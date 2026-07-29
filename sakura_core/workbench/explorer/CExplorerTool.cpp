@@ -333,7 +333,7 @@ struct CExplorerTool::Impl {
 		nodes.clear();
 		if (root.empty()) return;
 		ExplorerEntry entry;
-		entry.name = root;
+		entry.name = CExplorerTool::WorkspaceDisplayName(root);
 		entry.path = root;
 		entry.isDirectory = true;
 		const auto item = InsertNode(TVI_ROOT, std::move(entry));
@@ -454,7 +454,7 @@ bool CExplorerTool::Create(HWND parent)
 	m_impl->window = ::CreateWindowExW(0, kExplorerWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_impl->window == nullptr) return false;
-	m_impl->tree = ::CreateWindowExW(WS_EX_CLIENTEDGE, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+	m_impl->tree = ::CreateWindowExW(0, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
 		TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
 		0, 0, 0, 0, m_impl->window, nullptr, instance, nullptr);
 	if (m_impl->tree == nullptr) {
@@ -560,6 +560,21 @@ std::vector<ExplorerEntry> CExplorerTool::SortEntries(std::vector<ExplorerEntry>
 	return entries;
 }
 
+std::wstring CExplorerTool::WorkspaceDisplayName(std::wstring_view root)
+{
+	if (root.empty()) return {};
+	size_t end = root.size();
+	while (end > 0 && (root[end - 1] == L'\\' || root[end - 1] == L'/')) --end;
+	if (end == 0) return {};
+	const size_t separator = root.find_last_of(L"\\/", end - 1);
+	const size_t start = separator == std::wstring_view::npos ? 0 : separator + 1;
+	std::wstring displayName(root.substr(start, end - start));
+	if (!displayName.empty()) {
+		(void)::CharUpperBuffW(displayName.data(), static_cast<DWORD>(displayName.size()));
+	}
+	return displayName;
+}
+
 bool CExplorerTool::IsCurrentGeneration(std::uint64_t current, std::uint64_t candidate) noexcept
 {
 	return current != 0 && current == candidate;
@@ -588,10 +603,8 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		PAINTSTRUCT paint{};
 		const HDC dc = ::BeginPaint(window, &paint);
 		if (dc != nullptr) {
-			RECT client{};
-			::GetClientRect(window, &client);
-			const HBRUSH brush = ::CreateSolidBrush(impl.palette.border);
-			::FrameRect(dc, &client, brush);
+			const HBRUSH brush = ::CreateSolidBrush(impl.palette.panel);
+			::FillRect(dc, &paint.rcPaint, brush);
 			::DeleteObject(brush);
 			::EndPaint(window, &paint);
 		}

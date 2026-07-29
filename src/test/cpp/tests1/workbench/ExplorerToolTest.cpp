@@ -157,6 +157,13 @@ TEST(ExplorerTool, SortsDirectoriesFirstThenNamesCaseInsensitively)
 	EXPECT_EQ(L"zebra.txt", sorted[3].name);
 }
 
+TEST(ExplorerTool, UsesUppercaseWorkspaceFolderNameInsteadOfCanonicalPath)
+{
+	EXPECT_EQ(L"SAKURACODE", CExplorerTool::WorkspaceDisplayName(L"C:\\Codes\\tsuyoshi-otake\\sakuracode"));
+	EXPECT_EQ(L"SAKURACODE", CExplorerTool::WorkspaceDisplayName(L"C:/Codes/tsuyoshi-otake/sakuracode/"));
+	EXPECT_EQ(L"SHARE", CExplorerTool::WorkspaceDisplayName(L"\\\\server\\share\\"));
+}
+
 TEST(ExplorerTool, TreatsReparseDirectoriesAsLeaves)
 {
 	const ExplorerEntry normalDirectory{ L"source", L"C:\\root\\source", true, false };
@@ -207,8 +214,12 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 	ASSERT_TRUE(tool.Create(parent));
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
+	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_BORDER);
+	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_EXSTYLE) &
+		(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE));
 	const auto rootItem = TreeView_GetRoot(tree);
 	ASSERT_NE(nullptr, rootItem);
+	EXPECT_EQ(CExplorerTool::WorkspaceDisplayName(root.Path().wstring()), ItemText(tree, rootItem));
 
 	ASSERT_TRUE(PumpMessagesUntil([&] {
 		return FindDirectChild(tree, rootItem, L"child") != nullptr &&

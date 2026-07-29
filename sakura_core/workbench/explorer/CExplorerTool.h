@@ -74,6 +74,8 @@ public:
 
 	//! Pure helpers used by the directory worker and unit tests.
 	[[nodiscard]] static std::vector<ExplorerEntry> SortEntries(std::vector<ExplorerEntry> entries);
+	//! Returns the VS Code-style workspace label while keeping the canonical path private.
+	[[nodiscard]] static std::wstring WorkspaceDisplayName(std::wstring_view root);
 	//! UI result acceptance guard. A result from a cancelled/replaced root is stale.
 	[[nodiscard]] static bool IsCurrentGeneration(std::uint64_t current, std::uint64_t candidate) noexcept;
 	[[nodiscard]] static bool IsReparsePoint(DWORD attributes) noexcept;

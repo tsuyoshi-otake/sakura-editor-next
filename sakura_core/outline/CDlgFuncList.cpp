@@ -272,6 +272,9 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 		style &= ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS);
 		style |= TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
 		::SetWindowLongPtrW( hwndTree, GWL_STYLE, style );
+		LONG_PTR exStyle = ::GetWindowLongPtrW( hwndTree, GWL_EXSTYLE );
+		exStyle &= ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+		::SetWindowLongPtrW( hwndTree, GWL_EXSTYLE, exStyle );
 		::SendMessageW( hwndTree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER );
 		::SendMessageW( hwndTree, TVM_SETITEMHEIGHT, static_cast<WPARAM>(m_workbenchItemHeight), 0 );
 		if( m_workbenchFont != nullptr ) ::SendMessageW( hwndTree, WM_SETFONT, reinterpret_cast<WPARAM>(m_workbenchFont), FALSE );
@@ -318,6 +321,9 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 	if( hwndList != nullptr ){
 		const LONG_PTR style = ::GetWindowLongPtrW( hwndList, GWL_STYLE ) & ~WS_BORDER;
 		::SetWindowLongPtrW( hwndList, GWL_STYLE, style );
+		LONG_PTR exStyle = ::GetWindowLongPtrW( hwndList, GWL_EXSTYLE );
+		exStyle &= ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+		::SetWindowLongPtrW( hwndList, GWL_EXSTYLE, exStyle );
 		if( m_workbenchFont != nullptr ) ::SendMessageW( hwndList, WM_SETFONT, reinterpret_cast<WPARAM>(m_workbenchFont), FALSE );
 		ListView_SetTextColor( hwndList, m_workbenchText );
 		ListView_SetTextBkColor( hwndList, m_workbenchBackground );

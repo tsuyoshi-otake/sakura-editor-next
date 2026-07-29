@@ -268,7 +268,7 @@ void CWorkbenchPanelHost::Paint()
 	::SetBkMode(dc, TRANSPARENT);
 	::SetTextColor(dc, m_palette.primaryText.ToColorRef());
 	const HGDIOBJ previousFont = m_font.Get() == nullptr ? nullptr : ::SelectObject(dc, m_font.Get());
-	const wchar_t* title = m_edge == WorkbenchEdge::Left ? L"Explorer" : m_edge == WorkbenchEdge::Right ? L"Outline" : L"Terminal";
+	const wchar_t* title = m_edge == WorkbenchEdge::Left ? L"EXPLORER" : m_edge == WorkbenchEdge::Right ? L"OUTLINE" : L"TERMINAL";
 	::InflateRect(&header, -ScaleDip(8, m_dpi), 0);
 	::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 	if (previousFont != nullptr) ::SelectObject(dc, previousFont);
