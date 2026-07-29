@@ -54,6 +54,7 @@ enum EDllResult{
 	DLL_SUCCESS,		//成功
 	DLL_LOADFAILURE,	//DLLロード失敗
 	DLL_INITFAILURE,	//初期処理に失敗
+	DLL_MACHINE_MISMATCH,	//x64 プロセスで 32-bit DLL を検出
 };
 
 //! DLLの動的なLoad/Unloadを行うためのクラス

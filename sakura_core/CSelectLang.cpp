@@ -16,6 +16,7 @@
 #include "CSelectLang.h"
 
 #include "_main/CProcess.h"
+#include "platform/Windows11Platform.h"
 
 //! メッセージリソース用コンストラクタ
 CSelectLang::SSelLangInfo::SSelLangInfo(const std::filesystem::path& path)
@@ -38,7 +39,22 @@ bool CSelectLang::SSelLangInfo::Load()
 		return true;
 	}
 
-	const auto hModule = ::LoadLibraryExW(m_Path.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
+	// m_Path is retained as the display/configuration file name.  Resolve the
+	// load target explicitly so the architecture check and LoadLibraryExW always
+	// address the same language resource beside sakura.exe (the control process
+	// changes its current directory to System32 after startup).
+	const auto resourceDllPath = m_Path.is_absolute()
+		? m_Path
+		: GetExeFileName().replace_filename(m_Path);
+	// I386 is the one deterministic incompatibility for the x64 product.  Keep
+	// the existing LoadLibraryExW result for missing, unreadable, and malformed
+	// files so their current error handling remains unchanged.
+	if (platform::ReadPeMachineFromFile(resourceDllPath.c_str()) == platform::PeMachine::I386) {
+		::SetLastError(ERROR_EXE_MACHINE_TYPE_MISMATCH);
+		return false;
+	}
+
+	const auto hModule = ::LoadLibraryExW(resourceDllPath.c_str(), nullptr, LOAD_LIBRARY_AS_DATAFILE | LOAD_LIBRARY_AS_IMAGE_RESOURCE);
 	if( !hModule ){
 		return false;
 	}

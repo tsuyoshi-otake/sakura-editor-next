@@ -477,6 +477,7 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	const WCHAR* pszSecName = L"Common";
 	// 2005.04.07 D.S.Koba
 	CommonSetting& common = pShare->m_Common;
+	CommonSetting_Workbench& workbench = common.m_sWorkbench;
 
 	cProfile.IOProfileData( pszSecName, L"nCaretType"				, common.m_sGeneral.m_nCaretType );
 	//	Oct. 2, 2005 genta
@@ -596,6 +597,27 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	cProfile.IOProfileData( pszSecName, L"nMiniMapQuality"		, common.m_sWindow.m_nMiniMapQuality );
 	cProfile.IOProfileData( pszSecName, L"nMiniMapWidth"			, common.m_sWindow.m_nMiniMapWidth );
 	cProfile.IOProfileData( pszSecName, L"bDarkMode"				, common.m_sWindow.m_bDarkMode );
+
+	// Only display state is shared. Per-editor workspace roots and terminal
+	// sessions must never be persisted in the common shared memory block.
+	cProfile.IOProfileData( pszSecName, L"bWorkbenchLeftVisible"	, workbench.m_bLeftPanelVisible );
+	cProfile.IOProfileData( pszSecName, L"bWorkbenchRightVisible"	, workbench.m_bRightPanelVisible );
+	cProfile.IOProfileData( pszSecName, L"bWorkbenchBottomVisible"	, workbench.m_bBottomPanelVisible );
+	cProfile.IOProfileData( pszSecName, L"nWorkbenchLeftExtent96"	, workbench.m_nLeftPanelExtent96 );
+	cProfile.IOProfileData( pszSecName, L"nWorkbenchRightExtent96"	, workbench.m_nRightPanelExtent96 );
+	cProfile.IOProfileData( pszSecName, L"nWorkbenchBottomExtent96", workbench.m_nBottomPanelExtent96 );
+	cProfile.IOProfileData( pszSecName, L"eWorkbenchActiveTool"	, workbench.m_eActiveTool );
+	const bool hasOutlineMigrationMarker = cProfile.IOProfileData(
+		pszSecName, L"bWorkbenchOutlineMigrationComplete", workbench.m_bOutlineMigrationComplete
+	);
+	if (cProfile.IsReadingMode()) {
+		SetValueLimit(workbench.m_nLeftPanelExtent96, 80, 2000);
+		SetValueLimit(workbench.m_nRightPanelExtent96, 80, 2000);
+		SetValueLimit(workbench.m_nBottomPanelExtent96, 80, 2000);
+		int activeTool = static_cast<int>(workbench.m_eActiveTool);
+		SetValueLimit(activeTool, static_cast<int>(WORKBENCH_TOOL_EXPLORER), static_cast<int>(WORKBENCH_TOOL_TERMINAL));
+		workbench.m_eActiveTool = static_cast<EWorkbenchActiveTool>(activeTool);
+	}
 
 	cProfile.IOProfileData( pszSecName, L"bDispTabWnd"			, common.m_sTabBar.m_bDispTabWnd );	//タブウインドウ	//@@@ 2003.05.31 MIK
 	cProfile.IOProfileData( pszSecName, L"bDispTabWndMultiWin"	, common.m_sTabBar.m_bDispTabWndMultiWin );	//タブウインドウ	//@@@ 2003.05.31 MIK
@@ -752,6 +774,17 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	cProfile.IOProfileData( pszSecName, L"nDockOutline", common.m_sOutline.m_nDockOutline );
 	ShareData_IO_FileTree( cProfile, common.m_sOutline.m_sFileTree, pszSecName );
 	cProfile.IOProfileData( pszSecName, L"szFileTreeDefIniName", common.m_sOutline.m_sFileTreeDefIniName );
+
+	// Existing profiles lack this marker. Import their old Outline preference
+	// exactly once; new profiles start with the marker already set in defaults.
+	if (cProfile.IsReadingMode() && !hasOutlineMigrationMarker) {
+		workbench.m_bOutlineMigrationComplete = FALSE;
+		UINT migrationDpi = ::GetDpiForSystem();
+		if (migrationDpi == 0) {
+			migrationDpi = 96;
+		}
+		MigrateOutlineToWorkbench(common.m_sOutline, workbench, migrationDpi);
+	}
 }
 
 // プラグインコマンドを名前から機能番号へ変換
@@ -1988,6 +2021,15 @@ struct SMainMenuAddItemInfo
 	bool m_bAddNextSeparete;
 };
 
+int CShareData_IO::ResolveMainMenuReadVersion(
+	bool isReadingMode, bool hasStoredVersion, int storedVersion, int currentVersion ) noexcept
+{
+	if( !isReadingMode ){
+		return currentVersion;
+	}
+	return hasStoredVersion ? storedVersion : 0;
+}
+
 void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 {
 	IO_MainMenu( cProfile, GetDllShareData().m_Common.m_sMainMenu, false );		// 2010/5/15 Uchi
@@ -1996,20 +2038,10 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 2;
+	const int nCurrentVer = 3;
 	nVersion = nCurrentVer;
-	if( cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion) ){
-	}else{
-		if( cProfile.IsReadingMode() ){
-			int menuNum;
-			if( cProfile.IOProfileData(pszSecName, L"nMainMenuNum", menuNum) ){
-				// メインメニューが定義されていた
-				nVersion = 0; // 旧定義はVer0
-			}else{
-				// メインメニューすらない古いバージョンからのアップデートでは、最新メニューになるのでパス
-			}
-		}
-	}
+	const bool hasStoredVersion = cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion);
+	nVersion = ResolveMainMenuReadVersion(cProfile.IsReadingMode(), hasStoredVersion, nVersion, nCurrentVer);
 	if( cProfile.IsReadingMode() && nVersion < nCurrentVer ){
 		CommonSetting_MainMenu& mainmenu = GetDllShareData().m_Common.m_sMainMenu;
 		SMainMenuAddItemInfo addInfos[] = {
@@ -2035,6 +2067,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			{1, F_MODIFYLINE_NEXT_SEL, F_GOFILEEND_SEL, L'\0', true, false}, 	// (選択)次の変更行へ
 			{1, F_MODIFYLINE_PREV_SEL, F_MODIFYLINE_NEXT_SEL, L'\0', false, false}, 	// (選択)前の変更行へ
 			{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false}, 	// ウインドウ一覧表示
+			{3, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false}, // 作業フォルダーを開く
 		};
 		for( int i = 0; i < int(std::size(addInfos)); i++ ){
 			SMainMenuAddItemInfo& item = addInfos[i];

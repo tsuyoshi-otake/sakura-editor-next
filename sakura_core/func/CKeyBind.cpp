@@ -725,7 +725,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	/* アルファベット */
 	//keycode,	keyname,			なし,				Shitf+,				Ctrl+,					Shift+Ctrl+,		Alt+,					Shit+Alt+,			Ctrl+Alt+,				Shift+Ctrl+Alt+
 	{ 'A',		{ L"A" },			{ F_0,				F_0,				F_SELECTALL,			F_0,				F_SORT_ASC,				F_0,				F_0,					F_0 }, },
-	{ 'B',		{ L"B" },			{ F_0,				F_0,				F_BROWSE,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
+	{ 'B',		{ L"B" },			{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 'C',		{ L"C" },			{ F_0,				F_0,				F_COPY,					F_OPEN_HfromtoC,	F_0,					F_0,				F_0,					F_0 }, },
 	{ 'D',		{ L"D" },			{ F_0,				F_0,				F_WordCut,				F_WordDelete,		F_SORT_DESC,			F_0,				F_0,					F_0 }, },
 	{ 'E',		{ L"E" },			{ F_0,				F_0,				F_CUT_LINE,				F_DELETE_LINE,		F_0,					F_0,				F_CASCADE,				F_0 }, },
@@ -733,7 +733,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	{ 'G',		{ L"G" },			{ F_0,				F_0,				F_GREP_DIALOG,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 'H',		{ L"H" },			{ F_0,				F_0,				F_CURLINECENTER,		F_OPEN_HfromtoC,	F_0,					F_0,				F_TILE_V,				F_0 }, },
 	{ 'I',		{ L"I" },			{ F_0,				F_0,				F_DUPLICATELINE,		F_0,				F_0,					F_0,				F_0,					F_0 }, },
-	{ 'J',		{ L"J" },			{ F_0,				F_0,				F_JUMP_DIALOG,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
+	{ 'J',		{ L"J" },			{ F_0,				F_0,				F_TOGGLE_BOTTOM_PANEL,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 'K',		{ L"K" },			{ F_0,				F_0,				F_LineCutToEnd,			F_LineDeleteToEnd,	F_0,					F_0,				F_0,					F_0 }, },
 	{ 'L',		{ L"L" },			{ F_0,				F_0,				F_LOADKEYMACRO,			F_EXECKEYMACRO,		F_LTRIM,				F_0,				F_TOLOWER,				F_TOUPPER }, },
 	{ 'M',		{ L"M" },			{ F_0,				F_0,				F_SAVEKEYMACRO,			F_RECKEYMACRO,		F_MERGE,				F_0,				F_0,					F_0 }, },
@@ -756,7 +756,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	{ 0x00bd,	{ L"-" },			{ F_0,				F_0,				F_COPYFNAME,			F_SPLIT_V,			F_0,					F_0,				F_0,					F_0 }, },
 	{ 0x00de,	{ (LPCWSTR)STR_KEY_BIND_HAT_ENG_QT },		{ F_0,				F_0,				F_COPYTAG,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 0x00dc,	{ L"\\" },			{ F_0,				F_0,				F_COPYPATH,				F_SPLIT_H,			F_0,					F_0,				F_0,					F_0 }, },
-	{ 0x00c0,	{ (LPCWSTR)STR_KEY_BIND_AT_ENG_BQ },		{ F_0,				F_0,				F_COPYLINES,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
+	{ 0x00c0,	{ (LPCWSTR)STR_KEY_BIND_AT_ENG_BQ },		{ F_0,				F_0,				F_SHOW_FOCUS_TERMINAL,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 0x00db,	{ L"[" },			{ F_0,				F_0,				F_BRACKETPAIR,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
 	{ 0x00bb,	{ L";" },			{ F_0,				F_0,				F_0,					F_SPLIT_VH,			F_INS_DATE,				F_0,				F_0,					F_0 }, },
 	{ 0x00ba,	{ L":" },			{ F_0,				F_0,				_COPYWITHLINENUM,		F_0,				F_INS_TIME,				F_0,				F_0,					F_0 }, },

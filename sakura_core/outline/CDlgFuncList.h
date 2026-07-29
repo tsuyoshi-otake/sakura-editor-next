@@ -72,8 +72,12 @@ public:
 	*/
 	HWND DoModeless( HINSTANCE, HWND, LPARAM, CFuncInfoArr*, CLayoutInt, CLayoutInt, int, int, bool );/* モードレスダイアログの表示 */
 	void ChangeView(LPARAM pcEditView);	/* モードレス時：検索対象となるビューの変更 */
-	bool IsDocking() { return m_eDockSide > DOCKSIDE_FLOAT; }
-	EDockSide GetDockSide() { return m_eDockSide; }
+	void SetWorkbenchParent( HWND parent ) noexcept;
+	void SetWorkbenchMode( bool enabled ) noexcept;
+	[[nodiscard]] HWND GetWorkbenchParent() const noexcept { return m_hwndWorkbenchParent; }
+	[[nodiscard]] bool IsWorkbenchMode() const noexcept { return m_bWorkbenchMode; }
+	[[nodiscard]] bool IsDocking() const noexcept { return !m_bWorkbenchMode && m_eDockSide > DOCKSIDE_FLOAT; }
+	[[nodiscard]] EDockSide GetDockSide() const noexcept { return m_eDockSide; }
 
 protected:
 	INT_PTR DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam ) override;	// 2007.11.07 ryoji 標準以外のメッセージを捕捉する
@@ -187,6 +191,8 @@ protected:
 	bool TagJumpTimer(const WCHAR*, CMyPoint, bool);
 
 private:
+	[[nodiscard]] bool UsesCompactPanelLayout() const noexcept { return m_bWorkbenchMode || IsDocking(); }
+
 	//	May 18, 2001 genta
 	/*!
 		@brief アウトライン解析種別
@@ -213,6 +219,8 @@ private:
 	bool		m_bTimerJumpAutoClose;
 
 	EDockSide	m_eDockSide;	// 現在の画面の表示位置
+	HWND		m_hwndWorkbenchParent = nullptr;
+	bool		m_bWorkbenchMode = false;
 	HWND		m_hwndToolTip;	/*!< ツールチップ（ボタン用） */
 	bool		m_bStretching;
 	bool		m_bHovering;

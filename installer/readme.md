@@ -3,13 +3,12 @@
 - [インストーラ作成に必要なもの](#インストーラ作成に必要なもの)
 - [インストーラ作成手順](#インストーラ作成手順)
   - [すべて一括でビルドする場合](#すべて一括でビルドする場合)
-    - [具体例 (全構成をビルドする場合)](#具体例-全構成をビルドする場合)
+    - [具体例 (x64 の全構成をビルドする場合)](#具体例-x64-の全構成をビルドする場合)
   - [個別にビルドする場合](#個別にビルドする場合)
     - [具体例 (x64 の Release)](#具体例-x64-の-release)
 - [インストーラの設定ファイル](#インストーラの設定ファイル)
 - [インストーラのビルドに必要なファイル](#インストーラのビルドに必要なファイル)
 - [インストーラのビルド](#インストーラのビルド)
-  - [Win32](#win32)
   - [x64](#x64)
 - [インストーラのテスト](#インストーラのテスト)
   - [インストーラーのデバッグ](#インストーラーのデバッグ)
@@ -20,6 +19,8 @@
 ## インストーラ作成に必要なもの
 
 [こちら](../tools/build.md#必要なもの) を参照
+
+配布対象は Windows 11 build 22000 以降の x64 環境のみです。`sakura-x64.iss` は AMD64 のみを許可し、`MinVersion=10.0.22000` を設定しています。
 
 ## インストーラ作成手順
 
@@ -34,14 +35,12 @@ build-all.bat <Platform> <Configuration>
 
 | 引数 | 名前 | 値 |
 ----|----|----
-|第一引数 | platform      | "Win32" または "x64" |
+|第一引数 | platform      | "x64" |
 |第二引数 | configuration | "Debug" または "Release" |
 
-#### 具体例 (全構成をビルドする場合)
+#### 具体例 (x64 の全構成をビルドする場合)
 
 ```
-build-all.bat Win32 Release
-build-all.bat Win32 Debug
 build-all.bat x64   Release
 build-all.bat x64   Debug
 ```
@@ -72,8 +71,7 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。
 
 | iss ファイル | 意味 |
 ----|----
-|[sakura-common.iss](sakura-common.iss) |共通ファイル。以下の２つのファイルからインクルードされます。 |
-|[sakura-Win32.iss](sakura-Win32.iss)   |Win32 用の iss ファイル |
+|[sakura-common.iss](sakura-common.iss) |共通ファイル。以下のファイルからインクルードされます。 |
 |[sakura-x64.iss](sakura-x64.iss)       |x64   用の iss ファイル |
 
 ## インストーラのビルドに必要なファイル
@@ -92,6 +90,17 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。
         - macro.chm
         - plugin.chm
         - sakura.exe.ini
+        - license/
+            - windows-terminal/
+                - LICENSE
+                - UPSTREAM.md
+                - IMPORTED_FILES.md
+            - fmt/
+                - LICENSE
+            - ms-gsl/
+                - LICENSE
+            - wil/
+                - LICENSE
         - keyword/
             - *.col
             - *.dic
@@ -107,12 +116,6 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。
 ## インストーラのビルド
 
 以下のコマンドでインストーラをビルドします。(build-installer.bat に含まれます。)
-
-### Win32
-
-"C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\sakura-Win32.iss
-
-→ installer\Output-Win32\ にインストーラが生成されます。
 
 ### x64
 
@@ -133,7 +136,7 @@ https://www.kymoto.org/products/inno-script-studio/downloads
 
 (有志で[日本語化のファイル](https://www42.atwiki.jp/jfactory/pages/75.html)も公開されています)
 
-ただし現在、issファイルをインクルードしているとうまくブレイクポイントが有効にならないようなので、サクラエディタのissファイルのうち、sakura-x64.issまたは、sakura-Win32.issの作成したいインストーラのissファイル上２行をsakura-common.issの最初に挿入してからsakura-common.issにブレイクポイントを設定して実行してください。
+ただし現在、issファイルをインクルードしているとうまくブレイクポイントが有効にならないようなので、sakura-x64.issの先頭２行をsakura-common.issの最初に挿入してからsakura-common.issにブレイクポイントを設定して実行してください。
 
 ### 英語版インストーラーの動作確認について
 

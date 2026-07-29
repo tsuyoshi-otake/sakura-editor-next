@@ -61,6 +61,7 @@
 #define CMDLINEOPT_GROUP		500  //!< タブモードのグループを指定して開く
 #define CMDLINEOPT_PROF			501  //!< プロファイルを選択
 #define CMDLINEOPT_PROFMGR		502  //!< プロファイルマネージャを起動時に表示
+#define CMDLINEOPT_FOLDER		503  //!< ワークベンチの作業フォルダー
 
 /*!
 	コマンドラインのチェックを行って、オプション番号と
@@ -130,6 +131,7 @@ int CCommandLine::CheckCommandLine(
 		{L"M",		1,			CMDLINEOPT_M, false},		// 2009.06.14 syat
 		{L"MTYPE",	5,			CMDLINEOPT_MTYPE, false},	// 2009.06.14 syat
 		{L"PROF",	4,			CMDLINEOPT_PROF, true},	// 2013.12.20 Moca
+		{L"FOLDER",	6,			CMDLINEOPT_FOLDER, false},
 		{nullptr, 0, 0}
 	};
 
@@ -186,6 +188,8 @@ CCommandLine::CCommandLine() noexcept
 	, m_bNoWindow(false)
 	, m_bProfileMgr(false)
 	, m_bSetProfile(false)
+	, m_bSetWorkspaceFolder(false)
+	, m_bParsed(false)
 	, m_fi()
 	, m_gi()
 	, m_bViewMode(false)
@@ -193,6 +197,7 @@ CCommandLine::CCommandLine() noexcept
 	, m_cmMacro()
 	, m_cmMacroType()
 	, m_cmProfile(L"")
+	, m_cmWorkspaceFolder(L"")
 	, m_vFiles()
 {
 }
@@ -241,6 +246,7 @@ void CCommandLine::ParseKanjiCodeFromFileName(LPWSTR pszExeFileName, int cchExeF
 */
 void CCommandLine::ParseCommandLine( LPCWSTR pszCmdLineSrc, bool bResponse )
 {
+	m_bParsed = true;
 	MY_RUNNINGTIMER( cRunningTimer, L"CCommandLine::Parse" );
 
 	WCHAR	szPath[_MAX_PATH];
@@ -518,6 +524,11 @@ void CCommandLine::ParseCommandLine( LPCWSTR pszCmdLineSrc, bool bResponse )
 				break;
 			case CMDLINEOPT_PROFMGR:
 				m_bProfileMgr = true;
+				break;
+			case CMDLINEOPT_FOLDER:
+				m_cmWorkspaceFolder.SetString(arg, nArgLen);
+				m_cmWorkspaceFolder.Replace(L"\"\"", L"\"");
+				m_bSetWorkspaceFolder = true;
 				break;
 			default:
 				break;

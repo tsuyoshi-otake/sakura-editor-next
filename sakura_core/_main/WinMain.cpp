@@ -33,6 +33,7 @@
 #include "util/std_macro.h"
 #include "env/DLLSHAREDATA.h"
 #include "apiwrap/DarkMode.h"
+#include "platform/Windows11Platform.h"
 
 /*!
 	Windows Entry point
@@ -57,6 +58,12 @@ int WINAPI wWinMain(
 	// 2009.9.10 syat メモリリークチェックを追加
 	::_CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF | _CRTDBG_ALLOC_MEM_DF);
 #endif
+	const auto windowsBuild = platform::QueryWindowsBuild();
+	if (!platform::SupportsWindows11Features(windowsBuild)) {
+		const auto diagnostic = platform::FormatStartupPlatformDiagnostic(windowsBuild);
+		::MessageBoxW(nullptr, diagnostic.text.data(), L"Sakura Code - Unsupported Windows", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+		return ERROR_OLD_WIN_VERSION;
+	}
 
 	MY_RUNNINGTIMER(cRunningTimer, L"WinMain" );
 	{

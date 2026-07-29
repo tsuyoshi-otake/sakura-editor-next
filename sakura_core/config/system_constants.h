@@ -549,7 +549,7 @@
 	-- バージョン1000以降を本家統合までの間、使わせてください。かなり頻繁に構成が変更されると思われるので。by kobake 2008.03.02
 
 */
-#define N_SHAREDATA_VERSION		182
+#define N_SHAREDATA_VERSION		183
 #define STR_SHAREDATA_VERSION	NUM_TO_STR(N_SHAREDATA_VERSION)
 #define	GSTR_SHAREDATA	(L"SakuraShareData" _T(CON_SKR_MACHINE_SUFFIX_) _T(_CODE_SUFFIX_) _T(_DEBUG_SUFFIX_) _T(STR_SHAREDATA_VERSION))
 
@@ -651,6 +651,7 @@ enum e_PM_CHANGESETTING_SELECT {
 	PM_CHANGESETTING_TYPE		= 3, //!< タイプ別設定
 	PM_CHANGESETTING_TYPE2		= 4, //!< タイプ別設定(再読み込みなし)
 	PM_PRINTSETTING				= 5, //!< プリント設定
+	PM_CHANGESETTING_WORKBENCH	= 6, //!< 共有ワークベンチ表示状態
 };
 //!座標位置情報の保存
 #define MYWM_SAVEEDITSTATE  (WM_APP+1521)

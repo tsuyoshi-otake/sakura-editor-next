@@ -1,17 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" InitialTargets="ValidateX64Platform">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|Win32">
-      <Configuration>Debug</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|Win32">
-      <Configuration>Release</Configuration>
-      <Platform>Win32</Platform>
     </ProjectConfiguration>
     <ProjectConfiguration Include="Release|x64">
       <Configuration>Release</Configuration>
@@ -42,17 +34,20 @@
   <PropertyGroup Label="UserMacros">
     <IntDir>..\build\$(Platform)\$(Configuration)\sakura_core\</IntDir>
     <OutDir>..\$(Platform)\$(Configuration)\</OutDir>
+    <SakuraLinkInputsForTests1File>$(IntDir)sakura-link-inputs-for-tests1.txt</SakuraLinkInputsForTests1File>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <LinkIncremental>false</LinkIncremental>
+    <FmtLibrary>fmtd.lib</FmtLibrary>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <LinkIncremental>false</LinkIncremental>
+    <FmtLibrary>fmt.lib</FmtLibrary>
   </PropertyGroup>
   <ItemDefinitionGroup Label="sakura.common">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\src\main\cpp;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>NOMINMAX;_WIN32_WINNT=_WIN32_WINNT_WIN10;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\sakura_core\terminal\vendor\windows_terminal\sakura_compat;..\sakura_core\terminal\vendor\windows_terminal\src;..\sakura_core\terminal\vendor\windows_terminal\src\inc;..\sakura_core\terminal\vendor\windows_terminal\src\types;..\src\main\cpp;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>NOMINMAX;_WIN32_WINNT=0x0A00;NTDDI_VERSION=NTDDI_WIN10_CO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <ForceConformanceInForLoopScope>true</ForceConformanceInForLoopScope>
       <RuntimeTypeInfo>true</RuntimeTypeInfo>
@@ -60,8 +55,9 @@
       <PrecompiledHeaderFile>StdAfx.h</PrecompiledHeaderFile>
       <WarningLevel>Level4</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalOptions>/FAsu /Fa$(IntDir) /source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/FS /FAsu /Fa$(IntDir) /source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ForceSynchronousPDBWrite>true</ForceSynchronousPDBWrite>
       <LanguageStandard>stdcpp20</LanguageStandard>
       <SDLCheck>true</SDLCheck>
       <ConformanceMode>true</ConformanceMode>
@@ -72,7 +68,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>comctl32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>
@@ -113,17 +109,6 @@
       <GenerateMapFile>true</GenerateMapFile>
     </Link>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
-    <ClCompile>
-      <PreprocessorDefinitions>WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <ResourceCompile>
-      <PreprocessorDefinitions>WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ResourceCompile>
-    <Link>
-      <LargeAddressAware>true</LargeAddressAware>
-    </Link>
-  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <ClCompile>
       <PreprocessorDefinitions>%(PreprocessorDefinitions)</PreprocessorDefinitions>
@@ -133,11 +118,7 @@
     </ResourceCompile>
   </ItemDefinitionGroup>
   <Import Project="..\src\main\msbuild\cmake.props" />
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
-  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
   </ItemDefinitionGroup>
@@ -459,7 +440,42 @@
     <ClInclude Include="..\sakura_core\view\figures\CFigure_HanSpace.h" />
     <ClInclude Include="..\sakura_core\view\figures\CFigure_Tab.h" />
     <ClInclude Include="..\sakura_core\view\figures\CFigure_ZenSpace.h" />
+    <ClInclude Include="..\sakura_core\platform\Windows11Platform.h" />
+    <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h" />
+    <ClInclude Include="..\sakura_core\accessibility\CustomUiAutomationProvider.h" />
+    <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h" />
+    <ClInclude Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.h" />
+    <ClInclude Include="..\sakura_core\terminal\model\TerminalModel.h" />
+    <ClInclude Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.h" />
+    <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\inc\CodepointWidthDetector.hpp" />
+    <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\precomp.h" />
+    <ClInclude Include="..\sakura_core\terminal\parser\TerminalDispatch.h" />
+    <ClInclude Include="..\sakura_core\terminal\parser\SakuraTerminalStateMachineEngine.h" />
+    <ClInclude Include="..\sakura_core\terminal\parser\TerminalParser.h" />
+    <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\sakura_compat\WindowsTerminalCompat.h" />
+    <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\input\terminalInput.hpp" />
+    <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\parser\IStateMachineEngine.hpp" />
+    <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\parser\stateMachine.hpp" />
+    <ClInclude Include="..\sakura_core\terminal\session\TerminalSession.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\CTerminalTool.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\CTerminalWnd.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalColorResolver.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h" />
+    <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
+	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
+	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
+	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\activity\CActivityBar.h" />
+	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
+    <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h" />
     <ClInclude Include="..\sakura_core\window\CAutoScrollWnd.h" />
+    <ClInclude Include="..\sakura_core\window\CClientMenuBar.h" />
+    <ClInclude Include="..\sakura_core\window\CCustomFrameController.h" />
+    <ClInclude Include="..\sakura_core\window\CCustomTitleBar.h" />
     <ClInclude Include="..\sakura_core\window\CEditWnd.h" />
     <ClInclude Include="..\sakura_core\window\CMainStatusBar.h" />
     <ClInclude Include="..\sakura_core\window\CMainToolBar.h" />
@@ -863,7 +879,61 @@
     <ClCompile Include="..\sakura_core\view\figures\CFigure_HanSpace.cpp" />
     <ClCompile Include="..\sakura_core\view\figures\CFigure_Tab.cpp" />
     <ClCompile Include="..\sakura_core\view\figures\CFigure_ZenSpace.cpp" />
+    <ClCompile Include="..\sakura_core\platform\Windows11Platform.cpp" />
+    <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\model\TerminalModel.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\CodepointWidthDetector.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\parser\stateMachine.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\input\terminalInput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\terminal\input\mouseInput.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\sakura_compat\WindowsTerminalCompat.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\parser\TerminalDispatch.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\parser\SakuraTerminalStateMachineEngine.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\parser\TerminalParser.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\session\ConPtyTerminalBackend.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\session\TerminalSession.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\CTerminalTool.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\CTerminalWnd.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalColorResolver.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
+    <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\activity\CActivityBar.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />
+    <ClCompile Include="..\sakura_core\accessibility\CustomUiAutomationProvider.cpp" />
+    <ClCompile Include="..\sakura_core\window\CClientMenuBar.cpp" />
+    <ClCompile Include="..\sakura_core\window\CCustomFrameController.cpp" />
+    <ClCompile Include="..\sakura_core\window\CCustomTitleBar.cpp" />
     <ClCompile Include="..\sakura_core\window\CEditWnd.cpp" />
     <ClCompile Include="..\sakura_core\window\CMainStatusBar.cpp" />
     <ClCompile Include="..\sakura_core\window\CMainToolBar.cpp" />
@@ -908,29 +978,47 @@
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
   <Import Project="..\src\main\msbuild\cmake.targets" />
+  <Target Name="WriteSakuraLinkInputsForTests1" DependsOnTargets="ClCompile;ResourceCompile" BeforeTargets="Link">
+    <!--
+      tests1 links the production object files directly.  Derive the standard VC++
+      output names from the declared source/resource items so removed or renamed
+      stale files in $(IntDir) can never become accidental test linker inputs.
+    -->
+    <ItemGroup>
+      <_SakuraLinkInputForTests1 Include="@(ClCompile->'$(IntDir)%(Filename).obj');@(ResourceCompile->'$(IntDir)%(Filename).res')" />
+    </ItemGroup>
+    <Error Condition="'@(_SakuraLinkInputForTests1)' == ''"
+           Code="SAKURA0003"
+           Text="No production object or resource outputs were available for the tests1 link-input manifest." />
+    <WriteLinesToFile File="$(SakuraLinkInputsForTests1File)"
+                      Lines="@(_SakuraLinkInputForTests1)"
+                      Overwrite="true"
+                      WriteOnlyWhenDifferent="true"
+                      Encoding="Unicode" />
+  </Target>
   <Target Name="RunCompileTests" Condition="!Exists('..\build\$(Platform)\CMakeTools\compiletests\CMakeCache.txt')" DependsOnTargets="GenerateVersionHeader" BeforeTargets="ClCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' -A $(Platform) -B '$(CMakeToolsPath)/compiletests' -S '$([MSBuild]::NormalizePath('$(CMakeToolsSourceDir)', '.\src\test\resources\compiletests'))' -DCMAKE_CONFIGURATION_TYPES='Debug;Release' &amp;&amp; &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target run_compiletests -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' -A $(Platform) -B '$(CMakeToolsPath)/compiletests' -S '$([MSBuild]::NormalizePath('$(CMakeToolsSourceDir)', '.\src\test\resources\compiletests'))' -DCMAKE_CONFIGURATION_TYPES='Debug;Release' -DCMAKE_SYSTEM_VERSION='10.0.22621.0' &amp;&amp; &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target run_compiletests -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="GenerateBregonig" Condition="!Exists('$(OutDir)bregonig.dll')" BeforeTargets="ClCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_bregonig -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_bregonig -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="GenerateMigemo" Condition="!Exists('$(OutDir)migemo.dll')" BeforeTargets="ClCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_cmigemo -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_cmigemo -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="GenerateCTags" Condition="!Exists('$(OutDir)ctags.exe')" AfterTargets="Link">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_ctags -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_ctags -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
   </Target>
   <Target Name="GenerateDiff" Condition="!Exists('$(OutDir)diff.exe')" AfterTargets="Link">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_diffutils -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_diffutils -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
   </Target>
-  <Target Name="RemoveSakuraExe" Condition="Exists('$(TargetPath)')" DependsOnTargets="ClCompile;ResourceCompile" BeforeTargets="Link">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); attrib -R '$(TargetPath)'; Remove-Item '$(TargetPath)' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+  <Target Name="PrepareSakuraExeForLink" Condition="Exists('$(TargetPath)')" DependsOnTargets="ClCompile;ResourceCompile" BeforeTargets="Link">
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); attrib -R '$(TargetPath)'&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="GenerateLang_en_US" Inputs="..\src\main\cmake\version.h.in;@(FuncCodeRes);@(RcInclude);..\sakura_lang\sakura_rc_en-US.rc;..\sakura_lang\sakura_rc_en-US.rc2" Outputs="$(OutDir)sakura_lang_en_US.dll" AfterTargets="GenerateFuncCodeDefine;Link">
-    <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target sakura_lang_en_US -- /nologo" />
+    <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target sakura_lang_en_US -- /nologo" EnvironmentVariables="TrackFileAccess=false" />
   </Target>
   <Target Name="GenerateLang_zh_CN" Inputs="..\src\main\cmake\version.h.in;@(FuncCodeRes);@(RcInclude);..\sakura_lang\sakura_rc_zh-CN.rc;..\sakura_lang\sakura_rc_zh-CN.rc2" Outputs="$(OutDir)sakura_lang_zh_CN.dll" AfterTargets="GenerateFuncCodeDefine;Link">
-    <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target sakura_lang_zh_CN -- /nologo" />
+    <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target sakura_lang_zh_CN -- /nologo" EnvironmentVariables="TrackFileAccess=false" />
   </Target>
   <Target Name="AppendCleanTargets" BeforeTargets="CoreClean">
     <!-- Add files to @Clean just before running CoreClean. -->
@@ -943,6 +1031,10 @@
       <Clean Include="$(OutDir)bregonig.dll" />
       <Clean Include="$(OutDir)migemo.dll" />
       <Clean Include="$(OutDir)ctags.exe" />
+      <Clean Include="$(SakuraLinkInputsForTests1File)" />
     </ItemGroup>
+  </Target>
+  <Target Name="ValidateX64Platform" Condition="'$(DesignTimeBuild)' != 'true' and '$(Platform)' != 'x64'">
+    <Error Code="SAKURA0001" Text="Sakura Code supports only the x64 platform. Build with /p:Platform=x64." />
   </Target>
 </Project>

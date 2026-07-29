@@ -277,6 +277,9 @@ add_custom_target(generate_sakura_exe_manifest
 
 # Resolve darkmodelib from vcpkg local registry
 find_package(darkmodelib CONFIG REQUIRED)
+find_package(fmt CONFIG REQUIRED)
+find_package(Microsoft.GSL CONFIG REQUIRED)
+find_package(WIL CONFIG REQUIRED)
 
 # Resolve bregonig from vcpkg local registry
 find_package(bregonig CONFIG REQUIRED)
@@ -464,6 +467,7 @@ add_compile_definitions(
   _UNICODE
   WINVER=0x0A00
   _WIN32_WINNT=0x0A00
+  NTDDI_VERSION=NTDDI_WIN10_CO
   $<$<CONFIG:Debug>:_DEBUG>
   $<$<CONFIG:Release>:NDEBUG>
 )
@@ -517,6 +521,23 @@ file(GLOB_RECURSE SOURCES
   ${CMAKE_SOURCE_DIR}/sakura_core/*.cpp
 )
 
+# Do not let the broad source glob pull in the complete Windows Terminal tree.
+# Only the dependency-closed parser, input and Unicode boundary is compiled.
+set(WINDOWS_TERMINAL_VENDOR_ROOT
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/vendor/windows_terminal
+)
+set(WINDOWS_TERMINAL_VENDOR_SOURCES
+  ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/types/CodepointWidthDetector.cpp
+  ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/terminal/parser/stateMachine.cpp
+  ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/terminal/input/terminalInput.cpp
+  ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/terminal/input/mouseInput.cpp
+  ${WINDOWS_TERMINAL_VENDOR_ROOT}/sakura_compat/WindowsTerminalCompat.cpp
+)
+list(FILTER SOURCES EXCLUDE REGEX
+  ".*/sakura_core/terminal/vendor/windows_terminal/.*\\.cpp$"
+)
+list(APPEND SOURCES ${WINDOWS_TERMINAL_VENDOR_SOURCES})
+
 set(RESOURCE_SCRIPTS
   ${CMAKE_SOURCE_DIR}/sakura_core/sakura_rc.rc
   ${CMAKE_SOURCE_DIR}/sakura_core/sakura_rc.rc2
@@ -540,6 +561,13 @@ add_library(sakura_core OBJECT ${PCH_HEADER} ${SOURCES} ${RESOURCE_SCRIPTS} ${HE
 # Enable precompiled headers for sakura_core
 target_precompile_headers(sakura_core PRIVATE ${PCH_HEADER})
 
+# This upstream TU owns its minimal compatibility precomp.h.  Injecting
+# Sakura's StdAfx PCH would make the vendor boundary differ between CMake and
+# MSBuild builds.
+set_source_files_properties(${WINDOWS_TERMINAL_VENDOR_SOURCES}
+  PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+)
+
 # Set C++ standard for sakura_core
 target_compile_features(sakura_core PUBLIC cxx_std_20)
 
@@ -548,6 +576,11 @@ target_include_directories(sakura_core
   SYSTEM
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>"
+  PRIVATE
+    ${WINDOWS_TERMINAL_VENDOR_ROOT}/sakura_compat
+    ${WINDOWS_TERMINAL_VENDOR_ROOT}/src
+    ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/inc
+    ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/types
 )
 
 # Add link directories for sakura_core
@@ -560,6 +593,10 @@ target_link_directories(sakura_core
 target_link_libraries(sakura_core
   PUBLIC
     darkmodelib::darkmodelib
+    fmt::fmt
+    Microsoft.GSL::GSL
+    WIL::WIL
+    advapi32
     comctl32
     dbghelp
     dwmapi

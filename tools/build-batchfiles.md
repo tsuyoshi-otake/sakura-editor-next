@@ -62,12 +62,12 @@
 
 | バッチファイル | 第一引数 | 第二引数 |
 |----|----|----|
-|build-all.bat       | platform ("Win32" または "x64" または "MinGW") | configuration ("Debug" または "Release")  |
-|build-sln.bat       | platform ("Win32" または "x64") | configuration ("Debug" または "Release")  |
+|build-all.bat       | platform ("x64" または "MinGW") | configuration ("Debug" または "Release")  |
+|build-sln.bat       | platform ("x64") | configuration ("Debug" または "Release")  |
 |build-gnu.bat       | platform ("MinGW") | configuration ("Debug" または "Release")  |
 |build-chm.bat       | なし | なし |
-|build-installer.bat | platform ("Win32" または "x64") | configuration ("Debug" または "Release")  |
-|zipArtifacts.bat    | platform ("Win32" または "x64") | configuration ("Debug" または "Release")  |
+|build-installer.bat | platform ("x64") | configuration ("Debug" または "Release")  |
+|zipArtifacts.bat    | platform ("x64") | configuration ("Debug" または "Release")  |
 
 ## バッチファイルの仕組み
 

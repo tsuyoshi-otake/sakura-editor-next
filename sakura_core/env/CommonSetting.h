@@ -585,6 +585,63 @@ struct CommonSetting_OutLine
 	SFilePath	m_sFileTreeDefIniName;		//!< ファイルツリー設定のデフォルトファイル名(GUIなし)
 };
 
+// Workbench state shared between editor processes. Workspace roots and terminal
+// sessions intentionally remain per-editor runtime state.
+enum EWorkbenchActiveTool {
+	WORKBENCH_TOOL_EXPLORER = 0,
+	WORKBENCH_TOOL_OUTLINE = 1,
+	WORKBENCH_TOOL_TERMINAL = 2,
+};
+
+struct CommonSetting_Workbench
+{
+	BOOL	m_bLeftPanelVisible;
+	BOOL	m_bRightPanelVisible;
+	BOOL	m_bBottomPanelVisible;
+	int		m_nLeftPanelExtent96;
+	int		m_nRightPanelExtent96;
+	int		m_nBottomPanelExtent96;
+	EWorkbenchActiveTool m_eActiveTool;
+	BOOL	m_bOutlineMigrationComplete;
+};
+
+// Migrate only the old Outline visibility/width. Consumers must reserve the
+// workbench right panel rather than the legacy Outline docking rectangle.
+inline int ConvertLegacyOutlinePixelsToExtent96(int pixels, unsigned int sourceDpi) noexcept
+{
+	if (pixels <= 0) {
+		return pixels;
+	}
+	if (sourceDpi == 0) {
+		sourceDpi = 96;
+	}
+	// Legacy Outline extents were persisted as physical pixels. Preserve their
+	// physical size on the migration display while moving to 96-DPI units.
+	return static_cast<int>((static_cast<long long>(pixels) * 96 + sourceDpi / 2) / sourceDpi);
+}
+
+inline bool MigrateOutlineToWorkbench(
+	const CommonSetting_OutLine& outline,
+	CommonSetting_Workbench& workbench,
+	unsigned int sourceDpi = 96
+) noexcept
+{
+	if (workbench.m_bOutlineMigrationComplete) {
+		return false;
+	}
+
+	workbench.m_bRightPanelVisible = outline.m_bOutlineDockDisp;
+	if (outline.m_cxOutlineDockRight > 0) {
+		workbench.m_nRightPanelExtent96 =
+			ConvertLegacyOutlinePixelsToExtent96(outline.m_cxOutlineDockRight, sourceDpi);
+	} else if (outline.m_widthOutlineWindow > 0) {
+		workbench.m_nRightPanelExtent96 =
+			ConvertLegacyOutlinePixelsToExtent96(outline.m_widthOutlineWindow, sourceDpi);
+	}
+	workbench.m_bOutlineMigrationComplete = TRUE;
+	return true;
+}
+
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                     ファイル内容比較                        //
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -721,6 +778,7 @@ struct CommonSetting
 	CommonSetting_FileName			m_sFileName;		//!< ファイル名表示
 	//
 	CommonSetting_OutLine			m_sOutline;			//!< アウトライン
+	CommonSetting_Workbench		m_sWorkbench;		//!< ワークベンチ（表示状態のみ）
 	CommonSetting_Compare			m_sCompare;			//!< ファイル内容比較
 	CommonSetting_View				m_sView;			//!< ビュー
 	CommonSetting_Others			m_sOthers;			//!< その他

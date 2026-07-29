@@ -72,7 +72,10 @@ public:
 	LPCWSTR GetMacro() const noexcept { return m_cmMacro.GetStringPtr(); }
 	LPCWSTR GetMacroType() const noexcept { return m_cmMacroType.GetStringPtr(); }
 	LPCWSTR GetProfileName() const noexcept { return m_cmProfile.GetStringPtr(); }
+	LPCWSTR GetWorkspaceFolder() const noexcept { return m_cmWorkspaceFolder.GetStringPtr(); }
 	bool IsSetProfile() const noexcept { return m_bSetProfile; }
+	bool IsSetWorkspaceFolder() const noexcept { return m_bSetWorkspaceFolder; }
+	bool IsParsed() const noexcept { return m_bParsed; }
 	void SetProfileName(LPCWSTR s){
 		m_bSetProfile = true;
 		m_cmProfile.SetString(s);
@@ -99,6 +102,8 @@ private:
 	bool		m_bNoWindow;		//! [out] TRUE: 編集Windowを開かない
 	bool		m_bProfileMgr;
 	bool		m_bSetProfile;
+	bool		m_bSetWorkspaceFolder;
+	bool		m_bParsed;
 	EditInfo	m_fi;				//!
 	GrepInfo	m_gi;				//!
 	bool		m_bViewMode;		//! [out] TRUE: Read Only
@@ -106,6 +111,7 @@ private:
 	CNativeW	m_cmMacro;			//! [out] マクロファイル名／マクロ文
 	CNativeW	m_cmMacroType;		//! [out] マクロ種別
 	CNativeW	m_cmProfile;		//! プロファイル名
+	CNativeW	m_cmWorkspaceFolder;	//! ウィンドウ単位の作業フォルダー
 	std::vector<std::wstring> m_vFiles;	//!< ファイル名(複数)
 };
 #endif /* SAKURA_CCOMMANDLINE_DF7E2E03_76E1_458C_82AC_7C485EECF677_H_ */

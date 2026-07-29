@@ -8,10 +8,13 @@
       "platform": "static"
     },
     "dll-plugin1",
+    "fmt",
     {
       "name": "gtest",
       "platform": "static"
     },
-    "ppa-stub"
+    "ms-gsl",
+    "ppa-stub",
+    "wil"
   ]
 }

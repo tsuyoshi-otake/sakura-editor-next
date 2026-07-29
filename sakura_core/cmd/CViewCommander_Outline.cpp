@@ -29,6 +29,7 @@
 #include "apiwrap/StdApi.h"
 #include "sakura_rc.h"
 #include "apiwrap/DarkMode.h"
+#include "workbench/IWorkbenchTool.h"
 
 /*!	アウトライン解析
 
@@ -67,6 +68,23 @@ BOOL CViewCommander::Command_FUNCLIST(
 		// C/C++はファイル名(拡張子)により追加判定する
 		if( nOutlineType == OUTLINE_C_CPP ){
 			nOutlineType = GetCLangOutlineType( GetDocument()->m_cDocFile.GetFilePath() );
+		}
+	}
+
+	// The workbench host owns visibility and lifetime.  Legacy outline commands keep
+	// their parsing semantics, but must not destroy or float the hosted child dialog.
+	if( GetEditWindow()->m_cDlgFuncList.IsWorkbenchMode() ){
+		if( nAction == SHOW_TOGGLE ){
+			const bool show = !GetEditWindow()->IsWorkbenchPanelVisible( workbench::WorkbenchEdge::Right );
+			GetEditWindow()->SetWorkbenchPanelVisible( workbench::WorkbenchEdge::Right, show, show && bForeground );
+			if( !show ){
+				bIsProcessing = false;
+				return TRUE;
+			}
+			nAction = SHOW_NORMAL;
+		}else{
+			GetEditWindow()->SetWorkbenchPanelVisible(
+				workbench::WorkbenchEdge::Right, true, nAction == SHOW_NORMAL && bForeground );
 		}
 	}
 
@@ -191,6 +209,11 @@ BOOL CViewCommander::Command_FUNCLIST(
 	// ダイアログタイトルを上書き
 	if( ! sTitleOverride.empty() ){
 		GetEditWindow()->m_cDlgFuncList.SetWindowText( sTitleOverride.c_str() );
+	}
+	if( GetEditWindow()->m_cDlgFuncList.IsWorkbenchMode() ){
+		// DoModeless may have created the child after the host's previous layout pass.
+		GetEditWindow()->SetWorkbenchPanelVisible(
+			workbench::WorkbenchEdge::Right, true, nAction == SHOW_NORMAL && bForeground );
 	}
 
 	bIsProcessing = false;

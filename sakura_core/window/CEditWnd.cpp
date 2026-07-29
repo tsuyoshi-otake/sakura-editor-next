@@ -59,6 +59,15 @@
 #include "recent/CRecentFile.h"
 #include "recent/CRecentFolder.h"
 #include "apiwrap/DarkMode.h"
+#include "window/CCustomFrameController.h"
+#include "terminal/window/CTerminalTool.h"
+#include "theme/CThemeService.h"
+#include "workbench/CWorkbenchPanelHost.h"
+#include "workbench/CWorkspaceContext.h"
+#include "workbench/WorkbenchLayout.h"
+#include "workbench/activity/CActivityBar.h"
+#include "workbench/explorer/CExplorerTool.h"
+#include "workbench/outline/COutlineWorkbenchTool.h"
 
 #include "macro/CMacroFactory.h"
 #include "view/colors/CColorStrategy.h"
@@ -98,6 +107,48 @@ static const SFuncMenuName	sFuncMenuName[] = {
 	{F_SHOWMINIMAP,			{F_SHOWMINIMAP_ON,				F_SHOWMINIMAP_OFF}},
 	{F_TOGGLE_KEY_SEARCH,	{F_TOGGLE_KEY_SEARCH_ON,		F_TOGGLE_KEY_SEARCH_OFF}},
 };
+
+namespace {
+
+[[nodiscard]] std::wstring GetProcessCurrentDirectory()
+{
+	const DWORD required = ::GetCurrentDirectoryW(0, nullptr);
+	if (required == 0) return {};
+	std::wstring directory(required, L'\0');
+	const DWORD copied = ::GetCurrentDirectoryW(required, directory.data());
+	if (copied == 0 || copied >= required) return {};
+	directory.resize(copied);
+	return directory;
+}
+
+[[nodiscard]] std::wstring MakeAbsolutePath(std::wstring_view path)
+{
+	if (path.empty()) return {};
+	const DWORD required = ::GetFullPathNameW(std::wstring(path).c_str(), 0, nullptr, nullptr);
+	if (required == 0) return std::wstring(path);
+	std::wstring absolute(required, L'\0');
+	const DWORD copied = ::GetFullPathNameW(std::wstring(path).c_str(), required, absolute.data(), nullptr);
+	if (copied == 0 || copied >= required) return std::wstring(path);
+	absolute.resize(copied);
+	return absolute;
+}
+
+[[nodiscard]] RECT ToWinRect(const workbench::WorkbenchRect& source) noexcept
+{
+	return { source.left, source.top, source.right, source.bottom };
+}
+
+[[nodiscard]] bool ContainsPoint(const RECT& rect, POINT point) noexcept
+{
+	return rect.right > rect.left && rect.bottom > rect.top && ::PtInRect(&rect, point) != FALSE;
+}
+
+[[nodiscard]] int PixelsToDip(int pixels, unsigned int dpi) noexcept
+{
+	return ::MulDiv(pixels, 96, dpi == 0 ? 96 : static_cast<int>(dpi));
+}
+
+} // namespace
 
 static void ShowCodeBox( HWND hWnd, CEditDoc* pcEditDoc )
 {
@@ -203,14 +254,31 @@ LRESULT CALLBACK CEditWndProc(
 	LPARAM	lParam 	// second message parameter
 )
 {
-	CEditWnd* pcWnd = ( CEditWnd* )::GetWindowLongPtr( hwnd, GWLP_USERDATA );
-	if( pcWnd ){
-		return pcWnd->DispatchEvent( hwnd, uMsg, wParam, lParam );
+	auto* pcWnd = reinterpret_cast<CEditWnd*>(::GetWindowLongPtr(hwnd, GWLP_USERDATA));
+	if (uMsg == WM_NCCREATE) {
+		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+		pcWnd = create == nullptr ? nullptr : static_cast<CEditWnd*>(create->lpCreateParams);
+		if (pcWnd != nullptr) {
+			::SetWindowLongPtr(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(pcWnd));
+			pcWnd->AttachMainWindowEarly(hwnd);
+		}
 	}
-	return ::DefWindowProc( hwnd, uMsg, wParam, lParam );
+
+	if (pcWnd == nullptr) {
+		return ::DefWindowProc(hwnd, uMsg, wParam, lParam);
+	}
+
+	const LRESULT result = pcWnd->IsDispatchReady()
+		? pcWnd->DispatchEvent(hwnd, uMsg, wParam, lParam)
+		: pcWnd->DispatchBootstrapEvent(hwnd, uMsg, wParam, lParam);
+	if (uMsg == WM_NCDESTROY) {
+		::SetWindowLongPtr(hwnd, GWLP_USERDATA, 0);
+	}
+	return result;
 }
 
 CEditWnd::CEditWnd()
+	: m_customFrame(std::make_unique<CCustomFrameController>())
 {
 	const auto& cTypeConfig = GetEditDoc().m_cDocType.GetDocumentAttribute();
 	auto& cLayoutMgr = GetEditDoc().m_cLayoutMgr;
@@ -223,8 +291,38 @@ CEditWnd::CEditWnd()
 	m_pcEditView = m_pcEditViewArr[0].get();
 }
 
+void CEditWnd::AttachMainWindowEarly(HWND hWnd)
+{
+	m_hWnd = hWnd;
+	if (!m_customFrame) {
+		m_customFrame = std::make_unique<CCustomFrameController>();
+	}
+	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark
+		: theme::ThemeMode::Light;
+	m_customFrame->Attach(hWnd, mode);
+}
+
+LRESULT CEditWnd::DispatchBootstrapEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
+{
+	LRESULT result = 0;
+	const bool handled = m_customFrame
+		&& m_customFrame->HandleWindowMessage(Msg, wParam, lParam, result);
+	if (!handled) {
+		result = ::DefWindowProc(hWnd, Msg, wParam, lParam);
+	}
+	if (Msg == WM_NCDESTROY) {
+		m_dispatchReady = false;
+		if (m_hWnd == hWnd) {
+			m_hWnd = nullptr;
+		}
+	}
+	return result;
+}
+
 CEditWnd::~CEditWnd()
 {
+	CloseWorkbench();
 	CMacroFactory::resetInstance();
 	CColorStrategyPool::resetInstance();
 	CFigureManager::resetInstance();
@@ -234,10 +332,367 @@ CEditWnd::~CEditWnd()
 	m_hWnd = nullptr;
 }
 
+bool CEditWnd::InitializeWorkbench()
+{
+	if (m_workspaceContext != nullptr) return true;
+
+	m_workspaceContext = std::make_unique<workbench::CWorkspaceContext>(GetProcessCurrentDirectory());
+	if (GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) {
+		m_workspaceContext->SetSelectedFile(GetDocument()->m_cDocFile.GetFilePath());
+	}
+	if (const auto* commandLine = CCommandLine::getInstance(); commandLine->IsSetWorkspaceFolder()) {
+		m_workspaceContext->SetExplicitRoot(MakeAbsolutePath(commandLine->GetWorkspaceFolder()));
+	}
+
+	const auto persistExtent = [this](workbench::WorkbenchEdge edge, int extentDip) {
+		PersistWorkbenchExtent(edge, extentDip);
+	};
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+
+	m_leftWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
+		workbench::WorkbenchEdge::Left, settings.m_nLeftPanelExtent96, persistExtent);
+	auto explorer = std::make_unique<workbench::explorer::CExplorerTool>();
+	m_explorerTool = explorer.get();
+	m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
+	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path) {
+		const std::wstring ownedPath(path);
+		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
+	});
+	if (!m_leftWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(explorer))) {
+		m_explorerTool = nullptr;
+		m_leftWorkbenchPanel.reset();
+	}
+
+	m_rightWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
+		workbench::WorkbenchEdge::Right, settings.m_nRightPanelExtent96, persistExtent);
+	auto outline = std::make_unique<workbench::outline::COutlineWorkbenchTool>(m_cDlgFuncList);
+	m_outlineWorkbenchTool = outline.get();
+	if (!m_rightWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(outline))) {
+		m_outlineWorkbenchTool = nullptr;
+		m_rightWorkbenchPanel.reset();
+	}
+
+	m_bottomWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
+		workbench::WorkbenchEdge::Bottom, settings.m_nBottomPanelExtent96, persistExtent);
+	auto terminalTool = std::make_unique<terminal::CTerminalTool>();
+	m_terminalTool = terminalTool.get();
+	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	if (!m_bottomWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(terminalTool))) {
+		m_terminalTool = nullptr;
+		m_bottomWorkbenchPanel.reset();
+	}
+
+	m_activityBar = std::make_unique<workbench::CActivityBar>([this](workbench::ActivityBarItem item) {
+		switch (item) {
+		case workbench::ActivityBarItem::Explorer:
+			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Left, true);
+			break;
+		case workbench::ActivityBarItem::Outline:
+			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Right, true);
+			break;
+		case workbench::ActivityBarItem::Terminal:
+			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Bottom, true);
+			break;
+		case workbench::ActivityBarItem::Count:
+			break;
+		}
+	});
+	if (!m_activityBar->Create(GetHwnd(), G_AppInstance())) m_activityBar.reset();
+
+	const bool initialized = m_leftWorkbenchPanel != nullptr
+		&& m_rightWorkbenchPanel != nullptr
+		&& m_bottomWorkbenchPanel != nullptr
+		&& m_activityBar != nullptr;
+	if (!initialized) {
+		// Workbench initialization is all-or-nothing. Do not leave an editor in
+		// an unobservable partial state where a configured tool has no HWND.
+		CloseWorkbench();
+		return false;
+	}
+
+	ApplyWorkbenchTheme();
+	ApplyWorkbenchSettingsFromSharedData();
+	if (settings.m_bRightPanelVisible != FALSE && m_outlineWorkbenchTool != nullptr) {
+		ReloadWorkbenchOutlineAndRelayout();
+	}
+	return true;
+}
+
+void CEditWnd::CloseWorkbench() noexcept
+{
+	if (m_activityBar) m_activityBar->Close();
+	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Close();
+	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Close();
+	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Close();
+	m_activityBar.reset();
+	m_leftWorkbenchPanel.reset();
+	m_rightWorkbenchPanel.reset();
+	m_bottomWorkbenchPanel.reset();
+	m_explorerTool = nullptr;
+	m_outlineWorkbenchTool = nullptr;
+	m_terminalTool = nullptr;
+	m_workspaceContext.reset();
+}
+
+void CEditWnd::ApplyWorkbenchTheme()
+{
+	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark
+		: theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette(mode);
+	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->SetPalette(palette);
+	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->SetPalette(palette);
+	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->SetPalette(palette);
+	if (m_explorerTool) {
+		m_explorerTool->SetPalette({ palette.panel.ToColorRef(), palette.primaryText.ToColorRef(),
+			palette.border.ToColorRef(), palette.accent.ToColorRef() });
+	}
+	if (m_terminalTool) m_terminalTool->SetPalette(palette);
+	if (m_activityBar) {
+		workbench::ActivityBarPalette activityPalette;
+		activityPalette.background = palette.canvas.ToColorRef();
+		activityPalette.hoverBackground = palette.raised.ToColorRef();
+		activityPalette.pressedBackground = palette.border.ToColorRef();
+		activityPalette.selectedBackground = palette.panel.ToColorRef();
+		activityPalette.activeIndicator = palette.accent.ToColorRef();
+		activityPalette.icon = palette.primaryText.ToColorRef();
+		activityPalette.disabledIcon = palette.secondaryText.ToColorRef();
+		activityPalette.focusBorder = palette.accent.ToColorRef();
+		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
+		m_activityBar->SetPalette(activityPalette);
+	}
+}
+
+void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
+{
+	if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+	const auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	auto applyPanel = [](workbench::CWorkbenchPanelHost* host, BOOL visible, int extentDip) {
+		if (host == nullptr) return;
+		host->ApplyExtentDip(extentDip);
+		if (visible != FALSE) host->Show(); else host->Hide();
+	};
+	applyPanel(m_leftWorkbenchPanel.get(), settings.m_bLeftPanelVisible, settings.m_nLeftPanelExtent96);
+	applyPanel(m_rightWorkbenchPanel.get(), settings.m_bRightPanelVisible, settings.m_nRightPanelExtent96);
+	applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible, settings.m_nBottomPanelExtent96);
+
+	std::optional<workbench::ActivityBarItem> activeItem;
+	switch (settings.m_eActiveTool) {
+	case WORKBENCH_TOOL_EXPLORER:
+		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Explorer;
+		break;
+	case WORKBENCH_TOOL_OUTLINE:
+		if (settings.m_bRightPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Outline;
+		break;
+	case WORKBENCH_TOOL_TERMINAL:
+		if (settings.m_bBottomPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Terminal;
+		break;
+	}
+	if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
+	ApplyWorkbenchTheme();
+	if (GetHwnd() != nullptr) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType,
+			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+	if (settings.m_bRightPanelVisible != FALSE && m_outlineWorkbenchTool != nullptr
+		&& m_cDlgFuncList.GetHwnd() == nullptr && m_dispatchReady) {
+		ReloadWorkbenchOutlineAndRelayout();
+	}
+}
+
+void CEditWnd::ReloadWorkbenchOutlineAndRelayout()
+{
+	const bool commandSucceeded = GetActiveView().GetCommander().Command_FUNCLIST(
+		SHOW_RELOAD, OUTLINE_DEFAULT ) != FALSE;
+	const bool rightPanelVisible = m_rightWorkbenchPanel != nullptr
+		&& m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
+	const bool dialogCreated = m_cDlgFuncList.GetHwnd() != nullptr;
+	if( !workbench::outline::ShouldRelayoutOutlineAfterReload(
+		commandSucceeded, rightPanelVisible, dialogCreated ) || GetHwnd() == nullptr ) {
+		return;
+	}
+
+	// DoModeless deliberately creates the workbench child with SW_HIDE.  The previous
+	// layout may already have completed, so make the right host lay it out now.  OnSize2
+	// only positions children; it neither activates the host nor changes editor focus.
+	RECT client{};
+	::GetClientRect( GetHwnd(), &client );
+	(void)OnSize2( m_nWinSizeType,
+		MAKELONG( client.right - client.left, client.bottom - client.top ), false );
+}
+
+void CEditWnd::BroadcastWorkbenchSettings()
+{
+	if (GetHwnd() == nullptr) return;
+	CAppNodeGroupHandle(0).SendMessageToAllEditors(
+		MYWM_CHANGESETTING, 0, PM_CHANGESETTING_WORKBENCH, GetHwnd());
+}
+
+void CEditWnd::UpdateWorkspaceFromDocument()
+{
+	if (!m_workspaceContext) return;
+	if (GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) {
+		m_workspaceContext->SetSelectedFile(GetDocument()->m_cDocFile.GetFilePath());
+	} else {
+		m_workspaceContext->ClearSelectedFile();
+	}
+	if (m_explorerTool) m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
+	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+}
+
+void CEditWnd::PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip)
+{
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	int* savedExtent = nullptr;
+	switch (edge) {
+	case workbench::WorkbenchEdge::Left: savedExtent = &settings.m_nLeftPanelExtent96; break;
+	case workbench::WorkbenchEdge::Right: savedExtent = &settings.m_nRightPanelExtent96; break;
+	case workbench::WorkbenchEdge::Bottom: savedExtent = &settings.m_nBottomPanelExtent96; break;
+	}
+	if (savedExtent == nullptr || *savedExtent == extentDip) return;
+	*savedExtent = extentDip;
+	BroadcastWorkbenchSettings();
+}
+
+bool CEditWnd::IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept
+{
+	const workbench::CWorkbenchPanelHost* host = nullptr;
+	switch (edge) {
+	case workbench::WorkbenchEdge::Left: host = m_leftWorkbenchPanel.get(); break;
+	case workbench::WorkbenchEdge::Right: host = m_rightWorkbenchPanel.get(); break;
+	case workbench::WorkbenchEdge::Bottom: host = m_bottomWorkbenchPanel.get(); break;
+	}
+	return host != nullptr && host->GetState() != workbench::WorkbenchPanelState::Hidden;
+}
+
+void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate)
+{
+	workbench::CWorkbenchPanelHost* host = nullptr;
+	BOOL* savedVisible = nullptr;
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	std::optional<workbench::ActivityBarItem> item;
+	switch (edge) {
+	case workbench::WorkbenchEdge::Left:
+		host = m_leftWorkbenchPanel.get();
+		savedVisible = &settings.m_bLeftPanelVisible;
+		item = workbench::ActivityBarItem::Explorer;
+		break;
+	case workbench::WorkbenchEdge::Right:
+		host = m_rightWorkbenchPanel.get();
+		savedVisible = &settings.m_bRightPanelVisible;
+		item = workbench::ActivityBarItem::Outline;
+		break;
+	case workbench::WorkbenchEdge::Bottom:
+		host = m_bottomWorkbenchPanel.get();
+		savedVisible = &settings.m_bBottomPanelVisible;
+		item = workbench::ActivityBarItem::Terminal;
+		break;
+	}
+	const BOOL requestedVisible = visible ? TRUE : FALSE;
+	const bool visibilityChanged = savedVisible != nullptr && *savedVisible != requestedVisible;
+	if (savedVisible) *savedVisible = requestedVisible;
+	const auto oldActiveTool = settings.m_eActiveTool;
+	if (visible && activate) {
+		switch (edge) {
+		case workbench::WorkbenchEdge::Left: settings.m_eActiveTool = WORKBENCH_TOOL_EXPLORER; break;
+		case workbench::WorkbenchEdge::Right: settings.m_eActiveTool = WORKBENCH_TOOL_OUTLINE; break;
+		case workbench::WorkbenchEdge::Bottom: settings.m_eActiveTool = WORKBENCH_TOOL_TERMINAL; break;
+		}
+	}
+	if (host != nullptr) {
+		if (visible) host->Show(); else host->Hide();
+	}
+	if (GetHwnd() != nullptr) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+	// Materialize a newly shown tool only after the host has received its real
+	// bounds.  In particular, ConPTY must not be started from the host's initial
+	// empty rectangle, which would create a 1x1 pseudo console and lose the
+	// shell's startup output before the first resize.
+	if (host != nullptr && visible && activate) host->ActivateTool();
+	if (m_activityBar && visible && activate) m_activityBar->SetSelectedItem(item);
+	if (visibilityChanged || oldActiveTool != settings.m_eActiveTool) BroadcastWorkbenchSettings();
+}
+
+void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate)
+{
+	const bool show = !IsWorkbenchPanelVisible(edge);
+	SetWorkbenchPanelVisible(edge, show, activate);
+	if (edge == workbench::WorkbenchEdge::Right && show && m_dispatchReady) {
+		(void)GetActiveView().GetCommander().Command_FUNCLIST(SHOW_RELOAD, OUTLINE_DEFAULT);
+	}
+}
+
+void CEditWnd::OpenWorkspaceFolder()
+{
+	if (!m_workspaceContext) return;
+
+	// SelectDir uses the native IFileDialog with FOS_PICKFOLDERS and
+	// FOS_FORCEFILESYSTEM. Keep all state intact when the user cancels or the
+	// dialog cannot return a filesystem path.
+	std::array<WCHAR, 32768> selectedDirectory{};
+	const auto initialDirectory = m_workspaceContext->GetRoot();
+	if (!SelectDir(GetHwnd(), L"作業フォルダーを開く", initialDirectory, selectedDirectory)) return;
+
+	const auto absoluteRoot = MakeAbsolutePath(selectedDirectory.data());
+	const DWORD attributes = ::GetFileAttributesW(absoluteRoot.c_str());
+	if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return;
+
+	// The root is local to this editor process. SetRoot replaces the Explorer
+	// root and cancels stale enumeration. CTerminalTool reads the new value only
+	// when it creates or explicitly restarts a tab, so live sessions keep CWD.
+	m_workspaceContext->SetExplicitRoot(absoluteRoot);
+	if (m_explorerTool) m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
+	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true);
+}
+
+void CEditWnd::FocusIntegratedTerminal()
+{
+	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, true, true);
+}
+
+void CEditWnd::NewIntegratedTerminal()
+{
+	// Activating an empty tool creates its first terminal.  Do not immediately
+	// append another one when this command also has to reveal the hidden panel.
+	const bool hasTerminal = m_terminalTool != nullptr && m_terminalTool->TabCount() != 0;
+	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, true, true);
+	if (hasTerminal && m_terminalTool) (void)m_terminalTool->AddTerminal();
+}
+
+void CEditWnd::RedetectPowerShell()
+{
+	if (m_terminalTool) m_terminalTool->RedetectPowerShell();
+}
+
+bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
+{
+	if (m_resizingWorkbenchPanel != nullptr && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
+		CancelWorkbenchResize();
+		return true;
+	}
+	if (m_activityBar && m_activityBar->PreTranslateMessage(message)) return true;
+	if (m_bottomWorkbenchPanel && m_bottomWorkbenchPanel->PreTranslateMessage(message)) return true;
+	if (m_leftWorkbenchPanel && m_leftWorkbenchPanel->PreTranslateMessage(message)) return true;
+	return m_rightWorkbenchPanel && m_rightWorkbenchPanel->PreTranslateMessage(message);
+}
+
+//! ドキュメントリスナ：ロード後
+void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
+{
+	UpdateWorkspaceFromDocument();
+}
+
 //! ドキュメントリスナ：セーブ後
 // 2008.02.02 kobake
 void CEditWnd::OnAfterSave([[maybe_unused]] const SSaveInfo& sSaveInfo)
 {
+	UpdateWorkspaceFromDocument();
 	//ビュー再描画
 	this->Views_RedrawAll();
 
@@ -383,7 +838,7 @@ HWND CEditWnd::_CreateMainWindow(int nGroup, const STabGroupInfo& sTabGroupInfo)
 		nullptr,				// handle to parent or owner window
 		nullptr,				// handle to menu or child-window identifier
 		G_AppInstance(),		// handle to application instance
-		nullptr				// pointer to window-creation data
+		this				// pointer to window-creation data
 	);
 	return hwndResult;
 }
@@ -599,8 +1054,6 @@ HWND CEditWnd::Create(
 	if(!hWnd)return nullptr;
 	m_hWnd = hWnd;
 
-	DarkMode::setDarkTitleBarEx(hWnd, true);
-
 	// 初回アイドリング検出用のゼロ秒タイマーをセットする	// 2008.04.19 ryoji
 	// ゼロ秒タイマーが発動（初回アイドリング検出）したら MYWM_FIRST_IDLE を起動元プロセスにポストする。
 	// ※起動元での起動先アイドリング検出については CControlTray::OpenNewEditor を参照
@@ -671,6 +1124,12 @@ HWND CEditWnd::Create(
 
 	/* バーの配置終了 */
 	EndLayoutBars( FALSE );
+	if (!InitializeWorkbench()) {
+		TopErrorMessage(GetHwnd(), L"ワークベンチの初期化に失敗しました。\nFailed to initialize the workbench.");
+		::DestroyWindow(GetHwnd());
+		m_hWnd = hWnd = nullptr;
+		return hWnd;
+	}
 
 	DarkMode::setChildCtrlsTheme(hWnd);
 	DarkMode::setWindowMenuBarSubclass(hWnd);
@@ -679,7 +1138,7 @@ HWND CEditWnd::Create(
 	// -- -- -- -- その他調整など -- -- -- -- //
 
 	// 画面表示直前にDispatchEventを有効化する
-	::SetWindowLongPtr( GetHwnd(), GWLP_USERDATA, (LONG_PTR)this );
+	m_dispatchReady = true;
 
 	// デスクトップからはみ出さないようにする
 	_AdjustInMonitor(sTabGroupInfo);
@@ -907,14 +1366,28 @@ void CEditWnd::LayoutMainMenu()
 			break;
 		}
 	}
-	HMENU hMenuOld = ::GetMenu( hWnd );
-	SetMenu( hWnd, hMenu );
+	HMENU hMenuOld = nullptr;
+	if (m_customFrame) {
+		hMenuOld = m_customFrame->ReplaceMenu(hMenu);
+	} else {
+		hMenuOld = ::GetMenu(hWnd);
+		::SetMenu(hWnd, hMenu);
+	}
 	if( hMenuOld ){
 		DestroyMenu( hMenuOld );
 	}
 
-	DarkMode::setWindowMenuBarSubclass(hWnd);
-	DrawMenuBar( hWnd );
+	if (m_customFrame) {
+		m_customFrame->InvalidateTitle();
+	} else {
+		DarkMode::setWindowMenuBarSubclass(hWnd);
+		::DrawMenuBar(hWnd);
+	}
+}
+
+HMENU CEditWnd::GetMainMenuHandle() const noexcept
+{
+	return m_customFrame ? m_customFrame->GetMenu() : ::GetMenu(GetHwnd());
 }
 
 /*! ツールバーの配置処理
@@ -1080,6 +1553,8 @@ void CEditWnd::MessageLoop( void )
 		else if( MyIsDialogMessage( m_cDlgGrep.GetHwnd(),								&msg ) ){}	//!<「Grep」ダイアログ
 		else if( MyIsDialogMessage( m_cHokanMgr.GetHwnd(),								&msg ) ){}	//!<「入力補完」
 		else if( m_cToolbar.EatMessage(&msg ) ){ }													//!<ツールバー
+		else if( PreTranslateWorkbenchMessage(msg) ){}
+		else if( m_customFrame && m_customFrame->PreTranslateMessage(msg) ){}
 		//アクセラレータ
 		else{
 			// 補完ウィンドウが表示されているときはキーボード入力を先に処理させる（カーソル移動／決定／キャンセルの処理）
@@ -1107,6 +1582,10 @@ LRESULT CEditWnd::DispatchEvent(
 )
 {
 	const auto hWnd = GetHwnd();
+	LRESULT customFrameResult = 0;
+	if (m_customFrame && m_customFrame->HandleWindowMessage(uMsg, wParam, lParam, customFrameResult)) {
+		return customFrameResult;
+	}
 
 	int					nRet;
 	LPNMHDR				pnmh;
@@ -1130,6 +1609,13 @@ LRESULT CEditWnd::DispatchEvent(
 		return OnMouseMove( wParam, lParam );
 	case WM_LBUTTONUP:
 		return OnLButtonUp( wParam, lParam );
+	case WM_SETCURSOR:
+		return OnSetCursor( wParam, lParam );
+	case WM_CAPTURECHANGED:
+		return OnCaptureChanged( lParam );
+	case WM_CANCELMODE:
+		CancelWorkbenchResize();
+		return 0;
 	case WM_MOUSEWHEEL:
 		return OnMouseWheel( wParam, lParam );
 	case WM_HSCROLL:
@@ -1503,6 +1989,13 @@ LRESULT CEditWnd::DispatchEvent(
 		}
 		return 0L;
 	case WM_DESTROY:
+		m_dispatchReady = false;
+		CloseWorkbench();
+		if (m_customFrame) {
+			if (HMENU menu = m_customFrame->ReplaceMenu(nullptr); menu != nullptr) {
+				::DestroyMenu(menu);
+			}
+		}
 		if( m_pShareData->m_sFlags.m_bRecordingKeyMacro ){					/* キーボードマクロの記録中 */
 			if( m_pShareData->m_sFlags.m_hwndRecordingKeyMacro == GetHwnd() ){	/* キーボードマクロを記録中のウィンドウ */
 				m_pShareData->m_sFlags.m_bRecordingKeyMacro = FALSE;			/* キーボードマクロの記録中 */
@@ -1544,7 +2037,18 @@ LRESULT CEditWnd::DispatchEvent(
 				EndLayoutBars();
 			}
 		}
+		if (m_customFrame) {
+			m_customFrame->SetThemeMode(
+				m_pShareData->m_Common.m_sWindow.m_bDarkMode
+					? theme::ThemeMode::Dark
+					: theme::ThemeMode::Light);
+		}
+		ApplyWorkbenchTheme();
 		return 0L;
+
+	case WM_SETTINGCHANGE:
+		ApplyWorkbenchTheme();
+		return ::DefWindowProc(hwnd, uMsg, wParam, lParam);
 
 	case MYWM_UIPI_CHECK:
 		/* エディタ－トレイ間でのUI特権分離の確認メッセージ */	// 2007.06.07 ryoji
@@ -1604,6 +2108,12 @@ LRESULT CEditWnd::DispatchEvent(
 		/* 設定変更の通知 */
 		switch( (e_PM_CHANGESETTING_SELECT)lParam ){
 		case PM_CHANGESETTING_ALL:
+			if (m_customFrame) {
+				m_customFrame->SetThemeMode(
+					m_pShareData->m_Common.m_sWindow.m_bDarkMode
+						? theme::ThemeMode::Dark
+						: theme::ThemeMode::Light);
+			}
 			/* ダークモード設定を反映する */
 			{
 				if( (m_pShareData->m_Common.m_sWindow.m_bDarkMode != FALSE) != IsDarkModeActive() ){
@@ -1687,6 +2197,7 @@ LRESULT CEditWnd::DispatchEvent(
 
 			// バー変更で画面が乱れないように	// 2006.12.19 ryoji
 			EndLayoutBars();
+			ApplyWorkbenchSettingsFromSharedData();
 
 			// アクセラレータテーブルを再作成する
 			// ウィンドウ毎に作成したアクセラレータテーブルを破棄する
@@ -1739,6 +2250,9 @@ LRESULT CEditWnd::DispatchEvent(
 			GetDocument()->OnChangeSetting();	// ビューに設定変更を反映させる
 			GetDocument()->m_cDocType.SetDocumentIcon();	// Sep. 10, 2002 genta 文書アイコンの再設定
 
+			break;
+		case PM_CHANGESETTING_WORKBENCH:
+			ApplyWorkbenchSettingsFromSharedData();
 			break;
 		case PM_CHANGESETTING_FONT:
 			GetDocument()->OnChangeSetting( true );	// フォントで文字幅が変わるので、レイアウト再構築
@@ -2267,7 +2781,7 @@ void CEditWnd::InitMenu( HMENU hMenu, UINT uPos, BOOL fSystemMenu )
 	mi.dwStyle = MNS_CHECKORBMP;
 	SetMenuInfo(hMenu, &mi);
 
-	if( hMenu == ::GetSubMenu( ::GetMenu( GetHwnd() ), uPos )
+	if( hMenu == ::GetSubMenu( GetMainMenuHandle(), uPos )
 		&& !fSystemMenu ){
 		// 情報取得
 		const CommonSetting_MainMenu*	pcMenu = &m_pShareData->m_Common.m_sMainMenu;
@@ -2639,14 +3153,14 @@ bool CEditWnd::InitMenu_Special(HMENU hMenu, EFunctionCode eFunc)
 }
 
 // メニューバーの無効化を検査	2010/6/18 Uchi
-void CEditWnd::CheckFreeSubMenu( HWND hWnd, HMENU hMenu, UINT uPos )
+void CEditWnd::CheckFreeSubMenu( [[maybe_unused]] HWND hWnd, HMENU hMenu, UINT uPos )
 {
 	int 	cMenuItems;
 
 	cMenuItems = ::GetMenuItemCount( hMenu );
 	if (cMenuItems == 0) {
 		// 下が無いので無効化
-		::EnableMenuItem( ::GetMenu( hWnd ), uPos, MF_BYPOSITION | MF_GRAYED );
+		::EnableMenuItem( GetMainMenuHandle(), uPos, MF_BYPOSITION | MF_GRAYED );
 	}
 	else {
 		// 下位レベルを検索
@@ -2930,6 +3444,12 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		::ShowWindow( m_cFuncKeyWnd.GetHwnd(), SW_SHOW );
 		::ShowWindow( m_cTabWnd.GetHwnd(), SW_SHOW );	//@@@ 2003.06.25 MIK
 		::ShowWindow( m_cDlgFuncList.GetHwnd(), SW_SHOW );	// 2010.06.25 ryoji
+		if (m_activityBar) ::ShowWindow(m_activityBar->GetHwnd(), SW_SHOWNA);
+		for (const auto* panel : { m_leftWorkbenchPanel.get(), m_rightWorkbenchPanel.get(), m_bottomWorkbenchPanel.get() }) {
+			if (panel && panel->GetState() != workbench::WorkbenchPanelState::Hidden) {
+				::ShowWindow(panel->GetHwnd(), SW_SHOWNA);
+			}
+		}
 		if( m_cMiniMapView.GetHwnd() ){
 			::ShowWindow( m_cMiniMapView.GetHwnd(), SW_SHOW );
 		}
@@ -2952,11 +3472,17 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 	}else{
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
 		/*	通常モードを隠す	*/
-		hMenu = ::GetMenu( GetHwnd() );
+		hMenu = m_customFrame ? m_customFrame->ReplaceMenu(nullptr) : ::GetMenu(GetHwnd());
 		//	Jun. 18, 2001 genta Print Previewではメニューを削除
-		::SetMenu( GetHwnd(), nullptr );
+		if (!m_customFrame) {
+			::SetMenu(GetHwnd(), nullptr);
+		}
 		::DestroyMenu( hMenu );
-		::DrawMenuBar( GetHwnd() );
+		if (m_customFrame) {
+			m_customFrame->InvalidateTitle();
+		} else {
+			::DrawMenuBar(GetHwnd());
+		}
 
 		::ShowWindow( this->m_cSplitterWnd.GetHwnd(), SW_HIDE );
 		::ShowWindow( hwndToolBar, SW_HIDE );	// 2006.06.17 ryoji
@@ -2964,6 +3490,10 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		::ShowWindow( m_cFuncKeyWnd.GetHwnd(), SW_HIDE );
 		::ShowWindow( m_cTabWnd.GetHwnd(), SW_HIDE );	//@@@ 2003.06.25 MIK
 		::ShowWindow( m_cDlgFuncList.GetHwnd(), SW_HIDE );	// 2010.06.25 ryoji
+		if (m_activityBar) ::ShowWindow(m_activityBar->GetHwnd(), SW_HIDE);
+		for (const auto* panel : { m_leftWorkbenchPanel.get(), m_rightWorkbenchPanel.get(), m_bottomWorkbenchPanel.get() }) {
+			if (panel) ::ShowWindow(panel->GetHwnd(), SW_HIDE);
+		}
 		if( m_cMiniMapView.GetHwnd() ){
 			::ShowWindow( m_cMiniMapView.GetHwnd(), SW_HIDE );
 		}
@@ -3008,6 +3538,24 @@ LRESULT CEditWnd::OnSize( WPARAM wParam, LPARAM lParam )
 
 LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 {
+	if (m_layoutInProgress) {
+		m_layoutPending = true;
+		m_pendingLayoutWParam = wParam;
+		m_pendingLayoutLParam = lParam;
+		m_pendingLayoutUpdateStatus = m_pendingLayoutUpdateStatus || bUpdateStatus;
+		return 0L;
+	}
+	m_layoutInProgress = true;
+	auto finishLayout = [this](LRESULT result) {
+		m_layoutInProgress = false;
+		if (!m_layoutPending) return result;
+		const WPARAM pendingWParam = m_pendingLayoutWParam;
+		const LPARAM pendingLParam = m_pendingLayoutLParam;
+		const bool pendingUpdateStatus = m_pendingLayoutUpdateStatus;
+		m_layoutPending = false;
+		m_pendingLayoutUpdateStatus = false;
+		return OnSize2(pendingWParam, pendingLParam, pendingUpdateStatus);
+	};
 	HWND		hwndToolBar;
 	int			cx;
 	int			cy;
@@ -3023,6 +3571,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 
 	cx = LOWORD( lParam );
 	cy = HIWORD( lParam );
+	const int nCustomTitleHeight = m_customFrame ? m_customFrame->TitleHeight() : 0;
 
 	/* ウィンドウサイズ継承 */
 	if( wParam != SIZE_MINIMIZED ){						/* 最小化は継承しない */
@@ -3070,6 +3619,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		::SendMessage( hwndToolBar, WM_SIZE, wParam, lParam );
 		::GetWindowRect( hwndToolBar, &rc );
 		nToolBarHeight = rc.bottom - rc.top;
+		::MoveWindow(hwndToolBar, 0, nCustomTitleHeight, cx, nToolBarHeight, TRUE);
 	}
 	nFuncKeyWndHeight = 0;
 	if( nullptr != m_cFuncKeyWnd.GetHwnd() ){
@@ -3164,18 +3714,18 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			nTabWndHeight = rc.bottom - rc.top;
 			if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ){
-				::MoveWindow( m_cTabWnd.GetHwnd(), 0, nToolBarHeight + nFuncKeyWndHeight, cx, nTabWndHeight, TRUE );
+				::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight + nFuncKeyWndHeight, cx, nTabWndHeight, TRUE );
 			}else{
-				::MoveWindow( m_cTabWnd.GetHwnd(), 0, nToolBarHeight, cx, nTabWndHeight, TRUE );
+				::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight, cx, nTabWndHeight, TRUE );
 			}
 			m_cTabWnd.OnSize();
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			if( nTabWndHeight != rc.bottom - rc.top ){
 				nTabWndHeight = rc.bottom - rc.top;
 				if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ){
-					::MoveWindow( m_cTabWnd.GetHwnd(), 0, nToolBarHeight + nFuncKeyWndHeight, cx, nTabWndHeight, TRUE );
+					::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight + nFuncKeyWndHeight, cx, nTabWndHeight, TRUE );
 				}else{
-					::MoveWindow( m_cTabWnd.GetHwnd(), 0, nToolBarHeight, cx, nTabWndHeight, TRUE );
+					::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight, cx, nTabWndHeight, TRUE );
 				}
 			}
 		}else if( tabPosition == TabPosition_Bottom ){
@@ -3224,7 +3774,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			::MoveWindow(
 				m_cFuncKeyWnd.GetHwnd(),
 				0,
-				nToolBarHeight,
+				nCustomTitleHeight + nToolBarHeight,
 				cx,
 				nFuncKeyWndHeight, TRUE );
 		}
@@ -3251,66 +3801,61 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		::UpdateWindow( m_cFuncKeyWnd.GetHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
 	}
 
-	int nFuncListWidth = 0;
-	int nFuncListHeight = 0;
-	if( m_cDlgFuncList.GetHwnd() && m_cDlgFuncList.IsDocking() )
-	{
-		::SendMessageAny( m_cDlgFuncList.GetHwnd(), WM_SIZE, wParam, lParam );
-		::GetWindowRect( m_cDlgFuncList.GetHwnd(), &rc );
-		nFuncListWidth = rc.right - rc.left;
-		nFuncListHeight = rc.bottom - rc.top;
-	}
+	workbench::WorkbenchLayoutRequest layoutRequest;
+	layoutRequest.clientWidth = cx;
+	layoutRequest.clientHeight = cy;
+	layoutRequest.dpi = GetHwnd() == nullptr ? 96 : ::GetDpiForWindow(GetHwnd());
+	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
+	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
+		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);
+	layoutRequest.documentTabsHeightPixels = nTabWndHeight;
+	layoutRequest.bottomAccessoryHeightPixels = nTabHeightBottom
+		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 1 ? nFuncKeyWndHeight : 0);
+	layoutRequest.statusBarHeightPixels = nStatusBarHeight;
+	layoutRequest.leftPane = m_leftWorkbenchPanel
+		? m_leftWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.rightPane = m_rightWorkbenchPanel
+		? m_rightWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.bottomPane = m_bottomWorkbenchPanel
+		? m_bottomWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.showMinimap = m_cMiniMapView.GetHwnd() != nullptr;
+	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
+		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
+	layoutRequest.rightPaneWidthDip = m_rightWorkbenchPanel
+		? m_rightWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nRightPanelExtent96;
+	layoutRequest.bottomPaneHeightDip = m_bottomWorkbenchPanel
+		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
+	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;
+	const auto layout = workbench::CalculateWorkbenchLayout(layoutRequest);
+	m_leftWorkbenchSplitter = ToWinRect(layout.leftSplitter);
+	m_rightWorkbenchSplitter = ToWinRect(layout.rightSplitter);
+	m_bottomWorkbenchSplitter = ToWinRect(layout.bottomSplitter);
 
-	EDockSide eDockSideFL = m_cDlgFuncList.GetDockSide();
-	int nTop = nToolBarHeight + nTabWndHeight;
-	if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0)
-		nTop += nFuncKeyWndHeight;
-	int nHeight = cy - nToolBarHeight - nFuncKeyWndHeight - nTabWndHeight - nTabHeightBottom - nStatusBarHeight;
-	if( m_cDlgFuncList.GetHwnd() && m_cDlgFuncList.IsDocking() )
-	{
-		::MoveWindow(
-			m_cDlgFuncList.GetHwnd(),
-			(eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth: 0,
-			(eDockSideFL == DOCKSIDE_BOTTOM)? nTop + nHeight - nFuncListHeight: nTop,
-			(eDockSideFL == DOCKSIDE_LEFT || eDockSideFL == DOCKSIDE_RIGHT)? nFuncListWidth: cx,
-			(eDockSideFL == DOCKSIDE_TOP || eDockSideFL == DOCKSIDE_BOTTOM)? nFuncListHeight: nHeight,
-			TRUE
-		);
-		if( eDockSideFL == DOCKSIDE_RIGHT || eDockSideFL == DOCKSIDE_BOTTOM ){
+	if (m_activityBar) m_activityBar->Layout(ToWinRect(layout.activityBar), layoutRequest.dpi);
+	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Layout(ToWinRect(layout.leftPane), layoutRequest.dpi);
+	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Layout(ToWinRect(layout.rightPane), layoutRequest.dpi);
+	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Layout(ToWinRect(layout.bottomPane), layoutRequest.dpi);
+
+	if( m_cMiniMapView.GetHwnd() ){
+		::MoveWindow(m_cMiniMapView.GetHwnd(), layout.minimap.left, layout.minimap.top,
+			layout.minimap.Width(), layout.minimap.Height(), TRUE);
+		if (layoutRequest.rightPane != workbench::WorkbenchPanelState::Hidden
+			|| layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden) {
 			bMiniMapSizeBox = false;
 		}
+		m_cMiniMapView.SplitBoxOnOff(FALSE, FALSE, bMiniMapSizeBox);
 	}
 
-	// ミニマップ
-	int nMiniMapWidth = 0;
-	if( m_cMiniMapView.GetHwnd() ){
-		nMiniMapWidth = ::DpiScaleX(GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth);
-		::MoveWindow( m_cMiniMapView.GetHwnd(),
-			(eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth - nMiniMapWidth: cx - nMiniMapWidth,
-			(eDockSideFL == DOCKSIDE_TOP)? nTop + nFuncListHeight: nTop,
-			nMiniMapWidth,
-			(eDockSideFL == DOCKSIDE_TOP || eDockSideFL == DOCKSIDE_BOTTOM)? nHeight - nFuncListHeight: nHeight,
-			TRUE
-		);
-		m_cMiniMapView.SplitBoxOnOff( FALSE, FALSE, bMiniMapSizeBox );
-	}
-
-	::MoveWindow(
-		m_cSplitterWnd.GetHwnd(),
-		(eDockSideFL == DOCKSIDE_LEFT)? nFuncListWidth: 0,
-		(eDockSideFL == DOCKSIDE_TOP)? nTop + nFuncListHeight: nTop,	//@@@ 2003.05.31 MIK
-		((eDockSideFL == DOCKSIDE_LEFT || eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth: cx) - nMiniMapWidth,
-		(eDockSideFL == DOCKSIDE_TOP || eDockSideFL == DOCKSIDE_BOTTOM)? nHeight - nFuncListHeight: nHeight,	//@@@ 2003.05.31 MIK
-		TRUE
-	);
+	::MoveWindow(m_cSplitterWnd.GetHwnd(), layout.editor.left, layout.editor.top,
+		layout.editor.Width(), layout.editor.Height(), TRUE);
 	//@@@ To 2003.05.31 MIK
 
 	/* 印刷プレビューモードか */
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
 	if( !m_pPrintPreview ){
-		return 0L;
+		return finishLayout(0L);
 	}
-	return m_pPrintPreview->OnSize(wParam, lParam);
+	return finishLayout(m_pPrintPreview->OnSize(wParam, lParam));
 }
 
 /* WM_PAINT 描画処理 */
@@ -3325,7 +3870,11 @@ LRESULT CEditWnd::OnPaint(
 	/* 印刷プレビューモードか */
 	if( !m_pPrintPreview ){
 		PAINTSTRUCT		ps;
-		::BeginPaint( hwnd, &ps );
+		const HDC dc = ::BeginPaint(hwnd, &ps);
+		if (m_customFrame) {
+			m_customFrame->Paint(dc, ps.rcPaint);
+		}
+		PaintWorkbenchSplitters(dc);
 		::EndPaint( hwnd, &ps );
 		return 0L;
 	}
@@ -3357,6 +3906,18 @@ LRESULT CEditWnd::OnHScroll( WPARAM wParam, LPARAM lParam )
 
 LRESULT CEditWnd::OnLButtonDown( [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 {
+	const POINT point{ static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)) };
+	if (auto* host = HitTestWorkbenchSplitter(point); host != nullptr) {
+		m_resizingWorkbenchPanel = host;
+		m_workbenchResizeOrigin = point;
+		m_workbenchResizeInitialExtentDip = host->GetExtentDip();
+		host->BeginResize();
+		::SetCapture(GetHwnd());
+		::SetCursor(::LoadCursor(nullptr,
+			host->GetEdge() == workbench::WorkbenchEdge::Bottom ? IDC_SIZENS : IDC_SIZEWE));
+		return 0;
+	}
+
 	//by 鬼(2) キャプチャして押されたら非クライアントでもこっちに来る
 	if(m_IconClicked != icNone)
 		return 0;
@@ -3371,6 +3932,28 @@ LRESULT CEditWnd::OnLButtonDown( [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 
 LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 {
+	if (m_resizingWorkbenchPanel != nullptr) {
+		auto* host = m_resizingWorkbenchPanel;
+		m_resizingWorkbenchPanel = nullptr;
+		// The pure layout calculator may shrink an over-large requested extent to
+		// preserve the editor minimum. Persist what was actually displayed, not
+		// the unconstrained mouse-derived request.
+		RECT actualBounds{};
+		if (host->GetHwnd() != nullptr && ::GetClientRect(host->GetHwnd(), &actualBounds)) {
+			const int actualPixels = host->GetEdge() == workbench::WorkbenchEdge::Bottom
+				? actualBounds.bottom - actualBounds.top
+				: actualBounds.right - actualBounds.left;
+			host->UpdateResize(PixelsToDip(actualPixels, ::GetDpiForWindow(GetHwnd())));
+		}
+		host->CommitResize();
+		if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType,
+			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		return 0;
+	}
+
 	//by 鬼 2002/04/18
 	if(m_IconClicked != icNone)
 	{
@@ -3395,6 +3978,29 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 */
 LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 {
+	if (m_resizingWorkbenchPanel != nullptr) {
+		const POINT point{ static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)) };
+		const auto dpi = ::GetDpiForWindow(GetHwnd());
+		int extent = m_workbenchResizeInitialExtentDip;
+		switch (m_resizingWorkbenchPanel->GetEdge()) {
+		case workbench::WorkbenchEdge::Left:
+			extent += PixelsToDip(point.x - m_workbenchResizeOrigin.x, dpi);
+			break;
+		case workbench::WorkbenchEdge::Right:
+			extent -= PixelsToDip(point.x - m_workbenchResizeOrigin.x, dpi);
+			break;
+		case workbench::WorkbenchEdge::Bottom:
+			extent -= PixelsToDip(point.y - m_workbenchResizeOrigin.y, dpi);
+			break;
+		}
+		m_resizingWorkbenchPanel->UpdateResize(extent);
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType,
+			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		return 0;
+	}
+
 	//by 鬼
 	if(m_IconClicked != icNone)
 	{
@@ -3427,6 +4033,62 @@ LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 	else {
 		return m_pPrintPreview->OnMouseMove( wParam, lParam );
 	}
+}
+
+LRESULT CEditWnd::OnSetCursor([[maybe_unused]] WPARAM wParam, LPARAM lParam)
+{
+	if (LOWORD(lParam) != HTCLIENT) return ::DefWindowProc(GetHwnd(), WM_SETCURSOR, wParam, lParam);
+	POINT point{};
+	if (!::GetCursorPos(&point) || !::ScreenToClient(GetHwnd(), &point)) {
+		return ::DefWindowProc(GetHwnd(), WM_SETCURSOR, wParam, lParam);
+	}
+	auto* host = m_resizingWorkbenchPanel != nullptr
+		? m_resizingWorkbenchPanel : HitTestWorkbenchSplitter(point);
+	if (host == nullptr) return ::DefWindowProc(GetHwnd(), WM_SETCURSOR, wParam, lParam);
+	::SetCursor(::LoadCursor(nullptr,
+		host->GetEdge() == workbench::WorkbenchEdge::Bottom ? IDC_SIZENS : IDC_SIZEWE));
+	return TRUE;
+}
+
+LRESULT CEditWnd::OnCaptureChanged(LPARAM lParam)
+{
+	if (reinterpret_cast<HWND>(lParam) != GetHwnd()) CancelWorkbenchResize();
+	return 0;
+}
+
+workbench::CWorkbenchPanelHost* CEditWnd::HitTestWorkbenchSplitter(POINT point) const noexcept
+{
+	if (m_leftWorkbenchPanel && ContainsPoint(m_leftWorkbenchSplitter, point)) return m_leftWorkbenchPanel.get();
+	if (m_rightWorkbenchPanel && ContainsPoint(m_rightWorkbenchSplitter, point)) return m_rightWorkbenchPanel.get();
+	if (m_bottomWorkbenchPanel && ContainsPoint(m_bottomWorkbenchSplitter, point)) return m_bottomWorkbenchPanel.get();
+	return nullptr;
+}
+
+void CEditWnd::CancelWorkbenchResize()
+{
+	if (m_resizingWorkbenchPanel == nullptr) return;
+	auto* host = m_resizingWorkbenchPanel;
+	m_resizingWorkbenchPanel = nullptr;
+	host->CancelResize();
+	if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
+	RECT client{};
+	::GetClientRect(GetHwnd(), &client);
+	(void)OnSize2(m_nWinSizeType,
+		MAKELONG(client.right - client.left, client.bottom - client.top), false);
+}
+
+void CEditWnd::PaintWorkbenchSplitters(HDC dc) const
+{
+	if (dc == nullptr) return;
+	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette(mode);
+	const HBRUSH brush = ::CreateSolidBrush(palette.border.ToColorRef());
+	if (brush == nullptr) return;
+	for (const RECT& rect : { m_leftWorkbenchSplitter, m_rightWorkbenchSplitter, m_bottomWorkbenchSplitter }) {
+		if (rect.right > rect.left && rect.bottom > rect.top) ::FillRect(dc, &rect, brush);
+	}
+	::DeleteObject(brush);
 }
 
 LRESULT CEditWnd::OnMouseWheel( WPARAM wParam, LPARAM lParam )
@@ -3874,7 +4536,7 @@ void CEditWnd::PrintMenubarMessage( const WCHAR* msg )
 {
 	const auto hWnd = GetHwnd();
 
-	if( nullptr == ::GetMenu( GetHwnd() ) )	// 2007.03.08 ryoji 追加
+	if( nullptr == GetMainMenuHandle() )	// 2007.03.08 ryoji 追加
 		return;
 
 	POINT	po,poFrame;

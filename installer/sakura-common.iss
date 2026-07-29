@@ -7,10 +7,8 @@
 #define MyAppVerH StringChange(MyAppVer, ".", "-")
 
 [Setup]
-#if MyArchitecture != "x86"
 ArchitecturesInstallIn64BitMode={#MyArchitecture}
 ArchitecturesAllowed={#MyArchitecture}
-#endif
 AppName={cm:AppName}
 AppId=sakura editor
 AppVersion={#MyAppVer}
@@ -42,8 +40,8 @@ OutputBaseFilename=sakura_install{#MyAppVerH}-{#MyArchitecture}
 VersionInfoVersion={#MyAppVer}
 VersionInfoProductVersion={#MyAppVer}
 
-; OSバージョン制限(Windows 7 以降に対応)
-MinVersion=6.1
+; OSバージョン制限(Windows 11 build 22000 以降に対応)
+MinVersion=10.0.22000
 
 [Languages]
 Name: "ja"; MessagesFile: "compiler:Languages\Japanese.isl"
@@ -239,6 +237,10 @@ Source: "sakura\bregonig.dll";         DestDir: "{app}";                  Compon
 Source: "sakura\license\bregonig\*";   DestDir: "{app}\license\bregonig"; Components: main
 Source: "sakura\ctags.exe";            DestDir: "{app}";                  Components: main
 Source: "sakura\license\ctags\*";      DestDir: "{app}\license\ctags";    Components: main
+Source: "sakura\license\windows-terminal\*"; DestDir: "{app}\license\windows-terminal"; Components: main
+Source: "sakura\license\fmt\*"; DestDir: "{app}\license\fmt"; Components: main
+Source: "sakura\license\ms-gsl\*"; DestDir: "{app}\license\ms-gsl"; Components: main
+Source: "sakura\license\wil\*"; DestDir: "{app}\license\wil"; Components: main
 Source: "sakura\sakura.exe.manifest.x";DestDir: "{app}";                  Components: main; DestName: "sakura.exe.manifest"; Check: isMultiUserDisabled; Flags: onlyifdoesntexist;
 Source: "sakura\sakura.exe.manifest.v";DestDir: "{app}";                  Components: main; DestName: "sakura.exe.manifest"; Check: isMultiUserEnabled; Flags: onlyifdoesntexist;
 Source: "sakura\sakura.chm";           DestDir: "{app}";                  Components: help

@@ -304,7 +304,7 @@ bool CShareData::InitShareData()
 			sWindow.m_bUseCompatibleBMP = TRUE;		// 2007.09.09 Moca 画面キャッシュを使う	// 2009.06.09 ryoji FALSE->TRUE
 
 			sWindow.m_bMenuIcon = TRUE;		/* メニューにアイコンを表示する */
-			sWindow.m_bDarkMode = FALSE;	/* ダークモードを使う */
+			sWindow.m_bDarkMode = TRUE;	/* ダークモードを使う。既存プロファイルの値はINIから復元する */
 
 			//	Apr. 05, 2003 genta ウィンドウキャプションの初期値
 			//	Aug. 16, 2003 genta $N(ファイル名省略表示)をデフォルトに変更
@@ -552,6 +552,21 @@ bool CShareData::InitShareData()
 
 			InitFileTree( &sOutline.m_sFileTree );
 			sOutline.m_sFileTreeDefIniName = L"_sakurafiletree.ini";
+		}
+
+		// Workbench shares display settings only. Workspace roots and terminal
+		// runtime state remain owned by each editor process.
+		{
+			CommonSetting_Workbench& sWorkbench = m_pShareData->m_Common.m_sWorkbench;
+			sWorkbench.m_bLeftPanelVisible = TRUE;
+			sWorkbench.m_bRightPanelVisible = TRUE;
+			sWorkbench.m_bBottomPanelVisible = FALSE;
+			sWorkbench.m_nLeftPanelExtent96 = 280;
+			sWorkbench.m_nRightPanelExtent96 = 260;
+			sWorkbench.m_nBottomPanelExtent96 = 220;
+			sWorkbench.m_eActiveTool = WORKBENCH_TOOL_EXPLORER;
+			// A newly created profile has no legacy Outline state to import.
+			sWorkbench.m_bOutlineMigrationComplete = TRUE;
 		}
 
 		// [ファイル内容比較]タブ

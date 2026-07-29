@@ -1,14 +1,6 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
-<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" InitialTargets="ValidateX64Platform">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|Win32">
-      <Configuration>Debug</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|Win32">
-      <Configuration>Release</Configuration>
-      <Platform>Win32</Platform>
-    </ProjectConfiguration>
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
@@ -38,19 +30,27 @@
   <PropertyGroup Label="UserMacros">
     <IntDir>..\build\$(Platform)\$(Configuration)\$(ProjectName)\</IntDir>
     <OutDir>..\$(Platform)\$(Configuration)\</OutDir>
+    <SakuraLinkInputsForTests1File>..\build\$(Platform)\$(Configuration)\sakura_core\sakura-link-inputs-for-tests1.txt</SakuraLinkInputsForTests1File>
   </PropertyGroup>
   <PropertyGroup>
     <LinkIncremental>false</LinkIncremental>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <FmtLibrary>fmtd.lib</FmtLibrary>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <FmtLibrary>fmt.lib</FmtLibrary>
+  </PropertyGroup>
   <ItemDefinitionGroup Label="tests1.common">
     <ClCompile>
       <AdditionalIncludeDirectories>..\src\test\cpp\tests1\;..\src\test\resources\;..\src\main\cpp;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_CONSOLE;NOMINMAX;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <PreprocessorDefinitions>_CONSOLE;NOMINMAX;_WIN32_WINNT=0x0A00;NTDDI_VERSION=NTDDI_WIN10_CO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <ForceSynchronousPDBWrite>true</ForceSynchronousPDBWrite>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalOptions>/source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/FS /source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
       <AdditionalIncludeDirectories>..\src\test\resources\;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
@@ -58,7 +58,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>comctl32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
@@ -86,32 +86,16 @@
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
     </Link>
   </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Platform)'=='Win32'">
-    <ClCompile>
-      <PreprocessorDefinitions>WIN32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-    </ClCompile>
-    <Link>
-      <LargeAddressAware>true</LargeAddressAware>
-    </Link>
-  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Platform)'=='x64'">
     <ClCompile>
       <PreprocessorDefinitions>X64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
   </ItemDefinitionGroup>
   <Import Project="..\src\main\msbuild\cmake.props" />
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">
-  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
-  </ItemDefinitionGroup>
-  <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   </ItemDefinitionGroup>
-  <ItemGroup>
-    <Link Include="..\build\$(Platform)\$(Configuration)\sakura_core\*.obj" />
-    <Link Include="..\build\$(Platform)\$(Configuration)\sakura_core\*.res" />
-  </ItemGroup>
   <ItemGroup>
     <ClCompile Include="..\src\test\resources\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
@@ -123,6 +107,27 @@
     <ClCompile Include="..\src\test\cpp\tests1\macro\test-macro.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\window\EditorTestSuite.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\window\UiaTestSuite.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\window\CustomFrameTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\window\CustomUiAutomationProviderTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\platform\Windows11PlatformTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalModelTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalUnicodeTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalParserTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdocline.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoclinemgr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-codechecker.cpp" />
@@ -130,6 +135,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-csearchagent.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-crunningtimer.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-csharedata.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-extmodules.cpp" />
     <ClCompile Include="..\src\test\resources\printEFunctionCode.cpp" />
@@ -209,31 +215,58 @@
     </ProjectReference>
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <Target Name="CollectSakuraObjectsForTests1" DependsOnTargets="ResolveProjectReferences" BeforeTargets="Link">
+    <!--
+      The production project records the exact compiler/resource outputs after its
+      project dependency has completed.  Reading that manifest avoids linking stale
+      files left in the shared production intermediate directory after a rename.
+    -->
+    <Error Condition="!Exists('$(SakuraLinkInputsForTests1File)')"
+           Code="SAKURA0002"
+           Text="The Sakura production link-input manifest was not generated before tests1 linked." />
+    <ReadLinesFromFile File="$(SakuraLinkInputsForTests1File)">
+      <Output TaskParameter="Lines" ItemName="_SakuraLinkInputForTests1" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_MissingSakuraLinkInputForTests1 Include="@(_SakuraLinkInputForTests1)"
+                                        Condition="!Exists('%(_SakuraLinkInputForTests1.Identity)')" />
+      <Link Include="@(_SakuraLinkInputForTests1)" />
+    </ItemGroup>
+    <Error Condition="'@(_SakuraLinkInputForTests1)' == ''"
+           Code="SAKURA0002"
+           Text="The Sakura production link-input manifest was empty." />
+    <Error Condition="'@(_MissingSakuraLinkInputForTests1)' != ''"
+           Code="SAKURA0004"
+           Text="The Sakura production link-input manifest referenced missing files: @(_MissingSakuraLinkInputForTests1, ', ')." />
+  </Target>
   <ItemGroup>
     <TestResource Include="..\src\test\resources\tests1\test-plugin\plugin.def" />
   </ItemGroup>
   <Target Name="GenerateTests1ExeManifest" Inputs="..\src\main\cmake\manifest.in;..\src\main\cmake\manifest.cmake" Outputs="$(CMakeToolsBuildDir)tests1.exe.manifest" BeforeTargets="Link">
-    <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target generate_tests1_exe_manifest -- /nologo" />
+    <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target generate_tests1_exe_manifest -- /nologo" EnvironmentVariables="TrackFileAccess=false" />
   </Target>
   <Target Name="CopyMiniz" Condition="!Exists('$(CMakeToolsBuildDir)include\miniz-cpp\zip_file.hpp')" BeforeTargets="ClCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_miniz -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_miniz -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="GeneratePpaStub" BeforeTargets="ClCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target ppa_stub -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+  <Target Name="GeneratePpaStub" Inputs="$(VcpkgInstalledDir)$(VcpkgTriplet)\bin\ppa_stub.dll" Outputs="$(OutDir)ppa_stub.dll" BeforeTargets="ClCompile">
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target ppa_stub -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="MakeTestResource" Condition="!Exists('$(CMakeToolsBuildDir)resources.ja-JP.zip')" BeforeTargets="ResourceCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target test_resource_zip -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target test_resource_zip -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="MakeTestDllPlugin1" Condition="!Exists('$(CMakeToolsBuildDir)resources-dllplugin.zip')" BeforeTargets="ResourceCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target test_dllplugin_zip -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target test_dllplugin_zip -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="RemoveTests1Exe" Condition="Exists('$(TargetPath)')" DependsOnTargets="ClCompile;ResourceCompile" BeforeTargets="Link">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); attrib -R '$(TargetPath)'; Remove-Item '$(TargetPath)' -Force -ErrorAction SilentlyContinue; Start-Sleep -Seconds 1&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+  <Target Name="PrepareTests1ExeForLink" Condition="Exists('$(TargetPath)')" DependsOnTargets="ClCompile;ResourceCompile" BeforeTargets="Link">
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); attrib -R '$(TargetPath)'&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="AppendCleanTargets" BeforeTargets="CoreClean">
     <!-- Add files to @Clean just before running CoreClean. -->
     <ItemGroup>
       <Clean Include="$(IntDir)..\..\CMakeTools\resources.ja-JP.zip" />
     </ItemGroup>
+  </Target>
+  <Target Name="ValidateX64Platform" Condition="'$(DesignTimeBuild)' != 'true' and '$(Platform)' != 'x64'">
+    <Error Code="SAKURA0001" Text="Sakura Code supports only the x64 platform. Build with /p:Platform=x64." />
   </Target>
 </Project>

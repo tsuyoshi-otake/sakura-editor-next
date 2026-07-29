@@ -42,6 +42,7 @@
 #include "env/CMarkMgr.h"	// CAutoMarkMgr
 #include "util/os.h"
 #include "sakura.hh"
+#include "workbench/IWorkbenchTool.h"
 
 //using namespace nsFuncCode;
 
@@ -327,6 +328,13 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_OUTLINE			,	//アウトライン解析
 	F_OUTLINE_TOGGLE	,	//アウトライン解析(toggle) // 20060201 aroka
 	F_FILETREE			,	//ファイルツリー	// 2012.06.20 Moca
+	F_OPEN_WORKSPACE_FOLDER	,	//作業フォルダーを開く
+	F_TOGGLE_LEFT_EXPLORER	,	//左エクスプローラーの表示切替
+	F_TOGGLE_RIGHT_OUTLINE	,	//右アウトラインの表示切替
+	F_TOGGLE_BOTTOM_PANEL	,	//下部パネルの表示切替
+	F_SHOW_FOCUS_TERMINAL	,	//統合ターミナルを表示してフォーカス
+	F_NEW_TERMINAL		,	//新しい統合ターミナル
+	F_REDETECT_POWERSHELL	,	//PowerShellを再検出
 	F_TAGJUMP			,	//タグジャンプ機能
 	F_TAGJUMP_CLOSE		,	//閉じてタグジャンプ(元ウィンドウを閉じる) // Apr. 03, 2003 genta
 	F_TAGJUMPBACK		,	//タグジャンプバック機能
@@ -594,6 +602,7 @@ int FuncID_To_HelpContextID( EFunctionCode nFuncID )
 	case F_VIEWMODE:			return HLP000249;			//ビューモード
 	case F_PROPERTY_FILE:		return HLP000022;			/* ファイルのプロパティ */
 	case F_OPEN_FOLDER_IN_EXPLORER:		return HLP000373;	//ファイルの場所を開く
+	case F_OPEN_WORKSPACE_FOLDER:			return HLP000373;	//作業フォルダーを開く
 	case F_OPEN_COMMAND_PROMPT:			return HLP000376;	//コマンドプロンプトを開く
 	case F_OPEN_COMMAND_PROMPT_AS_ADMIN:	return HLP000377;	//管理者としてコマンドプロンプトを開く
 	case F_OPEN_POWERSHELL:				return HLP000378;	//PowerShellを開く
@@ -1285,6 +1294,9 @@ bool IsFuncChecked( const CEditDoc* pcEditDoc, const DLLSHAREDATA* pShareData, E
 	case F_SHOWTAB:				return pCEditWnd->m_cTabWnd.GetHwnd() != nullptr;	//@@@ 2003.06.10 MIK
 	case F_SHOWSTATUSBAR:		return pCEditWnd->m_cStatusBar.GetStatusHwnd() != nullptr;
 	case F_SHOWMINIMAP:			return pCEditWnd->GetMiniMap().GetHwnd() != nullptr;
+	case F_TOGGLE_LEFT_EXPLORER:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Left);
+	case F_TOGGLE_RIGHT_OUTLINE:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Right);
+	case F_TOGGLE_BOTTOM_PANEL:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom);
 	// 2008.05.30 nasukoji	テキストの折り返し方法
 	case F_TMPWRAPNOWRAP:		return ( pcEditDoc->m_nTextWrapMethodCur == WRAP_NO_TEXT_WRAP );		// 折り返さない
 	case F_TMPWRAPSETTING:		return ( pcEditDoc->m_nTextWrapMethodCur == WRAP_SETTING_WIDTH );		// 指定桁で折り返す

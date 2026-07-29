@@ -1,0 +1,95 @@
+/*! @file */
+/*
+	Copyright (C) 2026, Sakura Editor Organization
+
+	SPDX-License-Identifier: Zlib
+*/
+
+#include "pch.h"
+
+#include <gtest/gtest.h>
+
+#include "window/CCustomFrameController.h"
+
+TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
+{
+	EXPECT_EQ(34, ScaleCustomFrameDip(34, 96));
+	EXPECT_EQ(51, ScaleCustomFrameDip(34, 144));
+	EXPECT_EQ(68, ScaleCustomFrameDip(34, 192));
+	const auto layout = CalculateCustomFrameLayout(1200, 144, 430);
+	EXPECT_EQ(51, layout.title.bottom);
+}
+
+TEST(CustomFrame, UsesDpiScaledIconSizesAndHighlightTextForCloseButton)
+{
+	EXPECT_EQ(20, CalculateCustomTitleBarIconSize(34, 96));
+	EXPECT_EQ(40, CalculateCustomTitleBarIconSize(68, 192));
+	auto palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	palette.highlightText = { 1, 2, 3 };
+	EXPECT_EQ(palette.highlightText, CustomTitleBarGlyphColor(palette, true, HTCLOSE, HTCLOSE, HTNOWHERE));
+	EXPECT_EQ(palette.highlightText, CustomTitleBarGlyphColor(palette, true, HTCLOSE, HTNOWHERE, HTCLOSE));
+	EXPECT_EQ(palette.primaryText, CustomTitleBarGlyphColor(palette, true, HTCLOSE, HTNOWHERE, HTNOWHERE));
+}
+
+TEST(CustomFrame, CaptionButtonsRemainAtRightEdgeWithoutOverlap)
+{
+	const auto layout = CalculateCustomFrameLayout(1000, 96, 500);
+	EXPECT_EQ(1000, layout.closeButton.right);
+	EXPECT_EQ(layout.closeButton.left, layout.maximizeButton.right);
+	EXPECT_EQ(layout.maximizeButton.left, layout.minimizeButton.right);
+	EXPECT_LE(layout.menu.right, layout.captionText.left);
+	EXPECT_LE(layout.captionText.right, layout.minimizeButton.left);
+}
+
+TEST(CustomFrame, ReturnsSnapCompatibleCaptionButtonHits)
+{
+	const auto layout = CalculateCustomFrameLayout(1000, 96, 400);
+	const auto center = [](const RECT& rect) {
+		return POINT{ (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2 };
+	};
+	EXPECT_EQ(HTMINBUTTON, HitTestCustomFrame(layout, center(layout.minimizeButton), 1000, 700, 8, false));
+	EXPECT_EQ(HTMAXBUTTON, HitTestCustomFrame(layout, center(layout.maximizeButton), 1000, 700, 8, false));
+	EXPECT_EQ(HTCLOSE, HitTestCustomFrame(layout, center(layout.closeButton), 1000, 700, 8, false));
+	EXPECT_EQ(HTSYSMENU, HitTestCustomFrame(layout, center(layout.systemMenu), 1000, 700, 8, false));
+}
+
+TEST(CustomFrame, PreservesCornerAndEdgeResizeHits)
+{
+	const auto layout = CalculateCustomFrameLayout(1000, 96, 300);
+	EXPECT_EQ(HTTOPLEFT, HitTestCustomFrame(layout, { 1, 1 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTTOPRIGHT, HitTestCustomFrame(layout, { 998, 1 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTBOTTOMLEFT, HitTestCustomFrame(layout, { 1, 698 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 998, 698 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTRIGHT, HitTestCustomFrame(layout, { 998, 300 }, 1000, 700, 8, false));
+}
+
+TEST(CustomFrame, MaximizedWindowDisablesResizeBorderButKeepsSnapButton)
+{
+	const auto layout = CalculateCustomFrameLayout(1000, 96, 300);
+	const POINT captionPoint{ layout.captionText.left + 4, layout.captionText.top + 16 };
+	EXPECT_EQ(HTCAPTION, HitTestCustomFrame(layout, captionPoint, 1000, 700, 8, true));
+	const POINT maximizeCenter{
+		(layout.maximizeButton.left + layout.maximizeButton.right) / 2,
+		(layout.maximizeButton.top + layout.maximizeButton.bottom) / 2,
+	};
+	EXPECT_EQ(HTMAXBUTTON, HitTestCustomFrame(layout, maximizeCenter, 1000, 700, 8, true));
+}
+
+TEST(CustomFrame, MenuIsClientOwnedAndRemainingTitleDrags)
+{
+	const auto layout = CalculateCustomFrameLayout(1000, 96, 360);
+	const POINT menuPoint{ layout.menu.left + 4, layout.menu.top + 16 };
+	const POINT captionPoint{ layout.captionText.left + 4, layout.captionText.top + 16 };
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, menuPoint, 1000, 700, 8, false));
+	EXPECT_EQ(HTCAPTION, HitTestCustomFrame(layout, captionPoint, 1000, 700, 8, false));
+}
+
+TEST(CustomFrame, PrefersProcessedDwmTargetsButKeepsExtendedClientGeometry)
+{
+	EXPECT_TRUE(ShouldPreferDwmNonClientResult(WM_NCHITTEST, HTMAXBUTTON));
+	EXPECT_FALSE(ShouldPreferDwmNonClientResult(WM_NCHITTEST, HTCLIENT));
+	EXPECT_FALSE(ShouldPreferDwmNonClientResult(WM_NCHITTEST, HTNOWHERE));
+	EXPECT_TRUE(ShouldPreferDwmNonClientResult(WM_NCLBUTTONDBLCLK, 0));
+	EXPECT_TRUE(ShouldPreferDwmNonClientResult(WM_NCRBUTTONUP, 0));
+	EXPECT_FALSE(ShouldPreferDwmNonClientResult(WM_SYSCOMMAND, 0));
+}

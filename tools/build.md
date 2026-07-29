@@ -87,7 +87,7 @@ build-sln.bat x64 Release
 **Visual Studio 2019を指定してビルド**
 ```cmd
 set ARG_VSVERSION=16
-build-sln.bat Win32 Release
+build-sln.bat x64 Release
 ```
 
 参考: [MSBuildの検索について](./find-tools.md#MSBuild) で `ARG_VSVERSION` の詳細を説明しています。
@@ -100,9 +100,9 @@ build-sln.bat Win32 Release
 build-all.bat <Platform> <Configuration>
 ```
 
-**例: Win32 の Release ビルド**
+**例: x64 の Release ビルド**
 ```cmd
-build-all.bat Win32 Release
+build-all.bat x64 Release
 ```
 
 ## 開発者向け情報
@@ -114,6 +114,22 @@ build-all.bat Win32 Release
 ### ビルドに使用されるバッチファイル
 
 [ビルドに使用されるバッチファイル](./build-batchfiles.md) を参照してください。
+
+### x64 ビルドの増分検証
+
+Windows Terminal の取り込みファイルの SHA-256 を検証するには、以下を実行します。
+
+```pwsh
+.\tools\verify-build-incremental.ps1 -ValidateImportedFiles
+```
+
+既にビルド済みの x64 構成について、ベースラインビルドと続く no-op ビルドの binlog を保存し、`sakura.exe` の更新時刻が変わらず、2 回目の診断ログに `cl.exe`、`link.exe`、`CL`、`Link` タスクがないことを確認するには、以下を実行します。Visual Studio の開発者コマンド プロンプト、または `msbuild.exe` が `PATH` にある PowerShell から実行してください。
+
+```pwsh
+.\tools\verify-build-incremental.ps1 -VerifyNoOpBuild -Platform x64 -Configuration Release
+```
+
+binlog と診断ログは `artifacts/build-verification/` に保存されます。個別の非公開 `.cpp` を確認する場合は `-ProbeCpp <path>` を加えます。対象が含まれる `.vcxproj` を表示し、一時的に更新時刻を進めてビルドした後、元の更新時刻へ復元します。テスト後にこのリポジトリに関連するプロセスだけを報告するには、`-ListSurvivors` を使用します。このスクリプトはプロセスを終了しません。
 
 ### デバッグ方法
 
@@ -131,8 +147,6 @@ build-all.bat Win32 Release
 **実行例:**
 ```cmd
 set SKIP_CREATE_GITHASH=1
-build-sln.bat Win32 Release
-build-sln.bat Win32 Debug
 build-sln.bat x64 Release
 build-sln.bat x64 Debug
 ```
@@ -143,7 +157,7 @@ build-sln.bat x64 Debug
 
 ```cmd
 set FORCE_POWERSHELL_ZIP=1
-build-sln.bat Win32 Release
+build-sln.bat x64 Release
 ```
 
 ### CIビルドのスキップ

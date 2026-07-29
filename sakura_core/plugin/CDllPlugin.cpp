@@ -14,6 +14,14 @@
 #include "util/tchar_convert.h"
 #include "CSelectLang.h"
 
+namespace {
+
+constexpr wchar_t kX86ModuleUnsupportedMessage[] =
+	L"32-bit modules cannot be used with the x64 version of Sakura Code.\n"
+	L"Install and select the x64 version of the module.";
+
+} // namespace
+
 // デストラクタ
 CDllPlugin::~CDllPlugin(void)
 {
@@ -59,6 +67,11 @@ bool CDllPlugin::InvokePlug( CEditView* view, CPlug& plug_raw, [[maybe_unused]] 
 	std::wstring dllPath = GetFilePath( m_sDllName );
 	EDllResult resInit = InitDll( dllPath.c_str() );
 	if( resInit != DLL_SUCCESS ){
+		if (resInit == DLL_MACHINE_MISMATCH) {
+			::MYMESSAGEBOX( view->m_hwndParent, MB_OK | MB_ICONEXCLAMATION,
+				LS(STR_DLLPLG_TITLE), L"%s", kX86ModuleUnsupportedMessage );
+			return false;
+		}
 		::MYMESSAGEBOX( view->m_hwndParent, MB_OK, LS(STR_DLLPLG_TITLE), LS(STR_DLLPLG_INIT_ERR1), dllPath.c_str(), m_sName.c_str() );
 		return false;
 	}

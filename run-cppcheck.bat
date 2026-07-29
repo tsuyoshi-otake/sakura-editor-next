@@ -5,10 +5,7 @@ set configuration=%2
 
 set CPPCHECK_PARAMS=
 
-if "%platform%" == "Win32" (
-	set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% -U_WIN64 -D_M_IX86 -U_M_X64
-	@rem OK
-) else if "%platform%" == "x64" (
+if "%platform%" == "x64" (
 	set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% -D_WIN64 -U_M_IX86 -D_M_X64
 	@rem OK
 ) else (
@@ -36,15 +33,7 @@ if not defined CMD_CPPCHECK (
 set CPPCHECK_OUT=cppcheck-%platform%-%configuration%.xml
 set CPPCHECK_LOG=cppcheck-%platform%-%configuration%.log
 
-set CPPCHECK_PLATFORM=
-if "%PLATFORM%" == "Win32" (
-	set CPPCHECK_PLATFORM=win32W
-) else if "%PLATFORM%" == "x64" (
-	set CPPCHECK_PLATFORM=win64
-) else (
-	@echo not supported platform
-	exit /b 1
-)
+set CPPCHECK_PLATFORM=win64
 
 if exist "%CPPCHECK_OUT%" (
 	del %CPPCHECK_OUT%
@@ -84,12 +73,10 @@ exit /b %ERROR_RESULT%
 @echo    %~nx1 platform configuration
 @echo.
 @echo parameter
-@echo    platform      : Win32   or x64
+@echo    platform      : x64
 @echo    configuration : Release or Debug
 @echo.
 @echo example
-@echo    %~nx1 Win32 Release
-@echo    %~nx1 Win32 Debug
 @echo    %~nx1 x64   Release
 @echo    %~nx1 x64   Debug
 exit /b 0

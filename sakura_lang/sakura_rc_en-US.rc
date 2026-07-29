@@ -2882,6 +2882,16 @@ END
 
 STRINGTABLE
 BEGIN
+    F_TOGGLE_LEFT_EXPLORER  "Hide/Show Left Explorer"
+    F_TOGGLE_RIGHT_OUTLINE  "Hide/Show Right Outline"
+    F_TOGGLE_BOTTOM_PANEL   "Hide/Show Bottom Panel"
+    F_SHOW_FOCUS_TERMINAL   "Show and Focus Integrated Terminal"
+    F_NEW_TERMINAL          "New Integrated Terminal"
+    F_REDETECT_POWERSHELL   "Redetect PowerShell"
+END
+
+STRINGTABLE
+BEGIN
     F_HELP_CONTENTS         "Open help contents"
     F_HELP_SEARCH           "Search help by keyword"
     F_MENU_ALLFUNC          "Command list"

@@ -213,6 +213,24 @@ TEST(CCommandLine, ParseProfileName)
 }
 
 /*!
+ * @brief パラメータ解析(-FOLDER)の仕様
+ * @remark -FOLDERが指定されていなければ作業フォルダーは未指定
+ * @remark -FOLDERが指定されていたら指定された作業フォルダー
+ */
+TEST(CCommandLine, ParseWorkspaceFolder)
+{
+	CCommandLine cCommandLine;
+	EXPECT_FALSE(cCommandLine.IsSetWorkspaceFolder());
+	EXPECT_STREQ(L"", cCommandLine.GetWorkspaceFolder());
+
+#define TESTLOCAL_WORKSPACE_FOLDER L"C:\\work\\sakura folder"
+	cCommandLine.ParseCommandLine(L"-FOLDER=\"" TESTLOCAL_WORKSPACE_FOLDER L"\"", false);
+	EXPECT_TRUE(cCommandLine.IsSetWorkspaceFolder());
+	EXPECT_STREQ(TESTLOCAL_WORKSPACE_FOLDER, cCommandLine.GetWorkspaceFolder());
+#undef TESTLOCAL_WORKSPACE_FOLDER
+}
+
+/*!
  * @brief パラメータ解析(-PROFMGR)の仕様
  * @remark -PROFMGRが指定されていなければFALSE
  * @remark -PROFMGRが指定されていたらTRUE

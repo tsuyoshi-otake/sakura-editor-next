@@ -10,6 +10,7 @@
 #include "config/system_constants.h"
 #include "dlg/CDialog.h"	//仮置き、本来は不要。
 #include "env/CDataProfile.h" // StringBufferW
+#include "env/CShareData_IO.h"
 #include "env/DLLSHAREDATA.h"
 #include "uiparts/CMenuDrawer.h"
 #include "util/window.h"
@@ -70,6 +71,21 @@ BOOL WritePrivateProfileStringW(
 )
 {
 	return ::WritePrivateProfileStringW(lpAppName, lpKeyName, lpString, iniPath.has_value() ? iniPath.value().c_str() : nullptr);
+}
+
+BOOL ReadDarkModeFromProfile(const std::optional<std::wstring_view> persistedValue)
+{
+	CDataProfile profile;
+	profile.SetReadingMode();
+	if (persistedValue) {
+		profile.SetProfileData(L"Common", L"bDarkMode", *persistedValue);
+	}
+
+	// This is the same default and read operation used by CShareData::InitShareData
+	// and CShareData_IO::ShareData_IO_Common, respectively.
+	BOOL darkMode = TRUE;
+	profile.IOProfileData(L"Common", L"bDarkMode", darkMode);
+	return darkMode;
 }
 
 MATCHER_P(EqSTypeConfig, expected, "Checks if STypeConfig is equal to the expected value") {
@@ -379,7 +395,7 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	EXPECT_THAT(sWindow.m_nMiniMapFontSize, -2);
 	EXPECT_THAT(sWindow.m_nMiniMapQuality, NONANTIALIASED_QUALITY);
 	EXPECT_THAT(sWindow.m_nMiniMapWidth, 150);
-	EXPECT_THAT(sWindow.m_bDarkMode, IsFalse());
+	EXPECT_THAT(sWindow.m_bDarkMode, IsTrue());
 	EXPECT_THAT(sWindow.m_bSplitterWndHScroll, IsTrue());
 	EXPECT_THAT(sWindow.m_bSplitterWndVScroll, IsTrue());
 	EXPECT_THAT(sWindow.m_eSaveWindowSize, WINSIZEMODE_SAVE);
@@ -652,7 +668,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		/* アルファベット */
 		//keycode,	keyname,					なし,				Shitf+,				Ctrl+,					Shift+Ctrl+,		Alt+,					Shit+Alt+,			Ctrl+Alt+,				Shift+Ctrl+Alt+
 		{ 'A',		{ L"A" },					{ F_0,				F_0,				F_SELECTALL,			F_0,				F_SORT_ASC,				F_0,				F_0,					F_0 }, },
-		{ 'B',		{ L"B" },					{ F_0,				F_0,				F_BROWSE,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
+		{ 'B',		{ L"B" },					{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 'C',		{ L"C" },					{ F_0,				F_0,				F_COPY,					F_OPEN_HfromtoC,	F_0,					F_0,				F_0,					F_0 }, },
 		{ 'D',		{ L"D" },					{ F_0,				F_0,				F_WordCut,				F_WordDelete,		F_SORT_DESC,			F_0,				F_0,					F_0 }, },
 		{ 'E',		{ L"E" },					{ F_0,				F_0,				F_CUT_LINE,				F_DELETE_LINE,		F_0,					F_0,				F_CASCADE,				F_0 }, },
@@ -660,7 +676,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		{ 'G',		{ L"G" },					{ F_0,				F_0,				F_GREP_DIALOG,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 'H',		{ L"H" },					{ F_0,				F_0,				F_CURLINECENTER,		F_OPEN_HfromtoC,	F_0,					F_0,				F_TILE_V,				F_0 }, },
 		{ 'I',		{ L"I" },					{ F_0,				F_0,				F_DUPLICATELINE,		F_0,				F_0,					F_0,				F_0,					F_0 }, },
-		{ 'J',		{ L"J" },					{ F_0,				F_0,				F_JUMP_DIALOG,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
+		{ 'J',		{ L"J" },					{ F_0,				F_0,				F_TOGGLE_BOTTOM_PANEL,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 'K',		{ L"K" },					{ F_0,				F_0,				F_LineCutToEnd,			F_LineDeleteToEnd,	F_0,					F_0,				F_0,					F_0 }, },
 		{ 'L',		{ L"L" },					{ F_0,				F_0,				F_LOADKEYMACRO,			F_EXECKEYMACRO,		F_LTRIM,				F_0,				F_TOLOWER,				F_TOUPPER }, },
 		{ 'M',		{ L"M" },					{ F_0,				F_0,				F_SAVEKEYMACRO,			F_RECKEYMACRO,		F_MERGE,				F_0,				F_0,					F_0 }, },
@@ -683,7 +699,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		{ 0x00bd,	{ L"-" },					{ F_0,				F_0,				F_COPYFNAME,			F_SPLIT_V,			F_0,					F_0,				F_0,					F_0 }, },
 		{ 0x00de,	{ KEY_NAME(HAT_ENG_QT) },	{ F_0,				F_0,				F_COPYTAG,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 0x00dc,	{ L"\\" },					{ F_0,				F_0,				F_COPYPATH,				F_SPLIT_H,			F_0,					F_0,				F_0,					F_0 }, },
-		{ 0x00c0,	{ KEY_NAME(AT_ENG_BQ) },	{ F_0,				F_0,				F_COPYLINES,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
+		{ 0x00c0,	{ KEY_NAME(AT_ENG_BQ) },	{ F_0,				F_0,				F_SHOW_FOCUS_TERMINAL,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 0x00db,	{ L"[" },					{ F_0,				F_0,				F_BRACKETPAIR,			F_0,				F_0,					F_0,				F_0,					F_0 }, },
 		{ 0x00bb,	{ L";" },					{ F_0,				F_0,				F_0,					F_SPLIT_VH,			F_INS_DATE,				F_0,				F_0,					F_0 }, },
 		{ 0x00ba,	{ L":" },					{ F_0,				F_0,				_COPYWITHLINENUM,		F_0,				F_INS_TIME,				F_0,				F_0,					F_0 }, },
@@ -1781,6 +1797,30 @@ TEST_F(CShareDataTest, InitShareData001)
 	EXPECT_THAT(shareData, IsInitializedShareData(pszProfileName, isMultiUserSettings, userRootFolder, userSubFolder));
 
 	EXPECT_THAT(::GetDllShareData().m_sWorkBuffer.GetBuffer<WCHAR>(), ::testing::SizeIs(Eq(size_t(32000))));
+}
+
+TEST(CShareDataProfile, DarkModeDefaultAndExistingValues)
+{
+	// A missing key represents a new profile and keeps the dark-mode default.
+	EXPECT_THAT(ReadDarkModeFromProfile(std::nullopt), IsTrue());
+
+	// Existing profiles retain an explicitly saved setting.
+	EXPECT_THAT(ReadDarkModeFromProfile(L"0"), IsFalse());
+	EXPECT_THAT(ReadDarkModeFromProfile(L"1"), IsTrue());
+}
+
+TEST(CShareDataProfile, MainMenuMissingVersionMigratesButCurrentVersionDoesNot)
+{
+	constexpr int currentVersion = 3;
+
+	// A new profile gets its initial menu from resources. Its missing version
+	// must still enter the additive migration path; duplicate command IDs are
+	// guarded by ShareData_IO_MainMenu itself.
+	EXPECT_THAT(CShareData_IO::ResolveMainMenuReadVersion(true, false, currentVersion, currentVersion), Eq(0));
+
+	// An existing current-version profile intentionally keeps a user-deleted
+	// command deleted instead of adding it back during subsequent loads.
+	EXPECT_THAT(CShareData_IO::ResolveMainMenuReadVersion(true, true, currentVersion, currentVersion), Eq(currentVersion));
 }
 
 /*!

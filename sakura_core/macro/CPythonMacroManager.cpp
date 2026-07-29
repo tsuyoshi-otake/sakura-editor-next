@@ -20,10 +20,16 @@
 #include "CMacro.h"
 #include "util/tchar_convert.h"
 #include "util/module.h"
+#include "util/os.h"
+#include "platform/Windows11Platform.h"
 #include "window/CEditWnd.h"
 #include "view/CEditView.h"
 
 namespace {
+
+constexpr wchar_t kX86ModuleUnsupportedMessage[] =
+	L"32-bit modules cannot be used with the x64 version of Sakura Code.\n"
+	L"Install and select the x64 version of the module.";
 
 using Py_ssize_t = intptr_t;
 using Py_hash_t = Py_ssize_t;
@@ -976,6 +982,17 @@ bool CPythonMacroManager::ExecKeyMacro(CEditView *EditView, int flags [[maybe_un
 				path = path2;
 			}
 		}
+		platform::PeMachine machine;
+		{
+			CCurrentDirectoryBackupPoint directoryBackup;
+			ChangeCurrentDirectoryToExeDir();
+			machine = platform::ReadPeMachineFromFile(path.c_str());
+		}
+		if (machine == platform::PeMachine::I386) {
+			ErrorMessage(nullptr, L"%s", kX86ModuleUnsupportedMessage);
+			return false;
+		}
+
 		s_hModule = LoadLibraryExedir(path.c_str());
 		if (!s_hModule) {
 			WCHAR* pMsg;

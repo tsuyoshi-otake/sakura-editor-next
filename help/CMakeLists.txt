@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(CompiledHtmlHelp)
+project(CompiledHtmlHelp LANGUAGES NONE)
 
 # Find vswhere
 find_program(CMD_VSWHERE vswhere.exe

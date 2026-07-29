@@ -28,6 +28,12 @@ public:
 	static bool LoadShareData();	/* 共有データのロード */
 	static void SaveShareData();	/* 共有データの保存 */
 
+	// Pure policy seam for the main-menu migration.  A profile without a
+	// persisted version is treated as version 0 even when its initial menu came
+	// from the resource, so additive migrations can fill newly introduced items.
+	[[nodiscard]] static int ResolveMainMenuReadVersion(
+		bool isReadingMode, bool hasStoredVersion, int storedVersion, int currentVersion ) noexcept;
+
 protected:
 	static bool ShareData_IO_2( bool bRead );	/* 共有データの保存 */
 

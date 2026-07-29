@@ -27,6 +27,7 @@
 #pragma once
 
 #include <shellapi.h>// HDROP
+#include <cstdint>
 #include "_main/global.h"
 #include "_os/CDropTarget.h"
 #include "CMainToolBar.h"
@@ -57,7 +58,23 @@ static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
 class CPlug;
 class CEditDoc;
+class CCustomFrameController;
 struct DLLSHAREDATA;
+namespace terminal {
+class CTerminalTool;
+}
+namespace workbench {
+class CActivityBar;
+class CWorkbenchPanelHost;
+class CWorkspaceContext;
+enum class WorkbenchEdge : std::uint8_t;
+namespace explorer {
+class CExplorerTool;
+}
+namespace outline {
+class COutlineWorkbenchTool;
+}
+}
 
 //メインウィンドウ内コントロールID
 #define IDT_EDIT		455  // 20060128 aroka
@@ -131,11 +148,15 @@ public:
 	//                         イベント                            //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//ドキュメントイベント
+	void OnAfterLoad(const SLoadInfo& sLoadInfo) override;
 	void OnAfterSave(const SSaveInfo& sSaveInfo) override;
 
 	//管理
 	void MessageLoop( void );								/* メッセージループ */
 	LRESULT DispatchEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);	/* メッセージ処理 */
+	void AttachMainWindowEarly(HWND hWnd);
+	LRESULT DispatchBootstrapEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
+	[[nodiscard]] bool IsDispatchReady() const noexcept { return m_dispatchReady; }
 
 	//各種イベント
 	LRESULT OnPaint(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);	/* 描画処理 */
@@ -144,6 +165,8 @@ public:
 	LRESULT OnLButtonUp(WPARAM wParam, LPARAM lParam);
 	LRESULT OnLButtonDown(WPARAM wParam, LPARAM lParam);
 	LRESULT OnMouseMove(WPARAM wParam, LPARAM lParam);
+	LRESULT OnSetCursor(WPARAM wParam, LPARAM lParam);
+	LRESULT OnCaptureChanged(LPARAM lParam);
 	LRESULT OnMouseWheel(WPARAM wParam, LPARAM lParam);
 	BOOL DoMouseWheel( WPARAM wParam, LPARAM lParam );	// マウスホイール処理	// 2007.10.16 ryoji
 	LRESULT OnHScroll(WPARAM wParam, LPARAM lParam);
@@ -192,6 +215,14 @@ public:
 	void LayoutStatusBar( void );		/* ステータスバーの配置処理 */		// 2006.12.19 ryoji
 	void LayoutMiniMap();				// ミニマップの配置処理
 	void EndLayoutBars( BOOL bAdjust = TRUE );	/* バーの配置終了処理 */	// 2006.12.19 ryoji
+	void SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate = false);
+	void ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate = false);
+	//! Select a window-local workbench root. Cancellation and picker failure leave all state unchanged.
+	void OpenWorkspaceFolder();
+	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
+	void FocusIntegratedTerminal();
+	void NewIntegratedTerminal();
+	void RedetectPowerShell();
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                           設定                              //
@@ -308,6 +339,7 @@ protected:
 	// メニュー
 	void CheckFreeSubMenu(HWND hWnd, HMENU hMenu, UINT uPos);		// メニューバーの無効化を検査	2010/6/18 Uchi
 	void CheckFreeSubMenuSub(HMENU hMenu, int nLv);			// メニューバーの無効化を検査	2010/6/18 Uchi
+	[[nodiscard]] HMENU GetMainMenuHandle() const noexcept;
 
 //public:
 	//! 周期内でm_nTimerCountをインクリメント
@@ -349,6 +381,19 @@ public:
 	//                        メンバ変数                           //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 private:
+	bool InitializeWorkbench();
+	void CloseWorkbench() noexcept;
+	void ApplyWorkbenchTheme();
+	void ApplyWorkbenchSettingsFromSharedData();
+	void ReloadWorkbenchOutlineAndRelayout();
+	void BroadcastWorkbenchSettings();
+	void UpdateWorkspaceFromDocument();
+	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
+	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
+	[[nodiscard]] workbench::CWorkbenchPanelHost* HitTestWorkbenchSplitter(POINT point) const noexcept;
+	void CancelWorkbenchResize();
+	void PaintWorkbenchSplitters(HDC dc) const;
+
 	//共有データ
 	DLLSHAREDATA*	m_pShareData = &GetDllShareData();
 
@@ -357,6 +402,27 @@ private:
 
 	//自ウィンドウ
 	HWND			m_hWnd = nullptr;
+	std::unique_ptr<CCustomFrameController> m_customFrame;
+	bool			m_dispatchReady = false;
+	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
+	std::unique_ptr<workbench::CActivityBar> m_activityBar;
+	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
+	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
+	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
+	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
+	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
+	terminal::CTerminalTool* m_terminalTool = nullptr;
+	bool m_layoutInProgress = false;
+	bool m_layoutPending = false;
+	WPARAM m_pendingLayoutWParam = SIZE_RESTORED;
+	LPARAM m_pendingLayoutLParam = 0;
+	bool m_pendingLayoutUpdateStatus = false;
+	workbench::CWorkbenchPanelHost* m_resizingWorkbenchPanel = nullptr;
+	POINT m_workbenchResizeOrigin{};
+	int m_workbenchResizeInitialExtentDip = 0;
+	RECT m_leftWorkbenchSplitter{};
+	RECT m_rightWorkbenchSplitter{};
+	RECT m_bottomWorkbenchSplitter{};
 
 public:
 	//子ウィンドウ
@@ -402,7 +468,7 @@ public:
 	CLogicPointEx*	m_posSaveAry = nullptr;		//!< フォント変更前の座標
 private:
 	int				m_nCurrentFocus = 0;	//!< 現在のフォーカス情報
-	int				m_nWinSizeType;		//!< サイズ変更のタイプ。SIZE_MAXIMIZED, SIZE_MINIMIZED 等。
+	int				m_nWinSizeType = SIZE_RESTORED;	//!< サイズ変更のタイプ。SIZE_MAXIMIZED, SIZE_MINIMIZED 等。
 	BOOL			m_bPageScrollByWheel;		//!< ホイール操作によるページスクロールあり	// 2009.01.17 nasukoji
 	BOOL			m_bHorizontalScrollByWheel;	//!< ホイール操作による横スクロールあり		// 2009.01.17 nasukoji
 	AccelHolder		m_hAccel = nullptr;			//!< ウィンドウ毎のアクセラレータテーブルのハンドル

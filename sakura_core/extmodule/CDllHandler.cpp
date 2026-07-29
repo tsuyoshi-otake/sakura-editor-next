@@ -14,6 +14,19 @@
 #include "StdAfx.h"
 #include "CDllHandler.h"
 #include "util/module.h"
+#include "util/os.h"
+#include "platform/Windows11Platform.h"
+
+namespace {
+
+platform::PeMachine ReadPeMachineFromExeDirectory(LPCWSTR path) noexcept
+{
+	CCurrentDirectoryBackupPoint directoryBackup;
+	ChangeCurrentDirectoryToExeDir();
+	return platform::ReadPeMachineFromFile(path);
+}
+
+} // namespace
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                        生成と破棄                           //
@@ -70,6 +83,13 @@ EDllResult CDllImp::InitDll(LPCWSTR pszSpecifiedDllName)
 
 		//名前が無効の場合は、次の名前候補を試す。
 		if(!pszName || !pszName[0])continue;
+
+		// I386 is the deterministic incompatibility for the x64 product.
+		// Invalid, non-PE, and unreadable candidates retain the existing
+		// LoadLibrary behavior and its native error diagnostic.
+		if (ReadPeMachineFromExeDirectory(pszName) == platform::PeMachine::I386) {
+			return DLL_MACHINE_MISMATCH;
+		}
 
 		//DLLロード。ロードできなかったら次の名前候補を試す。
 		m_hInstance = LoadLibraryExedir(pszName);

@@ -132,6 +132,14 @@ bool CFuncLookup::Funccode2Name( int funccode, WCHAR* ptr, size_t size ) const
 			ptr[bufsize-1] = L'\0';
 			return true;	// 定義されたコマンド
 		}
+		// The legacy RC files are locale-encoded and cannot safely be changed by
+		// the workbench migration. Keep this generated command usable in menus
+		// and key-assignment UI until it receives a translated resource entry.
+		if( funccode == F_OPEN_WORKSPACE_FOLDER ){
+			wcsncpy( ptr, L"作業フォルダーを開く", bufsize );
+			ptr[bufsize-1] = L'\0';
+			return true;
+		}
 	}
 	else if( F_PLUGCOMMAND_FIRST <= funccode && funccode < F_PLUGCOMMAND_LAST ){
 		if( CJackManager::getInstance()->GetCommandName( funccode, ptr, bufsize ) > 0 ){

@@ -49,6 +49,7 @@
 <tr><td>-WX=</td>    <td>ウィンドウ左上のX座標。</td></tr>
 <tr><td>-WY=</td>    <td>ウィンドウ左上のY座標。</td></tr>
 <tr><td>-GROUP=</td> <td>タブモードのグループを指定して開く(1開始)。<br>・0を指定するとアクティブのグループ<br>・未使用のグループ番号を指定すると新規グループ<br>ファイル名指定なしのときも使えます。</td></tr>
+<tr><td>-FOLDER=</td><td>起動時に左エクスプローラーで表示する作業フォルダーを指定します。空白を含むパスは引用符で囲みます。指定しない場合はアクティブファイルの親フォルダー、未保存文書だけの場合は起動時のカレントフォルダーを使用します。</td></tr>
 <tr><td>-M=</td>    <td>-MTYPE 未指定時、起動時に実行するマクロのファイル名を指定します。<br><a href="HLP000201.html">共通設定の自動実行マクロ</a>の後に実行されます。<br>Grep、アウトプットでは実行されません。<br>
 相対パスの場合その時点のカレントフォルダーからの相対になります。<br>
 </td></tr>
@@ -64,6 +65,15 @@ sakura.exe "-M=Editor.InsText('hello world:\r\n')" "-MTYPE=js" -- "myfile.txt"<b
 <tr><td>--</td>      <td>オプション指定の終端を明示します。</td></tr>
 </table>
 <br>
+
+<h3>ワークベンチと統合 Terminal</h3>
+<p>Windows 11 build 22000 以降の x64 版では、左に Explorer、右に Outline、中央の編集領域の下に統合 Terminal を表示できます。新規プロファイルでは Explorer と Outline が表示され、Terminal は最初に開くまで起動しません。</p>
+<ul>
+<li><strong>Ctrl+B</strong>: 左 Explorer の表示／非表示</li>
+<li><strong>Ctrl+J</strong>: 下 Terminal パネルの表示／非表示</li>
+<li><strong>Ctrl+@</strong>: Terminal の表示またはフォーカス（英語配列では Ctrl+`）</li>
+</ul>
+<p>Terminal はユーザー指定のプロファイルを優先し、次にインストール済みの安定版 PowerShell のうち最も新しいものを選択します。PowerShell 7 が見つからない場合は Windows PowerShell 5.1 を使用します。Preview は選択一覧にだけ表示されます。起動済みの Terminal の作業フォルダーは、編集ファイルを切り替えても変更されません。</p>
 
 <h3>単独で使用するオプション</h3>
 <table style="border-collapse: collapse;" id="AutoNumber2" border="1" bordercolor="#111111" cellpadding="0" cellspacing="0">

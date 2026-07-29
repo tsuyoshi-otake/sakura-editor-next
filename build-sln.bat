@@ -2,9 +2,7 @@
 set platform=%1
 set configuration=%2
 
-if "%platform%" == "Win32" (
-	@rem OK
-) else if "%platform%" == "x64" (
+if "%platform%" == "x64" (
 	@rem OK
 ) else (
 	call :showhelp %0
@@ -52,12 +50,10 @@ exit /b 0
 @echo    %~nx1 platform configuration
 @echo.
 @echo parameter
-@echo    platform      : Win32   or x64
+@echo    platform      : x64
 @echo    configuration : Release or Debug
 @echo.
 @echo example
-@echo    %~nx1 Win32 Release
-@echo    %~nx1 Win32 Debug
 @echo    %~nx1 x64   Release
 @echo    %~nx1 x64   Debug
 exit /b 0

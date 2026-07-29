@@ -2826,6 +2826,16 @@ END
 
 STRINGTABLE
 BEGIN
+    F_TOGGLE_LEFT_EXPLORER  "左のエクスプローラーを表示／非表示"
+    F_TOGGLE_RIGHT_OUTLINE  "右のアウトラインを表示／非表示"
+    F_TOGGLE_BOTTOM_PANEL   "下パネルを表示／非表示"
+    F_SHOW_FOCUS_TERMINAL   "統合ターミナルを表示してフォーカス"
+    F_NEW_TERMINAL          "新しい統合ターミナル"
+    F_REDETECT_POWERSHELL   "PowerShellを再検出"
+END
+
+STRINGTABLE
+BEGIN
     F_HELP_CONTENTS         "ヘルプ目次"
     F_HELP_SEARCH           "ヘルプキーワード検索"
     F_MENU_ALLFUNC          "コマンド一覧"

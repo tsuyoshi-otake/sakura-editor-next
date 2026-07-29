@@ -2799,6 +2799,16 @@ END
 
 STRINGTABLE
 BEGIN
+    F_TOGGLE_LEFT_EXPLORER  "显示/隐藏左侧资源管理器"
+    F_TOGGLE_RIGHT_OUTLINE  "显示/隐藏右侧大纲"
+    F_TOGGLE_BOTTOM_PANEL   "显示/隐藏底部面板"
+    F_SHOW_FOCUS_TERMINAL   "显示并聚焦集成终端"
+    F_NEW_TERMINAL          "新建集成终端"
+    F_REDETECT_POWERSHELL   "重新检测 PowerShell"
+END
+
+STRINGTABLE
+BEGIN
     F_HELP_CONTENTS         "打开帮助目录"
     F_HELP_SEARCH           "关键字搜索帮助"
     F_MENU_ALLFUNC          "命令列表"

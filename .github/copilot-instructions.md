@@ -16,11 +16,11 @@ Open `sakura.sln` in Visual Studio and build, or use the command line:
 build-sln.bat <Platform> <Configuration>
 # Example: x64 Release
 build-sln.bat x64 Release
-# Example: Win32 Debug, specifying VS 2019
+# Example: x64 Debug, specifying VS 2019
 set ARG_VSVERSION=16
-build-sln.bat Win32 Debug
+build-sln.bat x64 Debug
 # Run Unit Testing
-Win32\Debug\tests1.exe
+x64\Debug\tests1.exe
 ```
 
 Full build (exe + HTML help + installer):
@@ -177,4 +177,4 @@ All third-party code lives under `externals/` as git submodules:
 
 ### CI
 
-GitHub Actions workflows are in `.github/workflows/`. The main build workflow (`build-sakura.yml`) builds all four combinations of {Win32, x64} × {Debug, Release}. To skip CI for documentation-only changes, include `[ci skip]` or `[skip ci]` in the commit message (note: this does not apply on PR merge).
+GitHub Actions workflows are in `.github/workflows/`. The main build workflow (`build-sakura.yml`) builds the supported x64 Debug and Release configurations. To skip CI for documentation-only changes, include `[ci skip]` or `[skip ci]` in the commit message (note: this does not apply on PR merge).

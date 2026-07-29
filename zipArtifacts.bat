@@ -3,9 +3,7 @@
 set platform=%1
 set configuration=%2
 
-if "%platform%" == "Win32" (
-	@rem OK
-) else if "%platform%" == "x64" (
+if "%platform%" == "x64" (
 	@rem OK
 ) else (
 	call :showhelp %0
@@ -21,14 +19,11 @@ if "%configuration%" == "Release" (
 	exit /b 1
 )
 
-if "%platform%" == "x64" (
-	set ALPHA=1
-) else (
-	set ALPHA=0
-)
+set ALPHA=1
 
 set ZIP_CMD=%~dp0tools\zip\zip.bat
 set LIST_ZIP_CMD=%~dp0tools\zip\listzip.bat
+set CTAGS_ZIP=%~dp0installer\externals\universal-ctags\ctags-v6.1.0-x64.zip
 
 @rem for GIT_TAG_NAME
 call %~dp0tools\githash.bat %~dp0sakura_core
@@ -133,7 +128,7 @@ if not "%RELEASE_PHASE%" == "" (
 @rem PR_NAME      : (option) PRxxx (xxx is a PR number)
 @rem BUILD_NUMBER : (option) buildYYY or "buildLocal" (YYY is build number)
 @rem SHORTHASH    : (option) hash or "buildLocal" (hash is leading 8 charactors)
-@rem platform     : Platform ("Win32" or "x64")
+@rem platform     : Platform ("x64")
 @rem configuration: Configuration ("Debug" or "Release")
 @rem RELEASE_PHASE: (option) "alpha" (x64 build only)
 @rem ----------------------------------------------------------------
@@ -194,76 +189,173 @@ mkdir %WORKDIR_EXE%
 mkdir %WORKDIR_EXE%\license\
 mkdir %WORKDIR_EXE%\license\bregonig\
 mkdir %WORKDIR_EXE%\license\ctags\
+mkdir %WORKDIR_EXE%\license\windows-terminal\
+mkdir %WORKDIR_EXE%\license\fmt\
+mkdir %WORKDIR_EXE%\license\ms-gsl\
+mkdir %WORKDIR_EXE%\license\wil\
 mkdir %WORKDIR_DEV%
 mkdir %WORKDIR_INST%
-copy /Y /B %platform%\%configuration%\sakura.exe %WORKDIR_EXE%\
-copy /Y /B %platform%\%configuration%\*.dll      %WORKDIR_EXE%\
-copy /Y /B %platform%\%configuration%\*.pdb      %WORKDIR_DEV%\
+call :copyRequired "%platform%\%configuration%\sakura.exe" "%WORKDIR_EXE%\" "sakura executable"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\*.dll" "%WORKDIR_EXE%\" "runtime DLLs"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\*.pdb" "%WORKDIR_DEV%\" "debug symbols"
+if errorlevel 1 exit /b 1
 
 : LICENSE
-copy /Y .\LICENSE                                   %WORKDIR_EXE%\license\ > NUL
+call :copyRequired ".\LICENSE" "%WORKDIR_EXE%\license\" "Sakura license"
+if errorlevel 1 exit /b 1
 
 : bregonig
 set INSTALLER_RESOURCES_BRON=%~dp0installer\temp\bron
-copy /Y %INSTALLER_RESOURCES_BRON%\*.txt            %WORKDIR_EXE%\license\bregonig\
+call :copyRequired "%INSTALLER_RESOURCES_BRON%\*.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig licenses"
+if errorlevel 1 exit /b 1
 
 : ctags.exe
 set INSTALLER_RESOURCES_CTAGS=%~dp0installer\temp\ctags
-copy /Y /B %INSTALLER_RESOURCES_CTAGS%\ctags.exe    %WORKDIR_EXE%\
-copy /Y /B %INSTALLER_RESOURCES_CTAGS%\README.md    %WORKDIR_EXE%\license\ctags\
-copy /Y /B %INSTALLER_RESOURCES_CTAGS%\license\*.*  %WORKDIR_EXE%\license\ctags\
+call :copyRequired "%platform%\%configuration%\ctags.exe" "%WORKDIR_EXE%\" "ctags executable"
+if errorlevel 1 exit /b 1
+call :copyRequired "%INSTALLER_RESOURCES_CTAGS%\license\*.*" "%WORKDIR_EXE%\license\ctags\" "ctags licenses"
+if errorlevel 1 exit /b 1
+if not defined CMD_7Z call %~dp0tools\find-tools.bat > NUL
+if not defined CMD_7Z (
+	echo Error: 7z.exe was not found; it is required to stage ctags documentation.
+	exit /b 1
+)
+"%CMD_7Z%" x "%CTAGS_ZIP%" -o"%INSTALLER_RESOURCES_CTAGS%" -y docs > NUL || (echo Error: unable to extract ctags documentation. & exit /b 1)
+if not exist "%INSTALLER_RESOURCES_CTAGS%\docs\index.html" (
+	echo Error: ctags documentation was not extracted.
+	exit /b 1
+)
+xcopy /E /I /Y "%INSTALLER_RESOURCES_CTAGS%\docs" "%WORKDIR_EXE%\license\ctags\docs" > NUL || (echo Error: unable to copy ctags documentation. & exit /b 1)
 
-copy /Y /B help\macro\macro.chm    %WORKDIR_EXE%\
-copy /Y /B help\plugin\plugin.chm  %WORKDIR_EXE%\
-copy /Y /B help\sakura\sakura.chm  %WORKDIR_EXE%\
-copy /Y /B html\sakura-doxygen.chm %WORKDIR_DEV%\
-copy /Y /B html\sakura-doxygen.chi %WORKDIR_DEV%\
+: Windows Terminal parser / Unicode / input provenance
+set WINDOWS_TERMINAL_VENDOR=%~dp0sakura_core\terminal\vendor\windows_terminal
+if not exist "%WINDOWS_TERMINAL_VENDOR%\LICENSE" (
+	echo Windows Terminal license payload was not found.
+	exit /b 1
+)
+if not exist "%WINDOWS_TERMINAL_VENDOR%\UPSTREAM.md" (
+	echo Windows Terminal provenance payload was not found.
+	exit /b 1
+)
+if not exist "%WINDOWS_TERMINAL_VENDOR%\IMPORTED_FILES.md" (
+	echo Windows Terminal imported-files payload was not found.
+	exit /b 1
+)
+call :copyRequired "%WINDOWS_TERMINAL_VENDOR%\LICENSE" "%WORKDIR_EXE%\license\windows-terminal\" "Windows Terminal license"
+if errorlevel 1 exit /b 1
+call :copyRequired "%WINDOWS_TERMINAL_VENDOR%\UPSTREAM.md" "%WORKDIR_EXE%\license\windows-terminal\" "Windows Terminal provenance"
+if errorlevel 1 exit /b 1
+call :copyRequired "%WINDOWS_TERMINAL_VENDOR%\IMPORTED_FILES.md" "%WORKDIR_EXE%\license\windows-terminal\" "Windows Terminal imported-files list"
+if errorlevel 1 exit /b 1
 
-copy /Y /B installer\Output-%platform%\*.exe       %WORKDIR_INST%\
-copy /Y msbuild-%platform%-%configuration%.log     %WORKDIR_LOG%\
-copy /Y msbuild-%platform%-%configuration%.log.csv %WORKDIR_LOG%\
+: Windows Terminal compatibility dependencies
+set WINDOWS_TERMINAL_LICENSES=%~dp0sakura_core\terminal\vendor\licenses
+if not exist "%WINDOWS_TERMINAL_LICENSES%\fmt\LICENSE" (
+	echo fmt license payload was not found.
+	exit /b 1
+)
+if not exist "%WINDOWS_TERMINAL_LICENSES%\ms-gsl\LICENSE" (
+	echo Microsoft GSL license payload was not found.
+	exit /b 1
+)
+if not exist "%WINDOWS_TERMINAL_LICENSES%\wil\LICENSE" (
+	echo WIL license payload was not found.
+	exit /b 1
+)
+call :copyRequired "%WINDOWS_TERMINAL_LICENSES%\fmt\LICENSE" "%WORKDIR_EXE%\license\fmt\" "fmt license"
+if errorlevel 1 exit /b 1
+call :copyRequired "%WINDOWS_TERMINAL_LICENSES%\ms-gsl\LICENSE" "%WORKDIR_EXE%\license\ms-gsl\" "Microsoft GSL license"
+if errorlevel 1 exit /b 1
+call :copyRequired "%WINDOWS_TERMINAL_LICENSES%\wil\LICENSE" "%WORKDIR_EXE%\license\wil\" "WIL license"
+if errorlevel 1 exit /b 1
+
+call :copyRequired "help\macro\macro.chm" "%WORKDIR_EXE%\" "macro help"
+if errorlevel 1 exit /b 1
+call :copyRequired "help\plugin\plugin.chm" "%WORKDIR_EXE%\" "plugin help"
+if errorlevel 1 exit /b 1
+call :copyRequired "help\sakura\sakura.chm" "%WORKDIR_EXE%\" "Sakura help"
+if errorlevel 1 exit /b 1
+if exist "html\sakura-doxygen.chm" (
+	call :copyRequired "html\sakura-doxygen.chm" "%WORKDIR_DEV%\" "Doxygen help"
+	if errorlevel 1 exit /b 1
+)
+if exist "html\sakura-doxygen.chi" (
+	call :copyRequired "html\sakura-doxygen.chi" "%WORKDIR_DEV%\" "Doxygen index"
+	if errorlevel 1 exit /b 1
+)
+
+call :copyRequired "installer\Output-%platform%\*.exe" "%WORKDIR_INST%\" "installer executable"
+if errorlevel 1 exit /b 1
+call :copyRequired "msbuild-%platform%-%configuration%.log" "%WORKDIR_LOG%\" "build log"
+if errorlevel 1 exit /b 1
+if exist "msbuild-%platform%-%configuration%.log.csv" (
+	call :copyRequired "msbuild-%platform%-%configuration%.log.csv" "%WORKDIR_LOG%\" "build log CSV"
+	if errorlevel 1 exit /b 1
+)
 if exist "msbuild-%platform%-%configuration%.log.xlsx" (
-	copy /Y /B "msbuild-%platform%-%configuration%.log.xlsx" %WORKDIR_LOG%\
+	call :copyRequired "msbuild-%platform%-%configuration%.log.xlsx" "%WORKDIR_LOG%\" "build log spreadsheet"
+	if errorlevel 1 exit /b 1
 )
 set ISS_LOG_FILE=iss-%platform%-%configuration%.log
 if exist "%ISS_LOG_FILE%" (
-	copy /Y /B "%ISS_LOG_FILE%" %WORKDIR_LOG%\
+	call :copyRequired "%ISS_LOG_FILE%" "%WORKDIR_LOG%\" "installer log"
+	if errorlevel 1 exit /b 1
 )
 
-copy /Y sakura_core\githash.h                      %WORKDIR_LOG%\
+call :copyRequired "sakura_core\githash.h" "%WORKDIR_LOG%\" "Git hash header"
+if errorlevel 1 exit /b 1
 if exist "cppcheck-%platform%-%configuration%.xml" (
-	copy /Y "cppcheck-%platform%-%configuration%.xml" %WORKDIR_LOG%\
+	call :copyRequired "cppcheck-%platform%-%configuration%.xml" "%WORKDIR_LOG%\" "cppcheck XML"
+	if errorlevel 1 exit /b 1
 )
 if exist "cppcheck-%platform%-%configuration%.log" (
-	copy /Y "cppcheck-%platform%-%configuration%.log" %WORKDIR_LOG%\
+	call :copyRequired "cppcheck-%platform%-%configuration%.log" "%WORKDIR_LOG%\" "cppcheck log"
+	if errorlevel 1 exit /b 1
 )
 if exist "doxygen-%platform%-%configuration%.log" (
-	copy /Y "doxygen-%platform%-%configuration%.log" %WORKDIR_LOG%\
+	call :copyRequired "doxygen-%platform%-%configuration%.log" "%WORKDIR_LOG%\" "Doxygen log"
+	if errorlevel 1 exit /b 1
 )
 
-copy /Y installer\warning.txt   %WORKDIR%\
+call :copyRequired "installer\warning.txt" "%WORKDIR%\" "release warning"
+if errorlevel 1 exit /b 1
 if "%ALPHA%" == "1" (
-	copy /Y installer\warning-alpha.txt   %WORKDIR%\
+	call :copyRequired "installer\warning-alpha.txt" "%WORKDIR%\" "alpha release warning"
+	if errorlevel 1 exit /b 1
 )
 
-pushd %WORKDIR_LOG%  && call %ZIP_CMD%       %OUTFILE_LOG%  .  && popd
+call :archiveRequired "%WORKDIR_LOG%" "%OUTFILE_LOG%" "log"
+if errorlevel 1 exit /b 1
+call :archiveRequired "%WORKDIR%" "%OUTFILE%" "complete"
+if errorlevel 1 exit /b 1
 
 @rem copy text files for warning after zipping %OUTFILE% because %WORKDIR% is the parent directory of %WORKDIR_EXE% and %WORKDIR_INST%.
 if "%ALPHA%" == "1" (
-	copy /Y installer\warning-alpha.txt   %WORKDIR_EXE%\
-	copy /Y installer\warning-alpha.txt   %WORKDIR_INST%\
+	call :copyRequired "installer\warning-alpha.txt" "%WORKDIR_EXE%\" "executable alpha warning"
+	if errorlevel 1 exit /b 1
+	call :copyRequired "installer\warning-alpha.txt" "%WORKDIR_INST%\" "installer alpha warning"
+	if errorlevel 1 exit /b 1
 )
-copy /Y installer\warning.txt        %WORKDIR_EXE%\
-copy /Y installer\warning.txt        %WORKDIR_INST%\
+call :copyRequired "installer\warning.txt" "%WORKDIR_EXE%\" "executable warning"
+if errorlevel 1 exit /b 1
+call :copyRequired "installer\warning.txt" "%WORKDIR_INST%\" "installer warning"
+if errorlevel 1 exit /b 1
 
-pushd %WORKDIR_INST% && call %ZIP_CMD%       %OUTFILE_INST% .  && popd
-pushd %WORKDIR_EXE%  && call %ZIP_CMD%       %OUTFILE_EXE%  .  && popd
-pushd %WORKDIR_DEV%  && call %ZIP_CMD%       %OUTFILE_DEV%  .  && popd
+call :archiveRequired "%WORKDIR_INST%" "%OUTFILE_INST%" "installer"
+if errorlevel 1 exit /b 1
+call :archiveRequired "%WORKDIR_EXE%" "%OUTFILE_EXE%" "executable"
+if errorlevel 1 exit /b 1
+call :archiveRequired "%WORKDIR_DEV%" "%OUTFILE_DEV%" "development"
+if errorlevel 1 exit /b 1
 
 @echo start zip asm
 mkdir %WORKDIR_ASM%
-copy /Y build\%platform%\%configuration%\sakura_core\*.asm %WORKDIR_ASM%\ > NUL
-pushd %WORKDIR_ASM%  && call %ZIP_CMD%       %OUTFILE_ASM%  .  && popd
+call :copyRequired "build\%platform%\%configuration%\sakura_core\*.asm" "%WORKDIR_ASM%\" "assembly listings"
+if errorlevel 1 exit /b 1
+call :archiveRequired "%WORKDIR_ASM%" "%OUTFILE_ASM%" "assembly"
+if errorlevel 1 exit /b 1
 
 @echo end   zip asm
 
@@ -277,6 +369,36 @@ if exist "%WORKDIR_ASM%" (
 
 exit /b 0
 
+:copyRequired
+xcopy /Y /I /Q /H "%~1" "%~f2\" > NUL
+if errorlevel 1 (
+	echo Error: unable to copy %~3.
+	exit /b 1
+)
+if not exist "%~f2\%~nx1" (
+	echo Error: copied %~3 was not found in the destination.
+	exit /b 1
+)
+goto :eof
+
+:archiveRequired
+pushd "%~1" || (
+	echo Error: unable to enter the %~3 artifact directory.
+	exit /b 1
+)
+call "%ZIP_CMD%" "%~2" .
+set ARCHIVE_ERROR=%ERRORLEVEL%
+popd
+if not "%ARCHIVE_ERROR%" == "0" (
+	echo Error: unable to create the %~3 archive.
+	exit /b 1
+)
+if not exist "%~2" (
+	echo Error: the %~3 archive was not created.
+	exit /b 1
+)
+goto :eof
+
 @rem ------------------------------------------------------------------------------
 @rem show help
 @rem see http://orangeclover.hatenablog.com/entry/20101004/1286120668
@@ -287,12 +409,10 @@ exit /b 0
 @echo    %~nx1 platform configuration
 @echo.
 @echo parameter
-@echo    platform      : Win32   or x64
+@echo    platform      : x64
 @echo    configuration : Release or Debug
 @echo.
 @echo example
-@echo    %~nx1 Win32 Release
-@echo    %~nx1 Win32 Debug
 @echo    %~nx1 x64   Release
 @echo    %~nx1 x64   Debug
 exit /b 0

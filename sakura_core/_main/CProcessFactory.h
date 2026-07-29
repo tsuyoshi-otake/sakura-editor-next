@@ -43,6 +43,7 @@ public:
 private:
 	bool	IsValidVersion() const;
 	bool	ProfileSelect(HINSTANCE hInstance, LPCWSTR lpCmdLine) const;
+	void	MigrateVirtualStoreIniForSelectedProfile() const;
 	bool	IsStartingControlProcess() const;
 };
 

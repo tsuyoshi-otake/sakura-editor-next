@@ -46,6 +46,14 @@ https://github.com/sakura-editor/sakura/security/advisories
 
 GitHubで公開しているので [GitHub Actionsのビルドページ](https://github.com/sakura-editor/sakura/actions/workflows/build-sakura.yml?query=branch%3Amaster) より開発中の最新版をダウンロードすることもできます。
 
+### Sakura Code ワークベンチ版の動作環境
+
+Sakura Code ワークベンチ版は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。
+
+左の Explorer、右の Outline、下の統合 Terminal を備えます。新規プロファイルでは Explorer と Outline を表示し、Terminal は必要になるまで起動しません。`Ctrl+B` で左パネル、`Ctrl+J` で下パネルを表示／非表示にできます。Terminal は `Ctrl+@`（英語配列では `Ctrl+\``）で表示またはフォーカスします。
+
+統合 Terminal は、ユーザーが指定したプロファイルを優先し、次にインストール済みの安定版 PowerShell のうち最も新しいものを選びます。PowerShell 7 がない場合は Windows PowerShell 5.1 にフォールバックします。ネットワークへの問い合わせや自動インストールは行いません。
+
 ## 開発情報
 
 ### How to build

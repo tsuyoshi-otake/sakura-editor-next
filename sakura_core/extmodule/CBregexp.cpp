@@ -32,6 +32,14 @@
 #include "env/DLLSHAREDATA.h"
 #include "apiwrap/StdControl.h"
 
+namespace {
+
+constexpr wchar_t kX86ModuleUnsupportedMessage[] =
+	L"32-bit modules cannot be used with the x64 version of Sakura Code.\n"
+	L"Install and select the x64 version of the module.";
+
+} // namespace
+
 // Compile時、行頭置換(len=0)の時にダミー文字列(１つに統一) by かろと
 const wchar_t CBregexp::m_tmpBuf[2] = L"\0";
 
@@ -583,7 +591,10 @@ bool InitRegexp(
 	if( DLL_SUCCESS != eDllResult ){
 		if( bShowMessage ){
 			LPCWSTR pszMsg = L"";
-			if(eDllResult==DLL_LOADFAILURE){
+			if(eDllResult==DLL_MACHINE_MISMATCH){
+				pszMsg = kX86ModuleUnsupportedMessage;
+			}
+			else if(eDllResult==DLL_LOADFAILURE){
 				pszMsg = LS(STR_BREGONIG_LOAD);
 			}
 			else if(eDllResult==DLL_INITFAILURE){

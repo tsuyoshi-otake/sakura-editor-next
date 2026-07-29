@@ -29,6 +29,27 @@
     <Filter Include="Other Files\dlg">
       <UniqueIdentifier>{fe8a4e97-7407-4cb3-9387-7a58c099410c}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\workbench">
+      <UniqueIdentifier>{d3a288e7-580f-4876-9595-500ae1997d6e}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\platform">
+      <UniqueIdentifier>{2b3bb0f2-9253-4128-a7c0-5c926e53be53}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\terminal">
+      <UniqueIdentifier>{1e1bdd3c-4abc-489a-813e-3009a5c42279}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\terminal\window">
+      <UniqueIdentifier>{42ddcfc4-d630-4dfd-a90f-2be4829db080}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\theme">
+      <UniqueIdentifier>{76a0a45e-2586-4076-a6cb-76407e8e9e7b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\window">
+      <UniqueIdentifier>{3c46cf4d-69ef-4f62-95c3-2e4fd01980a4}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\env">
+      <UniqueIdentifier>{5bf0f7ad-0291-4dac-b6dc-1f07b0df702a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\src\test\cmake\tests1.cmake">
@@ -60,6 +81,69 @@
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\window\UiaTestSuite.cpp">
       <Filter>Other Files\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\window\CustomFrameTest.cpp">
+      <Filter>Test Files\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\window\CustomUiAutomationProviderTest.cpp">
+      <Filter>Test Files\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\Windows11PlatformTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalModelTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalUnicodeTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalParserTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp">
+      <Filter>Test Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp">
+      <Filter>Test Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp">
+      <Filter>Test Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp">
+      <Filter>Test Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp">
+      <Filter>Test Files\theme</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cmemory.cpp">
       <Filter>Test Files</Filter>
@@ -208,6 +292,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-csharedata.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp">
+		<Filter>Test Files\env</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-messageboxf.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>

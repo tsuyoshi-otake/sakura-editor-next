@@ -5,7 +5,7 @@
 
 # Define the compiletests's path
 set(COMPILE_TEST_BUILD_DIR "${CMAKE_BINARY_DIR}/compiletests")
-set(COMPILE_TEST_CACHE "${COMPILE_TEST_BUILD_DIR}/compiletests/CMakeCache.txt")
+set(COMPILE_TEST_CACHE "${COMPILE_TEST_BUILD_DIR}/CMakeCache.txt")
 
 add_custom_command(
   OUTPUT "${COMPILE_TEST_CACHE}"

@@ -1,0 +1,28 @@
+# Imported Windows Terminal files
+
+Upstream repository: https://github.com/microsoft/terminal
+Pinned commit: `cd89e8226b423ee82dc56c3215ae4a43459a32e8`
+Hash algorithm: SHA-256
+
+All code files below are textually copied from the pinned upstream source. The vendor copy has LF line endings because it was added through the repository patch workflow; this is the only byte-level difference, so the recorded upstream and vendored hashes differ. No source-level modifications were made. Documentation files, `src/types/precomp.h`, `sakura_compat/`, `src/terminal/{parser,input}/precomp.h`, and `src/terminal/types/inc/` are local compatibility/provenance files and are not upstream imports. The compiled upstream translation units are `CodepointWidthDetector.cpp`, `stateMachine.cpp`, `terminalInput.cpp`, and `mouseInput.cpp`. `tracing.cpp` is retained as a pinned hash-tracked snapshot but is deliberately not compiled; Sakura-owned no-op tracing supplies the needed parser-tracing contract. The exact boundary is recorded in `DEPENDENCY_GAPS.md`.
+
+| Upstream path | Vendored path | Upstream SHA-256 | Vendored SHA-256 |
+| --- | --- | --- | --- |
+| `LICENSE` | `sakura_core/terminal/vendor/windows_terminal/LICENSE` | `5d177f23ecfeb0ea8e050b6a5a16355e1ae9a0b286436ca8f83ed08b3795be6b` | `ad0cf28f3381ca9bb0bf101d127402d44c17bfa0991e1a00bff7ae6679e9dada` |
+| `src/terminal/parser/IStateMachineEngine.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/parser/IStateMachineEngine.hpp` | `e20a015fa6e22dcb3f5e00fbd584bf044850572eded122cd6da41ac3e911220a` | `a20905c7d24beaee2e455b013e67377f4bd15e7594d5f6a30cb2083ca7432d15` |
+| `src/terminal/parser/stateMachine.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/parser/stateMachine.hpp` | `20631079abec931887f45a6acc4602c5e3b88c01ab841cc8bdf6bd0ea70952b0` | `ceb4ea835074f58f3639a00273725819c3634b2a0f8eb90146b115cf44ef8aac` |
+| `src/terminal/parser/stateMachine.cpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/parser/stateMachine.cpp` | `552dfd7eef3558effd2e34d135eef7f34865b94cb5ca8a38b083ff4ad0d32086` | `df03cace8c365f3ef1cdca9f29fe397b942a48bdf0b4cf79cce068cd96cb8512` |
+| `src/terminal/parser/ascii.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/parser/ascii.hpp` | `c0aa848c9456616f4f5b96f195de1f9e0a23eb9c169501d9c72e90df8a747383` | `5d51bb8c20b3155d6892172302349f1f8b5ab2ab24c853ae88b5bfabb9d2cbb5` |
+| `src/terminal/parser/tracing.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/parser/tracing.hpp` | `cd3b577fb385c7481881a3ba3ee562764f0b8eeabe2f4cc5a4fdfd69ef1e068f` | `c434df4655d841ce6818c0a7f18cbe7c7659c7cf6386e7cbe00a66c129acd4b0` |
+| `src/terminal/parser/tracing.cpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/parser/tracing.cpp` | `f90405036d5f2be59b68927b156336d150f0c25a3aa81c79668fcee320c1bed0` | `d4838b6e6958bc6a5abdf16d07f4c99bf2607f39c6e806a667ceda355b4c3697` |
+| `src/terminal/input/terminalInput.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/input/terminalInput.hpp` | `c4de61c40f1cf887cd7edd0953a775f809e6312c47bcf5001782b8090f4fad0b` | `26528eee201f506c5e6e403795967c1853fed40577611c79b1becb22ab5828da` |
+| `src/terminal/input/terminalInput.cpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/input/terminalInput.cpp` | `0f79204a7d3c70f5e8be12f1d9cb372234ecb3b841898a2491b994a2eebf0770` | `04fe9c0a07993e3eb64fcd521d6aef4cf76976da59e16d02582bc4b05e471e45` |
+| `src/terminal/input/mouseInput.cpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/input/mouseInput.cpp` | `570be9ac4bcedb87c415886429b55d15ee1100db8ed6f10725ea18ab8767695a` | `fdf920589182498629c515676eaa05898fd2babd42facce6df7ce7d87bfde31e` |
+| `src/types/inc/CodepointWidthDetector.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/types/inc/CodepointWidthDetector.hpp` | `568206b208302fc83b67149f4f83f6e8e308d71196a484cc4682ddeb1fc79b3d` | `358d8d1454a96ab3003f21dcda47f23c9abbef5145a2bac2126b7829a1531071` |
+| `src/types/CodepointWidthDetector.cpp` | `sakura_core/terminal/vendor/windows_terminal/src/types/CodepointWidthDetector.cpp` | `b41c3a844a313c6f61ae04322440296308830920c21f110034e20ae415ac6d5f` | `f60d4bc4e37b3473c0e0b61baeb9c15eae2addf3172cf53b9192021050af859a` |
+| `src/inc/til/unicode.h` | `sakura_core/terminal/vendor/windows_terminal/src/inc/til/unicode.h` | `c2c56b8a88e7a03b2975208ed675f6ad96b110c5725768b4c9f7f2d2c4d31a40` | `c2c56b8a88e7a03b2975208ed675f6ad96b110c5725768b4c9f7f2d2c4d31a40` |
+| `src/inc/til/enumset.h` | `sakura_core/terminal/vendor/windows_terminal/src/inc/til/enumset.h` | `a46cf31d7b2df9943a9a00da4cfe2423540ffb8509f4bdd68bf990866a8ccae4` | `4deb1e70576f5d60585e2056934b3265b8ba0fd14c8f569826d27039e49e0ae3` |
+| `src/inc/til/point.h` | `sakura_core/terminal/vendor/windows_terminal/src/inc/til/point.h` | `efb778b08cb67dfb3a786865b21f9cc78ba76a38e068be3f9a887c89c852b364` | `a726969579f30aa8d496471fb463f897be09ea2b27004c4e37a6b7ac3113ac5e` |
+| `src/types/inc/IInputEvent.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/types/inc/IInputEvent.hpp` | `0e0d0f6aec8d7658a9fb8e6101ad3acbfdca1a74c3e42c7ddc762a3b421cb4c5` | `a58ce5059819ccb2af1f8be6944d4759718cfa4db583124c47f879c7b84d582e` |
+| `src/types/inc/utils.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/types/inc/utils.hpp` | `569100cda66113dae06fdb29e3f64b0939b4e26224e7713c3d8cae0db8c5150b` | `5e35237e6a561d806513948d5b07b38a065ebe874d64a7b9af0a2dba8c214f42` |
+| `src/terminal/adapter/DispatchTypes.hpp` | `sakura_core/terminal/vendor/windows_terminal/src/terminal/adapter/DispatchTypes.hpp` | `b37f33bb86ca061d8b9560e9874b2f12df3364e7e010bae56a002aa8534836c0` | `d29005bb4e0ff00a5565be2c90401a384c60c9ca80f0b5a78584a8c02ae3f336` |

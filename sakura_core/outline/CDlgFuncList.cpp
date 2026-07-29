@@ -224,6 +224,20 @@ CDlgFuncList::CDlgFuncList() : CDialog(true)
 	m_bDummyLParamMode = false;
 }
 
+void CDlgFuncList::SetWorkbenchParent( HWND parent ) noexcept
+{
+	m_hwndWorkbenchParent = parent;
+}
+
+void CDlgFuncList::SetWorkbenchMode( bool enabled ) noexcept
+{
+	// The dialog template style and parent are fixed at creation time.  Callers close the
+	// current dialog before switching modes; repeated assignments remain harmless.
+	if( GetHwnd() == nullptr || m_bWorkbenchMode == enabled ) {
+		m_bWorkbenchMode = enabled;
+	}
+}
+
 /*!
 	標準以外のメッセージを捕捉する
 
@@ -236,7 +250,7 @@ INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM
 
 	switch( wMsg ){
 	case WM_ACTIVATEAPP:
-		if( IsDocking() )
+		if( IsDocking() || IsWorkbenchMode() )
 			break;
 
 		// 自分が最初にアクティブ化された場合は一旦編集ウィンドウをアクティブ化して戻す
@@ -256,18 +270,25 @@ INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM
 		break;
 
 	case WM_NCPAINT:
+		if( IsWorkbenchMode() ) return result;
 		return OnNcPaint( hWnd, wMsg, wParam, lParam );
 	case WM_NCCALCSIZE:
+		if( IsWorkbenchMode() ) return result;
 		return OnNcCalcSize( hWnd, wMsg, wParam, lParam );
 	case WM_NCHITTEST:
+		if( IsWorkbenchMode() ) return result;
 		return OnNcHitTest( hWnd, wMsg, wParam, lParam );
 	case WM_NCMOUSEMOVE:
+		if( IsWorkbenchMode() ) return result;
 		return OnNcMouseMove( hWnd, wMsg, wParam, lParam );
 	case WM_MOUSEMOVE:
+		if( IsWorkbenchMode() ) return result;
 		return OnMouseMove( hWnd, wMsg, wParam, lParam );
 	case WM_NCLBUTTONDOWN:
+		if( IsWorkbenchMode() ) return result;
 		return OnNcLButtonDown( hWnd, wMsg, wParam, lParam );
 	case WM_LBUTTONUP:
+		if( IsWorkbenchMode() ) return result;
 		return OnLButtonUp( hWnd, wMsg, wParam, lParam );
 	case WM_NCRBUTTONUP:
 		if( IsDocking() && wParam == HTCAPTION ){
@@ -376,8 +397,9 @@ HWND CDlgFuncList::DoModeless(
 	m_bWaitTreeProcess = false;
 
 	m_eDockSide = ProfDockSide();
+	if( IsWorkbenchMode() && m_hwndWorkbenchParent == nullptr ) return nullptr;
 	HWND hwndRet;
-	if( IsDocking() ){
+	if( IsDocking() || IsWorkbenchMode() ){
 		// ドッキング用にダイアログテンプレートに手を加えてから表示する（WS_CHILD化）
 		HINSTANCE hInstance2 = CSelectLang::getLangRsrcInstance();
 		if( !m_pDlgTemplate || m_lastRcInstance != hInstance2 ){
@@ -394,10 +416,12 @@ HWND CDlgFuncList::DoModeless(
 		LPDLGTEMPLATE pDlgTemplate = (LPDLGTEMPLATE)::GlobalAlloc( GMEM_FIXED, m_dwDlgTmpSize );
 		if( !pDlgTemplate ) return nullptr;
 		::CopyMemory( pDlgTemplate, m_pDlgTemplate, m_dwDlgTmpSize );
-		pDlgTemplate->style = (WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | DS_SETFONT);
-		hwndRet = CDialog::DoModeless( hInstance, MyGetAncestor(hwndParent, GA_ROOT), pDlgTemplate, lParam, SW_HIDE );
+		pDlgTemplate->style = (WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | DS_SETFONT)
+			| (IsWorkbenchMode()? DS_CONTROL: 0);
+		HWND dialogParent = IsWorkbenchMode()? m_hwndWorkbenchParent: MyGetAncestor(hwndParent, GA_ROOT);
+		hwndRet = CDialog::DoModeless( hInstance, dialogParent, pDlgTemplate, lParam, SW_HIDE );
 		::GlobalFree( pDlgTemplate );
-		GetEditWnd().EndLayoutBars( m_bEditWndReady );	// 画面の再レイアウト
+		if( !IsWorkbenchMode() ) GetEditWnd().EndLayoutBars( m_bEditWndReady );	// 画面の再レイアウト
 	}else{
 		hwndRet = CDialog::DoModeless( hInstance, MyGetAncestor(hwndParent, GA_ROOT), IDD_FUNCLIST, lParam, SW_SHOW );
 	}
@@ -696,7 +720,7 @@ void CDlgFuncList::SetData()
 	//空行をどう扱うかのチェックボックスはブックマーク一覧のときだけ表示する
 	if(OUTLINE_BOOKMARK == m_nListType){
 		::EnableWindow( GetItemHwnd( IDC_CHECK_bMarkUpBlankLineEnable ), TRUE );
-		if( !IsDocking() ) ::ShowWindow( GetItemHwnd( IDC_CHECK_bMarkUpBlankLineEnable ), SW_SHOW );
+		if( !UsesCompactPanelLayout() ) ::ShowWindow( GetItemHwnd( IDC_CHECK_bMarkUpBlankLineEnable ), SW_SHOW );
 	}else{
 		::ShowWindow( GetItemHwnd( IDC_CHECK_bMarkUpBlankLineEnable ), SW_HIDE );
 		::EnableWindow( GetItemHwnd( IDC_CHECK_bMarkUpBlankLineEnable ), FALSE );
@@ -1739,7 +1763,14 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 	/* アウトライン位置とサイズを初期化する */ // 20060201 aroka
 	CEditView* pcEditView=(CEditView*)m_lParam;
 	if( pcEditView != nullptr ){
-		if( !IsDocking() && m_pShareData->m_Common.m_sOutline.m_bRememberOutlineWindowPos ){
+		if( IsWorkbenchMode() ){
+			m_xPos = 0;
+			m_yPos = 0;
+			m_nShowCmd = SW_HIDE;
+			::GetClientRect( m_hwndWorkbenchParent, &rc );
+			m_nWidth = std::max( 0L, rc.right - rc.left );
+			m_nHeight = std::max( 0L, rc.bottom - rc.top );
+		}else if( !IsDocking() && m_pShareData->m_Common.m_sOutline.m_bRememberOutlineWindowPos ){
 			WINDOWPLACEMENT cWindowPlacement;
 			cWindowPlacement.length = sizeof( cWindowPlacement );
 			if (::GetWindowPlacement( GetEditWnd().GetHwnd(), &cWindowPlacement )){
@@ -1777,7 +1808,7 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 		}
 	}
 
-	if( !m_bInChangeLayout ){	// ChangeLayout() 処理中は設定変更しない
+	if( !IsWorkbenchMode() && !m_bInChangeLayout ){	// ChangeLayout() 処理中は設定変更しない
 		bool bType = (ProfDockSet() != 0);
 		if( bType ){
 			CDocTypeManager().GetTypeConfig(CTypeConfig(m_nDocType), m_type);
@@ -1793,7 +1824,7 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 		}
 	}
 
-	if( !IsDocking() ){
+	if( !UsesCompactPanelLayout() ){
 		/* 基底クラスメンバ */
 		CreateSizeBox();
 
@@ -1837,7 +1868,9 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 		ti.rect.bottom = 0;
 		ApiWrap::Tooltip_AddTool( m_hwndToolTip, &ti );
 
-		// 不要なコントロールを隠す
+	}
+	if( UsesCompactPanelLayout() ){
+		// 埋め込み時は内容だけを残す。タイトルとリサイズUIはpanel hostが所有する。
 		HWND hwndPrev;
 		HWND hwnd = ::GetWindow( GetHwnd(), GW_CHILD );
 		while( hwnd ){
@@ -1870,7 +1903,7 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 	for( int i = 0; i < int(std::size(anchorList)); i++ ){
 		GetItemClientRect( anchorList[i].id, m_rcItems[i] );
 		// ドッキング中はウィンドウ幅いっぱいまで伸ばす
-		if( IsDocking() ){
+		if( UsesCompactPanelLayout() ){
 			if( anchorList[i].anchor == ANCHOR_ALL ){
 				::GetClientRect( hwndDlg, &rc );
 				m_rcItems[i].right = rc.right;
@@ -1904,7 +1937,10 @@ BOOL CDlgFuncList::OnBnClicked( int wID )
 		if( m_bModal ){		/* モーダル ダイアログか */
 			::EndDialog( GetHwnd(), 0 );
 		}else{
-			if( IsDocking() ){
+			if( IsWorkbenchMode() ){
+				// The host owns panel visibility. Escape must not destroy the child dialog.
+				return TRUE;
+			}else if( IsDocking() ){
 				::SetFocus( ((CEditView*)m_lParam)->GetHwnd() );
 			}else{
 				::DestroyWindow( GetHwnd() );
@@ -1984,7 +2020,7 @@ BOOL CDlgFuncList::OnNotify(NMHDR* pNMHDR)
 		pnmtv = (NM_TREEVIEW *)pNMHDR;
 		switch( pnmtv->hdr.code ){
 		case NM_CLICK:
-			if( IsDocking() ){
+			if( UsesCompactPanelLayout() ){
 				// この時点ではまだ選択変更されていないが OnJump() の予備動作として先に選択変更しておく
 				TVHITTESTINFO tvht = {};
 				::GetCursorPos( &tvht.pt );
@@ -2045,7 +2081,7 @@ BOOL CDlgFuncList::OnNotify(NMHDR* pNMHDR)
 			SortListView( hwndList, m_nSortCol );
 			return TRUE;
 		case NM_CLICK:
-			if( IsDocking() ){
+			if( UsesCompactPanelLayout() ){
 				OnJump( false, false );
 				return TRUE;
 			}
@@ -2066,7 +2102,7 @@ BOOL CDlgFuncList::OnNotify(NMHDR* pNMHDR)
 	}
 
 #ifdef DEFINE_SYNCCOLOR
-	if( IsDocking() ){
+	if( UsesCompactPanelLayout() ){
 		if( hwndList == pNMHDR->hwndFrom || hwndTree == pNMHDR->hwndFrom ){
 			if(pNMHDR->code == NM_CUSTOMDRAW ){
 				LPNMCUSTOMDRAW lpnmcd = (LPNMCUSTOMDRAW)pNMHDR;
@@ -2287,8 +2323,8 @@ BOOL CDlgFuncList::OnDestroy( void )
 
 	/* アウトライン ■位置とサイズを記憶する */ // 20060201 aroka
 	// 前提条件：m_lParam が CDialog::OnDestroy でクリアされないこと
-	HWND hwndEdit = GetEditWnd().GetHwnd();
-	if( !IsDocking() && m_pShareData->m_Common.m_sOutline.m_bRememberOutlineWindowPos ){
+	HWND hwndEdit = IsWorkbenchMode()? nullptr: GetEditWnd().GetHwnd();
+	if( !IsWorkbenchMode() && !IsDocking() && m_pShareData->m_Common.m_sOutline.m_bRememberOutlineWindowPos ){
 		/* 親のウィンドウ位置・サイズを記憶 */
 		WINDOWPLACEMENT cWindowPlacement;
 		cWindowPlacement.length = sizeof( cWindowPlacement );
@@ -2303,12 +2339,12 @@ BOOL CDlgFuncList::OnDestroy( void )
 
 	// ドッキング画面を閉じるときは画面を再レイアウトする
 	// ドッキングでアプリ終了時には hwndEdit は NULL になっている（親に先に WM_DESTROY が送られるため）
-	if( IsDocking() && hwndEdit )
+	if( !IsWorkbenchMode() && IsDocking() && hwndEdit )
 		GetEditWnd().EndLayoutBars();
 
 	// 明示的にアウトライン画面を閉じたときだけアウトライン表示フラグを OFF にする
 	// フローティングでアプリ終了時やタブモードで裏にいる場合は ::IsWindowVisible( hwndEdit ) が FALSE を返す
-	if( hwndEdit && ::IsWindowVisible( hwndEdit ) && !m_bInChangeLayout ){	// ChangeLayout() 処理中は設定変更しない
+	if( !IsWorkbenchMode() && hwndEdit && ::IsWindowVisible( hwndEdit ) && !m_bInChangeLayout ){	// ChangeLayout() 処理中は設定変更しない
 		bool bType = (ProfDockSet() != 0);
 		if( bType ){
 			CDocTypeManager().GetTypeConfig(CTypeConfig(m_nDocType), m_type);
@@ -2497,7 +2533,7 @@ BOOL CDlgFuncList::OnJump( bool bCheckAutoClose, bool bFileJump )	//2002.02.08 h
 			}
 			if( bCheckAutoClose && bFileJumpSelf ){
 				/* アウトライン ダイアログを自動的に閉じる */
-				if( IsDocking() ){
+				if( UsesCompactPanelLayout() ){
 					::PostMessageAny( ((CEditView*)m_lParam)->GetHwnd(), MYWM_SETACTIVEPANE, 0, 0 );
 				}
 				else if( m_pShareData->m_Common.m_sOutline.m_bAutoCloseDlgFuncList ){
@@ -2599,7 +2635,7 @@ void CDlgFuncList::SetWindowText( const WCHAR* szTitle )
 */
 void CDlgFuncList::SyncColor( void )
 {
-	if( !IsDocking() )
+	if( !UsesCompactPanelLayout() )
 		return;
 #ifdef DEFINE_SYNCCOLOR
 	// テキスト色・背景色をビューと同色にする
@@ -2816,7 +2852,7 @@ BOOL CDlgFuncList::OnTimer( HWND hwnd, [[maybe_unused]] UINT uMsg, WPARAM wParam
 			bool bSelf = false;
 			pcView->TagJumpSub( pszFile, m_pointTimerJump, false, false, &bSelf );
 			if( m_bTimerJumpAutoClose ){
-				if( IsDocking() ){
+				if( UsesCompactPanelLayout() ){
 					if( bSelf ){
 						::PostMessageAny( pcView->GetHwnd(), MYWM_SETACTIVEPANE, 0, 0 );
 					}
@@ -3204,12 +3240,10 @@ void CDlgFuncList::DoMenu( POINT pt, HWND hwndFrom )
 	EDockSide eDockSide = ProfDockSide();	// 設定上の配置
 	UINT uFlags = MF_BYPOSITION | MF_STRING;
 	const bool bDropDown = (hwndFrom == GetHwnd()); // true=ドロップダウン, false=右クリック
+	const bool bWorkbench = IsWorkbenchMode();
 	HMENU hMenu = ::CreatePopupMenu();
-	HMENU hMenuSub = bDropDown ? nullptr : ::CreatePopupMenu();
+	HMENU hMenuSub = (bDropDown || bWorkbench) ? nullptr : ::CreatePopupMenu();
 	int iPos = 0;
-	int iPosSub = 0;
-	HMENU& hMenuRef = bDropDown ? hMenu : hMenuSub;
-	int& iPosRef = bDropDown ? iPos : iPosSub;
 
 	if( bDropDown == false ){
 		// 将来、ここに hwndFrom に応じた状況依存メニューを追加するといいかも
@@ -3234,35 +3268,42 @@ void CDlgFuncList::DoMenu( POINT pt, HWND hwndFrom )
 			::InsertMenu(hMenu, iPos++, MF_BYPOSITION | MF_STRING | flag, 510, LS(STR_DLGFNCLST_MENU_BOOK_DEL));
 			::InsertMenu(hMenu, iPos++, MF_BYPOSITION | MF_STRING, 511, LS(STR_DLGFNCLST_MENU_BOOK_ALL_DEL));
 		}
-		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
-		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_STRING | MF_POPUP, (UINT_PTR)hMenuSub,	LS(STR_DLGFNCLST_MENU_WINPOS) );
-	}
-
-	int iFrom = iPosRef;
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_LEFT,       LS(STR_DLGFNCLST_MENU_LEFTDOC) );
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_RIGHT,      LS(STR_DLGFNCLST_MENU_RIGHTDOC) );
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_TOP,        LS(STR_DLGFNCLST_MENU_TOPDOC) );
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_BOTTOM,     LS(STR_DLGFNCLST_MENU_BOTDOC) );
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_FLOAT,      LS(STR_DLGFNCLST_MENU_FLOATING) );
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_UNDOCKABLE, LS(STR_DLGFNCLST_MENU_NODOCK) );
-	int iTo = iPosRef - 1;
-	for( int i = iFrom; i <= iTo; i++ ){
-		if( static_cast<EDockSide>(::GetMenuItemID(hMenuRef, i)) == (100 + eDockSide) ){
-			::CheckMenuRadioItem( hMenuRef, iFrom, iTo, i, MF_BYPOSITION );
-			break;
+		if( !bWorkbench ){
+			::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
+			::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_STRING | MF_POPUP, (UINT_PTR)hMenuSub,	LS(STR_DLGFNCLST_MENU_WINPOS) );
 		}
 	}
-	::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
-	::InsertMenu( hMenuRef, iPosRef++, uFlags, 200, LS(STR_DLGFNCLST_MENU_SYNC) );
-	::CheckMenuItem( hMenuRef, 200, MF_BYCOMMAND | ProfDockSync()? MF_CHECKED: MF_UNCHECKED );
-	::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
-	::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_STRING, 300, LS(STR_DLGFNCLST_MENU_INHERIT) );
-	::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_STRING, 301, LS(STR_DLGFNCLST_MENU_TYPE) );
-	::CheckMenuRadioItem( hMenuRef, 300, 301, (ProfDockSet() == 0)? 300: 301, MF_BYCOMMAND );
-	::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
-	::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_STRING, 305, LS(STR_DLGFNCLST_MENU_UNIFY) );
 
-	if( bDropDown == false ){
+	if( !bWorkbench ){
+		int iPosSub = 0;
+		HMENU& hMenuRef = bDropDown ? hMenu : hMenuSub;
+		int& iPosRef = bDropDown ? iPos : iPosSub;
+		int iFrom = iPosRef;
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_LEFT,       LS(STR_DLGFNCLST_MENU_LEFTDOC) );
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_RIGHT,      LS(STR_DLGFNCLST_MENU_RIGHTDOC) );
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_TOP,        LS(STR_DLGFNCLST_MENU_TOPDOC) );
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_BOTTOM,     LS(STR_DLGFNCLST_MENU_BOTDOC) );
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_FLOAT,      LS(STR_DLGFNCLST_MENU_FLOATING) );
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 100 + DOCKSIDE_UNDOCKABLE, LS(STR_DLGFNCLST_MENU_NODOCK) );
+		int iTo = iPosRef - 1;
+		for( int i = iFrom; i <= iTo; i++ ){
+			if( static_cast<EDockSide>(::GetMenuItemID(hMenuRef, i)) == (100 + eDockSide) ){
+				::CheckMenuRadioItem( hMenuRef, iFrom, iTo, i, MF_BYPOSITION );
+				break;
+			}
+		}
+		::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
+		::InsertMenu( hMenuRef, iPosRef++, uFlags, 200, LS(STR_DLGFNCLST_MENU_SYNC) );
+		::CheckMenuItem( hMenuRef, 200, MF_BYCOMMAND | ProfDockSync()? MF_CHECKED: MF_UNCHECKED );
+		::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
+		::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_STRING, 300, LS(STR_DLGFNCLST_MENU_INHERIT) );
+		::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_STRING, 301, LS(STR_DLGFNCLST_MENU_TYPE) );
+		::CheckMenuRadioItem( hMenuRef, 300, 301, (ProfDockSet() == 0)? 300: 301, MF_BYCOMMAND );
+		::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
+		::InsertMenu( hMenuRef, iPosRef++, MF_BYPOSITION | MF_STRING, 305, LS(STR_DLGFNCLST_MENU_UNIFY) );
+	}
+
+	if( bDropDown == false && !bWorkbench ){
 		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_SEPARATOR, 0,	nullptr );
 		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_STRING, 452, LS(STR_DLGFNCLST_MENU_CLOSE) );
 	}
@@ -3432,6 +3473,10 @@ void CDlgFuncList::Refresh( void )
 */
 bool CDlgFuncList::ChangeLayout( int nId )
 {
+	// Workbench geometry and visibility are owned by CWorkbenchPanelHost.  Legacy
+	// outline notifications must never reserve editor space or move this child.
+	if( IsWorkbenchMode() ) return false;
+
 	struct SAutoSwitch
 	{
 		SAutoSwitch( bool* pbSwitch ): m_pbSwitch( pbSwitch ) { *m_pbSwitch = true; }

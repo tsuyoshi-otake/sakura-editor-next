@@ -248,6 +248,12 @@ void PrintTo(EFunctionCode eFuncCode, std::ostream* os)
 	case F_JUMP: *os << "F_JUMP"; break;
 	case F_OUTLINE: *os << "F_OUTLINE"; break;
 	case F_OUTLINE_TOGGLE: *os << "F_OUTLINE_TOGGLE"; break;
+	case F_TOGGLE_LEFT_EXPLORER: *os << "F_TOGGLE_LEFT_EXPLORER"; break;
+	case F_TOGGLE_RIGHT_OUTLINE: *os << "F_TOGGLE_RIGHT_OUTLINE"; break;
+	case F_TOGGLE_BOTTOM_PANEL: *os << "F_TOGGLE_BOTTOM_PANEL"; break;
+	case F_SHOW_FOCUS_TERMINAL: *os << "F_SHOW_FOCUS_TERMINAL"; break;
+	case F_NEW_TERMINAL: *os << "F_NEW_TERMINAL"; break;
+	case F_REDETECT_POWERSHELL: *os << "F_REDETECT_POWERSHELL"; break;
 	case F_TAGJUMP: *os << "F_TAGJUMP"; break;
 	case F_TAGJUMPBACK: *os << "F_TAGJUMPBACK"; break;
 	case F_TAGJUMP_LIST: *os << "F_TAGJUMP_LIST"; break;

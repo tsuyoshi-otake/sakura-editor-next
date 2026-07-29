@@ -37,6 +37,7 @@
 #include "apiwrap/StdApi.h"
 #include "CSelectLang.h"
 #include "config/app_constants.h"
+#include "workbench/IWorkbenchTool.h"
 
 CViewCommander::CViewCommander(CEditView* pEditView) : m_pCommanderView(pEditView)
 {
@@ -497,6 +498,13 @@ BOOL CViewCommander::HandleCommand(
 	case F_SHOWTAB:			Command_SHOWTAB();break;		/* タブの表示/非表示 */	//@@@ 2003.06.10 MIK
 	case F_SHOWSTATUSBAR:	Command_SHOWSTATUSBAR();break;	/* ステータスバーの表示/非表示 */
 	case F_SHOWMINIMAP:		Command_SHOWMINIMAP();break;	// ミニマップの表示/非表示
+	case F_TOGGLE_LEFT_EXPLORER:	GetEditWindow()->ToggleWorkbenchPanel(workbench::WorkbenchEdge::Left, true);break;
+	case F_TOGGLE_RIGHT_OUTLINE:	GetEditWindow()->ToggleWorkbenchPanel(workbench::WorkbenchEdge::Right, true);break;
+	case F_TOGGLE_BOTTOM_PANEL:	GetEditWindow()->ToggleWorkbenchPanel(workbench::WorkbenchEdge::Bottom, true);break;
+	case F_SHOW_FOCUS_TERMINAL:	GetEditWindow()->FocusIntegratedTerminal();break;
+	case F_NEW_TERMINAL:		GetEditWindow()->NewIntegratedTerminal();break;
+	case F_REDETECT_POWERSHELL:	GetEditWindow()->RedetectPowerShell();break;
+	case F_OPEN_WORKSPACE_FOLDER:	GetEditWindow()->OpenWorkspaceFolder();break;
 	case F_TYPE_LIST:		Command_TYPE_LIST();break;		/* タイプ別設定一覧 */
 	case F_CHANGETYPE:		Command_CHANGETYPE((int)lparam1);break;		// タイプ別設定一時適用
 	case F_OPTION_TYPE:		Command_OPTION_TYPE();break;	/* タイプ別設定 */

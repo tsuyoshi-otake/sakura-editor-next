@@ -28,6 +28,7 @@
 #include <tchar.h>
 #include "CSelectLang.h"
 #include "config/system_constants.h"
+#include "platform/VirtualStoreMigration.h"
 
 class CProcess;
 
@@ -52,6 +53,10 @@ CProcess* CProcessFactory::Create( HINSTANCE hInstance, LPCWSTR lpCmdLine )
 	if( !ProfileSelect( hInstance, lpCmdLine ) ){
 		return nullptr;
 	}
+	// ProfileSelect either resolves the requested/default profile or returns false
+	// after the profile dialog is cancelled.  Run the best-effort migration only
+	// once that final profile is available, before a process can initialize settings.
+	MigrateVirtualStoreIniForSelectedProfile();
 
 	CProcess* process = nullptr;
 	if( !IsValidVersion() ){
@@ -84,11 +89,12 @@ bool CProcessFactory::ProfileSelect(HINSTANCE hInstance, LPCWSTR lpCmdLine) cons
 {
 	//	May 30, 2000 genta
 	//	実行ファイル名をもとに漢字コードを固定する．
-	WCHAR szExeFileName[MAX_PATH];
-	const int cchExeFileName = ::GetModuleFileName(nullptr, szExeFileName, int(std::size(szExeFileName)));
-	CCommandLine::getInstance()->ParseKanjiCodeFromFileName(szExeFileName, cchExeFileName);
-
-	CCommandLine::getInstance()->ParseCommandLine(lpCmdLine);
+	if (!CCommandLine::getInstance()->IsParsed()) {
+		WCHAR szExeFileName[MAX_PATH];
+		const int cchExeFileName = ::GetModuleFileName(nullptr, szExeFileName, int(std::size(szExeFileName)));
+		CCommandLine::getInstance()->ParseKanjiCodeFromFileName(szExeFileName, cchExeFileName);
+		CCommandLine::getInstance()->ParseCommandLine(lpCmdLine);
+	}
 
 	// コマンドラインオプションから起動プロファイルを判定する
 	bool profileSelected = CDlgProfileMgr::TrySelectProfile( CCommandLine::getInstance() );
@@ -101,6 +107,20 @@ bool CProcessFactory::ProfileSelect(HINSTANCE hInstance, LPCWSTR lpCmdLine) cons
 		}
 	}
 	return true;
+}
+
+void CProcessFactory::MigrateVirtualStoreIniForSelectedProfile() const
+{
+	WCHAR executablePath[MAX_PATH]{};
+	const int executablePathLength = ::GetModuleFileName(
+		nullptr, executablePath, int(std::size(executablePath)));
+	if (executablePathLength <= 0 || executablePathLength >= int(std::size(executablePath))) {
+		return;
+	}
+
+	(void)platform::MigrateVirtualStoreIniForCurrentUser(
+		std::wstring(executablePath, executablePathLength),
+		CCommandLine::getInstance()->GetProfileName());
 }
 
 /*!
