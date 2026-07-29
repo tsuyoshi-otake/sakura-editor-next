@@ -350,6 +350,7 @@ void TerminalModel::SetMode( int mode, bool enabled ) noexcept
 	case 1003: m_modes.mouseAnyEventTracking = enabled; break;
 	case 1006: m_modes.mouseSgrEncoding = enabled; break;
 	case 2004: m_modes.bracketedPaste = enabled; break;
+	case 2026: m_modes.synchronizedOutput = enabled; break;
 	default: break;
 	}
 }

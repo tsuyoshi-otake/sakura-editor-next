@@ -75,6 +75,9 @@ class CExplorerOutlineTool;
 namespace outline {
 class COutlineWorkbenchTool;
 }
+namespace scm {
+class CScmWorkbenchTool;
+}
 }
 
 //メインウィンドウ内コントロールID
@@ -390,6 +393,8 @@ private:
 	void BroadcastWorkbenchSettings();
 	void UpdateWorkspaceFromDocument();
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
+	void ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive);
+	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
 	[[nodiscard]] workbench::CWorkbenchPanelHost* HitTestWorkbenchSplitter(POINT point) const noexcept;
 	void CancelWorkbenchResize();
@@ -413,6 +418,7 @@ private:
 	workbench::explorer::CExplorerOutlineTool* m_explorerOutlineTool = nullptr;
 	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
+	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;
@@ -425,6 +431,8 @@ private:
 	RECT m_leftWorkbenchSplitter{};
 	RECT m_rightWorkbenchSplitter{};
 	RECT m_bottomWorkbenchSplitter{};
+	int m_workbenchZoomPercent = 100;
+	int m_workbenchZoomBasePointSize = 0;
 
 public:
 	//子ウィンドウ

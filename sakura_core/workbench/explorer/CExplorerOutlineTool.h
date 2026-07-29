@@ -10,6 +10,7 @@
 #include "workbench/IWorkbenchTool.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
+#include "workbench/scm/CScmWorkbenchTool.h"
 
 #include <functional>
 #include <memory>
@@ -36,9 +37,12 @@ public:
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetOutlineExpanded(bool expanded, bool notify = false);
 	void FocusOutline();
+	void ShowSourceControl(bool show);
 	[[nodiscard]] bool IsOutlineExpanded() const noexcept { return m_outlineExpanded; }
+	[[nodiscard]] bool IsSourceControlVisible() const noexcept { return m_sourceControlVisible; }
 	[[nodiscard]] CExplorerTool* Explorer() const noexcept { return m_explorer.get(); }
 	[[nodiscard]] outline::COutlineWorkbenchTool* Outline() const noexcept { return m_outline.get(); }
+	[[nodiscard]] scm::CScmWorkbenchTool* SourceControl() const noexcept { return m_scm.get(); }
 	[[nodiscard]] static int OutlineHeaderHeightPixels(unsigned int dpi) noexcept;
 
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
@@ -53,6 +57,7 @@ private:
 	HINSTANCE m_instance = nullptr;
 	std::unique_ptr<CExplorerTool> m_explorer;
 	std::unique_ptr<outline::COutlineWorkbenchTool> m_outline;
+	std::unique_ptr<scm::CScmWorkbenchTool> m_scm;
 	OutlineExpandedCallback m_callback;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
@@ -60,6 +65,7 @@ private:
 	RECT m_outlineHeader{};
 	unsigned int m_dpi = 96;
 	bool m_outlineExpanded = true;
+	bool m_sourceControlVisible = false;
 	bool m_closed = false;
 };
 

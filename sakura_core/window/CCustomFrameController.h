@@ -45,6 +45,9 @@ struct CustomFrameLayout {
 //! DWM owns a processed non-client result. HTCLIENT/HTNOWHERE are the explicit
 //! exception: the extended custom client must supply its own caption/menu hits.
 [[nodiscard]] bool ShouldPreferDwmNonClientResult(UINT message, LRESULT dwmResult) noexcept;
+//! Maps a released custom caption button to the standard window command.
+//! Returns zero for non-caption hits.
+[[nodiscard]] UINT CaptionButtonSystemCommand(LRESULT hit, bool maximized) noexcept;
 
 //! Owns non-client extension, hit-testing, custom title/menu painting, and per-window DPI state.
 class CCustomFrameController final : public accessibility::ICustomUiAutomationHost {
@@ -62,6 +65,7 @@ public:
 	[[nodiscard]] HMENU ReplaceMenu(HMENU menu) noexcept;
 	[[nodiscard]] HMENU GetMenu() const noexcept { return m_menuBar.GetMenu(); }
 	void SetThemeMode(theme::ThemeMode savedMode) noexcept;
+	void SetUiScalePercent(int percent) noexcept;
 	[[nodiscard]] theme::ThemeMode GetThemeMode() const noexcept { return m_savedMode; }
 	[[nodiscard]] UINT Dpi() const noexcept { return m_dpi; }
 	[[nodiscard]] int TitleHeight() const noexcept { return ScaleCustomFrameDip(34, m_dpi); }
@@ -97,9 +101,12 @@ private:
 
 	HWND m_window = nullptr;
 	UINT m_dpi = 96;
+	UINT m_physicalDpi = 96;
+	int m_uiScalePercent = 100;
 	theme::ThemeMode m_savedMode = theme::ThemeMode::Dark;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
+	theme::CThemeFont m_menuFont;
 	CustomFrameLayout m_layout{};
 	CClientMenuBar m_menuBar;
 	CCustomTitleBar m_titleBar;

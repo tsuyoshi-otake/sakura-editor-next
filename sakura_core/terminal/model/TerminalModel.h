@@ -74,6 +74,7 @@ struct TerminalModes {
 	bool mouseDragTracking{};
 	bool mouseAnyEventTracking{};
 	bool mouseSgrEncoding{};
+	bool synchronizedOutput{};
 };
 
 class TerminalModel final {

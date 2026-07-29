@@ -48,6 +48,7 @@ bool EnsureWindowClass(HINSTANCE instance)
 CExplorerOutlineTool::CExplorerOutlineTool(CDlgFuncList& dialog, OutlineExpandedCallback callback)
 	: m_explorer(std::make_unique<CExplorerTool>())
 	, m_outline(std::make_unique<outline::COutlineWorkbenchTool>(dialog))
+	, m_scm(std::make_unique<scm::CScmWorkbenchTool>())
 	, m_callback(std::move(callback))
 {
 }
@@ -66,11 +67,12 @@ bool CExplorerOutlineTool::Create(HWND parent)
 	m_window = ::CreateWindowExW(0, kWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, m_instance, this);
 	if (m_window == nullptr) return false;
-	if (!m_explorer->Create(m_window) || !m_outline->Create(m_window)) {
+	if (!m_explorer->Create(m_window) || !m_outline->Create(m_window) || !m_scm->Create(m_window)) {
 		Close();
 		return false;
 	}
 	m_outline->SetVisible(m_outlineExpanded);
+	m_scm->SetVisible(false);
 	return true;
 }
 
@@ -88,17 +90,20 @@ void CExplorerOutlineTool::Layout(const RECT& contentRect, unsigned int dpi)
 
 void CExplorerOutlineTool::Activate()
 {
-	if (m_explorer) m_explorer->Activate();
+	if (m_sourceControlVisible && m_scm) m_scm->Activate();
+	else if (m_explorer) m_explorer->Activate();
 }
 
 void CExplorerOutlineTool::Deactivate()
 {
 	if (m_explorer) m_explorer->Deactivate();
 	if (m_outline) m_outline->Deactivate();
+	if (m_scm) m_scm->Deactivate();
 }
 
 bool CExplorerOutlineTool::PreTranslateMessage(MSG& message)
 {
+	if (m_sourceControlVisible) return m_scm && m_scm->PreTranslateMessage(message);
 	return (m_outlineExpanded && m_outline && m_outline->PreTranslateMessage(message))
 		|| (m_explorer && m_explorer->PreTranslateMessage(message));
 }
@@ -108,6 +113,7 @@ void CExplorerOutlineTool::Close()
 	if (m_closed) return;
 	m_closed = true;
 	if (m_outline) m_outline->Close();
+	if (m_scm) m_scm->Close();
 	if (m_explorer) m_explorer->Close();
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 	m_window = nullptr;
@@ -121,6 +127,7 @@ void CExplorerOutlineTool::SetPalette(const theme::ThemePalette& palette)
 			palette.border.ToColorRef(), palette.accent.ToColorRef() });
 	}
 	if (m_outline) m_outline->SetPalette(palette);
+	if (m_scm) m_scm->SetPalette(palette);
 	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
 }
 
@@ -136,8 +143,18 @@ void CExplorerOutlineTool::SetOutlineExpanded(bool expanded, bool notify)
 
 void CExplorerOutlineTool::FocusOutline()
 {
+	ShowSourceControl(false);
 	SetOutlineExpanded(true, true);
 	if (m_outline) m_outline->Activate();
+}
+
+void CExplorerOutlineTool::ShowSourceControl(bool show)
+{
+	if (m_sourceControlVisible == show) return;
+	m_sourceControlVisible = show;
+	if (m_scm) m_scm->SetVisible(show);
+	LayoutChildren();
+	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
 }
 
 int CExplorerOutlineTool::OutlineHeaderHeightPixels(unsigned int dpi) noexcept
@@ -194,9 +211,19 @@ LRESULT CExplorerOutlineTool::HandleMessage(UINT message, WPARAM wParam, LPARAM 
 
 void CExplorerOutlineTool::LayoutChildren()
 {
-	if (m_window == nullptr || !m_explorer || !m_outline) return;
+	if (m_window == nullptr || !m_explorer || !m_outline || !m_scm) return;
 	RECT client{};
 	::GetClientRect(m_window, &client);
+	if (m_sourceControlVisible) {
+		::ShowWindow(m_explorer->GetHwnd(), SW_HIDE);
+		m_outline->SetVisible(false);
+		m_scm->Layout(client, m_dpi);
+		m_scm->SetVisible(true);
+		m_outlineHeader = {};
+		return;
+	}
+	m_scm->SetVisible(false);
+	::ShowWindow(m_explorer->GetHwnd(), SW_SHOW);
 	const int headerHeight = OutlineHeaderHeightPixels(m_dpi);
 	const int available = std::max(0L, client.bottom - client.top);
 	int outlineHeight = 0;

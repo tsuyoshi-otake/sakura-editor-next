@@ -25,6 +25,7 @@
 #include <process.h> // _beginthreadex
 #include <limits.h>
 #include "CEditView.h"
+#include "view/MiniMapOverview.h"
 #include "_main/CAppMode.h"
 #include "CEditApp.h"
 #include "agent/CGrepAgent.h" // use CEditApp.h
@@ -946,32 +947,12 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 		}
 		if( m_bMiniMapMouseDown ){
 			CLayoutPoint ptNew;
-			CTextArea& area = GetTextArea();
-			area.ClientToLayout( ptMouse, &ptNew );
-			// ミニマップの上下スクロール
-			if( ptNew.y < 0 ){
-				ptNew.y = CLayoutYInt(0);
-			}
-			CLayoutYInt nScrollRow = CLayoutYInt(0);
-			CLayoutYInt nScrollMargin = CLayoutYInt(15);
-			nScrollMargin  = t_min(nScrollMargin,  (GetTextArea().m_nViewRowNum) / 2);
-			if( m_pcEditDoc->m_cLayoutMgr.GetLineCount() > area.m_nViewRowNum &&
-				ptNew.y > area.GetViewTopLine() + area.m_nViewRowNum - nScrollMargin ){
-				nScrollRow = (area.GetViewTopLine() + area.m_nViewRowNum - nScrollMargin) - ptNew.y;
-			}else if( 0 < area.GetViewTopLine() && ptNew.y < area.GetViewTopLine() + nScrollMargin ){
-				nScrollRow = area.GetViewTopLine() + nScrollMargin - ptNew.y;
-				if( 0 > area.GetViewTopLine() - nScrollRow ){
-					nScrollRow = area.GetViewTopLine();
-				}
-			}
-			if( nScrollRow != 0 ){
-				ScrollAtV( area.GetViewTopLine() - nScrollRow );
-			}
-
-			GetTextArea().ClientToLayout( ptMouse, &ptNew );
-			if( ptNew.y < 0 ){
-				ptNew.y = CLayoutYInt(0);
-			}
+			RECT client{};
+			::GetClientRect(GetHwnd(), &client);
+			const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
+			const auto mappedLine = minimap::PixelToLine(
+				ptMouse.y - client.top, lineCount, client.bottom - client.top);
+			ptNew.y = CLayoutYInt(static_cast<int>(std::min<std::int64_t>(mappedLine, INT_MAX)));
 			CEditView& view = GetEditWnd().GetActiveView();
 			ptNew.x = 0;
 			CLogicPoint ptNewLogic;

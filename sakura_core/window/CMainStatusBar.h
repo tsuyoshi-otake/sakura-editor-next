@@ -43,6 +43,7 @@ public:
 	bool SetStatusText(int nIndex, int nOption, const WCHAR* pszText, size_t textLen = SIZE_MAX);
 	void ShowProgressBar(bool bShow) const;
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
+	void SetScmText(std::wstring text);
 	void InstallPaletteSubclass() noexcept;
 	[[nodiscard]] COLORREF GetTextColor() const noexcept { return m_palette.highlightText.ToColorRef(); }
 private:
@@ -54,5 +55,6 @@ private:
 	HWND		m_hwndStatusBar = nullptr;
 	HWND		m_hwndProgressBar = nullptr;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	std::wstring m_scmText;
 };
 #endif /* SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_ */

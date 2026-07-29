@@ -414,9 +414,9 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	EXPECT_THAT(sWindow.m_bUseCompatibleBMP, IsTrue());
 	EXPECT_THAT(sWindow.m_bMenuIcon, IsFalse());
 
-	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$} $<profile>"));	// 👈バグ。 STR_ERR_CSHAREDATA17を更新して使うべき。
+	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA17を更新して使うべき。
 
-	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$} $<profile>"));	// 👈バグ。 STR_ERR_CSHAREDATA18を更新して使うべき。
+	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA18を更新して使うべき。
 
 	return true;
 }

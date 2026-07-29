@@ -129,6 +129,16 @@ TEST(TerminalParser, TogglesAlternateScreenBracketedPasteAndMouseModes)
 	EXPECT_EQ(L"M", RowText(model.Rows()[0]));
 }
 
+TEST(TerminalParser, TracksSynchronizedOutputModeForTuiFrameCoalescing)
+{
+	terminal::TerminalModel model(80, 24);
+	terminal::TerminalParser parser(model);
+	parser.Feed("\x1b[?2026hframe");
+	EXPECT_TRUE(model.Modes().synchronizedOutput);
+	parser.Feed("\x1b[?2026l");
+	EXPECT_FALSE(model.Modes().synchronizedOutput);
+}
+
 TEST(TerminalParser, SanitizesAndLimitsSplitOscTitle)
 {
 	terminal::TerminalModel model(8, 2);

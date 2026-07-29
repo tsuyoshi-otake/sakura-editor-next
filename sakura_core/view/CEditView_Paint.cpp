@@ -12,6 +12,7 @@
 #pragma comment(lib, "Msimg32.lib")
 #include "view/CEditView_Paint.h"
 #include "view/CEditView.h"
+#include "view/MiniMapOverview.h"
 #include "view/CViewFont.h"
 #include "view/CRuler.h"
 #include "view/colors/CColorStrategy.h"
@@ -458,6 +459,8 @@ CColor3Setting CEditView::GetColorIndex(
 
 	@date 2013.05.08 novice 範囲外チェック削除
 */
+inline COLORREF MakeColor2(COLORREF a, COLORREF b, int alpha);
+
 void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EColorIndexType eColorIndex2, EColorIndexType eColorIndexBg)
 {
 	//インデックス決定
@@ -470,10 +473,16 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 	const ColorInfo& info2 = m_pTypeData->m_ColorInfoArr[nColorIdx2];
 	const ColorInfo& infoBg = m_pTypeData->m_ColorInfoArr[nColorIdxBg];
 	COLORREF fgcolor = GetTextColorByColorInfo2(info, info2);
-	gr.SetTextForeColor(fgcolor);
 	// 2012.11.21 背景色がテキストとおなじなら背景色はカーソル行背景
 	const ColorInfo& info3 = (info2.m_sColorAttr.m_cBACK == m_crBack ? infoBg : info2);
 	COLORREF bkcolor = (nColorIdx == nColorIdx2) ? info3.m_sColorAttr.m_cBACK : GetBackColorByColorInfo2(info, info3);
+	if( m_bMiniMap ){
+		// The minimap is navigational context, not a second editor.  Pull syntax
+		// colors toward their background so they remain legible without competing
+		// with the active document.
+		fgcolor = MakeColor2(fgcolor, bkcolor, 72);
+	}
+	gr.SetTextForeColor(fgcolor);
 	gr.SetTextBackColor(bkcolor);
 	SFONT sFont;
 	sFont.m_sFontAttr = (info.m_sColorAttr.m_cTEXT != info.m_sColorAttr.m_cBACK) ? info.m_sFontAttr : info2.m_sFontAttr;
@@ -541,6 +550,118 @@ COLORREF CEditView::GetBackColorByColorInfo2(const ColorInfo& info, const ColorI
 	return MakeColor2(info.m_sColorAttr.m_cBACK, info2.m_sColorAttr.m_cBACK, alpha);
 }
 
+void CEditView::DrawMiniMapOverview(HDC hdc)
+{
+	if( !m_bMiniMap || hdc == nullptr ) return;
+	RECT client{};
+	if( !GetClientRect(&client) ) return;
+	const int width = client.right - client.left;
+	const int height = client.bottom - client.top;
+	if( width <= 0 || height <= 0 ) return;
+
+	CTypeSupport textType(this, COLORIDX_TEXT);
+	const COLORREF background = textType.GetBackColor();
+	const HBRUSH backgroundBrush = ::CreateSolidBrush(background);
+	::FillRect(hdc, &client, backgroundBrush);
+	::DeleteObject(backgroundBrush);
+
+	const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
+	if( lineCount <= 0 ) return;
+
+	// Aggregate all document lines into at most one GDI segment per pixel row.
+	// Very large files remain O(N + H), with O(H) GDI calls and memory.
+	std::vector<int> rowStart(static_cast<std::size_t>(height), width);
+	std::vector<int> rowEnd(static_cast<std::size_t>(height), 0);
+	constexpr int kMaxColumns = 160;
+	constexpr int kLeftPadding = 4;
+	const int drawableWidth = (std::max)(1, width - kLeftPadding - 2);
+	const CLayout* layout = m_pcEditDoc->m_cLayoutMgr.GetTopLayout();
+	std::int64_t line = 0;
+	while( layout != nullptr && line < lineCount ) {
+		const wchar_t* text = layout->GetPtr();
+		const int length = (std::min)(static_cast<int>(layout->GetLengthWithoutEOL()), kMaxColumns);
+		int indent = 0;
+		while( indent < length && (text[indent] == L' ' || text[indent] == L'\t') ) ++indent;
+		if( length > indent ) {
+			const int row = (std::min)(height - 1, minimap::LineToPixel(line, lineCount, height));
+			const int start = kLeftPadding + (indent * drawableWidth) / kMaxColumns;
+			const int end = kLeftPadding + ((std::max)(indent + 1, length) * drawableWidth) / kMaxColumns;
+			rowStart[static_cast<std::size_t>(row)] = (std::min)(rowStart[static_cast<std::size_t>(row)], start);
+			rowEnd[static_cast<std::size_t>(row)] = (std::max)(rowEnd[static_cast<std::size_t>(row)], end);
+		}
+		layout = layout->GetNextLayout();
+		++line;
+	}
+
+	const COLORREF foreground = MakeColor2(textType.GetTextColor(), background, 68);
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, foreground);
+	const HGDIOBJ previousPen = ::SelectObject(hdc, pen);
+	for( int row = 0; row < height; ++row ) {
+		const int start = rowStart[static_cast<std::size_t>(row)];
+		const int end = rowEnd[static_cast<std::size_t>(row)];
+		if( end <= start ) continue;
+		::MoveToEx(hdc, start, client.top + row, nullptr);
+		::LineTo(hdc, (std::min)(end, static_cast<int>(client.right)), client.top + row);
+	}
+	::SelectObject(hdc, previousPen);
+	::DeleteObject(pen);
+}
+
+void CEditView::DrawMiniMapViewport(HDC hdc)
+{
+	if( !m_bMiniMap || hdc == nullptr ) return;
+	RECT client{};
+	if( !GetClientRect(&client) ) return;
+	CEditView& activeView = GetEditWnd().GetActiveView();
+	const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
+	const int height = client.bottom - client.top;
+	if( lineCount <= 0 || height <= 0 ) return;
+	const auto band = minimap::ViewportToPixels(
+		static_cast<Int>(activeView.GetTextArea().GetViewTopLine()),
+		static_cast<Int>(activeView.GetTextArea().GetBottomLine()), lineCount, height);
+	RECT viewport{
+		client.left,
+		client.top + band.top,
+		client.right,
+		client.top + band.bottom
+	};
+	viewport.top = (std::clamp)(viewport.top, client.top, client.bottom);
+	viewport.bottom = (std::clamp)(viewport.bottom, client.top, client.bottom);
+	if( viewport.bottom <= viewport.top ) viewport.bottom = (std::min)(client.bottom, viewport.top + 2);
+	if( viewport.right <= viewport.left || viewport.bottom <= viewport.top ) return;
+
+	// VS Code represents the visible editor range as a quiet, neutral overlay
+	// across the minimap rather than as a high-contrast outline.  Blend after
+	// the map is rendered so syntax marks remain visible through the band.
+	CTypeSupport textType(this, COLORIDX_TEXT);
+	const HDC sourceDc = ::CreateCompatibleDC(hdc);
+	if( sourceDc == nullptr ) return;
+	const HBITMAP sourceBitmap = ::CreateCompatibleBitmap(hdc, 1, 1);
+	if( sourceBitmap == nullptr ){
+		::DeleteDC(sourceDc);
+		return;
+	}
+	const HGDIOBJ previousBitmap = ::SelectObject(sourceDc, sourceBitmap);
+	::SetPixelV(sourceDc, 0, 0, textType.GetTextColor());
+	BLENDFUNCTION blend{ AC_SRC_OVER, 0, 18, 0 };
+	::AlphaBlend(
+		hdc,
+		viewport.left,
+		viewport.top,
+		viewport.right - viewport.left,
+		viewport.bottom - viewport.top,
+		sourceDc,
+		0,
+		0,
+		1,
+		1,
+		blend
+	);
+	::SelectObject(sourceDc, previousBitmap);
+	::DeleteObject(sourceBitmap);
+	::DeleteDC(sourceDc);
+}
+
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                           描画                              //
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -550,7 +671,12 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 	if (GetEditWnd().m_pPrintPreview) {
 		return;
 	}
-	bool bChangeFont = m_bMiniMap;
+	if( m_bMiniMap ){
+		DrawMiniMapOverview(_hdc);
+		DrawMiniMapViewport(_hdc);
+		return;
+	}
+	bool bChangeFont = false;
 	if( bChangeFont ){
 		SelectCharWidthCache( CWM_FONT_MINIMAP, CWM_CACHE_LOCAL );
 	}
@@ -1007,18 +1133,12 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 	int nLineHeight = GetTextMetrics().GetHankakuDy();  //行の縦幅？
 	CTypeSupport	cCaretLineBg(this, COLORIDX_CARETLINEBG);
 	CTypeSupport	cEvenLineBg(this, COLORIDX_EVENLINEBG);
-	CTypeSupport	cPageViewBg(this, COLORIDX_PAGEVIEW);
-	CEditView& cActiveView = GetEditWnd().GetActiveView();
 	CTypeSupport&	cBackType = (cCaretLineBg.IsDisp() &&
 		GetCaret().GetCaretLayoutPos().GetY() == pInfo->m_pDispPos->GetLayoutLineRef() && !m_bMiniMap
 			? cCaretLineBg
 			: cEvenLineBg.IsDisp() && pInfo->m_pDispPos->GetLayoutLineRef() % 2 == 1 && !m_bMiniMap
 				? cEvenLineBg
-				: (cPageViewBg.IsDisp() && m_bMiniMap
-					&& cActiveView.GetTextArea().GetViewTopLine() <= pInfo->m_pDispPos->GetLayoutLineRef()
-					&& pInfo->m_pDispPos->GetLayoutLineRef() < cActiveView.GetTextArea().GetBottomLine())
-						? cPageViewBg
-						: cTextType);
+				: cTextType);
 	bool bTransText = IsBkBitmap();
 	if( bTransText ){
 		bTransText = cBackType.GetBackColor() == cTextType.GetBackColor();

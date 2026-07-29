@@ -18,7 +18,7 @@
 
 namespace terminal {
 
-//! Bottom-panel terminal tool with one viewport and multiple session tabs.
+//! Bottom-panel terminal tool with up to two viewports and multiple session tabs.
 class CTerminalTool final : public workbench::IWorkbenchTool {
 public:
 	explicit CTerminalTool( TerminalTabManagerDependencies dependencies = {} );
@@ -40,6 +40,9 @@ public:
 	[[nodiscard]] bool SelectTerminal( std::uint64_t tabId );
 	[[nodiscard]] bool RestartTerminal( std::uint64_t tabId );
 	[[nodiscard]] bool DeleteTerminal( std::uint64_t tabId );
+	[[nodiscard]] bool SplitTerminalRight();
+	[[nodiscard]] bool CloseTerminalSplit();
+	[[nodiscard]] bool HasTerminalSplit() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTerminalId() const noexcept;
 	[[nodiscard]] std::size_t TabCount() const noexcept;

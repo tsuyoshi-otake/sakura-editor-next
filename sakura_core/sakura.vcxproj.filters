@@ -928,6 +928,9 @@
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\WorkbenchZoom.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -943,7 +946,16 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
     <ClInclude Include="..\sakura_core\platform\Windows11Platform.h">
@@ -2222,6 +2234,12 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\platform\Windows11Platform.cpp">

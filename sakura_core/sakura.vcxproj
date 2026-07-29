@@ -467,10 +467,14 @@
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\WorkbenchZoom.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\CActivityBar.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h" />
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h" />
     <ClInclude Include="..\sakura_core\window\CAutoScrollWnd.h" />
     <ClInclude Include="..\sakura_core\window\CClientMenuBar.h" />
@@ -929,6 +933,8 @@
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp" />
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />
     <ClCompile Include="..\sakura_core\accessibility\CustomUiAutomationProvider.cpp" />

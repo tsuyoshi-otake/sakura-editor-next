@@ -280,9 +280,7 @@ void COutlineWorkbenchTool::RecreateSymbolImages() noexcept
 	(void)::ImageList_Add(images, colorBitmap, nullptr);
 
 	clearBitmap();
-	// Markdown symbols use the same quiet purple hue as VS Code's symbol tree;
-	// the Sakura accent remains reserved for focus and active-state affordances.
-	DrawSymbolGlyph(colorDc, size, RGB(0xC5, 0x86, 0xC0));
+	DrawSymbolGlyph(colorDc, size, m_palette.secondaryText.ToColorRef());
 	(void)::ImageList_Add(images, colorBitmap, nullptr);
 
 	::SelectObject(colorDc, oldColorBitmap);

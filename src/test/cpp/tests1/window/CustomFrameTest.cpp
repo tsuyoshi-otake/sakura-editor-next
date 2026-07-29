@@ -101,3 +101,12 @@ TEST(CustomFrame, PrefersProcessedDwmTargetsButKeepsExtendedClientGeometry)
 	EXPECT_TRUE(ShouldPreferDwmNonClientResult(WM_NCRBUTTONUP, 0));
 	EXPECT_FALSE(ShouldPreferDwmNonClientResult(WM_SYSCOMMAND, 0));
 }
+
+TEST(CustomFrame, MapsCaptionButtonsToStandardWindowCommands)
+{
+	EXPECT_EQ(SC_MINIMIZE, CaptionButtonSystemCommand(HTMINBUTTON, false));
+	EXPECT_EQ(SC_MAXIMIZE, CaptionButtonSystemCommand(HTMAXBUTTON, false));
+	EXPECT_EQ(SC_RESTORE, CaptionButtonSystemCommand(HTMAXBUTTON, true));
+	EXPECT_EQ(SC_CLOSE, CaptionButtonSystemCommand(HTCLOSE, false));
+	EXPECT_EQ(0u, CaptionButtonSystemCommand(HTCAPTION, false));
+}

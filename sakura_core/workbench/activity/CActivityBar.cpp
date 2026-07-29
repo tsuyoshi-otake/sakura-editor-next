@@ -49,6 +49,7 @@ constexpr int kIndicatorWidthDip = 2;
 {
 	switch (item) {
 	case ActivityBarItem::Explorer: return L'\xE8B7'; // Folder
+	case ActivityBarItem::SourceControl: return L'\xE8F0'; // Branch / source control
 	case ActivityBarItem::Outline: return L'\xE8D2'; // Bulleted list
 	case ActivityBarItem::Terminal: return L'\xE756'; // Command prompt
 	case ActivityBarItem::Count: break;

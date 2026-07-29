@@ -217,7 +217,7 @@ TEST(TerminalTool, VisibleLayoutBeforeActivationUsesViewportSizeForFirstSession)
 	::DestroyWindow(parent);
 }
 
-TEST(TerminalTool, SupportsAddSelectRestartAndDeleteWithoutPaneSplitting)
+TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)
 {
 	ToolHarness harness;
 	terminal::CTerminalTool tool(harness.Dependencies());
@@ -237,6 +237,73 @@ TEST(TerminalTool, SupportsAddSelectRestartAndDeleteWithoutPaneSplitting)
 	EXPECT_EQ(1u, tool.TabCount());
 	EXPECT_FALSE(tool.DeleteTerminal(*second));
 	tool.Close();
+}
+
+TEST(TerminalTool, SplitsIntoIndependentLeftAndRightSessionsAndClosesRightCleanly)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\split workspace");
+	tool.Activate();
+	const auto left = tool.ActiveTerminalId();
+	ASSERT_TRUE(left.has_value());
+
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+	EXPECT_EQ(2u, tool.TabCount());
+	EXPECT_EQ(left, tool.ActiveTerminalId());
+	ASSERT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(L"C:\\split workspace", harness.backends[1]->workingDirectory);
+	EXPECT_FALSE(tool.SplitTerminalRight());
+
+	EXPECT_TRUE(tool.CloseTerminalSplit());
+	EXPECT_FALSE(tool.HasTerminalSplit());
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(1, harness.backends[1]->closeCalls.load());
+	EXPECT_FALSE(tool.CloseTerminalSplit());
+	tool.Close();
+	EXPECT_EQ(1, harness.backends[0]->closeCalls.load());
+}
+
+TEST(TerminalTool, SplitCreatesTwoNativeViewportsAndDividerResizesThem)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	const RECT visible{ 0, 0, 640, 320 };
+	tool.Layout(visible, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+
+	const HWND first = ::FindWindowExW(tool.GetHwnd(), nullptr, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, first);
+	const HWND second = ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, second);
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), second, L"SakuraNativeTerminalWindow", nullptr));
+	RECT firstBefore{};
+	RECT secondBefore{};
+	ASSERT_TRUE(::GetWindowRect(first, &firstBefore));
+	ASSERT_TRUE(::GetWindowRect(second, &secondBefore));
+	EXPECT_LT(firstBefore.left, secondBefore.left);
+	EXPECT_LE(firstBefore.right, secondBefore.left);
+	EXPECT_GT(firstBefore.right - firstBefore.left, 200);
+	EXPECT_GT(secondBefore.right - secondBefore.left, 200);
+
+	POINT divider{ firstBefore.right, firstBefore.top + 20 };
+	::ScreenToClient(tool.GetHwnd(), &divider);
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(divider.x + 1, divider.y));
+	::SendMessageW(tool.GetHwnd(), WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(divider.x + 80, divider.y));
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(divider.x + 80, divider.y));
+	RECT firstAfter{};
+	ASSERT_TRUE(::GetWindowRect(first, &firstAfter));
+	EXPECT_GT(firstAfter.right - firstAfter.left, firstBefore.right - firstBefore.left);
+
+	EXPECT_TRUE(tool.CloseTerminalSplit());
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr));
+	tool.Close();
+	::DestroyWindow(parent);
 }
 
 TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)

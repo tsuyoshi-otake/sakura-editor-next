@@ -120,26 +120,6 @@ bool SColorStrategyInfo::CheckChangeColor(const CStringRef& cLineStr)
 			}
 		}
 	}
-	if( m_pcView->m_bMiniMap ){
-		CTypeSupport cPageViewBg(m_pcView, COLORIDX_PAGEVIEW);
-		if( cPageViewBg.IsDisp() ){
-			CEditView& cActiveView = GetEditWnd().GetActiveView();
-			CLayoutInt curLine = m_pDispPos->GetLayoutLineRef();
-			if( m_colorIdxBackLine == COLORIDX_PAGEVIEW ){
-				if( cActiveView.GetTextArea().GetViewTopLine() <= curLine && curLine < cActiveView.GetTextArea().GetBottomLine() ){
-				}else{
-					m_colorIdxBackLine = COLORIDX_TEXT;
-					bChange = true;
-				}
-			}else if( m_colorIdxBackLine == COLORIDX_TEXT ){
-				if( cActiveView.GetTextArea().GetViewTopLine() <= curLine && curLine < cActiveView.GetTextArea().GetBottomLine() ){
-					m_colorIdxBackLine = COLORIDX_PAGEVIEW;
-					bChange = true;
-				}
-			}
-		}
-	}
-
 	return bChange;
 }
 

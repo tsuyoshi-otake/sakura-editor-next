@@ -26,12 +26,21 @@ constexpr int kTabHeightDip = 30;
 constexpr int kMinimumTabWidthDip = 84;
 constexpr int kMaximumTabWidthDip = 180;
 constexpr int kAddButtonWidthDip = 32;
+constexpr int kSplitButtonWidthDip = 32;
+constexpr int kPaneDividerDip = 4;
+constexpr int kMinimumPaneWidthDip = 80;
 constexpr UINT kOutputAvailableMessage = WM_APP + 0x3a1;
 constexpr UINT kStateChangedMessage = WM_APP + 0x3a2;
+constexpr UINT_PTR kOutputFrameTimer = 0x5343;
+constexpr UINT_PTR kSynchronizedOutputTimer = 0x5344;
+constexpr UINT kOutputFrameMilliseconds = 16;
+constexpr ULONGLONG kSynchronizedOutputMaximumMilliseconds = 100;
 constexpr UINT kCommandNewTerminal = 1;
 constexpr UINT kCommandRestartTerminal = 2;
 constexpr UINT kCommandCloseTerminal = 3;
 constexpr UINT kCommandRedetectPowerShell = 4;
+constexpr UINT kCommandSplitTerminal = 5;
+constexpr UINT kCommandCloseSplit = 6;
 constexpr UINT kCommandProfileFirst = 1000;
 
 int ScaleDip( int value, unsigned int dpi ) noexcept
@@ -140,6 +149,8 @@ struct CTerminalTool::Impl {
 	std::unique_ptr<DefaultLaunchResolver> defaultResolver;
 	std::unique_ptr<TerminalTabManager> manager;
 	std::unique_ptr<CTerminalWnd> terminalWindow;
+	std::unique_ptr<CTerminalWnd> secondaryTerminalWindow;
+	std::optional<std::uint64_t> secondaryTabId;
 	HWND window{};
 	HINSTANCE instance{};
 	unsigned int dpi{ kDefaultDpi };
@@ -149,6 +160,13 @@ struct CTerminalTool::Impl {
 	bool closed{};
 	bool usesDefaultResolver{};
 	bool needsFullTerminalRepaint{};
+	bool needsFullSecondaryRepaint{};
+	bool outputFrameScheduled{};
+	std::vector<std::uint64_t> pendingOutputTabs;
+	ULONGLONG synchronizedOutputSince{};
+	ULONGLONG secondarySynchronizedOutputSince{};
+	int splitRatioPermille{ 500 };
+	bool draggingPaneDivider{};
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	std::vector<std::wstring> profileCommandPaths;
 
@@ -165,13 +183,34 @@ struct CTerminalTool::Impl {
 		auto candidate = std::make_unique<CTerminalWnd>();
 		if( !candidate->Create(window, instance) ) return false;
 		candidate->SetInputSink([this](std::span<const std::uint8_t> bytes) {
-			static_cast<void>(manager->QueueActiveInput(bytes));
+			if( const auto tabId = manager->ActiveTabId() ) static_cast<void>(manager->QueueInput(*tabId, bytes));
 		});
-		candidate->SetResizeSink([this](TerminalSize size) { manager->Resize(size); });
+		candidate->SetResizeSink([this](TerminalSize size) {
+			if( const auto tabId = manager->ActiveTabId() ) static_cast<void>(manager->ResizeTab(*tabId, size));
+		});
 		candidate->SetPalette(palette);
 		terminalWindow = std::move(candidate);
 		BindActiveModel();
+		if( secondaryTabId ) static_cast<void>(EnsureSecondaryTerminalWindow());
 		for( const auto& tab : manager->Snapshot() ) HandleOutput(tab.id);
+		return true;
+	}
+
+	bool EnsureSecondaryTerminalWindow()
+	{
+		if( secondaryTerminalWindow ) return true;
+		if( !secondaryTabId || !window || !instance || closed ) return false;
+		auto candidate = std::make_unique<CTerminalWnd>();
+		if( !candidate->Create(window, instance) ) return false;
+		candidate->SetInputSink([this](std::span<const std::uint8_t> bytes) {
+			if( secondaryTabId ) static_cast<void>(manager->QueueInput(*secondaryTabId, bytes));
+		});
+		candidate->SetResizeSink([this](TerminalSize size) {
+			if( secondaryTabId ) static_cast<void>(manager->ResizeTab(*secondaryTabId, size));
+		});
+		candidate->SetPalette(palette);
+		secondaryTerminalWindow = std::move(candidate);
+		BindSecondaryModel();
 		return true;
 	}
 
@@ -185,6 +224,11 @@ struct CTerminalTool::Impl {
 		return terminalWindow ? terminalWindow->GetTerminalSize() : TerminalSize{ 120, 30 };
 	}
 
+	TerminalSize SecondarySize() const noexcept
+	{
+		return secondaryTerminalWindow ? secondaryTerminalWindow->GetTerminalSize() : CurrentSize();
+	}
+
 	void BindActiveModel()
 	{
 		if( terminalWindow ) {
@@ -192,6 +236,28 @@ struct CTerminalTool::Impl {
 			terminalWindow->SetModel(manager->ActiveModel());
 			needsFullTerminalRepaint = true;
 		}
+	}
+
+	void BindSecondaryModel()
+	{
+		if( secondaryTerminalWindow ) {
+			secondaryTerminalWindow->SetInputAdapter(secondaryTabId ? manager->InputAdapter(*secondaryTabId) : nullptr);
+			secondaryTerminalWindow->SetModel(secondaryTabId ? manager->Model(*secondaryTabId) : nullptr);
+			needsFullSecondaryRepaint = true;
+		}
+	}
+
+	void DestroySecondaryRenderer() noexcept
+	{
+		if( secondaryTerminalWindow ) {
+			secondaryTerminalWindow->SetInputAdapter(nullptr);
+			secondaryTerminalWindow->SetModel(nullptr);
+			secondaryTerminalWindow->Close();
+			secondaryTerminalWindow.reset();
+		}
+		needsFullSecondaryRepaint = false;
+		secondarySynchronizedOutputSince = 0;
+		if( synchronizedOutputSince == 0 && window ) ::KillTimer(window, kSynchronizedOutputTimer);
 	}
 
 	void InvalidateTabs()
@@ -207,7 +273,7 @@ struct CTerminalTool::Impl {
 	int TabWidth( std::size_t count, int clientWidth ) const noexcept
 	{
 		if( count == 0 ) return ScaleDip(kMinimumTabWidthDip, dpi);
-		const auto available = std::max(0, clientWidth - ScaleDip(kAddButtonWidthDip, dpi));
+		const auto available = std::max(0, clientWidth - ScaleDip(kAddButtonWidthDip + kSplitButtonWidthDip, dpi));
 		return std::clamp(available / static_cast<int>(count), ScaleDip(kMinimumTabWidthDip, dpi), ScaleDip(kMaximumTabWidthDip, dpi));
 	}
 
@@ -234,13 +300,65 @@ struct CTerminalTool::Impl {
 		return x >= left && x < left + ScaleDip(kAddButtonWidthDip, dpi);
 	}
 
+	bool HitTestSplit( int x ) const
+	{
+		if( !window ) return false;
+		const auto tabs = manager->Snapshot();
+		RECT client{};
+		::GetClientRect(window, &client);
+		const auto left = TabWidth(tabs.size(), client.right - client.left) * static_cast<int>(tabs.size())
+			+ ScaleDip(kAddButtonWidthDip, dpi);
+		return x >= left && x < left + ScaleDip(kSplitButtonWidthDip, dpi);
+	}
+
+	LONG PaneDividerLeft( const RECT& content ) const noexcept
+	{
+		const LONG divider = ScaleDip(kPaneDividerDip, dpi);
+		const LONG available = std::max<LONG>(0, content.right - content.left - divider);
+		return content.left + static_cast<LONG>((static_cast<long long>(available) * splitRatioPermille) / 1000);
+	}
+
+	bool HitTestPaneDivider( int x, int y ) const noexcept
+	{
+		if( !secondaryTabId || !window || y < ScaleDip(kTabHeightDip, dpi) ) return false;
+		RECT client{};
+		::GetClientRect(window, &client);
+		client.top = std::min(client.bottom, client.top + ScaleDip(kTabHeightDip, dpi));
+		const LONG left = PaneDividerLeft(client);
+		return x >= left && x < left + ScaleDip(kPaneDividerDip, dpi);
+	}
+
+	void SetPaneDividerFromMouse( int x )
+	{
+		if( !window || !secondaryTabId ) return;
+		RECT client{};
+		::GetClientRect(window, &client);
+		const LONG divider = ScaleDip(kPaneDividerDip, dpi);
+		const LONG available = std::max<LONG>(1, client.right - client.left - divider);
+		const LONG minimum = std::min<LONG>(available / 2, ScaleDip(kMinimumPaneWidthDip, dpi));
+		const LONG position = std::clamp<LONG>(x - client.left, minimum, available - minimum);
+		splitRatioPermille = std::clamp(static_cast<int>((static_cast<long long>(position) * 1000) / available), 1, 999);
+		LayoutChildren();
+	}
+
 	void LayoutChildren()
 	{
 		if( !window || !terminalWindow ) return;
 		RECT client{};
 		::GetClientRect(window, &client);
 		client.top = std::min(client.bottom, client.top + ScaleDip(kTabHeightDip, dpi));
-		terminalWindow->Layout(client, dpi);
+		if( secondaryTabId && EnsureSecondaryTerminalWindow() && secondaryTerminalWindow ) {
+			const LONG divider = ScaleDip(kPaneDividerDip, dpi);
+			const LONG midpoint = PaneDividerLeft(client);
+			RECT primary = client;
+			primary.right = midpoint;
+			RECT secondary = client;
+			secondary.left = std::min(client.right, midpoint + divider);
+			terminalWindow->Layout(primary, dpi);
+			secondaryTerminalWindow->Layout(secondary, dpi);
+		} else {
+			terminalWindow->Layout(client, dpi);
+		}
 	}
 
 	void Paint()
@@ -272,10 +390,11 @@ struct CTerminalTool::Impl {
 		const auto tabWidth = TabWidth(tabs.size(), width);
 		for( std::size_t index = 0; index < tabs.size(); ++index ) {
 			RECT tab{ static_cast<LONG>(index * tabWidth), 0, static_cast<LONG>((index + 1) * tabWidth), tabStrip.bottom };
-			const HBRUSH tabBrush = ::CreateSolidBrush(tabs[index].active ? palette.raised.ToColorRef() : palette.panel.ToColorRef());
+			const bool displayed = tabs[index].active || (secondaryTabId && tabs[index].id == *secondaryTabId);
+			const HBRUSH tabBrush = ::CreateSolidBrush(displayed ? palette.raised.ToColorRef() : palette.panel.ToColorRef());
 			::FillRect(memory, &tab, tabBrush);
 			::DeleteObject(tabBrush);
-			if( tabs[index].active ) {
+			if( displayed ) {
 				RECT accent = tab;
 				accent.bottom = accent.top + ScaleDip(2, dpi);
 				const HBRUSH accentBrush = ::CreateSolidBrush(palette.accent.ToColorRef());
@@ -296,11 +415,63 @@ struct CTerminalTool::Impl {
 		RECT add{ static_cast<LONG>(tabs.size() * tabWidth), 0, static_cast<LONG>(tabs.size() * tabWidth + ScaleDip(kAddButtonWidthDip, dpi)), tabStrip.bottom };
 		::SetTextColor(memory, palette.primaryText.ToColorRef());
 		::DrawTextW(memory, L"+", 1, &add, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+		RECT split = add;
+		split.left = add.right;
+		split.right = split.left + ScaleDip(kSplitButtonWidthDip, dpi);
+		::SetTextColor(memory, secondaryTabId ? palette.secondaryText.ToColorRef() : palette.primaryText.ToColorRef());
+		const int iconWidth = ScaleDip(13, dpi);
+		const int iconHeight = ScaleDip(12, dpi);
+		const int iconLeft = split.left + ((split.right - split.left) - iconWidth) / 2;
+		const int iconTop = split.top + ((split.bottom - split.top) - iconHeight) / 2;
+		const HPEN iconPen = ::CreatePen(PS_SOLID, 1, secondaryTabId ? palette.secondaryText.ToColorRef() : palette.primaryText.ToColorRef());
+		const auto previousPen = ::SelectObject(memory, iconPen);
+		const auto previousBrush = ::SelectObject(memory, ::GetStockObject(NULL_BRUSH));
+		::Rectangle(memory, iconLeft, iconTop, iconLeft + iconWidth, iconTop + iconHeight);
+		::MoveToEx(memory, iconLeft + iconWidth / 2, iconTop, nullptr);
+		::LineTo(memory, iconLeft + iconWidth / 2, iconTop + iconHeight);
+		::SelectObject(memory, previousBrush);
+		::SelectObject(memory, previousPen);
+		::DeleteObject(iconPen);
 		::BitBlt(dc, 0, 0, width, height, memory, 0, 0, SRCCOPY);
+		if( secondaryTabId ) {
+			RECT divider = client;
+			divider.top = tabStrip.bottom;
+			divider.left = PaneDividerLeft(divider);
+			divider.right = divider.left + ScaleDip(kPaneDividerDip, dpi);
+			const HBRUSH dividerBrush = ::CreateSolidBrush(palette.border.ToColorRef());
+			::FillRect(dc, &divider, dividerBrush);
+			::DeleteObject(dividerBrush);
+		}
 		::SelectObject(memory, previousBitmap);
 		::DeleteObject(bitmap);
 		::DeleteDC(memory);
 		::EndPaint(window, &paint);
+	}
+
+	void PaintTerminalOutput( CTerminalWnd& renderer, const TerminalModel* model, const TerminalDrainResult& result,
+		bool& needsFullRepaint, ULONGLONG& synchronizedSince )
+	{
+		if( model && model->Modes().synchronizedOutput ) {
+			if( synchronizedSince == 0 ) synchronizedSince = ::GetTickCount64();
+			if( window ) ::SetTimer(window, kSynchronizedOutputTimer,
+				static_cast<UINT>(kSynchronizedOutputMaximumMilliseconds), nullptr);
+			return;
+		}
+		if( synchronizedSince != 0 ) {
+			synchronizedSince = 0;
+			renderer.InvalidateAll();
+			needsFullRepaint = false;
+			if( secondarySynchronizedOutputSince == 0 && synchronizedOutputSince == 0 && window ) {
+				::KillTimer(window, kSynchronizedOutputTimer);
+			}
+			return;
+		}
+		if( needsFullRepaint ) {
+			renderer.InvalidateAll();
+			needsFullRepaint = false;
+		} else {
+			renderer.InvalidateDirtyRows(result.dirtyRows);
+		}
 	}
 
 	void HandleOutput( std::uint64_t tabId )
@@ -309,16 +480,36 @@ struct CTerminalTool::Impl {
 		if( !result.found ) return;
 		if( result.titleChanged ) InvalidateTabs();
 		if( result.active && terminalWindow ) {
-			// The first output may arrive while the renderer is still transitioning
-			// from its deferred 0x0 layout. Paint the complete viewport once, then
-			// return to dirty-row invalidation for steady-state throughput.
-			if( needsFullTerminalRepaint ) {
-				terminalWindow->InvalidateAll();
-				needsFullTerminalRepaint = false;
-			} else {
-				terminalWindow->InvalidateDirtyRows(result.dirtyRows);
-			}
+			PaintTerminalOutput(*terminalWindow, manager->ActiveModel(), result,
+				needsFullTerminalRepaint, synchronizedOutputSince);
 		}
+		if( secondaryTabId == tabId && secondaryTerminalWindow ) {
+			PaintTerminalOutput(*secondaryTerminalWindow, manager->Model(tabId), result,
+				needsFullSecondaryRepaint, secondarySynchronizedOutputSince);
+		}
+	}
+
+	void ScheduleOutputFrame( std::uint64_t tabId )
+	{
+		if( std::find(pendingOutputTabs.begin(), pendingOutputTabs.end(), tabId) == pendingOutputTabs.end() ) {
+			pendingOutputTabs.push_back(tabId);
+		}
+		if( outputFrameScheduled || window == nullptr ) return;
+		outputFrameScheduled = ::SetTimer(window, kOutputFrameTimer, kOutputFrameMilliseconds, nullptr) != 0;
+		if( !outputFrameScheduled ) {
+			auto pending = std::move(pendingOutputTabs);
+			pendingOutputTabs.clear();
+			for( const auto pendingId : pending ) HandleOutput(pendingId);
+		}
+	}
+
+	void DrainOutputFrame()
+	{
+		if( window != nullptr ) ::KillTimer(window, kOutputFrameTimer);
+		outputFrameScheduled = false;
+		auto pending = std::move(pendingOutputTabs);
+		pendingOutputTabs.clear();
+		for( const auto tabId : pending ) HandleOutput(tabId);
 	}
 
 	void ShowContextMenu( int x, int y )
@@ -329,6 +520,9 @@ struct CTerminalTool::Impl {
 		const auto activeId = manager->ActiveTabId();
 		::AppendMenuW(menu, MF_STRING | (activeId ? 0 : MF_GRAYED), kCommandRestartTerminal, L"Restart Terminal");
 		::AppendMenuW(menu, MF_STRING | (activeId ? 0 : MF_GRAYED), kCommandCloseTerminal, L"Close Terminal");
+		::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+		::AppendMenuW(menu, MF_STRING | (secondaryTabId ? MF_GRAYED : 0), kCommandSplitTerminal, L"Split Terminal Right");
+		::AppendMenuW(menu, MF_STRING | (secondaryTabId ? 0 : MF_GRAYED), kCommandCloseSplit, L"Close Right Terminal");
 		if( defaultResolver ) {
 			const HMENU profilesMenu = ::CreatePopupMenu();
 			if( profilesMenu ) {
@@ -369,13 +563,50 @@ struct CTerminalTool::Impl {
 			if( terminalWindow ) terminalWindow->Focus();
 			return 0;
 		case WM_LBUTTONDOWN: {
+			if( HitTestPaneDivider(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)) ) {
+				draggingPaneDivider = true;
+				::SetCapture(window);
+				return 0;
+			}
+			if( GET_Y_LPARAM(lParam) >= ScaleDip(kTabHeightDip, dpi) ) return 0;
 			bool close = false;
 			const auto tabId = HitTestTab(GET_X_LPARAM(lParam), &close);
 			if( tabId ) {
 				if( close ) DeleteTerminal(*tabId);
 				else SelectTerminal(*tabId);
 			} else if( HitTestAdd(GET_X_LPARAM(lParam)) ) AddTerminal();
+			else if( HitTestSplit(GET_X_LPARAM(lParam)) ) {
+				if( secondaryTabId && secondaryTerminalWindow ) secondaryTerminalWindow->Focus();
+				else SplitTerminalRight();
+			}
 			return 0;
+		}
+		case WM_MOUSEMOVE:
+			if( draggingPaneDivider ) {
+				SetPaneDividerFromMouse(GET_X_LPARAM(lParam));
+				return 0;
+			}
+			break;
+		case WM_LBUTTONUP:
+			if( draggingPaneDivider ) {
+				draggingPaneDivider = false;
+				if( ::GetCapture() == window ) ::ReleaseCapture();
+				SetPaneDividerFromMouse(GET_X_LPARAM(lParam));
+				return 0;
+			}
+			break;
+		case WM_CAPTURECHANGED:
+			draggingPaneDivider = false;
+			return 0;
+		case WM_SETCURSOR: {
+			POINT point{};
+			::GetCursorPos(&point);
+			::ScreenToClient(window, &point);
+			if( HitTestPaneDivider(point.x, point.y) ) {
+				::SetCursor(::LoadCursor(nullptr, IDC_SIZEWE));
+				return TRUE;
+			}
+			break;
 		}
 		case WM_MBUTTONDOWN:
 			if( const auto tabId = HitTestTab(GET_X_LPARAM(lParam)) ) DeleteTerminal(*tabId);
@@ -403,18 +634,42 @@ struct CTerminalTool::Impl {
 			case kCommandRestartTerminal: if( const auto id = manager->ActiveTabId() ) RestartTerminal(*id); break;
 			case kCommandCloseTerminal: if( const auto id = manager->ActiveTabId() ) DeleteTerminal(*id); break;
 			case kCommandRedetectPowerShell: if( defaultResolver ) defaultResolver->Redetect(); break;
+			case kCommandSplitTerminal: SplitTerminalRight(); break;
+			case kCommandCloseSplit: CloseTerminalSplit(); break;
 			default: break;
 			}
 			return 0;
 		case kOutputAvailableMessage:
-			HandleOutput(static_cast<std::uint64_t>(wParam));
+			ScheduleOutputFrame(static_cast<std::uint64_t>(wParam));
 			return 0;
+		case WM_TIMER:
+			if( wParam == kOutputFrameTimer ) {
+				DrainOutputFrame();
+				return 0;
+			}
+			if( wParam == kSynchronizedOutputTimer ) {
+				// Broken or very long synchronized updates still present a bounded-rate
+				// preview instead of freezing indefinitely.
+				if( synchronizedOutputSince != 0 && terminalWindow ) {
+					terminalWindow->InvalidateAll();
+					needsFullTerminalRepaint = false;
+					synchronizedOutputSince = ::GetTickCount64();
+				}
+				if( secondarySynchronizedOutputSince != 0 && secondaryTerminalWindow ) {
+					secondaryTerminalWindow->InvalidateAll();
+					needsFullSecondaryRepaint = false;
+					secondarySynchronizedOutputSince = ::GetTickCount64();
+				}
+				return 0;
+			}
+			return ::DefWindowProcW(window, message, wParam, lParam);
 		case kStateChangedMessage:
 			InvalidateTabs();
 			return 0;
 		default:
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		}
+		return ::DefWindowProcW(window, message, wParam, lParam);
 	}
 
 	std::optional<std::uint64_t> AddTerminal()
@@ -431,6 +686,10 @@ struct CTerminalTool::Impl {
 
 	bool SelectTerminal( std::uint64_t tabId )
 	{
+		if( secondaryTabId == tabId ) {
+			if( active && secondaryTerminalWindow ) secondaryTerminalWindow->Focus();
+			return true;
+		}
 		if( !manager->SelectTab(tabId) ) return false;
 		BindActiveModel();
 		InvalidateTabs();
@@ -441,18 +700,57 @@ struct CTerminalTool::Impl {
 	bool RestartTerminal( std::uint64_t tabId )
 	{
 		static_cast<void>(EnsureTerminalWindow());
-		const bool restarted = manager->RestartTab(tabId, CurrentSize(), workingDirectory);
+		const bool secondary = secondaryTabId == tabId;
+		const bool restarted = manager->RestartTab(tabId, secondary ? SecondarySize() : CurrentSize(), workingDirectory);
 		if( manager->ActiveTabId() == tabId ) BindActiveModel();
+		if( secondary ) BindSecondaryModel();
 		InvalidateTabs();
 		return restarted;
 	}
 
 	bool DeleteTerminal( std::uint64_t tabId )
 	{
+		const bool deletingSecondary = secondaryTabId == tabId;
+		if( deletingSecondary ) {
+			DestroySecondaryRenderer();
+			secondaryTabId.reset();
+		}
 		if( !manager->DeleteTab(tabId) ) return false;
+		if( !deletingSecondary && secondaryTabId && manager->ActiveTabId() == secondaryTabId ) {
+			// The right-hand session becomes the primary viewport when it is the
+			// manager's only remaining choice after the left tab closes.
+			DestroySecondaryRenderer();
+			secondaryTabId.reset();
+		}
 		BindActiveModel();
+		LayoutChildren();
 		InvalidateTabs();
 		return true;
+	}
+
+	bool SplitTerminalRight()
+	{
+		if( closed || secondaryTabId ) return false;
+		static_cast<void>(EnsureTerminalWindow());
+		const auto primaryId = manager->Activate(CurrentSize(), workingDirectory);
+		if( !primaryId ) return false;
+		BindActiveModel();
+		const auto newId = manager->AddTab(CurrentSize(), workingDirectory);
+		if( !newId ) return false;
+		secondaryTabId = newId;
+		static_cast<void>(manager->SelectTab(*primaryId));
+		BindActiveModel();
+		static_cast<void>(EnsureSecondaryTerminalWindow());
+		BindSecondaryModel();
+		LayoutChildren();
+		InvalidateTabs();
+		if( active && secondaryTerminalWindow ) secondaryTerminalWindow->Focus();
+		return true;
+	}
+
+	bool CloseTerminalSplit()
+	{
+		return secondaryTabId && DeleteTerminal(*secondaryTabId);
 	}
 };
 
@@ -517,7 +815,9 @@ void CTerminalTool::Deactivate()
 
 bool CTerminalTool::PreTranslateMessage( MSG& message )
 {
-	return !m_impl->closed && m_impl->terminalWindow && m_impl->terminalWindow->PreTranslateMessage(message);
+	if( m_impl->closed ) return false;
+	if( m_impl->secondaryTerminalWindow && m_impl->secondaryTerminalWindow->PreTranslateMessage(message) ) return true;
+	return m_impl->terminalWindow && m_impl->terminalWindow->PreTranslateMessage(message);
 }
 
 void CTerminalTool::Close()
@@ -533,7 +833,20 @@ void CTerminalTool::Close()
 		m_impl->terminalWindow->SetInputAdapter(nullptr);
 		m_impl->terminalWindow->SetModel(nullptr);
 	}
+	if( m_impl->secondaryTerminalWindow ) {
+		m_impl->secondaryTerminalWindow->SetInputAdapter(nullptr);
+		m_impl->secondaryTerminalWindow->SetModel(nullptr);
+	}
+	if( m_impl->window ) ::KillTimer(m_impl->window, kOutputFrameTimer);
+	if( m_impl->window ) ::KillTimer(m_impl->window, kSynchronizedOutputTimer);
+	m_impl->outputFrameScheduled = false;
+	m_impl->pendingOutputTabs.clear();
+	m_impl->synchronizedOutputSince = 0;
+	m_impl->secondarySynchronizedOutputSince = 0;
 	m_impl->manager->Close();
+	if( m_impl->secondaryTerminalWindow ) m_impl->secondaryTerminalWindow->Close();
+	m_impl->secondaryTerminalWindow.reset();
+	m_impl->secondaryTabId.reset();
 	if( m_impl->terminalWindow ) m_impl->terminalWindow->Close();
 	m_impl->terminalWindow.reset();
 	if( m_impl->window ) ::DestroyWindow(m_impl->window);
@@ -551,6 +864,7 @@ void CTerminalTool::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
 	if( m_impl->terminalWindow ) m_impl->terminalWindow->SetPalette(palette);
+	if( m_impl->secondaryTerminalWindow ) m_impl->secondaryTerminalWindow->SetPalette(palette);
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 
@@ -580,6 +894,21 @@ bool CTerminalTool::RestartTerminal( std::uint64_t tabId )
 bool CTerminalTool::DeleteTerminal( std::uint64_t tabId )
 {
 	return !m_impl->closed && m_impl->DeleteTerminal(tabId);
+}
+
+bool CTerminalTool::SplitTerminalRight()
+{
+	return !m_impl->closed && m_impl->SplitTerminalRight();
+}
+
+bool CTerminalTool::CloseTerminalSplit()
+{
+	return !m_impl->closed && m_impl->CloseTerminalSplit();
+}
+
+bool CTerminalTool::HasTerminalSplit() const noexcept
+{
+	return !m_impl->closed && m_impl->secondaryTabId.has_value();
 }
 
 std::vector<TerminalTabSnapshot> CTerminalTool::Tabs() const

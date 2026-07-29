@@ -148,6 +148,13 @@ void CMainStatusBar::SetPalette(const theme::ThemePalette& palette) noexcept
 	}
 }
 
+void CMainStatusBar::SetScmText(std::wstring text)
+{
+	if (m_scmText == text) return;
+	m_scmText = std::move(text);
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
 void CMainStatusBar::InstallPaletteSubclass() noexcept
 {
 	if (m_hwndStatusBar == nullptr) return;
@@ -217,6 +224,16 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	::SetTextColor(target, m_palette.highlightText.ToColorRef());
 	const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(m_hwndStatusBar, WM_GETFONT, 0, 0));
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
+	int scmWidth = 0;
+	if (!m_scmText.empty()) {
+		SIZE extent{};
+		if (::GetTextExtentPoint32W(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &extent)) {
+			scmWidth = std::min(width, static_cast<int>(extent.cx) + 16);
+			RECT scmRect{ 8, 0, scmWidth - 4, height };
+			::DrawTextW(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &scmRect,
+				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		}
+	}
 
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
 	const HPEN separator = ::CreatePen(PS_SOLID, 1, m_palette.border.ToColorRef());
@@ -224,6 +241,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	for (int part = 0; part < partCount; ++part) {
 		RECT partRect{};
 		if (::SendMessageW(m_hwndStatusBar, SB_GETRECT, part, reinterpret_cast<LPARAM>(&partRect)) == FALSE) continue;
+		if (part == 0 && scmWidth > partRect.left) partRect.left = std::min<LONG>(partRect.right, scmWidth);
 		const LRESULT textInfo = ::SendMessageW(m_hwndStatusBar, SB_GETTEXTLENGTHW, part, 0);
 		const UINT textLength = LOWORD(textInfo);
 		const UINT style = HIWORD(textInfo);

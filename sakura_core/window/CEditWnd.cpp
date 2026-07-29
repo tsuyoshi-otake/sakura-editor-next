@@ -68,6 +68,7 @@
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/explorer/CExplorerOutlineTool.h"
+#include "workbench/WorkbenchZoom.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 
 #include "macro/CMacroFactory.h"
@@ -365,10 +366,19 @@ bool CEditWnd::InitializeWorkbench()
 	m_explorerOutlineTool = explorer.get();
 	m_explorerTool = explorer->Explorer();
 	m_outlineWorkbenchTool = explorer->Outline();
+	m_scmTool = explorer->SourceControl();
 	m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
+	m_scmTool->SetRoot(m_workspaceContext->GetRoot());
 	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path) {
 		const std::wstring ownedPath(path);
 		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
+	});
+	m_scmTool->SetFileActivationCallback([this](std::wstring_view path) {
+		const std::wstring ownedPath(path);
+		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
+	});
+	m_scmTool->SetStateChangedCallback([this](const workbench::scm::GitScmState& state) {
+		m_cStatusBar.SetScmText(workbench::scm::FormatStatusLine(state));
 	});
 	if (!m_leftWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(explorer))) {
 		m_explorerTool = nullptr;
@@ -388,9 +398,13 @@ bool CEditWnd::InitializeWorkbench()
 	m_activityBar = std::make_unique<workbench::CActivityBar>([this](workbench::ActivityBarItem item) {
 		switch (item) {
 		case workbench::ActivityBarItem::Explorer:
-			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Left, true);
+			ActivateLeftWorkbenchTool(false, true);
+			break;
+		case workbench::ActivityBarItem::SourceControl:
+			ActivateLeftWorkbenchTool(true, true);
 			break;
 		case workbench::ActivityBarItem::Outline:
+			if (m_explorerOutlineTool) m_explorerOutlineTool->ShowSourceControl(false);
 			SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right,
 				!IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Right), true);
 			break;
@@ -434,6 +448,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_explorerOutlineTool = nullptr;
 	m_explorerTool = nullptr;
 	m_outlineWorkbenchTool = nullptr;
+	m_scmTool = nullptr;
 	m_terminalTool = nullptr;
 	m_workspaceContext.reset();
 }
@@ -479,6 +494,7 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		if (visible != FALSE) host->Show(); else host->Hide();
 	};
 	applyPanel(m_leftWorkbenchPanel.get(), settings.m_bLeftPanelVisible, settings.m_nLeftPanelExtent96);
+	if (m_explorerOutlineTool) m_explorerOutlineTool->ShowSourceControl(settings.m_eActiveTool == WORKBENCH_TOOL_SCM);
 	if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(settings.m_bRightPanelVisible != FALSE);
 	applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible, settings.m_nBottomPanelExtent96);
 
@@ -492,6 +508,9 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		break;
 	case WORKBENCH_TOOL_TERMINAL:
 		if (settings.m_bBottomPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Terminal;
+		break;
+	case WORKBENCH_TOOL_SCM:
+		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::SourceControl;
 		break;
 	}
 	if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
@@ -546,6 +565,7 @@ void CEditWnd::UpdateWorkspaceFromDocument()
 		m_workspaceContext->ClearSelectedFile();
 	}
 	if (m_explorerTool) m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
+	if (m_scmTool) m_scmTool->SetRoot(m_workspaceContext->GetRoot());
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 }
 
@@ -620,6 +640,9 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		}
 		if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(visible);
 	} else if (host != nullptr) {
+		if (edge == workbench::WorkbenchEdge::Left && visible && activate && m_explorerOutlineTool) {
+			m_explorerOutlineTool->ShowSourceControl(false);
+		}
 		if (visible) host->Show(); else host->Hide();
 	}
 	if (GetHwnd() != nullptr) {
@@ -643,6 +666,32 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	if (visibilityChanged || leftVisibilityChanged || oldActiveTool != settings.m_eActiveTool) {
 		BroadcastWorkbenchSettings();
 	}
+}
+
+void CEditWnd::ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive)
+{
+	if (!m_leftWorkbenchPanel || !m_explorerOutlineTool) return;
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	const auto requested = sourceControl ? WORKBENCH_TOOL_SCM : WORKBENCH_TOOL_EXPLORER;
+	const bool alreadyActive = settings.m_bLeftPanelVisible != FALSE && settings.m_eActiveTool == requested;
+	if (toggleIfActive && alreadyActive) {
+		SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, false, false);
+		if (m_activityBar) m_activityBar->SetSelectedItem(std::nullopt);
+		return;
+	}
+	settings.m_bLeftPanelVisible = TRUE;
+	settings.m_eActiveTool = requested;
+	m_explorerOutlineTool->ShowSourceControl(sourceControl);
+	m_leftWorkbenchPanel->Show();
+	if (GetHwnd()) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+	m_leftWorkbenchPanel->ActivateTool();
+	if (m_activityBar) m_activityBar->SetSelectedItem(sourceControl
+		? workbench::ActivityBarItem::SourceControl : workbench::ActivityBarItem::Explorer);
+	BroadcastWorkbenchSettings();
 }
 
 void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate)
@@ -674,6 +723,7 @@ void CEditWnd::OpenWorkspaceFolder()
 	// when it creates or explicitly restarts a tab, so live sessions keep CWD.
 	m_workspaceContext->SetExplicitRoot(absoluteRoot);
 	if (m_explorerTool) m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
+	if (m_scmTool) m_scmTool->SetRoot(m_workspaceContext->GetRoot());
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true);
 }
@@ -699,6 +749,17 @@ void CEditWnd::RedetectPowerShell()
 
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
+	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
+		&& (::GetKeyState(VK_MENU) & 0x8000) == 0) {
+		int direction = 2;
+		if (message.wParam == VK_OEM_PLUS || message.wParam == VK_ADD) direction = 1;
+		else if (message.wParam == VK_OEM_MINUS || message.wParam == VK_SUBTRACT) direction = -1;
+		else if (message.wParam == L'0' || message.wParam == VK_NUMPAD0) direction = 0;
+		if (direction != 2) {
+			SetWorkbenchZoomPercent(workbench::AdjustZoomPercent(m_workbenchZoomPercent, direction));
+			return true;
+		}
+	}
 	if (m_resizingWorkbenchPanel != nullptr && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
 		CancelWorkbenchResize();
 		return true;
@@ -707,6 +768,27 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 	if (m_bottomWorkbenchPanel && m_bottomWorkbenchPanel->PreTranslateMessage(message)) return true;
 	if (m_leftWorkbenchPanel && m_leftWorkbenchPanel->PreTranslateMessage(message)) return true;
 	return m_rightWorkbenchPanel && m_rightWorkbenchPanel->PreTranslateMessage(message);
+}
+
+void CEditWnd::SetWorkbenchZoomPercent(int percent)
+{
+	percent = std::clamp(percent, workbench::kMinimumZoomPercent, workbench::kMaximumZoomPercent);
+	if (percent == m_workbenchZoomPercent) return;
+	if (m_workbenchZoomBasePointSize <= 0) {
+		m_workbenchZoomBasePointSize = GetFontPointSize(false);
+	}
+	m_workbenchZoomPercent = percent;
+	if (m_customFrame) m_customFrame->SetUiScalePercent(percent);
+	if (m_workbenchZoomBasePointSize > 0 && m_dispatchReady) {
+		const int pointSize = std::max(10, ::MulDiv(m_workbenchZoomBasePointSize, percent, 100));
+		GetActiveView().GetCommander().Command_SETFONTSIZE(pointSize, 0, 2);
+	}
+	if (GetHwnd()) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), true);
+		::RedrawWindow(GetHwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
+	}
 }
 
 //! ドキュメントリスナ：ロード後
@@ -1565,6 +1647,9 @@ void CEditWnd::MessageLoop( void )
 
 	auto hWndDM = GetHwnd();
 	DarkMode::setDarkWndNotifySafeEx(hWndDM, false, true);
+	// setDarkWndNotifySafeEx recursively installs darkmodelib's status-bar painter.
+	// Sakura owns the workbench status palette, so keep our painter last in the chain.
+	m_cStatusBar.InstallPaletteSubclass();
 
 	while(GetHwnd())
 	{
@@ -2530,6 +2615,7 @@ LRESULT CEditWnd::DispatchEvent(
 			EndLayoutBars();	// 2006.12.19 ryoji
 		}
 		DarkMode::setChildCtrlsSubclassAndTheme(hwnd);
+		m_cStatusBar.InstallPaletteSubclass();
 		return 0L;
 
 	//by 鬼 (2) MYWM_CHECKSYSMENUDBLCLKは不要に, WM_LBUTTONDBLCLK追加
@@ -3832,7 +3918,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	workbench::WorkbenchLayoutRequest layoutRequest;
 	layoutRequest.clientWidth = cx;
 	layoutRequest.clientHeight = cy;
-	layoutRequest.dpi = GetHwnd() == nullptr ? 96 : ::GetDpiForWindow(GetHwnd());
+	const auto physicalDpi = GetHwnd() == nullptr ? 96 : ::GetDpiForWindow(GetHwnd());
+	layoutRequest.dpi = workbench::ScaleDpi(physicalDpi, m_workbenchZoomPercent);
 	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
 	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
 		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);

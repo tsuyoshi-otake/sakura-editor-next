@@ -7,6 +7,7 @@
 
 #include "StdAfx.h"
 #include "window/CCustomFrameController.h"
+#include "workbench/WorkbenchZoom.h"
 
 #include <algorithm>
 
@@ -126,6 +127,20 @@ bool ShouldPreferDwmNonClientResult(UINT message, LRESULT dwmResult) noexcept
 	}
 }
 
+UINT CaptionButtonSystemCommand(LRESULT hit, bool maximized) noexcept
+{
+	switch (hit) {
+	case HTMINBUTTON:
+		return SC_MINIMIZE;
+	case HTMAXBUTTON:
+		return maximized ? SC_RESTORE : SC_MAXIMIZE;
+	case HTCLOSE:
+		return SC_CLOSE;
+	default:
+		return 0;
+	}
+}
+
 CCustomFrameController::~CCustomFrameController()
 {
 	m_accessibilityLifetime->Invalidate();
@@ -150,6 +165,7 @@ void CCustomFrameController::Detach() noexcept
 	m_accessibilityLifetime->Invalidate();
 	m_menuBar.SetMenu(nullptr);
 	m_font.Reset();
+	m_menuFont.Reset();
 	m_window = nullptr;
 	m_hotHit = HTNOWHERE;
 	m_pressedHit = HTNOWHERE;
@@ -178,11 +194,22 @@ void CCustomFrameController::SetThemeMode(theme::ThemeMode savedMode) noexcept
 	InvalidateTitle();
 }
 
+void CCustomFrameController::SetUiScalePercent(int percent) noexcept
+{
+	percent = std::clamp(percent, workbench::kMinimumZoomPercent, workbench::kMaximumZoomPercent);
+	if (m_uiScalePercent == percent) return;
+	m_uiScalePercent = percent;
+	RefreshMetrics();
+	InvalidateTitle();
+}
+
 void CCustomFrameController::RefreshMetrics() noexcept
 {
-	m_dpi = m_window == nullptr ? 96 : std::max<UINT>(96, ::GetDpiForWindow(m_window));
+	m_physicalDpi = m_window == nullptr ? 96 : std::max<UINT>(96, ::GetDpiForWindow(m_window));
+	m_dpi = workbench::ScaleDpi(m_physicalDpi, m_uiScalePercent);
 	m_palette = theme::CThemeService::EffectivePalette(m_savedMode);
 	(void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_dpi);
+	(void)m_menuFont.Recreate(theme::ThemeFontKind::Chrome, m_dpi, 8);
 	RefreshLayout();
 }
 
@@ -194,10 +221,10 @@ void CCustomFrameController::RefreshLayout() noexcept
 	}
 	RECT client{};
 	::GetClientRect(m_window, &client);
-	const int menuWidth = m_menuBar.MeasurePreferredWidth(m_window, m_font.Get(), m_dpi);
+	const int menuWidth = m_menuBar.MeasurePreferredWidth(m_window, m_menuFont.Get(), m_dpi);
 	m_layout = CalculateCustomFrameLayout(client.right - client.left, m_dpi, menuWidth);
 	m_menuBar.SetBounds(m_layout.menu);
-	m_menuBar.UpdateItemLayout(m_window, m_font.Get());
+	m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get());
 }
 
 int CCustomFrameController::ResizeBorder() const noexcept
@@ -331,6 +358,10 @@ bool CCustomFrameController::HandleWindowMessage(
 	case WM_NCLBUTTONDOWN:
 		if (IsCaptionButton(static_cast<LRESULT>(wParam))) {
 			SetPressedHit(static_cast<LRESULT>(wParam));
+			// The top edge is client-extended, so DWM supplies Snap hover but does
+			// not dispatch the command for Sakura-owned caption buttons.
+			result = 0;
+			return true;
 		}
 		if (dwmHandled) {
 			result = dwmResult;
@@ -338,12 +369,26 @@ bool CCustomFrameController::HandleWindowMessage(
 		}
 		return false;
 	case WM_NCLBUTTONUP:
+	{
+		const LRESULT releasedHit = static_cast<LRESULT>(wParam);
+		const bool invoke = IsCaptionButton(releasedHit) && m_pressedHit == releasedHit;
 		SetPressedHit(HTNOWHERE);
+		if (IsCaptionButton(releasedHit)) {
+			if (invoke) {
+				const UINT command = CaptionButtonSystemCommand(releasedHit, ::IsZoomed(m_window) != FALSE);
+				if (command != 0) {
+					::SendMessageW(m_window, WM_SYSCOMMAND, command, 0);
+				}
+			}
+			result = 0;
+			return true;
+		}
 		if (dwmHandled) {
 			result = dwmResult;
 			return true;
 		}
 		return false;
+	}
 	case WM_NCLBUTTONDBLCLK:
 	case WM_NCRBUTTONDOWN:
 	case WM_NCRBUTTONUP:
@@ -360,8 +405,10 @@ bool CCustomFrameController::HandleWindowMessage(
 	case WM_CAPTURECHANGED:
 		return m_menuBar.HandleMouseMessage(m_window, message, wParam, lParam, result);
 	case WM_DPICHANGED:
-		m_dpi = HIWORD(wParam) == 0 ? 96 : HIWORD(wParam);
+		m_physicalDpi = HIWORD(wParam) == 0 ? 96 : HIWORD(wParam);
+		m_dpi = workbench::ScaleDpi(m_physicalDpi, m_uiScalePercent);
 		(void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_dpi);
+		(void)m_menuFont.Recreate(theme::ThemeFontKind::Chrome, m_dpi, 8);
 		if (lParam != 0) {
 			const RECT suggested = *reinterpret_cast<const RECT*>(lParam);
 			::SetWindowPos(m_window, nullptr, suggested.left, suggested.top,
@@ -422,7 +469,7 @@ void CCustomFrameController::Paint(HDC dc, [[maybe_unused]] const RECT& paintRec
 	}
 	RefreshLayout();
 	m_titleBar.Paint(m_window, dc, m_layout, m_palette, m_font.Get(), m_active, m_hotHit, m_pressedHit);
-	m_menuBar.Paint(m_window, dc, m_font.Get(), m_palette, m_active);
+	m_menuBar.Paint(m_window, dc, m_menuFont.Get(), m_palette, m_active);
 }
 
 void CCustomFrameController::InvalidateTitle() const noexcept

@@ -250,6 +250,7 @@
   </Target>
   <Target Name="GeneratePpaStub" Inputs="$(VcpkgInstalledDir)$(VcpkgTriplet)\bin\ppa_stub.dll" Outputs="$(OutDir)ppa_stub.dll" BeforeTargets="ClCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target ppa_stub -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+	<Touch Files="$(OutDir)ppa_stub.dll" />
   </Target>
   <Target Name="MakeTestResource" Condition="!Exists('$(CMakeToolsBuildDir)resources.ja-JP.zip')" BeforeTargets="ResourceCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target test_resource_zip -- /nologo&quot;" EnvironmentVariables="TrackFileAccess=false" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />

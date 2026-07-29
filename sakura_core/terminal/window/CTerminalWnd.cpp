@@ -332,30 +332,76 @@ struct CTerminalWnd::Impl {
 				const auto globalRow = viewport.topRow + visualRow;
 				const auto* row = GetTerminalRow(*model, globalRow);
 				if( !row ) continue;
-				for( std::size_t column = 0; column < row->cells.size(); ++column ) {
-					const auto& cell = row->cells[column];
-					if( cell.continuation ) continue;
-					auto attributes = row->AttributesAt(column);
-					COLORREF foreground = ResolveTerminalColor(attributes.foreground, palette, defaultForeground);
-					COLORREF cellBackground = ResolveTerminalColor(attributes.background, palette, defaultBackground);
-					if( attributes.inverse ) std::swap(foreground, cellBackground);
-					const auto cellWidthPixels = cellWidth * std::max<unsigned int>(1, cell.width);
-					RECT cellRect{
-						static_cast<LONG>(column * cellWidth), static_cast<LONG>(visualRow * cellHeight),
-						static_cast<LONG>(column * cellWidth + cellWidthPixels), static_cast<LONG>((visualRow + 1) * cellHeight),
+				std::wstring batchText;
+				std::vector<int> batchAdvances;
+				batchText.reserve(row->cells.size());
+				batchAdvances.reserve(row->cells.size());
+				std::size_t batchStart{};
+				std::size_t batchEnd{};
+				TerminalAttributes batchAttributes{};
+				bool batchSelected{};
+				bool hasBatch{};
+				const auto flushBatch = [&] {
+					if( !hasBatch || batchText.empty() ) return;
+					auto foreground = ResolveTerminalColor(batchAttributes.foreground, palette, defaultForeground);
+					auto background = ResolveTerminalColor(batchAttributes.background, palette, defaultBackground);
+					if( batchAttributes.inverse ) std::swap(foreground, background);
+					if( batchSelected ) background = palette.accent.ToColorRef();
+					RECT runRect{
+						static_cast<LONG>(batchStart * cellWidth), static_cast<LONG>(visualRow * cellHeight),
+						static_cast<LONG>(batchEnd * cellWidth), static_cast<LONG>((visualRow + 1) * cellHeight),
 					};
-					if( HasSelection() && IsPointSelected({ globalRow, column }, selectionAnchor, selectionActive) ) cellBackground = palette.accent.ToColorRef();
 					::SetTextColor(memory, foreground);
-					::SetBkColor(memory, cellBackground);
-					const auto text = cell.Text();
-					::ExtTextOutW(memory, cellRect.left, cellRect.top, ETO_OPAQUE | ETO_CLIPPED, &cellRect,
-						text.data(), static_cast<UINT>(text.size()), nullptr);
-					if( attributes.underline ) {
+					::SetBkColor(memory, background);
+					::ExtTextOutW(memory, runRect.left, runRect.top, ETO_OPAQUE | ETO_CLIPPED, &runRect,
+						batchText.data(), static_cast<UINT>(batchText.size()), batchAdvances.data());
+					if( batchAttributes.underline ) {
 						::SetDCPenColor(memory, foreground);
-						::MoveToEx(memory, cellRect.left, cellRect.bottom - 2, nullptr);
-						::LineTo(memory, cellRect.right, cellRect.bottom - 2);
+						::MoveToEx(memory, runRect.left, runRect.bottom - 2, nullptr);
+						::LineTo(memory, runRect.right, runRect.bottom - 2);
 					}
+					batchText.clear();
+					batchAdvances.clear();
+					hasBatch = false;
+				};
+
+				for( std::size_t column = 0; column < row->cells.size(); ) {
+					const auto& cell = row->cells[column];
+					if( cell.continuation ) { ++column; continue; }
+					const auto attributes = row->AttributesAt(column);
+					const bool selected = HasSelection()
+						&& IsPointSelected({ globalRow, column }, selectionAnchor, selectionActive);
+					const auto columnsWide = std::max<std::size_t>(1, cell.width);
+					const auto text = cell.Text();
+					// Complex graphemes need GDI's own shaping and cannot safely share a
+					// per-cell advance array. They remain a rare single-call fallback.
+					if( text.size() > 1 ) {
+						flushBatch();
+						batchStart = column;
+						batchEnd = std::min(row->cells.size(), column + columnsWide);
+						batchAttributes = attributes;
+						batchSelected = selected;
+						batchText.assign(text);
+						batchAdvances.assign(text.size(), 0);
+						batchAdvances.back() = static_cast<int>(columnsWide * cellWidth);
+						hasBatch = true;
+						flushBatch();
+						column += columnsWide;
+						continue;
+					}
+					if( hasBatch && (attributes != batchAttributes || selected != batchSelected) ) flushBatch();
+					if( !hasBatch ) {
+						batchStart = column;
+						batchAttributes = attributes;
+						batchSelected = selected;
+						hasBatch = true;
+					}
+					batchEnd = std::min(row->cells.size(), column + columnsWide);
+					batchText.push_back(text.empty() ? L' ' : text.front());
+					batchAdvances.push_back(static_cast<int>(columnsWide * cellWidth));
+					column += columnsWide;
 				}
+				flushBatch();
 			}
 		}
 		if( previousFont ) ::SelectObject(memory, previousFont);
@@ -638,8 +684,12 @@ void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScr
 	m_impl->UpdateScrollbar();
 	const auto viewport = m_impl->Viewport();
 	const auto visible = MapDirtyRowsToViewport(*m_impl->model, viewport, dirtyScreenRows);
-	for( const auto row : visible ) {
-		RECT rectangle{ 0, static_cast<LONG>(row * m_impl->cellHeight), LONG_MAX, static_cast<LONG>((row + 1) * m_impl->cellHeight) };
+	for( std::size_t index = 0; index < visible.size(); ) {
+		const auto first = visible[index];
+		auto last = first;
+		while( ++index < visible.size() && visible[index] == last + 1 ) last = visible[index];
+		RECT rectangle{ 0, static_cast<LONG>(first * m_impl->cellHeight), LONG_MAX,
+			static_cast<LONG>((last + 1) * m_impl->cellHeight) };
 		::InvalidateRect(m_impl->window, &rectangle, FALSE);
 	}
 	m_impl->UpdateCaret();

@@ -40,8 +40,10 @@ BOOL CEditView::CreateScrollBar()
 {
 	SCROLLINFO	si;
 
-	/* スクロールバーの作成 */
-	m_hwndVScrollBar = ::CreateWindowEx(
+	/* A fit-to-document minimap has no independent scroll position. */
+	m_hwndVScrollBar = nullptr;
+	if( !m_bMiniMap ){
+		m_hwndVScrollBar = ::CreateWindowEx(
 		0L,									/* no extended styles */
 		WC_SCROLLBAR,						/* scroll bar control class */
 		nullptr,								/* text for window title bar */
@@ -62,8 +64,9 @@ BOOL CEditView::CreateScrollBar()
 	si.nPage = 10;
 	si.nPos  = 0;
 	si.nTrackPos = 1;
-	::SetScrollInfo( m_hwndVScrollBar, SB_CTL, &si, TRUE );
-	::ShowScrollBar( m_hwndVScrollBar, SB_CTL, TRUE );
+		::SetScrollInfo( m_hwndVScrollBar, SB_CTL, &si, TRUE );
+		::ShowScrollBar( m_hwndVScrollBar, SB_CTL, TRUE );
+	}
 
 	/* スクロールバーの作成 */
 	m_hwndHScrollBar = nullptr;
@@ -611,68 +614,12 @@ void CEditView::ScrollDraw(CLayoutInt nScrollRowNum, CLayoutInt nScrollColNum, c
 
 void CEditView::MiniMapRedraw(bool bUpdateAll)
 {
+	(void)bUpdateAll;
 	if( this == &GetEditWnd().GetActiveView() && GetEditWnd().GetMiniMap().GetHwnd() ){
 		CEditView& miniMap = GetEditWnd().GetMiniMap();
-		CLayoutYInt nViewTop = miniMap.m_nPageViewTop;
-		CLayoutYInt nViewBottom = miniMap.m_nPageViewBottom;
-		CLayoutYInt nDiff = nViewTop - GetTextArea().GetViewTopLine();
-		CLayoutYInt nDrawTopTop;
-		CLayoutYInt nDrawTopBottom;
-		bool bUpdate = (t_abs(nDiff) > nViewBottom - nViewTop) || bUpdateAll;
-		bool bUpdateOne = false;
-		if( bUpdate ){
-			if( nViewTop == GetTextArea().GetViewTopLine() ){
-				// OnSize:下だけ伸縮する
-				bUpdateOne = true;
-				nDrawTopTop = t_min(nViewBottom, GetTextArea().GetBottomLine());
-				nDrawTopBottom = t_max(nViewBottom, GetTextArea().GetBottomLine());
-			}else{
-				nDrawTopTop = nViewTop;
-				nDrawTopBottom = nViewBottom;
-			}
-		}else{
-			if( nDiff < 0 ){
-				// 上に移動
-				nDrawTopTop = GetTextArea().GetViewTopLine();
-				nDrawTopBottom = nViewTop;
-			}else{
-				// 下に移動
-				nDrawTopTop = nViewTop;
-				nDrawTopBottom = GetTextArea().GetViewTopLine();
-			}
-		}
-		RECT rcMiniMap;
-		rcMiniMap.left = 0;
-		rcMiniMap.right = miniMap.GetTextArea().GetAreaRight();
-		rcMiniMap.top = miniMap.GetTextArea().GenerateYPx(nDrawTopTop);
-		rcMiniMap.bottom = miniMap.GetTextArea().GenerateYPx(nDrawTopBottom);
-		::InvalidateRect( miniMap.GetHwnd(), &rcMiniMap, FALSE );
-		::UpdateWindow( miniMap.GetHwnd() );
-
-		if( bUpdateOne ){
-			return;
-		}
-		CLayoutYInt nDrawBottomTop;
-		CLayoutYInt nDrawBottomBottom;
-		if( bUpdate ){
-			nDrawBottomTop = GetTextArea().GetViewTopLine();
-			nDrawBottomBottom = GetTextArea().GetBottomLine();
-		}else{
-			if( nDiff < 0 ){
-				// 上に移動
-				nDrawBottomTop = GetTextArea().GetBottomLine();
-				nDrawBottomBottom = nViewBottom;
-			}else{
-				// 下に移動
-				nDrawBottomTop = nViewBottom;
-				nDrawBottomBottom = GetTextArea().GetBottomLine();
-			}
-		}
-		rcMiniMap.left = 0;
-		rcMiniMap.right = miniMap.GetTextArea().GetAreaRight();
-		rcMiniMap.top = miniMap.GetTextArea().GenerateYPx(nDrawBottomTop);
-		rcMiniMap.bottom = miniMap.GetTextArea().GenerateYPx(nDrawBottomBottom);
-		::InvalidateRect( miniMap.GetHwnd(), &rcMiniMap, FALSE );
+		// The document-wide scale means a line-count or viewport change can affect
+		// every row. Painting is still bounded to O(height) GDI calls.
+		::InvalidateRect( miniMap.GetHwnd(), nullptr, FALSE );
 		::UpdateWindow( miniMap.GetHwnd() );
 	}
 }

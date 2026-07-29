@@ -9,6 +9,7 @@
 #include "StdAfx.h"
 #include <limits.h>
 #include "CEditView.h"
+#include "view/MiniMapOverview.h"
 #include "window/CEditWnd.h"
 #include "parse/CWordParse.h"
 #include "util/string_ex2.h"
@@ -193,7 +194,6 @@ bool CEditView::MiniMapCursorLineTip( POINT* po, RECT* rc, bool* pbHide )
 	// ウィンドウ内にマウスカーソルがあるか？
 	GetCursorPos( po );
 	GetWindowRect( GetHwnd(), rc );
-	rc->right -= ::GetSystemMetrics(SM_CXVSCROLL);
 	if( !PtInRect( rc, *po ) ){
 		return false;
 	}
@@ -209,7 +209,10 @@ bool CEditView::MiniMapCursorLineTip( POINT* po, RECT* rc, bool* pbHide )
 	CMyPoint ptClient(*po);
 	ScreenToClient( GetHwnd(), &ptClient );
 	CLayoutPoint ptNew;
-	GetTextArea().ClientToLayout( ptClient, &ptNew );
+	const auto lineCount = static_cast<std::int64_t>(GetDocument()->m_cLayoutMgr.GetLineCount());
+	ptNew.x = 0;
+	const auto mappedLine = minimap::PixelToLine(ptClient.y, lineCount, rc->bottom - rc->top);
+	ptNew.y = CLayoutYInt(static_cast<int>(std::min<std::int64_t>(mappedLine, INT_MAX)));
 	// 同じ行ならなにもしない
 	if( 0 == m_dwTipTimer && m_cTipWnd.m_nSearchLine == (Int)ptNew.y ){
 		*pbHide = false; // 表示継続

@@ -78,12 +78,18 @@ public:
 	[[nodiscard]] bool RestartTab( std::uint64_t tabId, TerminalSize size, std::wstring_view workingDirectory );
 	[[nodiscard]] bool DeleteTab( std::uint64_t tabId ) noexcept;
 	void Resize( TerminalSize size );
+	[[nodiscard]] bool ResizeTab( std::uint64_t tabId, TerminalSize size );
 	void Close() noexcept;
 
 	[[nodiscard]] TerminalDrainResult DrainOutput( std::uint64_t tabId );
+	[[nodiscard]] TerminalQueueInputResult QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes );
 	[[nodiscard]] TerminalQueueInputResult QueueActiveInput( std::span<const std::uint8_t> bytes );
+	[[nodiscard]] const TerminalModel* Model( std::uint64_t tabId ) const noexcept;
+	[[nodiscard]] TerminalModel* Model( std::uint64_t tabId ) noexcept;
 	[[nodiscard]] const TerminalModel* ActiveModel() const noexcept;
 	[[nodiscard]] TerminalModel* ActiveModel() noexcept;
+	[[nodiscard]] const SakuraTerminalInputAdapter* InputAdapter( std::uint64_t tabId ) const noexcept;
+	[[nodiscard]] SakuraTerminalInputAdapter* InputAdapter( std::uint64_t tabId ) noexcept;
 	[[nodiscard]] const SakuraTerminalInputAdapter* ActiveInputAdapter() const noexcept;
 	[[nodiscard]] SakuraTerminalInputAdapter* ActiveInputAdapter() noexcept;
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTabId() const noexcept;

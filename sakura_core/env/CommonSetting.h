@@ -591,6 +591,7 @@ enum EWorkbenchActiveTool {
 	WORKBENCH_TOOL_EXPLORER = 0,
 	WORKBENCH_TOOL_OUTLINE = 1,
 	WORKBENCH_TOOL_TERMINAL = 2,
+	WORKBENCH_TOOL_SCM = 3,
 };
 
 struct CommonSetting_Workbench

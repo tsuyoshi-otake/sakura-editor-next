@@ -201,6 +201,17 @@ void TerminalTabManager::Resize( TerminalSize rawSize )
 	}
 }
 
+bool TerminalTabManager::ResizeTab( std::uint64_t tabId, TerminalSize rawSize )
+{
+	if( m_impl->closed ) return false;
+	auto* tab = m_impl->Find(tabId);
+	if( tab == nullptr ) return false;
+	const auto size = NormalizeSize(rawSize);
+	tab->model->Resize(size.columns, size.rows);
+	if( tab->session ) tab->session->RequestResize(size);
+	return true;
+}
+
 void TerminalTabManager::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
@@ -233,8 +244,26 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 TerminalQueueInputResult TerminalTabManager::QueueActiveInput( std::span<const std::uint8_t> bytes )
 {
 	if( m_impl->closed || !m_impl->activeTabId ) return TerminalQueueInputResult::NotRunning;
-	auto* tab = m_impl->Find(*m_impl->activeTabId);
+	return QueueInput(*m_impl->activeTabId, bytes);
+}
+
+TerminalQueueInputResult TerminalTabManager::QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes )
+{
+	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
+	auto* tab = m_impl->Find(tabId);
 	return tab && tab->session ? tab->session->QueueInput(bytes) : TerminalQueueInputResult::NotRunning;
+}
+
+const TerminalModel* TerminalTabManager::Model( std::uint64_t tabId ) const noexcept
+{
+	if( m_impl->closed ) return nullptr;
+	const auto* tab = m_impl->Find(tabId);
+	return tab ? tab->model.get() : nullptr;
+}
+
+TerminalModel* TerminalTabManager::Model( std::uint64_t tabId ) noexcept
+{
+	return const_cast<TerminalModel*>(std::as_const(*this).Model(tabId));
 }
 
 const TerminalModel* TerminalTabManager::ActiveModel() const noexcept
@@ -259,6 +288,18 @@ const SakuraTerminalInputAdapter* TerminalTabManager::ActiveInputAdapter() const
 SakuraTerminalInputAdapter* TerminalTabManager::ActiveInputAdapter() noexcept
 {
 	return const_cast<SakuraTerminalInputAdapter*>(std::as_const(*this).ActiveInputAdapter());
+}
+
+const SakuraTerminalInputAdapter* TerminalTabManager::InputAdapter( std::uint64_t tabId ) const noexcept
+{
+	if( m_impl->closed ) return nullptr;
+	const auto* tab = m_impl->Find(tabId);
+	return tab ? tab->input.get() : nullptr;
+}
+
+SakuraTerminalInputAdapter* TerminalTabManager::InputAdapter( std::uint64_t tabId ) noexcept
+{
+	return const_cast<SakuraTerminalInputAdapter*>(std::as_const(*this).InputAdapter(tabId));
 }
 
 std::optional<std::uint64_t> TerminalTabManager::ActiveTabId() const noexcept
