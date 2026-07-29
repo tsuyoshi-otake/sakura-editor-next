@@ -395,7 +395,15 @@ struct CTerminalWnd::Impl {
 			return 0;
 		case WM_SIZE:
 			NotifySize();
+			// A terminal is first created at 0x0 while its panel is materialized.
+			// Resizing it into view must schedule a paint even when it has not
+			// received focus yet; otherwise the first prompt remains hidden until
+			// a click happens to invalidate the window.
+			::InvalidateRect(window, nullptr, FALSE);
 			return 0;
+		case WM_SHOWWINDOW:
+			if( wParam != FALSE ) ::InvalidateRect(window, nullptr, FALSE);
+			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_SETFOCUS:
 			RecreateCaret();
 			if( inputAdapter ) {
@@ -588,6 +596,7 @@ void CTerminalWnd::Layout( const RECT& bounds, unsigned int dpi )
 	::SetWindowPos(m_impl->window, nullptr, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
 		std::max(0L, bounds.bottom - bounds.top), SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
 	m_impl->NotifySize();
+	::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 
 void CTerminalWnd::SetModel( TerminalModel* model )
@@ -664,7 +673,10 @@ bool CTerminalWnd::PreTranslateMessage( MSG& message )
 		}
 	}
 	if( m_impl->inputAdapter ) {
-		if( const auto encoded = m_impl->inputAdapter->EncodeKey(event) ) {
+		// Printable keys are completed by TranslateMessage/WM_CHAR. The VT input
+		// adapter can return an engaged but empty value for their WM_KEYDOWN because
+		// UnicodeChar is not available yet. Consuming it would suppress WM_CHAR.
+		if( const auto encoded = m_impl->inputAdapter->EncodeKey(event); encoded && !encoded->empty() ) {
 			m_impl->Send(*encoded);
 			return true;
 		}

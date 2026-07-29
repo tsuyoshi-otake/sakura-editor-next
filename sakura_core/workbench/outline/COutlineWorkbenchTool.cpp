@@ -128,6 +128,13 @@ void COutlineWorkbenchTool::Close()
 	m_lifecycle = AdvanceOutlineToolLifecycle( m_lifecycle, OutlineToolEvent::Close );
 }
 
+void COutlineWorkbenchTool::SetVisible( bool visible ) noexcept
+{
+	m_visible = visible;
+	const HWND window = GetDialogWindow();
+	if( window != nullptr ) ::ShowWindow(window, visible ? SW_SHOWNA : SW_HIDE);
+}
+
 void COutlineWorkbenchTool::ApplyLayout() noexcept
 {
 	const HWND window = GetDialogWindow();
@@ -139,8 +146,10 @@ void COutlineWorkbenchTool::ApplyLayout() noexcept
 	// SHOW_RELOAD creates the child with SW_HIDE while the right panel is already
 	// visible.  The outline must become visible on this layout pass without making
 	// the panel active; Activate() remains the only focus-changing path.
-	if( ShouldShowOutlineDialog(m_lifecycle) ) {
+	if( m_visible && ShouldShowOutlineDialog(m_lifecycle) ) {
 		::ShowWindow( window, SW_SHOWNA );
+	} else if( !m_visible ) {
+		::ShowWindow( window, SW_HIDE );
 	}
 }
 

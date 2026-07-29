@@ -26,6 +26,31 @@ bool Contains(const RECT& rect, POINT point) noexcept
 
 } // namespace
 
+std::wstring FormatClientMenuDisplayText(std::wstring_view text)
+{
+	// Japanese resources conventionally append "(&F)" to a localized label.
+	// Keep that mnemonic in the HMENU model, but do not expose the suffix in the
+	// always-visible client-owned title bar.
+	if (text.size() >= 4 && text[text.size() - 4] == L'('
+		&& text[text.size() - 3] == L'&' && text.back() == L')') {
+		text.remove_suffix(4);
+	}
+
+	std::wstring result;
+	result.reserve(text.size());
+	for (std::size_t index = 0; index < text.size(); ++index) {
+		if (text[index] != L'&') {
+			result.push_back(text[index]);
+			continue;
+		}
+		if (index + 1 < text.size() && text[index + 1] == L'&') {
+			result.push_back(L'&');
+			++index;
+		}
+	}
+	return result;
+}
+
 void CClientMenuBar::SetMenu(HMENU menu) noexcept
 {
 	m_menu = menu;
@@ -65,6 +90,11 @@ std::wstring CClientMenuBar::ItemText(int index) const
 	return result;
 }
 
+std::wstring CClientMenuBar::DisplayItemText(int index) const
+{
+	return FormatClientMenuDisplayText(ItemText(index));
+}
+
 int CClientMenuBar::MeasurePreferredWidth(HWND owner, HFONT font, UINT dpi) const noexcept
 {
 	if (m_menu == nullptr || owner == nullptr) {
@@ -76,10 +106,10 @@ int CClientMenuBar::MeasurePreferredWidth(HWND owner, HFONT font, UINT dpi) cons
 	}
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(dc, font);
 	const int count = ::GetMenuItemCount(m_menu);
-	const int horizontalPadding = ScaleDip(12, dpi);
+	const int horizontalPadding = ScaleDip(8, dpi);
 	int width = 0;
 	for (int index = 0; index < count; ++index) {
-		const std::wstring text = ItemText(index);
+		const std::wstring text = DisplayItemText(index);
 		SIZE extent{};
 		if (!text.empty()) {
 			::GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &extent);
@@ -105,11 +135,11 @@ void CClientMenuBar::UpdateItemLayout(HWND owner, HFONT font) noexcept
 	}
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(dc, font);
 	const UINT dpi = ::GetDpiForWindow(owner);
-	const int horizontalPadding = ScaleDip(12, dpi);
+	const int horizontalPadding = ScaleDip(8, dpi);
 	const int count = ::GetMenuItemCount(m_menu);
 	int left = m_bounds.left;
 	for (int index = 0; index < count && left < m_bounds.right; ++index) {
-		const std::wstring text = ItemText(index);
+		const std::wstring text = DisplayItemText(index);
 		SIZE extent{};
 		if (!text.empty()) {
 			::GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &extent);
@@ -140,6 +170,7 @@ void CClientMenuBar::Paint(
 	::SetTextColor(dc, (active ? palette.primaryText : palette.secondaryText).ToColorRef());
 	for (std::size_t index = 0; index < m_itemBounds.size(); ++index) {
 		const bool highlighted = static_cast<int>(index) == m_hotItem
+			|| static_cast<int>(index) == m_pressedItem
 			|| (m_keyboardMode && static_cast<int>(index) == m_keyboardItem);
 		if (highlighted) {
 			const HBRUSH brush = ::CreateSolidBrush(palette.raised.ToColorRef());
@@ -149,7 +180,7 @@ void CClientMenuBar::Paint(
 		RECT textRect = m_itemBounds[index];
 		const UINT format = DT_CENTER | DT_VCENTER | DT_SINGLELINE
 			| (m_keyboardMode ? 0 : DT_HIDEPREFIX);
-		const std::wstring text = ItemText(static_cast<int>(index));
+		const std::wstring text = DisplayItemText(static_cast<int>(index));
 		::DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &textRect, format);
 		if (m_keyboardMode && static_cast<int>(index) == m_keyboardItem) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, palette.accent.ToColorRef());
@@ -188,7 +219,7 @@ int CClientMenuBar::AccessibilityItemCount() const noexcept
 
 std::wstring CClientMenuBar::AccessibilityItemText(int index) const
 {
-	return ItemText(index);
+	return DisplayItemText(index);
 }
 
 RECT CClientMenuBar::AccessibilityItemBounds(int index) const noexcept
@@ -307,7 +338,28 @@ bool CClientMenuBar::HandleMouseMessage(
 		}
 		m_keyboardMode = false;
 		m_keyboardItem = -1;
-		result = OpenItem(owner, HitTestItem(point), false) ? 0 : 0;
+		m_pressedItem = HitTestItem(point);
+		SetHotItem(owner, m_pressedItem);
+		if (m_pressedItem >= 0) ::SetCapture(owner);
+		Invalidate(owner);
+		result = 0;
+		return true;
+	case WM_LBUTTONUP: {
+		if (m_pressedItem < 0) return false;
+		const int pressedItem = m_pressedItem;
+		m_pressedItem = -1;
+		if (::GetCapture() == owner) ::ReleaseCapture();
+		const bool invoke = ContainsPoint(point) && HitTestItem(point) == pressedItem;
+		Invalidate(owner);
+		if (invoke) (void)OpenItem(owner, pressedItem, false);
+		result = 0;
+		return true;
+	}
+	case WM_CAPTURECHANGED:
+		if (m_pressedItem < 0) return false;
+		m_pressedItem = -1;
+		Invalidate(owner);
+		result = 0;
 		return true;
 	default:
 		return false;

@@ -225,7 +225,13 @@ LRESULT CWorkbenchPanelHost::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 		if (!m_closed && m_tool && m_state != WorkbenchPanelState::Hidden) m_tool->Activate();
 		return 0;
 	case WM_KILLFOCUS:
-		if (!m_closed && m_tool && m_state != WorkbenchPanelState::Hidden) m_tool->Deactivate();
+		// Focus normally moves from this host to the hosted control. That remains an
+		// active panel; only deactivate once focus leaves the complete subtree.
+		if (!m_closed && m_tool && m_state != WorkbenchPanelState::Hidden
+			&& reinterpret_cast<HWND>(wParam) != m_window
+			&& !::IsChild(m_window, reinterpret_cast<HWND>(wParam))) {
+			m_tool->Deactivate();
+		}
 		return 0;
 	default:
 		return ::DefWindowProcW(m_window, message, wParam, lParam);

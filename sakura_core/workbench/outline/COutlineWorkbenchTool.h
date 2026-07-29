@@ -81,6 +81,7 @@ public:
 	void Deactivate() override;
 	bool PreTranslateMessage( MSG& message ) override;
 	void Close() override;
+	void SetVisible( bool visible ) noexcept;
 
 	[[nodiscard]] OutlineToolLifecycle GetLifecycle() const noexcept { return m_lifecycle; }
 	[[nodiscard]] OutlineToolLayout GetLayout() const noexcept { return m_layout; }
@@ -94,6 +95,7 @@ private:
 	HWND m_parent = nullptr;
 	OutlineToolLifecycle m_lifecycle = OutlineToolLifecycle::Idle;
 	OutlineToolLayout m_layout{};
+	bool m_visible = true;
 };
 
 } // namespace workbench::outline

@@ -1017,7 +1017,8 @@ MATCHER_P(IsInitializedCommonSettingView, lf, "Checks if CommonSetting_View is p
     const CommonSetting_View& sView = arg;
 
 	EXPECT_THAT(sView.m_lf, lf);
-	EXPECT_THAT(sView.m_nPointSize, 110);
+	EXPECT_THAT(sView.m_nPointSize,
+		theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal).pointSize * 10);
 	EXPECT_THAT(sView.m_bFontIs_FIXED_PITCH, IsTrue());
 
 	return true;

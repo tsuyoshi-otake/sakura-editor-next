@@ -356,6 +356,8 @@ bool CCustomFrameController::HandleWindowMessage(
 	case WM_MOUSEMOVE:
 	case WM_MOUSELEAVE:
 	case WM_LBUTTONDOWN:
+	case WM_LBUTTONUP:
+	case WM_CAPTURECHANGED:
 		return m_menuBar.HandleMouseMessage(m_window, message, wParam, lParam, result);
 	case WM_DPICHANGED:
 		m_dpi = HIWORD(wParam) == 0 ? 96 : HIWORD(wParam);

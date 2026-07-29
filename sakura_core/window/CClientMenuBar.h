@@ -10,9 +10,13 @@
 #include <Windows.h>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "theme/CThemeService.h"
+
+//! Removes visual mnemonic syntax while preserving the HMENU text used by keyboard handling.
+[[nodiscard]] std::wstring FormatClientMenuDisplayText(std::wstring_view text);
 
 //! Client-owned rendering and keyboard interaction for an existing HMENU model.
 //!
@@ -48,6 +52,7 @@ public:
 
 private:
 	[[nodiscard]] std::wstring ItemText(int index) const;
+	[[nodiscard]] std::wstring DisplayItemText(int index) const;
 	[[nodiscard]] int FindMnemonic(wchar_t character) const noexcept;
 	[[nodiscard]] bool OpenItem(HWND owner, int index, bool fromKeyboard) noexcept;
 	void SetHotItem(HWND owner, int index) noexcept;

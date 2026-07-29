@@ -1,6 +1,8 @@
 /*! @file */
 #include "pch.h"
 #include "terminal/window/CTerminalTool.h"
+#include "terminal/window/CTerminalWnd.h"
+#include "terminal/model/TerminalModel.h"
 
 #include <atomic>
 #include <chrono>
@@ -144,6 +146,29 @@ TEST(TerminalTool, DefersRendererUntilItsFirstNonEmptyLayout)
 	EXPECT_TRUE(tool.HasCreatedRenderer());
 
 	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, RendererSizeInvalidatesBeforeItReceivesFocus)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	terminal::TerminalModel model(80, 24);
+	renderer.SetModel(&model);
+
+	const RECT visible{ 0, 0, 480, 240 };
+	::SetWindowPos(parent, nullptr, -32000, -32000, 800, 600, SWP_NOACTIVATE | SWP_NOZORDER);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+	renderer.Layout(visible, 96);
+	ASSERT_TRUE(::ValidateRect(renderer.GetHwnd(), nullptr));
+	::SendMessageW(renderer.GetHwnd(), WM_SIZE, SIZE_RESTORED, MAKELPARAM(480, 240));
+	RECT update{};
+	EXPECT_TRUE(::GetUpdateRect(renderer.GetHwnd(), &update, FALSE));
+	EXPECT_NE(renderer.GetHwnd(), ::GetFocus());
+
+	renderer.Close();
 	::DestroyWindow(parent);
 }
 

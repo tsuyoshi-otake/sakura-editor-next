@@ -148,6 +148,7 @@ struct CTerminalTool::Impl {
 	bool active{};
 	bool closed{};
 	bool usesDefaultResolver{};
+	bool needsFullTerminalRepaint{};
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	std::vector<std::wstring> profileCommandPaths;
 
@@ -189,6 +190,7 @@ struct CTerminalTool::Impl {
 		if( terminalWindow ) {
 			terminalWindow->SetInputAdapter(manager->ActiveInputAdapter());
 			terminalWindow->SetModel(manager->ActiveModel());
+			needsFullTerminalRepaint = true;
 		}
 	}
 
@@ -306,7 +308,17 @@ struct CTerminalTool::Impl {
 		const auto result = manager->DrainOutput(tabId);
 		if( !result.found ) return;
 		if( result.titleChanged ) InvalidateTabs();
-		if( result.active && terminalWindow ) terminalWindow->InvalidateDirtyRows(result.dirtyRows);
+		if( result.active && terminalWindow ) {
+			// The first output may arrive while the renderer is still transitioning
+			// from its deferred 0x0 layout. Paint the complete viewport once, then
+			// return to dirty-row invalidation for steady-state throughput.
+			if( needsFullTerminalRepaint ) {
+				terminalWindow->InvalidateAll();
+				needsFullTerminalRepaint = false;
+			} else {
+				terminalWindow->InvalidateDirtyRows(result.dirtyRows);
+			}
+		}
 	}
 
 	void ShowContextMenu( int x, int y )

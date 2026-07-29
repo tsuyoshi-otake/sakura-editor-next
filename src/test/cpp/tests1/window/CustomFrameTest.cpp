@@ -10,6 +10,14 @@
 #include <gtest/gtest.h>
 
 #include "window/CCustomFrameController.h"
+#include "window/CClientMenuBar.h"
+
+TEST(CustomFrame, MenuLabelsHideMnemonicSuffixWithoutChangingMenuModel)
+{
+	EXPECT_EQ(L"ファイル", FormatClientMenuDisplayText(L"ファイル(&F)"));
+	EXPECT_EQ(L"File", FormatClientMenuDisplayText(L"&File"));
+	EXPECT_EQ(L"Research & Development", FormatClientMenuDisplayText(L"Research && Development"));
+}
 
 TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
 {
