@@ -118,13 +118,14 @@ void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 		m_columns = columns;
 		const auto resizeColumns = [this, columns]( auto& rowsToResize ) {
 			for( auto& row : rowsToResize ) {
-			row.cells.resize(columns);
-			row.cellAttributes.resize(columns);
-			NormalizeAttributeRuns(row);
-		}
+				row.cells.resize(columns);
+				row.cellAttributes.resize(columns);
+				RepairWideCells(row);
+				RebuildAttributeRuns(row);
+			}
 		};
 		resizeColumns(m_rows);
-		if( m_alternateScreen ) resizeColumns(m_savedMainRows);
+		resizeColumns(m_savedMainRows);
 	}
 	if( rows != m_rowsCount ) {
 		while( m_rows.size() > rows ) {
@@ -237,8 +238,15 @@ void TerminalModel::Print( char32_t codepoint )
 			}
 		}
 	}
-	if( IsCombining(codepoint) ) return;
-	const auto width = std::min<int>(static_cast<int>(m_columns), std::max(1, CodepointWidth(codepoint)));
+	// The vendored Windows Terminal width detector is the source of truth for
+	// non-extending codepoints.  In particular, format and combining codepoints
+	// such as ZWSP must not become an empty one-column glyph merely because they
+	// were not appended to the preceding grapheme above.  The explicit combining
+	// set remains a conservative fallback for the supported extension forms when
+	// they arrive without a preceding base cell.
+	const auto codepointWidth = CodepointWidth(codepoint);
+	if( codepointWidth == 0 || IsCombining(codepoint) ) return;
+	const auto width = std::min<int>(static_cast<int>(m_columns), codepointWidth);
 	if( m_cursorColumn >= m_columns || (width == 2 && m_cursorColumn + 1 >= m_columns) ) {
 		if( m_modes.autowrap ) {
 			m_rows[m_cursorRow].wrapped = true;
@@ -249,6 +257,18 @@ void TerminalModel::Print( char32_t codepoint )
 		}
 	}
 	auto& row = m_rows[m_cursorRow];
+	// A printable character always replaces the entire grapheme it intersects.
+	// Preserve the rendition on a displaced half; only the newly printed cells
+	// receive the current rendition below.
+	if( row.cells[m_cursorColumn].continuation ) {
+		if( m_cursorColumn != 0 ) {
+			auto& lead = row.cells[m_cursorColumn - 1];
+			if( !lead.continuation && lead.width == 2 ) lead = {};
+		}
+	} else if( row.cells[m_cursorColumn].width == 2 && m_cursorColumn + 1 < m_columns ) {
+		auto& continuation = row.cells[m_cursorColumn + 1];
+		if( continuation.continuation ) continuation = {};
+	}
 	auto& cell = row.cells[m_cursorColumn];
 	cell = {};
 	cell.width = static_cast<std::uint8_t>(width);
@@ -590,7 +610,9 @@ void TerminalModel::RepairWideCells( TerminalRow& row )
 		}
 		if( cell.width != 2 ) continue;
 		if( column + 1 >= m_columns ) {
-			cell.width = 1;
+			// A resize may have removed the continuation half of a wide
+			// grapheme. Do not render the remaining half as a clipped glyph.
+			cell = {};
 			continue;
 		}
 		auto& continuation = row.cells[column + 1];

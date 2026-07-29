@@ -37,6 +37,9 @@ struct TerminalTabEvent {
 struct TerminalTabSnapshot {
 	std::uint64_t id{};
 	std::wstring label;
+	//! Stable executable/profile name used by the terminal panel chrome.
+	//! OSC title changes intentionally update label without replacing this value.
+	std::wstring profileLabel;
 	TerminalSessionState state{ TerminalSessionState::Idle };
 	std::uint32_t errorCode{};
 	bool active{};

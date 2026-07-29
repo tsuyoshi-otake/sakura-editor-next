@@ -10,8 +10,10 @@
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 #include "terminal/model/TerminalModel.h"
 #include "terminal/window/TerminalColorResolver.h"
+#include "terminal/window/TerminalFontMetrics.h"
 #include "terminal/window/TerminalInput.h"
 #include "terminal/window/TerminalRenderMapping.h"
+#include "terminal/window/TerminalScrollbarLayout.h"
 #include "theme/CThemeService.h"
 
 #include <algorithm>
@@ -60,7 +62,10 @@ TerminalKeyEvent KeyEventFromMessage( const MSG& message ) noexcept
 	event.virtualKey = static_cast<std::uint32_t>(message.wParam);
 	event.shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
 	event.control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
-	event.alt = (::GetKeyState(VK_MENU) & 0x8000) != 0;
+	// The context-code bit belongs to this queued keyboard message.  Reading
+	// process-global key state here can attach a stale Alt modifier to a later
+	// printable WM_KEYDOWN and produce an unexpected ESC-prefixed character.
+	event.alt = (static_cast<ULONG_PTR>(message.lParam) & (1ULL << 29)) != 0;
 	event.scanCode = static_cast<std::uint16_t>((message.lParam >> 16) & 0xff);
 	event.repeatCount = static_cast<std::uint16_t>(message.lParam & 0xffff);
 	event.keyDown = message.message == WM_KEYDOWN || message.message == WM_SYSKEYDOWN;
@@ -107,6 +112,12 @@ struct CTerminalWnd::Impl {
 	std::size_t visibleRows{ 1 };
 	std::size_t scrollOffset{};
 	TerminalSize terminalSize{ 1, 1 };
+	bool scrollbarHover{};
+	bool scrollbarButtonPressed{};
+	bool scrollbarDragging{};
+	bool trackingScrollbarMouseLeave{};
+	int scrollbarThumbGrabOffset{};
+	unsigned int scrollbarSuppressedButtons{};
 	bool selecting{};
 	bool selectionMoved{};
 	bool caretShown{};
@@ -118,6 +129,7 @@ struct CTerminalWnd::Impl {
 	bool inputBackpressured{};
 	bool inputRejected{};
 	bool closed{};
+	bool useTerminalProfileColors{ true };
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 
 	bool AppendPendingInteractiveInput( std::span<const std::uint8_t> bytes )
@@ -254,20 +266,18 @@ struct CTerminalWnd::Impl {
 		}
 		const HDC dc = ::GetDC(window);
 		const auto fontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
+		const auto metrics = CalculateTerminalFontMetrics(fontSpec.pointSize, dpi);
 		const wchar_t* face = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal);
-		font = ::CreateFontW(-::MulDiv(fontSpec.pointSize, static_cast<int>(dpi), 72), 0, 0, 0, fontSpec.weight,
+		font = ::CreateFontW(-metrics.fontPixelHeight, metrics.cellWidth, 0, 0, fontSpec.weight,
 			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
 			FIXED_PITCH | FF_MODERN, face);
-		boldFont = ::CreateFontW(-::MulDiv(fontSpec.pointSize, static_cast<int>(dpi), 72), 0, 0, 0, FW_BOLD,
+		boldFont = ::CreateFontW(-metrics.fontPixelHeight, metrics.cellWidth, 0, 0, FW_BOLD,
 			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
 			FIXED_PITCH | FF_MODERN, face);
+		cellWidth = metrics.cellWidth;
+		cellHeight = metrics.cellHeight;
 		if( dc ) {
 			const auto previous = font ? ::SelectObject(dc, font) : nullptr;
-			TEXTMETRICW metrics{};
-			if( ::GetTextMetricsW(dc, &metrics) ) {
-				cellWidth = std::max(1L, metrics.tmAveCharWidth);
-				cellHeight = std::max(1L, metrics.tmHeight + metrics.tmExternalLeading);
-			}
 			if( previous ) ::SelectObject(dc, previous);
 			::ReleaseDC(window, dc);
 		}
@@ -287,7 +297,7 @@ struct CTerminalWnd::Impl {
 	void UpdateCaret()
 	{
 		if( window == nullptr || ::GetFocus() != window ) return;
-		if( !model || !model->Modes().cursorVisible || scrollOffset != 0 ) {
+		if( !model || !model->Modes().cursorVisible || (!model->IsAlternateScreen() && scrollOffset != 0) ) {
 			if( caretShown ) {
 				::HideCaret(window);
 				caretShown = false;
@@ -324,21 +334,102 @@ struct CTerminalWnd::Impl {
 	void UpdateScrollbar()
 	{
 		if( window == nullptr ) return;
-		SCROLLINFO info{};
-		info.cbSize = sizeof(info);
-		info.fMask = SIF_PAGE | SIF_POS | SIF_RANGE;
+		if( ScrollbarLayout().scrollable ) return;
+		const bool wasInteractive = scrollbarHover || scrollbarButtonPressed || scrollbarDragging;
+		const bool ownedCapture = scrollbarButtonPressed || scrollbarDragging;
+		scrollbarHover = false;
+		scrollbarButtonPressed = false;
+		scrollbarDragging = false;
+		scrollbarThumbGrabOffset = 0;
+		if( ownedCapture && ::GetCapture() == window ) ::ReleaseCapture();
+		if( wasInteractive ) ::InvalidateRect(window, nullptr, FALSE);
+	}
+
+	[[nodiscard]] TerminalScrollbarLayout ScrollbarLayout() const noexcept
+	{
+		RECT client{};
+		if( window == nullptr || !::GetClientRect(window, &client) ) return {};
 		const auto viewport = Viewport();
-		info.nMin = 0;
-		info.nMax = viewport.totalRows == 0 ? 0 : static_cast<int>(std::min<std::size_t>(viewport.totalRows - 1, INT_MAX));
-		info.nPage = static_cast<UINT>(std::min<std::size_t>(viewport.visibleRows, UINT_MAX));
-		info.nPos = static_cast<int>(std::min<std::size_t>(viewport.topRow, INT_MAX));
-		::SetScrollInfo(window, SB_VERT, &info, TRUE);
+		return CalculateTerminalScrollbarLayout(client, viewport.totalRows, viewport.visibleRows, viewport.topRow, dpi);
+	}
+
+	void PaintScrollbar( HDC dc ) const
+	{
+		const auto layout = ScrollbarLayout();
+		if( !layout.scrollable ) return;
+		const auto dcBrush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
+		if( scrollbarHover || scrollbarButtonPressed ) {
+			::SetDCBrushColor(dc, palette.raised.ToColorRef());
+			::FillRect(dc, &layout.track, dcBrush);
+		}
+		::SetDCBrushColor(dc, (scrollbarHover || scrollbarDragging ? palette.secondaryText : palette.border).ToColorRef());
+		::FillRect(dc, &layout.thumb, dcBrush);
+	}
+
+	[[nodiscard]] bool UpdateScrollbarHover( POINT point )
+	{
+		const bool hover = ScrollbarLayout().HitTest(point);
+		if( scrollbarHover != hover ) {
+			scrollbarHover = hover;
+			::InvalidateRect(window, nullptr, FALSE);
+		}
+		if( hover && !trackingScrollbarMouseLeave ) {
+			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, window, 0 };
+			trackingScrollbarMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+		}
+		return hover;
+	}
+
+	void EndScrollbarButtonPress( bool releaseCapture )
+	{
+		const bool wasInteractive = scrollbarButtonPressed || scrollbarDragging;
+		scrollbarButtonPressed = false;
+		scrollbarDragging = false;
+		scrollbarThumbGrabOffset = 0;
+		if( releaseCapture && ::GetCapture() == window ) ::ReleaseCapture();
+		if( wasInteractive ) ::InvalidateRect(window, nullptr, FALSE);
+	}
+
+	[[nodiscard]] bool BeginScrollbarButtonPress( POINT point, unsigned int button )
+	{
+		const auto layout = ScrollbarLayout();
+		if( !layout.HitTest(point) ) return false;
+		::SetFocus(window);
+		scrollbarButtonPressed = true;
+		scrollbarSuppressedButtons |= 1u << button;
+		scrollbarDragging = button == 0 && layout.ThumbHitTest(point);
+		scrollbarThumbGrabOffset = scrollbarDragging ? point.y - layout.thumb.top : 0;
+		if( button == 0 && !scrollbarDragging ) {
+			const auto viewport = Viewport();
+			if( point.y < layout.thumb.top ) SetScrollTop(viewport.topRow > viewport.visibleRows ? viewport.topRow - viewport.visibleRows : 0);
+			else if( point.y >= layout.thumb.bottom ) SetScrollTop(viewport.topRow + viewport.visibleRows);
+		}
+		::SetCapture(window);
+		static_cast<void>(UpdateScrollbarHover(point));
+		::InvalidateRect(window, nullptr, FALSE);
+		return true;
+	}
+
+	void DragScrollbarTo( int pointerY )
+	{
+		if( !scrollbarDragging ) return;
+		const auto layout = ScrollbarLayout();
+		if( !layout.scrollable ) {
+			EndScrollbarButtonPress(true);
+			return;
+		}
+		SetScrollTop(TerminalScrollbarTopRowFromDrag(layout, pointerY, scrollbarThumbGrabOffset));
 	}
 
 	void SetScrollTop( std::size_t top )
 	{
+		// Keep the main screen's scroll position intact while a TUI owns the
+		// alternate screen.  Wheel events may still arrive after the overlay
+		// scrollbar has disappeared; they must not reset the position restored
+		// when DECSET 1049 is later cleared.
+		if( model && model->IsAlternateScreen() ) return;
 		const auto viewport = Viewport();
-		const auto bottomTop = viewport.totalRows - viewport.visibleRows;
+		const auto bottomTop = viewport.totalRows > viewport.visibleRows ? viewport.totalRows - viewport.visibleRows : 0;
 		top = std::min(top, bottomTop);
 		scrollOffset = bottomTop - top;
 		UpdateScrollbar();
@@ -350,7 +441,8 @@ struct CTerminalWnd::Impl {
 	{
 		const auto viewport = Viewport();
 		const auto current = static_cast<long long>(viewport.topRow);
-		const auto target = std::clamp<long long>(current + lines, 0, static_cast<long long>(viewport.totalRows - viewport.visibleRows));
+		const auto maximumTop = viewport.totalRows > viewport.visibleRows ? viewport.totalRows - viewport.visibleRows : 0;
+		const auto target = std::clamp<long long>(current + lines, 0, static_cast<long long>(maximumTop));
 		SetScrollTop(static_cast<std::size_t>(target));
 	}
 
@@ -410,8 +502,10 @@ struct CTerminalWnd::Impl {
 		}
 		const bool buffered = EnsureBackBuffer(dc);
 		const HDC memory = buffered ? backBufferDc : dc;
-		const COLORREF defaultBackground = palette.canvas.ToColorRef();
-		const COLORREF defaultForeground = palette.primaryText.ToColorRef();
+		const COLORREF defaultBackground = useTerminalProfileColors
+			? TerminalDefaultBackground(palette) : palette.canvas.ToColorRef();
+		const COLORREF defaultForeground = useTerminalProfileColors
+			? TerminalDefaultForeground(palette) : palette.primaryText.ToColorRef();
 		const auto dcBrush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
 		const auto previousBrush = ::SelectObject(memory, dcBrush);
 		::SetDCBrushColor(memory, defaultBackground);
@@ -445,6 +539,7 @@ struct CTerminalWnd::Impl {
 				std::size_t batchEnd{};
 				TerminalAttributes batchAttributes{};
 				bool batchSelected{};
+				bool batchUsesNaturalAdvances{};
 				bool hasBatch{};
 				const auto flushBatch = [&] {
 					if( !hasBatch || batchText.empty() ) return;
@@ -467,7 +562,8 @@ struct CTerminalWnd::Impl {
 					::SetTextColor(memory, foreground);
 					::SetBkColor(memory, background);
 					::ExtTextOutW(memory, runRect.left, runRect.top, ETO_OPAQUE | ETO_CLIPPED, &runRect,
-						batchText.data(), static_cast<UINT>(batchText.size()), batchAdvances.data());
+						batchText.data(), static_cast<UINT>(batchText.size()),
+						batchUsesNaturalAdvances ? nullptr : batchAdvances.data());
 					if( batchAttributes.underline ) {
 						::SetDCPenColor(memory, foreground);
 						::MoveToEx(memory, runRect.left, runRect.bottom - 2, nullptr);
@@ -475,6 +571,7 @@ struct CTerminalWnd::Impl {
 					}
 					batchText.clear();
 					batchAdvances.clear();
+					batchUsesNaturalAdvances = false;
 					hasBatch = false;
 				};
 
@@ -495,8 +592,11 @@ struct CTerminalWnd::Impl {
 						batchAttributes = attributes;
 						batchSelected = selected;
 						batchText.assign(text);
-						batchAdvances.assign(text.size(), 0);
-						batchAdvances.back() = static_cast<int>(columnsWide * cellWidth);
+						batchAdvances.clear();
+						// Let GDI shape surrogate pairs, combining marks and ZWJ sequences as
+						// one cluster.  The cell rectangle still clips the result to its VT
+						// width, while a synthetic per-UTF-16-unit advance would tear it apart.
+						batchUsesNaturalAdvances = true;
 						hasBatch = true;
 						flushBatch();
 						column += columnsWide;
@@ -507,6 +607,7 @@ struct CTerminalWnd::Impl {
 						batchStart = column;
 						batchAttributes = attributes;
 						batchSelected = selected;
+						batchUsesNaturalAdvances = false;
 						hasBatch = true;
 					}
 					batchEnd = std::min(row->cells.size(), column + columnsWide);
@@ -527,6 +628,7 @@ struct CTerminalWnd::Impl {
 			::ExtTextOutW(memory, warning.left + 4, warning.top, ETO_OPAQUE | ETO_CLIPPED, &warning, message,
 				static_cast<UINT>(wcslen(message)), nullptr);
 		}
+		PaintScrollbar(memory);
 		if( previousPen ) ::SelectObject(memory, previousPen);
 		if( previousBrush ) ::SelectObject(memory, previousBrush);
 		if( buffered ) ::BitBlt(dc, paint.rcPaint.left, paint.rcPaint.top, width, height, memory,
@@ -612,8 +714,10 @@ struct CTerminalWnd::Impl {
 		case WM_LBUTTONDOWN:
 		case WM_MBUTTONDOWN:
 		case WM_RBUTTONDOWN: {
-			::SetFocus(window);
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			const auto button = message == WM_LBUTTONDOWN ? 0u : message == WM_MBUTTONDOWN ? 1u : 2u;
+			if( BeginScrollbarButtonPress(point, button) ) return 0;
+			::SetFocus(window);
 			pressedMouseButton = button;
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) {
 				SendMouse(TerminalMouseAction::Press, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), button, wParam);
@@ -626,7 +730,13 @@ struct CTerminalWnd::Impl {
 			}
 			return 0;
 		}
-		case WM_MOUSEMOVE:
+		case WM_MOUSEMOVE: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			if( scrollbarButtonPressed ) {
+				DragScrollbarTo(point.y);
+				return 0;
+			}
+			if( UpdateScrollbarHover(point) ) return 0;
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) {
 				SendMouse(TerminalMouseAction::Move, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), pressedMouseButton, wParam);
 			} else if( selecting ) {
@@ -637,10 +747,22 @@ struct CTerminalWnd::Impl {
 				::InvalidateRect(window, nullptr, FALSE);
 			}
 			return 0;
+		}
 		case WM_LBUTTONUP:
 		case WM_MBUTTONUP:
 		case WM_RBUTTONUP: {
 			const auto button = message == WM_LBUTTONUP ? 0u : message == WM_MBUTTONUP ? 1u : 2u;
+			const auto buttonMask = 1u << button;
+			if( scrollbarButtonPressed && (scrollbarSuppressedButtons & buttonMask) != 0 ) {
+				if( scrollbarDragging ) DragScrollbarTo(GET_Y_LPARAM(lParam));
+				scrollbarSuppressedButtons &= ~buttonMask;
+				EndScrollbarButtonPress(true);
+				return 0;
+			}
+			if( (scrollbarSuppressedButtons & buttonMask) != 0 ) {
+				scrollbarSuppressedButtons &= ~buttonMask;
+				return 0;
+			}
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) SendMouse(TerminalMouseAction::Release, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), button, wParam);
 			if( selecting ) {
 				const auto next = PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
@@ -654,6 +776,22 @@ struct CTerminalWnd::Impl {
 			pressedMouseButton = 3;
 			return 0;
 		}
+		case WM_MOUSELEAVE:
+			trackingScrollbarMouseLeave = false;
+			if( scrollbarHover ) {
+				scrollbarHover = false;
+				::InvalidateRect(window, nullptr, FALSE);
+			}
+			return 0;
+		case WM_CAPTURECHANGED:
+			EndScrollbarButtonPress(false);
+			if( selecting ) {
+				selecting = false;
+				selectionMoved = false;
+				::InvalidateRect(window, nullptr, FALSE);
+			}
+			pressedMouseButton = 3;
+			return 0;
 		case WM_MOUSEWHEEL: {
 			const auto delta = GET_WHEEL_DELTA_WPARAM(wParam);
 			POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -662,25 +800,16 @@ struct CTerminalWnd::Impl {
 			else ScrollLines(delta > 0 ? -3 : 3);
 			return 0;
 		}
-		case WM_VSCROLL: {
-			SCROLLINFO info{};
-			info.cbSize = sizeof(info);
-			info.fMask = SIF_ALL;
-			::GetScrollInfo(window, SB_VERT, &info);
-			int position = info.nPos;
-			switch( LOWORD(wParam) ) {
-			case SB_LINEUP: --position; break;
-			case SB_LINEDOWN: ++position; break;
-			case SB_PAGEUP: position -= static_cast<int>(info.nPage); break;
-			case SB_PAGEDOWN: position += static_cast<int>(info.nPage); break;
-			case SB_THUMBPOSITION:
-			case SB_THUMBTRACK: position = info.nTrackPos; break;
-			case SB_TOP: position = info.nMin; break;
-			case SB_BOTTOM: position = info.nMax; break;
-			default: return 0;
+		case WM_SETCURSOR: {
+			if( LOWORD(lParam) != HTCLIENT ) return ::DefWindowProcW(window, message, wParam, lParam);
+			POINT point{};
+			::GetCursorPos(&point);
+			::ScreenToClient(window, &point);
+			if( ScrollbarLayout().HitTest(point) ) {
+				::SetCursor(::LoadCursor(nullptr, IDC_ARROW));
+				return TRUE;
 			}
-			SetScrollTop(static_cast<std::size_t>(std::max(info.nMin, position)));
-			return 0;
+			return ::DefWindowProcW(window, message, wParam, lParam);
 		}
 		case WM_PASTE:
 			PasteFromClipboard();
@@ -751,7 +880,7 @@ bool CTerminalWnd::Create( HWND parent, HINSTANCE instance )
 {
 	if( m_impl->closed || m_impl->window || parent == nullptr || instance == nullptr || !EnsureTerminalClass(instance) ) return false;
 	m_impl->instance = instance;
-	m_impl->window = ::CreateWindowExW(0, kTerminalWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS | WS_VSCROLL,
+	m_impl->window = ::CreateWindowExW(0, kTerminalWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, m_impl.get());
 	if( !m_impl->window ) return false;
 	m_impl->RecreateFont();
@@ -804,6 +933,7 @@ void CTerminalWnd::SetResizeSink( ResizeSink sink )
 void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
+	m_impl->useTerminalProfileColors = !theme::CThemeService::IsHighContrastActive();
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 

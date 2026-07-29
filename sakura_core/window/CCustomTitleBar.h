@@ -13,6 +13,20 @@
 
 struct CustomFrameLayout;
 
+//! Sakura-owned compact title-bar controls placed immediately before the native caption buttons.
+enum class CustomFrameControl : unsigned char {
+	None,
+	Layout,
+	PrimarySidebar,
+	BottomPanel,
+	SecondarySidebar,
+	Account,
+	Settings,
+};
+
+[[nodiscard]] const wchar_t* CustomFrameControlName(CustomFrameControl control) noexcept;
+[[nodiscard]] const wchar_t* CustomFrameControlAutomationId(CustomFrameControl control) noexcept;
+
 //! Returns a physical icon size constrained to 16--20 DIP for the supplied title area.
 [[nodiscard]] int CalculateCustomTitleBarIconSize(int titleHeight, UINT dpi) noexcept;
 //! Selects the glyph color for a caption button, including its highlighted close-button state.
@@ -35,6 +49,9 @@ public:
 		HFONT font,
 		bool active,
 		LRESULT hotHit,
-		LRESULT pressedHit
+		LRESULT pressedHit,
+		CustomFrameControl hotControl,
+		CustomFrameControl pressedControl,
+		CustomFrameControl focusedControl
 	) const noexcept;
 };

@@ -39,6 +39,36 @@ void PaintButtonBackground(
 	Fill(dc, rect, color);
 }
 
+RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl control) noexcept
+{
+	switch (control) {
+	case CustomFrameControl::Layout: return layout.layoutButton;
+	case CustomFrameControl::PrimarySidebar: return layout.primarySidebarButton;
+	case CustomFrameControl::BottomPanel: return layout.bottomPanelButton;
+	case CustomFrameControl::SecondarySidebar: return layout.secondarySidebarButton;
+	case CustomFrameControl::Account: return layout.accountButton;
+	case CustomFrameControl::Settings: return layout.settingsButton;
+	case CustomFrameControl::None: break;
+	}
+	return {};
+}
+
+void PaintTitleControlBackground(
+	HDC dc,
+	const RECT& rect,
+	CustomFrameControl control,
+	CustomFrameControl hotControl,
+	CustomFrameControl pressedControl,
+	const theme::ThemePalette& palette
+) noexcept
+{
+	if (control == pressedControl) {
+		Fill(dc, rect, palette.accent.ToColorRef());
+	} else if (control == hotControl) {
+		Fill(dc, rect, palette.raised.ToColorRef());
+	}
+}
+
 void PaintGlyph(HDC dc, const RECT& rect, LRESULT hit, COLORREF color, int thickness, bool maximized) noexcept
 {
 	const int centerX = (rect.left + rect.right) / 2;
@@ -74,7 +104,110 @@ void PaintGlyph(HDC dc, const RECT& rect, LRESULT hit, COLORREF color, int thick
 	::DeleteObject(pen);
 }
 
+void PaintTitleControlGlyph(HDC dc, const RECT& rect, CustomFrameControl control, COLORREF color) noexcept
+{
+	const int centerX = (rect.left + rect.right) / 2;
+	const int centerY = (rect.top + rect.bottom) / 2;
+	const int half = std::max(5, static_cast<int>((rect.bottom - rect.top) / 6));
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
+	const HGDIOBJ oldPen = ::SelectObject(dc, pen);
+	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+	switch (control) {
+	case CustomFrameControl::Layout:
+		::Rectangle(dc, centerX - half, centerY - half, centerX - 1, centerY - 1);
+		::Rectangle(dc, centerX + 1, centerY - half, centerX + half + 1, centerY - 1);
+		::Rectangle(dc, centerX - half, centerY + 1, centerX - 1, centerY + half + 1);
+		::Rectangle(dc, centerX + 1, centerY + 1, centerX + half + 1, centerY + half + 1);
+		break;
+	case CustomFrameControl::PrimarySidebar:
+		::Rectangle(dc, centerX - half - 1, centerY - half, centerX + half + 1, centerY + half + 1);
+		::MoveToEx(dc, centerX - half / 2, centerY - half, nullptr);
+		::LineTo(dc, centerX - half / 2, centerY + half + 1);
+		break;
+	case CustomFrameControl::BottomPanel:
+		::Rectangle(dc, centerX - half - 1, centerY - half, centerX + half + 1, centerY + half + 1);
+		::MoveToEx(dc, centerX - half - 1, centerY + half / 2, nullptr);
+		::LineTo(dc, centerX + half + 1, centerY + half / 2);
+		break;
+	case CustomFrameControl::SecondarySidebar:
+		::Rectangle(dc, centerX - half - 1, centerY - half, centerX + half + 1, centerY + half + 1);
+		::MoveToEx(dc, centerX + half / 2, centerY - half, nullptr);
+		::LineTo(dc, centerX + half / 2, centerY + half + 1);
+		break;
+	case CustomFrameControl::Account:
+		::Ellipse(dc, centerX - 3, centerY - half, centerX + 4, centerY - half + 7);
+		::Arc(dc, centerX - half, centerY - 1, centerX + half + 1, centerY + half + 3,
+			centerX - half, centerY + half / 2, centerX + half, centerY + half / 2);
+		break;
+	case CustomFrameControl::Settings:
+		::Ellipse(dc, centerX - 3, centerY - 3, centerX + 4, centerY + 4);
+		::MoveToEx(dc, centerX, centerY - half - 1, nullptr);
+		::LineTo(dc, centerX, centerY - 4);
+		::MoveToEx(dc, centerX, centerY + 4, nullptr);
+		::LineTo(dc, centerX, centerY + half + 2);
+		::MoveToEx(dc, centerX - half - 1, centerY, nullptr);
+		::LineTo(dc, centerX - 4, centerY);
+		::MoveToEx(dc, centerX + 4, centerY, nullptr);
+		::LineTo(dc, centerX + half + 2, centerY);
+		::MoveToEx(dc, centerX - half + 1, centerY - half + 1, nullptr);
+		::LineTo(dc, centerX - 4, centerY - 4);
+		::MoveToEx(dc, centerX + 4, centerY + 4, nullptr);
+		::LineTo(dc, centerX + half, centerY + half);
+		::MoveToEx(dc, centerX + half - 1, centerY - half + 1, nullptr);
+		::LineTo(dc, centerX + 4, centerY - 4);
+		::MoveToEx(dc, centerX - 4, centerY + 4, nullptr);
+		::LineTo(dc, centerX - half, centerY + half);
+		break;
+	case CustomFrameControl::None:
+		break;
+	}
+	::SelectObject(dc, oldBrush);
+	::SelectObject(dc, oldPen);
+	::DeleteObject(pen);
+}
+
+void PaintTitleControlFocus(HDC dc, const RECT& rect, const theme::ThemePalette& palette) noexcept
+{
+	RECT focus = rect;
+	::InflateRect(&focus, -3, -3);
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, palette.accent.ToColorRef());
+	const HGDIOBJ oldPen = ::SelectObject(dc, pen);
+	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+	::Rectangle(dc, focus.left, focus.top, focus.right, focus.bottom);
+	::SelectObject(dc, oldBrush);
+	::SelectObject(dc, oldPen);
+	::DeleteObject(pen);
+}
+
 } // namespace
+
+const wchar_t* CustomFrameControlName(CustomFrameControl control) noexcept
+{
+	switch (control) {
+	case CustomFrameControl::Layout: return L"Layout";
+	case CustomFrameControl::PrimarySidebar: return L"Toggle Primary Side Bar";
+	case CustomFrameControl::BottomPanel: return L"Toggle Bottom Panel";
+	case CustomFrameControl::SecondarySidebar: return L"Toggle Secondary Side Bar";
+	case CustomFrameControl::Account: return L"Account";
+	case CustomFrameControl::Settings: return L"Settings";
+	case CustomFrameControl::None: return L"";
+	}
+	return L"";
+}
+
+const wchar_t* CustomFrameControlAutomationId(CustomFrameControl control) noexcept
+{
+	switch (control) {
+	case CustomFrameControl::Layout: return L"Sakura.TitleBar.Layout";
+	case CustomFrameControl::PrimarySidebar: return L"Sakura.TitleBar.PrimarySidebar";
+	case CustomFrameControl::BottomPanel: return L"Sakura.TitleBar.BottomPanel";
+	case CustomFrameControl::SecondarySidebar: return L"Sakura.TitleBar.SecondarySidebar";
+	case CustomFrameControl::Account: return L"Sakura.TitleBar.Account";
+	case CustomFrameControl::Settings: return L"Sakura.TitleBar.Settings";
+	case CustomFrameControl::None: return L"";
+	}
+	return L"";
+}
 
 int CalculateCustomTitleBarIconSize(int titleHeight, UINT dpi) noexcept
 {
@@ -106,7 +239,10 @@ void CCustomTitleBar::Paint(
 	HFONT font,
 	bool active,
 	LRESULT hotHit,
-	LRESULT pressedHit
+	LRESULT pressedHit,
+	CustomFrameControl hotControl,
+	CustomFrameControl pressedControl,
+	CustomFrameControl focusedControl
 ) const noexcept
 {
 	if (owner == nullptr || dc == nullptr) {
@@ -116,6 +252,23 @@ void CCustomTitleBar::Paint(
 	PaintButtonBackground(dc, layout.minimizeButton, HTMINBUTTON, hotHit, pressedHit, palette);
 	PaintButtonBackground(dc, layout.maximizeButton, HTMAXBUTTON, hotHit, pressedHit, palette);
 	PaintButtonBackground(dc, layout.closeButton, HTCLOSE, hotHit, pressedHit, palette);
+	for (const CustomFrameControl control : {
+		CustomFrameControl::Layout,
+		CustomFrameControl::PrimarySidebar,
+		CustomFrameControl::BottomPanel,
+		CustomFrameControl::SecondarySidebar,
+		CustomFrameControl::Account,
+		CustomFrameControl::Settings,
+	}) {
+		const RECT rect = TitleControlRect(layout, control);
+		if (::IsRectEmpty(&rect)) continue;
+		PaintTitleControlBackground(dc, rect, control, hotControl, pressedControl, palette);
+		const COLORREF controlColor = control == pressedControl
+			? palette.highlightText.ToColorRef()
+			: (active ? palette.primaryText : palette.secondaryText).ToColorRef();
+		PaintTitleControlGlyph(dc, rect, control, controlColor);
+		if (control == focusedControl) PaintTitleControlFocus(dc, rect, palette);
+	}
 
 	const COLORREF glyphColor = (active ? palette.primaryText : palette.secondaryText).ToColorRef();
 	PaintGlyph(dc, layout.minimizeButton, HTMINBUTTON, glyphColor, 1, false);

@@ -22,6 +22,7 @@
 #include "StdAfx.h"
 #include "CTabWnd.h"
 #include "window/CEditWnd.h"
+#include "window/DocumentTabActionLayout.h"
 #include "_main/global.h"
 #include "charset/charcode.h"
 #include "env/CShareData.h"
@@ -42,7 +43,6 @@
 // 2009.10.01 ryoji 高DPI対応スケーリング
 #define TAB_MARGIN_TOP		DpiScaleY(0)
 #define TAB_MARGIN_LEFT		DpiScaleX(1)
-#define TAB_MARGIN_RIGHT	DpiScaleX(47)
 
 //#define TAB_FONT_HEIGHT		DpiPointsToPixels(9)
 #define TAB_FONT_HEIGHT		abs(GetDllShareData().m_Common.m_sTabBar.m_lf.lfHeight)
@@ -884,6 +884,7 @@ HWND CTabWnd::Open( HINSTANCE hInstance, HWND hwndParent )
 	m_bVisualStyle = ::IsVisualStyle();	// 2007.04.01 ryoji
 	m_eDragState = DRAG_NONE;	//	2005.09.29 ryoji
 	m_bHovering = FALSE;			// 2006.02.01 ryoji
+	m_bMarkdownPreviewBtnHilighted = FALSE;
 	m_bListBtnHilighted = FALSE;	// 2006.02.01 ryoji
 	m_bCloseBtnHilighted = FALSE;	// 2006.10.21 ryoji
 	m_eCaptureSrc = CAPT_NONE;	// 2006.11.30 ryoji
@@ -904,6 +905,10 @@ HWND CTabWnd::Open( HINSTANCE hInstance, HWND hwndParent )
 
 	RECT rcParent;
 	::GetWindowRect( hwndParent, &rcParent );
+	const int initialActionMargin = tabbar::ScaleDocumentTabDip(
+		IsMarkdownPreviewActionAvailable() ? 70 : 47, ::GetDpiForWindow(hwndParent));
+	const int initialTabWidth = (std::max)(0,
+		static_cast<int>(rcParent.right - rcParent.left - TAB_MARGIN_LEFT) - initialActionMargin);
 
 	/* 基底クラスメンバ呼び出し */
 	CWnd::Create(
@@ -931,7 +936,7 @@ HWND CTabWnd::Open( HINSTANCE hInstance, HWND hwndParent )
 		// 2006.01.30 ryoji 初期配置見直し
 		TAB_MARGIN_LEFT,
 		TAB_MARGIN_TOP,
-		rcParent.right - rcParent.left - (TAB_MARGIN_LEFT + TAB_MARGIN_RIGHT),
+		initialTabWidth,
 		TAB_WINDOW_HEIGHT,
 		GetHwnd(),
 		(HMENU)nullptr,
@@ -1051,6 +1056,14 @@ void CTabWnd::UpdateTheme()
 	}
 }
 
+void CTabWnd::RefreshDocumentActionState()
+{
+	if (GetHwnd() == nullptr || m_hwndTab == nullptr) return;
+	LayoutTab();
+	::InvalidateRect(GetHwnd(), nullptr, FALSE);
+	::InvalidateRect(m_hwndTab, nullptr, FALSE);
+}
+
 /* ウィンドウ クローズ */
 void CTabWnd::Close( void )
 {
@@ -1133,8 +1146,18 @@ LRESULT CTabWnd::OnDestroy( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unuse
 /*! WM_LBUTTONDBLCLK処理
 	@date 2006.03.26 ryoji 新規作成
 */
-LRESULT CTabWnd::OnLButtonDblClk( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]] WPARAM wParam, [[maybe_unused]] LPARAM lParam )
+LRESULT CTabWnd::OnLButtonDblClk( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 {
+	RECT client{};
+	RECT preview{};
+	RECT list{};
+	RECT close{};
+	::GetClientRect(GetHwnd(), &client);
+	GetDocumentActionRects(client, &preview, &list, &close, nullptr);
+	const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+	if (::PtInRect(&preview, point) || ::PtInRect(&list, point) || ::PtInRect(&close, point)) {
+		return 0L;
+	}
 	// 新規作成コマンドを実行する
 	::SendMessageCmd( GetParentHwnd(), WM_COMMAND, MAKEWPARAM( F_FILENEW, 0 ), (LPARAM)nullptr );
 	return 0L;
@@ -1145,8 +1168,20 @@ LRESULT CTabWnd::OnLButtonDblClk( [[maybe_unused]] HWND hwnd, [[maybe_unused]] U
 */
 LRESULT CTabWnd::OnCaptureChanged( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]] WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 {
-	if( m_eCaptureSrc != CAPT_NONE )
+	if( m_eCaptureSrc != CAPT_NONE ) {
+		if (m_eCaptureSrc == CAPT_MARKDOWN_PREVIEW && GetHwnd() != nullptr) {
+			RECT client{};
+			RECT button{};
+			POINT cursor{};
+			::GetClientRect(GetHwnd(), &client);
+			GetMarkdownPreviewBtnRect(&client, &button);
+			::GetCursorPos(&cursor);
+			::ScreenToClient(GetHwnd(), &cursor);
+			m_bMarkdownPreviewBtnHilighted = ::PtInRect(&button, cursor);
+			::InvalidateRect(GetHwnd(), &button, FALSE);
+		}
 		m_eCaptureSrc = CAPT_NONE;
+	}
 
 	return 0L;
 }
@@ -1166,23 +1201,35 @@ LRESULT CTabWnd::OnLButtonDown( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UIN
 	pt.y = HIWORD(lParam);
 	::GetClientRect( GetHwnd(), &rc );
 
-	// タブ一覧ボタン上ならタブ一覧メニュー（タブ名）を表示する
-	GetListBtnRect( &rc, &rcBtn );
+	// Markdownプレビューボタンは押下から解放までをキャプチャして誤操作を防ぐ。
+	GetMarkdownPreviewBtnRect(&rc, &rcBtn);
 	if( ::PtInRect( &rcBtn, pt ) )
 	{
-		pt.x = rcBtn.left;
-		pt.y = rcBtn.bottom;
-		::ClientToScreen( GetHwnd(), &pt );
-		TabListMenu( pt, FALSE, FALSE, FALSE );	// タブ一覧メニュー（タブ名）
+		m_eCaptureSrc = CAPT_MARKDOWN_PREVIEW;
+		m_bMarkdownPreviewBtnHilighted = TRUE;
+		::SetCapture(GetHwnd());
+		::InvalidateRect(GetHwnd(), &rcBtn, FALSE);
 	}
 	else
 	{
-		// 閉じるボタン上ならキャプチャ開始
-		GetCloseBtnRect( &rc, &rcBtn );
+		// タブ一覧ボタン上ならタブ一覧メニュー（タブ名）を表示する
+		GetListBtnRect( &rc, &rcBtn );
 		if( ::PtInRect( &rcBtn, pt ) )
 		{
-			m_eCaptureSrc = CAPT_CLOSE;	// キャプチャ元は閉じるボタン
-			::SetCapture( GetHwnd() );
+			pt.x = rcBtn.left;
+			pt.y = rcBtn.bottom;
+			::ClientToScreen( GetHwnd(), &pt );
+			TabListMenu( pt, FALSE, FALSE, FALSE );	// タブ一覧メニュー（タブ名）
+		}
+		else
+		{
+			// 閉じるボタン上ならキャプチャ開始
+			GetCloseBtnRect( &rc, &rcBtn );
+			if( ::PtInRect( &rcBtn, pt ) )
+			{
+				m_eCaptureSrc = CAPT_CLOSE;	// キャプチャ元は閉じるボタン
+				::SetCapture( GetHwnd() );
+			}
 		}
 	}
 
@@ -1204,7 +1251,17 @@ LRESULT CTabWnd::OnLButtonUp( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT 
 
 	if( ::GetCapture() == GetHwnd() )	// 自ウィンドウがマウスキャプチャしている?
 	{
-		if( m_eCaptureSrc == CAPT_CLOSE )	// キャプチャ元は閉じるボタン?
+		if (m_eCaptureSrc == CAPT_MARKDOWN_PREVIEW)
+		{
+			GetMarkdownPreviewBtnRect(&rc, &rcBtn);
+			if (::PtInRect(&rcBtn, pt))
+			{
+				::PostMessageAny(GetParentHwnd(), WM_COMMAND,
+					MAKEWPARAM(F_TOGGLE_MARKDOWN_PREVIEW, 0), (LPARAM)nullptr);
+			}
+			::InvalidateRect(GetHwnd(), &rcBtn, FALSE);
+		}
+		else if( m_eCaptureSrc == CAPT_CLOSE )	// キャプチャ元は閉じるボタン?
 		{
 			// 閉じるボタン上ならタブを閉じる
 			GetCloseBtnRect( &rc, &rcBtn );
@@ -1585,8 +1642,17 @@ LRESULT CTabWnd::OnMouseMove( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unu
 
 	// カーソルがボタン上を出入りするときに再描画
 	RECT rcBtn;
-	LPWSTR pszTip = (LPWSTR)-1L;
-	WCHAR szText[80];	// 2007.12.06 ryoji メンバ変数を使う必要は無いのでローカル変数にした
+	BOOL actionHoverChanged = FALSE;
+	WCHAR szText[256]{};
+
+	GetMarkdownPreviewBtnRect(&rc, &rcBtn);
+	bHovering = ::PtInRect(&rcBtn, pt);
+	if (bHovering != m_bMarkdownPreviewBtnHilighted)
+	{
+		m_bMarkdownPreviewBtnHilighted = bHovering;
+		::InvalidateRect(hwnd, &rcBtn, FALSE);
+		actionHoverChanged = TRUE;
+	}
 
 	GetListBtnRect( &rc, &rcBtn );
 	bHovering = ::PtInRect( &rcBtn, pt );
@@ -1594,14 +1660,7 @@ LRESULT CTabWnd::OnMouseMove( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unu
 	{
 		m_bListBtnHilighted = bHovering;
 		::InvalidateRect( hwnd, &rcBtn, FALSE );
-
-		// ツールチップ用の文字列作成	// 2007.03.05 ryoji
-		pszTip = nullptr;	// ボタンの外に出るときは消す
-		if( m_bListBtnHilighted )	// ボタンに入ってきた?
-		{
-			pszTip = szText;
-			wcscpy( szText, LS(STR_TABWND_LR_INFO) );
-		}
+		actionHoverChanged = TRUE;
 	}
 
 	GetCloseBtnRect( &rc, &rcBtn );
@@ -1610,33 +1669,35 @@ LRESULT CTabWnd::OnMouseMove( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unu
 	{
 		m_bCloseBtnHilighted = bHovering;
 		::InvalidateRect( hwnd, &rcBtn, FALSE );
-
-		// ツールチップ用の文字列作成	// 2007.03.05 ryoji
-		pszTip = nullptr;	// ボタンの外に出るときは消す
-		if( m_bCloseBtnHilighted )	// ボタンに入ってきた?
-		{
-			pszTip = szText;
-			if( m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd && !m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin )
-			{
-				if( !m_pShareData->m_Common.m_sTabBar.m_bTab_CloseOneWin )
-				{
-					wcscpy( szText, LS(STR_TABWND_CLOSETAB) );
-				}
-				else
-				{
-					wcsncpy_s(szText, LS(F_GROUPCLOSE), _TRUNCATE);
-				}
-			}
-			else
-			{
-					wcsncpy_s(szText, LS(F_EXITALLEDITORS), _TRUNCATE);
-			}
-		}
+		actionHoverChanged = TRUE;
 	}
 
 	// ツールチップ更新	// 2007.03.05 ryoji
-	if( pszTip != (LPWSTR)-1L )	// ボタンへの出入りがあった?
+	if( actionHoverChanged )
 	{
+		LPWSTR pszTip = nullptr;
+		if (m_bMarkdownPreviewBtnHilighted) {
+			if (const auto* editWnd = GetEditWndPtr(); editWnd != nullptr) {
+				editWnd->GetTooltipText(szText, std::size(szText), F_TOGGLE_MARKDOWN_PREVIEW);
+			} else {
+				wcscpy_s(szText, L"Markdown Preview");
+			}
+			pszTip = szText;
+		} else if (m_bListBtnHilighted) {
+			wcscpy_s(szText, LS(STR_TABWND_LR_INFO));
+			pszTip = szText;
+		} else if (m_bCloseBtnHilighted) {
+			if( m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd && !m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin )
+			{
+				if( !m_pShareData->m_Common.m_sTabBar.m_bTab_CloseOneWin )
+					wcscpy_s( szText, LS(STR_TABWND_CLOSETAB) );
+				else
+					wcsncpy_s(szText, LS(F_GROUPCLOSE), _TRUNCATE);
+			}
+			else
+				wcsncpy_s(szText, LS(F_EXITALLEDITORS), _TRUNCATE);
+			pszTip = szText;
+		}
 		TOOLINFO ti;
 		::ZeroMemory( &ti, sizeof(ti) );
 		ti.cbSize       = CCSIZEOF_STRUCT(TOOLINFO, lpszText);
@@ -1699,6 +1760,7 @@ LRESULT CTabWnd::OnPaint( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]
 	}
 
 	// ボタンを描画する
+	DrawMarkdownPreviewBtn( gr, &rc );
 	DrawListBtn( gr, &rc );
 	DrawCloseBtn( gr, &rc );	// 2006.10.21 ryoji 追加
 
@@ -2368,10 +2430,6 @@ void CTabWnd::LayoutTab( void )
 {
 	// フォントを切り替える 2011.12.01 Moca
 	bool bChgFont = (0 != memcmp( &m_lf, &m_pShareData->m_Common.m_sTabBar.m_lf, sizeof(m_lf) ));
-	int nSizeBoxWidth = 0;
-	if( m_hwndSizeBox ){
-		nSizeBoxWidth = ::GetSystemMetrics( SM_CXVSCROLL );
-	}
 	if( bChgFont ){
 		HFONT hFontOld = m_hFont;
 		m_lf = m_pShareData->m_Common.m_sTabBar.m_lf;
@@ -2463,6 +2521,11 @@ void CTabWnd::LayoutTab( void )
 	}
 	RECT rcWnd;
 	::GetWindowRect( GetHwnd(), &rcWnd );
+	RECT rcActions{ 0, 0, rcWnd.right - rcWnd.left,
+		(std::max)(TAB_WINDOW_HEIGHT, rcWnd.bottom - rcWnd.top) };
+	int tabControlRight = 0;
+	GetDocumentActionRects(rcActions, nullptr, nullptr, nullptr, &tabControlRight);
+	const int tabMarginLeft = static_cast<int>(TAB_MARGIN_LEFT);
 
 	int nHeight = TAB_WINDOW_HEIGHT;
 	::GetWindowRect( m_hwndTab, &rcTab );
@@ -2470,13 +2533,13 @@ void CTabWnd::LayoutTab( void )
 		&& TabCtrl_GetItemCount( m_hwndTab ) ){
 		// 正確に再配置（多段タブでは段数が変わることがあるので必須）
 		RECT rcDisp = rcTab;
-		rcDisp.left = TAB_MARGIN_LEFT;
-		rcDisp.right = rcTab.left + (rcWnd.right - rcWnd.left) - (TAB_MARGIN_LEFT + TAB_MARGIN_RIGHT + nSizeBoxWidth);
+		rcDisp.left = tabMarginLeft;
+		rcDisp.right = rcTab.left + (std::max)(0, tabControlRight - tabMarginLeft);
 		TabCtrl_AdjustRect( m_hwndTab, FALSE, &rcDisp );
 		nHeight = (rcDisp.top - rcTab.top - 2) + TAB_MARGIN_TOP;
 	}
 	::SetWindowPos( GetHwnd(), nullptr, 0, 0, rcWnd.right - rcWnd.left, nHeight, SWP_NOMOVE | SWP_NOZORDER );
-	int nWidth = (rcWnd.right - rcWnd.left) - (TAB_MARGIN_LEFT + TAB_MARGIN_RIGHT + nSizeBoxWidth);
+	int nWidth = (std::max)(0, tabControlRight - tabMarginLeft);
 	if( (nWidth != rcTab.right - rcTab.left) || (nHeight != rcTab.bottom - rcTab.top) ){
 		::MoveWindow( m_hwndTab, TAB_MARGIN_LEFT, TAB_MARGIN_TOP, nWidth, nHeight, TRUE );
 	}
@@ -2671,6 +2734,65 @@ void CTabWnd::DrawBtnBkgnd( HDC hdc, const LPRECT lprcBtn, BOOL bBtnHilighted )
 	}
 }
 
+/*! Markdownプレビューボタン描画処理 */
+void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
+{
+	if (!IsMarkdownPreviewActionAvailable()) return;
+
+	RECT rcBtn{};
+	GetMarkdownPreviewBtnRect(lprcClient, &rcBtn);
+	if (::IsRectEmpty(&rcBtn)) return;
+
+	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette(mode);
+	const bool pressed = m_eCaptureSrc == CAPT_MARKDOWN_PREVIEW
+		&& ::GetCapture() == GetHwnd() && m_bMarkdownPreviewBtnHilighted;
+	if (pressed || m_bMarkdownPreviewBtnHilighted) {
+		::MyFillRect(gr, rcBtn, (pressed ? palette.border : palette.raised).ToColorRef());
+	}
+
+	const bool active = IsMarkdownPreviewActionActive();
+	const COLORREF iconColor = active ? palette.accent.ToColorRef()
+		: (m_bMarkdownPreviewBtnHilighted ? palette.primaryText : palette.secondaryText).ToColorRef();
+	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+	const int lineWidth = (std::max)(1, tabbar::ScaleDocumentTabDip(1, dpi));
+	const int insetX = tabbar::ScaleDocumentTabDip(2, dpi);
+	const int insetY = tabbar::ScaleDocumentTabDip(3, dpi);
+	RECT glyph{ rcBtn.left + insetX, rcBtn.top + insetY,
+		rcBtn.right - insetX, rcBtn.bottom - insetY };
+	if (glyph.right > glyph.left + lineWidth && glyph.bottom > glyph.top + lineWidth) {
+		const HPEN pen = ::CreatePen(PS_SOLID, lineWidth, iconColor);
+		if (pen != nullptr) {
+			const auto oldPen = ::SelectObject(gr, pen);
+			const auto oldBrush = ::SelectObject(gr, ::GetStockObject(NULL_BRUSH));
+			::Rectangle(gr, glyph.left, glyph.top, glyph.right, glyph.bottom);
+			const int divider = glyph.left + (glyph.right - glyph.left) / 2;
+			::MoveToEx(gr, divider, glyph.top + lineWidth, nullptr);
+			::LineTo(gr, divider, glyph.bottom - lineWidth);
+			const int textLeft = divider + tabbar::ScaleDocumentTabDip(2, dpi);
+			const int textRight = glyph.right - tabbar::ScaleDocumentTabDip(1, dpi);
+			for (int row = 0; row < 2 && textLeft < textRight; ++row) {
+				const int y = glyph.top + tabbar::ScaleDocumentTabDip(3 + row * 3, dpi);
+				if (y < glyph.bottom) {
+					::MoveToEx(gr, textLeft, y, nullptr);
+					::LineTo(gr, textRight, y);
+				}
+			}
+			::SelectObject(gr, oldBrush);
+			::SelectObject(gr, oldPen);
+			::DeleteObject(pen);
+		}
+	}
+	if (active) {
+		RECT indicator = rcBtn;
+		indicator.left += insetX;
+		indicator.right -= insetX;
+		indicator.top = indicator.bottom - lineWidth;
+		::MyFillRect(gr, indicator, palette.accent.ToColorRef());
+	}
+}
+
 /*! 一覧ボタン描画処理
 	@date 2006.02.01 ryoji 新規作成
 	@date 2006.10.21 ryoji 背景描画を関数呼び出しに変更
@@ -2683,6 +2805,7 @@ void CTabWnd::DrawListBtn( CGraphics& gr, const LPRECT lprcClient )
 
 	RECT rcBtn;
 	GetListBtnRect( lprcClient, &rcBtn );
+	if (::IsRectEmpty(&rcBtn)) return;
 	DrawBtnBkgnd( gr, &rcBtn, m_bListBtnHilighted );	// 2006.10.21 ryoji
 
 	// 描画イメージを矩形中央にもってくる	// 2009.10.01 ryoji
@@ -2755,6 +2878,7 @@ void CTabWnd::DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient )
 
 	RECT rcBtn;
 	GetCloseBtnRect( lprcClient, &rcBtn );
+	if (::IsRectEmpty(&rcBtn)) return;
 
 	// ボタンの左側にセパレータを描画する	// 2007.02.27 ryoji
 	gr.SetPen( IsDarkModeActive() ? DarkMode::getEdgeColor() : ::GetSysColor( COLOR_3DSHADOW ) );
@@ -2858,18 +2982,52 @@ void CTabWnd::DrawTopBand( const CGraphics& gr, const RECT& rcClient, int nTabIn
 	}
 }
 
+bool CTabWnd::IsMarkdownPreviewActionAvailable() const
+{
+	const auto* editWnd = GetEditWndPtr();
+	return editWnd != nullptr && editWnd->GetHwnd() == GetParentHwnd()
+		&& editWnd->IsMarkdownPreviewAvailable();
+}
+
+bool CTabWnd::IsMarkdownPreviewActionActive() const
+{
+	const auto* editWnd = GetEditWndPtr();
+	return IsMarkdownPreviewActionAvailable() && editWnd != nullptr
+		&& editWnd->IsMarkdownPreviewVisible();
+}
+
+void CTabWnd::GetDocumentActionRects( const RECT& rcClient, RECT* preview, RECT* list,
+	RECT* close, int* tabControlRight ) const
+{
+	const HWND dpiWindow = GetHwnd() != nullptr ? GetHwnd() : GetParentHwnd();
+	const UINT dpi = dpiWindow == nullptr ? 96U : ::GetDpiForWindow(dpiWindow);
+	const int sizeBoxWidth = m_hwndSizeBox == nullptr ? 0 : ::GetSystemMetrics(SM_CXVSCROLL);
+	const auto layout = tabbar::CalculateDocumentTabActionLayout(
+		rcClient.left, rcClient.top, rcClient.right, rcClient.bottom, dpi,
+		IsMarkdownPreviewActionAvailable(), sizeBoxWidth);
+	const auto copyRect = [](const tabbar::ActionRect& source, RECT* destination) {
+		if (destination != nullptr) {
+			*destination = { source.left, source.top, source.right, source.bottom };
+		}
+	};
+	copyRect(layout.preview, preview);
+	copyRect(layout.list, list);
+	copyRect(layout.close, close);
+	if (tabControlRight != nullptr) *tabControlRight = layout.tabControlRight;
+}
+
+/*! Markdownプレビューボタンの矩形取得処理 */
+void CTabWnd::GetMarkdownPreviewBtnRect( const LPRECT lprcClient, LPRECT lprc )
+{
+	GetDocumentActionRects(*lprcClient, lprc, nullptr, nullptr, nullptr);
+}
+
 /*! 一覧ボタンの矩形取得処理
 	@date 2006.02.01 ryoji 新規作成
 */
 void CTabWnd::GetListBtnRect( const LPRECT lprcClient, LPRECT lprc )
 {
-	*lprc = rcBtnBase;
-	DpiScaleRect(lprc);	// 2009.10.01 ryoji 高DPI対応スケーリング
-	int nSizeBoxWidth = 0;
-	if( m_hwndSizeBox ){
-		nSizeBoxWidth = ::GetSystemMetrics( SM_CXVSCROLL );
-	}
-	::OffsetRect(lprc, lprcClient->right - TAB_MARGIN_RIGHT - nSizeBoxWidth + DpiScaleX(4), lprcClient->top + TAB_MARGIN_TOP + DpiScaleY(2) );
+	GetDocumentActionRects(*lprcClient, nullptr, lprc, nullptr, nullptr);
 }
 
 /*! 閉じるボタンの矩形取得処理
@@ -2877,15 +3035,7 @@ void CTabWnd::GetListBtnRect( const LPRECT lprcClient, LPRECT lprc )
 */
 void CTabWnd::GetCloseBtnRect( const LPRECT lprcClient, LPRECT lprc )
 {
-	*lprc = rcBtnBase;
-	DpiScaleRect(lprc);	// 2009.10.01 ryoji 高DPI対応スケーリング
-	int nSizeBoxWidth = 0;
-	if( m_hwndSizeBox ){
-		nSizeBoxWidth = ::GetSystemMetrics( SM_CXVSCROLL );
-	}
-	::OffsetRect(lprc,
-		lprcClient->right - TAB_MARGIN_RIGHT - nSizeBoxWidth + DpiScaleX(4) + (DpiScaleX(rcBtnBase.right) - DpiScaleX(rcBtnBase.left)) + DpiScaleX(7),
-		lprcClient->top + TAB_MARGIN_TOP + DpiScaleY(2) );
+	GetDocumentActionRects(*lprcClient, nullptr, nullptr, lprc, nullptr);
 }
 
 /*! タブを閉じるボタンの矩形取得処理

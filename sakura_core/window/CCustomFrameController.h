@@ -22,6 +22,12 @@ struct CustomFrameLayout {
 	RECT systemMenu{};
 	RECT menu{};
 	RECT captionText{};
+	RECT layoutButton{};
+	RECT primarySidebarButton{};
+	RECT bottomPanelButton{};
+	RECT secondarySidebarButton{};
+	RECT accountButton{};
+	RECT settingsButton{};
 	RECT minimizeButton{};
 	RECT maximizeButton{};
 	RECT closeButton{};
@@ -41,6 +47,19 @@ struct CustomFrameLayout {
 	int resizeBorder,
 	bool maximized
 ) noexcept;
+//! Returns the compact title-bar control at a client point, or None outside its bounds.
+[[nodiscard]] CustomFrameControl HitTestCustomFrameControl(
+	const CustomFrameLayout& layout,
+	POINT clientPoint
+) noexcept;
+//! Maps a directly invokable title-bar control to its editor command; zero opens a local popup.
+[[nodiscard]] UINT CustomFrameControlCommand(CustomFrameControl control) noexcept;
+//! Builds the shared UIA/MSAA snapshot for one compact title-bar control.
+[[nodiscard]] accessibility::CustomUiAutomationNode CustomFrameControlAccessibilityNode(
+	CustomFrameControl control,
+	const CustomFrameLayout& layout,
+	bool focused
+);
 
 //! DWM owns a processed non-client result. HTCLIENT/HTNOWHERE are the explicit
 //! exception: the extended custom client must supply its own caption/menu hits.
@@ -96,8 +115,14 @@ private:
 	[[nodiscard]] LRESULT HitTestScreenPoint(POINT screenPoint) noexcept;
 	void SetHotHit(LRESULT hit) noexcept;
 	void SetPressedHit(LRESULT hit) noexcept;
+	void SetHotControl(CustomFrameControl control) noexcept;
+	void SetPressedControl(CustomFrameControl control) noexcept;
 	void ClearAccessibilityFocus() noexcept;
 	[[nodiscard]] bool IsCaptionButton(LRESULT hit) const noexcept;
+	[[nodiscard]] bool HandleTitleControlMouseMessage(UINT message, WPARAM wParam, LPARAM lParam, LRESULT& result) noexcept;
+	void InvokeTitleControl(CustomFrameControl control) noexcept;
+	void ShowLayoutMenu(const RECT& anchor) noexcept;
+	void ShowAccountMenu(const RECT& anchor) noexcept;
 
 	HWND m_window = nullptr;
 	UINT m_dpi = 96;
@@ -112,8 +137,11 @@ private:
 	CCustomTitleBar m_titleBar;
 	LRESULT m_hotHit = HTNOWHERE;
 	LRESULT m_pressedHit = HTNOWHERE;
+	CustomFrameControl m_hotControl = CustomFrameControl::None;
+	CustomFrameControl m_pressedControl = CustomFrameControl::None;
 	bool m_active = true;
 	bool m_trackingNonClientLeave = false;
+	bool m_trackingTitleControlLeave = false;
 	int m_accessibilityFocusedNode = -1;
 	std::shared_ptr<accessibility::CustomUiAutomationLifetime> m_accessibilityLifetime = std::make_shared<accessibility::CustomUiAutomationLifetime>();
 };

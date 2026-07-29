@@ -394,6 +394,17 @@ bool CEditWnd::InitializeWorkbench()
 	auto terminalTool = std::make_unique<terminal::CTerminalTool>();
 	m_terminalTool = terminalTool.get();
 	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	m_terminalTool->SetPanelActions({
+		.closePanel = [this]() {
+			SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, false, false);
+		},
+		.toggleMaximize = [this]() {
+			ToggleBottomWorkbenchMaximized();
+		},
+		.isMaximized = [this]() {
+			return m_bottomWorkbenchMaximized;
+		},
+	});
 	if (!m_bottomWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(terminalTool))) {
 		m_terminalTool = nullptr;
 		m_bottomWorkbenchPanel.reset();
@@ -406,14 +417,6 @@ bool CEditWnd::InitializeWorkbench()
 			break;
 		case workbench::ActivityBarItem::SourceControl:
 			ActivateLeftWorkbenchTool(true, true);
-			break;
-		case workbench::ActivityBarItem::Outline:
-			if (m_explorerOutlineTool) m_explorerOutlineTool->ShowSourceControl(false);
-			SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right,
-				!IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Right), true);
-			break;
-		case workbench::ActivityBarItem::Terminal:
-			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Bottom, true);
 			break;
 		case workbench::ActivityBarItem::Count:
 			break;
@@ -454,6 +457,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_outlineWorkbenchTool = nullptr;
 	m_scmTool = nullptr;
 	m_terminalTool = nullptr;
+	m_bottomWorkbenchMaximized = false;
 	m_workspaceContext.reset();
 }
 
@@ -503,6 +507,7 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 	if (m_explorerOutlineTool) m_explorerOutlineTool->ShowSourceControl(settings.m_eActiveTool == WORKBENCH_TOOL_SCM);
 	if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(settings.m_bRightPanelVisible != FALSE);
 	applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible, settings.m_nBottomPanelExtent96);
+	if (settings.m_bBottomPanelVisible == FALSE) m_bottomWorkbenchMaximized = false;
 
 	std::optional<workbench::ActivityBarItem> activeItem;
 	switch (settings.m_eActiveTool) {
@@ -510,10 +515,12 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Explorer;
 		break;
 	case WORKBENCH_TOOL_OUTLINE:
-		if (settings.m_bLeftPanelVisible != FALSE && settings.m_bRightPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Outline;
+		// Outline now lives inside Explorer.
+		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Explorer;
 		break;
 	case WORKBENCH_TOOL_TERMINAL:
-		if (settings.m_bBottomPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Terminal;
+		// Terminal is reached from the bottom panel/title-bar controls rather
+		// than occupying a dedicated Activity Bar button.
 		break;
 	case WORKBENCH_TOOL_SCM:
 		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::SourceControl;
@@ -625,15 +632,17 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	case workbench::WorkbenchEdge::Right:
 		host = m_leftWorkbenchPanel.get();
 		savedVisible = &settings.m_bRightPanelVisible;
-		item = workbench::ActivityBarItem::Outline;
+		item = workbench::ActivityBarItem::Explorer;
 		break;
 	case workbench::WorkbenchEdge::Bottom:
 		host = m_bottomWorkbenchPanel.get();
 		savedVisible = &settings.m_bBottomPanelVisible;
-		item = workbench::ActivityBarItem::Terminal;
 		break;
 	}
 	const BOOL requestedVisible = visible ? TRUE : FALSE;
+	if (edge == workbench::WorkbenchEdge::Bottom && !visible) {
+		m_bottomWorkbenchMaximized = false;
+	}
 	const bool visibilityChanged = savedVisible != nullptr && *savedVisible != requestedVisible;
 	if (savedVisible) *savedVisible = requestedVisible;
 	bool leftVisibilityChanged = false;
@@ -713,6 +722,21 @@ void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate
 	SetWorkbenchPanelVisible(edge, show, activate);
 	if (edge == workbench::WorkbenchEdge::Right && show && m_dispatchReady) {
 		(void)GetActiveView().GetCommander().Command_FUNCLIST(SHOW_RELOAD, OUTLINE_DEFAULT);
+	}
+}
+
+void CEditWnd::ToggleBottomWorkbenchMaximized()
+{
+	if (m_bottomWorkbenchPanel == nullptr
+		|| m_bottomWorkbenchPanel->GetState() == workbench::WorkbenchPanelState::Hidden) {
+		return;
+	}
+	m_bottomWorkbenchMaximized = !m_bottomWorkbenchMaximized;
+	if (GetHwnd() != nullptr) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType,
+			MAKELONG(client.right - client.left, client.bottom - client.top), false);
 	}
 }
 
@@ -911,6 +935,7 @@ void CEditWnd::ToggleMarkdownPreview()
 	} else if (m_markdownPreview) {
 		m_markdownPreview->Show(false);
 	}
+	m_cTabWnd.RefreshDocumentActionState();
 	if (GetHwnd() != nullptr) {
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
@@ -981,6 +1006,7 @@ void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 			(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
 		}
 	}
+	m_cTabWnd.RefreshDocumentActionState();
 }
 
 //! ドキュメントリスナ：セーブ後
@@ -988,6 +1014,8 @@ void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 void CEditWnd::OnAfterSave([[maybe_unused]] const SSaveInfo& sSaveInfo)
 {
 	UpdateWorkspaceFromDocument();
+	UpdateMarkdownPreviewIfNeeded();
+	m_cTabWnd.RefreshDocumentActionState();
 	//ビュー再描画
 	this->Views_RedrawAll();
 
@@ -4125,6 +4153,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		? m_rightWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
 	layoutRequest.bottomPane = m_bottomWorkbenchPanel
 		? m_bottomWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.bottomPaneMaximized = m_bottomWorkbenchMaximized
+		&& layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden;
 	layoutRequest.showMinimap = m_cMiniMapView.GetHwnd() != nullptr;
 	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
 		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;

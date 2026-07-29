@@ -1,6 +1,7 @@
 /*! @file */
 #include "pch.h"
 #include "terminal/window/TerminalRenderMapping.h"
+#include "terminal/window/TerminalScrollbarLayout.h"
 
 namespace {
 
@@ -23,6 +24,40 @@ TEST(TerminalRenderMapping, CalculatesViewportFromScrollbackWithoutWalkingTheTre
 	EXPECT_EQ(bottom.totalRows - 2, bottom.topRow);
 	const auto scrolled = terminal::CalculateTerminalViewport(model, 2, 1);
 	EXPECT_EQ(bottom.topRow - 1, scrolled.topRow);
+}
+
+TEST(TerminalRenderMapping, AlternateScreenIgnoresRememberedMainScrollbackViewport)
+{
+	terminal::TerminalModel model(6, 2, 10);
+	WriteLine(model, L"main-one");
+	WriteLine(model, L"main-two");
+	WriteLine(model, L"main-three");
+	ASSERT_GT(model.ScrollbackSize(), 0u);
+	const auto mainViewport = terminal::CalculateTerminalViewport(model, 2, 1);
+	ASSERT_GT(mainViewport.topRow, 0u);
+
+	model.SetAlternateScreen(true);
+	model.Print(U'A');
+	const auto alternateViewport = terminal::CalculateTerminalViewport(model, 2, 999);
+	EXPECT_EQ(model.RowCount(), alternateViewport.totalRows);
+	EXPECT_EQ(2u, alternateViewport.visibleRows);
+	EXPECT_EQ(0u, alternateViewport.topRow);
+	const RECT client{ 0, 0, 640, 320 };
+	EXPECT_FALSE(terminal::CalculateTerminalScrollbarLayout(client, alternateViewport.totalRows,
+		alternateViewport.visibleRows, alternateViewport.topRow, 96).scrollable);
+	const auto* alternateFirstRow = terminal::GetTerminalRow(model, 0);
+	ASSERT_NE(nullptr, alternateFirstRow);
+	EXPECT_EQ(L"A", alternateFirstRow->cells[0].Text());
+	const std::vector<std::size_t> expectedDirtyRows{ 0, 1 };
+	EXPECT_EQ(expectedDirtyRows, terminal::MapDirtyRowsToViewport(model, alternateViewport, { 0, 1 }));
+	EXPECT_EQ(L"A", terminal::ExtractTerminalSelection(model, { 0, 0 }, { 0, 1 }));
+
+	model.SetAlternateScreen(false);
+	const auto restoredViewport = terminal::CalculateTerminalViewport(model, 2, 1);
+	EXPECT_EQ(mainViewport.topRow, restoredViewport.topRow);
+	const auto* restoredFirstRow = terminal::GetTerminalRow(model, 0);
+	ASSERT_NE(nullptr, restoredFirstRow);
+	EXPECT_NE(L"A", restoredFirstRow->cells[0].Text());
 }
 
 TEST(TerminalRenderMapping, MapsOnlyDirtyScreenRowsThatAreActuallyVisible)

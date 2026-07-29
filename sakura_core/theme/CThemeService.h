@@ -139,7 +139,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x45, 0x45, 0x45 }, // border
 		{ 0xCC, 0xCC, 0xCC }, // primary text
 		{ 0x96, 0x96, 0x96 }, // secondary text
-		{ 0x00, 0x7A, 0xCC }, // focus / active status
+		{ 0x1F, 0x8A, 0xD2 }, // focus / active status
 		{ 0xFF, 0xFF, 0xFF }, // highlighted text
 		{ 0x3C, 0x3C, 0x3C }, // active title bar
 		{ 0x33, 0x33, 0x33 }, // activity bar
@@ -166,7 +166,7 @@ constexpr ThemeFontSpec CThemeService::FontSpec(ThemeFontKind kind) noexcept
 		return { L"Consolas", L"Cascadia Mono", 10, FW_NORMAL, true };
 	case ThemeFontKind::Terminal:
 	default:
-		return { L"Cascadia Mono", L"Consolas", 9, FW_NORMAL, true };
+		return { L"Cascadia Mono", L"Consolas", 9, FW_LIGHT, true };
 	}
 }
 

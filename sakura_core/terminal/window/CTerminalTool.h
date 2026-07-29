@@ -11,12 +11,20 @@
 #include "theme/CThemeService.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace terminal {
+
+//! Frame-owned actions exposed to the terminal chrome without coupling it to CEditWnd.
+struct TerminalPanelActions {
+	std::function<void()> closePanel;
+	std::function<void()> toggleMaximize;
+	std::function<bool()> isMaximized;
+};
 
 //! Bottom-panel terminal tool with up to two viewports and multiple session tabs.
 class CTerminalTool final : public workbench::IWorkbenchTool {
@@ -35,6 +43,7 @@ public:
 
 	void SetWorkingDirectory( std::wstring workingDirectory );
 	void SetPalette( const theme::ThemePalette& palette );
+	void SetPanelActions( TerminalPanelActions actions );
 	//! Materializes the renderer and starts exactly one initial session without
 	//! moving keyboard focus. Used when a persisted-visible panel is restored.
 	[[nodiscard]] bool EnsureSessionStarted();

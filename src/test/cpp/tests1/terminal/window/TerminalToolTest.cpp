@@ -1,10 +1,12 @@
 /*! @file */
 #include "pch.h"
+#include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
 #include "terminal/model/TerminalModel.h"
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstring>
@@ -123,6 +125,28 @@ HWND CreateHiddenParentWindow()
 		CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
 }
 
+class ScopedNeutralKeyboardState final {
+public:
+	ScopedNeutralKeyboardState()
+	{
+		m_restore = ::GetKeyboardState(m_saved.data()) != FALSE;
+		std::array<BYTE, 256> neutral{};
+		m_applied = ::SetKeyboardState(neutral.data()) != FALSE;
+	}
+
+	~ScopedNeutralKeyboardState()
+	{
+		if( m_restore ) static_cast<void>(::SetKeyboardState(m_saved.data()));
+	}
+
+	[[nodiscard]] bool Applied() const noexcept { return m_applied; }
+
+private:
+	std::array<BYTE, 256> m_saved{};
+	bool m_restore{};
+	bool m_applied{};
+};
+
 template<typename Predicate>
 bool WaitUntil( Predicate&& predicate, std::chrono::milliseconds timeout = 500ms )
 {
@@ -210,6 +234,11 @@ TEST(TerminalTool, RendererSizeInvalidatesBeforeItReceivesFocus)
 
 TEST(TerminalTool, PrintableKeyDownFallsThroughToCharMessage)
 {
+	// This test directly constructs a MSG instead of retrieving it from the
+	// thread queue.  Arrange the modifier state explicitly so a physically held
+	// Ctrl/Shift key cannot turn the synthetic printable key into a VT command.
+	ScopedNeutralKeyboardState keyboardState;
+	ASSERT_TRUE(keyboardState.Applied());
 	const HWND parent = CreateHiddenParentWindow();
 	ASSERT_NE(nullptr, parent);
 	terminal::CTerminalWnd renderer;
@@ -344,6 +373,27 @@ TEST(TerminalTool, DrainReportsCompletedSynchronizedFrameEvenWhenNextFrameIsOpen
 	manager.Close();
 }
 
+TEST(TerminalTool, OscTitleDoesNotReplaceStableHeaderProfileName)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b]0;Claude Code\x07";
+	std::atomic<int> outputNotifications{};
+	terminal::TerminalTabManager manager(harness.Dependencies(), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
+	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
+
+	const auto drained = manager.DrainOutput(*id);
+	EXPECT_TRUE(drained.titleChanged);
+	const auto tabs = manager.Snapshot();
+	ASSERT_EQ(1u, tabs.size());
+	EXPECT_EQ(L"Claude Code", tabs.front().label);
+	EXPECT_EQ(L"pwsh", tabs.front().profileLabel);
+	manager.Close();
+}
+
 TEST(TerminalTool, DeferredProtocolResponseFinalizesWhenTheSessionStops)
 {
 	ToolHarness harness;
@@ -451,8 +501,68 @@ TEST(TerminalTool, SplitCreatesTwoNativeViewportsAndDividerResizesThem)
 	ASSERT_TRUE(::GetWindowRect(first, &firstAfter));
 	EXPECT_GT(firstAfter.right - firstAfter.left, firstBefore.right - firstBefore.left);
 
+	// A ratio selected on a wide panel must be clamped again when the frame is
+	// narrowed; otherwise the right ConPTY can collapse to only a few columns.
+	const RECT wide{ 0, 0, 1200, 320 };
+	tool.Layout(wide, 96);
+	ASSERT_TRUE(::GetWindowRect(first, &firstAfter));
+	divider = { firstAfter.right, firstAfter.top + 20 };
+	::ScreenToClient(tool.GetHwnd(), &divider);
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(divider.x + 1, divider.y));
+	::SendMessageW(tool.GetHwnd(), WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(1110, divider.y));
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(1110, divider.y));
+	tool.Layout(visible, 96);
+	RECT firstNarrow{};
+	RECT secondNarrow{};
+	ASSERT_TRUE(::GetWindowRect(first, &firstNarrow));
+	ASSERT_TRUE(::GetWindowRect(second, &secondNarrow));
+	EXPECT_GE(firstNarrow.right - firstNarrow.left, 80);
+	EXPECT_GE(secondNarrow.right - secondNarrow.left, 80);
+	EXPECT_EQ(4, secondNarrow.left - firstNarrow.right);
+	EXPECT_EQ(0L, ::GetWindowLongPtrW(first, GWL_STYLE) & WS_VSCROLL);
+	EXPECT_EQ(0L, ::GetWindowLongPtrW(second, GWL_STYLE) & WS_VSCROLL);
+
 	EXPECT_TRUE(tool.CloseTerminalSplit());
 	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr));
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, HeaderMaximizeAndCloseButtonsInvokeFrameOwnedActionsOnRelease)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	int maximizeCalls = 0;
+	int closeCalls = 0;
+	bool maximized = false;
+	tool.SetPanelActions({
+		.closePanel = [&] { ++closeCalls; },
+		.toggleMaximize = [&] {
+			++maximizeCalls;
+			maximized = !maximized;
+		},
+		.isMaximized = [&] { return maximized; },
+	});
+	const RECT visible{ 0, 0, 640, 320 };
+	tool.Layout(visible, 96);
+
+	const auto layout = terminal::CalculateTerminalHeaderLayout(visible, 96);
+	const auto click = [&](terminal::TerminalHeaderTarget target) {
+		const auto rect = layout.RectFor(target);
+		const int x = rect.left + (rect.right - rect.left) / 2;
+		const int y = rect.top + (rect.bottom - rect.top) / 2;
+		::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+		::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+	};
+	click(terminal::TerminalHeaderTarget::Maximize);
+	EXPECT_EQ(1, maximizeCalls);
+	EXPECT_TRUE(maximized);
+	click(terminal::TerminalHeaderTarget::Close);
+	EXPECT_EQ(1, closeCalls);
+
 	tool.Close();
 	::DestroyWindow(parent);
 }

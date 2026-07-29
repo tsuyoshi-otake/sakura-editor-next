@@ -1018,12 +1018,21 @@
     <ClInclude Include="..\sakura_core\terminal\window\TerminalColorResolver.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalScrollbarLayout.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
@@ -1054,6 +1063,9 @@
     <ClInclude Include="..\sakura_core\window\CTabWnd.h">
       <Filter>Cpp Source Files\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\window\DocumentTabActionLayout.h">
+	  <Filter>Cpp Source Files\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\window\CTipWnd.h">
       <Filter>Cpp Source Files\window</Filter>
     </ClInclude>

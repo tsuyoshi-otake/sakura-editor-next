@@ -8,6 +8,7 @@
 
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 
 #include <CommCtrl.h>
 #include <windowsx.h>
@@ -43,18 +44,6 @@ constexpr int kIndicatorWidthDip = 2;
 		return true;
 	}
 	return false;
-}
-
-[[nodiscard]] wchar_t IconGlyph(ActivityBarItem item) noexcept
-{
-	switch (item) {
-	case ActivityBarItem::Explorer: return L'\xE8B7'; // Folder
-	case ActivityBarItem::SourceControl: return L'\xE8F0'; // Branch / source control
-	case ActivityBarItem::Outline: return L'\xE8D2'; // Bulleted list
-	case ActivityBarItem::Terminal: return L'\xE756'; // Command prompt
-	case ActivityBarItem::Count: break;
-	}
-	return L'?';
 }
 
 } // namespace
@@ -395,8 +384,6 @@ void CActivityBar::Paint() noexcept
 	::FillRect(buffer, &client, background);
 	::DeleteObject(background);
 
-	EnsureIconFont();
-	const HFONT previousFont = m_iconFont == nullptr ? nullptr : static_cast<HFONT>(::SelectObject(buffer, m_iconFont));
 	::SetBkMode(buffer, TRANSPARENT);
 	for (std::size_t index = 0; index < m_model.GetButtonCount(); ++index) {
 		const auto button = m_model.GetButton(index);
@@ -417,13 +404,15 @@ void CActivityBar::Paint() noexcept
 			::FillRect(buffer, &indicator, brush);
 			::DeleteObject(brush);
 		}
-		::SetTextColor(buffer, !button.enabled ? m_palette.disabledIcon
-			: button.selected ? m_palette.activeIcon : m_palette.icon);
-		const wchar_t glyph[] = { IconGlyph(button.item), L'\0' };
+		const COLORREF iconColor = !button.enabled ? m_palette.disabledIcon
+			: button.selected ? m_palette.activeIcon : m_palette.icon;
 		const auto iconBounds = icons::CenteredIconBounds(
 			{ bounds.left, bounds.top, bounds.right, bounds.bottom }, icons::kActivityIconDip, m_model.GetDpi());
-		RECT glyphBounds{ iconBounds.left, iconBounds.top, iconBounds.right, iconBounds.bottom };
-		::DrawTextW(buffer, glyph, 1, &glyphBounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		if (button.item == ActivityBarItem::SourceControl) {
+			icons::codicons::DrawSourceControl(buffer, iconBounds, iconColor);
+		} else {
+			icons::codicons::DrawFiles(buffer, iconBounds, iconColor);
+		}
 		if (button.focused) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.focusBorder);
 			const HGDIOBJ previousPen = ::SelectObject(buffer, pen);
@@ -436,7 +425,6 @@ void CActivityBar::Paint() noexcept
 			::DeleteObject(pen);
 		}
 	}
-	if (previousFont != nullptr) ::SelectObject(buffer, previousFont);
 	::BitBlt(target, 0, 0, width, height, buffer, 0, 0, SRCCOPY);
 	::SelectObject(buffer, previousBitmap);
 	::DeleteObject(bitmap);
@@ -485,7 +473,7 @@ bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 		focusChanged = true;
 		break;
 	case VK_END:
-		m_model.SetFocusedItem(ActivityBarItem::Terminal);
+		m_model.SetFocusedItem(ActivityBarItem::SourceControl);
 		if (!m_model.GetFocusedItem()) static_cast<void>(m_model.MoveFocus(-1));
 		focusChanged = true;
 		break;

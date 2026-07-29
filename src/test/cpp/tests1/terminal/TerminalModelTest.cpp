@@ -26,6 +26,64 @@ TEST(TerminalModel, StoresWideAndCombiningGraphemesWithoutPerCellHeapStorage)
 	EXPECT_EQ(L"e\u0301", model.Rows()[0].cells[2].Text());
 }
 
+TEST(TerminalModel, PrintsBoxBlockAndShadeCharactersAsNarrowCells)
+{
+	terminal::TerminalModel model(6, 1);
+	for( const auto character : { U'\u2500', U'\u2588', U'\u2591' } ) {
+		const auto column = model.CursorColumn();
+		model.Print(character);
+		EXPECT_EQ(column + 1, model.CursorColumn());
+	}
+
+	for( std::size_t column = 0; column < 3; ++column ) {
+		EXPECT_EQ(1u, model.Rows()[0].cells[column].width);
+		EXPECT_FALSE(model.Rows()[0].cells[column].continuation);
+	}
+}
+
+TEST(TerminalModel, OverwritingWideLeadWithNarrowClearsItsContinuation)
+{
+	terminal::TerminalModel model(4, 1);
+	const auto wideForeground = terminal::TerminalColor::Indexed(1);
+	const auto narrowForeground = terminal::TerminalColor::Indexed(2);
+	model.SetForeground(wideForeground);
+	model.Print(U'\u65E5');
+	model.SetForeground(narrowForeground);
+	model.SetCursorPosition(0, 0);
+	model.Print(U'x');
+
+	EXPECT_EQ(1u, model.CursorColumn());
+	EXPECT_EQ(L"x", model.Rows()[0].cells[0].Text());
+	EXPECT_EQ(1u, model.Rows()[0].cells[0].width);
+	EXPECT_FALSE(model.Rows()[0].cells[0].continuation);
+	EXPECT_TRUE(model.Rows()[0].cells[1].Text().empty());
+	EXPECT_FALSE(model.Rows()[0].cells[1].continuation);
+	EXPECT_EQ(narrowForeground, model.Rows()[0].AttributesAt(0).foreground);
+	EXPECT_EQ(wideForeground, model.Rows()[0].AttributesAt(1).foreground);
+}
+
+TEST(TerminalModel, OverwritingWideContinuationClearsItsLead)
+{
+	terminal::TerminalModel model(4, 1);
+	const auto wideForeground = terminal::TerminalColor::Indexed(1);
+	const auto narrowForeground = terminal::TerminalColor::Indexed(2);
+	model.SetForeground(wideForeground);
+	model.Print(U'\u65E5');
+	model.SetForeground(narrowForeground);
+	model.SetCursorPosition(1, 0);
+	model.Print(U'x');
+
+	EXPECT_EQ(2u, model.CursorColumn());
+	EXPECT_TRUE(model.Rows()[0].cells[0].Text().empty());
+	EXPECT_EQ(1u, model.Rows()[0].cells[0].width);
+	EXPECT_FALSE(model.Rows()[0].cells[0].continuation);
+	EXPECT_EQ(L"x", model.Rows()[0].cells[1].Text());
+	EXPECT_EQ(1u, model.Rows()[0].cells[1].width);
+	EXPECT_FALSE(model.Rows()[0].cells[1].continuation);
+	EXPECT_EQ(wideForeground, model.Rows()[0].AttributesAt(0).foreground);
+	EXPECT_EQ(narrowForeground, model.Rows()[0].AttributesAt(1).foreground);
+}
+
 TEST(TerminalModel, KeepsCommonEmojiZwjSequenceInOneWideCell)
 {
 	terminal::TerminalModel model(10, 2);
@@ -60,6 +118,26 @@ TEST(TerminalModel, EmojiVariationSelectorCanGrowPreviousCellWidth)
 	EXPECT_EQ(2u, model.Rows()[0].cells[0].length);
 	EXPECT_EQ(2u, model.Rows()[0].cells[0].width);
 	EXPECT_TRUE(model.Rows()[0].cells[1].continuation);
+}
+
+TEST(TerminalModel, DoesNotAllocateCellsForUnattachedZeroWidthCodepoints)
+{
+	terminal::TerminalModel model(4, 1);
+	model.Print(U'A');
+	model.Print(U'\u05B0'); // Hebrew point sheva extends the preceding base.
+	EXPECT_EQ(1u, model.CursorColumn());
+	EXPECT_EQ(L"A\u05B0", model.Rows()[0].cells[0].Text());
+
+	// These format characters are independently measured as zero-width and do
+	// not extend the preceding grapheme. They must not create blank cells.
+	model.Print(U'\u200B');
+	model.Print(U'\u2060');
+	EXPECT_EQ(1u, model.CursorColumn());
+	EXPECT_TRUE(model.Rows()[0].cells[1].Text().empty());
+
+	model.Print(U'B');
+	EXPECT_EQ(2u, model.CursorColumn());
+	EXPECT_EQ(L"B", model.Rows()[0].cells[1].Text());
 }
 
 TEST(TerminalModel, CapsScrollbackAndStopsGrowingAtConfiguredLimit)
@@ -187,6 +265,26 @@ TEST(TerminalModel, ResizesSavedMainScreenWhileAlternateScreenIsActive)
 	model.SetCursorPosition(11, 3);
 	model.Print(U'Z');
 	EXPECT_EQ(L"Z", model.Rows()[3].cells[11].Text());
+}
+
+TEST(TerminalModel, ResizeShrinkingRepairsWideCellsOnActiveAndSavedMainScreens)
+{
+	terminal::TerminalModel model(4, 1);
+	model.SetCursorPosition(2, 0);
+	model.Print(U'\u65E5');
+	model.SetAlternateScreen(true);
+	model.SetCursorPosition(2, 0);
+	model.Print(U'\u65E5');
+	model.Resize(3, 1);
+
+	ASSERT_EQ(3u, model.Rows()[0].cells.size());
+	EXPECT_TRUE(model.Rows()[0].cells[2].Text().empty());
+	EXPECT_EQ(1u, model.Rows()[0].cells[2].width);
+	EXPECT_FALSE(model.Rows()[0].cells[2].continuation);
+	model.SetAlternateScreen(false);
+	EXPECT_TRUE(model.Rows()[0].cells[2].Text().empty());
+	EXPECT_EQ(1u, model.Rows()[0].cells[2].width);
+	EXPECT_FALSE(model.Rows()[0].cells[2].continuation);
 }
 
 TEST(TerminalModel, EraseAndScrollBlanksUseCurrentBackgroundRendition)

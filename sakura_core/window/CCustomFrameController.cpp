@@ -7,6 +7,7 @@
 
 #include "StdAfx.h"
 #include "window/CCustomFrameController.h"
+#include "func/Funccode.h"
 #include "workbench/WorkbenchZoom.h"
 
 #include <algorithm>
@@ -20,6 +21,7 @@ constexpr int kMenuItemBaseNode = 1100;
 constexpr int kMinimizeNode = 1200;
 constexpr int kMaximizeNode = 1201;
 constexpr int kCloseNode = 1202;
+constexpr int kTitleControlNodeBase = 1300;
 
 bool Contains(const RECT& rect, POINT point) noexcept
 {
@@ -30,6 +32,36 @@ bool Contains(const RECT& rect, POINT point) noexcept
 RECT MakeRect(int left, int top, int right, int bottom) noexcept
 {
 	return { left, top, std::max(left, right), std::max(top, bottom) };
+}
+
+RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl control) noexcept
+{
+	switch (control) {
+	case CustomFrameControl::Layout: return layout.layoutButton;
+	case CustomFrameControl::PrimarySidebar: return layout.primarySidebarButton;
+	case CustomFrameControl::BottomPanel: return layout.bottomPanelButton;
+	case CustomFrameControl::SecondarySidebar: return layout.secondarySidebarButton;
+	case CustomFrameControl::Account: return layout.accountButton;
+	case CustomFrameControl::Settings: return layout.settingsButton;
+	case CustomFrameControl::None: break;
+	}
+	return {};
+}
+
+CustomFrameControl TitleControlFromNode(int nodeId) noexcept
+{
+	const int value = nodeId - kTitleControlNodeBase + 1;
+	return value >= static_cast<int>(CustomFrameControl::Layout)
+		&& value <= static_cast<int>(CustomFrameControl::Settings)
+		? static_cast<CustomFrameControl>(value)
+		: CustomFrameControl::None;
+}
+
+int TitleControlNode(CustomFrameControl control) noexcept
+{
+	return control == CustomFrameControl::None
+		? -1
+		: kTitleControlNodeBase + static_cast<int>(control) - 1;
 }
 
 } // namespace
@@ -47,10 +79,17 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	const int buttonWidth = ScaleCustomFrameDip(46, dpi);
 	const int closeWidth = ScaleCustomFrameDip(48, dpi);
 	const int captionPadding = ScaleCustomFrameDip(10, dpi);
+	const int titleControlWidth = ScaleCustomFrameDip(30, dpi);
+	const int titleControlCount = 6;
 	const int buttonsWidth = buttonWidth * 2 + closeWidth;
 	const int buttonLeft = std::max(0, width - buttonsWidth);
 	const int menuLeft = std::min(width, systemWidth);
-	const int maximumMenuRight = std::max(menuLeft, buttonLeft - ScaleCustomFrameDip(80, dpi));
+	const int titleControlsWidth = titleControlWidth * titleControlCount;
+	// Never partially draw a title control or let it overlap the system menu. On a
+	// narrow window all six collapse together, preserving caption drag and native buttons.
+	const bool showTitleControls = buttonLeft >= systemWidth + titleControlsWidth;
+	const int titleControlsLeft = showTitleControls ? buttonLeft - titleControlsWidth : buttonLeft;
+	const int maximumMenuRight = std::max(menuLeft, titleControlsLeft - ScaleCustomFrameDip(80, dpi));
 	const int menuRight = std::min(maximumMenuRight, menuLeft + std::max(0, preferredMenuWidth));
 
 	CustomFrameLayout layout{};
@@ -58,11 +97,25 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	layout.systemMenu = MakeRect(0, 0, std::min(systemWidth, width), titleHeight);
 	layout.menu = MakeRect(menuLeft, 0, menuRight, titleHeight);
 	layout.captionText = MakeRect(
-		std::min(buttonLeft, menuRight + captionPadding),
+		std::min(titleControlsLeft, menuRight + captionPadding),
 		0,
-		std::max(0, buttonLeft - captionPadding),
+		std::max(0, titleControlsLeft - captionPadding),
 		titleHeight
 	);
+	if (showTitleControls) {
+		int controlLeft = titleControlsLeft;
+		const auto nextControl = [&]() noexcept {
+			const RECT rect = MakeRect(controlLeft, 0, controlLeft + titleControlWidth, titleHeight);
+			controlLeft += titleControlWidth;
+			return rect;
+		};
+		layout.layoutButton = nextControl();
+		layout.primarySidebarButton = nextControl();
+		layout.bottomPanelButton = nextControl();
+		layout.secondarySidebarButton = nextControl();
+		layout.accountButton = nextControl();
+		layout.settingsButton = nextControl();
+	}
 	layout.minimizeButton = MakeRect(buttonLeft, 0, std::min(width, buttonLeft + buttonWidth), titleHeight);
 	layout.maximizeButton = MakeRect(
 		std::min(width, buttonLeft + buttonWidth),
@@ -72,6 +125,55 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	);
 	layout.closeButton = MakeRect(std::min(width, buttonLeft + buttonWidth * 2), 0, width, titleHeight);
 	return layout;
+}
+
+CustomFrameControl HitTestCustomFrameControl(const CustomFrameLayout& layout, POINT point) noexcept
+{
+	for (const CustomFrameControl control : {
+		CustomFrameControl::Layout,
+		CustomFrameControl::PrimarySidebar,
+		CustomFrameControl::BottomPanel,
+		CustomFrameControl::SecondarySidebar,
+		CustomFrameControl::Account,
+		CustomFrameControl::Settings,
+	}) {
+		if (Contains(TitleControlRect(layout, control), point)) return control;
+	}
+	return CustomFrameControl::None;
+}
+
+UINT CustomFrameControlCommand(CustomFrameControl control) noexcept
+{
+	switch (control) {
+	case CustomFrameControl::PrimarySidebar: return F_TOGGLE_LEFT_EXPLORER;
+	case CustomFrameControl::BottomPanel: return F_TOGGLE_BOTTOM_PANEL;
+	case CustomFrameControl::SecondarySidebar: return F_TOGGLE_RIGHT_OUTLINE;
+	case CustomFrameControl::Settings: return F_OPTION;
+	case CustomFrameControl::None:
+	case CustomFrameControl::Layout:
+	case CustomFrameControl::Account:
+		return 0;
+	}
+	return 0;
+}
+
+accessibility::CustomUiAutomationNode CustomFrameControlAccessibilityNode(
+	CustomFrameControl control,
+	const CustomFrameLayout& layout,
+	bool focused
+)
+{
+	if (control == CustomFrameControl::None) return {};
+	return {
+		TitleControlNode(control),
+		CustomFrameControlName(control),
+		CustomFrameControlAutomationId(control),
+		UIA_ButtonControlTypeId,
+		TitleControlRect(layout, control),
+		true,
+		focused,
+		true,
+	};
 }
 
 LRESULT HitTestCustomFrame(
@@ -105,6 +207,7 @@ LRESULT HitTestCustomFrame(
 	if (Contains(layout.minimizeButton, point)) return HTMINBUTTON;
 	if (Contains(layout.systemMenu, point)) return HTSYSMENU;
 	if (Contains(layout.menu, point)) return HTCLIENT;
+	if (HitTestCustomFrameControl(layout, point) != CustomFrameControl::None) return HTCLIENT;
 	if (Contains(layout.title, point)) return HTCAPTION;
 	return HTCLIENT;
 }
@@ -169,7 +272,10 @@ void CCustomFrameController::Detach() noexcept
 	m_window = nullptr;
 	m_hotHit = HTNOWHERE;
 	m_pressedHit = HTNOWHERE;
+	m_hotControl = CustomFrameControl::None;
+	m_pressedControl = CustomFrameControl::None;
 	m_trackingNonClientLeave = false;
+	m_trackingTitleControlLeave = false;
 	m_accessibilityFocusedNode = -1;
 }
 
@@ -275,6 +381,125 @@ void CCustomFrameController::SetPressedHit(LRESULT hit) noexcept
 		m_pressedHit = hit;
 		InvalidateTitle();
 	}
+}
+
+void CCustomFrameController::SetHotControl(CustomFrameControl control) noexcept
+{
+	if (m_hotControl != control) {
+		m_hotControl = control;
+		InvalidateTitle();
+	}
+}
+
+void CCustomFrameController::SetPressedControl(CustomFrameControl control) noexcept
+{
+	if (m_pressedControl != control) {
+		m_pressedControl = control;
+		InvalidateTitle();
+	}
+}
+
+bool CCustomFrameController::HandleTitleControlMouseMessage(
+	UINT message,
+	[[maybe_unused]] WPARAM wParam,
+	LPARAM lParam,
+	LRESULT& result
+) noexcept
+{
+	if (m_window == nullptr) return false;
+	const auto controlAtCursor = [&]() noexcept {
+		return HitTestCustomFrameControl(m_layout, { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+	};
+	switch (message) {
+	case WM_MOUSEMOVE: {
+		const CustomFrameControl control = controlAtCursor();
+		SetHotControl(control);
+		if (control != CustomFrameControl::None && !m_trackingTitleControlLeave) {
+			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, m_window, 0 };
+			m_trackingTitleControlLeave = ::TrackMouseEvent(&tracking) != FALSE;
+		}
+		return control != CustomFrameControl::None || m_pressedControl != CustomFrameControl::None;
+	}
+	case WM_MOUSELEAVE:
+		m_trackingTitleControlLeave = false;
+		SetHotControl(CustomFrameControl::None);
+		return false;
+	case WM_LBUTTONDOWN: {
+		const CustomFrameControl control = controlAtCursor();
+		if (control == CustomFrameControl::None) return false;
+		SetPressedControl(control);
+		::SetCapture(m_window);
+		result = 0;
+		return true;
+	}
+	case WM_LBUTTONUP: {
+		const CustomFrameControl pressed = m_pressedControl;
+		if (pressed == CustomFrameControl::None) return false;
+		const CustomFrameControl released = controlAtCursor();
+		if (::GetCapture() == m_window) ::ReleaseCapture();
+		SetPressedControl(CustomFrameControl::None);
+		SetHotControl(released);
+		if (released == pressed) InvokeTitleControl(released);
+		result = 0;
+		return true;
+	}
+	case WM_CAPTURECHANGED:
+		if (m_pressedControl == CustomFrameControl::None) return false;
+		SetPressedControl(CustomFrameControl::None);
+		SetHotControl(CustomFrameControl::None);
+		return true;
+	default:
+		return false;
+	}
+}
+
+void CCustomFrameController::InvokeTitleControl(CustomFrameControl control) noexcept
+{
+	if (m_window == nullptr || control == CustomFrameControl::None) return;
+	const UINT command = CustomFrameControlCommand(control);
+	if (command != 0) {
+		::SendMessageW(m_window, WM_COMMAND, MAKEWPARAM(command, 0), 0);
+		return;
+	}
+	const RECT anchor = TitleControlRect(m_layout, control);
+	if (control == CustomFrameControl::Layout) {
+		ShowLayoutMenu(anchor);
+	} else if (control == CustomFrameControl::Account) {
+		ShowAccountMenu(anchor);
+	}
+}
+
+void CCustomFrameController::ShowLayoutMenu(const RECT& anchor) noexcept
+{
+	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
+	const HMENU menu = ::CreatePopupMenu();
+	if (menu == nullptr) return;
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_LEFT_EXPLORER, L"Toggle Primary Side Bar");
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_BOTTOM_PANEL, L"Toggle Bottom Panel");
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_RIGHT_OUTLINE, L"Toggle Secondary Side Bar");
+	POINT point{ anchor.left, anchor.bottom };
+	::ClientToScreen(m_window, &point);
+	const UINT command = ::TrackPopupMenu(
+		menu,
+		TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_RETURNCMD | TPM_VERTICAL,
+		point.x, point.y, 0, m_window, nullptr
+	);
+	::DestroyMenu(menu);
+	if (command != 0) ::SendMessageW(m_window, WM_COMMAND, MAKEWPARAM(command, 0), 0);
+}
+
+void CCustomFrameController::ShowAccountMenu(const RECT& anchor) noexcept
+{
+	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
+	const HMENU menu = ::CreatePopupMenu();
+	if (menu == nullptr) return;
+	// Authentication is not configured in Sakura Editor; keep this explicit rather than implying sign-in works.
+	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No account provider configured");
+	POINT point{ anchor.left, anchor.bottom };
+	::ClientToScreen(m_window, &point);
+	(void)::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
+		point.x, point.y, 0, m_window, nullptr);
+	::DestroyMenu(menu);
 }
 
 void CCustomFrameController::ClearAccessibilityFocus() noexcept
@@ -403,6 +628,7 @@ bool CCustomFrameController::HandleWindowMessage(
 	case WM_LBUTTONDOWN:
 	case WM_LBUTTONUP:
 	case WM_CAPTURECHANGED:
+		if (HandleTitleControlMouseMessage(message, wParam, lParam, result)) return true;
 		return m_menuBar.HandleMouseMessage(m_window, message, wParam, lParam, result);
 	case WM_DPICHANGED:
 		m_physicalDpi = HIWORD(wParam) == 0 ? 96 : HIWORD(wParam);
@@ -468,7 +694,8 @@ void CCustomFrameController::Paint(HDC dc, [[maybe_unused]] const RECT& paintRec
 		return;
 	}
 	RefreshLayout();
-	m_titleBar.Paint(m_window, dc, m_layout, m_palette, m_font.Get(), m_active, m_hotHit, m_pressedHit);
+	m_titleBar.Paint(m_window, dc, m_layout, m_palette, m_font.Get(), m_active, m_hotHit, m_pressedHit,
+		m_hotControl, m_pressedControl, TitleControlFromNode(m_accessibilityFocusedNode));
 	m_menuBar.Paint(m_window, dc, m_menuFont.Get(), m_palette, m_active);
 }
 
@@ -494,7 +721,8 @@ int CCustomFrameController::AccessibilityChildCount(int parentId) const noexcept
 {
 	if (parentId == kMenuBarNode) return m_menuBar.AccessibilityItemCount();
 	if (parentId != -1) return 0;
-	return 3 + (m_menuBar.AccessibilityItemCount() > 0 ? 1 : 0);
+	const bool hasTitleControls = !::IsRectEmpty(&m_layout.layoutButton);
+	return 3 + (hasTitleControls ? 6 : 0) + (m_menuBar.AccessibilityItemCount() > 0 ? 1 : 0);
 }
 
 int CCustomFrameController::AccessibilityChildAt(int parentId, int index) const noexcept
@@ -504,8 +732,18 @@ int CCustomFrameController::AccessibilityChildAt(int parentId, int index) const 
 	}
 	if (parentId != -1 || index < 0) return -1;
 	const bool hasMenu = m_menuBar.AccessibilityItemCount() > 0;
-	if (hasMenu && index == 0) return kMenuBarNode;
-	const int captionIndex = index - (hasMenu ? 1 : 0);
+	int childIndex = index;
+	if (hasMenu) {
+		if (childIndex == 0) return kMenuBarNode;
+		--childIndex;
+	}
+	if (!::IsRectEmpty(&m_layout.layoutButton)) {
+		if (childIndex >= 0 && childIndex < 6) {
+			return TitleControlNode(static_cast<CustomFrameControl>(childIndex + 1));
+		}
+		childIndex -= 6;
+	}
+	const int captionIndex = childIndex;
 	switch (captionIndex) {
 	case 0: return kMinimizeNode;
 	case 1: return kMaximizeNode;
@@ -517,6 +755,10 @@ int CCustomFrameController::AccessibilityChildAt(int parentId, int index) const 
 int CCustomFrameController::AccessibilityParent(int nodeId) const noexcept
 {
 	if (nodeId == kMenuBarNode || nodeId == kMinimizeNode || nodeId == kMaximizeNode || nodeId == kCloseNode) return -1;
+	if (const CustomFrameControl control = TitleControlFromNode(nodeId); control != CustomFrameControl::None) {
+		const RECT bounds = TitleControlRect(m_layout, control);
+		if (!::IsRectEmpty(&bounds)) return -1;
+	}
 	if (nodeId >= kMenuItemBaseNode && nodeId < kMenuItemBaseNode + m_menuBar.AccessibilityItemCount()) return kMenuBarNode;
 	return -2;
 }
@@ -533,6 +775,12 @@ accessibility::CustomUiAutomationNode CCustomFrameController::AccessibilityNode(
 			L"Sakura.Menu." + std::to_wstring(index), UIA_MenuItemControlTypeId,
 			m_menuBar.AccessibilityItemBounds(index), m_menuBar.AccessibilityItemEnabled(index),
 			m_accessibilityFocusedNode == nodeId, true };
+	}
+	if (const CustomFrameControl control = TitleControlFromNode(nodeId); control != CustomFrameControl::None) {
+		const RECT bounds = TitleControlRect(m_layout, control);
+		if (!::IsRectEmpty(&bounds)) {
+			return CustomFrameControlAccessibilityNode(control, m_layout, m_accessibilityFocusedNode == nodeId);
+		}
 	}
 	const LONG_PTR style = m_window == nullptr ? 0 : ::GetWindowLongPtrW(m_window, GWL_STYLE);
 	if (nodeId == kMinimizeNode) {
@@ -568,6 +816,9 @@ bool CCustomFrameController::AccessibilityInvoke(int nodeId) noexcept
 	bool invoked = false;
 	if (nodeId >= kMenuItemBaseNode && nodeId < kMenuItemBaseNode + m_menuBar.AccessibilityItemCount()) {
 		invoked = m_menuBar.InvokeAccessibilityItem(m_window, nodeId - kMenuItemBaseNode);
+	} else if (const CustomFrameControl control = TitleControlFromNode(nodeId); control != CustomFrameControl::None) {
+		InvokeTitleControl(control);
+		invoked = true;
 	} else if (nodeId == kMinimizeNode && AccessibilityNode(nodeId).enabled) {
 		::SendMessageW(m_window, WM_SYSCOMMAND, SC_MINIMIZE, 0);
 		invoked = true;

@@ -53,6 +53,7 @@ struct TerminalTabManager::Impl {
 
 		std::uint64_t id{};
 		std::wstring label{ kDefaultTabLabel };
+		std::wstring profileLabel{ kDefaultTabLabel };
 		std::unique_ptr<SakuraTerminalInputAdapter> input;
 		std::unique_ptr<TerminalModel> model;
 		std::unique_ptr<TerminalParser> parser;
@@ -158,7 +159,8 @@ struct TerminalTabManager::Impl {
 		}
 		launch->initialSize = size;
 		if( launch->workingDirectory.empty() ) launch->workingDirectory.assign(workingDirectory);
-		tab.label = InitialTabLabel(*launch);
+		tab.profileLabel = InitialTabLabel(*launch);
+		tab.label = tab.profileLabel;
 		const auto callback = eventCallback;
 		const auto id = tab.id;
 		TerminalSessionCallbacks callbacks;
@@ -234,6 +236,7 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 	if( tab->session ) tab->session->Close();
 	tab->session.reset();
 	tab->label = kDefaultTabLabel;
+	tab->profileLabel = kDefaultTabLabel;
 	return m_impl->Start(*tab, size, workingDirectory);
 }
 
@@ -397,7 +400,7 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 	for( const auto& tab : m_impl->tabs ) {
 		const auto state = tab->session ? tab->session->GetState() : tab->state;
 		const auto error = tab->errorCode != 0 ? tab->errorCode : tab->session ? tab->session->GetLastError() : 0;
-		result.push_back({ tab->id, tab->label, state, error, m_impl->activeTabId == tab->id });
+		result.push_back({ tab->id, tab->label, tab->profileLabel, state, error, m_impl->activeTabId == tab->id });
 	}
 	return result;
 }

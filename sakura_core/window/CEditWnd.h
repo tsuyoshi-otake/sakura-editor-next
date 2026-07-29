@@ -400,6 +400,7 @@ private:
 	void UpdateWorkspaceFromDocument();
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
 	void ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive);
+	void ToggleBottomWorkbenchMaximized();
 	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
 	[[nodiscard]] workbench::CWorkbenchPanelHost* HitTestWorkbenchSplitter(POINT point) const noexcept;
@@ -448,6 +449,7 @@ private:
 	RECT m_leftWorkbenchSplitter{};
 	RECT m_rightWorkbenchSplitter{};
 	RECT m_bottomWorkbenchSplitter{};
+	bool m_bottomWorkbenchMaximized = false;
 	int m_workbenchZoomPercent = 100;
 	int m_workbenchZoomBasePointSize = 0;
 

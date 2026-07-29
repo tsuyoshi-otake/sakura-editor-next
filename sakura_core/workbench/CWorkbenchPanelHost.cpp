@@ -196,6 +196,7 @@ void CWorkbenchPanelHost::Close()
 
 int CWorkbenchPanelHost::GetHeaderHeightPixels() const noexcept
 {
+	if (m_edge == WorkbenchEdge::Bottom) return 0;
 	return ScaleDip(kHeaderHeightDip, m_dpi);
 }
 
@@ -269,20 +270,23 @@ void CWorkbenchPanelHost::Paint()
 	RECT client{};
 	::GetClientRect(m_window, &client);
 	RECT header = client;
-	header.bottom = std::min(header.bottom, header.top + GetHeaderHeightPixels());
+	const int headerHeight = GetHeaderHeightPixels();
+	header.bottom = std::min(header.bottom, header.top + headerHeight);
 	const HBRUSH background = ::CreateSolidBrush(m_palette.panel.ToColorRef());
-	const HBRUSH headerBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
 	::FillRect(dc, &client, background);
-	::FillRect(dc, &header, headerBrush);
 	::DeleteObject(background);
-	::DeleteObject(headerBrush);
-	::SetBkMode(dc, TRANSPARENT);
-	::SetTextColor(dc, m_palette.primaryText.ToColorRef());
-	const HGDIOBJ previousFont = m_font.Get() == nullptr ? nullptr : ::SelectObject(dc, m_font.Get());
-	const wchar_t* title = m_edge == WorkbenchEdge::Left ? L"EXPLORER" : m_edge == WorkbenchEdge::Right ? L"OUTLINE" : L"TERMINAL";
-	::InflateRect(&header, -ScaleDip(8, m_dpi), 0);
-	::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
-	if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+	if (headerHeight > 0) {
+		const HBRUSH headerBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
+		::FillRect(dc, &header, headerBrush);
+		::DeleteObject(headerBrush);
+		::SetBkMode(dc, TRANSPARENT);
+		::SetTextColor(dc, m_palette.primaryText.ToColorRef());
+		const HGDIOBJ previousFont = m_font.Get() == nullptr ? nullptr : ::SelectObject(dc, m_font.Get());
+		const wchar_t* title = m_edge == WorkbenchEdge::Left ? L"EXPLORER" : L"OUTLINE";
+		::InflateRect(&header, -ScaleDip(8, m_dpi), 0);
+		::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+	}
 	::EndPaint(m_window, &paint);
 }
 

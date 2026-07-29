@@ -86,6 +86,22 @@ TEST(WorkbenchLayout, BottomPaneSpansOnlyCentralEditorColumn)
 	EXPECT_GT(layout.rightPane.Width(), 0);
 }
 
+TEST(WorkbenchLayout, MaximizedBottomPaneReplacesEditorWithoutHidingDocumentTabs)
+{
+	auto request = WorkbenchLayoutRequest{ .clientWidth = 1600, .clientHeight = 1000 };
+	request.bottomPaneMaximized = true;
+	const auto layout = CalculateWorkbenchLayout(request);
+
+	EXPECT_GT(layout.documentTabs.Height(), 0);
+	EXPECT_EQ(0, layout.editor.Height());
+	EXPECT_EQ(0, layout.minimap.Height());
+	EXPECT_EQ(0, layout.bottomSplitter.Height());
+	EXPECT_EQ(layout.documentTabs.bottom, layout.bottomPane.top);
+	EXPECT_EQ(layout.editor.left, layout.bottomPane.left);
+	EXPECT_EQ(layout.rightSplitter.left, layout.bottomPane.right);
+	EXPECT_GT(layout.bottomPane.Height(), 220);
+}
+
 TEST(WorkbenchLayout, MinimapIsInsideEditorAtTheRightEdge)
 {
 	auto request = WorkbenchLayoutRequest{ .clientWidth = 1800, .clientHeight = 1000 };

@@ -18,6 +18,20 @@ TEST(TerminalUnicode, MeasuresAsciiCjkAndCombiningText)
 	ExpectOneGrapheme(L"e\u0301", 1);
 }
 
+TEST(TerminalUnicode, MeasuresBoxDrawingBlockAndShadeCharactersAsNarrow)
+{
+	ExpectOneGrapheme(L"\u2500", 1);
+	ExpectOneGrapheme(L"\u2588", 1);
+	ExpectOneGrapheme(L"\u2591", 1);
+}
+
+TEST(TerminalUnicode, MeasuresStandaloneCombiningAndFormatCodepointsAsZeroWidth)
+{
+	ExpectOneGrapheme(L"\u05B0", 0); // Hebrew point sheva
+	ExpectOneGrapheme(L"\u200B", 0); // zero width space
+	ExpectOneGrapheme(L"\u2060", 0); // word joiner
+}
+
 TEST(TerminalUnicode, MeasuresEmojiVariationZwjFlagsAndSkinTone)
 {
 	ExpectOneGrapheme(L"\u2764\uFE0F", 2);

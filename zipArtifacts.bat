@@ -190,6 +190,7 @@ mkdir %WORKDIR_EXE%\license\
 mkdir %WORKDIR_EXE%\license\bregonig\
 mkdir %WORKDIR_EXE%\license\ctags\
 mkdir %WORKDIR_EXE%\license\windows-terminal\
+mkdir %WORKDIR_EXE%\license\codicons\
 mkdir %WORKDIR_EXE%\license\fmt\
 mkdir %WORKDIR_EXE%\license\ms-gsl\
 mkdir %WORKDIR_EXE%\license\wil\
@@ -248,6 +249,15 @@ if errorlevel 1 exit /b 1
 call :copyRequired "%WINDOWS_TERMINAL_VENDOR%\UPSTREAM.md" "%WORKDIR_EXE%\license\windows-terminal\" "Windows Terminal provenance"
 if errorlevel 1 exit /b 1
 call :copyRequired "%WINDOWS_TERMINAL_VENDOR%\IMPORTED_FILES.md" "%WORKDIR_EXE%\license\windows-terminal\" "Windows Terminal imported-files list"
+if errorlevel 1 exit /b 1
+
+: Codicons Activity Bar geometry attribution
+set CODICONS_VENDOR=%~dp0sakura_core\workbench\icons
+if not exist "%CODICONS_VENDOR%\CODICONS-ATTRIBUTION.md" (
+	echo Codicons attribution payload was not found.
+	exit /b 1
+)
+call :copyRequired "%CODICONS_VENDOR%\CODICONS-ATTRIBUTION.md" "%WORKDIR_EXE%\license\codicons\" "Codicons attribution"
 if errorlevel 1 exit /b 1
 
 : Windows Terminal compatibility dependencies

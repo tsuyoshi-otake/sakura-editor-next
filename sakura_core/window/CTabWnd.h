@@ -66,6 +66,7 @@ public:
 	}
 	void UpdateStyle();
 	void UpdateTheme();		/*!< ダークモード切替時のテーマ更新 */
+	void RefreshDocumentActionState();	/*!< Markdownプレビュー操作の表示・状態更新 */
 protected:
 	/*
 	|| 実装ヘルパ系
@@ -125,14 +126,19 @@ protected:
 
 	// 2006.02.01 ryoji タブ一覧を追加
 	void DrawBtnBkgnd( HDC hdc, const LPRECT lprcBtn, BOOL bBtnHilighted );	/*!< ボタン背景描画処理 */	// 2006.10.21 ryoji
+	void DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient );	/*!< Markdownプレビューボタン描画処理 */
 	void DrawListBtn( CGraphics& gr, const LPRECT lprcClient );			/*!< 一覧ボタン描画処理 */
 	void DrawCloseFigure( CGraphics& gr, const RECT &btnRect );			/*!< 閉じるマーク描画処理 */
 	void DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient );			/*!< 閉じるボタン描画処理 */		// 2006.10.21 ryoji
 	void DrawTabCloseBtn( CGraphics& gr, const LPRECT lprcClient, bool selected, bool bHover );	/*!< タブを閉じるボタン描画処理 */		// 2012.04.14 syat
 	void DrawTopBand( const CGraphics& gr, const RECT& rcClient, int nTabIndex ) const;
+	void GetMarkdownPreviewBtnRect( const LPRECT lprcClient, LPRECT lprc );	/*!< Markdownプレビューボタンの矩形取得処理 */
 	void GetListBtnRect( const LPRECT lprcClient, LPRECT lprc );	/*!< 一覧ボタンの矩形取得処理 */
 	void GetCloseBtnRect( const LPRECT lprcClient, LPRECT lprc );	/*!< 閉じるボタンの矩形取得処理 */	// 2006.10.21 ryoji
 	void GetTabCloseBtnRect( const LPRECT lprcClient, LPRECT lprc, bool selected );	/*!< タブを閉じるボタンの矩形取得処理 */	// 2012.04.14 syat
+	void GetDocumentActionRects( const RECT& rcClient, RECT* preview, RECT* list, RECT* close, int* tabControlRight ) const;
+	[[nodiscard]] bool IsMarkdownPreviewActionAvailable() const;
+	[[nodiscard]] bool IsMarkdownPreviewActionActive() const;
 
 	HFONT CreateMenuFont( void )
 	{
@@ -146,7 +152,7 @@ protected:
 
 protected:
 	enum DragState { DRAG_NONE, DRAG_CHECK, DRAG_DRAG };
-	enum CaptureSrc { CAPT_NONE, CAPT_CLOSE };
+	enum CaptureSrc { CAPT_NONE, CAPT_MARKDOWN_PREVIEW, CAPT_CLOSE };
 
 	/*
 	|| メンバ変数
@@ -173,6 +179,7 @@ private:
 
 	BOOL		m_bVisualStyle = FALSE;			//!< ビジュアルスタイルかどうか	// 2007.04.01 ryoji
 	BOOL		m_bHovering = FALSE;
+	BOOL		m_bMarkdownPreviewBtnHilighted = FALSE;
 	BOOL		m_bListBtnHilighted = FALSE;
 	BOOL		m_bCloseBtnHilighted = FALSE;	//!< 閉じるボタンハイライト状態	// 2006.10.21 ryoji
 	CaptureSrc	m_eCaptureSrc = CAPT_NONE;			//!< キャプチャ元

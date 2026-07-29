@@ -153,7 +153,13 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	int bottomPane = 0;
 	int bottomSplitter = 0;
 	const int bottomBudget = std::max(0, bodyBottom - editorTop - editorMinimumHeight);
-	if (desiredBottomHeight <= bottomBudget) {
+	if (request.bottomPaneMaximized && desiredBottomPane > 0) {
+		// A maximized panel replaces the complete editor/minimap row.  It keeps
+		// document tabs above it and does not expose a resize splitter until it is
+		// restored, matching the explicit maximize/restore state.
+		bottomPane = std::max(0, bodyBottom - editorTop);
+		bottomSplitter = 0;
+	} else if (desiredBottomHeight <= bottomBudget) {
 		bottomPane = desiredBottomPane;
 		bottomSplitter = desiredBottomSplitter;
 	} else if (desiredBottomHeight > 0) {

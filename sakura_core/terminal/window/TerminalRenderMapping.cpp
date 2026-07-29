@@ -17,13 +17,29 @@ bool PointLess( const TerminalSelectionPoint& left, const TerminalSelectionPoint
 	return left.row < right.row || (left.row == right.row && left.column < right.column);
 }
 
+std::size_t TerminalViewportRowCount( const TerminalModel& model ) noexcept
+{
+	// DECSET 1049 swaps to a distinct screen.  The main screen's scrollback is
+	// intentionally retained by TerminalModel while a TUI is active, but it is
+	// not part of the alternate screen's coordinate space.  Keeping this rule
+	// here makes painting, selection, dirty-row mapping, and the overlay
+	// scrollbar all agree on the same row indices.
+	return model.IsAlternateScreen() ? model.RowCount() : model.ScrollbackSize() + model.RowCount();
+}
+
 } // namespace
 
 TerminalViewport CalculateTerminalViewport( const TerminalModel& model, std::size_t visibleRows, std::size_t scrollOffset ) noexcept
 {
 	TerminalViewport viewport;
-	viewport.totalRows = model.ScrollbackSize() + model.RowCount();
+	viewport.totalRows = TerminalViewportRowCount(model);
 	viewport.visibleRows = std::min(visibleRows, viewport.totalRows);
+	if( model.IsAlternateScreen() ) {
+		// A full-screen TUI is always rendered from its top-left cell.  In
+		// particular, do not apply a remembered main-screen scroll offset here.
+		viewport.topRow = 0;
+		return viewport;
+	}
 	const auto bottomTop = viewport.totalRows - viewport.visibleRows;
 	viewport.topRow = bottomTop - std::min(scrollOffset, bottomTop);
 	return viewport;
@@ -31,6 +47,9 @@ TerminalViewport CalculateTerminalViewport( const TerminalModel& model, std::siz
 
 const TerminalRow* GetTerminalRow( const TerminalModel& model, std::size_t globalRow ) noexcept
 {
+	if( model.IsAlternateScreen() ) {
+		return globalRow < model.Rows().size() ? &model.Rows()[globalRow] : nullptr;
+	}
 	if( globalRow < model.ScrollbackSize() ) return &model.Scrollback()[globalRow];
 	const auto screenRow = globalRow - model.ScrollbackSize();
 	return screenRow < model.Rows().size() ? &model.Rows()[screenRow] : nullptr;
@@ -55,7 +74,7 @@ std::vector<std::size_t> MapDirtyRowsToViewport( const TerminalModel& model, con
 	result.reserve(dirtyScreenRows.size());
 	const auto bottom = viewport.topRow + viewport.visibleRows;
 	for( const auto screenRow : dirtyScreenRows ) {
-		const auto globalRow = model.ScrollbackSize() + screenRow;
+		const auto globalRow = (model.IsAlternateScreen() ? 0 : model.ScrollbackSize()) + screenRow;
 		if( globalRow >= viewport.topRow && globalRow < bottom ) result.push_back(globalRow - viewport.topRow);
 	}
 	return result;
@@ -65,7 +84,7 @@ std::wstring ExtractTerminalSelection( const TerminalModel& model, TerminalSelec
 {
 	if( PointLess(active, anchor) ) std::swap(anchor, active);
 	if( anchor == active ) return {};
-	const auto totalRows = model.ScrollbackSize() + model.RowCount();
+	const auto totalRows = TerminalViewportRowCount(model);
 	if( totalRows == 0 || anchor.row >= totalRows ) return {};
 	active.row = std::min(active.row, totalRows - 1);
 	std::wstring result;

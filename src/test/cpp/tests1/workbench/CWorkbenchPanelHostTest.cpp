@@ -53,6 +53,8 @@ TEST(WorkbenchPanelHost, UsesHideWithoutClosingOwnedToolAndPersistsOnlyCommitted
 	host.Show();
 	EXPECT_EQ(workbench::WorkbenchPanelState::Visible, host.GetState());
 	EXPECT_EQ(45, host.GetHeaderHeightPixels());
+	EXPECT_EQ(45, recordingTool->lastLayout.top);
+	EXPECT_EQ(500, recordingTool->lastLayout.bottom);
 	EXPECT_EQ(0, recordingTool->activateCalls);
 	host.ActivateTool();
 	EXPECT_EQ(1, recordingTool->activateCalls);
@@ -70,6 +72,24 @@ TEST(WorkbenchPanelHost, UsesHideWithoutClosingOwnedToolAndPersistsOnlyCommitted
 	EXPECT_EQ(workbench::WorkbenchPanelState::Hidden, host.GetState());
 	EXPECT_EQ(1, callbackCount);
 	host.Close();
+	host.Close();
+}
+
+TEST(WorkbenchPanelHost, GivesBottomToolTheCompleteClientForItsOwnedHeader)
+{
+	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Bottom, 220);
+	auto tool = std::make_unique<RecordingTool>();
+	auto* recordingTool = tool.get();
+	ASSERT_TRUE(host.Create(::GetDesktopWindow(), ::GetModuleHandleW(nullptr), std::move(tool)));
+
+	host.Layout(RECT{ 0, 0, 640, 260 }, 192);
+
+	EXPECT_EQ(0, host.GetHeaderHeightPixels());
+	EXPECT_EQ(0, recordingTool->lastLayout.left);
+	EXPECT_EQ(0, recordingTool->lastLayout.top);
+	EXPECT_EQ(640, recordingTool->lastLayout.right);
+	EXPECT_EQ(260, recordingTool->lastLayout.bottom);
+	EXPECT_EQ(192U, recordingTool->lastDpi);
 	host.Close();
 }
 

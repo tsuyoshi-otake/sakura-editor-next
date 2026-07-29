@@ -91,6 +91,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\window\CustomUiAutomationProviderTest.cpp">
       <Filter>Test Files\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\window\DocumentTabActionLayoutTest.cpp">
+	  <Filter>Test Files\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
@@ -139,9 +142,18 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalFontMetricsTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalHeaderLayoutTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>

@@ -109,6 +109,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\window\UiaTestSuite.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\window\CustomFrameTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\window\CustomUiAutomationProviderTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\window\DocumentTabActionLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\Windows11PlatformTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp" />
@@ -119,7 +120,10 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalFontMetricsTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalHeaderLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />

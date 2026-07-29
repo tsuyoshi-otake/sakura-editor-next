@@ -21,17 +21,14 @@ TEST(ActivityBarModel, Uses42DipWidthAndSquareVerticalButtonsAtDpi)
 	model.SetViewport(500, 400, 144);
 
 	EXPECT_EQ(63, model.GetPreferredWidthPixels());
-	ASSERT_EQ(4U, model.GetButtonCount());
+	ASSERT_EQ(2U, model.GetButtonCount());
 	const auto explorer = model.GetButton(0);
 	const auto sourceControl = model.GetButton(1);
-	const auto outline = model.GetButton(2);
-	const auto terminal = model.GetButton(3);
 	EXPECT_EQ((ActivityBarRect{ 0, 0, 63, 63 }), explorer.bounds);
 	EXPECT_EQ((ActivityBarRect{ 0, 63, 63, 126 }), sourceControl.bounds);
-	EXPECT_EQ((ActivityBarRect{ 0, 126, 63, 189 }), outline.bounds);
-	EXPECT_EQ((ActivityBarRect{ 0, 189, 63, 252 }), terminal.bounds);
 	EXPECT_EQ(ActivityBarItem::Explorer, *model.HitTest(62, 62));
 	EXPECT_EQ(ActivityBarItem::SourceControl, *model.HitTest(10, 100));
+	EXPECT_FALSE(model.HitTest(10, 150).has_value());
 	EXPECT_FALSE(model.HitTest(63, 10).has_value());
 }
 
@@ -39,34 +36,30 @@ TEST(ActivityBarModel, ExposesIndependentVisualStateForProviders)
 {
 	ActivityBarModel model;
 	model.SetViewport(42, 200);
-	model.SetSelectedItem(ActivityBarItem::Terminal);
-	model.SetHoveredItem(ActivityBarItem::Outline);
-	model.SetPressedItem(ActivityBarItem::Outline);
-	model.SetFocusedItem(ActivityBarItem::Outline);
+	model.SetSelectedItem(ActivityBarItem::SourceControl);
+	model.SetHoveredItem(ActivityBarItem::Explorer);
+	model.SetPressedItem(ActivityBarItem::Explorer);
+	model.SetFocusedItem(ActivityBarItem::Explorer);
 
 	const auto explorer = model.GetButton(0);
-	const auto outline = model.GetButton(2);
-	const auto terminal = model.GetButton(3);
-	EXPECT_FALSE(explorer.selected);
-	EXPECT_TRUE(outline.hovered);
-	EXPECT_TRUE(outline.pressed);
-	EXPECT_TRUE(outline.focused);
-	EXPECT_TRUE(terminal.selected);
-	EXPECT_EQ(ActivityBarItem::Outline, *model.GetFocusedItem());
+	const auto sourceControl = model.GetButton(1);
+	EXPECT_TRUE(explorer.hovered);
+	EXPECT_TRUE(explorer.pressed);
+	EXPECT_TRUE(explorer.focused);
+	EXPECT_TRUE(sourceControl.selected);
+	EXPECT_EQ(ActivityBarItem::Explorer, *model.GetFocusedItem());
 }
 
 TEST(ActivityBarModel, FocusNavigationSkipsDisabledItemsAndWraps)
 {
 	ActivityBarModel model;
 	model.SetViewport(42, 200);
-	model.SetItemEnabled(ActivityBarItem::Outline, false);
 	model.SetItemEnabled(ActivityBarItem::SourceControl, false);
 	model.SetFocusedItem(ActivityBarItem::Explorer);
 
-	EXPECT_EQ(ActivityBarItem::Terminal, *model.MoveFocus(1));
 	EXPECT_EQ(ActivityBarItem::Explorer, *model.MoveFocus(1));
-	EXPECT_EQ(ActivityBarItem::Terminal, *model.MoveFocus(-1));
-	EXPECT_FALSE(model.GetButton(2).enabled);
+	EXPECT_EQ(ActivityBarItem::Explorer, *model.MoveFocus(-1));
+	EXPECT_FALSE(model.GetButton(1).enabled);
 	EXPECT_FALSE(model.HitTest(10, 100).has_value());
 }
 
@@ -75,12 +68,12 @@ TEST(ActivityBarModel, InvokeOnlyReturnsEnabledRequestedItemAndDoesNotChangeSele
 	ActivityBarModel model;
 	model.SetViewport(42, 200);
 	model.SetSelectedItem(ActivityBarItem::Explorer);
-	model.SetFocusedItem(ActivityBarItem::Terminal);
+	model.SetFocusedItem(ActivityBarItem::SourceControl);
 
-	EXPECT_EQ(ActivityBarItem::Terminal, *model.InvokeFocused());
+	EXPECT_EQ(ActivityBarItem::SourceControl, *model.InvokeFocused());
 	EXPECT_EQ(ActivityBarItem::Explorer, *model.GetSelectedItem());
-	model.SetItemEnabled(ActivityBarItem::Terminal, false);
-	EXPECT_FALSE(model.Invoke(ActivityBarItem::Terminal).has_value());
+	model.SetItemEnabled(ActivityBarItem::SourceControl, false);
+	EXPECT_FALSE(model.Invoke(ActivityBarItem::SourceControl).has_value());
 	EXPECT_FALSE(model.InvokeFocused().has_value());
 }
 

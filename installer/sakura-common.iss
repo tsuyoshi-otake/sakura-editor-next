@@ -238,6 +238,7 @@ Source: "sakura\license\bregonig\*";   DestDir: "{app}\license\bregonig"; Compon
 Source: "sakura\ctags.exe";            DestDir: "{app}";                  Components: main
 Source: "sakura\license\ctags\*";      DestDir: "{app}\license\ctags";    Components: main
 Source: "sakura\license\windows-terminal\*"; DestDir: "{app}\license\windows-terminal"; Components: main
+Source: "sakura\license\codicons\*"; DestDir: "{app}\license\codicons"; Components: main
 Source: "sakura\license\fmt\*"; DestDir: "{app}\license\fmt"; Components: main
 Source: "sakura\license\ms-gsl\*"; DestDir: "{app}\license\ms-gsl"; Components: main
 Source: "sakura\license\wil\*"; DestDir: "{app}\license\wil"; Components: main

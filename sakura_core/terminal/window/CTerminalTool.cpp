@@ -8,7 +8,9 @@
 #include "terminal/window/CTerminalTool.h"
 
 #include "terminal/PowerShellLocator.h"
+#include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/CTerminalWnd.h"
+#include "workbench/IconMetrics.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -23,10 +25,6 @@ namespace {
 constexpr wchar_t kTerminalToolWindowClass[] = L"SakuraNativeTerminalTool";
 constexpr unsigned int kDefaultDpi = 96;
 constexpr int kTabHeightDip = 30;
-constexpr int kMinimumTabWidthDip = 84;
-constexpr int kMaximumTabWidthDip = 180;
-constexpr int kAddButtonWidthDip = 32;
-constexpr int kSplitButtonWidthDip = 32;
 constexpr int kPaneDividerDip = 4;
 constexpr int kMinimumPaneWidthDip = 80;
 constexpr UINT kOutputAvailableMessage = WM_APP + 0x3a1;
@@ -44,6 +42,7 @@ constexpr UINT kCommandRedetectPowerShell = 4;
 constexpr UINT kCommandSplitTerminal = 5;
 constexpr UINT kCommandCloseSplit = 6;
 constexpr UINT kCommandProfileFirst = 1000;
+constexpr UINT kCommandTabFirst = 2000;
 
 int ScaleDip( int value, unsigned int dpi ) noexcept
 {
@@ -110,9 +109,126 @@ std::wstring FormatProfileLabel( const TerminalProfile& profile )
 		+ std::to_wstring(profile.version.minor) + L"." + std::to_wstring(profile.version.patch);
 	if( profile.channel == TerminalChannel::Preview ) label += L" Preview";
 	else if( profile.channel == TerminalChannel::Legacy ) label += L" (Windows PowerShell)";
-	label += L"  —  ";
+	label += L"  -  ";
 	label += profile.path;
 	return label;
+}
+
+bool IsEmptyRect( const RECT& rect ) noexcept
+{
+	return rect.right <= rect.left || rect.bottom <= rect.top;
+}
+
+POINT CenterOf( const RECT& rect ) noexcept
+{
+	return { rect.left + (rect.right - rect.left) / 2, rect.top + (rect.bottom - rect.top) / 2 };
+}
+
+void FillSolidRect( HDC dc, const RECT& rect, COLORREF color )
+{
+	if( IsEmptyRect(rect) ) return;
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	if( brush ) {
+		::FillRect(dc, &rect, brush);
+		::DeleteObject(brush);
+	}
+}
+
+void DrawHeaderIcon( HDC dc, const RECT& bounds, TerminalHeaderTarget target, bool maximized,
+	COLORREF color, unsigned int dpi )
+{
+	if( IsEmptyRect(bounds) ) return;
+	const POINT center = CenterOf(bounds);
+	const int stroke = workbench::icons::LineStrokePixels(dpi);
+	const int half = std::max(3, ScaleDip(6, dpi));
+	const HPEN pen = ::CreatePen(PS_SOLID, stroke, color);
+	if( !pen ) return;
+	const auto oldPen = ::SelectObject(dc, pen);
+	const auto oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+
+	switch( target ) {
+	case TerminalHeaderTarget::Profile: {
+		const int left = center.x - half;
+		const int top = center.y - std::max(3, ScaleDip(5, dpi));
+		const int right = center.x + half;
+		const int bottom = center.y + std::max(3, ScaleDip(5, dpi));
+		::Rectangle(dc, left, top, right, bottom);
+		::MoveToEx(dc, left + ScaleDip(3, dpi), top + ScaleDip(3, dpi), nullptr);
+		::LineTo(dc, left + ScaleDip(6, dpi), center.y);
+		::LineTo(dc, left + ScaleDip(3, dpi), bottom - ScaleDip(3, dpi));
+		::MoveToEx(dc, left + ScaleDip(7, dpi), bottom - ScaleDip(3, dpi), nullptr);
+		::LineTo(dc, right - ScaleDip(2, dpi), bottom - ScaleDip(3, dpi));
+		break;
+	}
+	case TerminalHeaderTarget::New:
+		::MoveToEx(dc, center.x - half / 2, center.y, nullptr);
+		::LineTo(dc, center.x + half / 2 + 1, center.y);
+		::MoveToEx(dc, center.x, center.y - half / 2, nullptr);
+		::LineTo(dc, center.x, center.y + half / 2 + 1);
+		break;
+	case TerminalHeaderTarget::Dropdown:
+		::MoveToEx(dc, center.x - ScaleDip(3, dpi), center.y - ScaleDip(1, dpi), nullptr);
+		::LineTo(dc, center.x, center.y + ScaleDip(2, dpi));
+		::LineTo(dc, center.x + ScaleDip(3, dpi), center.y - ScaleDip(1, dpi));
+		break;
+	case TerminalHeaderTarget::Split: {
+		const int left = center.x - half;
+		const int top = center.y - std::max(3, ScaleDip(5, dpi));
+		const int right = center.x + half;
+		const int bottom = center.y + std::max(3, ScaleDip(5, dpi));
+		::Rectangle(dc, left, top, right, bottom);
+		::MoveToEx(dc, center.x, top, nullptr);
+		::LineTo(dc, center.x, bottom);
+		break;
+	}
+	case TerminalHeaderTarget::Kill: {
+		const int bodyHalf = std::max(3, ScaleDip(4, dpi));
+		const int top = center.y - ScaleDip(4, dpi);
+		const int bottom = center.y + ScaleDip(6, dpi);
+		::Rectangle(dc, center.x - bodyHalf, top, center.x + bodyHalf, bottom);
+		::MoveToEx(dc, center.x - bodyHalf - ScaleDip(2, dpi), top - ScaleDip(2, dpi), nullptr);
+		::LineTo(dc, center.x + bodyHalf + ScaleDip(2, dpi), top - ScaleDip(2, dpi));
+		::MoveToEx(dc, center.x - ScaleDip(2, dpi), top - ScaleDip(4, dpi), nullptr);
+		::LineTo(dc, center.x + ScaleDip(2, dpi), top - ScaleDip(4, dpi));
+		break;
+	}
+	case TerminalHeaderTarget::More: {
+		const auto oldDotBrush = ::SelectObject(dc, ::CreateSolidBrush(color));
+		const int radius = std::max(1, ScaleDip(1, dpi));
+		for( int offset : { -ScaleDip(4, dpi), 0, ScaleDip(4, dpi) } ) {
+			::Ellipse(dc, center.x + offset - radius, center.y - radius,
+				center.x + offset + radius + 1, center.y + radius + 1);
+		}
+		const HGDIOBJ dotBrush = ::SelectObject(dc, oldDotBrush);
+		if( dotBrush ) ::DeleteObject(dotBrush);
+		break;
+	}
+	case TerminalHeaderTarget::Maximize: {
+		const int left = center.x - half;
+		const int top = center.y - std::max(3, ScaleDip(5, dpi));
+		const int right = center.x + half;
+		const int bottom = center.y + std::max(3, ScaleDip(5, dpi));
+		if( maximized ) {
+			::Rectangle(dc, left + ScaleDip(2, dpi), top, right, bottom - ScaleDip(2, dpi));
+			::Rectangle(dc, left, top + ScaleDip(2, dpi), right - ScaleDip(2, dpi), bottom);
+		} else {
+			::Rectangle(dc, left, top, right, bottom);
+		}
+		break;
+	}
+	case TerminalHeaderTarget::Close:
+		::MoveToEx(dc, center.x - ScaleDip(4, dpi), center.y - ScaleDip(4, dpi), nullptr);
+		::LineTo(dc, center.x + ScaleDip(4, dpi) + 1, center.y + ScaleDip(4, dpi) + 1);
+		::MoveToEx(dc, center.x + ScaleDip(4, dpi), center.y - ScaleDip(4, dpi), nullptr);
+		::LineTo(dc, center.x - ScaleDip(4, dpi) - 1, center.y + ScaleDip(4, dpi) + 1);
+		break;
+	default:
+		break;
+	}
+
+	::SelectObject(dc, oldBrush);
+	::SelectObject(dc, oldPen);
+	::DeleteObject(pen);
 }
 
 } // namespace
@@ -171,7 +287,13 @@ struct CTerminalTool::Impl {
 	int splitRatioPermille{ 500 };
 	bool draggingPaneDivider{};
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	theme::CThemeFont chromeFont;
+	TerminalPanelActions panelActions;
+	TerminalHeaderTarget hotTarget{ TerminalHeaderTarget::None };
+	TerminalHeaderTarget pressedTarget{ TerminalHeaderTarget::None };
+	bool trackingMouseLeave{};
 	std::vector<std::wstring> profileCommandPaths;
+	std::vector<std::uint64_t> tabCommandIds;
 
 	void EnsureDefaultResolver()
 	{
@@ -265,83 +387,103 @@ struct CTerminalTool::Impl {
 		if( synchronizedOutputSince == 0 && window ) ::KillTimer(window, kSynchronizedOutputTimer);
 	}
 
+	TerminalHeaderLayout HeaderLayout() const noexcept
+	{
+		RECT client{};
+		if( window ) ::GetClientRect(window, &client);
+		return CalculateTerminalHeaderLayout(client, dpi);
+	}
+
 	void InvalidateTabs()
 	{
 		if( window ) {
-			RECT client{};
-			::GetClientRect(window, &client);
-			client.bottom = std::min<LONG>(client.bottom, ScaleDip(kTabHeightDip, dpi));
-			::InvalidateRect(window, &client, FALSE);
+			const RECT header = HeaderLayout().header;
+			::InvalidateRect(window, &header, FALSE);
 		}
 	}
 
-	int TabWidth( std::size_t count, int clientWidth ) const noexcept
+	std::optional<std::uint64_t> FocusedTabId() const noexcept
 	{
-		if( count == 0 ) return ScaleDip(kMinimumTabWidthDip, dpi);
-		const auto available = std::max(0, clientWidth - ScaleDip(kAddButtonWidthDip + kSplitButtonWidthDip, dpi));
-		return std::clamp(available / static_cast<int>(count), ScaleDip(kMinimumTabWidthDip, dpi), ScaleDip(kMaximumTabWidthDip, dpi));
+		const HWND focused = ::GetFocus();
+		if( secondaryTabId && secondaryTerminalWindow ) {
+			const HWND secondary = secondaryTerminalWindow->GetHwnd();
+			if( focused == secondary || (secondary && focused && ::IsChild(secondary, focused)) ) return secondaryTabId;
+		}
+		return manager->ActiveTabId();
 	}
 
-	std::optional<std::uint64_t> HitTestTab( int x, bool* closeButton = nullptr ) const
+	std::wstring HeaderProfileLabel()
 	{
 		const auto tabs = manager->Snapshot();
-		if( !window || tabs.empty() ) return std::nullopt;
-		RECT client{};
-		::GetClientRect(window, &client);
-		const auto width = TabWidth(tabs.size(), client.right - client.left);
-		if( x < 0 || x >= width * static_cast<int>(tabs.size()) ) return std::nullopt;
-		const auto index = static_cast<std::size_t>(x / width);
-		if( closeButton ) *closeButton = x % width >= width - ScaleDip(24, dpi);
-		return tabs[index].id;
+		const auto focused = FocusedTabId();
+		const auto found = std::find_if(tabs.begin(), tabs.end(), [focused](const auto& tab) {
+			return focused && tab.id == *focused;
+		});
+		if( found != tabs.end() && !found->profileLabel.empty() ) return found->profileLabel;
+		if( defaultResolver ) {
+			if( const auto selected = defaultResolver->SelectedProfile() ) {
+				const auto stem = std::filesystem::path(selected->path).stem().wstring();
+				if( !stem.empty() ) return stem;
+			}
+		}
+		return L"pwsh";
 	}
 
-	bool HitTestAdd( int x ) const
+	bool IsHeaderTargetEnabled( TerminalHeaderTarget target ) const noexcept
 	{
-		if( !window ) return false;
-		const auto tabs = manager->Snapshot();
-		RECT client{};
-		::GetClientRect(window, &client);
-		const auto left = TabWidth(tabs.size(), client.right - client.left) * static_cast<int>(tabs.size());
-		return x >= left && x < left + ScaleDip(kAddButtonWidthDip, dpi);
+		switch( target ) {
+		case TerminalHeaderTarget::Kill:
+			return FocusedTabId().has_value();
+		case TerminalHeaderTarget::Maximize:
+			return static_cast<bool>(panelActions.toggleMaximize);
+		case TerminalHeaderTarget::Close:
+			return static_cast<bool>(panelActions.closePanel);
+		default:
+			return target != TerminalHeaderTarget::None && target != TerminalHeaderTarget::Count;
+		}
 	}
 
-	bool HitTestSplit( int x ) const
+	void UpdateHotTarget( TerminalHeaderTarget target )
 	{
-		if( !window ) return false;
-		const auto tabs = manager->Snapshot();
-		RECT client{};
-		::GetClientRect(window, &client);
-		const auto left = TabWidth(tabs.size(), client.right - client.left) * static_cast<int>(tabs.size())
-			+ ScaleDip(kAddButtonWidthDip, dpi);
-		return x >= left && x < left + ScaleDip(kSplitButtonWidthDip, dpi);
+		if( target == hotTarget ) return;
+		hotTarget = target;
+		InvalidateTabs();
 	}
 
 	LONG PaneDividerLeft( const RECT& content ) const noexcept
 	{
 		const LONG divider = ScaleDip(kPaneDividerDip, dpi);
 		const LONG available = std::max<LONG>(0, content.right - content.left - divider);
-		return content.left + static_cast<LONG>((static_cast<long long>(available) * splitRatioPermille) / 1000);
+		const LONG minimum = std::min<LONG>(available / 2, ScaleDip(kMinimumPaneWidthDip, dpi));
+		const LONG requested = static_cast<LONG>((static_cast<long long>(available) * splitRatioPermille) / 1000);
+		return content.left + std::clamp<LONG>(requested, minimum, available - minimum);
+	}
+
+	RECT ContentRect() const noexcept
+	{
+		RECT content{};
+		if( window ) ::GetClientRect(window, &content);
+		content.top = HeaderLayout().header.bottom;
+		return content;
 	}
 
 	bool HitTestPaneDivider( int x, int y ) const noexcept
 	{
-		if( !secondaryTabId || !window || y < ScaleDip(kTabHeightDip, dpi) ) return false;
-		RECT client{};
-		::GetClientRect(window, &client);
-		client.top = std::min(client.bottom, client.top + ScaleDip(kTabHeightDip, dpi));
-		const LONG left = PaneDividerLeft(client);
+		if( !secondaryTabId || !window ) return false;
+		const RECT content = ContentRect();
+		if( y < content.top || y >= content.bottom ) return false;
+		const LONG left = PaneDividerLeft(content);
 		return x >= left && x < left + ScaleDip(kPaneDividerDip, dpi);
 	}
 
 	void SetPaneDividerFromMouse( int x )
 	{
 		if( !window || !secondaryTabId ) return;
-		RECT client{};
-		::GetClientRect(window, &client);
+		const RECT content = ContentRect();
 		const LONG divider = ScaleDip(kPaneDividerDip, dpi);
-		const LONG available = std::max<LONG>(1, client.right - client.left - divider);
+		const LONG available = std::max<LONG>(1, content.right - content.left - divider);
 		const LONG minimum = std::min<LONG>(available / 2, ScaleDip(kMinimumPaneWidthDip, dpi));
-		const LONG position = std::clamp<LONG>(x - client.left, minimum, available - minimum);
+		const LONG position = std::clamp<LONG>(x - content.left, minimum, available - minimum);
 		splitRatioPermille = std::clamp(static_cast<int>((static_cast<long long>(position) * 1000) / available), 1, 999);
 		LayoutChildren();
 	}
@@ -349,20 +491,18 @@ struct CTerminalTool::Impl {
 	void LayoutChildren()
 	{
 		if( !window || !terminalWindow ) return;
-		RECT client{};
-		::GetClientRect(window, &client);
-		client.top = std::min(client.bottom, client.top + ScaleDip(kTabHeightDip, dpi));
+		const RECT content = ContentRect();
 		if( secondaryTabId && EnsureSecondaryTerminalWindow() && secondaryTerminalWindow ) {
 			const LONG divider = ScaleDip(kPaneDividerDip, dpi);
-			const LONG midpoint = PaneDividerLeft(client);
-			RECT primary = client;
+			const LONG midpoint = PaneDividerLeft(content);
+			RECT primary = content;
 			primary.right = midpoint;
-			RECT secondary = client;
-			secondary.left = std::min(client.right, midpoint + divider);
+			RECT secondary = content;
+			secondary.left = std::min(content.right, midpoint + divider);
 			terminalWindow->Layout(primary, dpi);
 			secondaryTerminalWindow->Layout(secondary, dpi);
 		} else {
-			terminalWindow->Layout(client, dpi);
+			terminalWindow->Layout(content, dpi);
 		}
 	}
 
@@ -373,10 +513,14 @@ struct CTerminalTool::Impl {
 		if( !dc ) return;
 		RECT client{};
 		::GetClientRect(window, &client);
-		RECT tabStrip = client;
-		tabStrip.bottom = std::min<LONG>(tabStrip.bottom, ScaleDip(kTabHeightDip, dpi));
-		const int width = tabStrip.right - tabStrip.left;
-		const int height = tabStrip.bottom - tabStrip.top;
+		FillSolidRect(dc, paint.rcPaint, palette.canvas.ToColorRef());
+		const auto layout = CalculateTerminalHeaderLayout(client, dpi);
+		const int width = layout.header.right - layout.header.left;
+		const int height = layout.header.bottom - layout.header.top;
+		if( width <= 0 || height <= 0 ) {
+			::EndPaint(window, &paint);
+			return;
+		}
 		const HDC memory = ::CreateCompatibleDC(dc);
 		const HBITMAP bitmap = memory && width > 0 && height > 0 ? ::CreateCompatibleBitmap(dc, width, height) : nullptr;
 		if( !memory || !bitmap ) {
@@ -386,61 +530,70 @@ struct CTerminalTool::Impl {
 			return;
 		}
 		const auto previousBitmap = ::SelectObject(memory, bitmap);
-		const HBRUSH stripBrush = ::CreateSolidBrush(palette.panel.ToColorRef());
-		::FillRect(memory, &tabStrip, stripBrush);
-		::DeleteObject(stripBrush);
+		RECT localHeader{ 0, 0, width, height };
+		FillSolidRect(memory, localHeader, palette.canvas.ToColorRef());
 		::SetBkMode(memory, TRANSPARENT);
 		::SetTextColor(memory, palette.primaryText.ToColorRef());
-		const auto tabs = manager->Snapshot();
-		const auto tabWidth = TabWidth(tabs.size(), width);
-		for( std::size_t index = 0; index < tabs.size(); ++index ) {
-			RECT tab{ static_cast<LONG>(index * tabWidth), 0, static_cast<LONG>((index + 1) * tabWidth), tabStrip.bottom };
-			const bool displayed = tabs[index].active || (secondaryTabId && tabs[index].id == *secondaryTabId);
-			const HBRUSH tabBrush = ::CreateSolidBrush(displayed ? palette.raised.ToColorRef() : palette.panel.ToColorRef());
-			::FillRect(memory, &tab, tabBrush);
-			::DeleteObject(tabBrush);
-			if( displayed ) {
-				RECT accent = tab;
-				accent.bottom = accent.top + ScaleDip(2, dpi);
-				const HBRUSH accentBrush = ::CreateSolidBrush(palette.accent.ToColorRef());
-				::FillRect(memory, &accent, accentBrush);
-				::DeleteObject(accentBrush);
-			}
-			RECT label = tab;
-			label.left += ScaleDip(10, dpi);
-			label.right -= ScaleDip(25, dpi);
-			if( tabs[index].state == TerminalSessionState::Failed ) ::SetTextColor(memory, RGB(241, 76, 76));
-			else ::SetTextColor(memory, palette.primaryText.ToColorRef());
-			::DrawTextW(memory, tabs[index].label.c_str(), -1, &label, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
-			RECT close = tab;
-			close.left = close.right - ScaleDip(24, dpi);
-			::SetTextColor(memory, palette.secondaryText.ToColorRef());
-			::DrawTextW(memory, L"\u00d7", 1, &close, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
+
+		if( chromeFont.Get() == nullptr || chromeFont.Dpi() != dpi ) {
+			static_cast<void>(chromeFont.Recreate(theme::ThemeFontKind::Chrome, dpi));
 		}
-		RECT add{ static_cast<LONG>(tabs.size() * tabWidth), 0, static_cast<LONG>(tabs.size() * tabWidth + ScaleDip(kAddButtonWidthDip, dpi)), tabStrip.bottom };
-		::SetTextColor(memory, palette.primaryText.ToColorRef());
-		::DrawTextW(memory, L"+", 1, &add, DT_SINGLELINE | DT_CENTER | DT_VCENTER | DT_NOPREFIX);
-		RECT split = add;
-		split.left = add.right;
-		split.right = split.left + ScaleDip(kSplitButtonWidthDip, dpi);
-		::SetTextColor(memory, secondaryTabId ? palette.secondaryText.ToColorRef() : palette.primaryText.ToColorRef());
-		const int iconWidth = ScaleDip(13, dpi);
-		const int iconHeight = ScaleDip(12, dpi);
-		const int iconLeft = split.left + ((split.right - split.left) - iconWidth) / 2;
-		const int iconTop = split.top + ((split.bottom - split.top) - iconHeight) / 2;
-		const HPEN iconPen = ::CreatePen(PS_SOLID, 1, secondaryTabId ? palette.secondaryText.ToColorRef() : palette.primaryText.ToColorRef());
-		const auto previousPen = ::SelectObject(memory, iconPen);
-		const auto previousBrush = ::SelectObject(memory, ::GetStockObject(NULL_BRUSH));
-		::Rectangle(memory, iconLeft, iconTop, iconLeft + iconWidth, iconTop + iconHeight);
-		::MoveToEx(memory, iconLeft + iconWidth / 2, iconTop, nullptr);
-		::LineTo(memory, iconLeft + iconWidth / 2, iconTop + iconHeight);
-		::SelectObject(memory, previousBrush);
-		::SelectObject(memory, previousPen);
-		::DeleteObject(iconPen);
-		::BitBlt(dc, 0, 0, width, height, memory, 0, 0, SRCCOPY);
+		const auto previousFont = chromeFont.Get() ? ::SelectObject(memory, chromeFont.Get()) : nullptr;
+
+		RECT title = layout.title;
+		::OffsetRect(&title, -layout.header.left, -layout.header.top);
+		::DrawTextW(memory, L"TERMINAL", -1, &title,
+			DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+		RECT underline = layout.underline;
+		::OffsetRect(&underline, -layout.header.left, -layout.header.top);
+		FillSolidRect(memory, underline, palette.accent.ToColorRef());
+
+		constexpr std::array actionTargets{
+			TerminalHeaderTarget::Profile,
+			TerminalHeaderTarget::New,
+			TerminalHeaderTarget::Dropdown,
+			TerminalHeaderTarget::Split,
+			TerminalHeaderTarget::Kill,
+			TerminalHeaderTarget::More,
+			TerminalHeaderTarget::Maximize,
+			TerminalHeaderTarget::Close,
+		};
+		const bool maximized = panelActions.isMaximized && panelActions.isMaximized();
+		for( const auto target : actionTargets ) {
+			RECT targetRect = layout.RectFor(target);
+			::OffsetRect(&targetRect, -layout.header.left, -layout.header.top);
+			if( IsEmptyRect(targetRect) ) continue;
+			const bool enabled = IsHeaderTargetEnabled(target);
+			const bool highlighted = enabled && (target == hotTarget || target == pressedTarget);
+			if( highlighted ) FillSolidRect(memory, targetRect, palette.raised.ToColorRef());
+
+			COLORREF iconColor = enabled ? palette.secondaryText.ToColorRef() : palette.border.ToColorRef();
+			if( highlighted ) {
+				iconColor = target == TerminalHeaderTarget::Kill
+					? palette.danger.ToColorRef()
+					: palette.primaryText.ToColorRef();
+			}
+			if( target == TerminalHeaderTarget::Profile ) {
+				RECT iconRect = targetRect;
+				iconRect.right = std::min(iconRect.right, iconRect.left + ScaleDip(23, dpi));
+				DrawHeaderIcon(memory, iconRect, target, maximized, iconColor, dpi);
+				RECT labelRect = targetRect;
+				labelRect.left = iconRect.right + ScaleDip(2, dpi);
+				labelRect.right -= ScaleDip(2, dpi);
+				::SetTextColor(memory, enabled ? palette.primaryText.ToColorRef() : palette.secondaryText.ToColorRef());
+				const auto label = HeaderProfileLabel();
+				::DrawTextW(memory, label.c_str(), -1, &labelRect,
+					DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+			} else {
+				DrawHeaderIcon(memory, targetRect, target, maximized, iconColor, dpi);
+			}
+		}
+
+		if( previousFont ) ::SelectObject(memory, previousFont);
+		::BitBlt(dc, layout.header.left, layout.header.top, width, height, memory, 0, 0, SRCCOPY);
 		if( secondaryTabId ) {
 			RECT divider = client;
-			divider.top = tabStrip.bottom;
+			divider.top = layout.header.bottom;
 			divider.left = PaneDividerLeft(divider);
 			divider.right = divider.left + ScaleDip(kPaneDividerDip, dpi);
 			const HBRUSH dividerBrush = ::CreateSolidBrush(palette.border.ToColorRef());
@@ -559,10 +712,29 @@ struct CTerminalTool::Impl {
 	{
 		const HMENU menu = ::CreatePopupMenu();
 		if( !menu ) return;
+		const auto focusedId = FocusedTabId();
+		const auto tabs = manager->Snapshot();
+		const HMENU sessionsMenu = ::CreatePopupMenu();
+		tabCommandIds.clear();
+		if( sessionsMenu ) {
+			for( const auto& tab : tabs ) {
+				const UINT command = kCommandTabFirst + static_cast<UINT>(tabCommandIds.size());
+				UINT flags = MF_STRING;
+				if( focusedId && tab.id == *focusedId ) flags |= MF_CHECKED;
+				std::wstring label = tab.label.empty() ? tab.profileLabel : tab.label;
+				if( secondaryTabId && tab.id == *secondaryTabId ) label += L"  (Right)";
+				::AppendMenuW(sessionsMenu, flags, command, label.c_str());
+				tabCommandIds.push_back(tab.id);
+			}
+			if( tabCommandIds.empty() ) {
+				::AppendMenuW(sessionsMenu, MF_STRING | MF_GRAYED, kCommandTabFirst, L"No terminal sessions");
+			}
+			::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(sessionsMenu), L"Terminal Sessions");
+			::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+		}
 		::AppendMenuW(menu, MF_STRING, kCommandNewTerminal, L"New Terminal");
-		const auto activeId = manager->ActiveTabId();
-		::AppendMenuW(menu, MF_STRING | (activeId ? 0 : MF_GRAYED), kCommandRestartTerminal, L"Restart Terminal");
-		::AppendMenuW(menu, MF_STRING | (activeId ? 0 : MF_GRAYED), kCommandCloseTerminal, L"Close Terminal");
+		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandRestartTerminal, L"Restart Terminal");
+		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandCloseTerminal, L"Kill Terminal");
 		::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
 		::AppendMenuW(menu, MF_STRING | (secondaryTabId ? MF_GRAYED : 0), kCommandSplitTerminal, L"Split Terminal Right");
 		::AppendMenuW(menu, MF_STRING | (secondaryTabId ? 0 : MF_GRAYED), kCommandCloseSplit, L"Close Right Terminal");
@@ -591,6 +763,46 @@ struct CTerminalTool::Impl {
 		::DestroyMenu(menu);
 	}
 
+	void ShowHeaderMenu( TerminalHeaderTarget target )
+	{
+		if( !window ) return;
+		const RECT action = HeaderLayout().RectFor(target);
+		POINT point{ action.left, action.bottom };
+		::ClientToScreen(window, &point);
+		ShowContextMenu(point.x, point.y);
+	}
+
+	void ExecuteHeaderTarget( TerminalHeaderTarget target )
+	{
+		if( !IsHeaderTargetEnabled(target) ) return;
+		switch( target ) {
+		case TerminalHeaderTarget::Profile:
+		case TerminalHeaderTarget::Dropdown:
+		case TerminalHeaderTarget::More:
+			ShowHeaderMenu(target);
+			break;
+		case TerminalHeaderTarget::New:
+			static_cast<void>(AddTerminal());
+			break;
+		case TerminalHeaderTarget::Split:
+			if( secondaryTabId && secondaryTerminalWindow ) secondaryTerminalWindow->Focus();
+			else static_cast<void>(SplitTerminalRight());
+			break;
+		case TerminalHeaderTarget::Kill:
+			if( const auto id = FocusedTabId() ) static_cast<void>(DeleteTerminal(*id));
+			break;
+		case TerminalHeaderTarget::Maximize:
+			panelActions.toggleMaximize();
+			InvalidateTabs();
+			break;
+		case TerminalHeaderTarget::Close:
+			panelActions.closePanel();
+			break;
+		default:
+			break;
+		}
+	}
+
 	LRESULT HandleMessage( UINT message, WPARAM wParam, LPARAM lParam )
 	{
 		switch( message ) {
@@ -611,35 +823,66 @@ struct CTerminalTool::Impl {
 				::SetCapture(window);
 				return 0;
 			}
-			if( GET_Y_LPARAM(lParam) >= ScaleDip(kTabHeightDip, dpi) ) return 0;
-			bool close = false;
-			const auto tabId = HitTestTab(GET_X_LPARAM(lParam), &close);
-			if( tabId ) {
-				if( close ) DeleteTerminal(*tabId);
-				else SelectTerminal(*tabId);
-			} else if( HitTestAdd(GET_X_LPARAM(lParam)) ) AddTerminal();
-			else if( HitTestSplit(GET_X_LPARAM(lParam)) ) {
-				if( secondaryTabId && secondaryTerminalWindow ) secondaryTerminalWindow->Focus();
-				else SplitTerminalRight();
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			const auto layout = HeaderLayout();
+			if( point.y >= layout.header.top && point.y < layout.header.bottom ) {
+				const auto target = layout.HitTest(point);
+				if( IsHeaderTargetEnabled(target) ) {
+					pressedTarget = target;
+					UpdateHotTarget(target);
+					::SetCapture(window);
+					InvalidateTabs();
+				} else if( terminalWindow ) {
+					terminalWindow->Focus();
+				}
 			}
 			return 0;
 		}
-		case WM_MOUSEMOVE:
+		case WM_MOUSEMOVE: {
 			if( draggingPaneDivider ) {
 				SetPaneDividerFromMouse(GET_X_LPARAM(lParam));
 				return 0;
 			}
-			break;
-		case WM_LBUTTONUP:
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			const auto layout = HeaderLayout();
+			auto target = layout.HitTest(point);
+			if( !IsHeaderTargetEnabled(target) ) target = TerminalHeaderTarget::None;
+			UpdateHotTarget(target);
+			if( !trackingMouseLeave ) {
+				TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, window, 0 };
+				trackingMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+			}
+			return 0;
+		}
+		case WM_LBUTTONUP: {
 			if( draggingPaneDivider ) {
 				draggingPaneDivider = false;
 				if( ::GetCapture() == window ) ::ReleaseCapture();
 				SetPaneDividerFromMouse(GET_X_LPARAM(lParam));
 				return 0;
 			}
+			if( pressedTarget != TerminalHeaderTarget::None ) {
+				const auto pressed = pressedTarget;
+				pressedTarget = TerminalHeaderTarget::None;
+				const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+				const auto released = HeaderLayout().HitTest(point);
+				if( ::GetCapture() == window ) ::ReleaseCapture();
+				if( released == pressed ) ExecuteHeaderTarget(pressed);
+				if( window && ::IsWindow(window) ) InvalidateTabs();
+				return 0;
+			}
 			break;
+		}
+		case WM_MOUSELEAVE:
+			trackingMouseLeave = false;
+			UpdateHotTarget(TerminalHeaderTarget::None);
+			return 0;
 		case WM_CAPTURECHANGED:
 			draggingPaneDivider = false;
+			if( pressedTarget != TerminalHeaderTarget::None ) {
+				pressedTarget = TerminalHeaderTarget::None;
+				InvalidateTabs();
+			}
 			return 0;
 		case WM_SETCURSOR: {
 			POINT point{};
@@ -651,12 +894,6 @@ struct CTerminalTool::Impl {
 			}
 			break;
 		}
-		case WM_MBUTTONDOWN:
-			if( const auto tabId = HitTestTab(GET_X_LPARAM(lParam)) ) DeleteTerminal(*tabId);
-			return 0;
-		case WM_LBUTTONDBLCLK:
-			if( const auto tabId = HitTestTab(GET_X_LPARAM(lParam)) ) RestartTerminal(*tabId);
-			return 0;
 		case WM_RBUTTONUP: {
 			POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			::ClientToScreen(window, &point);
@@ -672,10 +909,16 @@ struct CTerminalTool::Impl {
 				}
 				return 0;
 			}
+			if( const UINT command = LOWORD(wParam);
+				command >= kCommandTabFirst && command < kCommandTabFirst + tabCommandIds.size() ) {
+				const auto index = static_cast<std::size_t>(command - kCommandTabFirst);
+				static_cast<void>(SelectTerminal(tabCommandIds[index]));
+				return 0;
+			}
 			switch( LOWORD(wParam) ) {
 			case kCommandNewTerminal: AddTerminal(); break;
-			case kCommandRestartTerminal: if( const auto id = manager->ActiveTabId() ) RestartTerminal(*id); break;
-			case kCommandCloseTerminal: if( const auto id = manager->ActiveTabId() ) DeleteTerminal(*id); break;
+			case kCommandRestartTerminal: if( const auto id = FocusedTabId() ) RestartTerminal(*id); break;
+			case kCommandCloseTerminal: if( const auto id = FocusedTabId() ) DeleteTerminal(*id); break;
 			case kCommandRedetectPowerShell: if( defaultResolver ) defaultResolver->Redetect(); break;
 			case kCommandSplitTerminal: SplitTerminalRight(); break;
 			case kCommandCloseSplit: CloseTerminalSplit(); break;
@@ -848,6 +1091,9 @@ void CTerminalTool::Layout( const RECT& contentRect, unsigned int dpi )
 	if( m_impl->closed || !m_impl->window ) return;
 	m_impl->bounds = contentRect;
 	m_impl->dpi = dpi == 0 ? kDefaultDpi : dpi;
+	if( m_impl->chromeFont.Get() == nullptr || m_impl->chromeFont.Dpi() != m_impl->dpi ) {
+		static_cast<void>(m_impl->chromeFont.Recreate(theme::ThemeFontKind::Chrome, m_impl->dpi));
+	}
 	::SetWindowPos(m_impl->window, nullptr, contentRect.left, contentRect.top, std::max(0L, contentRect.right - contentRect.left),
 		std::max(0L, contentRect.bottom - contentRect.top), SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
 	if( m_impl->HasVisibleContentBounds() ) static_cast<void>(m_impl->EnsureTerminalWindow());
@@ -923,6 +1169,12 @@ void CTerminalTool::SetPalette( const theme::ThemePalette& palette )
 	if( m_impl->terminalWindow ) m_impl->terminalWindow->SetPalette(palette);
 	if( m_impl->secondaryTerminalWindow ) m_impl->secondaryTerminalWindow->SetPalette(palette);
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+}
+
+void CTerminalTool::SetPanelActions( TerminalPanelActions actions )
+{
+	m_impl->panelActions = std::move(actions);
+	m_impl->InvalidateTabs();
 }
 
 bool CTerminalTool::EnsureSessionStarted()

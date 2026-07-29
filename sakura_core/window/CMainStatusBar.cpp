@@ -325,14 +325,12 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const HGDIOBJ oldBitmap = bitmap == nullptr ? nullptr : ::SelectObject(buffer, bitmap);
 	HDC target = oldBitmap == nullptr ? dc : buffer;
 
-	// Status semantics get a compact accent rule; information and icons remain monochrome.
-	FillSolidRect(target, client, m_palette.panel.ToColorRef());
-	RECT statusRule = client;
-	statusRule.bottom = std::min<LONG>(statusRule.bottom,
-		statusRule.top + workbench::icons::ScaleDip(2, ::GetDpiForWindow(m_hwndStatusBar)));
-	FillSolidRect(target, statusRule, m_palette.accent.ToColorRef());
+	// Match the VS Code workbench status treatment: the complete bar carries
+	// the active accent, while every label and line icon uses its paired
+	// high-contrast foreground.
+	FillSolidRect(target, client, m_palette.accent.ToColorRef());
 	::SetBkMode(target, TRANSPARENT);
-	::SetTextColor(target, m_palette.primaryText.ToColorRef());
+	::SetTextColor(target, m_palette.highlightText.ToColorRef());
 	const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(m_hwndStatusBar, WM_GETFONT, 0, 0));
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
 	int scmWidth = 0;
@@ -343,7 +341,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 			const int textInset = workbench::icons::StatusTextInsetPixels(scmDpi);
 			scmWidth = std::min(width, static_cast<int>(extent.cx) + textInset + 8);
 			const RECT scmIconRect{ 0, 0, scmWidth, height };
-			DrawStatusIcon(target, scmIconRect, StatusIcon::Branch, m_palette.secondaryText.ToColorRef(), scmDpi);
+			DrawStatusIcon(target, scmIconRect, StatusIcon::Branch, m_palette.highlightText.ToColorRef(), scmDpi);
 			RECT scmRect{ textInset, 0, scmWidth - 4, height };
 			::DrawTextW(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &scmRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
@@ -352,7 +350,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
 	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
-	const HPEN separator = ::CreatePen(PS_SOLID, 1, m_palette.border.ToColorRef());
+	const HPEN separator = ::CreatePen(PS_SOLID, 1, m_palette.highlightText.ToColorRef());
 	const HGDIOBJ oldPen = separator == nullptr ? nullptr : ::SelectObject(target, separator);
 	for (int part = 0; part < partCount; ++part) {
 		RECT partRect{};
@@ -360,7 +358,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		if (part == 0 && scmWidth > partRect.left) partRect.left = std::min<LONG>(partRect.right, scmWidth);
 		const auto statusIcon = StatusIconForPart(part);
 		if (statusIcon != StatusIcon::None) {
-			DrawStatusIcon(target, partRect, statusIcon, m_palette.secondaryText.ToColorRef(), dpi);
+			DrawStatusIcon(target, partRect, statusIcon, m_palette.highlightText.ToColorRef(), dpi);
 			partRect.left = std::min<LONG>(partRect.right,
 				partRect.left + workbench::icons::StatusTextInsetPixels(dpi));
 		}
