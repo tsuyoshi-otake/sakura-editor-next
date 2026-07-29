@@ -29,7 +29,7 @@ The full binary includes UI and integration suites. `WinMain/WinMainTest.*` laun
 For unattended local smoke verification, use the currently verified exclusion set:
 
 ```cmd
-x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:DlgOpenFileTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMain/WinMainTest.*
+x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
 ```
 
 - This filter is not a substitute for the full suite. Run the affected UI/integration tests separately when the change touches them.

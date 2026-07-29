@@ -168,7 +168,7 @@ x64\Debug\tests1.exe
 UI を起動しないローカル確認では、対象を確認して `--gtest_filter` で除外してください。現在のヘッドレス確認例は次のとおりです。
 
 ```cmd
-x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:DlgOpenFileTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMain/WinMainTest.*
+x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
 ```
 
 このフィルターは UI・外部連携を含むテストを省くため、最終確認では必要なテストを別途実行してください。

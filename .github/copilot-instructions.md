@@ -4,7 +4,7 @@ This file provides guidance to GitHub Copilot when working with code in this rep
 
 ## Project Overview
 
-Sakura Editor is a free Windows text editor written in C++20, licensed under the zlib License. The primary build target is Windows (MSVC), with experimental MinGW support.
+Sakura Editor NEXT is a native Windows text editor written in C++20, licensed under the zlib License. The primary build target is Windows 11 x64 with MSVC, with experimental MinGW support.
 
 ## Build Commands
 
@@ -17,7 +17,7 @@ build-sln.bat <Platform> <Configuration>
 # Example: x64 Release
 build-sln.bat x64 Release
 # Example: x64 Debug, specifying VS 2019
-set ARG_VSVERSION=16
+set NUM_VSVERSION=16
 build-sln.bat x64 Debug
 # Run Unit Testing
 x64\Debug\tests1.exe
@@ -43,7 +43,7 @@ ctest --test-dir build/MinGW --output-on-failure
 |---|---|
 | `SKIP_CREATE_GITHASH=1` | Skip regenerating `githash.h` (useful when comparing binaries across refactors) |
 | `FORCE_POWERSHELL_ZIP=1` | Force PowerShell for ZIP operations instead of 7z |
-| `ARG_VSVERSION=16` | Override Visual Studio version selection (16=VS2019, 17=VS2022) |
+| `NUM_VSVERSION=16` | Override Visual Studio version selection (16=VS2019, 17=VS2022) |
 
 ### Running Tests
 
@@ -93,7 +93,7 @@ When an agent needs a fixed CI-aligned build/test setup, use this preset derived
 
 ### Two-Process Model
 
-Sakura Editor uses a two-process architecture:
+Sakura Editor NEXT uses a two-process architecture:
 
 - **Control Process** (`CControlProcess`) — A single hidden process (system tray) that manages all shared state across editor instances. It owns `CControlTray`.
 - **Editor Process** (`CNormalProcess`) — One per editor window. Creates and manages a `CEditWnd`. Multiple editor processes can run simultaneously.
