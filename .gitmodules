@@ -19,3 +19,6 @@
 [submodule "externals/darkmodelib"]
 	path = externals/darkmodelib
 	url = https://github.com/ozone10/darkmodelib.git
+[submodule "externals/picojson"]
+	path = externals/picojson
+	url = https://github.com/kazuho/picojson.git
