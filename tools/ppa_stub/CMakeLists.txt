@@ -36,6 +36,12 @@ add_library(${project_name} MODULE ${SOURCES} ${DEF_FILES})
 # Set C++ standard for project
 target_compile_features(${project_name} PUBLIC cxx_std_20)
 
+if(MSVC)
+  # Keep each source in its own compiler worker. This also avoids the MSVC
+  # multi-input compiler path, which is needlessly serial for this target.
+  target_compile_options(${project_name} PRIVATE /MP)
+endif()
+
 # add definitions for project
 target_compile_definitions(${project_name}
   PUBLIC

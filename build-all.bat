@@ -1,4 +1,5 @@
 @echo off
+setlocal
 set platform=%1
 set configuration=%2
 
@@ -23,6 +24,7 @@ if "%configuration%" == "Release" (
 @echo.
 
 @echo ---- start build-sln.bat ----
+set SAKURA_GENERATE_ASSEMBLY_LISTINGS=1
 call build-sln.bat       %PLATFORM% %CONFIGURATION% || (echo error build-sln.bat       && exit /b 1)
 @echo ---- end   build-sln.bat ----
 @echo.
@@ -42,7 +44,7 @@ call zipArtifacts.bat    %PLATFORM% %CONFIGURATION% || (echo error zipArtifacts.
 @echo ---- end   zipArtifacts.bat ----
 @echo.
 
-exit /b 0
+endlocal & exit /b 0
 
 @rem ------------------------------------------------------------------------------
 @rem show help
