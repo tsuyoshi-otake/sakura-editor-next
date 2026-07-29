@@ -1,180 +1,55 @@
-# CLAUDE.md
+# Sakura Editor Claude Code Guidance
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+## Scope
+
+This file contains repository-wide guidance. More specific `CLAUDE.md` files are loaded when Claude works in their subtrees; follow the nearest file and keep local details out of this root file.
+
+| Area | Scoped guidance |
+|---|---|
+| Core application and MSBuild projects | [`sakura_core/CLAUDE.md`](sakura_core/CLAUDE.md) |
+| Command dispatch | [`sakura_core/cmd/CLAUDE.md`](sakura_core/cmd/CLAUDE.md) |
+| Document model | [`sakura_core/doc/CLAUDE.md`](sakura_core/doc/CLAUDE.md) |
+| Build generation and shared resources | [`src/main/CLAUDE.md`](src/main/CLAUDE.md) |
+| Tests and test infrastructure | [`src/test/CLAUDE.md`](src/test/CLAUDE.md) |
+| Build helpers and build documentation | [`tools/CLAUDE.md`](tools/CLAUDE.md) |
+| Language resource DLLs | [`sakura_lang/CLAUDE.md`](sakura_lang/CLAUDE.md) |
+| CI workflows | [`.github/CLAUDE.md`](.github/CLAUDE.md) |
 
 ## Project Overview
 
-Sakura Editor is a free Windows text editor written in C++20, licensed under the zlib License. The primary build target is Windows (MSVC), with experimental MinGW support.
+Sakura Editor is a Windows text editor written in C++20 and licensed under the zlib License. Windows with MSVC is the primary build path. MinGW support is experimental, and its binaries may not behave correctly.
 
-## Build Commands
+The application uses two process types: one hidden control process owns cross-instance state, and each editor window runs in its own editor process. Detailed ownership and subsystem boundaries live under `sakura_core/`.
 
-### Visual Studio (Primary)
+Third-party code lives under `externals/`, mostly as Git submodules. Treat it as upstream code: change it only when the task explicitly requires an upstream or integration update.
 
-Open `sakura.sln` in Visual Studio and build, or use the command line:
+## Build Entry Points
 
-```cmd
-build-sln.bat <Platform> <Configuration>
-# Example: x64 Release
-build-sln.bat x64 Release
-# Example: x64 Debug, specifying VS 2019
-set ARG_VSVERSION=16
-build-sln.bat x64 Debug
-# Run Unit Testing
-x64\Debug\tests1.exe
-```
+Run build commands from the repository root.
 
-Full build (exe + HTML help + installer):
-```cmd
-build-all.bat <Platform> <Configuration>
-<Platform>\<Configuration>\tests1.exe
-```
+| Goal | Command | Scope |
+|---|---|---|
+| Fast edit/compile loop | `build-dev.bat x64 Debug` | App project only; skips `tests1` evaluation and build |
+| App and unit-test build | `build-sln.bat x64 Debug` | `sakura.sln` (`sakura` and `tests1`) |
+| Distribution build | `build-all.bat x64 Release` | App, tests, help, installer, ZIP, and assembly artifacts |
+| Experimental MinGW build | `build-gnu.bat MinGW Debug` | CMake/MinGW targets and tests |
 
-### MinGW (Experimental — binaries may not work correctly)
+- Set `NUM_VSVERSION=16` to select Visual Studio 2019 or `NUM_VSVERSION=17` for Visual Studio 2022. `ARG_VSVERSION` is internal to `find-tools.bat`; do not expose it as the user-facing setting.
+- Normal MSVC builds do not generate `.asm` listings. `build-all.bat` and distribution CI enable them explicitly.
+- Use `SKIP_CREATE_GITHASH=1` only when a comparison requires stable generated version data.
+- Build behavior and environment variables are documented in `tools/build.md`, `tools/build-batchfiles.md`, and `tools/build-envvars.md`; update those files when the interface changes.
 
-```bash
-cmake -S . -B build/MinGW -DCMAKE_BUILD_TYPE=Debug -DBUILD_PLATFORM=MinGW
-cmake --build build/MinGW
-ctest --test-dir build/MinGW --output-on-failure
-```
+## Verification
 
-### Useful Build Environment Variables
+- `build-dev.bat` verifies the application build only. Use `build-sln.bat` before running `tests1.exe` or claiming that test targets build.
+- `tests1.exe` contains UI and integration suites. A full local run can launch visible editor windows using an isolated/default profile. Read `src/test/CLAUDE.md` before unattended test execution.
+- Match verification to the affected build path: test both Debug and Release for MSBuild orchestration changes, and test MinGW when changing shared CMake logic.
+- Run static analysis with `run-cppcheck.bat <Platform> <Configuration>` when the change warrants it.
 
-| Variable | Effect |
-|---|---|
-| `SKIP_CREATE_GITHASH=1` | Skip regenerating `githash.h` (useful when comparing binaries across refactors) |
-| `FORCE_POWERSHELL_ZIP=1` | Force PowerShell for ZIP operations instead of 7z |
-| `ARG_VSVERSION=16` | Override Visual Studio version selection (16=VS2019, 17=VS2022) |
+## Repository-Wide Change Rules
 
-### Running Tests
-
-Tests use GoogleTest. With MinGW:
-```bash
-ctest --test-dir build/MinGW --output-on-failure
-```
-
-Tests are in `src/test/cpp/tests1/`. The test binary is `tests1`.
-
-### Static Analysis
-
-```cmd
-run-cppcheck.bat <Platform> <Configuration>
-```
-
-For cpplint (style check):
-```pwsh
-pip install cpplint
-cpplint --recursive sakura_core
-```
-
-## Agent Build/Test Preset (x64 Debug)
-
-When an agent needs a fixed CI-aligned build/test setup, use this preset derived from `.github/workflows/build-sakura.yml`:
-
-1. Fixed target:
-   - `Platform=x64`
-   - `Configuration=Debug`
-2. Setup:
-   - Add MSBuild to `PATH`
-   - Set up Python (`vars.PYTHON_VERSION` or `3.14.3`)
-   - Install `uv`
-   - `uv pip install --require-hashes --no-build --no-deps -r requirements.txt`
-   - Bootstrap vcpkg from `<workspace>\tools\vcpkg`
-3. Tool install:
-   - Install Ctags (winget)
-   - Install DiffUtils (winget)
-   - Install OpenCppCoverage using winget
-   - If winget fails, install via official installer with SHA256 verification, then add `C:\Program Files\OpenCppCoverage` to `PATH`
-4. Build:
-   - Use Build Wrapper + MSBuild for x64/Debug (as in workflow), or `build-sln.bat x64 Debug` when Build Wrapper is not required.
-5. Test:
-   - `ctest --test-dir build/x64/CMakeTools -C Debug --output-on-failure`
-
-## Architecture
-
-### Two-Process Model
-
-Sakura Editor uses a two-process architecture:
-
-- **Control Process** (`CControlProcess`) — A single hidden process (system tray) that manages all shared state across editor instances. It owns `CControlTray`.
-- **Editor Process** (`CNormalProcess`) — One per editor window. Creates and manages a `CEditWnd`. Multiple editor processes can run simultaneously.
-- **`CProcessFactory`** — Inspects the command line at startup to decide which process type to create. If an editor process is starting and no control process exists yet, it launches one first.
-- **`CShareData` / `DLLSHAREDATA`** — Shared memory structure that all processes map into their address space. This is the IPC mechanism between the control process and editor processes.
-
-### Core Class Hierarchy
-
-```
-WinMain
-  └─ CProcessFactory::Create()
-       ├─ CControlProcess (system tray, shared state)
-       │    └─ CControlTray
-       └─ CNormalProcess (editor window)
-            └─ CEditApp
-                 └─ CEditWnd (outer frame window)
-                      ├─ CMainToolBar, CTabWnd, CMainStatusBar
-                      └─ CEditView (the text editing area) ×1–4 (splitter panes)
-                           └─ CViewCommander (dispatches EFunctionCode commands)
-```
-
-### Document Model
-
-`CEditDoc` aggregates the document subsystems:
-- `CDocLineMgr` / `CDocLine` (`doc/logic/`) — Logical line storage (raw text, character encoding)
-- `CLayoutMgr` / `CLayout` (`doc/layout/`) — Layout lines (visual wrapping, tab expansion); sits above the logical model
-- `CDocEditor` — Edit operations (undo/redo via `COpeBuf`/`COpeBlk`)
-- `CDocFile` — File path and encoding metadata
-- `CDocFileOperation` — Open/close/save operations
-- `CDocType` — Document type (language mode) association
-
-### Command Dispatch
-
-All editor commands are `EFunctionCode` enum values (defined in the auto-generated `Funccode_define.h` / `Funccode_enum.h`, generated from `sakura_core/Funccode_x.hsrc` by `HeaderMake.exe`).
-
-`CViewCommander::HandleCommand()` is the central dispatcher. Implementations are split across:
-- `CViewCommander_Edit.cpp`, `CViewCommander_File.cpp`, `CViewCommander_Cursor.cpp`, etc.
-
-Function code ranges:
-- `20000–21999`: Plugin commands (20 × 100)
-- `30000–32767`: User-assignable commands (menus, keyboard)
-- `40000–49511`: Macro functions
-
-### Key Subsystems
-
-| Directory | Responsibility |
-|---|---|
-| `sakura_core/_main/` | Entry point, process classes, global state |
-| `sakura_core/_os/` | OS abstraction (clipboard, drop target, etc.) |
-| `sakura_core/window/` | Window classes (`CEditWnd`, `CTabWnd`, toolbar, status bar) |
-| `sakura_core/view/` | Text editing view (`CEditView`), caret, ruler, painting |
-| `sakura_core/cmd/` | Command implementations (`CViewCommander_*.cpp`) |
-| `sakura_core/doc/` | Document model (logic, layout, file ops, type) |
-| `sakura_core/env/` | Environment managers (shared data, keyword sets, doc types, file names) |
-| `sakura_core/prop/` | Common preferences dialog pages (`CPropCom*.cpp`) |
-| `sakura_core/typeprop/` | Per-document-type settings dialog and import/export |
-| `sakura_core/types/` | Language definitions (`CType_Cpp.cpp`, `CType_Python.cpp`, etc.) |
-| `sakura_core/macro/` | Macro system (key macro, PPA, Python) |
-| `sakura_core/plugin/` | DLL plugin system |
-| `sakura_core/agent/` | Background agents (auto-save, auto-reload, backup, grep, load/save) |
-| `sakura_core/grep/` | Grep file enumeration |
-| `sakura_core/charset/` | Character set detection and conversion |
-| `sakura_core/extmodule/` | External regex/migemo library wrappers |
-| `sakura_core/func/` | Function code table, key binding |
-| `sakura_core/util/` | Utilities; `design_template.h` provides `TSingleton`, `TSingleInstance`, `DISALLOW_COPY_AND_ASSIGN` |
-
-### Localization
-
-`sakura_lang/` contains resource-only DLLs for non-Japanese locales (en-US, zh-CN). The main `sakura_rc.rc` is Japanese. Language DLLs are built as separate projects (`sakura_lang_en_US.vcxproj`, etc.).
-
-### External Dependencies
-
-All third-party code lives under `externals/` as git submodules:
-- `Onigmo` / `bregonig` — Regular expression engine
-- `cmigemo` + `cmigemo-dict` — Migemo incremental Japanese search
-- `ctags` — Tag jump support
-- `diffutils` — File diff
-- `googletest` — Unit testing
-- `miniz-cpp` — ZIP handling (tests only)
-- `darkmodelib` — Windows dark mode support
-
-### CI
-
-GitHub Actions workflows are in `.github/workflows/`. The main build workflow (`build-sakura.yml`) builds the supported x64 Debug and Release configurations. To skip CI for documentation-only changes, include `[ci skip]` or `[skip ci]` in the commit message (note: this does not apply on PR merge).
+- Keep dependencies acyclic and pointed from UI/integration layers toward stable core abstractions.
+- Preserve explicit completion and cleanup on every branch of stateful startup, command, retry, and process-control flows.
+- Do not edit generated `Funccode_define.h`, `Funccode_enum.h`, or `version.h`; edit their source inputs instead.
+- When adding C++ sources to an MSBuild project, update both the `.vcxproj` and matching `.vcxproj.filters`. The CMake build discovers source files separately, so verify both build paths when relevant.
+- Preserve user-facing Japanese documentation and resources unless the task calls for another language; keep identifiers and code names in their established language.
