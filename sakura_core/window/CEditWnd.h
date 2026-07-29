@@ -70,6 +70,7 @@ class CWorkspaceContext;
 enum class WorkbenchEdge : std::uint8_t;
 namespace explorer {
 class CExplorerTool;
+class CExplorerOutlineTool;
 }
 namespace outline {
 class COutlineWorkbenchTool;
@@ -409,6 +410,7 @@ private:
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
+	workbench::explorer::CExplorerOutlineTool* m_explorerOutlineTool = nullptr;
 	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;

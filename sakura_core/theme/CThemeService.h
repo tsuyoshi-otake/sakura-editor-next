@@ -158,8 +158,8 @@ constexpr ThemePalette CThemeService::SelectPalette(
 constexpr ThemeFontSpec CThemeService::FontSpec(ThemeFontKind kind) noexcept
 {
 	return kind == ThemeFontKind::Chrome
-		? ThemeFontSpec{ L"Segoe UI Variable", L"Segoe UI", 9, FW_NORMAL, false }
-		: ThemeFontSpec{ L"Cascadia Mono", L"Consolas", 10, FW_NORMAL, true };
+		? ThemeFontSpec{ L"Segoe UI Variable", L"Segoe UI", 8, FW_NORMAL, false }
+		: ThemeFontSpec{ L"Cascadia Mono", L"Consolas", 9, FW_NORMAL, true };
 }
 
 } // namespace theme

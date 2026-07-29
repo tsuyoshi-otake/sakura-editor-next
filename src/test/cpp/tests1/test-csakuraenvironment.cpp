@@ -384,7 +384,7 @@ INSTANTIATE_TEST_SUITE_P(ExpandParamCases
 	, ExpandParamTest
 	, ::testing::Values(
 		ExpandParamTestParam{ L"$$",           L"$"s                  },
-		ExpandParamTestParam{ L"$A",           STR_GSTR_APPNAME       },
+		ExpandParamTestParam{ L"$A",           L"Sakura Editor - Code"s },
 		ExpandParamTestParam{ L"$F",           STR_NO_TITLE1          },
 		ExpandParamTestParam{ L"$f",           STR_NO_TITLE1          },
 		ExpandParamTestParam{ L"$g",           STR_NO_TITLE1          },

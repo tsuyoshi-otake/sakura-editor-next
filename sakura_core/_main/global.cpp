@@ -38,8 +38,10 @@
  */
 LPCWSTR GetAppName( void )
 {
-	// アプリ名をリソースから読み込む
-	return LS(STR_GSTR_APPNAME);
+	// The Windows 11 workbench is branded consistently in the title bar,
+	// About dialog, task switcher, and parameter expansion. Build qualifiers
+	// belong in the version field rather than the product name.
+	return L"Sakura Editor - Code";
 }
 
 /*! 選択領域描画用パラメータ */

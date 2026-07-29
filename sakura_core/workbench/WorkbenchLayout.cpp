@@ -115,15 +115,15 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	const int bottomAccessoryHeight = ResolveChromeHeight(
 		request.bottomAccessoryHeightPixels, 0, dpi,
 		height - titleHeight - topAccessoryHeight - tabsHeight - statusHeight);
-	const int bodyTop = titleHeight + topAccessoryHeight + tabsHeight;
+	const int sidePaneTop = titleHeight + topAccessoryHeight;
+	const int editorTop = sidePaneTop + tabsHeight;
 	const int bodyBottom = height - statusHeight - bottomAccessoryHeight;
 	const int activityWidth = std::min(width, ScaleDip(kActivityBarWidthDip, dpi));
 
 	WorkbenchLayout layout;
 	layout.titleBar = MakeRect(0, 0, width, titleHeight);
 	layout.topAccessory = MakeRect(0, titleHeight, width, titleHeight + topAccessoryHeight);
-	layout.activityBar = MakeRect(0, bodyTop, activityWidth, bodyBottom);
-	layout.documentTabs = MakeRect(0, titleHeight + topAccessoryHeight, width, bodyTop);
+	layout.activityBar = MakeRect(0, sidePaneTop, activityWidth, bodyBottom);
 	layout.bottomAccessory = MakeRect(0, bodyBottom, width, bodyBottom + bottomAccessoryHeight);
 	layout.statusBar = MakeRect(0, bodyBottom, width, height);
 	layout.statusBar.top = layout.bottomAccessory.bottom;
@@ -149,10 +149,10 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	const int desiredBottomPane = IsShown(request.bottomPane) ? ScaleDip(request.bottomPaneHeightDip, dpi) : 0;
 	const int desiredBottomSplitter = desiredBottomPane == 0 ? 0 : ScaleDip(kSplitterDip, dpi);
 	const auto desiredBottomHeight = static_cast<std::int64_t>(desiredBottomPane) + desiredBottomSplitter;
-	const int editorMinimumHeight = std::min(bodyBottom - bodyTop, ScaleDip(kEditorMinimumHeightDip, dpi));
+	const int editorMinimumHeight = std::min(bodyBottom - editorTop, ScaleDip(kEditorMinimumHeightDip, dpi));
 	int bottomPane = 0;
 	int bottomSplitter = 0;
-	const int bottomBudget = std::max(0, bodyBottom - bodyTop - editorMinimumHeight);
+	const int bottomBudget = std::max(0, bodyBottom - editorTop - editorMinimumHeight);
 	if (desiredBottomHeight <= bottomBudget) {
 		bottomPane = desiredBottomPane;
 		bottomSplitter = desiredBottomSplitter;
@@ -163,12 +163,13 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 
 	const int editorBottom = bodyBottom - bottomPane - bottomSplitter;
 	const int minimapLeft = std::max(centralLeft, centralRight - minimap);
-	layout.leftPane = MakeRect(activityWidth, bodyTop, activityWidth + leftPane, bodyBottom);
-	layout.leftSplitter = MakeRect(activityWidth + leftPane, bodyTop, centralLeft, bodyBottom);
-	layout.editor = MakeRect(centralLeft, bodyTop, minimapLeft, editorBottom);
-	layout.minimap = MakeRect(minimapLeft, bodyTop, centralRight, editorBottom);
-	layout.rightSplitter = MakeRect(centralRight, bodyTop, centralRight + rightSplitter, bodyBottom);
-	layout.rightPane = MakeRect(centralRight + rightSplitter, bodyTop, width, bodyBottom);
+	layout.documentTabs = MakeRect(centralLeft, sidePaneTop, centralRight, editorTop);
+	layout.leftPane = MakeRect(activityWidth, sidePaneTop, activityWidth + leftPane, bodyBottom);
+	layout.leftSplitter = MakeRect(activityWidth + leftPane, sidePaneTop, centralLeft, bodyBottom);
+	layout.editor = MakeRect(centralLeft, editorTop, minimapLeft, editorBottom);
+	layout.minimap = MakeRect(minimapLeft, editorTop, centralRight, editorBottom);
+	layout.rightSplitter = MakeRect(centralRight, sidePaneTop, centralRight + rightSplitter, bodyBottom);
+	layout.rightPane = MakeRect(centralRight + rightSplitter, sidePaneTop, width, bodyBottom);
 	layout.bottomSplitter = MakeRect(centralLeft, editorBottom, centralRight, editorBottom + bottomSplitter);
 	layout.bottomPane = MakeRect(centralLeft, editorBottom + bottomSplitter, centralRight, bodyBottom);
 	const int headerHeight = ScaleDip(request.paneHeaderHeightDip, dpi);

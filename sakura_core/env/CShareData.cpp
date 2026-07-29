@@ -286,12 +286,12 @@ bool CShareData::InitShareData()
 			sWindow.m_bDispTOOLBAR = FALSE;			/* 新規プロファイルは文字中心のメニューを使う */
 			sWindow.m_bDispSTATUSBAR = TRUE;			/* 次回ウィンドウを開いたときステータスバーを表示する */
 			sWindow.m_bDispFUNCKEYWND = FALSE;		/* 次回ウィンドウを開いたときファンクションキーを表示する */
-			sWindow.m_bDispMiniMap = false;			// ミニマップを表示する
+			sWindow.m_bDispMiniMap = true;			// 新規プロファイルはエディタ右端にミニマップを表示する
 			sWindow.m_nFUNCKEYWND_Place = 1;			/* ファンクションキー表示位置／0:上 1:下 */
 			sWindow.m_nFUNCKEYWND_GroupNum = 4;			// 2002/11/04 Moca ファンクションキーのグループボタン数
 			sWindow.m_nMiniMapFontSize = -2;
 			sWindow.m_nMiniMapQuality = NONANTIALIASED_QUALITY;
-			sWindow.m_nMiniMapWidth = 150;
+			sWindow.m_nMiniMapWidth = 100;
 
 			sWindow.m_bSplitterWndHScroll = TRUE;	// 2001/06/20 asa-o 分割ウィンドウの水平スクロールの同期をとる
 			sWindow.m_bSplitterWndVScroll = TRUE;	// 2001/06/20 asa-o 分割ウィンドウの垂直スクロールの同期をとる
@@ -353,7 +353,7 @@ bool CShareData::InitShareData()
 			sTabBar.m_lf = lfChrome;
 			sTabBar.m_nPointSize = chromeFontSpec.pointSize * 10;
 			sTabBar.m_nTabMaxWidth = 200;
-			sTabBar.m_nTabMinWidth = 60;
+			sTabBar.m_nTabMinWidth = 120;
 			sTabBar.m_nTabMinWidthOnMulti = 100;
 		}
 

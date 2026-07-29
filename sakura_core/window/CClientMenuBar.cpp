@@ -285,6 +285,12 @@ bool CClientMenuBar::OpenItem(HWND owner, int index, bool fromKeyboard) noexcept
 	POINT origin{ anchor.left, anchor.bottom };
 	::ClientToScreen(owner, &origin);
 	::SetForegroundWindow(owner);
+	// TrackPopupMenuEx treats the supplied submenu as a standalone popup and
+	// reports position zero in WM_INITMENUPOPUP. Sakura builds each top-level
+	// submenu lazily from that position, so explicitly initialize it with its
+	// real root-menu index before entering the modal popup loop. Without this,
+	// only the first (File) menu receives contents and every later menu is empty.
+	::SendMessageW(owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), MAKELPARAM(index, FALSE));
 	const UINT command = ::TrackPopupMenuEx(
 		submenu,
 		TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,

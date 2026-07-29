@@ -20,9 +20,10 @@ TEST(WorkbenchLayout, ScalesStandardChromeAtExplicitDpi)
 		EXPECT_EQ(22 * static_cast<int>(dpi) / 96, layout.statusBar.Height());
 		EXPECT_EQ(30 * static_cast<int>(dpi) / 96, layout.leftPaneHeader.Height());
 		EXPECT_EQ(layout.titleBar.bottom, layout.documentTabs.top);
-		EXPECT_EQ(layout.documentTabs.bottom, layout.activityBar.top);
-		EXPECT_EQ(0, layout.documentTabs.left);
-		EXPECT_EQ(layout.titleBar.right, layout.documentTabs.right);
+		EXPECT_EQ(layout.titleBar.bottom, layout.activityBar.top);
+		EXPECT_EQ(layout.leftSplitter.right, layout.documentTabs.left);
+		EXPECT_EQ(layout.rightSplitter.left, layout.documentTabs.right);
+		EXPECT_EQ(layout.documentTabs.bottom, layout.editor.top);
 	}
 }
 
@@ -57,10 +58,23 @@ TEST(WorkbenchLayout, UsesMeasuredLegacyChromeWithoutDoubleReservingBodySpace)
 	EXPECT_EQ(37, layout.documentTabs.Height());
 	EXPECT_EQ(29, layout.bottomAccessory.Height());
 	EXPECT_EQ(25, layout.statusBar.Height());
-	EXPECT_EQ(layout.documentTabs.bottom, layout.activityBar.top);
+	EXPECT_EQ(layout.topAccessory.bottom, layout.activityBar.top);
+	EXPECT_EQ(layout.documentTabs.bottom, layout.editor.top);
 	EXPECT_EQ(layout.activityBar.bottom, layout.bottomAccessory.top);
 	EXPECT_EQ(layout.bottomAccessory.bottom, layout.statusBar.top);
 	EXPECT_EQ(900, layout.statusBar.bottom);
+}
+
+TEST(WorkbenchLayout, TabsOccupyOnlyTheEditorColumnWhileSidebarsStartAboveThem)
+{
+	const auto layout = CalculateWorkbenchLayout({ .clientWidth = 1600, .clientHeight = 1000 });
+
+	EXPECT_EQ(layout.leftSplitter.right, layout.documentTabs.left);
+	EXPECT_EQ(layout.rightSplitter.left, layout.documentTabs.right);
+	EXPECT_EQ(layout.documentTabs.top, layout.leftPane.top);
+	EXPECT_EQ(layout.documentTabs.top, layout.activityBar.top);
+	EXPECT_EQ(layout.documentTabs.bottom, layout.editor.top);
+	EXPECT_LT(layout.leftPane.top, layout.editor.top);
 }
 
 TEST(WorkbenchLayout, BottomPaneSpansOnlyCentralEditorColumn)

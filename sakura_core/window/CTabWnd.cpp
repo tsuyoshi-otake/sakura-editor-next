@@ -40,14 +40,14 @@
 
 // 2006.01.30 ryoji タブのサイズ／位置に関する定義
 // 2009.10.01 ryoji 高DPI対応スケーリング
-#define TAB_MARGIN_TOP		DpiScaleY(3)
+#define TAB_MARGIN_TOP		DpiScaleY(0)
 #define TAB_MARGIN_LEFT		DpiScaleX(1)
 #define TAB_MARGIN_RIGHT	DpiScaleX(47)
 
 //#define TAB_FONT_HEIGHT		DpiPointsToPixels(9)
 #define TAB_FONT_HEIGHT		abs(GetDllShareData().m_Common.m_sTabBar.m_lf.lfHeight)
-#define TAB_ITEM_HEIGHT		(TAB_FONT_HEIGHT + DpiScaleY(7))
-#define TAB_WINDOW_HEIGHT	(TAB_ITEM_HEIGHT + TAB_MARGIN_TOP + 2)
+#define TAB_ITEM_HEIGHT		DpiScaleY(32)
+#define TAB_WINDOW_HEIGHT	DpiScaleY(32)
 
 #define MAX_TABITEM_WIDTH	DpiScaleX(GetDllShareData().m_Common.m_sTabBar.m_nTabMaxWidth)
 #define MIN_TABITEM_WIDTH	DpiScaleX(GetDllShareData().m_Common.m_sTabBar.m_nTabMinWidth)
@@ -1402,8 +1402,15 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 			::MyFillRect(gr, rcItem, background);
 			if (bSelected) {
 				RECT accentBand = rcItem;
-				accentBand.bottom = accentBand.top + DpiScaleY(1);
+				accentBand.bottom = accentBand.top + DpiScaleY(2);
 				::MyFillRect(gr, accentBand, palette.accent.ToColorRef());
+			}
+			if (!bSelected && nTabIndex + 1 < nTabCount) {
+				RECT separator = rcItem;
+				separator.left = separator.right - DpiScaleX(1);
+				separator.top += DpiScaleY(6);
+				separator.bottom -= DpiScaleY(6);
+				::MyFillRect(gr, separator, palette.border.ToColorRef());
 			}
 		} else if( !IsVisualStyle() ) {
 			::MyFillRect( gr, rcItem, COLOR_BTNFACE );
@@ -1458,11 +1465,12 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 			}
 		}
 
-		rcItem.left += DpiScaleX(4) + (bSelected ? DpiScaleX(4) : 0);
+		rcItem.left += DpiScaleX(8);
 
 		// アイコン描画
 		int cxIcon = CX_SMICON;
 		int cyIcon = CY_SMICON;
+		bool iconDrawn = false;
 		if( nullptr != m_hIml )
 		{
 			ImageList_GetIconSize( m_hIml, &cxIcon, &cyIcon );
@@ -1470,10 +1478,40 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 			{
 				int top = rcItem.top + ( rcItem.bottom - rcItem.top - cyIcon ) / 2 - 1;
 				ImageList_Draw( m_hIml, item.iImage, lpdis->hDC, rcItem.left,
-					top + (bSelected ? 0 : DpiScaleY(3)), ILD_TRANSPARENT );
-				rcItem.left += cxIcon + DpiScaleX(6);
+					top, ILD_TRANSPARENT );
+				iconDrawn = true;
 			}
 		}
+		if( !iconDrawn ) {
+			const int iconWidth = DpiScaleX(14);
+			const int iconHeight = DpiScaleY(16);
+			const int left = rcItem.left + DpiScaleX(1);
+			const int top = rcItem.top + (rcItem.bottom - rcItem.top - iconHeight) / 2;
+			const int right = left + iconWidth;
+			const int bottom = top + iconHeight;
+			const COLORREF glyphColor = IsDarkModeActive()
+				? theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark).secondaryText.ToColorRef()
+				: ::GetSysColor(COLOR_BTNTEXT);
+			const int penWidth = (std::max)(1, static_cast<int>(DpiScaleX(1)));
+			const HPEN pen = ::CreatePen(PS_SOLID, penWidth, glyphColor);
+			if( pen != nullptr ) {
+				const HGDIOBJ oldPen = ::SelectObject(hdc, pen);
+				const int fold = DpiScaleX(4);
+				::MoveToEx(hdc, left, top, nullptr);
+				::LineTo(hdc, right - fold, top);
+				::LineTo(hdc, right, top + fold);
+				::LineTo(hdc, right, bottom);
+				::LineTo(hdc, left, bottom);
+				::LineTo(hdc, left, top);
+				::MoveToEx(hdc, right - fold, top, nullptr);
+				::LineTo(hdc, right - fold, top + fold);
+				::LineTo(hdc, right, top + fold);
+				::SelectObject(hdc, oldPen);
+				::DeleteObject(pen);
+			}
+			cxIcon = DpiScaleX(16);
+		}
+		rcItem.left += cxIcon + DpiScaleX(6);
 
 		// テキスト描画
 		COLORREF clrText;
@@ -1486,12 +1524,12 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 		gr.PushTextForeColor( clrText );
 		gr.SetTextBackTransparent(true);
 		RECT rcText = rcItem;
-		rcText.top += (bSelected ? 0 : DpiScaleY(5)) - DpiScaleY(1);
 
 		// テキスト矩形は最大でもタブを閉じるボタンの左端までに切り詰める
 		// タブを閉じるボタンの矩形は他の箇所と同様 TabCtrl_GetItemRect の矩形から取得（lpdis->rcItem の矩形だと若干ずれる）
 		EDispTabClose bDispTabClose = m_pShareData->m_Common.m_sTabBar.m_bDispTabClose;
-		bool bDrawTabCloseBtn = (bDispTabClose == DISPTABCLOSE_ALLWAYS || (bDispTabClose == DISPTABCLOSE_AUTO && nTabIndex == m_nTabHover));
+		bool bDrawTabCloseBtn = bSelected || bDispTabClose == DISPTABCLOSE_ALLWAYS
+			|| (bDispTabClose == DISPTABCLOSE_AUTO && nTabIndex == m_nTabHover);
 		RECT rcGetItemRect;
 		TabCtrl_GetItemRect(m_hwndTab, nTabIndex, &rcGetItemRect);
 		if( bDrawTabCloseBtn ){
@@ -1500,7 +1538,8 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 			rcText.right = rcClose.left;
 		}
 
-		::DrawText( gr, szBuf, -1, &rcText, DT_SINGLELINE | DT_LEFT | DT_VCENTER );
+		::DrawText( gr, szBuf, -1, &rcText,
+			DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX );
 
 		gr.PopTextForeColor();
 

@@ -238,6 +238,96 @@ void CDlgFuncList::SetWorkbenchMode( bool enabled ) noexcept
 	}
 }
 
+void CDlgFuncList::SetWorkbenchAppearance(
+	COLORREF text,
+	COLORREF background,
+	COLORREF hover,
+	COLORREF selection,
+	COLORREF selectionText,
+	HFONT font,
+	int itemHeight,
+	HIMAGELIST symbolImages ) noexcept
+{
+	m_workbenchText = text;
+	m_workbenchBackground = background;
+	m_workbenchHover = hover;
+	m_workbenchSelection = selection;
+	m_workbenchSelectionText = selectionText;
+	m_workbenchFont = font;
+	m_workbenchItemHeight = (std::max)(1, itemHeight);
+	m_workbenchSymbolImages = symbolImages;
+	ApplyWorkbenchAppearance();
+}
+
+static std::wstring CompactWorkbenchTreeText(
+	HWND hwndTree, const wchar_t* text, int depth, HFONT fontOverride );
+
+void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
+{
+	if( !IsWorkbenchMode() || GetHwnd() == nullptr ) return;
+
+	const HWND hwndTree = GetItemHwnd( IDC_TREE_FL );
+	if( hwndTree != nullptr ){
+		LONG_PTR style = ::GetWindowLongPtrW( hwndTree, GWL_STYLE );
+		style &= ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS);
+		style |= TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
+		::SetWindowLongPtrW( hwndTree, GWL_STYLE, style );
+		::SendMessageW( hwndTree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER );
+		::SendMessageW( hwndTree, TVM_SETITEMHEIGHT, static_cast<WPARAM>(m_workbenchItemHeight), 0 );
+		if( m_workbenchFont != nullptr ) ::SendMessageW( hwndTree, WM_SETFONT, reinterpret_cast<WPARAM>(m_workbenchFont), FALSE );
+		TreeView_SetBkColor( hwndTree, m_workbenchBackground );
+		TreeView_SetTextColor( hwndTree, m_workbenchText );
+		TreeView_SetImageList( hwndTree, m_workbenchSymbolImages, TVSIL_NORMAL );
+
+		std::vector<HTREEITEM> pending;
+		if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
+		while( !pending.empty() ){
+			const HTREEITEM itemHandle = pending.back();
+			pending.pop_back();
+			TVITEMW source{};
+			source.mask = TVIF_PARAM;
+			source.hItem = itemHandle;
+			(void)TreeView_GetItem( hwndTree, &source );
+			std::wstring compactText;
+			if( !m_bDummyLParamMode && m_pcFuncInfoArr != nullptr
+				&& source.lParam >= 0 && source.lParam < m_pcFuncInfoArr->GetNum() ){
+				const CFuncInfo* info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(source.lParam));
+				compactText = CompactWorkbenchTreeText(
+					hwndTree, info->m_cmemFuncName.GetStringPtr(), info->m_nDepth, m_workbenchFont );
+			}
+			TVITEMW item{};
+			item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+			item.hItem = itemHandle;
+			const int imageIndex = TreeView_GetParent(hwndTree, itemHandle) == nullptr ? 0 : 1;
+			item.iImage = imageIndex;
+			item.iSelectedImage = imageIndex;
+			if( !compactText.empty() ){
+				item.mask |= TVIF_TEXT;
+				item.pszText = compactText.data();
+			}
+			(void)TreeView_SetItem( hwndTree, &item );
+			if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, itemHandle); sibling != nullptr ) pending.push_back(sibling);
+			if( const HTREEITEM child = TreeView_GetChild(hwndTree, itemHandle); child != nullptr ) pending.push_back(child);
+		}
+		::SetWindowPos( hwndTree, nullptr, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+		::InvalidateRect( hwndTree, nullptr, TRUE );
+	}
+
+	const HWND hwndList = GetItemHwnd( IDC_LIST_FL );
+	if( hwndList != nullptr ){
+		const LONG_PTR style = ::GetWindowLongPtrW( hwndList, GWL_STYLE ) & ~WS_BORDER;
+		::SetWindowLongPtrW( hwndList, GWL_STYLE, style );
+		if( m_workbenchFont != nullptr ) ::SendMessageW( hwndList, WM_SETFONT, reinterpret_cast<WPARAM>(m_workbenchFont), FALSE );
+		ListView_SetTextColor( hwndList, m_workbenchText );
+		ListView_SetTextBkColor( hwndList, m_workbenchBackground );
+		ListView_SetBkColor( hwndList, m_workbenchBackground );
+		::SetWindowPos( hwndList, nullptr, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+		::InvalidateRect( hwndList, nullptr, TRUE );
+	}
+}
+
 /*!
 	標準以外のメッセージを捕捉する
 
@@ -501,8 +591,9 @@ void CDlgFuncList::SetData()
 		::SetWindowText( GetHwnd(), LS(STR_DLGFNCLST_TITLE_COBOL) );
 	}
 	else if( OUTLINE_VB == m_nListType ){	/* VisualBasic アウトライン */
-		m_nViewType = VIEWTYPE_LIST;
-		SetListVB();
+		m_nViewType = IsWorkbenchMode() ? VIEWTYPE_TREE : VIEWTYPE_LIST;
+		if( IsWorkbenchMode() ) SetTree(hInsertAfter);
+		else SetListVB();
 		::SetWindowText( GetHwnd(), LS(STR_DLGFNCLST_TITLE_VB) );
 	}
 	else if( OUTLINE_XML == m_nListType ){ // XMLツリー
@@ -531,7 +622,7 @@ void CDlgFuncList::SetData()
 		::SetWindowText( GetHwnd(), L"" );
 	}
 	else{
-		m_nViewType = VIEWTYPE_LIST;
+		m_nViewType = IsWorkbenchMode() ? VIEWTYPE_TREE : VIEWTYPE_LIST;
 		switch( m_nListType ){
 		case OUTLINE_C:
 			::SetWindowText( GetHwnd(), LS(STR_DLGFNCLST_TITLE_C) );
@@ -568,6 +659,12 @@ void CDlgFuncList::SetData()
 		default:
 			break;
 		}
+		if( IsWorkbenchMode() ){
+			// The workbench Outline is a symbol hierarchy.  Legacy list-only
+			// analyzers become a flat tree so they share the same compact row,
+			// icon, keyboard and selection model as hierarchical analyzers.
+			SetTree(hInsertAfter);
+		}else{
 		//	May 18, 2001 genta
 		//	Windowがいなくなると後で都合が悪いので、表示しないだけにしておく
 		//::DestroyWindow( hwndTree );
@@ -694,6 +791,7 @@ void CDlgFuncList::SetData()
 		DWORD dwExStyle  = ListView_GetExtendedListViewStyle( hwndList );
 		dwExStyle |= LVS_EX_FULLROWSELECT;
 		ListView_SetExtendedListViewStyle( hwndList, dwExStyle );
+		}
 	}
 
 	/* アウトライン ダイアログを自動的に閉じる */
@@ -737,7 +835,16 @@ void CDlgFuncList::SetData()
 		m_bSortDesc = m_type.m_bOutlineSortDesc;
 		m_nSortType = m_type.m_nOutlineSortType;
 	}
-	if( m_nViewType == VIEWTYPE_TREE && m_nListType != OUTLINE_FILETREE ){
+	if( IsWorkbenchMode() ){
+		::EnableWindow( GetItemHwnd(IDC_COMBO_nSortType), FALSE );
+		::ShowWindow( GetItemHwnd(IDC_COMBO_nSortType), SW_HIDE );
+		::ShowWindow( GetItemHwnd(IDC_STATIC_nSortType), SW_HIDE );
+		if( m_nViewType == VIEWTYPE_TREE
+			&& m_nSortType != SORTTYPE_DEFAULT
+			&& m_nSortType != SORTTYPE_DEFAULT_DESC ){
+			SortTree(hwndTree, TVI_ROOT);
+		}
+	}else if( m_nViewType == VIEWTYPE_TREE && m_nListType != OUTLINE_FILETREE ){
 		HWND hWnd_Combo_Sort = GetItemHwnd( IDC_COMBO_nSortType );
 		if( m_nListType == OUTLINE_FILETREE ){
 			::EnableWindow( hWnd_Combo_Sort , FALSE );
@@ -774,6 +881,18 @@ void CDlgFuncList::SetData()
 	::ShowWindow(hwndShow, SW_SHOW);
 	::SendMessage(hwndList, WM_SETREDRAW, (WPARAM)TRUE, 0);
 	::SendMessage(hwndTree, WM_SETREDRAW, (WPARAM)TRUE, 0);
+	if( IsWorkbenchMode() ){
+		std::vector<HTREEITEM> pending;
+		if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
+		while( !pending.empty() ){
+			const HTREEITEM item = pending.back();
+			pending.pop_back();
+			(void)TreeView_Expand( hwndTree, item, TVE_EXPAND );
+			if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, item); sibling != nullptr ) pending.push_back(sibling);
+			if( const HTREEITEM child = TreeView_GetChild(hwndTree, item); child != nullptr ) pending.push_back(child);
+		}
+		ApplyWorkbenchAppearance();
+	}
 	// 選択状態更新
 	int nFuncInfoIndex = -1;
 	if (GetFuncInfoIndex(m_nCurLine, m_nCurCol, &nFuncInfoIndex)) {
@@ -1400,6 +1519,48 @@ void CDlgFuncList::SetListVB (void)
 	@date 2014.06.06 Moca 他ファイルへのタグジャンプ機能を追加
 	@date 2020.09.12 選択処理をGetFuncInfoIndex,SetItemSelectionへ移動
 */
+static std::wstring CompactWorkbenchTreeText(
+	HWND hwndTree, const wchar_t* text, int depth, HFONT fontOverride )
+{
+	std::wstring result = text != nullptr ? text : L"";
+	if( hwndTree == nullptr || result.empty() ) return result;
+
+	RECT client{};
+	if( !::GetClientRect(hwndTree, &client) ) return result;
+	int imageWidth = 0;
+	int imageHeight = 0;
+	if( const HIMAGELIST images = TreeView_GetImageList(hwndTree, TVSIL_NORMAL); images != nullptr ){
+		(void)::ImageList_GetIconSize( images, &imageWidth, &imageHeight );
+	}
+	const int indent = static_cast<int>(TreeView_GetIndent(hwndTree));
+	const int textLeft = (std::max)(0, depth) * indent + imageWidth + 11;
+	const int available = (std::max)(0L,
+		client.right - client.left - textLeft - ::GetSystemMetrics(SM_CXVSCROLL) - 6);
+	if( available <= 0 ) return L"...";
+
+	const HDC dc = ::GetDC(hwndTree);
+	if( dc == nullptr ) return result;
+	const HFONT font = fontOverride != nullptr
+		? fontOverride : reinterpret_cast<HFONT>(::SendMessageW(hwndTree, WM_GETFONT, 0, 0));
+	const HGDIOBJ oldFont = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+	SIZE size{};
+	(void)::GetTextExtentPoint32W( dc, result.c_str(), static_cast<int>(result.size()), &size );
+	if( size.cx > available ){
+		constexpr wchar_t ellipsis[] = L"...";
+		SIZE ellipsisSize{};
+		(void)::GetTextExtentPoint32W( dc, ellipsis, 3, &ellipsisSize );
+		while( !result.empty() ){
+			result.pop_back();
+			(void)::GetTextExtentPoint32W( dc, result.c_str(), static_cast<int>(result.size()), &size );
+			if( size.cx + ellipsisSize.cx <= available ) break;
+		}
+		result += ellipsis;
+	}
+	if( oldFont != nullptr ) ::SelectObject(dc, oldFont);
+	::ReleaseDC( hwndTree, dc );
+	return result;
+}
+
 void CDlgFuncList::SetTree(HTREEITEM hInsertAfter, bool tagjump, bool nolabel)
 {
 	HWND hwndTree = GetItemHwnd( IDC_TREE_FL );
@@ -1441,8 +1602,21 @@ void CDlgFuncList::SetTree(HTREEITEM hInsertAfter, bool tagjump, bool nolabel)
 		cTVInsertStruct.hParent = phParentStack[ nStackPointer ];
 		cTVInsertStruct.hInsertAfter = hInsertAfter;
 		cTVInsertStruct.item.mask = TVIF_TEXT | TVIF_PARAM;
-		cTVInsertStruct.item.pszText = pcFuncInfo->m_cmemFuncName.GetStringPtr();
+		std::wstring workbenchText;
+		if( IsWorkbenchMode() ){
+			workbenchText = CompactWorkbenchTreeText(
+				hwndTree, pcFuncInfo->m_cmemFuncName.GetStringPtr(), pcFuncInfo->m_nDepth,
+				m_workbenchFont );
+		}
+		cTVInsertStruct.item.pszText = IsWorkbenchMode()
+			? workbenchText.data() : pcFuncInfo->m_cmemFuncName.GetStringPtr();
 		cTVInsertStruct.item.lParam = i;	//	あとでこの数値（＝m_pcFuncInfoArrの何番目のアイテムか）を見て、目的地にジャンプするぜ!!。
+		if( IsWorkbenchMode() ){
+			cTVInsertStruct.item.mask |= TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+			const int imageIndex = pcFuncInfo->m_nDepth == 0 ? 0 : 1;
+			cTVInsertStruct.item.iImage = imageIndex;
+			cTVInsertStruct.item.iSelectedImage = imageIndex;
+		}
 
 		/*	親子関係をチェック
 		*/
@@ -1878,8 +2052,6 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 			hwndPrev = hwnd;
 			hwnd = ::GetWindow( hwnd, GW_HWNDNEXT );
 			switch( nId ){
-			case IDC_STATIC_nSortType:
-			case IDC_COMBO_nSortType:
 			case IDC_LIST_FL:
 			case IDC_TREE_FL:
 				continue;
@@ -1890,6 +2062,7 @@ BOOL CDlgFuncList::OnInitDialog( HWND hwndDlg, WPARAM wParam, LPARAM lParam )
 		}
 	}
 
+	ApplyWorkbenchAppearance();
 	SyncColor();
 
 	::GetWindowRect( hwndDlg, &rc );
@@ -2112,6 +2285,24 @@ BOOL CDlgFuncList::OnNotify(NMHDR* pNMHDR)
 					break;
 				case CDDS_ITEMPREPAINT:
 					{	// 選択アイテムを反転表示にする
+						if( IsWorkbenchMode() ){
+							const bool selected = hwndList == pNMHDR->hwndFrom
+								? (ListView_GetItemState(hwndList, lpnmcd->dwItemSpec, LVIS_SELECTED) != 0)
+								: ((lpnmcd->uItemState & CDIS_SELECTED) != 0);
+							const bool hot = (lpnmcd->uItemState & CDIS_HOT) != 0;
+							const COLORREF text = selected ? m_workbenchSelectionText : m_workbenchText;
+							const COLORREF background = selected ? m_workbenchSelection
+								: (hot ? m_workbenchHover : m_workbenchBackground);
+							if( hwndList == pNMHDR->hwndFrom ){
+								((LPNMLVCUSTOMDRAW)lpnmcd)->clrText = text;
+								((LPNMLVCUSTOMDRAW)lpnmcd)->clrTextBk = background;
+								if( selected ) lpnmcd->uItemState &= ~CDIS_SELECTED;
+							}else{
+								((LPNMTVCUSTOMDRAW)lpnmcd)->clrText = text;
+								((LPNMTVCUSTOMDRAW)lpnmcd)->clrTextBk = background;
+							}
+							break;
+						}
 						const STypeConfig	*TypeDataPtr = &(pcEditView->m_pcEditDoc->m_cDocType.GetDocumentAttribute());
 						COLORREF clrText = TypeDataPtr->m_ColorInfoArr[COLORIDX_TEXT].m_sColorAttr.m_cTEXT;
 						COLORREF clrTextBk = TypeDataPtr->m_ColorInfoArr[COLORIDX_TEXT].m_sColorAttr.m_cBACK;
@@ -2238,6 +2429,17 @@ BOOL CDlgFuncList::OnSize( WPARAM wParam, LPARAM lParam )
 
 	/* 基底クラスメンバ */
 	CDialog::OnSize( wParam, lParam );
+	if( IsWorkbenchMode() ){
+		const int width = (std::max)(0L, rcDlg.right - rcDlg.left);
+		const int height = (std::max)(0L, rcDlg.bottom - rcDlg.top);
+		for( const int id : { IDC_TREE_FL, IDC_LIST_FL } ){
+			const HWND control = GetItemHwnd(id);
+			if( control != nullptr ) ::SetWindowPos( control, nullptr, 0, 0, width, height,
+				SWP_NOACTIVATE | SWP_NOZORDER );
+		}
+		ApplyWorkbenchAppearance();
+		return TRUE;
+	}
 
 	RECT  rc;
 	POINT ptNew;
@@ -2635,6 +2837,10 @@ void CDlgFuncList::SetWindowText( const WCHAR* szTitle )
 */
 void CDlgFuncList::SyncColor( void )
 {
+	if( IsWorkbenchMode() ){
+		ApplyWorkbenchAppearance();
+		return;
+	}
 	if( !UsesCompactPanelLayout() )
 		return;
 #ifdef DEFINE_SYNCCOLOR

@@ -50,13 +50,13 @@ TEST(CThemeService, FontPolicyPrefersNativeWindowsElevenFamilies)
 	const auto chrome = CThemeService::FontSpec(ThemeFontKind::Chrome);
 	EXPECT_STREQ(L"Segoe UI Variable", chrome.preferredFamily);
 	EXPECT_STREQ(L"Segoe UI", chrome.fallbackFamily);
-	EXPECT_EQ(9, chrome.pointSize);
+	EXPECT_EQ(8, chrome.pointSize);
 	EXPECT_FALSE(chrome.fixedPitch);
 
 	const auto terminal = CThemeService::FontSpec(ThemeFontKind::Terminal);
 	EXPECT_STREQ(L"Cascadia Mono", terminal.preferredFamily);
 	EXPECT_STREQ(L"Consolas", terminal.fallbackFamily);
-	EXPECT_EQ(10, terminal.pointSize);
+	EXPECT_EQ(9, terminal.pointSize);
 	EXPECT_TRUE(terminal.fixedPitch);
 }
 

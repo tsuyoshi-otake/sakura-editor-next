@@ -67,6 +67,7 @@
 #include "workbench/WorkbenchLayout.h"
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/explorer/CExplorerTool.h"
+#include "workbench/explorer/CExplorerOutlineTool.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 
 #include "macro/CMacroFactory.h"
@@ -351,8 +352,19 @@ bool CEditWnd::InitializeWorkbench()
 
 	m_leftWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
 		workbench::WorkbenchEdge::Left, settings.m_nLeftPanelExtent96, persistExtent);
-	auto explorer = std::make_unique<workbench::explorer::CExplorerTool>();
-	m_explorerTool = explorer.get();
+	auto explorer = std::make_unique<workbench::explorer::CExplorerOutlineTool>(m_cDlgFuncList,
+		[this](bool expanded) {
+			auto& workbenchSettings = m_pShareData->m_Common.m_sWorkbench;
+			const BOOL value = expanded ? TRUE : FALSE;
+			if (workbenchSettings.m_bRightPanelVisible != value) {
+				workbenchSettings.m_bRightPanelVisible = value;
+				BroadcastWorkbenchSettings();
+			}
+			if (expanded && m_dispatchReady) ReloadWorkbenchOutlineAndRelayout();
+		});
+	m_explorerOutlineTool = explorer.get();
+	m_explorerTool = explorer->Explorer();
+	m_outlineWorkbenchTool = explorer->Outline();
 	m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
 	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path) {
 		const std::wstring ownedPath(path);
@@ -361,15 +373,6 @@ bool CEditWnd::InitializeWorkbench()
 	if (!m_leftWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(explorer))) {
 		m_explorerTool = nullptr;
 		m_leftWorkbenchPanel.reset();
-	}
-
-	m_rightWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
-		workbench::WorkbenchEdge::Right, settings.m_nRightPanelExtent96, persistExtent);
-	auto outline = std::make_unique<workbench::outline::COutlineWorkbenchTool>(m_cDlgFuncList);
-	m_outlineWorkbenchTool = outline.get();
-	if (!m_rightWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(outline))) {
-		m_outlineWorkbenchTool = nullptr;
-		m_rightWorkbenchPanel.reset();
 	}
 
 	m_bottomWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
@@ -388,7 +391,8 @@ bool CEditWnd::InitializeWorkbench()
 			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Left, true);
 			break;
 		case workbench::ActivityBarItem::Outline:
-			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Right, true);
+			SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right,
+				!IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Right), true);
 			break;
 		case workbench::ActivityBarItem::Terminal:
 			ToggleWorkbenchPanel(workbench::WorkbenchEdge::Bottom, true);
@@ -400,7 +404,6 @@ bool CEditWnd::InitializeWorkbench()
 	if (!m_activityBar->Create(GetHwnd(), G_AppInstance())) m_activityBar.reset();
 
 	const bool initialized = m_leftWorkbenchPanel != nullptr
-		&& m_rightWorkbenchPanel != nullptr
 		&& m_bottomWorkbenchPanel != nullptr
 		&& m_activityBar != nullptr;
 	if (!initialized) {
@@ -428,6 +431,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_leftWorkbenchPanel.reset();
 	m_rightWorkbenchPanel.reset();
 	m_bottomWorkbenchPanel.reset();
+	m_explorerOutlineTool = nullptr;
 	m_explorerTool = nullptr;
 	m_outlineWorkbenchTool = nullptr;
 	m_terminalTool = nullptr;
@@ -443,9 +447,9 @@ void CEditWnd::ApplyWorkbenchTheme()
 	m_cStatusBar.SetPalette(palette);
 	if (m_cTabWnd.GetHwnd()) m_cTabWnd.UpdateTheme();
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->SetPalette(palette);
-	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->SetPalette(palette);
+	if (m_explorerOutlineTool) m_explorerOutlineTool->SetPalette(palette);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->SetPalette(palette);
-	if (m_explorerTool) {
+	if (m_explorerTool && !m_explorerOutlineTool) {
 		m_explorerTool->SetPalette({ palette.panel.ToColorRef(), palette.primaryText.ToColorRef(),
 			palette.border.ToColorRef(), palette.accent.ToColorRef() });
 	}
@@ -475,7 +479,7 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		if (visible != FALSE) host->Show(); else host->Hide();
 	};
 	applyPanel(m_leftWorkbenchPanel.get(), settings.m_bLeftPanelVisible, settings.m_nLeftPanelExtent96);
-	applyPanel(m_rightWorkbenchPanel.get(), settings.m_bRightPanelVisible, settings.m_nRightPanelExtent96);
+	if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(settings.m_bRightPanelVisible != FALSE);
 	applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible, settings.m_nBottomPanelExtent96);
 
 	std::optional<workbench::ActivityBarItem> activeItem;
@@ -484,7 +488,7 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Explorer;
 		break;
 	case WORKBENCH_TOOL_OUTLINE:
-		if (settings.m_bRightPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Outline;
+		if (settings.m_bLeftPanelVisible != FALSE && settings.m_bRightPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Outline;
 		break;
 	case WORKBENCH_TOOL_TERMINAL:
 		if (settings.m_bBottomPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Terminal;
@@ -508,8 +512,9 @@ void CEditWnd::ReloadWorkbenchOutlineAndRelayout()
 {
 	const bool commandSucceeded = GetActiveView().GetCommander().Command_FUNCLIST(
 		SHOW_RELOAD, OUTLINE_DEFAULT ) != FALSE;
-	const bool rightPanelVisible = m_rightWorkbenchPanel != nullptr
-		&& m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
+	const bool rightPanelVisible = m_leftWorkbenchPanel != nullptr
+		&& m_leftWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden
+		&& m_explorerOutlineTool != nullptr && m_explorerOutlineTool->IsOutlineExpanded();
 	const bool dialogCreated = m_cDlgFuncList.GetHwnd() != nullptr;
 	if( !workbench::outline::ShouldRelayoutOutlineAfterReload(
 		commandSucceeded, rightPanelVisible, dialogCreated ) || GetHwnd() == nullptr ) {
@@ -563,7 +568,10 @@ bool CEditWnd::IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noex
 	const workbench::CWorkbenchPanelHost* host = nullptr;
 	switch (edge) {
 	case workbench::WorkbenchEdge::Left: host = m_leftWorkbenchPanel.get(); break;
-	case workbench::WorkbenchEdge::Right: host = m_rightWorkbenchPanel.get(); break;
+	case workbench::WorkbenchEdge::Right:
+		return m_leftWorkbenchPanel != nullptr
+			&& m_leftWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden
+			&& m_explorerOutlineTool != nullptr && m_explorerOutlineTool->IsOutlineExpanded();
 	case workbench::WorkbenchEdge::Bottom: host = m_bottomWorkbenchPanel.get(); break;
 	}
 	return host != nullptr && host->GetState() != workbench::WorkbenchPanelState::Hidden;
@@ -582,7 +590,7 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		item = workbench::ActivityBarItem::Explorer;
 		break;
 	case workbench::WorkbenchEdge::Right:
-		host = m_rightWorkbenchPanel.get();
+		host = m_leftWorkbenchPanel.get();
 		savedVisible = &settings.m_bRightPanelVisible;
 		item = workbench::ActivityBarItem::Outline;
 		break;
@@ -595,6 +603,7 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	const BOOL requestedVisible = visible ? TRUE : FALSE;
 	const bool visibilityChanged = savedVisible != nullptr && *savedVisible != requestedVisible;
 	if (savedVisible) *savedVisible = requestedVisible;
+	bool leftVisibilityChanged = false;
 	const auto oldActiveTool = settings.m_eActiveTool;
 	if (visible && activate) {
 		switch (edge) {
@@ -603,7 +612,14 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		case workbench::WorkbenchEdge::Bottom: settings.m_eActiveTool = WORKBENCH_TOOL_TERMINAL; break;
 		}
 	}
-	if (host != nullptr) {
+	if (edge == workbench::WorkbenchEdge::Right) {
+		if (visible && m_leftWorkbenchPanel) {
+			leftVisibilityChanged = settings.m_bLeftPanelVisible == FALSE;
+			m_leftWorkbenchPanel->Show();
+			settings.m_bLeftPanelVisible = TRUE;
+		}
+		if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(visible);
+	} else if (host != nullptr) {
 		if (visible) host->Show(); else host->Hide();
 	}
 	if (GetHwnd() != nullptr) {
@@ -615,9 +631,18 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	// bounds.  In particular, ConPTY must not be started from the host's initial
 	// empty rectangle, which would create a 1x1 pseudo console and lose the
 	// shell's startup output before the first resize.
-	if (host != nullptr && visible && activate) host->ActivateTool();
+	if (host != nullptr && visible && activate) {
+		if (edge == workbench::WorkbenchEdge::Right && m_explorerOutlineTool) {
+			if (m_dispatchReady) ReloadWorkbenchOutlineAndRelayout();
+			m_explorerOutlineTool->FocusOutline();
+		} else {
+			host->ActivateTool();
+		}
+	}
 	if (m_activityBar && visible && activate) m_activityBar->SetSelectedItem(item);
-	if (visibilityChanged || oldActiveTool != settings.m_eActiveTool) BroadcastWorkbenchSettings();
+	if (visibilityChanged || leftVisibilityChanged || oldActiveTool != settings.m_eActiveTool) {
+		BroadcastWorkbenchSettings();
+	}
 }
 
 void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate)
@@ -3838,6 +3863,11 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Layout(ToWinRect(layout.leftPane), layoutRequest.dpi);
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Layout(ToWinRect(layout.rightPane), layoutRequest.dpi);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Layout(ToWinRect(layout.bottomPane), layoutRequest.dpi);
+	if (m_cTabWnd.GetHwnd() && m_cTabWnd.m_eTabPosition == TabPosition_Top) {
+		::MoveWindow(m_cTabWnd.GetHwnd(), layout.documentTabs.left, layout.documentTabs.top,
+			layout.documentTabs.Width(), layout.documentTabs.Height(), TRUE);
+		m_cTabWnd.OnSize();
+	}
 
 	if( m_cMiniMapView.GetHwnd() ){
 		::MoveWindow(m_cMiniMapView.GetHwnd(), layout.minimap.left, layout.minimap.top,

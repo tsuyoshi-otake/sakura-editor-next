@@ -390,12 +390,12 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	EXPECT_THAT(sWindow.m_bDispTOOLBAR, IsFalse());
 	EXPECT_THAT(sWindow.m_bDispSTATUSBAR, IsTrue());
 	EXPECT_THAT(sWindow.m_bDispFUNCKEYWND, IsFalse());
-	EXPECT_THAT(sWindow.m_bDispMiniMap, IsFalse());
+	EXPECT_THAT(sWindow.m_bDispMiniMap, IsTrue());
 	EXPECT_THAT(sWindow.m_nFUNCKEYWND_Place, 1);
 	EXPECT_THAT(sWindow.m_nFUNCKEYWND_GroupNum, 4);
 	EXPECT_THAT(sWindow.m_nMiniMapFontSize, -2);
 	EXPECT_THAT(sWindow.m_nMiniMapQuality, NONANTIALIASED_QUALITY);
-	EXPECT_THAT(sWindow.m_nMiniMapWidth, 150);
+	EXPECT_THAT(sWindow.m_nMiniMapWidth, 100);
 	EXPECT_THAT(sWindow.m_bDarkMode, IsTrue());
 	EXPECT_THAT(sWindow.m_bSplitterWndHScroll, IsTrue());
 	EXPECT_THAT(sWindow.m_bSplitterWndVScroll, IsTrue());
@@ -445,7 +445,7 @@ MATCHER_P2(IsInitializedCommonSettingTabBar, lfIconTitle, nIconPointSize, "Check
 	EXPECT_THAT(sTabBar.m_lf, lfIconTitle);
 	EXPECT_THAT(sTabBar.m_nPointSize, nIconPointSize);
 	EXPECT_THAT(sTabBar.m_nTabMaxWidth, 200);
-	EXPECT_THAT(sTabBar.m_nTabMinWidth, 60);
+	EXPECT_THAT(sTabBar.m_nTabMinWidth, 120);
 	EXPECT_THAT(sTabBar.m_nTabMinWidthOnMulti, 100);
 
 	return true;

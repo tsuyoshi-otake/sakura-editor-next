@@ -927,6 +927,7 @@
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\CActivityBar.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />

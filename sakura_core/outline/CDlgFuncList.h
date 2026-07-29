@@ -24,6 +24,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <CommCtrl.h>
 #include "dlg/CDialog.h"
 #include "doc/CEditDoc.h"
 
@@ -74,6 +75,15 @@ public:
 	void ChangeView(LPARAM pcEditView);	/* モードレス時：検索対象となるビューの変更 */
 	void SetWorkbenchParent( HWND parent ) noexcept;
 	void SetWorkbenchMode( bool enabled ) noexcept;
+	void SetWorkbenchAppearance(
+		COLORREF text,
+		COLORREF background,
+		COLORREF hover,
+		COLORREF selection,
+		COLORREF selectionText,
+		HFONT font,
+		int itemHeight,
+		HIMAGELIST symbolImages ) noexcept;
 	[[nodiscard]] HWND GetWorkbenchParent() const noexcept { return m_hwndWorkbenchParent; }
 	[[nodiscard]] bool IsWorkbenchMode() const noexcept { return m_bWorkbenchMode; }
 	[[nodiscard]] bool IsDocking() const noexcept { return !m_bWorkbenchMode && m_eDockSide > DOCKSIDE_FLOAT; }
@@ -192,6 +202,7 @@ protected:
 
 private:
 	[[nodiscard]] bool UsesCompactPanelLayout() const noexcept { return m_bWorkbenchMode || IsDocking(); }
+	void ApplyWorkbenchAppearance() noexcept;
 
 	//	May 18, 2001 genta
 	/*!
@@ -221,6 +232,14 @@ private:
 	EDockSide	m_eDockSide;	// 現在の画面の表示位置
 	HWND		m_hwndWorkbenchParent = nullptr;
 	bool		m_bWorkbenchMode = false;
+	COLORREF	m_workbenchText = RGB(0xCC, 0xCC, 0xCC);
+	COLORREF	m_workbenchBackground = RGB(0x25, 0x25, 0x26);
+	COLORREF	m_workbenchHover = RGB(0x2A, 0x2D, 0x2E);
+	COLORREF	m_workbenchSelection = RGB(0x37, 0x37, 0x3D);
+	COLORREF	m_workbenchSelectionText = RGB(0xFF, 0xFF, 0xFF);
+	HFONT		m_workbenchFont = nullptr;
+	int			m_workbenchItemHeight = 22;
+	HIMAGELIST	m_workbenchSymbolImages = nullptr;
 	HWND		m_hwndToolTip;	/*!< ツールチップ（ボタン用） */
 	bool		m_bStretching;
 	bool		m_bHovering;

@@ -14,6 +14,7 @@
 #include "env/DLLSHAREDATA.h"
 #include "outline/CFuncInfo.h"
 #include "outline/CFuncInfoArr.h"
+#include "util/file.h"
 #include "view/colors/EColorIndexType.h"
 #include "CSelectLang.h"
 
@@ -83,6 +84,56 @@ void CDocOutline::MakeTopicList_txt( CFuncInfoArr* pcFuncInfoArr )
 	//見出し記号
 	const wchar_t*	pszStarts = GetDllShareData().m_Common.m_sFormat.m_szMidashiKigou;
 	auto nStartsLen = int(wcslen(pszStarts));
+	const wchar_t* filePath = m_pcDocRef->m_cDocFile.GetFilePath();
+	const bool isMarkdown = CheckEXT(filePath, L"md")
+		|| CheckEXT(filePath, L"markdown")
+		|| CheckEXT(filePath, L"mdown")
+		|| CheckEXT(filePath, L"mkd");
+	if( isMarkdown ){
+		int currentHeadingDepth = -1;
+		for( CLogicInt line = CLogicInt(0); line < m_pcDocRef->m_cDocLineMgr.GetLineCount(); ++line ){
+			CLogicInt logicLength;
+			const wchar_t* lineText = m_pcDocRef->m_cDocLineMgr.GetLine(line)->GetDocLineStrWithEOL(&logicLength);
+			if( lineText == nullptr ) break;
+			const int lineLength = static_cast<int>(logicLength);
+			int start = 0;
+			while( start < lineLength && WCODE::IsBlank(lineText[start]) ) ++start;
+			if( start >= lineLength ) continue;
+
+			const bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+			int end = start;
+			while( end < lineLength && !WCODE::IsLineDelimiter(lineText[end], bExtEol) ) ++end;
+
+			int depth = -1;
+			std::wstring displayText;
+			if( lineText[start] == L'#' ){
+				int markerLength = 1;
+				while( markerLength < 6 && start + markerLength < end
+					&& lineText[start + markerLength] == L'#' ) ++markerLength;
+				const int markerEnd = start + markerLength;
+				if( markerEnd < end && !WCODE::IsBlank(lineText[markerEnd]) ) continue;
+				depth = markerLength - 1;
+				currentHeadingDepth = depth;
+				displayText.assign( &lineText[start], end - start );
+			}else if( lineText[start] == L'[' ){
+				int close = start + 1;
+				while( close < end && lineText[close] != L']' ) ++close;
+				if( close >= end || close + 1 >= end || lineText[close + 1] != L':' ) continue;
+				depth = currentHeadingDepth >= 0 ? currentHeadingDepth + 1 : 0;
+				// The URL is navigation metadata.  VS Code's Outline displays only
+				// the reference label, including its brackets.
+				displayText.assign( &lineText[start], close - start + 1 );
+			}else{
+				continue;
+			}
+
+			CLayoutPoint position;
+			m_pcDocRef->m_cLayoutMgr.LogicToLayout( CLogicPoint(0, line), &position );
+			pcFuncInfoArr->AppendData(
+				line + CLogicInt(1), position.GetY2() + CLayoutInt(1), displayText.c_str(), 0, depth );
+		}
+		return;
+	}
 
 	/*	ネストの深さは、nMaxStackレベルまで、ひとつのヘッダーは、最長32文字まで区別
 		（32文字まで同じだったら同じものとして扱います）
@@ -111,22 +162,33 @@ void CDocOutline::MakeTopicList_txt( CFuncInfoArr* pcFuncInfoArr )
 		if( i >= nLineLen ){
 			continue;
 		}
+		// Markdown's Outline is intentionally based only on ATX headings.  Link
+		// references, image badges and list markers are content, not symbols.
+		if( isMarkdown && pLine[i] != L'#' ){
+			continue;
+		}
 
 		//先頭文字が見出し記号のいずれかであれば、次へ進む
 		int j;
 		int nCharChars;
 		int nCharChars2;
 		nCharChars = CNativeW::GetSizeOfChar( pLine, nLineLen, i );
-		for( j = 0; j < nStartsLen; j += nCharChars2 ){
-			// 2005-09-02 D.S.Koba GetSizeOfChar
-			nCharChars2 = CNativeW::GetSizeOfChar( pszStarts, nStartsLen, j );
-			if( nCharChars == nCharChars2 ){
-				if( 0 == wmemcmp( &pLine[i], &pszStarts[j], nCharChars ) ){
-					break;
+		if( isMarkdown ){
+			// Markdown ATX headings are a language construct and must not depend on
+			// the user's generic plain-text heading-character preference.
+			j = 0;
+		}else{
+			for( j = 0; j < nStartsLen; j += nCharChars2 ){
+				// 2005-09-02 D.S.Koba GetSizeOfChar
+				nCharChars2 = CNativeW::GetSizeOfChar( pszStarts, nStartsLen, j );
+				if( nCharChars == nCharChars2 ){
+					if( 0 == wmemcmp( &pLine[i], &pszStarts[j], nCharChars ) ){
+						break;
+					}
 				}
 			}
 		}
-		if( j >= nStartsLen ){
+		if( !isMarkdown && j >= nStartsLen ){
 			continue;
 		}
 
@@ -158,6 +220,25 @@ void CDocOutline::MakeTopicList_txt( CFuncInfoArr* pcFuncInfoArr )
 		else if( IsInRange(pLine[i], L'\u3280', L'\u3289') ) wcscpy( szTitle, L"\u3220" ); // ○一-○十
 		else if( IsInRange(pLine[i], L'\u32d0', L'\u32fe') ) wcscpy( szTitle, L"\u32d0" ); // ○ア-○ヲ
 		else if( wcschr(L"〇一二三四五六七八九十百零壱弐参伍", pLine[i]) ) wcscpy( szTitle, L"一" ); //漢数字
+		else if( pLine[i] == L'#' ){
+			// Markdown ATX headings use the number of leading hashes as their
+			// hierarchy.  Treat the complete marker as the heading kind so the
+			// existing topic stack produces the same parent/child structure as
+			// VS Code's Outline view instead of flattening every Markdown heading.
+			int markerLength = 1;
+			while( markerLength < 6 && i + markerLength < nLineLen
+				&& pLine[i + markerLength] == L'#' ){
+				++markerLength;
+			}
+			const int markerEnd = i + markerLength;
+			if( markerEnd < nLineLen
+				&& !WCODE::IsBlank(pLine[markerEnd])
+				&& !WCODE::IsLineDelimiter(pLine[markerEnd], GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol) ){
+				continue;
+			}
+			wmemcpy( szTitle, &pLine[i], markerLength );
+			szTitle[markerLength] = L'\0';
+		}
 		else{
 			wcsncpy( szTitle, &pLine[i], nCharChars );	//	先頭文字をszTitleに保持。
 			szTitle[nCharChars] = L'\0';

@@ -6,8 +6,10 @@
 */
 #pragma once
 
+#include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
 
+#include <CommCtrl.h>
 #include <cstdint>
 
 class CDlgFuncList;
@@ -82,6 +84,7 @@ public:
 	bool PreTranslateMessage( MSG& message ) override;
 	void Close() override;
 	void SetVisible( bool visible ) noexcept;
+	void SetPalette( const theme::ThemePalette& palette );
 
 	[[nodiscard]] OutlineToolLifecycle GetLifecycle() const noexcept { return m_lifecycle; }
 	[[nodiscard]] OutlineToolLayout GetLayout() const noexcept { return m_layout; }
@@ -89,12 +92,17 @@ public:
 
 private:
 	void ApplyLayout() noexcept;
+	void ApplyAppearance() noexcept;
+	void RecreateSymbolImages() noexcept;
 	[[nodiscard]] HWND GetDialogWindow() const noexcept;
 
 	CDlgFuncList* m_dialog = nullptr;
 	HWND m_parent = nullptr;
 	OutlineToolLifecycle m_lifecycle = OutlineToolLifecycle::Idle;
 	OutlineToolLayout m_layout{};
+	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	theme::CThemeFont m_font;
+	HIMAGELIST m_symbolImages = nullptr;
 	bool m_visible = true;
 };
 

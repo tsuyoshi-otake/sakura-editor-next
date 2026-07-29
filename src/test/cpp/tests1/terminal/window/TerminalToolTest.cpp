@@ -3,6 +3,7 @@
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
 #include "terminal/model/TerminalModel.h"
+#include "terminal/input/SakuraTerminalInputAdapter.h"
 
 #include <atomic>
 #include <chrono>
@@ -167,6 +168,29 @@ TEST(TerminalTool, RendererSizeInvalidatesBeforeItReceivesFocus)
 	RECT update{};
 	EXPECT_TRUE(::GetUpdateRect(renderer.GetHwnd(), &update, FALSE));
 	EXPECT_NE(renderer.GetHwnd(), ::GetFocus());
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, PrintableKeyDownFallsThroughToCharMessage)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	terminal::SakuraTerminalInputAdapter inputAdapter;
+	renderer.SetInputAdapter(&inputAdapter);
+	std::string received;
+	renderer.SetInputSink([&received](std::span<const std::uint8_t> bytes) {
+		received.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+	});
+
+	MSG keyDown{ renderer.GetHwnd(), WM_KEYDOWN, static_cast<WPARAM>('A'), 1 };
+	EXPECT_FALSE(renderer.PreTranslateMessage(keyDown));
+	EXPECT_TRUE(received.empty());
+	::SendMessageW(renderer.GetHwnd(), WM_CHAR, L'a', 1);
+	EXPECT_EQ("a", received);
 
 	renderer.Close();
 	::DestroyWindow(parent);
