@@ -6,6 +6,7 @@
 */
 #include "pch.h"
 #include <Windows.h>
+#include <limits>
 #include "extension/COpenVsxClient.h"
 
 /*!
@@ -277,16 +278,55 @@ TEST(COpenVsxClient, DISABLED_Search_Live)
 	}
 }
 
-//! 平文通信が拒否されること
-TEST(COpenVsxClient, DISABLED_Search_Live_RejectsPlainHttp)
+//! 実サービスの download URL が返す HTTPS リダイレクトを追跡して保存できること
+TEST(COpenVsxClient, DISABLED_DownloadVsix_Live)
 {
-	COpenVsxClient client(L"http://open-vsx.org");
+	COpenVsxClient client;
+	ASSERT_TRUE(client.IsOk());
+
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg;
+	ASSERT_TRUE(client.Search(L"eslint", 0, 1, result, errorMsg)) << errorMsg;
+	ASSERT_FALSE(result.extensions.empty());
+
+	std::error_code ec;
+	const std::filesystem::path outPath = std::filesystem::temp_directory_path() /
+		(L"sakura-editor-next-openvsx-" + std::to_wstring(::GetCurrentProcessId()) + L".vsix");
+	std::filesystem::remove(outPath, ec);
+	struct TempFileGuard {
+		std::filesystem::path path;
+		~TempFileGuard() { std::error_code ignored; std::filesystem::remove(path, ignored); }
+	} guard{ outPath };
+
+	ASSERT_TRUE(client.DownloadVsix(result.extensions[0].sDownloadUrl, outPath, errorMsg)) << errorMsg;
+	EXPECT_TRUE(std::filesystem::is_regular_file(outPath, ec));
+	EXPECT_GT(std::filesystem::file_size(outPath, ec), 0u);
+}
+
+//! 平文通信が拒否されること
+TEST(COpenVsxClient, Search_RejectsPlainHttpBeforeConnecting)
+{
+	COpenVsxClient client(L"http://127.0.0.1:1");
 	ASSERT_TRUE(client.IsOk());
 
 	SOpenVsxSearchResult result;
 	std::wstring errorMsg;
 	EXPECT_FALSE(client.Search(L"eslint", 0, 5, result, errorMsg));
 	EXPECT_NE(std::wstring::npos, errorMsg.find(L"https")) << errorMsg;
+}
+
+//! 事前に公開された取消しは接続前に失敗として観測できること
+TEST(COpenVsxClient, Search_HonorsPreCancellation)
+{
+	COpenVsxClient client(L"https://127.0.0.1:1");
+	ASSERT_TRUE(client.IsOk());
+
+	std::atomic<bool> cancelled{ true };
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg;
+	EXPECT_FALSE(client.Search(L"eslint", 0, 5, result, errorMsg, &cancelled));
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"cancelled")) << errorMsg;
+	EXPECT_TRUE(result.extensions.empty());
 }
 
 //! 失敗時に前回の結果が残らないこと
@@ -300,4 +340,47 @@ TEST(COpenVsxClient, ParseSearchResponse_ClearsResultOnFailure)
 	EXPECT_FALSE(COpenVsxClient::ParseSearchResponse("{", result, errorMsg));
 	EXPECT_EQ(0, result.nTotalSize);
 	EXPECT_TRUE(result.extensions.empty());
+}
+
+//! レジストリが要求件数を無視して巨大な配列を返しても無制限に確保しないこと
+TEST(COpenVsxClient, ParseSearchResponse_RejectsOversizedPage)
+{
+	std::string json = R"({"extensions":[)";
+	for (int i = 0; i < 101; ++i) {
+		if (i != 0) {
+			json += ',';
+		}
+		json += "{}";
+	}
+	json += "]}";
+
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg;
+	EXPECT_FALSE(COpenVsxClient::ParseSearchResponse(json, result, errorMsg));
+	EXPECT_FALSE(errorMsg.empty());
+	EXPECT_TRUE(result.extensions.empty());
+}
+
+//! 範囲外の数値を整数へ変換して未定義動作を起こさないこと
+TEST(COpenVsxClient, ParseSearchResponse_ClampsUntrustedCounts)
+{
+	const std::string json = R"({
+		"offset": 1e100,
+		"totalSize": -5,
+		"extensions": [{
+			"namespace": "safe",
+			"name": "sample",
+			"version": "1.0.0",
+			"downloadCount": 1e100,
+			"files": {"download": "https://example.test/sample.vsix"}
+		}]
+	})";
+
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg;
+	ASSERT_TRUE(COpenVsxClient::ParseSearchResponse(json, result, errorMsg)) << errorMsg;
+	EXPECT_EQ((std::numeric_limits<int>::max)(), result.nOffset);
+	EXPECT_EQ(0, result.nTotalSize);
+	ASSERT_EQ(1u, result.extensions.size());
+	EXPECT_EQ((std::numeric_limits<long long>::max)(), result.extensions[0].nDownloadCount);
 }

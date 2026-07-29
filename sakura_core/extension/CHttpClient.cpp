@@ -14,6 +14,7 @@
 
 #include <fstream>
 #include <system_error>
+#include <vector>
 
 #include "cxx/ResourceHolder.hpp"
 
@@ -29,6 +30,7 @@ constexpr int kReceiveTimeoutMs =  60 * 1000;
 
 //! 1 回の WinHttpReadData で読む量
 constexpr size_t kReadChunkBytes = 64 * 1024;
+constexpr unsigned int kMaxRedirects = 5;
 
 /*!
 	@brief 失敗した API 名と Win32 エラーコードから技術的詳細を組み立てる
@@ -39,6 +41,39 @@ constexpr size_t kReadChunkBytes = 64 * 1024;
 std::wstring FormatApiError(const wchar_t* pszApi, DWORD dwError)
 {
 	return std::wstring(pszApi) + L" failed (error " + std::to_wstring(dwError) + L")";
+}
+
+bool IsCancelled(const std::atomic<bool>* pCancelled) noexcept
+{
+	return pCancelled && pCancelled->load(std::memory_order_acquire);
+}
+
+bool IsRedirectStatus(unsigned long statusCode) noexcept
+{
+	return statusCode == 301 || statusCode == 302 || statusCode == 303 ||
+		statusCode == 307 || statusCode == 308;
+}
+
+bool QueryRedirectLocation(HINTERNET hRequest, std::wstring& location, std::wstring& errorMsg)
+{
+	DWORD bytes = 0;
+	if (::WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
+		nullptr, &bytes, WINHTTP_NO_HEADER_INDEX) || ::GetLastError() != ERROR_INSUFFICIENT_BUFFER || bytes < sizeof(wchar_t)) {
+		errorMsg = L"redirect response has no Location header";
+		return false;
+	}
+	std::vector<wchar_t> buffer(bytes / sizeof(wchar_t));
+	if (!::WinHttpQueryHeaders(hRequest, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX,
+		buffer.data(), &bytes, WINHTTP_NO_HEADER_INDEX)) {
+		errorMsg = FormatApiError(L"WinHttpQueryHeaders(Location)", ::GetLastError());
+		return false;
+	}
+	location.assign(buffer.data());
+	if (location.empty()) {
+		errorMsg = L"redirect response has an empty Location header";
+		return false;
+	}
+	return true;
 }
 
 } // namespace
@@ -78,7 +113,11 @@ CHttpClient::~CHttpClient()
 }
 
 // GET してメモリに受け取る
-bool CHttpClient::Get(const std::wstring& url, Response& response, std::wstring& errorMsg)
+bool CHttpClient::Get(
+	const std::wstring& url,
+	Response& response,
+	std::wstring& errorMsg,
+	const std::atomic<bool>* pCancelled)
 {
 	response.statusCode = 0;
 	response.body.clear();
@@ -91,11 +130,17 @@ bool CHttpClient::Get(const std::wstring& url, Response& response, std::wstring&
 			response.body.append(pData, nBytes);
 			return true;
 		},
-		errorMsg);
+		errorMsg,
+		pCancelled,
+		kMaxRedirects);
 }
 
 // GET してファイルに保存する
-bool CHttpClient::Download(const std::wstring& url, const std::filesystem::path& outPath, std::wstring& errorMsg)
+bool CHttpClient::Download(
+	const std::wstring& url,
+	const std::filesystem::path& outPath,
+	std::wstring& errorMsg,
+	const std::atomic<bool>* pCancelled)
 {
 	std::ofstream out(outPath, std::ios::binary | std::ios::trunc);
 	if (!out) {
@@ -112,7 +157,9 @@ bool CHttpClient::Download(const std::wstring& url, const std::filesystem::path&
 			out.write(pData, static_cast<std::streamsize>(nBytes));
 			return out.good();
 		},
-		errorMsg);
+		errorMsg,
+		pCancelled,
+		kMaxRedirects);
 
 	const bool bWritten = out.good();
 	out.close();
@@ -139,9 +186,15 @@ bool CHttpClient::Request(
 	size_t				maxBytes,
 	unsigned long&		statusCode,
 	const Sink&			sink,
-	std::wstring&		errorMsg)
+	std::wstring&		errorMsg,
+	const std::atomic<bool>* pCancelled,
+	unsigned int		redirectsRemaining)
 {
 	statusCode = 0;
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"request cancelled";
+		return false;
+	}
 
 	if (!IsOk()) {
 		errorMsg = L"WinHttpOpen failed";
@@ -199,6 +252,12 @@ bool CHttpClient::Request(
 		errorMsg = FormatApiError(L"WinHttpOpenRequest", ::GetLastError());
 		return false;
 	}
+	// WinHTTP の自動リダイレクトを止め、各遷移先を再度 HTTPS として検証する。
+	DWORD disabledFeatures = WINHTTP_DISABLE_REDIRECTS;
+	if (!::WinHttpSetOption(hRequest, WINHTTP_OPTION_DISABLE_FEATURE, &disabledFeatures, sizeof(disabledFeatures))) {
+		errorMsg = FormatApiError(L"WinHttpSetOption(WINHTTP_DISABLE_REDIRECTS)", ::GetLastError());
+		return false;
+	}
 
 	if (!::WinHttpSendRequest(hRequest, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0)) {
 		errorMsg = FormatApiError(L"WinHttpSendRequest", ::GetLastError());
@@ -224,11 +283,31 @@ bool CHttpClient::Request(
 		return false;
 	}
 	statusCode = dwStatus;
+	if (IsRedirectStatus(statusCode)) {
+		if (redirectsRemaining == 0) {
+			errorMsg = L"too many HTTP redirects";
+			return false;
+		}
+		std::wstring location;
+		if (!QueryRedirectLocation(hRequest, location, errorMsg)) {
+			return false;
+		}
+		// 相対 URL は元 URL の解決規則を自前で実装せず拒否する。絶対 HTTPS URL は
+		// 再帰先の WinHttpCrackUrl で必ず再検査される。
+		return Request(location, maxBytes, statusCode, sink, errorMsg, pCancelled, redirectsRemaining - 1);
+	}
+	if (statusCode != 200) {
+		return true;
+	}
 
 	// 本体を読む
 	std::string buffer(kReadChunkBytes, '\0');
 	size_t nTotal = 0;
 	for (;;) {
+		if (IsCancelled(pCancelled)) {
+			errorMsg = L"request cancelled";
+			return false;
+		}
 		DWORD dwRead = 0;
 		if (!::WinHttpReadData(hRequest, buffer.data(), static_cast<DWORD>(buffer.size()), &dwRead)) {
 			errorMsg = FormatApiError(L"WinHttpReadData", ::GetLastError());

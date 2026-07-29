@@ -16,12 +16,10 @@
 
 #include <algorithm>
 #include <array>
-#include <chrono>
 #include <cwctype>
 #include <fstream>
 #include <sstream>
 #include <system_error>
-#include <thread>
 
 #include "extension/CHttpClient.h"
 #include "io/CZipFile.h"
@@ -29,12 +27,6 @@
 #include "util/string_ex.h"
 
 namespace {
-
-//! Shell の展開完了を待つ上限
-constexpr int kExtractWaitMs = 30 * 1000;
-
-//! 展開完了確認の間隔
-constexpr int kExtractPollMs = 50;
 
 //! package.json の読み込み上限
 constexpr size_t kMaxManifestBytes = 4u * 1024 * 1024;
@@ -76,6 +68,104 @@ bool IsHexDigit(wchar_t ch) noexcept
 std::wstring FormatErrorCode(const std::error_code& ec)
 {
 	return L"error " + std::to_wstring(ec.value());
+}
+
+bool IsCancelled(const std::atomic<bool>* pCancelled) noexcept
+{
+	return pCancelled && pCancelled->load(std::memory_order_acquire);
+}
+
+bool IsDirectoryWithoutReparsePoint(const std::filesystem::path& path)
+{
+	const DWORD attributes = ::GetFileAttributesW(path.c_str());
+	return attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
+		(attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+}
+
+bool CreateStagingDirectory(
+	const std::filesystem::path& baseDir,
+	const std::wstring& folderName,
+	std::filesystem::path& stagingDir,
+	std::wstring& errorMsg)
+{
+	std::error_code ec;
+	if (!std::filesystem::create_directories(baseDir, ec) && ec) {
+		errorMsg = L"cannot create extension directory '" + baseDir.wstring() + L"': " + FormatErrorCode(ec);
+		return false;
+	}
+	if (!IsDirectoryWithoutReparsePoint(baseDir)) {
+		errorMsg = L"unsafe extension directory '" + baseDir.wstring() + L"'";
+		return false;
+	}
+
+	for (int attempt = 0; attempt < 3; ++attempt) {
+		GUID guid = {};
+		wchar_t guidText[40] = {};
+		if (FAILED(::CoCreateGuid(&guid)) || ::StringFromGUID2(guid, guidText, _countof(guidText)) == 0) {
+			errorMsg = L"cannot create a unique staging directory name";
+			return false;
+		}
+		stagingDir = baseDir / (L"." + folderName + L".staging-" + guidText);
+		ec.clear();
+		if (std::filesystem::create_directory(stagingDir, ec)) {
+			if (IsDirectoryWithoutReparsePoint(stagingDir)) {
+				return true;
+			}
+			std::error_code ignored;
+			std::filesystem::remove_all(stagingDir, ignored);
+			errorMsg = L"unsafe staging directory";
+			return false;
+		}
+		if (ec && ec != std::errc::file_exists) {
+			errorMsg = L"cannot create staging directory: " + FormatErrorCode(ec);
+			return false;
+		}
+	}
+	errorMsg = L"cannot reserve a unique staging directory";
+	return false;
+}
+
+bool RemoveTree(
+	const std::filesystem::path& path,
+	const std::atomic<bool>* pCancelled,
+	std::wstring& errorMsg)
+{
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension uninstall cancelled";
+		return false;
+	}
+	const DWORD attributes = ::GetFileAttributesW(path.c_str());
+	if (attributes == INVALID_FILE_ATTRIBUTES) {
+		errorMsg = L"cannot inspect '" + path.wstring() + L"'";
+		return false;
+	}
+	std::error_code ec;
+	if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0 || (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+		if (!std::filesystem::remove(path, ec) || ec) {
+			errorMsg = L"cannot remove '" + path.wstring() + L"': " + FormatErrorCode(ec);
+			return false;
+		}
+		return true;
+	}
+
+	for (std::filesystem::directory_iterator it(path, ec), end; !ec && it != end; it.increment(ec)) {
+		if (!RemoveTree(it->path(), pCancelled, errorMsg)) {
+			return false;
+		}
+	}
+	if (ec) {
+		errorMsg = L"cannot enumerate '" + path.wstring() + L"': " + FormatErrorCode(ec);
+		return false;
+	}
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension uninstall cancelled";
+		return false;
+	}
+	if (!std::filesystem::remove(path, ec) || ec) {
+		errorMsg = L"cannot remove '" + path.wstring() + L"': " + FormatErrorCode(ec);
+		return false;
+	}
+	return true;
 }
 
 } // namespace
@@ -218,23 +308,6 @@ std::wstring CExtensionManager::ComputeSha256Hex(const std::filesystem::path& pa
 	return sResult;
 }
 
-// Shell による展開の完了を待つ
-bool CExtensionManager::WaitForExtracted(const std::filesystem::path& marker, std::wstring& errorMsg)
-{
-	// CZipFile::Unzip は Shell の CopyHere を使うため、呼び出しから戻った時点では
-	// 展開が終わっていない。想定の成果物が現れるまで待つ。
-	for (int nElapsedMs = 0; nElapsedMs < kExtractWaitMs; nElapsedMs += kExtractPollMs) {
-		std::error_code ec;
-		if (std::filesystem::exists(marker, ec)) {
-			return true;
-		}
-		std::this_thread::sleep_for(std::chrono::milliseconds(kExtractPollMs));
-	}
-
-	errorMsg = L"timed out waiting for '" + marker.wstring() + L"'";
-	return false;
-}
-
 // package.json から表示名を読む
 std::wstring CExtensionManager::ReadDisplayName(const std::filesystem::path& manifestPath)
 {
@@ -271,8 +344,15 @@ std::wstring CExtensionManager::ReadDisplayName(const std::filesystem::path& man
 }
 
 // 拡張を導入する
-bool CExtensionManager::Install(const SOpenVsxExtension& ext, std::wstring& errorMsg)
+bool CExtensionManager::Install(
+	const SOpenVsxExtension& ext,
+	std::wstring& errorMsg,
+	const std::atomic<bool>* pCancelled)
 {
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension installation cancelled";
+		return false;
+	}
 	const std::wstring sFolderName = MakeInstallFolderName(ext);
 	if (sFolderName.empty()) {
 		errorMsg = L"registry returned an unsafe extension identifier";
@@ -287,20 +367,22 @@ bool CExtensionManager::Install(const SOpenVsxExtension& ext, std::wstring& erro
 		return false;
 	}
 
-	// VSIX は ZIP だが、Shell の Zip Folder は拡張子で判定するため
-	// .vsix のままでは開けない。.zip 名の一時ファイルに落とす。
-	const std::filesystem::path tempPath =
-		std::filesystem::temp_directory_path(ec) / (sFolderName + L".vsix.zip");
-	if (ec) {
-		errorMsg = L"cannot resolve the temporary directory";
+	std::filesystem::path stagingDir;
+	if (!CreateStagingDirectory(m_baseDir, sFolderName, stagingDir, errorMsg)) {
 		return false;
 	}
-
-	// 失敗しても一時ファイルを残さない
-	struct TempFileGuard {
+	struct StagingDirGuard {
 		const std::filesystem::path& path;
-		~TempFileGuard() { std::error_code ec2; std::filesystem::remove(path, ec2); }
-	} tempGuard{ tempPath };
+		bool committed = false;
+		~StagingDirGuard() {
+			if (!committed) {
+				std::error_code ignored;
+				std::filesystem::remove_all(path, ignored);
+			}
+		}
+	} stagingGuard{ stagingDir };
+	const std::filesystem::path tempPath = stagingDir / L"package.vsix";
+	const std::filesystem::path extractedDir = stagingDir / L"contents";
 
 	CHttpClient cHttp;
 	if (!cHttp.IsOk()) {
@@ -308,7 +390,11 @@ bool CExtensionManager::Install(const SOpenVsxExtension& ext, std::wstring& erro
 		return false;
 	}
 
-	if (!cHttp.Download(ext.sDownloadUrl, tempPath, errorMsg)) {
+	if (!cHttp.Download(ext.sDownloadUrl, tempPath, errorMsg, pCancelled)) {
+		return false;
+	}
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension installation cancelled";
 		return false;
 	}
 
@@ -317,7 +403,7 @@ bool CExtensionManager::Install(const SOpenVsxExtension& ext, std::wstring& erro
 	if (!ext.sSha256Url.empty()) {
 		CHttpClient::Response sha256Response;
 		std::wstring sha256Error;
-		if (!cHttp.Get(ext.sSha256Url, sha256Response, sha256Error) || !sha256Response.IsOk()) {
+		if (!cHttp.Get(ext.sSha256Url, sha256Response, sha256Error, pCancelled) || !sha256Response.IsOk()) {
 			errorMsg = L"cannot fetch the sha256 of the package: " + sha256Error;
 			return false;
 		}
@@ -339,46 +425,44 @@ bool CExtensionManager::Install(const SOpenVsxExtension& ext, std::wstring& erro
 		}
 	}
 
-	// ここから先で失敗したら導入先を残さない
-	struct DestDirGuard {
-		const std::filesystem::path&	path;
-		bool							bCommitted = false;
-		~DestDirGuard()
-		{
-			if (!bCommitted) {
-				std::error_code ec2;
-				std::filesystem::remove_all(path, ec2);
-			}
-		}
-	} destGuard{ destDir };
-
-	if (!std::filesystem::create_directories(destDir, ec) && ec) {
-		errorMsg = L"cannot create '" + destDir.wstring() + L"': " + FormatErrorCode(ec);
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension installation cancelled";
+		return false;
+	}
+	if (!CZipFile::ExtractVsixSafely(tempPath, extractedDir, errorMsg, pCancelled)) {
+		return false;
+	}
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension installation cancelled";
 		return false;
 	}
 
-	CZipFile cZipFile;
-	if (!cZipFile.IsOk()) {
-		errorMsg = L"the shell zip support is unavailable";
+	// 同期展開済みのマニフェストを確認してから、同一ボリューム上で確定する。
+	const std::filesystem::path manifestPath = extractedDir / kVsixContentDir / kManifestFileName;
+	if (!std::filesystem::is_regular_file(manifestPath, ec) || ec) {
+		errorMsg = L"VSIX archive did not extract extension/package.json";
 		return false;
 	}
-	if (!cZipFile.SetZip(tempPath)) {
-		errorMsg = L"the downloaded package is not a valid zip archive";
+	std::filesystem::remove(tempPath, ec);
+	if (ec) {
+		errorMsg = L"cannot remove temporary VSIX: " + FormatErrorCode(ec);
 		return false;
 	}
-	if (!cZipFile.Unzip(destDir)) {
-		errorMsg = L"cannot extract the package into '" + destDir.wstring() + L"'";
+	if (std::filesystem::exists(destDir, ec)) {
+		errorMsg = L"'" + sFolderName + L"' is already installed";
 		return false;
 	}
-
-	// VSIX は extension/package.json を必ず含む。これを展開完了の目印とし、
-	// 同時に「拡張として成立しているか」の検査も兼ねる。
-	const std::filesystem::path manifestPath = destDir / kVsixContentDir / kManifestFileName;
-	if (!WaitForExtracted(manifestPath, errorMsg)) {
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension installation cancelled";
 		return false;
 	}
-
-	destGuard.bCommitted = true;
+	std::filesystem::rename(extractedDir, destDir, ec);
+	if (ec) {
+		errorMsg = L"cannot finalize extension installation: " + FormatErrorCode(ec);
+		return false;
+	}
+	stagingGuard.committed = true;
+	std::filesystem::remove_all(stagingDir, ec); // 空になった親だけを消す
 	return true;
 }
 
@@ -450,8 +534,15 @@ bool CExtensionManager::FindInstalled(const std::wstring& sUniqueId, SInstalledE
 }
 
 // 導入済み拡張を削除する
-bool CExtensionManager::Uninstall(const std::wstring& sUniqueId, std::wstring& errorMsg)
+bool CExtensionManager::Uninstall(
+	const std::wstring& sUniqueId,
+	std::wstring& errorMsg,
+	const std::atomic<bool>* pCancelled)
 {
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension uninstall cancelled";
+		return false;
+	}
 	SInstalledExtension installed;
 	if (!FindInstalled(sUniqueId, installed)) {
 		errorMsg = L"'" + sUniqueId + L"' is not installed";
@@ -465,12 +556,10 @@ bool CExtensionManager::Uninstall(const std::wstring& sUniqueId, std::wstring& e
 		errorMsg = L"refusing to remove '" + installed.dir.wstring() + L"'";
 		return false;
 	}
-
-	std::filesystem::remove_all(installed.dir, ec);
-	if (ec) {
-		errorMsg = L"cannot remove '" + installed.dir.wstring() + L"': " + FormatErrorCode(ec);
+	if (IsCancelled(pCancelled)) {
+		errorMsg = L"extension uninstall cancelled";
 		return false;
 	}
 
-	return true;
+	return RemoveTree(installed.dir, pCancelled, errorMsg);
 }

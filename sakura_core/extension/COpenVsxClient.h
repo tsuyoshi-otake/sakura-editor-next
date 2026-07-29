@@ -11,6 +11,7 @@
 #define SAKURA_COPENVSXCLIENT_A47D9E32_1C60_4B8F_8D25_7F3E6A9C0B14_H_
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 
@@ -85,7 +86,8 @@ public:
 		int						nOffset,
 		int						nSize,
 		SOpenVsxSearchResult&	result,
-		std::wstring&			errorMsg);
+		std::wstring&			errorMsg,
+		const std::atomic<bool>* pCancelled = nullptr);
 
 	/*!
 		@brief VSIX をダウンロードする（通信を行う）
@@ -93,7 +95,11 @@ public:
 		@param[in]  outPath		保存先
 		@param[out] errorMsg		失敗理由
 	*/
-	bool DownloadVsix(const std::wstring& sDownloadUrl, const std::filesystem::path& outPath, std::wstring& errorMsg);
+	bool DownloadVsix(
+		const std::wstring& sDownloadUrl,
+		const std::filesystem::path& outPath,
+		std::wstring& errorMsg,
+		const std::atomic<bool>* pCancelled = nullptr);
 
 	//! 検索 URL を組み立てる。通信を行わないので単体で検証できる
 	std::wstring BuildSearchUrl(const std::wstring& sQuery, int nOffset, int nSize) const;

@@ -10,6 +10,7 @@
 #include "StdAfx.h"
 #include "extension/CExtensionPane.h"
 
+#include <exception>
 #include <memory>
 #include <thread>
 #include <utility>
@@ -129,8 +130,10 @@ CExtensionPane::~CExtensionPane()
 	// CWnd::~CWnd がウィンドウを壊す前に立てる必要がある。
 	if( m_pJob ){
 		m_pJob->bAbandoned.store( true, std::memory_order_release );
+		m_pJob->bCancelled.store( true, std::memory_order_release );
 		m_pJob.reset();
 	}
+	::KillTimer( GetHwnd(), kJobPollTimerId );
 	if( m_hFont ){
 		::DeleteObject( m_hFont );
 		m_hFont = nullptr;
@@ -379,11 +382,28 @@ LRESULT CExtensionPane::OnNotify( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 
 LRESULT CExtensionPane::OnDestroy( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 {
-	// ワーカーは WinHTTP の同期 API を使っているので中断できない。
-	// UI を最大 1 分止めて待つより、結果を捨てる方が利用者の利益にかなう。
+	// 共有を解放する前に取消しを公開する。ワーカーはネットワーク・展開・削除の境界で
+	// これを確認して副作用を止めるため、UI スレッドは完了を待たずに破棄できる。
 	if( m_pJob ){
 		m_pJob->bAbandoned.store( true, std::memory_order_release );
+		m_pJob->bCancelled.store( true, std::memory_order_release );
 		m_pJob.reset();
+	}
+	::KillTimer( hwnd, kJobPollTimerId );
+	return CallDefWndProc( hwnd, msg, wp, lp );
+}
+
+LRESULT CExtensionPane::OnTimer( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+	if( wp == kJobPollTimerId ){
+		// PostMessage が失敗しても、完了済みジョブをここで必ず終端状態へ遷移させる。
+		if( m_pJob && m_pJob->bDone.load( std::memory_order_acquire ) ){
+			FinishJob( m_pJob->nSerial );
+		}
+		else if( !m_pJob ){
+			::KillTimer( hwnd, kJobPollTimerId );
+		}
+		return 0;
 	}
 	return CallDefWndProc( hwnd, msg, wp, lp );
 }
@@ -569,51 +589,72 @@ void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 	pJob->nSerial = m_nNextSerial++;
 	m_pJob = pJob;
 	UpdateButtons();
+	if( 0 == ::SetTimer( GetHwnd(), kJobPollTimerId, kJobPollIntervalMs, nullptr ) ){
+		pJob->bCancelled.store( true, std::memory_order_release );
+		m_pJob.reset();
+		SetStatusText( L"cannot start extension job completion timer" );
+		UpdateButtons();
+		return;
+	}
 
-	// detach する。ウィンドウが先に閉じても join を待たされないため。
-	// 共有するのは SJob だけで、this には触れさせない。
-	std::thread( &CExtensionPane::RunJob, std::move( pJob ), GetHwnd() ).detach();
+	// detach する。共有するのは取消し可能な SJob だけで、this には触れさせない。
+	try {
+		std::thread( &CExtensionPane::RunJob, pJob, GetHwnd() ).detach();
+	}
+	catch( ... ) {
+		// ワーカーを作れなかった場合も、タイマーと busy 状態を必ず終端にする。
+		pJob->bCancelled.store( true, std::memory_order_release );
+		::KillTimer( GetHwnd(), kJobPollTimerId );
+		if( m_pJob && m_pJob->nSerial == pJob->nSerial ){
+			m_pJob.reset();
+		}
+		SetStatusText( L"cannot start extension job worker" );
+		UpdateButtons();
+	}
 }
 
 /* static */ void CExtensionPane::RunJob( std::shared_ptr<SJob> pJob, HWND hwndNotify )
 {
-	// Shell による ZIP 展開は COM を使うので、このスレッドで初期化しておく
-	const HRESULT hrOle = ::OleInitialize( nullptr );
-
-	switch( pJob->eKind ){
+	try {
+		switch( pJob->eKind ){
 	case EJobKind::Search:
 		{
 			COpenVsxClient cClient;
 			pJob->bSucceeded = cClient.Search(
-				pJob->sQuery, 0, COpenVsxClient::kDefaultPageSize, pJob->result, pJob->sErrorMsg );
+				pJob->sQuery, 0, COpenVsxClient::kDefaultPageSize, pJob->result, pJob->sErrorMsg,
+				&pJob->bCancelled );
 		}
 		break;
 	case EJobKind::Install:
 		{
 			CExtensionManager cManager;
-			pJob->bSucceeded = cManager.Install( pJob->ext, pJob->sErrorMsg );
+			pJob->bSucceeded = cManager.Install( pJob->ext, pJob->sErrorMsg, &pJob->bCancelled );
 		}
 		break;
 	case EJobKind::Uninstall:
 		{
 			CExtensionManager cManager;
-			pJob->bSucceeded = cManager.Uninstall( pJob->sUniqueId, pJob->sErrorMsg );
+			pJob->bSucceeded = cManager.Uninstall( pJob->sUniqueId, pJob->sErrorMsg, &pJob->bCancelled );
 		}
 		break;
 	default:
 		pJob->sErrorMsg = L"unknown job";
 		break;
+		}
 	}
-
-	if( SUCCEEDED( hrOle ) ){
-		::OleUninitialize();
+	catch( const std::exception& ) {
+		pJob->bSucceeded = false;
+		pJob->sErrorMsg = L"extension job threw an exception";
+	}
+	catch( ... ) {
+		pJob->bSucceeded = false;
+		pJob->sErrorMsg = L"extension job threw an unknown exception";
 	}
 
 	// 結果を書き終えたことを公開する。UI スレッドはこれを見てから結果を読む
 	pJob->bDone.store( true, std::memory_order_release );
 
-	// 宛先が無効なら投函しない。載せるのは通し番号だけなので、
-	// 投函が失敗しても解放漏れは起きない
+	// 通常は即時通知する。失敗しても UI 側のポーリングタイマーが完了状態を回収する。
 	if( !pJob->bAbandoned.load( std::memory_order_acquire ) ){
 		::PostMessage( hwndNotify, kJobDoneMessage, static_cast<WPARAM>(pJob->nSerial), 0 );
 	}
@@ -630,6 +671,7 @@ void CExtensionPane::FinishJob( int nSerial )
 
 	// 実行中でなくなったことを先に確定させる（move 後 m_pJob は空になる）
 	const std::shared_ptr<SJob> pJob = std::move( m_pJob );
+	::KillTimer( GetHwnd(), kJobPollTimerId );
 
 	if( !pJob->bSucceeded ){
 		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_FAILED ), pJob->sErrorMsg.c_str() ) );

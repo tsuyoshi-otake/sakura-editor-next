@@ -11,6 +11,7 @@
 #define SAKURA_CEXTENSIONMANAGER_D82F4A16_9E70_4C3B_B1A8_2D5C6E4F8073_H_
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -58,13 +59,19 @@ public:
 		@param[in]  ext		導入する拡張
 		@param[out] errorMsg	失敗理由（未ローカライズの技術的詳細）
 	*/
-	bool Install(const SOpenVsxExtension& ext, std::wstring& errorMsg);
+	bool Install(
+		const SOpenVsxExtension& ext,
+		std::wstring& errorMsg,
+		const std::atomic<bool>* pCancelled = nullptr);
 
 	//! 導入済み拡張を列挙する
 	std::vector<SInstalledExtension> EnumInstalled() const;
 
 	//! 導入済み拡張を削除する
-	bool Uninstall(const std::wstring& sUniqueId, std::wstring& errorMsg);
+	bool Uninstall(
+		const std::wstring& sUniqueId,
+		std::wstring& errorMsg,
+		const std::atomic<bool>* pCancelled = nullptr);
 
 	//! 指定 ID が導入済みか。導入済みならそのバージョンを返す
 	bool FindInstalled(const std::wstring& sUniqueId, SInstalledExtension& found) const;
@@ -99,9 +106,6 @@ public:
 	static std::wstring ComputeSha256Hex(const std::filesystem::path& path);
 
 private:
-	//! Shell による展開は非同期なので、想定の成果物が現れるまで待つ
-	static bool WaitForExtracted(const std::filesystem::path& marker, std::wstring& errorMsg);
-
 	//! package.json から表示名を読む。読めなければ空
 	static std::wstring ReadDisplayName(const std::filesystem::path& manifestPath);
 

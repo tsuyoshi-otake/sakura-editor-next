@@ -11,6 +11,7 @@
 #define SAKURA_CHTTPCLIENT_6B2E4D71_0A93_4C58_9F17_5E8A3C2D4B60_H_
 #pragma once
 
+#include <atomic>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -56,7 +57,11 @@ public:
 		@param[out] errorMsg	失敗理由（未ローカライズの技術的詳細）
 		@retval true 通信自体は成功。HTTP ステータスは response で確認すること
 	*/
-	bool Get(const std::wstring& url, Response& response, std::wstring& errorMsg);
+	bool Get(
+		const std::wstring& url,
+		Response& response,
+		std::wstring& errorMsg,
+		const std::atomic<bool>* pCancelled = nullptr);
 
 	/*!
 		@brief GET してファイルに保存する
@@ -65,7 +70,11 @@ public:
 		@param[out] errorMsg	失敗理由（未ローカライズの技術的詳細）
 		@retval true 200 応答を受け取り、outPath に保存できた
 	*/
-	bool Download(const std::wstring& url, const std::filesystem::path& outPath, std::wstring& errorMsg);
+	bool Download(
+		const std::wstring& url,
+		const std::filesystem::path& outPath,
+		std::wstring& errorMsg,
+		const std::atomic<bool>* pCancelled = nullptr);
 
 private:
 	//! 受信データの受け取り先。false を返すと受信を中止する
@@ -76,7 +85,9 @@ private:
 		size_t				maxBytes,
 		unsigned long&		statusCode,
 		const Sink&			sink,
-		std::wstring&		errorMsg);
+		std::wstring&		errorMsg,
+		const std::atomic<bool>* pCancelled,
+		unsigned int		redirectsRemaining);
 
 	void*	m_hSession = nullptr;	//!< HINTERNET（セッションハンドル）
 };

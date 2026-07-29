@@ -32,9 +32,9 @@
 	ウィンドウが先に消えて投函が失敗しても漏れない。
 
 	@par ウィンドウが先に閉じた場合
-	ワーカーは中断できない（WinHTTP の同期 API を使っている）ので、
-	OnDestroy では SJob::bAbandoned を立てて共有を手放すだけにする。
-	UI を最大 1 分止めて待つより、結果を捨てる方が利用者の利益にかなう。
+	OnDestroy では SJob::bAbandoned と bCancelled を立てて共有を解放する。
+	ワーカーはネットワーク、展開、削除の境界で bCancelled を確認して副作用を止める。
+	完了通知の PostMessage が失敗しても、ウィンドウ存続中はタイマーが共有ジョブを終端状態へ回収する。
 
 	@note 拡張を「実行」する仕組み（拡張ホスト）はまだ無い。
 		このサイドバーができるのは取得と配置までである。
@@ -46,6 +46,8 @@ class CExtensionPane final : public CWnd
 public:
 	//! ジョブ完了通知。このウィンドウの内部だけで使う
 	static constexpr UINT kJobDoneMessage = WM_APP + 1600;
+	static constexpr UINT_PTR kJobPollTimerId = 1601;
+	static constexpr UINT kJobPollIntervalMs = 250;
 
 	//! ペインの既定幅（DPI 拡大前の論理ピクセル）
 	static constexpr int kDefaultWidth = 280;
@@ -104,6 +106,9 @@ private:
 
 		//! UI 側がもう結果を必要としていない
 		std::atomic<bool>	bAbandoned{ false };
+
+		//! 取消し後はネットワーク・展開・削除の各境界で副作用を止める
+		std::atomic<bool>	bCancelled{ false };
 	};
 
 	//! 一覧の 1 行
@@ -117,6 +122,7 @@ private:
 	LRESULT OnCommand( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT OnNotify( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT OnDestroy( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
+	LRESULT OnTimer( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT DispatchEvent_WM_APP( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 
 	//! 子コントロールを作る

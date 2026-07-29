@@ -13,6 +13,8 @@
 #include <picojson/picojson.h>
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 
 #include "util/string_ex.h"
 
@@ -75,6 +77,21 @@ double GetNumber(const picojson::object& obj, const char* pszKey, double dDefaul
 	return it->second.get<double>();
 }
 
+//! 非信頼 JSON の数値を、未定義の浮動小数点→整数変換を起こさず非負整数へ収める
+template<typename Integer>
+Integer GetNonNegativeInteger(const picojson::object& obj, const char* pszKey)
+{
+	const double value = GetNumber(obj, pszKey, 0.0);
+	if (!std::isfinite(value) || value <= 0.0) {
+		return 0;
+	}
+	constexpr Integer upper = (std::numeric_limits<Integer>::max)();
+	if (value >= static_cast<double>(upper)) {
+		return upper;
+	}
+	return static_cast<Integer>(std::floor(value));
+}
+
 //! オブジェクトから真偽項目を取り出す。無ければ既定値
 bool GetBool(const picojson::object& obj, const char* pszKey, bool bDefault)
 {
@@ -132,12 +149,13 @@ bool COpenVsxClient::Search(
 	int						nOffset,
 	int						nSize,
 	SOpenVsxSearchResult&	result,
-	std::wstring&			errorMsg)
+	std::wstring&			errorMsg,
+	const std::atomic<bool>* pCancelled)
 {
 	result = SOpenVsxSearchResult();
 
 	CHttpClient::Response response;
-	if (!m_cHttp.Get(BuildSearchUrl(sQuery, nOffset, nSize), response, errorMsg)) {
+	if (!m_cHttp.Get(BuildSearchUrl(sQuery, nOffset, nSize), response, errorMsg, pCancelled)) {
 		return false;
 	}
 	if (!response.IsOk()) {
@@ -149,13 +167,17 @@ bool COpenVsxClient::Search(
 }
 
 // VSIX をダウンロードする
-bool COpenVsxClient::DownloadVsix(const std::wstring& sDownloadUrl, const std::filesystem::path& outPath, std::wstring& errorMsg)
+bool COpenVsxClient::DownloadVsix(
+	const std::wstring& sDownloadUrl,
+	const std::filesystem::path& outPath,
+	std::wstring& errorMsg,
+	const std::atomic<bool>* pCancelled)
 {
 	if (sDownloadUrl.empty()) {
 		errorMsg = L"download url is empty";
 		return false;
 	}
-	return m_cHttp.Download(sDownloadUrl, outPath, errorMsg);
+	return m_cHttp.Download(sDownloadUrl, outPath, errorMsg, pCancelled);
 }
 
 // 検索応答 JSON を解析する
@@ -174,8 +196,8 @@ bool COpenVsxClient::ParseSearchResponse(const std::string& sJson, SOpenVsxSearc
 	}
 
 	const picojson::object& objRoot = root.get<picojson::object>();
-	result.nOffset = static_cast<int>(GetNumber(objRoot, "offset", 0.0));
-	result.nTotalSize = static_cast<int>(GetNumber(objRoot, "totalSize", 0.0));
+	result.nOffset = GetNonNegativeInteger<int>(objRoot, "offset");
+	result.nTotalSize = GetNonNegativeInteger<int>(objRoot, "totalSize");
 
 	const auto itExtensions = objRoot.find("extensions");
 	if (itExtensions == objRoot.end()) {
@@ -188,6 +210,10 @@ bool COpenVsxClient::ParseSearchResponse(const std::string& sJson, SOpenVsxSearc
 	}
 
 	const picojson::array& arrExtensions = itExtensions->second.get<picojson::array>();
+	if (arrExtensions.size() > static_cast<size_t>(kMaxPageSize)) {
+		errorMsg = L"invalid JSON: too many extensions in one response";
+		return false;
+	}
 	result.extensions.reserve(arrExtensions.size());
 
 	for (const picojson::value& item : arrExtensions) {
@@ -202,8 +228,9 @@ bool COpenVsxClient::ParseSearchResponse(const std::string& sJson, SOpenVsxSearc
 		ext.sVersion		= GetWString(objItem, "version");
 		ext.sDisplayName	= GetWString(objItem, "displayName");
 		ext.sDescription	= GetWString(objItem, "description");
-		ext.nDownloadCount	= static_cast<long long>(GetNumber(objItem, "downloadCount", 0.0));
-		ext.dAverageRating	= GetNumber(objItem, "averageRating", -1.0);
+		ext.nDownloadCount	= GetNonNegativeInteger<long long>(objItem, "downloadCount");
+		const double dAverageRating = GetNumber(objItem, "averageRating", -1.0);
+		ext.dAverageRating	= std::isfinite(dAverageRating) ? dAverageRating : -1.0;
 		ext.bVerified		= GetBool(objItem, "verified", false);
 		ext.bDeprecated		= GetBool(objItem, "deprecated", false);
 

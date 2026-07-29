@@ -14,7 +14,9 @@
 #include <locale>
 #include <string>
 
+#define MINIZ_HEADER_FILE_ONLY
 #include <miniz-cpp/zip_file.hpp>
+#undef MINIZ_HEADER_FILE_ONLY
 
 #include "util/file.h"
 
@@ -173,6 +175,123 @@ TEST(CZipFile, DISABLED_IsNG) // 安定しないので無効化する
 	EXPECT_FALSE(cZipFile.IsOk());
 
 	// この場合、他のメソッドを呼び出すと落ちる。
+}
+
+//! 中央ディレクトリ内の名前は展開前に Windows のパス規則で拒否する
+TEST(CZipFile, IsSafeArchiveEntryPath)
+{
+	EXPECT_TRUE(CZipFile::IsSafeArchiveEntryPath("extension/package.json"));
+	EXPECT_TRUE(CZipFile::IsSafeArchiveEntryPath("extension/media/icon.png"));
+	EXPECT_TRUE(CZipFile::IsSafeArchiveEntryPath("extension/"));
+
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("../package.json"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/../../outside"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("/absolute/path"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("C:/absolute/path"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/file:stream"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension\\backslash"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension//duplicate-separator"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/CON/file"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/NUL.txt"));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/."));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/name."));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/name "));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath("extension/name. "));
+	EXPECT_FALSE(CZipFile::IsSafeArchiveEntryPath(std::string_view("extension/a\0b", 13)));
+}
+
+//! 安全な VSIX だけを同期展開し、zip-slip は展開前に拒否する
+TEST(CZipFile, ExtractVsixSafely_ValidatesAllCentralDirectoryEntriesBeforeWriting)
+{
+	const auto zipPath = GetTempFilePath(L"vxs");
+	const auto outputDir = GetTempFilePath(L"vxo");
+	const auto outsidePath = outputDir.parent_path() / L"outside.txt";
+	std::error_code ec;
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove(outputDir, ec);
+	std::filesystem::remove(outsidePath, ec);
+
+	{
+		miniz_cpp::zip_file archive;
+		archive.writestr("extension/package.json", "{\"name\":\"safe\"}");
+		archive.writestr("extension/readme.md", "safe content");
+		archive.save(zipPath.string());
+	}
+	std::wstring errorMsg;
+	ASSERT_TRUE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg)) << errorMsg;
+	EXPECT_TRUE(std::filesystem::exists(outputDir / L"extension" / L"package.json"));
+	std::filesystem::remove_all(outputDir, ec);
+
+	{
+		miniz_cpp::zip_file archive;
+		archive.writestr("extension/package.json", "{\"name\":\"unsafe\"}");
+		archive.writestr("../outside.txt", "must not be written");
+		archive.save(zipPath.string());
+	}
+	errorMsg.clear();
+	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
+	EXPECT_FALSE(errorMsg.empty());
+	EXPECT_FALSE(std::filesystem::exists(outsidePath));
+	EXPECT_FALSE(std::filesystem::exists(outputDir / L"extension" / L"package.json"));
+
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove_all(outputDir, ec);
+}
+
+//! Windows で同じ出力名になるエントリや必須マニフェスト不足を拒否する
+TEST(CZipFile, ExtractVsixSafely_RejectsAmbiguousOrIncompleteArchives)
+{
+	const auto zipPath = GetTempFilePath(L"vxa");
+	const auto outputDir = GetTempFilePath(L"vxb");
+	std::error_code ec;
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove(outputDir, ec);
+
+	{
+		miniz_cpp::zip_file archive;
+		archive.writestr("extension/package.json", "{\"name\":\"safe\"}");
+		archive.writestr("extension/PACKAGE.JSON", "{\"name\":\"duplicate\"}");
+		archive.save(zipPath.string());
+	}
+	std::wstring errorMsg;
+	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
+	EXPECT_FALSE(std::filesystem::exists(outputDir / L"extension" / L"package.json"));
+	std::filesystem::remove_all(outputDir, ec);
+
+	{
+		miniz_cpp::zip_file archive;
+		archive.writestr("extension/readme.md", "missing manifest");
+		archive.save(zipPath.string());
+	}
+	errorMsg.clear();
+	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
+	EXPECT_FALSE(std::filesystem::exists(outputDir / L"extension" / L"readme.md"));
+
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove_all(outputDir, ec);
+}
+
+//! 事前に取り消された展開は出力ディレクトリさえ作らない
+TEST(CZipFile, ExtractVsixSafely_HonorsPreCancellation)
+{
+	const auto zipPath = GetTempFilePath(L"vxc");
+	const auto outputDir = GetTempFilePath(L"vxd");
+	std::error_code ec;
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove(outputDir, ec);
+	{
+		miniz_cpp::zip_file archive;
+		archive.writestr("extension/package.json", "{\"name\":\"safe\"}");
+		archive.save(zipPath.string());
+	}
+
+	std::atomic<bool> cancelled{ true };
+	std::wstring errorMsg;
+	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg, &cancelled));
+	EXPECT_FALSE(errorMsg.empty());
+	EXPECT_FALSE(std::filesystem::exists(outputDir));
+
+	std::filesystem::remove(zipPath, ec);
 }
 
 /*!
