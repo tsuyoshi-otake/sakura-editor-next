@@ -10,13 +10,13 @@
 </OBJECT>
 <UL>
 	<LI> <OBJECT type="text/sitemap">
-		<param name="Name" value="サクラエディタ ヘルプ目次">
+		<param name="Name" value="Sakura Editor NEXT ヘルプ目次">
 		<param name="Local" value="res\HLP000001.html">
 		<param name="ImageNumber" value="1">
 		</OBJECT>
 	<UL>
 		<LI> <OBJECT type="text/sitemap">
-			<param name="Name" value="サクラエディタ概要">
+			<param name="Name" value="Sakura Editor NEXT概要">
 			<param name="Local" value="res\HLP000001.html#c901">
 			<param name="ImageNumber" value="1">
 			</OBJECT>
@@ -383,7 +383,7 @@
 					<param name="ImageNumber" value="9">
 					</OBJECT>
 				<LI> <OBJECT type="text/sitemap">
-					<param name="Name" value="サクラエディタの全終了">
+					<param name="Name" value="Sakura Editor NEXTの全終了">
 					<param name="Local" value="res\HLP000028.html">
 					<param name="ImageNumber" value="9">
 					</OBJECT>
@@ -2055,13 +2055,13 @@
 				</OBJECT>
 		</UL>
 		<LI> <OBJECT type="text/sitemap">
-			<param name="Name" value="サクラエディタについて">
+			<param name="Name" value="Sakura Editor NEXTについて">
 			<param name="Local" value="res\HLP000009.html">
 			<param name="ImageNumber" value="1">
 			</OBJECT>
 		<UL>
 			<LI> <OBJECT type="text/sitemap">
-				<param name="Name" value="サクラエディタについて">
+				<param name="Name" value="Sakura Editor NEXTについて">
 				<param name="Local" value="res\HLP_UR000.html">
 				<param name="ImageNumber" value="9">
 				</OBJECT>

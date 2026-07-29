@@ -132,7 +132,7 @@ TEST(Windows11Platform, FormatsNeutralStartupDiagnostic)
 	const auto result = platform::EvaluateWindowsBuildQuery(0, 10, 0, 22631);
 	const auto diagnostic = platform::FormatStartupPlatformDiagnostic(result);
 
-	EXPECT_STREQ(L"Sakura Code requires Windows 11 build 22000 or later. Detected Windows 10.0 build 22631.", diagnostic.text.data());
+	EXPECT_STREQ(L"Sakura Editor NEXT requires Windows 11 build 22000 or later. Detected Windows 10.0 build 22631.", diagnostic.text.data());
 }
 
 TEST(Windows11Platform, ParsesSupportedPeMachineTypes)

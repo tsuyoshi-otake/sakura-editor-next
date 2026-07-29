@@ -1068,7 +1068,7 @@ BEGIN
     CONTROL         "HotKey1",IDC_HOTKEY_TRAYMENU,"msctls_hotkey32",WS_BORDER | WS_TABSTOP,8,167,95,12
     CONTROL         "Confirm when closing\nm&ultiple editor windows",IDC_CHECK_CLOSEALLCONFIRM,
                     "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,8,193,124,19
-    CONTROL         "When closing all Sakura Editors,\nconfirm closing editor windows(&V)",IDC_CHECK_EXITCONFIRM,
+    CONTROL         "When closing all Sakura Editor NEXT windows,\nconfirm closing editor windows(&V)",IDC_CHECK_EXITCONFIRM,
                     "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,8,212,124,19
     GROUPBOX        "Scroll",IDC_STATIC,158,3,130,125,WS_GROUP
     LTEXT           "Line &Numbers",IDC_STATIC,163,19,29,8,NOT WS_GROUP
@@ -2964,8 +2964,8 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_AUTHOR_PAGE         "https://sakura-editor.github.io/"
-    IDS_ABOUT_DESCRIPTION   "This software is the renamed [Text Editor(Joint Development Version)].\r\nIt is free for use irrespective of use commercially or not but, Source Code Copyright reserved by the person as described in each section.\r\nThis software is distributed without guarantee.\r\n"
+    IDS_AUTHOR_PAGE         "https://github.com/tsuyoshi-otake/sakura-editor-next"
+    IDS_ABOUT_DESCRIPTION   "VS Code級の機能を、ネイティブの速さで。\r\nThis software is the renamed [Text Editor(Joint Development Version)].\r\nIt is free for use irrespective of use commercially or not but, Source Code Copyright reserved by the person as described in each section.\r\nThis software is distributed without guarantee.\r\n"
 END
 
 STRINGTABLE
@@ -3759,7 +3759,7 @@ END
 
 STRINGTABLE
 BEGIN
-    STR_DLGABOUT_APPNAME    "Sakura Editor"
+    STR_DLGABOUT_APPNAME    "Sakura Editor NEXT"
     STR_DLGEXEC_SELECT_CURDIR "Select current directory."
     STR_PROPEDIT_SELECT_DIR "Select file dialog path"
     STR_DLGTYPEASC_IMPORT   "--Without change import--"

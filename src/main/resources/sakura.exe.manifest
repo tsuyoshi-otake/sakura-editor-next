@@ -6,7 +6,7 @@
     processorArchitecture="amd64"
     version="1.0.0.0"
   />
-  <description>Sakura Editor</description>
+  <description>Sakura Editor NEXT</description>
   <dependency>
     <dependentAssembly>
       <assemblyIdentity

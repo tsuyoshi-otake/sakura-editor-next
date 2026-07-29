@@ -33,7 +33,7 @@ call %~dp0tools\githash.bat %~dp0sakura_core
 @rem ----------------------------------------------------------------
 @echo checking CI_REPO_NAME %CI_REPO_NAME%
 set BUILD_ACCOUNT=
-if "%CI_REPO_NAME%" == "sakura-editor/sakura" (
+if "%CI_REPO_NAME%" == "tsuyoshi-otake/sakura-editor-next" (
 	set BUILD_ACCOUNT=
 ) else if "%CI_REPO_NAME%" == "" (
 	set BUILD_ACCOUNT=

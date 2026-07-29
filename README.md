@@ -1,12 +1,16 @@
-﻿# Sakura Editor
+﻿# Sakura Editor NEXT
 
-A free text editor for Windows.  
+<p align="center">
+  <img src="src/main/resources/images/sakura_editor_next.png" alt="Sakura Editor NEXT" width="180">
+</p>
+
+**VS Code級の機能を、ネイティブの速さで。**
+
+A fast, native Windows editor with a VS Code-style workbench.
 [![License: Zlib](https://img.shields.io/badge/License-Zlib-lightgrey.svg)](https://opensource.org/licenses/Zlib)
-[![build sakura](https://github.com/sakura-editor/sakura/workflows/build%20sakura/badge.svg)](https://github.com/sakura-editor/sakura/actions?query=workflow%3A%22build+sakura%22)
-[![CodeFactor](https://www.codefactor.io/repository/github/sakura-editor/sakura/badge)](https://www.codefactor.io/repository/github/sakura-editor/sakura)
-[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=sakura-editor_sakura&metric=alert_status)](https://sonarcloud.io/dashboard?id=sakura-editor_sakura)
-[![Github Releases All](https://img.shields.io/github/downloads/sakura-editor/sakura/total.svg)](https://github.com/sakura-editor/sakura/releases "All Releases")
-[![Star History](https://img.shields.io/badge/star-histroy-yellow.svg)](https://star-history.t9t.io/#sakura-editor/sakura)
+[![build sakura](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml/badge.svg)](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml)
+[![Github Releases All](https://img.shields.io/github/downloads/tsuyoshi-otake/sakura-editor-next/total.svg)](https://github.com/tsuyoshi-otake/sakura-editor-next/releases "All Releases")
+[![Star History](https://img.shields.io/badge/star-history-yellow.svg)](https://star-history.com/#tsuyoshi-otake/sakura-editor-next)
 
 <!-- 以下は Markdownの参照形式によるリンク の定義です。 -->
 <!-- 参照 https://hail2u.net/blog/coding/markdown-reference-style-links.html -->
@@ -15,7 +19,6 @@ A free text editor for Windows.
 [Visual Studio 最新版]: https://visualstudio.microsoft.com/ja/downloads/ "Visual Studio 最新版"
 [ライセンスの OSI のページ]: https://opensource.org/license/zlib
 [Visual Studio Community ライセンス]: https://visualstudio.microsoft.com/ja/license-terms/vs2022-ga-community/
-[Markdown をローカルで確認する方法]: https://github.com/sakura-editor/sakura/wiki/markdown-%E3%82%92%E3%83%AD%E3%83%BC%E3%82%AB%E3%83%AB%E3%81%A7%E7%A2%BA%E8%AA%8D%E3%81%99%E3%82%8B%E6%96%B9%E6%B3%95
 [How to extract currently installed Visual Studio component IDs?]: https://stackoverflow.com/questions/52946333/how-to-extract-currently-installed-visual-studio-component-ids
 [Configure Visual Studio across your organization with .vsconfig]: https://devblogs.microsoft.com/setup/configure-visual-studio-across-your-organization-with-vsconfig/
 [インストール構成をインポートまたはエクスポートする]: https://docs.microsoft.com/ja-jp/visualstudio/install/import-export-installation-configurations?view=vs-2019
@@ -24,31 +27,30 @@ A free text editor for Windows.
 
 <!-- TOC -->
 
-- [Sakura Editor](#sakura-editor)
+- [Sakura Editor NEXT](#sakura-editor-next)
   - [脆弱性の報告方法](#脆弱性の報告方法)
   - [ダウンロード](#ダウンロード)
   - [開発情報](#開発情報)
     - [How to build](#how-to-build)
-    - [Static code analysis](#static-code-analysis)
   - [変更履歴](#変更履歴)
 
 <!-- /TOC -->
 
 ## 脆弱性の報告方法
 
-https://github.com/sakura-editor/sakura/security/advisories
+https://github.com/tsuyoshi-otake/sakura-editor-next/security/advisories
 から報告を行ってください。
 
 
 ## ダウンロード
 
-リリース版は [Sakura Editor Portal](https://sakura-editor.github.io/) に置いてあります。
+リリース版は [Sakura Editor NEXT Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) に置いてあります。
 
-GitHubで公開しているので [GitHub Actionsのビルドページ](https://github.com/sakura-editor/sakura/actions/workflows/build-sakura.yml?query=branch%3Amaster) より開発中の最新版をダウンロードすることもできます。
+開発中の最新版は [GitHub Actionsのビルドページ](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amaster) から取得できます。
 
-### Sakura Code ワークベンチ版の動作環境
+### Sakura Editor NEXT の動作環境
 
-Sakura Code ワークベンチ版は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。
+Sakura Editor NEXT は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。
 
 左の Explorer、右の Outline、下の統合 Terminal を備えます。新規プロファイルでは Explorer と Outline を表示し、Terminal は必要になるまで起動しません。`Ctrl+B` で左パネル、`Ctrl+J` で下パネルを表示／非表示にできます。Terminal は `Ctrl+@`（英語配列では `Ctrl+\``）で表示またはフォーカスします。
 
@@ -61,22 +63,7 @@ Sakura Code ワークベンチ版は **Windows 11 build 22000 以降の x64 環�
 `sakura.sln`を開いてビルドできます。  
 詳細は [ビルド方法](./tools/build.md) を参照。
 
-### Static code analysis
-
-サクラエディタプロジェクトではいくつかの静的解析サービスを利用しています。
-
-| サービス | 説明 |
-|---------|------|
-| [CodeFactor](https://www.codefactor.io/repository/github/sakura-editor/sakura) |  C++ のスタイルチェック。[cpplint.py](./tools/CodeFactor/README.md)による字句解析。 |
-| [SonarQube](https://sonarcloud.io/summary/new_code?id=sakura-editor_sakura&branch=master) | 多言語対応の静的解析。Build Wrapper + SonarScannerによるコード品質解析。 |
-
-[![Quality gate](https://sonarcloud.io/api/project_badges/quality_gate?project=sakura-editor_sakura)](https://sonarcloud.io/summary/overall?id=sakura-editor_sakura)
-
 ## 変更履歴
 
-- 変更履歴は [CHANGELOG.md](https://github.com/sakura-editor/sakura/blob/master/CHANGELOG.md) を参照してください。
-- 最新の `CHANGELOG.md` は [ここからダウンロード](https://ci.appveyor.com/project/sakuraeditor/changelog-sakura/branch/master/artifacts) できます([Markdown をローカルで確認する方法](https://github.com/sakura-editor/sakura/wiki/markdown-%E3%82%92%E3%83%AD%E3%83%BC%E3%82%AB%E3%83%AB%E3%81%A7%E7%A2%BA%E8%AA%8D%E3%81%99%E3%82%8B%E6%96%B9%E6%B3%95)
-で説明している手順でローカルで確認できます)。
-- `CHANGELOG.md` は [PullRequest](https://github.com/sakura-editor/sakura/pulls) から自動的に生成しています。
-  - 具体的には [github-changelog-generator](https://github.com/github-changelog-generator/github-changelog-generator) というソフトを使用して [changelog-sakura](https://github.com/sakura-editor/changelog-sakura) のリポジトリで [appveyor](https://ci.appveyor.com/project/sakuraeditor/changelog-sakura) で生成しています。
-  - 詳細は wiki の [CHANGELOG.mdについて](https://github.com/sakura-editor/sakura/wiki/CHANGELOG.md%E3%81%AB%E3%81%A4%E3%81%84%E3%81%A6) をご覧ください。
+- Sakura Editor NEXT の最新変更は [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/master/) と [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) を参照してください。
+- 基盤となったサクラエディタから引き継いだ履歴は [CHANGELOG.md](./CHANGELOG.md) に保存しています。

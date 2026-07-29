@@ -149,7 +149,7 @@ StartupPlatformDiagnostic FormatStartupPlatformDiagnostic(const WindowsBuildResu
 {
 	StartupPlatformDiagnostic diagnostic{};
 	std::size_t length = 0;
-	AppendLiteral(diagnostic, length, L"Sakura Code requires Windows 11 build 22000 or later. ");
+	AppendLiteral(diagnostic, length, L"Sakura Editor NEXT requires Windows 11 build 22000 or later. ");
 	if (result.status != WindowsBuildStatus::Success) {
 		AppendLiteral(diagnostic, length, L"Windows build detection failed: ");
 		AppendLiteral(diagnostic, length, StatusText(result.status));

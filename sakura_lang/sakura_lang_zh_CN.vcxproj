@@ -123,6 +123,6 @@
     <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target generate_funccode_define -- /nologo" EnvironmentVariables="TrackFileAccess=false" />
   </Target>
   <Target Name="ValidateX64Platform" Condition="'$(DesignTimeBuild)' != 'true' and '$(Platform)' != 'x64'">
-    <Error Code="SAKURA0001" Text="Sakura Code supports only the x64 platform. Build with /p:Platform=x64." />
+    <Error Code="SAKURA0001" Text="Sakura Editor NEXT supports only the x64 platform. Build with /p:Platform=x64." />
   </Target>
 </Project>

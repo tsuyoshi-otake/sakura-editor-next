@@ -222,7 +222,7 @@ public:
 		if (!EnsureParentDirectory(recordPath)) {
 			return false;
 		}
-		const std::wstring document = L"Sakura Code VirtualStore migration v1\r\nsource="
+		const std::wstring document = L"Sakura Editor NEXT VirtualStore migration v1\r\nsource="
 			+ recordText + L"\r\n";
 		const std::string utf8 = ToUtf8(document);
 		if (utf8.empty()) {

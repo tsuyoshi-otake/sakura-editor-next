@@ -5,11 +5,11 @@
 </HEAD><BODY>
 <UL>
 <LI><OBJECT type="text/sitemap">
-<param name="Name" value="サクラエディタ  ヘルプ目次">
+<param name="Name" value="Sakura Editor NEXT ヘルプ目次">
 <param name="Local" value="res\HLP000001.html">
 </OBJECT>
 <LI><OBJECT type="text/sitemap">
-<param name="Name" value="サクラエディタ概要">
+<param name="Name" value="Sakura Editor NEXT概要">
 <param name="Local" value="res\HLP000001.html#c901">
 </OBJECT>
 <LI><OBJECT type="text/sitemap">
@@ -293,7 +293,7 @@
 <param name="Local" value="res\HLP000030.html">
 </OBJECT>
 <LI><OBJECT type="text/sitemap">
-<param name="Name" value="サクラエディタの全終了">
+<param name="Name" value="Sakura Editor NEXTの全終了">
 <param name="Local" value="res\HLP000028.html">
 </OBJECT>
 <LI><OBJECT type="text/sitemap">

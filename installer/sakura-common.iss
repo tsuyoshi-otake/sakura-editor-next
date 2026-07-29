@@ -15,9 +15,9 @@ AppVersion={#MyAppVer}
 AppVerName={cm:AppVerName} {#MyAppVer} ({#MyArchitecture})
 AppMutex=MutexSakuraEditor
 AppPublisher={cm:AppPublisher}
-AppPublisherURL=https://sakura-editor.github.io/
-AppSupportURL=https://github.com/sakura-editor/sakura/issues
-AppUpdatesURL=https://github.com/sakura-editor/sakura/releases
+AppPublisherURL=https://github.com/tsuyoshi-otake/sakura-editor-next
+AppSupportURL=https://github.com/tsuyoshi-otake/sakura-editor-next/issues
+AppUpdatesURL=https://github.com/tsuyoshi-otake/sakura-editor-next/releases
 DefaultDirName={code:getDefautDirName|sakura}
 DefaultGroupName={cm:AppName}
 UninstallDisplayIcon={app}\sakura.exe
@@ -27,6 +27,7 @@ SolidCompression=yes
 
 WizardImageFile="instmaterials\SetupModern20.bmp"
 WizardSmallImageFile="instmaterials\SetupModernSmall20.bmp"
+SetupIconFile="instmaterials\icon_debug.ico"
 DisableStartupPrompt=yes
 DisableWelcomePage=no
 
@@ -55,20 +56,20 @@ ja.InfoBeforeFile=instmaterials\info.txt
 zh_hans.InfoBeforeFile=instmaterials\info_zh_hans.txt
 zh_hant.InfoBeforeFile=instmaterials\info_zh_hant.txt
 
-en.AppName=SAKURA Editor
-ja.AppName=サクラエディタ
-zh_hans.AppName=樱花编辑器
-zh_hant.AppName=櫻花編輯器
+en.AppName=Sakura Editor NEXT
+ja.AppName=Sakura Editor NEXT
+zh_hans.AppName=Sakura Editor NEXT
+zh_hant.AppName=Sakura Editor NEXT
 
-en.AppVerName=SAKURA Editor
-ja.AppVerName=SAKURA Editor(サクラエディタ)
-zh_hans.AppVerName=樱花编辑器
-zh_hant.AppVerName=櫻花編輯器
+en.AppVerName=Sakura Editor NEXT
+ja.AppVerName=Sakura Editor NEXT
+zh_hans.AppVerName=Sakura Editor NEXT
+zh_hant.AppVerName=Sakura Editor NEXT
 
-en.AppPublisher=SAKURA Editor developers
-ja.AppPublisher=サクラエディタ開発チーム
-zh_hans.AppPublisher=樱花编辑器 开发团队
-zh_hant.AppPublisher=櫻花編輯器 開發团队
+en.AppPublisher=Sakura Editor NEXT developers
+ja.AppPublisher=Sakura Editor NEXT 開発チーム
+zh_hans.AppPublisher=Sakura Editor NEXT 开发团队
+zh_hant.AppPublisher=Sakura Editor NEXT 開發團隊
 
 en.TypesAll=All
 ja.TypesAll=すべて
@@ -90,10 +91,10 @@ ja.TypesCustom=カスタム
 zh_hans.TypesCustom=自定义
 zh_hant.TypesCustom=自定義
 
-en.ComponentsMain=SAKURA Editor itself
-ja.ComponentsMain=サクラエディタ本体
-zh_hans.ComponentsMain=樱花编辑器
-zh_hant.ComponentsMain=櫻花編輯器
+en.ComponentsMain=Sakura Editor NEXT itself
+ja.ComponentsMain=Sakura Editor NEXT 本体
+zh_hans.ComponentsMain=Sakura Editor NEXT
+zh_hant.ComponentsMain=Sakura Editor NEXT
 
 en.ComponentsHelp=help files
 ja.ComponentsHelp=ヘルプファイル
@@ -115,30 +116,30 @@ ja.proglist=プログラム一覧に追加(&P)
 zh_hans.proglist=添加到程序列表(&P)
 zh_hant.proglist=添加到程式清單(&P)
 
-en.fileassoc=Add "Open with SAKURA &Editor"
-ja.fileassoc=「SAKURA Editorで開く」メニューの追加(&E)
-zh_hans.fileassoc=添加"用 樱花编辑器 打开"(&E)
-zh_hant.fileassoc=添加“用 櫻花編輯器 打開”(&E)
+en.fileassoc=Add "Open with Sakura Editor &NEXT"
+ja.fileassoc=「Sakura Editor NEXTで開く」メニューの追加(&E)
+zh_hans.fileassoc=添加“用 Sakura Editor NEXT 打开”(&E)
+zh_hant.fileassoc=添加“用 Sakura Editor NEXT 打開”(&E)
 
 en.sendto=Add to Send&To Menu
 ja.sendto=送るに追加(&T)
 zh_hans.sendto=添加到"发送到"菜单(&T)
 zh_hant.sendto=添加到“發送到”選單(&T)
 
-en.sakuragrep=Add "&Grep with SAKURA Editor"
-ja.sakuragrep=「SAKURA EditorでGrep」メニューの追加(&G)
-zh_hans.sakuragrep=添加到 "Grep with SAKURA Editor"(&G)
-zh_hant.sakuragrep=添加到 “Grep with SAKURA Editor”(&G)
+en.sakuragrep=Add "&Grep with Sakura Editor NEXT"
+ja.sakuragrep=「Sakura Editor NEXTでGrep」メニューの追加(&G)
+zh_hans.sakuragrep=添加到“Grep with Sakura Editor NEXT”(&G)
+zh_hant.sakuragrep=添加到“Grep with Sakura Editor NEXT”(&G)
 
-en.fileassocMenu=Open with SAKURA &Editor
-ja.fileassocMenu=SAKURA Editorで開く(&E)
-zh_hans.fileassocMenu=用 樱花编辑器 打开(&E)
-zh_hant.fileassocMenu=用 櫻花編輯器 打開く(&E)
+en.fileassocMenu=Open with Sakura Editor &NEXT
+ja.fileassocMenu=Sakura Editor NEXTで開く(&E)
+zh_hans.fileassocMenu=用 Sakura Editor NEXT 打开(&E)
+zh_hant.fileassocMenu=用 Sakura Editor NEXT 打開(&E)
 
-en.sakuragrepMenu=&Grep with SAKURA Editor
-ja.sakuragrepMenu=SAKURA EditorでGrep(&G)
-zh_hans.sakuragrepMenu=Grep with SAKURA Editor(&G)
-zh_hant.sakuragrepMenu=Grep with SAKURA Editor(&G)
+en.sakuragrepMenu=&Grep with Sakura Editor NEXT
+ja.sakuragrepMenu=Sakura Editor NEXTでGrep(&G)
+zh_hans.sakuragrepMenu=Grep with Sakura Editor NEXT(&G)
+zh_hant.sakuragrepMenu=Grep with Sakura Editor NEXT(&G)
 
 en.residentStartup=&Resident at startup
 ja.residentStartup=起動時に常駐(&R)
@@ -151,7 +152,7 @@ zh_hans.IconPreferencefolder=文件夹设置
 zh_hant.IconPreferencefolder=資料夾設定
 
 en.StartNow=Start now
-ja.StartNow=今すぐサクラエディタを起動
+ja.StartNow=今すぐ Sakura Editor NEXT を起動
 zh_hans.StartNow=现在启动
 zh_hant.StartNow=現在啟動
 

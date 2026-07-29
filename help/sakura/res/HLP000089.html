@@ -108,7 +108,7 @@
 <tr><td><code>\p{^<span style="color: blue">property-name</span>}<br>\P{<span style="color: blue">property-name</span>}</code></td><td><span style="color: green">(鬼)</span> <a href="https://github.com/kkos/oniguruma/blob/master/doc/UNICODE_PROPERTIES" target="_blank" rel="noopener">キャラクタプロパティ</a>（否定）</td></tr>
 </table>
 <span style="color: green">(鬼)</span> はbregonig.dllのみ<br>
-<span style="color: green">(Unicode版)</span> はUnicode版のサクラエディタ<br>
+<span style="color: green">(Unicode版)</span> は Unicode 版の Sakura Editor NEXT<br>
 <small>*1 この処理は正規表現DLLではなくsakura側が入力された.を[^\r\n]に置き換えています。</small><br>
 <h4>位置(錨)</h4>
 <table style="border-collapse: collapse;" border="1" bordercolor="#111111" cellpadding="0" cellspacing="0">
@@ -155,7 +155,7 @@
 <tr><td><code>(?&lt;=<span style="color: blue">式</span>)</code></td><td><span style="color: green">(鬼)</span> 戻り読み</td></tr>
 <tr><td><code>(?&lt;!<span style="color: blue">式</span>)</code></td><td><span style="color: green">(鬼)</span> 否定戻り読み</td></tr>
 <tr><td><code>(?&gt;<span style="color: blue">式</span>)</code></td><td><span style="color: green">(鬼)</span> 原子的式集合</td></tr>
-<tr><td><code>(?imsx)</code></td><td>孤立オプション<br>i: 大文字小文字照合<br>m: 複数行（サクラエディタではデフォルトでon）<br>s: 単一行  （. が \n にもマッチ）<br>x: 拡張形式（空白を無視、# 以降を無視）</td></tr>
+<tr><td><code>(?imsx)</code></td><td>孤立オプション<br>i: 大文字小文字照合<br>m: 複数行（Sakura Editor NEXT ではデフォルトでon）<br>s: 単一行  （. が \n にもマッチ）<br>x: 拡張形式（空白を無視、# 以降を無視）</td></tr>
 <tr><td><code>(?imsx-imsx)</code></td><td><span style="color: green">(鬼)</span> 孤立オプション（bregonig.dllではオプションの否定が可能）</td></tr>
 <tr><td><code>(imsx-imsx:<span style="color: blue">式</span>)</code></td><td><span style="color: green">(鬼)</span> 式オプション</td></tr>
 </table>
@@ -166,7 +166,7 @@
 <table style="border-collapse: collapse;" border="1" bordercolor="#111111" cellpadding="0" cellspacing="0">
 <caption style="display: none">無題</caption>
 <tr style="display: none"><th scope="col"></th><th scope="col"></th></tr>
-<tr><td><code>$<span style="color: blue">n</span></code></td><td>番号指定参照<br>( )でグループ化した文字列を、<strong>$<span style="color: blue">n</span></strong>(<span style="color: blue">n</span>は1以上の整数)で参照します。<br>サクラエディタでは<strong>$<span style="color: blue">n</span></strong>の代わりに<strong>\<span style="color: blue">n</span></strong>も使用できます。</td></tr>
+<tr><td><code>$<span style="color: blue">n</span></code></td><td>番号指定参照<br>( )でグループ化した文字列を、<strong>$<span style="color: blue">n</span></strong>(<span style="color: blue">n</span>は1以上の整数)で参照します。<br>Sakura Editor NEXT では<strong>$<span style="color: blue">n</span></strong>の代わりに<strong>\<span style="color: blue">n</span></strong>も使用できます。</td></tr>
 <tr><td><code>${<span style="color: blue">n</span>}</code></td><td><span style="color: green">(鬼)</span> （安全な）番号指定参照<br>後ろにそのまま続けて数字を書くことができます。</td></tr>
 <tr><td><code>$&amp;</code></td><td>マッチした文字列全体</td></tr>
 <tr><td><code>$+</code></td><td><span style="color: green">(鬼)</span> 最後にマッチした部分文字列</td></tr>
@@ -192,12 +192,12 @@
 	</li>
 	<li><strong>Unicode版は i オプションの動作が異なる。</strong><br>
 		<small>大文字小文字を区別しないの動作が ASCII 範囲外にも影響します。<br>
-		Unicode版サクラエディタの通常検索・置換も ASCII 範囲外の大文字小文字の考慮をしますが、2つが同じかどうかは未チェックです。</small>
+		Unicode 版 Sakura Editor NEXT の通常検索・置換も ASCII 範囲外の大文字小文字の考慮をしますが、2つが同じかどうかは未チェックです。</small>
 	</li>
 </ul>
 
 <h4>改行の検索</h4>
-サクラエディタで改行(CRLF)を検索する場合は、<br>
+Sakura Editor NEXT で改行(CRLF)を検索する場合は、<br>
 <strong>\r\n</strong> で検索して下さい。<br>
 改行(CR,LF,CRLFのすべて)を検索する場合は、<br>
 <strong>[\r\n]+</strong> のように指定してください。<br>

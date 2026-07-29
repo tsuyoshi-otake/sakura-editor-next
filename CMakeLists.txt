@@ -7,7 +7,7 @@ if(CMAKE_GENERATOR_PLATFORM)
   string(TOLOWER "${CMAKE_GENERATOR_PLATFORM}" _sakura_generator_platform)
   if(NOT _sakura_generator_platform MATCHES "^(x64|amd64)$")
     message(FATAL_ERROR
-      "Sakura Editor's CMake build supports only x64 targets. "
+      "Sakura Editor NEXT's CMake build supports only x64 targets. "
       "Use an x64 generator/toolchain; got '${_sakura_generator_platform}'.")
   endif()
 endif()
@@ -15,7 +15,7 @@ endif()
 # Define primary project
 project(sakura LANGUAGES CXX)
 
-# Sakura Editor's CMake build is supported only for 64-bit x86 targets.
+# Sakura Editor NEXT's CMake build is supported only for 64-bit x86 targets.
 # This also permits the experimental MinGW64 configuration, where the
 # generator platform is normally unset and the compiler reports x86_64.
 set(_sakura_target_platform "${CMAKE_VS_PLATFORM_NAME}")
@@ -27,7 +27,7 @@ string(TOLOWER "${_sakura_target_platform}" _sakura_target_platform)
 if(NOT _sakura_target_platform MATCHES "^(x64|amd64|x86_64)$" OR
    CMAKE_SIZEOF_VOID_P LESS 8)
   message(FATAL_ERROR
-    "Sakura Editor's CMake build supports only x64 targets. "
+    "Sakura Editor NEXT's CMake build supports only x64 targets. "
     "Use an x64 generator/toolchain (including experimental MinGW64); "
     "got '${_sakura_target_platform}'.")
 endif()

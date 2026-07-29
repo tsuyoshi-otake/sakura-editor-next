@@ -2881,8 +2881,8 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_AUTHOR_PAGE         "https://sakura-editor.github.io/"
-    IDS_ABOUT_DESCRIPTION   "本软件是[文本编辑器(联合开发版)]的更名版本。\r\n可免费用于商业或非商业用途，源代码版权遵循各部分原始作者声明保留。\r\n本软件不提供任何担保。\r\n"
+    IDS_AUTHOR_PAGE         "https://github.com/tsuyoshi-otake/sakura-editor-next"
+    IDS_ABOUT_DESCRIPTION   "VS Code級の機能を、ネイティブの速さで。\r\n本软件是[文本编辑器(联合开发版)]的更名版本。\r\n可免费用于商业或非商业用途，源代码版权遵循各部分原始作者声明保留。\r\n本软件不提供任何担保。\r\n"
 END
 
 STRINGTABLE
@@ -3662,7 +3662,7 @@ END
 
 STRINGTABLE
 BEGIN
-    STR_DLGABOUT_APPNAME    "樱花编辑器"
+    STR_DLGABOUT_APPNAME    "Sakura Editor NEXT"
     STR_DLGEXEC_SELECT_CURDIR "选择当前目录"
     STR_PROPEDIT_SELECT_DIR "选择文件对话框路径"
     STR_DLGTYPEASC_IMPORT   "--保持原样导入--"

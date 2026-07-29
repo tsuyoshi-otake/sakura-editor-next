@@ -61,7 +61,7 @@ int WINAPI wWinMain(
 	const auto windowsBuild = platform::QueryWindowsBuild();
 	if (!platform::SupportsWindows11Features(windowsBuild)) {
 		const auto diagnostic = platform::FormatStartupPlatformDiagnostic(windowsBuild);
-		::MessageBoxW(nullptr, diagnostic.text.data(), L"Sakura Code - Unsupported Windows", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
+		::MessageBoxW(nullptr, diagnostic.text.data(), L"Sakura Editor NEXT - Unsupported Windows", MB_OK | MB_ICONERROR | MB_SETFOREGROUND);
 		return ERROR_OLD_WIN_VERSION;
 	}
 

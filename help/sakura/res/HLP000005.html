@@ -17,7 +17,7 @@
 配布ファイルは zip形式にて圧縮されています。<br>
 解凍方法についてはここでは説明しません。<br>
 <ol>
-<li>以前のバージョンのサクラエディタがインストールされている場合、実行中のサクラエディタを(常駐も含めて)すべて終了させます。</li>
+<li>以前のバージョンのサクラエディタがインストールされている場合、実行中のサクラエディタまたは Sakura Editor NEXT を(常駐も含めて)すべて終了させます。</li>
 <li>任意のフォルダーを作成し、そのフォルダーに配布ファイル<em>sakura_xxxx-xx-xx.zip</em> を解凍します。更新の場合は通常、上書きで構いません。</li>
 <li>Windows 2000以降で、<a href="HLP000078.html">ユーザー別設定</a>にしたい場合は、<em>sakura.exe.ini</em> <small>(sakura.iniとは別のファイル)</small>を設置します。<br>
 	　<small>*Vista以降で<a href="HLP000080.html">Virtual Store</a>を無効にする場合は<a href="HLP000078.html">ユーザー別設定</a>が必須です。</small></li>
@@ -36,7 +36,7 @@ Vista以降のUACに対応していないバージョン(1.5.17.0以前)から�
 <span style="color: blue">パッケージ版（インストーラ）を利用した場合には、アンインストール情報などをレジストリに書き込みします。</span><br>
 <br>
 <ol>
-<li>実行中のサクラエディタを(常駐も含めて)すべて終了させます。</li>
+<li>実行中の Sakura Editor NEXT を(常駐も含めて)すべて終了させます。</li>
 <li>ダウンロードした<em>sinstx-x-xx-x.exe</em> を実行し、ウィザードに従ってください。</li>
 <li>2000以降のOSでは<strong>新規インストール時のみ</strong>、<a href="HLP000078.html">ユーザー別設定</a>を行うかどうかの選択画面がでます。</li>
 </ol><br>
@@ -55,14 +55,14 @@ Vista以降のUACに対応していないバージョン(1.5.17.0以前)から�
 <h3>アンインストール</h3>
 <h4>単体配布版アンインストール</h4>
 <ol>
-<li>実行中のサクラエディタを常駐も含めてすべて終了させます。</li>
+<li>実行中の Sakura Editor NEXT を常駐も含めてすべて終了させます。</li>
 <li><em>sakura.exe</em> のフォルダーを丸ごと削除します。</li>
 <li>2000以降で<a href="HLP000078.html">ユーザー別設定</a>を行っていた場合は、<a href="HLP000077.html">設定フォルダー</a>も削除します。</li>
 <li>Vista以降にて<a href="HLP000080.html">Virtual Store</a>が有効になっている場合は、<em>"%LOCALAPPDATA%\VirtualStore"</em> 以下にある<em>sakura.ini</em> などのファイルも削除します。</li>
 <li>自分で作成したショートカットなども削除してください。</li>
 </ol>
 <img alt="hint" src="images/hint.png" />ヒント<div class="li200">
-サクラエディタはレジストリへの書き込みは一切致しませんので、アンインストールにあたりレジストリを操作する必要はありません。<br>
+Sakura Editor NEXT はレジストリへの書き込みは一切致しませんので、アンインストールにあたりレジストリを操作する必要はありません。<br>
 (sakura:2.0.0.0以降)<br>
 タイプ別設定一覧画面化から関連付け設定を行った場合はレジストリを変更します。<br>
 アンインストールするときは、全てのチェックを外せば元の状態に戻ります。<br>
@@ -70,13 +70,13 @@ Vista以降のUACに対応していないバージョン(1.5.17.0以前)から�
 <br>
 <h4>パッケージ版アンインストール</h4>
 <ol>
-<li>実行中のサクラエディタを常駐も含めてすべて終了させます。</li>
+<li>実行中の Sakura Editor NEXT を常駐も含めてすべて終了させます。</li>
 <li>プログラムの追加と削除(アプリケーションの追加と削除)からアンインストールしてください。</li>
 </ol>
 <br>
 
 <img alt="hint" src="images/hint.png" />ヒント<div class="li200">
-<em>sakura.ini</em> というファイルはサクラエディタの設定ファイルです。パッケージ版のアンインストールでは、<em>sakura.ini</em> は削除されません。<br>
+<em>sakura.ini</em> というファイルは Sakura Editor NEXT の設定ファイルです。パッケージ版のアンインストールでは、<em>sakura.ini</em> は削除されません。<br>
 </div>
 <br>
 <img alt="note" src="images/note.png" /><strong>注意</strong><div class="li200">
@@ -95,11 +95,11 @@ sakura.iniの保存先
 <table style="border-collapse: collapse;" id="AutoNumber2" border="1" bordercolor="#111111" cellpadding="0" cellspacing="0">
 	<caption style="display: none">無題</caption>
 	<tr><th scope="col">ファイル名</th><th scope="col">内容</th></tr>
-<tr><td>sakura.exe</td><td>サクラエディタ  本体</td></tr>
+<tr><td>sakura.exe</td><td>Sakura Editor NEXT 本体</td></tr>
 <tr><td>bregonig.dll</td><td>正規表現ライブラリ<br>(1.5.17.x以前ではbregexp.dll)</td></tr>
 <tr><td>bsd_license.txt</td><td>Onigmo (Oniguruma-mod) LICENSE</td></tr>
-<tr><td>macro.chm</td><td>サクラエディタ  マクロヘルプ</td></tr>
-<tr><td>sakura.chm</td><td>サクラエディタ  オンラインヘルプ<br>(1.5.12.0以前ではsakura.hlpとsakura.cnt)</td></tr>
+<tr><td>macro.chm</td><td>Sakura Editor NEXT マクロヘルプ</td></tr>
+<tr><td>sakura.chm</td><td>Sakura Editor NEXT オンラインヘルプ<br>(1.5.12.0以前ではsakura.hlpとsakura.cnt)</td></tr>
 <tr><td>sakura.exe.ini</td><td>ユーザー別設定構成ファイル</td></tr>
 <tr><td>sakura.exe.manifest</td><td>XP/Vista用manifestファイル</td></tr>
 <tr><td>unins000.dat</td><td>アンインストーラ</td></tr>
@@ -182,9 +182,9 @@ sakura.iniの保存先
 <tr><td>Ruby4.kwd</td><td>Ruby</td><td>強調キーワード(組込み関数／メソッド)</td></tr>
 <tr><td>SHELL.kwd</td><td>シェルスクリプト</td><td>強調キーワード</td></tr>
 <tr><td>systemc_2_0_1.kwd</td><td>SystemC 2.0.1</td><td>強調キーワード</td></tr>
-<tr><td>S_MAC.KWD</td><td>サクラエディタマクロ</td><td>強調キーワード</td></tr>
-<tr><td>S_MACPPA.DIC</td><td>サクラエディタマクロ</td><td>入力補完辞書</td></tr>
-<tr><td>S_MACPPA.KHP</td><td>サクラエディタマクロ</td><td>キーワードヘルプ</td></tr>
+<tr><td>S_MAC.KWD</td><td>Sakura Editor NEXT マクロ</td><td>強調キーワード</td></tr>
+<tr><td>S_MACPPA.DIC</td><td>Sakura Editor NEXT マクロ</td><td>入力補完辞書</td></tr>
+<tr><td>S_MACPPA.KHP</td><td>Sakura Editor NEXT マクロ</td><td>キーワードヘルプ</td></tr>
 <tr><td>tcl.kwd</td><td>Tcl/Tk</td><td>強調キーワード</td></tr>
 <tr><td>TeX.kwd</td><td>TeX</td><td>強調キーワード　(tatei氏 ご提供)</td></tr>
 <tr><td>tsql.kwd</td><td>Transact-SQL</td><td>強調キーワード</td></tr>
@@ -209,12 +209,12 @@ sakura.iniの保存先
 </table>
 <br>
 
-<h4>サクラエディタが作成する作業ファイルについて</h4>
-サクラエディタをインストールした後にサクラエディタを実行すると、 sakura.exeのあるフォルダー（または<a href="HLP000077.html">設定フォルダー</a>）に以下のファイルが作成されます。<br>
+<h4>Sakura Editor NEXT が作成する作業ファイルについて</h4>
+Sakura Editor NEXT をインストールした後に実行すると、 sakura.exeのあるフォルダー（または<a href="HLP000077.html">設定フォルダー</a>）に以下のファイルが作成されます。<br>
 <table style="border-collapse: collapse;" id="AutoNumber4" border="1" bordercolor="#111111" cellpadding="0" cellspacing="0">
 	<caption style="display: none">無題</caption>
 	<tr><th scope="col">ファイル名</th><th scope="col">説明</th></tr>
-<tr><td>sakura.ini </td><td>サクラエディタ用の設定ファイルです。</td></tr>
+<tr><td>sakura.ini </td><td>Sakura Editor NEXT 用の設定ファイルです。</td></tr>
 </table>
 <br>
 キーマクロの記録を使うと、共通設定のマクロ一覧のフォルダーに以下のファイルが作成されます。<br>

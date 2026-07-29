@@ -148,7 +148,7 @@
 					<param name="ImageNumber" value="9">
 					</OBJECT>
 				<LI> <OBJECT type="text/sitemap">
-					<param name="Name" value="サクラエディタの全終了">
+					<param name="Name" value="Sakura Editor NEXT の全終了">
 					<param name="Local" value="source\reference\file\S_ExitAll.html">
 					<param name="ImageNumber" value="9">
 					</OBJECT>

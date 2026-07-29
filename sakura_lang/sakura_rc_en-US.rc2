@@ -1,7 +1,7 @@
 // このファイルにはリソースエディタで編集できない要素を配置します.
 // このファイルのエンコーディング/改行コードは UTF-16LE(BOM)/CRLF です.
 
-#define _APP_NAME_1 "SAKURA Editor"
+#define _APP_NAME_1 "Sakura Editor NEXT"
 
 #ifdef DEV_VERSION
 #define _APP_NAME_2 " Dev"
@@ -47,7 +47,7 @@ BEGIN
     LTEXT           "Translation:",IDC_STATIC,33,90,41,8
     LTEXT           S_COPYRIGHT_TRANSLATION,IDC_STATIC,74,90,164,8,SS_NOPREFIX | NOT WS_GROUP
     LTEXT           "Project URL:", IDC_STATIC_URL_CAPTION, 33, 103, 71, 8, NOT WS_GROUP
-    LTEXT           "https://sakura-editor.github.io/", IDC_STATIC_URL_UR, 101, 103, 120, 8, SS_NOTIFY | NOT WS_GROUP | WS_TABSTOP
+    LTEXT           "https://github.com/tsuyoshi-otake/sakura-editor-next", IDC_STATIC_URL_UR, 101, 103, 137, 8, SS_NOTIFY | NOT WS_GROUP | WS_TABSTOP
 #ifdef GIT_REMOTE_ORIGIN_URL
     LTEXT           "Source URL:", IDC_STATIC_GIT_CAPTION, 33, 113, 71, 8, NOT WS_GROUP
     LTEXT           GIT_REMOTE_ORIGIN_URL, IDC_STATIC_URL_GIT, 101, 113, 120, 8, SS_NOTIFY | NOT WS_GROUP | WS_TABSTOP
@@ -111,8 +111,8 @@ BEGIN
         BLOCK "040904b0"
         BEGIN
             VALUE "Comments", "This is free software\0"
-            VALUE "CompanyName", "Project: Sakura-Editor\0"
-            VALUE "FileDescription", "Sakura Editor Language DLL(en_US)\0"
+            VALUE "CompanyName", "Sakura Editor NEXT project\0"
+            VALUE "FileDescription", "Sakura Editor NEXT Language DLL (en-US)\0"
             VALUE "FileVersion", VERSION_STR
             VALUE "InternalName", "sakura\0"
             VALUE "LegalCopyright", S_COPYRIGHT_TRANSLATION

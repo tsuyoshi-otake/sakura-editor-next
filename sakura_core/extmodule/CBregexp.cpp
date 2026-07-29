@@ -35,7 +35,7 @@
 namespace {
 
 constexpr wchar_t kX86ModuleUnsupportedMessage[] =
-	L"32-bit modules cannot be used with the x64 version of Sakura Code.\n"
+	L"32-bit modules cannot be used with the x64 version of Sakura Editor NEXT.\n"
 	L"Install and select the x64 version of the module.";
 
 } // namespace

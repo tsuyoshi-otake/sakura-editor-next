@@ -1,4 +1,4 @@
-# Sakura Editor Claude Code Guidance
+# Sakura Editor NEXT Claude Code Guidance
 
 ## Scope
 
@@ -17,7 +17,7 @@ This file contains repository-wide guidance. More specific `CLAUDE.md` files are
 
 ## Project Overview
 
-Sakura Editor is a Windows text editor written in C++20 and licensed under the zlib License. Windows with MSVC is the primary build path. MinGW support is experimental, and its binaries may not behave correctly.
+Sakura Editor NEXT is a Windows text editor written in C++20 and licensed under the zlib License. Windows with MSVC is the primary build path. MinGW support is experimental, and its binaries may not behave correctly.
 
 The application uses two process types: one hidden control process owns cross-instance state, and each editor window runs in its own editor process. Detailed ownership and subsystem boundaries live under `sakura_core/`.
 

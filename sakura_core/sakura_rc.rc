@@ -1035,7 +1035,7 @@ BEGIN
     CONTROL         "HotKey1",IDC_HOTKEY_TRAYMENU,"msctls_hotkey32",WS_BORDER | WS_TABSTOP,8,172,95,12
     CONTROL         "同時に複数の編集用ウィンドウを\n閉じるとき確認(&U)",IDC_CHECK_CLOSEALLCONFIRM,
                     "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,8,194,124,20
-    CONTROL         "サクラエディタの全終了で編集用\nウィンドウを閉じるとき確認(&V)",IDC_CHECK_EXITCONFIRM,
+    CONTROL         "Sakura Editor NEXTの全終了で編集用\nウィンドウを閉じるとき確認(&V)",IDC_CHECK_EXITCONFIRM,
                     "Button",BS_AUTOCHECKBOX | BS_TOP | BS_MULTILINE | WS_TABSTOP,8,214,124,20
     GROUPBOX        "スクロール",IDC_STATIC,158,3,130,135,WS_GROUP
     LTEXT           "行数(&N)",IDC_STATIC,163,19,29,10,NOT WS_GROUP
@@ -2293,7 +2293,7 @@ END
 STRINGTABLE
 BEGIN
     F_EXITALLEDITORS        "編集の全終了"
-    F_EXITALL               "サクラエディタの全終了"
+    F_EXITALL               "Sakura Editor NEXTの全終了"
     F_OPEN_FOLDER_IN_EXPLORER "ファイルの場所を開く"
     F_OPEN_COMMAND_PROMPT   "コマンドプロンプトを開く"
     F_OPEN_COMMAND_PROMPT_AS_ADMIN "管理者としてコマンドプロンプトを開く"
@@ -2909,8 +2909,8 @@ END
 
 STRINGTABLE
 BEGIN
-    IDS_AUTHOR_PAGE         "https://sakura-editor.github.io/"
-    IDS_ABOUT_DESCRIPTION   "このソフトウェアは「テキストエディタ(共同開発版)」を改称したものです。\r\n商用・非商用を問わず無償で利用できますが、ソースコードの著作権は各箇所を記述した人が留保しています。\r\nこのソフトウェアは無保証です。\r\n"
+    IDS_AUTHOR_PAGE         "https://github.com/tsuyoshi-otake/sakura-editor-next"
+    IDS_ABOUT_DESCRIPTION   "VS Code級の機能を、ネイティブの速さで。\r\nこのソフトウェアは「テキストエディタ(共同開発版)」を改称したものです。\r\n商用・非商用を問わず無償で利用できますが、ソースコードの著作権は各箇所を記述した人が留保しています。\r\nこのソフトウェアは無保証です。\r\n"
 END
 
 STRINGTABLE
@@ -3693,7 +3693,7 @@ END
 
 STRINGTABLE
 BEGIN
-    STR_DLGABOUT_APPNAME    "サクラエディタ"
+    STR_DLGABOUT_APPNAME    "Sakura Editor NEXT"
     STR_DLGEXEC_SELECT_CURDIR "カレントディレクトリを選んでください"
     STR_PROPEDIT_SELECT_DIR "ファイルダイアログの指定フォルダーの選択"
     STR_DLGTYPEASC_IMPORT   "--そのままインポート--"

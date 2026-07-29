@@ -41,7 +41,7 @@ LPCWSTR GetAppName( void )
 	// The Windows 11 workbench is branded consistently in the title bar,
 	// About dialog, task switcher, and parameter expansion. Build qualifiers
 	// belong in the version field rather than the product name.
-	return L"Sakura Editor - Code";
+	return L"Sakura Editor NEXT";
 }
 
 /*! 選択領域描画用パラメータ */

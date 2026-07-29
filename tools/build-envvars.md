@@ -8,7 +8,7 @@
 |GITHUB_EVENT_NAME|ワークフローをトリガしたイベント名|`pull_request`, `push`|
 |GITHUB_REF_TYPE|リファレンスの種類|`branch`, `tag`|
 |GITHUB_SERVER_URL|GitHubサーバーのURL|`https://github.com`|
-|GITHUB_REPOSITORY|リポジトリのフルパス|`sakura-editor/sakura`|
+|GITHUB_REPOSITORY|リポジトリのフルパス|`tsuyoshi-otake/sakura-editor-next`|
 |GITHUB_SHA|コミットハッシュ (PRではマージコミット)|40桁のハッシュ値|
 
 ## CI が定義する環境変数

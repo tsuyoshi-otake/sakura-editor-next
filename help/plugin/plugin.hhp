@@ -11,7 +11,7 @@ Error log file=Compile.Log
 Full-text search=Yes
 Index file=plugin.hhk
 Language=0x411 日本語
-Title=サクラエディタ プラグイン仕様
+Title=Sakura Editor NEXT プラグイン仕様
 
 [WINDOWS]
 XHP="プラグイン仕様","plugin.hhc","plugin.hhk","Text/index.html","Text/index.html",,,,,0x61720,200,0x10384e,[50,50,850,550],0x0,0x0,,,,,0
