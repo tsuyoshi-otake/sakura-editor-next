@@ -18,7 +18,7 @@
 
 ## インストーラ作成に必要なもの
 
-[こちら](../tools/build.md#必要なもの) を参照
+[こちら](../tools/build.md#必要なツール) を参照
 
 配布対象は Windows 11 build 22000 以降の x64 環境のみです。`sakura-x64.iss` は AMD64 のみを許可し、`MinVersion=10.0.22000` を設定しています。
 
