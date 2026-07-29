@@ -14,7 +14,9 @@
   - [開発者向け情報](#開発者向け情報)
     - [ビルドで使用する環境変数](#ビルドで使用する環境変数)
     - [ビルドに使用されるバッチファイル](#ビルドに使用されるバッチファイル)
+    - [単体テストの実行](#単体テストの実行)
     - [デバッグ方法](#デバッグ方法)
+    - [アセンブリ一覧の生成](#アセンブリ一覧の生成)
     - [githash.h の更新をスキップ](#githashh-の更新をスキップ)
     - [PowerShellによるZIPファイル処理の強制](#powershellによるzipファイル処理の強制)
     - [CIビルドのスキップ](#ciビルドのスキップ)
@@ -75,6 +77,27 @@ Visual Studio で `sakura.sln` を開いてビルドします。
 
 #### コマンドラインでビルド
 
+用途に応じて次のコマンドを使い分けます。
+
+| 用途 | コマンド | ビルドする範囲 |
+|--|--|--|
+| 普段の編集・動作確認 | `build-dev.bat` | `sakura_core\sakura.vcxproj` のみ |
+| 本体と単体テストの確認 | `build-sln.bat` | `sakura.sln`（本体と `tests1`） |
+| 配布成果物の作成 | `build-all.bat` | 本体、単体テスト、HTML ヘルプ、インストーラ、ZIP |
+
+通常の編集では `build-dev.bat` を使用すると、`tests1` プロジェクトの評価・コンパイル・リンクを省略できます。単体テストのビルドや配布準備には `build-sln.bat` または `build-all.bat` を使用してください。
+
+```cmd
+build-dev.bat <Platform> <Configuration>
+```
+
+**例: x64 の Debug 本体ビルド**
+```cmd
+build-dev.bat x64 Debug
+```
+
+本体と単体テストをまとめてビルドする場合は `build-sln.bat` を使用します。
+
 ```cmd
 build-sln.bat <Platform> <Configuration>
 ```
@@ -86,11 +109,11 @@ build-sln.bat x64 Release
 
 **Visual Studio 2019を指定してビルド**
 ```cmd
-set ARG_VSVERSION=16
+set NUM_VSVERSION=16
 build-sln.bat Win32 Release
 ```
 
-参考: [MSBuildの検索について](./find-tools.md#MSBuild) で `ARG_VSVERSION` の詳細を説明しています。
+参考: [MSBuildの検索について](./find-tools.md#msbuild) で `NUM_VSVERSION` の詳細を説明しています。
 
 ### すべてビルド
 
@@ -115,10 +138,40 @@ build-all.bat Win32 Release
 
 [ビルドに使用されるバッチファイル](./build-batchfiles.md) を参照してください。
 
+### 単体テストの実行
+
+`build-sln.bat` でビルドした構成の `tests1.exe` を実行します。
+
+```cmd
+x64\Debug\tests1.exe
+```
+
+`tests1.exe` には、実際のエディタ画面やダイアログを起動する UI・連携テストも含まれます。特に `WinMain/WinMainTest.*` は既定設定のテストプロファイルを使用するため、普段の設定とは異なる外観でエディタが起動します。
+
+UI を起動しないローカル確認では、対象を確認して `--gtest_filter` で除外してください。現在のヘッドレス確認例は次のとおりです。
+
+```cmd
+x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:DlgOpenFileTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMain/WinMainTest.*
+```
+
+このフィルターは UI・外部連携を含むテストを省くため、最終確認では必要なテストを別途実行してください。
+
 ### デバッグ方法
 
 - [タスクトレイのメニュー項目をデバッグする方法](./debug-tasktray-menu.md)
 - [大きなファイルの作成方法](./create-big-file.md)
+
+### アセンブリ一覧の生成
+
+通常の Visual Studio / MSBuild ビルドでは、コンパイル時間とディスク書き込みを抑えるため `.asm` 一覧を生成しません。調査目的で必要な場合は、環境変数 `SAKURA_GENERATE_ASSEMBLY_LISTINGS` を `1` に設定します。
+
+```cmd
+set SAKURA_GENERATE_ASSEMBLY_LISTINGS=1
+build-dev.bat x64 Release
+set SAKURA_GENERATE_ASSEMBLY_LISTINGS=
+```
+
+設定を切り替えた直後はコンパイラーオプションが変わるため、次のビルドで一度だけ再コンパイルが発生する場合があります。`build-all.bat` はスクリプト内だけで、配布 CI は Release の MSBuild ステップだけで、この設定を自動的に有効化します。CMake からビルドする場合は `-DSAKURA_GENERATE_ASSEMBLY_LISTINGS=ON` を指定します。
 
 ### githash.h の更新をスキップ
 

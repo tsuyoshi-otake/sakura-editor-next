@@ -20,8 +20,9 @@
 |----|----|
 |[tools\githash.bat](./githash.bat) | Git や CI の環境変数から githash.h を生成する |
 |[tools\find-tools.bat](./find-tools.md) | ビルド関連ツールのパスを探す |
-|[build-all.bat](../build-all.bat)| すべてをビルドできるバッチファイル  |
-|[build-sln.bat](../build-sln.bat) | solution をビルドする |
+|[build-all.bat](../build-all.bat)| 配布に必要な本体、ヘルプ、インストーラ、ZIP をビルドする |
+|[build-dev.bat](../build-dev.bat) | `sakura.vcxproj` だけを高速にビルドする |
+|[build-sln.bat](../build-sln.bat) | `sakura.sln` の本体と単体テストをビルドする |
 |[build-gnu.bat](../build-gnu.bat) | Makefile をビルドする |
 |[build-chm.bat](../build-chm.bat) | compiled HTML ファイルをビルドする |
 |[build-installer.bat](../build-installer.bat) | インストーラをビルドする |
@@ -29,40 +30,49 @@
 
 ## 呼び出し構造
 
-- [build-all.bat](../build-all.bat)
-    - [build-sln.bat](../build-sln.bat)
-        - MSBuild.exe sakura.sln
-            - cmake.exe Gitリポジトリ情報を version.h に書き出す。
-                - git.exe
-            - HeaderMake.exe : Funccode_define.h, Funccode_enum.h を生成する
-            - cmake.exe 外部ソースからツールをビルドする、または、配布zipから展開する
-                - cmake.exe
-                - 7z.exe
-    - [build-gnu.bat](../build-gnu.bat)
-        - cmake -S . -B build/MinGW -DCMAKE_BUILD_TYPE=Debug -DBUILD_PLATFORM=MinGW
-        - cmake --build build/MinGW --config Debug --target sakura
-        - cmake --build build/MinGW --config Debug --target sakura_lang_en_US
-        - cmake --build build/MinGW --config Debug --target tests1
-        - ctest --test-dir build/MinGW --build-config Debug --output-on-failure
-    - [build-chm.bat](../build-chm.bat)
-        - cmake.exe
-          - ChmSourceConverter.exe : ヘルプファイルの文字コードを UTF-8 から Shift_JIS に変換する
-          - pwsh.exe
-            - [help\CompileChm.ps1](../help/CompileChm.ps1)
-              - hhc.exe (Visual Studio に同梱) : compiled HTML をビルドするコンパイラ。かなり古いツールであり、日本語 HTML をビルドするためには Windows のシステムロケールを日本語に変更する必要がある。
-    - [build-installer.bat](../build-installer.bat)
-        - ISCC.exe : [InnoSetup](https://www.jrsoftware.org/isinfo.php) でインストーラをビルドする
-    - [zipArtifacts.bat](../zipArtifacts.bat)
-        - [tools\githash.bat](./githash.bat)
+- [build-dev.bat](../build-dev.bat)
+    - MSBuild.exe sakura_core\sakura.vcxproj (`/nr:false`)
+- [build-sln.bat](../build-sln.bat)
+    - MSBuild.exe sakura.sln (`/nr:false`)
+        - cmake.exe Gitリポジトリ情報を version.h に書き出す。
             - git.exe
-        - [tools\zip\zip.bat](./zip/zip.bat) : 成果物を ZIP ファイルにまとめる
-            - 7z.exe または [tools\zip\zip.ps1](./zip/zip.ps1)
+        - HeaderMake.exe : Funccode_define.h, Funccode_enum.h を生成する
+        - cmake.exe 外部ソースからツールをビルドする、または、配布zipから展開する
+            - cmake.exe
+            - 7z.exe
+- [build-all.bat](../build-all.bat)
+    - Win32 / x64 の場合
+        - `SAKURA_GENERATE_ASSEMBLY_LISTINGS=1` をスクリプト内で設定
+        - [build-sln.bat](../build-sln.bat)
+        - [build-chm.bat](../build-chm.bat)
+            - cmake.exe
+                - ChmSourceConverter.exe : ヘルプファイルの文字コードを UTF-8 から Shift_JIS に変換する
+                - pwsh.exe
+                    - [help\CompileChm.ps1](../help/CompileChm.ps1)
+                        - hhc.exe (Visual Studio に同梱) : compiled HTML をビルドするコンパイラ。かなり古いツールであり、日本語 HTML をビルドするためには Windows のシステムロケールを日本語に変更する必要がある。
+        - [build-installer.bat](../build-installer.bat)
+            - ISCC.exe : [InnoSetup](https://www.jrsoftware.org/isinfo.php) でインストーラをビルドする
+        - [zipArtifacts.bat](../zipArtifacts.bat)
+            - [tools\githash.bat](./githash.bat)
+                - git.exe
+            - [tools\zip\zip.bat](./zip/zip.bat) : 成果物を ZIP ファイルにまとめる
+                - 7z.exe または [tools\zip\zip.ps1](./zip/zip.ps1)
+    - MinGW の場合（ここで処理を終了）
+        - [build-gnu.bat](../build-gnu.bat)
+            - cmake -S . -B build/MinGW -DCMAKE_BUILD_TYPE=Debug -DBUILD_PLATFORM=MinGW
+            - cmake --build build/MinGW --config Debug --target sakura
+            - cmake --build build/MinGW --config Debug --target sakura_lang_en_US
+            - cmake --build build/MinGW --config Debug --target tests1
+            - ctest --test-dir build/MinGW --build-config Debug --output-on-failure
+
+`build-dev.bat` と `build-sln.bat` は MSBuild のノード再利用を無効にしているため、正常終了後に再利用待ちの MSBuild プロセスを残しません。
 
 ## ビルドに使用するバッチファイルの引数
 
 | バッチファイル | 第一引数 | 第二引数 |
 |----|----|----|
 |build-all.bat       | platform ("Win32" または "x64" または "MinGW") | configuration ("Debug" または "Release")  |
+|build-dev.bat       | platform ("Win32" または "x64") | configuration ("Debug" または "Release")  |
 |build-sln.bat       | platform ("Win32" または "x64") | configuration ("Debug" または "Release")  |
 |build-gnu.bat       | platform ("MinGW") | configuration ("Debug" または "Release")  |
 |build-chm.bat       | なし | なし |
