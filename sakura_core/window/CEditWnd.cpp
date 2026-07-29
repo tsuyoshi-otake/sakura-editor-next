@@ -59,6 +59,7 @@
 #include "recent/CRecentFile.h"
 #include "recent/CRecentFolder.h"
 #include "apiwrap/DarkMode.h"
+#include "extension/CExtensionPane.h"
 
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたので
 //	定義を削除
@@ -991,6 +992,40 @@ void CEditWnd::LayoutMiniMap( void )
 	}
 }
 
+/*!	拡張サイドバーの表示を切り替える
+
+	初回の呼び出しでウィンドウを作る。通信を伴うクラスなので、
+	使われるまで生成しない。
+*/
+void CEditWnd::ToggleExtensionPane( void )
+{
+	if( !m_pcExtensionPane ){
+		auto pcPane = std::make_unique<CExtensionPane>();
+		if( !pcPane->Open( G_AppInstance(), GetHwnd() ) ){
+			return;
+		}
+		m_pcExtensionPane = std::move( pcPane );
+	}
+
+	m_bExtensionPaneShown = !m_bExtensionPaneShown;
+	::ShowWindow( m_pcExtensionPane->GetHwnd(), m_bExtensionPaneShown? SW_SHOW: SW_HIDE );
+
+	// 残りのウィンドウを配置し直す
+	RECT rc;
+	::GetClientRect( GetHwnd(), &rc );
+	OnSize( SIZE_RESTORED, MAKELPARAM( rc.right - rc.left, rc.bottom - rc.top ) );
+
+	if( m_bExtensionPaneShown ){
+		m_pcExtensionPane->SetFocusToSearchBox();
+	}
+}
+
+/*! 拡張サイドバーが表示されているか */
+bool CEditWnd::IsExtensionPaneVisible( void ) const
+{
+	return m_bExtensionPaneShown;
+}
+
 /*! バーの配置終了処理
 	@date 2006.12.19 ryoji 新規作成
 	@date 2007.03.04 ryoji 印刷プレビュー時はバーを隠す
@@ -1018,6 +1053,11 @@ void CEditWnd::EndLayoutBars( BOOL bAdjust/* = TRUE*/ )
 	}
 	if( m_cMiniMapView.GetHwnd() ){
 		::ShowWindow( m_cMiniMapView.GetHwnd(), nCmdShow );
+	}
+	// 拡張サイドバーは利用者が閉じていれば印刷プレビュー解除後も閉じたままにする
+	if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() ){
+		::ShowWindow( m_pcExtensionPane->GetHwnd(),
+			(SW_SHOW == nCmdShow && m_bExtensionPaneShown)? SW_SHOW: SW_HIDE );
 	}
 
 	if( bAdjust )
@@ -2920,6 +2960,10 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		if( m_cMiniMapView.GetHwnd() ){
 			::ShowWindow( m_cMiniMapView.GetHwnd(), SW_SHOW );
 		}
+		// 利用者が閉じていた拡張サイドバーは開かない
+		if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() && m_bExtensionPaneShown ){
+			::ShowWindow( m_pcExtensionPane->GetHwnd(), SW_SHOW );
+		}
 
 		// その他のモードレスダイアログも戻す	// 2010.06.25 ryoji
 		::ShowWindow( m_cDlgFind.GetHwnd(), SW_SHOW );
@@ -2953,6 +2997,9 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		::ShowWindow( m_cDlgFuncList.GetHwnd(), SW_HIDE );	// 2010.06.25 ryoji
 		if( m_cMiniMapView.GetHwnd() ){
 			::ShowWindow( m_cMiniMapView.GetHwnd(), SW_HIDE );
+		}
+		if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() ){
+			::ShowWindow( m_pcExtensionPane->GetHwnd(), SW_HIDE );
 		}
 
 		// その他のモードレスダイアログも隠す	// 2010.06.25 ryoji
@@ -3254,13 +3301,25 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0)
 		nTop += nFuncKeyWndHeight;
 	int nHeight = cy - nToolBarHeight - nFuncKeyWndHeight - nTabWndHeight - nTabHeightBottom - nStatusBarHeight;
+
+	// 拡張サイドバー。左端に固定でドッキングし、他をその分だけ右へずらす
+	int nExtWidth = m_pcExtensionPane? m_pcExtensionPane->GetDockWidth(): 0;
+	if( 0 < nExtWidth ){
+		if( cx / 2 < nExtWidth ){
+			// 編集領域を潰さない。ただし操作できる最小幅は確保する
+			const int nMinWidth = ::DpiScaleX( CExtensionPane::kMinWidth );
+			nExtWidth = (cx / 2 < nMinWidth)? nMinWidth: cx / 2;
+		}
+		::MoveWindow( m_pcExtensionPane->GetHwnd(), 0, nTop, nExtWidth, nHeight, TRUE );
+	}
+
 	if( m_cDlgFuncList.GetHwnd() && m_cDlgFuncList.IsDocking() )
 	{
 		::MoveWindow(
 			m_cDlgFuncList.GetHwnd(),
-			(eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth: 0,
+			(eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth: nExtWidth,
 			(eDockSideFL == DOCKSIDE_BOTTOM)? nTop + nHeight - nFuncListHeight: nTop,
-			(eDockSideFL == DOCKSIDE_LEFT || eDockSideFL == DOCKSIDE_RIGHT)? nFuncListWidth: cx,
+			(eDockSideFL == DOCKSIDE_LEFT || eDockSideFL == DOCKSIDE_RIGHT)? nFuncListWidth: cx - nExtWidth,
 			(eDockSideFL == DOCKSIDE_TOP || eDockSideFL == DOCKSIDE_BOTTOM)? nFuncListHeight: nHeight,
 			TRUE
 		);
@@ -3285,9 +3344,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 
 	::MoveWindow(
 		m_cSplitterWnd.GetHwnd(),
-		(eDockSideFL == DOCKSIDE_LEFT)? nFuncListWidth: 0,
+		nExtWidth + ((eDockSideFL == DOCKSIDE_LEFT)? nFuncListWidth: 0),
 		(eDockSideFL == DOCKSIDE_TOP)? nTop + nFuncListHeight: nTop,	//@@@ 2003.05.31 MIK
-		((eDockSideFL == DOCKSIDE_LEFT || eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth: cx) - nMiniMapWidth,
+		((eDockSideFL == DOCKSIDE_LEFT || eDockSideFL == DOCKSIDE_RIGHT)? cx - nFuncListWidth: cx) - nMiniMapWidth - nExtWidth,
 		(eDockSideFL == DOCKSIDE_TOP || eDockSideFL == DOCKSIDE_BOTTOM)? nHeight - nFuncListHeight: nHeight,	//@@@ 2003.05.31 MIK
 		TRUE
 	);

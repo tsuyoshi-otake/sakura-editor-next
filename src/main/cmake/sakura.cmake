@@ -21,6 +21,24 @@ endif()
 
 set(OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
+option(
+  SAKURA_GENERATE_ASSEMBLY_LISTINGS
+  "Generate MSVC source and assembly listing files"
+  OFF
+)
+
+set(SAKURA_NESTED_BUILD_TOOL_ARGS)
+if(CMAKE_GENERATOR MATCHES "^Visual Studio")
+  # Generated child projects own their CMake dependency graphs. FileTracker's
+  # injection can otherwise leave cl/link suspended before they start.
+  list(APPEND SAKURA_NESTED_BUILD_TOOL_ARGS
+    --
+    /nologo
+    /nr:false
+    /p:TrackFileAccess=false
+  )
+endif()
+
 # ビルド対象のCPUアーキテクチャを決める
 if(CMAKE_GENERATOR MATCHES "^Visual Studio")
   # VSジェネレーターは -A の値で判定する
@@ -207,7 +225,7 @@ add_custom_command(
     -in=${CMAKE_SOURCE_DIR}/sakura_core/Funccode_x.hsrc
     -out=${CMAKE_BINARY_DIR}/Funccode_define.h
     -mode=define
-  DEPENDS generate_header_make
+  DEPENDS generate_header_make ${CMAKE_SOURCE_DIR}/sakura_core/Funccode_x.hsrc
   COMMENT "Generating Funccode_define.h"
 )
 
@@ -225,7 +243,7 @@ add_custom_command(
     -out=${CMAKE_BINARY_DIR}/Funccode_enum.h
     -mode=enum
     -enum=EFunctionCode
-  DEPENDS generate_header_make
+  DEPENDS generate_header_make ${CMAKE_SOURCE_DIR}/sakura_core/Funccode_x.hsrc
   COMMENT "Generating Funccode_enum.h"
 )
 
@@ -441,6 +459,9 @@ target_include_directories(sakura_core
   SYSTEM
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>"
+    # picojson 等、externals 配下のヘッダーオンリーライブラリを参照するため。
+    # SYSTEM 扱いなので第三者コードの警告は抑止される
+    "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/externals>"
 )
 
 # Add link directories for sakura_core
@@ -453,6 +474,7 @@ target_link_directories(sakura_core
 target_link_libraries(sakura_core
   PUBLIC
     darkmode
+    bcrypt
     comctl32
     dbghelp
     dwmapi
@@ -466,6 +488,7 @@ target_link_libraries(sakura_core
     uuid
     uxtheme
     windowscodecs
+    winhttp
     winmm
     winspool
 )
@@ -494,12 +517,13 @@ if(MSVC)
     PUBLIC
       NOMINMAX
   )
-  # add compile options for sakura_core
-  target_compile_options(sakura_core
-    PRIVATE
-      /FAsu
-      /Fa"${CMAKE_BINARY_DIR}"
-  )
+  if(SAKURA_GENERATE_ASSEMBLY_LISTINGS)
+    target_compile_options(sakura_core
+      PRIVATE
+        /FAsu
+        /Fa"${CMAKE_BINARY_DIR}/"
+    )
+  endif()
 endif(MSVC)
 
 if(MINGW)

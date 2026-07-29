@@ -277,6 +277,7 @@ void PrintTo(EFunctionCode eFuncCode, std::ostream* os)
 	case F_FUNCLIST_NEXT: *os << "F_FUNCLIST_NEXT"; break;
 	case F_FUNCLIST_PREV: *os << "F_FUNCLIST_PREV"; break;
 	case F_FILETREE: *os << "F_FILETREE"; break;
+	case F_EXTENSION_LIST: *os << "F_EXTENSION_LIST"; break;
 	case F_CHGMOD_INS: *os << "F_CHGMOD_INS"; break;
 	case F_CHG_CHARSET: *os << "F_CHG_CHARSET"; break;
 	case F_CHGMOD_EOL_CRLF: *os << "F_CHGMOD_EOL_CRLF"; break;

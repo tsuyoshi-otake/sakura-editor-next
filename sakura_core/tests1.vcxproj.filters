@@ -139,6 +139,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cerrorinfo.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-ctextmetrics.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>

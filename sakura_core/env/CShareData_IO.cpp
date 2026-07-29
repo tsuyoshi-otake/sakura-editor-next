@@ -1996,7 +1996,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 2;
+	const int nCurrentVer = 3;
 	nVersion = nCurrentVer;
 	if( cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion) ){
 	}else{
@@ -2035,6 +2035,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			{1, F_MODIFYLINE_NEXT_SEL, F_GOFILEEND_SEL, L'\0', true, false}, 	// (選択)次の変更行へ
 			{1, F_MODIFYLINE_PREV_SEL, F_MODIFYLINE_NEXT_SEL, L'\0', false, false}, 	// (選択)前の変更行へ
 			{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false}, 	// ウインドウ一覧表示
+			{3, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false}, 	// 拡張（Open VSX）を表示
 		};
 		for( int i = 0; i < int(std::size(addInfos)); i++ ){
 			SMainMenuAddItemInfo& item = addInfos[i];
