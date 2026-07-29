@@ -40,6 +40,7 @@
 #include "debug/CRunningTimer.h"
 #include "recent/CMRUFile.h"
 #include "recent/CMRUFolder.h"
+#include "theme/CThemeService.h"
 #include "util/module.h"
 #include "util/string_ex2.h"
 #include "util/window.h"
@@ -200,11 +201,12 @@ bool CShareData::InitShareData()
 		cMRUFolder.ClearAll();
 
 //	From Here Sept. 19, 2000 JEPRO コメントアウトになっていた初めのブロックを復活しその下をコメントアウト
-//	MS ゴシック標準スタイル10ptに設定
+//	Windows 11 workbenchの既定エディターフォントに設定
 //		/* LOGFONTの初期化 */
 		LOGFONT lf;
 		memset_raw( &lf, 0, sizeof( lf ) );
-		lf.lfHeight			= DpiPointsToPixels(-10);	// 2009.10.01 ryoji 高DPI対応（ポイント数から算出）
+		const auto terminalFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
+		lf.lfHeight			= DpiPointsToPixels(-terminalFontSpec.pointSize);
 		lf.lfWidth				= 0;
 		lf.lfEscapement		= 0;
 		lf.lfOrientation		= 0;
@@ -212,12 +214,12 @@ bool CShareData::InitShareData()
 		lf.lfItalic			= 0x0;
 		lf.lfUnderline			= 0x0;
 		lf.lfStrikeOut			= 0x0;
-		lf.lfCharSet			= 0x80;
-		lf.lfOutPrecision		= 0x3;
-		lf.lfClipPrecision		= 0x2;
-		lf.lfQuality			= 0x1;
-		lf.lfPitchAndFamily	= 0x31;
-		wcscpy( lf.lfFaceName, L"ＭＳ ゴシック" );
+		lf.lfCharSet			= DEFAULT_CHARSET;
+		lf.lfOutPrecision		= OUT_TT_PRECIS;
+		lf.lfClipPrecision		= CLIP_DEFAULT_PRECIS;
+		lf.lfQuality			= CLEARTYPE_QUALITY;
+		lf.lfPitchAndFamily	= FIXED_PITCH | FF_MODERN;
+		wcsncpy_s( lf.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal), _TRUNCATE );
 
 		// LoadShareDataでフォントが変わる可能性があるので、ここでは不要 // 2013.04.08 aroka
 		//InitCharWidthCacheCommon();								// 2008/5/17 Uchi
@@ -233,6 +235,16 @@ bool CShareData::InitShareData()
 		// ai 02/05/21 Add E
 
 		INT		nIconPointSize = lfIconTitle.lfHeight >=0 ? lfIconTitle.lfHeight : DpiPixelsToPoints( -lfIconTitle.lfHeight, 10 );	// フォントサイズ（1/10ポイント単位）
+		LOGFONT lfChrome = lfIconTitle;
+		const auto chromeFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Chrome);
+		lfChrome.lfHeight = DpiPointsToPixels(-chromeFontSpec.pointSize);
+		lfChrome.lfWeight = chromeFontSpec.weight;
+		lfChrome.lfCharSet = DEFAULT_CHARSET;
+		lfChrome.lfOutPrecision = OUT_TT_PRECIS;
+		lfChrome.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+		lfChrome.lfQuality = CLEARTYPE_QUALITY;
+		lfChrome.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+		wcsncpy_s(lfChrome.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Chrome), _TRUNCATE);
 //	To Here Sept. 19,2000
 
 		// [全般]タブ
@@ -271,7 +283,7 @@ bool CShareData::InitShareData()
 		{
 			CommonSetting_Window& sWindow = m_pShareData->m_Common.m_sWindow;
 
-			sWindow.m_bDispTOOLBAR = TRUE;			/* 次回ウィンドウを開いたときツールバーを表示する */
+			sWindow.m_bDispTOOLBAR = FALSE;			/* 新規プロファイルは文字中心のメニューを使う */
 			sWindow.m_bDispSTATUSBAR = TRUE;			/* 次回ウィンドウを開いたときステータスバーを表示する */
 			sWindow.m_bDispFUNCKEYWND = FALSE;		/* 次回ウィンドウを開いたときファンクションキーを表示する */
 			sWindow.m_bDispMiniMap = false;			// ミニマップを表示する
@@ -303,7 +315,7 @@ bool CShareData::InitShareData()
 			sWindow.m_nVertLineOffset = -1;			// 2005.11.10 Moca 指定桁縦線
 			sWindow.m_bUseCompatibleBMP = TRUE;		// 2007.09.09 Moca 画面キャッシュを使う	// 2009.06.09 ryoji FALSE->TRUE
 
-			sWindow.m_bMenuIcon = TRUE;		/* メニューにアイコンを表示する */
+			sWindow.m_bMenuIcon = FALSE;		/* 新規プロファイルでは装飾的なメニューアイコンを抑える */
 			sWindow.m_bDarkMode = TRUE;	/* ダークモードを使う。既存プロファイルの値はINIから復元する */
 
 			//	Apr. 05, 2003 genta ウィンドウキャプションの初期値
@@ -320,7 +332,7 @@ bool CShareData::InitShareData()
 		{
 			CommonSetting_TabBar& sTabBar = m_pShareData->m_Common.m_sTabBar;
 
-			sTabBar.m_bDispTabWnd = FALSE;			//タブウインドウ表示	//@@@ 2003.05.31 MIK
+			sTabBar.m_bDispTabWnd = TRUE;			// 新規プロファイルでは文書タブを表示する
 			sTabBar.m_bDispTabWndMultiWin = FALSE;	//タブウインドウ表示	//@@@ 2003.05.31 MIK
 			wcscpy(	//@@@ 2003.06.13 MIK
 				sTabBar.m_szTabWndCaption,
@@ -328,7 +340,7 @@ bool CShareData::InitShareData()
 			);
 			sTabBar.m_bSameTabWidth = FALSE;			//タブを等幅にする			//@@@ 2006.01.28 ryoji
 			sTabBar.m_bDispTabIcon = FALSE;			//タブにアイコンを表示する	//@@@ 2006.01.28 ryoji
-			sTabBar.m_bDispTabClose = DISPTABCLOSE_NO;	//タブに閉じるボタンを表示する	//@@@ 2012.04.14 syat
+			sTabBar.m_bDispTabClose = DISPTABCLOSE_AUTO;	// 新規プロファイルではホバー中に閉じるボタンを表示する
 			sTabBar.m_bSortTabList = TRUE;			//タブ一覧をソートする		//@@@ 2006.05.10 ryoji
 			sTabBar.m_bTab_RetainEmptyWin = TRUE;	// 最後のファイルが閉じられたとき(無題)を残す	// 2007.02.11 genta
 			sTabBar.m_bTab_CloseOneWin = FALSE;	// タブモードでもウィンドウの閉じるボタンで現在のファイルのみ閉じる	// 2007.02.11 genta
@@ -338,8 +350,8 @@ bool CShareData::InitShareData()
 			sTabBar.m_bTabMultiLine = false;		// タブ多段
 			sTabBar.m_eTabPosition = TabPosition_Top;		//タブ位置
 
-			sTabBar.m_lf = lfIconTitle;
-			sTabBar.m_nPointSize = nIconPointSize;
+			sTabBar.m_lf = lfChrome;
+			sTabBar.m_nPointSize = chromeFontSpec.pointSize * 10;
 			sTabBar.m_nTabMaxWidth = 200;
 			sTabBar.m_nTabMinWidth = 60;
 			sTabBar.m_nTabMinWidthOnMulti = 100;
@@ -581,7 +593,7 @@ bool CShareData::InitShareData()
 			CommonSetting_View& sView = m_pShareData->m_Common.m_sView;
 
 			sView.m_lf = lf;
-			sView.m_nPointSize = 0;	// フォントサイズ（1/10ポイント単位） ※古いバージョンからの移行を考慮して無効値で初期化	// 2009.10.01 ryoji
+			sView.m_nPointSize = terminalFontSpec.pointSize * 10;
 
 			sView.m_bFontIs_FIXED_PITCH = TRUE;				/* 現在のフォントは固定幅フォントである */
 		}

@@ -10,6 +10,7 @@
 #pragma once
 
 #include "doc/CDocListener.h"
+#include "theme/CThemeService.h"
 
 class CEditWnd;
 
@@ -41,9 +42,17 @@ public:
 	//設定
 	bool SetStatusText(int nIndex, int nOption, const WCHAR* pszText, size_t textLen = SIZE_MAX);
 	void ShowProgressBar(bool bShow) const;
+	void SetPalette(const theme::ThemePalette& palette) noexcept;
+	void InstallPaletteSubclass() noexcept;
+	[[nodiscard]] COLORREF GetTextColor() const noexcept { return m_palette.highlightText.ToColorRef(); }
 private:
+	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+		UINT_PTR subclassId, DWORD_PTR referenceData);
+	void PaintStatusBar(HDC dc) const noexcept;
+
 	CEditWnd*	m_pOwner;
 	HWND		m_hwndStatusBar = nullptr;
 	HWND		m_hwndProgressBar = nullptr;
+	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 };
 #endif /* SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_ */

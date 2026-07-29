@@ -28,7 +28,7 @@ COLORREF IndexedColor( unsigned int index, const theme::ThemePalette& palette ) 
 		// A literal black foreground disappears against the workbench canvas, so
 		// bind the neutral ANSI colors to the active theme's readable neutrals.
 		// #808794 is still the darkest neutral in the dark terminal palette while
-		// retaining a WCAG contrast ratio above 4.5:1 against Sakura's #181A1F canvas.
+		// retaining a WCAG contrast ratio above 4.5:1 against Sakura's #1E1E1E canvas.
 		if( index == 0 ) return IsDarkTheme(palette) ? RGB(128, 135, 148) : RGB(31, 35, 41);
 		if( index == 7 ) return palette.primaryText.ToColorRef();
 		if( index == 8 ) return palette.secondaryText.ToColorRef();

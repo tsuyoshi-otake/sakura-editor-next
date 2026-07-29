@@ -34,7 +34,7 @@ void PaintButtonBackground(
 		return;
 	}
 	const COLORREF color = hit == HTCLOSE
-		? palette.accent.ToColorRef()
+		? palette.danger.ToColorRef()
 		: palette.raised.ToColorRef();
 	Fill(dc, rect, color);
 }
@@ -112,7 +112,7 @@ void CCustomTitleBar::Paint(
 	if (owner == nullptr || dc == nullptr) {
 		return;
 	}
-	Fill(dc, layout.title, palette.canvas.ToColorRef());
+	Fill(dc, layout.title, palette.titleBar.ToColorRef());
 	PaintButtonBackground(dc, layout.minimizeButton, HTMINBUTTON, hotHit, pressedHit, palette);
 	PaintButtonBackground(dc, layout.maximizeButton, HTMAXBUTTON, hotHit, pressedHit, palette);
 	PaintButtonBackground(dc, layout.closeButton, HTCLOSE, hotHit, pressedHit, palette);

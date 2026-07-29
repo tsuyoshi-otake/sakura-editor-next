@@ -89,6 +89,99 @@ const std::array ColorInfo_DEFAULT = {
 	ColorInfoIni{ STR_COLOR_PAGEVIEW,					{ true ,	{ false,	false },	{ RGB( 255, 251, 240 ),	RGB( 190, 230, 255 ) } } },
 };
 
+void ApplyDarkWorkbenchDefaults(ColorInfoBase& info, size_t index) noexcept
+{
+	auto& colors = info.m_sColorAttr;
+	if (colors.m_cBACK == RGB(255, 251, 240) || colors.m_cBACK == RGB(0, 0, 0)) {
+		colors.m_cBACK = RGB(30, 30, 30);
+	} else if (colors.m_cBACK == RGB(239, 239, 239)) {
+		colors.m_cBACK = RGB(37, 37, 38);
+	} else if (colors.m_cBACK == RGB(243, 243, 243)) {
+		colors.m_cBACK = RGB(42, 45, 46);
+	}
+
+	switch (index) {
+	case COLORIDX_TEXT:
+	case COLORIDX_CARET:
+	case COLORIDX_BRACKET_PAIR:
+		colors.m_cTEXT = RGB(212, 212, 212);
+		break;
+	case COLORIDX_RULER:
+	case COLORIDX_GYOU:
+	case COLORIDX_GYOU_MOD:
+		colors.m_cTEXT = RGB(133, 133, 133);
+		break;
+	case COLORIDX_CARET_IME:
+	case COLORIDX_CURSORVLINE:
+	case COLORIDX_EOL:
+	case COLORIDX_EOF:
+	case COLORIDX_URL:
+	case COLORIDX_KEYWORD1:
+	case COLORIDX_REGEX1:
+	case COLORIDX_REGEX2:
+	case COLORIDX_REGEX3:
+	case COLORIDX_REGEX4:
+	case COLORIDX_REGEX5:
+	case COLORIDX_REGEX6:
+	case COLORIDX_REGEX7:
+	case COLORIDX_REGEX8:
+	case COLORIDX_REGEX9:
+	case COLORIDX_REGEX10:
+		colors.m_cTEXT = RGB(86, 156, 214);
+		break;
+	case COLORIDX_TAB:
+	case COLORIDX_SPACE:
+	case COLORIDX_ZENSPACE:
+	case COLORIDX_VERTLINE:
+	case COLORIDX_NOTELINE:
+		colors.m_cTEXT = RGB(96, 96, 96);
+		break;
+	case COLORIDX_CTRLCODE:
+		colors.m_cTEXT = RGB(220, 220, 170);
+		break;
+	case COLORIDX_WRAP:
+	case COLORIDX_KEYWORD2:
+	case COLORIDX_KEYWORD3:
+	case COLORIDX_KEYWORD4:
+	case COLORIDX_KEYWORD5:
+	case COLORIDX_KEYWORD6:
+	case COLORIDX_KEYWORD7:
+	case COLORIDX_KEYWORD8:
+	case COLORIDX_KEYWORD9:
+	case COLORIDX_KEYWORD10:
+		colors.m_cTEXT = RGB(197, 134, 192);
+		break;
+	case COLORIDX_DIGIT:
+		colors.m_cTEXT = RGB(181, 206, 168);
+		break;
+	case COLORIDX_COMMENT:
+		colors.m_cTEXT = RGB(106, 153, 85);
+		break;
+	case COLORIDX_SSTRING:
+	case COLORIDX_WSTRING:
+	case COLORIDX_HEREDOC:
+		colors.m_cTEXT = RGB(206, 145, 120);
+		break;
+	case COLORIDX_DIFF_APPEND:
+		colors = { RGB(156, 220, 254), RGB(38, 79, 120) };
+		break;
+	case COLORIDX_DIFF_CHANGE:
+		colors = { RGB(181, 206, 168), RGB(20, 67, 43) };
+		break;
+	case COLORIDX_DIFF_DELETE:
+		colors = { RGB(244, 135, 113), RGB(90, 29, 29) };
+		break;
+	case COLORIDX_MARK:
+		colors = { RGB(255, 255, 255), RGB(0, 122, 204) };
+		break;
+	case COLORIDX_PAGEVIEW:
+		colors = { RGB(212, 212, 212), RGB(37, 37, 38) };
+		break;
+	default:
+		break;
+	}
+}
+
 void GetDefaultColorInfo(ColorInfo* pColorInfo, size_t nIndex) noexcept
 {
 	static_assert(std::size(ColorInfo_DEFAULT) == size_t(COLORIDX_LAST));
@@ -97,6 +190,7 @@ void GetDefaultColorInfo(ColorInfo* pColorInfo, size_t nIndex) noexcept
 
 	ColorInfoBase* p = pColorInfo;
 	*p = ColorInfo_DEFAULT[nIndex].m_sColorInfo; //ColorInfoBase
+	ApplyDarkWorkbenchDefaults(*p, nIndex);
 	GetDefaultColorInfoName(pColorInfo, nIndex);
 	pColorInfo->m_nColorIdx = int(nIndex);
 }

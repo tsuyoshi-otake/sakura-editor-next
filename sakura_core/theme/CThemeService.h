@@ -43,6 +43,9 @@ struct ThemePalette {
 	ThemeColor accent;
 	//! Text drawn over the system highlight/accent color (COLOR_HIGHLIGHTTEXT in High Contrast).
 	ThemeColor highlightText;
+	ThemeColor titleBar;
+	ThemeColor activityBar;
+	ThemeColor danger;
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -107,6 +110,8 @@ public:
 	[[nodiscard]] static ThemePalette EffectivePalette(ThemeMode savedMode) noexcept;
 	//! Preferred/fallback font policy. Creation verifies installed faces at runtime.
 	[[nodiscard]] static constexpr ThemeFontSpec FontSpec(ThemeFontKind kind) noexcept;
+	//! Resolves the preferred family when installed, otherwise returns the fallback family.
+	[[nodiscard]] static const wchar_t* ResolveFontFamily(ThemeFontKind kind) noexcept;
 };
 
 constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
@@ -121,17 +126,23 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0x5C, 0x65, 0x73 }, // secondary text
 			{ 0xB8, 0x32, 0x68 }, // Sakura accent / focus
 			{ 0xFF, 0xFF, 0xFF }, // highlighted text
+			{ 0xF3, 0xF3, 0xF3 }, // title bar
+			{ 0xF3, 0xF3, 0xF3 }, // activity bar
+			{ 0xC4, 0x2B, 0x1C }, // destructive hover
 		};
 	}
 	return {
-		{ 0x18, 0x1A, 0x1F }, // canvas
-		{ 0x20, 0x23, 0x2A }, // panel
-		{ 0x29, 0x2D, 0x35 }, // raised
-		{ 0x38, 0x3E, 0x49 }, // border
-		{ 0xE8, 0xEB, 0xF0 }, // primary text
-		{ 0xAA, 0xB1, 0xBC }, // secondary text
-		{ 0xEB, 0x6A, 0x9A }, // Sakura accent / focus
+		{ 0x1E, 0x1E, 0x1E }, // canvas: classic editor charcoal
+		{ 0x25, 0x25, 0x26 }, // panel: distinguish chrome from the editor surface
+		{ 0x2A, 0x2D, 0x2E }, // raised / hover
+		{ 0x45, 0x45, 0x45 }, // border
+		{ 0xCC, 0xCC, 0xCC }, // primary text
+		{ 0x96, 0x96, 0x96 }, // secondary text
+		{ 0x00, 0x7A, 0xCC }, // focus / active status
 		{ 0xFF, 0xFF, 0xFF }, // highlighted text
+		{ 0x3C, 0x3C, 0x3C }, // active title bar
+		{ 0x33, 0x33, 0x33 }, // activity bar
+		{ 0xC4, 0x2B, 0x1C }, // destructive hover
 	};
 }
 
@@ -147,8 +158,8 @@ constexpr ThemePalette CThemeService::SelectPalette(
 constexpr ThemeFontSpec CThemeService::FontSpec(ThemeFontKind kind) noexcept
 {
 	return kind == ThemeFontKind::Chrome
-		? ThemeFontSpec{ L"Segoe UI Variable", L"Segoe UI", 9, FW_NORMAL, false }
-		: ThemeFontSpec{ L"Cascadia Mono", L"Consolas", 10, FW_NORMAL, true };
+		? ThemeFontSpec{ L"Segoe UI Variable", L"Segoe UI", 10, FW_NORMAL, false }
+		: ThemeFontSpec{ L"Cascadia Mono", L"Consolas", 11, FW_NORMAL, true };
 }
 
 } // namespace theme

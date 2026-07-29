@@ -17,6 +17,7 @@
 #include "util/file.h"
 #include "version.h"
 #include "sakura_rc.h"
+#include "theme/CThemeService.h"
 
 using namespace std::string_literals;
 using namespace std::string_view_literals;
@@ -386,7 +387,7 @@ MATCHER(IsInitializedCommonSettingGeneral, "Checks if CommonSetting_General is p
 MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is properly initialized") {
     const CommonSetting_Window& sWindow = arg;
 
-	EXPECT_THAT(sWindow.m_bDispTOOLBAR, IsTrue());
+	EXPECT_THAT(sWindow.m_bDispTOOLBAR, IsFalse());
 	EXPECT_THAT(sWindow.m_bDispSTATUSBAR, IsTrue());
 	EXPECT_THAT(sWindow.m_bDispFUNCKEYWND, IsFalse());
 	EXPECT_THAT(sWindow.m_bDispMiniMap, IsFalse());
@@ -411,7 +412,7 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	EXPECT_THAT(sWindow.m_nLineNumRightSpace, 0);
 	EXPECT_THAT(sWindow.m_nVertLineOffset, -1);
 	EXPECT_THAT(sWindow.m_bUseCompatibleBMP, IsTrue());
-	EXPECT_THAT(sWindow.m_bMenuIcon, IsTrue());
+	EXPECT_THAT(sWindow.m_bMenuIcon, IsFalse());
 
 	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$} $<profile>"));	// 👈バグ。 STR_ERR_CSHAREDATA17を更新して使うべき。
 
@@ -424,14 +425,14 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 MATCHER_P2(IsInitializedCommonSettingTabBar, lfIconTitle, nIconPointSize, "Checks if CommonSetting_TabBar is properly initialized") {
     const CommonSetting_TabBar& sTabBar = arg;
 
-	EXPECT_THAT(sTabBar.m_bDispTabWnd, IsFalse());
+	EXPECT_THAT(sTabBar.m_bDispTabWnd, IsTrue());
 	EXPECT_THAT(sTabBar.m_bDispTabWndMultiWin, IsFalse());
 
 	EXPECT_THAT(sTabBar.m_szTabWndCaption, StrEq(L"${w?【Grep】$h$:【アウトプット】$:$f$n$}${U?(更新)$}${R?(ビューモード)$:(上書き禁止)$}${M?【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA10を更新して使うべき。
 
 	EXPECT_THAT(sTabBar.m_bSameTabWidth, IsFalse());
 	EXPECT_THAT(sTabBar.m_bDispTabIcon, IsFalse());
-	EXPECT_THAT(sTabBar.m_bDispTabClose, DISPTABCLOSE_NO);
+	EXPECT_THAT(sTabBar.m_bDispTabClose, DISPTABCLOSE_AUTO);
 	EXPECT_THAT(sTabBar.m_bSortTabList, IsTrue());
 	EXPECT_THAT(sTabBar.m_bTab_RetainEmptyWin, IsTrue());
 	EXPECT_THAT(sTabBar.m_bTab_CloseOneWin, IsFalse());
@@ -1016,7 +1017,7 @@ MATCHER_P(IsInitializedCommonSettingView, lf, "Checks if CommonSetting_View is p
     const CommonSetting_View& sView = arg;
 
 	EXPECT_THAT(sView.m_lf, lf);
-	EXPECT_THAT(sView.m_nPointSize, 0);
+	EXPECT_THAT(sView.m_nPointSize, 110);
 	EXPECT_THAT(sView.m_bFontIs_FIXED_PITCH, IsTrue());
 
 	return true;
@@ -1504,7 +1505,8 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
     const CommonSetting& commonSetting = arg;
 
 	LOGFONT lf{};
-	lf.lfHeight			= DpiPointsToPixels(-10);
+	const auto terminalFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
+	lf.lfHeight			= DpiPointsToPixels(-terminalFontSpec.pointSize);
 	lf.lfWidth			= 0;
 	lf.lfEscapement		= 0;
 	lf.lfOrientation	= 0;
@@ -1512,13 +1514,13 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
 	lf.lfItalic			= 0x0;
 	lf.lfUnderline		= 0x0;
 	lf.lfStrikeOut		= 0x0;
-	lf.lfCharSet		= 0x80;
-	lf.lfOutPrecision	= 0x3;
-	lf.lfClipPrecision	= 0x2;
-	lf.lfQuality		= 0x1;
-	lf.lfPitchAndFamily	= 0x31;
+	lf.lfCharSet		= DEFAULT_CHARSET;
+	lf.lfOutPrecision	= OUT_TT_PRECIS;
+	lf.lfClipPrecision	= CLIP_DEFAULT_PRECIS;
+	lf.lfQuality		= CLEARTYPE_QUALITY;
+	lf.lfPitchAndFamily	= FIXED_PITCH | FF_MODERN;
 
-	::wcsncpy_s(lf.lfFaceName, L"ＭＳ ゴシック", _TRUNCATE);
+	::wcsncpy_s(lf.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal), _TRUNCATE);
 
 	LOGFONT lfIconTitle{};
 	::SystemParametersInfoW(
@@ -1528,12 +1530,23 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
 		0
 	);
 	INT nIconPointSize = lfIconTitle.lfHeight >= 0 ? lfIconTitle.lfHeight : DpiPixelsToPoints(-lfIconTitle.lfHeight, 10);
+	LOGFONT lfTab = lfIconTitle;
+	const auto chromeFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Chrome);
+	lfTab.lfHeight = DpiPointsToPixels(-chromeFontSpec.pointSize);
+	lfTab.lfWeight = chromeFontSpec.weight;
+	lfTab.lfCharSet = DEFAULT_CHARSET;
+	lfTab.lfOutPrecision = OUT_TT_PRECIS;
+	lfTab.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	lfTab.lfQuality = CLEARTYPE_QUALITY;
+	lfTab.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	::wcsncpy_s(lfTab.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Chrome), _TRUNCATE);
+	const INT nTabPointSize = chromeFontSpec.pointSize * 10;
 
 	// CommonSettingのプロパティを検証
     return true
 		&& ExplainMatchResult(IsInitializedCommonSettingGeneral(), commonSetting.m_sGeneral, result_listener)
 		&& ExplainMatchResult(IsInitializedCommonSettingWindow(),  commonSetting.m_sWindow, result_listener)
-		&& ExplainMatchResult(IsInitializedCommonSettingTabBar(lfIconTitle, nIconPointSize),  commonSetting.m_sTabBar, result_listener)
+		&& ExplainMatchResult(IsInitializedCommonSettingTabBar(lfTab, nTabPointSize),  commonSetting.m_sTabBar, result_listener)
 		&& ExplainMatchResult(IsInitializedCommonSettingEdit(),  commonSetting.m_sEdit, result_listener)
 		&& ExplainMatchResult(IsInitializedCommonSettingFile(),  commonSetting.m_sFile, result_listener)
 		&& ExplainMatchResult(IsInitializedCommonSettingBackup(),  commonSetting.m_sBackup, result_listener)

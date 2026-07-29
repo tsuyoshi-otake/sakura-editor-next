@@ -55,9 +55,7 @@ int CALLBACK FindFontFamilyProc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPAR
 [[nodiscard]] HFONT CreateThemeFont(theme::ThemeFontKind kind, UINT dpi, int pointSize) noexcept
 {
 	const theme::ThemeFontSpec spec = theme::CThemeService::FontSpec(kind);
-	const wchar_t* faceName = IsFontFamilyInstalled(spec.preferredFamily)
-		? spec.preferredFamily
-		: spec.fallbackFamily;
+	const wchar_t* faceName = theme::CThemeService::ResolveFontFamily(kind);
 	LOGFONTW font{};
 	font.lfHeight = PointSizeToLogicalHeight(pointSize == 0 ? spec.pointSize : pointSize, dpi);
 	font.lfWeight = spec.weight;
@@ -71,6 +69,12 @@ int CALLBACK FindFontFamilyProc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPAR
 } // namespace
 
 namespace theme {
+
+const wchar_t* CThemeService::ResolveFontFamily(ThemeFontKind kind) noexcept
+{
+	const ThemeFontSpec spec = FontSpec(kind);
+	return IsFontFamilyInstalled(spec.preferredFamily) ? spec.preferredFamily : spec.fallbackFamily;
+}
 
 CThemeFont::~CThemeFont() noexcept
 {
@@ -142,7 +146,7 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	const ThemeColor highlight = FromColorRef(::GetSysColor(COLOR_HIGHLIGHT));
 	const ThemeColor highlightText = FromColorRef(::GetSysColor(COLOR_HIGHLIGHTTEXT));
 	const ThemeColor grayText = FromColorRef(::GetSysColor(COLOR_GRAYTEXT));
-	return { window, face, face, frame, windowText, grayText, highlight, highlightText };
+	return { window, face, face, frame, windowText, grayText, highlight, highlightText, face, face, highlight };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

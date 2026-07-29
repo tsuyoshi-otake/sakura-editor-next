@@ -9,6 +9,26 @@
 #include <string>
 #include "mem/CNativeW.h"
 #include "env/CDocTypeManager.h"
+#include "doc/CDocTypeSetting.h"
+#include "view/colors/EColorIndexType.h"
+
+TEST(CDocTypeSetting, NewProfilesUseWorkbenchDarkEditorColors)
+{
+	ColorInfo text{};
+	GetDefaultColorInfo(&text, COLORIDX_TEXT);
+	EXPECT_EQ(RGB(212, 212, 212), text.m_sColorAttr.m_cTEXT);
+	EXPECT_EQ(RGB(30, 30, 30), text.m_sColorAttr.m_cBACK);
+
+	ColorInfo ruler{};
+	GetDefaultColorInfo(&ruler, COLORIDX_RULER);
+	EXPECT_EQ(RGB(133, 133, 133), ruler.m_sColorAttr.m_cTEXT);
+	EXPECT_EQ(RGB(37, 37, 38), ruler.m_sColorAttr.m_cBACK);
+
+	ColorInfo comment{};
+	GetDefaultColorInfo(&comment, COLORIDX_COMMENT);
+	EXPECT_EQ(RGB(106, 153, 85), comment.m_sColorAttr.m_cTEXT);
+	EXPECT_EQ(RGB(30, 30, 30), comment.m_sColorAttr.m_cBACK);
+}
 
 TEST(CDocTypeManager, ConvertTypesExtToDlgExtNullptr1)
 {

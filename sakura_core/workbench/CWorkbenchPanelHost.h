@@ -60,6 +60,7 @@ private:
 	int m_pendingExtentDip = 0;
 	unsigned int m_dpi = 96;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	theme::CThemeFont m_font;
 	RECT m_bounds{};
 	HWND m_window = nullptr;
 	std::unique_ptr<IWorkbenchTool> m_tool;

@@ -13,6 +13,23 @@
 
 #include "charset/CCodeFactory.h"
 
+#include <vector>
+
+namespace {
+
+constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
+
+void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
+{
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	if (brush != nullptr) {
+		::FillRect(dc, &rect, brush);
+		::DeleteObject(brush);
+	}
+}
+
+} // namespace
+
 /*!
  * 文字コードの16進表示
  *
@@ -63,7 +80,7 @@ void CMainStatusBar::CreateStatusBar()
 		nullptr
 	);
 
-	DarkMode::setStatusBarCtrlSubclass(m_hwndStatusBar);
+	InstallPaletteSubclass();
 
 	/* プログレスバー */
 	m_hwndProgressBar = ::CreateWindowEx(
@@ -98,7 +115,10 @@ void CMainStatusBar::DestroyStatusBar()
 		::DestroyWindow( m_hwndProgressBar );
 		m_hwndProgressBar = nullptr;
 	}
-	::DestroyWindow( m_hwndStatusBar );
+	if (m_hwndStatusBar != nullptr) {
+		::RemoveWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, kSakuraStatusBarSubclassId);
+		::DestroyWindow(m_hwndStatusBar);
+	}
 	m_hwndStatusBar = nullptr;
 
 	if( nullptr != m_pOwner->m_cFuncKeyWnd.GetHwnd() ){
@@ -118,6 +138,124 @@ void CMainStatusBar::DestroyStatusBar()
 	}
 	//スプリッターの、サイズボックスの位置を変更
 	m_pOwner->m_cSplitterWnd.DoSplit( -1, -1 );
+}
+
+void CMainStatusBar::SetPalette(const theme::ThemePalette& palette) noexcept
+{
+	m_palette = palette;
+	if (m_hwndStatusBar != nullptr) {
+		::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+	}
+}
+
+void CMainStatusBar::InstallPaletteSubclass() noexcept
+{
+	if (m_hwndStatusBar == nullptr) return;
+	// The recursive darkmodelib pass runs after child creation. Remove only its
+	// status-bar painter, then put Sakura's palette-aware painter last in the chain.
+	DarkMode::removeStatusBarCtrlSubclass(m_hwndStatusBar);
+	::RemoveWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, kSakuraStatusBarSubclassId);
+	::SetWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, kSakuraStatusBarSubclassId,
+		reinterpret_cast<DWORD_PTR>(this));
+	::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
+LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+	UINT_PTR subclassId, DWORD_PTR referenceData)
+{
+	auto* self = reinterpret_cast<CMainStatusBar*>(referenceData);
+	switch (message) {
+	case WM_ERASEBKGND:
+		return TRUE;
+	case WM_PRINTCLIENT:
+		if (self != nullptr && reinterpret_cast<HDC>(wParam) != nullptr) {
+			self->PaintStatusBar(reinterpret_cast<HDC>(wParam));
+			return 0;
+		}
+		break;
+	case WM_PAINT:
+		if (self != nullptr) {
+			PAINTSTRUCT paint{};
+			const HDC dc = ::BeginPaint(window, &paint);
+			self->PaintStatusBar(dc);
+			::EndPaint(window, &paint);
+			return 0;
+		}
+		break;
+	case WM_THEMECHANGED:
+		::InvalidateRect(window, nullptr, FALSE);
+		break;
+	case WM_NCDESTROY:
+		::RemoveWindowSubclass(window, StatusBarSubclassProc, subclassId);
+		if (self != nullptr && self->m_hwndStatusBar == window) {
+			self->m_hwndStatusBar = nullptr;
+		}
+		break;
+	default:
+		break;
+	}
+	return ::DefSubclassProc(window, message, wParam, lParam);
+}
+
+void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
+{
+	if (dc == nullptr || m_hwndStatusBar == nullptr) return;
+
+	RECT client{};
+	::GetClientRect(m_hwndStatusBar, &client);
+	const int width = client.right - client.left;
+	const int height = client.bottom - client.top;
+	if (width <= 0 || height <= 0) return;
+
+	const HDC buffer = ::CreateCompatibleDC(dc);
+	const HBITMAP bitmap = buffer == nullptr ? nullptr : ::CreateCompatibleBitmap(dc, width, height);
+	const HGDIOBJ oldBitmap = bitmap == nullptr ? nullptr : ::SelectObject(buffer, bitmap);
+	HDC target = oldBitmap == nullptr ? dc : buffer;
+
+	FillSolidRect(target, client, m_palette.accent.ToColorRef());
+	::SetBkMode(target, TRANSPARENT);
+	::SetTextColor(target, m_palette.highlightText.ToColorRef());
+	const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(m_hwndStatusBar, WM_GETFONT, 0, 0));
+	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
+
+	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
+	const HPEN separator = ::CreatePen(PS_SOLID, 1, m_palette.border.ToColorRef());
+	const HGDIOBJ oldPen = separator == nullptr ? nullptr : ::SelectObject(target, separator);
+	for (int part = 0; part < partCount; ++part) {
+		RECT partRect{};
+		if (::SendMessageW(m_hwndStatusBar, SB_GETRECT, part, reinterpret_cast<LPARAM>(&partRect)) == FALSE) continue;
+		const LRESULT textInfo = ::SendMessageW(m_hwndStatusBar, SB_GETTEXTLENGTHW, part, 0);
+		const UINT textLength = LOWORD(textInfo);
+		const UINT style = HIWORD(textInfo);
+		std::vector<wchar_t> text(static_cast<size_t>(textLength) + 1, L'\0');
+		const LRESULT itemData = ::SendMessageW(m_hwndStatusBar, SB_GETTEXTW, part,
+			reinterpret_cast<LPARAM>(text.data()));
+		if ((style & SBT_OWNERDRAW) != 0) {
+			DRAWITEMSTRUCT drawItem{ ODT_STATIC, 0, static_cast<UINT>(part), ODA_DRAWENTIRE, 0,
+				m_hwndStatusBar, target, partRect, static_cast<ULONG_PTR>(itemData) };
+			::SendMessageW(::GetParent(m_hwndStatusBar), WM_DRAWITEM,
+				static_cast<WPARAM>(::GetDlgCtrlID(m_hwndStatusBar)), reinterpret_cast<LPARAM>(&drawItem));
+		} else if (textLength != 0) {
+			partRect.left += 4;
+			partRect.right -= 4;
+			::DrawTextW(target, text.data(), static_cast<int>(textLength), &partRect,
+				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		}
+		if (separator != nullptr && part + 1 < partCount) {
+			::MoveToEx(target, partRect.right, partRect.top + 3, nullptr);
+			::LineTo(target, partRect.right, partRect.bottom - 3);
+		}
+	}
+
+	if (oldPen != nullptr) ::SelectObject(target, oldPen);
+	if (separator != nullptr) ::DeleteObject(separator);
+	if (oldFont != nullptr) ::SelectObject(target, oldFont);
+	if (oldBitmap != nullptr) {
+		::BitBlt(dc, 0, 0, width, height, buffer, 0, 0, SRCCOPY);
+		::SelectObject(buffer, oldBitmap);
+	}
+	if (bitmap != nullptr) ::DeleteObject(bitmap);
+	if (buffer != nullptr) ::DeleteDC(buffer);
 }
 
 /*!

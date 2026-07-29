@@ -440,6 +440,8 @@ void CEditWnd::ApplyWorkbenchTheme()
 		? theme::ThemeMode::Dark
 		: theme::ThemeMode::Light;
 	const auto palette = theme::CThemeService::EffectivePalette(mode);
+	m_cStatusBar.SetPalette(palette);
+	if (m_cTabWnd.GetHwnd()) m_cTabWnd.UpdateTheme();
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->SetPalette(palette);
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->SetPalette(palette);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->SetPalette(palette);
@@ -450,7 +452,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	if (m_terminalTool) m_terminalTool->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
-		activityPalette.background = palette.canvas.ToColorRef();
+		activityPalette.background = palette.activityBar.ToColorRef();
 		activityPalette.hoverBackground = palette.raised.ToColorRef();
 		activityPalette.pressedBackground = palette.border.ToColorRef();
 		activityPalette.selectedBackground = palette.panel.ToColorRef();
@@ -1134,6 +1136,7 @@ HWND CEditWnd::Create(
 	DarkMode::setChildCtrlsTheme(hWnd);
 	DarkMode::setWindowMenuBarSubclass(hWnd);
 	DarkMode::setChildCtrlsSubclassAndTheme(hWnd);
+	m_cStatusBar.InstallPaletteSubclass();
 
 	// -- -- -- -- その他調整など -- -- -- -- //
 
@@ -1684,7 +1687,7 @@ LRESULT CEditWnd::DispatchEvent(
 				}else{
 					nColor = COLOR_3DSHADOW;
 				}
-				::SetTextColor( lpdis->hDC, ::GetSysColor( nColor ) );
+				::SetTextColor(lpdis->hDC, m_cStatusBar.GetTextColor());
 				::SetBkMode( lpdis->hDC, TRANSPARENT );
 
 				// 2003.08.26 Moca 上下中央位置に作画

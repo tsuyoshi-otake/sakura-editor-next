@@ -34,6 +34,7 @@
 #include "apiwrap/StdApi.h"
 #include "apiwrap/CommonControl.h"
 #include "apiwrap/DarkMode.h"
+#include "theme/CThemeService.h"
 #include "sakura_rc.h"
 #include "config/system_constants.h"
 
@@ -103,6 +104,42 @@ inline LRESULT CALLBACK DefTabWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		return ::DefWindowProc( hwnd, uMsg, wParam, lParam );
 }
 
+void PaintUnusedDarkTabArea( HWND hwnd )
+{
+	RECT client{};
+	if( !::GetClientRect(hwnd, &client) ) return;
+
+	LONG usedRight = client.left;
+	LONG usedBottom = client.top;
+	const int itemCount = TabCtrl_GetItemCount(hwnd);
+	for( int index = 0; index < itemCount; ++index ) {
+		RECT item{};
+		if( TabCtrl_GetItemRect(hwnd, index, &item) ) {
+			usedRight = std::max(usedRight, item.right);
+			usedBottom = std::max(usedBottom, item.bottom);
+		}
+	}
+
+	const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+	const HBRUSH brush = ::CreateSolidBrush(palette.panel.ToColorRef());
+	if( brush == nullptr ) return;
+	const HDC dc = ::GetDC(hwnd);
+	if( dc != nullptr ) {
+		if( usedRight < client.right ) {
+			RECT right = client;
+			right.left = usedRight;
+			::FillRect(dc, &right, brush);
+		}
+		if( usedBottom < client.bottom ) {
+			RECT bottom = client;
+			bottom.top = usedBottom;
+			::FillRect(dc, &bottom, brush);
+		}
+		::ReleaseDC(hwnd, dc);
+	}
+	::DeleteObject(brush);
+}
+
 /* TabWndウィンドウメッセージのコールバック関数 */
 LRESULT CALLBACK TabWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
@@ -113,6 +150,22 @@ LRESULT CALLBACK TabWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam 
 
 	if( pcTabWnd )
 	{
+		if( IsDarkModeActive() && uMsg == WM_ERASEBKGND ) {
+			RECT client{};
+			::GetClientRect(hwnd, &client);
+			const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+			const HBRUSH brush = ::CreateSolidBrush(palette.panel.ToColorRef());
+			if( brush != nullptr ) {
+				::FillRect(reinterpret_cast<HDC>(wParam), &client, brush);
+				::DeleteObject(brush);
+			}
+			return 1L;
+		}
+		if( IsDarkModeActive() && uMsg == WM_PAINT ) {
+			const LRESULT result = DefTabWndProc(hwnd, uMsg, wParam, lParam);
+			PaintUnusedDarkTabArea(hwnd);
+			return result;
+		}
 		//return
 		if( 0L == pcTabWnd->TabWndDispatchEvent( hwnd, uMsg, wParam, lParam ) )
 			return 0L;
@@ -993,6 +1046,9 @@ void CTabWnd::UpdateTheme()
 	}
 	// 再描画（背景・ボタン等の色を更新する）
 	::InvalidateRect( GetHwnd(), nullptr, TRUE );
+	if (m_hwndTab) {
+		::InvalidateRect(m_hwndTab, nullptr, TRUE);
+	}
 }
 
 /* ウィンドウ クローズ */
@@ -1333,11 +1389,23 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 		CGraphics gr(hdc);
 		RECT rcItem = lpdis->rcItem;
 		RECT rcFullItem(rcItem);
+		const bool bHotTracked = ::GetTextColor(hdc) == GetSysColor(COLOR_HOTLIGHT);
 
 		// 状態に従ってテキストと背景色を決める
 
 		// 背景描画
-		if( !IsVisualStyle() ) {
+		if( IsDarkModeActive() ) {
+			const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+			const COLORREF background = bSelected
+				? palette.canvas.ToColorRef()
+				: (bHotTracked ? palette.raised.ToColorRef() : palette.panel.ToColorRef());
+			::MyFillRect(gr, rcItem, background);
+			if (bSelected) {
+				RECT accentBand = rcItem;
+				accentBand.bottom = accentBand.top + DpiScaleY(1);
+				::MyFillRect(gr, accentBand, palette.accent.ToColorRef());
+			}
+		} else if( !IsVisualStyle() ) {
 			::MyFillRect( gr, rcItem, COLOR_BTNFACE );
 		}else{
 			int iPartId = TABP_TABITEM;
@@ -1352,8 +1420,6 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 						rcFullItem.left += DpiScaleX(1);
 					}
 				}
-				bool bHotTracked = ::GetTextColor(hdc) == GetSysColor(COLOR_HOTLIGHT);
-
 				RECT rcBk(rcFullItem);
 				if( bSelected ){
 					iStateId = TIS_SELECTED;
@@ -1411,7 +1477,12 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 
 		// テキスト描画
 		COLORREF clrText;
-		clrText = ::GetSysColor(COLOR_MENUTEXT);
+		if (IsDarkModeActive()) {
+			const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+			clrText = bSelected ? palette.primaryText.ToColorRef() : palette.secondaryText.ToColorRef();
+		} else {
+			clrText = ::GetSysColor(COLOR_MENUTEXT);
+		}
 		gr.PushTextForeColor( clrText );
 		gr.SetTextBackTransparent(true);
 		RECT rcText = rcItem;
@@ -1582,7 +1653,8 @@ LRESULT CTabWnd::OnPaint( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]
 	// 背景を描画する
 	::GetClientRect( hwnd, &rc );
 	if( IsDarkModeActive() ){
-		::MyFillRect( gr, rc, DarkMode::getDlgBackgroundColor() );
+		const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+		::MyFillRect(gr, rc, palette.panel.ToColorRef());
 	}else{
 		::MyFillRect( gr, rc, COLOR_3DFACE );
 	}
@@ -1593,7 +1665,8 @@ LRESULT CTabWnd::OnPaint( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]
 
 	// 上側に境界線を描画する
 	if( IsDarkModeActive() ){
-		gr.SetPen( DarkMode::getEdgeColor() );
+		const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+		gr.SetPen(palette.border.ToColorRef());
 		::MoveToEx( gr, rc.left, rc.top, nullptr );
 		::LineTo( gr, rc.right, rc.top );
 	}else{
@@ -2736,8 +2809,12 @@ void CTabWnd::DrawTopBand( const CGraphics& gr, const RECT& rcClient, int nTabIn
 	}
 
 	if( rcTopBand.left < rcTopBand.right ){
-		COLORREF color = RGB( 255, 128, 0 );
-		::GetSystemAccentColor( &color );
+		COLORREF color = RGB(255, 128, 0);
+		if (IsDarkModeActive()) {
+			color = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark).accent.ToColorRef();
+		} else {
+			::GetSystemAccentColor(&color);
+		}
 		::MyFillRect( gr, rcTopBand, color );
 	}
 }

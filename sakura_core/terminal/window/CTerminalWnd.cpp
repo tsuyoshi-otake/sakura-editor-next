@@ -12,6 +12,7 @@
 #include "terminal/window/TerminalColorResolver.h"
 #include "terminal/window/TerminalInput.h"
 #include "terminal/window/TerminalRenderMapping.h"
+#include "theme/CThemeService.h"
 
 #include <algorithm>
 #include <chrono>
@@ -27,22 +28,6 @@ namespace {
 
 constexpr wchar_t kTerminalWindowClass[] = L"SakuraNativeTerminalWindow";
 constexpr unsigned int kDefaultDpi = 96;
-constexpr int kTerminalPointSize = 11;
-int CALLBACK CountFontCallback( const LOGFONTW*, const TEXTMETRICW*, DWORD, LPARAM value )
-{
-	*reinterpret_cast<bool*>(value) = true;
-	return 0;
-}
-
-bool IsFontInstalled( HDC dc, const wchar_t* face )
-{
-	LOGFONTW query{};
-	query.lfCharSet = DEFAULT_CHARSET;
-	wcsncpy_s(query.lfFaceName, face, _TRUNCATE);
-	bool found = false;
-	::EnumFontFamiliesExW(dc, &query, CountFontCallback, reinterpret_cast<LPARAM>(&found), 0);
-	return found;
-}
 
 bool IsPointSelected( TerminalSelectionPoint point, TerminalSelectionPoint anchor, TerminalSelectionPoint active ) noexcept
 {
@@ -183,8 +168,9 @@ struct CTerminalWnd::Impl {
 			font = nullptr;
 		}
 		const HDC dc = ::GetDC(window);
-		const wchar_t* face = dc && IsFontInstalled(dc, L"Cascadia Mono") ? L"Cascadia Mono" : L"Consolas";
-		font = ::CreateFontW(-::MulDiv(kTerminalPointSize, static_cast<int>(dpi), 72), 0, 0, 0, FW_NORMAL,
+		const auto fontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
+		const wchar_t* face = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal);
+		font = ::CreateFontW(-::MulDiv(fontSpec.pointSize, static_cast<int>(dpi), 72), 0, 0, 0, fontSpec.weight,
 			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
 			FIXED_PITCH | FF_MODERN, face);
 		if( dc ) {

@@ -17,6 +17,12 @@ constexpr wchar_t kPanelHostClass[] = L"SakuraWorkbenchPanelHost";
 constexpr int kDefaultDpi = 96;
 constexpr int kHeaderHeightDip = 30;
 
+BOOL CALLBACK ApplyChromeFont(HWND window, LPARAM parameter)
+{
+	::SendMessageW(window, WM_SETFONT, static_cast<WPARAM>(parameter), TRUE);
+	return TRUE;
+}
+
 [[nodiscard]] int ScaleDip(int dip, unsigned int dpi) noexcept
 {
 	return std::max(0, (dip * static_cast<int>(dpi == 0 ? kDefaultDpi : dpi) + kDefaultDpi / 2) / kDefaultDpi);
@@ -79,6 +85,9 @@ void CWorkbenchPanelHost::Layout(const RECT& bounds, unsigned int dpi)
 	if (m_closed) return;
 	m_bounds = bounds;
 	m_dpi = dpi == 0 ? kDefaultDpi : dpi;
+	if (m_font.Dpi() != m_dpi) {
+		(void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_dpi);
+	}
 	if (m_window != nullptr) {
 		::SetWindowPos(m_window, nullptr, bounds.left, bounds.top,
 			std::max(0L, bounds.right - bounds.left), std::max(0L, bounds.bottom - bounds.top),
@@ -230,6 +239,9 @@ void CWorkbenchPanelHost::LayoutTool()
 	::GetClientRect(m_window, &client);
 	client.top = std::min(client.bottom, client.top + GetHeaderHeightPixels());
 	m_tool->Layout(client, m_dpi);
+	if (m_font.Get() != nullptr) {
+		::EnumChildWindows(m_window, ApplyChromeFont, reinterpret_cast<LPARAM>(m_font.Get()));
+	}
 }
 
 void CWorkbenchPanelHost::Paint()
@@ -249,9 +261,11 @@ void CWorkbenchPanelHost::Paint()
 	::DeleteObject(headerBrush);
 	::SetBkMode(dc, TRANSPARENT);
 	::SetTextColor(dc, m_palette.primaryText.ToColorRef());
+	const HGDIOBJ previousFont = m_font.Get() == nullptr ? nullptr : ::SelectObject(dc, m_font.Get());
 	const wchar_t* title = m_edge == WorkbenchEdge::Left ? L"Explorer" : m_edge == WorkbenchEdge::Right ? L"Outline" : L"Terminal";
 	::InflateRect(&header, -ScaleDip(8, m_dpi), 0);
 	::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+	if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 	::EndPaint(m_window, &paint);
 }
 
