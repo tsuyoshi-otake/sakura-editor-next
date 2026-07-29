@@ -9,6 +9,8 @@
 #include <gtest/gtest.h>
 
 #include "workbench/activity/ActivityBarModel.h"
+#include "workbench/IconMetrics.h"
+#include "workbench/scm/GitScmModel.h"
 
 namespace workbench::activity {
 namespace {
@@ -96,6 +98,30 @@ TEST(ActivityBarModel, ClampsShortClientsWithoutInvertedButtonBounds)
 		EXPECT_GE(bounds.bottom, bounds.top);
 		EXPECT_LE(bounds.bottom, 20);
 	}
+}
+
+TEST(IconMetrics, UsesSharedOpticalSizesAndDpiStableBounds)
+{
+	using namespace workbench::icons;
+	EXPECT_EQ(20, ScaleDip(kActivityIconDip, 96));
+	EXPECT_EQ(30, ScaleDip(kActivityIconDip, 144));
+	EXPECT_EQ(16, ScaleDip(kStatusIconDip, 96));
+	EXPECT_EQ(24, ScaleDip(kStatusIconDip, 144));
+	EXPECT_EQ(1, LineStrokePixels(96));
+	EXPECT_EQ(2, LineStrokePixels(192));
+	EXPECT_EQ(24, StatusTextInsetPixels(96));
+	EXPECT_EQ((IconRect{ 11, 11, 31, 31 }), CenteredIconBounds({ 0, 0, 42, 42 }, kActivityIconDip, 96));
+	EXPECT_EQ((IconRect{ 4, 4, 20, 20 }), LeadingStatusIconBounds({ 0, 0, 100, 24 }, 96));
+}
+
+TEST(IconMetrics, ScmStatusLeavesTheBranchIconToTheSharedNativeRenderer)
+{
+	scm::GitScmState state;
+	state.repository = true;
+	state.branch = L"main";
+	const auto status = scm::FormatStatusLine(state);
+	EXPECT_EQ(L"main", status);
+	EXPECT_EQ(std::wstring::npos, status.find(L'\x2387'));
 }
 
 } // namespace

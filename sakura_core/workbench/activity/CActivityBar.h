@@ -31,7 +31,9 @@ struct ActivityBarPalette {
 	COLORREF pressedBackground = RGB(57, 57, 57);
 	COLORREF selectedBackground = RGB(37, 37, 37);
 	COLORREF activeIndicator = RGB(0, 120, 212);
-	COLORREF icon = RGB(196, 196, 196);
+	//! Inactive glyphs are deliberately secondary; selection promotes only the active glyph.
+	COLORREF icon = RGB(170, 177, 188);
+	COLORREF activeIcon = RGB(232, 235, 240);
 	COLORREF disabledIcon = RGB(105, 105, 105);
 	COLORREF focusBorder = RGB(255, 255, 255);
 	bool highContrast = false;

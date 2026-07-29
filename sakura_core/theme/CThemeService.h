@@ -53,6 +53,7 @@ struct ThemePalette {
 //! Font role used by the native workbench chrome and GDI terminal renderer.
 enum class ThemeFontKind : std::uint8_t {
 	Chrome,
+	Editor,
 	Terminal,
 };
 
@@ -157,9 +158,16 @@ constexpr ThemePalette CThemeService::SelectPalette(
 
 constexpr ThemeFontSpec CThemeService::FontSpec(ThemeFontKind kind) noexcept
 {
-	return kind == ThemeFontKind::Chrome
-		? ThemeFontSpec{ L"Segoe UI Variable", L"Segoe UI", 8, FW_NORMAL, false }
-		: ThemeFontSpec{ L"Cascadia Mono", L"Consolas", 9, FW_NORMAL, true };
+	switch (kind) {
+	case ThemeFontKind::Chrome:
+		return { L"Segoe UI Variable", L"Segoe UI", 8, FW_NORMAL, false };
+	case ThemeFontKind::Editor:
+		// VS Code's Windows editor density is approximately 14 device pixels at 100% DPI.
+		return { L"Consolas", L"Cascadia Mono", 10, FW_NORMAL, true };
+	case ThemeFontKind::Terminal:
+	default:
+		return { L"Cascadia Mono", L"Consolas", 9, FW_NORMAL, true };
+	}
 }
 
 } // namespace theme

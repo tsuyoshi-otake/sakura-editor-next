@@ -88,8 +88,7 @@ GitScmState ParsePorcelainV2(std::string_view bytes)
 std::wstring FormatStatusLine(const GitScmState& state)
 {
 	if (!state.repository) return {};
-	std::wstring text = L"\x2387 ";
-	text += state.branch.empty() ? L"HEAD" : state.branch;
+	std::wstring text = state.branch.empty() ? L"HEAD" : state.branch;
 	if (state.ahead > 0) text += L"  \x2191" + std::to_wstring(state.ahead);
 	if (state.behind > 0) text += L"  \x2193" + std::to_wstring(state.behind);
 	if (!state.changes.empty()) text += L"  " + std::to_wstring(state.changes.size()) + L" changes";

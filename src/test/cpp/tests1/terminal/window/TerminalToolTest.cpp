@@ -7,6 +7,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <mutex>
 #include <thread>
 
@@ -20,8 +21,14 @@ struct BackendState {
 	std::atomic<int> forceTerminateCalls{};
 	std::atomic<int> closeCalls{};
 	std::atomic<bool> closed{};
+	std::atomic<bool> blockWrites{};
+	std::atomic<bool> failWrites{};
+	std::atomic<bool> writeEntered{};
+	std::atomic<std::size_t> outputOffset{};
+	std::string scriptedOutput;
 	std::wstring workingDirectory;
 	terminal::TerminalSize initialSize{};
+	bool failStart{};
 };
 
 class ToolFakeBackend final : public terminal::ITerminalBackend {
@@ -36,11 +43,19 @@ public:
 		++m_state->startCalls;
 		m_state->workingDirectory = options.workingDirectory;
 		m_state->initialSize = options.initialSize;
+		if( m_state->failStart ) return terminal::TerminalStartResult::Failure(ERROR_ACCESS_DENIED, L"denied");
 		return terminal::TerminalStartResult::Success();
 	}
 
-	terminal::TerminalBackendReadResult ReadOutput( std::span<std::uint8_t>, std::chrono::milliseconds timeout ) override
+	terminal::TerminalBackendReadResult ReadOutput( std::span<std::uint8_t> destination, std::chrono::milliseconds timeout ) override
 	{
+		const auto offset = m_state->outputOffset.load();
+		if( offset < m_state->scriptedOutput.size() ) {
+			const auto count = std::min(destination.size(), m_state->scriptedOutput.size() - offset);
+			std::memcpy(destination.data(), m_state->scriptedOutput.data() + offset, count);
+			m_state->outputOffset.store(offset + count);
+			return { terminal::TerminalBackendReadStatus::Data, count, 0 };
+		}
 		std::this_thread::sleep_for(std::min(timeout, 2ms));
 		return m_state->closed ? terminal::TerminalBackendReadResult{ terminal::TerminalBackendReadStatus::EndOfFile, 0, 0 }
 			: terminal::TerminalBackendReadResult{};
@@ -48,6 +63,9 @@ public:
 
 	terminal::TerminalBackendWriteResult WriteInput( std::span<const std::uint8_t> source ) override
 	{
+		m_state->writeEntered.store(true);
+		while( m_state->blockWrites.load() && !m_state->closed.load() ) std::this_thread::sleep_for(1ms);
+		if( m_state->failWrites.load() ) return { terminal::TerminalBackendWriteStatus::Failed, 0, ERROR_BROKEN_PIPE };
 		return { terminal::TerminalBackendWriteStatus::Completed, source.size(), 0 };
 	}
 
@@ -68,12 +86,18 @@ struct ToolHarness {
 	std::mutex mutex;
 	std::vector<std::shared_ptr<BackendState>> backends;
 	std::vector<std::wstring> resolvedWorkingDirectories;
+	std::string scriptedOutput;
+	bool failStart{};
+	bool blockWrites{};
 
 	terminal::TerminalTabManagerDependencies Dependencies()
 	{
 		terminal::TerminalTabManagerDependencies dependencies;
 		dependencies.createSession = [this](terminal::TerminalSessionCallbacks callbacks) {
 			auto state = std::make_shared<BackendState>();
+			state->scriptedOutput = scriptedOutput;
+			state->failStart = failStart;
+			state->blockWrites.store(blockWrites);
 			{
 				const std::lock_guard lock(mutex);
 				backends.push_back(state);
@@ -97,6 +121,17 @@ HWND CreateHiddenParentWindow()
 {
 	return ::CreateWindowExW(0, L"STATIC", L"Terminal tool test parent", WS_OVERLAPPED,
 		CW_USEDEFAULT, CW_USEDEFAULT, 800, 600, nullptr, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+}
+
+template<typename Predicate>
+bool WaitUntil( Predicate&& predicate, std::chrono::milliseconds timeout = 500ms )
+{
+	const auto deadline = std::chrono::steady_clock::now() + timeout;
+	while( std::chrono::steady_clock::now() < deadline ) {
+		if( predicate() ) return true;
+		std::this_thread::sleep_for(1ms);
+	}
+	return predicate();
 }
 
 TEST(TerminalTool, DefersFirstSessionUntilActivationAndKeepsItWhileDeactivated)
@@ -184,6 +219,7 @@ TEST(TerminalTool, PrintableKeyDownFallsThroughToCharMessage)
 	std::string received;
 	renderer.SetInputSink([&received](std::span<const std::uint8_t> bytes) {
 		received.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
 	});
 
 	MSG keyDown{ renderer.GetHwnd(), WM_KEYDOWN, static_cast<WPARAM>('A'), 1 };
@@ -191,6 +227,32 @@ TEST(TerminalTool, PrintableKeyDownFallsThroughToCharMessage)
 	EXPECT_TRUE(received.empty());
 	::SendMessageW(renderer.GetHwnd(), WM_CHAR, L'a', 1);
 	EXPECT_EQ("a", received);
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, QueueFullInteractiveInputIsRetriedInsteadOfSilentlyDiscarded)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	terminal::SakuraTerminalInputAdapter inputAdapter;
+	renderer.SetInputAdapter(&inputAdapter);
+	std::string received;
+	std::atomic<int> calls{};
+	renderer.SetInputSink([&](std::span<const std::uint8_t> bytes) {
+		if( calls.fetch_add(1) == 0 ) return terminal::TerminalQueueInputResult::QueueFull;
+		received.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
+	});
+
+	::SendMessageW(renderer.GetHwnd(), WM_CHAR, L'x', 1);
+	EXPECT_TRUE(received.empty());
+	::SendMessageW(renderer.GetHwnd(), WM_TIMER, 0x5345, 0);
+	EXPECT_EQ("x", received);
+	EXPECT_GE(calls.load(), 2);
 
 	renderer.Close();
 	::DestroyWindow(parent);
@@ -215,6 +277,95 @@ TEST(TerminalTool, VisibleLayoutBeforeActivationUsesViewportSizeForFirstSession)
 
 	tool.Close();
 	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, RestoredVisiblePanelStartsExactlyOneSessionWithoutTakingFocus)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	const HWND focusOwner = ::CreateWindowExW(0, L"STATIC", L"focus owner", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+		0, 0, 40, 20, parent, nullptr, ::GetModuleHandleW(nullptr), nullptr);
+	ASSERT_NE(nullptr, focusOwner);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+	::SetFocus(focusOwner);
+	const HWND focusBefore = ::GetFocus();
+
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 30, 480, 240 }, 96);
+	ASSERT_TRUE(tool.EnsureSessionStarted());
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(1u, harness.backends.size());
+	EXPECT_EQ(focusBefore, ::GetFocus());
+	EXPECT_TRUE(tool.EnsureSessionStarted());
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(1u, harness.backends.size());
+	EXPECT_EQ(focusBefore, ::GetFocus());
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, FirstSessionFailureIsReportedWithoutRemovingTheFailedTab)
+{
+	ToolHarness harness;
+	harness.failStart = true;
+	terminal::CTerminalTool tool(harness.Dependencies());
+
+	EXPECT_FALSE(tool.EnsureSessionStarted());
+	ASSERT_EQ(1u, tool.TabCount());
+	ASSERT_EQ(1u, tool.Tabs().size());
+	EXPECT_EQ(terminal::TerminalSessionState::Failed, tool.Tabs().front().state);
+	EXPECT_EQ(ERROR_ACCESS_DENIED, tool.Tabs().front().errorCode);
+	tool.Close();
+}
+
+TEST(TerminalTool, DrainReportsCompletedSynchronizedFrameEvenWhenNextFrameIsOpen)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b[?2026hClaude ready\x1b[?2026l\x1b[?2026hnext";
+	std::atomic<int> outputNotifications{};
+	terminal::TerminalTabManager manager(harness.Dependencies(), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
+	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	for( int attempt = 0; attempt < 100 && outputNotifications.load() == 0; ++attempt ) std::this_thread::sleep_for(2ms);
+	ASSERT_GT(outputNotifications.load(), 0);
+
+	const auto drained = manager.DrainOutput(*id);
+	EXPECT_TRUE(drained.found);
+	EXPECT_TRUE(drained.active);
+	EXPECT_TRUE(drained.synchronizedOutputCommitted);
+	EXPECT_EQ(harness.scriptedOutput.size(), drained.bytesDrained);
+	ASSERT_NE(nullptr, manager.Model(*id));
+	EXPECT_TRUE(manager.Model(*id)->Modes().synchronizedOutput);
+	manager.Close();
+}
+
+TEST(TerminalTool, DeferredProtocolResponseFinalizesWhenTheSessionStops)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b[6n";
+	harness.blockWrites = true;
+	terminal::TerminalTabManager manager(harness.Dependencies());
+	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	ASSERT_EQ(1u, harness.backends.size());
+	std::vector<std::uint8_t> fill(terminal::CTerminalSession::kInputLimitBytes, 0x41);
+	ASSERT_EQ(terminal::TerminalQueueInputResult::Accepted, manager.QueueInput(*id, fill));
+	ASSERT_TRUE(WaitUntil([&] { return harness.backends[0]->writeEntered.load(); }));
+
+	const auto drained = manager.DrainOutput(*id);
+	EXPECT_TRUE(drained.protocolInputPending);
+	EXPECT_TRUE(manager.HasPendingProtocolInput(*id));
+	harness.backends[0]->failWrites.store(true);
+	harness.backends[0]->blockWrites.store(false);
+	ASSERT_TRUE(WaitUntil([&] { return manager.Snapshot().front().state == terminal::TerminalSessionState::Failed; }));
+	EXPECT_EQ(terminal::TerminalQueueInputResult::NotRunning, manager.FlushPendingProtocolInput(*id));
+	EXPECT_FALSE(manager.HasPendingProtocolInput(*id));
+	manager.Close();
 }
 
 TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)

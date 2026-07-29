@@ -16,7 +16,8 @@ class SakuraTerminalInputAdapter;
 
 class SakuraTerminalStateMachineEngine final : public Microsoft::Console::VirtualTerminal::IStateMachineEngine {
 public:
-	SakuraTerminalStateMachineEngine( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter ) noexcept;
+	SakuraTerminalStateMachineEngine( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter,
+		TerminalDispatch::ResponseSink responseSink = {} ) noexcept;
 	void Reset() noexcept;
 
 	void UnknownSequence() noexcept override;

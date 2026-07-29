@@ -48,6 +48,7 @@
 #include "plugin/CJackManager.h"
 #include "agent/CGrepAgent.h"
 #include "env/CMarkMgr.h"
+#include "doc/logic/CDocLine.h"
 #include "doc/layout/CLayout.h"
 #include "debug/CRunningTimer.h"
 #include "apiwrap/StdApi.h"
@@ -60,10 +61,13 @@
 #include "recent/CRecentFolder.h"
 #include "apiwrap/DarkMode.h"
 #include "window/CCustomFrameController.h"
+#include "markdown/CMarkdownPreviewWnd.h"
+#include "markdown/MarkdownPreviewLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "theme/CThemeService.h"
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
+#include "workbench/IconMetrics.h"
 #include "workbench/WorkbenchLayout.h"
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/explorer/CExplorerTool.h"
@@ -469,6 +473,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 			palette.border.ToColorRef(), palette.accent.ToColorRef() });
 	}
 	if (m_terminalTool) m_terminalTool->SetPalette(palette);
+	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -476,7 +481,8 @@ void CEditWnd::ApplyWorkbenchTheme()
 		activityPalette.pressedBackground = palette.border.ToColorRef();
 		activityPalette.selectedBackground = palette.panel.ToColorRef();
 		activityPalette.activeIndicator = palette.accent.ToColorRef();
-		activityPalette.icon = palette.primaryText.ToColorRef();
+		activityPalette.icon = palette.secondaryText.ToColorRef();
+		activityPalette.activeIcon = palette.primaryText.ToColorRef();
 		activityPalette.disabledIcon = palette.secondaryText.ToColorRef();
 		activityPalette.focusBorder = palette.accent.ToColorRef();
 		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
@@ -520,6 +526,13 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType,
 			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+	if (settings.m_bBottomPanelVisible != FALSE && settings.m_eActiveTool == WORKBENCH_TOOL_TERMINAL
+		&& m_terminalTool != nullptr) {
+		// Restoring a visible terminal must produce its first prompt without the
+		// user pressing '+'. Keep focus where startup/shared-setting propagation
+		// found it; explicit user activation remains the focus-owning path.
+		(void)m_terminalTool->EnsureSessionStarted();
 	}
 	if (settings.m_bRightPanelVisible != FALSE && m_outlineWorkbenchTool != nullptr
 		&& m_cDlgFuncList.GetHwnd() == nullptr && m_dispatchReady) {
@@ -747,6 +760,164 @@ void CEditWnd::RedetectPowerShell()
 	if (m_terminalTool) m_terminalTool->RedetectPowerShell();
 }
 
+bool CEditWnd::IsMarkdownPreviewVisible() const noexcept
+{
+	return m_markdownPreviewVisible;
+}
+
+bool CEditWnd::IsMarkdownPreviewAvailable() const
+{
+	const auto filePath = m_pcEditDoc->m_cDocFile.GetFilePath();
+	return CheckEXT(filePath, L"md") || CheckEXT(filePath, L"markdown")
+		|| CheckEXT(filePath, L"mdown") || CheckEXT(filePath, L"mkd");
+}
+
+bool CEditWnd::EnsureMarkdownPreview()
+{
+	if (m_markdownPreview && m_markdownPreview->IsCreated()) {
+		return true;
+	}
+	m_markdownPreview = std::make_unique<markdown::CMarkdownPreviewWnd>();
+	if (!m_markdownPreview->Create(GetHwnd())) {
+		m_markdownPreview.reset();
+		return false;
+	}
+	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	m_markdownPreview->SetPalette(theme::CThemeService::EffectivePalette(mode));
+	const auto dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+	m_markdownPreview->SetEditorFont(GetLogfont(), dpi);
+	return true;
+}
+
+void CEditWnd::CloseMarkdownPreview() noexcept
+{
+	m_markdownPreviewVisible = false;
+	m_markdownPreviewDirty = false;
+	m_markdownPreviewRevision = -1;
+	if (m_markdownPreview) m_markdownPreview->Close();
+	m_markdownPreview.reset();
+}
+
+std::wstring CEditWnd::GetMarkdownPreviewSource(bool* truncated)
+{
+	// Keep the background refresh bounded even for unusually large generated documents.
+	constexpr std::size_t maximumCharacters = 2U * 1024U * 1024U;
+	constexpr int maximumLines = 200000;
+	bool wasTruncated = false;
+	std::wstring source;
+	int inspectedLines = 0;
+	const auto& lineManager = GetDocument()->m_cDocLineMgr;
+	for (CLogicInt line(0); line < lineManager.GetLineCount() && inspectedLines < maximumLines;
+		++line, ++inspectedLines) {
+		CLogicInt length(0);
+		const auto* documentLine = lineManager.GetLine(line);
+		const auto* text = CDocLine::GetDocLineStrWithEOL_Safe(documentLine, &length);
+		if (text == nullptr || length <= 0) {
+			continue;
+		}
+		if (source.size() >= maximumCharacters) {
+			wasTruncated = true;
+			break;
+		}
+		const auto available = maximumCharacters - source.size();
+		const auto copied = std::min<std::size_t>(available, static_cast<std::size_t>(length));
+		source.append(text, copied);
+		if (copied < static_cast<std::size_t>(length)) {
+			wasTruncated = true;
+			break;
+		}
+	}
+	if (inspectedLines >= maximumLines && CLogicInt(inspectedLines) < lineManager.GetLineCount()) {
+		wasTruncated = true;
+	}
+	if (truncated != nullptr) {
+		*truncated = wasTruncated;
+	}
+	return source;
+}
+
+void CEditWnd::RefreshMarkdownPreview()
+{
+	if (!m_markdownPreviewVisible || !m_markdownPreview) {
+		return;
+	}
+	bool truncated = false;
+	m_markdownPreview->SetDocument(markdown::ParseMarkdown(GetMarkdownPreviewSource(&truncated)));
+	m_markdownPreview->SetSourceTruncated(truncated);
+	m_markdownPreviewRevision = GetDocument()->m_cDocEditor.m_cOpeBuf.GetCurrentPointer();
+	m_markdownPreviewDirty = false;
+}
+
+void CEditWnd::UpdateMarkdownPreviewIfNeeded()
+{
+	if (!m_markdownPreviewVisible || !m_markdownPreview) {
+		return;
+	}
+	if (!IsMarkdownPreviewAvailable()) {
+		m_markdownPreviewVisible = false;
+		m_markdownPreview->Show(false);
+		return;
+	}
+	const auto revision = GetDocument()->m_cDocEditor.m_cOpeBuf.GetCurrentPointer();
+	if (revision != m_markdownPreviewRevision) {
+		m_markdownPreviewRevision = revision;
+		m_markdownPreviewDirty = true;
+		return;
+	}
+	if (m_markdownPreviewDirty) {
+		RefreshMarkdownPreview();
+	}
+}
+
+void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi)
+{
+	const RECT previousDivider = m_markdownPreviewDivider;
+	const bool showPreview = m_markdownPreviewVisible && m_markdownPreview != nullptr && !m_pPrintPreview;
+	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, showPreview);
+	m_markdownPreviewDivider = { layout.dividerLeft, top, layout.dividerRight, bottom };
+	if (!showPreview || layout.PreviewWidth() == 0) {
+		m_markdownPreviewDivider = {};
+	}
+	if (GetHwnd() != nullptr) {
+		::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
+		::InvalidateRect(GetHwnd(), &m_markdownPreviewDivider, FALSE);
+	}
+	::MoveWindow(m_cSplitterWnd.GetHwnd(), layout.editorLeft, top,
+		layout.EditorWidth(), std::max(0, bottom - top), TRUE);
+	if (!m_markdownPreview) {
+		return;
+	}
+	const RECT previewBounds{ layout.previewLeft, top, layout.previewRight, bottom };
+	m_markdownPreview->SetEditorFont(GetLogfont(), dpi);
+	m_markdownPreview->Layout(previewBounds, dpi);
+	m_markdownPreview->Show(showPreview && layout.PreviewWidth() > 0);
+}
+
+void CEditWnd::ToggleMarkdownPreview()
+{
+	if (!IsMarkdownPreviewAvailable()) {
+		return;
+	}
+	m_markdownPreviewVisible = !m_markdownPreviewVisible;
+	if (m_markdownPreviewVisible) {
+		if (!EnsureMarkdownPreview()) {
+			m_markdownPreviewVisible = false;
+			return;
+		}
+		m_markdownPreviewDirty = true;
+		m_markdownPreviewRevision = -1;
+		RefreshMarkdownPreview();
+	} else if (m_markdownPreview) {
+		m_markdownPreview->Show(false);
+	}
+	if (GetHwnd() != nullptr) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+}
+
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
 	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
@@ -795,6 +966,21 @@ void CEditWnd::SetWorkbenchZoomPercent(int percent)
 void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 {
 	UpdateWorkspaceFromDocument();
+	if (m_markdownPreviewVisible) {
+		if (IsMarkdownPreviewAvailable()) {
+			m_markdownPreviewDirty = true;
+			m_markdownPreviewRevision = -1;
+			RefreshMarkdownPreview();
+		} else if (m_markdownPreview) {
+			m_markdownPreviewVisible = false;
+			m_markdownPreview->Show(false);
+		}
+		if (GetHwnd() != nullptr) {
+			RECT client{};
+			::GetClientRect(GetHwnd(), &client);
+			(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		}
+	}
 }
 
 //! ドキュメントリスナ：セーブ後
@@ -1616,6 +1802,9 @@ void CEditWnd::EndLayoutBars( BOOL bAdjust/* = TRUE*/ )
 	if( m_cMiniMapView.GetHwnd() ){
 		::ShowWindow( m_cMiniMapView.GetHwnd(), nCmdShow );
 	}
+	if (m_markdownPreview) {
+		m_markdownPreview->Show(nCmdShow == SW_SHOW && m_markdownPreviewVisible);
+	}
 
 	if( bAdjust )
 	{
@@ -2103,6 +2292,7 @@ LRESULT CEditWnd::DispatchEvent(
 		return 0L;
 	case WM_DESTROY:
 		m_dispatchReady = false;
+		CloseMarkdownPreview();
 		CloseWorkbench();
 		if (m_customFrame) {
 			if (HMENU menu = m_customFrame->ReplaceMenu(nullptr); menu != nullptr) {
@@ -3765,6 +3955,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		int			nAllWidth = rc.right - rc.left;
 		int			nSbxWidth = ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE); // サイズボックスの幅
 		int			nBdrWidth = ::GetSystemMetrics(SM_CXSIZEFRAME) + ::GetSystemMetrics(SM_CXEDGE) * 2; // 境界の幅
+		const int statusIconTextInset = workbench::icons::StatusTextInsetPixels(
+			static_cast<unsigned int>(::GetDpiForWindow(m_cStatusBar.GetStatusHwnd())));
 		SIZE		sz;
 		HDC			hdc;
 
@@ -3782,7 +3974,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		}
 		for (int i = nStArrNum - 1; i > 0; --i) {
 			::GetTextExtentPoint32W(hdc, PSZ_ARGS(pszLabel[i]), &sz);
-			nStArr[i - 1] = nStArr[i] - ( sz.cx + nBdrWidth );
+			nStArr[i - 1] = nStArr[i] - ( sz.cx + statusIconTextInset + nBdrWidth );
 		}
 
 		//	Nov. 8, 2003 genta
@@ -3966,8 +4158,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		m_cMiniMapView.SplitBoxOnOff(FALSE, FALSE, bMiniMapSizeBox);
 	}
 
-	::MoveWindow(m_cSplitterWnd.GetHwnd(), layout.editor.left, layout.editor.top,
-		layout.editor.Width(), layout.editor.Height(), TRUE);
+	LayoutMarkdownPreview(layout.editor.left, layout.editor.top, layout.editor.right, layout.editor.bottom,
+		physicalDpi);
 	//@@@ To 2003.05.31 MIK
 
 	/* 印刷プレビューモードか */
@@ -3993,6 +4185,14 @@ LRESULT CEditWnd::OnPaint(
 		const HDC dc = ::BeginPaint(hwnd, &ps);
 		if (m_customFrame) {
 			m_customFrame->Paint(dc, ps.rcPaint);
+		}
+		if (m_markdownPreviewDivider.right > m_markdownPreviewDivider.left
+			&& m_markdownPreviewDivider.bottom > m_markdownPreviewDivider.top) {
+			const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+				? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+			const auto dividerBrush = ::CreateSolidBrush(theme::CThemeService::EffectivePalette(mode).border.ToColorRef());
+			::FillRect(dc, &m_markdownPreviewDivider, dividerBrush);
+			::DeleteObject(dividerBrush);
 		}
 		PaintWorkbenchSplitters(dc);
 		::EndPaint( hwnd, &ps );
@@ -4985,6 +5185,7 @@ void CEditWnd::OnEditTimer( void )
 	//static	int	nLoopCount = 0; // wmlhq m_nTimerCountに移行
 	// タイマーの呼び出し間隔を 500msに変更。300*10→500*6にする。 20060128 aroka
 	IncrementTimerCount(6);
+	UpdateMarkdownPreviewIfNeeded();
 
 	// 2006.01.28 aroka ツールバー更新関連は OnToolbarTimerに移動した。
 

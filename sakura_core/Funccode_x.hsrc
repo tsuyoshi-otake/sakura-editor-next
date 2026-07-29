@@ -358,6 +358,7 @@ F_SHOW_FOCUS_TERMINAL	= 30994,	//統合ターミナルを表示してフォー�
 F_NEW_TERMINAL			= 30995,	//新しい統合ターミナル						なし
 F_REDETECT_POWERSHELL	= 30996,	//PowerShellを再検出						なし
 F_OPEN_WORKSPACE_FOLDER	= 30997,	//作業フォルダーを開く						なし
+F_TOGGLE_MARKDOWN_PREVIEW	= 30998,	//Markdownプレビューの表示切替					なし
 
 // モード切り替え系 
 F_CHGMOD_INS		= 31001,	//挿入／上書きモード切り替え			なし

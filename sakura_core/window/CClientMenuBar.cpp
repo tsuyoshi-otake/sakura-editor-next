@@ -26,6 +26,68 @@ bool Contains(const RECT& rect, POINT point) noexcept
 
 } // namespace
 
+int HitTestClientMenuItemBounds(std::span<const RECT> itemBounds, POINT clientPoint) noexcept
+{
+	for (std::size_t index = 0; index < itemBounds.size(); ++index) {
+		if (Contains(itemBounds[index], clientPoint)) {
+			return static_cast<int>(index);
+		}
+	}
+	return -1;
+}
+
+int NextClientMenuPopupItem(int activeItem, int hoveredItem) noexcept
+{
+	return hoveredItem >= 0 && hoveredItem != activeItem ? hoveredItem : -1;
+}
+
+bool IsClientMenuMouseMoveFilter(int hookCode, UINT message) noexcept
+{
+	return hookCode == MSGF_MENU && message == WM_MOUSEMOVE;
+}
+
+struct CClientMenuBar::PopupTrackingState final {
+	CClientMenuBar* menuBar = nullptr;
+	HWND owner = nullptr;
+	int activeItem = -1;
+	int pendingItem = -1;
+	HHOOK hook = nullptr;
+	PopupTrackingState* previous = nullptr;
+};
+
+thread_local CClientMenuBar::PopupTrackingState* CClientMenuBar::s_popupTrackingState = nullptr;
+
+class CClientMenuBar::PopupTrackingScope final {
+public:
+	PopupTrackingScope(CClientMenuBar& menuBar, HWND owner, int activeItem) noexcept
+	{
+		m_state.menuBar = &menuBar;
+		m_state.owner = owner;
+		m_state.activeItem = activeItem;
+		m_state.previous = s_popupTrackingState;
+		s_popupTrackingState = &m_state;
+		m_state.hook = ::SetWindowsHookExW(
+			WH_MSGFILTER,
+			&CClientMenuBar::PopupMenuMessageFilter,
+			nullptr,
+			::GetCurrentThreadId()
+		);
+	}
+
+	~PopupTrackingScope()
+	{
+		if (m_state.hook != nullptr) {
+			::UnhookWindowsHookEx(m_state.hook);
+		}
+		s_popupTrackingState = m_state.previous;
+	}
+
+	[[nodiscard]] int PendingItem() const noexcept { return m_state.pendingItem; }
+
+private:
+	PopupTrackingState m_state;
+};
+
 std::wstring FormatClientMenuDisplayText(std::wstring_view text)
 {
 	// Japanese resources conventionally append "(&F)" to a localized label.
@@ -204,12 +266,7 @@ bool CClientMenuBar::ContainsPoint(POINT clientPoint) const noexcept
 
 int CClientMenuBar::HitTestItem(POINT clientPoint) const noexcept
 {
-	for (std::size_t index = 0; index < m_itemBounds.size(); ++index) {
-		if (Contains(m_itemBounds[index], clientPoint)) {
-			return static_cast<int>(index);
-		}
-	}
-	return -1;
+	return HitTestClientMenuItemBounds(m_itemBounds, clientPoint);
 }
 
 int CClientMenuBar::AccessibilityItemCount() const noexcept
@@ -268,37 +325,47 @@ bool CClientMenuBar::OpenItem(HWND owner, int index, bool fromKeyboard) noexcept
 		|| index >= ::GetMenuItemCount(m_menu)) {
 		return false;
 	}
-	const HMENU submenu = ::GetSubMenu(m_menu, index);
-	if (submenu == nullptr) {
-		const UINT command = ::GetMenuItemID(m_menu, index);
-		if (command != static_cast<UINT>(-1)) {
-			::SendMessageW(owner, WM_COMMAND, MAKEWPARAM(command, 0), 0);
-			return true;
+	int currentItem = index;
+	UINT command = 0;
+	for (;;) {
+		const HMENU submenu = ::GetSubMenu(m_menu, currentItem);
+		if (submenu == nullptr) {
+			const UINT itemCommand = ::GetMenuItemID(m_menu, currentItem);
+			if (itemCommand != static_cast<UINT>(-1)) {
+				::SendMessageW(owner, WM_COMMAND, MAKEWPARAM(itemCommand, 0), 0);
+				return true;
+			}
+			return false;
 		}
-		return false;
-	}
 
-	m_pressedItem = index;
-	m_keyboardItem = index;
-	Invalidate(owner);
-	RECT anchor = index < static_cast<int>(m_itemBounds.size()) ? m_itemBounds[index] : m_bounds;
-	POINT origin{ anchor.left, anchor.bottom };
-	::ClientToScreen(owner, &origin);
-	::SetForegroundWindow(owner);
-	// TrackPopupMenuEx treats the supplied submenu as a standalone popup and
-	// reports position zero in WM_INITMENUPOPUP. Sakura builds each top-level
-	// submenu lazily from that position, so explicitly initialize it with its
-	// real root-menu index before entering the modal popup loop. Without this,
-	// only the first (File) menu receives contents and every later menu is empty.
-	::SendMessageW(owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), MAKELPARAM(index, FALSE));
-	const UINT command = ::TrackPopupMenuEx(
-		submenu,
-		TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
-		origin.x,
-		origin.y,
-		owner,
-		nullptr
-	);
+		m_pressedItem = currentItem;
+		m_keyboardItem = currentItem;
+		Invalidate(owner);
+		const RECT anchor = currentItem < static_cast<int>(m_itemBounds.size()) ? m_itemBounds[currentItem] : m_bounds;
+		POINT origin{ anchor.left, anchor.bottom };
+		::ClientToScreen(owner, &origin);
+		::SetForegroundWindow(owner);
+		// TrackPopupMenuEx treats the supplied submenu as a standalone popup and
+		// reports position zero in WM_INITMENUPOPUP. Sakura builds each top-level
+		// submenu lazily from that position, so explicitly initialize it with its
+		// real root-menu index before entering the modal popup loop. Without this,
+		// only the first (File) menu receives contents and every later menu is empty.
+		::SendMessageW(owner, WM_INITMENUPOPUP, reinterpret_cast<WPARAM>(submenu), MAKELPARAM(currentItem, FALSE));
+		PopupTrackingScope tracking(*this, owner, currentItem);
+		command = ::TrackPopupMenuEx(
+			submenu,
+			TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
+			origin.x,
+			origin.y,
+			owner,
+			nullptr
+		);
+		const int nextItem = tracking.PendingItem();
+		if (command != 0 || nextItem < 0) {
+			break;
+		}
+		currentItem = nextItem;
+	}
 	m_pressedItem = -1;
 	if (command != 0) {
 		::SendMessageW(owner, WM_COMMAND, MAKEWPARAM(command, 0), 0);
@@ -309,6 +376,32 @@ bool CClientMenuBar::OpenItem(HWND owner, int index, bool fromKeyboard) noexcept
 	}
 	Invalidate(owner);
 	return true;
+}
+
+LRESULT CALLBACK CClientMenuBar::PopupMenuMessageFilter(int code, WPARAM wParam, LPARAM lParam) noexcept
+{
+	(void)wParam; // Reserved by WH_MSGFILTER; MSGF_MENU is delivered in nCode.
+	PopupTrackingState* const state = s_popupTrackingState;
+	if (code >= 0 && state != nullptr && lParam != 0) {
+		const MSG* const message = reinterpret_cast<const MSG*>(lParam);
+		if (IsClientMenuMouseMoveFilter(code, message->message) && state->pendingItem < 0) {
+			POINT point{};
+			if (::GetCursorPos(&point) != FALSE) {
+				::ScreenToClient(state->owner, &point);
+				const int hoveredItem = state->menuBar->HitTestItem(point);
+				const int nextItem = NextClientMenuPopupItem(state->activeItem, hoveredItem);
+				if (nextItem >= 0) {
+					state->pendingItem = nextItem;
+					::EndMenu();
+					return 1;
+				}
+			}
+		}
+	}
+	// The hook handle is intentionally null: the system does not require it for
+	// a thread hook, and a nested menu loop can temporarily replace the active
+	// thread-local state while an earlier hook is still unwinding.
+	return ::CallNextHookEx(nullptr, code, wParam, lParam);
 }
 
 bool CClientMenuBar::HandleMouseMessage(

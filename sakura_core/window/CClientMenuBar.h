@@ -11,12 +11,20 @@
 
 #include <string>
 #include <string_view>
+#include <span>
 #include <vector>
 
 #include "theme/CThemeService.h"
 
 //! Removes visual mnemonic syntax while preserving the HMENU text used by keyboard handling.
 [[nodiscard]] std::wstring FormatClientMenuDisplayText(std::wstring_view text);
+
+//! Returns the top-level item at a client point, or -1 when the point is outside all items.
+[[nodiscard]] int HitTestClientMenuItemBounds(std::span<const RECT> itemBounds, POINT clientPoint) noexcept;
+//! Returns a sibling menu item to open while a popup is active, or -1 when no switch is needed.
+[[nodiscard]] int NextClientMenuPopupItem(int activeItem, int hoveredItem) noexcept;
+//! WH_MSGFILTER reports MSGF_MENU through nCode (wParam is reserved).
+[[nodiscard]] bool IsClientMenuMouseMoveFilter(int hookCode, UINT message) noexcept;
 
 //! Client-owned rendering and keyboard interaction for an existing HMENU model.
 //!
@@ -51,10 +59,14 @@ public:
 	void SetAccessibilityFocusedItem(HWND owner, int index) noexcept;
 
 private:
+	struct PopupTrackingState;
+	class PopupTrackingScope;
+
 	[[nodiscard]] std::wstring ItemText(int index) const;
 	[[nodiscard]] std::wstring DisplayItemText(int index) const;
 	[[nodiscard]] int FindMnemonic(wchar_t character) const noexcept;
 	[[nodiscard]] bool OpenItem(HWND owner, int index, bool fromKeyboard) noexcept;
+	static LRESULT CALLBACK PopupMenuMessageFilter(int code, WPARAM wParam, LPARAM lParam) noexcept;
 	void SetHotItem(HWND owner, int index) noexcept;
 	void Invalidate(HWND owner) const noexcept;
 
@@ -68,4 +80,6 @@ private:
 	bool m_altDown = false;
 	bool m_altChord = false;
 	bool m_trackingMouseLeave = false;
+
+	static thread_local PopupTrackingState* s_popupTrackingState;
 };

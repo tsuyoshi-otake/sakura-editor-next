@@ -116,8 +116,19 @@ void CWorkbenchPanelHost::Hide()
 void CWorkbenchPanelHost::ActivateTool()
 {
 	if (m_closed || m_window == nullptr || m_tool == nullptr || m_state == WorkbenchPanelState::Hidden) return;
+	const HWND focus = ::GetFocus();
+	if (focus == m_window || (focus != nullptr && ::IsChild(m_window, focus))) {
+		m_tool->Activate();
+		return;
+	}
 	::SetFocus(m_window);
-	m_tool->Activate();
+	// WM_SETFOCUS synchronously owns normal activation. If focus could not enter
+	// the host subtree, retain one explicit fallback instead of silently doing
+	// nothing. This keeps each successful focus transition single-dispatch.
+	const HWND resultingFocus = ::GetFocus();
+	if (resultingFocus != m_window && (resultingFocus == nullptr || !::IsChild(m_window, resultingFocus))) {
+		m_tool->Activate();
+	}
 }
 
 void CWorkbenchPanelHost::SetPalette(const theme::ThemePalette& palette)

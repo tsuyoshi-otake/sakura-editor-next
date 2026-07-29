@@ -26,7 +26,10 @@ class TerminalModel;
 //! Native GDI terminal viewport. It owns no session or parser.
 class CTerminalWnd final {
 public:
-	using InputSink = std::function<void(std::span<const std::uint8_t> bytes)>;
+	// The renderer retains interactive input when the bounded session queue is
+	// full. Returning the result makes that pressure visible instead of silently
+	// losing a key, paste, mouse report, or IME commit.
+	using InputSink = std::function<TerminalQueueInputResult(std::span<const std::uint8_t> bytes)>;
 	using ResizeSink = std::function<void(TerminalSize size)>;
 
 	CTerminalWnd();

@@ -3,6 +3,7 @@
 #include "terminal/parser/TerminalDispatch.h"
 
 #include <algorithm>
+#include <string>
 
 namespace terminal {
 
@@ -35,11 +36,39 @@ void TerminalDispatch::Csi( wchar_t final, bool privateMode, const std::vector<i
 	case L'E': m_model.MoveCursorRelative(0, count); m_model.SetCursorColumn(0); break;
 	case L'F': m_model.MoveCursorRelative(0, -count); m_model.SetCursorColumn(0); break;
 	case L'G': m_model.SetCursorColumn(static_cast<std::size_t>(count - 1)); break;
+	case L'd': m_model.SetCursorRow(static_cast<std::size_t>(count - 1)); break;
 	case L'H': case L'f':
 		m_model.SetCursorPosition(static_cast<std::size_t>(Parameter(parameters, 1, 1) - 1), static_cast<std::size_t>(Parameter(parameters, 0, 1) - 1));
 		break;
 	case L'J': m_model.EraseDisplay(parameters.empty() ? 0 : parameters[0]); break;
 	case L'K': m_model.EraseLine(parameters.empty() ? 0 : parameters[0]); break;
+	case L'X': m_model.EraseCharacters(static_cast<std::size_t>(count)); break;
+	case L'@': m_model.InsertCharacters(static_cast<std::size_t>(count)); break;
+	case L'P': m_model.DeleteCharacters(static_cast<std::size_t>(count)); break;
+	case L'L': m_model.InsertLines(static_cast<std::size_t>(count)); break;
+	case L'M': m_model.DeleteLines(static_cast<std::size_t>(count)); break;
+	case L'n': {
+		const auto query = parameters.empty() ? 0 : parameters[0];
+		if( query == 5 && !privateMode ) Respond("\x1b[0n");
+		else if( query == 6 ) {
+			std::string response = privateMode ? "\x1b[?" : "\x1b[";
+			response += std::to_string(m_model.CursorRow() + 1);
+			response.push_back(';');
+			response += std::to_string(m_model.CursorColumn() + 1);
+			response.push_back('R');
+			Respond(std::move(response));
+		}
+		break;
+	}
+	case L'c':
+		if( !privateMode ) Respond("\x1b[?1;0c");
+		break;
+	case L't':
+		if( !privateMode && !parameters.empty() && parameters[0] == 18 ) {
+			Respond("\x1b[8;" + std::to_string(m_model.RowCount()) + ";" +
+				std::to_string(m_model.Columns()) + "t");
+		}
+		break;
 	case L'S': m_model.ScrollUp(static_cast<std::size_t>(count)); break;
 	case L'T': m_model.ScrollDown(static_cast<std::size_t>(count)); break;
 	case L'm': SelectGraphicRendition(parameters); break;
@@ -56,12 +85,20 @@ void TerminalDispatch::Csi( wchar_t final, bool privateMode, const std::vector<i
 			const bool enabled = final == L'h';
 			for( const auto mode : parameters ) {
 				if( mode == 1047 || mode == 1049 ) m_model.SetAlternateScreen(enabled);
+				else if( mode == 1048 ) enabled ? m_model.SaveCursor() : m_model.RestoreCursor();
 				else m_model.SetMode(mode, enabled);
 			}
 		}
 		break;
 	default: break;
 	}
+}
+
+void TerminalDispatch::Respond( std::string response ) const
+{
+	// Responses are small, deterministic terminal protocol messages. The sink is
+	// owned by the tab/session boundary and enforces the normal bounded input queue.
+	if( m_responseSink && !response.empty() ) m_responseSink(response);
 }
 
 void TerminalDispatch::SelectGraphicRendition( const std::vector<int>& parameters )

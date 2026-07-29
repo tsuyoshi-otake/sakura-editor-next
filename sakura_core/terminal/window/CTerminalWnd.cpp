@@ -28,6 +28,9 @@ namespace {
 
 constexpr wchar_t kTerminalWindowClass[] = L"SakuraNativeTerminalWindow";
 constexpr unsigned int kDefaultDpi = 96;
+constexpr UINT_PTR kInputRetryTimer = 0x5345;
+constexpr UINT kInputRetryMilliseconds = 30;
+constexpr std::size_t kPendingInteractiveInputLimit = CTerminalSession::kInputLimitBytes;
 
 bool IsPointSelected( TerminalSelectionPoint point, TerminalSelectionPoint anchor, TerminalSelectionPoint active ) noexcept
 {
@@ -93,6 +96,7 @@ struct CTerminalWnd::Impl {
 	InputSink inputSink;
 	ResizeSink resizeSink;
 	HFONT font{};
+	HFONT boldFont{};
 	HDC backBufferDc{};
 	HBITMAP backBufferBitmap{};
 	HGDIOBJ backBufferOriginalBitmap{};
@@ -105,16 +109,93 @@ struct CTerminalWnd::Impl {
 	TerminalSize terminalSize{ 1, 1 };
 	bool selecting{};
 	bool selectionMoved{};
+	bool caretShown{};
 	TerminalSelectionPoint selectionAnchor{};
 	TerminalSelectionPoint selectionActive{};
 	unsigned int pressedMouseButton{ 3 };
 	wchar_t pendingHighSurrogate{};
+	std::vector<std::uint8_t> pendingInteractiveInput;
+	bool inputBackpressured{};
+	bool inputRejected{};
 	bool closed{};
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 
-	void Send( std::string_view bytes ) const
+	bool AppendPendingInteractiveInput( std::span<const std::uint8_t> bytes )
 	{
-		if( inputSink && !bytes.empty() ) inputSink(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size()));
+		if( bytes.size() > kPendingInteractiveInputLimit - pendingInteractiveInput.size() ) {
+			inputRejected = true;
+			inputBackpressured = false;
+			if( window ) ::InvalidateRect(window, nullptr, FALSE);
+			return false;
+		}
+		pendingInteractiveInput.insert(pendingInteractiveInput.end(), bytes.begin(), bytes.end());
+		inputBackpressured = true;
+		if( window ) {
+			::SetTimer(window, kInputRetryTimer, kInputRetryMilliseconds, nullptr);
+			::InvalidateRect(window, nullptr, FALSE);
+		}
+		return true;
+	}
+
+	bool Send( std::string_view bytes )
+	{
+		if( bytes.empty() ) return true;
+		const auto input = std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size());
+		if( !inputSink ) {
+			inputRejected = true;
+			if( window ) ::InvalidateRect(window, nullptr, FALSE);
+			return false;
+		}
+		if( !pendingInteractiveInput.empty() ) return AppendPendingInteractiveInput(input);
+		switch( inputSink(input) ) {
+		case TerminalQueueInputResult::Accepted:
+			inputBackpressured = false;
+			inputRejected = false;
+			return true;
+		case TerminalQueueInputResult::QueueFull:
+			return AppendPendingInteractiveInput(input);
+		case TerminalQueueInputResult::NotRunning:
+			inputRejected = true;
+			inputBackpressured = false;
+			if( window ) ::InvalidateRect(window, nullptr, FALSE);
+			return false;
+		}
+		return false;
+	}
+
+	void RetryPendingInteractiveInput()
+	{
+		if( pendingInteractiveInput.empty() || !inputSink ) {
+			if( window ) ::KillTimer(window, kInputRetryTimer);
+			return;
+		}
+		switch( inputSink(pendingInteractiveInput) ) {
+		case TerminalQueueInputResult::Accepted:
+			pendingInteractiveInput.clear();
+			inputBackpressured = false;
+			inputRejected = false;
+			if( window ) {
+				::KillTimer(window, kInputRetryTimer);
+				::InvalidateRect(window, nullptr, FALSE);
+			}
+			break;
+		case TerminalQueueInputResult::QueueFull:
+			// Keep the bounded buffer intact and retry on the same low-rate timer.
+			inputBackpressured = true;
+			break;
+		case TerminalQueueInputResult::NotRunning:
+			// Ownership ends with this viewport once the session has stopped.  The
+			// visible warning records the rejected input; retaining it could leak a
+			// large paste across a tab restart into a different process.
+			pendingInteractiveInput.clear();
+			inputBackpressured = false;
+			inputRejected = true;
+			if( window ) {
+				::KillTimer(window, kInputRetryTimer);
+				::InvalidateRect(window, nullptr, FALSE);
+			}
+			break;
+		}
 	}
 
 	TerminalViewport Viewport() const noexcept
@@ -167,10 +248,17 @@ struct CTerminalWnd::Impl {
 			::DeleteObject(font);
 			font = nullptr;
 		}
+		if( boldFont ) {
+			::DeleteObject(boldFont);
+			boldFont = nullptr;
+		}
 		const HDC dc = ::GetDC(window);
 		const auto fontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
 		const wchar_t* face = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal);
 		font = ::CreateFontW(-::MulDiv(fontSpec.pointSize, static_cast<int>(dpi), 72), 0, 0, 0, fontSpec.weight,
+			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+			FIXED_PITCH | FF_MODERN, face);
+		boldFont = ::CreateFontW(-::MulDiv(fontSpec.pointSize, static_cast<int>(dpi), 72), 0, 0, 0, FW_BOLD,
 			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
 			FIXED_PITCH | FF_MODERN, face);
 		if( dc ) {
@@ -189,18 +277,29 @@ struct CTerminalWnd::Impl {
 	void RecreateCaret()
 	{
 		if( window == nullptr || ::GetFocus() != window ) return;
+		caretShown = false;
 		::DestroyCaret();
 		if( ::CreateCaret(window, nullptr, std::max(1, cellWidth / 8), cellHeight) ) {
 			UpdateCaret();
-			::ShowCaret(window);
 		}
 	}
 
 	void UpdateCaret()
 	{
-		if( !model || window == nullptr || ::GetFocus() != window || scrollOffset != 0 ) return;
+		if( window == nullptr || ::GetFocus() != window ) return;
+		if( !model || !model->Modes().cursorVisible || scrollOffset != 0 ) {
+			if( caretShown ) {
+				::HideCaret(window);
+				caretShown = false;
+			}
+			return;
+		}
 		const auto row = std::min(model->CursorRow(), visibleRows == 0 ? 0 : visibleRows - 1);
 		::SetCaretPos(static_cast<int>(model->CursorColumn()) * cellWidth, static_cast<int>(row) * cellHeight);
+		if( !caretShown ) {
+			::ShowCaret(window);
+			caretShown = true;
+		}
 	}
 
 	void NotifySize()
@@ -320,10 +419,18 @@ struct CTerminalWnd::Impl {
 		const auto dcPen = static_cast<HPEN>(::GetStockObject(DC_PEN));
 		const auto previousPen = ::SelectObject(memory, dcPen);
 		const auto previousFont = font ? ::SelectObject(memory, font) : nullptr;
+		HFONT selectedFont = font;
 		::SetBkMode(memory, OPAQUE);
 
 		if( model ) {
 			const auto viewport = Viewport();
+			// Reuse one pair of contiguous scratch buffers for every visible row.
+			// TUI repaint cost stays O(visible cells) without two heap allocations
+			// per row per frame.
+			std::wstring batchText;
+			std::vector<int> batchAdvances;
+			batchText.reserve(model->Columns());
+			batchAdvances.reserve(model->Columns());
 			const auto paintTop = std::max<LONG>(0, paint.rcPaint.top);
 			const auto paintBottom = std::max<LONG>(0, paint.rcPaint.bottom);
 			const auto firstVisible = std::min<std::size_t>(viewport.visibleRows, static_cast<std::size_t>(paintTop / cellHeight));
@@ -332,10 +439,8 @@ struct CTerminalWnd::Impl {
 				const auto globalRow = viewport.topRow + visualRow;
 				const auto* row = GetTerminalRow(*model, globalRow);
 				if( !row ) continue;
-				std::wstring batchText;
-				std::vector<int> batchAdvances;
-				batchText.reserve(row->cells.size());
-				batchAdvances.reserve(row->cells.size());
+				batchText.clear();
+				batchAdvances.clear();
 				std::size_t batchStart{};
 				std::size_t batchEnd{};
 				TerminalAttributes batchAttributes{};
@@ -343,8 +448,16 @@ struct CTerminalWnd::Impl {
 				bool hasBatch{};
 				const auto flushBatch = [&] {
 					if( !hasBatch || batchText.empty() ) return;
-					auto foreground = ResolveTerminalColor(batchAttributes.foreground, palette, defaultForeground);
-					auto background = ResolveTerminalColor(batchAttributes.background, palette, defaultBackground);
+					const HFONT desiredFont = batchAttributes.bold && boldFont ? boldFont : font;
+					if( desiredFont && desiredFont != selectedFont ) {
+						::SelectObject(memory, desiredFont);
+						selectedFont = desiredFont;
+					}
+					auto background = ResolveTerminalColor(batchAttributes.background, palette, defaultBackground,
+						TerminalColorRole::Background);
+					auto foreground = batchAttributes.inverse
+						? ResolveTerminalColor(batchAttributes.foreground, palette, defaultForeground, TerminalColorRole::Background)
+						: ResolveTerminalForeground(batchAttributes.foreground, palette, defaultForeground, background);
 					if( batchAttributes.inverse ) std::swap(foreground, background);
 					if( batchSelected ) background = palette.accent.ToColorRef();
 					RECT runRect{
@@ -405,6 +518,15 @@ struct CTerminalWnd::Impl {
 			}
 		}
 		if( previousFont ) ::SelectObject(memory, previousFont);
+		if( inputBackpressured || inputRejected ) {
+			RECT warning{ 0, std::max<LONG>(0, height - cellHeight), width, height };
+			::SetBkColor(memory, inputRejected ? RGB(128, 40, 40) : palette.raised.ToColorRef());
+			::SetTextColor(memory, palette.primaryText.ToColorRef());
+			const wchar_t* message = inputRejected ? L"Terminal input was rejected; restart the session to continue."
+				: L"Terminal input is waiting for the process to catch up.";
+			::ExtTextOutW(memory, warning.left + 4, warning.top, ETO_OPAQUE | ETO_CLIPPED, &warning, message,
+				static_cast<UINT>(wcslen(message)), nullptr);
+		}
 		if( previousPen ) ::SelectObject(memory, previousPen);
 		if( previousBrush ) ::SelectObject(memory, previousBrush);
 		if( buffered ) ::BitBlt(dc, paint.rcPaint.left, paint.rcPaint.top, width, height, memory,
@@ -450,6 +572,12 @@ struct CTerminalWnd::Impl {
 		case WM_SHOWWINDOW:
 			if( wParam != FALSE ) ::InvalidateRect(window, nullptr, FALSE);
 			return ::DefWindowProcW(window, message, wParam, lParam);
+		case WM_TIMER:
+			if( wParam == kInputRetryTimer ) {
+				RetryPendingInteractiveInput();
+				return 0;
+			}
+			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_SETFOCUS:
 			RecreateCaret();
 			if( inputAdapter ) {
@@ -460,7 +588,8 @@ struct CTerminalWnd::Impl {
 			if( inputAdapter ) {
 				if( const auto encoded = inputAdapter->EncodeFocus(false) ) Send(*encoded);
 			}
-			::HideCaret(window);
+			if( caretShown ) ::HideCaret(window);
+			caretShown = false;
 			::DestroyCaret();
 			return 0;
 		case WM_CHAR:
@@ -599,9 +728,8 @@ struct CTerminalWnd::Impl {
 			if( text ) {
 				const auto capacity = ::GlobalSize(data) / sizeof(wchar_t);
 				const auto length = wcsnlen_s(text, capacity);
-				Send(EncodeTerminalPaste(std::wstring_view(text, length), model->Modes().bracketedPaste));
+				pasted = Send(EncodeTerminalPaste(std::wstring_view(text, length), model->Modes().bracketedPaste));
 				::GlobalUnlock(data);
-				pasted = capacity != 0;
 			}
 		}
 		::CloseClipboard();
@@ -664,6 +792,7 @@ void CTerminalWnd::SetInputAdapter( SakuraTerminalInputAdapter* inputAdapter )
 void CTerminalWnd::SetInputSink( InputSink sink )
 {
 	m_impl->inputSink = std::move(sink);
+	if( !m_impl->pendingInteractiveInput.empty() ) m_impl->RetryPendingInteractiveInput();
 }
 
 void CTerminalWnd::SetResizeSink( ResizeSink sink )
@@ -684,11 +813,13 @@ void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScr
 	m_impl->UpdateScrollbar();
 	const auto viewport = m_impl->Viewport();
 	const auto visible = MapDirtyRowsToViewport(*m_impl->model, viewport, dirtyScreenRows);
+	RECT client{};
+	::GetClientRect(m_impl->window, &client);
 	for( std::size_t index = 0; index < visible.size(); ) {
 		const auto first = visible[index];
 		auto last = first;
 		while( ++index < visible.size() && visible[index] == last + 1 ) last = visible[index];
-		RECT rectangle{ 0, static_cast<LONG>(first * m_impl->cellHeight), LONG_MAX,
+		RECT rectangle{ 0, static_cast<LONG>(first * m_impl->cellHeight), client.right,
 			static_cast<LONG>((last + 1) * m_impl->cellHeight) };
 		::InvalidateRect(m_impl->window, &rectangle, FALSE);
 	}
@@ -697,7 +828,11 @@ void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScr
 
 void CTerminalWnd::InvalidateAll()
 {
-	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+	if( m_impl->window ) {
+		m_impl->UpdateScrollbar();
+		m_impl->UpdateCaret();
+		::InvalidateRect(m_impl->window, nullptr, FALSE);
+	}
 }
 
 bool CTerminalWnd::PreTranslateMessage( MSG& message )
@@ -757,11 +892,14 @@ void CTerminalWnd::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
 	m_impl->closed = true;
+	if( m_impl->window ) ::KillTimer(m_impl->window, kInputRetryTimer);
 	if( m_impl->window ) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->ReleaseBackBuffer();
 	if( m_impl->font ) ::DeleteObject(m_impl->font);
 	m_impl->font = nullptr;
+	if( m_impl->boldFont ) ::DeleteObject(m_impl->boldFont);
+	m_impl->boldFont = nullptr;
 	m_impl->model = nullptr;
 	m_impl->inputAdapter = nullptr;
 	m_impl->inputSink = {};

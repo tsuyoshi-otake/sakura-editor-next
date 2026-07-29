@@ -121,6 +121,8 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp" />

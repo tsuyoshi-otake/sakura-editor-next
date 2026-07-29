@@ -19,6 +19,34 @@ TEST(CustomFrame, MenuLabelsHideMnemonicSuffixWithoutChangingMenuModel)
 	EXPECT_EQ(L"Research & Development", FormatClientMenuDisplayText(L"Research && Development"));
 }
 
+TEST(CustomFrame, ClientMenuHitTestingUsesHalfOpenItemBounds)
+{
+	const std::vector<RECT> items{
+		{ 10, 0, 30, 34 },
+		{ 30, 0, 60, 34 },
+	};
+	EXPECT_EQ(0, HitTestClientMenuItemBounds(items, { 10, 0 }));
+	EXPECT_EQ(0, HitTestClientMenuItemBounds(items, { 29, 33 }));
+	EXPECT_EQ(1, HitTestClientMenuItemBounds(items, { 30, 0 }));
+	EXPECT_EQ(-1, HitTestClientMenuItemBounds(items, { 60, 0 }));
+	EXPECT_EQ(-1, HitTestClientMenuItemBounds(items, { 20, 34 }));
+}
+
+TEST(CustomFrame, PopupHotTrackingOnlyRequestsSiblingMenuSwitches)
+{
+	EXPECT_EQ(-1, NextClientMenuPopupItem(1, -1));
+	EXPECT_EQ(-1, NextClientMenuPopupItem(1, 1));
+	EXPECT_EQ(0, NextClientMenuPopupItem(1, 0));
+	EXPECT_EQ(2, NextClientMenuPopupItem(1, 2));
+}
+
+TEST(CustomFrame, PopupHotTrackingUsesTheWhMsgFilterCodeContract)
+{
+	EXPECT_TRUE(IsClientMenuMouseMoveFilter(MSGF_MENU, WM_MOUSEMOVE));
+	EXPECT_FALSE(IsClientMenuMouseMoveFilter(MSGF_DIALOGBOX, WM_MOUSEMOVE));
+	EXPECT_FALSE(IsClientMenuMouseMoveFilter(MSGF_MENU, WM_LBUTTONDOWN));
+}
+
 TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
 {
 	EXPECT_EQ(34, ScaleCustomFrameDip(34, 96));

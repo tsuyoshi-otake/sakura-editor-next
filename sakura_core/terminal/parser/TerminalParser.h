@@ -4,6 +4,7 @@
 #include "terminal/parser/TerminalDispatch.h"
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -14,7 +15,9 @@ class SakuraTerminalInputAdapter;
 
 class TerminalParser final {
 public:
-	explicit TerminalParser( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter = nullptr );
+	using ResponseSink = TerminalDispatch::ResponseSink;
+	explicit TerminalParser( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter = nullptr,
+		ResponseSink responseSink = {} );
 	~TerminalParser();
 	TerminalParser( const TerminalParser& ) = delete;
 	TerminalParser& operator=( const TerminalParser& ) = delete;

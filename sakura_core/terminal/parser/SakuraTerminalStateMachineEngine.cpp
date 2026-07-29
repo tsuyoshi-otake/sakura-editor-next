@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <utility>
 
 namespace terminal {
 namespace {
@@ -73,8 +74,8 @@ bool NormalizeSgrParameters(
 } // namespace
 
 SakuraTerminalStateMachineEngine::SakuraTerminalStateMachineEngine(
-	TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter ) noexcept
-	: m_dispatch(model), m_inputAdapter(inputAdapter)
+	TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter, TerminalDispatch::ResponseSink responseSink ) noexcept
+	: m_dispatch(model, std::move(responseSink)), m_inputAdapter(inputAdapter)
 {
 }
 

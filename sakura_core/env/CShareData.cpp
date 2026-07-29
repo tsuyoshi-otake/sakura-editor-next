@@ -205,8 +205,8 @@ bool CShareData::InitShareData()
 //		/* LOGFONTの初期化 */
 		LOGFONT lf;
 		memset_raw( &lf, 0, sizeof( lf ) );
-		const auto terminalFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
-		lf.lfHeight			= DpiPointsToPixels(-terminalFontSpec.pointSize);
+		const auto editorFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Editor);
+		lf.lfHeight			= DpiPointsToPixels(-editorFontSpec.pointSize);
 		lf.lfWidth				= 0;
 		lf.lfEscapement		= 0;
 		lf.lfOrientation		= 0;
@@ -219,7 +219,7 @@ bool CShareData::InitShareData()
 		lf.lfClipPrecision		= CLIP_DEFAULT_PRECIS;
 		lf.lfQuality			= CLEARTYPE_QUALITY;
 		lf.lfPitchAndFamily	= FIXED_PITCH | FF_MODERN;
-		wcsncpy_s( lf.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal), _TRUNCATE );
+		wcsncpy_s( lf.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Editor), _TRUNCATE );
 
 		// LoadShareDataでフォントが変わる可能性があるので、ここでは不要 // 2013.04.08 aroka
 		//InitCharWidthCacheCommon();								// 2008/5/17 Uchi
@@ -593,7 +593,7 @@ bool CShareData::InitShareData()
 			CommonSetting_View& sView = m_pShareData->m_Common.m_sView;
 
 			sView.m_lf = lf;
-			sView.m_nPointSize = terminalFontSpec.pointSize * 10;
+			sView.m_nPointSize = editorFontSpec.pointSize * 10;
 
 			sView.m_bFontIs_FIXED_PITCH = TRUE;				/* 現在のフォントは固定幅フォントである */
 		}

@@ -745,7 +745,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	{ 'S',		{ L"S" },			{ F_0,				F_0,				F_FILESAVE,				F_FILESAVEAS_DIALOG,F_0,					F_0,				F_TMPWRAPSETTING,		F_0 }, },
 	{ 'T',		{ L"T" },			{ F_0,				F_0,				F_TAGJUMP,				F_TAGJUMPBACK,		F_0,					F_0,				F_TILE_H,				F_0 }, },
 	{ 'U',		{ L"U" },			{ F_0,				F_0,				F_LineCutToStart,		F_LineDeleteToStart,F_0,					F_0,				F_WRAPWINDOWWIDTH,		F_0 }, },
-	{ 'V',		{ L"V" },			{ F_0,				F_0,				F_PASTE,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
+	{ 'V',		{ L"V" },			{ F_0,				F_0,				F_PASTE,				F_TOGGLE_MARKDOWN_PREVIEW,F_0,					F_0,				F_0,					F_0 }, },
 	{ 'W',		{ L"W" },			{ F_0,				F_0,				F_SELECTWORD,			F_0,				F_0,					F_0,				F_TMPWRAPWINDOW,		F_0 }, },
 	{ 'X',		{ L"X" },			{ F_0,				F_0,				F_CUT,					F_0,				F_0,					F_0,				F_TMPWRAPNOWRAP,		F_0 }, },
 	{ 'Y',		{ L"Y" },			{ F_0,				F_0,				F_REDO,					F_0,				F_0,					F_0,				F_0,					F_0 }, },

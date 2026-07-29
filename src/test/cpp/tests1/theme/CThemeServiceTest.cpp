@@ -53,6 +53,12 @@ TEST(CThemeService, FontPolicyPrefersNativeWindowsElevenFamilies)
 	EXPECT_EQ(8, chrome.pointSize);
 	EXPECT_FALSE(chrome.fixedPitch);
 
+	const auto editor = CThemeService::FontSpec(ThemeFontKind::Editor);
+	EXPECT_STREQ(L"Consolas", editor.preferredFamily);
+	EXPECT_STREQ(L"Cascadia Mono", editor.fallbackFamily);
+	EXPECT_EQ(10, editor.pointSize);
+	EXPECT_TRUE(editor.fixedPitch);
+
 	const auto terminal = CThemeService::FontSpec(ThemeFontKind::Terminal);
 	EXPECT_STREQ(L"Cascadia Mono", terminal.preferredFamily);
 	EXPECT_STREQ(L"Consolas", terminal.fallbackFamily);

@@ -43,8 +43,12 @@ struct TerminalTabManager::Impl {
 			: id(tabId)
 			, input(std::make_unique<SakuraTerminalInputAdapter>())
 			, model(std::make_unique<TerminalModel>(size.columns, size.rows))
-			, parser(std::make_unique<TerminalParser>(*model, input.get()))
 		{
+			parser = std::make_unique<TerminalParser>(*model, input.get(), [this](std::string_view response) {
+				if( !session || response.empty() ) return;
+				static_cast<void>(session->QueueInput(std::span<const std::uint8_t>(
+					reinterpret_cast<const std::uint8_t*>(response.data()), response.size())));
+			});
 		}
 
 		std::uint64_t id{};
@@ -55,6 +59,8 @@ struct TerminalTabManager::Impl {
 		std::unique_ptr<CTerminalSession> session;
 		TerminalSessionState state{ TerminalSessionState::Idle };
 		std::uint32_t errorCode{};
+		std::vector<std::uint8_t> pendingProtocolInput;
+		bool protocolInputRejected{};
 	};
 
 	TerminalTabManagerDependencies dependencies;
@@ -77,17 +83,70 @@ struct TerminalTabManager::Impl {
 		return found == tabs.end() ? nullptr : found->get();
 	}
 
+	TerminalQueueInputResult QueueProtocolInput( Tab& tab, std::span<const std::uint8_t> bytes )
+	{
+		if( bytes.empty() ) return TerminalQueueInputResult::Accepted;
+		if( !tab.session ) return TerminalQueueInputResult::NotRunning;
+		if( tab.pendingProtocolInput.empty() ) {
+			const auto result = tab.session->QueueInput(bytes);
+			if( result != TerminalQueueInputResult::QueueFull ) return result;
+		}
+		// Parser replies run on the UI thread. Preserve their order in a bounded
+		// local queue and make backpressure observable rather than dropping a
+		// DSR/DA response behind the session input limit.
+		if( bytes.size() > CTerminalSession::kInputLimitBytes - tab.pendingProtocolInput.size() ) {
+			tab.protocolInputRejected = true;
+			tab.errorCode = ERROR_BUFFER_OVERFLOW;
+			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
+			return TerminalQueueInputResult::QueueFull;
+		}
+		tab.pendingProtocolInput.insert(tab.pendingProtocolInput.end(), bytes.begin(), bytes.end());
+		return TerminalQueueInputResult::QueueFull;
+	}
+
+	TerminalQueueInputResult FlushPendingProtocolInput( Tab& tab )
+	{
+		if( tab.pendingProtocolInput.empty() ) return TerminalQueueInputResult::Accepted;
+		if( !tab.session ) {
+			tab.pendingProtocolInput.clear();
+			tab.protocolInputRejected = true;
+			tab.errorCode = ERROR_OPERATION_ABORTED;
+			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
+			return TerminalQueueInputResult::NotRunning;
+		}
+		const auto result = tab.session->QueueInput(tab.pendingProtocolInput);
+		if( result == TerminalQueueInputResult::Accepted ) {
+			tab.pendingProtocolInput.clear();
+			tab.protocolInputRejected = false;
+			if( tab.errorCode == ERROR_BUFFER_OVERFLOW ) tab.errorCode = 0;
+		} else if( result == TerminalQueueInputResult::NotRunning ) {
+			// The session owns no future writer once it has stopped. Finalize this
+			// deferred protocol payload here so the UI retry timer cannot become an
+			// accidental terminal state.
+			tab.pendingProtocolInput.clear();
+			tab.protocolInputRejected = true;
+			tab.errorCode = ERROR_OPERATION_ABORTED;
+			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
+		}
+		return result;
+	}
+
 	bool Start( Tab& tab, TerminalSize rawSize, std::wstring_view workingDirectory )
 	{
 		const auto size = NormalizeSize(rawSize);
 		tab.input = std::make_unique<SakuraTerminalInputAdapter>();
 		tab.model = std::make_unique<TerminalModel>(size.columns, size.rows);
-		tab.parser = std::make_unique<TerminalParser>(*tab.model, tab.input.get());
+		tab.parser = std::make_unique<TerminalParser>(*tab.model, tab.input.get(), [this, tabPtr = &tab](std::string_view response) {
+			if( response.empty() ) return;
+			static_cast<void>(QueueProtocolInput(*tabPtr, std::span<const std::uint8_t>(
+				reinterpret_cast<const std::uint8_t*>(response.data()), response.size())));
+		});
 		tab.state = TerminalSessionState::Starting;
 		tab.errorCode = 0;
 		if( !dependencies.resolveLaunch || !dependencies.createSession ) {
 			tab.state = TerminalSessionState::Failed;
 			tab.errorCode = ERROR_INVALID_FUNCTION;
+			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
 			return false;
 		}
 		auto launch = dependencies.resolveLaunch(size, workingDirectory);
@@ -113,12 +172,14 @@ struct TerminalTabManager::Impl {
 		if( !tab.session ) {
 			tab.state = TerminalSessionState::Failed;
 			tab.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
 			return false;
 		}
 		startedAnySession = true;
 		const auto result = tab.session->Start(*launch);
 		tab.state = tab.session->GetState();
 		tab.errorCode = result.succeeded ? 0 : result.errorCode;
+		if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
 		return result.succeeded;
 	}
 };
@@ -230,9 +291,16 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 	result.found = true;
 	result.active = m_impl->activeTabId == tabId;
 	const auto beforeTitle = tab->model->Title();
+	static_cast<void>(m_impl->FlushPendingProtocolInput(*tab));
+	const auto beforeSynchronizedCommit = tab->model->SynchronizedOutputCommitGeneration();
 	const auto bytes = tab->session->DrainOutput();
 	result.bytesDrained = bytes.size();
 	if( !bytes.empty() ) tab->parser->Feed(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+	static_cast<void>(m_impl->FlushPendingProtocolInput(*tab));
+	result.protocolInputPending = !tab->pendingProtocolInput.empty();
+	result.protocolInputRejected = tab->protocolInputRejected;
+	result.synchronizedOutputCommitted =
+		tab->model->SynchronizedOutputCommitGeneration() != beforeSynchronizedCommit;
 	if( tab->model->Title() != beforeTitle ) {
 		tab->label = tab->model->Title().empty() ? std::wstring(kDefaultTabLabel) : tab->model->Title();
 		result.titleChanged = true;
@@ -252,6 +320,20 @@ TerminalQueueInputResult TerminalTabManager::QueueInput( std::uint64_t tabId, st
 	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
 	auto* tab = m_impl->Find(tabId);
 	return tab && tab->session ? tab->session->QueueInput(bytes) : TerminalQueueInputResult::NotRunning;
+}
+
+TerminalQueueInputResult TerminalTabManager::FlushPendingProtocolInput( std::uint64_t tabId )
+{
+	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
+	auto* tab = m_impl->Find(tabId);
+	return tab ? m_impl->FlushPendingProtocolInput(*tab) : TerminalQueueInputResult::NotRunning;
+}
+
+bool TerminalTabManager::HasPendingProtocolInput( std::uint64_t tabId ) const noexcept
+{
+	if( m_impl->closed ) return false;
+	const auto* tab = m_impl->Find(tabId);
+	return tab != nullptr && !tab->pendingProtocolInput.empty();
 }
 
 const TerminalModel* TerminalTabManager::Model( std::uint64_t tabId ) const noexcept
@@ -314,7 +396,7 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 	result.reserve(m_impl->tabs.size());
 	for( const auto& tab : m_impl->tabs ) {
 		const auto state = tab->session ? tab->session->GetState() : tab->state;
-		const auto error = tab->session ? tab->session->GetLastError() : tab->errorCode;
+		const auto error = tab->errorCode != 0 ? tab->errorCode : tab->session ? tab->session->GetLastError() : 0;
 		result.push_back({ tab->id, tab->label, state, error, m_impl->activeTabId == tab->id });
 	}
 	return result;

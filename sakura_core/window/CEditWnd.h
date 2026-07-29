@@ -63,6 +63,9 @@ struct DLLSHAREDATA;
 namespace terminal {
 class CTerminalTool;
 }
+namespace markdown {
+class CMarkdownPreviewWnd;
+}
 namespace workbench {
 class CActivityBar;
 class CWorkbenchPanelHost;
@@ -227,6 +230,9 @@ public:
 	void FocusIntegratedTerminal();
 	void NewIntegratedTerminal();
 	void RedetectPowerShell();
+	void ToggleMarkdownPreview();
+	[[nodiscard]] bool IsMarkdownPreviewVisible() const noexcept;
+	[[nodiscard]] bool IsMarkdownPreviewAvailable() const;
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                           設定                              //
@@ -399,6 +405,12 @@ private:
 	[[nodiscard]] workbench::CWorkbenchPanelHost* HitTestWorkbenchSplitter(POINT point) const noexcept;
 	void CancelWorkbenchResize();
 	void PaintWorkbenchSplitters(HDC dc) const;
+	[[nodiscard]] bool EnsureMarkdownPreview();
+	void CloseMarkdownPreview() noexcept;
+	void RefreshMarkdownPreview();
+	void UpdateMarkdownPreviewIfNeeded();
+	[[nodiscard]] std::wstring GetMarkdownPreviewSource(bool* truncated = nullptr);
+	void LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi);
 
 	//共有データ
 	DLLSHAREDATA*	m_pShareData = &GetDllShareData();
@@ -420,6 +432,11 @@ private:
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
 	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
+	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
+	bool m_markdownPreviewVisible = false;
+	bool m_markdownPreviewDirty = false;
+	int m_markdownPreviewRevision = -1;
+	RECT m_markdownPreviewDivider{};
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;
 	WPARAM m_pendingLayoutWParam = SIZE_RESTORED;

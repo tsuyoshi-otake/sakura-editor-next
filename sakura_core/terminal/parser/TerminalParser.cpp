@@ -27,9 +27,9 @@ void AppendUtf16( std::wstring& output, char32_t codepoint )
 struct TerminalParser::Impl {
 	using StateMachine = Microsoft::Console::VirtualTerminal::StateMachine;
 
-	explicit Impl( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter )
+	explicit Impl( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter, TerminalParser::ResponseSink responseSink )
 	{
-		auto ownedEngine = std::make_unique<SakuraTerminalStateMachineEngine>(model, inputAdapter);
+		auto ownedEngine = std::make_unique<SakuraTerminalStateMachineEngine>(model, inputAdapter, std::move(responseSink));
 		engine = ownedEngine.get();
 		stateMachine = std::make_unique<StateMachine>(std::move(ownedEngine));
 	}
@@ -82,8 +82,8 @@ struct TerminalParser::Impl {
 	std::uint8_t utf8Remaining{};
 };
 
-TerminalParser::TerminalParser( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter )
-	: m_impl(std::make_unique<Impl>(model, inputAdapter))
+TerminalParser::TerminalParser( TerminalModel& model, SakuraTerminalInputAdapter* inputAdapter, ResponseSink responseSink )
+	: m_impl(std::make_unique<Impl>(model, inputAdapter, std::move(responseSink)))
 {
 }
 

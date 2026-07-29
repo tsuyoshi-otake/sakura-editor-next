@@ -689,7 +689,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		{ 'S',		{ L"S" },					{ F_0,				F_0,				F_FILESAVE,				F_FILESAVEAS_DIALOG,F_0,					F_0,				F_TMPWRAPSETTING,		F_0 }, },
 		{ 'T',		{ L"T" },					{ F_0,				F_0,				F_TAGJUMP,				F_TAGJUMPBACK,		F_0,					F_0,				F_TILE_H,				F_0 }, },
 		{ 'U',		{ L"U" },					{ F_0,				F_0,				F_LineCutToStart,		F_LineDeleteToStart,F_0,					F_0,				F_WRAPWINDOWWIDTH,		F_0 }, },
-		{ 'V',		{ L"V" },					{ F_0,				F_0,				F_PASTE,				F_0,				F_0,					F_0,				F_0,					F_0 }, },
+		{ 'V',		{ L"V" },					{ F_0,				F_0,				F_PASTE,				F_TOGGLE_MARKDOWN_PREVIEW,F_0,					F_0,				F_0,					F_0 }, },
 		{ 'W',		{ L"W" },					{ F_0,				F_0,				F_SELECTWORD,			F_0,				F_0,					F_0,				F_TMPWRAPWINDOW,		F_0 }, },
 		{ 'X',		{ L"X" },					{ F_0,				F_0,				F_CUT,					F_0,				F_0,					F_0,				F_TMPWRAPNOWRAP,		F_0 }, },
 		{ 'Y',		{ L"Y" },					{ F_0,				F_0,				F_REDO,					F_0,				F_0,					F_0,				F_0,					F_0 }, },
@@ -1018,7 +1018,7 @@ MATCHER_P(IsInitializedCommonSettingView, lf, "Checks if CommonSetting_View is p
 
 	EXPECT_THAT(sView.m_lf, lf);
 	EXPECT_THAT(sView.m_nPointSize,
-		theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal).pointSize * 10);
+		theme::CThemeService::FontSpec(theme::ThemeFontKind::Editor).pointSize * 10);
 	EXPECT_THAT(sView.m_bFontIs_FIXED_PITCH, IsTrue());
 
 	return true;
@@ -1506,8 +1506,8 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
     const CommonSetting& commonSetting = arg;
 
 	LOGFONT lf{};
-	const auto terminalFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
-	lf.lfHeight			= DpiPointsToPixels(-terminalFontSpec.pointSize);
+	const auto editorFontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Editor);
+	lf.lfHeight			= DpiPointsToPixels(-editorFontSpec.pointSize);
 	lf.lfWidth			= 0;
 	lf.lfEscapement		= 0;
 	lf.lfOrientation	= 0;
@@ -1521,7 +1521,7 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
 	lf.lfQuality		= CLEARTYPE_QUALITY;
 	lf.lfPitchAndFamily	= FIXED_PITCH | FF_MODERN;
 
-	::wcsncpy_s(lf.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal), _TRUNCATE);
+	::wcsncpy_s(lf.lfFaceName, theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Editor), _TRUNCATE);
 
 	LOGFONT lfIconTitle{};
 	::SystemParametersInfoW(
@@ -1631,7 +1631,7 @@ MATCHER_P4(IsInitializedShareData, pszProfileName, isMultiUserSettings, userRoot
 	EXPECT_THAT(shareData.m_maxTBNum, 0);
 
 	//InitTypeConfigs
-	const std::array<std::unique_ptr<CType>, 17> table = {{
+	const std::array<std::unique_ptr<CType>, 18> table = {{
 		std::make_unique<CType_Basis>(),
 		std::make_unique<CType_Text>(),
 		std::make_unique<CType_Cpp>(),
@@ -1648,7 +1648,8 @@ MATCHER_P4(IsInitializedShareData, pszProfileName, isMultiUserSettings, userRoot
 		std::make_unique<CType_Python>(),
 		std::make_unique<CType_Vb>(),
 		std::make_unique<CType_Rich>(),
-		std::make_unique<CType_Ini>()
+		std::make_unique<CType_Ini>(),
+		std::make_unique<CType_Markdown>()
 	}};
 
 	EXPECT_THAT(shareData.m_nTypesCount, std::size(table));

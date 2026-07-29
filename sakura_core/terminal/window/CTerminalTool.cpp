@@ -33,7 +33,9 @@ constexpr UINT kOutputAvailableMessage = WM_APP + 0x3a1;
 constexpr UINT kStateChangedMessage = WM_APP + 0x3a2;
 constexpr UINT_PTR kOutputFrameTimer = 0x5343;
 constexpr UINT_PTR kSynchronizedOutputTimer = 0x5344;
+constexpr UINT_PTR kProtocolInputRetryTimer = 0x5346;
 constexpr UINT kOutputFrameMilliseconds = 16;
+constexpr UINT kProtocolInputRetryMilliseconds = 30;
 constexpr ULONGLONG kSynchronizedOutputMaximumMilliseconds = 100;
 constexpr UINT kCommandNewTerminal = 1;
 constexpr UINT kCommandRestartTerminal = 2;
@@ -162,6 +164,7 @@ struct CTerminalTool::Impl {
 	bool needsFullTerminalRepaint{};
 	bool needsFullSecondaryRepaint{};
 	bool outputFrameScheduled{};
+	bool protocolInputRetryScheduled{};
 	std::vector<std::uint64_t> pendingOutputTabs;
 	ULONGLONG synchronizedOutputSince{};
 	ULONGLONG secondarySynchronizedOutputSince{};
@@ -183,7 +186,8 @@ struct CTerminalTool::Impl {
 		auto candidate = std::make_unique<CTerminalWnd>();
 		if( !candidate->Create(window, instance) ) return false;
 		candidate->SetInputSink([this](std::span<const std::uint8_t> bytes) {
-			if( const auto tabId = manager->ActiveTabId() ) static_cast<void>(manager->QueueInput(*tabId, bytes));
+			if( const auto tabId = manager->ActiveTabId() ) return manager->QueueInput(*tabId, bytes);
+			return TerminalQueueInputResult::NotRunning;
 		});
 		candidate->SetResizeSink([this](TerminalSize size) {
 			if( const auto tabId = manager->ActiveTabId() ) static_cast<void>(manager->ResizeTab(*tabId, size));
@@ -203,7 +207,8 @@ struct CTerminalTool::Impl {
 		auto candidate = std::make_unique<CTerminalWnd>();
 		if( !candidate->Create(window, instance) ) return false;
 		candidate->SetInputSink([this](std::span<const std::uint8_t> bytes) {
-			if( secondaryTabId ) static_cast<void>(manager->QueueInput(*secondaryTabId, bytes));
+			if( secondaryTabId ) return manager->QueueInput(*secondaryTabId, bytes);
+			return TerminalQueueInputResult::NotRunning;
 		});
 		candidate->SetResizeSink([this](TerminalSize size) {
 			if( secondaryTabId ) static_cast<void>(manager->ResizeTab(*secondaryTabId, size));
@@ -451,10 +456,26 @@ struct CTerminalTool::Impl {
 	void PaintTerminalOutput( CTerminalWnd& renderer, const TerminalModel* model, const TerminalDrainResult& result,
 		bool& needsFullRepaint, ULONGLONG& synchronizedSince )
 	{
-		if( model && model->Modes().synchronizedOutput ) {
-			if( synchronizedSince == 0 ) synchronizedSince = ::GetTickCount64();
-			if( window ) ::SetTimer(window, kSynchronizedOutputTimer,
-				static_cast<UINT>(kSynchronizedOutputMaximumMilliseconds), nullptr);
+		const bool synchronized = model && model->Modes().synchronizedOutput;
+		if( result.synchronizedOutputCommitted ) {
+			// A single drain may close one synchronized frame and immediately open
+			// another. Paint the completed boundary even though the final mode is on.
+			renderer.InvalidateAll();
+			needsFullRepaint = false;
+			if( synchronized ) synchronizedSince = ::GetTickCount64();
+		}
+		if( synchronized ) {
+			if( synchronizedSince == 0 ) {
+				synchronizedSince = ::GetTickCount64();
+				// SetTimer restarts an existing timer, so arm it only on entry. Re-arming
+				// every 16 ms output drain can postpone the fallback forever.
+				if( window ) ::SetTimer(window, kSynchronizedOutputTimer,
+					static_cast<UINT>(kSynchronizedOutputMaximumMilliseconds), nullptr);
+			} else if( result.synchronizedOutputCommitted && window ) {
+				// A committed frame starts a distinct bounded synchronization window.
+				::SetTimer(window, kSynchronizedOutputTimer,
+					static_cast<UINT>(kSynchronizedOutputMaximumMilliseconds), nullptr);
+			}
 			return;
 		}
 		if( synchronizedSince != 0 ) {
@@ -466,6 +487,7 @@ struct CTerminalTool::Impl {
 			}
 			return;
 		}
+		if( result.synchronizedOutputCommitted ) return;
 		if( needsFullRepaint ) {
 			renderer.InvalidateAll();
 			needsFullRepaint = false;
@@ -478,6 +500,7 @@ struct CTerminalTool::Impl {
 	{
 		const auto result = manager->DrainOutput(tabId);
 		if( !result.found ) return;
+		if( result.protocolInputPending ) ScheduleProtocolInputRetry();
 		if( result.titleChanged ) InvalidateTabs();
 		if( result.active && terminalWindow ) {
 			PaintTerminalOutput(*terminalWindow, manager->ActiveModel(), result,
@@ -486,6 +509,26 @@ struct CTerminalTool::Impl {
 		if( secondaryTabId == tabId && secondaryTerminalWindow ) {
 			PaintTerminalOutput(*secondaryTerminalWindow, manager->Model(tabId), result,
 				needsFullSecondaryRepaint, secondarySynchronizedOutputSince);
+		}
+	}
+
+	void ScheduleProtocolInputRetry()
+	{
+		if( protocolInputRetryScheduled || !window ) return;
+		protocolInputRetryScheduled = ::SetTimer(window, kProtocolInputRetryTimer, kProtocolInputRetryMilliseconds, nullptr) != 0;
+	}
+
+	void RetryPendingProtocolInput()
+	{
+		bool pending = false;
+		for( const auto& tab : manager->Snapshot() ) {
+			if( !manager->HasPendingProtocolInput(tab.id) ) continue;
+			const auto result = manager->FlushPendingProtocolInput(tab.id);
+			pending = pending || result == TerminalQueueInputResult::QueueFull || manager->HasPendingProtocolInput(tab.id);
+		}
+		if( !pending && window ) {
+			::KillTimer(window, kProtocolInputRetryTimer);
+			protocolInputRetryScheduled = false;
 		}
 	}
 
@@ -662,6 +705,10 @@ struct CTerminalTool::Impl {
 				}
 				return 0;
 			}
+			if( wParam == kProtocolInputRetryTimer ) {
+				RetryPendingProtocolInput();
+				return 0;
+			}
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		case kStateChangedMessage:
 			InvalidateTabs();
@@ -679,8 +726,19 @@ struct CTerminalTool::Impl {
 		static_cast<void>(EnsureTerminalWindow());
 		const auto id = manager->AddTab(CurrentSize(), workingDirectory);
 		BindActiveModel();
+		if( id ) HandleOutput(*id);
 		InvalidateTabs();
 		if( active && terminalWindow ) terminalWindow->Focus();
+		return id;
+	}
+
+	std::optional<std::uint64_t> EnsureSessionStarted()
+	{
+		static_cast<void>(EnsureTerminalWindow());
+		const auto id = manager->Activate(CurrentSize(), workingDirectory);
+		BindActiveModel();
+		if( id ) HandleOutput(*id);
+		InvalidateTabs();
 		return id;
 	}
 
@@ -704,6 +762,7 @@ struct CTerminalTool::Impl {
 		const bool restarted = manager->RestartTab(tabId, secondary ? SecondarySize() : CurrentSize(), workingDirectory);
 		if( manager->ActiveTabId() == tabId ) BindActiveModel();
 		if( secondary ) BindSecondaryModel();
+		HandleOutput(tabId);
 		InvalidateTabs();
 		return restarted;
 	}
@@ -800,10 +859,7 @@ void CTerminalTool::Activate()
 {
 	if( m_impl->closed ) return;
 	m_impl->active = true;
-	static_cast<void>(m_impl->EnsureTerminalWindow());
-	static_cast<void>(m_impl->manager->Activate(m_impl->CurrentSize(), m_impl->workingDirectory));
-	m_impl->BindActiveModel();
-	m_impl->InvalidateTabs();
+	static_cast<void>(m_impl->EnsureSessionStarted());
 	if( m_impl->terminalWindow ) m_impl->terminalWindow->Focus();
 }
 
@@ -839,6 +895,7 @@ void CTerminalTool::Close()
 	}
 	if( m_impl->window ) ::KillTimer(m_impl->window, kOutputFrameTimer);
 	if( m_impl->window ) ::KillTimer(m_impl->window, kSynchronizedOutputTimer);
+	if( m_impl->window ) ::KillTimer(m_impl->window, kProtocolInputRetryTimer);
 	m_impl->outputFrameScheduled = false;
 	m_impl->pendingOutputTabs.clear();
 	m_impl->synchronizedOutputSince = 0;
@@ -866,6 +923,18 @@ void CTerminalTool::SetPalette( const theme::ThemePalette& palette )
 	if( m_impl->terminalWindow ) m_impl->terminalWindow->SetPalette(palette);
 	if( m_impl->secondaryTerminalWindow ) m_impl->secondaryTerminalWindow->SetPalette(palette);
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+}
+
+bool CTerminalTool::EnsureSessionStarted()
+{
+	if( m_impl->closed ) return false;
+	const auto id = m_impl->EnsureSessionStarted();
+	if( !id ) return false;
+	// AddTab deliberately retains a Failed tab so the user can see/restart it.
+	// Do not mistake that visible tab identifier for a successful first launch.
+	const auto tabs = m_impl->manager->Snapshot();
+	const auto found = std::find_if(tabs.begin(), tabs.end(), [id](const auto& tab) { return tab.id == *id; });
+	return found != tabs.end() && found->state == TerminalSessionState::Running;
 }
 
 std::optional<std::uint64_t> CTerminalTool::AddTerminal()

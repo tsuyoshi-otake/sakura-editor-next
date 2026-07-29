@@ -35,6 +35,9 @@ public:
 
 	void SetWorkingDirectory( std::wstring workingDirectory );
 	void SetPalette( const theme::ThemePalette& palette );
+	//! Materializes the renderer and starts exactly one initial session without
+	//! moving keyboard focus. Used when a persisted-visible panel is restored.
+	[[nodiscard]] bool EnsureSessionStarted();
 	[[nodiscard]] std::optional<std::uint64_t> AddTerminal();
 	void RedetectPowerShell();
 	[[nodiscard]] bool SelectTerminal( std::uint64_t tabId );

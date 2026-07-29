@@ -46,6 +46,9 @@ struct TerminalDrainResult {
 	bool found{};
 	bool active{};
 	bool titleChanged{};
+	bool synchronizedOutputCommitted{};
+	bool protocolInputPending{};
+	bool protocolInputRejected{};
 	std::size_t bytesDrained{};
 	std::vector<std::size_t> dirtyRows;
 };
@@ -84,6 +87,10 @@ public:
 	[[nodiscard]] TerminalDrainResult DrainOutput( std::uint64_t tabId );
 	[[nodiscard]] TerminalQueueInputResult QueueInput( std::uint64_t tabId, std::span<const std::uint8_t> bytes );
 	[[nodiscard]] TerminalQueueInputResult QueueActiveInput( std::span<const std::uint8_t> bytes );
+	//! Retries terminal protocol replies (DSR/DA/etc.) which were deferred only
+	//! because the bounded session input queue was full.
+	[[nodiscard]] TerminalQueueInputResult FlushPendingProtocolInput( std::uint64_t tabId );
+	[[nodiscard]] bool HasPendingProtocolInput( std::uint64_t tabId ) const noexcept;
 	[[nodiscard]] const TerminalModel* Model( std::uint64_t tabId ) const noexcept;
 	[[nodiscard]] TerminalModel* Model( std::uint64_t tabId ) noexcept;
 	[[nodiscard]] const TerminalModel* ActiveModel() const noexcept;

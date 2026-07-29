@@ -69,6 +69,8 @@ struct TerminalRow {
 };
 
 struct TerminalModes {
+	bool cursorVisible{ true };
+	bool autowrap{ true };
 	bool bracketedPaste{};
 	bool mouseButtonTracking{};
 	bool mouseDragTracking{};
@@ -93,10 +95,16 @@ public:
 	void MoveCursorRelative( int columns, int rows );
 	void SetCursorPosition( std::size_t column, std::size_t row );
 	void SetCursorColumn( std::size_t column );
+	void SetCursorRow( std::size_t row );
 	void SaveCursor() noexcept;
 	void RestoreCursor() noexcept;
 	void EraseDisplay( int mode );
 	void EraseLine( int mode );
+	void EraseCharacters( std::size_t count );
+	void InsertCharacters( std::size_t count );
+	void DeleteCharacters( std::size_t count );
+	void InsertLines( std::size_t count );
+	void DeleteLines( std::size_t count );
 	void SetScrollRegion( std::size_t top, std::size_t bottom );
 	void ScrollUp( std::size_t lines );
 	void ScrollDown( std::size_t lines );
@@ -122,15 +130,23 @@ public:
 	const TerminalAttributes& CurrentAttributes() const noexcept { return m_attributes; }
 	const TerminalModes& Modes() const noexcept { return m_modes; }
 	const std::wstring& Title() const noexcept { return m_title; }
-	const std::vector<TerminalRow>& Rows() const noexcept { return m_rows; }
+	//! Monotonically advances whenever DEC synchronized output commits a frame.
+	//! Consumers compare generations around parser drains so a completed frame is
+	//! not lost when the same drain immediately begins the next frame.
+	std::uint64_t SynchronizedOutputCommitGeneration() const noexcept { return m_synchronizedOutputCommitGeneration; }
+	const std::deque<TerminalRow>& Rows() const noexcept { return m_rows; }
 	const std::deque<TerminalRow>& Scrollback() const noexcept { return m_scrollback; }
 	std::vector<std::size_t> ConsumeDirtyRows();
 
 private:
-	TerminalRow MakeBlankRow() const;
+	TerminalRow MakeBlankRow( const TerminalAttributes& attributes = {} ) const;
+	void ResetRow( TerminalRow& row, const TerminalAttributes& attributes ) const;
+	TerminalRow RecycleForBlankRow( TerminalRow&& outgoing, const TerminalAttributes& attributes );
 	void ClearCellRange( TerminalRow& row, std::size_t begin, std::size_t end );
 	void SetCellAttributes( TerminalRow& row, std::size_t column, std::size_t length, const TerminalAttributes& attributes );
 	void NormalizeAttributeRuns( TerminalRow& row );
+	void RebuildAttributeRuns( TerminalRow& row );
+	void RepairWideCells( TerminalRow& row );
 	void MarkDirty( std::size_t row ) noexcept;
 	void MarkDirtyRange( std::size_t top, std::size_t bottom ) noexcept;
 	void LineFeed();
@@ -143,10 +159,14 @@ private:
 	std::size_t m_columns;
 	std::size_t m_rowsCount;
 	std::size_t m_scrollbackLimit;
-	std::vector<TerminalRow> m_rows;
+	// Screen rows are a deque so full-screen scrolling can transfer a row to
+	// scrollback and recycle the evicted row in O(1), without vector erase/insert
+	// shifts or per-line cell-buffer allocations.  Indexed access remains O(1)
+	// for the renderer and parser.
+	std::deque<TerminalRow> m_rows;
 	// A bounded deque keeps steady-state eviction at the scrollback cap O(1).
 	std::deque<TerminalRow> m_scrollback;
-	std::vector<TerminalRow> m_savedMainRows;
+	std::deque<TerminalRow> m_savedMainRows;
 	std::vector<bool> m_dirtyRows;
 	std::size_t m_cursorColumn{};
 	std::size_t m_cursorRow{};
@@ -154,10 +174,16 @@ private:
 	std::size_t m_savedCursorRow{};
 	std::size_t m_savedMainCursorColumn{};
 	std::size_t m_savedMainCursorRow{};
+	std::size_t m_savedMainSavedCursorColumn{};
+	std::size_t m_savedMainSavedCursorRow{};
+	std::size_t m_savedMainScrollTop{};
+	std::size_t m_savedMainScrollBottom{};
 	std::size_t m_scrollTop{};
 	std::size_t m_scrollBottom{};
 	TerminalAttributes m_attributes;
+	TerminalAttributes m_savedMainAttributes;
 	TerminalModes m_modes;
+	std::uint64_t m_synchronizedOutputCommitGeneration{};
 	std::wstring m_title;
 	bool m_alternateScreen{};
 };

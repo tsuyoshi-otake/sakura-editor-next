@@ -335,6 +335,7 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_SHOW_FOCUS_TERMINAL	,	//統合ターミナルを表示してフォーカス
 	F_NEW_TERMINAL		,	//新しい統合ターミナル
 	F_REDETECT_POWERSHELL	,	//PowerShellを再検出
+	F_TOGGLE_MARKDOWN_PREVIEW	,	//Markdownプレビューの表示切替
 	F_TAGJUMP			,	//タグジャンプ機能
 	F_TAGJUMP_CLOSE		,	//閉じてタグジャンプ(元ウィンドウを閉じる) // Apr. 03, 2003 genta
 	F_TAGJUMPBACK		,	//タグジャンプバック機能
@@ -834,6 +835,7 @@ int FuncID_To_HelpContextID( EFunctionCode nFuncID )
 	case F_SHOWTAB:			return HLP000282;	/* タブの表示 */	//@@@ 2003.06.10 MIK
 	case F_SHOWSTATUSBAR:	return HLP000134;	/* ステータスバーの表示 */
 	case F_SHOWMINIMAP:		return HLP000371;	// ミニマップの表示
+	case F_TOGGLE_MARKDOWN_PREVIEW: return HLP000381;	// Markdownプレビューの表示
 	case F_TYPE_LIST:		return HLP000072;	/* タイプ別設定一覧 */
 	case F_OPTION_TYPE:		return HLP000073;	/* タイプ別設定 */
 	case F_OPTION:			return HLP000076;	/* 共通設定 */
@@ -1257,6 +1259,8 @@ bool IsFuncEnable( const CEditDoc* pcEditDoc, const DLLSHAREDATA* pShareData, EF
 	case F_TAB_JOINTPREV:	// 2007.06.20 ryoji 追加
 	case F_FILENEW_NEWWINDOW:	// 2011.11.15 syat 追加
 		return ( pShareData->m_Common.m_sTabBar.m_bDispTabWnd && !pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin );
+	case F_TOGGLE_MARKDOWN_PREVIEW:
+		return CEditWnd::getInstance()->IsMarkdownPreviewAvailable();
 	default:
 		break;
 	}
@@ -1297,6 +1301,7 @@ bool IsFuncChecked( const CEditDoc* pcEditDoc, const DLLSHAREDATA* pShareData, E
 	case F_TOGGLE_LEFT_EXPLORER:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Left);
 	case F_TOGGLE_RIGHT_OUTLINE:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Right);
 	case F_TOGGLE_BOTTOM_PANEL:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom);
+	case F_TOGGLE_MARKDOWN_PREVIEW:	return pCEditWnd->IsMarkdownPreviewVisible();
 	// 2008.05.30 nasukoji	テキストの折り返し方法
 	case F_TMPWRAPNOWRAP:		return ( pcEditDoc->m_nTextWrapMethodCur == WRAP_NO_TEXT_WRAP );		// 折り返さない
 	case F_TMPWRAPSETTING:		return ( pcEditDoc->m_nTextWrapMethodCur == WRAP_SETTING_WIDTH );		// 指定桁で折り返す

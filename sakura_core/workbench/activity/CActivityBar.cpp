@@ -7,6 +7,7 @@
 #include "StdAfx.h"
 
 #include "workbench/activity/CActivityBar.h"
+#include "workbench/IconMetrics.h"
 
 #include <CommCtrl.h>
 #include <windowsx.h>
@@ -18,7 +19,6 @@ namespace {
 
 constexpr wchar_t kActivityBarClass[] = L"SakuraWorkbenchActivityBar";
 constexpr int kDefaultDpi = 96;
-constexpr int kIconHeightDip = 18;
 constexpr int kIndicatorWidthDip = 2;
 
 [[nodiscard]] int ScaleDip(int dip, unsigned int dpi) noexcept
@@ -72,7 +72,8 @@ ActivityBarPalette ActivityBarPalette::Light() noexcept
 		.pressedBackground = RGB(210, 210, 210),
 		.selectedBackground = RGB(225, 225, 225),
 		.activeIndicator = RGB(0, 95, 184),
-		.icon = RGB(66, 66, 66),
+		.icon = RGB(92, 101, 115),
+		.activeIcon = RGB(31, 35, 41),
 		.disabledIcon = RGB(150, 150, 150),
 		.focusBorder = RGB(0, 0, 0),
 	};
@@ -88,6 +89,7 @@ ActivityBarPalette ActivityBarPalette::HighContrast(COLORREF window, COLORREF wi
 		.selectedBackground = highlight,
 		.activeIndicator = highlightText,
 		.icon = windowText,
+		.activeIcon = highlightText,
 		.disabledIcon = windowText,
 		.focusBorder = highlightText,
 		.highContrast = true,
@@ -355,7 +357,7 @@ void CActivityBar::EnsureIconFont() noexcept
 {
 	if (m_iconFont != nullptr) return;
 	LOGFONTW font{};
-	font.lfHeight = -ScaleDip(kIconHeightDip, m_model.GetDpi());
+	font.lfHeight = -ScaleDip(icons::kActivityIconDip, m_model.GetDpi());
 	font.lfWeight = FW_NORMAL;
 	font.lfCharSet = DEFAULT_CHARSET;
 	font.lfQuality = CLEARTYPE_QUALITY;
@@ -415,9 +417,13 @@ void CActivityBar::Paint() noexcept
 			::FillRect(buffer, &indicator, brush);
 			::DeleteObject(brush);
 		}
-		::SetTextColor(buffer, button.enabled ? m_palette.icon : m_palette.disabledIcon);
+		::SetTextColor(buffer, !button.enabled ? m_palette.disabledIcon
+			: button.selected ? m_palette.activeIcon : m_palette.icon);
 		const wchar_t glyph[] = { IconGlyph(button.item), L'\0' };
-		::DrawTextW(buffer, glyph, 1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		const auto iconBounds = icons::CenteredIconBounds(
+			{ bounds.left, bounds.top, bounds.right, bounds.bottom }, icons::kActivityIconDip, m_model.GetDpi());
+		RECT glyphBounds{ iconBounds.left, iconBounds.top, iconBounds.right, iconBounds.bottom };
+		::DrawTextW(buffer, glyph, 1, &glyphBounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		if (button.focused) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.focusBorder);
 			const HGDIOBJ previousPen = ::SelectObject(buffer, pen);

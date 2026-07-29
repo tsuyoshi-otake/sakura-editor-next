@@ -3,7 +3,9 @@
 
 #include "terminal/model/TerminalModel.h"
 
+#include <functional>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace terminal {
@@ -12,7 +14,9 @@ namespace terminal {
 // Windows Terminal types cross this boundary.
 class TerminalDispatch final {
 public:
-	explicit TerminalDispatch( TerminalModel& model ) noexcept : m_model(model) {}
+	using ResponseSink = std::function<void(std::string_view)>;
+	explicit TerminalDispatch( TerminalModel& model, ResponseSink responseSink = {} ) noexcept
+		: m_model(model), m_responseSink(std::move(responseSink)) {}
 
 	void Print( char32_t codepoint ) { m_model.Print(codepoint); }
 	void Execute( wchar_t control ) { m_model.ExecuteControl(control); }
@@ -23,8 +27,10 @@ public:
 private:
 	static int Parameter( const std::vector<int>& parameters, std::size_t index, int defaultValue ) noexcept;
 	void SelectGraphicRendition( const std::vector<int>& parameters );
+	void Respond( std::string response ) const;
 
 	TerminalModel& m_model;
+	ResponseSink m_responseSink;
 };
 
 } // namespace terminal

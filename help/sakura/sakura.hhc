@@ -1348,6 +1348,11 @@
 					<param name="ImageNumber" value="9">
 					</OBJECT>
 				<LI> <OBJECT type="text/sitemap">
+					<param name="Name" value="Markdown プレビューを表示／非表示">
+					<param name="Local" value="res\HLP000381.html">
+					<param name="ImageNumber" value="9">
+					</OBJECT>
+				<LI> <OBJECT type="text/sitemap">
 					<param name="Name" value="タイプ別設定一覧">
 					<param name="Local" value="res\HLP000072.html">
 					<param name="ImageNumber" value="9">

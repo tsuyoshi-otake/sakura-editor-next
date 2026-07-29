@@ -464,6 +464,9 @@
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h" />
     <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
+	<ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h" />
+	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
+	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h" />
@@ -811,6 +814,7 @@
     <ClCompile Include="..\sakura_core\types\CType_Html.cpp" />
     <ClCompile Include="..\sakura_core\types\CType_Ini.cpp" />
     <ClCompile Include="..\sakura_core\types\CType_Java.cpp" />
+	<ClCompile Include="..\sakura_core\types\CType_Markdown.cpp" />
     <ClCompile Include="..\sakura_core\types\CType_Others.cpp" />
     <ClCompile Include="..\sakura_core\types\CType_Pascal.cpp" />
     <ClCompile Include="..\sakura_core\types\CType_Perl.cpp" />
@@ -926,6 +930,9 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp" />

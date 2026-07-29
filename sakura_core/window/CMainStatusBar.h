@@ -45,7 +45,7 @@ public:
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
 	void SetScmText(std::wstring text);
 	void InstallPaletteSubclass() noexcept;
-	[[nodiscard]] COLORREF GetTextColor() const noexcept { return m_palette.highlightText.ToColorRef(); }
+	[[nodiscard]] COLORREF GetTextColor() const noexcept { return m_palette.primaryText.ToColorRef(); }
 private:
 	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
 		UINT_PTR subclassId, DWORD_PTR referenceData);

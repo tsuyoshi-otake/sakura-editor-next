@@ -116,6 +116,71 @@ TEST(TerminalParser, HandlesCursorEraseSaveRestoreAndScrollRegion)
 	EXPECT_TRUE(RowText(model.Rows()[0]).empty());
 }
 
+TEST(TerminalParser, HandlesTuiCharacterInsertionDeletionAndErase)
+{
+	terminal::TerminalModel model(8, 2);
+	terminal::TerminalParser parser(model);
+	parser.Feed("abcdef\x1b[3G\x1b[2X");
+	EXPECT_TRUE(model.Rows()[0].cells[2].Text().empty());
+	EXPECT_TRUE(model.Rows()[0].cells[3].Text().empty());
+	EXPECT_EQ(L"e", model.Rows()[0].cells[4].Text());
+
+	model.Reset();
+	parser.Reset();
+	parser.Feed("abcdef\x1b[3G\x1b[2@");
+	EXPECT_TRUE(model.Rows()[0].cells[2].Text().empty());
+	EXPECT_TRUE(model.Rows()[0].cells[3].Text().empty());
+	EXPECT_EQ(L"c", model.Rows()[0].cells[4].Text());
+	parser.Feed("\x1b[2P");
+	EXPECT_EQ(L"c", model.Rows()[0].cells[2].Text());
+	EXPECT_EQ(L"f", model.Rows()[0].cells[5].Text());
+}
+
+TEST(TerminalParser, HandlesTuiLineInsertionDeletionAndVerticalPosition)
+{
+	terminal::TerminalModel model(8, 4);
+	terminal::TerminalParser parser(model);
+	parser.Feed("one\r\ntwo\r\nthree\x1b[2d\x1b[1L");
+	EXPECT_EQ(L"one", RowText(model.Rows()[0]));
+	EXPECT_TRUE(RowText(model.Rows()[1]).empty());
+	EXPECT_EQ(L"two", RowText(model.Rows()[2]));
+	EXPECT_EQ(L"three", RowText(model.Rows()[3]));
+	parser.Feed("\x1b[1M");
+	EXPECT_EQ(L"two", RowText(model.Rows()[1]));
+	EXPECT_EQ(L"three", RowText(model.Rows()[2]));
+}
+
+TEST(TerminalParser, TracksCursorVisibilityAndAutowrapPrivateModes)
+{
+	terminal::TerminalModel model(4, 2);
+	terminal::TerminalParser parser(model);
+	parser.Feed("\x1b[?25l\x1b[?7l");
+	EXPECT_FALSE(model.Modes().cursorVisible);
+	EXPECT_FALSE(model.Modes().autowrap);
+	parser.Feed("abcde");
+	EXPECT_EQ(L"abce", RowText(model.Rows()[0]));
+	EXPECT_TRUE(RowText(model.Rows()[1]).empty());
+	parser.Feed("\x1b[?25h\x1b[?7h");
+	EXPECT_TRUE(model.Modes().cursorVisible);
+	EXPECT_TRUE(model.Modes().autowrap);
+}
+
+TEST(TerminalParser, ReturnsBoundedDeviceCursorAndSizeResponsesThroughInputSink)
+{
+	terminal::TerminalModel model(80, 24);
+	std::vector<std::string> responses;
+	terminal::TerminalParser parser(model, nullptr, [&responses](std::string_view response) {
+		responses.emplace_back(response);
+	});
+	parser.Feed("abc\x1b[5n\x1b[6n\x1b[c\x1b[18t");
+
+	ASSERT_EQ(4u, responses.size());
+	EXPECT_EQ("\x1b[0n", responses[0]);
+	EXPECT_EQ("\x1b[1;4R", responses[1]);
+	EXPECT_EQ("\x1b[?1;0c", responses[2]);
+	EXPECT_EQ("\x1b[8;24;80t", responses[3]);
+}
+
 TEST(TerminalParser, TogglesAlternateScreenBracketedPasteAndMouseModes)
 {
 	terminal::TerminalModel model(8, 2);
@@ -137,6 +202,48 @@ TEST(TerminalParser, TracksSynchronizedOutputModeForTuiFrameCoalescing)
 	EXPECT_TRUE(model.Modes().synchronizedOutput);
 	parser.Feed("\x1b[?2026l");
 	EXPECT_FALSE(model.Modes().synchronizedOutput);
+}
+
+TEST(TerminalParser, ExposesCommittedFrameWhenOneDrainImmediatelyStartsTheNextFrame)
+{
+	terminal::TerminalModel model(80, 24);
+	terminal::TerminalParser parser(model);
+	const auto before = model.SynchronizedOutputCommitGeneration();
+	parser.Feed("\x1b[?2026hA\x1b[?2026l\x1b[?2026hB");
+
+	EXPECT_TRUE(model.Modes().synchronizedOutput);
+	EXPECT_EQ(before + 1, model.SynchronizedOutputCommitGeneration());
+	EXPECT_EQ(L"AB", RowText(model.Rows()[0]));
+}
+
+TEST(TerminalParser, RendersClaudeStyleAlternateScreenFrameAsOneCommittedUpdate)
+{
+	terminal::TerminalModel model(48, 12);
+	terminal::TerminalParser parser(model);
+	const auto before = model.SynchronizedOutputCommitGeneration();
+	(void)model.ConsumeDirtyRows();
+
+	// Claude Code and similar TUIs render inside the alternate buffer, hide the
+	// cursor while composing, update rows by absolute position, and bracket the
+	// completed frame with DEC synchronized-output mode.
+	parser.Feed("\x1b[?1049h\x1b[?25l\x1b[?2026h\x1b[2J\x1b[H");
+	parser.Feed("\x1b[1;38;2;235;110;80mClaude Code\x1b[0m v2.1.220");
+	parser.Feed("\x1b[3;1H\x1b[38;5;214mReady\x1b[0m in sakuracode");
+	parser.Feed("\x1b[10;1H> \x1b[10;3H\x1b[2@go\x1b[2D\x1b[2P");
+	parser.Feed("\x1b[12;1H\x1b[7m master | 196 changes \x1b[0m");
+	parser.Feed("\x1b[?2026l\x1b[?25h");
+
+	EXPECT_TRUE(model.IsAlternateScreen());
+	EXPECT_TRUE(model.Modes().cursorVisible);
+	EXPECT_FALSE(model.Modes().synchronizedOutput);
+	EXPECT_EQ(before + 1, model.SynchronizedOutputCommitGeneration());
+	EXPECT_EQ(L"Claude Code v2.1.220", RowText(model.Rows()[0]));
+	EXPECT_EQ(L"Ready in sakuracode", RowText(model.Rows()[2]));
+	EXPECT_EQ(L"> ", RowText(model.Rows()[9]));
+	EXPECT_NE(std::wstring::npos, RowText(model.Rows()[11]).find(L"master | 196 changes"));
+	EXPECT_EQ(terminal::TerminalColor::Rgb(235, 110, 80), model.Rows()[0].AttributesAt(0).foreground);
+	EXPECT_TRUE(model.Rows()[11].AttributesAt(0).inverse);
+	EXPECT_FALSE(model.ConsumeDirtyRows().empty());
 }
 
 TEST(TerminalParser, SanitizesAndLimitsSplitOscTitle)

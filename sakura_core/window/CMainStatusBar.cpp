@@ -10,6 +10,7 @@
 #include "CEditApp.h"
 #include "apiwrap/CommonControl.h"
 #include "apiwrap/DarkMode.h"
+#include "workbench/IconMetrics.h"
 
 #include "charset/CCodeFactory.h"
 
@@ -19,6 +20,18 @@ namespace {
 
 constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
 
+enum class StatusIcon {
+	None,
+	Branch,
+	Position,
+	LineEnding,
+	Character,
+	Encoding,
+	Record,
+	InsertMode,
+	Zoom,
+};
+
 void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 {
 	const HBRUSH brush = ::CreateSolidBrush(color);
@@ -26,6 +39,99 @@ void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 		::FillRect(dc, &rect, brush);
 		::DeleteObject(brush);
 	}
+}
+
+[[nodiscard]] StatusIcon StatusIconForPart(int part) noexcept
+{
+	switch (part) {
+	case 1: return StatusIcon::Position;
+	case 2: return StatusIcon::LineEnding;
+	case 3: return StatusIcon::Character;
+	case 4: return StatusIcon::Encoding;
+	case 5: return StatusIcon::Record;
+	case 6: return StatusIcon::InsertMode;
+	case 7: return StatusIcon::Zoom;
+	default: return StatusIcon::None;
+	}
+}
+
+void DrawStatusIcon(HDC dc, const RECT& part, StatusIcon icon, COLORREF color, UINT dpi) noexcept
+{
+	if (dc == nullptr || icon == StatusIcon::None) return;
+	const auto box = workbench::icons::LeadingStatusIconBounds(
+		{ part.left, part.top, part.right, part.bottom }, dpi);
+	if (box.Width() <= 0 || box.Height() <= 0) return;
+	const int stroke = workbench::icons::LineStrokePixels(dpi);
+	const HPEN pen = ::CreatePen(PS_SOLID, stroke, color);
+	const HGDIOBJ oldPen = pen == nullptr ? nullptr : ::SelectObject(dc, pen);
+	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(HOLLOW_BRUSH));
+	const int left = box.left + stroke;
+	const int top = box.top + stroke;
+	const int right = std::max(left, box.right - stroke - 1);
+	const int bottom = std::max(top, box.bottom - stroke - 1);
+	const int centerX = (left + right) / 2;
+	const int centerY = (top + bottom) / 2;
+	const int eighthX = std::max(1, (right - left) / 8);
+	const int eighthY = std::max(1, (bottom - top) / 8);
+
+	switch (icon) {
+	case StatusIcon::Branch: {
+		const int radiusX = std::max(1, 2 * eighthX);
+		const int radiusY = std::max(1, 2 * eighthY);
+		const int trunkX = left + 2 * eighthX;
+		const int branchX = right - 2 * eighthX;
+		const int upperY = top + 2 * eighthY;
+		const int lowerY = bottom - 2 * eighthY;
+		::Ellipse(dc, trunkX - radiusX, upperY - radiusY, trunkX + radiusX + 1, upperY + radiusY + 1);
+		::Ellipse(dc, trunkX - radiusX, lowerY - radiusY, trunkX + radiusX + 1, lowerY + radiusY + 1);
+		::Ellipse(dc, branchX - radiusX, centerY - radiusY, branchX + radiusX + 1, centerY + radiusY + 1);
+		::MoveToEx(dc, trunkX, upperY + radiusY, nullptr);
+		::LineTo(dc, trunkX, lowerY - radiusY);
+		::MoveToEx(dc, trunkX, centerY, nullptr);
+		::LineTo(dc, branchX - radiusX, centerY);
+		break;
+	}
+	case StatusIcon::Position:
+		::Ellipse(dc, left + 2 * eighthX, top + 2 * eighthY, right - 2 * eighthX + 1, bottom - 2 * eighthY + 1);
+		::MoveToEx(dc, centerX, top, nullptr); ::LineTo(dc, centerX, bottom);
+		::MoveToEx(dc, left, centerY, nullptr); ::LineTo(dc, right, centerY);
+		break;
+	case StatusIcon::LineEnding:
+		::MoveToEx(dc, right, top + 2 * eighthY, nullptr); ::LineTo(dc, right, centerY);
+		::LineTo(dc, left + 2 * eighthX, centerY);
+		::MoveToEx(dc, left + 4 * eighthX, centerY - 2 * eighthY, nullptr); ::LineTo(dc, left + 2 * eighthX, centerY);
+		::LineTo(dc, left + 4 * eighthX, centerY + 2 * eighthY);
+		break;
+	case StatusIcon::Character:
+		::MoveToEx(dc, centerX - eighthX, top + 2 * eighthY, nullptr); ::LineTo(dc, left + 2 * eighthX, centerY);
+		::LineTo(dc, centerX - eighthX, bottom - 2 * eighthY);
+		::MoveToEx(dc, centerX + eighthX, top + 2 * eighthY, nullptr); ::LineTo(dc, right - 2 * eighthX, centerY);
+		::LineTo(dc, centerX + eighthX, bottom - 2 * eighthY);
+		break;
+	case StatusIcon::Encoding:
+		::Rectangle(dc, left + 2 * eighthX, top, right - 2 * eighthX + 1, bottom + 1);
+		::MoveToEx(dc, left + 4 * eighthX, centerY - eighthY, nullptr); ::LineTo(dc, right - 3 * eighthX, centerY - eighthY);
+		::MoveToEx(dc, left + 4 * eighthX, centerY + 2 * eighthY, nullptr); ::LineTo(dc, right - 3 * eighthX, centerY + 2 * eighthY);
+		break;
+	case StatusIcon::Record:
+		::Ellipse(dc, left + 2 * eighthX, top + 2 * eighthY, right - 2 * eighthX + 1, bottom - 2 * eighthY + 1);
+		break;
+	case StatusIcon::InsertMode:
+		::MoveToEx(dc, centerX, top + eighthY, nullptr); ::LineTo(dc, centerX, bottom - eighthY);
+		::MoveToEx(dc, centerX - 2 * eighthX, top + eighthY, nullptr); ::LineTo(dc, centerX + 2 * eighthX, top + eighthY);
+		::MoveToEx(dc, centerX - 2 * eighthX, bottom - eighthY, nullptr); ::LineTo(dc, centerX + 2 * eighthX, bottom - eighthY);
+		break;
+	case StatusIcon::Zoom:
+		::Ellipse(dc, left, top, centerX + 2 * eighthX, centerY + 2 * eighthY);
+		::MoveToEx(dc, centerX + eighthX, centerY + eighthY, nullptr); ::LineTo(dc, right, bottom);
+		break;
+	case StatusIcon::None:
+		break;
+	}
+
+	::SelectObject(dc, oldBrush);
+	if (oldPen != nullptr) ::SelectObject(dc, oldPen);
+	if (pen != nullptr) ::DeleteObject(pen);
 }
 
 } // namespace
@@ -219,29 +325,45 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const HGDIOBJ oldBitmap = bitmap == nullptr ? nullptr : ::SelectObject(buffer, bitmap);
 	HDC target = oldBitmap == nullptr ? dc : buffer;
 
-	FillSolidRect(target, client, m_palette.accent.ToColorRef());
+	// Status semantics get a compact accent rule; information and icons remain monochrome.
+	FillSolidRect(target, client, m_palette.panel.ToColorRef());
+	RECT statusRule = client;
+	statusRule.bottom = std::min<LONG>(statusRule.bottom,
+		statusRule.top + workbench::icons::ScaleDip(2, ::GetDpiForWindow(m_hwndStatusBar)));
+	FillSolidRect(target, statusRule, m_palette.accent.ToColorRef());
 	::SetBkMode(target, TRANSPARENT);
-	::SetTextColor(target, m_palette.highlightText.ToColorRef());
+	::SetTextColor(target, m_palette.primaryText.ToColorRef());
 	const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(m_hwndStatusBar, WM_GETFONT, 0, 0));
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
 	int scmWidth = 0;
 	if (!m_scmText.empty()) {
 		SIZE extent{};
 		if (::GetTextExtentPoint32W(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &extent)) {
-			scmWidth = std::min(width, static_cast<int>(extent.cx) + 16);
-			RECT scmRect{ 8, 0, scmWidth - 4, height };
+			const UINT scmDpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
+			const int textInset = workbench::icons::StatusTextInsetPixels(scmDpi);
+			scmWidth = std::min(width, static_cast<int>(extent.cx) + textInset + 8);
+			const RECT scmIconRect{ 0, 0, scmWidth, height };
+			DrawStatusIcon(target, scmIconRect, StatusIcon::Branch, m_palette.secondaryText.ToColorRef(), scmDpi);
+			RECT scmRect{ textInset, 0, scmWidth - 4, height };
 			::DrawTextW(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &scmRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 		}
 	}
 
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
+	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
 	const HPEN separator = ::CreatePen(PS_SOLID, 1, m_palette.border.ToColorRef());
 	const HGDIOBJ oldPen = separator == nullptr ? nullptr : ::SelectObject(target, separator);
 	for (int part = 0; part < partCount; ++part) {
 		RECT partRect{};
 		if (::SendMessageW(m_hwndStatusBar, SB_GETRECT, part, reinterpret_cast<LPARAM>(&partRect)) == FALSE) continue;
 		if (part == 0 && scmWidth > partRect.left) partRect.left = std::min<LONG>(partRect.right, scmWidth);
+		const auto statusIcon = StatusIconForPart(part);
+		if (statusIcon != StatusIcon::None) {
+			DrawStatusIcon(target, partRect, statusIcon, m_palette.secondaryText.ToColorRef(), dpi);
+			partRect.left = std::min<LONG>(partRect.right,
+				partRect.left + workbench::icons::StatusTextInsetPixels(dpi));
+		}
 		const LRESULT textInfo = ::SendMessageW(m_hwndStatusBar, SB_GETTEXTLENGTHW, part, 0);
 		const UINT textLength = LOWORD(textInfo);
 		const UINT style = HIWORD(textInfo);

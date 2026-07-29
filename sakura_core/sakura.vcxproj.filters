@@ -104,6 +104,9 @@
     <Filter Include="Cpp Source Files\theme">
       <UniqueIdentifier>{d66ff699-23e0-4599-a9f7-feec88d01fe2}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Cpp Source Files\markdown">
+      <UniqueIdentifier>{9804f6cb-9b93-457a-9830-6d8d9af0a2fc}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Cpp Source Files\workbench">
       <UniqueIdentifier>{0ca91f97-48a4-492d-86da-028cc85ae124}</UniqueIdentifier>
     </Filter>
@@ -1024,6 +1027,15 @@
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\MarkdownParser.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\theme\CThemeService.h">
       <Filter>Cpp Source Files\theme</Filter>
     </ClInclude>
@@ -1759,6 +1771,9 @@
     <ClCompile Include="..\sakura_core\types\CType_Java.cpp">
       <Filter>Cpp Source Files\types</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\types\CType_Markdown.cpp">
+	  <Filter>Cpp Source Files\types</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\types\CType_Others.cpp">
       <Filter>Cpp Source Files\types</Filter>
     </ClCompile>
@@ -2307,6 +2322,15 @@
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp">
+      <Filter>Cpp Source Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp">
       <Filter>Cpp Source Files\theme</Filter>

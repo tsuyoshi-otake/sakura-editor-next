@@ -44,6 +44,9 @@
     <Filter Include="Test Files\theme">
       <UniqueIdentifier>{76a0a45e-2586-4076-a6cb-76407e8e9e7b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\markdown">
+      <UniqueIdentifier>{812bfa2c-bc3f-4632-9877-fd0db69f872a}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Test Files\window">
       <UniqueIdentifier>{3c46cf4d-69ef-4f62-95c3-2e4fd01980a4}</UniqueIdentifier>
     </Filter>
@@ -141,6 +144,12 @@
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp">
+      <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp">
       <Filter>Test Files\theme</Filter>
