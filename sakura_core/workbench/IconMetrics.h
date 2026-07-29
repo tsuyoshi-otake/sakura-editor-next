@@ -10,14 +10,16 @@
 
 namespace workbench::icons {
 
-//! Shared optical metrics for Sakura Code's compact, single-colour line icons.
+//! Shared optical metrics for Sakura Editor NEXT's compact, single-colour line icons.
 constexpr int kActivityIconDip = 20;
 constexpr int kStatusIconDip = 16;
 constexpr int kLineStrokeDip = 1;
 constexpr int kStatusIconLeadingInsetDip = 4;
 constexpr int kStatusIconTextGapDip = 4;
-constexpr int kStatusItemInsetDip = 8;
-constexpr int kNativeStatusPartChromeDip = 4;
+constexpr int kStatusItemInsetDip = 4;
+constexpr int kStatusItemAdjacentGapDip = 8;
+constexpr int kNativeStatusPartChromeDip = 0;
+static_assert(kStatusItemAdjacentGapDip == 2 * kStatusItemInsetDip);
 
 struct IconRect {
 	int left = 0;
@@ -48,13 +50,19 @@ struct IconRect {
 
 [[nodiscard]] constexpr int StatusItemHorizontalPaddingPixels(unsigned int dpi) noexcept
 {
-	return 2 * ScaleDip(kStatusItemInsetDip, dpi);
+	return ScaleDip(kStatusItemAdjacentGapDip, dpi);
 }
 
 //! Includes the space reserved internally by the native status-bar part rectangle.
 [[nodiscard]] constexpr int StatusItemPartWidthPaddingPixels(unsigned int dpi) noexcept
 {
 	return StatusItemHorizontalPaddingPixels(dpi) + ScaleDip(kNativeStatusPartChromeDip, dpi);
+}
+
+//! Returns the intrinsic width of one right-aligned status item, including only its adjacent gap.
+[[nodiscard]] constexpr int StatusItemPartWidthPixels(int textWidth, unsigned int dpi) noexcept
+{
+	return std::max(0, textWidth) + StatusItemPartWidthPaddingPixels(dpi);
 }
 
 //! Centers an icon's optical square inside a caller-owned physical-pixel rectangle.

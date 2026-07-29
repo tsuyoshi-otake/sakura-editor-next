@@ -874,6 +874,8 @@ void CCaret::ShowCaretPosInfo()
 		setStatusText( nIndex++, SBT_OWNERDRAW, L"" );
 		setStatusText( nIndex++, 0,             szInsMode );
 		setStatusText( nIndex++, 0,             szFontSize );
+		GetEditWnd().LayoutStatusBarParts();
+		::GetClientRect(hWnd, &updatedRect);
 		::SendMessage(hWnd, WM_SETREDRAW, TRUE, 0);
 		InvalidateRect(hWnd, &updatedRect, TRUE);
 		UpdateWindow(hWnd);

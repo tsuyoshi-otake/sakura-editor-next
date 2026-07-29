@@ -222,6 +222,7 @@ public:
 	void LayoutFuncKey( void );			/* ファンクションキーの配置処理 */	// 2006.12.19 ryoji
 	void LayoutTabBar( void );			/* タブバーの配置処理 */			// 2006.12.19 ryoji
 	void LayoutStatusBar( void );		/* ステータスバーの配置処理 */		// 2006.12.19 ryoji
+	void LayoutStatusBarParts();		//!< 現在の表示内容に合わせて右側項目を詰めて配置する
 	void LayoutMiniMap();				// ミニマップの配置処理
 	void EndLayoutBars( BOOL bAdjust = TRUE );	/* バーの配置終了処理 */	// 2006.12.19 ryoji
 	void SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate = false);

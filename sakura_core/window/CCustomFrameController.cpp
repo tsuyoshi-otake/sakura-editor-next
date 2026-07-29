@@ -91,15 +91,24 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	const int titleControlsLeft = showTitleControls ? buttonLeft - titleControlsWidth : buttonLeft;
 	const int maximumMenuRight = std::max(menuLeft, titleControlsLeft - ScaleCustomFrameDip(80, dpi));
 	const int menuRight = std::min(maximumMenuRight, menuLeft + std::max(0, preferredMenuWidth));
+	const int captionSafeLeft = std::clamp(menuRight + captionPadding, 0, width);
+	const int captionSafeRight = std::clamp(titleControlsLeft - captionPadding, 0, width);
+	// Reserve identical physical space on both sides of the window centre. This keeps
+	// the title visually centred even when the menu and compact controls have different
+	// widths. On extremely narrow windows, retain the remaining safe area for an
+	// ellipsized title instead of intersecting the menu or caption controls.
+	const int centeredCaptionLeft = std::max(captionSafeLeft, width - captionSafeRight);
+	const int centeredCaptionRight = std::min(captionSafeRight, width - captionSafeLeft);
+	const bool hasCenteredCaption = centeredCaptionLeft < centeredCaptionRight;
 
 	CustomFrameLayout layout{};
 	layout.title = MakeRect(0, 0, width, titleHeight);
 	layout.systemMenu = MakeRect(0, 0, std::min(systemWidth, width), titleHeight);
 	layout.menu = MakeRect(menuLeft, 0, menuRight, titleHeight);
 	layout.captionText = MakeRect(
-		std::min(titleControlsLeft, menuRight + captionPadding),
+		hasCenteredCaption ? centeredCaptionLeft : captionSafeLeft,
 		0,
-		std::max(0, titleControlsLeft - captionPadding),
+		hasCenteredCaption ? centeredCaptionRight : captionSafeRight,
 		titleHeight
 	);
 	if (showTitleControls) {
@@ -708,9 +717,9 @@ void CCustomFrameController::InvalidateTitle() const noexcept
 
 std::wstring CCustomFrameController::AccessibilityName() const
 {
-	if (m_window == nullptr) return L"Sakura Editor";
+	if (m_window == nullptr) return L"Sakura Editor NEXT";
 	const int length = ::GetWindowTextLengthW(m_window);
-	if (length <= 0) return L"Sakura Editor";
+	if (length <= 0) return L"Sakura Editor NEXT";
 	std::wstring title(static_cast<std::size_t>(length) + 1, L'\0');
 	::GetWindowTextW(m_window, title.data(), length + 1);
 	title.resize(static_cast<std::size_t>(length));

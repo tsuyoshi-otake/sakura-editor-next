@@ -3910,6 +3910,76 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 }
 
 /* WM_SIZE 処理 */
+void CEditWnd::LayoutStatusBarParts()
+{
+	const HWND statusBar = m_cStatusBar.GetStatusHwnd();
+	if (statusBar == nullptr) return;
+
+	RECT client{};
+	::GetClientRect(statusBar, &client);
+	constexpr int partCount = 8;
+	std::wstring labels[partCount];
+	bool hasCurrentText = false;
+	for (int part = 1; part < partCount; ++part) {
+		const LRESULT textInfo = ::SendMessageW(statusBar, SB_GETTEXTLENGTHW, part, 0);
+		const UINT style = HIWORD(textInfo);
+		if ((style & SBT_OWNERDRAW) != 0) {
+			labels[part] = L"REC";
+			hasCurrentText = true;
+			continue;
+		}
+
+		const UINT textLength = LOWORD(textInfo);
+		if (textLength == 0) continue;
+		std::vector<wchar_t> text(static_cast<size_t>(textLength) + 1, L'\0');
+		::SendMessageW(statusBar, SB_GETTEXTW, part, reinterpret_cast<LPARAM>(text.data()));
+		labels[part].assign(text.data(), textLength);
+		hasCurrentText = true;
+	}
+
+	// Before the caret publishes its first snapshot, retain conservative widths.
+	// Subsequent updates use only the visible strings, so an empty character-code
+	// item no longer leaves a large hole in the right-aligned group.
+	if (!hasCurrentText) {
+		labels[1] = L"99999 行 9999 列";
+		labels[2] = L"CRLF";
+		labels[3] = L"AAAAAAAAAAAA";
+		labels[4] = L"UTF-16 BOM付";
+		labels[5] = L"REC";
+		labels[6] = L"上書";
+		labels[7] = L"9999 %";
+	}
+
+	int partEdges[partCount]{};
+	partEdges[partCount - 1] = client.right - client.left;
+	if (!::IsZoomed(GetHwnd())) {
+		partEdges[partCount - 1] -= ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE);
+	}
+	partEdges[partCount - 1] = std::max(0, partEdges[partCount - 1]);
+
+	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(statusBar));
+	const HDC dc = ::GetDC(statusBar);
+	HFONT oldFont = nullptr;
+	if (dc != nullptr) {
+		const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(statusBar, WM_GETFONT, 0, 0));
+		if (font != nullptr) oldFont = reinterpret_cast<HFONT>(::SelectObject(dc, font));
+	}
+	for (int part = partCount - 1; part > 0; --part) {
+		SIZE extent{};
+		if (dc != nullptr && !labels[part].empty()) {
+			::GetTextExtentPoint32W(dc, labels[part].c_str(), static_cast<int>(labels[part].size()), &extent);
+		}
+		const int width = workbench::icons::StatusItemPartWidthPixels(extent.cx, dpi);
+		partEdges[part - 1] = std::max(0, partEdges[part] - width);
+	}
+	if (dc != nullptr) {
+		if (oldFont != nullptr) ::SelectObject(dc, oldFont);
+		::ReleaseDC(statusBar, dc);
+	}
+
+	ApiWrap::StatusBar_SetParts(statusBar, partCount, partEdges);
+}
+
 LRESULT CEditWnd::OnSize( WPARAM wParam, LPARAM lParam )
 {
 	return OnSize2(wParam, lParam, true);
@@ -4022,35 +4092,6 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		// 2003.08.26 Moca CR0LF0廃止に従い、適当に調整
 		// 2004-02-28 yasu 文字列を出力時の書式に合わせる
 		// 幅を変えた場合にはCEditView::ShowCaretPosInfo()での表示方法を見直す必要あり．
-		// ※pszLabel[3]: ステータスバー文字コード表示領域は大きめにとっておく
-		const WCHAR* pszLabel[] = { L"", L"99999 行 9999 列", L"CRLF", L"AAAAAAAAAAAA", L"UTF-16 BOM付", L"REC", L"上書", L"9999 %" };	//Oct. 30, 2000 JEPRO 千万行も要らん	文字コード枠を広げる 2008/6/21	Uchi
-		constexpr auto nStArrNum = std::size(pszLabel);
-		int nStArr[std::size(pszLabel)] = {};
-		//	To Here
-		int			nAllWidth = rc.right - rc.left;
-		int			nSbxWidth = ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE); // サイズボックスの幅
-		const int statusItemWidthPadding = workbench::icons::StatusItemPartWidthPaddingPixels(
-			static_cast<unsigned int>(::GetDpiForWindow(m_cStatusBar.GetStatusHwnd())));
-		SIZE		sz;
-		HDC			hdc;
-
-		// 2004-02-28 yasu
-		// 正確な幅を計算するために、表示フォントを取得してhdcに選択させる。
-		hdc = ::GetDC( m_cStatusBar.GetStatusHwnd() );
-		HFONT hFont = (HFONT)::SendMessage(m_cStatusBar.GetStatusHwnd(), WM_GETFONT, 0, 0);
-		if (hFont != nullptr)
-		{
-			hFont = (HFONT)::SelectObject(hdc, hFont);
-		}
-		nStArr[nStArrNum - 1] = nAllWidth;
-		if( wParam != SIZE_MAXIMIZED ){
-			nStArr[nStArrNum - 1] -= nSbxWidth;
-		}
-		for (int i = nStArrNum - 1; i > 0; --i) {
-			::GetTextExtentPoint32W(hdc, PSZ_ARGS(pszLabel[i]), &sz);
-			nStArr[i - 1] = nStArr[i] - (sz.cx + statusItemWidthPadding);
-		}
-
 		//	Nov. 8, 2003 genta
 		//	初期状態ではすべての部分が「枠あり」だが，メッセージエリアは枠を描画しないようにしている
 		//	ため，初期化時の枠が変な風に残ってしまう．初期状態で枠を描画させなくするため，
@@ -4059,12 +4100,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"");
 		}
 
-		ApiWrap::StatusBar_SetParts( m_cStatusBar.GetStatusHwnd(), nStArrNum, nStArr );
-		if (hFont != nullptr)
-		{
-			::SelectObject(hdc, hFont);
-		}
-		::ReleaseDC( m_cStatusBar.GetStatusHwnd(), hdc );
+		LayoutStatusBarParts();
 
 		::UpdateWindow( m_cStatusBar.GetStatusHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
 		::GetWindowRect( m_cStatusBar.GetStatusHwnd(), &rc );

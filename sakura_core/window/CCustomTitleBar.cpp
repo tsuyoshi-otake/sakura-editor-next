@@ -236,7 +236,7 @@ void CCustomTitleBar::Paint(
 		::SetTextColor(dc, (active ? palette.primaryText : palette.secondaryText).ToColorRef());
 		RECT textRect = layout.captionText;
 		::DrawTextW(dc, title.data(), titleLength, &textRect,
-			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 		if (oldFont != nullptr) {
 			::SelectObject(dc, oldFont);
 		}

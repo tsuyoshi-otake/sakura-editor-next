@@ -59,6 +59,16 @@ struct SvgIconData {
 	std::string_view path;
 };
 
+//! Returns the largest square viewport contained by a caller-owned icon box.
+//! Rendering SVG coordinates into this viewport preserves the source aspect ratio.
+[[nodiscard]] constexpr IconRect SvgIconLetterboxBounds(IconRect box) noexcept
+{
+	const int side = std::min(std::max(0, box.Width()), std::max(0, box.Height()));
+	const int left = box.left + (box.Width() - side) / 2;
+	const int top = box.top + (box.Height() - side) / 2;
+	return { left, top, left + side, top + side };
+}
+
 [[nodiscard]] constexpr SvgIconData DataFor(Icon icon) noexcept;
 
 inline void SkipSeparators(const char*& cursor, const char* end) noexcept
@@ -243,10 +253,11 @@ inline void SkipSeparators(const char*& cursor, const char* end) noexcept
 	}
 	::SetPolyFillMode(dc, data.evenOdd ? ALTERNATE : WINDING);
 	const int logicalExtent = data.viewBox * kCoordinateScale;
+	const IconRect viewport = SvgIconLetterboxBounds(box);
 	const XFORM transform{
-		static_cast<float>(box.Width()) / logicalExtent, 0.0F,
-		0.0F, static_cast<float>(box.Height()) / logicalExtent,
-		static_cast<float>(box.left), static_cast<float>(box.top),
+		static_cast<float>(viewport.Width()) / logicalExtent, 0.0F,
+		0.0F, static_cast<float>(viewport.Height()) / logicalExtent,
+		static_cast<float>(viewport.left), static_cast<float>(viewport.top),
 	};
 	if (::SetWorldTransform(dc, &transform) == FALSE || ::BeginPath(dc) == FALSE
 		|| !AppendSvgPath(dc, data.path) || ::EndPath(dc) == FALSE) {

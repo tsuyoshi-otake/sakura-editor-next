@@ -11,6 +11,8 @@
 
 #include "window/CCustomFrameController.h"
 #include "window/CClientMenuBar.h"
+#include "workbench/IconMetrics.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 
 TEST(CustomFrame, MenuLabelsHideMnemonicSuffixWithoutChangingMenuModel)
 {
@@ -50,12 +52,85 @@ TEST(CustomFrame, PopupHotTrackingUsesTheWhMsgFilterCodeContract)
 TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
 {
 	EXPECT_EQ(34, ScaleCustomFrameDip(34, 96));
+	EXPECT_EQ(43, ScaleCustomFrameDip(34, 120));
 	EXPECT_EQ(51, ScaleCustomFrameDip(34, 144));
 	EXPECT_EQ(68, ScaleCustomFrameDip(34, 192));
 	const auto layout = CalculateCustomFrameLayout(1200, 144, 430);
 	EXPECT_EQ(51, layout.title.bottom);
 	EXPECT_EQ(45, layout.layoutButton.right - layout.layoutButton.left);
 	EXPECT_EQ(layout.minimizeButton.left, layout.settingsButton.right);
+}
+
+TEST(CustomFrame, CentersCaptionInAWindowSymmetricSafeRectangleAcrossDpi)
+{
+	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
+		constexpr int clientWidth = 1601;
+		const auto layout = CalculateCustomFrameLayout(clientWidth, dpi, 430);
+		EXPECT_EQ(clientWidth, layout.captionText.left + layout.captionText.right);
+		EXPECT_LE(layout.menu.right, layout.captionText.left);
+		EXPECT_LE(layout.captionText.right, layout.layoutButton.left);
+		EXPECT_EQ(ScaleCustomFrameDip(30, dpi), layout.layoutButton.right - layout.layoutButton.left);
+		EXPECT_EQ(ScaleCustomFrameDip(34, dpi), layout.layoutButton.bottom - layout.layoutButton.top);
+	}
+}
+
+TEST(CustomFrame, RetainsAnEllipsizedCaptionSafeFallbackWhenTheCenteredRegionDoesNotFit)
+{
+	const auto layout = CalculateCustomFrameLayout(500, 96, 430);
+	EXPECT_LT(layout.captionText.left, layout.captionText.right);
+	EXPECT_GE(layout.captionText.left, layout.menu.right);
+	EXPECT_LE(layout.captionText.right, layout.layoutButton.left);
+	EXPECT_NE(500, layout.captionText.left + layout.captionText.right);
+
+	const auto oddNarrowLayout = CalculateCustomFrameLayout(351, 96, 300);
+	EXPECT_EQ(351, oddNarrowLayout.captionText.left + oddNarrowLayout.captionText.right);
+	EXPECT_LE(oddNarrowLayout.captionText.right, oddNarrowLayout.minimizeButton.left);
+}
+
+TEST(CustomFrame, UsesSixteenDipGlyphsInsideThirtyByThirtyFourDipTitleTargets)
+{
+	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
+		const auto layout = CalculateCustomFrameLayout(1601, dpi, 430);
+		const auto glyph = workbench::icons::CenteredIconBounds(
+			{ layout.layoutButton.left, layout.layoutButton.top, layout.layoutButton.right, layout.layoutButton.bottom },
+			workbench::icons::kStatusIconDip, dpi);
+		EXPECT_EQ(ScaleCustomFrameDip(16, dpi), glyph.Width());
+		EXPECT_EQ(ScaleCustomFrameDip(16, dpi), glyph.Height());
+	}
+}
+
+TEST(CustomFrame, LetterboxesSvgCodiconsInsteadOfStretchingNonSquareBoxes)
+{
+	using workbench::icons::codicons::detail::SvgIconLetterboxBounds;
+	const auto wide = SvgIconLetterboxBounds({ 10, 20, 50, 40 });
+	EXPECT_EQ(20, wide.left);
+	EXPECT_EQ(20, wide.top);
+	EXPECT_EQ(40, wide.right);
+	EXPECT_EQ(40, wide.bottom);
+
+	const auto tall = SvgIconLetterboxBounds({ 10, 20, 30, 60 });
+	EXPECT_EQ(10, tall.left);
+	EXPECT_EQ(30, tall.top);
+	EXPECT_EQ(30, tall.right);
+	EXPECT_EQ(50, tall.bottom);
+
+	const auto empty = SvgIconLetterboxBounds({ 10, 20, 10, 40 });
+	EXPECT_EQ(10, empty.left);
+	EXPECT_EQ(30, empty.top);
+	EXPECT_EQ(10, empty.right);
+	EXPECT_EQ(30, empty.bottom);
+}
+
+TEST(CustomFrame, CompactsStatusItemsToAnEightDipAdjacentGapWithoutNativeChrome)
+{
+	using namespace workbench::icons;
+	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
+		EXPECT_EQ(ScaleDip(kStatusItemAdjacentGapDip, dpi), StatusItemHorizontalPaddingPixels(dpi));
+		EXPECT_EQ(StatusItemHorizontalPaddingPixels(dpi), StatusItemPartWidthPaddingPixels(dpi));
+		EXPECT_EQ(StatusItemPartWidthPaddingPixels(dpi), StatusItemPartWidthPixels(0, dpi));
+		EXPECT_EQ(25 + StatusItemPartWidthPaddingPixels(dpi), StatusItemPartWidthPixels(25, dpi));
+		EXPECT_EQ(0, ScaleDip(kNativeStatusPartChromeDip, dpi));
+	}
 }
 
 TEST(CustomFrame, UsesDpiScaledIconSizesAndHighlightTextForCloseButton)

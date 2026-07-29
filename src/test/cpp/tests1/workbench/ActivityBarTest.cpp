@@ -108,10 +108,10 @@ TEST(IconMetrics, UsesSharedOpticalSizesAndDpiStableBounds)
 	EXPECT_EQ(1, LineStrokePixels(96));
 	EXPECT_EQ(2, LineStrokePixels(192));
 	EXPECT_EQ(24, StatusTextInsetPixels(96));
-	EXPECT_EQ(16, StatusItemHorizontalPaddingPixels(96));
-	EXPECT_EQ(24, StatusItemHorizontalPaddingPixels(144));
-	EXPECT_EQ(20, StatusItemPartWidthPaddingPixels(96));
-	EXPECT_EQ(30, StatusItemPartWidthPaddingPixels(144));
+	EXPECT_EQ(8, StatusItemHorizontalPaddingPixels(96));
+	EXPECT_EQ(12, StatusItemHorizontalPaddingPixels(144));
+	EXPECT_EQ(8, StatusItemPartWidthPaddingPixels(96));
+	EXPECT_EQ(12, StatusItemPartWidthPaddingPixels(144));
 	EXPECT_EQ((IconRect{ 11, 11, 31, 31 }), CenteredIconBounds({ 0, 0, 42, 42 }, kActivityIconDip, 96));
 	EXPECT_EQ((IconRect{ 4, 4, 20, 20 }), LeadingStatusIconBounds({ 0, 0, 100, 24 }, 96));
 }

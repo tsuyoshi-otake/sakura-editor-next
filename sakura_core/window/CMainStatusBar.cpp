@@ -273,8 +273,10 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 			::SendMessageW(::GetParent(m_hwndStatusBar), WM_DRAWITEM,
 				static_cast<WPARAM>(::GetDlgCtrlID(m_hwndStatusBar)), reinterpret_cast<LPARAM>(&drawItem));
 		} else if (textLength != 0) {
+			// Each part already reserves the full adjacent gap. Keep half before the
+			// label and leave the other half after it so exact GDI extents do not
+			// ellipsize and neighbouring labels still remain eight DIP apart.
 			partRect.left = std::min<LONG>(partRect.right, partRect.left + itemInset);
-			partRect.right = std::max<LONG>(partRect.left, partRect.right - itemInset);
 			::DrawTextW(target, text.data(), static_cast<int>(textLength), &partRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 		}

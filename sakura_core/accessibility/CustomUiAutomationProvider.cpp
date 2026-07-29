@@ -94,7 +94,7 @@ public:
 		case UIA_IsContentElementPropertyId: value->vt = VT_BOOL; value->boolVal = VARIANT_TRUE; break;
 		case UIA_IsOffscreenPropertyId: value->vt = VT_BOOL; value->boolVal = IsOffscreen(node.bounds) ? VARIANT_TRUE : VARIANT_FALSE; break;
 		case UIA_BoundingRectanglePropertyId: SetBoundingRectangle(value, node.bounds); break;
-		case UIA_ProviderDescriptionPropertyId: SetBstr(value, L"Sakura Editor custom UI Automation provider"); break;
+		case UIA_ProviderDescriptionPropertyId: SetBstr(value, L"Sakura Editor NEXT custom UI Automation provider"); break;
 		default: break;
 		}
 		return S_OK;
