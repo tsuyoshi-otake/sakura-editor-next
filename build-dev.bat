@@ -1,5 +1,6 @@
 @echo off
 setlocal
+
 set "platform=%~1"
 set "configuration=%~2"
 
@@ -20,22 +21,20 @@ if "%configuration%" == "Release" (
 	call :showhelp "%~f0"
 	endlocal & exit /b 1
 )
+
 if not defined CMD_MSBUILD call "%~dp0tools\find-tools.bat"
 if not defined CMD_MSBUILD (
 	echo msbuild.exe was not found.
 	endlocal & exit /b 1
 )
 
-set "SLN_FILE=%~dp0sakura.sln"
-
-set "EXTRA_CMD="
-set "LOG_FILE=msbuild-%platform%-%configuration%.log"
-@rem https://msdn.microsoft.com/ja-jp/library/ms171470.aspx
-set "LOG_OPTION=/flp:logfile=%LOG_FILE%"
+set "PROJECT_FILE=%~dp0sakura_core\sakura.vcxproj"
 set "MSBUILDDISABLENODEREUSE=1"
+set "BUILD_TARGET=Build"
+if defined SAKURA_DEV_BUILD_TARGET set "BUILD_TARGET=%SAKURA_DEV_BUILD_TARGET%"
 
-	@echo "%CMD_MSBUILD%" "%SLN_FILE%" /p:Platform=%platform% /p:Configuration=%configuration% /t:"Build" /nr:false %EXTRA_CMD% %LOG_OPTION%
-	      "%CMD_MSBUILD%" "%SLN_FILE%" /p:Platform=%platform% /p:Configuration=%configuration% /t:"Build" /nr:false %EXTRA_CMD% %LOG_OPTION%
+@echo "%CMD_MSBUILD%" "%PROJECT_FILE%" /p:Platform=%platform% /p:Configuration=%configuration% /t:"%BUILD_TARGET%" /nr:false
+      "%CMD_MSBUILD%" "%PROJECT_FILE%" /p:Platform=%platform% /p:Configuration=%configuration% /t:"%BUILD_TARGET%" /nr:false
 
 if errorlevel 1 goto :builderror
 
@@ -46,9 +45,6 @@ set "build_exit=%errorlevel%"
 echo ERROR in msbuild.exe errorlevel %build_exit%
 endlocal & exit /b %build_exit%
 
-@rem ------------------------------------------------------------------------------
-@rem show help
-@rem see http://orangeclover.hatenablog.com/entry/20101004/1286120668
 @rem ------------------------------------------------------------------------------
 :showhelp
 @echo off

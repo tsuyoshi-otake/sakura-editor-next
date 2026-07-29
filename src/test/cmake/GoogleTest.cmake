@@ -41,7 +41,12 @@ add_custom_command(
     -DBUILD_GMOCK=ON
     -Dgtest_build_tests=OFF
     -Dgtest_build_samples=OFF
-  DEPENDS fetch_gtest_source_files
+  DEPENDS
+    fetch_gtest_source_files
+    "${CMAKE_SOURCE_DIR}/CMakeLists.txt"
+    "${CMAKE_SOURCE_DIR}/src/main/cmake/sakura.cmake"
+    "${CMAKE_SOURCE_DIR}/src/test/cmake/GoogleTest.cmake"
+    "${CMAKE_SOURCE_DIR}/externals/googletest/CMakeLists.txt"
   COMMENT "Configure GoogleTest Library"
 )
 
@@ -52,7 +57,7 @@ add_custom_target(configure_gtest
 
 add_custom_command(
   OUTPUT "${GTEST_PC}"
-  COMMAND ${CMAKE_COMMAND} --build "${GTEST_BUILD_DIR}" --config $<CONFIG>
+  COMMAND ${CMAKE_COMMAND} --build "${GTEST_BUILD_DIR}" --config $<CONFIG> ${SAKURA_NESTED_BUILD_TOOL_ARGS}
   COMMAND ${CMAKE_COMMAND} --install "${GTEST_BUILD_DIR}" --config $<CONFIG>
   DEPENDS configure_gtest
   COMMENT "Building GoogleTest Library"

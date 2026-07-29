@@ -29,7 +29,7 @@ add_custom_target(configure_header_make
 
 add_custom_command(
   OUTPUT "${HEADER_MAKE_EXECUTABLE}"
-  COMMAND ${CMAKE_COMMAND} --build "${HEADER_MAKE_BUILD_DIR}" --config $<CONFIG>
+  COMMAND ${CMAKE_COMMAND} --build "${HEADER_MAKE_BUILD_DIR}" --config $<CONFIG> ${SAKURA_NESTED_BUILD_TOOL_ARGS}
   COMMAND ${CMAKE_COMMAND} --install "${HEADER_MAKE_BUILD_DIR}" --config $<CONFIG>
   DEPENDS configure_header_make
   COMMENT "Building HeaderMake Command"

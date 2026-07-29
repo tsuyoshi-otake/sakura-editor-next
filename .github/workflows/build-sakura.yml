@@ -66,6 +66,8 @@ jobs:
       shell: pwsh
 
     - name: MSBuild
+      env:
+        SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ matrix.config == 'Release' && '1' || '0' }}
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 

@@ -10,6 +10,9 @@
     <VersionHeader>$(CMakeToolsBuildDir)version.h</VersionHeader>
     <FuncCodeDefine>$(CMakeToolsBuildDir)Funccode_define.h</FuncCodeDefine>
     <FuncCodeEnum>$(CMakeToolsBuildDir)Funccode_enum.h</FuncCodeEnum>
+    <!-- Limit this workaround to generated CMake/MSBuild children. The regular
+         project keeps FileTracker enabled for correct incremental compilation. -->
+    <CMakeBuildEnvironmentVariables>TrackFileAccess=false;MSBUILDDISABLENODEREUSE=1</CMakeBuildEnvironmentVariables>
   </PropertyGroup>
   <ItemDefinitionGroup Label="CMakeTools">
     <ClCompile>

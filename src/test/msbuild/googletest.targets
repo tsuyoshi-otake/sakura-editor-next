@@ -1,9 +1,15 @@
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
-  <Target Name="ConfigureGoogleTest" Condition="!Exists('$(GoogleTestBuildDir)CMakeCache.txt')">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target configure_gtest&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+  <ItemGroup>
+    <GoogleTestConfigurationInput Include="$(CMakeToolsSourceDir)\CMakeLists.txt" />
+    <GoogleTestConfigurationInput Include="$(CMakeToolsSourceDir)\src\main\cmake\sakura.cmake" />
+    <GoogleTestConfigurationInput Include="$(CMakeToolsSourceDir)\src\test\cmake\GoogleTest.cmake" />
+    <GoogleTestConfigurationInput Include="$(GoogleTestSourceDir)\CMakeLists.txt" />
+  </ItemGroup>
+  <Target Name="ConfigureGoogleTest" Inputs="@(GoogleTestConfigurationInput)" Outputs="$(GoogleTestBuildDir)CMakeCache.txt">
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target configure_gtest&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" />
   </Target>
   <Target Name="BuildGoogleTest" Condition="!Exists('$(GTestLibPath)') Or !Exists('$(GMockLibPath)')" DependsOnTargets="ConfigureGoogleTest" BeforeTargets="ClCompile">
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(GoogleTestBuildPath)' --config $(Configuration) -- /nologo &amp;&amp; &amp; '$(CMakeExe)' --install '$(GoogleTestBuildPath)' --config $(Configuration)&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_gtest -- /nologo&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" />
   </Target>
   <Target Name="AppendCleanTargetsForGoogleTest" BeforeTargets="CoreClean">
     <RemoveDir Directories="$(GoogleTestBuildDir)" />

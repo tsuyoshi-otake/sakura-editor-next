@@ -49,7 +49,7 @@ add_custom_target(configure_darkmodelib
 
 add_custom_command(
   OUTPUT "${DARKMODE_LIB_PC}"
-  COMMAND ${CMAKE_COMMAND} --build "${DARKMODE_LIB_BUILD_DIR}" --config $<CONFIG>
+  COMMAND ${CMAKE_COMMAND} --build "${DARKMODE_LIB_BUILD_DIR}" --config $<CONFIG> ${SAKURA_NESTED_BUILD_TOOL_ARGS}
   COMMAND ${CMAKE_COMMAND} --install "${DARKMODE_LIB_BUILD_DIR}" --config $<CONFIG>
   DEPENDS configure_darkmodelib
   COMMENT "Building DarkModeLib Library"
