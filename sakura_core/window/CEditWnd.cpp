@@ -78,6 +78,7 @@
 #include "macro/CMacroFactory.h"
 #include "view/colors/CColorStrategy.h"
 #include "view/figures/CFigureManager.h"
+#include "extension/CExtensionPane.h"
 
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたので
 //	定義を削除
@@ -1803,6 +1804,40 @@ void CEditWnd::LayoutMiniMap( void )
 	}
 }
 
+/*!	拡張サイドバーの表示を切り替える
+
+	初回の呼び出しでウィンドウを作る。通信を伴うクラスなので、
+	使われるまで生成しない。
+*/
+void CEditWnd::ToggleExtensionPane( void )
+{
+	if( !m_pcExtensionPane ){
+		auto pcPane = std::make_unique<CExtensionPane>();
+		if( !pcPane->Open( G_AppInstance(), GetHwnd() ) ){
+			return;
+		}
+		m_pcExtensionPane = std::move( pcPane );
+	}
+
+	m_bExtensionPaneShown = !m_bExtensionPaneShown;
+	::ShowWindow( m_pcExtensionPane->GetHwnd(), m_bExtensionPaneShown? SW_SHOW: SW_HIDE );
+
+	// 残りのウィンドウを配置し直す
+	RECT rc;
+	::GetClientRect( GetHwnd(), &rc );
+	OnSize( SIZE_RESTORED, MAKELPARAM( rc.right - rc.left, rc.bottom - rc.top ) );
+
+	if( m_bExtensionPaneShown ){
+		m_pcExtensionPane->SetFocusToSearchBox();
+	}
+}
+
+/*! 拡張サイドバーが表示されているか */
+bool CEditWnd::IsExtensionPaneVisible( void ) const
+{
+	return m_bExtensionPaneShown;
+}
+
 /*! バーの配置終了処理
 	@date 2006.12.19 ryoji 新規作成
 	@date 2007.03.04 ryoji 印刷プレビュー時はバーを隠す
@@ -1832,6 +1867,11 @@ void CEditWnd::EndLayoutBars( BOOL bAdjust/* = TRUE*/ )
 	}
 	if (m_markdownPreview) {
 		m_markdownPreview->Show(nCmdShow == SW_SHOW && m_markdownPreviewVisible);
+	}
+	// 拡張サイドバーは利用者が閉じていれば印刷プレビュー解除後も閉じたままにする
+	if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() ){
+		::ShowWindow( m_pcExtensionPane->GetHwnd(),
+			(SW_SHOW == nCmdShow && m_bExtensionPaneShown)? SW_SHOW: SW_HIDE );
 	}
 
 	if( bAdjust )
@@ -3785,6 +3825,10 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		if( m_cMiniMapView.GetHwnd() ){
 			::ShowWindow( m_cMiniMapView.GetHwnd(), SW_SHOW );
 		}
+		// 利用者が閉じていた拡張サイドバーは開かない
+		if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() && m_bExtensionPaneShown ){
+			::ShowWindow( m_pcExtensionPane->GetHwnd(), SW_SHOW );
+		}
 
 		// その他のモードレスダイアログも戻す	// 2010.06.25 ryoji
 		::ShowWindow( m_cDlgFind.GetHwnd(), SW_SHOW );
@@ -3828,6 +3872,9 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		}
 		if( m_cMiniMapView.GetHwnd() ){
 			::ShowWindow( m_cMiniMapView.GetHwnd(), SW_HIDE );
+		}
+		if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() ){
+			::ShowWindow( m_pcExtensionPane->GetHwnd(), SW_HIDE );
 		}
 
 		// その他のモードレスダイアログも隠す	// 2010.06.25 ryoji
@@ -4187,7 +4234,18 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		m_cMiniMapView.SplitBoxOnOff(FALSE, FALSE, bMiniMapSizeBox);
 	}
 
-	LayoutMarkdownPreview(layout.editor.left, layout.editor.top, layout.editor.right, layout.editor.bottom,
+	auto editorBounds = layout.editor;
+	if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() && m_bExtensionPaneShown ){
+		const int minimumEditorWidth = ::MulDiv( CExtensionPane::kMinWidth, physicalDpi, 96 );
+		const int extensionWidth = std::clamp(
+			m_pcExtensionPane->GetDockWidth(), 0,
+			std::max( 0, editorBounds.Width() - minimumEditorWidth ) );
+		::MoveWindow( m_pcExtensionPane->GetHwnd(), editorBounds.left, editorBounds.top,
+			extensionWidth, editorBounds.Height(), TRUE );
+		editorBounds.left += extensionWidth;
+	}
+
+	LayoutMarkdownPreview(editorBounds.left, editorBounds.top, editorBounds.right, editorBounds.bottom,
 		physicalDpi);
 	//@@@ To 2003.05.31 MIK
 

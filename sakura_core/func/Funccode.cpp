@@ -336,6 +336,7 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_NEW_TERMINAL		,	//新しい統合ターミナル
 	F_REDETECT_POWERSHELL	,	//PowerShellを再検出
 	F_TOGGLE_MARKDOWN_PREVIEW	,	//Markdownプレビューの表示切替
+	F_EXTENSION_LIST	,	//拡張（Open VSX）
 	F_TAGJUMP			,	//タグジャンプ機能
 	F_TAGJUMP_CLOSE		,	//閉じてタグジャンプ(元ウィンドウを閉じる) // Apr. 03, 2003 genta
 	F_TAGJUMPBACK		,	//タグジャンプバック機能
@@ -1333,6 +1334,7 @@ bool IsFuncChecked( const CEditDoc* pcEditDoc, const DLLSHAREDATA* pShareData, E
 	case F_OUTLINE_TOGGLE: // 20060201 aroka アウトラインウィンドウ
 		// ToDo:ブックマークリストが出ているときもへこんでしまう。
 		return GetEditWnd().m_cDlgFuncList.GetHwnd() != nullptr;
+	case F_EXTENSION_LIST:		return GetEditWnd().IsExtensionPaneVisible();	//拡張サイドバー
 	default:
 		break;
 	}

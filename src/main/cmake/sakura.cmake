@@ -21,6 +21,24 @@ endif()
 
 set(OUTPUT_DIRECTORY "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
 
+option(
+  SAKURA_GENERATE_ASSEMBLY_LISTINGS
+  "Generate MSVC source and assembly listing files"
+  OFF
+)
+
+set(SAKURA_NESTED_BUILD_TOOL_ARGS)
+if(CMAKE_GENERATOR MATCHES "^Visual Studio")
+  # Generated child projects own their CMake dependency graphs. FileTracker's
+  # injection can otherwise leave cl/link suspended before they start.
+  list(APPEND SAKURA_NESTED_BUILD_TOOL_ARGS
+    --
+    /nologo
+    /nr:false
+    /p:TrackFileAccess=false
+  )
+endif()
+
 # ビルド対象のCPUアーキテクチャを決める
 if(CMAKE_GENERATOR MATCHES "^Visual Studio")
   # VSジェネレーターは -A の値で判定する
@@ -576,6 +594,7 @@ target_include_directories(sakura_core
   SYSTEM
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>"
+    "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/externals>"
   PRIVATE
     ${WINDOWS_TERMINAL_VENDOR_ROOT}/sakura_compat
     ${WINDOWS_TERMINAL_VENDOR_ROOT}/src
@@ -597,6 +616,7 @@ target_link_libraries(sakura_core
     Microsoft.GSL::GSL
     WIL::WIL
     advapi32
+    bcrypt
     comctl32
     dbghelp
     dwmapi
@@ -610,6 +630,7 @@ target_link_libraries(sakura_core
     uuid
     uxtheme
     windowscodecs
+    winhttp
     winmm
     winspool
 )
@@ -637,12 +658,13 @@ if(MSVC)
     PUBLIC
       NOMINMAX
   )
-  # add compile options for sakura_core
-  target_compile_options(sakura_core
-    PRIVATE
-      /FAsu
-      /Fa"${CMAKE_BINARY_DIR}"
-  )
+  if(SAKURA_GENERATE_ASSEMBLY_LISTINGS)
+    target_compile_options(sakura_core
+      PRIVATE
+        /FAsu
+        /Fa"${CMAKE_BINARY_DIR}/"
+    )
+  endif()
 endif(MSVC)
 
 if(MINGW)

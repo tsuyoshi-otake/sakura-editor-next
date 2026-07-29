@@ -301,6 +301,9 @@ public:
 	void Command_FUNCLIST_NEXT( void );					// 次の関数リストマーク	2014.01.05
 	void Command_FUNCLIST_PREV( void );					// 前の関数リストマーク	2014.01.05
 
+	/* 拡張系 */
+	void Command_EXTENSION_LIST( void );				// 拡張（Open VSX）サイドバーの表示切り替え
+
 	/* モード切り替え系 */
 	void Command_CHGMOD_INS( void );	/* 挿入／上書きモード切り替え */
 	void Command_CHG_CHARSET(ECodeType	eCharSet, bool bBom); /* 文字コードセット指定 */	// 2010/6/15 Uchi

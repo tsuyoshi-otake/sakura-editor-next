@@ -36,6 +36,9 @@
     <OutDir>..\$(Platform)\$(Configuration)\</OutDir>
     <SakuraLinkInputsForTests1File>$(IntDir)sakura-link-inputs-for-tests1.txt</SakuraLinkInputsForTests1File>
   </PropertyGroup>
+  <PropertyGroup Label="BuildOptions">
+    <SAKURA_GENERATE_ASSEMBLY_LISTINGS Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'==''">false</SAKURA_GENERATE_ASSEMBLY_LISTINGS>
+  </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)'=='Debug'">
     <LinkIncremental>false</LinkIncremental>
     <FmtLibrary>fmtd.lib</FmtLibrary>
@@ -46,7 +49,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Label="sakura.common">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\sakura_core\terminal\vendor\windows_terminal\sakura_compat;..\sakura_core\terminal\vendor\windows_terminal\src;..\sakura_core\terminal\vendor\windows_terminal\src\inc;..\sakura_core\terminal\vendor\windows_terminal\src\types;..\src\main\cpp;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\sakura_core\terminal\vendor\windows_terminal\sakura_compat;..\sakura_core\terminal\vendor\windows_terminal\src;..\sakura_core\terminal\vendor\windows_terminal\src\inc;..\sakura_core\terminal\vendor\windows_terminal\src\types;..\src\main\cpp;..\src\main\resources;..\sakura_core;..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NOMINMAX;_WIN32_WINNT=0x0A00;NTDDI_VERSION=NTDDI_WIN10_CO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <ForceConformanceInForLoopScope>true</ForceConformanceInForLoopScope>
@@ -55,7 +58,7 @@
       <PrecompiledHeaderFile>StdAfx.h</PrecompiledHeaderFile>
       <WarningLevel>Level4</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <AdditionalOptions>/FS /FAsu /Fa$(IntDir) /source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/FS /source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <ForceSynchronousPDBWrite>true</ForceSynchronousPDBWrite>
       <LanguageStandard>stdcpp20</LanguageStandard>
@@ -68,10 +71,15 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='1' Or '$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='true'">
+    <ClCompile>
+      <AdditionalOptions>/FAsu /Fa$(IntDir) %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
@@ -287,6 +295,10 @@
     <ClInclude Include="..\sakura_core\env\CShareData_IO.h" />
     <ClInclude Include="..\sakura_core\env\CTagJumpManager.h" />
     <ClInclude Include="..\sakura_core\env\DLLSHAREDATA.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionManager.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionPane.h" />
+    <ClInclude Include="..\sakura_core\extension\CHttpClient.h" />
+    <ClInclude Include="..\sakura_core\extension\COpenVsxClient.h" />
     <ClInclude Include="..\sakura_core\extmodule\CBregexp.h" />
     <ClInclude Include="..\sakura_core\extmodule\CBregexpDll2.h" />
     <ClInclude Include="..\sakura_core\extmodule\CDllHandler.h" />
@@ -590,6 +602,7 @@
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Edit.cpp" />
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Edit_advanced.cpp" />
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Edit_word_line.cpp" />
+    <ClCompile Include="..\sakura_core\cmd\CViewCommander_Extension.cpp" />
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_File.cpp" />
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Grep.cpp" />
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Insert.cpp" />
@@ -704,6 +717,10 @@
     <ClCompile Include="..\sakura_core\env\CShareData_IO.cpp" />
     <ClCompile Include="..\sakura_core\env\CTagJumpManager.cpp" />
     <ClCompile Include="..\sakura_core\env\DLLSHAREDATA.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CHttpClient.cpp" />
+    <ClCompile Include="..\sakura_core\extension\COpenVsxClient.cpp" />
     <ClCompile Include="..\sakura_core\extmodule\CBregexp.cpp" />
     <ClCompile Include="..\sakura_core\extmodule\CBregexpDll2.cpp" />
     <ClCompile Include="..\sakura_core\extmodule\CDllHandler.cpp" />

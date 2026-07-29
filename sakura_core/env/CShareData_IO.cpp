@@ -2038,7 +2038,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 4;
+	const int nCurrentVer = 5;
 	nVersion = nCurrentVer;
 	const bool hasStoredVersion = cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion);
 	nVersion = ResolveMainMenuReadVersion(cProfile.IsReadingMode(), hasStoredVersion, nVersion, nCurrentVer);
@@ -2069,6 +2069,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false}, 	// ウインドウ一覧表示
 			{3, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false}, // 作業フォルダーを開く
 			{4, F_TOGGLE_MARKDOWN_PREVIEW, F_SHOWMINIMAP, L'M', false, false}, // Markdownプレビュー表示
+			{5, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false}, 	// 拡張（Open VSX）を表示
 		};
 		for( int i = 0; i < int(std::size(addInfos)); i++ ){
 			SMainMenuAddItemInfo& item = addInfos[i];

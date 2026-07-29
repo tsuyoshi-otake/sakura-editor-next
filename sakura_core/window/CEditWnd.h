@@ -59,6 +59,7 @@ static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 class CPlug;
 class CEditDoc;
 class CCustomFrameController;
+class CExtensionPane;
 struct DLLSHAREDATA;
 namespace terminal {
 class CTerminalTool;
@@ -113,6 +114,7 @@ private:
 	using CDropTargetHolder = std::unique_ptr<CDropTarget>;
 	using CEditViewHolder = std::unique_ptr<CEditView>;
 	using CEditViewsArray = std::array<CEditViewHolder, 4>;
+	using CExtensionPaneHolder = std::unique_ptr<CExtensionPane>;
 	using CPrintPreviewHolder = std::unique_ptr<CPrintPreview>;
 	using CViewFontHolder = std::unique_ptr<CViewFont>;
 	using FontHolder = cxx::ResourceHolder<&::DeleteObject, HFONT>;
@@ -315,6 +317,13 @@ public:
 	const CEditView&    GetView(int n) const { return *m_pcEditViewArr[n]; }
 	CEditView&          GetView(int n)       { return *m_pcEditViewArr[n]; }
 	CMiniMapView&       GetMiniMap( void ) { return m_cMiniMapView; }
+
+	//! 拡張サイドバーの表示を切り替える。初回はここで作成する
+	void ToggleExtensionPane();
+
+	//! 拡張サイドバーが表示されているか
+	bool IsExtensionPaneVisible() const;
+
 	bool                IsEnablePane(int n) const { return 0 <= n && n < m_nEditViewCount; }
 	int                 GetAllViewCount() const { return m_nEditViewCount; }
 
@@ -481,6 +490,10 @@ private:
 	CEditViewsArray	m_pcEditViewArr{};	//!< ビュー
 	CEditView*		m_pcEditView;		//!< 有効なビュー
 	CMiniMapView	m_cMiniMapView;		//!< ミニマップ
+	//! 拡張サイドバー。使われるまで作らない（通信を伴うので常駐させない）
+	CExtensionPaneHolder	m_pcExtensionPane;
+	//! 利用者が拡張サイドバーを出したままにしているか（印刷プレビューでの一時退避と区別する）
+	bool			m_bExtensionPaneShown = false;
 	int				m_nActivePaneIndex = 0;	//!< 有効なビューのindex
 	int				m_nEditViewCount = 1;	//!< 有効なビューの数
 	const int		m_nEditViewMaxCount = int(std::size(m_pcEditViewArr));//!< ビューの最大数=4

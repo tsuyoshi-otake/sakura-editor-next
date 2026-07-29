@@ -43,7 +43,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Label="tests1.common">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\src\test\cpp\tests1\;..\src\test\resources\;..\src\main\cpp;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\src\test\cpp\tests1\;..\src\test\resources\;..\src\main\cpp;..\src\main\resources;..\sakura_core;..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CONSOLE;NOMINMAX;_WIN32_WINNT=0x0A00;NTDDI_VERSION=NTDDI_WIN10_CO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -58,7 +58,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
@@ -155,6 +155,8 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoctypemanager.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-ceol.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cerrorinfo.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfileext.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfuncinfoarr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-clayoutint.cpp" />

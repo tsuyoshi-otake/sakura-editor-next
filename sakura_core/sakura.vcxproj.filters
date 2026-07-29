@@ -134,6 +134,9 @@
     <Filter Include="Cpp Source Files\cmd">
       <UniqueIdentifier>{0595cd15-40b1-4098-a613-dd41df2e4d6b}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Cpp Source Files\extension">
+      <UniqueIdentifier>{3c7a1f52-6b40-4de8-9a11-5f2c8e0d7b46}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Cpp Source Files\extmodule">
       <UniqueIdentifier>{8f308ded-1d7f-4015-a253-647de0e447d0}</UniqueIdentifier>
     </Filter>
@@ -1185,6 +1188,18 @@
     </ClInclude>
     <ClInclude Include="..\sakura_core\cmd\CViewCommander_inline.h">
       <Filter>Cpp Source Files\cmd</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionManager.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionPane.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CHttpClient.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\COpenVsxClient.h">
+      <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extmodule\CBregexp.h">
       <Filter>Cpp Source Files\extmodule</Filter>
@@ -2491,6 +2506,9 @@
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Edit_word_line.cpp">
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\cmd\CViewCommander_Extension.cpp">
+      <Filter>Cpp Source Files\cmd</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_File.cpp">
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
@@ -2526,6 +2544,18 @@
     </ClCompile>
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Window.cpp">
       <Filter>Cpp Source Files\cmd</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CHttpClient.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\COpenVsxClient.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extmodule\CBregexp.cpp">
       <Filter>Cpp Source Files\extmodule</Filter>
