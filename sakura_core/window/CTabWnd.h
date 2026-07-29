@@ -128,7 +128,7 @@ protected:
 	void DrawBtnBkgnd( HDC hdc, const LPRECT lprcBtn, BOOL bBtnHilighted );	/*!< ボタン背景描画処理 */	// 2006.10.21 ryoji
 	void DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient );	/*!< Markdownプレビューボタン描画処理 */
 	void DrawListBtn( CGraphics& gr, const LPRECT lprcClient );			/*!< 一覧ボタン描画処理 */
-	void DrawCloseFigure( CGraphics& gr, const RECT &btnRect );			/*!< 閉じるマーク描画処理 */
+	void DrawCloseFigure( CGraphics& gr, const RECT &btnRect, COLORREF color );	/*!< 閉じるマーク描画処理 */
 	void DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient );			/*!< 閉じるボタン描画処理 */		// 2006.10.21 ryoji
 	void DrawTabCloseBtn( CGraphics& gr, const LPRECT lprcClient, bool selected, bool bHover );	/*!< タブを閉じるボタン描画処理 */		// 2012.04.14 syat
 	void DrawTopBand( const CGraphics& gr, const RECT& rcClient, int nTabIndex ) const;

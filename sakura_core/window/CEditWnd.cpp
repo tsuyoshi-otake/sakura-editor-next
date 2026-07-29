@@ -3982,8 +3982,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		//	To Here
 		int			nAllWidth = rc.right - rc.left;
 		int			nSbxWidth = ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE); // サイズボックスの幅
-		int			nBdrWidth = ::GetSystemMetrics(SM_CXSIZEFRAME) + ::GetSystemMetrics(SM_CXEDGE) * 2; // 境界の幅
-		const int statusIconTextInset = workbench::icons::StatusTextInsetPixels(
+		const int statusItemWidthPadding = workbench::icons::StatusItemPartWidthPaddingPixels(
 			static_cast<unsigned int>(::GetDpiForWindow(m_cStatusBar.GetStatusHwnd())));
 		SIZE		sz;
 		HDC			hdc;
@@ -4002,7 +4001,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		}
 		for (int i = nStArrNum - 1; i > 0; --i) {
 			::GetTextExtentPoint32W(hdc, PSZ_ARGS(pszLabel[i]), &sz);
-			nStArr[i - 1] = nStArr[i] - ( sz.cx + statusIconTextInset + nBdrWidth );
+			nStArr[i - 1] = nStArr[i] - (sz.cx + statusItemWidthPadding);
 		}
 
 		//	Nov. 8, 2003 genta

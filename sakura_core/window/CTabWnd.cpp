@@ -36,6 +36,8 @@
 #include "apiwrap/CommonControl.h"
 #include "apiwrap/DarkMode.h"
 #include "theme/CThemeService.h"
+#include "workbench/IconMetrics.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 #include "sakura_rc.h"
 #include "config/system_constants.h"
 
@@ -1524,50 +1526,17 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 
 		rcItem.left += DpiScaleX(8);
 
-		// アイコン描画
-		int cxIcon = CX_SMICON;
-		int cyIcon = CY_SMICON;
-		bool iconDrawn = false;
-		if( nullptr != m_hIml )
-		{
-			ImageList_GetIconSize( m_hIml, &cxIcon, &cyIcon );
-			if( 0 <= item.iImage )
-			{
-				int top = rcItem.top + ( rcItem.bottom - rcItem.top - cyIcon ) / 2 - 1;
-				ImageList_Draw( m_hIml, item.iImage, lpdis->hDC, rcItem.left,
-					top, ILD_TRANSPARENT );
-				iconDrawn = true;
-			}
-		}
-		if( !iconDrawn ) {
-			const int iconWidth = DpiScaleX(14);
-			const int iconHeight = DpiScaleY(16);
-			const int left = rcItem.left + DpiScaleX(1);
-			const int top = rcItem.top + (rcItem.bottom - rcItem.top - iconHeight) / 2;
-			const int right = left + iconWidth;
-			const int bottom = top + iconHeight;
-			const COLORREF glyphColor = IsDarkModeActive()
-				? theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark).secondaryText.ToColorRef()
-				: ::GetSysColor(COLOR_BTNTEXT);
-			const int penWidth = (std::max)(1, static_cast<int>(DpiScaleX(1)));
-			const HPEN pen = ::CreatePen(PS_SOLID, penWidth, glyphColor);
-			if( pen != nullptr ) {
-				const HGDIOBJ oldPen = ::SelectObject(hdc, pen);
-				const int fold = DpiScaleX(4);
-				::MoveToEx(hdc, left, top, nullptr);
-				::LineTo(hdc, right - fold, top);
-				::LineTo(hdc, right, top + fold);
-				::LineTo(hdc, right, bottom);
-				::LineTo(hdc, left, bottom);
-				::LineTo(hdc, left, top);
-				::MoveToEx(hdc, right - fold, top, nullptr);
-				::LineTo(hdc, right - fold, top + fold);
-				::LineTo(hdc, right, top + fold);
-				::SelectObject(hdc, oldPen);
-				::DeleteObject(pen);
-			}
-			cxIcon = DpiScaleX(16);
-		}
+		// VS Code と同じ汎用ファイル Codicon を描画する。
+		const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+		const int cxIcon = workbench::icons::ScaleDip(workbench::icons::kStatusIconDip, dpi);
+		const COLORREF glyphColor = IsDarkModeActive()
+			? theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark).secondaryText.ToColorRef()
+			: ::GetSysColor(COLOR_BTNTEXT);
+		const auto iconBox = workbench::icons::CenteredIconBounds(
+			{ rcItem.left, rcItem.top, rcItem.left + cxIcon, rcItem.bottom },
+			workbench::icons::kStatusIconDip, dpi);
+		workbench::icons::codicons::Draw(hdc, iconBox,
+			workbench::icons::codicons::Icon::File, glyphColor);
 		rcItem.left += cxIcon + DpiScaleX(6);
 
 		// テキスト描画
@@ -2758,32 +2727,11 @@ void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
 	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
 	const int lineWidth = (std::max)(1, tabbar::ScaleDocumentTabDip(1, dpi));
 	const int insetX = tabbar::ScaleDocumentTabDip(2, dpi);
-	const int insetY = tabbar::ScaleDocumentTabDip(3, dpi);
-	RECT glyph{ rcBtn.left + insetX, rcBtn.top + insetY,
-		rcBtn.right - insetX, rcBtn.bottom - insetY };
-	if (glyph.right > glyph.left + lineWidth && glyph.bottom > glyph.top + lineWidth) {
-		const HPEN pen = ::CreatePen(PS_SOLID, lineWidth, iconColor);
-		if (pen != nullptr) {
-			const auto oldPen = ::SelectObject(gr, pen);
-			const auto oldBrush = ::SelectObject(gr, ::GetStockObject(NULL_BRUSH));
-			::Rectangle(gr, glyph.left, glyph.top, glyph.right, glyph.bottom);
-			const int divider = glyph.left + (glyph.right - glyph.left) / 2;
-			::MoveToEx(gr, divider, glyph.top + lineWidth, nullptr);
-			::LineTo(gr, divider, glyph.bottom - lineWidth);
-			const int textLeft = divider + tabbar::ScaleDocumentTabDip(2, dpi);
-			const int textRight = glyph.right - tabbar::ScaleDocumentTabDip(1, dpi);
-			for (int row = 0; row < 2 && textLeft < textRight; ++row) {
-				const int y = glyph.top + tabbar::ScaleDocumentTabDip(3 + row * 3, dpi);
-				if (y < glyph.bottom) {
-					::MoveToEx(gr, textLeft, y, nullptr);
-					::LineTo(gr, textRight, y);
-				}
-			}
-			::SelectObject(gr, oldBrush);
-			::SelectObject(gr, oldPen);
-			::DeleteObject(pen);
-		}
-	}
+	const auto iconBox = workbench::icons::CenteredIconBounds(
+		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
+		workbench::icons::kStatusIconDip, dpi);
+	workbench::icons::codicons::Draw(gr, iconBox,
+		workbench::icons::codicons::Icon::OpenPreview, iconColor);
 	if (active) {
 		RECT indicator = rcBtn;
 		indicator.left += insetX;
@@ -2800,56 +2748,28 @@ void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
 */
 void CTabWnd::DrawListBtn( CGraphics& gr, const LPRECT lprcClient )
 {
-	static const POINT ptBase[4] = { {4, 8}, {7, 11}, {8, 11}, {11, 8} };	// 描画イメージ形状
-	POINT pt[4];
-
 	RECT rcBtn;
 	GetListBtnRect( lprcClient, &rcBtn );
 	if (::IsRectEmpty(&rcBtn)) return;
 	DrawBtnBkgnd( gr, &rcBtn, m_bListBtnHilighted );	// 2006.10.21 ryoji
 
-	// 描画イメージを矩形中央にもってくる	// 2009.10.01 ryoji
-	rcBtn.left = rcBtn.left + ((rcBtn.right - rcBtn.left) - (rcBtnBase.right - rcBtnBase.left)) / 2;
-	rcBtn.top = rcBtn.top + ((rcBtn.bottom - rcBtn.top) - (rcBtnBase.bottom - rcBtnBase.top)) / 2;
-	rcBtn.right = rcBtn.left + (rcBtnBase.right - rcBtnBase.left);
-	rcBtn.bottom = rcBtn.top + (rcBtnBase.bottom - rcBtnBase.left);
-
-	COLORREF clrBtn = GetBtnTextColor( m_bListBtnHilighted );
-	gr.SetPen( clrBtn );
-	gr.SetBrushColor( clrBtn );
-	for( int i = 0; i < int(std::size(ptBase)); i++ )
-	{
-		pt[i].x = ptBase[i].x + rcBtn.left;
-		pt[i].y = ptBase[i].y + rcBtn.top;
-	}
-	::Polygon( gr, pt, int(std::size(pt)) );
+	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+	const auto iconBox = workbench::icons::CenteredIconBounds(
+		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
+		workbench::icons::kStatusIconDip, dpi);
+	workbench::icons::codicons::Draw(gr, iconBox,
+		workbench::icons::codicons::Icon::ChevronDown, GetBtnTextColor(m_bListBtnHilighted));
 }
 
 /*! 閉じるマーク描画処理 */
-void CTabWnd::DrawCloseFigure( CGraphics& gr, const RECT& rcBtn )
+void CTabWnd::DrawCloseFigure( CGraphics& gr, const RECT& rcBtn, COLORREF color )
 {
-	static const POINT ptBase1[6][2] =	// [x]描画イメージ形状（直線6本）
-	{
-		{{4, 5}, {12, 13}},
-		{{4, 4}, {13, 13}},
-		{{5, 4}, {13, 12}},
-		{{11, 4}, {3, 12}},
-		{{12, 4}, {3, 13}},
-		{{12, 5}, {4, 13}}
-	};
-	POINT pt[2];
-	int i;
-
-	// [x]を描画（直線6本）
-	for( i = 0; i < int(std::size(ptBase1)); i++ )
-	{
-		pt[0].x = ptBase1[i][0].x + rcBtn.left;
-		pt[0].y = ptBase1[i][0].y + rcBtn.top;
-		pt[1].x = ptBase1[i][1].x + rcBtn.left;
-		pt[1].y = ptBase1[i][1].y + rcBtn.top;
-		::MoveToEx( gr, pt[0].x, pt[0].y, nullptr );
-		::LineTo( gr, pt[1].x, pt[1].y );
-	}
+	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+	const auto iconBox = workbench::icons::CenteredIconBounds(
+		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
+		workbench::icons::kStatusIconDip, dpi);
+	workbench::icons::codicons::Draw(gr, iconBox,
+		workbench::icons::codicons::Icon::Close, color);
 }
 
 /*! 閉じるボタン描画処理
@@ -2859,23 +2779,6 @@ void CTabWnd::DrawCloseFigure( CGraphics& gr, const RECT& rcBtn )
 */
 void CTabWnd::DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient )
 {
-	static const POINT ptBase2[10][2] = // [xx]描画イメージ形状（矩形10個）
-	{
-		{{3, 4}, {5, 6}},
-		{{6, 4}, {8, 6}},
-		{{4, 6}, {7, 10}},
-		{{3, 10}, {5, 12}},
-		{{6, 10}, {8, 12}},
-		{{9, 4}, {11, 6}},
-		{{12, 4}, {14, 6}},
-		{{10, 6}, {13, 10}},
-		{{9, 10}, {11, 12}},
-		{{12, 10}, {14, 12}}
-	};
-
-	POINT pt[2];
-	int i;
-
 	RECT rcBtn;
 	GetCloseBtnRect( lprcClient, &rcBtn );
 	if (::IsRectEmpty(&rcBtn)) return;
@@ -2887,33 +2790,22 @@ void CTabWnd::DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient )
 
 	DrawBtnBkgnd( gr, &rcBtn, m_bCloseBtnHilighted );
 
-	// 描画イメージを矩形中央にもってくる	// 2009.10.01 ryoji
-	rcBtn.left = rcBtn.left + ((rcBtn.right - rcBtn.left) - (rcBtnBase.right - rcBtnBase.left)) / 2;
-	rcBtn.top = rcBtn.top + ((rcBtn.bottom - rcBtn.top) - (rcBtnBase.bottom - rcBtnBase.top)) / 2;
-	rcBtn.right = rcBtn.left + (rcBtnBase.right - rcBtnBase.left);
-	rcBtn.bottom = rcBtn.top + (rcBtnBase.bottom - rcBtnBase.left);
-
 	COLORREF clrBtn = GetBtnTextColor( m_bCloseBtnHilighted );
-	gr.SetPen( clrBtn );
-	gr.SetBrushColor( clrBtn );
 	if( m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd &&
 		!m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin &&
 		!m_pShareData->m_Common.m_sTabBar.m_bTab_CloseOneWin			// 2007.02.13 ryoji 条件追加（ウィンドウの閉じるボタンは全部閉じる）
 		)
 	{
-		DrawCloseFigure( gr, rcBtn );
+		DrawCloseFigure( gr, rcBtn, clrBtn );
 	}
 	else
 	{
-		 // [xx]を描画（矩形10個）
-		for( i = 0; i < int(std::size(ptBase2)); i++ )
-		{
-			pt[0].x = ptBase2[i][0].x + rcBtn.left;
-			pt[0].y = ptBase2[i][0].y + rcBtn.top;
-			pt[1].x = ptBase2[i][1].x + rcBtn.left;
-			pt[1].y = ptBase2[i][1].y + rcBtn.top;
-			::Rectangle( gr, pt[0].x, pt[0].y, pt[1].x, pt[1].y );
-		}
+		const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+		const auto iconBox = workbench::icons::CenteredIconBounds(
+			{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
+			workbench::icons::kStatusIconDip, dpi);
+		workbench::icons::codicons::Draw(gr, iconBox,
+			workbench::icons::codicons::Icon::CloseAll, clrBtn);
 	}
 }
 
@@ -2927,16 +2819,8 @@ void CTabWnd::DrawTabCloseBtn( CGraphics& gr, const LPRECT lprcClient, bool sele
 
 	DrawBtnBkgnd( gr, &rcBtn, bHover );
 
-	// 描画イメージを矩形中央にもってくる	// 2009.10.01 ryoji
-	rcBtn.left = rcBtn.left + ((rcBtn.right - rcBtn.left) - (rcBtnBase.right - rcBtnBase.left)) / 2;
-	rcBtn.top = rcBtn.top + ((rcBtn.bottom - rcBtn.top) - (rcBtnBase.bottom - rcBtnBase.top)) / 2 - 1;
-	rcBtn.right = rcBtn.left + (rcBtnBase.right - rcBtnBase.left);
-	rcBtn.bottom = rcBtn.top + (rcBtnBase.bottom - rcBtnBase.left);
-
 	COLORREF clrBtn = GetBtnTextColor( FALSE );
-	gr.SetPen( clrBtn );
-	gr.SetBrushColor( clrBtn );
-	DrawCloseFigure( gr, rcBtn );
+	DrawCloseFigure( gr, rcBtn, clrBtn );
 }
 
 /*!	指定したタブの上部にその位置を示す帯を描画

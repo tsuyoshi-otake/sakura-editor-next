@@ -16,6 +16,8 @@ constexpr int kStatusIconDip = 16;
 constexpr int kLineStrokeDip = 1;
 constexpr int kStatusIconLeadingInsetDip = 4;
 constexpr int kStatusIconTextGapDip = 4;
+constexpr int kStatusItemInsetDip = 8;
+constexpr int kNativeStatusPartChromeDip = 4;
 
 struct IconRect {
 	int left = 0;
@@ -42,6 +44,17 @@ struct IconRect {
 [[nodiscard]] constexpr int StatusTextInsetPixels(unsigned int dpi) noexcept
 {
 	return ScaleDip(kStatusIconLeadingInsetDip + kStatusIconDip + kStatusIconTextGapDip, dpi);
+}
+
+[[nodiscard]] constexpr int StatusItemHorizontalPaddingPixels(unsigned int dpi) noexcept
+{
+	return 2 * ScaleDip(kStatusItemInsetDip, dpi);
+}
+
+//! Includes the space reserved internally by the native status-bar part rectangle.
+[[nodiscard]] constexpr int StatusItemPartWidthPaddingPixels(unsigned int dpi) noexcept
+{
+	return StatusItemHorizontalPaddingPixels(dpi) + ScaleDip(kNativeStatusPartChromeDip, dpi);
 }
 
 //! Centers an icon's optical square inside a caller-owned physical-pixel rectangle.

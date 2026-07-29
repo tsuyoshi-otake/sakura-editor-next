@@ -11,6 +11,8 @@
 #include <array>
 
 #include "window/CCustomFrameController.h"
+#include "workbench/IconMetrics.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 
 namespace {
 
@@ -69,101 +71,39 @@ void PaintTitleControlBackground(
 	}
 }
 
-void PaintGlyph(HDC dc, const RECT& rect, LRESULT hit, COLORREF color, int thickness, bool maximized) noexcept
+void PaintGlyph(HDC dc, const RECT& rect, LRESULT hit, COLORREF color, [[maybe_unused]] int thickness, bool maximized) noexcept
 {
-	const int centerX = (rect.left + rect.right) / 2;
-	const int centerY = (rect.top + rect.bottom) / 2;
-	const int half = std::max(4, static_cast<int>((rect.bottom - rect.top) / 7));
-	const HPEN pen = ::CreatePen(PS_SOLID, thickness, color);
-	const HGDIOBJ oldPen = ::SelectObject(dc, pen);
-	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+	using workbench::icons::codicons::Icon;
+	Icon icon = Icon::ChromeClose;
 	switch (hit) {
-	case HTMINBUTTON:
-		::MoveToEx(dc, centerX - half, centerY + half / 2, nullptr);
-		::LineTo(dc, centerX + half + 1, centerY + half / 2);
-		break;
-	case HTMAXBUTTON:
-		if (maximized) {
-			::Rectangle(dc, centerX - half + 2, centerY - half - 1, centerX + half + 2, centerY + half - 1);
-			::Rectangle(dc, centerX - half - 2, centerY - half + 2, centerX + half - 2, centerY + half + 2);
-		} else {
-			::Rectangle(dc, centerX - half, centerY - half, centerX + half + 1, centerY + half + 1);
-		}
-		break;
-	case HTCLOSE:
-		::MoveToEx(dc, centerX - half, centerY - half, nullptr);
-		::LineTo(dc, centerX + half + 1, centerY + half + 1);
-		::MoveToEx(dc, centerX + half, centerY - half, nullptr);
-		::LineTo(dc, centerX - half - 1, centerY + half + 1);
-		break;
-	default:
-		break;
+	case HTMINBUTTON: icon = Icon::ChromeMinimize; break;
+	case HTMAXBUTTON: icon = maximized ? Icon::ChromeRestore : Icon::ChromeMaximize; break;
+	case HTCLOSE: icon = Icon::ChromeClose; break;
+	default: return;
 	}
-	::SelectObject(dc, oldBrush);
-	::SelectObject(dc, oldPen);
-	::DeleteObject(pen);
+	const UINT dpi = static_cast<UINT>(std::max(96, ::GetDeviceCaps(dc, LOGPIXELSX)));
+	const auto box = workbench::icons::CenteredIconBounds(
+		{ rect.left, rect.top, rect.right, rect.bottom }, workbench::icons::kStatusIconDip, dpi);
+	workbench::icons::codicons::Draw(dc, box, icon, color);
 }
 
 void PaintTitleControlGlyph(HDC dc, const RECT& rect, CustomFrameControl control, COLORREF color) noexcept
 {
-	const int centerX = (rect.left + rect.right) / 2;
-	const int centerY = (rect.top + rect.bottom) / 2;
-	const int half = std::max(5, static_cast<int>((rect.bottom - rect.top) / 6));
-	const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
-	const HGDIOBJ oldPen = ::SelectObject(dc, pen);
-	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
+	using workbench::icons::codicons::Icon;
+	Icon icon = Icon::Layout;
 	switch (control) {
-	case CustomFrameControl::Layout:
-		::Rectangle(dc, centerX - half, centerY - half, centerX - 1, centerY - 1);
-		::Rectangle(dc, centerX + 1, centerY - half, centerX + half + 1, centerY - 1);
-		::Rectangle(dc, centerX - half, centerY + 1, centerX - 1, centerY + half + 1);
-		::Rectangle(dc, centerX + 1, centerY + 1, centerX + half + 1, centerY + half + 1);
-		break;
-	case CustomFrameControl::PrimarySidebar:
-		::Rectangle(dc, centerX - half - 1, centerY - half, centerX + half + 1, centerY + half + 1);
-		::MoveToEx(dc, centerX - half / 2, centerY - half, nullptr);
-		::LineTo(dc, centerX - half / 2, centerY + half + 1);
-		break;
-	case CustomFrameControl::BottomPanel:
-		::Rectangle(dc, centerX - half - 1, centerY - half, centerX + half + 1, centerY + half + 1);
-		::MoveToEx(dc, centerX - half - 1, centerY + half / 2, nullptr);
-		::LineTo(dc, centerX + half + 1, centerY + half / 2);
-		break;
-	case CustomFrameControl::SecondarySidebar:
-		::Rectangle(dc, centerX - half - 1, centerY - half, centerX + half + 1, centerY + half + 1);
-		::MoveToEx(dc, centerX + half / 2, centerY - half, nullptr);
-		::LineTo(dc, centerX + half / 2, centerY + half + 1);
-		break;
-	case CustomFrameControl::Account:
-		::Ellipse(dc, centerX - 3, centerY - half, centerX + 4, centerY - half + 7);
-		::Arc(dc, centerX - half, centerY - 1, centerX + half + 1, centerY + half + 3,
-			centerX - half, centerY + half / 2, centerX + half, centerY + half / 2);
-		break;
-	case CustomFrameControl::Settings:
-		::Ellipse(dc, centerX - 3, centerY - 3, centerX + 4, centerY + 4);
-		::MoveToEx(dc, centerX, centerY - half - 1, nullptr);
-		::LineTo(dc, centerX, centerY - 4);
-		::MoveToEx(dc, centerX, centerY + 4, nullptr);
-		::LineTo(dc, centerX, centerY + half + 2);
-		::MoveToEx(dc, centerX - half - 1, centerY, nullptr);
-		::LineTo(dc, centerX - 4, centerY);
-		::MoveToEx(dc, centerX + 4, centerY, nullptr);
-		::LineTo(dc, centerX + half + 2, centerY);
-		::MoveToEx(dc, centerX - half + 1, centerY - half + 1, nullptr);
-		::LineTo(dc, centerX - 4, centerY - 4);
-		::MoveToEx(dc, centerX + 4, centerY + 4, nullptr);
-		::LineTo(dc, centerX + half, centerY + half);
-		::MoveToEx(dc, centerX + half - 1, centerY - half + 1, nullptr);
-		::LineTo(dc, centerX + 4, centerY - 4);
-		::MoveToEx(dc, centerX - 4, centerY + 4, nullptr);
-		::LineTo(dc, centerX - half, centerY + half);
-		break;
-	case CustomFrameControl::None:
-		break;
+	case CustomFrameControl::Layout: icon = Icon::Layout; break;
+	case CustomFrameControl::PrimarySidebar: icon = Icon::LayoutSidebarLeft; break;
+	case CustomFrameControl::BottomPanel: icon = Icon::LayoutPanel; break;
+	case CustomFrameControl::SecondarySidebar: icon = Icon::LayoutSidebarRight; break;
+	case CustomFrameControl::Account: icon = Icon::Account; break;
+	case CustomFrameControl::Settings: icon = Icon::Gear; break;
+	case CustomFrameControl::None: return;
 	}
-	::SelectObject(dc, oldBrush);
-	::SelectObject(dc, oldPen);
-	::DeleteObject(pen);
+	const UINT dpi = static_cast<UINT>(std::max(96, ::GetDeviceCaps(dc, LOGPIXELSX)));
+	const auto box = workbench::icons::CenteredIconBounds(
+		{ rect.left, rect.top, rect.right, rect.bottom }, workbench::icons::kStatusIconDip, dpi);
+	workbench::icons::codicons::Draw(dc, box, icon, color);
 }
 
 void PaintTitleControlFocus(HDC dc, const RECT& rect, const theme::ThemePalette& palette) noexcept

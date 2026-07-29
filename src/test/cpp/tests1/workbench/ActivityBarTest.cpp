@@ -8,8 +8,13 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+
 #include "workbench/activity/ActivityBarModel.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/scm/GitScmModel.h"
 
 namespace workbench::activity {
@@ -103,6 +108,10 @@ TEST(IconMetrics, UsesSharedOpticalSizesAndDpiStableBounds)
 	EXPECT_EQ(1, LineStrokePixels(96));
 	EXPECT_EQ(2, LineStrokePixels(192));
 	EXPECT_EQ(24, StatusTextInsetPixels(96));
+	EXPECT_EQ(16, StatusItemHorizontalPaddingPixels(96));
+	EXPECT_EQ(24, StatusItemHorizontalPaddingPixels(144));
+	EXPECT_EQ(20, StatusItemPartWidthPaddingPixels(96));
+	EXPECT_EQ(30, StatusItemPartWidthPaddingPixels(144));
 	EXPECT_EQ((IconRect{ 11, 11, 31, 31 }), CenteredIconBounds({ 0, 0, 42, 42 }, kActivityIconDip, 96));
 	EXPECT_EQ((IconRect{ 4, 4, 20, 20 }), LeadingStatusIconBounds({ 0, 0, 100, 24 }, 96));
 }
@@ -115,6 +124,63 @@ TEST(IconMetrics, ScmStatusLeavesTheBranchIconToTheSharedNativeRenderer)
 	const auto status = scm::FormatStatusLine(state);
 	EXPECT_EQ(L"main", status);
 	EXPECT_EQ(std::wstring::npos, status.find(L'\x2387'));
+}
+
+TEST(Codicons, EveryNativeWorkbenchIconRendersPixels)
+{
+	using Icon = workbench::icons::codicons::Icon;
+	constexpr Icon icons[] = {
+		Icon::Layout,
+		Icon::LayoutSidebarLeft,
+		Icon::LayoutPanel,
+		Icon::LayoutSidebarRight,
+		Icon::Account,
+		Icon::Gear,
+		Icon::ChromeMinimize,
+		Icon::ChromeMaximize,
+		Icon::ChromeRestore,
+		Icon::ChromeClose,
+		Icon::GitBranch,
+		Icon::Target,
+		Icon::Newline,
+		Icon::Code,
+		Icon::FileBinary,
+		Icon::RecordSmall,
+		Icon::Insert,
+		Icon::ZoomIn,
+		Icon::File,
+		Icon::OpenPreview,
+		Icon::ChevronDown,
+		Icon::Close,
+		Icon::CloseAll,
+	};
+
+	BITMAPINFO bitmapInfo{};
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = 32;
+	bitmapInfo.bmiHeader.biHeight = -32;
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	void* pixels = nullptr;
+	const HDC dc = ::CreateCompatibleDC(nullptr);
+	ASSERT_NE(nullptr, dc);
+	const HBITMAP bitmap = ::CreateDIBSection(dc, &bitmapInfo, DIB_RGB_COLORS, &pixels, nullptr, 0);
+	ASSERT_NE(nullptr, bitmap);
+	ASSERT_NE(nullptr, pixels);
+	const HGDIOBJ oldBitmap = ::SelectObject(dc, bitmap);
+
+	for (const auto icon : icons) {
+		std::memset(pixels, 0, 32 * 32 * sizeof(std::uint32_t));
+		workbench::icons::codicons::Draw(dc, { 8, 8, 24, 24 }, icon, RGB(1, 2, 3));
+		const auto* values = static_cast<const std::uint32_t*>(pixels);
+		EXPECT_TRUE(std::any_of(values, values + 32 * 32,
+			[](std::uint32_t value) noexcept { return value != 0; }));
+	}
+
+	::SelectObject(dc, oldBitmap);
+	::DeleteObject(bitmap);
+	::DeleteDC(dc);
 }
 
 } // namespace
