@@ -43,12 +43,11 @@ jobs:
         run: ./run-doxygen.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
         shell: msys2 {0}
 
-      - name: Zip files for artifacts
-        run: zipArtifacts.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
-        shell: cmd
-
       - name: Upload doxygen artifact
         uses: actions/upload-artifact@v7
         with:
           name: doxygen_${{ env.BuildPlatform }}_${{ env.Configuration }}
-          path: '**Dev.zip'
+          path: |
+            html
+            doxygen-${{ env.BuildPlatform }}-${{ env.Configuration }}.log
+          if-no-files-found: error
