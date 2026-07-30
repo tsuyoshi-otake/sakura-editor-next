@@ -174,6 +174,8 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 
 このフィルターは UI・外部連携を含むテストを省くため、最終確認では必要なテストを別途実行してください。
 
+GitHub-hosted runner は非対話セッションのため、標準 CI でも同じフィルターを環境変数 `GTEST_FILTER` から適用します。CI では CTest と Actions の両方に上限時間を設け、失敗時を含めてリポジトリ配下の `tests1.exe`、`sakura.exe`、および関連するカバレッジプロセスを検査・終了します。完全な UI・連携テストは、対話可能な Windows セッションで別途実行してください。
+
 ### デバッグ方法
 
 - [タスクトレイのメニュー項目をデバッグする方法](./debug-tasktray-menu.md)
