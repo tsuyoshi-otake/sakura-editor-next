@@ -95,6 +95,8 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。
                 - LICENSE
                 - UPSTREAM.md
                 - IMPORTED_FILES.md
+            - codicons/
+                - CODICONS-ATTRIBUTION.md
             - fmt/
                 - LICENSE
             - ms-gsl/
