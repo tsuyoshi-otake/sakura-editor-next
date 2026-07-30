@@ -298,14 +298,14 @@ if exist "html\sakura-doxygen.chi" (
 
 call :copyRequired "installer\Output-%platform%\*.exe" "%WORKDIR_INST%\" "installer executable"
 if errorlevel 1 exit /b 1
-call :copyRequired "msbuild-%platform%-%configuration%.log" "%WORKDIR_LOG%\" "build log"
+call :copyRequired "build\logs\msbuild-%platform%-%configuration%.log" "%WORKDIR_LOG%\" "build log"
 if errorlevel 1 exit /b 1
-if exist "msbuild-%platform%-%configuration%.log.csv" (
-	call :copyRequired "msbuild-%platform%-%configuration%.log.csv" "%WORKDIR_LOG%\" "build log CSV"
+if exist "build\logs\msbuild-%platform%-%configuration%.log.csv" (
+	call :copyRequired "build\logs\msbuild-%platform%-%configuration%.log.csv" "%WORKDIR_LOG%\" "build log CSV"
 	if errorlevel 1 exit /b 1
 )
-if exist "msbuild-%platform%-%configuration%.log.xlsx" (
-	call :copyRequired "msbuild-%platform%-%configuration%.log.xlsx" "%WORKDIR_LOG%\" "build log spreadsheet"
+if exist "build\logs\msbuild-%platform%-%configuration%.log.xlsx" (
+	call :copyRequired "build\logs\msbuild-%platform%-%configuration%.log.xlsx" "%WORKDIR_LOG%\" "build log spreadsheet"
 	if errorlevel 1 exit /b 1
 )
 set ISS_LOG_FILE=iss-%platform%-%configuration%.log

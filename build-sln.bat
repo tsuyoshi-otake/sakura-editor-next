@@ -33,7 +33,7 @@ if errorlevel 1 (
 	echo Failed to create MSBuild log directory: %LOG_DIR%
 	endlocal & exit /b 1
 )
-set "LOG_FILE=%LOG_DIR%\msbuild-%platform%-%configuration%-%RANDOM%%RANDOM%.log"
+set "LOG_FILE=%LOG_DIR%\msbuild-%platform%-%configuration%.log"
 @rem https://msdn.microsoft.com/ja-jp/library/ms171470.aspx
 set "LOG_OPTION=/flp:logfile=%LOG_FILE%"
 set "MSBUILDDISABLENODEREUSE=1"
