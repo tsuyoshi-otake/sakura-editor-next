@@ -60,7 +60,8 @@ C++20をサポートするC++コンパイラーが必要です。
 インストーラをビルドする場合のみ必要です。
 
 - [Inno Setup](https://jrsoftware.org/isdl.php) (ISCC.exe)
-  - 推奨バージョン: [innosetup-6.4.0.exe](https://files.jrsoftware.org/is/6/)
+  - 必須バージョン: 6.7.0 以降
+  - 推奨バージョン: [innosetup-6.7.3.exe](https://files.jrsoftware.org/is/6/)
 
 ```pwsh
 choco install InnoSetup -y

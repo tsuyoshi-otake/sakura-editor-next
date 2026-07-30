@@ -10,6 +10,7 @@
 - [インストーラのビルドに必要なファイル](#インストーラのビルドに必要なファイル)
 - [インストーラのビルド](#インストーラのビルド)
   - [x64](#x64)
+- [コード署名](#コード署名)
 - [インストーラのテスト](#インストーラのテスト)
   - [インストーラーのデバッグ](#インストーラーのデバッグ)
   - [英語版インストーラーの動作確認について](#英語版インストーラーの動作確認について)
@@ -67,12 +68,18 @@ build-installer.bat x64 Release
 
 ## インストーラの設定ファイル
 
-Inno Setup の設定ファイルは拡張子が iss のファイルです。
+Inno Setup の設定ファイルは拡張子が iss のファイルです。Sakura Editor NEXT の
+ダークテーマ、背景色、および高 DPI 対応画像には Inno Setup 6.7.0 以降が必要です。
 
 | iss ファイル | 意味 |
 ----|----
 |[sakura-common.iss](sakura-common.iss) |共通ファイル。以下のファイルからインクルードされます。 |
 |[sakura-x64.iss](sakura-x64.iss)       |x64   用の iss ファイル |
+
+`sakura-common.iss` は純黒を使わない `#2B2B2B` のチャコール背景を指定し、
+セットアップ EXE に埋め込まれた Sakura Editor NEXT アイコンを Welcome / 完了ページの
+左側へ縦横比を維持して表示します。Windows の高コントラストテーマでは Inno Setup が
+カスタムスタイルを自動的に無効化します。
 
 ## インストーラのビルドに必要なファイル
 
@@ -124,6 +131,20 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。
 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\sakura-x64.iss
 
 → installer\Output-x64\ にインストーラが生成されます。
+
+## コード署名
+
+ローカルの `build-installer.bat` および Inno Setup のコンパイル処理は、生成した
+セットアップ EXE にコード署名を付与しません。署名状態は Windows SDK の SignTool で
+確認できます。
+
+```pwsh
+signtool verify /pa /v installer\Output-x64\sakura_install<version>-x64.exe
+```
+
+ローカル成果物では `SignTool Error: No signature found.` になるのが現在の仕様です。
+配布用成果物は、公開前に信頼できる証明書とタイムスタンプを使って別途署名する必要が
+あります。
 
 ## インストーラのテスト
 

@@ -1,0 +1,13 @@
+Sakura Editor NEXT
+VS Code 級功能，原生應用速度。
+
+安裝前確認
+• 儲存正在編輯的檔案。
+• 關閉所有正在執行的 Sakura Editor NEXT 視窗。
+• 僅為目前使用者安裝時不需要系統管理員權限。
+• 為所有使用者安裝時需要系統管理員權限，並會安裝至 Program Files。
+
+授權條款
+Sakura Editor NEXT 依 zlib License 提供，可用於商業及非商業用途。
+著作權聲明與完整授權文件會安裝至 license 資料夾。
+本軟體按現狀提供，不附帶任何明示或默示擔保。
