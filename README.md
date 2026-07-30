@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml"><img src="https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml/badge.svg" alt="Build"></a>
-  <a href="https://github.com/tsuyoshi-otake/sakura-editor-next/releases"><img src="https://img.shields.io/github/downloads/tsuyoshi-otake/sakura-editor-next/total.svg" alt="Release downloads"></a>
+  <img src="https://img.shields.io/badge/Windows%2011-x64-0078D4.svg" alt="Platform: Windows 11 x64">
   <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Zlib-lightgrey.svg" alt="License: Zlib"></a>
 </p>
 
