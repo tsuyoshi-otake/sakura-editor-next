@@ -38,7 +38,7 @@ permissions:
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   check-encoding:
-    runs-on: &windows_runner windows-latest # YAMLアンカーを使う
+    runs-on: &windows_runner windows-2022 # VS 2022 + Windows SDK 10.0.22621.0
     defaults:
       run:
         shell: cmd # このJobでは 指定しない限り cmd を使う
