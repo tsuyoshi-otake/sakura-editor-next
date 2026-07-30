@@ -1,67 +1,79 @@
-﻿# Sakura Editor NEXT
+﻿<h1 align="center">
+  <img src=".github/assets/sakura-editor-next-hero.png" alt="Sakura Editor NEXT — VS Code級の機能を、ネイティブの速さで。">
+</h1>
 
 <p align="center">
-  <img src=".github/assets/sakura-editor-next-hero.png" alt="Sakura Editor NEXT — VS Code級の機能を、ネイティブの速さで。">
+  サクラエディタを基盤に、VS Code スタイルのワークベンチを Windows ネイティブで実現するテキストエディタ。
 </p>
 
-A fast, native Windows editor with a VS Code-style workbench.
-[![License: Zlib](https://img.shields.io/badge/License-Zlib-lightgrey.svg)](https://opensource.org/licenses/Zlib)
-[![build sakura](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml/badge.svg)](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml)
-[![Github Releases All](https://img.shields.io/github/downloads/tsuyoshi-otake/sakura-editor-next/total.svg)](https://github.com/tsuyoshi-otake/sakura-editor-next/releases "All Releases")
-[![Star History](https://img.shields.io/badge/star-history-yellow.svg)](https://star-history.com/#tsuyoshi-otake/sakura-editor-next)
+<p align="center">
+  <a href="https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml"><img src="https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml/badge.svg" alt="Build"></a>
+  <a href="https://github.com/tsuyoshi-otake/sakura-editor-next/releases"><img src="https://img.shields.io/github/downloads/tsuyoshi-otake/sakura-editor-next/total.svg" alt="Release downloads"></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/License-Zlib-lightgrey.svg" alt="License: Zlib"></a>
+</p>
 
-<!-- 以下は Markdownの参照形式によるリンク の定義です。 -->
-<!-- 参照 https://hail2u.net/blog/coding/markdown-reference-style-links.html -->
-
-[Visual Studio 以前のバージョン]: https://visualstudio.microsoft.com/ja/vs/older-downloads/ "Visual Studio 以前のバージョン"
-[Visual Studio 最新版]: https://visualstudio.microsoft.com/ja/downloads/ "Visual Studio 最新版"
-[ライセンスの OSI のページ]: https://opensource.org/license/zlib
-[Visual Studio Community ライセンス]: https://visualstudio.microsoft.com/ja/license-terms/vs2022-ga-community/
-[How to extract currently installed Visual Studio component IDs?]: https://stackoverflow.com/questions/52946333/how-to-extract-currently-installed-visual-studio-component-ids
-[Configure Visual Studio across your organization with .vsconfig]: https://devblogs.microsoft.com/setup/configure-visual-studio-across-your-organization-with-vsconfig/
-[インストール構成をインポートまたはエクスポートする]: https://docs.microsoft.com/ja-jp/visualstudio/install/import-export-installation-configurations?view=vs-2019
-[コマンド ライン パラメーターを使用して Visual Studio をインストールする]: https://docs.microsoft.com/ja-jp/visualstudio/install/use-command-line-parameters-to-install-visual-studio?view=vs-2019
-[不足しているコンポーネントを自動的にインストールする]: https://docs.microsoft.com/ja-jp/visualstudio/install/import-export-installation-configurations?view=vs-2019#automatically-install-missing-components
-
-<!-- TOC -->
-
-- [Sakura Editor NEXT](#sakura-editor-next)
-  - [脆弱性の報告方法](#脆弱性の報告方法)
-  - [ダウンロード](#ダウンロード)
-  - [開発情報](#開発情報)
-    - [How to build](#how-to-build)
-  - [変更履歴](#変更履歴)
-
-<!-- /TOC -->
-
-## 脆弱性の報告方法
-
-https://github.com/tsuyoshi-otake/sakura-editor-next/security/advisories
-から報告を行ってください。
-
+<p align="center">
+  <a href="#ダウンロード">ダウンロード</a> ・
+  <a href="#主な特徴">主な特徴</a> ・
+  <a href="#基本操作">基本操作</a> ・
+  <a href="#ビルド">ビルド</a> ・
+  <a href="#プロジェクト情報">プロジェクト情報</a>
+</p>
 
 ## ダウンロード
 
-リリース版は [Sakura Editor NEXT Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) に置いてあります。
+> [!IMPORTANT]
+> Sakura Editor NEXT は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。
 
-開発中の最新版は [GitHub Actionsのビルドページ](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amaster) から取得できます。
+| 種類 | 入手先 | 内容 |
+| --- | --- | --- |
+| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amaster) | `master` の最新ビルド |
+| リリース版 | [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) | 公開済みの配布パッケージ |
 
-### Sakura Editor NEXT の動作環境
+## 主な特徴
 
-Sakura Editor NEXT は **Windows 11 build 22000 以降の x64 環境専用**です。x86 版および Windows 10 はサポートしません。
+- **ネイティブワークベンチ** — 左の Explorer、右の Outline、下の統合 Terminal を 1 つのウィンドウにまとめています。
+- **必要なときだけ起動する Terminal** — 新規プロファイルでは Explorer と Outline を表示し、Terminal は初めて使うまで起動しません。
+- **Open VSX 拡張機能管理** — Open VSX の検索、VSIX のダウンロード、インストール、削除に対応しています。
+- **サクラエディタ由来の編集基盤** — 実績ある編集機能を引き継ぎながら、Windows 11 向けの x64 ネイティブアプリとして発展させています。
 
-左の Explorer、右の Outline、下の統合 Terminal を備えます。新規プロファイルでは Explorer と Outline を表示し、Terminal は必要になるまで起動しません。`Ctrl+B` で左パネル、`Ctrl+J` で下パネルを表示／非表示にできます。Terminal は `Ctrl+@`（英語配列では `Ctrl+\``）で表示またはフォーカスします。
+> [!NOTE]
+> Open VSX 拡張機能は管理機能までの対応です。拡張機能を実行するランタイムホストは、現在まだ搭載していません。
 
-統合 Terminal は、ユーザーが指定したプロファイルを優先し、次にインストール済みの安定版 PowerShell のうち最も新しいものを選びます。PowerShell 7 がない場合は Windows PowerShell 5.1 にフォールバックします。ネットワークへの問い合わせや自動インストールは行いません。
+## 基本操作
 
-## 開発情報
+| 操作 | ショートカット |
+| --- | --- |
+| 左パネルの表示／非表示 | <kbd>Ctrl</kbd>+<kbd>B</kbd> |
+| 下パネルの表示／非表示 | <kbd>Ctrl</kbd>+<kbd>J</kbd> |
+| Terminal の表示／フォーカス | <kbd>Ctrl</kbd>+<kbd>@</kbd>（英語配列では <kbd>Ctrl</kbd>+<kbd>&#96;</kbd>） |
 
-### How to build
+統合 Terminal は、ユーザーが指定したプロファイルを最優先します。指定がない場合はインストール済みの安定版 PowerShell から最も新しいものを選び、PowerShell 7 がない環境では Windows PowerShell 5.1 にフォールバックします。ネットワークへの問い合わせや自動インストールは行いません。
 
-`sakura.sln`を開いてビルドできます。  
-詳細は [ビルド方法](./tools/build.md) を参照。
+## ビルド
 
-## 変更履歴
+C++20 に対応した Visual Studio 2019 以降が必要です。Visual Studio 2022 では [`.vsconfig`](./.vsconfig) を使って必要なコンポーネントを導入できます。
 
-- Sakura Editor NEXT の最新変更は [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/master/) と [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) を参照してください。
-- 基盤となったサクラエディタから引き継いだ履歴は [CHANGELOG.md](./CHANGELOG.md) に保存しています。
+```cmd
+git clone --recursive https://github.com/tsuyoshi-otake/sakura-editor-next.git
+cd sakura-editor-next
+build-dev.bat x64 Debug
+```
+
+| 目的 | コマンド | 対象 |
+| --- | --- | --- |
+| 普段の編集・動作確認 | `build-dev.bat x64 Debug` | アプリ本体 |
+| 本体と単体テストの確認 | `build-sln.bat x64 Release` | アプリ本体と `tests1` |
+| 配布成果物の作成 | `build-all.bat x64 Release` | 本体、テスト、ヘルプ、インストーラ、ZIP |
+
+Visual Studio で [`sakura.sln`](./sakura.sln) を開くこともできます。環境構築、MinGW の実験的サポート、テスト手順などは [ビルド方法](./tools/build.md) を参照してください。
+
+## プロジェクト情報
+
+| 項目 | リンク |
+| --- | --- |
+| コントリビュート | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+| セキュリティ | [GitHub Security Advisories](https://github.com/tsuyoshi-otake/sakura-editor-next/security/advisories) |
+| 最新の変更 | [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/master/) ・ [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) |
+| 引き継いだ変更履歴 | [CHANGELOG.md](./CHANGELOG.md) |
+| ライセンス | [zlib License](./LICENSE) |
