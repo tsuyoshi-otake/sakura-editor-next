@@ -1,10 +1,8 @@
 ﻿# Sakura Editor NEXT
 
 <p align="center">
-  <img src="src/main/resources/images/sakura_editor_next.png" alt="Sakura Editor NEXT" width="180">
+  <img src=".github/assets/sakura-editor-next-hero.png" alt="Sakura Editor NEXT — VS Code級の機能を、ネイティブの速さで。">
 </p>
-
-**VS Code級の機能を、ネイティブの速さで。**
 
 A fast, native Windows editor with a VS Code-style workbench.
 [![License: Zlib](https://img.shields.io/badge/License-Zlib-lightgrey.svg)](https://opensource.org/licenses/Zlib)
