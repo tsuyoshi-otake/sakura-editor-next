@@ -4,8 +4,6 @@ VS Code 级功能，原生应用速度。
 安装前确认
 • 保存正在编辑的文件。
 • 关闭所有正在运行的 Sakura Editor NEXT 窗口。
-• 仅为当前用户安装时不需要管理员权限。
-• 为所有用户安装时需要管理员权限，并将安装到 Program Files。
 
 许可证
 Sakura Editor NEXT 依据 zlib License 提供，可用于商业和非商业用途。

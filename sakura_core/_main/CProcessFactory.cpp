@@ -24,6 +24,7 @@
 #include "CControlTray.h"
 #include "dlg/CDlgProfileMgr.h"
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
 #include "util/os.h"
 #include <tchar.h>
 #include "CSelectLang.h"
@@ -47,10 +48,12 @@ class CProcess;
 */
 CProcess* CProcessFactory::Create( HINSTANCE hInstance, LPCWSTR lpCmdLine )
 {
+	CStartupTrace::Mark(CStartupTrace::Event::FactoryBegin);
 	// 言語環境を初期化する
 	CSelectLang::InitializeLanguageEnvironment();
 
 	if( !ProfileSelect( hInstance, lpCmdLine ) ){
+		CStartupTrace::Mark(CStartupTrace::Event::FactoryEnd);
 		return nullptr;
 	}
 	// ProfileSelect either resolves the requested/default profile or returns false
@@ -60,6 +63,7 @@ CProcess* CProcessFactory::Create( HINSTANCE hInstance, LPCWSTR lpCmdLine )
 
 	CProcess* process = nullptr;
 	if( !IsValidVersion() ){
+		CStartupTrace::Mark(CStartupTrace::Event::FactoryEnd);
 		return nullptr;
 	}
 
@@ -73,15 +77,14 @@ CProcess* CProcessFactory::Create( HINSTANCE hInstance, LPCWSTR lpCmdLine )
 	// しかし、そのような場合でもミューテックスを最初に確保したコントロールプロセスが唯一生き残る。
 	//
 	if( IsStartingControlProcess() ){
-
+		CStartupTrace::SetRole(CStartupTrace::Role::Control);
 			process = new CControlProcess( hInstance, lpCmdLine );
-
 	}
 	else{
-
+		CStartupTrace::SetRole(CStartupTrace::Role::Editor);
 			process = new CNormalProcess( hInstance, lpCmdLine );
-
 	}
+	CStartupTrace::Mark(CStartupTrace::Event::FactoryEnd, process ? 1 : 0);
 	return process;
 }
 
@@ -228,6 +231,7 @@ bool CProcessFactory::IsStartingControlProcess() const
 
 	//常駐プロセス起動
 	DWORD dwCreationFlag = CREATE_DEFAULT_ERROR_MODE;
+	CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnBegin);
 #ifdef _DEBUG
 //	dwCreationFlag |= DEBUG_PROCESS; //2007.09.22 kobake デバッグ用フラグ
 #endif
@@ -244,6 +248,7 @@ bool CProcessFactory::IsStartingControlProcess() const
 		&p					// プロセス情報
 	);
 	if( !bCreateResult ){
+		CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnEnd);
 		//	失敗
 		WCHAR* pMsg;
 		::FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER |
@@ -263,14 +268,20 @@ bool CProcessFactory::IsStartingControlProcess() const
 
 	HandleHolder hProcess{ p.hProcess };
 	HandleHolder hThread{ p.hThread };
+	CStartupTrace::Mark(CStartupTrace::Event::ControlSpawnEnd, p.dwProcessId);
 
 	// 初期化完了を待つ
 	std::array handles{ hEvent.get(), hProcess.get()};
+	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitBegin);
 	if (const auto dwRet = ::WaitForMultipleObjects(DWORD(std::size(handles)), std::data(handles), FALSE, 15000); WAIT_OBJECT_0 != dwRet) {
+		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
+		CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, dwRet);
 		// L"エディタまたはシステムがビジー状態です。\nしばらく待って開きなおしてください。
 		TopErrorMessage(nullptr, LS(STR_ERR_DLGPROCFACT5));
 		return false;
 	}
+	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitEnd);
+	CStartupTrace::Mark(CStartupTrace::Event::ControlWaitResult, WAIT_OBJECT_0);
 
 	return true;
 }

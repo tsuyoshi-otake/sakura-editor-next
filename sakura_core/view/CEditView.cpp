@@ -2759,6 +2759,7 @@ void CEditView::SetUndoBuffer([[maybe_unused]] bool bPaintLineNumber)
 		if( 0 < m_cCommander.GetOpeBlk()->GetNum() ){	/* 操作の数を返す */
 			/* 操作の追加 */
 			GetDocument()->m_cDocEditor.m_cOpeBuf.AppendOpeBlk( m_cCommander.GetOpeBlk() );
+			GetEditWnd().NotifyExtensionDocumentChanged();
 
 			// 2013.05.01 Moca 正確に変更行を表示するようになったので不要
 			//  if( bPaintLineNumber

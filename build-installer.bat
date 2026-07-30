@@ -117,7 +117,11 @@ copy /Y /B %platform%\%configuration%\*.dll                 %INSTALLER_WORK%\ > 
 
 set SAKURA_ISS=installer\sakura-%platform%.iss
 @echo running "%CMD_ISCC%" %SAKURA_ISS%
-"%CMD_ISCC%" %SAKURA_ISS% > %ISS_LOG_FILE% || (echo error && exit /b 1)
+if "%configuration%" == "Release" (
+	"%CMD_ISCC%" /DREQUIRE_AVX=1 %SAKURA_ISS% > %ISS_LOG_FILE% || (echo error && exit /b 1)
+) else (
+	"%CMD_ISCC%" %SAKURA_ISS% > %ISS_LOG_FILE% || (echo error && exit /b 1)
+)
 exit /b 0
 
 @rem ------------------------------------------------------------------------------

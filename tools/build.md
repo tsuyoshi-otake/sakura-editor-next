@@ -130,6 +130,11 @@ build-all.bat <Platform> <Configuration>
 build-all.bat x64 Release
 ```
 
+x64 Release は、最小要件を AVX とする単一の `x64\Release\sakura.exe` を生成します。
+AVX2 および AVX-512F/BW を使う処理はソース単位で分離してコンパイルし、プロセス起動時に
+CPUID と XGETBV で CPU・OS の保存状態を一度だけ確認して、利用可能な最上位実装へ
+関数ポインターを固定します。追加の ISA 別バイナリは生成しません。
+
 ## 開発者向け情報
 
 ### ビルドで使用する環境変数

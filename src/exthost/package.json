@@ -1,0 +1,14 @@
+{
+  "name": "sakura-editor-extension-host",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared Node.js extension host for Sakura Editor NEXT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.cjs"
+  }
+}

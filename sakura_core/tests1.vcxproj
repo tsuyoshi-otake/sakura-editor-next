@@ -58,7 +58,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
@@ -156,6 +156,21 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-ceol.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cerrorinfo.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiondocumentbridge.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostbroker.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostintegration.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostprocess.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostsharedstate.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhoststatemachine.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionpipetransport.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionsecretstorage.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiontruststore.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchmodels.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchdispatcher.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchui.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionviewregistry.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionrpcprotocol.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cjsonrpcframecodec.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfileext.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfuncinfoarr.cpp" />
@@ -171,6 +186,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-editinfo.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-file.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-charcode.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cpudispatch.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-format.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-grepinfo.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-int2dec.cpp" />

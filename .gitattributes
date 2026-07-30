@@ -7,6 +7,7 @@ sakura_rc.h text eol=crlf
 *.rc text working-tree-encoding=utf-16le-bom eol=crlf
 *.rc2 text working-tree-encoding=utf-16le-bom eol=crlf
 *.ps1 text working-tree-encoding=utf-16le-bom eol=crlf
+tools/startup-benchmark-sample.md text eol=lf
 *.config text eol=crlf
 *.csproj text eol=crlf
 *.filters text eol=crlf

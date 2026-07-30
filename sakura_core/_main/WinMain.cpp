@@ -29,6 +29,8 @@
 #include "util/os.h"
 #include "util/module.h"
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
+#include "util/CpuDispatch.h"
 #include "version.h"
 #include "util/std_macro.h"
 #include "env/DLLSHAREDATA.h"
@@ -54,6 +56,13 @@ int WINAPI wWinMain(
 	[[maybe_unused]] int			nCmdShow		//!< show state of window
 )
 {
+	CStartupTrace::Initialize();
+	CStartupTrace::Mark(CStartupTrace::Event::ProcessEntry);
+	const auto& cpuDispatch = CpuDispatch::Initialize();
+	CStartupTrace::Mark(
+		CStartupTrace::Event::IsaDispatch,
+		static_cast<std::int64_t>(cpuDispatch.isa),
+		cpuDispatch.initializationTicks);
 #ifdef USE_LEAK_CHECK_WITH_CRTDBG
 	// 2009.9.10 syat メモリリークチェックを追加
 	::_CrtSetDbgFlag(_CRTDBG_LEAK_CHECK_DF | _CRTDBG_ALLOC_MEM_DF);

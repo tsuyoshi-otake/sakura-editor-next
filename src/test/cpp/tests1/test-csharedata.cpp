@@ -1545,6 +1545,8 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
 	const INT nTabPointSize = chromeFontSpec.pointSize * 10;
 
 	// CommonSettingのプロパティを検証
+	EXPECT_THAT(commonSetting.m_sWorkbench.m_bExtensionViewsVisible, IsFalse());
+	EXPECT_THAT(commonSetting.m_sWorkbench.m_nExtensionViewsExtent96, Eq(320));
     return true
 		&& ExplainMatchResult(IsInitializedCommonSettingGeneral(), commonSetting.m_sGeneral, result_listener)
 		&& ExplainMatchResult(IsInitializedCommonSettingWindow(),  commonSetting.m_sWindow, result_listener)

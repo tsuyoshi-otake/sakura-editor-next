@@ -15,6 +15,8 @@
 
 #include "charset/CCodeFactory.h"
 
+#include <cwctype>
+#include <string_view>
 #include <vector>
 
 namespace {
@@ -38,6 +40,106 @@ void DrawBranchIcon(HDC dc, const RECT& part, COLORREF color, UINT dpi) noexcept
 	if (box.Width() <= 0 || box.Height() <= 0) return;
 	workbench::icons::codicons::Draw(dc, box,
 		workbench::icons::codicons::Icon::GitBranch, color);
+}
+
+struct ExtensionStatusText {
+	std::wstring text;
+	workbench::icons::codicons::Icon icon = workbench::icons::codicons::Icon::RecordSmall;
+	bool hasIcon = false;
+	bool extensionsIcon = false;
+};
+
+[[nodiscard]] bool ResolveExtensionStatusIcon(
+	std::wstring_view name,
+	workbench::icons::codicons::Icon& icon,
+	bool& extensionsIcon) noexcept
+{
+	using Icon = workbench::icons::codicons::Icon;
+	extensionsIcon = name == L"extensions";
+	if (extensionsIcon) return true;
+	if (name == L"git-branch" || name == L"source-control") icon = Icon::GitBranch;
+	else if (name == L"account") icon = Icon::Account;
+	else if (name == L"gear" || name == L"settings") icon = Icon::Gear;
+	else if (name == L"target") icon = Icon::Target;
+	else if (name == L"newline") icon = Icon::Newline;
+	else if (name == L"code") icon = Icon::Code;
+	else if (name == L"file-binary") icon = Icon::FileBinary;
+	else if (name == L"record-small" || name == L"circle-filled") icon = Icon::RecordSmall;
+	else if (name == L"insert") icon = Icon::Insert;
+	else if (name == L"zoom-in") icon = Icon::ZoomIn;
+	else if (name == L"file") icon = Icon::File;
+	else if (name == L"open-preview") icon = Icon::OpenPreview;
+	else if (name == L"chevron-down") icon = Icon::ChevronDown;
+	else if (name == L"close" || name == L"error") icon = Icon::Close;
+	else if (name == L"close-all") icon = Icon::CloseAll;
+	else {
+		// Codicons contains hundreds of names. A stable native marker is preferable
+		// to leaking the literal "$(name)" markup when a glyph is not imported yet.
+		icon = Icon::RecordSmall;
+	}
+	return true;
+}
+
+[[nodiscard]] ExtensionStatusText ParseExtensionStatusText(std::wstring_view raw)
+{
+	ExtensionStatusText result;
+	result.text.reserve(raw.size());
+	std::size_t cursor = 0;
+	while (cursor < raw.size()) {
+		const std::size_t start = raw.find(L"$(", cursor);
+		if (start == std::wstring_view::npos) {
+			result.text.append(raw.substr(cursor));
+			break;
+		}
+		result.text.append(raw.substr(cursor, start - cursor));
+		const std::size_t end = raw.find(L')', start + 2);
+		if (end == std::wstring_view::npos) {
+			result.text.append(raw.substr(start));
+			break;
+		}
+		auto name = raw.substr(start + 2, end - start - 2);
+		if (const std::size_t modifier = name.find(L'~'); modifier != std::wstring_view::npos) {
+			name = name.substr(0, modifier);
+		}
+		const bool onlyLeadingWhitespace = std::all_of(result.text.begin(), result.text.end(),
+			[](wchar_t character) { return std::iswspace(character) != 0; });
+		if (!result.hasIcon && onlyLeadingWhitespace && !name.empty()) {
+			result.hasIcon = ResolveExtensionStatusIcon(name, result.icon, result.extensionsIcon);
+			result.text.clear();
+		}
+		cursor = end + 1;
+	}
+	if (result.hasIcon) {
+		const auto firstText = std::find_if_not(result.text.begin(), result.text.end(),
+			[](wchar_t character) { return std::iswspace(character) != 0; });
+		result.text.erase(result.text.begin(), firstText);
+	}
+	return result;
+}
+
+void DrawExtensionsStatusIcon(HDC dc, const RECT& part, COLORREF color, UINT dpi) noexcept
+{
+	if (dc == nullptr) return;
+	const auto box = workbench::icons::LeadingStatusIconBounds(
+		{ part.left, part.top, part.right, part.bottom }, dpi);
+	if (box.Width() <= 0 || box.Height() <= 0) return;
+	const int gap = std::max(1, workbench::icons::ScaleDip(2, dpi));
+	const int tileWidth = std::max(1, (box.Width() - gap) / 2);
+	const int tileHeight = std::max(1, (box.Height() - gap) / 2);
+	const HBRUSH tile = ::CreateSolidBrush(color);
+	if (tile == nullptr) return;
+	for (int row = 0; row < 2; ++row) {
+		for (int column = 0; column < 2; ++column) {
+			RECT square{
+				box.left + column * (tileWidth + gap),
+				box.top + row * (tileHeight + gap),
+				box.left + column * (tileWidth + gap) + tileWidth,
+				box.top + row * (tileHeight + gap) + tileHeight,
+			};
+			::FillRect(dc, &square, tile);
+		}
+	}
+	::DeleteObject(tile);
 }
 
 } // namespace
@@ -167,6 +269,18 @@ void CMainStatusBar::SetScmText(std::wstring text)
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
+void CMainStatusBar::SetExtensionItems(std::vector<SExtensionStatusBarItem> items)
+{
+	std::erase_if(items, [](const auto& item) { return !item.visible || item.text.empty(); });
+	m_extensionItems = std::move(items);
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
+void CMainStatusBar::SetExtensionCommandCallback(std::function<void(std::wstring_view)> callback)
+{
+	m_extensionCommandCallback = std::move(callback);
+}
+
 void CMainStatusBar::InstallPaletteSubclass() noexcept
 {
 	if (m_hwndStatusBar == nullptr) return;
@@ -204,6 +318,24 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 	case WM_THEMECHANGED:
 		::InvalidateRect(window, nullptr, FALSE);
 		break;
+	case WM_LBUTTONUP:
+		if (self != nullptr && self->InvokeExtensionItemAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })) {
+			return 0;
+		}
+		break;
+	case WM_SETCURSOR:
+		if (self != nullptr) {
+			POINT point{};
+			if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)) {
+				for (const auto& target : self->m_extensionHitTargets) {
+					if (::PtInRect(&target.bounds, point)) {
+						::SetCursor(::LoadCursor(nullptr, IDC_HAND));
+						return TRUE;
+					}
+				}
+			}
+		}
+		break;
 	case WM_NCDESTROY:
 		::RemoveWindowSubclass(window, StatusBarSubclassProc, subclassId);
 		if (self != nullptr && self->m_hwndStatusBar == window) {
@@ -239,6 +371,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	::SetTextColor(target, m_palette.highlightText.ToColorRef());
 	const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(m_hwndStatusBar, WM_GETFONT, 0, 0));
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
+	m_extensionHitTargets.clear();
 	int scmWidth = 0;
 	if (!m_scmText.empty()) {
 		SIZE extent{};
@@ -257,10 +390,84 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
 	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
 	const int itemInset = workbench::icons::ScaleDip(workbench::icons::kStatusItemInsetDip, dpi);
+	RECT messageRect{};
+	if (partCount > 0) {
+		(void)::SendMessageW(m_hwndStatusBar, SB_GETRECT, 0, reinterpret_cast<LPARAM>(&messageRect));
+		messageRect.left = std::max<LONG>(messageRect.left, scmWidth);
+	}
+
+	struct ExtensionLayoutItem {
+		const SExtensionStatusBarItem* item = nullptr;
+		ExtensionStatusText display;
+		int width = 0;
+	};
+	std::vector<ExtensionLayoutItem> leftItems;
+	std::vector<ExtensionLayoutItem> rightItems;
+	for (const auto& item : m_extensionItems) {
+		auto display = ParseExtensionStatusText(item.text);
+		SIZE extent{};
+		(void)::GetTextExtentPoint32W(target, display.text.c_str(), static_cast<int>(display.text.size()), &extent);
+		const int contentWidth = extent.cx +
+			(display.hasIcon ? workbench::icons::StatusTextInsetPixels(dpi) : 0);
+		ExtensionLayoutItem layout{
+			.item = &item,
+			.display = std::move(display),
+			.width = workbench::icons::StatusItemPartWidthPixels(contentWidth, dpi),
+		};
+		if (item.alignment == EExtensionStatusBarAlignment::Right) rightItems.push_back(layout);
+		else leftItems.push_back(layout);
+	}
+	const auto drawExtensionItem = [&](const ExtensionLayoutItem& layout, int left, int right) {
+		if (layout.item == nullptr || right <= left) return;
+		RECT itemRect{ left, messageRect.top, right, messageRect.bottom };
+		if (layout.display.hasIcon) {
+			if (layout.display.extensionsIcon) {
+				DrawExtensionsStatusIcon(target, itemRect, m_palette.highlightText.ToColorRef(), dpi);
+			} else {
+				const auto box = workbench::icons::LeadingStatusIconBounds(
+					{ itemRect.left, itemRect.top, itemRect.right, itemRect.bottom }, dpi);
+				workbench::icons::codicons::Draw(
+					target, box, layout.display.icon, m_palette.highlightText.ToColorRef());
+			}
+		}
+		RECT textRect = itemRect;
+		textRect.left = std::min<LONG>(textRect.right, textRect.left +
+			(layout.display.hasIcon ? workbench::icons::StatusTextInsetPixels(dpi) : itemInset));
+		textRect.right = std::max<LONG>(textRect.left, textRect.right - itemInset);
+		if (!layout.display.text.empty()) {
+			::DrawTextW(target, layout.display.text.c_str(), static_cast<int>(layout.display.text.size()), &textRect,
+				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		}
+		if (!layout.item->command.empty()) {
+			m_extensionHitTargets.push_back({ itemRect, layout.item->command });
+		}
+	};
+
+	int rightGroupWidth = 0;
+	for (const auto& layout : rightItems) {
+		rightGroupWidth = std::min<int>(messageRect.right - messageRect.left,
+			rightGroupWidth + std::max(0, layout.width));
+	}
+	int rightCursor = std::max<int>(messageRect.left, messageRect.right - rightGroupWidth);
+	const int rightGroupLeft = rightCursor;
+	for (const auto& layout : rightItems) {
+		const int next = std::min<int>(messageRect.right, rightCursor + layout.width);
+		drawExtensionItem(layout, rightCursor, next);
+		rightCursor = next;
+	}
+	int leftCursor = messageRect.left;
+	for (const auto& layout : leftItems) {
+		if (leftCursor >= rightGroupLeft) break;
+		const int next = std::min<int>(rightGroupLeft, leftCursor + layout.width);
+		drawExtensionItem(layout, leftCursor, next);
+		leftCursor = next;
+	}
+	messageRect.left = leftCursor;
+	messageRect.right = rightGroupLeft;
 	for (int part = 0; part < partCount; ++part) {
 		RECT partRect{};
 		if (::SendMessageW(m_hwndStatusBar, SB_GETRECT, part, reinterpret_cast<LPARAM>(&partRect)) == FALSE) continue;
-		if (part == 0 && scmWidth > partRect.left) partRect.left = std::min<LONG>(partRect.right, scmWidth);
+		if (part == 0) partRect = messageRect;
 		const LRESULT textInfo = ::SendMessageW(m_hwndStatusBar, SB_GETTEXTLENGTHW, part, 0);
 		const UINT textLength = LOWORD(textInfo);
 		const UINT style = HIWORD(textInfo);
@@ -289,6 +496,18 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	}
 	if (bitmap != nullptr) ::DeleteObject(bitmap);
 	if (buffer != nullptr) ::DeleteDC(buffer);
+}
+
+bool CMainStatusBar::InvokeExtensionItemAt(POINT point) const
+{
+	if (!m_extensionCommandCallback) return false;
+	for (const auto& target : m_extensionHitTargets) {
+		if (::PtInRect(&target.bounds, point)) {
+			m_extensionCommandCallback(target.command);
+			return true;
+		}
+	}
+	return false;
 }
 
 /*!

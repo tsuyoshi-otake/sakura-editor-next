@@ -137,6 +137,12 @@ void CWorkbenchPanelHost::SetPalette(const theme::ThemePalette& palette)
 	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, TRUE);
 }
 
+void CWorkbenchPanelHost::SetTitle(std::wstring title)
+{
+	m_title = std::move(title);
+	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, TRUE);
+}
+
 void CWorkbenchPanelHost::ApplyExtentDip(int extentDip)
 {
 	if (m_closed || m_state == WorkbenchPanelState::DragResizing) return;
@@ -282,7 +288,8 @@ void CWorkbenchPanelHost::Paint()
 		::SetBkMode(dc, TRANSPARENT);
 		::SetTextColor(dc, m_palette.primaryText.ToColorRef());
 		const HGDIOBJ previousFont = m_font.Get() == nullptr ? nullptr : ::SelectObject(dc, m_font.Get());
-		const wchar_t* title = m_edge == WorkbenchEdge::Left ? L"EXPLORER" : L"OUTLINE";
+		const wchar_t* title = !m_title.empty() ? m_title.c_str()
+			: m_edge == WorkbenchEdge::Left ? L"EXPLORER" : L"OUTLINE";
 		::InflateRect(&header, -ScaleDip(8, m_dpi), 0);
 		::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);

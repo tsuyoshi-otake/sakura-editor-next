@@ -604,6 +604,8 @@ struct CommonSetting_Workbench
 	int		m_nBottomPanelExtent96;
 	EWorkbenchActiveTool m_eActiveTool;
 	BOOL	m_bOutlineMigrationComplete;
+	BOOL	m_bExtensionViewsVisible;
+	int		m_nExtensionViewsExtent96;
 };
 
 // Migrate only the old Outline visibility/width. Consumers must reserve the

@@ -26,14 +26,17 @@ TEST(ActivityBarModel, Uses42DipWidthAndSquareVerticalButtonsAtDpi)
 	model.SetViewport(500, 400, 144);
 
 	EXPECT_EQ(63, model.GetPreferredWidthPixels());
-	ASSERT_EQ(2U, model.GetButtonCount());
+	ASSERT_EQ(3U, model.GetButtonCount());
 	const auto explorer = model.GetButton(0);
 	const auto sourceControl = model.GetButton(1);
+	const auto extensions = model.GetButton(2);
 	EXPECT_EQ((ActivityBarRect{ 0, 0, 63, 63 }), explorer.bounds);
 	EXPECT_EQ((ActivityBarRect{ 0, 63, 63, 126 }), sourceControl.bounds);
+	EXPECT_EQ((ActivityBarRect{ 0, 126, 63, 189 }), extensions.bounds);
 	EXPECT_EQ(ActivityBarItem::Explorer, *model.HitTest(62, 62));
 	EXPECT_EQ(ActivityBarItem::SourceControl, *model.HitTest(10, 100));
-	EXPECT_FALSE(model.HitTest(10, 150).has_value());
+	EXPECT_EQ(ActivityBarItem::Extensions, *model.HitTest(10, 150));
+	EXPECT_FALSE(model.HitTest(10, 210).has_value());
 	EXPECT_FALSE(model.HitTest(63, 10).has_value());
 }
 
@@ -62,10 +65,11 @@ TEST(ActivityBarModel, FocusNavigationSkipsDisabledItemsAndWraps)
 	model.SetItemEnabled(ActivityBarItem::SourceControl, false);
 	model.SetFocusedItem(ActivityBarItem::Explorer);
 
-	EXPECT_EQ(ActivityBarItem::Explorer, *model.MoveFocus(1));
+	EXPECT_EQ(ActivityBarItem::Extensions, *model.MoveFocus(1));
 	EXPECT_EQ(ActivityBarItem::Explorer, *model.MoveFocus(-1));
 	EXPECT_FALSE(model.GetButton(1).enabled);
-	EXPECT_FALSE(model.HitTest(10, 100).has_value());
+	EXPECT_FALSE(model.HitTest(10, 60).has_value());
+	EXPECT_EQ(ActivityBarItem::Extensions, *model.HitTest(10, 100));
 }
 
 TEST(ActivityBarModel, InvokeOnlyReturnsEnabledRequestedItemAndDoesNotChangeSelection)

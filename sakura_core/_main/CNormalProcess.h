@@ -43,7 +43,7 @@ protected:
 	void OnExitProcess() override;
 
 	//実装補助
-	HANDLE _GetInitializeMutex() const; // 2002/2/8 aroka
+	HANDLE _GetInitializeMutex(bool& abandoned) const; // 2002/2/8 aroka
 	void	OpenFiles(HWND hEditWnd) const;
 
 private:

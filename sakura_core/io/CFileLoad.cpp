@@ -15,6 +15,7 @@
 */
 
 #include "StdAfx.h"
+#include "util/CpuDispatch.h"
 #include <stdlib.h>
 #include <string.h>
 #include <algorithm>
@@ -481,6 +482,14 @@ const char* CFileLoad::GetNextLineCharCode(
 				EEolType::paragraph_separator,
 			};
 			nLen = nDataLen;
+			if( !m_bEolEx ){
+				i = nbgn + CpuDispatch::Get().findCrOrLf(pData + nbgn, nDataLen - nbgn);
+				if( i < nDataLen ){
+					pcEol->SetTypeByStringForFile( &pData[i], nDataLen - i );
+					neollen = (size_t)pcEol->GetLen();
+				}
+				break;
+			}
 			for( i = nbgn; i < nDataLen; ++i ){
 				if( pData[i] == '\r' || pData[i] == '\n' ){
 					pcEol->SetTypeByStringForFile( &pData[i], nDataLen - i );

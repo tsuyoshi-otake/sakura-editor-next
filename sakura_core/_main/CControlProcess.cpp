@@ -22,6 +22,7 @@
 #include "CCommandLine.h"
 #include "env/CShareData_IO.h"
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
 #include "env/CShareData.h"
 #include "sakura_rc.h"/// IDD_EXITTING 2002/2/10 aroka ヘッダー整理
 #include "config/system_constants.h"
@@ -119,6 +120,8 @@ std::filesystem::path CControlProcess::GetPrivateIniFileName(const std::wstring&
 bool CControlProcess::InitializeProcess()
 {
 	MY_RUNNINGTIMER( cRunningTimer, L"CControlProcess::InitializeProcess" );
+	CStartupTrace::SetRole(CStartupTrace::Role::Control);
+	CStartupTrace::Mark(CStartupTrace::Event::ControlInitializeBegin);
 
 	// アプリケーション実行検出用(インストーラで使用)
 	m_hMutex = ::CreateMutex( nullptr, FALSE, GSTR_MUTEX_SAKURA );
@@ -155,6 +158,7 @@ bool CControlProcess::InitializeProcess()
 	if( !CProcess::InitializeProcess() ){
 		return false;
 	}
+	CStartupTrace::Mark(CStartupTrace::Event::ControlSharedDataReady);
 
 	// コントロールプロセスのカレントディレクトリをシステムディレクトリに変更
 	WCHAR szDir[_MAX_PATH];
@@ -189,9 +193,25 @@ bool CControlProcess::InitializeProcess()
 	}
 	SetMainWindow(hwnd);
 	GetDllShareData().m_sHandles.m_hwndTray = hwnd;
+	CStartupTrace::Mark(CStartupTrace::Event::ControlTrayCreated);
 
-	// 初期化完了イベントをシグナル状態にする
-	if (hEvent) ::SetEvent(hEvent);
+	// 初期化完了イベントをシグナル状態にする。ランチャー所有イベントが
+	// 無い場合も trace 上では明示的な終端として記録する。
+	CStartupTrace::Mark(CStartupTrace::Event::ControlReadyEventBegin);
+	if (hEvent) {
+		::SetLastError(ERROR_SUCCESS);
+		const BOOL setEventResult = ::SetEvent(hEvent);
+		const DWORD setEventError = setEventResult ? ERROR_SUCCESS : ::GetLastError();
+		CStartupTrace::Mark(
+			CStartupTrace::Event::ControlReadyEventEnd,
+			setEventResult ? 1 : 0,
+			setEventError);
+	} else {
+		CStartupTrace::Mark(
+			CStartupTrace::Event::ControlReadyEventEnd,
+			-1,
+			ERROR_INVALID_HANDLE);
+	}
 
 	return true;
 }

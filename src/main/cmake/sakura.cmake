@@ -586,6 +586,46 @@ set_source_files_properties(${WINDOWS_TERMINAL_VENDOR_SOURCES}
   PROPERTIES SKIP_PRECOMPILE_HEADERS ON
 )
 
+# Keep higher-ISA code in isolated translation units.  The baseline executable
+# remains AVX-compatible, while the process-wide dispatch table calls these
+# implementations only after CPUID and XGETBV validation.
+set(SAKURA_CPU_DISPATCH_AVX_SOURCE
+  ${CMAKE_SOURCE_DIR}/sakura_core/util/CpuDispatchAvx.cpp
+)
+set(SAKURA_CPU_DISPATCH_AVX2_SOURCE
+  ${CMAKE_SOURCE_DIR}/sakura_core/util/CpuDispatchAvx2.cpp
+)
+set(SAKURA_CPU_DISPATCH_AVX512_SOURCE
+  ${CMAKE_SOURCE_DIR}/sakura_core/util/CpuDispatchAvx512.cpp
+)
+set_source_files_properties(
+  ${SAKURA_CPU_DISPATCH_AVX_SOURCE}
+  ${SAKURA_CPU_DISPATCH_AVX2_SOURCE}
+  ${SAKURA_CPU_DISPATCH_AVX512_SOURCE}
+  PROPERTIES SKIP_PRECOMPILE_HEADERS ON
+)
+if(MSVC)
+  set_source_files_properties(${SAKURA_CPU_DISPATCH_AVX_SOURCE}
+    PROPERTIES COMPILE_OPTIONS "/arch:AVX;/GL-"
+  )
+  set_source_files_properties(${SAKURA_CPU_DISPATCH_AVX2_SOURCE}
+    PROPERTIES COMPILE_OPTIONS "/arch:AVX2;/GL-"
+  )
+  set_source_files_properties(${SAKURA_CPU_DISPATCH_AVX512_SOURCE}
+    PROPERTIES COMPILE_OPTIONS "/arch:AVX512;/GL-"
+  )
+elseif(MINGW)
+  set_source_files_properties(${SAKURA_CPU_DISPATCH_AVX_SOURCE}
+    PROPERTIES COMPILE_OPTIONS "-mavx"
+  )
+  set_source_files_properties(${SAKURA_CPU_DISPATCH_AVX2_SOURCE}
+    PROPERTIES COMPILE_OPTIONS "-mavx2"
+  )
+  set_source_files_properties(${SAKURA_CPU_DISPATCH_AVX512_SOURCE}
+    PROPERTIES COMPILE_OPTIONS "-mavx512f;-mavx512bw"
+  )
+endif()
+
 # Set C++ standard for sakura_core
 target_compile_features(sakura_core PUBLIC cxx_std_20)
 
@@ -618,6 +658,7 @@ target_link_libraries(sakura_core
     advapi32
     bcrypt
     comctl32
+    crypt32
     dbghelp
     dwmapi
     htmlhelp

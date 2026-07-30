@@ -60,6 +60,13 @@ class CPlug;
 class CEditDoc;
 class CCustomFrameController;
 class CExtensionPane;
+class CExtensionService;
+struct SExtensionNativeEditorOptions;
+class CExtensionViewRegistry;
+struct SExtensionDiagnostic;
+struct SExtensionDocumentSnapshot;
+struct SExtensionDocumentEdit;
+struct SExtensionApplyEditResult;
 struct DLLSHAREDATA;
 namespace terminal {
 class CTerminalTool;
@@ -82,6 +89,10 @@ class COutlineWorkbenchTool;
 namespace scm {
 class CScmWorkbenchTool;
 }
+namespace extension {
+class CExtensionBottomPanelTool;
+class CExtensionSidebarTool;
+}
 }
 
 //メインウィンドウ内コントロールID
@@ -89,6 +100,7 @@ class CScmWorkbenchTool;
 #define IDT_TOOLBAR		456
 #define IDT_CAPTION		457
 #define IDT_FIRST_IDLE	458
+#define IDT_EXTENSION_DOCUMENT_SYNC 459
 #define IDT_SYSMENU		1357
 #define ID_TOOLBAR		100
 
@@ -146,6 +158,16 @@ public:
 	void OpenDocumentWhenStart(
 		const SLoadInfo& sLoadInfo		//!< [in]
 	);
+
+	//! Initial-window presentation is committed once after document/layout setup.
+	void CommitStartupDrawTransaction();
+	[[nodiscard]] bool IsStartupDrawSuppressed() const noexcept;
+	[[nodiscard]] bool IsStartupDrawCommitting() const noexcept;
+	//! Records completion of the first full paint of the primary editor view.
+	void RecordFirstStartupContentPaint() noexcept;
+	//! Aggregates minimap work in memory; the transaction emits one summary.
+	void RecordStartupMiniMapImmediateUpdate() noexcept;
+	void RecordStartupMiniMapPaint(std::int64_t qpcTicks) noexcept;
 
 	void SetDocumentTypeWhenCreate(
 		ECodeType		nCharCode,							//!< [in] 漢字コード
@@ -234,6 +256,8 @@ public:
 	void NewIntegratedTerminal();
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
+	//! Show the VS Code-compatible command palette and dispatch the selected extension command.
+	void ShowExtensionCommandPalette();
 	[[nodiscard]] bool IsMarkdownPreviewVisible() const noexcept;
 	[[nodiscard]] bool IsMarkdownPreviewAvailable() const;
 
@@ -318,6 +342,10 @@ public:
 	const CEditView&    GetView(int n) const { return *m_pcEditViewArr[n]; }
 	CEditView&          GetView(int n)       { return *m_pcEditViewArr[n]; }
 	CMiniMapView&       GetMiniMap( void ) { return m_cMiniMapView; }
+	//! Diagnostics published for the file currently owned by this editor process.
+	[[nodiscard]] std::vector<SExtensionDiagnostic> ExtensionDiagnosticsForCurrentDocument() const;
+	//! Called after a native undo unit is finalized; schedules one bounded document snapshot.
+	void NotifyExtensionDocumentChanged();
 
 	//! 拡張サイドバーの表示を切り替える。初回はここで作成する
 	void ToggleExtensionPane();
@@ -401,6 +429,20 @@ public:
 	//                        メンバ変数                           //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 private:
+	enum class StartupDrawState {
+		Inactive,
+		Suppressing,
+		Committing,
+		Committed,
+		Aborted,
+	};
+
+	void BeginStartupDrawTransaction() noexcept;
+	void AbortStartupDrawTransaction() noexcept;
+	void FinishStartupTabSwap() noexcept;
+	void EmitStartupMiniMapSummary() noexcept;
+	[[nodiscard]] bool ShouldDeferStartupLayout() const noexcept;
+
 	bool InitializeWorkbench();
 	void CloseWorkbench() noexcept;
 	void ApplyWorkbenchTheme();
@@ -408,8 +450,19 @@ private:
 	void ReloadWorkbenchOutlineAndRelayout();
 	void BroadcastWorkbenchSettings();
 	void UpdateWorkspaceFromDocument();
+	[[nodiscard]] SExtensionDocumentSnapshot CaptureExtensionDocumentSnapshot(std::uint64_t version) const;
+	void PublishExtensionDocumentOpen(bool forceReopen);
+	void PublishExtensionDocumentChange();
+	void PublishExtensionDocumentSave();
+	void PublishExtensionActiveEditor();
+	SExtensionApplyEditResult ApplyExtensionEdits(
+		const std::vector<SExtensionDocumentEdit>& edits,
+		std::vector<SExtensionDocumentSnapshot>& snapshots);
+	bool ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& options);
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
+	void PersistExtensionViewsExtent(int extentDip);
 	void ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive);
+	void ToggleExtensionViewsSidebar(bool activate);
 	void ToggleBottomWorkbenchMaximized();
 	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
@@ -438,6 +491,13 @@ private:
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
+	std::unique_ptr<CExtensionService> m_extensionService;
+	std::wstring m_extensionDocumentUri;
+	std::uint64_t m_extensionDocumentVersion = 0;
+	bool m_extensionDocumentSyncTimerPending = false;
+	std::shared_ptr<CExtensionViewRegistry> m_extensionViewRegistry;
+	workbench::extension::CExtensionSidebarTool* m_extensionSidebarTool = nullptr;
+	workbench::extension::CExtensionBottomPanelTool* m_extensionBottomPanelTool = nullptr;
 	workbench::explorer::CExplorerOutlineTool* m_explorerOutlineTool = nullptr;
 	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
@@ -453,6 +513,16 @@ private:
 	WPARAM m_pendingLayoutWParam = SIZE_RESTORED;
 	LPARAM m_pendingLayoutLParam = 0;
 	bool m_pendingLayoutUpdateStatus = false;
+	StartupDrawState m_startupDrawState = StartupDrawState::Inactive;
+	bool m_startupSavedDrawSwitch = true;
+	bool m_startupCommitLayoutAllowed = false;
+	bool m_startupFirstContentPainted = false;
+	bool m_startupMiniMapSummaryEmitted = false;
+	std::int64_t m_startupMiniMapPaintQpcTicks = 0;
+	std::int64_t m_startupMiniMapPaintCount = 0;
+	std::int64_t m_startupMiniMapImmediateUpdateCount = 0;
+	int m_startupShowCommand = SW_SHOW;
+	HWND m_startupPreviousTabWindow = nullptr;
 	workbench::CWorkbenchPanelHost* m_resizingWorkbenchPanel = nullptr;
 	POINT m_workbenchResizeOrigin{};
 	int m_workbenchResizeInitialExtentDip = 0;

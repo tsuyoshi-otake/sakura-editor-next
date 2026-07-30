@@ -30,6 +30,7 @@ public:
 	void Hide();
 	void ActivateTool();
 	void SetPalette(const theme::ThemePalette& palette);
+	void SetTitle(std::wstring title);
 	//! Applies a shared extent without entering resize state or invoking persistence.
 	void ApplyExtentDip(int extentDip);
 	void BeginResize();
@@ -64,6 +65,7 @@ private:
 	RECT m_bounds{};
 	HWND m_window = nullptr;
 	std::unique_ptr<IWorkbenchTool> m_tool;
+	std::wstring m_title;
 	PersistExtentCallback m_persistExtent;
 	bool m_closed = false;
 };

@@ -620,6 +620,7 @@ void CEditView::MiniMapRedraw(bool bUpdateAll)
 		// The document-wide scale means a line-count or viewport change can affect
 		// every row. Painting is still bounded to O(height) GDI calls.
 		::InvalidateRect( miniMap.GetHwnd(), nullptr, FALSE );
+		GetEditWnd().RecordStartupMiniMapImmediateUpdate();
 		::UpdateWindow( miniMap.GetHwnd() );
 	}
 }

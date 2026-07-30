@@ -22,6 +22,16 @@ set(_sakura_target_platform "${CMAKE_VS_PLATFORM_NAME}")
 if(NOT _sakura_target_platform)
   set(_sakura_target_platform "${CMAKE_SYSTEM_PROCESSOR}")
 endif()
+if(NOT _sakura_target_platform)
+  # Single-config generators such as Ninja do not populate either of the
+  # platform variables above when using MSVC.  CMake's compiler probe still
+  # records the actual target architecture, so use that without weakening the
+  # x64-only guard (in particular, ARM64 must remain rejected).
+  set(_sakura_target_platform "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}")
+endif()
+if(NOT _sakura_target_platform)
+  set(_sakura_target_platform "${MSVC_CXX_ARCHITECTURE_ID}")
+endif()
 string(TOLOWER "${_sakura_target_platform}" _sakura_target_platform)
 
 if(NOT _sakura_target_platform MATCHES "^(x64|amd64|x86_64)$" OR

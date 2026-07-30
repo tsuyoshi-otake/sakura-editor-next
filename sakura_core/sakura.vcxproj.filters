@@ -487,6 +487,12 @@
     <ClInclude Include="..\sakura_core\util\container.h">
       <Filter>Cpp Source Files\util</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\util\CpuDispatch.h">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\util\CpuDispatchInternal.h">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\util\design_template.h">
       <Filter>Cpp Source Files\util</Filter>
     </ClInclude>
@@ -949,6 +955,12 @@
 	<ClInclude Include="..\sakura_core\workbench\activity\CActivityBar.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1090,6 +1102,9 @@
     <ClInclude Include="..\sakura_core\debug\CRunningTimer.h">
       <Filter>Cpp Source Files\debug</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\debug\StartupTrace.h">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\debug\Debug1.h">
       <Filter>Cpp Source Files\debug</Filter>
     </ClInclude>
@@ -1195,7 +1210,67 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionPane.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionCommandPalette.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchUi.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionTrustStore.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionQuickInputDialog.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionContextKeys.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionDocumentBridge.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostBroker.h">
+      <Filter>extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostController.h">
+      <Filter>extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostProcess.h">
+      <Filter>extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostSharedState.h">
+      <Filter>extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostStateMachine.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionPipeTransport.h">
+      <Filter>extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionNotificationCenter.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionSecretStorage.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionStatusBar.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionViewRegistry.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionRpcProtocol.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionService.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CHttpClient.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CJsonRpcFrameCodec.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\COpenVsxClient.h">
@@ -1655,6 +1730,18 @@
       <Filter>Cpp Source Files\env</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\util\file.cpp">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatch.cpp">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatchAvx.cpp">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatchAvx2.cpp">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatchAvx512.cpp">
       <Filter>Cpp Source Files\util</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\util\format.cpp">
@@ -2269,6 +2356,12 @@
 	<ClCompile Include="..\sakura_core\workbench\activity\CActivityBar.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -2396,6 +2489,9 @@
       <Filter>Cpp Source Files\docplus</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\debug\CRunningTimer.cpp">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\debug\StartupTrace.cpp">
       <Filter>Cpp Source Files\debug</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\debug\Debug1.cpp">
@@ -2551,7 +2647,67 @@
     <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionCommandPalette.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchUi.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionTrustStore.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionQuickInputDialog.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionContextKeys.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionDocumentBridge.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostBroker.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostController.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostProcess.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostSharedState.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostStateMachine.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionPipeTransport.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionNotificationCenter.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionSecretStorage.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionStatusBar.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionViewRegistry.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionRpcProtocol.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionService.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CHttpClient.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CJsonRpcFrameCodec.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\COpenVsxClient.cpp">

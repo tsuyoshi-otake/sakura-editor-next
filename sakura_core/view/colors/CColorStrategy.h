@@ -86,6 +86,7 @@ struct SColorStrategyInfo{
 	//参照
 	CEditView*	m_pcView = nullptr;
 	CGraphics	m_gr = nullptr;	//(SColorInfoでは未使用)
+	bool		m_collectStartupPaintMetrics = false;
 
 	//スキャン位置
 	LPCWSTR			m_pLineOfLogic;

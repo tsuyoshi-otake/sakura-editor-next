@@ -6,6 +6,7 @@
 */
 #include "charset/charcode.h"
 #include "pch.h"
+#include "env/ShareDataTestSuite.hpp"
 #include <algorithm>
 #include <cstring>
 #include <string>
@@ -44,6 +45,19 @@ protected:
 	HDC dc;
 	HFONT font;
 	HFONT oldFont;
+};
+
+class CharWidthCacheWithShareData : public CharWidthCache, public env::ShareDataTestSuite {
+protected:
+	static void SetUpTestSuite()
+	{
+		SetUpShareData();
+	}
+
+	static void TearDownTestSuite()
+	{
+		TearDownShareData();
+	}
 };
 
 TEST_F(CharWidthCache, IsHankaku)
@@ -217,6 +231,33 @@ TEST_F(CharWidthCache, GetCharWidthCache)
 
 	// 同じキャッシュ
 	EXPECT_EQ(&edit1, &edit2);
+}
+
+TEST_F(CharWidthCacheWithShareData, ReusesOnlyIdenticalLocalFontInitialization)
+{
+	SelectCharWidthCache(CWM_FONT_EDIT, CWM_CACHE_LOCAL);
+	InitCharWidthCache(lf1);
+	EXPECT_FALSE(InitCharWidthCache(lf1));
+
+	// フォントが変われば、ローカルでも 64K 要素のキャッシュを再初期化する。
+	EXPECT_TRUE(InitCharWidthCache(lf3));
+
+	// 共有キャッシュは別プロセスとの状態を再検証するため、同一フォントでも
+	// 再初期化を省略してはいけない。
+	SelectCharWidthCache(CWM_FONT_EDIT, CWM_CACHE_SHARE);
+	EXPECT_TRUE(InitCharWidthCache(lf1));
+	EXPECT_TRUE(InitCharWidthCache(lf1));
+	EXPECT_TRUE(InitCharWidthCache(lf3));
+	SelectCharWidthCache(CWM_FONT_EDIT, CWM_CACHE_LOCAL);
+	EXPECT_TRUE(InitCharWidthCache(lf1));
+	EXPECT_FALSE(InitCharWidthCache(lf1));
+
+	// DC 初期化はデバイス依存であり、同一 LOGFONT のローカル初期化と
+	// 同一視しない。次の通常初期化も必ず実行する。
+	SelectCharWidthCache(CWM_FONT_PRINT, CWM_CACHE_LOCAL);
+	LOGFONT lfs[] = { lf1, lf2 };
+	InitCharWidthCacheFromDC(lfs, CWM_FONT_PRINT, dc);
+	EXPECT_TRUE(InitCharWidthCache(lf1, CWM_FONT_PRINT));
 }
 
 TEST(charcode, IS_KEYWORD_CHAR)

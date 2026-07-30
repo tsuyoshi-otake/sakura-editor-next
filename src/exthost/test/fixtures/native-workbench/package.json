@@ -1,0 +1,27 @@
+{
+  "name": "native-workbench",
+  "publisher": "sakura-test",
+  "version": "1.0.0",
+  "displayName": "Native Workbench Integration",
+  "main": "./extension.js",
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "sakuraTest.native.run",
+        "title": "Run Native Workbench Test",
+        "category": "Sakura Test"
+      }
+    ],
+    "views": {
+      "sakura.extensionViews": [
+        {
+          "id": "sakuraTest.native.view",
+          "name": "Open VSX Test View"
+        }
+      ]
+    }
+  }
+}

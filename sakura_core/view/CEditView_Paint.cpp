@@ -21,6 +21,8 @@
 #include "types/CTypeSupport.h"
 #include "doc/CEditDoc.h"
 #include "doc/layout/CLayout.h"
+#include "debug/StartupTrace.h"
+#include "extension/CExtensionWorkbenchUi.h"
 #include "window/CEditWnd.h"
 #include "parse/CWordParse.h"
 #include "util/string_ex2.h"
@@ -33,6 +35,79 @@
 #endif
 
 void _DispWrap(CGraphics& gr, DispPos* pDispPos, const CEditView* pcView, CLayoutYInt nLineNum);
+
+namespace {
+
+COLORREF DiagnosticColor(EExtensionDiagnosticSeverity severity) noexcept
+{
+	switch (severity) {
+	case EExtensionDiagnosticSeverity::Error: return RGB(224, 62, 62);
+	case EExtensionDiagnosticSeverity::Warning: return RGB(222, 151, 31);
+	case EExtensionDiagnosticSeverity::Information: return RGB(61, 139, 204);
+	case EExtensionDiagnosticSeverity::Hint: return RGB(128, 128, 128);
+	}
+	return RGB(224, 62, 62);
+}
+
+void DrawDiagnosticSquiggles(CEditView& view, CGraphics& graphics)
+{
+	const auto diagnostics = GetEditWnd().ExtensionDiagnosticsForCurrentDocument();
+	if (diagnostics.empty()) return;
+	const auto& area = view.GetTextArea();
+	const auto visibleTop = area.GetViewTopLine();
+	const auto visibleBottom = area.GetBottomLine();
+	const auto visibleLeft = area.GetViewLeftCol();
+	const auto visibleRight = area.GetRightCol();
+	const int lineHeight = view.GetTextMetrics().GetHankakuDy();
+	constexpr std::size_t maximumDiagnosticsPerPaint = 4096;
+	constexpr std::size_t maximumSegmentsPerPaint = 8192;
+	std::size_t segmentCount = 0;
+
+	for (std::size_t diagnosticIndex = 0;
+		diagnosticIndex < diagnostics.size() && diagnosticIndex < maximumDiagnosticsPerPaint;
+		++diagnosticIndex) {
+		const auto& diagnostic = diagnostics[diagnosticIndex];
+		CLayoutPoint start;
+		CLayoutPoint end;
+		view.GetDocument()->m_cLayoutMgr.LogicToLayout(
+			CLogicPoint(static_cast<int>(diagnostic.range.start.character), static_cast<int>(diagnostic.range.start.line)), &start);
+		view.GetDocument()->m_cLayoutMgr.LogicToLayout(
+			CLogicPoint(static_cast<int>(diagnostic.range.end.character), static_cast<int>(diagnostic.range.end.line)), &end);
+		if (PointCompare(end, start) < 0 || end.y < visibleTop || start.y > visibleBottom) continue;
+
+		const auto firstLine = (std::max)(start.y, visibleTop);
+		const auto lastLine = (std::min)(end.y, visibleBottom);
+		const HPEN pen = ::CreatePen(PS_SOLID, 1, DiagnosticColor(diagnostic.severity));
+		if (!pen) continue;
+		const auto oldPen = static_cast<HPEN>(::SelectObject(graphics, pen));
+		for (auto line = firstLine; line <= lastLine && segmentCount < maximumSegmentsPerPaint; ++line) {
+			if (line == end.y && end.x == 0 && end != start) break;
+			auto from = line == start.y ? start.x : visibleLeft;
+			auto to = line == end.y ? end.x : visibleRight;
+			from = (std::max)(from, visibleLeft);
+			to = (std::min)(to, visibleRight);
+			if (to < from) continue;
+			int left = area.GetAreaLeft() + view.GetTextMetrics().GetCharPxWidth(from - visibleLeft);
+			int right = area.GetAreaLeft() + view.GetTextMetrics().GetCharPxWidth(to - visibleLeft);
+			left = (std::clamp)(left, area.GetAreaLeft(), area.GetAreaRight());
+			right = (std::clamp)(right, area.GetAreaLeft(), area.GetAreaRight());
+			if (right <= left) right = (std::min)(area.GetAreaRight(), left + 4);
+			if (right <= left) continue;
+			const int baseline = area.GetAreaTop() + static_cast<int>(line - visibleTop) * lineHeight + lineHeight - 2;
+			::MoveToEx(graphics, left, baseline, nullptr);
+			for (int x = left + 2, phase = 0; x < right; x += 2, ++phase) {
+				::LineTo(graphics, x, baseline - (phase % 2 == 0 ? 2 : 0));
+			}
+			::LineTo(graphics, right, baseline);
+			++segmentCount;
+		}
+		::SelectObject(graphics, oldPen);
+		::DeleteObject(pen);
+		if (segmentCount >= maximumSegmentsPerPaint) break;
+	}
+}
+
+} // namespace
 
 /*
 	PAINT_LINENUMBER = (1<<0), //!< 行番号
@@ -672,17 +747,39 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 		return;
 	}
 	if( m_bMiniMap ){
+		const bool measureStartupPaint = CStartupTrace::IsEnabled()
+			&& GetEditWnd().IsStartupDrawCommitting();
+		LARGE_INTEGER begin{};
+		if (measureStartupPaint) {
+			::QueryPerformanceCounter(&begin);
+		}
 		DrawMiniMapOverview(_hdc);
 		DrawMiniMapViewport(_hdc);
+		if (measureStartupPaint) {
+			LARGE_INTEGER end{};
+			::QueryPerformanceCounter(&end);
+			GetEditWnd().RecordStartupMiniMapPaint(end.QuadPart - begin.QuadPart);
+		}
 		return;
 	}
 	bool bChangeFont = false;
 	if( bChangeFont ){
 		SelectCharWidthCache( CWM_FONT_MINIMAP, CWM_CACHE_LOCAL );
 	}
-	OnPaint2( _hdc, pPs, bDrawFromComptibleBmp );
+	const bool traceFirstContentPaint = m_nMyIndex == 0 && CStartupTrace::IsAwaitingFirstContentPaint();
+	if (traceFirstContentPaint) {
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintBegin);
+	}
+	const bool contentPainted = OnPaint2( _hdc, pPs, bDrawFromComptibleBmp );
+	if (traceFirstContentPaint) {
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintEnd, contentPainted ? 1 : 0);
+		CStartupTrace::FlushFirstContentPaintMetrics();
+	}
 	if( bChangeFont ){
 		SelectCharWidthCache( CWM_FONT_EDIT, GetEditWnd().GetLogfontCacheMode() );
+	}
+	if (contentPainted && m_nMyIndex == 0) {
+		GetEditWnd().RecordFirstStartupContentPaint();
 	}
 }
 
@@ -695,15 +792,15 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 	@date 2007.09.09 Moca 元々無効化されていた第三パラメータのbUseMemoryDCをbDrawFromComptibleBmpに変更。
 	@date 2009.03.26 ryoji 行番号のみ描画を通常の行描画と分離（効率化）
 */
-void CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp )
+bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp )
 {
 //	MY_RUNNINGTIMER( cRunningTimer, "CEditView::OnPaint" );
 	CGraphics gr(_hdc);
 
 	// 2004.01.28 Moca デスクトップに作画しないように
-	if( nullptr == GetHwnd() || nullptr == _hdc )return;
+	if( nullptr == GetHwnd() || nullptr == _hdc )return false;
 
-	if( !GetDrawSwitch() )return;
+	if( !GetDrawSwitch() )return false;
 	//@@@
 #if 0
 	::MYTRACE( L"OnPaint(%d,%d)-(%d,%d) : %d\n",
@@ -734,7 +831,11 @@ void CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 			/* アクティブペインは、アンダーライン描画 */
 			GetCaret().m_cUnderLine.CaretUnderLineON( true, false );
 		}
-		return;
+		return false;
+	}
+	const bool traceFirstContentWork = m_nMyIndex == 0 && CStartupTrace::IsAwaitingFirstContentPaint();
+	if (traceFirstContentWork) {
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintPrepareBegin);
 	}
 	if( (m_hdcCompatDC && nullptr == m_hbmpCompatBMP)
 		 || m_nCompatBMPWidth < (pPs->rcPaint.right - pPs->rcPaint.left)
@@ -882,6 +983,11 @@ void CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 		;
 
 	//必要な行を描画する	// 2009.03.26 ryoji 行番号のみ描画を通常の行描画と分離（効率化）
+	if (traceFirstContentWork) {
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintPrepareEnd);
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintLinesBegin);
+		CStartupTrace::BeginFirstContentPaintMetrics();
+	}
 	if(pPs->rcPaint.right <= GetTextArea().GetAreaLeft()){
 		while(sPos.GetLayoutLineRef() <= nLayoutLineTo)
 		{
@@ -903,6 +1009,7 @@ void CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 		SColorStrategyInfo sInfo(gr);
 		sInfo.m_pDispPos = &sPos;
 		sInfo.m_pcView = this;
+		sInfo.m_collectStartupPaintMetrics = traceFirstContentWork;
 		while(sPos.GetLayoutLineRef() <= nLayoutLineTo)
 		{
 			//描画X位置リセット
@@ -940,8 +1047,14 @@ void CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 			}
 		}
 	}
+	if (traceFirstContentWork) {
+		CStartupTrace::EndFirstContentPaintMetrics();
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintLinesEnd);
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintFinishBegin);
+	}
 
 	cTextType.RewindGraphicsState(gr);
+	DrawDiagnosticSquiggles(*this, gr);
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                       ルーラー描画                          //
@@ -986,7 +1099,10 @@ void CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 	/* キャレットを現在位置に表示します */
 	if( bCaretShowFlag_Old )	// 2008.06.09 ryoji
 		GetCaret().ShowCaret_( this->GetHwnd() ); // 2002/07/22 novice
-	return;
+	if (traceFirstContentWork) {
+		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintFinishEnd);
+	}
+	return true;
 }
 
 /*!
@@ -1206,9 +1322,15 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 			if (is_text) {
 				nextRenderType = CFigure_Text::GetRenderType(pInfo);
 			}
+			const bool renderTypeBoundary = prevRenderType != nextRenderType;
+			const bool lengthBoundary = nDrawBlockLen < nPosLength;
 			if (CFigure_Text::IsRenderType_Block(prevRenderType) &&
-				(prevRenderType != nextRenderType || (nDrawBlockLen < nPosLength))) {
+				(renderTypeBoundary || lengthBoundary)) {
 				if (0 < nPosLength) {
+					if (pInfo->m_collectStartupPaintMetrics) {
+						CStartupTrace::AccumulateFirstContentTextBoundary(
+							renderTypeBoundary, lengthBoundary, false, false);
+					}
 					CFigure_Text::DrawImpBlock(pInfo, nPosBgn, nPosLength);
 					nPosBgn = nPosInLogic;
 					nPosLength = 0;
@@ -1217,8 +1339,15 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 			prevRenderType = nextRenderType;
 
 			//色切替
-			if( pInfo->CheckChangeColor(cLineStr) ){
+			const bool colorChanged = pInfo->CheckChangeColor(cLineStr);
+			if (pInfo->m_collectStartupPaintMetrics) {
+				CStartupTrace::AccumulateFirstContentTextScan(is_text, colorChanged);
+			}
+			if( colorChanged ){
 				if (0 < nPosLength) {
+					if (pInfo->m_collectStartupPaintMetrics) {
+						CStartupTrace::AccumulateFirstContentTextBoundary(false, false, true, false);
+					}
 					CFigure_Text::DrawImpBlock(pInfo, nPosBgn, nPosLength);
 					nPosBgn = nPosInLogic;
 					nPosLength = 0;
@@ -1241,6 +1370,9 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 			}
 			if( bSkipRight && GetTextArea().GetRightCol() < nDrawX ){
 				if (0 < nPosLength) {
+					if (pInfo->m_collectStartupPaintMetrics) {
+						CStartupTrace::AccumulateFirstContentTextBoundary(false, false, false, true);
+					}
 					CFigure_Text::DrawImpBlock(pInfo, nPosBgn, nPosLength);
 					nPosBgn = nPosInLogic;
 				}
@@ -1250,6 +1382,9 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 			}
 		}
 		if (0 < nPosLength) {
+			if (pInfo->m_collectStartupPaintMetrics) {
+				CStartupTrace::AccumulateFirstContentTextBoundary(false, false, false, true);
+			}
 			CFigure_Text::DrawImpBlock(pInfo, nPosBgn, nPosLength);
 		}
 	}

@@ -44,6 +44,7 @@
 #include "util/os.h"		//WM_MOUSEWHEEL,WM_THEMECHANGED
 #include "util/window.h"
 #include "util/shell.h"
+#include "util/file.h"
 #include "util/string_ex2.h"
 #include "plugin/CJackManager.h"
 #include "agent/CGrepAgent.h"
@@ -51,6 +52,7 @@
 #include "doc/logic/CDocLine.h"
 #include "doc/layout/CLayout.h"
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
 #include "apiwrap/StdApi.h"
 #include "apiwrap/CommonControl.h"
 #include "sakura_rc.h"
@@ -70,6 +72,8 @@
 #include "workbench/IconMetrics.h"
 #include "workbench/WorkbenchLayout.h"
 #include "workbench/activity/CActivityBar.h"
+#include "workbench/extension/CExtensionBottomPanelTool.h"
+#include "workbench/extension/CExtensionSidebarTool.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/explorer/CExplorerOutlineTool.h"
 #include "workbench/WorkbenchZoom.h"
@@ -79,6 +83,13 @@
 #include "view/colors/CColorStrategy.h"
 #include "view/figures/CFigureManager.h"
 #include "extension/CExtensionPane.h"
+#include "extension/CExtensionQuickInputDialog.h"
+#include "extension/CExtensionService.h"
+#include "extension/CExtensionViewRegistry.h"
+#include "cmd/COpeBlk.h"
+#include "cmd/CViewCommander_inline.h"
+
+#include <cwctype>
 
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたので
 //	定義を削除
@@ -153,6 +164,35 @@ namespace {
 [[nodiscard]] int PixelsToDip(int pixels, unsigned int dpi) noexcept
 {
 	return ::MulDiv(pixels, 96, dpi == 0 ? 96 : static_cast<int>(dpi));
+}
+
+[[nodiscard]] std::wstring ExtensionLanguageIdForPath(const std::filesystem::path& path)
+{
+	auto extension = path.extension().wstring();
+	std::ranges::transform(extension, extension.begin(), [](wchar_t value) {
+		return static_cast<wchar_t>(std::towlower(value));
+	});
+	static constexpr std::pair<std::wstring_view, std::wstring_view> mappings[] = {
+		{ L".md", L"markdown" }, { L".markdown", L"markdown" },
+		{ L".json", L"json" }, { L".jsonc", L"jsonc" },
+		{ L".js", L"javascript" }, { L".jsx", L"javascriptreact" },
+		{ L".mjs", L"javascript" }, { L".cjs", L"javascript" },
+		{ L".ts", L"typescript" }, { L".tsx", L"typescriptreact" },
+		{ L".css", L"css" }, { L".scss", L"scss" }, { L".less", L"less" },
+		{ L".html", L"html" }, { L".htm", L"html" }, { L".vue", L"vue" },
+		{ L".xml", L"xml" }, { L".svg", L"xml" },
+		{ L".yaml", L"yaml" }, { L".yml", L"yaml" },
+		{ L".py", L"python" }, { L".rb", L"ruby" }, { L".php", L"php" },
+		{ L".c", L"c" }, { L".h", L"c" }, { L".cc", L"cpp" },
+		{ L".cpp", L"cpp" }, { L".cxx", L"cpp" }, { L".hpp", L"cpp" },
+		{ L".java", L"java" }, { L".cs", L"csharp" }, { L".go", L"go" }, { L".rs", L"rust" },
+		{ L".ini", L"ini" }, { L".toml", L"toml" },
+		{ L".sh", L"shellscript" }, { L".ps1", L"powershell" }, { L".bat", L"bat" },
+	};
+	for (const auto& [suffix, language] : mappings) {
+		if (extension == suffix) return std::wstring(language);
+	}
+	return L"plaintext";
 }
 
 } // namespace
@@ -312,6 +352,14 @@ void CEditWnd::AttachMainWindowEarly(HWND hWnd)
 
 LRESULT CEditWnd::DispatchBootstrapEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
+	if (Msg == WM_WINDOWPOSCHANGING && IsStartupDrawSuppressed()) {
+		// Some child/control initialization paths can request that the top-level
+		// window be shown.  Keep the window genuinely hidden until the document,
+		// final geometry, caption, and scroll ranges are ready to commit together.
+		if (auto* position = reinterpret_cast<WINDOWPOS*>(lParam)) {
+			position->flags &= ~SWP_SHOWWINDOW;
+		}
+	}
 	LRESULT result = 0;
 	const bool handled = m_customFrame
 		&& m_customFrame->HandleWindowMessage(Msg, wParam, lParam, result);
@@ -329,6 +377,7 @@ LRESULT CEditWnd::DispatchBootstrapEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPA
 
 CEditWnd::~CEditWnd()
 {
+	AbortStartupDrawTransaction();
 	CloseWorkbench();
 	CMacroFactory::resetInstance();
 	CColorStrategyPool::resetInstance();
@@ -337,6 +386,202 @@ CEditWnd::~CEditWnd()
 	delete[] m_pszLastCaption;
 
 	m_hWnd = nullptr;
+}
+
+void CEditWnd::BeginStartupDrawTransaction() noexcept
+{
+	if (m_startupDrawState != StartupDrawState::Inactive) {
+		assert_warning(false);
+		return;
+	}
+	m_startupSavedDrawSwitch = SetDrawSwitchOfAllViews(false);
+	m_startupShowCommand = SW_SHOW;
+	m_startupPreviousTabWindow = nullptr;
+	m_startupFirstContentPainted = false;
+	m_startupCommitLayoutAllowed = false;
+	m_startupMiniMapSummaryEmitted = false;
+	m_startupMiniMapPaintQpcTicks = 0;
+	m_startupMiniMapPaintCount = 0;
+	m_startupMiniMapImmediateUpdateCount = 0;
+	m_startupDrawState = StartupDrawState::Suppressing;
+	CStartupTrace::ArmStartupDocument();
+}
+
+bool CEditWnd::IsStartupDrawSuppressed() const noexcept
+{
+	return m_startupDrawState == StartupDrawState::Suppressing;
+}
+
+bool CEditWnd::IsStartupDrawCommitting() const noexcept
+{
+	return m_startupDrawState == StartupDrawState::Committing;
+}
+
+bool CEditWnd::ShouldDeferStartupLayout() const noexcept
+{
+	return !m_startupCommitLayoutAllowed
+		&& (m_startupDrawState == StartupDrawState::Suppressing
+			|| m_startupDrawState == StartupDrawState::Committing);
+}
+
+void CEditWnd::AbortStartupDrawTransaction() noexcept
+{
+	const bool wasCommitting = m_startupDrawState == StartupDrawState::Committing;
+	if (m_startupDrawState == StartupDrawState::Suppressing
+		|| m_startupDrawState == StartupDrawState::Committing) {
+		SetDrawSwitchOfAllViews(m_startupSavedDrawSwitch);
+		m_startupCommitLayoutAllowed = false;
+		m_startupPreviousTabWindow = nullptr;
+		m_startupDrawState = StartupDrawState::Aborted;
+		CStartupTrace::AbortStartupDocument();
+		if (wasCommitting) {
+			EmitStartupMiniMapSummary();
+		}
+	}
+}
+
+void CEditWnd::EmitStartupMiniMapSummary() noexcept
+{
+	if (m_startupMiniMapSummaryEmitted) {
+		return;
+	}
+	m_startupMiniMapSummaryEmitted = true;
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawMiniMapPaintSummary,
+		m_startupMiniMapPaintQpcTicks, m_startupMiniMapPaintCount);
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawMiniMapUpdateSummary,
+		m_startupMiniMapImmediateUpdateCount);
+}
+
+void CEditWnd::RecordStartupMiniMapImmediateUpdate() noexcept
+{
+	if (m_startupDrawState == StartupDrawState::Committing) {
+		++m_startupMiniMapImmediateUpdateCount;
+	}
+}
+
+void CEditWnd::RecordStartupMiniMapPaint(std::int64_t qpcTicks) noexcept
+{
+	if (m_startupDrawState != StartupDrawState::Committing || qpcTicks < 0) {
+		return;
+	}
+	m_startupMiniMapPaintQpcTicks += qpcTicks;
+	++m_startupMiniMapPaintCount;
+}
+
+void CEditWnd::FinishStartupTabSwap() noexcept
+{
+	if (!m_startupFirstContentPainted) {
+		return;
+	}
+
+	const HWND previousTab = m_startupPreviousTabWindow;
+	if (::IsWindow(previousTab)) {
+		if (const HWND hwnd = GetHwnd(); ::IsWindow(hwnd)) {
+			::BringWindowToTop(hwnd);
+		}
+		::ShowWindowAsync(previousTab, SW_HIDE);
+	}
+	m_startupPreviousTabWindow = nullptr;
+}
+
+void CEditWnd::CommitStartupDrawTransaction()
+{
+	if (m_startupDrawState == StartupDrawState::Committed
+		|| m_startupDrawState == StartupDrawState::Aborted) {
+		return;
+	}
+	if (m_startupDrawState != StartupDrawState::Suppressing) {
+		assert_warning(false);
+		return;
+	}
+
+	m_startupDrawState = StartupDrawState::Committing;
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitBegin);
+	const HWND hwnd = GetHwnd();
+	if (!::IsWindow(hwnd)) {
+		AbortStartupDrawTransaction();
+		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_INVALID_WINDOW_HANDLE);
+		return;
+	}
+
+	// Finalize child geometry while the top-level window is still hidden. Drawing
+	// remains disabled here, so controls cannot expose intermediate bootstrap state.
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawLayoutBegin);
+	RECT client{};
+	::GetClientRect(hwnd, &client);
+	const WPARAM sizeType = ::IsIconic(hwnd)
+		? SIZE_MINIMIZED
+		: (::IsZoomed(hwnd) ? SIZE_MAXIMIZED : SIZE_RESTORED);
+	m_startupCommitLayoutAllowed = true;
+	(void)OnSize2(sizeType,
+		MAKELONG(client.right - client.left, client.bottom - client.top), true);
+	m_startupCommitLayoutAllowed = false;
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawLayoutEnd,
+		m_startupDrawState == StartupDrawState::Committing && ::IsWindow(hwnd) ? 1 : 0);
+	if (m_startupDrawState != StartupDrawState::Committing || !::IsWindow(hwnd)) {
+		AbortStartupDrawTransaction();
+		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_OPERATION_ABORTED);
+		return;
+	}
+
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawScrollBegin);
+	SetDrawSwitchOfAllViews(m_startupSavedDrawSwitch);
+	// The load-completion path attempts to update the scroll bars while startup
+	// drawing is suppressed.  CEditView::AdjustScrollBars deliberately ignores
+	// that request, so publish the final layout range after restoring drawing and
+	// before the first visible paint.  Otherwise a later incidental message is
+	// required to replace the one-line bootstrap range.
+	for (int i = 0; i < GetAllViewCount(); ++i) {
+		GetView(i).AdjustScrollBars(FALSE);
+	}
+	m_cMiniMapView.AdjustScrollBars(FALSE);
+	CStartupTrace::CompleteStartupDocument();
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawScrollEnd);
+
+	// Allow a maximizing/minimizing ShowWindow to deliver its final WM_SIZE with
+	// drawing enabled. The first composited frame can therefore contain the real
+	// document instead of a visible empty shell.
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawShowBegin);
+	m_startupCommitLayoutAllowed = true;
+	::ShowWindow(hwnd, m_startupShowCommand);
+	m_startupCommitLayoutAllowed = false;
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawShowEnd,
+		m_startupDrawState == StartupDrawState::Committing && ::IsWindow(hwnd) ? 1 : 0);
+	if (m_startupDrawState != StartupDrawState::Committing || !::IsWindow(hwnd)) {
+		AbortStartupDrawTransaction();
+		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_OPERATION_ABORTED);
+		return;
+	}
+
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawRedrawBegin);
+	const HWND previousTab = m_startupPreviousTabWindow;
+	if (::IsWindow(previousTab)) {
+		// Keep the fully painted previous tab in front until the new view is ready.
+		::SetWindowPos(hwnd, previousTab, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+	const BOOL redrawResult = ::RedrawWindow(hwnd, nullptr, nullptr,
+		RDW_FRAME | RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawRedrawEnd, redrawResult ? 1 : 0);
+
+	EmitStartupMiniMapSummary();
+	m_startupDrawState = StartupDrawState::Committed;
+	FinishStartupTabSwap();
+	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, redrawResult ? 1 : 0);
+}
+
+void CEditWnd::RecordFirstStartupContentPaint() noexcept
+{
+	if (m_startupFirstContentPainted
+		|| (m_startupDrawState != StartupDrawState::Committing
+			&& m_startupDrawState != StartupDrawState::Committed)) {
+		return;
+	}
+	m_startupFirstContentPainted = true;
+	CStartupTrace::MarkFirstContentPainted();
+	if (m_startupDrawState == StartupDrawState::Committed) {
+		FinishStartupTabSwap();
+	}
 }
 
 bool CEditWnd::InitializeWorkbench()
@@ -353,6 +598,9 @@ bool CEditWnd::InitializeWorkbench()
 
 	const auto persistExtent = [this](workbench::WorkbenchEdge edge, int extentDip) {
 		PersistWorkbenchExtent(edge, extentDip);
+	};
+	const auto persistExtensionViewsExtent = [this](workbench::WorkbenchEdge, int extentDip) {
+		PersistExtensionViewsExtent(extentDip);
 	};
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 
@@ -390,10 +638,23 @@ bool CEditWnd::InitializeWorkbench()
 		m_leftWorkbenchPanel.reset();
 	}
 
+	m_extensionViewRegistry = std::make_shared<CExtensionViewRegistry>();
+	m_rightWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
+		workbench::WorkbenchEdge::Right, settings.m_nExtensionViewsExtent96, persistExtensionViewsExtent);
+	m_rightWorkbenchPanel->SetTitle(L"EXTENSIONS");
+	auto extensionSidebar = std::make_unique<workbench::extension::CExtensionSidebarTool>(m_extensionViewRegistry);
+	m_extensionSidebarTool = extensionSidebar.get();
+	if (!m_rightWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(extensionSidebar))) {
+		m_extensionSidebarTool = nullptr;
+		m_rightWorkbenchPanel.reset();
+		m_extensionViewRegistry.reset();
+	}
+
 	m_bottomWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
 		workbench::WorkbenchEdge::Bottom, settings.m_nBottomPanelExtent96, persistExtent);
-	auto terminalTool = std::make_unique<terminal::CTerminalTool>();
-	m_terminalTool = terminalTool.get();
+	auto bottomPanelTool = std::make_unique<workbench::extension::CExtensionBottomPanelTool>();
+	m_extensionBottomPanelTool = bottomPanelTool.get();
+	m_terminalTool = bottomPanelTool->Terminal();
 	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 	m_terminalTool->SetPanelActions({
 		.closePanel = [this]() {
@@ -406,7 +667,8 @@ bool CEditWnd::InitializeWorkbench()
 			return m_bottomWorkbenchMaximized;
 		},
 	});
-	if (!m_bottomWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(terminalTool))) {
+	if (!m_bottomWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(bottomPanelTool))) {
+		m_extensionBottomPanelTool = nullptr;
 		m_terminalTool = nullptr;
 		m_bottomWorkbenchPanel.reset();
 	}
@@ -419,6 +681,9 @@ bool CEditWnd::InitializeWorkbench()
 		case workbench::ActivityBarItem::SourceControl:
 			ActivateLeftWorkbenchTool(true, true);
 			break;
+		case workbench::ActivityBarItem::Extensions:
+			ToggleExtensionViewsSidebar(true);
+			break;
 		case workbench::ActivityBarItem::Count:
 			break;
 		}
@@ -426,6 +691,7 @@ bool CEditWnd::InitializeWorkbench()
 	if (!m_activityBar->Create(GetHwnd(), G_AppInstance())) m_activityBar.reset();
 
 	const bool initialized = m_leftWorkbenchPanel != nullptr
+		&& m_rightWorkbenchPanel != nullptr
 		&& m_bottomWorkbenchPanel != nullptr
 		&& m_activityBar != nullptr;
 	if (!initialized) {
@@ -434,17 +700,255 @@ bool CEditWnd::InitializeWorkbench()
 		CloseWorkbench();
 		return false;
 	}
+	m_extensionService = std::make_unique<CExtensionService>(
+		GetHwnd(), m_pShareData->m_sHandles.m_hwndTray, GetIniFileName().parent_path(), m_extensionViewRegistry);
+	m_extensionService->SetApplyEditHandler([this](const std::vector<SExtensionDocumentEdit>& edits) {
+		CExtensionService::NativeApplyEditResult completion;
+		completion.result = ApplyExtensionEdits(edits, completion.snapshots);
+		return completion;
+	});
+	m_extensionService->SetEditorOptionsHandler([this](const SExtensionNativeEditorOptions& options) {
+		return ApplyExtensionEditorOptions(options);
+	});
+	m_extensionBottomPanelTool->SetProblemsProvider([this]() {
+		return m_extensionService ? m_extensionService->Problems() : std::vector<SExtensionProblem>{};
+	});
+	m_extensionBottomPanelTool->SetOutputProvider([this]() {
+		return m_extensionService ? m_extensionService->OutputChannels() : std::vector<SExtensionOutputChannel>{};
+	});
+	m_extensionBottomPanelTool->SetProblemActivationCallback([this](const SExtensionProblem& problem) {
+		const auto path = ExtensionFilePathFromUri(problem.uri);
+		if (path) GetActiveView().GetCommander().Command_FILEOPEN(path->c_str());
+	});
+	m_cStatusBar.SetExtensionCommandCallback([this](std::wstring_view command) {
+		if (m_extensionService) m_extensionService->ExecuteCommand(command);
+	});
+	m_extensionSidebarTool->SetRequestChildrenCallback([this](std::wstring_view view, std::wstring_view parent) {
+		if (m_extensionService) m_extensionService->RequestTreeChildren(view, parent);
+	});
+	m_extensionSidebarTool->SetSelectionChangedCallback(
+		[this](std::wstring_view view, const std::vector<std::wstring>& items) {
+			if (m_extensionService) m_extensionService->NotifyTreeSelection(view, items);
+		});
+	m_extensionSidebarTool->SetCheckboxChangedCallback(
+		[this](std::wstring_view view, std::wstring_view item, bool checked) {
+			if (m_extensionService) m_extensionService->NotifyTreeCheckbox(view, item, checked);
+		});
+	m_extensionSidebarTool->SetCommandCallback(
+		[this](std::wstring_view command, std::string_view argumentsJson,
+			std::wstring_view, std::wstring_view) {
+			if (m_extensionService) m_extensionService->ExecuteCommand(command, argumentsJson);
+		});
+	m_extensionSidebarTool->SetVisibilityChangedCallback([this](bool visible) {
+		if (m_extensionService) m_extensionService->NotifyViewVisibility(visible);
+	});
 
 	ApplyWorkbenchTheme();
 	ApplyWorkbenchSettingsFromSharedData();
 	if (settings.m_bRightPanelVisible != FALSE && m_outlineWorkbenchTool != nullptr) {
 		ReloadWorkbenchOutlineAndRelayout();
 	}
+	PublishExtensionDocumentOpen(false);
+	return true;
+}
+
+std::vector<SExtensionDiagnostic> CEditWnd::ExtensionDiagnosticsForCurrentDocument() const
+{
+	if (!m_extensionService || !GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) return {};
+	const auto uri = ExtensionFileUriFromPath(GetDocument()->m_cDocFile.GetFilePath());
+	return uri.empty() ? std::vector<SExtensionDiagnostic>{} : m_extensionService->DiagnosticsForUri(uri);
+}
+
+SExtensionDocumentSnapshot CEditWnd::CaptureExtensionDocumentSnapshot(std::uint64_t version) const
+{
+	SExtensionDocumentSnapshot snapshot;
+	snapshot.id = { ::GetCurrentProcessId(), 1 };
+	const auto& file = GetDocument()->m_cDocFile;
+	if (file.GetFilePathClass().IsValidPath()) {
+		const std::filesystem::path path(file.GetFilePath());
+		snapshot.uri = ExtensionFileUriFromPath(path);
+		snapshot.languageId = ExtensionLanguageIdForPath(path);
+	} else {
+		snapshot.uri = L"untitled:sakura-editor-next/" + std::to_wstring(::GetCurrentProcessId()) + L"/1";
+		snapshot.languageId = L"plaintext";
+	}
+	for (const CDocLine* line = GetDocument()->m_cDocLineMgr.GetDocLineTop(); line; line = line->GetNextLine()) {
+		const auto length = static_cast<std::size_t>(line->GetLengthWithEOL());
+		if (length != 0) snapshot.text.append(line->GetPtr(), length);
+	}
+	snapshot.version = version;
+	snapshot.dirty = GetDocument()->m_cDocEditor.IsModified();
+	return snapshot;
+}
+
+void CEditWnd::PublishExtensionDocumentOpen(bool forceReopen)
+{
+	if (!m_extensionService) return;
+	auto snapshot = CaptureExtensionDocumentSnapshot(1);
+	if (snapshot.uri.empty()) return;
+	if (!m_extensionDocumentUri.empty() && (forceReopen || snapshot.uri != m_extensionDocumentUri)) {
+		if (m_extensionDocumentSyncTimerPending) {
+			::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+			m_extensionDocumentSyncTimerPending = false;
+		}
+		m_extensionService->CloseDocument({ ::GetCurrentProcessId(), 1 });
+		m_extensionDocumentUri.clear();
+		m_extensionDocumentVersion = 0;
+	}
+	if (m_extensionDocumentVersion == 0) {
+		m_extensionDocumentUri = snapshot.uri;
+		m_extensionDocumentVersion = snapshot.version;
+		m_extensionService->OpenDocument(std::move(snapshot));
+	}
+	PublishExtensionActiveEditor();
+}
+
+void CEditWnd::NotifyExtensionDocumentChanged()
+{
+	if (!m_extensionService || m_extensionDocumentVersion == 0 || m_extensionDocumentSyncTimerPending) return;
+	if (::SetTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC, 8, nullptr) != 0) {
+		m_extensionDocumentSyncTimerPending = true;
+	} else {
+		PublishExtensionDocumentChange();
+	}
+}
+
+void CEditWnd::PublishExtensionDocumentChange()
+{
+	if (!m_extensionService || m_extensionDocumentVersion == 0) return;
+	auto snapshot = CaptureExtensionDocumentSnapshot(++m_extensionDocumentVersion);
+	if (snapshot.uri != m_extensionDocumentUri) {
+		PublishExtensionDocumentOpen(true);
+		return;
+	}
+	m_extensionService->ChangeDocument(std::move(snapshot));
+	PublishExtensionActiveEditor();
+}
+
+void CEditWnd::PublishExtensionDocumentSave()
+{
+	if (!m_extensionService) return;
+	if (m_extensionDocumentSyncTimerPending) {
+		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+		m_extensionDocumentSyncTimerPending = false;
+		PublishExtensionDocumentChange();
+	}
+	if (m_extensionDocumentVersion == 0) {
+		PublishExtensionDocumentOpen(false);
+		return;
+	}
+	auto snapshot = CaptureExtensionDocumentSnapshot(m_extensionDocumentVersion);
+	if (snapshot.uri != m_extensionDocumentUri) {
+		PublishExtensionDocumentOpen(true);
+		return;
+	}
+	snapshot.dirty = false;
+	m_extensionService->SaveDocument(std::move(snapshot));
+}
+
+void CEditWnd::PublishExtensionActiveEditor()
+{
+	if (!m_extensionService || m_extensionDocumentVersion == 0) return;
+	const auto caret = GetActiveView().GetCaret().GetCaretLogicPos();
+	const int line = Int(caret.y);
+	const int character = Int(caret.x);
+	const SExtensionTextPosition position{
+		static_cast<std::uint32_t>((std::max)(0, line)),
+		static_cast<std::uint32_t>((std::max)(0, character)),
+	};
+	m_extensionService->SetActiveEditor({ ::GetCurrentProcessId(), 1 }, position);
+}
+
+SExtensionApplyEditResult CEditWnd::ApplyExtensionEdits(
+	const std::vector<SExtensionDocumentEdit>& edits,
+	std::vector<SExtensionDocumentSnapshot>& snapshots)
+{
+	if (edits.size() != 1 || edits.front().documentId != SExtensionDocumentId{ ::GetCurrentProcessId(), 1 }) {
+		return { EExtensionApplyEditStatus::UnknownDocument };
+	}
+	if (m_extensionDocumentSyncTimerPending) {
+		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+		m_extensionDocumentSyncTimerPending = false;
+		PublishExtensionDocumentChange();
+		return { EExtensionApplyEditStatus::VersionMismatch };
+	}
+	auto& view = GetActiveView();
+	if (view.GetCommander().GetOpeBlk() != nullptr || view.m_bDoing_UndoRedo) {
+		return { EExtensionApplyEditStatus::CommandReentry };
+	}
+	CExtensionDocumentSync validationDocuments;
+	if (validationDocuments.Open(CaptureExtensionDocumentSnapshot(m_extensionDocumentVersion)) !=
+		EExtensionDocumentUpdateResult::Applied) {
+		return { EExtensionApplyEditStatus::UnknownDocument };
+	}
+	CExtensionApplyEdit validation(validationDocuments);
+	const auto validated = validation.Apply(edits);
+	if (!validated.Applied()) return validated;
+	const auto updated = validationDocuments.Snapshot(edits.front().documentId);
+	if (!updated) return { EExtensionApplyEditStatus::UnknownDocument };
+
+	auto& lineManager = GetDocument()->m_cDocLineMgr;
+	const int lineCount = Int(lineManager.GetLineCount());
+	const int lastLineIndex = (std::max)(0, lineCount - 1);
+	const CDocLine* lastLine = lineManager.GetLine(CLogicInt(lastLineIndex));
+	CLogicRange wholeDocument;
+	wholeDocument.SetFrom(CLogicPoint(0, 0));
+	wholeDocument.SetTo(CLogicPoint(lastLine ? lastLine->GetLengthWithEOL() : CLogicInt(0), lastLineIndex));
+	auto* undo = new COpeBlk();
+	view.GetCommander().SetOpeBlk(undo);
+	undo->AddRef();
+	view.ReplaceData_CEditView2(wholeDocument, updated->text.data(),
+		CLogicInt(static_cast<int>(updated->text.size())), true, undo);
+	view.SetUndoBuffer();
+	if (m_extensionDocumentSyncTimerPending) {
+		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+		m_extensionDocumentSyncTimerPending = false;
+	}
+	m_extensionDocumentVersion = updated->version;
+	auto appliedSnapshot = CaptureExtensionDocumentSnapshot(m_extensionDocumentVersion);
+	appliedSnapshot.dirty = true;
+	snapshots.push_back(std::move(appliedSnapshot));
+	return validated;
+}
+
+bool CEditWnd::ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& options)
+{
+	if (options.documentId != SExtensionDocumentId{ ::GetCurrentProcessId(), 1 }) return false;
+	auto* document = GetDocument();
+	if (!document) return false;
+	if (options.insertSpaces) {
+		document->m_cDocType.GetDocumentAttributeWrite().m_bInsSpace = *options.insertSpaces;
+	}
+	if (options.tabSize) {
+		document->m_bTabSpaceCurTemp = true;
+		auto& layout = document->m_cLayoutMgr;
+		const CKetaXInt tabSize(static_cast<int>(*options.tabSize));
+		if (layout.GetTabSpaceKetas() != tabSize) {
+			ChangeLayoutParam(false, tabSize, layout.m_tsvInfo.m_nTsvMode, layout.GetMaxLineKetas());
+		}
+	}
 	return true;
 }
 
 void CEditWnd::CloseWorkbench() noexcept
 {
+	if (m_extensionDocumentSyncTimerPending) {
+		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+		m_extensionDocumentSyncTimerPending = false;
+	}
+	if (m_extensionSidebarTool) {
+		m_extensionSidebarTool->SetRequestChildrenCallback({});
+		m_extensionSidebarTool->SetSelectionChangedCallback({});
+		m_extensionSidebarTool->SetCheckboxChangedCallback({});
+		m_extensionSidebarTool->SetCommandCallback({});
+		m_extensionSidebarTool->SetVisibilityChangedCallback({});
+	}
+	m_cStatusBar.SetExtensionCommandCallback({});
+	if (m_extensionService) m_extensionService->Shutdown();
+	m_extensionService.reset();
+	m_extensionDocumentUri.clear();
+	m_extensionDocumentVersion = 0;
+	m_cStatusBar.SetExtensionItems({});
 	if (m_activityBar) m_activityBar->Close();
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Close();
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Close();
@@ -454,6 +958,9 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_rightWorkbenchPanel.reset();
 	m_bottomWorkbenchPanel.reset();
 	m_explorerOutlineTool = nullptr;
+	m_extensionSidebarTool = nullptr;
+	m_extensionBottomPanelTool = nullptr;
+	m_extensionViewRegistry.reset();
 	m_explorerTool = nullptr;
 	m_outlineWorkbenchTool = nullptr;
 	m_scmTool = nullptr;
@@ -471,8 +978,11 @@ void CEditWnd::ApplyWorkbenchTheme()
 	m_cStatusBar.SetPalette(palette);
 	if (m_cTabWnd.GetHwnd()) m_cTabWnd.UpdateTheme();
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->SetPalette(palette);
+	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->SetPalette(palette);
+	if (m_extensionSidebarTool) m_extensionSidebarTool->SetPalette(palette);
 	if (m_explorerOutlineTool) m_explorerOutlineTool->SetPalette(palette);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->SetPalette(palette);
+	if (m_extensionBottomPanelTool) m_extensionBottomPanelTool->SetPalette(palette);
 	if (m_explorerTool && !m_explorerOutlineTool) {
 		m_explorerTool->SetPalette({ palette.panel.ToColorRef(), palette.primaryText.ToColorRef(),
 			palette.border.ToColorRef(), palette.accent.ToColorRef() });
@@ -505,6 +1015,10 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		if (visible != FALSE) host->Show(); else host->Hide();
 	};
 	applyPanel(m_leftWorkbenchPanel.get(), settings.m_bLeftPanelVisible, settings.m_nLeftPanelExtent96);
+	applyPanel(m_rightWorkbenchPanel.get(), settings.m_bExtensionViewsVisible, settings.m_nExtensionViewsExtent96);
+	if (m_extensionSidebarTool) {
+		m_extensionSidebarTool->SetSidebarVisible(settings.m_bExtensionViewsVisible != FALSE);
+	}
 	if (m_explorerOutlineTool) m_explorerOutlineTool->ShowSourceControl(settings.m_eActiveTool == WORKBENCH_TOOL_SCM);
 	if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(settings.m_bRightPanelVisible != FALSE);
 	applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible, settings.m_nBottomPanelExtent96);
@@ -526,6 +1040,9 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 	case WORKBENCH_TOOL_SCM:
 		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::SourceControl;
 		break;
+	}
+	if (m_rightWorkbenchPanel && m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden) {
+		activeItem = workbench::ActivityBarItem::Extensions;
 	}
 	if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
 	ApplyWorkbenchTheme();
@@ -714,6 +1231,43 @@ void CEditWnd::ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive
 	m_leftWorkbenchPanel->ActivateTool();
 	if (m_activityBar) m_activityBar->SetSelectedItem(sourceControl
 		? workbench::ActivityBarItem::SourceControl : workbench::ActivityBarItem::Explorer);
+	BroadcastWorkbenchSettings();
+}
+
+void CEditWnd::PersistExtensionViewsExtent(int extentDip)
+{
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	if (settings.m_nExtensionViewsExtent96 == extentDip) return;
+	settings.m_nExtensionViewsExtent96 = extentDip;
+	BroadcastWorkbenchSettings();
+}
+
+void CEditWnd::ToggleExtensionViewsSidebar(bool activate)
+{
+	if (!m_rightWorkbenchPanel || !m_extensionSidebarTool) return;
+	const bool visible = m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	settings.m_bExtensionViewsVisible = visible ? FALSE : TRUE;
+	if (visible) {
+		m_extensionSidebarTool->SetSidebarVisible(false);
+		m_rightWorkbenchPanel->Hide();
+		std::optional<workbench::ActivityBarItem> selected;
+		if (settings.m_bLeftPanelVisible != FALSE) {
+			selected = settings.m_eActiveTool == WORKBENCH_TOOL_SCM
+				? workbench::ActivityBarItem::SourceControl : workbench::ActivityBarItem::Explorer;
+		}
+		if (m_activityBar) m_activityBar->SetSelectedItem(selected);
+	} else {
+		m_rightWorkbenchPanel->Show();
+		m_extensionSidebarTool->SetSidebarVisible(true);
+		if (m_activityBar) m_activityBar->SetSelectedItem(workbench::ActivityBarItem::Extensions);
+	}
+	if (GetHwnd()) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+	if (!visible && activate) m_rightWorkbenchPanel->ActivateTool();
 	BroadcastWorkbenchSettings();
 }
 
@@ -948,6 +1502,10 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
 	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
 		&& (::GetKeyState(VK_MENU) & 0x8000) == 0) {
+		if (message.wParam == L'P' && (::GetKeyState(VK_SHIFT) & 0x8000) != 0) {
+			ShowExtensionCommandPalette();
+			return true;
+		}
 		int direction = 2;
 		if (message.wParam == VK_OEM_PLUS || message.wParam == VK_ADD) direction = 1;
 		else if (message.wParam == VK_OEM_MINUS || message.wParam == VK_SUBTRACT) direction = -1;
@@ -965,6 +1523,37 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 	if (m_bottomWorkbenchPanel && m_bottomWorkbenchPanel->PreTranslateMessage(message)) return true;
 	if (m_leftWorkbenchPanel && m_leftWorkbenchPanel->PreTranslateMessage(message)) return true;
 	return m_rightWorkbenchPanel && m_rightWorkbenchPanel->PreTranslateMessage(message);
+}
+
+void CEditWnd::ShowExtensionCommandPalette()
+{
+	if (!m_extensionService || !GetHwnd()) return;
+	m_extensionService->Start();
+	const auto commands = m_extensionService->SearchCommands(L"");
+	SExtensionQuickInputRequest request;
+	request.kind = EExtensionQuickInputKind::QuickPick;
+	request.title = L"Command Palette";
+	request.placeholder = L"実行するコマンドを選択してください (Ctrl+Shift+P)";
+	request.items.reserve(commands.size());
+	for (std::size_t index = 0; index < commands.size(); ++index) {
+		const auto& command = commands[index];
+		request.items.push_back({
+			.sourceIndex = index,
+			.label = command.enabled ? command.label : L"(無効) " + command.label,
+			.description = command.detail,
+			.detail = command.id,
+		});
+	}
+	if (request.items.empty()) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できる拡張コマンドはありません");
+		return;
+	}
+	CExtensionQuickInputDialog dialog(request);
+	const auto completion = dialog.DoModal(GetHwnd());
+	if (completion.state != EExtensionQuickInputState::Accepted || completion.selectedIndices.size() != 1) return;
+	const auto selected = completion.selectedIndices.front();
+	if (selected >= commands.size() || !commands[selected].enabled) return;
+	m_extensionService->ExecuteCommand(commands[selected].id);
 }
 
 void CEditWnd::SetWorkbenchZoomPercent(int percent)
@@ -992,6 +1581,7 @@ void CEditWnd::SetWorkbenchZoomPercent(int percent)
 void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 {
 	UpdateWorkspaceFromDocument();
+	PublishExtensionDocumentOpen(true);
 	if (m_markdownPreviewVisible) {
 		if (IsMarkdownPreviewAvailable()) {
 			m_markdownPreviewDirty = true;
@@ -1015,6 +1605,7 @@ void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 void CEditWnd::OnAfterSave([[maybe_unused]] const SSaveInfo& sSaveInfo)
 {
 	UpdateWorkspaceFromDocument();
+	PublishExtensionDocumentSave();
 	UpdateMarkdownPreviewIfNeeded();
 	m_cTabWnd.RefreshDocumentActionState();
 	//ビュー再描画
@@ -1029,7 +1620,11 @@ void CEditWnd::OnAfterSave([[maybe_unused]] const SSaveInfo& sSaveInfo)
 
 void CEditWnd::UpdateCaption()
 {
-	if( !GetActiveView().GetDrawSwitch() )return;
+	// Startup keeps the client views non-drawing while the document is loaded,
+	// but the top-level window is still hidden at this point.  Publish the final
+	// caption now so ShowWindow never exposes the class-name bootstrap caption.
+	// Outside that bounded transaction, preserve the historical draw-switch gate.
+	if( !GetActiveView().GetDrawSwitch() && !IsStartupDrawSuppressed() )return;
 
 	const  CommonSetting& Common = GetDllShareData().m_Common;
 
@@ -1255,61 +1850,14 @@ void CEditWnd::_AdjustInMonitor(const STabGroupInfo& sTabGroupInfo)
 		DWORD dwExStyle = (DWORD)::GetWindowLongPtr( sTabGroupInfo.hwndTop, GWL_EXSTYLE );
 		::SetWindowPos( GetHwnd(), (dwExStyle & WS_EX_TOPMOST)? HWND_TOPMOST: HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
 
-		//タブウインドウ時は現状を維持
-		{
-			// 初回表示のアニメーション効果を抑止する
-
-			// 先頭ウィンドウの背後で画面描画してから手前に出す（ツールバーやビューのちらつきを抑える）
-			// ここでは、あとで正式に適用されるはずのドキュメントタイプを仮設定して一時描画しておく（ビューの配色切替によるちらつきを抑える）
-			// さらに、タイプを戻して画面を無効化だけしておく（何らかの原因で途中停止した場合にはもとのタイプ色で再描画されるように ← 例えばファイルサイズが大きすぎる警告を出すときなど）
-			// ※ 正攻法とはいえないかもしれないがあちこち手を入れることなく簡潔に済ませられるのでこうしておく
-			CTypeConfig cTypeOld, cTypeNew(-1);
-			cTypeOld = GetDocument()->m_cDocType.GetDocumentType();	// 現在のタイプ
-			{
-				EditInfo ei, mruei;
-				CCommandLine::getInstance()->GetEditInfo( &ei );
-				if( ei.m_szDocType[0] != '\0' ){
-					cTypeNew = CDocTypeManager().GetDocumentTypeOfExt( ei.m_szDocType );
-				}else{
-					if( CMRUFile().GetEditInfo( ei.m_szPath, &mruei ) && 0 < mruei.m_nTypeId ){
-						cTypeNew = CDocTypeManager().GetDocumentTypeOfId(mruei.m_nTypeId);
-					}
-					if( !cTypeNew.IsValidType() ){
-						if( ei.m_szPath[0] ){
-							cTypeNew = CDocTypeManager().GetDocumentTypeOfPath( ei.m_szPath );
-						}else{
-							cTypeNew = cTypeOld;
-						}
-					}
-				}
-			}
-			GetDocument()->m_cDocType.SetDocumentType( cTypeNew, true, true );	// 仮設定
-
-			// 可能な限り画面描画の様子が見えないよう一時的に先頭ウィンドウの後ろに配置
-			::SetWindowPos( GetHwnd(), sTabGroupInfo.hwndTop, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
-
-			// アニメーション効果は一時的に OFF にする
-			ANIMATIONINFO ai = {sizeof(ANIMATIONINFO)};
-			::SystemParametersInfo( SPI_GETANIMATION, sizeof(ANIMATIONINFO), &ai, 0 );
-			int iMinAnimateOld = ai.iMinAnimate;
-			ai.iMinAnimate = 0;
-			::SystemParametersInfo( SPI_SETANIMATION, sizeof(ANIMATIONINFO), &ai, 0 );
-
-			// 可視化する（最大化のときは次の ::ShowWindow() で手前に出てしまうので、アニメーション除去効果はあるがクライアント領域のちらつきは抑えきれない）
-			int nCmdShow = ( sTabGroupInfo.wpTop.showCmd == SW_SHOWMAXIMIZED )? SW_SHOWMAXIMIZED: SW_SHOWNOACTIVATE;
-			::ShowWindow( GetHwnd(), nCmdShow );
-			::UpdateWindow( GetHwnd() );	// 画面更新
-			::BringWindowToTop( GetHwnd() );
-			::ShowWindowAsync(sTabGroupInfo.hwndTop, SW_HIDE );	// 以前の先頭ウィンドウはここで消しておかないと消えるアニメーションが見える場合がある
-
-			// アニメーション効果を戻す
-			ai.iMinAnimate = iMinAnimateOld;
-			::SystemParametersInfo( SPI_SETANIMATION, sizeof(ANIMATIONINFO), &ai, 0 );
-
-			// アイドリング開始時にその時点のタイプ別設定色で再描画されるようにしておく
-			GetDocument()->m_cDocType.SetDocumentType( cTypeOld, true, true );	// タイプ戻し
-			::InvalidateRect( GetHwnd(), nullptr, TRUE );	// 画面無効化
-		}
+		// Keep the old tab visible while the new window loads and lays out off-screen.
+		// The startup draw transaction performs one final paint before swapping z-order.
+		::SetWindowPos( GetHwnd(), sTabGroupInfo.hwndTop, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
+		m_startupPreviousTabWindow = sTabGroupInfo.hwndTop;
+		m_startupShowCommand = (sTabGroupInfo.wpTop.showCmd == SW_SHOWMAXIMIZED)
+			? SW_SHOWMAXIMIZED
+			: SW_SHOWNOACTIVATE;
 	}
 	else
 	{
@@ -1320,18 +1868,18 @@ void CEditWnd::_AdjustInMonitor(const STabGroupInfo& sTabGroupInfo)
 			SWP_NOOWNERZORDER | SWP_NOZORDER
 		);
 
-		/* ウィンドウサイズ継承 */
+		/* ウィンドウサイズ継承。表示は初期文書の確定後まで遅延する。 */
 		if( WINSIZEMODE_DEF != m_pShareData->m_Common.m_sWindow.m_eSaveWindowSize &&
 			m_pShareData->m_Common.m_sWindow.m_nWinSizeType == SIZE_MAXIMIZED ){
-			::ShowWindow( GetHwnd(), SW_SHOWMAXIMIZED );
+			m_startupShowCommand = SW_SHOWMAXIMIZED;
 		}else
 		// 2004.05.14 Moca ウィンドウサイズを直接指定する場合は、最小化表示を受け入れる
 		if( WINSIZEMODE_SET == m_pShareData->m_Common.m_sWindow.m_eSaveWindowSize &&
 			m_pShareData->m_Common.m_sWindow.m_nWinSizeType == SIZE_MINIMIZED ){
-			::ShowWindow( GetHwnd(), SW_SHOWMINIMIZED );
+			m_startupShowCommand = SW_SHOWMINIMIZED;
 		}
 		else{
-			::ShowWindow( GetHwnd(), SW_SHOW );
+			m_startupShowCommand = SW_SHOW;
 		}
 	}
 	//To Here @@@ 2003.06.13 MIK
@@ -1448,8 +1996,10 @@ HWND CEditWnd::Create(
 
 	/* バーの配置終了 */
 	EndLayoutBars( FALSE );
+	BeginStartupDrawTransaction();
 	if (!InitializeWorkbench()) {
 		TopErrorMessage(GetHwnd(), L"ワークベンチの初期化に失敗しました。\nFailed to initialize the workbench.");
+		AbortStartupDrawTransaction();
 		::DestroyWindow(GetHwnd());
 		m_hWnd = hWnd = nullptr;
 		return hWnd;
@@ -1482,24 +2032,34 @@ HWND CEditWnd::Create(
 	::PeekMessageW(&msg, hWnd, WM_USER, WM_USER, PM_NOREMOVE);
 
 	// エディタ－トレイ間でのUI特権分離の確認（Vista UIPI機能） 2007.06.07 ryoji
+	CStartupTrace::Mark(CStartupTrace::Event::UipiCheckBegin);
 	if (const auto hWndTray = m_pShareData->m_sHandles.m_hwndTray) {
 		// 戻り値取得用変数（成功するとhWndが返って来る）
 		DWORD_PTR dwRes = 0;
 
 		// コントロールプロセスにMYWM_UIPI_CHECKを送る
-		::SendMessageTimeoutW(hWndTray, MYWM_UIPI_CHECK, 0L, LPARAM(hWnd), SMTO_NORMAL, 10000, &dwRes);
+		::SetLastError(ERROR_SUCCESS);
+		const LRESULT sendResult = ::SendMessageTimeoutW(
+			hWndTray, MYWM_UIPI_CHECK, 0L, LPARAM(hWnd), SMTO_NORMAL, 10000, &dwRes);
+		const DWORD sendError = sendResult ? ERROR_SUCCESS : ::GetLastError();
 
 		// メッセージ返送を回収する（とれない場合もあるが問題はない。）
 		::PeekMessageW(&msg, hWnd, MYWM_UIPI_CHECK, MYWM_UIPI_CHECK, PM_REMOVE | PM_QS_SENDMESSAGE);
+		CStartupTrace::Mark(CStartupTrace::Event::UipiCheckEnd, dwRes ? 1 : 0, sendError);
 
 		if (!dwRes) {	// 送信失敗
 			TopErrorMessage( GetHwnd(),
 				LS(STR_ERR_DLGEDITWND02)
 			);
+			AbortStartupDrawTransaction();
 			::DestroyWindow( GetHwnd() );
 			m_hWnd = hWnd = nullptr;
 			return hWnd;
 		}
+	} else {
+		// -1 is an explicit "no IPC HWND" outcome.  Future minimal-ready work must
+		// preserve the UIPI contract instead of silently taking this branch.
+		CStartupTrace::Mark(CStartupTrace::Event::UipiCheckEnd, -1);
 	}
 
 	CShareData::getInstance()->SetTraceOutSource( GetHwnd() );	// TraceOut()起動元ウィンドウの設定	// 2006.06.26 ryoji
@@ -1525,7 +2085,9 @@ void CEditWnd::OpenDocumentWhenStart(
 )
 {
 	if( _sLoadInfo.cFilePath.Length() ){
-		::ShowWindow( GetHwnd(), SW_SHOW );
+		if (!IsStartupDrawSuppressed()) {
+			::ShowWindow( GetHwnd(), SW_SHOW );
+		}
 		//	Oct. 03, 2004 genta コード確認は設定に依存
 		SLoadInfo	sLoadInfo = _sLoadInfo;
 		bool		bReadResult = GetDocument()->m_cDocFileOperation.FileLoadWithoutAutoMacro(&sLoadInfo);	// 自動実行マクロは後で別の場所で実行される
@@ -1952,6 +2514,11 @@ LRESULT CEditWnd::DispatchEvent(
 )
 {
 	const auto hWnd = GetHwnd();
+	if (uMsg == WM_WINDOWPOSCHANGING && IsStartupDrawSuppressed()) {
+		if (auto* position = reinterpret_cast<WINDOWPOS*>(lParam)) {
+			position->flags &= ~SWP_SHOWWINDOW;
+		}
+	}
 	LRESULT customFrameResult = 0;
 	if (m_customFrame && m_customFrame->HandleWindowMessage(uMsg, wParam, lParam, customFrameResult)) {
 		return customFrameResult;
@@ -1973,6 +2540,46 @@ LRESULT CEditWnd::DispatchEvent(
 		return 0;
 	case WM_ICONERASEBKGND:
 		return 0;
+	case MYWM_EXTENSION_WORKBENCH_CHANGED:
+		if (m_extensionService) {
+			const auto changes = static_cast<EExtensionWorkbenchChange>(wParam);
+			const auto bits = static_cast<std::uint32_t>(changes);
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::StatusBar)) != 0) {
+				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Views)) != 0 && m_extensionSidebarTool) {
+				m_extensionSidebarTool->Refresh();
+			}
+			if ((bits & (static_cast<std::uint32_t>(EExtensionWorkbenchChange::Diagnostics) |
+				static_cast<std::uint32_t>(EExtensionWorkbenchChange::Output))) != 0 && m_extensionBottomPanelTool) {
+				m_extensionBottomPanelTool->Refresh();
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Diagnostics)) != 0) {
+				Views_DeleteCompatibleBitmap();
+				RedrawAllViews(nullptr);
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Output)) != 0 && m_extensionBottomPanelTool) {
+				const auto channels = m_extensionService->OutputChannels();
+				if (std::ranges::any_of(channels, [](const auto& channel) { return channel.visible; })) {
+					m_extensionBottomPanelTool->ShowOutput();
+					SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, true, false);
+				}
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Progress)) != 0) {
+				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
+			}
+		}
+		return 0;
+	case MYWM_EXTENSION_NOTIFICATION_PROMPT:
+		return m_extensionService ? m_extensionService->HandleNotificationPrompt(lParam) : 0;
+	case MYWM_EXTENSION_QUICK_INPUT_PROMPT:
+		return m_extensionService ? m_extensionService->HandleQuickInputPrompt(lParam) : 0;
+	case MYWM_EXTENSION_TRUST_PROMPT:
+		return m_extensionService ? m_extensionService->HandleTrustPrompt(lParam) : 0;
+	case MYWM_EXTENSION_APPLY_EDIT_PROMPT:
+		return m_extensionService ? m_extensionService->HandleApplyEditPrompt(lParam) : 0;
+	case MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT:
+		return m_extensionService ? m_extensionService->HandleEditorOptionsPrompt(lParam) : 0;
 	case WM_LBUTTONDOWN:
 		return OnLButtonDown( wParam, lParam );
 	case WM_MOUSEMOVE:
@@ -2086,6 +2693,10 @@ LRESULT CEditWnd::DispatchEvent(
 
 	case WM_ACTIVATEAPP:
 		m_bIsActiveApp = (wParam != 0);	// 自アプリがアクティブかどうか
+		if (m_extensionService) {
+			m_extensionService->SetWindowState(m_bIsActiveApp);
+			if (m_bIsActiveApp) PublishExtensionActiveEditor();
+		}
 
 		// アクティブ化なら編集ウィンドウリストの先頭に移動する		// 2007.04.08 ryoji WM_SETFOCUS から移動
 		if( m_bIsActiveApp ){
@@ -2359,6 +2970,7 @@ LRESULT CEditWnd::DispatchEvent(
 		}
 		return 0L;
 	case WM_DESTROY:
+		AbortStartupDrawTransaction();
 		m_dispatchReady = false;
 		CloseMarkdownPreview();
 		CloseWorkbench();
@@ -3736,9 +4348,15 @@ LRESULT CEditWnd::OnTimer( WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 		break;
 	case IDT_FIRST_IDLE:
 		m_cDlgFuncList.m_bEditWndReady = true;	// エディタ画面の準備完了
+		if (m_extensionService) m_extensionService->Start();
 		CAppNodeGroupHandle(0).PostMessageToAllEditors( MYWM_FIRST_IDLE, ::GetCurrentProcessId(), 0, nullptr );	// プロセスの初回アイドリング通知	// 2008.04.19 ryoji
 		::PostMessage( m_pShareData->m_sHandles.m_hwndTray, MYWM_FIRST_IDLE, (WPARAM)::GetCurrentProcessId(), (LPARAM)0 );
 		::KillTimer( m_hWnd, wParam );
+		break;
+	case IDT_EXTENSION_DOCUMENT_SYNC:
+		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+		m_extensionDocumentSyncTimerPending = false;
+		PublishExtensionDocumentChange();
 		break;
 	default:
 		return 1L;
@@ -3987,6 +4605,9 @@ LRESULT CEditWnd::OnSize( WPARAM wParam, LPARAM lParam )
 
 LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 {
+	if (ShouldDeferStartupLayout()) {
+		return 0L;
+	}
 	if (m_layoutInProgress) {
 		m_layoutPending = true;
 		m_pendingLayoutWParam = wParam;
@@ -4102,7 +4723,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 
 		LayoutStatusBarParts();
 
-		::UpdateWindow( m_cStatusBar.GetStatusHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
+		if( m_startupDrawState != StartupDrawState::Committing ){
+			::UpdateWindow( m_cStatusBar.GetStatusHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
+		}
 		::GetWindowRect( m_cStatusBar.GetStatusHwnd(), &rc );
 		nStatusBarHeight = rc.bottom - rc.top;
 		bMiniMapSizeBox = false;
@@ -4214,7 +4837,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cFuncKeyWnd.SizeBox_ONOFF( bSizeBox );
 			bMiniMapSizeBox = false;
 		}
-		::UpdateWindow( m_cFuncKeyWnd.GetHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
+		if( m_startupDrawState != StartupDrawState::Committing ){
+			::UpdateWindow( m_cFuncKeyWnd.GetHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
+		}
 	}
 
 	workbench::WorkbenchLayoutRequest layoutRequest;
@@ -4241,7 +4866,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
 		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
 	layoutRequest.rightPaneWidthDip = m_rightWorkbenchPanel
-		? m_rightWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nRightPanelExtent96;
+		? m_rightWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nExtensionViewsExtent96;
 	layoutRequest.bottomPaneHeightDip = m_bottomWorkbenchPanel
 		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
 	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;

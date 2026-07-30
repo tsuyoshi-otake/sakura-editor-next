@@ -410,6 +410,25 @@ void CActivityBar::Paint() noexcept
 			{ bounds.left, bounds.top, bounds.right, bounds.bottom }, icons::kActivityIconDip, m_model.GetDpi());
 		if (button.item == ActivityBarItem::SourceControl) {
 			icons::codicons::DrawSourceControl(buffer, iconBounds, iconColor);
+		} else if (button.item == ActivityBarItem::Extensions) {
+			// Four compact tiles match the familiar Extensions activity affordance
+			// without introducing another font/glyph dependency.
+			const int gap = std::max(1, ScaleDip(2, m_model.GetDpi()));
+			const int tileWidth = std::max(2, (iconBounds.right - iconBounds.left - gap) / 2);
+			const int tileHeight = std::max(2, (iconBounds.bottom - iconBounds.top - gap) / 2);
+			const HBRUSH tile = ::CreateSolidBrush(iconColor);
+			for (int row = 0; row < 2; ++row) {
+				for (int column = 0; column < 2; ++column) {
+					RECT part{
+						iconBounds.left + column * (tileWidth + gap),
+						iconBounds.top + row * (tileHeight + gap),
+						iconBounds.left + column * (tileWidth + gap) + tileWidth,
+						iconBounds.top + row * (tileHeight + gap) + tileHeight,
+					};
+					::FillRect(buffer, &part, tile);
+				}
+			}
+			::DeleteObject(tile);
 		} else {
 			icons::codicons::DrawFiles(buffer, iconBounds, iconColor);
 		}
@@ -473,7 +492,7 @@ bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 		focusChanged = true;
 		break;
 	case VK_END:
-		m_model.SetFocusedItem(ActivityBarItem::SourceControl);
+		m_model.SetFocusedItem(ActivityBarItem::Extensions);
 		if (!m_model.GetFocusedItem()) static_cast<void>(m_model.MoveFocus(-1));
 		focusChanged = true;
 		break;

@@ -90,20 +90,21 @@ file(GLOB_RECURSE TESTS1_SOURCES
   ${CMAKE_SOURCE_DIR}/src/test/resources/*.cpp
 )
 
-if(MSVC)
-  # coverage.cppのみC++17準拠にする
+set(CODE_COVERAGE_SOURCE ${CMAKE_SOURCE_DIR}/src/test/resources/coverage.cpp)
+set(CODE_COVERAGE_HEADER ${CMAKE_VS_INSTALL_DIRECTORY}/VC/Auxiliary/VS/include/CodeCoverage/CodeCoverage.h)
+
+if(MSVC AND EXISTS "${CODE_COVERAGE_HEADER}")
+  # Code Coverage SDK がある Visual Studio では coverage.cpp のみ C++17 準拠にする
   set_source_files_properties(
-    ${CMAKE_SOURCE_DIR}/src/test/resources/coverage.cpp
+    ${CODE_COVERAGE_SOURCE}
     PROPERTIES
       COMPILE_FLAGS "/std:c++17"
       SKIP_PRECOMPILE_HEADERS ON
   )
-endif(MSVC)
-
-if(MINGW)
-  # coverage.cppをリストから削除
-  list(REMOVE_ITEM TESTS1_SOURCES ${CMAKE_SOURCE_DIR}/src/test/resources/coverage.cpp)
-endif(MINGW)
+else()
+  # MSBuild プロジェクトと同様、SDK が無い環境では coverage.cpp を含めない
+  list(REMOVE_ITEM TESTS1_SOURCES ${CODE_COVERAGE_SOURCE})
+endif()
 
 # define resource files of tests1
 set(TESTS1_RESOURCE_SCRIPTS ${CMAKE_SOURCE_DIR}/sakura_core/tests1_rc.rc)
@@ -180,6 +181,16 @@ target_include_directories(tests1
     ${CMAKE_SOURCE_DIR}/src/test/resources
 )
 
+# tests1_rc.rc embeds the two dictionary archives by file name.  Make the
+# package directory visible to every resource compiler, including MSVC with a
+# single-config generator such as Ninja (where the RC working directory does
+# not contain the vcpkg payloads).
+get_filename_component(CMIGEMO_DICTIONARY_DIR "${cmigemo_DICT_UTF8_ZIP}" DIRECTORY)
+target_include_directories(tests1
+  PRIVATE
+    "$<BUILD_INTERFACE:${CMIGEMO_DICTIONARY_DIR}>"
+)
+
 # link libraries
 target_link_libraries(tests1
   PRIVATE
@@ -198,31 +209,39 @@ add_custom_command(TARGET tests1 PRE_LINK
   COMMAND ${CMAKE_COMMAND} -E remove -f $<TARGET_FILE:tests1>
 )
 
+set(TESTS1_EXE_MANIFEST "${CMAKE_BINARY_DIR}/tests1.exe.manifest")
+set(TESTS1_MANIFEST_RC "${CMAKE_BINARY_DIR}/tests1_manifest.rc")
+
+# Embed the generated application manifest as resource ID 1 on every Windows
+# toolchain.  This avoids generator-specific linker/mt.exe behavior while
+# preserving the Common Controls v6 activation context.
+add_custom_command(
+  OUTPUT "${TESTS1_MANIFEST_RC}"
+  COMMAND ${CMAKE_COMMAND}
+    -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
+    -DOUTPUT_FILE="${TESTS1_MANIFEST_RC}"
+    -DMANIFEST_FILE="${TESTS1_EXE_MANIFEST}"
+    -P ${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake
+  DEPENDS "${TESTS1_EXE_MANIFEST}"
+  COMMENT "Generating tests1_manifest.rc"
+)
+
+target_sources(tests1
+  PRIVATE
+    "${TESTS1_MANIFEST_RC}"
+)
+
+if(MSVC)
+  # The manifest is already resource-compiled above.  Disable CMake's default
+  # linker-generated manifest so resource ID 1 is not emitted twice.
+  target_link_options(tests1 PRIVATE "/MANIFEST:NO")
+endif()
+
 if(MINGW)
-  set(TESTS1_EXE_MANIFEST "${CMAKE_BINARY_DIR}/tests1.exe.manifest")
-  set(TESTS1_MANIFEST_RC "${CMAKE_BINARY_DIR}/tests1_manifest.rc")
-
-  # Create a custom command for tests1_manifest.rc generation
-  add_custom_command(
-    OUTPUT "${TESTS1_MANIFEST_RC}"
-    COMMAND ${CMAKE_COMMAND} 
-      -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
-      -DOUTPUT_FILE="${TESTS1_MANIFEST_RC}"
-      -DMANIFEST_FILE="${TESTS1_EXE_MANIFEST}"
-      -P ${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake
-    COMMENT "Generating tests1_manifest.rc"
-  )
-
-  target_sources(tests1
-    PRIVATE
-      "${TESTS1_MANIFEST_RC}"
-  )
-
   # Add include directories for tests1
   target_include_directories(tests1
     PRIVATE
       "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/tests1_ja-JP>"
-      "$<BUILD_INTERFACE:${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/share/cmigemo>"
   )
   target_link_options(tests1
     PRIVATE

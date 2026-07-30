@@ -10,7 +10,11 @@
 #pragma once
 
 #include "doc/CDocListener.h"
+#include "extension/CExtensionStatusBar.h"
 #include "theme/CThemeService.h"
+
+#include <functional>
+#include <vector>
 
 class CEditWnd;
 
@@ -44,17 +48,30 @@ public:
 	void ShowProgressBar(bool bShow) const;
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
 	void SetScmText(std::wstring text);
+	//! Applies the visible StatusBarItem snapshot on the UI thread.
+	void SetExtensionItems(std::vector<SExtensionStatusBarItem> items);
+	//! Invoked when a clickable extension item is activated.
+	void SetExtensionCommandCallback(std::function<void(std::wstring_view)> callback);
 	void InstallPaletteSubclass() noexcept;
 	[[nodiscard]] COLORREF GetTextColor() const noexcept { return m_palette.primaryText.ToColorRef(); }
 private:
 	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
 		UINT_PTR subclassId, DWORD_PTR referenceData);
 	void PaintStatusBar(HDC dc) const noexcept;
+	[[nodiscard]] bool InvokeExtensionItemAt(POINT point) const;
+
+	struct ExtensionHitTarget {
+		RECT bounds{};
+		std::wstring command;
+	};
 
 	CEditWnd*	m_pOwner;
 	HWND		m_hwndStatusBar = nullptr;
 	HWND		m_hwndProgressBar = nullptr;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	std::wstring m_scmText;
+	std::vector<SExtensionStatusBarItem> m_extensionItems;
+	mutable std::vector<ExtensionHitTarget> m_extensionHitTargets;
+	std::function<void(std::wstring_view)> m_extensionCommandCallback;
 };
 #endif /* SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_ */

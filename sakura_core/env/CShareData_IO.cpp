@@ -607,6 +607,8 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	cProfile.IOProfileData( pszSecName, L"nWorkbenchRightExtent96"	, workbench.m_nRightPanelExtent96 );
 	cProfile.IOProfileData( pszSecName, L"nWorkbenchBottomExtent96", workbench.m_nBottomPanelExtent96 );
 	cProfile.IOProfileData( pszSecName, L"eWorkbenchActiveTool"	, workbench.m_eActiveTool );
+	cProfile.IOProfileData( pszSecName, L"bWorkbenchExtensionViewsVisible", workbench.m_bExtensionViewsVisible );
+	cProfile.IOProfileData( pszSecName, L"nWorkbenchExtensionViewsExtent96", workbench.m_nExtensionViewsExtent96 );
 	const bool hasOutlineMigrationMarker = cProfile.IOProfileData(
 		pszSecName, L"bWorkbenchOutlineMigrationComplete", workbench.m_bOutlineMigrationComplete
 	);
@@ -614,6 +616,7 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 		SetValueLimit(workbench.m_nLeftPanelExtent96, 80, 2000);
 		SetValueLimit(workbench.m_nRightPanelExtent96, 80, 2000);
 		SetValueLimit(workbench.m_nBottomPanelExtent96, 80, 2000);
+		SetValueLimit(workbench.m_nExtensionViewsExtent96, 80, 2000);
 		int activeTool = static_cast<int>(workbench.m_eActiveTool);
 		SetValueLimit(activeTool, static_cast<int>(WORKBENCH_TOOL_EXPLORER), static_cast<int>(WORKBENCH_TOOL_SCM));
 		workbench.m_eActiveTool = static_cast<EWorkbenchActiveTool>(activeTool);

@@ -28,6 +28,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <memory>
 #include "uiparts/CMenuDrawer.h"
 #include "uiparts/CImageListMgr.h" // 2002/2/10 aroka
 #include "dlg/CDlgGrep.h" // 2002/2/10 aroka
@@ -36,6 +37,7 @@ struct SLoadInfo;
 struct EditInfo;
 struct DLLSHAREDATA;
 class CPropertyManager;
+class CExtensionHostController;
 
 //!	常駐部の管理
 /*!
@@ -126,6 +128,7 @@ protected:
 	);
 
 private:
+	int CleanupInvalidEditWindows(bool requestShutdownWhenEmpty);
 	bool	OnSetTypeSetting(size_t index);
 	bool	OnGetTypeSetting(size_t index);
 	bool	OnAddTypeSetting(size_t index);
@@ -149,6 +152,7 @@ public:	// テストできないのでアクセス権変更
 	CImageListMgr	m_hIcons;
 
 	SFilePath		m_szLanguageDll;
+	std::unique_ptr<CExtensionHostController> m_extensionHostController;
 };
 
 #endif /* SAKURA_CCONTROLTRAY_E9E24D69_3511_4EC1_A29A_1D119F68004A_H_ */

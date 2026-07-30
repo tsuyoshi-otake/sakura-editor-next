@@ -32,6 +32,7 @@
 #include "doc/CEditDoc.h"
 #include "doc/logic/CDocLine.h" // 2003/03/28 MIK
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
 #include "util/window.h"
 #include "util/file.h"
 #include "plugin/CPluginManager.h"
@@ -43,6 +44,85 @@
 #include "CSelectLang.h"
 #include "env/CShareData.h"
 #include "config/system_constants.h"
+
+namespace
+{
+class CEditorReadyEventSignal final
+{
+public:
+	explicit CEditorReadyEventSignal(HANDLE event) noexcept
+		: m_event(event)
+	{
+	}
+
+	~CEditorReadyEventSignal()
+	{
+		Signal();
+	}
+
+	void Signal() noexcept
+	{
+		if (m_signaled) {
+			return;
+		}
+		m_signaled = true;
+		CStartupTrace::Mark(CStartupTrace::Event::EditorReadyEventBegin);
+		if (!m_event) {
+			CStartupTrace::Mark(
+				CStartupTrace::Event::EditorReadyEventEnd, -1, ERROR_INVALID_HANDLE);
+			return;
+		}
+
+		::SetLastError(ERROR_SUCCESS);
+		const BOOL result = ::SetEvent(m_event);
+		const DWORD error = result ? ERROR_SUCCESS : ::GetLastError();
+		CStartupTrace::Mark(
+			CStartupTrace::Event::EditorReadyEventEnd, result ? 1 : 0, error);
+	}
+
+	CEditorReadyEventSignal(const CEditorReadyEventSignal&) = delete;
+	CEditorReadyEventSignal& operator=(const CEditorReadyEventSignal&) = delete;
+
+private:
+	HANDLE m_event;
+	bool m_signaled = false;
+};
+
+class CInitializeMutexGuard final
+{
+public:
+	explicit CInitializeMutexGuard(HANDLE mutex) noexcept
+		: m_mutex(mutex)
+	{
+	}
+
+	~CInitializeMutexGuard()
+	{
+		Release();
+	}
+
+	explicit operator bool() const noexcept
+	{
+		return m_mutex != nullptr;
+	}
+
+	void Release() noexcept
+	{
+		if (!m_mutex) {
+			return;
+		}
+		::ReleaseMutex(m_mutex);
+		::CloseHandle(m_mutex);
+		m_mutex = nullptr;
+	}
+
+	CInitializeMutexGuard(const CInitializeMutexGuard&) = delete;
+	CInitializeMutexGuard& operator=(const CInitializeMutexGuard&) = delete;
+
+private:
+	HANDLE m_mutex;
+};
+}
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //               コンストラクタ・デストラクタ                  //
@@ -83,8 +163,9 @@ bool CNormalProcess::InitializeProcess()
 	MY_RUNNINGTIMER( cRunningTimer, L"NormalProcess::Init" );
 
 	/* プロセス初期化の目印 */
-	HANDLE	hMutex = _GetInitializeMutex();	// 2002/2/8 aroka 込み入っていたので分離
-	if( nullptr == hMutex ){
+	bool initializeMutexAbandoned = false;
+	CInitializeMutexGuard initializeMutex{ _GetInitializeMutex(initializeMutexAbandoned) };
+	if( !initializeMutex ){
 		return false;
 	}
 
@@ -93,13 +174,42 @@ bool CNormalProcess::InitializeProcess()
 	using HandleHolder = cxx::ResourceHolder<&::CloseHandle>;
 	HandleHolder hEvent{ ::OpenEventW(STANDARD_RIGHTS_REQUIRED | EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, initEventName) };
 
-	// スコープを抜けるときシグナル状態になるようにする
-	using InitEventHolder = cxx::ResourceHolder<&::SetEvent>;
-	InitEventHolder initEvent{ hEvent.get() };
+	// Every return path signals exactly once; the trace records success, failure,
+	// or the explicit absence of the launcher-owned event.
+	CEditorReadyEventSignal initEvent{ hEvent.get() };
 
 	/* 共有メモリを初期化する */
 	if (!CProcessFactory::IsExistControlProcess() && !CProcessFactory::StartControlProcess() || !CProcess::InitializeProcess()) {
 		return false;
+	}
+
+	if (initializeMutexAbandoned) {
+		const HWND trayWindow = GetDllShareData().m_sHandles.m_hwndTray;
+		DWORD_PTR recoveryResult = 0;
+		::SetLastError(ERROR_SUCCESS);
+		const LRESULT sendResult = trayWindow
+			? ::SendMessageTimeoutW(
+				trayWindow,
+				MYWM_RECOVER_APPNODE,
+				0,
+				0,
+				SMTO_ABORTIFHUNG | SMTO_BLOCK,
+				5000,
+				&recoveryResult)
+			: 0;
+		const DWORD recoveryError = sendResult
+			? ERROR_SUCCESS
+			: (trayWindow ? ::GetLastError() : ERROR_INVALID_WINDOW_HANDLE);
+		if (!sendResult || recoveryResult != 1) {
+			TopErrorMessage(
+				nullptr,
+				L"前回の異常終了後に共有ウィンドウ情報を修復できませんでした。\n"
+				L"SendMessageTimeout() result=%lld recovery=%llu error=%lu",
+				static_cast<long long>(sendResult),
+				static_cast<unsigned long long>(recoveryResult),
+				recoveryError);
+			return false;
+		}
 	}
 
 	/* ダークモード設定を反映する */
@@ -144,8 +254,7 @@ bool CNormalProcess::InitializeProcess()
 			//	To Here Oct. 19, 2001 genta
 			/* アクティブにする */
 			ActivateFrameWindow( hwndOwner );
-			::ReleaseMutex( hMutex );
-			::CloseHandle( hMutex );
+			initializeMutex.Release();
 
 			// 複数ファイル読み込み
 			OpenFiles( hwndOwner );
@@ -178,8 +287,6 @@ bool CNormalProcess::InitializeProcess()
 
 	const auto hEditWnd = pEditWnd->GetHwnd();
 	if (!hEditWnd) {
-		::ReleaseMutex( hMutex );
-		::CloseHandle( hMutex );
 		return false;	// 2009.06.23 ryoji CEditWnd::Create()失敗のため終了
 	}
 
@@ -220,14 +327,15 @@ bool CNormalProcess::InitializeProcess()
 		}
 		GrepInfo gi;
 		CCommandLine::getInstance()->GetGrepInfo(&gi); // 2002/2/8 aroka ここに移動
+		// Grep can run for a long time. Present the initialized editor before it starts.
+		pEditWnd->CommitStartupDrawTransaction();
 		if( !bGrepDlg ){
 			// Grepでは対象パス解析に現在のカレントディレクトリを必要とする
 			// pEditWnd->GetDocument()->SetCurDirNotitle();
 			// 2003.06.23 Moca GREP実行前にMutexを解放
 			//	こうしないとGrepが終わるまで新しいウィンドウを開けない
 			SetMainWindow( pEditWnd->GetHwnd() );
-			::ReleaseMutex( hMutex );
-			::CloseHandle( hMutex );
+			initializeMutex.Release();
 			this->m_pcEditApp->m_pcGrepAgent->DoGrep(
 				&pEditWnd->GetActiveView(),
 				gi.bGrepReplace,
@@ -280,9 +388,7 @@ bool CNormalProcess::InitializeProcess()
 			// 2003.06.23 Moca GREPダイアログ表示前にMutexを解放
 			//	こうしないとGrepが終わるまで新しいウィンドウを開けない
 			SetMainWindow( pEditWnd->GetHwnd() );
-			::ReleaseMutex( hMutex );
-			::CloseHandle( hMutex );
-			hMutex = nullptr;
+			initializeMutex.Release();
 			
 			//	Oct. 9, 2003 genta コマンドラインからGERPダイアログを表示させた場合に
 			//	引数の設定がBOXに反映されない
@@ -386,7 +492,6 @@ bool CNormalProcess::InitializeProcess()
 				pEditWnd->GetActiveView().GetCaret().m_nCaretPosX_Prev =
 					pEditWnd->GetActiveView().GetCaret().GetCaretLayoutPos().GetX2();
 			}
-			pEditWnd->GetActiveView().RedrawAll();
 		}
 		else{
 			pEditWnd->GetDocument()->SetCurDirNotitle();	// (無題)ウィンドウ
@@ -409,22 +514,10 @@ bool CNormalProcess::InitializeProcess()
 	//	YAZAKI 2002/05/30 IMEウィンドウの位置がおかしいのを修正。
 	pEditWnd->GetActiveView().SetIMECompFormPos();
 
-	//WM_SIZEをポスト
-	{	// ファイル読み込みしなかった場合にはこの WM_SIZE がアウトライン画面を配置する
-		if( !::IsIconic( hEditWnd ) ){
-			RECT rc;
-			::GetClientRect( hEditWnd, &rc );
-			::PostMessageAny( hEditWnd, WM_SIZE, ::IsZoomed( hEditWnd )? SIZE_MAXIMIZED: SIZE_RESTORED, MAKELONG( rc.right - rc.left, rc.bottom - rc.top ) );
-		}
-	}
+	// Coalesce startup WM_SIZE/redraw work and reveal the final document once.
+	pEditWnd->CommitStartupDrawTransaction();
 
-	//再描画
-	::InvalidateRect( pEditWnd->GetHwnd(), nullptr, TRUE );
-
-	if( hMutex ){
-		::ReleaseMutex( hMutex );
-		::CloseHandle( hMutex );
-	}
+	initializeMutex.Release();
 
 	//プラグイン：EditorStartイベント実行
 	CJackManager::getInstance()->InvokePlugins(PP_EDITOR_START, &pEditWnd->GetActiveView());
@@ -451,7 +544,7 @@ bool CNormalProcess::InitializeProcess()
 	// 複数ファイル読み込み
 	OpenFiles( pEditWnd->GetHwnd() );
 
-	initEvent = nullptr;
+	initEvent.Signal();
 
 	return pEditWnd->GetHwnd() ? true : false;
 }
@@ -497,9 +590,10 @@ void CNormalProcess::OnExitProcess()
 	@retval Mutex のハンドルを返す
 	@retval 失敗した時はリリースしてから NULL を返す
 */
-HANDLE CNormalProcess::_GetInitializeMutex() const
+HANDLE CNormalProcess::_GetInitializeMutex(bool& abandoned) const
 {
 	MY_RUNNINGTIMER( cRunningTimer, L"NormalProcess::_GetInitializeMutex" );
+	abandoned = false;
 	HANDLE hMutex;
 	const auto pszProfileName = GetProfileName();
 	std::wstring strMutexInitName = GSTR_MUTEX_SAKURA_INIT;
@@ -517,6 +611,27 @@ HANDLE CNormalProcess::_GetInitializeMutex() const
 			::CloseHandle( hMutex );
 			return nullptr;
 		}
+		if( WAIT_FAILED == dwRet ){
+			const DWORD error = ::GetLastError();
+			TopErrorMessage( nullptr,
+				L"起動同期オブジェクトの待機に失敗しました。\n"
+				L"WaitForSingleObject() result=0x%08lX error=%lu",
+				dwRet, error );
+			::CloseHandle( hMutex );
+			return nullptr;
+		}
+		if( WAIT_OBJECT_0 != dwRet && WAIT_ABANDONED != dwRet ){
+			TopErrorMessage( nullptr,
+				L"起動同期オブジェクトから予期しない結果が返されました。\n"
+				L"WaitForSingleObject() result=0x%08lX",
+				dwRet );
+			::CloseHandle( hMutex );
+			return nullptr;
+		}
+		// WAIT_ABANDONED transfers ownership after the previous owner exited.  The
+		// caller repairs stale AppNode entries through the control process while it
+		// still owns this mutex, before creating or querying an editor window.
+		abandoned = (WAIT_ABANDONED == dwRet);
 	}
 	return hMutex;
 }

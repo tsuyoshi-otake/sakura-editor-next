@@ -33,7 +33,8 @@
   </ImportGroup>
   <PropertyGroup Label="UserMacros">
     <IntDir>..\build\$(Platform)\$(Configuration)\sakura_core\</IntDir>
-    <OutDir>..\$(Platform)\$(Configuration)\</OutDir>
+    <SakuraSharedOutDir>..\$(Platform)\$(Configuration)\</SakuraSharedOutDir>
+    <OutDir>$(SakuraSharedOutDir)</OutDir>
     <SakuraLinkInputsForTests1File>$(IntDir)sakura-link-inputs-for-tests1.txt</SakuraLinkInputsForTests1File>
   </PropertyGroup>
   <PropertyGroup Label="BuildOptions">
@@ -71,7 +72,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>
@@ -100,8 +101,10 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
     <ClCompile>
-      <Optimization>MinSpace</Optimization>
-      <InlineFunctionExpansion>OnlyExplicitInline</InlineFunctionExpansion>
+      <Optimization>MaxSpeed</Optimization>
+      <InlineFunctionExpansion>AnySuitable</InlineFunctionExpansion>
+      <IntrinsicFunctions>true</IntrinsicFunctions>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
@@ -124,6 +127,11 @@
     <ResourceCompile>
       <PreprocessorDefinitions>_WIN64;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
+  </ItemDefinitionGroup>
+  <ItemDefinitionGroup Condition="'$(Configuration)'=='Release'">
+    <ClCompile>
+      <EnableEnhancedInstructionSet>AdvancedVectorExtensions</EnableEnhancedInstructionSet>
+    </ClCompile>
   </ItemDefinitionGroup>
   <Import Project="..\src\main\msbuild\cmake.props" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -232,6 +240,7 @@
     <ClInclude Include="..\sakura_core\env\CSortedTagJumpList.h" />
     <ClInclude Include="..\sakura_core\env\CWriteManager.h" />
     <ClInclude Include="..\sakura_core\debug\CRunningTimer.h" />
+    <ClInclude Include="..\sakura_core\debug\StartupTrace.h" />
     <ClInclude Include="..\sakura_core\debug\Debug1.h" />
     <ClInclude Include="..\sakura_core\debug\Debug2.h" />
     <ClInclude Include="..\sakura_core\dlg\CDialog.h" />
@@ -297,7 +306,27 @@
     <ClInclude Include="..\sakura_core\env\DLLSHAREDATA.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionManager.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionPane.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionCommandPalette.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionContextKeys.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionDocumentBridge.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostBroker.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostController.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostProcess.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostSharedState.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostStateMachine.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionPipeTransport.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionNotificationCenter.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionSecretStorage.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionStatusBar.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionTrustStore.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionViewRegistry.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionRpcProtocol.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionService.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchUi.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionQuickInputDialog.h" />
     <ClInclude Include="..\sakura_core\extension\CHttpClient.h" />
+    <ClInclude Include="..\sakura_core\extension\CJsonRpcFrameCodec.h" />
     <ClInclude Include="..\sakura_core\extension\COpenVsxClient.h" />
     <ClInclude Include="..\sakura_core\extmodule\CBregexp.h" />
     <ClInclude Include="..\sakura_core\extmodule\CBregexpDll2.h" />
@@ -402,6 +431,8 @@
     <ClInclude Include="..\sakura_core\uiparts\CWaitCursor.h" />
     <ClInclude Include="..\sakura_core\uiparts\HandCursor.h" />
     <ClInclude Include="..\sakura_core\util\container.h" />
+    <ClInclude Include="..\sakura_core\util\CpuDispatch.h" />
+    <ClInclude Include="..\sakura_core\util\CpuDispatchInternal.h" />
     <ClInclude Include="..\sakura_core\util\design_template.h" />
     <ClInclude Include="..\sakura_core\util\file.h" />
     <ClInclude Include="..\sakura_core\util\format.h" />
@@ -488,6 +519,8 @@
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchZoom.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\CActivityBar.h" />
+	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
@@ -650,6 +683,7 @@
     <ClCompile Include="..\sakura_core\env\CSortedTagJumpList.cpp" />
     <ClCompile Include="..\sakura_core\env\CWriteManager.cpp" />
     <ClCompile Include="..\sakura_core\debug\CRunningTimer.cpp" />
+    <ClCompile Include="..\sakura_core\debug\StartupTrace.cpp" />
     <ClCompile Include="..\sakura_core\debug\Debug1.cpp" />
     <ClCompile Include="..\sakura_core\debug\Debug2.cpp" />
     <ClCompile Include="..\sakura_core\dlg\CDialog.cpp" />
@@ -719,7 +753,27 @@
     <ClCompile Include="..\sakura_core\env\DLLSHAREDATA.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionCommandPalette.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionContextKeys.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionDocumentBridge.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostBroker.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostController.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostProcess.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostSharedState.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostStateMachine.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionPipeTransport.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionNotificationCenter.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionSecretStorage.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionStatusBar.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionTrustStore.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionViewRegistry.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionRpcProtocol.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionService.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchUi.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionQuickInputDialog.cpp" />
     <ClCompile Include="..\sakura_core\extension\CHttpClient.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CJsonRpcFrameCodec.cpp" />
     <ClCompile Include="..\sakura_core\extension\COpenVsxClient.cpp" />
     <ClCompile Include="..\sakura_core\extmodule\CBregexp.cpp" />
     <ClCompile Include="..\sakura_core\extmodule\CBregexpDll2.cpp" />
@@ -852,6 +906,22 @@
     <ClCompile Include="..\sakura_core\uiparts\CVisualProgress.cpp" />
     <ClCompile Include="..\sakura_core\uiparts\CWaitCursor.cpp" />
     <ClCompile Include="..\sakura_core\util\file.cpp" />
+    <ClCompile Include="..\sakura_core\util\CpuDispatch.cpp" />
+    <ClCompile Include="..\sakura_core\util\CpuDispatchAvx.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/arch:AVX /GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatchAvx2.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/arch:AVX2 /GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatchAvx512.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <WholeProgramOptimization>false</WholeProgramOptimization>
+      <AdditionalOptions>/arch:AVX512 /GL- %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\util\format.cpp" />
     <ClCompile Include="..\sakura_core\util\input.cpp" />
     <ClCompile Include="..\sakura_core\util\MessageBoxF.cpp" />
@@ -958,6 +1028,8 @@
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\CActivityBar.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
@@ -1034,38 +1106,40 @@
   <Target Name="RunCompileTests" Condition="!Exists('..\build\$(Platform)\CMakeTools\compiletests\CMakeCache.txt')" DependsOnTargets="GenerateVersionHeader" BeforeTargets="ClCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' -A $(Platform) -B '$(CMakeToolsPath)/compiletests' -S '$([MSBuild]::NormalizePath('$(CMakeToolsSourceDir)', '.\src\test\resources\compiletests'))' -DCMAKE_CONFIGURATION_TYPES='Debug;Release' -DCMAKE_SYSTEM_VERSION='10.0.22621.0' &amp;&amp; &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target run_compiletests -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="GenerateBregonig" Condition="!Exists('$(OutDir)bregonig.dll')" BeforeTargets="ClCompile">
+  <Target Name="GenerateBregonig" Condition="!Exists('$(SakuraSharedOutDir)bregonig.dll')" BeforeTargets="ClCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_bregonig -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="GenerateMigemo" Condition="!Exists('$(OutDir)migemo.dll')" BeforeTargets="ClCompile">
+  <Target Name="GenerateMigemo" Condition="!Exists('$(SakuraSharedOutDir)migemo.dll')" BeforeTargets="ClCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_cmigemo -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="GenerateCTags" Condition="!Exists('$(OutDir)ctags.exe')" AfterTargets="Link">
+  <Target Name="GenerateCTags" Condition="!Exists('$(SakuraSharedOutDir)ctags.exe')" AfterTargets="Link">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_ctags -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
   </Target>
-  <Target Name="GenerateDiff" Condition="!Exists('$(OutDir)diff.exe')" AfterTargets="Link">
+  <Target Name="GenerateDiff" Condition="!Exists('$(SakuraSharedOutDir)diff.exe')" AfterTargets="Link">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_diffutils -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
   </Target>
   <Target Name="RemoveSakuraExe" Condition="Exists('$(TargetPath)')" DependsOnTargets="WriteSakuraLinkInputsForTests1;GenerateSakuraExeManifest" BeforeTargets="Link" Inputs="@(_SakuraLinkInputForTests1);$(CMakeToolsBuildDir)sakura.exe.manifest;$(MSBuildAllProjects)" Outputs="$(TargetPath)">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File &quot;$(MSBuildProjectDirectory)\..\tools\Remove-FileWithRetry.ps1&quot; -LiteralPath &quot;$(TargetPath)&quot;" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="GenerateLang_en_US" Inputs="..\src\main\cmake\version.h.in;@(FuncCodeRes);@(RcInclude);..\sakura_lang\sakura_rc_en-US.rc;..\sakura_lang\sakura_rc_en-US.rc2" Outputs="$(OutDir)sakura_lang_en_US.dll" AfterTargets="GenerateFuncCodeDefine;Link">
+  <Target Name="GenerateLang_en_US" Inputs="..\src\main\cmake\version.h.in;@(FuncCodeRes);@(RcInclude);..\sakura_lang\sakura_rc_en-US.rc;..\sakura_lang\sakura_rc_en-US.rc2" Outputs="$(SakuraSharedOutDir)sakura_lang_en_US.dll" AfterTargets="GenerateFuncCodeDefine;Link">
     <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target sakura_lang_en_US -- /nologo /nr:false /p:TrackFileAccess=false" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" />
   </Target>
-  <Target Name="GenerateLang_zh_CN" Inputs="..\src\main\cmake\version.h.in;@(FuncCodeRes);@(RcInclude);..\sakura_lang\sakura_rc_zh-CN.rc;..\sakura_lang\sakura_rc_zh-CN.rc2" Outputs="$(OutDir)sakura_lang_zh_CN.dll" AfterTargets="GenerateFuncCodeDefine;Link">
+  <Target Name="GenerateLang_zh_CN" Inputs="..\src\main\cmake\version.h.in;@(FuncCodeRes);@(RcInclude);..\sakura_lang\sakura_rc_zh-CN.rc;..\sakura_lang\sakura_rc_zh-CN.rc2" Outputs="$(SakuraSharedOutDir)sakura_lang_zh_CN.dll" AfterTargets="GenerateFuncCodeDefine;Link">
     <Exec Command="%22$(CMakeExe)%22 --build $(CMakeToolsPath) --config $(Configuration) --target sakura_lang_zh_CN -- /nologo /nr:false /p:TrackFileAccess=false" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" />
   </Target>
   <Target Name="AppendCleanTargets" BeforeTargets="CoreClean">
     <!-- Add files to @Clean just before running CoreClean. -->
     <ItemGroup>
-      <Clean Include="$(OutDir)sakura.ini" />
-      <Clean Include="$(OutDir)sakura_lang_en_US.dll" />
-      <Clean Include="$(OutDir)sakura_lang_en_US.pdb" />
-      <Clean Include="$(OutDir)sakura_lang_zh_CN.dll" />
-      <Clean Include="$(OutDir)sakura_lang_zh_CN.pdb" />
-      <Clean Include="$(OutDir)bregonig.dll" />
-      <Clean Include="$(OutDir)migemo.dll" />
-      <Clean Include="$(OutDir)ctags.exe" />
+      <Clean Include="$(SakuraSharedOutDir)sakura.ini" />
+      <Clean Include="$(SakuraSharedOutDir)sakura_lang_en_US.dll" />
+      <Clean Include="$(SakuraSharedOutDir)sakura_lang_en_US.pdb" />
+      <Clean Include="$(SakuraSharedOutDir)sakura_lang_zh_CN.dll" />
+      <Clean Include="$(SakuraSharedOutDir)sakura_lang_zh_CN.pdb" />
+      <Clean Include="$(SakuraSharedOutDir)bregonig.dll" />
+      <Clean Include="$(SakuraSharedOutDir)migemo.dll" />
+      <Clean Include="$(SakuraSharedOutDir)ctags.exe" />
+    </ItemGroup>
+    <ItemGroup>
       <Clean Include="$(SakuraLinkInputsForTests1File)" />
     </ItemGroup>
   </Target>

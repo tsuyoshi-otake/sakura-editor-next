@@ -146,5 +146,6 @@ int CTextMetrics::CalcTextWidth3(
 ) const
 {
 	static std::vector<int> dxArray;
-	return CalcTextWidth2(pText, nLength, GetCharPxWidth(), GetHankakuDx() - GetHankakuWidth(), dxArray, cache);
+	return CalcTextWidth2(
+		pText, nLength, GetCharPxWidth(), GetHankakuDx() - GetHankakuWidth(), dxArray, cache);
 }

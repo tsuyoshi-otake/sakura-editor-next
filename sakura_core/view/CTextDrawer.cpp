@@ -18,6 +18,7 @@
 #include "types/CTypeSupport.h"
 #include "charset/charcode.h"
 #include "doc/layout/CLayout.h"
+#include "debug/StartupTrace.h"
 #include "apiwrap/StdApi.h"
 
 const CTextArea* CTextDrawer::GetTextArea() const
@@ -30,7 +31,8 @@ const CTextArea* CTextDrawer::GetTextArea() const
 @@@ 2002.09.22 YAZAKI    const unsigned char* pDataを、const char* pDataに変更
 @@@ 2007.08.25 kobake 戻り値を void に変更。引数 x, y を DispPos に変更
 */
-void CTextDrawer::DispText( HDC hdc, DispPos* pDispPos, int marginy, const wchar_t* pData, int nLength, bool bTransparent ) const
+void CTextDrawer::DispText( HDC hdc, DispPos* pDispPos, int marginy, const wchar_t* pData, int nLength,
+	bool bTransparent, bool measureStartupPaint ) const
 {
 	if( 0 >= nLength ){
 		return;
@@ -43,11 +45,21 @@ void CTextDrawer::DispText( HDC hdc, DispPos* pDispPos, int marginy, const wchar
 	const CTextArea* pArea=GetTextArea();
 
 	//文字間隔配列を生成
+	LARGE_INTEGER widthBegin{};
+	if (measureStartupPaint) {
+		::QueryPerformanceCounter(&widthBegin);
+	}
 	static std::vector<int> vDxArray(1);
 	const int* pDxArray = pMetrics->GenerateDxArray2(&vDxArray, pData, nLength);
 
 	//文字列のピクセル幅
 	int nTextWidth=pMetrics->CalcTextWidth(pData,nLength,pDxArray);
+	if (measureStartupPaint) {
+		LARGE_INTEGER widthEnd{};
+		::QueryPerformanceCounter(&widthEnd);
+		CStartupTrace::AccumulateFirstContentDrawWidth(
+			widthEnd.QuadPart - widthBegin.QuadPart, nLength);
+	}
 
 	//テキストの描画範囲の矩形を求める -> rcClip
 	CMyRect rcClip;
@@ -119,6 +131,10 @@ void CTextDrawer::DispText( HDC hdc, DispPos* pDispPos, int marginy, const wchar
 		}
 
 		//描画
+		LARGE_INTEGER outputBegin{};
+		if (measureStartupPaint) {
+			::QueryPerformanceCounter(&outputBegin);
+		}
 		::ExtTextOut(
 			hdc,
 			nDrawX,					//X
@@ -129,6 +145,12 @@ void CTextDrawer::DispText( HDC hdc, DispPos* pDispPos, int marginy, const wchar
 			nDrawLength,			//文字列長
 			pDrawDxArray			//文字間隔の入った配列
 		);
+		if (measureStartupPaint) {
+			LARGE_INTEGER outputEnd{};
+			::QueryPerformanceCounter(&outputEnd);
+			CStartupTrace::AccumulateFirstContentTextOutput(
+				outputEnd.QuadPart - outputBegin.QuadPart, nDrawLength);
+		}
 	}
 
 end:

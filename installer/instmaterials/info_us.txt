@@ -4,8 +4,6 @@ VS Code-class features at native speed.
 Before you install
 • Save any files you are working on.
 • Close all running Sakura Editor NEXT windows.
-• A current-user installation does not require administrator privileges.
-• An all-users installation requires administrator privileges and uses Program Files.
 
 License
 Sakura Editor NEXT is provided under the zlib License for commercial and non-commercial use.

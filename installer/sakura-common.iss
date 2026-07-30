@@ -13,7 +13,6 @@ AppName={cm:AppName}
 AppId=sakura editor
 AppVersion={#MyAppVer}
 AppVerName={cm:AppVerName} {#MyAppVer} ({#MyArchitecture})
-AppMutex=MutexSakuraEditor
 AppPublisher={cm:AppPublisher}
 AppPublisherURL=https://github.com/tsuyoshi-otake/sakura-editor-next
 AppSupportURL=https://github.com/tsuyoshi-otake/sakura-editor-next/issues
@@ -24,24 +23,21 @@ DisableProgramGroupPage=yes
 UninstallDisplayIcon={app}\sakura.exe
 InfoBeforeFile="instmaterials\info.txt"
 LanguageDetectionMethod=uilanguage 
+ShowLanguageDialog=no
 SolidCompression=yes
 
 ; Sakura Editor NEXT brand theme: a charcoal surface rather than pure black.
 ; Inno Setup automatically disables custom styling for Windows high-contrast themes.
 WizardStyle=modern dark includetitlebar hidebevels
-WizardBackColor=#2B2B2B
 WizardImageFile=
 WizardSmallImageFile="..\src\main\resources\images\sakura_editor_next.png"
-WizardSmallImageBackColor=#2B2B2B
 SetupIconFile="instmaterials\icon_debug.ico"
 DisableStartupPrompt=yes
 DisableWelcomePage=no
 
-; Match the VS Code-style deployment model in one installer artifact:
-; current-user installation is recommended, while all-users installation elevates.
+; Install for the current user only.  Do not expose an elevation or
+; all-users override: this package must remain usable without admin rights.
 PrivilegesRequired=lowest
-PrivilegesRequiredOverridesAllowed=dialog commandline
-UsePreviousPrivileges=no
 
 ; 出力先ディレクトリ
 OutputDir=Output-{#OutputSuffix}
@@ -61,14 +57,6 @@ Name: "zh_hans"; MessagesFile: "Languages\ChineseSimplified.isl"; InfoBeforeFile
 Name: "zh_hant"; MessagesFile: "Languages\ChineseTraditional.isl"; InfoBeforeFile: "instmaterials\info_zh_hant_utf8.txt"
 
 [Messages]
-; Keep decisions short and explicit. The install-mode dialog is shown before the
-; main wizard because elevation has to be decided before files are written.
-ja.PrivilegesRequiredOverrideTitle=インストール方法
-ja.PrivilegesRequiredOverrideInstruction=インストールするユーザーを選択
-ja.PrivilegesRequiredOverrideText1=Sakura Editor NEXT をこのユーザーのみ、またはこの PC のすべてのユーザー向けにインストールします。%n%nすべてのユーザー向けでは管理者権限が必要です。
-ja.PrivilegesRequiredOverrideText2=Sakura Editor NEXT をこのユーザーのみ、またはこの PC のすべてのユーザー向けにインストールします。%n%nすべてのユーザー向けでは管理者権限が必要です。
-ja.PrivilegesRequiredOverrideCurrentUserRecommended=このユーザーのみ（推奨）(&M)
-ja.PrivilegesRequiredOverrideAllUsers=すべてのユーザー（Program Files）(&A)
 ja.WelcomeLabel1=Sakura Editor NEXT のセットアップ
 ja.WelcomeLabel2=VS Code級の機能を、ネイティブの速さで。%n%nセットアップを始める前に、作業中のファイルを保存し、起動中の Sakura Editor NEXT を終了してください。
 ja.WizardInfoBefore=インストール前の確認
@@ -91,12 +79,6 @@ ja.FinishedLabelNoIcons=Sakura Editor NEXT のインストールが完了しま�
 ja.ClickFinish=「完了」を選択してセットアップを終了してください。
 ja.ButtonNext=次へ(&N)
 
-en.PrivilegesRequiredOverrideTitle=Choose install mode
-en.PrivilegesRequiredOverrideInstruction=Choose who can use Sakura Editor NEXT
-en.PrivilegesRequiredOverrideText1=Install Sakura Editor NEXT for your account only, or for everyone who uses this PC.%n%nInstalling for all users requires administrator privileges.
-en.PrivilegesRequiredOverrideText2=Install Sakura Editor NEXT for your account only, or for everyone who uses this PC.%n%nInstalling for all users requires administrator privileges.
-en.PrivilegesRequiredOverrideCurrentUserRecommended=Install for me only (recommended)
-en.PrivilegesRequiredOverrideAllUsers=Install for all users (Program Files)
 en.WelcomeLabel1=Set up Sakura Editor NEXT
 en.WelcomeLabel2=VS Code-class features at native speed.%n%nSave your work and close any running Sakura Editor NEXT windows before continuing.
 en.WizardInfoBefore=Before you install
@@ -118,9 +100,6 @@ en.FinishedLabel=Sakura Editor NEXT was installed successfully.
 en.FinishedLabelNoIcons=Sakura Editor NEXT was installed successfully.
 en.ClickFinish=Select Finish to close Setup.
 
-zh_hans.PrivilegesRequiredOverrideInstruction=选择 Sakura Editor NEXT 的使用范围
-zh_hans.PrivilegesRequiredOverrideCurrentUserRecommended=仅为当前用户安装（推荐）(&M)
-zh_hans.PrivilegesRequiredOverrideAllUsers=为所有用户安装（Program Files）(&A)
 zh_hans.WizardInfoBefore=安装前确认
 zh_hans.InfoBeforeLabel=安装 Sakura Editor NEXT 前请确认以下内容。
 zh_hans.InfoBeforeClickLabel=确认后请选择“下一步”。
@@ -133,9 +112,6 @@ zh_hans.SelectTasksDesc=选择 Sakura Editor NEXT 与 Windows 的集成方式。
 zh_hans.FinishedHeadingLabel=Sakura Editor NEXT 已准备就绪
 zh_hans.FinishedLabel=Sakura Editor NEXT 已成功安装。
 
-zh_hant.PrivilegesRequiredOverrideInstruction=選擇 Sakura Editor NEXT 的使用範圍
-zh_hant.PrivilegesRequiredOverrideCurrentUserRecommended=僅為目前使用者安裝（建議）(&M)
-zh_hant.PrivilegesRequiredOverrideAllUsers=為所有使用者安裝（Program Files）(&A)
 zh_hant.WizardInfoBefore=安裝前確認
 zh_hant.InfoBeforeLabel=安裝 Sakura Editor NEXT 前請確認以下內容。
 zh_hant.InfoBeforeClickLabel=確認後請選擇「下一步」。
@@ -163,6 +139,26 @@ en.AppPublisher=Sakura Editor NEXT developers
 ja.AppPublisher=Sakura Editor NEXT 開発チーム
 zh_hans.AppPublisher=Sakura Editor NEXT 开发团队
 zh_hant.AppPublisher=Sakura Editor NEXT 開發團隊
+
+en.ExitSetupPrompt=Setup is not complete. Exiting now will cancel the installation.%n%nExit Setup?
+ja.ExitSetupPrompt=セットアップは完了していません。%n終了するとインストールされません。%n%nセットアップを終了しますか？
+zh_hans.ExitSetupPrompt=安装尚未完成。现在退出将取消安装。%n%n要退出安装程序吗？
+zh_hant.ExitSetupPrompt=安裝尚未完成。現在結束將取消安裝。%n%n要結束安裝程式嗎？
+
+en.RunningAppTitle=Close Sakura Editor NEXT
+ja.RunningAppTitle=Sakura Editor NEXT を終了してください
+zh_hans.RunningAppTitle=请关闭 Sakura Editor NEXT
+zh_hant.RunningAppTitle=請關閉 Sakura Editor NEXT
+
+en.RunningAppPrompt=Sakura Editor NEXT is currently running.%nSave your work and close it, then select Check Again.
+ja.RunningAppPrompt=Sakura Editor NEXT が実行中です。%n作業内容を保存して終了し、「再確認」を選択してください。
+zh_hans.RunningAppPrompt=Sakura Editor NEXT 正在运行。%n请保存工作并关闭应用，然后选择“重新检查”。
+zh_hant.RunningAppPrompt=Sakura Editor NEXT 正在執行。%n請儲存工作並關閉應用程式，然後選擇「重新檢查」。
+
+en.RunningAppRetry=Check Again
+ja.RunningAppRetry=再確認
+zh_hans.RunningAppRetry=重新检查
+zh_hant.RunningAppRetry=重新檢查
 
 en.TypesAll=Recommended
 ja.TypesAll=推奨
@@ -289,21 +285,6 @@ ja.InitWiz_Check=設定をユーザーごとに保存する（推奨）
 zh_hans.InitWiz_Check=将每个用户的配置文件单独保存
 zh_hant.InitWiz_Check=將每個用戶的設定檔單獨保存
 
-en.ReadyMemo_InstallScope=Available to:
-ja.ReadyMemo_InstallScope=利用できるユーザー:
-zh_hans.ReadyMemo_InstallScope=可用用户:
-zh_hant.ReadyMemo_InstallScope=可用使用者:
-
-en.ReadyMemo_CurrentUser=Current user only (recommended)
-ja.ReadyMemo_CurrentUser=このユーザーのみ（推奨）
-zh_hans.ReadyMemo_CurrentUser=仅当前用户（推荐）
-zh_hant.ReadyMemo_CurrentUser=僅目前使用者（建議）
-
-en.ReadyMemo_AllUsers=All users (administrator installation)
-ja.ReadyMemo_AllUsers=すべてのユーザー（管理者インストール）
-zh_hans.ReadyMemo_AllUsers=所有用户（管理员安装）
-zh_hant.ReadyMemo_AllUsers=所有使用者（系統管理員安裝）
-
 en.ReadyMemo_SaveLocation=Settings location:
 ja.ReadyMemo_SaveLocation=設定の保存場所:
 zh_hans.ReadyMemo_SaveLocation=设定文件保存位置
@@ -328,6 +309,11 @@ en.ReadyMemo_VirtualStoreEnable=Enable
 ja.ReadyMemo_VirtualStoreEnable=有効
 zh_hans.ReadyMemo_VirtualStoreEnable=生效
 zh_hant.ReadyMemo_VirtualStoreEnable=生效
+
+en.AvxRequired=Sakura Editor NEXT requires a processor and operating system that support AVX instructions. This PC cannot run this release binary.
+ja.AvxRequired=Sakura Editor NEXT を使用するには、AVX 命令をサポートするプロセッサーとオペレーティング システムが必要です。この PC では配布バイナリを実行できません。
+zh_hans.AvxRequired=Sakura Editor NEXT 需要支持 AVX 指令的处理器和操作系统。此电脑无法运行此发行版二进制文件。
+zh_hant.AvxRequired=Sakura Editor NEXT 需要支援 AVX 指令的處理器和作業系統。此電腦無法執行此發行版二進位檔案。
 
 
 
@@ -468,6 +454,23 @@ FileName: "{app}\sakura.exe"; Description: "{cm:StartNow}"; WorkingDir: "{app}";
 Name: "{userappdata}\sakura"; Components: main; Tasks: startmenu; Check: isMultiUserEnabled
 
 [Code]
+const
+  PBM_SETBARCOLOR = $0409;
+  PBM_SETBKCOLOR = $2001;
+  PremiumProgressColor = $00C6942D;
+  PremiumProgressTrackColor = $00323232;
+
+#ifdef REQUIRE_AVX
+const
+  PF_AVX_INSTRUCTIONS_AVAILABLE = 39;
+
+function IsProcessorFeaturePresent(ProcessorFeature: DWORD): Boolean;
+  external 'IsProcessorFeaturePresent@kernel32.dll stdcall';
+#endif
+
+function SetWindowTheme(Window: HWND; SubAppName, SubIdList: String): HRESULT;
+  external 'SetWindowTheme@uxtheme.dll stdcall';
+
 var
   MultiUserPage: TInputOptionWizardPage;
   MultiUserPageEnabled : Boolean;
@@ -512,9 +515,9 @@ begin
     LogoSize := ImageAreaHeight - ScaleY(4);
 
   if InitializeBitmapImageFromIcon(
-    BitmapImage, BrandIconPath, $002B2B2B, [256]) then
+    BitmapImage, BrandIconPath, WizardForm.Color, [256]) then
   begin
-    BitmapImage.BackColor := $002B2B2B;
+    BitmapImage.BackColor := WizardForm.Color;
     BitmapImage.Center := True;
     BitmapImage.Stretch := True;
     BitmapImage.SetBounds(
@@ -557,16 +560,26 @@ begin
   WizardForm.SelectDirBrowseLabel.Left := ContentLeft;
   WizardForm.SelectDirBrowseLabel.Width := ContentWidth;
 
-  { Keep text surfaces distinct without introducing pure-black boxes. }
-  WizardForm.InfoBeforeMemo.StyleElements := [];
-  WizardForm.InfoBeforeMemo.BorderStyle := bsNone;
-  WizardForm.InfoBeforeMemo.Color := $00333333;
-  WizardForm.InfoBeforeMemo.Font.Color := $00F2F2F2;
+  { The bundled content is plain text.  Let the dark wizard style own the
+    client, font, border, focus, selection, and scrollbar colors together. }
+  WizardForm.InfoBeforeMemo.UseRichEdit := False;
   WizardForm.InfoBeforeMemo.ScrollBars := ssVertical;
-  WizardForm.ReadyMemo.StyleElements := [];
-  WizardForm.ReadyMemo.BorderStyle := bsNone;
-  WizardForm.ReadyMemo.Color := $00333333;
-  WizardForm.ReadyMemo.Font.Color := $00F2F2F2;
+
+  WizardForm.ReadyMemo.ScrollBars := ssVertical;
+end;
+
+procedure ApplyInstallProgressColors;
+begin
+  if not HighContrastActive then
+  begin
+    { The native normal progress state is green. Disable that control theme so
+      the explicit restrained blue and charcoal colors are honored. }
+    SetWindowTheme(WizardForm.ProgressGauge.Handle, '', '');
+    SendMessage(WizardForm.ProgressGauge.Handle, PBM_SETBKCOLOR, 0,
+      PremiumProgressTrackColor);
+    SendMessage(WizardForm.ProgressGauge.Handle, PBM_SETBARCOLOR, 0,
+      PremiumProgressColor);
+  end;
 end;
 
 { **********************************
@@ -636,13 +649,140 @@ end;
 
 { **********************************
    System Event Functions
-  ********************************** }
+   ********************************** }
+
+function ShowExitSetupConfirmation: Boolean;
+var
+  ConfirmForm: TSetupForm;
+  MessageLabel: TNewStaticText;
+  YesButton, NoButton: TNewButton;
+begin
+  ConfirmForm := CreateCustomForm(ScaleX(400), ScaleY(142), True, True);
+  try
+    ConfirmForm.Caption := SetupMessage(msgExitSetupTitle);
+    ConfirmForm.BorderStyle := bsDialog;
+    ConfirmForm.Position := poOwnerFormCenter;
+    ConfirmForm.Color := WizardForm.Color;
+    ConfirmForm.Font.Assign(WizardForm.Font);
+
+    MessageLabel := TNewStaticText.Create(ConfirmForm);
+    MessageLabel.Parent := ConfirmForm;
+    MessageLabel.AutoSize := False;
+    MessageLabel.WordWrap := True;
+    MessageLabel.Caption := CustomMessage('ExitSetupPrompt');
+    MessageLabel.SetBounds(ScaleX(24), ScaleY(16), ScaleX(352), ScaleY(72));
+
+    NoButton := TNewButton.Create(ConfirmForm);
+    NoButton.Parent := ConfirmForm;
+    NoButton.Caption := SetupMessage(msgButtonNo);
+    NoButton.ModalResult := mrNo;
+    NoButton.Default := True;
+    NoButton.Cancel := True;
+    NoButton.SetBounds(ScaleX(296), ScaleY(102), ScaleX(80), ScaleY(28));
+
+    YesButton := TNewButton.Create(ConfirmForm);
+    YesButton.Parent := ConfirmForm;
+    YesButton.Caption := SetupMessage(msgButtonYes);
+    YesButton.ModalResult := mrYes;
+    YesButton.SetBounds(ScaleX(208), ScaleY(102), ScaleX(80), ScaleY(28));
+
+    ConfirmForm.ActiveControl := NoButton;
+    Result := ConfirmForm.ShowModal = mrYes;
+  finally
+    ConfirmForm.Free;
+  end;
+end;
+
+procedure CancelButtonClick(CurPageID: Integer; var Cancel, Confirm: Boolean);
+begin
+  if Confirm then
+  begin
+    Confirm := False;
+    Cancel := ShowExitSetupConfirmation;
+  end;
+end;
+
+function ShowRunningApplicationConfirmation: Boolean;
+var
+  RunningForm: TSetupForm;
+  MessageLabel: TNewStaticText;
+  RetryButton, CancelButton: TNewButton;
+begin
+  RunningForm := CreateCustomForm(ScaleX(400), ScaleY(118), True, True);
+  try
+    RunningForm.Caption := CustomMessage('RunningAppTitle');
+    RunningForm.BorderStyle := bsDialog;
+    RunningForm.Position := poScreenCenter;
+
+    MessageLabel := TNewStaticText.Create(RunningForm);
+    MessageLabel.Parent := RunningForm;
+    MessageLabel.AutoSize := False;
+    MessageLabel.WordWrap := True;
+    MessageLabel.Caption := CustomMessage('RunningAppPrompt');
+    MessageLabel.SetBounds(ScaleX(24), ScaleY(16), ScaleX(352), ScaleY(48));
+
+    CancelButton := TNewButton.Create(RunningForm);
+    CancelButton.Parent := RunningForm;
+    CancelButton.Caption := SetupMessage(msgButtonCancel);
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Cancel := True;
+    CancelButton.SetBounds(ScaleX(288), ScaleY(78), ScaleX(88), ScaleY(28));
+
+    RetryButton := TNewButton.Create(RunningForm);
+    RetryButton.Parent := RunningForm;
+    RetryButton.Caption := CustomMessage('RunningAppRetry');
+    RetryButton.ModalResult := mrOk;
+    RetryButton.Default := True;
+    RetryButton.SetBounds(ScaleX(184), ScaleY(78), ScaleX(96), ScaleY(28));
+
+    RunningForm.ActiveControl := RetryButton;
+    Result := RunningForm.ShowModal = mrOk;
+  finally
+    RunningForm.Free;
+  end;
+end;
+
+function ConfirmApplicationIsClosed: Boolean;
+begin
+  Result := True;
+  while CheckForMutexes('MutexSakuraEditor') do
+  begin
+    if not ShowRunningApplicationConfirmation then
+    begin
+      Result := False;
+      Exit;
+    end;
+  end;
+end;
+
+function InitializeSetup: Boolean;
+begin
+  Result := ConfirmApplicationIsClosed;
+  if not Result then
+    Exit;
+
+#ifdef REQUIRE_AVX
+  { The single Release binary has an AVX baseline.  AVX2 and AVX-512 are
+    selected internally after the application validates CPUID and XGETBV. }
+  if IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE) then
+  begin
+    Log('AVX baseline is available; installing the runtime-dispatch binary.');
+    Result := True;
+  end
+  else
+  begin
+    MsgBox(CustomMessage('AvxRequired'), mbError, MB_OK);
+    Result := False;
+  end;
+#endif
+end;
 
 { Add multi user selection page if supported }
 procedure InitializeWizard;
 begin
   InitializeBrandWizardImages;
   PolishStandardWizardPages;
+  ApplyInstallProgressColors;
 
   { Create multi user page }
   MultiUserPage := CreateInputOptionPage( wpSelectComponents, CustomMessage('InitWiz_Title'),
@@ -655,28 +795,44 @@ begin
   MultiUserPageEnabled := True;
 end;
 
+procedure CurPageChanged(CurPageID: Integer);
+begin
+  { Keep the install type available without presenting its combo box as the
+    page's primary action. This also avoids an accent-colored focus rectangle
+    around the default "recommended" value on first display. }
+  if CurPageID = wpSelectComponents then
+    WizardForm.ActiveControl := WizardForm.NextButton;
+
+  if CurPageID = wpInstalling then
+    ApplyInstallProgressColors;
+end;
+
+procedure AppendReadyMemoSection(var Memo: String; Section, NewLine: String);
+begin
+  if Section <> '' then
+  begin
+    if Memo <> '' then
+      Memo := Memo + NewLine + NewLine;
+    Memo := Memo + Section;
+  end;
+end;
+
 { Build List of installation configuration for ready page }
 function UpdateReadyMemo(Space, NewLine, MemoUserInfoInfo, MemoDirInfo, MemoTypeInfo,
   MemoComponentsInfo, MemoGroupInfo, MemoTasksInfo: String): String;
 var
-  MemoInstallScope, MemoSettingsLocation: String;
+  MemoSettingsLocation: String;
 begin
-  MemoInstallScope := CustomMessage('ReadyMemo_InstallScope') + NewLine + Space;
-  if IsAdminInstallMode then
-    MemoInstallScope := MemoInstallScope + CustomMessage('ReadyMemo_AllUsers')
-  else
-    MemoInstallScope := MemoInstallScope + CustomMessage('ReadyMemo_CurrentUser');
-
   MemoSettingsLocation := CustomMessage('ReadyMemo_SaveLocation') + NewLine + Space;
   if isMultiUserEnabled then
     MemoSettingsLocation := MemoSettingsLocation + CustomMessage('ReadyMemo_UserProfileDir')
   else
     MemoSettingsLocation := MemoSettingsLocation + CustomMessage('ReadyMemo_ExecProfileDir');
 
-  Result := MemoInstallScope + NewLine + NewLine +
-            MemoDirInfo + NewLine + NewLine +
-            MemoTypeInfo + NewLine + NewLine +
-            MemoSettingsLocation + NewLine + NewLine +
-            MemoComponentsInfo + NewLine + NewLine +
-            MemoTasksInfo;
+  Result := '';
+  AppendReadyMemoSection(Result, MemoDirInfo, NewLine);
+  AppendReadyMemoSection(Result, MemoTypeInfo, NewLine);
+  AppendReadyMemoSection(Result, MemoSettingsLocation, NewLine);
+  AppendReadyMemoSection(Result, MemoComponentsInfo, NewLine);
+  AppendReadyMemoSection(Result, MemoTasksInfo, NewLine);
 end;

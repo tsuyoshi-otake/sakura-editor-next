@@ -31,6 +31,7 @@
 #include "env/CPropertyManager.h"
 #include "typeprop/CDlgTypeList.h"
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
 #include "dlg/CDlgOpenFile.h"
 #include "dlg/CDlgAbout.h"		//Nov. 21, 2000 JEPROtest
 #include "dlg/CDlgFavorite.h"
@@ -56,12 +57,15 @@
 #include "config/system_constants.h"
 #include "config/app_constants.h"
 #include "apiwrap/DarkMode.h"
+#include "extension/CExtensionHostController.h"
 
 #define ID_HOTKEY_TRAYMENU	0x1234
 
 #define IDT_EDITCHECK 2
 // 3秒
 #define IDT_EDITCHECK_INTERVAL 3000
+#define IDT_EXTENSION_HOST 3
+#define IDT_EXTENSION_HOST_INTERVAL 250
 /////////////////////////////////////////////////////////////////////////
 static LRESULT CALLBACK CControlTrayWndProc( HWND, UINT, WPARAM, LPARAM );
 
@@ -265,6 +269,7 @@ CControlTray::CControlTray()
 
 CControlTray::~CControlTray()
 {
+	if (m_extensionHostController) m_extensionHostController->Shutdown();
 	delete m_pcPropertyManager;
 	return;
 }
@@ -336,6 +341,9 @@ HWND CControlTray::Create( HINSTANCE hInstance )
 
 	m_pcPropertyManager = new CPropertyManager();
 	m_pcPropertyManager->Create( GetTrayHwnd(), &m_hIcons, &m_cMenuDrawer );
+	m_extensionHostController = std::make_unique<CExtensionHostController>();
+	std::wstring extensionHostDiagnostic;
+	(void)m_extensionHostController->Initialize(GetIniFileName().parent_path(), extensionHostDiagnostic);
 
 	m_szLanguageDll = GetDllShareData().m_Common.m_sWindow.m_szLanguageDll;
 
@@ -551,6 +559,31 @@ BOOL CControlTray::TrayMessage(HWND hDlg, DWORD dwMessage, UINT uID, HICON hIcon
 	return res;
 }
 
+int CControlTray::CleanupInvalidEditWindows(bool requestShutdownWhenEmpty)
+{
+	int deletedCount = 0;
+	bool deleted;
+	do {
+		deleted = false;
+		for (int i = 0; i < m_pShareData->m_sNodes.m_nEditArrNum; ++i) {
+			const HWND target = m_pShareData->m_sNodes.m_pEditArr[i].GetHwnd();
+			if (!IsSakuraMainWindow(target)) {
+				CAppNodeGroupHandle(m_pShareData->m_sNodes.m_pEditArr[i].m_nGroup)
+					.DeleteEditWndList(target);
+				++deletedCount;
+				deleted = true;
+				// The array is compacted by DeleteEditWndList; restart from index zero.
+				break;
+			}
+		}
+	} while (deleted);
+
+	if (requestShutdownWhenEmpty && deletedCount != 0 && m_pShareData->m_sNodes.m_nEditArrNum == 0) {
+		PostMessageAny(m_hWnd, MYWM_DELETE_ME, 0, 0);
+	}
+	return deletedCount;
+}
+
 /* メッセージ処理 */
 //@@@ 2001.12.26 YAZAKI MRUリストは、CMRUに依頼する
 LRESULT CControlTray::DispatchEvent(
@@ -612,30 +645,41 @@ LRESULT CControlTray::DispatchEvent(
 		// タイマメッセージ
 		if( IDT_EDITCHECK == wParam ){
 			// 2010.08.26 ウィンドウ存在確認。消えたウィンドウを抹消する
-			bool bDelete = false;
-			bool bDelFound;
-			do {
-				bDelFound = false;
-				for( int i = 0; i < m_pShareData->m_sNodes.m_nEditArrNum; ++i ){
-					HWND target = m_pShareData->m_sNodes.m_pEditArr[i].GetHwnd();
-					if( ! IsSakuraMainWindow( target ) ){
-						CAppNodeGroupHandle(m_pShareData->m_sNodes.m_pEditArr[i].m_nGroup).DeleteEditWndList( target );
-						bDelete = bDelFound = true;
-						// 1つ削除したらやり直し
-						break;
-					}
-				}
-			}while( bDelFound );
-			if( bDelete && m_pShareData->m_sNodes.m_nEditArrNum == 0 ){
-				PostMessageAny( hwnd, MYWM_DELETE_ME, 0, 0 );
-			}
+			CleanupInvalidEditWindows(true);
+		}
+		else if (IDT_EXTENSION_HOST == wParam && m_extensionHostController) {
+			m_extensionHostController->Tick();
 		}
 		return 0;
 
 	case MYWM_UIPI_CHECK:
 		/* エディタ－トレイ間でのUI特権分離の確認メッセージ */	// 2007.06.07 ryoji
+		CStartupTrace::Mark(CStartupTrace::Event::UipiCheckBegin);
 		::SendMessageW(HWND(lParam), MYWM_UIPI_CHECK, 0L, LPARAM(hWnd));	// 返事を返す
+		CStartupTrace::Mark(CStartupTrace::Event::UipiCheckEnd);
 		return lParam;
+
+	case MYWM_RECOVER_APPNODE:
+		// The requesting editor owns the startup mutex, so no other editor can
+		// inspect or append AppNode entries until this repair completes.
+		CleanupInvalidEditWindows(false);
+		return 1;
+
+	case MYWM_EXTENSION_HOST_ACQUIRE:
+		return m_extensionHostController && m_extensionHostController->AcquireLease(static_cast<std::uint32_t>(wParam));
+
+	case MYWM_EXTENSION_HOST_RELEASE:
+		if (m_extensionHostController) m_extensionHostController->ReleaseLease(static_cast<std::uint32_t>(wParam));
+		return 0;
+
+	case MYWM_EXTENSION_HOST_ACCEPT:
+		return m_extensionHostController && m_extensionHostController->AcceptHandshake(
+			static_cast<std::uint64_t>(wParam), static_cast<std::uint32_t>(lParam));
+
+	case MYWM_EXTENSION_HOST_LOST:
+		if (m_extensionHostController) m_extensionHostController->NotifyHostLost(
+			static_cast<std::uint64_t>(wParam), static_cast<std::uint32_t>(lParam));
+		return 0;
 
 	case MYWM_HTMLHELP:
 		{
@@ -741,6 +785,7 @@ LRESULT CControlTray::DispatchEvent(
 
 		// 2010.08.26 ウィンドウ存在確認
 		::SetTimer( hwnd, IDT_EDITCHECK, IDT_EDITCHECK_INTERVAL, nullptr );
+		::SetTimer(hwnd, IDT_EXTENSION_HOST, IDT_EXTENSION_HOST_INTERVAL, nullptr);
 		return 0L;
 
 //	case WM_QUERYENDSESSION:
@@ -1243,6 +1288,7 @@ bool CControlTray::OpenNewEditor(
 //	dwCreationFlag |= DEBUG_PROCESS; //2007.09.22 kobake デバッグ用フラグ
 #endif
 	WCHAR szCmdLine[1024]; wcscpy_s(szCmdLine, std::size(szCmdLine), cCmdLineBuf.c_str());
+	CStartupTrace::Mark(CStartupTrace::Event::EditorSpawnBegin);
 
 	if (const auto bCreateResult = ::CreateProcessW(
 		szEXE,					// 実行可能モジュールの名前
@@ -1257,6 +1303,7 @@ bool CControlTray::OpenNewEditor(
 		&p						// プロセス情報
 	);
 		!bCreateResult) {
+		CStartupTrace::Mark(CStartupTrace::Event::EditorSpawnEnd);
 		//	失敗
 		WCHAR* pMsg;
 		FormatMessage( FORMAT_MESSAGE_ALLOCATE_BUFFER |
@@ -1278,6 +1325,7 @@ bool CControlTray::OpenNewEditor(
 		::LocalFree( (HLOCAL)pMsg );	//	エラーメッセージバッファを解放
 		return false;
 	}
+	CStartupTrace::Mark(CStartupTrace::Event::EditorSpawnEnd, p.dwProcessId);
 
 	// MYWM_FIRST_IDLE が届くまでちょっとだけ余分に待つ	// 2008.04.19 ryoji
 	// Note. 起動先プロセスが初期化処理中に COM 関数（SHGetFileInfo API なども含む）を実行すると、
@@ -1299,6 +1347,7 @@ bool CControlTray::OpenNewEditor(
 		const auto startTick = ::GetTickCount64();
 		const ULONGLONG timeoutMillis = 15000;	// タイムアウト時間
 
+		CStartupTrace::Mark(CStartupTrace::Event::EditorWaitBegin);
 		DWORD dwRet = 0;
 		do {
 			// 残り時間を考慮して待機する
@@ -1315,6 +1364,8 @@ bool CControlTray::OpenNewEditor(
 			WAIT_OBJECT_0 != dwRet && // エディター初期化完了
 			WAIT_OBJECT_0 + 1 != dwRet // エディタープロセス終了
 		);
+		CStartupTrace::Mark(CStartupTrace::Event::EditorWaitEnd);
+		CStartupTrace::Mark(CStartupTrace::Event::EditorWaitResult, dwRet);
 
 		if (WAIT_OBJECT_0 != dwRet) {
 			ErrorMessage(
@@ -1711,6 +1762,8 @@ void CControlTray::OnDestroy()
 
 	if (GetTrayHwnd() == nullptr)
 		return;	// 既に破棄されている
+
+	if (m_extensionHostController) m_extensionHostController->Shutdown();
 
 	// ホットキーの破棄
 	::UnregisterHotKey( GetTrayHwnd(), ID_HOTKEY_TRAYMENU );

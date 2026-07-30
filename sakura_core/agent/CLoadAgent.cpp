@@ -21,6 +21,37 @@
 #include "io/CFileLoad.h"
 #include "apiwrap/StdApi.h"
 #include "config/app_constants.h"
+#include "debug/StartupTrace.h"
+
+namespace
+{
+class CStartupTracePhase final
+{
+public:
+	CStartupTracePhase(bool enabled, CStartupTrace::Event begin, CStartupTrace::Event end)
+		: m_enabled(enabled)
+		, m_end(end)
+	{
+		if (m_enabled) {
+			CStartupTrace::Mark(begin);
+		}
+	}
+
+	~CStartupTracePhase()
+	{
+		if (m_enabled) {
+			CStartupTrace::Mark(m_end);
+		}
+	}
+
+	CStartupTracePhase(const CStartupTracePhase&) = delete;
+	CStartupTracePhase& operator=(const CStartupTracePhase&) = delete;
+
+private:
+	bool m_enabled;
+	CStartupTrace::Event m_end;
+};
+}
 
 ECallbackResult CLoadAgent::OnCheckLoad(SLoadInfo* pLoadInfo)
 {
@@ -201,26 +232,33 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 	}
 
 	//ファイルが存在する場合はファイルを読む
-	if(fexist(sLoadInfo.cFilePath)){
-		//CDocLineMgrの構成
-		CReadManager cReader;
-		CProgressSubject* pOld = CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&cReader);
-		EConvertResult eReadResult = cReader.ReadFile_To_CDocLineMgr(
-			&pcDoc->m_cDocLineMgr,
-			sLoadInfo,
-			&pcDoc->m_cDocFile.m_sFileInfo
-		);
-		if(eReadResult==RESULT_LOSESOME){
-			eRet = LOADED_LOSESOME;
+	{
+		const CStartupTracePhase startupReadTrace{
+			CStartupTrace::IsStartupDocumentPending(),
+			CStartupTrace::Event::ReadBegin,
+			CStartupTrace::Event::ReadEnd,
+		};
+		if(fexist(sLoadInfo.cFilePath)){
+			//CDocLineMgrの構成
+			CReadManager cReader;
+			CProgressSubject* pOld = CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&cReader);
+			EConvertResult eReadResult = cReader.ReadFile_To_CDocLineMgr(
+				&pcDoc->m_cDocLineMgr,
+				sLoadInfo,
+				&pcDoc->m_cDocFile.m_sFileInfo
+			);
+			if(eReadResult==RESULT_LOSESOME){
+				eRet = LOADED_LOSESOME;
+			}
+			CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
 		}
-		CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
-	}
-	else{
-		// 存在しないときもドキュメントに文字コードを反映する
-		const STypeConfig& types = pcDoc->m_cDocType.GetDocumentAttribute();
-		pcDoc->m_cDocFile.SetCodeSet( sLoadInfo.eCharCode, 
-			( sLoadInfo.eCharCode == types.m_encoding.m_eDefaultCodetype ) ?
-				types.m_encoding.m_bDefaultBom : CCodeTypeName( sLoadInfo.eCharCode ).IsBomDefOn() );
+		else{
+			// 存在しないときもドキュメントに文字コードを反映する
+			const STypeConfig& types = pcDoc->m_cDocType.GetDocumentAttribute();
+			pcDoc->m_cDocFile.SetCodeSet( sLoadInfo.eCharCode,
+				( sLoadInfo.eCharCode == types.m_encoding.m_eDefaultCodetype ) ?
+					types.m_encoding.m_bDefaultBom : CCodeTypeName( sLoadInfo.eCharCode ).IsBomDefOn() );
+		}
 	}
 
 	/* レイアウト情報の変更 */
@@ -292,7 +330,7 @@ void CLoadAgent::OnFinalLoad(ELoadResult eLoadResult)
 	//再描画 $$不足
 	// CEditWnd::getInstance()->GetActiveView().SetDrawSwitch(true);
 	bool bDraw = CEditWnd::getInstance()->GetActiveView().GetDrawSwitch();
-	if( bDraw ){
+	if( bDraw && !CEditWnd::getInstance()->IsStartupDrawSuppressed() ){
 		CEditWnd::getInstance()->Views_RedrawAll(); //ビュー再描画
 		InvalidateRect( CEditWnd::getInstance()->GetHwnd(), nullptr, TRUE );
 	}

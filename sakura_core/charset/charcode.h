@@ -269,7 +269,9 @@ private:
 
 // キャッシュの初期化関数群
 void SelectCharWidthCache( ECharWidthFontMode fMode, ECharWidthCacheMode cMode );  //!< モードを変更したいとき
-void InitCharWidthCache( const LOGFONT &lf, ECharWidthFontMode fMode=CWM_FONT_EDIT ); //!< フォントを変更したとき
+// true: キャッシュを再初期化した。false: 同一のローカル・フォントを再利用した。
+// 共有キャッシュと InitCharWidthCacheFromDC は常に再初期化する。
+bool InitCharWidthCache( const LOGFONT &lf, ECharWidthFontMode fMode=CWM_FONT_EDIT ); //!< フォントを変更したとき
 void InitCharWidthCacheFromDC(const LOGFONT* lfs, ECharWidthFontMode fMode, HDC hdcOrg );
 [[nodiscard]] CCharWidthCache& GetCharWidthCache();
 

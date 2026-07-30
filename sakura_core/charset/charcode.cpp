@@ -209,11 +209,42 @@ namespace WCODE {
 				m_parCache[i] = 0;
 			}
 		}
-		void Init( const LOGFONT &lf1, const LOGFONT &lf2, ECharWidthFontMode fMode, HDC hdc )
-	 	{
-			//	Fontfaceが変更されていたらキャッシュをクリアする	2013.04.08 aroka
-			m_localcache[fMode].Init(lf1, lf2, hdc);
-			// サイズやHDCが変わってもクリアする必要がある
+		[[nodiscard]] bool CanReuseLocal(const LOGFONT& lf, ECharWidthFontMode fMode) const noexcept
+		{
+			return m_eCacheMode[fMode] == CWM_CACHE_LOCAL
+				&& m_localInitValid[fMode]
+				&& 0 == memcmp(&m_localInitFont[fMode], &lf, sizeof(lf));
+		}
+		bool Init(const LOGFONT& lf, ECharWidthFontMode fMode, HDC hdc)
+		{
+			// ローカル・キャッシュだけは、同じ論理フォントで連続して初期化される
+			// Create -> OnLoad のケースで 64K 要素の Clear を避けられる。共有キャッシュは
+			// 他プロセスとの整合性を保つため、同じフォントでも常に再初期化する。
+			if (CanReuseLocal(lf, fMode)) {
+				return false;
+			}
+
+			// Fontface、サイズ、HDC のいずれが変わってもキャッシュをクリアする。
+			m_localcache[fMode].Init(lf, lf, hdc);
+			m_localcache[fMode].Clear();
+
+			if (m_eCacheMode[fMode] == CWM_CACHE_LOCAL) {
+				m_localInitFont[fMode] = lf;
+				m_localInitValid[fMode] = true;
+			} else {
+				// A shared-mode Init replaces this process's HDC/font objects too.  A
+				// later switch back to LOCAL must therefore rebuild them, even when
+				// the last remembered local LOGFONT happens to match.
+				m_localInitValid[fMode] = false;
+			}
+			return true;
+		}
+		void InitFromDC(const LOGFONT* lfs, ECharWidthFontMode fMode, HDC hdc)
+		{
+			// DC の DPI / デバイス特性は LOGFONT だけでは表せない。通常の Init と
+			// 同一視せず、次の通常初期化も必ず実行する。
+			m_localInitValid[fMode] = false;
+			m_localcache[fMode].Init(lfs[0], lfs[1], hdc);
 			m_localcache[fMode].Clear();
 		}
 		void Select( ECharWidthFontMode fMode, ECharWidthCacheMode cMode )
@@ -230,12 +261,16 @@ namespace WCODE {
 				pcache->SelectCache( m_parCache[fMode] );
 			}
 			if( fMode==CWM_FONT_EDIT ){ m_eLastEditCacheMode = cmode; }
+			m_eCacheMode[fMode] = cmode;
 			WCODE::s_MultiFont = pcache->GetMultiFont();
 		}
 		[[nodiscard]] CCharWidthCache* GetCache(){ return pcache; }
 	private:
 		std::array<CCharWidthCache, 3> m_localcache;
 		std::array<SCharWidthCache*, 3> m_parCache;
+		std::array<ECharWidthCacheMode, CWM_FONT_MAX> m_eCacheMode{};
+		std::array<LOGFONT, CWM_FONT_MAX> m_localInitFont{};
+		std::array<bool, CWM_FONT_MAX> m_localInitValid{};
 		ECharWidthCacheMode m_eLastEditCacheMode = CWM_CACHE_NEUTRAL;
 		CCharWidthCache* pcache;
 		DISALLOW_COPY_AND_ASSIGN(CacheSelector);
@@ -260,16 +295,19 @@ namespace WCODE {
 }
 
 //	文字幅の動的計算用キャッシュの初期化。	2007/5/18 Uchi
-void InitCharWidthCache( const LOGFONT &lf, ECharWidthFontMode fMode )
+bool InitCharWidthCache( const LOGFONT &lf, ECharWidthFontMode fMode )
 {
+	if (WCODE::selector.CanReuseLocal(lf, fMode)) {
+		return false;
+	}
 	using MemDcHolder = cxx::ResourceHolder<&::DeleteDC>;
 	MemDcHolder hdc = ::CreateCompatibleDC(nullptr);
-	WCODE::selector.Init( lf, lf, fMode, hdc );
+	return WCODE::selector.Init(lf, fMode, hdc);
 }
 
 void InitCharWidthCacheFromDC( const LOGFONT* lfs, ECharWidthFontMode fMode, HDC hdcOrg )
 {
-	WCODE::selector.Init(lfs[0], lfs[1], fMode, hdcOrg);
+	WCODE::selector.InitFromDC(lfs, fMode, hdcOrg);
 }
 
  //	文字幅の動的計算用キャッシュの選択	2013.04.08 aroka

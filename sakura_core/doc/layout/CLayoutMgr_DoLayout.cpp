@@ -15,6 +15,7 @@
 #include "view/colors/CColorStrategy.h"
 #include "util/window.h"
 #include "debug/CRunningTimer.h"
+#include "debug/StartupTrace.h"
 #include <atomic>
 #include <thread>
 
@@ -330,6 +331,10 @@ void CLayoutMgr::_OnLine1(SLayoutWork* pWork)
 void CLayoutMgr::_DoLayout(bool bBlockingHook)
 {
 	MY_RUNNINGTIMER( cRunningTimer, L"CLayoutMgr::_DoLayout" );
+	const bool isStartupDocumentLayout = CStartupTrace::IsStartupDocumentPending();
+	if (isStartupDocumentLayout) {
+		CStartupTrace::Mark(CStartupTrace::Event::LayoutBegin);
+	}
 
 	_Empty();
 	Init();
@@ -337,15 +342,21 @@ void CLayoutMgr::_DoLayout(bool bBlockingHook)
 	const CLogicInt nAllLineCount = m_pcDocLineMgr->GetLineCount();
 
 	int nWorkerThreadCount = 0;
+	CStartupTrace::LayoutReason layoutReason = CStartupTrace::LayoutReason::None;
 	if (nAllLineCount < 1000) {
 		// 行数が多くなければマルチスレッド処理するまでもない
 		nWorkerThreadCount = 0;
+		layoutReason = CStartupTrace::LayoutReason::BelowMinimumLines;
 	} else if (CColorStrategyPool::getInstance()->HasRangeBasedColorStrategies()) {
 		// 行をまたぐ可能性のある色分けが有効の場合、途中で処理単位が分割されて
 		// しまうと色分けがおかしくなってしまうためやむなくマルチスレッド処理の対象外とする
 		nWorkerThreadCount = 0;
+		layoutReason = CStartupTrace::LayoutReason::RangeBasedColor;
 	} else {
 		nWorkerThreadCount = (std::max)(1, (int)std::thread::hardware_concurrency()) - 1;
+	}
+	if (isStartupDocumentLayout) {
+		CStartupTrace::MarkLayoutDecision(nAllLineCount, nWorkerThreadCount, layoutReason);
 	}
 
 	// 末尾側の行から順番にワーカースレッドに割り当てていき最後 (先頭行～) はメインスレッドで実行
@@ -397,6 +408,9 @@ void CLayoutMgr::_DoLayout(bool bBlockingHook)
 	for (int i = (nWorkerThreadCount - 1); i >= 0; i--) {
 		vecWorkerThreads[i].join();
 		_AppendAsMove(vecWorkerLayoutMgrs[i]);
+	}
+	if (isStartupDocumentLayout) {
+		CStartupTrace::Mark(CStartupTrace::Event::LayoutComplete);
 	}
 }
 

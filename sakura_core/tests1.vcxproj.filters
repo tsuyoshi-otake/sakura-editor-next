@@ -238,6 +238,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-charcode.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cpudispatch.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-zoom.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
@@ -245,6 +248,51 @@
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiondocumentbridge.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostbroker.cpp">
+      <Filter>tests1</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostintegration.cpp">
+      <Filter>tests1</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostprocess.cpp">
+      <Filter>tests1</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostsharedstate.cpp">
+      <Filter>tests1</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhoststatemachine.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionpipetransport.cpp">
+      <Filter>tests1</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionsecretstorage.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchmodels.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchdispatcher.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchui.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiontruststore.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionviewregistry.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionrpcprotocol.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cjsonrpcframecodec.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp">

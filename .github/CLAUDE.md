@@ -3,7 +3,7 @@
 ## Windows Build Contract
 
 - `workflows/build-sakura.yml` builds the x64 `{Debug, Release}` matrix. Debug compilation runs under Build Wrapper for analysis, while the regular MSBuild step builds Release with `build-sln.bat`.
-- The workflow runs the full `tests1.exe` suite, then builds HTML help and the installer. Release jobs package and upload artifacts.
+- The workflow runs the test suite before creating the installer. Release jobs package and upload one AVX-baseline `sakura.exe`; AVX2 and AVX-512F/BW implementations are selected inside that binary at runtime.
 - Release MSBuild must set `SAKURA_GENERATE_ASSEMBLY_LISTINGS=1` because the workflow calls `build-sln.bat` directly but later publishes the ASM ZIP. Keep the setting scoped to the MSBuild step; Debug does not need listing I/O.
 - Do not replace CI's solution build with `build-dev.bat`, and do not apply the local headless test filter to the required full CI suite solely for speed.
 - The Sonar job has its own rebuild/coverage flow; do not assume the main matrix's incremental settings apply to it.

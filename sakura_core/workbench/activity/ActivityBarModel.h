@@ -17,6 +17,7 @@ namespace workbench::activity {
 	enum class ActivityBarItem : std::uint8_t {
 	Explorer,
 	SourceControl,
+	Extensions,
 	Count,
 };
 
@@ -97,7 +98,7 @@ private:
 	int m_heightPixels = 0;
 	unsigned int m_dpi = 96;
 	std::array<ActivityBarRect, kItemCount> m_bounds{};
-	std::array<bool, kItemCount> m_enabled{ true, true };
+	std::array<bool, kItemCount> m_enabled{ true, true, true };
 	std::optional<ActivityBarItem> m_selected = ActivityBarItem::Explorer;
 	std::optional<ActivityBarItem> m_hovered;
 	std::optional<ActivityBarItem> m_pressed;
@@ -109,6 +110,7 @@ private:
 	switch (item) {
 	case ActivityBarItem::Explorer: return L"Explorer";
 	case ActivityBarItem::SourceControl: return L"Source Control";
+	case ActivityBarItem::Extensions: return L"Extensions";
 	case ActivityBarItem::Count: break;
 	}
 	return L"";

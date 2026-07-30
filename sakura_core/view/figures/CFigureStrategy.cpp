@@ -12,8 +12,39 @@
 #include "CFigureStrategy.h"
 #include "doc/layout/CLayout.h"
 #include "charset/charcode.h"
+#include "debug/StartupTrace.h"
 #include "types/CTypeSupport.h"
 #include "apiwrap/StdApi.h"
+
+namespace
+{
+CStartupTrace::NonBlockTextCategory ClassifyNonBlockText(const wchar_t code, const int utf16Length) noexcept
+{
+	if (utf16Length != 1) {
+		return CStartupTrace::NonBlockTextCategory::SurrogatePair;
+	}
+	if ((0x0300 <= code && code <= 0x036f)
+		|| (0x1ab0 <= code && code <= 0x1aff)
+		|| (0x1dc0 <= code && code <= 0x1dff)
+		|| (0x20d0 <= code && code <= 0x20ff)
+		|| (0x302a <= code && code <= 0x302f)
+		|| (0x3099 <= code && code <= 0x309a)
+		|| (0xfe00 <= code && code <= 0xfe0f)
+		|| (0xfe20 <= code && code <= 0xfe2f)) {
+		return CStartupTrace::NonBlockTextCategory::CombiningOrVariation;
+	}
+	if (0x3000 <= code && code <= 0x303f) {
+		return CStartupTrace::NonBlockTextCategory::CjkSymbolsAndPunctuation;
+	}
+	if (0x2000 <= code && code <= 0x206f) {
+		return CStartupTrace::NonBlockTextCategory::GeneralPunctuation;
+	}
+	if (0x0080 <= code && code <= 0x024f) {
+		return CStartupTrace::NonBlockTextCategory::LatinExtended;
+	}
+	return CStartupTrace::NonBlockTextCategory::OtherBmp;
+}
+}
 
 FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 {
@@ -43,6 +74,10 @@ FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 			nType = 1;
 		}
 	}
+	if (pInfo->m_collectStartupPaintMetrics && nType == 0) {
+		CStartupTrace::AccumulateFirstContentNonBlockText(
+			ClassifyNonBlockText(pInfo->m_pLineOfLogic[nIdx], nLength));
+	}
 	return (fontNo << 1) | nType;
 }
 
@@ -55,7 +90,17 @@ int CFigure_Text::FowardChars(SColorStrategyInfo* pInfo)
 						nIdx
 					);
 	pInfo->m_nPosInLogic += nLength;
-	return pInfo->m_pcView->GetTextMetrics().CalcTextWidth3(pInfo->m_pLineOfLogic + nIdx, nLength);
+	if (!pInfo->m_collectStartupPaintMetrics) {
+		return pInfo->m_pcView->GetTextMetrics().CalcTextWidth3(pInfo->m_pLineOfLogic + nIdx, nLength);
+	}
+	LARGE_INTEGER begin{};
+	::QueryPerformanceCounter(&begin);
+	const int width = pInfo->m_pcView->GetTextMetrics().CalcTextWidth3(
+		pInfo->m_pLineOfLogic + nIdx, nLength);
+	LARGE_INTEGER end{};
+	::QueryPerformanceCounter(&end);
+	CStartupTrace::AccumulateFirstContentAdvanceWidth(end.QuadPart - begin.QuadPart, nLength);
+	return width;
 }
 
 bool CFigure_Text::DrawImpBlock(SColorStrategyInfo* pInfo, int nPos, int nLength)
@@ -71,6 +116,9 @@ bool CFigure_Text::DrawImpBlock(SColorStrategyInfo* pInfo, int nPos, int nLength
 	// 先頭の文字のフォントを採用する。フォント判別は上位で行う必要がある
 	int fontNo = (nLengthFirst == 2 ? WCODE::GetFontNo2(pInfo->m_pLineOfLogic[nIdx], pInfo->m_pLineOfLogic[nIdx+1]):
 			WCODE::GetFontNo(pInfo->m_pLineOfLogic[nIdx]));
+	if (pInfo->m_collectStartupPaintMetrics) {
+		CStartupTrace::AccumulateFirstContentTextBlock(nLength, fontNo != 0);
+	}
 	if( fontNo ){
 		CTypeSupport cCurrentType(pInfo->m_pcView, pInfo->GetCurrentColor());	// 周辺の色（現在の指定色/選択色）
 		CTypeSupport cCurrentType2(pInfo->m_pcView, pInfo->GetCurrentColor2());	// 周辺の色（現在の指定色）
@@ -88,7 +136,8 @@ bool CFigure_Text::DrawImpBlock(SColorStrategyInfo* pInfo, int nPos, int nLength
 		nHeightMargin,
 		&pInfo->m_pLineOfLogic[nIdx],
 		nLength,
-		bTrans
+		bTrans,
+		pInfo->m_collectStartupPaintMetrics
 	);
 	if( fontNo ){
 		pInfo->m_gr.PopMyFont();
