@@ -35,6 +35,10 @@ permissions:
   actions: read
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
 jobs:
   check-encoding:
@@ -301,21 +305,9 @@ jobs:
       if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
       uses: SonarSource/sonarqube-scan-action/install-build-wrapper@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
 
-    # OpenCppCoverageをインストールする
-    - name: Install OpenCppCoverage (winget)
-      id: install_opencppcoverage_winget
+    # OpenCppCoverageをハッシュ検証済みのインストーラーから導入する。
+    - name: Install OpenCppCoverage
       if: ${{ matrix.config == 'Debug' }}
-      continue-on-error: true
-      run: |
-        winget install `
-          --id OpenCppCoverage.OpenCppCoverage `
-          --exact `
-          --accept-package-agreements `
-          --accept-source-agreements
-
-    # wingetは失敗することがあるので、インストーラー方式も残しておく。
-    - name: Install OpenCppCoverage (installer)
-      if: ${{ matrix.config == 'Debug' && steps.install_opencppcoverage_winget.outcome == 'failure' }}
       working-directory: ${{ runner.temp }}
       run: |
         $installer = '.\OpenCppCoverageSetup.exe'
@@ -327,27 +319,21 @@ jobs:
         if ($actualSha256 -ne $expectedSha256.ToLowerInvariant()) {
           throw "SHA256 mismatch: expected=$expectedSha256 actual=$actualSha256"
         }
-        Start-Process `
+        $process = Start-Process `
           -FilePath $installer `
           -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" `
-          -Wait
+          -Wait `
+          -PassThru
+        if ($process.ExitCode -ne 0) {
+          throw "OpenCppCoverage installer failed with exit code $($process.ExitCode)."
+        }
         echo "C:\Program Files\OpenCppCoverage" >> $env:GITHUB_PATH
 
-    - name: Install Ctags (winget)
-      run: |
-        winget install `
-          --id UniversalCtags.Ctags `
-          --exact `
-          --accept-package-agreements `
-          --accept-source-agreements
+    - name: Install Ctags (Chocolatey)
+      run: choco install universal-ctags --version=2022.6.5 --yes --no-progress
 
-    - name: Install DiffUtils (winget)
-      run: |
-        winget install `
-          --id GnuWin32.DiffUtils `
-          --exact `
-          --accept-package-agreements `
-          --accept-source-agreements
+    - name: Install DiffUtils (Chocolatey)
+      run: choco install diffutils --version=2.8.7 --yes --no-progress
 
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0

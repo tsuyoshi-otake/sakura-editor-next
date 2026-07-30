@@ -24,6 +24,10 @@ permissions:
   contents: read
   packages: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   mingw:
     runs-on: windows-latest
