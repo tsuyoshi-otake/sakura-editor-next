@@ -51,9 +51,9 @@ public:
 	CStartupLayoutPhaseTimer& operator=(const CStartupLayoutPhaseTimer&) = delete;
 
 private:
+	bool m_enabled{};
 	std::int64_t m_start{};
 	std::int64_t m_operations{1};
-	bool m_enabled{};
 };
 }
 
