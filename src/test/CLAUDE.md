@@ -16,6 +16,19 @@
 - Keep live network or machine-specific integration checks disabled by default and clearly named. Routine verification must be deterministic.
 - When a test needs a generated library, DLL, ZIP, or header, update both its CMake dependency and the MSBuild staging/invalidation contract.
 
+## Phase-Scoped Tests
+
+| Priority | Additional guidance |
+|---|---|
+| P0 platform contracts | [`cpp/tests1/platform/CLAUDE.md`](cpp/tests1/platform/CLAUDE.md) |
+| P0/P2 extension registry and secret boundaries | [`cpp/tests1/extension/CLAUDE.md`](cpp/tests1/extension/CLAUDE.md) |
+| P1/P2/P4 workbench models and layout | [`cpp/tests1/workbench/CLAUDE.md`](cpp/tests1/workbench/CLAUDE.md) |
+| Cross-process and real backends | [`integration/CLAUDE.md`](integration/CLAUDE.md) |
+
+When a new scoped test directory is introduced, add its own `CLAUDE.md` with
+only the subsystem-specific invariants; keep build registration and runner
+cleanup rules centralized here.
+
 ## Running Tests
 
 Full suite for a built configuration:

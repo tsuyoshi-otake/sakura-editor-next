@@ -9,6 +9,13 @@ This file contains repository-wide guidance. More specific `CLAUDE.md` files are
 | Core application and MSBuild projects | [`sakura_core/CLAUDE.md`](sakura_core/CLAUDE.md) |
 | Command dispatch | [`sakura_core/cmd/CLAUDE.md`](sakura_core/cmd/CLAUDE.md) |
 | Document model | [`sakura_core/doc/CLAUDE.md`](sakura_core/doc/CLAUDE.md) |
+| Process composition | [`sakura_core/_main/CLAUDE.md`](sakura_core/_main/CLAUDE.md) |
+| Platform services | [`sakura_core/platform/CLAUDE.md`](sakura_core/platform/CLAUDE.md) |
+| Configuration, Settings, and workspace sources | [`sakura_core/config/CLAUDE.md`](sakura_core/config/CLAUDE.md) |
+| Workbench, editor, working copy, and layout state | [`sakura_core/workbench/CLAUDE.md`](sakura_core/workbench/CLAUDE.md), [`sakura_core/workbench/editor/CLAUDE.md`](sakura_core/workbench/editor/CLAUDE.md), [`sakura_core/workbench/layout/CLAUDE.md`](sakura_core/workbench/layout/CLAUDE.md) |
+| Filesystem resource/version boundary | [`sakura_core/platform/filesystem/CLAUDE.md`](sakura_core/platform/filesystem/CLAUDE.md) |
+| Terminal and debug capability boundaries | [`sakura_core/terminal/CLAUDE.md`](sakura_core/terminal/CLAUDE.md), [`sakura_core/debug/CLAUDE.md`](sakura_core/debug/CLAUDE.md) |
+| Extension integration and extension host | [`sakura_core/extension/CLAUDE.md`](sakura_core/extension/CLAUDE.md), [`src/exthost/CLAUDE.md`](src/exthost/CLAUDE.md) |
 | Build generation and shared resources | [`src/main/CLAUDE.md`](src/main/CLAUDE.md) |
 | Tests and test infrastructure | [`src/test/CLAUDE.md`](src/test/CLAUDE.md) |
 | Build helpers and build documentation | [`tools/CLAUDE.md`](tools/CLAUDE.md) |
@@ -18,6 +25,8 @@ This file contains repository-wide guidance. More specific `CLAUDE.md` files are
 ## Project Overview
 
 Sakura Editor NEXT is a Windows text editor written in C++20 and licensed under the zlib License. Windows with MSVC is the primary build path. MinGW support is experimental, and its binaries may not behave correctly.
+
+This repository is a fork of [sakura-editor/sakura](https://github.com/sakura-editor/sakura), which is a separate upstream project. Do not treat upstream's issues, pull requests, releases, conventions, or CI as this repository's own, and do not send changes from this repository to upstream unless the task explicitly calls for it.
 
 The application uses two process types: one hidden control process owns cross-instance state, and each editor window runs in its own editor process. Detailed ownership and subsystem boundaries live under `sakura_core/`.
 

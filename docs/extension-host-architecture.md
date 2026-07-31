@@ -286,11 +286,12 @@ sequenceDiagram
 
 ### 9.4 SecretStorage
 
-- `ExtensionContext.secrets` は通常設定や `globalState` と分離し、Windows DPAPI の current-user scope で暗号化してから profile 配下へ保存する。
-- 保存キーは `(extensionId, key)` で名前空間化する。Node 側が任意の `extensionId` を指定する形にはせず、activation context に束縛された SecretStorage instance だけが呼び出せる。
-- 更新は一時ファイルへの書き込み、flush、atomic replace の順で行い、複数 editor／host generation の同時更新を直列化する。
-- API は `get`、`store`、`delete`、`keys`、`onDidChange` を提供する。秘密値は Setting Sync、diagnostic、Output Channel、crash report、RPC trace に含めない。
-- DPAPI は保存時暗号化と同一 Windows user への束縛を提供するが、同じ Node host 内で任意コードを実行する悪意ある拡張を強制分離する sandbox ではない。強い拡張間分離が必要になった場合は extension ごとの process 分離を別 mode として追加する。
+- `ExtensionContext.secrets` は通常設定や `globalState` と分離する。control process が唯一の durable writer となり、Windows DPAPI の current-user scope で暗号化した Vault を canonical profile identity に束縛する。
+- 保存アドレスは `(extensionId, key)` で論理的に名前空間化する。activation context から作った SecretStorage instance が canonical `extensionId` を付加し、control 側は installed inventory、host session、generation、editor lease、短命 capability を検証する。
+- Editor lease の legacy window-message edge は、登録済み Sakura editor HWND と OS が返す PID の一致を control tray が process-handle取得の前後で検証する。controller は最初のleaseで `SYNCHRONIZE` handleを固定し、数値PIDを再openせず、そのprocess objectの終了で全nested leaseを回収する。owner/nestingはboundedで、rollback・final release・shutdownがhandleを一度だけ閉じる。
+- 共有 Node host 内の extension は互いに別の security principal ではない。RPC の `extensionId` と installed-ID 検査は API の名前空間／適格性契約であり、悪意ある extension 間の秘密分離を保証しない。これは VS Code と同じ trusted extension-host 境界であり、強い分離には extension ごとの専用 process と認証済み起動 identity が必要になる。
+- 更新は global revision CAS、同一 operation ID の bounded replay、一時ファイルへの書き込み、flush、atomic replace の順で直列化する。旧 per-editor Vault は control-owned migration coordinator だけが bounded lazy migration する。
+- API は実装済みの `get`、`store`、`delete`、値を含まない `onDidChange` を提供する。`keys` は現時点では `UnsupportedCapability` として Node 内で拒否し RPC を送らない。秘密値は Settings Sync、diagnostic、Output Channel、crash report、通常 log、RPC trace、変更 event に含めない。
 
 ## 10. API 互換範囲
 
@@ -304,7 +305,7 @@ sequenceDiagram
 | workspace | documents、open/change/save/close events、`applyEdit`、configuration、filesystem |
 | document/editor | text/line/offset/position、save/edit、selection(s) |
 | languages | document/range formatting provider、diagnostic collection |
-| context | subscriptions、JSON-backed global/workspace state、DPAPI-backed secrets、extension path |
+| context | subscriptions、revisioned global/workspace state、control-Vault-backed secrets、extension path |
 | env | clipboard、app name、匿名化した machine ID |
 | workbench | Activity Bar、`viewsContainers`／`views`、TreeView／TreeDataProvider、Problems／Output pane |
 | webview | Webview View／Panel、CSP、navigation、local resource roots、message bridge |
@@ -317,6 +318,17 @@ diagnostics の最小 UI は行の下線と一覧 pane とする。
 - hover provider
 - `vscode-languageclient` の互換動作
 - task、terminal、SCM の provider／execution API
+
+Task の native backend は、`.vscode/tasks.json`／`.code-workspace` の
+folder-scoped catalog、bounded run ownership、shell/process policy、ConPTY の
+real exit code、post-quiescence completion まで実装済みである。ただし、これは
+extension API 互換の完了を意味しない。`CNormalProcess` の Task factory は現時点で
+presentation sink を持たず、Task 出力は native Terminal tab に投影されない。
+VS Code と同じ構造へ寄せる次段では、Task と panel が共有する runtime-owned
+Terminal session/model authority、provider/custom execution RPC、variable resolution、
+dependency/background scheduling、problem matcher、presentation policy を実装する。
+raw ANSI bytes を Output pane や HWND-local buffer に流して Terminal 互換とみなしては
+ならない。
 
 ### 10.3 初期版の対象外
 

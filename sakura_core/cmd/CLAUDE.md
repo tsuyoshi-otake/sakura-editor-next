@@ -13,6 +13,44 @@
 - Do not introduce an early return that bypasses undo ownership, post-command notification, redraw/update work, or caller-visible completion.
 - Commands that modify document state should enter through the document/editor abstractions described in `../doc/CLAUDE.md`; avoid direct storage mutation from UI dispatch code.
 
+## P1 Workbench Command Adapter
+
+- New/Open/Show/Save/Revert/Close/Focus and part toggles have stable workbench
+  command IDs as the target contract. A native function code becomes an adapter
+  only after its complete parameter and terminal-result behavior is routed; an
+  aspirational ID is not evidence that the legacy implementation has migrated.
+- Menus, accelerators, Activity Bar, Empty Group watermark, Command Palette,
+  and extension RPC execute the same registered command and observe the same
+  terminal result.
+- Enablement and visibility come from Context Keys. With no active editor,
+  text-editor-only commands return `NotApplicable`; general workbench commands
+  remain available when their own context permits.
+- Command completion updates model, context, focus, and extension deltas in the
+  documented order. Do not publish success before the owning operation commits.
+
+### Landed file-command seam
+
+- After undo/operation-block preparation and before the legacy switch,
+  `CViewCommander::HandleCommand` offers the complete command to
+  `CEditWnd::TryExecuteWorkingCopyFileCommand`. Preserve `originalCommand`,
+  redraw, and all four `lparam` values; the high 16-bit source flags and Save As
+  target/encoding/EOL intent must survive translation.
+- Once the seam marks Save, Quiet Save, Save As, Save-and-Close, or File Close
+  as handled, every terminal result remains handled. Cancellation, conflict,
+  failure, and unsupported capability must not fall through to a second,
+  destructive legacy implementation. Common post-dispatch finalization still
+  runs.
+- `F_FILESAVEALL` remains a legacy process fan-out rather than one atomic
+  transaction. Each receiver gets `F_FILESAVE_QUIET` and re-enters the same
+  central seam; the sender's historical return does not claim aggregate save
+  success.
+- `F_FILE_REOPEN*` and `CAutoReloadAgent` remain legacy reload routes until a
+  production backend can stage/apply/finalize or roll back native state. Do not
+  route them to a typed Revert that can only return `Unsupported`, because that
+  would silently remove an existing operation. When the backend lands, translate
+  every encoding variant and no-confirm flag here and remove the direct reload
+  route in the same verified change.
+
 ## Adding or Changing Commands
 
 - Update `Funccode_x.hsrc`, the appropriate commander implementation, and any resource/menu/keybinding tables that expose the command.
