@@ -54,6 +54,16 @@ whether an editor input is open or active.
 - Commands use the stable IDs in `EditorCommandIds.h`. Native menus/keys,
   watermark actions, command palette, and extension RPC converge on the same
   coordinator; observers such as extension document events run after commit.
+- The empty-editor watermark mirrors VS Code's `.editor-group-watermark`: one
+  vertically centered column holding a square product letterpress capped at
+  256 DIP, a 24 DIP gap, and the shortcut list. `EmptyEditorSurfaceModel` owns
+  that geometry; `CEmptyEditorSurface` only paints it. The square shrinks with
+  the viewport and is dropped entirely before the action list loses space, so
+  an empty letterpress rectangle is a normal state rather than a failure.
+- VS Code paints no text wordmark there, so the product name lives in the
+  accessible name instead of the canvas. Both the label and its keybinding use
+  the `descriptionText` token; do not reintroduce `secondaryText` or the removed
+  `editorWatermark.foreground` token, which no longer exists upstream.
 
 ## Backup and Session Persistence
 

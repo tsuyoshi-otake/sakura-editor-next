@@ -332,6 +332,7 @@ const EFunctionCode pnFuncList_Search[] = {	//Oct. 16, 2000 JEPRO 変数名変�
 	F_TOGGLE_LEFT_EXPLORER	,	//左エクスプローラーの表示切替
 	F_TOGGLE_RIGHT_OUTLINE	,	//右アウトラインの表示切替
 	F_TOGGLE_BOTTOM_PANEL	,	//下部パネルの表示切替
+	F_TOGGLE_SECONDARY_SIDEBAR	,	//セカンダリサイドバーの表示切替
 	F_SHOW_FOCUS_TERMINAL	,	//統合ターミナルを表示してフォーカス
 	F_NEW_TERMINAL		,	//新しい統合ターミナル
 	F_REDETECT_POWERSHELL	,	//PowerShellを再検出
@@ -1302,6 +1303,7 @@ bool IsFuncChecked( const CEditDoc* pcEditDoc, const DLLSHAREDATA* pShareData, E
 	case F_TOGGLE_LEFT_EXPLORER:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Left);
 	case F_TOGGLE_RIGHT_OUTLINE:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Right);
 	case F_TOGGLE_BOTTOM_PANEL:	return pCEditWnd->IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom);
+	case F_TOGGLE_SECONDARY_SIDEBAR:	return pCEditWnd->IsSecondarySidebarVisible();
 	case F_TOGGLE_MARKDOWN_PREVIEW:	return pCEditWnd->IsMarkdownPreviewVisible();
 	// 2008.05.30 nasukoji	テキストの折り返し方法
 	case F_TMPWRAPNOWRAP:		return ( pcEditDoc->m_nTextWrapMethodCur == WRAP_NO_TEXT_WRAP );		// 折り返さない
@@ -1334,7 +1336,7 @@ bool IsFuncChecked( const CEditDoc* pcEditDoc, const DLLSHAREDATA* pShareData, E
 	case F_OUTLINE_TOGGLE: // 20060201 aroka アウトラインウィンドウ
 		// ToDo:ブックマークリストが出ているときもへこんでしまう。
 		return GetEditWnd().m_cDlgFuncList.GetHwnd() != nullptr;
-	case F_EXTENSION_LIST:		return GetEditWnd().IsExtensionPaneVisible();	//拡張サイドバー
+	case F_EXTENSION_LIST:		return GetEditWnd().IsExtensionsViewContainerActive();	//拡張（Open VSX）ViewContainerが表示中か
 	default:
 		break;
 	}

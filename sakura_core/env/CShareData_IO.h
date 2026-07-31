@@ -34,6 +34,13 @@ public:
 	[[nodiscard]] static int ResolveMainMenuReadVersion(
 		bool isReadingMode, bool hasStoredVersion, int storedVersion, int currentVersion ) noexcept;
 
+	// Version 6 migration.  VS Code's File menu exposes a single "Open Recent"
+	// submenu holding recent folders, a separator, then recent files, so the two
+	// legacy sibling submenus are merged in place.  Only the exact legacy four
+	// entry run is rewritten; a customized menu is left untouched.  Returns true
+	// when the run was found and rewritten.
+	[[nodiscard]] static bool MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) noexcept;
+
 protected:
 	static bool ShareData_IO_2( bool bRead );	/* 共有データの保存 */
 

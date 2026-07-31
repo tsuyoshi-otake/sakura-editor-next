@@ -14,6 +14,7 @@
 #include <windowsx.h>
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace workbench {
 namespace {
@@ -134,6 +135,7 @@ void CActivityBar::Destroy() noexcept
 	if (m_destroyed || m_destroying) return;
 	m_destroying = true;
 	m_captureItem.reset();
+	m_dragging = false;
 	if (m_iconFont != nullptr) {
 		::DeleteObject(m_iconFont);
 		m_iconFont = nullptr;
@@ -182,6 +184,20 @@ void CActivityBar::SetItemEnabled(ActivityBarItem item, bool enabled) noexcept
 	const bool oldEnabled = m_model.IsEnabled(item);
 	m_model.SetEnabled(item, enabled);
 	if (oldEnabled != enabled) accessibility::RaiseEnabledChanged(*this, static_cast<int>(item), oldEnabled, enabled);
+	Invalidate();
+}
+
+void CActivityBar::SetItemVisible(ActivityBarItem item, bool visible) noexcept
+{
+	if (m_model.IsVisible(item) == visible) return;
+	if (!visible && m_captureItem == item) {
+		m_captureItem.reset();
+		m_dragging = false;
+		if (::GetCapture() == m_window) ::ReleaseCapture();
+	}
+	m_model.SetItemVisible(item, visible);
+	// Every remaining entry moved, so the tooltip rectangles are stale.
+	UpdateTooltipRects();
 	Invalidate();
 }
 
@@ -260,6 +276,14 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_MOUSEMOVE: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (m_captureItem && BeginDragIfPastThreshold(point)) {
+			// A drag has started, so the press affordance must stop pretending a click
+			// is still pending.
+			m_model.SetPressedItem(std::nullopt);
+			m_model.SetHoveredItem(std::nullopt);
+			Invalidate();
+			return 0;
+		}
 		SetHoverFromPoint(point);
 		if (m_captureItem) m_model.SetPressedItem(m_model.HitTest(point.x, point.y) == m_captureItem ? m_captureItem : std::nullopt);
 		if (!m_trackingMouseLeave) {
@@ -284,17 +308,33 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		accessibility::RaiseFocusChanged(*this, static_cast<int>(*item));
 		m_model.SetPressedItem(item);
 		m_captureItem = item;
+		m_dragOrigin = point;
+		m_dragging = false;
 		::SetCapture(m_window);
 		Invalidate();
 		return 0;
 	}
+	case WM_SETCURSOR:
+		if (m_dragging) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+			return TRUE;
+		}
+		break;
 	case WM_LBUTTONUP: {
 		if (!m_captureItem) break;
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		const auto captured = m_captureItem;
+		const bool dragged = m_dragging;
 		m_captureItem.reset();
+		m_dragging = false;
 		m_model.SetPressedItem(std::nullopt);
 		if (::GetCapture() == m_window) ::ReleaseCapture();
+		if (dragged) {
+			// A completed drag is a move gesture, never the toggle it started as.
+			Invalidate();
+			static_cast<void>(FinishDrag(*captured, point));
+			return 0;
+		}
 		SetHoverFromPoint(point);
 		Invalidate();
 	const auto invoked = m_model.HitTest(point.x, point.y) == captured ? captured : std::nullopt;
@@ -304,6 +344,7 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	}
 	case WM_CAPTURECHANGED:
 		m_captureItem.reset();
+		m_dragging = false;
 		m_model.SetPressedItem(std::nullopt);
 		Invalidate();
 		return 0;
@@ -461,6 +502,31 @@ bool CActivityBar::InvokeRequest(std::optional<ActivityBarItem> item) noexcept
 	if (!item || !m_onToggleRequest) return false;
 	try {
 		m_onToggleRequest(*item);
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
+bool CActivityBar::BeginDragIfPastThreshold(POINT point) noexcept
+{
+	if (m_dragging) return true;
+	if (!m_captureItem || !m_onContainerDrag) return false;
+	const int dragX = std::max(1, ::GetSystemMetrics(SM_CXDRAG));
+	const int dragY = std::max(1, ::GetSystemMetrics(SM_CYDRAG));
+	if (std::abs(point.x - m_dragOrigin.x) < dragX && std::abs(point.y - m_dragOrigin.y) < dragY) return false;
+	m_dragging = true;
+	::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+	return true;
+}
+
+bool CActivityBar::FinishDrag(ActivityBarItem item, POINT clientPoint) noexcept
+{
+	if (!m_onContainerDrag || m_window == nullptr) return false;
+	POINT screenPoint = clientPoint;
+	if (::ClientToScreen(m_window, &screenPoint) == FALSE) return false;
+	try {
+		m_onContainerDrag(item, screenPoint);
 		return true;
 	} catch (...) {
 		return false;

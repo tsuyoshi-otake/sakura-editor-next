@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -38,29 +39,45 @@ constexpr std::array kRequiredBuiltinParts{
 	return std::nullopt;
 }
 
+[[nodiscard]] constexpr std::uint32_t LocationBit(
+	layout::EWorkbenchViewContainerLocation location) noexcept
+{
+	return static_cast<std::uint32_t>(1u) << static_cast<std::uint32_t>(location);
+}
+
+//! VS Code renders the same composite bar in the Primary and Secondary Side Bar, so an
+//! Activity Bar ViewContainer is valid in either one and moves between them.
+constexpr std::uint32_t kSideBarLocations =
+	LocationBit(layout::EWorkbenchViewContainerLocation::SideBar)
+	| LocationBit(layout::EWorkbenchViewContainerLocation::AuxiliaryBar);
+//! Panel containers stay in the Panel here. Moving the whole Panel to the Secondary Side
+//! Bar is `workbench.action.movePanelToSecondarySideBar`, a separate unsupported gate.
+constexpr std::uint32_t kPanelLocations =
+	LocationBit(layout::EWorkbenchViewContainerLocation::Panel);
+
 struct NativeSurfaceMapping {
 	std::string_view containerId;
 	std::string_view viewId;
-	layout::EWorkbenchViewContainerLocation location;
+	//! Every location whose native host can render this surface.
+	std::uint32_t locations;
 	BuiltinActiveSurface surface;
 };
 
 constexpr std::array kNativeSurfaceMappings{
 	NativeSurfaceMapping{ layout::ids::viewContainer::Explorer, layout::ids::view::Explorer,
-		layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::Explorer },
+		kSideBarLocations, BuiltinActiveSurface::Explorer },
 	NativeSurfaceMapping{ layout::ids::viewContainer::Explorer, layout::ids::view::Outline,
-		layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::Outline },
+		kSideBarLocations, BuiltinActiveSurface::Outline },
 	NativeSurfaceMapping{ layout::ids::viewContainer::SourceControl, layout::ids::view::SourceControl,
-		layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::SourceControl },
+		kSideBarLocations, BuiltinActiveSurface::SourceControl },
+	NativeSurfaceMapping{ layout::ids::viewContainer::Extensions, layout::ids::view::Extensions,
+		kSideBarLocations, BuiltinActiveSurface::Extensions },
 	NativeSurfaceMapping{ layout::ids::viewContainer::Terminal, layout::ids::view::Terminal,
-		layout::EWorkbenchViewContainerLocation::Panel, BuiltinActiveSurface::Terminal },
+		kPanelLocations, BuiltinActiveSurface::Terminal },
 	NativeSurfaceMapping{ layout::ids::viewContainer::Problems, layout::ids::view::Problems,
-		layout::EWorkbenchViewContainerLocation::Panel, BuiltinActiveSurface::Problems },
+		kPanelLocations, BuiltinActiveSurface::Problems },
 	NativeSurfaceMapping{ layout::ids::viewContainer::Output, layout::ids::view::Output,
-		layout::EWorkbenchViewContainerLocation::Panel, BuiltinActiveSurface::Output },
-	NativeSurfaceMapping{ layout::ids::viewContainer::LegacyExtensionViewsAuxiliary,
-		layout::ids::view::LegacyExtensionViews, layout::EWorkbenchViewContainerLocation::AuxiliaryBar,
-		BuiltinActiveSurface::LegacyExtensionViews },
+		kPanelLocations, BuiltinActiveSurface::Output },
 };
 
 template<typename T>
@@ -205,7 +222,7 @@ BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
 		}
 
 		const auto* mapping = FindNativeSurface(container->containerId, view->viewId);
-		if (mapping == nullptr || mapping->location != activeLocation.location) {
+		if (mapping == nullptr || (mapping->locations & LocationBit(activeLocation.location)) == 0) {
 			return NativeSurfaceFailure(EBuiltinActiveSurfaceProjectionStatus::UnsupportedSurface);
 		}
 		projection.*(activeLocation.surface) = mapping->surface;
@@ -277,10 +294,12 @@ BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
 	}
 
 	const auto* mapping = FindNativeSurface(focusedContainer->containerId, activeView->viewId);
-	if (mapping == nullptr || mapping->location != focusedContainer->location) {
+	if (mapping == nullptr || (mapping->locations & LocationBit(focusedContainer->location)) == 0) {
 		return NativeSurfaceFailure(EBuiltinActiveSurfaceProjectionStatus::UnsupportedSurface);
 	}
-	const auto* activeLocation = FindActiveLocation(mapping->location);
+	// The container's own committed location decides the Part, so a relocated container
+	// resolves against the Secondary Side Bar rather than its original home.
+	const auto* activeLocation = FindActiveLocation(focusedContainer->location);
 	if (activeLocation == nullptr) {
 		return NativeSurfaceFailure(EBuiltinActiveSurfaceProjectionStatus::InconsistentHierarchy);
 	}
@@ -289,7 +308,7 @@ BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
 		return NativeSurfaceFailure(EBuiltinActiveSurfaceProjectionStatus::InvalidFocus);
 	}
 
-	const auto requiredPartId = PartIdForLocation(mapping->location);
+	const auto requiredPartId = PartIdForLocation(focusedContainer->location);
 	const auto& focusPartId = focus.partId ? *focus.partId : requiredPartId;
 	bool duplicatePart = false;
 	const auto* part = FindUniqueById(snapshot.parts, focusPartId,

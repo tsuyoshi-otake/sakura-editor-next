@@ -20,6 +20,7 @@
 #include "_main/CCommandLine.h"
 #include "_main/CControlProcess.h"
 #include "config/app_constants.h"
+#include "sakura_rc.h"	// F_FILE_RCNTFILE_SUBMENU など、メインメニュー移行で参照するリソースID
 
 void ShareData_IO_Sub_LogFont( CDataProfile& cProfile, const WCHAR* pszSecName,
 	const WCHAR* pszKeyLf, const WCHAR* pszKeyPointSize, const WCHAR* pszKeyFaceName, LOGFONT& lf, INT& nPointSize );
@@ -618,7 +619,7 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 		SetValueLimit(workbench.m_nBottomPanelExtent96, 80, 2000);
 		SetValueLimit(workbench.m_nExtensionViewsExtent96, 80, 2000);
 		int activeTool = static_cast<int>(workbench.m_eActiveTool);
-		SetValueLimit(activeTool, static_cast<int>(WORKBENCH_TOOL_EXPLORER), static_cast<int>(WORKBENCH_TOOL_SCM));
+		SetValueLimit(activeTool, static_cast<int>(WORKBENCH_TOOL_EXPLORER), static_cast<int>(WORKBENCH_TOOL_EXTENSIONS));
 		workbench.m_eActiveTool = static_cast<EWorkbenchActiveTool>(activeTool);
 	}
 
@@ -2024,6 +2025,66 @@ struct SMainMenuAddItemInfo
 	bool m_bAddNextSeparete;
 };
 
+bool CShareData_IO::MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) noexcept
+{
+	// VS Codeのファイルメニューは「最近使用した項目を開く」(Open Recent) 1個だけを持ち、
+	// その中に 最近使ったフォルダー / 区切り線 / 最近使ったファイル が並ぶ。旧定義の
+	//   NODE F_FILE_RCNTFILE_SUBMENU        (level L)
+	//   SPECIAL F_FILE_USED_RECENTLY        (level L+1)
+	//   NODE F_FILE_RCNTFLDR_SUBMENU        (level L)
+	//   SPECIAL F_FOLDER_USED_RECENTLY      (level L+1)
+	// という4項目の並びだけをその場で書き換える。項目数が変わらないので
+	// m_nMainMenuNum も m_nMenuTopIdx も動かす必要がない。
+	// 並びが一致しない（ユーザーがカスタマイズした）メニューには一切手を触れない。
+	CMainMenu* const pcMenuTbl = mainmenu.m_cMainMenuTbl;
+	const int nCapacity = int(std::size(mainmenu.m_cMainMenuTbl));
+	const int nNum = mainmenu.m_nMainMenuNum < nCapacity ? mainmenu.m_nMainMenuNum : nCapacity;
+	for( int i = 0; i + 3 < nNum; i++ ){
+		const int nLevel = pcMenuTbl[i].m_nLevel;
+		if( pcMenuTbl[i].m_nType != T_NODE
+		 || pcMenuTbl[i].m_nFunc != EFunctionCode(F_FILE_RCNTFILE_SUBMENU) ) continue;
+		if( pcMenuTbl[i+1].m_nType != T_SPECIAL
+		 || pcMenuTbl[i+1].m_nFunc != F_FILE_USED_RECENTLY
+		 || pcMenuTbl[i+1].m_nLevel != nLevel + 1 ) continue;
+		if( pcMenuTbl[i+2].m_nType != T_NODE
+		 || pcMenuTbl[i+2].m_nFunc != EFunctionCode(F_FILE_RCNTFLDR_SUBMENU)
+		 || pcMenuTbl[i+2].m_nLevel != nLevel ) continue;
+		if( pcMenuTbl[i+3].m_nType != T_SPECIAL
+		 || pcMenuTbl[i+3].m_nFunc != F_FOLDER_USED_RECENTLY
+		 || pcMenuTbl[i+3].m_nLevel != nLevel + 1 ) continue;
+
+		// 「最近使用した項目を開く」ポップアップ本体。名前は空にしてストリングテーブルを使う。
+		pcMenuTbl[i].m_nFunc    = EFunctionCode(F_FILE_OPENRECENT_SUBMENU);
+		pcMenuTbl[i].m_sName[0] = L'\0';
+		pcMenuTbl[i].m_sKey[0]  = L'R';
+		pcMenuTbl[i].m_sKey[1]  = L'\0';
+
+		// VS Codeはフォルダー/ワークスペースを先に、続いてファイルを並べる。
+		pcMenuTbl[i+1].m_nType    = T_SPECIAL;
+		pcMenuTbl[i+1].m_nFunc    = F_FOLDER_USED_RECENTLY;
+		pcMenuTbl[i+1].m_nLevel   = nLevel + 1;
+		pcMenuTbl[i+1].m_sName[0] = L'\0';
+		pcMenuTbl[i+1].m_sKey[0]  = L'\0';
+		pcMenuTbl[i+1].m_sKey[1]  = L'\0';
+
+		pcMenuTbl[i+2].m_nType    = T_SEPARATOR;
+		pcMenuTbl[i+2].m_nFunc    = F_SEPARATOR;
+		pcMenuTbl[i+2].m_nLevel   = nLevel + 1;
+		pcMenuTbl[i+2].m_sName[0] = L'\0';
+		pcMenuTbl[i+2].m_sKey[0]  = L'\0';
+		pcMenuTbl[i+2].m_sKey[1]  = L'\0';
+
+		pcMenuTbl[i+3].m_nType    = T_SPECIAL;
+		pcMenuTbl[i+3].m_nFunc    = F_FILE_USED_RECENTLY;
+		pcMenuTbl[i+3].m_nLevel   = nLevel + 1;
+		pcMenuTbl[i+3].m_sName[0] = L'\0';
+		pcMenuTbl[i+3].m_sKey[0]  = L'\0';
+		pcMenuTbl[i+3].m_sKey[1]  = L'\0';
+		return true;
+	}
+	return false;
+}
+
 int CShareData_IO::ResolveMainMenuReadVersion(
 	bool isReadingMode, bool hasStoredVersion, int storedVersion, int currentVersion ) noexcept
 {
@@ -2041,7 +2102,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 5;
+	const int nCurrentVer = 6;
 	nVersion = nCurrentVer;
 	const bool hasStoredVersion = cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion);
 	nVersion = ResolveMainMenuReadVersion(cProfile.IsReadingMode(), hasStoredVersion, nVersion, nCurrentVer);
@@ -2074,6 +2135,10 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			{4, F_TOGGLE_MARKDOWN_PREVIEW, F_SHOWMINIMAP, L'M', false, false}, // Markdownプレビュー表示
 			{5, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false}, 	// 拡張（Open VSX）を表示
 		};
+		if( nVersion < 6 ){
+			// 追加ではなく構造の書き換えなので addInfos では表現できない。
+			(void)MergeMainMenuOpenRecent( mainmenu );
+		}
 		for( int i = 0; i < int(std::size(addInfos)); i++ ){
 			SMainMenuAddItemInfo& item = addInfos[i];
 			if( item.m_nVer <= nVersion ){

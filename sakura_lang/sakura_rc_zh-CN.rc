@@ -2191,6 +2191,7 @@ BEGIN
     F_WINDOW_TOPMENU        "窗口"
     F_HELP_TOPMENU          "帮助"
     F_WINDOW_LIST_SUBMENU   "窗口列表"
+    F_FILE_OPENRECENT_SUBMENU "打开最近的文件"
 END
 
 STRINGTABLE

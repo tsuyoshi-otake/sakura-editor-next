@@ -641,7 +641,8 @@
 	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
-	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h" />
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h" />
@@ -1257,7 +1258,8 @@
 	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp" />
-	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp" />

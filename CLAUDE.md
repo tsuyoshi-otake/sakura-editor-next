@@ -1,5 +1,49 @@
 # Sakura Editor NEXT Claude Code Guidance
 
+## Highest-Priority Rule: Real VS Code Compatibility, Not a Look-Alike
+
+**This is the single most important rule in this repository. It outranks every
+other convenience, shortcut, or local habit. When any other guidance conflicts
+with it, this rule wins.**
+
+The goal of this project is genuine behavioral compatibility with Visual Studio
+Code — not a visual imitation of it. Looking like VS Code is never sufficient
+and is never the acceptance criterion.
+
+Every workbench change must satisfy all of the following:
+
+- **Model the real VS Code concept, not the pixels.** Parts (Activity Bar,
+  Primary Side Bar, Panel, Secondary Side Bar / Auxiliary Bar, Editor),
+  ViewContainers, and Views are distinct layers with distinct lifetimes. A View
+  nested in the Primary Side Bar is never the same thing as a physical Part, and
+  a control that merely looks like a VS Code control must invoke the same
+  concept VS Code invokes.
+- **Use VS Code's own stable identifiers.** Command IDs
+  (`workbench.action.toggleAuxiliaryBar`), Part IDs
+  (`workbench.parts.auxiliarybar`), ViewContainer IDs
+  (`workbench.view.extensions`), and View IDs must match upstream VS Code
+  exactly. Do not invent a parallel naming scheme for a concept VS Code already
+  names.
+- **Match VS Code's placement, defaults, and keybindings.** Example: the
+  Activity Bar containers (Explorer, Search, Source Control, Run and Debug,
+  Extensions) live in the **Primary Side Bar**; the Secondary Side Bar is empty
+  by default; `Ctrl+B` toggles the Primary Side Bar, `Ctrl+J` the Panel, and
+  `Ctrl+Alt+B` the Secondary Side Bar. If this repository's behavior differs
+  from real VS Code, this repository is wrong.
+- **Verify against real VS Code before implementing.** When the correct behavior
+  is uncertain, check what VS Code actually does — its command palette entry,
+  its default keybinding, its container location, its empty/failure state — and
+  implement that. Do not guess and do not rationalize a divergence because it is
+  easier to build.
+- **Never fake a capability to make a screenshot look right.** A surface that is
+  not implemented must remain an explicit, typed unsupported boundary that fails
+  closed. Approximating a VS Code capability with unrelated legacy state
+  (toggling some other view, reusing a legacy active-tool flag, drawing a
+  disabled placeholder) is a defect, not progress.
+- **Divergence requires a written reason.** If a platform constraint makes exact
+  VS Code behavior impossible, record the constraint and the chosen behavior in
+  the owning subsystem's `CLAUDE.md`. An undocumented divergence is a bug.
+
 ## Scope
 
 This file contains repository-wide guidance. More specific `CLAUDE.md` files are loaded when Claude works in their subtrees; follow the nearest file and keep local details out of this root file.

@@ -27,11 +27,26 @@ policy, profile state, or native control lifetime.
   active ViewContainer/View state. It has no HWND, `CShareData`, tool, storage,
   logging, mutation, or focus-transfer dependency, and it does not change the
   independent `ProjectBuiltinParts` physical-part contract.
-- The verified active mappings are Sidebar `Explorer/Explorer`,
-  `Explorer/Outline`, and `SourceControl/SourceControl`; Panel
-  `Terminal/Terminal`, `Problems/Problems`, and `Output/Output`; and Auxiliary
-  Bar `LegacyExtensionViewsAuxiliary/LegacyExtensionViews`. `Editor` is a
-  focus-only surface and is never an active ViewContainer/View slot.
+- The verified active mappings are the side-bar pair `Explorer/Explorer`,
+  `Explorer/Outline`, `SourceControl/SourceControl`, and
+  `Extensions/Extensions`; and Panel `Terminal/Terminal`, `Problems/Problems`,
+  and `Output/Output`. `Editor` is a focus-only surface and is never an active
+  ViewContainer/View slot.
+- A mapping declares a **set** of locations, not one. VS Code renders the same
+  composite bar in the Primary and the Secondary Side Bar and its
+  `CompositeDragAndDrop.drop` moves an Activity Bar ViewContainer between them,
+  so every side-bar mapping is valid in `SideBar` and `AuxiliaryBar` alike and
+  projects into whichever slot the model says owns it. A ViewContainer has
+  exactly one location, so exactly one of `sidebar` / `auxiliaryBar` can carry
+  it.
+- Panel mappings remain Panel-only. Relocating the whole Panel is VS Code's
+  separate `workbench.action.movePanelToSecondarySideBar` family and is still an
+  unsupported gate, so `Terminal`, `Problems`, or `Output` placed in the
+  Auxiliary Bar fails closed rather than being approximated.
+- The Secondary Side Bar still starts empty. That is a default, not a capability
+  limit: an empty auxiliary slot means no container has been moved there yet,
+  and it must never be populated with a placeholder container to make the right
+  edge look inhabited.
 - Activation never implies focus. The projection emits focus only for an
   explicit, coherent model focus: its container/view must be active and
   visible, the View must belong to that container and be its active View, and
@@ -39,9 +54,9 @@ policy, profile state, or native control lifetime.
   editor-only fallback focus projects to the focus-only Editor surface.
 - Unsupported active pairs and malformed active/focus hierarchies return one
   typed terminal failure with no partial logical projection. Unsupported
-  surfaces are Search, RunAndDebug, the canonical Sidebar Extensions
-  contribution, Ports, DebugConsole, and unknown future contributions.
-- `x64\Debug\tests1.exe --gtest_filter=BuiltinPartProjection.*` passed 14/14
+  surfaces are Search, RunAndDebug, Ports, DebugConsole, an AuxiliaryBar
+  placement of a Panel-only container, and unknown future contributions.
+- `x64\Debug\tests1.exe --gtest_filter=BuiltinPartProjection.*` passed 15/15
   after the integration build with zero errors; the required `tests1.exe` and
   Sakura-process survivor audit was clean. This verifies the pure projection
   boundary only, not native-host application or command routing.

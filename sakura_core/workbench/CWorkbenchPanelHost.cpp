@@ -8,7 +8,10 @@
 
 #include "workbench/CWorkbenchPanelHost.h"
 
+#include <windowsx.h>
+
 #include <algorithm>
+#include <cstdlib>
 
 namespace workbench {
 namespace {
@@ -205,6 +208,8 @@ void CWorkbenchPanelHost::Close()
 {
 	if (m_closed) return;
 	m_closed = true;
+	m_headerPressed = false;
+	m_headerDragging = false;
 	if (m_tool) {
 		m_tool->Close();
 		m_tool.reset();
@@ -255,6 +260,45 @@ LRESULT CWorkbenchPanelHost::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 		LayoutTool();
 		::InvalidateRect(m_window, nullptr, TRUE);
 		return 0;
+	case WM_LBUTTONDOWN: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (!m_headerDrag || !IsHeaderPoint(point)) break;
+		m_headerPressed = true;
+		m_headerDragging = false;
+		m_headerDragOrigin = point;
+		::SetCapture(m_window);
+		return 0;
+	}
+	case WM_MOUSEMOVE: {
+		if (!m_headerPressed) break;
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (!m_headerDragging) {
+			const int dragX = std::max(1, ::GetSystemMetrics(SM_CXDRAG));
+			const int dragY = std::max(1, ::GetSystemMetrics(SM_CYDRAG));
+			if (std::abs(point.x - m_headerDragOrigin.x) < dragX
+				&& std::abs(point.y - m_headerDragOrigin.y) < dragY) {
+				return 0;
+			}
+			m_headerDragging = true;
+		}
+		::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+		return 0;
+	}
+	case WM_LBUTTONUP: {
+		if (!m_headerPressed) break;
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		EndHeaderDrag(m_headerDragging, point);
+		return 0;
+	}
+	case WM_CAPTURECHANGED:
+		EndHeaderDrag(false, POINT{});
+		return 0;
+	case WM_SETCURSOR:
+		if (m_headerDragging) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_SIZEALL));
+			return TRUE;
+		}
+		break;
 	case WM_SETFOCUS:
 		if (!m_closed && m_tool && m_state != WorkbenchPanelState::Hidden) m_tool->Activate();
 		return 0;
@@ -268,7 +312,35 @@ LRESULT CWorkbenchPanelHost::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 		}
 		return 0;
 	default:
-		return ::DefWindowProcW(m_window, message, wParam, lParam);
+		break;
+	}
+	return ::DefWindowProcW(m_window, message, wParam, lParam);
+}
+
+bool CWorkbenchPanelHost::IsHeaderPoint(POINT clientPoint) const noexcept
+{
+	const int headerHeight = GetHeaderHeightPixels();
+	if (headerHeight <= 0 || m_window == nullptr) return false;
+	RECT client{};
+	::GetClientRect(m_window, &client);
+	return clientPoint.y >= client.top && clientPoint.y < client.top + headerHeight
+		&& clientPoint.x >= client.left && clientPoint.x < client.right;
+}
+
+void CWorkbenchPanelHost::EndHeaderDrag(bool deliver, POINT clientPoint)
+{
+	if (!m_headerPressed) return;
+	m_headerPressed = false;
+	m_headerDragging = false;
+	if (::GetCapture() == m_window) ::ReleaseCapture();
+	if (!deliver || !m_headerDrag || m_window == nullptr) return;
+	POINT screenPoint = clientPoint;
+	if (::ClientToScreen(m_window, &screenPoint) == FALSE) return;
+	try {
+		m_headerDrag(m_edge, screenPoint);
+	}
+	catch (...) {
+		// A rejected move must never destabilize the host that raised it.
 	}
 }
 

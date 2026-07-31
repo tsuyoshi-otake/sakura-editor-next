@@ -146,7 +146,10 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	const ThemeColor highlight = FromColorRef(::GetSysColor(COLOR_HIGHLIGHT));
 	const ThemeColor highlightText = FromColorRef(::GetSysColor(COLOR_HIGHLIGHTTEXT));
 	const ThemeColor grayText = FromColorRef(::GetSysColor(COLOR_GRAYTEXT));
-	return { window, face, face, frame, windowText, grayText, highlight, highlightText, face, face, highlight };
+	// High Contrast never lowers contrast to imitate VS Code's translucent description token:
+	// the description role takes the full window text color and only the disabled role dims.
+	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
+		face, face, highlight };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

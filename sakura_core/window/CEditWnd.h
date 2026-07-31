@@ -67,7 +67,6 @@ static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 class CPlug;
 class CEditDoc;
 class CCustomFrameController;
-class CExtensionPane;
 class CExtensionService;
 class IExtensionSecretSessionStorage;
 struct SExtensionNativeEditorOptions;
@@ -95,6 +94,7 @@ struct WorkbenchLayoutStateSnapshot;
 }
 namespace win32 {
 struct BuiltinActiveSurfaceProjection;
+enum class BuiltinActiveSurface : std::uint8_t;
 }
 namespace commands {
 class WorkbenchCommandRegistry;
@@ -102,7 +102,11 @@ class WorkbenchContextKeyService;
 }
 namespace explorer {
 class CExplorerTool;
-class CExplorerOutlineTool;
+}
+namespace viewcontainer {
+class CViewContainerHost;
+class CViewContainerPages;
+enum class ViewContainerPage : std::uint8_t;
 }
 namespace outline {
 class COutlineWorkbenchTool;
@@ -189,7 +193,6 @@ private:
 	using CDropTargetHolder = std::unique_ptr<CDropTarget>;
 	using CEditViewHolder = std::unique_ptr<CEditView>;
 	using CEditViewsArray = std::array<CEditViewHolder, 4>;
-	using CExtensionPaneHolder = std::unique_ptr<CExtensionPane>;
 	using CPrintPreviewHolder = std::unique_ptr<CPrintPreview>;
 	using CViewFontHolder = std::unique_ptr<CViewFont>;
 	using FontHolder = cxx::ResourceHolder<&::DeleteObject, HFONT>;
@@ -344,6 +347,10 @@ public:
 	//! Select a window-local workbench root. Cancellation and picker failure leave all state unchanged.
 	void OpenWorkspaceFolder();
 	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
+	//! `workbench.action.toggleAuxiliaryBar` (Ctrl+Alt+B). This is the physical Secondary
+	//! Side Bar Part, never the Outline View nested in the Primary Side Bar.
+	void ToggleSecondarySidebar(bool activate = false);
+	[[nodiscard]] bool IsSecondarySidebarVisible() const noexcept;
 	void FocusIntegratedTerminal();
 	void NewIntegratedTerminal();
 	void RedetectPowerShell();
@@ -439,11 +446,10 @@ public:
 	//! Called after a native undo unit is finalized; schedules one bounded document snapshot.
 	void NotifyExtensionDocumentChanged();
 
-	//! 拡張サイドバーの表示を切り替える。初回はここで作成する
-	void ToggleExtensionPane();
-
-	//! 拡張サイドバーが表示されているか
-	bool IsExtensionPaneVisible() const;
+	//! Reveals `workbench.view.extensions`, matching VS Code's reveal-only `workbench.view.*`.
+	void ShowExtensionsViewContainer();
+	//! True while the Extensions ViewContainer is the active, visible container of its Part.
+	[[nodiscard]] bool IsExtensionsViewContainerActive() const;
 
 	bool                IsEnablePane(int n) const { return 0 <= n && n < m_nEditViewCount; }
 	int                 GetAllViewCount() const { return m_nEditViewCount; }
@@ -477,6 +483,8 @@ protected:
 	void	Timer_ONOFF(bool bStart) const; /* 更新の開始／停止 20060128 aroka */
 
 	// メニュー
+	//! 先頭・末尾・連続した区切り線を取り除く。空グループを含むメニューでのみ効果がある。
+	static void RemoveRedundantMenuSeparators(HMENU hMenu);
 	void CheckFreeSubMenu(HWND hWnd, HMENU hMenu, UINT uPos);		// メニューバーの無効化を検査	2010/6/18 Uchi
 	void CheckFreeSubMenuSub(HMENU hMenu, int nLv);			// メニューバーの無効化を検査	2010/6/18 Uchi
 	[[nodiscard]] HMENU GetMainMenuHandle() const noexcept;
@@ -598,6 +606,14 @@ private:
 	[[nodiscard]] bool SetBuiltinViewVisibility(std::string_view viewId, bool visible);
 	[[nodiscard]] bool ActivateBuiltinWorkbenchView(std::string_view viewId, bool requestFocus);
 	[[nodiscard]] bool IsBuiltinWorkbenchViewActive(std::string_view viewId) const;
+	//! Stable VS Code ViewContainer ID rendered by one side-bar page.
+	[[nodiscard]] static std::string_view SidebarViewContainerId(
+		workbench::viewcontainer::ViewContainerPage page) noexcept;
+	//! Inverse of SidebarViewContainerId; std::nullopt for a container this adapter cannot render.
+	[[nodiscard]] static std::optional<workbench::viewcontainer::ViewContainerPage>
+		ViewContainerPageForId(std::string_view containerId) noexcept;
+	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
+	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
 	[[nodiscard]] bool RefreshWorkbenchCommandContext();
 	[[nodiscard]] bool TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled);
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
@@ -607,8 +623,37 @@ private:
 	[[nodiscard]] bool ExecuteToggleOutputCommand();
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
 	void PersistExtensionViewsExtent(int extentDip);
-	void ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive);
-	void ToggleExtensionViewsSidebar(bool activate);
+	//! Activates one Primary Side Bar ViewContainer, mirroring a VS Code Activity Bar click.
+	void ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage page, bool toggleIfActive);
+	//! Applies an already-decided container selection to whichever side bar now owns it.
+	void ApplySidebarPage(workbench::viewcontainer::ViewContainerPage page);
+	//! Applies an already-decided Secondary Side Bar container selection.
+	void ApplyAuxiliaryBarPage(std::optional<workbench::viewcontainer::ViewContainerPage> page);
+	//! Refreshes both side-bar titles from the containers they currently render.
+	void RefreshSidebarTitles();
+	//! The side-bar host that currently renders `page`, or nullptr when neither does.
+	[[nodiscard]] workbench::viewcontainer::CViewContainerHost* HostShowingPage(
+		workbench::viewcontainer::ViewContainerPage page) const noexcept;
+	//! The Part host that physically contains `host`, or nullptr.
+	[[nodiscard]] workbench::CWorkbenchPanelHost* PanelHostFor(
+		const workbench::viewcontainer::CViewContainerHost* host) const noexcept;
+	//! True when the Explorer container is rendered by a visible side bar whose OUTLINE
+	//! view is expanded. Outline is a View, so which Part shows it is not fixed.
+	[[nodiscard]] bool IsOutlineViewExpanded() const noexcept;
+	//! Applies already-committed Outline visibility to whichever host renders Explorer.
+	void SetOutlineExpandedInHosts(bool expanded);
+	//! The ViewContainer behind one projected side-bar surface, or std::nullopt when the
+	//! surface does not belong to a side bar at all.
+	[[nodiscard]] static std::optional<workbench::viewcontainer::ViewContainerPage>
+		SidebarPageForActiveSurface(workbench::win32::BuiltinActiveSurface surface) noexcept;
+	//! Adds or removes Activity Bar entries so only Primary Side Bar containers have one.
+	void SyncActivityBarEntries(const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot);
+	//! Which physical side bar the pointer is over, if any. VS Code's composite drag and
+	//! drop is resolved by the drop target, not by the handle that started the gesture.
+	[[nodiscard]] std::optional<workbench::WorkbenchEdge> HitTestSideBarEdge(POINT screenPoint) const;
+	//! Runs `workbench.action.moveView` semantics for a container dropped on a side bar.
+	void MoveViewContainerToEdge(workbench::viewcontainer::ViewContainerPage page,
+		workbench::WorkbenchEdge edge);
 	void ToggleBottomWorkbenchMaximized();
 	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
@@ -689,7 +734,11 @@ private:
 	std::shared_ptr<CExtensionViewRegistry> m_extensionViewRegistry;
 	workbench::extension::CExtensionSidebarTool* m_extensionSidebarTool = nullptr;
 	workbench::extension::CExtensionBottomPanelTool* m_extensionBottomPanelTool = nullptr;
-	workbench::explorer::CExplorerOutlineTool* m_explorerOutlineTool = nullptr;
+	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
+	//! container survives being moved from one physical Part to the other.
+	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
+	workbench::viewcontainer::CViewContainerHost* m_sidebarHost = nullptr;
+	workbench::viewcontainer::CViewContainerHost* m_auxiliaryBarHost = nullptr;
 	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
 	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
@@ -752,10 +801,6 @@ private:
 	CEditViewsArray	m_pcEditViewArr{};	//!< ビュー
 	CEditView*		m_pcEditView;		//!< 有効なビュー
 	CMiniMapView	m_cMiniMapView;		//!< ミニマップ
-	//! 拡張サイドバー。使われるまで作らない（通信を伴うので常駐させない）
-	CExtensionPaneHolder	m_pcExtensionPane;
-	//! 利用者が拡張サイドバーを出したままにしているか（印刷プレビューでの一時退避と区別する）
-	bool			m_bExtensionPaneShown = false;
 	int				m_nActivePaneIndex = 0;	//!< 有効なビューのindex
 	int				m_nEditViewCount = 1;	//!< 有効なビューの数
 	const int		m_nEditViewMaxCount = int(std::size(m_pcEditViewArr));//!< ビューの最大数=4

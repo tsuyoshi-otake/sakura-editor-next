@@ -48,6 +48,11 @@ struct ActivityBarPalette {
 class CActivityBar final : public accessibility::ICustomUiAutomationHost {
 public:
 	using ToggleRequestCallback = std::function<void(ActivityBarItem item)>;
+	//! Raised when the user drops a dragged Activity Bar entry. VS Code treats both the
+	//! Activity Bar icon and the side-bar title as composite drag handles, and the drop
+	//! target decides whether the ViewContainer changes location. The point is in screen
+	//! coordinates because the target is usually a different window.
+	using ContainerDragCallback = std::function<void(ActivityBarItem item, POINT screenPoint)>;
 
 	explicit CActivityBar(ToggleRequestCallback onToggleRequest = {});
 	~CActivityBar();
@@ -63,11 +68,15 @@ public:
 	void SetPalette(const ActivityBarPalette& palette) noexcept;
 	[[nodiscard]] const ActivityBarPalette& GetPalette() const noexcept { return m_palette; }
 	void SetToggleRequestCallback(ToggleRequestCallback callback) { m_onToggleRequest = std::move(callback); }
+	void SetContainerDragCallback(ContainerDragCallback callback) { m_onContainerDrag = std::move(callback); }
 
 	void SetSelectedItem(std::optional<ActivityBarItem> item) noexcept;
 	void SetSelected(std::optional<ActivityBarItem> item) noexcept { SetSelectedItem(item); }
 	void SetPressed(std::optional<ActivityBarItem> item) noexcept;
 	void SetItemEnabled(ActivityBarItem item, bool enabled) noexcept;
+	//! Adds or removes the entry for a ViewContainer that left the Primary Side Bar.
+	void SetItemVisible(ActivityBarItem item, bool visible) noexcept;
+	[[nodiscard]] bool IsItemVisible(ActivityBarItem item) const noexcept { return m_model.IsVisible(item); }
 	[[nodiscard]] int GetPreferredWidthPixels() const noexcept { return m_model.GetPreferredWidthPixels(); }
 	[[nodiscard]] unsigned int GetDpi() const noexcept { return m_model.GetDpi(); }
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
@@ -109,14 +118,21 @@ private:
 	[[nodiscard]] bool InvokeRequest(std::optional<ActivityBarItem> item) noexcept;
 	[[nodiscard]] bool HandleNavigationKey(WPARAM key) noexcept;
 	void SetHoverFromPoint(POINT point) noexcept;
+	//! True once the pointer has left the system drag threshold while a button is held.
+	[[nodiscard]] bool BeginDragIfPastThreshold(POINT point) noexcept;
+	//! Delivers the drop to the owner. Returns true when a drag consumed the click.
+	[[nodiscard]] bool FinishDrag(ActivityBarItem item, POINT clientPoint) noexcept;
 
 	ActivityBarModel m_model;
 	ActivityBarPalette m_palette = ActivityBarPalette::Dark();
 	ToggleRequestCallback m_onToggleRequest;
+	ContainerDragCallback m_onContainerDrag;
 	HWND m_window = nullptr;
 	HWND m_tooltip = nullptr;
 	HFONT m_iconFont = nullptr;
 	std::optional<ActivityBarItem> m_captureItem;
+	POINT m_dragOrigin{};
+	bool m_dragging = false;
 	bool m_trackingMouseLeave = false;
 	bool m_destroyed = false;
 	bool m_destroying = false;

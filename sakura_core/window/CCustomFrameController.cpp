@@ -156,7 +156,10 @@ UINT CustomFrameControlCommand(CustomFrameControl control) noexcept
 	switch (control) {
 	case CustomFrameControl::PrimarySidebar: return F_TOGGLE_LEFT_EXPLORER;
 	case CustomFrameControl::BottomPanel: return F_TOGGLE_BOTTOM_PANEL;
-	case CustomFrameControl::SecondarySidebar: return F_TOGGLE_RIGHT_OUTLINE;
+	// VS Code's title-bar control toggles the physical Auxiliary Bar
+	// (workbench.action.toggleAuxiliaryBar). F_TOGGLE_RIGHT_OUTLINE only expands the
+	// Outline View nested in the Primary Side Bar and is not this surface.
+	case CustomFrameControl::SecondarySidebar: return F_TOGGLE_SECONDARY_SIDEBAR;
 	case CustomFrameControl::Settings: return F_OPTION;
 	case CustomFrameControl::None:
 	case CustomFrameControl::Layout:
@@ -485,7 +488,7 @@ void CCustomFrameController::ShowLayoutMenu(const RECT& anchor) noexcept
 	if (menu == nullptr) return;
 	::AppendMenuW(menu, MF_STRING, F_TOGGLE_LEFT_EXPLORER, L"Toggle Primary Side Bar");
 	::AppendMenuW(menu, MF_STRING, F_TOGGLE_BOTTOM_PANEL, L"Toggle Bottom Panel");
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_RIGHT_OUTLINE, L"Toggle Secondary Side Bar");
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_SECONDARY_SIDEBAR, L"Toggle Secondary Side Bar");
 	POINT point{ anchor.left, anchor.bottom };
 	::ClientToScreen(m_window, &point);
 	const UINT command = ::TrackPopupMenu(

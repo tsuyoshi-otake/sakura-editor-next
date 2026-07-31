@@ -14,6 +14,7 @@ namespace workbench::editor::command_ids {
 // native menus, keybindings, context keys, watermark actions, and extension RPC.
 inline constexpr std::string_view NewUntitledFile = "workbench.action.files.newUntitledFile";
 inline constexpr std::string_view OpenFile = "workbench.action.files.openFile";
+inline constexpr std::string_view OpenFolder = "workbench.action.files.openFolder";
 inline constexpr std::string_view Save = "workbench.action.files.save";
 inline constexpr std::string_view SaveAs = "workbench.action.files.saveAs";
 inline constexpr std::string_view Revert = "workbench.action.files.revert";

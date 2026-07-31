@@ -1045,7 +1045,10 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.h">
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h">
@@ -2785,7 +2788,10 @@
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerOutlineTool.cpp">
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp">

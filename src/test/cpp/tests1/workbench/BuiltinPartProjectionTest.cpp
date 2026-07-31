@@ -58,22 +58,18 @@ WorkbenchLayoutStateSnapshot ActiveSurfaceSample()
 		{ std::string(workbench::layout::ids::viewContainer::Terminal),
 			workbench::layout::EWorkbenchViewContainerLocation::Panel, 0, true,
 			std::string(workbench::layout::ids::view::Terminal) },
-		{ std::string(workbench::layout::ids::viewContainer::LegacyExtensionViewsAuxiliary),
-			workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar, 0, true,
-			std::string(workbench::layout::ids::view::LegacyExtensionViews) },
 	};
 	snapshot.views = {
 		{ std::string(workbench::layout::ids::view::Explorer),
 			std::string(workbench::layout::ids::viewContainer::Explorer), 0, true },
 		{ std::string(workbench::layout::ids::view::Terminal),
 			std::string(workbench::layout::ids::viewContainer::Terminal), 0, true },
-		{ std::string(workbench::layout::ids::view::LegacyExtensionViews),
-			std::string(workbench::layout::ids::viewContainer::LegacyExtensionViewsAuxiliary), 0, true },
 	};
+	// VS Code's Secondary Side Bar starts empty: it holds a ViewContainer only after the
+	// user moves one there, so the default sample has no active auxiliary container.
 	snapshot.activeContainers = {
 		.sideBar = std::string(workbench::layout::ids::viewContainer::Explorer),
 		.panel = std::string(workbench::layout::ids::viewContainer::Terminal),
-		.auxiliaryBar = std::string(workbench::layout::ids::viewContainer::LegacyExtensionViewsAuxiliary),
 	};
 	return snapshot;
 }
@@ -209,8 +205,7 @@ TEST(BuiltinPartProjection, ProjectsAllSupportedActiveSurfacesWithoutAssigningFo
 	EXPECT_EQ(BuiltinActiveSurface::Explorer, *result.projection->sidebar);
 	ASSERT_TRUE(result.projection->panel.has_value());
 	EXPECT_EQ(BuiltinActiveSurface::Terminal, *result.projection->panel);
-	ASSERT_TRUE(result.projection->auxiliaryBar.has_value());
-	EXPECT_EQ(BuiltinActiveSurface::LegacyExtensionViews, *result.projection->auxiliaryBar);
+	EXPECT_FALSE(result.projection->auxiliaryBar.has_value());
 	EXPECT_FALSE(result.projection->focus.has_value());
 }
 
@@ -232,6 +227,9 @@ TEST(BuiltinPartProjection, ProjectsEverySupportedContainerViewPair)
 		ExpectedSurface{ workbench::layout::ids::viewContainer::SourceControl,
 			workbench::layout::ids::view::SourceControl,
 			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::SourceControl },
+		ExpectedSurface{ workbench::layout::ids::viewContainer::Extensions,
+			workbench::layout::ids::view::Extensions,
+			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::Extensions },
 		ExpectedSurface{ workbench::layout::ids::viewContainer::Terminal,
 			workbench::layout::ids::view::Terminal,
 			workbench::layout::EWorkbenchViewContainerLocation::Panel, BuiltinActiveSurface::Terminal },
@@ -241,10 +239,6 @@ TEST(BuiltinPartProjection, ProjectsEverySupportedContainerViewPair)
 		ExpectedSurface{ workbench::layout::ids::viewContainer::Output,
 			workbench::layout::ids::view::Output,
 			workbench::layout::EWorkbenchViewContainerLocation::Panel, BuiltinActiveSurface::Output },
-		ExpectedSurface{ workbench::layout::ids::viewContainer::LegacyExtensionViewsAuxiliary,
-			workbench::layout::ids::view::LegacyExtensionViews,
-			workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar,
-			BuiltinActiveSurface::LegacyExtensionViews },
 	};
 
 	for (const auto& expectedSurface : expected) {
@@ -315,14 +309,21 @@ TEST(BuiltinPartProjection, RejectsUnsupportedActiveSurfaceWithoutAffectingPhysi
 			workbench::layout::EWorkbenchViewContainerLocation::SideBar },
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::RunAndDebug,
 			workbench::layout::ids::view::DebugVariables, workbench::layout::EWorkbenchViewContainerLocation::SideBar },
-		UnsupportedSurface{ workbench::layout::ids::viewContainer::Extensions,
-			workbench::layout::ids::view::Extensions, workbench::layout::EWorkbenchViewContainerLocation::SideBar },
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::Ports, workbench::layout::ids::view::Ports,
 			workbench::layout::EWorkbenchViewContainerLocation::Panel },
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::DebugConsole,
 			workbench::layout::ids::view::DebugConsole, workbench::layout::EWorkbenchViewContainerLocation::Panel },
 		UnsupportedSurface{ "publisher.future.container", "publisher.future.view",
 			workbench::layout::EWorkbenchViewContainerLocation::SideBar },
+		// Moving a container into the Secondary Side Bar is supported, but that does not
+		// make the Auxiliary Bar a renderer for surfaces this adapter never mapped.
+		UnsupportedSurface{ "publisher.future.container", "publisher.future.view",
+			workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar },
+		// A Panel container stays in the Panel here. Relocating the whole Panel is
+		// `workbench.action.movePanelToSecondarySideBar`, a separate unsupported gate.
+		UnsupportedSurface{ workbench::layout::ids::viewContainer::Terminal,
+			workbench::layout::ids::view::Terminal,
+			workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar },
 	};
 
 	for (const auto& unsupportedSurface : unsupported) {
@@ -335,6 +336,38 @@ TEST(BuiltinPartProjection, RejectsUnsupportedActiveSurfaceWithoutAffectingPhysi
 
 		const auto physical = ProjectBuiltinParts(snapshot);
 		EXPECT_TRUE(physical.Succeeded());
+	}
+}
+
+//! VS Code's `CompositeDragAndDrop` moves an Activity Bar ViewContainer between the
+//! Primary and the Secondary Side Bar, so the same container/view pair must project into
+//! whichever side bar currently owns it — and into that one only.
+TEST(BuiltinPartProjection, ProjectsSideBarContainersMovedIntoTheSecondarySideBar)
+{
+	constexpr std::array movable{
+		std::pair{ workbench::layout::ids::viewContainer::Explorer, BuiltinActiveSurface::Explorer },
+		std::pair{ workbench::layout::ids::viewContainer::SourceControl, BuiltinActiveSurface::SourceControl },
+		std::pair{ workbench::layout::ids::viewContainer::Extensions, BuiltinActiveSurface::Extensions },
+	};
+	constexpr std::array views{
+		workbench::layout::ids::view::Explorer,
+		workbench::layout::ids::view::SourceControl,
+		workbench::layout::ids::view::Extensions,
+	};
+
+	for (std::size_t index = 0; index < movable.size(); ++index) {
+		auto snapshot = ActiveSurfaceSample();
+		SelectActiveSurface(snapshot, movable[index].first, views[index],
+			workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar);
+
+		const auto result = ProjectBuiltinActiveSurfaces(snapshot);
+		ASSERT_TRUE(result.Succeeded());
+		ASSERT_TRUE(result.projection.has_value());
+		ASSERT_TRUE(result.projection->auxiliaryBar.has_value());
+		EXPECT_EQ(movable[index].second, *result.projection->auxiliaryBar);
+		// One ViewContainer has exactly one location, so the Primary Side Bar must not
+		// keep claiming a container the model moved away from it.
+		EXPECT_FALSE(result.projection->sidebar.has_value());
 	}
 }
 

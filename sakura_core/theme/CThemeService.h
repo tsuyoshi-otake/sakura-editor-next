@@ -40,6 +40,11 @@ struct ThemePalette {
 	ThemeColor border;
 	ThemeColor primaryText;
 	ThemeColor secondaryText;
+	//! VS Code `descriptionForeground`. GDI text has no alpha channel, so the CSS
+	//! `transparent(foreground, 0.7)` token is composited over `canvas` at design time.
+	ThemeColor descriptionText;
+	//! VS Code `disabledForeground`, composited over `canvas` for the same reason.
+	ThemeColor disabledText;
 	ThemeColor accent;
 	//! Text drawn over the system highlight/accent color (COLOR_HIGHLIGHTTEXT in High Contrast).
 	ThemeColor highlightText;
@@ -125,6 +130,8 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xCD, 0xD2, 0xDB }, // border
 			{ 0x1F, 0x23, 0x29 }, // primary text
 			{ 0x5C, 0x65, 0x73 }, // secondary text
+			{ 0x71, 0x71, 0x71 }, // description text: VS Code light descriptionForeground literal
+			{ 0xAA, 0xAB, 0xAC }, // disabled text: #61616180 composited over the light canvas
 			{ 0xB8, 0x32, 0x68 }, // Sakura accent / focus
 			{ 0xFF, 0xFF, 0xFF }, // highlighted text
 			{ 0xF3, 0xF3, 0xF3 }, // title bar
@@ -139,6 +146,8 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x45, 0x45, 0x45 }, // border
 		{ 0xCC, 0xCC, 0xCC }, // primary text
 		{ 0x96, 0x96, 0x96 }, // secondary text
+		{ 0x98, 0x98, 0x98 }, // description text: transparent(#CCCCCC, 0.7) over the #1E1E1E canvas
+		{ 0x75, 0x75, 0x75 }, // disabled text: #CCCCCC80 composited over the same canvas
 		{ 0x1F, 0x8A, 0xD2 }, // focus / active status
 		{ 0xFF, 0xFF, 0xFF }, // highlighted text
 		{ 0x3C, 0x3C, 0x3C }, // active title bar

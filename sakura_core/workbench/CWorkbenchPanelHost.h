@@ -20,6 +20,10 @@ public:
 	//! Commits an extent to the authoritative layout model. Returning false leaves
 	//! this host at its previously committed extent.
 	using CommitExtentCallback = std::function<bool(WorkbenchEdge edge, int extentDip)>;
+	//! Raised when the user drags this Part's title and releases it. VS Code makes the
+	//! side-bar title a composite drag handle, so dropping it on another side bar moves
+	//! the ViewContainer it currently shows. The point is in screen coordinates.
+	using HeaderDragCallback = std::function<void(WorkbenchEdge edge, POINT screenPoint)>;
 
 	CWorkbenchPanelHost(WorkbenchEdge edge, int extentDip, CommitExtentCallback commitExtent = {});
 	~CWorkbenchPanelHost();
@@ -33,6 +37,7 @@ public:
 	void ActivateTool();
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetTitle(std::wstring title);
+	void SetHeaderDragCallback(HeaderDragCallback callback) { m_headerDrag = std::move(callback); }
 	//! Applies a shared extent without entering resize state or invoking persistence.
 	void ApplyExtentDip(int extentDip);
 	void BeginResize();
@@ -56,6 +61,9 @@ private:
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	void LayoutTool();
 	void Paint();
+	//! True while the pointer is over this Part's title, the only drag handle it owns.
+	[[nodiscard]] bool IsHeaderPoint(POINT clientPoint) const noexcept;
+	void EndHeaderDrag(bool deliver, POINT clientPoint);
 	static int ClampExtent(int extentDip) noexcept;
 
 	WorkbenchEdge m_edge;
@@ -70,6 +78,10 @@ private:
 	std::unique_ptr<IWorkbenchTool> m_tool;
 	std::wstring m_title;
 	CommitExtentCallback m_commitExtent;
+	HeaderDragCallback m_headerDrag;
+	POINT m_headerDragOrigin{};
+	bool m_headerPressed = false;
+	bool m_headerDragging = false;
 	bool m_closed = false;
 };
 

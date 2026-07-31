@@ -160,22 +160,86 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   runtime-backed window. They are not inputs that can overwrite the current
   layout model.
 - The bounded active-surface adapter also projects committed
-  ViewContainer/View selection for Explorer, Outline, Source Control, Terminal,
-  Problems, Output, and the legacy extension-view Auxiliary Bar. It validates
-  the complete active/focus hierarchy before native mutation and applies an
-  explicit focus only after native bounds exist. Activity Bar selection,
-  Outline expansion, and bottom-panel tab selection are therefore projections
-  of model truth rather than an independent `m_eActiveTool` authority.
-- Search, Run and Debug, the canonical Extensions view, Ports, Debug Console,
-  arbitrary extension-owned View rendering, move/reorder, and panel
-  position/alignment remain typed unsupported boundaries. A generic
-  contribution renderer and unified command/context route are still required.
+  ViewContainer/View selection for Explorer, Outline, Source Control,
+  Extensions, Terminal, Problems, and Output. It validates the complete
+  active/focus hierarchy before native mutation and applies an explicit focus
+  only after native bounds exist. Activity Bar selection, Outline expansion,
+  and bottom-panel tab selection are therefore projections of model truth
+  rather than an independent `m_eActiveTool` authority.
+- Every Activity Bar ViewContainer, `workbench.view.extensions` included, is
+  registered into the Primary Side Bar exactly as in VS Code, and the Auxiliary
+  Bar registers none. That is VS Code's **default**, not a capability limit: the
+  Secondary Side Bar starts empty and gains a container only when the user moves
+  one there, and its toggle remains a pure Part-visibility change that never
+  changes Activity Bar selection. Do not reintroduce a placeholder auxiliary
+  container to make the right edge look populated.
+- Relocation is a model operation. `MoveContainer` is the only authority for a
+  ViewContainer's location; the native side bars project that fact and never
+  hold a second one. Because a container has exactly one location, a container
+  in the Auxiliary Bar has no Activity Bar entry, matching VS Code, and the
+  Primary Side Bar must stop claiming it.
+- The active side-bar ViewContainer and a container's active View are separate
+  model facts. Activating Outline keeps `activeContainers.sideBar` at
+  `workbench.view.explorer` while the Explorer container's `activeViewId` becomes
+  `outline`. VS Code's Activity Bar toggle compares containers, so any code
+  answering "is this Activity Bar entry already active" reads
+  `activeContainers.sideBar`, not the container's active view.
+- Search, Run and Debug, Ports, Debug Console, arbitrary extension-owned View
+  rendering, reorder within a bar, moving the whole Panel
+  (`workbench.action.movePanelToSecondarySideBar`), and panel position/alignment
+  remain typed unsupported boundaries. A generic contribution renderer and
+  unified command/context route are still required. Moving a built-in Activity
+  Bar ViewContainer between the Primary and the Secondary Side Bar is now
+  supported and projected; see [`win32/CLAUDE.md`](win32/CLAUDE.md) for the
+  location-set mapping and [`../window/CLAUDE.md`](../window/CLAUDE.md) for the
+  drag gesture and its documented edge-strip divergence.
 
 The original focused Part/host/state/memento/runtime filter passed 68/68. After
 the active-surface integration, the state/memento/projection filter passed
 45/45 and the callback/projection-separation filter passed 10/10; the x64 Debug
 solution build completed with zero errors and the repository process audits
 were clean.
+
+## ViewContainer Pool/Host Boundary (2026-08-01)
+
+- `CViewContainerPages` owns every window a page renders, not just the page's
+  primary control. The optional `MarketplaceFactory` builds the Extensions
+  page's OpenVSX Marketplace inside `Create()`, and `Close()` destroys it before
+  any other page teardown, which cancels an in-flight OpenVSX job before the
+  owning window dies. A host may render a page; it may never own one.
+- A ViewContainer has exactly one location, and that location now carries every
+  window the page owns, not only its primary control. The Extensions page's
+  Marketplace and its contributed-views control move together on `Attach`,
+  exactly as the Explorer page's nested Outline View follows Explorer. A
+  container dragged to the Secondary Side Bar takes its Marketplace with it;
+  nothing may leave a stray reparented copy behind in the vacated host.
+- Presence is typed, not inferred from a cached flag.
+  `HasContributedExtensionViews()` is the one source of truth for whether the
+  contributed-views section exists at all; `SetPageVisible` and
+  `CViewContainerHost::LayoutExtensionsPage` both consult it directly instead of
+  caching a separate "is empty" bit that could drift from the registry.
+- An absent section reserves no space and is never filled with a placeholder.
+  With no contributed view, `LayoutExtensionsPage` gives the Marketplace the
+  whole container instead of leaving a blank strip; with no Marketplace (no
+  runtime, or a pane that failed to open), the contributed-views control gets
+  the whole container instead of sitting beside empty space.
+- A control's own visibility contract must not depend on how another control in
+  the same page happens to be laid out. `CExtensionSidebarTool::SetSidebarVisible`
+  reports the ViewContainer's own visibility to extensions, not the visibility
+  of whichever section currently renders the contributed views, so an
+  extension's view-lifecycle callbacks stay correct even when the Marketplace
+  claims the entire container.
+- A host offers dialog-message translation only to the page content it actually
+  owns. `CViewContainerHost::PreTranslateMessage` calls `IsDialogMessageW` on
+  the Marketplace pane only for messages whose `hwnd` is that pane or a
+  descendant of it; a message belonging to any other surface is never offered
+  to it, so Tab/arrow navigation inside one control cannot swallow input meant
+  for another.
+
+See [`../window/CLAUDE.md`](../window/CLAUDE.md) for the profile-scoped factory
+composition and the retired legacy floating dock, and
+[`../extension/CLAUDE.md`](../extension/CLAUDE.md) for how `CExtensionPane`
+itself is composed as this container's content rather than a standalone dock.
 
 ## Phase 3/5 Dual-Profile and Command Checkpoint (2026-07-31)
 

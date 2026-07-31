@@ -200,7 +200,7 @@ TEST(CustomFrame, CompactTitleControlInvokeMappingsUseExistingEditorCommands)
 {
 	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_LEFT_EXPLORER), CustomFrameControlCommand(CustomFrameControl::PrimarySidebar));
 	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_BOTTOM_PANEL), CustomFrameControlCommand(CustomFrameControl::BottomPanel));
-	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_RIGHT_OUTLINE), CustomFrameControlCommand(CustomFrameControl::SecondarySidebar));
+	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_SECONDARY_SIDEBAR), CustomFrameControlCommand(CustomFrameControl::SecondarySidebar));
 	EXPECT_EQ(static_cast<UINT>(F_OPTION), CustomFrameControlCommand(CustomFrameControl::Settings));
 	EXPECT_EQ(0u, CustomFrameControlCommand(CustomFrameControl::Layout));
 	EXPECT_EQ(0u, CustomFrameControlCommand(CustomFrameControl::Account));

@@ -46,6 +46,9 @@ struct ActivityBarButtonInfo {
 	bool pressed = false;
 	bool focused = false;
 	bool enabled = true;
+	//! False when the ViewContainer no longer lives in the Primary Side Bar. VS Code
+	//! removes the Activity Bar entry outright rather than greying it out.
+	bool visible = true;
 
 	[[nodiscard]] constexpr bool operator==(const ActivityBarButtonInfo&) const noexcept = default;
 };
@@ -67,6 +70,12 @@ public:
 	//! Semantic name used by UI hosts and tests; retained alongside SetEnabled for low-level callers.
 	void SetItemEnabled(ActivityBarItem item, bool enabled) noexcept { SetEnabled(item, enabled); }
 	[[nodiscard]] bool IsEnabled(ActivityBarItem item) const noexcept;
+
+	//! Adds or removes one Activity Bar entry. A ViewContainer moved to the Secondary
+	//! Side Bar leaves the Activity Bar entirely, and the remaining entries close the gap.
+	void SetItemVisible(ActivityBarItem item, bool visible) noexcept;
+	[[nodiscard]] bool IsVisible(ActivityBarItem item) const noexcept;
+
 	void SetHoveredItem(std::optional<ActivityBarItem> item) noexcept;
 	void SetPressedItem(std::optional<ActivityBarItem> item) noexcept;
 	void SetFocusedItem(std::optional<ActivityBarItem> item) noexcept;
@@ -91,6 +100,9 @@ private:
 	}
 	[[nodiscard]] static int ScaleDip(int dip, unsigned int dpi) noexcept;
 	[[nodiscard]] bool IsValid(ActivityBarItem item) const noexcept;
+	//! An entry only participates in hit testing, focus, and invocation when it is both
+	//! present in the Activity Bar and enabled.
+	[[nodiscard]] bool IsInteractive(std::size_t index) const noexcept;
 	[[nodiscard]] std::optional<ActivityBarItem> FirstEnabled(int direction) const noexcept;
 	void Reflow() noexcept;
 
@@ -99,6 +111,7 @@ private:
 	unsigned int m_dpi = 96;
 	std::array<ActivityBarRect, kItemCount> m_bounds{};
 	std::array<bool, kItemCount> m_enabled{ true, true, true };
+	std::array<bool, kItemCount> m_visible{ true, true, true };
 	std::optional<ActivityBarItem> m_selected = ActivityBarItem::Explorer;
 	std::optional<ActivityBarItem> m_hovered;
 	std::optional<ActivityBarItem> m_pressed;

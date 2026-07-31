@@ -208,6 +208,21 @@ void COutlineWorkbenchTool::SetPalette( const theme::ThemePalette& palette )
 	ApplyAppearance();
 }
 
+bool COutlineWorkbenchTool::Reparent( HWND parent ) noexcept
+{
+	if( m_dialog == nullptr || parent == nullptr || m_lifecycle == OutlineToolLifecycle::Closed ) return false;
+	if( m_parent == parent ) return true;
+	m_parent = parent;
+	m_dialog->SetWorkbenchParent( parent );
+	// The dialog is created lazily by the existing Command_FUNCLIST path.  When it does
+	// not exist yet, updating the recorded workbench parent is the whole operation.
+	if( const HWND window = GetDialogWindow(); window != nullptr ){
+		if( ::SetParent( window, parent ) == nullptr ) return false;
+		ApplyLayout();
+	}
+	return true;
+}
+
 void COutlineWorkbenchTool::ApplyLayout() noexcept
 {
 	const HWND window = GetDialogWindow();

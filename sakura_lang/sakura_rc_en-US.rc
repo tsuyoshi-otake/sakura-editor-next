@@ -2274,6 +2274,7 @@ BEGIN
     F_WINDOW_TOPMENU        "Window"
     F_HELP_TOPMENU          "Help"
     F_WINDOW_LIST_SUBMENU   "Window List"
+    F_FILE_OPENRECENT_SUBMENU "Open Recent"
 END
 
 STRINGTABLE

@@ -91,13 +91,16 @@ TEST(WorkbenchLayoutStateService, InitializesCanonicalIdsAndKeepsRightPartSepara
 	EXPECT_TRUE(Part(snapshot, ids::part::Sidebar).visible);
 	EXPECT_FALSE(Part(snapshot, ids::part::Panel).visible);
 	EXPECT_FALSE(Part(snapshot, ids::part::Auxiliarybar).visible);
-	EXPECT_EQ(EWorkbenchViewContainerLocation::AuxiliaryBar, Container(snapshot, ids::viewContainer::LegacyExtensionViewsAuxiliary).location);
+	// The Auxiliary Bar Part exists as a physical right-side Part with no built-in
+	// ViewContainer, exactly like VS Code's empty Secondary Side Bar. Outline stays an
+	// Explorer view rather than the legacy tool's unrelated "right edge" alias.
+	EXPECT_FALSE(std::any_of(snapshot.containers.begin(), snapshot.containers.end(),
+		[](const auto& value) { return value.location == EWorkbenchViewContainerLocation::AuxiliaryBar; }));
+	EXPECT_FALSE(snapshot.activeContainers.auxiliaryBar.has_value());
 	EXPECT_EQ(std::string(ids::view::Explorer), *Container(snapshot, ids::viewContainer::Explorer).activeViewId);
 	EXPECT_EQ(std::string(ids::viewContainer::Explorer), *snapshot.activeContainers.sideBar);
 	EXPECT_EQ(std::string(ids::viewContainer::Problems), *snapshot.activeContainers.panel);
-	EXPECT_EQ(std::string(ids::viewContainer::LegacyExtensionViewsAuxiliary),
-		*snapshot.activeContainers.auxiliaryBar);
-	EXPECT_NE(std::string(ids::part::Auxiliarybar), std::string(ids::viewContainer::LegacyExtensionViewsAuxiliary));
+	EXPECT_TRUE(HasView(snapshot, ids::view::Outline));
 }
 
 TEST(WorkbenchLayoutStateService, ContainerAndViewActivationPreserveSelectionAndSwitchTheLocationOwner)
@@ -133,6 +136,58 @@ TEST(WorkbenchLayoutStateService, ContainerAndViewActivationPreserveSelectionAnd
 	EXPECT_EQ(std::string(ids::viewContainer::Explorer),
 		*alreadySelectedView.snapshot.activeContainers.sideBar);
 	EXPECT_FALSE(alreadySelectedView.snapshot.focus.viewId);
+}
+
+TEST(WorkbenchLayoutStateService, ActiveSideBarContainerIgnoresTheNestedViewSelection)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+
+	// VS Code's Activity Bar click compares the clicked ViewContainer with
+	// `getActivePaneComposite()`, never with the active View, so selecting Outline inside the
+	// Explorer container must keep Explorer the active Primary Side Bar container. A view-level
+	// comparison here would make the Explorer icon fail to collapse the Part.
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
+		state.ActivateView({ .operation = { .operationId = "select-outline" },
+			.viewId = std::string(ids::view::Outline) }).status);
+	const auto outlineActive = state.Snapshot();
+	EXPECT_EQ(std::string(ids::view::Outline),
+		*Container(outlineActive, ids::viewContainer::Explorer).activeViewId);
+	EXPECT_EQ(std::string(ids::viewContainer::Explorer), *outlineActive.activeContainers.sideBar);
+	EXPECT_TRUE(Container(outlineActive, ids::viewContainer::Explorer).visible);
+	EXPECT_EQ(EWorkbenchViewContainerLocation::SideBar,
+		Container(outlineActive, ids::viewContainer::Explorer).location);
+	EXPECT_TRUE(Part(outlineActive, ids::part::Sidebar).visible);
+
+	// Hiding the Part is the whole effect of the toggle gesture: the container selection
+	// survives so the next click can restore exactly the same Primary Side Bar content.
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
+		state.SetPartVisibility({ .operation = { .operationId = "collapse-sidebar" },
+			.partId = std::string(ids::part::Sidebar), .visible = false }).status);
+	const auto collapsed = state.Snapshot();
+	EXPECT_FALSE(Part(collapsed, ids::part::Sidebar).visible);
+	EXPECT_EQ(std::string(ids::viewContainer::Explorer), *collapsed.activeContainers.sideBar);
+	EXPECT_EQ(std::string(ids::view::Outline),
+		*Container(collapsed, ids::viewContainer::Explorer).activeViewId);
+}
+
+TEST(WorkbenchLayoutStateService, ExtensionsIsASideBarContainerSelectableLikeExplorer)
+{
+	WorkbenchContributionRegistry registry;
+	WorkbenchLayoutStateService state(registry.Snapshot());
+
+	// `workbench.view.extensions` lives in the Primary Side Bar in VS Code, so it must become the
+	// active side-bar container exactly like Explorer and Source Control do.
+	const auto extensions = state.ActivateContainer({
+		.operation = { .operationId = "select-extensions" },
+		.containerId = std::string(ids::viewContainer::Extensions),
+	});
+	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, extensions.status);
+	EXPECT_EQ(EWorkbenchViewContainerLocation::SideBar,
+		Container(extensions.snapshot, ids::viewContainer::Extensions).location);
+	EXPECT_EQ(std::string(ids::viewContainer::Extensions),
+		*extensions.snapshot.activeContainers.sideBar);
+	EXPECT_FALSE(extensions.snapshot.activeContainers.auxiliaryBar.has_value());
 }
 
 TEST(WorkbenchLayoutStateService, FocusRequiresAVisibleActiveCoherentHierarchy)

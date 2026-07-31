@@ -891,6 +891,7 @@
 #define F_WINDOW_TOPMENU                34058
 #define F_HELP_TOPMENU                  34059
 #define F_WINDOW_LIST_SUBMENU           34060
+#define F_FILE_OPENRECENT_SUBMENU       34061
 #define STR_SELLANG_NAME                34080
 #define STR_SELLANG_LANGID              34081
 #define STR_SQLERR_EXEC_BUT_NOT_RUN     34085

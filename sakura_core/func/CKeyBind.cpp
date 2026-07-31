@@ -725,7 +725,7 @@ static const KEYDATAINIT	KeyDataInit[] = {
 	/* アルファベット */
 	//keycode,	keyname,			なし,				Shitf+,				Ctrl+,					Shift+Ctrl+,		Alt+,					Shit+Alt+,			Ctrl+Alt+,				Shift+Ctrl+Alt+
 	{ 'A',		{ L"A" },			{ F_0,				F_0,				F_SELECTALL,			F_0,				F_SORT_ASC,				F_0,				F_0,					F_0 }, },
-	{ 'B',		{ L"B" },			{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
+	{ 'B',		{ L"B" },			{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_TOGGLE_SECONDARY_SIDEBAR,	F_0 }, },
 	{ 'C',		{ L"C" },			{ F_0,				F_0,				F_COPY,					F_OPEN_HfromtoC,	F_0,					F_0,				F_0,					F_0 }, },
 	{ 'D',		{ L"D" },			{ F_0,				F_0,				F_WordCut,				F_WordDelete,		F_SORT_DESC,			F_0,				F_0,					F_0 }, },
 	{ 'E',		{ L"E" },			{ F_0,				F_0,				F_CUT_LINE,				F_DELETE_LINE,		F_0,					F_0,				F_CASCADE,				F_0 }, },

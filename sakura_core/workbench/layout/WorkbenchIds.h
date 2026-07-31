@@ -34,8 +34,9 @@ inline constexpr std::string_view Output = "workbench.panel.output";
 inline constexpr std::string_view Terminal = "terminal";
 inline constexpr std::string_view Ports = "~remote.forwardedPortsContainer";
 inline constexpr std::string_view DebugConsole = "workbench.panel.repl";
-//! Compatibility container for Sakura's legacy extension sidebar. It is never an alias for a part.
-inline constexpr std::string_view LegacyExtensionViewsAuxiliary = "sakura.extensionViews";
+// The Auxiliary Bar deliberately registers no built-in ViewContainer. VS Code's
+// Secondary Side Bar is empty until the user moves a container into it, so a
+// placeholder container here would be a rendered-nothing phantom.
 } // namespace viewContainer
 
 namespace view {
@@ -54,8 +55,6 @@ inline constexpr std::string_view Output = "workbench.panel.output";
 inline constexpr std::string_view Terminal = "terminal";
 inline constexpr std::string_view Ports = "~remote.forwardedPorts";
 inline constexpr std::string_view DebugConsole = "workbench.panel.repl.view";
-//! Root view used by the native adapter to host legacy extension-contributed content.
-inline constexpr std::string_view LegacyExtensionViews = "sakura.extensionViews.root";
 } // namespace view
 
 inline constexpr std::string_view BuiltinOwner = "sakura.builtin";

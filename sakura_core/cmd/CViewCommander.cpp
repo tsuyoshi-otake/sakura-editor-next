@@ -514,6 +514,7 @@ BOOL CViewCommander::HandleCommand(
 	case F_TOGGLE_LEFT_EXPLORER:	GetEditWindow()->ToggleWorkbenchPanel(workbench::WorkbenchEdge::Left, true);break;
 	case F_TOGGLE_RIGHT_OUTLINE:	GetEditWindow()->ToggleWorkbenchPanel(workbench::WorkbenchEdge::Right, true);break;
 	case F_TOGGLE_BOTTOM_PANEL:	GetEditWindow()->ToggleWorkbenchPanel(workbench::WorkbenchEdge::Bottom, true);break;
+	case F_TOGGLE_SECONDARY_SIDEBAR:	GetEditWindow()->ToggleSecondarySidebar(true);break;
 	case F_SHOW_FOCUS_TERMINAL:	GetEditWindow()->FocusIntegratedTerminal();break;
 	case F_NEW_TERMINAL:		GetEditWindow()->NewIntegratedTerminal();break;
 	case F_REDETECT_POWERSHELL:	GetEditWindow()->RedetectPowerShell();break;

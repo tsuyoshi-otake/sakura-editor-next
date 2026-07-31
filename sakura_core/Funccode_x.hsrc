@@ -360,6 +360,7 @@ F_REDETECT_POWERSHELL	= 30996,	//PowerShellを再検出						なし
 F_OPEN_WORKSPACE_FOLDER	= 30997,	//作業フォルダーを開く						なし
 F_TOGGLE_MARKDOWN_PREVIEW	= 30998,	//Markdownプレビューの表示切替					なし
 F_EXTENSION_LIST	= 30999,	//拡張（Open VSX）								なし
+F_TOGGLE_SECONDARY_SIDEBAR	= 31000,	//セカンダリサイドバーの表示切替			Ctrl+Alt+B
 
 // モード切り替え系 
 F_CHGMOD_INS		= 31001,	//挿入／上書きモード切り替え			なし

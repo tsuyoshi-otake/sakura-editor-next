@@ -592,6 +592,8 @@ enum EWorkbenchActiveTool {
 	WORKBENCH_TOOL_OUTLINE = 1,
 	WORKBENCH_TOOL_TERMINAL = 2,
 	WORKBENCH_TOOL_SCM = 3,
+	//! `workbench.view.extensions`, hosted in the Primary Side Bar like VS Code.
+	WORKBENCH_TOOL_EXTENSIONS = 4,
 };
 
 struct CommonSetting_Workbench

@@ -86,6 +86,11 @@ public:
 	void SetVisible( bool visible ) noexcept;
 	void SetPalette( const theme::ThemePalette& palette );
 
+	//! Moves this View under another host window.  Outline is a View inside the Explorer
+	//! ViewContainer, so it travels with that container when VS Code moves it between the
+	//! Primary and Secondary Side Bar.  Returns false when there is nothing to reparent.
+	bool Reparent( HWND parent ) noexcept;
+
 	[[nodiscard]] OutlineToolLifecycle GetLifecycle() const noexcept { return m_lifecycle; }
 	[[nodiscard]] OutlineToolLayout GetLayout() const noexcept { return m_layout; }
 	[[nodiscard]] HWND GetParent() const noexcept { return m_parent; }

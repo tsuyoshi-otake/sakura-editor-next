@@ -20,6 +20,7 @@ namespace workbench::editor {
 enum class EmptyEditorSurfaceAction : std::uint8_t {
 	NewFile,
 	OpenFile,
+	OpenFolder,
 	ShowAllCommands,
 	OpenSettings,
 	Count,
@@ -68,6 +69,12 @@ public:
 	[[nodiscard]] int GetWidthPixels() const noexcept { return m_widthPixels; }
 	[[nodiscard]] int GetHeightPixels() const noexcept { return m_heightPixels; }
 
+	//! Square logo box above the action list, mirroring VS Code's `.letterpress` watermark.
+	//!
+	//! An empty rectangle means the viewport is too short to show the logo; the action list
+	//! then owns the whole centered block exactly as it did before the logo existed.
+	[[nodiscard]] EmptyEditorSurfaceRect GetLetterpressBounds() const noexcept { return m_letterpress; }
+
 	[[nodiscard]] std::size_t GetActionCount() const noexcept { return kActionCount; }
 	[[nodiscard]] EmptyEditorSurfaceActionInfo GetAction(std::size_t index) const noexcept;
 	[[nodiscard]] std::optional<EmptyEditorSurfaceAction> HitTest(int x, int y) const noexcept;
@@ -76,6 +83,8 @@ public:
 	void SetHovered(std::optional<EmptyEditorSurfaceAction> action) noexcept;
 	void SetPressed(std::optional<EmptyEditorSurfaceAction> action) noexcept;
 	void SetFocused(std::optional<EmptyEditorSurfaceAction> action) noexcept;
+	[[nodiscard]] std::optional<EmptyEditorSurfaceAction> GetHovered() const noexcept { return m_hovered; }
+	[[nodiscard]] std::optional<EmptyEditorSurfaceAction> GetPressed() const noexcept { return m_pressed; }
 	[[nodiscard]] std::optional<EmptyEditorSurfaceAction> GetFocused() const noexcept { return m_focused; }
 	//! Moves through enabled actions, wrapping at either end. Zero is treated as forward.
 	[[nodiscard]] std::optional<EmptyEditorSurfaceAction> MoveFocus(int direction) noexcept;
@@ -99,8 +108,9 @@ private:
 	int m_widthPixels = 0;
 	int m_heightPixels = 0;
 	unsigned int m_dpi = 96;
+	EmptyEditorSurfaceRect m_letterpress{};
 	std::array<EmptyEditorSurfaceRect, kActionCount> m_bounds{};
-	std::array<bool, kActionCount> m_enabled{ true, true, true, true };
+	std::array<bool, kActionCount> m_enabled{ true, true, true, true, true };
 	std::optional<EmptyEditorSurfaceAction> m_hovered;
 	std::optional<EmptyEditorSurfaceAction> m_pressed;
 	std::optional<EmptyEditorSurfaceAction> m_focused;
@@ -111,6 +121,7 @@ constexpr std::string_view EmptyEditorSurfaceModel::CommandId(EmptyEditorSurface
 	switch (action) {
 	case EmptyEditorSurfaceAction::NewFile: return command_ids::NewUntitledFile;
 	case EmptyEditorSurfaceAction::OpenFile: return command_ids::OpenFile;
+	case EmptyEditorSurfaceAction::OpenFolder: return command_ids::OpenFolder;
 	case EmptyEditorSurfaceAction::ShowAllCommands: return command_ids::ShowCommands;
 	case EmptyEditorSurfaceAction::OpenSettings: return command_ids::OpenSettings;
 	case EmptyEditorSurfaceAction::Count: break;
@@ -123,6 +134,7 @@ constexpr const wchar_t* EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction
 	switch (action) {
 	case EmptyEditorSurfaceAction::NewFile: return L"新しいファイル";
 	case EmptyEditorSurfaceAction::OpenFile: return L"ファイルを開く...";
+	case EmptyEditorSurfaceAction::OpenFolder: return L"フォルダーを開く...";
 	case EmptyEditorSurfaceAction::ShowAllCommands: return L"すべてのコマンドの表示";
 	case EmptyEditorSurfaceAction::OpenSettings: return L"設定を開く";
 	case EmptyEditorSurfaceAction::Count: break;
@@ -135,6 +147,9 @@ constexpr const wchar_t* EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAct
 	switch (action) {
 	case EmptyEditorSurfaceAction::NewFile: return L"Ctrl+N";
 	case EmptyEditorSurfaceAction::OpenFile: return L"Ctrl+O";
+	// F_OPEN_WORKSPACE_FOLDER has no default keyboard binding, so this column stays
+	// empty instead of advertising a shortcut the key map does not dispatch.
+	case EmptyEditorSurfaceAction::OpenFolder: return L"";
 	case EmptyEditorSurfaceAction::ShowAllCommands: return L"Ctrl+Shift+P";
 	case EmptyEditorSurfaceAction::OpenSettings: return L"Ctrl+,";
 	case EmptyEditorSurfaceAction::Count: break;

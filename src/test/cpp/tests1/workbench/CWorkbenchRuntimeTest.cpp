@@ -893,7 +893,7 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	};
 
 	EXPECT_EQ(1U, contributions.revision);
-	EXPECT_EQ(11U, contributions.viewContainers.size());
+	EXPECT_EQ(10U, contributions.viewContainers.size());
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Search));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::RunAndDebug));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Problems));
@@ -901,9 +901,10 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Terminal));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Ports));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::DebugConsole));
-	const auto auxiliaryContainer = findContainer(layout::ids::viewContainer::LegacyExtensionViewsAuxiliary);
-	ASSERT_NE(contributions.viewContainers.end(), auxiliaryContainer);
-	EXPECT_EQ(layout::EViewContainerLocation::AuxiliaryBar, auxiliaryContainer->descriptor.location);
+	// VS Code's Secondary Side Bar is empty by default, so no built-in ViewContainer
+	// may claim the AuxiliaryBar location.
+	EXPECT_TRUE(std::none_of(contributions.viewContainers.begin(), contributions.viewContainers.end(),
+		[](const auto& value) { return value.descriptor.location == layout::EViewContainerLocation::AuxiliaryBar; }));
 
 	// The auxiliary bar is a physical workbench part on the right. Outline remains an
 	// Explorer view, rather than the legacy tool's unrelated "right edge" alias.

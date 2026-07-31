@@ -62,6 +62,24 @@ See [`openvsx/CLAUDE.md`](openvsx/CLAUDE.md) for registry-client invariants and
 [`../platform/request/CLAUDE.md`](../platform/request/CLAUDE.md) for the shared
 request lifetime and proxy contract.
 
+## Extensions ViewContainer Composition (2026-08-01)
+
+- `CExtensionPane` is no longer a standalone dock. It is the content of the
+  built-in `workbench.view.extensions` ViewContainer:
+  `workbench::viewcontainer::CViewContainerPages` owns the instance, and the
+  profile-scoped `MarketplaceFactory` supplied by the composition root is what
+  constructs and destroys it. The pane must not construct or place itself.
+- `CExtensionViewRegistry`-backed contributed tree views remain a separate
+  section of that same ViewContainer, never the container's identity. An
+  extension that contributes nothing leaves the Marketplace as the container's
+  entire content; a contribution adds a section beside it and never replaces
+  it.
+- See [`../workbench/CLAUDE.md`](../workbench/CLAUDE.md) for the pool/host
+  ownership, one-location, and typed-absence contracts this composition must
+  satisfy, and [`../window/CLAUDE.md`](../window/CLAUDE.md) for the
+  profile-scoped factory wiring and the retired legacy floating dock that used
+  to hold this pane.
+
 ## P2 Contributions
 
 Commands, menus, keybindings, configuration, views, diagnostics, output,

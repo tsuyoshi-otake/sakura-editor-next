@@ -8,6 +8,9 @@
 
 #include "workbench/editor/CEmptyEditorSurface.h"
 
+#include "config/system_constants.h"
+#include "sakura_rc.h"
+
 #include <windowsx.h>
 
 #include <algorithm>
@@ -17,9 +20,6 @@ namespace {
 
 constexpr wchar_t kEmptyEditorSurfaceClass[] = L"SakuraWorkbenchEmptyEditorSurface";
 constexpr unsigned int kDefaultDpi = 96;
-constexpr int kWordmarkGapDip = 16;
-constexpr int kWordmarkHeightDip = 48;
-constexpr int kWordmarkPointSize = 22;
 constexpr int kFocusInsetDip = 2;
 
 [[nodiscard]] int ScaleDip(int dip, unsigned int dpi) noexcept
@@ -51,6 +51,7 @@ constexpr int kFocusInsetDip = 2;
 	switch (action) {
 	case EmptyEditorSurfaceAction::NewFile: return L"NewFile";
 	case EmptyEditorSurfaceAction::OpenFile: return L"OpenFile";
+	case EmptyEditorSurfaceAction::OpenFolder: return L"OpenFolder";
 	case EmptyEditorSurfaceAction::ShowAllCommands: return L"ShowAllCommands";
 	case EmptyEditorSurfaceAction::OpenSettings: return L"OpenSettings";
 	case EmptyEditorSurfaceAction::Count: break;
@@ -77,6 +78,7 @@ bool CEmptyEditorSurface::Create(HWND parent, HINSTANCE instance)
 	m_window = ::CreateWindowExW(0, kEmptyEditorSurfaceClass, L"", WS_CHILD | WS_TABSTOP | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_window == nullptr) return false;
+	m_instance = instance;
 	UpdateClientLayout(static_cast<unsigned int>(::GetDpiForWindow(m_window)));
 	return true;
 }
@@ -95,9 +97,32 @@ void CEmptyEditorSurface::Destroy() noexcept
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 	m_window = nullptr;
 	m_font.Reset();
-	m_wordmarkFont.Reset();
+	ReleaseLetterpress();
+	m_instance = nullptr;
 	m_destroyed = true;
 	m_destroying = false;
+}
+
+HICON CEmptyEditorSurface::EnsureLetterpress(int side) noexcept
+{
+	if (m_instance == nullptr || side <= 0) return nullptr;
+	if (m_letterpress != nullptr && m_letterpressSide == side) return m_letterpress;
+	// LoadImageW realizes the closest stored frame at the requested size, so the logo stays
+	// crisp across DPI changes instead of being stretched from one cached bitmap.
+	const auto realized = static_cast<HICON>(::LoadImageW(m_instance, MAKEINTRESOURCEW(ICON_DEFAULT_APP),
+		IMAGE_ICON, side, side, LR_DEFAULTCOLOR));
+	if (realized == nullptr) return m_letterpress;
+	ReleaseLetterpress();
+	m_letterpress = realized;
+	m_letterpressSide = side;
+	return m_letterpress;
+}
+
+void CEmptyEditorSurface::ReleaseLetterpress() noexcept
+{
+	if (m_letterpress != nullptr) ::DestroyIcon(m_letterpress);
+	m_letterpress = nullptr;
+	m_letterpressSide = 0;
 }
 
 void CEmptyEditorSurface::Layout(const RECT& bounds, unsigned int dpi)
@@ -107,9 +132,6 @@ void CEmptyEditorSurface::Layout(const RECT& bounds, unsigned int dpi)
 	const int height = std::max(0L, bounds.bottom - bounds.top);
 	m_model.SetViewport(width, height, dpi);
 	if (m_font.Dpi() != m_model.GetDpi()) (void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_model.GetDpi());
-	if (m_wordmarkFont.Dpi() != m_model.GetDpi()) {
-		(void)m_wordmarkFont.Recreate(theme::ThemeFontKind::Chrome, m_model.GetDpi(), kWordmarkPointSize);
-	}
 	if (m_window != nullptr) ::SetWindowPos(m_window, nullptr, bounds.left, bounds.top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
 	Invalidate();
 }
@@ -220,21 +242,28 @@ LRESULT CEmptyEditorSurface::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 		break;
 	case WM_MOUSEMOVE: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		const auto previousHovered = m_model.GetHovered();
+		const auto previousPressed = m_model.GetPressed();
 		SetHoverFromPoint(point);
 		if (m_captureAction) m_model.SetPressed(m_model.HitTest(point.x, point.y) == m_captureAction ? m_captureAction : std::nullopt);
 		if (!m_trackingMouseLeave) {
 			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, m_window, 0 };
 			m_trackingMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
 		}
-		Invalidate();
+		// Pointer motion that changes no visual state must not repaint. Invalidating
+		// on every WM_MOUSEMOVE redrew the whole welcome surface at pointer rate.
+		if (m_model.GetHovered() != previousHovered || m_model.GetPressed() != previousPressed) Invalidate();
 		return 0;
 	}
-	case WM_MOUSELEAVE:
+	case WM_MOUSELEAVE: {
 		m_trackingMouseLeave = false;
+		const bool changed = m_model.GetHovered().has_value()
+			|| (!m_captureAction && m_model.GetPressed().has_value());
 		m_model.SetHovered(std::nullopt);
 		if (!m_captureAction) m_model.SetPressed(std::nullopt);
-		Invalidate();
+		if (changed) Invalidate();
 		return 0;
+	}
 	case WM_LBUTTONDOWN: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		const auto action = m_model.HitTest(point.x, point.y);
@@ -280,9 +309,6 @@ void CEmptyEditorSurface::UpdateClientLayout(unsigned int dpi) noexcept
 	::GetClientRect(m_window, &client);
 	m_model.SetViewport(std::max(0L, client.right - client.left), std::max(0L, client.bottom - client.top), dpi);
 	if (m_font.Dpi() != m_model.GetDpi()) (void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_model.GetDpi());
-	if (m_wordmarkFont.Dpi() != m_model.GetDpi()) {
-		(void)m_wordmarkFont.Recreate(theme::ThemeFontKind::Chrome, m_model.GetDpi(), kWordmarkPointSize);
-	}
 	Invalidate();
 }
 
@@ -293,23 +319,58 @@ void CEmptyEditorSurface::Paint() noexcept
 	if (target == nullptr) return;
 	RECT client{};
 	::GetClientRect(m_window, &client);
+	const int width = std::max(0L, client.right - client.left);
+	const int height = std::max(0L, client.bottom - client.top);
+
+	// Compose into a back buffer. Filling the canvas and then drawing the wordmark
+	// and action rows straight onto the window DC made every repaint visibly blank
+	// the surface first, which the user sees as flicker.
+	const HDC memory = width > 0 && height > 0 ? ::CreateCompatibleDC(target) : nullptr;
+	const HBITMAP buffer = memory != nullptr ? ::CreateCompatibleBitmap(target, width, height) : nullptr;
+	const HGDIOBJ previousBitmap = buffer != nullptr ? ::SelectObject(memory, buffer) : nullptr;
+	const HDC surface = buffer != nullptr ? memory : target;
+	const auto releaseBuffer = [&]() noexcept {
+		if (buffer != nullptr) {
+			::SelectObject(memory, previousBitmap);
+			::DeleteObject(buffer);
+		}
+		if (memory != nullptr) ::DeleteDC(memory);
+	};
+
 	const HBRUSH canvas = ::CreateSolidBrush(m_palette.canvas.ToColorRef());
-	::FillRect(target, &client, canvas);
+	::FillRect(surface, &client, canvas);
 	::DeleteObject(canvas);
-	if (client.right <= client.left || client.bottom <= client.top) {
+	if (width <= 0 || height <= 0) {
+		releaseBuffer();
 		::EndPaint(m_window, &paint);
 		return;
 	}
 
+	PaintContent(surface);
+	if (buffer != nullptr) {
+		::BitBlt(target, client.left, client.top, width, height, memory, client.left, client.top, SRCCOPY);
+	}
+	releaseBuffer();
+	::EndPaint(m_window, &paint);
+}
+
+void CEmptyEditorSurface::PaintContent(HDC target) noexcept
+{
 	const HGDIOBJ previousFont = m_font.Get() != nullptr ? ::SelectObject(target, m_font.Get()) : nullptr;
 	::SetBkMode(target, TRANSPARENT);
-	const auto first = m_model.GetAction(0).bounds;
-	const int wordmarkBottom = std::max(0, first.top - ScaleDip(kWordmarkGapDip, m_model.GetDpi()));
-	RECT wordmark{ 0, std::max(0, wordmarkBottom - ScaleDip(kWordmarkHeightDip, m_model.GetDpi())), client.right, wordmarkBottom };
-	if (m_wordmarkFont.Get() != nullptr) ::SelectObject(target, m_wordmarkFont.Get());
-	::SetTextColor(target, m_palette.secondaryText.ToColorRef());
-	::DrawTextW(target, L"Sakura Editor NEXT", -1, &wordmark, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-	if (m_font.Get() != nullptr) ::SelectObject(target, m_font.Get());
+
+	// VS Code's watermark is the product letterpress alone; the caption text lives in the
+	// accessible name instead of being painted, so the surface stays a single centered column.
+	const auto letterpress = m_model.GetLetterpressBounds();
+	const int letterpressSide = std::min(letterpress.Width(), letterpress.Height());
+	if (letterpressSide > 0) {
+		if (const HICON logo = EnsureLetterpress(letterpressSide); logo != nullptr) {
+			(void)::DrawIconEx(target, letterpress.left, letterpress.top, logo,
+				letterpressSide, letterpressSide, 0, nullptr, DI_NORMAL);
+		}
+	} else {
+		ReleaseLetterpress();
+	}
 
 	for (std::size_t index = 0; index < m_model.GetActionCount(); ++index) {
 		const auto action = m_model.GetAction(index);
@@ -320,12 +381,14 @@ void CEmptyEditorSurface::Paint() noexcept
 			::FillRect(target, &bounds, background);
 			::DeleteObject(background);
 		}
-		const auto textColor = action.pressed ? m_palette.highlightText : (action.enabled ? m_palette.primaryText : m_palette.secondaryText);
+		// VS Code colors the whole watermark definition list, both the label and its keybinding,
+		// with descriptionForeground. Only the pressed row inverts onto the accent fill.
+		const auto textColor = action.pressed ? m_palette.highlightText
+			: (action.enabled ? m_palette.descriptionText : m_palette.disabledText);
 		::SetTextColor(target, textColor.ToColorRef());
 		const int padding = ScaleDip(8, m_model.GetDpi());
 		RECT label{ bounds.left + padding, bounds.top, std::max(bounds.left + padding, bounds.right - padding), bounds.bottom };
 		::DrawTextW(target, action.label, -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-		::SetTextColor(target, (action.pressed ? m_palette.highlightText : m_palette.secondaryText).ToColorRef());
 		::DrawTextW(target, action.shortcut, -1, &label, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 		if (action.focused) {
 			RECT focus = bounds;
@@ -337,7 +400,6 @@ void CEmptyEditorSurface::Paint() noexcept
 		}
 	}
 	if (previousFont != nullptr) ::SelectObject(target, previousFont);
-	::EndPaint(m_window, &paint);
 }
 
 void CEmptyEditorSurface::Invalidate() const noexcept

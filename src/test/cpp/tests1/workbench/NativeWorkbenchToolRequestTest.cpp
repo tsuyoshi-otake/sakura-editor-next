@@ -7,16 +7,19 @@
 #include "pch.h"
 
 #include "env/ShareDataTestSuite.hpp"
+#include "extension/CExtensionViewRegistry.h"
 #include "outline/CDlgFuncList.h"
-#include "workbench/explorer/CExplorerOutlineTool.h"
+#include "workbench/viewcontainer/CViewContainerHost.h"
 #include "workbench/extension/CExtensionBottomPanelTool.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
 
+#include <memory>
 #include <stdexcept>
 
 namespace {
 
-using workbench::explorer::CExplorerOutlineTool;
+using workbench::viewcontainer::CViewContainerHost;
+using workbench::viewcontainer::CViewContainerPages;
 using workbench::extension::CExtensionBottomPanelTool;
 using workbench::extension::ExtensionBottomPanelTab;
 
@@ -31,74 +34,131 @@ protected:
 	{
 		TearDownShareData();
 	}
+
+	//! The Primary Side Bar hosts `workbench.view.extensions`, so the shared page pool always
+	//! owns an extension View registry. These tests create no HWND, but the registry must
+	//! still be a real object rather than null so construction matches production.
+	std::shared_ptr<CExtensionViewRegistry> m_views = std::make_shared<CExtensionViewRegistry>();
+
+	//! A side-bar host renders pages it borrows from the shared pool, so a test host is
+	//! only meaningful together with one. The pool is deliberately not `Create`d: these
+	//! tests cover the request/projection contract, which owns no window.
+	std::shared_ptr<CViewContainerPages> MakePages(CDlgFuncList& dialog)
+	{
+		return std::make_shared<CViewContainerPages>(dialog, m_views);
+	}
 };
 
 TEST_F(NativeWorkbenchToolRequest, OutlineRequestCallsOwnerBeforeApplyingNativeState)
 {
 	CDlgFuncList dialog;
-	CExplorerOutlineTool* observedTool = nullptr;
+	auto pages = MakePages(dialog);
+	CViewContainerHost* observedHost = nullptr;
 	int callbackCalls = 0;
-	CExplorerOutlineTool tool(dialog, [&](bool expanded) {
+	CViewContainerHost host(pages, [&](bool expanded) {
 		++callbackCalls;
 		EXPECT_TRUE(expanded);
-		EXPECT_NE(nullptr, observedTool);
-		EXPECT_FALSE(observedTool->IsOutlineExpanded());
+		EXPECT_NE(nullptr, observedHost);
+		EXPECT_FALSE(observedHost->IsOutlineExpanded());
 		return true;
 	});
-	observedTool = &tool;
+	observedHost = &host;
 
-	tool.SetOutlineExpanded(false);
+	host.SetOutlineExpanded(false);
 
-	EXPECT_TRUE(tool.RequestOutlineExpanded(true));
+	EXPECT_TRUE(host.RequestOutlineExpanded(true));
 	EXPECT_EQ(1, callbackCalls);
-	EXPECT_TRUE(tool.IsOutlineExpanded());
+	EXPECT_TRUE(host.IsOutlineExpanded());
 }
 
 TEST_F(NativeWorkbenchToolRequest, OutlineRequestWithoutOwnerPreservesLegacyApply)
 {
 	CDlgFuncList dialog;
-	CExplorerOutlineTool tool(dialog);
-	tool.SetOutlineExpanded(false);
+	CViewContainerHost host(MakePages(dialog));
+	host.SetOutlineExpanded(false);
 
-	EXPECT_TRUE(tool.RequestOutlineExpanded(true));
-	EXPECT_TRUE(tool.IsOutlineExpanded());
+	EXPECT_TRUE(host.RequestOutlineExpanded(true));
+	EXPECT_TRUE(host.IsOutlineExpanded());
 }
 
 TEST_F(NativeWorkbenchToolRequest, OutlineVetoLeavesStateUnchanged)
 {
 	CDlgFuncList dialog;
-	CExplorerOutlineTool tool(dialog, [](bool) { return false; });
-	tool.SetOutlineExpanded(false);
+	CViewContainerHost host(MakePages(dialog), [](bool) { return false; });
+	host.SetOutlineExpanded(false);
 
-	EXPECT_FALSE(tool.RequestOutlineExpanded(true));
-	EXPECT_FALSE(tool.IsOutlineExpanded());
+	EXPECT_FALSE(host.RequestOutlineExpanded(true));
+	EXPECT_FALSE(host.IsOutlineExpanded());
 }
 
 TEST_F(NativeWorkbenchToolRequest, OutlineCallbackExceptionLeavesStateUnchanged)
 {
 	CDlgFuncList dialog;
-	CExplorerOutlineTool tool(dialog, [](bool) -> bool {
+	CViewContainerHost host(MakePages(dialog), [](bool) -> bool {
 		throw std::runtime_error("outline callback failure");
 	});
-	tool.SetOutlineExpanded(false);
+	host.SetOutlineExpanded(false);
 
-	EXPECT_FALSE(tool.RequestOutlineExpanded(true));
-	EXPECT_FALSE(tool.IsOutlineExpanded());
+	EXPECT_FALSE(host.RequestOutlineExpanded(true));
+	EXPECT_FALSE(host.IsOutlineExpanded());
 }
 
 TEST_F(NativeWorkbenchToolRequest, OutlineProjectionDoesNotCallOwner)
 {
 	CDlgFuncList dialog;
 	int callbackCalls = 0;
-	CExplorerOutlineTool tool(dialog, [&](bool) {
+	CViewContainerHost host(MakePages(dialog), [&](bool) {
 		++callbackCalls;
 		return true;
 	});
 
-	tool.SetOutlineExpanded(false);
+	host.SetOutlineExpanded(false);
 
 	EXPECT_EQ(0, callbackCalls);
-	EXPECT_FALSE(tool.IsOutlineExpanded());
+	EXPECT_FALSE(host.IsOutlineExpanded());
+}
+
+//! A ViewContainer is rendered by exactly one side bar. VS Code moves the composite
+//! between the Primary and the Secondary Side Bar, so the host that no longer owns the
+//! page must stop claiming it even before its owner applies a new selection.
+TEST_F(NativeWorkbenchToolRequest, SideBarHostsShareOnePagePoolWithoutBothClaimingIt)
+{
+	using workbench::viewcontainer::ViewContainerPage;
+	CDlgFuncList dialog;
+	auto pages = MakePages(dialog);
+	CViewContainerHost primary(pages);
+	CViewContainerHost secondary(pages);
+
+	primary.ShowPage(ViewContainerPage::Extensions);
+	EXPECT_TRUE(primary.ActivePage().has_value());
+	EXPECT_EQ(ViewContainerPage::Extensions, *primary.ActivePage());
+	EXPECT_FALSE(secondary.ActivePage().has_value());
+
+	primary.ShowPage(std::nullopt);
+	secondary.ShowPage(ViewContainerPage::Extensions);
+	EXPECT_FALSE(primary.ActivePage().has_value());
+	ASSERT_TRUE(secondary.ActivePage().has_value());
+	EXPECT_EQ(ViewContainerPage::Extensions, *secondary.ActivePage());
+}
+
+//! Outline visibility is one model fact, not a per-Part one: it must survive the Explorer
+//! container moving to the other side bar.
+TEST_F(NativeWorkbenchToolRequest, OutlineExpansionIsSharedByBothSideBars)
+{
+	using workbench::viewcontainer::ViewContainerPage;
+	CDlgFuncList dialog;
+	auto pages = MakePages(dialog);
+	CViewContainerHost primary(pages);
+	CViewContainerHost secondary(pages);
+
+	primary.ShowPage(ViewContainerPage::Explorer);
+	primary.SetOutlineExpanded(false);
+	EXPECT_FALSE(secondary.IsOutlineExpanded());
+
+	primary.ShowPage(std::nullopt);
+	secondary.ShowPage(ViewContainerPage::Explorer);
+	secondary.SetOutlineExpanded(true);
+	EXPECT_TRUE(primary.IsOutlineExpanded());
 }
 
 TEST_F(NativeWorkbenchToolRequest, BottomPanelRequestCallsOwnerBeforeApplyingNativeState)

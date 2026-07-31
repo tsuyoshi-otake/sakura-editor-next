@@ -42,8 +42,8 @@ TEST(WorkbenchContributionRegistry, IncludesCanonicalVSCodePartsAndPanelContribu
 
 	EXPECT_EQ(1U, snapshot.revision);
 	EXPECT_EQ(9U, snapshot.parts.size());
-	EXPECT_EQ(11U, snapshot.viewContainers.size());
-	EXPECT_EQ(16U, snapshot.views.size());
+	EXPECT_EQ(10U, snapshot.viewContainers.size());
+	EXPECT_EQ(15U, snapshot.views.size());
 	const auto containsContainer = [&snapshot](std::string_view id, EViewContainerLocation location) {
 		return std::any_of(snapshot.viewContainers.begin(), snapshot.viewContainers.end(), [id, location](const auto& value) {
 			return value.descriptor.id == id && value.descriptor.location == location && value.isBuiltin;
@@ -54,7 +54,10 @@ TEST(WorkbenchContributionRegistry, IncludesCanonicalVSCodePartsAndPanelContribu
 	EXPECT_TRUE(containsContainer(ids::viewContainer::Terminal, EViewContainerLocation::Panel));
 	EXPECT_TRUE(containsContainer(ids::viewContainer::Ports, EViewContainerLocation::Panel));
 	EXPECT_TRUE(containsContainer(ids::viewContainer::DebugConsole, EViewContainerLocation::Panel));
-	EXPECT_TRUE(containsContainer(ids::viewContainer::LegacyExtensionViewsAuxiliary, EViewContainerLocation::AuxiliaryBar));
+	// VS Code's Secondary Side Bar starts empty; no built-in container may claim it.
+	EXPECT_TRUE(std::none_of(snapshot.viewContainers.begin(), snapshot.viewContainers.end(),
+		[](const auto& value) { return value.descriptor.location == EViewContainerLocation::AuxiliaryBar; }));
+	EXPECT_TRUE(containsContainer(ids::viewContainer::Extensions, EViewContainerLocation::Sidebar));
 	EXPECT_TRUE(containsContainer(ids::viewContainer::Search, EViewContainerLocation::Sidebar));
 	EXPECT_TRUE(containsContainer(ids::viewContainer::RunAndDebug, EViewContainerLocation::Sidebar));
 	EXPECT_TRUE(std::any_of(snapshot.parts.begin(), snapshot.parts.end(), [](const auto& value) {

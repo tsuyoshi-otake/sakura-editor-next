@@ -50,7 +50,33 @@ void ActivityBarModel::SetEnabled(ActivityBarItem item, bool enabled) noexcept
 
 bool ActivityBarModel::IsEnabled(ActivityBarItem item) const noexcept
 {
-	return IsValid(item) && m_enabled[ToIndex(item)];
+	return IsValid(item) && IsInteractive(ToIndex(item));
+}
+
+void ActivityBarModel::SetItemVisible(ActivityBarItem item, bool visible) noexcept
+{
+	if (!IsValid(item)) return;
+	const auto index = ToIndex(item);
+	if (m_visible[index] == visible) return;
+	m_visible[index] = visible;
+	if (!visible) {
+		if (m_hovered == item) m_hovered.reset();
+		if (m_pressed == item) m_pressed.reset();
+		if (m_focused == item) m_focused.reset();
+		if (m_selected == item) m_selected.reset();
+	}
+	// A removed entry closes its gap, so every remaining entry shifts.
+	Reflow();
+}
+
+bool ActivityBarModel::IsVisible(ActivityBarItem item) const noexcept
+{
+	return IsValid(item) && m_visible[ToIndex(item)];
+}
+
+bool ActivityBarModel::IsInteractive(std::size_t index) const noexcept
+{
+	return index < kItemCount && m_enabled[index] && m_visible[index];
 }
 
 void ActivityBarModel::SetHoveredItem(std::optional<ActivityBarItem> item) noexcept
@@ -80,13 +106,14 @@ ActivityBarButtonInfo ActivityBarModel::GetButton(std::size_t index) const noexc
 		.pressed = m_pressed == item,
 		.focused = m_focused == item,
 		.enabled = m_enabled[index],
+		.visible = m_visible[index],
 	};
 }
 
 std::optional<ActivityBarItem> ActivityBarModel::HitTest(int x, int y) const noexcept
 {
 	for (std::size_t index = 0; index < kItemCount; ++index) {
-		if (m_enabled[index] && m_bounds[index].Contains(x, y)) return static_cast<ActivityBarItem>(index);
+		if (IsInteractive(index) && m_bounds[index].Contains(x, y)) return static_cast<ActivityBarItem>(index);
 	}
 	return std::nullopt;
 }
@@ -103,7 +130,7 @@ std::optional<ActivityBarItem> ActivityBarModel::MoveFocus(int direction) noexce
 	const int start = static_cast<int>(ToIndex(*m_focused));
 	for (int offset = 1; offset <= static_cast<int>(kItemCount); ++offset) {
 		const int index = (start + step * offset + static_cast<int>(kItemCount)) % static_cast<int>(kItemCount);
-		if (m_enabled[static_cast<std::size_t>(index)]) {
+		if (IsInteractive(static_cast<std::size_t>(index))) {
 			m_focused = static_cast<ActivityBarItem>(index);
 			return m_focused;
 		}
@@ -143,11 +170,11 @@ std::optional<ActivityBarItem> ActivityBarModel::FirstEnabled(int direction) con
 {
 	if (direction < 0) {
 		for (std::size_t index = kItemCount; index-- > 0;) {
-			if (m_enabled[index]) return static_cast<ActivityBarItem>(index);
+			if (IsInteractive(index)) return static_cast<ActivityBarItem>(index);
 		}
 	} else {
 		for (std::size_t index = 0; index < kItemCount; ++index) {
-			if (m_enabled[index]) return static_cast<ActivityBarItem>(index);
+			if (IsInteractive(index)) return static_cast<ActivityBarItem>(index);
 		}
 	}
 	return std::nullopt;
@@ -157,8 +184,16 @@ void ActivityBarModel::Reflow() noexcept
 {
 	const int slot = ScaleDip(kButtonExtentDip, m_dpi);
 	const int right = std::min(m_widthPixels, GetPreferredWidthPixels());
+	// Only present entries occupy a slot, so a container moved out of the Primary Side
+	// Bar leaves no gap behind, exactly as VS Code's composite bar reflows.
+	std::size_t slotIndex = 0;
 	for (std::size_t index = 0; index < kItemCount; ++index) {
-		const auto top64 = static_cast<std::int64_t>(slot) * index;
+		if (!m_visible[index]) {
+			m_bounds[index] = {};
+			continue;
+		}
+		const auto top64 = static_cast<std::int64_t>(slot) * slotIndex;
+		++slotIndex;
 		const int top = static_cast<int>(std::min<std::int64_t>(top64, m_heightPixels));
 		const int bottom = std::min(m_heightPixels, static_cast<int>(std::min<std::int64_t>(
 			top64 + slot, std::numeric_limits<int>::max())));

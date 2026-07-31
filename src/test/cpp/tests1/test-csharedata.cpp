@@ -260,6 +260,7 @@ const std::set<int> topFuncCodes = {
 const std::set<int> popupFuncCodes = {
 	F_TEXTWRAPMETHOD,
 	F_FILE_REOPEN_SUBMENU,
+	F_FILE_OPENRECENT_SUBMENU,
 	F_FILE_RCNTFILE_SUBMENU,
 	F_FILE_RCNTFLDR_SUBMENU,
 	F_EDIT_INS_SUBMENU,
@@ -669,7 +670,7 @@ MATCHER(IsInitializedCommonSettingKeyBind, "Checks if CommonSetting_KeyBind is p
 		/* アルファベット */
 		//keycode,	keyname,					なし,				Shitf+,				Ctrl+,					Shift+Ctrl+,		Alt+,					Shit+Alt+,			Ctrl+Alt+,				Shift+Ctrl+Alt+
 		{ 'A',		{ L"A" },					{ F_0,				F_0,				F_SELECTALL,			F_0,				F_SORT_ASC,				F_0,				F_0,					F_0 }, },
-		{ 'B',		{ L"B" },					{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_0,					F_0 }, },
+		{ 'B',		{ L"B" },					{ F_0,				F_0,				F_TOGGLE_LEFT_EXPLORER,	F_0,				F_0,					F_0,				F_TOGGLE_SECONDARY_SIDEBAR,	F_0 }, },
 		{ 'C',		{ L"C" },					{ F_0,				F_0,				F_COPY,					F_OPEN_HfromtoC,	F_0,					F_0,				F_0,					F_0 }, },
 		{ 'D',		{ L"D" },					{ F_0,				F_0,				F_WordCut,				F_WordDelete,		F_SORT_DESC,			F_0,				F_0,					F_0 }, },
 		{ 'E',		{ L"E" },					{ F_0,				F_0,				F_CUT_LINE,				F_DELETE_LINE,		F_0,					F_0,				F_CASCADE,				F_0 }, },
@@ -1155,10 +1156,12 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 		SMenuItem{ 1, 30190, 'T' },
 		SMenuItem{ 1, 30180, 'B' },
 		SMenuItem{ 1, 1 },
-		SMenuItem{ 1, 34006, 'F' },
-		SMenuItem{ 2, 29002 },
-		SMenuItem{ 1, 34007, 'D' },
+		// VS Codeのファイルメニューは「最近使用した項目を開く」1個だけを持ち、
+		// その中を 最近使ったフォルダー / 区切り線 / 最近使ったファイル の順に並べる。
+		SMenuItem{ 1, 34061, 'R' },
 		SMenuItem{ 2, 29003 },
+		SMenuItem{ 2, 1 },
+		SMenuItem{ 2, 29002 },
 		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 31380, 'G' },
 		SMenuItem{ 1, 30194, 'Q' },
@@ -1839,6 +1842,114 @@ TEST(CShareDataProfile, MainMenuMissingVersionMigratesButCurrentVersionDoesNot)
 	// An existing current-version profile intentionally keeps a user-deleted
 	// command deleted instead of adding it back during subsequent loads.
 	EXPECT_THAT(CShareData_IO::ResolveMainMenuReadVersion(true, true, currentVersion, currentVersion), Eq(currentVersion));
+}
+
+namespace {
+	//! `MergeMainMenuOpenRecent` に渡すメニュー表を組み立てる。
+	std::unique_ptr<CommonSetting_MainMenu> MakeMainMenu(std::initializer_list<SMenuItem> items)
+	{
+		auto menu = std::make_unique<CommonSetting_MainMenu>();	// 値初期化でゼロクリアされる
+		menu->m_nMainMenuNum = static_cast<int>(items.size());
+		int i = 0;
+		for (const auto& item : items) {
+			menu->m_cMainMenuTbl[i].m_nType    = item.GetType();
+			menu->m_cMainMenuTbl[i].m_nFunc    = item.m_eFuncCode;
+			menu->m_cMainMenuTbl[i].m_nLevel   = item.m_nLevel;
+			menu->m_cMainMenuTbl[i].m_sKey[0]  = static_cast<WCHAR>(item.m_chAccessKey);
+			menu->m_cMainMenuTbl[i].m_sKey[1]  = L'\0';
+			menu->m_cMainMenuTbl[i].m_sName[0] = L'\0';
+			++i;
+		}
+		return menu;
+	}
+}
+
+TEST(CShareDataProfile, MainMenuVersion6MergesTheTwoMruSubmenusIntoOneOpenRecent)
+{
+	// VS Code のファイルメニューは "Open Recent" という単一のサブメニューを持ち、
+	// 最近使ったフォルダー・区切り線・最近使ったファイルの順に並べる。移行は同じ
+	// 項目数の置き換えなので、m_nMainMenuNum も m_nMenuTopIdx も動かない。
+	auto menu = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 30190, 'T' },
+		SMenuItem{ 1, 34006, 'F' },
+		SMenuItem{ 2, 29002 },
+		SMenuItem{ 1, 34007, 'D' },
+		SMenuItem{ 2, 29003 },
+		SMenuItem{ 1, 1 },
+	});
+	menu->m_nMenuTopIdx[0] = 0;
+	const int nBeforeNum = menu->m_nMainMenuNum;
+
+	ASSERT_THAT(CShareData_IO::MergeMainMenuOpenRecent(*menu), IsTrue());
+
+	EXPECT_THAT(menu->m_nMainMenuNum, Eq(nBeforeNum));
+	EXPECT_THAT(menu->m_nMenuTopIdx[0], Eq(0));
+
+	EXPECT_THAT(menu->m_cMainMenuTbl[2].m_nType,  Eq(T_NODE));
+	EXPECT_THAT(menu->m_cMainMenuTbl[2].m_nFunc,  Eq(EFunctionCode(F_FILE_OPENRECENT_SUBMENU)));
+	EXPECT_THAT(menu->m_cMainMenuTbl[2].m_nLevel, Eq(1));
+	EXPECT_THAT(menu->m_cMainMenuTbl[2].m_sKey[0], Eq(L'R'));
+	// 名前が空のときだけストリングテーブルの訳語が使われる。
+	EXPECT_THAT(menu->m_cMainMenuTbl[2].m_sName, StrEq(L""));
+
+	EXPECT_THAT(menu->m_cMainMenuTbl[3].m_nType,  Eq(T_SPECIAL));
+	EXPECT_THAT(menu->m_cMainMenuTbl[3].m_nFunc,  Eq(F_FOLDER_USED_RECENTLY));
+	EXPECT_THAT(menu->m_cMainMenuTbl[3].m_nLevel, Eq(2));
+
+	EXPECT_THAT(menu->m_cMainMenuTbl[4].m_nType,  Eq(T_SEPARATOR));
+	EXPECT_THAT(menu->m_cMainMenuTbl[4].m_nFunc,  Eq(F_SEPARATOR));
+	EXPECT_THAT(menu->m_cMainMenuTbl[4].m_nLevel, Eq(2));
+
+	EXPECT_THAT(menu->m_cMainMenuTbl[5].m_nType,  Eq(T_SPECIAL));
+	EXPECT_THAT(menu->m_cMainMenuTbl[5].m_nFunc,  Eq(F_FILE_USED_RECENTLY));
+	EXPECT_THAT(menu->m_cMainMenuTbl[5].m_nLevel, Eq(2));
+
+	// 直後の区切り線と、前後の項目は触らない。
+	EXPECT_THAT(menu->m_cMainMenuTbl[1].m_nFunc, Eq(EFunctionCode(30190)));
+	EXPECT_THAT(menu->m_cMainMenuTbl[6].m_nType, Eq(T_SEPARATOR));
+	EXPECT_THAT(menu->m_cMainMenuTbl[6].m_nLevel, Eq(1));
+
+	// 二度目は該当する並びが無いので何も起きない。
+	EXPECT_THAT(CShareData_IO::MergeMainMenuOpenRecent(*menu), IsFalse());
+}
+
+TEST(CShareDataProfile, MainMenuVersion6LeavesACustomizedMenuUntouched)
+{
+	// 並びが完全一致しない場合は書き換えない。ユーザーが片方を消した/順番を入れ替えた
+	// メニューを壊さないための境界。
+	auto reordered = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 34007, 'D' },
+		SMenuItem{ 2, 29003 },
+		SMenuItem{ 1, 34006, 'F' },
+		SMenuItem{ 2, 29002 },
+	});
+	EXPECT_THAT(CShareData_IO::MergeMainMenuOpenRecent(*reordered), IsFalse());
+	EXPECT_THAT(reordered->m_cMainMenuTbl[1].m_nFunc, Eq(EFunctionCode(F_FILE_RCNTFLDR_SUBMENU)));
+	EXPECT_THAT(reordered->m_cMainMenuTbl[3].m_nFunc, Eq(EFunctionCode(F_FILE_RCNTFILE_SUBMENU)));
+
+	// 「最近使ったフォルダー」だけを消したメニューも対象外。
+	auto filesOnly = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 34006, 'F' },
+		SMenuItem{ 2, 29002 },
+		SMenuItem{ 1, 1 },
+	});
+	EXPECT_THAT(CShareData_IO::MergeMainMenuOpenRecent(*filesOnly), IsFalse());
+	EXPECT_THAT(filesOnly->m_cMainMenuTbl[1].m_nFunc, Eq(EFunctionCode(F_FILE_RCNTFILE_SUBMENU)));
+	EXPECT_THAT(filesOnly->m_cMainMenuTbl[2].m_nFunc, Eq(F_FILE_USED_RECENTLY));
+
+	// 階層が食い違う並びも対象外。
+	auto flattened = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 34006, 'F' },
+		SMenuItem{ 1, 29002 },
+		SMenuItem{ 1, 34007, 'D' },
+		SMenuItem{ 2, 29003 },
+	});
+	EXPECT_THAT(CShareData_IO::MergeMainMenuOpenRecent(*flattened), IsFalse());
+	EXPECT_THAT(flattened->m_cMainMenuTbl[1].m_nFunc, Eq(EFunctionCode(F_FILE_RCNTFILE_SUBMENU)));
 }
 
 /*!

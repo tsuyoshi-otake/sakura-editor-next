@@ -307,7 +307,7 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	addContainer(ids::viewContainer::Terminal, "Terminal", EViewContainerLocation::Panel, 30);
 	addContainer(ids::viewContainer::Ports, "Ports", EViewContainerLocation::Panel, 40);
 	addContainer(ids::viewContainer::DebugConsole, "Debug Console", EViewContainerLocation::Panel, 50);
-	addContainer(ids::viewContainer::LegacyExtensionViewsAuxiliary, "Extension Views", EViewContainerLocation::AuxiliaryBar, 10);
+	// No built-in AuxiliaryBar container: VS Code's Secondary Side Bar starts empty.
 
 	addView(ids::view::Explorer, ids::viewContainer::Explorer, "Explorer", 10);
 	addView(ids::view::Outline, ids::viewContainer::Explorer, "Outline", 20);
@@ -324,7 +324,6 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	addView(ids::view::Terminal, ids::viewContainer::Terminal, "Terminal", 10);
 	addView(ids::view::Ports, ids::viewContainer::Ports, "Ports", 10);
 	addView(ids::view::DebugConsole, ids::viewContainer::DebugConsole, "Debug Console", 10);
-	addView(ids::view::LegacyExtensionViews, ids::viewContainer::LegacyExtensionViewsAuxiliary, "Extension Views", 10);
 }
 
 WorkbenchContributionRegistry::~WorkbenchContributionRegistry()

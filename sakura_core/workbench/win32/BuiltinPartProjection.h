@@ -56,10 +56,11 @@ enum class BuiltinActiveSurface : std::uint8_t {
 	Explorer,
 	Outline,
 	SourceControl,
+	//! Canonical VS Code `workbench.view.extensions` container hosted in the Primary Side Bar.
+	Extensions,
 	Terminal,
 	Problems,
 	Output,
-	LegacyExtensionViews,
 };
 
 //! HWND-free active logical surfaces for the native shell.
