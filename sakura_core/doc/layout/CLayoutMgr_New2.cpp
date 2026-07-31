@@ -25,6 +25,8 @@ void CLayoutMgr::ReplaceData_CLayoutMgr(
 	LayoutReplaceArg*	pArg
 )
 {
+	m_freshLoadLayoutComplete = false;
+	++m_layoutGeneration;
 	CLayoutInt	nWork_nLines = m_nLines;	//変更前の全行数の保存	@@@ 2002.04.19 MIK
 
 	/* 置換先頭位置のレイアウト情報 */

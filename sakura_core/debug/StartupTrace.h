@@ -50,6 +50,7 @@ public:
 		ReadEnd,
 		LayoutBegin,
 		LayoutDecision,
+		StartupLayoutInputSummary,
 		LayoutComplete,
 		StartupDocumentArmed,
 		StartupDocumentComplete,
@@ -85,6 +86,17 @@ public:
 		FirstContentNonBlockTextOtherSummary,
 		StartupDrawMiniMapPaintSummary,
 		StartupDrawMiniMapUpdateSummary,
+		StartupDocumentSubphaseSummary,
+		StartupReadDecisionSummary,
+		StartupReadResultSummary,
+		StartupReadWorkerSummary,
+		StartupReadWorkerLifecycleSummary,
+		StartupReadTransferSummary,
+		StartupMiniMapCacheSummary,
+		StartupMiniMapBuildSummary,
+		StartupMakeOneLineSummary,
+		StartupMakeOneLineWorkSummary,
+		StartupMakeOneLineCostSummary,
 		FirstContentPainted,
 	};
 
@@ -103,6 +115,28 @@ public:
 		OtherBmp,
 	};
 
+	// Aggregate-only startup-document buckets. Callers supply already-measured
+	// QPC ticks; the trace layer never measures, allocates, or formats here.
+	enum class StartupDocumentSubphase : std::uint8_t {
+		PreReadSettings,
+		Read,
+		Decode,
+		LineBuild,
+		Layout,
+		PostLoadFinalize,
+		WorkbenchUi,
+		DrawCommit,
+		Count,
+	};
+
+	enum class MakeOneLineCost : std::uint8_t {
+		KinsokuAndWord,
+		ColorBoundary,
+		CharacterWidth,
+		LayoutAllocation,
+		Count,
+	};
+
 	// Call once from wWinMain before any startup work.  Tracing is enabled only
 	// when SAKURA_STARTUP_TRACE_DIR names an existing directory.
 	static void Initialize();
@@ -118,6 +152,25 @@ public:
 	static void AbortStartupDocument();
 	static bool IsStartupDocumentPending();
 	static bool IsAwaitingFirstContentPaint();
+	static bool IsCollectingStartupDocumentMetrics() noexcept;
+
+	// Reset by ArmStartupDocument and emitted once after the startup draw commit
+	// (or on abort). All fields are numeric aggregates and contain no document data.
+	static void AccumulateStartupDocumentSubphase(
+		StartupDocumentSubphase subphase, std::int64_t qpcTicks, std::int64_t operations = 1) noexcept;
+	static void SetStartupReadDecision(
+		std::int64_t inputBytes, std::int64_t activePartitions, std::int64_t launchedWorkers) noexcept;
+	static void SetStartupReadResult(std::int64_t logicalLines, std::int64_t result) noexcept;
+	static void AccumulateStartupReadWorker(std::int64_t qpcTicks) noexcept;
+	static void SetStartupReadWorkerLifecycle(
+		std::int64_t startedWorkers, std::int64_t collectedWorkers) noexcept;
+	static void AccumulateStartupReadTransfer(std::int64_t copyOperations, std::int64_t moveOperations) noexcept;
+	static void AccumulateStartupMiniMapCacheLookup(
+		bool hit, std::int64_t buildQpcTicks = 0, std::int64_t generatedRows = 0) noexcept;
+	static void AccumulateStartupMakeOneLine(std::int64_t qpcTicks, std::int64_t utf16Units) noexcept;
+	static void AccumulateStartupMakeOneLineCost(
+		MakeOneLineCost cost, std::int64_t qpcTicks, std::int64_t operations) noexcept;
+	static void FlushStartupDocumentMetrics();
 
 	// Hot-path paint measurements are accumulated in memory and written only
 	// after the first primary content paint. Durations use raw QPC ticks so the

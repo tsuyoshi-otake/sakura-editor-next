@@ -91,6 +91,8 @@ void CLayoutMgr::Init()
 	m_pLayoutPrevRefer = nullptr;
 	m_nLines = CLayoutInt(0);			/* 全物理行数 */
 	m_nLineTypeBot = COLORIDX_DEFAULT;
+	m_lastFullLayoutCompleted = false;
+	m_freshLoadLayoutComplete = false;
 
 	// EOFレイアウト位置記憶	//2006.10.07 Moca
 	m_nEOFLine = CLayoutInt(-1);
@@ -124,6 +126,11 @@ void CLayoutMgr::SetLayoutInfo(
 	CCharWidthCache&	cache
 )
 {
+	if (bDoLayout) {
+		// A setting-driven re-layout must not inherit the load-only fast path.
+		m_freshLoadLayoutComplete = false;
+		m_lastFullLayoutCompleted = false;
+	}
 	MY_RUNNINGTIMER( cRunningTimer, L"CLayoutMgr::SetLayoutInfo" );
 
 	assert_warning( (!bDoLayout && m_nMaxLineKetas == nMaxLineKetas) || bDoLayout );

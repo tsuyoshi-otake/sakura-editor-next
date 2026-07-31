@@ -6,6 +6,7 @@
 */
 #include "charset/charcode.h"
 #include "pch.h"
+#include "view/figures/CFigureStrategy.h"
 #include "env/ShareDataTestSuite.hpp"
 #include <algorithm>
 #include <cstring>
@@ -382,4 +383,22 @@ TEST(charcode, IsTabAvailableCode)
 	for (wchar_t ch = 0; ch < 128; ++ch) {
 		EXPECT_EQ(WCODE::IsTabAvailableCode(ch), chars.find(ch) == std::wstring::npos);
 	}
+}
+
+TEST(CFigureText, BlockSafeCodeUnitKeepsCombiningAndContextualCharactersSeparate)
+{
+	EXPECT_TRUE(CFigure_Text::IsBlockSafeCodeUnit(L'A'));
+	EXPECT_TRUE(CFigure_Text::IsBlockSafeCodeUnit(L'あ'));
+	EXPECT_TRUE(CFigure_Text::IsBlockSafeCodeUnit(L'漢'));
+	EXPECT_TRUE(CFigure_Text::IsBlockSafeCodeUnit(L'、'));
+	EXPECT_TRUE(CFigure_Text::IsBlockSafeCodeUnit(L'。'));
+
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(L'\u3000'));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(L'\u302a'));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(L'\u302f'));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(L'\u3099'));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(L'\u309a'));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(L'\ufe0f'));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(static_cast<wchar_t>(0xd800)));
+	EXPECT_FALSE(CFigure_Text::IsBlockSafeCodeUnit(static_cast<wchar_t>(0xdc00)));
 }

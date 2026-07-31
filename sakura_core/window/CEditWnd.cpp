@@ -108,6 +108,48 @@
 #include <cwctype>
 #include <limits>
 #include <mutex>
+#include <utility>
+
+namespace
+{
+class CStartupDocumentSubphaseTimer final
+{
+public:
+	explicit CStartupDocumentSubphaseTimer(CStartupTrace::StartupDocumentSubphase subphase) noexcept
+		: m_subphase(subphase)
+		, m_enabled(CStartupTrace::IsCollectingStartupDocumentMetrics())
+	{
+		if (m_enabled) {
+			::QueryPerformanceCounter(&m_start);
+		}
+	}
+
+	~CStartupDocumentSubphaseTimer()
+	{
+		Finish();
+	}
+
+	void Finish() noexcept
+	{
+		if (!m_enabled) {
+			return;
+		}
+		LARGE_INTEGER end{};
+		::QueryPerformanceCounter(&end);
+		CStartupTrace::AccumulateStartupDocumentSubphase(
+			m_subphase, end.QuadPart - m_start.QuadPart);
+		m_enabled = false;
+	}
+
+	CStartupDocumentSubphaseTimer(const CStartupDocumentSubphaseTimer&) = delete;
+	CStartupDocumentSubphaseTimer& operator=(const CStartupDocumentSubphaseTimer&) = delete;
+
+private:
+	CStartupTrace::StartupDocumentSubphase m_subphase;
+	LARGE_INTEGER m_start{};
+	bool m_enabled{};
+};
+}
 
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたので
 //	定義を削除
@@ -1233,6 +1275,7 @@ void CEditWnd::EmitStartupMiniMapSummary() noexcept
 		m_startupMiniMapPaintQpcTicks, m_startupMiniMapPaintCount);
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawMiniMapUpdateSummary,
 		m_startupMiniMapImmediateUpdateCount);
+	CStartupTrace::FlushStartupDocumentMetrics();
 }
 
 void CEditWnd::RecordStartupMiniMapImmediateUpdate() noexcept
@@ -1278,10 +1321,13 @@ void CEditWnd::CommitStartupDrawTransaction()
 		return;
 	}
 
+	CStartupDocumentSubphaseTimer drawCommitTimer{
+		CStartupTrace::StartupDocumentSubphase::DrawCommit };
 	m_startupDrawState = StartupDrawState::Committing;
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitBegin);
 	const HWND hwnd = GetHwnd();
 	if (!::IsWindow(hwnd)) {
+		drawCommitTimer.Finish();
 		AbortStartupDrawTransaction();
 		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_INVALID_WINDOW_HANDLE);
 		return;
@@ -1302,6 +1348,7 @@ void CEditWnd::CommitStartupDrawTransaction()
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawLayoutEnd,
 		m_startupDrawState == StartupDrawState::Committing && ::IsWindow(hwnd) ? 1 : 0);
 	if (m_startupDrawState != StartupDrawState::Committing || !::IsWindow(hwnd)) {
+		drawCommitTimer.Finish();
 		AbortStartupDrawTransaction();
 		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_OPERATION_ABORTED);
 		return;
@@ -1331,6 +1378,7 @@ void CEditWnd::CommitStartupDrawTransaction()
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawShowEnd,
 		m_startupDrawState == StartupDrawState::Committing && ::IsWindow(hwnd) ? 1 : 0);
 	if (m_startupDrawState != StartupDrawState::Committing || !::IsWindow(hwnd)) {
+		drawCommitTimer.Finish();
 		AbortStartupDrawTransaction();
 		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_OPERATION_ABORTED);
 		return;
@@ -1350,10 +1398,12 @@ void CEditWnd::CommitStartupDrawTransaction()
 		RecordFirstStartupContentPaint();
 	}
 
+	drawCommitTimer.Finish();
 	EmitStartupMiniMapSummary();
 	m_startupDrawState = StartupDrawState::Committed;
 	FinishStartupTabSwap();
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, redrawResult ? 1 : 0);
+	PostDeferredStartupWorkbenchIfReady();
 }
 
 void CEditWnd::RecordFirstStartupContentPaint() noexcept
@@ -1368,6 +1418,7 @@ void CEditWnd::RecordFirstStartupContentPaint() noexcept
 	if (m_startupDrawState == StartupDrawState::Committed) {
 		FinishStartupTabSwap();
 	}
+	PostDeferredStartupWorkbenchIfReady();
 }
 
 bool CEditWnd::InitializeWorkbench()
@@ -1701,12 +1752,6 @@ bool CEditWnd::InitializeWorkbench()
 		CloseWorkbench();
 		return false;
 	}
-	if (m_workbenchRuntime == nullptr && settings.m_bRightPanelVisible != FALSE
-		&& m_outlineWorkbenchTool != nullptr
-		&& m_leftWorkbenchPanel != nullptr
-		&& m_leftWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden) {
-		ReloadWorkbenchOutlineAndRelayout();
-	}
 	if (editorBridgeEnabled) {
 		const HWND editorWindow = GetHwnd();
 		m_editorCoreSubscription = m_editorServiceAdapter->Subscribe(
@@ -1721,8 +1766,58 @@ bool CEditWnd::InitializeWorkbench()
 		}
 		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot(), false);
 	}
-	PublishExtensionDocumentOpen(false);
+	// CEditWnd::Create runs before the startup file is loaded.  Parsing the
+	// bootstrap document here only produces a result that the load immediately
+	// invalidates.  Coalesce both document-dependent jobs and complete them after
+	// the real document has reached its first painted frame.  The outline reload
+	// stays a runtime-less legacy path; a runtime-backed window projects its
+	// Explorer/Outline state from the committed layout snapshot instead.
+	m_startupOutlineReloadPending = m_workbenchRuntime == nullptr && settings.m_bRightPanelVisible != FALSE;
+	m_startupExtensionDocumentOpenPending = true;
 	return true;
+}
+
+void CEditWnd::PostDeferredStartupWorkbenchIfReady()
+{
+	if (m_startupWorkbenchCompletionPosted
+		|| m_startupDrawState != StartupDrawState::Committed
+		|| !m_startupFirstContentPainted
+		|| !m_cDlgFuncList.m_bEditWndReady
+		|| (!m_startupOutlineReloadPending && !m_startupExtensionDocumentOpenPending)) {
+		return;
+	}
+
+	m_startupWorkbenchCompletionPosted = true;
+	if (!::PostMessageW(GetHwnd(), MYWM_COMPLETE_STARTUP_WORKBENCH, 0, 0)) {
+		m_startupWorkbenchCompletionPosted = false;
+		// If the queue cannot accept the internal message, still give every
+		// pending branch an explicit terminal state while the window is valid.
+		CompleteDeferredStartupWorkbench();
+	}
+}
+
+void CEditWnd::CompleteDeferredStartupWorkbench()
+{
+	// Clear each request before doing any callback-driven work.  A load that is
+	// triggered reentrantly can set a fresh request which belongs to the next
+	// completion rather than being accidentally consumed here.
+	const bool publishDocument = std::exchange(m_startupExtensionDocumentOpenPending, false);
+	const bool reloadOutline = std::exchange(m_startupOutlineReloadPending, false);
+	if (!publishDocument && !reloadOutline) return;
+
+	if (publishDocument && m_extensionService) {
+		PublishExtensionDocumentOpen(true);
+	}
+	const auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	if (reloadOutline
+		&& settings.m_bRightPanelVisible != FALSE
+		&& m_leftWorkbenchPanel != nullptr
+		&& m_leftWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden
+		&& m_outlineWorkbenchTool != nullptr
+		&& m_explorerOutlineTool != nullptr
+		&& m_explorerOutlineTool->IsOutlineExpanded()) {
+		ReloadWorkbenchOutlineAndRelayout();
+	}
 }
 
 std::vector<SExtensionDiagnostic> CEditWnd::ExtensionDiagnosticsForCurrentDocument() const
@@ -1942,6 +2037,13 @@ void CEditWnd::CloseWorkbench() noexcept
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Destroy();
 	m_emptyEditorSurface.reset();
 	ClosePublishedExtensionDocument();
+	m_startupOutlineReloadPending = false;
+	m_startupExtensionDocumentOpenPending = false;
+	m_startupWorkbenchCompletionPosted = false;
+	if (m_extensionDocumentSyncTimerPending) {
+		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
+		m_extensionDocumentSyncTimerPending = false;
+	}
 	if (m_extensionSidebarTool) {
 		m_extensionSidebarTool->SetRequestChildrenCallback({});
 		m_extensionSidebarTool->SetSelectionChangedCallback({});
@@ -3530,7 +3632,18 @@ bool CEditWnd::FinalizeSuccessfulLegacyLoad()
 	if (m_editorServiceAdapter != nullptr && !AdoptLoadedLegacyFile()) return false;
 	if (!HasActiveEditorInput()) return false;
 	UpdateWorkspaceFromDocument();
-	PublishExtensionDocumentOpen(true);
+	if (m_startupDrawState != StartupDrawState::Committed
+		|| !m_startupFirstContentPainted
+		|| !m_cDlgFuncList.m_bEditWndReady
+		|| m_startupWorkbenchCompletionPosted) {
+		m_startupExtensionDocumentOpenPending = true;
+		m_startupOutlineReloadPending =
+			m_pShareData->m_Common.m_sWorkbench.m_bRightPanelVisible != FALSE;
+	} else {
+		// The startup gate is fully satisfied; later loads publish synchronously.
+		m_startupExtensionDocumentOpenPending = false;
+		PublishExtensionDocumentOpen(true);
+	}
 	if (m_markdownPreviewVisible) {
 		if (IsMarkdownPreviewAvailable()) {
 			m_markdownPreviewDirty = true;
@@ -4012,7 +4125,13 @@ HWND CEditWnd::Create(
 	/* バーの配置終了 */
 	EndLayoutBars( FALSE );
 	BeginStartupDrawTransaction();
-	if (!InitializeWorkbench()) {
+	bool workbenchInitialized = false;
+	{
+		CStartupDocumentSubphaseTimer workbenchTimer{
+			CStartupTrace::StartupDocumentSubphase::WorkbenchUi };
+		workbenchInitialized = InitializeWorkbench();
+	}
+	if (!workbenchInitialized) {
 		TopErrorMessage(GetHwnd(), L"ワークベンチの初期化に失敗しました。\nFailed to initialize the workbench.");
 		AbortStartupDrawTransaction();
 		::DestroyWindow(GetHwnd());
@@ -4604,6 +4723,14 @@ LRESULT CEditWnd::DispatchEvent(
 		return m_extensionService ? m_extensionService->HandleApplyEditPrompt(lParam) : 0;
 	case MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT:
 		return m_extensionService ? m_extensionService->HandleEditorOptionsPrompt(lParam) : 0;
+	case MYWM_COMPLETE_STARTUP_WORKBENCH:
+		m_startupWorkbenchCompletionPosted = false;
+		if (m_startupDrawState == StartupDrawState::Committed
+			&& m_startupFirstContentPainted
+			&& m_cDlgFuncList.m_bEditWndReady) {
+			CompleteDeferredStartupWorkbench();
+		}
+		return 0;
 	case WM_LBUTTONDOWN:
 		return OnLButtonDown( wParam, lParam );
 	case WM_MOUSEMOVE:
@@ -6399,6 +6526,7 @@ LRESULT CEditWnd::OnTimer( WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 		CAppNodeGroupHandle(0).PostMessageToAllEditors( MYWM_FIRST_IDLE, ::GetCurrentProcessId(), 0, nullptr );	// プロセスの初回アイドリング通知	// 2008.04.19 ryoji
 		::PostMessage( m_pShareData->m_sHandles.m_hwndTray, MYWM_FIRST_IDLE, (WPARAM)::GetCurrentProcessId(), (LPARAM)0 );
 		::KillTimer( m_hWnd, wParam );
+		PostDeferredStartupWorkbenchIfReady();
 		break;
 	case IDT_EXTENSION_DOCUMENT_SYNC:
 		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);

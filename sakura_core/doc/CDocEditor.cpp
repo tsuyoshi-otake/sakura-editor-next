@@ -207,3 +207,11 @@ void CDocEditAgent::AddLineStrX( const wchar_t* pData, int nDataLen )
 	//インスタンス設定
 	pDocLine->SetDocLineString(pData, nDataLen, GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol);
 }
+
+void CDocEditAgent::AddLineStrXMove(CNativeW* pcData)
+{
+	// The decoded CNativeW is owned by the reader until this point.  Moving it
+	// directly into CDocLine removes the otherwise unavoidable final line copy.
+	CDocLine* pDocLine = m_pcDocLineMgr->AddNewLine();
+	pDocLine->SetDocLineStringMove(pcData, GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol);
+}

@@ -25,6 +25,40 @@
 #include "plugin/CJackManager.h"
 #include "util/format.h"
 #include "CSelectLang.h"
+#include "debug/StartupTrace.h"
+
+namespace
+{
+class CStartupPostLoadTimer final
+{
+public:
+	CStartupPostLoadTimer() noexcept
+		: m_enabled(CStartupTrace::IsCollectingStartupDocumentMetrics())
+	{
+		if (m_enabled) {
+			::QueryPerformanceCounter(&m_start);
+		}
+	}
+
+	~CStartupPostLoadTimer()
+	{
+		if (m_enabled) {
+			LARGE_INTEGER end{};
+			::QueryPerformanceCounter(&end);
+			CStartupTrace::AccumulateStartupDocumentSubphase(
+				CStartupTrace::StartupDocumentSubphase::PostLoadFinalize,
+				end.QuadPart - m_start.QuadPart);
+		}
+	}
+
+	CStartupPostLoadTimer(const CStartupPostLoadTimer&) = delete;
+	CStartupPostLoadTimer& operator=(const CStartupPostLoadTimer&) = delete;
+
+private:
+	LARGE_INTEGER m_start{};
+	bool m_enabled{};
+};
+}
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                          ロック                             //
@@ -105,20 +139,30 @@ bool CDocFileOperation::DoLoadFlow(SLoadInfo* pLoadInfo, bool checkAlreadyComple
 		//ロード処理
 		m_pcDocRef->NotifyBeforeLoad(pLoadInfo);			//前処理
 		eLoadResult = m_pcDocRef->NotifyLoad(*pLoadInfo);	//本処理
-		m_pcDocRef->NotifyAfterLoad(*pLoadInfo);			//後処理
+		{
+			const CStartupPostLoadTimer startupPostLoadTimer;
+			m_pcDocRef->NotifyAfterLoad(*pLoadInfo);			//後処理
+		}
 	}
 	catch(const CFlowInterruption&){
 		eLoadResult = LOADED_INTERRUPT;
 	}
 	catch(...){
 		//予期せぬ例外が発生した場合も NotifyFinalLoad は必ず呼ぶ！
-		(void)m_pcDocRef->NotifyFinalLoad(LOADED_FAILURE);
+		{
+			const CStartupPostLoadTimer startupFinalLoadTimer;
+			(void)m_pcDocRef->NotifyFinalLoad(LOADED_FAILURE);
+		}
 		throw;
 	}
 
 	// Native I/O is not the commit boundary.  Every listener must finish, and a
 	// failed Core/UI projection downgrades an otherwise successful native load.
-	const auto finalization = m_pcDocRef->NotifyFinalLoad(eLoadResult);
+	ELoadFinalizationStatus finalization;
+	{
+		const CStartupPostLoadTimer startupFinalLoadTimer;
+		finalization = m_pcDocRef->NotifyFinalLoad(eLoadResult);
+	}
 
 	const bool nativeLoaded = eLoadResult == LOADED_OK || eLoadResult == LOADED_LOSESOME;
 	return nativeLoaded && finalization == ELoadFinalizationStatus::Succeeded;

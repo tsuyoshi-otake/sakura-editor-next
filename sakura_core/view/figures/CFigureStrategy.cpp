@@ -83,6 +83,9 @@ FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 	FigureRenderType nType = 0;
 	if(nLength == 1){
 		const wchar_t code = pInfo->m_pLineOfLogic[nIdx];
+		// IsBlockRenderableCodeUnit() is the wider of the two block predicates:
+		// it also admits the CJK bracket, dash, and quotation range that sits
+		// between otherwise block-safe Japanese text.
 		if(IsBlockRenderableCodeUnit(code)){
 			nType = 1;
 		}
@@ -92,6 +95,23 @@ FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 			ClassifyNonBlockText(pInfo->m_pLineOfLogic[nIdx], nLength));
 	}
 	return (fontNo << 1) | nType;
+}
+
+bool CFigure_Text::IsBlockSafeCodeUnit(const wchar_t code) noexcept
+{
+	// Unshaped characters which can share one ExtTextOut call.  Keep this list
+	// deliberately narrower than Unicode blocks containing combining marks.
+	return (0x20 <= code && code <= 0x7f) // ASCII
+		|| code == 0x3001 // IDEOGRAPHIC COMMA
+		|| code == 0x3002 // IDEOGRAPHIC FULL STOP
+		|| (0x2E80 <= code && code <= 0x2FDF) // 漢字部首
+		|| (0x3041 <= code && code <= 0x3096) // ひらがな
+		|| (0x30A1 <= code && code <= 0x30FA) // カタカナ(合成用濁点などを除く)
+		|| (0x3400 <= code && code <= 0x4DBF) // CJK統合漢字拡張A
+		|| (0x4E00 <= code && code <= 0x9FFF) // CJK統合漢字
+		|| (0xF900 <= code && code <= 0xFAFF) // CJK互換漢字
+		|| (0xFF01 <= code && code <= 0xFF5E) // 全角ASCII
+		|| (0xFF61 <= code && code <= 0xFF9F); // 半角カナ
 }
 
 int CFigure_Text::FowardChars(SColorStrategyInfo* pInfo)

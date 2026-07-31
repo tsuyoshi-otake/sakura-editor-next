@@ -129,6 +129,29 @@ IPC HWND が存在しない明示的な経路では `-1` です。後者の通�
 `below_minimum_lines` / `range_based_color` 等の固定理由です。未定義のイベント値を全イベント共通の成功値と
 解釈してはいけません。
 
+起動文書の内訳は、次の集計イベントで確認します。時間はすべて QPC tick であり、同じレコードの
+`frequency` で換算します。`read` は読込全体、`decode` と `line_build` はその内訳なので、単純加算して
+トランザクション全体と解釈してはいけません。
+
+| イベント | `value1` | `value2` / `detail` |
+|---|---|---|
+| `startup_document_subphase_summary` | subphase の合計 QPC tick | 処理回数 / `pre_read_settings`, `read`, `decode`, `line_build`, `layout`, `post_load_finalize`, `workbench_ui`, `draw_commit` |
+| `startup_read_decision_summary` | 入力 byte 数 | 有効な行境界 partition 数 |
+| `startup_read_result_summary` | 公開した論理行数 | `EConvertResult` |
+| `startup_read_worker_summary` | worker の合計 QPC tick | 完了した worker 計測数 |
+| `startup_read_worker_lifecycle_summary` | 起動した worker 数 | 回収した worker 数 |
+| `startup_read_transfer_summary` | 行 buffer の copy 回数 | move 回数 |
+| `startup_layout_input_summary` | レイアウト対象行数 | 折返し幅 |
+| `startup_minimap_cache_summary` | キャッシュ hit 数 | miss 数 |
+| `startup_minimap_build_summary` | 再構築の合計 QPC tick | 走査したレイアウト行数 |
+| `startup_make_one_line_summary` | `_MakeOneLine()` の合計 QPC tick | 呼出回数 |
+| `startup_make_one_line_work_summary` | `_MakeOneLine()` の呼出回数 | 入力 UTF-16 code unit 数 |
+| `startup_make_one_line_cost_summary` | 分類別の合計 QPC tick | 処理回数 / `kinsoku_and_word_inclusive`, `color_boundary`, `character_width`, `layout_allocation` |
+
+`startup_read_worker_lifecycle_summary` の両値が一致しない結果は、速度比較に使わず読込終了経路を調査します。
+`kinsoku_and_word_inclusive` は内側の文字幅・レイアウト生成を含み得るため、分類別 QPC tick も互いに排他的な
+合計として扱いません。
+
 `isa_dispatch` はプロセスごとに起動直後の一度だけ記録します。`value1` は選択した実装
 （`1` = AVX、`2` = AVX2、`3` = AVX-512F/BW）、`value2` は CPUID・XGETBV と
 ディスパッチ表初期化に要した QPC tick 数です。ミリ秒へ換算するときは、同じレコードの
@@ -143,8 +166,10 @@ IPC HWND が存在しない明示的な経路では `-1` です。後者の通�
 
 通常起動の `sakura.exe -PROF=<name> <markdown>` は、必要なら同じプロファイル用の非表示
 コントロールプロセスを先に起動し、その初期化を待ってからエディタウィンドウを作ります。現在の重要な
-順序は、**子ビューと workbench の生成後に起動描画トランザクションを開始し、初期文書を非表示・描画抑止の
-まま同期ロードしてから、一度だけ表示・描画をコミットする**ことです。
+順序は、**子ビューと各バーの生成後に起動描画トランザクションを開始し、workbench の枠組み初期化と
+初期文書の同期ロードを非表示・描画抑止のまま完了してから、一度だけ表示・描画をコミットする**ことです。
+起動時の空文書に依存するアウトライン解析と拡張向け文書公開は実行せず、実文書の初回描画後に一つの
+内部メッセージへまとめて完了します。
 
 ```mermaid
 sequenceDiagram
@@ -208,7 +233,9 @@ sequenceDiagram
 
     E->>Q: MainLoop
     Q->>W: WM_TIMER(IDT_FIRST_IDLE)
-    W->>W: MYWM_FIRST_IDLE を post → KillTimer
+    W->>W: ready 設定・extension service 開始<br/>MYWM_FIRST_IDLE を post → KillTimer
+    W->>Q: MYWM_COMPLETE_STARTUP_WORKBENCH を post
+    Q->>W: 実文書を extension へ公開<br/>表示中なら outline を一度だけ解析
     B->>E: WaitForInputIdle
     Note right of B: inputIdleMs<br/>OS queue idle。IDT_FIRST_IDLE の証明ではない
     B->>W: 縦 scrollbar range を poll
@@ -247,6 +274,19 @@ Final 時の抑止判定は [`CLoadAgent.cpp:234`](../sakura_core/agent/CLoadAge
 `first_content_painted` を発行し、前のタブを隠すのもその後です
 ([`CEditView_Paint.cpp:761`](../sakura_core/view/CEditView_Paint.cpp#L761)、
 [`CEditWnd.cpp:422`](../sakura_core/window/CEditWnd.cpp#L422))。
+
+workbench の初期化では、ロード直後に捨てる空文書のアウトライン解析と文書 snapshot を保留します。
+`OnAfterLoad` は起動中の要求を重複させません。起動レイアウト中の `BlockingHook()` が 0 ms の
+`IDT_FIRST_IDLE` を先に dispatch する場合もあるため、ready 状態だけでは完了処理を許可しません。
+**first-idle、描画トランザクションの `Committed`、主本文の初回描画完了**がすべて成立した時だけ
+`MYWM_COMPLETE_STARTUP_WORKBENCH` を一度 post します。各状態を確定する経路から同じ判定を再試行するため、
+到達順序には依存しません。受信側は保留フラグを callback より先に消費し、実文書の公開と、右パネルが
+表示中かつ outline が展開中の場合だけの解析を完了します。post に失敗した場合は、安全な三状態が成立
+した時点で同じ完了処理を同期実行し、close 分岐では全保留・post済みフラグを破棄するため、保留状態が
+暗黙の終端になりません
+([`CEditWnd.cpp:803`](../sakura_core/window/CEditWnd.cpp#L803)、
+[`CEditWnd.cpp:1680`](../sakura_core/window/CEditWnd.cpp#L1680)、
+[`CEditWnd.cpp:4474`](../sakura_core/window/CEditWnd.cpp#L4474))。
 
 したがって `visibleMs` はロード前の空の枠ではなく、コミット中の表示要求を観測する値です。ただし
 `visibleMs`、`captionReadyMs`、`firstContentPaintedMs` はそれぞれ別の境界であり、全文レイアウトの外部確認を

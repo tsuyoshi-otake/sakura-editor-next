@@ -14,6 +14,7 @@
 
 class CEditDoc;
 class CDocLineMgr;
+class CNativeW;
 
 class CDocEditor : public CDocListenerEx{
 public:
@@ -86,6 +87,8 @@ public:
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//	May 15, 2000 genta
 	void AddLineStrX( const wchar_t*, int );	/* 末尾に行を追加 Ver1.5 */
+	//! Transfers a decoded line buffer into the logical document without a final copy.
+	void AddLineStrXMove(CNativeW* pcData);
 
 private:
 	CDocLineMgr* m_pcDocLineMgr;

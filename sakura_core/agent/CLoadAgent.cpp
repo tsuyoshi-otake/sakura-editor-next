@@ -51,6 +51,37 @@ private:
 	bool m_enabled;
 	CStartupTrace::Event m_end;
 };
+
+class CStartupDocumentMetricsPhase final
+{
+public:
+	explicit CStartupDocumentMetricsPhase(CStartupTrace::StartupDocumentSubphase subphase) noexcept
+		: m_subphase(subphase)
+		, m_enabled(CStartupTrace::IsCollectingStartupDocumentMetrics())
+	{
+		if (m_enabled) {
+			::QueryPerformanceCounter(&m_start);
+		}
+	}
+
+	~CStartupDocumentMetricsPhase()
+	{
+		if (m_enabled) {
+			LARGE_INTEGER end{};
+			::QueryPerformanceCounter(&end);
+			CStartupTrace::AccumulateStartupDocumentSubphase(
+				m_subphase, end.QuadPart - m_start.QuadPart);
+		}
+	}
+
+	CStartupDocumentMetricsPhase(const CStartupDocumentMetricsPhase&) = delete;
+	CStartupDocumentMetricsPhase& operator=(const CStartupDocumentMetricsPhase&) = delete;
+
+private:
+	CStartupTrace::StartupDocumentSubphase m_subphase;
+	LARGE_INTEGER m_start{};
+	bool m_enabled{};
+};
 }
 
 ECallbackResult CLoadAgent::OnCheckLoad(SLoadInfo* pLoadInfo)
@@ -205,34 +236,42 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 	ELoadResult eRet = LOADED_OK;
 	CEditDoc* pcDoc = GetListeningDoc();
 
-	/* 既存データのクリア */
-	pcDoc->InitDoc(); //$$
+	{
+		const CStartupDocumentMetricsPhase startupPreReadTrace{
+			CStartupTrace::StartupDocumentSubphase::PreReadSettings };
 
-	// パスを確定
-	pcDoc->SetFilePathAndIcon( sLoadInfo.cFilePath );
+		/* 既存データのクリア */
+		pcDoc->InitDoc(); //$$
 
-	// 文書種別確定
-	pcDoc->m_cDocType.SetDocumentType( sLoadInfo.nType, true );
-	GetEditWnd().m_pcViewFontMiniMap->UpdateFont(&GetEditWnd().GetLogfont());
-	InitCharWidthCache( GetEditWnd().m_pcViewFontMiniMap->GetLogfont(), CWM_FONT_MINIMAP );
-	SelectCharWidthCache( CWM_FONT_EDIT, GetEditWnd().GetLogfontCacheMode() );
-	InitCharWidthCache( GetEditWnd().GetLogfont() );
-	GetEditWnd().m_pcViewFont->UpdateFont(&GetEditWnd().GetLogfont());
+		// パスを確定
+		pcDoc->SetFilePathAndIcon( sLoadInfo.cFilePath );
 
-	// 起動と同時に読む場合は予めアウトライン解析画面を配置しておく
-	// （ファイル読み込み開始とともにビューが表示されるので、あとで配置すると画面のちらつきが大きいの）
-	if( !GetEditWnd().m_cDlgFuncList.m_bEditWndReady ){
-		GetEditWnd().m_cDlgFuncList.Refresh();
-		HWND hEditWnd = GetEditWnd().GetHwnd();
-		if( !::IsIconic( hEditWnd ) && GetEditWnd().m_cDlgFuncList.GetHwnd() ){
-			RECT rc;
-			::GetClientRect( hEditWnd, &rc );
-			::SendMessageAny( hEditWnd, WM_SIZE, ::IsZoomed( hEditWnd )? SIZE_MAXIMIZED: SIZE_RESTORED, MAKELONG( rc.right - rc.left, rc.bottom - rc.top ) );
+		// 文書種別確定
+		pcDoc->m_cDocType.SetDocumentType( sLoadInfo.nType, true );
+		GetEditWnd().m_pcViewFontMiniMap->UpdateFont(&GetEditWnd().GetLogfont());
+		InitCharWidthCache( GetEditWnd().m_pcViewFontMiniMap->GetLogfont(), CWM_FONT_MINIMAP );
+		SelectCharWidthCache( CWM_FONT_EDIT, GetEditWnd().GetLogfontCacheMode() );
+		InitCharWidthCache( GetEditWnd().GetLogfont() );
+		GetEditWnd().m_pcViewFont->UpdateFont(&GetEditWnd().GetLogfont());
+
+		// 起動と同時に読む場合は予めアウトライン解析画面を配置しておく
+		// （ファイル読み込み開始とともにビューが表示されるので、あとで配置すると画面のちらつきが大きいの）
+		if( !GetEditWnd().m_cDlgFuncList.m_bEditWndReady
+			&& !GetEditWnd().m_cDlgFuncList.IsWorkbenchMode() ){
+			GetEditWnd().m_cDlgFuncList.Refresh();
+			HWND hEditWnd = GetEditWnd().GetHwnd();
+			if( !::IsIconic( hEditWnd ) && GetEditWnd().m_cDlgFuncList.GetHwnd() ){
+				RECT rc;
+				::GetClientRect( hEditWnd, &rc );
+				::SendMessageAny( hEditWnd, WM_SIZE, ::IsZoomed( hEditWnd )? SIZE_MAXIMIZED: SIZE_RESTORED, MAKELONG( rc.right - rc.left, rc.bottom - rc.top ) );
+			}
 		}
 	}
 
 	//ファイルが存在する場合はファイルを読む
 	{
+		const CStartupDocumentMetricsPhase startupReadMetrics{
+			CStartupTrace::StartupDocumentSubphase::Read };
 		const CStartupTracePhase startupReadTrace{
 			CStartupTrace::IsStartupDocumentPending(),
 			CStartupTrace::Event::ReadBegin,
@@ -288,6 +327,7 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 
 	CProgressSubject* pOld = CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&pcDoc->m_cLayoutMgr);
 	pcDoc->m_cLayoutMgr.SetLayoutInfo( true, true, ref, ref.m_nTabSpace, ref.m_nTsvMode, nMaxLineKetas, CLayoutXInt(-1), &GetEditWnd().GetLogfont() );
+	pcDoc->m_cLayoutMgr.MarkFreshLoadLayoutComplete();
 	GetEditWnd().ClearViewCaretPosInfo();
 	
 	CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
@@ -315,7 +355,7 @@ void CLoadAgent::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 	if( pcDoc->m_nTextWrapMethodCur == WRAP_NO_TEXT_WRAP )
 		// CLayoutMgr::_DoLayoutにて長さ算出済みなのでbCalLineLen=FALSE指定
 		pcDoc->m_cLayoutMgr.CalculateTextWidth(FALSE);	// テキスト最大幅を算出する
-	else
+	else if( !pcDoc->m_cLayoutMgr.ConsumeFreshLoadLayoutComplete() )
 		pcDoc->m_cLayoutMgr.ClearLayoutLineWidth();		// 各行のレイアウト行長の記憶をクリアする
 }
 

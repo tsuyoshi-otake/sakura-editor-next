@@ -19,6 +19,44 @@
 #include <atomic>
 #include <thread>
 
+namespace
+{
+std::int64_t StartupQpcNow() noexcept
+{
+	LARGE_INTEGER counter{};
+	::QueryPerformanceCounter(&counter);
+	return counter.QuadPart;
+}
+
+class CStartupLayoutPhaseTimer final
+{
+public:
+	CStartupLayoutPhaseTimer() noexcept
+		: m_enabled(CStartupTrace::IsCollectingStartupDocumentMetrics())
+		, m_start(m_enabled ? StartupQpcNow() : 0)
+	{
+	}
+
+	~CStartupLayoutPhaseTimer()
+	{
+		if (m_enabled) {
+			CStartupTrace::AccumulateStartupDocumentSubphase(
+				CStartupTrace::StartupDocumentSubphase::Layout,
+				StartupQpcNow() - m_start,
+				m_operations);
+		}
+	}
+
+	CStartupLayoutPhaseTimer(const CStartupLayoutPhaseTimer&) = delete;
+	CStartupLayoutPhaseTimer& operator=(const CStartupLayoutPhaseTimer&) = delete;
+
+private:
+	bool m_enabled{};
+	std::int64_t m_start{};
+	std::int64_t m_operations{1};
+};
+}
+
 //2008.07.27 kobake
 static bool _GetKeywordLength(
 	const CLayoutMgr&	cLayoutMgr,
@@ -97,7 +135,9 @@ static bool _GetKeywordLength(
 
 CLayout* CLayoutMgr::SLayoutWork::_CreateLayout(CLayoutMgr* mgr)
 {
-	return mgr->CreateLayout(
+	const bool traceCost = bTraceStartupCost;
+	const auto start = traceCost ? StartupQpcNow() : 0;
+	CLayout* layout = mgr->CreateLayout(
 		this->pcDocLine,
 		CLogicPoint(this->nBgn, this->nCurLine),
 		this->nPos - this->nBgn,
@@ -106,6 +146,13 @@ CLayout* CLayoutMgr::SLayoutWork::_CreateLayout(CLayoutMgr* mgr)
 		this->nPosX,
 		this->exInfoPrev.DetachColorInfo()
 	);
+	if (traceCost) {
+		CStartupTrace::AccumulateStartupMakeOneLineCost(
+			CStartupTrace::MakeOneLineCost::LayoutAllocation,
+			StartupQpcNow() - start,
+			1);
+	}
+	return layout;
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -235,66 +282,98 @@ void CLayoutMgr::_DoGyomatsuKinsoku(SLayoutWork* pWork, PF_OnLine pfOnLine)
 
 void CLayoutMgr::_MakeOneLine(SLayoutWork* pWork, PF_OnLine pfOnLine)
 {
+	const bool traceCost = pWork->bTraceStartupCost;
+	const auto makeOneLineStart = traceCost ? StartupQpcNow() : 0;
+	std::int64_t kinsokuTicks = 0;
+	std::int64_t kinsokuOperations = 0;
+	std::int64_t colorTicks = 0;
+	std::int64_t colorOperations = 0;
+	std::int64_t widthTicks = 0;
+	std::int64_t widthOperations = 0;
+
+	const int lineLength = pWork->cLineStr.GetLength();
+	const CLayoutInt maxLineLayout = GetMaxLineLayout();
+	const bool csvMode = m_tsvInfo.m_nTsvMode == TSV_MODE_CSV;
+	const bool enableExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+	const bool wordWrap = m_pTypeConfig->m_bWordWrap;
+	const bool kinsokuKuto = m_pTypeConfig->m_bKinsokuKuto;
+	const bool kinsokuHead = m_pTypeConfig->m_bKinsokuHead;
+	const bool kinsokuTail = m_pTypeConfig->m_bKinsokuTail;
+	const bool kinsokuRet = m_pTypeConfig->m_bKinsokuRet;
+
 	int	nEol = pWork->pcDocLine->GetEol().GetLen(); //########そのうち不要になる
 	int nEol_1 = nEol - 1;
 	if( 0 >	nEol_1 ){
 		nEol_1 = 0;
 	}
-	CLogicInt nLength = pWork->cLineStr.GetLength() - CLogicInt(nEol_1);
+	CLogicInt nLength = CLogicInt(lineLength) - CLogicInt(nEol_1);
 
 	if(pWork->pcColorStrategy)pWork->pcColorStrategy->InitStrategyStatus();
 	CColorStrategyPool& color = *CColorStrategyPool::getInstance();
 
 	const bool bCheckColorEnabled = color.HasRangeBasedColorStrategies();
-	const bool bKinsokuEnabled = m_pTypeConfig->m_bWordWrap
-		|| m_pTypeConfig->m_bKinsokuKuto
-		|| m_pTypeConfig->m_bKinsokuHead
-		|| m_pTypeConfig->m_bKinsokuTail;
+	const bool bKinsokuEnabled = wordWrap || kinsokuKuto || kinsokuHead || kinsokuTail;
 
 	//1ロジック行を消化するまでループ
 	while( pWork->nPos < nLength ){
 		// インデント幅は_OnLineで計算済みなのでここからは削除
 
 		// 禁則関係の設定がONかつ現在禁則処理中でなければ次の禁則の開始をチェック
+		const auto kinsokuStart = traceCost && bKinsokuEnabled ? StartupQpcNow() : 0;
 		if( bKinsokuEnabled && !_DoKinsokuSkip(pWork, pfOnLine) ){
 			// 英文ワードラップをする
-			if( m_pTypeConfig->m_bWordWrap ){
+			if( wordWrap ){
 				_DoWordWrap(pWork, pfOnLine);
 			}
 
 			// 句読点のぶらさげ
-			if( m_pTypeConfig->m_bKinsokuKuto ){
+			if( kinsokuKuto ){
 				_DoKutoBurasage(pWork);
 			}
 
 			// 行頭禁則
-			if( m_pTypeConfig->m_bKinsokuHead ){
+			if( kinsokuHead ){
 				_DoGyotoKinsoku(pWork, pfOnLine);
 			}
 
 			// 行末禁則
-			if( m_pTypeConfig->m_bKinsokuTail ){
+			if( kinsokuTail ){
 				_DoGyomatsuKinsoku(pWork, pfOnLine);
 			}
+		}
+		if (traceCost && bKinsokuEnabled) {
+			kinsokuTicks += StartupQpcNow() - kinsokuStart;
+			++kinsokuOperations;
 		}
 
 		if( bCheckColorEnabled ){
 			// 範囲を持つ色分けの開始終了チェック
+			const auto colorStart = traceCost ? StartupQpcNow() : 0;
 			color.CheckColorMODE( &pWork->pcColorStrategy, pWork->nPos, pWork->cLineStr );
+			if (traceCost) {
+				colorTicks += StartupQpcNow() - colorStart;
+				++colorOperations;
+			}
 		}
 
 		const auto& ch = pWork->cLineStr[pWork->nPos];
 		CLayoutInt nCharKetas {0};
-		if( ch == WCODE::TAB || (ch == L',' && m_tsvInfo.m_nTsvMode == TSV_MODE_CSV) ){
+		const auto widthStart = traceCost ? StartupQpcNow() : 0;
+		if( ch == WCODE::TAB || (ch == L',' && csvMode) ){
 			nCharKetas = GetActualTsvSpace( pWork->nPosX, ch );
 		}else{
-			nCharKetas = GetLayoutXOfChar( pWork->cLineStr, pWork->nPos );
+			nCharKetas = GetLayoutXOfChar(
+				pWork->cLineStr.GetPtr(), lineLength, pWork->nPos, enableExtEol );
+		}
+		if (traceCost) {
+			widthTicks += StartupQpcNow() - widthStart;
+			++widthOperations;
 		}
 
-		if( pWork->nPosX + nCharKetas > GetMaxLineLayout() ){
+		if( pWork->nPosX + nCharKetas > maxLineLayout ){
 			if( pWork->eKinsokuType != KINSOKU_TYPE_KINSOKU_KUTO )
 			{
-				if( ! (m_pTypeConfig->m_bKinsokuRet && (pWork->nPos == pWork->cLineStr.GetLength() - nEol) && nEol) )	//改行文字をぶら下げる		//@@@ 2002.04.14 MIK
+				if( ! (kinsokuRet && (pWork->nPos == lineLength - nEol) && nEol) )	//改行文字をぶら下げる		//@@@ 2002.04.14 MIK
 				{
 					(this->*pfOnLine)(pWork);
 					continue;
@@ -303,6 +382,18 @@ void CLayoutMgr::_MakeOneLine(SLayoutWork* pWork, PF_OnLine pfOnLine)
 		}
 		pWork->nPos += CNativeW::GetSizeOfChar( pWork->cLineStr, pWork->nPos );
 		pWork->nPosX += nCharKetas;
+	}
+
+	if (traceCost) {
+		CStartupTrace::AccumulateStartupMakeOneLine(
+			StartupQpcNow() - makeOneLineStart,
+			static_cast<std::int64_t>(pWork->cLineStr.GetLength()));
+		CStartupTrace::AccumulateStartupMakeOneLineCost(
+			CStartupTrace::MakeOneLineCost::KinsokuAndWord, kinsokuTicks, kinsokuOperations);
+		CStartupTrace::AccumulateStartupMakeOneLineCost(
+			CStartupTrace::MakeOneLineCost::ColorBoundary, colorTicks, colorOperations);
+		CStartupTrace::AccumulateStartupMakeOneLineCost(
+			CStartupTrace::MakeOneLineCost::CharacterWidth, widthTicks, widthOperations);
 	}
 }
 
@@ -331,6 +422,8 @@ void CLayoutMgr::_OnLine1(SLayoutWork* pWork)
 void CLayoutMgr::_DoLayout(bool bBlockingHook)
 {
 	MY_RUNNINGTIMER( cRunningTimer, L"CLayoutMgr::_DoLayout" );
+	CStartupLayoutPhaseTimer startupLayoutTimer;
+	++m_layoutGeneration;
 	const bool isStartupDocumentLayout = CStartupTrace::IsStartupDocumentPending();
 	if (isStartupDocumentLayout) {
 		CStartupTrace::Mark(CStartupTrace::Event::LayoutBegin);
@@ -340,6 +433,12 @@ void CLayoutMgr::_DoLayout(bool bBlockingHook)
 	Init();
 
 	const CLogicInt nAllLineCount = m_pcDocLineMgr->GetLineCount();
+	if (isStartupDocumentLayout) {
+		CStartupTrace::Mark(
+			CStartupTrace::Event::StartupLayoutInputSummary,
+			static_cast<std::int64_t>(nAllLineCount),
+			static_cast<std::int64_t>(GetMaxLineLayout()));
+	}
 
 	int nWorkerThreadCount = 0;
 	CStartupTrace::LayoutReason layoutReason = CStartupTrace::LayoutReason::None;
@@ -409,6 +508,7 @@ void CLayoutMgr::_DoLayout(bool bBlockingHook)
 		vecWorkerThreads[i].join();
 		_AppendAsMove(vecWorkerLayoutMgrs[i]);
 	}
+	m_lastFullLayoutCompleted = !bCanceled.load();
 	if (isStartupDocumentLayout) {
 		CStartupTrace::Mark(CStartupTrace::Event::LayoutComplete);
 	}
@@ -451,6 +551,7 @@ void CLayoutMgr::_DoLayoutSub(CDocLine* pDocLineBegin, const CDocLine* pDocLineE
 	pWork->pcColorStrategy			= nullptr;
 	pWork->colorPrev				= COLORIDX_DEFAULT;
 	pWork->nCurLine					= CLogicInt( nLineIndex );
+	pWork->bTraceStartupCost		= CStartupTrace::IsCollectingStartupDocumentMetrics();
 
 	constexpr DWORD userInterfaceInterval = 33;
 	ULONGLONG prevTime = GetTickCount64() + userInterfaceInterval;
@@ -587,6 +688,7 @@ CLayoutInt CLayoutMgr::DoLayout_Range(
 	pWork->pcColorStrategy			= CColorStrategyPool::getInstance()->GetStrategyByColor(nCurrentLineType);
 	pWork->colorPrev				= nCurrentLineType;
 	pWork->exInfoPrev.SetColorInfo(colorInfo);
+	pWork->bTraceStartupCost		= CStartupTrace::IsCollectingStartupDocumentMetrics();
 	pWork->bNeedChangeCOMMENTMODE	= false;
 	if( nullptr == pWork->pLayout ){
 		pWork->nCurLine = CLogicInt(0);

@@ -13,6 +13,7 @@
 #include "charset/CCodeBase.h" // EConvertResult
 #include "io/CFileLoad.h"
 #include <atomic>
+#include <cstddef>
 
 class CDocLineMgr;
 struct SFileInfo; // doc/CDocFile.h
@@ -26,6 +27,11 @@ public:
 		const SLoadInfo&	sLoadInfo,
 		SFileInfo*			pFileInfo
 	);
+
+	//! Chooses the maximum number of read partitions, including the main thread.
+	//! This is independent of machine state so the policy remains directly testable.
+	[[nodiscard]] static int SelectReadThreadCount(
+		std::size_t fileSize, unsigned int hardwareConcurrency) noexcept;
 
 private:
 	EConvertResult ReadLines(

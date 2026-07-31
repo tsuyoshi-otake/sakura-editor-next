@@ -28,6 +28,8 @@
 #include <Windows.h>
 #include <ObjIdl.h>  // LPDATAOBJECT
 #include <shellapi.h>  // HDROP
+#include <cstdint>
+#include <vector>
 
 #include "CTextMetrics.h"
 #include "CTextDrawer.h"
@@ -758,6 +760,20 @@ public:
 	bool			m_bMiniMapMouseDown;
 	CLayoutInt		m_nPageViewTop;
 	CLayoutInt		m_nPageViewBottom;
+
+	struct MiniMapOverviewCache {
+		const CEditDoc* document = nullptr;
+		std::uint64_t layoutGeneration = 0;
+		std::int64_t lineCount = 0;
+		int width = 0;
+		int height = 0;
+		COLORREF background = CLR_INVALID;
+		COLORREF foreground = CLR_INVALID;
+		std::vector<int> rowStart;
+		std::vector<int> rowEnd;
+		bool valid = false;
+	};
+	MiniMapOverviewCache m_miniMapOverviewCache;
 
 	DISALLOW_COPY_AND_ASSIGN(CEditView);
 };

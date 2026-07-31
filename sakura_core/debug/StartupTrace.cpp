@@ -70,11 +70,43 @@ struct FirstContentPaintMetrics {
 
 thread_local FirstContentPaintMetrics g_firstContentPaintMetrics;
 
+constexpr std::size_t kStartupDocumentSubphaseCount = static_cast<std::size_t>(CStartupTrace::StartupDocumentSubphase::Count);
+constexpr std::size_t kMakeOneLineCostCount = static_cast<std::size_t>(CStartupTrace::MakeOneLineCost::Count);
+
+struct StartupDocumentMetrics {
+	std::array<std::atomic<std::int64_t>, kStartupDocumentSubphaseCount> subphaseTicks{};
+	std::array<std::atomic<std::int64_t>, kStartupDocumentSubphaseCount> subphaseOperations{};
+	std::atomic<std::int64_t> readInputBytes{};
+	std::atomic<std::int64_t> readActivePartitions{};
+	std::atomic<std::int64_t> readLogicalLines{};
+	std::atomic<std::int64_t> readResult{-1};
+	std::atomic<std::int64_t> readWorkerTicks{};
+	std::atomic<std::int64_t> readWorkerOperations{};
+	std::atomic<std::int64_t> readWorkersStarted{};
+	std::atomic<std::int64_t> readWorkersCollected{};
+	std::atomic<std::int64_t> readCopyOperations{};
+	std::atomic<std::int64_t> readMoveOperations{};
+	std::atomic<std::int64_t> miniMapCacheHits{};
+	std::atomic<std::int64_t> miniMapCacheMisses{};
+	std::atomic<std::int64_t> miniMapBuildTicks{};
+	std::atomic<std::int64_t> miniMapGeneratedRows{};
+	std::atomic<std::int64_t> makeOneLineTicks{};
+	std::atomic<std::int64_t> makeOneLineOperations{};
+	std::atomic<std::int64_t> makeOneLineUtf16Units{};
+	std::array<std::atomic<std::int64_t>, kMakeOneLineCostCount> makeOneLineCostTicks{};
+	std::array<std::atomic<std::int64_t>, kMakeOneLineCostCount> makeOneLineCostOperations{};
+	std::atomic<bool> emitted{false};
+};
+
+StartupDocumentMetrics g_startupDocumentMetrics;
+
 TraceState& GetTraceState()
 {
 	static TraceState state;
 	return state;
 }
+
+void WriteRecord(CStartupTrace::Event event, std::int64_t value1, std::int64_t value2, const char* detail);
 
 const char* RoleName(CStartupTrace::Role role)
 {
@@ -115,6 +147,7 @@ const char* EventName(CStartupTrace::Event event)
 	case CStartupTrace::Event::ReadEnd: return "read_end";
 	case CStartupTrace::Event::LayoutBegin: return "layout_begin";
 	case CStartupTrace::Event::LayoutDecision: return "layout_decision";
+	case CStartupTrace::Event::StartupLayoutInputSummary: return "startup_layout_input_summary";
 	case CStartupTrace::Event::LayoutComplete: return "layout_complete";
 	case CStartupTrace::Event::StartupDocumentArmed: return "startup_document_armed";
 	case CStartupTrace::Event::StartupDocumentComplete: return "startup_document_complete";
@@ -150,6 +183,17 @@ const char* EventName(CStartupTrace::Event event)
 	case CStartupTrace::Event::FirstContentNonBlockTextOtherSummary: return "first_content_nonblock_text_other_summary";
 	case CStartupTrace::Event::StartupDrawMiniMapPaintSummary: return "startup_draw_minimap_paint_summary";
 	case CStartupTrace::Event::StartupDrawMiniMapUpdateSummary: return "startup_draw_minimap_update_summary";
+	case CStartupTrace::Event::StartupDocumentSubphaseSummary: return "startup_document_subphase_summary";
+	case CStartupTrace::Event::StartupReadDecisionSummary: return "startup_read_decision_summary";
+	case CStartupTrace::Event::StartupReadResultSummary: return "startup_read_result_summary";
+	case CStartupTrace::Event::StartupReadWorkerSummary: return "startup_read_worker_summary";
+	case CStartupTrace::Event::StartupReadWorkerLifecycleSummary: return "startup_read_worker_lifecycle_summary";
+	case CStartupTrace::Event::StartupReadTransferSummary: return "startup_read_transfer_summary";
+	case CStartupTrace::Event::StartupMiniMapCacheSummary: return "startup_minimap_cache_summary";
+	case CStartupTrace::Event::StartupMiniMapBuildSummary: return "startup_minimap_build_summary";
+	case CStartupTrace::Event::StartupMakeOneLineSummary: return "startup_make_one_line_summary";
+	case CStartupTrace::Event::StartupMakeOneLineWorkSummary: return "startup_make_one_line_work_summary";
+	case CStartupTrace::Event::StartupMakeOneLineCostSummary: return "startup_make_one_line_cost_summary";
 	case CStartupTrace::Event::FirstContentPainted: return "first_content_painted";
 	default: return "unknown";
 	}
@@ -161,6 +205,114 @@ const char* LayoutReasonName(CStartupTrace::LayoutReason reason)
 	case CStartupTrace::LayoutReason::BelowMinimumLines: return "below_minimum_lines";
 	case CStartupTrace::LayoutReason::RangeBasedColor: return "range_based_color";
 	default: return "none";
+	}
+}
+
+const char* StartupDocumentSubphaseName(CStartupTrace::StartupDocumentSubphase subphase)
+{
+	switch (subphase) {
+	case CStartupTrace::StartupDocumentSubphase::PreReadSettings: return "pre_read_settings";
+	case CStartupTrace::StartupDocumentSubphase::Read: return "read";
+	case CStartupTrace::StartupDocumentSubphase::Decode: return "decode";
+	case CStartupTrace::StartupDocumentSubphase::LineBuild: return "line_build";
+	case CStartupTrace::StartupDocumentSubphase::Layout: return "layout";
+	case CStartupTrace::StartupDocumentSubphase::PostLoadFinalize: return "post_load_finalize";
+	case CStartupTrace::StartupDocumentSubphase::WorkbenchUi: return "workbench_ui";
+	case CStartupTrace::StartupDocumentSubphase::DrawCommit: return "draw_commit";
+	default: return "unknown";
+	}
+}
+
+const char* MakeOneLineCostName(CStartupTrace::MakeOneLineCost cost)
+{
+	switch (cost) {
+	case CStartupTrace::MakeOneLineCost::KinsokuAndWord: return "kinsoku_and_word_inclusive";
+	case CStartupTrace::MakeOneLineCost::ColorBoundary: return "color_boundary";
+	case CStartupTrace::MakeOneLineCost::CharacterWidth: return "character_width";
+	case CStartupTrace::MakeOneLineCost::LayoutAllocation: return "layout_allocation";
+	default: return "unknown";
+	}
+}
+
+void ResetStartupDocumentMetrics() noexcept
+{
+	for (auto& value : g_startupDocumentMetrics.subphaseTicks) {
+		value.store(0, std::memory_order_relaxed);
+	}
+	for (auto& value : g_startupDocumentMetrics.subphaseOperations) {
+		value.store(0, std::memory_order_relaxed);
+	}
+	g_startupDocumentMetrics.readInputBytes.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readActivePartitions.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readLogicalLines.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readResult.store(-1, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkerTicks.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkerOperations.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkersStarted.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkersCollected.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readCopyOperations.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readMoveOperations.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.miniMapCacheHits.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.miniMapCacheMisses.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.miniMapBuildTicks.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.miniMapGeneratedRows.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.makeOneLineTicks.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.makeOneLineOperations.store(0, std::memory_order_relaxed);
+	g_startupDocumentMetrics.makeOneLineUtf16Units.store(0, std::memory_order_relaxed);
+	for (auto& value : g_startupDocumentMetrics.makeOneLineCostTicks) {
+		value.store(0, std::memory_order_relaxed);
+	}
+	for (auto& value : g_startupDocumentMetrics.makeOneLineCostOperations) {
+		value.store(0, std::memory_order_relaxed);
+	}
+	g_startupDocumentMetrics.emitted.store(false, std::memory_order_relaxed);
+}
+
+void FlushStartupDocumentMetricRecords()
+{
+	if (g_startupDocumentMetrics.emitted.exchange(true, std::memory_order_relaxed)) {
+		return;
+	}
+	for (std::size_t i = 0; i < kStartupDocumentSubphaseCount; ++i) {
+		const auto subphase = static_cast<CStartupTrace::StartupDocumentSubphase>(i);
+		WriteRecord(CStartupTrace::Event::StartupDocumentSubphaseSummary,
+			g_startupDocumentMetrics.subphaseTicks[i].load(std::memory_order_relaxed),
+			g_startupDocumentMetrics.subphaseOperations[i].load(std::memory_order_relaxed),
+			StartupDocumentSubphaseName(subphase));
+	}
+	WriteRecord(CStartupTrace::Event::StartupReadDecisionSummary,
+		g_startupDocumentMetrics.readInputBytes.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.readActivePartitions.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupReadResultSummary,
+		g_startupDocumentMetrics.readLogicalLines.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.readResult.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupReadWorkerSummary,
+		g_startupDocumentMetrics.readWorkerTicks.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.readWorkerOperations.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupReadWorkerLifecycleSummary,
+		g_startupDocumentMetrics.readWorkersStarted.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.readWorkersCollected.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupReadTransferSummary,
+		g_startupDocumentMetrics.readCopyOperations.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.readMoveOperations.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupMiniMapCacheSummary,
+		g_startupDocumentMetrics.miniMapCacheHits.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.miniMapCacheMisses.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupMiniMapBuildSummary,
+		g_startupDocumentMetrics.miniMapBuildTicks.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.miniMapGeneratedRows.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupMakeOneLineSummary,
+		g_startupDocumentMetrics.makeOneLineTicks.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.makeOneLineOperations.load(std::memory_order_relaxed), "");
+	WriteRecord(CStartupTrace::Event::StartupMakeOneLineWorkSummary,
+		g_startupDocumentMetrics.makeOneLineOperations.load(std::memory_order_relaxed),
+		g_startupDocumentMetrics.makeOneLineUtf16Units.load(std::memory_order_relaxed), "");
+	for (std::size_t i = 0; i < kMakeOneLineCostCount; ++i) {
+		const auto cost = static_cast<CStartupTrace::MakeOneLineCost>(i);
+		WriteRecord(CStartupTrace::Event::StartupMakeOneLineCostSummary,
+			g_startupDocumentMetrics.makeOneLineCostTicks[i].load(std::memory_order_relaxed),
+			g_startupDocumentMetrics.makeOneLineCostOperations[i].load(std::memory_order_relaxed),
+			MakeOneLineCostName(cost));
 	}
 }
 
@@ -267,6 +419,7 @@ void CStartupTrace::ArmStartupDocument()
 	state.startupDocumentPending.store(true, std::memory_order_relaxed);
 	state.startupDocumentCompleted.store(false, std::memory_order_relaxed);
 	state.firstContentPainted.store(false, std::memory_order_relaxed);
+	ResetStartupDocumentMetrics();
 	Mark(Event::StartupDocumentArmed);
 }
 
@@ -291,6 +444,7 @@ void CStartupTrace::AbortStartupDocument()
 		return;
 	}
 	state.startupDocumentCompleted.store(false, std::memory_order_relaxed);
+	FlushStartupDocumentMetricRecords();
 	Mark(Event::StartupDocumentAborted);
 }
 
@@ -307,6 +461,118 @@ bool CStartupTrace::IsAwaitingFirstContentPaint()
 		&& state.startupDocumentArmed.load(std::memory_order_relaxed)
 		&& state.startupDocumentCompleted.load(std::memory_order_relaxed)
 		&& !state.firstContentPainted.load(std::memory_order_relaxed);
+}
+
+bool CStartupTrace::IsCollectingStartupDocumentMetrics() noexcept
+{
+	auto& state = GetTraceState();
+	return state.enabled.load(std::memory_order_relaxed)
+		&& state.startupDocumentArmed.load(std::memory_order_relaxed)
+		&& !g_startupDocumentMetrics.emitted.load(std::memory_order_relaxed);
+}
+
+void CStartupTrace::AccumulateStartupDocumentSubphase(
+	StartupDocumentSubphase subphase, std::int64_t qpcTicks, std::int64_t operations) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || qpcTicks < 0 || operations < 0) {
+		return;
+	}
+	const auto index = static_cast<std::size_t>(subphase);
+	if (index >= kStartupDocumentSubphaseCount) {
+		return;
+	}
+	g_startupDocumentMetrics.subphaseTicks[index].fetch_add(qpcTicks, std::memory_order_relaxed);
+	g_startupDocumentMetrics.subphaseOperations[index].fetch_add(operations, std::memory_order_relaxed);
+}
+
+void CStartupTrace::SetStartupReadDecision(
+	std::int64_t inputBytes, std::int64_t activePartitions, std::int64_t launchedWorkers) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics()
+		|| inputBytes < 0 || activePartitions < 0 || launchedWorkers < 0) {
+		return;
+	}
+	g_startupDocumentMetrics.readInputBytes.store(inputBytes, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readActivePartitions.store(activePartitions, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkersStarted.store(launchedWorkers, std::memory_order_relaxed);
+}
+
+void CStartupTrace::SetStartupReadResult(std::int64_t logicalLines, std::int64_t result) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || logicalLines < 0) {
+		return;
+	}
+	g_startupDocumentMetrics.readLogicalLines.store(logicalLines, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readResult.store(result, std::memory_order_relaxed);
+}
+
+void CStartupTrace::AccumulateStartupReadWorker(std::int64_t qpcTicks) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || qpcTicks < 0) {
+		return;
+	}
+	g_startupDocumentMetrics.readWorkerTicks.fetch_add(qpcTicks, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkerOperations.fetch_add(1, std::memory_order_relaxed);
+}
+
+void CStartupTrace::SetStartupReadWorkerLifecycle(
+	std::int64_t startedWorkers, std::int64_t collectedWorkers) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || startedWorkers < 0 || collectedWorkers < 0) {
+		return;
+	}
+	g_startupDocumentMetrics.readWorkersStarted.store(startedWorkers, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readWorkersCollected.store(collectedWorkers, std::memory_order_relaxed);
+}
+
+void CStartupTrace::AccumulateStartupReadTransfer(std::int64_t copyOperations, std::int64_t moveOperations) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || copyOperations < 0 || moveOperations < 0) {
+		return;
+	}
+	g_startupDocumentMetrics.readCopyOperations.fetch_add(copyOperations, std::memory_order_relaxed);
+	g_startupDocumentMetrics.readMoveOperations.fetch_add(moveOperations, std::memory_order_relaxed);
+}
+
+void CStartupTrace::AccumulateStartupMiniMapCacheLookup(
+	bool hit, std::int64_t buildQpcTicks, std::int64_t generatedRows) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || buildQpcTicks < 0 || generatedRows < 0) {
+		return;
+	}
+	(hit ? g_startupDocumentMetrics.miniMapCacheHits : g_startupDocumentMetrics.miniMapCacheMisses)
+		.fetch_add(1, std::memory_order_relaxed);
+	g_startupDocumentMetrics.miniMapBuildTicks.fetch_add(buildQpcTicks, std::memory_order_relaxed);
+	g_startupDocumentMetrics.miniMapGeneratedRows.fetch_add(generatedRows, std::memory_order_relaxed);
+}
+
+void CStartupTrace::AccumulateStartupMakeOneLine(std::int64_t qpcTicks, std::int64_t utf16Units) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || qpcTicks < 0 || utf16Units < 0) {
+		return;
+	}
+	g_startupDocumentMetrics.makeOneLineTicks.fetch_add(qpcTicks, std::memory_order_relaxed);
+	g_startupDocumentMetrics.makeOneLineOperations.fetch_add(1, std::memory_order_relaxed);
+	g_startupDocumentMetrics.makeOneLineUtf16Units.fetch_add(utf16Units, std::memory_order_relaxed);
+}
+
+void CStartupTrace::AccumulateStartupMakeOneLineCost(
+	MakeOneLineCost cost, std::int64_t qpcTicks, std::int64_t operations) noexcept
+{
+	if (!IsCollectingStartupDocumentMetrics() || qpcTicks < 0 || operations < 0) {
+		return;
+	}
+	const auto index = static_cast<std::size_t>(cost);
+	if (index >= kMakeOneLineCostCount) {
+		return;
+	}
+	g_startupDocumentMetrics.makeOneLineCostTicks[index].fetch_add(qpcTicks, std::memory_order_relaxed);
+	g_startupDocumentMetrics.makeOneLineCostOperations[index].fetch_add(operations, std::memory_order_relaxed);
+}
+
+void CStartupTrace::FlushStartupDocumentMetrics()
+{
+	FlushStartupDocumentMetricRecords();
 }
 
 void CStartupTrace::BeginFirstContentPaintMetrics() noexcept
