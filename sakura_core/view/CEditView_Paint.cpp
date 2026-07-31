@@ -643,37 +643,71 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 	const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
 	if( lineCount <= 0 ) return;
 
-	// Aggregate all document lines into at most one GDI segment per pixel row.
-	// Very large files remain O(N + H), with O(H) GDI calls and memory.
-	std::vector<int> rowStart(static_cast<std::size_t>(height), width);
-	std::vector<int> rowEnd(static_cast<std::size_t>(height), 0);
-	constexpr int kMaxColumns = 160;
-	constexpr int kLeftPadding = 4;
-	const int drawableWidth = (std::max)(1, width - kLeftPadding - 2);
-	const CLayout* layout = m_pcEditDoc->m_cLayoutMgr.GetTopLayout();
-	std::int64_t line = 0;
-	while( layout != nullptr && line < lineCount ) {
-		const wchar_t* text = layout->GetPtr();
-		const int length = (std::min)(static_cast<int>(layout->GetLengthWithoutEOL()), kMaxColumns);
-		int indent = 0;
-		while( indent < length && (text[indent] == L' ' || text[indent] == L'\t') ) ++indent;
-		if( length > indent ) {
-			const int row = (std::min)(height - 1, minimap::LineToPixel(line, lineCount, height));
-			const int start = kLeftPadding + (indent * drawableWidth) / kMaxColumns;
-			const int end = kLeftPadding + ((std::max)(indent + 1, length) * drawableWidth) / kMaxColumns;
-			rowStart[static_cast<std::size_t>(row)] = (std::min)(rowStart[static_cast<std::size_t>(row)], start);
-			rowEnd[static_cast<std::size_t>(row)] = (std::max)(rowEnd[static_cast<std::size_t>(row)], end);
-		}
-		layout = layout->GetNextLayout();
-		++line;
-	}
-
 	const COLORREF foreground = MakeColor2(textType.GetTextColor(), background, 68);
+	const auto layoutGeneration = m_pcEditDoc->m_cLayoutMgr.GetLayoutGeneration();
+	const auto cacheMatches = m_miniMapOverviewCache.valid
+		&& m_miniMapOverviewCache.document == m_pcEditDoc
+		&& m_miniMapOverviewCache.layoutGeneration == layoutGeneration
+		&& m_miniMapOverviewCache.lineCount == lineCount
+		&& m_miniMapOverviewCache.width == width
+		&& m_miniMapOverviewCache.height == height
+		&& m_miniMapOverviewCache.background == background
+		&& m_miniMapOverviewCache.foreground == foreground;
+	if( !cacheMatches ) {
+		const bool traceCache = CStartupTrace::IsCollectingStartupDocumentMetrics();
+		LARGE_INTEGER cacheBuildStart{};
+		if (traceCache) {
+			::QueryPerformanceCounter(&cacheBuildStart);
+		}
+		// Build into a local value and publish only after the complete overview is
+		// ready, so paint never observes a partially rebuilt cache.
+		MiniMapOverviewCache next;
+		next.document = m_pcEditDoc;
+		next.layoutGeneration = layoutGeneration;
+		next.lineCount = lineCount;
+		next.width = width;
+		next.height = height;
+		next.background = background;
+		next.foreground = foreground;
+		next.rowStart.assign(static_cast<std::size_t>(height), width);
+		next.rowEnd.assign(static_cast<std::size_t>(height), 0);
+		constexpr int kMaxColumns = 160;
+		constexpr int kLeftPadding = 4;
+		const int drawableWidth = (std::max)(1, width - kLeftPadding - 2);
+		const CLayout* layout = m_pcEditDoc->m_cLayoutMgr.GetTopLayout();
+		std::int64_t line = 0;
+		while( layout != nullptr && line < lineCount ) {
+			const wchar_t* text = layout->GetPtr();
+			const int length = (std::min)(static_cast<int>(layout->GetLengthWithoutEOL()), kMaxColumns);
+			int indent = 0;
+			while( indent < length && (text[indent] == L' ' || text[indent] == L'\t') ) ++indent;
+			if( length > indent ) {
+				const int row = (std::min)(height - 1, minimap::LineToPixel(line, lineCount, height));
+				const int start = kLeftPadding + (indent * drawableWidth) / kMaxColumns;
+				const int end = kLeftPadding + ((std::max)(indent + 1, length) * drawableWidth) / kMaxColumns;
+				next.rowStart[static_cast<std::size_t>(row)] = (std::min)(next.rowStart[static_cast<std::size_t>(row)], start);
+				next.rowEnd[static_cast<std::size_t>(row)] = (std::max)(next.rowEnd[static_cast<std::size_t>(row)], end);
+			}
+			layout = layout->GetNextLayout();
+			++line;
+		}
+
+		next.valid = true;
+		m_miniMapOverviewCache = std::move(next);
+		if (traceCache) {
+			LARGE_INTEGER cacheBuildEnd{};
+			::QueryPerformanceCounter(&cacheBuildEnd);
+			CStartupTrace::AccumulateStartupMiniMapCacheLookup(
+				false, cacheBuildEnd.QuadPart - cacheBuildStart.QuadPart, line);
+		}
+	} else {
+		CStartupTrace::AccumulateStartupMiniMapCacheLookup(true);
+	}
 	const HPEN pen = ::CreatePen(PS_SOLID, 1, foreground);
 	const HGDIOBJ previousPen = ::SelectObject(hdc, pen);
 	for( int row = 0; row < height; ++row ) {
-		const int start = rowStart[static_cast<std::size_t>(row)];
-		const int end = rowEnd[static_cast<std::size_t>(row)];
+		const int start = m_miniMapOverviewCache.rowStart[static_cast<std::size_t>(row)];
+		const int end = m_miniMapOverviewCache.rowEnd[static_cast<std::size_t>(row)];
 		if( end <= start ) continue;
 		::MoveToEx(hdc, start, client.top + row, nullptr);
 		::LineTo(hdc, (std::min)(end, static_cast<int>(client.right)), client.top + row);

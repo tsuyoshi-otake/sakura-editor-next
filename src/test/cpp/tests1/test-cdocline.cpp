@@ -6,8 +6,20 @@
 
 #include "pch.h"
 #include "doc/logic/CDocLine.h"
+#include "env/CReadManager.h"
 
 #include <string_view>
+
+TEST(CReadManager, SelectReadThreadCount)
+{
+	EXPECT_EQ(1, CReadManager::SelectReadThreadCount(0, 0));
+	EXPECT_EQ(1, CReadManager::SelectReadThreadCount(128 * 1024 * 1024, 0));
+	EXPECT_EQ(1, CReadManager::SelectReadThreadCount(1, 64));
+	EXPECT_EQ(1, CReadManager::SelectReadThreadCount(1024 * 1024, 64));
+	EXPECT_EQ(2, CReadManager::SelectReadThreadCount(1024 * 1024 + 1, 64));
+	EXPECT_EQ(4, CReadManager::SelectReadThreadCount(16 * 1024 * 1024, 4));
+	EXPECT_EQ(8, CReadManager::SelectReadThreadCount(128 * 1024 * 1024, 64));
+}
 
 TEST(CDocLine, IsEmptyLine)
 {

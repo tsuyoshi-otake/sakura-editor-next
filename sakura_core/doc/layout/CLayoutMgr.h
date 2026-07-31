@@ -28,6 +28,7 @@
 #include <vector>
 #include <memory_resource>
 #include <atomic>
+#include <cstdint>
 #include "doc/CDocListener.h"
 #include "_main/global.h"// 2002/2/10 aroka
 #include "basis/SakuraBasis.h"
@@ -127,6 +128,7 @@ public:
 public:
 	//2007.10.09 kobake 関数名変更: Search → SearchLineByLayoutY
 	CLayoutInt		GetLineCount() const{ return m_nLines; }	/* 全物理行数を返す */
+	std::uint64_t GetLayoutGeneration() const noexcept { return m_layoutGeneration; }
 	const wchar_t*	GetLineStr( CLayoutInt nLine, CLogicInt* pnLineLen ) const;	/* 指定された物理行のデータへのポインタとその長さを返す */
 	const wchar_t*	GetLineStr( CLayoutInt nLine, CLogicInt* pnLineLen, const CLayout** ppcLayoutDes ) const;	/* 指定された物理行のデータへのポインタとその長さを返す */
 
@@ -273,6 +275,10 @@ public:
 
 	BOOL CalculateTextWidth( BOOL bCalLineLen = TRUE, CLayoutInt nStart = CLayoutInt(-1), CLayoutInt nEnd = CLayoutInt(-1) );	/* テキスト最大幅を算出する */		// 2009.08.28 nasukoji
 	void ClearLayoutLineWidth( void );				/* 各行のレイアウト行長の記憶をクリアする */		// 2009.08.28 nasukoji
+	// A load owns this one-shot marker.  It is set only after its complete full
+	// layout and consumed by its immediately following load finalization.
+	void MarkFreshLoadLayoutComplete() noexcept;
+	bool ConsumeFreshLoadLayoutComplete() noexcept;
 	CLayoutXInt GetLayoutXOfChar( const wchar_t* pData, int nDataLen, int i ) const {
 		CLayoutXInt nSpace = CLayoutXInt(0);
 		if( m_nSpacing ){
@@ -408,6 +414,9 @@ protected:
 	EColorIndexType			m_nLineTypeBot;				//!< タイプ 0=通常 1=行コメント 2=ブロックコメント 3=シングルクォーテーション文字列 4=ダブルクォーテーション文字列
 	CLayoutExInfo			m_cLayoutExInfoBot;
 	CLayoutInt				m_nLines;					// 全レイアウト行数
+	std::uint64_t			m_layoutGeneration = 0;
+	bool					m_lastFullLayoutCompleted = false;
+	bool					m_freshLoadLayoutComplete = false;
 
 	mutable CLayoutInt		m_nPrevReferLine;
 	mutable CLayout*		m_pLayoutPrevRefer;

@@ -91,6 +91,47 @@
 
 #include <cwctype>
 
+namespace
+{
+class CStartupDocumentSubphaseTimer final
+{
+public:
+	explicit CStartupDocumentSubphaseTimer(CStartupTrace::StartupDocumentSubphase subphase) noexcept
+		: m_subphase(subphase)
+		, m_enabled(CStartupTrace::IsCollectingStartupDocumentMetrics())
+	{
+		if (m_enabled) {
+			::QueryPerformanceCounter(&m_start);
+		}
+	}
+
+	~CStartupDocumentSubphaseTimer()
+	{
+		Finish();
+	}
+
+	void Finish() noexcept
+	{
+		if (!m_enabled) {
+			return;
+		}
+		LARGE_INTEGER end{};
+		::QueryPerformanceCounter(&end);
+		CStartupTrace::AccumulateStartupDocumentSubphase(
+			m_subphase, end.QuadPart - m_start.QuadPart);
+		m_enabled = false;
+	}
+
+	CStartupDocumentSubphaseTimer(const CStartupDocumentSubphaseTimer&) = delete;
+	CStartupDocumentSubphaseTimer& operator=(const CStartupDocumentSubphaseTimer&) = delete;
+
+private:
+	CStartupTrace::StartupDocumentSubphase m_subphase;
+	LARGE_INTEGER m_start{};
+	bool m_enabled{};
+};
+}
+
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたので
 //	定義を削除
 
@@ -450,6 +491,7 @@ void CEditWnd::EmitStartupMiniMapSummary() noexcept
 		m_startupMiniMapPaintQpcTicks, m_startupMiniMapPaintCount);
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawMiniMapUpdateSummary,
 		m_startupMiniMapImmediateUpdateCount);
+	CStartupTrace::FlushStartupDocumentMetrics();
 }
 
 void CEditWnd::RecordStartupMiniMapImmediateUpdate() noexcept
@@ -495,10 +537,13 @@ void CEditWnd::CommitStartupDrawTransaction()
 		return;
 	}
 
+	CStartupDocumentSubphaseTimer drawCommitTimer{
+		CStartupTrace::StartupDocumentSubphase::DrawCommit };
 	m_startupDrawState = StartupDrawState::Committing;
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitBegin);
 	const HWND hwnd = GetHwnd();
 	if (!::IsWindow(hwnd)) {
+		drawCommitTimer.Finish();
 		AbortStartupDrawTransaction();
 		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_INVALID_WINDOW_HANDLE);
 		return;
@@ -519,6 +564,7 @@ void CEditWnd::CommitStartupDrawTransaction()
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawLayoutEnd,
 		m_startupDrawState == StartupDrawState::Committing && ::IsWindow(hwnd) ? 1 : 0);
 	if (m_startupDrawState != StartupDrawState::Committing || !::IsWindow(hwnd)) {
+		drawCommitTimer.Finish();
 		AbortStartupDrawTransaction();
 		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_OPERATION_ABORTED);
 		return;
@@ -548,6 +594,7 @@ void CEditWnd::CommitStartupDrawTransaction()
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawShowEnd,
 		m_startupDrawState == StartupDrawState::Committing && ::IsWindow(hwnd) ? 1 : 0);
 	if (m_startupDrawState != StartupDrawState::Committing || !::IsWindow(hwnd)) {
+		drawCommitTimer.Finish();
 		AbortStartupDrawTransaction();
 		CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, 0, ERROR_OPERATION_ABORTED);
 		return;
@@ -564,6 +611,7 @@ void CEditWnd::CommitStartupDrawTransaction()
 		RDW_FRAME | RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawRedrawEnd, redrawResult ? 1 : 0);
 
+	drawCommitTimer.Finish();
 	EmitStartupMiniMapSummary();
 	m_startupDrawState = StartupDrawState::Committed;
 	FinishStartupTabSwap();
@@ -1997,7 +2045,13 @@ HWND CEditWnd::Create(
 	/* バーの配置終了 */
 	EndLayoutBars( FALSE );
 	BeginStartupDrawTransaction();
-	if (!InitializeWorkbench()) {
+	bool workbenchInitialized = false;
+	{
+		CStartupDocumentSubphaseTimer workbenchTimer{
+			CStartupTrace::StartupDocumentSubphase::WorkbenchUi };
+		workbenchInitialized = InitializeWorkbench();
+	}
+	if (!workbenchInitialized) {
 		TopErrorMessage(GetHwnd(), L"ワークベンチの初期化に失敗しました。\nFailed to initialize the workbench.");
 		AbortStartupDrawTransaction();
 		::DestroyWindow(GetHwnd());

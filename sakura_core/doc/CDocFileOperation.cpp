@@ -25,6 +25,40 @@
 #include "plugin/CJackManager.h"
 #include "util/format.h"
 #include "CSelectLang.h"
+#include "debug/StartupTrace.h"
+
+namespace
+{
+class CStartupPostLoadTimer final
+{
+public:
+	CStartupPostLoadTimer() noexcept
+		: m_enabled(CStartupTrace::IsCollectingStartupDocumentMetrics())
+	{
+		if (m_enabled) {
+			::QueryPerformanceCounter(&m_start);
+		}
+	}
+
+	~CStartupPostLoadTimer()
+	{
+		if (m_enabled) {
+			LARGE_INTEGER end{};
+			::QueryPerformanceCounter(&end);
+			CStartupTrace::AccumulateStartupDocumentSubphase(
+				CStartupTrace::StartupDocumentSubphase::PostLoadFinalize,
+				end.QuadPart - m_start.QuadPart);
+		}
+	}
+
+	CStartupPostLoadTimer(const CStartupPostLoadTimer&) = delete;
+	CStartupPostLoadTimer& operator=(const CStartupPostLoadTimer&) = delete;
+
+private:
+	LARGE_INTEGER m_start{};
+	bool m_enabled{};
+};
+}
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 //                          ロック                             //
@@ -100,19 +134,28 @@ bool CDocFileOperation::DoLoadFlow(SLoadInfo* pLoadInfo)
 		//ロード処理
 		m_pcDocRef->NotifyBeforeLoad(pLoadInfo);			//前処理
 		eLoadResult = m_pcDocRef->NotifyLoad(*pLoadInfo);	//本処理
-		m_pcDocRef->NotifyAfterLoad(*pLoadInfo);			//後処理
+		{
+			const CStartupPostLoadTimer startupPostLoadTimer;
+			m_pcDocRef->NotifyAfterLoad(*pLoadInfo);			//後処理
+		}
 	}
 	catch(const CFlowInterruption&){
 		eLoadResult = LOADED_INTERRUPT;
 	}
 	catch(...){
 		//予期せぬ例外が発生した場合も NotifyFinalLoad は必ず呼ぶ！
-		m_pcDocRef->NotifyFinalLoad(LOADED_FAILURE);
+		{
+			const CStartupPostLoadTimer startupFinalLoadTimer;
+			m_pcDocRef->NotifyFinalLoad(LOADED_FAILURE);
+		}
 		throw;
 	}
 
 	//最終処理
-	m_pcDocRef->NotifyFinalLoad(eLoadResult);
+	{
+		const CStartupPostLoadTimer startupFinalLoadTimer;
+		m_pcDocRef->NotifyFinalLoad(eLoadResult);
+	}
 
 	return eLoadResult==LOADED_OK;
 }

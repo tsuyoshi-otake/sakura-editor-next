@@ -129,6 +129,29 @@ IPC HWND が存在しない明示的な経路では `-1` です。後者の通�
 `below_minimum_lines` / `range_based_color` 等の固定理由です。未定義のイベント値を全イベント共通の成功値と
 解釈してはいけません。
 
+起動文書の内訳は、次の集計イベントで確認します。時間はすべて QPC tick であり、同じレコードの
+`frequency` で換算します。`read` は読込全体、`decode` と `line_build` はその内訳なので、単純加算して
+トランザクション全体と解釈してはいけません。
+
+| イベント | `value1` | `value2` / `detail` |
+|---|---|---|
+| `startup_document_subphase_summary` | subphase の合計 QPC tick | 処理回数 / `pre_read_settings`, `read`, `decode`, `line_build`, `layout`, `post_load_finalize`, `workbench_ui`, `draw_commit` |
+| `startup_read_decision_summary` | 入力 byte 数 | 有効な行境界 partition 数 |
+| `startup_read_result_summary` | 公開した論理行数 | `EConvertResult` |
+| `startup_read_worker_summary` | worker の合計 QPC tick | 完了した worker 計測数 |
+| `startup_read_worker_lifecycle_summary` | 起動した worker 数 | 回収した worker 数 |
+| `startup_read_transfer_summary` | 行 buffer の copy 回数 | move 回数 |
+| `startup_layout_input_summary` | レイアウト対象行数 | 折返し幅 |
+| `startup_minimap_cache_summary` | キャッシュ hit 数 | miss 数 |
+| `startup_minimap_build_summary` | 再構築の合計 QPC tick | 走査したレイアウト行数 |
+| `startup_make_one_line_summary` | `_MakeOneLine()` の合計 QPC tick | 呼出回数 |
+| `startup_make_one_line_work_summary` | `_MakeOneLine()` の呼出回数 | 入力 UTF-16 code unit 数 |
+| `startup_make_one_line_cost_summary` | 分類別の合計 QPC tick | 処理回数 / `kinsoku_and_word_inclusive`, `color_boundary`, `character_width`, `layout_allocation` |
+
+`startup_read_worker_lifecycle_summary` の両値が一致しない結果は、速度比較に使わず読込終了経路を調査します。
+`kinsoku_and_word_inclusive` は内側の文字幅・レイアウト生成を含み得るため、分類別 QPC tick も互いに排他的な
+合計として扱いません。
+
 `isa_dispatch` はプロセスごとに起動直後の一度だけ記録します。`value1` は選択した実装
 （`1` = AVX、`2` = AVX2、`3` = AVX-512F/BW）、`value2` は CPUID・XGETBV と
 ディスパッチ表初期化に要した QPC tick 数です。ミリ秒へ換算するときは、同じレコードの
@@ -143,8 +166,8 @@ IPC HWND が存在しない明示的な経路では `-1` です。後者の通�
 
 通常起動の `sakura.exe -PROF=<name> <markdown>` は、必要なら同じプロファイル用の非表示
 コントロールプロセスを先に起動し、その初期化を待ってからエディタウィンドウを作ります。現在の重要な
-順序は、**子ビューと workbench の生成後に起動描画トランザクションを開始し、初期文書を非表示・描画抑止の
-まま同期ロードしてから、一度だけ表示・描画をコミットする**ことです。
+順序は、**子ビューと各バーの生成後に起動描画トランザクションを開始し、workbench の初期化と初期文書の
+同期ロードを非表示・描画抑止のまま完了してから、一度だけ表示・描画をコミットする**ことです。
 
 ```mermaid
 sequenceDiagram

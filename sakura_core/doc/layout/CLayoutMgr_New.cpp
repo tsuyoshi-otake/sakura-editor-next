@@ -323,3 +323,17 @@ void CLayoutMgr::ClearLayoutLineWidth( void )
 		pLayout = pLayout->GetNextLayout();		// 次のレイアウト行のデータ
 	}
 }
+
+void CLayoutMgr::MarkFreshLoadLayoutComplete() noexcept
+{
+	// A cancelled full layout can leave an incomplete list.  Such a list must
+	// retain the legacy clear path.
+	m_freshLoadLayoutComplete = m_lastFullLayoutCompleted;
+}
+
+bool CLayoutMgr::ConsumeFreshLoadLayoutComplete() noexcept
+{
+	const bool complete = m_freshLoadLayoutComplete;
+	m_freshLoadLayoutComplete = false;
+	return complete;
+}
