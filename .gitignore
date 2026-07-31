@@ -42,6 +42,10 @@ id_ecdsa
 id_dsa
 secrets/
 .secrets/
+# This is a source-code namespace for the control-owned Secret Vault contract,
+# not a directory containing secret material.
+!sakura_core/platform/secrets/
+!sakura_core/platform/secrets/**
 credentials/
 .credentials/
 credentials.json
