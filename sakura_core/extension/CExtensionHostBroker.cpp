@@ -21,6 +21,12 @@ namespace {
 
 constexpr std::size_t IdentityBytes = 16;
 
+bool HasNativeExtensionHostSession(EExtensionHostState state) noexcept
+{
+	return state == EExtensionHostState::Starting || state == EExtensionHostState::Ready ||
+		state == EExtensionHostState::KeepAlive || state == EExtensionHostState::Quiescing;
+}
+
 bool NtSuccess(NTSTATUS status) noexcept
 {
 	return status >= 0;
@@ -143,6 +149,18 @@ std::wstring CExtensionHostBroker::GenerateBootId()
 	return BytesToHex(random.data(), random.size());
 }
 
+std::wstring CExtensionHostBroker::GenerateExtensionHostSessionId()
+{
+	// This intentionally has its own call site and storage from bootId.  It is a
+	// native-editor capability, never a host-process identity or launch input.
+	std::array<std::uint8_t, IdentityBytes> random{};
+	if (!NtSuccess(::BCryptGenRandom(
+		nullptr, random.data(), static_cast<ULONG>(random.size()), BCRYPT_USE_SYSTEM_PREFERRED_RNG))) {
+		return {};
+	}
+	return BytesToHex(random.data(), random.size());
+}
+
 std::string CExtensionHostBroker::NarrowDiagnostic(std::wstring_view value)
 {
 	if (value.empty()) {
@@ -176,8 +194,12 @@ void CExtensionHostBroker::ExecuteStart(
 {
 	if (m_identityGeneration != action.generation) {
 		const auto nextBootId = m_config.bootIdOverride.empty() ? GenerateBootId() : m_config.bootIdOverride;
-		if (nextBootId.empty()) {
-			m_lastDiagnostic = "failed to generate extension host boot identity";
+		const auto nextExtensionHostSessionId = GenerateExtensionHostSessionId();
+		if (nextBootId.empty() || nextExtensionHostSessionId.empty()) {
+			m_extensionHostSessionId.clear();
+			m_lastDiagnostic = nextBootId.empty()
+				? "failed to generate extension host boot identity"
+				: "failed to generate extension host native session identity";
 			Dispatch(
 				m_stateMachine.OnHostStartFailed(action.generation, now, m_lastDiagnostic, jitterUnit),
 				now,
@@ -185,6 +207,7 @@ void CExtensionHostBroker::ExecuteStart(
 			return;
 		}
 		m_bootId = nextBootId;
+		m_extensionHostSessionId = nextExtensionHostSessionId;
 		m_pipeName = L"\\\\.\\pipe\\sakura-exthost-" + m_profileHash + L"-" + m_bootId;
 		m_identityGeneration = action.generation;
 	}
@@ -244,6 +267,7 @@ void CExtensionHostBroker::Dispatch(
 			break;
 		case EExtensionHostLifecycleActionKind::Stopped:
 			m_process->Terminate(ERROR_SUCCESS);
+			m_extensionHostSessionId.clear();
 			break;
 		case EExtensionHostLifecycleActionKind::ScheduleRetry:
 		case EExtensionHostLifecycleActionKind::BeginQuiesce:
@@ -343,13 +367,17 @@ void CExtensionHostBroker::Tick(TimePoint now, double jitterUnit)
 
 void CExtensionHostBroker::Shutdown(TimePoint now, double jitterUnit)
 {
+	// Shutdown revokes the native-editor capability immediately, even while the
+	// child process is completing its orderly quiesce.
+	m_extensionHostSessionId.clear();
 	Dispatch(m_stateMachine.Shutdown(now), now, jitterUnit);
 }
 
 SExtensionHostBrokerSnapshot CExtensionHostBroker::GetSnapshot() const
 {
+	const auto state = m_stateMachine.GetState();
 	return {
-		m_stateMachine.GetState(),
+		state,
 		m_stateMachine.GetGeneration(),
 		m_process->GetProcessId(),
 		m_stateMachine.GetRetryCount(),
@@ -357,6 +385,7 @@ SExtensionHostBrokerSnapshot CExtensionHostBroker::GetSnapshot() const
 		m_stateMachine.GetLeaseCount(),
 		m_profileHash,
 		m_bootId,
+		HasNativeExtensionHostSession(state) ? m_extensionHostSessionId : std::wstring{},
 		m_pipeName,
 		m_lastDiagnostic,
 	};

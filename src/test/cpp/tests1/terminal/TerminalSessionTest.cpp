@@ -27,8 +27,18 @@ bool WaitUntil( Predicate predicate, std::chrono::milliseconds timeout = 2000ms 
 	return predicate();
 }
 
+struct FakeTerminalBackendLifetimeCounters {
+	std::atomic<std::size_t> startCalls{ 0 };
+	std::atomic<std::size_t> closeCalls{ 0 };
+};
+
 class FakeTerminalBackend final : public terminal::ITerminalBackend {
 public:
+	explicit FakeTerminalBackend( std::shared_ptr<FakeTerminalBackendLifetimeCounters> lifetimeCounters = {} )
+		: m_lifetimeCounters(std::move(lifetimeCounters))
+	{
+	}
+
 	struct ReadEvent {
 		terminal::TerminalBackendReadStatus status = terminal::TerminalBackendReadStatus::Data;
 		std::vector<std::uint8_t> bytes;
@@ -41,13 +51,16 @@ public:
 	bool blockWrites = false;
 	bool failWrites = false;
 	bool failResize = false;
+	bool blockWaitForExit = false;
 	std::deque<bool> waitResults;
+	std::deque<terminal::TerminalBackendExitResult> exitResults;
 
 	terminal::TerminalStartResult Start( const terminal::TerminalLaunchOptions& options ) override
 	{
 		const std::lock_guard lock(m_mutex);
 		launchOptions = options;
 		++startCalls;
+		if( m_lifetimeCounters ) m_lifetimeCounters->startCalls.fetch_add(1, std::memory_order_relaxed);
 		return startResult;
 	}
 
@@ -59,7 +72,6 @@ public:
 		auto& event = readEvents.front();
 		if( event.status != terminal::TerminalBackendReadStatus::Data ) {
 			const auto result = terminal::TerminalBackendReadResult{ event.status, 0, event.error };
-			if( event.status == terminal::TerminalBackendReadStatus::EndOfFile ) processExited = true;
 			readEvents.pop_front();
 			return result;
 		}
@@ -97,15 +109,30 @@ public:
 		++gracefulCloseCalls;
 	}
 
-	bool WaitForExit( std::chrono::milliseconds timeout ) noexcept override
+	terminal::TerminalBackendExitResult WaitForExit( std::chrono::milliseconds timeout ) noexcept override
 	{
-		const std::lock_guard lock(m_mutex);
+		std::unique_lock lock(m_mutex);
 		waitTimeouts.push_back(timeout);
-		if( waitResults.empty() ) return processExited;
+		waitEntered = true;
+		m_cv.notify_all();
+		m_cv.wait(lock, [&] { return !blockWaitForExit; });
+		if( !exitResults.empty() ) {
+			const auto result = exitResults.front();
+			exitResults.pop_front();
+			if( result.status == terminal::TerminalBackendExitStatus::Exited ) {
+				processExited = true;
+				processExitCode = result.exitCode;
+			}
+			return result;
+		}
+		if( waitResults.empty() ) return processExited
+			? terminal::TerminalBackendExitResult{ terminal::TerminalBackendExitStatus::Exited, processExitCode, 0 }
+			: terminal::TerminalBackendExitResult{};
 		const bool result = waitResults.front();
 		waitResults.pop_front();
 		if( result ) processExited = true;
-		return result;
+		return result ? terminal::TerminalBackendExitResult{ terminal::TerminalBackendExitStatus::Exited, processExitCode, 0 }
+			: terminal::TerminalBackendExitResult{};
 	}
 
 	void ForceTerminate() noexcept override
@@ -122,6 +149,7 @@ public:
 			if( closed ) return;
 			closed = true;
 			++closeCalls;
+			if( m_lifetimeCounters ) m_lifetimeCounters->closeCalls.fetch_add(1, std::memory_order_relaxed);
 		}
 		m_cv.notify_all();
 	}
@@ -162,16 +190,28 @@ public:
 		m_cv.notify_all();
 	}
 
+	void UnblockExitWait()
+	{
+		{
+			const std::lock_guard lock(m_mutex);
+			blockWaitForExit = false;
+		}
+		m_cv.notify_all();
+	}
+
 	std::size_t TotalBytesRead() const { const std::lock_guard lock(m_mutex); return totalBytesRead; }
 	bool WriteEntered() const { const std::lock_guard lock(m_mutex); return writeEntered; }
+	bool WaitEntered() const { const std::lock_guard lock(m_mutex); return waitEntered; }
 	std::size_t WrittenByteCount() const { const std::lock_guard lock(m_mutex); return writtenBytes.size(); }
 	std::vector<terminal::TerminalSize> Resizes() const { const std::lock_guard lock(m_mutex); return resizes; }
 	std::size_t CloseCalls() const { const std::lock_guard lock(m_mutex); return closeCalls; }
+	std::size_t StartCalls() const { const std::lock_guard lock(m_mutex); return startCalls; }
 	std::size_t GracefulCloseCalls() const { const std::lock_guard lock(m_mutex); return gracefulCloseCalls; }
 	std::size_t ForceTerminateCalls() const { const std::lock_guard lock(m_mutex); return forceTerminateCalls; }
 	std::vector<std::chrono::milliseconds> WaitTimeouts() const { const std::lock_guard lock(m_mutex); return waitTimeouts; }
 
 private:
+	std::shared_ptr<FakeTerminalBackendLifetimeCounters> m_lifetimeCounters;
 	mutable std::mutex m_mutex;
 	std::condition_variable m_cv;
 	std::deque<ReadEvent> readEvents;
@@ -185,7 +225,9 @@ private:
 	std::size_t gracefulCloseCalls = 0;
 	std::size_t forceTerminateCalls = 0;
 	bool writeEntered = false;
+	bool waitEntered = false;
 	bool processExited = false;
+	std::uint32_t processExitCode = 0;
 	bool closed = false;
 };
 
@@ -232,6 +274,7 @@ TEST(TerminalSession, EndOfFileTransitionsRunningSessionToExited)
 		if( state == terminal::TerminalSessionState::Closing ) sawClosing.store(true);
 	} } );
 	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	fake->waitResults = { true };
 	fake->PushEndOfFile();
 	ASSERT_TRUE(WaitUntil([&] { return session.GetState() == terminal::TerminalSessionState::Exited; }));
 	EXPECT_TRUE(sawClosing.load());
@@ -274,6 +317,293 @@ TEST(TerminalSession, CloseUsesBoundedGraceThenJobFallbackAndIsIdempotent)
 	EXPECT_EQ((std::vector<terminal::TerminalSessionState>{ terminal::TerminalSessionState::Starting, terminal::TerminalSessionState::Running, terminal::TerminalSessionState::Closing, terminal::TerminalSessionState::Exited }), states);
 }
 
+TEST(TerminalSession, BeginCloseIsNonblockingAndWaitReturnsOnlyAfterNormalQuiescence)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	fake->blockWaitForExit = true;
+	fake->waitResults = { true };
+	terminal::CTerminalSession session(std::move(backend));
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+
+	const auto began = std::chrono::steady_clock::now();
+	session.BeginClose();
+	EXPECT_LT(std::chrono::steady_clock::now() - began, 100ms);
+	ASSERT_TRUE(WaitUntil([&] { return fake->WaitEntered(); }));
+	EXPECT_EQ(terminal::TerminalSessionState::Closing, session.GetState());
+
+	fake->UnblockExitWait();
+	const auto closed = session.WaitForClose(std::chrono::steady_clock::now() + 1s);
+	EXPECT_EQ(terminal::TerminalSessionCloseWaitStatus::Closed, closed.status);
+	EXPECT_TRUE(closed.IsQuiescent());
+	EXPECT_EQ(terminal::TerminalSessionState::Exited, session.GetState());
+	EXPECT_EQ(1u, fake->CloseCalls());
+}
+
+TEST(TerminalSession, EndOfFileWaitsForRealExitAndRetainsNonzeroRootCode)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	std::mutex completionMutex;
+	std::vector<terminal::TerminalSessionCompletionResult> completions;
+	terminal::CTerminalSession session( std::move(backend), terminal::TerminalSessionCallbacks{ {}, {}, [&](const auto result) {
+		const std::lock_guard lock(completionMutex);
+		completions.push_back(result);
+	} } );
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	fake->exitResults = {
+		{ terminal::TerminalBackendExitStatus::TimedOut, 0, 0 },
+		{ terminal::TerminalBackendExitStatus::Exited, 37, 0 },
+	};
+	fake->PushEndOfFile();
+	ASSERT_TRUE(WaitUntil([&] { return session.GetState() == terminal::TerminalSessionState::Exited; }));
+	ASSERT_TRUE(WaitUntil([&] { const std::lock_guard lock(completionMutex); return completions.size() == 1; }));
+	const auto waits = fake->WaitTimeouts();
+	EXPECT_GE(waits.size(), 2u);
+	const std::lock_guard lock(completionMutex);
+	ASSERT_EQ(1u, completions.size());
+	EXPECT_EQ(terminal::TerminalSessionCompletionKind::Exited, completions.front().kind);
+	EXPECT_EQ(37u, completions.front().exitCode);
+	EXPECT_EQ(0u, completions.front().errorCode);
+}
+
+TEST(TerminalSession, ExitObservationFailureBecomesOneFailedPostQuiescenceCompletion)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	std::atomic<unsigned> completionCount{};
+	terminal::TerminalSessionCompletionResult completion;
+	terminal::CTerminalSession session( std::move(backend), terminal::TerminalSessionCallbacks{ {}, {}, [&](const auto result) {
+		completion = result;
+		completionCount.fetch_add(1);
+	} } );
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	fake->exitResults = { { terminal::TerminalBackendExitStatus::Failed, 0, ERROR_ACCESS_DENIED } };
+	fake->PushEndOfFile();
+	ASSERT_TRUE(WaitUntil([&] { return completionCount.load() == 1; }));
+	EXPECT_EQ(terminal::TerminalSessionState::Failed, session.GetState());
+	EXPECT_EQ(terminal::TerminalSessionCompletionKind::Failed, completion.kind);
+	EXPECT_EQ(ERROR_ACCESS_DENIED, completion.errorCode);
+	session.Close();
+	EXPECT_EQ(1u, completionCount.load());
+}
+
+TEST(TerminalSession, RequestedForcedCloseCompletesOnceAfterBackendCloseAndPreservesObservedCode)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	fake->exitResults = {
+		{ terminal::TerminalBackendExitStatus::TimedOut, 0, 0 },
+		{ terminal::TerminalBackendExitStatus::Exited, 1, 0 },
+	};
+	std::atomic<unsigned> completionCount{};
+	std::atomic<bool> backendAlreadyClosed{};
+	terminal::TerminalSessionCompletionResult completion;
+	terminal::CTerminalSession session( std::move(backend), terminal::TerminalSessionCallbacks{ {}, {}, [&](const auto result) {
+		completion = result;
+		backendAlreadyClosed.store(fake->CloseCalls() == 1);
+		completionCount.fetch_add(1);
+	} } );
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	EXPECT_TRUE(session.WaitForClose(std::chrono::steady_clock::now() + 2s).IsQuiescent());
+	EXPECT_EQ(1u, fake->ForceTerminateCalls());
+	EXPECT_EQ(1u, completionCount.load());
+	EXPECT_TRUE(backendAlreadyClosed.load());
+	EXPECT_EQ(terminal::TerminalSessionCompletionKind::Closed, completion.kind);
+	EXPECT_EQ(1u, completion.exitCode);
+	session.Close();
+	EXPECT_EQ(1u, completionCount.load());
+}
+
+TEST(TerminalSession, CompletionCallbackMayDestroySessionAfterQuiescence)
+{
+	auto lifetimeCounters = std::make_shared<FakeTerminalBackendLifetimeCounters>();
+	auto backend = std::make_unique<FakeTerminalBackend>(lifetimeCounters);
+	std::unique_ptr<terminal::CTerminalSession> session;
+	std::atomic<unsigned> completionCount{};
+	std::atomic<bool> destroyed{};
+	session = std::make_unique<terminal::CTerminalSession>(std::move(backend), terminal::TerminalSessionCallbacks{ {}, {}, [&](const auto) {
+		completionCount.fetch_add(1);
+		session.reset();
+		destroyed.store(true);
+	} });
+	ASSERT_TRUE(session->Start(DefaultLaunchOptions()).succeeded);
+	session->BeginClose();
+	ASSERT_TRUE(WaitUntil([&] { return destroyed.load(); }));
+	EXPECT_FALSE(session);
+	EXPECT_EQ(1u, completionCount.load());
+	EXPECT_EQ(1u, lifetimeCounters->closeCalls.load(std::memory_order_relaxed));
+}
+
+TEST(TerminalSession, WaitDeadlineReportsExceededOnlyAfterForcedCloseQuiesces)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	fake->blockWaitForExit = true;
+	fake->waitResults = { false, true };
+	terminal::CTerminalSession session(std::move(backend));
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	session.BeginClose();
+	ASSERT_TRUE(WaitUntil([&] { return fake->WaitEntered(); }));
+
+	fake->UnblockExitWait();
+	const auto closed = session.WaitForClose(std::chrono::steady_clock::now() - 1ms);
+	EXPECT_EQ(terminal::TerminalSessionCloseWaitStatus::DeadlineExceeded, closed.status);
+	EXPECT_TRUE(closed.IsQuiescent());
+	EXPECT_EQ(1u, fake->ForceTerminateCalls());
+	EXPECT_EQ(terminal::TerminalSessionState::Exited, session.GetState());
+}
+
+TEST(TerminalSession, RepeatedConcurrentBeginCloseHasOneBackendCloseAndNoSurvivingWorkerOwnership)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	terminal::CTerminalSession session(std::move(backend));
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+
+	std::array<std::thread, 8> callers;
+	for( auto& caller : callers ) caller = std::thread([&] { session.BeginClose(); });
+	for( auto& caller : callers ) caller.join();
+	const auto closed = session.WaitForClose(std::chrono::steady_clock::now() + 2s);
+	EXPECT_TRUE(closed.IsQuiescent());
+	EXPECT_EQ(1u, fake->GracefulCloseCalls());
+	EXPECT_EQ(1u, fake->CloseCalls());
+	EXPECT_EQ(terminal::TerminalSessionState::Exited, session.GetState());
+	// A second external waiter observes the completed ownership boundary rather
+	// than joining/detaching a new worker.
+	EXPECT_TRUE(session.WaitForClose(std::chrono::steady_clock::now() + 1s).IsQuiescent());
+}
+
+TEST(TerminalSession, WorkerCallbackWaitDoesNotSelfDeadlockAndRetainsExternalCloseOwnership)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	terminal::CTerminalSession* current = nullptr;
+	terminal::TerminalSessionCloseResult callbackResult;
+	std::atomic<bool> callbackObserved{ false };
+	terminal::CTerminalSession session(std::move(backend), { {}, [&](const auto state, const auto) {
+		if( state != terminal::TerminalSessionState::Closing || current == nullptr ) return;
+		callbackResult = current->WaitForClose(std::chrono::steady_clock::now() + 1ms);
+		callbackObserved.store(true);
+	} });
+	current = &session;
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	session.BeginClose();
+	ASSERT_TRUE(WaitUntil([&] { return callbackObserved.load(); }));
+	EXPECT_EQ(terminal::TerminalSessionCloseWaitStatus::InProgress, callbackResult.status);
+	const auto closed = session.WaitForClose(std::chrono::steady_clock::now() + 2s);
+	EXPECT_TRUE(closed.IsQuiescent());
+	EXPECT_EQ(terminal::TerminalSessionState::Exited, session.GetState());
+}
+
+TEST(TerminalSession, FastReaderCallbackPublishesItsIdentityBeforeWaitCanStartClose)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	terminal::CTerminalSession* current = nullptr;
+	terminal::TerminalSessionCloseResult callbackResult;
+	std::atomic<bool> callbackObserved{ false };
+	terminal::CTerminalSession session(std::move(backend), { [&] {
+		callbackResult = current->WaitForClose(std::chrono::steady_clock::now() + 1ms);
+		callbackObserved.store(true);
+	}, {} });
+	current = &session;
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+	fake->PushData({ 1, 2, 3 });
+	ASSERT_TRUE(WaitUntil([&] { return callbackObserved.load(); }));
+	EXPECT_EQ(terminal::TerminalSessionCloseWaitStatus::InProgress, callbackResult.status);
+	EXPECT_TRUE(session.WaitForClose(std::chrono::steady_clock::now() + 2s).IsQuiescent());
+}
+
+TEST(TerminalSession, StartCallbackCloseWaitIsDeferredUntilLifecycleLockIsReleased)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	terminal::CTerminalSession* current = nullptr;
+	terminal::TerminalSessionCloseResult callbackResult;
+	std::atomic<bool> callbackObserved{ false };
+	terminal::CTerminalSession session(std::move(backend), { {}, [&](const auto state, const auto) {
+		if( state != terminal::TerminalSessionState::Starting || current == nullptr ) return;
+		current->BeginClose();
+		callbackResult = current->WaitForClose(std::chrono::steady_clock::now() + 1ms);
+		callbackObserved.store(true);
+	} });
+	current = &session;
+	const auto start = session.Start(DefaultLaunchOptions());
+	ASSERT_TRUE(callbackObserved.load());
+	EXPECT_FALSE(start.succeeded);
+	EXPECT_EQ(ERROR_CANCELLED, start.errorCode);
+	EXPECT_EQ(0u, fake->StartCalls());
+	EXPECT_EQ(terminal::TerminalSessionCloseWaitStatus::InProgress, callbackResult.status);
+	EXPECT_TRUE(session.WaitForClose(std::chrono::steady_clock::now() + 2s).IsQuiescent());
+}
+
+TEST(TerminalSession, DestroyingSessionFromStartingCallbackAbortsBeforeBackendLaunch)
+{
+	auto lifetimeCounters = std::make_shared<FakeTerminalBackendLifetimeCounters>();
+	auto backend = std::make_unique<FakeTerminalBackend>(lifetimeCounters);
+	std::unique_ptr<terminal::CTerminalSession> session;
+	std::atomic<bool> destroyed{ false };
+	session = std::make_unique<terminal::CTerminalSession>(std::move(backend), terminal::TerminalSessionCallbacks{ {}, [&](const auto state, const auto) {
+		if( state != terminal::TerminalSessionState::Starting || !session ) return;
+		session.reset();
+		destroyed.store(true);
+	} });
+
+	auto* const startingSession = session.get();
+	const auto start = startingSession->Start(DefaultLaunchOptions());
+	EXPECT_FALSE(start.succeeded);
+	EXPECT_EQ(ERROR_CANCELLED, start.errorCode);
+	EXPECT_TRUE(destroyed.load());
+	EXPECT_FALSE(session);
+	EXPECT_EQ(0u, lifetimeCounters->startCalls.load(std::memory_order_relaxed));
+	ASSERT_TRUE(WaitUntil([&] { return lifetimeCounters->closeCalls.load(std::memory_order_relaxed) == 1; }));
+}
+
+TEST(TerminalSession, DestructionFromCloseCallbackRetainsImplUntilCloseWorkerCompletes)
+{
+	auto lifetimeCounters = std::make_shared<FakeTerminalBackendLifetimeCounters>();
+	auto backend = std::make_unique<FakeTerminalBackend>(lifetimeCounters);
+	std::unique_ptr<terminal::CTerminalSession> session;
+	std::atomic<bool> destroyed{ false };
+	session = std::make_unique<terminal::CTerminalSession>(std::move(backend), terminal::TerminalSessionCallbacks{ {}, [&](const auto state, const auto) {
+		if( state != terminal::TerminalSessionState::Closing || !session ) return;
+		session.reset();
+		destroyed.store(true);
+	} });
+	ASSERT_TRUE(session->Start(DefaultLaunchOptions()).succeeded);
+	session->BeginClose();
+	ASSERT_TRUE(WaitUntil([&] { return destroyed.load(); }));
+	ASSERT_TRUE(WaitUntil([&] { return lifetimeCounters->closeCalls.load(std::memory_order_relaxed) == 1; }));
+	EXPECT_FALSE(session);
+}
+
+TEST(TerminalSession, ExternalCloseSurvivesDestructionFromClosingCallback)
+{
+	auto lifetimeCounters = std::make_shared<FakeTerminalBackendLifetimeCounters>();
+	auto backend = std::make_unique<FakeTerminalBackend>(lifetimeCounters);
+	std::unique_ptr<terminal::CTerminalSession> session;
+	std::atomic<bool> destroyed{ false };
+	std::atomic<bool> closeReturned{ false };
+	session = std::make_unique<terminal::CTerminalSession>(std::move(backend), terminal::TerminalSessionCallbacks{ {}, [&](const auto state, const auto) {
+		if( state != terminal::TerminalSessionState::Closing || !session ) return;
+		session.reset();
+		destroyed.store(true);
+	} });
+	ASSERT_TRUE(session->Start(DefaultLaunchOptions()).succeeded);
+
+	std::thread closer([&] {
+		auto* const closingSession = session.get();
+		ASSERT_NE(nullptr, closingSession);
+		closingSession->Close();
+		closeReturned.store(true);
+	});
+	closer.join();
+	EXPECT_TRUE(destroyed.load());
+	EXPECT_TRUE(closeReturned.load());
+	EXPECT_FALSE(session);
+	EXPECT_EQ(1u, lifetimeCounters->closeCalls.load(std::memory_order_relaxed));
+}
+
 TEST(TerminalSession, PreservesExecutableArgumentsAndWorkingDirectoryWithSpaces)
 {
 	auto backend = std::make_unique<FakeTerminalBackend>();
@@ -295,6 +625,7 @@ TEST(TerminalSession, OutputQueueAppliesHighLowWaterBackpressureWithoutLoss)
 	std::vector<std::uint8_t> expected(terminal::CTerminalSession::kOutputHighWaterBytes + 256u * 1024u);
 	for( std::size_t i = 0; i < expected.size(); ++i ) expected[i] = static_cast<std::uint8_t>(i % 251);
 	fake->PushData(expected);
+	fake->waitResults = { true };
 	fake->PushEndOfFile();
 	ASSERT_TRUE(WaitUntil([&] { return session.GetQueuedOutputBytes() == terminal::CTerminalSession::kOutputHighWaterBytes; }));
 	EXPECT_EQ(terminal::CTerminalSession::kOutputHighWaterBytes, fake->TotalBytesRead());
@@ -393,6 +724,7 @@ TEST(TerminalSession, ResizeFailureReachesFailedTerminalState)
 	ASSERT_TRUE(WaitUntil([&] { return session.GetState() == terminal::TerminalSessionState::Failed; }));
 	EXPECT_EQ(87u, session.GetLastError());
 	EXPECT_EQ(1u, fake->ForceTerminateCalls());
+	ASSERT_TRUE(WaitUntil([&] { return fake->CloseCalls() == 1; }));
 	EXPECT_EQ(1u, fake->CloseCalls());
 }
 
@@ -425,7 +757,7 @@ TEST(ConPtyTerminalBackend, LaunchesResizesExchangesDataAndClosesIdempotently)
 	const auto resize = backend->Resize({ 100, 30 });
 	EXPECT_TRUE(resize.succeeded) << "ResizePseudoConsole failed with " << resize.errorCode;
 
-	constexpr std::string_view command = "echo SAKURA_CONPTY_READY\r\nexit\r\n";
+	constexpr std::string_view command = "echo SAKURA_CONPTY_READY\r\nexit /b 23\r\n";
 	const auto write = backend->WriteInput(std::span<const std::uint8_t>(
 		reinterpret_cast<const std::uint8_t*>(command.data()), command.size()));
 	ASSERT_EQ(terminal::TerminalBackendWriteStatus::Completed, write.status);
@@ -451,7 +783,9 @@ TEST(ConPtyTerminalBackend, LaunchesResizesExchangesDataAndClosesIdempotently)
 
 	EXPECT_NE(std::string::npos, output.find("SAKURA_CONPTY_READY"));
 	EXPECT_TRUE(reachedEof);
-	EXPECT_TRUE(backend->WaitForExit(1s));
+	const auto exit = backend->WaitForExit(1s);
+	EXPECT_EQ(terminal::TerminalBackendExitStatus::Exited, exit.status);
+	EXPECT_EQ(23u, exit.exitCode);
 	backend->Close();
 	backend->Close();
 }
@@ -502,7 +836,7 @@ TEST(ConPtyTerminalBackend, DiscoveredPowerShellExecutesTypedCommand)
 
 	EXPECT_NE(std::string::npos, output.find("SAKURA_POWERSHELL_COMMAND_READY"));
 	EXPECT_TRUE(reachedEof);
-	EXPECT_TRUE(backend->WaitForExit(1s));
+	EXPECT_EQ(terminal::TerminalBackendExitStatus::Exited, backend->WaitForExit(1s).status);
 	backend->Close();
 }
 

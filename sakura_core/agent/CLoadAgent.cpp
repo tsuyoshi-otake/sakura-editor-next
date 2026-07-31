@@ -247,10 +247,14 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 				sLoadInfo,
 				&pcDoc->m_cDocFile.m_sFileInfo
 			);
-			if(eReadResult==RESULT_LOSESOME){
-				eRet = LOADED_LOSESOME;
-			}
+			eRet = ToLoadResult(eReadResult);
 			CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
+			if (eRet == LOADED_FAILURE) {
+				// A cancelled/failed read must never be published as an empty successful
+				// document.  Remove any partial native data before the finalization barrier.
+				pcDoc->InitDoc();
+				return eRet;
+			}
 		}
 		else{
 			// 存在しないときもドキュメントに文字コードを反映する
@@ -315,7 +319,7 @@ void CLoadAgent::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 		pcDoc->m_cLayoutMgr.ClearLayoutLineWidth();		// 各行のレイアウト行長の記憶をクリアする
 }
 
-void CLoadAgent::OnFinalLoad(ELoadResult eLoadResult)
+ELoadFinalizationStatus CLoadAgent::OnFinalLoad(ELoadResult eLoadResult)
 {
 	CEditDoc* pcDoc = GetListeningDoc();
 
@@ -337,4 +341,18 @@ void CLoadAgent::OnFinalLoad(ELoadResult eLoadResult)
 	CCaret& cCaret = CEditWnd::getInstance()->GetActiveView().GetCaret();
 	cCaret.MoveCursor(cCaret.GetCaretLayoutPos(),true);
 	CEditWnd::getInstance()->GetActiveView().AdjustScrollBars();
+	return ELoadFinalizationStatus::Succeeded;
+}
+
+ELoadResult CLoadAgent::ToLoadResult(EConvertResult readResult) noexcept
+{
+	switch (readResult) {
+	case RESULT_COMPLETE:
+		return LOADED_OK;
+	case RESULT_LOSESOME:
+		return LOADED_LOSESOME;
+	case RESULT_FAILURE:
+	default:
+		return LOADED_FAILURE;
+	}
 }

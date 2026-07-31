@@ -46,6 +46,30 @@ CStartupTrace::NonBlockTextCategory ClassifyNonBlockText(const wchar_t code, con
 }
 }
 
+bool CFigure_Text::IsBlockRenderableCodeUnit(const wchar_t code) noexcept
+{
+	// Keep combining marks, variation selectors, multi-unit characters, and
+	// paired vertical kana marks out of shared runs.  The punctuation ranges
+	// below contain spacing characters used between otherwise block-safe
+	// Japanese text, so treating them as block-safe avoids one GDI call per
+	// punctuation mark without changing font, color, or clipping boundaries.
+	return (0x20 <= code && code <= 0x7f) // ASCII
+		|| (0x2e80 <= code && code <= 0x2fdf) // CJK radicals
+		|| code == 0x3001 // ideographic comma
+		|| code == 0x3002 // ideographic full stop
+		|| (0x3008 <= code && code <= 0x301f) // CJK brackets, dash, and quotation marks
+		|| code == 0x3030 // wavy dash
+		|| (0x3041 <= code && code <= 0x3096) // Hiragana
+		|| (0x30a1 <= code && code <= 0x30fa) // Katakana, excluding combining marks
+		|| code == 0x30a0 // Katakana-Hiragana double hyphen
+		|| (0x30fb <= code && code <= 0x30ff) // Katakana punctuation and spacing marks
+		|| (0x3400 <= code && code <= 0x4dbf) // CJK Unified Ideographs Extension A
+		|| (0x4e00 <= code && code <= 0x9fff) // CJK Unified Ideographs
+		|| (0xf900 <= code && code <= 0xfaff) // CJK Compatibility Ideographs
+		|| (0xff01 <= code && code <= 0xff5e) // Fullwidth ASCII
+		|| (0xff61 <= code && code <= 0xff9f); // Halfwidth Katakana
+}
+
 FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 {
 	const int nIdx = pInfo->GetPosInLogic();
@@ -59,18 +83,7 @@ FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 	FigureRenderType nType = 0;
 	if(nLength == 1){
 		const wchar_t code = pInfo->m_pLineOfLogic[nIdx];
-		// 未合成で一度に描画しても安全そうな文字一覧(その範囲の文字が合成用文字ではないもの)
-		// 合成は未サポート
-		if((0x20 <= code && code <= 0x7f) // ASCII
-			|| (0x2E80 <= code && code <= 0x2FDF) // 漢字部首
-			|| (0x3041 <= code && code <= 0x3096) // ひらがな
-			|| (0x30A1 <= code && code <= 0x30FA) // カタカナ(合成用濁点などを除く)
-			|| (0x3400 <= code && code <= 0x4DBF) // CJK統合漢字拡張A
-			|| (0x4E00 <= code && code <= 0x9FFF) // CJK統合漢字
-			|| (0xF900 <= code && code <= 0xFAFF) // CJK互換漢字
-			|| (0xFF01 <= code && code <= 0xFF5E) // 全角ASCII
-			|| (0xFF61 <= code && code <= 0xFF9F) // 半角カナ
-		){
+		if(IsBlockRenderableCodeUnit(code)){
 			nType = 1;
 		}
 	}

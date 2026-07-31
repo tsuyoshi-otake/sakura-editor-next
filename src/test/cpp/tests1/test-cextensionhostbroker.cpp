@@ -20,6 +20,11 @@ namespace {
 using namespace std::chrono_literals;
 using TimePoint = CExtensionHostBroker::TimePoint;
 
+template<typename T>
+constexpr bool HasExtensionHostSessionMember = requires(T value) {
+	value.extensionHostSessionId;
+};
+
 class FakeProcess final : public IExtensionHostProcess {
 public:
 	SExtensionHostProcessStartResult Start(const SExtensionHostLaunchOptions& options) override
@@ -109,8 +114,20 @@ TEST(CExtensionHostBroker, LeaseStartsOneGenerationWithBoundIdentity)
 	EXPECT_EQ(6001u, launch.brokerProcessId);
 	EXPECT_EQ(L"0123456789abcdef0123456789abcdef", launch.bootId);
 	EXPECT_EQ(L"\\\\.\\pipe\\sakura-exthost-" + launch.profileHash + L"-" + launch.bootId, launch.pipeName);
+	const auto snapshot = broker.GetSnapshot();
+	EXPECT_EQ(32u, snapshot.extensionHostSessionId.size());
+	EXPECT_EQ(snapshot.extensionHostSessionId, broker.GetSnapshot().extensionHostSessionId);
+	EXPECT_EQ(std::wstring::npos, launch.profileHash.find(snapshot.extensionHostSessionId));
+	EXPECT_EQ(std::wstring::npos, launch.bootId.find(snapshot.extensionHostSessionId));
+	EXPECT_EQ(std::wstring::npos, launch.pipeName.find(snapshot.extensionHostSessionId));
 	EXPECT_EQ(1u, observer.Count(EExtensionHostLifecycleActionKind::StartHost));
 	EXPECT_EQ(2u, broker.GetSnapshot().leaseOwnerCount);
+}
+
+TEST(CExtensionHostBroker, NativeSessionIdIsNotALaunchOption)
+{
+	static_assert(!HasExtensionHostSessionMember<SExtensionHostLaunchOptions>);
+	EXPECT_FALSE((HasExtensionHostSessionMember<SExtensionHostLaunchOptions>));
 }
 
 TEST(CExtensionHostBroker, HandshakeRequiresCurrentGenerationBootIdAndActualServerPid)
@@ -152,22 +169,28 @@ TEST(CExtensionHostBroker, StartFailureRetriesWithANewGenerationAtDeadline)
 	EXPECT_EQ(EExtensionHostState::Starting, broker.GetSnapshot().state);
 }
 
-TEST(CExtensionHostBroker, RetryUsesANewUnpredictableBootIdentityAndPipe)
+TEST(CExtensionHostBroker, RetryRotatesNativeSessionWithoutExposingItToHostLaunch)
 {
 	auto config = TestConfig();
 	config.bootIdOverride.clear();
 	auto process = std::make_unique<FakeProcess>();
 	auto* processView = process.get();
-	process->startResults.push_back({ false, 0, ERROR_FILE_NOT_FOUND, L"node missing" });
-	process->startResults.push_back({ true, 7100, 0, {} });
-	CExtensionHostBroker broker(std::move(config), std::move(process));
+	RecordingObserver observer;
+	CExtensionHostBroker broker(std::move(config), std::move(process), &observer);
 	const TimePoint start{};
 
 	broker.AcquireLease(101, start, 0.5);
+	const auto firstSession = broker.GetSnapshot().extensionHostSessionId;
+	ASSERT_EQ(32u, firstSession.size());
+	broker.NotifyHostLost(1, EExtensionHostLossKind::HostCrash, "test crash", start, 0.5);
 	broker.Tick(start + 100ms, 0.5);
 	ASSERT_EQ(2u, processView->starts.size());
 	EXPECT_NE(processView->starts[0].bootId, processView->starts[1].bootId);
 	EXPECT_NE(processView->starts[0].pipeName, processView->starts[1].pipeName);
+	EXPECT_NE(firstSession, broker.GetSnapshot().extensionHostSessionId);
+	EXPECT_EQ(std::wstring::npos, processView->starts[1].profileHash.find(firstSession));
+	EXPECT_EQ(std::wstring::npos, processView->starts[1].bootId.find(firstSession));
+	EXPECT_EQ(std::wstring::npos, processView->starts[1].pipeName.find(firstSession));
 	EXPECT_EQ(processView->starts[1].bootId, broker.GetSnapshot().bootId);
 }
 
@@ -222,8 +245,10 @@ TEST(CExtensionHostBroker, ShutdownOwnsTerminalStateAndRejectsLaterLease)
 
 	broker.Shutdown(start);
 	EXPECT_EQ(EExtensionHostState::Quiescing, broker.GetSnapshot().state);
+	EXPECT_TRUE(broker.GetSnapshot().extensionHostSessionId.empty());
 	broker.NotifyQuiesceCompleted(1, start + 1s);
 	EXPECT_EQ(EExtensionHostState::Stopped, broker.GetSnapshot().state);
+	EXPECT_TRUE(broker.GetSnapshot().extensionHostSessionId.empty());
 	broker.AcquireLease(202, start + 2s);
 	EXPECT_EQ(1u, observer.Count(EExtensionHostLifecycleActionKind::LeaseRejected));
 }
@@ -236,7 +261,12 @@ TEST(CExtensionHostBroker, ProfileHashAndRandomBootIdArePipeSafe)
 	EXPECT_EQ(32u, hashA.size());
 	const auto bootA = CExtensionHostBroker::GenerateBootId();
 	const auto bootB = CExtensionHostBroker::GenerateBootId();
+	const auto sessionA = CExtensionHostBroker::GenerateExtensionHostSessionId();
+	const auto sessionB = CExtensionHostBroker::GenerateExtensionHostSessionId();
 	EXPECT_EQ(32u, bootA.size());
 	EXPECT_EQ(32u, bootB.size());
 	EXPECT_NE(bootA, bootB);
+	EXPECT_EQ(32u, sessionA.size());
+	EXPECT_EQ(32u, sessionB.size());
+	EXPECT_NE(sessionA, sessionB);
 }

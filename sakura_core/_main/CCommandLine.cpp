@@ -62,6 +62,7 @@
 #define CMDLINEOPT_PROF			501  //!< プロファイルを選択
 #define CMDLINEOPT_PROFMGR		502  //!< プロファイルマネージャを起動時に表示
 #define CMDLINEOPT_FOLDER		503  //!< ワークベンチの作業フォルダー
+#define CMDLINEOPT_WORKSPACE	504  //!< ワークベンチのワークスペース構成ファイル
 
 /*!
 	コマンドラインのチェックを行って、オプション番号と
@@ -132,6 +133,7 @@ int CCommandLine::CheckCommandLine(
 		{L"MTYPE",	5,			CMDLINEOPT_MTYPE, false},	// 2009.06.14 syat
 		{L"PROF",	4,			CMDLINEOPT_PROF, true},	// 2013.12.20 Moca
 		{L"FOLDER",	6,			CMDLINEOPT_FOLDER, false},
+		{L"WORKSPACE",	9,			CMDLINEOPT_WORKSPACE, false},
 		{nullptr, 0, 0}
 	};
 
@@ -189,6 +191,7 @@ CCommandLine::CCommandLine() noexcept
 	, m_bProfileMgr(false)
 	, m_bSetProfile(false)
 	, m_bSetWorkspaceFolder(false)
+	, m_bSetWorkspaceConfig(false)
 	, m_bParsed(false)
 	, m_fi()
 	, m_gi()
@@ -198,6 +201,7 @@ CCommandLine::CCommandLine() noexcept
 	, m_cmMacroType()
 	, m_cmProfile(L"")
 	, m_cmWorkspaceFolder(L"")
+	, m_cmWorkspaceConfig(L"")
 	, m_vFiles()
 {
 }
@@ -529,6 +533,11 @@ void CCommandLine::ParseCommandLine( LPCWSTR pszCmdLineSrc, bool bResponse )
 				m_cmWorkspaceFolder.SetString(arg, nArgLen);
 				m_cmWorkspaceFolder.Replace(L"\"\"", L"\"");
 				m_bSetWorkspaceFolder = true;
+				break;
+			case CMDLINEOPT_WORKSPACE:
+				m_cmWorkspaceConfig.SetString(arg, nArgLen);
+				m_cmWorkspaceConfig.Replace(L"\"\"", L"\"");
+				m_bSetWorkspaceConfig = true;
 				break;
 			default:
 				break;

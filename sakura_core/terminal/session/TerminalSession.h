@@ -45,6 +45,8 @@ struct TerminalStartResult {
 
 	static TerminalStartResult Success();
 	static TerminalStartResult Failure( std::uint32_t errorCode, std::wstring diagnostic );
+	//! A close request interrupted Start; no I/O workers were left running.
+	static TerminalStartResult Aborted();
 };
 
 enum class TerminalBackendReadStatus {
@@ -77,6 +79,20 @@ struct TerminalBackendOperationResult {
 	std::uint32_t errorCode = 0;
 };
 
+//! Result of observing the launched root process after all job-owned
+//! descendants have exited.  `exitCode` is meaningful only for `Exited`.
+enum class TerminalBackendExitStatus {
+	Exited,
+	TimedOut,
+	Failed,
+};
+
+struct TerminalBackendExitResult {
+	TerminalBackendExitStatus status = TerminalBackendExitStatus::TimedOut;
+	std::uint32_t exitCode = 0;
+	std::uint32_t errorCode = 0;
+};
+
 // This is the only boundary between the session state machine and ConPTY. It
 // deliberately contains no HWND, HANDLE, HPCON, or vendored terminal type so
 // the state machine can be tested without creating operating-system objects.
@@ -88,7 +104,7 @@ public:
 	virtual TerminalBackendWriteResult WriteInput( std::span<const std::uint8_t> source ) = 0;
 	virtual TerminalBackendOperationResult Resize( TerminalSize size ) = 0;
 	virtual void RequestGracefulClose() noexcept = 0;
-	virtual bool WaitForExit( std::chrono::milliseconds timeout ) noexcept = 0;
+	virtual TerminalBackendExitResult WaitForExit( std::chrono::milliseconds timeout ) noexcept = 0;
 	virtual void ForceTerminate() noexcept = 0;
 	virtual void Close() noexcept = 0;
 };
@@ -103,11 +119,58 @@ enum class TerminalQueueInputResult {
 	QueueFull,
 };
 
+//! Result of waiting for an initiated terminal close.
+//!
+//! `Closed` and `DeadlineExceeded` both guarantee that the backend and every
+//! session worker have quiesced.  `InProgress` is returned only to prevent a
+//! callback running on a session/close worker from waiting for itself; it keeps
+//! ownership with the session and an external owner must call WaitForClose. If
+//! a close-worker launch fails, BeginClose first stops workers and closes the
+//! backend; the same external wait remains responsible for joining them.
+enum class TerminalSessionCloseWaitStatus {
+	Closed,
+	DeadlineExceeded,
+	InProgress,
+};
+
+struct TerminalSessionCloseResult {
+	TerminalSessionCloseWaitStatus status = TerminalSessionCloseWaitStatus::Closed;
+
+	[[nodiscard]] constexpr bool IsQuiescent() const noexcept
+	{
+		return status == TerminalSessionCloseWaitStatus::Closed
+			|| status == TerminalSessionCloseWaitStatus::DeadlineExceeded;
+	}
+};
+
+//! The durable outcome for a successfully started terminal.  It is delivered
+//! exactly once after the backend and both I/O workers have quiesced.
+enum class TerminalSessionCompletionKind {
+	Exited,
+	Closed,
+	Failed,
+};
+
+struct TerminalSessionCompletionResult {
+	TerminalSessionCompletionKind kind = TerminalSessionCompletionKind::Closed;
+	//! Observed root-process exit code when `kind` is Exited or Closed and the
+	//! backend could observe one before its handles were released.
+	std::uint32_t exitCode = 0;
+	//! Nonzero only for Failed.
+	std::uint32_t errorCode = 0;
+};
+
 struct TerminalSessionCallbacks {
 	// Callbacks run on a session worker. A window implementation should only
 	// post/coalesce a UI message here and perform model work on the UI thread.
 	std::function<void()> outputAvailable;
 	std::function<void(TerminalSessionState, std::uint32_t)> stateChanged;
+	//! Called by the lifecycle worker only after `closeFinished` is published and
+	//! the backend plus reader/writer workers have quiesced.  It is never emitted
+	//! when Start fails before a backend has started.  Callback-origin Close or
+	//! destruction is safe; an external owner remains responsible for any
+	//! self-wait that returned InProgress.
+	std::function<void(TerminalSessionCompletionResult)> completed;
 };
 
 class CTerminalSession final {
@@ -127,6 +190,17 @@ public:
 	CTerminalSession& operator=( const CTerminalSession& ) = delete;
 
 	TerminalStartResult Start( const TerminalLaunchOptions& options );
+	//! Starts shutdown on a dedicated lifecycle worker. Idempotent, thread-safe,
+	//! non-throwing, and never waits for backend or I/O-worker completion.
+	void BeginClose() noexcept;
+	//! Waits for shutdown after BeginClose using one absolute deadline. A returned
+	//! terminal result always represents quiesced backend/worker ownership: if the
+	//! deadline expires, shutdown still joins before returning DeadlineExceeded.
+	//! InProgress is solely the self-wait guard for callback/worker callers.
+	[[nodiscard]] TerminalSessionCloseResult WaitForClose( std::chrono::steady_clock::time_point deadline ) noexcept;
+	//! Compatibility wrapper. Begins close and waits until quiescent when called
+	//! externally; a session worker callback only initiates close to avoid a
+	//! self-join deadlock.
 	void Close() noexcept;
 
 	TerminalQueueInputResult QueueInput( std::span<const std::uint8_t> bytes );
@@ -141,7 +215,7 @@ public:
 
 private:
 	struct Impl;
-	std::unique_ptr<Impl> m_impl;
+	std::shared_ptr<Impl> m_impl;
 };
 
 } // namespace terminal

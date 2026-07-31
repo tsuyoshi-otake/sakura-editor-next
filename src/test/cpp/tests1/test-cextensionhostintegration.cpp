@@ -8,6 +8,7 @@
 #include "extension/CExtensionHostProcess.h"
 #include "extension/CExtensionPipeTransport.h"
 #include "extension/CExtensionRpcProtocol.h"
+#include "extension/CExtensionSecretStorage.h"
 #include "extension/CExtensionWorkbenchDispatcher.h"
 
 #include <picojson/picojson.h>

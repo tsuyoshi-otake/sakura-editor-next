@@ -18,10 +18,11 @@
 #include <array>
 #include <cwctype>
 #include <fstream>
+#include <limits>
+#include <optional>
 #include <sstream>
 #include <system_error>
 
-#include "extension/CHttpClient.h"
 #include "io/CZipFile.h"
 #include "util/file.h"
 #include "util/string_ex.h"
@@ -73,6 +74,44 @@ std::wstring FormatErrorCode(const std::error_code& ec)
 bool IsCancelled(const std::atomic<bool>* pCancelled) noexcept
 {
 	return pCancelled && pCancelled->load(std::memory_order_acquire);
+}
+
+bool IsCancelled(const platform::request::IRequestCancellation* requestCancellation) noexcept
+{
+	return requestCancellation && requestCancellation->IsCancellationRequested();
+}
+
+bool IsInstallationCancelled(
+	const platform::request::IRequestCancellation* requestCancellation,
+	const std::atomic<bool>* pCancelled) noexcept
+{
+	return IsCancelled(requestCancellation) || IsCancelled(pCancelled);
+}
+
+bool WriteDownloadedVsix(
+	const std::filesystem::path& path,
+	const std::vector<std::uint8_t>& bytes,
+	std::wstring& errorMsg)
+{
+	if (bytes.size() > static_cast<std::size_t>((std::numeric_limits<std::streamsize>::max)())) {
+		errorMsg = L"downloaded extension package is too large to stage";
+		return false;
+	}
+
+	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	if (!out) {
+		errorMsg = L"cannot create temporary VSIX";
+		return false;
+	}
+	if (!bytes.empty()) {
+		out.write(reinterpret_cast<const char*>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
+	}
+	out.flush();
+	if (!out) {
+		errorMsg = L"cannot write temporary VSIX";
+		return false;
+	}
+	return true;
 }
 
 bool IsDirectoryWithoutReparsePoint(const std::filesystem::path& path)
@@ -178,6 +217,11 @@ CExtensionManager::CExtensionManager()
 	WCHAR szPath[_MAX_PATH];
 	GetInidir(szPath, L"extensions");
 	m_baseDir = std::filesystem::path(szPath);
+}
+
+CExtensionManager::CExtensionManager(std::filesystem::path baseDir)
+	: m_baseDir(std::move(baseDir))
+{
 }
 
 // フォルダー名の構成要素として安全か
@@ -346,10 +390,12 @@ std::wstring CExtensionManager::ReadDisplayName(const std::filesystem::path& man
 // 拡張を導入する
 bool CExtensionManager::Install(
 	const SOpenVsxExtension& ext,
+	extension::openvsx::IOpenVsxRegistryClient& registryClient,
 	std::wstring& errorMsg,
+	const platform::request::IRequestCancellation* requestCancellation,
 	const std::atomic<bool>* pCancelled)
 {
-	if (IsCancelled(pCancelled)) {
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
 		errorMsg = L"extension installation cancelled";
 		return false;
 	}
@@ -363,7 +409,7 @@ bool CExtensionManager::Install(
 
 	std::error_code ec;
 	if (std::filesystem::exists(destDir, ec)) {
-		errorMsg = L"'" + sFolderName + L"' is already installed";
+		errorMsg = L"extension is already installed";
 		return false;
 	}
 
@@ -384,31 +430,43 @@ bool CExtensionManager::Install(
 	const std::filesystem::path tempPath = stagingDir / L"package.vsix";
 	const std::filesystem::path extractedDir = stagingDir / L"contents";
 
-	CHttpClient cHttp;
-	if (!cHttp.IsOk()) {
-		errorMsg = L"cannot open an HTTP session";
+	const auto vsixResponse = registryClient.FetchVsix(ext.sDownloadUrl, requestCancellation);
+	if (!vsixResponse.status) {
+		errorMsg = vsixResponse.status.outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled ||
+			IsInstallationCancelled(requestCancellation, pCancelled)
+			? L"extension installation cancelled"
+			: L"cannot fetch extension package";
 		return false;
 	}
-
-	if (!cHttp.Download(ext.sDownloadUrl, tempPath, errorMsg, pCancelled)) {
-		return false;
-	}
-	if (IsCancelled(pCancelled)) {
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
 		errorMsg = L"extension installation cancelled";
+		return false;
+	}
+	if (!WriteDownloadedVsix(tempPath, vsixResponse.value, errorMsg)) {
 		return false;
 	}
 
 	// レジストリが sha256 を公開しているなら必ず検証する。
 	// 取得したバイト列が公開されたものと一致することの確認になる。
-	if (!ext.sSha256Url.empty()) {
-		CHttpClient::Response sha256Response;
-		std::wstring sha256Error;
-		if (!cHttp.Get(ext.sSha256Url, sha256Response, sha256Error, pCancelled) || !sha256Response.IsOk()) {
-			errorMsg = L"cannot fetch the sha256 of the package: " + sha256Error;
+	const std::optional<std::wstring> sha256Uri = ext.sSha256Url.empty()
+		? std::nullopt
+		: std::optional<std::wstring>(ext.sSha256Url);
+	const auto sha256Response = registryClient.FetchOptionalSha256(sha256Uri, requestCancellation);
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
+		errorMsg = L"extension installation cancelled";
+		return false;
+	}
+	if (sha256Response.status.outcome != extension::openvsx::EOpenVsxRequestOutcome::NotRequested) {
+		if (!sha256Response.status) {
+			errorMsg = sha256Response.status.outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled ||
+				IsInstallationCancelled(requestCancellation, pCancelled)
+				? L"extension installation cancelled"
+				: L"cannot fetch extension package integrity metadata";
 			return false;
 		}
 
-		const std::wstring sExpected = ExtractSha256Hex(sha256Response.body);
+		const std::string sha256Body(sha256Response.value.begin(), sha256Response.value.end());
+		const std::wstring sExpected = ExtractSha256Hex(sha256Body);
 		if (sExpected.empty()) {
 			errorMsg = L"the registry returned a malformed sha256";
 			return false;
@@ -420,19 +478,19 @@ bool CExtensionManager::Install(
 			return false;
 		}
 		if (sActual != sExpected) {
-			errorMsg = L"sha256 mismatch: expected " + sExpected + L", got " + sActual;
+			errorMsg = L"extension package sha256 did not match registry metadata";
 			return false;
 		}
 	}
 
-	if (IsCancelled(pCancelled)) {
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
 		errorMsg = L"extension installation cancelled";
 		return false;
 	}
 	if (!CZipFile::ExtractVsixSafely(tempPath, extractedDir, errorMsg, pCancelled)) {
 		return false;
 	}
-	if (IsCancelled(pCancelled)) {
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
 		errorMsg = L"extension installation cancelled";
 		return false;
 	}
@@ -449,10 +507,10 @@ bool CExtensionManager::Install(
 		return false;
 	}
 	if (std::filesystem::exists(destDir, ec)) {
-		errorMsg = L"'" + sFolderName + L"' is already installed";
+		errorMsg = L"extension is already installed";
 		return false;
 	}
-	if (IsCancelled(pCancelled)) {
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
 		errorMsg = L"extension installation cancelled";
 		return false;
 	}

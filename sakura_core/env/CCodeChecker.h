@@ -19,7 +19,7 @@ public:
 	void OnFinalSave(ESaveResult eSaveResult) override;
 
 	//ロード時チェック
-	void OnFinalLoad(ELoadResult eLoadResult) override;
+	ELoadFinalizationStatus OnFinalLoad(ELoadResult eLoadResult) override;
 };
 
 #endif /* SAKURA_CCODECHECKER_44D0ED68_9D9D_4B3E_88F5_185934F5FF0E_H_ */

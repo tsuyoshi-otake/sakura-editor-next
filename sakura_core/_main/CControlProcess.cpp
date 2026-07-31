@@ -27,8 +27,16 @@
 #include "sakura_rc.h"/// IDD_EXITTING 2002/2/10 aroka ヘッダー整理
 #include "config/system_constants.h"
 #include "apiwrap/DarkMode.h"
+#include "platform/controlipc/ControlPlatformRuntime.h"
+#include "platform/profiles/ProfileAuthorityStore.h"
+#include "extension/CExtensionHostSecretVaultGrantRuntimeAdapter.h"
 
 //-------------------------------------------------
+
+CControlProcess::CControlProcess(HINSTANCE hInstance, LPCWSTR lpCmdLine) :
+	CProcess(hInstance, lpCmdLine)
+{
+}
 
 /*!
 	@brief iniファイルパスを取得する
@@ -171,6 +179,42 @@ bool CControlProcess::InitializeProcess()
 		CShareData_IO::SaveShareData();
 	}
 
+	// The legacy settings path is resolved before the durable platform runtime.
+	// Runtime::Start reaches Running only after authority commit, storage open,
+	// endpoint publication, and a successful pipe bind.  The launcher-ready event
+	// below must never advertise an intermediate platform state.
+	if (!StartControlPlatform()) {
+		return false;
+	}
+	const auto secretVaultAuthorities = m_controlPlatformRuntime->SecretVaultAuthorities();
+	if (!secretVaultAuthorities) {
+		TopErrorMessage(nullptr,
+			L"プラットフォームサービスの初期化に失敗しました。\n"
+			L"Secret Vault の拡張ホスト権限を取得できませんでした。");
+		StopControlPlatform();
+		return false;
+	}
+
+	std::shared_ptr<IExtensionHostSecretVaultGrantLifecycle> secretVaultGrantLifecycle;
+	try {
+		secretVaultGrantLifecycle = CreateExtensionHostSecretVaultGrantRuntimeAdapter(
+			secretVaultAuthorities->grantAuthority,
+			secretVaultAuthorities->capabilities);
+	}
+	catch (...) {
+		TopErrorMessage(nullptr,
+			L"プラットフォームサービスの初期化中に予期しないエラーが発生しました。");
+		StopControlPlatform();
+		return false;
+	}
+	if (!secretVaultGrantLifecycle) {
+		TopErrorMessage(nullptr,
+			L"プラットフォームサービスの初期化に失敗しました。\n"
+			L"Secret Vault の拡張ホスト権限を作成できませんでした。");
+		StopControlPlatform();
+		return false;
+	}
+
 	/* ダークモード設定を反映する */
 	ApplyDarkModeSetting(GetDllShareData().m_Common.m_sWindow.m_bDarkMode);
 
@@ -181,7 +225,7 @@ bool CControlProcess::InitializeProcess()
 	MY_TRACETIME( cRunningTimer, L"Before new CControlTray" );
 
 	/* タスクトレイにアイコン作成 */
-	m_pcTray = new CControlTray;
+	m_pcTray = new CControlTray(std::move(secretVaultGrantLifecycle));
 
 	MY_TRACETIME( cRunningTimer, L"After new CControlTray" );
 
@@ -240,11 +284,17 @@ bool CControlProcess::MainLoop()
 */
 void CControlProcess::OnExitProcess()
 {
+	if (m_pcTray) m_pcTray->ShutdownExtensionHost();
+	StopControlPlatform();
 	GetDllShareData().m_sHandles.m_hwndTray = nullptr;
 }
 
 CControlProcess::~CControlProcess()
 {
+	// InitializeProcess failures do not reach OnExitProcess. Keep destruction as
+	// the idempotent rollback owner for every partial startup branch.
+	if (m_pcTray) m_pcTray->ShutdownExtensionHost();
+	StopControlPlatform();
 	delete m_pcTray;
 
 	if( m_hMutexCP ){
@@ -257,3 +307,64 @@ CControlProcess::~CControlProcess()
 	}
 	::CloseHandle( m_hMutex );
 };
+
+bool CControlProcess::StartControlPlatform()
+{
+	using namespace platform::controlipc;
+	try {
+		if (m_controlPlatformRuntime) {
+			return m_controlPlatformRuntime->State() == EControlPlatformRuntimeState::Running;
+		}
+
+		const auto profileDirectory = TryGetResolvedProfileDirectory();
+		if (!profileDirectory) {
+			TopErrorMessage(nullptr,
+				L"プラットフォームサービスの初期化に失敗しました。\n"
+				L"共有設定のプロファイルディレクトリを取得できませんでした。");
+			return false;
+		}
+		ControlPlatformRuntimeOptions options;
+		options.profileDirectory = *profileDirectory;
+		options.storageDirectory = platform::profiles::BuildProfilePlatformMetadataDirectory(*profileDirectory);
+		options.legacyProfileAlias = GetProfileName();
+
+		auto runtime = std::make_unique<CControlPlatformRuntime>(std::move(options));
+		const auto result = runtime->Start();
+		if (result.code != EControlPlatformRuntimeResultCode::Running &&
+			result.code != EControlPlatformRuntimeResultCode::AlreadyRunning) {
+			const int authorityStatus = result.authorityResult
+				? static_cast<int>(result.authorityResult->status) : -1;
+			const int storageStatus = result.storageOpenResult
+				? static_cast<int>(result.storageOpenResult->status) : -1;
+			const int hostStatus = result.hostResult
+				? static_cast<int>(result.hostResult->code) : -1;
+			TopErrorMessage(nullptr,
+				L"プラットフォームサービスの初期化に失敗しました。\n"
+				L"runtime=%d authority=%d storage=%d host=%d",
+				static_cast<int>(result.code), authorityStatus, storageStatus, hostStatus);
+			return false;
+		}
+
+		m_controlPlatformRuntime = std::move(runtime);
+		return true;
+	}
+	catch (...) {
+		TopErrorMessage(nullptr, L"プラットフォームサービスの初期化中に予期しないエラーが発生しました。");
+		return false;
+	}
+}
+
+void CControlProcess::StopControlPlatform() noexcept
+{
+	if (!m_controlPlatformRuntime) return;
+	try {
+		const auto result = m_controlPlatformRuntime->Stop();
+		if (result.state != platform::controlipc::EControlPlatformRuntimeState::Stopped) {
+			::OutputDebugStringW(L"Control platform runtime did not reach Stopped during process shutdown.\n");
+		}
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Control platform runtime shutdown raised an unexpected exception.\n");
+	}
+	m_controlPlatformRuntime.reset();
+}

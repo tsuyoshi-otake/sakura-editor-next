@@ -38,6 +38,9 @@ typedef int FigureRenderType;
 //! 通常テキスト描画
 class CFigure_Text final : public CFigure{
 public:
+	//! A single UTF-16 code unit that can share one fixed-grid GDI text run.
+	static bool IsBlockRenderableCodeUnit(wchar_t code) noexcept;
+
 	// 文字列を進める
 	static FigureRenderType GetRenderType(SColorStrategyInfo* pInfo);
 

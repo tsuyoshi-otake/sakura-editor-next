@@ -69,6 +69,7 @@ BOOL CViewCommander::HandleCommand(
 	//	May. 19, 2006 genta 上位16bitに送信元の識別子が入るように変更したので
 	//	下位16ビットのみを取り出す
 	//	Jul.  7, 2007 genta 定数と比較するためにシフトしないで使う
+	const EFunctionCode originalCommand = nCommand;
 	int nCommandFrom = nCommand & ~0xffff;
 	nCommand = (EFunctionCode)LOWORD( nCommand );
 
@@ -174,7 +175,18 @@ BOOL CViewCommander::HandleCommand(
 	//	途中で処理の打ち切りを行ってはいけない
 	// -------------------------------------
 
-	switch( nCommand ){
+	const auto workingCopyDispatch = GetEditWindow()->TryExecuteWorkingCopyFileCommand({
+		.functionCode = originalCommand,
+		.redraw = bRedraw,
+		.lparam1 = lparam1,
+		.lparam2 = lparam2,
+		.lparam3 = lparam3,
+		.lparam4 = lparam4,
+	});
+	if (workingCopyDispatch.handled) {
+		bRet = workingCopyDispatch.legacyResult;
+	}
+	else switch( nCommand ){
 	case F_WCHAR:	/* 文字入力 */
 		{
 			Command_WCHAR( (wchar_t)lparam1 );

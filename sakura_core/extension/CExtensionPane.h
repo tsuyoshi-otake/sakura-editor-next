@@ -17,7 +17,7 @@
 #include <vector>
 
 #include "extension/CExtensionManager.h"
-#include "extension/COpenVsxClient.h"
+#include "extension/openvsx/OpenVsxProductionClient.h"
 #include "window/CWnd.h"
 
 /*!
@@ -55,7 +55,10 @@ public:
 	//! ペインの最小幅（DPI 拡大前の論理ピクセル）
 	static constexpr int kMinWidth = 160;
 
-	CExtensionPane();
+	CExtensionPane(
+		config::IConfigurationService& configurationService,
+		std::wstring canonicalProfileId,
+		HWND controlProcessWindow);
 	~CExtensionPane() override;
 
 	/*!
@@ -95,6 +98,8 @@ private:
 		SOpenVsxExtension	ext;					//!< Install の対象
 		std::wstring		sUniqueId;				//!< Uninstall の対象
 		std::wstring		sTargetName;			//!< 進捗表示に使う名前
+		// Search/Install only.  This client owns its network composition and has no runtime/config reference.
+		std::shared_ptr<extension::openvsx::IOpenVsxRegistryClient> registryClient;
 
 		// -- ワーカーが設定する -- //
 		bool					bSucceeded = false;
@@ -157,6 +162,9 @@ private:
 	//! ジョブをワーカースレッドへ投入する
 	void StartJob( std::shared_ptr<SJob> pJob );
 
+	//! A single active job makes a reset after INT_MAX safe: no prior completion can collide.
+	int AllocateJobSerial() noexcept;
+
 	//! ジョブの完了を受け取る
 	void FinishJob( int nSerial );
 
@@ -172,6 +180,9 @@ private:
 	HFONT	m_hFont             = nullptr;
 
 	CExtensionManager		m_cManager;		//!< 導入済みの列挙にのみ使う（UI スレッド専用）
+	config::IConfigurationService& m_configurationService;	//!< Used only before a worker starts.
+	std::wstring			m_canonicalProfileId;	//!< Canonical profile authority id for the OpenVSX factory.
+	HWND					m_controlProcessWindow = nullptr;	//!< Control-owned extension host broker window.
 	std::vector<SRow>		m_rows;			//!< 一覧の内容
 	std::shared_ptr<SJob>	m_pJob;			//!< 実行中のジョブ。無ければ空
 	int						m_nNextSerial = 1;

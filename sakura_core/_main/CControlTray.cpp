@@ -42,6 +42,7 @@
 #include "util/module.h"
 #include "util/shell.h"
 #include "util/window.h"
+#include "util/string_ex.h"
 #include "util/string_ex2.h"
 #include "env/CShareData.h"
 #include "env/CShareData_IO.h"
@@ -58,6 +59,7 @@
 #include "config/app_constants.h"
 #include "apiwrap/DarkMode.h"
 #include "extension/CExtensionHostController.h"
+#include "extension/CExtensionManager.h"
 
 #define ID_HOTKEY_TRAYMENU	0x1234
 
@@ -260,18 +262,21 @@ static LRESULT CALLBACK CControlTrayWndProc(
 // CControlTray
 //	@date 2002.2.17 YAZAKI CShareDataのインスタンスは、CProcessにひとつあるのみ。
 CControlTray::CControlTray()
+	: CControlTray(nullptr)
+{
+}
+
+CControlTray::CControlTray(std::shared_ptr<IExtensionHostSecretVaultGrantLifecycle> secretVaultGrantLifecycle)
+	: m_extensionHostSecretVaultGrantLifecycle(std::move(secretVaultGrantLifecycle))
 {
 	/* 共有データ構造体のアドレスを返す */
 	m_pShareData = &GetDllShareData();
-
-	return;
 }
 
 CControlTray::~CControlTray()
 {
-	if (m_extensionHostController) m_extensionHostController->Shutdown();
+	ShutdownExtensionHost();
 	delete m_pcPropertyManager;
-	return;
 }
 
 /////////////////////////////////////////////////////////////////////////////
@@ -341,13 +346,46 @@ HWND CControlTray::Create( HINSTANCE hInstance )
 
 	m_pcPropertyManager = new CPropertyManager();
 	m_pcPropertyManager->Create( GetTrayHwnd(), &m_hIcons, &m_cMenuDrawer );
-	m_extensionHostController = std::make_unique<CExtensionHostController>();
+	m_extensionHostController = std::make_unique<CExtensionHostController>(
+		std::move(m_extensionHostSecretVaultGrantLifecycle));
 	std::wstring extensionHostDiagnostic;
-	(void)m_extensionHostController->Initialize(GetIniFileName().parent_path(), extensionHostDiagnostic);
+	if (m_extensionHostController->Initialize(GetIniFileName().parent_path(), extensionHostDiagnostic)) {
+		(void)RefreshExtensionHostInventory();
+	}
 
 	m_szLanguageDll = GetDllShareData().m_Common.m_sWindow.m_szLanguageDll;
 
 	return GetTrayHwnd();
+}
+
+void CControlTray::ShutdownExtensionHost() noexcept
+{
+	if (m_extensionHostController) {
+		m_extensionHostController->Shutdown();
+	}
+}
+
+bool CControlTray::RefreshExtensionHostInventory() noexcept
+{
+	if (!m_extensionHostController) return false;
+
+	try {
+		const auto profileDirectory = GetIniFileName().parent_path();
+		const CExtensionManager extensionManager(profileDirectory / L"extensions");
+		const auto installedExtensions = extensionManager.EnumInstalled();
+
+		std::vector<std::string> extensionIds;
+		extensionIds.reserve(installedExtensions.size());
+		for (const auto& installed : installedExtensions) {
+			extensionIds.emplace_back(wcstou8s(installed.sUniqueId));
+		}
+
+		return m_extensionHostController->RefreshSecretVaultExtensionInventory(extensionIds);
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Failed to refresh the extension-host Secret Vault inventory.\n");
+		return false;
+	}
 }
 
 //! タスクトレイにアイコンを登録する
@@ -584,6 +622,19 @@ int CControlTray::CleanupInvalidEditWindows(bool requestShutdownWhenEmpty)
 	return deletedCount;
 }
 
+bool CControlTray::IsRegisteredEditorLeaseOwner(HWND editorWindow, std::uint32_t editorProcessId) const noexcept
+{
+	if (!m_pShareData || !editorWindow || editorProcessId == 0 || !IsSakuraMainWindow(editorWindow)) return false;
+	DWORD windowProcessId = 0;
+	if (::GetWindowThreadProcessId(editorWindow, &windowProcessId) == 0 || windowProcessId != editorProcessId) return false;
+	const int editorCount = m_pShareData->m_sNodes.m_nEditArrNum;
+	if (editorCount < 0 || editorCount > MAX_EDITWINDOWS) return false;
+	for (int i = 0; i < editorCount; ++i) {
+		if (m_pShareData->m_sNodes.m_pEditArr[i].GetHwnd() == editorWindow) return true;
+	}
+	return false;
+}
+
 /* メッセージ処理 */
 //@@@ 2001.12.26 YAZAKI MRUリストは、CMRUに依頼する
 LRESULT CControlTray::DispatchEvent(
@@ -666,10 +717,24 @@ LRESULT CControlTray::DispatchEvent(
 		return 1;
 
 	case MYWM_EXTENSION_HOST_ACQUIRE:
-		return m_extensionHostController && m_extensionHostController->AcquireLease(static_cast<std::uint32_t>(wParam));
+		if (m_extensionHostController) {
+			const auto editorWindow = reinterpret_cast<HWND>(lParam);
+			const auto editorProcessId = static_cast<std::uint32_t>(wParam);
+			if (IsRegisteredEditorLeaseOwner(editorWindow, editorProcessId) &&
+				m_extensionHostController->AcquireLease(editorProcessId)) {
+				// Pinning the process handle closes the PID-reuse race only if the
+				// registered HWND still identifies that PID after OpenProcess.
+				if (IsRegisteredEditorLeaseOwner(editorWindow, editorProcessId)) return 1;
+				m_extensionHostController->ReleaseLease(editorProcessId);
+			}
+		}
+		return 0;
 
 	case MYWM_EXTENSION_HOST_RELEASE:
-		if (m_extensionHostController) m_extensionHostController->ReleaseLease(static_cast<std::uint32_t>(wParam));
+		if (m_extensionHostController && IsRegisteredEditorLeaseOwner(
+			reinterpret_cast<HWND>(lParam), static_cast<std::uint32_t>(wParam))) {
+			m_extensionHostController->ReleaseLease(static_cast<std::uint32_t>(wParam));
+		}
 		return 0;
 
 	case MYWM_EXTENSION_HOST_ACCEPT:
@@ -680,6 +745,9 @@ LRESULT CControlTray::DispatchEvent(
 		if (m_extensionHostController) m_extensionHostController->NotifyHostLost(
 			static_cast<std::uint64_t>(wParam), static_cast<std::uint32_t>(lParam));
 		return 0;
+
+	case MYWM_EXTENSION_HOST_REFRESH_INVENTORY:
+		return RefreshExtensionHostInventory();
 
 	case MYWM_HTMLHELP:
 		{
@@ -1763,7 +1831,7 @@ void CControlTray::OnDestroy()
 	if (GetTrayHwnd() == nullptr)
 		return;	// 既に破棄されている
 
-	if (m_extensionHostController) m_extensionHostController->Shutdown();
+	ShutdownExtensionHost();
 
 	// ホットキーの破棄
 	::UnregisterHotKey( GetTrayHwnd(), ID_HOTKEY_TRAYMENU );

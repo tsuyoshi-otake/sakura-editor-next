@@ -16,7 +16,7 @@
 #include <string>
 #include <vector>
 
-#include "extension/COpenVsxClient.h"
+#include "extension/openvsx/IOpenVsxRegistryClient.h"
 
 //! 導入済み拡張
 struct SInstalledExtension {
@@ -47,6 +47,9 @@ public:
 
 	CExtensionManager();
 
+	//! 明示的な導入先を使う。隔離された integration/test profile と埋め込み用途向け。
+	explicit CExtensionManager(std::filesystem::path baseDir);
+
 	//! 導入先フォルダー（末尾は区切り文字なし）
 	const std::filesystem::path& GetBaseDir() const noexcept { return m_baseDir; }
 
@@ -57,11 +60,16 @@ public:
 		マニフェストの存在を確認する。途中で失敗した場合は導入先を残さない。
 
 		@param[in]  ext		導入する拡張
+		@param[in]  registryClient	Open VSX の型付き取得境界。HTTP/proxy 設定はここへ閉じ込める
 		@param[out] errorMsg	失敗理由（未ローカライズの技術的詳細）
+		@param[in]  requestCancellation	共有 request の中止 token。無ければ request 側の中止は行わない
+		@param[in]  pCancelled	既存の install/uninstall worker 用中止フラグ
 	*/
 	bool Install(
 		const SOpenVsxExtension& ext,
+		extension::openvsx::IOpenVsxRegistryClient& registryClient,
 		std::wstring& errorMsg,
+		const platform::request::IRequestCancellation* requestCancellation = nullptr,
 		const std::atomic<bool>* pCancelled = nullptr);
 
 	//! 導入済み拡張を列挙する

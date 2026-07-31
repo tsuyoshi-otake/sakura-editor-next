@@ -92,7 +92,25 @@ VOID_NOTIFY2(BeforeLoad,SLoadInfo*)
 CORE_NOTIFY2(Load,const SLoadInfo&)
 VOID_NOTIFY2(Loading,int)
 VOID_NOTIFY2(AfterLoad,const SLoadInfo&)
-VOID_NOTIFY2(FinalLoad,ELoadResult)
+
+ELoadFinalizationStatus CDocSubject::NotifyFinalLoad(ELoadResult eLoadResult) noexcept
+{
+	ELoadFinalizationStatus result = ELoadFinalizationStatus::Succeeded;
+	const int count = GetListenerCount();
+	for (int index = 0; index < count; ++index) {
+		try {
+			if (GetListener(index)->OnFinalLoad(eLoadResult) == ELoadFinalizationStatus::Failed) {
+				result = ELoadFinalizationStatus::Failed;
+			}
+		}
+		catch (...) {
+			// Finalization is an all-listener terminal barrier.  One broken listener
+			// must not prevent later listeners from releasing their state.
+			result = ELoadFinalizationStatus::Failed;
+		}
+	}
+	return result;
+}
 
 DEF_NOTIFY2(CheckSave,SSaveInfo*)
 DEF_NOTIFY2(PreBeforeSave,SSaveInfo*)

@@ -32,8 +32,17 @@
     <Filter Include="Test Files\workbench">
       <UniqueIdentifier>{d3a288e7-580f-4876-9595-500ae1997d6e}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\debug">
+      <UniqueIdentifier>{35aec67f-66a9-4b9d-9838-1f8e2d3e1140}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Test Files\platform">
       <UniqueIdentifier>{2b3bb0f2-9253-4128-a7c0-5c926e53be53}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\platform\controlipc">
+      <UniqueIdentifier>{b8c4d661-7779-42bc-829a-a78d4c995156}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\config">
+      <UniqueIdentifier>{fd73669b-2b65-4cdb-a56c-c504ce143d35}</UniqueIdentifier>
     </Filter>
     <Filter Include="Test Files\terminal">
       <UniqueIdentifier>{1e1bdd3c-4abc-489a-813e-3009a5c42279}</UniqueIdentifier>
@@ -91,9 +100,57 @@
     <ClCompile Include="..\src\test\cpp\tests1\window\CustomUiAutomationProviderTest.cpp">
       <Filter>Test Files\window</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\agent\LoadFinalizationTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\window\DocumentTabActionLayoutTest.cpp">
 	  <Filter>Test Files\window</Filter>
 	</ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\debug\LaunchConfigurationCatalogTest.cpp">
+      <Filter>Test Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\FolderTaskCatalogRegistryTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskConfigurationCatalogTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskExecutionServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskTerminalSessionFactoryTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\PortForwardingServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\debug\DapProtocolCodecTest.cpp">
+      <Filter>Test Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\debug\DapSessionTest.cpp">
+      <Filter>Test Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\debug\DebugConsoleModelTest.cpp">
+      <Filter>Test Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentSourceControllerTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceResourceDescriptorsTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
@@ -103,20 +160,221 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ControlPlatformWorkbenchLayoutMementoStoreTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ControlPlatformWorkingCopyPersistenceStoreTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditDocWorkingCopyPersistenceAdapterTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchContributionRegistryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchCommandRegistryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutMementoCodecTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutStateServiceTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemsOutputPanelProjectionTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\NativeWorkbenchToolRequestTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditorServiceLegacyAdapterTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EmptyEditorSurfaceModelTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EditorCoreServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EditorCoreRecoveredInputAdopterTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EditorCoreWorkingCopyCaptureContextSourceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EditorWorkingCopyCoordinatorTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EditorWorkingCopyLifecycleTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\EditorWorkingCopyLifecycleBridgeTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkingCopyPersistenceCodecTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBootstrapContextTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\Windows11PlatformTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp">
       <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\FileServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\PlatformServiceRegistryTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\RequestServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpRequestRuntimeTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\JsoncDocumentTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\LegacyExtensionSecretVaultReaderTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultLegacyMigrationCoordinatorTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultCapabilityServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultExtensionGrantAuthorityTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\WindowsDpapiSecretVaultServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\AtomicFileStorageServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\StorageServiceTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ProfileAuthorityStoreTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ProfileBootstrapSnapshotTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcProtocolTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcNamedPipeTransportTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcSecurityTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRpcServerAdapterTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSecretVaultRpcTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlStorageRpcTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlStorageRpcServerAdapterTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformEndpointTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformEndpointDiscoveryReaderTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRuntimeTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformServiceHostTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformClientTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorControlPlatformRuntimeTest.cpp">
+	  <Filter>Test Files\platform\controlipc</Filter>
+	</ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorSecretVaultClientTest.cpp">
+      <Filter>Test Files\platform\controlipc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionHostSecretVaultGrantLifecycleTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionHostControllerTest.cpp">
+	  <Filter>Test Files</Filter>
+	</ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\SecretVaultStorageTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\UriIdentityTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileBootstrapTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\profiles\DurableUserDataProfileRegistryServiceTest.cpp">
+	  <Filter>Test Files\platform\profiles</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ControlUserDataProfileRegistryTest.cpp">
+	  <Filter>Test Files\platform\profiles</Filter>
+	</ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\platform\Win32FileSystemProviderTest.cpp">
+      <Filter>Test Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationServiceTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationNetworkPolicyTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationProxyServiceTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationFileSourceControllerTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\JsoncConfigurationSourceTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\editing\JsoncConfigurationEditorTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceContextServiceTest.cpp">
+      <Filter>Test Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp">
       <Filter>Test Files\terminal</Filter>
@@ -250,6 +508,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionclientreconnectpolicy.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensiondocumentbridge.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
@@ -296,6 +557,12 @@
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxRequestServiceAdapterTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxProductionClientTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-ctextmetrics.cpp">

@@ -6,8 +6,82 @@
 */
 #include "pch.h"
 #include "view/CTextMetrics.h"
+#include "view/figures/CFigureStrategy.h"
 #include <vector>
 #include <Windows.h>
+
+namespace {
+class GdiTextSurface final {
+public:
+	GdiTextSurface(HDC referenceDc, HFONT font, int width, int height)
+	{
+		m_dc = CreateCompatibleDC(referenceDc);
+		if (nullptr == m_dc) {
+			return;
+		}
+		m_bitmap = CreateCompatibleBitmap(referenceDc, width, height);
+		if (nullptr == m_bitmap) {
+			return;
+		}
+		m_oldBitmap = SelectObject(m_dc, m_bitmap);
+		m_oldFont = SelectObject(m_dc, font);
+		if (!IsValid()) {
+			return;
+		}
+		SetTextColor(m_dc, RGB(0, 0, 0));
+		SetBkColor(m_dc, RGB(255, 255, 255));
+		SetBkMode(m_dc, OPAQUE);
+		PatBlt(m_dc, 0, 0, width, height, WHITENESS);
+	}
+
+	~GdiTextSurface()
+	{
+		if (nullptr != m_dc && nullptr != m_oldFont && HGDI_ERROR != m_oldFont) {
+			SelectObject(m_dc, m_oldFont);
+		}
+		if (nullptr != m_dc && nullptr != m_oldBitmap && HGDI_ERROR != m_oldBitmap) {
+			SelectObject(m_dc, m_oldBitmap);
+		}
+		if (nullptr != m_bitmap) {
+			DeleteObject(m_bitmap);
+		}
+		if (nullptr != m_dc) {
+			DeleteDC(m_dc);
+		}
+	}
+
+	bool IsValid() const noexcept
+	{
+		return nullptr != m_dc && nullptr != m_bitmap
+			&& nullptr != m_oldBitmap && HGDI_ERROR != m_oldBitmap
+			&& nullptr != m_oldFont && HGDI_ERROR != m_oldFont;
+	}
+
+	HDC Get() const noexcept
+	{
+		return m_dc;
+	}
+
+private:
+	HDC m_dc{};
+	HBITMAP m_bitmap{};
+	HGDIOBJ m_oldBitmap{};
+	HGDIOBJ m_oldFont{};
+};
+
+bool IsLegacyBlockRenderableCodeUnit(const wchar_t code) noexcept
+{
+	return (0x20 <= code && code <= 0x7f)
+		|| (0x2e80 <= code && code <= 0x2fdf)
+		|| (0x3041 <= code && code <= 0x3096)
+		|| (0x30a1 <= code && code <= 0x30fa)
+		|| (0x3400 <= code && code <= 0x4dbf)
+		|| (0x4e00 <= code && code <= 0x9fff)
+		|| (0xf900 <= code && code <= 0xfaff)
+		|| (0xff01 <= code && code <= 0xff5e)
+		|| (0xff61 <= code && code <= 0xff9f);
+}
+}
 
 class CTextMetricsWithGDI : public testing::Test {
 protected:
@@ -34,6 +108,31 @@ protected:
 	HFONT font;
 	HFONT oldFont;
 };
+
+TEST(CFigureText, BlockRenderableCodeUnit)
+{
+	// Existing fixed-grid ranges remain block-safe.
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(L'A'));
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x3042)); // Hiragana A
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x4e00)); // CJK ideograph
+
+	// Common spacing punctuation can join the surrounding Japanese text run.
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x3001)); // ideographic comma
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x3002)); // ideographic full stop
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x300c)); // left corner bracket
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x301c)); // wave dash
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x30fb)); // Katakana middle dot
+	EXPECT_TRUE(CFigure_Text::IsBlockRenderableCodeUnit(0x30fc)); // prolonged sound mark
+
+	// Characters that participate in a cluster or multi-code-unit sequence keep
+	// the existing one-character fallback.
+	EXPECT_FALSE(CFigure_Text::IsBlockRenderableCodeUnit(0x302a)); // combining tone mark
+	EXPECT_FALSE(CFigure_Text::IsBlockRenderableCodeUnit(0x3031)); // paired vertical repeat mark
+	EXPECT_FALSE(CFigure_Text::IsBlockRenderableCodeUnit(0x3099)); // combining voiced mark
+	EXPECT_FALSE(CFigure_Text::IsBlockRenderableCodeUnit(0x200d)); // zero-width joiner
+	EXPECT_FALSE(CFigure_Text::IsBlockRenderableCodeUnit(0xfe0f)); // variation selector
+	EXPECT_FALSE(CFigure_Text::IsBlockRenderableCodeUnit(0xd83c)); // high surrogate
+}
 
 TEST_F(CTextMetricsWithGDI, Update1)
 {
@@ -70,6 +169,62 @@ TEST_F(CTextMetricsWithGDI, Update1)
 	std::vector<int> v;
 	metrics.GenerateDxArray2(&v, L"a", 1, cache);
 	EXPECT_EQ(v[0], 1);
+}
+
+TEST_F(CTextMetricsWithGDI, BlockRenderingMatchesFragmentedJapanesePunctuation)
+{
+	constexpr wchar_t text[] =
+		L"日本語\u3001句点\u3002\u3008括弧\u3009\u3010隅括弧\u3011"
+		L"\u301c波\u3030\u30a0カタカナ\u30fb長音\u30fc\u30ff";
+	constexpr int surfaceWidth = 1024;
+	constexpr int surfaceHeight = 64;
+	const int length = static_cast<int>(_countof(text) - 1);
+	std::vector<int> dx(length, 24);
+
+	GdiTextSurface fragmented(dc, font, surfaceWidth, surfaceHeight);
+	GdiTextSurface block(dc, font, surfaceWidth, surfaceHeight);
+	ASSERT_TRUE(fragmented.IsValid());
+	ASSERT_TRUE(block.IsValid());
+
+	RECT blockClip{ 0, 0, 24 * length, surfaceHeight };
+	ASSERT_TRUE(ExtTextOutW(
+		block.Get(), 0, 0, ETO_CLIPPED | ETO_OPAQUE, &blockClip, text, length, dx.data()));
+
+	int start = 0;
+	int drawX = 0;
+	while (start < length) {
+		int end = start + 1;
+		if (IsLegacyBlockRenderableCodeUnit(text[start])) {
+			while (end < length && IsLegacyBlockRenderableCodeUnit(text[end])) {
+				++end;
+			}
+		}
+		int segmentWidth = 0;
+		for (int index = start; index < end; ++index) {
+			segmentWidth += dx[index];
+		}
+		RECT segmentClip{ drawX, 0, drawX + segmentWidth, surfaceHeight };
+		ASSERT_TRUE(ExtTextOutW(
+			fragmented.Get(), drawX, 0, ETO_CLIPPED | ETO_OPAQUE,
+			&segmentClip, text + start, end - start, dx.data() + start));
+		drawX += segmentWidth;
+		start = end;
+	}
+
+	int differentPixels = 0;
+	POINT firstDifference{ -1, -1 };
+	for (int y = 0; y < surfaceHeight; ++y) {
+		for (int x = 0; x < surfaceWidth; ++x) {
+			if (GetPixel(fragmented.Get(), x, y) != GetPixel(block.Get(), x, y)) {
+				if (0 == differentPixels) {
+					firstDifference = POINT{ x, y };
+				}
+				++differentPixels;
+			}
+		}
+	}
+	EXPECT_EQ(0, differentPixels)
+		<< "first differing pixel: (" << firstDifference.x << ", " << firstDifference.y << ")";
 }
 
 TEST_F(CTextMetricsWithGDI, Update2)

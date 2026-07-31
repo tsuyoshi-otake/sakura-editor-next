@@ -9,15 +9,20 @@
 #pragma once
 
 #include "extension/CExtensionCommandPalette.h"
+#include "extension/CExtensionClientReconnectPolicy.h"
 #include "extension/CExtensionDocumentBridge.h"
 #include "extension/CExtensionHostSharedState.h"
 #include "extension/CExtensionNotificationCenter.h"
 #include "extension/CExtensionPipeTransport.h"
 #include "extension/CExtensionRpcProtocol.h"
-#include "extension/CExtensionSecretStorage.h"
+#include "extension/IExtensionSecretStorage.h"
 #include "extension/CExtensionStatusBar.h"
 #include "extension/CExtensionTrustStore.h"
 #include "extension/CExtensionViewRegistry.h"
+
+class CExtensionWorkbenchServiceBridge;
+namespace workbench::output { class OutputService; }
+namespace workbench::problems { class MarkerService; }
 #include "extension/CExtensionWorkbenchDispatcher.h"
 
 #include <atomic>
@@ -60,7 +65,10 @@ public:
 		HWND editorWindow,
 		HWND brokerWindow,
 		std::filesystem::path profileDirectory,
-		std::shared_ptr<CExtensionViewRegistry> views);
+		std::shared_ptr<CExtensionViewRegistry> views,
+		std::unique_ptr<IExtensionSecretSessionStorage> secrets = {},
+		workbench::problems::MarkerService* markerService = nullptr,
+		workbench::output::OutputService* outputService = nullptr);
 	~CExtensionService();
 	CExtensionService(const CExtensionService&) = delete;
 	CExtensionService& operator=(const CExtensionService&) = delete;
@@ -166,9 +174,19 @@ private:
 	void Enqueue(std::function<void()> task);
 	void WorkerMain() noexcept;
 	void WorkerInitialize();
-	void EnsureConnectedWorker(bool acquireLease);
-	void HandlePipeBytesWorker(std::vector<std::uint8_t> bytes);
-	void HandlePipeClosedWorker(std::uint32_t errorCode, std::wstring diagnostic);
+	void RequestReconnectWorker();
+	void EnsureConnectedWorker(std::uint64_t attemptToken);
+	void ProcessReconnectDeadlineWorker(CExtensionClientReconnectPolicy::TimePoint now);
+	[[nodiscard]] double NextReconnectJitter() noexcept;
+	void HandlePipeBytesWorker(
+		std::uint64_t attemptToken,
+		std::uint64_t connectionGeneration,
+		std::vector<std::uint8_t> bytes);
+	void HandlePipeClosedWorker(
+		std::uint64_t attemptToken,
+		std::uint64_t connectionGeneration,
+		std::uint32_t errorCode,
+		std::wstring diagnostic);
 	void HandleMessageWorker(const SExtensionRpcMessage& message);
 	bool HandleDocumentVersionGapWorker(const SExtensionRpcMessage& message);
 	bool HandleEditorOptionsNotificationWorker(const SExtensionRpcMessage& message);
@@ -227,12 +245,13 @@ private:
 	CExtensionCommandPalette m_commands;
 	CExtensionStatusBar m_statusBar;
 	CExtensionNotificationCenter m_notifications;
-	CExtensionSecretStorage m_secrets;
+	std::unique_ptr<IExtensionSecretSessionStorage> m_secrets;
 	CExtensionTrustStore m_trustStore;
 	CExtensionDiagnostics m_diagnostics;
 	CExtensionQuickInput m_quickInput;
 	CExtensionOutputChannel m_output;
 	CExtensionProgressCenter m_progress;
+	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_workbenchServiceBridge;
 	ApplyEditHandler m_applyEditHandler;
 	EditorOptionsHandler m_editorOptionsHandler;
 
@@ -242,6 +261,8 @@ private:
 	std::condition_variable m_taskReady;
 	std::deque<std::function<void()>> m_tasks;
 	std::atomic_bool m_taskQueueOverloaded = false;
+	std::atomic_uint64_t m_pipeCallbackAttemptToken = 0;
+	std::atomic_uint64_t m_pipeCallbackGeneration = 0;
 	std::thread m_worker;
 
 	// worker-thread-only state
@@ -265,4 +286,7 @@ private:
 	bool m_connected = false;
 	bool m_registered = false;
 	bool m_sidebarVisible = false;
+	CExtensionClientReconnectPolicy m_reconnectPolicy;
+	std::uint64_t m_connectionAttemptToken = 0;
+	std::uint32_t m_reconnectJitterState = 0x9e3779b9u;
 };

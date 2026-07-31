@@ -41,6 +41,8 @@ struct SExtensionHostBrokerSnapshot {
 	std::size_t leaseCount = 0;
 	std::wstring profileHash;
 	std::wstring bootId;
+	//! Native-editor session capability. Never crosses the Node host boundary.
+	std::wstring extensionHostSessionId;
 	std::wstring pipeName;
 	std::string lastDiagnostic;
 };
@@ -90,6 +92,7 @@ public:
 	SExtensionHostBrokerSnapshot GetSnapshot() const;
 	static std::wstring ComputeProfileHash(const std::filesystem::path& profileDirectory);
 	static std::wstring GenerateBootId();
+	static std::wstring GenerateExtensionHostSessionId();
 
 private:
 	void Dispatch(
@@ -109,6 +112,7 @@ private:
 	IExtensionHostBrokerObserver* m_observer = nullptr;
 	std::wstring m_profileHash;
 	std::wstring m_bootId;
+	std::wstring m_extensionHostSessionId;
 	std::wstring m_pipeName;
 	std::uint64_t m_identityGeneration = 0;
 	std::string m_lastDiagnostic;

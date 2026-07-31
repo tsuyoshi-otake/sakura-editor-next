@@ -5,7 +5,11 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "pch.h"
+#include "extension/CExtensionSecretStorage.h"
 #include "extension/CExtensionWorkbenchDispatcher.h"
+#include "extension/CExtensionWorkbenchServiceBridge.h"
+#include "workbench/output/OutputService.h"
+#include "workbench/problems/MarkerService.h"
 
 #include <filesystem>
 
@@ -19,9 +23,10 @@ protected:
 			(L"sakura-workbench-dispatcher-" + std::to_wstring(::GetCurrentProcessId()) + L"-" +
 				std::to_wstring(::GetTickCount64()));
 		m_secrets = std::make_unique<CExtensionSecretStorage>(m_root);
+		m_bridge = std::make_unique<CExtensionWorkbenchServiceBridge>(&m_markerService, &m_outputService);
 		m_dispatcher = std::make_unique<CExtensionWorkbenchDispatcher>(
 			m_context, m_commands, m_status, m_notifications, m_views, *m_secrets,
-			m_diagnostics, m_quickInput, m_output, m_progress);
+			m_diagnostics, m_quickInput, m_output, m_progress, m_bridge.get());
 	}
 
 	void TearDown() override
@@ -54,6 +59,9 @@ protected:
 	CExtensionQuickInput m_quickInput;
 	CExtensionOutputChannel m_output;
 	CExtensionProgressCenter m_progress;
+	workbench::problems::MarkerService m_markerService;
+	workbench::output::OutputService m_outputService;
+	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_bridge;
 	std::unique_ptr<CExtensionSecretStorage> m_secrets;
 	std::unique_ptr<CExtensionWorkbenchDispatcher> m_dispatcher;
 };
@@ -104,7 +112,7 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesCommandsStatusBarAndTreeViewsWit
 	EXPECT_EQ(L"test.run", roots.front().command);
 }
 
-TEST_F(CExtensionWorkbenchDispatcherTest, RoutesDpapiSecretsWithoutLeakingValuesIntoErrors)
+TEST_F(CExtensionWorkbenchDispatcherTest, RoutesLegacyDpapiSecretsAndRejectsEnumeration)
 {
 	auto stored = Dispatch("secrets/store",
 		R"({"extensionId":"test.sample","key":"token","value":"\u79d8\u5bc6-value"})",
@@ -120,8 +128,11 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesDpapiSecretsWithoutLeakingValues
 	EXPECT_NE(std::string::npos, read.resultJson.find("value"));
 	auto keys = Dispatch("secrets/keys",
 		R"({"extensionId":"test.sample"})", EExtensionRpcMessageKind::Request);
-	ASSERT_TRUE(keys.success) << keys.errorMessage;
-	EXPECT_NE(std::string::npos, keys.resultJson.find("token"));
+	EXPECT_FALSE(keys.success);
+	EXPECT_EQ(-32601, keys.errorCode);
+	EXPECT_NE(std::string::npos, keys.errorMessage.find("UnsupportedCapability"));
+	EXPECT_EQ(std::string::npos, keys.errorMessage.find("token"));
+	EXPECT_EQ(std::string::npos, keys.resultJson.find("token"));
 	EXPECT_TRUE(Dispatch("secrets/delete",
 		R"({"extensionId":"test.sample","key":"token"})", EExtensionRpcMessageKind::Request).success);
 }
@@ -163,13 +174,13 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesDiagnosticsOutputAndProgressWith
 	ASSERT_EQ(1u, m_diagnostics.ForUri(L"file:///test.md").size());
 
 	ASSERT_TRUE(Dispatch("workbench/output/create", R"({
-		"handle":"output:12","extensionId":"test.sample","generation":12,"name":"Sample"
+		"handle":"output:12","extensionId":"test.sample","generation":12,"name":"Sample","operationId":"output-create-12"
 	})").success);
 	ASSERT_TRUE(Dispatch("workbench/output/append", R"({
-		"handle":"output:12","extensionId":"test.sample","generation":12,"value":"line one\n"
+		"handle":"output:12","extensionId":"test.sample","generation":12,"value":"line one\n","operationId":"output-append-12"
 	})").success);
 	ASSERT_TRUE(Dispatch("workbench/output/show", R"({
-		"handle":"output:12","extensionId":"test.sample","generation":12
+		"handle":"output:12","extensionId":"test.sample","generation":12,"operationId":"output-show-12"
 	})").success);
 	auto channels = m_output.Snapshot();
 	ASSERT_EQ(1u, channels.size());
@@ -193,6 +204,83 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesDiagnosticsOutputAndProgressWith
 	EXPECT_TRUE(m_diagnostics.Problems().empty());
 	EXPECT_TRUE(m_output.Snapshot().empty());
 	EXPECT_TRUE(m_progress.Snapshot().empty());
+	EXPECT_TRUE(m_markerService.Snapshot().resources.empty());
+	EXPECT_TRUE(m_outputService.Snapshot().channels.empty());
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, UsesMarkerServiceForAtomicCollectionClearAndOwnerGenerations)
+{
+	const auto set = [this](std::string_view owner, const std::uint64_t generation, std::string_view collection,
+		std::string_view uri, std::string_view message) {
+		return Dispatch("languages/diagnostics/set", std::string(R"({"extensionId":")") + std::string(owner) +
+			R"(","generation":)" + std::to_string(generation) + R"(,"collection":")" + std::string(collection) +
+			R"(","uri":")" + std::string(uri) + R"(","diagnostics":[{"range":{"start":{"line":0,"character":1},"end":{"line":0,"character":3}},"message":")" +
+			std::string(message) + R"(","severity":1,"source":"lint","code":"W1"}]})");
+	};
+	ASSERT_TRUE(set("one.extension", 4, "lint", "file:///one.md", "one").success);
+	ASSERT_TRUE(set("one.extension", 4, "lint", "file:///two.md", "two").success);
+	ASSERT_TRUE(set("one.extension", 4, "single", "file:///delete.md", "delete").success);
+	ASSERT_TRUE(set("sibling.extension", 3, "lint", "file:///sibling.md", "sibling").success);
+	ASSERT_TRUE(Dispatch("languages/diagnostics/delete",
+		R"({"extensionId":"one.extension","generation":4,"collection":"single","uri":"file:///delete.md"})").success);
+	EXPECT_TRUE(Dispatch("languages/diagnostics/delete",
+		R"({"extensionId":"one.extension","generation":4,"collection":"single","uri":"file:///delete.md"})").success);
+	ASSERT_TRUE(Dispatch("languages/diagnostics/clear",
+		R"({"extensionId":"one.extension","generation":4,"collection":"lint"})").success);
+	EXPECT_TRUE(Dispatch("languages/diagnostics/clear",
+		R"({"extensionId":"one.extension","generation":4,"collection":"lint"})").success);
+	const auto cleared = m_markerService.Snapshot();
+	ASSERT_EQ(1u, cleared.resources.size());
+	EXPECT_EQ(L"file:///sibling.md", cleared.resources.front().resource.ToString());
+	EXPECT_TRUE(m_diagnostics.ForUri(L"file:///one.md").empty());
+	EXPECT_FALSE(set("one.extension", 3, "lint", "file:///stale.md", "stale").success);
+	EXPECT_FALSE(Dispatch("languages/diagnostics/set", R"({
+		"extensionId":"one.extension","generation":5,"collection":"lint","uri":"not a uri","diagnostics":[]
+	})").success);
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, UsesOutputServiceForAllOperationsReplayAndPreserveFocus)
+{
+	const auto dispatch = [this](std::string_view method, std::string_view operationId, std::string_view extra = {}) {
+		return Dispatch(std::string(method), std::string(R"({"handle":"output:bridge","extensionId":"test.sample","generation":17,"operationId":")") +
+			std::string(operationId) + R"(")" + std::string(extra) + "}");
+	};
+	ASSERT_TRUE((dispatch("workbench/output/create", "bridge-create", R"(,"name":"Bridge","languageId":"plaintext","source":"test")")).success);
+	ASSERT_TRUE((dispatch("workbench/output/append", "bridge-append", R"(,"value":"one")")).success);
+	ASSERT_TRUE((dispatch("workbench/output/append", "bridge-append", R"(,"value":"one")")).success);
+	EXPECT_FALSE((dispatch("workbench/output/append", "bridge-append", R"(,"value":"conflict")")).success);
+	ASSERT_TRUE((dispatch("workbench/output/replace", "bridge-replace", R"(,"value":"replacement")")).success);
+	ASSERT_TRUE((dispatch("workbench/output/clear", "bridge-clear")).success);
+	ASSERT_TRUE((dispatch("workbench/output/append", "bridge-append-two", R"(,"value":"two")")).success);
+	ASSERT_TRUE((dispatch("workbench/output/show", "bridge-show", R"(,"preserveFocus":true)")).success);
+	ASSERT_TRUE((dispatch("workbench/output/show", "bridge-show-again", R"(,"preserveFocus":true)")).success);
+	ASSERT_TRUE((dispatch("workbench/output/hide", "bridge-hide")).success);
+	const auto hidden = m_outputService.Snapshot();
+	ASSERT_EQ(1u, hidden.channels.size());
+	EXPECT_FALSE(hidden.channels.front().visible);
+	EXPECT_TRUE(hidden.channels.front().lastShowPreservedFocus);
+	EXPECT_EQ("two", hidden.channels.front().text);
+	EXPECT_EQ(L"two", m_output.Snapshot().front().text); // replay did not duplicate the legacy projection.
+	ASSERT_TRUE(dispatch("workbench/output/dispose", "bridge-dispose").success);
+	EXPECT_TRUE(m_outputService.Snapshot().channels.empty());
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, DisposesOnlyTheExactBridgeOwnerAndAllOwnersOnHostClear)
+{
+	const auto create = [this](std::string_view owner, const std::uint64_t generation, std::string_view handle, std::string_view operationId) {
+		return Dispatch("workbench/output/create", std::string(R"({"handle":")") + std::string(handle) + R"(","extensionId":")" +
+			std::string(owner) + R"(","generation":)" + std::to_string(generation) + R"(,"name":"Channel","operationId":")" + std::string(operationId) + R"("})");
+	};
+	ASSERT_TRUE(create("one.extension", 1, "output-one", "dispose-create-one").success);
+	ASSERT_TRUE(create("two.extension", 1, "output-two", "dispose-create-two").success);
+	ASSERT_TRUE(Dispatch("workbench/extensions/removeGeneration",
+		R"({"extensionId":"one.extension","generation":1})").success);
+	auto snapshot = m_outputService.Snapshot();
+	ASSERT_EQ(1u, snapshot.channels.size());
+	EXPECT_EQ("output-two", snapshot.channels.front().channelId);
+	ASSERT_TRUE(create("three.extension", 1, "output-three", "dispose-create-three").success);
+	ASSERT_TRUE(m_bridge->DisposeAll(m_diagnostics, m_output));
+	EXPECT_TRUE(m_outputService.Snapshot().channels.empty());
 }
 
 TEST_F(CExtensionWorkbenchDispatcherTest, MapsLanguageStatusToNativeStatusBarAndCleansGeneration)

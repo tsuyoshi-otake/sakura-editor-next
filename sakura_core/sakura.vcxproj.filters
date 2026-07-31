@@ -343,6 +343,48 @@
     <ClInclude Include="..\sakura_core\config\build_config.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\config\BuiltinConfigurationDescriptors.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\CConfigurationNetworkPolicy.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\CConfigurationProxyService.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\CConfigurationService.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\CWorkspaceContextService.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\ConfigurationFileSourceController.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\ConfigurationFileWatchController.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\SettingsWritebackCoordinator.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\ConfigurationTypes.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\IConfigurationService.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\JsoncConfigurationSource.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\editing\CJsoncConfigurationEditor.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\IWorkspaceContextService.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\config\maxdata.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
@@ -946,7 +988,46 @@
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\IWorkbenchRuntime.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchContributionRegistry.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchIds.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\layout\IWorkbenchLayoutMementoStore.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutMementoCodec.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateTypes.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\win32\BuiltinPartProjection.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h">
@@ -976,10 +1057,283 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EditorCoreService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EditorCoreTypes.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EditorCommandIds.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EditorGroupModel.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EditorWorkingCopyCoordinator.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\EditorWorkingCopyTypes.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\IEditorWorkingCopyBackend.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\ILegacyEditorBackend.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\IWorkingCopyPersistenceStore.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\CEditDocWorkingCopyPersistenceAdapter.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\EditorCoreRecoveredInputAdopter.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\EditorCoreWorkingCopyCaptureContextSource.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycle.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycleBridge.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycleTypes.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceTypes.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceConfigurationDocumentParser.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\FolderTaskCatalogRegistry.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\TaskExecutionService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\output\OutputService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\ports\PortForwardingService.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\debug\dap\DapProtocolCodec.h">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\debug\dap\DapSession.h">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\debug\console\DebugConsoleModel.h">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\debug\launch\LaunchConfigurationCatalog.h">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentSourceController.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceConfigurationTypes.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceResourceDescriptors.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\Windows11Platform.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\foundation\PlatformLifecycleCoordinator.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\filesystem\CFileService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\filesystem\IFileService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\filesystem\IFileSystemProvider.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\foundation\PlatformServiceRegistry.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileRegistry.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+	<ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileRegistryCodec.h">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\platform\profiles\DurableUserDataProfileRegistryService.h">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\platform\profiles\ControlUserDataProfileRegistry.h">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClInclude>
+    <ClInclude Include="..\sakura_core\platform\profiles\ProfileAuthorityStore.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\profiles\ProfileAuthorityIdentity.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\profiles\ProfileBootstrapSnapshot.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\serialization\JsoncDocument.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\request\RequestService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\request\win32\WinHttpRequestRuntime.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultCapabilityService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultExtensionGrantAuthority.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultLegacyMigrationCoordinator.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\CWindowsDpapiSecretVaultService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultCapabilityService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultExtensionGrantAuthority.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultLegacyMigrationCoordinator.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\LegacyExtensionSecretVaultReader.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultCapabilityTypes.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultExtensionGrantAuthorityTypes.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultTypes.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcProtocol.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+	<ClInclude Include="..\sakura_core\platform\controlipc\ControlProfileRpc.h">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpc.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpoint.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRuntime.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformServiceHost.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformClient.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+	<ClInclude Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.h">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClInclude>
+    <ClInclude Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\security\CurrentUserSecurityAttributes.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\storage\CAtomicFileStorageService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\storage\CInMemoryStorageService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\storage\IStorageService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\storage\StorageTypes.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\uri\UriIdentity.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h">
@@ -1129,6 +1483,12 @@
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.h">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\_main\CProcess.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
@@ -1216,6 +1576,9 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchServiceBridge.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchUi.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
@@ -1237,6 +1600,12 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionHostController.h">
       <Filter>extension</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantLifecycle.h">
+      <Filter>extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantRuntimeAdapter.h">
+      <Filter>extension</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionHostProcess.h">
       <Filter>extension</Filter>
     </ClInclude>
@@ -1255,6 +1624,12 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionSecretStorage.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionSecretVaultStorage.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\IExtensionSecretStorage.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionStatusBar.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
@@ -1267,6 +1642,9 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionService.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionClientReconnectPolicy.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CHttpClient.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
@@ -1274,6 +1652,18 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\COpenVsxClient.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\openvsx\IOpenVsxRegistryClient.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\openvsx\OpenVsxProductionClient.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\openvsx\OpenVsxProtocol.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\openvsx\OpenVsxRequestServiceAdapter.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extmodule\CBregexp.h">
@@ -2347,7 +2737,37 @@
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchContributionRegistry.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchIds.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutMementoCodec.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp">
@@ -2377,10 +2797,172 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\DocumentRegistry.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\EditorCoreService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\EditorGroupModel.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\EditorWorkingCopyCoordinator.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\persistence\CEditDocWorkingCopyPersistenceAdapter.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\persistence\EditorCoreRecoveredInputAdopter.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\persistence\EditorCoreWorkingCopyCaptureContextSource.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycle.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycleBridge.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\platform\Windows11Platform.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileRegistry.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+	<ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileRegistryCodec.cpp">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\platform\profiles\DurableUserDataProfileRegistryService.cpp">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\platform\profiles\ControlUserDataProfileRegistry.cpp">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClCompile>
+    <ClCompile Include="..\sakura_core\platform\profiles\ProfileAuthorityStore.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\profiles\ProfileBootstrapSnapshot.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\request\RequestService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\request\win32\WinHttpRequestRuntime.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultCapabilityService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultExtensionGrantAuthority.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultLegacyMigrationCoordinator.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\CWindowsDpapiSecretVaultService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\LegacyExtensionSecretVaultReader.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\secrets\SecretVaultTypes.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcProtocol.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+	<ClCompile Include="..\sakura_core\platform\controlipc\ControlProfileRpc.cpp">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpc.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpoint.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRuntime.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformServiceHost.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformClient.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+	<ClCompile Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.cpp">
+	  <Filter>Cpp Source Files\platform</Filter>
+	</ClCompile>
+    <ClCompile Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\security\CurrentUserSecurityAttributes.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\storage\CAtomicFileStorageService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\storage\CInMemoryStorageService.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\storage\StorageTypes.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp">
@@ -2513,6 +3095,12 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\CProcess.cpp">
@@ -2653,6 +3241,9 @@
     <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchServiceBridge.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchUi.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
@@ -2674,6 +3265,12 @@
     <ClCompile Include="..\sakura_core\extension\CExtensionHostController.cpp">
       <Filter>extension</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantLifecycle.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantRuntimeAdapter.cpp">
+      <Filter>extension</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionHostProcess.cpp">
       <Filter>extension</Filter>
     </ClCompile>
@@ -2690,6 +3287,9 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionSecretStorage.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionSecretVaultStorage.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionStatusBar.cpp">
@@ -2711,6 +3311,12 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\COpenVsxClient.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\openvsx\OpenVsxProductionClient.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\openvsx\OpenVsxProtocol.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extmodule\CBregexp.cpp">
@@ -2750,6 +3356,84 @@
       <Filter>Cpp Source Files\uiparts</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\config\build_config.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\BuiltinConfigurationDescriptors.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\CConfigurationNetworkPolicy.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\CConfigurationProxyService.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\CConfigurationService.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\CWorkspaceContextService.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\ConfigurationFileSourceController.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\ConfigurationFileWatchController.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\SettingsWritebackCoordinator.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\ConfigurationTypes.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\serialization\JsoncDocument.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceConfigurationDocumentParser.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\debug\launch\LaunchConfigurationCatalog.cpp">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentSourceController.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\FolderTaskCatalogRegistry.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\TaskExecutionService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\output\OutputService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\ports\PortForwardingService.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\debug\dap\DapProtocolCodec.cpp">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\debug\dap\DapSession.cpp">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\debug\console\DebugConsoleModel.cpp">
+      <Filter>Cpp Source Files\debug</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceResourceDescriptors.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\recent\CRecentExcludeFile.cpp">

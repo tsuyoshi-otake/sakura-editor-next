@@ -18,6 +18,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -39,6 +40,9 @@ public:
 	virtual void RefreshString();
 
 	virtual std::filesystem::path GetIniFileName() const;
+	// Returns the directory frozen in legacy shared data after the shared-data
+	// mapping is attached.  This deliberately does not resolve profile options.
+	[[nodiscard]] std::optional<std::filesystem::path> TryGetResolvedProfileDirectory() const;
 
 protected:
 	CProcess();

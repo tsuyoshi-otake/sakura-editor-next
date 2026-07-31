@@ -97,6 +97,7 @@ public:
 	static CMutex& GetMutexShareWork();
 
 	DLLSHAREDATA*	GetDllShareDataPtr() noexcept { return m_pShareData; }
+	[[nodiscard]] const DLLSHAREDATA* GetDllShareDataPtr() const noexcept { return m_pShareData; }
 
 protected:
 	/*

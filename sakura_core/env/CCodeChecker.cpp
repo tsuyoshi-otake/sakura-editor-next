@@ -223,7 +223,7 @@ void CCodeChecker::OnFinalSave(ESaveResult eSaveResult)
 //                     ロード時チェック                        //
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 
-void CCodeChecker::OnFinalLoad(ELoadResult eLoadResult)
+ELoadFinalizationStatus CCodeChecker::OnFinalLoad(ELoadResult eLoadResult)
 {
 	if(eLoadResult==LOADED_LOSESOME){
 		ErrorMessage(
@@ -231,4 +231,5 @@ void CCodeChecker::OnFinalLoad(ELoadResult eLoadResult)
 			LS(STR_CODECHECKER_LOSESOME_ROAD)
 		);
 	}
+	return ELoadFinalizationStatus::Succeeded;
 }

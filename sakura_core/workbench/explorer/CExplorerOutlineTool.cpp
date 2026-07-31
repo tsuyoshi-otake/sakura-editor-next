@@ -131,20 +131,35 @@ void CExplorerOutlineTool::SetPalette(const theme::ThemePalette& palette)
 	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
 }
 
-void CExplorerOutlineTool::SetOutlineExpanded(bool expanded, bool notify)
+void CExplorerOutlineTool::SetOutlineExpanded(bool expanded)
 {
 	if (m_outlineExpanded == expanded) return;
 	m_outlineExpanded = expanded;
 	if (m_outline) m_outline->SetVisible(expanded);
 	LayoutChildren();
 	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
-	if (notify && m_callback) m_callback(expanded);
+}
+
+bool CExplorerOutlineTool::RequestOutlineExpanded(bool expanded) noexcept
+{
+	if (m_closed || m_outlineExpanded == expanded) return !m_closed;
+	if (m_callback) {
+		try {
+			if (!m_callback(expanded)) return false;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+	SetOutlineExpanded(expanded);
+	return true;
 }
 
 void CExplorerOutlineTool::FocusOutline()
 {
 	ShowSourceControl(false);
-	SetOutlineExpanded(true, true);
+	// Focus is a projection/activation operation, not a user expansion request.
+	SetOutlineExpanded(true);
 	if (m_outline) m_outline->Activate();
 }
 
@@ -190,7 +205,7 @@ LRESULT CExplorerOutlineTool::HandleMessage(UINT message, WPARAM wParam, LPARAM 
 	case WM_LBUTTONUP: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		if (IsOutlineHeaderPoint(point)) {
-			SetOutlineExpanded(!m_outlineExpanded, true);
+			(void)RequestOutlineExpanded(!m_outlineExpanded);
 			return 0;
 		}
 		break;

@@ -24,7 +24,7 @@ const transport = {
     if (method === 'env/clipboard/writeText') return {};
     if (method === 'workbench/notification/show') return {};
     if (method === 'workbench/context/set') return {};
-    if (method.startsWith('secrets/')) return method === 'secrets/keys' ? { keys: [] } : {};
+    if (method.startsWith('secrets/')) return {};
     throw new Error(`UnsupportedCapability: ${activeExtensionId} requires ${method}`);
   },
 };

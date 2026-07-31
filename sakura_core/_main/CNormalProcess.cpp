@@ -44,6 +44,20 @@
 #include "CSelectLang.h"
 #include "env/CShareData.h"
 #include "config/system_constants.h"
+#include "_main/ControlPlatformWorkbenchLayoutMementoStore.h"
+#include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
+#include "extension/CExtensionSecretVaultStorage.h"
+#include "platform/controlipc/EditorControlPlatformRuntime.h"
+#include "platform/profiles/ProfileBootstrapSnapshot.h"
+#include "platform/profiles/UserDataProfileBootstrap.h"
+#include "platform/uri/UriIdentity.h"
+#include "workbench/CWorkbenchRuntime.h"
+#include "workbench/WorkbenchBootstrapContext.h"
+#include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
+#include "workbench/editor/persistence/WorkingCopyPersistenceTypes.h"
+#include "workbench/tasks/TaskTerminalSessionFactory.h"
+
+#include <limits>
 
 namespace
 {
@@ -122,6 +136,67 @@ public:
 private:
 	HANDLE m_mutex;
 };
+
+std::optional<platform::uri::Uri> MakeAbsoluteFileUri(std::wstring_view input) noexcept
+{
+	if (input.empty()) return std::nullopt;
+	try {
+		std::error_code error;
+		auto absolute = std::filesystem::absolute(std::filesystem::path(input), error);
+		if (error) return std::nullopt;
+		absolute = absolute.lexically_normal();
+		if (absolute.empty() || !absolute.is_absolute()) return std::nullopt;
+		for (const auto& component : absolute) {
+			if (component == L"." || component == L"..") return std::nullopt;
+		}
+		auto uri = platform::uri::Uri::FromWindowsPath(absolute.native());
+		return uri ? std::move(uri.value) : std::nullopt;
+	}
+	catch (...) {
+		return std::nullopt;
+	}
+}
+
+std::optional<std::string> EncodeWorkingCopyScopeId(std::wstring_view value) noexcept
+{
+	using namespace workbench::editor::persistence;
+	if (value.empty() || value.find(L'\0') != std::wstring_view::npos
+		|| value.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
+		return std::nullopt;
+	}
+	const int required = ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS,
+		value.data(), static_cast<int>(value.size()), nullptr, 0, nullptr, nullptr);
+	if (required <= 0
+		|| static_cast<std::size_t>(required) > kMaximumWorkingCopyPersistenceIdBytes) {
+		return std::nullopt;
+	}
+	try {
+		std::string result(static_cast<std::size_t>(required), '\0');
+		if (::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
+				static_cast<int>(value.size()), result.data(), required, nullptr, nullptr) != required) {
+			return std::nullopt;
+		}
+		return IsValidWorkingCopyPersistenceUtf8(
+			result, false, kMaximumWorkingCopyPersistenceIdBytes)
+			? std::optional{ std::move(result) } : std::nullopt;
+	}
+	catch (...) {
+		return std::nullopt;
+	}
+}
+
+std::optional<workbench::editor::persistence::WorkingCopyPersistenceScope>
+ResolveWorkingCopyPersistenceScope(std::string profileId,
+	const config::WorkspaceContextSnapshot& workspace) noexcept
+{
+	using namespace workbench::editor::persistence;
+	WorkingCopyPersistenceScope scope{ .profileId = std::move(profileId) };
+	if (workspace.kind != config::EWorkspaceKind::Empty) {
+		scope.workspaceId = EncodeWorkingCopyScopeId(workspace.workspaceIdentityKey);
+		if (!scope.workspaceId) return std::nullopt;
+	}
+	return scope.IsValid() ? std::optional{ std::move(scope) } : std::nullopt;
+}
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -139,6 +214,9 @@ CNormalProcess::~CNormalProcess()
 	CPluginManager::resetInstance();
 
 	CEditApp::resetInstance();
+	// Workbench, plugin, and extension consumers must release their platform
+	// references before the process-owned discovery/client/cache composition.
+	StopEditorControlPlatform();
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -263,6 +341,169 @@ bool CNormalProcess::InitializeProcess()
 		}
 	}
 
+	// A process that only forwarded an already-open file returns above and does
+	// not acquire an editor platform session. A real editor process freezes the
+	// control-owned endpoint before plugins or the workbench can observe state.
+	if (!StartEditorControlPlatform()) {
+		return false;
+	}
+
+	// Freeze all profile, workspace and launch identities before plugins or the
+	// native workbench can observe them. A loose startup file remains a document
+	// resource and never authorizes workspace or .vscode discovery.
+	const auto platformIdentity = m_editorControlPlatformRuntime
+		? m_editorControlPlatformRuntime->Identity() : std::nullopt;
+	const auto profileDirectory = TryGetResolvedProfileDirectory();
+	if (!platformIdentity || !profileDirectory) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"プロファイルの起動情報を確定できませんでした。");
+		return false;
+	}
+	auto controlProfile = platform::profiles::ResolveProfileBootstrapSnapshot(
+		platformIdentity->profileId,
+		platformIdentity->minimumGeneration,
+		profileDirectory->native());
+	if (!controlProfile.Resolved()) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"制御プロファイルのリソース情報が無効です (status=%d)。",
+			static_cast<int>(controlProfile.status));
+		return false;
+	}
+
+	std::optional<platform::uri::Uri> explicitFolderUri;
+	if (CCommandLine::getInstance()->IsSetWorkspaceFolder()) {
+		explicitFolderUri = MakeAbsoluteFileUri(
+			CCommandLine::getInstance()->GetWorkspaceFolder());
+		if (!explicitFolderUri) {
+			TopErrorMessage(nullptr,
+				L"ワークベンチの初期化に失敗しました。\n"
+				L"作業フォルダーを絶対リソースとして解決できませんでした。");
+			return false;
+		}
+	}
+	std::optional<platform::uri::Uri> explicitWorkspaceConfigUri;
+	if (CCommandLine::getInstance()->IsSetWorkspaceConfig()) {
+		explicitWorkspaceConfigUri = MakeAbsoluteFileUri(
+			CCommandLine::getInstance()->GetWorkspaceConfig());
+		if (!explicitWorkspaceConfigUri) {
+			TopErrorMessage(nullptr,
+				L"ワークベンチの初期化に失敗しました。\n"
+				L"ワークスペース構成ファイルを絶対リソースとして解決できませんでした。");
+			return false;
+		}
+	}
+	std::optional<platform::uri::Uri> initialDocumentUri;
+	if (fi.m_szPath[0] != L'\0') {
+		initialDocumentUri = MakeAbsoluteFileUri(fi.m_szPath);
+		if (!initialDocumentUri) {
+			TopErrorMessage(nullptr,
+				L"ワークベンチの初期化に失敗しました。\n"
+				L"起動ドキュメントをリソースとして解決できませんでした。");
+			return false;
+		}
+	}
+	auto terminalLaunchDirectoryUri = MakeAbsoluteFileUri(L".");
+	if (!terminalLaunchDirectoryUri) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"ターミナルの起動ディレクトリを確定できませんでした。");
+		return false;
+	}
+
+	// Fetch one immutable, generation-pinned registry document through the
+	// editor runtime facade. The editor never opens the control-owned registry
+	// or its storage directly.
+	platform::controlipc::ControlProfileRpcRequest profileSnapshotRequest;
+	profileSnapshotRequest.operation = platform::controlipc::EControlProfileRpcOperation::Snapshot;
+	const auto profileSnapshot = m_editorControlPlatformRuntime->ExecuteProfile(profileSnapshotRequest);
+	if (profileSnapshot.code != platform::controlipc::EEditorControlProfileExecuteCode::Succeeded
+		|| !profileSnapshot.response
+		|| profileSnapshot.response->terminalStatus != platform::controlipc::EControlIpcTerminalStatus::Succeeded
+		|| !profileSnapshot.response->result.Succeeded()
+		|| profileSnapshot.response->snapshotDocument.empty()) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"ユーザーデータプロファイルのスナップショットを取得できませんでした (status=%d)。",
+			static_cast<int>(profileSnapshot.code));
+		return false;
+	}
+
+	platform::profiles::UserDataProfileBootstrapRequest userDataRequest {
+		.controlAuthority = { platformIdentity->profileId, platformIdentity->minimumGeneration },
+		.controlProfileRoot = profileDirectory->native(),
+		.resourceRootMode = platform::profiles::UserDataProfileResourceRootMode::ProfileIdNamespace,
+	};
+	if (explicitFolderUri) {
+		userDataRequest.selection.workspaceUri = *explicitFolderUri;
+	} else if (explicitWorkspaceConfigUri) {
+		userDataRequest.selection.workspaceUri = *explicitWorkspaceConfigUri;
+	} else {
+		// This fixed compatibility token is stable across process restarts and
+		// deliberately distinct from the process-local window instance identity.
+		// A future control-owned window identity store can replace it when
+		// multiple independently associated empty windows are supported.
+		userDataRequest.selection.emptyWindowId = L"empty-window:default-window";
+	}
+	auto userDataProfile = platform::profiles::ResolveUserDataProfileBootstrap(
+		userDataRequest, profileSnapshot.response->snapshotDocument);
+	if (userDataProfile.Resolved()
+		&& userDataProfile.snapshot->SelectedProfile().kind == platform::profiles::UserDataProfileKind::Default) {
+		// Preserve the existing default-profile resources until a durable,
+		// marker-backed namespace migration has completed. Named and transient
+		// profiles never use this compatibility bridge.
+		userDataRequest.resourceRootMode =
+			platform::profiles::UserDataProfileResourceRootMode::LegacyControlRootForDefault;
+		userDataProfile = platform::profiles::ResolveUserDataProfileBootstrap(
+			userDataRequest, profileSnapshot.response->snapshotDocument);
+	}
+	if (!userDataProfile.Resolved()) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"ユーザーデータプロファイルの選択またはリソース情報が無効です (status=%d)。",
+			static_cast<int>(userDataProfile.status));
+		return false;
+	}
+
+	workbench::WorkbenchBootstrapRequest bootstrapRequest {
+		.controlProfile = std::move(*controlProfile.snapshot),
+		.userDataProfile = std::move(*userDataProfile.snapshot),
+		.windowInstanceIdentity = L"editor-process:" + std::to_wstring(::GetCurrentProcessId()),
+		.explicitFolderUri = std::move(explicitFolderUri),
+		.explicitWorkspaceConfigUri = std::move(explicitWorkspaceConfigUri),
+		.initialDocumentUri = std::move(initialDocumentUri),
+		.terminalLaunchDirectoryUri = std::move(terminalLaunchDirectoryUri),
+	};
+	auto bootstrap = workbench::ResolveWorkbenchBootstrapContext(std::move(bootstrapRequest));
+	if (!bootstrap.Resolved()) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"起動コンテキストが無効です (status=%d)。",
+			static_cast<int>(bootstrap.status));
+		return false;
+	}
+	auto workingCopyScope = ResolveWorkingCopyPersistenceScope(
+		platformIdentity->profileId, bootstrap.context->Workspace());
+	if (!workingCopyScope) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"作業コピーの永続化スコープを確定できませんでした。");
+		return false;
+	}
+	auto extensionSecretStorage = CreateProductionExtensionSecretVaultStorage({
+		.profileDirectory = *profileDirectory,
+		.profileId = platformIdentity->profileId,
+		.profileHash = platformIdentity->profileHash,
+		.pinnedControlGeneration = platformIdentity->minimumGeneration,
+	});
+	if (!extensionSecretStorage) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"Secret Vault のクライアント境界を初期化できませんでした。");
+		return false;
+	}
+
 	// プラグイン読み込み
 	MY_TRACETIME( cRunningTimer, L"Before Init Jack" );
 	/* ジャック初期化 */
@@ -282,7 +523,23 @@ bool CNormalProcess::InitializeProcess()
 	}
 	// CEditAppを作成
 	m_pcEditApp = CEditApp::getInstance();
-	m_pcEditApp->Create(GetProcessInstance(), nGroupId);
+	workbench::WorkbenchRuntimeDependencies workbenchDependencies;
+	workbenchDependencies.layoutMementoStore =
+		std::make_unique<CControlPlatformWorkbenchLayoutMementoStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	workbenchDependencies.taskExecutionSessionFactory =
+		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();
+	auto workingCopyStore = std::make_unique<CControlPlatformWorkingCopyPersistenceStore>(
+		*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	if (!m_pcEditApp->Create(
+		GetProcessInstance(), nGroupId, std::move(*bootstrap.context), std::move(workbenchDependencies),
+		std::move(workingCopyStore), std::move(*workingCopyScope), *profileDirectory,
+		std::move(extensionSecretStorage))) {
+		TopErrorMessage(nullptr,
+			L"ワークベンチの初期化に失敗しました。\n"
+			L"設定またはワークスペースサービスを開始できませんでした。");
+		return false;
+	}
 	CEditWnd* pEditWnd = m_pcEditApp->GetEditWindow();
 
 	const auto hEditWnd = pEditWnd->GetHwnd();
@@ -294,6 +551,30 @@ bool CNormalProcess::InitializeProcess()
 	bDebugMode = CCommandLine::getInstance()->IsDebugMode();
 	bGrepMode  = CCommandLine::getInstance()->IsGrepMode();
 	bGrepDlg   = CCommandLine::getInstance()->IsGrepDlg();
+	const auto restoreResult = m_pcEditApp->RestoreWorkingCopies({
+		.explicitCommandLine = fi.m_szPath[0] != L'\0',
+		.multipleFiles = CCommandLine::getInstance()->GetFileNum() > 0,
+		.debugOrGrep = bDebugMode || bGrepMode,
+	});
+	if (restoreResult.status != workbench::editor::persistence::EEditorWorkingCopyLifecycleStatus::Succeeded
+		&& restoreResult.status != workbench::editor::persistence::EEditorWorkingCopyLifecycleStatus::NotApplicable
+		&& restoreResult.status != workbench::editor::persistence::EEditorWorkingCopyLifecycleStatus::Suppressed) {
+		if (restoreResult.reason
+			== workbench::editor::persistence::EEditorWorkingCopyLifecycleReason::CoreActivationFailed
+			|| restoreResult.reason
+			== workbench::editor::persistence::EEditorWorkingCopyLifecycleReason::NativeProjectionFailed) {
+			TopErrorMessage(nullptr,
+				L"作業コピーの回復を画面へ反映できませんでした。\n"
+				L"回復バックアップは保持されています (status=%d reason=%d)。",
+				static_cast<int>(restoreResult.status), static_cast<int>(restoreResult.reason));
+			return false;
+		}
+		wchar_t diagnostic[160]{};
+		::swprintf_s(diagnostic,
+			L"Working-copy restore completed without adoption (status=%d reason=%d).\n",
+			static_cast<int>(restoreResult.status), static_cast<int>(restoreResult.reason));
+		::OutputDebugStringW(diagnostic);
+	}
 
 	MY_TRACETIME( cRunningTimer, L"CheckFile" );
 
@@ -313,6 +594,7 @@ bool CNormalProcess::InitializeProcess()
 		// 文字コードを有効とする Uchi 2008/6/8
 		// 2010.06.16 Moca アウトプットは CCommnadLineで -TYPE=output 扱いとする
 		pEditWnd->SetDocumentTypeWhenCreate( fi.m_nCharCode, false, nType );
+		if (!pEditWnd->AdoptLegacyUntitledInput("debug")) return false;
 		pEditWnd->m_cDlgFuncList.Refresh();	// アウトラインを表示する
 	}
 	else if( bGrepMode ){
@@ -327,6 +609,7 @@ bool CNormalProcess::InitializeProcess()
 		}
 		GrepInfo gi;
 		CCommandLine::getInstance()->GetGrepInfo(&gi); // 2002/2/8 aroka ここに移動
+		if (!pEditWnd->AdoptLegacyUntitledInput("grep")) return false;
 		// Grep can run for a long time. Present the initialized editor before it starts.
 		pEditWnd->CommitStartupDrawTransaction();
 		if( !bGrepDlg ){
@@ -415,7 +698,9 @@ bool CNormalProcess::InitializeProcess()
 		CJackManager::getInstance()->InvokePlugins( PP_EDITOR_START, &pEditWnd->GetActiveView() );
 
 		//プラグイン：DocumentOpenイベント実行
-		CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_OPEN, &pEditWnd->GetActiveView() );
+		if (pEditWnd->HasActiveEditorInput()) {
+			CJackManager::getInstance()->InvokePlugins(PP_DOCUMENT_OPEN, &pEditWnd->GetActiveView());
+		}
 
 		if( !bGrepDlg && gi.bGrepStdout ){
 			// 即時終了
@@ -494,17 +779,8 @@ bool CNormalProcess::InitializeProcess()
 			}
 		}
 		else{
-			pEditWnd->GetDocument()->SetCurDirNotitle();	// (無題)ウィンドウ
-			// 2004.05.13 Moca ファイル名が与えられなくてもReadOnlyとタイプ指定を有効にする
-			pEditWnd->SetDocumentTypeWhenCreate(
-				fi.m_nCharCode,
-				bViewMode,	// ビューモードか
-				nType
-			);
-		}
-		if( !pEditWnd->GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath() ){
-			pEditWnd->GetDocument()->SetCurDirNotitle();	// (無題)ウィンドウ
-			CAppNodeManager::getInstance()->GetNoNameNumber( pEditWnd->GetHwnd() );
+			// No startup resource is a genuine empty editor group. The legacy CEditDoc
+			// remains an inert backing object until an explicit New/Open operation adopts it.
 			pEditWnd->UpdateCaption();
 		}
 	}
@@ -512,7 +788,7 @@ bool CNormalProcess::InitializeProcess()
 	SetMainWindow( pEditWnd->GetHwnd() );
 
 	//	YAZAKI 2002/05/30 IMEウィンドウの位置がおかしいのを修正。
-	pEditWnd->GetActiveView().SetIMECompFormPos();
+	if (pEditWnd->HasActiveEditorInput()) pEditWnd->GetActiveView().SetIMECompFormPos();
 
 	// Coalesce startup WM_SIZE/redraw work and reveal the final document once.
 	pEditWnd->CommitStartupDrawTransaction();
@@ -523,12 +799,12 @@ bool CNormalProcess::InitializeProcess()
 	CJackManager::getInstance()->InvokePlugins(PP_EDITOR_START, &pEditWnd->GetActiveView());
 
 	// 2006.09.03 ryoji オープン後自動実行マクロを実行する
-	if( !( bDebugMode || bGrepMode ) )
+	if( pEditWnd->HasActiveEditorInput() && !( bDebugMode || bGrepMode ) )
 		pEditWnd->GetDocument()->RunAutoMacro( GetDllShareData().m_Common.m_sMacro.m_nMacroOnOpened );
 
 	// 起動時マクロオプション
 	if (const auto pszMacro = CCommandLine::getInstance()->GetMacro();
-		pszMacro && pszMacro[0] != L'\0')
+		pEditWnd->HasActiveEditorInput() && pszMacro && pszMacro[0] != L'\0')
 	{
 		LPCWSTR pszMacroType = CCommandLine::getInstance()->GetMacroType();
 		if( pszMacroType == nullptr || pszMacroType[0] == L'\0' || _wcsicmp(pszMacroType, L"file") == 0 ){
@@ -539,7 +815,9 @@ bool CNormalProcess::InitializeProcess()
 	}
 
 	//プラグイン：DocumentOpenイベント実行
-	CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_OPEN, &pEditWnd->GetActiveView() );
+	if (pEditWnd->HasActiveEditorInput()) {
+		CJackManager::getInstance()->InvokePlugins(PP_DOCUMENT_OPEN, &pEditWnd->GetActiveView());
+	}
 
 	// 複数ファイル読み込み
 	OpenFiles( pEditWnd->GetHwnd() );
@@ -575,6 +853,72 @@ void CNormalProcess::OnExitProcess()
 {
 	/* プラグイン解放 */
 	CPluginManager::getInstance()->UnloadAllPlugin();		// Mpve here	2010/7/11 Uchi
+}
+
+bool CNormalProcess::StartEditorControlPlatform()
+{
+	using namespace platform::controlipc;
+	try {
+		if (m_editorControlPlatformRuntime) {
+			const auto result = m_editorControlPlatformRuntime->Start();
+			return result.code == EEditorControlPlatformRuntimeResultCode::Ready ||
+				result.code == EEditorControlPlatformRuntimeResultCode::AlreadyReady;
+		}
+
+		const auto profileDirectory = TryGetResolvedProfileDirectory();
+		if (!profileDirectory) {
+			TopErrorMessage(nullptr,
+				L"プラットフォームサービスへの接続に失敗しました。\n"
+				L"共有設定のプロファイルディレクトリを取得できませんでした。");
+			return false;
+		}
+
+		EditorControlPlatformRuntimeOptions options;
+		options.profileDirectory = *profileDirectory;
+		options.allowDegradedUnavailable = false;
+		options.clientOptions.retryJitterSalt = ::GetCurrentProcessId();
+		auto runtime = std::make_unique<CEditorControlPlatformRuntime>(std::move(options));
+		const auto result = runtime->Start();
+		if (result.code != EEditorControlPlatformRuntimeResultCode::Ready &&
+			result.code != EEditorControlPlatformRuntimeResultCode::AlreadyReady) {
+			const int clientOutcome = result.clientResult
+				? static_cast<int>(result.clientResult->outcome) : -1;
+			const int terminalStatus = result.clientResult
+				? static_cast<int>(result.clientResult->terminalStatus) : -1;
+			const int discoveryStatus = result.clientResult
+				? static_cast<int>(result.clientResult->discoveryDisposition) : -1;
+			const int transportStatus = result.clientResult
+				? static_cast<int>(result.clientResult->transportReason) : -1;
+			TopErrorMessage(nullptr,
+				L"プラットフォームサービスへの接続に失敗しました。\n"
+				L"runtime=%d state=%d client=%d terminal=%d discovery=%d transport=%d",
+				static_cast<int>(result.code), static_cast<int>(result.state), clientOutcome,
+				terminalStatus, discoveryStatus, transportStatus);
+			return false;
+		}
+
+		m_editorControlPlatformRuntime = std::move(runtime);
+		return true;
+	}
+	catch (...) {
+		TopErrorMessage(nullptr, L"プラットフォームサービスへの接続中に予期しないエラーが発生しました。");
+		return false;
+	}
+}
+
+void CNormalProcess::StopEditorControlPlatform() noexcept
+{
+	if (!m_editorControlPlatformRuntime) return;
+	try {
+		const auto result = m_editorControlPlatformRuntime->Stop();
+		if (result.state != platform::controlipc::EEditorControlPlatformRuntimeState::Stopped) {
+			::OutputDebugStringW(L"Editor control platform runtime did not reach Stopped during process shutdown.\n");
+		}
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Editor control platform runtime shutdown raised an unexpected exception.\n");
+	}
+	m_editorControlPlatformRuntime.reset();
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

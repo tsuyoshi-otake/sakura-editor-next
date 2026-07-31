@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "extension/CExtensionService.h"
+#include "extension/CExtensionWorkbenchServiceBridge.h"
 
 #include "config/system_constants.h"
 #include "extension/CExtensionManager.h"
@@ -29,7 +30,43 @@ using namespace std::chrono_literals;
 
 constexpr std::size_t kMaximumQueuedTasks = 2048;
 constexpr std::size_t kMaximumPendingRequests = 512;
+constexpr auto kExtensionPipeConnectTimeout = 500ms;
 constexpr std::wstring_view kFormatDocumentCommand = L"editor.action.formatDocument";
+
+class CUnavailableExtensionSecretStorage final : public IExtensionSecretSessionStorage {
+public:
+	SExtensionSecretStorageResult Store(
+		std::wstring_view, std::wstring_view, std::wstring_view) override
+	{
+		return Unsupported();
+	}
+	SExtensionSecretReadResult Get(std::wstring_view, std::wstring_view) override
+	{
+		SExtensionSecretReadResult result;
+		static_cast<SExtensionSecretStorageResult&>(result) = Unsupported();
+		return result;
+	}
+	SExtensionSecretStorageResult Delete(std::wstring_view, std::wstring_view) override
+	{
+		return Unsupported();
+	}
+	SExtensionSecretStorageResult BindSession(std::string_view, std::uint64_t) override
+	{
+		return { true, EExtensionSecretStorageStatus::Success, ERROR_SUCCESS, {} };
+	}
+	SExtensionSecretStorageResult ClearSession() noexcept override
+	{
+		return { true, EExtensionSecretStorageStatus::Success, ERROR_SUCCESS, {} };
+	}
+	void Stop() noexcept override {}
+
+private:
+	static SExtensionSecretStorageResult Unsupported()
+	{
+		return { false, EExtensionSecretStorageStatus::Unsupported, ERROR_NOT_SUPPORTED,
+			L"Secret Vault backend is not configured" };
+	}
+};
 
 const picojson::value* Find(const picojson::object& object, const char* key)
 {
@@ -147,14 +184,26 @@ CExtensionService::CExtensionService(
 	HWND editorWindow,
 	HWND brokerWindow,
 	std::filesystem::path profileDirectory,
-	std::shared_ptr<CExtensionViewRegistry> views)
+	std::shared_ptr<CExtensionViewRegistry> views,
+	std::unique_ptr<IExtensionSecretSessionStorage> secrets,
+	workbench::problems::MarkerService* markerService,
+	workbench::output::OutputService* outputService)
 	: m_editorWindow(editorWindow)
 	, m_brokerWindow(brokerWindow)
 	, m_profileDirectory(std::move(profileDirectory))
 	, m_views(views ? std::move(views) : std::make_shared<CExtensionViewRegistry>())
-	, m_secrets(m_profileDirectory / L"extensionData" / L"secrets")
+	, m_secrets(secrets ? std::move(secrets)
+		: std::unique_ptr<IExtensionSecretSessionStorage>(
+			std::make_unique<CUnavailableExtensionSecretStorage>()))
 	, m_trustStore(m_profileDirectory / L"extensionData" / L"extension-trust.json")
+	, m_workbenchServiceBridge(markerService || outputService
+		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService) : nullptr)
 {
+	const auto tick = static_cast<std::uint64_t>(::GetTickCount64());
+	const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
+	m_reconnectJitterState = static_cast<std::uint32_t>(
+		tick ^ (tick >> 32) ^ address ^ (address >> 32) ^ ::GetCurrentProcessId());
+	if (m_reconnectJitterState == 0) m_reconnectJitterState = 0x9e3779b9u;
 	RegisterBuiltInCommands();
 }
 
@@ -233,7 +282,7 @@ void CExtensionService::NotifyViewVisibility(bool visible)
 	Enqueue([this, visible]() {
 		m_sidebarVisible = visible;
 		if (!m_registered) {
-			if (visible) EnsureConnectedWorker(!m_leaseAcquired);
+			if (visible) RequestReconnectWorker();
 			return;
 		}
 		if (visible) ActivateContributedViewsWorker();
@@ -444,7 +493,11 @@ void CExtensionService::OnExtensionPipeBytes(std::vector<std::uint8_t> bytes) no
 {
 	if (m_stopping.load(std::memory_order_acquire)) return;
 	try {
-		Enqueue([this, bytes = std::move(bytes)]() mutable { HandlePipeBytesWorker(std::move(bytes)); });
+		const auto attemptToken = m_pipeCallbackAttemptToken.load(std::memory_order_acquire);
+		const auto generation = m_pipeCallbackGeneration.load(std::memory_order_acquire);
+		Enqueue([this, attemptToken, generation, bytes = std::move(bytes)]() mutable {
+			HandlePipeBytesWorker(attemptToken, generation, std::move(bytes));
+		});
 	} catch (...) {
 	}
 }
@@ -453,8 +506,10 @@ void CExtensionService::OnExtensionPipeClosed(std::uint32_t errorCode, std::wstr
 {
 	if (m_stopping.load(std::memory_order_acquire)) return;
 	try {
-		Enqueue([this, errorCode, diagnostic = std::move(diagnostic)]() mutable {
-			HandlePipeClosedWorker(errorCode, std::move(diagnostic));
+		const auto attemptToken = m_pipeCallbackAttemptToken.load(std::memory_order_acquire);
+		const auto generation = m_pipeCallbackGeneration.load(std::memory_order_acquire);
+		Enqueue([this, attemptToken, generation, errorCode, diagnostic = std::move(diagnostic)]() mutable {
+			HandlePipeClosedWorker(attemptToken, generation, errorCode, std::move(diagnostic));
 		});
 	} catch (...) {
 	}
@@ -482,44 +537,47 @@ void CExtensionService::WorkerMain() noexcept
 			std::function<void()> task;
 			bool overloaded = false;
 			bool documentTimerExpired = false;
+			bool reconnectTimerExpired = false;
 			{
 				std::unique_lock lock(m_taskMutex);
-				const auto readyTime = m_documentEvents.NextReadyTime();
+				const auto documentReadyTime = m_documentEvents.NextReadyTime();
+				const auto reconnectReadyTime = m_reconnectPolicy.NextDeadline();
+				std::optional<CExtensionClientReconnectPolicy::TimePoint> readyTime;
+				if (documentReadyTime && reconnectReadyTime) readyTime = std::min(*documentReadyTime, *reconnectReadyTime);
+				else readyTime = documentReadyTime ? documentReadyTime : reconnectReadyTime;
 				const auto ready = [this]() {
 					return m_stopping.load(std::memory_order_acquire) ||
 						m_taskQueueOverloaded.load(std::memory_order_acquire) || !m_tasks.empty();
 				};
 				if (readyTime) {
-					documentTimerExpired = !m_taskReady.wait_until(lock, *readyTime, ready);
+					(void)m_taskReady.wait_until(lock, *readyTime, ready);
 				} else {
 					m_taskReady.wait(lock, ready);
 				}
 				if (m_stopping.load(std::memory_order_acquire)) break;
-				if (documentTimerExpired) {
-					// No producer owns this timeout; the worker explicitly finalizes the batch below.
-				} else {
-				overloaded = m_taskQueueOverloaded.exchange(false, std::memory_order_acq_rel);
-				if (overloaded) {
-					m_tasks.clear();
-				} else {
-					task = std::move(m_tasks.front());
-					m_tasks.pop_front();
-				}
+				const auto now = CExtensionClientReconnectPolicy::Clock::now();
+				documentTimerExpired = documentReadyTime && now >= *documentReadyTime;
+				reconnectTimerExpired = reconnectReadyTime && now >= *reconnectReadyTime;
+				if (!documentTimerExpired && !reconnectTimerExpired) {
+					overloaded = m_taskQueueOverloaded.exchange(false, std::memory_order_acq_rel);
+					if (overloaded) {
+						m_tasks.clear();
+					} else {
+						task = std::move(m_tasks.front());
+						m_tasks.pop_front();
+					}
 				}
 			}
-			if (documentTimerExpired) {
-				DrainDocumentChangesWorker(CExtensionEventAggregator::Clock::now());
+			if (documentTimerExpired || reconnectTimerExpired) {
+				if (documentTimerExpired) DrainDocumentChangesWorker(CExtensionEventAggregator::Clock::now());
+				if (reconnectTimerExpired) ProcessReconnectDeadlineWorker(CExtensionClientReconnectPolicy::Clock::now());
 				continue;
 			}
 			if (overloaded) {
 				const bool reconnect = m_connected || m_awaitingHello;
 				FailConnectionWorker(ERROR_NOT_ENOUGH_MEMORY,
 					L"Extension RPC task queue limit exceeded", reconnect);
-				if (reconnect && m_leaseAcquired) {
-					Enqueue([this]() { EnsureConnectedWorker(false); });
-				} else {
-					Enqueue([this]() { WorkerInitialize(); });
-				}
+				if (!reconnect) RequestReconnectWorker();
 				continue;
 			}
 			try { task(); } catch (...) {}
@@ -535,13 +593,20 @@ void CExtensionService::WorkerMain() noexcept
 	if (m_transport) m_transport->Close();
 	m_transport.reset();
 	m_protocol.reset();
+	if (m_secrets) {
+		(void)m_secrets->ClearSession();
+		m_secrets->Stop();
+	}
 	if (m_leaseAcquired) {
 		DWORD_PTR ignored = 0;
 		(void)SendBrokerMessage(m_brokerWindow, MYWM_EXTENSION_HOST_RELEASE,
-			static_cast<WPARAM>(::GetCurrentProcessId()), 0, ignored);
+			static_cast<WPARAM>(::GetCurrentProcessId()), reinterpret_cast<LPARAM>(m_editorWindow), ignored);
 		m_leaseAcquired = false;
 	}
 	m_sharedState.Close();
+	m_pipeCallbackAttemptToken.store(0, std::memory_order_release);
+	m_pipeCallbackGeneration.store(0, std::memory_order_release);
+	m_reconnectPolicy.Shutdown();
 }
 
 void CExtensionService::WorkerInitialize()
@@ -555,12 +620,35 @@ void CExtensionService::WorkerInitialize()
 			m_installedRoots.push_back(root);
 		}
 	}
-	if (!m_installedRoots.empty()) EnsureConnectedWorker(true);
+	if (!m_installedRoots.empty()) RequestReconnectWorker();
 }
 
-void CExtensionService::EnsureConnectedWorker(bool acquireLease)
+void CExtensionService::RequestReconnectWorker()
 {
-	if (m_stopping.load(std::memory_order_acquire) || m_connected || m_awaitingHello) return;
+	if (m_stopping.load(std::memory_order_acquire) || m_installedRoots.empty()) return;
+	if (m_reconnectPolicy.RequestReconnect(CExtensionClientReconnectPolicy::Clock::now())) m_taskReady.notify_one();
+}
+
+void CExtensionService::ProcessReconnectDeadlineWorker(CExtensionClientReconnectPolicy::TimePoint now)
+{
+	if (m_reconnectPolicy.IsHelloTimedOut(now)) {
+		FailConnectionWorker(ERROR_TIMEOUT, L"Extension host hello handshake timed out", true);
+		return;
+	}
+	if (const auto attempt = m_reconnectPolicy.TakeDueReconnect(now)) EnsureConnectedWorker(*attempt);
+}
+
+double CExtensionService::NextReconnectJitter() noexcept
+{
+	m_reconnectJitterState = m_reconnectJitterState * 1664525u + 1013904223u;
+	return static_cast<double>(m_reconnectJitterState) / static_cast<double>((std::numeric_limits<std::uint32_t>::max)());
+}
+
+void CExtensionService::EnsureConnectedWorker(std::uint64_t attemptToken)
+{
+	if (m_stopping.load(std::memory_order_acquire) ||
+		m_reconnectPolicy.GetState() != CExtensionClientReconnectPolicy::State::Connecting ||
+		m_reconnectPolicy.GetActiveToken() != attemptToken) return;
 	if (m_installedRoots.empty()) {
 		CExtensionManager manager;
 		for (const auto& installed : manager.EnumInstalled()) {
@@ -570,45 +658,75 @@ void CExtensionService::EnsureConnectedWorker(bool acquireLease)
 				m_installedRoots.push_back(root);
 			}
 		}
-		if (m_installedRoots.empty()) return;
+		if (m_installedRoots.empty()) {
+			(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+			return;
+		}
 	}
-	if (acquireLease && !m_leaseAcquired) {
+	// The control process owns the authorization inventory. Refresh it from the
+	// profile-scoped installation immediately before acquiring a PID lease, so a
+	// stale install/uninstall snapshot can never authorize SecretStorage.
+	DWORD_PTR inventoryRefreshed = 0;
+	if (!SendBrokerMessage(m_brokerWindow, MYWM_EXTENSION_HOST_REFRESH_INVENTORY,
+		0, 0, inventoryRefreshed) || inventoryRefreshed == 0) {
+		(void)m_reconnectPolicy.OnConnectFailure(
+			attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+		return;
+	}
+	if (!m_leaseAcquired) {
 		DWORD_PTR acquired = 0;
 		if (!SendBrokerMessage(m_brokerWindow, MYWM_EXTENSION_HOST_ACQUIRE,
-			static_cast<WPARAM>(::GetCurrentProcessId()), 0, acquired) || acquired == 0) return;
+			static_cast<WPARAM>(::GetCurrentProcessId()), reinterpret_cast<LPARAM>(m_editorWindow), acquired) || acquired == 0) {
+			(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+			return;
+		}
 		m_leaseAcquired = true;
 	}
-	if (!m_leaseAcquired) return;
+	if (!m_leaseAcquired) {
+		(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+		return;
+	}
 
 	std::wstring diagnostic;
-	if (!m_sharedState.OpenForEditor(m_profileDirectory, diagnostic)) return;
-	const auto deadline = std::chrono::steady_clock::now() + 15s;
-	std::optional<SExtensionHostBrokerSnapshot> snapshot;
-	while (!m_stopping.load(std::memory_order_acquire) && std::chrono::steady_clock::now() < deadline) {
-		snapshot = m_sharedState.Read();
-		if (snapshot && snapshot->generation != 0 && snapshot->hostProcessId != 0 && !snapshot->pipeName.empty() &&
-			(snapshot->state == EExtensionHostState::Starting || snapshot->state == EExtensionHostState::Ready)) break;
-		if (snapshot && snapshot->state == EExtensionHostState::Stopped) return;
-		std::this_thread::sleep_for(25ms);
+	if (!m_sharedState.OpenForEditor(m_profileDirectory, diagnostic)) {
+		(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+		return;
 	}
-	if (!snapshot || snapshot->generation == 0 || snapshot->hostProcessId == 0 || snapshot->pipeName.empty()) return;
+	const auto snapshot = m_sharedState.Read();
+	if (!snapshot || snapshot->generation == 0 || snapshot->hostProcessId == 0 || snapshot->pipeName.empty() ||
+		(snapshot->state != EExtensionHostState::Starting && snapshot->state != EExtensionHostState::Ready)) {
+		(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+		return;
+	}
 	m_connectionSnapshot = *snapshot;
 	m_protocol = std::make_unique<CExtensionRpcProtocol>();
 	m_transport = std::make_unique<CExtensionPipeTransport>(
 		static_cast<IExtensionPipeTransportSink&>(*this));
+	m_connectionAttemptToken = attemptToken;
+	m_pipeCallbackAttemptToken.store(attemptToken, std::memory_order_release);
+	m_pipeCallbackGeneration.store(m_connectionSnapshot.generation, std::memory_order_release);
 	const auto connected = m_transport->Connect(
-		m_connectionSnapshot.pipeName, m_connectionSnapshot.hostProcessId, 10s);
+		m_connectionSnapshot.pipeName, m_connectionSnapshot.hostProcessId, kExtensionPipeConnectTimeout);
 	if (!connected.success) {
+		(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
 		FailConnectionWorker(connected.errorCode, connected.diagnostic, true);
-		if (!m_stopping.load(std::memory_order_acquire) && m_leaseAcquired) EnsureConnectedWorker(false);
+		return;
+	}
+	if (!m_reconnectPolicy.BeginHello(attemptToken, m_connectionSnapshot.generation,
+		CExtensionClientReconnectPolicy::Clock::now())) {
+		(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
+		FailConnectionWorker(ERROR_INVALID_STATE, L"Stale extension host connect attempt", true);
 		return;
 	}
 	m_awaitingHello = true;
 }
 
-void CExtensionService::HandlePipeBytesWorker(std::vector<std::uint8_t> bytes)
+void CExtensionService::HandlePipeBytesWorker(
+	std::uint64_t attemptToken,
+	std::uint64_t connectionGeneration,
+	std::vector<std::uint8_t> bytes)
 {
-	if (!m_protocol || bytes.empty()) return;
+	if (!m_reconnectPolicy.AcceptsPipeEvent(attemptToken, connectionGeneration) || !m_protocol || bytes.empty()) return;
 	const auto received = m_protocol->Feed(std::string_view(
 		reinterpret_cast<const char*>(bytes.data()), bytes.size()));
 	for (const auto& message : received.messages) HandleMessageWorker(message);
@@ -617,11 +735,14 @@ void CExtensionService::HandlePipeBytesWorker(std::vector<std::uint8_t> bytes)
 	}
 }
 
-void CExtensionService::HandlePipeClosedWorker(std::uint32_t errorCode, std::wstring diagnostic)
+void CExtensionService::HandlePipeClosedWorker(
+	std::uint64_t attemptToken,
+	std::uint64_t connectionGeneration,
+	std::uint32_t errorCode,
+	std::wstring diagnostic)
 {
-	if (!m_connected && !m_awaitingHello) return;
+	if (!m_reconnectPolicy.AcceptsPipeEvent(attemptToken, connectionGeneration)) return;
 	FailConnectionWorker(errorCode, std::move(diagnostic), true);
-	if (!m_stopping.load(std::memory_order_acquire) && m_leaseAcquired) EnsureConnectedWorker(false);
 }
 
 void CExtensionService::HandleMessageWorker(const SExtensionRpcMessage& message)
@@ -998,6 +1119,12 @@ bool CExtensionService::HandleHelloWorker(const SExtensionRpcMessage& message)
 			if (!current || current->state != EExtensionHostState::Ready || current->generation != generation) return false;
 		}
 	}
+	const auto sessionId = wcstou8s(m_connectionSnapshot.extensionHostSessionId);
+	if (!m_secrets || !m_secrets->BindSession(sessionId, generation).success) return false;
+	if (!m_reconnectPolicy.OnHello(m_connectionAttemptToken, generation)) {
+		m_secrets->ClearSession();
+		return false;
+	}
 	m_awaitingHello = false;
 	m_connected = true;
 	m_registered = false;
@@ -1097,7 +1224,7 @@ void CExtensionService::RunClientActionWorker(ClientAction action)
 {
 	if (!m_registered) {
 		if (m_deferredActions.size() < 256) m_deferredActions.emplace_back(std::move(action));
-		EnsureConnectedWorker(!m_leaseAcquired);
+		RequestReconnectWorker();
 		return;
 	}
 	picojson::object params;
@@ -1313,7 +1440,6 @@ bool CExtensionService::SendRequestWorker(
 	if (m_pendingRequests.size() >= kMaximumPendingRequests) {
 		FailConnectionWorker(ERROR_NOT_ENOUGH_MEMORY,
 			L"Extension RPC pending request limit exceeded", true);
-		if (m_leaseAcquired) Enqueue([this]() { EnsureConnectedWorker(false); });
 		return false;
 	}
 	SExtensionRpcOutbound outbound;
@@ -1360,25 +1486,35 @@ void CExtensionService::FailConnectionWorker(
 	std::wstring diagnostic,
 	bool notifyBroker)
 {
+	const auto generation = m_connectionSnapshot.generation;
+	const auto scheduled = m_reconnectPolicy.OnFailure(m_connectionAttemptToken, generation,
+		CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
 	m_connected = false;
 	m_awaitingHello = false;
 	m_registered = false;
 	m_requestedViewActivations.clear();
 	if (m_protocol) (void)m_protocol->CloseHostLost(wcstou8s(diagnostic));
+	m_pipeCallbackAttemptToken.store(0, std::memory_order_release);
+	m_pipeCallbackGeneration.store(0, std::memory_order_release);
 	if (m_transport) m_transport->Close();
 	m_transport.reset();
 	m_protocol.reset();
+	m_connectionAttemptToken = 0;
+	if (m_secrets) (void)m_secrets->ClearSession();
+	m_connectionSnapshot = {};
 	m_pendingRequests.clear();
 	ClearWorkbenchWorker();
-	if (notifyBroker && m_connectionSnapshot.generation != 0) {
+	if (notifyBroker && generation != 0) {
 		DWORD_PTR ignored = 0;
 		(void)SendBrokerMessage(m_brokerWindow, MYWM_EXTENSION_HOST_LOST,
-			static_cast<WPARAM>(m_connectionSnapshot.generation), static_cast<LPARAM>(errorCode), ignored);
+			static_cast<WPARAM>(generation), static_cast<LPARAM>(errorCode), ignored);
 	}
+	if (scheduled) m_taskReady.notify_one();
 }
 
 void CExtensionService::ClearWorkbenchWorker()
 {
+	if (m_workbenchServiceBridge && !m_workbenchServiceBridge->DisposeAll(m_diagnostics, m_output)) return;
 	m_contextKeys.Clear();
 	m_commands.Clear();
 	RegisterBuiltInCommands();
@@ -1399,8 +1535,8 @@ void CExtensionService::ClearWorkbenchWorker()
 void CExtensionService::ResetDispatcherWorker()
 {
 	m_dispatcher = std::make_unique<CExtensionWorkbenchDispatcher>(
-		m_contextKeys, m_commands, m_statusBar, m_notifications, *m_views, m_secrets,
-		m_diagnostics, m_quickInput, m_output, m_progress);
+		m_contextKeys, m_commands, m_statusBar, m_notifications, *m_views, *m_secrets,
+		m_diagnostics, m_quickInput, m_output, m_progress, m_workbenchServiceBridge.get());
 	m_dispatcher->SetNotificationHandler([this](const SExtensionNotification& notification) {
 		return ShowNotificationOnUi(notification);
 	});

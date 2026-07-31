@@ -11,11 +11,13 @@
 #include "extension/CExtensionPane.h"
 
 #include <exception>
+#include <limits>
 #include <memory>
 #include <thread>
 #include <utility>
 
 #include "apiwrap/DarkMode.h"
+#include "config/system_constants.h"
 #include "util/MessageBoxF.h"
 #include "util/string_ex.h"
 #include "util/window.h"
@@ -117,10 +119,105 @@ SOpenVsxExtension MakeExtensionFromUniqueId( const std::wstring& sUniqueId, cons
 	return ext;
 }
 
+//! A job owns the atomic flag, so this adapter stays valid for every request in its worker.
+class AtomicJobCancellation final : public platform::request::IRequestCancellation {
+public:
+	explicit AtomicJobCancellation( const std::atomic<bool>& cancelled ) noexcept
+		: m_cancelled( cancelled )
+	{
+	}
+
+	bool IsCancellationRequested() const noexcept override
+	{
+		return m_cancelled.load( std::memory_order_acquire );
+	}
+
+private:
+	const std::atomic<bool>& m_cancelled;
+};
+
+//! Do not surface endpoint URLs, profile ids, proxy settings, or raw transport diagnostics in the UI.
+std::wstring SafeOpenVsxStatusMessage( extension::openvsx::EOpenVsxRequestOutcome outcome )
+{
+	using extension::openvsx::EOpenVsxRequestOutcome;
+	switch( outcome ){
+	case EOpenVsxRequestOutcome::Cancelled:
+		return L"extension operation cancelled";
+	case EOpenVsxRequestOutcome::Timeout:
+		return L"extension registry request timed out";
+	case EOpenVsxRequestOutcome::ServerAuthenticationRequired:
+	case EOpenVsxRequestOutcome::ProxyAuthenticationRequired:
+		return L"extension registry authentication is required";
+	case EOpenVsxRequestOutcome::TlsCertificateFailure:
+		return L"extension registry TLS validation failed";
+	case EOpenVsxRequestOutcome::ResponseHeaderLimitExceeded:
+	case EOpenVsxRequestOutcome::ResponseBodyLimitExceeded:
+		return L"extension registry response exceeded a safety limit";
+	case EOpenVsxRequestOutcome::OfflineCacheMiss:
+		return L"extension registry is unavailable offline";
+	case EOpenVsxRequestOutcome::UnsupportedProxyPolicy:
+		return L"extension registry proxy policy is unsupported";
+	case EOpenVsxRequestOutcome::InvalidRegistryUri:
+	case EOpenVsxRequestOutcome::InvalidEndpointUri:
+	case EOpenVsxRequestOutcome::InvalidRequest:
+	case EOpenVsxRequestOutcome::InvalidRedirect:
+	case EOpenVsxRequestOutcome::HttpsDowngradeRejected:
+	case EOpenVsxRequestOutcome::RedirectLimitExceeded:
+		return L"extension registry configuration is invalid";
+	case EOpenVsxRequestOutcome::HttpStatusFailure:
+	case EOpenVsxRequestOutcome::TransportFailure:
+	case EOpenVsxRequestOutcome::InvalidResponse:
+	case EOpenVsxRequestOutcome::SearchParseFailure:
+	default:
+		return L"extension registry operation failed";
+	}
+}
+
+std::wstring SafeOpenVsxClientCreationMessage(
+	extension::openvsx::EOpenVsxProductionClientOutcome outcome
+)
+{
+	using extension::openvsx::EOpenVsxProductionClientOutcome;
+	switch( outcome ){
+	case EOpenVsxProductionClientOutcome::InvalidProfileId:
+		return L"extension registry profile is unavailable";
+	case EOpenVsxProductionClientOutcome::ConfigurationUnavailable:
+		return L"extension registry network configuration is unavailable";
+	case EOpenVsxProductionClientOutcome::ConfigurationInvalid:
+		return L"extension registry network configuration is invalid";
+	case EOpenVsxProductionClientOutcome::InternalFailure:
+	default:
+		return L"extension registry client initialization failed";
+	}
+}
+
+bool RefreshExtensionHostInventory(HWND controlProcessWindow) noexcept
+{
+	DWORD_PTR refreshed = 0;
+	return controlProcessWindow
+		&& ::IsWindow(controlProcessWindow)
+		&& ::SendMessageTimeoutW(
+			controlProcessWindow,
+			MYWM_EXTENSION_HOST_REFRESH_INVENTORY,
+			0,
+			0,
+			SMTO_ABORTIFHUNG | SMTO_BLOCK,
+			2000,
+			&refreshed) != 0
+		&& refreshed != 0;
+}
+
 } // namespace
 
-CExtensionPane::CExtensionPane()
+CExtensionPane::CExtensionPane(
+	config::IConfigurationService& configurationService,
+	std::wstring canonicalProfileId,
+	HWND controlProcessWindow
+)
 	: CWnd( L"::CExtensionPane" )
+	, m_configurationService( configurationService )
+	, m_canonicalProfileId( std::move( canonicalProfileId ) )
+	, m_controlProcessWindow( controlProcessWindow )
 {
 }
 
@@ -584,9 +681,46 @@ void CExtensionPane::StartUninstall()
 	StartJob( std::move( pJob ) );
 }
 
+int CExtensionPane::AllocateJobSerial() noexcept
+{
+	// At most one job exists.  The next job is not launched before the current
+	// job is terminal, so reuse after INT_MAX cannot collide with a live result.
+	if( m_nNextSerial <= 0 || m_nNextSerial == (std::numeric_limits<int>::max)() ){
+		m_nNextSerial = 1;
+	}
+	const int nSerial = m_nNextSerial;
+	++m_nNextSerial;
+	return nSerial;
+}
+
 void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 {
-	pJob->nSerial = m_nNextSerial++;
+	if( !pJob ){
+		SetStatusText( L"cannot start extension job" );
+		UpdateButtons();
+		return;
+	}
+
+	// The configuration snapshot and all network-service construction happen on
+	// the UI thread.  The self-contained client is then transferred to SJob;
+	// detached work never touches CEditWnd, IWorkbenchRuntime, or configuration.
+	if( pJob->eKind == EJobKind::Search || pJob->eKind == EJobKind::Install ){
+		auto clientResult = extension::openvsx::CreateOpenVsxProductionClient(
+			m_configurationService,
+			m_canonicalProfileId
+		);
+		if( !clientResult ){
+			SetStatusText( strprintf(
+				LS( STR_EXTENSION_STATUS_FAILED ),
+				SafeOpenVsxClientCreationMessage( clientResult.outcome ).c_str()
+			) );
+			UpdateButtons();
+			return;
+		}
+		pJob->registryClient = std::move( clientResult.client );
+	}
+
+	pJob->nSerial = AllocateJobSerial();
 	m_pJob = pJob;
 	UpdateButtons();
 	if( 0 == ::SetTimer( GetHwnd(), kJobPollTimerId, kJobPollIntervalMs, nullptr ) ){
@@ -619,16 +753,48 @@ void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 		switch( pJob->eKind ){
 	case EJobKind::Search:
 		{
-			COpenVsxClient cClient;
-			pJob->bSucceeded = cClient.Search(
-				pJob->sQuery, 0, COpenVsxClient::kDefaultPageSize, pJob->result, pJob->sErrorMsg,
-				&pJob->bCancelled );
+			if( !pJob->registryClient ){
+				pJob->sErrorMsg = L"extension registry client is unavailable";
+				break;
+			}
+			const AtomicJobCancellation cancellation( pJob->bCancelled );
+			auto operation = pJob->registryClient->Search(
+				pJob->sQuery,
+				0,
+				extension::openvsx::OpenVsxRequestServiceAdapter::kDefaultPageSize,
+				&cancellation
+			);
+			pJob->bSucceeded = static_cast<bool>( operation.status );
+			if( pJob->bSucceeded ){
+				pJob->result = std::move( operation.value );
+			}
+			else{
+				pJob->sErrorMsg = SafeOpenVsxStatusMessage( operation.status.outcome );
+			}
 		}
 		break;
 	case EJobKind::Install:
 		{
+			if( !pJob->registryClient ){
+				pJob->sErrorMsg = L"extension registry client is unavailable";
+				break;
+			}
+			const AtomicJobCancellation cancellation( pJob->bCancelled );
 			CExtensionManager cManager;
-			pJob->bSucceeded = cManager.Install( pJob->ext, pJob->sErrorMsg, &pJob->bCancelled );
+			pJob->bSucceeded = cManager.Install(
+				pJob->ext,
+				*pJob->registryClient,
+				pJob->sErrorMsg,
+				&cancellation,
+				&pJob->bCancelled
+			);
+			if( !pJob->bSucceeded ){
+				// CExtensionManager intentionally keeps detailed diagnostics for logs/tests.
+				// This UI boundary must not display request URLs, proxy values, or secrets.
+				pJob->sErrorMsg = pJob->bCancelled.load( std::memory_order_acquire )
+					? L"extension operation cancelled"
+					: L"extension installation failed";
+			}
 		}
 		break;
 	case EJobKind::Uninstall:
@@ -703,6 +869,9 @@ void CExtensionPane::FinishJob( int nSerial )
 			ShowInstalledList();
 		}
 		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED ), pJob->sTargetName.c_str() ) );
+		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
+			SetStatusText( L"Extension installed, but the extension-host inventory refresh failed." );
+		}
 		break;
 
 	case EJobKind::Uninstall:
@@ -714,6 +883,9 @@ void CExtensionPane::FinishJob( int nSerial )
 			ShowInstalledList();
 		}
 		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_REMOVED ), pJob->sTargetName.c_str() ) );
+		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
+			SetStatusText( L"Extension removed, but the extension-host inventory refresh failed." );
+		}
 		break;
 
 	default:

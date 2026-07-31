@@ -779,4 +779,12 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 #define MYWM_RECOVER_APPNODE (WM_APP+236)
 //! UI thread で VS Code TextEditor.options の文書ローカル設定を適用する
 #define MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT (WM_APP+237)
+//! Committed Editor Core state changed; the UI thread must re-read the current snapshot.
+#define MYWM_EDITOR_CORE_CHANGED (WM_APP+238)
+//! Committed workbench layout state changed; the UI thread must re-read the current snapshot.
+#define MYWM_WORKBENCH_LAYOUT_CHANGED (WM_APP+239)
+//! Re-enumerate the profile-scoped OpenVSX installation and replace the Secret Vault approval snapshot.
+#define MYWM_EXTENSION_HOST_REFRESH_INVENTORY (WM_APP+240)
+//! Committed Problems or Output service state changed; the UI thread must re-read copied snapshots.
+#define MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED (WM_APP+241)
 #endif /* SAKURA_SYSTEM_CONSTANTS_DACC287C_DAC4_4FC7_8AEC_8DB5BE6BFB8B_H_ */

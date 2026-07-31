@@ -63,6 +63,10 @@ TEST(CCommandLine, ConstructWithoutParam)
 	EXPECT_EQ(NULL, cCommandLine.GetMacroType());
 	EXPECT_STREQ(L"", cCommandLine.GetProfileName());	//不自然
 	EXPECT_FALSE(cCommandLine.IsSetProfile());
+	EXPECT_FALSE(cCommandLine.IsSetWorkspaceFolder());
+	EXPECT_STREQ(L"", cCommandLine.GetWorkspaceFolder());
+	EXPECT_FALSE(cCommandLine.IsSetWorkspaceConfig());
+	EXPECT_STREQ(L"", cCommandLine.GetWorkspaceConfig());
 	EXPECT_FALSE(cCommandLine.IsProfileMgr());
 	EXPECT_EQ(0, cCommandLine.GetFileNum());
 	EXPECT_EQ(NULL, cCommandLine.GetFileName(0));
@@ -228,6 +232,24 @@ TEST(CCommandLine, ParseWorkspaceFolder)
 	EXPECT_TRUE(cCommandLine.IsSetWorkspaceFolder());
 	EXPECT_STREQ(TESTLOCAL_WORKSPACE_FOLDER, cCommandLine.GetWorkspaceFolder());
 #undef TESTLOCAL_WORKSPACE_FOLDER
+}
+
+/*!
+ * @brief パラメータ解析(-WORKSPACE)の仕様
+ * @remark -WORKSPACEが指定されていなければワークスペース構成ファイルは未指定
+ * @remark -WORKSPACEが指定されていたら指定されたワークスペース構成ファイル
+ */
+TEST(CCommandLine, ParseWorkspaceConfig)
+{
+	CCommandLine cCommandLine;
+	EXPECT_FALSE(cCommandLine.IsSetWorkspaceConfig());
+	EXPECT_STREQ(L"", cCommandLine.GetWorkspaceConfig());
+
+#define TESTLOCAL_WORKSPACE_CONFIG L"C:\\work\\sakura workspace.code-workspace"
+	cCommandLine.ParseCommandLine(L"-WORKSPACE=\"" TESTLOCAL_WORKSPACE_CONFIG L"\"", false);
+	EXPECT_TRUE(cCommandLine.IsSetWorkspaceConfig());
+	EXPECT_STREQ(TESTLOCAL_WORKSPACE_CONFIG, cCommandLine.GetWorkspaceConfig());
+#undef TESTLOCAL_WORKSPACE_CONFIG
 }
 
 /*!

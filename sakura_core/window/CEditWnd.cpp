@@ -37,6 +37,7 @@
 #include "env/CSakuraEnvironment.h"
 #include "charset/CCodeFactory.h"
 #include "charset/CCodeBase.h"
+#include "charset/charset.h"
 #include "CEditApp.h"
 #include "recent/CMRUFile.h"
 #include "recent/CMRUFolder.h"
@@ -69,6 +70,7 @@
 #include "theme/CThemeService.h"
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
+#include "workbench/IWorkbenchRuntime.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/WorkbenchLayout.h"
 #include "workbench/activity/CActivityBar.h"
@@ -77,7 +79,20 @@
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/explorer/CExplorerOutlineTool.h"
 #include "workbench/WorkbenchZoom.h"
+#include "workbench/commands/WorkbenchCommandRegistry.h"
+#include "workbench/commands/WorkbenchContextKeyService.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
+#include "workbench/editor/CEditDocLegacyEditorBackend.h"
+#include "workbench/editor/CEditorServiceLegacyAdapter.h"
+#include "workbench/editor/CEmptyEditorSurface.h"
+#include "workbench/editor/EditorCommandIds.h"
+#include "workbench/editor/EditorWorkingCopyCoordinator.h"
+#include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
+#include "workbench/layout/WorkbenchIds.h"
+#include "workbench/layout/WorkbenchLayoutStateService.h"
+#include "workbench/win32/BuiltinPartProjection.h"
+#include "workbench/win32/ProblemsOutputPanelProjection.h"
+#include "platform/uri/UriIdentity.h"
 
 #include "macro/CMacroFactory.h"
 #include "view/colors/CColorStrategy.h"
@@ -86,10 +101,13 @@
 #include "extension/CExtensionQuickInputDialog.h"
 #include "extension/CExtensionService.h"
 #include "extension/CExtensionViewRegistry.h"
+#include "extension/IExtensionSecretStorage.h"
 #include "cmd/COpeBlk.h"
 #include "cmd/CViewCommander_inline.h"
 
 #include <cwctype>
+#include <limits>
+#include <mutex>
 
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたので
 //	定義を削除
@@ -128,6 +146,30 @@ static const SFuncMenuName	sFuncMenuName[] = {
 
 namespace {
 
+constexpr std::string_view kLegacyEditorInputId = "legacy.editor.1";
+
+class ScopedWorkingCopyBackendEffect final {
+public:
+	explicit ScopedWorkingCopyBackendEffect(bool& value) noexcept
+		: m_value(value)
+		, m_previous(value)
+	{
+		m_value = true;
+	}
+
+	~ScopedWorkingCopyBackendEffect()
+	{
+		m_value = m_previous;
+	}
+
+	ScopedWorkingCopyBackendEffect(const ScopedWorkingCopyBackendEffect&) = delete;
+	ScopedWorkingCopyBackendEffect& operator=(const ScopedWorkingCopyBackendEffect&) = delete;
+
+private:
+	bool& m_value;
+	const bool m_previous;
+};
+
 [[nodiscard]] std::wstring GetProcessCurrentDirectory()
 {
 	const DWORD required = ::GetCurrentDirectoryW(0, nullptr);
@@ -149,6 +191,101 @@ namespace {
 	if (copied == 0 || copied >= required) return std::wstring(path);
 	absolute.resize(copied);
 	return absolute;
+}
+
+[[nodiscard]] bool WideToUtf8Bounded(const wchar_t* value, std::size_t maximumBytes, std::string& converted) noexcept
+{
+	converted.clear();
+	if (value == nullptr) return true;
+	constexpr std::size_t kMaximumInputCharacters = 32767;
+	const auto length = ::wcsnlen_s(value, kMaximumInputCharacters + 1);
+	if (length > kMaximumInputCharacters) return false;
+	if (length == 0) return true;
+	if (length > static_cast<std::size_t>((std::numeric_limits<int>::max)())) return false;
+	const auto required = ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value,
+		static_cast<int>(length), nullptr, 0, nullptr, nullptr);
+	if (required <= 0 || static_cast<std::size_t>(required) > maximumBytes) return false;
+	try {
+		converted.resize(static_cast<std::size_t>(required));
+	}
+	catch (...) {
+		return false;
+	}
+	return ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value,
+		static_cast<int>(length), converted.data(), required, nullptr, nullptr) == required;
+}
+
+[[nodiscard]] bool TryCanonicalEncodingId(ECodeType encoding, std::optional<std::string>& canonicalId)
+{
+	canonicalId.reset();
+	switch (encoding) {
+	case CODE_NONE:
+		return true;
+	case CODE_SJIS:
+		canonicalId = "shift_jis";
+		return true;
+	case CODE_JIS:
+		canonicalId = "iso-2022-jp";
+		return true;
+	case CODE_EUC:
+		canonicalId = "euc-jp";
+		return true;
+	case CODE_UTF16LE:
+		canonicalId = "utf-16le";
+		return true;
+	case CODE_UTF16BE:
+		canonicalId = "utf-16be";
+		return true;
+	case CODE_UTF8:
+		canonicalId = "utf-8";
+		return true;
+	case CODE_UTF7:
+		canonicalId = "utf-7";
+		return true;
+	case CODE_CESU8:
+		canonicalId = "cesu-8";
+		return true;
+	case CODE_LATIN1:
+		canonicalId = "windows-1252";
+		return true;
+	default:
+		return false;
+	}
+}
+
+[[nodiscard]] bool TryWorkingCopyLineEnding(
+	EEolType lineEnding, workbench::editor::EEditorWorkingCopyLineEnding& portable) noexcept
+{
+	using workbench::editor::EEditorWorkingCopyLineEnding;
+	switch (lineEnding) {
+	case EEolType::none:
+		portable = EEditorWorkingCopyLineEnding::Preserve;
+		return true;
+	case EEolType::cr_and_lf:
+		portable = EEditorWorkingCopyLineEnding::CrLf;
+		return true;
+	case EEolType::line_feed:
+		portable = EEditorWorkingCopyLineEnding::Lf;
+		return true;
+	case EEolType::carriage_return:
+		portable = EEditorWorkingCopyLineEnding::Cr;
+		return true;
+	default:
+		return false;
+	}
+}
+
+[[nodiscard]] std::optional<workbench::editor::EditorDocumentIdentity> FileIdentityFromLegacyPath(
+	const wchar_t* value)
+{
+	if (value == nullptr) return std::nullopt;
+	constexpr std::size_t kMaximumPathCharacters = 32767;
+	const auto length = ::wcsnlen_s(value, kMaximumPathCharacters + 1);
+	if (length == 0 || length > kMaximumPathCharacters) return std::nullopt;
+	const auto absolute = MakeAbsolutePath(std::wstring_view(value, length));
+	const auto uri = platform::uri::Uri::FromWindowsPath(absolute);
+	if (!uri) return std::nullopt;
+	return workbench::editor::EditorDocumentIdentity{ .resource = std::move(*uri.value) };
 }
 
 [[nodiscard]] RECT ToWinRect(const workbench::WorkbenchRect& source) noexcept
@@ -196,6 +333,30 @@ namespace {
 }
 
 } // namespace
+
+struct CEditWnd::WorkbenchServiceProjectionGate final {
+	std::mutex mutex;
+	HWND window{};
+	bool connected{ true };
+	bool messageQueued{};
+	//! A ChannelShown must survive coalescing with content-only notifications.
+	bool outputRevealPending{};
+
+	static void Notify(const std::shared_ptr<WorkbenchServiceProjectionGate>& gate,
+		const bool outputChannelShown) noexcept
+	{
+		std::lock_guard lock(gate->mutex);
+		if (!gate->connected || gate->window == nullptr) return;
+		if (outputChannelShown) gate->outputRevealPending = true;
+		if (gate->messageQueued) return;
+		gate->messageQueued = true;
+		if (::PostMessageW(gate->window, MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED, 0, 0)) return;
+
+		// A failed post must not leave the gate permanently coalesced. A later
+		// service change can retry after a transient queue/window failure.
+		gate->messageQueued = false;
+	}
+};
 
 static void ShowCodeBox( HWND hWnd, CEditDoc* pcEditDoc )
 {
@@ -338,6 +499,25 @@ CEditWnd::CEditWnd()
 	m_pcEditView = m_pcEditViewArr[0].get();
 }
 
+CEditWnd::CEditWnd(
+	workbench::editor::CEditorServiceLegacyAdapter& editorServiceAdapter,
+	workbench::editor::CEditDocLegacyEditorBackend& legacyEditorBackend,
+	workbench::editor::EditorWorkingCopyCoordinator& workingCopyCoordinator,
+	workbench::editor::persistence::EditorWorkingCopyLifecycleBridge& workingCopyLifecycleBridge,
+	workbench::IWorkbenchRuntime& workbenchRuntime,
+	std::filesystem::path profileDirectory,
+	std::unique_ptr<IExtensionSecretSessionStorage> extensionSecretStorage)
+	: CEditWnd()
+{
+	m_editorServiceAdapter = &editorServiceAdapter;
+	m_legacyEditorBackend = &legacyEditorBackend;
+	m_workingCopyCoordinator = &workingCopyCoordinator;
+	m_workingCopyLifecycleBridge = &workingCopyLifecycleBridge;
+	m_workbenchRuntime = &workbenchRuntime;
+	m_extensionProfileDirectory = std::move(profileDirectory);
+	m_extensionSecretStorage = std::move(extensionSecretStorage);
+}
+
 void CEditWnd::AttachMainWindowEarly(HWND hWnd)
 {
 	m_hWnd = hWnd;
@@ -386,6 +566,609 @@ CEditWnd::~CEditWnd()
 	delete[] m_pszLastCaption;
 
 	m_hWnd = nullptr;
+}
+
+std::string CEditWnd::NextEditorOperationId(std::string_view prefix)
+{
+	return std::string(prefix) + "." + std::to_string(::GetCurrentProcessId()) + "."
+		+ std::to_string(++m_editorOperationSequence);
+}
+
+bool CEditWnd::CloseActiveEditorInput()
+{
+	if (m_editorServiceAdapter == nullptr || m_legacyEditorBackend == nullptr) return false;
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	if (!snapshot.group.activeInputId) {
+		m_legacyEditorBackend->ClearInput();
+		ApplyEditorCoreSnapshot(snapshot);
+		return true;
+	}
+	const auto result = m_editorServiceAdapter->CloseInput({
+		.operation = {
+			.operationId = NextEditorOperationId("legacy.close"),
+			.expectedModelRevision = snapshot.revision,
+		},
+		.inputId = *snapshot.group.activeInputId,
+	});
+	if (result.status != workbench::editor::EEditorOperationStatus::Succeeded) return false;
+	m_legacyEditorBackend->ClearInput();
+	ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+	return true;
+}
+
+bool CEditWnd::AdoptLoadedLegacyFile()
+{
+	if (m_editorServiceAdapter == nullptr || m_legacyEditorBackend == nullptr) return false;
+	if (!m_legacyEditorBackend->PrepareFileInput()) {
+		m_legacyEditorBackend->ClearInput();
+		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+		return false;
+	}
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	workbench::editor::EditorOperationResult result;
+	if (snapshot.group.activeInputId) {
+		if (ActiveInputMatchesCurrentFile()) {
+			// Reload keeps the canonical identity but publishes a new clean content version.
+			return SynchronizeLegacyDocumentState(false, true);
+		}
+		result = m_editorServiceAdapter->ReplaceInputDocumentWithCurrent({
+			.operationId = NextEditorOperationId("legacy.replace.file"),
+			.expectedModelRevision = snapshot.revision,
+		}, *snapshot.group.activeInputId);
+	}
+	else {
+		result = m_editorServiceAdapter->AdoptCurrentDocument({
+			.operationId = NextEditorOperationId("legacy.adopt.file"),
+			.expectedModelRevision = snapshot.revision,
+		}, std::string(kLegacyEditorInputId));
+	}
+	if (result.status != workbench::editor::EEditorOperationStatus::Succeeded) {
+		m_legacyEditorBackend->ClearInput();
+		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+		return false;
+	}
+	ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+	return true;
+}
+
+bool CEditWnd::AdoptLegacyUntitledInput(std::string_view kind)
+{
+	if (m_editorServiceAdapter == nullptr || m_legacyEditorBackend == nullptr
+		|| kind.empty() || kind.size() > 64) return false;
+	if (m_editorServiceAdapter->Snapshot().group.activeInputId && !CloseActiveEditorInput()) return false;
+	const std::string opaqueId = "sakura-legacy-" + std::string(kind) + ":"
+		+ std::to_string(::GetCurrentProcessId()) + ":" + std::to_string(++m_editorOperationSequence);
+	if (!m_legacyEditorBackend->PrepareUntitledInput(opaqueId)) {
+		m_legacyEditorBackend->ClearInput();
+		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+		return false;
+	}
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	const auto result = m_editorServiceAdapter->AdoptCurrentDocument({
+		.operationId = NextEditorOperationId("legacy.adopt.untitled"),
+		.expectedModelRevision = snapshot.revision,
+	}, std::string(kLegacyEditorInputId));
+	if (result.status != workbench::editor::EEditorOperationStatus::Succeeded) {
+		m_legacyEditorBackend->ClearInput();
+		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+		return false;
+	}
+	ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+	return true;
+}
+
+ERecoveredEditorProjectionResult CEditWnd::ReconcileRecoveredEditorInput(
+	std::string_view recoveredInputId, std::string_view effectiveActiveInputId)
+{
+	using namespace workbench::editor;
+	if (m_editorServiceAdapter == nullptr || recoveredInputId.empty()
+		|| effectiveActiveInputId.empty() || recoveredInputId != effectiveActiveInputId) {
+		return ERecoveredEditorProjectionResult::InvalidRecovery;
+	}
+
+	try {
+		const auto before = m_editorServiceAdapter->Snapshot();
+		// The currently supported native bridge has exactly one recovered input.
+		// Do not make a similarly named native CEditDoc authoritative by guessing
+		// from it: prove the exact core input and its inactive starting state.
+		if (before.group.inputs.size() != 1 || before.group.activeInputId) {
+			return ERecoveredEditorProjectionResult::InvalidRecovery;
+		}
+		const auto recovered = std::ranges::find_if(before.group.inputs,
+			[recoveredInputId](const auto& candidate) {
+				return candidate.descriptor.inputId == recoveredInputId;
+			});
+		if (recovered == before.group.inputs.end()) {
+			return ERecoveredEditorProjectionResult::InvalidRecovery;
+		}
+
+		const auto activated = m_editorServiceAdapter->ShowInput({
+			.operation = {
+				.operationId = NextEditorOperationId("recovery.activate"),
+				.expectedModelRevision = before.revision,
+			},
+			.inputId = std::string(effectiveActiveInputId),
+		});
+		if (activated.status != EEditorOperationStatus::Succeeded) {
+			return ERecoveredEditorProjectionResult::CoreActivationFailed;
+		}
+
+		const auto after = m_editorServiceAdapter->Snapshot();
+		if (!after.group.activeInputId || *after.group.activeInputId != effectiveActiveInputId) {
+			return ERecoveredEditorProjectionResult::CoreActivationFailed;
+		}
+		ApplyEditorCoreSnapshot(after, false);
+
+		const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
+		if (emptySurface == nullptr || !::IsWindow(emptySurface)) {
+			return ERecoveredEditorProjectionResult::NativeProjectionFailed;
+		}
+		const bool emptySurfaceShown = ::IsWindow(emptySurface)
+			&& (::GetWindowLongPtrW(emptySurface, GWL_STYLE) & WS_VISIBLE) != 0;
+		if (!HasActiveEditorInput() || emptySurfaceShown) {
+			return ERecoveredEditorProjectionResult::NativeProjectionFailed;
+		}
+		return ERecoveredEditorProjectionResult::Succeeded;
+	}
+	catch (...) {
+		return ERecoveredEditorProjectionResult::NativeProjectionFailed;
+	}
+}
+
+bool CEditWnd::CreateUntitledEditorInput()
+{
+	if (HasActiveEditorInput()) return false;
+	GetDocument()->InitDoc();
+	GetDocument()->InitAllView();
+	GetDocument()->SetCurDirNotitle();
+	CAppNodeManager::getInstance()->GetNoNameNumber(GetHwnd());
+	return AdoptLegacyUntitledInput("untitled");
+}
+
+bool CEditWnd::ExecuteWorkbenchEditorCommand(std::string_view commandId)
+{
+	using namespace workbench::editor;
+	if (commandId == command_ids::NewUntitledFile) return CreateUntitledEditorInput();
+	if (commandId == command_ids::OpenFile) {
+		GetDocument()->HandleCommand(F_FILEOPEN);
+		return true;
+	}
+	if (commandId == command_ids::Save || commandId == command_ids::SaveAs
+		|| commandId == command_ids::Revert || commandId == command_ids::CloseActiveEditor) {
+		return ExecuteActiveWorkingCopyCommand(commandId);
+	}
+	if (commandId == command_ids::ShowCommands) {
+		ShowExtensionCommandPalette();
+		return true;
+	}
+	if (commandId == command_ids::OpenSettings) {
+		return CEditApp::getInstance()->OpenPropertySheet(-1);
+	}
+	return false;
+}
+
+bool CEditWnd::ExecuteActiveWorkingCopyCommand(
+	std::string_view commandId, bool suppressCloseConfirmation, bool disposeWindow)
+{
+	const auto result = ExecuteActiveWorkingCopyOperation(
+		commandId, {}, std::nullopt, suppressCloseConfirmation, disposeWindow);
+	if (result.status == workbench::editor::EEditorWorkingCopyOperationStatus::Succeeded) return true;
+	return result.status == workbench::editor::EEditorWorkingCopyOperationStatus::NotApplicable
+		&& commandId == workbench::editor::command_ids::Save
+		&& result.workingCopy && result.workingCopy->identity.resource.has_value();
+}
+
+workbench::editor::EditorWorkingCopyOperationResult CEditWnd::ExecuteActiveWorkingCopyOperation(
+	std::string_view commandId,
+	const workbench::editor::EditorWorkingCopySaveOptions& saveOptions,
+	std::optional<workbench::editor::EditorDocumentIdentity> targetIdentity,
+	bool suppressCloseConfirmation,
+	bool disposeWindow)
+{
+	using namespace workbench::editor;
+	using namespace workbench::editor::persistence;
+	if (m_workingCopyCoordinator == nullptr || m_editorServiceAdapter == nullptr) {
+		return {
+			.status = EEditorWorkingCopyOperationStatus::Failed,
+			.reason = EEditorWorkingCopyOperationReason::InvalidInput,
+		};
+	}
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	if (!snapshot.group.activeInputId) {
+		return {
+			.status = EEditorWorkingCopyOperationStatus::Failed,
+			.reason = EEditorWorkingCopyOperationReason::InputNotFound,
+			.coreRevision = snapshot.revision,
+		};
+	}
+	const auto completionToken = m_workingCopyLifecycleBridge
+		? m_workingCopyLifecycleBridge->CaptureCurrentCompletionToken() : std::nullopt;
+
+	const auto operation = EditorWorkingCopyOperationMetadata{
+		.operationId = NextEditorOperationId("workbench.working-copy"),
+		.expectedModelRevision = snapshot.revision,
+	};
+	const auto activeInput = std::ranges::find_if(snapshot.group.inputs, [&snapshot](const auto& candidate) {
+		return candidate.descriptor.inputId == *snapshot.group.activeInputId;
+	});
+	if (activeInput == snapshot.group.inputs.end()) {
+		return {
+			.status = EEditorWorkingCopyOperationStatus::Failed,
+			.reason = EEditorWorkingCopyOperationReason::InputNotFound,
+			.coreRevision = snapshot.revision,
+		};
+	}
+	// An Untitled/opaque input has no native file target.  Stable Save therefore
+	// takes the same target-acquisition route as Save As even when it is clean.
+	const bool saveRequiresTarget = !activeInput->descriptor.documentIdentity.resource.has_value();
+	const bool saveAsOperation = commandId == command_ids::SaveAs
+		|| (commandId == command_ids::Save && saveRequiresTarget
+			&& saveOptions.targetPolicy == EEditorWorkingCopySaveTargetPolicy::AcquireIfMissing);
+	if (commandId == command_ids::CloseActiveEditor && m_workingCopyLifecycleBridge) {
+		// Persist the latest accepted dirty generation before the native prompt can
+		// synchronously save, discard, cancel, or destroy the backing document.
+		(void)m_workingCopyLifecycleBridge->Flush(::GetTickCount64(), true);
+	}
+	EditorWorkingCopyOperationResult result;
+	{
+		// Save and close may synchronously notify the native listener.  The core is
+		// committed only after that backend effect returns, so OnAfterSave must not
+		// adopt/synchronize a speculative legacy identity in the interim.
+		ScopedWorkingCopyBackendEffect backendEffect(m_workingCopyBackendEffectInProgress);
+		if (commandId == command_ids::Save && !saveAsOperation) {
+			result = m_workingCopyCoordinator->Save({
+				.operation = operation,
+				.inputId = *snapshot.group.activeInputId,
+				.options = saveOptions,
+			});
+		}
+		else if (saveAsOperation) {
+			result = m_workingCopyCoordinator->SaveAs({
+				.operation = operation,
+				.inputId = *snapshot.group.activeInputId,
+				.targetIdentity = std::move(targetIdentity),
+				.options = saveOptions,
+			});
+		}
+		else if (commandId == command_ids::Revert) {
+			// The current backend returns Unsupported without touching the live document.
+			result = m_workingCopyCoordinator->Revert({ .operation = operation, .inputId = *snapshot.group.activeInputId });
+		}
+		else if (commandId == command_ids::CloseActiveEditor) {
+			result = m_workingCopyCoordinator->Close({
+				.operation = operation,
+				.inputId = *snapshot.group.activeInputId,
+				.suppressConfirmation = suppressCloseConfirmation,
+				.disposition = disposeWindow
+					? EEditorWorkingCopyCloseDisposition::DisposeWindow
+					: EEditorWorkingCopyCloseDisposition::InitializeEmptyDocument,
+			});
+		}
+		else {
+			return {
+				.status = EEditorWorkingCopyOperationStatus::Unsupported,
+				.reason = EEditorWorkingCopyOperationReason::BackendUnsupported,
+				.coreRevision = snapshot.revision,
+			};
+		}
+	}
+
+	if (result.status == EEditorWorkingCopyOperationStatus::Succeeded) {
+		if (commandId == command_ids::CloseActiveEditor && m_legacyEditorBackend != nullptr) {
+			// CommitClose has reset the legacy document.  Its old read-only adoption
+			// candidate must not survive the authoritative core input removal.
+			m_legacyEditorBackend->ClearInput();
+		}
+		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+		if (completionToken && m_workingCopyLifecycleBridge) {
+			if (commandId == command_ids::CloseActiveEditor) {
+				(void)m_workingCopyLifecycleBridge->CompletePreClose(*completionToken);
+			}
+			else if (commandId == command_ids::Save || commandId == command_ids::SaveAs) {
+				(void)m_workingCopyLifecycleBridge->CompleteCurrentSave(*completionToken,
+					saveAsOperation
+						? EEditorWorkingCopySaveCompletionMode::AllowIdentityReplacement
+						: EEditorWorkingCopySaveCompletionMode::PreserveIdentity);
+			}
+		}
+		return result;
+	}
+	// A clean Save is a successfully handled no-op.  Cancellation, failure,
+	// conflict, and the intentionally unsupported Revert remain observable to
+	// the caller as false and do not trigger legacy fallback work.
+	const bool cleanSave = result.status == EEditorWorkingCopyOperationStatus::NotApplicable
+		&& commandId == command_ids::Save && !saveRequiresTarget;
+	if (cleanSave && completionToken && m_workingCopyLifecycleBridge) {
+		(void)m_workingCopyLifecycleBridge->CompleteCurrentSave(*completionToken);
+	}
+	return result;
+}
+
+SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
+	const SLegacyEditorFunctionCommand& request)
+{
+	using namespace workbench::editor;
+	SWorkingCopyFunctionDispatchResult dispatch;
+	if (m_workingCopyCoordinator == nullptr || m_editorServiceAdapter == nullptr) return dispatch;
+
+	const auto baseCode = static_cast<EFunctionCode>(static_cast<int>(request.functionCode) & 0xffff);
+	switch (baseCode) {
+	case F_FILESAVE:
+	case F_FILESAVEAS_DIALOG:
+	case F_FILESAVEAS:
+	case F_FILESAVE_QUIET:
+	case F_FILESAVECLOSE:
+	case F_FILECLOSE:
+		break;
+	default:
+		return dispatch;
+	}
+	dispatch.handled = true;
+
+	const auto invalidInput = [this]() {
+		return EditorWorkingCopyOperationResult{
+			.status = EEditorWorkingCopyOperationStatus::Failed,
+			.reason = EEditorWorkingCopyOperationReason::InvalidInput,
+			.coreRevision = m_editorServiceAdapter ? m_editorServiceAdapter->Snapshot().revision : 0,
+		};
+	};
+	const auto isSuccessfulSave = [](const EditorWorkingCopyOperationResult& result) {
+		if (result.status == EEditorWorkingCopyOperationStatus::Succeeded) return true;
+		return result.status == EEditorWorkingCopyOperationStatus::NotApplicable
+			&& result.workingCopy && result.workingCopy->identity.resource.has_value();
+	};
+	const auto postWindowClose = [this]() {
+		const HWND window = GetHwnd();
+		if (window == nullptr) return false;
+		return ::PostMessage(window, MYWM_CLOSE, 0,
+			reinterpret_cast<LPARAM>(CAppNodeManager::getInstance()->GetNextTab(window))) != FALSE;
+	};
+
+	EditorWorkingCopySaveOptions options;
+	switch (baseCode) {
+	case F_FILESAVE:
+		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::Save, options);
+		dispatch.legacyResult = isSuccessfulSave(*dispatch.operation) ? TRUE : FALSE;
+		break;
+
+	case F_FILESAVE_QUIET:
+		options.targetPolicy = EEditorWorkingCopySaveTargetPolicy::ExistingOnly;
+		options.suppressFeedback = true;
+		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::Save, options);
+		dispatch.legacyResult = isSuccessfulSave(*dispatch.operation) ? TRUE : FALSE;
+		break;
+
+	case F_FILESAVEAS_DIALOG:
+		if (!WideToUtf8Bounded(reinterpret_cast<const wchar_t*>(request.lparam1), 4096, options.suggestedTarget)
+			|| !TryCanonicalEncodingId(static_cast<ECodeType>(request.lparam2), options.encodingId)
+			|| !TryWorkingCopyLineEnding(static_cast<EEolType>(request.lparam3), options.lineEnding)) {
+			dispatch.operation = invalidInput();
+			dispatch.legacyResult = FALSE;
+			break;
+		}
+		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::SaveAs, options);
+		dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
+			? TRUE : FALSE;
+		break;
+
+	case F_FILESAVEAS:
+		if (!TryWorkingCopyLineEnding(static_cast<EEolType>(request.lparam3), options.lineEnding)) {
+			dispatch.operation = invalidInput();
+			dispatch.legacyResult = FALSE;
+			break;
+		}
+		if (auto target = FileIdentityFromLegacyPath(reinterpret_cast<const wchar_t*>(request.lparam1))) {
+			dispatch.operation = ExecuteActiveWorkingCopyOperation(
+				command_ids::SaveAs, options, std::move(target));
+			dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
+				? TRUE : FALSE;
+		}
+		else {
+			dispatch.operation = invalidInput();
+			dispatch.legacyResult = FALSE;
+		}
+		break;
+
+	case F_FILESAVECLOSE:
+		if (!GetDllShareData().m_Common.m_sFile.m_bEnableUnmodifiedOverwrite
+			&& !GetDocument()->m_cDocEditor.IsModified()) {
+			dispatch.legacyResult = postWindowClose() ? TRUE : FALSE;
+			break;
+		}
+		options.suppressFeedback = true;
+		options.forceWrite = GetDllShareData().m_Common.m_sFile.m_bEnableUnmodifiedOverwrite;
+		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::Save, options);
+		if (isSuccessfulSave(*dispatch.operation)) {
+			dispatch.legacyResult = postWindowClose() ? TRUE : FALSE;
+		}
+		else {
+			dispatch.legacyResult = FALSE;
+		}
+		break;
+
+	case F_FILECLOSE:
+		dispatch.operation = ExecuteActiveWorkingCopyOperation(command_ids::CloseActiveEditor);
+		dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
+			? TRUE : FALSE;
+		break;
+
+	default:
+		// The first switch owns command recognition; this is an explicit terminal guard.
+		dispatch.handled = false;
+		break;
+	}
+	return dispatch;
+}
+
+void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
+{
+	const auto baseCode = static_cast<EFunctionCode>(static_cast<int>(functionCode) & 0xffff);
+	// Menu and key dispatch retain their source/high-bit flags up to this point.
+	// Route only the base legacy alias through the stable workbench command; a
+	// registered command's terminal failure must not fall through as success.
+	if (baseCode == F_TOGGLE_LEFT_EXPLORER && m_workbenchRuntime != nullptr) {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand("workbench.view.explorer", handled);
+		if (handled) return;
+	}
+	if (baseCode == F_FILENEW && !HasActiveEditorInput()) {
+		(void)CreateUntitledEditorInput();
+		return;
+	}
+	if (!HasActiveEditorInput()) {
+		const int code = static_cast<int>(baseCode);
+		const bool isDocumentFileCommand = code >= static_cast<int>(F_FILESAVE)
+			&& code <= static_cast<int>(F_PROPERTY_FILE)
+			&& baseCode != F_FILENEW_NEWWINDOW
+			&& baseCode != F_FILEOPEN_DROPDOWN;
+		const bool isEditorCommand = code >= static_cast<int>(F_WCHAR)
+			&& code <= static_cast<int>(F_FUNCLIST_PREV);
+		const bool isDocumentModeCommand = code >= static_cast<int>(F_CHGMOD_INS)
+			&& code <= static_cast<int>(F_CANCEL_MODE);
+		if (isDocumentFileCommand || isEditorCommand || isDocumentModeCommand) return;
+	}
+	GetDocument()->HandleCommand(functionCode);
+}
+
+void CEditWnd::RefreshEditorCorePresentation()
+{
+	if (m_editorServiceAdapter == nullptr) return;
+	ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot());
+}
+
+void CEditWnd::ApplyEditorCoreSnapshot(
+	const workbench::editor::EditorCoreSnapshot& snapshot, bool restoreFocus)
+{
+	if (m_editorServiceAdapter == nullptr) return;
+
+	const bool hasActiveInput = snapshot.group.activeInputId.has_value();
+	const bool presentationChanged = !m_editorCorePresentationInitialized
+		|| m_hasActiveEditorInput != hasActiveInput;
+	m_hasActiveEditorInput = hasActiveInput;
+	m_editorCorePresentationInitialized = true;
+	if (!presentationChanged) return;
+
+	const HWND splitter = m_cSplitterWnd.GetHwnd();
+	const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
+	const HWND focused = ::GetFocus();
+	const bool editorOwnedFocus = focused != nullptr
+		&& ((splitter != nullptr && (focused == splitter || ::IsChild(splitter, focused)))
+			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused))));
+
+	if (hasActiveInput) {
+		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+		if (splitter != nullptr && !m_pPrintPreview) ::ShowWindow(splitter, SW_SHOWNA);
+		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr && !m_pPrintPreview) {
+			::ShowWindow(minimap, SW_SHOWNA);
+		}
+		PublishExtensionDocumentOpen(false);
+	} else {
+		m_markdownPreviewVisible = false;
+		m_markdownPreviewDirty = false;
+		m_markdownPreviewRevision = -1;
+		m_markdownPreviewDivider = {};
+		if (m_markdownPreview) m_markdownPreview->Show(false);
+		if (splitter != nullptr) ::ShowWindow(splitter, SW_HIDE);
+		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
+			::ShowWindow(minimap, SW_HIDE);
+		}
+		if (m_emptyEditorSurface && !m_pPrintPreview) m_emptyEditorSurface->Show();
+		ClearDocumentStatus();
+		ClosePublishedExtensionDocument();
+	}
+
+	UpdateCaption();
+	m_cTabWnd.RefreshDocumentActionState();
+	if (const HWND window = GetHwnd(); ::IsWindow(window)) {
+		RECT client{};
+		::GetClientRect(window, &client);
+		(void)OnSize2(m_nWinSizeType,
+			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	}
+
+	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
+	if (hasActiveInput) {
+		if (const HWND view = GetActiveView().GetHwnd(); ::IsWindowVisible(view)) ::SetFocus(view);
+	} else if (m_emptyEditorSurface) {
+		m_emptyEditorSurface->Focus();
+	}
+}
+
+bool CEditWnd::SynchronizeLegacyDocumentState(bool dirty, bool contentChanged)
+{
+	if (m_editorServiceAdapter == nullptr) return false;
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	if (!snapshot.group.activeInputId) return false;
+
+	const auto input = std::ranges::find_if(snapshot.group.inputs, [&snapshot](const auto& candidate) {
+		return candidate.descriptor.inputId == *snapshot.group.activeInputId;
+	});
+	if (input == snapshot.group.inputs.end()) return false;
+	const auto document = std::ranges::find_if(snapshot.documents, [&input](const auto& candidate) {
+		return candidate.documentKey == input->documentKey;
+	});
+	if (document == snapshot.documents.end()) return false;
+
+	std::uint64_t documentRevision = document->documentRevision;
+	if (contentChanged) {
+		if (documentRevision == (std::numeric_limits<std::uint64_t>::max)()) return false;
+		++documentRevision;
+	}
+	const auto result = m_editorServiceAdapter->SetDocumentState({
+		.operation = {
+			.operationId = NextEditorOperationId("legacy.document.state"),
+			.expectedModelRevision = snapshot.revision,
+		},
+		.inputId = *snapshot.group.activeInputId,
+		.dirty = dirty,
+		.documentRevision = documentRevision,
+	});
+	return result.status == workbench::editor::EEditorOperationStatus::Succeeded
+		|| result.status == workbench::editor::EEditorOperationStatus::NotApplicable;
+}
+
+void CEditWnd::ClearDocumentStatus()
+{
+	if (m_cStatusBar.GetStatusHwnd() == nullptr) return;
+	for (int part = 1; part < 8; ++part) {
+		m_cStatusBar.SetStatusText(part, 0, L"");
+	}
+	ClearViewCaretPosInfo();
+	LayoutStatusBarParts();
+}
+
+void CEditWnd::ClosePublishedExtensionDocument()
+{
+	if (m_extensionDocumentSyncTimerPending) {
+		if (const HWND window = GetHwnd(); ::IsWindow(window)) {
+			::KillTimer(window, IDT_EXTENSION_DOCUMENT_SYNC);
+		}
+		m_extensionDocumentSyncTimerPending = false;
+	}
+	if (m_extensionService) {
+		if (m_extensionDocumentVersion != 0) {
+			m_extensionService->CloseDocument({ ::GetCurrentProcessId(), 1 });
+		}
+		m_extensionService->SetActiveEditor({}, {});
+	}
+	m_extensionDocumentUri.clear();
+	m_extensionDocumentVersion = 0;
+}
+
+bool CEditWnd::ActiveInputMatchesCurrentFile() const
+{
+	if (m_editorServiceAdapter == nullptr) return true;
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	if (!snapshot.group.activeInputId) return false;
+	const auto input = std::ranges::find_if(snapshot.group.inputs, [&snapshot](const auto& candidate) {
+		return candidate.descriptor.inputId == *snapshot.group.activeInputId;
+	});
+	if (input == snapshot.group.inputs.end() || !input->descriptor.documentIdentity.resource) return false;
+	const auto& file = GetDocument()->m_cDocFile;
+	if (!file.GetFilePathClass().IsValidPath()) return false;
+	const auto current = platform::uri::Uri::FromWindowsPath(file.GetFilePath());
+	return current && platform::uri::UriIdentityService::IsEqual(
+		*input->descriptor.documentIdentity.resource, *current.value);
 }
 
 void CEditWnd::BeginStartupDrawTransaction() noexcept
@@ -563,6 +1346,9 @@ void CEditWnd::CommitStartupDrawTransaction()
 	const BOOL redrawResult = ::RedrawWindow(hwnd, nullptr, nullptr,
 		RDW_FRAME | RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawRedrawEnd, redrawResult ? 1 : 0);
+	if (redrawResult && !HasActiveEditorInput()) {
+		RecordFirstStartupContentPaint();
+	}
 
 	EmitStartupMiniMapSummary();
 	m_startupDrawState = StartupDrawState::Committed;
@@ -588,26 +1374,56 @@ bool CEditWnd::InitializeWorkbench()
 {
 	if (m_workspaceContext != nullptr) return true;
 
-	m_workspaceContext = std::make_unique<workbench::CWorkspaceContext>(GetProcessCurrentDirectory());
+	std::wstring terminalLaunchDirectory = GetProcessCurrentDirectory();
+	if (m_workbenchRuntime != nullptr) {
+		if (const auto& terminalUri = m_workbenchRuntime->Bootstrap().TerminalLaunchDirectoryUri()) {
+			if (auto path = terminalUri->ToWindowsPath(); path) terminalLaunchDirectory = std::move(*path.value);
+		}
+	}
+	m_workspaceContext = std::make_unique<workbench::CWorkspaceContext>(std::move(terminalLaunchDirectory));
 	if (GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) {
 		m_workspaceContext->SetSelectedFile(GetDocument()->m_cDocFile.GetFilePath());
 	}
-	if (const auto* commandLine = CCommandLine::getInstance(); commandLine->IsSetWorkspaceFolder()) {
-		m_workspaceContext->SetExplicitRoot(MakeAbsolutePath(commandLine->GetWorkspaceFolder()));
+	if (m_workbenchRuntime == nullptr) {
+		const auto* commandLine = CCommandLine::getInstance();
+		if (commandLine->IsSetWorkspaceFolder()) {
+			m_workspaceContext->SetExplicitRoot(MakeAbsolutePath(commandLine->GetWorkspaceFolder()));
+		}
+	} else {
+		ApplySemanticWorkspaceContext();
 	}
 
-	const auto persistExtent = [this](workbench::WorkbenchEdge edge, int extentDip) {
-		PersistWorkbenchExtent(edge, extentDip);
+	const auto commitExtent = [this](workbench::WorkbenchEdge edge, int extentDip) {
+		if (m_workbenchRuntime == nullptr) {
+			PersistWorkbenchExtent(edge, extentDip);
+			return true;
+		}
+		switch (edge) {
+		case workbench::WorkbenchEdge::Left:
+			return SetBuiltinPartExtent(workbench::layout::ids::part::Sidebar, extentDip);
+		case workbench::WorkbenchEdge::Bottom:
+			return SetBuiltinPartExtent(workbench::layout::ids::part::Panel, extentDip);
+		case workbench::WorkbenchEdge::Right:
+			return false;
+		}
+		return false;
 	};
-	const auto persistExtensionViewsExtent = [this](workbench::WorkbenchEdge, int extentDip) {
-		PersistExtensionViewsExtent(extentDip);
+	const auto commitExtensionViewsExtent = [this](workbench::WorkbenchEdge, int extentDip) {
+		if (m_workbenchRuntime == nullptr) {
+			PersistExtensionViewsExtent(extentDip);
+			return true;
+		}
+		return SetBuiltinPartExtent(workbench::layout::ids::part::Auxiliarybar, extentDip);
 	};
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 
 	m_leftWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
-		workbench::WorkbenchEdge::Left, settings.m_nLeftPanelExtent96, persistExtent);
+		workbench::WorkbenchEdge::Left, settings.m_nLeftPanelExtent96, commitExtent);
 	auto explorer = std::make_unique<workbench::explorer::CExplorerOutlineTool>(m_cDlgFuncList,
 		[this](bool expanded) {
+			if (m_workbenchRuntime != nullptr) {
+				return SetBuiltinViewVisibility(workbench::layout::ids::view::Outline, expanded);
+			}
 			auto& workbenchSettings = m_pShareData->m_Common.m_sWorkbench;
 			const BOOL value = expanded ? TRUE : FALSE;
 			if (workbenchSettings.m_bRightPanelVisible != value) {
@@ -615,13 +1431,15 @@ bool CEditWnd::InitializeWorkbench()
 				BroadcastWorkbenchSettings();
 			}
 			if (expanded && m_dispatchReady) ReloadWorkbenchOutlineAndRelayout();
+			return true;
 		});
 	m_explorerOutlineTool = explorer.get();
 	m_explorerTool = explorer->Explorer();
 	m_outlineWorkbenchTool = explorer->Outline();
 	m_scmTool = explorer->SourceControl();
-	m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
-	m_scmTool->SetRoot(m_workspaceContext->GetRoot());
+	const auto workspaceRoot = GetSemanticWorkspaceRoot();
+	m_explorerTool->SetRoot(workspaceRoot);
+	m_scmTool->SetRoot(workspaceRoot);
 	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path) {
 		const std::wstring ownedPath(path);
 		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
@@ -640,7 +1458,7 @@ bool CEditWnd::InitializeWorkbench()
 
 	m_extensionViewRegistry = std::make_shared<CExtensionViewRegistry>();
 	m_rightWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
-		workbench::WorkbenchEdge::Right, settings.m_nExtensionViewsExtent96, persistExtensionViewsExtent);
+		workbench::WorkbenchEdge::Right, settings.m_nExtensionViewsExtent96, commitExtensionViewsExtent);
 	m_rightWorkbenchPanel->SetTitle(L"EXTENSIONS");
 	auto extensionSidebar = std::make_unique<workbench::extension::CExtensionSidebarTool>(m_extensionViewRegistry);
 	m_extensionSidebarTool = extensionSidebar.get();
@@ -651,10 +1469,33 @@ bool CEditWnd::InitializeWorkbench()
 	}
 
 	m_bottomWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
-		workbench::WorkbenchEdge::Bottom, settings.m_nBottomPanelExtent96, persistExtent);
+		workbench::WorkbenchEdge::Bottom, settings.m_nBottomPanelExtent96, commitExtent);
 	auto bottomPanelTool = std::make_unique<workbench::extension::CExtensionBottomPanelTool>();
 	m_extensionBottomPanelTool = bottomPanelTool.get();
 	m_terminalTool = bottomPanelTool->Terminal();
+	bottomPanelTool->SetTabSelectionCallback(
+		[this](workbench::extension::ExtensionBottomPanelTab tab) {
+			if (m_workbenchRuntime == nullptr) return true;
+			switch (tab) {
+			case workbench::extension::ExtensionBottomPanelTab::Terminal:
+				return ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Terminal, false);
+			case workbench::extension::ExtensionBottomPanelTab::Problems:
+				break;
+			case workbench::extension::ExtensionBottomPanelTab::Output:
+				break;
+			default:
+				return false;
+			}
+			const std::string_view commandId = tab == workbench::extension::ExtensionBottomPanelTab::Problems
+				? "workbench.actions.view.problems"
+				: "workbench.action.output.toggleOutput";
+			bool handled = false;
+			const bool succeeded = TryExecuteWorkbenchStableCommand(commandId, handled);
+			if (handled) return succeeded;
+			return tab == workbench::extension::ExtensionBottomPanelTab::Problems
+				? ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Problems, false)
+				: ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Output, false);
+		});
 	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 	m_terminalTool->SetPanelActions({
 		.closePanel = [this]() {
@@ -676,6 +1517,11 @@ bool CEditWnd::InitializeWorkbench()
 	m_activityBar = std::make_unique<workbench::CActivityBar>([this](workbench::ActivityBarItem item) {
 		switch (item) {
 		case workbench::ActivityBarItem::Explorer:
+			if (m_workbenchRuntime != nullptr) {
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand("workbench.view.explorer", handled);
+				if (handled) break;
+			}
 			ActivateLeftWorkbenchTool(false, true);
 			break;
 		case workbench::ActivityBarItem::SourceControl:
@@ -690,18 +1536,81 @@ bool CEditWnd::InitializeWorkbench()
 	});
 	if (!m_activityBar->Create(GetHwnd(), G_AppInstance())) m_activityBar.reset();
 
+	const bool hasEditorAdapter = m_editorServiceAdapter != nullptr;
+	const bool hasLegacyBackend = m_legacyEditorBackend != nullptr;
+	if (hasEditorAdapter != hasLegacyBackend) {
+		CloseWorkbench();
+		return false;
+	}
+	const bool editorBridgeEnabled = hasEditorAdapter && hasLegacyBackend;
+	if (editorBridgeEnabled) {
+		m_emptyEditorSurface = std::make_unique<workbench::editor::CEmptyEditorSurface>(
+			[this](std::string_view commandId) {
+				(void)ExecuteWorkbenchEditorCommand(commandId);
+			});
+		if (!m_emptyEditorSurface->Create(GetHwnd(), G_AppInstance())) {
+			m_emptyEditorSurface.reset();
+		}
+	}
+
 	const bool initialized = m_leftWorkbenchPanel != nullptr
 		&& m_rightWorkbenchPanel != nullptr
 		&& m_bottomWorkbenchPanel != nullptr
-		&& m_activityBar != nullptr;
+		&& m_activityBar != nullptr
+		&& (!editorBridgeEnabled || m_emptyEditorSurface != nullptr);
 	if (!initialized) {
 		// Workbench initialization is all-or-nothing. Do not leave an editor in
 		// an unobservable partial state where a configured tool has no HWND.
 		CloseWorkbench();
 		return false;
 	}
+	if (m_workbenchRuntime != nullptr) {
+		m_workbenchContextKeyService = std::make_unique<workbench::commands::WorkbenchContextKeyService>();
+		m_workbenchCommandRegistry = std::make_unique<workbench::commands::WorkbenchCommandRegistry>();
+		const auto registration = m_workbenchCommandRegistry->RegisterBuiltinCommands({
+			.toggleSidebarVisibility = [this]() {
+				return ExecuteToggleSidebarVisibilityCommand()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "sidebar layout command failed" };
+			},
+			.showExplorer = [this]() {
+				return ExecuteShowExplorerCommand()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "explorer layout command failed" };
+			},
+			.showProblems = [this]() {
+				return ExecuteShowProblemsCommand()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "problems layout command failed" };
+			},
+			.toggleOutput = [this]() {
+				return ExecuteToggleOutputCommand()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "output layout command failed" };
+			},
+		});
+		if (!registration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+	}
+	if (m_workbenchRuntime != nullptr && !InitializeWorkbenchServiceProjection()) {
+		CloseWorkbench();
+		return false;
+	}
+	const auto extensionProfileDirectory = m_extensionProfileDirectory.empty()
+		? GetIniFileName().parent_path() : m_extensionProfileDirectory;
 	m_extensionService = std::make_unique<CExtensionService>(
-		GetHwnd(), m_pShareData->m_sHandles.m_hwndTray, GetIniFileName().parent_path(), m_extensionViewRegistry);
+		GetHwnd(), m_pShareData->m_sHandles.m_hwndTray, extensionProfileDirectory,
+		m_extensionViewRegistry, std::move(m_extensionSecretStorage), m_markerService, m_outputService);
 	m_extensionService->SetApplyEditHandler([this](const std::vector<SExtensionDocumentEdit>& edits) {
 		CExtensionService::NativeApplyEditResult completion;
 		completion.result = ApplyExtensionEdits(edits, completion.snapshots);
@@ -710,15 +1619,39 @@ bool CEditWnd::InitializeWorkbench()
 	m_extensionService->SetEditorOptionsHandler([this](const SExtensionNativeEditorOptions& options) {
 		return ApplyExtensionEditorOptions(options);
 	});
-	m_extensionBottomPanelTool->SetProblemsProvider([this]() {
-		return m_extensionService ? m_extensionService->Problems() : std::vector<SExtensionProblem>{};
-	});
-	m_extensionBottomPanelTool->SetOutputProvider([this]() {
-		return m_extensionService ? m_extensionService->OutputChannels() : std::vector<SExtensionOutputChannel>{};
-	});
-	m_extensionBottomPanelTool->SetProblemActivationCallback([this](const SExtensionProblem& problem) {
-		const auto path = ExtensionFilePathFromUri(problem.uri);
-		if (path) GetActiveView().GetCommander().Command_FILEOPEN(path->c_str());
+	m_extensionBottomPanelTool->SetProblemActivationCallback(
+		[this](const workbench::win32::ProblemsPanelEntry& problem) {
+			const auto path = ExtensionFilePathFromUri(problem.resourceUri);
+			if (!path) return;
+			GetActiveView().GetCommander().Command_FILEOPEN(path->c_str());
+			// TODO: add an explicit UTF-16-to-Sakura position adapter before applying
+			// problem.range. The service range is deliberately not a legacy column.
+		});
+	m_extensionBottomPanelTool->SetOutputChannelSelectionCallback([this](const std::string& channelId) {
+		if (m_outputService == nullptr) return false;
+		try {
+			const auto snapshot = m_outputService->Snapshot();
+			const auto channel = std::ranges::find(snapshot.channels, channelId,
+				&workbench::output::OutputChannelSnapshot::channelId);
+			if (channel == snapshot.channels.end()) return false;
+			auto operationId = NextOutputPanelOperationId();
+			if (!operationId) return false;
+			const auto result = m_outputService->Show({
+				.operation = {
+					.operationId = std::move(*operationId),
+					.expectedRevision = snapshot.revision,
+				},
+				.owner = channel->owner,
+				.channelId = channelId,
+				.preserveFocus = true,
+			});
+			return result.Succeeded()
+				|| (result.status == workbench::output::EOutputOperationStatus::NotApplicable
+					&& result.reason == workbench::output::EOutputOperationReason::None);
+		}
+		catch (...) {
+			return false;
+		}
 	});
 	m_cStatusBar.SetExtensionCommandCallback([this](std::wstring_view command) {
 		if (m_extensionService) m_extensionService->ExecuteCommand(command);
@@ -743,10 +1676,50 @@ bool CEditWnd::InitializeWorkbench()
 		if (m_extensionService) m_extensionService->NotifyViewVisibility(visible);
 	});
 
+	if (m_workbenchRuntime != nullptr) {
+		const HWND editorWindow = GetHwnd();
+		try {
+			m_layoutStateSubscription = m_workbenchRuntime->LayoutState().Subscribe(
+				[editorWindow](const workbench::layout::WorkbenchLayoutChangeBatch&) {
+					if (::IsWindow(editorWindow)) {
+						::PostMessageW(editorWindow, MYWM_WORKBENCH_LAYOUT_CHANGED, 0, 0);
+					}
+				});
+		}
+		catch (...) {
+			m_layoutStateSubscription.reset();
+		}
+		if (!m_layoutStateSubscription) {
+			CloseWorkbench();
+			return false;
+		}
+	}
+
 	ApplyWorkbenchTheme();
-	ApplyWorkbenchSettingsFromSharedData();
-	if (settings.m_bRightPanelVisible != FALSE && m_outlineWorkbenchTool != nullptr) {
+	ApplyWorkbenchSettingsFromSharedData(false);
+	if (!ApplyInitialWorkbenchLayoutState()) {
+		CloseWorkbench();
+		return false;
+	}
+	if (m_workbenchRuntime == nullptr && settings.m_bRightPanelVisible != FALSE
+		&& m_outlineWorkbenchTool != nullptr
+		&& m_leftWorkbenchPanel != nullptr
+		&& m_leftWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden) {
 		ReloadWorkbenchOutlineAndRelayout();
+	}
+	if (editorBridgeEnabled) {
+		const HWND editorWindow = GetHwnd();
+		m_editorCoreSubscription = m_editorServiceAdapter->Subscribe(
+			[editorWindow](const workbench::editor::EditorCoreChangeBatch&) {
+				if (::IsWindow(editorWindow)) {
+					::PostMessageW(editorWindow, MYWM_EDITOR_CORE_CHANGED, 0, 0);
+				}
+			});
+		if (!m_editorCoreSubscription) {
+			CloseWorkbench();
+			return false;
+		}
+		ApplyEditorCoreSnapshot(m_editorServiceAdapter->Snapshot(), false);
 	}
 	PublishExtensionDocumentOpen(false);
 	return true;
@@ -754,7 +1727,8 @@ bool CEditWnd::InitializeWorkbench()
 
 std::vector<SExtensionDiagnostic> CEditWnd::ExtensionDiagnosticsForCurrentDocument() const
 {
-	if (!m_extensionService || !GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) return {};
+	if (!HasActiveEditorInput() || !m_extensionService
+		|| !GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) return {};
 	const auto uri = ExtensionFileUriFromPath(GetDocument()->m_cDocFile.GetFilePath());
 	return uri.empty() ? std::vector<SExtensionDiagnostic>{} : m_extensionService->DiagnosticsForUri(uri);
 }
@@ -784,6 +1758,10 @@ SExtensionDocumentSnapshot CEditWnd::CaptureExtensionDocumentSnapshot(std::uint6
 void CEditWnd::PublishExtensionDocumentOpen(bool forceReopen)
 {
 	if (!m_extensionService) return;
+	if (!HasActiveEditorInput()) {
+		ClosePublishedExtensionDocument();
+		return;
+	}
 	auto snapshot = CaptureExtensionDocumentSnapshot(1);
 	if (snapshot.uri.empty()) return;
 	if (!m_extensionDocumentUri.empty() && (forceReopen || snapshot.uri != m_extensionDocumentUri)) {
@@ -805,6 +1783,12 @@ void CEditWnd::PublishExtensionDocumentOpen(bool forceReopen)
 
 void CEditWnd::NotifyExtensionDocumentChanged()
 {
+	if (!HasActiveEditorInput()) return;
+	const bool synchronized = SynchronizeLegacyDocumentState(
+		GetDocument()->m_cDocEditor.IsModified(), true);
+	if (synchronized && !m_workingCopyBackendEffectInProgress && m_workingCopyLifecycleBridge) {
+		(void)m_workingCopyLifecycleBridge->NotifyCurrentChanged(::GetTickCount64());
+	}
 	if (!m_extensionService || m_extensionDocumentVersion == 0 || m_extensionDocumentSyncTimerPending) return;
 	if (::SetTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC, 8, nullptr) != 0) {
 		m_extensionDocumentSyncTimerPending = true;
@@ -815,6 +1799,10 @@ void CEditWnd::NotifyExtensionDocumentChanged()
 
 void CEditWnd::PublishExtensionDocumentChange()
 {
+	if (!HasActiveEditorInput()) {
+		ClosePublishedExtensionDocument();
+		return;
+	}
 	if (!m_extensionService || m_extensionDocumentVersion == 0) return;
 	auto snapshot = CaptureExtensionDocumentSnapshot(++m_extensionDocumentVersion);
 	if (snapshot.uri != m_extensionDocumentUri) {
@@ -827,6 +1815,10 @@ void CEditWnd::PublishExtensionDocumentChange()
 
 void CEditWnd::PublishExtensionDocumentSave()
 {
+	if (!HasActiveEditorInput()) {
+		ClosePublishedExtensionDocument();
+		return;
+	}
 	if (!m_extensionService) return;
 	if (m_extensionDocumentSyncTimerPending) {
 		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
@@ -848,7 +1840,7 @@ void CEditWnd::PublishExtensionDocumentSave()
 
 void CEditWnd::PublishExtensionActiveEditor()
 {
-	if (!m_extensionService || m_extensionDocumentVersion == 0) return;
+	if (!HasActiveEditorInput() || !m_extensionService || m_extensionDocumentVersion == 0) return;
 	const auto caret = GetActiveView().GetCaret().GetCaretLogicPos();
 	const int line = Int(caret.y);
 	const int character = Int(caret.x);
@@ -863,6 +1855,9 @@ SExtensionApplyEditResult CEditWnd::ApplyExtensionEdits(
 	const std::vector<SExtensionDocumentEdit>& edits,
 	std::vector<SExtensionDocumentSnapshot>& snapshots)
 {
+	if (!HasActiveEditorInput() || m_extensionDocumentVersion == 0) {
+		return { EExtensionApplyEditStatus::UnknownDocument };
+	}
 	if (edits.size() != 1 || edits.front().documentId != SExtensionDocumentId{ ::GetCurrentProcessId(), 1 }) {
 		return { EExtensionApplyEditStatus::UnknownDocument };
 	}
@@ -913,6 +1908,7 @@ SExtensionApplyEditResult CEditWnd::ApplyExtensionEdits(
 
 bool CEditWnd::ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& options)
 {
+	if (!HasActiveEditorInput() || m_extensionDocumentVersion == 0) return false;
 	if (options.documentId != SExtensionDocumentId{ ::GetCurrentProcessId(), 1 }) return false;
 	auto* document = GetDocument();
 	if (!document) return false;
@@ -932,10 +1928,20 @@ bool CEditWnd::ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& 
 
 void CEditWnd::CloseWorkbench() noexcept
 {
-	if (m_extensionDocumentSyncTimerPending) {
-		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
-		m_extensionDocumentSyncTimerPending = false;
-	}
+	// Model callbacks own only the shared gate. Disconnect it before removing
+	// subscriptions so an in-flight callback cannot post into torn-down panels.
+	CloseWorkbenchServiceProjection();
+	if (m_layoutStateSubscription) m_layoutStateSubscription->Unsubscribe();
+	m_layoutStateSubscription.reset();
+	// Registry executors capture this window and must be gone before any host they
+	// can project is closed. Context state has no external owner and is window-local.
+	m_workbenchCommandRegistry.reset();
+	m_workbenchContextKeyService.reset();
+	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
+	m_editorCoreSubscription.reset();
+	if (m_emptyEditorSurface) m_emptyEditorSurface->Destroy();
+	m_emptyEditorSurface.reset();
+	ClosePublishedExtensionDocument();
 	if (m_extensionSidebarTool) {
 		m_extensionSidebarTool->SetRequestChildrenCallback({});
 		m_extensionSidebarTool->SetSelectionChangedCallback({});
@@ -943,11 +1949,14 @@ void CEditWnd::CloseWorkbench() noexcept
 		m_extensionSidebarTool->SetCommandCallback({});
 		m_extensionSidebarTool->SetVisibilityChangedCallback({});
 	}
+	if (m_extensionBottomPanelTool) {
+		m_extensionBottomPanelTool->SetProblemActivationCallback({});
+		m_extensionBottomPanelTool->SetOutputChannelSelectionCallback({});
+		m_extensionBottomPanelTool->SetTabSelectionCallback({});
+	}
 	m_cStatusBar.SetExtensionCommandCallback({});
 	if (m_extensionService) m_extensionService->Shutdown();
 	m_extensionService.reset();
-	m_extensionDocumentUri.clear();
-	m_extensionDocumentVersion = 0;
 	m_cStatusBar.SetExtensionItems({});
 	if (m_activityBar) m_activityBar->Close();
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Close();
@@ -989,6 +1998,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	}
 	if (m_terminalTool) m_terminalTool->SetPalette(palette);
 	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
+	if (m_emptyEditorSurface) m_emptyEditorSurface->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -1005,46 +2015,380 @@ void CEditWnd::ApplyWorkbenchTheme()
 	}
 }
 
-void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
+void CEditWnd::ApplyWorkbenchSettingsFromSharedData(bool finalizeProjection)
 {
-	if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
 	const auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	auto applyPanel = [](workbench::CWorkbenchPanelHost* host, BOOL visible, int extentDip) {
 		if (host == nullptr) return;
 		host->ApplyExtentDip(extentDip);
 		if (visible != FALSE) host->Show(); else host->Hide();
 	};
-	applyPanel(m_leftWorkbenchPanel.get(), settings.m_bLeftPanelVisible, settings.m_nLeftPanelExtent96);
-	applyPanel(m_rightWorkbenchPanel.get(), settings.m_bExtensionViewsVisible, settings.m_nExtensionViewsExtent96);
-	if (m_extensionSidebarTool) {
-		m_extensionSidebarTool->SetSidebarVisible(settings.m_bExtensionViewsVisible != FALSE);
+	if (m_workbenchRuntime == nullptr) {
+		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+		applyPanel(m_leftWorkbenchPanel.get(), settings.m_bLeftPanelVisible, settings.m_nLeftPanelExtent96);
+		applyPanel(m_rightWorkbenchPanel.get(), settings.m_bExtensionViewsVisible,
+			settings.m_nExtensionViewsExtent96);
+		if (m_extensionSidebarTool) {
+			m_extensionSidebarTool->SetSidebarVisible(settings.m_bExtensionViewsVisible != FALSE);
+		}
+		applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible,
+			settings.m_nBottomPanelExtent96);
+		if (settings.m_bBottomPanelVisible == FALSE) m_bottomWorkbenchMaximized = false;
+		if (m_explorerOutlineTool) {
+			m_explorerOutlineTool->ShowSourceControl(settings.m_eActiveTool == WORKBENCH_TOOL_SCM);
+			m_explorerOutlineTool->SetOutlineExpanded(settings.m_bRightPanelVisible != FALSE);
+		}
 	}
-	if (m_explorerOutlineTool) m_explorerOutlineTool->ShowSourceControl(settings.m_eActiveTool == WORKBENCH_TOOL_SCM);
-	if (m_explorerOutlineTool) m_explorerOutlineTool->SetOutlineExpanded(settings.m_bRightPanelVisible != FALSE);
-	applyPanel(m_bottomWorkbenchPanel.get(), settings.m_bBottomPanelVisible, settings.m_nBottomPanelExtent96);
-	if (settings.m_bBottomPanelVisible == FALSE) m_bottomWorkbenchMaximized = false;
+	if (finalizeProjection) FinalizeWorkbenchPanelProjection();
+}
 
-	std::optional<workbench::ActivityBarItem> activeItem;
-	switch (settings.m_eActiveTool) {
-	case WORKBENCH_TOOL_EXPLORER:
-		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Explorer;
-		break;
-	case WORKBENCH_TOOL_OUTLINE:
-		// Outline now lives inside Explorer.
-		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::Explorer;
-		break;
-	case WORKBENCH_TOOL_TERMINAL:
-		// Terminal is reached from the bottom panel/title-bar controls rather
-		// than occupying a dedicated Activity Bar button.
-		break;
-	case WORKBENCH_TOOL_SCM:
-		if (settings.m_bLeftPanelVisible != FALSE) activeItem = workbench::ActivityBarItem::SourceControl;
-		break;
+bool CEditWnd::ApplyInitialWorkbenchLayoutState()
+{
+	if (m_workbenchRuntime == nullptr) {
+		FinalizeWorkbenchPanelProjection();
+		return true;
 	}
-	if (m_rightWorkbenchPanel && m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden) {
-		activeItem = workbench::ActivityBarItem::Extensions;
+	return ApplyCurrentWorkbenchLayoutState(true, true);
+}
+
+bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
+	bool broadcastMirrorChanges, bool* mirrorChanged)
+{
+	if (mirrorChanged != nullptr) *mirrorChanged = false;
+	if (m_workbenchRuntime == nullptr || m_leftWorkbenchPanel == nullptr
+		|| m_bottomWorkbenchPanel == nullptr || m_rightWorkbenchPanel == nullptr) {
+		return false;
+	}
+
+	workbench::layout::WorkbenchLayoutStateSnapshot snapshot;
+	workbench::win32::BuiltinPartProjectionResult result;
+	workbench::win32::BuiltinActiveSurfaceProjectionResult surfaceResult;
+	try {
+		snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		result = workbench::win32::ProjectBuiltinParts(snapshot);
+		surfaceResult = workbench::win32::ProjectBuiltinActiveSurfaces(snapshot);
+	}
+	catch (...) {
+		return false;
+	}
+	if (!result.Succeeded() || !surfaceResult.Succeeded()) return false;
+	if (m_workbenchContextKeyService != nullptr) {
+		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(snapshot);
+		if (!contextResult.Succeeded()
+			&& contextResult.status != workbench::commands::EWorkbenchContextMutationStatus::NotApplicable) {
+			return false;
+		}
+	}
+
+	const auto applyPart = [](workbench::CWorkbenchPanelHost& host,
+		const workbench::win32::BuiltinPartProjectionState& part) {
+		if (part.committedExtentDip) {
+			host.ApplyExtentDip(static_cast<int>(*part.committedExtentDip));
+		}
+		if (part.visible) host.Show(); else host.Hide();
+	};
+	applyPart(*m_leftWorkbenchPanel, result.projection->left);
+	applyPart(*m_bottomWorkbenchPanel, result.projection->bottom);
+	applyPart(*m_rightWorkbenchPanel, result.projection->right);
+	if (m_extensionSidebarTool) {
+		m_extensionSidebarTool->SetSidebarVisible(result.projection->right.visible);
+	}
+	if (!result.projection->bottom.visible) m_bottomWorkbenchMaximized = false;
+
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	bool changed = false;
+	const auto updateVisible = [&changed](BOOL& destination, bool visible) {
+		const BOOL value = visible ? TRUE : FALSE;
+		if (destination == value) return;
+		destination = value;
+		changed = true;
+	};
+	const auto updateExtent = [&changed](int& destination, int extentDip) {
+		if (destination == extentDip) return;
+		destination = extentDip;
+		changed = true;
+	};
+	updateVisible(settings.m_bLeftPanelVisible, result.projection->left.visible);
+	updateExtent(settings.m_nLeftPanelExtent96, m_leftWorkbenchPanel->GetExtentDip());
+	updateVisible(settings.m_bBottomPanelVisible, result.projection->bottom.visible);
+	updateExtent(settings.m_nBottomPanelExtent96, m_bottomWorkbenchPanel->GetExtentDip());
+	updateVisible(settings.m_bExtensionViewsVisible, result.projection->right.visible);
+	updateExtent(settings.m_nExtensionViewsExtent96, m_rightWorkbenchPanel->GetExtentDip());
+	if (mirrorChanged != nullptr) *mirrorChanged = changed;
+
+	const bool surfacesApplied = ApplyBuiltinWorkbenchSurfaces(
+		snapshot, *surfaceResult.projection);
+	if (finalizeProjection) FinalizeWorkbenchPanelProjection(&*surfaceResult.projection);
+	if (surfacesApplied && finalizeProjection) {
+		ApplyBuiltinWorkbenchFocus(*surfaceResult.projection);
+	}
+	if (changed && broadcastMirrorChanges) BroadcastWorkbenchSettings();
+	return surfacesApplied;
+}
+
+bool CEditWnd::ApplyBuiltinWorkbenchSurfaces(
+	const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot,
+	const workbench::win32::BuiltinActiveSurfaceProjection& projection)
+{
+	if (m_workbenchRuntime == nullptr || m_explorerOutlineTool == nullptr
+		|| m_extensionBottomPanelTool == nullptr || m_extensionSidebarTool == nullptr) {
+		return false;
+	}
+
+	const auto outline = std::ranges::find(snapshot.views,
+		workbench::layout::ids::view::Outline, &workbench::layout::WorkbenchViewState::viewId);
+	if (outline != snapshot.views.end()) {
+		m_explorerOutlineTool->SetOutlineExpanded(outline->visible);
+	}
+
+	if (projection.sidebar) {
+		switch (*projection.sidebar) {
+		case workbench::win32::BuiltinActiveSurface::Explorer:
+		case workbench::win32::BuiltinActiveSurface::Outline:
+			m_explorerOutlineTool->ShowSourceControl(false);
+			break;
+		case workbench::win32::BuiltinActiveSurface::SourceControl:
+			m_explorerOutlineTool->ShowSourceControl(true);
+			break;
+		default:
+			return false;
+		}
+	}
+
+	if (projection.panel) {
+		switch (*projection.panel) {
+		case workbench::win32::BuiltinActiveSurface::Terminal:
+			m_extensionBottomPanelTool->SetActiveTab(
+				workbench::extension::ExtensionBottomPanelTab::Terminal);
+			break;
+		case workbench::win32::BuiltinActiveSurface::Problems:
+			m_extensionBottomPanelTool->SetActiveTab(
+				workbench::extension::ExtensionBottomPanelTab::Problems);
+			break;
+		case workbench::win32::BuiltinActiveSurface::Output:
+			m_extensionBottomPanelTool->SetActiveTab(
+				workbench::extension::ExtensionBottomPanelTab::Output);
+			break;
+		default:
+			return false;
+		}
+	}
+
+	if (projection.auxiliaryBar
+		&& *projection.auxiliaryBar != workbench::win32::BuiltinActiveSurface::LegacyExtensionViews) {
+		return false;
+	}
+
+	const auto partVisible = [&snapshot](std::string_view partId) {
+		const auto part = std::ranges::find(snapshot.parts, partId,
+			&workbench::layout::WorkbenchPartState::partId);
+		return part != snapshot.parts.end() && part->visible;
+	};
+	std::optional<workbench::ActivityBarItem> activeItem;
+	if (partVisible(workbench::layout::ids::part::Sidebar) && projection.sidebar) {
+		switch (*projection.sidebar) {
+		case workbench::win32::BuiltinActiveSurface::Explorer:
+		case workbench::win32::BuiltinActiveSurface::Outline:
+			activeItem = workbench::ActivityBarItem::Explorer;
+			break;
+		case workbench::win32::BuiltinActiveSurface::SourceControl:
+			activeItem = workbench::ActivityBarItem::SourceControl;
+			break;
+		default:
+			break;
+		}
 	}
 	if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
+	return true;
+}
+
+void CEditWnd::ApplyBuiltinWorkbenchFocus(
+	const workbench::win32::BuiltinActiveSurfaceProjection& projection)
+{
+	if (projection.focus) {
+		switch (*projection.focus) {
+		case workbench::win32::BuiltinActiveSurface::Explorer:
+		case workbench::win32::BuiltinActiveSurface::SourceControl:
+			if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->ActivateTool();
+			break;
+		case workbench::win32::BuiltinActiveSurface::Outline:
+			m_explorerOutlineTool->FocusOutline();
+			break;
+		case workbench::win32::BuiltinActiveSurface::Terminal:
+		case workbench::win32::BuiltinActiveSurface::Problems:
+		case workbench::win32::BuiltinActiveSurface::Output:
+			if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->ActivateTool();
+			break;
+		case workbench::win32::BuiltinActiveSurface::LegacyExtensionViews:
+			if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->ActivateTool();
+			break;
+		case workbench::win32::BuiltinActiveSurface::Editor:
+			if (m_emptyEditorSurface != nullptr && m_emptyEditorSurface->IsVisible()) {
+				m_emptyEditorSurface->Focus();
+			} else if (HasActiveEditorInput() && GetActiveView().GetHwnd() != nullptr
+				&& ::IsWindowVisible(GetActiveView().GetHwnd())) {
+				::SetFocus(GetActiveView().GetHwnd());
+			}
+			break;
+		}
+	}
+}
+
+void CEditWnd::OnWorkbenchLayoutStateChanged()
+{
+	if (!m_layoutStateSubscription) return;
+	if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+	if (!ApplyCurrentWorkbenchLayoutState(true, true)) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: committed workbench layout projection failed.\n");
+	}
+}
+
+bool CEditWnd::InitializeWorkbenchServiceProjection()
+{
+	if (m_workbenchRuntime == nullptr || m_extensionBottomPanelTool == nullptr
+		|| m_workbenchServiceProjectionGate != nullptr || m_markerSubscriptionId || m_outputSubscriptionId) {
+		return false;
+	}
+
+	m_markerService = m_workbenchRuntime->Markers();
+	m_outputService = m_workbenchRuntime->Output();
+	if (m_markerService == nullptr || m_outputService == nullptr) {
+		m_markerService = nullptr;
+		m_outputService = nullptr;
+		return false;
+	}
+
+	try {
+		auto gate = std::make_shared<WorkbenchServiceProjectionGate>();
+		gate->window = GetHwnd();
+		if (gate->window == nullptr) return false;
+
+		const auto markerSubscription = m_markerService->Subscribe(
+			[gate](const workbench::problems::MarkerChange&) {
+				WorkbenchServiceProjectionGate::Notify(gate, false);
+			});
+		if (markerSubscription.status != workbench::problems::EMarkerSubscriptionStatus::Subscribed
+			|| !markerSubscription.subscriptionId) {
+			m_markerService = nullptr;
+			m_outputService = nullptr;
+			return false;
+		}
+		// Publish the gate and marker ID before the second subscription. Every
+		// subsequent failure can therefore take the single close terminal.
+		m_workbenchServiceProjectionGate = gate;
+		m_markerSubscriptionId = *markerSubscription.subscriptionId;
+
+		const auto outputSubscription = m_outputService->Subscribe(
+			[gate](const workbench::output::OutputServiceChange& change) {
+				WorkbenchServiceProjectionGate::Notify(gate,
+					change.kind == workbench::output::EOutputChangeKind::ChannelShown);
+			});
+		if (!outputSubscription) {
+			CloseWorkbenchServiceProjection();
+			return false;
+		}
+
+		m_outputSubscriptionId = *outputSubscription;
+		OnWorkbenchServiceProjectionChanged();
+		return true;
+	}
+	catch (...) {
+		CloseWorkbenchServiceProjection();
+		return false;
+	}
+}
+
+void CEditWnd::CloseWorkbenchServiceProjection() noexcept
+{
+	const auto gate = std::move(m_workbenchServiceProjectionGate);
+	if (gate) {
+		std::lock_guard lock(gate->mutex);
+		gate->connected = false;
+		gate->window = nullptr;
+		gate->messageQueued = false;
+		gate->outputRevealPending = false;
+	}
+	if (m_markerService != nullptr && m_markerSubscriptionId) {
+		m_markerService->Unsubscribe(*m_markerSubscriptionId);
+	}
+	m_markerSubscriptionId.reset();
+	if (m_outputService != nullptr && m_outputSubscriptionId) {
+		m_outputService->Unsubscribe(*m_outputSubscriptionId);
+	}
+	m_outputSubscriptionId.reset();
+	m_markerService = nullptr;
+	m_outputService = nullptr;
+}
+
+void CEditWnd::OnWorkbenchServiceProjectionChanged()
+{
+	if (m_extensionBottomPanelTool == nullptr || m_markerService == nullptr || m_outputService == nullptr
+		|| !m_workbenchServiceProjectionGate) {
+		return;
+	}
+
+	bool revealOutput = false;
+	{
+		std::lock_guard lock(m_workbenchServiceProjectionGate->mutex);
+		if (!m_workbenchServiceProjectionGate->connected) return;
+		revealOutput = m_workbenchServiceProjectionGate->outputRevealPending;
+		m_workbenchServiceProjectionGate->outputRevealPending = false;
+		m_workbenchServiceProjectionGate->messageQueued = false;
+	}
+
+	try {
+		const auto problems = workbench::win32::ProjectProblemsPanel(m_markerService->Snapshot());
+		const auto output = workbench::win32::ProjectOutputPanel(m_outputService->Snapshot());
+		m_extensionBottomPanelTool->SetProblemsSnapshot(problems);
+		m_extensionBottomPanelTool->SetOutputSnapshot(output);
+
+		if (!revealOutput || !output.activeChannelId) return;
+		const auto active = std::ranges::find(output.channels, *output.activeChannelId,
+			&workbench::win32::OutputPanelChannel::channelId);
+		if (active == output.channels.end() || !active->visible) return;
+		if (!ExecuteShowOutputCommand(!active->lastShowPreservedFocus)) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: Output service reveal projection failed.\n");
+		}
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: Problems/Output service projection failed.\n");
+	}
+}
+
+void CEditWnd::FinalizeWorkbenchPanelProjection(
+	const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection)
+{
+	const auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	const bool leftVisible = m_leftWorkbenchPanel != nullptr
+		&& m_leftWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
+	const bool rightVisible = m_rightWorkbenchPanel != nullptr
+		&& m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
+	const bool bottomVisible = m_bottomWorkbenchPanel != nullptr
+		&& m_bottomWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
+
+	if (m_workbenchRuntime == nullptr) {
+		std::optional<workbench::ActivityBarItem> activeItem;
+		switch (settings.m_eActiveTool) {
+		case WORKBENCH_TOOL_EXPLORER:
+			if (leftVisible) activeItem = workbench::ActivityBarItem::Explorer;
+			break;
+		case WORKBENCH_TOOL_OUTLINE:
+			// Outline now lives inside Explorer.
+			if (leftVisible) activeItem = workbench::ActivityBarItem::Explorer;
+			break;
+		case WORKBENCH_TOOL_TERMINAL:
+			// Terminal is reached from the bottom panel/title-bar controls rather
+			// than occupying a dedicated Activity Bar button.
+			break;
+		case WORKBENCH_TOOL_SCM:
+			if (leftVisible) activeItem = workbench::ActivityBarItem::SourceControl;
+			break;
+		}
+		if (rightVisible) {
+			activeItem = workbench::ActivityBarItem::Extensions;
+		}
+		if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
+	}
 	ApplyWorkbenchTheme();
 	if (GetHwnd() != nullptr) {
 		RECT client{};
@@ -1052,14 +2396,20 @@ void CEditWnd::ApplyWorkbenchSettingsFromSharedData()
 		(void)OnSize2(m_nWinSizeType,
 			MAKELONG(client.right - client.left, client.bottom - client.top), false);
 	}
-	if (settings.m_bBottomPanelVisible != FALSE && settings.m_eActiveTool == WORKBENCH_TOOL_TERMINAL
-		&& m_terminalTool != nullptr) {
+	const bool terminalSelected = m_workbenchRuntime == nullptr
+		? settings.m_eActiveTool == WORKBENCH_TOOL_TERMINAL
+		: runtimeProjection != nullptr
+			&& runtimeProjection->panel == workbench::win32::BuiltinActiveSurface::Terminal;
+	if (bottomVisible && terminalSelected && m_terminalTool != nullptr) {
 		// Restoring a visible terminal must produce its first prompt without the
 		// user pressing '+'. Keep focus where startup/shared-setting propagation
 		// found it; explicit user activation remains the focus-owning path.
 		(void)m_terminalTool->EnsureSessionStarted();
 	}
-	if (settings.m_bRightPanelVisible != FALSE && m_outlineWorkbenchTool != nullptr
+	const bool outlineVisible = m_workbenchRuntime == nullptr
+		? settings.m_bRightPanelVisible != FALSE
+		: m_explorerOutlineTool != nullptr && m_explorerOutlineTool->IsOutlineExpanded();
+	if (leftVisible && outlineVisible && m_outlineWorkbenchTool != nullptr
 		&& m_cDlgFuncList.GetHwnd() == nullptr && m_dispatchReady) {
 		ReloadWorkbenchOutlineAndRelayout();
 	}
@@ -1094,6 +2444,34 @@ void CEditWnd::BroadcastWorkbenchSettings()
 		MYWM_CHANGESETTING, 0, PM_CHANGESETTING_WORKBENCH, GetHwnd());
 }
 
+std::wstring CEditWnd::GetSemanticWorkspaceRoot() const
+{
+	if (m_workbenchRuntime == nullptr) {
+		return m_workspaceContext == nullptr ? std::wstring{} : m_workspaceContext->GetRoot();
+	}
+
+	const auto snapshot = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	// The native Explorer currently has one root. Do not silently collapse a
+	// multi-root workspace to its first folder; that receives a real tree model
+	// in the later view-container slice.
+	if (snapshot.kind != config::EWorkspaceKind::Folder || snapshot.folders.size() != 1) return {};
+	const auto path = snapshot.folders.front().uri.ToWindowsPath();
+	return path ? std::move(*path.value) : std::wstring{};
+}
+
+void CEditWnd::ApplySemanticWorkspaceContext()
+{
+	if (m_workspaceContext == nullptr) return;
+	const auto root = GetSemanticWorkspaceRoot();
+	if (m_workbenchRuntime != nullptr) {
+		if (root.empty()) m_workspaceContext->ClearExplicitRoot();
+		else m_workspaceContext->SetExplicitRoot(root);
+	}
+	if (m_explorerTool) m_explorerTool->SetRoot(root);
+	if (m_scmTool) m_scmTool->SetRoot(root);
+	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+}
+
 void CEditWnd::UpdateWorkspaceFromDocument()
 {
 	if (!m_workspaceContext) return;
@@ -1102,9 +2480,395 @@ void CEditWnd::UpdateWorkspaceFromDocument()
 	} else {
 		m_workspaceContext->ClearSelectedFile();
 	}
-	if (m_explorerTool) m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
-	if (m_scmTool) m_scmTool->SetRoot(m_workspaceContext->GetRoot());
+	// A document path is only a terminal-launch fallback. It never promotes its
+	// parent to workspace identity, Explorer/SCM root, or .vscode authority.
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+}
+
+std::optional<std::string> CEditWnd::NextWorkbenchLayoutOperationId(std::string_view action)
+{
+	if (action.empty() || action.find('\0') != std::string_view::npos
+		|| m_workbenchLayoutOperationSequence == (std::numeric_limits<std::uint64_t>::max)()) {
+		return std::nullopt;
+	}
+	const auto sequence = ++m_workbenchLayoutOperationSequence;
+	std::string operationId = "sakura.native-layout.v1/";
+	operationId += std::to_string(static_cast<unsigned long long>(::GetCurrentProcessId()));
+	operationId += '/';
+	operationId += std::to_string(static_cast<unsigned long long>(
+		reinterpret_cast<std::uintptr_t>(GetHwnd())));
+	operationId += '/';
+	operationId += std::to_string(static_cast<unsigned long long>(sequence));
+	operationId += '/';
+	operationId.append(action);
+	if (operationId.size() > workbench::layout::kMaxWorkbenchLayoutOperationIdLength) {
+		return std::nullopt;
+	}
+	return operationId;
+}
+
+std::optional<std::string> CEditWnd::NextOutputPanelOperationId()
+{
+	if (m_outputPanelOperationSequence == (std::numeric_limits<std::uint64_t>::max)()) {
+		return std::nullopt;
+	}
+	const auto sequence = ++m_outputPanelOperationSequence;
+	std::string operationId = "sakura.native-output.v1/";
+	operationId += std::to_string(static_cast<unsigned long long>(::GetCurrentProcessId()));
+	operationId += '/';
+	operationId += std::to_string(static_cast<unsigned long long>(
+		reinterpret_cast<std::uintptr_t>(GetHwnd())));
+	operationId += '/';
+	operationId += std::to_string(static_cast<unsigned long long>(sequence));
+	if (!workbench::output::OutputService::IsValidOperationId(operationId)) return std::nullopt;
+	return operationId;
+}
+
+bool CEditWnd::SetBuiltinPartVisibility(std::string_view partId, bool visible)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		auto operationId = NextWorkbenchLayoutOperationId("set-part-visibility");
+		if (!operationId) return false;
+		const auto result = m_workbenchRuntime->LayoutState().SetPartVisibility({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.partId = std::string(partId),
+			.visible = visible,
+		});
+		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::SetBuiltinPartExtent(std::string_view partId, int extentDip)
+{
+	if (m_workbenchRuntime == nullptr || extentDip <= 0
+		|| static_cast<std::uint64_t>(extentDip)
+			> workbench::layout::kMaximumWorkbenchLayoutCommittedExtentDip) {
+		return false;
+	}
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		auto operationId = NextWorkbenchLayoutOperationId("set-part-extent");
+		if (!operationId) return false;
+		const auto result = m_workbenchRuntime->LayoutState().SetPartExtent({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.partId = std::string(partId),
+			.committedExtentDip = static_cast<std::uint32_t>(extentDip),
+		});
+		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::SetBuiltinViewVisibility(std::string_view viewId, bool visible)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		auto operationId = NextWorkbenchLayoutOperationId("set-view-visibility");
+		if (!operationId) return false;
+		const auto result = m_workbenchRuntime->LayoutState().SetViewVisibility({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.viewId = std::string(viewId),
+			.visible = visible,
+		});
+		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ActivateBuiltinWorkbenchView(std::string_view viewId, bool requestFocus)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	const bool supported = viewId == workbench::layout::ids::view::Explorer
+		|| viewId == workbench::layout::ids::view::Outline
+		|| viewId == workbench::layout::ids::view::SourceControl
+		|| viewId == workbench::layout::ids::view::Terminal
+		|| viewId == workbench::layout::ids::view::Problems
+		|| viewId == workbench::layout::ids::view::Output
+		|| viewId == workbench::layout::ids::view::LegacyExtensionViews;
+	if (!supported) return false;
+	try {
+		auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		auto operationId = NextWorkbenchLayoutOperationId("activate-view");
+		if (!operationId) return false;
+		auto result = m_workbenchRuntime->LayoutState().ActivateView({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.viewId = std::string(viewId),
+		});
+		if (result.status != workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			&& result.status != workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
+			return false;
+		}
+		snapshot = std::move(result.snapshot);
+
+		const auto view = std::ranges::find(snapshot.views, viewId,
+			&workbench::layout::WorkbenchViewState::viewId);
+		if (view == snapshot.views.end()) return false;
+		const auto container = std::ranges::find(snapshot.containers, view->containerId,
+			&workbench::layout::WorkbenchViewContainerState::containerId);
+		if (container == snapshot.containers.end()) return false;
+		const std::string resolvedContainerId = container->containerId;
+		const std::string resolvedViewId = view->viewId;
+
+		std::string_view partId;
+		switch (container->location) {
+		case workbench::layout::EWorkbenchViewContainerLocation::SideBar:
+			partId = workbench::layout::ids::part::Sidebar;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::Panel:
+			partId = workbench::layout::ids::part::Panel;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar:
+			partId = workbench::layout::ids::part::Auxiliarybar;
+			break;
+		}
+		if (partId.empty()) return false;
+
+		const auto part = std::ranges::find(snapshot.parts, partId,
+			&workbench::layout::WorkbenchPartState::partId);
+		if (part == snapshot.parts.end()) return false;
+		if (!part->visible) {
+			operationId = NextWorkbenchLayoutOperationId("reveal-active-view-part");
+			if (!operationId) return false;
+			result = m_workbenchRuntime->LayoutState().SetPartVisibility({
+				.operation = {
+					.operationId = std::move(*operationId),
+					.expectedRevision = snapshot.revision,
+				},
+				.partId = std::string(partId),
+				.visible = true,
+			});
+			if (result.status != workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+				&& result.status != workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
+				return false;
+			}
+			snapshot = std::move(result.snapshot);
+		}
+
+		if (!requestFocus) return true;
+		operationId = NextWorkbenchLayoutOperationId("focus-active-view");
+		if (!operationId) return false;
+		result = m_workbenchRuntime->LayoutState().SetFocus({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.focus = {
+				.partId = std::string(partId),
+				.containerId = resolvedContainerId,
+				.viewId = resolvedViewId,
+			},
+		});
+		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::IsBuiltinWorkbenchViewActive(std::string_view viewId) const
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		const auto view = std::ranges::find(snapshot.views, viewId,
+			&workbench::layout::WorkbenchViewState::viewId);
+		if (view == snapshot.views.end() || !view->visible) return false;
+		const auto container = std::ranges::find(snapshot.containers, view->containerId,
+			&workbench::layout::WorkbenchViewContainerState::containerId);
+		if (container == snapshot.containers.end() || !container->visible
+			|| !container->activeViewId || *container->activeViewId != viewId) {
+			return false;
+		}
+
+		const std::optional<std::string>* activeContainer = nullptr;
+		std::string_view partId;
+		switch (container->location) {
+		case workbench::layout::EWorkbenchViewContainerLocation::SideBar:
+			activeContainer = &snapshot.activeContainers.sideBar;
+			partId = workbench::layout::ids::part::Sidebar;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::Panel:
+			activeContainer = &snapshot.activeContainers.panel;
+			partId = workbench::layout::ids::part::Panel;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar:
+			activeContainer = &snapshot.activeContainers.auxiliaryBar;
+			partId = workbench::layout::ids::part::Auxiliarybar;
+			break;
+		}
+		if (activeContainer == nullptr || !*activeContainer
+			|| **activeContainer != container->containerId) {
+			return false;
+		}
+		const auto part = std::ranges::find(snapshot.parts, partId,
+			&workbench::layout::WorkbenchPartState::partId);
+		return part != snapshot.parts.end() && part->visible;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::RefreshWorkbenchCommandContext()
+{
+	if (m_workbenchRuntime == nullptr || m_workbenchContextKeyService == nullptr) return false;
+	try {
+		const auto result = m_workbenchContextKeyService->SetCoreProjection(
+			m_workbenchRuntime->LayoutState().Snapshot());
+		return result.Succeeded()
+			|| result.status == workbench::commands::EWorkbenchContextMutationStatus::NotApplicable;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled)
+{
+	handled = false;
+	if (m_workbenchCommandRegistry == nullptr || m_workbenchContextKeyService == nullptr) return false;
+	if (!m_workbenchCommandRegistry->Find(commandId)) return false;
+	handled = true;
+	if (!RefreshWorkbenchCommandContext()) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: workbench command context refresh failed.\n");
+		return false;
+	}
+
+	const auto result = m_workbenchCommandRegistry->Execute(commandId, m_workbenchContextKeyService->Snapshot());
+	switch (result.status) {
+	case workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded:
+		return true;
+	case workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable:
+		::OutputDebugStringW(L"Sakura Editor NEXT: workbench command was not applicable.\n");
+		return false;
+	case workbench::commands::EWorkbenchCommandExecutionStatus::Disabled:
+		::OutputDebugStringW(L"Sakura Editor NEXT: workbench command was disabled.\n");
+		return false;
+	case workbench::commands::EWorkbenchCommandExecutionStatus::UnknownCommand:
+		// A registry lookup just succeeded, so this is an internal terminal error,
+		// never a cue to execute a potentially different legacy action.
+		::OutputDebugStringW(L"Sakura Editor NEXT: workbench command disappeared.\n");
+		return false;
+	case workbench::commands::EWorkbenchCommandExecutionStatus::Unsupported:
+		::OutputDebugStringW(L"Sakura Editor NEXT: workbench command executor is unsupported.\n");
+		return false;
+	case workbench::commands::EWorkbenchCommandExecutionStatus::Failed:
+		::OutputDebugStringW(L"Sakura Editor NEXT: workbench command failed.\n");
+		return false;
+	}
+	::OutputDebugStringW(L"Sakura Editor NEXT: workbench command returned an invalid terminal status.\n");
+	return false;
+}
+
+bool CEditWnd::ExecuteToggleSidebarVisibilityCommand()
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		const auto part = std::ranges::find(snapshot.parts, workbench::layout::ids::part::Sidebar,
+			&workbench::layout::WorkbenchPartState::partId);
+		if (part == snapshot.parts.end()) return false;
+		if (!SetBuiltinPartVisibility(workbench::layout::ids::part::Sidebar, !part->visible)) return false;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) return false;
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ExecuteShowExplorerCommand()
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		if (!ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Explorer, true)) return false;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) return false;
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ExecuteShowProblemsCommand()
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		if (!ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Problems, true)) return false;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) return false;
+		if (!RefreshWorkbenchCommandContext()) return false;
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ExecuteShowOutputCommand(const bool requestFocus)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		if (!ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Output, requestFocus)) return false;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) return false;
+		if (!RefreshWorkbenchCommandContext()) return false;
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::ExecuteToggleOutputCommand()
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		if (!IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Output)) {
+			return ExecuteShowOutputCommand();
+		}
+		if (!SetBuiltinPartVisibility(workbench::layout::ids::part::Panel, false)) return false;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) return false;
+		if (!RefreshWorkbenchCommandContext()) return false;
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return true;
+	}
+	catch (...) {
+		return false;
+	}
 }
 
 void CEditWnd::PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip)
@@ -1123,6 +2887,34 @@ void CEditWnd::PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentD
 
 bool CEditWnd::IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept
 {
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+			const auto partVisible = [&snapshot](std::string_view partId) {
+				const auto part = std::ranges::find(snapshot.parts, partId,
+					&workbench::layout::WorkbenchPartState::partId);
+				return part != snapshot.parts.end() && part->visible;
+			};
+			switch (edge) {
+			case workbench::WorkbenchEdge::Left:
+				return partVisible(workbench::layout::ids::part::Sidebar);
+			case workbench::WorkbenchEdge::Right: {
+				const auto outline = std::ranges::find(snapshot.views,
+					workbench::layout::ids::view::Outline,
+					&workbench::layout::WorkbenchViewState::viewId);
+				return partVisible(workbench::layout::ids::part::Sidebar)
+					&& outline != snapshot.views.end() && outline->visible;
+			}
+			case workbench::WorkbenchEdge::Bottom:
+				return partVisible(workbench::layout::ids::part::Panel);
+			}
+		}
+		catch (...) {
+			return false;
+		}
+		return false;
+	}
+
 	const workbench::CWorkbenchPanelHost* host = nullptr;
 	switch (edge) {
 	case workbench::WorkbenchEdge::Left: host = m_leftWorkbenchPanel.get(); break;
@@ -1137,6 +2929,43 @@ bool CEditWnd::IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noex
 
 void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate)
 {
+	if (m_workbenchRuntime != nullptr) {
+		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+		bool mirrorChanged = false;
+
+		if (edge == workbench::WorkbenchEdge::Right) {
+			// This is the legacy Outline nested inside the left Sidebar. It is not
+			// the physical VS Code Auxiliary Bar hosted on the right.
+			if (m_explorerOutlineTool == nullptr || m_leftWorkbenchPanel == nullptr) return;
+			const bool committed = visible && activate
+				? ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Outline, true)
+				: (!visible || SetBuiltinPartVisibility(workbench::layout::ids::part::Sidebar, true))
+					&& SetBuiltinViewVisibility(workbench::layout::ids::view::Outline, visible);
+			if (!committed) return;
+			if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
+				::OutputDebugStringW(L"Sakura Editor NEXT: Outline reveal projection failed.\n");
+				return;
+			}
+			if (mirrorChanged) BroadcastWorkbenchSettings();
+			return;
+		}
+
+		const std::string_view partId = edge == workbench::WorkbenchEdge::Left
+			? workbench::layout::ids::part::Sidebar : workbench::layout::ids::part::Panel;
+		const std::string_view viewId = edge == workbench::WorkbenchEdge::Left
+			? workbench::layout::ids::view::Explorer : workbench::layout::ids::view::Terminal;
+		const bool committed = visible && activate
+			? ActivateBuiltinWorkbenchView(viewId, true)
+			: SetBuiltinPartVisibility(partId, visible);
+		if (!committed) return;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: workbench visibility projection failed.\n");
+			return;
+		}
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return;
+	}
+
 	workbench::CWorkbenchPanelHost* host = nullptr;
 	BOOL* savedVisible = nullptr;
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
@@ -1211,14 +3040,33 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 void CEditWnd::ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive)
 {
 	if (!m_leftWorkbenchPanel || !m_explorerOutlineTool) return;
-	auto& settings = m_pShareData->m_Common.m_sWorkbench;
-	const auto requested = sourceControl ? WORKBENCH_TOOL_SCM : WORKBENCH_TOOL_EXPLORER;
-	const bool alreadyActive = settings.m_bLeftPanelVisible != FALSE && settings.m_eActiveTool == requested;
+	const std::string_view requestedView = sourceControl
+		? workbench::layout::ids::view::SourceControl : workbench::layout::ids::view::Explorer;
+	const bool alreadyActive = m_workbenchRuntime != nullptr
+		? IsBuiltinWorkbenchViewActive(requestedView)
+		: IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Left)
+			&& m_pShareData->m_Common.m_sWorkbench.m_eActiveTool
+				== (sourceControl ? WORKBENCH_TOOL_SCM : WORKBENCH_TOOL_EXPLORER);
 	if (toggleIfActive && alreadyActive) {
 		SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, false, false);
-		if (m_activityBar) m_activityBar->SetSelectedItem(std::nullopt);
+		if (m_workbenchRuntime == nullptr && m_activityBar) {
+			m_activityBar->SetSelectedItem(std::nullopt);
+		}
 		return;
 	}
+	if (m_workbenchRuntime != nullptr) {
+		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+		if (!ActivateBuiltinWorkbenchView(requestedView, true)) return;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: left tool projection failed.\n");
+			return;
+		}
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return;
+	}
+	auto& settings = m_pShareData->m_Common.m_sWorkbench;
+	const auto requested = sourceControl ? WORKBENCH_TOOL_SCM : WORKBENCH_TOOL_EXPLORER;
 	settings.m_bLeftPanelVisible = TRUE;
 	settings.m_eActiveTool = requested;
 	m_explorerOutlineTool->ShowSourceControl(sourceControl);
@@ -1245,6 +3093,33 @@ void CEditWnd::PersistExtensionViewsExtent(int extentDip)
 void CEditWnd::ToggleExtensionViewsSidebar(bool activate)
 {
 	if (!m_rightWorkbenchPanel || !m_extensionSidebarTool) return;
+	if (m_workbenchRuntime != nullptr) {
+		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+		bool visible = false;
+		try {
+			const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+			const auto part = std::ranges::find(snapshot.parts,
+				workbench::layout::ids::part::Auxiliarybar,
+				&workbench::layout::WorkbenchPartState::partId);
+			if (part == snapshot.parts.end()) return;
+			visible = part->visible;
+		}
+		catch (...) {
+			return;
+		}
+		const bool committed = !visible && activate
+			? ActivateBuiltinWorkbenchView(
+				workbench::layout::ids::view::LegacyExtensionViews, true)
+			: SetBuiltinPartVisibility(workbench::layout::ids::part::Auxiliarybar, !visible);
+		if (!committed) return;
+		bool mirrorChanged = false;
+		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: Auxiliary Bar projection failed.\n");
+			return;
+		}
+		if (mirrorChanged) BroadcastWorkbenchSettings();
+		return;
+	}
 	const bool visible = m_rightWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	settings.m_bExtensionViewsVisible = visible ? FALSE : TRUE;
@@ -1275,7 +3150,8 @@ void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate
 {
 	const bool show = !IsWorkbenchPanelVisible(edge);
 	SetWorkbenchPanelVisible(edge, show, activate);
-	if (edge == workbench::WorkbenchEdge::Right && show && m_dispatchReady) {
+	if (m_workbenchRuntime == nullptr && edge == workbench::WorkbenchEdge::Right
+		&& show && m_dispatchReady) {
 		(void)GetActiveView().GetCommander().Command_FUNCLIST(SHOW_RELOAD, OUTLINE_DEFAULT);
 	}
 }
@@ -1303,20 +3179,39 @@ void CEditWnd::OpenWorkspaceFolder()
 	// FOS_FORCEFILESYSTEM. Keep all state intact when the user cancels or the
 	// dialog cannot return a filesystem path.
 	std::array<WCHAR, 32768> selectedDirectory{};
-	const auto initialDirectory = m_workspaceContext->GetRoot();
+	auto initialDirectory = GetSemanticWorkspaceRoot();
+	if (initialDirectory.empty()) initialDirectory = m_workspaceContext->GetNewTerminalWorkingDirectory();
 	if (!SelectDir(GetHwnd(), L"作業フォルダーを開く", initialDirectory, selectedDirectory)) return;
 
 	const auto absoluteRoot = MakeAbsolutePath(selectedDirectory.data());
 	const DWORD attributes = ::GetFileAttributesW(absoluteRoot.c_str());
 	if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return;
 
-	// The root is local to this editor process. SetRoot replaces the Explorer
-	// root and cancels stale enumeration. CTerminalTool reads the new value only
-	// when it creates or explicitly restarts a tab, so live sessions keep CWD.
-	m_workspaceContext->SetExplicitRoot(absoluteRoot);
-	if (m_explorerTool) m_explorerTool->SetRoot(m_workspaceContext->GetRoot());
-	if (m_scmTool) m_scmTool->SetRoot(m_workspaceContext->GetRoot());
-	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	if (m_workbenchRuntime != nullptr) {
+		auto uri = platform::uri::Uri::FromWindowsPath(absoluteRoot);
+		if (!uri) return;
+		const std::filesystem::path selectedPath(absoluteRoot);
+		auto displayName = selectedPath.filename().native();
+		if (displayName.empty()) displayName = selectedPath.root_name().native();
+		if (displayName.empty()) return;
+		const auto before = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		config::SetFolderRequest request {
+			.operation = {
+				.operationId = NextEditorOperationId("workspace.openFolder"),
+				.expectedRevision = before.revision,
+			},
+			.folderUri = std::move(*uri.value),
+			.displayName = std::move(displayName),
+		};
+		const auto result = m_workbenchRuntime->WorkspaceContext().SetFolder(request);
+		if (result.outcome != config::EWorkspaceContextOutcome::Succeeded
+			&& result.outcome != config::EWorkspaceContextOutcome::NotApplicable) return;
+		ApplySemanticWorkspaceContext();
+	} else {
+		// Unit-only/legacy construction keeps the pre-runtime fallback.
+		m_workspaceContext->SetExplicitRoot(absoluteRoot);
+		ApplySemanticWorkspaceContext();
+	}
 	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true);
 }
 
@@ -1346,6 +3241,7 @@ bool CEditWnd::IsMarkdownPreviewVisible() const noexcept
 
 bool CEditWnd::IsMarkdownPreviewAvailable() const
 {
+	if (!HasActiveEditorInput()) return false;
 	const auto filePath = m_pcEditDoc->m_cDocFile.GetFilePath();
 	return CheckEXT(filePath, L"md") || CheckEXT(filePath, L"markdown")
 		|| CheckEXT(filePath, L"mdown") || CheckEXT(filePath, L"mkd");
@@ -1452,6 +3348,23 @@ void CEditWnd::UpdateMarkdownPreviewIfNeeded()
 void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi)
 {
 	const RECT previousDivider = m_markdownPreviewDivider;
+	if (!HasActiveEditorInput()) {
+		m_markdownPreviewDivider = {};
+		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
+		if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
+			::ShowWindow(splitter, SW_HIDE);
+		}
+		if (m_markdownPreview) m_markdownPreview->Show(false);
+		if (m_emptyEditorSurface) {
+			m_emptyEditorSurface->Layout({ left, top, right, bottom }, dpi);
+			if (!m_pPrintPreview) m_emptyEditorSurface->Show();
+		}
+		return;
+	}
+	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr && !m_pPrintPreview) {
+		::ShowWindow(splitter, SW_SHOWNA);
+	}
 	const bool showPreview = m_markdownPreviewVisible && m_markdownPreview != nullptr && !m_pPrintPreview;
 	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, showPreview);
 	m_markdownPreviewDivider = { layout.dividerLeft, top, layout.dividerRight, bottom };
@@ -1500,6 +3413,7 @@ void CEditWnd::ToggleMarkdownPreview()
 
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
+	if (m_emptyEditorSurface && m_emptyEditorSurface->PreTranslateMessage(message)) return true;
 	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
 		&& (::GetKeyState(VK_MENU) & 0x8000) == 0) {
 		if (message.wParam == L'P' && (::GetKeyState(VK_SHIFT) & 0x8000) != 0) {
@@ -1565,7 +3479,7 @@ void CEditWnd::SetWorkbenchZoomPercent(int percent)
 	}
 	m_workbenchZoomPercent = percent;
 	if (m_customFrame) m_customFrame->SetUiScalePercent(percent);
-	if (m_workbenchZoomBasePointSize > 0 && m_dispatchReady) {
+	if (m_workbenchZoomBasePointSize > 0 && m_dispatchReady && HasActiveEditorInput()) {
 		const int pointSize = std::max(10, ::MulDiv(m_workbenchZoomBasePointSize, percent, 100));
 		GetActiveView().GetCommander().Command_SETFONTSIZE(pointSize, 0, 2);
 	}
@@ -1577,9 +3491,44 @@ void CEditWnd::SetWorkbenchZoomPercent(int percent)
 	}
 }
 
-//! ドキュメントリスナ：ロード後
+//! ドキュメントリスナ：ロード前。NotifyCheckLoad が全て通った後、native mutation より前に呼ばれる。
+void CEditWnd::OnBeforeLoad([[maybe_unused]] SLoadInfo* sLoadInfo)
+{
+	if (m_pendingLoadPrearmed) {
+		m_pendingLoadPrearmed = false;
+		return;
+	}
+	m_pendingLoadCompletionToken.reset();
+	m_pendingLoadHadActiveInput = false;
+	m_pendingLoadReachedAfter = false;
+	if (m_editorServiceAdapter == nullptr) return;
+	const auto snapshot = m_editorServiceAdapter->Snapshot();
+	m_pendingLoadHadActiveInput = snapshot.group.activeInputId.has_value();
+	if (!m_pendingLoadHadActiveInput || m_workingCopyLifecycleBridge == nullptr) return;
+	(void)m_workingCopyLifecycleBridge->Flush(::GetTickCount64(), true);
+	if (auto token = m_workingCopyLifecycleBridge->CaptureCurrentCompletionToken()) {
+		m_pendingLoadCompletionToken =
+			std::make_unique<workbench::editor::persistence::EditorWorkingCopyCompletionToken>(
+				std::move(*token));
+	}
+}
+
+void CEditWnd::PrepareLegacyLoadReplacement()
+{
+	OnBeforeLoad(nullptr);
+	m_pendingLoadPrearmed = true;
+}
+
+//! ドキュメントリスナ：ロード後。Commit は OnFinalLoad の成功 terminal まで延期する。
 void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 {
+	m_pendingLoadReachedAfter = true;
+}
+
+bool CEditWnd::FinalizeSuccessfulLegacyLoad()
+{
+	if (m_editorServiceAdapter != nullptr && !AdoptLoadedLegacyFile()) return false;
+	if (!HasActiveEditorInput()) return false;
 	UpdateWorkspaceFromDocument();
 	PublishExtensionDocumentOpen(true);
 	if (m_markdownPreviewVisible) {
@@ -1598,12 +3547,74 @@ void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 		}
 	}
 	m_cTabWnd.RefreshDocumentActionState();
+	// Complete the pre-load persistence token only after the authoritative core
+	// input and every native projection step reached their success terminal.  A
+	// projection failure must leave the durable backup untouched for recovery.
+	if (m_pendingLoadCompletionToken && m_workingCopyLifecycleBridge) {
+		(void)m_workingCopyLifecycleBridge->CompletePreClose(*m_pendingLoadCompletionToken);
+	}
+	return true;
+}
+
+//! ドキュメントリスナ：ロード terminal。成功以外も必ず所有者を決めて終端する。
+ELoadFinalizationStatus CEditWnd::OnFinalLoad(ELoadResult eLoadResult)
+{
+	const auto clearPendingState = [this]() noexcept {
+		m_pendingLoadCompletionToken.reset();
+		m_pendingLoadHadActiveInput = false;
+		m_pendingLoadReachedAfter = false;
+		m_pendingLoadPrearmed = false;
+	};
+	const bool loaded = eLoadResult == LOADED_OK || eLoadResult == LOADED_LOSESOME;
+	try {
+		if (loaded && m_pendingLoadReachedAfter && m_editorServiceAdapter != nullptr) {
+			if (!FinalizeSuccessfulLegacyLoad()) {
+				// Native I/O has already committed, but it cannot be represented as the
+				// active core input. Fail closed rather than leaving a backing CEditDoc
+				// visible without its workbench owner. The pre-load token is intentionally
+				// not completed, so its durable recovery backup remains available.
+				(void)CloseActiveEditorInput();
+				clearPendingState();
+				return ELoadFinalizationStatus::Failed;
+			}
+		}
+		else if (!loaded && m_pendingLoadHadActiveInput) {
+			// CLoadAgent has already reset the failed native load to its pathless backing
+			// document. Do not expose the old Core input against that new native state;
+			// retain its durable backup by deliberately not completing the pre-load token.
+			(void)CloseActiveEditorInput();
+		}
+	}
+	catch (...) {
+		if (loaded && m_pendingLoadHadActiveInput) {
+			try {
+				// An exception after native load has the same ownership rule as a
+				// failed projection: clear the exact active Core input and retain backup.
+				(void)CloseActiveEditorInput();
+			}
+			catch (...) {
+				// The caller receives Failed; finalization state is still cleared below.
+			}
+		}
+		clearPendingState();
+		return ELoadFinalizationStatus::Failed;
+	}
+	clearPendingState();
+	return ELoadFinalizationStatus::Succeeded;
 }
 
 //! ドキュメントリスナ：セーブ後
 // 2008.02.02 kobake
 void CEditWnd::OnAfterSave([[maybe_unused]] const SSaveInfo& sSaveInfo)
 {
+	if (!HasActiveEditorInput()) return;
+	if (m_editorServiceAdapter != nullptr && !m_workingCopyBackendEffectInProgress) {
+		if (!ActiveInputMatchesCurrentFile()) {
+			if (!AdoptLoadedLegacyFile()) return;
+		} else {
+			(void)SynchronizeLegacyDocumentState(false, false);
+		}
+	}
 	UpdateWorkspaceFromDocument();
 	PublishExtensionDocumentSave();
 	UpdateMarkdownPreviewIfNeeded();
@@ -1625,6 +3636,10 @@ void CEditWnd::UpdateCaption()
 	// caption now so ShowWindow never exposes the class-name bootstrap caption.
 	// Outside that bounded transaction, preserve the historical draw-switch gate.
 	if( !GetActiveView().GetDrawSwitch() && !IsStartupDrawSuppressed() )return;
+	if (!HasActiveEditorInput()) {
+		::SetWindowText(GetHwnd(), GSTR_APPNAME);
+		return;
+	}
 
 	const  CommonSetting& Common = GetDllShareData().m_Common;
 
@@ -2374,7 +4389,18 @@ void CEditWnd::LayoutMiniMap( void )
 void CEditWnd::ToggleExtensionPane( void )
 {
 	if( !m_pcExtensionPane ){
-		auto pcPane = std::make_unique<CExtensionPane>();
+		// OpenVSX is a profile-scoped workbench service.  Fail closed when the
+		// immutable bootstrap/configuration authority is unavailable instead of
+		// silently falling back to the legacy direct HTTP path.
+		if( m_workbenchRuntime == nullptr ){
+			return;
+		}
+		const auto& profileId = m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId();
+		auto pcPane = std::make_unique<CExtensionPane>(
+			m_workbenchRuntime->Configuration(),
+			profileId,
+			m_pShareData->m_sHandles.m_hwndTray
+		);
 		if( !pcPane->Open( G_AppInstance(), GetHwnd() ) ){
 			return;
 		}
@@ -2490,7 +4516,7 @@ void CEditWnd::MessageLoop( void )
 		//アクセラレータ
 		else{
 			// 補完ウィンドウが表示されているときはキーボード入力を先に処理させる（カーソル移動／決定／キャンセルの処理）
-			if (WM_KEYDOWN == msg.message &&
+			if (HasActiveEditorInput() && WM_KEYDOWN == msg.message &&
 				GetActiveView().m_bHokan &&
 				-1 == m_cHokanMgr.KeyProc(msg.wParam, msg.lParam)) {
 						continue;	// 補完ウィンドウが処理を実行した
@@ -2540,6 +4566,15 @@ LRESULT CEditWnd::DispatchEvent(
 		return 0;
 	case WM_ICONERASEBKGND:
 		return 0;
+	case MYWM_EDITOR_CORE_CHANGED:
+		RefreshEditorCorePresentation();
+		return 0;
+	case MYWM_WORKBENCH_LAYOUT_CHANGED:
+		OnWorkbenchLayoutStateChanged();
+		return 0;
+	case MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED:
+		OnWorkbenchServiceProjectionChanged();
+		return 0;
 	case MYWM_EXTENSION_WORKBENCH_CHANGED:
 		if (m_extensionService) {
 			const auto changes = static_cast<EExtensionWorkbenchChange>(wParam);
@@ -2550,20 +4585,9 @@ LRESULT CEditWnd::DispatchEvent(
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Views)) != 0 && m_extensionSidebarTool) {
 				m_extensionSidebarTool->Refresh();
 			}
-			if ((bits & (static_cast<std::uint32_t>(EExtensionWorkbenchChange::Diagnostics) |
-				static_cast<std::uint32_t>(EExtensionWorkbenchChange::Output))) != 0 && m_extensionBottomPanelTool) {
-				m_extensionBottomPanelTool->Refresh();
-			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Diagnostics)) != 0) {
 				Views_DeleteCompatibleBitmap();
 				RedrawAllViews(nullptr);
-			}
-			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Output)) != 0 && m_extensionBottomPanelTool) {
-				const auto channels = m_extensionService->OutputChannels();
-				if (std::ranges::any_of(channels, [](const auto& channel) { return channel.visible; })) {
-					m_extensionBottomPanelTool->ShowOutput();
-					SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, true, false);
-				}
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Progress)) != 0) {
 				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
@@ -2594,6 +4618,7 @@ LRESULT CEditWnd::DispatchEvent(
 		CancelWorkbenchResize();
 		return 0;
 	case WM_MOUSEWHEEL:
+		if (!HasActiveEditorInput() && !m_pPrintPreview) return 0;
 		return OnMouseWheel( wParam, lParam );
 	case WM_HSCROLL:
 		return OnHScroll( wParam, lParam );
@@ -2680,9 +4705,11 @@ LRESULT CEditWnd::DispatchEvent(
 		return OnPaint( hwnd, uMsg, wParam, lParam );
 
 	case WM_PASTE:
+		if (!HasActiveEditorInput()) return 0;
 		return GetActiveView().GetCommander().HandleCommand( F_PASTE, true, 0, 0, 0, 0 );
 
 	case WM_COPY:
+		if (!HasActiveEditorInput()) return 0;
 		return GetActiveView().GetCommander().HandleCommand( F_COPY, true, 0, 0, 0, 0 );
 
 	case WM_HELP:
@@ -2804,6 +4831,7 @@ LRESULT CEditWnd::DispatchEvent(
 #if 0
 	case MYWM_IME_REQUEST:   /*  再変換対応 by minfu 2002.03.27  */ // 20020331 aroka
 #endif
+		if (!HasActiveEditorInput()) return 0;
 		if( GetActiveView().m_nAutoScrollMode ){
 			GetActiveView().AutoScrollExit();
 		}
@@ -2815,6 +4843,7 @@ LRESULT CEditWnd::DispatchEvent(
 		if( nullptr != m_cStatusBar.GetStatusHwnd() ){
 			m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"");
 		}
+		if (!HasActiveEditorInput()) return 0;
 		/* メッセージの配送 */
 		return Views_DispatchEvent( hwnd, uMsg, wParam, lParam );
 
@@ -2826,7 +4855,11 @@ LRESULT CEditWnd::DispatchEvent(
 
 		// ビューにフォーカスを移動する	// 2007.10.16 ryoji
 		if( !m_pPrintPreview ){
-			::SetFocus( GetActiveView().GetHwnd() );
+			if (HasActiveEditorInput()) {
+				::SetFocus(GetActiveView().GetHwnd());
+			} else if (m_emptyEditorSurface) {
+				m_emptyEditorSurface->Focus();
+			}
 		}
 		lRes = 0;
 
@@ -2843,6 +4876,7 @@ LRESULT CEditWnd::DispatchEvent(
 		//	From Here Feb. 15, 2004 genta
 		//	ステータスバーのダブルクリックでモード切替ができるようにする
 		if( m_cStatusBar.GetStatusHwnd() && pnmh->hwndFrom == m_cStatusBar.GetStatusHwnd() ){
+			if (!HasActiveEditorInput()) return 0L;
 			if( pnmh->code == NM_DBLCLK ){
 				LPNMMOUSE mp = (LPNMMOUSE) lParam;
 				if( mp->dwItemSpec == 6 ){	//	上書き/挿入
@@ -3042,7 +5076,9 @@ LRESULT CEditWnd::DispatchEvent(
 		if( FALSE != ( nRet = OnClose( (HWND)lParam,
 				PM_CLOSE_GREPNOCONFIRM == (PM_CLOSE_GREPNOCONFIRM & wParam) )) ){	// Jan. 23, 2002 genta 警告抑制
 			//プラグイン：DocumentCloseイベント実行
-			CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_CLOSE, &GetActiveView() );
+			if (HasActiveEditorInput()) {
+				CJackManager::getInstance()->InvokePlugins(PP_DOCUMENT_CLOSE, &GetActiveView());
+			}
 
 			//プラグイン：EditorEndイベント実行
 			CJackManager::getInstance()->InvokePlugins( PP_EDITOR_END, &GetActiveView() );
@@ -3564,7 +5600,13 @@ LRESULT CEditWnd::DispatchEvent(
 int	CEditWnd::OnClose(HWND hWndActive, bool bGrepNoConfirm )
 {
 	/* ファイルを閉じるときのMRU登録 & 保存確認 & 保存実行 */
-	int nRet = GetDocument()->OnFileClose( bGrepNoConfirm );
+	int nRet = TRUE;
+	if (HasActiveEditorInput()) {
+		nRet = m_workingCopyCoordinator
+			? (ExecuteActiveWorkingCopyCommand(
+				workbench::editor::command_ids::CloseActiveEditor, bGrepNoConfirm, true) ? TRUE : FALSE)
+			: GetDocument()->OnFileClose(bGrepNoConfirm);
+	}
 	if( !nRet ) return nRet;
 
 	// パラメータでハンドルを貰う様にしたので検索を削除	2013/4/9 Uchi
@@ -3658,9 +5700,11 @@ void CEditWnd::OnCommand( WORD wNotifyCode, WORD wID , HWND hwndCtl )
 				if( strText.length() < _MAX_PATH ){
 					CSearchKeywordManager().AddToSearchKeyArr( strText.c_str() );
 				}
-				GetActiveView().m_strCurSearchKey = std::move(strText);
-				GetActiveView().m_bCurSearchUpdate = true;
-				GetActiveView().ChangeCurRegexp();
+				if (HasActiveEditorInput()) {
+					GetActiveView().m_strCurSearchKey = std::move(strText);
+					GetActiveView().m_bCurSearchUpdate = true;
+					GetActiveView().ChangeCurRegexp();
+				}
 			}
 			break;
 		}
@@ -3717,28 +5761,31 @@ void CEditWnd::OnCommand( WORD wNotifyCode, WORD wID , HWND hwndCtl )
 		else{
 			//ビューにフォーカスを移動しておく
 			if( wID != F_SEARCH_BOX && m_nCurrentFocus == F_SEARCH_BOX ) {
-				::SetFocus( GetActiveView().GetHwnd() );
+				if (HasActiveEditorInput()) ::SetFocus(GetActiveView().GetHwnd());
+				else if (m_emptyEditorSurface) m_emptyEditorSurface->Focus();
 			}
 
 			// コマンドコードによる処理振り分け
 			//	May 19, 2006 genta 上位ビットを渡す
 			//	Jul. 7, 2007 genta 上位ビットを定数に
-			GetDocument()->HandleCommand( (EFunctionCode)(wID | 0) );
+			DispatchEditorFunction(static_cast<EFunctionCode>(wID | 0));
 		}
 		break;
 	/* アクセラレータからのメッセージ */
 	case 1:
 		{
 			//ビューにフォーカスを移動しておく
-			if( wID != F_SEARCH_BOX && m_nCurrentFocus == F_SEARCH_BOX )
-				::SetFocus( GetActiveView().GetHwnd() );
+			if( wID != F_SEARCH_BOX && m_nCurrentFocus == F_SEARCH_BOX ) {
+				if (HasActiveEditorInput()) ::SetFocus(GetActiveView().GetHwnd());
+				else if (m_emptyEditorSurface) m_emptyEditorSurface->Focus();
+			}
 
 			EFunctionCode nFuncCode = CKeyBind::GetFuncCode(
 				wID,
 				m_pShareData->m_Common.m_sKeyBind.m_nKeyNameArrNum,
 				m_pShareData->m_Common.m_sKeyBind.m_pKeyNameArr
 			);
-			GetDocument()->HandleCommand( (EFunctionCode)(nFuncCode | FA_FROMKEYBOARD) );
+			DispatchEditorFunction(static_cast<EFunctionCode>(nFuncCode | FA_FROMKEYBOARD));
 		}
 		break;
 	default:
@@ -4297,7 +6344,7 @@ void CEditWnd::OnDropFiles( HDROP hDrop )
 				if( m_pShareData->m_Common.m_sFile.m_bDropFileAndClose ){
 					/* ファイル読み込み */
 					SLoadInfo sLoadInfo(szFile, CODE_AUTODETECT, false);
-					GetDocument()->m_cDocFileOperation.FileCloseOpen(sLoadInfo);
+					(void)GetDocument()->m_cDocFileOperation.FileCloseOpen(sLoadInfo);
 				}
 				else{
 					/* 編集ウィンドウの上限チェック */
@@ -4414,6 +6461,8 @@ void CEditWnd::OnSysMenuTimer( void ) //by 鬼(2)
 /* 印刷プレビューモードのオン/オフ */
 void CEditWnd::PrintPreviewModeONOFF( void )
 {
+	if (!m_pPrintPreview && !HasActiveEditorInput()) return;
+
 	HMENU	hMenu;
 	HWND	hwndToolBar;
 
@@ -4446,6 +6495,11 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		// 利用者が閉じていた拡張サイドバーは開かない
 		if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() && m_bExtensionPaneShown ){
 			::ShowWindow( m_pcExtensionPane->GetHwnd(), SW_SHOW );
+		}
+		if (!HasActiveEditorInput()) {
+			::ShowWindow(m_cSplitterWnd.GetHwnd(), SW_HIDE);
+			if (m_cMiniMapView.GetHwnd()) ::ShowWindow(m_cMiniMapView.GetHwnd(), SW_HIDE);
+			if (m_emptyEditorSurface) m_emptyEditorSurface->Show();
 		}
 
 		// その他のモードレスダイアログも戻す	// 2010.06.25 ryoji
@@ -4494,6 +6548,7 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		if( m_pcExtensionPane && m_pcExtensionPane->GetHwnd() ){
 			::ShowWindow( m_pcExtensionPane->GetHwnd(), SW_HIDE );
 		}
+		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 
 		// その他のモードレスダイアログも隠す	// 2010.06.25 ryoji
 		::ShowWindow( m_cDlgFind.GetHwnd(), SW_HIDE );
@@ -4558,7 +6613,7 @@ void CEditWnd::LayoutStatusBarParts()
 	// Before the caret publishes its first snapshot, retain conservative widths.
 	// Subsequent updates use only the visible strings, so an empty character-code
 	// item no longer leaves a large hole in the right-aligned group.
-	if (!hasCurrentText) {
+	if (!hasCurrentText && HasActiveEditorInput()) {
 		labels[1] = L"99999 行 9999 列";
 		labels[2] = L"CRLF";
 		labels[3] = L"AAAAAAAAAAAA";
@@ -4738,7 +6793,12 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	//タブウインドウ
 	int nTabHeightBottom = 0;
 	nTabWndHeight = 0;
-	if( m_cTabWnd.GetHwnd() )
+	const bool showDocumentTabs = HasActiveEditorInput()
+		|| m_pShareData->m_sNodes.m_nEditArrNum > 1;
+	if (m_cTabWnd.GetHwnd()) {
+		::ShowWindow(m_cTabWnd.GetHwnd(), showDocumentTabs ? SW_SHOWNA : SW_HIDE);
+	}
+	if( m_cTabWnd.GetHwnd() && showDocumentTabs )
 	{
 		// タブ多段はSizeBox/ウィンドウ幅で高さが変わる可能性がある
 		ETabPosition tabPosition = m_pShareData->m_Common.m_sTabBar.m_eTabPosition;
@@ -4862,7 +6922,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		? m_bottomWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
 	layoutRequest.bottomPaneMaximized = m_bottomWorkbenchMaximized
 		&& layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden;
-	layoutRequest.showMinimap = m_cMiniMapView.GetHwnd() != nullptr;
+	layoutRequest.showMinimap = HasActiveEditorInput() && m_cMiniMapView.GetHwnd() != nullptr;
 	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
 		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
 	layoutRequest.rightPaneWidthDip = m_rightWorkbenchPanel
@@ -4886,6 +6946,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	}
 
 	if( m_cMiniMapView.GetHwnd() ){
+		::ShowWindow(m_cMiniMapView.GetHwnd(),
+			layoutRequest.showMinimap && !m_pPrintPreview ? SW_SHOWNA : SW_HIDE);
 		::MoveWindow(m_cMiniMapView.GetHwnd(), layout.minimap.left, layout.minimap.top,
 			layout.minimap.Width(), layout.minimap.Height(), TRUE);
 		if (layoutRequest.rightPane != workbench::WorkbenchPanelState::Hidden
@@ -5013,7 +7075,11 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 				: actualBounds.right - actualBounds.left;
 			host->UpdateResize(PixelsToDip(actualPixels, ::GetDpiForWindow(GetHwnd())));
 		}
-		host->CommitResize();
+		const bool committed = host->CommitResize();
+		if (committed && m_workbenchRuntime != nullptr
+			&& !ApplyCurrentWorkbenchLayoutState(false, true)) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: committed resize projection failed.\n");
+		}
 		if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
@@ -5934,6 +8000,9 @@ void CEditWnd::OnEditTimer( void )
 	// タイマーの呼び出し間隔を 500msに変更。300*10→500*6にする。 20060128 aroka
 	IncrementTimerCount(6);
 	UpdateMarkdownPreviewIfNeeded();
+	if (m_workingCopyLifecycleBridge && !m_workingCopyBackendEffectInProgress) {
+		(void)m_workingCopyLifecycleBridge->Flush(::GetTickCount64(), false);
+	}
 
 	// 2006.01.28 aroka ツールバー更新関連は OnToolbarTimerに移動した。
 

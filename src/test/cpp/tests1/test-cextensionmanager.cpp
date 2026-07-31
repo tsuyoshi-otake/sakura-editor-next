@@ -10,15 +10,20 @@
 
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <string_view>
+#include <utility>
 
+#include "config/BuiltinConfigurationDescriptors.h"
+#include "config/CConfigurationService.h"
+#include "extension/openvsx/OpenVsxProductionClient.h"
 #include "util/file.h"
 
 /*!
 	@brief 通信を伴わない部分だけを検証する
 
-	Install はネットワークと Shell の ZIP 機能に依存するため対象外。
-	導入先フォルダー名の決定と sha256 の扱いは、安全性に直結するのでここで固定する。
+	通信を伴わない契約と、型付き registry fake を通る失敗経路を検証する。
+	実ネットワークと Shell の ZIP 展開成功経路は disabled live test に隔離する。
  */
 
 namespace {
@@ -46,6 +51,95 @@ private:
 	std::filesystem::path	m_path;
 };
 
+//! 導入先を実プロファイルから隔離する。失敗時の staging cleanup を観測できる。
+class TempDirectory {
+public:
+	TempDirectory()
+		: m_path(GetTempFilePath(L"extdir"))
+	{
+		std::error_code ec;
+		std::filesystem::remove(m_path, ec);
+		std::filesystem::create_directory(m_path, ec);
+	}
+	~TempDirectory()
+	{
+		std::error_code ec;
+		std::filesystem::remove_all(m_path, ec);
+	}
+	TempDirectory(const TempDirectory&) = delete;
+	TempDirectory& operator = (const TempDirectory&) = delete;
+
+	const std::filesystem::path& GetPath() const noexcept { return m_path; }
+
+private:
+	std::filesystem::path m_path;
+};
+
+extension::openvsx::OpenVsxOperationStatus SuccessfulOperation()
+{
+	return { extension::openvsx::EOpenVsxRequestOutcome::Success,
+		platform::request::ERequestOutcome::Success, std::nullopt, {} };
+}
+
+extension::openvsx::OpenVsxOperationStatus FailedOperation(
+	extension::openvsx::EOpenVsxRequestOutcome outcome,
+	std::wstring message = L"secret=https://example.invalid/token")
+{
+	return { outcome,
+		outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled
+			? platform::request::ERequestOutcome::Cancelled
+			: platform::request::ERequestOutcome::TransportFailure,
+		std::nullopt, std::move(message) };
+}
+
+//! 通信せず、manager が型付き failure と staging cleanup を正しく扱うかを検証する fake。
+class FakeOpenVsxRegistryClient final : public extension::openvsx::IOpenVsxRegistryClient {
+public:
+	mutable int fetchVsixCalls = 0;
+	mutable int fetchSha256Calls = 0;
+	extension::openvsx::OpenVsxBinaryOperation vsix{ FailedOperation(extension::openvsx::EOpenVsxRequestOutcome::TransportFailure), {} };
+	extension::openvsx::OpenVsxBinaryOperation sha256{ { extension::openvsx::EOpenVsxRequestOutcome::NotRequested,
+		platform::request::ERequestOutcome::Success, std::nullopt, {} }, {} };
+
+	extension::openvsx::OpenVsxSearchOperation Search(
+		std::wstring_view,
+		int,
+		int,
+		const platform::request::IRequestCancellation* = nullptr) const override
+	{
+		return { FailedOperation(extension::openvsx::EOpenVsxRequestOutcome::InvalidRequest), {} };
+	}
+
+	extension::openvsx::OpenVsxBinaryOperation FetchVsix(
+		std::wstring_view,
+		const platform::request::IRequestCancellation* = nullptr) const override
+	{
+		++fetchVsixCalls;
+		return vsix;
+	}
+
+	extension::openvsx::OpenVsxBinaryOperation FetchOptionalSha256(
+		const std::optional<std::wstring>&,
+		const platform::request::IRequestCancellation* = nullptr) const override
+	{
+		++fetchSha256Calls;
+		return sha256;
+	}
+};
+
+class StaticRequestCancellation final : public platform::request::IRequestCancellation {
+public:
+	explicit StaticRequestCancellation(bool cancelled) noexcept
+		: m_cancelled(cancelled)
+	{
+	}
+
+	bool IsCancellationRequested() const noexcept override { return m_cancelled; }
+
+private:
+	bool m_cancelled;
+};
+
 //! 名前・バージョンだけを持つ拡張を作る
 SOpenVsxExtension MakeExtension(std::wstring sNamespace, std::wstring sName, std::wstring sVersion)
 {
@@ -55,6 +149,16 @@ SOpenVsxExtension MakeExtension(std::wstring sNamespace, std::wstring sName, std
 	ext.sVersion	= std::move(sVersion);
 	return ext;
 }
+
+SOpenVsxExtension MakeDownloadableExtension()
+{
+	auto ext = MakeExtension(L"test", L"extension", L"1.0.0");
+	ext.sDownloadUrl = L"https://example.invalid/download.vsix";
+	ext.sSha256Url = L"https://example.invalid/download.vsix.sha256";
+	return ext;
+}
+
+constexpr std::wstring_view kCanonicalProfileId = L"0123456789abcdef0123456789abcdef";
 
 } // namespace
 
@@ -224,6 +328,79 @@ TEST(CExtensionManager, GetBaseDir)
 	EXPECT_TRUE(manager.GetBaseDir().is_absolute());
 }
 
+//! 型付き request failure は value/URL を診断へ写さず、予約済み staging を残さない。
+TEST(CExtensionManager, Install_TypedVsixFailureCleansStagingAndDoesNotExposeRemoteMessage)
+{
+	const TempDirectory directory;
+	ASSERT_TRUE(std::filesystem::exists(directory.GetPath()));
+	CExtensionManager manager(directory.GetPath());
+	FakeOpenVsxRegistryClient client;
+	client.vsix.status = FailedOperation(extension::openvsx::EOpenVsxRequestOutcome::TransportFailure,
+		L"access token for https://private.example.invalid/vsix");
+	std::wstring errorMsg;
+
+	EXPECT_FALSE(manager.Install(MakeDownloadableExtension(), client, errorMsg));
+	EXPECT_EQ(1, client.fetchVsixCalls);
+	EXPECT_EQ(0, client.fetchSha256Calls);
+	EXPECT_EQ(L"cannot fetch extension package", errorMsg);
+	EXPECT_EQ(std::wstring::npos, errorMsg.find(L"private.example.invalid"));
+	EXPECT_TRUE(std::filesystem::is_empty(directory.GetPath()));
+}
+
+//! cancellation は request を開始せず terminal cancelled として終える。
+TEST(CExtensionManager, Install_AtomicCancellationPreventsFetchAndLeavesNoStaging)
+{
+	const TempDirectory directory;
+	ASSERT_TRUE(std::filesystem::exists(directory.GetPath()));
+	CExtensionManager manager(directory.GetPath());
+	FakeOpenVsxRegistryClient client;
+	std::atomic<bool> cancelled{ true };
+	std::wstring errorMsg;
+
+	EXPECT_FALSE(manager.Install(MakeDownloadableExtension(), client, errorMsg, nullptr, &cancelled));
+	EXPECT_EQ(0, client.fetchVsixCalls);
+	EXPECT_EQ(0, client.fetchSha256Calls);
+	EXPECT_EQ(L"extension installation cancelled", errorMsg);
+	EXPECT_TRUE(std::filesystem::is_empty(directory.GetPath()));
+}
+
+//! 共有 request token も、worker の atomic flag と同じ terminal cancellation になる。
+TEST(CExtensionManager, Install_RequestCancellationPreventsFetchAndLeavesNoStaging)
+{
+	const TempDirectory directory;
+	ASSERT_TRUE(std::filesystem::exists(directory.GetPath()));
+	CExtensionManager manager(directory.GetPath());
+	FakeOpenVsxRegistryClient client;
+	const StaticRequestCancellation cancelled(true);
+	std::wstring errorMsg;
+
+	EXPECT_FALSE(manager.Install(MakeDownloadableExtension(), client, errorMsg, &cancelled));
+	EXPECT_EQ(0, client.fetchVsixCalls);
+	EXPECT_EQ(0, client.fetchSha256Calls);
+	EXPECT_EQ(L"extension installation cancelled", errorMsg);
+	EXPECT_TRUE(std::filesystem::is_empty(directory.GetPath()));
+}
+
+//! integrity metadata の取得失敗後にも、一時 VSIX と staging を確定させない。
+TEST(CExtensionManager, Install_TypedSha256FailureCleansWrittenStaging)
+{
+	const TempDirectory directory;
+	ASSERT_TRUE(std::filesystem::exists(directory.GetPath()));
+	CExtensionManager manager(directory.GetPath());
+	FakeOpenVsxRegistryClient client;
+	client.vsix = { SuccessfulOperation(), { 'n', 'o', 't', '-', 'a', '-', 'z', 'i', 'p' } };
+	client.sha256 = { FailedOperation(extension::openvsx::EOpenVsxRequestOutcome::HttpStatusFailure,
+		L"https://private.example.invalid/sha256"), {} };
+	std::wstring errorMsg;
+
+	EXPECT_FALSE(manager.Install(MakeDownloadableExtension(), client, errorMsg));
+	EXPECT_EQ(1, client.fetchVsixCalls);
+	EXPECT_EQ(1, client.fetchSha256Calls);
+	EXPECT_EQ(L"cannot fetch extension package integrity metadata", errorMsg);
+	EXPECT_EQ(std::wstring::npos, errorMsg.find(L"private.example.invalid"));
+	EXPECT_TRUE(std::filesystem::is_empty(directory.GetPath()));
+}
+
 /*!
 	@brief 実際に Open VSX から拡張を導入する
 
@@ -238,13 +415,16 @@ TEST(CExtensionManager, DISABLED_Install_Live)
 	// CZipFile が使う IShellDispatch のために OLE を初期化する
 	ASSERT_HRESULT_SUCCEEDED(::OleInitialize(nullptr));
 
-	COpenVsxClient client;
-	ASSERT_TRUE(client.IsOk());
+	config::CConfigurationService configuration(config::BuiltinConfigurationDescriptors());
+	const auto clientResult = extension::openvsx::CreateOpenVsxProductionClient(
+		configuration, std::wstring(kCanonicalProfileId));
+	ASSERT_TRUE(clientResult) << clientResult.diagnostic.c_str();
 
 	// 小さく、名前空間が検証済みの拡張を選ぶ
-	SOpenVsxSearchResult searchResult;
 	std::wstring errorMsg;
-	ASSERT_TRUE(client.Search(L"vscode-icons", 0, 1, searchResult, errorMsg)) << errorMsg;
+	const auto search = clientResult.client->Search(L"vscode-icons", 0, 1);
+	ASSERT_TRUE(search.status) << search.status.message;
+	const SOpenVsxSearchResult& searchResult = search.value;
 	ASSERT_FALSE(searchResult.extensions.empty());
 
 	const SOpenVsxExtension& ext = searchResult.extensions[0];
@@ -259,7 +439,7 @@ TEST(CExtensionManager, DISABLED_Install_Live)
 		manager.Uninstall(sUniqueId, ignored);
 	}
 
-	ASSERT_TRUE(manager.Install(ext, errorMsg)) << errorMsg;
+	ASSERT_TRUE(manager.Install(ext, *clientResult.client, errorMsg)) << errorMsg;
 
 	// マニフェストまで展開されていること
 	SInstalledExtension installed;
@@ -270,7 +450,7 @@ TEST(CExtensionManager, DISABLED_Install_Live)
 		installed.dir / CExtensionManager::kVsixContentDir / CExtensionManager::kManifestFileName));
 
 	// 二重導入は拒否されること
-	EXPECT_FALSE(manager.Install(ext, errorMsg));
+	EXPECT_FALSE(manager.Install(ext, *clientResult.client, errorMsg));
 
 	// 後片付け
 	EXPECT_TRUE(manager.Uninstall(sUniqueId, errorMsg)) << errorMsg;
@@ -284,12 +464,15 @@ TEST(CExtensionManager, DISABLED_Install_Live_RejectsTamperedSha256)
 {
 	ASSERT_HRESULT_SUCCEEDED(::OleInitialize(nullptr));
 
-	COpenVsxClient client;
-	ASSERT_TRUE(client.IsOk());
+	config::CConfigurationService configuration(config::BuiltinConfigurationDescriptors());
+	const auto clientResult = extension::openvsx::CreateOpenVsxProductionClient(
+		configuration, std::wstring(kCanonicalProfileId));
+	ASSERT_TRUE(clientResult) << clientResult.diagnostic.c_str();
 
-	SOpenVsxSearchResult searchResult;
 	std::wstring errorMsg;
-	ASSERT_TRUE(client.Search(L"vscode-icons", 0, 1, searchResult, errorMsg)) << errorMsg;
+	const auto search = clientResult.client->Search(L"vscode-icons", 0, 1);
+	ASSERT_TRUE(search.status) << search.status.message;
+	const SOpenVsxSearchResult& searchResult = search.value;
 	ASSERT_FALSE(searchResult.extensions.empty());
 
 	// 別の配布物の sha256 を指すよう差し替える。中身と一致しなくなる
@@ -298,7 +481,7 @@ TEST(CExtensionManager, DISABLED_Install_Live_RejectsTamperedSha256)
 	ext.sSha256Url = L"https://open-vsx.org/api/-/search?query=eslint&size=1";
 
 	CExtensionManager manager;
-	EXPECT_FALSE(manager.Install(ext, errorMsg));
+	EXPECT_FALSE(manager.Install(ext, *clientResult.client, errorMsg));
 	EXPECT_FALSE(manager.GetBaseDir().empty());
 
 	// 展開先を残していないこと

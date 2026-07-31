@@ -146,32 +146,20 @@ bool HaveAllProcessesExited( HANDLE process, HANDLE job ) noexcept
 	return rootExited;
 }
 
-constexpr auto kPseudoConsoleCloseJoinTimeout = std::chrono::milliseconds(500);
-
-bool JoinPseudoConsoleCloseBounded( std::thread& worker ) noexcept
+void JoinPseudoConsoleClose( std::thread& worker ) noexcept
 {
-	if( !worker.joinable() ) return true;
+	if( !worker.joinable() ) return;
+	// Closing pipe clients and the kill-on-close job happens before this join.
+	// It is therefore safe to wait indefinitely: an externally reported close
+	// result must not claim quiescence while ClosePseudoConsole is still live.
 	const auto handle = reinterpret_cast<HANDLE>(worker.native_handle());
-	const auto waitMilliseconds = static_cast<DWORD>(kPseudoConsoleCloseJoinTimeout.count());
-	if( ::WaitForSingleObject(handle, waitMilliseconds) != WAIT_OBJECT_0 ) {
-		// ClosePseudoConsole can wait on pre-24H2 builds. Closing the output
-		// handles and job normally releases it; cancellation is a second bounded
-		// escape hatch for a synchronous wait inside the API.
-		::CancelSynchronousIo(handle);
-		if( ::WaitForSingleObject(handle, waitMilliseconds) != WAIT_OBJECT_0 ) {
-			// The close worker captures only the HPCON value and never backend
-			// memory. Detaching is the finite-time last resort for an OS call that
-			// remains stuck even after every client pipe and process is gone.
-			worker.detach();
-			return false;
-		}
-	}
+	::CancelSynchronousIo(handle);
 	try {
 		worker.join();
-		return true;
 	} catch( ... ) {
-		if( worker.joinable() ) worker.detach();
-		return false;
+		// std::thread::join has no recoverable failure for a joinable, non-self
+		// worker.  Detaching here would violate the backend's ownership contract.
+		std::terminate();
 	}
 }
 
@@ -356,23 +344,46 @@ public:
 		// the user's shell or suppressing its PowerShell profile.
 	}
 
-	bool WaitForExit( std::chrono::milliseconds timeout ) noexcept override
+	TerminalBackendExitResult WaitForExit( std::chrono::milliseconds timeout ) noexcept override
 	{
 		UniqueHandle process;
 		UniqueHandle job;
+		std::optional<std::uint32_t> cachedExitCode;
 		{
 			const std::lock_guard lock(m_mutex);
 			process = DuplicateLocalHandle(m_process.Get());
 			job = DuplicateLocalHandle(m_job.Get());
+			cachedExitCode = m_rootExitCode;
 		}
-		if( !process && !job ) return true;
+		if( !process && !job ) return cachedExitCode ? TerminalBackendExitResult{ TerminalBackendExitStatus::Exited, *cachedExitCode, 0 }
+			: TerminalBackendExitResult{ TerminalBackendExitStatus::Failed, 0, ERROR_INVALID_STATE };
 		const auto bounded = std::chrono::milliseconds(std::clamp<std::int64_t>(timeout.count(), 0, std::numeric_limits<DWORD>::max() - 1ll));
 		const auto deadline = std::chrono::steady_clock::now() + bounded;
 		for( ;; ) {
-			const bool rootExited = !process || ::WaitForSingleObject(process.Get(), 0) == WAIT_OBJECT_0;
+			bool rootExited = !process;
+			if( process ) {
+				const auto wait = ::WaitForSingleObject(process.Get(), 0);
+				if( wait == WAIT_FAILED ) return { TerminalBackendExitStatus::Failed, 0, ::GetLastError() };
+				rootExited = wait == WAIT_OBJECT_0;
+				if( rootExited && !cachedExitCode ) {
+					DWORD exitCode = 0;
+					if( !::GetExitCodeProcess(process.Get(), &exitCode) ) return { TerminalBackendExitStatus::Failed, 0, ::GetLastError() };
+					cachedExitCode = exitCode;
+					const std::lock_guard lock(m_mutex);
+					m_rootExitCode = exitCode;
+				}
+			}
 			const auto now = std::chrono::steady_clock::now();
-			if( HaveAllProcessesExited(process.Get(), job.Get()) ) return true;
-			if( now >= deadline ) return false;
+			if( rootExited ) {
+				if( job ) {
+					const auto jobEmpty = IsJobEmpty(job.Get());
+					if( !jobEmpty ) return { TerminalBackendExitStatus::Failed, 0, ::GetLastError() };
+					if( !*jobEmpty ) {
+						if( now >= deadline ) return { TerminalBackendExitStatus::TimedOut, 0, 0 };
+					} else return { TerminalBackendExitStatus::Exited, cachedExitCode.value_or(0), 0 };
+				} else return { TerminalBackendExitStatus::Exited, cachedExitCode.value_or(0), 0 };
+			}
+			if( now >= deadline ) return { TerminalBackendExitStatus::TimedOut, 0, 0 };
 			const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now);
 			const DWORD slice = static_cast<DWORD>(std::max<std::int64_t>(1, std::min<std::int64_t>(10, remaining.count())));
 			if( process && !rootExited ) ::WaitForSingleObject(process.Get(), slice);
@@ -429,7 +440,7 @@ public:
 				::ClosePseudoConsole(pseudoConsole);
 			}
 		}
-		(void)JoinPseudoConsoleCloseBounded(pseudoConsoleCloseThread);
+		JoinPseudoConsoleClose(pseudoConsoleCloseThread);
 	}
 
 private:
@@ -461,6 +472,7 @@ private:
 	UniqueHandle m_job;
 	UniquePseudoConsole m_pseudoConsole;
 	std::thread m_pseudoConsoleCloseThread;
+	std::optional<std::uint32_t> m_rootExitCode;
 	bool m_started = false;
 	bool m_closed = false;
 };

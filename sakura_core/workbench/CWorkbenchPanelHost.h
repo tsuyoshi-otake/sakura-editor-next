@@ -17,9 +17,11 @@ namespace workbench {
 //! Owns one CEditWnd-child host and the tool child hosted inside it.
 class CWorkbenchPanelHost final {
 public:
-	using PersistExtentCallback = std::function<void(WorkbenchEdge edge, int extentDip)>;
+	//! Commits an extent to the authoritative layout model. Returning false leaves
+	//! this host at its previously committed extent.
+	using CommitExtentCallback = std::function<bool(WorkbenchEdge edge, int extentDip)>;
 
-	CWorkbenchPanelHost(WorkbenchEdge edge, int extentDip, PersistExtentCallback persistExtent = {});
+	CWorkbenchPanelHost(WorkbenchEdge edge, int extentDip, CommitExtentCallback commitExtent = {});
 	~CWorkbenchPanelHost();
 	CWorkbenchPanelHost(const CWorkbenchPanelHost&) = delete;
 	CWorkbenchPanelHost& operator=(const CWorkbenchPanelHost&) = delete;
@@ -35,7 +37,8 @@ public:
 	void ApplyExtentDip(int extentDip);
 	void BeginResize();
 	void UpdateResize(int extentDip);
-	void CommitResize();
+	//! Returns true when the resize is accepted (or needed no model update).
+	[[nodiscard]] bool CommitResize();
 	void CancelResize();
 	[[nodiscard]] bool PreTranslateMessage(MSG& message);
 	void Close();
@@ -66,7 +69,7 @@ private:
 	HWND m_window = nullptr;
 	std::unique_ptr<IWorkbenchTool> m_tool;
 	std::wstring m_title;
-	PersistExtentCallback m_persistExtent;
+	CommitExtentCallback m_commitExtent;
 	bool m_closed = false;
 };
 

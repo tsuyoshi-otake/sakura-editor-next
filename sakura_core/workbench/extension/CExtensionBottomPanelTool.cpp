@@ -10,6 +10,7 @@
 #include <CommCtrl.h>
 
 #include <algorithm>
+#include <iterator>
 #include <string>
 #include <utility>
 
@@ -42,23 +43,13 @@ bool EnsureClass(HINSTANCE instance)
 	return ::RegisterClassExW(&windowClass) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
-std::wstring ProblemLocation(const SExtensionProblem& problem)
-{
-	std::wstring location = problem.uri;
-	constexpr std::wstring_view prefix = L"file:///";
-	if (location.starts_with(prefix)) location.erase(0, prefix.size());
-	location += L":" + std::to_wstring(problem.diagnostic.range.start.line + 1) +
-		L":" + std::to_wstring(problem.diagnostic.range.start.character + 1);
-	return location;
-}
-
-const wchar_t* SeverityText(EExtensionDiagnosticSeverity severity) noexcept
+const wchar_t* SeverityText(const win32::EProblemsPanelSeverity severity) noexcept
 {
 	switch (severity) {
-	case EExtensionDiagnosticSeverity::Error: return L"Error";
-	case EExtensionDiagnosticSeverity::Warning: return L"Warning";
-	case EExtensionDiagnosticSeverity::Information: return L"Info";
-	case EExtensionDiagnosticSeverity::Hint: return L"Hint";
+	case win32::EProblemsPanelSeverity::Error: return L"Error";
+	case win32::EProblemsPanelSeverity::Warning: return L"Warning";
+	case win32::EProblemsPanelSeverity::Information: return L"Info";
+	case win32::EProblemsPanelSeverity::Hint: return L"Hint";
 	}
 	return L"";
 }
@@ -79,11 +70,12 @@ struct CExtensionBottomPanelTool::Impl {
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont font;
 	ExtensionBottomPanelTab active = ExtensionBottomPanelTab::Terminal;
-	ProblemsProvider problemsProvider;
-	OutputProvider outputProvider;
 	ProblemActivationCallback problemActivation;
-	std::vector<SExtensionProblem> problems;
-	std::vector<SExtensionOutputChannel> outputs;
+	OutputChannelSelectionCallback outputChannelSelection;
+	TabSelectionCallback tabSelection;
+	win32::ProblemsPanelSnapshot problems;
+	win32::OutputPanelSnapshot outputs;
+	std::optional<std::string> selectedOutputChannelId;
 	bool closed = false;
 
 	void ApplyFont(HWND control) const
@@ -91,7 +83,7 @@ struct CExtensionBottomPanelTool::Impl {
 		if (control && font.Get()) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), TRUE);
 	}
 
-	void SetActive(ExtensionBottomPanelTab tab)
+	void ApplyActiveTab(ExtensionBottomPanelTab tab)
 	{
 		if (closed) return;
 		active = tab;
@@ -129,51 +121,102 @@ struct CExtensionBottomPanelTool::Impl {
 
 	void RefreshProblems()
 	{
-		problems = problemsProvider ? problemsProvider() : std::vector<SExtensionProblem>{};
 		ListView_DeleteAllItems(problemsList);
-		for (std::size_t index = 0; index < problems.size(); ++index) {
-			const auto& problem = problems[index];
+		for (std::size_t index = 0; index < problems.entries.size(); ++index) {
+			const auto& problem = problems.entries[index];
 			LVITEMW item{};
 			item.mask = LVIF_TEXT;
 			item.iItem = static_cast<int>(index);
-			item.pszText = const_cast<wchar_t*>(SeverityText(problem.diagnostic.severity));
+			item.pszText = const_cast<wchar_t*>(SeverityText(problem.severity));
 			ListView_InsertItem(problemsList, &item);
 			ListView_SetItemText(problemsList, static_cast<int>(index), 1,
-				const_cast<wchar_t*>(problem.diagnostic.message.c_str()));
-			auto location = ProblemLocation(problem);
-			ListView_SetItemText(problemsList, static_cast<int>(index), 2, location.data());
+				const_cast<wchar_t*>(problem.message.c_str()));
+			ListView_SetItemText(problemsList, static_cast<int>(index), 2,
+				const_cast<wchar_t*>(problem.location.c_str()));
 			ListView_SetItemText(problemsList, static_cast<int>(index), 3,
-				const_cast<wchar_t*>(problem.diagnostic.source.c_str()));
+				const_cast<wchar_t*>(problem.source.c_str()));
 		}
-		std::wstring label = L"Problems (" + std::to_wstring(problems.size()) + L")";
+		std::wstring label = L"Problems (" + std::to_wstring(problems.entries.size()) + L")";
 		::SetWindowTextW(problemsButton, label.c_str());
 	}
 
 	void SelectOutput(int index)
 	{
-		if (index < 0 || static_cast<std::size_t>(index) >= outputs.size()) {
+		if (index < 0 || static_cast<std::size_t>(index) >= outputs.channels.size()) {
+			selectedOutputChannelId.reset();
 			::SetWindowTextW(outputText, L"");
 			return;
 		}
+		selectedOutputChannelId = outputs.channels[static_cast<std::size_t>(index)].channelId;
 		::SendMessageW(outputSelector, CB_SETCURSEL, index, 0);
-		::SetWindowTextW(outputText, outputs[static_cast<std::size_t>(index)].text.c_str());
+		::SetWindowTextW(outputText, outputs.channels[static_cast<std::size_t>(index)].projectedText.c_str());
+	}
+
+	void SelectOutputForSnapshot()
+	{
+		const auto findChannel = [this](const std::string& channelId) {
+			return std::find_if(outputs.channels.begin(), outputs.channels.end(), [&](const auto& channel) {
+				return channel.channelId == channelId;
+			});
+		};
+		if (outputs.activeChannelId && findChannel(*outputs.activeChannelId) != outputs.channels.end()) {
+			selectedOutputChannelId = outputs.activeChannelId;
+			return;
+		}
+		if (selectedOutputChannelId && findChannel(*selectedOutputChannelId) != outputs.channels.end()) return;
+		if (!outputs.channels.empty()) {
+			selectedOutputChannelId = outputs.channels.front().channelId;
+		} else {
+			selectedOutputChannelId.reset();
+		}
 	}
 
 	void RefreshOutputs()
 	{
-		std::wstring previousHandle;
-		const auto previous = static_cast<int>(::SendMessageW(outputSelector, CB_GETCURSEL, 0, 0));
-		if (previous >= 0 && static_cast<std::size_t>(previous) < outputs.size()) previousHandle = outputs[previous].handle;
-		outputs = outputProvider ? outputProvider() : std::vector<SExtensionOutputChannel>{};
 		::SendMessageW(outputSelector, CB_RESETCONTENT, 0, 0);
-		int selected = outputs.empty() ? -1 : 0;
-		for (std::size_t index = 0; index < outputs.size(); ++index) {
-			::SendMessageW(outputSelector, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(outputs[index].name.c_str()));
-			if ((!previousHandle.empty() && outputs[index].handle == previousHandle) || outputs[index].visible) {
+		int selected = -1;
+		for (std::size_t index = 0; index < outputs.channels.size(); ++index) {
+			::SendMessageW(outputSelector, CB_ADDSTRING, 0,
+				reinterpret_cast<LPARAM>(outputs.channels[index].label.c_str()));
+			if (selectedOutputChannelId && outputs.channels[index].channelId == *selectedOutputChannelId) {
 				selected = static_cast<int>(index);
 			}
 		}
 		SelectOutput(selected);
+	}
+
+	void RestoreOutputSelection()
+	{
+		if (window && !closed) RefreshOutputs();
+	}
+
+	bool RequestOutputSelection(const std::string& channelId) noexcept
+	{
+		const auto selected = std::find_if(outputs.channels.begin(), outputs.channels.end(), [&](const auto& channel) {
+			return channel.channelId == channelId;
+		});
+		if (selected == outputs.channels.end()) {
+			RestoreOutputSelection();
+			return false;
+		}
+		if (selectedOutputChannelId && *selectedOutputChannelId == channelId) {
+			RestoreOutputSelection();
+			return true;
+		}
+		if (outputChannelSelection) {
+			try {
+				if (!outputChannelSelection(channelId)) {
+					RestoreOutputSelection();
+					return false;
+				}
+			}
+			catch (...) {
+				RestoreOutputSelection();
+				return false;
+			}
+		}
+		SelectOutput(static_cast<int>(std::distance(outputs.channels.begin(), selected)));
+		return true;
 	}
 
 	void Refresh()
@@ -243,6 +286,12 @@ void CExtensionBottomPanelTool::Close()
 {
 	if (!m_impl || m_impl->closed) return;
 	m_impl->closed = true;
+	m_impl->problemActivation = {};
+	m_impl->outputChannelSelection = {};
+	m_impl->tabSelection = {};
+	m_impl->problems = {};
+	m_impl->outputs = {};
+	m_impl->selectedOutputChannelId.reset();
 	m_impl->terminal->Close();
 	if (m_impl->window) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
@@ -261,28 +310,74 @@ void CExtensionBottomPanelTool::SetPalette(const theme::ThemePalette& palette)
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
 }
 
-void CExtensionBottomPanelTool::SetProblemsProvider(ProblemsProvider provider)
+void CExtensionBottomPanelTool::SetProblemsSnapshot(win32::ProblemsPanelSnapshot snapshot)
 {
-	if (m_impl) m_impl->problemsProvider = std::move(provider);
+	if (!m_impl || m_impl->closed) return;
+	m_impl->problems = std::move(snapshot);
+	m_impl->Refresh();
 }
 
-void CExtensionBottomPanelTool::SetOutputProvider(OutputProvider provider)
+void CExtensionBottomPanelTool::SetOutputSnapshot(win32::OutputPanelSnapshot snapshot)
 {
-	if (m_impl) m_impl->outputProvider = std::move(provider);
+	if (!m_impl || m_impl->closed) return;
+	m_impl->outputs = std::move(snapshot);
+	m_impl->SelectOutputForSnapshot();
+	m_impl->Refresh();
 }
 
 void CExtensionBottomPanelTool::SetProblemActivationCallback(ProblemActivationCallback callback)
 {
-	if (m_impl) m_impl->problemActivation = std::move(callback);
+	if (m_impl && !m_impl->closed) m_impl->problemActivation = std::move(callback);
+}
+
+void CExtensionBottomPanelTool::SetOutputChannelSelectionCallback(OutputChannelSelectionCallback callback)
+{
+	if (m_impl && !m_impl->closed) m_impl->outputChannelSelection = std::move(callback);
+}
+
+void CExtensionBottomPanelTool::SetTabSelectionCallback(TabSelectionCallback callback)
+{
+	if (m_impl && !m_impl->closed) m_impl->tabSelection = std::move(callback);
 }
 
 void CExtensionBottomPanelTool::Refresh() { if (m_impl) m_impl->Refresh(); }
-void CExtensionBottomPanelTool::ShowProblems() { if (m_impl) m_impl->SetActive(ExtensionBottomPanelTab::Problems); }
-void CExtensionBottomPanelTool::ShowOutput() { if (m_impl) m_impl->SetActive(ExtensionBottomPanelTab::Output); }
+void CExtensionBottomPanelTool::SetActiveTab(ExtensionBottomPanelTab tab)
+{
+	if (m_impl) m_impl->ApplyActiveTab(tab);
+}
+
+bool CExtensionBottomPanelTool::RequestTabSelection(ExtensionBottomPanelTab tab) noexcept
+{
+	if (!m_impl || m_impl->closed) return false;
+	if (m_impl->active == tab) return true;
+	if (m_impl->tabSelection) {
+		try {
+			if (!m_impl->tabSelection(tab)) return false;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+	m_impl->ApplyActiveTab(tab);
+	return true;
+}
+
+void CExtensionBottomPanelTool::ShowProblems() { SetActiveTab(ExtensionBottomPanelTab::Problems); }
+void CExtensionBottomPanelTool::ShowOutput() { SetActiveTab(ExtensionBottomPanelTab::Output); }
 
 ExtensionBottomPanelTab CExtensionBottomPanelTool::ActiveTab() const noexcept
 {
 	return m_impl ? m_impl->active : ExtensionBottomPanelTab::Terminal;
+}
+
+bool CExtensionBottomPanelTool::RequestOutputChannelSelection(const std::string& channelId) noexcept
+{
+	return m_impl && !m_impl->closed && m_impl->RequestOutputSelection(channelId);
+}
+
+std::optional<std::string> CExtensionBottomPanelTool::SelectedOutputChannelId() const
+{
+	return m_impl ? m_impl->selectedOutputChannelId : std::nullopt;
 }
 
 LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
@@ -325,17 +420,22 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 		impl.outputText = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
 			WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
-		impl.SetActive(ExtensionBottomPanelTab::Terminal);
+		impl.ApplyActiveTab(ExtensionBottomPanelTab::Terminal);
 		return 0;
 	}
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
-		case kTerminalButton: impl.SetActive(ExtensionBottomPanelTab::Terminal); return 0;
-		case kProblemsButton: impl.SetActive(ExtensionBottomPanelTab::Problems); return 0;
-		case kOutputButton: impl.SetActive(ExtensionBottomPanelTab::Output); return 0;
+		case kTerminalButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Terminal); return 0;
+		case kProblemsButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Problems); return 0;
+		case kOutputButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Output); return 0;
 		case kOutputSelector:
 			if (HIWORD(wParam) == CBN_SELCHANGE) {
-				impl.SelectOutput(static_cast<int>(::SendMessageW(impl.outputSelector, CB_GETCURSEL, 0, 0)));
+				const auto selected = static_cast<int>(::SendMessageW(impl.outputSelector, CB_GETCURSEL, 0, 0));
+				if (selected >= 0 && static_cast<std::size_t>(selected) < impl.outputs.channels.size()) {
+					(void)self->RequestOutputChannelSelection(impl.outputs.channels[static_cast<std::size_t>(selected)].channelId);
+				} else {
+					impl.RefreshOutputs();
+				}
 			}
 			return 0;
 		}
@@ -344,8 +444,8 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 		const auto* header = reinterpret_cast<const NMHDR*>(lParam);
 		if (header && header->idFrom == kProblemsList && header->code == NM_DBLCLK && impl.problemActivation) {
 			const int selected = ListView_GetNextItem(impl.problemsList, -1, LVNI_SELECTED);
-			if (selected >= 0 && static_cast<std::size_t>(selected) < impl.problems.size()) {
-				impl.problemActivation(impl.problems[static_cast<std::size_t>(selected)]);
+			if (selected >= 0 && static_cast<std::size_t>(selected) < impl.problems.entries.size()) {
+				impl.problemActivation(impl.problems.entries[static_cast<std::size_t>(selected)]);
 			}
 			return 0;
 		}

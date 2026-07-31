@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "extension/CExtensionWorkbenchDispatcher.h"
+#include "extension/CExtensionWorkbenchServiceBridge.h"
 
 #include <picojson/picojson.h>
 
@@ -121,6 +122,17 @@ bool OptionalBool(const picojson::object& object, const char* key, bool fallback
 	return source && source->is<bool>() ? source->get<bool>() : fallback;
 }
 
+bool RequiredOutputOperationId(const picojson::object& object, std::string& operationId, std::string& error)
+{
+	const auto* source = Find(object, "operationId");
+	if (!source || !source->is<std::string>() || !workbench::output::OutputService::IsValidOperationId(source->get<std::string>())) {
+		error = "operationId must be a non-empty bounded stable string";
+		return false;
+	}
+	operationId = source->get<std::string>();
+	return true;
+}
+
 bool UInt32(const picojson::object& object, const char* key, std::uint32_t& value)
 {
 	const auto* source = Find(object, key);
@@ -166,11 +178,12 @@ CExtensionWorkbenchDispatcher::CExtensionWorkbenchDispatcher(
 	CExtensionStatusBar& statusBar,
 	CExtensionNotificationCenter& notifications,
 	CExtensionViewRegistry& views,
-	CExtensionSecretStorage& secrets,
+	IExtensionSecretStorage& secrets,
 	CExtensionDiagnostics& diagnostics,
 	CExtensionQuickInput& quickInput,
 	CExtensionOutputChannel& output,
-	CExtensionProgressCenter& progress)
+	CExtensionProgressCenter& progress,
+	CExtensionWorkbenchServiceBridge* serviceBridge)
 	: m_contextKeys(contextKeys)
 	, m_commands(commands)
 	, m_statusBar(statusBar)
@@ -181,6 +194,7 @@ CExtensionWorkbenchDispatcher::CExtensionWorkbenchDispatcher(
 	, m_quickInput(quickInput)
 	, m_output(output)
 	, m_progress(progress)
+	, m_serviceBridge(serviceBridge)
 {
 }
 
@@ -216,7 +230,9 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::Dispatch(const 
 	if (method == "workbench/commands/list") return DispatchCommandList(message.sParamsJson);
 	if (method.starts_with("workbench/statusBar/")) return DispatchStatusBar(method, message.sParamsJson);
 	if (method.starts_with("workbench/views/")) return DispatchView(method, message.sParamsJson);
-	if (method.starts_with("secrets/")) return DispatchSecret(method, message.sParamsJson);
+	if (message.eKind == EExtensionRpcMessageKind::Request && method.starts_with("secrets/")) {
+		return DispatchSecret(method, message.sParamsJson);
+	}
 	if (method == "workbench/notification/show") return DispatchNotification(message.sParamsJson);
 	if (method.starts_with("languages/diagnostics/")) return DispatchDiagnostics(method, message.sParamsJson);
 	if (method.starts_with("workbench/quickInput/")) return DispatchQuickInput(method, message.sParamsJson);
@@ -284,6 +300,9 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchRemoveG
 	std::wstring extensionId;
 	std::uint64_t generation = 0;
 	if (!RequiredString(params, "extensionId", extensionId, error) || !Generation(params, generation, error)) return Failure(error);
+	if (m_serviceBridge && !m_serviceBridge->DisposeOwner(extensionId, generation, m_diagnostics, m_output)) {
+		return Failure("workbench service owner disposal failed", -32012);
+	}
 	m_commands.RemoveOwnedBy(extensionId, generation);
 	m_contextKeys.RemoveOwnedBy(extensionId);
 	m_statusBar.RemoveOwnedBy(extensionId, generation);
@@ -499,30 +518,25 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchView(
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchSecret(
 	std::string_view method, std::string_view paramsJson)
 {
+	if (method == "secrets/keys") {
+		return Failure("UnsupportedCapability: SecretStorage.keys is not available", -32601);
+	}
+	if (method != "secrets/get" && method != "secrets/store" && method != "secrets/delete") return {};
 	picojson::object params;
 	std::string error;
 	if (!ParseObject(paramsJson, params, error)) return Failure(error);
 	std::wstring extensionId;
 	if (!RequiredString(params, "extensionId", extensionId, error)) return Failure(error);
-	if (method.ends_with("keys")) {
-		const auto result = m_secrets.Keys(extensionId);
-		if (!result.success) return Failure(SecretFailure(result), -32020);
-		picojson::array keys;
-		for (const auto& key : result.keys) keys.emplace_back(WideString(key));
-		picojson::object response;
-		response["keys"] = picojson::value(std::move(keys));
-		return Success(EExtensionWorkbenchChange::None, picojson::value(std::move(response)).serialize());
-	}
 	std::wstring key;
 	if (!RequiredString(params, "key", key, error)) return Failure(error);
-	if (method.ends_with("get")) {
+	if (method == "secrets/get") {
 		const auto result = m_secrets.Get(extensionId, key);
 		if (!result.success) return Failure(SecretFailure(result), -32020);
 		picojson::object response;
 		if (result.value) response["value"] = WideString(*result.value);
 		return Success(EExtensionWorkbenchChange::None, picojson::value(std::move(response)).serialize());
 	}
-	if (method.ends_with("store")) {
+	if (method == "secrets/store") {
 		std::wstring value;
 		if (!RequiredString(params, "value", value, error) && OptionalString(params, "value").empty()) {
 			const auto* raw = Find(params, "value");
@@ -532,7 +546,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchSecret(
 		const auto result = m_secrets.Store(extensionId, key, value);
 		return result.success ? Success() : Failure(SecretFailure(result), -32020);
 	}
-	if (method.ends_with("delete")) {
+	if (method == "secrets/delete") {
 		const auto result = m_secrets.Delete(extensionId, key);
 		return result.success ? Success() : Failure(SecretFailure(result), -32020);
 	}
@@ -588,14 +602,18 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchDiagnos
 	if (!RequiredString(params, "extensionId", extensionId, error) ||
 		!Generation(params, generation, error) || !RequiredString(params, "collection", collection, error)) return Failure(error);
 	if (method.ends_with("clear")) {
-		m_diagnostics.ClearCollection(extensionId, generation, collection);
-		return Success(EExtensionWorkbenchChange::Diagnostics);
+		const bool accepted = m_serviceBridge
+			? m_serviceBridge->ClearDiagnosticsCollection(extensionId, generation, collection, m_diagnostics)
+			: (m_diagnostics.ClearCollection(extensionId, generation, collection), true);
+		return accepted ? Success(EExtensionWorkbenchChange::Diagnostics) : Failure("invalid diagnostic collection", -32011);
 	}
 	std::wstring uri;
 	if (!RequiredString(params, "uri", uri, error)) return Failure(error);
 	if (method.ends_with("delete")) {
-		(void)m_diagnostics.Delete(extensionId, generation, collection, uri);
-		return Success(EExtensionWorkbenchChange::Diagnostics);
+		const bool accepted = m_serviceBridge
+			? m_serviceBridge->DeleteDiagnostics(extensionId, generation, collection, uri, m_diagnostics)
+			: m_diagnostics.Delete(extensionId, generation, collection, uri);
+		return accepted ? Success(EExtensionWorkbenchChange::Diagnostics) : Failure("invalid diagnostic collection", -32011);
 	}
 	const auto* values = Find(params, "diagnostics");
 	if (!values || !values->is<picojson::array>()) return Failure("diagnostics must be an array");
@@ -619,7 +637,10 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchDiagnos
 		}
 		diagnostics.emplace_back(std::move(diagnostic));
 	}
-	if (!m_diagnostics.Set(std::move(extensionId), generation, std::move(collection), std::move(uri), std::move(diagnostics))) {
+	const bool accepted = m_serviceBridge
+		? m_serviceBridge->SetDiagnostics(extensionId, generation, collection, uri, diagnostics, m_diagnostics)
+		: m_diagnostics.Set(std::move(extensionId), generation, std::move(collection), std::move(uri), std::move(diagnostics));
+	if (!accepted) {
 		return Failure("invalid diagnostic collection", -32011);
 	}
 	return Success(EExtensionWorkbenchChange::Diagnostics);
@@ -713,25 +734,46 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchOutput(
 	std::uint64_t generation = 0;
 	if (!RequiredString(params, "handle", handle, error) || !RequiredString(params, "extensionId", extensionId, error) ||
 		!Generation(params, generation, error)) return Failure(error);
+	std::string operationId;
+	const bool useOutputService = m_serviceBridge && m_serviceBridge->HasOutputService();
+	if (useOutputService && !RequiredOutputOperationId(params, operationId, error)) return Failure(error);
 	bool accepted = false;
 	if (method.ends_with("create")) {
 		std::wstring name;
 		if (!RequiredString(params, "name", name, error)) return Failure(error);
-		accepted = m_output.Create({
-			.handle = std::move(handle), .extensionId = std::move(extensionId), .generation = generation,
-			.name = std::move(name), .languageId = OptionalString(params, "languageId"),
-		});
+		workbench::output::EOutputChannelKind kind = workbench::output::EOutputChannelKind::Output;
+		if (const auto* rawKind = Find(params, "kind"); rawKind) {
+			if (!rawKind->is<std::string>()) return Failure("output kind must be a string");
+			if (rawKind->get<std::string>() == "log") kind = workbench::output::EOutputChannelKind::Log;
+			else if (rawKind->get<std::string>() != "output") return Failure("output kind is invalid");
+		}
+		accepted = m_serviceBridge
+			? m_serviceBridge->CreateOutput(handle, extensionId, generation, name, OptionalString(params, "languageId"),
+				OptionalString(params, "source"), kind, operationId, m_output)
+			: m_output.Create({ .handle = std::move(handle), .extensionId = std::move(extensionId), .generation = generation,
+				.name = std::move(name), .languageId = OptionalString(params, "languageId") });
 	} else if (method.ends_with("append") || method.ends_with("replace")) {
 		const auto* raw = Find(params, "value");
 		if (!raw || !raw->is<std::string>()) return Failure("output value must be a string");
 		auto value = u8stowcs(raw->get<std::string>());
-		accepted = method.ends_with("append")
-			? m_output.Append(handle, extensionId, generation, value)
-			: m_output.Replace(handle, extensionId, generation, std::move(value));
-	} else if (method.ends_with("clear")) accepted = m_output.Clear(handle, extensionId, generation);
-	else if (method.ends_with("show")) accepted = m_output.SetVisible(handle, extensionId, generation, true);
-	else if (method.ends_with("hide")) accepted = m_output.SetVisible(handle, extensionId, generation, false);
-	else if (method.ends_with("dispose")) accepted = m_output.Dispose(handle, extensionId, generation);
+		accepted = m_serviceBridge
+			? (method.ends_with("append")
+				? m_serviceBridge->AppendOutput(handle, extensionId, generation, value, operationId, m_output)
+				: m_serviceBridge->ReplaceOutput(handle, extensionId, generation, value, operationId, m_output))
+			: (method.ends_with("append") ? m_output.Append(handle, extensionId, generation, value)
+				: m_output.Replace(handle, extensionId, generation, std::move(value)));
+	} else if (method.ends_with("clear")) accepted = m_serviceBridge
+		? m_serviceBridge->ClearOutput(handle, extensionId, generation, operationId, m_output)
+		: m_output.Clear(handle, extensionId, generation);
+	else if (method.ends_with("show")) accepted = m_serviceBridge
+		? m_serviceBridge->ShowOutput(handle, extensionId, generation, OptionalBool(params, "preserveFocus"), operationId, m_output)
+		: m_output.SetVisible(handle, extensionId, generation, true);
+	else if (method.ends_with("hide")) accepted = m_serviceBridge
+		? m_serviceBridge->HideOutput(handle, extensionId, generation, operationId, m_output)
+		: m_output.SetVisible(handle, extensionId, generation, false);
+	else if (method.ends_with("dispose")) accepted = m_serviceBridge
+		? m_serviceBridge->DisposeOutput(handle, extensionId, generation, operationId, m_output)
+		: m_output.Dispose(handle, extensionId, generation);
 	else return {};
 	return accepted ? Success(EExtensionWorkbenchChange::Output) : Failure("output channel ownership mismatch", -32012);
 }

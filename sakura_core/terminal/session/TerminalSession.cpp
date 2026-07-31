@@ -23,7 +23,6 @@ constexpr std::size_t kBackendReadBytes = 64u * 1024u;
 constexpr std::size_t kBackendWriteBytes = 16u * 1024u;
 constexpr auto kBackendReadTimeout = std::chrono::milliseconds(100);
 constexpr auto kResizeCoalesceDelay = std::chrono::milliseconds(16);
-constexpr auto kWorkerJoinTimeout = std::chrono::milliseconds(500);
 
 struct ByteChunk {
 	std::vector<std::uint8_t> bytes;
@@ -71,7 +70,12 @@ TerminalStartResult TerminalStartResult::Failure( std::uint32_t errorCode, std::
 	return { false, errorCode, std::move(diagnostic) };
 }
 
-struct CTerminalSession::Impl {
+TerminalStartResult TerminalStartResult::Aborted()
+{
+	return Failure(ERROR_CANCELLED, L"Terminal start was cancelled by a close request.");
+}
+
+struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::Impl> {
 	struct SharedState {
 		mutable std::mutex stateMutex;
 		TerminalSessionState state = TerminalSessionState::Idle;
@@ -79,6 +83,9 @@ struct CTerminalSession::Impl {
 
 		mutable std::mutex callbackMutex;
 		TerminalSessionCallbacks callbacks;
+		mutable std::mutex workerIdentityMutex;
+		std::thread::id readerWorkerId{};
+		std::thread::id writerWorkerId{};
 
 		mutable std::mutex outputMutex;
 		std::condition_variable outputSpaceAvailable;
@@ -94,13 +101,42 @@ struct CTerminalSession::Impl {
 		std::chrono::steady_clock::time_point resizeDue{};
 
 		std::atomic<bool> stopRequested{ false };
+		// Set before the close worker is constructed so Start can observe a close
+		// requested by its synchronous Starting callback without racing that worker.
+		std::atomic<bool> closeRequested{ false };
 		std::atomic<bool> acceptingInput{ false };
 		std::atomic<bool> backendStarted{ false };
+		std::atomic<bool> startedSuccessfully{ false };
 		std::atomic<bool> backendClosed{ false };
 		// Reader and writer failures can wake the peer by closing the backend.
 		// Exactly one worker must own the terminal outcome so the peer cannot
 		// replace a real failure with the close-induced EOF it observes later.
 		std::atomic<bool> workerFinalizationClaimed{ false };
+
+		mutable std::mutex completionMutex;
+		std::optional<TerminalSessionCompletionResult> completion;
+		bool completionDelivered = false;
+	};
+
+	// A thread-local linked stack makes callback-origin self-wait detection both
+	// allocation-free and correct for nested callbacks belonging to different
+	// sessions.  This is deliberately independent of SharedState lifetime.
+	struct CallbackFrame {
+		const SharedState* state;
+		CallbackFrame* previous;
+
+		explicit CallbackFrame( const SharedState* current ) noexcept
+			: state(current), previous(ActiveCallbackFrame())
+		{
+			ActiveCallbackFrame() = this;
+		}
+		~CallbackFrame() noexcept { ActiveCallbackFrame() = previous; }
+
+		static CallbackFrame*& ActiveCallbackFrame() noexcept
+		{
+			static thread_local CallbackFrame* frame = nullptr;
+			return frame;
+		}
 	};
 
 	explicit Impl( std::unique_ptr<ITerminalBackend> backendValue, TerminalSessionCallbacks callbackValue )
@@ -113,8 +149,27 @@ struct CTerminalSession::Impl {
 	std::shared_ptr<SharedState> shared;
 	std::thread reader;
 	std::thread writer;
+	std::thread closeWorker;
 	std::mutex lifecycleMutex;
-	std::once_flag closeOnce;
+	std::mutex closeMutex;
+	std::condition_variable closeCompleted;
+	bool closeStarted = false;
+	bool closeFinished = false;
+	std::atomic<bool> closeWorkerLaunchFailed{ false };
+	std::chrono::steady_clock::time_point closeFinishedAt{};
+	std::thread::id closeWorkerId{};
+
+	~Impl() noexcept
+	{
+		// Every worker captures a shared Impl. Therefore this destructor can run
+		// only after every other worker has completed; a remaining joinable handle
+		// is an already-finished thread (or the current final worker). Detaching
+		// here prevents std::terminate during callback-origin destruction without
+		// releasing live backend work.
+		if( reader.joinable() ) reader.detach();
+		if( writer.joinable() ) writer.detach();
+		if( closeWorker.joinable() ) closeWorker.detach();
+	}
 
 	static TerminalSessionState StateOf( const std::shared_ptr<SharedState>& state ) noexcept
 	{
@@ -141,7 +196,7 @@ struct CTerminalSession::Impl {
 			const std::lock_guard lock(state->callbackMutex);
 			callbacks = state->callbacks;
 		} catch( ... ) {}
-		InvokeNoThrow( callbacks.stateChanged, next, errorCode );
+		InvokeCallback(state, callbacks.stateChanged, next, errorCode);
 		return true;
 	}
 
@@ -157,7 +212,15 @@ struct CTerminalSession::Impl {
 			const std::lock_guard lock(state->callbackMutex);
 			callback = state->callbacks.outputAvailable;
 		} catch( ... ) {}
-		InvokeNoThrow(callback);
+		InvokeCallback(state, callback);
+	}
+
+	template<typename Callback, typename... Args>
+	static void InvokeCallback(const std::shared_ptr<SharedState>& state, const Callback& callback, Args&&... args) noexcept
+	{
+		if( !callback ) return;
+		CallbackFrame frame(state.get());
+		InvokeNoThrow(callback, std::forward<Args>(args)...);
 	}
 
 	void NotifyOutput() noexcept { NotifyOutputState(shared); }
@@ -187,18 +250,52 @@ struct CTerminalSession::Impl {
 
 	void CloseBackendOnce() noexcept { CloseBackendOnceState(shared, backend); }
 
-	static void FinalizeFromWorker( const std::shared_ptr<SharedState>& state, const std::shared_ptr<ITerminalBackend>& terminalBackend,
-		TerminalSessionState terminalState, std::uint32_t errorCode = 0 ) noexcept
+	static void ClaimCompletion( const std::shared_ptr<SharedState>& state, TerminalSessionCompletionResult result ) noexcept
+	{
+		try {
+			const std::lock_guard lock(state->completionMutex);
+			if( !state->completion ) state->completion = result;
+		} catch( ... ) {
+			// Completion delivery is best effort only when memory/locking is already
+			// compromised; lifecycle ownership still reaches its close terminal state.
+		}
+	}
+
+	static void RecordObservedExitCode( const std::shared_ptr<SharedState>& state, std::uint32_t exitCode ) noexcept
+	{
+		try {
+			const std::lock_guard lock(state->completionMutex);
+			if( state->completion && (state->completion->kind == TerminalSessionCompletionKind::Exited || state->completion->kind == TerminalSessionCompletionKind::Closed) ) {
+				state->completion->exitCode = exitCode;
+			}
+		} catch( ... ) {}
+	}
+
+	static TerminalSessionCompletionResult CompletionOf( const std::shared_ptr<SharedState>& state ) noexcept
+	{
+		try {
+			const std::lock_guard lock(state->completionMutex);
+			return state->completion.value_or(TerminalSessionCompletionResult{});
+		} catch( ... ) {
+			return {};
+		}
+	}
+
+	static void FinalizeFromWorker( const std::shared_ptr<Impl>& self, const std::shared_ptr<SharedState>& state, const std::shared_ptr<ITerminalBackend>& terminalBackend,
+		TerminalSessionState terminalState, std::uint32_t errorCode = 0, std::uint32_t exitCode = 0 ) noexcept
 	{
 		bool expected = false;
 		if( !state->workerFinalizationClaimed.compare_exchange_strong(expected, true, std::memory_order_acq_rel) ) return;
+		ClaimCompletion(state, { terminalState == TerminalSessionState::Failed ? TerminalSessionCompletionKind::Failed : TerminalSessionCompletionKind::Exited, exitCode, errorCode });
 		if( StateOf(state) == TerminalSessionState::Running ) TransitionState(state, TerminalSessionState::Closing);
 		StopWorkersState(state);
 		if( terminalState == TerminalSessionState::Failed ) {
 			try { terminalBackend->ForceTerminate(); } catch( ... ) {}
 		}
-		CloseBackendOnceState(state, terminalBackend);
 		TransitionState(state, terminalState, errorCode);
+		// State change remains the early UI signal.  The durable completion is
+		// delivered by the lifecycle worker only after all ownership quiesces.
+		self->BeginClose();
 	}
 
 	static void CancelSynchronousIoNoThrow( std::thread& worker ) noexcept
@@ -208,27 +305,19 @@ struct CTerminalSession::Impl {
 		::CancelSynchronousIo(handle);
 	}
 
-	static bool JoinBounded( std::thread& worker ) noexcept
+	static void JoinUntilQuiescent( std::thread& worker ) noexcept
 	{
-		if( !worker.joinable() ) return true;
+		if( !worker.joinable() ) return;
 		const auto handle = reinterpret_cast<HANDLE>(worker.native_handle());
-		const auto wait = ::WaitForSingleObject( handle, static_cast<DWORD>(kWorkerJoinTimeout.count()) );
-		if( wait == WAIT_OBJECT_0 ) {
-			worker.join();
-			return true;
-		}
 		::CancelSynchronousIo(handle);
-		if( ::WaitForSingleObject(handle, static_cast<DWORD>(kWorkerJoinTimeout.count())) == WAIT_OBJECT_0 ) {
-			worker.join();
-			return true;
-		}
-		// Workers capture shared state and the backend by value, never `this`.
-		// Detaching is the finite-time last resort for a broken backend.
-		worker.detach();
-		return false;
+		// A close result must never outlive an I/O worker.  A hostile backend may
+		// ignore cancellation, in which case retaining ownership and waiting is the
+		// only truthful outcome; detaching would make a later task adapter claim
+		// quiescence while backend work still exists.
+		worker.join();
 	}
 
-	static void ReaderLoop( std::shared_ptr<SharedState> state, std::shared_ptr<ITerminalBackend> terminalBackend ) noexcept
+	static void ReaderLoop( std::shared_ptr<Impl> self, std::shared_ptr<SharedState> state, std::shared_ptr<ITerminalBackend> terminalBackend ) noexcept
 	{
 		std::array<std::uint8_t, kBackendReadBytes> buffer{};
 		try {
@@ -255,16 +344,30 @@ struct CTerminalSession::Impl {
 
 				if( result.status == TerminalBackendReadStatus::Timeout ) continue;
 				if( result.status == TerminalBackendReadStatus::EndOfFile ) {
-					FinalizeFromWorker( state, terminalBackend, TerminalSessionState::Exited );
-					return;
+					if( state->stopRequested.load(std::memory_order_acquire) ) return;
+					// EOF merely closes the ConPTY output channel.  The root process may
+					// still be alive, so observe its exit (and job descendants) before
+					// publishing a natural terminal outcome.
+					for( ;; ) {
+						TerminalBackendExitResult exit;
+						try { exit = terminalBackend->WaitForExit(kBackendReadTimeout); }
+						catch( ... ) { exit = { TerminalBackendExitStatus::Failed, 0, ERROR_UNHANDLED_EXCEPTION }; }
+						if( exit.status == TerminalBackendExitStatus::TimedOut ) {
+							if( state->stopRequested.load(std::memory_order_acquire) ) return;
+							continue;
+						}
+						if( exit.status == TerminalBackendExitStatus::Exited ) FinalizeFromWorker( self, state, terminalBackend, TerminalSessionState::Exited, 0, exit.exitCode );
+						else FinalizeFromWorker( self, state, terminalBackend, TerminalSessionState::Failed, exit.errorCode == 0 ? ERROR_GEN_FAILURE : exit.errorCode );
+						return;
+					}
 				}
 				if( result.status == TerminalBackendReadStatus::Failed ) {
 					const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-					FinalizeFromWorker( state, terminalBackend, terminalState, result.errorCode );
+					FinalizeFromWorker( self, state, terminalBackend, terminalState, result.errorCode );
 					return;
 				}
 				if( result.bytesTransferred == 0 || result.bytesTransferred > capacity ) {
-					FinalizeFromWorker( state, terminalBackend, TerminalSessionState::Failed, ERROR_INVALID_DATA );
+					FinalizeFromWorker( self, state, terminalBackend, TerminalSessionState::Failed, ERROR_INVALID_DATA );
 					return;
 				}
 
@@ -284,14 +387,14 @@ struct CTerminalSession::Impl {
 			}
 		} catch( const std::bad_alloc& ) {
 			const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-			FinalizeFromWorker( state, terminalBackend, terminalState, ERROR_NOT_ENOUGH_MEMORY );
+			FinalizeFromWorker( self, state, terminalBackend, terminalState, ERROR_NOT_ENOUGH_MEMORY );
 		} catch( ... ) {
 			const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-			FinalizeFromWorker( state, terminalBackend, terminalState, ERROR_UNHANDLED_EXCEPTION );
+			FinalizeFromWorker( self, state, terminalBackend, terminalState, ERROR_UNHANDLED_EXCEPTION );
 		}
 	}
 
-	static void WriterLoop( std::shared_ptr<SharedState> state, std::shared_ptr<ITerminalBackend> terminalBackend ) noexcept
+	static void WriterLoop( std::shared_ptr<Impl> self, std::shared_ptr<SharedState> state, std::shared_ptr<ITerminalBackend> terminalBackend ) noexcept
 	{
 		try {
 			while( !state->stopRequested.load(std::memory_order_acquire) ) {
@@ -328,7 +431,7 @@ struct CTerminalSession::Impl {
 					}
 					if( !result.succeeded ) {
 						const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-						FinalizeFromWorker( state, terminalBackend, terminalState, result.errorCode );
+						FinalizeFromWorker( self, state, terminalBackend, terminalState, result.errorCode );
 						return;
 					}
 					continue;
@@ -343,7 +446,7 @@ struct CTerminalSession::Impl {
 				if( result.status != TerminalBackendWriteStatus::Completed || result.bytesTransferred == 0 || result.bytesTransferred > bytes.size() ) {
 					const auto error = result.errorCode == 0 ? static_cast<std::uint32_t>(ERROR_BROKEN_PIPE) : result.errorCode;
 					const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-					FinalizeFromWorker( state, terminalBackend, terminalState, error );
+					FinalizeFromWorker( self, state, terminalBackend, terminalState, error );
 					return;
 				}
 
@@ -358,10 +461,10 @@ struct CTerminalSession::Impl {
 			}
 		} catch( const std::bad_alloc& ) {
 			const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-			FinalizeFromWorker( state, terminalBackend, terminalState, ERROR_NOT_ENOUGH_MEMORY );
+			FinalizeFromWorker( self, state, terminalBackend, terminalState, ERROR_NOT_ENOUGH_MEMORY );
 		} catch( ... ) {
 			const auto terminalState = StateOf(state) == TerminalSessionState::Closing ? TerminalSessionState::Exited : TerminalSessionState::Failed;
-			FinalizeFromWorker( state, terminalBackend, terminalState, ERROR_UNHANDLED_EXCEPTION );
+			FinalizeFromWorker( self, state, terminalBackend, terminalState, ERROR_UNHANDLED_EXCEPTION );
 		}
 	}
 
@@ -380,36 +483,158 @@ struct CTerminalSession::Impl {
 			shared->pendingResize.reset();
 		}
 
-		if( shared->backendStarted.load(std::memory_order_acquire) && !shared->backendClosed.load(std::memory_order_acquire) ) {
+		const auto completion = CompletionOf(shared);
+		if( shared->backendStarted.load(std::memory_order_acquire) && !shared->backendClosed.load(std::memory_order_acquire)
+			&& completion.kind == TerminalSessionCompletionKind::Closed ) {
 			try { backend->RequestGracefulClose(); } catch( ... ) {}
-			bool exited = false;
-			try { exited = backend->WaitForExit(CTerminalSession::kGracefulCloseTimeout); } catch( ... ) {}
-			if( !exited ) {
+			TerminalBackendExitResult exit;
+			try { exit = backend->WaitForExit(CTerminalSession::kGracefulCloseTimeout); }
+			catch( ... ) { exit = { TerminalBackendExitStatus::Failed, 0, ERROR_UNHANDLED_EXCEPTION }; }
+			if( exit.status == TerminalBackendExitStatus::TimedOut ) {
 				try { backend->ForceTerminate(); } catch( ... ) {}
-				try { backend->WaitForExit(CTerminalSession::kForcedCloseTimeout); } catch( ... ) {}
+				try { exit = backend->WaitForExit(CTerminalSession::kForcedCloseTimeout); }
+				catch( ... ) { exit = { TerminalBackendExitStatus::Failed, 0, ERROR_UNHANDLED_EXCEPTION }; }
 			}
+			if( exit.status == TerminalBackendExitStatus::Exited ) RecordObservedExitCode(shared, exit.exitCode);
 		}
 
 		StopWorkers();
 		CloseBackendOnce();
 		CancelSynchronousIoNoThrow(reader);
 		CancelSynchronousIoNoThrow(writer);
-		const bool readerJoined = JoinBounded(reader);
-		const bool writerJoined = JoinBounded(writer);
-		if( (!readerJoined || !writerJoined) && State() == TerminalSessionState::Closing ) {
-			Transition( TerminalSessionState::Failed, ERROR_TIMEOUT );
-		} else if( State() == TerminalSessionState::Closing ) {
+		JoinUntilQuiescent(reader);
+		JoinUntilQuiescent(writer);
+		if( State() == TerminalSessionState::Closing ) {
 			Transition(TerminalSessionState::Exited);
 		}
-		{
-			const std::lock_guard lock(shared->callbackMutex);
-			shared->callbacks = {};
+	}
+
+	void DeliverCompletion() noexcept
+	{
+		if( !shared->startedSuccessfully.load(std::memory_order_acquire) ) return;
+		TerminalSessionCallbacks callbacks;
+		TerminalSessionCompletionResult result;
+		try {
+			{
+				const std::lock_guard completionLock(shared->completionMutex);
+				if( shared->completionDelivered ) return;
+				if( !shared->completion ) shared->completion = TerminalSessionCompletionResult{};
+				result = *shared->completion;
+				shared->completionDelivered = true;
+			}
+			{
+				const std::lock_guard callbackLock(shared->callbackMutex);
+				callbacks = shared->callbacks;
+				shared->callbacks = {};
+			}
+		} catch( ... ) {
+			return;
 		}
+		InvokeCallback(shared, callbacks.completed, result);
+	}
+
+	void BeginClose() noexcept
+	{
+		shared->closeRequested.store(true, std::memory_order_release);
+		try {
+			std::lock_guard lock(closeMutex);
+			if( closeStarted ) return;
+			closeStarted = true;
+			try {
+				const auto self = shared_from_this();
+				closeWorker = std::thread([self] {
+					{
+						const std::lock_guard workerLock(self->shared->workerIdentityMutex);
+						self->closeWorkerId = std::this_thread::get_id();
+					}
+					self->CloseImpl();
+					{
+						const std::lock_guard closeLock(self->closeMutex);
+						self->closeFinished = true;
+						self->closeFinishedAt = std::chrono::steady_clock::now();
+					}
+					self->closeCompleted.notify_all();
+					// `closeFinished` is observable before this callback.  This lets an
+					// external waiter take ownership without a completion callback ever
+					// racing live reader/writer or backend work.
+					self->DeliverCompletion();
+				});
+			}
+			catch( ... ) {
+				// Thread construction can fail. Stop and close the backend immediately
+				// so every worker holding Impl observes finalization and exits. An
+				// external WaitForClose then performs the final joins; callback callers
+				// truthfully receive InProgress rather than a false quiescent result.
+				closeWorkerLaunchFailed.store(true, std::memory_order_release);
+				StopWorkers();
+				CloseBackendOnce();
+			}
+		}
+		catch( ... ) {
+			// If the close mutex itself cannot be acquired, retain the same truthful
+			// fallback: stop/close now; a later external wait can join the workers.
+			closeWorkerLaunchFailed.store(true, std::memory_order_release);
+			StopWorkers();
+			CloseBackendOnce();
+		}
+	}
+
+	void RequestClose() noexcept
+	{
+		if( shared->startedSuccessfully.load(std::memory_order_acquire) ) ClaimCompletion(shared, {});
+		BeginClose();
+	}
+
+	[[nodiscard]] bool IsWorkerThread() const noexcept
+	{
+		const auto current = std::this_thread::get_id();
+		for( auto* frame = CallbackFrame::ActiveCallbackFrame(); frame != nullptr; frame = frame->previous ) {
+			if( frame->state == shared.get() ) return true;
+		}
+		const std::lock_guard workerLock(shared->workerIdentityMutex);
+		return current == shared->readerWorkerId || current == shared->writerWorkerId || current == closeWorkerId;
+	}
+
+	[[nodiscard]] TerminalSessionCloseResult WaitForClose( const std::chrono::steady_clock::time_point deadline ) noexcept
+	{
+		RequestClose();
+		if( IsWorkerThread() ) return { TerminalSessionCloseWaitStatus::InProgress };
+
+		std::thread completedWorker;
+		bool exceededDeadline = false;
+		try {
+			std::unique_lock lock(closeMutex);
+			if( closeWorkerLaunchFailed.load(std::memory_order_acquire) && !closeFinished && !closeWorker.joinable() ) {
+				lock.unlock();
+				CloseImpl();
+				lock.lock();
+				closeFinished = true;
+				closeFinishedAt = std::chrono::steady_clock::now();
+				closeCompleted.notify_all();
+			}
+			else {
+				if( !closeCompleted.wait_until(lock, deadline, [this] { return closeFinished; }) ) {
+					exceededDeadline = true;
+					// The deadline is an escalation/reporting boundary, not permission
+					// to release a live backend or worker.
+					closeCompleted.wait(lock, [this] { return closeFinished; });
+				}
+			}
+			if( closeFinishedAt > deadline ) exceededDeadline = true;
+			if( closeWorker.joinable() ) completedWorker = std::move(closeWorker);
+		}
+		catch( ... ) {
+			// CloseImpl is noexcept and ownership remains in this object.  Retry the
+			// wait on a later external call rather than reporting false quiescence.
+			return { TerminalSessionCloseWaitStatus::InProgress };
+		}
+		if( completedWorker.joinable() ) completedWorker.join();
+		return { exceededDeadline ? TerminalSessionCloseWaitStatus::DeadlineExceeded : TerminalSessionCloseWaitStatus::Closed };
 	}
 };
 
 CTerminalSession::CTerminalSession( std::unique_ptr<ITerminalBackend> backend, TerminalSessionCallbacks callbacks )
-	: m_impl(std::make_unique<Impl>(std::move(backend), std::move(callbacks)))
+	: m_impl(std::make_shared<Impl>(std::move(backend), std::move(callbacks)))
 {
 	if( !m_impl->backend ) throw std::invalid_argument("CTerminalSession requires a backend");
 }
@@ -421,41 +646,71 @@ CTerminalSession::~CTerminalSession()
 
 TerminalStartResult CTerminalSession::Start( const TerminalLaunchOptions& options )
 {
-	const std::lock_guard lifecycleLock(m_impl->lifecycleMutex);
-	if( m_impl->State() != TerminalSessionState::Idle ) return TerminalStartResult::Failure( ERROR_INVALID_STATE, L"Terminal session has already been started or closed." );
-	m_impl->Transition(TerminalSessionState::Starting);
+	const auto impl = m_impl;
+	if( !impl ) return TerminalStartResult::Aborted();
+	std::unique_lock lifecycleLock(impl->lifecycleMutex);
+	if( impl->State() != TerminalSessionState::Idle ) return TerminalStartResult::Failure( ERROR_INVALID_STATE, L"Terminal session has already been started or closed." );
+	impl->Transition(TerminalSessionState::Starting);
+	if( impl->shared->closeRequested.load(std::memory_order_acquire) ) {
+		impl->Transition(TerminalSessionState::Closing);
+		return TerminalStartResult::Aborted();
+	}
 	if( options.executablePath.empty() || options.initialSize.columns == 0 || options.initialSize.rows == 0 ) {
-		m_impl->Transition( TerminalSessionState::Failed, ERROR_INVALID_PARAMETER );
-		m_impl->CloseBackendOnce();
+		impl->Transition( TerminalSessionState::Failed, ERROR_INVALID_PARAMETER );
+		impl->CloseBackendOnce();
 		return TerminalStartResult::Failure( ERROR_INVALID_PARAMETER, L"Terminal launch options are invalid." );
 	}
 
 	TerminalStartResult result;
 	try {
-		result = m_impl->backend->Start(options);
+		result = impl->backend->Start(options);
 	} catch( ... ) {
 		result = TerminalStartResult::Failure( ERROR_UNHANDLED_EXCEPTION, L"Terminal backend initialization raised an exception." );
 	}
 	if( !result.succeeded ) {
-		m_impl->Transition( TerminalSessionState::Failed, result.errorCode );
-		m_impl->CloseBackendOnce();
+		impl->Transition( TerminalSessionState::Failed, result.errorCode );
+		impl->CloseBackendOnce();
 		return result;
 	}
-	m_impl->shared->backendStarted.store(true, std::memory_order_release);
-	m_impl->Transition(TerminalSessionState::Running);
-	m_impl->shared->acceptingInput.store(true, std::memory_order_release);
+	impl->shared->backendStarted.store(true, std::memory_order_release);
+	impl->shared->startedSuccessfully.store(true, std::memory_order_release);
+	impl->Transition(TerminalSessionState::Running);
+	if( impl->shared->closeRequested.load(std::memory_order_acquire) ) {
+		impl->Transition(TerminalSessionState::Closing);
+		return TerminalStartResult::Aborted();
+	}
+	impl->shared->acceptingInput.store(true, std::memory_order_release);
 
 	try {
-		const auto state = m_impl->shared;
-		const auto backend = m_impl->backend;
-		m_impl->reader = std::thread( [state, backend] { Impl::ReaderLoop(state, backend); } );
-		m_impl->writer = std::thread( [state, backend] { Impl::WriterLoop(state, backend); } );
+		const auto state = impl->shared;
+		const auto backend = impl->backend;
+		impl->reader = std::thread( [impl, state, backend] {
+			{
+				const std::lock_guard workerLock(state->workerIdentityMutex);
+				state->readerWorkerId = std::this_thread::get_id();
+			}
+			Impl::ReaderLoop(impl, state, backend);
+		} );
+		impl->writer = std::thread( [impl, state, backend] {
+			{
+				const std::lock_guard workerLock(state->workerIdentityMutex);
+				state->writerWorkerId = std::this_thread::get_id();
+			}
+			Impl::WriterLoop(impl, state, backend);
+		} );
+		// The reader can invoke an output callback immediately after construction.
+		// If that callback requests close (or destroys the outer session), do not
+		// report a successful start after the just-created workers are cancelled.
+		if( impl->shared->closeRequested.load(std::memory_order_acquire) ) {
+			impl->Transition(TerminalSessionState::Closing);
+			return TerminalStartResult::Aborted();
+		}
 	} catch( const std::system_error& error ) {
-		m_impl->Transition( TerminalSessionState::Failed, static_cast<std::uint32_t>(error.code().value()) );
-		m_impl->StopWorkers();
-		m_impl->CloseBackendOnce();
-		Impl::CancelSynchronousIoNoThrow(m_impl->reader);
-		Impl::JoinBounded(m_impl->reader);
+		impl->Transition( TerminalSessionState::Failed, static_cast<std::uint32_t>(error.code().value()) );
+		impl->StopWorkers();
+		impl->CloseBackendOnce();
+		Impl::CancelSynchronousIoNoThrow(impl->reader);
+		Impl::JoinUntilQuiescent(impl->reader);
 		return TerminalStartResult::Failure( static_cast<std::uint32_t>(error.code().value()), L"Unable to create terminal I/O workers." );
 	}
 	return result;
@@ -463,8 +718,22 @@ TerminalStartResult CTerminalSession::Start( const TerminalLaunchOptions& option
 
 void CTerminalSession::Close() noexcept
 {
-	if( !m_impl ) return;
-	std::call_once( m_impl->closeOnce, [this] { m_impl->CloseImpl(); } );
+	const auto impl = m_impl;
+	if( !impl ) return;
+	impl->RequestClose();
+	(void)impl->WaitForClose(std::chrono::steady_clock::time_point::max());
+}
+
+void CTerminalSession::BeginClose() noexcept
+{
+	const auto impl = m_impl;
+	if( impl ) impl->RequestClose();
+}
+
+TerminalSessionCloseResult CTerminalSession::WaitForClose( const std::chrono::steady_clock::time_point deadline ) noexcept
+{
+	const auto impl = m_impl;
+	return impl ? impl->WaitForClose(deadline) : TerminalSessionCloseResult{};
 }
 
 TerminalQueueInputResult CTerminalSession::QueueInput( std::span<const std::uint8_t> bytes )
@@ -502,28 +771,30 @@ bool CTerminalSession::RequestResize( TerminalSize size )
 
 std::vector<std::uint8_t> CTerminalSession::DrainOutput()
 {
+	const auto impl = m_impl;
+	if( !impl ) return {};
 	std::vector<std::uint8_t> result;
 	result.reserve(kMaximumDrainBytes);
 	bool renotify = false;
 	const auto deadline = std::chrono::steady_clock::now() + kMaximumDrainTime;
 	{
-		const std::lock_guard lock(m_impl->shared->outputMutex);
-		m_impl->shared->outputNotificationPending = false;
-		while( !m_impl->shared->output.empty() && result.size() < kMaximumDrainBytes && std::chrono::steady_clock::now() < deadline ) {
-			auto& front = m_impl->shared->output.front();
+		const std::lock_guard lock(impl->shared->outputMutex);
+		impl->shared->outputNotificationPending = false;
+		while( !impl->shared->output.empty() && result.size() < kMaximumDrainBytes && std::chrono::steady_clock::now() < deadline ) {
+			auto& front = impl->shared->output.front();
 			const auto count = std::min( kMaximumDrainBytes - result.size(), front.bytes.size() - front.offset );
 			result.insert( result.end(), front.bytes.begin() + front.offset, front.bytes.begin() + front.offset + count );
 			front.offset += count;
-			m_impl->shared->outputBytes -= count;
-			if( front.offset == front.bytes.size() ) m_impl->shared->output.pop_front();
+			impl->shared->outputBytes -= count;
+			if( front.offset == front.bytes.size() ) impl->shared->output.pop_front();
 		}
-		if( !m_impl->shared->output.empty() ) {
-			m_impl->shared->outputNotificationPending = true;
+		if( !impl->shared->output.empty() ) {
+			impl->shared->outputNotificationPending = true;
 			renotify = true;
 		}
 	}
-	if( GetQueuedOutputBytes() <= kOutputLowWaterBytes ) m_impl->shared->outputSpaceAvailable.notify_one();
-	if( renotify ) m_impl->NotifyOutput();
+	if( GetQueuedOutputBytes() <= kOutputLowWaterBytes ) impl->shared->outputSpaceAvailable.notify_one();
+	if( renotify ) impl->NotifyOutput();
 	return result;
 }
 

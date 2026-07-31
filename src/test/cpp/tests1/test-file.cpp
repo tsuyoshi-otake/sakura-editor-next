@@ -12,6 +12,8 @@
 #include <cstdlib>
 #include <fstream>
 
+#include <algorithm>
+
 #include "config/maxdata.h"
 #include "basis/primitive.h"
 #include "debug/Debug2.h"
@@ -20,6 +22,7 @@
 #include "env/DLLSHAREDATA.h"
 #include "_main/CCommandLine.h"
 #include "_main/CControlProcess.h"
+#include "_main/CProcess.h"
 #include "env/CDataProfile.h"
 #include "util/file.h"
 
@@ -160,6 +163,48 @@ namespace path_util {
 
 using cxx::WritePrivateProfileStringW;
 using cxx::ExpandEnvironmentStringsW;
+
+class CResolvedProfileProcessForTest final : public CProcess {
+public:
+	CResolvedProfileProcessForTest() : CProcess(nullptr, L"") {}
+
+	bool AttachSharedDataForTest()
+	{
+		return InitializeProcess();
+	}
+
+private:
+	bool MainLoop() override { return true; }
+	void OnExitProcess() override {}
+};
+
+TEST(file, TryGetResolvedProfileDirectory_UsesFrozenSharedDataAnchor)
+{
+	CResolvedProfileProcessForTest process;
+	EXPECT_FALSE(process.TryGetResolvedProfileDirectory().has_value());
+	ASSERT_TRUE(process.AttachSharedDataForTest());
+
+	auto* const shareData = process.GetShareData().GetDllShareDataPtr();
+	ASSERT_NE(nullptr, shareData);
+	const auto originalFrozenIniFile = shareData->m_szPrivateIniFile;
+
+	const auto verifyFrozenDirectory = [&](const std::filesystem::path& frozenIniFile,
+		const std::filesystem::path& expectedDirectory) {
+		auto& buffer = shareData->m_szPrivateIniFile;
+		std::fill(buffer.data(), buffer.data() + buffer.BUFFER_COUNT, L'\0');
+		buffer = frozenIniFile;
+
+		const auto resolvedDirectory = process.TryGetResolvedProfileDirectory();
+		ASSERT_TRUE(resolvedDirectory.has_value());
+		EXPECT_EQ(*resolvedDirectory, expectedDirectory.lexically_normal());
+	};
+
+	verifyFrozenDirectory(LR"(C:\Sakura\sakura.ini)", LR"(C:\Sakura)");
+	verifyFrozenDirectory(LR"(C:\Sakura\profiles\named\sakura.ini)", LR"(C:\Sakura\profiles\named)");
+	verifyFrozenDirectory(LR"(C:\Users\Test\AppData\Roaming\sakura\sakura.ini)",
+		LR"(C:\Users\Test\AppData\Roaming\sakura)");
+	shareData->m_szPrivateIniFile = originalFrozenIniFile;
+}
 
 /*!
  * @brief パスがファイル名に使えない文字を含んでいるかチェックする

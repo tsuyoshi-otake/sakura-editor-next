@@ -21,7 +21,7 @@
 namespace {
 
 constexpr std::uint32_t kSharedStateMagic = 0x58454853; // SHEX
-constexpr std::uint32_t kSharedStateVersion = 1;
+constexpr std::uint32_t kSharedStateVersion = 2;
 constexpr std::size_t kIdentityCharacters = 33;
 constexpr std::size_t kPipeCharacters = 160;
 constexpr std::size_t kDiagnosticBytes = 512;
@@ -108,6 +108,52 @@ std::wstring MappingNameFor(const std::filesystem::path& profileDirectory)
 	return hash.empty() ? std::wstring{} : L"Local\\SakuraExtensionHostState-" + hash;
 }
 
+bool IsCanonicalNativeSessionId(const std::array<wchar_t, kIdentityCharacters>& value) noexcept
+{
+	if (value.back() != L'\0') return false;
+	for (std::size_t index = 0; index + 1 < value.size(); ++index) {
+		const auto character = value[index];
+		if (!((character >= L'0' && character <= L'9') || (character >= L'a' && character <= L'f'))) {
+			return false;
+		}
+	}
+	return true;
+}
+
+void CopyNativeSessionId(
+	std::array<wchar_t, kIdentityCharacters>& destination, std::wstring_view source) noexcept
+{
+	if (source.empty()) return;
+	if (source.size() == destination.size() - 1 &&
+		std::all_of(source.begin(), source.end(), [](wchar_t character) {
+			return (character >= L'0' && character <= L'9') ||
+				(character >= L'a' && character <= L'f');
+		})) {
+		std::copy(source.begin(), source.end(), destination.begin());
+		return;
+	}
+	// Never turn an oversized or malformed capability identity into a valid one
+	// through truncation.  This marker is rejected in every lifecycle state.
+	destination[0] = L'g';
+}
+
+bool IsEmptyNativeSessionId(const std::array<wchar_t, kIdentityCharacters>& value) noexcept
+{
+	return std::all_of(value.begin(), value.end(), [](wchar_t character) { return character == L'\0'; });
+}
+
+bool StateRequiresNativeSession(EExtensionHostState state) noexcept
+{
+	return state == EExtensionHostState::Starting || state == EExtensionHostState::Ready ||
+		state == EExtensionHostState::KeepAlive;
+}
+
+bool StateForbidsNativeSession(EExtensionHostState state) noexcept
+{
+	return state == EExtensionHostState::Absent || state == EExtensionHostState::Failed ||
+		state == EExtensionHostState::Stopped;
+}
+
 } // namespace
 
 struct CExtensionHostSharedState::SharedBlock {
@@ -122,6 +168,7 @@ struct CExtensionHostSharedState::SharedBlock {
 		std::uint64_t generation = 0;
 		std::array<wchar_t, kIdentityCharacters> profileHash{};
 		std::array<wchar_t, kIdentityCharacters> bootId{};
+		std::array<wchar_t, kIdentityCharacters> extensionHostSessionId{};
 		std::array<wchar_t, kPipeCharacters> pipeName{};
 		std::array<char, kDiagnosticBytes> diagnostic{};
 	};
@@ -229,6 +276,7 @@ void CExtensionHostSharedState::Publish(const SExtensionHostBrokerSnapshot& snap
 	payload.generation = snapshot.generation;
 	CopyBounded(payload.profileHash, std::wstring_view(snapshot.profileHash));
 	CopyBounded(payload.bootId, std::wstring_view(snapshot.bootId));
+	CopyNativeSessionId(payload.extensionHostSessionId, snapshot.extensionHostSessionId);
 	CopyBounded(payload.pipeName, std::wstring_view(snapshot.pipeName));
 	CopyBounded(payload.diagnostic, std::string_view(snapshot.lastDiagnostic));
 
@@ -257,10 +305,18 @@ std::optional<SExtensionHostBrokerSnapshot> CExtensionHostSharedState::Read() co
 			payload.state > static_cast<std::uint32_t>(EExtensionHostState::Stopped)) {
 			return std::nullopt;
 		}
+		const auto state = static_cast<EExtensionHostState>(payload.state);
+		if ((StateRequiresNativeSession(state) && !IsCanonicalNativeSessionId(payload.extensionHostSessionId)) ||
+			(StateForbidsNativeSession(state) && !IsEmptyNativeSessionId(payload.extensionHostSessionId)) ||
+			(state == EExtensionHostState::Quiescing && !IsEmptyNativeSessionId(payload.extensionHostSessionId) &&
+				!IsCanonicalNativeSessionId(payload.extensionHostSessionId))) {
+			return std::nullopt;
+		}
 		return SExtensionHostBrokerSnapshot{
-			static_cast<EExtensionHostState>(payload.state), payload.generation, payload.hostProcessId,
+			state, payload.generation, payload.hostProcessId,
 			payload.retryCount, payload.leaseOwnerCount, payload.leaseCount,
-			payload.profileHash.data(), payload.bootId.data(), payload.pipeName.data(), payload.diagnostic.data(),
+			payload.profileHash.data(), payload.bootId.data(), payload.extensionHostSessionId.data(),
+			payload.pipeName.data(), payload.diagnostic.data(),
 		};
 	}
 	return std::nullopt;

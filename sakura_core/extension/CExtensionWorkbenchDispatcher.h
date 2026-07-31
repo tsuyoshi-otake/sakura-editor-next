@@ -11,7 +11,7 @@
 #include "extension/CExtensionCommandPalette.h"
 #include "extension/CExtensionNotificationCenter.h"
 #include "extension/CExtensionRpcProtocol.h"
-#include "extension/CExtensionSecretStorage.h"
+#include "extension/IExtensionSecretStorage.h"
 #include "extension/CExtensionStatusBar.h"
 #include "extension/CExtensionViewRegistry.h"
 #include "extension/CExtensionWorkbenchUi.h"
@@ -22,6 +22,8 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+
+class CExtensionWorkbenchServiceBridge;
 
 enum class EExtensionWorkbenchChange : std::uint32_t {
 	None = 0,
@@ -72,11 +74,12 @@ public:
 		CExtensionStatusBar& statusBar,
 		CExtensionNotificationCenter& notifications,
 		CExtensionViewRegistry& views,
-		CExtensionSecretStorage& secrets,
+		IExtensionSecretStorage& secrets,
 		CExtensionDiagnostics& diagnostics,
 		CExtensionQuickInput& quickInput,
 		CExtensionOutputChannel& output,
-		CExtensionProgressCenter& progress);
+		CExtensionProgressCenter& progress,
+		CExtensionWorkbenchServiceBridge* serviceBridge = nullptr);
 
 	void SetNotificationHandler(NotificationHandler handler);
 	void SetQuickInputHandler(QuickInputHandler handler);
@@ -120,11 +123,12 @@ private:
 	CExtensionStatusBar& m_statusBar;
 	CExtensionNotificationCenter& m_notifications;
 	CExtensionViewRegistry& m_views;
-	CExtensionSecretStorage& m_secrets;
+	IExtensionSecretStorage& m_secrets;
 	CExtensionDiagnostics& m_diagnostics;
 	CExtensionQuickInput& m_quickInput;
 	CExtensionOutputChannel& m_output;
 	CExtensionProgressCenter& m_progress;
+	CExtensionWorkbenchServiceBridge* m_serviceBridge = nullptr;
 	NotificationHandler m_notificationHandler;
 	QuickInputHandler m_quickInputHandler;
 	TrustHandler m_trustHandler;

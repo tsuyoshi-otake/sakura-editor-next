@@ -49,11 +49,11 @@ BOOL CALLBACK ApplyChromeFont(HWND window, LPARAM parameter)
 
 } // namespace
 
-CWorkbenchPanelHost::CWorkbenchPanelHost(WorkbenchEdge edge, int extentDip, PersistExtentCallback persistExtent)
+CWorkbenchPanelHost::CWorkbenchPanelHost(WorkbenchEdge edge, int extentDip, CommitExtentCallback commitExtent)
 	: m_edge(edge)
 	, m_extentDip(ClampExtent(extentDip))
 	, m_pendingExtentDip(m_extentDip)
-	, m_persistExtent(std::move(persistExtent))
+	, m_commitExtent(std::move(commitExtent))
 {
 }
 
@@ -163,13 +163,29 @@ void CWorkbenchPanelHost::UpdateResize(int extentDip)
 	if (m_state == WorkbenchPanelState::DragResizing) m_pendingExtentDip = ClampExtent(extentDip);
 }
 
-void CWorkbenchPanelHost::CommitResize()
+bool CWorkbenchPanelHost::CommitResize()
 {
-	if (m_state != WorkbenchPanelState::DragResizing) return;
+	if (m_state != WorkbenchPanelState::DragResizing) return false;
 	m_state = WorkbenchPanelState::Visible;
-	if (m_extentDip == m_pendingExtentDip) return;
-	m_extentDip = m_pendingExtentDip;
-	if (m_persistExtent) m_persistExtent(m_edge, m_extentDip);
+	if (m_extentDip == m_pendingExtentDip) return true;
+
+	const int requestedExtentDip = m_pendingExtentDip;
+	bool accepted = true;
+	if (m_commitExtent) {
+		try {
+			accepted = m_commitExtent(m_edge, requestedExtentDip);
+		}
+		catch (...) {
+			accepted = false;
+		}
+	}
+	if (!accepted) {
+		m_pendingExtentDip = m_extentDip;
+		return false;
+	}
+	m_extentDip = requestedExtentDip;
+	m_pendingExtentDip = m_extentDip;
+	return true;
 }
 
 void CWorkbenchPanelHost::CancelResize()

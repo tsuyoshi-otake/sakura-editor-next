@@ -18,11 +18,16 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 
 #include "global.h"
 #include "CProcess.h"
 
 class CControlTray;
+
+namespace platform::controlipc {
+class CControlPlatformRuntime;
+}
 
 /*-----------------------------------------------------------------------
 クラスの宣言
@@ -36,9 +41,7 @@ class CControlTray;
 */
 class CControlProcess final : public CProcess {
 public:
-	CControlProcess( HINSTANCE hInstance, LPCWSTR lpCmdLine ) : 
-		CProcess( hInstance, lpCmdLine )
-	{}
+	CControlProcess(HINSTANCE hInstance, LPCWSTR lpCmdLine);
 
 	~CControlProcess();
 
@@ -52,10 +55,13 @@ protected:
 
 private:
 	std::filesystem::path GetPrivateIniFileName(const std::wstring& exeIniPath, const std::wstring& filename) const;
+	bool StartControlPlatform();
+	void StopControlPlatform() noexcept;
 
 	HANDLE			m_hMutex = nullptr;					//!< アプリケーション実行検出用ミューテックス
 	HANDLE			m_hMutexCP = nullptr;				//!< コントロールプロセスミューテックス
 	CControlTray*	m_pcTray = nullptr;
+	std::unique_ptr<platform::controlipc::CControlPlatformRuntime> m_controlPlatformRuntime;
 };
 
 #endif /* SAKURA_CCONTROLPROCESS_AFB90808_4287_4A11_B7FB_9CD21CF8BFD6_H_ */

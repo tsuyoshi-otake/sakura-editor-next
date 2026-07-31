@@ -658,6 +658,8 @@ void CCaret::ShowEditCaret()
 //2007.10.17 kobake 重複するコードを整理
 void CCaret::ShowCaretPosInfo()
 {
+	if (!GetEditWnd().HasActiveEditorInput()) return;
+
 	//必要なインターフェース
 	const CLayoutMgr* pLayoutMgr=&m_pEditDoc->m_cLayoutMgr;
 	const STypeConfig* pTypes=&m_pEditDoc->m_cDocType.GetDocumentAttribute();

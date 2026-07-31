@@ -8,6 +8,7 @@
 #include <Windows.h>
 #include <limits>
 #include "extension/COpenVsxClient.h"
+#include "extension/openvsx/OpenVsxProtocol.h"
 
 /*!
 	@brief 通信を伴わない部分だけを検証する
@@ -73,6 +74,18 @@ TEST(COpenVsxClient, Constructor_StripsTrailingSlash)
 	EXPECT_STREQ(
 		L"https://example.test/api/-/search?offset=0&size=25&query=x",
 		client.BuildSearchUrl(L"x", 0, 25).c_str());
+}
+
+//! protocol は legacy HTTP client を生成せず URL の入力境界を固定できること
+TEST(OpenVsxProtocol, BuildSearchUrl_NormalizesAndClampsWithoutTransport)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	const auto registryUrl = OpenVsxProtocol::NormalizeRegistryUrl(L"https://example.test///");
+
+	EXPECT_STREQ(L"https://example.test", registryUrl.c_str());
+	EXPECT_STREQ(
+		L"https://example.test/api/-/search?offset=0&size=100&query=a%26b",
+		OpenVsxProtocol::BuildSearchUrl(registryUrl, L"a&b", -1, 101).c_str());
 }
 
 //! 実際のレジストリ応答と同じ形を解析できること
@@ -383,4 +396,37 @@ TEST(COpenVsxClient, ParseSearchResponse_ClampsUntrustedCounts)
 	EXPECT_EQ(0, result.nTotalSize);
 	ASSERT_EQ(1u, result.extensions.size());
 	EXPECT_EQ((std::numeric_limits<long long>::max)(), result.extensions[0].nDownloadCount);
+}
+
+//! protocol の解析結果は legacy client の静的 API と同じ public model を返すこと
+TEST(OpenVsxProtocol, ParseSearchResponse_PreservesLegacyPublicModel)
+{
+	const std::string json = R"({
+		"offset": 1,
+		"totalSize": 1,
+		"extensions": [{
+			"namespace": "sample",
+			"name": "tool",
+			"version": "1.0.0",
+			"files": { "download": "https://example.test/tool.vsix" }
+		}]
+	})";
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg;
+
+	ASSERT_TRUE(extension::openvsx::OpenVsxProtocol::ParseSearchResponse(json, result, errorMsg)) << errorMsg;
+	ASSERT_EQ(1u, result.extensions.size());
+	EXPECT_EQ(L"sample.tool", result.extensions.front().GetUniqueId());
+	EXPECT_EQ(L"tool", result.extensions.front().sDisplayName);
+}
+
+//! 成功結果に、同じ呼び出し元が保持していた古い失敗診断を混在させないこと
+TEST(OpenVsxProtocol, ParseSearchResponse_ClearsPriorErrorOnSuccess)
+{
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg = L"stale failure";
+
+	ASSERT_TRUE(extension::openvsx::OpenVsxProtocol::ParseSearchResponse(
+		R"({"offset":0,"totalSize":0})", result, errorMsg));
+	EXPECT_TRUE(errorMsg.empty());
 }

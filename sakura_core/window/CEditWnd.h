@@ -28,6 +28,11 @@
 
 #include <shellapi.h>// HDROP
 #include <cstdint>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <string>
+#include <string_view>
 #include "_main/global.h"
 #include "_os/CDropTarget.h"
 #include "CMainToolBar.h"
@@ -53,6 +58,9 @@
 #include "cxx/ResourceHolder.hpp"
 
 #include "print/CPrintPreview.h"
+#include "workbench/editor/EditorWorkingCopyTypes.h"
+#include "workbench/output/OutputService.h"
+#include "workbench/problems/MarkerService.h"
 
 static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
@@ -61,6 +69,7 @@ class CEditDoc;
 class CCustomFrameController;
 class CExtensionPane;
 class CExtensionService;
+class IExtensionSecretSessionStorage;
 struct SExtensionNativeEditorOptions;
 class CExtensionViewRegistry;
 struct SExtensionDiagnostic;
@@ -76,9 +85,21 @@ class CMarkdownPreviewWnd;
 }
 namespace workbench {
 class CActivityBar;
+class IWorkbenchRuntime;
 class CWorkbenchPanelHost;
 class CWorkspaceContext;
 enum class WorkbenchEdge : std::uint8_t;
+namespace layout {
+class IWorkbenchLayoutSubscription;
+struct WorkbenchLayoutStateSnapshot;
+}
+namespace win32 {
+struct BuiltinActiveSurfaceProjection;
+}
+namespace commands {
+class WorkbenchCommandRegistry;
+class WorkbenchContextKeyService;
+}
 namespace explorer {
 class CExplorerTool;
 class CExplorerOutlineTool;
@@ -92,6 +113,18 @@ class CScmWorkbenchTool;
 namespace extension {
 class CExtensionBottomPanelTool;
 class CExtensionSidebarTool;
+}
+namespace editor {
+class CEditDocLegacyEditorBackend;
+class CEditorServiceLegacyAdapter;
+class EditorWorkingCopyCoordinator;
+class CEmptyEditorSurface;
+class IEditorCoreSubscription;
+struct EditorCoreSnapshot;
+}
+namespace editor::persistence {
+class EditorWorkingCopyLifecycleBridge;
+struct EditorWorkingCopyCompletionToken;
 }
 }
 
@@ -111,6 +144,36 @@ struct STabGroupInfo {
 	STabGroupInfo() = default;
 
 	bool IsValid() const noexcept { return hwndTop != nullptr; }
+};
+
+//! Parameter-preserving request at the legacy command/workbench migration seam.
+//! functionCode retains its FA_* source flags; the adapter decodes only its low word.
+struct SLegacyEditorFunctionCommand final {
+	EFunctionCode functionCode = F_0;
+	bool redraw = true;
+	LPARAM lparam1 = 0;
+	LPARAM lparam2 = 0;
+	LPARAM lparam3 = 0;
+	LPARAM lparam4 = 0;
+};
+
+//! A handled operation never falls back to the legacy implementation, including
+//! cancellation, conflict, unsupported, and failure terminals.
+struct SWorkingCopyFunctionDispatchResult final {
+	bool handled = false;
+	BOOL legacyResult = TRUE;
+	std::optional<workbench::editor::EditorWorkingCopyOperationResult> operation;
+};
+
+//! Terminal outcome for the one-input Hot Exit recovery projection.  Recovery
+//! has already committed the backing CEditDoc before this boundary runs, so a
+//! failure is deliberately observable to startup rather than being hidden by a
+//! best-effort native refresh.
+enum class ERecoveredEditorProjectionResult : std::uint8_t {
+	Succeeded,
+	InvalidRecovery,
+	CoreActivationFailed,
+	NativeProjectionFailed,
 };
 
 //! 編集ウィンドウ（外枠）管理クラス
@@ -137,6 +200,14 @@ private:
 
 public:
 	CEditWnd();
+	CEditWnd(
+		workbench::editor::CEditorServiceLegacyAdapter& editorServiceAdapter,
+		workbench::editor::CEditDocLegacyEditorBackend& legacyEditorBackend,
+		workbench::editor::EditorWorkingCopyCoordinator& workingCopyCoordinator,
+		workbench::editor::persistence::EditorWorkingCopyLifecycleBridge& workingCopyLifecycleBridge,
+		workbench::IWorkbenchRuntime& workbenchRuntime,
+		std::filesystem::path profileDirectory,
+		std::unique_ptr<IExtensionSecretSessionStorage> extensionSecretStorage);
 	~CEditWnd() override;
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -175,12 +246,33 @@ public:
 		CTypeConfig	nDocumentType = CTypeConfig(-1)	//!< [in] 文書タイプ．-1のとき強制指定無し．
 	);
 	void UpdateCaption();
+	//! True only when the last applied authoritative Editor Core snapshot has an active input.
+	//! Unit-only windows without the migration seam retain the historical always-backed editor behavior.
+	[[nodiscard]] bool HasActiveEditorInput() const noexcept
+	{
+		return m_editorServiceAdapter == nullptr || m_hasActiveEditorInput;
+	}
+	//! Explicitly adopts a legitimate pathless legacy tool/untitled input after its legacy setup completed.
+	[[nodiscard]] bool AdoptLegacyUntitledInput(std::string_view kind);
+	//! Selects the one recovered core input and immediately applies the resulting
+	//! authoritative snapshot to this native window.  The legacy document is only
+	//! a prepared backing object; it is never consulted to infer the active input.
+	[[nodiscard]] ERecoveredEditorProjectionResult ReconcileRecoveredEditorInput(
+		std::string_view recoveredInputId, std::string_view effectiveActiveInputId);
+	//! Central parameter-preserving migration seam used by CViewCommander.
+	[[nodiscard]] SWorkingCopyFunctionDispatchResult TryExecuteWorkingCopyFileCommand(
+		const SLegacyEditorFunctionCommand& request);
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                         イベント                            //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//ドキュメントイベント
+	void OnBeforeLoad(SLoadInfo* sLoadInfo) override;
 	void OnAfterLoad(const SLoadInfo& sLoadInfo) override;
+	ELoadFinalizationStatus OnFinalLoad(ELoadResult eLoadResult) override;
 	void OnAfterSave(const SSaveInfo& sSaveInfo) override;
+	//! Arms the common load listener while the old native content is still intact.
+	//! FileCloseOpen uses this after target/check/close-veto validation and before its close event.
+	void PrepareLegacyLoadReplacement();
 
 	//管理
 	void MessageLoop( void );								/* メッセージループ */
@@ -446,10 +538,48 @@ private:
 	bool InitializeWorkbench();
 	void CloseWorkbench() noexcept;
 	void ApplyWorkbenchTheme();
-	void ApplyWorkbenchSettingsFromSharedData();
+	void ApplyWorkbenchSettingsFromSharedData(bool finalizeProjection = true);
+	[[nodiscard]] bool ApplyInitialWorkbenchLayoutState();
+	[[nodiscard]] bool ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
+		bool broadcastMirrorChanges, bool* mirrorChanged = nullptr);
+	[[nodiscard]] bool ApplyBuiltinWorkbenchSurfaces(
+		const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot,
+		const workbench::win32::BuiltinActiveSurfaceProjection& projection);
+	void ApplyBuiltinWorkbenchFocus(
+		const workbench::win32::BuiltinActiveSurfaceProjection& projection);
+	void OnWorkbenchLayoutStateChanged();
+	void OnWorkbenchServiceProjectionChanged();
+	[[nodiscard]] bool InitializeWorkbenchServiceProjection();
+	void CloseWorkbenchServiceProjection() noexcept;
+	void FinalizeWorkbenchPanelProjection(
+		const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection = nullptr);
 	void ReloadWorkbenchOutlineAndRelayout();
 	void BroadcastWorkbenchSettings();
+	[[nodiscard]] std::wstring GetSemanticWorkspaceRoot() const;
+	void ApplySemanticWorkspaceContext();
 	void UpdateWorkspaceFromDocument();
+	void RefreshEditorCorePresentation();
+	void ApplyEditorCoreSnapshot(const workbench::editor::EditorCoreSnapshot& snapshot, bool restoreFocus = true);
+	[[nodiscard]] bool AdoptLoadedLegacyFile();
+	[[nodiscard]] bool FinalizeSuccessfulLegacyLoad();
+	[[nodiscard]] bool CreateUntitledEditorInput();
+	[[nodiscard]] bool CloseActiveEditorInput();
+	[[nodiscard]] bool ExecuteWorkbenchEditorCommand(std::string_view commandId);
+	[[nodiscard]] bool ExecuteActiveWorkingCopyCommand(
+		std::string_view commandId, bool suppressCloseConfirmation = false,
+		bool disposeWindow = false);
+	[[nodiscard]] workbench::editor::EditorWorkingCopyOperationResult ExecuteActiveWorkingCopyOperation(
+		std::string_view commandId,
+		const workbench::editor::EditorWorkingCopySaveOptions& saveOptions = {},
+		std::optional<workbench::editor::EditorDocumentIdentity> targetIdentity = std::nullopt,
+		bool suppressCloseConfirmation = false,
+		bool disposeWindow = false);
+	void DispatchEditorFunction(EFunctionCode functionCode);
+	[[nodiscard]] bool SynchronizeLegacyDocumentState(bool dirty, bool contentChanged);
+	void ClearDocumentStatus();
+	void ClosePublishedExtensionDocument();
+	[[nodiscard]] std::string NextEditorOperationId(std::string_view prefix);
+	[[nodiscard]] bool ActiveInputMatchesCurrentFile() const;
 	[[nodiscard]] SExtensionDocumentSnapshot CaptureExtensionDocumentSnapshot(std::uint64_t version) const;
 	void PublishExtensionDocumentOpen(bool forceReopen);
 	void PublishExtensionDocumentChange();
@@ -459,6 +589,20 @@ private:
 		const std::vector<SExtensionDocumentEdit>& edits,
 		std::vector<SExtensionDocumentSnapshot>& snapshots);
 	bool ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& options);
+	[[nodiscard]] std::optional<std::string> NextWorkbenchLayoutOperationId(std::string_view action);
+	[[nodiscard]] std::optional<std::string> NextOutputPanelOperationId();
+	[[nodiscard]] bool SetBuiltinPartVisibility(std::string_view partId, bool visible);
+	[[nodiscard]] bool SetBuiltinPartExtent(std::string_view partId, int extentDip);
+	[[nodiscard]] bool SetBuiltinViewVisibility(std::string_view viewId, bool visible);
+	[[nodiscard]] bool ActivateBuiltinWorkbenchView(std::string_view viewId, bool requestFocus);
+	[[nodiscard]] bool IsBuiltinWorkbenchViewActive(std::string_view viewId) const;
+	[[nodiscard]] bool RefreshWorkbenchCommandContext();
+	[[nodiscard]] bool TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled);
+	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
+	[[nodiscard]] bool ExecuteShowExplorerCommand();
+	[[nodiscard]] bool ExecuteShowProblemsCommand();
+	[[nodiscard]] bool ExecuteShowOutputCommand(bool requestFocus = true);
+	[[nodiscard]] bool ExecuteToggleOutputCommand();
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
 	void PersistExtensionViewsExtent(int extentDip);
 	void ActivateLeftWorkbenchTool(bool sourceControl, bool toggleIfActive);
@@ -481,16 +625,58 @@ private:
 
 	//ドキュメント
 	CEditDoc* 		m_pcEditDoc = &GetEditDoc();
+	// Non-owning migration seams composed by CEditApp. Unit-only CEditWnd instances
+	// may leave them null and retain the legacy-only behavior.
+	workbench::editor::CEditorServiceLegacyAdapter* m_editorServiceAdapter = nullptr;
+	workbench::editor::CEditDocLegacyEditorBackend* m_legacyEditorBackend = nullptr;
+	workbench::editor::EditorWorkingCopyCoordinator* m_workingCopyCoordinator = nullptr;
+	workbench::editor::persistence::EditorWorkingCopyLifecycleBridge* m_workingCopyLifecycleBridge = nullptr;
+	workbench::IWorkbenchRuntime* m_workbenchRuntime = nullptr;
+	//! A shared callback-only gate lets service notifications outlive this window
+	//! without retaining or dereferencing CEditWnd from a model callback thread.
+	struct WorkbenchServiceProjectionGate;
+	std::shared_ptr<WorkbenchServiceProjectionGate> m_workbenchServiceProjectionGate;
+	//! Running-only borrows from m_workbenchRuntime. They are released after the
+	//! gate is disconnected and their exact subscriptions are removed.
+	workbench::problems::MarkerService* m_markerService = nullptr;
+	std::optional<workbench::problems::MarkerSubscriptionId> m_markerSubscriptionId;
+	workbench::output::OutputService* m_outputService = nullptr;
+	std::optional<workbench::output::OutputServiceSubscriptionId> m_outputSubscriptionId;
 
 	//自ウィンドウ
 	HWND			m_hWnd = nullptr;
 	std::unique_ptr<CCustomFrameController> m_customFrame;
 	bool			m_dispatchReady = false;
 	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
+	std::unique_ptr<workbench::editor::CEmptyEditorSurface> m_emptyEditorSurface;
+	std::unique_ptr<workbench::editor::IEditorCoreSubscription> m_editorCoreSubscription;
+	std::unique_ptr<workbench::layout::IWorkbenchLayoutSubscription> m_layoutStateSubscription;
+	//! Window-local command/context boundary; only initialized for runtime-backed workbench windows.
+	std::unique_ptr<workbench::commands::WorkbenchContextKeyService> m_workbenchContextKeyService;
+	std::unique_ptr<workbench::commands::WorkbenchCommandRegistry> m_workbenchCommandRegistry;
+	//! Presentation cache derived only by ApplyEditorCoreSnapshot.
+	bool m_hasActiveEditorInput = false;
+	bool m_editorCorePresentationInitialized = false;
+	//! Set only while a coordinator backend call may synchronously raise OnAfterSave.
+	//! The RAII scope restores it on every completion path, including a legacy exception.
+	bool m_workingCopyBackendEffectInProgress = false;
+	//! Load listeners form one synchronous native replacement transaction. The old
+	//! persistence token is captured before CLoadAgent mutates CEditDoc and completed
+	//! only after the new native document is atomically reflected in Editor Core.
+	std::unique_ptr<workbench::editor::persistence::EditorWorkingCopyCompletionToken>
+		m_pendingLoadCompletionToken;
+	bool m_pendingLoadHadActiveInput = false;
+	bool m_pendingLoadReachedAfter = false;
+	bool m_pendingLoadPrearmed = false;
+	std::uint64_t m_editorOperationSequence = 0;
+	std::uint64_t m_workbenchLayoutOperationSequence = 0;
+	std::uint64_t m_outputPanelOperationSequence = 0;
 	std::unique_ptr<workbench::CActivityBar> m_activityBar;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
+	std::filesystem::path m_extensionProfileDirectory;
+	std::unique_ptr<IExtensionSecretSessionStorage> m_extensionSecretStorage;
 	std::unique_ptr<CExtensionService> m_extensionService;
 	std::wstring m_extensionDocumentUri;
 	std::uint64_t m_extensionDocumentVersion = 0;

@@ -16,11 +16,17 @@
 #define SAKURA_CNORMALPROCESS_F2808B31_61DC_4BE0_8661_9626478AC7F9_H_
 #pragma once
 
+#include <memory>
+
 #include "global.h"
 #include "CProcess.h"
 #include "extmodule/CMigemo.h"
 #include "CEditApp.h"
 #include "util/design_template.h"
+
+namespace platform::controlipc {
+class CEditorControlPlatformRuntime;
+}
 
 /*-----------------------------------------------------------------------
 クラスの宣言
@@ -47,8 +53,12 @@ protected:
 	void	OpenFiles(HWND hEditWnd) const;
 
 private:
+	bool StartEditorControlPlatform();
+	void StopEditorControlPlatform() noexcept;
+
 	CEditApp*	m_pcEditApp = nullptr;	//2007.10.23 kobake
 	CMigemo		m_cMigemo;
+	std::unique_ptr<platform::controlipc::CEditorControlPlatformRuntime> m_editorControlPlatformRuntime;
 };
 
 #endif /* SAKURA_CNORMALPROCESS_F2808B31_61DC_4BE0_8661_9626478AC7F9_H_ */

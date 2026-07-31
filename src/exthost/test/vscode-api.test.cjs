@@ -20,6 +20,7 @@ const {
   ThemeColor,
   TreeItem,
   TreeItemCollapsibleState,
+  UnsupportedCapabilityError,
   Uri,
   WorkspaceEdit,
 } = require('../src/vscode-api.cjs');
@@ -150,6 +151,7 @@ test('output batches writes and progress always reaches an explicit end', async 
   await new Promise((resolve) => setTimeout(resolve, 20));
   assert.equal(transport.notified('workbench/output/append').length, 1);
   assert.equal(transport.notified('workbench/output/append')[0].params.value, 'onetwo\n');
+  assert.match(transport.notified('workbench/output/append')[0].params.operationId, /^output-op-s\d+-g3-\d+$/);
 
   await assert.rejects(session.api.window.withProgress({ title: 'Work', cancellable: true }, async (progress) => {
     progress.report({ increment: 50, message: 'half' });
@@ -162,12 +164,107 @@ test('output batches writes and progress always reaches an explicit end', async 
   session.dispose();
 });
 
+test('output mutations carry one bounded, unique operation ID across channels', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.output', 12, transport);
+  const first = session.api.window.createOutputChannel('Mutable output name');
+  first.append('mutable output text');
+  first.flush();
+  first.replace('replacement');
+  first.clear();
+  first.show(2, true);
+  first.hide();
+
+  const second = session.api.window.createOutputChannel('Second output');
+  second.append('second text');
+  second.flush();
+  second.dispose();
+  first.dispose();
+
+  const mutations = transport.notifications.filter((item) => item.method.startsWith('workbench/output/'));
+  assert.deepEqual(new Set(mutations.map((item) => item.method)), new Set([
+    'workbench/output/create',
+    'workbench/output/append',
+    'workbench/output/replace',
+    'workbench/output/clear',
+    'workbench/output/show',
+    'workbench/output/hide',
+    'workbench/output/dispose',
+  ]));
+  const ids = mutations.map((item) => item.params.operationId);
+  assert.equal(new Set(ids).size, ids.length);
+  for (const id of ids) {
+    assert.match(id, /^output-op-s\d+-g12-\d+$/);
+    assert.match(id, /^[\x21-\x7e]+$/);
+    assert.ok(id.length <= 64);
+    assert.equal(id.includes('Mutable output name'), false);
+    assert.equal(id.includes('mutable output text'), false);
+  }
+  for (const { params } of mutations) {
+    assert.equal(params.extensionId, 'sample.output');
+    assert.equal(params.generation, 12);
+    assert.equal(typeof params.handle, 'string');
+  }
+  assert.equal(transport.notified('workbench/output/show').at(-1).params.preserveFocus, true);
+  assert.equal('column' in transport.notified('workbench/output/show').at(-1).params, false);
+  assert.equal(transport.notified('workbench/output/replace').at(-1).params.value, 'replacement');
+  assert.equal(transport.notified('workbench/output/append')[0].params.handle, first.handle);
+  assert.equal(transport.notified('workbench/output/append')[1].params.handle, second.handle);
+  session.dispose();
+});
+
+test('output mutation IDs remain stable when a transport resends the same notification', () => {
+  class RetryingOutputTransport extends RecordingTransport {
+    notify(method, params) {
+      super.notify(method, params);
+      if (method === 'workbench/output/append') super.notify(method, params);
+    }
+  }
+
+  const transport = new RetryingOutputTransport();
+  const session = new ExtensionApiSession('sample.output', 13, transport);
+  const output = session.api.window.createOutputChannel('Replay');
+  output.append('retry me');
+  output.flush();
+
+  const attempts = transport.notified('workbench/output/append');
+  assert.equal(attempts.length, 2);
+  assert.strictEqual(attempts[0].params, attempts[1].params);
+  assert.equal(attempts[0].params.operationId, attempts[1].params.operationId);
+  output.dispose();
+  session.dispose();
+});
+
+test('output operation ID namespaces are session-scoped and fail explicitly on exhaustion', () => {
+  const firstTransport = new RecordingTransport();
+  const secondTransport = new RecordingTransport();
+  const firstSession = new ExtensionApiSession('sample.output', 14, firstTransport);
+  const secondSession = new ExtensionApiSession('sample.output', 15, secondTransport);
+  firstSession.api.window.createOutputChannel('First generation');
+  secondSession.api.window.createOutputChannel('Second generation');
+  const firstId = firstTransport.notified('workbench/output/create')[0].params.operationId;
+  const secondId = secondTransport.notified('workbench/output/create')[0].params.operationId;
+  assert.notEqual(firstId, secondId);
+  assert.match(firstId, /^output-op-s\d+-g14-1$/);
+  assert.match(secondId, /^output-op-s\d+-g15-1$/);
+  firstSession.dispose();
+  secondSession.dispose();
+
+  const exhaustedTransport = new RecordingTransport();
+  const exhaustedSession = new ExtensionApiSession('sample.output', 16, exhaustedTransport);
+  exhaustedSession.nextOutputOperation = Number.MAX_SAFE_INTEGER;
+  const exhaustedChannel = exhaustedSession.api.window.createOutputChannel('Bounded');
+  const lastId = exhaustedTransport.notified('workbench/output/create')[0].params.operationId;
+  assert.ok(lastId.length <= 64);
+  assert.throws(() => exhaustedChannel.hide(), /Output operation ID space exhausted/);
+  exhaustedSession.dispose();
+});
+
 test('SecretStorage is extension-namespaced and fires changes after successful mutations', async () => {
   const transport = new RecordingTransport();
   transport.responses.set('secrets/get', { value: 'secret-value' });
   transport.responses.set('secrets/store', {});
   transport.responses.set('secrets/delete', {});
-  transport.responses.set('secrets/keys', { keys: ['token'] });
   const session = new ExtensionApiSession('sample.extension', 5, transport);
   const secrets = session.createExtensionContext().secrets;
   const changes = [];
@@ -175,11 +272,18 @@ test('SecretStorage is extension-namespaced and fires changes after successful m
 
   assert.equal(await secrets.get('token'), 'secret-value');
   await secrets.store('token', 'new-secret');
-  assert.deepEqual(await secrets.keys(), ['token']);
+  await assert.rejects(secrets.keys(), (error) => {
+    assert.ok(error instanceof UnsupportedCapabilityError);
+    assert.equal(error.code, 'UnsupportedCapability');
+    assert.equal(error.extensionId, 'sample.extension');
+    assert.equal(error.capability, 'SecretStorage.keys');
+    return true;
+  });
   await secrets.delete('token');
   await session.handleRequest('extension/secrets/didChange', { key: 'remote' });
   assert.deepEqual(changes, ['token', 'token', 'remote']);
   for (const request of transport.requests) assert.equal(request.params.extensionId, 'sample.extension');
+  assert.equal(transport.requests.some((request) => request.method === 'secrets/keys'), false);
 
   subscription.dispose();
   session.dispose();

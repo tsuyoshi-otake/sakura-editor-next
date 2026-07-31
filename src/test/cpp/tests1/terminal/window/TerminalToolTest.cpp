@@ -73,7 +73,7 @@ public:
 
 	terminal::TerminalBackendOperationResult Resize( terminal::TerminalSize ) override { return { true, 0 }; }
 	void RequestGracefulClose() noexcept override { ++m_state->gracefulCloseCalls; }
-	bool WaitForExit( std::chrono::milliseconds ) noexcept override { return true; }
+	terminal::TerminalBackendExitResult WaitForExit( std::chrono::milliseconds ) noexcept override { return { terminal::TerminalBackendExitStatus::Exited, 0, 0 }; }
 	void ForceTerminate() noexcept override { ++m_state->forceTerminateCalls; }
 	void Close() noexcept override
 	{

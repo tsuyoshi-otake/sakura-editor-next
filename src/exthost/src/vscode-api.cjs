@@ -7,6 +7,21 @@ const { fileURLToPath, pathToFileURL } = require('node:url');
 
 const OUTPUT_FLUSH_MS = 8;
 const MAX_OUTPUT_BUFFER_CHARS = 1024 * 1024;
+const MAX_OUTPUT_OPERATION_ID_LENGTH = 64;
+let nextOutputOperationSession = 1;
+
+function allocateOutputOperationPrefix(generation) {
+  const session = nextOutputOperationSession;
+  if (!Number.isSafeInteger(session)) {
+    throw new RangeError('Output operation session ID space exhausted');
+  }
+  nextOutputOperationSession = session + 1;
+  const prefix = `output-op-s${session}-g${generation}-`;
+  if (prefix.length + String(Number.MAX_SAFE_INTEGER).length > MAX_OUTPUT_OPERATION_ID_LENGTH) {
+    throw new RangeError('Output operation ID format exceeds its maximum length');
+  }
+  return prefix;
+}
 
 class UnsupportedCapabilityError extends Error {
   constructor(extensionId, capability) {
@@ -979,8 +994,7 @@ class SecretStorage {
   }
 
   async keys() {
-    const result = await this.session.request('secrets/keys', { extensionId: this.session.extensionId });
-    return Array.isArray(result?.keys) ? [...result.keys] : [];
+    throw new UnsupportedCapabilityError(this.session.extensionId, 'SecretStorage.keys');
   }
 
   acceptChange(key) {
@@ -1095,9 +1109,7 @@ class OutputChannel {
     this.buffer = '';
     this.timer = null;
     this.disposed = false;
-    session.notify('workbench/output/create', {
-      handle, extensionId: session.extensionId, generation: session.generation, name, languageId,
-    });
+    this.notifyMutation('workbench/output/create', { name, languageId });
   }
 
   append(value) {
@@ -1120,7 +1132,7 @@ class OutputChannel {
   replace(value) {
     if (!this.assertActive()) return;
     this.flush();
-    this.session.notify('workbench/output/replace', this.parameters({ value: String(value) }));
+    this.notifyMutation('workbench/output/replace', { value: String(value) });
   }
 
   clear() {
@@ -1128,19 +1140,19 @@ class OutputChannel {
     this.buffer = '';
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
-    this.session.notify('workbench/output/clear', this.parameters());
+    this.notifyMutation('workbench/output/clear');
   }
 
   show(columnOrPreserveFocus, preserveFocus) {
     if (!this.assertActive()) return;
-    this.session.notify('workbench/output/show', this.parameters({
+    this.notifyMutation('workbench/output/show', {
       preserveFocus: typeof columnOrPreserveFocus === 'boolean' ? columnOrPreserveFocus : Boolean(preserveFocus),
-    }));
+    });
   }
 
   hide() {
     if (!this.assertActive()) return;
-    this.session.notify('workbench/output/hide', this.parameters());
+    this.notifyMutation('workbench/output/hide');
   }
 
   flush() {
@@ -1149,11 +1161,22 @@ class OutputChannel {
     if (this.disposed || this.buffer.length === 0) return;
     const value = this.buffer;
     this.buffer = '';
-    this.session.notify('workbench/output/append', this.parameters({ value }));
+    this.notifyMutation('workbench/output/append', { value });
   }
 
-  parameters(extra = {}) {
-    return { handle: this.handle, extensionId: this.session.extensionId, generation: this.session.generation, ...extra };
+  notifyMutation(method, extra = {}) {
+    const params = this.parameters(extra, this.session.allocateOutputOperationId());
+    this.session.notify(method, params);
+  }
+
+  parameters(extra = {}, operationId) {
+    return {
+      handle: this.handle,
+      extensionId: this.session.extensionId,
+      generation: this.session.generation,
+      ...extra,
+      operationId,
+    };
   }
 
   assertActive() {
@@ -1164,7 +1187,7 @@ class OutputChannel {
     if (this.disposed) return;
     this.flush();
     this.disposed = true;
-    this.session.notify('workbench/output/dispose', this.parameters());
+    this.notifyMutation('workbench/output/dispose');
   }
 }
 
@@ -1398,6 +1421,8 @@ class ExtensionApiSession {
     this.generation = generation;
     this.transport = transport;
     this.options = options;
+    this.outputOperationPrefix = allocateOutputOperationPrefix(generation);
+    this.nextOutputOperation = 1;
     this.nextHandle = 1;
     this.commands = new Map();
     this.statusBarIds = new Set();
@@ -1454,6 +1479,19 @@ class ExtensionApiSession {
 
   allocateHandle(kind) {
     return `${kind}:${this.extensionId}:${this.generation}:${this.nextHandle++}`;
+  }
+
+  allocateOutputOperationId() {
+    const sequence = this.nextOutputOperation;
+    if (!Number.isSafeInteger(sequence)) {
+      throw new RangeError('Output operation ID space exhausted');
+    }
+    const operationId = `${this.outputOperationPrefix}${sequence}`;
+    if (operationId.length > MAX_OUTPUT_OPERATION_ID_LENGTH) {
+      throw new RangeError('Output operation ID exceeds its maximum length');
+    }
+    this.nextOutputOperation = sequence + 1;
+    return operationId;
   }
 
   track(disposable) {

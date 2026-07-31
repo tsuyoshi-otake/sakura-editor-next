@@ -38,6 +38,7 @@ struct EditInfo;
 struct DLLSHAREDATA;
 class CPropertyManager;
 class CExtensionHostController;
+class IExtensionHostSecretVaultGrantLifecycle;
 
 //!	常駐部の管理
 /*!
@@ -67,6 +68,7 @@ public:
 	||  Constructors
 	*/
 	CControlTray();
+	explicit CControlTray(std::shared_ptr<IExtensionHostSecretVaultGrantLifecycle> secretVaultGrantLifecycle);
 	~CControlTray();
 
 	/*
@@ -80,6 +82,10 @@ public:
 
 	void	MessageLoop() const;	/* メッセージループ */
 	void OnDestroy( void );		/* WM_DESTROY 処理 */	// 2006.07.09 ryoji
+	//! Stop the extension host while the control-owned Secret Vault runtime is still valid.
+	void ShutdownExtensionHost() noexcept;
+	//! Replace the host grant inventory with the extensions installed in this profile.
+	bool RefreshExtensionHostInventory() noexcept;
 	int	CreatePopUpMenu_L( void );	/* ポップアップメニュー(トレイ左ボタン) */
 	int	CreatePopUpMenu_R( void );	/* ポップアップメニュー(トレイ右ボタン) */
 
@@ -129,6 +135,7 @@ protected:
 
 private:
 	int CleanupInvalidEditWindows(bool requestShutdownWhenEmpty);
+	[[nodiscard]] bool IsRegisteredEditorLeaseOwner(HWND editorWindow, std::uint32_t editorProcessId) const noexcept;
 	bool	OnSetTypeSetting(size_t index);
 	bool	OnGetTypeSetting(size_t index);
 	bool	OnAddTypeSetting(size_t index);
@@ -152,6 +159,7 @@ public:	// テストできないのでアクセス権変更
 	CImageListMgr	m_hIcons;
 
 	SFilePath		m_szLanguageDll;
+	std::shared_ptr<IExtensionHostSecretVaultGrantLifecycle> m_extensionHostSecretVaultGrantLifecycle;
 	std::unique_ptr<CExtensionHostController> m_extensionHostController;
 };
 

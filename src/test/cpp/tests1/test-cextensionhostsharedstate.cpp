@@ -41,6 +41,7 @@ TEST(CExtensionHostSharedStateTest, PublishesConsistentBrokerSnapshotToEditors)
 	expected.leaseCount = 5;
 	expected.profileHash = L"0123456789abcdef0123456789abcdef";
 	expected.bootId = L"fedcba9876543210fedcba9876543210";
+	expected.extensionHostSessionId = L"00112233445566778899aabbccddeeff";
 	expected.pipeName = L"\\\\.\\pipe\\sakura-exthost-test";
 	expected.lastDiagnostic = "ready";
 	brokerState.Publish(expected);
@@ -57,6 +58,7 @@ TEST(CExtensionHostSharedStateTest, PublishesConsistentBrokerSnapshotToEditors)
 	EXPECT_EQ(actual->leaseCount, expected.leaseCount);
 	EXPECT_EQ(actual->profileHash, expected.profileHash);
 	EXPECT_EQ(actual->bootId, expected.bootId);
+	EXPECT_EQ(actual->extensionHostSessionId, expected.extensionHostSessionId);
 	EXPECT_EQ(actual->pipeName, expected.pipeName);
 	EXPECT_EQ(actual->lastDiagnostic, expected.lastDiagnostic);
 
@@ -68,4 +70,52 @@ TEST(CExtensionHostSharedStateTest, PublishesConsistentBrokerSnapshotToEditors)
 	ASSERT_TRUE(updated.has_value());
 	EXPECT_EQ(updated->state, EExtensionHostState::KeepAlive);
 	EXPECT_EQ(updated->leaseCount, 0u);
+}
+
+TEST(CExtensionHostSharedStateTest, RejectsMissingMalformedOrOversizeNativeSessionId)
+{
+	const auto profile = UniqueProfilePath();
+	std::wstring diagnostic;
+	CExtensionHostSharedState writer;
+	ASSERT_TRUE(writer.CreateForBroker(profile, diagnostic)) << diagnostic;
+	CExtensionHostSharedState reader;
+	ASSERT_TRUE(reader.OpenForEditor(profile, diagnostic)) << diagnostic;
+
+	SExtensionHostBrokerSnapshot snapshot;
+	snapshot.state = EExtensionHostState::Ready;
+	snapshot.extensionHostSessionId = L"00112233445566778899aabbccddeeff";
+	writer.Publish(snapshot);
+	ASSERT_TRUE(reader.Read().has_value());
+
+	snapshot.extensionHostSessionId.clear();
+	writer.Publish(snapshot);
+	EXPECT_FALSE(reader.Read().has_value());
+
+	snapshot.extensionHostSessionId = L"00112233445566778899aabbccddeefg";
+	writer.Publish(snapshot);
+	EXPECT_FALSE(reader.Read().has_value());
+
+	snapshot.extensionHostSessionId.assign(33, L'a');
+	writer.Publish(snapshot);
+	EXPECT_FALSE(reader.Read().has_value());
+}
+
+TEST(CExtensionHostSharedStateTest, RequiresNativeSessionIdToBeClearedWhenUnavailable)
+{
+	const auto profile = UniqueProfilePath();
+	std::wstring diagnostic;
+	CExtensionHostSharedState writer;
+	ASSERT_TRUE(writer.CreateForBroker(profile, diagnostic)) << diagnostic;
+	CExtensionHostSharedState reader;
+	ASSERT_TRUE(reader.OpenForEditor(profile, diagnostic)) << diagnostic;
+
+	SExtensionHostBrokerSnapshot unavailable;
+	unavailable.state = EExtensionHostState::Stopped;
+	writer.Publish(unavailable);
+	ASSERT_TRUE(reader.Read().has_value());
+	EXPECT_TRUE(reader.Read()->extensionHostSessionId.empty());
+
+	unavailable.extensionHostSessionId = L"00112233445566778899aabbccddeeff";
+	writer.Publish(unavailable);
+	EXPECT_FALSE(reader.Read().has_value());
 }

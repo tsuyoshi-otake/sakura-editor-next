@@ -46,6 +46,14 @@ enum ELoadResult{
 	LOADED_NOIMPLEMENT,	//!< 実装無し
 };
 
+//! Final projection/cleanup result reported after every listener has observed a load terminal.
+//! This is separate from ELoadResult because native I/O can succeed while a higher-level
+//! workbench projection fails.  Callers must not publish open events in that split state.
+enum class ELoadFinalizationStatus : unsigned char {
+	Succeeded,
+	Failed,
+};
+
 //###
 enum ECallbackResult{
 	CALLBACK_CONTINUE,			//!< 続ける
@@ -133,7 +141,7 @@ public:
 	ELoadResult NotifyLoad			(const SLoadInfo& sLoadInfo);
 	void NotifyLoading				(int nPer);
 	void NotifyAfterLoad			(const SLoadInfo& sLoadInfo);
-	void NotifyFinalLoad			(ELoadResult eLoadResult);
+	[[nodiscard]] ELoadFinalizationStatus NotifyFinalLoad(ELoadResult eLoadResult) noexcept;
 
 	//セーブ前後
 	ECallbackResult NotifyCheckSave	(SSaveInfo* pSaveInfo);
@@ -164,7 +172,10 @@ public:
 	virtual ELoadResult		OnLoad		([[maybe_unused]] const SLoadInfo& sLoadInfo) { return LOADED_NOIMPLEMENT; }	//!< ロード処理
 	virtual void			OnLoading	([[maybe_unused]] int nPer)					 { return ; }							//!< ロード処理の経過情報を受信
 	virtual void			OnAfterLoad	([[maybe_unused]] const SLoadInfo& sLoadInfo) { return ; }					//!< ロード事後処理
-	virtual void			OnFinalLoad	([[maybe_unused]] ELoadResult eLoadResult)	 { return ; }					//!< ロードフローの最後に必ず呼ばれる
+	virtual ELoadFinalizationStatus OnFinalLoad([[maybe_unused]] ELoadResult eLoadResult)
+	{
+		return ELoadFinalizationStatus::Succeeded;
+	}	//!< ロードフローの最後に必ず呼ばれる。全 listener が終端を返す。
 
 	//セーブ前後
 	virtual ECallbackResult OnCheckSave	([[maybe_unused]] SSaveInfo* pSaveInfo)		 { return CALLBACK_CONTINUE; }	//!< 本当にセーブを行うかの判定を行う

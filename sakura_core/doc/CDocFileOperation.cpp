@@ -91,11 +91,16 @@ bool CDocFileOperation::OpenFileDialog(
 
 bool CDocFileOperation::DoLoadFlow(SLoadInfo* pLoadInfo)
 {
+	return DoLoadFlow(pLoadInfo, false);
+}
+
+bool CDocFileOperation::DoLoadFlow(SLoadInfo* pLoadInfo, bool checkAlreadyCompleted)
+{
 	ELoadResult eLoadResult = LOADED_FAILURE;
 
 	try{
 		//ロード前チェック
-		if(CALLBACK_INTERRUPT==m_pcDocRef->NotifyCheckLoad(pLoadInfo))throw CFlowInterruption();
+		if(!checkAlreadyCompleted && CALLBACK_INTERRUPT==m_pcDocRef->NotifyCheckLoad(pLoadInfo))throw CFlowInterruption();
 
 		//ロード処理
 		m_pcDocRef->NotifyBeforeLoad(pLoadInfo);			//前処理
@@ -107,14 +112,16 @@ bool CDocFileOperation::DoLoadFlow(SLoadInfo* pLoadInfo)
 	}
 	catch(...){
 		//予期せぬ例外が発生した場合も NotifyFinalLoad は必ず呼ぶ！
-		m_pcDocRef->NotifyFinalLoad(LOADED_FAILURE);
+		(void)m_pcDocRef->NotifyFinalLoad(LOADED_FAILURE);
 		throw;
 	}
 
-	//最終処理
-	m_pcDocRef->NotifyFinalLoad(eLoadResult);
+	// Native I/O is not the commit boundary.  Every listener must finish, and a
+	// failed Core/UI projection downgrades an otherwise successful native load.
+	const auto finalization = m_pcDocRef->NotifyFinalLoad(eLoadResult);
 
-	return eLoadResult==LOADED_OK;
+	const bool nativeLoaded = eLoadResult == LOADED_OK || eLoadResult == LOADED_LOSESOME;
+	return nativeLoaded && finalization == ELoadFinalizationStatus::Succeeded;
 }
 
 //! ファイルを開く
@@ -290,6 +297,7 @@ bool CDocFileOperation::SaveFileDialog(LPWSTR szPath)
 bool CDocFileOperation::DoSaveFlow(SSaveInfo* pSaveInfo)
 {
 	ESaveResult eSaveResult = SAVED_FAILURE;
+	m_lastSaveResult = EDocFileOperationResult::Failed;
 
 	try{
 		//オプション：無変更でも上書きするか
@@ -349,6 +357,11 @@ bool CDocFileOperation::DoSaveFlow(SSaveInfo* pSaveInfo)
 
 	//最終処理
 	m_pcDocRef->NotifyFinalSave(eSaveResult);
+	m_lastSaveResult = eSaveResult == SAVED_OK
+		? EDocFileOperationResult::Succeeded
+		: (eSaveResult == SAVED_INTERRUPT
+			? EDocFileOperationResult::Cancelled
+			: EDocFileOperationResult::Failed);
 
 	return eSaveResult==SAVED_OK;
 }
@@ -384,6 +397,7 @@ bool CDocFileOperation::FileSave()
 */
 bool CDocFileOperation::FileSaveAs( const WCHAR* filename,ECodeType eCodeType, EEolType eEolType, bool bDialog )
 {
+	m_lastSaveResult = EDocFileOperationResult::Failed;
 	//セーブ情報
 	SSaveInfo sSaveInfo;
 	m_pcDocRef->GetSaveInfo(&sSaveInfo);
@@ -405,7 +419,10 @@ bool CDocFileOperation::FileSaveAs( const WCHAR* filename,ECodeType eCodeType, E
 		}
 
 		//ダイアログ表示
-		if(!SaveFileDialog(&sSaveInfo))return false;
+		if(!SaveFileDialog(&sSaveInfo)){
+			m_lastSaveResult = EDocFileOperationResult::Cancelled;
+			return false;
+		}
 	}
 
 	//セーブ処理
@@ -436,32 +453,73 @@ bool CDocFileOperation::FileSaveAs( const WCHAR* filename,ECodeType eCodeType, E
 */
 bool CDocFileOperation::FileClose()
 {
-	/* ファイルを閉じるときのMRU登録 & 保存確認 & 保存実行 */
-	if( !m_pcDocRef->OnFileClose(false) ){
+	if (!PrepareFileClose(false)) return false;
+	CommitFileClose();
+	return true;
+}
+
+bool CDocFileOperation::PrepareFileClose(bool bGrepNoConfirm)
+{
+	// OnFileClose owns only the close veto/save confirmation. It deliberately does not clear the document.
+	// Reset the save result so a cancelled prompt cannot inherit a terminal result from an earlier command.
+	m_lastSaveResult = EDocFileOperationResult::Cancelled;
+	m_lastCloseResult = EDocFileOperationResult::Failed;
+	try {
+		if (m_pcDocRef->OnFileClose(bGrepNoConfirm)) {
+			m_lastCloseResult = EDocFileOperationResult::Succeeded;
+			return true;
+		}
+		m_lastCloseResult = m_lastSaveResult == EDocFileOperationResult::Failed
+			? EDocFileOperationResult::Failed
+			: EDocFileOperationResult::Cancelled;
 		return false;
 	}
+	catch (...) {
+		m_lastCloseResult = EDocFileOperationResult::Failed;
+		return false;
+	}
+}
 
-	//プラグイン：DocumentCloseイベント実行
-	CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_CLOSE, &GetEditWnd().GetActiveView() );
-
-	/* 既存データのクリア */
-	m_pcDocRef->InitDoc();
-
-	/* 全ビューの初期化 */
-	m_pcDocRef->InitAllView();
-
-	m_pcDocRef->SetCurDirNotitle();
-
-	// 無題番号取得
-	CAppNodeManager::getInstance()->GetNoNameNumber( GetEditWnd().GetHwnd() );
-
-	/* 親ウィンドウのタイトルを更新 */
-	GetEditWnd().UpdateCaption();
-
-	// 2006.09.01 ryoji オープン後自動実行マクロを実行する
-	m_pcDocRef->RunAutoMacro( GetDllShareData().m_Common.m_sMacro.m_nMacroOnOpened );
-
-	return true;
+void CDocFileOperation::CommitFileClose(bool initializeEmptyDocument) noexcept
+{
+	// This is intentionally best effort. The workbench core has already committed the input close when this
+	// entry point is used; a legacy cleanup failure must never resurrect that input or leak an exception.
+	try {
+		CJackManager::getInstance()->InvokePlugins(PP_DOCUMENT_CLOSE, &GetEditWnd().GetActiveView());
+	}
+	catch (...) {
+	}
+	if (!initializeEmptyDocument) return;
+	try {
+		m_pcDocRef->InitDoc();
+	}
+	catch (...) {
+	}
+	try {
+		m_pcDocRef->InitAllView();
+	}
+	catch (...) {
+	}
+	try {
+		m_pcDocRef->SetCurDirNotitle();
+	}
+	catch (...) {
+	}
+	try {
+		CAppNodeManager::getInstance()->GetNoNameNumber(GetEditWnd().GetHwnd());
+	}
+	catch (...) {
+	}
+	try {
+		GetEditWnd().UpdateCaption();
+	}
+	catch (...) {
+	}
+	try {
+		m_pcDocRef->RunAutoMacro(GetDllShareData().m_Common.m_sMacro.m_nMacroOnOpened);
+	}
+	catch (...) {
+	}
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -471,47 +529,45 @@ bool CDocFileOperation::FileClose()
 /* 閉じて開く
 	@date 2006.12.30 ryoji CEditView::Command_FILESAVEAS()から処理本体を切り出し
 */
-void CDocFileOperation::FileCloseOpen( const SLoadInfo& _sLoadInfo )
+bool CDocFileOperation::FileCloseOpen( const SLoadInfo& _sLoadInfo )
 {
-	/* ファイルを閉じるときのMRU登録 & 保存確認 & 保存実行 */
-	if( !m_pcDocRef->OnFileClose(false) ){
-		return;
-	}
-
-	//プラグイン：DocumentCloseイベント実行
-	CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_CLOSE, &GetEditWnd().GetActiveView() );
-
-	//ファイル名指定が無い場合はダイアログで入力させる
+	// Resolve the replacement target before any close prompt, event, or document mutation.
+	// A cancelled picker must leave the original native/core/plugin state untouched.
 	SLoadInfo sLoadInfo = _sLoadInfo;
+	std::vector<std::wstring> files;
 	if( sLoadInfo.cFilePath.Length()==0 ){
-		std::vector<std::wstring> files;
 		if( !OpenFileDialog( CEditWnd::getInstance()->GetHwnd(), nullptr, &sLoadInfo, files ) ){
-			return;
+			return false;
 		}
 		sLoadInfo.cFilePath = files[0].c_str();
-		// 他のファイルは新規ウィンドウ
-		size_t nSize = files.size();
-		for( size_t i = 1; i < nSize; i++ ){
-			SLoadInfo sFilesLoadInfo = sLoadInfo;
-			sFilesLoadInfo.cFilePath = files[i].c_str();
-			CControlTray::OpenNewEditor(
-				G_AppInstance(),
-				CEditWnd::getInstance()->GetHwnd(),
-				sFilesLoadInfo,
-				nullptr,
-				true
-			);
-		}
+	}
+	// Complete every cancellable target/load validation before publishing close or mutating the old document.
+	if (CALLBACK_INTERRUPT == m_pcDocRef->NotifyCheckLoad(&sLoadInfo)) return false;
+
+	/* ファイルを閉じるときのMRU登録 & 保存確認 & 保存実行 */
+	if( !PrepareFileClose(false) ) return false;
+	// Persist/capture the accepted old generation while its native line model still exists.
+	GetEditWnd().PrepareLegacyLoadReplacement();
+
+	//プラグイン：DocumentCloseイベント実行。target selection/close vetoより後で一度だけ発火する。
+	CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_CLOSE, &GetEditWnd().GetActiveView() );
+
+	// 他のファイルは、元文書のcloseが確定した後に新規ウィンドウへ送る。
+	for( size_t i = 1; i < files.size(); i++ ){
+		SLoadInfo sFilesLoadInfo = sLoadInfo;
+		sFilesLoadInfo.cFilePath = files[i].c_str();
+		CControlTray::OpenNewEditor(
+			G_AppInstance(),
+			CEditWnd::getInstance()->GetHwnd(),
+			sFilesLoadInfo,
+			nullptr,
+			true
+		);
 	}
 
-	/* 既存データのクリア */
-	m_pcDocRef->InitDoc();
-
-	/* 全ビューの初期化 */
-	m_pcDocRef->InitAllView();
-
-	//開く
-	FileLoadWithoutAutoMacro(&sLoadInfo);
+	// Open through the common listener flow. CLoadAgent owns the single native reset;
+	// the earlier validation is not repeated after the close event has committed.
+	const bool loaded = DoLoadFlow(&sLoadInfo, true);
 
 	if( !m_pcDocRef->m_cDocFile.GetFilePathClass().IsValidPath() ){
 		m_pcDocRef->SetCurDirNotitle();
@@ -521,10 +577,11 @@ void CDocFileOperation::FileCloseOpen( const SLoadInfo& _sLoadInfo )
 	/* 親ウィンドウのタイトルを更新 */
 	GetEditWnd().UpdateCaption();
 
-	// オープン後自動実行マクロを実行する
-	// ※ロードしてなくても(無題)には変更済み
-	m_pcDocRef->RunAutoMacro( GetDllShareData().m_Common.m_sMacro.m_nMacroOnOpened );
-
-	//プラグイン：DocumentOpenイベント実行
-	CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_OPEN, &GetEditWnd().GetActiveView() );
+	// A failed native/Core projection is not an opened document.  Neither macros
+	// nor plugin observers may see a speculative or pathless replacement.
+	if( loaded ){
+		m_pcDocRef->RunAutoMacro( GetDllShareData().m_Common.m_sMacro.m_nMacroOnOpened );
+		CJackManager::getInstance()->InvokePlugins( PP_DOCUMENT_OPEN, &GetEditWnd().GetActiveView() );
+	}
+	return loaded;
 }

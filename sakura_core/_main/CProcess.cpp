@@ -18,6 +18,8 @@
 #include "StdAfx.h"
 #include "_main/CProcess.h"
 
+#include <algorithm>
+
 #include "util/module.h"
 #include "env/CShareData.h"
 #include "env/DLLSHAREDATA.h"
@@ -48,6 +50,45 @@ std::filesystem::path CProcess::GetIniFileName() const
 		return pShareData->m_szPrivateIniFile.c_str();
 	}
 	return GetExeFileName().replace_extension(L".ini");
+}
+
+std::optional<std::filesystem::path> CProcess::TryGetResolvedProfileDirectory() const
+{
+	const auto* const shareData = m_cShareData.GetDllShareDataPtr();
+	if (!shareData) {
+		return std::nullopt;
+	}
+
+	const auto& frozenIniFile = shareData->m_szPrivateIniFile;
+	const auto* const begin = frozenIniFile.data();
+	const auto* const end = begin + frozenIniFile.BUFFER_COUNT;
+	const auto terminator = std::find(begin, end, L'\0');
+	if (terminator == begin || terminator == end) {
+		return std::nullopt;
+	}
+
+	// A full buffer cannot distinguish an intentional boundary-length string from
+	// StaticString truncation, so reject it rather than using a partial anchor.
+	if (terminator == end - 1) {
+		return std::nullopt;
+	}
+
+	const std::filesystem::path frozenIniPath{ std::wstring_view{ begin, static_cast<size_t>(terminator - begin) } };
+	if (!frozenIniPath.is_absolute() || frozenIniPath.filename().empty() ||
+		frozenIniPath.filename() == L"." || frozenIniPath.filename() == L"..") {
+		return std::nullopt;
+	}
+	for (const auto& component : frozenIniPath) {
+		if (component == L"." || component == L"..") {
+			return std::nullopt;
+		}
+	}
+
+	const auto directory = frozenIniPath.parent_path().lexically_normal();
+	if (directory.empty() || !directory.is_absolute()) {
+		return std::nullopt;
+	}
+	return directory;
 }
 
 /*!

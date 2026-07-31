@@ -20,7 +20,10 @@ namespace workbench::explorer {
 //! VS Code-like left sidebar containing Explorer and a collapsible Outline section.
 class CExplorerOutlineTool final : public IWorkbenchTool {
 public:
-	using OutlineExpandedCallback = std::function<void(bool expanded)>;
+	//! Commits a user-originated expansion request to the owning model.
+	//! Return false to veto the request. The callback deliberately carries only the
+	//! requested value so it stays independent of HWND and layout/model types.
+	using OutlineExpandedCallback = std::function<bool(bool expanded)>;
 
 	CExplorerOutlineTool(CDlgFuncList& dialog, OutlineExpandedCallback callback = {});
 	~CExplorerOutlineTool() override;
@@ -35,7 +38,11 @@ public:
 	void Close() override;
 
 	void SetPalette(const theme::ThemePalette& palette);
-	void SetOutlineExpanded(bool expanded, bool notify = false);
+	//! Applies already-committed model state. This never calls m_callback.
+	void SetOutlineExpanded(bool expanded);
+	//! Sends a user request to the owner before changing the local/native state.
+	//! A veto or callback failure leaves the prior state unchanged.
+	[[nodiscard]] bool RequestOutlineExpanded(bool expanded) noexcept;
 	void FocusOutline();
 	void ShowSourceControl(bool show);
 	[[nodiscard]] bool IsOutlineExpanded() const noexcept { return m_outlineExpanded; }
