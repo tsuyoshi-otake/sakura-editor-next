@@ -63,6 +63,21 @@
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
   </ItemDefinitionGroup>
+  <!--
+    This project links the application's whole-program-optimized objects, and a
+    listing option recorded in an object still applies when the linker generates
+    that object's code.  So this link writes the same sakura_core listings that
+    sakura.vcxproj writes, and it hits the same collision: code generation is
+    partitioned by function, so two threads holding functions from one source
+    file open one .asm and the second open fails the Win32 share check, reported
+    as "C1083 ... Permission denied" plus LNK1257.  Serialize code generation
+    under the same opt-in switch that produces the listings.
+  -->
+  <ItemDefinitionGroup Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='1' Or '$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='true'">
+    <Link>
+      <AdditionalOptions>/CGTHREADS:1 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
+  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
       <PreprocessorDefinitions>_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>

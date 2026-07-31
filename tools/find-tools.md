@@ -34,6 +34,7 @@ MSBuild以外の探索手順は同一であり、7-Zipを例に説明する。
     * %ProgramFiles%
     * %ProgramFiles(x86)%
     * %ProgramW6432%
+    * %LOCALAPPDATA%\Programs （管理者権限なしでインストールした場合の既定の場所。Inno Setup 6 などが該当する）
 4. 1～3で見つからなければCMD_7Zには何もセットしない
 
 ## MSBuild

@@ -81,6 +81,7 @@ code.
 - `StdAfx.h` / `StdAfx.cpp` and the test `pch.h` are precompiled-header boundaries. Avoid broad PCH additions that increase every translation unit's rebuild cost.
 - Function-code headers and `version.h` are generated under the CMake tools build directory. Change `Funccode_x.hsrc` or the relevant CMake template, not generated output.
 - The normal compiler path uses parallel compilation. Assembly listings are opt-in through `SAKURA_GENERATE_ASSEMBLY_LISTINGS`; keep them off for the regular edit loop.
+- A listing is named after its source file, but whole-program optimization generates code in the linker and partitions it by function, so several code-generation threads can hold functions from one source file and race to open the same `.asm`. The listing configuration therefore also links with `/CGTHREADS:1`. Keep that serialization scoped to the listing branch, and do not "fix" the resulting `C1083 ... Permission denied` / `LNK1257` pair by deleting listings or retrying the link.
 
 ## Incremental-Build Invariants
 

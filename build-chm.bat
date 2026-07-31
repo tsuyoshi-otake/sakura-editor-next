@@ -20,10 +20,19 @@ set CHM_MACRO=%TMP_HELP%\macro\macro.chm
 set CHM_PLUGIN=%TMP_HELP%\plugin\plugin.chm
 set CHM_SAKURA=%TMP_HELP%\sakura\sakura.chm
 
-rem Build CHM files using CMake
-cd /d %~dp0help
+rem Build CHM files using CMake.
+rem Only the configure step needs the help directory as its source directory,
+rem and it has to be entered with pushd/popd: build-all.bat calls this script
+rem between other scripts that it resolves against the caller's directory, so a
+rem leaked "cd" makes the next call fail with "not recognized as ... command".
+pushd "%~dp0help" || (
+    echo Error: unable to enter the help directory.
+    exit /b 1
+)
 "%CMD_CMAKE%" -G "%CMAKE_G_PARAM%" -A x64 -B "%~dp0build\build-chm"
-if errorlevel 1 (
+set CHM_CONFIGURE_ERROR=%ERRORLEVEL%
+popd
+if not "%CHM_CONFIGURE_ERROR%" == "0" (
     echo CMake configuration failed
     exit /b 1
 )

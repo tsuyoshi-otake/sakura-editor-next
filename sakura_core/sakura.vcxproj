@@ -81,6 +81,20 @@
     <ClCompile>
       <AdditionalOptions>/FAsu /Fa$(IntDir) %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
+    <!--
+      A listing file is named after its originating source file, but whole-program
+      optimization defers code generation to the linker, which partitions the
+      program by function rather than by translation unit.  Two code-generation
+      threads that each hold functions from one source file then open the same
+      .asm listing, and the second open fails the Win32 share check.  The build
+      observes that as "C1083 ... Permission denied" on an arbitrary listing plus
+      LNK1257, with the diagnostic attributed to whichever source the reporting
+      thread was on.  Serialize code generation while listings are enabled;
+      listings are opt-in, so the regular parallel build path is unaffected.
+    -->
+    <Link>
+      <AdditionalOptions>/CGTHREADS:1 %(AdditionalOptions)</AdditionalOptions>
+    </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)'=='Debug'">
     <ClCompile>
