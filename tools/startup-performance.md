@@ -284,9 +284,9 @@ workbench の初期化では、ロード直後に捨てる空文書のアウト�
 表示中かつ outline が展開中の場合だけの解析を完了します。post に失敗した場合は、安全な三状態が成立
 した時点で同じ完了処理を同期実行し、close 分岐では全保留・post済みフラグを破棄するため、保留状態が
 暗黙の終端になりません
-([`CEditWnd.cpp:797`](../sakura_core/window/CEditWnd.cpp#L797)、
+([`CEditWnd.cpp:803`](../sakura_core/window/CEditWnd.cpp#L803)、
 [`CEditWnd.cpp:1680`](../sakura_core/window/CEditWnd.cpp#L1680)、
-[`CEditWnd.cpp:4457`](../sakura_core/window/CEditWnd.cpp#L4457))。
+[`CEditWnd.cpp:4474`](../sakura_core/window/CEditWnd.cpp#L4474))。
 
 したがって `visibleMs` はロード前の空の枠ではなく、コミット中の表示要求を観測する値です。ただし
 `visibleMs`、`captionReadyMs`、`firstContentPaintedMs` はそれぞれ別の境界であり、全文レイアウトの外部確認を

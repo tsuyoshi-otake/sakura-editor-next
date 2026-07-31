@@ -1688,8 +1688,7 @@ void CEditWnd::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 		m_startupOutlineReloadPending =
 			m_pShareData->m_Common.m_sWorkbench.m_bRightPanelVisible != FALSE;
 	} else {
-		// A queued startup completion no longer owns document publication once a
-		// ready editor has published a newer load synchronously.
+		// The startup gate is fully satisfied; later loads publish synchronously.
 		m_startupExtensionDocumentOpenPending = false;
 		PublishExtensionDocumentOpen(true);
 	}

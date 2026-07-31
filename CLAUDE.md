@@ -163,17 +163,18 @@ cleanup.
 
 | External milestone | A median (range), ms | B median (range), ms | B minus A medians, ms | B faster pairs |
 |---|---:|---:|---:|---:|
-| Process API returned | 4.466 (3.433–41.482) | 4.510 (3.823–41.743) | +0.044 | 4/10 |
-| Top-level window created | 108.778 (93.021–179.643) | 120.950 (83.282–173.448) | +12.172 | 4/10 |
-| Window visible / caption ready | 465.106 (423.277–540.366) | 438.614 (399.811–497.277) | -26.492 | 6/10 |
-| Input idle | 145.854 (110.178–218.593) | 139.374 (97.859–215.339) | -6.479 | 5/10 |
-| Document ready | 316.948 (282.693–382.128) | 297.778 (275.690–362.973) | -19.169 | 6/10 |
+| Process API returned | 4.286 (3.937–6.767) | 4.118 (3.705–5.190) | -0.167 | 6/10 |
+| Top-level window created | 101.554 (85.096–188.948) | 95.458 (85.880–152.489) | -6.096 | 4/10 |
+| Window visible / caption ready | 475.247 (414.987–680.120) | 394.142 (361.289–572.680) | -81.104 | 10/10 |
+| Input idle | 121.868 (102.011–215.894) | 112.602 (101.559–237.855) | -9.266 | 5/10 |
+| Document ready | 307.014 (282.168–435.943) | 274.642 (249.040–413.674) | -32.373 | 9/10 |
 
-The paired median B-minus-A differences were -16.942 ms for visible/caption and -7.332 ms for document
-ready. Only six of ten pairs improved and the ranges overlap, so this small, noisy sample indicates a useful
-median shift but does **not** establish a statistically reliable end-to-end speedup. Caption readiness and
-visibility are equal in this run because the caption changes while startup drawing is suppressed and the
-external poll first observes both at the single display commit.
+The paired median B-minus-A differences were -59.824 ms for visible/caption and -40.780 ms for document
+ready. All ten visible/caption pairs and nine of ten document-ready pairs improved. Input-idle improved in
+only five pairs and its paired median was +6.102 ms, so the pooled input-idle median is not evidence of an
+improvement. This small machine-specific sample establishes the observed result for these runs, not a
+general performance guarantee. Caption readiness and visibility are equal here because the caption changes
+while startup drawing is suppressed and the external poll first observes both at the single display commit.
 
 One trace-enabled launch of each binary was used only to attribute removed work, not as the statistical A/B
 comparison. Both reports had 89 valid records, zero invalid lines/parse errors, and verified cleanup. The B
@@ -181,12 +182,13 @@ process selected AVX-512F/BW at runtime (`isa_dispatch.value1 = 3`).
 
 | Internal measurement (single trace per build) | A | B | Change |
 |---|---:|---:|---:|
-| Pre-read settings | 8.056 ms | 1.737 ms | -6.320 ms (-78.5%) |
-| Document layout | 92.643 ms | 98.129 ms | +5.486 ms (+5.9%) |
-| Workbench UI inside startup transaction | 120.470 ms | 28.668 ms | -91.802 ms (-76.2%) |
-| Startup document transaction | 341.190 ms | 252.644 ms | -88.546 ms (-26.0%) |
-| First content-paint duration | 72.890 ms | 42.304 ms | -30.586 ms (-42.0%) |
-| Text-output duration within first paint | 69.202 ms | 39.668 ms | -29.534 ms (-42.7%) |
+| Pre-read settings | 8.056 ms | 1.252 ms | -6.804 ms (-84.5%) |
+| Document layout | 92.643 ms | 110.384 ms | +17.741 ms (+19.2%) |
+| Workbench UI inside startup transaction | 120.470 ms | 27.467 ms | -93.003 ms (-77.2%) |
+| Startup document transaction | 341.190 ms | 222.208 ms | -118.982 ms (-34.9%) |
+| Startup draw commit | 130.171 ms | 82.463 ms | -47.708 ms (-36.7%) |
+| First content-paint duration | 72.890 ms | 42.638 ms | -30.252 ms (-41.5%) |
+| Text-output duration within first paint | 69.202 ms | 39.870 ms | -29.332 ms (-42.4%) |
 | First-paint text-output calls | 489 | 244 | -245 (-50.1%) |
 
 The layout single-run value did not improve, so the observed attributable gains come from eliminating
