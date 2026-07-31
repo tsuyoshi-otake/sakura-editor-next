@@ -51,7 +51,7 @@ endfunction()
 
 # Initialize variables with default values
 set(SAKURA_MAJOR_VERSION "3") # メジャーバージョン(3以降は Sakura Editor NEXT)
-set(SAKURA_MINOR_VERSION "0") # マイナーバージョン
+set(SAKURA_MINOR_VERSION "1") # マイナーバージョン
 set(SAKURA_PATCH_VERSION "0") # 連番(マージの通し番号)
 set(BUILD_VERSION "0")
 
