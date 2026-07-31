@@ -20,11 +20,8 @@ class CPoolResource : public std::pmr::memory_resource
 	using Me = CPoolResource;
 
 public:
-	CPoolResource()
-	{
-		// 始めのブロックをメモリ確保
-		AllocateBlock();
-	}
+	// ブロックは初回の do_allocate まで確保しない(未使用プールの64KiB常駐を避ける)
+	CPoolResource() = default;
 
 	CPoolResource(const Me&) = delete;
 	Me& operator = (const Me&) = delete;
@@ -58,9 +55,9 @@ protected:
 		}
 		else {
 			// 未割当領域が無い場合は、ブロックの中から切り出す
-			// 現在のブロックに新規確保するNodeサイズ分の領域が余っていない場合は新規のブロックを確保
-			Node* blockEnd = reinterpret_cast<Node*>(reinterpret_cast<char*>(m_currentBlock) + BlockSize);
-			if (m_currentNode + 1 >= blockEnd) {
+			// ブロック未確保、または現在のブロックに新規確保するNodeサイズ分の領域が余っていない場合は新規のブロックを確保
+			if (!m_currentBlock ||
+				m_currentNode + 1 >= reinterpret_cast<Node*>(reinterpret_cast<char*>(m_currentBlock) + BlockSize)) {
 				AllocateBlock();
 			}
 			// 要素の領域のポインタを返すと同時にポインタを次に進めて切り出す位置を更新する

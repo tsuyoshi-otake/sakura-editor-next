@@ -163,6 +163,28 @@ void CMemory::AllocBuffer( size_t nNewDataLen )
 	}
 }
 
+/*!
+	バッファを有効データ長まで縮小する
+
+	デコード時などにワーストケースで確保したバッファの余剰をヒープへ返す。
+	余剰がヒープ管理単位に満たない場合は再確保せず直ちに抜ける。
+	縮小の realloc に失敗した場合は現在のバッファをそのまま使い続ける。
+*/
+void CMemory::ShrinkBuffer()
+{
+	// AllocBuffer と同じ丸め規則で必要サイズを求める
+	size_t nTightSize = ((static_cast<size_t>(m_nRawLen) + sizeof(wchar_t)) + 7) & (~7);
+
+	if( m_pRawData == nullptr || m_nDataBufSize <= nTightSize + 24 ){
+		return;
+	}
+
+	if( void* pAllocated = ::realloc( m_pRawData, nTightSize ) ){
+		m_pRawData = static_cast<std::byte*>(pAllocated);
+		m_nDataBufSize = static_cast<decltype(m_nDataBufSize)>(nTightSize);
+	}
+}
+
 /* バッファの内容を置き換える */
 void CMemory::SetRawData( const void* pData, size_t nDataLen )
 {

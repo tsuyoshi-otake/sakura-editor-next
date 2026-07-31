@@ -24,6 +24,7 @@
 #include "mem/CMemory.h"// 2002/4/21 YAZAKI
 #include "CLayoutExInfo.h"
 #include "view/colors/EColorIndexType.h"
+#include <cstdint>
 
 class CLayout;
 class CLayoutMgr;
@@ -54,7 +55,7 @@ public:
 		m_pCDocLine		= pcDocLine;
 		m_ptLogicPos	= ptLogicPos;	// 実データ参照位置
 		m_nLength		= nLength;		// 実データ内データ長
-		m_nTypePrev		= nTypePrev;	// タイプ 0=通常 1=行コメント 2=ブロックコメント 3=シングルクォーテーション文字列 4=ダブルクォーテーション文字列
+		m_nTypePrev		= static_cast<uint16_t>(nTypePrev);	// タイプ 0=通常 1=行コメント 2=ブロックコメント 3=シングルクォーテーション文字列 4=ダブルクォーテーション文字列
 		m_nIndent		= nTypeIndent;	// このレイアウト行のインデント数 @@@ 2002.09.23 YAZAKI
 		m_cExInfo.SetColorInfo(pColorInfo);
 	}
@@ -77,14 +78,14 @@ public:
 	}
 	CLogicInt GetLogicOffset() const{ return m_ptLogicPos.GetX2(); }
 	CLogicPoint GetLogicPos() const{ return m_ptLogicPos; }
-	EColorIndexType GetColorTypePrev() const{ return m_nTypePrev; } //#########汚っ
+	EColorIndexType GetColorTypePrev() const{ return static_cast<EColorIndexType>(m_nTypePrev); } //#########汚っ
 	CLayoutInt GetLayoutWidth() const{ return m_nLayoutWidth; }		// 2009.08.28 nasukoji	このレイアウト行の改行を含むレイアウト長を返す
 
 	//変更インターフェース
 	void OffsetLogicLineNo(CLogicInt n){ m_ptLogicPos.y+=n; }
 	void SetColorTypePrev(EColorIndexType n)
 	{
-		m_nTypePrev=n;
+		m_nTypePrev=static_cast<uint16_t>(n);
 	}
 	void SetLayoutWidth(CLayoutInt nWidth){ m_nLayoutWidth = nWidth; }
 
@@ -116,6 +117,7 @@ public:
 	}
 
 private:
+	// レイアウト行数に比例してメモリを消費するため、パディングが生じない並び順を維持する
 	CLayout*			m_pPrev;
 	CLayout*			m_pNext;
 
@@ -125,12 +127,16 @@ private:
 	CLogicInt			m_nLength;			//!< このレイアウト行の長さ。文字単位。
 
 	//その他属性
-	EColorIndexType		m_nTypePrev;		//!< タイプ 0=通常 1=行コメント 2=ブロックコメント 3=シングルクォーテーション文字列 4=ダブルクォーテーション文字列
 	CLayoutInt			m_nIndent;			//!< このレイアウト行のインデント数 @@@ 2002.09.23 YAZAKI
-	CEol				m_cEol;
 	CLayoutInt			m_nLayoutWidth;		//!< このレイアウト行の改行を含むレイアウト長（「折り返さない」選択時のみ）	// 2009.08.28 nasukoji
+	uint16_t			m_nTypePrev;		//!< タイプ(EColorIndexTypeを16bitで保持) 0=通常 1=行コメント 2=ブロックコメント 3=シングルクォーテーション文字列 4=ダブルクォーテーション文字列
+	CEol				m_cEol;
 	CLayoutExInfo		m_cExInfo;			//!< 色分け詳細情報
 
 	DISALLOW_COPY_AND_ASSIGN(CLayout);
 };
+
+// m_nTypePrev は EColorIndexType の全値域(正規表現キーワード含む)を16bitで保持する
+static_assert(COLORIDX_REGEX_LAST <= 0xFFFF, "EColorIndexType must fit in uint16_t");
+static_assert(sizeof(CLayout) == 56, "CLayout size is layout-line-count sensitive");
 #endif /* SAKURA_CLAYOUT_7DF189B5_10E6_42A4_8A49_371C848CB38F_H_ */

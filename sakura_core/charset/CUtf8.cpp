@@ -99,6 +99,9 @@ EConvertResult CUtf8::_UTF8ToUnicode( const CMemory& cSrc, CNativeW* pDstMem, bo
 
 		// pDstMem を更新
 		pDstMem->_SetStringLength( nDstLen );
+
+		// 変換元バイト数を文字数とみなして確保しているため、マルチバイト主体の行では余剰が大きい
+		pDstMem->_GetMemory()->ShrinkBuffer();
 	}
 
 	if( bError == false ){

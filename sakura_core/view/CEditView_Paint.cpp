@@ -1654,7 +1654,11 @@ bool CEditView::CreateOrUpdateCompatibleBitmap( int cx, int cy )
 	// サイズを64の倍数で整列
 	int nBmpWidthNew  = ((cx + 63) & (0x7fffffff - 63));
 	int nBmpHeightNew = ((cy + 63) & (0x7fffffff - 63));
-	if( nBmpWidthNew > m_nCompatBMPWidth || nBmpHeightNew > m_nCompatBMPHeight ){
+	// 保持面積が必要面積の2倍を超えたら縮小方向にも作り直して余剰を解放する
+	bool bShrink = 0 < nBmpWidthNew && 0 < nBmpHeightNew
+		&& static_cast<long long>(m_nCompatBMPWidth) * m_nCompatBMPHeight
+			> static_cast<long long>(nBmpWidthNew) * nBmpHeightNew * 2;
+	if( nBmpWidthNew > m_nCompatBMPWidth || nBmpHeightNew > m_nCompatBMPHeight || bShrink ){
 #if 0
 	MYTRACE( L"CEditView::CreateOrUpdateCompatibleBitmap( %d, %d ): resized\n", cx, cy );
 #endif
