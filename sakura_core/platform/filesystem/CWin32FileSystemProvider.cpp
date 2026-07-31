@@ -309,6 +309,31 @@ public:
 	[[nodiscard]] HANDLE Get() const noexcept { return m_handle; }
 	void MarkPublished() noexcept { m_ownsPath = false; }
 
+	//! Release the writable handle and keep only an attribute handle.
+	//! ReplaceFileW opens the staged replacement with restrictive sharing, so a
+	//! surviving data handle fails publication with ERROR_SHARING_VIOLATION.  An
+	//! attribute-only open takes no part in the Win32 share check, yet the handle
+	//! still follows the file object through the rename and can therefore report
+	//! the committed identity after publication.
+	[[nodiscard]] bool ReopenForAttributesOnly() noexcept
+	{
+		if (m_handle != INVALID_HANDLE_VALUE) {
+			(void)::CloseHandle(m_handle);
+			m_handle = INVALID_HANDLE_VALUE;
+		}
+		HANDLE handle = ::CreateFileW(
+			m_path.c_str(),
+			FILE_READ_ATTRIBUTES,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+			nullptr,
+			OPEN_EXISTING,
+			FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT,
+			nullptr);
+		if (handle == INVALID_HANDLE_VALUE) return false;
+		m_handle = handle;
+		return true;
+	}
+
 	CTemporaryFileGuard(const CTemporaryFileGuard&) = delete;
 	CTemporaryFileGuard& operator=(const CTemporaryFileGuard&) = delete;
 
@@ -764,13 +789,18 @@ FileResult<FileContentSnapshot> CWin32FileSystemProvider::ReadVersioned(
 	}
 
 	const auto extendedPath = ToExtendedPath(std::move(*path.value));
+	// FILE_FLAG_BACKUP_SEMANTICS is required to obtain a directory handle at all.
+	// Without it a directory URI fails the open with ERROR_ACCESS_DENIED and the
+	// caller would observe PermissionDenied instead of the NotDirectory terminal
+	// that the handle-based check below owns.
 	HANDLE handle = ::CreateFileW(
 		extendedPath.c_str(),
 		GENERIC_READ | FILE_READ_ATTRIBUTES,
 		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
 		nullptr,
 		OPEN_EXISTING,
-		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT,
+		FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN | FILE_FLAG_OPEN_REPARSE_POINT
+			| FILE_FLAG_BACKUP_SEMANTICS,
 		nullptr);
 	if (handle == INVALID_HANDLE_VALUE) {
 		return FailureFromLastError<FileContentSnapshot>(
@@ -909,6 +939,21 @@ FileConditionalReplaceResult CWin32FileSystemProvider::ConditionalAtomicReplace(
 	auto staged = SnapshotHandle(temporary.Get());
 	if (!staged) {
 		return FileConditionalReplaceResult::Failure(std::move(staged.diagnostic));
+	}
+	// The staged content is durable from here on, so the writable handle has no
+	// remaining purpose and only blocks ReplaceFileW.  Reacquire it for
+	// attributes and prove the reopened handle is still the same staged file.
+	if (!temporary.ReopenForAttributesOnly()) {
+		return ReplaceFailure(
+			L"reopening the conditional replace staging file for attributes", ::GetLastError());
+	}
+	auto restaged = SnapshotHandle(temporary.Get());
+	if (!restaged) {
+		return FileConditionalReplaceResult::Failure(std::move(restaged.diagnostic));
+	}
+	if (!(restaged.value->version == staged.value->version)) {
+		return FileConditionalReplaceResult::Failure(
+			L"the conditional replace staging file changed before publication");
 	}
 
 	std::scoped_lock publishLock(g_conditionalReplaceMutex);
