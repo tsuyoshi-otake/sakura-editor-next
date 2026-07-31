@@ -135,7 +135,7 @@ static bool _GetKeywordLength(
 
 CLayout* CLayoutMgr::SLayoutWork::_CreateLayout(CLayoutMgr* mgr)
 {
-	const bool traceCost = CStartupTrace::IsCollectingStartupDocumentMetrics();
+	const bool traceCost = bTraceStartupCost;
 	const auto start = traceCost ? StartupQpcNow() : 0;
 	CLayout* layout = mgr->CreateLayout(
 		this->pcDocLine,
@@ -282,7 +282,7 @@ void CLayoutMgr::_DoGyomatsuKinsoku(SLayoutWork* pWork, PF_OnLine pfOnLine)
 
 void CLayoutMgr::_MakeOneLine(SLayoutWork* pWork, PF_OnLine pfOnLine)
 {
-	const bool traceCost = CStartupTrace::IsCollectingStartupDocumentMetrics();
+	const bool traceCost = pWork->bTraceStartupCost;
 	const auto makeOneLineStart = traceCost ? StartupQpcNow() : 0;
 	std::int64_t kinsokuTicks = 0;
 	std::int64_t kinsokuOperations = 0;
@@ -291,21 +291,28 @@ void CLayoutMgr::_MakeOneLine(SLayoutWork* pWork, PF_OnLine pfOnLine)
 	std::int64_t widthTicks = 0;
 	std::int64_t widthOperations = 0;
 
+	const int lineLength = pWork->cLineStr.GetLength();
+	const CLayoutInt maxLineLayout = GetMaxLineLayout();
+	const bool csvMode = m_tsvInfo.m_nTsvMode == TSV_MODE_CSV;
+	const bool enableExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+	const bool wordWrap = m_pTypeConfig->m_bWordWrap;
+	const bool kinsokuKuto = m_pTypeConfig->m_bKinsokuKuto;
+	const bool kinsokuHead = m_pTypeConfig->m_bKinsokuHead;
+	const bool kinsokuTail = m_pTypeConfig->m_bKinsokuTail;
+	const bool kinsokuRet = m_pTypeConfig->m_bKinsokuRet;
+
 	int	nEol = pWork->pcDocLine->GetEol().GetLen(); //########そのうち不要になる
 	int nEol_1 = nEol - 1;
 	if( 0 >	nEol_1 ){
 		nEol_1 = 0;
 	}
-	CLogicInt nLength = pWork->cLineStr.GetLength() - CLogicInt(nEol_1);
+	CLogicInt nLength = CLogicInt(lineLength) - CLogicInt(nEol_1);
 
 	if(pWork->pcColorStrategy)pWork->pcColorStrategy->InitStrategyStatus();
 	CColorStrategyPool& color = *CColorStrategyPool::getInstance();
 
 	const bool bCheckColorEnabled = color.HasRangeBasedColorStrategies();
-	const bool bKinsokuEnabled = m_pTypeConfig->m_bWordWrap
-		|| m_pTypeConfig->m_bKinsokuKuto
-		|| m_pTypeConfig->m_bKinsokuHead
-		|| m_pTypeConfig->m_bKinsokuTail;
+	const bool bKinsokuEnabled = wordWrap || kinsokuKuto || kinsokuHead || kinsokuTail;
 
 	//1ロジック行を消化するまでループ
 	while( pWork->nPos < nLength ){
@@ -315,22 +322,22 @@ void CLayoutMgr::_MakeOneLine(SLayoutWork* pWork, PF_OnLine pfOnLine)
 		const auto kinsokuStart = traceCost && bKinsokuEnabled ? StartupQpcNow() : 0;
 		if( bKinsokuEnabled && !_DoKinsokuSkip(pWork, pfOnLine) ){
 			// 英文ワードラップをする
-			if( m_pTypeConfig->m_bWordWrap ){
+			if( wordWrap ){
 				_DoWordWrap(pWork, pfOnLine);
 			}
 
 			// 句読点のぶらさげ
-			if( m_pTypeConfig->m_bKinsokuKuto ){
+			if( kinsokuKuto ){
 				_DoKutoBurasage(pWork);
 			}
 
 			// 行頭禁則
-			if( m_pTypeConfig->m_bKinsokuHead ){
+			if( kinsokuHead ){
 				_DoGyotoKinsoku(pWork, pfOnLine);
 			}
 
 			// 行末禁則
-			if( m_pTypeConfig->m_bKinsokuTail ){
+			if( kinsokuTail ){
 				_DoGyomatsuKinsoku(pWork, pfOnLine);
 			}
 		}
@@ -352,20 +359,21 @@ void CLayoutMgr::_MakeOneLine(SLayoutWork* pWork, PF_OnLine pfOnLine)
 		const auto& ch = pWork->cLineStr[pWork->nPos];
 		CLayoutInt nCharKetas {0};
 		const auto widthStart = traceCost ? StartupQpcNow() : 0;
-		if( ch == WCODE::TAB || (ch == L',' && m_tsvInfo.m_nTsvMode == TSV_MODE_CSV) ){
+		if( ch == WCODE::TAB || (ch == L',' && csvMode) ){
 			nCharKetas = GetActualTsvSpace( pWork->nPosX, ch );
 		}else{
-			nCharKetas = GetLayoutXOfChar( pWork->cLineStr, pWork->nPos );
+			nCharKetas = GetLayoutXOfChar(
+				pWork->cLineStr.GetPtr(), lineLength, pWork->nPos, enableExtEol );
 		}
 		if (traceCost) {
 			widthTicks += StartupQpcNow() - widthStart;
 			++widthOperations;
 		}
 
-		if( pWork->nPosX + nCharKetas > GetMaxLineLayout() ){
+		if( pWork->nPosX + nCharKetas > maxLineLayout ){
 			if( pWork->eKinsokuType != KINSOKU_TYPE_KINSOKU_KUTO )
 			{
-				if( ! (m_pTypeConfig->m_bKinsokuRet && (pWork->nPos == pWork->cLineStr.GetLength() - nEol) && nEol) )	//改行文字をぶら下げる		//@@@ 2002.04.14 MIK
+				if( ! (kinsokuRet && (pWork->nPos == lineLength - nEol) && nEol) )	//改行文字をぶら下げる		//@@@ 2002.04.14 MIK
 				{
 					(this->*pfOnLine)(pWork);
 					continue;
@@ -543,6 +551,7 @@ void CLayoutMgr::_DoLayoutSub(CDocLine* pDocLineBegin, const CDocLine* pDocLineE
 	pWork->pcColorStrategy			= nullptr;
 	pWork->colorPrev				= COLORIDX_DEFAULT;
 	pWork->nCurLine					= CLogicInt( nLineIndex );
+	pWork->bTraceStartupCost		= CStartupTrace::IsCollectingStartupDocumentMetrics();
 
 	constexpr DWORD userInterfaceInterval = 33;
 	ULONGLONG prevTime = GetTickCount64() + userInterfaceInterval;
@@ -679,6 +688,7 @@ CLayoutInt CLayoutMgr::DoLayout_Range(
 	pWork->pcColorStrategy			= CColorStrategyPool::getInstance()->GetStrategyByColor(nCurrentLineType);
 	pWork->colorPrev				= nCurrentLineType;
 	pWork->exInfoPrev.SetColorInfo(colorInfo);
+	pWork->bTraceStartupCost		= CStartupTrace::IsCollectingStartupDocumentMetrics();
 	pWork->bNeedChangeCOMMENTMODE	= false;
 	if( nullptr == pWork->pLayout ){
 		pWork->nCurLine = CLogicInt(0);

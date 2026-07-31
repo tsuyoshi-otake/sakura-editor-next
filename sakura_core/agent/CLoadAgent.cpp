@@ -256,7 +256,8 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 
 		// 起動と同時に読む場合は予めアウトライン解析画面を配置しておく
 		// （ファイル読み込み開始とともにビューが表示されるので、あとで配置すると画面のちらつきが大きいの）
-		if( !GetEditWnd().m_cDlgFuncList.m_bEditWndReady ){
+		if( !GetEditWnd().m_cDlgFuncList.m_bEditWndReady
+			&& !GetEditWnd().m_cDlgFuncList.IsWorkbenchMode() ){
 			GetEditWnd().m_cDlgFuncList.Refresh();
 			HWND hEditWnd = GetEditWnd().GetHwnd();
 			if( !::IsIconic( hEditWnd ) && GetEditWnd().m_cDlgFuncList.GetHwnd() ){

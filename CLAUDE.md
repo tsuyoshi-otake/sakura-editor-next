@@ -152,6 +152,48 @@ Fresh-profile medians were 448.883 ms window-visible and 295.653 ms document-rea
 medians were 420.607 ms and 274.413 ms. Treat these as a functional/current-machine baseline rather than
 evidence that AVX-512 itself reduced startup time. The confidential report remains outside the repository.
 
+### 2026-07-31 prioritized startup hot-path comparison
+
+The first comparison for the prioritized #2578 startup changes used the same machine, warm-cache
+confidential input, and x64 Release runtime-ISA binary as the preceding validation. Build A was master at
+`ae763378`; build B added deferred document-dependent workbench initialization, narrower punctuation text
+batching, and loop-invariant layout snapshots. Startup tracing was disabled for timing. Ten adjacent
+fresh-profile pairs alternated A/B and B/A order; all 20 launches succeeded and verified process/profile
+cleanup.
+
+| External milestone | A median (range), ms | B median (range), ms | B minus A medians, ms | B faster pairs |
+|---|---:|---:|---:|---:|
+| Process API returned | 4.466 (3.433–41.482) | 4.510 (3.823–41.743) | +0.044 | 4/10 |
+| Top-level window created | 108.778 (93.021–179.643) | 120.950 (83.282–173.448) | +12.172 | 4/10 |
+| Window visible / caption ready | 465.106 (423.277–540.366) | 438.614 (399.811–497.277) | -26.492 | 6/10 |
+| Input idle | 145.854 (110.178–218.593) | 139.374 (97.859–215.339) | -6.479 | 5/10 |
+| Document ready | 316.948 (282.693–382.128) | 297.778 (275.690–362.973) | -19.169 | 6/10 |
+
+The paired median B-minus-A differences were -16.942 ms for visible/caption and -7.332 ms for document
+ready. Only six of ten pairs improved and the ranges overlap, so this small, noisy sample indicates a useful
+median shift but does **not** establish a statistically reliable end-to-end speedup. Caption readiness and
+visibility are equal in this run because the caption changes while startup drawing is suppressed and the
+external poll first observes both at the single display commit.
+
+One trace-enabled launch of each binary was used only to attribute removed work, not as the statistical A/B
+comparison. Both reports had 89 valid records, zero invalid lines/parse errors, and verified cleanup. The B
+process selected AVX-512F/BW at runtime (`isa_dispatch.value1 = 3`).
+
+| Internal measurement (single trace per build) | A | B | Change |
+|---|---:|---:|---:|
+| Pre-read settings | 8.056 ms | 1.737 ms | -6.320 ms (-78.5%) |
+| Document layout | 92.643 ms | 98.129 ms | +5.486 ms (+5.9%) |
+| Workbench UI inside startup transaction | 120.470 ms | 28.668 ms | -91.802 ms (-76.2%) |
+| Startup document transaction | 341.190 ms | 252.644 ms | -88.546 ms (-26.0%) |
+| First content-paint duration | 72.890 ms | 42.304 ms | -30.586 ms (-42.0%) |
+| Text-output duration within first paint | 69.202 ms | 39.668 ms | -29.534 ms (-42.7%) |
+| First-paint text-output calls | 489 | 244 | -245 (-50.1%) |
+
+The layout single-run value did not improve, so the observed attributable gains come from eliminating
+bootstrap workbench work and reducing first-paint GDI fragmentation, not from ISA selection or a claimed
+layout breakthrough. The trace reports remain outside the repository because their configuration includes
+the confidential input path.
+
 ## Repository-Wide Change Rules
 
 - Keep dependencies acyclic and pointed from UI/integration layers toward stable core abstractions.

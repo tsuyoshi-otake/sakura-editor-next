@@ -779,4 +779,6 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 #define MYWM_RECOVER_APPNODE (WM_APP+236)
 //! UI thread で VS Code TextEditor.options の文書ローカル設定を適用する
 #define MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT (WM_APP+237)
+//! 初回描画と first-idle 通知の後で、起動中に保留したワークベンチ処理を完了する
+#define MYWM_COMPLETE_STARTUP_WORKBENCH (WM_APP+238)
 #endif /* SAKURA_SYSTEM_CONSTANTS_DACC287C_DAC4_4FC7_8AEC_8DB5BE6BFB8B_H_ */

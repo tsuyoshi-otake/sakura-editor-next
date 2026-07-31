@@ -166,8 +166,10 @@ IPC HWND が存在しない明示的な経路では `-1` です。後者の通�
 
 通常起動の `sakura.exe -PROF=<name> <markdown>` は、必要なら同じプロファイル用の非表示
 コントロールプロセスを先に起動し、その初期化を待ってからエディタウィンドウを作ります。現在の重要な
-順序は、**子ビューと各バーの生成後に起動描画トランザクションを開始し、workbench の初期化と初期文書の
-同期ロードを非表示・描画抑止のまま完了してから、一度だけ表示・描画をコミットする**ことです。
+順序は、**子ビューと各バーの生成後に起動描画トランザクションを開始し、workbench の枠組み初期化と
+初期文書の同期ロードを非表示・描画抑止のまま完了してから、一度だけ表示・描画をコミットする**ことです。
+起動時の空文書に依存するアウトライン解析と拡張向け文書公開は実行せず、実文書の初回描画後に一つの
+内部メッセージへまとめて完了します。
 
 ```mermaid
 sequenceDiagram
@@ -231,7 +233,9 @@ sequenceDiagram
 
     E->>Q: MainLoop
     Q->>W: WM_TIMER(IDT_FIRST_IDLE)
-    W->>W: MYWM_FIRST_IDLE を post → KillTimer
+    W->>W: ready 設定・extension service 開始<br/>MYWM_FIRST_IDLE を post → KillTimer
+    W->>Q: MYWM_COMPLETE_STARTUP_WORKBENCH を post
+    Q->>W: 実文書を extension へ公開<br/>表示中なら outline を一度だけ解析
     B->>E: WaitForInputIdle
     Note right of B: inputIdleMs<br/>OS queue idle。IDT_FIRST_IDLE の証明ではない
     B->>W: 縦 scrollbar range を poll
@@ -270,6 +274,19 @@ Final 時の抑止判定は [`CLoadAgent.cpp:234`](../sakura_core/agent/CLoadAge
 `first_content_painted` を発行し、前のタブを隠すのもその後です
 ([`CEditView_Paint.cpp:761`](../sakura_core/view/CEditView_Paint.cpp#L761)、
 [`CEditWnd.cpp:422`](../sakura_core/window/CEditWnd.cpp#L422))。
+
+workbench の初期化では、ロード直後に捨てる空文書のアウトライン解析と文書 snapshot を保留します。
+`OnAfterLoad` は起動中の要求を重複させません。起動レイアウト中の `BlockingHook()` が 0 ms の
+`IDT_FIRST_IDLE` を先に dispatch する場合もあるため、ready 状態だけでは完了処理を許可しません。
+**first-idle、描画トランザクションの `Committed`、主本文の初回描画完了**がすべて成立した時だけ
+`MYWM_COMPLETE_STARTUP_WORKBENCH` を一度 post します。各状態を確定する経路から同じ判定を再試行するため、
+到達順序には依存しません。受信側は保留フラグを callback より先に消費し、実文書の公開と、右パネルが
+表示中かつ outline が展開中の場合だけの解析を完了します。post に失敗した場合は、安全な三状態が成立
+した時点で同じ完了処理を同期実行し、close 分岐では全保留・post済みフラグを破棄するため、保留状態が
+暗黙の終端になりません
+([`CEditWnd.cpp:797`](../sakura_core/window/CEditWnd.cpp#L797)、
+[`CEditWnd.cpp:1680`](../sakura_core/window/CEditWnd.cpp#L1680)、
+[`CEditWnd.cpp:4457`](../sakura_core/window/CEditWnd.cpp#L4457))。
 
 したがって `visibleMs` はロード前の空の枠ではなく、コミット中の表示要求を観測する値です。ただし
 `visibleMs`、`captionReadyMs`、`firstContentPaintedMs` はそれぞれ別の境界であり、全文レイアウトの外部確認を

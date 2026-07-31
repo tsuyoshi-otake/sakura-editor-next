@@ -444,6 +444,8 @@ private:
 	[[nodiscard]] bool ShouldDeferStartupLayout() const noexcept;
 
 	bool InitializeWorkbench();
+	void PostDeferredStartupWorkbenchIfReady();
+	void CompleteDeferredStartupWorkbench();
 	void CloseWorkbench() noexcept;
 	void ApplyWorkbenchTheme();
 	void ApplyWorkbenchSettingsFromSharedData();
@@ -495,6 +497,9 @@ private:
 	std::wstring m_extensionDocumentUri;
 	std::uint64_t m_extensionDocumentVersion = 0;
 	bool m_extensionDocumentSyncTimerPending = false;
+	bool m_startupOutlineReloadPending = false;
+	bool m_startupExtensionDocumentOpenPending = false;
+	bool m_startupWorkbenchCompletionPosted = false;
 	std::shared_ptr<CExtensionViewRegistry> m_extensionViewRegistry;
 	workbench::extension::CExtensionSidebarTool* m_extensionSidebarTool = nullptr;
 	workbench::extension::CExtensionBottomPanelTool* m_extensionBottomPanelTool = nullptr;

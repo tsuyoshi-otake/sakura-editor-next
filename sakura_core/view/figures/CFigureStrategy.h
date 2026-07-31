@@ -40,6 +40,8 @@ class CFigure_Text final : public CFigure{
 public:
 	// 文字列を進める
 	static FigureRenderType GetRenderType(SColorStrategyInfo* pInfo);
+	//! Returns true when one UTF-16 code unit can join an adjacent unshaped text run.
+	static bool IsBlockSafeCodeUnit(wchar_t code) noexcept;
 
 	static const FigureRenderType RenderType_None = -1;
 	static bool IsRenderType_Block(FigureRenderType nRenderType){

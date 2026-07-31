@@ -279,13 +279,16 @@ public:
 	// layout and consumed by its immediately following load finalization.
 	void MarkFreshLoadLayoutComplete() noexcept;
 	bool ConsumeFreshLoadLayoutComplete() noexcept;
-	CLayoutXInt GetLayoutXOfChar( const wchar_t* pData, int nDataLen, int i ) const {
+	CLayoutXInt GetLayoutXOfChar( const wchar_t* pData, int nDataLen, int i, bool bEnableExtEol ) const {
 		CLayoutXInt nSpace = CLayoutXInt(0);
 		if( m_nSpacing ){
 			nSpace = CLayoutXInt(CNativeW::GetKetaOfChar(pData, nDataLen, i)) * m_nSpacing;
 		}
-		return CNativeW::GetColmOfChar( pData, nDataLen, i,
-			GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol) + nSpace;
+		return CNativeW::GetColmOfChar( pData, nDataLen, i, bEnableExtEol ) + nSpace;
+	}
+	CLayoutXInt GetLayoutXOfChar( const wchar_t* pData, int nDataLen, int i ) const {
+		return GetLayoutXOfChar( pData, nDataLen, i,
+			GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol );
 	}
 	CLayoutXInt GetLayoutXOfChar( const CStringRef& str, int i ) const {
 		return GetLayoutXOfChar(str.GetPtr(), str.GetLength(), i);
@@ -328,6 +331,7 @@ protected:
 		EColorIndexType	colorPrev;
 		CLayoutExInfo	exInfoPrev;
 		CLogicInt		nCurLine;
+		bool			bTraceStartupCost;
 
 		//ループ外 (DoLayoutのみ)
 //		CLogicInt		nLineNum;

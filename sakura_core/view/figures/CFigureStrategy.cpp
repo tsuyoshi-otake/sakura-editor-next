@@ -57,28 +57,31 @@ FigureRenderType CFigure_Text::GetRenderType(SColorStrategyInfo* pInfo)
 	const int fontNo = (nLength == 2 ? WCODE::GetFontNo2(pInfo->m_pLineOfLogic[nIdx], pInfo->m_pLineOfLogic[nIdx+1]):
 			WCODE::GetFontNo(pInfo->m_pLineOfLogic[nIdx]));
 	FigureRenderType nType = 0;
-	if(nLength == 1){
-		const wchar_t code = pInfo->m_pLineOfLogic[nIdx];
-		// 未合成で一度に描画しても安全そうな文字一覧(その範囲の文字が合成用文字ではないもの)
-		// 合成は未サポート
-		if((0x20 <= code && code <= 0x7f) // ASCII
-			|| (0x2E80 <= code && code <= 0x2FDF) // 漢字部首
-			|| (0x3041 <= code && code <= 0x3096) // ひらがな
-			|| (0x30A1 <= code && code <= 0x30FA) // カタカナ(合成用濁点などを除く)
-			|| (0x3400 <= code && code <= 0x4DBF) // CJK統合漢字拡張A
-			|| (0x4E00 <= code && code <= 0x9FFF) // CJK統合漢字
-			|| (0xF900 <= code && code <= 0xFAFF) // CJK互換漢字
-			|| (0xFF01 <= code && code <= 0xFF5E) // 全角ASCII
-			|| (0xFF61 <= code && code <= 0xFF9F) // 半角カナ
-		){
-			nType = 1;
-		}
+	if(nLength == 1 && IsBlockSafeCodeUnit(pInfo->m_pLineOfLogic[nIdx])){
+		nType = 1;
 	}
 	if (pInfo->m_collectStartupPaintMetrics && nType == 0) {
 		CStartupTrace::AccumulateFirstContentNonBlockText(
 			ClassifyNonBlockText(pInfo->m_pLineOfLogic[nIdx], nLength));
 	}
 	return (fontNo << 1) | nType;
+}
+
+bool CFigure_Text::IsBlockSafeCodeUnit(const wchar_t code) noexcept
+{
+	// Unshaped characters which can share one ExtTextOut call.  Keep this list
+	// deliberately narrower than Unicode blocks containing combining marks.
+	return (0x20 <= code && code <= 0x7f) // ASCII
+		|| code == 0x3001 // IDEOGRAPHIC COMMA
+		|| code == 0x3002 // IDEOGRAPHIC FULL STOP
+		|| (0x2E80 <= code && code <= 0x2FDF) // 漢字部首
+		|| (0x3041 <= code && code <= 0x3096) // ひらがな
+		|| (0x30A1 <= code && code <= 0x30FA) // カタカナ(合成用濁点などを除く)
+		|| (0x3400 <= code && code <= 0x4DBF) // CJK統合漢字拡張A
+		|| (0x4E00 <= code && code <= 0x9FFF) // CJK統合漢字
+		|| (0xF900 <= code && code <= 0xFAFF) // CJK互換漢字
+		|| (0xFF01 <= code && code <= 0xFF5E) // 全角ASCII
+		|| (0xFF61 <= code && code <= 0xFF9F); // 半角カナ
 }
 
 int CFigure_Text::FowardChars(SColorStrategyInfo* pInfo)
