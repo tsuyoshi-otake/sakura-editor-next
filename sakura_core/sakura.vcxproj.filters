@@ -1219,6 +1219,9 @@
     <ClInclude Include="..\sakura_core\platform\profiles\ProfileAuthorityIdentity.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileIdentity.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\profiles\ProfileBootstrapSnapshot.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>

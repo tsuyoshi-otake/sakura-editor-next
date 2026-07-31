@@ -194,6 +194,105 @@ TEST(ConfigurationProxyService, RequiresSystemWhenNoManualPolicyExists)
 	EXPECT_EQ(3, fixture.resolver.calls);
 }
 
+TEST(ConfigurationProxyService, FallbackAcceptsSystemNoProxyRequiredAsSelectedDirect)
+{
+	// Regression for the OpenVSX-unreachable defect: a machine with no proxy
+	// configured must resolve to a direct connection, not fail closed. Before
+	// the fix, NoProxyRequired did not exist and the resolver could only
+	// answer Unavailable here, which SelectProxy turned into UnsupportedPolicy.
+	Fixture fixture;
+	fixture.Configure(L"fallback");
+	fixture.resolver.result = { ESystemProxyResolutionOutcome::NoProxyRequired, {} };
+
+	const auto selected = fixture.proxy.SelectProxy(Request(EProxySupport::Fallback), std::nullopt, nullptr);
+	EXPECT_EQ(EProxySelectionOutcome::Selected, selected.outcome);
+	EXPECT_EQ(EProxyMode::Direct, selected.mode);
+	EXPECT_FALSE(selected.bypassed);
+	EXPECT_EQ(1, fixture.resolver.calls);
+}
+
+TEST(ConfigurationProxyService, OnAndOverrideAcceptSystemNoProxyRequiredAsSelectedDirectWhenNoManualProxyConfigured)
+{
+	// Same defect as FallbackAcceptsSystemNoProxyRequiredAsSelectedDirect, but
+	// for the On/Override request modes: with no manual proxy configured, a
+	// NoProxyRequired system answer must still be a selected Direct result.
+	for (const auto support : { EProxySupport::On, EProxySupport::Override }) {
+		Fixture fixture;
+		fixture.Configure(L"fallback");
+		fixture.resolver.result = { ESystemProxyResolutionOutcome::NoProxyRequired, {} };
+
+		const auto selected = fixture.proxy.SelectProxy(Request(support), std::nullopt, nullptr);
+		EXPECT_EQ(EProxySelectionOutcome::Selected, selected.outcome);
+		EXPECT_EQ(EProxyMode::Direct, selected.mode);
+		EXPECT_EQ(1, fixture.resolver.calls);
+	}
+}
+
+TEST(ConfigurationProxyService, FallbackSystemNoProxyRequiredStillUsesConfiguredManualProxy)
+{
+	// The fix must not turn into a silent proxy bypass: when the user has set
+	// http.proxy, a NoProxyRequired system answer still yields that configured
+	// manual proxy under Fallback, exactly as an Unavailable answer already did.
+	Fixture fixture;
+	fixture.Configure(L"fallback", L"http://manual.example.test:8080");
+	fixture.resolver.result = { ESystemProxyResolutionOutcome::NoProxyRequired, {} };
+
+	const auto selected = fixture.proxy.SelectProxy(Request(), std::nullopt, nullptr);
+	EXPECT_EQ(EProxySelectionOutcome::Selected, selected.outcome);
+	EXPECT_EQ(EProxyMode::Manual, selected.mode);
+	ASSERT_TRUE(selected.proxyUrl.has_value());
+	EXPECT_EQ(L"http://manual.example.test:8080", *selected.proxyUrl);
+	EXPECT_EQ(1, fixture.resolver.calls);
+}
+
+TEST(ConfigurationProxyService, FallbackSystemUnavailableWithNoConfiguredProxyStaysUnsupported)
+{
+	// A genuine resolution failure (the system could not answer) must remain
+	// fail-closed even though NoProxyRequired now succeeds for the same
+	// request shape. Unavailable and NoProxyRequired must not be conflated in
+	// either direction.
+	Fixture fixture;
+	fixture.Configure(L"fallback");
+	fixture.resolver.result = { ESystemProxyResolutionOutcome::Unavailable, {} };
+
+	const auto selected = fixture.proxy.SelectProxy(Request(), std::nullopt, nullptr);
+	EXPECT_EQ(EProxySelectionOutcome::UnsupportedPolicy, selected.outcome);
+	EXPECT_EQ(1, fixture.resolver.calls);
+}
+
+TEST(ConfigurationProxyService, AcceptsSystemDirectSelectionThatIsAlsoMarkedBypassed)
+{
+	// The system may legitimately report Direct because its own bypass list
+	// matched the target (outcome == Selected, mode == Direct, bypassed ==
+	// true). That must be accepted, not rejected as Unsupported: previously
+	// any machine whose proxy bypass list covered the target failed here.
+	Fixture fixture;
+	fixture.Configure(L"fallback");
+	fixture.resolver.result = { ESystemProxyResolutionOutcome::Selected,
+		{ EProxyMode::Direct, std::nullopt, true, EProxySelectionOutcome::Selected } };
+
+	const auto selected = fixture.proxy.SelectProxy(Request(), std::nullopt, nullptr);
+	EXPECT_EQ(EProxySelectionOutcome::Selected, selected.outcome);
+	EXPECT_EQ(EProxyMode::Direct, selected.mode);
+	EXPECT_TRUE(selected.bypassed);
+	EXPECT_EQ(1, fixture.resolver.calls);
+}
+
+TEST(ConfigurationProxyService, RejectsSystemManualSelectionThatIsAlsoMarkedBypassed)
+{
+	// A contradictory system answer (a manual proxy claiming to be bypassed)
+	// is not a legitimate Direct-via-bypass result and must stay rejected,
+	// unlike the Direct+bypassed case accepted above.
+	Fixture fixture;
+	fixture.Configure(L"fallback");
+	fixture.resolver.result = { ESystemProxyResolutionOutcome::Selected,
+		{ EProxyMode::Manual, L"http://system.example.test:8080", true, EProxySelectionOutcome::Selected } };
+
+	const auto selected = fixture.proxy.SelectProxy(Request(), std::nullopt, nullptr);
+	EXPECT_EQ(EProxySelectionOutcome::UnsupportedPolicy, selected.outcome);
+	EXPECT_EQ(1, fixture.resolver.calls);
+}
+
 TEST(ConfigurationProxyService, MatchesNoProxyVariantsBeforeAnyResolver)
 {
 	Fixture fixture;

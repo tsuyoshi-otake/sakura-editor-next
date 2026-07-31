@@ -29,6 +29,12 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   the OpenVSX endpoint must be HTTPS. `http.proxyStrictSSL=false` is represented
   for compatibility but must terminate as unsupported at a production transport
   composition boundary rather than disabling certificate validation silently.
+- `CConfigurationProxyService::SelectProxy` must keep "the system reports that
+  no proxy applies" (`NoProxyRequired` -> `Direct()`) separate from "the system
+  could not answer" (`Unavailable` -> `Unsupported`, unless `Fallback` has a
+  configured `http.proxy`). Merging them made every unproxied machine fail
+  closed; see
+  [`../platform/request/CLAUDE.md`](../platform/request/CLAUDE.md).
 
 ## Workspace Context Checkpoint
 
@@ -75,3 +81,35 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
 
 Configuration UI and extension RPC consume the same service. They may not read
 or write `CShareData_IO`, INI files, or workspace JSON directly.
+
+## Network Policy Identity Checkpoint (2026-08-01)
+
+- The network-policy target's `profileId` is the selected user-data profile
+  handed down from bootstrap (`Bootstrap().UserDataProfile().SelectedProfileId()`),
+  never the control authority id. `CConfigurationNetworkPolicy::Snapshot`
+  therefore validates it with `platform::profiles::IsOpaqueUserDataProfileId`,
+  not the control authority's canonical-hex predicate; see
+  [`../platform/profiles/CLAUDE.md`](../platform/profiles/CLAUDE.md) for the
+  two identity spaces and why conflating them fails every read closed.
+- `LayerIdentity` matches a Profile-scope source by exact string equality of
+  `"profile" + target.profileId` (`CConfigurationService.cpp:259-262`). A
+  target whose `profileId` matches no registered source does **not** fail:
+  `ReadSnapshot` still returns `EConfigurationOutcome::Applied`
+  (`CConfigurationService.cpp:659-690`) and `EffectiveLocked` silently falls
+  back to the descriptor default because no Profile-scope candidate was
+  collected (`CConfigurationService.cpp:558-598`). A caller that reads
+  network policy, or any other profile-scoped key, through the wrong
+  `profileId` gets plausible-looking defaults instead of an error — which is
+  why correctness here depends on validating the *right* identity space
+  up front rather than on the read path catching a mismatch.
+- VS Code registers `http.proxy`, `http.proxyStrictSSL`, `http.proxySupport`,
+  and `http.systemCertificates` with `ConfigurationScope.APPLICATION`
+  ("Application specific configuration, which can be configured only in
+  default profile user settings"). **Documented divergence:** our network
+  policy is instead read through the selected profile's layered
+  configuration (Profile scope), because this repository has no separate
+  Application-scope configuration layer yet — `CConfigurationNetworkPolicy`
+  is scoped to whichever profile is selected, not pinned across profiles the
+  way VS Code pins it. Closing this divergence requires adding a true
+  Application scope shared by every profile, not merely validating the
+  selected profile's id correctly.

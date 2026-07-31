@@ -9,6 +9,7 @@
 
 #include "platform/profiles/UserDataProfileBootstrap.h"
 
+#include "platform/profiles/UserDataProfileIdentity.h"
 #include "platform/profiles/UserDataProfileRegistryCodec.h"
 
 #include <algorithm>
@@ -18,7 +19,6 @@ namespace platform::profiles {
 namespace {
 
 constexpr std::size_t kMaximumControlProfileRootCharacters = 4096;
-constexpr std::size_t kMaximumProfileIdCharacters = 128;
 constexpr std::size_t kMaximumProfiles = 256;
 constexpr std::size_t kMaximumAssociations = 1024;
 
@@ -58,16 +58,6 @@ bool IsNormalizedAbsoluteWindowsDirectory(std::wstring_view directory) noexcept
 	return true;
 }
 
-bool IsOpaqueProfileId(const UserDataProfileId& value) noexcept
-{
-	if (value.empty() || value.size() > kMaximumProfileIdCharacters) return false;
-	for (const wchar_t character : value) {
-		if (!((character >= L'a' && character <= L'z') || (character >= L'A' && character <= L'Z')
-			|| (character >= L'0' && character <= L'9') || character == L'-' || character == L'_')) return false;
-	}
-	return true;
-}
-
 bool IsKnownProfileKind(UserDataProfileKind kind) noexcept
 {
 	return kind == UserDataProfileKind::Default || kind == UserDataProfileKind::Normal || kind == UserDataProfileKind::Transient;
@@ -88,12 +78,12 @@ UserDataProfileBootstrapResult Failed(UserDataProfileBootstrapStatus status)
 
 bool IsValidSnapshot(const UserDataProfileRegistrySnapshot& snapshot) noexcept
 {
-	if (!IsOpaqueProfileId(snapshot.defaultProfileId) || snapshot.profiles.empty() || snapshot.profiles.size() > kMaximumProfiles
+	if (!IsOpaqueUserDataProfileId(snapshot.defaultProfileId) || snapshot.profiles.empty() || snapshot.profiles.size() > kMaximumProfiles
 		|| snapshot.workspaceAssociations.size() > kMaximumAssociations || snapshot.emptyWindowAssociations.size() > kMaximumAssociations) return false;
 
 	bool foundDefault = false;
 	for (auto current = snapshot.profiles.begin(); current != snapshot.profiles.end(); ++current) {
-		if (!IsOpaqueProfileId(current->profileId) || current->displayName.empty() || current->displayName.size() > 1024
+		if (!IsOpaqueUserDataProfileId(current->profileId) || current->displayName.empty() || current->displayName.size() > 1024
 			|| !IsKnownProfileKind(current->kind)) return false;
 		if (std::any_of(snapshot.profiles.begin(), current, [&current](const auto& existing) {
 			return existing.profileId == current->profileId || existing.displayName == current->displayName;
@@ -206,7 +196,7 @@ UserDataProfileBootstrapResult ResolveUserDataProfileBootstrap(
 		return Failed(UserDataProfileBootstrapStatus::InvalidControlProfileRoot);
 	}
 	if (!IsValidSnapshot(registrySnapshot)) return Failed(UserDataProfileBootstrapStatus::InvalidRegistrySnapshot);
-	if (request.selection.explicitProfileId && !IsOpaqueProfileId(*request.selection.explicitProfileId)) {
+	if (request.selection.explicitProfileId && !IsOpaqueUserDataProfileId(*request.selection.explicitProfileId)) {
 		return Failed(UserDataProfileBootstrapStatus::InvalidProfileId);
 	}
 	if (request.selection.emptyWindowId && !IsStableEmptyWindowIdentity(*request.selection.emptyWindowId)) {

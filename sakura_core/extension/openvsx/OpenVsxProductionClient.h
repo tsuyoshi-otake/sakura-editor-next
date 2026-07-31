@@ -53,7 +53,7 @@ struct OpenVsxProductionClientResult final {
  */
 [[nodiscard]] OpenVsxProductionClientResult CreateOpenVsxProductionClient(
 	config::IConfigurationService& configurationService,
-	std::wstring canonicalProfileId
+	std::wstring userDataProfileId
 ) noexcept;
 
 } // namespace extension::openvsx

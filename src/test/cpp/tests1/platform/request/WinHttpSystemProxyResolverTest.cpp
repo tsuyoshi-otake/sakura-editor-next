@@ -159,6 +159,32 @@ TEST(WinHttpSystemProxyResolverTest, UsesCurrentUserStaticProxyAndBypassWithoutO
 	EXPECT_EQ(0, facade.openCalls);
 }
 
+TEST(WinHttpSystemProxyResolverTest, EmptyStaticProxyConfigurationResolvesToNoProxyRequiredAndBypassListStillSelectsDirect)
+{
+	// Regression for the OpenVSX-unreachable defect: a machine with no static
+	// proxy and no auto-detect/PAC has the system authoritatively answering
+	// "no proxy applies", so this must be NoProxyRequired rather than the old
+	// conflated Unavailable, and it must do so without ever opening WinHTTP.
+	FakeFacade facade;
+	WinHttpSystemProxyResolver resolver(facade);
+
+	const auto empty = resolver.Resolve(Request(), std::nullopt, nullptr);
+	EXPECT_EQ(ESystemProxyResolutionOutcome::NoProxyRequired, empty.outcome);
+	EXPECT_EQ(0, facade.openCalls);
+
+	// A configured static proxy whose bypass list matches the target is a
+	// different, still-Selected outcome: a direct connection because the
+	// system's own bypass rule fired, not because nothing was configured.
+	facade.config.proxy = L"http://proxy.example.test";
+	facade.config.proxyBypass = L"*.example.test";
+	const auto bypassed = resolver.Resolve(Request(), std::nullopt, nullptr);
+	EXPECT_EQ(ESystemProxyResolutionOutcome::Selected, bypassed.outcome);
+	EXPECT_EQ(EProxyMode::Direct, bypassed.selection.mode);
+	EXPECT_TRUE(bypassed.selection.bypassed);
+	EXPECT_FALSE(bypassed.selection.proxyUrl.has_value());
+	EXPECT_EQ(0, facade.openCalls);
+}
+
 TEST(WinHttpSystemProxyResolverTest, SupportsDefaultPortAndIPv6BypassIncludingLoopbackOptOut)
 {
 	FakeFacade facade;
@@ -292,7 +318,12 @@ TEST(WinHttpSystemProxyResolverTest, ClassifiesKnownAndUnknownCallbackFailuresAn
 	callbackFailure.callbackStatus = EWinHttpSystemProxyCallbackStatus::RequestError;
 	callbackFailure.callbackError = ERROR_WINHTTP_BAD_AUTO_PROXY_SCRIPT;
 	WinHttpSystemProxyResolver callbackResolver(callbackFailure);
-	EXPECT_EQ(ESystemProxyResolutionOutcome::Unavailable, callbackResolver.Resolve(Request(), std::nullopt, nullptr).outcome);
+	// A PAC script that fails to parse/download only fails the auto-proxy attempt.
+	// WinHTTP's documented fallback is the static configuration, and an empty
+	// static configuration is still the system authoritatively answering "no
+	// proxy applies" (matching what a browser and VS Code both do), so the
+	// end-to-end answer here is NoProxyRequired, not a policy-level Unavailable.
+	EXPECT_EQ(ESystemProxyResolutionOutcome::NoProxyRequired, callbackResolver.Resolve(Request(), std::nullopt, nullptr).outcome);
 	EXPECT_EQ(0, callbackFailure.getResultCalls);
 	EXPECT_EQ(0, callbackFailure.freeResultCalls);
 	EXPECT_EQ(1, callbackFailure.closeResolverCalls);

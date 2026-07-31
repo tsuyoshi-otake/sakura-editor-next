@@ -10,7 +10,7 @@
 
 #include "config/CConfigurationNetworkPolicy.h"
 #include "config/CConfigurationProxyService.h"
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include "platform/profiles/UserDataProfileIdentity.h"
 #include "platform/request/win32/WinHttpRequestRuntime.h"
 #include "platform/request/win32/WinHttpSystemProxyResolver.h"
 
@@ -128,15 +128,18 @@ OpenVsxRequestPolicy BuildOpenVsxProductionRequestPolicy(const config::Configura
 
 OpenVsxProductionClientResult CreateOpenVsxProductionClient(
 	config::IConfigurationService& configurationService,
-	std::wstring canonicalProfileId
+	std::wstring userDataProfileId
 ) noexcept
 {
-	if (!platform::profiles::IsCanonicalProfileAuthorityId(canonicalProfileId)) {
-		return Failure(EOpenVsxProductionClientOutcome::InvalidProfileId, "Open VSX requires a canonical profile identity");
+	// This is the selected user-data profile (e.g. Default's fixed literal id),
+	// never the control authority, so its identity space is deliberately opaque
+	// rather than canonical-hex.  Validate it as such before any network policy read.
+	if (!platform::profiles::IsOpaqueUserDataProfileId(userDataProfileId)) {
+		return Failure(EOpenVsxProductionClientOutcome::InvalidProfileId, "Open VSX requires a valid user-data profile identity");
 	}
 
 	try {
-		config::CConfigurationNetworkPolicy networkPolicy(configurationService, std::move(canonicalProfileId));
+		config::CConfigurationNetworkPolicy networkPolicy(configurationService, std::move(userDataProfileId));
 		const auto policy = networkPolicy.Snapshot();
 		if (policy.outcome == config::EConfigurationNetworkPolicyOutcome::Unsupported) {
 			return Failure(EOpenVsxProductionClientOutcome::ConfigurationUnavailable, "Open VSX network configuration is unavailable");

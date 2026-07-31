@@ -46,10 +46,11 @@ TEST(OpenVsxProductionClient, RejectsInvalidProfileAndUnsupportedTlsConfiguratio
 {
 	CConfigurationService service(BuiltinConfigurationDescriptors());
 
-	const auto invalidProfile = CreateOpenVsxProductionClient(service, L"not-a-canonical-profile");
+	// A space is outside the opaque `[A-Za-z0-9_-]` user-data profile identity alphabet.
+	const auto invalidProfile = CreateOpenVsxProductionClient(service, L"not a profile");
 	EXPECT_EQ(EOpenVsxProductionClientOutcome::InvalidProfileId, invalidProfile.outcome);
 	EXPECT_FALSE(invalidProfile.client);
-	EXPECT_EQ(std::string::npos, invalidProfile.diagnostic.find("not-a-canonical-profile"));
+	EXPECT_EQ(std::string::npos, invalidProfile.diagnostic.find("not a profile"));
 
 	ASSERT_EQ(EConfigurationOutcome::Applied, service.Update({ ProfileSource(), "http.proxyStrictSSL",
 		ConfigurationValue(false), "unsupported-tls", 0 }).outcome);
@@ -83,6 +84,51 @@ TEST(OpenVsxProductionClient, CapturesConfigurationSnapshotAndOutlivesConfigurat
 	EXPECT_TRUE(client);
 	EXPECT_EQ(extension::openvsx::EOpenVsxRequestOutcome::NotRequested,
 		client->FetchOptionalSha256(std::nullopt).status.outcome);
+}
+
+// Regression test: the Default profile's selected user-data identity is the literal
+// L"default", which is opaque-valid (`[A-Za-z0-9_-]`, 1..128 chars) but never
+// 32-lowercase-hex canonical. The factory must accept it and produce a ready client.
+TEST(OpenVsxProductionClient, AcceptsTheDefaultUserDataProfileIdentity)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const auto result = CreateOpenVsxProductionClient(service, std::wstring(L"default"));
+
+	ASSERT_EQ(EOpenVsxProductionClientOutcome::Ready, result.outcome);
+	ASSERT_TRUE(result.client);
+
+	// No registry method is called: this is a construction-only regression check.
+	EXPECT_EQ(extension::openvsx::EOpenVsxRequestOutcome::NotRequested,
+		result.client->FetchOptionalSha256(std::nullopt).status.outcome);
+}
+
+/*!
+	@brief Search the real Open VSX registry through the production graph the
+		Extensions ViewContainer uses, with the Default profile's own identity.
+
+	This depends on an external service, so it stays opt-in. Run it after
+	touching the profile-identity guard or the request graph:
+	@code
+	tests1.exe --gtest_also_run_disabled_tests --gtest_filter=*Search_Live_WithDefaultUserDataProfile
+	@endcode
+ */
+TEST(OpenVsxProductionClient, DISABLED_Search_Live_WithDefaultUserDataProfile)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const auto result = CreateOpenVsxProductionClient(service, std::wstring(L"default"));
+	ASSERT_EQ(EOpenVsxProductionClientOutcome::Ready, result.outcome) << result.diagnostic;
+	ASSERT_TRUE(result.client);
+
+	const auto search = result.client->Search(L"otak", 0, 5);
+	ASSERT_TRUE(search.status)
+		<< "outcome=" << static_cast<int>(search.status.outcome) << " " << search.status.message;
+	EXPECT_GT(search.value.nTotalSize, 0);
+	ASSERT_FALSE(search.value.extensions.empty());
+	for (const SOpenVsxExtension& extension : search.value.extensions) {
+		EXPECT_FALSE(extension.sNamespace.empty());
+		EXPECT_FALSE(extension.sName.empty());
+		EXPECT_EQ(0u, extension.sDownloadUrl.find(L"https://")) << extension.sDownloadUrl;
+	}
 }
 
 TEST(OpenVsxProductionClient, BuildsBoundedEndpointPoliciesFromTheSingleNetworkPolicySnapshot)

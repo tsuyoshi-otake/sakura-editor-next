@@ -9,6 +9,8 @@
 
 #include "workbench/WorkbenchBootstrapContext.h"
 
+#include "platform/profiles/UserDataProfileIdentity.h"
+
 #include <algorithm>
 #include <cwctype>
 #include <utility>
@@ -145,15 +147,6 @@ bool IsProfileShapeValid(const platform::profiles::ProfileBootstrapSnapshot& pro
 		&& IsWorkspaceResourceUri(resources.GlobalStorage());
 }
 
-bool IsOpaqueUserDataProfileId(const platform::profiles::UserDataProfileId& value) noexcept
-{
-	if (value.empty() || value.size() > 128) return false;
-	return std::all_of(value.begin(), value.end(), [](wchar_t character) {
-		return (character >= L'a' && character <= L'z') || (character >= L'A' && character <= L'Z')
-			|| (character >= L'0' && character <= L'9') || character == L'-' || character == L'_';
-	});
-}
-
 bool IsValidUserDataProfileKind(platform::profiles::UserDataProfileKind kind) noexcept
 {
 	return kind == platform::profiles::UserDataProfileKind::Default
@@ -163,7 +156,7 @@ bool IsValidUserDataProfileKind(platform::profiles::UserDataProfileKind kind) no
 
 bool IsUserDataDescriptorShapeValid(const platform::profiles::UserDataProfileDescriptor& descriptor) noexcept
 {
-	if (!IsOpaqueUserDataProfileId(descriptor.profileId) || descriptor.displayName.empty()
+	if (!platform::profiles::IsOpaqueUserDataProfileId(descriptor.profileId) || descriptor.displayName.empty()
 		|| descriptor.displayName.size() > 1024 || !IsValidUtf16(descriptor.displayName)
 		|| !IsValidUserDataProfileKind(descriptor.kind)) return false;
 	return std::all_of(descriptor.legacyAliases.begin(), descriptor.legacyAliases.end(), [](const std::wstring& alias) {

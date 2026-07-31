@@ -211,12 +211,12 @@ bool RefreshExtensionHostInventory(HWND controlProcessWindow) noexcept
 
 CExtensionPane::CExtensionPane(
 	config::IConfigurationService& configurationService,
-	std::wstring canonicalProfileId,
+	std::wstring userDataProfileId,
 	HWND controlProcessWindow
 )
 	: CWnd( L"::CExtensionPane" )
 	, m_configurationService( configurationService )
-	, m_canonicalProfileId( std::move( canonicalProfileId ) )
+	, m_userDataProfileId( std::move( userDataProfileId ) )
 	, m_controlProcessWindow( controlProcessWindow )
 {
 }
@@ -707,7 +707,7 @@ void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 	if( pJob->eKind == EJobKind::Search || pJob->eKind == EJobKind::Install ){
 		auto clientResult = extension::openvsx::CreateOpenVsxProductionClient(
 			m_configurationService,
-			m_canonicalProfileId
+			m_userDataProfileId
 		);
 		if( !clientResult ){
 			SetStatusText( strprintf(

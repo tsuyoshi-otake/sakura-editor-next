@@ -76,3 +76,38 @@
 The pure bootstrap suite passes 7/7. Native create/select/switch/manage flows,
 durable empty-window identity allocation, and the default-root migration remain
 open Phase 3 work.
+
+## User-Data Profile Identity vs. Control Authority Identity (2026-08-01)
+
+- Two distinct identity spaces exist and must never validate each other's
+  values. The **control authority id** (`ProfileAuthorityIdentity.h`,
+  `IsCanonicalProfileAuthorityId`) is exactly 32 lowercase hex characters, the
+  form `ProfileAuthorityStore` mints for the control endpoint's durable
+  anchor. The **selected user-data profile id** (`UserDataProfileIdentity.h`,
+  `IsOpaqueUserDataProfileId`) is `[A-Za-z0-9_-]`, 1..
+  `kMaximumUserDataProfileIdCharacters` (128) characters — the shape of
+  `Bootstrap().UserDataProfile().SelectedProfileId()`, including the Default
+  profile's fixed literal `L"default"` (`UserDataProfileRegistry.cpp:64-67`).
+- VS Code precedent: its Default profile also carries a fixed literal id
+  (`'__default__profile__'`); only named profiles get a generated
+  `hash(generateUuid())` id. A fixed non-hex literal default-profile id is
+  therefore upstream behaviour, not a local shortcut, and every profile-scoped
+  consumer must accept it.
+- A profile-scoped service that receives the selected user-data profile id —
+  network policy, the OpenVSX client factory, or any other consumer of
+  `SelectedProfileId()` — validates with `IsOpaqueUserDataProfileId`.
+  Control-endpoint, durable-storage, and Vault adapters that consume an id
+  minted by `ProfileAuthorityStore` keep `IsCanonicalProfileAuthorityId`.
+  Applying the canonical-hex predicate to a selected profile id fails closed
+  unconditionally (`"default"` can never be 32 hex characters); that
+  cross-space mismatch was the root cause of a production defect where
+  `CConfigurationNetworkPolicy::Snapshot` and `CreateOpenVsxProductionClient`
+  both rejected every Marketplace request. See
+  [`../../config/CLAUDE.md`](../../config/CLAUDE.md) and
+  [`../../extension/openvsx/CLAUDE.md`](../../extension/openvsx/CLAUDE.md)
+  for the two corrected call sites.
+- `UserDataProfileIdentity.h` is the single shared home for the opaque
+  predicate. Do not reintroduce a private copy in a bootstrap or workbench
+  file — `UserDataProfileBootstrap.cpp` and `WorkbenchBootstrapContext.cpp`
+  previously carried byte-identical private copies before this
+  consolidation.

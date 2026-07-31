@@ -536,6 +536,7 @@
 	<ClInclude Include="..\sakura_core\platform\profiles\ControlUserDataProfileRegistry.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\ProfileAuthorityStore.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\ProfileAuthorityIdentity.h" />
+    <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileIdentity.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\ProfileBootstrapSnapshot.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.h" />
     <ClInclude Include="..\sakura_core\platform\request\RequestService.h" />

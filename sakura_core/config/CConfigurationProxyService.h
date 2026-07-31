@@ -22,10 +22,18 @@ namespace config {
 //! Each value is a terminal result; adapters must not return a partial choice.
 enum class ESystemProxyResolutionOutcome : std::uint8_t {
 	Selected,
+	//! The system could not be asked at all -- unreadable configuration, a
+	//! WinHTTP query failure, or another inability to produce an answer. This
+	//! is strictly "unable to resolve"; it must never stand in for "the
+	//! system authoritatively says no proxy applies", which is
+	//! NoProxyRequired below.
 	Unavailable,
 	Cancelled,
 	DeadlineExceeded,
 	InvalidResult,
+	//! The system answered authoritatively that this target needs no proxy.
+	//! This is a selection ("connect directly"), not a failure to resolve.
+	NoProxyRequired,
 };
 
 struct SystemProxyResolution final {

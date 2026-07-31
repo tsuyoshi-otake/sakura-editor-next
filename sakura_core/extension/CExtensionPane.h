@@ -57,7 +57,7 @@ public:
 
 	CExtensionPane(
 		config::IConfigurationService& configurationService,
-		std::wstring canonicalProfileId,
+		std::wstring userDataProfileId,
 		HWND controlProcessWindow);
 	~CExtensionPane() override;
 
@@ -181,7 +181,7 @@ private:
 
 	CExtensionManager		m_cManager;		//!< 導入済みの列挙にのみ使う（UI スレッド専用）
 	config::IConfigurationService& m_configurationService;	//!< Used only before a worker starts.
-	std::wstring			m_canonicalProfileId;	//!< Canonical profile authority id for the OpenVSX factory.
+	std::wstring			m_userDataProfileId;	//!< Selected user-data profile id (opaque, not the control authority id) for the OpenVSX factory.
 	HWND					m_controlProcessWindow = nullptr;	//!< Control-owned extension host broker window.
 	std::vector<SRow>		m_rows;			//!< 一覧の内容
 	std::shared_ptr<SJob>	m_pJob;			//!< 実行中のジョブ。無ければ空

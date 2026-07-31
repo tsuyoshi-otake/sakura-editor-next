@@ -306,13 +306,22 @@ bool Matches(const Endpoint& endpoint, const NoProxyPattern& pattern) noexcept
 	return false;
 }
 
-bool IsValidManualProxy(const ProxySelection& selection) noexcept
+//! Validates any system-supplied selection, including a legitimate Direct one:
+//! WinHTTP reports Direct(bypassed=true) when the target matched the system's
+//! own bypass list, and that is a valid "connect directly" answer, not a
+//! contradiction. A Manual selection that also claims to be bypassed remains
+//! contradictory and is rejected, so the bypassed check runs only once the
+//! Direct case has already returned.
+bool IsValidSystemProxySelection(const ProxySelection& selection) noexcept
 {
-	if (selection.outcome != EProxySelectionOutcome::Selected || selection.bypassed) {
+	if (selection.outcome != EProxySelectionOutcome::Selected) {
 		return false;
 	}
 	if (selection.mode == EProxyMode::Direct) {
 		return !selection.proxyUrl.has_value();
+	}
+	if (selection.bypassed) {
+		return false;
 	}
 	if (selection.mode != EProxyMode::Manual || !selection.proxyUrl.has_value()) {
 		return false;
@@ -418,7 +427,9 @@ ProxySelection CConfigurationProxyService::SelectProxy(
 	}
 
 	if (support == EProxySupport::Fallback && policySnapshot->proxyUrl.has_value()) {
-		// Fallback has system precedence; only use the manual URL for Unavailable.
+		// Fallback has system precedence; the manual URL is only used below when
+		// the system resolver cannot select a proxy (Unavailable) or
+		// authoritatively selects none (NoProxyRequired).
 	} else if (support == EProxySupport::On || support == EProxySupport::Override) {
 		// No configured proxy: a system resolver is required.
 	}
@@ -428,13 +439,31 @@ ProxySelection CConfigurationProxyService::SelectProxy(
 		return Unsupported();
 	}
 	if (system.outcome == ESystemProxyResolutionOutcome::Selected) {
-		if (!IsValidManualProxy(system.selection)) {
+		if (!IsValidSystemProxySelection(system.selection)) {
 			return Unsupported();
 		}
 		return system.selection;
 	}
+	if (system.outcome == ESystemProxyResolutionOutcome::NoProxyRequired) {
+		// The system authoritatively reports that no proxy applies to this
+		// target. VS Code's Electron `session.resolveProxy` reports this same
+		// fact as the literal DIRECT and simply connects; it has no failure
+		// state for "no proxy is configured". A direct connection is
+		// therefore the normal outcome here too, not an unsupported policy.
+		// A user-configured http.proxy still takes precedence under
+		// Fallback; On/Override already returned Manual above when a proxy
+		// was configured, so reaching this line under those modes means none
+		// was, and Direct() is correct for them as well.
+		if (support == EProxySupport::Fallback && policySnapshot->proxyUrl.has_value()) {
+			return Manual(*policySnapshot->proxyUrl);
+		}
+		return Direct();
+	}
 	if (system.outcome == ESystemProxyResolutionOutcome::Unavailable
 		&& support == EProxySupport::Fallback && policySnapshot->proxyUrl.has_value()) {
+		// A genuine inability to resolve stays fail-closed except for this one
+		// configured-fallback escape hatch; every other case below falls
+		// through to Unsupported().
 		return Manual(*policySnapshot->proxyUrl);
 	}
 	return Unsupported();

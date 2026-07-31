@@ -9,7 +9,7 @@
 
 #include "config/CConfigurationNetworkPolicy.h"
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include "platform/profiles/UserDataProfileIdentity.h"
 #include "platform/uri/UriIdentity.h"
 
 #include <chrono>
@@ -94,8 +94,13 @@ CConfigurationNetworkPolicy::CConfigurationNetworkPolicy(
 
 ConfigurationNetworkPolicyResult CConfigurationNetworkPolicy::Snapshot() const
 {
-	if (!platform::profiles::IsCanonicalProfileAuthorityId(m_target.profileId)) {
-		return Unsupported("network policy requires a canonical profile authority target");
+	// This target is the selected user-data profile handed down from bootstrap
+	// (e.g. the Default profile's fixed literal id, mirroring VS Code's
+	// '__default__profile__'), never the control authority, so its identity
+	// space is deliberately opaque rather than canonical-hex.  Validate it as
+	// such before any read reaches configuration.
+	if (!platform::profiles::IsOpaqueUserDataProfileId(m_target.profileId)) {
+		return Unsupported("network policy requires a valid user-data profile target");
 	}
 
 	const auto read = m_configurationService.ReadSnapshot(kNetworkPolicyKeys, m_target);

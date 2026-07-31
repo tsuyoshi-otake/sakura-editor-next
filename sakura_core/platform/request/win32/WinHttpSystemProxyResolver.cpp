@@ -523,7 +523,10 @@ config::SystemProxyResolution ResolveStaticProxy(
 )
 {
 	if (parsed == EStaticProxyParse::Invalid) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
-	if (parsed == EStaticProxyParse::None) return Resolution(config::ESystemProxyResolutionOutcome::Unavailable);
+	// An empty static proxy configuration is the system's authoritative "no
+	// proxy applies here" answer (VS Code's Electron resolver would report
+	// DIRECT), not a failure to resolve one -- so this is a selection.
+	if (parsed == EStaticProxyParse::None) return Resolution(config::ESystemProxyResolutionOutcome::NoProxyRequired);
 	const auto bypass = IsBypassed(bypasses, targetHost, targetPort);
 	if (bypass == EBypassMatch::Invalid) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
 	if (bypass == EBypassMatch::Match) return Direct(true);

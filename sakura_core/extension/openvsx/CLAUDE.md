@@ -26,10 +26,20 @@ general HTTP policy, credentials, or SecretStorage.
 
 ## Production Composition and Lifetime
 
-- `CreateOpenVsxProductionClient` validates the canonical immutable profile ID,
-  reads exactly one coherent network-policy snapshot, and constructs a
-  self-contained client. A successful client retains no configuration-service
-  or workbench-runtime reference.
+- `CreateOpenVsxProductionClient` validates the selected user-data profile's
+  opaque identity (`platform::profiles::IsOpaqueUserDataProfileId`), not the
+  control authority's canonical-hex form; see
+  [`../../platform/profiles/CLAUDE.md`](../../platform/profiles/CLAUDE.md) for
+  the two identity spaces (2026-08-01). Its parameter was renamed from
+  `canonicalProfileId` to `userDataProfileId` to match — the old name
+  asserted the control-authority shape while the value was always the
+  selected user-data profile id. It reads exactly one coherent network-policy
+  snapshot and constructs a self-contained client; a successful client
+  retains no configuration-service or workbench-runtime reference. The
+  gallery endpoint itself comes from `IProductService`/`product.json` and has
+  no profile-scoped branching, so switching the selected profile never
+  changes which registry is searched — only the network policy (proxy, TLS,
+  response limits) is profile-scoped.
 - `CExtensionPane` creates that client synchronously before starting a Search or
   Install worker. The shared job owns it; a detached worker may therefore
   finish or cancel after the pane/window starts teardown without dereferencing

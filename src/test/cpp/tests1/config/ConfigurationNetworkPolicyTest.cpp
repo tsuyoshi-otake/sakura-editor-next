@@ -70,6 +70,21 @@ TEST(ConfigurationNetworkPolicy, ReturnsSafeDefaultsForOneProfile)
 	EXPECT_EQ(L"https://open-vsx.org", result.snapshot->openVsxRegistry);
 }
 
+// Regression test: the Default profile's selected user-data identity is the literal
+// L"default", which is opaque-valid (`[A-Za-z0-9_-]`, 1..128 chars) but never
+// 32-lowercase-hex canonical. The guard must accept it, not reject it as an
+// unsupported profile authority target.
+TEST(ConfigurationNetworkPolicy, AcceptsTheDefaultUserDataProfileIdentity)
+{
+	auto service = Service();
+	CConfigurationNetworkPolicy policy(service, std::wstring(L"default"));
+	const auto result = policy.Snapshot();
+
+	ASSERT_EQ(EConfigurationNetworkPolicyOutcome::Ready, result.outcome);
+	ASSERT_TRUE(result.snapshot.has_value());
+	EXPECT_EQ(L"https://open-vsx.org", result.snapshot->openVsxRegistry);
+}
+
 TEST(ConfigurationNetworkPolicy, UsesProfileOverridesAndNeverReadsWorkspaceSource)
 {
 	auto service = Service();
@@ -161,15 +176,38 @@ TEST(ConfigurationNetworkPolicy, RejectsUnsafeConfiguredUrlsWithoutLeakingTheirV
 	EXPECT_EQ(std::string::npos, registryResult.diagnostic.find("registry.example.test"));
 }
 
-TEST(ConfigurationNetworkPolicy, RejectsANonCanonicalProfileAuthorityTarget)
+TEST(ConfigurationNetworkPolicy, RejectsAnInvalidUserDataProfileTarget)
 {
 	auto service = Service();
-	CConfigurationNetworkPolicy policy(service, L"network-test");
-	const auto result = policy.Snapshot();
 
-	EXPECT_EQ(EConfigurationNetworkPolicyOutcome::Unsupported, result.outcome);
-	EXPECT_FALSE(result.snapshot.has_value());
-	EXPECT_EQ(std::string::npos, result.diagnostic.find("network-test"));
+	// A path separator would be dangerous if silently accepted as a resource-root
+	// selector, and it is outside the opaque `[A-Za-z0-9_-]` identity alphabet.
+	{
+		CConfigurationNetworkPolicy policy(service, L"../escape");
+		const auto result = policy.Snapshot();
+
+		EXPECT_EQ(EConfigurationNetworkPolicyOutcome::Unsupported, result.outcome);
+		EXPECT_FALSE(result.snapshot.has_value());
+		EXPECT_EQ(std::string::npos, result.diagnostic.find("../escape"));
+	}
+
+	// The empty id is rejected: the identity alphabet requires 1..128 characters.
+	{
+		CConfigurationNetworkPolicy policy(service, L"");
+		const auto result = policy.Snapshot();
+
+		EXPECT_EQ(EConfigurationNetworkPolicyOutcome::Unsupported, result.outcome);
+		EXPECT_FALSE(result.snapshot.has_value());
+	}
+
+	// An id one character past the 128-character bound is rejected.
+	{
+		CConfigurationNetworkPolicy policy(service, std::wstring(129, L'a'));
+		const auto result = policy.Snapshot();
+
+		EXPECT_EQ(EConfigurationNetworkPolicyOutcome::Unsupported, result.outcome);
+		EXPECT_FALSE(result.snapshot.has_value());
+	}
 }
 
 TEST(ConfigurationNetworkPolicy, KeepsUnknownEntriesLatentAndDoesNotDefineProxyAuthorization)
