@@ -191,6 +191,7 @@ class ExtensionLoader {
     if (!Array.isArray(extensionPaths)) throw new TypeError('extensions must be an array');
     const registered = [];
     const failed = [];
+    let added = false;
     for (const descriptor of extensionPaths) {
       try {
         const extensionPath = typeof descriptor === 'string' ? descriptor : descriptor?.path;
@@ -216,10 +217,12 @@ class ExtensionLoader {
           context: null,
           exports: undefined,
           activation: null,
+          descriptor: null,
           paths: typeof descriptor === 'object' && descriptor ? descriptor : {},
         };
         record.events = activationEvents(record);
         this.extensions.set(record.extensionId, record);
+        added = true;
         for (const command of record.commands) {
           if (!this.commandOwners.has(command.id)) this.commandOwners.set(command.id, record.extensionId);
         }
@@ -242,6 +245,7 @@ class ExtensionLoader {
         failed.push({ path: typeof descriptor === 'string' ? descriptor : descriptor?.path, message: error instanceof Error ? error.message : String(error) });
       }
     }
+    if (added) this.fireExtensionsChanged();
     return { registered, failed };
   }
 
@@ -259,24 +263,46 @@ class ExtensionLoader {
     }
   }
 
+  //! Stable public description of one record, reused so `vscode.extensions`
+  //! hands out the same object identity for the same extension.
+  descriptorFor(record) {
+    if (record.descriptor) return record.descriptor;
+    const loader = this;
+    record.descriptor = Object.freeze({
+      extensionId: record.extensionId,
+      extensionPath: record.root,
+      packageJSON: record.manifest,
+      get isActive() { return record.state === 'active'; },
+      get exports() { return record.state === 'active' ? record.exports : undefined; },
+      activate: () => loader.activate(record.extensionId, 'api'),
+    });
+    return record.descriptor;
+  }
+
+  extensionRegistryPort() {
+    const loader = this;
+    return {
+      all: () => [...loader.extensions.values()].map((record) => loader.descriptorFor(record)),
+      describe: (extensionId) => {
+        const record = loader.extensions.get(String(extensionId).toLowerCase());
+        return record ? loader.descriptorFor(record) : undefined;
+      },
+    };
+  }
+
+  //! VS Code raises `extensions.onDidChange` when the installed set changes.
+  fireExtensionsChanged() {
+    for (const record of this.extensions.values()) {
+      try { record.session?.extensionsChangeEmitter?.fire(); } catch {}
+    }
+  }
+
   async activateRecord(record, reason) {
     record.state = 'activating';
-    const trust = await this.transport.request('workbench/extensions/ensureTrusted', {
-      extensionId: record.extensionId,
-      version: typeof record.manifest.version === 'string' ? record.manifest.version : '',
-      displayName: typeof record.manifest.displayName === 'string' ? record.manifest.displayName : record.extensionId,
-      extensionPath: record.root,
-    });
-    if (trust?.trusted !== true) {
-      record.state = 'blocked';
-      this.transport.notify('workbench/extensions/didBlockActivation', {
-        extensionId: record.extensionId, generation: this.generation, reason: 'TrustDenied',
-      });
-      throw new Error(`ExtensionTrustDenied: ${record.extensionId}`);
-    }
     const session = new ExtensionApiSession(record.extensionId, this.generation, this.transport, {
       ...this.options,
       configurationDefaults: { ...(this.options.configurationDefaults || {}), ...record.configurationDefaults },
+      extensionRegistry: this.extensionRegistryPort(),
     });
     record.session = session;
     const normalizedRoot = normalizeRoot(record.root);
@@ -330,15 +356,31 @@ class ExtensionLoader {
     }
   }
 
+  // 実 VS Code の AbstractExtensionService._activateByEvent は該当する拡張を Promise.all で
+  // 並行に起動し、1 つの activate() が投げてもそれは _onExtensionActivationError で
+  // その拡張だけの失敗として記録される。他の拡張の起動は止まらない。
+  // ここも同じ契約にする: 直列の await ループで最初の例外を伝播させると、たまたま先に
+  // 並んだ 1 つが落ちただけで後続の拡張が 'registered' のまま永久に起動しなくなる
+  // (実機で odangoo.otak-monitor の失敗が odangoo.otak-usage を巻き添えにした)。
   async activateByEvent(event) {
-    const activated = [];
+    const targets = [];
     for (const record of this.extensions.values()) {
       if (record.state === 'registered' && (record.events.has(event) || record.events.has('*'))) {
-        await this.activate(record.extensionId, event);
-        activated.push(record.extensionId);
+        targets.push(record.extensionId);
       }
     }
-    return { activated };
+    const activated = [];
+    const failed = [];
+    // 失敗は didFailActivation 通知で既にネイティブ側の Extension Host ログへ届いているので、
+    // ここでは呼び出し元が結果を見られるよう要約するだけで、再スローはしない。
+    const results = await Promise.all(targets.map((extensionId) => this.activate(extensionId, event).then(
+      () => ({ extensionId, error: null }),
+      (error) => ({ extensionId, error: error instanceof Error ? error.message : String(error) }))));
+    for (const result of results) {
+      if (result.error === null) activated.push(result.extensionId);
+      else failed.push({ extensionId: result.extensionId, message: result.error });
+    }
+    return { activated, failed };
   }
 
   sessionForHandle(kind, handle) {

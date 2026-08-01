@@ -11,17 +11,26 @@
 #include "apiwrap/CommonControl.h"
 #include "apiwrap/DarkMode.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/hover/HoverMarkdown.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CExtensionIconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/ThemeIconResolver.h"
 
 #include "charset/CCodeFactory.h"
 
+#include <algorithm>
 #include <cwctype>
+#include <new>
 #include <string_view>
 #include <vector>
 
 namespace {
 
 constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
+
+//! ホバー遅延タイマーの ID。comctl32 がステータスバー自身に張るタイマーと衝突しない値。
+constexpr UINT_PTR kExtensionHoverTimerId = 0xACE1;
 
 void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 {
@@ -42,104 +51,11 @@ void DrawBranchIcon(HDC dc, const RECT& part, COLORREF color, UINT dpi) noexcept
 		workbench::icons::codicons::Icon::GitBranch, color);
 }
 
-struct ExtensionStatusText {
-	std::wstring text;
-	workbench::icons::codicons::Icon icon = workbench::icons::codicons::Icon::RecordSmall;
-	bool hasIcon = false;
-	bool extensionsIcon = false;
-};
-
-[[nodiscard]] bool ResolveExtensionStatusIcon(
-	std::wstring_view name,
-	workbench::icons::codicons::Icon& icon,
-	bool& extensionsIcon) noexcept
+//! インラインアイコン 1 個が占める正方形の一辺。矩形の高さで頭打ちにする。
+[[nodiscard]] int InlineStatusIconSide(int availableHeight, UINT dpi) noexcept
 {
-	using Icon = workbench::icons::codicons::Icon;
-	extensionsIcon = name == L"extensions";
-	if (extensionsIcon) return true;
-	if (name == L"git-branch" || name == L"source-control") icon = Icon::GitBranch;
-	else if (name == L"account") icon = Icon::Account;
-	else if (name == L"gear" || name == L"settings") icon = Icon::Gear;
-	else if (name == L"target") icon = Icon::Target;
-	else if (name == L"newline") icon = Icon::Newline;
-	else if (name == L"code") icon = Icon::Code;
-	else if (name == L"file-binary") icon = Icon::FileBinary;
-	else if (name == L"record-small" || name == L"circle-filled") icon = Icon::RecordSmall;
-	else if (name == L"insert") icon = Icon::Insert;
-	else if (name == L"zoom-in") icon = Icon::ZoomIn;
-	else if (name == L"file") icon = Icon::File;
-	else if (name == L"open-preview") icon = Icon::OpenPreview;
-	else if (name == L"chevron-down") icon = Icon::ChevronDown;
-	else if (name == L"close" || name == L"error") icon = Icon::Close;
-	else if (name == L"close-all") icon = Icon::CloseAll;
-	else {
-		// Codicons contains hundreds of names. A stable native marker is preferable
-		// to leaking the literal "$(name)" markup when a glyph is not imported yet.
-		icon = Icon::RecordSmall;
-	}
-	return true;
-}
-
-[[nodiscard]] ExtensionStatusText ParseExtensionStatusText(std::wstring_view raw)
-{
-	ExtensionStatusText result;
-	result.text.reserve(raw.size());
-	std::size_t cursor = 0;
-	while (cursor < raw.size()) {
-		const std::size_t start = raw.find(L"$(", cursor);
-		if (start == std::wstring_view::npos) {
-			result.text.append(raw.substr(cursor));
-			break;
-		}
-		result.text.append(raw.substr(cursor, start - cursor));
-		const std::size_t end = raw.find(L')', start + 2);
-		if (end == std::wstring_view::npos) {
-			result.text.append(raw.substr(start));
-			break;
-		}
-		auto name = raw.substr(start + 2, end - start - 2);
-		if (const std::size_t modifier = name.find(L'~'); modifier != std::wstring_view::npos) {
-			name = name.substr(0, modifier);
-		}
-		const bool onlyLeadingWhitespace = std::all_of(result.text.begin(), result.text.end(),
-			[](wchar_t character) { return std::iswspace(character) != 0; });
-		if (!result.hasIcon && onlyLeadingWhitespace && !name.empty()) {
-			result.hasIcon = ResolveExtensionStatusIcon(name, result.icon, result.extensionsIcon);
-			result.text.clear();
-		}
-		cursor = end + 1;
-	}
-	if (result.hasIcon) {
-		const auto firstText = std::find_if_not(result.text.begin(), result.text.end(),
-			[](wchar_t character) { return std::iswspace(character) != 0; });
-		result.text.erase(result.text.begin(), firstText);
-	}
-	return result;
-}
-
-void DrawExtensionsStatusIcon(HDC dc, const RECT& part, COLORREF color, UINT dpi) noexcept
-{
-	if (dc == nullptr) return;
-	const auto box = workbench::icons::LeadingStatusIconBounds(
-		{ part.left, part.top, part.right, part.bottom }, dpi);
-	if (box.Width() <= 0 || box.Height() <= 0) return;
-	const int gap = std::max(1, workbench::icons::ScaleDip(2, dpi));
-	const int tileWidth = std::max(1, (box.Width() - gap) / 2);
-	const int tileHeight = std::max(1, (box.Height() - gap) / 2);
-	const HBRUSH tile = ::CreateSolidBrush(color);
-	if (tile == nullptr) return;
-	for (int row = 0; row < 2; ++row) {
-		for (int column = 0; column < 2; ++column) {
-			RECT square{
-				box.left + column * (tileWidth + gap),
-				box.top + row * (tileHeight + gap),
-				box.left + column * (tileWidth + gap) + tileWidth,
-				box.top + row * (tileHeight + gap) + tileHeight,
-			};
-			::FillRect(dc, &square, tile);
-		}
-	}
-	::DeleteObject(tile);
+	return std::max(0, std::min(workbench::icons::ScaleDip(workbench::icons::kStatusIconDip, dpi),
+		std::max(0, availableHeight)));
 }
 
 } // namespace
@@ -196,6 +112,14 @@ void CMainStatusBar::CreateStatusBar()
 
 	InstallPaletteSubclass();
 
+	// 拡張機能ステータスバー項目のホバー。VS Code の HoverWidget と同じく、
+	// StatusBarItem.tooltip の MarkdownString を書式付きのまま描く独立したポップアップ。
+	// TOOLTIPS_CLASSW は平文 1 本しか描けないため使わない。
+	if (m_extensionHover.Create(m_hwndStatusBar)) {
+		m_extensionHover.SetPalette(m_palette);
+		m_extensionHover.SetIconRegistry(m_extensionIconFonts);
+	}
+
 	/* プログレスバー */
 	m_hwndProgressBar = ::CreateWindowEx(
 		WS_EX_TOOLWINDOW,
@@ -229,6 +153,11 @@ void CMainStatusBar::DestroyStatusBar()
 		::DestroyWindow( m_hwndProgressBar );
 		m_hwndProgressBar = nullptr;
 	}
+	HideExtensionHover();
+	m_extensionHover.Destroy();
+	// フォントは DC へ選択したままにしていない（PaintStatusBar が毎回元へ戻す）ので、
+	// ここで破棄してよい。
+	ReleaseIconFonts();
 	if (m_hwndStatusBar != nullptr) {
 		::RemoveWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, kSakuraStatusBarSubclassId);
 		::DestroyWindow(m_hwndStatusBar);
@@ -257,6 +186,7 @@ void CMainStatusBar::DestroyStatusBar()
 void CMainStatusBar::SetPalette(const theme::ThemePalette& palette) noexcept
 {
 	m_palette = palette;
+	m_extensionHover.SetPalette(palette);
 	if (m_hwndStatusBar != nullptr) {
 		::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 	}
@@ -273,12 +203,71 @@ void CMainStatusBar::SetExtensionItems(std::vector<SExtensionStatusBarItem> item
 {
 	std::erase_if(items, [](const auto& item) { return !item.visible || item.text.empty(); });
 	m_extensionItems = std::move(items);
+	// 項目が入れ替わると m_extensionHitTargets は次の描画まで古いままなので、表示中の
+	// ホバーは消えた項目の内容を映し続けかねない。ここで必ず取り下げる。
+	HideExtensionHover();
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
 void CMainStatusBar::SetExtensionCommandCallback(std::function<void(std::wstring_view)> callback)
 {
 	m_extensionCommandCallback = std::move(callback);
+}
+
+void CMainStatusBar::SetExtensionIconFonts(
+	const workbench::icons::CExtensionIconFontRegistry* registry) noexcept
+{
+	if (m_extensionIconFonts == registry) return;
+	m_extensionIconFonts = registry;
+	// ホバーも `$(name)` を同じレジストリで解決する。ステータスバー本文とホバー本文で
+	// 解決結果が食い違ってはならない。
+	m_extensionHover.SetIconRegistry(registry);
+	// 借りていた書体は今のレジストリのものなので、差し替え時は必ず捨てる。
+	// 登録解除済みの書体名で CreateFontIndirectW を続けると、代替書体で描いた
+	// 無関係なグリフが出てしまう。
+	ReleaseIconFonts();
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
+HFONT CMainStatusBar::AcquireIconFont(const std::wstring& faceName, int height) const noexcept
+{
+	if (faceName.empty() || height <= 0) return nullptr;
+	// LOGFONTW::lfFaceName は LF_FACESIZE 文字（終端含む）まで。溢れる書体名は
+	// 黙って切り詰めず、描かないほうを選ぶ（別書体で代替されるより誤解が少ない）。
+	if (faceName.size() >= LF_FACESIZE) return nullptr;
+
+	for (const auto& cached : m_iconFontCache) {
+		if (cached.height == height && cached.faceName == faceName) return cached.font;
+	}
+
+	LOGFONTW logFont{};
+	logFont.lfHeight = -height;	// 負値は em 高（文字高）指定
+	logFont.lfWeight = FW_NORMAL;
+	logFont.lfCharSet = DEFAULT_CHARSET;
+	logFont.lfOutPrecision = OUT_TT_PRECIS;
+	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	logFont.lfQuality = CLEARTYPE_QUALITY;
+	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	::wcsncpy_s(logFont.lfFaceName, faceName.c_str(), _TRUNCATE);
+
+	const HFONT font = ::CreateFontIndirectW(&logFont);
+	if (font == nullptr) return nullptr;
+	try {
+		m_iconFontCache.push_back({ faceName, height, font });
+	}
+	catch (const std::bad_alloc&) {
+		::DeleteObject(font);
+		return nullptr;
+	}
+	return font;
+}
+
+void CMainStatusBar::ReleaseIconFonts() const noexcept
+{
+	for (const auto& cached : m_iconFontCache) {
+		if (cached.font != nullptr) ::DeleteObject(cached.font);
+	}
+	m_iconFontCache.clear();
 }
 
 void CMainStatusBar::InstallPaletteSubclass() noexcept
@@ -319,7 +308,27 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 		::InvalidateRect(window, nullptr, FALSE);
 		break;
 	case WM_LBUTTONUP:
+		// VS Code もホバー中にクリックするとホバーは閉じる。コマンドが走って項目の
+		// 中身が入れ替わったあとも古い内容が残らないよう、実行の前に取り下げる。
+		if (self != nullptr) self->HideExtensionHover();
 		if (self != nullptr && self->InvokeExtensionItemAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })) {
+			return 0;
+		}
+		break;
+	case WM_MOUSEMOVE:
+		if (self != nullptr) {
+			self->OnExtensionHoverMouseMove({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+		}
+		break;
+	case WM_MOUSELEAVE:
+		if (self != nullptr) {
+			self->m_hoverTracking = false;
+			self->HideExtensionHover();
+		}
+		break;
+	case WM_TIMER:
+		if (self != nullptr && wParam == kExtensionHoverTimerId) {
+			self->ShowExtensionHoverNow();
 			return 0;
 		}
 		break;
@@ -328,7 +337,10 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 			POINT point{};
 			if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)) {
 				for (const auto& target : self->m_extensionHitTargets) {
-					if (::PtInRect(&target.bounds, point)) {
+					// tooltip-only 項目（command が空）は WM_LBUTTONUP でも無視される
+					// ので、ここでも手のひらカーソルを出さない。押しても何も起きない
+					// 項目にクリック可能な見た目を与えるのは既存の挙動からの逸脱になる。
+					if (!target.command.empty() && ::PtInRect(&target.bounds, point)) {
 						::SetCursor(::LoadCursor(nullptr, IDC_HAND));
 						return TRUE;
 					}
@@ -339,6 +351,11 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 	case WM_NCDESTROY:
 		::RemoveWindowSubclass(window, StatusBarSubclassProc, subclassId);
 		if (self != nullptr && self->m_hwndStatusBar == window) {
+			// ホバーはこのウィンドウの所有ポップアップなので、親が消える前に必ず
+			// 落とす。タイマーも m_hwndStatusBar に張っているため、null 化より先に
+			// 取り下げないと KillTimer の宛先が無くなる。
+			self->HideExtensionHover();
+			self->m_extensionHover.Destroy();
 			self->m_hwndStatusBar = nullptr;
 		}
 		break;
@@ -390,56 +407,107 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
 	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
 	const int itemInset = workbench::icons::ScaleDip(workbench::icons::kStatusItemInsetDip, dpi);
-	RECT messageRect{};
+	// パート 0 はレガシーのドキュメント状態（カーソル位置・文字コード等）が占める帯で、
+	// ドキュメントが 1 つも開いていなければパートは 1 つも無い。しかし拡張のステータス
+	// 項目はそれとは別のレイヤーで、実 VS Code はエディターが開いていなくても
+	// ステータスバーと拡張項目を常に描く。「パートが無い」を「拡張項目も描かない」と
+	// 読み替えると、空のウィンドウで拡張項目が丸ごと消える（実機で確認した欠陥）。
+	// パートが無いときはステータスバー自身のクライアント矩形を帯として使う。
+	RECT messageRect = client;
 	if (partCount > 0) {
 		(void)::SendMessageW(m_hwndStatusBar, SB_GETRECT, 0, reinterpret_cast<LPARAM>(&messageRect));
-		messageRect.left = std::max<LONG>(messageRect.left, scmWidth);
 	}
+	messageRect.left = std::max<LONG>(messageRect.left, scmWidth);
+
+	const int statusHeight = std::max<int>(0, messageRect.bottom - messageRect.top);
+	const int inlineIconSide = InlineStatusIconSide(statusHeight, dpi);
 
 	struct ExtensionLayoutItem {
 		const SExtensionStatusBarItem* item = nullptr;
-		ExtensionStatusText display;
+		std::vector<workbench::icons::SLabelRun> runs;
 		int width = 0;
 	};
 	std::vector<ExtensionLayoutItem> leftItems;
 	std::vector<ExtensionLayoutItem> rightItems;
 	for (const auto& item : m_extensionItems) {
-		auto display = ParseExtensionStatusText(item.text);
-		SIZE extent{};
-		(void)::GetTextExtentPoint32W(target, display.text.c_str(), static_cast<int>(display.text.size()), &extent);
-		const int contentWidth = extent.cx +
-			(display.hasIcon ? workbench::icons::StatusTextInsetPixels(dpi) : 0);
+		// 実 VS Code の renderLabelWithIcons と同じく、ラベル中のアイコンは位置そのままで
+		// 何個でもインラインに並ぶ。先頭 1 個だけを特別扱いしてはならない。
+		// 組み込み `$(name)` は同梱 codicon.ttf の 1 グリフとして描く。書体名が空なら
+		// 登録に失敗しているので、取り込み済みベクターへ縮退する。
+		auto runs = workbench::icons::ParseLabelWithIcons(
+			item.text, m_extensionIconFonts, workbench::icons::CCodiconFont::Instance().FaceName());
+		int contentWidth = 0;
+		for (const auto& run : runs) {
+			if (run.icon) {
+				contentWidth += inlineIconSide;
+				continue;
+			}
+			SIZE extent{};
+			if (::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent)) {
+				contentWidth += extent.cx;
+			}
+		}
 		ExtensionLayoutItem layout{
 			.item = &item,
-			.display = std::move(display),
+			.runs = std::move(runs),
 			.width = workbench::icons::StatusItemPartWidthPixels(contentWidth, dpi),
 		};
-		if (item.alignment == EExtensionStatusBarAlignment::Right) rightItems.push_back(layout);
-		else leftItems.push_back(layout);
+		if (item.alignment == EExtensionStatusBarAlignment::Right) rightItems.push_back(std::move(layout));
+		else leftItems.push_back(std::move(layout));
 	}
 	const auto drawExtensionItem = [&](const ExtensionLayoutItem& layout, int left, int right) {
 		if (layout.item == nullptr || right <= left) return;
 		RECT itemRect{ left, messageRect.top, right, messageRect.bottom };
-		if (layout.display.hasIcon) {
-			if (layout.display.extensionsIcon) {
-				DrawExtensionsStatusIcon(target, itemRect, m_palette.highlightText.ToColorRef(), dpi);
-			} else {
-				const auto box = workbench::icons::LeadingStatusIconBounds(
-					{ itemRect.left, itemRect.top, itemRect.right, itemRect.bottom }, dpi);
-				workbench::icons::codicons::Draw(
-					target, box, layout.display.icon, m_palette.highlightText.ToColorRef());
+		const COLORREF iconColor = m_palette.highlightText.ToColorRef();
+		const LONG contentRight = std::max<LONG>(itemRect.left, itemRect.right - itemInset);
+		LONG cursorX = std::min<LONG>(contentRight, itemRect.left + itemInset);
+		for (const auto& run : layout.runs) {
+			if (cursorX >= contentRight) break;
+			if (run.icon) {
+				const int side = std::min<int>(inlineIconSide, static_cast<int>(contentRight - cursorX));
+				if (side <= 0) break;
+				const workbench::icons::IconRect box{
+					static_cast<int>(cursorX),
+					itemRect.top + (statusHeight - side) / 2,
+					static_cast<int>(cursorX) + side,
+					itemRect.top + (statusHeight - side) / 2 + side,
+				};
+				if (run.resolved.font) {
+					// アイコンフォント（寄与アイコンも同梱 codicon.ttf も）は em ボックス
+					// いっぱいにグリフを置く前提で作られている。負の lfHeight は文字高
+					// （em 高）指定なので、アイコンの正方形と同じ高さを渡してから矩形の
+					// 中央へ寄せる。
+					const HFONT glyphFont = AcquireIconFont(
+						run.resolved.fontIcon.faceName, std::max(1, box.Height()));
+					if (glyphFont != nullptr && !run.resolved.fontIcon.glyph.empty()) {
+						const HFONT previousFont = static_cast<HFONT>(::SelectObject(target, glyphFont));
+						RECT glyphRect{ box.left, box.top, box.right, box.bottom };
+						::DrawTextW(target, run.resolved.fontIcon.glyph.c_str(),
+							static_cast<int>(run.resolved.fontIcon.glyph.size()), &glyphRect,
+							DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+						::SelectObject(target, previousFont);
+					}
+				} else if (run.resolved.extensionsComposite) {
+					workbench::icons::DrawExtensionsCompositeIcon(target, box, iconColor, dpi);
+				} else {
+					workbench::icons::codicons::Draw(target, box, run.resolved.builtin, iconColor);
+				}
+				cursorX += side;
+				continue;
 			}
-		}
-		RECT textRect = itemRect;
-		textRect.left = std::min<LONG>(textRect.right, textRect.left +
-			(layout.display.hasIcon ? workbench::icons::StatusTextInsetPixels(dpi) : itemInset));
-		textRect.right = std::max<LONG>(textRect.left, textRect.right - itemInset);
-		if (!layout.display.text.empty()) {
-			::DrawTextW(target, layout.display.text.c_str(), static_cast<int>(layout.display.text.size()), &textRect,
+			if (run.text.empty()) continue;
+			SIZE extent{};
+			(void)::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent);
+			RECT textRect{ cursorX, itemRect.top, contentRight, itemRect.bottom };
+			::DrawTextW(target, run.text.c_str(), static_cast<int>(run.text.size()), &textRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			cursorX = std::min<LONG>(contentRight, cursorX + extent.cx);
 		}
-		if (!layout.item->command.empty()) {
-			m_extensionHitTargets.push_back({ itemRect, layout.item->command });
+		// ツールチップは Markdown 原文のまま持ち、実際にホバーを出す瞬間に解析する。
+		// 再描画のたびに解析すると、書式付きホバーでは平文射影より明確に高くつく。
+		if (!layout.item->command.empty() || !layout.item->tooltip.empty()) {
+			m_extensionHitTargets.push_back({ itemRect, layout.item->command, layout.item->tooltip,
+				layout.item->tooltipSupportsThemeIcons });
 		}
 	};
 
@@ -502,12 +570,92 @@ bool CMainStatusBar::InvokeExtensionItemAt(POINT point) const
 {
 	if (!m_extensionCommandCallback) return false;
 	for (const auto& target : m_extensionHitTargets) {
-		if (::PtInRect(&target.bounds, point)) {
+		// tooltip-only 項目（command が空）はクリックしても何も起きない。既存の挙動を
+		// 変えないよう、command を持つ項目だけを対象にする。
+		if (!target.command.empty() && ::PtInRect(&target.bounds, point)) {
 			m_extensionCommandCallback(target.command);
 			return true;
 		}
 	}
 	return false;
+}
+
+const CMainStatusBar::ExtensionHitTarget* CMainStatusBar::FindHoverTargetAt(POINT point) const noexcept
+{
+	for (const auto& target : m_extensionHitTargets) {
+		// コマンドだけ持ちツールチップの無い項目には、出すものが無い。
+		if (target.tooltipMarkdown.empty()) continue;
+		if (::PtInRect(&target.bounds, point)) return &target;
+	}
+	return nullptr;
+}
+
+void CMainStatusBar::OnExtensionHoverMouseMove(POINT point) noexcept
+{
+	if (m_hwndStatusBar == nullptr) return;
+	// ステータスバーの外へ出たことは WM_MOUSEMOVE では分からないので、TME_LEAVE を
+	// 張っておく。ホバーは WS_EX_TRANSPARENT なので、ポップアップの下でも
+	// WM_MOUSEMOVE はこちらへ届き続ける。
+	if (!m_hoverTracking) {
+		TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, m_hwndStatusBar, 0 };
+		m_hoverTracking = ::TrackMouseEvent(&track) != FALSE;
+	}
+
+	const auto* target = FindHoverTargetAt(point);
+	if (target == nullptr) {
+		HideExtensionHover();
+		return;
+	}
+	// 同じ項目の中で動いただけなら、待機も表示もやり直さない。矩形で同一性を見るのは、
+	// m_extensionHitTargets が描画のたびに作り直されて添字が当てにならないため。
+	if ((m_hoverPending || m_extensionHover.IsVisible()) && ::EqualRect(&m_hoverAnchor, &target->bounds)) return;
+
+	HideExtensionHover();
+	m_hoverAnchor = target->bounds;
+	m_hoverPending = ::SetTimer(m_hwndStatusBar, kExtensionHoverTimerId,
+		workbench::hover::kHoverDelayMilliseconds, nullptr) != 0;
+}
+
+void CMainStatusBar::ShowExtensionHoverNow()
+{
+	if (m_hwndStatusBar == nullptr) return;
+	::KillTimer(m_hwndStatusBar, kExtensionHoverTimerId);
+	m_hoverPending = false;
+
+	// タイマー満了時点のカーソル位置を改めて読む。待機中に項目が入れ替わっていれば、
+	// 張った時とは別の（あるいは何も無い）項目の上にいる。
+	POINT cursor{};
+	if (::GetCursorPos(&cursor) == FALSE || ::ScreenToClient(m_hwndStatusBar, &cursor) == FALSE) {
+		HideExtensionHover();
+		return;
+	}
+	const auto* target = FindHoverTargetAt(cursor);
+	if (target == nullptr) {
+		HideExtensionHover();
+		return;
+	}
+
+	const auto document = workbench::hover::Parse(target->tooltipMarkdown,
+		{ .supportThemeIcons = target->tooltipSupportsThemeIcons });
+	if (document.empty()) {
+		HideExtensionHover();
+		return;
+	}
+
+	RECT anchor = target->bounds;
+	m_hoverAnchor = anchor;
+	::MapWindowPoints(m_hwndStatusBar, HWND_DESKTOP, reinterpret_cast<POINT*>(&anchor), 2);
+	m_extensionHover.Show(document, anchor);
+}
+
+void CMainStatusBar::HideExtensionHover() noexcept
+{
+	if (m_hoverPending && m_hwndStatusBar != nullptr) {
+		::KillTimer(m_hwndStatusBar, kExtensionHoverTimerId);
+	}
+	m_hoverPending = false;
+	m_hoverAnchor = RECT{};
+	m_extensionHover.Hide();
 }
 
 /*!

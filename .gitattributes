@@ -21,3 +21,8 @@ tools/startup-benchmark-sample.md text eol=lf
 *.vsconfig text eol=crlf
 *.yml text eol=crlf
 .github/workflows/*.yml text eol=lf
+
+# フォントは変換せずそのまま扱う
+*.ttf binary
+*.otf binary
+*.woff binary

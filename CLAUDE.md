@@ -44,6 +44,23 @@ Every workbench change must satisfy all of the following:
   VS Code behavior impossible, record the constraint and the chosen behavior in
   the owning subsystem's `CLAUDE.md`. An undocumented divergence is a bug.
 
+## Repository Boundary: Fork-Only by Default
+
+This checkout is `tsuyoshi-otake/sakura-editor-next`. Upstream repositories are
+reference material only unless the user explicitly authorizes work against them.
+
+- Do not create, modify, close, comment on, or label upstream Issues or Pull
+  Requests.
+- Do not fetch from, pull from, push to, merge, tag, release, create branches,
+  or change remotes in an upstream repository.
+- Do not infer upstream authorization from requests to research VS Code, compare
+  repositories, synchronize code, or continue a fork-side implementation. Those
+  requests authorize read-only reference work at most.
+- When explicit upstream authorization is given, confirm the exact repository
+  and operation first, then keep fork-side and upstream-side changes separate.
+  Never omit an explicit `--repo`/repository target when using a hosted-repo
+  CLI, and never assume a remote name identifies the intended repository.
+
 ## Scope
 
 This file contains repository-wide guidance. More specific `CLAUDE.md` files are loaded when Claude works in their subtrees; follow the nearest file and keep local details out of this root file.

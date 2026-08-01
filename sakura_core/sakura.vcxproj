@@ -1,4 +1,4 @@
-<?xml version="1.0" encoding="utf-8"?>
+﻿<?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" InitialTargets="ValidateX64Platform">
   <ItemGroup Label="ProjectConfigurations">
     <ProjectConfiguration Include="Debug|x64">
@@ -350,7 +350,6 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionSecretVaultStorage.h" />
     <ClInclude Include="..\sakura_core\extension\IExtensionSecretStorage.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionStatusBar.h" />
-    <ClInclude Include="..\sakura_core\extension\CExtensionTrustStore.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionViewRegistry.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionRpcProtocol.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionClientReconnectPolicy.h" />
@@ -651,6 +650,7 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EditorCoreService.h" />
@@ -672,6 +672,12 @@
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceTypes.h" />
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\CExtensionIconFont.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h" />
+	<ClInclude Include="..\sakura_core\workbench\hover\HoverMarkdown.h" />
+	<ClInclude Include="..\sakura_core\workbench\hover\CHoverWidget.h" />
     <ClInclude Include="..\sakura_core\window\CAutoScrollWnd.h" />
     <ClInclude Include="..\sakura_core\window\CClientMenuBar.h" />
     <ClInclude Include="..\sakura_core\window\CCustomFrameController.h" />
@@ -925,7 +931,6 @@
     <ClCompile Include="..\sakura_core\extension\CExtensionSecretStorage.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionSecretVaultStorage.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionStatusBar.cpp" />
-    <ClCompile Include="..\sakura_core\extension\CExtensionTrustStore.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionViewRegistry.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionRpcProtocol.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionService.cpp" />
@@ -1268,6 +1273,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EditorCoreService.cpp" />
@@ -1281,6 +1287,10 @@
     <ClCompile Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.cpp" />
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\icons\CExtensionIconFont.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\hover\HoverMarkdown.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\hover\CHoverWidget.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />
     <ClCompile Include="..\sakura_core\accessibility\CustomUiAutomationProvider.cpp" />
     <ClCompile Include="..\sakura_core\window\CClientMenuBar.cpp" />

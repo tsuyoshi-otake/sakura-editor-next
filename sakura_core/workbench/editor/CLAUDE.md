@@ -64,6 +64,14 @@ whether an editor input is open or active.
   accessible name instead of the canvas. Both the label and its keybinding use
   the `descriptionText` token; do not reintroduce `secondaryText` or the removed
   `editorWatermark.foreground` token, which no longer exists upstream.
+- `CExtensionDetailSurface` is a native composition-layer metadata projection,
+  not an `EditorInput` and not a second document model. `CEditWnd` may show it
+  only while the native editor has no active document, and must hide it before
+  projecting a document. Its gallery media, feature/changelog/pack rendering,
+  and recommendation/filter surfaces must remain explicit rather than being
+  represented by stale or fake document state. README Markdown may be supplied
+  through its typed state API after a bounded OpenVSX text fetch; the surface
+  renders that content natively and never executes remote HTML or links.
 
 ## Backup and Session Persistence
 

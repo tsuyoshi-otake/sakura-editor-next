@@ -7,6 +7,10 @@
 #include "StdAfx.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
 
+#include "config/editing/CJsoncConfigurationEditor.h"
+#include "workbench/IWorkbenchRuntime.h"
+#include "workbench/WorkbenchBootstrapContext.h"
+
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -51,17 +55,84 @@ workbench::output::OutputOwner Owner(const std::string& extensionId, const std::
 	return { .ownerId = extensionId, .generation = generation };
 }
 
+//! Fixed owner identity for the host-owned Extension Host log channel. This never equals any real
+//! extension ID, so it can never be matched by DisposeOwner(extensionId, generation) and is never
+//! visited by DisposeAll's m_trackedOwners walk (the channel is deliberately never remembered there).
+workbench::output::OutputOwner ExtensionHostLogOwner()
+{
+	return { .ownerId = "sakura.workbench.extensionHost", .generation = 1 };
+}
+
+//! Extension-supplied text reaching this channel is untrusted and unbounded in principle (for example a
+//! long stack trace). Defensively bound the total stored message regardless of what the caller composed.
+constexpr std::size_t kMaximumExtensionHostLogMessageCodeUnits = 4000;
+
+std::wstring BoundedExtensionHostLogMessage(const std::wstring_view message)
+{
+	if (message.size() <= kMaximumExtensionHostLogMessageCodeUnits) return std::wstring(message);
+	std::wstring bounded(message.substr(0, kMaximumExtensionHostLogMessageCodeUnits));
+	bounded += L"…[truncated]";
+	return bounded;
+}
+
 } // namespace
 
 CExtensionWorkbenchServiceBridge::CExtensionWorkbenchServiceBridge(
 	workbench::problems::MarkerService* markerService,
 	workbench::output::OutputService* outputService,
+	workbench::IWorkbenchRuntime* workbenchRuntime,
 	const std::size_t maximumTrackedOwnerGenerations)
 	: m_markerService(markerService)
 	, m_outputService(outputService)
+	, m_workbenchRuntime(workbenchRuntime)
 	, m_maximumTrackedOwnerGenerations(maximumTrackedOwnerGenerations)
 {
 	m_trackedOwners.reserve(m_maximumTrackedOwnerGenerations);
+}
+
+config::SettingsWritebackResult CExtensionWorkbenchServiceBridge::WriteGlobalConfiguration(
+	const std::string_view key,
+	const std::optional<config::ConfigurationValue>& value,
+	const std::wstring_view overrideLanguageId)
+{
+	if (!m_workbenchRuntime) {
+		return { .status = config::ESettingsWritebackStatus::Stopped,
+			.diagnostic = "no workbench runtime is bound to this bridge" };
+	}
+
+	// Mirrors CWorkbenchRuntime::ReloadProfileSettings's own source identity exactly
+	// (scope, sourceId, priority, and a target that carries only profileId): the file
+	// source controller rejects a Reload whose source identity differs from the one
+	// already tracked for this document key, so this write must reuse it verbatim
+	// rather than constructing a plausible-looking but distinct identity.
+	const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+	config::ConfigurationTarget sourceTarget;
+	sourceTarget.profileId = profile.SelectedProfileId();
+	const config::ConfigurationSource source {
+		config::EConfigurationScope::Profile,
+		sourceTarget,
+		"profile.settings",
+		0,
+	};
+
+	config::editing::ConfigurationDocumentEditTarget editTarget;
+	editTarget.resource = profile.Resources().Settings();
+	editTarget.target = sourceTarget;
+	if (overrideLanguageId.empty()) {
+		editTarget.scope = config::editing::EConfigurationDocumentScope::Profile;
+	} else {
+		// The base source identity's languageId must stay unset (IsSameBaseTarget requires
+		// it); only the edit target's languageId selects the "[languageId]" override block.
+		editTarget.scope = config::editing::EConfigurationDocumentScope::LanguageOverride;
+		editTarget.target.languageId = std::wstring(overrideLanguageId);
+	}
+
+	const config::SettingsWritebackRequest request {
+		.edit = { .target = std::move(editTarget), .key = std::string(key), .value = value },
+		.documentKey = "profile.settings",
+		.source = source,
+	};
+	return m_workbenchRuntime->WriteSetting(request);
 }
 
 bool CExtensionWorkbenchServiceBridge::PrepareOwner(
@@ -266,6 +337,54 @@ bool CExtensionWorkbenchServiceBridge::NextDisposeOperationId(std::string& opera
 	} catch (...) {
 		return false;
 	}
+}
+
+bool CExtensionWorkbenchServiceBridge::NextExtensionHostLogOperationId(std::string& operationId) noexcept
+{
+	if (m_nextExtensionHostLogOperationId == 0 ||
+		m_nextExtensionHostLogOperationId == (std::numeric_limits<std::uint64_t>::max)()) return false;
+	try {
+		operationId = "extension-bridge-host-log-" + std::to_string(m_nextExtensionHostLogOperationId++);
+		return workbench::output::OutputService::IsValidOperationId(operationId);
+	} catch (...) {
+		return false;
+	}
+}
+
+bool CExtensionWorkbenchServiceBridge::AppendExtensionHostLog(
+	const workbench::output::EOutputLogLevel level, const std::wstring_view message)
+{
+	// No runtime-owned Output authority to record into (for example isolated legacy tests that construct
+	// the bridge without one). The caller's RPC still succeeds; only this diagnostic is unavailable.
+	if (!m_outputService) return false;
+
+	if (!m_extensionHostLogChannelCreated) {
+		std::string createOperationId;
+		if (!NextExtensionHostLogOperationId(createOperationId)) return false;
+		const auto created = m_outputService->CreateChannel({
+			.operation = { .operationId = std::move(createOperationId) },
+			.owner = ExtensionHostLogOwner(),
+			.channelId = std::string(kExtensionHostLogChannelId),
+			.label = std::string(kExtensionHostLogChannelLabel),
+			.kind = workbench::output::EOutputChannelKind::Log,
+		});
+		// Succeeded/Replayed both mean the channel now exists. Any other status (for example the service's
+		// owner/channel limits, its non-wrapping operation ID space exhausted, or Stopped) leaves the
+		// created flag unset so a later call retries channel creation instead of permanently caching a
+		// stale failure.
+		if (!IsAccepted(created)) return false;
+		m_extensionHostLogChannelCreated = true;
+	}
+
+	std::string appendOperationId;
+	if (!NextExtensionHostLogOperationId(appendOperationId)) return false;
+	const auto appended = m_outputService->AppendLog({
+		.operation = { .operationId = std::move(appendOperationId) },
+		.owner = ExtensionHostLogOwner(),
+		.channelId = std::string(kExtensionHostLogChannelId),
+		.entries = { { .level = level, .message = wcstou8s(BoundedExtensionHostLogMessage(message)) } },
+	});
+	return IsAccepted(appended);
 }
 
 bool CExtensionWorkbenchServiceBridge::DisposeTrackedOwner(

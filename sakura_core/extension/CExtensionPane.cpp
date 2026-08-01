@@ -34,6 +34,7 @@ enum EChildId {
 	ID_INSTALL_BUTTON	= 1004,
 	ID_REMOVE_BUTTON	= 1005,
 	ID_STATUS			= 1006,
+	ID_SECTION_LABEL	= 1007,
 };
 
 //! 一覧の列
@@ -46,9 +47,17 @@ enum EColumn {
 
 // 配置に使う寸法（DPI 拡大前の論理ピクセル）
 constexpr int kMargin			= 4;
+constexpr int kSectionHeight = 20;
+constexpr int kExtensionRowHeight = 78;
 constexpr int kLineHeight		= 22;
 constexpr int kSearchButtonWidth = 52;
 constexpr int kStatusHeight		= 40;
+
+constexpr COLORREF kDarkCardColor = RGB( 37, 37, 38 );
+constexpr COLORREF kDarkCardHoverColor = RGB( 50, 50, 50 );
+constexpr COLORREF kDarkCardSelectedColor = RGB( 0, 122, 204 );
+constexpr COLORREF kDarkTextColor = RGB( 224, 224, 224 );
+constexpr COLORREF kDarkSecondaryTextColor = RGB( 170, 170, 170 );
 
 //! 検索欄のサブクラス識別子
 constexpr UINT_PTR kSearchEditSubclassId = 1;
@@ -168,6 +177,7 @@ std::wstring SafeOpenVsxStatusMessage( extension::openvsx::EOpenVsxRequestOutcom
 	case EOpenVsxRequestOutcome::TransportFailure:
 	case EOpenVsxRequestOutcome::InvalidResponse:
 	case EOpenVsxRequestOutcome::SearchParseFailure:
+	case EOpenVsxRequestOutcome::Unsupported:
 	default:
 		return L"extension registry operation failed";
 	}
@@ -221,6 +231,41 @@ CExtensionPane::CExtensionPane(
 {
 }
 
+void CExtensionPane::SetOnExtensionInstalled( std::function<void()> callback )
+{
+	m_onExtensionInstalled = std::move( callback );
+}
+
+void CExtensionPane::SetOnExtensionSelected( ExtensionSelectedCallback callback )
+{
+	m_onExtensionSelected = std::move( callback );
+	NotifySelectionChanged();
+}
+
+void CExtensionPane::SetOnExtensionReadme( ExtensionReadmeCallback callback )
+{
+	m_onExtensionReadme = std::move( callback );
+	if( m_onExtensionReadme ){
+		NotifySelectionChanged();
+	}
+}
+
+void CExtensionPane::InstallSelectedExtension()
+{
+	StartInstall();
+}
+
+void CExtensionPane::ClearExtensionSelection()
+{
+	if( m_hwndList ){
+		LVITEM item = {};
+		item.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+		::SendMessage( m_hwndList, LVM_SETITEMSTATE, static_cast<WPARAM>(-1), (LPARAM)&item );
+	}
+	SetStatusText( L"" );
+	NotifySelectionChanged();
+}
+
 CExtensionPane::~CExtensionPane()
 {
 	// 実行中のワーカーが居るかもしれないので、結果の宛先を無効にしておく。
@@ -235,6 +280,9 @@ CExtensionPane::~CExtensionPane()
 		::DeleteObject( m_hFont );
 		m_hFont = nullptr;
 	}
+	CancelReadmeJob();
+	m_onExtensionSelected = nullptr;
+	m_onExtensionInstalled = nullptr;
 }
 
 HWND CExtensionPane::Open( HINSTANCE hInstance, HWND hwndParent )
@@ -304,10 +352,13 @@ bool CExtensionPane::CreateChildren()
 		0, WC_BUTTON, LS( STR_EXTENSION_SEARCH ),
 		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
 		0, 0, 0, 0, hwnd, (HMENU)ID_SEARCH_BUTTON, hInstance, nullptr );
+	m_hwndSectionLabel = ::CreateWindowEx(
+		0, WC_STATIC, L"Installed", WS_CHILD | WS_VISIBLE | SS_LEFT,
+		0, 0, 0, 0, hwnd, (HMENU)ID_SECTION_LABEL, hInstance, nullptr );
 
 	m_hwndList = ::CreateWindowEx(
 		WS_EX_CLIENTEDGE, WC_LISTVIEW, nullptr,
-		WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
+		WS_CHILD | WS_VISIBLE | WS_TABSTOP | LVS_REPORT | LVS_OWNERDRAWFIXED | LVS_SINGLESEL | LVS_SHOWSELALWAYS | LVS_NOSORTHEADER,
 		0, 0, 0, 0, hwnd, (HMENU)ID_LIST, hInstance, nullptr );
 
 	m_hwndInstallButton = ::CreateWindowEx(
@@ -325,20 +376,23 @@ bool CExtensionPane::CreateChildren()
 		WS_CHILD | WS_VISIBLE | SS_LEFT,
 		0, 0, 0, 0, hwnd, (HMENU)ID_STATUS, hInstance, nullptr );
 
-	if( !m_hwndSearchEdit || !m_hwndSearchButton || !m_hwndList
+	if( !m_hwndSearchEdit || !m_hwndSearchButton || !m_hwndSectionLabel || !m_hwndList
 		|| !m_hwndInstallButton || !m_hwndRemoveButton || !m_hwndStatus ){
 		return false;
 	}
 
 	if( m_hFont ){
 		for( HWND hwndChild : { m_hwndSearchEdit, m_hwndSearchButton, m_hwndList,
-			m_hwndInstallButton, m_hwndRemoveButton, m_hwndStatus } ){
+			m_hwndInstallButton, m_hwndRemoveButton, m_hwndStatus, m_hwndSectionLabel } ){
 			::SendMessage( hwndChild, WM_SETFONT, (WPARAM)m_hFont, MAKELPARAM( TRUE, 0 ) );
 		}
 	}
 
 	::SendMessage( m_hwndList, LVM_SETEXTENDEDLISTVIEWSTYLE,
-		LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER );
+		LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_TRACKSELECT,
+		LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_TRACKSELECT );
+	::SendMessage( m_hwndSearchEdit, EM_SETCUEBANNER, TRUE,
+		(LPARAM)L"Search Extensions in Marketplace" );
 
 	// 列を作る。幅は LayoutChildren で決めるのでここでは仮の値
 	static const UINT auColumnLabels[COL_COUNT] = {
@@ -351,6 +405,14 @@ bool CExtensionPane::CreateChildren()
 		col.cx = DpiScaleX( 60 );
 		col.pszText = const_cast<LPWSTR>( LS( auColumnLabels[i] ) );
 		::SendMessage( m_hwndList, LVM_INSERTCOLUMN, i, (LPARAM)&col );
+	}
+	// The Marketplace view is a stack of extension cards, not a table. Keep the
+	// legacy columns as the list's data model for keyboard/accessibility support,
+	// but hide their report header so the native projection matches VS Code's
+	// card presentation.
+	if (const HWND header = reinterpret_cast<HWND>(::SendMessage(m_hwndList, LVM_GETHEADER, 0, 0));
+		header != nullptr) {
+		::ShowWindow(header, SW_HIDE);
 	}
 
 	::SetWindowSubclass( m_hwndSearchEdit, SearchEditProc, kSearchEditSubclassId, 0 );
@@ -382,7 +444,7 @@ LRESULT CExtensionPane::OnSize( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 
 void CExtensionPane::LayoutChildren( int cx, int cy )
 {
-	if( cx <= 0 || cy <= 0 || !m_hwndList ){
+	if( cx <= 0 || cy <= 0 || !m_hwndList || !m_hwndSearchEdit ){
 		return;
 	}
 
@@ -390,6 +452,7 @@ void CExtensionPane::LayoutChildren( int cx, int cy )
 	const int nLine		= DpiScaleY( kLineHeight );
 	const int nButtonW	= DpiScaleX( kSearchButtonWidth );
 	const int nStatusH	= DpiScaleY( kStatusHeight );
+	const int nSectionH = DpiScaleY( kSectionHeight );
 
 	// 上段：検索欄と検索ボタン
 	int nEditWidth = cx - nMargin * 3 - nButtonW;
@@ -400,20 +463,22 @@ void CExtensionPane::LayoutChildren( int cx, int cy )
 	::MoveWindow( m_hwndSearchButton, nMargin * 2 + nEditWidth, nMargin, nButtonW, nLine, TRUE );
 
 	// 下段：操作ボタンと状態表示
-	const int nStatusTop = cy - nMargin - nStatusH;
-	const int nButtonTop = nStatusTop - nMargin - nLine;
+	const int nStatusTop = std::max( nMargin, cy - nMargin - nStatusH );
+	const int nButtonTop = std::max( nMargin, nStatusTop - nMargin - nLine );
 	const int nActionW = ( cx - nMargin * 3 ) / 2;
 	::MoveWindow( m_hwndInstallButton, nMargin, nButtonTop, nActionW, nLine, TRUE );
 	::MoveWindow( m_hwndRemoveButton, nMargin * 2 + nActionW, nButtonTop, nActionW, nLine, TRUE );
 	::MoveWindow( m_hwndStatus, nMargin, nStatusTop, cx - nMargin * 2, nStatusH, TRUE );
 
 	// 中段：一覧。残りをすべて使う
-	const int nListTop = nMargin * 2 + nLine;
+	::MoveWindow( m_hwndSectionLabel, nMargin, nMargin * 2 + nLine,
+		cx - nMargin * 2, nSectionH, TRUE );
+	const int nListTop = nMargin * 2 + nLine + nSectionH;
 	int nListHeight = nButtonTop - nMargin - nListTop;
 	if( nListHeight < nLine ){
 		nListHeight = nLine;
 	}
-	const int nListWidth = cx - nMargin * 2;
+	const int nListWidth = std::max( nMargin, cx - nMargin * 2 );
 	::MoveWindow( m_hwndList, nMargin, nListTop, nListWidth, nListHeight, TRUE );
 
 	// 列幅。縦スクロールバーの分を残して名前欄を可変にする
@@ -427,6 +492,7 @@ void CExtensionPane::LayoutChildren( int cx, int cy )
 	::SendMessage( m_hwndList, LVM_SETCOLUMNWIDTH, COL_NAME, nNameW );
 	::SendMessage( m_hwndList, LVM_SETCOLUMNWIDTH, COL_VERSION, nVersionW );
 	::SendMessage( m_hwndList, LVM_SETCOLUMNWIDTH, COL_STATE, nStateW );
+	::InvalidateRect( m_hwndList, nullptr, TRUE );
 }
 
 LRESULT CExtensionPane::OnCommand( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
@@ -463,6 +529,10 @@ LRESULT CExtensionPane::OnNotify( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 						const std::wstring& sDescription = m_rows[nRow].ext.sDescription;
 						SetStatusText( sDescription.empty() ? m_rows[nRow].ext.GetUniqueId() : sDescription );
 					}
+					else{
+						SetStatusText( L"" );
+					}
+					NotifySelectionChanged();
 				}
 			}
 			return 0;
@@ -477,6 +547,62 @@ LRESULT CExtensionPane::OnNotify( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 	return CallDefWndProc( hwnd, msg, wp, lp );
 }
 
+LRESULT CExtensionPane::OnMeasureItem( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+	if( lp ){
+		auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>( lp );
+		if( measure->CtlID == ID_LIST ){
+			measure->itemHeight = DpiScaleY( kExtensionRowHeight );
+			return TRUE;
+		}
+	}
+	return CallDefWndProc( hwnd, msg, wp, lp );
+}
+
+LRESULT CExtensionPane::OnDrawItem( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
+{
+	if( !lp ) return CallDefWndProc( hwnd, msg, wp, lp );
+	auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>( lp );
+	if( draw->CtlID != ID_LIST || draw->itemID >= m_rows.size() ) return TRUE;
+	const auto& row = m_rows[draw->itemID];
+	const bool selected = ( draw->itemState & ODS_SELECTED ) != 0;
+	const bool focused = ( draw->itemState & ODS_FOCUS ) != 0;
+	const bool hovered = ( draw->itemState & ODS_HOTLIGHT ) != 0;
+	const bool dark = IsDarkModeActive();
+	const COLORREF background = dark
+		? ( selected ? kDarkCardSelectedColor : hovered ? kDarkCardHoverColor : kDarkCardColor )
+		: ( selected ? ::GetSysColor( COLOR_HIGHLIGHT ) : hovered ? RGB( 232, 240, 254 ) : ::GetSysColor( COLOR_WINDOW ) );
+	const COLORREF foreground = dark
+		? ( selected ? RGB( 255, 255, 255 ) : kDarkTextColor )
+		: ( selected ? ::GetSysColor( COLOR_HIGHLIGHTTEXT ) : ::GetSysColor( COLOR_WINDOWTEXT ) );
+	const COLORREF secondary = dark ? kDarkSecondaryTextColor : ::GetSysColor( COLOR_GRAYTEXT );
+	HBRUSH brush = ::CreateSolidBrush( background );
+	::FillRect( draw->hDC, &draw->rcItem, brush );
+	::DeleteObject( brush );
+	::SetBkMode( draw->hDC, TRANSPARENT );
+	::SetTextColor( draw->hDC, foreground );
+	RECT text = draw->rcItem;
+	text.left += DpiScaleX( 8 ); text.right -= DpiScaleX( 8 );
+	const std::wstring name = row.ext.sDisplayName.empty() ? row.ext.sName : row.ext.sDisplayName;
+	::DrawText( draw->hDC, name.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
+	text.top += DpiScaleY( 18 );
+	const std::wstring id = row.ext.GetUniqueId();
+	::SetTextColor( draw->hDC, secondary );
+	::DrawText( draw->hDC, id.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
+	text.top += DpiScaleY( 16 );
+	std::wstring details = row.sInstalledVersion.empty() ? L"Available  " : L"Installed  ";
+	details += row.sInstalledVersion.empty() ? row.ext.sVersion : row.sInstalledVersion;
+	::DrawText( draw->hDC, details.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
+	text.top += DpiScaleY( 16 );
+	details = row.ext.sDescription;
+	if( row.ext.nDownloadCount > 0 ) details += L"  " + std::to_wstring( row.ext.nDownloadCount ) + L" downloads";
+	if( row.ext.HasRating() ) details += L"  " + std::to_wstring( row.ext.dAverageRating ) + L"/5";
+	if( row.ext.bVerified ) details += L"  Verified";
+	::DrawText( draw->hDC, details.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
+	if( focused ) ::DrawFocusRect( draw->hDC, &draw->rcItem );
+	return TRUE;
+}
+
 LRESULT CExtensionPane::OnDestroy( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 {
 	// 共有を解放する前に取消しを公開する。ワーカーはネットワーク・展開・削除の境界で
@@ -486,6 +612,9 @@ LRESULT CExtensionPane::OnDestroy( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 		m_pJob->bCancelled.store( true, std::memory_order_release );
 		m_pJob.reset();
 	}
+	// README runs on the same detached-worker boundary and must not publish after
+	// the pane HWND has begun destruction.
+	CancelReadmeJob();
 	::KillTimer( hwnd, kJobPollTimerId );
 	return CallDefWndProc( hwnd, msg, wp, lp );
 }
@@ -497,7 +626,10 @@ LRESULT CExtensionPane::OnTimer( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 		if( m_pJob && m_pJob->bDone.load( std::memory_order_acquire ) ){
 			FinishJob( m_pJob->nSerial );
 		}
-		else if( !m_pJob ){
+		if( m_pReadmeJob && m_pReadmeJob->bDone.load( std::memory_order_acquire ) ){
+			FinishJob( m_pReadmeJob->nSerial );
+		}
+		if( !m_pJob && !m_pReadmeJob ){
 			::KillTimer( hwnd, kJobPollTimerId );
 		}
 		return 0;
@@ -544,7 +676,19 @@ void CExtensionPane::UpdateListView()
 	}
 
 	::SendMessage( m_hwndList, WM_SETREDRAW, FALSE, 0 );
+	const int selectedRow = GetSelectedRow();
+	const std::wstring selectedId = selectedRow >= 0 && static_cast<size_t>( selectedRow ) < m_rows.size()
+		? m_rows[static_cast<size_t>(selectedRow)].ext.GetUniqueId() : std::wstring();
+	// Do not notify while the old rows still exist.  The public selection callback
+	// must observe either a current row or an explicit cleared selection.
+	LVITEM clearSelection = {};
+	clearSelection.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+	::SendMessage( m_hwndList, LVM_SETITEMSTATE, static_cast<WPARAM>(-1), (LPARAM)&clearSelection );
 	::SendMessage( m_hwndList, LVM_DELETEALLITEMS, 0, 0 );
+	if( m_hwndSectionLabel ){
+		::SetWindowText( m_hwndSectionLabel,
+			m_bSearchResultShown ? L"Popular / Search results" : L"Installed" );
+	}
 
 	for( size_t i = 0; i < m_rows.size(); ++i ){
 		const SRow& row = m_rows[i];
@@ -573,11 +717,23 @@ void CExtensionPane::UpdateListView()
 			? STR_EXTENSION_STATE_NOTINSTALLED : STR_EXTENSION_STATE_INSTALLED ) );
 		::SendMessage( m_hwndList, LVM_SETITEM, 0, (LPARAM)&sub );
 	}
+	if( !selectedId.empty() ){
+		for( size_t i = 0; i < m_rows.size(); ++i ){
+			if( m_rows[i].ext.GetUniqueId() == selectedId ){
+				LVITEM state = {};
+				state.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+				state.state = LVIS_SELECTED | LVIS_FOCUSED;
+				::SendMessage( m_hwndList, LVM_SETITEMSTATE, static_cast<WPARAM>(i), (LPARAM)&state );
+				break;
+			}
+		}
+	}
 
 	::SendMessage( m_hwndList, WM_SETREDRAW, TRUE, 0 );
 	::InvalidateRect( m_hwndList, nullptr, TRUE );
 
 	UpdateButtons();
+	NotifySelectionChanged();
 }
 
 void CExtensionPane::UpdateButtons()
@@ -612,6 +768,84 @@ int CExtensionPane::GetSelectedRow() const
 		return -1;
 	}
 	return nIndex;
+}
+
+void CExtensionPane::NotifySelectionChanged()
+{
+	const int nRow = GetSelectedRow();
+	if( nRow < 0 || static_cast<size_t>(nRow) >= m_rows.size() ){
+		// An empty model is the typed clear signal for the composition root. This
+		// prevents stale details from surviving a refresh, uninstall, or close gesture.
+		CancelReadmeJob();
+		m_sReadmeCacheKey.clear();
+		if( m_onExtensionSelected ) m_onExtensionSelected( SOpenVsxExtension{} );
+		if( m_onExtensionReadme ) NotifyReadme( SOpenVsxExtension{}, EExtensionReadmeState::Unsupported, L"", L"" );
+		return;
+	}
+	const SOpenVsxExtension& extension = m_rows[static_cast<size_t>(nRow)].ext;
+	if( m_onExtensionSelected ) m_onExtensionSelected( extension );
+	StartReadmeJob( extension );
+}
+
+void CExtensionPane::NotifyReadme(
+	const SOpenVsxExtension& extension,
+	EExtensionReadmeState state,
+	const std::wstring& payload,
+	const std::wstring& error )
+{
+	if( m_onExtensionReadme ) m_onExtensionReadme( extension, state, payload, error );
+}
+
+void CExtensionPane::CancelReadmeJob()
+{
+	if( m_pReadmeJob ){
+		m_pReadmeJob->bAbandoned.store( true, std::memory_order_release );
+		m_pReadmeJob->bCancelled.store( true, std::memory_order_release );
+		m_pReadmeJob.reset();
+	}
+}
+
+void CExtensionPane::StartReadmeJob( const SOpenVsxExtension& extension )
+{
+	CancelReadmeJob();
+	const std::wstring key = extension.GetUniqueId() + L"\n" + extension.sVersion + L"\n" + extension.sReadmeUrl;
+	if( key == m_sReadmeCacheKey ){
+		NotifyReadme( extension, m_eReadmeCacheState, m_sReadmeCachePayload, m_sReadmeCacheError );
+		return;
+	}
+	m_sReadmeCacheKey.clear();
+	NotifyReadme( extension, EExtensionReadmeState::Loading, L"", L"" );
+	if( extension.sReadmeUrl.empty() ){
+		NotifyReadme( extension, EExtensionReadmeState::Unsupported, L"", L"" );
+		return;
+	}
+	auto clientResult = extension::openvsx::CreateOpenVsxProductionClient(
+		m_configurationService, m_userDataProfileId );
+	if( !clientResult ){
+		NotifyReadme( extension, EExtensionReadmeState::Error, L"", SafeOpenVsxClientCreationMessage( clientResult.outcome ) );
+		return;
+	}
+	auto pJob = std::make_shared<SJob>();
+	pJob->eKind = EJobKind::Readme;
+	pJob->ext = extension;
+	pJob->sReadmeUrl = extension.sReadmeUrl;
+	pJob->registryClient = std::move( clientResult.client );
+	pJob->nSerial = AllocateJobSerial();
+	m_pReadmeJob = pJob;
+	if( 0 == ::SetTimer( GetHwnd(), kJobPollTimerId, kJobPollIntervalMs, nullptr ) ){
+		pJob->bCancelled.store( true, std::memory_order_release );
+		m_pReadmeJob.reset();
+		NotifyReadme( extension, EExtensionReadmeState::Error, L"", L"cannot start extension detail timer" );
+		return;
+	}
+	try {
+		std::thread( &CExtensionPane::RunJob, pJob, GetHwnd() ).detach();
+	}
+	catch( ... ){
+		pJob->bCancelled.store( true, std::memory_order_release );
+		m_pReadmeJob.reset();
+		NotifyReadme( extension, EExtensionReadmeState::Error, L"", L"cannot start extension detail worker" );
+	}
 }
 
 void CExtensionPane::StartSearch()
@@ -773,6 +1007,22 @@ void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 			}
 		}
 		break;
+	case EJobKind::Readme:
+		{
+			if( !pJob->registryClient ){
+				pJob->sErrorMsg = L"extension registry client is unavailable";
+				break;
+			}
+			const AtomicJobCancellation cancellation( pJob->bCancelled );
+			auto operation = pJob->registryClient->FetchText( pJob->sReadmeUrl, &cancellation );
+			pJob->bSucceeded = static_cast<bool>( operation.status );
+			pJob->sReadmePayload = std::move( operation.value );
+			pJob->sErrorMsg = operation.status.message;
+			if( !pJob->bSucceeded && pJob->sErrorMsg.empty() ){
+				pJob->sErrorMsg = SafeOpenVsxStatusMessage( operation.status.outcome );
+			}
+		}
+		break;
 	case EJobKind::Install:
 		{
 			if( !pJob->registryClient ){
@@ -828,16 +1078,56 @@ void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 
 void CExtensionPane::FinishJob( int nSerial )
 {
-	if( !m_pJob || m_pJob->nSerial != nSerial ){
+	if( m_pReadmeJob && m_pReadmeJob->nSerial == nSerial ){
+		if( !m_pReadmeJob->bDone.load( std::memory_order_acquire ) ) return;
+		const std::shared_ptr<SJob> pJob = std::move( m_pReadmeJob );
+		const int nRow = GetSelectedRow();
+		const bool current = nRow >= 0 && static_cast<size_t>(nRow) < m_rows.size()
+			&& m_rows[static_cast<size_t>(nRow)].ext.GetUniqueId() == pJob->ext.GetUniqueId()
+			&& m_rows[static_cast<size_t>(nRow)].ext.sVersion == pJob->ext.sVersion
+			&& m_rows[static_cast<size_t>(nRow)].ext.sReadmeUrl == pJob->sReadmeUrl;
+		if( current ){
+			const EExtensionReadmeState state = pJob->bSucceeded ? EExtensionReadmeState::Ready : EExtensionReadmeState::Error;
+			m_sReadmeCacheKey = pJob->ext.GetUniqueId() + L"\n" + pJob->ext.sVersion + L"\n" + pJob->sReadmeUrl;
+			m_eReadmeCacheState = state;
+			m_sReadmeCachePayload = pJob->bSucceeded ? pJob->sReadmePayload : L"";
+			m_sReadmeCacheError = pJob->bSucceeded ? L"" : pJob->sErrorMsg;
+			NotifyReadme( pJob->ext, state, m_sReadmeCachePayload, m_sReadmeCacheError );
+		}
+		if( !m_pJob ) ::KillTimer( GetHwnd(), kJobPollTimerId );
+		return;
+	}
+	std::shared_ptr<SJob>* ppJob = nullptr;
+	if( m_pJob && m_pJob->nSerial == nSerial ) ppJob = &m_pJob;
+	else if( m_pReadmeJob && m_pReadmeJob->nSerial == nSerial ) ppJob = &m_pReadmeJob;
+	if( !ppJob ){
 		return;	// 世代違いの結果は捨てる
 	}
-	if( !m_pJob->bDone.load( std::memory_order_acquire ) ){
+	if( !(*ppJob)->bDone.load( std::memory_order_acquire ) ){
 		return;	// 書き終えていないものは読まない
 	}
 
 	// 実行中でなくなったことを先に確定させる（move 後 m_pJob は空になる）
-	const std::shared_ptr<SJob> pJob = std::move( m_pJob );
-	::KillTimer( GetHwnd(), kJobPollTimerId );
+	const std::shared_ptr<SJob> pJob = std::move( *ppJob );
+	if( !m_pJob && !m_pReadmeJob ) ::KillTimer( GetHwnd(), kJobPollTimerId );
+
+	if( pJob->eKind == EJobKind::Readme ){
+		if( pJob->bSucceeded ){
+			m_sReadmeCacheKey = pJob->ext.GetUniqueId() + L"\n" + pJob->ext.sVersion + L"\n" + pJob->ext.sReadmeUrl;
+			m_eReadmeCacheState = EExtensionReadmeState::Ready;
+			m_sReadmeCachePayload = pJob->sReadmePayload;
+			m_sReadmeCacheError.clear();
+			NotifyReadme( pJob->ext, EExtensionReadmeState::Ready, pJob->sReadmePayload, L"" );
+		}
+		else if( !pJob->bCancelled.load( std::memory_order_acquire ) ){
+			m_sReadmeCacheKey = pJob->ext.GetUniqueId() + L"\n" + pJob->ext.sVersion + L"\n" + pJob->ext.sReadmeUrl;
+			m_eReadmeCacheState = EExtensionReadmeState::Error;
+			m_sReadmeCachePayload.clear();
+			m_sReadmeCacheError = pJob->sErrorMsg;
+			NotifyReadme( pJob->ext, EExtensionReadmeState::Error, L"", pJob->sErrorMsg );
+		}
+		return;
+	}
 
 	if( !pJob->bSucceeded ){
 		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_FAILED ), pJob->sErrorMsg.c_str() ) );
@@ -872,6 +1162,13 @@ void CExtensionPane::FinishJob( int nSerial )
 		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
 			SetStatusText( L"Extension installed, but the extension-host inventory refresh failed." );
 		}
+		// The running editor's extension host still only knows the extensions it saw at
+		// last connect/registration. Tell it (via the composition root's callback) that
+		// the installed set may have grown, so it can pick up the new extension without
+		// requiring a restart -- the same way real VS Code activates on install.
+		if( m_onExtensionInstalled ){
+			m_onExtensionInstalled();
+		}
 		break;
 
 	case EJobKind::Uninstall:
@@ -893,4 +1190,5 @@ void CExtensionPane::FinishJob( int nSerial )
 	}
 
 	UpdateButtons();
+	NotifySelectionChanged();
 }

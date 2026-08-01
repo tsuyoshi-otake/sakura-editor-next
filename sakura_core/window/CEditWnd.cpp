@@ -86,6 +86,7 @@
 #include "workbench/editor/CEditDocLegacyEditorBackend.h"
 #include "workbench/editor/CEditorServiceLegacyAdapter.h"
 #include "workbench/editor/CEmptyEditorSurface.h"
+#include "workbench/editor/CExtensionDetailSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
@@ -100,7 +101,9 @@
 #include "view/figures/CFigureManager.h"
 #include "extension/CExtensionPane.h"
 #include "extension/CExtensionQuickInputDialog.h"
+#include "extension/CExtensionManager.h"
 #include "extension/CExtensionService.h"
+#include "workbench/icons/CExtensionIconFont.h"
 #include "extension/CExtensionViewRegistry.h"
 #include "extension/IExtensionSecretStorage.h"
 #include "cmd/COpeBlk.h"
@@ -1148,13 +1151,16 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 
 	const HWND splitter = m_cSplitterWnd.GetHwnd();
 	const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
+	const HWND extensionDetailSurface = m_extensionDetailSurface ? m_extensionDetailSurface->GetHwnd() : nullptr;
 	const HWND focused = ::GetFocus();
 	const bool editorOwnedFocus = focused != nullptr
 		&& ((splitter != nullptr && (focused == splitter || ::IsChild(splitter, focused)))
-			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused))));
+			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused)))
+			|| (extensionDetailSurface != nullptr && (focused == extensionDetailSurface || ::IsChild(extensionDetailSurface, focused))));
 
 	if (hasActiveInput) {
 		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+		if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
 		if (splitter != nullptr && !m_pPrintPreview) ::ShowWindow(splitter, SW_SHOWNA);
 		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr && !m_pPrintPreview) {
 			::ShowWindow(minimap, SW_SHOWNA);
@@ -1170,7 +1176,11 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
 			::ShowWindow(minimap, SW_HIDE);
 		}
-		if (m_emptyEditorSurface && !m_pPrintPreview) m_emptyEditorSurface->Show();
+		if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension() && !m_pPrintPreview) {
+			m_extensionDetailSurface->Show();
+		} else if (m_emptyEditorSurface && !m_pPrintPreview) {
+			m_emptyEditorSurface->Show();
+		}
 		ClearDocumentStatus();
 		ClosePublishedExtensionDocument();
 	}
@@ -1187,6 +1197,8 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
 	if (hasActiveInput) {
 		if (const HWND view = GetActiveView().GetHwnd(); ::IsWindowVisible(view)) ::SetFocus(view);
+	} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
+		m_extensionDetailSurface->Focus();
 	} else if (m_emptyEditorSurface) {
 		m_emptyEditorSurface->Focus();
 	}
@@ -1540,6 +1552,55 @@ bool CEditWnd::InitializeWorkbench()
 				m_workbenchRuntime->Configuration(),
 				m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId(),
 				m_pShareData->m_sHandles.m_hwndTray);
+			// m_extensionService is constructed after marketplaceFactory (this lambda) is
+			// built, so the callback must read it through `this` at call time -- never
+			// capture the pointer itself. By the time an install can complete, the
+			// service is long since constructed. A null service (not yet constructed, or
+			// already torn down) makes this a no-op rather than a dangling call.
+			pane->SetOnExtensionInstalled([this]() {
+				if (m_extensionService) m_extensionService->RequestInstalledExtensionRescan();
+				// 新しく入った拡張の contributes.icons も同じ契機で取り込む。
+				// 再起動を待たずにステータスバーが本物のグリフを描けるようにする。
+				RefreshExtensionIconFonts();
+			});
+			pane->SetOnExtensionSelected([this](const SOpenVsxExtension& extension) {
+				if (!m_extensionDetailSurface) return;
+				if (extension.sNamespace.empty() && extension.sName.empty()) {
+					m_extensionDetailSurface->ClearExtension();
+					m_extensionDetailSurface->Hide();
+					if (!HasActiveEditorInput() && m_emptyEditorSurface) m_emptyEditorSurface->Show();
+					RECT client{};
+					if (GetHwnd() != nullptr && ::GetClientRect(GetHwnd(), &client)) {
+						(void)OnSize2(m_nWinSizeType,
+							MAKELONG(client.right - client.left, client.bottom - client.top), false);
+					}
+					return;
+				}
+				m_extensionDetailSurface->ShowExtension(extension);
+				if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+				RECT client{};
+				if (GetHwnd() != nullptr && ::GetClientRect(GetHwnd(), &client)) {
+					(void)OnSize2(m_nWinSizeType,
+						MAKELONG(client.right - client.left, client.bottom - client.top), false);
+				}
+			});
+			pane->SetOnExtensionReadme([this](const SOpenVsxExtension&, CExtensionPane::EExtensionReadmeState state, const std::wstring& markdown, const std::wstring& error) {
+				if (!m_extensionDetailSurface || !m_extensionDetailSurface->HasExtension()) return;
+				switch (state) {
+				case CExtensionPane::EExtensionReadmeState::Loading:
+					m_extensionDetailSurface->SetReadmeLoading();
+					break;
+				case CExtensionPane::EExtensionReadmeState::Ready:
+					m_extensionDetailSurface->SetReadmeMarkdown(markdown);
+					break;
+				case CExtensionPane::EExtensionReadmeState::Error:
+					m_extensionDetailSurface->SetReadmeError(error.empty() ? L"README could not be loaded." : error);
+					break;
+				case CExtensionPane::EExtensionReadmeState::Unsupported:
+					m_extensionDetailSurface->SetReadmeUnsupported();
+					break;
+				}
+			});
 			if (pane->Open(G_AppInstance(), owner) == nullptr) {
 				return nullptr;
 			}
@@ -1724,13 +1785,36 @@ bool CEditWnd::InitializeWorkbench()
 		if (!m_emptyEditorSurface->Create(GetHwnd(), G_AppInstance())) {
 			m_emptyEditorSurface.reset();
 		}
+		m_extensionDetailSurface = std::make_unique<CExtensionDetailSurface>();
+		if (m_extensionDetailSurface->Open(G_AppInstance(), GetHwnd()) == nullptr) {
+			m_extensionDetailSurface.reset();
+		} else {
+			m_extensionDetailSurface->Hide();
+			m_extensionDetailSurface->SetOnInstallRequested([this]() {
+				if (m_viewContainerPages && m_viewContainerPages->Marketplace()) {
+					m_viewContainerPages->Marketplace()->InstallSelectedExtension();
+				}
+			});
+			m_extensionDetailSurface->SetOnCloseRequested([this]() {
+				if (m_viewContainerPages && m_viewContainerPages->Marketplace()) {
+					m_viewContainerPages->Marketplace()->ClearExtensionSelection();
+				}
+				if (m_extensionDetailSurface) m_extensionDetailSurface->ClearExtension();
+				if (m_emptyEditorSurface && !HasActiveEditorInput()) m_emptyEditorSurface->Show();
+				RECT client{};
+				if (GetHwnd() != nullptr && ::GetClientRect(GetHwnd(), &client)) {
+					(void)OnSize2(m_nWinSizeType,
+						MAKELONG(client.right - client.left, client.bottom - client.top), false);
+				}
+			});
+		}
 	}
 
 	const bool initialized = m_leftWorkbenchPanel != nullptr
 		&& m_rightWorkbenchPanel != nullptr
 		&& m_bottomWorkbenchPanel != nullptr
 		&& m_activityBar != nullptr
-		&& (!editorBridgeEnabled || m_emptyEditorSurface != nullptr);
+		&& (!editorBridgeEnabled || (m_emptyEditorSurface != nullptr && m_extensionDetailSurface != nullptr));
 	if (!initialized) {
 		// Workbench initialization is all-or-nothing. Do not leave an editor in
 		// an unobservable partial state where a configured tool has no HWND.
@@ -1781,9 +1865,21 @@ bool CEditWnd::InitializeWorkbench()
 	}
 	const auto extensionProfileDirectory = m_extensionProfileDirectory.empty()
 		? GetIniFileName().parent_path() : m_extensionProfileDirectory;
+	// contributes.icons は拡張ホストの接続とは独立に読める（マニフェストとフォント
+	// ファイルだけで完結する）。ホストが繋がらなくてもアイコンは正しく描けるよう、
+	// サービス構築より先に用意し、ステータスバーへ非所有で貸す。
+	m_extensionIconFonts = std::make_unique<workbench::icons::CExtensionIconFontRegistry>();
+	m_cStatusBar.SetExtensionIconFonts(m_extensionIconFonts.get());
+	RefreshExtensionIconFonts();
+
+	// workspace/configuration/update の書き込み先は、この window が借りている
+	// workbench runtime そのもの（Settings writeback の唯一の所有者）。ここで渡さないと
+	// bridge は runtime 無しのまま構築され、拡張からの update() は常に -32001 で閉じる。
+	// runtime を持たない単体テスト経路では nullptr のままで、その場合も fail-closed になる。
 	m_extensionService = std::make_unique<CExtensionService>(
 		GetHwnd(), m_pShareData->m_sHandles.m_hwndTray, extensionProfileDirectory,
-		m_extensionViewRegistry, std::move(m_extensionSecretStorage), m_markerService, m_outputService);
+		m_extensionViewRegistry, std::move(m_extensionSecretStorage), m_markerService, m_outputService,
+		m_workbenchRuntime);
 	m_extensionService->SetApplyEditHandler([this](const std::vector<SExtensionDocumentEdit>& edits) {
 		CExtensionService::NativeApplyEditResult completion;
 		completion.result = ApplyExtensionEdits(edits, completion.snapshots);
@@ -2065,6 +2161,26 @@ void CEditWnd::PublishExtensionActiveEditor()
 	m_extensionService->SetActiveEditor({ ::GetCurrentProcessId(), 1 }, position);
 }
 
+void CEditWnd::RefreshExtensionIconFonts()
+{
+	if (!m_extensionIconFonts) return;
+	CExtensionManager manager;
+	for (const auto& installed : manager.EnumInstalled()) {
+		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) || error) {
+			continue;
+		}
+		// 読めない・contributes.icons を持たない拡張は登録 0 件で正常終了する。
+		// マニフェストが壊れている場合だけ false になるが、その拡張を飛ばすだけで
+		// 他の拡張の登録は続ける（fail closed であって fail stop ではない）。
+		(void)m_extensionIconFonts->RegisterExtension(installed.sUniqueId, root);
+	}
+	if (m_cStatusBar.GetStatusHwnd() != nullptr) {
+		::InvalidateRect(m_cStatusBar.GetStatusHwnd(), nullptr, FALSE);
+	}
+}
+
 SExtensionApplyEditResult CEditWnd::ApplyExtensionEdits(
 	const std::vector<SExtensionDocumentEdit>& edits,
 	std::vector<SExtensionDocumentSnapshot>& snapshots)
@@ -2153,6 +2269,19 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_workbenchContextKeyService.reset();
 	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
 	m_editorCoreSubscription.reset();
+	if (m_viewContainerPages && m_viewContainerPages->Marketplace()) {
+		// Detach the composition-root callback before destroying the shared
+		// Marketplace page; no selection event may reach a torn-down editor surface.
+		m_viewContainerPages->Marketplace()->SetOnExtensionSelected({});
+		m_viewContainerPages->Marketplace()->SetOnExtensionReadme({});
+	}
+	if (m_extensionDetailSurface) {
+		m_extensionDetailSurface->SetOnInstallRequested({});
+		m_extensionDetailSurface->SetOnCloseRequested({});
+		m_extensionDetailSurface->ClearExtension();
+		m_extensionDetailSurface->Destroy();
+	}
+	m_extensionDetailSurface.reset();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Destroy();
 	m_emptyEditorSurface.reset();
 	ClosePublishedExtensionDocument();
@@ -2176,8 +2305,12 @@ void CEditWnd::CloseWorkbench() noexcept
 		m_extensionBottomPanelTool->SetTabSelectionCallback({});
 	}
 	m_cStatusBar.SetExtensionCommandCallback({});
+	// ステータスバーはレジストリを非所有で借りているだけなので、破棄より先に
+	// 借用を明示的に返させる。宣言順に依存した暗黙のメンバー破棄順に頼らない。
+	m_cStatusBar.SetExtensionIconFonts(nullptr);
 	if (m_extensionService) m_extensionService->Shutdown();
 	m_extensionService.reset();
+	m_extensionIconFonts.reset();
 	m_cStatusBar.SetExtensionItems({});
 	if (m_activityBar) m_activityBar->Close();
 	// The shared pages are borrowed by both side-bar hosts, so they must be destroyed
@@ -2222,6 +2355,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	if (m_terminalTool) m_terminalTool->SetPalette(palette);
 	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
 	if (m_emptyEditorSurface) m_emptyEditorSurface->SetPalette(palette);
+	if (m_extensionDetailSurface) m_extensionDetailSurface->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -3844,12 +3978,17 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			::ShowWindow(splitter, SW_HIDE);
 		}
 		if (m_markdownPreview) m_markdownPreview->Show(false);
-		if (m_emptyEditorSurface) {
+		if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
+			m_extensionDetailSurface->Layout({ left, top, right, bottom }, dpi);
+			if (!m_pPrintPreview) m_extensionDetailSurface->Show();
+			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+		} else if (m_emptyEditorSurface) {
 			m_emptyEditorSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_emptyEditorSurface->Show();
 		}
 		return;
 	}
+	if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr && !m_pPrintPreview) {
 		::ShowWindow(splitter, SW_SHOWNA);
@@ -5071,8 +5210,6 @@ LRESULT CEditWnd::DispatchEvent(
 		return m_extensionService ? m_extensionService->HandleNotificationPrompt(lParam) : 0;
 	case MYWM_EXTENSION_QUICK_INPUT_PROMPT:
 		return m_extensionService ? m_extensionService->HandleQuickInputPrompt(lParam) : 0;
-	case MYWM_EXTENSION_TRUST_PROMPT:
-		return m_extensionService ? m_extensionService->HandleTrustPrompt(lParam) : 0;
 	case MYWM_EXTENSION_APPLY_EDIT_PROMPT:
 		return m_extensionService ? m_extensionService->HandleApplyEditPrompt(lParam) : 0;
 	case MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT:

@@ -8,6 +8,8 @@
   [`layout/CLAUDE.md`](layout/CLAUDE.md)
 - Native projection of validated Workbench snapshots:
   [`win32/CLAUDE.md`](win32/CLAUDE.md)
+- Markdown hover rendering (`HoverWidget` / `renderMarkdown` equivalents):
+  [`hover/CLAUDE.md`](hover/CLAUDE.md)
 - Stable commands, surface bindings, when clauses, and context keys:
   [`commands/CLAUDE.md`](commands/CLAUDE.md)
 - Workspace artifact routing and file/watch ownership:
@@ -77,6 +79,14 @@ remain pending.
   writeback before joining watches, so no post-stop resnapshot applies a
   setting. Current writeback accepts resolved `settings.json` resources; UI and
   `.code-workspace` nested-settings editing are still separate work.
+- `WriteSetting` is declared on `IWorkbenchRuntime`, not only on the concrete
+  runtime, because a borrower that needs it must not have to name the
+  implementation. `CEditWnd` holds the runtime as `IWorkbenchRuntime*` and hands
+  that same borrow to `CExtensionService`, which is what makes
+  `workspace/configuration/update` reach a real settings document in production;
+  see [`../extension/CLAUDE.md`](../extension/CLAUDE.md). `CWorkbenchRuntime` is
+  still the only implementer and still the only writeback authority — putting
+  the method on the interface widens who may *call* it, never who may own it.
 
 ## P2 Workbench MVP
 

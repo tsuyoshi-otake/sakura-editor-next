@@ -81,7 +81,7 @@ public:
 	//! The runtime is the sole production owner for settings writeback.  It
 	//! serializes the versioned edit with the same file-source controller used by
 	//! advisory watches, then resnapshots before exposing a terminal result.
-	[[nodiscard]] config::SettingsWritebackResult WriteSetting(const config::SettingsWritebackRequest& request);
+	[[nodiscard]] config::SettingsWritebackResult WriteSetting(const config::SettingsWritebackRequest& request) override;
 
 	[[nodiscard]] const WorkbenchBootstrapContext& Bootstrap() const noexcept override { return m_bootstrap; }
 	[[nodiscard]] config::IConfigurationService& Configuration() noexcept override { return m_configuration; }

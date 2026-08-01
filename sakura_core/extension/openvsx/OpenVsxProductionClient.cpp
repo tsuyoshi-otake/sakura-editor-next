@@ -26,6 +26,7 @@ namespace {
 constexpr std::size_t kMaximumResponseHeaderBytes = 64u * 1024u;
 constexpr std::size_t kMaximumSearchResponseBytes = 8u * 1024u * 1024u;
 constexpr std::size_t kMaximumSha256ResponseBytes = 64u * 1024u;
+constexpr std::size_t kMaximumTextResponseBytes = 1024u * 1024u;
 constexpr std::size_t kMaximumVsixResponseBytes = 512u * 1024u * 1024u;
 constexpr std::size_t kMaximumRedirects = 3;
 constexpr std::size_t kMaximumRetries = 2;
@@ -93,6 +94,14 @@ public:
 		return m_adapter.FetchOptionalSha256(validatedHttpsSha256Uri, cancellation);
 	}
 
+	OpenVsxTextOperation FetchText(
+		std::wstring_view validatedHttpsTextUri,
+		const platform::request::IRequestCancellation* cancellation = nullptr
+	) const override
+	{
+		return m_adapter.FetchText(validatedHttpsTextUri, cancellation);
+	}
+
 private:
 	// Reverse destruction preserves every dependency while its consumer is torn down:
 	// adapter → request service → time/credential/proxy services → WinHTTP boundaries.
@@ -123,6 +132,7 @@ OpenVsxRequestPolicy BuildOpenVsxProductionRequestPolicy(const config::Configura
 	policy.searchLimits = MakeRequestLimits(snapshot, kMaximumSearchResponseBytes);
 	policy.vsixLimits = MakeRequestLimits(snapshot, kMaximumVsixResponseBytes);
 	policy.sha256Limits = MakeRequestLimits(snapshot, kMaximumSha256ResponseBytes);
+	policy.textLimits = MakeRequestLimits(snapshot, kMaximumTextResponseBytes);
 	return policy;
 }
 

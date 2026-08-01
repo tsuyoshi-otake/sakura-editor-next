@@ -20,7 +20,6 @@ class RecordingTransport {
 
   async request(method, params) {
     this.requests.push({ method, params });
-    if (method === 'workbench/extensions/ensureTrusted') return { trusted: true };
     return {};
   }
 
@@ -127,21 +126,118 @@ test('ESM extensions import named vscode exports through the per-extension bridg
   }), { value: 3 });
 });
 
-test('first activation is blocked before extension code runs when trust is denied', async (t) => {
-  const root = createExtension({ name: 'denied', publisher: 'test', main: './extension.js' }, `
-    throw new Error('extension code executed');
+test('activation runs extension code without asking the workbench for permission', async (t) => {
+  const root = createExtension({ name: 'immediate', publisher: 'test', main: './extension.js' }, `
+    exports.activate = () => ({ ran: true });
   `);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const transport = new RecordingTransport();
-  transport.request = async (method, params) => {
-    transport.requests.push({ method, params });
-    return method === 'workbench/extensions/ensureTrusted' ? { trusted: false } : {};
-  };
   const loader = new ExtensionLoader(5, transport);
   t.after(() => loader.dispose());
   loader.register([root]);
-  await assert.rejects(loader.activate('test.denied'), /ExtensionTrustDenied: test.denied/);
-  assert.equal(loader.extensions.get('test.denied').state, 'blocked');
-  assert.equal(loader.extensions.get('test.denied').session, null);
-  assert.equal(transport.notified('workbench/extensions/didBlockActivation').length, 1);
+  assert.deepEqual(await loader.activate('test.immediate'), { ran: true });
+  assert.equal(loader.extensions.get('test.immediate').state, 'active');
+  // VS Code has Workspace Trust, never a per-extension "may this run?" round trip.
+  assert.equal(transport.requests.filter((item) => /trust/i.test(item.method)).length, 0);
+  assert.equal(transport.notified('workbench/extensions/didActivate').length, 1);
+});
+
+test('vscode.extensions exposes the registry and the UI extension kind', async (t) => {
+  const observer = createExtension({ name: 'observer', publisher: 'test', main: './extension.js' }, `
+    const vscode = require('vscode');
+    exports.activate = () => ({
+      self: vscode.extensions.getExtension('test.observer')?.extensionKind === vscode.ExtensionKind.UI,
+      peer: vscode.extensions.getExtension('TEST.PEER')?.id,
+      missing: vscode.extensions.getExtension('test.absent'),
+      ids: vscode.extensions.all.map((item) => item.id).sort(),
+      peerActive: vscode.extensions.getExtension('test.peer').isActive,
+    });
+  `);
+  const peer = createExtension({ name: 'peer', publisher: 'test', main: './extension.js' }, `
+    exports.activate = () => ({});
+  `);
+  t.after(() => {
+    fs.rmSync(observer, { recursive: true, force: true });
+    fs.rmSync(peer, { recursive: true, force: true });
+  });
+  const loader = new ExtensionLoader(8, new RecordingTransport());
+  t.after(() => loader.dispose());
+  assert.equal(loader.register([observer, peer]).failed.length, 0);
+  assert.deepEqual(await loader.activate('test.observer'), {
+    self: true,
+    peer: 'test.peer',
+    missing: undefined,
+    ids: ['test.observer', 'test.peer'],
+    // An unactivated peer is visible in the registry but is not active yet.
+    peerActive: false,
+  });
+});
+
+test('setStatusBarMessage stacks messages and reveals the one beneath on dispose', async (t) => {
+  // Item updates are coalesced onto a microtask, so the extension flushes between
+  // steps to make each rendered state individually observable.
+  const root = createExtension({ name: 'message', publisher: 'test', main: './extension.js' }, `
+    const vscode = require('vscode');
+    const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+    exports.activate = async () => {
+      const first = vscode.window.setStatusBarMessage('first');
+      await flush();
+      const second = vscode.window.setStatusBarMessage('second');
+      await flush();
+      second.dispose();
+      await flush();
+      first.dispose();
+      await flush();
+      return {};
+    };
+  `);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const transport = new RecordingTransport();
+  const loader = new ExtensionLoader(9, transport);
+  t.after(() => loader.dispose());
+  loader.register([root]);
+  await loader.activate('test.message');
+  const rendered = transport.notified('workbench/statusBar/update')
+    .map((item) => `${item.params.text}:${item.params.visible}`);
+  assert.deepEqual(rendered, ['first:true', 'second:true', 'first:true', 'first:false']);
+});
+
+// 実機で odangoo.otak-monitor の activate() が投げ、直列 await ループがそこで打ち切られた
+// ため odangoo.otak-usage が 'registered' のまま永久に起動しなかった。上流の
+// AbstractExtensionService._activateByEvent は Promise.all で並行に起動し、1 拡張の
+// 失敗は _onExtensionActivationError でその拡張だけの失敗として記録される。
+test('one extension failing to activate never blocks another for the same event', async (t) => {
+  const failing = createExtension({
+    name: 'broken', publisher: 'test', version: '1.0.0', main: './extension',
+    activationEvents: ['onStartupFinished'],
+  }, `exports.activate = () => { throw new Error('boom'); };`);
+  const healthy = createExtension({
+    name: 'healthy', publisher: 'test', version: '1.0.0', main: './extension',
+    activationEvents: ['onStartupFinished'],
+  }, `exports.activate = () => ({ ok: true });`);
+  t.after(() => {
+    fs.rmSync(failing, { recursive: true, force: true });
+    fs.rmSync(healthy, { recursive: true, force: true });
+  });
+  const transport = new RecordingTransport();
+  const loader = new ExtensionLoader(3, transport);
+  t.after(() => loader.dispose());
+
+  // 壊れたほうを先に登録する。直列 await ループなら後続がここで巻き添えになる。
+  assert.equal(loader.register([failing, healthy]).failed.length, 0);
+
+  const result = await loader.activateByEvent('onStartupFinished');
+  assert.deepEqual(result.activated, ['test.healthy']);
+  assert.equal(result.failed.length, 1);
+  assert.equal(result.failed[0].extensionId, 'test.broken');
+  assert.match(result.failed[0].message, /boom/);
+
+  assert.equal(loader.extensions.get('test.broken').state, 'failed');
+  assert.equal(loader.extensions.get('test.healthy').state, 'active');
+
+  // 失敗は握りつぶさず didFailActivation としてネイティブ側の Extension Host ログへ届く。
+  const failures = transport.notified('workbench/extensions/didFailActivation');
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].params.extensionId, 'test.broken');
+  assert.equal(transport.notified('workbench/extensions/didActivate').length, 1);
 });

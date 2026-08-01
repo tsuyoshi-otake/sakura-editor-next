@@ -62,11 +62,6 @@ class CExtensionWorkbenchDispatcher final {
 public:
 	using NotificationHandler = std::function<std::optional<std::size_t>(const SExtensionNotification&)>;
 	using QuickInputHandler = std::function<SExtensionQuickInputCompletion(const SExtensionQuickInputRequest&)>;
-	using TrustHandler = std::function<bool(
-		std::wstring_view extensionId,
-		std::wstring_view version,
-		std::wstring_view displayName,
-		std::wstring_view extensionPath)>;
 
 	CExtensionWorkbenchDispatcher(
 		CExtensionContextKeys& contextKeys,
@@ -83,7 +78,6 @@ public:
 
 	void SetNotificationHandler(NotificationHandler handler);
 	void SetQuickInputHandler(QuickInputHandler handler);
-	void SetTrustHandler(TrustHandler handler);
 	[[nodiscard]] SExtensionWorkbenchDispatchResult Dispatch(const SExtensionRpcMessage& message);
 	[[nodiscard]] SExtensionWorkbenchDispatchResult ApplyTreeChildrenResult(
 		std::wstring_view viewHandle,
@@ -102,6 +96,7 @@ private:
 
 	SExtensionWorkbenchDispatchResult DispatchExtensionRegistration(std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchRemoveGeneration(std::string_view paramsJson);
+	SExtensionWorkbenchDispatchResult DispatchActivationFailure(std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchCommandHandler(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchContextSet(std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchCommandList(std::string_view paramsJson);
@@ -116,7 +111,7 @@ private:
 	SExtensionWorkbenchDispatchResult DispatchLanguageStatus(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchCapabilityRegistration(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchUnsupportedCapability(std::string_view method, std::string_view paramsJson);
-	SExtensionWorkbenchDispatchResult DispatchTrust(std::string_view paramsJson);
+	SExtensionWorkbenchDispatchResult DispatchConfigurationUpdate(std::string_view paramsJson);
 
 	CExtensionContextKeys& m_contextKeys;
 	CExtensionCommandPalette& m_commands;
@@ -131,7 +126,6 @@ private:
 	CExtensionWorkbenchServiceBridge* m_serviceBridge = nullptr;
 	NotificationHandler m_notificationHandler;
 	QuickInputHandler m_quickInputHandler;
-	TrustHandler m_trustHandler;
 	std::unordered_map<std::wstring, CommandState> m_commandStates;
 	std::unordered_map<std::wstring, SExtensionViewDescriptor> m_viewDescriptors;
 	std::unordered_set<std::wstring> m_reportedUnsupportedCapabilities;

@@ -187,7 +187,8 @@ CExtensionService::CExtensionService(
 	std::shared_ptr<CExtensionViewRegistry> views,
 	std::unique_ptr<IExtensionSecretSessionStorage> secrets,
 	workbench::problems::MarkerService* markerService,
-	workbench::output::OutputService* outputService)
+	workbench::output::OutputService* outputService,
+	workbench::IWorkbenchRuntime* workbenchRuntime)
 	: m_editorWindow(editorWindow)
 	, m_brokerWindow(brokerWindow)
 	, m_profileDirectory(std::move(profileDirectory))
@@ -195,9 +196,8 @@ CExtensionService::CExtensionService(
 	, m_secrets(secrets ? std::move(secrets)
 		: std::unique_ptr<IExtensionSecretSessionStorage>(
 			std::make_unique<CUnavailableExtensionSecretStorage>()))
-	, m_trustStore(m_profileDirectory / L"extensionData" / L"extension-trust.json")
-	, m_workbenchServiceBridge(markerService || outputService
-		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService) : nullptr)
+	, m_workbenchServiceBridge(markerService || outputService || workbenchRuntime
+		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService, workbenchRuntime) : nullptr)
 {
 	const auto tick = static_cast<std::uint64_t>(::GetTickCount64());
 	const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
@@ -288,6 +288,12 @@ void CExtensionService::NotifyViewVisibility(bool visible)
 		if (visible) ActivateContributedViewsWorker();
 		NotifyRegisteredViewsVisibilityWorker();
 	});
+}
+
+void CExtensionService::RequestInstalledExtensionRescan()
+{
+	Start();
+	Enqueue([this]() { RescanInstalledExtensionsWorker(); });
 }
 
 void CExtensionService::OpenDocument(SExtensionDocumentSnapshot snapshot)
@@ -434,32 +440,6 @@ LRESULT CExtensionService::HandleQuickInputPrompt(LPARAM promptPointer) noexcept
 	if (!prompt || !prompt->request) return 0;
 	CExtensionQuickInputDialog dialog(*prompt->request);
 	prompt->completion = dialog.DoModal(m_editorWindow);
-	return 1;
-}
-
-LRESULT CExtensionService::HandleTrustPrompt(LPARAM promptPointer) noexcept
-{
-	auto* prompt = reinterpret_cast<TrustPrompt*>(promptPointer);
-	if (!prompt) return 0;
-	std::wstring instruction = prompt->displayName.empty() ? prompt->extensionId : prompt->displayName;
-	instruction += L" を実行しますか？";
-	std::wstring content = L"この拡張機能はエディターの文書と設定へアクセスし、コードを実行できます。\n\n";
-	content += L"ID: " + prompt->extensionId;
-	if (!prompt->version.empty()) content += L"\nVersion: " + prompt->version;
-	if (!prompt->extensionPath.empty()) content += L"\nPath: " + prompt->extensionPath;
-	content += L"\n\n提供元を信頼できる場合だけ実行してください。";
-	TASKDIALOGCONFIG config{};
-	config.cbSize = sizeof(config);
-	config.hwndParent = m_editorWindow;
-	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT;
-	config.dwCommonButtons = TDCBF_YES_BUTTON | TDCBF_NO_BUTTON;
-	config.pszWindowTitle = L"拡張機能の実行確認 - Sakura Editor NEXT";
-	config.pszMainInstruction = instruction.c_str();
-	config.pszContent = content.c_str();
-	config.pszMainIcon = TD_WARNING_ICON;
-	config.nDefaultButton = IDNO;
-	int selected = IDNO;
-	prompt->trusted = SUCCEEDED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr)) && selected == IDYES;
 	return 1;
 }
 
@@ -627,6 +607,48 @@ void CExtensionService::RequestReconnectWorker()
 {
 	if (m_stopping.load(std::memory_order_acquire) || m_installedRoots.empty()) return;
 	if (m_reconnectPolicy.RequestReconnect(CExtensionClientReconnectPolicy::Clock::now())) m_taskReady.notify_one();
+}
+
+void CExtensionService::RescanInstalledExtensionsWorker()
+{
+	if (m_stopping.load(std::memory_order_acquire)) return;
+
+	// Re-derive the installed set exactly like WorkerInitialize()/EnsureConnectedWorker()
+	// do, but only append roots this session has never seen. A root already in
+	// m_installedRoots must never be registered a second time.
+	CExtensionManager manager;
+	bool foundNew = false;
+	for (const auto& installed : manager.EnumInstalled()) {
+		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) || error) continue;
+		if (std::find(m_installedRoots.begin(), m_installedRoots.end(), root) != m_installedRoots.end()) continue;
+		m_installedRoots.push_back(root);
+		foundNew = true;
+	}
+	if (!foundNew) return;
+
+	// If this is the first extension ever seen, WorkerInitialize() previously left
+	// m_installedRoots empty and never attempted a connection at all (both it and
+	// EnsureConnectedWorker() bail out on an empty root list). RequestReconnectWorker()
+	// is the same entry point Start()/NotifyViewVisibility() already use to establish a
+	// first connection, and CExtensionClientReconnectPolicy::RequestReconnect() is a
+	// no-op whenever a connect attempt is already scheduled, connecting, awaiting Hello,
+	// or connected -- so calling it here never disturbs a healthy or in-progress session.
+	RequestReconnectWorker();
+
+	// A session that is already connected does not need to wait for a future reconnect:
+	// extend its registration immediately. SendRegisterExtensionsWorker() re-sends the
+	// *complete* accumulated m_installedRoots list -- the same convention already used on
+	// every reconnect -- and the host registers each extension ID at most once
+	// (ExtensionLoader.register in extension-host.cjs returns the existing metadata
+	// without re-adding or re-notifying activation for a path it already knows), so
+	// previously registered extensions are left untouched. The response still flows
+	// through the existing HandleRegistrationResultWorker() ->
+	// SendActivateEventWorker(L"onStartupFinished") path, and the host's
+	// activateByEvent() only activates extensions still in the 'registered' state, so an
+	// already-active extension is never reactivated.
+	if (m_connected) SendRegisterExtensionsWorker();
 }
 
 void CExtensionService::ProcessReconnectDeadlineWorker(CExtensionClientReconnectPolicy::TimePoint now)
@@ -1543,10 +1565,6 @@ void CExtensionService::ResetDispatcherWorker()
 	m_dispatcher->SetQuickInputHandler([this](const SExtensionQuickInputRequest& request) {
 		return ShowQuickInputOnUi(request);
 	});
-	m_dispatcher->SetTrustHandler([this](std::wstring_view extensionId, std::wstring_view version,
-		std::wstring_view displayName, std::wstring_view extensionPath) {
-		return ShowTrustOnUi(extensionId, version, displayName, extensionPath);
-	});
 }
 
 void CExtensionService::PostWorkbenchChanges(EExtensionWorkbenchChange changes) const noexcept
@@ -1580,26 +1598,6 @@ SExtensionQuickInputCompletion CExtensionService::ShowQuickInputOnUi(
 		return { .id = request.id, .state = EExtensionQuickInputState::HostLost };
 	}
 	return std::move(prompt.completion);
-}
-
-bool CExtensionService::ShowTrustOnUi(
-	std::wstring_view extensionId,
-	std::wstring_view version,
-	std::wstring_view displayName,
-	std::wstring_view extensionPath)
-{
-	if (!m_editorWindow || m_stopping.load(std::memory_order_acquire)) return false;
-	if (m_trustStore.IsTrusted(extensionId, version, extensionPath)) return true;
-	TrustPrompt prompt{
-		.extensionId = std::wstring(extensionId),
-		.version = std::wstring(version),
-		.displayName = std::wstring(displayName),
-		.extensionPath = std::wstring(extensionPath),
-	};
-	DWORD_PTR ignored = 0;
-	if (::SendMessageTimeoutW(m_editorWindow, MYWM_EXTENSION_TRUST_PROMPT, 0,
-		reinterpret_cast<LPARAM>(&prompt), SMTO_ABORTIFHUNG | SMTO_BLOCK, 5 * 60 * 1000, &ignored) == 0) return false;
-	return prompt.trusted && m_trustStore.Grant(extensionId, version, extensionPath);
 }
 
 CExtensionService::NativeApplyEditResult CExtensionService::ApplyEditOnUi(

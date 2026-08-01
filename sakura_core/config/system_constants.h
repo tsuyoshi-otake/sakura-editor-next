@@ -771,8 +771,6 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 #define MYWM_EXTENSION_NOTIFICATION_PROMPT (WM_APP+232)
 //! UI thread で拡張 Quick Pick / Input Box を表示する
 #define MYWM_EXTENSION_QUICK_INPUT_PROMPT (WM_APP+233)
-//! UI thread で拡張の初回実行許可を確認する
-#define MYWM_EXTENSION_TRUST_PROMPT (WM_APP+234)
 //! UI thread で versioned workspace edit を1つのnative undo単位として適用する
 #define MYWM_EXTENSION_APPLY_EDIT_PROMPT (WM_APP+235)
 //! WAIT_ABANDONED 後に control process へ stale AppNode の同期修復を依頼する

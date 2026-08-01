@@ -163,13 +163,30 @@ backend whose service owner remains active.
   `IsBuiltinWorkbenchViewActive(ids::view::Extensions)`, so it reflects
   whichever Part currently owns the container, including after a drag to the
   Secondary Side Bar.
-- **Documented divergence:** the Marketplace is Sakura's own OpenVSX
-  search/install/remove list, not VS Code's Extensions view UI. There are no
-  gallery cards, no per-extension detail editor, no recommendations/installed/
-  outdated sections, and no filter quick-pick. It is the same concept in the
-  same place with a narrower surface, not a faked parity claim.
-- **Documented divergence:** this route only acquires and places an extension.
-  There is still no way to *run* an installed extension through it.
+- The Marketplace now projects the VS Code Extensions view's primary
+  interaction shape: its search cue is `Search Extensions in Marketplace`,
+  results are grouped into Installed/Popular-or-search sections, rows are
+  card-like extension summaries, and selecting a row opens the typed native
+  metadata surface owned by `CEditWnd`. The selection, install, and close
+  paths remain connected to the real `CExtensionPane`/OpenVSX flow.
+- **Documented divergence:** this is still not the full VS Code
+  `workbench.editor.extension` input. OpenVSX remains the registry, and the
+  composition root does not yet supply gallery icons, nor does it provide
+  feature/changelog/extension-pack content, recommendations/outdated groups,
+  or the filter quick-pick. README Markdown is fetched through the bounded
+  OpenVSX text path, passed to the typed detail surface, and rendered as a
+  native, non-executable projection; loading/error/unsupported states remain
+  explicit. It is shown only when no native document input is active, so it
+  never displaces an open Sakura document.
+  Auxiliary-Bar Sessions is a separate VS Code Chat view and is intentionally
+  not faked as part of Extensions.
+- Installing through this Marketplace now takes effect in the running window.
+  `CViewContainerPages`' factory hands `CExtensionPane` an install-completed
+  callback owned by the composition root, and `CEditWnd` turns that into
+  `CExtensionService::RequestInstalledExtensionRescan()`, so a newly installed
+  extension activates without a restart. The pane still never reaches into
+  `CExtensionService`; see [`../extension/CLAUDE.md`](../extension/CLAUDE.md)
+  for the rescan and re-registration contract.
 - The OpenVSX production factory's missing credential provider is recorded in
   [`../extension/CLAUDE.md`](../extension/CLAUDE.md); do not restate it here.
 
@@ -212,3 +229,193 @@ The integrated runtime/service/native-bridge cohort passes 210/210 and compiles
 through the native window. Command Palette, arbitrary extension view
 contributions, Debug Console, Ports, and Run and Debug still require production
 wiring.
+
+## Extension Status Bar Item Hovers (2026-08-01)
+
+- Extension-contributed status bar items get a real **hover**, not a Win32
+  tooltip. `CMainStatusBar` owns one `workbench::hover::CHoverWidget` — this
+  repository's `HoverWidget` implementation, see
+  [`../workbench/hover/CLAUDE.md`](../workbench/hover/CLAUDE.md) — created in
+  `CreateStatusBar()` and destroyed in `DestroyStatusBar()` / `WM_NCDESTROY`.
+  The former `TOOLTIPS_CLASSW` popup, its `TTF_SUBCLASS` tools,
+  `SyncExtensionTooltips()`, and `ExtensionTooltipPlainText()` are all gone.
+  They were replaced rather than extended: a common-control tooltip carries one
+  plain-text string, so headings, emphasis, inline code, theme icons, and a
+  column-aligned table are not "hard" there but impossible, and the previous
+  plain-text projection left visible markup debris (`| │`) in
+  `odangoo.otak-usage`'s two-brand table where VS Code shows a clean grid.
+- The window layer owns the *gesture*, the hover owns the *rendering*.
+  `WM_MOUSEMOVE` arms a `workbench::hover::kHoverDelayMilliseconds` (500 ms,
+  VS Code's `workbench.hover.delay` default) timer through
+  `OnExtensionHoverMouseMove`; the timer's `ShowExtensionHoverNow` re-hit-tests
+  the *current* cursor position, parses that item's Markdown, and shows the
+  widget anchored above the item's screen rectangle. `WM_MOUSELEAVE` (armed via
+  `TrackMouseEvent`), `WM_LBUTTONUP`, `SetExtensionItems`, and window teardown
+  all call `HideExtensionHover`, which always kills the timer.
+- `ExtensionHitTarget` stores the **raw Markdown**, not a rendered projection,
+  and `workbench::hover::Parse` runs only at show time. A repaint therefore
+  never re-parses, and the parse sees the `tooltipSupportsThemeIcons` flag that
+  came with the item. An item whose tooltip is empty gets no hover at all;
+  `FindHoverTargetAt` skips those targets outright.
+- The pending/visible target is identified by its client-coordinate `RECT`
+  compared with `::EqualRect`, never by an index into `m_extensionHitTargets`.
+  That vector is rebuilt on every paint, so an index would silently point at a
+  different item after any repaint. Re-entering the same rectangle keeps the
+  existing timer or the already-visible hover instead of restarting it, so an
+  unrelated repaint (theme change, resize, value refresh) cannot dismiss an open
+  hover.
+- `SetPalette()` and `SetExtensionIconFonts()` forward to the widget, so the
+  hover follows the theme and resolves `contributes.icons` glyphs the same way
+  the status bar text does. Items with no `command` keep their hover but do not
+  get the hand cursor and are not click targets, unchanged from before.
+- **Documented divergence — the hover is non-interactive.** It is created
+  `WS_EX_TRANSPARENT` and returns `HTTRANSPARENT`, so a `command:` link inside it
+  renders as link-colored text but cannot be clicked, and the pointer cannot rest
+  inside the hover to keep it open. This is deliberate: a mouse-accepting popup
+  covers its own anchor, producing a leave/re-enter flicker loop. The reasoning,
+  the upstream mechanism it stands in for, and the Markdown-side divergences
+  (table borders, HTML entity coverage, bounded untrusted input) all live in
+  [`../workbench/hover/CLAUDE.md`](../workbench/hover/CLAUDE.md); do not restate
+  them here.
+- **Corrected record — `supportThemeIcons` now survives the trip to native
+  code.** An earlier version of this section stated that
+  `vscode.MarkdownString.supportThemeIcons` was dropped by the exthost shim's
+  `serializeThemeValue` before the tooltip reached
+  `CExtensionWorkbenchDispatcher`, and that native code therefore had no way to
+  tell an intended codicon from literal `$(name)` text — which is why the old
+  projection stripped `$(name)` tokens unconditionally. That gap is closed. The
+  flag is carried through `src/exthost/src/vscode-api.cjs`, the dispatcher, and
+  `SExtensionStatusBarItem::tooltipSupportsThemeIcons` into
+  `workbench::hover::SParseOptions`, so `$(name)` renders as a glyph when the
+  extension asked for icons and stays literal when it did not — matching VS Code
+  in both directions instead of guessing one.
+
+## Extension-Contributed Status Bar Icons (2026-08-01)
+
+- `StatusBarItem.text`'s `$(name)` tokens now resolve against
+  `workbench::icons::CExtensionIconFontRegistry` — this repository's
+  `contributes.icons` implementation — before falling back to the built-in
+  codicon table. `CEditWnd` owns the registry and lends it to `CMainStatusBar`
+  by raw pointer through `SetExtensionIconFonts()`; the status bar never owns
+  it, never extends its lifetime, and treats `nullptr` as "no contributed
+  icons, built-in table only." The registry is constructed *before*
+  `CExtensionService` because `contributes.icons` is satisfied entirely by the
+  manifest plus a font file on disk: a dead or unreachable extension host must
+  not change which glyph an installed extension's status bar item draws.
+- **Resolution order matches real VS Code, globally, not per extension.**
+  Upstream `contributes.icons` registers into the single global
+  `IconRegistry` (`platform/theme/common/iconRegistry.ts`) keyed by the icon id
+  alone, and `ThemeIcon.fromString("$(id)")` resolves that id no matter which
+  extension is rendering. `workbench::icons::ResolveThemeIcon` therefore calls
+  the single-argument `Find(iconId)` overload. Do not "fix" this into a
+  per-extension lookup: an extension using an id another extension contributed
+  is a legitimate upstream state, not a bug.
+- **The resolution vocabulary is shared with the hover, not duplicated.** The
+  contributed-first/built-in-fallback decision lives in
+  [`../workbench/icons/ThemeIconResolver.h`](../workbench/icons/ThemeIconResolver.h)
+  as pure functions, and both `CMainStatusBar`'s `StatusBarItem.text` renderer
+  and `CHoverWidget`'s inline icon runs call it. The former
+  `ResolveExtensionStatusIcon` member of `CMainStatusBar.cpp` was extracted into
+  that header for exactly this reason; an icon id must not be able to mean one
+  thing in the item's text and another in its hover.
+- `CEditWnd::RefreshExtensionIconFonts()` is the only place that populates the
+  registry, and it is UI-thread-only. It enumerates through
+  `CExtensionManager::EnumInstalled()` and must **not** read
+  `CExtensionService::m_installedRoots`, which is worker-thread-only state. It
+  runs once at composition and again from the install-completed callback, so an
+  extension installed mid-session gets its glyphs without a restart, matching
+  the rescan contract in [`../extension/CLAUDE.md`](../extension/CLAUDE.md).
+- The status bar caches one `HFONT` per (face name, pixel height) pair in
+  `m_iconFontCache` so repaints do not call `CreateFontIndirectW`. The cache is
+  named for what it holds — icon-font handles — not for one of its two sources,
+  because it now serves both extension-contributed faces and the bundled
+  `codicon` face. `SetExtensionIconFonts()` and `DestroyStatusBar()` both
+  release the cache; the release on registry swap is mandatory, not defensive,
+  because a face name whose memory font has been unregistered would otherwise
+  still resolve through GDI's font substitution and silently draw an unrelated
+  glyph. Teardown clears the borrow explicitly rather than relying on
+  `CEditWnd`'s member declaration order.
+- **Built-in `$(name)` resolves through the bundled `codicon.ttf`, the same way
+  real VS Code does.** VS Code ships the whole font and draws every built-in
+  `$(name)` as one glyph of it; this product now does the same. `codicon.ttf`
+  (npm `@vscode/codicons@0.0.46-24`, redistributed byte-verbatim) is embedded in
+  the executable as the named `CODICONFONT RCDATA` resource and registered
+  process-privately by
+  [`../workbench/icons/CCodiconFont.h`](../workbench/icons/CCodiconFont.h)
+  through the same `AddFontMemResourceEx` path
+  `CExtensionIconFontRegistry` already uses for `contributes.icons`. The name →
+  code point vocabulary is
+  [`../workbench/icons/CodiconGlyphTable.h`](../workbench/icons/CodiconGlyphTable.h),
+  generated one-to-one from the same package's `dist/codiconsLibrary.ts`, so all
+  746 upstream names — aliases included — resolve, not a hand-picked subset.
+  Resolution order in `ThemeIconResolver` is therefore: extension-contributed
+  registry (upstream's global `IconRegistry` semantics) → bundled font glyph →
+  the imported vector fallbacks.
+- **The imported vectors and the substitute dot are now a degraded path, not the
+  normal one.** The two dozen vector icons in
+  [`../workbench/icons/CodiconsActivityIcons.h`](../workbench/icons/CodiconsActivityIcons.h)
+  are still the authority for icons drawn as GDI paths (Activity Bar, title bar,
+  tab strip), and `ThemeIconResolver` still falls back to them — and finally to
+  the substitute dot `Icon::RecordSmall` — but for `$(name)` text resolution that
+  only happens when `CCodiconFont::Instance().FaceName()` is empty, i.e. the
+  embedded resource is missing or GDI refused it. Passing an empty built-in face
+  name is what makes the fallback reachable in tests; production call sites in
+  `CMainStatusBar` and `CHoverWidget` always pass the real face name. A name the
+  upstream library does not declare at all still resolves to the substitute dot
+  rather than leaking the literal `$(name)` markup, which matches VS Code showing
+  nothing meaningful for an undeclared id.
+- **The font resource is declared once, in `sakura_rc.rc2` only.** `tests1.exe`
+  links `sakura.vcxproj`'s objects *and* its `.res`, so `CODICONFONT` is already
+  present in the test binary; adding the same resource to `tests1_rc.rc` makes
+  the link fail with `CVT1100 重複するリソース` / `LNK1123`. Declaring it in
+  `sakura_rc.rc2` also means no project-file edit is needed for either build
+  path, because `sakura_rc.rc` includes that file and both MSBuild and
+  CMake/MinGW compile it.
+- **Corrected record — `odangoo.otak-usage`'s other built-in `$(name)` tokens
+  never reached the status bar `text` path, so they never drew the substitute
+  dot.** An earlier version of this note claimed that with `odangoo.otak-usage`
+  installed, its built-in `$(check)`, `$(warning)`, `$(rocket)`, `$(zap)`,
+  `$(copy)`, `$(edit)`, `$(circle-slash)`, and `$(dashboard)` tokens drew the
+  substitute dot in the status bar. Live investigation of
+  `x64/Debug/extensions/odangoo.otak-usage-1.19.0/extension/out/formatter.js`
+  and `out/extension.js` found that claim wrong: every one of those names
+  appears only inside the Markdown source that `formatter.js` builds for
+  `StatusBarItem.tooltip`, never in `StatusBarItem.text`, and the tooltip path
+  of the time (`ExtensionTooltipPlainText()`, since replaced — see "Extension
+  Status Bar Item Hovers" above) removed `$(icon-name)` tokens outright rather
+  than resolving them to a glyph — so no dot, substitute or otherwise, was ever
+  drawn for them. Those tooltip tokens now *do* resolve, through the hover's
+  shared `ThemeIconResolver`, so `$(check)` and friends draw their real glyph in
+  the hover when the extension set `supportThemeIcons`. Since the bundled
+  `codicon.ttf` landed they resolve there directly, so the substitute dot is
+  reachable for them only if the embedded font fails to register at all. The
+  only built-in `$(name)` that reaches the status bar `text` render path for
+  this extension (in its default `cost` mode, while a refresh is in flight) is
+  `$(loading~spin)`; the other tokens that do reach `text`
+  (`$(otak-claude)`, `$(otak-openai)`) are this extension's own
+  `contributes.icons` contributions, resolved through
+  `CExtensionIconFontRegistry`, not built-ins. `loading` resolves from the
+  bundled font, and `Icon::Loading` is additionally imported as a vector (see
+  below) so it survives the degraded path too.
+- **`$(loading~spin)` now draws the real `loading` glyph, statically.**
+  `ParseExtensionStatusText` already stripped the `~spin` (or any
+  `~modifier`) suffix before this change, exactly as VS Code's own
+  `ThemeIcon.fromString` does, so the name looked up was already `loading`;
+  the gap was that `loading` was not yet an imported glyph, so the resolver
+  fell through to the substitute dot. It is now
+  imported as `Icon::Loading` (16x16 viewBox, single path, non-evenodd fill,
+  adapted from `vscode-codicons`' `loading.svg` at the same pinned commit as
+  every other entry in
+  [`../workbench/icons/CodiconsActivityIcons.h`](../workbench/icons/CodiconsActivityIcons.h);
+  see `CODICONS-ATTRIBUTION.md` beside that header), so `$(loading~spin)`
+  draws the correct spinner ring shape instead of a dot. Real VS Code also
+  applies a continuous CSS `@keyframes spin` rotation to that glyph while the
+  extension host is busy; this native renderer draws one static frame of the
+  same glyph and does not rotate it. This is a faithful, non-animated
+  rendering of the correct glyph — a degraded presentation of the same
+  concept, not an unrelated glyph standing in for it, and therefore does not
+  violate the top-level "never fake a capability" rule. Animating it would
+  require a periodic repaint timer (most naturally reusing the status bar's
+  existing per-item invalidation path) driving a rotating `HDC` world
+  transform each tick; that is separate follow-up work and is not implemented
+  here.

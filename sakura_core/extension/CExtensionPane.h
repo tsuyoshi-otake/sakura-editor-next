@@ -12,6 +12,8 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -36,14 +38,28 @@
 	ワーカーはネットワーク、展開、削除の境界で bCancelled を確認して副作用を止める。
 	完了通知の PostMessage が失敗しても、ウィンドウ存続中はタイマーが共有ジョブを終端状態へ回収する。
 
-	@note 拡張を「実行」する仕組み（拡張ホスト）はまだ無い。
-		このサイドバーができるのは取得と配置までである。
+	@note このサイドバーの責務は取得と配置までである。導入した拡張の実行は
+		拡張ホスト（CExtensionService）が担う。導入完了はコンポジションルートが
+		所有するコールバックで通知するだけで、ここから CExtensionService を
+		直接触ってはならない。
  */
 class CExtensionPane final : public CWnd
 {
 	using Me = CExtensionPane;
 
 public:
+	using ExtensionSelectedCallback = std::function<void(const SOpenVsxExtension&)>;
+	enum class EExtensionReadmeState : std::uint8_t {
+		Loading,
+		Ready,
+		Error,
+		Unsupported,
+	};
+	using ExtensionReadmeCallback = std::function<void(
+		const SOpenVsxExtension&,
+		EExtensionReadmeState,
+		const std::wstring&,
+		const std::wstring&)>;
 	//! ジョブ完了通知。このウィンドウの内部だけで使う
 	static constexpr UINT kJobDoneMessage = WM_APP + 1600;
 	static constexpr UINT_PTR kJobPollTimerId = 1601;
@@ -75,12 +91,28 @@ public:
 	//! 検索欄へフォーカスを移す
 	void SetFocusToSearchBox();
 
+	/*!
+		@brief 導入完了を外部（合成ルート）へ知らせるコールバックを設定する
+
+		拡張の導入が完了すると、既存の RefreshExtensionHostInventory 呼び出しの後に
+		これを呼ぶ。CExtensionPane は稼働中の拡張ホストサービスを直接知らない
+		（依存の向きを保つため）ので、再スキャンの実行は呼び出し側に委ねる。
+	*/
+	void SetOnExtensionInstalled( std::function<void()> callback );
+	//! Marketplace ViewContainer content (not an Auxiliary Bar/Sessions implementation).
+	void SetOnExtensionSelected( ExtensionSelectedCallback callback );
+	void SetOnExtensionReadme( ExtensionReadmeCallback callback );
+	//! The callback receives an empty SOpenVsxExtension when the selection is cleared.
+	void InstallSelectedExtension();
+	void ClearExtensionSelection();
+
 private:
 	//! ジョブの種類
 	enum class EJobKind {
 		Search,		//!< レジストリの検索
 		Install,	//!< 導入
 		Uninstall,	//!< 削除
+		Readme,	//!< 選択中 README の取得
 	};
 
 	/*!
@@ -90,6 +122,7 @@ private:
 		という取り決めで排他を不要にしている。bDone の release/acquire が
 		結果の可視性を保証する。
 	*/
+
 	struct SJob {
 		// -- 投入時に UI スレッドが設定する（以後 UI スレッドは触らない） -- //
 		EJobKind			eKind = EJobKind::Search;
@@ -98,6 +131,8 @@ private:
 		SOpenVsxExtension	ext;					//!< Install の対象
 		std::wstring		sUniqueId;				//!< Uninstall の対象
 		std::wstring		sTargetName;			//!< 進捗表示に使う名前
+		std::wstring		sReadmeUrl;
+
 		// Search/Install only.  This client owns its network composition and has no runtime/config reference.
 		std::shared_ptr<extension::openvsx::IOpenVsxRegistryClient> registryClient;
 
@@ -105,6 +140,7 @@ private:
 		bool					bSucceeded = false;
 		std::wstring			sErrorMsg;
 		SOpenVsxSearchResult	result;
+		std::wstring		sReadmePayload;
 
 		//! 結果が書き終わったか。これが結果の可視性の境界になる
 		std::atomic<bool>	bDone{ false };
@@ -126,6 +162,8 @@ private:
 	LRESULT OnSize( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT OnCommand( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT OnNotify( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
+	LRESULT OnMeasureItem( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
+	LRESULT OnDrawItem( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT OnDestroy( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT OnTimer( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
 	LRESULT DispatchEvent_WM_APP( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp ) override;
@@ -147,6 +185,14 @@ private:
 
 	//! 選択状態に応じてボタンの有効・無効を切り替える
 	void UpdateButtons();
+	void NotifySelectionChanged();
+	void StartReadmeJob( const SOpenVsxExtension& extension );
+	void CancelReadmeJob();
+	void NotifyReadme(
+		const SOpenVsxExtension& extension,
+		EExtensionReadmeState state,
+		const std::wstring& payload,
+		const std::wstring& error );
 
 	//! 状態表示欄に文字列を設定する
 	void SetStatusText( const std::wstring& sText );
@@ -173,6 +219,7 @@ private:
 
 	HWND	m_hwndSearchEdit    = nullptr;
 	HWND	m_hwndSearchButton  = nullptr;
+	HWND	m_hwndSectionLabel  = nullptr;
 	HWND	m_hwndList          = nullptr;
 	HWND	m_hwndInstallButton = nullptr;
 	HWND	m_hwndRemoveButton  = nullptr;
@@ -183,10 +230,18 @@ private:
 	config::IConfigurationService& m_configurationService;	//!< Used only before a worker starts.
 	std::wstring			m_userDataProfileId;	//!< Selected user-data profile id (opaque, not the control authority id) for the OpenVSX factory.
 	HWND					m_controlProcessWindow = nullptr;	//!< Control-owned extension host broker window.
+	std::function<void()>	m_onExtensionInstalled;	//!< 導入完了の通知先（無ければ何もしない）
 	std::vector<SRow>		m_rows;			//!< 一覧の内容
 	std::shared_ptr<SJob>	m_pJob;			//!< 実行中のジョブ。無ければ空
+	std::shared_ptr<SJob>		m_pReadmeJob;
 	int						m_nNextSerial = 1;
 	bool					m_bSearchResultShown = false;	//!< 一覧が検索結果か（false なら導入済み一覧）
+	ExtensionSelectedCallback m_onExtensionSelected;
+	ExtensionReadmeCallback m_onExtensionReadme;
+	std::wstring			m_sReadmeCacheKey;
+	EExtensionReadmeState	m_eReadmeCacheState = EExtensionReadmeState::Unsupported;
+	std::wstring			m_sReadmeCachePayload;
+	std::wstring			m_sReadmeCacheError;
 };
 
 #endif /* SAKURA_CEXTENSIONPANE_5B1D8C74_0A93_4E62_9F27_6D48B0C5E31A_H_ */

@@ -161,6 +161,8 @@ bool OpenVsxProtocol::ParseSearchResponse(const std::string& json, SOpenVsxSearc
 			extension.sDownloadUrl = GetWString(*files, "download");
 			extension.sSha256Url = GetWString(*files, "sha256");
 			extension.sIconUrl = GetWString(*files, "icon");
+			extension.sReadmeUrl = GetWString(*files, "readme");
+			extension.sChangelogUrl = GetWString(*files, "changelog");
 		}
 
 		if (extension.sNamespace.empty() || extension.sName.empty() || extension.sVersion.empty() || extension.sDownloadUrl.empty()) continue;

@@ -29,6 +29,11 @@ struct SExtensionStatusBarItem {
 	double priority = 0.0;
 	std::wstring text;
 	std::wstring tooltip;
+	//! tooltip が MarkdownString で、その supportThemeIcons が真だったか。
+	//! VS Code は supportThemeIcons が真のときだけ `$(name)` をコディコンとして
+	//! 描画し、偽ならリテラル文字として描画する。この 1 ビットが両者を区別する
+	//! 唯一の情報なので、ワイヤーからホバー描画まで落とさずに運ぶ。
+	bool tooltipSupportsThemeIcons = false;
 	std::wstring command;
 	std::wstring accessibilityLabel;
 	bool visible = false;

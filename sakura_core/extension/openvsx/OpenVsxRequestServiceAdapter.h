@@ -9,6 +9,7 @@
 
 #include "extension/openvsx/IOpenVsxRegistryClient.h"
 #include "platform/request/RequestService.h"
+#include "util/string_ex.h"
 
 #include <chrono>
 #include <cstddef>
@@ -30,6 +31,7 @@ struct OpenVsxRequestPolicy {
 	platform::request::RequestLimits searchLimits;
 	platform::request::RequestLimits vsixLimits;
 	platform::request::RequestLimits sha256Limits;
+	platform::request::RequestLimits textLimits;
 };
 
 /*!
@@ -97,6 +99,25 @@ public:
 			return { { EOpenVsxRequestOutcome::NotRequested, platform::request::ERequestOutcome::Success, std::nullopt, L"sha256 URI was not provided" }, {} };
 		}
 		return FetchBinary(*validatedHttpsSha256Uri, m_policy.sha256Limits, L"text/plain", cancellation);
+	}
+
+	OpenVsxTextOperation FetchText(
+		std::wstring_view validatedHttpsTextUri,
+		const platform::request::IRequestCancellation* cancellation = nullptr) const override
+	{
+		OpenVsxTextOperation operation;
+		const auto execution = ExecuteGet(validatedHttpsTextUri, m_policy.textLimits, L"text/plain", cancellation);
+		operation.status = execution.status;
+		if (!operation.status) return operation;
+		try {
+			const std::string utf8(execution.response->body.begin(), execution.response->body.end());
+			operation.value = u8stowcs(utf8);
+		}
+		catch (...) {
+			operation.status.outcome = EOpenVsxRequestOutcome::InvalidResponse;
+			operation.status.message = L"text response was not valid UTF-8";
+		}
+		return operation;
 	}
 
 private:

@@ -150,5 +150,6 @@ TEST(OpenVsxProductionClient, BuildsBoundedEndpointPoliciesFromTheSingleNetworkP
 	EXPECT_EQ(64u * 1024u, policy.searchLimits.maxResponseHeaderBytes);
 	EXPECT_EQ(8u * 1024u * 1024u, policy.searchLimits.maxResponseBodyBytes);
 	EXPECT_EQ(64u * 1024u, policy.sha256Limits.maxResponseBodyBytes);
+	EXPECT_EQ(1024u * 1024u, policy.textLimits.maxResponseBodyBytes);
 	EXPECT_EQ(512u * 1024u * 1024u, policy.vsixLimits.maxResponseBodyBytes);
 }

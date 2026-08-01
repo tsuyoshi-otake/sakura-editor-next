@@ -8,6 +8,8 @@
 #include "extension/CExtensionWorkbenchDispatcher.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
 
+#include "platform/serialization/JsoncDocument.h"
+
 #include <picojson/picojson.h>
 
 #include <algorithm>
@@ -90,6 +92,18 @@ std::wstring PresentationString(const picojson::object& object, const char* key)
 	return {};
 }
 
+//! `MarkdownString` として送られてきたプレゼンテーション値の supportThemeIcons を読む。
+//! VS Code は supportThemeIcons が真のときだけ `$(name)` をコディコンとして描画する。
+//! プレーン文字列で送られた値（MarkdownString ではない）は常に偽。
+bool PresentationSupportsThemeIcons(const picojson::object& object, const char* key)
+{
+	const auto* source = Find(object, key);
+	if (!source || !source->is<picojson::object>()) return false;
+	const auto& nested = source->get<picojson::object>();
+	const auto* flag = Find(nested, "supportThemeIcons");
+	return flag && flag->is<bool>() && flag->get<bool>();
+}
+
 std::wstring CommandString(const picojson::object& object)
 {
 	const auto* command = Find(object, "command");
@@ -170,6 +184,136 @@ std::string SecretFailure(const SExtensionSecretStorageResult& result)
 		", error " + std::to_string(result.errorCode) + ")";
 }
 
+// The host-supplied failure message originates from whatever the extension threw (for example an
+// uncaught TypeError's stack). Bound it before it is ever composed into a diagnostic string; the
+// service bridge applies its own defensive bound too, but truncating here keeps the extension-supplied
+// portion clearly separated from the surrounding attribution text this dispatcher adds.
+constexpr std::size_t kMaximumActivationFailureMessageCodeUnits = 2000;
+
+std::wstring BoundedActivationFailureMessage(std::wstring value)
+{
+	if (value.size() <= kMaximumActivationFailureMessageCodeUnits) return value;
+	value.resize(kMaximumActivationFailureMessageCodeUnits);
+	value += L"…[truncated]";
+	return value;
+}
+
+// workspace/configuration/update ---------------------------------------------------------
+//
+// Real VS Code's ConfigurationTarget is Global = 1, Workspace = 2, WorkspaceFolder = 3, and
+// its update() also accepts a plain boolean (true => Global, false => Workspace) in place of
+// the enum. An absent target resolves to WorkspaceFolder when the call is resource-scoped,
+// otherwise Workspace. This dispatcher only ever accepts Global: the workbench runtime has no
+// safe accessor to its dynamically-assigned workspace/folder settings documents from this
+// bridge (see extension/CLAUDE.md), so every non-Global outcome -- including both branches of
+// the absent-target default, since neither is Global -- is rejected as an explicit typed
+// UnsupportedCapability failure rather than silently accepted or silently dropped.
+enum class EConfigurationUpdateTarget : std::uint8_t {
+	Global,
+	Unsupported,
+	Malformed,
+};
+
+EConfigurationUpdateTarget ResolveConfigurationUpdateTarget(const picojson::value* target)
+{
+	if (!target || target->is<picojson::null>()) return EConfigurationUpdateTarget::Unsupported;
+	if (target->is<bool>()) {
+		return target->get<bool>() ? EConfigurationUpdateTarget::Global : EConfigurationUpdateTarget::Unsupported;
+	}
+	if (target->is<double>()) {
+		const double number = target->get<double>();
+		if (!std::isfinite(number) || std::floor(number) != number) return EConfigurationUpdateTarget::Malformed;
+		if (number == 1.0) return EConfigurationUpdateTarget::Global;
+		if (number == 2.0 || number == 3.0) return EConfigurationUpdateTarget::Unsupported;
+		return EConfigurationUpdateTarget::Malformed;
+	}
+	return EConfigurationUpdateTarget::Malformed;
+}
+
+// The extension-supplied value tree is untrusted and otherwise unbounded (an extension can
+// send an arbitrarily deep or wide JSON value). Bound both the node count and the nesting
+// depth defensively before ever building a config::ConfigurationValue, reusing the same
+// budgets CJsoncDocument enforces for a parsed settings document so this conversion can never
+// admit a value the document editor would not have accepted anyway.
+constexpr int kMaximumConfigurationValueDepth = 64;
+constexpr std::size_t kMaximumConfigurationValueNodes = 65536;
+constexpr std::size_t kMaximumConfigurationValueStringLength = 1024 * 1024;
+
+bool ToConfigurationValue(
+	const picojson::value& source, int depth, std::size_t& nodeBudget, config::ConfigurationValue& out)
+{
+	if (depth > kMaximumConfigurationValueDepth || nodeBudget == 0) return false;
+	--nodeBudget;
+	if (source.is<picojson::null>()) { out = config::ConfigurationValue(nullptr); return true; }
+	if (source.is<bool>()) { out = config::ConfigurationValue(source.get<bool>()); return true; }
+	if (source.is<double>()) {
+		const double number = source.get<double>();
+		if (!std::isfinite(number)) return false;
+		if (std::floor(number) == number &&
+			number >= static_cast<double>((std::numeric_limits<std::int64_t>::min)()) &&
+			number <= static_cast<double>((std::numeric_limits<std::int64_t>::max)())) {
+			out = config::ConfigurationValue(static_cast<std::int64_t>(number));
+		} else {
+			out = config::ConfigurationValue(number);
+		}
+		return true;
+	}
+	if (source.is<std::string>()) {
+		const auto& text = source.get<std::string>();
+		if (text.size() > kMaximumConfigurationValueStringLength) return false;
+		out = config::ConfigurationValue(u8stowcs(text));
+		return true;
+	}
+	if (source.is<picojson::array>()) {
+		config::ConfigurationValue::Array array;
+		for (const auto& element : source.get<picojson::array>()) {
+			config::ConfigurationValue converted;
+			if (!ToConfigurationValue(element, depth + 1, nodeBudget, converted)) return false;
+			array.push_back(std::move(converted));
+		}
+		out = config::ConfigurationValue(std::move(array));
+		return true;
+	}
+	if (source.is<picojson::object>()) {
+		config::ConfigurationValue::Object object;
+		for (const auto& [key, value] : source.get<picojson::object>()) {
+			if (key.size() > kMaximumConfigurationValueStringLength) return false;
+			config::ConfigurationValue converted;
+			if (!ToConfigurationValue(value, depth + 1, nodeBudget, converted)) return false;
+			object.emplace(u8stowcs(key), std::move(converted));
+		}
+		out = config::ConfigurationValue(std::move(object));
+		return true;
+	}
+	return false;
+}
+
+// The coordinator's diagnostic string is already documented as category-only (never a URI,
+// path, key, or value), but this dispatcher still owns its own fixed, English, per-status RPC
+// error message rather than forwarding it verbatim -- an extra margin against ever leaking
+// something the coordinator's own contract did not intend to expose across the RPC boundary.
+SExtensionWorkbenchDispatchResult ConfigurationWriteFailure(const config::SettingsWritebackResult& result)
+{
+	switch (result.status) {
+	case config::ESettingsWritebackStatus::Conflict:
+		return Failure("configuration update conflicted with a concurrent write and could not be applied", -32011);
+	case config::ESettingsWritebackStatus::InvalidRequest:
+		return Failure("configuration update request is invalid", -32602);
+	case config::ESettingsWritebackStatus::EditRejected:
+		return Failure("configuration document edit was rejected", -32011);
+	case config::ESettingsWritebackStatus::ResnapshotRejected:
+		return Failure("configuration update was written but could not be reloaded into the effective configuration model", -32011);
+	case config::ESettingsWritebackStatus::Stopped:
+		return Failure("workbench settings owner is not available", -32001);
+	case config::ESettingsWritebackStatus::Applied:
+	case config::ESettingsWritebackStatus::NoChange:
+	case config::ESettingsWritebackStatus::Replayed:
+	case config::ESettingsWritebackStatus::Failed:
+	default:
+		return Failure("configuration update failed", -32011);
+	}
+}
+
 } // namespace
 
 CExtensionWorkbenchDispatcher::CExtensionWorkbenchDispatcher(
@@ -203,11 +347,6 @@ void CExtensionWorkbenchDispatcher::SetQuickInputHandler(QuickInputHandler handl
 	m_quickInputHandler = std::move(handler);
 }
 
-void CExtensionWorkbenchDispatcher::SetTrustHandler(TrustHandler handler)
-{
-	m_trustHandler = std::move(handler);
-}
-
 void CExtensionWorkbenchDispatcher::SetNotificationHandler(NotificationHandler handler)
 {
 	m_notificationHandler = std::move(handler);
@@ -220,9 +359,8 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::Dispatch(const 
 	const auto method = std::string_view(message.sMethod);
 	if (method == "workbench/extensions/register") return DispatchExtensionRegistration(message.sParamsJson);
 	if (method == "workbench/extensions/removeGeneration") return DispatchRemoveGeneration(message.sParamsJson);
-	if (method == "workbench/extensions/didActivate" || method == "workbench/extensions/didFailActivation" ||
-		method == "workbench/extensions/didBlockActivation") return Success();
-	if (method == "workbench/extensions/ensureTrusted") return DispatchTrust(message.sParamsJson);
+	if (method == "workbench/extensions/didActivate") return Success();
+	if (method == "workbench/extensions/didFailActivation") return DispatchActivationFailure(message.sParamsJson);
 	if (method == "workbench/commands/registerHandler" || method == "workbench/commands/unregisterHandler") {
 		return DispatchCommandHandler(method, message.sParamsJson);
 	}
@@ -240,6 +378,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::Dispatch(const 
 	if (method.starts_with("workbench/progress/")) return DispatchProgress(method, message.sParamsJson);
 	if (method.starts_with("workbench/languageStatus/")) return DispatchLanguageStatus(method, message.sParamsJson);
 	if (method.starts_with("languages/provider/")) return DispatchCapabilityRegistration(method, message.sParamsJson);
+	if (method == "workspace/configuration/update") return DispatchConfigurationUpdate(message.sParamsJson);
 	if (method.starts_with("workbench/tasks/") || method.starts_with("workbench/terminal/") ||
 		method.starts_with("workbench/webview/") || method.starts_with("window/editor/")) {
 		return DispatchUnsupportedCapability(method, message.sParamsJson);
@@ -326,6 +465,34 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchRemoveG
 		EExtensionWorkbenchChange::Views | EExtensionWorkbenchChange::Notifications |
 		EExtensionWorkbenchChange::Diagnostics | EExtensionWorkbenchChange::Output |
 		EExtensionWorkbenchChange::Progress | EExtensionWorkbenchChange::QuickInput);
+}
+
+SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchActivationFailure(std::string_view paramsJson)
+{
+	// Real VS Code does not show a modal for a normal-mode activation failure; AbstractExtensionService
+	// only surfaces one when running under the extension development host, and otherwise routes it to
+	// the "Extension Host" log channel. Match that landing point instead of a TaskDialog: parse
+	// leniently (this is host-originated telemetry about a failure, not a request whose ownership must
+	// be exact) and always ack the RPC, so a malformed or partially-missing notification can never make
+	// the extension host think this method failed.
+	picojson::object params;
+	std::string ignored;
+	(void)ParseObject(paramsJson, params, ignored);
+	std::wstring extensionId = OptionalString(params, "extensionId");
+	if (extensionId.empty() || extensionId.size() > 255 || extensionId.find(L'\0') != std::wstring::npos) {
+		extensionId = L"unknown-extension";
+	}
+	std::uint64_t generation = 1;
+	std::string generationError;
+	(void)Generation(params, generation, generationError);
+	const std::wstring message = BoundedActivationFailureMessage(OptionalString(params, "message"));
+
+	if (!m_serviceBridge) return Success();
+	const std::wstring diagnostic = L"Activation failed for " + extensionId +
+		L" (generation " + std::to_wstring(generation) + L"): " +
+		(message.empty() ? L"(no message provided)" : message);
+	const bool recorded = m_serviceBridge->AppendExtensionHostLog(workbench::output::EOutputLogLevel::Error, diagnostic);
+	return Success(recorded ? EExtensionWorkbenchChange::Output : EExtensionWorkbenchChange::None);
 }
 
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchCommandHandler(
@@ -437,6 +604,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchStatusB
 		.priority = priority && priority->is<double>() ? priority->get<double>() : 0.0,
 		.text = OptionalString(params, "text"),
 		.tooltip = PresentationString(params, "tooltip"),
+		.tooltipSupportsThemeIcons = PresentationSupportsThemeIcons(params, "tooltip"),
 		.command = CommandString(params),
 		.accessibilityLabel = PresentationString(params, "accessibilityInformation"),
 		.visible = OptionalBool(params, "visible"),
@@ -917,21 +1085,48 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchUnsuppo
 	return Success(EExtensionWorkbenchChange::Output);
 }
 
-SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchTrust(std::string_view paramsJson)
+SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchConfigurationUpdate(std::string_view paramsJson)
 {
 	picojson::object params;
 	std::string error;
 	if (!ParseObject(paramsJson, params, error)) return Failure(error);
-	std::wstring extensionId;
-	if (!RequiredString(params, "extensionId", extensionId, error)) return Failure(error);
-	const auto trusted = m_trustHandler && m_trustHandler(
-		extensionId,
-		OptionalString(params, "version"),
-		OptionalString(params, "displayName"),
-		OptionalString(params, "extensionPath"));
-	picojson::object response;
-	response["trusted"] = picojson::value(trusted);
-	return Success(EExtensionWorkbenchChange::None, picojson::value(std::move(response)).serialize());
+
+	const auto* keyValue = Find(params, "key");
+	if (!keyValue || !keyValue->is<std::string>()) return Failure("key must be a non-empty string");
+	const std::string& key = keyValue->get<std::string>();
+	if (key.empty() || key.size() > platform::serialization::CJsoncDocument::kMaximumObjectKeyLength) {
+		return Failure("key must be a non-empty bounded string");
+	}
+
+	const auto targetKind = ResolveConfigurationUpdateTarget(Find(params, "configurationTarget"));
+	if (targetKind == EConfigurationUpdateTarget::Malformed) {
+		return Failure("configurationTarget must be a ConfigurationTarget value or boolean");
+	}
+	if (targetKind == EConfigurationUpdateTarget::Unsupported) {
+		return Failure(
+			"UnsupportedCapability: workspace and workspace-folder configuration targets are not yet supported",
+			-32601);
+	}
+
+	if (!m_serviceBridge || !m_serviceBridge->HasWorkbenchRuntime()) {
+		return Failure("workbench settings owner is not available", -32001);
+	}
+
+	std::optional<config::ConfigurationValue> value;
+	if (const auto* rawValue = Find(params, "value")) {
+		config::ConfigurationValue converted;
+		std::size_t nodeBudget = kMaximumConfigurationValueNodes;
+		if (!ToConfigurationValue(*rawValue, 0, nodeBudget, converted)) {
+			return Failure("value is malformed or exceeds the configuration value bounds");
+		}
+		value = std::move(converted);
+	}
+
+	const std::wstring overrideLanguageId = OptionalString(params, "overrideInLanguage");
+
+	const auto result = m_serviceBridge->WriteGlobalConfiguration(key, value, overrideLanguageId);
+	if (!result.Succeeded()) return ConfigurationWriteFailure(result);
+	return Success();
 }
 
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::ApplyTreeChildrenResult(

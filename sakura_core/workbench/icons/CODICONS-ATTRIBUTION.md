@@ -1,7 +1,55 @@
-# Codicons Native Workbench Geometry Attribution
+# Codicons Attribution
 
-The native workbench's Activity Bar, title bar, status bar, and tab-strip icon
-geometry is adapted from Microsoft's `vscode-codicons` repository, pinned to commit
+This product uses Microsoft's Codicons in two distinct ways, each with its own
+provenance:
+
+1. **The bundled `codicon.ttf` font binary**, redistributed verbatim and
+   embedded in `sakura.exe`. This is what resolves the `$(name)` vocabulary,
+   exactly as real VS Code does. See "Bundled `codicon.ttf`" below.
+2. **Vector path geometry imported into `CodiconsActivityIcons.h`** for the
+   Activity Bar, title bar, status bar, and tab-strip icons that are drawn
+   through GDI paths rather than as text. See "Imported vector geometry" below.
+
+Both are Codicons artwork under
+[Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/);
+the accompanying Codicons source code is MIT. The full upstream license texts
+are redistributed beside this file in the installed `license\codicons`
+directory as `LICENSE` (CC-BY-4.0, artwork) and `LICENSE-CODE` (MIT, code).
+
+Only generic interface icons are used. No VS Code product logo, Microsoft
+logo, or other trademark-bearing icon is included.
+
+## Bundled `codicon.ttf`
+
+| Item | Value |
+| --- | --- |
+| Upstream package | npm [`@vscode/codicons`](https://www.npmjs.com/package/@vscode/codicons) version `0.0.46-24` |
+| File taken | `dist/codicon.ttf` |
+| Local path | `sakura_core/workbench/icons/codicon.ttf` |
+| Size | 149,508 bytes |
+| SHA-256 | `3819e4ae4b87350e7c37a5d8f24e71ada2f1f2ee58f7ce5ebc1f88e3c8c38c80` |
+| Family name (`name` nameID 1) | `codicon` |
+| Modification | **None.** The bytes are redistributed verbatim. |
+
+The font is embedded into the executable as a named `RCDATA` resource
+(`CODICONFONT`, declared in `sakura_core/sakura_rc.rc2`) and registered
+process-privately at runtime with `AddFontMemResourceEx` by
+`CCodiconFont.cpp`. It is never installed into the system font collection and
+never written to disk.
+
+`CodiconGlyphTable.h` beside it is a generated one-to-one transcription of the
+same package's `dist/codiconsLibrary.ts` — the `register('<name>', 0x<cp>)`
+list that upstream's `vs/base/common/codicons.ts` builds the `Codicon`
+vocabulary from — covering all 746 names including aliases. It contains icon
+*names* and *code points*, not artwork. The generator verified that every one
+of those 746 code points has a real glyph in the bundled font's `cmap`, and
+`CCodiconFont.EveryTableEntryHasARealGlyphInTheRegisteredFont` re-verifies it
+against the actually-embedded bytes on every test run.
+
+## Imported vector geometry
+
+The geometry in `CodiconsActivityIcons.h` is adapted from Microsoft's
+`vscode-codicons` repository, pinned to commit
 [`c20fbe9efb8ff7cc77182c5b43c44025544ff843`](https://github.com/microsoft/vscode-codicons/commit/c20fbe9efb8ff7cc77182c5b43c44025544ff843)
 (2026-07-28).
 
@@ -35,6 +83,7 @@ zlib License. The imported Codicons geometry in that header is CC-BY-4.0.
 | `Draw(Icon::ChevronDown)` | `chevron-down` | <https://github.com/microsoft/vscode-codicons/blob/c20fbe9efb8ff7cc77182c5b43c44025544ff843/src/icons/chevron-down.svg> |
 | `Draw(Icon::Close)` | `close` | <https://github.com/microsoft/vscode-codicons/blob/c20fbe9efb8ff7cc77182c5b43c44025544ff843/src/icons/close.svg> |
 | `Draw(Icon::CloseAll)` | `close-all` | <https://github.com/microsoft/vscode-codicons/blob/c20fbe9efb8ff7cc77182c5b43c44025544ff843/src/icons/close-all.svg> |
+| `Draw(Icon::Loading)` | `loading` | <https://github.com/microsoft/vscode-codicons/blob/c20fbe9efb8ff7cc77182c5b43c44025544ff843/src/icons/loading.svg> |
 
 ## Imported SVG path data
 
@@ -59,9 +108,7 @@ geometry. Fill colour continues to come from Sakura's existing theme palettes.
 `vscode-codicons` is licensed under
 [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/).
 The upstream license is at
-<https://github.com/microsoft/vscode-codicons/blob/c20fbe9efb8ff7cc77182c5b43c44025544ff843/LICENSE>.
-This attribution identifies Microsoft and the original repository, links to the
-source and license, and describes the local coordinate-scaling adaptation.
-
-Only generic interface icons are imported. No VS Code product logo, Microsoft
-logo, or other trademark-bearing icon is included.
+<https://github.com/microsoft/vscode-codicons/blob/c20fbe9efb8ff7cc77182c5b43c44025544ff843/LICENSE>
+and is redistributed beside this file as `LICENSE`. This attribution identifies
+Microsoft and the original repository, links to the source and license, and
+describes the local coordinate-scaling adaptation.

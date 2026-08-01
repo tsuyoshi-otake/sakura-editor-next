@@ -111,13 +111,35 @@ test('status bar item preserves VS Code overloads, priority, visibility, and dis
   assert.equal(updates[0].params.priority, 50);
   assert.equal(updates[0].params.visible, true);
   assert.deepEqual(updates[0].params.color, { themeColor: 'statusBar.foreground' });
-  assert.deepEqual(updates[0].params.tooltip, { markdown: 'No problems', isTrusted: false });
+  assert.deepEqual(updates[0].params.tooltip,
+    { markdown: 'No problems', isTrusted: false, supportThemeIcons: false });
 
   assert.throws(() => session.api.window.createStatusBarItem('lint.status'), /already exists/);
   item.dispose();
   assert.equal(transport.notified('workbench/statusBar/remove').length, 1);
   const replacement = session.api.window.createStatusBarItem('lint.status');
   replacement.dispose();
+  session.dispose();
+});
+
+// `$(name)` を「アイコン」として描くか「そのままの文字」として描くかは、
+// MarkdownString の supportThemeIcons だけが決める。この値がワイヤーから
+// 落ちると、ネイティブ側は意図されたアイコンとリテラルの "$(name)" を
+// 区別できなくなるため、必ず送出されること自体を検証する。
+test('markdown tooltips carry supportThemeIcons over the wire', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 2, transport);
+  const item = session.api.window.createStatusBarItem('icons.status');
+  item.tooltip = new MarkdownString('$(rocket) Launch', true);
+  item.show();
+  await tick();
+
+  const updates = transport.notified('workbench/statusBar/update');
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].params.tooltip,
+    { markdown: '$(rocket) Launch', isTrusted: false, supportThemeIcons: true });
+
+  item.dispose();
   session.dispose();
 });
 
@@ -466,5 +488,89 @@ test('diagnostics, configuration defaults, state, and file-system API retain ext
   assert.equal(transport.notified('languages/diagnostics/set').at(-1).params.diagnostics[0].severity,
     DiagnosticSeverity.Warning);
   diagnostics.dispose();
+  session.dispose();
+});
+
+test('config.update() confirms the native write before mutating the local cache or firing change events', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.settings', 3, transport, {
+    configurationDefaults: { 'sample.retries': 1 },
+  });
+  const api = session.api;
+  const config = api.workspace.getConfiguration('sample');
+  let changeCount = 0;
+  api.workspace.onDidChangeConfiguration(() => { changeCount += 1; });
+
+  await config.update('retries', 5, true, 'plaintext');
+  const request = transport.requests.at(-1);
+  assert.equal(request.method, 'workspace/configuration/update');
+  assert.equal(request.params.key, 'sample.retries');
+  assert.equal(request.params.value, 5);
+  assert.equal(request.params.configurationTarget, true);
+  assert.equal(request.params.overrideInLanguage, 'plaintext');
+  assert.equal(config.get('retries'), 5);
+  assert.equal(changeCount, 1);
+
+  // value === undefined must delete the key and must serialize to an absent
+  // "value" property (never a literal null) so the native side can tell
+  // "remove this setting" apart from "set it to null".
+  await config.update('retries', undefined, true);
+  const deleteRequest = transport.requests.at(-1);
+  assert.equal(Object.prototype.hasOwnProperty.call(
+    JSON.parse(JSON.stringify(deleteRequest.params)), 'value'), false);
+  assert.equal(config.get('retries'), 1); // falls back to configurationDefaults
+  assert.equal(changeCount, 2);
+
+  session.dispose();
+});
+
+test('config.update() rejection leaves the local cache and change events untouched', async () => {
+  const transport = new RecordingTransport();
+  transport.responses.set('workspace/configuration/update', () => {
+    throw new Error('UnsupportedConfigurationTarget: workspace settings are not writable yet');
+  });
+  const session = new ExtensionApiSession('sample.settings', 4, transport, {
+    configurationDefaults: { 'sample.retries': 1 },
+  });
+  const api = session.api;
+  const config = api.workspace.getConfiguration('sample');
+  let changeCount = 0;
+  api.workspace.onDidChangeConfiguration(() => { changeCount += 1; });
+
+  await assert.rejects(() => config.update('retries', 9, false), /UnsupportedConfigurationTarget/);
+  assert.equal(config.get('retries'), 1);
+  assert.equal(changeCount, 0);
+
+  session.dispose();
+});
+
+// 実機で odangoo.otak-monitor が activate() 中に `vscode.window.state.focused` を読んで
+// TypeError で落ちていた。上流の ExtHostWindow は `_state` を InitialState
+// ({ focused: true, active: true }) で初期化するので、`window.state` が undefined に
+// なる瞬間は存在しない。
+test('window.state always exists and tracks the native window state notification', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.window', 3, transport);
+  const api = session.api;
+
+  assert.deepEqual(api.window.state, { focused: true, active: true });
+
+  const seen = [];
+  api.window.onDidChangeWindowState((state) => {
+    // ハンドラの中から読んだ window.state は、通知された値と必ず一致する。
+    seen.push({ event: state, current: api.window.state });
+  });
+
+  assert.deepEqual(await session.handleRequest('extension/window/didChangeState', {
+    focused: false, active: true,
+  }), { accepted: true });
+  assert.deepEqual(api.window.state, { focused: false, active: true });
+  assert.equal(seen.length, 1);
+  assert.deepEqual(seen[0].event, { focused: false, active: true });
+  assert.deepEqual(seen[0].current, { focused: false, active: true });
+
+  await session.handleRequest('extension/window/didChangeState', { focused: true, active: false });
+  assert.deepEqual(api.window.state, { focused: true, active: false });
+
   session.dispose();
 });

@@ -57,6 +57,7 @@ OpenVsxRequestPolicy MakePolicy()
 	policy.searchLimits = { std::chrono::milliseconds(111), 1, 101, 102 };
 	policy.vsixLimits = { std::chrono::milliseconds(222), 2, 201, 202 };
 	policy.sha256Limits = { std::chrono::milliseconds(333), 3, 301, 302 };
+	policy.textLimits = { std::chrono::milliseconds(444), 4, 401, 402 };
 	return policy;
 }
 
@@ -75,6 +76,7 @@ TEST(OpenVsxRequestServiceAdapter, RoutesSearchVsixAndOptionalSha256ThroughTheSh
 		std::vector<std::uint8_t>{ '{', '"', 'o', 'f', 'f', 's', 'e', 't', '"', ':', '0', '}' }));
 	requestService.results.push_back(HttpResult(200, L"https://cdn.example/tool.vsix", { 1, 2, 3 }));
 	requestService.results.push_back(HttpResult(200, L"https://cdn.example/tool.sha256", { 'a', 'b', 'c' }));
+	requestService.results.push_back(HttpResult(200, L"https://cdn.example/tool.readme", { '#', ' ', 'R', 'E', 'A', 'D', 'M', 'E' }));
 
 	const auto policy = MakePolicy();
 	const OpenVsxRequestServiceAdapter adapter(requestService, L"https://registry.example///", policy);
@@ -88,15 +90,20 @@ TEST(OpenVsxRequestServiceAdapter, RoutesSearchVsixAndOptionalSha256ThroughTheSh
 	ASSERT_TRUE(sha256.status);
 	EXPECT_EQ(std::vector<std::uint8_t>({ 'a', 'b', 'c' }), sha256.value);
 	EXPECT_EQ(EOpenVsxRequestOutcome::NotRequested, registryClient.FetchOptionalSha256(std::nullopt).status.outcome);
+	const auto readme = registryClient.FetchText(L"https://cdn.example/tool.readme");
+	ASSERT_TRUE(readme.status);
+	EXPECT_EQ(L"# README", readme.value);
 
-	ASSERT_EQ(3u, requestService.requests.size());
+	ASSERT_EQ(4u, requestService.requests.size());
 	EXPECT_EQ(L"https://registry.example/api/-/search?offset=0&size=25&query=a%26b", requestService.requests[0].url);
 	EXPECT_EQ(L"https://cdn.example/tool.vsix", requestService.requests[1].url);
 	EXPECT_EQ(L"https://cdn.example/tool.sha256", requestService.requests[2].url);
+	EXPECT_EQ(L"https://cdn.example/tool.readme", requestService.requests[3].url);
 	EXPECT_EQ(L"GET", requestService.requests[0].method);
 	ExpectExactLimits(policy.searchLimits, requestService.requests[0].limits);
 	ExpectExactLimits(policy.vsixLimits, requestService.requests[1].limits);
 	ExpectExactLimits(policy.sha256Limits, requestService.requests[2].limits);
+	ExpectExactLimits(policy.textLimits, requestService.requests[3].limits);
 	EXPECT_EQ(policy.proxySupport, requestService.requests[2].proxySupport);
 	EXPECT_TRUE(requestService.requests[0].allowRedirects);
 	EXPECT_EQ(ERequestCachePolicy::PreferCache, requestService.requests[1].cachePolicy);

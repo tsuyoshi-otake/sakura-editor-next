@@ -34,6 +34,12 @@ constexpr uint64_t kMaxVsixExtractedBytes = 256u * 1024 * 1024;
 constexpr uint64_t kMaxVsixEntryBytes = 64u * 1024 * 1024;
 constexpr mz_uint kMaxVsixEntries = 4096;
 
+// InflateZlibStream() の展開後サイズ上限。単一 VSIX エントリの上限
+// kMaxVsixEntryBytes を踏襲する。呼び出し元（WOFF フォントのテーブル等）は
+// 実際にはこれよりずっと小さいが、小さい圧縮入力から巨大な確保を要求する
+// zip 爆弾を防ぐため、上限は必ず設ける。
+constexpr std::size_t kMaxInflateExpandedBytes = 64u * 1024 * 1024;
+
 constexpr std::array<const wchar_t*, 22> kReservedDeviceNames = {
 	L"CON", L"PRN", L"AUX", L"NUL",
 	L"COM1", L"COM2", L"COM3", L"COM4", L"COM5", L"COM6", L"COM7", L"COM8", L"COM9",
@@ -223,6 +229,40 @@ bool CZipFile::SetZip(const std::filesystem::path& zipPath)
 		begin = end + 1;
 	}
 	return true;
+}
+
+/* static */ bool CZipFile::InflateZlibStream(
+	std::span<const std::byte> compressed,
+	std::size_t expandedSize,
+	std::vector<std::byte>& out) noexcept
+{
+	out.clear();
+
+	// mz_ulong (unsigned long) は LLP64 では 32bit。std::size_t (64bit) の
+	// 値をそのまま渡すとサイレントに切り詰められるため、事前に範囲を検査する。
+	constexpr std::size_t kMaxMzUlong = static_cast<std::size_t>((std::numeric_limits<mz_ulong>::max)());
+	if (compressed.empty() || expandedSize == 0 || expandedSize > kMaxInflateExpandedBytes ||
+		expandedSize > kMaxMzUlong || compressed.size() > kMaxMzUlong) {
+		return false;
+	}
+
+	try {
+		std::vector<std::byte> buffer(expandedSize);
+		mz_ulong destLen = static_cast<mz_ulong>(expandedSize);
+		const int status = mz_uncompress(
+			reinterpret_cast<unsigned char*>(buffer.data()), &destLen,
+			reinterpret_cast<const unsigned char*>(compressed.data()),
+			static_cast<mz_ulong>(compressed.size()));
+		if (status != MZ_OK || destLen != static_cast<mz_ulong>(expandedSize)) {
+			return false;
+		}
+		out = std::move(buffer);
+		return true;
+	}
+	catch (const std::exception&) {
+		out.clear();
+		return false;
+	}
 }
 
 /* static */ bool CZipFile::ExtractVsixSafely(

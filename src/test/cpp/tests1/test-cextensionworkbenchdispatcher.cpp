@@ -5,13 +5,21 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "pch.h"
+#include "config/BuiltinConfigurationDescriptors.h"
 #include "extension/CExtensionSecretStorage.h"
 #include "extension/CExtensionWorkbenchDispatcher.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
+#include "platform/filesystem/IFileService.h"
+#include "platform/profiles/ProfileBootstrapSnapshot.h"
+#include "platform/profiles/UserDataProfileBootstrap.h"
+#include "platform/serialization/JsoncDocument.h"
+#include "workbench/CWorkbenchRuntime.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 
 #include <filesystem>
+#include <optional>
+#include <string>
 
 namespace {
 
@@ -61,6 +69,191 @@ protected:
 	CExtensionProgressCenter m_progress;
 	workbench::problems::MarkerService m_markerService;
 	workbench::output::OutputService m_outputService;
+	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_bridge;
+	std::unique_ptr<CExtensionSecretStorage> m_secrets;
+	std::unique_ptr<CExtensionWorkbenchDispatcher> m_dispatcher;
+};
+
+// workspace/configuration/update ---------------------------------------------------------
+//
+// A real, started workbench::CWorkbenchRuntime is required to exercise the actual
+// writeback path (CSettingsWritebackCoordinator -> CJsoncConfigurationEditor ->
+// IFileService::ReadVersioned/ConditionalAtomicReplace), not just the "no runtime bound"
+// short-circuit the plain CExtensionWorkbenchDispatcherTest fixture above can reach. This
+// fake models exactly one backing document (the profile settings document the bridge's
+// WriteGlobalConfiguration always targets) with real read-modify-write and Missing/Current
+// conditional-replace semantics, so a sequence of dispatched updates round-trips like a
+// real settings.json file would. Read() always fails with NotFound: CWorkbenchRuntime::Start()
+// only needs that much to complete its own startup settings load with defaults, and the
+// writeback path exclusively uses ReadVersioned/ConditionalAtomicReplace instead.
+class ConfigurationWriteFakeFileService final : public platform::filesystem::IFileService {
+public:
+	platform::filesystem::FileResult<platform::filesystem::FileStat> Stat(const platform::uri::Uri&) override
+	{
+		return platform::filesystem::FileResult<platform::filesystem::FileStat>::Failure(
+			platform::filesystem::EFileResultStatus::Unsupported);
+	}
+
+	platform::filesystem::FileResult<std::vector<platform::filesystem::DirectoryEntry>> Enumerate(
+		const platform::uri::Uri&) override
+	{
+		return platform::filesystem::FileResult<std::vector<platform::filesystem::DirectoryEntry>>::Failure(
+			platform::filesystem::EFileResultStatus::Unsupported);
+	}
+
+	platform::filesystem::FileResult<platform::filesystem::FileBytes> Read(
+		const platform::uri::Uri&, const platform::filesystem::FileReadOptions&) override
+	{
+		return platform::filesystem::FileResult<platform::filesystem::FileBytes>::Failure(
+			platform::filesystem::EFileResultStatus::NotFound);
+	}
+
+	platform::filesystem::FileResult<platform::filesystem::FileContentSnapshot> ReadVersioned(
+		const platform::uri::Uri&, const platform::filesystem::FileReadOptions&) override
+	{
+		++m_readCalls;
+		if (!m_document.has_value()) {
+			return platform::filesystem::FileResult<platform::filesystem::FileContentSnapshot>::Failure(
+				platform::filesystem::EFileResultStatus::NotFound);
+		}
+		return platform::filesystem::FileResult<platform::filesystem::FileContentSnapshot>::Success(
+			{ platform::filesystem::FileBytes(m_document->begin(), m_document->end()), Version(m_version) });
+	}
+
+	platform::filesystem::FileConditionalReplaceResult ConditionalAtomicReplace(
+		const platform::uri::Uri&, const platform::filesystem::FileBytes& bytes,
+		const platform::filesystem::FileConditionalReplaceOptions& options) override
+	{
+		++m_replaceCalls;
+		const bool expectsMissing =
+			options.expectation == platform::filesystem::EFileConditionalReplaceExpectation::Missing;
+		if (expectsMissing == m_document.has_value()) {
+			return platform::filesystem::FileConditionalReplaceResult::Conflict();
+		}
+		++m_version;
+		m_document = std::string(bytes.begin(), bytes.end());
+		return platform::filesystem::FileConditionalReplaceResult::Success(Version(m_version));
+	}
+
+	platform::filesystem::FileResult<std::unique_ptr<platform::filesystem::IFileWatch>> Watch(
+		const platform::uri::Uri&, const platform::filesystem::FileWatchOptions&) override
+	{
+		return platform::filesystem::FileResult<std::unique_ptr<platform::filesystem::IFileWatch>>::Failure(
+			platform::filesystem::EFileResultStatus::Unsupported);
+	}
+
+	[[nodiscard]] std::string Document() const { return m_document.value_or(std::string()); }
+	[[nodiscard]] int ReplaceCalls() const noexcept { return m_replaceCalls; }
+
+private:
+	static platform::filesystem::FileVersionToken Version(std::uint8_t value)
+	{
+		const std::uint8_t bytes[] { value };
+		auto token = platform::filesystem::FileVersionToken::FromOpaqueBytes(bytes);
+		return token.value_or(platform::filesystem::FileVersionToken());
+	}
+
+	std::optional<std::string> m_document;
+	std::uint8_t m_version = 0;
+	int m_readCalls = 0;
+	int m_replaceCalls = 0;
+};
+
+constexpr char kConfigurationTestProfileId[] = "0123456789abcdef0123456789abcdef";
+
+platform::profiles::ProfileBootstrapSnapshot ConfigurationTestProfile()
+{
+	auto resolved = platform::profiles::ResolveProfileBootstrapSnapshot(
+		kConfigurationTestProfileId, 7, L"C:\\Profiles\\Sakura");
+	EXPECT_TRUE(resolved.Resolved());
+	return std::move(*resolved.snapshot);
+}
+
+platform::profiles::UserDataProfileBootstrapSnapshot ConfigurationTestUserDataProfile()
+{
+	platform::profiles::UserDataProfileRegistry registry;
+	platform::profiles::UserDataProfileBootstrapRequest request {
+		{ kConfigurationTestProfileId, 7 }, L"C:\\Profiles\\Sakura", {},
+		platform::profiles::UserDataProfileResourceRootMode::LegacyControlRootForDefault,
+	};
+	auto resolved = platform::profiles::ResolveUserDataProfileBootstrap(request, registry);
+	EXPECT_TRUE(resolved.Resolved());
+	return std::move(*resolved.snapshot);
+}
+
+workbench::WorkbenchBootstrapContext ConfigurationTestBootstrap()
+{
+	workbench::WorkbenchBootstrapRequest request {
+		ConfigurationTestProfile(), ConfigurationTestUserDataProfile(), L"extension-configuration-update-test",
+		std::nullopt, std::nullopt, {}, std::nullopt, std::nullopt,
+	};
+	auto resolved = workbench::ResolveWorkbenchBootstrapContext(std::move(request));
+	EXPECT_TRUE(resolved.Resolved());
+	return std::move(*resolved.context);
+}
+
+//! Exercises workspace/configuration/update through a real, started CWorkbenchRuntime so the
+//! full CExtensionWorkbenchServiceBridge::WriteGlobalConfiguration -> CWorkbenchRuntime::WriteSetting
+//! -> CSettingsWritebackCoordinator::Write -> CJsoncConfigurationEditor::Edit chain is actually
+//! traversed, not just the not-bound short circuit the plain dispatcher fixture above can reach.
+class CExtensionWorkbenchDispatcherConfigurationUpdateTest : public ::testing::Test {
+protected:
+	void SetUp() override
+	{
+		m_root = std::filesystem::temp_directory_path() /
+			(L"sakura-workbench-dispatcher-config-" + std::to_wstring(::GetCurrentProcessId()) + L"-" +
+				std::to_wstring(::GetTickCount64()));
+		m_secrets = std::make_unique<CExtensionSecretStorage>(m_root);
+
+		auto ownedFiles = std::make_unique<ConfigurationWriteFakeFileService>();
+		m_files = ownedFiles.get();
+		workbench::WorkbenchRuntimeDependencies dependencies;
+		dependencies.fileService = std::move(ownedFiles);
+		m_runtime = std::make_unique<workbench::CWorkbenchRuntime>(
+			ConfigurationTestBootstrap(), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
+		ASSERT_TRUE(m_runtime->Start().IsUsable());
+
+		m_bridge = std::make_unique<CExtensionWorkbenchServiceBridge>(nullptr, nullptr, m_runtime.get());
+		m_dispatcher = std::make_unique<CExtensionWorkbenchDispatcher>(
+			m_context, m_commands, m_status, m_notifications, m_views, *m_secrets,
+			m_diagnostics, m_quickInput, m_output, m_progress, m_bridge.get());
+	}
+
+	void TearDown() override
+	{
+		m_dispatcher.reset();
+		m_bridge.reset();
+		if (m_runtime) m_runtime->Stop();
+		m_runtime.reset();
+		m_secrets.reset();
+		std::error_code ignored;
+		std::filesystem::remove_all(m_root, ignored);
+	}
+
+	SExtensionWorkbenchDispatchResult Dispatch(
+		std::string method,
+		std::string params,
+		EExtensionRpcMessageKind kind = EExtensionRpcMessageKind::Request)
+	{
+		return m_dispatcher->Dispatch({
+			.eKind = kind,
+			.sMethod = std::move(method),
+			.sParamsJson = std::move(params),
+		});
+	}
+
+	std::filesystem::path m_root;
+	CExtensionContextKeys m_context;
+	CExtensionCommandPalette m_commands;
+	CExtensionStatusBar m_status;
+	CExtensionNotificationCenter m_notifications;
+	CExtensionViewRegistry m_views;
+	CExtensionDiagnostics m_diagnostics;
+	CExtensionQuickInput m_quickInput;
+	CExtensionOutputChannel m_output;
+	CExtensionProgressCenter m_progress;
+	ConfigurationWriteFakeFileService* m_files = nullptr;
+	std::unique_ptr<workbench::CWorkbenchRuntime> m_runtime;
 	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_bridge;
 	std::unique_ptr<CExtensionSecretStorage> m_secrets;
 	std::unique_ptr<CExtensionWorkbenchDispatcher> m_dispatcher;
@@ -283,6 +476,49 @@ TEST_F(CExtensionWorkbenchDispatcherTest, DisposesOnlyTheExactBridgeOwnerAndAllO
 	EXPECT_TRUE(m_outputService.Snapshot().channels.empty());
 }
 
+TEST_F(CExtensionWorkbenchDispatcherTest, RecordsActivationFailureIntoTheExtensionHostLogChannelWithoutFailingTheRpc)
+{
+	// Real VS Code routes a normal-mode activation failure to the "Extension Host" log channel
+	// instead of a modal; Dispatch must ack the RPC either way and only report the Output change
+	// when the diagnostic was actually recorded.
+	ASSERT_TRUE(m_outputService.Snapshot().channels.empty());
+	auto failure = Dispatch("workbench/extensions/didFailActivation", R"({
+		"extensionId":"test.sample","generation":4,"message":"TypeError: something went wrong"
+	})");
+	ASSERT_TRUE(failure.success) << failure.errorMessage;
+	EXPECT_EQ(EExtensionWorkbenchChange::Output, failure.changes);
+
+	const auto snapshot = m_outputService.Snapshot();
+	ASSERT_EQ(1u, snapshot.channels.size());
+	const auto& channel = snapshot.channels.front();
+	EXPECT_EQ("Extension Host", channel.label);
+	EXPECT_EQ(workbench::output::EOutputChannelKind::Log, channel.kind);
+	ASSERT_EQ(1u, channel.logEntries.size());
+	EXPECT_EQ(workbench::output::EOutputLogLevel::Error, channel.logEntries.front().level);
+	EXPECT_NE(std::string::npos, channel.logEntries.front().message.find("test.sample"));
+	EXPECT_NE(std::string::npos, channel.logEntries.front().message.find("4"));
+	EXPECT_NE(std::string::npos, channel.logEntries.front().message.find("something went wrong"));
+
+	// The channel is host-owned, not extension-owned: neither the exact owner-generation cleanup
+	// that fires when the failed extension itself is torn down, nor a full host clear, may remove
+	// it -- unlike every extension-owned output channel the bridge otherwise tracks.
+	auto removed = Dispatch("workbench/extensions/removeGeneration",
+		R"({"extensionId":"test.sample","generation":4})");
+	ASSERT_TRUE(removed.success) << removed.errorMessage;
+	ASSERT_EQ(1u, m_outputService.Snapshot().channels.size());
+	ASSERT_TRUE(m_bridge->DisposeAll(m_diagnostics, m_output));
+	ASSERT_EQ(1u, m_outputService.Snapshot().channels.size());
+
+	// A second failure (from any extension) appends to the same lazily-created channel rather than
+	// creating another one.
+	ASSERT_TRUE(Dispatch("workbench/extensions/didFailActivation",
+		R"({"extensionId":"other.sample","generation":1,"message":"second failure"})").success);
+	const auto afterSecond = m_outputService.Snapshot();
+	ASSERT_EQ(1u, afterSecond.channels.size());
+	ASSERT_EQ(2u, afterSecond.channels.front().logEntries.size());
+	EXPECT_NE(std::string::npos, afterSecond.channels.front().logEntries[1].message.find("second failure"));
+}
+
 TEST_F(CExtensionWorkbenchDispatcherTest, MapsLanguageStatusToNativeStatusBarAndCleansGeneration)
 {
 	auto updated = Dispatch("workbench/languageStatus/update", R"({
@@ -336,7 +572,7 @@ TEST_F(CExtensionWorkbenchDispatcherTest, ExplicitlyAcceptsHostBackedLanguagePro
 	EXPECT_EQ(EExtensionWorkbenchChange::None, registered.changes);
 }
 
-TEST_F(CExtensionWorkbenchDispatcherTest, ResolvesQuickPickInputBoxAndTrustThroughNativeHandlers)
+TEST_F(CExtensionWorkbenchDispatcherTest, ResolvesQuickPickAndInputBoxThroughNativeHandlers)
 {
 	m_dispatcher->SetQuickInputHandler([](const SExtensionQuickInputRequest& request) {
 		SExtensionQuickInputCompletion result{ .id = request.id, .state = EExtensionQuickInputState::Accepted };
@@ -357,21 +593,6 @@ TEST_F(CExtensionWorkbenchDispatcherTest, ResolvesQuickPickInputBoxAndTrustThrou
 	})", EExtensionRpcMessageKind::Request);
 	ASSERT_TRUE(input.success) << input.errorMessage;
 	EXPECT_NE(std::string::npos, input.resultJson.find("typed value"));
-
-	m_dispatcher->SetTrustHandler([](std::wstring_view id, std::wstring_view version,
-		std::wstring_view name, std::wstring_view path) {
-		EXPECT_EQ(L"test.sample", id);
-		EXPECT_EQ(L"1.2.3", version);
-		EXPECT_EQ(L"Sample", name);
-		EXPECT_EQ(L"C:\\extensions\\sample", path);
-		return true;
-	});
-	auto trust = Dispatch("workbench/extensions/ensureTrusted", R"({
-		"extensionId":"test.sample","version":"1.2.3","displayName":"Sample",
-		"extensionPath":"C:\\extensions\\sample"
-	})", EExtensionRpcMessageKind::Request);
-	ASSERT_TRUE(trust.success) << trust.errorMessage;
-	EXPECT_NE(std::string::npos, trust.resultJson.find("true"));
 }
 
 TEST_F(CExtensionWorkbenchDispatcherTest, RejectsAttemptsToClaimBuiltInCommands)
@@ -383,6 +604,176 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RejectsAttemptsToClaimBuiltInCommands)
 	})");
 	EXPECT_FALSE(result.success);
 	EXPECT_EQ(-32011, result.errorCode);
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, RejectsConfigurationUpdateWhenNoWorkbenchRuntimeIsBound)
+{
+	// This fixture's bridge is constructed with no CWorkbenchRuntime bound (the production
+	// default before CEditWnd wires one in -- see extension/CLAUDE.md). Real VS Code throws
+	// rather than silently succeeding when a target cannot be honored, so this must reject
+	// with a typed failure rather than reporting success.
+	auto result = Dispatch("workspace/configuration/update",
+		R"({"key":"otakUsage.statusBarMode","value":"detailed","configurationTarget":1})",
+		EExtensionRpcMessageKind::Request);
+	EXPECT_FALSE(result.success);
+	EXPECT_EQ(-32001, result.errorCode);
+	EXPECT_NE(std::string::npos, result.errorMessage.find("workbench settings owner is not available"));
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest,
+	RejectsWorkspaceScopedAndAbsentConfigurationTargetsAsUnsupportedRegardlessOfRuntimeBinding)
+{
+	// ConfigurationTarget.Workspace (2), ConfigurationTarget.WorkspaceFolder (3), the boolean
+	// `false` form, and both flavors of an absent target (JSON null and the field omitted
+	// entirely -- real VS Code's own default-target rule resolves an absent target to either
+	// Workspace or WorkspaceFolder, never Global) are all rejected as an explicit typed
+	// UnsupportedCapability failure. This runs against a bridge with no runtime bound at all,
+	// proving the rejection happens before ever touching runtime or workspace state -- so it
+	// also covers "no workspace is open" as a subset of "Workspace/WorkspaceFolder is never
+	// supported by this bridge," since there is no separate code path that first checks
+	// whether a workspace happens to be open.
+	const char* unsupportedParams[] = {
+		R"({"key":"sample.key","value":"v","configurationTarget":2})",
+		R"({"key":"sample.key","value":"v","configurationTarget":3})",
+		R"({"key":"sample.key","value":"v","configurationTarget":false})",
+		R"({"key":"sample.key","value":"v","configurationTarget":null})",
+		R"({"key":"sample.key","value":"v"})",
+	};
+	for (const char* params : unsupportedParams) {
+		auto result = Dispatch("workspace/configuration/update", params, EExtensionRpcMessageKind::Request);
+		EXPECT_FALSE(result.success) << params;
+		EXPECT_EQ(-32601, result.errorCode) << params;
+		EXPECT_NE(std::string::npos, result.errorMessage.find("UnsupportedCapability")) << params;
+	}
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, RejectsMalformedConfigurationTargetValuesWithAGenericError)
+{
+	// A string, a non-integer number, and out-of-range integers are not merely an unsupported
+	// *scope* -- they are not a ConfigurationTarget at all, so they get the generic malformed-
+	// request error rather than the UnsupportedCapability wording reserved for well-formed but
+	// unimplemented targets.
+	const char* malformedParams[] = {
+		R"({"key":"sample.key","value":"v","configurationTarget":"Global"})",
+		R"({"key":"sample.key","value":"v","configurationTarget":1.5})",
+		R"({"key":"sample.key","value":"v","configurationTarget":4})",
+		R"({"key":"sample.key","value":"v","configurationTarget":-1})",
+	};
+	for (const char* params : malformedParams) {
+		auto result = Dispatch("workspace/configuration/update", params, EExtensionRpcMessageKind::Request);
+		EXPECT_FALSE(result.success) << params;
+		EXPECT_EQ(-32602, result.errorCode) << params;
+		EXPECT_EQ(std::string::npos, result.errorMessage.find("UnsupportedCapability")) << params;
+	}
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, RejectsConfigurationUpdatesWithMissingEmptyOrOversizedKeys)
+{
+	auto missingKey = Dispatch("workspace/configuration/update",
+		R"({"value":"v","configurationTarget":1})", EExtensionRpcMessageKind::Request);
+	EXPECT_FALSE(missingKey.success);
+	EXPECT_EQ(-32602, missingKey.errorCode);
+
+	auto emptyKey = Dispatch("workspace/configuration/update",
+		R"({"key":"","value":"v","configurationTarget":1})", EExtensionRpcMessageKind::Request);
+	EXPECT_FALSE(emptyKey.success);
+
+	auto numericKey = Dispatch("workspace/configuration/update",
+		R"({"key":42,"value":"v","configurationTarget":1})", EExtensionRpcMessageKind::Request);
+	EXPECT_FALSE(numericKey.success);
+
+	// One byte past CJsoncDocument::kMaximumObjectKeyLength (64 KiB); the extension-supplied
+	// key is untrusted and must be bounded before it ever reaches the document editor.
+	const std::string oversizedKey(platform::serialization::CJsoncDocument::kMaximumObjectKeyLength + 1, 'k');
+	const std::string oversizedKeyParams =
+		R"({"key":")" + oversizedKey + R"(","value":"v","configurationTarget":1})";
+	auto oversized = Dispatch("workspace/configuration/update", oversizedKeyParams, EExtensionRpcMessageKind::Request);
+	EXPECT_FALSE(oversized.success);
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	WritesAGlobalSettingUnderNumericAndBooleanConfigurationTargetsAndPersistsAcrossWrites)
+{
+	auto first = Dispatch("workspace/configuration/update",
+		R"({"key":"otakUsage.statusBarMode","value":"detailed","configurationTarget":1})");
+	ASSERT_TRUE(first.success) << first.errorMessage;
+	EXPECT_EQ("{}", first.resultJson);
+	EXPECT_EQ(EExtensionWorkbenchChange::None, first.changes);
+	EXPECT_NE(std::string::npos, m_files->Document().find("otakUsage.statusBarMode"));
+	EXPECT_NE(std::string::npos, m_files->Document().find("detailed"));
+
+	// The boolean `true` form is equivalent to ConfigurationTarget.Global (1) and must reach
+	// the same already-created document -- exercising the fake's "Current" conditional-replace
+	// branch, as opposed to the first write's "Missing" branch.
+	auto second = Dispatch("workspace/configuration/update",
+		R"({"key":"otakUsage.statusBarMode","value":"compact","configurationTarget":true})");
+	ASSERT_TRUE(second.success) << second.errorMessage;
+	EXPECT_NE(std::string::npos, m_files->Document().find("compact"));
+	EXPECT_EQ(std::string::npos, m_files->Document().find("detailed"));
+	EXPECT_EQ(2, m_files->ReplaceCalls());
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest, TreatsAnAbsentValueFieldAsRemovalOfAnExistingKey)
+{
+	auto created = Dispatch("workspace/configuration/update",
+		R"({"key":"sample.toRemove","value":"temp","configurationTarget":1})");
+	ASSERT_TRUE(created.success) << created.errorMessage;
+	ASSERT_NE(std::string::npos, m_files->Document().find("sample.toRemove"));
+
+	// A JSON payload with no "value" member mirrors Configuration.update(key, undefined):
+	// vscode-api.cjs never serializes a "value" property when the caller's value is undefined,
+	// so its absence in the wire payload -- not a literal JSON null -- is the removal signal.
+	auto removed = Dispatch("workspace/configuration/update",
+		R"({"key":"sample.toRemove","configurationTarget":1})");
+	ASSERT_TRUE(removed.success) << removed.errorMessage;
+	EXPECT_EQ(std::string::npos, m_files->Document().find("sample.toRemove"));
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	WritesIntoALanguageOverrideBlockWhenOverrideInLanguageIsSupplied)
+{
+	auto result = Dispatch("workspace/configuration/update",
+		R"({"key":"editor.tabSize","value":2,"configurationTarget":1,"overrideInLanguage":"typescript"})");
+	ASSERT_TRUE(result.success) << result.errorMessage;
+	const auto document = m_files->Document();
+	EXPECT_NE(std::string::npos, document.find("[typescript]"));
+	EXPECT_NE(std::string::npos, document.find("editor.tabSize"));
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	RejectsAnOversizedOrTooDeeplyNestedConfigurationValuePayloadWithoutWritingAnything)
+{
+	// A string value one byte past the 1 MiB bound this dispatcher reuses from
+	// CJsoncDocument::kMaximumStringLength for its own value-conversion budget.
+	const std::string oversizedValue(1024 * 1024 + 1, 'a');
+	auto oversized = Dispatch("workspace/configuration/update",
+		R"({"key":"sample.big","value":")" + oversizedValue + R"(","configurationTarget":1})");
+	EXPECT_FALSE(oversized.success);
+	EXPECT_EQ(-32602, oversized.errorCode);
+	EXPECT_TRUE(m_files->Document().empty());
+
+	// An array nested 80 levels deep exceeds the 64-level depth bound.
+	std::string deepValue = "0";
+	for (int i = 0; i < 80; ++i) deepValue = "[" + deepValue + "]";
+	auto deep = Dispatch("workspace/configuration/update",
+		R"({"key":"sample.deep","value":)" + deepValue + R"(,"configurationTarget":1})");
+	EXPECT_FALSE(deep.success);
+	EXPECT_EQ(-32602, deep.errorCode);
+	EXPECT_TRUE(m_files->Document().empty());
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	RejectsConfigurationUpdatesAfterTheWorkbenchRuntimeIsStopped)
+{
+	const auto stopped = m_runtime->Stop();
+	ASSERT_EQ(workbench::EWorkbenchRuntimeResultCode::Stopped, stopped.code);
+
+	auto result = Dispatch("workspace/configuration/update",
+		R"({"key":"sample.key","value":"v","configurationTarget":1})");
+	EXPECT_FALSE(result.success);
+	EXPECT_EQ(-32001, result.errorCode);
+	EXPECT_NE(std::string::npos, result.errorMessage.find("workbench settings owner is not available"));
+	EXPECT_TRUE(m_files->Document().empty());
 }
 
 } // namespace

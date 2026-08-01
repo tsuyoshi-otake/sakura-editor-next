@@ -241,6 +241,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-csharedata.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensioniconfont.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-extmodules.cpp" />
     <ClCompile Include="..\src\test\resources\printEFunctionCode.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cclipboard.cpp" />
@@ -263,10 +264,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhoststatemachine.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionpipetransport.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionsecretstorage.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiontruststore.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchmodels.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchdispatcher.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchui.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-hovermarkdown.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-ccodiconfont.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionviewregistry.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionrpcprotocol.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cjsonrpcframecodec.cpp" />

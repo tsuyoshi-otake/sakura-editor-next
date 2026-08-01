@@ -18,6 +18,42 @@ authoritative snapshot before applying deltas and reject stale generations.
 Every async request has bounded cancellation/timeout ownership and one terminal
 response.
 
+Activation asks the workbench for nothing. VS Code gates code execution with
+Workspace Trust — a per-workspace restricted mode — and has no per-extension
+"may this run?" confirmation anywhere in its model. An installed extension is
+therefore activated directly; do not reintroduce a permission round trip on the
+activation path under any name.
+
+## Extension Registry
+
+`vscode.extensions` is served from the loader's own record set, which is the
+only authority for what is registered in this host. `ExtensionLoader` exposes it
+as a narrow registry port so the API session can project records without
+reaching into loader internals, and one record always maps to one frozen
+`Extension` object, so identity comparisons behave as upstream.
+
+`extensionKind` is `ExtensionKind.UI` for every extension. VS Code documents
+that value as the answer when no remote extension host exists, and this product
+has no remote extension host at all; it is the upstream-correct result, not a
+placeholder. `isActive` and `exports` are live getters over the record, so an
+extension observed before its own activation reports `false`/`undefined` rather
+than a stale snapshot. `onDidChange` fires when the registered set changes.
+
+`window.setStatusBarMessage` is a stack, not a single slot: the newest message
+renders, and disposing it reveals the message beneath. One left-aligned entry at
+`Number.MIN_VALUE` backs the whole stack, matching upstream's `StatusBarMessage`
+so an ordinary left item never sorts behind it.
+
+A `StatusBarItem.tooltip` set to a `vscode.MarkdownString` puts its
+`supportThemeIcons` flag on the wire as `tooltipSupportsThemeIcons`, alongside
+the Markdown source. `serializeThemeValue` must not flatten a `MarkdownString`
+to a bare string: that flag is the only signal distinguishing "the extension
+meant a codicon" from "the extension literally typed `$(name)`", and native code
+cannot recover it from the text. A plain-string tooltip carries `false`, which is
+also upstream's answer — `$(name)` in a plain string is literal text. The native
+consumer is
+[`../../sakura_core/workbench/hover/CLAUDE.md`](../../sakura_core/workbench/hover/CLAUDE.md).
+
 ## API Compatibility
 
 Do not implement an API as successful until a native service owns its real

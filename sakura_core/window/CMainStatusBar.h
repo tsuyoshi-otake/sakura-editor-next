@@ -12,11 +12,17 @@
 #include "doc/CDocListener.h"
 #include "extension/CExtensionStatusBar.h"
 #include "theme/CThemeService.h"
+#include "workbench/hover/CHoverWidget.h"
 
 #include <functional>
+#include <string>
 #include <vector>
 
 class CEditWnd;
+
+namespace workbench::icons {
+class CExtensionIconFontRegistry;
+}
 
 class CMainStatusBar : public CDocListenerEx{
 public:
@@ -52,18 +58,52 @@ public:
 	void SetExtensionItems(std::vector<SExtensionStatusBarItem> items);
 	//! Invoked when a clickable extension item is activated.
 	void SetExtensionCommandCallback(std::function<void(std::wstring_view)> callback);
+	/*!
+		@brief contributes.icons のレジストリを借りる（所有しない）
+
+		`$(icon-id)` は実 VS Code のグローバルな IconRegistry と同じ解決順で、
+		まず拡張が寄与したアイコンを引き、無ければ組み込み codicon へ落とす。
+		レジストリの生存はコンポジションルート（CEditWnd）が持つ。nullptr なら
+		寄与アイコンは一切解決せず、従来どおり組み込み codicon だけを使う。
+	*/
+	void SetExtensionIconFonts(const workbench::icons::CExtensionIconFontRegistry* registry) noexcept;
 	void InstallPaletteSubclass() noexcept;
 	[[nodiscard]] COLORREF GetTextColor() const noexcept { return m_palette.primaryText.ToColorRef(); }
 private:
-	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
-		UINT_PTR subclassId, DWORD_PTR referenceData);
-	void PaintStatusBar(HDC dc) const noexcept;
-	[[nodiscard]] bool InvokeExtensionItemAt(POINT point) const;
+	//! 書体名と字高の組に対して 1 個だけ作る、寄与アイコン描画用フォント
+	struct IconFont {
+		std::wstring faceName;
+		int height = 0;
+		HFONT font = nullptr;
+	};
 
 	struct ExtensionHitTarget {
 		RECT bounds{};
 		std::wstring command;
+		//! 拡張機能が渡した Markdown 原文。空ならホバーを出さない。解析はホバーを実際に
+		//! 出す瞬間まで遅らせる（再描画のたびに解析し直さないため）。
+		std::wstring tooltipMarkdown;
+		//! vscode.MarkdownString.supportThemeIcons。真のときだけ `$(name)` をアイコンに解釈する。
+		bool tooltipSupportsThemeIcons = false;
 	};
+
+	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
+		UINT_PTR subclassId, DWORD_PTR referenceData);
+	void PaintStatusBar(HDC dc) const noexcept;
+	[[nodiscard]] bool InvokeExtensionItemAt(POINT point) const;
+	//! ツールチップ本文を持つ項目のうち、指定クライアント座標を含む最初のものを返す。
+	[[nodiscard]] const ExtensionHitTarget* FindHoverTargetAt(POINT point) const noexcept;
+	//! WM_MOUSEMOVE。VS Code の workbench.hover.delay と同じ遅延タイマーを張り直す。
+	void OnExtensionHoverMouseMove(POINT point) noexcept;
+	//! 遅延タイマー満了。カーソル直下の項目のツールチップを解析して表示する。
+	void ShowExtensionHoverNow();
+	//! 表示中/待機中のホバーを取り下げる。タイマーも必ず落とす。
+	void HideExtensionHover() noexcept;
+	//! 寄与アイコン用の HFONT を書体名と字高の組で貸し出す。同じ組は 1 個だけ作り、
+	//! 再描画のたびに CreateFontIndirectW を呼ばない。失敗したら nullptr を返す。
+	[[nodiscard]] HFONT AcquireIconFont(const std::wstring& faceName, int height) const noexcept;
+	//! 貸し出し済みの HFONT をすべて破棄する。DC に選択されたままにしてはならない。
+	void ReleaseIconFonts() const noexcept;
 
 	CEditWnd*	m_pOwner;
 	HWND		m_hwndStatusBar = nullptr;
@@ -72,6 +112,17 @@ private:
 	std::wstring m_scmText;
 	std::vector<SExtensionStatusBarItem> m_extensionItems;
 	mutable std::vector<ExtensionHitTarget> m_extensionHitTargets;
+	//! VS Code の HoverWidget 相当。TOOLTIPS_CLASSW では描けない書式付き本文を自前で描く。
+	workbench::hover::CHoverWidget m_extensionHover;
+	//! ホバー待機中/表示中の項目矩形（ステータスバーのクライアント座標）。
+	RECT m_hoverAnchor{};
+	//! 遅延タイマーが張られている。
+	bool m_hoverPending = false;
+	//! TrackMouseEvent(TME_LEAVE) 済み。WM_MOUSELEAVE で false に戻る。
+	bool m_hoverTracking = false;
 	std::function<void(std::wstring_view)> m_extensionCommandCallback;
+	//! 借り物。所有者は CEditWnd。null なら寄与アイコンを解決しない
+	const workbench::icons::CExtensionIconFontRegistry* m_extensionIconFonts = nullptr;
+	mutable std::vector<IconFont> m_iconFontCache;
 };
 #endif /* SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_ */

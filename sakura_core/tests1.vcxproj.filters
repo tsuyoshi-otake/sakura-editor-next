@@ -544,7 +544,13 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchui.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiontruststore.cpp">
+    <ClCompile Include="..\src\test\cpp\tests1\test-hovermarkdown.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-ccodiconfont.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cextensionviewregistry.cpp">
@@ -623,6 +629,9 @@
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\test-cextensioniconfont.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-statictype.cpp">

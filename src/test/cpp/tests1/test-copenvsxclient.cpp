@@ -103,6 +103,8 @@ TEST(COpenVsxClient, ParseSearchResponse_RealShape)
 					"signature": "https://example.test/sig",
 					"icon": "https://example.test/icon.png",
 					"sha256": "https://example.test/hash.sha256",
+					"readme": "https://example.test/readme.md",
+					"changelog": "https://example.test/changelog.md",
 					"publicKey": "https://example.test/key"
 				},
 				"name": "vscode-eslint",
@@ -139,6 +141,8 @@ TEST(COpenVsxClient, ParseSearchResponse_RealShape)
 		ext.sDownloadUrl.c_str());
 	EXPECT_STREQ(L"https://example.test/hash.sha256", ext.sSha256Url.c_str());
 	EXPECT_STREQ(L"https://example.test/icon.png", ext.sIconUrl.c_str());
+	EXPECT_STREQ(L"https://example.test/readme.md", ext.sReadmeUrl.c_str());
+	EXPECT_STREQ(L"https://example.test/changelog.md", ext.sChangelogUrl.c_str());
 	EXPECT_EQ(1234567LL, ext.nDownloadCount);
 	EXPECT_TRUE(ext.HasRating());
 	EXPECT_DOUBLE_EQ(4.5, ext.dAverageRating);

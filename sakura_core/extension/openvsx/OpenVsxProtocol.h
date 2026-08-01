@@ -31,6 +31,9 @@ struct SOpenVsxExtension {
 	bool			bVerified = false;			//!< 名前空間が検証済みか
 	bool			bDeprecated = false;			//!< 非推奨か
 
+	std::wstring	sReadmeUrl;
+	std::wstring	sChangelogUrl;
+
 	//! "namespace.name" 形式の一意識別子。インストール先フォルダー名に使う
 	std::wstring GetUniqueId() const { return sNamespace + L"." + sName; }
 

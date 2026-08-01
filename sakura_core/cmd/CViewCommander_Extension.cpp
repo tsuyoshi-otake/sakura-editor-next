@@ -22,8 +22,8 @@
 	@note このコマンドは表示のみを行い、非表示にはしない。VS Codeでも非表示は
 		workbench.action.toggleSidebarVisibility（Activity Barクリック相当）が
 		担う操作であり、workbench.view.*系のコマンドではない。
-	@note 導入した拡張を「実行」する仕組みはまだ無い。
-		このコマンドでできるのは取得と配置までである。
+	@note 導入した拡張の実行は拡張ホストが担う。このコマンドの責務は
+		ViewContainerの表示だけである。
 */
 void CViewCommander::Command_EXTENSION_LIST( void )
 {

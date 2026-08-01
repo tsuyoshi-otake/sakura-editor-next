@@ -71,6 +71,7 @@ class CExtensionService;
 class IExtensionSecretSessionStorage;
 struct SExtensionNativeEditorOptions;
 class CExtensionViewRegistry;
+class CExtensionDetailSurface;
 struct SExtensionDiagnostic;
 struct SExtensionDocumentSnapshot;
 struct SExtensionDocumentEdit;
@@ -91,6 +92,9 @@ enum class WorkbenchEdge : std::uint8_t;
 namespace layout {
 class IWorkbenchLayoutSubscription;
 struct WorkbenchLayoutStateSnapshot;
+}
+namespace icons {
+class CExtensionIconFontRegistry;
 }
 namespace win32 {
 struct BuiltinActiveSurfaceProjection;
@@ -595,6 +599,15 @@ private:
 	void PublishExtensionDocumentChange();
 	void PublishExtensionDocumentSave();
 	void PublishExtensionActiveEditor();
+	/*!
+		@brief 導入済み拡張の contributes.icons を読み直し、フォントを登録する
+
+		拡張の列挙は CExtensionService::WorkerInitialize() と同じ規約
+		（CExtensionManager::EnumInstalled() の各 dir/"extension" にマニフェストが
+		あるものだけ、ID は sUniqueId）で行うが、こちらは UI スレッド専用である。
+		ワーカー専用状態である m_installedRoots は決して読まない。
+	*/
+	void RefreshExtensionIconFonts();
 	SExtensionApplyEditResult ApplyExtensionEdits(
 		const std::vector<SExtensionDocumentEdit>& edits,
 		std::vector<SExtensionDocumentSnapshot>& snapshots);
@@ -696,6 +709,7 @@ private:
 	bool			m_dispatchReady = false;
 	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
 	std::unique_ptr<workbench::editor::CEmptyEditorSurface> m_emptyEditorSurface;
+	std::unique_ptr<CExtensionDetailSurface> m_extensionDetailSurface;
 	std::unique_ptr<workbench::editor::IEditorCoreSubscription> m_editorCoreSubscription;
 	std::unique_ptr<workbench::layout::IWorkbenchLayoutSubscription> m_layoutStateSubscription;
 	//! Window-local command/context boundary; only initialized for runtime-backed workbench windows.
@@ -725,6 +739,9 @@ private:
 	std::filesystem::path m_extensionProfileDirectory;
 	std::unique_ptr<IExtensionSecretSessionStorage> m_extensionSecretStorage;
 	std::unique_ptr<CExtensionService> m_extensionService;
+	//! 導入済み拡張の contributes.icons。ステータスバーは非所有ポインタで借りるので、
+	//! ここが唯一の所有者であり、m_cStatusBar より長く生きなければならない。
+	std::unique_ptr<workbench::icons::CExtensionIconFontRegistry> m_extensionIconFonts;
 	std::wstring m_extensionDocumentUri;
 	std::uint64_t m_extensionDocumentVersion = 0;
 	bool m_extensionDocumentSyncTimerPending = false;

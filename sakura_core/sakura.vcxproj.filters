@@ -1000,6 +1000,24 @@
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\CExtensionIconFont.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\hover\HoverMarkdown.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\hover\CHoverWidget.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1070,6 +1088,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h">
@@ -1586,9 +1607,6 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchUi.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionTrustStore.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionQuickInputDialog.h">
@@ -2752,6 +2770,18 @@
 	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\icons\CExtensionIconFont.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\hover\HoverMarkdown.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\hover\CHoverWidget.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -2816,6 +2846,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp">
@@ -3254,9 +3287,6 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchUi.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionTrustStore.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionQuickInputDialog.cpp">

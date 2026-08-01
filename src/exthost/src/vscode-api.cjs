@@ -296,6 +296,7 @@ class FileSystemError extends Error {
 const ViewColumn = Object.freeze({ Active: -1, Beside: -2, One: 1, Two: 2, Three: 3, Four: 4, Five: 5, Six: 6, Seven: 7, Eight: 8, Nine: 9 });
 const OverviewRulerLane = Object.freeze({ Left: 1, Center: 2, Right: 4, Full: 7 });
 const ColorThemeKind = Object.freeze({ Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 });
+const ExtensionKind = Object.freeze({ UI: 1, Workspace: 2 });
 
 class TextEdit {
   constructor(range, newText) {
@@ -778,12 +779,22 @@ class Configuration {
   }
   async update(section, value, configurationTarget, overrideInLanguage) {
     const key = this._path(section);
-    if (value === undefined) this.session.configuration.delete(key);
-    else this.session.configuration.set(key, value);
+    // Real VS Code throws (rejects) rather than silently succeeding when the
+    // requested target cannot be honored. Do not touch the session-local
+    // configuration cache or fire the change event until the native side has
+    // confirmed the write actually happened: an optimistic mutation here would
+    // leave get()/inspect() reporting a value that was never durably written
+    // whenever the request is rejected (unsupported target, no workspace open,
+    // runtime stopped, malformed key, etc). `value === undefined` must still
+    // signal deletion to the native side by omitting the "value" property
+    // entirely, since JSON.stringify drops undefined-valued properties but
+    // keeps an explicit null.
     await this.session.request('workspace/configuration/update', {
-      extensionId: this.session.extensionId, key, value, configurationTarget, overrideInLanguage,
+      key, value, configurationTarget, overrideInLanguage,
       scope: serializeUri(this.scope instanceof Uri ? this.scope : this.scope?.uri),
     });
+    if (value === undefined) this.session.configuration.delete(key);
+    else this.session.configuration.set(key, value);
     this.session.configurationEmitter.fire(Object.freeze({
       affectsConfiguration: (sectionToTest) => key === sectionToTest || key.startsWith(`${sectionToTest}.`),
     }));
@@ -963,7 +974,17 @@ class MarkdownString {
 
 function serializeThemeValue(value) {
   if (value instanceof ThemeColor) return { themeColor: value.id };
-  if (value instanceof MarkdownString) return { markdown: value.value, isTrusted: value.isTrusted === true };
+  if (value instanceof MarkdownString) {
+    // supportThemeIcons はネイティブ側で `$(name)` を「アイコンとして描く」か
+    // 「リテラル文字として描く」かを分ける唯一の情報源なので、必ず伝える。
+    // ここで落とすと、意図されたアイコンと拡張機能が literal に打った "$(name)"
+    // をネイティブから区別できなくなる（sakura_core/window/CLAUDE.md 参照）。
+    return {
+      markdown: value.value,
+      isTrusted: value.isTrusted === true,
+      supportThemeIcons: value.supportThemeIcons === true,
+    };
+  }
   return value;
 }
 
@@ -1426,6 +1447,11 @@ class ExtensionApiSession {
     this.nextHandle = 1;
     this.commands = new Map();
     this.statusBarIds = new Set();
+    // window.setStatusBarMessage is a stack in VS Code: the newest entry is the one
+    // rendered, and disposing it reveals the entry beneath instead of clearing the bar.
+    this.statusBarMessages = [];
+    this.statusBarMessageItem = null;
+    this.extensionObjects = new Map();
     this.views = new Map();
     this.viewIds = new Set();
     this.disposables = new Set();
@@ -1450,6 +1476,10 @@ class ExtensionApiSession {
     this.selectionEmitter = new EventEmitter();
     this.editorOptionsEmitter = new EventEmitter();
     this.windowStateEmitter = new EventEmitter();
+    // 実 VS Code の ExtHostWindow.InitialState と同じ初期値。`window.state` は
+    // 常に存在するプロパティで、undefined になる状態は上流には無い。
+    this.windowState = Object.freeze({ focused: true, active: true });
+    this.extensionsChangeEmitter = new EventEmitter();
     this.secrets = new SecretStorage(this);
     this.disposed = false;
     this.api = this.createApi();
@@ -1497,6 +1527,60 @@ class ExtensionApiSession {
   track(disposable) {
     this.disposables.add(disposable);
     return disposable;
+  }
+
+  //! Builds the public `vscode.Extension` view of one loader descriptor.
+  //! The descriptor is the loader's stable per-record object, so the same
+  //! extension always maps to the same object identity within one session.
+  extensionObject(descriptor) {
+    if (!descriptor) return undefined;
+    const cached = this.extensionObjects.get(descriptor);
+    if (cached) return cached;
+    const created = Object.freeze({
+      id: descriptor.extensionId,
+      extensionUri: Uri.file(descriptor.extensionPath),
+      extensionPath: descriptor.extensionPath,
+      // VS Code documents ExtensionKind.UI as the value when no remote extension
+      // host exists. This product has no remote extension host at all.
+      extensionKind: ExtensionKind.UI,
+      packageJSON: descriptor.packageJSON,
+      get isActive() { return descriptor.isActive === true; },
+      get exports() { return descriptor.exports; },
+      activate: () => descriptor.activate(),
+    });
+    this.extensionObjects.set(descriptor, created);
+    return created;
+  }
+
+  pushStatusBarMessage(text) {
+    const entry = { text };
+    this.statusBarMessages.unshift(entry);
+    this.renderStatusBarMessage();
+    return entry;
+  }
+
+  removeStatusBarMessage(entry) {
+    const index = this.statusBarMessages.indexOf(entry);
+    if (index < 0) return;
+    this.statusBarMessages.splice(index, 1);
+    this.renderStatusBarMessage();
+  }
+
+  renderStatusBarMessage() {
+    const current = this.statusBarMessages[0];
+    if (!this.statusBarMessageItem) {
+      if (!current) return;
+      // Upstream's StatusBarMessage is a left-aligned entry at Number.MIN_VALUE, so it
+      // sorts after every ordinary left item instead of claiming the leftmost slot.
+      this.statusBarMessageItem = this.track(new StatusBarItem(this, this.allocateHandle('status'),
+        `${this.extensionId}.statusBarMessage`, StatusBarAlignment.Left, Number.MIN_VALUE, () => {}));
+    }
+    if (current) {
+      this.statusBarMessageItem.text = current.text;
+      this.statusBarMessageItem.show();
+      return;
+    }
+    this.statusBarMessageItem.hide();
   }
 
   configurationValue(key) {
@@ -1858,6 +1942,7 @@ class ExtensionApiSession {
       get activeNotebookEditor() { return undefined; },
       get visibleNotebookEditors() { return []; },
       get activeColorTheme() { return Object.freeze({ kind: ColorThemeKind.Light }); },
+      get state() { return session.windowState; },
       onDidChangeActiveTextEditor: session.activeEditorEmitter.event,
       onDidChangeVisibleTextEditors: session.visibleEditorsEmitter.event,
       onDidChangeTextEditorSelection: session.selectionEmitter.event,
@@ -1900,6 +1985,27 @@ class ExtensionApiSession {
         }
         return session.track(new StatusBarItem(session, session.allocateHandle('status'), id,
           alignment, resolvedPriority, releaseId));
+      },
+      setStatusBarMessage(text, hideAfterTimeoutOrThenable) {
+        requireString(text, 'setStatusBarMessage text', true);
+        const entry = session.pushStatusBarMessage(text);
+        let released = false;
+        const release = () => {
+          if (released) return;
+          released = true;
+          session.removeStatusBarMessage(entry);
+        };
+        if (typeof hideAfterTimeoutOrThenable === 'number') {
+          if (!Number.isFinite(hideAfterTimeoutOrThenable) || hideAfterTimeoutOrThenable < 0) {
+            release();
+            throw new TypeError('hideAfterTimeout must be a non-negative finite number');
+          }
+          // An extension message must never be the reason the host process stays alive.
+          setTimeout(release, hideAfterTimeoutOrThenable).unref?.();
+        } else if (typeof hideAfterTimeoutOrThenable?.then === 'function') {
+          Promise.resolve(hideAfterTimeoutOrThenable).then(release, release);
+        }
+        return session.track(new Disposable(release));
       },
       createOutputChannel(name, languageId) {
         requireString(name, 'OutputChannel.name');
@@ -2077,6 +2183,22 @@ class ExtensionApiSession {
       async executeTask() { throw new UnsupportedCapabilityError(session.extensionId, 'tasks.executeTask'); },
     });
 
+    // The registry is the loader's view of every registered extension in this host.
+    // Its absence is a host wiring defect, not an extension-visible capability gap,
+    // so the namespace degrades to an empty registry rather than throwing.
+    const registry = session.options.extensionRegistry;
+    const extensions = Object.freeze({
+      get all() {
+        if (!registry) return [];
+        return registry.all().map((descriptor) => session.extensionObject(descriptor)).filter(Boolean);
+      },
+      getExtension(extensionId) {
+        requireString(extensionId, 'extensionId');
+        return registry ? session.extensionObject(registry.describe(extensionId)) : undefined;
+      },
+      onDidChange: session.extensionsChangeEmitter.event,
+    });
+
     const unsupportedNamespace = (name) => new Proxy(Object.create(null), {
       get(_target, property) {
         if (property === Symbol.toStringTag) return 'UnsupportedCapability';
@@ -2091,6 +2213,7 @@ class ExtensionApiSession {
       workspace: Object.freeze(workspace),
       languages: Object.freeze(languages),
       env,
+      extensions,
       debug: unsupportedNamespace('debug'),
       tasks,
       scm: unsupportedNamespace('scm'),
@@ -2112,6 +2235,7 @@ class ExtensionApiSession {
       ViewColumn,
       OverviewRulerLane,
       ColorThemeKind,
+      ExtensionKind,
       Diagnostic,
       DiagnosticRelatedInformation,
       DiagnosticSeverity,
@@ -2211,7 +2335,10 @@ class ExtensionApiSession {
         return { accepted: true };
       }
       case 'extension/window/didChangeState':
-        this.windowStateEmitter.fire(Object.freeze({ focused: params?.focused === true, active: params?.active !== false }));
+        // `window.state` を先に更新してから通知する。上流も同じ順序で、ハンドラの中から
+        // `vscode.window.state` を読むと必ず通知された値と一致する。
+        this.windowState = Object.freeze({ focused: params?.focused === true, active: params?.active !== false });
+        this.windowStateEmitter.fire(this.windowState);
         return { accepted: true };
       case 'extension/workspace/didChangeConfiguration':
         for (const [key, value] of Object.entries(params?.values || {})) {
@@ -2292,7 +2419,11 @@ class ExtensionApiSession {
     this.diagnosticCollections.clear();
     for (const emitter of [this.documentOpenEmitter, this.documentChangeEmitter, this.documentSaveEmitter,
       this.documentCloseEmitter, this.documentWillSaveEmitter, this.configurationEmitter, this.activeEditorEmitter,
-      this.visibleEditorsEmitter, this.selectionEmitter, this.editorOptionsEmitter, this.windowStateEmitter]) emitter.dispose();
+      this.visibleEditorsEmitter, this.selectionEmitter, this.editorOptionsEmitter, this.windowStateEmitter,
+      this.extensionsChangeEmitter]) emitter.dispose();
+    this.statusBarMessages.length = 0;
+    this.statusBarMessageItem = null;
+    this.extensionObjects.clear();
     this.documents.clear();
     this.documentIdsByUri.clear();
     this.editors.clear();

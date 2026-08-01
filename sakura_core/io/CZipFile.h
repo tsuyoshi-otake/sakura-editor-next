@@ -15,9 +15,12 @@
 #include "cxx/com_pointer.hpp"
 
 #include <atomic>
+#include <cstddef>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
+#include <vector>
 
 class CZipFile {
 private:
@@ -54,6 +57,29 @@ public:
 
 	//! VSIX の中央ディレクトリ名として安全か。通信・ファイル操作を伴わない
 	static bool IsSafeArchiveEntryPath(std::string_view entryName);
+
+	/*!
+		@brief zlib ストリーム（RFC 1950）を展開する
+
+		miniz の実体（`mz_uncompress` 等）はこのクラスの翻訳単位
+		（CZipFile.cpp）だけがヘッダーガードなしで取り込んでいる。zlib 展開が
+		必要な呼び出し元（例: WOFF1 フォントのテーブル展開）は、miniz を
+		二重に実体化させないためこの関数を経由する。
+
+		expandedSize は呼び出し側があらかじめ知っている展開後の正確なサイズ
+		（WOFF テーブルディレクトリの origLength など）を渡すこと。展開結果の
+		サイズがこれと一致しない場合は失敗として扱う。expandedSize が
+		kMaxInflateExpandedBytes（64 MiB。単一 VSIX エントリの上限
+		kMaxVsixEntryBytes と同じ値を踏襲）を超える場合は、小さい圧縮入力から
+		巨大な確保を要求する zip 爆弾を防ぐため即座に拒否する。
+
+		miniz のエラー・サイズ不一致を含め、失敗時は必ず false を返し out を
+		空にする。例外は投げない（内部で捕捉する）。
+	 */
+	static bool InflateZlibStream(
+		std::span<const std::byte> compressed,
+		std::size_t expandedSize,
+		std::vector<std::byte>& out) noexcept;
 
 private:
 	IShellDispatchPtr	m_pShellDispatch = nullptr;

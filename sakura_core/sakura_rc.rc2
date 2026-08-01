@@ -141,6 +141,17 @@ IDI_ICON_STD            ICON         "../src/main/resources/images/icon_std.ico"
 
 /////////////////////////////////////////////////////////////////////////////
 //
+// Codicon font
+//
+
+// 実 VS Code と同じく、組み込みの $(name) アイコンは codicon.ttf の 1 グリフとして描く。
+// 外部ファイルにせず実行ファイルへ埋め込むのは、配布物から 1 ファイル欠けただけで全ての
+// 組み込みアイコンが黙って別物になる、という壊れ方を避けるため。読み出しは
+// workbench/icons/CCodiconFont.cpp。名前付きリソースなので数値 ID 空間と衝突しない。
+CODICONFONT             RCDATA       "workbench/icons/codicon.ttf"
+
+/////////////////////////////////////////////////////////////////////////////
+//
 // String Table
 //
 

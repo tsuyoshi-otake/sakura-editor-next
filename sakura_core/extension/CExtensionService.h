@@ -17,10 +17,10 @@
 #include "extension/CExtensionRpcProtocol.h"
 #include "extension/IExtensionSecretStorage.h"
 #include "extension/CExtensionStatusBar.h"
-#include "extension/CExtensionTrustStore.h"
 #include "extension/CExtensionViewRegistry.h"
 
 class CExtensionWorkbenchServiceBridge;
+namespace workbench { class IWorkbenchRuntime; }
 namespace workbench::output { class OutputService; }
 namespace workbench::problems { class MarkerService; }
 #include "extension/CExtensionWorkbenchDispatcher.h"
@@ -68,7 +68,8 @@ public:
 		std::shared_ptr<CExtensionViewRegistry> views,
 		std::unique_ptr<IExtensionSecretSessionStorage> secrets = {},
 		workbench::problems::MarkerService* markerService = nullptr,
-		workbench::output::OutputService* outputService = nullptr);
+		workbench::output::OutputService* outputService = nullptr,
+		workbench::IWorkbenchRuntime* workbenchRuntime = nullptr);
 	~CExtensionService();
 	CExtensionService(const CExtensionService&) = delete;
 	CExtensionService& operator=(const CExtensionService&) = delete;
@@ -76,6 +77,13 @@ public:
 	//! 初回 idle または最初の拡張 UI 操作から呼ぶ。二重起動はしない。
 	void Start();
 	void Shutdown() noexcept;
+
+	//! 導入済み拡張の集合が変わった可能性がある（インストール完了など）ときに UI スレッドから呼ぶ。
+	//! 他の Notify* 系と同じく、ワーカースレッドへ投げて即座に戻る（UI スレッドをブロックしない）。
+	//! 新しく見つかったルートだけを登録し、既に登録済みの拡張は二重登録・二重アクティベートしない。
+	//! まだ一度も接続していなければ（導入済み拡張が無く接続を見送っていた場合を含め）、この呼び出しが
+	//! 接続を確立する起点になる。
+	void RequestInstalledExtensionRescan();
 
 	void ExecuteCommand(std::wstring_view command, std::string_view argumentsJson = "[]");
 	void RequestTreeChildren(std::wstring_view viewHandle, std::wstring_view parentHandle);
@@ -104,8 +112,6 @@ public:
 	LRESULT HandleNotificationPrompt(LPARAM promptPointer) noexcept;
 	//! MYWM_EXTENSION_QUICK_INPUT_PROMPT を受けた UI thread だけが呼ぶ。
 	LRESULT HandleQuickInputPrompt(LPARAM promptPointer) noexcept;
-	//! MYWM_EXTENSION_TRUST_PROMPT を受けた UI thread だけが呼ぶ。
-	LRESULT HandleTrustPrompt(LPARAM promptPointer) noexcept;
 	//! MYWM_EXTENSION_APPLY_EDIT_PROMPT を受けた UI thread だけが呼ぶ。
 	LRESULT HandleApplyEditPrompt(LPARAM promptPointer) noexcept;
 	//! MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT を受けた UI thread だけが呼ぶ。
@@ -152,13 +158,6 @@ private:
 		const SExtensionQuickInputRequest* request = nullptr;
 		SExtensionQuickInputCompletion completion;
 	};
-	struct TrustPrompt {
-		std::wstring extensionId;
-		std::wstring version;
-		std::wstring displayName;
-		std::wstring extensionPath;
-		bool trusted = false;
-	};
 	struct ApplyEditPrompt {
 		const std::vector<SExtensionDocumentEdit>* edits = nullptr;
 		NativeApplyEditResult completion;
@@ -175,6 +174,7 @@ private:
 	void WorkerMain() noexcept;
 	void WorkerInitialize();
 	void RequestReconnectWorker();
+	void RescanInstalledExtensionsWorker();
 	void EnsureConnectedWorker(std::uint64_t attemptToken);
 	void ProcessReconnectDeadlineWorker(CExtensionClientReconnectPolicy::TimePoint now);
 	[[nodiscard]] double NextReconnectJitter() noexcept;
@@ -231,8 +231,6 @@ private:
 	void PostWorkbenchChanges(EExtensionWorkbenchChange changes) const noexcept;
 	std::optional<std::size_t> ShowNotificationOnUi(const SExtensionNotification& notification);
 	SExtensionQuickInputCompletion ShowQuickInputOnUi(const SExtensionQuickInputRequest& request);
-	bool ShowTrustOnUi(std::wstring_view extensionId, std::wstring_view version,
-		std::wstring_view displayName, std::wstring_view extensionPath);
 	NativeApplyEditResult ApplyEditOnUi(const std::vector<SExtensionDocumentEdit>& edits);
 	bool ApplyEditorOptionsOnUi(const SExtensionNativeEditorOptions& options);
 	[[nodiscard]] std::optional<SExtensionViewDescriptor> FindView(std::wstring_view handle) const;
@@ -246,7 +244,6 @@ private:
 	CExtensionStatusBar m_statusBar;
 	CExtensionNotificationCenter m_notifications;
 	std::unique_ptr<IExtensionSecretSessionStorage> m_secrets;
-	CExtensionTrustStore m_trustStore;
 	CExtensionDiagnostics m_diagnostics;
 	CExtensionQuickInput m_quickInput;
 	CExtensionOutputChannel m_output;

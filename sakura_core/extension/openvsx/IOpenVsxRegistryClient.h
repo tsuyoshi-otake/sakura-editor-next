@@ -40,6 +40,7 @@ enum class EOpenVsxRequestOutcome : std::uint8_t {
 	HttpStatusFailure,
 	InvalidResponse,
 	SearchParseFailure,
+	Unsupported,
 };
 
 struct OpenVsxOperationStatus {
@@ -59,6 +60,11 @@ struct OpenVsxSearchOperation {
 struct OpenVsxBinaryOperation {
 	OpenVsxOperationStatus status;
 	std::vector<std::uint8_t> value;
+};
+
+struct OpenVsxTextOperation {
+	OpenVsxOperationStatus status;
+	std::wstring value;
 };
 
 /*! 
@@ -85,6 +91,17 @@ public:
 	virtual OpenVsxBinaryOperation FetchOptionalSha256(
 		const std::optional<std::wstring>& validatedHttpsSha256Uri,
 		const platform::request::IRequestCancellation* cancellation = nullptr) const = 0;
+
+	virtual OpenVsxTextOperation FetchText(
+		std::wstring_view validatedHttpsTextUri,
+		const platform::request::IRequestCancellation* cancellation = nullptr) const
+	{
+		(void)validatedHttpsTextUri;
+		(void)cancellation;
+		return { { EOpenVsxRequestOutcome::Unsupported,
+			platform::request::ERequestOutcome::InvalidRequest,
+			std::nullopt, L"text fetch is unsupported" }, {} };
+	}
 };
 
 } // namespace extension::openvsx

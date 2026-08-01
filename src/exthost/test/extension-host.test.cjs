@@ -34,10 +34,8 @@ class TestClient {
     this.socket.on('data', (chunk) => {
       for (const payload of this.decoder.feed(chunk)) {
         const message = parseRpcPayload(payload);
-        if (Object.prototype.hasOwnProperty.call(message, 'id') &&
-            (message.method === 'client/echo' || message.method === 'workbench/extensions/ensureTrusted')) {
-          const result = message.method === 'workbench/extensions/ensureTrusted' ? { trusted: true } : message.params;
-          this.socket.write(encodeFrame({ jsonrpc: '2.0', id: message.id, result }));
+        if (Object.prototype.hasOwnProperty.call(message, 'id') && message.method === 'client/echo') {
+          this.socket.write(encodeFrame({ jsonrpc: '2.0', id: message.id, result: message.params }));
         } else {
           this.messages.push(message);
           this.flush();

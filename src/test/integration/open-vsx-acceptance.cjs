@@ -17,7 +17,6 @@ const transport = {
   async request(method, params) {
     requests.push({ method, params });
     if (method === 'workbench/commands/list') return { commands: [] };
-    if (method === 'workbench/extensions/ensureTrusted') return { trusted: true };
     if (method === 'workspace/findFiles') return { uris: [] };
     if (method === 'workspace/configuration/update') return {};
     if (method === 'env/clipboard/readText') return { value: '' };

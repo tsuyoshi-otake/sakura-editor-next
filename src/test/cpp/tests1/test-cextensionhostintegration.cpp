@@ -431,11 +431,6 @@ TEST(CExtensionHostIntegration, BridgesVsCodeStatusBarAndTreeViewIntoNativeWorkb
 	CExtensionWorkbenchDispatcher dispatcher(
 		contextKeys, commands, statusBar, notifications, views, secrets,
 		diagnostics, quickInput, output, progress);
-	dispatcher.SetTrustHandler([](
-		std::wstring_view,
-		std::wstring_view,
-		std::wstring_view,
-		std::wstring_view) { return true; });
 	std::vector<std::string> dispatchFailures;
 	pump.SetIncomingHandler([&](const SExtensionRpcMessage& message) {
 		const auto result = dispatcher.Dispatch(message);

@@ -13,6 +13,7 @@
 #include <fstream>
 #include <locale>
 #include <string>
+#include <vector>
 
 #define MINIZ_HEADER_FILE_ONLY
 #include <miniz-cpp/zip_file.hpp>
@@ -360,4 +361,94 @@ TEST(CZipFile, CZipFIle)
 
 	// OLEをシャットダウンする
 	::OleUninitialize();
+}
+
+// InflateZlibStream() 用のテストデータ生成ヘルパー。
+// mz_compress() は宣言（このファイル冒頭の MINIZ_HEADER_FILE_ONLY 付き
+// include）のみを見ており、実体は CZipFile.cpp が唯一ガードなしで取り込む
+// 側にある。両者は同一ヘッダーテキストの extern "C" 宣言を経由するため
+// リンク時に解決できる。テスト専用の圧縮 API を新たに増やす代わりに、
+// この既存の再利用パターン（miniz_cpp::zip_file 等ですでに使われている
+// ものと同じ仕組み）を使い、本物の RFC 1950 zlib ストリームを合成する。
+std::vector<std::byte> CompressWithMzForTest(std::string_view source)
+{
+	mz_ulong destLen = mz_compressBound(static_cast<mz_ulong>(source.size()));
+	std::vector<std::byte> dest(destLen);
+	const int status = mz_compress(
+		reinterpret_cast<unsigned char*>(dest.data()), &destLen,
+		reinterpret_cast<const unsigned char*>(source.data()), static_cast<mz_ulong>(source.size()));
+	EXPECT_EQ(MZ_OK, status);
+	dest.resize(destLen);
+	return dest;
+}
+
+//! zlib（RFC 1950）ストリームを展開し、期待サイズと一致した場合だけ成功する
+TEST(CZipFile, InflateZlibStream_RoundTripsAndRejectsSizeMismatch)
+{
+	std::string payload;
+	payload.reserve(4096);
+	for (size_t i = 0; i < 4096; ++i) {
+		payload.push_back(static_cast<char>('A' + (i % 7)));
+	}
+	const std::vector<std::byte> compressed = CompressWithMzForTest(payload);
+	ASSERT_FALSE(compressed.empty());
+
+	std::vector<std::byte> inflated;
+	ASSERT_TRUE(CZipFile::InflateZlibStream(compressed, payload.size(), inflated));
+	ASSERT_EQ(payload.size(), inflated.size());
+	for (size_t i = 0; i < payload.size(); ++i) {
+		ASSERT_EQ(static_cast<std::byte>(payload[i]), inflated[i]) << "mismatch at offset " << i;
+	}
+
+	// 呼び出し側が伝える期待サイズが実際の展開結果とずれている場合は、
+	// miniz が成功していても失敗として扱い、out を空にする
+	std::vector<std::byte> tooSmall;
+	EXPECT_FALSE(CZipFile::InflateZlibStream(compressed, payload.size() - 1, tooSmall));
+	EXPECT_TRUE(tooSmall.empty());
+
+	std::vector<std::byte> tooLarge;
+	EXPECT_FALSE(CZipFile::InflateZlibStream(compressed, payload.size() + 1, tooLarge));
+	EXPECT_TRUE(tooLarge.empty());
+}
+
+//! 壊れた、または切り詰められたストリームはクラッシュせず失敗として扱う
+TEST(CZipFile, InflateZlibStream_RejectsCorruptOrTruncatedStream)
+{
+	const std::string_view payload = "InflateZlibStream corrupt-stream regression payload";
+	const std::vector<std::byte> compressed = CompressWithMzForTest(payload);
+	ASSERT_GT(compressed.size(), 4u);
+
+	// 末尾を切り詰めた不完全なストリーム
+	const std::vector<std::byte> truncated(compressed.begin(), compressed.end() - 4);
+	std::vector<std::byte> outTruncated;
+	EXPECT_FALSE(CZipFile::InflateZlibStream(truncated, payload.size(), outTruncated));
+	EXPECT_TRUE(outTruncated.empty());
+
+	// 中間バイトを反転させた破損ストリーム
+	std::vector<std::byte> corrupted = compressed;
+	corrupted[corrupted.size() / 2] ^= std::byte{ 0xFF };
+	std::vector<std::byte> outCorrupted;
+	EXPECT_FALSE(CZipFile::InflateZlibStream(corrupted, payload.size(), outCorrupted));
+	EXPECT_TRUE(outCorrupted.empty());
+}
+
+//! 空入力・ゼロサイズ・文書化された上限を超えるサイズは miniz を呼び出す前に拒否する
+TEST(CZipFile, InflateZlibStream_RejectsDegenerateInputsWithoutAllocating)
+{
+	std::vector<std::byte> out;
+
+	// 圧縮データが空
+	EXPECT_FALSE(CZipFile::InflateZlibStream(std::span<const std::byte>{}, 16, out));
+	EXPECT_TRUE(out.empty());
+
+	const std::vector<std::byte> dummy(4, std::byte{ 0 });
+
+	// 期待展開サイズがゼロ
+	EXPECT_FALSE(CZipFile::InflateZlibStream(dummy, 0, out));
+	EXPECT_TRUE(out.empty());
+
+	// クラスが文書化している 64 MiB の上限を大きく超えるサイズは、
+	// 巨大なバッファ確保を試みる前に即座に拒否されなければならない
+	EXPECT_FALSE(CZipFile::InflateZlibStream(dummy, 1ull * 1024 * 1024 * 1024, out));
+	EXPECT_TRUE(out.empty());
 }

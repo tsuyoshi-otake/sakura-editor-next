@@ -194,12 +194,20 @@ mkdir %WORKDIR_EXE%\license\codicons\
 mkdir %WORKDIR_EXE%\license\fmt\
 mkdir %WORKDIR_EXE%\license\ms-gsl\
 mkdir %WORKDIR_EXE%\license\wil\
+mkdir %WORKDIR_EXE%\exthost\
 mkdir %WORKDIR_DEV%
 mkdir %WORKDIR_INST%
 call :copyRequired "%platform%\%configuration%\sakura.exe" "%WORKDIR_EXE%\" "sakura executable"
 if errorlevel 1 exit /b 1
 call :copyRequired "%platform%\%configuration%\*.dll" "%WORKDIR_EXE%\" "runtime DLLs"
 if errorlevel 1 exit /b 1
+
+: extension host runtime
+call :copyRequired "%platform%\%configuration%\exthost\extension-host.js" "%WORKDIR_EXE%\exthost\" "extension host bundle"
+if errorlevel 1 exit /b 1
+call :copyRequired "%platform%\%configuration%\exthost\sakura_exthost_security.node" "%WORKDIR_EXE%\exthost\" "extension host security shim"
+if errorlevel 1 exit /b 1
+
 call :copyRequired "%platform%\%configuration%\*.pdb" "%WORKDIR_DEV%\" "debug symbols"
 if errorlevel 1 exit /b 1
 
