@@ -109,6 +109,11 @@ bool ShouldRelayoutOutlineAfterReload(
 	return commandSucceeded && rightPanelVisible && dialogCreated;
 }
 
+COLORREF OutlineBackgroundColor( const theme::ThemePalette& palette ) noexcept
+{
+	return palette.sideBar.ToColorRef();
+}
+
 COutlineWorkbenchTool::COutlineWorkbenchTool( CDlgFuncList& dialog ) noexcept
 	: m_dialog(&dialog)
 {
@@ -245,7 +250,7 @@ void COutlineWorkbenchTool::ApplyAppearance() noexcept
 	const COLORREF selection = BlendColor( m_palette.raised.ToColorRef(), m_palette.border.ToColorRef() );
 	m_dialog->SetWorkbenchAppearance(
 		m_palette.primaryText.ToColorRef(),
-		m_palette.panel.ToColorRef(),
+		OutlineBackgroundColor(m_palette),
 		m_palette.raised.ToColorRef(),
 		selection,
 		m_palette.highlightText.ToColorRef(),
@@ -264,7 +269,7 @@ void COutlineWorkbenchTool::RecreateSymbolImages() noexcept
 	const int imageCount = CDlgFuncList::WorkbenchSymbolImageCount();
 	HIMAGELIST images = ::ImageList_Create( size, size, ILC_COLOR24, imageCount, imageCount );
 	if( images == nullptr ) return;
-	(void)::ImageList_SetBkColor( images, m_palette.panel.ToColorRef() );
+	(void)::ImageList_SetBkColor( images, OutlineBackgroundColor(m_palette) );
 
 	const HDC screen = ::GetDC(nullptr);
 	const HDC colorDc = ::CreateCompatibleDC(screen);
@@ -280,7 +285,7 @@ void COutlineWorkbenchTool::RecreateSymbolImages() noexcept
 	const HGDIOBJ oldColorBitmap = ::SelectObject(colorDc, colorBitmap);
 	RECT bounds{ 0, 0, size, size };
 	const auto clearBitmap = [&]() noexcept {
-		const HBRUSH background = ::CreateSolidBrush(m_palette.panel.ToColorRef());
+		const HBRUSH background = ::CreateSolidBrush(OutlineBackgroundColor(m_palette));
 		::FillRect( colorDc, &bounds, background );
 		::DeleteObject( background );
 	};

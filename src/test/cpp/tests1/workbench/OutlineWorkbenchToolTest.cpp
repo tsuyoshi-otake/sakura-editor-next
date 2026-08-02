@@ -66,6 +66,14 @@ TEST(OutlineWorkbenchTool, ReloadRelayoutRequiresSuccessfulVisibleChildCreation)
 	EXPECT_TRUE( ShouldRelayoutOutlineAfterReload(true, true, true) );
 }
 
+TEST(OutlineWorkbenchTool, NestedExplorerViewUsesSideBarBackgroundForEverySurface)
+{
+	auto palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	palette.panel = { 0x10, 0x20, 0x30 };
+	palette.sideBar = { 0x40, 0x50, 0x60 };
+	EXPECT_EQ(palette.sideBar.ToColorRef(), OutlineBackgroundColor(palette));
+}
+
 TEST(OutlineWorkbenchTool, SymbolKindsUseCanonicalCodiconImageSlots)
 {
 	EXPECT_EQ(10, CDlgFuncList::WorkbenchSymbolImageCount());

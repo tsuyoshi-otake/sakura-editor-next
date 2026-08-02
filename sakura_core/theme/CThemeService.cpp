@@ -156,7 +156,7 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// High Contrast never lowers contrast to imitate VS Code's translucent description token:
 	// the description role takes the full window text color and only the disabled role dims.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
-		face, face, highlight, highlight, face, face };
+		face, face, highlight, highlight, face, face, face };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

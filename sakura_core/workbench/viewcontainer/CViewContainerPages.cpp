@@ -167,6 +167,8 @@ HWND CViewContainerPages::AttachedHost(ViewContainerPage page) const noexcept
 void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 {
 	if (m_explorer) {
+		// Explorer is a Side Bar ViewContainer; its injected background also backs
+		// the TreeView's generated font-icon tiles.
 		m_explorer->SetPalette({ palette.sideBar.ToColorRef(), palette.primaryText.ToColorRef(),
 			palette.border.ToColorRef(), palette.accent.ToColorRef() });
 	}

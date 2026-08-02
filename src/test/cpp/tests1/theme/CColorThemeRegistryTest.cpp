@@ -219,6 +219,7 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 			"editor.background": "#202020",
 			"sideBar.background": "#293134",
 			"panel.background": "#252526",
+			"terminal.background": "#12345680",
 			"foreground": "#d4d4d4",
 			"descriptionForeground": "#ffffffb3",
 			"disabledForeground": "#ffffff80",
@@ -261,6 +262,7 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 	EXPECT_EQ((ThemeColor{ 0x29, 0x31, 0x34, 0xFF }), snapshot.palette.sideBar);
 	EXPECT_EQ((ThemeColor{ 0x25, 0x25, 0x26, 0xFF }), snapshot.palette.panel);
 	EXPECT_EQ((ThemeColor{ 0x25, 0x25, 0x26, 0xFF }), snapshot.palette.bottomPanel);
+	EXPECT_EQ((ThemeColor{ 0x1B, 0x2D, 0x3E, 0xFF }), snapshot.palette.terminalBackground);
 	EXPECT_EQ((ThemeColor{ 0xD4, 0xD4, 0xD4, 0xFF }), snapshot.palette.primaryText);
 	EXPECT_EQ((ThemeColor{ 189, 189, 189, 0xFF }), snapshot.palette.descriptionText);
 	EXPECT_EQ((ThemeColor{ 144, 144, 144, 0xFF }), snapshot.palette.disabledText);
@@ -270,6 +272,32 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 	EXPECT_EQ((ThemeColor{ 0xCE, 0x91, 0x78, 0xFF }), *snapshot.syntaxPalette.string.foreground);
 	ASSERT_TRUE(snapshot.syntaxPalette.variable.foreground.has_value());
 	EXPECT_EQ((ThemeColor{ 0xFF, 0, 0, 0xFF }), *snapshot.syntaxPalette.variable.foreground);
+}
+
+TEST(CColorThemeRegistry, FallsBackToProjectedPanelBackgroundWhenTerminalTokenIsAbsent)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ThemeColor;
+
+	TemporaryThemeExtension extension;
+	ASSERT_FALSE(extension.Root().empty());
+	ASSERT_TRUE(extension.Write(L"theme.json", R"json({
+		"type": "dark",
+		"colors": {
+			"panel.background": "#123456"
+		}
+	})json"));
+	WriteManifest(extension);
+
+	CColorThemeRegistry registry;
+	ASSERT_TRUE(registry.RegisterExtension(L"publisher.test-theme", extension.Root()));
+	const auto loaded = registry.Load(L"publisher.test-theme");
+	ASSERT_TRUE(loaded.Succeeded()) << loaded.diagnostic.c_str();
+	ASSERT_TRUE(loaded.theme.has_value());
+	const auto& snapshot = *loaded.theme;
+	EXPECT_EQ(snapshot.colors.end(), snapshot.colors.find(L"terminal.background"));
+	EXPECT_EQ((ThemeColor{ 0x12, 0x34, 0x56, 0xFF }), snapshot.palette.bottomPanel);
+	EXPECT_EQ(snapshot.palette.bottomPanel, snapshot.palette.terminalBackground);
 }
 
 TEST(CColorThemeRegistry, RejectsThemeIncludesOutsideExtensionRoot)

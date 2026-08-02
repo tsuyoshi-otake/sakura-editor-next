@@ -571,12 +571,13 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			return background;
 		};
 		palette.canvas = first(palette.canvas, { L"editor.background", L"editorGroup.emptyBackground" });
-		// Side Bar and Panel are separate VS Code Parts. `sideBar` is the Primary
-		// Side Bar/Explorer surface; `panel` remains the Secondary Side Bar role
-		// used by the right host and by legacy workbench controls.
+		// Side Bar and Panel are separate VS Code Parts. `sideBar` serves both
+		// physical side-bar hosts; `bottomPanel` is the Panel surface and the
+		// fallback base for the Panel-only Terminal ViewContainer.
 		palette.sideBar = first(palette.sideBar, { L"sideBar.background" });
 		palette.panel = first(palette.panel, { L"panel.background", L"editorGroupHeader.tabsBackground" });
 		palette.bottomPanel = first(palette.bottomPanel, { L"panel.background", L"editorGroupHeader.tabsBackground" });
+		palette.terminalBackground = first(palette.bottomPanel, { L"terminal.background" });
 		palette.raised = first(palette.raised, { L"sideBarSectionHeader.background", L"list.hoverBackground",
 			L"editorWidget.background", L"quickInput.background" });
 		palette.border = first(palette.border, { L"sideBar.border", L"panel.border", L"contrastBorder",

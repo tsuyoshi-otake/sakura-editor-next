@@ -37,8 +37,10 @@ enum class ExplorerWorkerState : unsigned char {
 };
 
 //! A small, injectable palette until the workbench theme service owns these values.
+//! The construction background is only a bootstrap fallback; production injection
+//! uses the VS Code Side Bar semantic role.
 struct ExplorerPalette {
-	COLORREF panel = RGB(0x20, 0x23, 0x2A);
+	COLORREF background = RGB(0x20, 0x23, 0x2A);
 	COLORREF text = RGB(0xE8, 0xEB, 0xF0);
 	COLORREF border = RGB(0x38, 0x3E, 0x49);
 	COLORREF focus = RGB(0xEB, 0x6A, 0x9A);

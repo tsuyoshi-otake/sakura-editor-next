@@ -21,18 +21,35 @@ TEST(TerminalColorResolver, DefaultUsesTheSuppliedThemeForeground)
 			terminal::TerminalColorRole::Foreground));
 }
 
-TEST(TerminalColorResolver, UsesOneHalfProfileDefaultsAndAnsiColors)
+TEST(TerminalColorResolver, UsesPanelFallbackAndOneHalfProfileAnsiColors)
 {
 	const auto dark = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
-	EXPECT_EQ(RGB(0x28, 0x2C, 0x34), terminal::TerminalDefaultBackground(dark));
+	EXPECT_EQ(RGB(0x25, 0x25, 0x26), terminal::TerminalDefaultBackground(dark));
 	EXPECT_EQ(RGB(0xDC, 0xDF, 0xE4), terminal::TerminalDefaultForeground(dark));
 	EXPECT_EQ(RGB(0x61, 0xAF, 0xEF),
 		terminal::ResolveTerminalColor(terminal::TerminalColor::Indexed(4), dark,
 			terminal::TerminalDefaultForeground(dark), terminal::TerminalColorRole::Foreground));
 
 	const auto light = theme::CThemeService::PaletteFor(theme::ThemeMode::Light);
-	EXPECT_EQ(RGB(0xFA, 0xFA, 0xFA), terminal::TerminalDefaultBackground(light));
+	EXPECT_EQ(RGB(0xFF, 0xFF, 0xFF), terminal::TerminalDefaultBackground(light));
 	EXPECT_EQ(RGB(0x38, 0x3A, 0x42), terminal::TerminalDefaultForeground(light));
+}
+
+TEST(TerminalColorResolver, DefaultBackgroundUsesTheProjectedTerminalSemanticRole)
+{
+	auto palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	palette.terminalBackground = { 0x12, 0x34, 0x56 };
+	EXPECT_EQ(RGB(0x12, 0x34, 0x56), terminal::TerminalDefaultBackground(palette));
+}
+
+TEST(TerminalColorResolver, HighContrastRenderDefaultsKeepTerminalBackgroundRole)
+{
+	auto palette = theme::CThemeService::HighContrastPalette();
+	palette.canvas = { 0x01, 0x02, 0x03 };
+	palette.terminalBackground = { 0x12, 0x34, 0x56 };
+	const auto defaults = terminal::ResolveTerminalRenderDefaults(palette, false);
+	EXPECT_EQ(RGB(0x12, 0x34, 0x56), defaults.background);
+	EXPECT_EQ(palette.primaryText.ToColorRef(), defaults.foreground);
 }
 
 TEST(TerminalColorResolver, ExtendedIndexedColorsRetainXtermValues)

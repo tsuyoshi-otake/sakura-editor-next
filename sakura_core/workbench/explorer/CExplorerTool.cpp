@@ -436,7 +436,7 @@ struct CExplorerTool::Impl {
 
 		const auto pixelCount = static_cast<std::size_t>(iconSize) * iconSize;
 		auto* pixels = static_cast<std::uint32_t*>(bits);
-		const auto opaqueBackground = 0xFF000000u | (static_cast<std::uint32_t>(palette.panel) & 0x00FFFFFFu);
+		const auto opaqueBackground = 0xFF000000u | (static_cast<std::uint32_t>(palette.background) & 0x00FFFFFFu);
 		std::fill_n(pixels, pixelCount, opaqueBackground);
 
 		HDC dc = ::CreateCompatibleDC(nullptr);
@@ -467,7 +467,7 @@ struct CExplorerTool::Impl {
 		::SelectObject(dc, previousBitmap);
 		::DeleteDC(dc);
 		// GDI text drawing may leave the alpha byte untouched. The image-list tile is
-		// intentionally opaque so the icon has the same panel-colored background as
+		// intentionally opaque so the icon has the same Explorer background as
 		// the TreeView rather than becoming a black transparent rectangle.
 		for (std::size_t index = 0; index < pixelCount; ++index) pixels[index] |= 0xFF000000u;
 		return bitmap;
@@ -721,7 +721,7 @@ bool CExplorerTool::Create(HWND parent)
 		return false;
 	}
 	::SendMessageW(m_impl->tree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
-	TreeView_SetBkColor(m_impl->tree, m_impl->palette.panel);
+	TreeView_SetBkColor(m_impl->tree, m_impl->palette.background);
 	TreeView_SetTextColor(m_impl->tree, m_impl->palette.text);
 	m_impl->RebuildIconImages();
 	m_impl->SetNotificationWindow(m_impl->window, true);
@@ -803,7 +803,7 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 {
 	m_impl->palette = palette;
 	if (m_impl->tree != nullptr) {
-		TreeView_SetBkColor(m_impl->tree, palette.panel);
+		TreeView_SetBkColor(m_impl->tree, palette.background);
 		TreeView_SetTextColor(m_impl->tree, palette.text);
 	}
 	m_impl->RebuildIconImages();
@@ -878,7 +878,7 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		PAINTSTRUCT paint{};
 		const HDC dc = ::BeginPaint(window, &paint);
 		if (dc != nullptr) {
-			const HBRUSH brush = ::CreateSolidBrush(impl.palette.panel);
+			const HBRUSH brush = ::CreateSolidBrush(impl.palette.background);
 			::FillRect(dc, &paint.rcPaint, brush);
 			::DeleteObject(brush);
 			::EndPaint(window, &paint);

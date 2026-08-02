@@ -887,10 +887,9 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 		const bool buffered = EnsureBackBuffer(dc);
 		const HDC memory = buffered ? backBufferDc : dc;
-		const COLORREF defaultBackground = useTerminalProfileColors
-			? TerminalDefaultBackground(palette) : palette.canvas.ToColorRef();
-		const COLORREF defaultForeground = useTerminalProfileColors
-			? TerminalDefaultForeground(palette) : palette.primaryText.ToColorRef();
+		const auto defaultColors = ResolveTerminalRenderDefaults(palette, useTerminalProfileColors);
+		const COLORREF defaultBackground = defaultColors.background;
+		const COLORREF defaultForeground = defaultColors.foreground;
 		const auto dcBrush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
 		const auto previousBrush = ::SelectObject(memory, dcBrush);
 		::SetDCBrushColor(memory, defaultBackground);

@@ -65,6 +65,10 @@ struct OutlineToolLayout {
 	bool rightPanelVisible,
 	bool dialogCreated ) noexcept;
 
+//! Outline is a View nested in the Explorer ViewContainer, so every background
+//! surface it owns uses the containing Side Bar Part role.
+[[nodiscard]] COLORREF OutlineBackgroundColor( const theme::ThemePalette& palette ) noexcept;
+
 //! Adapts the existing outline dialog to the deliberately small IWorkbenchTool boundary.
 //!
 //! Create establishes the workbench parent/mode but does not force outline parsing. The

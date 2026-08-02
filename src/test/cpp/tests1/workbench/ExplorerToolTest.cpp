@@ -193,7 +193,7 @@ TEST(ExplorerTool, ExposesThePlannedPaletteAndKeepsRootWindowLocal)
 	EXPECT_EQ(L"C:\\first", first.GetRoot());
 	EXPECT_EQ(L"C:\\second", second.GetRoot());
 	const ExplorerPalette palette = first.GetPalette();
-	EXPECT_EQ(RGB(0x20, 0x23, 0x2A), palette.panel);
+	EXPECT_EQ(RGB(0x20, 0x23, 0x2A), palette.background);
 	EXPECT_EQ(RGB(0xE8, 0xEB, 0xF0), palette.text);
 	EXPECT_EQ(RGB(0x38, 0x3E, 0x49), palette.border);
 	EXPECT_EQ(RGB(0xEB, 0x6A, 0x9A), palette.focus);

@@ -483,7 +483,7 @@ void CViewContainerHost::Paint()
 {
 	PAINTSTRUCT paint{};
 	const HDC dc = ::BeginPaint(m_window, &paint);
-	const HBRUSH background = ::CreateSolidBrush(m_palette.panel.ToColorRef());
+	const HBRUSH background = ::CreateSolidBrush(m_palette.sideBar.ToColorRef());
 	::FillRect(dc, &paint.rcPaint, background);
 	::DeleteObject(background);
 	if (m_font.Get()) ::SelectObject(dc, m_font.Get());

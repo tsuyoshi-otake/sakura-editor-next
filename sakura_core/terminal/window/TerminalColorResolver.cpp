@@ -44,12 +44,23 @@ COLORREF IndexedColor( unsigned int index, const theme::ThemePalette& palette ) 
 
 COLORREF TerminalDefaultBackground( const theme::ThemePalette& palette ) noexcept
 {
-	return IsDarkTheme(palette) ? RGB(0x28, 0x2C, 0x34) : RGB(0xFA, 0xFA, 0xFA);
+	return palette.terminalBackground.ToColorRef();
 }
 
 COLORREF TerminalDefaultForeground( const theme::ThemePalette& palette ) noexcept
 {
 	return IsDarkTheme(palette) ? RGB(0xDC, 0xDF, 0xE4) : RGB(0x38, 0x3A, 0x42);
+}
+
+TerminalRenderDefaults ResolveTerminalRenderDefaults(
+	const theme::ThemePalette& palette,
+	bool useTerminalProfileColors
+) noexcept
+{
+	return {
+		TerminalDefaultBackground(palette),
+		useTerminalProfileColors ? TerminalDefaultForeground(palette) : palette.primaryText.ToColorRef(),
+	};
 }
 
 COLORREF ResolveTerminalColor( const TerminalColor& color, const theme::ThemePalette& palette, COLORREF defaultColor,

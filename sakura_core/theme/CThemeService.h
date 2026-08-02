@@ -60,10 +60,14 @@ struct ThemePalette {
 	//! VS Code `panel.background`, distinct from the Primary/Secondary Side Bar.
 	//! Existing consumers that only know the legacy panel role continue to use `panel`.
 	ThemeColor bottomPanel = { 0x25, 0x25, 0x26 };
-	//! VS Code `sideBar.background`, used by the Primary Side Bar/Explorer surface.
-	//! This is separate from `panel` so the screenshot-compatible Sakura Explorer
-	//! surface can remain #293134 while the Panel/Auxiliary Bar remains #252526.
+	//! VS Code `sideBar.background`, used by both Primary and Secondary Side Bar
+	//! hosts; Explorer receives it while located in the Primary Side Bar.
+	//! This is separate from `bottomPanel` because Side Bar and Panel are distinct Parts.
 	ThemeColor sideBar = { 0x25, 0x25, 0x26 };
+	//! VS Code `terminal.background`. The Terminal ViewContainer belongs to the
+	//! Panel; color-theme projection falls back to the resolved `bottomPanel` role
+	//! when this optional token is absent.
+	ThemeColor terminalBackground = { 0x25, 0x25, 0x26 };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -236,6 +240,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xBF, 0x88, 0x00 }, // notificationsWarningIcon.foreground
 			{ 0xFF, 0xFF, 0xFF }, // panel.background
 			{ 0xFF, 0xFF, 0xFF }, // sideBar.background
+			{ 0xFF, 0xFF, 0xFF }, // terminal.background fallback: panel.background
 		};
 	}
 	return {
@@ -255,6 +260,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0xCC, 0xA7, 0x00 }, // notificationsWarningIcon.foreground
 		{ 0x25, 0x25, 0x26 }, // panel.background
 		{ 0x29, 0x31, 0x34 }, // sideBar.background
+		{ 0x25, 0x25, 0x26 }, // terminal.background fallback: panel.background
 	};
 }
 

@@ -13,10 +13,24 @@ enum class TerminalColorRole : std::uint8_t {
 	Background,
 };
 
-//! Default profile canvas/foreground matching Windows Terminal's included
-//! One Half Dark / One Half Light schemes for the active workbench mode.
+struct TerminalRenderDefaults final {
+	COLORREF background{};
+	COLORREF foreground{};
+};
+
+//! Default terminal viewport background uses the projected VS Code
+//! `terminal.background` role, which falls back to Panel background when absent.
+//! The foreground keeps the Windows Terminal One Half profile behavior.
 [[nodiscard]] COLORREF TerminalDefaultBackground(const theme::ThemePalette& palette) noexcept;
 [[nodiscard]] COLORREF TerminalDefaultForeground(const theme::ThemePalette& palette) noexcept;
+
+//! Selects the colors used to fill a terminal viewport and render default text.
+//! High Contrast disables the One Half foreground profile, but it must not bypass
+//! the projected `terminal.background` role for the viewport fill.
+[[nodiscard]] TerminalRenderDefaults ResolveTerminalRenderDefaults(
+	const theme::ThemePalette& palette,
+	bool useTerminalProfileColors
+) noexcept;
 
 //! Resolves VT colors against Sakura's active workbench theme.
 [[nodiscard]] COLORREF ResolveTerminalColor(
