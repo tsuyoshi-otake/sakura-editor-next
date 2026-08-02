@@ -72,7 +72,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>
@@ -333,6 +333,7 @@
     <ClInclude Include="..\sakura_core\env\CTagJumpManager.h" />
     <ClInclude Include="..\sakura_core\env\DLLSHAREDATA.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionManager.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionProfileState.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionPane.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionCommandPalette.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionContextKeys.h" />
@@ -593,18 +594,24 @@
     <ClInclude Include="..\sakura_core\terminal\session\TerminalSession.h" />
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalTool.h" />
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalWnd.h" />
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalBuiltinGlyphRenderer.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalColorResolver.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalScrollbarLayout.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h" />
     <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
+    <ClInclude Include="..\sakura_core\theme\CColorThemeRegistry.h" />
 	<ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
+	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h" />
+	<ClInclude Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchRuntime.h" />
@@ -646,6 +653,7 @@
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
@@ -675,6 +683,7 @@
 	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CExtensionIconFont.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h" />
 	<ClInclude Include="..\sakura_core\workbench\hover\HoverMarkdown.h" />
 	<ClInclude Include="..\sakura_core\workbench\hover\CHoverWidget.h" />
@@ -915,6 +924,7 @@
     <ClCompile Include="..\sakura_core\env\CTagJumpManager.cpp" />
     <ClCompile Include="..\sakura_core\env\DLLSHAREDATA.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionProfileState.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionCommandPalette.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionContextKeys.cpp" />
@@ -1225,15 +1235,21 @@
     <ClCompile Include="..\sakura_core\terminal\session\TerminalSession.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\CTerminalTool.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\CTerminalWnd.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalBuiltinGlyphRenderer.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalColorResolver.cpp" />
-    <ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
+    <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp" />
@@ -1269,6 +1285,7 @@
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\DocumentRegistry.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp" />
@@ -1289,6 +1306,7 @@
 	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\icons\CExtensionIconFont.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\hover\HoverMarkdown.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\hover\CHoverWidget.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />

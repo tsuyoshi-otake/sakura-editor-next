@@ -1795,15 +1795,18 @@ LRESULT CTabWnd::OnNotify( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMs
 	return 0L;
 }
 
-void CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
+ETabWindowNotifyImpact CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 {
-	if( nullptr == m_hwndTab ) return;
+	if( nullptr == m_hwndTab ) return ETabWindowNotifyImpact::TabStripOnly;
 
 	bool	bFlag = false;	//前回何もタブがなかったか？
 	int		nCount;
 	int		nIndex;
 	HWND	hwndUpDown;
 	DWORD nScrollPos;
+	const int nCountBefore = TabCtrl_GetItemCount( m_hwndTab );
+	const bool tabControlVisibleBefore =
+		(static_cast<LONG_PTR>(::GetWindowLongPtr( m_hwndTab, GWL_STYLE )) & WS_VISIBLE) != 0;
 
 	BreakDrag();	// 2006.01.28 ryoji ドラッグ状態を解除する(関数化)
 
@@ -1990,7 +1993,7 @@ void CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 
 	case TWNT_WNDPL_ADJUST:	// ウィンドウ位置合わせ	// 2007.04.03 ryoji
 		AdjustWindowPlacement();
-		return;
+		return ETabWindowNotifyImpact::WorkbenchLayout;
 
 	default:
 		break;
@@ -2009,11 +2012,25 @@ void CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 
 //	LayoutTab();	// 2006.01.28 ryoji タブのレイアウト調整処理
 
-	//更新
-//	::InvalidateRect( m_hwndTab, NULL, FALSE );
-//	::InvalidateRect( GetHwnd(), NULL, FALSE );		// 2006.10.21 ryoji タブ内ボタン再描画のために追加
+	const int nCountAfter = TabCtrl_GetItemCount( m_hwndTab );
+	const bool tabControlVisibleAfter =
+		(static_cast<LONG_PTR>(::GetWindowLongPtr( m_hwndTab, GWL_STYLE )) & WS_VISIBLE) != 0;
+	const bool itemCountChanged = nCountBefore != nCountAfter;
+	const bool modeChanged = wParam == TWNT_MODE_ENABLE || wParam == TWNT_MODE_DISABLE;
+	const bool tabStripHeightMayChange = m_bMultiLine && itemCountChanged;
+	const bool workbenchLayoutChanged = modeChanged
+		|| tabControlVisibleBefore != tabControlVisibleAfter
+		|| tabStripHeightMayChange;
 
-	return;
+	// TabCtrl_* already invalidates the control for item changes. Invalidate
+	// only the tab host here so its action buttons are refreshed without
+	// invalidating the editor, sidebars, or status bar.
+	::InvalidateRect( m_hwndTab, nullptr, FALSE );
+	::InvalidateRect( GetHwnd(), nullptr, FALSE );
+
+	return workbenchLayoutChanged
+		? ETabWindowNotifyImpact::WorkbenchLayout
+		: ETabWindowNotifyImpact::TabStripOnly;
 }
 
 /*! 指定のウインドウハンドル情報を持つタブ位置を探す */

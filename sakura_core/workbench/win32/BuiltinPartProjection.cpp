@@ -321,4 +321,26 @@ BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
 	return { EBuiltinActiveSurfaceProjectionStatus::Succeeded, std::move(projection) };
 }
 
+BuiltinWorkbenchProjectionResult ProjectBuiltinWorkbench(
+	const layout::WorkbenchLayoutStateSnapshot& snapshot)
+{
+	const auto parts = ProjectBuiltinParts(snapshot);
+	if (!parts.Succeeded()) {
+		return { EBuiltinWorkbenchProjectionStatus::PartProjectionFailed, std::nullopt };
+	}
+
+	const auto surfaces = ProjectBuiltinActiveSurfaces(snapshot);
+	if (!surfaces.Succeeded()) {
+		return { EBuiltinWorkbenchProjectionStatus::ActiveSurfaceProjectionFailed, std::nullopt };
+	}
+
+	return {
+		EBuiltinWorkbenchProjectionStatus::Succeeded,
+		BuiltinWorkbenchProjection{
+			*parts.projection,
+			*surfaces.projection,
+		},
+	};
+}
+
 } // namespace workbench::win32

@@ -24,10 +24,12 @@ using workbench::layout::WorkbenchPartState;
 using workbench::layout::WorkbenchViewContainerState;
 using workbench::layout::WorkbenchViewState;
 using workbench::win32::BuiltinActiveSurface;
+using workbench::win32::EBuiltinWorkbenchProjectionStatus;
 using workbench::win32::EBuiltinActiveSurfaceProjectionStatus;
 using workbench::win32::EBuiltinPartProjectionStatus;
 using workbench::win32::ProjectBuiltinActiveSurfaces;
 using workbench::win32::ProjectBuiltinParts;
+using workbench::win32::ProjectBuiltinWorkbench;
 
 WorkbenchLayoutStateSnapshot Sample()
 {
@@ -417,4 +419,29 @@ TEST(BuiltinPartProjection, ProjectsActiveSurfacesOrderIndependently)
 	ASSERT_TRUE(first.projection.has_value());
 	ASSERT_TRUE(second.projection.has_value());
 	EXPECT_EQ(*first.projection, *second.projection);
+}
+
+TEST(BuiltinPartProjection, ProjectsCompleteWorkbenchAtomicallyFromOneSnapshot)
+{
+	const auto result = ProjectBuiltinWorkbench(ActiveSurfaceSample());
+	ASSERT_TRUE(result.Succeeded());
+	ASSERT_TRUE(result.projection.has_value());
+	EXPECT_TRUE(result.projection->parts.left.visible);
+	EXPECT_FALSE(result.projection->parts.bottom.visible);
+	ASSERT_TRUE(result.projection->surfaces.sidebar.has_value());
+	EXPECT_EQ(BuiltinActiveSurface::Explorer, *result.projection->surfaces.sidebar);
+	ASSERT_TRUE(result.projection->surfaces.panel.has_value());
+	EXPECT_EQ(BuiltinActiveSurface::Terminal, *result.projection->surfaces.panel);
+}
+
+TEST(BuiltinPartProjection, DoesNotExposePhysicalProjectionWhenActiveSurfaceProjectionFails)
+{
+	auto snapshot = ActiveSurfaceSample();
+	SelectActiveSurface(snapshot, "future.container", "future.view",
+		workbench::layout::EWorkbenchViewContainerLocation::Panel);
+
+	const auto result = ProjectBuiltinWorkbench(snapshot);
+	EXPECT_EQ(EBuiltinWorkbenchProjectionStatus::ActiveSurfaceProjectionFailed, result.status);
+	EXPECT_FALSE(result.Succeeded());
+	EXPECT_FALSE(result.projection.has_value());
 }

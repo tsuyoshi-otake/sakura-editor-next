@@ -787,4 +787,6 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 #define MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED (WM_APP+241)
 //! 初回描画と first-idle 通知の後で、起動中に保留したワークベンチ処理を完了する
 #define MYWM_COMPLETE_STARTUP_WORKBENCH (WM_APP+242)
+//! Effective workbench color-theme setting changed; the UI thread must reapply the selected snapshot.
+#define MYWM_WORKBENCH_THEME_CHANGED (WM_APP+243)
 #endif /* SAKURA_SYSTEM_CONSTANTS_DACC287C_DAC4_4FC7_8AEC_8DB5BE6BFB8B_H_ */

@@ -24,6 +24,7 @@
 #include "theme/CThemeService.h"
 #include "workbench/hover/HoverMarkdown.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -40,11 +41,14 @@ inline constexpr UINT kHoverDelayMilliseconds = 500;
 	@brief 1 個の書式付きホバーウィンドウ
 
 	所有者ウィンドウ 1 つにつき 1 個持ち、表示のたびに内容を差し替える。マウス入力を
-	受け取らない（`WS_EX_TRANSPARENT`）ので、VS Code のようにホバー内をポイントし続けて
-	リンクを押すことはできない。この差異は sakura_core/workbench/hover/CLAUDE.md に記録。
+	受け取り、ホストへポインターの出入りを通知する。リンクの実行は別途コマンド経路が
+	必要であり、このクラスは表示とホバー維持だけを担当する。
 */
 class CHoverWidget final {
 public:
+	using PointerCallback = std::function<void(bool inside)>;
+	using LinkCallback = std::function<bool(std::wstring_view target)>;
+
 	CHoverWidget() noexcept = default;
 	~CHoverWidget();
 	CHoverWidget(const CHoverWidget&) = delete;
@@ -62,6 +66,11 @@ public:
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
 	//! 寄与アイコンの解決に使う。所有はしない（レジストリはウィンドウより長生き）。
 	void SetIconRegistry(const workbench::icons::CExtensionIconFontRegistry* registry) noexcept;
+	//! ポインターがウィンドウへ入った/出たときに呼ぶホスト側コールバック。
+	void SetPointerCallback(PointerCallback callback);
+	//! 信頼済み command: リンクをホストの拡張コマンド経路へ渡す。
+	void SetLinkCallback(LinkCallback callback);
+	[[nodiscard]] bool IsPointerInside() const noexcept;
 
 	/*!
 		@brief 内容を差し替えて表示する
@@ -69,7 +78,8 @@ public:
 		@param [in] document 表示するブロックモデル。空なら Hide() と同じ。
 		@param [in] anchorScreen アンカー矩形（スクリーン座標）。原則その上辺に接して出る。
 	*/
-	void Show(const SDocument& document, const RECT& anchorScreen);
+	void Show(const SDocument& document, const RECT& anchorScreen, bool trustedLinks = false,
+		std::vector<std::wstring> trustedCommands = {});
 	void Hide() noexcept;
 
 private:
@@ -78,6 +88,7 @@ private:
 		RECT bounds{};
 		std::wstring text;
 		std::wstring iconId;
+		std::wstring linkTarget;
 		int fontIndex = 0;
 		bool link = false;
 	};
@@ -107,10 +118,19 @@ private:
 	void ReleaseFonts() noexcept;
 	bool EnsureFonts(UINT dpi) noexcept;
 	[[nodiscard]] HFONT AcquireIconFont(const std::wstring& faceName, int height) const noexcept;
+	[[nodiscard]] bool IsLinkAt(POINT point) const noexcept;
+	[[nodiscard]] bool IsTrustedCommand(std::wstring_view target) const noexcept;
+	bool OpenLinkAt(POINT point) noexcept;
 	void PositionWindow(const RECT& anchorScreen) noexcept;
 
 	HWND m_hwnd = nullptr;
 	HWND m_owner = nullptr;
+	bool m_trackingMouse = false;
+	bool m_leftButtonDown = false;
+	bool m_trustedLinks = false;
+	std::vector<std::wstring> m_trustedCommands;
+	PointerCallback m_pointerCallback;
+	LinkCallback m_linkCallback;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	const workbench::icons::CExtensionIconFontRegistry* m_iconRegistry = nullptr;
 	SLayout m_layout;

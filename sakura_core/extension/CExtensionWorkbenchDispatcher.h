@@ -35,6 +35,7 @@ enum class EExtensionWorkbenchChange : std::uint32_t {
 	Output = 1u << 5,
 	Progress = 1u << 6,
 	QuickInput = 1u << 7,
+	Scm = 1u << 8,
 };
 
 constexpr EExtensionWorkbenchChange operator|(EExtensionWorkbenchChange left, EExtensionWorkbenchChange right) noexcept
@@ -46,6 +47,8 @@ constexpr EExtensionWorkbenchChange operator|(EExtensionWorkbenchChange left, EE
 struct SExtensionWorkbenchDispatchResult {
 	bool handled = false;
 	bool success = false;
+	//! The request is waiting for a later UI action and must not be answered yet.
+	bool responseDeferred = false;
 	std::string resultJson = "{}";
 	int errorCode = -32602;
 	std::string errorMessage;
@@ -61,6 +64,8 @@ struct SExtensionWorkbenchDispatchResult {
 class CExtensionWorkbenchDispatcher final {
 public:
 	using NotificationHandler = std::function<std::optional<std::size_t>(const SExtensionNotification&)>;
+	using DeferredNotificationHandler = std::function<bool(
+		const SExtensionNotification&, const SExtensionRpcMessage&)>;
 	using QuickInputHandler = std::function<SExtensionQuickInputCompletion(const SExtensionQuickInputRequest&)>;
 
 	CExtensionWorkbenchDispatcher(
@@ -77,6 +82,7 @@ public:
 		CExtensionWorkbenchServiceBridge* serviceBridge = nullptr);
 
 	void SetNotificationHandler(NotificationHandler handler);
+	void SetDeferredNotificationHandler(DeferredNotificationHandler handler);
 	void SetQuickInputHandler(QuickInputHandler handler);
 	[[nodiscard]] SExtensionWorkbenchDispatchResult Dispatch(const SExtensionRpcMessage& message);
 	[[nodiscard]] SExtensionWorkbenchDispatchResult ApplyTreeChildrenResult(
@@ -103,11 +109,12 @@ private:
 	SExtensionWorkbenchDispatchResult DispatchStatusBar(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchView(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchSecret(std::string_view method, std::string_view paramsJson);
-	SExtensionWorkbenchDispatchResult DispatchNotification(std::string_view paramsJson);
+	SExtensionWorkbenchDispatchResult DispatchNotification(const SExtensionRpcMessage& message);
 	SExtensionWorkbenchDispatchResult DispatchDiagnostics(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchQuickInput(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchOutput(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchProgress(std::string_view method, std::string_view paramsJson);
+	SExtensionWorkbenchDispatchResult DispatchScm(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchLanguageStatus(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchCapabilityRegistration(std::string_view method, std::string_view paramsJson);
 	SExtensionWorkbenchDispatchResult DispatchUnsupportedCapability(std::string_view method, std::string_view paramsJson);
@@ -125,6 +132,7 @@ private:
 	CExtensionProgressCenter& m_progress;
 	CExtensionWorkbenchServiceBridge* m_serviceBridge = nullptr;
 	NotificationHandler m_notificationHandler;
+	DeferredNotificationHandler m_deferredNotificationHandler;
 	QuickInputHandler m_quickInputHandler;
 	std::unordered_map<std::wstring, CommandState> m_commandStates;
 	std::unordered_map<std::wstring, SExtensionViewDescriptor> m_viewDescriptors;

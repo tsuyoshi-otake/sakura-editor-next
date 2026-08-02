@@ -222,12 +222,18 @@ bool RefreshExtensionHostInventory(HWND controlProcessWindow) noexcept
 CExtensionPane::CExtensionPane(
 	config::IConfigurationService& configurationService,
 	std::wstring userDataProfileId,
-	HWND controlProcessWindow
+	HWND controlProcessWindow,
+	std::filesystem::path extensionSelectionPath,
+	std::filesystem::path defaultExtensionSelectionPath,
+	bool defaultProfileExtensionsWhenMissing
 )
 	: CWnd( L"::CExtensionPane" )
+	, m_profileState( std::move( extensionSelectionPath ) )
 	, m_configurationService( configurationService )
 	, m_userDataProfileId( std::move( userDataProfileId ) )
 	, m_controlProcessWindow( controlProcessWindow )
+	, m_defaultProfileSelectionPath( std::move( defaultExtensionSelectionPath ) )
+	, m_defaultProfileExtensionsWhenMissing( defaultProfileExtensionsWhenMissing )
 {
 }
 
@@ -502,7 +508,12 @@ LRESULT CExtensionPane::OnCommand( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 		StartSearch();
 		return 0;
 	case ID_INSTALL_BUTTON:
-		StartInstall();
+		if( const int nRow = GetSelectedRow(); nRow >= 0 && !m_rows[nRow].sInstalledVersion.empty() ){
+			StartToggle();
+		}
+		else{
+			StartInstall();
+		}
 		return 0;
 	case ID_REMOVE_BUTTON:
 		StartUninstall();
@@ -590,7 +601,8 @@ LRESULT CExtensionPane::OnDrawItem( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 	::SetTextColor( draw->hDC, secondary );
 	::DrawText( draw->hDC, id.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
 	text.top += DpiScaleY( 16 );
-	std::wstring details = row.sInstalledVersion.empty() ? L"Available  " : L"Installed  ";
+	std::wstring details = row.sInstalledVersion.empty()
+		? L"Available  " : row.bEnabled ? L"Installed  " : L"Disabled  ";
 	details += row.sInstalledVersion.empty() ? row.ext.sVersion : row.sInstalledVersion;
 	::DrawText( draw->hDC, details.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
 	text.top += DpiScaleY( 16 );
@@ -656,16 +668,20 @@ void CExtensionPane::ShowInstalledList()
 		row.sInstalledVersion = installed.sVersion;
 		m_rows.push_back( std::move( row ) );
 	}
+	RefreshInstalledState();
 	UpdateListView();
 }
 
 void CExtensionPane::RefreshInstalledState()
 {
+	const auto profileState = m_profileState.Load();
 	for( auto& row : m_rows ){
 		SInstalledExtension found;
 		row.sInstalledVersion = m_cManager.FindInstalled( row.ext.GetUniqueId(), found )
 			? found.sVersion
 			: std::wstring();
+		row.bEnabled = !row.sInstalledVersion.empty() && CExtensionProfileState::IsEnabled(
+			profileState, row.ext.GetUniqueId(), m_defaultProfileExtensionsWhenMissing );
 	}
 }
 
@@ -713,8 +729,10 @@ void CExtensionPane::UpdateListView()
 		::SendMessage( m_hwndList, LVM_SETITEM, 0, (LPARAM)&sub );
 
 		sub.iSubItem = COL_STATE;
-		sub.pszText = const_cast<LPWSTR>( LS( row.sInstalledVersion.empty()
-			? STR_EXTENSION_STATE_NOTINSTALLED : STR_EXTENSION_STATE_INSTALLED ) );
+		const wchar_t* state = row.sInstalledVersion.empty()
+			? LS( STR_EXTENSION_STATE_NOTINSTALLED )
+			: row.bEnabled ? LS( STR_EXTENSION_STATE_INSTALLED ) : L"Disabled";
+		sub.pszText = const_cast<LPWSTR>( state );
 		::SendMessage( m_hwndList, LVM_SETITEM, 0, (LPARAM)&sub );
 	}
 	if( !selectedId.empty() ){
@@ -745,9 +763,16 @@ void CExtensionPane::UpdateButtons()
 		&& !m_rows[nRow].ext.sDownloadUrl.empty()
 		&& m_rows[nRow].sInstalledVersion.empty();
 	const bool bCanRemove = !bBusy && 0 <= nRow && !m_rows[nRow].sInstalledVersion.empty();
+	const bool bCanToggle = !bBusy && 0 <= nRow && !m_rows[nRow].sInstalledVersion.empty();
 
 	::EnableWindow( m_hwndSearchButton, !bBusy );
-	::EnableWindow( m_hwndInstallButton, bCanInstall );
+	if( 0 <= nRow && !m_rows[nRow].sInstalledVersion.empty() ){
+		::SetWindowText( m_hwndInstallButton, m_rows[nRow].bEnabled ? L"Disable" : L"Enable" );
+	}
+	else{
+		::SetWindowText( m_hwndInstallButton, LS( STR_EXTENSION_INSTALL ) );
+	}
+	::EnableWindow( m_hwndInstallButton, bCanInstall || bCanToggle );
 	::EnableWindow( m_hwndRemoveButton, bCanRemove );
 }
 
@@ -888,6 +913,28 @@ void CExtensionPane::StartInstall()
 	pJob->sTargetName = pJob->ext.GetUniqueId();
 	SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLING ), pJob->sTargetName.c_str() ) );
 	StartJob( std::move( pJob ) );
+}
+
+void CExtensionPane::StartToggle()
+{
+	if( m_pJob ){
+		SetStatusText( LS( STR_EXTENSION_STATUS_BUSY ) );
+		return;
+	}
+
+	const int nRow = GetSelectedRow();
+	if( nRow < 0 || m_rows[nRow].sInstalledVersion.empty() ) return;
+	const std::wstring extensionId = m_rows[nRow].ext.GetUniqueId();
+	const bool enabled = !m_rows[nRow].bEnabled;
+	if( !m_profileState.SetEnabled( extensionId, enabled ) ){
+		SetStatusText( L"Could not update the profile extension state." );
+		UpdateButtons();
+		return;
+	}
+	RefreshInstalledState();
+	UpdateListView();
+	SetStatusText( enabled ? L"Extension enabled." : L"Extension disabled." );
+	if( m_onExtensionInstalled ) m_onExtensionInstalled();
 }
 
 void CExtensionPane::StartUninstall()
@@ -1135,6 +1182,14 @@ void CExtensionPane::FinishJob( int nSerial )
 		return;
 	}
 
+	const auto updateDefaultProfileSelection = [this]( std::wstring_view extensionId, bool installInCurrentProfile ){
+		if( m_defaultProfileExtensionsWhenMissing || m_defaultProfileSelectionPath.empty() ) return true;
+		CExtensionProfileState defaultProfile( m_defaultProfileSelectionPath );
+		return installInCurrentProfile
+			? defaultProfile.SetEnabled( extensionId, false )
+			: defaultProfile.Remove( extensionId );
+	};
+
 	switch( pJob->eKind ){
 	case EJobKind::Search:
 		m_bSearchResultShown = true;
@@ -1151,6 +1206,18 @@ void CExtensionPane::FinishJob( int nSerial )
 		break;
 
 	case EJobKind::Install:
+		{
+			const std::wstring extensionId = pJob->ext.GetUniqueId();
+			const bool profileSelectionUpdated = m_profileState.Path().empty()
+				|| m_profileState.SetEnabled( extensionId, true );
+			const bool defaultSelectionUpdated = updateDefaultProfileSelection( extensionId, true );
+			if( !profileSelectionUpdated || !defaultSelectionUpdated ){
+				SetStatusText( L"Extension installed, but the profile selection could not be updated." );
+			}
+			else{
+				SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED ), pJob->sTargetName.c_str() ) );
+			}
+		}
 		if( m_bSearchResultShown ){
 			RefreshInstalledState();
 			UpdateListView();
@@ -1158,7 +1225,6 @@ void CExtensionPane::FinishJob( int nSerial )
 		else{
 			ShowInstalledList();
 		}
-		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED ), pJob->sTargetName.c_str() ) );
 		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
 			SetStatusText( L"Extension installed, but the extension-host inventory refresh failed." );
 		}
@@ -1172,6 +1238,17 @@ void CExtensionPane::FinishJob( int nSerial )
 		break;
 
 	case EJobKind::Uninstall:
+		{
+			const bool profileSelectionUpdated = m_profileState.Path().empty()
+				|| m_profileState.Remove( pJob->sUniqueId );
+			const bool defaultSelectionUpdated = updateDefaultProfileSelection( pJob->sUniqueId, false );
+			if( !profileSelectionUpdated || !defaultSelectionUpdated ){
+				SetStatusText( L"Extension removed, but the profile selection could not be updated." );
+			}
+			else{
+				SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_REMOVED ), pJob->sTargetName.c_str() ) );
+			}
+		}
 		if( m_bSearchResultShown ){
 			RefreshInstalledState();
 			UpdateListView();
@@ -1179,7 +1256,6 @@ void CExtensionPane::FinishJob( int nSerial )
 		else{
 			ShowInstalledList();
 		}
-		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_REMOVED ), pJob->sTargetName.c_str() ) );
 		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
 			SetStatusText( L"Extension removed, but the extension-host inventory refresh failed." );
 		}

@@ -9,7 +9,9 @@
 
 #include <Windows.h>
 
+#include <functional>
 #include <memory>
+#include <utility>
 
 #include "theme/CThemeService.h"
 #include "window/CClientMenuBar.h"
@@ -27,7 +29,7 @@ struct CustomFrameLayout {
 	RECT bottomPanelButton{};
 	RECT secondarySidebarButton{};
 	RECT accountButton{};
-	RECT settingsButton{};
+	RECT manageButton{};
 	RECT minimizeButton{};
 	RECT maximizeButton{};
 	RECT closeButton{};
@@ -68,6 +70,19 @@ struct CustomFrameLayout {
 //! Returns zero for non-caption hits.
 [[nodiscard]] UINT CaptionButtonSystemCommand(LRESULT hit, bool maximized) noexcept;
 
+//! Actions available from the VS Code-compatible Manage menu.
+enum class CustomFrameManageAction : unsigned char {
+	None,
+	ShowCommandPalette,
+	OpenSettings,
+	ShowExtensions,
+	OpenKeyboardShortcuts,
+	SelectColorTheme,
+	SelectFileIconTheme,
+};
+
+using CustomFrameManageActionCallback = std::function<void(CustomFrameManageAction)>;
+
 //! Owns non-client extension, hit-testing, custom title/menu painting, and per-window DPI state.
 class CCustomFrameController final : public accessibility::ICustomUiAutomationHost {
 public:
@@ -85,6 +100,11 @@ public:
 	[[nodiscard]] HMENU GetMenu() const noexcept { return m_menuBar.GetMenu(); }
 	void SetThemeMode(theme::ThemeMode savedMode) noexcept;
 	void SetUiScalePercent(int percent) noexcept;
+	//! Binds the window-local workbench command dispatcher used by the Manage popup.
+	void SetManageMenuActionCallback(CustomFrameManageActionCallback callback) noexcept
+	{
+		m_manageMenuActionCallback = std::move(callback);
+	}
 	[[nodiscard]] theme::ThemeMode GetThemeMode() const noexcept { return m_savedMode; }
 	[[nodiscard]] UINT Dpi() const noexcept { return m_dpi; }
 	[[nodiscard]] int TitleHeight() const noexcept { return ScaleCustomFrameDip(34, m_dpi); }
@@ -123,6 +143,7 @@ private:
 	void InvokeTitleControl(CustomFrameControl control) noexcept;
 	void ShowLayoutMenu(const RECT& anchor) noexcept;
 	void ShowAccountMenu(const RECT& anchor) noexcept;
+	void ShowManageMenu(const RECT& anchor) noexcept;
 
 	HWND m_window = nullptr;
 	UINT m_dpi = 96;
@@ -135,6 +156,7 @@ private:
 	CustomFrameLayout m_layout{};
 	CClientMenuBar m_menuBar;
 	CCustomTitleBar m_titleBar;
+	CustomFrameManageActionCallback m_manageMenuActionCallback;
 	LRESULT m_hotHit = HTNOWHERE;
 	LRESULT m_pressedHit = HTNOWHERE;
 	CustomFrameControl m_hotControl = CustomFrameControl::None;

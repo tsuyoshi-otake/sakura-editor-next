@@ -287,6 +287,14 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 		.maximumRememberedOperations = 512U,
 		.maximumPendingNotifications = 512U,
 	})
+	, m_scm(scm::SourceControlServiceLimits {
+		.maximumOwners = 128U,
+		.maximumProviders = 128U,
+		.maximumGroupsPerProvider = 128U,
+		.maximumResourcesPerGroup = 4'096U,
+		.maximumPayloadBytes = 1U << 20,
+		.maximumSubscriptions = 256U,
+	})
 	, m_stopRequested(std::make_shared<std::atomic_bool>(false))
 	, m_listenerGate(std::make_shared<ListenerGate>())
 {
@@ -389,6 +397,18 @@ const output::OutputService* CWorkbenchRuntime::Output() const noexcept
 {
 	std::lock_guard lock(m_stateMutex);
 	return IsReadyForServiceAccessLocked() ? &m_output : nullptr;
+}
+
+scm::SourceControlService* CWorkbenchRuntime::Scm() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? &m_scm : nullptr;
+}
+
+const scm::SourceControlService* CWorkbenchRuntime::Scm() const noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? &m_scm : nullptr;
 }
 
 std::optional<tasks::FolderTaskCatalogSnapshot> CWorkbenchRuntime::TaskCatalogForFolder(
@@ -1604,7 +1624,9 @@ bool CWorkbenchRuntime::StopOwnedServices() noexcept
 	// service's typed Stopped result rather than becoming dangling mid-stop.
 	const auto outputStop = m_output.Stop();
 	const auto markerStop = m_markers.Stop();
-	return !outputStop.callbackDrainDeferred && !markerStop.callbackDrainDeferred;
+	const auto scmStop = m_scm.Stop();
+	return !outputStop.callbackDrainDeferred && !markerStop.callbackDrainDeferred &&
+		(scmStop.status == scm::EScmOperationStatus::Succeeded || scmStop.status == scm::EScmOperationStatus::Stopped);
 }
 
 } // namespace workbench

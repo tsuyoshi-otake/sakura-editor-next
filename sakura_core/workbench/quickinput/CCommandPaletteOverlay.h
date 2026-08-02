@@ -1,0 +1,112 @@
+/*! @file
+	@brief VS Code互換のCommand Palette用Quick Inputオーバーレイ
+*/
+/*
+	Copyright (C) 2026, Sakura Editor Organization
+
+	SPDX-License-Identifier: Zlib
+*/
+#pragma once
+
+#include "theme/CThemeService.h"
+
+#include <Windows.h>
+
+#include <cstddef>
+#include <functional>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace workbench::quickinput {
+
+//! Presentation data for one command shown by the workbench-local palette.
+struct CommandPaletteItem {
+	std::wstring id;
+	std::wstring label;
+	std::wstring detail;
+	bool enabled = true;
+};
+
+//! Borderless, non-modal Quick Input surface used by Ctrl+Shift+P.
+class CCommandPaletteOverlay final {
+public:
+	using SearchCallback = std::function<std::vector<CommandPaletteItem>(std::wstring_view)>;
+	using AcceptCallback = std::function<void(std::wstring)>;
+	using CancelCallback = std::function<void()>;
+
+	CCommandPaletteOverlay() noexcept = default;
+	~CCommandPaletteOverlay() noexcept;
+	CCommandPaletteOverlay(const CCommandPaletteOverlay&) = delete;
+	CCommandPaletteOverlay& operator=(const CCommandPaletteOverlay&) = delete;
+
+	[[nodiscard]] bool Create(HWND parent) noexcept;
+	void Destroy() noexcept;
+
+	//! Shows the palette without disabling or entering a nested message loop for the owner.
+	[[nodiscard]] bool Show(std::vector<CommandPaletteItem> items);
+	void Hide() noexcept;
+	[[nodiscard]] bool IsVisible() const noexcept;
+
+	//! Gives the editor message loop first chance to handle palette keyboard input.
+	[[nodiscard]] bool PreTranslateMessage(MSG& message) noexcept;
+	void Layout() noexcept;
+
+	void SetPalette(const theme::ThemePalette& palette) noexcept;
+	void SetSearchCallback(SearchCallback callback);
+	void SetAcceptCallback(AcceptCallback callback);
+	void SetCancelCallback(CancelCallback callback);
+
+private:
+	static constexpr int kInputControl = 100;
+	static constexpr int kListControl = 101;
+	static constexpr int kCloseControl = 102;
+	static constexpr int kEmptyControl = 103;
+
+	static ATOM RegisterWindowClass() noexcept;
+	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) noexcept;
+	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept;
+
+	void Layout(int width, int height) noexcept;
+	void PopulateList() noexcept;
+	void UpdateSearch() noexcept;
+	void MoveSelection(int direction) noexcept;
+	void Accept() noexcept;
+	void Cancel() noexcept;
+	void RestoreFocus() noexcept;
+	void Paint(HDC dc, const RECT& bounds) noexcept;
+	void DrawItem(const DRAWITEMSTRUCT& draw) noexcept;
+	void DrawCloseButton(const DRAWITEMSTRUCT& draw) noexcept;
+	void RebuildBrushes() noexcept;
+	void ResetBrushes() noexcept;
+	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
+	void ReleaseCodiconFont() noexcept;
+
+	[[nodiscard]] int Scale(int value) const noexcept;
+	[[nodiscard]] static bool IsPaletteTarget(HWND palette, HWND target) noexcept;
+	[[nodiscard]] static std::wstring ReadWindowText(HWND window);
+	[[nodiscard]] static HFONT ControlFont(HFONT fallback) noexcept;
+
+	HWND m_parent = nullptr;
+	HWND m_window = nullptr;
+	HWND m_prompt = nullptr;
+	HWND m_input = nullptr;
+	HWND m_list = nullptr;
+	HWND m_close = nullptr;
+	HWND m_empty = nullptr;
+	HWND m_previousFocus = nullptr;
+
+	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	theme::CThemeFont m_font;
+	HBRUSH m_panelBrush = nullptr;
+	HBRUSH m_inputBrush = nullptr;
+	HFONT m_codiconFont = nullptr;
+	int m_codiconFontHeight = 0;
+
+	std::vector<CommandPaletteItem> m_items;
+	SearchCallback m_searchCallback;
+	AcceptCallback m_acceptCallback;
+	CancelCallback m_cancelCallback;
+};
+
+} // namespace workbench::quickinput

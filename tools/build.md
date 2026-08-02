@@ -93,6 +93,13 @@ Visual Studio で `sakura.sln` を開いてビルドします。
 build-dev.bat <Platform> <Configuration>
 ```
 
+既定のユーザープロファイルは実行ファイルの場所によらず、Windows の
+%APPDATA%\sakura に保存されます。Debug/Release の切替、配布版の更新、
+再インストール後も設定・拡張機能・プロファイルを共有できます。
+実行ファイル隣接のポータブルプロファイルが必要な場合だけ、実行ファイルと
+同じフォルダーに sakura.exe.ini を置き、[Settings] の MultiUser=0 を
+明示してください。
+
 **例: x64 の Debug 本体ビルド**
 ```cmd
 build-dev.bat x64 Debug

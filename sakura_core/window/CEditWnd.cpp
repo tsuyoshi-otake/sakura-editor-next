@@ -39,6 +39,7 @@
 #include "charset/CCodeBase.h"
 #include "charset/charset.h"
 #include "CEditApp.h"
+#include "prop/CPropCommon.h"
 #include "recent/CMRUFile.h"
 #include "recent/CMRUFolder.h"
 #include "util/module.h"
@@ -68,6 +69,10 @@
 #include "markdown/MarkdownPreviewLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "theme/CThemeService.h"
+#include "theme/CColorThemeRegistry.h"
+#include "config/ConfigurationTypes.h"
+#include "config/SettingsWritebackCoordinator.h"
+#include "config/editing/CJsoncConfigurationEditor.h"
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
 #include "workbench/IWorkbenchRuntime.h"
@@ -77,6 +82,7 @@
 #include "workbench/extension/CExtensionBottomPanelTool.h"
 #include "workbench/extension/CExtensionSidebarTool.h"
 #include "workbench/explorer/CExplorerTool.h"
+#include "workbench/notification/CNotificationHost.h"
 #include "workbench/viewcontainer/CViewContainerHost.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/WorkbenchZoom.h"
@@ -100,11 +106,14 @@
 #include "view/colors/CColorStrategy.h"
 #include "view/figures/CFigureManager.h"
 #include "extension/CExtensionPane.h"
-#include "extension/CExtensionQuickInputDialog.h"
 #include "extension/CExtensionManager.h"
+#include "extension/CExtensionProfileState.h"
 #include "extension/CExtensionService.h"
 #include "workbench/icons/CExtensionIconFont.h"
+#include "workbench/icons/CFileIconThemeRegistry.h"
+#include "workbench/quickinput/CCommandPaletteOverlay.h"
 #include "extension/CExtensionViewRegistry.h"
+#include "extension/CExtensionQuickInputDialog.h"
 #include "extension/IExtensionSecretStorage.h"
 #include "cmd/COpeBlk.h"
 #include "cmd/CViewCommander_inline.h"
@@ -451,6 +460,27 @@ struct CEditWnd::WorkbenchServiceProjectionGate final {
 
 		// A failed post must not leave the gate permanently coalesced. A later
 		// service change can retry after a transient queue/window failure.
+		gate->messageQueued = false;
+	}
+};
+
+struct CEditWnd::ThemeConfigurationGate final {
+	std::mutex mutex;
+	HWND window{};
+	bool connected{ true };
+	bool messageQueued{};
+
+	static void Notify(const std::shared_ptr<ThemeConfigurationGate>& gate,
+		const std::vector<config::ConfigurationChange>& changes) noexcept
+	{
+		const bool relevant = std::ranges::any_of(changes, [](const config::ConfigurationChange& change) {
+			return change.key == "workbench.colorTheme" || change.key == "workbench.iconTheme";
+		});
+		if (!relevant) return;
+		std::lock_guard lock(gate->mutex);
+		if (!gate->connected || gate->window == nullptr || gate->messageQueued) return;
+		gate->messageQueued = true;
+		if (::PostMessageW(gate->window, MYWM_WORKBENCH_THEME_CHANGED, 0, 0)) return;
 		gate->messageQueued = false;
 	}
 };
@@ -839,13 +869,45 @@ bool CEditWnd::ExecuteWorkbenchEditorCommand(std::string_view commandId)
 		return ExecuteActiveWorkingCopyCommand(commandId);
 	}
 	if (commandId == command_ids::ShowCommands) {
-		ShowExtensionCommandPalette();
-		return true;
+		return ShowExtensionCommandPalette();
 	}
 	if (commandId == command_ids::OpenSettings) {
 		return CEditApp::getInstance()->OpenPropertySheet(-1);
 	}
 	return false;
+}
+
+void CEditWnd::ConfigureCustomFrameActions()
+{
+	if (!m_customFrame) return;
+	m_customFrame->SetManageMenuActionCallback([this](CustomFrameManageAction action) {
+		using namespace workbench::editor;
+		std::string_view commandId;
+		switch (action) {
+		case CustomFrameManageAction::ShowCommandPalette:
+			commandId = command_ids::ShowCommands;
+			break;
+		case CustomFrameManageAction::OpenSettings:
+			commandId = command_ids::OpenSettings;
+			break;
+		case CustomFrameManageAction::ShowExtensions:
+			commandId = command_ids::ShowExtensions;
+			break;
+		case CustomFrameManageAction::OpenKeyboardShortcuts:
+			commandId = command_ids::OpenGlobalKeybindings;
+			break;
+		case CustomFrameManageAction::SelectColorTheme:
+			commandId = command_ids::SelectTheme;
+			break;
+		case CustomFrameManageAction::SelectFileIconTheme:
+			commandId = command_ids::SelectIconTheme;
+			break;
+		case CustomFrameManageAction::None:
+			return;
+		}
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(commandId, handled);
+	});
 }
 
 bool CEditWnd::ExecuteActiveWorkingCopyCommand(
@@ -1143,6 +1205,12 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (m_editorServiceAdapter == nullptr) return;
 
 	const bool hasActiveInput = snapshot.group.activeInputId.has_value();
+	const bool previousShowDocumentTabs =
+		(m_editorCorePresentationInitialized && m_hasActiveEditorInput)
+		|| m_pShareData->m_sNodes.m_nEditArrNum > 1;
+	const bool showDocumentTabs = hasActiveInput
+		|| m_pShareData->m_sNodes.m_nEditArrNum > 1;
+	const bool documentTabVisibilityChanged = previousShowDocumentTabs != showDocumentTabs;
 	const bool presentationChanged = !m_editorCorePresentationInitialized
 		|| m_hasActiveEditorInput != hasActiveInput;
 	m_hasActiveEditorInput = hasActiveInput;
@@ -1187,11 +1255,13 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 
 	UpdateCaption();
 	m_cTabWnd.RefreshDocumentActionState();
-	if (const HWND window = GetHwnd(); ::IsWindow(window)) {
-		RECT client{};
-		::GetClientRect(window, &client);
-		(void)OnSize2(m_nWinSizeType,
-			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	if (documentTabVisibilityChanged) {
+		if (const HWND window = GetHwnd(); ::IsWindow(window)) {
+			RECT client{};
+			::GetClientRect(window, &client);
+			(void)OnSize2(m_nWinSizeType,
+				MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		}
 	}
 
 	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
@@ -1548,10 +1618,22 @@ bool CEditWnd::InitializeWorkbench()
 	workbench::viewcontainer::CViewContainerPages::MarketplaceFactory marketplaceFactory;
 	if (m_workbenchRuntime != nullptr) {
 		marketplaceFactory = [this](HWND owner) -> std::unique_ptr<CExtensionPane> {
+			const auto& userDataProfile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+			std::filesystem::path extensionSelectionPath;
+			if (const auto path = userDataProfile.Resources().ExtensionsSelection().ToWindowsPath(); path.value) {
+				extensionSelectionPath = *path.value;
+			}
+			const auto defaultProfileRoot = m_extensionProfileDirectory.empty()
+				? GetIniFileName().parent_path() : m_extensionProfileDirectory;
+			const bool defaultProfileExtensionsWhenMissing =
+				userDataProfile.SelectedProfile().kind == platform::profiles::UserDataProfileKind::Default;
 			auto pane = std::make_unique<CExtensionPane>(
 				m_workbenchRuntime->Configuration(),
-				m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId(),
-				m_pShareData->m_sHandles.m_hwndTray);
+				userDataProfile.SelectedProfileId(),
+				m_pShareData->m_sHandles.m_hwndTray,
+				std::move(extensionSelectionPath),
+				defaultProfileRoot / L"extensions.json",
+				defaultProfileExtensionsWhenMissing);
 			// m_extensionService is constructed after marketplaceFactory (this lambda) is
 			// built, so the callback must read it through `this` at call time -- never
 			// capture the pointer itself. By the time an install can complete, the
@@ -1562,6 +1644,11 @@ bool CEditWnd::InitializeWorkbench()
 				// 新しく入った拡張の contributes.icons も同じ契機で取り込む。
 				// 再起動を待たずにステータスバーが本物のグリフを描けるようにする。
 				RefreshExtensionIconFonts();
+				// OpenVSXからテーマ拡張が入った場合も、再起動を待たずに
+				// contributes.themes を選択可能な状態へ反映する。
+				RefreshColorThemes();
+				RefreshFileIconThemes();
+				ApplyWorkbenchTheme();
 			});
 			pane->SetOnExtensionSelected([this](const SOpenVsxExtension& extension) {
 				if (!m_extensionDetailSurface) return;
@@ -1705,6 +1792,9 @@ bool CEditWnd::InitializeWorkbench()
 				break;
 			case workbench::extension::ExtensionBottomPanelTab::Output:
 				break;
+			case workbench::extension::ExtensionBottomPanelTab::Ports:
+			case workbench::extension::ExtensionBottomPanelTab::DebugConsole:
+				return false;
 			default:
 				return false;
 			}
@@ -1718,8 +1808,7 @@ bool CEditWnd::InitializeWorkbench()
 				? ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Problems, false)
 				: ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Output, false);
 		});
-	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
-	m_terminalTool->SetPanelActions({
+	bottomPanelTool->SetPanelActions({
 		.closePanel = [this]() {
 			SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom, false, false);
 		},
@@ -1730,6 +1819,11 @@ bool CEditWnd::InitializeWorkbench()
 			return m_bottomWorkbenchMaximized;
 		},
 	});
+	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+		m_terminalTool->SetPanelActions({
+			.renderPanelActions = false,
+			.renderHeader = false,
+		});
 	if (!m_bottomWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(bottomPanelTool))) {
 		m_extensionBottomPanelTool = nullptr;
 		m_terminalTool = nullptr;
@@ -1825,6 +1919,42 @@ bool CEditWnd::InitializeWorkbench()
 		m_workbenchContextKeyService = std::make_unique<workbench::commands::WorkbenchContextKeyService>();
 		m_workbenchCommandRegistry = std::make_unique<workbench::commands::WorkbenchCommandRegistry>();
 		const auto registration = m_workbenchCommandRegistry->RegisterBuiltinCommands({
+			.showCommands = [this]() {
+				return ShowExtensionCommandPalette()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "command palette is unavailable" };
+			},
+			.openSettings = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::OpenSettings)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "settings dialog could not be opened" };
+			},
+			.showExtensions = [this]() {
+				if (m_viewContainerPages == nullptr || m_workbenchRuntime == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Unsupported,
+						"Extensions ViewContainer is unavailable" };
+				}
+				ShowExtensionsViewContainer();
+				return IsExtensionsViewContainerActive()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"Extensions ViewContainer could not be revealed" };
+			},
+			.openGlobalKeybindings = [this]() {
+				return CEditApp::getInstance()->OpenPropertySheet(ID_PROPCOM_PAGENUM_KEYBOARD)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"keyboard shortcuts settings could not be opened" };
+			},
 			.toggleSidebarVisibility = [this]() {
 				return ExecuteToggleSidebarVisibilityCommand()
 					? workbench::commands::WorkbenchCommandExecutionResult{
@@ -1853,11 +1983,26 @@ bool CEditWnd::InitializeWorkbench()
 					: workbench::commands::WorkbenchCommandExecutionResult{
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "output layout command failed" };
 			},
+			.selectTheme = [this]() {
+				return ShowColorThemePicker()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "no color theme is available" };
+			},
+			.selectFileIconTheme = [this]() {
+				return ShowFileIconThemePicker()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "no file icon theme is available" };
+			},
 		});
 		if (!registration.Succeeded()) {
 			CloseWorkbench();
 			return false;
 		}
+		ConfigureCustomFrameActions();
 	}
 	if (m_workbenchRuntime != nullptr && !InitializeWorkbenchServiceProjection()) {
 		CloseWorkbench();
@@ -1865,12 +2010,46 @@ bool CEditWnd::InitializeWorkbench()
 	}
 	const auto extensionProfileDirectory = m_extensionProfileDirectory.empty()
 		? GetIniFileName().parent_path() : m_extensionProfileDirectory;
+	std::filesystem::path extensionSelectionPath;
+	bool defaultProfileExtensionsWhenMissing = true;
+	if (m_workbenchRuntime != nullptr) {
+		const auto& userDataProfile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		if (const auto path = userDataProfile.Resources().ExtensionsSelection().ToWindowsPath(); path.value) {
+			extensionSelectionPath = *path.value;
+		}
+		defaultProfileExtensionsWhenMissing =
+			userDataProfile.SelectedProfile().kind == platform::profiles::UserDataProfileKind::Default;
+	}
 	// contributes.icons は拡張ホストの接続とは独立に読める（マニフェストとフォント
 	// ファイルだけで完結する）。ホストが繋がらなくてもアイコンは正しく描けるよう、
 	// サービス構築より先に用意し、ステータスバーへ非所有で貸す。
 	m_extensionIconFonts = std::make_unique<workbench::icons::CExtensionIconFontRegistry>();
 	m_cStatusBar.SetExtensionIconFonts(m_extensionIconFonts.get());
 	RefreshExtensionIconFonts();
+	m_colorThemeRegistry = std::make_unique<theme::CColorThemeRegistry>();
+	RefreshColorThemes();
+	m_fileIconThemeRegistry = std::make_unique<workbench::icons::CFileIconThemeRegistry>();
+	RefreshFileIconThemes();
+	if (m_workbenchRuntime != nullptr && GetHwnd() != nullptr) {
+		try {
+			auto gate = std::make_shared<ThemeConfigurationGate>();
+			gate->window = GetHwnd();
+			auto subscription = m_workbenchRuntime->Configuration().Subscribe(
+				[gate](const std::vector<config::ConfigurationChange>& changes) {
+					ThemeConfigurationGate::Notify(gate, changes);
+				});
+			m_themeConfigurationGate = gate;
+			m_themeConfigurationSubscription =
+				std::make_unique<config::ConfigurationSubscription>(std::move(subscription));
+		}
+		catch (...) {
+			// The selected setting is still read during startup. If the advisory
+			// watcher cannot be subscribed, a later window reopen remains the safe
+			// terminal fallback instead of keeping a dangling callback.
+			m_themeConfigurationGate.reset();
+			m_themeConfigurationSubscription.reset();
+		}
+	}
 
 	// workspace/configuration/update の書き込み先は、この window が借りている
 	// workbench runtime そのもの（Settings writeback の唯一の所有者）。ここで渡さないと
@@ -1879,7 +2058,8 @@ bool CEditWnd::InitializeWorkbench()
 	m_extensionService = std::make_unique<CExtensionService>(
 		GetHwnd(), m_pShareData->m_sHandles.m_hwndTray, extensionProfileDirectory,
 		m_extensionViewRegistry, std::move(m_extensionSecretStorage), m_markerService, m_outputService,
-		m_workbenchRuntime);
+		m_workbenchRuntime, std::move(extensionSelectionPath),
+		defaultProfileExtensionsWhenMissing);
 	m_extensionService->SetApplyEditHandler([this](const std::vector<SExtensionDocumentEdit>& edits) {
 		CExtensionService::NativeApplyEditResult completion;
 		completion.result = ApplyExtensionEdits(edits, completion.snapshots);
@@ -1888,6 +2068,9 @@ bool CEditWnd::InitializeWorkbench()
 	m_extensionService->SetEditorOptionsHandler([this](const SExtensionNativeEditorOptions& options) {
 		return ApplyExtensionEditorOptions(options);
 	});
+	// The workbench can be composed before the native editor HWND has reached its
+	// final lifetime.  EnsureNotificationHost retries once the real owner exists.
+	EnsureNotificationHost();
 	m_extensionBottomPanelTool->SetProblemActivationCallback(
 		[this](const workbench::win32::ProblemsPanelEntry& problem) {
 			const auto path = ExtensionFilePathFromUri(problem.resourceUri);
@@ -2164,8 +2347,31 @@ void CEditWnd::PublishExtensionActiveEditor()
 void CEditWnd::RefreshExtensionIconFonts()
 {
 	if (!m_extensionIconFonts) return;
+	// Rebuild the registry from the active profile. This removes icons contributed
+	// by an extension that was disabled or removed while the window stayed open.
+	m_extensionIconFonts->Clear();
+	std::filesystem::path extensionSelectionPath;
+	bool defaultProfileExtensionsWhenMissing = true;
+	if (m_workbenchRuntime != nullptr) {
+		const auto& userDataProfile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		if (const auto path = userDataProfile.Resources().ExtensionsSelection().ToWindowsPath(); path.value) {
+			extensionSelectionPath = *path.value;
+		}
+		defaultProfileExtensionsWhenMissing =
+			userDataProfile.SelectedProfile().kind == platform::profiles::UserDataProfileKind::Default;
+	}
+	const CExtensionProfileState profileState(std::move(extensionSelectionPath));
+	const auto profileSnapshot = profileState.Load();
+	if (profileSnapshot.status == CExtensionProfileState::EStatus::Invalid ||
+		profileSnapshot.status == CExtensionProfileState::EStatus::IoError) {
+		return;
+	}
 	CExtensionManager manager;
 	for (const auto& installed : manager.EnumInstalled()) {
+		if (!CExtensionProfileState::IsEnabled(
+			profileSnapshot, installed.sUniqueId, defaultProfileExtensionsWhenMissing)) {
+			continue;
+		}
 		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
 		std::error_code error;
 		if (!std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) || error) {
@@ -2179,6 +2385,220 @@ void CEditWnd::RefreshExtensionIconFonts()
 	if (m_cStatusBar.GetStatusHwnd() != nullptr) {
 		::InvalidateRect(m_cStatusBar.GetStatusHwnd(), nullptr, FALSE);
 	}
+}
+
+void CEditWnd::RefreshColorThemes()
+{
+	if (!m_colorThemeRegistry) return;
+	// The theme registry follows the same enabled-profile projection as
+	// contributes.icons. A disabled VSIX must disappear without requiring a
+	// restart, otherwise workbench.colorTheme could resolve stale files.
+	m_colorThemeRegistry->Clear();
+	// Sakura's own Dark/Light defaults are real VS Code-compatible theme
+	// documents, not a second selector path. Register them before the optional
+	// extension projection so a settings value can resolve them even when the
+	// extension profile is unavailable or empty.
+	(void)m_colorThemeRegistry->RegisterBuiltinThemes();
+	std::filesystem::path extensionSelectionPath;
+	bool defaultProfileExtensionsWhenMissing = true;
+	if (m_workbenchRuntime != nullptr) {
+		const auto& userDataProfile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		if (const auto path = userDataProfile.Resources().ExtensionsSelection().ToWindowsPath(); path.value) {
+			extensionSelectionPath = *path.value;
+		}
+		defaultProfileExtensionsWhenMissing =
+			userDataProfile.SelectedProfile().kind == platform::profiles::UserDataProfileKind::Default;
+	}
+	const CExtensionProfileState profileState(std::move(extensionSelectionPath));
+	const auto profileSnapshot = profileState.Load();
+	if (profileSnapshot.status == CExtensionProfileState::EStatus::Invalid
+		|| profileSnapshot.status == CExtensionProfileState::EStatus::IoError) {
+		return;
+	}
+	CExtensionManager manager;
+	for (const auto& installed : manager.EnumInstalled()) {
+		if (!CExtensionProfileState::IsEnabled(
+			profileSnapshot, installed.sUniqueId, defaultProfileExtensionsWhenMissing)) continue;
+		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) || error) continue;
+		(void)m_colorThemeRegistry->RegisterExtension(installed.sUniqueId, root);
+	}
+}
+
+void CEditWnd::RefreshFileIconThemes()
+{
+	if (!m_fileIconThemeRegistry) return;
+	// Keep discovery tied to the same enabled-profile projection as contributes.icons
+	// and contributes.themes. A disabled VSIX must not remain selectable after a live
+	// extension/profile refresh.
+	m_fileIconThemeRegistry->Clear();
+	std::filesystem::path extensionSelectionPath;
+	bool defaultProfileExtensionsWhenMissing = true;
+	if (m_workbenchRuntime != nullptr) {
+		const auto& userDataProfile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		if (const auto path = userDataProfile.Resources().ExtensionsSelection().ToWindowsPath(); path.value) {
+			extensionSelectionPath = *path.value;
+		}
+		defaultProfileExtensionsWhenMissing =
+			userDataProfile.SelectedProfile().kind == platform::profiles::UserDataProfileKind::Default;
+	}
+	const CExtensionProfileState profileState(std::move(extensionSelectionPath));
+	const auto profileSnapshot = profileState.Load();
+	if (profileSnapshot.status == CExtensionProfileState::EStatus::Invalid
+		|| profileSnapshot.status == CExtensionProfileState::EStatus::IoError) {
+		if (m_explorerTool) m_explorerTool->SetFileIconTheme(nullptr);
+		return;
+	}
+	CExtensionManager manager;
+	for (const auto& installed : manager.EnumInstalled()) {
+		if (!CExtensionProfileState::IsEnabled(
+			profileSnapshot, installed.sUniqueId, defaultProfileExtensionsWhenMissing)) continue;
+		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
+		std::error_code error;
+		if (!std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) || error) continue;
+		(void)m_fileIconThemeRegistry->RegisterExtension(installed.sUniqueId, root);
+	}
+}
+
+bool CEditWnd::PersistColorThemeSelection(std::wstring_view themeId)
+{
+	if (m_workbenchRuntime == nullptr || themeId.empty()) return false;
+	try {
+		const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		config::ConfigurationTarget sourceTarget;
+		sourceTarget.profileId = profile.SelectedProfileId();
+		const config::ConfigurationSource source {
+			config::EConfigurationScope::Profile,
+			sourceTarget,
+			"profile.settings",
+			0,
+		};
+		config::editing::ConfigurationDocumentEditTarget editTarget;
+		editTarget.scope = config::editing::EConfigurationDocumentScope::Profile;
+		editTarget.target = sourceTarget;
+		editTarget.resource = profile.Resources().Settings();
+		const config::SettingsWritebackRequest request {
+			.edit = {
+				.target = std::move(editTarget),
+				.key = "workbench.colorTheme",
+				.value = config::ConfigurationValue(std::wstring(themeId)),
+			},
+			.documentKey = "profile.settings",
+			.source = source,
+		};
+		const auto result = m_workbenchRuntime->WriteSetting(request);
+		if (result.Succeeded()) return true;
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"カラーテーマの設定を保存できませんでした");
+		return false;
+	}
+	catch (...) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"カラーテーマの設定に失敗しました");
+		return false;
+	}
+}
+
+bool CEditWnd::PersistFileIconThemeSelection(std::wstring_view themeId)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		config::ConfigurationTarget sourceTarget;
+		sourceTarget.profileId = profile.SelectedProfileId();
+		const config::ConfigurationSource source {
+			config::EConfigurationScope::Profile,
+			sourceTarget,
+			"profile.settings",
+			0,
+		};
+		config::editing::ConfigurationDocumentEditTarget editTarget;
+		editTarget.scope = config::editing::EConfigurationDocumentScope::Profile;
+		editTarget.target = sourceTarget;
+		editTarget.resource = profile.Resources().Settings();
+		const config::SettingsWritebackRequest request {
+			.edit = {
+				.target = std::move(editTarget),
+				.key = "workbench.iconTheme",
+				.value = config::ConfigurationValue(std::wstring(themeId)),
+			},
+			.documentKey = "profile.settings",
+			.source = source,
+		};
+		const auto result = m_workbenchRuntime->WriteSetting(request);
+		if (result.Succeeded()) return true;
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"ファイルアイコンテーマの設定を保存できませんでした");
+		return false;
+	}
+	catch (...) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"ファイルアイコンテーマの設定に失敗しました");
+		return false;
+	}
+}
+
+bool CEditWnd::ShowColorThemePicker()
+{
+	if (!m_colorThemeRegistry || !GetHwnd()) return false;
+	const auto themes = m_colorThemeRegistry->Themes();
+	if (themes.empty()) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"インストール済みのカラーテーマはありません");
+		return false;
+	}
+	SExtensionQuickInputRequest request;
+	request.kind = EExtensionQuickInputKind::QuickPick;
+	request.title = L"Color Theme";
+	request.placeholder = L"適用するVS Codeカラーテーマを選択してください";
+	request.items.reserve(themes.size());
+	for (std::size_t index = 0; index < themes.size(); ++index) {
+		request.items.push_back({
+			.sourceIndex = index,
+			.label = themes[index].label,
+			.description = themes[index].extensionId,
+			.detail = themes[index].id,
+		});
+	}
+	CExtensionQuickInputDialog dialog(request);
+	const auto completion = dialog.DoModal(GetHwnd());
+	if (completion.state != EExtensionQuickInputState::Accepted || completion.selectedIndices.size() != 1) return true;
+	const auto selected = completion.selectedIndices.front();
+	if (selected >= themes.size()) return true;
+	// VS Code persists the display label for workbench.colorTheme. The registry
+	// also accepts the stable id, so settings authored by either ecosystem work.
+	return PersistColorThemeSelection(themes[selected].label);
+}
+
+bool CEditWnd::ShowFileIconThemePicker()
+{
+	if (!m_fileIconThemeRegistry || !GetHwnd()) return false;
+	const auto themes = m_fileIconThemeRegistry->Themes();
+	SExtensionQuickInputRequest request;
+	request.kind = EExtensionQuickInputKind::QuickPick;
+	request.title = L"File Icon Theme";
+	request.placeholder = L"適用するVS Codeファイルアイコンテーマを選択してください";
+	request.items.reserve(themes.size() + 1);
+	request.items.push_back({
+		.sourceIndex = 0,
+		.label = L"None",
+		.description = L"ファイルアイコンを無効化",
+		.detail = L"workbench.iconTheme を空にする",
+	});
+	for (std::size_t index = 0; index < themes.size(); ++index) {
+		request.items.push_back({
+			.sourceIndex = index + 1,
+			.label = themes[index].label,
+			.description = themes[index].extensionId,
+			.detail = themes[index].id,
+		});
+	}
+	CExtensionQuickInputDialog dialog(request);
+	const auto completion = dialog.DoModal(GetHwnd());
+	if (completion.state != EExtensionQuickInputState::Accepted || completion.selectedIndices.size() != 1) return true;
+	const auto selected = completion.selectedIndices.front();
+	if (selected == 0) return PersistFileIconThemeSelection({});
+	const auto themeIndex = selected - 1;
+	if (themeIndex >= themes.size()) return true;
+	// VS Code accepts the stable id and display label. Persisting the stable id
+	// keeps the selection deterministic when two extensions use the same label.
+	return PersistFileIconThemeSelection(themes[themeIndex].id);
 }
 
 SExtensionApplyEditResult CEditWnd::ApplyExtensionEdits(
@@ -2256,15 +2676,53 @@ bool CEditWnd::ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& 
 	return true;
 }
 
+void CEditWnd::EnsureNotificationHost() noexcept
+{
+	if (m_notificationHost || m_extensionService == nullptr) return;
+	const HWND owner = GetHwnd();
+	if (owner == nullptr || !::IsWindow(owner)) return;
+
+	auto host = std::make_unique<workbench::notification::CNotificationHost>();
+	if (!host->Create(owner)) return;
+	host->SetResolveCallback(
+		[this](std::uint64_t id, std::optional<std::size_t> selectedAction) {
+			if (m_extensionService) m_extensionService->ResolveNotification(id, selectedAction);
+		});
+	host->SetPalette(theme::CThemeService::EffectivePalette(
+		m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
+	m_notificationHost = std::move(host);
+	// A request can arrive between the first failed attempt and the retry.  Read
+	// the service projection here so that the pending request is not dependent on
+	// another workbench-change message being posted after creation.
+	m_notificationHost->SetNotifications(m_extensionService->PendingNotifications());
+}
+
 void CEditWnd::CloseWorkbench() noexcept
 {
 	// Model callbacks own only the shared gate. Disconnect it before removing
 	// subscriptions so an in-flight callback cannot post into torn-down panels.
+	if (m_themeConfigurationGate) {
+		std::lock_guard lock(m_themeConfigurationGate->mutex);
+		m_themeConfigurationGate->connected = false;
+		m_themeConfigurationGate->window = nullptr;
+	}
+	m_themeConfigurationSubscription.reset();
+	m_themeConfigurationGate.reset();
 	CloseWorkbenchServiceProjection();
+	// The Quick Input surface owns callbacks into this composition root. Detach and
+	// destroy it before the command registry/service it queries can disappear.
+	if (m_commandPaletteOverlay) {
+		m_commandPaletteOverlay->SetSearchCallback({});
+		m_commandPaletteOverlay->SetAcceptCallback({});
+		m_commandPaletteOverlay->SetCancelCallback({});
+		m_commandPaletteOverlay->Destroy();
+		m_commandPaletteOverlay.reset();
+	}
 	if (m_layoutStateSubscription) m_layoutStateSubscription->Unsubscribe();
 	m_layoutStateSubscription.reset();
 	// Registry executors capture this window and must be gone before any host they
 	// can project is closed. Context state has no external owner and is window-local.
+	if (m_customFrame) m_customFrame->SetManageMenuActionCallback({});
 	m_workbenchCommandRegistry.reset();
 	m_workbenchContextKeyService.reset();
 	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
@@ -2308,9 +2766,18 @@ void CEditWnd::CloseWorkbench() noexcept
 	// ステータスバーはレジストリを非所有で借りているだけなので、破棄より先に
 	// 借用を明示的に返させる。宣言順に依存した暗黙のメンバー破棄順に頼らない。
 	m_cStatusBar.SetExtensionIconFonts(nullptr);
+	if (m_notificationHost) {
+		m_notificationHost->SetResolveCallback({});
+		m_notificationHost->Destroy();
+		m_notificationHost.reset();
+	}
 	if (m_extensionService) m_extensionService->Shutdown();
 	m_extensionService.reset();
 	m_extensionIconFonts.reset();
+	m_colorThemeRegistry.reset();
+	if (m_explorerTool) m_explorerTool->SetFileIconTheme(nullptr);
+	m_fileIconThemeRegistry.reset();
+	theme::CThemeService::ClearActiveColorThemePalette();
 	m_cStatusBar.SetExtensionItems({});
 	if (m_activityBar) m_activityBar->Close();
 	// The shared pages are borrowed by both side-bar hosts, so they must be destroyed
@@ -2337,13 +2804,97 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_workspaceContext.reset();
 }
 
+void CEditWnd::ApplyFileIconTheme()
+{
+	if (m_explorerTool == nullptr) return;
+	std::shared_ptr<const workbench::icons::FileIconThemeSnapshot> selectedTheme;
+	auto variant = workbench::icons::FileIconThemeVariant::Default;
+	if (m_fileIconThemeRegistry != nullptr && m_workbenchRuntime != nullptr) {
+		try {
+			config::ConfigurationTarget target;
+			target.profileId = m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId();
+			const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
+			target.workspaceUri = workspace.workspaceConfigUri;
+			if (workspace.folders.size() == 1) target.folderUri = workspace.folders.front().uri;
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue("workbench.iconTheme", target);
+			if (lookup.value) {
+				if (const auto* selected = std::get_if<std::wstring>(&lookup.value->Value());
+					selected != nullptr && !selected->empty()) {
+					const auto loaded = m_fileIconThemeRegistry->Load(*selected);
+					if (loaded.Succeeded()) selectedTheme = loaded.theme;
+				}
+			}
+			if (selectedTheme != nullptr && theme::CThemeService::IsHighContrastActive()) {
+				variant = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+					? workbench::icons::FileIconThemeVariant::HighContrast
+					: workbench::icons::FileIconThemeVariant::HighContrastLight;
+			} else if (selectedTheme != nullptr && !m_pShareData->m_Common.m_sWindow.m_bDarkMode) {
+				variant = workbench::icons::FileIconThemeVariant::Light;
+			}
+		}
+		catch (...) {
+			selectedTheme.reset();
+			variant = workbench::icons::FileIconThemeVariant::Default;
+		}
+	}
+	m_explorerTool->SetFileIconTheme(std::move(selectedTheme), variant);
+}
+
 void CEditWnd::ApplyWorkbenchTheme()
 {
-	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+	auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 		? theme::ThemeMode::Dark
 		: theme::ThemeMode::Light;
+	// The persisted VS Code setting is resolved through the same profile,
+	// workspace, and single-folder target used by the configuration service.
+	// An empty/invalid setting first resolves to Sakura's built-in theme for the
+	// saved mode; the constexpr palette remains the final fail-closed fallback.
+	theme::CThemeService::ClearActiveColorThemePalette();
+	if (m_colorThemeRegistry != nullptr && m_workbenchRuntime != nullptr) {
+		try {
+			config::ConfigurationTarget target;
+			target.profileId = m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId();
+			const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
+			target.workspaceUri = workspace.workspaceConfigUri;
+			if (workspace.folders.size() == 1) target.folderUri = workspace.folders.front().uri;
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue("workbench.colorTheme", target);
+			std::wstring selectedTheme;
+			if (lookup.value) {
+				if (const auto* selected = std::get_if<std::wstring>(&lookup.value->Value());
+					selected != nullptr) {
+					selectedTheme = *selected;
+				}
+			}
+			const auto applyTheme = [this, &mode](std::wstring_view idOrLabel) {
+				const auto loaded = m_colorThemeRegistry->Load(idOrLabel);
+				if (!loaded.Succeeded()) return false;
+				theme::CThemeService::SetActiveColorThemePalette(loaded.theme->palette);
+				if (theme::CThemeService::IsHighContrastActive()) {
+					theme::CThemeService::ClearActiveColorThemeSyntaxPalette();
+				} else {
+					theme::CThemeService::SetActiveColorThemeSyntaxPalette(loaded.theme->syntaxPalette);
+				}
+				mode = theme::CColorThemeRegistry::ModeForKind(loaded.theme->info.kind);
+				return true;
+			};
+			if (!selectedTheme.empty() && applyTheme(selectedTheme)) {
+				// The explicit VS Code setting won.
+			} else {
+				// Empty settings and unreadable third-party settings both resolve to
+				// the built-in theme matching Sakura's saved Dark/Light preference.
+				(void)applyTheme(theme::CColorThemeRegistry::BuiltinThemeId(mode));
+			}
+		}
+		catch (...) {
+			// Keep the legacy saved mode when a third-party theme cannot be read.
+			theme::CThemeService::ClearActiveColorThemePalette();
+		}
+	}
+	if (m_customFrame) m_customFrame->SetThemeMode(mode);
 	const auto palette = theme::CThemeService::EffectivePalette(mode);
 	m_cStatusBar.SetPalette(palette);
+	if (m_notificationHost) m_notificationHost->SetPalette(palette);
+	if (m_commandPaletteOverlay) m_commandPaletteOverlay->SetPalette(palette);
 	if (m_cTabWnd.GetHwnd()) m_cTabWnd.UpdateTheme();
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->SetPalette(palette);
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->SetPalette(palette);
@@ -2370,6 +2921,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
 		m_activityBar->SetPalette(activityPalette);
 	}
+	ApplyFileIconTheme();
 }
 
 void CEditWnd::ApplyWorkbenchSettingsFromSharedData(bool finalizeProjection)
@@ -2415,17 +2967,16 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	}
 
 	workbench::layout::WorkbenchLayoutStateSnapshot snapshot;
-	workbench::win32::BuiltinPartProjectionResult result;
-	workbench::win32::BuiltinActiveSurfaceProjectionResult surfaceResult;
+	workbench::win32::BuiltinWorkbenchProjectionResult projectionResult;
 	try {
 		snapshot = m_workbenchRuntime->LayoutState().Snapshot();
-		result = workbench::win32::ProjectBuiltinParts(snapshot);
-		surfaceResult = workbench::win32::ProjectBuiltinActiveSurfaces(snapshot);
+		projectionResult = workbench::win32::ProjectBuiltinWorkbench(snapshot);
 	}
 	catch (...) {
 		return false;
 	}
-	if (!result.Succeeded() || !surfaceResult.Succeeded()) return false;
+	if (!projectionResult.Succeeded()) return false;
+	const auto& projection = *projectionResult.projection;
 	if (m_workbenchContextKeyService != nullptr) {
 		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(snapshot);
 		if (!contextResult.Succeeded()
@@ -2441,10 +2992,10 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 		}
 		if (part.visible) host.Show(); else host.Hide();
 	};
-	applyPart(*m_leftWorkbenchPanel, result.projection->left);
-	applyPart(*m_bottomWorkbenchPanel, result.projection->bottom);
-	applyPart(*m_rightWorkbenchPanel, result.projection->right);
-	if (!result.projection->bottom.visible) m_bottomWorkbenchMaximized = false;
+	applyPart(*m_leftWorkbenchPanel, projection.parts.left);
+	applyPart(*m_bottomWorkbenchPanel, projection.parts.bottom);
+	applyPart(*m_rightWorkbenchPanel, projection.parts.right);
+	if (!projection.parts.bottom.visible) m_bottomWorkbenchMaximized = false;
 
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	bool changed = false;
@@ -2459,19 +3010,18 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 		destination = extentDip;
 		changed = true;
 	};
-	updateVisible(settings.m_bLeftPanelVisible, result.projection->left.visible);
+	updateVisible(settings.m_bLeftPanelVisible, projection.parts.left.visible);
 	updateExtent(settings.m_nLeftPanelExtent96, m_leftWorkbenchPanel->GetExtentDip());
-	updateVisible(settings.m_bBottomPanelVisible, result.projection->bottom.visible);
+	updateVisible(settings.m_bBottomPanelVisible, projection.parts.bottom.visible);
 	updateExtent(settings.m_nBottomPanelExtent96, m_bottomWorkbenchPanel->GetExtentDip());
-	updateVisible(settings.m_bExtensionViewsVisible, result.projection->right.visible);
+	updateVisible(settings.m_bExtensionViewsVisible, projection.parts.right.visible);
 	updateExtent(settings.m_nExtensionViewsExtent96, m_rightWorkbenchPanel->GetExtentDip());
 	if (mirrorChanged != nullptr) *mirrorChanged = changed;
 
-	const bool surfacesApplied = ApplyBuiltinWorkbenchSurfaces(
-		snapshot, *surfaceResult.projection);
-	if (finalizeProjection) FinalizeWorkbenchPanelProjection(&*surfaceResult.projection);
+	const bool surfacesApplied = ApplyBuiltinWorkbenchSurfaces(snapshot, projection.surfaces);
+	if (finalizeProjection) FinalizeWorkbenchPanelProjection(&projection.surfaces);
 	if (surfacesApplied && finalizeProjection) {
-		ApplyBuiltinWorkbenchFocus(*surfaceResult.projection);
+		ApplyBuiltinWorkbenchFocus(projection.surfaces);
 	}
 	if (changed && broadcastMirrorChanges) BroadcastWorkbenchSettings();
 	return surfacesApplied;
@@ -4041,11 +4591,12 @@ void CEditWnd::ToggleMarkdownPreview()
 
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
+	if (m_commandPaletteOverlay && m_commandPaletteOverlay->PreTranslateMessage(message)) return true;
 	if (m_emptyEditorSurface && m_emptyEditorSurface->PreTranslateMessage(message)) return true;
 	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
 		&& (::GetKeyState(VK_MENU) & 0x8000) == 0) {
 		if (message.wParam == L'P' && (::GetKeyState(VK_SHIFT) & 0x8000) != 0) {
-			ShowExtensionCommandPalette();
+			(void)ShowExtensionCommandPalette();
 			return true;
 		}
 		int direction = 2;
@@ -4067,35 +4618,117 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 	return m_rightWorkbenchPanel && m_rightWorkbenchPanel->PreTranslateMessage(message);
 }
 
-void CEditWnd::ShowExtensionCommandPalette()
+bool CEditWnd::ShowExtensionCommandPalette()
 {
-	if (!m_extensionService || !GetHwnd()) return;
-	m_extensionService->Start();
-	const auto commands = m_extensionService->SearchCommands(L"");
-	SExtensionQuickInputRequest request;
-	request.kind = EExtensionQuickInputKind::QuickPick;
-	request.title = L"Command Palette";
-	request.placeholder = L"実行するコマンドを選択してください (Ctrl+Shift+P)";
-	request.items.reserve(commands.size());
-	for (std::size_t index = 0; index < commands.size(); ++index) {
-		const auto& command = commands[index];
-		request.items.push_back({
-			.sourceIndex = index,
-			.label = command.enabled ? command.label : L"(無効) " + command.label,
-			.description = command.detail,
-			.detail = command.id,
+	if (!GetHwnd()) return false;
+	if (m_extensionService) m_extensionService->Start();
+	const auto commands = m_extensionService ? m_extensionService->SearchCommands(L"")
+		: std::vector<SExtensionCommandPaletteItem>{};
+	const bool hasColorThemeCommand = m_workbenchCommandRegistry != nullptr
+		&& m_workbenchCommandRegistry->Find("workbench.action.selectTheme").has_value();
+	const bool hasFileIconThemeCommand = m_workbenchCommandRegistry != nullptr
+		&& m_workbenchCommandRegistry->Find("workbench.action.selectIconTheme").has_value();
+	auto convertItems = [](const std::vector<SExtensionCommandPaletteItem>& source) {
+		std::vector<workbench::quickinput::CommandPaletteItem> items;
+		items.reserve(source.size());
+		for (const auto& command : source) {
+			items.push_back({
+				.id = command.id,
+				.label = command.label,
+				.detail = command.detail,
+				.enabled = command.enabled,
+			});
+		}
+		return items;
+	};
+	auto matchesColorTheme = [](std::wstring_view query) {
+		if (query.empty()) return true;
+		std::wstring loweredQuery(query);
+		std::wstring loweredLabel = L"preferences: color theme";
+		std::wstring loweredId = L"workbench.action.selecttheme";
+		std::ranges::transform(loweredQuery, loweredQuery.begin(), [](wchar_t character) {
+			return static_cast<wchar_t>(std::towlower(character));
+		});
+		return loweredLabel.find(loweredQuery) != std::wstring::npos
+			|| loweredId.find(loweredQuery) != std::wstring::npos;
+	};
+	auto matchesFileIconTheme = [](std::wstring_view query) {
+		if (query.empty()) return true;
+		std::wstring loweredQuery(query);
+		std::ranges::transform(loweredQuery, loweredQuery.begin(), [](wchar_t character) {
+			return static_cast<wchar_t>(std::towlower(character));
+		});
+		constexpr std::wstring_view label = L"preferences: file icon theme";
+		constexpr std::wstring_view id = L"workbench.action.selecticontheme";
+		return label.find(loweredQuery) != std::wstring_view::npos
+			|| id.find(loweredQuery) != std::wstring_view::npos;
+	};
+	if (commands.empty() && !hasColorThemeCommand && !hasFileIconThemeCommand) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できる拡張コマンドはありません");
+		return false;
+	}
+	if (!m_commandPaletteOverlay) {
+		m_commandPaletteOverlay = std::make_unique<workbench::quickinput::CCommandPaletteOverlay>();
+		if (!m_commandPaletteOverlay->Create(GetHwnd())) {
+			m_commandPaletteOverlay.reset();
+			return false;
+		}
+		m_commandPaletteOverlay->SetPalette(theme::CThemeService::EffectivePalette(
+			m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
+		m_commandPaletteOverlay->SetSearchCallback(
+			[this, convertItems, hasColorThemeCommand, hasFileIconThemeCommand, matchesColorTheme, matchesFileIconTheme](std::wstring_view query) {
+				std::vector<workbench::quickinput::CommandPaletteItem> items;
+				if (m_extensionService) items = convertItems(m_extensionService->SearchCommands(query));
+				if (hasColorThemeCommand && matchesColorTheme(query)) {
+					items.push_back({
+						.id = L"workbench.action.selectTheme",
+						.label = L"Preferences: Color Theme",
+						.detail = L"Sakura Editor",
+						.enabled = true,
+					});
+				}
+				if (hasFileIconThemeCommand && matchesFileIconTheme(query)) {
+					items.push_back({
+						.id = L"workbench.action.selectIconTheme",
+						.label = L"Preferences: File Icon Theme",
+						.detail = L"Sakura Editor",
+						.enabled = true,
+					});
+				}
+				return items;
+			});
+		m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring commandId) {
+			if (commandId == L"workbench.action.selectTheme") {
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand("workbench.action.selectTheme", handled);
+				return;
+			}
+			if (commandId == L"workbench.action.selectIconTheme") {
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand("workbench.action.selectIconTheme", handled);
+				return;
+			}
+			if (m_extensionService) m_extensionService->ExecuteCommand(commandId);
 		});
 	}
-	if (request.items.empty()) {
-		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できる拡張コマンドはありません");
-		return;
+	std::vector<workbench::quickinput::CommandPaletteItem> items = convertItems(commands);
+	if (hasColorThemeCommand) {
+		items.push_back({
+			.id = L"workbench.action.selectTheme",
+			.label = L"Preferences: Color Theme",
+			.detail = L"Sakura Editor",
+			.enabled = true,
+		});
 	}
-	CExtensionQuickInputDialog dialog(request);
-	const auto completion = dialog.DoModal(GetHwnd());
-	if (completion.state != EExtensionQuickInputState::Accepted || completion.selectedIndices.size() != 1) return;
-	const auto selected = completion.selectedIndices.front();
-	if (selected >= commands.size() || !commands[selected].enabled) return;
-	m_extensionService->ExecuteCommand(commands[selected].id);
+	if (hasFileIconThemeCommand) {
+		items.push_back({
+			.id = L"workbench.action.selectIconTheme",
+			.label = L"Preferences: File Icon Theme",
+			.detail = L"Sakura Editor",
+			.enabled = true,
+		});
+	}
+	return m_commandPaletteOverlay->Show(std::move(items));
 }
 
 void CEditWnd::SetWorkbenchZoomPercent(int percent)
@@ -5187,6 +5820,13 @@ LRESULT CEditWnd::DispatchEvent(
 	case MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED:
 		OnWorkbenchServiceProjectionChanged();
 		return 0;
+	case MYWM_WORKBENCH_THEME_CHANGED:
+		if (m_themeConfigurationGate) {
+			std::lock_guard lock(m_themeConfigurationGate->mutex);
+			m_themeConfigurationGate->messageQueued = false;
+		}
+		ApplyWorkbenchTheme();
+		return 0;
 	case MYWM_EXTENSION_WORKBENCH_CHANGED:
 		if (m_extensionService) {
 			const auto changes = static_cast<EExtensionWorkbenchChange>(wParam);
@@ -5203,6 +5843,13 @@ LRESULT CEditWnd::DispatchEvent(
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Progress)) != 0) {
 				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Notifications)) != 0 &&
+				m_extensionService) {
+				EnsureNotificationHost();
+				if (m_notificationHost) {
+					m_notificationHost->SetNotifications(m_extensionService->PendingNotifications());
+				}
 			}
 		}
 		return 0;
@@ -5248,11 +5895,19 @@ LRESULT CEditWnd::DispatchEvent(
 		return m_cMenuDrawer.OnMenuChar( hwnd, uMsg, wParam, lParam );
 
 	// 2007.09.09 Moca 互換BMPによる画面バッファ
-	case WM_SHOWWINDOW:
+	case WM_SHOWWINDOW: {
 		if( !wParam ){
 			Views_DeleteCompatibleBitmap();
 		}
-		return ::DefWindowProc( hwnd, uMsg, wParam, lParam );
+		const auto result = ::DefWindowProc( hwnd, uMsg, wParam, lParam );
+		if (wParam) EnsureNotificationHost();
+		if (m_notificationHost) m_notificationHost->Layout();
+		if (m_commandPaletteOverlay) {
+			if (!wParam) m_commandPaletteOverlay->Hide();
+			else m_commandPaletteOverlay->Layout();
+		}
+		return result;
+	}
 
 	case WM_MENUSELECT:
 		if( nullptr == m_cStatusBar.GetStatusHwnd() ){
@@ -5319,8 +5974,12 @@ LRESULT CEditWnd::DispatchEvent(
 			return 0;
 		}
 		return FALSE;
-	case WM_PAINT:
-		return OnPaint( hwnd, uMsg, wParam, lParam );
+	case WM_PAINT: {
+		const auto result = OnPaint( hwnd, uMsg, wParam, lParam );
+		if (m_notificationHost) m_notificationHost->Layout();
+		if (m_commandPaletteOverlay) m_commandPaletteOverlay->Layout();
+		return result;
+	}
 
 	case WM_PASTE:
 		if (!HasActiveEditorInput()) return 0;
@@ -5368,7 +6027,7 @@ LRESULT CEditWnd::DispatchEvent(
 		}
 		return 0L;
 
-	case WM_WINDOWPOSCHANGED:
+	case WM_WINDOWPOSCHANGED: {
 		// ポップアップウィンドウの表示切替指示をポストする	// 2007.10.22 ryoji
 		// ・WM_SHOWWINDOWはすべての表示切替で呼ばれるわけではないのでWM_WINDOWPOSCHANGEDで処理
 		//   （タブグループ解除などの設定変更時はWM_SHOWWINDOWは呼ばれない）
@@ -5379,22 +6038,32 @@ LRESULT CEditWnd::DispatchEvent(
 		else if( pwp->flags & SWP_HIDEWINDOW )
 			::PostMessage( hwnd, MYWM_SHOWOWNEDPOPUPS, FALSE, 0 );
 
-		return ::DefWindowProc( hwnd, uMsg, wParam, lParam );
+		const auto result = ::DefWindowProc( hwnd, uMsg, wParam, lParam );
+		EnsureNotificationHost();
+		if (m_notificationHost) m_notificationHost->Layout();
+		if (m_commandPaletteOverlay) m_commandPaletteOverlay->Layout();
+		return result;
+	}
 
 	case MYWM_SHOWOWNEDPOPUPS:
 		::ShowOwnedPopups( m_hWnd, (BOOL)wParam );	// 2007.10.22 ryoji
 		return 0L;
 
-	case WM_SIZE:
+	case WM_SIZE: {
 //		MYTRACE( L"WM_SIZE\n" );
 		/* WM_SIZE 処理 */
 		if( SIZE_MINIMIZED == wParam ){
 			this->UpdateCaption();
 		}
-		return OnSize( wParam, lParam );
+		const auto result = OnSize( wParam, lParam );
+		EnsureNotificationHost();
+		if (m_notificationHost) m_notificationHost->Layout();
+		if (m_commandPaletteOverlay) m_commandPaletteOverlay->Layout();
+		return result;
+	}
 
 	//From here 2003.05.31 MIK
-	case WM_MOVE:
+	case WM_MOVE: {
 		// From Here 2004.05.13 Moca ウィンドウ位置継承
 		//	最後の位置を復元するため，移動されるたびに共有メモリに位置を保存する．
 		if (WINSIZEMODE_SAVE == m_pShareData->m_Common.m_sWindow.m_eSaveWindowPos &&
@@ -5415,7 +6084,10 @@ LRESULT CEditWnd::DispatchEvent(
 				m_pShareData->m_Common.m_sWindow.m_nWinPosY = rcWin.top;
 		}
 		// To Here 2004.05.13 Moca ウィンドウ位置継承
-		return DefWindowProc( hwnd, uMsg, wParam, lParam );
+		const auto result = DefWindowProc( hwnd, uMsg, wParam, lParam );
+		if (m_notificationHost) m_notificationHost->Layout();
+		return result;
+	}
 	//To here 2003.05.31 MIK
 	case WM_SYSCOMMAND:
 		// タブまとめ表示では閉じる動作はオプション指定に従う	// 2006.02.13 ryoji
@@ -6086,13 +6758,12 @@ LRESULT CEditWnd::DispatchEvent(
 
 	//タブウインドウ	//@@@ 2003.05.31 MIK
 	case MYWM_TAB_WINDOW_NOTIFY:
-		m_cTabWnd.TabWindowNotify( wParam, lParam );
-		{
+		if (m_cTabWnd.TabWindowNotify( wParam, lParam ) == ETabWindowNotifyImpact::WorkbenchLayout) {
 			RECT		rc;
 			::GetClientRect( GetHwnd(), &rc );
 			OnSize2( m_nWinSizeType, MAKELONG( rc.right - rc.left, rc.bottom - rc.top ), false );
-			GetActiveView().SetIMECompFormPos();
 		}
+		GetActiveView().SetIMECompFormPos();
 		return 0L;
 
 	//アウトライン	// 2010.06.06 ryoji

@@ -8,13 +8,16 @@
 
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/CodiconGlyphTable.h"
 
 #include <CommCtrl.h>
 #include <windowsx.h>
 
 #include <algorithm>
 #include <cstdlib>
+#include <string_view>
 
 namespace workbench {
 namespace {
@@ -45,6 +48,39 @@ constexpr int kIndicatorWidthDip = 2;
 		return true;
 	}
 	return false;
+}
+
+[[nodiscard]] wchar_t CodiconGlyph(std::wstring_view name) noexcept
+{
+	return icons::FindCodiconGlyph(name).value_or(L'\0');
+}
+
+[[nodiscard]] bool PaintFontGlyph(
+	HDC dc,
+	const icons::IconRect& box,
+	HFONT font,
+	wchar_t glyph,
+	COLORREF color
+) noexcept
+{
+	if (dc == nullptr || font == nullptr || glyph == L'\0' || box.Width() <= 0 || box.Height() <= 0) {
+		return false;
+	}
+	const int saved = ::SaveDC(dc);
+	if (saved == 0) return false;
+	const HGDIOBJ oldFont = ::SelectObject(dc, font);
+	if (oldFont == nullptr || oldFont == HGDI_ERROR) {
+		::RestoreDC(dc, saved);
+		return false;
+	}
+	::SetBkMode(dc, TRANSPARENT);
+	::SetTextColor(dc, color);
+	RECT glyphRect{ box.left, box.top, box.right, box.bottom };
+	const wchar_t text[] = { glyph, L'\0' };
+	const int drawn = ::DrawTextW(dc, text, 1, &glyphRect,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::RestoreDC(dc, saved);
+	return drawn != 0;
 }
 
 } // namespace
@@ -386,12 +422,18 @@ void CActivityBar::UpdateTooltipRects() noexcept
 void CActivityBar::EnsureIconFont() noexcept
 {
 	if (m_iconFont != nullptr) return;
+	const auto faceName = icons::CCodiconFont::Instance().FaceName();
+	if (faceName.empty() || faceName.size() >= LF_FACESIZE) return;
 	LOGFONTW font{};
 	font.lfHeight = -ScaleDip(icons::kActivityIconDip, m_model.GetDpi());
 	font.lfWeight = FW_NORMAL;
 	font.lfCharSet = DEFAULT_CHARSET;
+	font.lfOutPrecision = OUT_TT_PRECIS;
+	font.lfClipPrecision = CLIP_DEFAULT_PRECIS;
 	font.lfQuality = CLEARTYPE_QUALITY;
-	::wcscpy_s(font.lfFaceName, L"Segoe Fluent Icons");
+	font.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	std::copy(faceName.begin(), faceName.end(), font.lfFaceName);
+	font.lfFaceName[faceName.size()] = L'\0';
 	m_iconFont = ::CreateFontIndirectW(&font);
 }
 
@@ -426,6 +468,7 @@ void CActivityBar::Paint() noexcept
 	::DeleteObject(background);
 
 	::SetBkMode(buffer, TRANSPARENT);
+	EnsureIconFont();
 	for (std::size_t index = 0; index < m_model.GetButtonCount(); ++index) {
 		const auto button = m_model.GetButton(index);
 		RECT bounds{ button.bounds.left, button.bounds.top, button.bounds.right, button.bounds.bottom };
@@ -449,29 +492,26 @@ void CActivityBar::Paint() noexcept
 			: button.selected ? m_palette.activeIcon : m_palette.icon;
 		const auto iconBounds = icons::CenteredIconBounds(
 			{ bounds.left, bounds.top, bounds.right, bounds.bottom }, icons::kActivityIconDip, m_model.GetDpi());
-		if (button.item == ActivityBarItem::SourceControl) {
-			icons::codicons::DrawSourceControl(buffer, iconBounds, iconColor);
-		} else if (button.item == ActivityBarItem::Extensions) {
-			// Four compact tiles match the familiar Extensions activity affordance
-			// without introducing another font/glyph dependency.
-			const int gap = std::max(1, ScaleDip(2, m_model.GetDpi()));
-			const int tileWidth = std::max(2, (iconBounds.right - iconBounds.left - gap) / 2);
-			const int tileHeight = std::max(2, (iconBounds.bottom - iconBounds.top - gap) / 2);
-			const HBRUSH tile = ::CreateSolidBrush(iconColor);
-			for (int row = 0; row < 2; ++row) {
-				for (int column = 0; column < 2; ++column) {
-					RECT part{
-						iconBounds.left + column * (tileWidth + gap),
-						iconBounds.top + row * (tileHeight + gap),
-						iconBounds.left + column * (tileWidth + gap) + tileWidth,
-						iconBounds.top + row * (tileHeight + gap) + tileHeight,
-					};
-					::FillRect(buffer, &part, tile);
-				}
+		// VS Code renders all built-in Activity Bar glyphs from codicon.ttf. Mixing
+		// a GDI path for some entries with a font glyph for others makes their
+		// anti-aliasing and optical weight visibly inconsistent. The 20-DIP bounds
+		// and normal font weight stay unchanged; the vector paths remain only as
+		// the explicit fallback when the embedded font could not be registered.
+		if (!PaintFontGlyph(buffer, iconBounds, m_iconFont,
+			CodiconGlyph(ActivityBarItemCodiconName(button.item)), iconColor)) {
+			switch (button.item) {
+			case ActivityBarItem::Explorer:
+				icons::codicons::DrawFiles(buffer, iconBounds, iconColor);
+				break;
+			case ActivityBarItem::SourceControl:
+				icons::codicons::DrawSourceControl(buffer, iconBounds, iconColor);
+				break;
+			case ActivityBarItem::Extensions:
+				icons::codicons::Draw(buffer, iconBounds, icons::codicons::Icon::Extensions, iconColor);
+				break;
+			case ActivityBarItem::Count:
+				break;
 			}
-			::DeleteObject(tile);
-		} else {
-			icons::codicons::DrawFiles(buffer, iconBounds, iconColor);
 		}
 		if (button.focused) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.focusBorder);

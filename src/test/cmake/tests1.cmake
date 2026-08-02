@@ -90,6 +90,10 @@ file(GLOB_RECURSE TESTS1_SOURCES
   ${CMAKE_SOURCE_DIR}/src/test/resources/*.cpp
 )
 
+# The terminal renderer focused suites under tests1/terminal/window are picked
+# up by the recursive source glob above; keep this explicit note beside the
+# discovery contract so the MSBuild and CMake registrations stay intentional.
+
 set(CODE_COVERAGE_SOURCE ${CMAKE_SOURCE_DIR}/src/test/resources/coverage.cpp)
 set(CODE_COVERAGE_HEADER ${CMAKE_VS_INSTALL_DIRECTORY}/VC/Auxiliary/VS/include/CodeCoverage/CodeCoverage.h)
 
@@ -198,6 +202,14 @@ target_link_libraries(tests1
     GTest::gtest
     GTest::gmock
 )
+
+if(WIN32)
+  target_link_libraries(tests1
+    PRIVATE
+      gdiplus
+      psapi
+  )
+endif()
 
 set_target_properties(tests1
   PROPERTIES

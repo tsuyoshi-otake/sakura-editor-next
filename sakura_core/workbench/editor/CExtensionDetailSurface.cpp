@@ -7,6 +7,9 @@
 #include "StdAfx.h"
 
 #include "workbench/editor/CExtensionDetailSurface.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 
 #include <algorithm>
 #include <string_view>
@@ -26,6 +29,34 @@ struct MarkdownBlock {
 	bool ordered = false;
 	int number = 0;
 };
+
+[[nodiscard]] bool PaintFontGlyph(
+	HDC dc,
+	const workbench::icons::IconRect& box,
+	HFONT font,
+	wchar_t glyph,
+	COLORREF color
+) noexcept
+{
+	if (dc == nullptr || font == nullptr || glyph == L'\0' || box.Width() <= 0 || box.Height() <= 0) {
+		return false;
+	}
+	const int saved = ::SaveDC(dc);
+	if (saved == 0) return false;
+	const HGDIOBJ oldFont = ::SelectObject(dc, font);
+	if (oldFont == nullptr || oldFont == HGDI_ERROR) {
+		::RestoreDC(dc, saved);
+		return false;
+	}
+	::SetBkMode(dc, TRANSPARENT);
+	::SetTextColor(dc, color);
+	RECT glyphRect{ box.left, box.top, box.right, box.bottom };
+	const wchar_t text[] = { glyph, L'\0' };
+	const int drawn = ::DrawTextW(dc, text, 1, &glyphRect,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::RestoreDC(dc, saved);
+	return drawn != 0;
+}
 
 std::wstring_view Trim(std::wstring_view value) noexcept
 {
@@ -185,7 +216,7 @@ HWND CExtensionDetailSurface::Open(HINSTANCE hInstance, HWND hwndParent)
 		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL, 0, 0, 0, 0, nullptr);
 	if (window == nullptr) return nullptr;
 	EnsureFont();
-	m_hwndClose = ::CreateWindowExW(0, WC_BUTTONW, L"×", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+	m_hwndClose = ::CreateWindowExW(0, WC_BUTTONW, L"", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
 		0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kCloseButtonId)), hInstance, nullptr);
 	m_hwndInstall = ::CreateWindowExW(0, WC_BUTTONW, L"Install / Update", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
 		0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kInstallButtonId)), hInstance, nullptr);
@@ -211,6 +242,7 @@ void CExtensionDetailSurface::Destroy() noexcept
 		m_hwndClose = nullptr;
 		m_hwndInstall = nullptr;
 	}
+	ReleaseCodiconFont();
 }
 
 void CExtensionDetailSurface::Layout(const RECT& bounds, unsigned int dpi)
@@ -354,6 +386,69 @@ void CExtensionDetailSurface::ReleaseFont() noexcept
 	if (m_boldFont != nullptr) ::DeleteObject(m_boldFont);
 	m_font = nullptr;
 	m_boldFont = nullptr;
+}
+
+HFONT CExtensionDetailSurface::AcquireCodiconFont(int height) noexcept
+{
+	if (height <= 0) return nullptr;
+	const auto faceName = workbench::icons::CCodiconFont::Instance().FaceName();
+	if (faceName.empty() || faceName.size() >= LF_FACESIZE) {
+		ReleaseCodiconFont();
+		return nullptr;
+	}
+	if (m_codiconFont != nullptr && m_codiconFontHeight == height) return m_codiconFont;
+
+	ReleaseCodiconFont();
+	LOGFONTW logFont{};
+	logFont.lfHeight = -height;
+	logFont.lfWeight = FW_NORMAL;
+	logFont.lfCharSet = DEFAULT_CHARSET;
+	logFont.lfOutPrecision = OUT_TT_PRECIS;
+	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	logFont.lfQuality = CLEARTYPE_QUALITY;
+	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	std::copy(faceName.begin(), faceName.end(), logFont.lfFaceName);
+	logFont.lfFaceName[faceName.size()] = L'\0';
+	m_codiconFont = ::CreateFontIndirectW(&logFont);
+	if (m_codiconFont != nullptr) m_codiconFontHeight = height;
+	return m_codiconFont;
+}
+
+void CExtensionDetailSurface::ReleaseCodiconFont() noexcept
+{
+	if (m_codiconFont != nullptr) ::DeleteObject(m_codiconFont);
+	m_codiconFont = nullptr;
+	m_codiconFontHeight = 0;
+}
+
+void CExtensionDetailSurface::DrawCloseButton(const DRAWITEMSTRUCT& draw) noexcept
+{
+	const bool selected = (draw.itemState & (ODS_SELECTED | ODS_HOTLIGHT)) != 0;
+	const COLORREF backgroundColor = selected ? m_palette.panel.ToColorRef() : m_palette.raised.ToColorRef();
+	if (const HBRUSH background = ::CreateSolidBrush(backgroundColor); background != nullptr) {
+		::FillRect(draw.hDC, &draw.rcItem, background);
+		::DeleteObject(background);
+	}
+	if ((draw.itemState & ODS_FOCUS) != 0) {
+		if (const HBRUSH border = ::CreateSolidBrush(m_palette.border.ToColorRef()); border != nullptr) {
+			::FrameRect(draw.hDC, &draw.rcItem, border);
+			::DeleteObject(border);
+		}
+	}
+	const int width = static_cast<int>(draw.rcItem.right - draw.rcItem.left);
+	const int height = static_cast<int>(draw.rcItem.bottom - draw.rcItem.top);
+	const int side = (std::min)(ScaleDip(18), (std::min)(width, height));
+	const workbench::icons::IconRect iconBox{
+		draw.rcItem.left + (width - side) / 2,
+		draw.rcItem.top + (height - side) / 2,
+		draw.rcItem.left + (width - side) / 2 + side,
+		draw.rcItem.top + (height - side) / 2 + side };
+	const auto glyph = workbench::icons::FindCodiconGlyph(L"close");
+	const COLORREF color = m_palette.secondaryText.ToColorRef();
+	if (!PaintFontGlyph(draw.hDC, iconBox, AcquireCodiconFont(side), glyph.value_or(L'\0'), color)) {
+		workbench::icons::codicons::Draw(draw.hDC, iconBox,
+			workbench::icons::codicons::Icon::Close, color);
+	}
 }
 
 void CExtensionDetailSurface::LayoutChildren()
@@ -581,6 +676,12 @@ LRESULT CExtensionDetailSurface::DispatchEvent(HWND hwnd, UINT msg, WPARAM wp, L
 	switch (msg) {
 	case WM_ERASEBKGND: return 1;
 	case WM_PAINT: Paint(); return 0;
+	case WM_DRAWITEM:
+		if (wp == static_cast<WPARAM>(kCloseButtonId) && lp != 0) {
+			DrawCloseButton(*reinterpret_cast<const DRAWITEMSTRUCT*>(lp));
+			return TRUE;
+		}
+		break;
 	case WM_SIZE: LayoutChildren(); return 0;
 	case WM_VSCROLL: {
 		SCROLLINFO info{ sizeof(info), SIF_ALL };
@@ -606,6 +707,7 @@ LRESULT CExtensionDetailSurface::DispatchEvent(HWND hwnd, UINT msg, WPARAM wp, L
 	}
 	case WM_DPICHANGED:
 		ReleaseFont();
+		ReleaseCodiconFont();
 		EnsureFont();
 		if (m_hwndClose != nullptr) ::SendMessageW(m_hwndClose, WM_SETFONT, reinterpret_cast<WPARAM>(m_font), TRUE);
 		if (m_hwndInstall != nullptr) ::SendMessageW(m_hwndInstall, WM_SETFONT, reinterpret_cast<WPARAM>(m_font), TRUE);

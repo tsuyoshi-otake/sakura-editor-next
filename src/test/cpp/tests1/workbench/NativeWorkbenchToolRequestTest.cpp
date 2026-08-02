@@ -161,7 +161,7 @@ TEST_F(NativeWorkbenchToolRequest, OutlineExpansionIsSharedByBothSideBars)
 	EXPECT_TRUE(primary.IsOutlineExpanded());
 }
 
-TEST_F(NativeWorkbenchToolRequest, BottomPanelRequestCallsOwnerBeforeApplyingNativeState)
+TEST_F(NativeWorkbenchToolRequest, BottomPanelRequestWaitsForCommittedProjection)
 {
 	CExtensionBottomPanelTool tool;
 	int callbackCalls = 0;
@@ -174,6 +174,11 @@ TEST_F(NativeWorkbenchToolRequest, BottomPanelRequestCallsOwnerBeforeApplyingNat
 
 	EXPECT_TRUE(tool.RequestTabSelection(ExtensionBottomPanelTab::Problems));
 	EXPECT_EQ(1, callbackCalls);
+	EXPECT_EQ(ExtensionBottomPanelTab::Terminal, tool.ActiveTab());
+
+	// The owning Workbench model projects the accepted request back as a committed
+	// snapshot. A native tab is never changed optimistically by the request path.
+	tool.SetActiveTab(ExtensionBottomPanelTab::Problems);
 	EXPECT_EQ(ExtensionBottomPanelTab::Problems, tool.ActiveTab());
 }
 
@@ -255,7 +260,7 @@ TEST_F(NativeWorkbenchToolRequest, BottomPanelOutputProjectionUsesActiveChannelW
 	EXPECT_EQ("active", *tool.SelectedOutputChannelId());
 }
 
-TEST_F(NativeWorkbenchToolRequest, BottomPanelOutputSelectionCallsOwnerBeforeApplyingLocalSelection)
+TEST_F(NativeWorkbenchToolRequest, BottomPanelOutputSelectionWaitsForCommittedSnapshot)
 {
 	CExtensionBottomPanelTool tool;
 	workbench::win32::OutputPanelSnapshot snapshot;
@@ -279,6 +284,17 @@ TEST_F(NativeWorkbenchToolRequest, BottomPanelOutputSelectionCallsOwnerBeforeApp
 
 	EXPECT_TRUE(tool.RequestOutputChannelSelection("second"));
 	EXPECT_EQ(1, callbackCalls);
+	ASSERT_TRUE(tool.SelectedOutputChannelId().has_value());
+	EXPECT_EQ("first", *tool.SelectedOutputChannelId());
+
+	// OutputService's accepted value is projected through the next snapshot.
+	workbench::win32::OutputPanelSnapshot committed;
+	committed.activeChannelId = "second";
+	committed.channels = {
+		{ .channelId = "first", .label = L"First", .projectedText = L"first" },
+		{ .channelId = "second", .label = L"Second", .projectedText = L"second" },
+	};
+	tool.SetOutputSnapshot(std::move(committed));
 	ASSERT_TRUE(tool.SelectedOutputChannelId().has_value());
 	EXPECT_EQ("second", *tool.SelectedOutputChannelId());
 }

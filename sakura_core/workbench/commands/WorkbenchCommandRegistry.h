@@ -78,10 +78,16 @@ using WorkbenchCommandExecutor = std::function<WorkbenchCommandExecutionResult()
 
 //! Optional bindings supplied by the native composition root. Empty executors remain explicitly Unsupported.
 struct WorkbenchBuiltinCommandExecutors {
+	WorkbenchCommandExecutor showCommands;
+	WorkbenchCommandExecutor openSettings;
+	WorkbenchCommandExecutor showExtensions;
+	WorkbenchCommandExecutor openGlobalKeybindings;
 	WorkbenchCommandExecutor toggleSidebarVisibility;
 	WorkbenchCommandExecutor showExplorer;
 	WorkbenchCommandExecutor showProblems;
 	WorkbenchCommandExecutor toggleOutput;
+	WorkbenchCommandExecutor selectTheme;
+	WorkbenchCommandExecutor selectFileIconTheme;
 };
 
 enum class EWorkbenchCommandRegistrationStatus : std::uint8_t {

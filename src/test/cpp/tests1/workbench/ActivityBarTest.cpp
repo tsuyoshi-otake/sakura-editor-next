@@ -9,12 +9,16 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstring>
+#include <string_view>
+#include <utility>
 
 #include "workbench/activity/ActivityBarModel.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/scm/GitScmModel.h"
 
 namespace workbench::activity {
@@ -38,6 +42,20 @@ TEST(ActivityBarModel, Uses42DipWidthAndSquareVerticalButtonsAtDpi)
 	EXPECT_EQ(ActivityBarItem::Extensions, *model.HitTest(10, 150));
 	EXPECT_FALSE(model.HitTest(10, 210).has_value());
 	EXPECT_FALSE(model.HitTest(63, 10).has_value());
+}
+
+TEST(ActivityBarModel, MapsEveryRenderedContainerToItsBundledCodicon)
+{
+	const std::array mappings{
+		std::pair{ ActivityBarItem::Explorer, std::wstring_view(L"files") },
+		std::pair{ ActivityBarItem::SourceControl, std::wstring_view(L"source-control") },
+		std::pair{ ActivityBarItem::Extensions, std::wstring_view(L"extensions") },
+	};
+	for (const auto& [item, name] : mappings) {
+		EXPECT_EQ(name, ActivityBarItemCodiconName(item));
+		EXPECT_TRUE(workbench::icons::FindCodiconGlyph(name).has_value());
+	}
+	EXPECT_TRUE(ActivityBarItemCodiconName(ActivityBarItem::Count).empty());
 }
 
 TEST(ActivityBarModel, ExposesIndependentVisualStateForProviders)

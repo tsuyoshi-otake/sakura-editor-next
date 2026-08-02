@@ -58,7 +58,7 @@ TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
 	const auto layout = CalculateCustomFrameLayout(1200, 144, 430);
 	EXPECT_EQ(51, layout.title.bottom);
 	EXPECT_EQ(45, layout.layoutButton.right - layout.layoutButton.left);
-	EXPECT_EQ(layout.minimizeButton.left, layout.settingsButton.right);
+	EXPECT_EQ(layout.minimizeButton.left, layout.manageButton.right);
 }
 
 TEST(CustomFrame, CentersCaptionInAWindowSymmetricSafeRectangleAcrossDpi)
@@ -158,8 +158,8 @@ TEST(CustomFrame, PlacesAllCompactTitleControlsImmediatelyBeforeNativeCaptionBut
 {
 	const auto layout = CalculateCustomFrameLayout(1200, 96, 430);
 	EXPECT_FALSE(::IsRectEmpty(&layout.layoutButton));
-	EXPECT_EQ(layout.minimizeButton.left, layout.settingsButton.right);
-	EXPECT_EQ(layout.settingsButton.left, layout.accountButton.right);
+	EXPECT_EQ(layout.minimizeButton.left, layout.manageButton.right);
+	EXPECT_EQ(layout.manageButton.left, layout.accountButton.right);
 	EXPECT_EQ(layout.accountButton.left, layout.secondarySidebarButton.right);
 	EXPECT_EQ(layout.secondarySidebarButton.left, layout.bottomPanelButton.right);
 	EXPECT_EQ(layout.bottomPanelButton.left, layout.primarySidebarButton.right);
@@ -172,7 +172,7 @@ TEST(CustomFrame, CollapsesTitleControlsTogetherOnNarrowWidthsWithoutCreatingCap
 {
 	const auto layout = CalculateCustomFrameLayout(350, 96, 300);
 	EXPECT_TRUE(::IsRectEmpty(&layout.layoutButton));
-	EXPECT_TRUE(::IsRectEmpty(&layout.settingsButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.manageButton));
 	const POINT captionPoint{
 		(layout.captionText.left + layout.captionText.right) / 2,
 		(layout.captionText.top + layout.captionText.bottom) / 2,
@@ -191,9 +191,9 @@ TEST(CustomFrame, CompactTitleControlHitTestingUsesHalfOpenBoundsAndClientHits)
 	EXPECT_EQ(CustomFrameControl::BottomPanel, HitTestCustomFrameControl(layout, center(layout.bottomPanelButton)));
 	EXPECT_EQ(CustomFrameControl::SecondarySidebar, HitTestCustomFrameControl(layout, center(layout.secondarySidebarButton)));
 	EXPECT_EQ(CustomFrameControl::Account, HitTestCustomFrameControl(layout, center(layout.accountButton)));
-	EXPECT_EQ(CustomFrameControl::Settings, HitTestCustomFrameControl(layout, center(layout.settingsButton)));
-	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { layout.settingsButton.right, 16 }));
-	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.settingsButton), 1200, 700, 8, false));
+	EXPECT_EQ(CustomFrameControl::Manage, HitTestCustomFrameControl(layout, center(layout.manageButton)));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { layout.manageButton.right, 16 }));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.manageButton), 1200, 700, 8, false));
 }
 
 TEST(CustomFrame, CompactTitleControlInvokeMappingsUseExistingEditorCommands)
@@ -201,7 +201,7 @@ TEST(CustomFrame, CompactTitleControlInvokeMappingsUseExistingEditorCommands)
 	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_LEFT_EXPLORER), CustomFrameControlCommand(CustomFrameControl::PrimarySidebar));
 	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_BOTTOM_PANEL), CustomFrameControlCommand(CustomFrameControl::BottomPanel));
 	EXPECT_EQ(static_cast<UINT>(F_TOGGLE_SECONDARY_SIDEBAR), CustomFrameControlCommand(CustomFrameControl::SecondarySidebar));
-	EXPECT_EQ(static_cast<UINT>(F_OPTION), CustomFrameControlCommand(CustomFrameControl::Settings));
+	EXPECT_EQ(0u, CustomFrameControlCommand(CustomFrameControl::Manage));
 	EXPECT_EQ(0u, CustomFrameControlCommand(CustomFrameControl::Layout));
 	EXPECT_EQ(0u, CustomFrameControlCommand(CustomFrameControl::Account));
 }
@@ -209,15 +209,15 @@ TEST(CustomFrame, CompactTitleControlInvokeMappingsUseExistingEditorCommands)
 TEST(CustomFrame, CompactTitleControlsExposeAccessibleButtonsWithInvokeMetadata)
 {
 	const auto layout = CalculateCustomFrameLayout(1200, 96, 300);
-	const auto settings = CustomFrameControlAccessibilityNode(CustomFrameControl::Settings, layout, true);
-	EXPECT_EQ(L"Settings", settings.name);
-	EXPECT_EQ(L"Sakura.TitleBar.Settings", settings.automationId);
-	EXPECT_EQ(UIA_ButtonControlTypeId, settings.controlType);
-	EXPECT_EQ(layout.settingsButton.left, settings.bounds.left);
-	EXPECT_EQ(layout.settingsButton.right, settings.bounds.right);
-	EXPECT_TRUE(settings.enabled);
-	EXPECT_TRUE(settings.focused);
-	EXPECT_TRUE(settings.invoke);
+	const auto manage = CustomFrameControlAccessibilityNode(CustomFrameControl::Manage, layout, true);
+	EXPECT_EQ(L"Manage", manage.name);
+	EXPECT_EQ(L"Sakura.TitleBar.Manage", manage.automationId);
+	EXPECT_EQ(UIA_ButtonControlTypeId, manage.controlType);
+	EXPECT_EQ(layout.manageButton.left, manage.bounds.left);
+	EXPECT_EQ(layout.manageButton.right, manage.bounds.right);
+	EXPECT_TRUE(manage.enabled);
+	EXPECT_TRUE(manage.focused);
+	EXPECT_TRUE(manage.invoke);
 
 	const auto account = CustomFrameControlAccessibilityNode(CustomFrameControl::Account, layout, false);
 	EXPECT_EQ(L"Account", account.name);

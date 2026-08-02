@@ -346,8 +346,10 @@ TEST(file, GetIniFileName_InProcessDefaultProfileUnInitialized)
 	// プロセスのインスタンスを用意する
 	CControlProcess dummy(nullptr, LR"(-PROF="")");
 
-	// exeファイルの拡張子をiniに変えたパスが返る
-	auto path = GetExeFileName().replace_extension(L".ini");
+	// サイドカー設定がない既定プロファイルは、exeではなくユーザー
+	// データ領域に固定される。
+	auto path = std::filesystem::path(ExpandEnvironmentStringsW(L"%APPDATA%\\sakura"));
+	path.append(GetExeFileName().replace_extension(L".ini").filename().wstring());
 	EXPECT_THAT(GetIniFileName(), StrEq(path.c_str()));
 }
 
@@ -363,9 +365,9 @@ TEST(file, GetIniFileName_InProcessNamedProfileUnInitialized)
 	// プロセスのインスタンスを用意する
 	CControlProcess dummy(nullptr, LR"(-PROF="profile1")");
 
-	// exeファイルの拡張子をiniに変えたパスの最後のフォルダーにプロファイル名を加えたパスが返る
-	auto iniPath = GetExeFileName().replace_extension(L".ini");
-	auto path = iniPath.parent_path().append(L"profile1").append(iniPath.filename().c_str());
+	// 既定ユーザーデータ領域の下に、選択したプロファイル名が付く。
+	auto path = std::filesystem::path(ExpandEnvironmentStringsW(L"%APPDATA%\\sakura"));
+	path.append(L"profile1").append(GetExeFileName().replace_extension(L".ini").filename().wstring());
 	EXPECT_THAT(GetIniFileName(), StrEq(path.c_str()));
 }
 
@@ -421,6 +423,24 @@ protected:
 		}
 	}
 };
+
+TEST_F(CExeIniTest, GetIniFileName_ExistingSidecarWithMultiUserDisabledUsesPortablePath)
+{
+	WritePrivateProfileStringW(L"Settings", L"MultiUser", L"0", exeIniPath);
+
+	ASSERT_TRUE(fexist(exeIniPath));
+
+	// コマンドラインのインスタンスを用意する
+	auto pCommandLine = std::make_unique<CCommandLine>();
+	pCommandLine->ParseCommandLine(LR"(-PROF="")", false);
+
+	// プロセスのインスタンスを用意する
+	CControlProcess dummy(nullptr, LR"(-PROF="")");
+
+	// MultiUser=0 を明示した場合だけ exe 隣接プロファイルを使う。
+	const auto expectedPath = GetExeFileName().replace_extension(L".ini");
+	EXPECT_THAT(GetIniFileName(), StrEq(expectedPath.c_str()));
+}
 
 /*!
  * @brief iniファイルパスの取得

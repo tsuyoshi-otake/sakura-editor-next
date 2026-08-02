@@ -388,6 +388,7 @@ class ExtensionLoader {
       if (!record.session) continue;
       if (kind === 'view' && record.session.views.has(handle)) return record.session;
       if (kind === 'progress' && record.session.progress.has(handle)) return record.session;
+      if (kind === 'scm' && (record.session.sourceControls.has(handle) || record.session.globalSourceControlInputBox?.handle === handle)) return record.session;
       if (kind === 'provider') {
         for (const providers of record.session.languageProviders.values()) if (providers.has(handle)) return record.session;
       }
@@ -416,6 +417,11 @@ class ExtensionLoader {
     }
     if (method === 'extension/progress/cancel') {
       return this.sessionForHandle('progress', params?.handle)?.handleRequest(method, params) ?? { accepted: false };
+    }
+    if (method === 'extension/scm/inputChange') {
+      const byOwner = this.extensions.get(String(params?.extensionId || '').toLowerCase())?.session;
+      const session = byOwner || this.sessionForHandle('scm', params?.handle);
+      return session?.handleRequest(method, params) ?? { accepted: false };
     }
     if (method === 'extension/secrets/didChange') {
       const record = this.extensions.get(String(params?.extensionId || '').toLowerCase());

@@ -308,7 +308,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
 		const HDC dc = ::BeginPaint(window, &paint);
-		const HBRUSH brush = ::CreateSolidBrush(impl.palette.panel.ToColorRef());
+		const HBRUSH brush = ::CreateSolidBrush(impl.palette.sideBar.ToColorRef());
 		::FillRect(dc, &paint.rcPaint, brush);
 		::DeleteObject(brush);
 		if (impl.font.Get()) ::SelectObject(dc, impl.font.Get());
@@ -323,8 +323,8 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	case WM_CTLCOLORLISTBOX: {
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
-		::SetBkColor(dc, impl.palette.panel.ToColorRef());
-		::SetDCBrushColor(dc, impl.palette.panel.ToColorRef());
+		::SetBkColor(dc, impl.palette.sideBar.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.sideBar.ToColorRef());
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case WM_COMMAND:

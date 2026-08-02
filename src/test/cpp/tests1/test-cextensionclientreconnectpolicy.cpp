@@ -54,6 +54,24 @@ TEST(CExtensionClientReconnectPolicy, DeduplicatesAndUsesCappedExponentialBackof
 	EXPECT_TRUE(policy.TakeDueReconnect(start + 350ms).has_value());
 }
 
+TEST(CExtensionClientReconnectPolicy, CancelDropsPendingSessionAndAllowsFreshRequest)
+{
+	Policy policy(FastConfig());
+	const TimePoint start{};
+	const auto first = StartAttempt(policy, start);
+	ASSERT_TRUE(policy.BeginHello(first, 11, start));
+
+	policy.Cancel();
+
+	EXPECT_EQ(Policy::State::Idle, policy.GetState());
+	EXPECT_EQ(0u, policy.GetRetryCount());
+	EXPECT_EQ(0u, policy.GetActiveToken());
+	EXPECT_EQ(0u, policy.GetActiveGeneration());
+	EXPECT_FALSE(policy.NextDeadline().has_value());
+	EXPECT_TRUE(policy.RequestReconnect(start + 1s));
+	EXPECT_FALSE(policy.OnFailure(first, 11, start + 1s, 0.5));
+}
+
 TEST(CExtensionClientReconnectPolicy, RejectsStaleTokenAndGeneration)
 {
 	Policy policy(FastConfig());

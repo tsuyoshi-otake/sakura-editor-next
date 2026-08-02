@@ -29,6 +29,15 @@ class CGraphics;
 struct EditNode;
 struct DLLSHAREDATA;
 
+// A tab notification normally belongs to the editor-group tab strip. Only
+// changes that alter the strip's participation in the parent layout should
+// cause CEditWnd::OnSize2() to relayout the workbench.
+enum class ETabWindowNotifyImpact
+{
+	TabStripOnly,
+	WorkbenchLayout,
+};
+
 //! タブバーウィンドウ
 class CTabWnd final : public CWnd
 {
@@ -44,7 +53,7 @@ public:
 	*/
 	HWND Open( HINSTANCE hInstance, HWND hwndParent );		/*!< ウィンドウ オープン */
 	void Close( void );					/*!< ウィンドウ クローズ */
-	void TabWindowNotify( WPARAM wParam, LPARAM lParam );
+	[[nodiscard]] ETabWindowNotifyImpact TabWindowNotify( WPARAM wParam, LPARAM lParam );
 	void Refresh( BOOL bEnsureVisible = TRUE, BOOL bRebuild = FALSE );			// 2006.02.06 ryoji 引数削除
 	void NextGroup( void );			/* 次のグループ */			// 2007.06.20 ryoji
 	void PrevGroup( void );			/* 前のグループ */			// 2007.06.20 ryoji

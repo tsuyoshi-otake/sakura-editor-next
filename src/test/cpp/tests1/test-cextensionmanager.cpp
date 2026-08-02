@@ -7,6 +7,7 @@
 #include "pch.h"
 #include <Windows.h>
 #include "extension/CExtensionManager.h"
+#include "extension/CExtensionProfileState.h"
 
 #include <filesystem>
 #include <fstream>
@@ -501,4 +502,48 @@ TEST(CExtensionManager, Uninstall_NotInstalled)
 
 	SInstalledExtension found;
 	EXPECT_FALSE(manager.FindInstalled(L"no-such.extension", found));
+}
+
+TEST(CExtensionProfileState, MissingStateUsesProfileSpecificDefaults)
+{
+	TempDirectory directory;
+	CExtensionProfileState state(directory.GetPath() / L"extensions.json");
+	const auto missing = state.Load();
+
+	EXPECT_EQ(missing.status, CExtensionProfileState::EStatus::Missing);
+	EXPECT_TRUE(CExtensionProfileState::IsEnabled(missing, L"ms-toolsai.python", true));
+	EXPECT_FALSE(CExtensionProfileState::IsEnabled(missing, L"ms-toolsai.python", false));
+	EXPECT_TRUE(state.SetEnabled(L"MS-ToolsAI.Python", false));
+
+	const auto disabled = state.Load();
+	ASSERT_EQ(disabled.status, CExtensionProfileState::EStatus::Valid);
+	EXPECT_FALSE(CExtensionProfileState::IsEnabled(disabled, L"ms-toolsai.python", true));
+	EXPECT_TRUE(state.SetEnabled(L"ms-toolsai.python", true));
+	EXPECT_TRUE(CExtensionProfileState::IsEnabled(state.Load(), L"ms-toolsai.python", false));
+	EXPECT_TRUE(state.Remove(L"ms-toolsai.python"));
+	EXPECT_EQ(state.Load().status, CExtensionProfileState::EStatus::Valid);
+}
+
+TEST(CExtensionProfileState, InvalidStateFailsClosedAndIsNotOverwritten)
+{
+	TempDirectory directory;
+	const auto path = directory.GetPath() / L"extensions.json";
+	{
+		std::ofstream output(path, std::ios::binary | std::ios::trunc);
+		output << R"({"version":1,"extensions":{"bad/id":true}})";
+	}
+	CExtensionProfileState state(path);
+	EXPECT_EQ(state.Load().status, CExtensionProfileState::EStatus::Invalid);
+	EXPECT_FALSE(CExtensionProfileState::IsEnabled(state.Load(), L"ms-toolsai.python", true));
+	EXPECT_FALSE(state.SetEnabled(L"ms-toolsai.python", true));
+	EXPECT_EQ(state.Load().status, CExtensionProfileState::EStatus::Invalid);
+}
+
+TEST(CExtensionProfileState, RejectsUnsafeIds)
+{
+	EXPECT_TRUE(CExtensionProfileState::IsSafeExtensionId(L"publisher.extension"));
+	EXPECT_TRUE(CExtensionProfileState::IsSafeExtensionId(L"publisher_extension-1"));
+	EXPECT_FALSE(CExtensionProfileState::IsSafeExtensionId(L"publisher/extension"));
+	EXPECT_FALSE(CExtensionProfileState::IsSafeExtensionId(L"..\\..\\secret"));
+	EXPECT_FALSE(CExtensionProfileState::IsSafeExtensionId(L""));
 }

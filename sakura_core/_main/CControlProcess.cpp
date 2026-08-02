@@ -50,22 +50,32 @@ std::filesystem::path CControlProcess::GetIniFileName() const
 	// exe基準のiniファイルパスを得る
 	auto iniPath = GetExeFileName().replace_extension(L".ini");
 
-	// マルチユーザー用のiniファイルパス
-	//		exeと同じフォルダーに置かれたマルチユーザー構成設定ファイル（sakura.exe.ini）の内容
-	//		に従ってマルチユーザー用のiniファイルパスを決める
+	// exeと同じフォルダーに置かれたマルチユーザー構成設定ファイル
+	// (sakura.exe.ini) がある場合だけ、その内容に従って保存先を決める。
+	// 構成ファイルがない状態は、実行ファイルの場所に依存しない既定の
+	// ユーザープロファイルとして扱う。これにより Debug/Release の切替や
+	// アップデート後も、設定・拡張機能・各種プロファイルを引き継げる。
 	auto exeIniPath = GetExeFileName().concat(L".ini");
-	if (bool isMultiUserSeggings = ::GetPrivateProfileInt(L"Settings", L"MultiUser", 0, exeIniPath.c_str()); isMultiUserSeggings) {
-		return GetPrivateIniFileName(exeIniPath, iniPath.filename());
-	}
-
 	const auto filename = iniPath.filename();
-	iniPath.remove_filename();
+	const auto exeIniAttributes = ::GetFileAttributesW(exeIniPath.c_str());
+	const bool hasExeIniSettings = exeIniAttributes != INVALID_FILE_ATTRIBUTES
+		&& (exeIniAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0;
+	if (hasExeIniSettings) {
+		if (bool isMultiUserSettings = ::GetPrivateProfileInt(L"Settings", L"MultiUser", 0, exeIniPath.c_str()); isMultiUserSettings) {
+			return GetPrivateIniFileName(exeIniPath, filename.wstring());
+		}
 
-	if (const auto pszProfileName = GetProfileName(); *pszProfileName) {
-		iniPath.append(pszProfileName);
+		// MultiUser=0 を明示した場合は、互換用のポータブルモードとして
+		// 実行ファイル隣接プロファイルを維持する。
+		iniPath.remove_filename();
+		if (const auto pszProfileName = GetProfileName(); *pszProfileName) {
+			iniPath.append(pszProfileName);
+		}
+		return iniPath.append(filename.c_str());
 	}
 
-	return iniPath.append(filename.c_str());
+	// サイドカー設定がない場合の既定値は per-user プロファイル。
+	return GetPrivateIniFileName(exeIniPath, filename.wstring());
 }
 
 /*!

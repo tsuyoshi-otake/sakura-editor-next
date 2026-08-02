@@ -8,8 +8,10 @@
 #include "workbench/extension/CExtensionBottomPanelTool.h"
 
 #include <CommCtrl.h>
+#include <Richedit.h>
 
 #include <algorithm>
+#include <array>
 #include <iterator>
 #include <string>
 #include <utility>
@@ -21,14 +23,48 @@ constexpr wchar_t kWindowClass[] = L"SakuraExtensionBottomPanel";
 constexpr UINT_PTR kTerminalButton = 100;
 constexpr UINT_PTR kProblemsButton = 101;
 constexpr UINT_PTR kOutputButton = 102;
-constexpr UINT_PTR kProblemsList = 103;
-constexpr UINT_PTR kOutputSelector = 104;
-constexpr UINT_PTR kOutputText = 105;
+constexpr UINT_PTR kPortsButton = 103;
+constexpr UINT_PTR kDebugConsoleButton = 104;
+constexpr UINT_PTR kProblemsList = 105;
+constexpr UINT_PTR kOutputSelector = 106;
+constexpr UINT_PTR kOutputText = 107;
+constexpr UINT_PTR kPanelMaximizeButton = 108;
+constexpr UINT_PTR kPanelCloseButton = 109;
 constexpr unsigned int kDefaultDpi = 96;
+
+bool IsPanelTabId(UINT_PTR id) noexcept
+{
+	return id == kTerminalButton || id == kProblemsButton || id == kOutputButton
+		|| id == kPortsButton || id == kDebugConsoleButton;
+}
+
+bool IsPanelActionId(UINT_PTR id) noexcept
+{
+	return id == kPanelMaximizeButton || id == kPanelCloseButton;
+}
 
 int Scale(int value, unsigned int dpi) noexcept
 {
 	return ::MulDiv(value, static_cast<int>(dpi ? dpi : kDefaultDpi), kDefaultDpi);
+}
+
+bool IsSupportedTab(ExtensionBottomPanelTab tab) noexcept
+{
+	return tab == ExtensionBottomPanelTab::Terminal
+		|| tab == ExtensionBottomPanelTab::Problems
+		|| tab == ExtensionBottomPanelTab::Output;
+}
+
+ExtensionBottomPanelTab TabForButtonId(UINT_PTR id) noexcept
+{
+	switch (id) {
+	case kProblemsButton: return ExtensionBottomPanelTab::Problems;
+	case kOutputButton: return ExtensionBottomPanelTab::Output;
+	case kTerminalButton: return ExtensionBottomPanelTab::Terminal;
+	case kPortsButton: return ExtensionBottomPanelTab::Ports;
+	case kDebugConsoleButton: return ExtensionBottomPanelTab::DebugConsole;
+	default: return ExtensionBottomPanelTab::Terminal;
+	}
 }
 
 bool EnsureClass(HINSTANCE instance)
@@ -62,13 +98,20 @@ struct CExtensionBottomPanelTool::Impl {
 	HWND terminalButton = nullptr;
 	HWND problemsButton = nullptr;
 	HWND outputButton = nullptr;
+	HWND portsButton = nullptr;
+	HWND debugConsoleButton = nullptr;
 	HWND problemsList = nullptr;
 	HWND outputSelector = nullptr;
 	HWND outputText = nullptr;
+	HWND maximizeButton = nullptr;
+	HWND closeButton = nullptr;
+	RECT terminalHeaderBounds{};
 	RECT bounds{};
 	unsigned int dpi = kDefaultDpi;
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont font;
+	HBRUSH panelBrush = nullptr;
+	HBRUSH raisedBrush = nullptr;
 	ExtensionBottomPanelTab active = ExtensionBottomPanelTab::Terminal;
 	ProblemActivationCallback problemActivation;
 	OutputChannelSelectionCallback outputChannelSelection;
@@ -76,6 +119,7 @@ struct CExtensionBottomPanelTool::Impl {
 	win32::ProblemsPanelSnapshot problems;
 	win32::OutputPanelSnapshot outputs;
 	std::optional<std::string> selectedOutputChannelId;
+	CExtensionBottomPanelTool::PanelActions panelActions;
 	bool closed = false;
 
 	void ApplyFont(HWND control) const
@@ -83,9 +127,140 @@ struct CExtensionBottomPanelTool::Impl {
 		if (control && font.Get()) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), TRUE);
 	}
 
+	void DestroyBrushes() noexcept
+	{
+		if (panelBrush) ::DeleteObject(panelBrush);
+		if (raisedBrush) ::DeleteObject(raisedBrush);
+		panelBrush = nullptr;
+		raisedBrush = nullptr;
+	}
+
+	void RecreateBrushes()
+	{
+		DestroyBrushes();
+		panelBrush = ::CreateSolidBrush(palette.bottomPanel.ToColorRef());
+		raisedBrush = ::CreateSolidBrush(palette.raised.ToColorRef());
+	}
+
+	void ApplyControlPalette()
+	{
+		if (problemsList) {
+			ListView_SetBkColor(problemsList, palette.bottomPanel.ToColorRef());
+			ListView_SetTextBkColor(problemsList, palette.bottomPanel.ToColorRef());
+			ListView_SetTextColor(problemsList, palette.primaryText.ToColorRef());
+			::InvalidateRect(problemsList, nullptr, TRUE);
+		}
+		if (outputText) {
+			::SendMessageW(outputText, EM_SETBKGNDCOLOR, TRUE, palette.bottomPanel.ToColorRef());
+			::InvalidateRect(outputText, nullptr, TRUE);
+		}
+		if (outputSelector) ::InvalidateRect(outputSelector, nullptr, TRUE);
+	}
+
+	void UpdateActionVisibility()
+	{
+		if (maximizeButton) {
+			::ShowWindow(maximizeButton, panelActions.toggleMaximize ? SW_SHOW : SW_HIDE);
+		}
+		if (closeButton) {
+			::ShowWindow(closeButton, panelActions.closePanel ? SW_SHOW : SW_HIDE);
+		}
+	}
+
+	void DrawOwnerButton(const DRAWITEMSTRUCT& item) const
+	{
+		if (item.hDC == nullptr) return;
+		const UINT_PTR id = static_cast<UINT_PTR>(item.CtlID);
+		const bool action = IsPanelActionId(id);
+		const bool tab = IsPanelTabId(id);
+		const ExtensionBottomPanelTab buttonTab = TabForButtonId(id);
+		const bool supportedTab = !tab || IsSupportedTab(buttonTab);
+		const bool disabled = (item.itemState & ODS_DISABLED) != 0 || !supportedTab;
+		const bool activeTab = tab && supportedTab && active == buttonTab;
+		const bool pressed = (item.itemState & ODS_SELECTED) != 0;
+		const HBRUSH background = (activeTab || pressed) ? raisedBrush : panelBrush;
+		if (background) ::FillRect(item.hDC, &item.rcItem, background);
+
+		if (action) {
+			const int centerX = (item.rcItem.left + item.rcItem.right) / 2;
+			const int centerY = (item.rcItem.top + item.rcItem.bottom) / 2;
+			const int half = Scale(5, dpi);
+			const COLORREF iconColor = palette.secondaryText.ToColorRef();
+			const HPEN pen = ::CreatePen(PS_SOLID, std::max(1, Scale(1, dpi)), iconColor);
+			const HGDIOBJ previousPen = pen ? ::SelectObject(item.hDC, pen) : nullptr;
+			if (id == kPanelCloseButton) {
+				::MoveToEx(item.hDC, centerX - half, centerY - half, nullptr);
+				::LineTo(item.hDC, centerX + half + 1, centerY + half + 1);
+				::MoveToEx(item.hDC, centerX + half, centerY - half, nullptr);
+				::LineTo(item.hDC, centerX - half - 1, centerY + half + 1);
+			} else {
+				const bool maximized = panelActions.isMaximized && panelActions.isMaximized();
+				const RECT outer{ centerX - half, centerY - half, centerX + half + 1, centerY + half + 1 };
+				if (maximized) {
+					::Rectangle(item.hDC, outer.left + Scale(2, dpi), outer.top,
+						outer.right, outer.bottom - Scale(2, dpi));
+					::Rectangle(item.hDC, outer.left, outer.top + Scale(2, dpi),
+						outer.right - Scale(2, dpi), outer.bottom);
+				} else {
+					::Rectangle(item.hDC, outer.left, outer.top, outer.right, outer.bottom);
+				}
+			}
+			if (previousPen) ::SelectObject(item.hDC, previousPen);
+			if (pen) ::DeleteObject(pen);
+			return;
+		}
+
+		wchar_t label[128]{};
+		::GetWindowTextW(item.hwndItem, label, static_cast<int>(std::size(label)));
+		::SetBkMode(item.hDC, TRANSPARENT);
+		::SetTextColor(item.hDC, disabled ? palette.disabledText.ToColorRef()
+			: activeTab ? palette.primaryText.ToColorRef() : palette.secondaryText.ToColorRef());
+		RECT text = item.rcItem;
+		text.left += Scale(12, dpi);
+		text.right -= Scale(8, dpi);
+		::DrawTextW(item.hDC, label, -1, &text, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+		if (activeTab) {
+			RECT underline = item.rcItem;
+			underline.left += Scale(8, dpi);
+			underline.right -= Scale(8, dpi);
+			underline.top = std::max(underline.top, underline.bottom - Scale(2, dpi));
+			const HBRUSH accentBrush = ::CreateSolidBrush(palette.accent.ToColorRef());
+			if (accentBrush) {
+				::FillRect(item.hDC, &underline, accentBrush);
+				::DeleteObject(accentBrush);
+			}
+		}
+		if ((item.itemState & ODS_FOCUS) != 0) {
+			RECT focus = item.rcItem;
+			::InflateRect(&focus, -Scale(2, dpi), -Scale(2, dpi));
+			::DrawFocusRect(item.hDC, &focus);
+		}
+	}
+
+	void DrawOutputItem(const DRAWITEMSTRUCT& item) const
+	{
+		if (item.hDC == nullptr) return;
+		const bool selected = (item.itemState & ODS_SELECTED) != 0;
+		const HBRUSH background = selected ? raisedBrush : panelBrush;
+		if (background) ::FillRect(item.hDC, &item.rcItem, background);
+		wchar_t label[256]{};
+		int itemIndex = item.itemID == static_cast<UINT>(-1)
+			? static_cast<int>(::SendMessageW(outputSelector, CB_GETCURSEL, 0, 0))
+			: static_cast<int>(item.itemID);
+		if (itemIndex >= 0) {
+			::SendMessageW(outputSelector, CB_GETLBTEXT, itemIndex, reinterpret_cast<LPARAM>(label));
+		}
+		::SetBkMode(item.hDC, TRANSPARENT);
+		::SetTextColor(item.hDC, palette.primaryText.ToColorRef());
+		RECT text = item.rcItem;
+		text.left += Scale(8, dpi);
+		text.right -= Scale(24, dpi);
+		::DrawTextW(item.hDC, label, -1, &text, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+	}
+
 	void ApplyActiveTab(ExtensionBottomPanelTab tab)
 	{
-		if (closed) return;
+		if (closed || !IsSupportedTab(tab)) return;
 		active = tab;
 		const bool showTerminal = tab == ExtensionBottomPanelTab::Terminal;
 		::ShowWindow(terminal->GetHwnd(), showTerminal ? SW_SHOW : SW_HIDE);
@@ -95,8 +270,11 @@ struct CExtensionBottomPanelTool::Impl {
 		::SendMessageW(terminalButton, BM_SETSTATE, showTerminal, 0);
 		::SendMessageW(problemsButton, BM_SETSTATE, tab == ExtensionBottomPanelTab::Problems, 0);
 		::SendMessageW(outputButton, BM_SETSTATE, tab == ExtensionBottomPanelTab::Output, 0);
+		::SendMessageW(portsButton, BM_SETSTATE, FALSE, 0);
+		::SendMessageW(debugConsoleButton, BM_SETSTATE, FALSE, 0);
 		if (!showTerminal) terminal->Deactivate();
 		LayoutChildren();
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 
 	void LayoutChildren()
@@ -104,19 +282,70 @@ struct CExtensionBottomPanelTool::Impl {
 		if (!window) return;
 		const int width = std::max(0L, bounds.right - bounds.left);
 		const int height = std::max(0L, bounds.bottom - bounds.top);
-		const int tabHeight = Scale(30, dpi);
-		const int tabWidth = Scale(105, dpi);
+		const int headerHeight = Scale(34, dpi);
+		const int actionWidth = Scale(30, dpi);
 		::MoveWindow(window, bounds.left, bounds.top, width, height, TRUE);
-		::MoveWindow(terminalButton, 0, 0, tabWidth, tabHeight, TRUE);
-		::MoveWindow(problemsButton, tabWidth, 0, tabWidth, tabHeight, TRUE);
-		::MoveWindow(outputButton, tabWidth * 2, 0, tabWidth, tabHeight, TRUE);
-		RECT content{ 0, tabHeight, width, height };
+
+		int commonActionLeft = width;
+		const auto placeAction = [&](HWND button, bool visible) {
+			if (!button) return;
+			if (visible) {
+				commonActionLeft = std::max(0, commonActionLeft - actionWidth);
+				::MoveWindow(button, commonActionLeft, 0,
+					std::min(actionWidth, std::max(0, width - commonActionLeft)), headerHeight, TRUE);
+			} else {
+				::MoveWindow(button, 0, 0, 0, 0, FALSE);
+			}
+		};
+		placeAction(closeButton, static_cast<bool>(panelActions.closePanel));
+		placeAction(maximizeButton, static_cast<bool>(panelActions.toggleMaximize));
+
+		// Keep the terminal actions in the same physical row as the view-container
+		// tabs. The toolbar gets a bounded trailing region; the tabs retain a compact
+		// intrinsic width and leave the middle as intentional breathing room.
+		constexpr std::array desiredTabWidthsDip{ 82, 70, 78, 58, 118 };
+		constexpr int desiredTabWidthDipTotal = 406;
+		const int minimumTabArea = std::min(commonActionLeft, Scale(250, dpi));
+		const int desiredToolbarWidth = Scale(260, dpi);
+		const int toolbarWidth = std::min(desiredToolbarWidth,
+			std::max(0, commonActionLeft - minimumTabArea));
+		const int toolbarLeft = std::max(0, commonActionLeft - toolbarWidth);
+		terminalHeaderBounds = toolbarWidth > 0 && headerHeight > 0
+			? RECT{ toolbarLeft, 0, commonActionLeft, headerHeight } : RECT{};
+
+		constexpr std::array tabButtons{
+			std::pair{ ExtensionBottomPanelTab::Problems, kProblemsButton },
+			std::pair{ ExtensionBottomPanelTab::Output, kOutputButton },
+			std::pair{ ExtensionBottomPanelTab::Terminal, kTerminalButton },
+			std::pair{ ExtensionBottomPanelTab::Ports, kPortsButton },
+			std::pair{ ExtensionBottomPanelTab::DebugConsole, kDebugConsoleButton },
+		};
+		const int compactTabArea = std::min(toolbarLeft, Scale(desiredTabWidthDipTotal, dpi));
+		int remainingWidth = compactTabArea;
+		int remainingTabs = static_cast<int>(tabButtons.size());
+		int tabLeft = 0;
+		for (std::size_t index = 0; index < tabButtons.size(); ++index) {
+			const int desired = Scale(desiredTabWidthsDip[index], dpi);
+			const int tabWidth = toolbarLeft >= Scale(desiredTabWidthDipTotal, dpi)
+				? desired
+				: remainingTabs > 0 ? remainingWidth / remainingTabs : 0;
+			const HWND button = index == 0 ? problemsButton
+				: index == 1 ? outputButton
+				: index == 2 ? terminalButton
+				: index == 3 ? portsButton : debugConsoleButton;
+			::MoveWindow(button, tabLeft, 0, std::max(0, tabWidth), headerHeight, TRUE);
+			tabLeft += tabWidth;
+			remainingWidth = std::max(0, remainingWidth - tabWidth);
+			--remainingTabs;
+		}
+
+		RECT content{ 0, headerHeight, width, height };
 		terminal->Layout(content, dpi);
-		::MoveWindow(problemsList, 0, tabHeight, width, std::max(0, height - tabHeight), TRUE);
+		::MoveWindow(problemsList, 0, headerHeight, width, std::max(0, height - headerHeight), TRUE);
 		const int selectorHeight = Scale(28, dpi);
-		::MoveWindow(outputSelector, 0, tabHeight, width, selectorHeight, TRUE);
-		::MoveWindow(outputText, 0, tabHeight + selectorHeight, width,
-			std::max(0, height - tabHeight - selectorHeight), TRUE);
+		::MoveWindow(outputSelector, 0, headerHeight, width, selectorHeight, TRUE);
+		::MoveWindow(outputText, 0, headerHeight + selectorHeight, width,
+			std::max(0, height - headerHeight - selectorHeight), TRUE);
 	}
 
 	void RefreshProblems()
@@ -136,7 +365,8 @@ struct CExtensionBottomPanelTool::Impl {
 			ListView_SetItemText(problemsList, static_cast<int>(index), 3,
 				const_cast<wchar_t*>(problem.source.c_str()));
 		}
-		std::wstring label = L"Problems (" + std::to_wstring(problems.entries.size()) + L")";
+		std::wstring label = L"PROBLEMS";
+		if (!problems.entries.empty()) label += L" (" + std::to_wstring(problems.entries.size()) + L")";
 		::SetWindowTextW(problemsButton, label.c_str());
 	}
 
@@ -215,7 +445,12 @@ struct CExtensionBottomPanelTool::Impl {
 				return false;
 			}
 		}
-		SelectOutput(static_cast<int>(std::distance(outputs.channels.begin(), selected)));
+		// The callback is the model owner. Its accepted request is projected back
+		// through SetOutputSnapshot; applying here would create a second, optimistic
+		// authority and could briefly display a value the model rejected later.
+		if (!outputChannelSelection) {
+			SelectOutput(static_cast<int>(std::distance(outputs.channels.begin(), selected)));
+		}
 		return true;
 	}
 
@@ -243,6 +478,7 @@ bool CExtensionBottomPanelTool::Create(HWND parent)
 		m_impl->window = nullptr;
 		return false;
 	}
+	m_impl->terminal->SetPanelHeaderHost(m_impl->window);
 	return true;
 }
 
@@ -256,9 +492,13 @@ void CExtensionBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi
 		m_impl->ApplyFont(m_impl->terminalButton);
 		m_impl->ApplyFont(m_impl->problemsButton);
 		m_impl->ApplyFont(m_impl->outputButton);
+		m_impl->ApplyFont(m_impl->portsButton);
+		m_impl->ApplyFont(m_impl->debugConsoleButton);
 		m_impl->ApplyFont(m_impl->problemsList);
 		m_impl->ApplyFont(m_impl->outputSelector);
 		m_impl->ApplyFont(m_impl->outputText);
+		m_impl->ApplyFont(m_impl->maximizeButton);
+		m_impl->ApplyFont(m_impl->closeButton);
 	}
 	m_impl->LayoutChildren();
 }
@@ -292,9 +532,12 @@ void CExtensionBottomPanelTool::Close()
 	m_impl->problems = {};
 	m_impl->outputs = {};
 	m_impl->selectedOutputChannelId.reset();
+	m_impl->panelActions = {};
+	m_impl->terminal->SetPanelHeaderHost(nullptr);
 	m_impl->terminal->Close();
 	if (m_impl->window) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
+	m_impl->DestroyBrushes();
 }
 
 terminal::CTerminalTool* CExtensionBottomPanelTool::Terminal() noexcept
@@ -306,7 +549,9 @@ void CExtensionBottomPanelTool::SetPalette(const theme::ThemePalette& palette)
 {
 	if (!m_impl) return;
 	m_impl->palette = palette;
+	m_impl->RecreateBrushes();
 	m_impl->terminal->SetPalette(palette);
+	m_impl->ApplyControlPalette();
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
 }
 
@@ -340,6 +585,15 @@ void CExtensionBottomPanelTool::SetTabSelectionCallback(TabSelectionCallback cal
 	if (m_impl && !m_impl->closed) m_impl->tabSelection = std::move(callback);
 }
 
+void CExtensionBottomPanelTool::SetPanelActions(PanelActions actions)
+{
+	if (!m_impl || m_impl->closed) return;
+	m_impl->panelActions = std::move(actions);
+	m_impl->UpdateActionVisibility();
+	m_impl->LayoutChildren();
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+}
+
 void CExtensionBottomPanelTool::Refresh() { if (m_impl) m_impl->Refresh(); }
 void CExtensionBottomPanelTool::SetActiveTab(ExtensionBottomPanelTab tab)
 {
@@ -348,7 +602,7 @@ void CExtensionBottomPanelTool::SetActiveTab(ExtensionBottomPanelTab tab)
 
 bool CExtensionBottomPanelTool::RequestTabSelection(ExtensionBottomPanelTab tab) noexcept
 {
-	if (!m_impl || m_impl->closed) return false;
+	if (!m_impl || m_impl->closed || !IsSupportedTab(tab)) return false;
 	if (m_impl->active == tab) return true;
 	if (m_impl->tabSelection) {
 		try {
@@ -357,6 +611,10 @@ bool CExtensionBottomPanelTool::RequestTabSelection(ExtensionBottomPanelTab tab)
 		catch (...) {
 			return false;
 		}
+		// The callback owns the committed state. The next model snapshot will call
+		// SetActiveTab and update the native controls atomically with the rest of the
+		// Workbench projection.
+		return true;
 	}
 	m_impl->ApplyActiveTab(tab);
 	return true;
@@ -391,16 +649,35 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 	}
 	if (!self || !self->m_impl) return ::DefWindowProcW(window, message, wParam, lParam);
 	auto& impl = *self->m_impl;
+	if ((message == WM_LBUTTONDOWN || message == WM_LBUTTONUP || message == WM_MOUSEMOVE
+		|| message == WM_MOUSELEAVE || message == WM_CAPTURECHANGED || message == WM_SETCURSOR
+		|| message == WM_RBUTTONUP)
+		&& impl.terminal
+		&& impl.terminal->HandlePanelHeaderMessage(message, wParam, lParam,
+			impl.terminalHeaderBounds, impl.dpi)) {
+		return 0;
+	}
 	switch (message) {
 	case WM_CREATE: {
 		const auto instance = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(window, GWLP_HINSTANCE));
-		impl.terminalButton = ::CreateWindowExW(0, L"BUTTON", L"Terminal", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+		impl.RecreateBrushes();
+		const DWORD tabStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW;
+		impl.terminalButton = ::CreateWindowExW(0, L"BUTTON", L"TERMINAL", tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kTerminalButton), instance, nullptr);
-		impl.problemsButton = ::CreateWindowExW(0, L"BUTTON", L"Problems (0)", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+		impl.problemsButton = ::CreateWindowExW(0, L"BUTTON", L"PROBLEMS", tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kProblemsButton), instance, nullptr);
-		impl.outputButton = ::CreateWindowExW(0, L"BUTTON", L"Output", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+		impl.outputButton = ::CreateWindowExW(0, L"BUTTON", L"OUTPUT", tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputButton), instance, nullptr);
-		impl.problemsList = ::CreateWindowExW(WS_EX_CLIENTEDGE, WC_LISTVIEWW, L"",
+		impl.portsButton = ::CreateWindowExW(0, L"BUTTON", L"PORTS", tabStyle | WS_DISABLED,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kPortsButton), instance, nullptr);
+		impl.debugConsoleButton = ::CreateWindowExW(0, L"BUTTON", L"DEBUG CONSOLE", tabStyle | WS_DISABLED,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kDebugConsoleButton), instance, nullptr);
+		const DWORD actionStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW;
+		impl.maximizeButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kPanelMaximizeButton), instance, nullptr);
+		impl.closeButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
+			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kPanelCloseButton), instance, nullptr);
+		impl.problemsList = ::CreateWindowExW(0, WC_LISTVIEWW, L"",
 			WS_CHILD | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kProblemsList), instance, nullptr);
 		ListView_SetExtendedListViewStyle(impl.problemsList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
@@ -415,11 +692,13 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 			ListView_InsertColumn(impl.problemsList, index, &column);
 		}
 		impl.outputSelector = ::CreateWindowExW(0, L"COMBOBOX", L"",
-			WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+			WS_CHILD | WS_TABSTOP | CBS_DROPDOWNLIST | CBS_OWNERDRAWFIXED | CBS_HASSTRINGS | WS_VSCROLL,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputSelector), instance, nullptr);
-		impl.outputText = ::CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+		impl.outputText = ::CreateWindowExW(0, L"EDIT", L"",
 			WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
+		impl.UpdateActionVisibility();
+		impl.ApplyControlPalette();
 		impl.ApplyActiveTab(ExtensionBottomPanelTab::Terminal);
 		return 0;
 	}
@@ -428,6 +707,18 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 		case kTerminalButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Terminal); return 0;
 		case kProblemsButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Problems); return 0;
 		case kOutputButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Output); return 0;
+		case kPortsButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::Ports); return 0;
+		case kDebugConsoleButton: (void)self->RequestTabSelection(ExtensionBottomPanelTab::DebugConsole); return 0;
+		case kPanelMaximizeButton:
+			if (HIWORD(wParam) == BN_CLICKED && impl.panelActions.toggleMaximize) {
+				impl.panelActions.toggleMaximize();
+			}
+			return 0;
+		case kPanelCloseButton:
+			if (HIWORD(wParam) == BN_CLICKED && impl.panelActions.closePanel) {
+				impl.panelActions.closePanel();
+			}
+			return 0;
 		case kOutputSelector:
 			if (HIWORD(wParam) == CBN_SELCHANGE) {
 				const auto selected = static_cast<int>(::SendMessageW(impl.outputSelector, CB_GETCURSEL, 0, 0));
@@ -440,6 +731,35 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 			return 0;
 		}
 		break;
+	case WM_DRAWITEM:
+		if (lParam != 0) {
+			const auto& item = *reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+			if (IsPanelTabId(item.CtlID) || IsPanelActionId(item.CtlID)) {
+				impl.DrawOwnerButton(item);
+				return TRUE;
+			}
+			if (item.CtlID == kOutputSelector) {
+				impl.DrawOutputItem(item);
+				return TRUE;
+			}
+		}
+		break;
+	case WM_MEASUREITEM:
+		if (wParam == kOutputSelector && lParam != 0) {
+			auto& measure = *reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
+			measure.itemHeight = static_cast<UINT>(Scale(26, impl.dpi));
+			return TRUE;
+		}
+		break;
+	case WM_CTLCOLORBTN:
+	case WM_CTLCOLORLISTBOX:
+	case WM_CTLCOLOREDIT:
+	case WM_CTLCOLORSTATIC: {
+		const HDC dc = reinterpret_cast<HDC>(wParam);
+		::SetBkColor(dc, impl.palette.bottomPanel.ToColorRef());
+		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
+		return reinterpret_cast<LRESULT>(impl.panelBrush);
+	}
 	case WM_NOTIFY: {
 		const auto* header = reinterpret_cast<const NMHDR*>(lParam);
 		if (header && header->idFrom == kProblemsList && header->code == NM_DBLCLK && impl.problemActivation) {
@@ -458,13 +778,25 @@ LRESULT CALLBACK CExtensionBottomPanelTool::WindowProc(HWND window, UINT message
 		const HDC dc = ::BeginPaint(window, &paint);
 		RECT client{};
 		::GetClientRect(window, &client);
-		const HBRUSH brush = ::CreateSolidBrush(impl.palette.panel.ToColorRef());
+		const HBRUSH brush = ::CreateSolidBrush(impl.palette.bottomPanel.ToColorRef());
 		::FillRect(dc, &client, brush);
 		::DeleteObject(brush);
+		const int tabBottom = Scale(34, impl.dpi);
+		if (impl.terminalHeaderBounds.right > impl.terminalHeaderBounds.left) {
+			impl.terminal->PaintPanelHeader(dc, impl.terminalHeaderBounds, impl.dpi);
+		}
+		RECT separator{ client.left, std::max<LONG>(client.top, static_cast<LONG>(tabBottom - 1)),
+			client.right, static_cast<LONG>(tabBottom) };
+		const HBRUSH separatorBrush = ::CreateSolidBrush(impl.palette.border.ToColorRef());
+		if (separatorBrush) {
+			::FillRect(dc, &separator, separatorBrush);
+			::DeleteObject(separatorBrush);
+		}
 		::EndPaint(window, &paint);
 		return 0;
 	}
 	case WM_NCDESTROY:
+		impl.DestroyBrushes();
 		impl.window = nullptr;
 		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
 		break;

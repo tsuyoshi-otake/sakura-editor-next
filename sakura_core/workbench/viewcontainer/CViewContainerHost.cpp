@@ -8,8 +8,12 @@
 #include "workbench/viewcontainer/CViewContainerHost.h"
 
 #include "extension/CExtensionPane.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
 
 #include <algorithm>
+#include <string_view>
 #include <windowsx.h>
 
 namespace workbench::viewcontainer {
@@ -52,6 +56,34 @@ bool EnsureWindowClass(HINSTANCE instance)
 	return false;
 }
 
+[[nodiscard]] bool PaintFontGlyph(
+	HDC dc,
+	const workbench::icons::IconRect& box,
+	HFONT font,
+	wchar_t glyph,
+	COLORREF color
+) noexcept
+{
+	if (dc == nullptr || font == nullptr || glyph == L'\0' || box.Width() <= 0 || box.Height() <= 0) {
+		return false;
+	}
+	const int saved = ::SaveDC(dc);
+	if (saved == 0) return false;
+	const HGDIOBJ oldFont = ::SelectObject(dc, font);
+	if (oldFont == nullptr || oldFont == HGDI_ERROR) {
+		::RestoreDC(dc, saved);
+		return false;
+	}
+	::SetBkMode(dc, TRANSPARENT);
+	::SetTextColor(dc, color);
+	RECT glyphRect{ box.left, box.top, box.right, box.bottom };
+	const wchar_t text[] = { glyph, L'\0' };
+	const int drawn = ::DrawTextW(dc, text, 1, &glyphRect,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::RestoreDC(dc, saved);
+	return drawn != 0;
+}
+
 } // namespace
 
 CViewContainerHost::CViewContainerHost(std::shared_ptr<CViewContainerPages> pages,
@@ -88,6 +120,39 @@ void CViewContainerHost::Layout(const RECT& contentRect, unsigned int dpi)
 		std::max(0L, contentRect.right - contentRect.left),
 		std::max(0L, contentRect.bottom - contentRect.top), SWP_NOACTIVATE | SWP_NOZORDER);
 	LayoutChildren();
+}
+
+HFONT CViewContainerHost::AcquireCodiconFont(int height) noexcept
+{
+	if (height <= 0) return nullptr;
+	const auto faceName = workbench::icons::CCodiconFont::Instance().FaceName();
+	if (faceName.empty() || faceName.size() >= LF_FACESIZE) {
+		ReleaseCodiconFont();
+		return nullptr;
+	}
+	if (m_codiconFont != nullptr && m_codiconFontHeight == height) return m_codiconFont;
+
+	ReleaseCodiconFont();
+	LOGFONTW logFont{};
+	logFont.lfHeight = -height;
+	logFont.lfWeight = FW_NORMAL;
+	logFont.lfCharSet = DEFAULT_CHARSET;
+	logFont.lfOutPrecision = OUT_TT_PRECIS;
+	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	logFont.lfQuality = CLEARTYPE_QUALITY;
+	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	std::copy(faceName.begin(), faceName.end(), logFont.lfFaceName);
+	logFont.lfFaceName[faceName.size()] = L'\0';
+	m_codiconFont = ::CreateFontIndirectW(&logFont);
+	if (m_codiconFont != nullptr) m_codiconFontHeight = height;
+	return m_codiconFont;
+}
+
+void CViewContainerHost::ReleaseCodiconFont() noexcept
+{
+	if (m_codiconFont != nullptr) ::DeleteObject(m_codiconFont);
+	m_codiconFont = nullptr;
+	m_codiconFontHeight = 0;
 }
 
 void CViewContainerHost::Activate()
@@ -182,6 +247,7 @@ void CViewContainerHost::Close()
 	}
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 	m_window = nullptr;
+	ReleaseCodiconFont();
 }
 
 void CViewContainerHost::SetPalette(const theme::ThemePalette& palette)
@@ -450,8 +516,18 @@ void CViewContainerHost::Paint()
 		RECT chevron = m_outlineHeader;
 		chevron.left += ScaleDip(6, m_dpi);
 		chevron.right = chevron.left + ScaleDip(12, m_dpi);
-		::DrawTextW(dc, IsOutlineExpanded() ? L"\x2304" : L"\x203A", -1, &chevron,
-			DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+		const bool expanded = IsOutlineExpanded();
+		const auto icon = expanded ? workbench::icons::codicons::Icon::ChevronDown
+			: workbench::icons::codicons::Icon::ChevronRight;
+		const auto glyphName = expanded ? L"chevron-down" : L"chevron-right";
+		const auto glyph = workbench::icons::FindCodiconGlyph(glyphName);
+		const workbench::icons::IconRect iconBox{
+			static_cast<int>(chevron.left), static_cast<int>(chevron.top),
+			static_cast<int>(chevron.right), static_cast<int>(chevron.bottom) };
+		if (!PaintFontGlyph(dc, iconBox, AcquireCodiconFont(ScaleDip(16, m_dpi)),
+			glyph.value_or(L'\0'), m_palette.primaryText.ToColorRef())) {
+			workbench::icons::codicons::Draw(dc, iconBox, icon, m_palette.primaryText.ToColorRef());
+		}
 		RECT text = m_outlineHeader;
 		text.left += ScaleDip(22, m_dpi);
 		::DrawTextW(dc, L"OUTLINE", -1, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);

@@ -8,6 +8,7 @@
 #include "workbench/scm/GitScmModel.h"
 
 #include <charconv>
+#include <utility>
 
 namespace workbench::scm {
 namespace {
@@ -41,6 +42,27 @@ int ParseSigned(std::string_view value)
 	return result;
 }
 
+GitChange MakeChange(
+	const wchar_t indexStatus,
+	const wchar_t worktreeStatus,
+	std::wstring path,
+	const bool conflicted = false,
+	std::wstring originalPath = {})
+{
+	const bool untracked = indexStatus == L'?' && worktreeStatus == L'?';
+	const wchar_t status = conflicted ? L'!' : untracked ? L'U'
+		: worktreeStatus != L'.' ? worktreeStatus : indexStatus != L'.' ? indexStatus : L'M';
+	return {
+		.status = status,
+		.path = std::move(path),
+		.indexStatus = indexStatus,
+		.worktreeStatus = worktreeStatus,
+		.untracked = untracked,
+		.conflicted = conflicted,
+		.originalPath = std::move(originalPath),
+	};
+}
+
 } // namespace
 
 GitScmState ParsePorcelainV2(std::string_view bytes)
@@ -63,22 +85,25 @@ GitScmState ParsePorcelainV2(std::string_view bytes)
 			state.ahead = ParseSigned(values.substr(0, separator));
 			if (separator != std::string_view::npos) state.behind = -ParseSigned(values.substr(separator + 1));
 		} else if (record.starts_with("? ")) {
-			state.changes.push_back({ L'U', FromUtf8(record.substr(2)) });
+			state.changes.push_back(MakeChange(L'?', L'?', FromUtf8(record.substr(2))));
 		} else if (record.starts_with("! ")) {
 			continue;
 		} else if (!record.empty() && (record[0] == '1' || record[0] == '2' || record[0] == 'u')) {
-			const wchar_t x = record.size() > 2 ? static_cast<unsigned char>(record[2]) : L'M';
+			const wchar_t x = record.size() > 2 ? static_cast<unsigned char>(record[2]) : L'.';
 			const wchar_t y = record.size() > 3 ? static_cast<unsigned char>(record[3]) : L'.';
-			wchar_t status = y != L'.' ? y : x;
-			if (record[0] == 'u') status = L'!';
-			if (status == L'?') status = L'U';
 			const int pathField = record[0] == '2' ? 9 : record[0] == 'u' ? 10 : 8;
 			const auto path = FieldAfterSpaces(record, pathField);
-			if (!path.empty()) state.changes.push_back({ status, FromUtf8(path) });
-			if (record[0] == '2' && position < bytes.size()) {
-				// -z rename records append the original path as an extra NUL record.
-				const auto originalEnd = bytes.find('\0', position);
-				position = originalEnd == std::string_view::npos ? bytes.size() : originalEnd + 1;
+			if (!path.empty()) {
+				std::wstring originalPath;
+				if (record[0] == '2' && position < bytes.size()) {
+					// -z rename records append the original path as an extra NUL record.
+					const auto originalEnd = bytes.find('\0', position);
+					const auto original = bytes.substr(position,
+						originalEnd == std::string_view::npos ? bytes.size() - position : originalEnd - position);
+					originalPath = FromUtf8(original);
+					position = originalEnd == std::string_view::npos ? bytes.size() : originalEnd + 1;
+				}
+				state.changes.push_back(MakeChange(x, y, FromUtf8(path), record[0] == 'u', std::move(originalPath)));
 			}
 		}
 	}

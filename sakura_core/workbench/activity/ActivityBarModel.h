@@ -10,6 +10,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <optional>
+#include <string_view>
 
 namespace workbench::activity {
 
@@ -127,6 +128,20 @@ private:
 	case ActivityBarItem::Count: break;
 	}
 	return L"";
+}
+
+//! The bundled VS Code Codicon name for one rendered Activity Bar ViewContainer.
+//! Keep this separate from ActivityBarItemName(): accessible labels are localized
+//! product text, whereas these names are stable glyph identifiers.
+[[nodiscard]] constexpr std::wstring_view ActivityBarItemCodiconName(ActivityBarItem item) noexcept
+{
+	switch (item) {
+	case ActivityBarItem::Explorer: return L"files";
+	case ActivityBarItem::SourceControl: return L"source-control";
+	case ActivityBarItem::Extensions: return L"extensions";
+	case ActivityBarItem::Count: break;
+	}
+	return {};
 }
 
 } // namespace workbench::activity

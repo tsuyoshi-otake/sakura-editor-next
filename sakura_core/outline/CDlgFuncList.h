@@ -25,6 +25,7 @@
 
 #include <Windows.h>
 #include <CommCtrl.h>
+#include <string_view>
 #include "dlg/CDialog.h"
 #include "doc/CEditDoc.h"
 
@@ -84,6 +85,9 @@ public:
 		HFONT font,
 		int itemHeight,
 		HIMAGELIST symbolImages ) noexcept;
+	static constexpr int WorkbenchSymbolImageCount() noexcept { return 10; }
+	[[nodiscard]] static int WorkbenchSymbolImageIndex( int info ) noexcept;
+	[[nodiscard]] static std::wstring_view WorkbenchSymbolCodiconName( int imageIndex ) noexcept;
 	[[nodiscard]] HWND GetWorkbenchParent() const noexcept { return m_hwndWorkbenchParent; }
 	[[nodiscard]] bool IsWorkbenchMode() const noexcept { return m_bWorkbenchMode; }
 	[[nodiscard]] bool IsDocking() const noexcept { return !m_bWorkbenchMode && m_eDockSide > DOCKSIDE_FLOAT; }

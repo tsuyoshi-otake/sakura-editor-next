@@ -539,6 +539,24 @@ file(GLOB_RECURSE SOURCES
   ${CMAKE_SOURCE_DIR}/sakura_core/*.cpp
 )
 
+# Keep the native terminal rendering seam explicit even though the broad source
+# discovery above also sees these paths.  This makes CMake registration match
+# the MSBuild project and preserves their deterministic build order.
+set(TERMINAL_RENDERER_HEADERS
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/window/TerminalBuiltinGlyphRenderer.h
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/window/TerminalDWriteRenderer.h
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/window/TerminalRenderPlan.h
+)
+set(TERMINAL_RENDERER_SOURCES
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/window/TerminalBuiltinGlyphRenderer.cpp
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/window/TerminalDWriteRenderer.cpp
+  ${CMAKE_SOURCE_DIR}/sakura_core/terminal/window/TerminalRenderPlan.cpp
+)
+list(REMOVE_ITEM HEADERS ${TERMINAL_RENDERER_HEADERS})
+list(APPEND HEADERS ${TERMINAL_RENDERER_HEADERS})
+list(REMOVE_ITEM SOURCES ${TERMINAL_RENDERER_SOURCES})
+list(APPEND SOURCES ${TERMINAL_RENDERER_SOURCES})
+
 # Do not let the broad source glob pull in the complete Windows Terminal tree.
 # Only the dependency-closed parser, input and Unicode boundary is compiled.
 set(WINDOWS_TERMINAL_VENDOR_ROOT
@@ -659,8 +677,10 @@ target_link_libraries(sakura_core
     bcrypt
     comctl32
     crypt32
+    d2d1
     dbghelp
     dwmapi
+    dwrite
     htmlhelp
     imm32
     mpr

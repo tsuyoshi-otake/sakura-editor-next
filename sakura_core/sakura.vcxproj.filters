@@ -988,6 +988,12 @@
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1007,6 +1013,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\CExtensionIconFont.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h">
@@ -1076,6 +1085,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h">
@@ -1411,10 +1423,19 @@
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalWnd.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalBuiltinGlyphRenderer.h">
+      <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalColorResolver.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h">
@@ -1442,6 +1463,9 @@
       <Filter>Cpp Source Files\markdown</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\theme\CThemeService.h">
+      <Filter>Cpp Source Files\theme</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\theme\CColorThemeRegistry.h">
       <Filter>Cpp Source Files\theme</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\window\CMainStatusBar.h">
@@ -1592,6 +1616,9 @@
       <Filter>Cpp Source Files\cmd</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionManager.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionProfileState.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionPane.h">
@@ -2761,6 +2788,12 @@
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -2774,6 +2807,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\icons\CExtensionIconFont.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\hover\HoverMarkdown.cpp">
@@ -2834,6 +2870,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\DocumentRegistry.cpp">
@@ -3055,15 +3094,24 @@
     <ClCompile Include="..\sakura_core\terminal\window\CTerminalWnd.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\terminal\window\TerminalBuiltinGlyphRenderer.cpp">
+      <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalColorResolver.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
@@ -3077,6 +3125,9 @@
       <Filter>Cpp Source Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp">
+      <Filter>Cpp Source Files\theme</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp">
       <Filter>Cpp Source Files\theme</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\window\CMainStatusBar.cpp">
@@ -3272,6 +3323,9 @@
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionProfileState.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp">

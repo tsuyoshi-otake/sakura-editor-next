@@ -89,7 +89,8 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 //! narrow to contain its complete hit target.  This keeps all returned rectangles
 //! inside the header and prevents partially clickable icons at small window widths.
 [[nodiscard]] inline TerminalHeaderLayout CalculateTerminalHeaderLayout(
-	const RECT& bounds, unsigned int dpi) noexcept
+	const RECT& bounds, unsigned int dpi, bool includePanelActions = true,
+	int headerHeightDip = 30) noexcept
 {
 	using detail::ScaleTerminalHeaderDip;
 	TerminalHeaderLayout result;
@@ -98,7 +99,7 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 	result.header.right = std::max(bounds.left, bounds.right);
 	const LONG availableBottom = std::max(bounds.top, bounds.bottom);
 	result.header.bottom = std::min<LONG>(availableBottom,
-		bounds.top + ScaleTerminalHeaderDip(30, dpi));
+		bounds.top + ScaleTerminalHeaderDip(std::max(0, headerHeightDip), dpi));
 
 	const LONG top = result.header.top;
 	const LONG bottom = result.header.bottom;
@@ -123,8 +124,12 @@ constexpr int kTerminalHeaderDefaultDpi = 96;
 
 	// Visual order, left-to-right: profile, new, dropdown, split, kill, more,
 	// separator, maximize, close.  Allocation proceeds from the stable right edge.
-	reserve(TerminalHeaderTarget::Close, 28);
-	reserve(TerminalHeaderTarget::Maximize, 28, 4);
+	// Maximize and close belong to the physical Panel Part. They are omitted when
+	// the containing Part supplies that common chrome above this view.
+	if (includePanelActions) {
+		reserve(TerminalHeaderTarget::Close, 28);
+		reserve(TerminalHeaderTarget::Maximize, 28, 4);
+	}
 	reserve(TerminalHeaderTarget::More, 28);
 	reserve(TerminalHeaderTarget::Kill, 28);
 	reserve(TerminalHeaderTarget::Split, 28);

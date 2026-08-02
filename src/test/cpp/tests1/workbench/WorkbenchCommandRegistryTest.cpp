@@ -12,6 +12,7 @@
 
 #include <array>
 #include <stdexcept>
+#include <string_view>
 #include <utility>
 
 namespace {
@@ -107,6 +108,17 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 {
 	WorkbenchCommandRegistry registry;
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
+	const auto iconTheme = registry.Find("workbench.action.selectIconTheme");
+	ASSERT_TRUE(iconTheme.has_value());
+	EXPECT_EQ("Preferences: File Icon Theme", iconTheme->title);
+	EXPECT_EQ("workbench.action.selectIconTheme.palette",
+		iconTheme->surfaceBindings.front().slotId);
+	const auto colorTheme = registry.Find("workbench.action.selectTheme");
+	ASSERT_TRUE(colorTheme.has_value());
+	EXPECT_EQ("Preferences: Color Theme", colorTheme->title);
+	EXPECT_EQ("workbench.action.selectTheme.palette",
+		colorTheme->surfaceBindings.front().slotId);
+	EXPECT_FALSE(registry.Find("workbench.action.selectColorTheme").has_value());
 
 	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 4> bindings = {
 		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.explorer.palette" },
@@ -126,6 +138,26 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 		}
 	}
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
+}
+
+TEST(WorkbenchCommandRegistry, ManageMenuSurfacesResolveToTheirCanonicalVsCodeCommands)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
+	const std::array<std::pair<std::string_view, std::string_view>, 6> bindings = {
+		std::pair{ "workbench.manage.commandPalette", "workbench.action.showCommands" },
+		std::pair{ "workbench.manage.settings", "workbench.action.openSettings" },
+		std::pair{ "workbench.manage.extensions", "workbench.view.extensions" },
+		std::pair{ "workbench.manage.keybindings", "workbench.action.openGlobalKeybindings" },
+		std::pair{ "workbench.manage.colorTheme", "workbench.action.selectTheme" },
+		std::pair{ "workbench.manage.fileIconTheme", "workbench.action.selectIconTheme" },
+	};
+	for (const auto& [slot, commandId] : bindings) {
+		const auto resolved = registry.ResolveSurface(EWorkbenchCommandSurface::Menu, slot);
+		ASSERT_TRUE(resolved.has_value());
+		EXPECT_EQ(commandId, resolved->commandId);
+		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
+	}
 }
 
 TEST(WorkbenchCommandRegistry, ProblemsAndOutputUseCanonicalIdsAcrossTheirSupportedSurfaces)
@@ -205,6 +237,67 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 	EXPECT_EQ(1, explorerCalls);
 	EXPECT_EQ(1, problemsCalls);
 	EXPECT_EQ(1, outputCalls);
+}
+
+TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)
+{
+	WorkbenchCommandRegistry registry;
+	int commandPaletteCalls{};
+	int settingsCalls{};
+	int extensionsCalls{};
+	int keybindingsCalls{};
+	int colorThemeCalls{};
+	int fileIconThemeCalls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
+		.showCommands = [&commandPaletteCalls] {
+			++commandPaletteCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.openSettings = [&settingsCalls] {
+			++settingsCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.showExtensions = [&extensionsCalls] {
+			++extensionsCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.openGlobalKeybindings = [&keybindingsCalls] {
+			++keybindingsCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.selectTheme = [&colorThemeCalls] {
+			++colorThemeCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.selectFileIconTheme = [&fileIconThemeCalls] {
+			++fileIconThemeCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+	}).status);
+
+	const auto context = EnabledContext();
+	for (const auto commandId : {
+		"workbench.action.showCommands",
+		"workbench.action.openSettings",
+		"workbench.view.extensions",
+		"workbench.action.openGlobalKeybindings",
+		"workbench.action.selectTheme",
+		"workbench.action.selectIconTheme",
+	}) {
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, registry.Execute(commandId, context).status);
+	}
+	EXPECT_EQ(1, commandPaletteCalls);
+	EXPECT_EQ(1, settingsCalls);
+	EXPECT_EQ(1, extensionsCalls);
+	EXPECT_EQ(1, keybindingsCalls);
+	EXPECT_EQ(1, colorThemeCalls);
+	EXPECT_EQ(1, fileIconThemeCalls);
 }
 
 TEST(WorkbenchCommandRegistry, DuplicateAndExactOwnerGenerationDisposalAreTerminal)

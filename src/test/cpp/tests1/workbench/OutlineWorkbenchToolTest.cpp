@@ -6,6 +6,9 @@
 */
 #include "pch.h"
 
+#include "outline/CDlgFuncList.h"
+#include "outline/CFuncInfo.h"
+#include "outline/CFuncInfoArr.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 
 namespace workbench::outline {
@@ -61,6 +64,38 @@ TEST(OutlineWorkbenchTool, ReloadRelayoutRequiresSuccessfulVisibleChildCreation)
 	EXPECT_FALSE( ShouldRelayoutOutlineAfterReload(true, false, true) );
 	EXPECT_FALSE( ShouldRelayoutOutlineAfterReload(true, true, false) );
 	EXPECT_TRUE( ShouldRelayoutOutlineAfterReload(true, true, true) );
+}
+
+TEST(OutlineWorkbenchTool, SymbolKindsUseCanonicalCodiconImageSlots)
+{
+	EXPECT_EQ(10, CDlgFuncList::WorkbenchSymbolImageCount());
+	EXPECT_EQ(0, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_DEFINITION));
+	EXPECT_EQ(1, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_DECLARE));
+	EXPECT_EQ(2, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_FUNCTION));
+	EXPECT_EQ(3, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_CLASS));
+	EXPECT_EQ(4, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_STRUCT));
+	EXPECT_EQ(4, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_UNION));
+	EXPECT_EQ(5, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_ENUM));
+	EXPECT_EQ(6, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_NAMESPACE));
+	EXPECT_EQ(7, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_INTERFACE));
+	EXPECT_EQ(8, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_GLOBAL));
+	EXPECT_EQ(9, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_ELEMENT_MAX));
+	EXPECT_EQ(2, CDlgFuncList::WorkbenchSymbolImageIndex(FL_OBJ_FUNCTION | FUNCINFO_NOCLIPTEXT));
+}
+
+TEST(OutlineWorkbenchTool, SymbolImageSlotsResolveToCodiconNames)
+{
+	EXPECT_EQ(L"symbol-misc", CDlgFuncList::WorkbenchSymbolCodiconName(0));
+	EXPECT_EQ(L"symbol-method", CDlgFuncList::WorkbenchSymbolCodiconName(1));
+	EXPECT_EQ(L"symbol-function", CDlgFuncList::WorkbenchSymbolCodiconName(2));
+	EXPECT_EQ(L"symbol-class", CDlgFuncList::WorkbenchSymbolCodiconName(3));
+	EXPECT_EQ(L"symbol-structure", CDlgFuncList::WorkbenchSymbolCodiconName(4));
+	EXPECT_EQ(L"symbol-enum", CDlgFuncList::WorkbenchSymbolCodiconName(5));
+	EXPECT_EQ(L"symbol-namespace", CDlgFuncList::WorkbenchSymbolCodiconName(6));
+	EXPECT_EQ(L"symbol-interface", CDlgFuncList::WorkbenchSymbolCodiconName(7));
+	EXPECT_EQ(L"symbol-variable", CDlgFuncList::WorkbenchSymbolCodiconName(8));
+	EXPECT_EQ(L"symbol-property", CDlgFuncList::WorkbenchSymbolCodiconName(9));
+	EXPECT_EQ(L"symbol-misc", CDlgFuncList::WorkbenchSymbolCodiconName(99));
 }
 
 } // namespace

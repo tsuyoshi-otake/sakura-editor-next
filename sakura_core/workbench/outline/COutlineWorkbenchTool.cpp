@@ -8,6 +8,8 @@
 #include "workbench/outline/COutlineWorkbenchTool.h"
 
 #include "outline/CDlgFuncList.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconGlyphTable.h"
 
 #include <algorithm>
 
@@ -31,42 +33,34 @@ COLORREF BlendColor( COLORREF first, COLORREF second ) noexcept
 		(GetBValue(first) + GetBValue(second)) / 2 );
 }
 
-void DrawSymbolGlyph( HDC dc, int size, COLORREF color ) noexcept
+void DrawCodiconGlyph( HDC dc, int size, std::wstring_view name, COLORREF color ) noexcept
 {
-	const int stroke = (std::max)(1, size / 16);
-	const int left = size / 4;
-	const int top = size / 5;
-	const int right = size - left;
-	const int bottom = size - top;
-	const HPEN pen = ::CreatePen( PS_SOLID, stroke, color );
-	const HGDIOBJ oldPen = ::SelectObject( dc, pen );
-	const HGDIOBJ oldBrush = ::SelectObject( dc, ::GetStockObject(NULL_BRUSH) );
-	::Rectangle( dc, left, top, right, bottom );
-	for( int row = 0; row < 2; ++row ){
-		const int y = top + (row + 1) * (bottom - top) / 3;
-		::MoveToEx( dc, left + stroke * 2, y, nullptr );
-		::LineTo( dc, right - stroke * 2, y );
-	}
-	::SelectObject( dc, oldBrush );
-	::SelectObject( dc, oldPen );
-	::DeleteObject( pen );
-}
-
-void DrawRootGlyph( HDC dc, int size, unsigned int dpi, COLORREF color ) noexcept
-{
-	const int fontHeight = -::MulDiv( 7, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), 72 );
-	const HFONT font = ::CreateFontW( fontHeight, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-		DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, NONANTIALIASED_QUALITY,
-		DEFAULT_PITCH | FF_SWISS, L"Segoe UI" );
-	const HGDIOBJ oldFont = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+	if( dc == nullptr || size <= 0 ) return;
+	const auto glyph = workbench::icons::FindCodiconGlyph(name);
+	const auto faceName = workbench::icons::CCodiconFont::Instance().FaceName();
+	if( !glyph.has_value() || faceName.empty() || faceName.size() >= LF_FACESIZE ) return;
+	LOGFONTW logFont{};
+	logFont.lfHeight = -size;
+	logFont.lfWeight = FW_NORMAL;
+	logFont.lfCharSet = DEFAULT_CHARSET;
+	logFont.lfOutPrecision = OUT_TT_PRECIS;
+	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
+	logFont.lfQuality = CLEARTYPE_QUALITY;
+	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	std::copy(faceName.begin(), faceName.end(), logFont.lfFaceName);
+	logFont.lfFaceName[faceName.size()] = L'\0';
+	const HFONT font = ::CreateFontIndirectW(&logFont);
+	if( font == nullptr ) return;
+	const HGDIOBJ oldFont = ::SelectObject( dc, font );
 	const int oldBkMode = ::SetBkMode( dc, TRANSPARENT );
 	const COLORREF oldTextColor = ::SetTextColor( dc, color );
+	const wchar_t text[] = { *glyph, L'\0' };
 	RECT bounds{ 0, 0, size, size };
-	::DrawTextW( dc, L"abc", 3, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX );
+	::DrawTextW( dc, text, 1, &bounds, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX );
 	::SetTextColor( dc, oldTextColor );
 	::SetBkMode( dc, oldBkMode );
-	if( oldFont != nullptr ) ::SelectObject( dc, oldFont );
-	if( font != nullptr ) ::DeleteObject( font );
+	::SelectObject( dc, oldFont );
+	::DeleteObject( font );
 }
 
 } // namespace
@@ -267,7 +261,8 @@ void COutlineWorkbenchTool::RecreateSymbolImages() noexcept
 		m_symbolImages = nullptr;
 	}
 	const int size = (std::max)(8, ScaleDip(kSymbolImageSizeDip, m_layout.dpi));
-	HIMAGELIST images = ::ImageList_Create( size, size, ILC_COLOR24, 2, 2 );
+	const int imageCount = CDlgFuncList::WorkbenchSymbolImageCount();
+	HIMAGELIST images = ::ImageList_Create( size, size, ILC_COLOR24, imageCount, imageCount );
 	if( images == nullptr ) return;
 	(void)::ImageList_SetBkColor( images, m_palette.panel.ToColorRef() );
 
@@ -290,13 +285,13 @@ void COutlineWorkbenchTool::RecreateSymbolImages() noexcept
 		::DeleteObject( background );
 	};
 
-	clearBitmap();
-	DrawRootGlyph(colorDc, size, m_layout.dpi, m_palette.secondaryText.ToColorRef());
-	(void)::ImageList_Add(images, colorBitmap, nullptr);
-
-	clearBitmap();
-	DrawSymbolGlyph(colorDc, size, m_palette.secondaryText.ToColorRef());
-	(void)::ImageList_Add(images, colorBitmap, nullptr);
+	for( int imageIndex = 0; imageIndex < imageCount; ++imageIndex ){
+		clearBitmap();
+		DrawCodiconGlyph(
+			colorDc, size, CDlgFuncList::WorkbenchSymbolCodiconName(imageIndex),
+			m_palette.secondaryText.ToColorRef() );
+		(void)::ImageList_Add(images, colorBitmap, nullptr);
+	}
 
 	::SelectObject(colorDc, oldColorBitmap);
 	::DeleteObject(colorBitmap);

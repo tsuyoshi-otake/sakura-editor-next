@@ -58,7 +58,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;gdiplus.lib;psapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
@@ -185,11 +185,17 @@
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalFontMetricsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalHeaderLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalBuiltinGlyphRendererTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalDWriteRendererTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaseline.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaselineTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />
@@ -219,6 +225,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileIconThemeRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\NativeWorkbenchToolRequestTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditorServiceLegacyAdapterTest.cpp" />
@@ -320,6 +327,7 @@
     <ClInclude Include="..\src\test\cpp\tests1\env\ShareDataTestSuite.hpp" />
     <ClInclude Include="..\src\test\cpp\tests1\window\EditorTestSuite.hpp" />
     <ClInclude Include="..\src\test\cpp\tests1\window\UiaTestSuite.hpp" />
+    <ClInclude Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaseline.h" />
     <ClInclude Include="..\src\test\resources\eval_outputs.hpp" />
     <ClInclude Include="..\src\test\resources\rt_zipres.h" />
     <ClInclude Include="..\src\test\resources\TExtModule.hpp" />

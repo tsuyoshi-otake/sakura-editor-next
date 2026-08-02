@@ -11,6 +11,8 @@
 #include "config/system_constants.h"
 #include "extension/CExtensionManager.h"
 #include "extension/CExtensionQuickInputDialog.h"
+#include "workbench/IWorkbenchRuntime.h"
+#include "_os/CClipboard.h"
 #include "util/string_ex.h"
 
 #include <CommCtrl.h>
@@ -30,6 +32,7 @@ using namespace std::chrono_literals;
 
 constexpr std::size_t kMaximumQueuedTasks = 2048;
 constexpr std::size_t kMaximumPendingRequests = 512;
+constexpr std::size_t kMaximumExtensionClipboardTextCodeUnits = 8u * 1024u * 1024u;
 constexpr auto kExtensionPipeConnectTimeout = 500ms;
 constexpr std::wstring_view kFormatDocumentCommand = L"editor.action.formatDocument";
 
@@ -188,16 +191,21 @@ CExtensionService::CExtensionService(
 	std::unique_ptr<IExtensionSecretSessionStorage> secrets,
 	workbench::problems::MarkerService* markerService,
 	workbench::output::OutputService* outputService,
-	workbench::IWorkbenchRuntime* workbenchRuntime)
+	workbench::IWorkbenchRuntime* workbenchRuntime,
+	std::filesystem::path extensionSelectionPath,
+	bool defaultProfileExtensionsWhenMissing)
 	: m_editorWindow(editorWindow)
 	, m_brokerWindow(brokerWindow)
 	, m_profileDirectory(std::move(profileDirectory))
+	, m_extensionProfileState(std::move(extensionSelectionPath))
+	, m_defaultProfileExtensionsWhenMissing(defaultProfileExtensionsWhenMissing)
 	, m_views(views ? std::move(views) : std::make_shared<CExtensionViewRegistry>())
 	, m_secrets(secrets ? std::move(secrets)
 		: std::unique_ptr<IExtensionSecretSessionStorage>(
 			std::make_unique<CUnavailableExtensionSecretStorage>()))
 	, m_workbenchServiceBridge(markerService || outputService || workbenchRuntime
-		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService, workbenchRuntime) : nullptr)
+		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService, workbenchRuntime,
+			128, workbenchRuntime ? workbenchRuntime->Scm() : nullptr) : nullptr)
 {
 	const auto tick = static_cast<std::uint64_t>(::GetTickCount64());
 	const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
@@ -273,6 +281,22 @@ void CExtensionService::NotifyTreeCheckbox(
 		.first = std::wstring(viewHandle),
 		.second = std::wstring(itemHandle),
 		.checked = checked,
+	});
+}
+
+void CExtensionService::RequestScmInputChange(
+	const std::string_view handle, const std::string_view value, const bool global)
+{
+	if (handle.empty() || value.size() > (1U << 20)) return;
+	Start();
+	Enqueue([this, handle = std::string(handle), value = std::string(value), global]() {
+		if (!m_registered) return;
+		picojson::object params;
+		params["handle"] = picojson::value(handle);
+		params["value"] = picojson::value(value);
+		params["global"] = picojson::value(global);
+		(void)SendRequestWorker("extension/scm/inputChange", picojson::value(std::move(params)).serialize(),
+			{ .kind = PendingKind::ScmInputChange });
 	});
 }
 
@@ -370,6 +394,21 @@ std::vector<SExtensionOutputChannel> CExtensionService::OutputChannels() const
 std::vector<SExtensionProgress> CExtensionService::ProgressItems() const
 {
 	return m_progress.Snapshot();
+}
+
+std::vector<SExtensionNotification> CExtensionService::PendingNotifications() const
+{
+	return m_notifications.Pending();
+}
+
+void CExtensionService::ResolveNotification(
+	std::uint64_t id, std::optional<std::size_t> selectedAction)
+{
+	if (id == 0) return;
+	Start();
+	Enqueue([this, id, selectedAction]() {
+		ResolveNotificationWorker(id, selectedAction);
+	});
 }
 
 std::vector<SExtensionStatusBarItem> CExtensionService::StatusBarItems() const
@@ -577,29 +616,40 @@ void CExtensionService::WorkerMain() noexcept
 		(void)m_secrets->ClearSession();
 		m_secrets->Stop();
 	}
-	if (m_leaseAcquired) {
-		DWORD_PTR ignored = 0;
-		(void)SendBrokerMessage(m_brokerWindow, MYWM_EXTENSION_HOST_RELEASE,
-			static_cast<WPARAM>(::GetCurrentProcessId()), reinterpret_cast<LPARAM>(m_editorWindow), ignored);
-		m_leaseAcquired = false;
-	}
+	ReleaseHostLeaseWorker();
 	m_sharedState.Close();
 	m_pipeCallbackAttemptToken.store(0, std::memory_order_release);
 	m_pipeCallbackGeneration.store(0, std::memory_order_release);
 	m_reconnectPolicy.Shutdown();
 }
 
-void CExtensionService::WorkerInitialize()
+std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRootsWorker() const
 {
+	const auto profileState = m_extensionProfileState.Load();
+	if (profileState.status == CExtensionProfileState::EStatus::Invalid ||
+		profileState.status == CExtensionProfileState::EStatus::IoError) {
+		return {};
+	}
+
 	CExtensionManager manager;
-	m_installedRoots.clear();
+	std::vector<std::filesystem::path> roots;
 	for (const auto& installed : manager.EnumInstalled()) {
+		if (!CExtensionProfileState::IsEnabled(
+			profileState, installed.sUniqueId, m_defaultProfileExtensionsWhenMissing)) {
+			continue;
+		}
 		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
 		std::error_code error;
 		if (std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) && !error) {
-			m_installedRoots.push_back(root);
+			roots.push_back(root);
 		}
 	}
+	return roots;
+}
+
+void CExtensionService::WorkerInitialize()
+{
+	m_installedRoots = LoadInstalledExtensionRootsWorker();
 	if (!m_installedRoots.empty()) RequestReconnectWorker();
 }
 
@@ -613,42 +663,20 @@ void CExtensionService::RescanInstalledExtensionsWorker()
 {
 	if (m_stopping.load(std::memory_order_acquire)) return;
 
-	// Re-derive the installed set exactly like WorkerInitialize()/EnsureConnectedWorker()
-	// do, but only append roots this session has never seen. A root already in
-	// m_installedRoots must never be registered a second time.
-	CExtensionManager manager;
-	bool foundNew = false;
-	for (const auto& installed : manager.EnumInstalled()) {
-		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
-		std::error_code error;
-		if (!std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) || error) continue;
-		if (std::find(m_installedRoots.begin(), m_installedRoots.end(), root) != m_installedRoots.end()) continue;
-		m_installedRoots.push_back(root);
-		foundNew = true;
+	const auto roots = LoadInstalledExtensionRootsWorker();
+	if (roots == m_installedRoots) return;
+	m_installedRoots = roots;
+
+	const bool sessionActive = m_connected || m_awaitingHello;
+	if (sessionActive) {
+		FailConnectionWorker(ERROR_CANCELLED, L"Active extension profile changed", true);
 	}
-	if (!foundNew) return;
-
-	// If this is the first extension ever seen, WorkerInitialize() previously left
-	// m_installedRoots empty and never attempted a connection at all (both it and
-	// EnsureConnectedWorker() bail out on an empty root list). RequestReconnectWorker()
-	// is the same entry point Start()/NotifyViewVisibility() already use to establish a
-	// first connection, and CExtensionClientReconnectPolicy::RequestReconnect() is a
-	// no-op whenever a connect attempt is already scheduled, connecting, awaiting Hello,
-	// or connected -- so calling it here never disturbs a healthy or in-progress session.
+	m_reconnectPolicy.Cancel();
+	if (m_installedRoots.empty()) {
+		ReleaseHostLeaseWorker();
+		return;
+	}
 	RequestReconnectWorker();
-
-	// A session that is already connected does not need to wait for a future reconnect:
-	// extend its registration immediately. SendRegisterExtensionsWorker() re-sends the
-	// *complete* accumulated m_installedRoots list -- the same convention already used on
-	// every reconnect -- and the host registers each extension ID at most once
-	// (ExtensionLoader.register in extension-host.cjs returns the existing metadata
-	// without re-adding or re-notifying activation for a path it already knows), so
-	// previously registered extensions are left untouched. The response still flows
-	// through the existing HandleRegistrationResultWorker() ->
-	// SendActivateEventWorker(L"onStartupFinished") path, and the host's
-	// activateByEvent() only activates extensions still in the 'registered' state, so an
-	// already-active extension is never reactivated.
-	if (m_connected) SendRegisterExtensionsWorker();
 }
 
 void CExtensionService::ProcessReconnectDeadlineWorker(CExtensionClientReconnectPolicy::TimePoint now)
@@ -672,18 +700,9 @@ void CExtensionService::EnsureConnectedWorker(std::uint64_t attemptToken)
 		m_reconnectPolicy.GetState() != CExtensionClientReconnectPolicy::State::Connecting ||
 		m_reconnectPolicy.GetActiveToken() != attemptToken) return;
 	if (m_installedRoots.empty()) {
-		CExtensionManager manager;
-		for (const auto& installed : manager.EnumInstalled()) {
-			const auto root = installed.dir / CExtensionManager::kVsixContentDir;
-			std::error_code error;
-			if (std::filesystem::is_regular_file(root / CExtensionManager::kManifestFileName, error) && !error) {
-				m_installedRoots.push_back(root);
-			}
-		}
-		if (m_installedRoots.empty()) {
-			(void)m_reconnectPolicy.OnConnectFailure(attemptToken, CExtensionClientReconnectPolicy::Clock::now(), NextReconnectJitter());
-			return;
-		}
+		m_reconnectPolicy.Cancel();
+		ReleaseHostLeaseWorker();
+		return;
 	}
 	// The control process owns the authorization inventory. Refresh it from the
 	// profile-scoped installation immediately before acquiring a PID lease, so a
@@ -787,13 +806,20 @@ void CExtensionService::HandleMessageWorker(const SExtensionRpcMessage& message)
 		(void)HandleBuiltInCommandRequestWorker(message);
 		return;
 	}
+	if (message.eKind == EExtensionRpcMessageKind::Request &&
+		(message.sMethod == "env/clipboard/readText" || message.sMethod == "env/clipboard/writeText")) {
+		(void)HandleEnvironmentClipboardRequestWorker(message);
+		return;
+	}
 	if (message.eKind == EExtensionRpcMessageKind::Notification &&
 		message.sMethod == "workspace/document/versionGap" && HandleDocumentVersionGapWorker(message)) return;
 	if (message.eKind == EExtensionRpcMessageKind::Notification &&
 		message.sMethod == "window/editor/setOptions" && HandleEditorOptionsNotificationWorker(message)) return;
 	const auto result = m_dispatcher->Dispatch(message);
 	if (result.handled) {
-		if (message.eKind == EExtensionRpcMessageKind::Request) (void)SendResponseWorker(message, result);
+		if (message.eKind == EExtensionRpcMessageKind::Request && !result.responseDeferred) {
+			(void)SendResponseWorker(message, result);
+		}
 		PostWorkbenchChanges(result.changes);
 		if (result.success && message.sMethod == "workbench/views/register" && m_sidebarVisible) {
 			picojson::object params;
@@ -822,6 +848,97 @@ void CExtensionService::HandleMessageWorker(const SExtensionRpcMessage& message)
 		missing.errorMessage = "UnsupportedCapability: " + extensionId + " requires " + message.sMethod;
 		(void)SendResponseWorker(message, missing);
 	}
+}
+
+bool CExtensionService::HandleEnvironmentClipboardRequestWorker(const SExtensionRpcMessage& message)
+{
+	SExtensionWorkbenchDispatchResult response;
+	response.handled = true;
+	response.errorCode = -32602;
+
+	CClipboard clipboard(m_editorWindow);
+	if (!clipboard) {
+		response.errorCode = -32001;
+		response.errorMessage = "clipboard could not be opened";
+		(void)SendResponseWorker(message, response);
+		return true;
+	}
+
+	if (message.sMethod == "env/clipboard/readText") {
+		std::wstring text;
+		CEol eol;
+		// VS Code returns an empty string when the clipboard has no text. A false
+		// GetText result therefore represents an empty clipboard, not an RPC error.
+		(void)clipboard.GetText(&text, nullptr, nullptr, eol);
+		if (text.size() > kMaximumExtensionClipboardTextCodeUnits) {
+			response.errorCode = -32002;
+			response.errorMessage = "clipboard text exceeds the supported size";
+		} else {
+			picojson::object result;
+			result["value"] = picojson::value(wcstou8s(text));
+			response.success = true;
+			response.resultJson = picojson::value(result).serialize();
+		}
+	} else {
+		picojson::object params;
+		if (!ParseObject(message.sParamsJson, params)) {
+			response.errorMessage = "clipboard request parameters must be an object";
+		} else {
+			const auto* value = Find(params, "value");
+			if (!value || !value->is<std::string>()) {
+				response.errorMessage = "clipboard value must be a string";
+			} else {
+				const std::wstring text = u8stowcs(value->get<std::string>());
+				if (text.size() > kMaximumExtensionClipboardTextCodeUnits) {
+					response.errorCode = -32002;
+					response.errorMessage = "clipboard text exceeds the supported size";
+				} else if (!clipboard.SetText(text.c_str(), text.size(), false, false)) {
+					response.errorCode = -32001;
+					response.errorMessage = "clipboard text could not be written";
+				} else {
+					response.success = true;
+				}
+			}
+		}
+	}
+
+	(void)SendResponseWorker(message, response);
+	return true;
+}
+
+bool CExtensionService::QueueNotificationRequestWorker(
+	const SExtensionNotification& notification, const SExtensionRpcMessage& request)
+{
+	if (notification.id == 0 || !m_editorWindow || m_stopping.load(std::memory_order_acquire)) {
+		return false;
+	}
+	if (request.eKind != EExtensionRpcMessageKind::Request) return true;
+	if (request.sIdJson.empty()) return false;
+	return m_pendingNotificationRequests.emplace(notification.id, request).second;
+}
+
+void CExtensionService::ResolveNotificationWorker(
+	std::uint64_t id, std::optional<std::size_t> selectedAction)
+{
+	if (!m_notifications.Resolve(id, selectedAction)) return;
+	const auto completion = m_notifications.TakeCompletion(id);
+	const auto pending = m_pendingNotificationRequests.find(id);
+	if (pending != m_pendingNotificationRequests.end()) {
+		SExtensionWorkbenchDispatchResult response;
+		response.handled = true;
+		response.success = true;
+		response.changes = EExtensionWorkbenchChange::Notifications;
+		picojson::object result;
+		if (completion && completion->selectedAction &&
+			*completion->selectedAction < completion->actions.size()) {
+			result["selectedIndex"] = picojson::value(
+				static_cast<double>(*completion->selectedAction));
+		}
+		response.resultJson = picojson::value(std::move(result)).serialize();
+		(void)SendResponseWorker(pending->second, response);
+		m_pendingNotificationRequests.erase(pending);
+	}
+	PostWorkbenchChanges(EExtensionWorkbenchChange::Notifications);
 }
 
 bool CExtensionService::HandleDocumentVersionGapWorker(const SExtensionRpcMessage& message)
@@ -1534,6 +1651,15 @@ void CExtensionService::FailConnectionWorker(
 	if (scheduled) m_taskReady.notify_one();
 }
 
+void CExtensionService::ReleaseHostLeaseWorker() noexcept
+{
+	if (!m_leaseAcquired) return;
+	DWORD_PTR ignored = 0;
+	(void)SendBrokerMessage(m_brokerWindow, MYWM_EXTENSION_HOST_RELEASE,
+		static_cast<WPARAM>(::GetCurrentProcessId()), reinterpret_cast<LPARAM>(m_editorWindow), ignored);
+	m_leaseAcquired = false;
+}
+
 void CExtensionService::ClearWorkbenchWorker()
 {
 	if (m_workbenchServiceBridge && !m_workbenchServiceBridge->DisposeAll(m_diagnostics, m_output)) return;
@@ -1542,6 +1668,7 @@ void CExtensionService::ClearWorkbenchWorker()
 	RegisterBuiltInCommands();
 	m_statusBar.Clear();
 	m_notifications.Clear();
+	m_pendingNotificationRequests.clear();
 	m_diagnostics.Clear();
 	m_quickInput.Clear();
 	m_output.ClearAll();
@@ -1562,6 +1689,10 @@ void CExtensionService::ResetDispatcherWorker()
 	m_dispatcher->SetNotificationHandler([this](const SExtensionNotification& notification) {
 		return ShowNotificationOnUi(notification);
 	});
+	m_dispatcher->SetDeferredNotificationHandler(
+		[this](const SExtensionNotification& notification, const SExtensionRpcMessage& request) {
+			return QueueNotificationRequestWorker(notification, request);
+		});
 	m_dispatcher->SetQuickInputHandler([this](const SExtensionQuickInputRequest& request) {
 		return ShowQuickInputOnUi(request);
 	});

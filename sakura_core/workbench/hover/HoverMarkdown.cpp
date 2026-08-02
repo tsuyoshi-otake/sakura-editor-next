@@ -162,6 +162,21 @@ void AppendCodePoint(std::wstring& out, unsigned long codePoint)
 	return result;
 }
 
+//! Markdown リンクの destination だけを取り出す。タイトルや山括弧は表示しない。
+[[nodiscard]] std::wstring ExtractLinkTarget(std::wstring_view raw)
+{
+	const std::wstring decoded = DecodeHtmlEntities(raw);
+	const std::wstring trimmed = TrimCopy(decoded);
+	if (trimmed.size() >= 2 && trimmed.front() == L'<') {
+		if (const std::size_t close = trimmed.find(L'>', 1); close != std::wstring::npos) {
+			return TrimCopy(std::wstring_view(trimmed).substr(1, close - 1));
+		}
+	}
+	std::size_t end = 0;
+	while (end < trimmed.size() && !IsTrimmableWhitespace(trimmed[end])) ++end;
+	return trimmed.substr(0, end);
+}
+
 /*!
 	インライン HTML を落とす。`<br>` だけは改行へ変換する。
 
@@ -316,7 +331,8 @@ void AppendRun(SInlineText& out, SInlineRun run)
 	if (run.text.empty() && run.iconId.empty()) return;
 	if (!out.empty() && run.iconId.empty() && out.back().iconId.empty() &&
 		out.back().bold == run.bold && out.back().italic == run.italic &&
-		out.back().code == run.code && out.back().link == run.link) {
+		out.back().code == run.code && out.back().link == run.link &&
+		out.back().linkTarget == run.linkTarget) {
 		out.back().text.append(run.text);
 		return;
 	}
@@ -408,6 +424,8 @@ void ParseInline(std::wstring_view text, const SInlineRun& style, int depth, SIn
 					FlushLiteral(literal, style, out, state);
 					SInlineRun nested = style;
 					nested.link = true;
+					nested.linkTarget = ExtractLinkTarget(
+						text.substr(labelClose + 2, targetClose - labelClose - 2));
 					ParseInline(text.substr(cursor + 1, labelClose - cursor - 1), nested, depth + 1, out, state);
 					cursor = targetClose + 1;
 					continue;

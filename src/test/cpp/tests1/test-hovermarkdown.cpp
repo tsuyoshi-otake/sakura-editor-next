@@ -98,6 +98,7 @@ TEST(HoverMarkdownParse, ReducesLinksToTheirLabelAndMarksThemAsLinkRuns)
 	// URI もタイトルの引用符付き文字列も描かない。ラベルだけがリンク色で残る。
 	EXPECT_EQ(L"Run", run.text);
 	EXPECT_TRUE(run.link);
+	EXPECT_FALSE(run.linkTarget.empty());
 	EXPECT_EQ(L"label", PlainText(L"[label](https://example.com)"));
 }
 

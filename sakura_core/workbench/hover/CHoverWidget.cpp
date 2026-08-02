@@ -17,6 +17,8 @@
 
 #include <algorithm>
 #include <cwctype>
+#include <shellapi.h>
+#include <utility>
 
 namespace workbench::hover {
 namespace {
@@ -56,6 +58,48 @@ constexpr int kMaxTableWidthDip = 900;
 //! 1 つのホバーが描く実行単位の上限。信頼できない入力で描画時間が発散しないようにする。
 constexpr std::size_t kMaxPositionedRuns = 4096;
 
+[[nodiscard]] bool HasCaseInsensitivePrefix(std::wstring_view value, std::wstring_view prefix) noexcept
+{
+	if (value.size() < prefix.size()) return false;
+	for (std::size_t index = 0; index < prefix.size(); ++index) {
+		if (std::towlower(static_cast<std::wint_t>(value[index])) !=
+			std::towlower(static_cast<std::wint_t>(prefix[index]))) return false;
+	}
+	return true;
+}
+
+[[nodiscard]] bool IsAllowedLinkTarget(std::wstring_view target) noexcept
+{
+	// StatusBarItem.tooltip is extension-provided content. Keep command:, file:,
+	// javascript:, and other shell-resolved schemes closed; VS Code's trusted
+	// command-link policy is a separate capability that this surface does not expose.
+	constexpr wchar_t httpsScheme[] = { L'h', L't', L't', L'p', L's', L':', L'/', L'/', L'\0' };
+	constexpr wchar_t httpScheme[] = { L'h', L't', L't', L'p', L':', L'/', L'/', L'\0' };
+	constexpr wchar_t mailtoScheme[] = { L'm', L'a', L'i', L'l', L't', L'o', L':', L'\0' };
+	return HasCaseInsensitivePrefix(target, httpsScheme) ||
+		HasCaseInsensitivePrefix(target, httpScheme) ||
+		HasCaseInsensitivePrefix(target, mailtoScheme);
+}
+
+[[nodiscard]] bool IsCommandLinkTarget(std::wstring_view target) noexcept
+{
+	constexpr wchar_t commandScheme[] = {
+		L'c', L'o', L'm', L'm', L'a', L'n', L'd', L':', L'\0'
+	};
+	return HasCaseInsensitivePrefix(target, commandScheme);
+}
+
+[[nodiscard]] std::wstring_view CommandIdFromLinkTarget(std::wstring_view target) noexcept
+{
+	constexpr wchar_t commandScheme[] = {
+		L'c', L'o', L'm', L'm', L'a', L'n', L'd', L':', L'\0'
+	};
+	if (!HasCaseInsensitivePrefix(target, commandScheme)) return {};
+	const std::size_t start = std::size(commandScheme) - 1;
+	const std::size_t query = target.find(L'?', start);
+	return target.substr(start, query == std::wstring_view::npos ? std::wstring_view::npos : query - start);
+}
+
 [[nodiscard]] HFONT MakeFont(const wchar_t* family, int pointSize, int weight, bool italic, UINT dpi) noexcept
 {
 	LOGFONTW logFont{};
@@ -93,6 +137,7 @@ constexpr std::size_t kMaxPositionedRuns = 4096;
 struct SToken {
 	std::wstring text;
 	std::wstring iconId;
+	std::wstring linkTarget;
 	int fontIndex = FontRegular;
 	bool link = false;
 	bool code = false;
@@ -106,6 +151,8 @@ struct SToken {
 		if (!run.iconId.empty()) {
 			SToken token;
 			token.iconId = run.iconId;
+			token.link = run.link;
+			token.linkTarget = run.linkTarget;
 			tokens.push_back(std::move(token));
 			continue;
 		}
@@ -119,6 +166,7 @@ struct SToken {
 			token.text = run.text.substr(index, end - index);
 			token.fontIndex = fontIndex;
 			token.link = run.link;
+			token.linkTarget = run.linkTarget;
 			token.code = run.code;
 			token.space = space;
 			tokens.push_back(std::move(token));
@@ -162,10 +210,10 @@ bool CHoverWidget::Create(HWND owner) noexcept
 	if (owner == nullptr) return false;
 	if (!EnsureWindowClass()) return false;
 	m_owner = owner;
-	// WS_EX_TRANSPARENT: ホバーはマウス入力を取らない。ヒットテストが下へ抜けるので、
-	// ホバーの上をポイントしてもステータスバー側のホバー判定が壊れない。
+	// WS_EX_NOACTIVATE: ホバーへポインターを移しても、エディター本体のアクティブ状態を
+	// 変えない。ホスト側がアンカーとホバーの間の移動を管理するため、入力は受け取る。
 	m_hwnd = ::CreateWindowExW(
-		WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT,
+		WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_NOACTIVATE,
 		kWindowClassName,
 		L"",
 		WS_POPUP,
@@ -185,6 +233,10 @@ void CHoverWidget::Destroy() noexcept
 		::DestroyWindow(hwnd);
 	}
 	m_owner = nullptr;
+	m_trackingMouse = false;
+	m_leftButtonDown = false;
+	m_trustedLinks = false;
+	m_trustedCommands.clear();
 	m_layout = SLayout{};
 	ReleaseFonts();
 }
@@ -203,6 +255,67 @@ void CHoverWidget::SetPalette(const theme::ThemePalette& palette) noexcept
 void CHoverWidget::SetIconRegistry(const workbench::icons::CExtensionIconFontRegistry* registry) noexcept
 {
 	m_iconRegistry = registry;
+}
+
+void CHoverWidget::SetPointerCallback(PointerCallback callback)
+{
+	m_pointerCallback = std::move(callback);
+}
+
+void CHoverWidget::SetLinkCallback(LinkCallback callback)
+{
+	m_linkCallback = std::move(callback);
+}
+
+bool CHoverWidget::IsPointerInside() const noexcept
+{
+	if (!IsVisible()) return false;
+	POINT cursor{};
+	RECT bounds{};
+	if (::GetCursorPos(&cursor) == FALSE || ::GetWindowRect(m_hwnd, &bounds) == FALSE) return false;
+	return ::PtInRect(&bounds, cursor) != FALSE;
+}
+
+bool CHoverWidget::IsTrustedCommand(std::wstring_view target) const noexcept
+{
+	if (!IsCommandLinkTarget(target)) return false;
+	if (m_trustedLinks) return true;
+	const std::wstring_view command = CommandIdFromLinkTarget(target);
+	return !command.empty() && std::any_of(
+		m_trustedCommands.begin(), m_trustedCommands.end(),
+		[command](const std::wstring& allowed) { return allowed == command; });
+}
+
+bool CHoverWidget::IsLinkAt(POINT point) const noexcept
+{
+	for (auto it = m_layout.runs.rbegin(); it != m_layout.runs.rend(); ++it) {
+		if (it->link && !it->linkTarget.empty() &&
+			(IsAllowedLinkTarget(it->linkTarget) || IsTrustedCommand(it->linkTarget)) &&
+			::PtInRect(&it->bounds, point)) return true;
+	}
+	return false;
+}
+
+bool CHoverWidget::OpenLinkAt(POINT point) noexcept
+{
+	for (auto it = m_layout.runs.rbegin(); it != m_layout.runs.rend(); ++it) {
+		if (!it->link || it->linkTarget.empty() || !::PtInRect(&it->bounds, point)) continue;
+		if (!IsAllowedLinkTarget(it->linkTarget) &&
+			!IsTrustedCommand(it->linkTarget)) return false;
+		if (IsCommandLinkTarget(it->linkTarget)) {
+			if (!m_linkCallback) return false;
+			return m_linkCallback(it->linkTarget);
+		}
+		const HINSTANCE result = ::ShellExecuteW(
+			m_owner != nullptr ? m_owner : m_hwnd,
+			nullptr,
+			it->linkTarget.c_str(),
+			nullptr,
+			nullptr,
+			SW_SHOWNORMAL);
+		return reinterpret_cast<INT_PTR>(result) > 32;
+	}
+	return false;
 }
 
 void CHoverWidget::ReleaseFonts() noexcept
@@ -349,6 +462,7 @@ CHoverWidget::SLayout CHoverWidget::BuildLayout(HDC dc, const SDocument& documen
 			run.iconId = token.iconId;
 			run.fontIndex = token.fontIndex;
 			run.link = token.link;
+			run.linkTarget = token.linkTarget;
 			if (isIcon) {
 				lineHeight = std::max(lineHeight, iconSize);
 			}
@@ -378,6 +492,7 @@ CHoverWidget::SLayout CHoverWidget::BuildLayout(HDC dc, const SDocument& documen
 			positioned.iconId = run.iconId;
 			positioned.fontIndex = fontIndex;
 			positioned.link = run.link;
+			positioned.linkTarget = run.linkTarget;
 			if (run.code && !isIcon) {
 				layout.fills.push_back(SFilledRect{ positioned.bounds, m_palette.raised.ToColorRef() });
 			}
@@ -510,7 +625,9 @@ CHoverWidget::SLayout CHoverWidget::BuildLayout(HDC dc, const SDocument& documen
 	return layout;
 }
 
-void CHoverWidget::Show(const SDocument& document, const RECT& anchorScreen)
+void CHoverWidget::Show(
+	const SDocument& document, const RECT& anchorScreen, bool trustedLinks,
+	std::vector<std::wstring> trustedCommands)
 {
 	if (m_hwnd == nullptr || document.empty()) {
 		Hide();
@@ -527,6 +644,8 @@ void CHoverWidget::Show(const SDocument& document, const RECT& anchorScreen)
 		return;
 	}
 	m_layout = BuildLayout(screen, document, m_fontDpi);
+	m_trustedLinks = trustedLinks;
+	m_trustedCommands = std::move(trustedCommands);
 	::ReleaseDC(m_hwnd, screen);
 	if (m_layout.width <= 0 || m_layout.height <= 0 || m_layout.runs.empty()) {
 		Hide();
@@ -564,6 +683,11 @@ void CHoverWidget::PositionWindow(const RECT& anchorScreen) noexcept
 void CHoverWidget::Hide() noexcept
 {
 	if (m_hwnd == nullptr) return;
+	if (::GetCapture() == m_hwnd) ::ReleaseCapture();
+	m_trackingMouse = false;
+	m_leftButtonDown = false;
+	m_trustedLinks = false;
+	m_trustedCommands.clear();
 	::ShowWindow(m_hwnd, SW_HIDE);
 }
 
@@ -620,9 +744,6 @@ void CHoverWidget::OnPaint(HDC dc) const noexcept
 					::SelectObject(dc, previous);
 				}
 			}
-			else if (resolved.extensionsComposite) {
-				workbench::icons::DrawExtensionsCompositeIcon(dc, box, textColor, m_fontDpi);
-			}
 			else {
 				workbench::icons::codicons::Draw(dc, box, resolved.builtin, textColor);
 			}
@@ -654,9 +775,56 @@ LRESULT CALLBACK CHoverWidget::HoverWndProc(HWND hwnd, UINT message, WPARAM wPar
 	switch (message) {
 	case WM_ERASEBKGND:
 		return 1;
+	case WM_MOUSEMOVE:
+		if (self != nullptr) {
+			if (!self->m_trackingMouse) {
+				TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
+				self->m_trackingMouse = ::TrackMouseEvent(&tracking) != FALSE;
+				if (self->m_pointerCallback) self->m_pointerCallback(true);
+			}
+			::SetCursor(::LoadCursorW(nullptr, self->IsLinkAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })
+				? IDC_HAND : IDC_ARROW));
+		}
+		return 0;
+	case WM_MOUSELEAVE:
+		if (self != nullptr) {
+			self->m_trackingMouse = false;
+			if (self->m_pointerCallback) self->m_pointerCallback(false);
+		}
+		return 0;
+	case WM_LBUTTONDOWN:
+		if (self != nullptr && self->IsLinkAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })) {
+			self->m_leftButtonDown = true;
+			::SetCapture(hwnd);
+		}
+		return 0;
+	case WM_SETCURSOR:
+		if (self != nullptr && LOWORD(lParam) == HTCLIENT) {
+			POINT point{};
+			if (::GetCursorPos(&point) != FALSE && ::ScreenToClient(hwnd, &point) != FALSE) {
+				::SetCursor(::LoadCursorW(nullptr, self->IsLinkAt(point) ? IDC_HAND : IDC_ARROW));
+				return TRUE;
+			}
+		}
+		break;
+	case WM_LBUTTONUP:
+		if (self != nullptr) {
+			const bool pressed = self->m_leftButtonDown;
+			self->m_leftButtonDown = false;
+			if (::GetCapture() == hwnd) ::ReleaseCapture();
+			if (pressed && self->OpenLinkAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })) {
+				self->Hide();
+			}
+		}
+		return 0;
+	case WM_CAPTURECHANGED:
+	case WM_CANCELMODE:
+		if (self != nullptr) self->m_leftButtonDown = false;
+		return 0;
+	case WM_MOUSEACTIVATE:
+		return MA_NOACTIVATE;
 	case WM_NCHITTEST:
-		// 入力は常に下のウィンドウへ抜かす。ホバーは表示専用。
-		return HTTRANSPARENT;
+		return HTCLIENT;
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
 		const HDC dc = ::BeginPaint(hwnd, &paint);
@@ -667,6 +835,10 @@ LRESULT CALLBACK CHoverWidget::HoverWndProc(HWND hwnd, UINT message, WPARAM wPar
 		return 0;
 	}
 	case WM_NCDESTROY:
+		if (self != nullptr) {
+			self->m_trackingMouse = false;
+			self->m_leftButtonDown = false;
+		}
 		::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
 		if (self != nullptr && self->m_hwnd == hwnd) self->m_hwnd = nullptr;
 		break;

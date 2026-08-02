@@ -238,6 +238,60 @@ void CDlgFuncList::SetWorkbenchMode( bool enabled ) noexcept
 	}
 }
 
+int CDlgFuncList::WorkbenchSymbolImageIndex( int info ) noexcept
+{
+	switch( info & FUNCINFO_INFOMASK ){
+	case FL_OBJ_DECLARE:
+		return 1;
+	case FL_OBJ_FUNCTION:
+		return 2;
+	case FL_OBJ_CLASS:
+		return 3;
+	case FL_OBJ_STRUCT:
+	case FL_OBJ_UNION:
+		return 4;
+	case FL_OBJ_ENUM:
+		return 5;
+	case FL_OBJ_NAMESPACE:
+		return 6;
+	case FL_OBJ_INTERFACE:
+		return 7;
+	case FL_OBJ_GLOBAL:
+		return 8;
+	case FL_OBJ_DEFINITION:
+		return 0;
+	default:
+		return 9;
+	}
+}
+
+std::wstring_view CDlgFuncList::WorkbenchSymbolCodiconName( int imageIndex ) noexcept
+{
+	switch( imageIndex ){
+	case 1:
+		return L"symbol-method";
+	case 2:
+		return L"symbol-function";
+	case 3:
+		return L"symbol-class";
+	case 4:
+		return L"symbol-structure";
+	case 5:
+		return L"symbol-enum";
+	case 6:
+		return L"symbol-namespace";
+	case 7:
+		return L"symbol-interface";
+	case 8:
+		return L"symbol-variable";
+	case 9:
+		return L"symbol-property";
+	case 0:
+	default:
+		return L"symbol-misc";
+	}
+}
+
 void CDlgFuncList::SetWorkbenchAppearance(
 	COLORREF text,
 	COLORREF background,
@@ -268,13 +322,17 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 
 	const HWND hwndTree = GetItemHwnd( IDC_TREE_FL );
 	if( hwndTree != nullptr ){
-		LONG_PTR style = ::GetWindowLongPtrW( hwndTree, GWL_STYLE );
-		style &= ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS);
-		style |= TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
-		::SetWindowLongPtrW( hwndTree, GWL_STYLE, style );
-		LONG_PTR exStyle = ::GetWindowLongPtrW( hwndTree, GWL_EXSTYLE );
-		exStyle &= ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
-		::SetWindowLongPtrW( hwndTree, GWL_EXSTYLE, exStyle );
+		const LONG_PTR currentStyle = ::GetWindowLongPtrW( hwndTree, GWL_STYLE );
+		const LONG_PTR style = (currentStyle & ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS))
+			| TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
+		const LONG_PTR currentExStyle = ::GetWindowLongPtrW( hwndTree, GWL_EXSTYLE );
+		const LONG_PTR exStyle = currentExStyle & ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+		// Redraw() reaches here for every document update. Recalculate the native frame only
+		// when the edge styles actually change; otherwise the common control can flash its
+		// non-client border over the workbench surface.
+		const bool frameChanged = currentStyle != style || currentExStyle != exStyle;
+		if( currentStyle != style ) ::SetWindowLongPtrW( hwndTree, GWL_STYLE, style );
+		if( currentExStyle != exStyle ) ::SetWindowLongPtrW( hwndTree, GWL_EXSTYLE, exStyle );
 		::SendMessageW( hwndTree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER );
 		::SendMessageW( hwndTree, TVM_SETITEMHEIGHT, static_cast<WPARAM>(m_workbenchItemHeight), 0 );
 		if( m_workbenchFont != nullptr ) ::SendMessageW( hwndTree, WM_SETFONT, reinterpret_cast<WPARAM>(m_workbenchFont), FALSE );
@@ -292,16 +350,19 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 			source.hItem = itemHandle;
 			(void)TreeView_GetItem( hwndTree, &source );
 			std::wstring compactText;
+			const CFuncInfo* info = nullptr;
 			if( !m_bDummyLParamMode && m_pcFuncInfoArr != nullptr
 				&& source.lParam >= 0 && source.lParam < m_pcFuncInfoArr->GetNum() ){
-				const CFuncInfo* info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(source.lParam));
-				compactText = CompactWorkbenchTreeText(
-					hwndTree, info->m_cmemFuncName.GetStringPtr(), info->m_nDepth, m_workbenchFont );
+				info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(source.lParam));
+				if( info != nullptr ){
+					compactText = CompactWorkbenchTreeText(
+						hwndTree, info->m_cmemFuncName.GetStringPtr(), info->m_nDepth, m_workbenchFont );
+				}
 			}
 			TVITEMW item{};
 			item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
 			item.hItem = itemHandle;
-			const int imageIndex = TreeView_GetParent(hwndTree, itemHandle) == nullptr ? 0 : 1;
+			const int imageIndex = info != nullptr ? WorkbenchSymbolImageIndex(info->m_nInfo) : 0;
 			item.iImage = imageIndex;
 			item.iSelectedImage = imageIndex;
 			if( !compactText.empty() ){
@@ -312,25 +373,31 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 			if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, itemHandle); sibling != nullptr ) pending.push_back(sibling);
 			if( const HTREEITEM child = TreeView_GetChild(hwndTree, itemHandle); child != nullptr ) pending.push_back(child);
 		}
-		::SetWindowPos( hwndTree, nullptr, 0, 0, 0, 0,
-			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
-		::InvalidateRect( hwndTree, nullptr, TRUE );
+		if( frameChanged ){
+			::SetWindowPos( hwndTree, nullptr, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+		}
+		::InvalidateRect( hwndTree, nullptr, FALSE );
 	}
 
 	const HWND hwndList = GetItemHwnd( IDC_LIST_FL );
 	if( hwndList != nullptr ){
-		const LONG_PTR style = ::GetWindowLongPtrW( hwndList, GWL_STYLE ) & ~WS_BORDER;
-		::SetWindowLongPtrW( hwndList, GWL_STYLE, style );
-		LONG_PTR exStyle = ::GetWindowLongPtrW( hwndList, GWL_EXSTYLE );
-		exStyle &= ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
-		::SetWindowLongPtrW( hwndList, GWL_EXSTYLE, exStyle );
+		const LONG_PTR currentStyle = ::GetWindowLongPtrW( hwndList, GWL_STYLE );
+		const LONG_PTR style = currentStyle & ~WS_BORDER;
+		const LONG_PTR currentExStyle = ::GetWindowLongPtrW( hwndList, GWL_EXSTYLE );
+		const LONG_PTR exStyle = currentExStyle & ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+		const bool frameChanged = currentStyle != style || currentExStyle != exStyle;
+		if( currentStyle != style ) ::SetWindowLongPtrW( hwndList, GWL_STYLE, style );
+		if( currentExStyle != exStyle ) ::SetWindowLongPtrW( hwndList, GWL_EXSTYLE, exStyle );
 		if( m_workbenchFont != nullptr ) ::SendMessageW( hwndList, WM_SETFONT, reinterpret_cast<WPARAM>(m_workbenchFont), FALSE );
 		ListView_SetTextColor( hwndList, m_workbenchText );
 		ListView_SetTextBkColor( hwndList, m_workbenchBackground );
 		ListView_SetBkColor( hwndList, m_workbenchBackground );
-		::SetWindowPos( hwndList, nullptr, 0, 0, 0, 0,
-			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
-		::InvalidateRect( hwndList, nullptr, TRUE );
+		if( frameChanged ){
+			::SetWindowPos( hwndList, nullptr, 0, 0, 0, 0,
+				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
+		}
+		::InvalidateRect( hwndList, nullptr, FALSE );
 	}
 }
 
@@ -1619,7 +1686,7 @@ void CDlgFuncList::SetTree(HTREEITEM hInsertAfter, bool tagjump, bool nolabel)
 		cTVInsertStruct.item.lParam = i;	//	あとでこの数値（＝m_pcFuncInfoArrの何番目のアイテムか）を見て、目的地にジャンプするぜ!!。
 		if( IsWorkbenchMode() ){
 			cTVInsertStruct.item.mask |= TVIF_IMAGE | TVIF_SELECTEDIMAGE;
-			const int imageIndex = pcFuncInfo->m_nDepth == 0 ? 0 : 1;
+			const int imageIndex = WorkbenchSymbolImageIndex(pcFuncInfo->m_nInfo);
 			cTVInsertStruct.item.iImage = imageIndex;
 			cTVInsertStruct.item.iSelectedImage = imageIndex;
 		}

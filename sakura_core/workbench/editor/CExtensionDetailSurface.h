@@ -69,6 +69,9 @@ private:
 	void LayoutChildren();
 	void EnsureFont();
 	void ReleaseFont() noexcept;
+	void DrawCloseButton(const DRAWITEMSTRUCT& draw) noexcept;
+	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
+	void ReleaseCodiconFont() noexcept;
 	void Paint();
 	void PaintText(HDC dc, const wchar_t* text, RECT bounds, COLORREF color, UINT format, bool bold = false);
 	void PaintSectionHeading(HDC dc, const wchar_t* text, int left, int* top, int right);
@@ -86,6 +89,8 @@ private:
 	HWND m_hwndInstall = nullptr;
 	HFONT m_font = nullptr;
 	HFONT m_boldFont = nullptr;
+	HFONT m_codiconFont = nullptr;
+	int m_codiconFontHeight = 0;
 	bool m_hasExtension = false;
 	bool m_focused = false;
 	int m_scrollOffset = 0;

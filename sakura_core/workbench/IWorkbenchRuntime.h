@@ -39,6 +39,10 @@ namespace workbench::output {
 class OutputService;
 }
 
+namespace workbench::scm {
+class SourceControlService;
+}
+
 namespace workbench {
 
 //! Only terminal states are observable outside the runtime. Starting and
@@ -140,6 +144,8 @@ public:
 	[[nodiscard]] virtual const problems::MarkerService* Markers() const noexcept = 0;
 	[[nodiscard]] virtual output::OutputService* Output() noexcept = 0;
 	[[nodiscard]] virtual const output::OutputService* Output() const noexcept = 0;
+	[[nodiscard]] virtual scm::SourceControlService* Scm() noexcept = 0;
+	[[nodiscard]] virtual const scm::SourceControlService* Scm() const noexcept = 0;
 	//! Explicit folder lookup only. Empty workbenches and unknown folders return
 	//! no catalog instead of silently borrowing a first/default workspace folder.
 	[[nodiscard]] virtual std::optional<tasks::FolderTaskCatalogSnapshot> TaskCatalogForFolder(

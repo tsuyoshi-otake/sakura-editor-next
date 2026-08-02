@@ -81,13 +81,21 @@ CExtensionWorkbenchServiceBridge::CExtensionWorkbenchServiceBridge(
 	workbench::problems::MarkerService* markerService,
 	workbench::output::OutputService* outputService,
 	workbench::IWorkbenchRuntime* workbenchRuntime,
-	const std::size_t maximumTrackedOwnerGenerations)
+	const std::size_t maximumTrackedOwnerGenerations,
+	workbench::scm::SourceControlService* scmService)
 	: m_markerService(markerService)
 	, m_outputService(outputService)
 	, m_workbenchRuntime(workbenchRuntime)
+	, m_scmService(scmService)
 	, m_maximumTrackedOwnerGenerations(maximumTrackedOwnerGenerations)
 {
 	m_trackedOwners.reserve(m_maximumTrackedOwnerGenerations);
+}
+
+workbench::scm::SourceControlService* CExtensionWorkbenchServiceBridge::Scm() const noexcept
+{
+	if (m_scmService) return m_scmService;
+	return m_workbenchRuntime ? m_workbenchRuntime->Scm() : nullptr;
 }
 
 config::SettingsWritebackResult CExtensionWorkbenchServiceBridge::WriteGlobalConfiguration(
@@ -404,6 +412,13 @@ bool CExtensionWorkbenchServiceBridge::DisposeTrackedOwner(
 			result.status != EOutputOperationStatus::NotApplicable && result.status != EOutputOperationStatus::Conflict &&
 			result.status != EOutputOperationStatus::Stopped) return false;
 	}
+	if (auto* scm = Scm()) {
+		const auto result = scm->DisposeOwner({ .extensionId = owner.id, .generation = owner.generation });
+		if (result.status != workbench::scm::EScmOperationStatus::Succeeded &&
+			result.status != workbench::scm::EScmOperationStatus::Replayed &&
+			result.status != workbench::scm::EScmOperationStatus::NotApplicable &&
+			result.status != workbench::scm::EScmOperationStatus::Stopped) return false;
+	}
 	const auto wideId = u8stowcs(owner.id);
 	try { diagnosticsCache.RemoveOwnedBy(wideId, owner.generation); } catch (...) {}
 	try { outputCache.RemoveOwnedBy(wideId, owner.generation); } catch (...) {}
@@ -415,10 +430,17 @@ bool CExtensionWorkbenchServiceBridge::DisposeOwner(
 	CExtensionDiagnostics& diagnosticsCache, CExtensionOutputChannel& outputCache)
 {
 	const auto ownerId = wcstou8s(std::wstring(extensionId));
-	if (!IsTracked(ownerId, generation)) return true;
 	const TrackedOwner owner { ownerId, generation };
-	if (!DisposeTrackedOwner(owner, diagnosticsCache, outputCache)) return false;
-	ForgetTracked(ownerId, generation);
+	if (IsTracked(ownerId, generation)) {
+		if (!DisposeTrackedOwner(owner, diagnosticsCache, outputCache)) return false;
+		ForgetTracked(ownerId, generation);
+	} else if (auto* scm = Scm()) {
+		const auto result = scm->DisposeOwner({ .extensionId = ownerId, .generation = generation });
+		if (result.status != workbench::scm::EScmOperationStatus::Succeeded &&
+			result.status != workbench::scm::EScmOperationStatus::Replayed &&
+			result.status != workbench::scm::EScmOperationStatus::NotApplicable &&
+			result.status != workbench::scm::EScmOperationStatus::Stopped) return false;
+	}
 	return true;
 }
 
@@ -428,6 +450,13 @@ bool CExtensionWorkbenchServiceBridge::DisposeAll(CExtensionDiagnostics& diagnos
 		const auto owner = m_trackedOwners.back();
 		if (!DisposeTrackedOwner(owner, diagnosticsCache, outputCache)) return false;
 		m_trackedOwners.pop_back();
+	}
+	if (auto* scm = Scm()) {
+		const auto result = scm->DisposeAll();
+		if (result.status != workbench::scm::EScmOperationStatus::Succeeded &&
+			result.status != workbench::scm::EScmOperationStatus::Replayed &&
+			result.status != workbench::scm::EScmOperationStatus::NotApplicable &&
+			result.status != workbench::scm::EScmOperationStatus::Stopped) return false;
 	}
 	return true;
 }

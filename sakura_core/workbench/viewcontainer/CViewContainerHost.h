@@ -71,6 +71,8 @@ private:
 	void LayoutChildren();
 	//! Splits the Extensions ViewContainer between its Marketplace and any contributed views.
 	void LayoutExtensionsPage(const RECT& client);
+	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
+	void ReleaseCodiconFont() noexcept;
 	void Paint();
 	[[nodiscard]] bool IsOutlineHeaderPoint(POINT point) const noexcept;
 	//! True when this host, and not the other side bar, currently owns the page window.
@@ -85,6 +87,8 @@ private:
 	RECT m_bounds{};
 	RECT m_outlineHeader{};
 	unsigned int m_dpi = 96;
+	HFONT m_codiconFont = nullptr;
+	int m_codiconFontHeight = 0;
 	std::optional<ViewContainerPage> m_page;
 	bool m_closed = false;
 };

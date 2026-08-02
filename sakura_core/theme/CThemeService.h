@@ -10,6 +10,7 @@
 #include <Windows.h>
 
 #include <cstdint>
+#include <optional>
 
 namespace theme {
 
@@ -24,6 +25,10 @@ struct ThemeColor {
 	std::uint8_t red = 0;
 	std::uint8_t green = 0;
 	std::uint8_t blue = 0;
+	//! VS Code theme JSON may carry an alpha channel. Native GDI consumers use
+	//! ToColorRef(), while the color-theme loader composites translucent values
+	//! before projecting them into ThemePalette.
+	std::uint8_t alpha = 0xFF;
 
 	[[nodiscard]] constexpr bool operator==(const ThemeColor&) const noexcept = default;
 	[[nodiscard]] constexpr COLORREF ToColorRef() const noexcept
@@ -51,8 +56,85 @@ struct ThemePalette {
 	ThemeColor titleBar;
 	ThemeColor activityBar;
 	ThemeColor danger;
+	ThemeColor warning;
+	//! VS Code `panel.background`, distinct from the Primary/Secondary Side Bar.
+	//! Existing consumers that only know the legacy panel role continue to use `panel`.
+	ThemeColor bottomPanel = { 0x25, 0x25, 0x26 };
+	//! VS Code `sideBar.background`, used by the Primary Side Bar/Explorer surface.
+	//! This is separate from `panel` so the screenshot-compatible Sakura Explorer
+	//! surface can remain #293134 while the Panel/Auxiliary Bar remains #252526.
+	ThemeColor sideBar = { 0x25, 0x25, 0x26 };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
+};
+
+//! Coarse native editor categories projected from VS Code TextMate/semantic scopes.
+//! The legacy renderer has no TextMate scope tree, so this is deliberately a
+//! typed category boundary rather than a claim of full grammar compatibility.
+enum class ThemeSyntaxTokenKind : std::uint8_t {
+	Comment,
+	String,
+	Number,
+	Keyword,
+	Type,
+	Function,
+	Variable,
+	Constant,
+	Regexp,
+	Tag,
+	Attribute,
+	Invalid,
+};
+
+struct ThemeSyntaxStyle final {
+	std::optional<ThemeColor> foreground;
+	std::optional<ThemeColor> background;
+	bool bold = false;
+	bool underline = false;
+
+	[[nodiscard]] constexpr bool operator==(const ThemeSyntaxStyle&) const noexcept = default;
+};
+
+//! Projected syntax colors consumed by Sakura's existing syntax-category renderer.
+struct ThemeSyntaxPalette final {
+	ThemeSyntaxStyle comment;
+	ThemeSyntaxStyle string;
+	ThemeSyntaxStyle number;
+	ThemeSyntaxStyle keyword;
+	ThemeSyntaxStyle type;
+	ThemeSyntaxStyle function;
+	ThemeSyntaxStyle variable;
+	ThemeSyntaxStyle constant;
+	ThemeSyntaxStyle regexp;
+	ThemeSyntaxStyle tag;
+	ThemeSyntaxStyle attribute;
+	ThemeSyntaxStyle invalid;
+
+	[[nodiscard]] ThemeSyntaxStyle& For(ThemeSyntaxTokenKind kind) noexcept
+	{
+		switch (kind) {
+		case ThemeSyntaxTokenKind::Comment: return comment;
+		case ThemeSyntaxTokenKind::String: return string;
+		case ThemeSyntaxTokenKind::Number: return number;
+		case ThemeSyntaxTokenKind::Keyword: return keyword;
+		case ThemeSyntaxTokenKind::Type: return type;
+		case ThemeSyntaxTokenKind::Function: return function;
+		case ThemeSyntaxTokenKind::Variable: return variable;
+		case ThemeSyntaxTokenKind::Constant: return constant;
+		case ThemeSyntaxTokenKind::Regexp: return regexp;
+		case ThemeSyntaxTokenKind::Tag: return tag;
+		case ThemeSyntaxTokenKind::Attribute: return attribute;
+		case ThemeSyntaxTokenKind::Invalid: return invalid;
+		}
+		return invalid;
+	}
+
+	[[nodiscard]] const ThemeSyntaxStyle& For(ThemeSyntaxTokenKind kind) const noexcept
+	{
+		return const_cast<ThemeSyntaxPalette*>(this)->For(kind);
+	}
+
+	[[nodiscard]] constexpr bool operator==(const ThemeSyntaxPalette&) const noexcept = default;
 };
 
 //! Font role used by the native workbench chrome and GDI terminal renderer.
@@ -114,6 +196,20 @@ public:
 	[[nodiscard]] static ThemePalette HighContrastPalette() noexcept;
 	//! Uses the system palette only while High Contrast is active.
 	[[nodiscard]] static ThemePalette EffectivePalette(ThemeMode savedMode) noexcept;
+	//! Installs the currently selected VS Code color-theme projection for this
+	//! editor process. High Contrast still takes precedence at read time.
+	static void SetActiveColorThemePalette(const ThemePalette& palette) noexcept;
+	static void ClearActiveColorThemePalette() noexcept;
+	[[nodiscard]] static bool HasActiveColorThemePalette() noexcept;
+	//! Installs the projected token/semantic colors for the selected VS Code theme.
+	//! High Contrast suppresses this overlay at read time, like the palette overlay.
+	static void SetActiveColorThemeSyntaxPalette(const ThemeSyntaxPalette& palette) noexcept;
+	static void ClearActiveColorThemeSyntaxPalette() noexcept;
+	[[nodiscard]] static bool HasActiveColorThemeSyntaxPalette() noexcept;
+	//! Returns the process-local projected syntax palette without copying. The
+	//! pointer is valid until the next theme application on the UI thread.
+	[[nodiscard]] static const ThemeSyntaxPalette* ActiveColorThemeSyntaxPalette() noexcept;
+	[[nodiscard]] static ThemeSyntaxPalette EffectiveSyntaxPalette(ThemeMode savedMode) noexcept;
 	//! Preferred/fallback font policy. Creation verifies installed faces at runtime.
 	[[nodiscard]] static constexpr ThemeFontSpec FontSpec(ThemeFontKind kind) noexcept;
 	//! Resolves the preferred family when installed, otherwise returns the fallback family.
@@ -137,6 +233,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xF3, 0xF3, 0xF3 }, // title bar
 			{ 0xF3, 0xF3, 0xF3 }, // activity bar
 			{ 0xC4, 0x2B, 0x1C }, // destructive hover
+			{ 0xBF, 0x88, 0x00 }, // notificationsWarningIcon.foreground
+			{ 0xFF, 0xFF, 0xFF }, // panel.background
+			{ 0xFF, 0xFF, 0xFF }, // sideBar.background
 		};
 	}
 	return {
@@ -153,6 +252,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x3C, 0x3C, 0x3C }, // active title bar
 		{ 0x33, 0x33, 0x33 }, // activity bar
 		{ 0xC4, 0x2B, 0x1C }, // destructive hover
+		{ 0xCC, 0xA7, 0x00 }, // notificationsWarningIcon.foreground
+		{ 0x25, 0x25, 0x26 }, // panel.background
+		{ 0x29, 0x31, 0x34 }, // sideBar.background
 	};
 }
 
@@ -175,7 +277,9 @@ constexpr ThemeFontSpec CThemeService::FontSpec(ThemeFontKind kind) noexcept
 		return { L"Consolas", L"Cascadia Mono", 10, FW_NORMAL, true };
 	case ThemeFontKind::Terminal:
 	default:
-		return { L"Cascadia Mono", L"Consolas", 9, FW_LIGHT, true };
+		// VS Code's terminal defaults to a normal weight.  FW_LIGHT makes small
+		// rasterized strokes disappear before ClearType can make them readable.
+		return { L"Cascadia Mono", L"Consolas", 9, FW_NORMAL, true };
 	}
 }
 

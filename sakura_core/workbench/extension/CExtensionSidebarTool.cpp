@@ -359,7 +359,7 @@ void CExtensionSidebarTool::SetPalette(const theme::ThemePalette& palette)
 {
 	m_impl->palette = palette;
 	if (m_impl->tree) {
-		TreeView_SetBkColor(m_impl->tree, palette.panel.ToColorRef());
+		TreeView_SetBkColor(m_impl->tree, palette.sideBar.ToColorRef());
 		TreeView_SetTextColor(m_impl->tree, palette.primaryText.ToColorRef());
 		TreeView_SetLineColor(m_impl->tree, palette.border.ToColorRef());
 		::InvalidateRect(m_impl->tree, nullptr, TRUE);

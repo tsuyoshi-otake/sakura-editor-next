@@ -15,6 +15,14 @@ namespace workbench::scm {
 struct GitChange {
 	wchar_t status = L'M';
 	std::wstring path;
+	//! Porcelain-v2 XY status. `indexStatus` describes HEAD -> index and
+	//! `worktreeStatus` describes index -> worktree, matching Git's two-area
+	//! source-control model.
+	wchar_t indexStatus = L'.';
+	wchar_t worktreeStatus = L'.';
+	bool untracked = false;
+	bool conflicted = false;
+	std::wstring originalPath;
 };
 
 struct GitScmState {

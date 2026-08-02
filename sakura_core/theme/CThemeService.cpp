@@ -16,6 +16,13 @@ namespace {
 
 constexpr UINT kDefaultDpi = 96;
 
+// Theme selection is window/UI-thread state in the native composition root.
+// Keeping it process-local also makes existing controls that ask EffectivePalette
+// directly observe the same selected VS Code theme as controls receiving a
+// palette through CEditWnd::ApplyWorkbenchTheme.
+std::optional<theme::ThemePalette> g_activeColorThemePalette;
+std::optional<theme::ThemeSyntaxPalette> g_activeColorThemeSyntaxPalette;
+
 [[nodiscard]] theme::ThemeColor FromColorRef(COLORREF color) noexcept
 {
 	return { GetRValue(color), GetGValue(color), GetBValue(color) };
@@ -149,7 +156,7 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// High Contrast never lowers contrast to imitate VS Code's translucent description token:
 	// the description role takes the full window text color and only the disabled role dims.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
-		face, face, highlight };
+		face, face, highlight, highlight, face, face };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept
@@ -157,7 +164,55 @@ ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept
 	if (IsHighContrastActive()) {
 		return HighContrastPalette();
 	}
+	if (g_activeColorThemePalette) {
+		return *g_activeColorThemePalette;
+	}
 	return PaletteFor(savedMode);
+}
+
+void CThemeService::SetActiveColorThemePalette(const ThemePalette& palette) noexcept
+{
+	g_activeColorThemePalette = palette;
+}
+
+void CThemeService::ClearActiveColorThemePalette() noexcept
+{
+	g_activeColorThemePalette.reset();
+	g_activeColorThemeSyntaxPalette.reset();
+}
+
+bool CThemeService::HasActiveColorThemePalette() noexcept
+{
+	return g_activeColorThemePalette.has_value();
+}
+
+void CThemeService::SetActiveColorThemeSyntaxPalette(const ThemeSyntaxPalette& palette) noexcept
+{
+	g_activeColorThemeSyntaxPalette = palette;
+}
+
+void CThemeService::ClearActiveColorThemeSyntaxPalette() noexcept
+{
+	g_activeColorThemeSyntaxPalette.reset();
+}
+
+bool CThemeService::HasActiveColorThemeSyntaxPalette() noexcept
+{
+	return g_activeColorThemeSyntaxPalette.has_value();
+}
+
+const ThemeSyntaxPalette* CThemeService::ActiveColorThemeSyntaxPalette() noexcept
+{
+	return g_activeColorThemeSyntaxPalette ? &*g_activeColorThemeSyntaxPalette : nullptr;
+}
+
+ThemeSyntaxPalette CThemeService::EffectiveSyntaxPalette(ThemeMode savedMode) noexcept
+{
+	(void)savedMode;
+	if (IsHighContrastActive() || !g_activeColorThemeSyntaxPalette) {
+		return {};
+	}
+	return *g_activeColorThemeSyntaxPalette;
 }
 
 } // namespace theme

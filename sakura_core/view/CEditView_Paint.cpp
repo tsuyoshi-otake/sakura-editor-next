@@ -24,6 +24,7 @@
 #include "debug/StartupTrace.h"
 #include "extension/CExtensionWorkbenchUi.h"
 #include "window/CEditWnd.h"
+#include "theme/CThemeService.h"
 #include "parse/CWordParse.h"
 #include "util/string_ex2.h"
 #ifdef USE_SSE2
@@ -47,6 +48,25 @@ COLORREF DiagnosticColor(EExtensionDiagnosticSeverity severity) noexcept
 	case EExtensionDiagnosticSeverity::Hint: return RGB(128, 128, 128);
 	}
 	return RGB(224, 62, 62);
+}
+
+std::optional<theme::ThemeSyntaxTokenKind> SyntaxKindForColorIndex(EColorIndexType index) noexcept
+{
+	if (index == COLORIDX_COMMENT || index == COLORIDX_BLOCK1 || index == COLORIDX_BLOCK2) {
+		return theme::ThemeSyntaxTokenKind::Comment;
+	}
+	if (index == COLORIDX_SSTRING || index == COLORIDX_WSTRING || index == COLORIDX_HEREDOC) {
+		return theme::ThemeSyntaxTokenKind::String;
+	}
+	if (index == COLORIDX_DIGIT) return theme::ThemeSyntaxTokenKind::Number;
+	if (index >= COLORIDX_KEYWORD1 && index <= COLORIDX_KEYWORD10) {
+		return theme::ThemeSyntaxTokenKind::Keyword;
+	}
+	if ((index >= COLORIDX_REGEX1 && index <= COLORIDX_REGEX10)
+		|| (index >= COLORIDX_REGEX_FIRST && index <= COLORIDX_REGEX_LAST)) {
+		return theme::ThemeSyntaxTokenKind::Regexp;
+	}
+	return std::nullopt;
 }
 
 void DrawDiagnosticSquiggles(CEditView& view, CGraphics& graphics)
@@ -551,6 +571,23 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 	// 2012.11.21 背景色がテキストとおなじなら背景色はカーソル行背景
 	const ColorInfo& info3 = (info2.m_sColorAttr.m_cBACK == m_crBack ? infoBg : info2);
 	COLORREF bkcolor = (nColorIdx == nColorIdx2) ? info3.m_sColorAttr.m_cBACK : GetBackColorByColorInfo2(info, info3);
+	const theme::ThemeSyntaxStyle* syntaxStyle = nullptr;
+	if (eColorIndex != COLORIDX_SELECT && eColorIndex2 != COLORIDX_SELECT) {
+		if (const auto* syntaxPalette = theme::CThemeService::ActiveColorThemeSyntaxPalette()) {
+			auto syntaxKind = SyntaxKindForColorIndex(eColorIndex);
+			if (!syntaxKind) syntaxKind = SyntaxKindForColorIndex(eColorIndex2);
+			if (syntaxKind) syntaxStyle = &syntaxPalette->For(*syntaxKind);
+		}
+	}
+	const auto applyThemeColor = [](const std::optional<theme::ThemeColor>& color, COLORREF base) noexcept {
+		if (!color || color->alpha == 0) return base;
+		if (color->alpha == 0xFF) return color->ToColorRef();
+		return MakeColor2(color->ToColorRef(), base, color->alpha);
+	};
+	if (syntaxStyle != nullptr) {
+		bkcolor = applyThemeColor(syntaxStyle->background, bkcolor);
+		fgcolor = applyThemeColor(syntaxStyle->foreground, bkcolor);
+	}
 	if( m_bMiniMap ){
 		// The minimap is navigational context, not a second editor.  Pull syntax
 		// colors toward their background so they remain legible without competing
@@ -561,6 +598,10 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 	gr.SetTextBackColor(bkcolor);
 	SFONT sFont;
 	sFont.m_sFontAttr = (info.m_sColorAttr.m_cTEXT != info.m_sColorAttr.m_cBACK) ? info.m_sFontAttr : info2.m_sFontAttr;
+	if (syntaxStyle != nullptr) {
+		sFont.m_sFontAttr.m_bBoldFont = sFont.m_sFontAttr.m_bBoldFont || syntaxStyle->bold;
+		sFont.m_sFontAttr.m_bUnderLine = sFont.m_sFontAttr.m_bUnderLine || syntaxStyle->underline;
+	}
 	sFont.m_hFont = GetFontset().ChooseFontHandle( 0, sFont.m_sFontAttr );
 	gr.SetMyFont(sFont);
 }

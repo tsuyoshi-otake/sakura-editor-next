@@ -20,16 +20,26 @@
 
 namespace workbench::extension {
 
-enum class ExtensionBottomPanelTab { Terminal, Problems, Output };
+//! Panel view containers follow VS Code's left-to-right order. Ports and Debug
+//! Console are visible as explicit, disabled boundaries until their native view
+//! projections are implemented; they never select a fake placeholder surface.
+enum class ExtensionBottomPanelTab { Problems, Output, Terminal, Ports, DebugConsole };
 
 class CExtensionBottomPanelTool final : public IWorkbenchTool {
 public:
 	using ProblemActivationCallback = std::function<void(const win32::ProblemsPanelEntry&)>;
-	//! Commits a user-originated Output channel selection to the owning model before local application.
+	//! Commits a user-originated Output channel selection to the owning model.
 	using OutputChannelSelectionCallback = std::function<bool(const std::string& channelId)>;
 	//! Commits a user-originated tab selection to the owning model. Return false
 	//! to veto it; the value has no HWND or layout/model dependency.
 	using TabSelectionCallback = std::function<bool(ExtensionBottomPanelTab tab)>;
+
+	//! Common actions owned by the physical VS Code Panel Part, not by a panel view.
+	struct PanelActions {
+		std::function<void()> closePanel;
+		std::function<void()> toggleMaximize;
+		std::function<bool()> isMaximized;
+	};
 
 	CExtensionBottomPanelTool();
 	~CExtensionBottomPanelTool() override;
@@ -52,16 +62,20 @@ public:
 	void SetProblemActivationCallback(ProblemActivationCallback callback);
 	void SetOutputChannelSelectionCallback(OutputChannelSelectionCallback callback);
 	void SetTabSelectionCallback(TabSelectionCallback callback);
+	//! Sets the common Panel Part chrome actions. The callbacks are invoked only for
+	//! user input; committed visibility/extent state still arrives through the model.
+	void SetPanelActions(PanelActions actions);
 	void Refresh();
 	//! Applies already-committed model state. This never calls the selection callback.
 	void SetActiveTab(ExtensionBottomPanelTab tab);
-	//! Sends a user request to the owner before changing the local/native state.
-	//! A veto or callback failure leaves the prior state unchanged.
+	//! Sends a user request to the owner. With a callback installed, native state is
+	//! changed only when the next committed model snapshot is projected back.
 	[[nodiscard]] bool RequestTabSelection(ExtensionBottomPanelTab tab) noexcept;
 	void ShowProblems();
 	void ShowOutput();
 	[[nodiscard]] ExtensionBottomPanelTab ActiveTab() const noexcept;
-	//! Sends a user selection request to the owner before changing the cached/native channel selection.
+	//! Sends a user selection request to the owner. With a callback installed, the
+	//! cached/native channel selection waits for the committed output snapshot.
 	[[nodiscard]] bool RequestOutputChannelSelection(const std::string& channelId) noexcept;
 	//! The panel's cached selection; it follows an accepted activeChannelId when available.
 	[[nodiscard]] std::optional<std::string> SelectedOutputChannelId() const;

@@ -97,6 +97,35 @@ struct BuiltinActiveSurfaceProjectionResult {
 	}
 };
 
+//! The complete native shell projection for one committed Workbench snapshot.
+//!
+//! VS Code keeps physical Parts and the active ViewContainer/View projection as
+//! separate responsibilities, but the native shell must apply them from the same
+//! committed snapshot.  This value is the boundary between those two model
+//! concerns and HWND-bearing controls.
+struct BuiltinWorkbenchProjection {
+	BuiltinPartProjection parts;
+	BuiltinActiveSurfaceProjection surfaces;
+	[[nodiscard]] constexpr bool operator==(const BuiltinWorkbenchProjection&) const noexcept = default;
+};
+
+//! A failed composite projection never exposes a half-applicable native state.
+enum class EBuiltinWorkbenchProjectionStatus : std::uint8_t {
+	Succeeded,
+	PartProjectionFailed,
+	ActiveSurfaceProjectionFailed,
+};
+
+struct BuiltinWorkbenchProjectionResult {
+	EBuiltinWorkbenchProjectionStatus status = EBuiltinWorkbenchProjectionStatus::PartProjectionFailed;
+	std::optional<BuiltinWorkbenchProjection> projection;
+
+	[[nodiscard]] constexpr bool Succeeded() const noexcept
+	{
+		return status == EBuiltinWorkbenchProjectionStatus::Succeeded && projection.has_value();
+	}
+};
+
 /*!
 	@brief Projects only the built-in physical parts from one model snapshot.
 
@@ -115,6 +144,17 @@ struct BuiltinActiveSurfaceProjectionResult {
 	or an explicit focus that cannot resolve to a supported active leaf fail atomically.
 */
 [[nodiscard]] BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
+	const layout::WorkbenchLayoutStateSnapshot& snapshot);
+
+/*!
+	@brief Projects a complete native shell view from one model snapshot.
+
+	The individual functions above remain useful for focused validation, while this
+	composite adapter is the only boundary used by the window projection path.  It
+	prevents a valid Part projection from being applied when the active surface
+	projection for the same snapshot is malformed.
+*/
+[[nodiscard]] BuiltinWorkbenchProjectionResult ProjectBuiltinWorkbench(
 	const layout::WorkbenchLayoutStateSnapshot& snapshot);
 
 } // namespace workbench::win32

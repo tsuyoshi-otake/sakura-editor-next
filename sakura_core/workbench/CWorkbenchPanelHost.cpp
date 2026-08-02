@@ -366,7 +366,10 @@ void CWorkbenchPanelHost::Paint()
 	RECT header = client;
 	const int headerHeight = GetHeaderHeightPixels();
 	header.bottom = std::min(header.bottom, header.top + headerHeight);
-	const HBRUSH background = ::CreateSolidBrush(m_palette.panel.ToColorRef());
+	const theme::ThemeColor surface = m_edge == WorkbenchEdge::Bottom
+		? m_palette.bottomPanel
+		: m_edge == WorkbenchEdge::Left ? m_palette.sideBar : m_palette.panel;
+	const HBRUSH background = ::CreateSolidBrush(surface.ToColorRef());
 	::FillRect(dc, &client, background);
 	::DeleteObject(background);
 	if (headerHeight > 0) {

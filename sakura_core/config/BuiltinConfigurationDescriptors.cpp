@@ -20,6 +20,15 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// workspace persists its window settings in .vscode/settings.json.
 		{ "workbench.editor.showTabs", ConfigurationValue(L"multiple"),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder } },
+		// VS Code's selected color-theme label/id. An empty value resolves to
+		// Sakura's built-in theme matching the legacy profile dark/light preference;
+		// the native palette remains the final fail-closed fallback.
+		{ "workbench.colorTheme", ConfigurationValue(L""),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 512 } },
+		// VS Code's selected file-icon-theme id/label. Empty means the built-in
+		// Explorer presentation with no contributed file icons.
+		{ "workbench.iconTheme", ConfigurationValue(L""),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 512 } },
 		// Application-scoped trust policy is profile-owned in Sakura. It is never
 		// accepted from a workspace/folder document.
 		{ "security.workspace.trust.enabled", ConfigurationValue(true), { Scope::Profile } },

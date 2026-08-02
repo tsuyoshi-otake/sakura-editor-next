@@ -36,6 +36,8 @@ struct SInlineRun {
 	bool code = false;
 	//! `[label](target)` のラベル。リンク色で描画される。
 	bool link = false;
+	//! リンクの遷移先。表示ラベルとは分けて保持し、安全な外部 URI だけを開く。
+	std::wstring linkTarget;
 
 	[[nodiscard]] bool operator==(const SInlineRun&) const = default;
 };

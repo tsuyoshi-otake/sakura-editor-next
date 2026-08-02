@@ -20,6 +20,7 @@
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
+#include "workbench/scm/SourceControlService.h"
 #include "workbench/tasks/FolderTaskCatalogRegistry.h"
 #include "workbench/tasks/TaskExecutionService.h"
 #include "workbench/workspace/WorkspaceConfigurationTypes.h"
@@ -96,6 +97,8 @@ public:
 	[[nodiscard]] const problems::MarkerService* Markers() const noexcept override;
 	[[nodiscard]] output::OutputService* Output() noexcept override;
 	[[nodiscard]] const output::OutputService* Output() const noexcept override;
+	[[nodiscard]] scm::SourceControlService* Scm() noexcept override;
+	[[nodiscard]] const scm::SourceControlService* Scm() const noexcept override;
 	[[nodiscard]] std::optional<tasks::FolderTaskCatalogSnapshot> TaskCatalogForFolder(
 		const platform::uri::Uri& folderUri) const override;
 	[[nodiscard]] tasks::TaskExecutionService* TaskExecution() noexcept override;
@@ -196,6 +199,7 @@ private:
 	//! terminal state. Their limits are explicit runtime composition policy.
 	problems::MarkerService m_markers;
 	output::OutputService m_output;
+	scm::SourceControlService m_scm;
 	std::optional<config::WorkspaceContextSnapshot> m_workspaceArtifactTopology;
 	std::shared_ptr<std::atomic_bool> m_stopRequested;
 	mutable std::recursive_mutex m_lifecycleMutex;

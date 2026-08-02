@@ -112,6 +112,19 @@ public:
 	std::uint64_t GetActiveToken() const noexcept { return m_activeToken; }
 	std::uint64_t GetActiveGeneration() const noexcept { return m_activeGeneration; }
 	TimePoint GetCooldownUntil() const noexcept { return m_cooldownUntil; }
+	//! Cancel a pending session when the selected profile has no active extensions.
+	void Cancel() noexcept
+	{
+		if (m_state == State::Shutdown) return;
+		m_state = State::Idle;
+		m_retryCount = 0;
+		m_activeToken = 0;
+		m_activeGeneration = 0;
+		m_scheduledToken = 0;
+		m_windowActive = false;
+		m_deadline = {};
+		m_cooldownUntil = {};
+	}
 	void Shutdown() noexcept { m_state = State::Shutdown; m_activeToken = 0; m_activeGeneration = 0; m_deadline = {}; }
 
 private:

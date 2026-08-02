@@ -72,6 +72,9 @@ class IExtensionSecretSessionStorage;
 struct SExtensionNativeEditorOptions;
 class CExtensionViewRegistry;
 class CExtensionDetailSurface;
+namespace config {
+class ConfigurationSubscription;
+}
 struct SExtensionDiagnostic;
 struct SExtensionDocumentSnapshot;
 struct SExtensionDocumentEdit;
@@ -79,6 +82,9 @@ struct SExtensionApplyEditResult;
 struct DLLSHAREDATA;
 namespace terminal {
 class CTerminalTool;
+}
+namespace theme {
+class CColorThemeRegistry;
 }
 namespace markdown {
 class CMarkdownPreviewWnd;
@@ -95,6 +101,7 @@ struct WorkbenchLayoutStateSnapshot;
 }
 namespace icons {
 class CExtensionIconFontRegistry;
+class CFileIconThemeRegistry;
 }
 namespace win32 {
 struct BuiltinActiveSurfaceProjection;
@@ -121,6 +128,12 @@ class CScmWorkbenchTool;
 namespace extension {
 class CExtensionBottomPanelTool;
 class CExtensionSidebarTool;
+}
+namespace notification {
+class CNotificationHost;
+}
+namespace quickinput {
+class CCommandPaletteOverlay;
 }
 namespace editor {
 class CEditDocLegacyEditorBackend;
@@ -360,7 +373,7 @@ public:
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
 	//! Show the VS Code-compatible command palette and dispatch the selected extension command.
-	void ShowExtensionCommandPalette();
+	[[nodiscard]] bool ShowExtensionCommandPalette();
 	[[nodiscard]] bool IsMarkdownPreviewVisible() const noexcept;
 	[[nodiscard]] bool IsMarkdownPreviewAvailable() const;
 
@@ -548,6 +561,7 @@ private:
 	[[nodiscard]] bool ShouldDeferStartupLayout() const noexcept;
 
 	bool InitializeWorkbench();
+	void EnsureNotificationHost() noexcept;
 	void PostDeferredStartupWorkbenchIfReady();
 	void CompleteDeferredStartupWorkbench();
 	void CloseWorkbench() noexcept;
@@ -578,6 +592,7 @@ private:
 	[[nodiscard]] bool FinalizeSuccessfulLegacyLoad();
 	[[nodiscard]] bool CreateUntitledEditorInput();
 	[[nodiscard]] bool CloseActiveEditorInput();
+	void ConfigureCustomFrameActions();
 	[[nodiscard]] bool ExecuteWorkbenchEditorCommand(std::string_view commandId);
 	[[nodiscard]] bool ExecuteActiveWorkingCopyCommand(
 		std::string_view commandId, bool suppressCloseConfirmation = false,
@@ -608,6 +623,18 @@ private:
 		ワーカー専用状態である m_installedRoots は決して読まない。
 	*/
 	void RefreshExtensionIconFonts();
+	//! Rebuilds the window-local registry from the profile's enabled VSIX roots.
+	void RefreshColorThemes();
+	//! Rebuilds the file-icon-theme registry from the profile's enabled VSIX roots.
+	void RefreshFileIconThemes();
+	//! Shows the native equivalent of VS Code's Preferences: Color Theme picker.
+	[[nodiscard]] bool ShowColorThemePicker();
+	[[nodiscard]] bool PersistColorThemeSelection(std::wstring_view themeId);
+	//! Shows the native equivalent of VS Code's Preferences: File Icon Theme picker.
+	[[nodiscard]] bool ShowFileIconThemePicker();
+	[[nodiscard]] bool PersistFileIconThemeSelection(std::wstring_view themeId);
+	//! Applies the selected file icon theme to the native Explorer control.
+	void ApplyFileIconTheme();
 	SExtensionApplyEditResult ApplyExtensionEdits(
 		const std::vector<SExtensionDocumentEdit>& edits,
 		std::vector<SExtensionDocumentSnapshot>& snapshots);
@@ -696,6 +723,11 @@ private:
 	//! without retaining or dereferencing CEditWnd from a model callback thread.
 	struct WorkbenchServiceProjectionGate;
 	std::shared_ptr<WorkbenchServiceProjectionGate> m_workbenchServiceProjectionGate;
+	//! Configuration callbacks never touch CEditWnd directly; they coalesce a
+	//! message through this gate and are disconnected before workbench teardown.
+	struct ThemeConfigurationGate;
+	std::shared_ptr<ThemeConfigurationGate> m_themeConfigurationGate;
+	std::unique_ptr<config::ConfigurationSubscription> m_themeConfigurationSubscription;
 	//! Running-only borrows from m_workbenchRuntime. They are released after the
 	//! gate is disconnected and their exact subscriptions are removed.
 	workbench::problems::MarkerService* m_markerService = nullptr;
@@ -739,9 +771,15 @@ private:
 	std::filesystem::path m_extensionProfileDirectory;
 	std::unique_ptr<IExtensionSecretSessionStorage> m_extensionSecretStorage;
 	std::unique_ptr<CExtensionService> m_extensionService;
+	std::unique_ptr<workbench::notification::CNotificationHost> m_notificationHost;
+	std::unique_ptr<workbench::quickinput::CCommandPaletteOverlay> m_commandPaletteOverlay;
 	//! 導入済み拡張の contributes.icons。ステータスバーは非所有ポインタで借りるので、
 	//! ここが唯一の所有者であり、m_cStatusBar より長く生きなければならない。
 	std::unique_ptr<workbench::icons::CExtensionIconFontRegistry> m_extensionIconFonts;
+	//! Parsed contributes.themes entries from the same enabled extension set.
+	std::unique_ptr<theme::CColorThemeRegistry> m_colorThemeRegistry;
+	//! Parsed contributes.iconThemes entries from the same enabled extension set.
+	std::unique_ptr<workbench::icons::CFileIconThemeRegistry> m_fileIconThemeRegistry;
 	std::wstring m_extensionDocumentUri;
 	std::uint64_t m_extensionDocumentVersion = 0;
 	bool m_extensionDocumentSyncTimerPending = false;

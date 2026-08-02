@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 #include <utility>
+#include <vector>
 
 #include "util/string_ex.h"
 
@@ -104,6 +106,39 @@ bool PresentationSupportsThemeIcons(const picojson::object& object, const char* 
 	return flag && flag->is<bool>() && flag->get<bool>();
 }
 
+bool PresentationIsTrusted(const picojson::object& object, const char* key)
+{
+	const auto* source = Find(object, key);
+	if (!source || !source->is<picojson::object>()) return false;
+	const auto& nested = source->get<picojson::object>();
+	constexpr char trustedKey[] = { 'i', 's', 'T', 'r', 'u', 's', 't', 'e', 'd', '\0' };
+	const auto* flag = Find(nested, trustedKey);
+	return flag && flag->is<bool>() && flag->get<bool>();
+}
+
+std::vector<std::wstring> PresentationTrustedCommands(const picojson::object& object, const char* key)
+{
+	const auto* source = Find(object, key);
+	if (!source || !source->is<picojson::object>()) return {};
+	const auto& nested = source->get<picojson::object>();
+	constexpr char trustedKey[] = { 'i', 's', 'T', 'r', 'u', 's', 't', 'e', 'd', '\0' };
+	const auto* trusted = Find(nested, trustedKey);
+	if (!trusted || !trusted->is<picojson::object>()) return {};
+	const auto& trustedObject = trusted->get<picojson::object>();
+	constexpr char enabledCommandsKey[] = {
+		'e', 'n', 'a', 'b', 'l', 'e', 'd', 'C', 'o', 'm', 'm', 'a', 'n', 'd', 's', '\0'
+	};
+	const auto* enabledCommands = Find(trustedObject, enabledCommandsKey);
+	if (!enabledCommands || !enabledCommands->is<picojson::array>()) return {};
+	std::vector<std::wstring> result;
+	for (const auto& command : enabledCommands->get<picojson::array>()) {
+		if (!command.is<std::string>()) continue;
+		const auto value = u8stowcs(command.get<std::string>());
+		if (!value.empty()) result.push_back(value);
+	}
+	return result;
+}
+
 std::wstring CommandString(const picojson::object& object)
 {
 	const auto* command = Find(object, "command");
@@ -156,6 +191,204 @@ bool UInt32(const picojson::object& object, const char* key, std::uint32_t& valu
 		number > static_cast<double>((std::numeric_limits<std::uint32_t>::max)())) return false;
 	value = static_cast<std::uint32_t>(number);
 	return true;
+}
+
+bool ScmInputBox(const picojson::value* source, workbench::scm::ScmInputBoxState& input, std::string& error)
+{
+	if (!source || !source->is<picojson::object>()) {
+		error = "inputBox must be an object";
+		return false;
+	}
+	const auto& object = source->get<picojson::object>();
+	for (const auto& [key, target] : object) {
+		if (key == "value" || key == "placeholder") {
+			if (!target.is<std::string>()) {
+				error = "inputBox text fields must be strings";
+				return false;
+			}
+			if (key == "value") input.value = target.get<std::string>();
+			else input.placeholder = target.get<std::string>();
+		} else if (key == "enabled" || key == "visible") {
+			if (!target.is<bool>()) {
+				error = "inputBox enabled/visible fields must be booleans";
+				return false;
+			}
+			if (key == "enabled") input.enabled = target.get<bool>();
+			else input.visible = target.get<bool>();
+		}
+	}
+	return true;
+}
+
+bool ScmCommand(const picojson::value* source, workbench::scm::ScmCommand& command, std::string& error)
+{
+	if (!source || !source->is<picojson::object>()) {
+		error = "SCM command must be an object";
+		return false;
+	}
+	const auto& object = source->get<picojson::object>();
+	const auto* id = Find(object, "command");
+	const auto* title = Find(object, "title");
+	if (!id || !id->is<std::string>() || id->get<std::string>().empty() ||
+		!title || !title->is<std::string>() || title->get<std::string>().empty()) {
+		error = "SCM command requires non-empty command and title";
+		return false;
+	}
+	command.command = id->get<std::string>();
+	command.title = title->get<std::string>();
+	if (const auto* arguments = Find(object, "arguments")) {
+		if (!arguments->is<picojson::array>()) {
+			error = "SCM command arguments must be an array";
+			return false;
+		}
+		command.argumentsJson = arguments->serialize();
+	} else {
+		command.argumentsJson = "[]";
+	}
+	return true;
+}
+
+bool ScmIconPath(const picojson::value* source, std::optional<std::string>& path, std::string& error)
+{
+	if (!source || source->is<picojson::null>()) {
+		path.reset();
+		return true;
+	}
+	if (source->is<std::string>()) {
+		path = source->get<std::string>();
+		return true;
+	}
+	if (source->is<picojson::object>()) {
+		const auto* themeIcon = Find(source->get<picojson::object>(), "themeIcon");
+		if (themeIcon && themeIcon->is<std::string>() && !themeIcon->get<std::string>().empty()) {
+			path = "$(" + themeIcon->get<std::string>() + ")";
+			return true;
+		}
+	}
+	error = "SCM iconPath must be a string, URI, or ThemeIcon";
+	return false;
+}
+
+bool ScmResource(
+	const picojson::value& source,
+	std::optional<workbench::scm::ScmResourceState>& resource,
+	std::string& error)
+{
+	if (!source.is<picojson::object>()) {
+		error = "SCM resource state must be an object";
+		return false;
+	}
+	const auto& object = source.get<picojson::object>();
+	const auto* uri = Find(object, "resourceUri");
+	if (!uri || !uri->is<std::string>() || uri->get<std::string>().empty()) {
+		error = "SCM resourceUri must be a non-empty string";
+		return false;
+	}
+	const auto parsed = platform::uri::Uri::Parse(u8stowcs(uri->get<std::string>()));
+	if (!parsed) {
+		error = "SCM resourceUri is not a valid URI";
+		return false;
+	}
+	resource.emplace(*parsed.value);
+	if (const auto* command = Find(object, "command")) {
+		workbench::scm::ScmCommand parsedCommand;
+		if (!ScmCommand(command, parsedCommand, error)) return false;
+		resource->command = std::move(parsedCommand);
+	}
+	if (const auto* context = Find(object, "contextValue")) {
+		if (!context->is<std::string>()) {
+			error = "SCM contextValue must be a string";
+			return false;
+		}
+		resource->contextValue = context->get<std::string>();
+	}
+	const auto* decorations = Find(object, "decorations");
+	if (decorations) {
+		if (!decorations->is<picojson::object>()) {
+			error = "SCM decorations must be an object";
+			return false;
+		}
+		const auto& decoration = decorations->get<picojson::object>();
+		if (const auto* strike = Find(decoration, "strikeThrough")) {
+			if (!strike->is<bool>()) { error = "SCM strikeThrough must be a boolean"; return false; }
+			resource->strikeThrough = strike->get<bool>();
+		}
+		if (const auto* faded = Find(decoration, "faded")) {
+			if (!faded->is<bool>()) { error = "SCM faded must be a boolean"; return false; }
+			resource->faded = faded->get<bool>();
+		}
+		if (const auto* tooltip = Find(decoration, "tooltip")) {
+			if (!tooltip->is<std::string>()) { error = "SCM tooltip must be a string"; return false; }
+			resource->tooltip = tooltip->get<std::string>();
+		}
+		std::optional<std::string> commonIcon;
+		if (!ScmIconPath(Find(decoration, "iconPath"), commonIcon, error)) return false;
+		if (const auto* light = Find(decoration, "light")) {
+			if (!light->is<picojson::object>()) { error = "SCM light decoration must be an object"; return false; }
+			if (!ScmIconPath(Find(light->get<picojson::object>(), "iconPath"), resource->lightIconPath, error)) return false;
+		}
+		if (const auto* dark = Find(decoration, "dark")) {
+			if (!dark->is<picojson::object>()) { error = "SCM dark decoration must be an object"; return false; }
+			if (!ScmIconPath(Find(dark->get<picojson::object>(), "iconPath"), resource->darkIconPath, error)) return false;
+		}
+		if (commonIcon) {
+			if (!resource->lightIconPath) resource->lightIconPath = commonIcon;
+			if (!resource->darkIconPath) resource->darkIconPath = commonIcon;
+		}
+	}
+	return true;
+}
+
+bool ScmCount(const picojson::object& object, std::optional<std::int32_t>& count, std::string& error)
+{
+	const auto* source = Find(object, "count");
+	if (!source || source->is<picojson::null>()) return true;
+	if (!source->is<double>()) { error = "SCM count must be an integer"; return false; }
+	const auto number = source->get<double>();
+	if (!std::isfinite(number) || std::floor(number) != number ||
+		number < static_cast<double>((std::numeric_limits<std::int32_t>::min)()) ||
+		number > static_cast<double>((std::numeric_limits<std::int32_t>::max)())) {
+		error = "SCM count is outside the supported integer range";
+		return false;
+	}
+	count = static_cast<std::int32_t>(number);
+	return true;
+}
+
+bool ScmCommands(const picojson::value* source, std::vector<workbench::scm::ScmCommand>& commands, std::string& error)
+{
+	if (!source || !source->is<picojson::array>()) { error = "SCM commands must be an array"; return false; }
+	for (const auto& value : source->get<picojson::array>()) {
+		workbench::scm::ScmCommand command;
+		if (!ScmCommand(&value, command, error)) return false;
+		commands.push_back(std::move(command));
+	}
+	return true;
+}
+
+std::string ScmFailureText(const workbench::scm::EScmOperationStatus status)
+{
+	using enum workbench::scm::EScmOperationStatus;
+	switch (status) {
+	case InvalidOwner: return "SCM owner is invalid or stale";
+	case OwnerGenerationConflict: return "SCM owner generation conflict";
+	case InvalidProvider: return "SCM provider is not registered";
+	case InvalidGroup: return "SCM resource group is not registered";
+	case InvalidResource: return "SCM resource state is invalid";
+	case InvalidPayload: return "SCM payload is invalid";
+	case OwnerLimitExceeded: return "SCM owner limit exceeded";
+	case ProviderLimitExceeded: return "SCM provider limit exceeded";
+	case GroupLimitExceeded: return "SCM resource-group limit exceeded";
+	case ResourceLimitExceeded: return "SCM resource limit exceeded";
+	case PayloadLimitExceeded: return "SCM payload limit exceeded";
+	case RevisionExhausted: return "SCM revision space exhausted";
+	case Stopped: return "SCM service is stopped";
+	case Succeeded:
+	case Replayed:
+	case NotApplicable:
+		return "";
+	}
+	return "SCM operation failed";
 }
 
 bool ParsePosition(const picojson::value* value, SExtensionTextPosition& position)
@@ -352,6 +585,11 @@ void CExtensionWorkbenchDispatcher::SetNotificationHandler(NotificationHandler h
 	m_notificationHandler = std::move(handler);
 }
 
+void CExtensionWorkbenchDispatcher::SetDeferredNotificationHandler(DeferredNotificationHandler handler)
+{
+	m_deferredNotificationHandler = std::move(handler);
+}
+
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::Dispatch(const SExtensionRpcMessage& message)
 {
 	if (message.eKind != EExtensionRpcMessageKind::Request &&
@@ -368,10 +606,11 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::Dispatch(const 
 	if (method == "workbench/commands/list") return DispatchCommandList(message.sParamsJson);
 	if (method.starts_with("workbench/statusBar/")) return DispatchStatusBar(method, message.sParamsJson);
 	if (method.starts_with("workbench/views/")) return DispatchView(method, message.sParamsJson);
+	if (method.starts_with("workbench/scm/")) return DispatchScm(method, message.sParamsJson);
 	if (message.eKind == EExtensionRpcMessageKind::Request && method.starts_with("secrets/")) {
 		return DispatchSecret(method, message.sParamsJson);
 	}
-	if (method == "workbench/notification/show") return DispatchNotification(message.sParamsJson);
+	if (method == "workbench/notification/show") return DispatchNotification(message);
 	if (method.starts_with("languages/diagnostics/")) return DispatchDiagnostics(method, message.sParamsJson);
 	if (method.starts_with("workbench/quickInput/")) return DispatchQuickInput(method, message.sParamsJson);
 	if (method.starts_with("workbench/output/")) return DispatchOutput(method, message.sParamsJson);
@@ -464,7 +703,8 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchRemoveG
 	return Success(EExtensionWorkbenchChange::Commands | EExtensionWorkbenchChange::StatusBar |
 		EExtensionWorkbenchChange::Views | EExtensionWorkbenchChange::Notifications |
 		EExtensionWorkbenchChange::Diagnostics | EExtensionWorkbenchChange::Output |
-		EExtensionWorkbenchChange::Progress | EExtensionWorkbenchChange::QuickInput);
+		EExtensionWorkbenchChange::Progress | EExtensionWorkbenchChange::QuickInput |
+		EExtensionWorkbenchChange::Scm);
 }
 
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchActivationFailure(std::string_view paramsJson)
@@ -594,6 +834,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchStatusB
 		return Success(EExtensionWorkbenchChange::StatusBar);
 	}
 	const auto* priority = Find(params, "priority");
+	constexpr char tooltipKey[] = { 't', 'o', 'o', 'l', 't', 'i', 'p', '\0' };
 	SExtensionStatusBarItem item{
 		.handle = std::move(handle),
 		.itemId = OptionalString(params, "itemId"),
@@ -605,6 +846,8 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchStatusB
 		.text = OptionalString(params, "text"),
 		.tooltip = PresentationString(params, "tooltip"),
 		.tooltipSupportsThemeIcons = PresentationSupportsThemeIcons(params, "tooltip"),
+		.tooltipIsTrusted = PresentationIsTrusted(params, tooltipKey),
+		.tooltipTrustedCommands = PresentationTrustedCommands(params, tooltipKey),
 		.command = CommandString(params),
 		.accessibilityLabel = PresentationString(params, "accessibilityInformation"),
 		.visible = OptionalBool(params, "visible"),
@@ -683,6 +926,200 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchView(
 	return {};
 }
 
+SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchScm(
+	std::string_view method, std::string_view paramsJson)
+{
+	picojson::object params;
+	std::string error;
+	if (!ParseObject(paramsJson, params, error)) return Failure(error);
+	std::wstring extensionId;
+	std::uint64_t generation = 0;
+	if (!RequiredString(params, "extensionId", extensionId, error) || !Generation(params, generation, error)) {
+		return Failure(error);
+	}
+	if (!m_serviceBridge) return Failure("SCM service is unavailable", -32001);
+	auto* scm = m_serviceBridge->Scm();
+	if (!scm) return Failure("SCM service is unavailable", -32001);
+	const workbench::scm::ScmOwner owner{ .extensionId = wcstou8s(extensionId), .generation = generation };
+
+	const auto complete = [&](const workbench::scm::ScmOperationResult& result, const bool allowNotApplicable = false) {
+		if (result.Succeeded() || (allowNotApplicable && result.status == workbench::scm::EScmOperationStatus::NotApplicable)) {
+			return Success(EExtensionWorkbenchChange::Scm);
+		}
+		return Failure(ScmFailureText(result.status), result.status == workbench::scm::EScmOperationStatus::Stopped ? -32001 : -32011);
+	};
+
+	if (method == "workbench/scm/provider/create") {
+		std::wstring handle;
+		std::wstring id;
+		std::wstring label;
+		if (!RequiredString(params, "handle", handle, error) || !RequiredString(params, "id", id, error) ||
+			!RequiredString(params, "label", label, error)) return Failure(error);
+		workbench::scm::ScmProviderState provider{
+			.owner = owner,
+			.handle = wcstou8s(handle),
+			.id = wcstou8s(id),
+			.label = wcstou8s(label),
+		};
+		if (const auto* root = Find(params, "rootUri"); root && !root->is<picojson::null>()) {
+			if (!root->is<std::string>()) return Failure("rootUri must be a URI string");
+			const auto parsed = platform::uri::Uri::Parse(u8stowcs(root->get<std::string>()));
+			if (!parsed) return Failure("rootUri is not a valid URI");
+			provider.rootUri = *parsed.value;
+		}
+		if (const auto* input = Find(params, "inputBox")) {
+			if (!ScmInputBox(input, provider.inputBox, error)) return Failure(error);
+		}
+		if (!ScmCount(params, provider.count, error)) return Failure(error);
+		if (const auto* commitTemplate = Find(params, "commitTemplate"); commitTemplate && !commitTemplate->is<picojson::null>()) {
+			if (!commitTemplate->is<std::string>()) return Failure("commitTemplate must be a string");
+			provider.commitTemplate = commitTemplate->get<std::string>();
+		}
+		if (const auto* accept = Find(params, "acceptInputCommand"); accept && !accept->is<picojson::null>()) {
+			workbench::scm::ScmCommand command;
+			if (!ScmCommand(accept, command, error)) return Failure(error);
+			provider.acceptInputCommand = std::move(command);
+		}
+		if (const auto* status = Find(params, "statusBarCommands"); status && !status->is<picojson::null>()) {
+			if (!ScmCommands(status, provider.statusBarCommands, error)) return Failure(error);
+		}
+		return complete(scm->CreateProvider({ .provider = std::move(provider) }));
+	}
+
+	if (method == "workbench/scm/provider/update") {
+		std::wstring handle;
+		if (!RequiredString(params, "handle", handle, error)) return Failure(error);
+		workbench::scm::ScmUpdateProviderRequest request{ .owner = owner, .handle = wcstou8s(handle) };
+		if (const auto* label = Find(params, "label")) {
+			if (!label->is<std::string>()) return Failure("label must be a string");
+			request.label = label->get<std::string>();
+		}
+		if (const auto* input = Find(params, "inputBox")) {
+			workbench::scm::ScmInputBoxState state;
+			if (!ScmInputBox(input, state, error)) return Failure(error);
+			request.inputBox = std::move(state);
+		}
+		if (Find(params, "count")) {
+			if (Find(params, "count")->is<picojson::null>()) request.clearCount = true;
+			else if (!ScmCount(params, request.count, error)) return Failure(error);
+		}
+		if (const auto* commitTemplate = Find(params, "commitTemplate")) {
+			if (commitTemplate->is<picojson::null>()) request.clearCommitTemplate = true;
+			else if (!commitTemplate->is<std::string>()) return Failure("commitTemplate must be a string or null");
+			else request.commitTemplate = commitTemplate->get<std::string>();
+		}
+		if (const auto* accept = Find(params, "acceptInputCommand")) {
+			if (accept->is<picojson::null>()) request.clearAcceptInputCommand = true;
+			else {
+				workbench::scm::ScmCommand command;
+				if (!ScmCommand(accept, command, error)) return Failure(error);
+				request.acceptInputCommand = std::move(command);
+			}
+		}
+		if (const auto* status = Find(params, "statusBarCommands")) {
+			if (status->is<picojson::null>()) request.clearStatusBarCommands = true;
+			else {
+				request.statusBarCommands.emplace();
+				if (!ScmCommands(status, *request.statusBarCommands, error)) return Failure(error);
+			}
+		}
+		return complete(scm->UpdateProvider(request));
+	}
+
+	if (method == "workbench/scm/provider/dispose") {
+		std::wstring handle;
+		if (!RequiredString(params, "handle", handle, error)) return Failure(error);
+		return complete(scm->DisposeProvider({ .owner = owner, .handle = wcstou8s(handle) }), true);
+	}
+
+	if (method == "workbench/scm/group/create") {
+		std::wstring handle;
+		std::wstring groupId;
+		std::wstring label;
+		if (!RequiredString(params, "handle", handle, error) || !RequiredString(params, "groupId", groupId, error) ||
+			!RequiredString(params, "label", label, error)) return Failure(error);
+		workbench::scm::ScmResourceGroupState group{
+			.owner = owner,
+			.providerHandle = wcstou8s(handle),
+			.id = wcstou8s(groupId),
+			.label = wcstou8s(label),
+			.hideWhenEmpty = OptionalBool(params, "hideWhenEmpty"),
+		};
+		if (const auto* context = Find(params, "contextValue")) {
+			if (!context->is<std::string>()) return Failure("contextValue must be a string");
+			group.contextValue = context->get<std::string>();
+		}
+		return complete(scm->CreateGroup({ .group = std::move(group) }));
+	}
+
+	if (method == "workbench/scm/group/update") {
+		std::wstring handle;
+		std::wstring groupId;
+		if (!RequiredString(params, "handle", handle, error) || !RequiredString(params, "groupId", groupId, error)) return Failure(error);
+		workbench::scm::ScmUpdateGroupRequest request{
+			.owner = owner,
+			.providerHandle = wcstou8s(handle),
+			.groupId = wcstou8s(groupId),
+		};
+		if (const auto* label = Find(params, "label")) {
+			if (!label->is<std::string>()) return Failure("label must be a string");
+			request.label = label->get<std::string>();
+		}
+		if (const auto* hide = Find(params, "hideWhenEmpty")) {
+			if (!hide->is<bool>()) return Failure("hideWhenEmpty must be a boolean");
+			request.hideWhenEmpty = hide->get<bool>();
+		}
+		if (const auto* context = Find(params, "contextValue")) {
+			if (!context->is<std::string>()) return Failure("contextValue must be a string");
+			request.contextValue = context->get<std::string>();
+		}
+		return complete(scm->UpdateGroup(request));
+	}
+
+	if (method == "workbench/scm/group/dispose") {
+		std::wstring handle;
+		std::wstring groupId;
+		if (!RequiredString(params, "handle", handle, error) || !RequiredString(params, "groupId", groupId, error)) return Failure(error);
+		return complete(scm->DisposeGroup({ .owner = owner, .providerHandle = wcstou8s(handle), .groupId = wcstou8s(groupId) }), true);
+	}
+
+	if (method == "workbench/scm/resources/replace") {
+		std::wstring handle;
+		std::wstring groupId;
+		if (!RequiredString(params, "handle", handle, error) || !RequiredString(params, "groupId", groupId, error)) return Failure(error);
+		const auto* resources = Find(params, "resources");
+		if (!resources || !resources->is<picojson::array>()) return Failure("resources must be an array");
+		workbench::scm::ScmReplaceResourcesRequest request{
+			.owner = owner,
+			.providerHandle = wcstou8s(handle),
+			.groupId = wcstou8s(groupId),
+		};
+		request.resources.reserve(resources->get<picojson::array>().size());
+		for (const auto& value : resources->get<picojson::array>()) {
+			std::optional<workbench::scm::ScmResourceState> resource;
+			if (!ScmResource(value, resource, error)) return Failure(error);
+			if (!resource) return Failure("SCM resource state was not constructed", -32603);
+			request.resources.push_back(std::move(*resource));
+		}
+		return complete(scm->ReplaceResources(request));
+	}
+
+	if (method == "workbench/scm/input/update") {
+		std::wstring handle;
+		if (!RequiredString(params, "handle", handle, error)) return Failure(error);
+		workbench::scm::ScmInputBoxState input;
+		if (!ScmInputBox(Find(params, "inputBox"), input, error)) return Failure(error);
+		return complete(scm->UpdateInputBox({
+			.owner = owner,
+			.handle = wcstou8s(handle),
+			.inputBox = std::move(input),
+			.global = OptionalBool(params, "global"),
+		}));
+	}
+
+	return {};
+}
+
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchSecret(
 	std::string_view method, std::string_view paramsJson)
 {
@@ -721,11 +1158,12 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchSecret(
 	return {};
 }
 
-SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchNotification(std::string_view paramsJson)
+SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchNotification(
+	const SExtensionRpcMessage& message)
 {
 	picojson::object params;
 	std::string error;
-	if (!ParseObject(paramsJson, params, error)) return Failure(error);
+	if (!ParseObject(message.sParamsJson, params, error)) return Failure(error);
 	SExtensionNotification notification;
 	if (!RequiredString(params, "extensionId", notification.extensionId, error) ||
 		!Generation(params, notification.generation, error) ||
@@ -746,6 +1184,17 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchNotific
 	}
 	const auto id = m_notifications.Show(notification);
 	if (!id) return Failure("notification queue is unavailable", -32030);
+	notification.id = *id;
+	if (!notification.modal) {
+		if (m_deferredNotificationHandler && m_deferredNotificationHandler(notification, message)) {
+			auto result = Success(EExtensionWorkbenchChange::Notifications);
+			result.responseDeferred = message.eKind == EExtensionRpcMessageKind::Request;
+			return result;
+		}
+		m_notifications.Resolve(*id, std::nullopt);
+		(void)m_notifications.TakeCompletion(*id);
+		return Failure("notification presentation is unavailable", -32030);
+	}
 	std::optional<std::size_t> selected;
 	if (m_notificationHandler) selected = m_notificationHandler(notification);
 	m_notifications.Resolve(*id, selected);

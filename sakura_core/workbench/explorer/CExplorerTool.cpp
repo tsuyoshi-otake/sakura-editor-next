@@ -8,6 +8,9 @@
 #include "workbench/explorer/CExplorerTool.h"
 
 #include <CommCtrl.h>
+#include <wincodec.h>
+
+#include "cxx/com_pointer.hpp"
 
 #include <algorithm>
 #include <atomic>
@@ -15,11 +18,16 @@
 #include <condition_variable>
 #include <cstring>
 #include <cwctype>
+#include <cwchar>
 #include <deque>
+#include <map>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <utility>
+
+#pragma comment(lib, "windowscodecs.lib")
 
 namespace workbench::explorer {
 namespace {
@@ -29,6 +37,86 @@ constexpr UINT kWorkerResultMessage = WM_APP + 0x571;
 constexpr UINT kDirectoryChangedMessage = WM_APP + 0x572;
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr unsigned int kDefaultDpi = 96;
+
+[[nodiscard]] int IconSizeForDpi(unsigned int dpi) noexcept
+{
+	return std::max(12, ::MulDiv(16, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), 96));
+}
+
+//! Loads a raster icon into a transparent, square 32-bit DIB for the TreeView image list.
+//! WIC intentionally fails closed for formats such as SVG that have no native decoder here.
+[[nodiscard]] HBITMAP LoadRasterBitmap(const std::filesystem::path& path, unsigned int iconSize) noexcept
+{
+	try {
+		cxx::com_pointer<IWICImagingFactory> factory;
+		if (FAILED(factory.CreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER))) return nullptr;
+		cxx::com_pointer<IWICBitmapDecoder> decoder;
+		if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+			WICDecodeMetadataCacheOnLoad, &decoder))) return nullptr;
+		cxx::com_pointer<IWICBitmapFrameDecode> frame;
+		if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
+		UINT width = 0;
+		UINT height = 0;
+		if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
+			|| width > 4096 || height > 4096) return nullptr;
+
+		UINT scaledWidth = iconSize;
+		UINT scaledHeight = iconSize;
+		if (width > height) {
+			scaledHeight = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(height) * iconSize) / width));
+		} else if (height > width) {
+			scaledWidth = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(width) * iconSize) / height));
+		}
+
+		cxx::com_pointer<IWICBitmapScaler> scaler;
+		IWICBitmapSource* source = frame;
+		if (scaledWidth != width || scaledHeight != height) {
+			if (FAILED(factory->CreateBitmapScaler(&scaler))
+				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
+					WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
+			source = scaler;
+		}
+		cxx::com_pointer<IWICFormatConverter> converter;
+		if (FAILED(factory->CreateFormatConverter(&converter))
+			|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
+				WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return nullptr;
+
+		const UINT stride = scaledWidth * 4;
+		std::vector<BYTE> pixels(static_cast<std::size_t>(stride) * scaledHeight);
+		if (FAILED(converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data()))) return nullptr;
+
+		BITMAPINFO bitmapInfo{};
+		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(iconSize);
+		bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(iconSize);
+		bitmapInfo.bmiHeader.biPlanes = 1;
+		bitmapInfo.bmiHeader.biBitCount = 32;
+		bitmapInfo.bmiHeader.biCompression = BI_RGB;
+		HDC screen = ::GetDC(nullptr);
+		if (screen == nullptr) return nullptr;
+		void* bits = nullptr;
+		HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+		::ReleaseDC(nullptr, screen);
+		if (bitmap == nullptr || bits == nullptr) {
+			if (bitmap != nullptr) ::DeleteObject(bitmap);
+			return nullptr;
+		}
+		const auto destinationBytes = static_cast<std::size_t>(iconSize) * iconSize * 4;
+		std::memset(bits, 0, destinationBytes);
+		const UINT left = (iconSize - scaledWidth) / 2;
+		const UINT top = (iconSize - scaledHeight) / 2;
+		auto* destination = static_cast<BYTE*>(bits);
+		for (UINT row = 0; row < scaledHeight; ++row) {
+			const auto* sourceRow = pixels.data() + static_cast<std::size_t>(row) * stride;
+			std::memcpy(destination + (static_cast<std::size_t>(top + row) * iconSize + left) * 4,
+				sourceRow, stride);
+		}
+		return bitmap;
+	}
+	catch (...) {
+		return nullptr;
+	}
+}
 
 struct Job {
 	std::uint64_t rootGeneration{};
@@ -243,9 +331,11 @@ struct CExplorerTool::Impl {
 		std::uint64_t id{};
 		std::uint64_t requestGeneration{};
 		HTREEITEM item{};
+		std::wstring name;
 		std::wstring path;
 		bool isDirectory{};
 		bool isReparsePoint{};
+		bool isWorkspaceRoot{};
 		bool queued{};
 		bool refreshAfterQueued{};
 	};
@@ -257,6 +347,10 @@ struct CExplorerTool::Impl {
 	RECT bounds{};
 	unsigned int dpi{ kDefaultDpi };
 	ExplorerPalette palette{};
+	std::shared_ptr<const icons::FileIconThemeSnapshot> fileIconTheme;
+	icons::FileIconThemeVariant fileIconThemeVariant{ icons::FileIconThemeVariant::Default };
+	HIMAGELIST iconImages{};
+	std::map<std::wstring, int, std::less<>> iconIndices;
 	FileActivationCallback activateFile;
 	std::wstring root;
 	std::unordered_map<std::uint64_t, Node> nodes;
@@ -295,6 +389,162 @@ struct CExplorerTool::Impl {
 		return it == nodes.end() ? nullptr : &it->second;
 	}
 
+	void DestroyIconImages() noexcept
+	{
+		if (tree != nullptr) TreeView_SetImageList(tree, nullptr, TVSIL_NORMAL);
+		if (iconImages != nullptr) {
+			::ImageList_Destroy(iconImages);
+			iconImages = nullptr;
+		}
+		iconIndices.clear();
+	}
+
+	void ApplyArrowVisibility() noexcept
+	{
+		if (tree == nullptr) return;
+		LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
+		if (fileIconTheme != nullptr && fileIconTheme->hidesExplorerArrows) {
+			style &= ~static_cast<LONG_PTR>(TVS_HASBUTTONS);
+		} else {
+			style |= TVS_HASBUTTONS;
+		}
+		::SetWindowLongPtrW(tree, GWL_STYLE, style);
+		::SetWindowPos(tree, nullptr, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+	}
+
+	[[nodiscard]] HBITMAP CreateFontBitmap(const icons::FileIconDefinition& definition) const noexcept
+	{
+		if (!definition.HasFont()) return nullptr;
+		const int iconSize = IconSizeForDpi(dpi);
+		BITMAPINFO bitmapInfo{};
+		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		bitmapInfo.bmiHeader.biWidth = iconSize;
+		bitmapInfo.bmiHeader.biHeight = -iconSize;
+		bitmapInfo.bmiHeader.biPlanes = 1;
+		bitmapInfo.bmiHeader.biBitCount = 32;
+		bitmapInfo.bmiHeader.biCompression = BI_RGB;
+		HDC screen = ::GetDC(nullptr);
+		if (screen == nullptr) return nullptr;
+		void* bits = nullptr;
+		HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+		::ReleaseDC(nullptr, screen);
+		if (bitmap == nullptr || bits == nullptr) {
+			if (bitmap != nullptr) ::DeleteObject(bitmap);
+			return nullptr;
+		}
+
+		const auto pixelCount = static_cast<std::size_t>(iconSize) * iconSize;
+		auto* pixels = static_cast<std::uint32_t*>(bits);
+		const auto opaqueBackground = 0xFF000000u | (static_cast<std::uint32_t>(palette.panel) & 0x00FFFFFFu);
+		std::fill_n(pixels, pixelCount, opaqueBackground);
+
+		HDC dc = ::CreateCompatibleDC(nullptr);
+		if (dc == nullptr) {
+			::DeleteObject(bitmap);
+			return nullptr;
+		}
+		const HGDIOBJ previousBitmap = ::SelectObject(dc, bitmap);
+		LOGFONTW logFont{};
+		logFont.lfHeight = -static_cast<LONG>((std::max)(8, ::MulDiv(iconSize, 13, 16)));
+		logFont.lfWeight = FW_NORMAL;
+		logFont.lfCharSet = DEFAULT_CHARSET;
+		logFont.lfOutPrecision = OUT_TT_PRECIS;
+		logFont.lfQuality = CLEARTYPE_QUALITY;
+		logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+		(void)::wcsncpy_s(logFont.lfFaceName, LF_FACESIZE, definition.font->faceName.c_str(), _TRUNCATE);
+		HFONT font = ::CreateFontIndirectW(&logFont);
+		if (font != nullptr) {
+			const HGDIOBJ previousFont = ::SelectObject(dc, font);
+			::SetBkMode(dc, TRANSPARENT);
+			::SetTextColor(dc, static_cast<COLORREF>(definition.fontColor.value_or(palette.text)));
+			RECT textRect{ 0, 0, iconSize, iconSize };
+			(void)::DrawTextW(dc, definition.glyph.c_str(), static_cast<int>(definition.glyph.size()),
+				&textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			::SelectObject(dc, previousFont);
+			::DeleteObject(font);
+		}
+		::SelectObject(dc, previousBitmap);
+		::DeleteDC(dc);
+		// GDI text drawing may leave the alpha byte untouched. The image-list tile is
+		// intentionally opaque so the icon has the same panel-colored background as
+		// the TreeView rather than becoming a black transparent rectangle.
+		for (std::size_t index = 0; index < pixelCount; ++index) pixels[index] |= 0xFF000000u;
+		return bitmap;
+	}
+
+	[[nodiscard]] std::wstring IconCacheKey(const icons::FileIconDefinition& definition) const
+	{
+		if (definition.HasImage()) return L"image:" + definition.iconPath.wstring();
+		if (!definition.HasFont()) return {};
+		std::wstring key = L"font:" + definition.font->faceName + L"\x1F" + definition.glyph;
+		if (definition.fontColor) key += L"\x1F" + std::to_wstring(*definition.fontColor);
+		return key;
+	}
+
+	[[nodiscard]] int EnsureIconIndex(const icons::FileIconDefinition& definition)
+	{
+		if (iconImages == nullptr) return -1;
+		try {
+			const auto key = IconCacheKey(definition);
+			if (key.empty()) return -1;
+			if (const auto found = iconIndices.find(key); found != iconIndices.end()) return found->second;
+			HBITMAP bitmap = definition.HasImage()
+				? LoadRasterBitmap(definition.iconPath, static_cast<unsigned int>(IconSizeForDpi(dpi)))
+				: CreateFontBitmap(definition);
+			if (bitmap == nullptr) return -1;
+			const int index = ::ImageList_Add(iconImages, bitmap, nullptr);
+			::DeleteObject(bitmap);
+			if (index < 0) return -1;
+			iconIndices.emplace(key, index);
+			return index;
+		}
+		catch (...) {
+			return -1;
+		}
+	}
+
+	[[nodiscard]] int ResolveIcon(const Node& node, bool expanded)
+	{
+		if (fileIconTheme == nullptr) return -1;
+		const auto* definition = fileIconTheme->Resolve(node.name, node.path,
+			node.isDirectory, expanded, node.isWorkspaceRoot, fileIconThemeVariant);
+		return definition == nullptr ? -1 : EnsureIconIndex(*definition);
+	}
+
+	void UpdateNodeIcon(Node& node, bool expanded)
+	{
+		if (tree == nullptr || node.item == nullptr) return;
+		TVITEMW item{};
+		item.hItem = node.item;
+		item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+		item.iImage = ResolveIcon(node, expanded);
+		item.iSelectedImage = item.iImage;
+		(void)TreeView_SetItem(tree, &item);
+	}
+
+	void UpdateAllItemIcons()
+	{
+		for (auto& [id, node] : nodes) {
+			(void)id;
+			const bool expanded = tree != nullptr
+				&& (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
+			UpdateNodeIcon(node, expanded);
+		}
+	}
+
+	void RebuildIconImages()
+	{
+		DestroyIconImages();
+		ApplyArrowVisibility();
+		if (tree == nullptr || fileIconTheme == nullptr) return;
+		const int iconSize = IconSizeForDpi(dpi);
+		iconImages = ::ImageList_Create(iconSize, iconSize, ILC_COLOR32, 32, 16);
+		if (iconImages == nullptr) return;
+		TreeView_SetImageList(tree, iconImages, TVSIL_NORMAL);
+		UpdateAllItemIcons();
+	}
+
 	void InsertPlaceholder(HTREEITEM parent)
 	{
 		TVINSERTSTRUCTW insert{};
@@ -309,15 +559,23 @@ struct CExplorerTool::Impl {
 	{
 		Node node;
 		node.id = nextNodeId++;
+		node.name = entry.name;
 		node.path = std::move(entry.path);
 		node.isDirectory = entry.isDirectory;
 		node.isReparsePoint = entry.isReparsePoint;
+		node.isWorkspaceRoot = parent == TVI_ROOT;
 		TVINSERTSTRUCTW insert{};
 		insert.hParent = parent;
 		insert.hInsertAfter = TVI_LAST;
 		insert.item.mask = TVIF_TEXT | TVIF_PARAM;
 		insert.item.pszText = entry.name.data();
 		insert.item.lParam = static_cast<LPARAM>(node.id);
+		const int icon = ResolveIcon(node, false);
+		if (icon >= 0) {
+			insert.item.mask |= TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+			insert.item.iImage = icon;
+			insert.item.iSelectedImage = icon;
+		}
 		const auto item = TreeView_InsertItem(tree, &insert);
 		if (item == nullptr) return nullptr;
 		node.item = item;
@@ -465,6 +723,7 @@ bool CExplorerTool::Create(HWND parent)
 	::SendMessageW(m_impl->tree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
 	TreeView_SetBkColor(m_impl->tree, m_impl->palette.panel);
 	TreeView_SetTextColor(m_impl->tree, m_impl->palette.text);
+	m_impl->RebuildIconImages();
 	m_impl->SetNotificationWindow(m_impl->window, true);
 	m_impl->StartWorker();
 	m_impl->UpdateRoot(m_impl->root);
@@ -475,7 +734,10 @@ void CExplorerTool::Layout(const RECT& contentRect, unsigned int dpi)
 {
 	if (m_impl->closed) return;
 	m_impl->bounds = contentRect;
-	m_impl->dpi = dpi == 0 ? kDefaultDpi : dpi;
+	const unsigned int nextDpi = dpi == 0 ? kDefaultDpi : dpi;
+	const bool dpiChanged = m_impl->dpi != nextDpi;
+	m_impl->dpi = nextDpi;
+	if (dpiChanged) m_impl->RebuildIconImages();
 	if (m_impl->window != nullptr) {
 		::SetWindowPos(m_impl->window, nullptr, contentRect.left, contentRect.top,
 			std::max(0L, contentRect.right - contentRect.left), std::max(0L, contentRect.bottom - contentRect.top), SWP_NOACTIVATE | SWP_NOZORDER);
@@ -512,6 +774,7 @@ void CExplorerTool::Close()
 	if (m_impl->window != nullptr) ::KillTimer(m_impl->window, kRefreshTimer);
 	m_impl->SetNotificationWindow(nullptr, false);
 	m_impl->StopWorker();
+	m_impl->DestroyIconImages();
 	if (m_impl->window != nullptr && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->tree = nullptr;
@@ -543,6 +806,18 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 		TreeView_SetBkColor(m_impl->tree, palette.panel);
 		TreeView_SetTextColor(m_impl->tree, palette.text);
 	}
+	m_impl->RebuildIconImages();
+	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+}
+
+void CExplorerTool::SetFileIconTheme(
+	std::shared_ptr<const icons::FileIconThemeSnapshot> theme,
+	icons::FileIconThemeVariant variant)
+{
+	if (m_impl->closed) return;
+	m_impl->fileIconTheme = std::move(theme);
+	m_impl->fileIconThemeVariant = variant;
+	m_impl->RebuildIconImages();
 	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
 }
 
@@ -627,9 +902,11 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		if (notification == nullptr || notification->hwndFrom != impl.tree) break;
 		if (notification->code == TVN_ITEMEXPANDINGW) {
 			const auto* expanding = reinterpret_cast<const NMTREEVIEWW*>(lParam);
-			if ((expanding->action & TVE_EXPAND) != 0) {
-				auto* node = impl.FindNode(static_cast<std::uint64_t>(expanding->itemNew.lParam));
-				if (node != nullptr) impl.QueueEnumeration(*node, false);
+			const bool expanded = (expanding->action & TVE_EXPAND) != 0;
+			auto* node = impl.FindNode(static_cast<std::uint64_t>(expanding->itemNew.lParam));
+			if (node != nullptr) {
+				impl.UpdateNodeIcon(*node, expanded);
+				if (expanded) impl.QueueEnumeration(*node, false);
 			}
 			return 0;
 		}

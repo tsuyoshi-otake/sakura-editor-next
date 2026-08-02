@@ -165,14 +165,25 @@ TEST(ThemeIconResolverLabel, DollarWithoutAParenthesisIsOrdinaryText)
 
 // 以下 2 件は同梱フォントが登録できなかったときの縮退経路。通常経路は
 // ThemeIconResolverBundledFont が確かめる。
-TEST(ThemeIconResolverLabel, WithoutTheBundledFontExtensionsIdFallsBackToTheCompositeTile)
+TEST(ThemeIconResolverLabel, WithoutTheBundledFontExtensionsIdFallsBackToTheCanonicalVector)
 {
 	const auto runs = Runs(L"$(extensions)");
 	ASSERT_EQ(1u, runs.size());
 	ASSERT_TRUE(runs[0].icon);
 	EXPECT_FALSE(runs[0].resolved.font);
-	EXPECT_TRUE(runs[0].resolved.extensionsComposite);
+	EXPECT_EQ(codicons::Icon::Extensions, runs[0].resolved.builtin);
 	EXPECT_FALSE(runs[0].resolved.contributed);
+}
+
+TEST(ThemeIconResolverLabel, WithoutTheBundledFontUsesCanonicalVectorsForCommonBuiltinIds)
+{
+	const auto runs = Runs(L"$(source-control)$(warning)$(error)$(info)$(chevron-right)");
+	ASSERT_EQ(5u, runs.size());
+	EXPECT_EQ(codicons::Icon::SourceControl, runs[0].resolved.builtin);
+	EXPECT_EQ(codicons::Icon::Warning, runs[1].resolved.builtin);
+	EXPECT_EQ(codicons::Icon::Error, runs[2].resolved.builtin);
+	EXPECT_EQ(codicons::Icon::Info, runs[3].resolved.builtin);
+	EXPECT_EQ(codicons::Icon::ChevronRight, runs[4].resolved.builtin);
 }
 
 // 取り込んでいないベクター名は代替の点へ落ちる。リテラルの "$(name)" を漏らすより
@@ -199,7 +210,6 @@ TEST(ThemeIconResolverBundledFont, BuiltinNameResolvesToAGlyphOfTheBundledFont)
 	EXPECT_FALSE(runs[0].resolved.contributed);
 	EXPECT_EQ(L"codicon", runs[0].resolved.fontIcon.faceName);
 	EXPECT_EQ(std::wstring(1, L'\uEB44'), runs[0].resolved.fontIcon.glyph);
-	EXPECT_FALSE(runs[0].resolved.extensionsComposite);
 }
 
 // codicon.csv には無いが codiconsLibrary.ts にはある別名。odangoo.otak-usage の
@@ -212,13 +222,12 @@ TEST(ThemeIconResolverBundledFont, AliasOnlyNameZapResolves)
 	EXPECT_EQ(std::wstring(1, L'\uEA86'), runs[0].resolved.fontIcon.glyph);
 }
 
-// 2x2 タイル合成は同梱フォントが無いときだけの代用品。フォントがあれば本物が勝つ。
-TEST(ThemeIconResolverBundledFont, ExtensionsIdPrefersTheRealGlyphOverTheCompositeTile)
+// 同梱フォントがあれば、本物の extensions グリフを使う。
+TEST(ThemeIconResolverBundledFont, ExtensionsIdResolvesToTheRealGlyph)
 {
 	const auto runs = FontRuns(L"$(extensions)");
 	ASSERT_EQ(1u, runs.size());
 	ASSERT_TRUE(runs[0].resolved.font);
-	EXPECT_FALSE(runs[0].resolved.extensionsComposite);
 	EXPECT_EQ(std::wstring(1, L'\uEAE6'), runs[0].resolved.fontIcon.glyph);
 }
 

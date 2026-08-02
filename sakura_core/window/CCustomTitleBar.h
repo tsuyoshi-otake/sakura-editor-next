@@ -21,7 +21,7 @@ enum class CustomFrameControl : unsigned char {
 	BottomPanel,
 	SecondarySidebar,
 	Account,
-	Settings,
+	Manage,
 };
 
 [[nodiscard]] const wchar_t* CustomFrameControlName(CustomFrameControl control) noexcept;
@@ -41,6 +41,13 @@ enum class CustomFrameControl : unsigned char {
 //! GDI painter for Sakura-owned opaque title chrome.
 class CCustomTitleBar final {
 public:
+	CCustomTitleBar() noexcept = default;
+	~CCustomTitleBar() noexcept;
+	CCustomTitleBar(const CCustomTitleBar&) = delete;
+	CCustomTitleBar& operator=(const CCustomTitleBar&) = delete;
+	CCustomTitleBar(CCustomTitleBar&&) = delete;
+	CCustomTitleBar& operator=(CCustomTitleBar&&) = delete;
+
 	void Paint(
 		HWND owner,
 		HDC dc,
@@ -54,4 +61,11 @@ public:
 		CustomFrameControl pressedControl,
 		CustomFrameControl focusedControl
 	) const noexcept;
+
+private:
+	[[nodiscard]] HFONT AcquireCodiconFont(int height) const noexcept;
+	void ReleaseCodiconFont() const noexcept;
+
+	mutable HFONT m_codiconFont = nullptr;
+	mutable int m_codiconFontHeight = 0;
 };

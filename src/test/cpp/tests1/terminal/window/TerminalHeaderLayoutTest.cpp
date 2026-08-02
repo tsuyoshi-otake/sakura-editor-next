@@ -85,6 +85,18 @@ TEST(TerminalHeaderLayout, ReturnsNoneForActionGapsAndOutsideHeader)
 	EXPECT_EQ(TerminalHeaderTarget::None, layout.HitTest(POINT{ 799, layout.header.bottom }));
 }
 
+TEST(TerminalHeaderLayout, OmitsPanelActionsWhenTheContainingPartOwnsCommonChrome)
+{
+	const auto layout = CalculateTerminalHeaderLayout(RECT{ 0, 0, 800, 100 }, 96, false);
+	EXPECT_EQ(layout.RectFor(TerminalHeaderTarget::Maximize).left,
+		layout.RectFor(TerminalHeaderTarget::Maximize).right);
+	EXPECT_EQ(layout.RectFor(TerminalHeaderTarget::Close).left,
+		layout.RectFor(TerminalHeaderTarget::Close).right);
+	EXPECT_EQ(TerminalHeaderTarget::None, layout.HitTest(POINT{ 799, 15 }));
+	EXPECT_GT(layout.RectFor(TerminalHeaderTarget::More).right,
+		layout.RectFor(TerminalHeaderTarget::More).left);
+}
+
 TEST(TerminalHeaderLayout, CollapsesWholeActionsForNarrowAndDegenerateBounds)
 {
 	const auto narrow = CalculateTerminalHeaderLayout(RECT{ 0, 0, 60, 30 }, 96);

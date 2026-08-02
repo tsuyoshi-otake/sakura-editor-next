@@ -979,9 +979,18 @@ function serializeThemeValue(value) {
     // 「リテラル文字として描く」かを分ける唯一の情報源なので、必ず伝える。
     // ここで落とすと、意図されたアイコンと拡張機能が literal に打った "$(name)"
     // をネイティブから区別できなくなる（sakura_core/window/CLAUDE.md 参照）。
+    let trusted = false;
+    if (value.isTrusted === true) {
+      trusted = true;
+    } else if (value.isTrusted && typeof value.isTrusted === 'object') {
+      const enabledCommands = Array.isArray(value.isTrusted.enabledCommands)
+        ? value.isTrusted.enabledCommands.filter((command) => typeof command === 'string')
+        : [];
+      trusted = { enabledCommands };
+    }
     return {
       markdown: value.value,
-      isTrusted: value.isTrusted === true,
+      isTrusted: trusted,
       supportThemeIcons: value.supportThemeIcons === true,
     };
   }
@@ -1209,6 +1218,259 @@ class OutputChannel {
     this.flush();
     this.disposed = true;
     this.notifyMutation('workbench/output/dispose');
+  }
+}
+
+function serializeScmCommand(command, name = 'SourceControl command') {
+  if (!command || typeof command !== 'object') throw new TypeError(`${name} must be an object`);
+  requireString(command.command, `${name}.command`);
+  requireString(command.title, `${name}.title`);
+  return {
+    command: command.command,
+    title: command.title,
+    arguments: Array.isArray(command.arguments) ? [...command.arguments] : [],
+  };
+}
+
+function serializeScmIconPath(value, name) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'string') return value;
+  if (value instanceof Uri) return value.toString();
+  if (value instanceof ThemeIcon) return { themeIcon: value.id };
+  throw new TypeError(`${name} must be a string, Uri, or ThemeIcon`);
+}
+
+function serializeScmDecoration(value, name) {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value !== 'object') throw new TypeError(`${name} must be an object`);
+  const result = {};
+  const iconPath = serializeScmIconPath(value.iconPath, `${name}.iconPath`);
+  if (iconPath !== undefined) result.iconPath = iconPath;
+  return result;
+}
+
+function serializeScmResourceState(resource, index) {
+  if (!resource || typeof resource !== 'object') throw new TypeError(`SourceControlResourceState[${index}] must be an object`);
+  if (!(resource.resourceUri instanceof Uri)) throw new TypeError(`SourceControlResourceState[${index}].resourceUri must be a Uri`);
+  const result = {
+    resourceUri: resource.resourceUri.toString(),
+    contextValue: resource.contextValue === undefined ? '' : requireString(resource.contextValue, 'resource contextValue', true),
+  };
+  if (resource.command !== undefined) result.command = serializeScmCommand(resource.command, `SourceControlResourceState[${index}].command`);
+  if (resource.decorations !== undefined) {
+    const decorations = resource.decorations;
+    if (!decorations || typeof decorations !== 'object') throw new TypeError('SourceControlResourceState.decorations must be an object');
+    const serialized = {};
+    if (decorations.strikeThrough !== undefined) serialized.strikeThrough = decorations.strikeThrough === true;
+    if (decorations.faded !== undefined) serialized.faded = decorations.faded === true;
+    if (decorations.tooltip !== undefined) serialized.tooltip = requireString(decorations.tooltip, 'SourceControlResourceState.decorations.tooltip', true);
+    const iconPath = serializeScmIconPath(decorations.iconPath, 'SourceControlResourceState.decorations.iconPath');
+    if (iconPath !== undefined) serialized.iconPath = iconPath;
+    const light = serializeScmDecoration(decorations.light, 'SourceControlResourceState.decorations.light');
+    const dark = serializeScmDecoration(decorations.dark, 'SourceControlResourceState.decorations.dark');
+    if (light !== undefined) serialized.light = light;
+    if (dark !== undefined) serialized.dark = dark;
+    result.decorations = serialized;
+  }
+  return result;
+}
+
+class SourceControlInputBox {
+  constructor(session, handle, global = false) {
+    this.session = session;
+    this.handle = handle;
+    this.global = global;
+    this._value = '';
+    this._placeholder = '';
+    this._enabled = true;
+    this._visible = true;
+    this.changeEmitter = new EventEmitter();
+    this.onDidChange = this.changeEmitter.event;
+    this.disposed = false;
+  }
+
+  get value() { return this._value; }
+  set value(value) { this.assertActive(); this._value = requireString(value, 'SourceControlInputBox.value', true); this.notify(); }
+  get placeholder() { return this._placeholder; }
+  set placeholder(value) { this.assertActive(); this._placeholder = requireString(value, 'SourceControlInputBox.placeholder', true); this.notify(); }
+  get enabled() { return this._enabled; }
+  set enabled(value) { this.assertActive(); this._enabled = Boolean(value); this.notify(); }
+  get visible() { return this._visible; }
+  set visible(value) { this.assertActive(); this._visible = Boolean(value); this.notify(); }
+
+  snapshot() {
+    return { value: this._value, placeholder: this._placeholder, enabled: this._enabled, visible: this._visible };
+  }
+
+  notify() {
+    this.session.notify('workbench/scm/input/update', {
+      handle: this.handle, global: this.global, inputBox: this.snapshot(),
+    });
+  }
+
+  acceptNative(value) {
+    this.assertActive();
+    const next = requireString(value, 'native SourceControlInputBox.value', true);
+    if (next === this._value) return;
+    this._value = next;
+    this.changeEmitter.fire(Object.freeze({ value: next }));
+  }
+
+  assertActive() { if (this.disposed) throw new Error('SourceControlInputBox is disposed'); }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.changeEmitter.dispose();
+  }
+}
+
+class SourceControlResourceGroup {
+  constructor(session, provider, id, label) {
+    this.session = session;
+    this.provider = provider;
+    this.id = requireString(id, 'SourceControlResourceGroup.id');
+    this._label = requireString(label, 'SourceControlResourceGroup.label');
+    this._hideWhenEmpty = false;
+    this._contextValue = undefined;
+    this._resourceStates = [];
+    this.disposed = false;
+    this.session.sourceControlGroups.set(this.key, this);
+    this.session.notify('workbench/scm/group/create', this.snapshot());
+  }
+
+  get key() { return `${this.provider.handle}\n${this.id}`; }
+  get label() { return this._label; }
+  set label(value) { this.assertActive(); this._label = requireString(value, 'SourceControlResourceGroup.label'); this.notifyUpdate(); }
+  get hideWhenEmpty() { return this._hideWhenEmpty; }
+  set hideWhenEmpty(value) { this.assertActive(); this._hideWhenEmpty = Boolean(value); this.notifyUpdate(); }
+  get contextValue() { return this._contextValue; }
+  set contextValue(value) {
+    this.assertActive();
+    this._contextValue = value === undefined ? undefined : requireString(value, 'SourceControlResourceGroup.contextValue', true);
+    this.notifyUpdate();
+  }
+  get resourceStates() { return this._resourceStates; }
+  set resourceStates(value) {
+    this.assertActive();
+    if (!Array.isArray(value)) throw new TypeError('SourceControlResourceGroup.resourceStates must be an array');
+    const serialized = value.map((resource, index) => serializeScmResourceState(resource, index));
+    this._resourceStates = [...value];
+    this.session.notify('workbench/scm/resources/replace', {
+      handle: this.provider.handle, groupId: this.id, resources: serialized,
+    });
+  }
+
+  snapshot() {
+    return {
+      handle: this.provider.handle,
+      groupId: this.id,
+      label: this._label,
+      hideWhenEmpty: this._hideWhenEmpty,
+      ...(this._contextValue === undefined ? {} : { contextValue: this._contextValue }),
+    };
+  }
+
+  notifyUpdate() { this.session.notify('workbench/scm/group/update', this.snapshot()); }
+  assertActive() { if (this.disposed) throw new Error(`SourceControlResourceGroup is disposed: ${this.id}`); }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    this.session.sourceControlGroups.delete(this.key);
+    this.session.notify('workbench/scm/group/dispose', { handle: this.provider.handle, groupId: this.id });
+  }
+}
+
+class SourceControl {
+  constructor(session, handle, id, label, rootUri) {
+    this.session = session;
+    this.handle = handle;
+    this.id = requireString(id, 'SourceControl.id');
+    this._label = requireString(label, 'SourceControl.label');
+    this.rootUri = rootUri;
+    this.inputBox = new SourceControlInputBox(session, handle, false);
+    this._count = undefined;
+    this._commitTemplate = undefined;
+    this._acceptInputCommand = undefined;
+    this._statusBarCommands = undefined;
+    this._quickDiffProvider = undefined;
+    this.groups = new Map();
+    this.disposed = false;
+    this.session.sourceControls.set(handle, this);
+    this.session.sourceControlIds.add(this.id);
+    this.session.notify('workbench/scm/provider/create', this.snapshot());
+  }
+
+  get label() { return this._label; }
+  set label(value) { this.assertActive(); this._label = requireString(value, 'SourceControl.label'); this.update(); }
+  get count() { return this._count; }
+  set count(value) {
+    this.assertActive();
+    if (value !== undefined && (!Number.isInteger(value) || !Number.isFinite(value))) throw new TypeError('SourceControl.count must be an integer or undefined');
+    this._count = value;
+    this.update();
+  }
+  get commitTemplate() { return this._commitTemplate; }
+  set commitTemplate(value) { this.assertActive(); this._commitTemplate = value === undefined ? undefined : requireString(value, 'SourceControl.commitTemplate', true); this.update(); }
+  get acceptInputCommand() { return this._acceptInputCommand; }
+  set acceptInputCommand(value) { this.assertActive(); if (value !== undefined) serializeScmCommand(value, 'SourceControl.acceptInputCommand'); this._acceptInputCommand = value; this.update(); }
+  get statusBarCommands() { return this._statusBarCommands; }
+  set statusBarCommands(value) {
+    this.assertActive();
+    if (value !== undefined && !Array.isArray(value)) throw new TypeError('SourceControl.statusBarCommands must be an array or undefined');
+    if (value !== undefined) value.forEach((command, index) => serializeScmCommand(command, `SourceControl.statusBarCommands[${index}]`));
+    this._statusBarCommands = value === undefined ? undefined : [...value];
+    this.update();
+  }
+  get quickDiffProvider() { return this._quickDiffProvider; }
+  set quickDiffProvider(value) { this.assertActive(); this._quickDiffProvider = value; }
+
+  snapshot() {
+    return {
+      handle: this.handle,
+      id: this.id,
+      label: this._label,
+      ...(this.rootUri === undefined ? {} : { rootUri: serializeUri(this.rootUri) }),
+      inputBox: this.inputBox.snapshot(),
+      ...(this._count === undefined ? {} : { count: this._count }),
+      ...(this._commitTemplate === undefined ? {} : { commitTemplate: this._commitTemplate }),
+      ...(this._acceptInputCommand === undefined ? {} : { acceptInputCommand: serializeScmCommand(this._acceptInputCommand, 'SourceControl.acceptInputCommand') }),
+      ...(this._statusBarCommands === undefined ? {} : { statusBarCommands: this._statusBarCommands.map((command, index) => serializeScmCommand(command, `SourceControl.statusBarCommands[${index}]`)) }),
+    };
+  }
+
+  update() {
+    this.session.notify('workbench/scm/provider/update', {
+      handle: this.handle,
+      label: this._label,
+      count: this._count === undefined ? null : this._count,
+      commitTemplate: this._commitTemplate === undefined ? null : this._commitTemplate,
+      acceptInputCommand: this._acceptInputCommand === undefined ? null : serializeScmCommand(this._acceptInputCommand, 'SourceControl.acceptInputCommand'),
+      statusBarCommands: this._statusBarCommands === undefined ? null : this._statusBarCommands.map((command, index) => serializeScmCommand(command, `SourceControl.statusBarCommands[${index}]`)),
+    });
+  }
+
+  createResourceGroup(id, label) {
+    this.assertActive();
+    requireString(id, 'SourceControlResourceGroup.id');
+    if (this.groups.has(id)) throw new Error(`SourceControlResourceGroup already exists: ${id}`);
+    const group = new SourceControlResourceGroup(this.session, this, id, label);
+    this.groups.set(id, group);
+    return this.session.track(group);
+  }
+
+  assertActive() { if (this.disposed) throw new Error(`SourceControl is disposed: ${this.id}`); }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const group of [...this.groups.values()]) group.dispose();
+    this.groups.clear();
+    this.inputBox.dispose();
+    this.session.sourceControls.delete(this.handle);
+    this.session.sourceControlIds.delete(this.id);
+    this.session.notify('workbench/scm/provider/dispose', { handle: this.handle });
   }
 }
 
@@ -1454,6 +1716,10 @@ class ExtensionApiSession {
     this.extensionObjects = new Map();
     this.views = new Map();
     this.viewIds = new Set();
+    this.sourceControls = new Map();
+    this.sourceControlIds = new Set();
+    this.sourceControlGroups = new Map();
+    this.globalSourceControlInputBox = null;
     this.disposables = new Set();
     this.progress = new Map();
     this.documents = new Map();
@@ -1683,6 +1949,13 @@ class ExtensionApiSession {
         handle, extensionId: this.extensionId, generation: this.generation, kind,
       });
     }));
+  }
+
+  getGlobalSourceControlInputBox() {
+    if (!this.globalSourceControlInputBox) {
+      this.globalSourceControlInputBox = this.track(new SourceControlInputBox(this, this.allocateHandle('scm-input'), true));
+    }
+    return this.globalSourceControlInputBox;
   }
 
   async invokeLanguageProvider(kind, params) {
@@ -2206,6 +2479,17 @@ class ExtensionApiSession {
       },
     });
 
+    const scm = Object.freeze({
+      get inputBox() { return session.getGlobalSourceControlInputBox(); },
+      createSourceControl(id, label, rootUri) {
+        requireString(id, 'SourceControl.id');
+        requireString(label, 'SourceControl.label');
+        if (rootUri !== undefined && !(rootUri instanceof Uri)) throw new TypeError('SourceControl.rootUri must be a Uri or undefined');
+        if (session.sourceControlIds.has(id)) throw new Error(`SourceControl already exists: ${id}`);
+        return session.track(new SourceControl(session, session.allocateHandle('scm'), id, label, rootUri));
+      },
+    });
+
     return Object.freeze({
       version: '1.104.0',
       commands: Object.freeze(commands),
@@ -2216,7 +2500,7 @@ class ExtensionApiSession {
       extensions,
       debug: unsupportedNamespace('debug'),
       tasks,
-      scm: unsupportedNamespace('scm'),
+      scm,
       Disposable,
       EventEmitter,
       CancellationToken,
@@ -2272,6 +2556,9 @@ class ExtensionApiSession {
       ProgressLocation,
       TreeItem,
       TreeItemCollapsibleState,
+      SourceControlInputBox,
+      SourceControlResourceGroup,
+      SourceControl,
     });
   }
 
@@ -2287,6 +2574,15 @@ class ExtensionApiSession {
       case 'extension/progress/cancel':
         this.progress.get(params?.handle)?.cancel();
         return { accepted: this.progress.has(params?.handle) };
+      case 'extension/scm/inputChange': {
+        const input = params?.global === true
+          ? this.globalSourceControlInputBox
+          : this.sourceControls.get(params?.handle)?.inputBox;
+        if (!input) throw new Error(`SCM input box is not registered: ${params?.handle}`);
+        const value = typeof params?.value === 'string' ? params.value : params?.inputBox?.value;
+        input.acceptNative(requireString(value, 'SCM input value', true));
+        return { accepted: true };
+      }
       case 'extension/secrets/didChange':
         this.secrets.acceptChange(params?.key);
         return { accepted: true };
@@ -2428,6 +2724,10 @@ class ExtensionApiSession {
     this.documentIdsByUri.clear();
     this.editors.clear();
     this.languageProviders.clear();
+    this.sourceControls.clear();
+    this.sourceControlGroups.clear();
+    this.sourceControlIds.clear();
+    this.globalSourceControlInputBox = null;
     this.secrets.dispose();
     this.disposed = true;
     this.transport.notify('workbench/extensions/removeGeneration', {

@@ -78,13 +78,16 @@ private:
 	};
 
 	struct ExtensionHitTarget {
+		std::wstring handle;
 		RECT bounds{};
 		std::wstring command;
 		//! 拡張機能が渡した Markdown 原文。空ならホバーを出さない。解析はホバーを実際に
 		//! 出す瞬間まで遅らせる（再描画のたびに解析し直さないため）。
 		std::wstring tooltipMarkdown;
 		//! vscode.MarkdownString.supportThemeIcons。真のときだけ `$(name)` をアイコンに解釈する。
-		bool tooltipSupportsThemeIcons = false;
+	bool tooltipSupportsThemeIcons = false;
+	bool tooltipIsTrusted = false;
+	std::vector<std::wstring> tooltipTrustedCommands;
 	};
 
 	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
@@ -95,6 +98,11 @@ private:
 	[[nodiscard]] const ExtensionHitTarget* FindHoverTargetAt(POINT point) const noexcept;
 	//! WM_MOUSEMOVE。VS Code の workbench.hover.delay と同じ遅延タイマーを張り直す。
 	void OnExtensionHoverMouseMove(POINT point) noexcept;
+	//! ホバーウィンドウへのポインター移動を受け、ステータスバーの外でも表示を維持する。
+	void OnExtensionHoverPointer(bool inside) noexcept;
+	//! ステータスバーとホバーの間を通過するための短い取り下げ猶予を張る。
+	void ScheduleExtensionHoverDismiss() noexcept;
+	[[nodiscard]] bool IsCursorOnExtensionHoverPath() const noexcept;
 	//! 遅延タイマー満了。カーソル直下の項目のツールチップを解析して表示する。
 	void ShowExtensionHoverNow();
 	//! 表示中/待機中のホバーを取り下げる。タイマーも必ず落とす。
@@ -116,8 +124,12 @@ private:
 	workbench::hover::CHoverWidget m_extensionHover;
 	//! ホバー待機中/表示中の項目矩形（ステータスバーのクライアント座標）。
 	RECT m_hoverAnchor{};
+	//! ホバー中の StatusBarItem を更新後も追跡するための安定したハンドル。
+	std::wstring m_hoverHandle;
 	//! 遅延タイマーが張られている。
 	bool m_hoverPending = false;
+	//! ステータスバー外へ出た後の取り下げ猶予タイマーが張られている。
+	bool m_hoverDismissPending = false;
 	//! TrackMouseEvent(TME_LEAVE) 済み。WM_MOUSELEAVE で false に戻る。
 	bool m_hoverTracking = false;
 	std::function<void(std::wstring_view)> m_extensionCommandCallback;

@@ -31,6 +31,9 @@ constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
 
 //! ホバー遅延タイマーの ID。comctl32 がステータスバー自身に張るタイマーと衝突しない値。
 constexpr UINT_PTR kExtensionHoverTimerId = 0xACE1;
+//! ステータスバーとポップアップの間を横切るためのポインター監視タイマー。
+constexpr UINT_PTR kExtensionHoverDismissTimerId = 0xACE2;
+constexpr UINT kExtensionHoverDismissPollMilliseconds = 50;
 
 void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 {
@@ -39,6 +42,16 @@ void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 		::FillRect(dc, &rect, brush);
 		::DeleteObject(brush);
 	}
+}
+
+[[nodiscard]] bool HasCaseInsensitivePrefix(std::wstring_view value, std::wstring_view prefix) noexcept
+{
+	if (value.size() < prefix.size()) return false;
+	for (std::size_t index = 0; index < prefix.size(); ++index) {
+		if (std::towlower(static_cast<std::wint_t>(value[index])) !=
+			std::towlower(static_cast<std::wint_t>(prefix[index]))) return false;
+	}
+	return true;
 }
 
 void DrawBranchIcon(HDC dc, const RECT& part, COLORREF color, UINT dpi) noexcept
@@ -118,6 +131,19 @@ void CMainStatusBar::CreateStatusBar()
 	if (m_extensionHover.Create(m_hwndStatusBar)) {
 		m_extensionHover.SetPalette(m_palette);
 		m_extensionHover.SetIconRegistry(m_extensionIconFonts);
+		m_extensionHover.SetPointerCallback([this](bool inside) {
+			OnExtensionHoverPointer(inside);
+		});
+		m_extensionHover.SetLinkCallback([this](std::wstring_view target) {
+			constexpr wchar_t commandScheme[] = {
+				L'c', L'o', L'm', L'm', L'a', L'n', L'd', L':', L'\0'
+			};
+			if (!HasCaseInsensitivePrefix(target, commandScheme)) return false;
+			const std::wstring_view command = target.substr(std::size(commandScheme) - 1);
+			if (command.empty() || !m_extensionCommandCallback) return false;
+			m_extensionCommandCallback(command);
+			return true;
+		});
 	}
 
 	/* プログレスバー */
@@ -154,6 +180,7 @@ void CMainStatusBar::DestroyStatusBar()
 		m_hwndProgressBar = nullptr;
 	}
 	HideExtensionHover();
+	m_extensionHover.SetPointerCallback({});
 	m_extensionHover.Destroy();
 	// フォントは DC へ選択したままにしていない（PaintStatusBar が毎回元へ戻す）ので、
 	// ここで破棄してよい。
@@ -202,10 +229,17 @@ void CMainStatusBar::SetScmText(std::wstring text)
 void CMainStatusBar::SetExtensionItems(std::vector<SExtensionStatusBarItem> items)
 {
 	std::erase_if(items, [](const auto& item) { return !item.visible || item.text.empty(); });
+	const bool hoverActive = m_extensionHover.IsVisible() || m_hoverPending;
+	const std::wstring hoverHandle = m_hoverHandle;
 	m_extensionItems = std::move(items);
-	// 項目が入れ替わると m_extensionHitTargets は次の描画まで古いままなので、表示中の
-	// ホバーは消えた項目の内容を映し続けかねない。ここで必ず取り下げる。
-	HideExtensionHover();
+	// 拡張機能の progress/status 更新では全スナップショットが再送される。表示中の
+	// 項目が同じ handle なら、VS Code と同じくそのホバーを更新のたびに閉じない。
+	// 本当に項目が消えたときだけ古い内容を取り下げる。
+	if (hoverActive) {
+		const auto stillExists = std::find_if(m_extensionItems.begin(), m_extensionItems.end(),
+			[&hoverHandle](const auto& item) { return !hoverHandle.empty() && item.handle == hoverHandle; });
+		if (stillExists == m_extensionItems.end()) HideExtensionHover();
+	}
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
@@ -323,12 +357,26 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 	case WM_MOUSELEAVE:
 		if (self != nullptr) {
 			self->m_hoverTracking = false;
-			self->HideExtensionHover();
+			if (self->m_extensionHover.IsVisible()) {
+				self->ScheduleExtensionHoverDismiss();
+			} else {
+				self->HideExtensionHover();
+			}
 		}
 		break;
 	case WM_TIMER:
 		if (self != nullptr && wParam == kExtensionHoverTimerId) {
 			self->ShowExtensionHoverNow();
+			return 0;
+		}
+		if (self != nullptr && wParam == kExtensionHoverDismissTimerId) {
+			// Keep polling while the cursor is crossing the anchor-to-hover path. This
+			// avoids relying on the order of WM_MOUSELEAVE/WM_MOUSEMOVE between two
+			// separate top-level windows.
+			if (self->IsCursorOnExtensionHoverPath()) return 0;
+			::KillTimer(window, kExtensionHoverDismissTimerId);
+			self->m_hoverDismissPending = false;
+			self->HideExtensionHover();
 			return 0;
 		}
 		break;
@@ -355,6 +403,7 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 			// 落とす。タイマーも m_hwndStatusBar に張っているため、null 化より先に
 			// 取り下げないと KillTimer の宛先が無くなる。
 			self->HideExtensionHover();
+			self->m_extensionHover.SetPointerCallback({});
 			self->m_extensionHover.Destroy();
 			self->m_hwndStatusBar = nullptr;
 		}
@@ -487,8 +536,6 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 							DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
 						::SelectObject(target, previousFont);
 					}
-				} else if (run.resolved.extensionsComposite) {
-					workbench::icons::DrawExtensionsCompositeIcon(target, box, iconColor, dpi);
 				} else {
 					workbench::icons::codicons::Draw(target, box, run.resolved.builtin, iconColor);
 				}
@@ -506,8 +553,9 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		// ツールチップは Markdown 原文のまま持ち、実際にホバーを出す瞬間に解析する。
 		// 再描画のたびに解析すると、書式付きホバーでは平文射影より明確に高くつく。
 		if (!layout.item->command.empty() || !layout.item->tooltip.empty()) {
-			m_extensionHitTargets.push_back({ itemRect, layout.item->command, layout.item->tooltip,
-				layout.item->tooltipSupportsThemeIcons });
+			m_extensionHitTargets.push_back({ layout.item->handle, itemRect, layout.item->command, layout.item->tooltip,
+				layout.item->tooltipSupportsThemeIcons, layout.item->tooltipIsTrusted,
+				layout.item->tooltipTrustedCommands });
 		}
 	};
 
@@ -593,9 +641,13 @@ const CMainStatusBar::ExtensionHitTarget* CMainStatusBar::FindHoverTargetAt(POIN
 void CMainStatusBar::OnExtensionHoverMouseMove(POINT point) noexcept
 {
 	if (m_hwndStatusBar == nullptr) return;
+	if (m_hoverDismissPending) {
+		::KillTimer(m_hwndStatusBar, kExtensionHoverDismissTimerId);
+		m_hoverDismissPending = false;
+	}
 	// ステータスバーの外へ出たことは WM_MOUSEMOVE では分からないので、TME_LEAVE を
-	// 張っておく。ホバーは WS_EX_TRANSPARENT なので、ポップアップの下でも
-	// WM_MOUSEMOVE はこちらへ届き続ける。
+	// 張っておく。ステータスバーからホバーへ移動すると WM_MOUSELEAVE が先に届くため、
+	// ホスト側でホバーウィンドウへの移動猶予を管理する。
 	if (!m_hoverTracking) {
 		TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, m_hwndStatusBar, 0 };
 		m_hoverTracking = ::TrackMouseEvent(&track) != FALSE;
@@ -603,7 +655,11 @@ void CMainStatusBar::OnExtensionHoverMouseMove(POINT point) noexcept
 
 	const auto* target = FindHoverTargetAt(point);
 	if (target == nullptr) {
-		HideExtensionHover();
+		if (m_extensionHover.IsVisible() && IsCursorOnExtensionHoverPath()) {
+			ScheduleExtensionHoverDismiss();
+		} else {
+			HideExtensionHover();
+		}
 		return;
 	}
 	// 同じ項目の中で動いただけなら、待機も表示もやり直さない。矩形で同一性を見るのは、
@@ -612,6 +668,7 @@ void CMainStatusBar::OnExtensionHoverMouseMove(POINT point) noexcept
 
 	HideExtensionHover();
 	m_hoverAnchor = target->bounds;
+	m_hoverHandle = target->handle;
 	m_hoverPending = ::SetTimer(m_hwndStatusBar, kExtensionHoverTimerId,
 		workbench::hover::kHoverDelayMilliseconds, nullptr) != 0;
 }
@@ -644,8 +701,56 @@ void CMainStatusBar::ShowExtensionHoverNow()
 
 	RECT anchor = target->bounds;
 	m_hoverAnchor = anchor;
+	m_hoverHandle = target->handle;
 	::MapWindowPoints(m_hwndStatusBar, HWND_DESKTOP, reinterpret_cast<POINT*>(&anchor), 2);
-	m_extensionHover.Show(document, anchor);
+	m_extensionHover.Show(document, anchor, target->tooltipIsTrusted, target->tooltipTrustedCommands);
+}
+
+void CMainStatusBar::OnExtensionHoverPointer(bool inside) noexcept
+{
+	if (inside) {
+		// The dismiss timer is intentionally a short polling timer. Keeping it
+		// alive while inside the popup also covers platforms where the popup does
+		// not receive a matching WM_MOUSELEAVE after a cross-window transition.
+		return;
+	}
+	if (m_extensionHover.IsVisible()) ScheduleExtensionHoverDismiss();
+}
+
+void CMainStatusBar::ScheduleExtensionHoverDismiss() noexcept
+{
+	if (m_hwndStatusBar == nullptr || !m_extensionHover.IsVisible() || m_hoverDismissPending) return;
+	if (::SetTimer(
+			m_hwndStatusBar,
+			kExtensionHoverDismissTimerId,
+			kExtensionHoverDismissPollMilliseconds,
+			nullptr) != 0) {
+		m_hoverDismissPending = true;
+	} else {
+		HideExtensionHover();
+	}
+}
+
+bool CMainStatusBar::IsCursorOnExtensionHoverPath() const noexcept
+{
+	if (!m_extensionHover.IsVisible() || m_hwndStatusBar == nullptr) return false;
+	if (m_extensionHover.IsPointerInside()) return true;
+
+	POINT cursor{};
+	if (::GetCursorPos(&cursor) == FALSE) return false;
+	RECT anchor = m_hoverAnchor;
+	RECT popup{};
+	::MapWindowPoints(m_hwndStatusBar, HWND_DESKTOP, reinterpret_cast<POINT*>(&anchor), 2);
+	if (::GetWindowRect(m_extensionHover.GetHwnd(), &popup) == FALSE) return false;
+
+	if (::PtInRect(&anchor, cursor) != FALSE) return true;
+	const RECT bridge{
+		(std::min)(anchor.left, popup.left),
+		(std::min)(anchor.bottom, popup.bottom),
+		(std::max)(anchor.right, popup.right),
+		(std::max)(anchor.top, popup.top),
+	};
+	return ::PtInRect(&bridge, cursor) != FALSE;
 }
 
 void CMainStatusBar::HideExtensionHover() noexcept
@@ -653,8 +758,13 @@ void CMainStatusBar::HideExtensionHover() noexcept
 	if (m_hoverPending && m_hwndStatusBar != nullptr) {
 		::KillTimer(m_hwndStatusBar, kExtensionHoverTimerId);
 	}
+	if (m_hoverDismissPending && m_hwndStatusBar != nullptr) {
+		::KillTimer(m_hwndStatusBar, kExtensionHoverDismissTimerId);
+	}
 	m_hoverPending = false;
+	m_hoverDismissPending = false;
 	m_hoverAnchor = RECT{};
+	m_hoverHandle.clear();
 	m_extensionHover.Hide();
 }
 

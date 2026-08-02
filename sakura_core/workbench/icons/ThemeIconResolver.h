@@ -49,7 +49,6 @@ struct SResolvedThemeIcon {
 	//! font が真のとき、そのグリフが拡張の contributes.icons 由来なら真。
 	bool contributed = false;
 	//! `$(extensions)`。同梱フォントが使えないときだけの 2x2 タイル合成アイコン。
-	bool extensionsComposite = false;
 	//! 取り込み済みベクター codicon。同梱フォントが使えないときの最後の砦。
 	codicons::Icon builtin = codicons::Icon::RecordSmall;
 };
@@ -66,7 +65,8 @@ struct SResolvedThemeIcon {
 [[nodiscard]] inline codicons::Icon BuiltinCodiconFor(std::wstring_view name) noexcept
 {
 	using Icon = codicons::Icon;
-	if (name == L"git-branch" || name == L"source-control") return Icon::GitBranch;
+	if (name == L"git-branch") return Icon::GitBranch;
+	if (name == L"source-control") return Icon::SourceControl;
 	if (name == L"account") return Icon::Account;
 	if (name == L"gear" || name == L"settings") return Icon::Gear;
 	if (name == L"target") return Icon::Target;
@@ -79,7 +79,12 @@ struct SResolvedThemeIcon {
 	if (name == L"file") return Icon::File;
 	if (name == L"open-preview") return Icon::OpenPreview;
 	if (name == L"chevron-down") return Icon::ChevronDown;
-	if (name == L"close" || name == L"error") return Icon::Close;
+	if (name == L"chevron-right") return Icon::ChevronRight;
+	if (name == L"extensions") return Icon::Extensions;
+	if (name == L"warning") return Icon::Warning;
+	if (name == L"error") return Icon::Error;
+	if (name == L"info") return Icon::Info;
+	if (name == L"close") return Icon::Close;
 	if (name == L"close-all") return Icon::CloseAll;
 	if (name == L"loading") return Icon::Loading;
 	return Icon::RecordSmall;
@@ -123,8 +128,6 @@ struct SResolvedThemeIcon {
 			return resolved;
 		}
 	}
-	resolved.extensionsComposite = iconId == L"extensions";
-	if (resolved.extensionsComposite) return resolved;
 	resolved.builtin = BuiltinCodiconFor(iconId);
 	return resolved;
 }
@@ -232,27 +235,4 @@ struct SLabelRun {
 }
 
 //! `$(extensions)` の 2x2 タイル。ベクターパスを持たないので矩形 4 枚で描く。
-inline void DrawExtensionsCompositeIcon(HDC dc, const IconRect& box, COLORREF color, UINT dpi) noexcept
-{
-	if (dc == nullptr) return;
-	if (box.Width() <= 0 || box.Height() <= 0) return;
-	const int gap = std::max(1, ScaleDip(2, dpi));
-	const int tileWidth = std::max(1, (box.Width() - gap) / 2);
-	const int tileHeight = std::max(1, (box.Height() - gap) / 2);
-	const HBRUSH tile = ::CreateSolidBrush(color);
-	if (tile == nullptr) return;
-	for (int row = 0; row < 2; ++row) {
-		for (int column = 0; column < 2; ++column) {
-			RECT square{
-				box.left + column * (tileWidth + gap),
-				box.top + row * (tileHeight + gap),
-				box.left + column * (tileWidth + gap) + tileWidth,
-				box.top + row * (tileHeight + gap) + tileHeight,
-			};
-			::FillRect(dc, &square, tile);
-		}
-	}
-	::DeleteObject(tile);
-}
-
 } // namespace workbench::icons

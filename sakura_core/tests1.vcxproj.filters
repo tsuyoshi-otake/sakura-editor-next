@@ -196,6 +196,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileIconThemeRegistryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\NativeWorkbenchToolRequestTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -409,6 +412,21 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalBuiltinGlyphRendererTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalDWriteRendererTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaseline.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaselineTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp">
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
@@ -422,6 +440,9 @@
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp">
+      <Filter>Test Files\theme</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp">
       <Filter>Test Files\theme</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cmemory.cpp">
@@ -683,6 +704,9 @@
     </ClInclude>
     <ClInclude Include="..\src\test\cpp\tests1\window\UiaTestSuite.hpp">
       <Filter>Other Files\window</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaseline.h">
+      <Filter>Other Files\terminal\window</Filter>
     </ClInclude>
     <ClInclude Include="..\src\test\resources\eval_outputs.hpp">
       <Filter>Other Files</Filter>

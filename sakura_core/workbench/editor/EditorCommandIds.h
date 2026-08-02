@@ -21,5 +21,9 @@ inline constexpr std::string_view Revert = "workbench.action.files.revert";
 inline constexpr std::string_view CloseActiveEditor = "workbench.action.closeActiveEditor";
 inline constexpr std::string_view ShowCommands = "workbench.action.showCommands";
 inline constexpr std::string_view OpenSettings = "workbench.action.openSettings";
+inline constexpr std::string_view ShowExtensions = "workbench.view.extensions";
+inline constexpr std::string_view OpenGlobalKeybindings = "workbench.action.openGlobalKeybindings";
+inline constexpr std::string_view SelectTheme = "workbench.action.selectTheme";
+inline constexpr std::string_view SelectIconTheme = "workbench.action.selectIconTheme";
 
 } // namespace workbench::editor::command_ids

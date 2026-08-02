@@ -14,6 +14,7 @@
 #include "extension/CExtensionHostSharedState.h"
 #include "extension/CExtensionNotificationCenter.h"
 #include "extension/CExtensionPipeTransport.h"
+#include "extension/CExtensionProfileState.h"
 #include "extension/CExtensionRpcProtocol.h"
 #include "extension/IExtensionSecretStorage.h"
 #include "extension/CExtensionStatusBar.h"
@@ -69,7 +70,9 @@ public:
 		std::unique_ptr<IExtensionSecretSessionStorage> secrets = {},
 		workbench::problems::MarkerService* markerService = nullptr,
 		workbench::output::OutputService* outputService = nullptr,
-		workbench::IWorkbenchRuntime* workbenchRuntime = nullptr);
+		workbench::IWorkbenchRuntime* workbenchRuntime = nullptr,
+		std::filesystem::path extensionSelectionPath = {},
+		bool defaultProfileExtensionsWhenMissing = true);
 	~CExtensionService();
 	CExtensionService(const CExtensionService&) = delete;
 	CExtensionService& operator=(const CExtensionService&) = delete;
@@ -89,6 +92,9 @@ public:
 	void RequestTreeChildren(std::wstring_view viewHandle, std::wstring_view parentHandle);
 	void NotifyTreeSelection(std::wstring_view viewHandle, const std::vector<std::wstring>& itemHandles);
 	void NotifyTreeCheckbox(std::wstring_view viewHandle, std::wstring_view itemHandle, bool checked);
+	//! Native SCM input edits are requests so the extension host can apply the value and fire
+	//! SourceControlInputBox.onDidChange on its owning generation.
+	void RequestScmInputChange(std::string_view handle, std::string_view value, bool global = false);
 	void NotifyViewVisibility(bool visible);
 	//! Native document lifecycle forwarded to the shared extension host.
 	void OpenDocument(SExtensionDocumentSnapshot snapshot);
@@ -107,6 +113,9 @@ public:
 	[[nodiscard]] std::vector<SExtensionProblem> Problems() const;
 	[[nodiscard]] std::vector<SExtensionOutputChannel> OutputChannels() const;
 	[[nodiscard]] std::vector<SExtensionProgress> ProgressItems() const;
+	[[nodiscard]] std::vector<SExtensionNotification> PendingNotifications() const;
+	//! Queues a non-modal notification completion back to the extension-host worker.
+	void ResolveNotification(std::uint64_t id, std::optional<std::size_t> selectedAction);
 
 	//! MYWM_EXTENSION_NOTIFICATION_PROMPT を受けた UI thread だけが呼ぶ。
 	LRESULT HandleNotificationPrompt(LPARAM promptPointer) noexcept;
@@ -123,6 +132,7 @@ private:
 		TreeChildren,
 		TreeSelection,
 		TreeCheckbox,
+		ScmInputChange,
 	};
 	struct ClientAction {
 		ClientActionKind kind = ClientActionKind::ExecuteCommand;
@@ -140,6 +150,8 @@ private:
 		TreeChildren,
 		ViewEvent,
 		DocumentEvent,
+		//! Fire-and-forget acknowledgement for a source-control input update.
+		ScmInputChange,
 	};
 	struct PendingRequest {
 		PendingKind kind = PendingKind::ViewEvent;
@@ -173,6 +185,7 @@ private:
 	void Enqueue(std::function<void()> task);
 	void WorkerMain() noexcept;
 	void WorkerInitialize();
+	[[nodiscard]] std::vector<std::filesystem::path> LoadInstalledExtensionRootsWorker() const;
 	void RequestReconnectWorker();
 	void RescanInstalledExtensionsWorker();
 	void EnsureConnectedWorker(std::uint64_t attemptToken);
@@ -188,6 +201,10 @@ private:
 		std::uint32_t errorCode,
 		std::wstring diagnostic);
 	void HandleMessageWorker(const SExtensionRpcMessage& message);
+	bool HandleEnvironmentClipboardRequestWorker(const SExtensionRpcMessage& message);
+	bool QueueNotificationRequestWorker(
+		const SExtensionNotification& notification, const SExtensionRpcMessage& request);
+	void ResolveNotificationWorker(std::uint64_t id, std::optional<std::size_t> selectedAction);
 	bool HandleDocumentVersionGapWorker(const SExtensionRpcMessage& message);
 	bool HandleEditorOptionsNotificationWorker(const SExtensionRpcMessage& message);
 	bool HandleApplyEditRequestWorker(const SExtensionRpcMessage& message);
@@ -226,6 +243,7 @@ private:
 	bool SendResponseWorker(const SExtensionRpcMessage& request, const SExtensionWorkbenchDispatchResult& result);
 	bool SendOutboundWorker(const SExtensionRpcOutbound& outbound);
 	void FailConnectionWorker(std::uint32_t errorCode, std::wstring diagnostic, bool notifyBroker);
+	void ReleaseHostLeaseWorker() noexcept;
 	void ClearWorkbenchWorker();
 	void ResetDispatcherWorker();
 	void PostWorkbenchChanges(EExtensionWorkbenchChange changes) const noexcept;
@@ -238,6 +256,8 @@ private:
 	HWND m_editorWindow = nullptr;
 	HWND m_brokerWindow = nullptr;
 	std::filesystem::path m_profileDirectory;
+	CExtensionProfileState m_extensionProfileState;
+	bool m_defaultProfileExtensionsWhenMissing = true;
 	std::shared_ptr<CExtensionViewRegistry> m_views;
 	CExtensionContextKeys m_contextKeys;
 	CExtensionCommandPalette m_commands;
@@ -268,6 +288,7 @@ private:
 	std::unordered_set<std::wstring> m_requestedViewActivations;
 	std::deque<ClientAction> m_deferredActions;
 	std::unordered_map<std::string, PendingRequest> m_pendingRequests;
+	std::unordered_map<std::uint64_t, SExtensionRpcMessage> m_pendingNotificationRequests;
 	CExtensionDocumentSync m_documents;
 	CExtensionEventAggregator m_documentEvents;
 	std::optional<SExtensionDocumentId> m_activeDocument;

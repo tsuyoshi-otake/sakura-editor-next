@@ -22,6 +22,12 @@ constexpr int kMinimizeNode = 1200;
 constexpr int kMaximizeNode = 1201;
 constexpr int kCloseNode = 1202;
 constexpr int kTitleControlNodeBase = 1300;
+constexpr UINT kManageShowCommandPalette = 0x5A01;
+constexpr UINT kManageOpenSettings = 0x5A02;
+constexpr UINT kManageShowExtensions = 0x5A03;
+constexpr UINT kManageOpenKeyboardShortcuts = 0x5A04;
+constexpr UINT kManageSelectColorTheme = 0x5A05;
+constexpr UINT kManageSelectFileIconTheme = 0x5A06;
 
 bool Contains(const RECT& rect, POINT point) noexcept
 {
@@ -42,7 +48,7 @@ RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl contro
 	case CustomFrameControl::BottomPanel: return layout.bottomPanelButton;
 	case CustomFrameControl::SecondarySidebar: return layout.secondarySidebarButton;
 	case CustomFrameControl::Account: return layout.accountButton;
-	case CustomFrameControl::Settings: return layout.settingsButton;
+	case CustomFrameControl::Manage: return layout.manageButton;
 	case CustomFrameControl::None: break;
 	}
 	return {};
@@ -52,7 +58,7 @@ CustomFrameControl TitleControlFromNode(int nodeId) noexcept
 {
 	const int value = nodeId - kTitleControlNodeBase + 1;
 	return value >= static_cast<int>(CustomFrameControl::Layout)
-		&& value <= static_cast<int>(CustomFrameControl::Settings)
+		&& value <= static_cast<int>(CustomFrameControl::Manage)
 		? static_cast<CustomFrameControl>(value)
 		: CustomFrameControl::None;
 }
@@ -62,6 +68,19 @@ int TitleControlNode(CustomFrameControl control) noexcept
 	return control == CustomFrameControl::None
 		? -1
 		: kTitleControlNodeBase + static_cast<int>(control) - 1;
+}
+
+CustomFrameManageAction ManageActionFromMenuCommand(UINT command) noexcept
+{
+	switch (command) {
+	case kManageShowCommandPalette: return CustomFrameManageAction::ShowCommandPalette;
+	case kManageOpenSettings: return CustomFrameManageAction::OpenSettings;
+	case kManageShowExtensions: return CustomFrameManageAction::ShowExtensions;
+	case kManageOpenKeyboardShortcuts: return CustomFrameManageAction::OpenKeyboardShortcuts;
+	case kManageSelectColorTheme: return CustomFrameManageAction::SelectColorTheme;
+	case kManageSelectFileIconTheme: return CustomFrameManageAction::SelectFileIconTheme;
+	default: return CustomFrameManageAction::None;
+	}
 }
 
 } // namespace
@@ -123,7 +142,7 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 		layout.bottomPanelButton = nextControl();
 		layout.secondarySidebarButton = nextControl();
 		layout.accountButton = nextControl();
-		layout.settingsButton = nextControl();
+		layout.manageButton = nextControl();
 	}
 	layout.minimizeButton = MakeRect(buttonLeft, 0, std::min(width, buttonLeft + buttonWidth), titleHeight);
 	layout.maximizeButton = MakeRect(
@@ -144,7 +163,7 @@ CustomFrameControl HitTestCustomFrameControl(const CustomFrameLayout& layout, PO
 		CustomFrameControl::BottomPanel,
 		CustomFrameControl::SecondarySidebar,
 		CustomFrameControl::Account,
-		CustomFrameControl::Settings,
+		CustomFrameControl::Manage,
 	}) {
 		if (Contains(TitleControlRect(layout, control), point)) return control;
 	}
@@ -160,10 +179,10 @@ UINT CustomFrameControlCommand(CustomFrameControl control) noexcept
 	// (workbench.action.toggleAuxiliaryBar). F_TOGGLE_RIGHT_OUTLINE only expands the
 	// Outline View nested in the Primary Side Bar and is not this surface.
 	case CustomFrameControl::SecondarySidebar: return F_TOGGLE_SECONDARY_SIDEBAR;
-	case CustomFrameControl::Settings: return F_OPTION;
 	case CustomFrameControl::None:
 	case CustomFrameControl::Layout:
 	case CustomFrameControl::Account:
+	case CustomFrameControl::Manage:
 		return 0;
 	}
 	return 0;
@@ -478,6 +497,8 @@ void CCustomFrameController::InvokeTitleControl(CustomFrameControl control) noex
 		ShowLayoutMenu(anchor);
 	} else if (control == CustomFrameControl::Account) {
 		ShowAccountMenu(anchor);
+	} else if (control == CustomFrameControl::Manage) {
+		ShowManageMenu(anchor);
 	}
 }
 
@@ -512,6 +533,49 @@ void CCustomFrameController::ShowAccountMenu(const RECT& anchor) noexcept
 	(void)::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
 		point.x, point.y, 0, m_window, nullptr);
 	::DestroyMenu(menu);
+}
+
+void CCustomFrameController::ShowManageMenu(const RECT& anchor) noexcept
+{
+	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
+	const HMENU menu = ::CreatePopupMenu();
+	const HMENU themes = ::CreatePopupMenu();
+	if (menu == nullptr || themes == nullptr) {
+		if (themes != nullptr) ::DestroyMenu(themes);
+		if (menu != nullptr) ::DestroyMenu(menu);
+		return;
+	}
+	const bool menuItemsAppended = ::AppendMenuW(menu, MF_STRING, kManageShowCommandPalette,
+		L"Command Palette...\tCtrl+Shift+P") != FALSE
+		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageOpenSettings, L"Settings\tCtrl+,") != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageShowExtensions, L"Extensions\tCtrl+Shift+X") != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageOpenKeyboardShortcuts, L"Keyboard Shortcuts\tCtrl+K Ctrl+S") != FALSE
+		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
+		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme, L"Color Theme\tCtrl+K Ctrl+T") != FALSE
+		&& ::AppendMenuW(themes, MF_STRING, kManageSelectFileIconTheme, L"File Icon Theme") != FALSE;
+	if (!menuItemsAppended
+		|| ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes), L"Themes") == FALSE) {
+		::DestroyMenu(themes);
+		::DestroyMenu(menu);
+		return;
+	}
+	POINT point{ anchor.right, anchor.bottom };
+	::ClientToScreen(m_window, &point);
+	const UINT command = ::TrackPopupMenu(
+		menu,
+		TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_RETURNCMD | TPM_VERTICAL,
+		point.x, point.y, 0, m_window, nullptr
+	);
+	::DestroyMenu(menu);
+	const auto action = ManageActionFromMenuCommand(command);
+	if (action == CustomFrameManageAction::None || !m_manageMenuActionCallback) return;
+	try {
+		m_manageMenuActionCallback(action);
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: Manage menu action callback threw.\n");
+	}
 }
 
 void CCustomFrameController::ClearAccessibilityFocus() noexcept

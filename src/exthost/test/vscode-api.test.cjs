@@ -143,6 +143,48 @@ test('markdown tooltips carry supportThemeIcons over the wire', async () => {
   session.dispose();
 });
 
+test('markdown tooltips preserve trusted link permission over the wire', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 3, transport);
+  const item = session.api.window.createStatusBarItem('trusted.status');
+  const tooltip = new MarkdownString('[Run](command:sample.run)');
+  tooltip.isTrusted = true;
+  item.tooltip = tooltip;
+  item.show();
+  await tick();
+
+  const updates = transport.notified('workbench/statusBar/update');
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].params.tooltip,
+    { markdown: '[Run](command:sample.run)', isTrusted: true, supportThemeIcons: false });
+
+  item.dispose();
+  session.dispose();
+});
+
+test('markdown tooltips preserve trusted command allowlists over the wire', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 3, transport);
+  const item = session.api.window.createStatusBarItem('trusted.allowlist.status');
+  const tooltip = new MarkdownString('[Run](command:sample.run)');
+  tooltip.isTrusted = { enabledCommands: ['sample.run'] };
+  item.tooltip = tooltip;
+  item.show();
+  await tick();
+
+  const updates = transport.notified('workbench/statusBar/update');
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0].params.tooltip,
+    {
+      markdown: '[Run](command:sample.run)',
+      isTrusted: { enabledCommands: ['sample.run'] },
+      supportThemeIcons: false,
+    });
+
+  item.dispose();
+  session.dispose();
+});
+
 test('notifications and quick input return the original selected values', async () => {
   const transport = new RecordingTransport();
   transport.responses.set('workbench/notification/show', { selectedIndex: 1 });

@@ -117,6 +117,98 @@ WorkbenchCommandDescriptor MakeOutputDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeShowCommandsDescriptor()
+{
+	return {
+		"workbench.action.showCommands",
+		"Command Palette...",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::Menu, "workbench.manage.commandPalette", std::nullopt },
+		},
+	};
+}
+
+WorkbenchCommandDescriptor MakeOpenSettingsDescriptor()
+{
+	return {
+		"workbench.action.openSettings",
+		"Settings",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::LegacyNative,
+		{
+			{ EWorkbenchCommandSurface::Menu, "workbench.manage.settings", std::nullopt },
+		},
+	};
+}
+
+WorkbenchCommandDescriptor MakeExtensionsDescriptor()
+{
+	return {
+		"workbench.view.extensions",
+		"Extensions",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Layout,
+		{
+			{ EWorkbenchCommandSurface::Menu, "workbench.manage.extensions", std::nullopt },
+		},
+	};
+}
+
+WorkbenchCommandDescriptor MakeOpenGlobalKeybindingsDescriptor()
+{
+	return {
+		"workbench.action.openGlobalKeybindings",
+		"Keyboard Shortcuts",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::LegacyNative,
+		{
+			{ EWorkbenchCommandSurface::Menu, "workbench.manage.keybindings", std::nullopt },
+		},
+	};
+}
+
+WorkbenchCommandDescriptor MakeColorThemeDescriptor()
+{
+	return {
+		"workbench.action.selectTheme",
+		"Preferences: Color Theme",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::LegacyNative,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.selectTheme.palette", std::nullopt },
+			{ EWorkbenchCommandSurface::Menu, "workbench.manage.colorTheme", std::nullopt },
+		},
+	};
+}
+
+WorkbenchCommandDescriptor MakeFileIconThemeDescriptor()
+{
+	return {
+		"workbench.action.selectIconTheme",
+		"Preferences: File Icon Theme",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::LegacyNative,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.selectIconTheme.palette", std::nullopt },
+			{ EWorkbenchCommandSurface::Menu, "workbench.manage.fileIconTheme", std::nullopt },
+		},
+	};
+}
+
 } // namespace
 
 bool WorkbenchCommandRegistry::IsValidCommandId(std::string_view value) noexcept
@@ -157,6 +249,12 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 	const auto explorer = MakeExplorerDescriptor();
 	const auto problems = MakeProblemsDescriptor();
 	const auto output = MakeOutputDescriptor();
+	const auto showCommands = MakeShowCommandsDescriptor();
+	const auto openSettings = MakeOpenSettingsDescriptor();
+	const auto extensions = MakeExtensionsDescriptor();
+	const auto openGlobalKeybindings = MakeOpenGlobalKeybindingsDescriptor();
+	const auto colorTheme = MakeColorThemeDescriptor();
+	const auto fileIconTheme = MakeFileIconThemeDescriptor();
 	std::lock_guard lock(m_mutex);
 	const auto conflicts = [&](const WorkbenchCommandDescriptor& requested) {
 		for (const auto& [id, entry] : m_entries) {
@@ -170,14 +268,25 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		return false;
 	};
 	if (m_entries.contains(toggle.id) || m_entries.contains(explorer.id)
-		|| m_entries.contains(problems.id) || m_entries.contains(output.id)
-		|| conflicts(toggle) || conflicts(explorer) || conflicts(problems) || conflicts(output)) {
+		|| m_entries.contains(problems.id) || m_entries.contains(output.id) || m_entries.contains(colorTheme.id)
+		|| m_entries.contains(fileIconTheme.id) || m_entries.contains(showCommands.id)
+		|| m_entries.contains(openSettings.id) || m_entries.contains(extensions.id)
+		|| m_entries.contains(openGlobalKeybindings.id)
+		|| conflicts(toggle) || conflicts(explorer) || conflicts(problems) || conflicts(output)
+		|| conflicts(colorTheme) || conflicts(fileIconTheme) || conflicts(showCommands)
+		|| conflicts(openSettings) || conflicts(extensions) || conflicts(openGlobalKeybindings)) {
 		return { EWorkbenchCommandRegistrationStatus::Conflict, m_revision };
 	}
 	m_entries.emplace(toggle.id, Entry{ toggle, std::move(executors.toggleSidebarVisibility) });
 	m_entries.emplace(explorer.id, Entry{ explorer, std::move(executors.showExplorer) });
 	m_entries.emplace(problems.id, Entry{ problems, std::move(executors.showProblems) });
 	m_entries.emplace(output.id, Entry{ output, std::move(executors.toggleOutput) });
+	m_entries.emplace(showCommands.id, Entry{ showCommands, std::move(executors.showCommands) });
+	m_entries.emplace(openSettings.id, Entry{ openSettings, std::move(executors.openSettings) });
+	m_entries.emplace(extensions.id, Entry{ extensions, std::move(executors.showExtensions) });
+	m_entries.emplace(openGlobalKeybindings.id, Entry{ openGlobalKeybindings, std::move(executors.openGlobalKeybindings) });
+	m_entries.emplace(colorTheme.id, Entry{ colorTheme, std::move(executors.selectTheme) });
+	m_entries.emplace(fileIconTheme.id, Entry{ fileIconTheme, std::move(executors.selectFileIconTheme) });
 	return { EWorkbenchCommandRegistrationStatus::Succeeded, ++m_revision };
 }
 

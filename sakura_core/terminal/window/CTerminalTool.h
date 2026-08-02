@@ -24,6 +24,11 @@ struct TerminalPanelActions {
 	std::function<void()> closePanel;
 	std::function<void()> toggleMaximize;
 	std::function<bool()> isMaximized;
+	//! When false, the physical Panel Part draws maximize/close in its own chrome.
+	bool renderPanelActions = true;
+	//! When false, the physical Panel Part supplies the one shared header row and
+	//! this tool renders only the terminal content surface.
+	bool renderHeader = true;
 };
 
 //! Bottom-panel terminal tool with up to two viewports and multiple session tabs.
@@ -44,6 +49,14 @@ public:
 	void SetWorkingDirectory( std::wstring workingDirectory );
 	void SetPalette( const theme::ThemePalette& palette );
 	void SetPanelActions( TerminalPanelActions actions );
+	//! Sets the physical Panel Part that owns the terminal-specific header actions.
+	//! A null host restores standalone-header invalidation.
+	void SetPanelHeaderHost( HWND host );
+	//! Paints the terminal-specific actions into a host-owned, single-row header.
+	void PaintPanelHeader( HDC dc, const RECT& bounds, unsigned int dpi );
+	//! Forwards mouse input from the physical Panel Part's header region.
+	[[nodiscard]] bool HandlePanelHeaderMessage(
+		UINT message, WPARAM wParam, LPARAM lParam, const RECT& bounds, unsigned int dpi );
 	//! Materializes the renderer and starts exactly one initial session without
 	//! moving keyboard focus. Used when a persisted-visible panel is restored.
 	[[nodiscard]] bool EnsureSessionStarted();

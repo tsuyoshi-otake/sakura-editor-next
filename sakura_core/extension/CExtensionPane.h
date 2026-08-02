@@ -13,12 +13,14 @@
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
 #include "extension/CExtensionManager.h"
+#include "extension/CExtensionProfileState.h"
 #include "extension/openvsx/OpenVsxProductionClient.h"
 #include "window/CWnd.h"
 
@@ -74,7 +76,10 @@ public:
 	CExtensionPane(
 		config::IConfigurationService& configurationService,
 		std::wstring userDataProfileId,
-		HWND controlProcessWindow);
+		HWND controlProcessWindow,
+		std::filesystem::path extensionSelectionPath = {},
+		std::filesystem::path defaultExtensionSelectionPath = {},
+		bool defaultProfileExtensionsWhenMissing = true);
 	~CExtensionPane() override;
 
 	/*!
@@ -154,6 +159,7 @@ private:
 
 	//! 一覧の 1 行
 	struct SRow {
+		bool					bEnabled = false;
 		SOpenVsxExtension	ext;				//!< sDownloadUrl が空なら導入操作はできない
 		std::wstring		sInstalledVersion;	//!< 空なら未導入
 	};
@@ -203,6 +209,7 @@ private:
 	// -- 操作 -- //
 	void StartSearch();
 	void StartInstall();
+	void StartToggle();
 	void StartUninstall();
 
 	//! ジョブをワーカースレッドへ投入する
@@ -225,6 +232,9 @@ private:
 	HWND	m_hwndRemoveButton  = nullptr;
 	HWND	m_hwndStatus        = nullptr;
 	HFONT	m_hFont             = nullptr;
+	CExtensionProfileState	m_profileState;
+	std::filesystem::path	m_defaultProfileSelectionPath;
+	bool					m_defaultProfileExtensionsWhenMissing = true;
 
 	CExtensionManager		m_cManager;		//!< 導入済みの列挙にのみ使う（UI スレッド専用）
 	config::IConfigurationService& m_configurationService;	//!< Used only before a worker starts.

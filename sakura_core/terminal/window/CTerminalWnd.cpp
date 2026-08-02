@@ -9,18 +9,27 @@
 
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 #include "terminal/model/TerminalModel.h"
+#include "terminal/window/TerminalBuiltinGlyphRenderer.h"
 #include "terminal/window/TerminalColorResolver.h"
+#include "terminal/window/TerminalDWriteRenderer.h"
 #include "terminal/window/TerminalFontMetrics.h"
 #include "terminal/window/TerminalInput.h"
+#include "terminal/window/TerminalRenderPlan.h"
 #include "terminal/window/TerminalRenderMapping.h"
 #include "terminal/window/TerminalScrollbarLayout.h"
 #include "theme/CThemeService.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cstddef>
 #include <cstring>
+#include <cstdint>
 #include <limits>
+#include <new>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <utility>
 #include <windowsx.h>
 #include <imm.h>
@@ -33,14 +42,33 @@ constexpr unsigned int kDefaultDpi = 96;
 constexpr UINT_PTR kInputRetryTimer = 0x5345;
 constexpr UINT kInputRetryMilliseconds = 30;
 constexpr std::size_t kPendingInteractiveInputLimit = CTerminalSession::kInputLimitBytes;
+constexpr std::size_t kTerminalFallbackFontCount = 5;
+constexpr WORD kMissingGlyph = 0xffff;
+constexpr std::size_t kTerminalPrimaryCoverageCacheLimit = 512;
+constexpr std::size_t kTerminalFallbackCoverageCacheLimit = 512;
+constexpr std::size_t kTerminalBackBufferBytesPerPixel = sizeof(std::uint32_t);
 
-bool IsPointSelected( TerminalSelectionPoint point, TerminalSelectionPoint anchor, TerminalSelectionPoint active ) noexcept
+static_assert(kTerminalBackBufferBytesPerPixel == 4U);
+
+//! GDI does not accept a CSS-style font stack.  Keep the terminal's primary
+//! face fixed, then select a real installed face per grapheme when the primary
+//! face has no glyph.  This is the native equivalent of xterm.js's browser
+//! font fallback for symbols, CJK, and emoji.
+bool FontContainsText( HDC dc, HFONT candidate, std::wstring_view text ) noexcept
 {
-	const auto less = [](const TerminalSelectionPoint& left, const TerminalSelectionPoint& right) {
-		return left.row < right.row || (left.row == right.row && left.column < right.column);
-	};
-	if( less(active, anchor) ) std::swap(anchor, active);
-	return !less(point, anchor) && less(point, active);
+	if( dc == nullptr || candidate == nullptr || text.empty() ) return candidate != nullptr;
+	// TerminalModel stores at most twelve UTF-16 code units in one cell.  Keep
+	// this probe allocation-free so a repaint does not allocate per visible cell.
+	std::array<WORD, 16> glyphs{};
+	if( text.size() > glyphs.size() ) return false;
+	const auto previous = ::SelectObject(dc, candidate);
+	if( previous == nullptr || previous == HGDI_ERROR ) return false;
+	const auto count = ::GetGlyphIndicesW(dc, text.data(), static_cast<int>(text.size()), glyphs.data(),
+		GGI_MARK_NONEXISTING_GLYPHS);
+	::SelectObject(dc, previous);
+	if( count == GDI_ERROR || count != text.size() ) return false;
+	return std::all_of(glyphs.begin(), glyphs.begin() + static_cast<std::ptrdiff_t>(count),
+		[](WORD glyph) { return glyph != kMissingGlyph; });
 }
 
 bool EnsureTerminalClass( HINSTANCE instance )
@@ -93,7 +121,7 @@ std::string EncodeAltPrintable( const MSG& message )
 
 } // namespace
 
-struct CTerminalWnd::Impl {
+struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	HWND window{};
 	HINSTANCE instance{};
 	TerminalModel* model{};
@@ -105,6 +133,26 @@ struct CTerminalWnd::Impl {
 	HDC backBufferDc{};
 	HBITMAP backBufferBitmap{};
 	HGDIOBJ backBufferOriginalBitmap{};
+	std::uint32_t* backBufferBits{};
+	std::ptrdiff_t backBufferStridePixels{};
+	std::size_t backBufferByteCount{};
+	std::array<HFONT, kTerminalFallbackFontCount> fallbackFonts{};
+	std::array<HFONT, kTerminalFallbackFontCount> fallbackBoldFonts{};
+	std::array<const wchar_t*, kTerminalFallbackFontCount> fallbackFontFamilies{};
+	bool fallbackFontsCreated{};
+	std::unordered_map<std::uint32_t, HFONT> glyphFontCache;
+	std::unordered_map<std::uint32_t, bool> primaryGlyphCoverage;
+	TerminalRenderPlan renderPlan;
+	TerminalBuiltinGlyphRenderer builtinGlyphRenderer;
+	TerminalDWriteRenderer dwriteRenderer;
+	std::wstring terminalFontFamily;
+	std::wstring terminalLocale;
+	std::uint64_t rendererGeneration{ 1 };
+	int terminalFontPixelHeight{ 1 };
+	int terminalFontWeight{ FW_NORMAL };
+	HDC classifierDc{};
+	COLORREF paintDefaultBackground{};
+	COLORREF paintDefaultForeground{};
 	SIZE backBufferSize{};
 	unsigned int dpi{ kDefaultDpi };
 	int cellWidth{ 8 };
@@ -131,6 +179,33 @@ struct CTerminalWnd::Impl {
 	bool closed{};
 	bool useTerminalProfileColors{ true };
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+
+	void ReleaseRenderFonts() noexcept
+	{
+		if( font ) {
+			::DeleteObject(font);
+			font = nullptr;
+		}
+		if( boldFont ) {
+			::DeleteObject(boldFont);
+			boldFont = nullptr;
+		}
+		for( auto& fallback : fallbackFonts ) {
+			if( fallback ) {
+				::DeleteObject(fallback);
+				fallback = nullptr;
+			}
+		}
+		for( auto& fallback : fallbackBoldFonts ) {
+			if( fallback ) {
+				::DeleteObject(fallback);
+				fallback = nullptr;
+			}
+		}
+		fallbackFontsCreated = false;
+		glyphFontCache.clear();
+		primaryGlyphCoverage.clear();
+	}
 
 	bool AppendPendingInteractiveInput( std::span<const std::uint8_t> bytes )
 	{
@@ -215,73 +290,280 @@ struct CTerminalWnd::Impl {
 		return model ? CalculateTerminalViewport(*model, visibleRows, scrollOffset) : TerminalViewport{};
 	}
 
+	static void DestroyBackBuffer(HDC dc, HBITMAP bitmap, HGDIOBJ originalBitmap) noexcept
+	{
+		if( dc != nullptr && bitmap != nullptr && originalBitmap != nullptr ) {
+			static_cast<void>(::SelectObject(dc, originalBitmap));
+		}
+		const bool bitmapDeleted = bitmap != nullptr && ::DeleteObject(bitmap) != FALSE;
+		if( dc != nullptr ) ::DeleteDC(dc);
+		// DeleteObject cannot delete a selected bitmap.  A failed restore above
+		// is therefore retried after the DC is gone instead of leaking the DIB.
+		if( bitmap != nullptr && !bitmapDeleted ) static_cast<void>(::DeleteObject(bitmap));
+	}
+
+	[[nodiscard]] bool HasUsableBackBufferState() const noexcept
+	{
+		if( backBufferDc == nullptr || backBufferBitmap == nullptr || backBufferOriginalBitmap == nullptr ||
+			backBufferBits == nullptr || backBufferSize.cx <= 0 || backBufferSize.cy <= 0 ) {
+			return false;
+		}
+		const auto width = static_cast<std::size_t>(backBufferSize.cx);
+		const auto height = static_cast<std::size_t>(backBufferSize.cy);
+		const auto maximumSize = std::numeric_limits<std::size_t>::max();
+		if( width > maximumSize / kTerminalBackBufferBytesPerPixel ||
+			width > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) ) {
+			return false;
+		}
+		const auto strideBytes = width * kTerminalBackBufferBytesPerPixel;
+		if( height > maximumSize / strideBytes ) return false;
+		return backBufferStridePixels == static_cast<std::ptrdiff_t>(width) &&
+			backBufferByteCount == strideBytes * height;
+	}
+
+	[[nodiscard]] bool HasAnyBackBufferState() const noexcept
+	{
+		return backBufferDc != nullptr || backBufferBitmap != nullptr || backBufferOriginalBitmap != nullptr ||
+			backBufferBits != nullptr || backBufferStridePixels != 0 || backBufferByteCount != 0 ||
+			backBufferSize.cx != 0 || backBufferSize.cy != 0;
+	}
+
 	bool EnsureBackBuffer( HDC referenceDc )
 	{
 		RECT client{};
 		if( referenceDc == nullptr || window == nullptr || !::GetClientRect(window, &client) ) return false;
-		const LONG width = std::max<LONG>(0, client.right - client.left);
-		const LONG height = std::max<LONG>(0, client.bottom - client.top);
-		if( width == 0 || height == 0 ) return false;
-		if( backBufferDc && backBufferBitmap && backBufferSize.cx == width && backBufferSize.cy == height ) return true;
-		if( backBufferDc == nullptr ) {
-			backBufferDc = ::CreateCompatibleDC(referenceDc);
-			if( backBufferDc == nullptr ) return false;
-		}
-		const HBITMAP replacement = ::CreateCompatibleBitmap(referenceDc, width, height);
-		if( replacement == nullptr ) return false;
-		const auto previous = ::SelectObject(backBufferDc, replacement);
-		if( previous == nullptr || previous == HGDI_ERROR ) {
-			::DeleteObject(replacement);
+		const auto widthValue = static_cast<long long>(client.right) - static_cast<long long>(client.left);
+		const auto heightValue = static_cast<long long>(client.bottom) - static_cast<long long>(client.top);
+		if( widthValue <= 0 || heightValue <= 0 ||
+			widthValue > std::numeric_limits<LONG>::max() || heightValue > std::numeric_limits<LONG>::max() ) {
 			return false;
 		}
-		if( backBufferBitmap ) ::DeleteObject(backBufferBitmap);
-		else backBufferOriginalBitmap = previous;
-		backBufferBitmap = replacement;
+		const auto width = static_cast<LONG>(widthValue);
+		const auto height = static_cast<LONG>(heightValue);
+		const auto widthPixels = static_cast<std::size_t>(width);
+		const auto heightPixels = static_cast<std::size_t>(height);
+		const auto maximumSize = std::numeric_limits<std::size_t>::max();
+		if( widthPixels > maximumSize / kTerminalBackBufferBytesPerPixel ||
+			widthPixels > static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) ) {
+			return false;
+		}
+		const auto strideBytes = widthPixels * kTerminalBackBufferBytesPerPixel;
+		if( heightPixels > maximumSize / strideBytes ) return false;
+		const auto byteCount = strideBytes * heightPixels;
+		const auto stridePixels = static_cast<std::ptrdiff_t>(widthPixels);
+
+		if( HasUsableBackBufferState() && backBufferSize.cx == width && backBufferSize.cy == height &&
+			backBufferStridePixels == stridePixels && backBufferByteCount == byteCount ) {
+			return true;
+		}
+		if( HasAnyBackBufferState() && !HasUsableBackBufferState() ) ReleaseBackBuffer();
+
+		// Create the new DC and DIB independently.  A resize/create failure never
+		// changes the still-valid old backbuffer or publishes partial DIB state.
+		const HDC replacementDc = ::CreateCompatibleDC(referenceDc);
+		if( replacementDc == nullptr ) return false;
+		BITMAPINFO bitmapInfo{};
+		bitmapInfo.bmiHeader.biSize = sizeof(bitmapInfo.bmiHeader);
+		bitmapInfo.bmiHeader.biWidth = width;
+		bitmapInfo.bmiHeader.biHeight = -height; // top-down: bits starts at logical row zero.
+		bitmapInfo.bmiHeader.biPlanes = 1;
+		bitmapInfo.bmiHeader.biBitCount = 32;
+		bitmapInfo.bmiHeader.biCompression = BI_RGB;
+		void* replacementBits{};
+		const HBITMAP replacementBitmap = ::CreateDIBSection(referenceDc, &bitmapInfo, DIB_RGB_COLORS,
+			&replacementBits, nullptr, 0);
+		if( replacementBitmap == nullptr || replacementBits == nullptr ) {
+			DestroyBackBuffer(replacementDc, replacementBitmap, nullptr);
+			return false;
+		}
+		const auto replacementOriginalBitmap = ::SelectObject(replacementDc, replacementBitmap);
+		if( replacementOriginalBitmap == nullptr || replacementOriginalBitmap == HGDI_ERROR ) {
+			DestroyBackBuffer(replacementDc, replacementBitmap, nullptr);
+			return false;
+		}
+
+		const HDC oldDc = backBufferDc;
+		const HBITMAP oldBitmap = backBufferBitmap;
+		const HGDIOBJ oldOriginalBitmap = backBufferOriginalBitmap;
+		backBufferDc = replacementDc;
+		backBufferBitmap = replacementBitmap;
+		backBufferOriginalBitmap = replacementOriginalBitmap;
+		backBufferBits = static_cast<std::uint32_t*>(replacementBits);
+		backBufferStridePixels = stridePixels;
+		backBufferByteCount = byteCount;
 		backBufferSize = { width, height };
+		DestroyBackBuffer(oldDc, oldBitmap, oldOriginalBitmap);
 		return true;
 	}
 
 	void ReleaseBackBuffer() noexcept
 	{
-		if( backBufferDc && backBufferBitmap ) {
-			if( backBufferOriginalBitmap ) ::SelectObject(backBufferDc, backBufferOriginalBitmap);
-			::DeleteObject(backBufferBitmap);
-		}
-		if( backBufferDc ) ::DeleteDC(backBufferDc);
-		backBufferDc = nullptr;
-		backBufferBitmap = nullptr;
-		backBufferOriginalBitmap = nullptr;
+		const HDC dc = std::exchange(backBufferDc, nullptr);
+		const HBITMAP bitmap = std::exchange(backBufferBitmap, nullptr);
+		const HGDIOBJ originalBitmap = std::exchange(backBufferOriginalBitmap, nullptr);
+		backBufferBits = nullptr;
+		backBufferStridePixels = 0;
+		backBufferByteCount = 0;
 		backBufferSize = {};
+		DestroyBackBuffer(dc, bitmap, originalBitmap);
 	}
 
 	void RecreateFont()
 	{
-		if( font ) {
-			::DeleteObject(font);
-			font = nullptr;
-		}
-		if( boldFont ) {
-			::DeleteObject(boldFont);
-			boldFont = nullptr;
-		}
-		const HDC dc = ::GetDC(window);
+		ReleaseRenderFonts();
 		const auto fontSpec = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
 		const auto metrics = CalculateTerminalFontMetrics(fontSpec.pointSize, dpi);
 		const wchar_t* face = theme::CThemeService::ResolveFontFamily(theme::ThemeFontKind::Terminal);
-		font = ::CreateFontW(-metrics.fontPixelHeight, metrics.cellWidth, 0, 0, fontSpec.weight,
-			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-			FIXED_PITCH | FF_MODERN, face);
-		boldFont = ::CreateFontW(-metrics.fontPixelHeight, metrics.cellWidth, 0, 0, FW_BOLD,
-			FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
-			FIXED_PITCH | FF_MODERN, face);
+		fallbackFontFamilies = {
+			fontSpec.fallbackFamily,
+			L"Segoe UI Symbol",
+			L"Segoe UI Emoji",
+			L"Yu Gothic UI",
+			L"Meiryo UI",
+		};
+		const auto createFont = [&](const wchar_t* family, int weight, DWORD pitch) {
+			if( family == nullptr || *family == L'\0' ) return static_cast<HFONT>(nullptr);
+			// lfWidth == 0 preserves the typeface's natural outlines.  The terminal
+			// grid still supplies explicit cell advances to ExtTextOutW, so this
+			// removes horizontal glyph distortion without changing PTY dimensions.
+			return ::CreateFontW(-metrics.fontPixelHeight, 0, 0, 0, weight,
+				FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+				CLEARTYPE_NATURAL_QUALITY, pitch, family);
+		};
+		font = createFont(face, fontSpec.weight, FIXED_PITCH | FF_MODERN);
+		boldFont = createFont(face, FW_BOLD, FIXED_PITCH | FF_MODERN);
 		cellWidth = metrics.cellWidth;
 		cellHeight = metrics.cellHeight;
-		if( dc ) {
-			const auto previous = font ? ::SelectObject(dc, font) : nullptr;
-			if( previous ) ::SelectObject(dc, previous);
-			::ReleaseDC(window, dc);
-		}
+		// DirectWrite consumes model-owned cells for shaped fallback only.  It
+		// never measures a font back into the terminal's PTY grid geometry.
+		terminalFontFamily.assign(face == nullptr ? L"" : face);
+		terminalFontPixelHeight = metrics.fontPixelHeight;
+		terminalFontWeight = fontSpec.weight;
+		RefreshDWriteConfiguration(true);
 		RecreateCaret();
+	}
+
+	void EnsureFallbackFonts() noexcept
+	{
+		if( fallbackFontsCreated ) return;
+		// This path is reached only after DirectWrite declined/failed for a shaped
+		// cluster and the primary GDI face has no matching glyph.  Record the
+		// one permitted construction attempt before issuing Win32 calls so a
+		// missing font cannot turn repaint into a creation retry loop.
+		fallbackFontsCreated = true;
+		const int fontHeight = std::max(1, terminalFontPixelHeight);
+		const auto createFont = [fontHeight](const wchar_t* family, int weight) noexcept {
+			if( family == nullptr || *family == L'\0' ) return static_cast<HFONT>(nullptr);
+			return ::CreateFontW(-fontHeight, 0, 0, 0, weight,
+				FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_TT_PRECIS, CLIP_DEFAULT_PRECIS,
+				CLEARTYPE_NATURAL_QUALITY, DEFAULT_PITCH | FF_DONTCARE, family);
+		};
+		const int boldWeight = std::max(terminalFontWeight, static_cast<int>(FW_BOLD));
+		for( std::size_t index = 0; index < kTerminalFallbackFontCount; ++index ) {
+			fallbackFonts[index] = createFont(fallbackFontFamilies[index], terminalFontWeight);
+			fallbackBoldFonts[index] = createFont(fallbackFontFamilies[index], boldWeight);
+		}
+	}
+
+	void RefreshDWriteConfiguration( bool force )
+	{
+		std::array<wchar_t, LOCALE_NAME_MAX_LENGTH> locale{};
+		std::wstring currentLocale;
+		const int length = ::GetUserDefaultLocaleName(locale.data(), static_cast<int>(locale.size()));
+		if( length > 1 ) currentLocale.assign(locale.data(), static_cast<std::size_t>(length - 1));
+		if( currentLocale != terminalLocale ) {
+			terminalLocale = std::move(currentLocale);
+			force = true;
+		}
+		if( !force ) return;
+		++rendererGeneration;
+		dwriteRenderer.Configure({ terminalFontFamily, terminalLocale, terminalFontPixelHeight,
+			terminalFontWeight, dpi, rendererGeneration });
+	}
+
+	[[nodiscard]] TerminalRenderClassification Classify(std::wstring_view text, bool bold) noexcept override
+	{
+		if( text.size() != 1 || classifierDc == nullptr ) return TerminalRenderClassification::ShapedFallback;
+		const HFONT primary = bold && boldFont ? boldFont : font;
+		if( primary == nullptr ) return TerminalRenderClassification::ShapedFallback;
+		const auto key = static_cast<std::uint32_t>(text.front()) | (bold ? 0x10000U : 0U);
+		if( const auto cached = primaryGlyphCoverage.find(key); cached != primaryGlyphCoverage.end() ) {
+			return cached->second ? TerminalRenderClassification::GdiSimple : TerminalRenderClassification::ShapedFallback;
+		}
+		const bool covered = FontContainsText(classifierDc, primary, text);
+		try {
+			if( primaryGlyphCoverage.size() >= kTerminalPrimaryCoverageCacheLimit ) primaryGlyphCoverage.clear();
+			primaryGlyphCoverage.emplace(key, covered);
+		} catch( const std::bad_alloc& ) {
+			// A cache allocation must not make a terminal repaint fail.  A
+			// conservative shaped route is safe when the bounded cache cannot grow.
+			return TerminalRenderClassification::ShapedFallback;
+		}
+		return covered ? TerminalRenderClassification::GdiSimple : TerminalRenderClassification::ShapedFallback;
+	}
+
+	[[nodiscard]] std::uint64_t Generation() const noexcept override
+	{
+		return rendererGeneration;
+	}
+
+	[[nodiscard]] static TerminalRenderStyle ResolvePlanStyle(void* context,
+		const TerminalAttributes& attributes, bool selected) noexcept
+	{
+		const auto& self = *static_cast<const Impl*>(context);
+		auto background = ResolveTerminalColor(attributes.background, self.palette, self.paintDefaultBackground,
+			TerminalColorRole::Background);
+		auto foreground = attributes.inverse
+			? ResolveTerminalColor(attributes.foreground, self.palette, self.paintDefaultForeground,
+				TerminalColorRole::Background)
+			: ResolveTerminalForeground(attributes.foreground, self.palette, self.paintDefaultForeground, background);
+		if( attributes.inverse ) std::swap(foreground, background);
+		if( selected ) background = self.palette.accent.ToColorRef();
+		const bool usesSurfaceDefaultBackground = !selected && !attributes.inverse &&
+			attributes.background.kind == TerminalColorKind::Default;
+		return { foreground, background, attributes.bold, attributes.underline, attributes.inverse, selected,
+			usesSurfaceDefaultBackground };
+	}
+
+	HFONT FallbackFontForText( HDC dc, std::wstring_view text, bool bold )
+	{
+		const HFONT primary = bold && boldFont ? boldFont : font;
+		if( primary == nullptr || text.empty() || (text.size() == 1 && text.front() < 0x80) ) return primary;
+
+		// Most terminal output is a single BMP codepoint.  Cache that hot path by
+		// code unit and weight; multi-codepoint graphemes are probed directly so a
+		// cached key can never retain a pointer into a mutable TerminalCell.
+		if( text.size() == 1 ) {
+			const auto key = static_cast<std::uint32_t>(text.front()) | (bold ? 0x10000U : 0U);
+			if( const auto cached = glyphFontCache.find(key); cached != glyphFontCache.end() ) return cached->second;
+			HFONT selected = primary;
+			if( !FontContainsText(dc, primary, text) ) {
+				EnsureFallbackFonts();
+				const auto& fallbacks = bold ? fallbackBoldFonts : fallbackFonts;
+				for( const auto candidate : fallbacks ) {
+					if( candidate && FontContainsText(dc, candidate, text) ) {
+						selected = candidate;
+						break;
+					}
+				}
+			}
+			try {
+				if( glyphFontCache.size() >= kTerminalFallbackCoverageCacheLimit ) glyphFontCache.clear();
+				glyphFontCache.emplace(key, selected);
+			} catch( const std::bad_alloc& ) {
+				// The cache is only an allocation-avoidance optimization.  The fallback
+				// decision remains valid even if this repaint cannot retain it.
+			}
+			return selected;
+		}
+
+		if( FontContainsText(dc, primary, text) ) return primary;
+		EnsureFallbackFonts();
+		const auto& fallbacks = bold ? fallbackBoldFonts : fallbackFonts;
+		for( const auto candidate : fallbacks ) {
+			if( candidate && FontContainsText(dc, candidate, text) ) return candidate;
+		}
+		return primary;
 	}
 
 	void RecreateCaret()
@@ -489,6 +771,109 @@ struct CTerminalWnd::Impl {
 		return modes.mouseButtonTracking || modes.mouseDragTracking || modes.mouseAnyEventTracking;
 	}
 
+	void DrawUnderline( HDC memory, const RECT& rect, COLORREF color ) noexcept
+	{
+		const RECT underline{ rect.left, std::max(rect.top, rect.bottom - 2), rect.right, rect.bottom };
+		if( underline.right <= underline.left || underline.bottom <= underline.top ) return;
+		const auto brush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
+		::SetDCBrushColor(memory, color);
+		::FillRect(memory, &underline, brush);
+	}
+
+	void PaintPlanBackgrounds( HDC memory ) noexcept
+	{
+		const auto brush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
+		for( const auto& span : renderPlan.BackgroundSpans() ) {
+			::SetDCBrushColor(memory, span.style.background);
+			::FillRect(memory, &span.rect, brush);
+		}
+	}
+
+	void PaintBuiltinGlyphs( HDC memory, const RECT& paintRect ) noexcept
+	{
+		const auto commands = renderPlan.BuiltinGlyphs();
+		if( commands.empty() ) return;
+		if( memory == backBufferDc && HasUsableBackBufferState() ) {
+			const TerminalBuiltinGlyphPixelSurface surface{
+				backBufferBits,
+				backBufferStridePixels,
+				backBufferSize.cx,
+				backBufferSize.cy,
+				paintRect,
+			};
+			// CreateDIBSection requires a GDI flush before application code touches
+			// the DIB bits.  Subsequent GDI (and the existing DWrite handoff) sees
+			// the same selected DIB; the window-DC and rejected-surface paths retain
+			// the exact HDC batch/scalar fallback.
+			if( ::GdiFlush() != FALSE && TerminalBuiltinGlyphRenderer::DrawBatch(surface, commands) ) return;
+		}
+		builtinGlyphRenderer.DrawBatch(memory, commands);
+	}
+
+	void PaintGdiRuns( HDC memory, HFONT& selectedFont ) noexcept
+	{
+		::SetBkMode(memory, TRANSPARENT);
+		for( const auto& run : renderPlan.GdiRuns() ) {
+			const HFONT desiredFont = run.style.bold && boldFont ? boldFont : font;
+			if( desiredFont == nullptr ) continue;
+			if( desiredFont != selectedFont ) {
+				::SelectObject(memory, desiredFont);
+				selectedFont = desiredFont;
+			}
+			const auto text = renderPlan.Text(run.textOffset, run.textLength);
+			const auto advances = renderPlan.Advances(run.advanceOffset, run.advanceCount);
+			if( text.empty() || advances.size() != text.size() ) continue;
+			::SetTextColor(memory, run.style.foreground);
+			::ExtTextOutW(memory, run.rect.left, run.rect.top, ETO_CLIPPED, &run.rect,
+				text.data(), static_cast<UINT>(text.size()), advances.data());
+			if( run.style.underline ) DrawUnderline(memory, run.rect, run.style.foreground);
+		}
+	}
+
+	void PaintShapedGdiFallbacks( HDC memory, HFONT& selectedFont )
+	{
+		// A failed EndDraw can leave successfully submitted clusters visible in the
+		// DC.  Restore only the shaped commands' exact model rectangles before any
+		// GDI fallback text is emitted, so no partial DirectWrite pixels survive.
+		const auto brush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
+		for( const auto& cluster : renderPlan.ShapedClusters() ) {
+			::SetDCBrushColor(memory, cluster.style.background);
+			::FillRect(memory, &cluster.rect, brush);
+		}
+		::SetBkMode(memory, TRANSPARENT);
+		for( const auto& cluster : renderPlan.ShapedClusters() ) {
+			const auto text = renderPlan.Text(cluster.textOffset, cluster.textLength);
+			if( text.empty() ) continue;
+			const HFONT desiredFont = FallbackFontForText(memory, text, cluster.style.bold);
+			if( desiredFont == nullptr ) continue;
+			if( desiredFont != selectedFont ) {
+				::SelectObject(memory, desiredFont);
+				selectedFont = desiredFont;
+			}
+			::SetTextColor(memory, cluster.style.foreground);
+			// DirectWrite retry is deliberately not attempted here.  The model-owned
+			// rectangle still clips this degraded GDI fallback to the same VT cells.
+			::ExtTextOutW(memory, cluster.rect.left, cluster.rect.top, ETO_CLIPPED, &cluster.rect,
+				text.data(), static_cast<UINT>(text.size()), nullptr);
+			if( cluster.style.underline ) DrawUnderline(memory, cluster.rect, cluster.style.foreground);
+		}
+	}
+
+	[[nodiscard]] bool PaintShapedDirectWrite( HDC memory, const RECT& paintRect ) noexcept
+	{
+		TerminalDWriteFrame frame;
+		::GdiFlush();
+		if( dwriteRenderer.BeginFrame(memory, paintRect, frame) != TerminalDWriteFrameOutcome::Rendered ) return false;
+		for( const auto& cluster : renderPlan.ShapedClusters() ) {
+			const auto text = renderPlan.Text(cluster.textOffset, cluster.textLength);
+			if( text.empty() || !dwriteRenderer.DrawCluster(cluster, text) ) {
+				dwriteRenderer.AbortFrame(frame);
+				return false;
+			}
+		}
+		return dwriteRenderer.FinalizeFrame(frame) == TerminalDWriteFrameOutcome::Rendered;
+	}
+
 	void Paint()
 	{
 		PAINTSTRUCT paint{};
@@ -514,109 +899,43 @@ struct CTerminalWnd::Impl {
 		const auto previousPen = ::SelectObject(memory, dcPen);
 		const auto previousFont = font ? ::SelectObject(memory, font) : nullptr;
 		HFONT selectedFont = font;
-		::SetBkMode(memory, OPAQUE);
-
-		if( model ) {
-			const auto viewport = Viewport();
-			// Reuse one pair of contiguous scratch buffers for every visible row.
-			// TUI repaint cost stays O(visible cells) without two heap allocations
-			// per row per frame.
-			std::wstring batchText;
-			std::vector<int> batchAdvances;
-			batchText.reserve(model->Columns());
-			batchAdvances.reserve(model->Columns());
-			const auto paintTop = std::max<LONG>(0, paint.rcPaint.top);
-			const auto paintBottom = std::max<LONG>(0, paint.rcPaint.bottom);
-			const auto firstVisible = std::min<std::size_t>(viewport.visibleRows, static_cast<std::size_t>(paintTop / cellHeight));
-			const auto lastVisible = std::min<std::size_t>(viewport.visibleRows, static_cast<std::size_t>((paintBottom + cellHeight - 1) / cellHeight));
-			for( auto visualRow = firstVisible; visualRow < lastVisible; ++visualRow ) {
-				const auto globalRow = viewport.topRow + visualRow;
-				const auto* row = GetTerminalRow(*model, globalRow);
-				if( !row ) continue;
-				batchText.clear();
-				batchAdvances.clear();
-				std::size_t batchStart{};
-				std::size_t batchEnd{};
-				TerminalAttributes batchAttributes{};
-				bool batchSelected{};
-				bool batchUsesNaturalAdvances{};
-				bool hasBatch{};
-				const auto flushBatch = [&] {
-					if( !hasBatch || batchText.empty() ) return;
-					const HFONT desiredFont = batchAttributes.bold && boldFont ? boldFont : font;
-					if( desiredFont && desiredFont != selectedFont ) {
-						::SelectObject(memory, desiredFont);
-						selectedFont = desiredFont;
-					}
-					auto background = ResolveTerminalColor(batchAttributes.background, palette, defaultBackground,
-						TerminalColorRole::Background);
-					auto foreground = batchAttributes.inverse
-						? ResolveTerminalColor(batchAttributes.foreground, palette, defaultForeground, TerminalColorRole::Background)
-						: ResolveTerminalForeground(batchAttributes.foreground, palette, defaultForeground, background);
-					if( batchAttributes.inverse ) std::swap(foreground, background);
-					if( batchSelected ) background = palette.accent.ToColorRef();
-					RECT runRect{
-						static_cast<LONG>(batchStart * cellWidth), static_cast<LONG>(visualRow * cellHeight),
-						static_cast<LONG>(batchEnd * cellWidth), static_cast<LONG>((visualRow + 1) * cellHeight),
-					};
-					::SetTextColor(memory, foreground);
-					::SetBkColor(memory, background);
-					::ExtTextOutW(memory, runRect.left, runRect.top, ETO_OPAQUE | ETO_CLIPPED, &runRect,
-						batchText.data(), static_cast<UINT>(batchText.size()),
-						batchUsesNaturalAdvances ? nullptr : batchAdvances.data());
-					if( batchAttributes.underline ) {
-						::SetDCPenColor(memory, foreground);
-						::MoveToEx(memory, runRect.left, runRect.bottom - 2, nullptr);
-						::LineTo(memory, runRect.right, runRect.bottom - 2);
-					}
-					batchText.clear();
-					batchAdvances.clear();
-					batchUsesNaturalAdvances = false;
-					hasBatch = false;
-				};
-
-				for( std::size_t column = 0; column < row->cells.size(); ) {
-					const auto& cell = row->cells[column];
-					if( cell.continuation ) { ++column; continue; }
-					const auto attributes = row->AttributesAt(column);
-					const bool selected = HasSelection()
-						&& IsPointSelected({ globalRow, column }, selectionAnchor, selectionActive);
-					const auto columnsWide = std::max<std::size_t>(1, cell.width);
-					const auto text = cell.Text();
-					// Complex graphemes need GDI's own shaping and cannot safely share a
-					// per-cell advance array. They remain a rare single-call fallback.
-					if( text.size() > 1 ) {
-						flushBatch();
-						batchStart = column;
-						batchEnd = std::min(row->cells.size(), column + columnsWide);
-						batchAttributes = attributes;
-						batchSelected = selected;
-						batchText.assign(text);
-						batchAdvances.clear();
-						// Let GDI shape surrogate pairs, combining marks and ZWJ sequences as
-						// one cluster.  The cell rectangle still clips the result to its VT
-						// width, while a synthetic per-UTF-16-unit advance would tear it apart.
-						batchUsesNaturalAdvances = true;
-						hasBatch = true;
-						flushBatch();
-						column += columnsWide;
-						continue;
-					}
-					if( hasBatch && (attributes != batchAttributes || selected != batchSelected) ) flushBatch();
-					if( !hasBatch ) {
-						batchStart = column;
-						batchAttributes = attributes;
-						batchSelected = selected;
-						batchUsesNaturalAdvances = false;
-						hasBatch = true;
-					}
-					batchEnd = std::min(row->cells.size(), column + columnsWide);
-					batchText.push_back(text.empty() ? L' ' : text.front());
-					batchAdvances.push_back(static_cast<int>(columnsWide * cellWidth));
-					column += columnsWide;
-				}
-				flushBatch();
+		paintDefaultBackground = defaultBackground;
+		paintDefaultForeground = defaultForeground;
+		classifierDc = memory;
+		const TerminalRenderPlanBuildInput planInput{
+			model,
+			Viewport(),
+			paint.rcPaint,
+			cellWidth,
+			cellHeight,
+			HasSelection(),
+			selectionAnchor,
+			selectionActive,
+			this,
+			&Impl::ResolvePlanStyle,
+			this,
+			true,
+		};
+		const bool hasRenderPlan = renderPlan.Build(planInput);
+		classifierDc = nullptr;
+		if( hasRenderPlan ) {
+			const int savedDc = ::SaveDC(memory);
+			if( savedDc != 0 ) ::IntersectClipRect(memory, paint.rcPaint.left, paint.rcPaint.top,
+				paint.rcPaint.right, paint.rcPaint.bottom);
+			// The normal plan is consumed in its fixed pass order: resolved
+			// backgrounds, deterministic terminal glyphs, simple primary GDI, then
+			// model-owned shaped DirectWrite.  Only failure recovery restores shaped
+			// backgrounds before repainting those clusters through GDI.
+			PaintPlanBackgrounds(memory);
+			PaintBuiltinGlyphs(memory, paint.rcPaint);
+			PaintGdiRuns(memory, selectedFont);
+			if( !renderPlan.ShapedClusters().empty() ) {
+				// Locale refresh and DirectWrite factory creation are both gated behind
+				// an eligible shaped cluster, so ASCII-only terminal frames remain GDI.
+				RefreshDWriteConfiguration(false);
+				if( !PaintShapedDirectWrite(memory, paint.rcPaint) ) PaintShapedGdiFallbacks(memory, selectedFont);
 			}
+			if( savedDc != 0 ) ::RestoreDC(memory, savedDc);
 		}
 		if( previousFont ) ::SelectObject(memory, previousFont);
 		if( inputBackpressured || inputRejected ) {
@@ -934,6 +1253,11 @@ void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
 	m_impl->useTerminalProfileColors = !theme::CThemeService::IsHighContrastActive();
+	// Palette transitions are an explicit renderer generation boundary.  Glyph
+	// geometry is font-owned, but invalidating the bounded shaped-run cache here
+	// keeps all DirectWrite state and its foreground/background style keys in
+	// lockstep with the workbench theme.
+	m_impl->dwriteRenderer.Invalidate();
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 
@@ -1026,10 +1350,8 @@ void CTerminalWnd::Close() noexcept
 	if( m_impl->window ) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->ReleaseBackBuffer();
-	if( m_impl->font ) ::DeleteObject(m_impl->font);
-	m_impl->font = nullptr;
-	if( m_impl->boldFont ) ::DeleteObject(m_impl->boldFont);
-	m_impl->boldFont = nullptr;
+	m_impl->dwriteRenderer.Close();
+	m_impl->ReleaseRenderFonts();
 	m_impl->model = nullptr;
 	m_impl->inputAdapter = nullptr;
 	m_impl->inputSink = {};

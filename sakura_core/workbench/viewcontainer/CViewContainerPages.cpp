@@ -167,7 +167,7 @@ HWND CViewContainerPages::AttachedHost(ViewContainerPage page) const noexcept
 void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 {
 	if (m_explorer) {
-		m_explorer->SetPalette({ palette.panel.ToColorRef(), palette.primaryText.ToColorRef(),
+		m_explorer->SetPalette({ palette.sideBar.ToColorRef(), palette.primaryText.ToColorRef(),
 			palette.border.ToColorRef(), palette.accent.ToColorRef() });
 	}
 	if (m_outline) m_outline->SetPalette(palette);

@@ -34,6 +34,9 @@ struct SExtensionStatusBarItem {
 	//! 描画し、偽ならリテラル文字として描画する。この 1 ビットが両者を区別する
 	//! 唯一の情報なので、ワイヤーからホバー描画まで落とさずに運ぶ。
 	bool tooltipSupportsThemeIcons = false;
+	//! tooltip の MarkdownString.isTrusted。command: リンクの実行許可に使う。
+	bool tooltipIsTrusted = false;
+	std::vector<std::wstring> tooltipTrustedCommands;
 	std::wstring command;
 	std::wstring accessibilityLabel;
 	bool visible = false;

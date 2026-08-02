@@ -276,11 +276,11 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesCommandsStatusBarAndTreeViewsWit
 	ASSERT_EQ(1u, palette.size());
 	EXPECT_TRUE(palette.front().enabled);
 
-	auto status = Dispatch("workbench/statusBar/update", R"({
+	auto status = Dispatch("workbench/statusBar/update", R"json({
 		"handle":"status:test.sample:4:1","itemId":"test.status","extensionId":"test.sample","generation":4,
 		"alignment":"right","priority":20,"text":"$(check) Ready","tooltip":{"markdown":"All good"},
 		"command":{"command":"test.run"},"accessibilityInformation":{"label":"Ready"},"visible":true
-	})");
+	})json");
 	ASSERT_TRUE(status.success) << status.errorMessage;
 	const auto statusItems = m_status.Snapshot();
 	ASSERT_EQ(1u, statusItems.size());
@@ -303,6 +303,25 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesCommandsStatusBarAndTreeViewsWit
 	ASSERT_EQ(1u, roots.size());
 	EXPECT_EQ(L"Root", roots.front().label);
 	EXPECT_EQ(L"test.run", roots.front().command);
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, PreservesTrustedStatusBarTooltipCommands)
+{
+	auto status = Dispatch("workbench/statusBar/update", R"json({
+		"handle":"status:test.sample:4:1","itemId":"test.status","extensionId":"test.sample","generation":4,
+		"alignment":"right","priority":20,"text":"Ready",
+		"tooltip":{"markdown":"[Run](command:test.run \"Run\")",
+			"isTrusted":{"enabledCommands":["test.run","workbench.action.openSettings"]},
+			"supportThemeIcons":false},
+		"visible":true
+	})json");
+	ASSERT_TRUE(status.success) << status.errorMessage;
+	const auto statusItems = m_status.Snapshot();
+	ASSERT_EQ(1u, statusItems.size());
+	EXPECT_FALSE(statusItems.front().tooltipIsTrusted);
+	ASSERT_EQ(2u, statusItems.front().tooltipTrustedCommands.size());
+	EXPECT_EQ(L"test.run", statusItems.front().tooltipTrustedCommands[0]);
+	EXPECT_EQ(L"workbench.action.openSettings", statusItems.front().tooltipTrustedCommands[1]);
 }
 
 TEST_F(CExtensionWorkbenchDispatcherTest, RoutesLegacyDpapiSecretsAndRejectsEnumeration)
@@ -354,6 +373,34 @@ TEST_F(CExtensionWorkbenchDispatcherTest, ResolvesNotificationActionsAndCleansGe
 	ASSERT_TRUE(removed.success) << removed.errorMessage;
 	EXPECT_FALSE(m_commands.Contains(L"test.clean"));
 	EXPECT_TRUE(m_status.Snapshot().empty());
+}
+
+TEST_F(CExtensionWorkbenchDispatcherTest, DefersNonModalNotificationUntilUiResolvesIt)
+{
+	std::uint64_t presentedId = 0;
+	std::string presentedRequestId;
+	m_dispatcher->SetDeferredNotificationHandler(
+		[&](const SExtensionNotification& notification, const SExtensionRpcMessage& request) {
+			presentedId = notification.id;
+			presentedRequestId = request.sIdJson;
+			return true;
+		});
+
+	const auto result = m_dispatcher->Dispatch({
+		.eKind = EExtensionRpcMessageKind::Request,
+		.sIdJson = "17",
+		.sMethod = "workbench/notification/show",
+		.sParamsJson = R"({"extensionId":"test.sample","generation":3,
+			"message":"Copied","detail":"Markdown format"})",
+	});
+	ASSERT_TRUE(result.success) << result.errorMessage;
+	EXPECT_TRUE(result.responseDeferred);
+	EXPECT_EQ("17", presentedRequestId);
+	ASSERT_EQ(1u, m_notifications.Pending().size());
+	EXPECT_EQ(presentedId, m_notifications.Pending().front().id);
+
+	ASSERT_TRUE(m_notifications.Resolve(presentedId, std::nullopt));
+	EXPECT_TRUE(m_notifications.TakeCompletion(presentedId).has_value());
 }
 
 TEST_F(CExtensionWorkbenchDispatcherTest, RoutesDiagnosticsOutputAndProgressWithGenerationCleanup)

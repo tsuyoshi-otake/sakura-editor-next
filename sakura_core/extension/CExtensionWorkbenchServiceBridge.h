@@ -14,6 +14,7 @@
 #include "extension/CExtensionWorkbenchUi.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
+#include "workbench/scm/SourceControlService.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,11 +39,13 @@ public:
 		workbench::problems::MarkerService* markerService = nullptr,
 		workbench::output::OutputService* outputService = nullptr,
 		workbench::IWorkbenchRuntime* workbenchRuntime = nullptr,
-		std::size_t maximumTrackedOwnerGenerations = 128);
+		std::size_t maximumTrackedOwnerGenerations = 128,
+		workbench::scm::SourceControlService* scmService = nullptr);
 
 	[[nodiscard]] bool HasMarkerService() const noexcept { return m_markerService != nullptr; }
 	[[nodiscard]] bool HasOutputService() const noexcept { return m_outputService != nullptr; }
 	[[nodiscard]] bool HasWorkbenchRuntime() const noexcept { return m_workbenchRuntime != nullptr; }
+	[[nodiscard]] workbench::scm::SourceControlService* Scm() const noexcept;
 
 	//! Writes (or, when `value` is empty, removes) one key in the Global/User settings
 	//! document through the runtime's sole settings-writeback owner. `overrideLanguageId`
@@ -142,6 +145,7 @@ private:
 	workbench::problems::MarkerService* m_markerService = nullptr;
 	workbench::output::OutputService* m_outputService = nullptr;
 	workbench::IWorkbenchRuntime* m_workbenchRuntime = nullptr;
+	workbench::scm::SourceControlService* m_scmService = nullptr;
 	std::size_t m_maximumTrackedOwnerGenerations = 0;
 	std::vector<TrackedOwner> m_trackedOwners;
 	std::uint64_t m_nextDisposeOperationId = 1;
