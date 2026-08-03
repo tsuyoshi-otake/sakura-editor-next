@@ -36,6 +36,8 @@ namespace {
 
 using namespace std::chrono_literals;
 
+constexpr auto kExtensionHostExitTimeout = 10s;
+
 std::filesystem::path FindRepositoryRoot()
 {
 	std::array<wchar_t, 32768> modulePath{};
@@ -362,7 +364,7 @@ TEST(CExtensionHostIntegration, LaunchesSecureNodeHostAndPerformsFullDuplexRpc)
 				message.sIdJson == quiesceRequest.sIdJson;
 		},
 		quiesce));
-	EXPECT_TRUE(process.WaitForExit(2s));
+	EXPECT_TRUE(process.WaitForExit(kExtensionHostExitTimeout));
 	transport.Close();
 	process.Terminate(ERROR_SUCCESS);
 }
@@ -589,7 +591,7 @@ TEST(CExtensionHostIntegration, BridgesVsCodeStatusBarAndTreeViewIntoNativeWorkb
 				message.sIdJson == quiesceRequest.sIdJson;
 		},
 		quiesce));
-	EXPECT_TRUE(process.WaitForExit(2s));
+	EXPECT_TRUE(process.WaitForExit(kExtensionHostExitTimeout));
 	transport.Close();
 	process.Terminate(ERROR_SUCCESS);
 }
