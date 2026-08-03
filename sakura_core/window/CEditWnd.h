@@ -59,6 +59,7 @@
 
 #include "print/CPrintPreview.h"
 #include "workbench/editor/EditorWorkingCopyTypes.h"
+#include "workbench/editor/OpenFolderChordState.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 
@@ -155,6 +156,7 @@ struct EditorWorkingCopyCompletionToken;
 #define IDT_CAPTION		457
 #define IDT_FIRST_IDLE	458
 #define IDT_EXTENSION_DOCUMENT_SYNC 459
+#define IDT_WORKBENCH_OPEN_FOLDER_CHORD 460
 #define IDT_SYSMENU		1357
 #define ID_TOOLBAR		100
 
@@ -195,6 +197,18 @@ enum class ERecoveredEditorProjectionResult : std::uint8_t {
 	InvalidRecovery,
 	CoreActivationFailed,
 	NativeProjectionFailed,
+};
+
+//! Terminal outcome for the native Open Folder adapter.  Keep picker, workspace
+//! context, and Explorer projection failures distinct so the stable command
+//! boundary never reports one terminal as another.
+enum class EOpenWorkspaceFolderResult : std::uint8_t {
+	Succeeded,
+	Cancelled,
+	InvalidSelection,
+	PickerFailed,
+	WorkspaceContextFailed,
+	ExplorerProjectionFailed,
 };
 
 //! 編集ウィンドウ（外枠）管理クラス
@@ -359,10 +373,12 @@ public:
 	void LayoutStatusBarParts();		//!< 現在の表示内容に合わせて右側項目を詰めて配置する
 	void LayoutMiniMap();				// ミニマップの配置処理
 	void EndLayoutBars( BOOL bAdjust = TRUE );	/* バーの配置終了処理 */	// 2006.12.19 ryoji
-	void SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate = false);
+	bool SetWorkbenchPanelVisible(
+		workbench::WorkbenchEdge edge, bool visible, bool activate = false);
 	void ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate = false);
-	//! Select a window-local workbench root. Cancellation and picker failure leave all state unchanged.
-	void OpenWorkspaceFolder();
+	//! Select a window-local workbench root. Picker cancellation/invalid input is
+	//! non-applicable; a native Explorer projection failure is explicitly failed.
+	[[nodiscard]] EOpenWorkspaceFolderResult OpenWorkspaceFolder();
 	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
 	//! `workbench.action.toggleAuxiliaryBar` (Ctrl+Alt+B). This is the physical Secondary
 	//! Side Bar Part, never the Outline View nested in the Primary Side Bar.
@@ -656,6 +672,9 @@ private:
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
 	[[nodiscard]] bool RefreshWorkbenchCommandContext();
 	[[nodiscard]] bool TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled);
+	void BeginOpenFolderChord(HWND focusWindow) noexcept;
+	void ClearOpenFolderChord() noexcept;
+	void ExpireOpenFolderChord() noexcept;
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
@@ -747,6 +766,8 @@ private:
 	//! Window-local command/context boundary; only initialized for runtime-backed workbench windows.
 	std::unique_ptr<workbench::commands::WorkbenchContextKeyService> m_workbenchContextKeyService;
 	std::unique_ptr<workbench::commands::WorkbenchCommandRegistry> m_workbenchCommandRegistry;
+	//! State for VS Code's Windows Open Folder chord (Ctrl+K, Ctrl+O).
+	workbench::editor::OpenFolderChordState m_openFolderChord;
 	//! Presentation cache derived only by ApplyEditorCoreSnapshot.
 	bool m_hasActiveEditorInput = false;
 	bool m_editorCorePresentationInitialized = false;

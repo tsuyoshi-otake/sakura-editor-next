@@ -41,6 +41,17 @@ public:
 	// when the run was found and rewritten.
 	[[nodiscard]] static bool MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) noexcept;
 
+	//! Adds one versioned leaf after an existing menu item, without duplicating
+	//! an already-present command.  This pure migration seam keeps additive
+	//! menu upgrades idempotent and is used by ShareData_IO_MainMenu.
+	[[nodiscard]] static bool AddMainMenuItemIfMissing(
+		CommonSetting_MainMenu& mainmenu,
+		int addFuncCode,
+		int prevFuncCode,
+		wchar_t accessKey,
+		bool addPreviousSeparator,
+		bool addNextSeparator) noexcept;
+
 protected:
 	static bool ShareData_IO_2( bool bRead );	/* 共有データの保存 */
 

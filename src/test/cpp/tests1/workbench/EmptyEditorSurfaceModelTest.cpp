@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include "workbench/editor/EmptyEditorSurfaceModel.h"
+#include "workbench/editor/OpenFolderChordState.h"
 
 namespace workbench::editor {
 namespace {
@@ -25,8 +26,94 @@ TEST(EmptyEditorSurfaceModel, ExposesStableVsCodeCommandsAndJapaneseActions)
 	EXPECT_STREQ(L"新しいファイル", EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction::NewFile));
 	EXPECT_STREQ(L"フォルダーを開く...", EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction::OpenFolder));
 	EXPECT_STREQ(L"Ctrl+Shift+P", EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAction::ShowAllCommands));
-	// F_OPEN_WORKSPACE_FOLDER has no default key binding, so no shortcut may be advertised.
-	EXPECT_STREQ(L"", EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAction::OpenFolder));
+	EXPECT_STREQ(L"Ctrl+K Ctrl+O", EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAction::OpenFolder));
+}
+
+TEST(OpenFolderChordState, ExpiresAtVsCodesFiveSecondInactivityDeadline)
+{
+	OpenFolderChordState state;
+	state.Begin(100);
+	EXPECT_EQ(5000U, OpenFolderChordState::TimeoutMs);
+	EXPECT_TRUE(state.IsPending());
+	EXPECT_FALSE(state.ExpireIfNeeded(100 + OpenFolderChordState::TimeoutMs - 1));
+	EXPECT_TRUE(state.IsPending());
+	EXPECT_TRUE(state.ExpireIfNeeded(100 + OpenFolderChordState::TimeoutMs));
+	EXPECT_FALSE(state.IsPending());
+	EXPECT_EQ(0U, state.StartedAt());
+}
+
+TEST(OpenFolderChordState, FocusChangeCancelsThePendingChord)
+{
+	OpenFolderChordState state;
+	state.Begin(1000, 11);
+
+	EXPECT_FALSE(state.CancelIfFocusChanged(11));
+	EXPECT_TRUE(state.IsPending());
+	EXPECT_TRUE(state.CancelIfFocusChanged(12));
+	EXPECT_FALSE(state.IsPending());
+	EXPECT_FALSE(state.ExpireIfNeeded(2500));
+}
+
+TEST(OpenFolderChordState, RepressedControlPassesThroughAndExactSecondStrokeExecutes)
+{
+	OpenFolderChordState state;
+	state.Begin(1000, 11);
+	const OpenFolderChordModifiers controlOnly{ .control = true };
+
+	// Ctrl-up has no chord transition. Its re-press is a pass-through key-down,
+	// so Ctrl+K, Ctrl-up, Ctrl-down, Ctrl+O remains a valid VS Code chord.
+	EXPECT_EQ(EOpenFolderChordKeyDecision::PassThrough,
+		state.AdvancePendingKeyDown(0x11, controlOnly)); // VK_CONTROL after re-press
+	EXPECT_TRUE(state.IsPending());
+	EXPECT_EQ(EOpenFolderChordKeyDecision::Execute,
+		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), controlOnly));
+	EXPECT_FALSE(state.IsPending());
+}
+
+TEST(OpenFolderChordState, MismatchingSecondKeydownsClearAndAreConsumed)
+{
+	const OpenFolderChordModifiers controlOnly{ .control = true };
+	OpenFolderChordState state;
+	state.Begin(500);
+	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
+		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('X'), controlOnly));
+	EXPECT_FALSE(state.IsPending());
+
+	state.Begin(600);
+	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
+		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), {}));
+	EXPECT_FALSE(state.IsPending());
+
+	state.Begin(700);
+	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
+		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), {
+			.control = true,
+			.shift = true,
+		}));
+	EXPECT_FALSE(state.IsPending());
+
+	state.Begin(800);
+	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
+		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), {
+			.control = true,
+			.alt = true,
+		}));
+	EXPECT_FALSE(state.IsPending());
+}
+
+TEST(OpenFolderChordState, RepeatedFirstStrokeKeepsTheChordPendingForTheAdapterToRenew)
+{
+	OpenFolderChordState state;
+	const OpenFolderChordModifiers controlOnly{ .control = true };
+	state.Begin(500);
+	EXPECT_EQ(EOpenFolderChordKeyDecision::Restart,
+		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('K'), controlOnly));
+	EXPECT_TRUE(state.IsPending());
+	state.Refresh(700);
+	EXPECT_EQ(700U, state.StartedAt());
+	state.Clear();
+	EXPECT_FALSE(state.IsPending());
+	EXPECT_FALSE(state.ExpireIfNeeded(700 + OpenFolderChordState::TimeoutMs));
 }
 
 TEST(EmptyEditorSurfaceModel, CentersActionRectsAndHitTestsOnlyEnabledActions)

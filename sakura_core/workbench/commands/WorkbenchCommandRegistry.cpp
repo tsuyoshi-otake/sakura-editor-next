@@ -17,6 +17,8 @@ namespace {
 const WorkbenchCommandOwner kBuiltinOwner{ "sakura.builtin", 1 };
 //! Integer mirror of generated F_TOGGLE_LEFT_EXPLORER. Keep source/high-bit flags out of this pure boundary.
 constexpr std::int32_t kLegacyToggleLeftExplorerFunctionCode = 30991;
+//! Integer mirror of generated F_OPEN_WORKSPACE_FOLDER. Keep this pure boundary independent of generated headers.
+constexpr std::int32_t kLegacyOpenWorkspaceFolderFunctionCode = 30997;
 
 bool IsValidBinding(const WorkbenchCommandSurfaceBinding& binding) noexcept
 {
@@ -147,6 +149,23 @@ WorkbenchCommandDescriptor MakeOpenSettingsDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeOpenFolderDescriptor()
+{
+	return {
+		"workbench.action.files.openFolder",
+		"Open Folder...",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.files.openFolder.palette", std::nullopt },
+			{ EWorkbenchCommandSurface::Menu, "workbench.action.files.openFolder.menu", kLegacyOpenWorkspaceFolderFunctionCode },
+			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.files.openFolder.key", kLegacyOpenWorkspaceFolderFunctionCode },
+		},
+	};
+}
+
 WorkbenchCommandDescriptor MakeExtensionsDescriptor()
 {
 	return {
@@ -251,6 +270,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 	const auto output = MakeOutputDescriptor();
 	const auto showCommands = MakeShowCommandsDescriptor();
 	const auto openSettings = MakeOpenSettingsDescriptor();
+	const auto openFolder = MakeOpenFolderDescriptor();
 	const auto extensions = MakeExtensionsDescriptor();
 	const auto openGlobalKeybindings = MakeOpenGlobalKeybindingsDescriptor();
 	const auto colorTheme = MakeColorThemeDescriptor();
@@ -270,11 +290,11 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 	if (m_entries.contains(toggle.id) || m_entries.contains(explorer.id)
 		|| m_entries.contains(problems.id) || m_entries.contains(output.id) || m_entries.contains(colorTheme.id)
 		|| m_entries.contains(fileIconTheme.id) || m_entries.contains(showCommands.id)
-		|| m_entries.contains(openSettings.id) || m_entries.contains(extensions.id)
+		|| m_entries.contains(openSettings.id) || m_entries.contains(openFolder.id) || m_entries.contains(extensions.id)
 		|| m_entries.contains(openGlobalKeybindings.id)
 		|| conflicts(toggle) || conflicts(explorer) || conflicts(problems) || conflicts(output)
 		|| conflicts(colorTheme) || conflicts(fileIconTheme) || conflicts(showCommands)
-		|| conflicts(openSettings) || conflicts(extensions) || conflicts(openGlobalKeybindings)) {
+		|| conflicts(openSettings) || conflicts(openFolder) || conflicts(extensions) || conflicts(openGlobalKeybindings)) {
 		return { EWorkbenchCommandRegistrationStatus::Conflict, m_revision };
 	}
 	m_entries.emplace(toggle.id, Entry{ toggle, std::move(executors.toggleSidebarVisibility) });
@@ -283,6 +303,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 	m_entries.emplace(output.id, Entry{ output, std::move(executors.toggleOutput) });
 	m_entries.emplace(showCommands.id, Entry{ showCommands, std::move(executors.showCommands) });
 	m_entries.emplace(openSettings.id, Entry{ openSettings, std::move(executors.openSettings) });
+	m_entries.emplace(openFolder.id, Entry{ openFolder, std::move(executors.openFolder) });
 	m_entries.emplace(extensions.id, Entry{ extensions, std::move(executors.showExtensions) });
 	m_entries.emplace(openGlobalKeybindings.id, Entry{ openGlobalKeybindings, std::move(executors.openGlobalKeybindings) });
 	m_entries.emplace(colorTheme.id, Entry{ colorTheme, std::move(executors.selectTheme) });
@@ -328,6 +349,23 @@ std::optional<ResolvedWorkbenchCommandSurface> WorkbenchCommandRegistry::Resolve
 		}
 	}
 	return std::nullopt;
+}
+
+std::vector<WorkbenchCommandDescriptor> WorkbenchCommandRegistry::EnumerateSurface(
+	EWorkbenchCommandSurface surface) const
+{
+	std::lock_guard lock(m_mutex);
+	std::vector<WorkbenchCommandDescriptor> descriptors;
+	descriptors.reserve(m_entries.size());
+	for (const auto& [id, entry] : m_entries) {
+		(void)id;
+		const auto hasSurface = std::any_of(entry.descriptor.surfaceBindings.begin(),
+			entry.descriptor.surfaceBindings.end(), [surface](const WorkbenchCommandSurfaceBinding& binding) {
+				return binding.surface == surface;
+			});
+		if (hasSurface) descriptors.push_back(entry.descriptor);
+	}
+	return descriptors;
 }
 
 WorkbenchCommandExecutionResult WorkbenchCommandRegistry::Execute(std::string_view commandId,

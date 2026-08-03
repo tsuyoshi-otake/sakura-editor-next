@@ -32,7 +32,7 @@ BOOL SelectDir(HWND hWnd, const std::wstring& title, const std::filesystem::path
 }
 
 /* フォルダー選択ダイアログ */
-BOOL SelectDir(
+ESelectDirResult SelectDirWithResult(
 	HWND hWnd,
 	const std::wstring& title,
 	const std::filesystem::path& initialDirectory,
@@ -43,7 +43,7 @@ BOOL SelectDir(
 	auto nMaxCount = buffer.size();
 
 	if (!strFolderName || !nMaxCount) {
-		return FALSE;
+		return ESelectDirResult::Failed;
 	}
 
 	cxx::com_pointer<IFileDialog> pDialog;
@@ -52,20 +52,20 @@ BOOL SelectDir(
 	// インスタンスを作成
 	hres = pDialog.CreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER);
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return ESelectDirResult::Failed;
 	}
 
 	// デフォルト設定を取得
 	DWORD dwOptions = 0;
 	hres = pDialog->GetOptions( &dwOptions );
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return ESelectDirResult::Failed;
 	}
 
 	// オプションをフォルダーを選択可能に変更
 	hres = pDialog->SetOptions( dwOptions | FOS_PICKFOLDERS | FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM );
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return ESelectDirResult::Failed;
 	}
 
 	// 初期フォルダーを設定
@@ -78,38 +78,52 @@ BOOL SelectDir(
 	// タイトル文字列を設定
 	hres = pDialog->SetTitle( title.c_str() );
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return ESelectDirResult::Failed;
 	}
 
 	// フォルダー選択ダイアログを表示
 	hres = pDialog->Show( hWnd );
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return hres == HRESULT_FROM_WIN32(ERROR_CANCELLED)
+			? ESelectDirResult::Cancelled
+			: ESelectDirResult::Failed;
 	}
 
 	// 選択結果を取得
 	cxx::com_pointer<IShellItem> psiResult;
 	hres = pDialog->GetResult( &psiResult );
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return hres == HRESULT_FROM_WIN32(ERROR_CANCELLED)
+			? ESelectDirResult::Cancelled
+			: ESelectDirResult::Failed;
 	}
 
 	PWSTR pszResult;
 	hres = psiResult->GetDisplayName( SIGDN_FILESYSPATH, &pszResult );
 	if ( FAILED(hres) ) {
-		return FALSE;
+		return ESelectDirResult::Failed;
 	}
 
 	using CoTaskMemHolder = cxx::ResourceHolder<&::CoTaskMemFree>;
 	CoTaskMemHolder taskMem = pszResult;
 
-	BOOL bRet = TRUE;
 	if ( 0 != wcsncpy_s( strFolderName, nMaxCount, pszResult, _TRUNCATE ) ) {
 		wcsncpy_s( strFolderName, nMaxCount, L"", _TRUNCATE );
-		bRet = FALSE;
+		return ESelectDirResult::Failed;
 	}
 
-	return bRet;
+	return ESelectDirResult::Succeeded;
+}
+
+BOOL SelectDir(
+	HWND hWnd,
+	const std::wstring& title,
+	const std::filesystem::path& initialDirectory,
+	std::span<WCHAR> buffer
+)
+{
+	return SelectDirWithResult(hWnd, title, initialDirectory, buffer)
+		== ESelectDirResult::Succeeded;
 }
 
 ///////////////////////////////////////////////////////////////////////

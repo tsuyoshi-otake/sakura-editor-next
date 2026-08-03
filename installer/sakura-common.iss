@@ -29,7 +29,7 @@ SolidCompression=yes
 ; Sakura Editor NEXT brand theme: a charcoal surface rather than pure black.
 ; Inno Setup automatically disables custom styling for Windows high-contrast themes.
 WizardStyle=modern dark includetitlebar hidebevels
-WizardImageFile=
+WizardImageFile="instmaterials\sakura-installer-image.png"
 WizardSmallImageFile="..\src\main\resources\images\sakura_editor_next.png"
 SetupIconFile="instmaterials\icon_debug.ico"
 DisableStartupPrompt=yes
@@ -339,7 +339,6 @@ Name: sakuragrep;  Description: "{cm:sakuragrep}";       GroupDescription: "{cm:
 Name: startup;     Description: "{cm:residentStartup}";  GroupDescription: "{cm:TasksStartup}";             Components: main; Flags: unchecked
 
 [Files]
-Source: "instmaterials\icon_debug.ico"; Flags: dontcopy
 Source: "sakura\sakura.exe";           DestDir: "{app}";                  Components: main; Flags: ignoreversion;
 Source: "sakura\sakura_lang_en_US.dll";DestDir: "{app}";                  Components: main; Flags: ignoreversion;
 Source: "sakura\license\LICENSE";      DestDir: "{app}\license";          Components: main
@@ -498,53 +497,6 @@ begin
     Result := IsAdminInstallMode
   else
     Result := not IsAdminInstallMode;
-end;
-
-procedure InitializeBrandWizardImage(BitmapImage: TBitmapImage; BrandIconPath: String);
-var
-  ImageAreaLeft, ImageAreaTop, ImageAreaWidth, ImageAreaHeight: Integer;
-  LogoSize: Integer;
-begin
-  ImageAreaLeft := BitmapImage.Left;
-  ImageAreaTop := BitmapImage.Top;
-  ImageAreaWidth := BitmapImage.Width;
-  ImageAreaHeight := BitmapImage.Height;
-
-  { Keep the NEXT logo large while preserving its square aspect ratio. }
-  LogoSize := ImageAreaWidth - ScaleX(4);
-  if LogoSize > ImageAreaHeight - ScaleY(4) then
-    LogoSize := ImageAreaHeight - ScaleY(4);
-
-  if InitializeBitmapImageFromIcon(
-    BitmapImage, BrandIconPath, WizardForm.Color, [256]) then
-  begin
-    BitmapImage.BackColor := WizardForm.Color;
-    BitmapImage.Center := True;
-    BitmapImage.Stretch := True;
-    BitmapImage.SetBounds(
-      ImageAreaLeft + ((ImageAreaWidth - LogoSize) div 2),
-      ImageAreaTop + ((ImageAreaHeight - LogoSize) div 2),
-      LogoSize,
-      LogoSize);
-    Log(Format('Initialized NEXT wizard logo at %dx%d.', [
-      BitmapImage.Width,
-      BitmapImage.Height]));
-  end
-  else
-  begin
-    Log(Format('Could not initialize the NEXT wizard logo from %s.', [BrandIconPath]));
-    BitmapImage.Visible := False;
-  end;
-end;
-
-procedure InitializeBrandWizardImages;
-var
-  BrandIconPath: String;
-begin
-  ExtractTemporaryFile('icon_debug.ico');
-  BrandIconPath := ExpandConstant('{tmp}\icon_debug.ico');
-  InitializeBrandWizardImage(WizardForm.WizardBitmapImage, BrandIconPath);
-  InitializeBrandWizardImage(WizardForm.WizardBitmapImage2, BrandIconPath);
 end;
 
 procedure PolishStandardWizardPages;
@@ -781,7 +733,6 @@ end;
 { Add multi user selection page if supported }
 procedure InitializeWizard;
 begin
-  InitializeBrandWizardImages;
   PolishStandardWizardPages;
   ApplyInstallProgressColors;
 

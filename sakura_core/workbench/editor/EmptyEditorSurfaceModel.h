@@ -147,9 +147,8 @@ constexpr const wchar_t* EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAct
 	switch (action) {
 	case EmptyEditorSurfaceAction::NewFile: return L"Ctrl+N";
 	case EmptyEditorSurfaceAction::OpenFile: return L"Ctrl+O";
-	// F_OPEN_WORKSPACE_FOLDER has no default keyboard binding, so this column stays
-	// empty instead of advertising a shortcut the key map does not dispatch.
-	case EmptyEditorSurfaceAction::OpenFolder: return L"";
+	// VS Code's Windows default is the two-stroke Ctrl+K, Ctrl+O chord.
+	case EmptyEditorSurfaceAction::OpenFolder: return L"Ctrl+K Ctrl+O";
 	case EmptyEditorSurfaceAction::ShowAllCommands: return L"Ctrl+Shift+P";
 	case EmptyEditorSurfaceAction::OpenSettings: return L"Ctrl+,";
 	case EmptyEditorSurfaceAction::Count: break;

@@ -2085,6 +2085,71 @@ bool CShareData_IO::MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) 
 	return false;
 }
 
+bool CShareData_IO::AddMainMenuItemIfMissing(
+	CommonSetting_MainMenu& mainmenu,
+	int addFuncCode,
+	int prevFuncCode,
+	wchar_t accessKey,
+	bool addPreviousSeparator,
+	bool addNextSeparator) noexcept
+{
+	CMainMenu* const menuTable = mainmenu.m_cMainMenuTbl;
+	const int capacity = int(std::size(mainmenu.m_cMainMenuTbl));
+	if (mainmenu.m_nMainMenuNum < 0 || mainmenu.m_nMainMenuNum > capacity) return false;
+	for (int i = 0; i < mainmenu.m_nMainMenuNum; ++i) {
+		if (menuTable[i].m_nFunc == EFunctionCode(addFuncCode)) return false;
+	}
+
+	const int separatorCount = (addPreviousSeparator ? 1 : 0) + (addNextSeparator ? 1 : 0);
+	if (mainmenu.m_nMainMenuNum + separatorCount >= capacity) return false;
+	for (int previous = 0; previous < mainmenu.m_nMainMenuNum; ++previous) {
+		if (menuTable[previous].m_nFunc != EFunctionCode(prevFuncCode)
+			|| menuTable[previous].m_nLevel <= 0) {
+			continue;
+		}
+		for (int index = mainmenu.m_nMainMenuNum - 1; previous <= index; --index) {
+			menuTable[index + 1 + separatorCount] = menuTable[index];
+		}
+		for (int top = 0; top < MAX_MAINMENU_TOP; ++top) {
+			if (previous < mainmenu.m_nMenuTopIdx[top]) {
+				mainmenu.m_nMenuTopIdx[top] += 1 + separatorCount;
+			}
+		}
+
+		CMainMenu* menu = &menuTable[previous + 1];
+		const int level = menuTable[previous].m_nLevel;
+		if (addPreviousSeparator) {
+			menu->m_nType = T_SEPARATOR;
+			menu->m_nFunc = F_SEPARATOR;
+			menu->m_nLevel = level;
+			menu->m_sName[0] = L'\0';
+			menu->m_sKey[0] = L'\0';
+			menu->m_sKey[1] = L'\0';
+			++menu;
+			++mainmenu.m_nMainMenuNum;
+		}
+		menu->m_nType = T_LEAF;
+		menu->m_nFunc = EFunctionCode(addFuncCode);
+		menu->m_nLevel = level;
+		menu->m_sName[0] = L'\0';
+		menu->m_sKey[0] = accessKey;
+		menu->m_sKey[1] = L'\0';
+		++mainmenu.m_nMainMenuNum;
+		if (addNextSeparator) {
+			++menu;
+			menu->m_nType = T_SEPARATOR;
+			menu->m_nFunc = F_SEPARATOR;
+			menu->m_nLevel = level;
+			menu->m_sName[0] = L'\0';
+			menu->m_sKey[0] = L'\0';
+			menu->m_sKey[1] = L'\0';
+			++mainmenu.m_nMainMenuNum;
+		}
+		return true;
+	}
+	return false;
+}
+
 int CShareData_IO::ResolveMainMenuReadVersion(
 	bool isReadingMode, bool hasStoredVersion, int storedVersion, int currentVersion ) noexcept
 {
@@ -2102,7 +2167,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 6;
+	const int nCurrentVer = 7;
 	nVersion = nCurrentVer;
 	const bool hasStoredVersion = cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion);
 	nVersion = ResolveMainMenuReadVersion(cProfile.IsReadingMode(), hasStoredVersion, nVersion, nCurrentVer);
@@ -2131,7 +2196,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			{1, F_MODIFYLINE_NEXT_SEL, F_GOFILEEND_SEL, L'\0', true, false}, 	// (選択)次の変更行へ
 			{1, F_MODIFYLINE_PREV_SEL, F_MODIFYLINE_NEXT_SEL, L'\0', false, false}, 	// (選択)前の変更行へ
 			{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false}, 	// ウインドウ一覧表示
-			{3, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false}, // 作業フォルダーを開く
+			{7, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false}, // 作業フォルダーを開く
 			{4, F_TOGGLE_MARKDOWN_PREVIEW, F_SHOWMINIMAP, L'M', false, false}, // Markdownプレビュー表示
 			{5, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false}, 	// 拡張（Open VSX）を表示
 		};
@@ -2144,66 +2209,13 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			if( item.m_nVer <= nVersion ){
 				continue;
 			}
-			CMainMenu*	pcMenuTlb = mainmenu.m_cMainMenuTbl;
-			int k = 0;
-			for(; k < mainmenu.m_nMainMenuNum; k++ ){
-				if( pcMenuTlb[k].m_nFunc == item.m_nAddFuncCode ){
-					break;
-				}
-			}
-			int nAddSep = 0;
-			if( item.m_bAddPrevSeparete ){
-				nAddSep++;
-			}
-			if( item.m_bAddNextSeparete ){
-				nAddSep++;
-			}
-			if( k == mainmenu.m_nMainMenuNum && mainmenu.m_nMainMenuNum + nAddSep < int(std::size(mainmenu.m_cMainMenuTbl)) ){
-				// メニュー内にまだ追加されていないので追加する
-				for( int r = 0; r < mainmenu.m_nMainMenuNum; r++ ){
-					if( pcMenuTlb[r].m_nFunc == item.m_nPrevFuncCode && 0 < pcMenuTlb[r].m_nLevel ){
-						// 追加分後ろにずらす
-						for( int n = mainmenu.m_nMainMenuNum - 1; r < n; n-- ){
-							pcMenuTlb[n + 1 + nAddSep] = pcMenuTlb[n];
-						}
-						for( int n = 0; n < MAX_MAINMENU_TOP; n++ ){
-							if( r < mainmenu.m_nMenuTopIdx[n] ){
-								mainmenu.m_nMenuTopIdx[n] += 1 + nAddSep;
-							}
-						}
-						CMainMenu* pcMenu = &pcMenuTlb[r+1];
-						const int nLevel = pcMenuTlb[r].m_nLevel;
-						if( item.m_bAddPrevSeparete ){
-							pcMenu->m_nType    = T_SEPARATOR;
-							pcMenu->m_nFunc    = F_SEPARATOR;
-							pcMenu->m_nLevel   = nLevel;
-							pcMenu->m_sName[0] = L'\0';
-							pcMenu->m_sKey[0]  = L'\0';
-							pcMenu->m_sKey[1]  = L'\0';
-							pcMenu++;
-							mainmenu.m_nMainMenuNum++;
-						}
-						pcMenu->m_nType    = T_LEAF;
-						pcMenu->m_nFunc    = item.m_nAddFuncCode;
-						pcMenu->m_nLevel   = nLevel;
-						pcMenu->m_sName[0] = L'\0';
-						pcMenu->m_sKey[0]  = L'\0';
-						pcMenu->m_sKey[1]  = L'\0';
-						mainmenu.m_nMainMenuNum++;
-						if( item.m_bAddNextSeparete ){
-							pcMenu++;
-							pcMenu->m_nType    = T_SEPARATOR;
-							pcMenu->m_nFunc    = F_SEPARATOR;
-							pcMenu->m_nLevel   = nLevel;
-							pcMenu->m_sName[0] = L'\0';
-							pcMenu->m_sKey[0]  = L'\0';
-							pcMenu->m_sKey[1]  = L'\0';
-							mainmenu.m_nMainMenuNum++;
-						}
-						break;
-					}
-				}
-			}
+			(void)AddMainMenuItemIfMissing(
+				mainmenu,
+				static_cast<int>(item.m_nAddFuncCode),
+				static_cast<int>(item.m_nPrevFuncCode),
+				item.m_cAccKey,
+				item.m_bAddPrevSeparete,
+				item.m_bAddNextSeparete);
 		}
 	}
 }

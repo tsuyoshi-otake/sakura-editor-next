@@ -7,11 +7,14 @@
 #include "pch.h"
 
 #include "workbench/commands/WorkbenchCommandRegistry.h"
+#include "workbench/editor/WorkbenchCommandPaletteModel.h"
 
 #include "workbench/layout/WorkbenchIds.h"
 
+#include <algorithm>
 #include <array>
 #include <stdexcept>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -45,6 +48,19 @@ WorkbenchCommandDescriptor SampleDescriptor(std::string id = "publisher.extensio
 		"extension.enabled",
 		EWorkbenchCommandExecutorTarget::ExtensionHost,
 		{ { EWorkbenchCommandSurface::CommandPalette, "publisher.extension.run.palette", std::nullopt } },
+	};
+}
+
+WorkbenchCommandDescriptor NativePaletteDescriptor()
+{
+	return {
+		"sakura.test.nativePaletteCommand",
+		"Native Palette Command",
+		{ "sakura.test", 1 },
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{ { EWorkbenchCommandSurface::CommandPalette, "sakura.test.nativePaletteCommand.palette", std::nullopt } },
 	};
 }
 
@@ -119,6 +135,26 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 	EXPECT_EQ("workbench.action.selectTheme.palette",
 		colorTheme->surfaceBindings.front().slotId);
 	EXPECT_FALSE(registry.Find("workbench.action.selectColorTheme").has_value());
+	const auto openFolder = registry.Find("workbench.action.files.openFolder");
+	ASSERT_TRUE(openFolder.has_value());
+	EXPECT_EQ("Open Folder...", openFolder->title);
+	EXPECT_EQ(EWorkbenchCommandExecutorTarget::Editor, openFolder->executorTarget);
+	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 3> openFolderBindings = {
+		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.files.openFolder.palette" },
+		std::pair{ EWorkbenchCommandSurface::Menu, "workbench.action.files.openFolder.menu" },
+		std::pair{ EWorkbenchCommandSurface::Keybinding, "workbench.action.files.openFolder.key" },
+	};
+	for (const auto& [surface, slot] : openFolderBindings) {
+		const auto resolved = registry.ResolveSurface(surface, slot);
+		ASSERT_TRUE(resolved.has_value());
+		EXPECT_EQ("workbench.action.files.openFolder", resolved->commandId);
+		if (surface == EWorkbenchCommandSurface::Menu || surface == EWorkbenchCommandSurface::Keybinding) {
+			ASSERT_TRUE(resolved->binding.legacyFunctionCode.has_value());
+			EXPECT_EQ(30997, *resolved->binding.legacyFunctionCode);
+		} else {
+			EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
+		}
+	}
 
 	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 4> bindings = {
 		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.explorer.palette" },
@@ -138,6 +174,62 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 		}
 	}
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
+}
+
+TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatchesStableIds)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
+	int nativePaletteCalls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded,
+		registry.Register(NativePaletteDescriptor(), [&nativePaletteCalls] {
+			++nativePaletteCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		}).status);
+
+	const auto expectedDescriptors = registry.EnumerateSurface(EWorkbenchCommandSurface::CommandPalette);
+	ASSERT_GT(expectedDescriptors.size(), 3U);
+	const auto allItems = workbench::editor::SearchRegisteredCommandPalette(registry, L"");
+	ASSERT_EQ(expectedDescriptors.size(), allItems.size());
+	const auto nativeItem = std::find_if(allItems.begin(), allItems.end(),
+		[](const workbench::editor::WorkbenchCommandPaletteItem& item) {
+			return item.id == "sakura.test.nativePaletteCommand";
+		});
+	ASSERT_NE(allItems.end(), nativeItem);
+	EXPECT_EQ(L"Native Palette Command", nativeItem->label);
+	const auto outputItem = std::find_if(allItems.begin(), allItems.end(),
+		[](const workbench::editor::WorkbenchCommandPaletteItem& item) {
+			return item.id == "workbench.action.output.toggleOutput";
+		});
+	ASSERT_NE(allItems.end(), outputItem);
+	EXPECT_EQ(L"Toggle Output", outputItem->label);
+
+	const auto filtered = workbench::editor::SearchRegisteredCommandPalette(registry, L"native palette");
+	ASSERT_EQ(1U, filtered.size());
+	EXPECT_EQ("sakura.test.nativePaletteCommand", filtered.front().id);
+	const auto idFiltered = workbench::editor::SearchRegisteredCommandPalette(registry, L"toggleoutput");
+	ASSERT_EQ(1U, idFiltered.size());
+	EXPECT_EQ("workbench.action.output.toggleOutput", idFiltered.front().id);
+
+	workbench::commands::WorkbenchCommandExecutionResult accepted;
+	EXPECT_TRUE(workbench::editor::DispatchRegisteredCommandPaletteSelection(registry,
+		L"sakura.test.nativePaletteCommand", [&registry, &accepted](std::string_view commandId) {
+			accepted = registry.Execute(commandId, EnabledContext());
+		}));
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, accepted.status);
+	EXPECT_EQ(1, nativePaletteCalls);
+
+	std::string acceptedCommand;
+	EXPECT_TRUE(workbench::editor::DispatchRegisteredCommandPaletteSelection(registry,
+		L"workbench.action.files.openFolder", [&acceptedCommand](std::string_view commandId) {
+			acceptedCommand.assign(commandId);
+		}));
+	EXPECT_EQ("workbench.action.files.openFolder", acceptedCommand);
+	EXPECT_FALSE(workbench::editor::DispatchRegisteredCommandPaletteSelection(registry,
+		L"workbench.action.showCommands", [](std::string_view) {}));
+	EXPECT_FALSE(workbench::editor::DispatchRegisteredCommandPaletteSelection(registry,
+		L"publisher.extension.notRegistered", [](std::string_view) {}));
 }
 
 TEST(WorkbenchCommandRegistry, ManageMenuSurfacesResolveToTheirCanonicalVsCodeCommands)
@@ -202,7 +294,13 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 	int explorerCalls{};
 	int problemsCalls{};
 	int outputCalls{};
+	int openFolderCalls{};
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
+		.openFolder = [&openFolderCalls] {
+			++openFolderCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
 		.toggleSidebarVisibility = [&sidebarCalls] {
 			++sidebarCalls;
 			return workbench::commands::WorkbenchCommandExecutionResult{
@@ -233,10 +331,13 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 		registry.Execute("workbench.actions.view.problems", context).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 		registry.Execute("workbench.action.output.toggleOutput", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.action.files.openFolder", context).status);
 	EXPECT_EQ(1, sidebarCalls);
 	EXPECT_EQ(1, explorerCalls);
 	EXPECT_EQ(1, problemsCalls);
 	EXPECT_EQ(1, outputCalls);
+	EXPECT_EQ(1, openFolderCalls);
 }
 
 TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)
@@ -334,6 +435,8 @@ TEST(WorkbenchCommandRegistry, DisabledCommandNeverInvokesExecutorAndUnknownUnsu
 		registry.Execute("workbench.actions.view.problems", EnabledContext()).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
 		registry.Execute("workbench.action.output.toggleOutput", EnabledContext()).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		registry.Execute("workbench.action.files.openFolder", EnabledContext()).status);
 
 	WorkbenchContextKeySnapshot unavailable;
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::NotApplicable,

@@ -1128,6 +1128,7 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 		SMenuItem{ 1, 30101, 'N' },
 		SMenuItem{ 1, 30110, 'M' },
 		SMenuItem{ 1, 30102, 'O' },
+		SMenuItem{ 1, 30997, 'F' },
 		SMenuItem{ 1, 30103, 'S' },
 		SMenuItem{ 1, 30104, 'A' },
 		SMenuItem{ 1, 30120, 'Z' },
@@ -1484,13 +1485,13 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 
 	constexpr std::array mainMenuTopIdxs = {
 		0,
-		40,
-		168,
-		199,
-		239,
-		258,
-		287,
-		327,
+		41,
+		169,
+		200,
+		240,
+		259,
+		288,
+		328,
 	};
 
 	for (size_t i = 0; i < std::size(mainMenuTopIdxs); ++i) {
@@ -1862,6 +1863,26 @@ namespace {
 		}
 		return menu;
 	}
+}
+
+TEST(CShareDataProfile, MainMenuVersion7OpenFolderMigrationIsIdempotent)
+{
+	auto menu = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 30102, 'O' },
+		SMenuItem{ 1, 30103, 'S' },
+	});
+	const int beforeCount = menu->m_nMainMenuNum;
+
+	ASSERT_TRUE(CShareData_IO::AddMainMenuItemIfMissing(*menu, 30997, 30102, L'F', false, false));
+	EXPECT_EQ(beforeCount + 1, menu->m_nMainMenuNum);
+	EXPECT_EQ(EFunctionCode(30997), menu->m_cMainMenuTbl[2].m_nFunc);
+	EXPECT_EQ(1, menu->m_cMainMenuTbl[2].m_nLevel);
+	EXPECT_EQ(L'F', menu->m_cMainMenuTbl[2].m_sKey[0]);
+
+	// Replaying the version-7 migration must not add a second Open Folder entry.
+	EXPECT_FALSE(CShareData_IO::AddMainMenuItemIfMissing(*menu, 30997, 30102, L'F', false, false));
+	EXPECT_EQ(beforeCount + 1, menu->m_nMainMenuNum);
 }
 
 TEST(CShareDataProfile, MainMenuVersion6MergesTheTwoMruSubmenusIntoOneOpenRecent)

@@ -80,6 +80,7 @@ using WorkbenchCommandExecutor = std::function<WorkbenchCommandExecutionResult()
 struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor showCommands;
 	WorkbenchCommandExecutor openSettings;
+	WorkbenchCommandExecutor openFolder;
 	WorkbenchCommandExecutor showExtensions;
 	WorkbenchCommandExecutor openGlobalKeybindings;
 	WorkbenchCommandExecutor toggleSidebarVisibility;
@@ -128,6 +129,10 @@ public:
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(
 		EWorkbenchCommandSurface surface, std::string_view slotId) const;
+	//! Returns owning descriptor copies in stable command-ID order for one surface.
+	//! A command with multiple bindings for the surface appears exactly once.
+	[[nodiscard]] std::vector<WorkbenchCommandDescriptor> EnumerateSurface(
+		EWorkbenchCommandSurface surface) const;
 	[[nodiscard]] WorkbenchCommandExecutionResult Execute(std::string_view commandId,
 		const WorkbenchContextKeySnapshot& context) const noexcept;
 	[[nodiscard]] std::uint64_t Revision() const noexcept;

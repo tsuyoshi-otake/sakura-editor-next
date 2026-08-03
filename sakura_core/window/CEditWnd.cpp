@@ -94,6 +94,7 @@
 #include "workbench/editor/CEmptyEditorSurface.h"
 #include "workbench/editor/CExtensionDetailSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
+#include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
 #include "workbench/layout/WorkbenchIds.h"
@@ -861,8 +862,7 @@ bool CEditWnd::ExecuteWorkbenchEditorCommand(std::string_view commandId)
 		return true;
 	}
 	if (commandId == command_ids::OpenFolder) {
-		OpenWorkspaceFolder();
-		return true;
+		return OpenWorkspaceFolder() == EOpenWorkspaceFolderResult::Succeeded;
 	}
 	if (commandId == command_ids::Save || commandId == command_ids::SaveAs
 		|| commandId == command_ids::Revert || commandId == command_ids::CloseActiveEditor) {
@@ -1169,6 +1169,11 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 	// Menu and key dispatch retain their source/high-bit flags up to this point.
 	// Route only the base legacy alias through the stable workbench command; a
 	// registered command's terminal failure must not fall through as success.
+	if (baseCode == F_OPEN_WORKSPACE_FOLDER && m_workbenchRuntime != nullptr) {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(workbench::editor::command_ids::OpenFolder, handled);
+		if (handled) return;
+	}
 	if (baseCode == F_TOGGLE_LEFT_EXPLORER && m_workbenchRuntime != nullptr) {
 		bool handled = false;
 		(void)TryExecuteWorkbenchStableCommand("workbench.view.explorer", handled);
@@ -1874,7 +1879,12 @@ bool CEditWnd::InitializeWorkbench()
 	if (editorBridgeEnabled) {
 		m_emptyEditorSurface = std::make_unique<workbench::editor::CEmptyEditorSurface>(
 			[this](std::string_view commandId) {
-				(void)ExecuteWorkbenchEditorCommand(commandId);
+				// Watermark actions share the same stable command authority as the
+				// native menu and keybinding.  A recognized failure is terminal and
+				// must not fall through to a legacy implementation.
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand(commandId, handled);
+				if (!handled) (void)ExecuteWorkbenchEditorCommand(commandId);
 			});
 		if (!m_emptyEditorSurface->Create(GetHwnd(), G_AppInstance())) {
 			m_emptyEditorSurface.reset();
@@ -1932,6 +1942,33 @@ bool CEditWnd::InitializeWorkbench()
 						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
 					: workbench::commands::WorkbenchCommandExecutionResult{
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "settings dialog could not be opened" };
+			},
+			.openFolder = [this]() {
+				switch (OpenWorkspaceFolder()) {
+				case EOpenWorkspaceFolderResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EOpenWorkspaceFolderResult::Cancelled:
+				case EOpenWorkspaceFolderResult::InvalidSelection:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable,
+						"folder selection was cancelled or invalid" };
+				case EOpenWorkspaceFolderResult::PickerFailed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"folder picker failed" };
+				case EOpenWorkspaceFolderResult::WorkspaceContextFailed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"workspace context could not accept the selected folder" };
+				case EOpenWorkspaceFolderResult::ExplorerProjectionFailed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"selected folder could not be projected into the Explorer Part" };
+			}
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+				"folder command returned an invalid terminal status" };
 			},
 			.showExtensions = [this]() {
 				if (m_viewContainerPages == nullptr || m_workbenchRuntime == nullptr) {
@@ -2723,6 +2760,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	// Registry executors capture this window and must be gone before any host they
 	// can project is closed. Context state has no external owner and is window-local.
 	if (m_customFrame) m_customFrame->SetManageMenuActionCallback({});
+	ClearOpenFolderChord();
 	m_workbenchCommandRegistry.reset();
 	m_workbenchContextKeyService.reset();
 	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
@@ -3764,6 +3802,33 @@ bool CEditWnd::TryExecuteWorkbenchStableCommand(std::string_view commandId, bool
 	return false;
 }
 
+void CEditWnd::BeginOpenFolderChord(HWND focusWindow) noexcept
+{
+	const auto now = ::GetTickCount64();
+	m_openFolderChord.Begin(now,
+		reinterpret_cast<workbench::editor::OpenFolderChordState::FocusToken>(focusWindow));
+	if (GetHwnd() == nullptr
+		|| ::SetTimer(GetHwnd(), IDT_WORKBENCH_OPEN_FOLDER_CHORD,
+			static_cast<UINT>(workbench::editor::OpenFolderChordState::TimeoutMs), nullptr) == 0) {
+		// Fail closed when a native timer cannot be armed.  The first stroke must
+		// never leave a permanently pending chord in that case.
+		m_openFolderChord.Clear();
+	}
+}
+
+void CEditWnd::ClearOpenFolderChord() noexcept
+{
+	if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_OPEN_FOLDER_CHORD);
+	m_openFolderChord.Clear();
+}
+
+void CEditWnd::ExpireOpenFolderChord() noexcept
+{
+	if (m_openFolderChord.ExpireIfNeeded(::GetTickCount64())) {
+		if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_OPEN_FOLDER_CHORD);
+	}
+}
+
 bool CEditWnd::ExecuteToggleSidebarVisibilityCommand()
 {
 	if (m_workbenchRuntime == nullptr) return false;
@@ -3903,7 +3968,7 @@ bool CEditWnd::IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noex
 	return host != nullptr && host->GetState() != workbench::WorkbenchPanelState::Hidden;
 }
 
-void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate)
+bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visible, bool activate)
 {
 	if (m_workbenchRuntime != nullptr) {
 		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
@@ -3912,18 +3977,18 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		if (edge == workbench::WorkbenchEdge::Right) {
 			// This is the legacy Outline nested inside the left Sidebar. It is not
 			// the physical VS Code Auxiliary Bar hosted on the right.
-			if (m_viewContainerPages == nullptr || m_leftWorkbenchPanel == nullptr) return;
+			if (m_viewContainerPages == nullptr || m_leftWorkbenchPanel == nullptr) return false;
 			const bool committed = visible && activate
 				? ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Outline, true)
 				: (!visible || SetBuiltinPartVisibility(workbench::layout::ids::part::Sidebar, true))
 					&& SetBuiltinViewVisibility(workbench::layout::ids::view::Outline, visible);
-			if (!committed) return;
+			if (!committed) return false;
 			if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
 				::OutputDebugStringW(L"Sakura Editor NEXT: Outline reveal projection failed.\n");
-				return;
+				return false;
 			}
 			if (mirrorChanged) BroadcastWorkbenchSettings();
-			return;
+			return true;
 		}
 
 		const std::string_view partId = edge == workbench::WorkbenchEdge::Left
@@ -3933,13 +3998,13 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		const bool committed = visible && activate
 			? ActivateBuiltinWorkbenchView(viewId, true)
 			: SetBuiltinPartVisibility(partId, visible);
-		if (!committed) return;
+		if (!committed) return false;
 		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
 			::OutputDebugStringW(L"Sakura Editor NEXT: workbench visibility projection failed.\n");
-			return;
+			return false;
 		}
 		if (mirrorChanged) BroadcastWorkbenchSettings();
-		return;
+		return true;
 	}
 
 	workbench::CWorkbenchPanelHost* host = nullptr;
@@ -3962,6 +4027,7 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		savedVisible = &settings.m_bBottomPanelVisible;
 		break;
 	}
+	if (host == nullptr || savedVisible == nullptr) return false;
 	const BOOL requestedVisible = visible ? TRUE : FALSE;
 	if (edge == workbench::WorkbenchEdge::Bottom && !visible) {
 		m_bottomWorkbenchMaximized = false;
@@ -4014,6 +4080,7 @@ void CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	if (visibilityChanged || leftVisibilityChanged || oldActiveTool != settings.m_eActiveTool) {
 		BroadcastWorkbenchSettings();
 	}
+	return true;
 }
 
 void CEditWnd::ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage page, bool toggleIfActive)
@@ -4344,9 +4411,9 @@ void CEditWnd::ToggleBottomWorkbenchMaximized()
 	}
 }
 
-void CEditWnd::OpenWorkspaceFolder()
+EOpenWorkspaceFolderResult CEditWnd::OpenWorkspaceFolder()
 {
-	if (!m_workspaceContext) return;
+	if (!m_workspaceContext) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
 
 	// SelectDir uses the native IFileDialog with FOS_PICKFOLDERS and
 	// FOS_FORCEFILESYSTEM. Keep all state intact when the user cancels or the
@@ -4354,19 +4421,29 @@ void CEditWnd::OpenWorkspaceFolder()
 	std::array<WCHAR, 32768> selectedDirectory{};
 	auto initialDirectory = GetSemanticWorkspaceRoot();
 	if (initialDirectory.empty()) initialDirectory = m_workspaceContext->GetNewTerminalWorkingDirectory();
-	if (!SelectDir(GetHwnd(), L"作業フォルダーを開く", initialDirectory, selectedDirectory)) return;
+	switch (SelectDirWithResult(GetHwnd(), L"作業フォルダーを開く", initialDirectory, selectedDirectory)) {
+	case ESelectDirResult::Succeeded:
+		break;
+	case ESelectDirResult::Cancelled:
+		return EOpenWorkspaceFolderResult::Cancelled;
+	case ESelectDirResult::Failed:
+		return EOpenWorkspaceFolderResult::PickerFailed;
+	}
 
 	const auto absoluteRoot = MakeAbsolutePath(selectedDirectory.data());
 	const DWORD attributes = ::GetFileAttributesW(absoluteRoot.c_str());
-	if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return;
+	if (absoluteRoot.empty() || attributes == INVALID_FILE_ATTRIBUTES
+		|| (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+		return EOpenWorkspaceFolderResult::InvalidSelection;
+	}
 
 	if (m_workbenchRuntime != nullptr) {
 		auto uri = platform::uri::Uri::FromWindowsPath(absoluteRoot);
-		if (!uri) return;
+		if (!uri) return EOpenWorkspaceFolderResult::InvalidSelection;
 		const std::filesystem::path selectedPath(absoluteRoot);
 		auto displayName = selectedPath.filename().native();
 		if (displayName.empty()) displayName = selectedPath.root_name().native();
-		if (displayName.empty()) return;
+		if (displayName.empty()) return EOpenWorkspaceFolderResult::InvalidSelection;
 		const auto before = m_workbenchRuntime->WorkspaceContext().Snapshot();
 		config::SetFolderRequest request {
 			.operation = {
@@ -4378,14 +4455,23 @@ void CEditWnd::OpenWorkspaceFolder()
 		};
 		const auto result = m_workbenchRuntime->WorkspaceContext().SetFolder(request);
 		if (result.outcome != config::EWorkspaceContextOutcome::Succeeded
-			&& result.outcome != config::EWorkspaceContextOutcome::NotApplicable) return;
+			&& result.outcome != config::EWorkspaceContextOutcome::NotApplicable) {
+			return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+		}
 		ApplySemanticWorkspaceContext();
 	} else {
 		// Unit-only/legacy construction keeps the pre-runtime fallback.
 		m_workspaceContext->SetExplicitRoot(absoluteRoot);
 		ApplySemanticWorkspaceContext();
 	}
-	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true);
+	// The command is successful only after the selected folder has been projected
+	// into the Explorer Part as well as the workspace context.  The setter
+	// returns the native projection result instead of reading the model back,
+	// because a failed host application can leave model visibility committed.
+	if (!SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true)) {
+		return EOpenWorkspaceFolderResult::ExplorerProjectionFailed;
+	}
+	return EOpenWorkspaceFolderResult::Succeeded;
 }
 
 void CEditWnd::FocusIntegratedTerminal()
@@ -4591,8 +4677,79 @@ void CEditWnd::ToggleMarkdownPreview()
 
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
+	if (message.message == WM_TIMER && message.wParam == IDT_WORKBENCH_OPEN_FOLDER_CHORD) {
+		// A queued timer from an earlier restarted chord must not clear the newer
+		// state before its own five-second deadline has elapsed.
+		ExpireOpenFolderChord();
+		return true;
+	}
+	ExpireOpenFolderChord();
+	const auto cancelsOpenFolderChord = [](UINT messageId) noexcept {
+		switch (messageId) {
+		case WM_SETFOCUS:
+		case WM_KILLFOCUS:
+		case WM_LBUTTONDOWN:
+		case WM_RBUTTONDOWN:
+		case WM_MBUTTONDOWN:
+		case WM_XBUTTONDOWN:
+		case WM_NCLBUTTONDOWN:
+		case WM_NCRBUTTONDOWN:
+		case WM_NCMBUTTONDOWN:
+		case WM_NCXBUTTONDOWN:
+		case WM_MOUSEWHEEL:
+		case WM_MOUSEHWHEEL:
+		case WM_SYSKEYDOWN:
+			return true;
+		default:
+			return false;
+		}
+	};
+	if (m_openFolderChord.IsPending() && cancelsOpenFolderChord(message.message)) {
+		ClearOpenFolderChord();
+	}
 	if (m_commandPaletteOverlay && m_commandPaletteOverlay->PreTranslateMessage(message)) return true;
 	if (m_emptyEditorSurface && m_emptyEditorSurface->PreTranslateMessage(message)) return true;
+	if (message.message == WM_KEYDOWN) {
+		const workbench::editor::OpenFolderChordModifiers modifiers{
+			.control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0,
+			.alt = (::GetKeyState(VK_MENU) & 0x8000) != 0,
+			.shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0,
+		};
+		const HWND focusWindow = ::GetFocus();
+		const HWND chordFocusWindow = focusWindow != nullptr ? focusWindow : message.hwnd;
+		if (m_openFolderChord.IsPending()) {
+			switch (m_openFolderChord.AdvancePendingKeyDown(
+				static_cast<std::uint32_t>(message.wParam), modifiers)) {
+			case workbench::editor::EOpenFolderChordKeyDecision::PassThrough:
+				// In particular, Ctrl can be released and re-pressed between strokes.
+				// Do not intercept modifier key-down or any key-up messages.
+				break;
+			case workbench::editor::EOpenFolderChordKeyDecision::Execute: {
+				ClearOpenFolderChord();
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand(
+					workbench::editor::command_ids::OpenFolder, handled);
+				// A recognized chord is terminal even when the registered executor is
+				// unavailable or fails; it must never fall through to legacy input.
+				return true;
+			}
+			case workbench::editor::EOpenFolderChordKeyDecision::Restart:
+				BeginOpenFolderChord(chordFocusWindow);
+				return true;
+			case workbench::editor::EOpenFolderChordKeyDecision::CancelAndConsume:
+				ClearOpenFolderChord();
+				return true;
+			}
+		}
+		if (modifiers.IsControlOnly() && message.wParam == L'K'
+			&& m_workbenchCommandRegistry != nullptr
+			&& m_workbenchCommandRegistry->Find(workbench::editor::command_ids::OpenFolder).has_value()) {
+			BeginOpenFolderChord(chordFocusWindow);
+			// Once the registry recognizes Ctrl+K as this chord's first stroke, do
+			// not let a failed native timer arm a legacy accelerator instead.
+			return true;
+		}
+	}
 	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
 		&& (::GetKeyState(VK_MENU) & 0x8000) == 0) {
 		if (message.wParam == L'P' && (::GetKeyState(VK_SHIFT) & 0x8000) != 0) {
@@ -4624,10 +4781,9 @@ bool CEditWnd::ShowExtensionCommandPalette()
 	if (m_extensionService) m_extensionService->Start();
 	const auto commands = m_extensionService ? m_extensionService->SearchCommands(L"")
 		: std::vector<SExtensionCommandPaletteItem>{};
-	const bool hasColorThemeCommand = m_workbenchCommandRegistry != nullptr
-		&& m_workbenchCommandRegistry->Find("workbench.action.selectTheme").has_value();
-	const bool hasFileIconThemeCommand = m_workbenchCommandRegistry != nullptr
-		&& m_workbenchCommandRegistry->Find("workbench.action.selectIconTheme").has_value();
+	const auto registeredCommands = m_workbenchCommandRegistry
+		? workbench::editor::SearchRegisteredCommandPalette(*m_workbenchCommandRegistry, L"")
+		: std::vector<workbench::editor::WorkbenchCommandPaletteItem>{};
 	auto convertItems = [](const std::vector<SExtensionCommandPaletteItem>& source) {
 		std::vector<workbench::quickinput::CommandPaletteItem> items;
 		items.reserve(source.size());
@@ -4641,30 +4797,21 @@ bool CEditWnd::ShowExtensionCommandPalette()
 		}
 		return items;
 	};
-	auto matchesColorTheme = [](std::wstring_view query) {
-		if (query.empty()) return true;
-		std::wstring loweredQuery(query);
-		std::wstring loweredLabel = L"preferences: color theme";
-		std::wstring loweredId = L"workbench.action.selecttheme";
-		std::ranges::transform(loweredQuery, loweredQuery.begin(), [](wchar_t character) {
-			return static_cast<wchar_t>(std::towlower(character));
-		});
-		return loweredLabel.find(loweredQuery) != std::wstring::npos
-			|| loweredId.find(loweredQuery) != std::wstring::npos;
+	auto convertRegisteredItems = [](const std::vector<workbench::editor::WorkbenchCommandPaletteItem>& source) {
+		std::vector<workbench::quickinput::CommandPaletteItem> items;
+		items.reserve(source.size());
+		for (const auto& command : source) {
+			items.push_back({
+				.id = std::wstring(command.id.begin(), command.id.end()),
+				.label = command.label,
+				.detail = command.detail,
+				.enabled = true,
+			});
+		}
+		return items;
 	};
-	auto matchesFileIconTheme = [](std::wstring_view query) {
-		if (query.empty()) return true;
-		std::wstring loweredQuery(query);
-		std::ranges::transform(loweredQuery, loweredQuery.begin(), [](wchar_t character) {
-			return static_cast<wchar_t>(std::towlower(character));
-		});
-		constexpr std::wstring_view label = L"preferences: file icon theme";
-		constexpr std::wstring_view id = L"workbench.action.selecticontheme";
-		return label.find(loweredQuery) != std::wstring_view::npos
-			|| id.find(loweredQuery) != std::wstring_view::npos;
-	};
-	if (commands.empty() && !hasColorThemeCommand && !hasFileIconThemeCommand) {
-		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できる拡張コマンドはありません");
+	if (commands.empty() && registeredCommands.empty()) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できるコマンドはありません");
 		return false;
 	}
 	if (!m_commandPaletteOverlay) {
@@ -4676,58 +4823,32 @@ bool CEditWnd::ShowExtensionCommandPalette()
 		m_commandPaletteOverlay->SetPalette(theme::CThemeService::EffectivePalette(
 			m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
 		m_commandPaletteOverlay->SetSearchCallback(
-			[this, convertItems, hasColorThemeCommand, hasFileIconThemeCommand, matchesColorTheme, matchesFileIconTheme](std::wstring_view query) {
+			[this, convertItems, convertRegisteredItems](std::wstring_view query) {
 				std::vector<workbench::quickinput::CommandPaletteItem> items;
 				if (m_extensionService) items = convertItems(m_extensionService->SearchCommands(query));
-				if (hasColorThemeCommand && matchesColorTheme(query)) {
-					items.push_back({
-						.id = L"workbench.action.selectTheme",
-						.label = L"Preferences: Color Theme",
-						.detail = L"Sakura Editor",
-						.enabled = true,
-					});
-				}
-				if (hasFileIconThemeCommand && matchesFileIconTheme(query)) {
-					items.push_back({
-						.id = L"workbench.action.selectIconTheme",
-						.label = L"Preferences: File Icon Theme",
-						.detail = L"Sakura Editor",
-						.enabled = true,
-					});
+				if (m_workbenchCommandRegistry) {
+					const auto registeredItems = workbench::editor::SearchRegisteredCommandPalette(
+						*m_workbenchCommandRegistry, query);
+					const auto converted = convertRegisteredItems(registeredItems);
+					items.insert(items.end(), converted.begin(), converted.end());
 				}
 				return items;
 			});
 		m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring commandId) {
-			if (commandId == L"workbench.action.selectTheme") {
-				bool handled = false;
-				(void)TryExecuteWorkbenchStableCommand("workbench.action.selectTheme", handled);
-				return;
-			}
-			if (commandId == L"workbench.action.selectIconTheme") {
-				bool handled = false;
-				(void)TryExecuteWorkbenchStableCommand("workbench.action.selectIconTheme", handled);
+			if (m_workbenchCommandRegistry
+				&& workbench::editor::DispatchRegisteredCommandPaletteSelection(*m_workbenchCommandRegistry, commandId,
+				[this](std::string_view stableCommandId) {
+					bool handled = false;
+					(void)TryExecuteWorkbenchStableCommand(stableCommandId, handled);
+				})) {
 				return;
 			}
 			if (m_extensionService) m_extensionService->ExecuteCommand(commandId);
 		});
 	}
 	std::vector<workbench::quickinput::CommandPaletteItem> items = convertItems(commands);
-	if (hasColorThemeCommand) {
-		items.push_back({
-			.id = L"workbench.action.selectTheme",
-			.label = L"Preferences: Color Theme",
-			.detail = L"Sakura Editor",
-			.enabled = true,
-		});
-	}
-	if (hasFileIconThemeCommand) {
-		items.push_back({
-			.id = L"workbench.action.selectIconTheme",
-			.label = L"Preferences: File Icon Theme",
-			.detail = L"Sakura Editor",
-			.enabled = true,
-		});
-	}
+	const auto convertedRegisteredItems = convertRegisteredItems(registeredCommands);
+	items.insert(items.end(), convertedRegisteredItems.begin(), convertedRegisteredItems.end());
 	return m_commandPaletteOverlay->Show(std::move(items));
 }
 
@@ -5747,6 +5868,11 @@ void CEditWnd::MessageLoop( void )
 		ret = GetMessage(&msg,nullptr,0,0);
 		if(ret== 0)break; //WM_QUIT
 		if(ret==-1)break; //GetMessage失敗
+		if (m_openFolderChord.IsPending()
+			&& m_openFolderChord.CancelIfFocusChanged(
+				reinterpret_cast<workbench::editor::OpenFolderChordState::FocusToken>(::GetFocus()))) {
+			ClearOpenFolderChord();
+		}
 
 		//ダイアログメッセージ
 		     if( MyIsDialogMessage( CPrintPreview::GetPrintPreviewBarHANDLE_Safe(m_pPrintPreview.get()),	&msg ) ){}	//!< 印刷プレビュー 操作バー
@@ -5785,6 +5911,13 @@ LRESULT CEditWnd::DispatchEvent(
 )
 {
 	const auto hWnd = GetHwnd();
+	if (uMsg == WM_SETFOCUS || uMsg == WM_KILLFOCUS
+		|| (uMsg == WM_ACTIVATE && LOWORD(wParam) == WA_INACTIVE)
+		|| (uMsg == WM_ACTIVATEAPP && wParam == FALSE)) {
+		// Focus/activation notifications are delivered synchronously to the native
+		// window procedure, so they cannot be relied on by MessageLoop's prefilter.
+		ClearOpenFolderChord();
+	}
 	if (uMsg == WM_WINDOWPOSCHANGING && IsStartupDrawSuppressed()) {
 		if (auto* position = reinterpret_cast<WINDOWPOS*>(lParam)) {
 			position->flags &= ~SWP_SHOWWINDOW;
@@ -7742,6 +7875,11 @@ LRESULT CEditWnd::OnTimer( WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
 		m_extensionDocumentSyncTimerPending = false;
 		PublishExtensionDocumentChange();
+		break;
+	case IDT_WORKBENCH_OPEN_FOLDER_CHORD:
+		// SetTimer can leave an already-queued WM_TIMER behind when Ctrl+K is
+		// repeated. Only expire the state once its own deadline is actually due.
+		ExpireOpenFolderChord();
 		break;
 	default:
 		return 1L;

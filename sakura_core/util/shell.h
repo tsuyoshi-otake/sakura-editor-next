@@ -11,11 +11,21 @@
 #define SAKURA_SHELL_0A8B6454_B007_46E5_9606_8D2FD7993B91_H_
 #pragma once
 
+#include <cstdint>
 #include <Windows.h>
 
 BOOL MyWinHelp(HWND hwndCaller, UINT uCommand, DWORD_PTR dwData);	/* WinHelp のかわりに HtmlHelp を呼び出す */	// 2006.07.22 ryoji
 
 /* Shell Interface系(?) */
+enum class ESelectDirResult : std::uint8_t {
+	Succeeded,
+	Cancelled,
+	Failed,
+};
+
+ESelectDirResult SelectDirWithResult(HWND hWnd, const std::wstring& title,
+	const std::filesystem::path& initialDirectory, std::span<WCHAR> buffer);
+
 BOOL SelectDir(HWND hWnd, const std::wstring& title, const std::filesystem::path& initialDirectory, std::span<WCHAR> buffer);	/* フォルダー選択ダイアログ */
 
 BOOL SelectDir(HWND hWnd, const std::wstring& title, const std::filesystem::path& initialDirectory, WCHAR* strFolderName, size_t nMaxCount);
