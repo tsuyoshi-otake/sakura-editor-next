@@ -1490,8 +1490,17 @@ TEST(CWorkbenchRuntime, WorkspaceFolderDocumentsKeepStableControllerIdentityAcro
 
 	fixture.files->Set(Parse(L"file:///C:/One/.vscode/settings.json"),
 		Bytes(R"json({ "workbench.editor.showTabs": "single" })json"));
-	ASSERT_EQ(workbench::workspace::EWorkspaceEditingOutcome::Succeeded,
-		replaceFolders({ { first, L"one" }, { second, L"two" } }).outcome);
+	fixture.files->Set(workspaceConfig, Bytes(R"json({ "folders": [
+		{ "uri": "file:///C:/One", "name": "one" }, { "uri": "file:///C:/Two", "name": "two" }
+	] })json"));
+	const auto beforeReorder = fixture.runtime->WorkspaceContext().Snapshot();
+	const auto reorderedBack = fixture.runtime->WorkspaceContext().SetWorkspace({
+		.operation = { .operationId = "test.workspace.reorder-back",
+			.expectedRevision = beforeReorder.revision },
+		.workspaceConfigUri = workspaceConfig,
+		.folders = { { first, L"one" }, { second, L"two" } },
+	});
+	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, reorderedBack.outcome);
 
 	// The retained controller remembers the revision accepted before the direct
 	// source update, detects the stale CAS on reload, and leaves that newer value
