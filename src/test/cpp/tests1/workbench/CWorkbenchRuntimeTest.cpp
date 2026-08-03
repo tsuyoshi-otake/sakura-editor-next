@@ -44,6 +44,7 @@ namespace {
 using config::ConfigurationTarget;
 using config::ConfigurationValue;
 using config::EConfigurationOutcome;
+using config::EConfigurationScope;
 using config::EWorkspaceContextOutcome;
 using config::EWorkspaceKind;
 using platform::filesystem::DirectoryEntry;
@@ -71,6 +72,7 @@ using platform::uri::Uri;
 using platform::uri::UriIdentityService;
 using workbench::CWorkbenchRuntime;
 using workbench::EWorkbenchRuntimeDiagnosticCode;
+using workbench::EWorkbenchRuntimeDiagnosticSource;
 using workbench::EWorkbenchRuntimeResultCode;
 using workbench::EWorkbenchRuntimeState;
 using workbench::ResolveWorkbenchBootstrapContext;
@@ -1463,38 +1465,46 @@ TEST(CWorkbenchRuntime, WorkspaceFolderDocumentsKeepStableControllerIdentityAcro
 		Bytes(R"json({ "workbench.editor.showTabs": "single" })json"));
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 
-	auto transition = [&](std::string operationId, std::vector<config::WorkspaceFolderDescriptor> folders) {
-		return fixture.runtime->WorkspaceContext().SetWorkspace({
-			.operation = { .operationId = std::move(operationId),
-				.expectedRevision = fixture.runtime->WorkspaceContext().Snapshot().revision },
-			.workspaceConfigUri = workspaceConfig, .folders = std::move(folders),
+	auto replaceFolders = [&](std::vector<workbench::workspace::WorkspaceFolderEdit> folders) {
+		return fixture.runtime->ReplaceCurrentWorkspaceFolders({
+			.source = workspaceConfig,
+			.target = workspaceConfig,
+			.folders = std::move(folders),
 		});
 	};
-	fixture.files->Set(workspaceConfig, Bytes(R"json({ "folders": [
-		{ "uri": "file:///C:/One", "name": "one" }, { "uri": "file:///C:/Two", "name": "two" }
-	] })json"));
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, transition("test.workspace.add-folder", { { first, L"one" }, { second, L"two" } }).outcome);
-	fixture.files->Set(workspaceConfig, Bytes(R"json({ "folders": [
-		{ "uri": "file:///C:/Two", "name": "two" }, { "uri": "file:///C:/One", "name": "one" }
-	] })json"));
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, transition("test.workspace.reorder-folders", { { second, L"two" }, { first, L"one" } }).outcome);
-	fixture.files->Set(Parse(L"file:///C:/One/.vscode/settings.json"),
-		Bytes(R"json({ "workbench.editor.showTabs": "single" })json"));
-	fixture.files->Set(workspaceConfig, Bytes(R"json({ "folders": [
-		{ "uri": "file:///C:/One", "name": "one" }, { "uri": "file:///C:/Two", "name": "two" }
-	] })json"));
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, transition("test.workspace.reorder-back", { { first, L"one" }, { second, L"two" } }).outcome);
+	ASSERT_EQ(workbench::workspace::EWorkspaceEditingOutcome::Succeeded,
+		replaceFolders({ { first, L"one" }, { second, L"two" } }).outcome);
+	ASSERT_EQ(workbench::workspace::EWorkspaceEditingOutcome::Succeeded,
+		replaceFolders({ { second, L"two" }, { first, L"one" } }).outcome);
 
 	ConfigurationTarget firstTarget = ProfileTarget(fixture.runtime->Bootstrap());
 	firstTarget.workspaceUri = workspaceConfig;
 	firstTarget.folderUri = first;
-	EXPECT_EQ(L"single", ShowTabs(*fixture.runtime, firstTarget));
-	EXPECT_EQ(EWorkbenchRuntimeState::Ready, fixture.runtime->Snapshot().state);
-	// The same folder was reloaded through its original controller identity on
-	// each transition; a new identity would lose its optimistic CAS revisions.
-	const auto reads = fixture.files->Reads();
-	EXPECT_EQ(4, std::count(reads.begin(), reads.end(),
-		Parse(L"file:///C:/One/.vscode/settings.json").ToString()));
+	const auto concurrentSourceUpdate = fixture.runtime->Configuration().ReplaceSource({
+		.source = { EConfigurationScope::Folder, firstTarget, "workspace.folder.settings", 0 },
+		.entries = { { "workbench.editor.showTabs", ConfigurationValue(L"multiple") } },
+		.operationId = "test.workspace.concurrent-folder-source-update",
+	});
+	ASSERT_EQ(EConfigurationOutcome::Applied, concurrentSourceUpdate.outcome);
+	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, firstTarget));
+
+	fixture.files->Set(Parse(L"file:///C:/One/.vscode/settings.json"),
+		Bytes(R"json({ "workbench.editor.showTabs": "single" })json"));
+	ASSERT_EQ(workbench::workspace::EWorkspaceEditingOutcome::Succeeded,
+		replaceFolders({ { first, L"one" }, { second, L"two" } }).outcome);
+
+	// The retained controller remembers the revision accepted before the direct
+	// source update, detects the stale CAS on reload, and leaves that newer value
+	// intact. Recreating the controller would lose the expected revision and
+	// incorrectly overwrite "multiple" with the file's "single" value.
+	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, firstTarget));
+	const auto snapshot = fixture.runtime->Snapshot();
+	EXPECT_EQ(EWorkbenchRuntimeState::ReadyWithDiagnostics, snapshot.state);
+	EXPECT_TRUE(std::ranges::any_of(snapshot.diagnostics, [](const auto& diagnostic) {
+		return diagnostic.source == EWorkbenchRuntimeDiagnosticSource::WorkspaceSettings
+			&& diagnostic.code == EWorkbenchRuntimeDiagnosticCode::ApplyFailed
+			&& diagnostic.message == "configuration document changed concurrently";
+	}));
 }
 
 TEST(CWorkbenchRuntime, DifferentUnreadableWorkspaceClearsPreviousWorkspaceAndFolderSources)
