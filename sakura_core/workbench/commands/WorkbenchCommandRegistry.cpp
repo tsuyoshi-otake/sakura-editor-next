@@ -360,6 +360,34 @@ WorkbenchCommandDescriptor MakeFileIconThemeDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeShowNotificationsDescriptor()
+{
+	return {
+		"notifications.showList", "Show Notifications", kBuiltinOwner,
+		"workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::Editor, {}
+	};
+}
+
+WorkbenchCommandDescriptor MakeHideNotificationsDescriptor()
+{
+	return {
+		"notifications.hideList", "Hide Notifications", kBuiltinOwner,
+		"workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::Editor, {}
+	};
+}
+
+WorkbenchCommandDescriptor MakeToggleStatusbarDescriptor()
+{
+	return {
+		"workbench.action.toggleStatusbarVisibility", "Toggle Status Bar Visibility", kBuiltinOwner,
+		"workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::LegacyNative,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette,
+				"workbench.action.toggleStatusbarVisibility.palette", std::nullopt },
+		}
+	};
+}
+
 } // namespace
 
 bool WorkbenchCommandRegistry::IsValidCommandId(std::string_view value) noexcept
@@ -425,6 +453,9 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		std::pair{ MakeCloseFolderDescriptor(), std::move(executors.closeFolder) },
 		std::pair{ MakeCloseWindowDescriptor(), std::move(executors.closeWindow) },
 		std::pair{ MakeQuitDescriptor(), std::move(executors.quit) },
+		std::pair{ MakeShowNotificationsDescriptor(), std::move(executors.showNotifications) },
+		std::pair{ MakeHideNotificationsDescriptor(), std::move(executors.hideNotifications) },
+		std::pair{ MakeToggleStatusbarDescriptor(), std::move(executors.toggleStatusbarVisibility) },
 	};
 	std::lock_guard lock(m_mutex);
 	const auto conflicts = [&](const WorkbenchCommandDescriptor& requested) {

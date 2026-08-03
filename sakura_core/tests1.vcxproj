@@ -196,6 +196,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\CNotificationHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />
@@ -220,6 +221,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchContributionRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchCommandRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\RecentlyOpenedWorkspaceServiceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\StatusbarViewModelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutMementoCodecTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutStateServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp" />

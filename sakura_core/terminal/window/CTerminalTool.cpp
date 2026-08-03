@@ -1137,6 +1137,64 @@ struct CTerminalTool::Impl {
 		return true;
 	}
 
+	TerminalWorkspaceResetResult ResetForWorkspace( std::wstring nextWorkingDirectory, bool recreateSession )
+	{
+		TerminalWorkspaceResetResult result;
+		if( closed ) return result;
+		workingDirectory = std::move(nextWorkingDirectory);
+
+		if( window ) {
+			::KillTimer(window, kOutputFrameTimer);
+			::KillTimer(window, kSynchronizedOutputTimer);
+			::KillTimer(window, kProtocolInputRetryTimer);
+		}
+		outputFrameScheduled = false;
+		pendingOutputTabs.clear();
+		synchronizedOutputSince = 0;
+		secondarySynchronizedOutputSince = 0;
+		needsFullTerminalRepaint = false;
+		needsFullSecondaryRepaint = false;
+		if( terminalWindow ) terminalWindow->ResetSessionInputState();
+		if( secondaryTerminalWindow ) secondaryTerminalWindow->ResetSessionInputState();
+		DestroySecondaryRenderer();
+		secondaryTabId.reset();
+
+		const auto deadline = std::chrono::steady_clock::now()
+			+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
+		const auto cleared = manager->ClearTabs(deadline);
+		result.clearedTabCount = cleared.clearedTabCount;
+		result.closeDeadlineExceeded = cleared.status == TerminalTabClearStatus::DeadlineExceeded;
+		if( cleared.status == TerminalTabClearStatus::Unavailable ) return result;
+		if( cleared.status == TerminalTabClearStatus::InProgress ) {
+			result.outcome = TerminalWorkspaceResetOutcome::Busy;
+			return result;
+		}
+
+		BindActiveModel();
+		LayoutChildren();
+		InvalidateTabs();
+		if( !recreateSession ) {
+			result.outcome = TerminalWorkspaceResetOutcome::Cleared;
+			return result;
+		}
+
+		const auto replacementId = EnsureSessionStarted();
+		if( !replacementId ) {
+			result.outcome = TerminalWorkspaceResetOutcome::RestartFailed;
+			result.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+			return result;
+		}
+		const auto tabs = manager->Snapshot();
+		const auto replacement = std::ranges::find(tabs, *replacementId, &TerminalTabSnapshot::id);
+		if( replacement == tabs.end() || replacement->state == TerminalSessionState::Failed ) {
+			result.outcome = TerminalWorkspaceResetOutcome::RestartFailed;
+			result.errorCode = replacement == tabs.end() ? ERROR_GEN_FAILURE : replacement->errorCode;
+			return result;
+		}
+		result.outcome = TerminalWorkspaceResetOutcome::Restarted;
+		return result;
+	}
+
 	bool SplitTerminalRight()
 	{
 		if( closed || secondaryTabId ) return false;
@@ -1271,6 +1329,12 @@ void CTerminalTool::SetWorkingDirectory( std::wstring workingDirectory )
 	// Existing sessions keep their original CWD. This value is used only by a
 	// subsequently created or explicitly restarted tab.
 	m_impl->workingDirectory = std::move(workingDirectory);
+}
+
+TerminalWorkspaceResetResult CTerminalTool::ResetForWorkspace(
+	std::wstring workingDirectory, bool recreateSession )
+{
+	return m_impl->ResetForWorkspace(std::move(workingDirectory), recreateSession);
 }
 
 void CTerminalTool::SetPalette( const theme::ThemePalette& palette )

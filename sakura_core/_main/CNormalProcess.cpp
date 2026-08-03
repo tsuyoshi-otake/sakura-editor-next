@@ -46,6 +46,7 @@
 #include "config/system_constants.h"
 #include "_main/ControlPlatformWorkbenchLayoutMementoStore.h"
 #include "_main/ControlPlatformRecentlyOpenedWorkspaceStore.h"
+#include "_main/ControlPlatformStatusbarVisibilityMementoStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
 #include "extension/CExtensionSecretVaultStorage.h"
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
@@ -530,6 +531,9 @@ bool CNormalProcess::InitializeProcess()
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.recentlyOpenedWorkspaceStore =
 		std::make_unique<CControlPlatformRecentlyOpenedWorkspaceStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	workbenchDependencies.statusbarVisibilityMementoStore =
+		std::make_unique<CControlPlatformStatusbarVisibilityMementoStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.taskExecutionSessionFactory =
 		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();

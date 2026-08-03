@@ -13,6 +13,7 @@
 #include "workbench/IconMetrics.h"
 #include "workbench/hover/HoverMarkdown.h"
 #include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CExtensionIconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/ThemeIconResolver.h"
@@ -20,8 +21,10 @@
 #include "charset/CCodeFactory.h"
 
 #include <algorithm>
+#include <array>
 #include <cwctype>
 #include <new>
+#include <set>
 #include <string_view>
 #include <vector>
 
@@ -34,6 +37,25 @@ constexpr UINT_PTR kExtensionHoverTimerId = 0xACE1;
 //! ステータスバーとポップアップの間を横切るためのポインター監視タイマー。
 constexpr UINT_PTR kExtensionHoverDismissTimerId = 0xACE2;
 constexpr UINT kExtensionHoverDismissPollMilliseconds = 50;
+constexpr std::string_view kNotificationStatusId = "status.notifications";
+constexpr std::string_view kShowNotificationsCommand = "notifications.showList";
+constexpr std::string_view kHideNotificationsCommand = "notifications.hideList";
+constexpr std::string_view kToggleStatusbarCommand = "workbench.action.toggleStatusbarVisibility";
+
+constexpr std::array<std::string_view, 8> kLegacyStatusbarIds{
+	"", "status.editor.selection", "status.editor.eol", "sakura.status.editor.characterCode",
+	"status.editor.encoding", "sakura.status.macroRecording", "status.editor.inputMode",
+	"status.editor.zoom",
+};
+
+std::string ExtensionStatusbarId(const SExtensionStatusBarItem& item)
+{
+	const std::string extensionId = wcstou8s(item.extensionId);
+	const std::string itemId = wcstou8s(item.itemId);
+	if (extensionId.empty()) return itemId;
+	if (itemId.empty() || itemId == extensionId) return extensionId;
+	return extensionId + "." + itemId;
+}
 
 void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 {
@@ -248,6 +270,54 @@ void CMainStatusBar::SetExtensionCommandCallback(std::function<void(std::wstring
 	m_extensionCommandCallback = std::move(callback);
 }
 
+void CMainStatusBar::SetWorkbenchCommandCallback(std::function<void(std::string_view)> callback)
+{
+	m_workbenchCommandCallback = std::move(callback);
+}
+
+void CMainStatusBar::SetStatusbarVisibilityCallback(
+	std::function<void(std::string_view, bool)> callback)
+{
+	m_statusbarVisibilityCallback = std::move(callback);
+}
+
+void CMainStatusBar::SetStatusbarViewSnapshot(workbench::statusbar::StatusbarViewSnapshot snapshot)
+{
+	m_statusbarViewSnapshot = std::move(snapshot);
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
+void CMainStatusBar::SetNotificationState(
+	std::size_t pendingCount, std::size_t unreadCount, bool centerVisible)
+{
+	if (m_notificationPendingCount == pendingCount && m_notificationUnreadCount == unreadCount
+		&& m_notificationCenterVisible == centerVisible) return;
+	m_notificationPendingCount = pendingCount;
+	m_notificationUnreadCount = unreadCount;
+	m_notificationCenterVisible = centerVisible;
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
+bool CMainStatusBar::IsStatusbarEntryVisible(std::string_view id, bool providerVisible) const noexcept
+{
+	if (!providerVisible || !workbench::statusbar::StatusbarViewModel::IsValidId(id)) return false;
+	return std::find(m_statusbarViewSnapshot.hiddenIds.begin(), m_statusbarViewSnapshot.hiddenIds.end(), id)
+		== m_statusbarViewSnapshot.hiddenIds.end();
+}
+
+int CMainStatusBar::ReservedRightWidth() const noexcept
+{
+	if (!IsStatusbarEntryVisible(kNotificationStatusId)) return 0;
+	const UINT dpi = m_hwndStatusBar != nullptr ? (std::max)(96u, ::GetDpiForWindow(m_hwndStatusBar)) : 96u;
+	return workbench::icons::ScaleDip(28, dpi);
+}
+
+std::string_view CMainStatusBar::LegacyEntryIdForPart(int part) noexcept
+{
+	if (part < 0 || static_cast<std::size_t>(part) >= kLegacyStatusbarIds.size()) return {};
+	return kLegacyStatusbarIds[static_cast<std::size_t>(part)];
+}
+
 void CMainStatusBar::SetExtensionIconFonts(
 	const workbench::icons::CExtensionIconFontRegistry* registry) noexcept
 {
@@ -345,7 +415,15 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 		// VS Code もホバー中にクリックするとホバーは閉じる。コマンドが走って項目の
 		// 中身が入れ替わったあとも古い内容が残らないよう、実行の前に取り下げる。
 		if (self != nullptr) self->HideExtensionHover();
-		if (self != nullptr && self->InvokeExtensionItemAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })) {
+		if (self != nullptr && (self->InvokeBuiltinItemAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) })
+			|| self->InvokeExtensionItemAt({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) }))) {
+			return 0;
+		}
+		break;
+	case WM_CONTEXTMENU:
+		if (self != nullptr) {
+			self->HideExtensionHover();
+			self->ShowContextMenu({ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
 			return 0;
 		}
 		break;
@@ -384,6 +462,12 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 		if (self != nullptr) {
 			POINT point{};
 			if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)) {
+				for (const auto& target : self->m_statusbarHitTargets) {
+					if (target.id == kNotificationStatusId && ::PtInRect(&target.bounds, point)) {
+						::SetCursor(::LoadCursor(nullptr, IDC_HAND));
+						return TRUE;
+					}
+				}
 				for (const auto& target : self->m_extensionHitTargets) {
 					// tooltip-only 項目（command が空）は WM_LBUTTONUP でも無視される
 					// ので、ここでも手のひらカーソルを出さない。押しても何も起きない
@@ -438,8 +522,9 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const HFONT font = reinterpret_cast<HFONT>(::SendMessageW(m_hwndStatusBar, WM_GETFONT, 0, 0));
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
 	m_extensionHitTargets.clear();
+	m_statusbarHitTargets.clear();
 	int scmWidth = 0;
-	if (!m_scmText.empty()) {
+	if (!m_scmText.empty() && IsStatusbarEntryVisible("status.scm")) {
 		SIZE extent{};
 		if (::GetTextExtentPoint32W(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &extent)) {
 			const UINT scmDpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
@@ -450,6 +535,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 			RECT scmRect{ textInset, 0, scmWidth - 4, height };
 			::DrawTextW(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &scmRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			m_statusbarHitTargets.push_back({ "status.scm", scmIconRect });
 		}
 	}
 
@@ -467,6 +553,18 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		(void)::SendMessageW(m_hwndStatusBar, SB_GETRECT, 0, reinterpret_cast<LPARAM>(&messageRect));
 	}
 	messageRect.left = std::max<LONG>(messageRect.left, scmWidth);
+	LONG statusContentRight = client.right;
+	if (!::IsZoomed(m_pOwner->GetHwnd())) {
+		statusContentRight -= ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE);
+	}
+	statusContentRight = (std::max<LONG>)(messageRect.left, statusContentRight);
+	RECT notificationRect{};
+	if (IsStatusbarEntryVisible(kNotificationStatusId)) {
+		const int notificationWidth = ReservedRightWidth();
+		notificationRect = { (std::max<LONG>)(messageRect.left, statusContentRight - notificationWidth),
+			messageRect.top, statusContentRight, messageRect.bottom };
+		messageRect.right = (std::min)(messageRect.right, notificationRect.left);
+	}
 
 	const int statusHeight = std::max<int>(0, messageRect.bottom - messageRect.top);
 	const int inlineIconSide = InlineStatusIconSide(statusHeight, dpi);
@@ -479,6 +577,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	std::vector<ExtensionLayoutItem> leftItems;
 	std::vector<ExtensionLayoutItem> rightItems;
 	for (const auto& item : m_extensionItems) {
+		if (!IsStatusbarEntryVisible(ExtensionStatusbarId(item), item.visible)) continue;
 		// 実 VS Code の renderLabelWithIcons と同じく、ラベル中のアイコンは位置そのままで
 		// 何個でもインラインに並ぶ。先頭 1 個だけを特別扱いしてはならない。
 		// 組み込み `$(name)` は同梱 codicon.ttf の 1 グリフとして描く。書体名が空なら
@@ -553,7 +652,8 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		// ツールチップは Markdown 原文のまま持ち、実際にホバーを出す瞬間に解析する。
 		// 再描画のたびに解析すると、書式付きホバーでは平文射影より明確に高くつく。
 		if (!layout.item->command.empty() || !layout.item->tooltip.empty()) {
-			m_extensionHitTargets.push_back({ layout.item->handle, itemRect, layout.item->command, layout.item->tooltip,
+			m_extensionHitTargets.push_back({ layout.item->handle, ExtensionStatusbarId(*layout.item), itemRect,
+				layout.item->command, layout.item->tooltip,
 				layout.item->tooltipSupportsThemeIcons, layout.item->tooltipIsTrusted,
 				layout.item->tooltipTrustedCommands });
 		}
@@ -584,6 +684,11 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		RECT partRect{};
 		if (::SendMessageW(m_hwndStatusBar, SB_GETRECT, part, reinterpret_cast<LPARAM>(&partRect)) == FALSE) continue;
 		if (part == 0) partRect = messageRect;
+		const auto entryId = LegacyEntryIdForPart(part);
+		if (!entryId.empty()) {
+			if (!IsStatusbarEntryVisible(entryId)) continue;
+			m_statusbarHitTargets.push_back({ std::string(entryId), partRect });
+		}
 		const LRESULT textInfo = ::SendMessageW(m_hwndStatusBar, SB_GETTEXTLENGTHW, part, 0);
 		const UINT textLength = LOWORD(textInfo);
 		const UINT style = HIWORD(textInfo);
@@ -603,6 +708,28 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 			::DrawTextW(target, text.data(), static_cast<int>(textLength), &partRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 		}
+	}
+
+	if (notificationRect.right > notificationRect.left) {
+		const int side = InlineStatusIconSide(notificationRect.bottom - notificationRect.top, dpi);
+		const auto glyph = workbench::icons::FindCodiconGlyph(
+			m_notificationUnreadCount == 0 ? L"bell" : L"bell-dot");
+		const auto& codiconFont = workbench::icons::CCodiconFont::Instance();
+		const HFONT glyphFont = codiconFont.IsAvailable()
+			? AcquireIconFont(std::wstring(codiconFont.FaceName()), std::max(1, side)) : nullptr;
+		if (glyph && glyphFont != nullptr) {
+			const HFONT previousFont = static_cast<HFONT>(::SelectObject(target, glyphFont));
+			wchar_t text[2]{ *glyph, L'\0' };
+			RECT glyphRect = notificationRect;
+			::DrawTextW(target, text, 1, &glyphRect,
+				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+			::SelectObject(target, previousFont);
+		}
+		m_statusbarHitTargets.push_back({ std::string(kNotificationStatusId), notificationRect });
+		std::wstring tooltip = m_notificationPendingCount == 0
+			? L"通知はありません" : L"通知 (" + std::to_wstring(m_notificationPendingCount) + L")";
+		m_extensionHitTargets.push_back({ L"status.notifications", std::string(kNotificationStatusId),
+			notificationRect, L"", std::move(tooltip), false, false, {} });
 	}
 
 	if (oldFont != nullptr) ::SelectObject(target, oldFont);
@@ -626,6 +753,88 @@ bool CMainStatusBar::InvokeExtensionItemAt(POINT point) const
 		}
 	}
 	return false;
+}
+
+bool CMainStatusBar::InvokeBuiltinItemAt(POINT point) const
+{
+	if (!m_workbenchCommandCallback) return false;
+	for (const auto& target : m_statusbarHitTargets) {
+		if (target.id == kNotificationStatusId && ::PtInRect(&target.bounds, point)) {
+			m_workbenchCommandCallback(
+				m_notificationCenterVisible ? kHideNotificationsCommand : kShowNotificationsCommand);
+			return true;
+		}
+	}
+	return false;
+}
+
+std::optional<std::string> CMainStatusBar::EntryIdAt(POINT clientPoint) const
+{
+	for (const auto& target : m_statusbarHitTargets) {
+		if (::PtInRect(&target.bounds, clientPoint)) return target.id;
+	}
+	for (const auto& target : m_extensionHitTargets) {
+		if (!target.statusbarId.empty() && ::PtInRect(&target.bounds, clientPoint)) return target.statusbarId;
+	}
+	return std::nullopt;
+}
+
+void CMainStatusBar::ShowContextMenu(POINT screenPoint)
+{
+	if (m_hwndStatusBar == nullptr) return;
+	if (screenPoint.x == -1 && screenPoint.y == -1) {
+		RECT rect{};
+		::GetWindowRect(m_hwndStatusBar, &rect);
+		screenPoint = { rect.left + (rect.right - rect.left) / 2, rect.top + (rect.bottom - rect.top) / 2 };
+	}
+	POINT clientPoint = screenPoint;
+	(void)::ScreenToClient(m_hwndStatusBar, &clientPoint);
+	const auto clickedId = EntryIdAt(clientPoint);
+
+	const HMENU menu = ::CreatePopupMenu();
+	if (menu == nullptr) return;
+	constexpr UINT kHideStatusbarMenu = 1;
+	constexpr UINT kHideClickedMenu = 2;
+	constexpr UINT kFirstEntryMenu = 100;
+	::AppendMenuW(menu, MF_STRING, kHideStatusbarMenu, L"ステータス バーを非表示");
+	::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+
+	std::vector<const workbench::statusbar::StatusbarEntry*> menuEntries;
+	std::set<std::string, std::less<>> seen;
+	for (const auto& entry : m_statusbarViewSnapshot.entries) {
+		if (!entry.providerVisible || entry.name.empty() || !seen.insert(entry.id).second) continue;
+		const UINT command = kFirstEntryMenu + static_cast<UINT>(menuEntries.size());
+		const UINT flags = MF_STRING | (IsStatusbarEntryVisible(entry.id) ? MF_CHECKED : MF_UNCHECKED);
+		::AppendMenuW(menu, flags, command, entry.name.c_str());
+		menuEntries.push_back(&entry);
+	}
+
+	const workbench::statusbar::StatusbarEntry* clickedEntry = nullptr;
+	if (clickedId) {
+		const auto found = std::find_if(m_statusbarViewSnapshot.entries.begin(), m_statusbarViewSnapshot.entries.end(),
+			[&clickedId](const auto& entry) { return entry.id == *clickedId; });
+		if (found != m_statusbarViewSnapshot.entries.end() && IsStatusbarEntryVisible(found->id)) clickedEntry = &*found;
+	}
+	if (clickedEntry != nullptr) {
+		::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+		const std::wstring label = L"'" + clickedEntry->name + L"' を非表示";
+		::AppendMenuW(menu, MF_STRING, kHideClickedMenu, label.c_str());
+	}
+
+	const UINT selected = ::TrackPopupMenu(menu,
+		TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_NONOTIFY, screenPoint.x, screenPoint.y, 0,
+		m_pOwner->GetHwnd(), nullptr);
+	::DestroyMenu(menu);
+	if (selected == kHideStatusbarMenu) {
+		if (m_workbenchCommandCallback) m_workbenchCommandCallback(kToggleStatusbarCommand);
+	} else if (selected == kHideClickedMenu && clickedEntry != nullptr) {
+		if (m_statusbarVisibilityCallback) m_statusbarVisibilityCallback(clickedEntry->id, true);
+	} else if (selected >= kFirstEntryMenu && selected - kFirstEntryMenu < menuEntries.size()) {
+		const auto& entry = *menuEntries[selected - kFirstEntryMenu];
+		if (m_statusbarVisibilityCallback) {
+			m_statusbarVisibilityCallback(entry.id, IsStatusbarEntryVisible(entry.id));
+		}
+	}
 }
 
 const CMainStatusBar::ExtensionHitTarget* CMainStatusBar::FindHoverTargetAt(POINT point) const noexcept

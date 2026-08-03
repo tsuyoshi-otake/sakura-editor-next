@@ -601,6 +601,8 @@ private:
 
 	bool InitializeWorkbench();
 	void EnsureNotificationHost() noexcept;
+	void RefreshStatusbarPresentation();
+	void SetStatusbarEntryHidden(std::string_view id, bool hidden);
 	void PostDeferredStartupWorkbenchIfReady();
 	void CompleteDeferredStartupWorkbench();
 	void CloseWorkbench() noexcept;

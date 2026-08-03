@@ -28,3 +28,46 @@ Theme changes publish one revisioned snapshot and invalidate all affected
 surfaces. Validate native and extension-contributed UI at supported DPI values
 and in high-contrast mode. Missing tokens use a documented fallback; missing
 capabilities are never silently presented as supported.
+
+## VS Code color-theme compatibility boundary
+
+`CColorThemeRegistry` is the native boundary for VS Code `contributes.themes`.
+It discovers themes from enabled installed extension roots, reads JSONC theme
+files, supports relative `include`/`extends` inheritance inside the extension,
+and resolves `workbench.colorTheme` by manifest id or label. `colors` entries
+are projected into the semantic `ThemePalette`; translucent values are
+pre-composited before they reach GDI controls. A malformed, oversized, cyclic,
+or out-of-root theme fails closed and leaves the previous/native fallback
+palette intact.
+
+`ThemePalette.sideBar` represents `sideBar.background` for the Primary Side Bar
+and its Explorer/Source Control/Extensions containers. `ThemePalette.panel`
+represents the Secondary Side Bar/legacy right-host surface, while
+`ThemePalette.bottomPanel` represents the distinct `panel.background` role used
+by the bottom Panel and its Problems/Output tools. Sakura's embedded Dark
+default deliberately keeps Explorer at `#293134` and the right/Outline/Panel
+surfaces at `#252526`; keep those roles separate when adding a Workbench
+consumer.
+
+`tokenColors`, `semanticTokenColors`, and `semanticHighlighting` are parsed and
+projected into the editor's typed native categories (comment, string, number,
+keyword, type, function, variable, constant, regexp, tag, attribute, and
+invalid). The projection preserves the source rules and applies the published
+rule order, and semantic foregrounds override TextMate foregrounds when
+`semanticHighlighting` is true. This is real rendering integration, but it is
+not a full TextMate grammar/scope-selector engine: unknown scopes and italic
+font styles remain explicit unsupported portions of the boundary.
+`contributes.iconThemes` and `workbench.iconTheme` are a separate capability and
+remain governed by `workbench/icons/CLAUDE.md`.
+
+The registry also owns the two built-in Sakura defaults as embedded VS Code
+JSONC theme documents (`sakura.default-dark` and `sakura.default-light`, owned
+by the `sakura.builtin` virtual extension). `CEditWnd::RefreshColorThemes()`
+registers them on every refresh before enabled extension contributions, so the
+Color Theme picker, `workbench.colorTheme` writeback, JSONC loading, and
+`ProjectPalette` projection use one path for built-in and OpenVSX themes. The
+empty setting and an unreadable third-party setting first resolve to the built-in
+theme matching Sakura's saved Dark/Light preference. The compiled
+`CThemeService::PaletteFor()` values remain the deterministic fail-closed fallback
+when the registry itself cannot load; focused tests require the embedded
+documents to produce exactly the same `ThemePalette`.

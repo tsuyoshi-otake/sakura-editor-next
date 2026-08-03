@@ -84,6 +84,32 @@ bool EnsureTerminalClass( HINSTANCE instance )
 	return ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
 }
 
+bool ReadNativeImeResult( HWND window, std::wstring& result )
+{
+	const HIMC context = ::ImmGetContext(window);
+	if( context == nullptr ) return false;
+	const LONG byteCount = ::ImmGetCompositionStringW(context, GCS_RESULTSTR, nullptr, 0);
+	if( byteCount < 0 || (byteCount % static_cast<LONG>(sizeof(wchar_t))) != 0 ) {
+		::ImmReleaseContext(window, context);
+		return false;
+	}
+	try {
+		result.assign(static_cast<std::size_t>(byteCount) / sizeof(wchar_t), L'\0');
+	} catch( ... ) {
+		::ImmReleaseContext(window, context);
+		return false;
+	}
+	if( byteCount == 0 ) {
+		::ImmReleaseContext(window, context);
+		return true;
+	}
+	const LONG copied = ::ImmGetCompositionStringW(context, GCS_RESULTSTR, result.data(), byteCount);
+	::ImmReleaseContext(window, context);
+	if( copied < 0 || copied > byteCount || (copied % static_cast<LONG>(sizeof(wchar_t))) != 0 ) return false;
+	result.resize(static_cast<std::size_t>(copied) / sizeof(wchar_t));
+	return true;
+}
+
 TerminalKeyEvent KeyEventFromMessage( const MSG& message ) noexcept
 {
 	TerminalKeyEvent event;
@@ -128,6 +154,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	SakuraTerminalInputAdapter* inputAdapter{};
 	InputSink inputSink;
 	ResizeSink resizeSink;
+	CTerminalWnd::ImeResultReader imeResultReader;
 	HFONT font{};
 	HFONT boldFont{};
 	HDC backBufferDc{};
@@ -169,6 +196,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	bool selecting{};
 	bool selectionMoved{};
 	bool caretShown{};
+	TerminalSelectionPoint selectionOrigin{};
 	TerminalSelectionPoint selectionAnchor{};
 	TerminalSelectionPoint selectionActive{};
 	unsigned int pressedMouseButton{ 3 };
@@ -176,6 +204,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	std::vector<std::uint8_t> pendingInteractiveInput;
 	bool inputBackpressured{};
 	bool inputRejected{};
+	bool imeComposing{};
 	bool closed{};
 	bool useTerminalProfileColors{ true };
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
@@ -733,6 +762,18 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		return TerminalCellFromPoint(Viewport(), x, y, cellWidth, cellHeight, model ? model->Columns() : 0);
 	}
 
+	void UpdateSelection( TerminalSelectionPoint point ) noexcept
+	{
+		selectionMoved = point != selectionOrigin;
+		if( !selectionMoved ) {
+			selectionAnchor = selectionActive = selectionOrigin;
+			return;
+		}
+		const auto range = NormalizeTerminalSelection(*model, selectionOrigin, point);
+		selectionAnchor = range.anchor;
+		selectionActive = range.active;
+	}
+
 	bool HasSelection() const noexcept
 	{
 		return model != nullptr && selectionAnchor != selectionActive;
@@ -741,6 +782,8 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	void ClearSelection()
 	{
 		selectionAnchor = selectionActive;
+		selectionOrigin = selectionActive;
+		selectionMoved = false;
 		::InvalidateRect(window, nullptr, FALSE);
 	}
 
@@ -859,11 +902,11 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 	}
 
-	[[nodiscard]] bool PaintShapedDirectWrite( HDC memory, const RECT& paintRect ) noexcept
+	[[nodiscard]] bool PaintShapedDirectWrite( HDC memory, const RECT& targetRect ) noexcept
 	{
 		TerminalDWriteFrame frame;
 		::GdiFlush();
-		if( dwriteRenderer.BeginFrame(memory, paintRect, frame) != TerminalDWriteFrameOutcome::Rendered ) return false;
+		if( dwriteRenderer.BeginFrame(memory, targetRect, frame) != TerminalDWriteFrameOutcome::Rendered ) return false;
 		for( const auto& cluster : renderPlan.ShapedClusters() ) {
 			const auto text = renderPlan.Text(cluster.textOffset, cluster.textLength);
 			if( text.empty() || !dwriteRenderer.DrawCluster(cluster, text) ) {
@@ -887,6 +930,9 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 		const bool buffered = EnsureBackBuffer(dc);
 		const HDC memory = buffered ? backBufferDc : dc;
+		RECT dwriteTargetRect{};
+		if( buffered ) dwriteTargetRect = { 0, 0, backBufferSize.cx, backBufferSize.cy };
+		else ::GetClientRect(window, &dwriteTargetRect);
 		const auto defaultColors = ResolveTerminalRenderDefaults(palette, useTerminalProfileColors);
 		const COLORREF defaultBackground = defaultColors.background;
 		const COLORREF defaultForeground = defaultColors.foreground;
@@ -932,7 +978,12 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 				// Locale refresh and DirectWrite factory creation are both gated behind
 				// an eligible shaped cluster, so ASCII-only terminal frames remain GDI.
 				RefreshDWriteConfiguration(false);
-				if( !PaintShapedDirectWrite(memory, paint.rcPaint) ) PaintShapedGdiFallbacks(memory, selectedFont);
+				// ID2D1DCRenderTarget uses the bound rectangle as its target geometry.
+				// Model-owned glyph rectangles are absolute client coordinates, so binding
+				// only a dirty row can clip every shaped glyph below that row's local
+				// target height. Keep the target at the stable client/DIB bounds while the
+				// render plan and DC clip still restrict actual work to paint.rcPaint.
+				if( !PaintShapedDirectWrite(memory, dwriteTargetRect) ) PaintShapedGdiFallbacks(memory, selectedFont);
 			}
 			if( savedDc != 0 ) ::RestoreDC(memory, savedDc);
 		}
@@ -971,6 +1022,40 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		auto bytes = EncodeTerminalText(text);
 		if( alt ) bytes.insert(bytes.begin(), '\x1b');
 		Send(bytes);
+	}
+
+	bool HandleImeResult()
+	{
+		std::wstring result;
+		try {
+			if( !imeResultReader || !imeResultReader(window, result) ) return false;
+		} catch( ... ) {
+			return false;
+		}
+		if( pendingHighSurrogate ) {
+			result.insert(result.begin(), pendingHighSurrogate);
+			pendingHighSurrogate = 0;
+		}
+		if( !result.empty() ) Send(EncodeTerminalText(result));
+		return true;
+	}
+
+	void ResetSessionInputState() noexcept
+	{
+		if( window ) {
+			::KillTimer(window, kInputRetryTimer);
+			if( imeComposing ) {
+				if( const HIMC context = ::ImmGetContext(window) ) {
+					::ImmNotifyIME(context, NI_COMPOSITIONSTR, CPS_CANCEL, 0);
+					::ImmReleaseContext(window, context);
+				}
+			}
+		}
+		pendingHighSurrogate = 0;
+		pendingInteractiveInput.clear();
+		inputBackpressured = false;
+		inputRejected = false;
+		imeComposing = false;
 	}
 
 	LRESULT HandleMessage( UINT message, WPARAM wParam, LPARAM lParam )
@@ -1019,6 +1104,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			HandleChar(static_cast<wchar_t>(wParam), true);
 			return 0;
 		case WM_IME_STARTCOMPOSITION: {
+			imeComposing = true;
 			const HIMC context = ::ImmGetContext(window);
 			if( context ) {
 				COMPOSITIONFORM form{};
@@ -1029,6 +1115,20 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			}
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		}
+		case WM_IME_COMPOSITION:
+			// Some IMEs deliver committed text only through GCS_RESULTSTR. Relying
+			// on DefWindowProc to synthesize WM_CHAR makes input depend on the IME
+			// and on whether the child is hosting a full-screen terminal program.
+			if( (lParam & GCS_RESULTSTR) != 0 && HandleImeResult() ) return 0;
+			return ::DefWindowProcW(window, message, wParam, lParam);
+		case WM_IME_ENDCOMPOSITION:
+			imeComposing = false;
+			return ::DefWindowProcW(window, message, wParam, lParam);
+		case WM_IME_CHAR:
+			// Own the fallback path too instead of asking DefWindowProc to post a
+			// second message whose behavior varies between Unicode IMEs.
+			HandleChar(static_cast<wchar_t>(wParam), false);
+			return 0;
 		case WM_LBUTTONDOWN:
 		case WM_MBUTTONDOWN:
 		case WM_RBUTTONDOWN: {
@@ -1042,7 +1142,8 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			} else if( message == WM_LBUTTONDOWN ) {
 				selecting = true;
 				selectionMoved = false;
-				selectionAnchor = selectionActive = PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+				selectionOrigin = PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
+				selectionAnchor = selectionActive = selectionOrigin;
 				::SetCapture(window);
 				::InvalidateRect(window, nullptr, FALSE);
 			}
@@ -1058,10 +1159,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) {
 				SendMouse(TerminalMouseAction::Move, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), pressedMouseButton, wParam);
 			} else if( selecting ) {
-				const auto next = PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-				selectionMoved = selectionMoved || next != selectionAnchor;
-				selectionActive = next;
-				if( selectionActive.column < (model ? model->Columns() : 0) ) ++selectionActive.column;
+				UpdateSelection(PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
 				::InvalidateRect(window, nullptr, FALSE);
 			}
 			return 0;
@@ -1081,12 +1179,23 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 				scrollbarSuppressedButtons &= ~buttonMask;
 				return 0;
 			}
+			if( button == 2 ) {
+				switch( ResolveTerminalRightClick(HasSelection(), MouseReporting(), (wParam & MK_SHIFT) != 0) ) {
+				case TerminalRightClickAction::CopySelection:
+					if( CopySelectionToClipboard() ) ClearSelection();
+					pressedMouseButton = 3;
+					return 0;
+				case TerminalRightClickAction::PasteClipboard:
+					PasteFromClipboard();
+					pressedMouseButton = 3;
+					return 0;
+				case TerminalRightClickAction::SendToApplication:
+					break;
+				}
+			}
 			if( MouseReporting() && (wParam & MK_SHIFT) == 0 ) SendMouse(TerminalMouseAction::Release, GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam), button, wParam);
 			if( selecting ) {
-				const auto next = PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam));
-				selectionMoved = selectionMoved || next != selectionAnchor;
-				selectionActive = next;
-				if( selectionMoved && selectionActive.column < (model ? model->Columns() : 0) ) ++selectionActive.column;
+				UpdateSelection(PointToCell(GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)));
 				selecting = false;
 				::ReleaseCapture();
 				::InvalidateRect(window, nullptr, FALSE);
@@ -1185,8 +1294,14 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 };
 
 CTerminalWnd::CTerminalWnd()
+	: CTerminalWnd(ReadNativeImeResult)
+{
+}
+
+CTerminalWnd::CTerminalWnd( ImeResultReader imeResultReader )
 	: m_impl(std::make_unique<Impl>())
 {
+	m_impl->imeResultReader = std::move(imeResultReader);
 }
 
 CTerminalWnd::~CTerminalWnd()
@@ -1258,6 +1373,11 @@ void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 	// lockstep with the workbench theme.
 	m_impl->dwriteRenderer.Invalidate();
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+}
+
+void CTerminalWnd::ResetSessionInputState() noexcept
+{
+	m_impl->ResetSessionInputState();
 }
 
 void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScreenRows )

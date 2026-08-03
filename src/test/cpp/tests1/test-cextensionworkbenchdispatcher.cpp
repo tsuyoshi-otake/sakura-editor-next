@@ -223,7 +223,7 @@ protected:
 	{
 		m_dispatcher.reset();
 		m_bridge.reset();
-		if (m_runtime) m_runtime->Stop();
+		if (m_runtime) static_cast<void>(m_runtime->Stop());
 		m_runtime.reset();
 		m_secrets.reset();
 		std::error_code ignored;
@@ -278,12 +278,13 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RoutesCommandsStatusBarAndTreeViewsWit
 
 	auto status = Dispatch("workbench/statusBar/update", R"json({
 		"handle":"status:test.sample:4:1","itemId":"test.status","extensionId":"test.sample","generation":4,
-		"alignment":"right","priority":20,"text":"$(check) Ready","tooltip":{"markdown":"All good"},
+		"alignment":"right","priority":20,"name":"Sample Status","text":"$(check) Ready","tooltip":{"markdown":"All good"},
 		"command":{"command":"test.run"},"accessibilityInformation":{"label":"Ready"},"visible":true
 	})json");
 	ASSERT_TRUE(status.success) << status.errorMessage;
 	const auto statusItems = m_status.Snapshot();
 	ASSERT_EQ(1u, statusItems.size());
+	EXPECT_EQ(L"Sample Status", statusItems.front().name);
 	EXPECT_EQ(L"test.run", statusItems.front().command);
 	EXPECT_EQ(L"All good", statusItems.front().tooltip);
 	EXPECT_FALSE(Dispatch("workbench/statusBar/remove",

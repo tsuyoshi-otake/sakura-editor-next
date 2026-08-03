@@ -87,6 +87,22 @@ backend whose service owner remains active.
   fail closed at this adapter boundary. They remain explicit Phase 5/6 gates and
   must not be approximated with legacy active-tool state.
 
+## Title-bar Account and Manage actions (2026-08-02)
+
+- In VS Code's default vertical Activity Bar, Accounts and Manage are lower
+  **global actions**, not ViewContainers. They move to the title bar only when
+  the Activity Bar itself is moved to the top or bottom.
+- **Documented divergence:** this native adapter has no Activity Bar position
+  setting or typed lower-global-action section yet. It therefore retains Account
+  and Manage in the title bar rather than adding them as `ActivityBarItem`s and
+  falsely treating them as draggable Primary Side Bar ViewContainers. Account
+  remains an explicit "No account provider configured" boundary; Manage contains
+  only workbench commands with real native executors.
+- When Activity Bar placement is implemented, add a typed global-action group
+  and place Account/Manage at the bottom only for the vertical position, or in
+  the title bar only for top/bottom positions. Do not duplicate those actions or
+  add placeholder Search/Run and Debug containers in the meantime.
+
 ## Moving a ViewContainer between the side bars (2026-08-01)
 
 - The gesture reproduces VS Code's `CompositeDragAndDrop`: an Activity Bar icon
@@ -230,6 +246,27 @@ through the native window. Command Palette, arbitrary extension view
 contributions, Debug Console, Ports, and Run and Debug still require production
 wiring.
 
+## Status Bar Notifications and Visibility (2026-08-03)
+
+- The rightmost entry is the built-in `status.notifications` item. It executes
+  `notifications.showList` / `notifications.hideList`, shows the bell-dot glyph
+  while unread notifications exist, and remains present even when every other
+  status item is hidden. A timed-out toast retracts only its transient popup;
+  the notification remains in the center until its explicit close or action.
+- Status-bar customization is model-backed. Right-clicking the bar exposes the
+  VS Code-shaped checked entry list, a context-specific Hide action, and Hide
+  Status Bar. Hidden stable IDs are stored in the selected profile's User scope
+  under `workbench.statusbar.hidden`; an extension item uses
+  `<extensionId>.<itemId>` and its contributed `name` is the menu label.
+- Use upstream stable IDs when VS Code owns the concept, including `status.scm`,
+  `status.editor.selection`, `status.editor.eol`, `status.editor.encoding`,
+  `status.editor.inputMode`, `status.editor.zoom`, and `status.notifications`.
+  **Documented divergence:** Sakura's character-code display and macro-recording
+  indicator have no VS Code counterparts. Their IDs are therefore explicitly
+  product-owned as `sakura.status.editor.characterCode` and
+  `sakura.status.macroRecording`; do not disguise them under unrelated VS Code
+  IDs merely to make the customization menu look canonical.
+
 ## Extension Status Bar Item Hovers (2026-08-01)
 
 - Extension-contributed status bar items get a real **hover**, not a Win32
@@ -354,8 +391,10 @@ wiring.
 - **The imported vectors and the substitute dot are now a degraded path, not the
   normal one.** The two dozen vector icons in
   [`../workbench/icons/CodiconsActivityIcons.h`](../workbench/icons/CodiconsActivityIcons.h)
-  are still the authority for icons drawn as GDI paths (Activity Bar, title bar,
-  tab strip), and `ThemeIconResolver` still falls back to them — and finally to
+  are the GDI fallback when the bundled font cannot be registered. The Activity
+  Bar and native title bar normally use their matching bundled codicon font
+  glyphs; the tab strip retains its component-owned GDI path.
+  `ThemeIconResolver` still falls back to them and finally to
   the substitute dot `Icon::RecordSmall` — but for `$(name)` text resolution that
   only happens when `CCodiconFont::Instance().FaceName()` is empty, i.e. the
   embedded resource is missing or GDI refused it. Passing an empty built-in face

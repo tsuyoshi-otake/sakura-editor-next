@@ -199,6 +199,9 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 			EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
 		}
 	}
+	EXPECT_TRUE(registry.Find("notifications.showList").has_value());
+	EXPECT_TRUE(registry.Find("notifications.hideList").has_value());
+	EXPECT_TRUE(registry.Find("workbench.action.toggleStatusbarVisibility").has_value());
 
 	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 4> bindings = {
 		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.explorer.palette" },
@@ -525,6 +528,9 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 	int problemsCalls{};
 	int outputCalls{};
 	int openFolderCalls{};
+	int showNotificationsCalls{};
+	int hideNotificationsCalls{};
+	int toggleStatusbarCalls{};
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
 		.openFolder = [&openFolderCalls] {
 			++openFolderCalls;
@@ -551,6 +557,21 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 			return workbench::commands::WorkbenchCommandExecutionResult{
 				EWorkbenchCommandExecutionStatus::Succeeded, {} };
 		},
+		.showNotifications = [&showNotificationsCalls] {
+			++showNotificationsCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.hideNotifications = [&hideNotificationsCalls] {
+			++hideNotificationsCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.toggleStatusbarVisibility = [&toggleStatusbarCalls] {
+			++toggleStatusbarCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
 	}).status);
 	const auto context = EnabledContext();
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
@@ -563,11 +584,20 @@ TEST(WorkbenchCommandRegistry, BuiltinExecutorsAreBoundAtomicallyAndReachTypedSu
 		registry.Execute("workbench.action.output.toggleOutput", context).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 		registry.Execute("workbench.action.files.openFolder", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("notifications.showList", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("notifications.hideList", context).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.action.toggleStatusbarVisibility", context).status);
 	EXPECT_EQ(1, sidebarCalls);
 	EXPECT_EQ(1, explorerCalls);
 	EXPECT_EQ(1, problemsCalls);
 	EXPECT_EQ(1, outputCalls);
 	EXPECT_EQ(1, openFolderCalls);
+	EXPECT_EQ(1, showNotificationsCalls);
+	EXPECT_EQ(1, hideNotificationsCalls);
+	EXPECT_EQ(1, toggleStatusbarCalls);
 }
 
 TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)

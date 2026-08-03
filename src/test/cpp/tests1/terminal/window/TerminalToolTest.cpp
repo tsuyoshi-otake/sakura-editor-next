@@ -287,6 +287,75 @@ TEST(TerminalTool, QueueFullInteractiveInputIsRetriedInsteadOfSilentlyDiscarded)
 	::DestroyWindow(parent);
 }
 
+TEST(TerminalTool, SessionInputResetDropsBackpressuredBytesBeforeRebinding)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	std::string received;
+	renderer.SetInputSink([](std::span<const std::uint8_t>) {
+		return terminal::TerminalQueueInputResult::QueueFull;
+	});
+	::SendMessageW(renderer.GetHwnd(), WM_CHAR, L'旧', 1);
+
+	renderer.ResetSessionInputState();
+	renderer.SetInputSink([&received](std::span<const std::uint8_t> bytes) {
+		received.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
+	});
+	::SendMessageW(renderer.GetHwnd(), WM_TIMER, 0x5345, 0);
+	EXPECT_TRUE(received.empty());
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, ImeCharacterFallbackEncodesCommittedJapaneseAsUtf8Once)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	std::string received;
+	renderer.SetInputSink([&received](std::span<const std::uint8_t> bytes) {
+		received.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
+	});
+
+	::SendMessageW(renderer.GetHwnd(), WM_IME_CHAR, L'日', 1);
+	::SendMessageW(renderer.GetHwnd(), WM_IME_CHAR, L'本', 1);
+	EXPECT_EQ(std::string("\xe6\x97\xa5\xe6\x9c\xac", 6), received);
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, ImeCompositionCommitsTheCompleteJapaneseResultExactlyOnce)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	int reads = 0;
+	terminal::CTerminalWnd renderer([&reads](HWND, std::wstring& result) {
+		++reads;
+		result = L"日本語";
+		return true;
+	});
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	std::string received;
+	renderer.SetInputSink([&received](std::span<const std::uint8_t> bytes) {
+		received.append(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+		return terminal::TerminalQueueInputResult::Accepted;
+	});
+
+	::SendMessageW(renderer.GetHwnd(), WM_IME_COMPOSITION, 0, GCS_RESULTSTR);
+	EXPECT_EQ(1, reads);
+	EXPECT_EQ(std::string("\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e", 9), received);
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, VisibleLayoutBeforeActivationUsesViewportSizeForFirstSession)
 {
 	ToolHarness harness;
@@ -577,6 +646,70 @@ TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)
 	ASSERT_TRUE(tool.AddTerminal().has_value());
 	ASSERT_EQ(2u, harness.backends.size());
 	EXPECT_EQ(L"C:\\first", harness.backends[0]->workingDirectory);
+	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
+	tool.Close();
+}
+
+TEST(TerminalTool, WorkspaceResetClosesAllTabsAndCreatesOneReplacementInNewCwd)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\first");
+	tool.Activate();
+	ASSERT_TRUE(tool.AddTerminal().has_value());
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_EQ(3u, tool.TabCount());
+	ASSERT_TRUE(tool.HasTerminalSplit());
+
+	const auto reset = tool.ResetForWorkspace(L"C:\\second", true);
+	EXPECT_EQ(terminal::TerminalWorkspaceResetOutcome::Restarted, reset.outcome);
+	EXPECT_EQ(3u, reset.clearedTabCount);
+	EXPECT_FALSE(reset.closeDeadlineExceeded);
+	EXPECT_EQ(1u, tool.TabCount());
+	EXPECT_FALSE(tool.HasTerminalSplit());
+	ASSERT_EQ(4u, harness.backends.size());
+	for( std::size_t index = 0; index < 3; ++index ) {
+		EXPECT_EQ(1, harness.backends[index]->closeCalls.load());
+	}
+	EXPECT_EQ(L"C:\\second", harness.backends[3]->workingDirectory);
+	EXPECT_EQ(0, harness.backends[3]->closeCalls.load());
+	tool.Close();
+}
+
+TEST(TerminalTool, HiddenWorkspaceResetStaysEmptyUntilTerminalIsRevealed)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\first");
+	tool.Activate();
+	ASSERT_EQ(1u, tool.TabCount());
+
+	const auto reset = tool.ResetForWorkspace(L"C:\\second", false);
+	EXPECT_EQ(terminal::TerminalWorkspaceResetOutcome::Cleared, reset.outcome);
+	EXPECT_EQ(1u, reset.clearedTabCount);
+	EXPECT_EQ(0u, tool.TabCount());
+	ASSERT_EQ(1u, harness.backends.size());
+
+	EXPECT_TRUE(tool.EnsureSessionStarted());
+	ASSERT_EQ(2u, harness.backends.size());
+	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
+	tool.Close();
+}
+
+TEST(TerminalTool, WorkspaceReplacementStartFailureRemainsVisibleAndTyped)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetWorkingDirectory(L"C:\\first");
+	tool.Activate();
+	harness.failStart = true;
+
+	const auto reset = tool.ResetForWorkspace(L"C:\\second", true);
+	EXPECT_EQ(terminal::TerminalWorkspaceResetOutcome::RestartFailed, reset.outcome);
+	EXPECT_EQ(ERROR_ACCESS_DENIED, reset.errorCode);
+	ASSERT_EQ(1u, tool.TabCount());
+	EXPECT_EQ(terminal::TerminalSessionState::Failed, tool.Tabs()[0].state);
+	ASSERT_EQ(2u, harness.backends.size());
 	EXPECT_EQ(L"C:\\second", harness.backends[1]->workingDirectory);
 	tool.Close();
 }

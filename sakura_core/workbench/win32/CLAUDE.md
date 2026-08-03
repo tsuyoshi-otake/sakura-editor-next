@@ -63,10 +63,13 @@ policy, profile state, or native control lifetime.
 
 ## Dependency and Completion Boundary
 
-The Window adapter owns UI-thread application and preserves the last native
-state if this projection fails. Layout mutations always go through
-`WorkbenchLayoutStateService` before projection; this directory is never a
-second authority.
+`ProjectBuiltinWorkbench` is the composite boundary used by the Window adapter:
+it validates the physical Part projection and the active ViewContainer/View
+projection from the same committed snapshot, and exposes neither half when
+either one fails. The Window adapter owns UI-thread application and preserves
+the last native state if this projection fails. Layout mutations always go
+through `WorkbenchLayoutStateService` before projection; this directory is
+never a second authority.
 
 The current checkpoint covers built-in Part visibility/extent and the bounded
 active ViewContainer/View/focus mapping above. A later generic adapter must

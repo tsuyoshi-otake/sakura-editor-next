@@ -235,6 +235,33 @@ TEST(TerminalDWriteRenderer, AbsoluteCommandRectHonorsNonzeroBindClip)
 	EXPECT_EQ(0u, CountNotColorOutside(dib, background, modelRect));
 }
 
+TEST(TerminalDWriteRenderer, FullSurfaceBindKeepsJapaneseVisibleToPartialGdiCopy)
+{
+	ScopedCom com;
+	if( FAILED(com.Result()) && com.Result() != RPC_E_CHANGED_MODE ) GTEST_SKIP() << "COM unavailable";
+	constexpr COLORREF background = RGB(0x28, 0x2C, 0x34);
+	TestDib source;
+	TestDib destination;
+	ASSERT_TRUE(source.Create(160, 112));
+	ASSERT_TRUE(destination.Create(160, 112));
+	source.Fill(background);
+	destination.Fill(background);
+	TerminalDWriteRenderer renderer;
+	renderer.Configure(Configuration());
+	TerminalDWriteFrame frame;
+	const RECT surface{ 0, 0, source.Width(), source.Height() };
+	const RECT damage{ 0, 32, 160, 64 };
+	ASSERT_EQ(TerminalDWriteFrameOutcome::Rendered, renderer.BeginFrame(source.Dc(), surface, frame));
+	const RECT modelRect{ 8, 32, 40, 64 };
+	ASSERT_TRUE(renderer.DrawCluster({ modelRect, Style(), 0, 1 }, L"\u65e5"));
+	ASSERT_EQ(TerminalDWriteFrameOutcome::Rendered, renderer.FinalizeFrame(frame));
+	ASSERT_GT(CountNotColor(source, background, modelRect), 0u);
+	ASSERT_TRUE(::BitBlt(destination.Dc(), damage.left, damage.top, damage.right - damage.left,
+		damage.bottom - damage.top, source.Dc(), damage.left, damage.top, SRCCOPY));
+	EXPECT_GT(CountNotColor(destination, background, modelRect), 0u);
+	EXPECT_EQ(0u, CountNotColorOutside(destination, background, modelRect));
+}
+
 TEST(TerminalDWriteRenderer, CacheEntriesAndBytesStayWithinBound)
 {
 	ScopedCom com;

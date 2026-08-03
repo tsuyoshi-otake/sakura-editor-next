@@ -11,6 +11,7 @@ the `workbench::icons` namespace:
 | `CCodiconFont.h`/`.cpp` + `codicon.ttf` + `CodiconGlyphTable.h` | VS Code's built-in codicon vocabulary |
 | `ThemeIconResolver.h` | The pure joining step both call sites share |
 | `CodiconsActivityIcons.h` | Vector geometry for icons drawn as GDI paths, not text |
+| `CFileIconThemeRegistry.h`/`.cpp` | `contributes.iconThemes`, selection lookup, association precedence, and registered file-icon resources |
 
 `CExtensionIconFont.h`/`.cpp` reads an extension's `package.json`,
 decodes the referenced icon font (WOFF1 or a bare TTF/OTF/TTC), registers it
@@ -99,14 +100,23 @@ will have that icon silently skipped (per-icon failure, not extension-wide
 failure — see `RegisterExtension`'s per-icon-tolerant contract in
 `CExtensionIconFont.h`), and the caller's existing fallback glyph applies.
 
-## Unsupported: `contributes.iconThemes` / Product Icon Themes
+## File Icon Themes: Supported Boundary
 
-Only `contributes.icons` is implemented. VS Code's product icon theme
-mechanism (`contributes.iconThemes`, `workbench.iconTheme` setting, `.json`
-icon-theme definition files that *remap* the built-in codicon vocabulary) is
-not read, not parsed, and not registered by this component. An extension that
-only contributes an icon theme (no `contributes.icons`) contributes nothing
-visible through this registry.
+`CFileIconThemeRegistry` implements the file-icon-theme contribution point
+(`contributes.iconThemes`) and the `workbench.iconTheme` selection contract.
+It discovers JSONC theme documents from enabled extension roots, resolves
+`fileNames`, `fileExtensions`, `folderNames`, root-folder associations, light
+and high-contrast variants, and keeps registered font resources alive for the
+Explorer. The command and picker use the stable VS Code command id
+`workbench.action.selectIconTheme`.
+
+The native projection currently supports ordinary raster image files and
+registered icon fonts. Unsupported image formats such as SVG, unsupported
+font formats such as WOFF2, malformed documents, missing definitions, and
+paths outside an extension root fail closed; they do not become placeholder
+icons or silently reuse an unrelated icon. Advanced association forms that
+are not represented by the current native Explorer contract remain
+unsupported until their semantics can be implemented and tested.
 
 ## Unsupported: `"default"` as a String Alias
 
@@ -195,8 +205,11 @@ the vocabulary with a hand-picked set of vector icons:
   actually shipped, so a table/font version drift cannot pass unnoticed.
 
 [`CodiconsActivityIcons.h`](CodiconsActivityIcons.h)'s imported vector paths
-remain the authority for icons drawn as GDI paths rather than as text — the
-Activity Bar, title bar, and tab strip — and are unaffected by the bundled font.
+remain the GDI fallback for built-in icons when the bundled font cannot be
+registered. The Activity Bar and native title bar normally draw their matching
+codicon.ttf glyphs, preserving the same anti-aliased text rendering and normal
+weight across every built-in icon. The tab strip continues to use its vector
+path where that component owns a GDI-specific rendering path.
 
 Verified live on 2026-08-01 with the x64 Debug build and both `odangoo.otak-usage`
 and `odangoo.otak-monitor` installed: `$(circle-slash)`, `$(zap)`, `$(copy)`,

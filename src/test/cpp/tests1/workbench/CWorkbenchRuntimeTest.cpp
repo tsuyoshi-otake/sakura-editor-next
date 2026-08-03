@@ -17,6 +17,7 @@
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
+#include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
 
 #include <algorithm>
 #include <atomic>
@@ -79,6 +80,7 @@ using workbench::WorkbenchRuntimeDependencies;
 namespace layout = workbench::layout;
 namespace outputModel = workbench::output;
 namespace problems = workbench::problems;
+namespace statusbar = workbench::statusbar;
 namespace tasks = workbench::tasks;
 
 constexpr char kProfileId[] = "0123456789abcdef0123456789abcdef";
@@ -388,6 +390,32 @@ public:
 	std::optional<layout::WorkbenchLayoutStateSnapshot> lastSavedSnapshot;
 };
 
+class FakeStatusbarVisibilityMementoStore final : public statusbar::IStatusbarVisibilityMementoStore {
+public:
+	statusbar::StatusbarMementoLoadResult Load() override
+	{
+		++loadCalls;
+		return loadResult;
+	}
+
+	statusbar::StatusbarMementoSaveResult Save(const std::vector<std::string>& hiddenIds) override
+	{
+		++saveCalls;
+		lastSavedHiddenIds = hiddenIds;
+		return saveResult;
+	}
+
+	statusbar::StatusbarMementoLoadResult loadResult{
+		statusbar::EStatusbarMementoLoadStatus::NotFound, std::vector<std::string>{}, {}
+	};
+	statusbar::StatusbarMementoSaveResult saveResult{
+		statusbar::EStatusbarMementoSaveStatus::Persisted, {}
+	};
+	std::size_t loadCalls = 0;
+	std::size_t saveCalls = 0;
+	std::vector<std::string> lastSavedHiddenIds;
+};
+
 struct RuntimeTaskSessionState final {
 	explicit RuntimeTaskSessionState(tasks::TaskExecutionSessionCallbacks value)
 		: callbacks(std::move(value))
@@ -445,21 +473,25 @@ struct RuntimeFixture final {
 	explicit RuntimeFixture(
 		WorkbenchBootstrapContext bootstrap,
 		std::unique_ptr<FakeLayoutMementoStore> ownedLayoutStore = {},
-		std::shared_ptr<workbench::tasks::ITaskExecutionSessionFactory> taskFactory = {})
+		std::shared_ptr<workbench::tasks::ITaskExecutionSessionFactory> taskFactory = {},
+		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {})
 	{
 		auto ownedFiles = std::make_unique<FakeFileService>();
 		files = ownedFiles.get();
 		layoutStore = ownedLayoutStore.get();
+		statusbarStore = ownedStatusbarStore.get();
 		WorkbenchRuntimeDependencies dependencies;
 		dependencies.fileService = std::move(ownedFiles);
 		dependencies.layoutMementoStore = std::move(ownedLayoutStore);
 		dependencies.taskExecutionSessionFactory = std::move(taskFactory);
+		dependencies.statusbarVisibilityMementoStore = std::move(ownedStatusbarStore);
 		runtime = std::make_unique<CWorkbenchRuntime>(
 			std::move(bootstrap), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
 	}
 
 	FakeFileService* files = nullptr;
 	FakeLayoutMementoStore* layoutStore = nullptr;
+	FakeStatusbarVisibilityMementoStore* statusbarStore = nullptr;
 	std::unique_ptr<CWorkbenchRuntime> runtime;
 };
 
@@ -1541,6 +1573,28 @@ TEST(CWorkbenchRuntime, StopRequestCancelsABlockedFolderReadBeforeConfigurationA
 	target.workspaceUri = folder;
 	target.folderUri = folder;
 	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
+}
+
+TEST(CWorkbenchRuntime, RestoresAndImmediatelyPersistsProfileStatusbarVisibility)
+{
+	auto store = std::make_unique<FakeStatusbarVisibilityMementoStore>();
+	store->loadResult = {
+		statusbar::EStatusbarMementoLoadStatus::Loaded,
+		std::vector<std::string>{ "status.editor.eol" },
+		{}
+	};
+	RuntimeFixture fixture(Bootstrap(), {}, {}, std::move(store));
+
+	ASSERT_EQ(EWorkbenchRuntimeResultCode::Ready, fixture.runtime->Start().code);
+	EXPECT_EQ(1U, fixture.statusbarStore->loadCalls);
+	EXPECT_FALSE(fixture.runtime->StatusbarState().IsVisible("status.editor.eol", true));
+	ASSERT_TRUE(fixture.runtime->StatusbarState().SetHidden("status.editor.encoding", true));
+
+	const auto persisted = fixture.runtime->PersistStatusbarVisibility();
+	EXPECT_EQ(statusbar::EStatusbarMementoSaveStatus::Persisted, persisted.status);
+	ASSERT_EQ(1U, fixture.statusbarStore->saveCalls);
+	EXPECT_EQ((std::vector<std::string>{ "status.editor.encoding", "status.editor.eol" }),
+		fixture.statusbarStore->lastSavedHiddenIds);
 }
 
 TEST(CWorkbenchRuntime, RestoresAValidLayoutBeforeReadyAndSkipsAnUnchangedShutdownWrite)

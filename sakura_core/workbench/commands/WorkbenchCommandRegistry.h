@@ -104,6 +104,9 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor toggleOutput;
 	WorkbenchCommandExecutor selectTheme;
 	WorkbenchCommandExecutor selectFileIconTheme;
+	WorkbenchCommandExecutor showNotifications;
+	WorkbenchCommandExecutor hideNotifications;
+	WorkbenchCommandExecutor toggleStatusbarVisibility;
 };
 
 enum class EWorkbenchCommandRegistrationStatus : std::uint8_t {

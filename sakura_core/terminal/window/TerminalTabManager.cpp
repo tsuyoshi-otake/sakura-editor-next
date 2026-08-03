@@ -255,6 +255,34 @@ bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
 	return true;
 }
 
+TerminalTabClearResult TerminalTabManager::ClearTabs( std::chrono::steady_clock::time_point deadline ) noexcept
+{
+	TerminalTabClearResult result;
+	if( !m_impl || m_impl->closed ) {
+		result.status = TerminalTabClearStatus::Unavailable;
+		return result;
+	}
+	result.clearedTabCount = m_impl->tabs.size();
+	for( auto& tab : m_impl->tabs ) {
+		if( tab->session ) tab->session->BeginClose();
+	}
+	for( auto& tab : m_impl->tabs ) {
+		if( !tab->session ) continue;
+		const auto closed = tab->session->WaitForClose(deadline);
+		if( closed.status == TerminalSessionCloseWaitStatus::InProgress ) {
+			result.status = TerminalTabClearStatus::InProgress;
+			result.clearedTabCount = 0;
+			return result;
+		}
+		if( closed.status == TerminalSessionCloseWaitStatus::DeadlineExceeded ) {
+			result.status = TerminalTabClearStatus::DeadlineExceeded;
+		}
+	}
+	m_impl->tabs.clear();
+	m_impl->activeTabId.reset();
+	return result;
+}
+
 void TerminalTabManager::Resize( TerminalSize rawSize )
 {
 	if( m_impl->closed ) return;
@@ -279,7 +307,12 @@ bool TerminalTabManager::ResizeTab( std::uint64_t tabId, TerminalSize rawSize )
 void TerminalTabManager::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
+	const auto deadline = std::chrono::steady_clock::now()
+		+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
+	static_cast<void>(ClearTabs(deadline));
 	m_impl->closed = true;
+	// ClearTabs can return InProgress only when invoked by a session worker. This
+	// manager is UI-thread-owned, but retain the compatibility close as a fail-safe.
 	for( auto& tab : m_impl->tabs ) if( tab->session ) tab->session->Close();
 	m_impl->tabs.clear();
 	m_impl->activeTabId.reset();

@@ -16,6 +16,7 @@
 #include <functional>
 #include <memory>
 #include <span>
+#include <string>
 #include <vector>
 
 namespace terminal {
@@ -31,8 +32,10 @@ public:
 	// losing a key, paste, mouse report, or IME commit.
 	using InputSink = std::function<TerminalQueueInputResult(std::span<const std::uint8_t> bytes)>;
 	using ResizeSink = std::function<void(TerminalSize size)>;
+	using ImeResultReader = std::function<bool(HWND window, std::wstring& result)>;
 
 	CTerminalWnd();
+	explicit CTerminalWnd( ImeResultReader imeResultReader );
 	~CTerminalWnd();
 	CTerminalWnd( const CTerminalWnd& ) = delete;
 	CTerminalWnd& operator=( const CTerminalWnd& ) = delete;
@@ -43,6 +46,9 @@ public:
 	void SetInputAdapter( SakuraTerminalInputAdapter* inputAdapter );
 	void SetInputSink( InputSink sink );
 	void SetResizeSink( ResizeSink sink );
+	//! Drops input and IME state owned by the previously bound session. This must
+	//! be called before a renderer is rebound across a workspace/session boundary.
+	void ResetSessionInputState() noexcept;
 	void SetPalette( const theme::ThemePalette& palette );
 	void InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScreenRows );
 	void InvalidateAll();
