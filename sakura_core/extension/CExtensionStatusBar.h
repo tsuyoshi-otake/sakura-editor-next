@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief VS Code StatusBarItem 互換のウィンドウ状態モデル
 */
 /*

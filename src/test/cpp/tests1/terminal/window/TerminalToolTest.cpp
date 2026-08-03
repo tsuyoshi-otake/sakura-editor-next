@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 #include "pch.h"
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/CTerminalTool.h"
