@@ -2192,6 +2192,15 @@ BEGIN
     F_HELP_TOPMENU          "帮助"
     F_WINDOW_LIST_SUBMENU   "窗口列表"
     F_FILE_OPENRECENT_SUBMENU "打开最近的文件"
+    F_OPEN_WORKSPACE         "从文件打开工作区..."
+    F_ADD_FOLDER_TO_WORKSPACE "将文件夹添加到工作区..."
+    F_SAVE_WORKSPACE_AS      "工作区另存为..."
+    F_DUPLICATE_WORKSPACE    "在新窗口中复制工作区"
+    F_CLOSE_WORKSPACE        "关闭工作区"
+    STR_CLOSE_FOLDER         "关闭文件夹"
+    F_CLOSE_ACTIVE_EDITOR    "关闭编辑器"
+    F_OPEN_WORKSPACE_FOLDER  "打开文件夹..."
+    F_TOGGLE_MARKDOWN_PREVIEW "切换 Markdown 预览"
 END
 
 STRINGTABLE
@@ -2875,6 +2884,7 @@ BEGIN
     F_WINDOW_LIST           "窗口列表"
     F_FILE_USED_RECENTLY    "最近使用的文件"
     F_FOLDER_USED_RECENTLY  "最近使用的文件夹"
+    F_RECENT_WORKSPACE_LIST "最近打开的文件夹或工作区"
     F_CUSTMENU_LIST         "自定义菜单列表"
     F_USERMACRO_LIST        "已注册宏列表"
     F_PLUGIN_LIST           "插件命令列表"

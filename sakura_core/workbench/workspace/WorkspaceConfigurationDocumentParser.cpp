@@ -9,6 +9,8 @@
 
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 
+#include "workbench/workspace/WorkspaceFolderLimits.h"
+
 #include "platform/uri/UriIdentity.h"
 
 #include <algorithm>
@@ -21,7 +23,6 @@ namespace {
 
 constexpr std::size_t kMaximumUriComponentLength = 4096U;
 constexpr std::size_t kMaximumFolderDisplayNameLength = 256U;
-constexpr std::size_t kMaximumWorkspaceFolders = 256U;
 
 WorkspaceConfigurationParseResult Failed(EWorkspaceConfigurationDiagnosticCode code, const char* message)
 {
@@ -51,33 +52,6 @@ bool IsWorkspaceResourceUri(const platform::uri::Uri& uri) noexcept
 	return !uri.Scheme().empty() && !uri.Path().empty() && !uri.Query() && !uri.Fragment();
 }
 
-std::optional<platform::uri::Uri> Canonicalize(const platform::uri::Uri& uri)
-{
-	if (!HasBoundedUriEncoding(uri)) return std::nullopt;
-	const bool isFile = ToLowerInvariant(uri.Scheme()) == L"file";
-	const bool localFileAuthority = isFile && (uri.Authority().empty() || ToLowerInvariant(uri.Authority()) == L"localhost");
-	auto result = platform::uri::Uri::FromComponents(
-		ToLowerInvariant(uri.Scheme()), localFileAuthority ? std::wstring {} : uri.Authority(), uri.Path(),
-		uri.Query(), uri.Fragment(), isFile ? true : uri.HasAuthority());
-	return result ? std::move(result.value) : std::nullopt;
-}
-
-bool IsValidDisplayName(std::wstring_view value) noexcept
-{
-	return !value.empty() && value.size() <= kMaximumFolderDisplayNameLength
-		&& std::none_of(value.begin(), value.end(), [](wchar_t character) { return character <= 0x1f || character == 0x7f; });
-}
-
-std::optional<std::wstring> DeriveDisplayName(const platform::uri::Uri& uri)
-{
-	std::wstring_view path = uri.Path();
-	while (path.size() > 1 && path.back() == L'/') path.remove_suffix(1);
-	const auto separator = path.find_last_of(L'/');
-	const auto name = separator == std::wstring_view::npos ? path : path.substr(separator + 1);
-	if (!IsValidDisplayName(name)) return std::nullopt;
-	return std::wstring(name);
-}
-
 std::wstring NormalizeUriPath(std::wstring_view path)
 {
 	const bool absolute = !path.empty() && path.front() == L'/';
@@ -104,16 +78,95 @@ std::wstring NormalizeUriPath(std::wstring_view path)
 	return result;
 }
 
+bool IsWindowsDriveRoot(std::wstring_view path) noexcept
+{
+	return path.size() == 4U && path[0] == L'/'
+		&& ((path[1] >= L'A' && path[1] <= L'Z') || (path[1] >= L'a' && path[1] <= L'z'))
+		&& path[2] == L':' && path[3] == L'/';
+}
+
+bool IsUncShareRoot(std::wstring_view authority, std::wstring_view path) noexcept
+{
+	if (authority.empty() || path.size() < 3U || path.front() != L'/') return false;
+	const auto separator = path.find(L'/', 1U);
+	return separator != std::wstring_view::npos && separator == path.size() - 1U && separator > 1U;
+}
+
+std::wstring RemoveTrailingFolderSeparator(bool isFile, std::wstring_view authority, std::wstring path)
+{
+	while (path.size() > 1U && path.back() == L'/') {
+		if ((isFile && IsWindowsDriveRoot(path)) || (isFile && IsUncShareRoot(authority, path))) break;
+		path.pop_back();
+	}
+	return path;
+}
+
+std::optional<platform::uri::Uri> NormalizeFolderResource(const platform::uri::Uri& uri)
+{
+	if (!HasBoundedUriEncoding(uri)) return std::nullopt;
+	const std::wstring scheme = ToLowerInvariant(uri.Scheme());
+	const bool isFile = scheme == L"file";
+	std::wstring path = NormalizeUriPath(uri.Path());
+	path = RemoveTrailingFolderSeparator(isFile, uri.Authority(), std::move(path));
+	auto result = platform::uri::Uri::FromComponents(
+		scheme, uri.Authority(), std::move(path), uri.Query(), uri.Fragment(), isFile ? true : uri.HasAuthority());
+	return result ? std::move(result.value) : std::nullopt;
+}
+
+std::optional<platform::uri::Uri> Canonicalize(const platform::uri::Uri& uri)
+{
+	auto normalized = NormalizeFolderResource(uri);
+	if (!normalized) return std::nullopt;
+	const bool isFile = normalized->Scheme() == L"file";
+	const bool localFileAuthority = isFile
+		&& (normalized->Authority().empty() || ToLowerInvariant(normalized->Authority()) == L"localhost");
+	auto result = platform::uri::Uri::FromComponents(
+		normalized->Scheme(), localFileAuthority ? std::wstring {} : normalized->Authority(), normalized->Path(),
+		normalized->Query(), normalized->Fragment(), isFile ? true : normalized->HasAuthority());
+	return result ? std::move(result.value) : std::nullopt;
+}
+
+bool IsValidDisplayName(std::wstring_view value) noexcept
+{
+	return !value.empty() && value.size() <= kMaximumFolderDisplayNameLength
+		&& std::none_of(value.begin(), value.end(), [](wchar_t character) { return character <= 0x1f || character == 0x7f; });
+}
+
+std::optional<std::wstring> DeriveDisplayName(const platform::uri::Uri& uri)
+{
+	std::wstring_view path = uri.Path();
+	while (path.size() > 1 && path.back() == L'/') path.remove_suffix(1);
+	const auto separator = path.find_last_of(L'/');
+	const auto name = separator == std::wstring_view::npos ? path : path.substr(separator + 1);
+	if (!IsValidDisplayName(name)) return std::nullopt;
+	return std::wstring(name);
+}
+
 bool IsWindowsAbsolutePath(std::wstring_view value) noexcept
 {
 	return value.size() >= 3 && ((value[0] >= L'A' && value[0] <= L'Z') || (value[0] >= L'a' && value[0] <= L'z'))
 		&& value[1] == L':' && (value[2] == L'/' || value[2] == L'\\');
 }
 
+bool IsWindowsUncPath(std::wstring_view value) noexcept
+{
+	if (value.size() < 5U || (value[0] != L'\\' && value[0] != L'/')
+		|| (value[1] != L'\\' && value[1] != L'/')) return false;
+	const auto serverEnd = value.find_first_of(L"\\/", 2U);
+	return serverEnd != std::wstring_view::npos && serverEnd > 2U
+		&& serverEnd + 1U < value.size()
+		&& value.find_first_not_of(L"\\/", serverEnd + 1U) != std::wstring_view::npos;
+}
+
 std::optional<platform::uri::Uri> ResolvePath(const platform::uri::Uri& workspaceConfigUri, std::wstring path)
 {
 	if (path.empty() || path.size() > kMaximumUriComponentLength) return std::nullopt;
-	if (IsWindowsAbsolutePath(path)) {
+	if (IsWindowsAbsolutePath(path) || IsWindowsUncPath(path)) {
+		if (IsWindowsUncPath(path)) {
+			// Workspace JSON conventionally persists UNC paths with '/' separators,
+			// while Uri::FromWindowsPath accepts Win32's canonical '\\server' form.
+			std::replace(path.begin(), path.end(), L'/', L'\\');
+		}
 		auto absolute = platform::uri::Uri::FromWindowsPath(path);
 		if (!absolute) return std::nullopt;
 		return Canonicalize(*absolute.value);
@@ -185,7 +238,6 @@ WorkspaceConfigurationParseResult CWorkspaceConfigurationDocumentParser::Parse(
 	if (folders != root->end()) {
 		const auto* entries = std::get_if<platform::serialization::JsoncValue::Array>(&folders->second.Value());
 		if (!entries) return Failed(EWorkspaceConfigurationDiagnosticCode::FoldersMustBeArray, "workspace folders must be an array");
-		if (entries->size() > kMaximumWorkspaceFolders) return Failed(EWorkspaceConfigurationDiagnosticCode::MaximumFoldersExceeded, "workspace folder limit exceeded");
 		std::set<std::wstring, std::less<>> identities;
 		for (const auto& entry : *entries) {
 			const auto* folder = std::get_if<platform::serialization::JsoncValue::Object>(&entry.Value());
@@ -203,8 +255,11 @@ WorkspaceConfigurationParseResult CWorkspaceConfigurationDocumentParser::Parse(
 			if (const auto name = folder->find(L"name"); name != folder->end()) {
 				const auto* value = std::get_if<std::wstring>(&name->second.Value());
 				if (!value) return Failed(EWorkspaceConfigurationDiagnosticCode::FolderNameMustBeString, "workspace folder name must be a string");
-				if (!IsValidDisplayName(*value)) return Failed(EWorkspaceConfigurationDiagnosticCode::InvalidFolderName, "workspace folder name is invalid");
-				displayName = *value;
+				if (value->empty()) displayName = DeriveDisplayName(*uri);
+				else {
+					if (!IsValidDisplayName(*value)) return Failed(EWorkspaceConfigurationDiagnosticCode::InvalidFolderName, "workspace folder name is invalid");
+					displayName = *value;
+				}
 			} else displayName = DeriveDisplayName(*uri);
 			if (!displayName) return Failed(EWorkspaceConfigurationDiagnosticCode::InvalidFolderName, "workspace folder name is invalid");
 			auto identity = platform::uri::UriIdentityService::MakeComparisonKey(*uri);
@@ -213,6 +268,9 @@ WorkspaceConfigurationParseResult CWorkspaceConfigurationDocumentParser::Parse(
 				continue;
 			}
 			document.folders.push_back({ std::move(*uri), std::move(*displayName) });
+		}
+		if (document.folders.size() > kMaximumWorkspaceFolders) {
+			return Failed(EWorkspaceConfigurationDiagnosticCode::MaximumFoldersExceeded, "workspace folder limit exceeded");
 		}
 	}
 
@@ -234,6 +292,20 @@ WorkspaceConfigurationParseResult CWorkspaceConfigurationDocumentParser::Parse(
 		if (entries && result.document->folders.size() < entries->size()) result.diagnostics.push_back({ EWorkspaceConfigurationDiagnosticCode::DuplicateFolderUri, "duplicate workspace folder ignored" });
 	}
 	return result;
+}
+
+std::optional<platform::uri::Uri> CWorkspaceConfigurationDocumentParser::NormalizeFolderUri(
+	const platform::uri::Uri& uri)
+{
+	return NormalizeFolderResource(uri);
+}
+
+std::optional<platform::uri::Uri> CWorkspaceConfigurationDocumentParser::ResolveFolderPath(
+	const platform::uri::Uri& workspaceConfigUri, std::wstring_view path)
+{
+	auto canonicalConfigUri = Canonicalize(workspaceConfigUri);
+	if (!canonicalConfigUri || !IsWorkspaceResourceUri(*canonicalConfigUri)) return std::nullopt;
+	return ResolvePath(*canonicalConfigUri, std::wstring(path));
 }
 
 } // namespace workbench::workspace

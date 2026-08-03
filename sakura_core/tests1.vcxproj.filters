@@ -109,6 +109,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceWindowTransitionServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentServiceTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
@@ -176,6 +179,9 @@
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchCommandRegistryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\RecentlyOpenedWorkspaceServiceTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutMementoCodecTest.cpp">

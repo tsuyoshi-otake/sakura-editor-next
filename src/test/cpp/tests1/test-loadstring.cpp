@@ -6,10 +6,14 @@
 */
 #include "pch.h"
 #include "CSelectLang.h"
+#include "func/CFuncLookup.h"
+#include "window/CEditWnd.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 namespace {
@@ -72,6 +76,113 @@ public:
 private:
 	std::filesystem::path m_path;
 };
+
+std::filesystem::path GetCurrentProcessDirectory()
+{
+	std::array<wchar_t, 32768> path{};
+	const auto length = ::GetModuleFileNameW(nullptr, path.data(), static_cast<DWORD>(path.size()));
+	if (length == 0 || length >= path.size()) {
+		throw std::runtime_error("GetModuleFileNameW failed");
+	}
+	return std::filesystem::path(std::wstring_view(path.data(), length)).parent_path();
+}
+
+//! Restores both the selected resource module and thread UI language on all
+//! GoogleTest exit paths, including ASSERT_*/exception unwinding.
+class ScopedLanguageSelection final {
+public:
+	ScopedLanguageSelection()
+		: m_threadLanguage(::GetThreadUILanguage())
+		, m_hadLanguageEnvironment(!CSelectLang::gm_Langs.empty())
+	{
+		if (m_hadLanguageEnvironment && CSelectLang::gm_Selected < CSelectLang::gm_Langs.size()) {
+			m_previousDll = CSelectLang::GetLangInfo(CSelectLang::gm_Selected).GetDllName();
+		}
+	}
+
+	~ScopedLanguageSelection()
+	{
+		if (m_hadLanguageEnvironment) {
+			CSelectLang::ChangeLang(m_previousDll);
+		} else {
+			CSelectLang::ChangeLang(L"");
+			CSelectLang::gm_Langs.clear();
+			CSelectLang::gm_Selected = 0;
+		}
+		::SetThreadUILanguage(m_threadLanguage);
+	}
+
+	ScopedLanguageSelection(const ScopedLanguageSelection&) = delete;
+	ScopedLanguageSelection& operator=(const ScopedLanguageSelection&) = delete;
+
+private:
+	LANGID m_threadLanguage;
+	bool m_hadLanguageEnvironment;
+	std::filesystem::path m_previousDll;
+};
+
+struct FileMenuLocaleExpectation {
+	const wchar_t* dllName;
+	WORD languageId;
+	const wchar_t* openFolder;
+	const wchar_t* openWorkspace;
+	const wchar_t* recentWorkspace;
+	const wchar_t* closeFolder;
+	const wchar_t* closeWorkspace;
+};
+
+//! This is the complete function-code surface of the File menu's v8 default,
+//! including its ordinary submenu labels and special recent projections.
+constexpr std::array<int, 41> kV8FileMenuFunctionCodes = {
+	F_FILE_TOPMENU,
+	F_FILENEW,
+	F_FILENEW_NEWWINDOW,
+	F_FILEOPEN,
+	F_OPEN_WORKSPACE_FOLDER,
+	F_OPEN_WORKSPACE,
+	F_FILE_OPENRECENT_SUBMENU,
+	F_RECENT_WORKSPACE_LIST,
+	F_ADD_FOLDER_TO_WORKSPACE,
+	F_SAVE_WORKSPACE_AS,
+	F_DUPLICATE_WORKSPACE,
+	F_FILESAVE,
+	F_FILESAVEAS_DIALOG,
+	F_FILESAVEALL,
+	F_CLOSE_ACTIVE_EDITOR,
+	F_CLOSE_WORKSPACE,
+	F_WINCLOSE,
+	F_EXITALL,
+	F_FILESAVECLOSE,
+	F_FILECLOSE,
+	F_FILECLOSE_OPEN,
+	F_FILE_REOPEN_SUBMENU,
+	F_FILE_REOPEN,
+	F_FILE_REOPEN_SJIS,
+	F_FILE_REOPEN_JIS,
+	F_FILE_REOPEN_EUC,
+	F_FILE_REOPEN_LATIN1,
+	F_FILE_REOPEN_UNICODE,
+	F_FILE_REOPEN_UNICODEBE,
+	F_FILE_REOPEN_UTF8,
+	F_FILE_REOPEN_CESU8,
+	F_FILE_REOPEN_UTF7,
+	F_PRINT,
+	F_PRINT_PREVIEW,
+	F_PRINT_PAGESETUP,
+	F_PROPERTY_FILE,
+	F_BROWSE,
+	F_FILE_RCNTFLDR_SUBMENU,
+	F_FOLDER_USED_RECENTLY,
+	F_GROUPCLOSE,
+	F_EXITALLEDITORS,
+};
+
+std::wstring ResolveFileMenuFunctionName(const CFuncLookup& lookup, int functionCode)
+{
+	std::array<wchar_t, 256> buffer{};
+	(void)lookup.Funccode2Name(functionCode, buffer.data(), buffer.size());
+	return buffer.data();
+}
 
 } // namespace
 
@@ -169,4 +280,74 @@ TEST(LoadStringW, LoadStringResource101)
 {
 	// 対応する文字列リソースが存在しない機能IDを指定
 	EXPECT_THAT(LS(F_EXPANDPARAMETER), StrEq(L""));
+}
+
+TEST(FileMenuLocalization, AllV8FileFunctionNamesResolveFromEachSelectedRuntimeResource)
+{
+	ScopedLanguageSelection restoreLanguage;
+	const auto resourceDirectory = GetCurrentProcessDirectory();
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"))
+		<< "build-sln must stage sakura_lang_en_US.dll beside tests1.exe";
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"))
+		<< "build-sln must stage sakura_lang_zh_CN.dll beside tests1.exe";
+
+	CSelectLang::InitializeLanguageEnvironment();
+	const std::array locales = {
+		FileMenuLocaleExpectation{ L"", MAKELANGID(LANG_JAPANESE, SUBLANG_JAPANESE_JAPAN),
+			L"フォルダーを開く...", L"ファイルからワークスペースを開く...", L"最近使用したフォルダーまたはワークスペース", L"フォルダーを閉じる", L"ワークスペースを閉じる" },
+		FileMenuLocaleExpectation{ L"sakura_lang_en_US.dll", MAKELANGID(LANG_ENGLISH, SUBLANG_ENGLISH_US),
+			L"Open Folder...", L"Open Workspace from File...", L"Recently Opened Folder or Workspace", L"Close Folder", L"Close Workspace" },
+		FileMenuLocaleExpectation{ L"sakura_lang_zh_CN.dll", MAKELANGID(LANG_CHINESE, SUBLANG_CHINESE_SIMPLIFIED),
+			L"打开文件夹...", L"从文件打开工作区...", L"最近打开的文件夹或工作区", L"关闭文件夹", L"关闭工作区" },
+	};
+	CFuncLookup lookup;
+	for (const auto& locale : locales) {
+		SCOPED_TRACE(locale.dllName);
+		CSelectLang::ChangeLang(locale.dllName);
+		ASSERT_EQ(locale.languageId, CSelectLang::getDefaultLangId());
+
+		for (const int functionCode : kV8FileMenuFunctionCodes) {
+			SCOPED_TRACE(functionCode);
+			std::wstring directResource;
+			try {
+				directResource = CSelectLang::LoadStringW(static_cast<UINT>(functionCode));
+			}
+			catch (const std::out_of_range&) {
+				ADD_FAILURE() << "selected language resource is missing File-menu function code " << functionCode;
+				continue;
+			}
+			EXPECT_FALSE(directResource.empty());
+			const auto menuName = ResolveFileMenuFunctionName(lookup, functionCode);
+			EXPECT_EQ(directResource, menuName);
+			EXPECT_NE(L"-- undefined name --", menuName);
+		}
+
+		EXPECT_EQ(locale.openFolder, ResolveFileMenuFunctionName(lookup, F_OPEN_WORKSPACE_FOLDER));
+		EXPECT_EQ(locale.openWorkspace, ResolveFileMenuFunctionName(lookup, F_OPEN_WORKSPACE));
+		EXPECT_EQ(locale.recentWorkspace, ResolveFileMenuFunctionName(lookup, F_RECENT_WORKSPACE_LIST));
+		EXPECT_EQ(locale.closeFolder, CSelectLang::LoadStringW(STR_CLOSE_FOLDER));
+		EXPECT_EQ(locale.closeWorkspace, CSelectLang::LoadStringW(
+			CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind::Workspace)));
+		EXPECT_EQ(STR_CLOSE_FOLDER, CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind::Folder));
+		EXPECT_EQ(0U, CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind::Empty));
+	}
+}
+
+TEST(FileMenuLocalization, LegacyMissingFunctionUsesTheSelectedLocaleUndefinedResource)
+{
+	ScopedLanguageSelection restoreLanguage;
+	const auto resourceDirectory = GetCurrentProcessDirectory();
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
+	CSelectLang::InitializeLanguageEnvironment();
+	CFuncLookup lookup;
+	for (const auto* dllName : { L"", L"sakura_lang_en_US.dll", L"sakura_lang_zh_CN.dll" }) {
+		SCOPED_TRACE(dllName);
+		CSelectLang::ChangeLang(dllName);
+		const auto expectedUndefinedName = CSelectLang::LoadStringW(static_cast<UINT>(F_DISABLE));
+		std::array<wchar_t, 256> name{};
+		EXPECT_FALSE(lookup.Funccode2Name(F_EXPANDPARAMETER, name.data(), name.size()));
+		EXPECT_EQ(expectedUndefinedName, name.data());
+		EXPECT_NE(L"-- undefined name --", name.data());
+	}
 }

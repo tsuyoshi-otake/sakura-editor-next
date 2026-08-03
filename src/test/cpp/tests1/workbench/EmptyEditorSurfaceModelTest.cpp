@@ -8,8 +8,9 @@
 
 #include <gtest/gtest.h>
 
+#include "workbench/commands/WorkbenchCommandRegistry.h"
 #include "workbench/editor/EmptyEditorSurfaceModel.h"
-#include "workbench/editor/OpenFolderChordState.h"
+#include "workbench/editor/WorkbenchKeybindingState.h"
 
 namespace workbench::editor {
 namespace {
@@ -29,22 +30,22 @@ TEST(EmptyEditorSurfaceModel, ExposesStableVsCodeCommandsAndJapaneseActions)
 	EXPECT_STREQ(L"Ctrl+K Ctrl+O", EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAction::OpenFolder));
 }
 
-TEST(OpenFolderChordState, ExpiresAtVsCodesFiveSecondInactivityDeadline)
+TEST(WorkbenchKeybindingState, ExpiresAtVsCodesFiveSecondInactivityDeadline)
 {
-	OpenFolderChordState state;
+	CtrlKChordState state;
 	state.Begin(100);
-	EXPECT_EQ(5000U, OpenFolderChordState::TimeoutMs);
+	EXPECT_EQ(5000U, CtrlKChordState::TimeoutMs);
 	EXPECT_TRUE(state.IsPending());
-	EXPECT_FALSE(state.ExpireIfNeeded(100 + OpenFolderChordState::TimeoutMs - 1));
+	EXPECT_FALSE(state.ExpireIfNeeded(100 + CtrlKChordState::TimeoutMs - 1));
 	EXPECT_TRUE(state.IsPending());
-	EXPECT_TRUE(state.ExpireIfNeeded(100 + OpenFolderChordState::TimeoutMs));
+	EXPECT_TRUE(state.ExpireIfNeeded(100 + CtrlKChordState::TimeoutMs));
 	EXPECT_FALSE(state.IsPending());
 	EXPECT_EQ(0U, state.StartedAt());
 }
 
-TEST(OpenFolderChordState, FocusChangeCancelsThePendingChord)
+TEST(WorkbenchKeybindingState, FocusChangeCancelsThePendingChord)
 {
-	OpenFolderChordState state;
+	CtrlKChordState state;
 	state.Begin(1000, 11);
 
 	EXPECT_FALSE(state.CancelIfFocusChanged(11));
@@ -54,66 +55,121 @@ TEST(OpenFolderChordState, FocusChangeCancelsThePendingChord)
 	EXPECT_FALSE(state.ExpireIfNeeded(2500));
 }
 
-TEST(OpenFolderChordState, RepressedControlPassesThroughAndExactSecondStrokeExecutes)
+TEST(WorkbenchKeybindingState, CtrlKSecondStrokesSelectTheExactStableCommands)
 {
-	OpenFolderChordState state;
-	state.Begin(1000, 11);
-	const OpenFolderChordModifiers controlOnly{ .control = true };
+	const auto available = [](std::string_view) { return true; };
+	WorkbenchKeybindingState state;
+	const WorkbenchKeyModifiers controlOnly{ .control = true };
 
 	// Ctrl-up has no chord transition. Its re-press is a pass-through key-down,
 	// so Ctrl+K, Ctrl-up, Ctrl-down, Ctrl+O remains a valid VS Code chord.
-	EXPECT_EQ(EOpenFolderChordKeyDecision::PassThrough,
-		state.AdvancePendingKeyDown(0x11, controlOnly)); // VK_CONTROL after re-press
-	EXPECT_TRUE(state.IsPending());
-	EXPECT_EQ(EOpenFolderChordKeyDecision::Execute,
-		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), controlOnly));
-	EXPECT_FALSE(state.IsPending());
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 1000, 11, available).decision);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown(0x11, controlOnly, 1001, 11, available).decision); // VK_CONTROL
+	EXPECT_TRUE(state.IsChordPending());
+	auto result = state.HandleKeyDown('O', controlOnly, 1002, 11, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::OpenFolder, result.commandId);
+	EXPECT_FALSE(state.IsChordPending());
+
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 1100, 11, available).decision);
+	result = state.HandleKeyDown('S', {}, 1101, 11, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::SaveAll, result.commandId);
+
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 1200, 11, available).decision);
+	result = state.HandleKeyDown('F', {}, 1201, 11, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::CloseFolder, result.commandId);
 }
 
-TEST(OpenFolderChordState, MismatchingSecondKeydownsClearAndAreConsumed)
+TEST(WorkbenchKeybindingState, WrongModifiersAndSecondStrokesClearAndAreConsumed)
 {
-	const OpenFolderChordModifiers controlOnly{ .control = true };
-	OpenFolderChordState state;
-	state.Begin(500);
-	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
-		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('X'), controlOnly));
-	EXPECT_FALSE(state.IsPending());
-
-	state.Begin(600);
-	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
-		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), {}));
-	EXPECT_FALSE(state.IsPending());
-
-	state.Begin(700);
-	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
-		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), {
-			.control = true,
-			.shift = true,
-		}));
-	EXPECT_FALSE(state.IsPending());
-
-	state.Begin(800);
-	EXPECT_EQ(EOpenFolderChordKeyDecision::CancelAndConsume,
-		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('O'), {
-			.control = true,
-			.alt = true,
-		}));
-	EXPECT_FALSE(state.IsPending());
+	const auto available = [](std::string_view) { return true; };
+	const WorkbenchKeyModifiers controlOnly{ .control = true };
+	WorkbenchKeybindingState state;
+	const auto begin = [&] {
+		EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+			state.HandleKeyDown('K', controlOnly, 500, 1, available).decision);
+	};
+	begin();
+	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
+		state.HandleKeyDown('X', controlOnly, 501, 1, available).decision);
+	EXPECT_FALSE(state.IsChordPending());
+	begin();
+	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
+		state.HandleKeyDown('O', {}, 601, 1, available).decision);
+	begin();
+	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
+		state.HandleKeyDown('O', { .control = true, .shift = true }, 701, 1, available).decision);
+	begin();
+	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
+		state.HandleKeyDown('S', controlOnly, 801, 1, available).decision);
+	begin();
+	EXPECT_EQ(EWorkbenchKeyInputDecision::CancelChordAndConsume,
+		state.HandleKeyDown('F', { .alt = true }, 901, 1, available).decision);
 }
 
-TEST(OpenFolderChordState, RepeatedFirstStrokeKeepsTheChordPendingForTheAdapterToRenew)
+TEST(WorkbenchKeybindingState, RepeatedFirstStrokeRestartsAndRenewsTheTimeout)
 {
-	OpenFolderChordState state;
-	const OpenFolderChordModifiers controlOnly{ .control = true };
-	state.Begin(500);
-	EXPECT_EQ(EOpenFolderChordKeyDecision::Restart,
-		state.AdvancePendingKeyDown(static_cast<std::uint32_t>('K'), controlOnly));
-	EXPECT_TRUE(state.IsPending());
-	state.Refresh(700);
-	EXPECT_EQ(700U, state.StartedAt());
-	state.Clear();
-	EXPECT_FALSE(state.IsPending());
-	EXPECT_FALSE(state.ExpireIfNeeded(700 + OpenFolderChordState::TimeoutMs));
+	const auto available = [](std::string_view) { return true; };
+	WorkbenchKeybindingState state;
+	const WorkbenchKeyModifiers controlOnly{ .control = true };
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 500, 11, available).decision);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 700, 11, available).decision);
+	EXPECT_FALSE(state.ExpireIfNeeded(700 + CtrlKChordState::TimeoutMs - 1));
+	EXPECT_TRUE(state.ExpireIfNeeded(700 + CtrlKChordState::TimeoutMs));
+	EXPECT_FALSE(state.IsChordPending());
+}
+
+TEST(WorkbenchKeybindingState, FocusCancellationAndExactDirectBindingsAreModeledWithoutAnHwnd)
+{
+	const auto available = [](std::string_view) { return true; };
+	WorkbenchKeybindingState state;
+	const WorkbenchKeyModifiers controlOnly{ .control = true };
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 100, 11, available).decision);
+	EXPECT_TRUE(state.CancelIfFocusChanged(12));
+	EXPECT_FALSE(state.IsChordPending());
+
+	auto result = state.HandleKeyDown('R', controlOnly, 200, 12, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::OpenRecent, result.commandId);
+	result = state.HandleKeyDown('W', controlOnly, 201, 12, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::CloseActiveEditor, result.commandId);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown('R', { .control = true, .shift = true }, 202, 12, available).decision);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
+		state.HandleKeyDown('W', { .alt = true }, 203, 12, available).decision);
+}
+
+TEST(WorkbenchKeybindingState, RegisteredDisabledCommandIsStillATerminalConsumedBinding)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::EWorkbenchCommandRegistrationStatus;
+	using workbench::commands::WorkbenchCommandRegistry;
+	using workbench::commands::WorkbenchContextKeySnapshot;
+
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
+	WorkbenchKeybindingState state;
+	const auto result = state.HandleKeyDown('W', { .control = true }, 100, 1,
+		[&registry](std::string_view commandId) { return registry.Find(commandId).has_value(); });
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::CloseActiveEditor, result.commandId);
+
+	WorkbenchContextKeySnapshot disabled;
+	disabled.values.emplace("workbenchReady", true);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Disabled, registry.Execute(result.commandId, disabled).status);
+	// The model's explicit consumed decision is the contract used by CEditWnd:
+	// terminal registry outcomes never reach TranslateAccelerator afterward.
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 }
 
 TEST(EmptyEditorSurfaceModel, CentersActionRectsAndHitTestsOnlyEnabledActions)

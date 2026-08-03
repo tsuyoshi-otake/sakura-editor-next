@@ -45,6 +45,7 @@
 #include "env/CShareData.h"
 #include "config/system_constants.h"
 #include "_main/ControlPlatformWorkbenchLayoutMementoStore.h"
+#include "_main/ControlPlatformRecentlyOpenedWorkspaceStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
 #include "extension/CExtensionSecretVaultStorage.h"
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
@@ -527,6 +528,9 @@ bool CNormalProcess::InitializeProcess()
 	workbenchDependencies.layoutMementoStore =
 		std::make_unique<CControlPlatformWorkbenchLayoutMementoStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	workbenchDependencies.recentlyOpenedWorkspaceStore =
+		std::make_unique<CControlPlatformRecentlyOpenedWorkspaceStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.taskExecutionSessionFactory =
 		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();
 	auto workingCopyStore = std::make_unique<CControlPlatformWorkingCopyPersistenceStore>(
@@ -823,6 +827,10 @@ bool CNormalProcess::InitializeProcess()
 	OpenFiles( pEditWnd->GetHwnd() );
 
 	initEvent.Signal();
+	// The successor owns MRU promotion after crossing the same ready boundary
+	// observed by the predecessor.  This keeps the live window's process-local
+	// snapshot and CAS coordinates coherent with the durable mutation.
+	pEditWnd->RecordCurrentWorkspaceAfterReady();
 
 	return pEditWnd->GetHwnd() ? true : false;
 }

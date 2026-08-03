@@ -115,6 +115,55 @@ ESelectDirResult SelectDirWithResult(
 	return ESelectDirResult::Succeeded;
 }
 
+ESelectDirResult SelectDirsWithResult(
+	HWND hWnd,
+	const std::wstring& title,
+	const std::filesystem::path& initialDirectory,
+	std::vector<std::wstring>& selectedDirectories
+)
+{
+	cxx::com_pointer<IFileOpenDialog> dialog;
+	HRESULT hres = dialog.CreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER);
+	if (FAILED(hres)) return ESelectDirResult::Failed;
+
+	DWORD options = 0;
+	hres = dialog->GetOptions(&options);
+	if (FAILED(hres)) return ESelectDirResult::Failed;
+	hres = dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_ALLOWMULTISELECT
+		| FOS_NOCHANGEDIR | FOS_FORCEFILESYSTEM);
+	if (FAILED(hres)) return ESelectDirResult::Failed;
+
+	cxx::com_pointer<IShellItem> initialFolder;
+	hres = SHCreateItemFromParsingName(initialDirectory.c_str(), nullptr, IID_PPV_ARGS(&initialFolder));
+	if (SUCCEEDED(hres) && FAILED(dialog->SetFolder(initialFolder))) return ESelectDirResult::Failed;
+	if (FAILED(dialog->SetTitle(title.c_str()))) return ESelectDirResult::Failed;
+
+	hres = dialog->Show(hWnd);
+	if (FAILED(hres)) return hres == HRESULT_FROM_WIN32(ERROR_CANCELLED)
+		? ESelectDirResult::Cancelled : ESelectDirResult::Failed;
+
+	cxx::com_pointer<IShellItemArray> results;
+	hres = dialog->GetResults(&results);
+	if (FAILED(hres)) return hres == HRESULT_FROM_WIN32(ERROR_CANCELLED)
+		? ESelectDirResult::Cancelled : ESelectDirResult::Failed;
+	DWORD count = 0;
+	if (FAILED(results->GetCount(&count)) || count == 0) return ESelectDirResult::Failed;
+
+	std::vector<std::wstring> pending;
+	pending.reserve(count);
+	for (DWORD index = 0; index < count; ++index) {
+		cxx::com_pointer<IShellItem> item;
+		if (FAILED(results->GetItemAt(index, &item))) return ESelectDirResult::Failed;
+		PWSTR path = nullptr;
+		if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) || path == nullptr) return ESelectDirResult::Failed;
+		using CoTaskMemHolder = cxx::ResourceHolder<&::CoTaskMemFree>;
+		CoTaskMemHolder pathHolder = path;
+		pending.emplace_back(path);
+	}
+	selectedDirectories = std::move(pending);
+	return ESelectDirResult::Succeeded;
+}
+
 BOOL SelectDir(
 	HWND hWnd,
 	const std::wstring& title,

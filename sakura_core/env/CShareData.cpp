@@ -1136,6 +1136,9 @@ bool CShareData::OpenDebugWindow( HWND hwnd, bool bAllwaysActive )
 */
 int CShareData::GetMacroFilename( int idx, WCHAR *pszPath, int nBufLen )
 {
+	if( idx < -1 || MAX_CUSTMACRO <= idx ){
+		return 0;
+	}
 	if( -1 != idx && !m_pShareData->m_Common.m_sMacro.m_MacroTable[idx].IsEnabled() )
 		return 0;
 	const WCHAR *ptr;

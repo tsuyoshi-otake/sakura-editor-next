@@ -12,6 +12,10 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
+#include <span>
+#include <string>
+#include <vector>
 #include <Windows.h>
 
 BOOL MyWinHelp(HWND hwndCaller, UINT uCommand, DWORD_PTR dwData);	/* WinHelp のかわりに HtmlHelp を呼び出す */	// 2006.07.22 ryoji
@@ -25,6 +29,11 @@ enum class ESelectDirResult : std::uint8_t {
 
 ESelectDirResult SelectDirWithResult(HWND hWnd, const std::wstring& title,
 	const std::filesystem::path& initialDirectory, std::span<WCHAR> buffer);
+
+//! Native multi-folder picker for workspace composition.  The result vector is
+//! changed only on success, keeping cancellation/failure free of partial paths.
+ESelectDirResult SelectDirsWithResult(HWND hWnd, const std::wstring& title,
+	const std::filesystem::path& initialDirectory, std::vector<std::wstring>& selectedDirectories);
 
 BOOL SelectDir(HWND hWnd, const std::wstring& title, const std::filesystem::path& initialDirectory, std::span<WCHAR> buffer);	/* フォルダー選択ダイアログ */
 

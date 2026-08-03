@@ -22,6 +22,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
 #include <future>
 #include <functional>
@@ -29,6 +30,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -46,9 +48,13 @@ using config::EWorkspaceKind;
 using platform::filesystem::DirectoryEntry;
 using platform::filesystem::EFileResultStatus;
 using platform::filesystem::FileBytes;
+using platform::filesystem::FileConditionalReplaceOptions;
+using platform::filesystem::FileConditionalReplaceResult;
+using platform::filesystem::FileContentSnapshot;
 using platform::filesystem::FileReadOptions;
 using platform::filesystem::FileResult;
 using platform::filesystem::FileStat;
+using platform::filesystem::FileVersionToken;
 using platform::filesystem::IFileService;
 using platform::filesystem::IFileWatch;
 using platform::filesystem::FileWatchEvent;
@@ -172,7 +178,10 @@ public:
 	void Set(const Uri& resource, FileResult<FileBytes> result)
 	{
 		std::lock_guard lock(m_mutex);
-		m_results.insert_or_assign(UriIdentityService::MakeComparisonKey(resource), std::move(result));
+		const auto identity = UriIdentityService::MakeComparisonKey(resource);
+		if (result.Succeeded() && result.value) m_versions.insert_or_assign(identity, NextVersion());
+		else m_versions.erase(identity);
+		m_results.insert_or_assign(identity, std::move(result));
 	}
 
 	std::vector<std::wstring> Reads() const
@@ -205,6 +214,7 @@ public:
 	}
 
 	void EnableWatches() { std::lock_guard lock(m_mutex); m_watchEnabled = true; }
+	void ConflictNextConditionalReplace() { std::lock_guard lock(m_mutex); m_conflictNextReplace = true; }
 	void EmitFirstWatchEvent(FileWatchEvent event)
 	{
 		std::vector<FakeWatch*> watches;
@@ -263,6 +273,57 @@ public:
 		return result;
 	}
 
+	FileResult<FileContentSnapshot> ReadVersioned(const Uri& resource, const FileReadOptions&) override
+	{
+		std::function<void()> callback;
+		FileResult<FileContentSnapshot> result;
+		{
+			std::lock_guard lock(m_mutex);
+			const auto identity = UriIdentityService::MakeComparisonKey(resource);
+			m_reads.push_back(resource.ToString());
+			callback = onRead;
+			const auto found = m_results.find(identity);
+			const auto version = m_versions.find(identity);
+			if (found == m_results.end()) {
+				result = FileResult<FileContentSnapshot>::Failure(EFileResultStatus::NotFound);
+			} else if (!found->second.Succeeded() || !found->second.value) {
+				result = FileResult<FileContentSnapshot>::Failure(found->second.status, found->second.diagnostic);
+			} else if (version == m_versions.end()) {
+				result = FileResult<FileContentSnapshot>::Failure(EFileResultStatus::Failed);
+			} else {
+				result = FileResult<FileContentSnapshot>::Success({ *found->second.value, version->second });
+			}
+		}
+		m_readCountCondition.notify_all();
+		if (callback) callback();
+		return result;
+	}
+
+	FileConditionalReplaceResult ConditionalAtomicReplace(
+		const Uri& resource, const FileBytes& bytes, const FileConditionalReplaceOptions& options) override
+	{
+		std::lock_guard lock(m_mutex);
+		if (m_conflictNextReplace) {
+			m_conflictNextReplace = false;
+			return FileConditionalReplaceResult::Conflict();
+		}
+		const auto identity = UriIdentityService::MakeComparisonKey(resource);
+		const auto found = m_results.find(identity);
+		const bool exists = found != m_results.end() && found->second.Succeeded() && found->second.value;
+		if (options.expectation == platform::filesystem::EFileConditionalReplaceExpectation::Missing) {
+			if (exists) return FileConditionalReplaceResult::Conflict();
+		} else {
+			const auto version = m_versions.find(identity);
+			if (!exists || version == m_versions.end() || version->second != options.expectedVersion) {
+				return FileConditionalReplaceResult::Conflict();
+			}
+		}
+		auto committed = NextVersion();
+		m_results.insert_or_assign(identity, FileResult<FileBytes>::Success(bytes));
+		m_versions.insert_or_assign(identity, committed);
+		return FileConditionalReplaceResult::Success(std::move(committed));
+	}
+
 	FileResult<std::unique_ptr<IFileWatch>> Watch(
 		const Uri& root,
 		const platform::filesystem::FileWatchOptions&) override
@@ -275,8 +336,20 @@ public:
 	}
 
 private:
+	FileVersionToken NextVersion()
+	{
+		const std::uint64_t value = m_nextVersion++;
+		const auto bytes = std::span<const std::uint8_t>(
+			reinterpret_cast<const std::uint8_t*>(&value), sizeof(value));
+		auto token = FileVersionToken::FromOpaqueBytes(bytes);
+		EXPECT_TRUE(token.has_value());
+		return std::move(*token);
+	}
 	mutable std::mutex m_mutex;
 	std::map<std::wstring, FileResult<FileBytes>, std::less<>> m_results;
+	std::map<std::wstring, FileVersionToken, std::less<>> m_versions;
+	std::uint64_t m_nextVersion = 1;
+	bool m_conflictNextReplace = false;
 	std::vector<std::wstring> m_reads;
 	std::optional<std::wstring> m_blockedResource;
 	bool m_readBlocked = false;
@@ -1044,6 +1117,78 @@ TEST(CWorkbenchRuntime, ZeroBootstrapFolderWorkspaceLoadsDocumentFoldersAndKeeps
 	EXPECT_TRUE(ContainsRead(reads, workspaceConfig.ToString()));
 	EXPECT_TRUE(ContainsRead(reads, L"file:///C:/One/.vscode/settings.json"));
 	EXPECT_TRUE(ContainsRead(reads, L"file:///C:/Two/.vscode/settings.json"));
+}
+
+TEST(CWorkbenchRuntime, AddFolderAcceptsTheExactCasDocumentSynchronouslyAndDoesNotDoubleReload)
+{
+	auto workspaceConfig = Parse(L"file:///C:/Work/demo.code-workspace");
+	auto first = Parse(L"file:///C:/One");
+	auto added = Parse(L"file:///C:/Added");
+	RuntimeFixture fixture(WorkspaceBootstrap(workspaceConfig, { { first, L"one" } }));
+	fixture.files->Set(workspaceConfig, Bytes(R"json({
+		"folders": [{ "uri": "file:///C:/One", "name": "one" }],
+		"settings": { "workbench.editor.showTabs": "single" },
+		"unknown": { "keep": true }
+	})json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto readsBefore = fixture.files->Reads();
+	const auto workspaceReadsBefore = std::ranges::count(readsBefore, workspaceConfig.ToString());
+
+	const auto edited = fixture.runtime->ReplaceCurrentWorkspaceFolders({
+		workspaceConfig,
+		workspaceConfig,
+		{
+			{ first, L"one" },
+			{ added, std::nullopt },
+		},
+	});
+	ASSERT_EQ(workbench::workspace::EWorkspaceEditingOutcome::Succeeded, edited.outcome);
+	ASSERT_TRUE(edited.committedVersion.has_value());
+	ASSERT_TRUE(edited.committedDocument.has_value());
+
+	const auto context = fixture.runtime->WorkspaceContext().Snapshot();
+	ASSERT_EQ(EWorkspaceKind::Workspace, context.kind);
+	ASSERT_EQ(2U, context.folders.size());
+	EXPECT_TRUE(UriIdentityService::IsEqual(first, context.folders[0].uri));
+	EXPECT_TRUE(UriIdentityService::IsEqual(added, context.folders[1].uri));
+	EXPECT_EQ(L"Added", context.folders[1].displayName);
+	const auto accepted = fixture.runtime->WorkspaceConfiguration();
+	ASSERT_TRUE(accepted.document.has_value());
+	ASSERT_EQ(2U, accepted.document->folders.size());
+	EXPECT_TRUE(accepted.document->settings.has_value());
+
+	const auto readsAfter = fixture.files->Reads();
+	const auto workspaceReadsAfter = std::ranges::count(readsAfter, workspaceConfig.ToString());
+	// One versioned edit read plus at most one typed-artifact refresh. An
+	// ordinary listener reload would add a third workspace-document read.
+	EXPECT_LE(workspaceReadsAfter - workspaceReadsBefore, 2);
+}
+
+TEST(CWorkbenchRuntime, AddFolderCasConflictKeepsTheLastAcceptedSemanticWorkspace)
+{
+	auto workspaceConfig = Parse(L"file:///C:/Work/demo.code-workspace");
+	auto first = Parse(L"file:///C:/One");
+	auto added = Parse(L"file:///C:/Added");
+	RuntimeFixture fixture(WorkspaceBootstrap(workspaceConfig, { { first, L"one" } }));
+	fixture.files->Set(workspaceConfig, Bytes(
+		R"json({ "folders": [{ "uri": "file:///C:/One", "name": "one" }] })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	const auto before = fixture.runtime->WorkspaceContext().Snapshot();
+	fixture.files->ConflictNextConditionalReplace();
+
+	const auto edited = fixture.runtime->ReplaceCurrentWorkspaceFolders({
+		workspaceConfig,
+		workspaceConfig,
+		{ { first, L"one" }, { added, std::nullopt } },
+	});
+	EXPECT_EQ(workbench::workspace::EWorkspaceEditingOutcome::Failed, edited.outcome);
+	const auto after = fixture.runtime->WorkspaceContext().Snapshot();
+	ASSERT_EQ(before.folders.size(), after.folders.size());
+	ASSERT_EQ(1U, after.folders.size());
+	EXPECT_TRUE(UriIdentityService::IsEqual(first, after.folders.front().uri));
+	const auto accepted = fixture.runtime->WorkspaceConfiguration();
+	ASSERT_TRUE(accepted.document.has_value());
+	ASSERT_EQ(1U, accepted.document->folders.size());
 }
 
 TEST(CWorkbenchRuntime, WorkspaceArtifactsPreferFolderDocumentsAndNeverBecomeConfiguration)

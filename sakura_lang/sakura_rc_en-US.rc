@@ -2275,6 +2275,15 @@ BEGIN
     F_HELP_TOPMENU          "Help"
     F_WINDOW_LIST_SUBMENU   "Window List"
     F_FILE_OPENRECENT_SUBMENU "Open Recent"
+    F_OPEN_WORKSPACE         "Open Workspace from File..."
+    F_ADD_FOLDER_TO_WORKSPACE "Add Folder to Workspace..."
+    F_SAVE_WORKSPACE_AS      "Save Workspace As..."
+    F_DUPLICATE_WORKSPACE    "Duplicate Workspace in New Window"
+    F_CLOSE_WORKSPACE        "Close Workspace"
+    STR_CLOSE_FOLDER         "Close Folder"
+    F_CLOSE_ACTIVE_EDITOR    "Close Editor"
+    F_OPEN_WORKSPACE_FOLDER  "Open Folder..."
+    F_TOGGLE_MARKDOWN_PREVIEW "Toggle Markdown Preview"
 END
 
 STRINGTABLE
@@ -2958,6 +2967,7 @@ BEGIN
     F_WINDOW_LIST           "Window List"
     F_FILE_USED_RECENTLY    "Recently Used File"
     F_FOLDER_USED_RECENTLY  "Recently Used Folder"
+    F_RECENT_WORKSPACE_LIST "Recently Opened Folder or Workspace"
     F_CUSTMENU_LIST         "Custom Menus"
     F_USERMACRO_LIST        "Registered Macros"
     F_PLUGIN_LIST           "Plugin Commands"

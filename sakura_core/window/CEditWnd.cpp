@@ -28,10 +28,12 @@
 
 #include "window/CEditWnd.h"
 #include "_main/CControlTray.h"
+#include "_main/FailedEditorProcessShutdown.h"
 #include "_main/CCommandLine.h"	/// 2003/1/26 aroka
 #include "_main/CAppMode.h"
 #include "basis/CErrorInfo.h"
 #include "dlg/CDlgAbout.h"
+#include "dlg/CDlgOpenFile.h"
 #include "dlg/CDlgPrintSetting.h"
 #include "env/CShareData.h"
 #include "env/CSakuraEnvironment.h"
@@ -52,6 +54,7 @@
 #include "agent/CGrepAgent.h"
 #include "env/CMarkMgr.h"
 #include "doc/logic/CDocLine.h"
+#include "doc/CDocFileOperation.h"
 #include "doc/layout/CLayout.h"
 #include "debug/CRunningTimer.h"
 #include "debug/StartupTrace.h"
@@ -76,6 +79,10 @@
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
 #include "workbench/IWorkbenchRuntime.h"
+#include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
+#include "workbench/workspace/WorkspaceEditingService.h"
+#include "workbench/workspace/WorkspaceWindowTransitionService.h"
+#include "workbench/workspace/WorkspaceWindowTransitionPlanner.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/WorkbenchLayout.h"
 #include "workbench/activity/CActivityBar.h"
@@ -120,12 +127,79 @@
 #include "cmd/CViewCommander_inline.h"
 
 #include <cwctype>
+#include <functional>
 #include <limits>
 #include <mutex>
 #include <utility>
 
 namespace
 {
+class CWorkspaceWindowTransitionCallbackHost final
+	: public workbench::workspace::IWorkspaceWindowTransitionHost {
+public:
+	std::function<EWorkspaceWindowTransitionResult()> prepare;
+	std::function<EWorkspaceWindowTransitionResult()> launch;
+	std::function<EWorkspaceWindowTransitionResult()> close;
+	std::function<EWorkspaceWindowTransitionResult()> cleanup;
+
+	workbench::workspace::EWorkspaceWindowTransitionOutcome PrepareReplacement() override
+	{
+		return Convert(prepare ? prepare() : EWorkspaceWindowTransitionResult::Failed);
+	}
+	workbench::workspace::EWorkspaceWindowTransitionOutcome LaunchAndWaitForReady() override
+	{
+		return Convert(launch ? launch() : EWorkspaceWindowTransitionResult::Failed);
+	}
+	workbench::workspace::EWorkspaceWindowTransitionOutcome CloseCurrentWindowOnce() override
+	{
+		return Convert(close ? close() : EWorkspaceWindowTransitionResult::Failed);
+	}
+	workbench::workspace::EWorkspaceWindowTransitionOutcome DeleteStagedTarget() override
+	{
+		return Convert(cleanup ? cleanup() : EWorkspaceWindowTransitionResult::Failed);
+	}
+
+private:
+	static workbench::workspace::EWorkspaceWindowTransitionOutcome Convert(EWorkspaceWindowTransitionResult result) noexcept
+	{
+		switch (result) {
+		case EWorkspaceWindowTransitionResult::Succeeded:
+			return workbench::workspace::EWorkspaceWindowTransitionOutcome::Succeeded;
+		case EWorkspaceWindowTransitionResult::Cancelled:
+			return workbench::workspace::EWorkspaceWindowTransitionOutcome::Cancelled;
+		case EWorkspaceWindowTransitionResult::Failed:
+			return workbench::workspace::EWorkspaceWindowTransitionOutcome::Failed;
+		}
+		return workbench::workspace::EWorkspaceWindowTransitionOutcome::Failed;
+	}
+};
+
+EWorkspaceWindowTransitionResult ToWindowTransitionResult(
+	workbench::workspace::EWorkspaceWindowTransitionOutcome result) noexcept
+{
+	switch (result) {
+	case workbench::workspace::EWorkspaceWindowTransitionOutcome::Succeeded:
+		return EWorkspaceWindowTransitionResult::Succeeded;
+	case workbench::workspace::EWorkspaceWindowTransitionOutcome::Cancelled:
+		return EWorkspaceWindowTransitionResult::Cancelled;
+	case workbench::workspace::EWorkspaceWindowTransitionOutcome::Failed:
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	return EWorkspaceWindowTransitionResult::Failed;
+}
+
+std::optional<std::wstring> CreateManagedWorkspacePath()
+{
+	std::array<WCHAR, MAX_PATH> temporaryDirectory{};
+	if (::GetTempPathW(static_cast<DWORD>(temporaryDirectory.size()), temporaryDirectory.data()) == 0) return std::nullopt;
+	std::array<WCHAR, MAX_PATH> reservation{};
+	if (::GetTempFileNameW(temporaryDirectory.data(), L"skr", 0, reservation.data()) == 0) return std::nullopt;
+	// GetTempFileName atomically reserves uniqueness.  The workspace service
+	// subsequently owns the actual document creation through Missing-CAS.
+	if (::DeleteFileW(reservation.data()) == FALSE) return std::nullopt;
+	return std::wstring(reservation.data()) + L".code-workspace";
+}
+
 class CStartupDocumentSubphaseTimer final
 {
 public:
@@ -856,7 +930,14 @@ bool CEditWnd::CreateUntitledEditorInput()
 bool CEditWnd::ExecuteWorkbenchEditorCommand(std::string_view commandId)
 {
 	using namespace workbench::editor;
-	if (commandId == command_ids::NewUntitledFile) return CreateUntitledEditorInput();
+	if (commandId == command_ids::NewUntitledFile) {
+		if (!HasActiveEditorInput()) return CreateUntitledEditorInput();
+		// The established native command owns the multi-document/new-buffer path
+		// once an editor is active.  Do not turn a recognized stable command into
+		// a no-op simply because the empty-editor helper is not applicable.
+		GetDocument()->HandleCommand(F_FILENEW);
+		return true;
+	}
 	if (commandId == command_ids::OpenFile) {
 		GetDocument()->HandleCommand(F_FILEOPEN);
 		return true;
@@ -864,9 +945,44 @@ bool CEditWnd::ExecuteWorkbenchEditorCommand(std::string_view commandId)
 	if (commandId == command_ids::OpenFolder) {
 		return OpenWorkspaceFolder() == EOpenWorkspaceFolderResult::Succeeded;
 	}
+	if (commandId == command_ids::OpenRecent) {
+		return ShowRecentlyOpenedWorkspaceMenu() == EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	if (commandId == command_ids::OpenWorkspace) {
+		return OpenWorkspaceConfiguration() == EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	if (commandId == command_ids::AddRootFolder) {
+		return AddFolderToWorkspace() == EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	if (commandId == command_ids::SaveWorkspaceAs) {
+		return SaveWorkspaceAs() == EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	if (commandId == command_ids::DuplicateWorkspaceInNewWindow) {
+		return DuplicateWorkspaceInNewWindow() == EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	if (commandId == command_ids::CloseFolder) {
+		return CloseWorkspaceWindow() == EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	if (commandId == command_ids::NewWindow) {
+		return LaunchWorkspaceTarget({}, false) == EWorkspaceWindowTransitionResult::Succeeded;
+	}
 	if (commandId == command_ids::Save || commandId == command_ids::SaveAs
 		|| commandId == command_ids::Revert || commandId == command_ids::CloseActiveEditor) {
 		return ExecuteActiveWorkingCopyCommand(commandId);
+	}
+	if (commandId == command_ids::SaveAll) {
+		// The existing control-process fan-out remains the implementation, but it
+		// is reachable only through this one stable registry executor.
+		GetDocument()->HandleCommand(F_FILESAVEALL);
+		return true;
+	}
+	if (commandId == command_ids::CloseWindow) {
+		GetDocument()->HandleCommand(F_WINCLOSE);
+		return true;
+	}
+	if (commandId == command_ids::Quit) {
+		GetDocument()->HandleCommand(F_EXITALL);
+		return true;
 	}
 	if (commandId == command_ids::ShowCommands) {
 		return ShowExtensionCommandPalette();
@@ -1169,10 +1285,36 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 	// Menu and key dispatch retain their source/high-bit flags up to this point.
 	// Route only the base legacy alias through the stable workbench command; a
 	// registered command's terminal failure must not fall through as success.
-	if (baseCode == F_OPEN_WORKSPACE_FOLDER && m_workbenchRuntime != nullptr) {
-		bool handled = false;
-		(void)TryExecuteWorkbenchStableCommand(workbench::editor::command_ids::OpenFolder, handled);
-		if (handled) return;
+	if (m_workbenchRuntime != nullptr) {
+		using namespace workbench::editor;
+		std::string_view commandId;
+		switch (baseCode) {
+		case F_FILENEW: commandId = command_ids::NewUntitledFile; break;
+		case F_FILENEW_NEWWINDOW: commandId = command_ids::NewWindow; break;
+		case F_FILEOPEN: commandId = command_ids::OpenFile; break;
+		case F_OPEN_WORKSPACE_FOLDER: commandId = command_ids::OpenFolder; break;
+		case F_OPEN_WORKSPACE: commandId = command_ids::OpenWorkspace; break;
+		case F_RECENT_WORKSPACE_LIST: commandId = command_ids::OpenRecent; break;
+		case F_ADD_FOLDER_TO_WORKSPACE: commandId = command_ids::AddRootFolder; break;
+		case F_SAVE_WORKSPACE_AS: commandId = command_ids::SaveWorkspaceAs; break;
+		case F_DUPLICATE_WORKSPACE: commandId = command_ids::DuplicateWorkspaceInNewWindow; break;
+		case F_FILESAVE: commandId = command_ids::Save; break;
+		case F_FILESAVEAS_DIALOG: commandId = command_ids::SaveAs; break;
+		case F_FILESAVEALL: commandId = command_ids::SaveAll; break;
+		case F_CLOSE_WORKSPACE: commandId = command_ids::CloseFolder; break;
+		case F_CLOSE_ACTIVE_EDITOR: commandId = command_ids::CloseActiveEditor; break;
+		case F_WINCLOSE: commandId = command_ids::CloseWindow; break;
+		case F_EXITALL: commandId = command_ids::Quit; break;
+		default: break;
+		}
+		if (!commandId.empty()) {
+			bool handled = false;
+			(void)TryExecuteWorkbenchStableCommand(commandId, handled);
+			// Recognition is terminal. Disabled, cancelled, unsupported, and failed
+			// stable commands must never select a different legacy behavior.
+			if (!handled) return;
+			return;
+		}
 	}
 	if (baseCode == F_TOGGLE_LEFT_EXPLORER && m_workbenchRuntime != nullptr) {
 		bool handled = false;
@@ -1196,6 +1338,11 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		if (isDocumentFileCommand || isEditorCommand || isDocumentModeCommand) return;
 	}
 	GetDocument()->HandleCommand(functionCode);
+}
+
+void CEditWnd::ExecuteWorkbenchFileFunction(EFunctionCode functionCode)
+{
+	DispatchEditorFunction(functionCode);
 }
 
 void CEditWnd::RefreshEditorCorePresentation()
@@ -1969,6 +2116,159 @@ bool CEditWnd::InitializeWorkbench()
 			return workbench::commands::WorkbenchCommandExecutionResult{
 				workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
 				"folder command returned an invalid terminal status" };
+			},
+			.newUntitledFile = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::NewUntitledFile)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "new untitled editor could not be created" };
+			},
+			.newWindow = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::NewWindow)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "new window could not be started" };
+			},
+			.openFile = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::OpenFile)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "file picker could not be opened" };
+			},
+			.openWorkspace = [this]() {
+				switch (OpenWorkspaceConfiguration()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "workspace selection was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "workspace transition failed" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "workspace command returned an invalid terminal status" };
+			},
+			.openRecent = [this]() {
+				switch (ShowRecentlyOpenedWorkspaceMenu()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "recent selection was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "recent workspace transition failed" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "recent workspace command returned an invalid terminal status" };
+			},
+			.addRootFolder = [this]() {
+				switch (AddFolderToWorkspace()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "folder selection was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "workspace update transition failed" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "add folder returned an invalid terminal status" };
+			},
+			.saveWorkspaceAs = [this]() {
+				switch (SaveWorkspaceAs()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "workspace save target selection was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "workspace save transition failed" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "save workspace returned an invalid terminal status" };
+			},
+			.duplicateWorkspaceInNewWindow = [this]() {
+				switch (DuplicateWorkspaceInNewWindow()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "workspace duplication was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "workspace duplication transition failed" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "duplicate workspace returned an invalid terminal status" };
+			},
+			.save = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::Save)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "active editor save failed" };
+			},
+			.saveAs = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::SaveAs)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "active editor save as failed" };
+			},
+			.saveAll = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::SaveAll)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "save all dispatch failed" };
+			},
+			.closeActiveEditor = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::CloseActiveEditor)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "active editor close failed" };
+			},
+			.closeFolder = [this]() {
+				switch (CloseWorkspaceWindow()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "workspace close was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "workspace close transition failed" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "close workspace returned an invalid terminal status" };
+			},
+			.closeWindow = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::CloseWindow)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "window close dispatch failed" };
+			},
+			.quit = [this]() {
+				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::Quit)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "quit dispatch failed" };
 			},
 			.showExtensions = [this]() {
 				if (m_viewContainerPages == nullptr || m_workbenchRuntime == nullptr) {
@@ -2760,7 +3060,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	// Registry executors capture this window and must be gone before any host they
 	// can project is closed. Context state has no external owner and is window-local.
 	if (m_customFrame) m_customFrame->SetManageMenuActionCallback({});
-	ClearOpenFolderChord();
+	ClearWorkbenchKeybindingChord();
 	m_workbenchCommandRegistry.reset();
 	m_workbenchContextKeyService.reset();
 	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
@@ -3016,7 +3316,10 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	if (!projectionResult.Succeeded()) return false;
 	const auto& projection = *projectionResult.projection;
 	if (m_workbenchContextKeyService != nullptr) {
-		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(snapshot);
+		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
+		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(
+			snapshot, m_workbenchRuntime->WorkspaceContext().Snapshot(), BuildWorkbenchEditorCommandContext(),
+			recentlyOpenedAvailable);
 		if (!contextResult.Succeeded()
 			&& contextResult.status != workbench::commands::EWorkbenchContextMutationStatus::NotApplicable) {
 			return false;
@@ -3755,8 +4058,10 @@ bool CEditWnd::RefreshWorkbenchCommandContext()
 {
 	if (m_workbenchRuntime == nullptr || m_workbenchContextKeyService == nullptr) return false;
 	try {
+		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto result = m_workbenchContextKeyService->SetCoreProjection(
-			m_workbenchRuntime->LayoutState().Snapshot());
+			m_workbenchRuntime->LayoutState().Snapshot(), m_workbenchRuntime->WorkspaceContext().Snapshot(),
+			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable);
 		return result.Succeeded()
 			|| result.status == workbench::commands::EWorkbenchContextMutationStatus::NotApplicable;
 	}
@@ -3802,30 +4107,51 @@ bool CEditWnd::TryExecuteWorkbenchStableCommand(std::string_view commandId, bool
 	return false;
 }
 
-void CEditWnd::BeginOpenFolderChord(HWND focusWindow) noexcept
+bool CEditWnd::ArmWorkbenchKeybindingChordTimer() noexcept
 {
-	const auto now = ::GetTickCount64();
-	m_openFolderChord.Begin(now,
-		reinterpret_cast<workbench::editor::OpenFolderChordState::FocusToken>(focusWindow));
 	if (GetHwnd() == nullptr
-		|| ::SetTimer(GetHwnd(), IDT_WORKBENCH_OPEN_FOLDER_CHORD,
-			static_cast<UINT>(workbench::editor::OpenFolderChordState::TimeoutMs), nullptr) == 0) {
+		|| ::SetTimer(GetHwnd(), IDT_WORKBENCH_KEYBINDING_CHORD,
+			static_cast<UINT>(workbench::editor::CtrlKChordState::TimeoutMs), nullptr) == 0) {
 		// Fail closed when a native timer cannot be armed.  The first stroke must
 		// never leave a permanently pending chord in that case.
-		m_openFolderChord.Clear();
+		m_workbenchKeybindingState.Clear();
+		return false;
 	}
+	return true;
 }
 
-void CEditWnd::ClearOpenFolderChord() noexcept
+workbench::commands::WorkbenchEditorCommandContext CEditWnd::BuildWorkbenchEditorCommandContext() const
 {
-	if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_OPEN_FOLDER_CHORD);
-	m_openFolderChord.Clear();
+	workbench::commands::WorkbenchEditorCommandContext editor;
+	if (m_editorServiceAdapter != nullptr) {
+		const auto editorSnapshot = m_editorServiceAdapter->Snapshot();
+		editor.hasActiveEditor = editorSnapshot.group.activeInputId.has_value();
+		if (!editorSnapshot.group.activeInputId) return editor;
+		const auto input = std::ranges::find_if(editorSnapshot.group.inputs,
+			[&editorSnapshot](const auto& candidate) {
+				return candidate.descriptor.inputId == *editorSnapshot.group.activeInputId;
+			});
+		if (input == editorSnapshot.group.inputs.end()) return editor;
+		const auto document = std::ranges::find(editorSnapshot.documents, input->documentKey,
+			&workbench::editor::EditorDocumentSnapshot::documentKey);
+		editor.activeEditorDirty = document != editorSnapshot.documents.end() && document->dirty;
+		return editor;
+	}
+	editor.hasActiveEditor = HasActiveEditorInput();
+	editor.activeEditorDirty = editor.hasActiveEditor && GetDocument()->m_cDocEditor.IsModified();
+	return editor;
 }
 
-void CEditWnd::ExpireOpenFolderChord() noexcept
+void CEditWnd::ClearWorkbenchKeybindingChord() noexcept
 {
-	if (m_openFolderChord.ExpireIfNeeded(::GetTickCount64())) {
-		if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_OPEN_FOLDER_CHORD);
+	if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_KEYBINDING_CHORD);
+	m_workbenchKeybindingState.Clear();
+}
+
+void CEditWnd::ExpireWorkbenchKeybindingChord() noexcept
+{
+	if (m_workbenchKeybindingState.ExpireIfNeeded(::GetTickCount64())) {
+		if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_KEYBINDING_CHORD);
 	}
 }
 
@@ -4411,6 +4737,345 @@ void CEditWnd::ToggleBottomWorkbenchMaximized()
 	}
 }
 
+EWorkspaceWindowTransitionResult CEditWnd::LaunchWorkspaceTarget(
+	const std::wstring& commandLineOption, bool closeCurrentWindow, const std::wstring& stagedTargetToDeleteOnFailure)
+{
+	bool retainStagedTargetForUnresolvedChild = false;
+	CWorkspaceWindowTransitionCallbackHost host;
+	host.prepare = [this]() { return PrepareWorkspaceReplacement(); };
+	host.launch = [this, &commandLineOption, &stagedTargetToDeleteOnFailure, &retainStagedTargetForUnresolvedChild]() {
+		SLoadInfo loadInfo;
+		loadInfo.cFilePath = L"";
+		loadInfo.eCharCode = CODE_NONE;
+		loadInfo.bViewMode = false;
+		// sync=true owns the existing bounded (15 second) successor-ready IPC
+		// observation in CControlTray::OpenNewEditor.
+		auto launched = CControlTray::OpenNewEditorWithResult(G_AppInstance(), GetHwnd(), loadInfo,
+			commandLineOption.empty() ? nullptr : commandLineOption.c_str(), true, nullptr, true,
+			true);
+		if (launched.outcome == EOpenNewEditorOutcome::FailedChildOwnershipTransferred) {
+			retainStagedTargetForUnresolvedChild = !stagedTargetToDeleteOnFailure.empty();
+			CFailedEditorProcessOwner::Retain(launched.transferredProcessHandle);
+		}
+		return launched.Succeeded()
+			? EWorkspaceWindowTransitionResult::Succeeded : EWorkspaceWindowTransitionResult::Failed;
+	};
+	host.close = [this]() { return CloseWorkspaceWindowOnce(); };
+	host.cleanup = [&stagedTargetToDeleteOnFailure, &retainStagedTargetForUnresolvedChild]() {
+		if (stagedTargetToDeleteOnFailure.empty()) return EWorkspaceWindowTransitionResult::Succeeded;
+		if (retainStagedTargetForUnresolvedChild) {
+			// The successor may still be consuming this managed file.  Retention is
+			// the safe terminal cleanup state; a later run may reclaim it after the
+			// retained process handle becomes signalled.
+			return EWorkspaceWindowTransitionResult::Succeeded;
+		}
+		// OpenNewEditor does not return a timed-out managed launch until the
+		// successor has stopped. A CreateProcess failure has no child, so in
+		// either failure mode no process can still be opening this resource.
+		return (::DeleteFileW(stagedTargetToDeleteOnFailure.c_str()) != FALSE
+			|| ::GetLastError() == ERROR_FILE_NOT_FOUND)
+			? EWorkspaceWindowTransitionResult::Succeeded : EWorkspaceWindowTransitionResult::Failed;
+	};
+	const auto transition = !stagedTargetToDeleteOnFailure.empty()
+		? (closeCurrentWindow
+			? workbench::workspace::CWorkspaceWindowTransitionPlanner::ManagedReplacement()
+			: workbench::workspace::CWorkspaceWindowTransitionPlanner::ManagedDuplicate())
+		: (closeCurrentWindow
+			? workbench::workspace::CWorkspaceWindowTransitionPlanner::SaveAsReplacement()
+			: workbench::workspace::WorkspaceWindowTransitionRequest{});
+	return ToWindowTransitionResult(workbench::workspace::CWorkspaceWindowTransitionService::Execute(transition, host));
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::PrepareWorkspaceReplacement()
+{
+	if (!HasActiveEditorInput() || !GetDocument()->m_cDocEditor.IsModified()) {
+		return EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	// This is the authoritative legacy save/discard/cancel dialog.  It is a
+	// non-destructive preflight: CommitFileClose is deliberately deferred until
+	// the successor has reported ready.
+	if (GetDocument()->m_cDocFileOperation.PrepareFileClose(false)) {
+		return EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	switch (GetDocument()->m_cDocFileOperation.GetLastCloseResult()) {
+	case EDocFileOperationResult::Cancelled: return EWorkspaceWindowTransitionResult::Cancelled;
+	case EDocFileOperationResult::Failed: return EWorkspaceWindowTransitionResult::Failed;
+	case EDocFileOperationResult::Succeeded: break;
+	}
+	return EWorkspaceWindowTransitionResult::Failed;
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::CloseWorkspaceWindowOnce()
+{
+	const HWND window = GetHwnd();
+	if (window == nullptr) return EWorkspaceWindowTransitionResult::Failed;
+	// OnClose consumes this one-shot token after the real preflight above.  This
+	// prevents a discarded dirty buffer from producing a second confirmation.
+	m_workspaceReplacementClosePreflightAccepted = true;
+	if (::PostMessage(window, WM_CLOSE, 0, 0) != FALSE) return EWorkspaceWindowTransitionResult::Succeeded;
+	m_workspaceReplacementClosePreflightAccepted = false;
+	return EWorkspaceWindowTransitionResult::Failed;
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::OpenWorkspaceConfiguration()
+{
+	std::array<WCHAR, 32768> selected{};
+	CDlgOpenFile dialog;
+	dialog.Create(G_AppInstance(), GetHwnd(), L"*.code-workspace", L"");
+	if (!dialog.DoModal_GetOpenFileName(selected, EFITER_NONE)) return EWorkspaceWindowTransitionResult::Cancelled;
+	const auto path = MakeAbsolutePath(selected.data());
+	if (path.empty() || _wcsicmp(std::filesystem::path(path).extension().c_str(), L".code-workspace") != 0) {
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	const auto target = platform::uri::Uri::FromWindowsPath(path);
+	if (!target) return EWorkspaceWindowTransitionResult::Failed;
+	return LaunchWorkspaceTarget(L"-WORKSPACE=\"" + path + L"\"", true);
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::AddFolderToWorkspace()
+{
+	if (m_workbenchRuntime == nullptr || m_workbenchRuntime->WorkspaceEditing() == nullptr) {
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	const auto current = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	std::vector<std::wstring> selectedPaths;
+	switch (SelectDirsWithResult(GetHwnd(), LS(F_ADD_FOLDER_TO_WORKSPACE), GetSemanticWorkspaceRoot(), selectedPaths)) {
+	case ESelectDirResult::Succeeded: break;
+	case ESelectDirResult::Cancelled: return EWorkspaceWindowTransitionResult::Cancelled;
+	case ESelectDirResult::Failed: return EWorkspaceWindowTransitionResult::Failed;
+	}
+	std::vector<std::pair<std::wstring, platform::uri::Uri>> selectedFolders;
+	selectedFolders.reserve(selectedPaths.size());
+	for (const auto& selectedPath : selectedPaths) {
+		const auto path = MakeAbsolutePath(selectedPath);
+		const auto folder = platform::uri::Uri::FromWindowsPath(path);
+		if (path.empty() || !folder) return EWorkspaceWindowTransitionResult::Failed;
+		selectedFolders.emplace_back(path, std::move(*folder.value));
+	}
+	if (selectedFolders.empty()) return EWorkspaceWindowTransitionResult::Failed;
+	std::vector<workbench::workspace::WorkspaceFolderEdit> additionalFolders;
+	additionalFolders.reserve(selectedFolders.size());
+	for (auto& [path, folder] : selectedFolders) {
+		(void)path;
+		additionalFolders.push_back({ std::move(folder), std::nullopt });
+	}
+	// A saved multi-root workspace keeps its identity and is CAS-updated in
+	// place, exactly like VS Code.  Empty/Folder states cross the identity
+	// boundary into a managed untitled workspace and therefore use a successor.
+	if (current.kind == config::EWorkspaceKind::Workspace) {
+		if (!current.workspaceConfigUri) return EWorkspaceWindowTransitionResult::Failed;
+		auto request = workbench::workspace::CWorkspaceWindowTransitionPlanner::BuildWorkspaceDocumentEdit(
+			current, *current.workspaceConfigUri, std::move(additionalFolders));
+		const auto edited = m_workbenchRuntime->ReplaceCurrentWorkspaceFolders(request);
+		if (edited.outcome != workbench::workspace::EWorkspaceEditingOutcome::Succeeded) {
+			return EWorkspaceWindowTransitionResult::Failed;
+		}
+		ApplySemanticWorkspaceContext();
+		if (!RefreshWorkbenchCommandContext()) return EWorkspaceWindowTransitionResult::Failed;
+		return EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	const auto managedPath = CreateManagedWorkspacePath();
+	if (!managedPath) return EWorkspaceWindowTransitionResult::Failed;
+	const auto managed = platform::uri::Uri::FromWindowsPath(*managedPath);
+	if (!managed) return EWorkspaceWindowTransitionResult::Failed;
+	auto request = workbench::workspace::CWorkspaceWindowTransitionPlanner::BuildWorkspaceDocumentEdit(
+		current, *managed.value, std::move(additionalFolders));
+	const auto edited = m_workbenchRuntime->WorkspaceEditing()->ReplaceFolders(request);
+	if (edited.outcome != workbench::workspace::EWorkspaceEditingOutcome::Succeeded) {
+		(void)::DeleteFileW(managedPath->c_str());
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	return LaunchWorkspaceTarget(L"-WORKSPACE=\"" + *managedPath + L"\"", true, *managedPath);
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::SaveWorkspaceAs()
+{
+	if (m_workbenchRuntime == nullptr || m_workbenchRuntime->WorkspaceEditing() == nullptr) {
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	const auto current = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	std::array<WCHAR, 32768> selected{};
+	std::wstring initial = L"workspace.code-workspace";
+	if (current.workspaceConfigUri) {
+		if (const auto existing = current.workspaceConfigUri->ToWindowsPath(); existing.value) initial = *existing.value;
+	}
+	::wcsncpy_s(selected.data(), selected.size(), initial.c_str(), _TRUNCATE);
+	CDlgOpenFile dialog;
+	dialog.Create(G_AppInstance(), GetHwnd(), L"*.code-workspace", initial.c_str());
+	if (!dialog.DoModal_GetSaveFileName(selected)) return EWorkspaceWindowTransitionResult::Cancelled;
+	auto path = MakeAbsolutePath(selected.data());
+	if (path.empty()) return EWorkspaceWindowTransitionResult::Failed;
+	if (_wcsicmp(std::filesystem::path(path).extension().c_str(), L".code-workspace") != 0) {
+		path += L".code-workspace";
+	}
+	const auto target = platform::uri::Uri::FromWindowsPath(path);
+	if (!target) return EWorkspaceWindowTransitionResult::Failed;
+	auto request = workbench::workspace::CWorkspaceWindowTransitionPlanner::BuildWorkspaceDocumentEdit(current, *target.value);
+	const auto edited = m_workbenchRuntime->WorkspaceEditing()->ReplaceFolders(request);
+	if (edited.outcome != workbench::workspace::EWorkspaceEditingOutcome::Succeeded) {
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	return LaunchWorkspaceTarget(L"-WORKSPACE=\"" + path + L"\"", true);
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::DuplicateWorkspaceInNewWindow()
+{
+	if (m_workbenchRuntime == nullptr || m_workbenchRuntime->WorkspaceEditing() == nullptr) return EWorkspaceWindowTransitionResult::Failed;
+	const auto current = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	const auto managedPath = CreateManagedWorkspacePath();
+	if (!managedPath) return EWorkspaceWindowTransitionResult::Failed;
+	const auto managed = platform::uri::Uri::FromWindowsPath(*managedPath);
+	if (!managed) return EWorkspaceWindowTransitionResult::Failed;
+	auto request = workbench::workspace::CWorkspaceWindowTransitionPlanner::BuildWorkspaceDocumentEdit(current, *managed.value);
+	const auto edited = m_workbenchRuntime->WorkspaceEditing()->ReplaceFolders(request);
+	if (edited.outcome != workbench::workspace::EWorkspaceEditingOutcome::Succeeded) {
+		(void)::DeleteFileW(managedPath->c_str());
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	return LaunchWorkspaceTarget(L"-WORKSPACE=\"" + *managedPath + L"\"", false, *managedPath);
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::CloseWorkspaceWindow()
+{
+	if (m_workbenchRuntime == nullptr
+		|| m_workbenchRuntime->WorkspaceContext().Snapshot().kind == config::EWorkspaceKind::Empty) {
+		return EWorkspaceWindowTransitionResult::Cancelled;
+	}
+	return LaunchWorkspaceTarget({}, true);
+}
+
+bool CEditWnd::HasRecentlyOpenedItems() const
+{
+	std::vector<workbench::recent::RecentlyOpenedWorkspaceEntry> entries;
+	if (m_workbenchRuntime != nullptr) {
+		if (const auto recent = m_workbenchRuntime->RecentlyOpenedWorkspaces(); recent != nullptr) {
+			entries = recent->Snapshot();
+		}
+	}
+	const CMRUFile legacyFiles;
+	return workbench::recent::CRecentlyOpenedWorkspaceMenuProjection::HasItems(entries,
+		legacyFiles.MenuLength() > 0);
+}
+
+bool CEditWnd::AppendRecentlyOpenedWorkspaceMenu(HMENU hMenu, bool hasRecentFiles)
+{
+	m_recentlyOpenedWorkspaceMenuSnapshot.clear();
+	if (m_workbenchRuntime == nullptr || hMenu == nullptr) return false;
+	const auto recent = m_workbenchRuntime->RecentlyOpenedWorkspaces();
+	if (recent == nullptr) return false;
+	m_recentlyOpenedWorkspaceMenuSnapshot = recent->Snapshot();
+	const auto rows = workbench::recent::CRecentlyOpenedWorkspaceMenuProjection::Build(
+		m_recentlyOpenedWorkspaceMenuSnapshot, hasRecentFiles);
+	for (const auto& row : rows) {
+		if (row.kind == workbench::recent::ERecentlyOpenedWorkspaceMenuRowKind::Separator) {
+			(void)::AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
+			continue;
+		}
+		std::wstring label;
+		label.reserve(row.label.size());
+		for (const auto character : row.label) {
+			label.push_back(character);
+			if (character == L'&') label.push_back(L'&');
+		}
+		m_cMenuDrawer.MyAppendMenu(hMenu, MF_BYPOSITION | MF_STRING,
+			static_cast<UINT_PTR>(row.commandId), label.c_str(), L"");
+	}
+	return !m_recentlyOpenedWorkspaceMenuSnapshot.empty();
+}
+
+void CEditWnd::RecordRecentlyOpenedWorkspaceAfterReady(
+	workbench::recent::ERecentlyOpenedWorkspaceKind kind, const platform::uri::Uri& uri)
+{
+	if (m_workbenchRuntime == nullptr) return;
+	const auto recent = m_workbenchRuntime->RecentlyOpenedWorkspaces();
+	if (recent == nullptr) return;
+	const auto recorded = recent->RecordSuccessfulOpen({ kind, uri, std::nullopt });
+	if (recorded.outcome != workbench::recent::ERecentlyOpenedWorkspaceOutcome::Succeeded) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: recently opened workspace history update failed.\n");
+	}
+	(void)RefreshWorkbenchCommandContext();
+}
+
+void CEditWnd::RecordCurrentWorkspaceAfterReady()
+{
+	if (m_workbenchRuntime == nullptr) return;
+	const auto current = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	if (current.kind == config::EWorkspaceKind::Workspace && current.workspaceConfigUri) {
+		RecordRecentlyOpenedWorkspaceAfterReady(
+			workbench::recent::ERecentlyOpenedWorkspaceKind::Workspace, *current.workspaceConfigUri);
+	} else if (current.kind == config::EWorkspaceKind::Folder && !current.folders.empty()) {
+		RecordRecentlyOpenedWorkspaceAfterReady(
+			workbench::recent::ERecentlyOpenedWorkspaceKind::Folder, current.folders.front().uri);
+	}
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::OpenRecentlyOpenedWorkspace(
+	const workbench::recent::RecentlyOpenedWorkspaceEntry& entry)
+{
+	if (m_workbenchRuntime == nullptr) return EWorkspaceWindowTransitionResult::Failed;
+	const auto recent = m_workbenchRuntime->RecentlyOpenedWorkspaces();
+	const auto normalized = workbench::recent::CRecentlyOpenedWorkspaceService::Normalize(entry);
+	if (recent == nullptr || !normalized) return EWorkspaceWindowTransitionResult::Failed;
+	const auto localPath = normalized->uri.ToWindowsPath();
+	if (!localPath.value) return EWorkspaceWindowTransitionResult::Failed;
+	const DWORD attributes = ::GetFileAttributesW(localPath.value->c_str());
+	if (attributes == INVALID_FILE_ATTRIBUTES) {
+		const DWORD error = ::GetLastError();
+		if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+			(void)recent->RemoveConfirmedNotFound(normalized->uri);
+			(void)RefreshWorkbenchCommandContext();
+		}
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	if ((normalized->kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Folder
+		&& (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0)
+		|| (normalized->kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Workspace
+			&& (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)) {
+		return EWorkspaceWindowTransitionResult::Failed;
+	}
+	const auto option = normalized->kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Workspace
+		? L"-WORKSPACE=\"" + *localPath.value + L"\""
+		: L"-FOLDER=\"" + *localPath.value + L"\"";
+	return LaunchWorkspaceTarget(option, true);
+}
+
+bool CEditWnd::TryExecuteRecentlyOpenedWorkspaceMenuCommand(std::int32_t commandId)
+{
+	if (commandId < workbench::recent::kRecentlyOpenedWorkspaceDynamicFirst
+		|| commandId > workbench::recent::kRecentlyOpenedWorkspaceDynamicLast) return false;
+	const auto index = workbench::recent::CRecentlyOpenedWorkspaceMenuProjection::Resolve(
+		commandId, m_recentlyOpenedWorkspaceMenuSnapshot);
+	if (index) (void)OpenRecentlyOpenedWorkspace(m_recentlyOpenedWorkspaceMenuSnapshot[*index]);
+	// This range belongs exclusively to the typed snapshot.  A stale click is
+	// consumed rather than being reinterpreted as a legacy function code.
+	return true;
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::ShowRecentlyOpenedWorkspaceMenu()
+{
+	HMENU menu = ::CreatePopupMenu();
+	if (menu == nullptr) return EWorkspaceWindowTransitionResult::Failed;
+	struct MenuHandle final { HMENU value; ~MenuHandle() { if (value != nullptr) ::DestroyMenu(value); } } menuHandle { menu };
+	const CMRUFile legacyFiles;
+	const bool hasRecentFiles = legacyFiles.MenuLength() > 0;
+	const bool hasTypedEntries = AppendRecentlyOpenedWorkspaceMenu(menu, hasRecentFiles);
+	if (!hasTypedEntries && !hasRecentFiles) return EWorkspaceWindowTransitionResult::Cancelled;
+	if (hasRecentFiles) legacyFiles.CreateMenu(menu, &m_cMenuDrawer);
+	POINT point{};
+	if (::GetCursorPos(&point) == FALSE) return EWorkspaceWindowTransitionResult::Failed;
+	const UINT selected = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+		point.x, point.y, 0, GetHwnd(), nullptr);
+	if (selected == 0) return EWorkspaceWindowTransitionResult::Cancelled;
+	const auto index = workbench::recent::CRecentlyOpenedWorkspaceMenuProjection::Resolve(
+		static_cast<std::int32_t>(selected), m_recentlyOpenedWorkspaceMenuSnapshot);
+	if (index) return OpenRecentlyOpenedWorkspace(m_recentlyOpenedWorkspaceMenuSnapshot[*index]);
+	if (selected >= IDM_SELMRU && selected < IDM_SELMRU + MAX_MRU) {
+		OnCommand(0, static_cast<WORD>(selected), nullptr);
+		return EWorkspaceWindowTransitionResult::Succeeded;
+	}
+	return EWorkspaceWindowTransitionResult::Failed;
+}
+
 EOpenWorkspaceFolderResult CEditWnd::OpenWorkspaceFolder()
 {
 	if (!m_workspaceContext) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
@@ -4421,7 +5086,7 @@ EOpenWorkspaceFolderResult CEditWnd::OpenWorkspaceFolder()
 	std::array<WCHAR, 32768> selectedDirectory{};
 	auto initialDirectory = GetSemanticWorkspaceRoot();
 	if (initialDirectory.empty()) initialDirectory = m_workspaceContext->GetNewTerminalWorkingDirectory();
-	switch (SelectDirWithResult(GetHwnd(), L"作業フォルダーを開く", initialDirectory, selectedDirectory)) {
+	switch (SelectDirWithResult(GetHwnd(), LS(F_OPEN_WORKSPACE_FOLDER), initialDirectory, selectedDirectory)) {
 	case ESelectDirResult::Succeeded:
 		break;
 	case ESelectDirResult::Cancelled:
@@ -4438,32 +5103,19 @@ EOpenWorkspaceFolderResult CEditWnd::OpenWorkspaceFolder()
 	}
 
 	if (m_workbenchRuntime != nullptr) {
-		auto uri = platform::uri::Uri::FromWindowsPath(absoluteRoot);
-		if (!uri) return EOpenWorkspaceFolderResult::InvalidSelection;
-		const std::filesystem::path selectedPath(absoluteRoot);
-		auto displayName = selectedPath.filename().native();
-		if (displayName.empty()) displayName = selectedPath.root_name().native();
-		if (displayName.empty()) return EOpenWorkspaceFolderResult::InvalidSelection;
-		const auto before = m_workbenchRuntime->WorkspaceContext().Snapshot();
-		config::SetFolderRequest request {
-			.operation = {
-				.operationId = NextEditorOperationId("workspace.openFolder"),
-				.expectedRevision = before.revision,
-			},
-			.folderUri = std::move(*uri.value),
-			.displayName = std::move(displayName),
-		};
-		const auto result = m_workbenchRuntime->WorkspaceContext().SetFolder(request);
-		if (result.outcome != config::EWorkspaceContextOutcome::Succeeded
-			&& result.outcome != config::EWorkspaceContextOutcome::NotApplicable) {
-			return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+		switch (LaunchWorkspaceTarget(L"-FOLDER=\"" + absoluteRoot + L"\"", true)) {
+		case EWorkspaceWindowTransitionResult::Succeeded: return EOpenWorkspaceFolderResult::Succeeded;
+		case EWorkspaceWindowTransitionResult::Cancelled: return EOpenWorkspaceFolderResult::DirtyPreflightFailed;
+		case EWorkspaceWindowTransitionResult::Failed: return EOpenWorkspaceFolderResult::HandoffFailed;
 		}
-		ApplySemanticWorkspaceContext();
+		return EOpenWorkspaceFolderResult::HandoffFailed;
 	} else {
 		// Unit-only/legacy construction keeps the pre-runtime fallback.
 		m_workspaceContext->SetExplicitRoot(absoluteRoot);
 		ApplySemanticWorkspaceContext();
 	}
+	// Unit-only legacy construction remains a local projection path. Production
+	// runtime composition has already handed off to a ready editor above.
 	// The command is successful only after the selected folder has been projected
 	// into the Explorer Part as well as the workspace context.  The setter
 	// returns the native projection result instead of reading the model back,
@@ -4677,14 +5329,14 @@ void CEditWnd::ToggleMarkdownPreview()
 
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 {
-	if (message.message == WM_TIMER && message.wParam == IDT_WORKBENCH_OPEN_FOLDER_CHORD) {
+	if (message.message == WM_TIMER && message.wParam == IDT_WORKBENCH_KEYBINDING_CHORD) {
 		// A queued timer from an earlier restarted chord must not clear the newer
 		// state before its own five-second deadline has elapsed.
-		ExpireOpenFolderChord();
+		ExpireWorkbenchKeybindingChord();
 		return true;
 	}
-	ExpireOpenFolderChord();
-	const auto cancelsOpenFolderChord = [](UINT messageId) noexcept {
+	ExpireWorkbenchKeybindingChord();
+	const auto cancelsWorkbenchKeybindingChord = [](UINT messageId) noexcept {
 		switch (messageId) {
 		case WM_SETFOCUS:
 		case WM_KILLFOCUS:
@@ -4704,49 +5356,45 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 			return false;
 		}
 	};
-	if (m_openFolderChord.IsPending() && cancelsOpenFolderChord(message.message)) {
-		ClearOpenFolderChord();
+	if (m_workbenchKeybindingState.IsChordPending() && cancelsWorkbenchKeybindingChord(message.message)) {
+		ClearWorkbenchKeybindingChord();
 	}
 	if (m_commandPaletteOverlay && m_commandPaletteOverlay->PreTranslateMessage(message)) return true;
 	if (m_emptyEditorSurface && m_emptyEditorSurface->PreTranslateMessage(message)) return true;
 	if (message.message == WM_KEYDOWN) {
-		const workbench::editor::OpenFolderChordModifiers modifiers{
+		const workbench::editor::WorkbenchKeyModifiers modifiers{
 			.control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0,
 			.alt = (::GetKeyState(VK_MENU) & 0x8000) != 0,
 			.shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0,
 		};
 		const HWND focusWindow = ::GetFocus();
 		const HWND chordFocusWindow = focusWindow != nullptr ? focusWindow : message.hwnd;
-		if (m_openFolderChord.IsPending()) {
-			switch (m_openFolderChord.AdvancePendingKeyDown(
-				static_cast<std::uint32_t>(message.wParam), modifiers)) {
-			case workbench::editor::EOpenFolderChordKeyDecision::PassThrough:
-				// In particular, Ctrl can be released and re-pressed between strokes.
-				// Do not intercept modifier key-down or any key-up messages.
-				break;
-			case workbench::editor::EOpenFolderChordKeyDecision::Execute: {
-				ClearOpenFolderChord();
-				bool handled = false;
-				(void)TryExecuteWorkbenchStableCommand(
-					workbench::editor::command_ids::OpenFolder, handled);
-				// A recognized chord is terminal even when the registered executor is
-				// unavailable or fails; it must never fall through to legacy input.
-				return true;
-			}
-			case workbench::editor::EOpenFolderChordKeyDecision::Restart:
-				BeginOpenFolderChord(chordFocusWindow);
-				return true;
-			case workbench::editor::EOpenFolderChordKeyDecision::CancelAndConsume:
-				ClearOpenFolderChord();
-				return true;
-			}
+		const auto input = m_workbenchKeybindingState.HandleKeyDown(
+			static_cast<std::uint32_t>(message.wParam), modifiers, ::GetTickCount64(),
+			reinterpret_cast<workbench::editor::WorkbenchKeybindingState::FocusToken>(chordFocusWindow),
+			[this](std::string_view commandId) {
+				return m_workbenchCommandRegistry != nullptr
+					&& m_workbenchCommandRegistry->Find(commandId).has_value();
+			});
+		switch (input.decision) {
+		case workbench::editor::EWorkbenchKeyInputDecision::PassThrough:
+			break;
+		case workbench::editor::EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume:
+			// The first stroke and a repeated Ctrl+K are terminal as soon as the
+			// registry recognizes Open Folder. A failed timer arm clears the pure
+			// state, but must not revive a conflicting legacy accelerator.
+			(void)ArmWorkbenchKeybindingChordTimer();
+			return true;
+		case workbench::editor::EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume: {
+			ClearWorkbenchKeybindingChord();
+			bool handled = false;
+			(void)TryExecuteWorkbenchStableCommand(input.commandId, handled);
+			// A registry-recognized binding is terminal even when its executor is
+			// disabled, not applicable, unsupported, or failed.
+			return true;
 		}
-		if (modifiers.IsControlOnly() && message.wParam == L'K'
-			&& m_workbenchCommandRegistry != nullptr
-			&& m_workbenchCommandRegistry->Find(workbench::editor::command_ids::OpenFolder).has_value()) {
-			BeginOpenFolderChord(chordFocusWindow);
-			// Once the registry recognizes Ctrl+K as this chord's first stroke, do
-			// not let a failed native timer arm a legacy accelerator instead.
+		case workbench::editor::EWorkbenchKeyInputDecision::CancelChordAndConsume:
+			ClearWorkbenchKeybindingChord();
 			return true;
 		}
 	}
@@ -5616,11 +6264,14 @@ void CEditWnd::LayoutMainMenu()
 				nCount = CAppNodeManager::getInstance()->GetOpenedWindowArr( &pEditNodeArr, TRUE );
 				delete [] pEditNodeArr;
 				break;
-			case F_FILE_USED_RECENTLY:		// 最近使ったファイル
+			case F_FILE_USED_RECENTLY:		// typed workspaces/folders followed by recent files
 				{
 					CRecentFile	cRecentFile;
-					nCount = cRecentFile.GetViewCount();
+				nCount = cRecentFile.GetViewCount() + (HasRecentlyOpenedItems() ? 1 : 0);
 				}
+				break;
+			case F_RECENT_WORKSPACE_LIST:
+				nCount = HasRecentlyOpenedItems() ? 1 : 0;
 				break;
 			case F_FOLDER_USED_RECENTLY:	// 最近使ったフォルダー
 				{
@@ -5868,10 +6519,10 @@ void CEditWnd::MessageLoop( void )
 		ret = GetMessage(&msg,nullptr,0,0);
 		if(ret== 0)break; //WM_QUIT
 		if(ret==-1)break; //GetMessage失敗
-		if (m_openFolderChord.IsPending()
-			&& m_openFolderChord.CancelIfFocusChanged(
-				reinterpret_cast<workbench::editor::OpenFolderChordState::FocusToken>(::GetFocus()))) {
-			ClearOpenFolderChord();
+		if (m_workbenchKeybindingState.IsChordPending()
+			&& m_workbenchKeybindingState.CancelIfFocusChanged(
+				reinterpret_cast<workbench::editor::WorkbenchKeybindingState::FocusToken>(::GetFocus()))) {
+			ClearWorkbenchKeybindingChord();
 		}
 
 		//ダイアログメッセージ
@@ -5916,7 +6567,7 @@ LRESULT CEditWnd::DispatchEvent(
 		|| (uMsg == WM_ACTIVATEAPP && wParam == FALSE)) {
 		// Focus/activation notifications are delivered synchronously to the native
 		// window procedure, so they cannot be relied on by MessageLoop's prefilter.
-		ClearOpenFolderChord();
+		ClearWorkbenchKeybindingChord();
 	}
 	if (uMsg == WM_WINDOWPOSCHANGING && IsStartupDrawSuppressed()) {
 		if (auto* position = reinterpret_cast<WINDOWPOS*>(lParam)) {
@@ -7023,7 +7674,15 @@ int	CEditWnd::OnClose(HWND hWndActive, bool bGrepNoConfirm )
 {
 	/* ファイルを閉じるときのMRU登録 & 保存確認 & 保存実行 */
 	int nRet = TRUE;
-	if (HasActiveEditorInput()) {
+	const bool workspacePreflightAccepted = std::exchange(m_workspaceReplacementClosePreflightAccepted, false);
+	if (workspacePreflightAccepted && HasActiveEditorInput()) {
+		// PrepareWorkspaceReplacement already ran CDocFileOperation's real
+		// save/discard/cancel flow.  Commit only the non-throwing legacy teardown;
+		// invoking the coordinator again would prompt a discarded dirty buffer a
+		// second time after the successor is already ready.
+		GetDocument()->m_cDocFileOperation.CommitFileClose(false);
+	}
+	else if (HasActiveEditorInput()) {
 		nRet = m_workingCopyCoordinator
 			? (ExecuteActiveWorkingCopyCommand(
 				workbench::editor::command_ids::CloseActiveEditor, bGrepNoConfirm, true) ? TRUE : FALSE)
@@ -7143,6 +7802,10 @@ void CEditWnd::OnCommand( WORD wNotifyCode, WORD wID , HWND hwndCtl )
 		//ウィンドウ切り替え
 		if( wID - IDM_SELWINDOW >= 0 && wID - IDM_SELWINDOW < m_pShareData->m_sNodes.m_nEditArrNum ){
 			ActivateFrameWindow( m_pShareData->m_sNodes.m_pEditArr[wID - IDM_SELWINDOW].GetHwnd() );
+		}
+		else if (TryExecuteRecentlyOpenedWorkspaceMenuCommand(static_cast<std::int32_t>(wID))) {
+			// The 13000 range is a typed, immutable snapshot and cannot fall into
+			// either legacy MRU handler below.
 		}
 		//最近使ったファイル
 		else if( wID - IDM_SELMRU >= 0 && wID - IDM_SELMRU < 999){
@@ -7410,6 +8073,13 @@ void CEditWnd::InitMenu_Function(HMENU hMenu, EFunctionCode eFunc, const wchar_t
 		}
 	}else{
 		switch (eFunc) {
+		case F_CLOSE_WORKSPACE:
+			if( m_workbenchRuntime == nullptr ) return;
+			if( const UINT label = CloseWorkspaceMenuLabelResource(
+				m_workbenchRuntime->WorkspaceContext().Snapshot().kind); label != 0 ){
+				m_cMenuDrawer.MyAppendMenu( hMenu, MF_BYPOSITION | MF_STRING, eFunc, LS(label), pszKey );
+			}
+			return;
 		case F_RECKEYMACRO:
 		case F_SAVEKEYMACRO:
 		case F_LOADKEYMACRO:
@@ -7514,6 +8184,19 @@ void CEditWnd::InitMenu_Function(HMENU hMenu, EFunctionCode eFunc, const wchar_t
 
 /*!	Specialコマンドのメニューへの追加
 */
+UINT CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind kind) noexcept
+{
+	switch( kind ){
+	case config::EWorkspaceKind::Folder:
+		return STR_CLOSE_FOLDER;
+	case config::EWorkspaceKind::Workspace:
+		return F_CLOSE_WORKSPACE;
+	case config::EWorkspaceKind::Empty:
+		return 0;
+	}
+	return 0;
+}
+
 bool CEditWnd::InitMenu_Special(HMENU hMenu, EFunctionCode eFunc)
 {
 	int j;
@@ -7528,13 +8211,28 @@ bool CEditWnd::InitMenu_Special(HMENU hMenu, EFunctionCode eFunc)
 			delete [] pEditNodeArr;
 		}
 		break;
-	case F_FILE_USED_RECENTLY:		// 最近使ったファイル
-		/* MRUリストのファイルのリストをメニューにする */
+	case F_FILE_USED_RECENTLY:		// typed workspaces/folders followed by legacy files
+		/* The typed history deliberately does not consult CMRUFolder. */
 		{
-			//@@@ 2001.12.26 YAZAKI MRUリストは、CMRUに依頼する
 			const CMRUFile cMRU;
-			cMRU.CreateMenu( hMenu, &m_cMenuDrawer );	//	ファイルメニュー
-			bInList = (cMRU.MenuLength() > 0);
+			bInList = AppendRecentlyOpenedWorkspaceMenu(hMenu, cMRU.MenuLength() > 0);
+			if (cMRU.MenuLength() > 0) {
+				cMRU.CreateMenu(hMenu, &m_cMenuDrawer);
+				bInList = true;
+			}
+		}
+		break;
+	case F_RECENT_WORKSPACE_LIST:
+		// The stable Open Recent submenu is one combined projection.  Typed
+		// workspace/folder rows own 13000..13063; legacy recent files retain
+		// their established IDs below them.
+		{
+			const CMRUFile cMRU;
+			bInList = AppendRecentlyOpenedWorkspaceMenu(hMenu, cMRU.MenuLength() > 0);
+			if (cMRU.MenuLength() > 0) {
+				cMRU.CreateMenu(hMenu, &m_cMenuDrawer);
+				bInList = true;
+			}
 		}
 		break;
 	case F_FOLDER_USED_RECENTLY:	// 最近使ったフォルダー
@@ -7876,10 +8574,10 @@ LRESULT CEditWnd::OnTimer( WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 		m_extensionDocumentSyncTimerPending = false;
 		PublishExtensionDocumentChange();
 		break;
-	case IDT_WORKBENCH_OPEN_FOLDER_CHORD:
+	case IDT_WORKBENCH_KEYBINDING_CHORD:
 		// SetTimer can leave an already-queued WM_TIMER behind when Ctrl+K is
 		// repeated. Only expire the state once its own deadline is actually due.
-		ExpireOpenFolderChord();
+		ExpireWorkbenchKeybindingChord();
 		break;
 	default:
 		return 1L;

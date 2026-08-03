@@ -11,6 +11,7 @@
 #include "workbench/layout/WorkbenchIds.h"
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <utility>
 #include <vector>
@@ -33,6 +34,9 @@ bool IsTruthy(const std::optional<WorkbenchContextValue>& value) noexcept
 	}
 	if (const auto* boolValue = std::get_if<bool>(&*value)) {
 		return *boolValue;
+	}
+	if (const auto* integerValue = std::get_if<std::int64_t>(&*value)) {
+		return *integerValue != 0;
 	}
 	return !std::get<std::string>(*value).empty();
 }
@@ -98,6 +102,7 @@ enum class EToken : std::uint8_t {
 	End,
 	Identifier,
 	Boolean,
+	Integer,
 	String,
 	Not,
 	And,
@@ -105,6 +110,10 @@ enum class EToken : std::uint8_t {
 	Equal,
 	NotEqual,
 	Matches,
+	Less,
+	LessEqual,
+	Greater,
+	GreaterEqual,
 	LeftParenthesis,
 	RightParenthesis,
 	Invalid,
@@ -145,6 +154,16 @@ public:
 			}
 			return { EToken::Identifier, std::move(value) };
 		}
+		if (std::isdigit(static_cast<unsigned char>(current)) || (current == '-' && m_position + 1 < m_input.size()
+			&& std::isdigit(static_cast<unsigned char>(m_input[m_position + 1])))) {
+			const std::size_t start = m_position;
+			if (current == '-') ++m_position;
+			while (m_position < m_input.size()
+				&& std::isdigit(static_cast<unsigned char>(m_input[m_position]))) {
+				++m_position;
+			}
+			return { EToken::Integer, std::string(m_input.substr(start, m_position - start)) };
+		}
 		if (current == '\'' || current == '"') {
 			const char quote = current;
 			++m_position;
@@ -176,6 +195,8 @@ public:
 			if (Take('=')) return { EToken::Equal, {} };
 			if (Take('~')) return { EToken::Matches, {} };
 			return {};
+		case '<': return Take('=') ? Token{ EToken::LessEqual, {} } : Token{ EToken::Less, {} };
+		case '>': return Take('=') ? Token{ EToken::GreaterEqual, {} } : Token{ EToken::Greater, {} };
 		case '(': return { EToken::LeftParenthesis, {} };
 		case ')': return { EToken::RightParenthesis, {} };
 		default: return {};
@@ -265,7 +286,9 @@ private:
 			return false;
 		}
 		const EToken operation = m_current.kind;
-		if (operation != EToken::Equal && operation != EToken::NotEqual && operation != EToken::Matches) {
+		if (operation != EToken::Equal && operation != EToken::NotEqual && operation != EToken::Matches
+			&& operation != EToken::Less && operation != EToken::LessEqual
+			&& operation != EToken::Greater && operation != EToken::GreaterEqual) {
 			return IsTruthy(left);
 		}
 		Advance();
@@ -281,6 +304,19 @@ private:
 				return false;
 			}
 			return SafeRegexSearch(*subject, *pattern);
+		}
+		if (operation == EToken::Less || operation == EToken::LessEqual
+			|| operation == EToken::Greater || operation == EToken::GreaterEqual) {
+			const auto* leftInteger = left ? std::get_if<std::int64_t>(&*left) : nullptr;
+			const auto* rightInteger = std::get_if<std::int64_t>(&*right);
+			if (leftInteger == nullptr || rightInteger == nullptr) return false;
+			switch (operation) {
+			case EToken::Less: return *leftInteger < *rightInteger;
+			case EToken::LessEqual: return *leftInteger <= *rightInteger;
+			case EToken::Greater: return *leftInteger > *rightInteger;
+			case EToken::GreaterEqual: return *leftInteger >= *rightInteger;
+			default: break;
+			}
 		}
 		const bool equal = left && *left == *right;
 		return operation == EToken::Equal ? equal : !equal;
@@ -301,6 +337,17 @@ private:
 		}
 		case EToken::Boolean: {
 			const bool value = m_current.value == "true";
+			Advance();
+			return WorkbenchContextValue(value);
+		}
+		case EToken::Integer: {
+			std::int64_t value{};
+			const auto text = m_current.value;
+			const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+			if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size()) {
+				m_valid = false;
+				return std::nullopt;
+			}
 			Advance();
 			return WorkbenchContextValue(value);
 		}
@@ -346,11 +393,30 @@ bool WorkbenchContextKeyService::IsValidKey(std::string_view key) noexcept
 
 bool WorkbenchContextKeyService::IsReservedCoreKey(std::string_view key) noexcept
 {
-	return key == "workbenchReady" || key.starts_with("workbench.");
+	return key == "workbenchReady" || key.starts_with("workbench.")
+		|| key == "workbenchState" || key == "workspaceFolderCount"
+		|| key == "editorHasActiveEditor" || key == "editorIsDirty";
 }
 
 WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	const layout::WorkbenchLayoutStateSnapshot& snapshot)
+
+{
+	return SetCoreProjection(snapshot, {}, {}, false);
+}
+
+WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
+	const layout::WorkbenchLayoutStateSnapshot& snapshot,
+	const config::WorkspaceContextSnapshot& workspace)
+{
+	return SetCoreProjection(snapshot, workspace, {}, false);
+}
+
+WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
+	const layout::WorkbenchLayoutStateSnapshot& snapshot,
+	const config::WorkspaceContextSnapshot& workspace,
+	WorkbenchEditorCommandContext editor,
+	bool recentlyOpenedAvailable)
 {
 	WorkbenchContextKeyMap values;
 	const auto sidebar = std::find_if(snapshot.parts.begin(), snapshot.parts.end(), [](const auto& part) {
@@ -371,6 +437,17 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	values.emplace("workbench.activeView", activeView.value_or(std::string()));
 	values.emplace("workbench.explorerActive", snapshot.activeContainers.sideBar
 		&& *snapshot.activeContainers.sideBar == layout::ids::viewContainer::Explorer);
+	const char* workbenchState = "empty";
+	switch (workspace.kind) {
+	case config::EWorkspaceKind::Empty: break;
+	case config::EWorkspaceKind::Folder: workbenchState = "folder"; break;
+	case config::EWorkspaceKind::Workspace: workbenchState = "workspace"; break;
+	}
+	values.emplace("workbenchState", std::string(workbenchState));
+	values.emplace("workspaceFolderCount", static_cast<std::int64_t>(workspace.folders.size()));
+	values.emplace("editorHasActiveEditor", editor.hasActiveEditor);
+	values.emplace("editorIsDirty", editor.activeEditorDirty);
+	values.emplace("workbench.recentlyOpenedAvailable", recentlyOpenedAvailable);
 
 	std::lock_guard lock(m_mutex);
 	if (m_coreValues == values) {

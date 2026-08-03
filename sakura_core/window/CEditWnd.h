@@ -59,7 +59,10 @@
 
 #include "print/CPrintPreview.h"
 #include "workbench/editor/EditorWorkingCopyTypes.h"
-#include "workbench/editor/OpenFolderChordState.h"
+#include "workbench/editor/WorkbenchKeybindingState.h"
+#include "workbench/commands/WorkbenchContextKeyService.h"
+#include "config/WorkspaceContextTypes.h"
+#include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 
@@ -110,7 +113,6 @@ enum class BuiltinActiveSurface : std::uint8_t;
 }
 namespace commands {
 class WorkbenchCommandRegistry;
-class WorkbenchContextKeyService;
 }
 namespace explorer {
 class CExplorerTool;
@@ -156,7 +158,7 @@ struct EditorWorkingCopyCompletionToken;
 #define IDT_CAPTION		457
 #define IDT_FIRST_IDLE	458
 #define IDT_EXTENSION_DOCUMENT_SYNC 459
-#define IDT_WORKBENCH_OPEN_FOLDER_CHORD 460
+#define IDT_WORKBENCH_KEYBINDING_CHORD 460
 #define IDT_SYSMENU		1357
 #define ID_TOOLBAR		100
 
@@ -207,8 +209,19 @@ enum class EOpenWorkspaceFolderResult : std::uint8_t {
 	Cancelled,
 	InvalidSelection,
 	PickerFailed,
+	DirtyPreflightFailed,
+	HandoffFailed,
 	WorkspaceContextFailed,
 	ExplorerProjectionFailed,
+};
+
+//! Every native workspace picker/handoff path has one terminal result.  The
+//! window owns picker and process composition; the workbench service remains
+//! HWND-free.
+enum class EWorkspaceWindowTransitionResult : std::uint8_t {
+	Succeeded,
+	Cancelled,
+	Failed,
 };
 
 //! 編集ウィンドウ（外枠）管理クラス
@@ -233,6 +246,10 @@ private:
 	using WindowDcHolder = cxx::ResourceHolder<&::ReleaseDC>;
 
 public:
+	//! Resource label for the state-dependent Close Folder / Close Workspace
+	//! File-menu slot. Zero means the slot is intentionally omitted in Empty.
+	[[nodiscard]] static UINT CloseWorkspaceMenuLabelResource(config::EWorkspaceKind kind) noexcept;
+
 	CEditWnd();
 	CEditWnd(
 		workbench::editor::CEditorServiceLegacyAdapter& editorServiceAdapter,
@@ -379,6 +396,9 @@ public:
 	//! Select a window-local workbench root. Picker cancellation/invalid input is
 	//! non-applicable; a native Explorer projection failure is explicitly failed.
 	[[nodiscard]] EOpenWorkspaceFolderResult OpenWorkspaceFolder();
+	//! Native-command bridge for the workspace File-menu function codes.  It
+	//! keeps CViewCommander on the same stable-command path as menu dispatch.
+	void ExecuteWorkbenchFileFunction(EFunctionCode functionCode);
 	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
 	//! `workbench.action.toggleAuxiliaryBar` (Ctrl+Alt+B). This is the physical Secondary
 	//! Side Bar Part, never the Outline View nested in the Primary Side Bar.
@@ -556,6 +576,9 @@ public:
 	int			GetFontPointSize(bool bTempSetting = true);
 	ECharWidthCacheMode GetLogfontCacheMode();
 	double GetFontZoom();
+	//! Called by the successor process only after it has crossed the ready IPC
+	//! boundary.  The predecessor never mutates typed recent history.
+	void RecordCurrentWorkspaceAfterReady();
 
 	void ClearViewCaretPosInfo();
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -610,6 +633,24 @@ private:
 	[[nodiscard]] bool CloseActiveEditorInput();
 	void ConfigureCustomFrameActions();
 	[[nodiscard]] bool ExecuteWorkbenchEditorCommand(std::string_view commandId);
+	[[nodiscard]] EWorkspaceWindowTransitionResult OpenWorkspaceConfiguration();
+	[[nodiscard]] EWorkspaceWindowTransitionResult AddFolderToWorkspace();
+	[[nodiscard]] EWorkspaceWindowTransitionResult SaveWorkspaceAs();
+	[[nodiscard]] EWorkspaceWindowTransitionResult DuplicateWorkspaceInNewWindow();
+	[[nodiscard]] EWorkspaceWindowTransitionResult CloseWorkspaceWindow();
+	[[nodiscard]] EWorkspaceWindowTransitionResult ShowRecentlyOpenedWorkspaceMenu();
+	[[nodiscard]] EWorkspaceWindowTransitionResult OpenRecentlyOpenedWorkspace(
+		const workbench::recent::RecentlyOpenedWorkspaceEntry& entry);
+	void RecordRecentlyOpenedWorkspaceAfterReady(
+		workbench::recent::ERecentlyOpenedWorkspaceKind kind, const platform::uri::Uri& uri);
+	[[nodiscard]] bool AppendRecentlyOpenedWorkspaceMenu(HMENU hMenu, bool hasRecentFiles);
+	[[nodiscard]] bool TryExecuteRecentlyOpenedWorkspaceMenuCommand(std::int32_t commandId);
+	[[nodiscard]] bool HasRecentlyOpenedItems() const;
+	[[nodiscard]] EWorkspaceWindowTransitionResult LaunchWorkspaceTarget(
+		const std::wstring& commandLineOption, bool closeCurrentWindow,
+		const std::wstring& stagedTargetToDeleteOnFailure = {});
+	[[nodiscard]] EWorkspaceWindowTransitionResult PrepareWorkspaceReplacement();
+	[[nodiscard]] EWorkspaceWindowTransitionResult CloseWorkspaceWindowOnce();
 	[[nodiscard]] bool ExecuteActiveWorkingCopyCommand(
 		std::string_view commandId, bool suppressCloseConfirmation = false,
 		bool disposeWindow = false);
@@ -670,11 +711,12 @@ private:
 		ViewContainerPageForId(std::string_view containerId) noexcept;
 	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
+	[[nodiscard]] workbench::commands::WorkbenchEditorCommandContext BuildWorkbenchEditorCommandContext() const;
 	[[nodiscard]] bool RefreshWorkbenchCommandContext();
 	[[nodiscard]] bool TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled);
-	void BeginOpenFolderChord(HWND focusWindow) noexcept;
-	void ClearOpenFolderChord() noexcept;
-	void ExpireOpenFolderChord() noexcept;
+	[[nodiscard]] bool ArmWorkbenchKeybindingChordTimer() noexcept;
+	void ClearWorkbenchKeybindingChord() noexcept;
+	void ExpireWorkbenchKeybindingChord() noexcept;
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
@@ -766,14 +808,21 @@ private:
 	//! Window-local command/context boundary; only initialized for runtime-backed workbench windows.
 	std::unique_ptr<workbench::commands::WorkbenchContextKeyService> m_workbenchContextKeyService;
 	std::unique_ptr<workbench::commands::WorkbenchCommandRegistry> m_workbenchCommandRegistry;
-	//! State for VS Code's Windows Open Folder chord (Ctrl+K, Ctrl+O).
-	workbench::editor::OpenFolderChordState m_openFolderChord;
+	//! State for the VS Code Windows File-menu keybindings, including Ctrl+K chords.
+	workbench::editor::WorkbenchKeybindingState m_workbenchKeybindingState;
+	//! The native dynamic-command IDs are resolved against this popup/menu-open
+	//! snapshot, never against mutable legacy CMRU state.
+	std::vector<workbench::recent::RecentlyOpenedWorkspaceEntry> m_recentlyOpenedWorkspaceMenuSnapshot;
 	//! Presentation cache derived only by ApplyEditorCoreSnapshot.
 	bool m_hasActiveEditorInput = false;
 	bool m_editorCorePresentationInitialized = false;
 	//! Set only while a coordinator backend call may synchronously raise OnAfterSave.
 	//! The RAII scope restores it on every completion path, including a legacy exception.
 	bool m_workingCopyBackendEffectInProgress = false;
+	//! Set only after the real legacy save/discard/cancel preflight accepted a
+	//! replacement.  The subsequent close consumes it exactly once so the user is
+	//! never prompted twice after the successor has acknowledged ready.
+	bool m_workspaceReplacementClosePreflightAccepted = false;
 	//! Load listeners form one synchronous native replacement transaction. The old
 	//! persistence token is captured before CLoadAgent mutates CEditDoc and completed
 	//! only after the new native document is atomically reflected in Editor Core.

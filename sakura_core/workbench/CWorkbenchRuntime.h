@@ -20,11 +20,13 @@
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
+#include "workbench/recent/RecentlyOpenedWorkspaceService.h"
 #include "workbench/scm/SourceControlService.h"
 #include "workbench/tasks/FolderTaskCatalogRegistry.h"
 #include "workbench/tasks/TaskExecutionService.h"
 #include "workbench/workspace/WorkspaceConfigurationTypes.h"
 #include "workbench/workspace/WorkspaceArtifactDocumentService.h"
+#include "workbench/workspace/WorkspaceEditingService.h"
 
 #include <map>
 #include <memory>
@@ -61,6 +63,9 @@ struct WorkbenchRuntimeDependencies final {
 	//! Optional host adapter. Tests may leave this null to prove the runtime
 	//! rejects execution without creating operating-system processes.
 	std::shared_ptr<tasks::ITaskExecutionSessionFactory> taskExecutionSessionFactory;
+	//! Profile/User persistence stays behind a control-process adapter. The
+	//! runtime owns the UI-independent service, never the durable backend.
+	std::unique_ptr<recent::IRecentlyOpenedWorkspaceStore> recentlyOpenedWorkspaceStore;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -87,6 +92,10 @@ public:
 	[[nodiscard]] const WorkbenchBootstrapContext& Bootstrap() const noexcept override { return m_bootstrap; }
 	[[nodiscard]] config::IConfigurationService& Configuration() noexcept override { return m_configuration; }
 	[[nodiscard]] config::IWorkspaceContextService& WorkspaceContext() noexcept override { return m_workspaceContext; }
+	[[nodiscard]] workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept override { return m_workspaceEditing.get(); }
+	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
+		const workspace::WorkspaceFoldersEditRequest& request) override;
+	[[nodiscard]] recent::IRecentlyOpenedWorkspaceService* RecentlyOpenedWorkspaces() noexcept override;
 	[[nodiscard]] layout::WorkbenchContributionRegistry& Contributions() noexcept override { return m_contributions; }
 	[[nodiscard]] const layout::WorkbenchContributionRegistry& Contributions() const noexcept override { return m_contributions; }
 	[[nodiscard]] layout::WorkbenchLayoutStateService& LayoutState() noexcept override { return m_layoutState; }
@@ -126,7 +135,8 @@ private:
 	void RestoreInitialLayoutMemento();
 	void PersistFinalLayoutMemento() noexcept;
 	void ReloadWorkspaceSettings(const config::WorkspaceContextSnapshot& snapshot);
-	void ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot);
+	void ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot,
+		const std::string* exactWorkspaceDocument = nullptr);
 	void StartWorkspaceArtifacts(const config::WorkspaceContextSnapshot& snapshot);
 	void UpdateWorkspaceArtifacts(const config::WorkspaceContextSnapshot& snapshot);
 	void ReconcileTaskCatalogs(const config::WorkspaceContextSnapshot& snapshot) noexcept;
@@ -180,6 +190,8 @@ private:
 	bool m_layoutPersistenceReady = false;
 	std::optional<layout::WorkbenchContributionSubscriptionId> m_contributionSubscription;
 	std::unique_ptr<platform::filesystem::IFileService> m_fileService;
+	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
+	std::unique_ptr<recent::IRecentlyOpenedWorkspaceService> m_recentlyOpenedWorkspaces;
 	std::unique_ptr<config::CConfigurationFileSourceController> m_fileSources;
 	std::unique_ptr<config::CSettingsWritebackCoordinator> m_settingsWriteback;
 	//! Owns advisory watchers and their cancellation/join boundary. It reports
@@ -217,6 +229,10 @@ private:
 	std::optional<platform::uri::Uri> m_workspaceSettingsResource;
 	workspace::WorkspaceConfigurationRuntimeSnapshot m_workspaceConfiguration;
 	std::optional<std::uint64_t> m_loadedWorkspaceRevision;
+	//! Suppresses the ordinary context-listener reload while a CAS result is
+	//! being accepted from its exact committed bytes. The accepting operation
+	//! performs artifact/watch reconciliation once after the terminal decision.
+	bool m_exactWorkspaceAcceptanceActive = false;
 	std::optional<config::WorkspaceContextSnapshot> m_pendingWorkspaceSnapshot;
 	bool m_workspaceReloadActive = false;
 	bool m_startActive = false;

@@ -613,6 +613,8 @@
 	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h" />
+	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceMenuProjection.h" />
+	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchRuntime.h" />
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h" />
@@ -704,9 +706,11 @@
     <ClInclude Include="..\sakura_core\_main\CCommandLine.h" />
     <ClInclude Include="..\sakura_core\_main\CControlProcess.h" />
     <ClInclude Include="..\sakura_core\_main\CControlTray.h" />
+    <ClInclude Include="..\sakura_core\_main\FailedEditorProcessShutdown.h" />
     <ClInclude Include="..\sakura_core\_main\CMutex.h" />
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h" />
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.h" />
     <ClInclude Include="..\sakura_core\_main\CProcess.h" />
     <ClInclude Include="..\sakura_core\_main\CProcessFactory.h" />
@@ -1251,6 +1255,7 @@
 	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.cpp" />
@@ -1328,6 +1333,7 @@
     <ClCompile Include="..\sakura_core\_main\CControlTray.cpp" />
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp" />
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\CProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\CProcessFactory.cpp" />

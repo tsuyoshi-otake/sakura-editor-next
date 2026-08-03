@@ -273,6 +273,9 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_layoutState(m_contributions.Snapshot())
 	, m_layoutMementoStore(std::move(dependencies.layoutMementoStore))
 	, m_fileService(std::move(dependencies.fileService))
+	, m_recentlyOpenedWorkspaces(dependencies.recentlyOpenedWorkspaceStore
+		? std::make_unique<recent::CRecentlyOpenedWorkspaceService>(std::move(dependencies.recentlyOpenedWorkspaceStore))
+		: nullptr)
 	, m_taskExecution(std::move(dependencies.taskExecutionSessionFactory))
 	, m_markers(problems::MarkerServiceLimits {
 		.maximumOwners = 128U,
@@ -311,6 +314,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	}
 	if (m_fileService) {
 		m_fileService = std::make_unique<StopAwareFileService>(std::move(m_fileService), m_stopRequested);
+		m_workspaceEditing = std::make_unique<workspace::CWorkspaceEditingService>(*m_fileService);
 		m_fileSources = std::make_unique<config::CConfigurationFileSourceController>(
 			*m_fileService, m_configuration);
 		m_settingsWriteback = std::make_unique<config::CSettingsWritebackCoordinator>(
@@ -342,6 +346,12 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	}
 }
 
+recent::IRecentlyOpenedWorkspaceService* CWorkbenchRuntime::RecentlyOpenedWorkspaces() noexcept
+{
+	std::lock_guard lock(m_stateMutex);
+	return IsReadyForServiceAccessLocked() ? m_recentlyOpenedWorkspaces.get() : nullptr;
+}
+
 CWorkbenchRuntime::~CWorkbenchRuntime()
 {
 	(void)Stop();
@@ -360,6 +370,78 @@ config::SettingsWritebackResult CWorkbenchRuntime::WriteSetting(const config::Se
 		return { .status = config::ESettingsWritebackStatus::Failed, .diagnostic = "workbench settings writeback owner is unavailable" };
 	}
 	return m_settingsWriteback->Write(request);
+}
+
+workspace::WorkspaceEditingResult CWorkbenchRuntime::ReplaceCurrentWorkspaceFolders(
+	const workspace::WorkspaceFoldersEditRequest& request)
+{
+	const auto failed = [](std::string diagnostic) {
+		return workspace::WorkspaceEditingResult{ .diagnostic = std::move(diagnostic) };
+	};
+	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	{
+		std::lock_guard stateLock(m_stateMutex);
+		if (!IsReadyForServiceAccessLocked()) return failed("workbench runtime is not ready");
+	}
+	if (!m_workspaceEditing) return failed("workspace editor is unavailable");
+	const auto before = m_workspaceContext.Snapshot();
+	if (before.kind != EWorkspaceKind::Workspace || !before.workspaceConfigUri
+		|| !UriIdentityService::IsEqual(*before.workspaceConfigUri, request.source)
+		|| !UriIdentityService::IsEqual(request.source, request.target)) {
+		return failed("workspace edit does not target the active saved workspace");
+	}
+	{
+		std::lock_guard sourceLock(m_sourceMutex);
+		if (m_workspaceReloadActive || m_exactWorkspaceAcceptanceActive) {
+			return failed("workspace semantic reload is already active");
+		}
+	}
+
+	auto edited = m_workspaceEditing->ReplaceFolders(request);
+	if (edited.outcome != workspace::EWorkspaceEditingOutcome::Succeeded) return edited;
+	if (!edited.committedVersion || !edited.committedDocument) {
+		return failed("workspace editor did not return exact committed state");
+	}
+	const auto expected = workspace::CWorkspaceConfigurationDocumentParser::Parse(
+		*edited.committedDocument, request.target);
+	if (!expected.Succeeded()) return failed("committed workspace document could not be parsed");
+
+	{
+		std::lock_guard sourceLock(m_sourceMutex);
+		m_exactWorkspaceAcceptanceActive = true;
+	}
+	try {
+		ReloadWorkspaceSettingsNow(before, &*edited.committedDocument);
+	} catch (...) {
+		std::lock_guard sourceLock(m_sourceMutex);
+		m_exactWorkspaceAcceptanceActive = false;
+		return failed("committed workspace document acceptance failed unexpectedly");
+	}
+	{
+		std::lock_guard sourceLock(m_sourceMutex);
+		m_exactWorkspaceAcceptanceActive = false;
+		m_loadedWorkspaceRevision = m_workspaceContext.Snapshot().revision;
+	}
+
+	const auto acceptedContext = m_workspaceContext.Snapshot();
+	const auto acceptedDocument = WorkspaceConfiguration();
+	if (acceptedContext.kind != EWorkspaceKind::Workspace
+		|| !acceptedContext.workspaceConfigUri
+		|| !UriIdentityService::IsEqual(*acceptedContext.workspaceConfigUri, request.target)
+		|| !HasSameFolders(acceptedContext, expected.document->folders)
+		|| !acceptedDocument.resource || !acceptedDocument.document
+		|| !UriIdentityService::IsEqual(*acceptedDocument.resource, request.target)
+		|| !HasSameFolders(acceptedContext, acceptedDocument.document->folders)) {
+		UpdateWorkspaceArtifacts(acceptedContext);
+		RefreshFileWatching();
+		return failed("committed workspace document was not accepted by the semantic workspace");
+	}
+
+	// The exact-acceptance guard suppressed the context listener. Reconcile the
+	// two advisory consumers once, from the accepted semantic snapshot.
+	UpdateWorkspaceArtifacts(acceptedContext);
+	RefreshFileWatching();
+	return edited;
 }
 
 workspace::WorkspaceConfigurationRuntimeSnapshot CWorkbenchRuntime::WorkspaceConfiguration() const
@@ -996,7 +1078,8 @@ void CWorkbenchRuntime::ReloadWorkspaceSettings(const config::WorkspaceContextSn
 	}
 }
 
-void CWorkbenchRuntime::ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot)
+void CWorkbenchRuntime::ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot,
+	const std::string* exactWorkspaceDocument)
 {
 	if (IsStopRequested()) return;
 	struct DesiredDocument final {
@@ -1061,16 +1144,21 @@ void CWorkbenchRuntime::ReloadWorkspaceSettingsNow(const config::WorkspaceContex
 			if (IsStopRequested() || m_workspaceSettingsActive) return;
 			SetWorkspaceConfigurationSnapshot({});
 		}
-		const auto read = m_fileService->Read(*snapshot.workspaceConfigUri,
-			{ .maximumBytes = config::CJsoncConfigurationSource::kMaximumInputBytes });
-		if (!read.Succeeded() || !read.value) {
-			if (IsStopRequested()) return;
-			restoreAcceptedWorkspaceModel(snapshot);
-			RecordWorkspaceDocumentDiagnostic("workspace.configuration", EWorkbenchRuntimeDiagnosticCode::ReadFailed,
-				"workspace configuration document could not be read");
-			return;
+		std::string utf8;
+		if (exactWorkspaceDocument != nullptr) {
+			utf8 = *exactWorkspaceDocument;
+		} else {
+			const auto read = m_fileService->Read(*snapshot.workspaceConfigUri,
+				{ .maximumBytes = config::CJsoncConfigurationSource::kMaximumInputBytes });
+			if (!read.Succeeded() || !read.value) {
+				if (IsStopRequested()) return;
+				restoreAcceptedWorkspaceModel(snapshot);
+				RecordWorkspaceDocumentDiagnostic("workspace.configuration", EWorkbenchRuntimeDiagnosticCode::ReadFailed,
+					"workspace configuration document could not be read");
+				return;
+			}
+			utf8.assign(read.value->begin(), read.value->end());
 		}
-		const std::string utf8(read.value->begin(), read.value->end());
 		auto parsed = workspace::CWorkspaceConfigurationDocumentParser::Parse(utf8, *snapshot.workspaceConfigUri);
 		if (IsStopRequested()) return;
 		if (!parsed.Succeeded()) {
@@ -1363,6 +1451,10 @@ void CWorkbenchRuntime::OnWorkspaceContextChanged(const config::WorkspaceContext
 			if (IsStopRequested()
 				|| (m_state != EWorkbenchRuntimeState::Ready && m_state != EWorkbenchRuntimeState::ReadyWithDiagnostics)) return;
 		}
+		{
+			std::lock_guard sourceLock(m_sourceMutex);
+			if (m_exactWorkspaceAcceptanceActive) return;
+		}
 		if (HasSameConfigurationShape(change.previous, change.current)) return;
 		ReloadWorkspaceSettings(change.current);
 		// The settings reload can reconcile workspace-file folders, so artifacts
@@ -1475,6 +1567,12 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 	try {
 		RestoreInitialLayoutMemento();
 		if (auto terminal = terminalResult()) return std::move(*terminal);
+
+		// Recent history is non-critical and is intentionally fail-closed: a
+		// malformed or unavailable control record never blocks a window, never
+		// rewrites storage, and remains unavailable to command context until a
+		// later successful store operation.
+		if (m_recentlyOpenedWorkspaces) (void)m_recentlyOpenedWorkspaces->Load();
 
 		if (!ApplyBootstrapWorkspace()) {
 			return FailStart(EWorkbenchRuntimeDiagnosticCode::WorkspaceTransitionFailed,

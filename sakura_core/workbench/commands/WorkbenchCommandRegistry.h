@@ -81,6 +81,21 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor showCommands;
 	WorkbenchCommandExecutor openSettings;
 	WorkbenchCommandExecutor openFolder;
+	WorkbenchCommandExecutor newUntitledFile;
+	WorkbenchCommandExecutor newWindow;
+	WorkbenchCommandExecutor openFile;
+	WorkbenchCommandExecutor openWorkspace;
+	WorkbenchCommandExecutor openRecent;
+	WorkbenchCommandExecutor addRootFolder;
+	WorkbenchCommandExecutor saveWorkspaceAs;
+	WorkbenchCommandExecutor duplicateWorkspaceInNewWindow;
+	WorkbenchCommandExecutor save;
+	WorkbenchCommandExecutor saveAs;
+	WorkbenchCommandExecutor saveAll;
+	WorkbenchCommandExecutor closeActiveEditor;
+	WorkbenchCommandExecutor closeFolder;
+	WorkbenchCommandExecutor closeWindow;
+	WorkbenchCommandExecutor quit;
 	WorkbenchCommandExecutor showExtensions;
 	WorkbenchCommandExecutor openGlobalKeybindings;
 	WorkbenchCommandExecutor toggleSidebarVisibility;
@@ -129,6 +144,9 @@ public:
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(
 		EWorkbenchCommandSurface surface, std::string_view slotId) const;
+	//! Finds the stable descriptor owning an integer compatibility alias. The
+	//! registry intentionally stores raw integers, never generated function enums.
+	[[nodiscard]] std::optional<std::string> ResolveLegacyFunctionCode(std::int32_t functionCode) const;
 	//! Returns owning descriptor copies in stable command-ID order for one surface.
 	//! A command with multiple bindings for the surface appears exactly once.
 	[[nodiscard]] std::vector<WorkbenchCommandDescriptor> EnumerateSurface(

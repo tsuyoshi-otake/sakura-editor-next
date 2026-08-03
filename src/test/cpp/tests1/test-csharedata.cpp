@@ -287,6 +287,7 @@ const std::set<int> popupFuncCodes = {
  * namespace nsFuncCodeに似た定義がある。
  */
 const std::set<int> specialFuncCodes = {
+	F_RECENT_WORKSPACE_LIST,
 	F_FILE_USED_RECENTLY,
 	F_FOLDER_USED_RECENTLY,
 	F_USERMACRO_LIST,
@@ -1126,16 +1127,30 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 	constexpr std::array mainMenuTable = {
 		SMenuItem{ 0, 34052, 'F' },
 		SMenuItem{ 1, 30101, 'N' },
-		SMenuItem{ 1, 30110, 'M' },
+		SMenuItem{ 1, 30110, 'W' },
+		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 30102, 'O' },
 		SMenuItem{ 1, 30997, 'F' },
+		SMenuItem{ 1, 31002, 'W' },
+		SMenuItem{ 1, 34061, 'R' },
+		SMenuItem{ 2, 29007 },
+		SMenuItem{ 1, 1 },
+		SMenuItem{ 1, 31003, 'A' },
+		SMenuItem{ 1, 31004, 'S' },
+		SMenuItem{ 1, 31005, 'D' },
+		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 30103, 'S' },
 		SMenuItem{ 1, 30104, 'A' },
-		SMenuItem{ 1, 30120, 'Z' },
+		SMenuItem{ 1, 30120, 'L' },
+		SMenuItem{ 1, 1 },
+		SMenuItem{ 1, 31007, 'C' },
+		SMenuItem{ 1, 31006, 'F' },
+		SMenuItem{ 1, 31320, 'W' },
+		SMenuItem{ 1, 1 },
+		SMenuItem{ 1, 30195, 'X' },
 		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 30109, 'E' },
-		SMenuItem{ 1, 31320, 'C' },
-		SMenuItem{ 1, 30105, 'R' },
+		SMenuItem{ 1, 30105, 'C' },
 		SMenuItem{ 1, 30107, 'L' },
 		SMenuItem{ 1, 34005, 'W' },
 		SMenuItem{ 2, 30119, 'W' },
@@ -1149,24 +1164,15 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 		SMenuItem{ 2, 30115, '8' },
 		SMenuItem{ 2, 30118, 'C' },
 		SMenuItem{ 2, 30116, '7' },
-		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 30150, 'P' },
 		SMenuItem{ 1, 30151, 'V' },
 		SMenuItem{ 1, 30152, 'U' },
-		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 30190, 'T' },
 		SMenuItem{ 1, 30180, 'B' },
-		SMenuItem{ 1, 1 },
-		// VS Codeのファイルメニューは「最近使用した項目を開く」1個だけを持ち、
-		// その中を 最近使ったフォルダー / 区切り線 / 最近使ったファイル の順に並べる。
-		SMenuItem{ 1, 34061, 'R' },
+		SMenuItem{ 1, 34007, 'R' },
 		SMenuItem{ 2, 29003 },
-		SMenuItem{ 2, 1 },
-		SMenuItem{ 2, 29002 },
-		SMenuItem{ 1, 1 },
 		SMenuItem{ 1, 31380, 'G' },
 		SMenuItem{ 1, 30194, 'Q' },
-		SMenuItem{ 1, 30195, 'X' },
 		SMenuItem{ 0, 34053, 'E' },
 		SMenuItem{ 1, 30210, 'U' },
 		SMenuItem{ 1, 30211, 'R' },
@@ -1485,13 +1491,13 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 
 	constexpr std::array mainMenuTopIdxs = {
 		0,
-		41,
-		169,
-		200,
-		240,
-		259,
-		288,
-		328,
+		48,
+		176,
+		207,
+		247,
+		266,
+		295,
+		335,
 	};
 
 	for (size_t i = 0; i < std::size(mainMenuTopIdxs); ++i) {
@@ -1831,18 +1837,202 @@ TEST(CShareDataProfile, DarkModeDefaultAndExistingValues)
 	EXPECT_THAT(ReadDarkModeFromProfile(L"1"), IsTrue());
 }
 
-TEST(CShareDataProfile, MainMenuMissingVersionMigratesButCurrentVersionDoesNot)
+TEST(CShareDataProfile, MainMenuMissingVersionStartsHistoricalMigrations)
 {
 	constexpr int currentVersion = 3;
 
-	// A new profile gets its initial menu from resources. Its missing version
-	// must still enter the additive migration path; duplicate command IDs are
-	// guarded by ShareData_IO_MainMenu itself.
+	// The menu resource is a base, not a complete historical upgrade result.
+	// A missing version must therefore replay duplicate-guarded additions.
 	EXPECT_THAT(CShareData_IO::ResolveMainMenuReadVersion(true, false, currentVersion, currentVersion), Eq(0));
 
 	// An existing current-version profile intentionally keeps a user-deleted
 	// command deleted instead of adding it back during subsequent loads.
 	EXPECT_THAT(CShareData_IO::ResolveMainMenuReadVersion(true, true, currentVersion, currentVersion), Eq(currentVersion));
+}
+
+namespace {
+
+constexpr std::array kKnownV7FileMenu = {
+	SMenuItem{ 0, 34052, 'F' }, SMenuItem{ 1, 30101, 'N' }, SMenuItem{ 1, 30110, 'M' },
+	SMenuItem{ 1, 30102, 'O' }, SMenuItem{ 1, 30997, 'F' }, SMenuItem{ 1, 30103, 'S' },
+	SMenuItem{ 1, 30104, 'A' }, SMenuItem{ 1, 30120, 'Z' }, SMenuItem{ 1, 1 },
+	SMenuItem{ 1, 30109, 'E' }, SMenuItem{ 1, 31320, 'C' }, SMenuItem{ 1, 30105, 'R' },
+	SMenuItem{ 1, 30107, 'L' }, SMenuItem{ 1, 34005, 'W' }, SMenuItem{ 2, 30119, 'W' },
+	SMenuItem{ 2, 1 }, SMenuItem{ 2, 30111, 'S' }, SMenuItem{ 2, 30112, 'J' },
+	SMenuItem{ 2, 30113, 'E' }, SMenuItem{ 2, 30122, 'L' }, SMenuItem{ 2, 30114, 'U' },
+	SMenuItem{ 2, 30117, 'N' }, SMenuItem{ 2, 30115, '8' }, SMenuItem{ 2, 30118, 'C' },
+	SMenuItem{ 2, 30116, '7' }, SMenuItem{ 1, 1 }, SMenuItem{ 1, 30150, 'P' },
+	SMenuItem{ 1, 30151, 'V' }, SMenuItem{ 1, 30152, 'U' }, SMenuItem{ 1, 1 },
+	SMenuItem{ 1, 30190, 'T' }, SMenuItem{ 1, 30180, 'B' }, SMenuItem{ 1, 1 },
+	SMenuItem{ 1, 34061, 'R' }, SMenuItem{ 2, 29003 }, SMenuItem{ 2, 1 },
+	SMenuItem{ 2, 29002 }, SMenuItem{ 1, 1 }, SMenuItem{ 1, 31380, 'G' },
+	SMenuItem{ 1, 30194, 'Q' }, SMenuItem{ 1, 30195, 'X' },
+};
+
+// This is the pre-version-6 File run.  It is intentionally not a v8 resource
+// with its File prefix replaced: ApplyMainMenuHistoricalAdditions performs the
+// real v6 Open Recent structural migration and the version-7 Open Folder add.
+constexpr std::array kPreV6FileMenu = {
+	SMenuItem{ 0, 34052, 'F' }, SMenuItem{ 1, 30101, 'N' }, SMenuItem{ 1, 30110, 'M' },
+	SMenuItem{ 1, 30102, 'O' }, SMenuItem{ 1, 30103, 'S' }, SMenuItem{ 1, 30104, 'A' },
+	SMenuItem{ 1, 30120, 'Z' }, SMenuItem{ 1, 1 }, SMenuItem{ 1, 30109, 'E' },
+	SMenuItem{ 1, 31320, 'C' }, SMenuItem{ 1, 30105, 'R' }, SMenuItem{ 1, 30107, 'L' },
+	SMenuItem{ 1, 34005, 'W' }, SMenuItem{ 2, 30119, 'W' }, SMenuItem{ 2, 1 },
+	SMenuItem{ 2, 30111, 'S' }, SMenuItem{ 2, 30112, 'J' }, SMenuItem{ 2, 30113, 'E' },
+	SMenuItem{ 2, 30122, 'L' }, SMenuItem{ 2, 30114, 'U' }, SMenuItem{ 2, 30117, 'N' },
+	SMenuItem{ 2, 30115, '8' }, SMenuItem{ 2, 30118, 'C' }, SMenuItem{ 2, 30116, '7' },
+	SMenuItem{ 1, 1 }, SMenuItem{ 1, 30150, 'P' }, SMenuItem{ 1, 30151, 'V' },
+	SMenuItem{ 1, 30152, 'U' }, SMenuItem{ 1, 1 }, SMenuItem{ 1, 30190, 'T' },
+	SMenuItem{ 1, 30180, 'B' }, SMenuItem{ 1, 1 }, SMenuItem{ 1, 34006, 'F' },
+	SMenuItem{ 2, 29002 }, SMenuItem{ 1, 34007, 'D' }, SMenuItem{ 2, 29003 },
+	SMenuItem{ 1, 1 }, SMenuItem{ 1, 31380, 'G' }, SMenuItem{ 1, 30194, 'Q' },
+	SMenuItem{ 1, 30195, 'X' },
+};
+
+bool MenuContainsFunction(const CommonSetting_MainMenu& menu, EFunctionCode function)
+{
+	for (int index = 0; index < menu.m_nMainMenuNum; ++index) {
+		if (menu.m_cMainMenuTbl[index].m_nFunc == function) return true;
+	}
+	return false;
+}
+
+std::unique_ptr<CommonSetting_MainMenu> MakePreV6DefaultFromResource(const CommonSetting_MainMenu& v8)
+{
+	constexpr int kV8FileItemCount = 48;
+	constexpr int kPreV6FileItemCount = static_cast<int>(kPreV6FileMenu.size());
+	static_assert(kV8FileItemCount - kPreV6FileItemCount == 8);
+	auto menu = std::make_unique<CommonSetting_MainMenu>(v8);
+	for (int index = kV8FileItemCount; index < menu->m_nMainMenuNum; ++index) {
+		menu->m_cMainMenuTbl[index - (kV8FileItemCount - kPreV6FileItemCount)] = menu->m_cMainMenuTbl[index];
+	}
+	for (int index = 0; index < kPreV6FileItemCount; ++index) {
+		const auto& source = kPreV6FileMenu[static_cast<std::size_t>(index)];
+		auto& target = menu->m_cMainMenuTbl[index];
+		target.m_nType = source.GetType();
+		target.m_nFunc = source.m_eFuncCode;
+		target.m_nLevel = source.m_nLevel;
+		target.m_sKey[0] = static_cast<WCHAR>(source.m_chAccessKey);
+		target.m_sKey[1] = L'\0';
+		target.m_sName[0] = L'\0';
+	}
+	menu->m_nMainMenuNum -= kV8FileItemCount - kPreV6FileItemCount;
+	for (int top = 0; top < MAX_MAINMENU_TOP; ++top) {
+		if (menu->m_nMenuTopIdx[top] >= kV8FileItemCount) {
+			menu->m_nMenuTopIdx[top] -= kV8FileItemCount - kPreV6FileItemCount;
+		}
+	}
+	return menu;
+}
+
+std::unique_ptr<CommonSetting_MainMenu> MakeKnownV7DefaultFromResource(const CommonSetting_MainMenu& v8)
+{
+	auto menu = MakePreV6DefaultFromResource(v8);
+	CShareData_IO::ApplyMainMenuHistoricalAdditions(*menu, 0);
+	return menu;
+}
+
+bool RemoveHistoricalMenuItem(CommonSetting_MainMenu& menu, EFunctionCode function, bool removePreviousSeparator)
+{
+	for (int index = 0; index < menu.m_nMainMenuNum; ++index) {
+		if (menu.m_cMainMenuTbl[index].m_nFunc != function) continue;
+		int first = index;
+		int count = 1;
+		if (removePreviousSeparator && index > 0
+			&& menu.m_cMainMenuTbl[index - 1].m_nType == T_SEPARATOR) {
+			first = index - 1;
+			count = 2;
+		}
+		for (int source = first + count; source < menu.m_nMainMenuNum; ++source) {
+			menu.m_cMainMenuTbl[source - count] = menu.m_cMainMenuTbl[source];
+		}
+		menu.m_nMainMenuNum -= count;
+		for (int top = 0; top < MAX_MAINMENU_TOP; ++top) {
+			if (menu.m_nMenuTopIdx[top] > first) menu.m_nMenuTopIdx[top] -= count;
+		}
+		return true;
+	}
+	return false;
+}
+
+bool SplitMainMenuOpenRecent(CommonSetting_MainMenu& menu)
+{
+	for (int index = 0; index + 3 < menu.m_nMainMenuNum; ++index) {
+		auto* items = &menu.m_cMainMenuTbl[index];
+		if (items[0].m_nFunc != EFunctionCode(F_FILE_OPENRECENT_SUBMENU)
+			|| items[1].m_nFunc != F_FOLDER_USED_RECENTLY
+			|| items[2].m_nType != T_SEPARATOR
+			|| items[3].m_nFunc != F_FILE_USED_RECENTLY) continue;
+		const int level = items[0].m_nLevel;
+		items[0].m_nType = T_NODE;
+		items[0].m_nFunc = EFunctionCode(F_FILE_RCNTFILE_SUBMENU);
+		items[0].m_nLevel = level;
+		items[0].m_sKey[0] = L'F';
+		items[0].m_sKey[1] = L'\0';
+		items[0].m_sName[0] = L'\0';
+		items[1].m_nType = T_SPECIAL;
+		items[1].m_nFunc = F_FILE_USED_RECENTLY;
+		items[1].m_nLevel = level + 1;
+		items[1].m_sKey[0] = L'\0';
+		items[1].m_sKey[1] = L'\0';
+		items[1].m_sName[0] = L'\0';
+		items[2].m_nType = T_NODE;
+		items[2].m_nFunc = EFunctionCode(F_FILE_RCNTFLDR_SUBMENU);
+		items[2].m_nLevel = level;
+		items[2].m_sKey[0] = L'D';
+		items[2].m_sKey[1] = L'\0';
+		items[2].m_sName[0] = L'\0';
+		items[3].m_nType = T_SPECIAL;
+		items[3].m_nFunc = F_FOLDER_USED_RECENTLY;
+		items[3].m_nLevel = level + 1;
+		items[3].m_sKey[0] = L'\0';
+		items[3].m_sKey[1] = L'\0';
+		items[3].m_sName[0] = L'\0';
+		return true;
+	}
+	return false;
+}
+
+std::unique_ptr<CommonSetting_MainMenu> MakeHistoricalDefaultForVersion(
+	const CommonSetting_MainMenu& resource, int storedVersion)
+{
+	auto menu = MakeKnownV7DefaultFromResource(resource);
+	struct Addition {
+		int version;
+		EFunctionCode function;
+		bool previousSeparator;
+	};
+	constexpr std::array additions{
+		Addition{ 1, F_FILENEW_NEWWINDOW, false }, Addition{ 1, F_CHG_CHARSET, false },
+		Addition{ 1, F_FILE_REOPEN_LATIN1, false }, Addition{ 1, F_COPY_COLOR_HTML, false },
+		Addition{ 1, F_COPY_COLOR_HTML_LINENUMBER, false }, Addition{ 1, F_GREP_REPLACE_DLG, false },
+		Addition{ 1, F_FILETREE, false }, Addition{ 1, F_SHOWMINIMAP, false },
+		Addition{ 1, F_FUNCLIST_NEXT, true }, Addition{ 1, F_FUNCLIST_PREV, false },
+		Addition{ 1, F_MODIFYLINE_NEXT, false }, Addition{ 1, F_MODIFYLINE_PREV, false },
+		Addition{ 1, F_MODIFYLINE_NEXT_SEL, true }, Addition{ 1, F_MODIFYLINE_PREV_SEL, false },
+		Addition{ 2, F_DLGWINLIST, false }, Addition{ 4, F_TOGGLE_MARKDOWN_PREVIEW, false },
+		Addition{ 5, F_EXTENSION_LIST, false }, Addition{ 7, F_OPEN_WORKSPACE_FOLDER, false },
+	};
+	for (auto it = additions.rbegin(); it != additions.rend(); ++it) {
+		if (it->version > storedVersion) EXPECT_TRUE(RemoveHistoricalMenuItem(*menu, it->function, it->previousSeparator));
+	}
+	if (storedVersion < 6) EXPECT_TRUE(SplitMainMenuOpenRecent(*menu));
+	return menu;
+}
+
+void ExpectSameMenuModel(const CommonSetting_MainMenu& expected, const CommonSetting_MainMenu& actual)
+{
+	EXPECT_EQ(expected.m_nMainMenuNum, actual.m_nMainMenuNum);
+	EXPECT_EQ(expected.m_bMainMenuKeyParentheses, actual.m_bMainMenuKeyParentheses);
+	for (int top = 0; top < MAX_MAINMENU_TOP; ++top) EXPECT_EQ(expected.m_nMenuTopIdx[top], actual.m_nMenuTopIdx[top]);
+	for (int index = 0; index < expected.m_nMainMenuNum; ++index) {
+		EXPECT_EQ(expected.m_cMainMenuTbl[index].m_nType, actual.m_cMainMenuTbl[index].m_nType) << index;
+		EXPECT_EQ(expected.m_cMainMenuTbl[index].m_nFunc, actual.m_cMainMenuTbl[index].m_nFunc) << index;
+		EXPECT_EQ(expected.m_cMainMenuTbl[index].m_nLevel, actual.m_cMainMenuTbl[index].m_nLevel) << index;
+		EXPECT_STREQ(expected.m_cMainMenuTbl[index].m_sKey, actual.m_cMainMenuTbl[index].m_sKey) << index;
+		EXPECT_STREQ(expected.m_cMainMenuTbl[index].m_sName, actual.m_cMainMenuTbl[index].m_sName) << index;
+	}
+}
 }
 
 namespace {
@@ -1883,6 +2073,156 @@ TEST(CShareDataProfile, MainMenuVersion7OpenFolderMigrationIsIdempotent)
 	// Replaying the version-7 migration must not add a second Open Folder entry.
 	EXPECT_FALSE(CShareData_IO::AddMainMenuItemIfMissing(*menu, 30997, 30102, L'F', false, false));
 	EXPECT_EQ(beforeCount + 1, menu->m_nMainMenuNum);
+}
+
+TEST_F(CShareDataTest, MainMenuHistoricalMigrationsBuildTheRealV7DefaultAndPreserveFreshV8File)
+{
+	const auto& resource = GetDllShareData().m_Common.m_sMainMenu;
+	auto v7 = MakeKnownV7DefaultFromResource(resource);
+
+	ASSERT_EQ(kKnownV7FileMenu.size(), std::size_t(41));
+	for (int index = 0; index < static_cast<int>(kKnownV7FileMenu.size()); ++index) {
+		const auto& expected = kKnownV7FileMenu[static_cast<std::size_t>(index)];
+		const auto& actual = v7->m_cMainMenuTbl[index];
+		EXPECT_EQ(expected.GetType(), actual.m_nType) << index;
+		EXPECT_EQ(expected.m_eFuncCode, actual.m_nFunc) << index;
+		EXPECT_EQ(expected.m_nLevel, actual.m_nLevel) << index;
+		EXPECT_EQ(static_cast<WCHAR>(expected.m_chAccessKey), actual.m_sKey[0]) << index;
+	}
+
+	// Every historical addition, including the resource omissions that motivated
+	// this regression, is present in the canonical v7 model.
+	constexpr std::array historicalFunctions{
+		F_FILENEW_NEWWINDOW, F_CHG_CHARSET, F_FILE_REOPEN_LATIN1,
+		F_COPY_COLOR_HTML, F_COPY_COLOR_HTML_LINENUMBER, F_GREP_REPLACE_DLG,
+		F_FILETREE, F_SHOWMINIMAP, F_FUNCLIST_NEXT, F_FUNCLIST_PREV,
+		F_MODIFYLINE_NEXT, F_MODIFYLINE_PREV, F_MODIFYLINE_NEXT_SEL,
+		F_MODIFYLINE_PREV_SEL, F_DLGWINLIST, F_TOGGLE_MARKDOWN_PREVIEW,
+		F_EXTENSION_LIST, F_OPEN_WORKSPACE_FOLDER,
+	};
+	for (const auto function : historicalFunctions) {
+		EXPECT_TRUE(MenuContainsFunction(*v7, function)) << static_cast<int>(function);
+	}
+
+	// Missing version zero begins from the current v8 resource, retains that
+	// File shape, and still gains historical non-File additions.
+	auto fresh = std::make_unique<CommonSetting_MainMenu>(resource);
+	CShareData_IO::ApplyMainMenuHistoricalAdditions(*fresh, 0);
+	for (int index = 0; index < 48; ++index) {
+		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nType, fresh->m_cMainMenuTbl[index].m_nType) << index;
+		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nFunc, fresh->m_cMainMenuTbl[index].m_nFunc) << index;
+		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nLevel, fresh->m_cMainMenuTbl[index].m_nLevel) << index;
+	}
+	EXPECT_TRUE(MenuContainsFunction(*fresh, F_TOGGLE_MARKDOWN_PREVIEW));
+	EXPECT_TRUE(MenuContainsFunction(*fresh, F_EXTENSION_LIST));
+
+	// A persisted v6 menu already has the v6 Open Recent merge and first reaches
+	// the canonical v7 shape before the guarded v8 replacement.
+	auto v6 = MakeHistoricalDefaultForVersion(resource, 6);
+	EXPECT_FALSE(MenuContainsFunction(*v6, F_OPEN_WORKSPACE_FOLDER));
+	EXPECT_TRUE(CShareData_IO::MigrateKnownMainMenuDefaultToV8(*v6, 6));
+	EXPECT_TRUE(MenuContainsFunction(*v6, F_OPEN_WORKSPACE));
+}
+
+TEST_F(CShareDataTest, MainMenuVersion8MigratesRecognizedDefaultsFromEveryPriorVersion)
+{
+	auto v8 = GetDllShareData().m_Common.m_sMainMenu;
+	CShareData_IO::ApplyMainMenuHistoricalAdditions(v8, 0);
+	for (int storedVersion = 0; storedVersion <= 7; ++storedVersion) {
+		auto menu = MakeHistoricalDefaultForVersion(GetDllShareData().m_Common.m_sMainMenu, storedVersion);
+		ASSERT_TRUE(CShareData_IO::MigrateKnownMainMenuDefaultToV8(*menu, storedVersion)) << storedVersion;
+		ExpectSameMenuModel(v8, *menu);
+		EXPECT_FALSE(CShareData_IO::MigrateKnownMainMenuDefaultToV8(*menu, storedVersion)) << storedVersion;
+	}
+}
+
+TEST_F(CShareDataTest, MainMenuVersion8PreservesCustomizedModelsFromEveryPriorVersion)
+{
+	const auto& v8 = GetDllShareData().m_Common.m_sMainMenu;
+	for (int storedVersion = 0; storedVersion <= 7; ++storedVersion) {
+		auto menu = MakeHistoricalDefaultForVersion(v8, storedVersion);
+		menu->m_cMainMenuTbl[menu->m_nMenuTopIdx[1]].m_sName[0] = L'X';
+		const auto before = *menu;
+		EXPECT_FALSE(CShareData_IO::MigrateKnownMainMenuDefaultToV8(*menu, storedVersion)) << storedVersion;
+		ExpectSameMenuModel(before, *menu);
+		EXPECT_FALSE(MenuContainsFunction(*menu, F_OPEN_WORKSPACE)) << storedVersion;
+	}
+}
+
+TEST_F(CShareDataTest, MainMenuVersion7FullDefaultFingerprintIsStable)
+{
+	const auto menu = MakeKnownV7DefaultFromResource(GetDllShareData().m_Common.m_sMainMenu);
+	constexpr std::uint64_t kExpectedFingerprint = UINT64_C(17115839819928857123);
+	EXPECT_EQ(kExpectedFingerprint, CShareData_IO::MainMenuModelFingerprint(*menu));
+}
+
+TEST_F(CShareDataTest, MainMenuVersion8RewritesOnlyTheCompleteKnownV7DefaultAndIsIdempotent)
+{
+	const auto v8 = GetDllShareData().m_Common.m_sMainMenu;
+	auto menu = MakeKnownV7DefaultFromResource(v8);
+	auto expectedV8 = std::make_unique<CommonSetting_MainMenu>(v8);
+	CShareData_IO::ApplyMainMenuHistoricalAdditions(*expectedV8, 0);
+
+	ASSERT_TRUE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
+	EXPECT_EQ(EFunctionCode(F_OPEN_WORKSPACE), menu->m_cMainMenuTbl[6].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_FILE_OPENRECENT_SUBMENU), menu->m_cMainMenuTbl[7].m_nFunc);
+	EXPECT_EQ(F_RECENT_WORKSPACE_LIST, menu->m_cMainMenuTbl[8].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_ADD_FOLDER_TO_WORKSPACE), menu->m_cMainMenuTbl[10].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_SAVE_WORKSPACE_AS), menu->m_cMainMenuTbl[11].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_DUPLICATE_WORKSPACE), menu->m_cMainMenuTbl[12].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_CLOSE_ACTIVE_EDITOR), menu->m_cMainMenuTbl[18].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_CLOSE_WORKSPACE), menu->m_cMainMenuTbl[19].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_EXITALL), menu->m_cMainMenuTbl[22].m_nFunc);
+	EXPECT_EQ(EFunctionCode(F_FILE_RCNTFLDR_SUBMENU), menu->m_cMainMenuTbl[44].m_nFunc);
+	EXPECT_EQ(EFunctionCode(34053), menu->m_cMainMenuTbl[48].m_nFunc);
+	EXPECT_EQ(48, menu->m_nMenuTopIdx[1]);
+	ExpectSameMenuModel(*expectedV8, *menu);
+	const int count = menu->m_nMainMenuNum;
+	EXPECT_FALSE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
+	EXPECT_EQ(count, menu->m_nMainMenuNum);
+}
+
+TEST_F(CShareDataTest, MainMenuVersion8DoesNotRewriteAnyCustomizedV7Model)
+{
+	auto menu = MakeKnownV7DefaultFromResource(GetDllShareData().m_Common.m_sMainMenu);
+	menu->m_cMainMenuTbl[1].m_sName[0] = L'X';
+	menu->m_cMainMenuTbl[2].m_sKey[0] = L'X';
+	menu->m_cMainMenuTbl[3].m_nType = T_NODE;
+	std::swap(menu->m_cMainMenuTbl[4], menu->m_cMainMenuTbl[5]);
+	menu->m_cMainMenuTbl[menu->m_nMenuTopIdx[1]].m_sName[0] = L'X'; // customization outside File
+	const auto before = *menu;
+	EXPECT_FALSE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
+	ExpectSameMenuModel(before, *menu);
+}
+
+TEST_F(CShareDataTest, MainMenuVersion8DoesNotRewriteV7InsertionOrDeletion)
+{
+	for (const bool insert : { false, true }) {
+		auto menu = MakeKnownV7DefaultFromResource(GetDllShareData().m_Common.m_sMainMenu);
+		if (insert) {
+			for (int index = menu->m_nMainMenuNum - 1; index >= 1; --index) {
+				menu->m_cMainMenuTbl[index + 1] = menu->m_cMainMenuTbl[index];
+			}
+			menu->m_cMainMenuTbl[1] = menu->m_cMainMenuTbl[2];
+			++menu->m_nMainMenuNum;
+			for (int top = 0; top < MAX_MAINMENU_TOP; ++top) {
+				if (menu->m_nMenuTopIdx[top] >= 1) ++menu->m_nMenuTopIdx[top];
+			}
+		} else {
+			--menu->m_nMainMenuNum; // deletion at the end retains valid top indices
+		}
+		const auto before = *menu;
+		EXPECT_FALSE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
+		ExpectSameMenuModel(before, *menu);
+	}
+}
+
+TEST_F(CShareDataTest, MainMenuVersion8FreshResourceIsNotRewritten)
+{
+	const auto before = GetDllShareData().m_Common.m_sMainMenu;
+	auto menu = std::make_unique<CommonSetting_MainMenu>(before);
+	EXPECT_FALSE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
+	ExpectSameMenuModel(before, *menu);
 }
 
 TEST(CShareDataProfile, MainMenuVersion6MergesTheTwoMruSubmenusIntoOneOpenRecent)

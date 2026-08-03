@@ -9,10 +9,12 @@
 
 #include <gtest/gtest.h>
 
+#include <string>
 #include <utility>
 
 #include "platform/uri/UriIdentity.h"
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
+#include "workbench/workspace/WorkspaceFolderLimits.h"
 
 namespace {
 
@@ -79,6 +81,37 @@ TEST(WorkspaceConfigurationDocumentParser, CanonicalUriDuplicatesKeepFirstFolder
 	EXPECT_EQ(std::string::npos, result.diagnostics.front().message.find("C:"));
 }
 
+TEST(WorkspaceConfigurationDocumentParser, EmptyExplicitNameUsesDerivedDisplayName)
+{
+	const auto result = workbench::workspace::CWorkspaceConfigurationDocumentParser::Parse(
+		R"json({ "folders": [{ "path": "D:/Absolute", "name": "" }] })json",
+		ParseUri(L"file:///C:/Work/demo.code-workspace"));
+
+	ASSERT_TRUE(result.Succeeded());
+	ASSERT_EQ(1U, result.document->folders.size());
+	EXPECT_EQ(L"file:///D:/Absolute", result.document->folders.front().uri.ToString());
+	EXPECT_EQ(L"Absolute", result.document->folders.front().displayName);
+}
+
+TEST(WorkspaceConfigurationDocumentParser, ResolvesUncPathsWithoutBorrowingWorkspaceAuthority)
+{
+	const auto localWorkspace = workbench::workspace::CWorkspaceConfigurationDocumentParser::Parse(
+		R"json({ "folders": [{ "path": "\\\\server\\share\\Repo", "name": "" }] })json",
+		ParseUri(L"file:///C:/Work/demo.code-workspace"));
+	ASSERT_TRUE(localWorkspace.Succeeded());
+	ASSERT_EQ(1U, localWorkspace.document->folders.size());
+	EXPECT_EQ(L"file://server/share/Repo", localWorkspace.document->folders.front().uri.ToString());
+	EXPECT_EQ(L"Repo", localWorkspace.document->folders.front().displayName);
+
+	const auto uncWorkspace = workbench::workspace::CWorkspaceConfigurationDocumentParser::Parse(
+		R"json({ "folders": [{ "path": "..\\Sibling" }, { "path": "\\\\other\\share\\Repo" }] })json",
+		ParseUri(L"file://host/workspaces/team/demo.code-workspace"));
+	ASSERT_TRUE(uncWorkspace.Succeeded());
+	ASSERT_EQ(2U, uncWorkspace.document->folders.size());
+	EXPECT_EQ(L"file://host/workspaces/Sibling", uncWorkspace.document->folders[0].uri.ToString());
+	EXPECT_EQ(L"file://other/share/Repo", uncWorkspace.document->folders[1].uri.ToString());
+}
+
 TEST(WorkspaceConfigurationDocumentParser, RejectsNonObjectSettingsBeforeAnyConfigurationAdapterCanRun)
 {
 	const auto result = workbench::workspace::CWorkspaceConfigurationDocumentParser::Parse(
@@ -86,6 +119,28 @@ TEST(WorkspaceConfigurationDocumentParser, RejectsNonObjectSettingsBeforeAnyConf
 	EXPECT_FALSE(result.Succeeded());
 	ASSERT_EQ(1U, result.diagnostics.size());
 	EXPECT_EQ(workbench::workspace::EWorkspaceConfigurationDiagnosticCode::SettingsMustBeObject, result.diagnostics.front().code);
+}
+
+TEST(WorkspaceConfigurationDocumentParser, SharesTheSixtyFourFolderBoundWithWorkspaceEditing)
+{
+	auto workspaceDocument = [](std::size_t count) {
+		std::string text = "{ \"folders\": [";
+		for (std::size_t index = 0; index < count; ++index) {
+			text += "{ \"path\": \"Folder" + std::to_string(index) + "\" },";
+		}
+		return text + "] }";
+	};
+	const auto resource = ParseUri(L"file:///C:/Work/demo.code-workspace");
+	const auto accepted = workbench::workspace::CWorkspaceConfigurationDocumentParser::Parse(
+		workspaceDocument(workbench::workspace::kMaximumWorkspaceFolders), resource);
+	ASSERT_TRUE(accepted.Succeeded());
+	EXPECT_EQ(workbench::workspace::kMaximumWorkspaceFolders, accepted.document->folders.size());
+
+	const auto rejected = workbench::workspace::CWorkspaceConfigurationDocumentParser::Parse(
+		workspaceDocument(workbench::workspace::kMaximumWorkspaceFolders + 1U), resource);
+	ASSERT_FALSE(rejected.Succeeded());
+	ASSERT_EQ(1U, rejected.diagnostics.size());
+	EXPECT_EQ(workbench::workspace::EWorkspaceConfigurationDiagnosticCode::MaximumFoldersExceeded, rejected.diagnostics.front().code);
 }
 
 } // namespace

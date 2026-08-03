@@ -997,6 +997,12 @@
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceMenuProjection.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1528,6 +1534,9 @@
     <ClInclude Include="..\sakura_core\_main\CControlTray.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\FailedEditorProcessShutdown.h">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\_main\CMutex.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
@@ -1535,6 +1544,9 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.h">
@@ -2797,6 +2809,9 @@
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\recent\RecentlyOpenedWorkspaceService.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3191,6 +3206,9 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.cpp">

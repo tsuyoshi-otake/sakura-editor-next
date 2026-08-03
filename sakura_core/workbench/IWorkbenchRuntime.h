@@ -16,6 +16,7 @@
 #include "workbench/tasks/FolderTaskCatalogRegistry.h"
 #include "workbench/tasks/TaskExecutionService.h"
 #include "workbench/workspace/WorkspaceConfigurationTypes.h"
+#include "workbench/workspace/WorkspaceEditingService.h"
 
 #include <cstdint>
 #include <optional>
@@ -28,7 +29,11 @@ class WorkbenchLayoutStateService;
 }
 
 namespace workbench::workspace {
-class CWorkspaceArtifactDocumentService;
+	class CWorkspaceArtifactDocumentService;
+}
+
+namespace workbench::recent {
+	class IRecentlyOpenedWorkspaceService;
 }
 
 namespace workbench::problems {
@@ -125,6 +130,21 @@ public:
 	[[nodiscard]] virtual const WorkbenchBootstrapContext& Bootstrap() const noexcept = 0;
 	[[nodiscard]] virtual config::IConfigurationService& Configuration() noexcept = 0;
 	[[nodiscard]] virtual config::IWorkspaceContextService& WorkspaceContext() noexcept = 0;
+	//! Runtime-owned editor for .code-workspace documents. It is the only window-facing
+	//! write path and keeps the process-local file provider private.
+	[[nodiscard]] virtual workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept = 0;
+	//! Production overrides this operation to make a successful CAS edit and the
+	//! corresponding semantic workspace/context update one synchronous terminal
+	//! result. Narrow test runtimes retain a fail-closed default.
+	[[nodiscard]] virtual workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
+		const workspace::WorkspaceFoldersEditRequest&)
+	{
+		return { .diagnostic = "runtime does not support synchronous workspace-folder acceptance" };
+	}
+	//! Control-owned Profile/User recent-workspace state.  A default null borrow
+	//! keeps existing narrow test runtimes source compatible; production exposes
+	//! it only while the runtime is ready.
+	[[nodiscard]] virtual recent::IRecentlyOpenedWorkspaceService* RecentlyOpenedWorkspaces() noexcept { return nullptr; }
 	//! Stable-ID contributions and HWND-free layout state remain separate from native workbench adapters.
 	[[nodiscard]] virtual layout::WorkbenchContributionRegistry& Contributions() noexcept = 0;
 	[[nodiscard]] virtual const layout::WorkbenchContributionRegistry& Contributions() const noexcept = 0;

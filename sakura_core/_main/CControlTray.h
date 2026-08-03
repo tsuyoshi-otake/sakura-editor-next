@@ -28,6 +28,7 @@
 #pragma once
 
 #include <Windows.h>
+#include <cstdint>
 #include <memory>
 #include "uiparts/CMenuDrawer.h"
 #include "uiparts/CImageListMgr.h" // 2002/2/10 aroka
@@ -39,6 +40,20 @@ struct DLLSHAREDATA;
 class CPropertyManager;
 class CExtensionHostController;
 class IExtensionHostSecretVaultGrantLifecycle;
+
+enum class EOpenNewEditorOutcome : std::uint8_t {
+	Succeeded,
+	Failed,
+	FailedChildStopped,
+	FailedChildOwnershipTransferred,
+};
+
+struct OpenNewEditorResult final {
+	EOpenNewEditorOutcome outcome = EOpenNewEditorOutcome::Failed;
+	HANDLE transferredProcessHandle = nullptr;
+
+	[[nodiscard]] bool Succeeded() const noexcept { return outcome == EOpenNewEditorOutcome::Succeeded; }
+};
 
 //!	常駐部の管理
 /*!
@@ -97,7 +112,20 @@ public:
 		const WCHAR*		szCmdLineOption	= nullptr,		//!< [in] 追加のコマンドラインオプション
 		bool				sync			= false,	//!< [in] trueなら新規エディタの起動まで待機する
 		const WCHAR*		pszCurDir		= nullptr,		//!< [in] 新規エディタのカレントディレクトリ
-		bool				bNewWindow		= false		//!< [in] 新規エディタをウインドウで開く
+		bool				bNewWindow		= false,		//!< [in] 新規エディタをウインドウで開く
+		bool				terminateOnSyncFailure = false
+	);
+	//! Typed Workspace transition path.  When child quiescence cannot be proven,
+	//! ownership of transferredProcessHandle passes to the caller.
+	static OpenNewEditorResult OpenNewEditorWithResult(
+		HINSTANCE hInstance,
+		HWND hWndParent,
+		const SLoadInfo& sLoadInfo,
+		const WCHAR* szCmdLineOption = nullptr,
+		bool sync = false,
+		const WCHAR* pszCurDir = nullptr,
+		bool bNewWindow = false,
+		bool terminateOnSyncFailure = false
 	);
 	static bool OpenNewEditor2(						//!< 新規編集ウィンドウの追加 ver 1
 		HINSTANCE		hInstance,

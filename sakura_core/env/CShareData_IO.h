@@ -8,6 +8,7 @@
 #ifndef SAKURA_CSHAREDATA_IO_B154E0E0_C606_468E_A3B7_767DDA1DE6EE_H_
 #define SAKURA_CSHAREDATA_IO_B154E0E0_C606_468E_A3B7_767DDA1DE6EE_H_
 #pragma once
+#include <cstdint>
 
 class CDataProfile;
 class CMenuDrawer;
@@ -28,9 +29,9 @@ public:
 	static bool LoadShareData();	/* 共有データのロード */
 	static void SaveShareData();	/* 共有データの保存 */
 
-	// Pure policy seam for the main-menu migration.  A profile without a
-	// persisted version is treated as version 0 even when its initial menu came
-	// from the resource, so additive migrations can fill newly introduced items.
+	// Pure policy seam for the main-menu migration. A missing persisted version
+	// is historically version zero: the current resource is the base, then the
+	// duplicate-guarded additive migrations fill resource omissions.
 	[[nodiscard]] static int ResolveMainMenuReadVersion(
 		bool isReadingMode, bool hasStoredVersion, int storedVersion, int currentVersion ) noexcept;
 
@@ -40,6 +41,21 @@ public:
 	// entry run is rewritten; a customized menu is left untouched.  Returns true
 	// when the run was found and rewritten.
 	[[nodiscard]] static bool MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) noexcept;
+
+	//! Version 8 migration. Replaces the File run only when the complete
+	//! persisted model is the known unmodified version-7 default.
+	[[nodiscard]] static bool MigrateMainMenuV7DefaultToV8( CommonSetting_MainMenu& mainmenu ) noexcept;
+
+	//! Replays historical migrations on a copy and commits the v8 replacement
+	//! only when that copy is the complete known default for storedVersion.
+	//! Customized persisted menus therefore remain byte-for-byte unchanged.
+	[[nodiscard]] static bool MigrateKnownMainMenuDefaultToV8(
+		CommonSetting_MainMenu& mainmenu, int storedVersion ) noexcept;
+
+	//! Canonical fingerprint for the persisted menu model. This intentionally
+	//! includes the complete model rather than only the File-menu run so a
+	//! customization anywhere prevents a destructive schema migration.
+	[[nodiscard]] static std::uint64_t MainMenuModelFingerprint( const CommonSetting_MainMenu& mainmenu ) noexcept;
 
 	//! Adds one versioned leaf after an existing menu item, without duplicating
 	//! an already-present command.  This pure migration seam keeps additive
@@ -51,6 +67,12 @@ public:
 		wchar_t accessKey,
 		bool addPreviousSeparator,
 		bool addNextSeparator) noexcept;
+
+	//! Applies the pre-v8 duplicate-guarded main-menu migrations for a persisted
+	//! schema version. This is intentionally separate from the destructive v8
+	//! replacement so current resources can still receive historical additions.
+	static void ApplyMainMenuHistoricalAdditions(
+		CommonSetting_MainMenu& mainmenu, int storedVersion) noexcept;
 
 protected:
 	static bool ShareData_IO_2( bool bRead );	/* 共有データの保存 */

@@ -28,6 +28,7 @@
 #include "StdAfx.h"
 #include <HtmlHelp.h>
 #include "CControlTray.h"
+#include "_main/FailedEditorProcessShutdown.h"
 #include "env/CPropertyManager.h"
 #include "typeprop/CDlgTypeList.h"
 #include "debug/CRunningTimer.h"
@@ -1220,13 +1221,34 @@ void CControlTray::OnNewEditor( bool bNewWindow )
 	@date 2008.05.05 novice GetModuleHandle(NULL)→NULLに変更
 */
 bool CControlTray::OpenNewEditor(
+	HINSTANCE hInstance,
+	HWND hWndParent,
+	const SLoadInfo& sLoadInfo,
+	const WCHAR* szCmdLineOption,
+	bool sync,
+	const WCHAR* pszCurDir,
+	bool bNewWindow,
+	bool terminateOnSyncFailure)
+{
+	auto result = OpenNewEditorWithResult(hInstance, hWndParent, sLoadInfo, szCmdLineOption,
+		sync, pszCurDir, bNewWindow, terminateOnSyncFailure);
+	if (result.transferredProcessHandle != nullptr) {
+		// The boolean compatibility path never requests termination ownership,
+		// but retain defensively if a future caller does.
+		CFailedEditorProcessOwner::Retain(result.transferredProcessHandle);
+	}
+	return result.Succeeded();
+}
+
+OpenNewEditorResult CControlTray::OpenNewEditorWithResult(
 	[[maybe_unused]] HINSTANCE			hInstance,			//!< [in] インスタンスID (実は未使用)
 	HWND				hWndParent,			//!< [in] 親ウィンドウハンドル．エラーメッセージ表示用
 	const SLoadInfo&	sLoadInfo,			//!< [in]
 	const WCHAR*		szCmdLineOption,	//!< [in] 追加のコマンドラインオプション
 	bool				sync,				//!< [in] trueなら新規エディタの起動まで待機する
 	const WCHAR*		pszCurDir,			//!< [in] 新規エディタのカレントディレクトリ(NULL可)
-	bool				bNewWindow			//!< [in] 新規エディタを新しいウインドウで開く
+	bool				bNewWindow,			//!< [in] 新規エディタを新しいウインドウで開く
+	bool				terminateOnSyncFailure
 )
 {
 	/* 共有データ構造体のアドレスを返す */
@@ -1235,7 +1257,7 @@ bool CControlTray::OpenNewEditor(
 	/* 編集ウィンドウの上限チェック */
 	if (MAX_EDITWINDOWS <= pShareData->m_sNodes.m_nEditArrNum) {
 		OkMessage( nullptr, LS(STR_MAXWINDOW), MAX_EDITWINDOWS );
-		return false;
+		return {};
 	}
 
 	// -- -- -- -- コマンドライン文字列を生成 -- -- -- -- //
@@ -1297,14 +1319,14 @@ bool CControlTray::OpenNewEditor(
 			LPWSTR pszTempFile = _wtempnam(szIniDir, L"skr_resp");
 			if( !pszTempFile ){
 				ErrorMessage(hWndParent, LS(STR_TRAY_RESPONSEFILE));
-				return false;
+				return {};
 			}
 			wcscpy(szResponseFile, pszTempFile);
 			free(pszTempFile);
 			CTextOutputStream output(szResponseFile);
 			if( !output ){
 				ErrorMessage(hWndParent, LS(STR_TRAY_RESPONSEFILE));
-				return false;
+				return {};
 			}
 			respDeleter.fileName = szResponseFile;
 			// 出力
@@ -1391,14 +1413,14 @@ bool CControlTray::OpenNewEditor(
 			pMsg
 		);
 		::LocalFree( (HLOCAL)pMsg );	//	エラーメッセージバッファを解放
-		return false;
+		return {};
 	}
 	CStartupTrace::Mark(CStartupTrace::Event::EditorSpawnEnd, p.dwProcessId);
 
 	// MYWM_FIRST_IDLE が届くまでちょっとだけ余分に待つ	// 2008.04.19 ryoji
 	// Note. 起動先プロセスが初期化処理中に COM 関数（SHGetFileInfo API なども含む）を実行すると、
 	//       その時点で COM の同期機構が動いて WaitForInputIdle は終了してしまう可能性がある（らしい）。
-	bool bRet = true;
+	OpenNewEditorResult result{ EOpenNewEditorOutcome::Succeeded, nullptr };
 	if (sync)
 	{
 		// エディター初期化完了イベントを作成する
@@ -1420,7 +1442,7 @@ bool CControlTray::OpenNewEditor(
 		do {
 			// 残り時間を考慮して待機する
 			const auto elapsed = ::GetTickCount64() - startTick;	// 経過時間
-			const auto remaining = DWORD(timeoutMillis - elapsed);			// 残り時間
+			const auto remaining = DWORD(elapsed < timeoutMillis ? timeoutMillis - elapsed : 0);	// 残り時間
 			dwRet = ::MsgWaitForMultipleObjects(count, std::data(handles), FALSE, remaining, QS_SENDMESSAGE);
 
 			// 自スレッドにメッセージが送られてきた場合
@@ -1436,19 +1458,38 @@ bool CControlTray::OpenNewEditor(
 		CStartupTrace::Mark(CStartupTrace::Event::EditorWaitResult, dwRet);
 
 		if (WAIT_OBJECT_0 != dwRet) {
+			result.outcome = EOpenNewEditorOutcome::Failed;
+			bool childStopped = dwRet == WAIT_OBJECT_0 + 1 || ::WaitForSingleObject(p.hProcess, 0) == WAIT_OBJECT_0;
+			if (!childStopped && terminateOnSyncFailure) {
+				// Workspace transitions cannot return with an unowned successor.
+				// TerminateAndWait is intentionally unbounded after the bounded ready
+				// handshake: the caller may delete a managed workspace target only
+				// after the child process object is signalled.
+				childStopped = CFailedEditorProcessShutdown::TerminateAndWait(p.hProcess, ERROR_TIMEOUT)
+					== EFailedEditorProcessShutdownResult::Stopped;
+				result.outcome = childStopped
+					? EOpenNewEditorOutcome::FailedChildStopped
+					: EOpenNewEditorOutcome::FailedChildOwnershipTransferred;
+				if (!childStopped) result.transferredProcessHandle = p.hProcess;
+			} else if (childStopped) {
+				result.outcome = EOpenNewEditorOutcome::FailedChildStopped;
+			}
+			// Establish final child ownership before displaying a modal error.  A
+			// late-ready child must not race the failure cleanup while this dialog
+			// is open.
 			ErrorMessage(
 				hWndParent,
 				LS(STR_TRAY_CREATEPROC2),
 				szEXE
 			);
-			bRet = false;
 		}
+		if (hEvent != nullptr) ::CloseHandle(hEvent);
 	}
 
 	CloseHandle( p.hThread );
-	CloseHandle( p.hProcess );
+	if (result.transferredProcessHandle == nullptr) CloseHandle( p.hProcess );
 
-	return bRet;
+	return result;
 }
 
 /*!	新規編集ウィンドウの追加 ver 2:

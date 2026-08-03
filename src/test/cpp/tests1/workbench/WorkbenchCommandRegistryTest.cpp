@@ -8,11 +8,15 @@
 
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
+#include "Funccode_enum.h"
 
 #include "workbench/layout/WorkbenchIds.h"
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <map>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -73,6 +77,17 @@ WorkbenchContextKeySnapshot EnabledContext()
 	return context;
 }
 
+WorkbenchContextKeySnapshot EnabledFileCommandContext(std::string workbenchState = "folder")
+{
+	auto context = EnabledContext();
+	context.values.insert_or_assign("editorHasActiveEditor", true);
+	context.values.insert_or_assign("editorIsDirty", true);
+	context.values.insert_or_assign("workbenchState", std::move(workbenchState));
+	context.values.insert_or_assign("workspaceFolderCount", std::int64_t{ 1 });
+	context.values.insert_or_assign("workbench.recentlyOpenedAvailable", true);
+	return context;
+}
+
 } // namespace
 
 TEST(WorkbenchContextKeyService, ProjectsLayoutKeysAsOneCoreSnapshot)
@@ -99,8 +114,22 @@ TEST(WorkbenchContextKeyService, ProjectsLayoutKeysAsOneCoreSnapshot)
 TEST(WorkbenchContextKeyService, CoreNamespaceRejectsExtensionWritesAndRequiresExactGenerationDisposal)
 {
 	WorkbenchContextKeyService service;
-	EXPECT_EQ(EWorkbenchContextMutationStatus::Invalid,
-		service.SetExtensionOverlay(kExtensionGenerationOne, { { "workbench.sidebarVisible", false } }).status);
+	for (const auto key : {
+		std::string_view("workbench.sidebarVisible"),
+		std::string_view("workbenchState"),
+		std::string_view("workspaceFolderCount"),
+		std::string_view("editorHasActiveEditor"),
+		std::string_view("editorIsDirty"),
+	}) {
+		EXPECT_EQ(EWorkbenchContextMutationStatus::Invalid,
+			service.SetExtensionOverlay(kExtensionGenerationOne,
+				{ { std::string(key), WorkbenchContextValue(false) } }).status) << key;
+	}
+
+	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("workbenchState"));
+	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("workspaceFolderCount"));
+	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("editorHasActiveEditor"));
+	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("editorIsDirty"));
 	ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded,
 		service.SetExtensionOverlay(kExtensionGenerationOne, { { "extension.enabled", true } }).status);
 	EXPECT_EQ(EWorkbenchContextMutationStatus::NotApplicable, service.DisposeExtensionOverlay(kExtensionGenerationTwo).status);
@@ -118,6 +147,21 @@ TEST(WorkbenchWhenClauseEvaluator, SupportsBoundedBooleanComparisonAndRegexSubse
 	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("!missing && resource.langId != 'text'", context));
 	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("resource.langId =~ '['", context));
 	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("workbenchReady &&", context));
+}
+
+TEST(WorkbenchWhenClauseEvaluator, ComparesIntegerContextKeysWithoutChangingBooleanOrStringSemantics)
+{
+	auto context = EnabledContext();
+	context.values.emplace("workspaceFolderCount", std::int64_t{ 2 });
+
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount == 2", context));
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount != 1", context));
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount > 1 && workspaceFolderCount <= 2", context));
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount >= 2 && workspaceFolderCount < 3", context));
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount > -1", context));
+	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount == '2'", context));
+	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount < '3'", context));
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("extension.enabled && resource.langId == 'cpp'", context));
 }
 
 TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommandId)
@@ -174,6 +218,192 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 		}
 	}
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
+}
+
+TEST(WorkbenchCommandRegistry, FileCommandsRegisterStableIdsAliasesSurfacesAndOnlyTheirBoundExecutors)
+{
+	struct ExpectedCommand final {
+		std::string_view id;
+		std::int32_t legacyFunctionCode;
+	};
+	const std::array<ExpectedCommand, 16> expected = {{
+		{ "workbench.action.files.newUntitledFile", 30101 },
+		{ "workbench.action.newWindow", 30110 },
+		{ "workbench.action.files.openFile", 30102 },
+		{ "workbench.action.files.openFolder", 30997 },
+		{ "workbench.action.openWorkspace", 31002 },
+		{ "workbench.action.openRecent", 29007 },
+		{ "workbench.action.addRootFolder", 31003 },
+		{ "workbench.action.saveWorkspaceAs", 31004 },
+		{ "workbench.action.duplicateWorkspaceInNewWindow", 31005 },
+		{ "workbench.action.files.save", 30103 },
+		{ "workbench.action.files.saveAs", 30104 },
+		{ "workbench.action.files.saveAll", 30120 },
+		{ "workbench.action.closeActiveEditor", 31007 },
+		{ "workbench.action.closeFolder", 31006 },
+		{ "workbench.action.closeWindow", 31320 },
+		{ "workbench.action.quit", 30195 },
+	}};
+
+	std::map<std::string, int, std::less<>> calls;
+	const auto executor = [&calls](std::string_view id) {
+		return [&calls, id = std::string(id)] {
+			++calls[id];
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		};
+	};
+	workbench::commands::WorkbenchBuiltinCommandExecutors executors;
+	executors.newUntitledFile = executor(expected[0].id);
+	executors.newWindow = executor(expected[1].id);
+	executors.openFile = executor(expected[2].id);
+	executors.openFolder = executor(expected[3].id);
+	executors.openWorkspace = executor(expected[4].id);
+	executors.openRecent = executor(expected[5].id);
+	executors.addRootFolder = executor(expected[6].id);
+	executors.saveWorkspaceAs = executor(expected[7].id);
+	executors.duplicateWorkspaceInNewWindow = executor(expected[8].id);
+	executors.save = executor(expected[9].id);
+	executors.saveAs = executor(expected[10].id);
+	executors.saveAll = executor(expected[11].id);
+	executors.closeActiveEditor = executor(expected[12].id);
+	executors.closeFolder = executor(expected[13].id);
+	executors.closeWindow = executor(expected[14].id);
+	executors.quit = executor(expected[15].id);
+
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded,
+		registry.RegisterBuiltinCommands(std::move(executors)).status);
+	const auto context = EnabledFileCommandContext();
+	std::set<std::int32_t> aliases;
+	for (const auto& command : expected) {
+		EXPECT_TRUE(aliases.insert(command.legacyFunctionCode).second);
+		const auto descriptor = registry.Find(command.id);
+		ASSERT_TRUE(descriptor.has_value()) << command.id;
+		EXPECT_EQ(EWorkbenchCommandExecutorTarget::Editor, descriptor->executorTarget);
+
+		const auto palette = registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
+			std::string(command.id) + ".palette");
+		const auto menu = registry.ResolveSurface(EWorkbenchCommandSurface::Menu,
+			std::string(command.id) + ".menu");
+		const auto key = registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
+			std::string(command.id) + ".key");
+		ASSERT_TRUE(palette.has_value());
+		ASSERT_TRUE(menu.has_value());
+		ASSERT_TRUE(key.has_value());
+		EXPECT_EQ(command.id, palette->commandId);
+		EXPECT_EQ(command.id, menu->commandId);
+		EXPECT_EQ(command.id, key->commandId);
+		EXPECT_FALSE(palette->binding.legacyFunctionCode.has_value());
+		ASSERT_TRUE(menu->binding.legacyFunctionCode.has_value());
+		ASSERT_TRUE(key->binding.legacyFunctionCode.has_value());
+		EXPECT_EQ(command.legacyFunctionCode, *menu->binding.legacyFunctionCode);
+		EXPECT_EQ(command.legacyFunctionCode, *key->binding.legacyFunctionCode);
+		const auto resolvedAlias = registry.ResolveLegacyFunctionCode(command.legacyFunctionCode);
+		ASSERT_TRUE(resolvedAlias.has_value());
+		EXPECT_EQ(command.id, *resolvedAlias);
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, registry.Execute(command.id, context).status);
+	}
+	for (const auto& command : expected) {
+		EXPECT_EQ(1, calls[std::string(command.id)]) << command.id;
+	}
+
+	const auto revision = registry.Revision();
+	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
+	EXPECT_EQ(revision, registry.Revision());
+}
+
+TEST(WorkbenchCommandRegistry, OpenRecentRemainsEnabledForEmptyHistoryWhileOtherFileCommandsFailClosed)
+{
+	int recentCalls{};
+	int editorCalls{};
+	int closeFolderCalls{};
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
+		.openRecent = [&recentCalls] {
+			++recentCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{
+				EWorkbenchCommandExecutionStatus::NotApplicable, "recent history is empty or selection was cancelled" };
+		},
+		.save = [&editorCalls] {
+			++editorCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+		.closeFolder = [&closeFolderCalls] {
+			++closeFolderCalls;
+			return workbench::commands::WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		},
+	}).status);
+
+	auto empty = EnabledContext();
+	empty.values.insert_or_assign("workbenchState", std::string("empty"));
+	empty.values.insert_or_assign("workspaceFolderCount", std::int64_t{ 0 });
+	empty.values.insert_or_assign("editorHasActiveEditor", false);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::NotApplicable,
+		registry.Execute("workbench.action.openRecent", empty).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Disabled,
+		registry.Execute("workbench.action.files.save", empty).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Disabled,
+		registry.Execute("workbench.action.closeFolder", empty).status);
+	EXPECT_EQ(1, recentCalls);
+	EXPECT_EQ(0, editorCalls);
+	EXPECT_EQ(0, closeFolderCalls);
+
+	for (const std::string_view state : { "folder", "workspace" }) {
+		auto nonEmpty = EnabledFileCommandContext(std::string(state));
+		nonEmpty.values.insert_or_assign("workbench.recentlyOpenedAvailable", false);
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::NotApplicable,
+			registry.Execute("workbench.action.openRecent", nonEmpty).status);
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute("workbench.action.closeFolder", nonEmpty).status);
+	}
+	EXPECT_EQ(3, recentCalls);
+	EXPECT_EQ(2, closeFolderCalls);
+}
+
+TEST(WorkbenchCommandRegistry, FileFunctionSourceAllocationsAndDynamicRangeDoNotCollide)
+{
+	EXPECT_EQ(31002, static_cast<int>(F_OPEN_WORKSPACE));
+	EXPECT_EQ(31003, static_cast<int>(F_ADD_FOLDER_TO_WORKSPACE));
+	EXPECT_EQ(31004, static_cast<int>(F_SAVE_WORKSPACE_AS));
+	EXPECT_EQ(31005, static_cast<int>(F_DUPLICATE_WORKSPACE));
+	EXPECT_EQ(31006, static_cast<int>(F_CLOSE_WORKSPACE));
+	EXPECT_EQ(31007, static_cast<int>(F_CLOSE_ACTIVE_EDITOR));
+	EXPECT_EQ(29007, static_cast<int>(F_RECENT_WORKSPACE_LIST));
+	EXPECT_EQ(13000, static_cast<int>(F_RECENT_WORKSPACE_DYNAMIC_FIRST));
+
+	const std::array<int, 7> fixedCodes = { 29007, 31002, 31003, 31004, 31005, 31006, 31007 };
+	const std::set<int> uniqueCodes(fixedCodes.begin(), fixedCodes.end());
+	EXPECT_EQ(fixedCodes.size(), uniqueCodes.size());
+	for (const int code : fixedCodes) {
+		EXPECT_TRUE(code < 13000 || code >= 13064);
+	}
+}
+
+TEST(WorkbenchContextKeyService, ProjectsWorkspaceAndEditorStateInTheSameImmutableSnapshot)
+{
+	WorkbenchLayoutStateSnapshot layout;
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Workspace;
+	const auto firstFolder = platform::uri::Uri::FromWindowsPath(L"C:\\workspace-one");
+	const auto secondFolder = platform::uri::Uri::FromWindowsPath(L"C:\\workspace-two");
+	ASSERT_TRUE(firstFolder.value.has_value());
+	ASSERT_TRUE(secondFolder.value.has_value());
+	workspace.folders = {
+		{ *firstFolder.value, L"" },
+		{ *secondFolder.value, L"" },
+	};
+
+	WorkbenchContextKeyService service;
+	const auto mutation = service.SetCoreProjection(layout, workspace, { true, true });
+	const auto snapshot = service.Snapshot();
+
+	ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded, mutation.status);
+	EXPECT_EQ(mutation.revision, snapshot.revision);
+	EXPECT_EQ(WorkbenchContextValue(std::string("workspace")), snapshot.values.at("workbenchState"));
+	EXPECT_EQ(WorkbenchContextValue(std::int64_t{ 2 }), snapshot.values.at("workspaceFolderCount"));
+	EXPECT_EQ(WorkbenchContextValue(true), snapshot.values.at("editorHasActiveEditor"));
+	EXPECT_EQ(WorkbenchContextValue(true), snapshot.values.at("editorIsDirty"));
 }
 
 TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatchesStableIds)

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "workbench/layout/WorkbenchLayoutStateTypes.h"
+#include "config/WorkspaceContextTypes.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -22,8 +23,16 @@ namespace workbench::commands {
 inline constexpr std::size_t kMaxWorkbenchContextKeyLength = 160;
 inline constexpr std::size_t kMaxWorkbenchContextValueLength = 1'024;
 
-using WorkbenchContextValue = std::variant<bool, std::string>;
+using WorkbenchContextValue = std::variant<bool, std::int64_t, std::string>;
 using WorkbenchContextKeyMap = std::map<std::string, WorkbenchContextValue, std::less<>>;
+
+//! Editor state supplied by the native composition root with the layout and
+//! workspace snapshots. This pure value type avoids an editor implementation
+//! dependency in the command/context layer.
+struct WorkbenchEditorCommandContext {
+	bool hasActiveEditor = false;
+	bool activeEditorDirty = false;
+};
 
 //! An owner/generation pair deliberately independent of the extension transport.
 struct WorkbenchCommandOwner {
@@ -74,6 +83,14 @@ public:
 
 	[[nodiscard]] WorkbenchContextMutationResult SetCoreProjection(
 		const layout::WorkbenchLayoutStateSnapshot& snapshot);
+	[[nodiscard]] WorkbenchContextMutationResult SetCoreProjection(
+		const layout::WorkbenchLayoutStateSnapshot& snapshot,
+		const config::WorkspaceContextSnapshot& workspace);
+	[[nodiscard]] WorkbenchContextMutationResult SetCoreProjection(
+		const layout::WorkbenchLayoutStateSnapshot& snapshot,
+		const config::WorkspaceContextSnapshot& workspace,
+		WorkbenchEditorCommandContext editor,
+		bool recentlyOpenedAvailable = false);
 	[[nodiscard]] WorkbenchContextMutationResult SetExtensionOverlay(
 		const WorkbenchCommandOwner& owner, WorkbenchContextKeyMap values);
 	[[nodiscard]] WorkbenchContextMutationResult DisposeExtensionOverlay(

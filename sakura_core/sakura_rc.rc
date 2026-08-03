@@ -2219,6 +2219,15 @@ BEGIN
     F_HELP_TOPMENU          "ヘルプ"
     F_WINDOW_LIST_SUBMENU   "ウィンドウ一覧"
     F_FILE_OPENRECENT_SUBMENU "最近使用した項目を開く"
+    F_OPEN_WORKSPACE         "ファイルからワークスペースを開く..."
+    F_ADD_FOLDER_TO_WORKSPACE "ワークスペースにフォルダーを追加..."
+    F_SAVE_WORKSPACE_AS      "ワークスペースに名前を付けて保存..."
+    F_DUPLICATE_WORKSPACE    "ワークスペースを新しいウィンドウで複製"
+    F_CLOSE_WORKSPACE        "ワークスペースを閉じる"
+    STR_CLOSE_FOLDER         "フォルダーを閉じる"
+    F_CLOSE_ACTIVE_EDITOR    "エディターを閉じる"
+    F_OPEN_WORKSPACE_FOLDER  "フォルダーを開く..."
+    F_TOGGLE_MARKDOWN_PREVIEW "Markdown プレビューを表示／非表示"
 END
 
 STRINGTABLE
@@ -2903,6 +2912,7 @@ BEGIN
     F_WINDOW_LIST           "ウィンドウリスト"
     F_FILE_USED_RECENTLY    "最近使ったファイル"
     F_FOLDER_USED_RECENTLY  "最近使ったフォルダー"
+    F_RECENT_WORKSPACE_LIST "最近使用したフォルダーまたはワークスペース"
     F_CUSTMENU_LIST         "カスタムメニューリスト"
     F_USERMACRO_LIST        "登録済みマクロリスト"
     F_PLUGIN_LIST           "プラグインコマンドリスト"

@@ -22,6 +22,44 @@
 #include "config/app_constants.h"
 #include "sakura_rc.h"	// F_FILE_RCNTFILE_SUBMENU など、メインメニュー移行で参照するリソースID
 
+#include <array>
+
+std::uint64_t CShareData_IO::MainMenuModelFingerprint( const CommonSetting_MainMenu& mainmenu ) noexcept
+{
+	// Persisted menu fields are written independently by IO_MainMenu. Hash only
+	// those semantic fields (rather than padding or unused array tail bytes), so
+	// this is stable across process builds and precisely rejects any customization.
+	std::uint64_t hash = UINT64_C(1469598103934665603); // FNV-1a
+	auto append = [&hash]( std::uint32_t value ) noexcept {
+		for( int byte = 0; byte < 4; ++byte ){
+			hash ^= std::uint8_t(value >> (byte * 8));
+			hash *= UINT64_C(1099511628211);
+		}
+	};
+	append( static_cast<std::uint32_t>(mainmenu.m_nMainMenuNum) );
+	append( mainmenu.m_bMainMenuKeyParentheses ? 1U : 0U );
+	for( int top = 0; top < MAX_MAINMENU_TOP; ++top ){
+		append( static_cast<std::uint32_t>(mainmenu.m_nMenuTopIdx[top]) );
+	}
+	const int capacity = static_cast<int>(std::size(mainmenu.m_cMainMenuTbl));
+	const int itemCount = (0 <= mainmenu.m_nMainMenuNum && mainmenu.m_nMainMenuNum <= capacity)
+		? mainmenu.m_nMainMenuNum : 0;
+	for( int index = 0; index < itemCount; ++index ){
+		const CMainMenu& item = mainmenu.m_cMainMenuTbl[index];
+		append( static_cast<std::uint32_t>(item.m_nType) );
+		append( static_cast<std::uint32_t>(item.m_nFunc) );
+		append( static_cast<std::uint32_t>(item.m_nLevel) );
+		append( static_cast<std::uint16_t>(item.m_sKey[0]) );
+		append( static_cast<std::uint16_t>(item.m_sKey[1]) );
+		for( int character = 0; character <= MAX_MAIN_MENU_NAME_LEN; ++character ){
+			const std::uint16_t value = static_cast<std::uint16_t>(item.m_sName[character]);
+			append( value );
+			if( value == 0 ) break;
+		}
+	}
+	return hash;
+}
+
 void ShareData_IO_Sub_LogFont( CDataProfile& cProfile, const WCHAR* pszSecName,
 	const WCHAR* pszKeyLf, const WCHAR* pszKeyPointSize, const WCHAR* pszKeyFaceName, LOGFONT& lf, INT& nPointSize );
 
@@ -2025,6 +2063,40 @@ struct SMainMenuAddItemInfo
 	bool m_bAddNextSeparete;
 };
 
+namespace {
+
+// These are the historical additive migrations.  Keep the table shared by the
+// profile reader and the version-7 default fixture: the latter must describe
+// the model users actually received, rather than a v8 resource approximation.
+constexpr std::array kMainMenuHistoricalAddInfos{
+	SMainMenuAddItemInfo{1, F_FILENEW_NEWWINDOW, F_FILENEW, L'M', false, false},
+	SMainMenuAddItemInfo{1, F_CHG_CHARSET, F_TOGGLE_KEY_SEARCH, L'A', false, false},
+	SMainMenuAddItemInfo{1, F_CHG_CHARSET, F_VIEWMODE, L'A', false, false},
+	SMainMenuAddItemInfo{1, F_FILE_REOPEN_LATIN1, F_FILE_REOPEN_EUC, L'L', false, false},
+	SMainMenuAddItemInfo{1, F_FILE_REOPEN_LATIN1, F_FILE_REOPEN, L'L', false, false},
+	SMainMenuAddItemInfo{1, F_COPY_COLOR_HTML, F_COPYLINESWITHLINENUMBER, L'C', false, false},
+	SMainMenuAddItemInfo{1, F_COPY_COLOR_HTML_LINENUMBER, F_COPY_COLOR_HTML, L'F', false, false},
+	SMainMenuAddItemInfo{1, F_GREP_REPLACE_DLG, F_GREP_DIALOG, L'\0', false, false},
+	SMainMenuAddItemInfo{1, F_FILETREE, F_OUTLINE, L'E', false, false},
+	SMainMenuAddItemInfo{1, F_FILETREE, F_OUTLINE_TOGGLE, L'E', false, false},
+	SMainMenuAddItemInfo{1, F_SHOWMINIMAP, F_SHOWSTATUSBAR, L'N', false, false},
+	SMainMenuAddItemInfo{1, F_SHOWMINIMAP, F_SHOWTAB, L'N', false, false},
+	SMainMenuAddItemInfo{1, F_SHOWMINIMAP, F_SHOWFUNCKEY, L'N', false, false},
+	SMainMenuAddItemInfo{1, F_SHOWMINIMAP, F_SHOWTOOLBAR, L'N', false, false},
+	SMainMenuAddItemInfo{1, F_FUNCLIST_NEXT, F_JUMPHIST_SET, L'\0', true, false},
+	SMainMenuAddItemInfo{1, F_FUNCLIST_PREV, F_FUNCLIST_NEXT, L'\0', false, false},
+	SMainMenuAddItemInfo{1, F_MODIFYLINE_NEXT, F_FUNCLIST_PREV, L'\0', false, false},
+	SMainMenuAddItemInfo{1, F_MODIFYLINE_PREV, F_MODIFYLINE_NEXT, L'\0', false, false},
+	SMainMenuAddItemInfo{1, F_MODIFYLINE_NEXT_SEL, F_GOFILEEND_SEL, L'\0', true, false},
+	SMainMenuAddItemInfo{1, F_MODIFYLINE_PREV_SEL, F_MODIFYLINE_NEXT_SEL, L'\0', false, false},
+	SMainMenuAddItemInfo{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false},
+	SMainMenuAddItemInfo{4, F_TOGGLE_MARKDOWN_PREVIEW, F_SHOWMINIMAP, L'M', false, false},
+	SMainMenuAddItemInfo{5, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false},
+	SMainMenuAddItemInfo{7, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false},
+};
+
+}
+
 bool CShareData_IO::MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) noexcept
 {
 	// VS Codeのファイルメニューは「最近使用した項目を開く」(Open Recent) 1個だけを持ち、
@@ -2083,6 +2155,177 @@ bool CShareData_IO::MergeMainMenuOpenRecent( CommonSetting_MainMenu& mainmenu ) 
 		return true;
 	}
 	return false;
+}
+
+void CShareData_IO::ApplyMainMenuHistoricalAdditions(
+	CommonSetting_MainMenu& mainmenu, int storedVersion) noexcept
+{
+	if (storedVersion < 6) {
+		// Version 6 is a structural migration and must precede the later
+		// duplicate-guarded leaf additions.
+		(void)MergeMainMenuOpenRecent(mainmenu);
+	}
+	for (const auto& item : kMainMenuHistoricalAddInfos) {
+		if (item.m_nVer <= storedVersion) continue;
+		(void)AddMainMenuItemIfMissing(
+			mainmenu,
+			static_cast<int>(item.m_nAddFuncCode),
+			static_cast<int>(item.m_nPrevFuncCode),
+			item.m_cAccKey,
+			item.m_bAddPrevSeparete,
+			item.m_bAddNextSeparete);
+	}
+}
+
+bool CShareData_IO::MigrateMainMenuV7DefaultToV8( CommonSetting_MainMenu& mainmenu ) noexcept
+{
+	// A version number alone is not authority to rewrite a user's menu. The
+	// fixed fingerprint covers every persisted top index and every menu item;
+	// any customization, including outside File, makes this a no-op.
+	constexpr std::uint64_t kKnownV7DefaultFingerprint = UINT64_C(17115839819928857123);
+	struct ShapeItem {
+		EMainMenuType type;
+		EFunctionCode function;
+		int level;
+		WCHAR accessKey;
+	};
+	constexpr std::array oldShape{
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_TOPMENU), 0, L'F' },
+		ShapeItem{ T_LEAF, F_FILENEW, 1, L'N' },
+		ShapeItem{ T_LEAF, F_FILENEW_NEWWINDOW, 1, L'M' },
+		ShapeItem{ T_LEAF, F_FILEOPEN, 1, L'O' },
+		ShapeItem{ T_LEAF, F_OPEN_WORKSPACE_FOLDER, 1, L'F' },
+		ShapeItem{ T_LEAF, F_FILESAVE, 1, L'S' },
+		ShapeItem{ T_LEAF, F_FILESAVEAS_DIALOG, 1, L'A' },
+		ShapeItem{ T_LEAF, F_FILESAVEALL, 1, L'Z' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_FILESAVECLOSE, 1, L'E' },
+		ShapeItem{ T_LEAF, F_WINCLOSE, 1, L'C' },
+		ShapeItem{ T_LEAF, F_FILECLOSE, 1, L'R' },
+		ShapeItem{ T_LEAF, F_FILECLOSE_OPEN, 1, L'L' },
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_REOPEN_SUBMENU), 1, L'W' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN, 2, L'W' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 2, L'\0' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_SJIS, 2, L'S' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_JIS, 2, L'J' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_EUC, 2, L'E' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_LATIN1, 2, L'L' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UNICODE, 2, L'U' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UNICODEBE, 2, L'N' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UTF8, 2, L'8' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_CESU8, 2, L'C' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UTF7, 2, L'7' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_PRINT, 1, L'P' },
+		ShapeItem{ T_LEAF, F_PRINT_PREVIEW, 1, L'V' },
+		ShapeItem{ T_LEAF, F_PRINT_PAGESETUP, 1, L'U' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_PROPERTY_FILE, 1, L'T' },
+		ShapeItem{ T_LEAF, F_BROWSE, 1, L'B' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_OPENRECENT_SUBMENU), 1, L'R' },
+		ShapeItem{ T_SPECIAL, F_FOLDER_USED_RECENTLY, 2, L'\0' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 2, L'\0' },
+		ShapeItem{ T_SPECIAL, F_FILE_USED_RECENTLY, 2, L'\0' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_GROUPCLOSE, 1, L'G' },
+		ShapeItem{ T_LEAF, F_EXITALLEDITORS, 1, L'Q' },
+		ShapeItem{ T_LEAF, F_EXITALL, 1, L'X' },
+	};
+	constexpr std::array newShape{
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_TOPMENU), 0, L'F' },
+		ShapeItem{ T_LEAF, F_FILENEW, 1, L'N' },
+		ShapeItem{ T_LEAF, F_FILENEW_NEWWINDOW, 1, L'W' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_FILEOPEN, 1, L'O' },
+		ShapeItem{ T_LEAF, F_OPEN_WORKSPACE_FOLDER, 1, L'F' },
+		ShapeItem{ T_LEAF, F_OPEN_WORKSPACE, 1, L'W' },
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_OPENRECENT_SUBMENU), 1, L'R' },
+		ShapeItem{ T_SPECIAL, F_RECENT_WORKSPACE_LIST, 2, L'\0' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_ADD_FOLDER_TO_WORKSPACE, 1, L'A' },
+		ShapeItem{ T_LEAF, F_SAVE_WORKSPACE_AS, 1, L'S' },
+		ShapeItem{ T_LEAF, F_DUPLICATE_WORKSPACE, 1, L'D' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_FILESAVE, 1, L'S' },
+		ShapeItem{ T_LEAF, F_FILESAVEAS_DIALOG, 1, L'A' },
+		ShapeItem{ T_LEAF, F_FILESAVEALL, 1, L'L' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_CLOSE_ACTIVE_EDITOR, 1, L'C' },
+		ShapeItem{ T_LEAF, F_CLOSE_WORKSPACE, 1, L'F' },
+		ShapeItem{ T_LEAF, F_WINCLOSE, 1, L'W' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_EXITALL, 1, L'X' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 1, L'\0' },
+		ShapeItem{ T_LEAF, F_FILESAVECLOSE, 1, L'E' },
+		ShapeItem{ T_LEAF, F_FILECLOSE, 1, L'C' },
+		ShapeItem{ T_LEAF, F_FILECLOSE_OPEN, 1, L'L' },
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_REOPEN_SUBMENU), 1, L'W' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN, 2, L'W' },
+		ShapeItem{ T_SEPARATOR, F_SEPARATOR, 2, L'\0' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_SJIS, 2, L'S' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_JIS, 2, L'J' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_EUC, 2, L'E' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_LATIN1, 2, L'L' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UNICODE, 2, L'U' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UNICODEBE, 2, L'N' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UTF8, 2, L'8' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_CESU8, 2, L'C' },
+		ShapeItem{ T_LEAF, F_FILE_REOPEN_UTF7, 2, L'7' },
+		ShapeItem{ T_LEAF, F_PRINT, 1, L'P' },
+		ShapeItem{ T_LEAF, F_PRINT_PREVIEW, 1, L'V' },
+		ShapeItem{ T_LEAF, F_PRINT_PAGESETUP, 1, L'U' },
+		ShapeItem{ T_LEAF, F_PROPERTY_FILE, 1, L'T' },
+		ShapeItem{ T_LEAF, F_BROWSE, 1, L'B' },
+		ShapeItem{ T_NODE, EFunctionCode(F_FILE_RCNTFLDR_SUBMENU), 1, L'R' },
+		ShapeItem{ T_SPECIAL, F_FOLDER_USED_RECENTLY, 2, L'\0' },
+		ShapeItem{ T_LEAF, F_GROUPCLOSE, 1, L'G' },
+		ShapeItem{ T_LEAF, F_EXITALLEDITORS, 1, L'Q' },
+	};
+
+	const int oldCount = static_cast<int>(oldShape.size());
+	const int newCount = static_cast<int>(newShape.size());
+	if (mainmenu.m_nMainMenuNum < oldCount || mainmenu.m_nMainMenuNum > int(std::size(mainmenu.m_cMainMenuTbl))) return false;
+	if( MainMenuModelFingerprint(mainmenu) != kKnownV7DefaultFingerprint ) return false;
+	for (int index = 0; index < oldCount; ++index) {
+		const CMainMenu& item = mainmenu.m_cMainMenuTbl[index];
+		const ShapeItem& expected = oldShape[static_cast<std::size_t>(index)];
+		if (item.m_nType != expected.type || item.m_nFunc != expected.function
+			|| item.m_nLevel != expected.level || item.m_sKey[0] != expected.accessKey
+			|| item.m_sKey[1] != L'\0' || item.m_sName[0] != L'\0') return false;
+	}
+	const int delta = newCount - oldCount;
+	if (mainmenu.m_nMainMenuNum + delta > int(std::size(mainmenu.m_cMainMenuTbl))) return false;
+	for (int index = mainmenu.m_nMainMenuNum - 1; index >= oldCount; --index) {
+		mainmenu.m_cMainMenuTbl[index + delta] = mainmenu.m_cMainMenuTbl[index];
+	}
+	for (int index = 0; index < newCount; ++index) {
+		CMainMenu& item = mainmenu.m_cMainMenuTbl[index];
+		const ShapeItem& source = newShape[static_cast<std::size_t>(index)];
+		item.m_nType = source.type;
+		item.m_nFunc = source.function;
+		item.m_nLevel = source.level;
+		item.m_sKey[0] = source.accessKey;
+		item.m_sKey[1] = L'\0';
+		item.m_sName[0] = L'\0';
+	}
+	mainmenu.m_nMainMenuNum += delta;
+	for (int top = 0; top < MAX_MAINMENU_TOP; ++top) {
+		if (mainmenu.m_nMenuTopIdx[top] >= oldCount && mainmenu.m_nMenuTopIdx[top] < mainmenu.m_nMainMenuNum - delta) {
+			mainmenu.m_nMenuTopIdx[top] += delta;
+		}
+	}
+	return true;
+}
+
+bool CShareData_IO::MigrateKnownMainMenuDefaultToV8(
+	CommonSetting_MainMenu& mainmenu, int storedVersion ) noexcept
+{
+	CommonSetting_MainMenu candidate = mainmenu;
+	ApplyMainMenuHistoricalAdditions(candidate, storedVersion);
+	if (!MigrateMainMenuV7DefaultToV8(candidate)) return false;
+	mainmenu = candidate;
+	return true;
 }
 
 bool CShareData_IO::AddMainMenuItemIfMissing(
@@ -2167,57 +2410,26 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 7;
+	const int nCurrentVer = 8;
 	nVersion = nCurrentVer;
 	const bool hasStoredVersion = cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion);
 	nVersion = ResolveMainMenuReadVersion(cProfile.IsReadingMode(), hasStoredVersion, nVersion, nCurrentVer);
 	if( cProfile.IsReadingMode() && nVersion < nCurrentVer ){
 		CommonSetting_MainMenu& mainmenu = GetDllShareData().m_Common.m_sMainMenu;
-		SMainMenuAddItemInfo addInfos[] = {
-			{1, F_FILENEW_NEWWINDOW, F_FILENEW, L'M', false, false},	// 新しいウインドウを開く
-			{1, F_CHG_CHARSET, F_TOGGLE_KEY_SEARCH, L'A', false, false},	// 文字コード変更
-			{1, F_CHG_CHARSET, F_VIEWMODE, L'A', false, false}, 	// 文字コード変更(Sub)
-			{1, F_FILE_REOPEN_LATIN1, F_FILE_REOPEN_EUC, L'L', false, false}, 	// Latin1で開き直す
-			{1, F_FILE_REOPEN_LATIN1, F_FILE_REOPEN, L'L', false, false}, 	// Latin1で開き直す(Sub)
-			{1, F_COPY_COLOR_HTML, F_COPYLINESWITHLINENUMBER, L'C', false, false}, 	// 選択範囲内色付きHTMLコピー
-			{1, F_COPY_COLOR_HTML_LINENUMBER, F_COPY_COLOR_HTML, L'F', false, false}, 	// 選択範囲内行番号色付きHTMLコピー
-			// 矩形選択類は省略...
-			{1, F_GREP_REPLACE_DLG, F_GREP_DIALOG, L'\0', false, false}, 	// Grep置換
-			{1, F_FILETREE, F_OUTLINE, L'E', false, false}, 	// ファイルツリー表示
-			{1, F_FILETREE, F_OUTLINE_TOGGLE, L'E', false, false}, 	// ファイルツリー表示(Sub)
-			{1, F_SHOWMINIMAP, F_SHOWSTATUSBAR, L'N', false, false}, 	// ミニマップ表示
-			{1, F_SHOWMINIMAP, F_SHOWTAB, L'N', false, false}, 	// ミニマップ表示(Sub)
-			{1, F_SHOWMINIMAP, F_SHOWFUNCKEY, L'N', false, false}, 	// ミニマップ表示(Sub)
-			{1, F_SHOWMINIMAP, F_SHOWTOOLBAR, L'N', false, false}, 	// ミニマップ表示(Sub)
-			{1, F_FUNCLIST_NEXT, F_JUMPHIST_SET, L'\0', true, false}, 	// 次の関数リストマーク(セパレータ追加)
-			{1, F_FUNCLIST_PREV, F_FUNCLIST_NEXT, L'\0', false, false}, 	// 前の関数リストマーク
-			{1, F_MODIFYLINE_NEXT, F_FUNCLIST_PREV, L'\0', false, false}, 	// 次の変更行へ
-			{1, F_MODIFYLINE_PREV, F_MODIFYLINE_NEXT, L'\0', false, false}, 	// 前の変更行へ
-			{1, F_MODIFYLINE_NEXT_SEL, F_GOFILEEND_SEL, L'\0', true, false}, 	// (選択)次の変更行へ
-			{1, F_MODIFYLINE_PREV_SEL, F_MODIFYLINE_NEXT_SEL, L'\0', false, false}, 	// (選択)前の変更行へ
-			{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false}, 	// ウインドウ一覧表示
-			{7, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false}, // 作業フォルダーを開く
-			{4, F_TOGGLE_MARKDOWN_PREVIEW, F_SHOWMINIMAP, L'M', false, false}, // Markdownプレビュー表示
-			{5, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false}, 	// 拡張（Open VSX）を表示
-		};
-		if( nVersion < 6 ){
-			// 追加ではなく構造の書き換えなので addInfos では表現できない。
-			(void)MergeMainMenuOpenRecent( mainmenu );
-		}
-		for( int i = 0; i < int(std::size(addInfos)); i++ ){
-			SMainMenuAddItemInfo& item = addInfos[i];
-			if( item.m_nVer <= nVersion ){
-				continue;
-			}
-			(void)AddMainMenuItemIfMissing(
-				mainmenu,
-				static_cast<int>(item.m_nAddFuncCode),
-				static_cast<int>(item.m_nPrevFuncCode),
-				item.m_cAccKey,
-				item.m_bAddPrevSeparete,
-				item.m_bAddNextSeparete);
+		const int storedVersion = nVersion;
+		if (!hasStoredVersion) {
+			// A fresh profile starts from the current v8 resource rather than a
+			// persisted legacy model. Fill its duplicate-guarded resource omissions.
+			ApplyMainMenuHistoricalAdditions(mainmenu, 0);
+		} else {
+			// Replay old migrations on a copy. Only a complete known default is
+			// committed; custom menus are not partially upgraded on the way to v8.
+			(void)MigrateKnownMainMenuDefaultToV8(mainmenu, storedVersion);
 		}
 	}
+	// Schema metadata follows this reader; no old/custom structure is changed
+	// unless it matched the complete known version-7 default above.
+	nVersion = nCurrentVer;
 }
 
 /*!

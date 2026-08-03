@@ -81,6 +81,16 @@ struct ConfigurationDocumentEditResult final {
 	}
 };
 
+//! Result of a byte-preserving top-level JSONC member replacement.  This
+//! intentionally exposes only category diagnostics; callers must not surface
+//! parser offsets or source text in UI diagnostics.
+struct JsoncTopLevelMemberReplacementResult final {
+	std::optional<std::string> document;
+	std::optional<platform::serialization::EJsoncDiagnosticCode> jsoncDiagnostic;
+
+	[[nodiscard]] bool Succeeded() const noexcept { return document.has_value(); }
+};
+
 //! Bounded, synchronous, UI-independent JSONC preserving editor.  Each call
 //! performs one versioned read and at most one conditional atomic replace.  A
 //! conflict is terminal: callers must deliberately reread and replan.
@@ -143,6 +153,34 @@ public:
 		auto published = m_fileService.ConditionalAtomicReplace(
 			*request.target.resource, bytes, platform::filesystem::FileConditionalReplaceOptions::ForCurrent(read.value->version));
 		return PublishResult(published);
+	}
+
+	/*! Replaces or inserts one top-level JSONC object member while preserving all
+	 * surrounding bytes. This text-only primitive is shared by non-settings
+	 * configuration documents such as .code-workspace files. */
+	[[nodiscard]] static JsoncTopLevelMemberReplacementResult ReplaceTopLevelObjectMemberWithDiagnostics(
+		const std::string& document, std::string_view key, std::string_view replacement)
+	{
+		if (key.empty() || replacement.size() > kMaximumOutputBytes) return {};
+		auto parsed = platform::serialization::CJsoncDocument::Parse(document);
+		if (!parsed.Succeeded()) return { std::nullopt, parsed.diagnostic ? std::optional(parsed.diagnostic->code) : std::nullopt };
+		if (!std::holds_alternative<platform::serialization::JsoncValue::Object>(parsed.value->Value())) return {};
+		auto layout = ScanTopLevelObject(document);
+		if (!layout) return {};
+		const auto member = FindMember(*layout, key);
+		auto result = member ? std::optional<std::string>(ReplaceValue(document, *member, std::string(replacement)))
+			: InsertMember(document, *layout, std::string(key), std::string(replacement));
+		if (!result || result->size() > kMaximumOutputBytes) return {};
+		auto validated = platform::serialization::CJsoncDocument::Parse(*result);
+		if (!validated.Succeeded()) return { std::nullopt, validated.diagnostic ? std::optional(validated.diagnostic->code) : std::nullopt };
+		if (!std::holds_alternative<platform::serialization::JsoncValue::Object>(validated.value->Value())) return {};
+		return { std::move(result), std::nullopt };
+	}
+
+	[[nodiscard]] static std::optional<std::string> ReplaceTopLevelObjectMember(
+		const std::string& document, std::string_view key, std::string_view replacement)
+	{
+		return ReplaceTopLevelObjectMemberWithDiagnostics(document, key, replacement).document;
 	}
 
 private:

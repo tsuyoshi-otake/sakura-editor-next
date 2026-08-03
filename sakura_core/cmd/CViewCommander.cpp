@@ -519,7 +519,14 @@ BOOL CViewCommander::HandleCommand(
 	case F_NEW_TERMINAL:		GetEditWindow()->NewIntegratedTerminal();break;
 	case F_REDETECT_POWERSHELL:	GetEditWindow()->RedetectPowerShell();break;
 	case F_TOGGLE_MARKDOWN_PREVIEW:	GetEditWindow()->ToggleMarkdownPreview();break;
-	case F_OPEN_WORKSPACE_FOLDER:	(void)GetEditWindow()->OpenWorkspaceFolder();break;
+	case F_OPEN_WORKSPACE_FOLDER:
+	case F_OPEN_WORKSPACE:
+	case F_ADD_FOLDER_TO_WORKSPACE:
+	case F_SAVE_WORKSPACE_AS:
+	case F_DUPLICATE_WORKSPACE:
+	case F_CLOSE_WORKSPACE:
+	case F_CLOSE_ACTIVE_EDITOR:
+		GetEditWindow()->ExecuteWorkbenchFileFunction(nCommand);break;
 	case F_TYPE_LIST:		Command_TYPE_LIST();break;		/* タイプ別設定一覧 */
 	case F_CHANGETYPE:		Command_CHANGETYPE((int)lparam1);break;		// タイプ別設定一時適用
 	case F_OPTION_TYPE:		Command_OPTION_TYPE();break;	/* タイプ別設定 */
