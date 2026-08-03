@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
     @brief VS Code互換の非モーダル通知Toastを表示するWin32ホスト
 */
 /*
