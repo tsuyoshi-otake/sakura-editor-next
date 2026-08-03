@@ -22,6 +22,7 @@
 #include <deque>
 #include <map>
 #include <mutex>
+#include <set>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -33,6 +34,7 @@ namespace workbench::explorer {
 namespace {
 
 constexpr wchar_t kExplorerWindowClass[] = L"SakuraNativeExplorerTool";
+constexpr wchar_t kExplorerScrollbarClass[] = L"SakuraExplorerOverlayScrollbar";
 constexpr UINT kWorkerResultMessage = WM_APP + 0x571;
 constexpr UINT kDirectoryChangedMessage = WM_APP + 0x572;
 constexpr UINT_PTR kRefreshTimer = 1;
@@ -154,6 +156,13 @@ struct SharedWorkerState {
 {
 	return ::CompareStringOrdinal(left.c_str(), static_cast<int>(left.size()), right.c_str(), static_cast<int>(right.size()), TRUE) - CSTR_EQUAL;
 }
+
+struct ExplorerPathLess {
+	[[nodiscard]] bool operator()(const std::wstring& left, const std::wstring& right) const noexcept
+	{
+		return CompareNoCase(left, right) < 0;
+	}
+};
 
 [[nodiscard]] std::wstring JoinPath(const std::wstring& directory, const wchar_t* child)
 {
@@ -344,6 +353,7 @@ struct CExplorerTool::Impl {
 	std::thread worker;
 	HWND window{};
 	HWND tree{};
+	HWND scrollbar{};
 	RECT bounds{};
 	unsigned int dpi{ kDefaultDpi };
 	ExplorerPalette palette{};
@@ -354,11 +364,252 @@ struct CExplorerTool::Impl {
 	FileActivationCallback activateFile;
 	std::wstring root;
 	std::unordered_map<std::uint64_t, Node> nodes;
+	// Expansion is owned by stable filesystem paths. Refresh reconciles existing
+	// TreeView items in place so expanded descendants, selection, and scroll
+	// metrics do not oscillate while filesystem watcher results arrive.
+	std::set<std::wstring, ExplorerPathLess> expandedPaths;
 	std::uint64_t nextNodeId = 1;
 	std::uint64_t nextRequestGeneration = 1;
 	std::uint64_t currentRootGeneration = 1;
 	bool active{};
 	bool closed{};
+	bool scrollbarHover{};
+	bool scrollbarDragging{};
+	bool trackingScrollbarMouseLeave{};
+	int scrollbarThumbGrabOffset{};
+
+	struct ScrollbarLayout {
+		RECT track{};
+		RECT thumb{};
+		int totalRows{};
+		int visibleRows{};
+		int topRow{};
+		int maximumTop{};
+		bool scrollable{};
+	};
+
+	[[nodiscard]] int ScaleDip(int value) const noexcept
+	{
+		return std::max(1, ::MulDiv(value, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), 96));
+	}
+
+	[[nodiscard]] ScrollbarLayout GetScrollbarLayout() const noexcept
+	{
+		ScrollbarLayout layout;
+		if (tree == nullptr || scrollbar == nullptr) return layout;
+		SCROLLINFO info{ sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS };
+		if (!::GetScrollInfo(tree, SB_VERT, &info)) return layout;
+		layout.totalRows = std::max(0, info.nMax - info.nMin + 1);
+		layout.visibleRows = std::max(1, static_cast<int>(info.nPage));
+		layout.maximumTop = std::max(0, layout.totalRows - layout.visibleRows);
+		layout.topRow = std::clamp(info.nPos - info.nMin, 0, layout.maximumTop);
+		if (layout.maximumTop == 0) return layout;
+
+		RECT client{};
+		if (!::GetClientRect(scrollbar, &client) || client.bottom <= client.top) return layout;
+		layout.track = client;
+		const int height = client.bottom - client.top;
+		const int minimumThumb = std::min(height, ScaleDip(20));
+		const int proportionalThumb = static_cast<int>(
+			(static_cast<long long>(height) * layout.visibleRows) / std::max(1, layout.totalRows));
+		const int thumbHeight = std::clamp(std::max(minimumThumb, proportionalThumb), 1, height);
+		const int travel = height - thumbHeight;
+		const int offset = layout.maximumTop == 0 ? 0 : static_cast<int>(
+			(static_cast<long long>(travel) * layout.topRow) / layout.maximumTop);
+		layout.thumb = RECT{ client.left, client.top + offset, client.right, client.top + offset + thumbHeight };
+		layout.scrollable = true;
+		return layout;
+	}
+
+	void EndScrollbarDrag(bool releaseCapture) noexcept
+	{
+		const bool wasInteractive = scrollbarDragging;
+		scrollbarDragging = false;
+		scrollbarThumbGrabOffset = 0;
+		if (releaseCapture && scrollbar != nullptr && ::GetCapture() == scrollbar) ::ReleaseCapture();
+		if (wasInteractive && scrollbar != nullptr) ::InvalidateRect(scrollbar, nullptr, FALSE);
+	}
+
+	void SetFirstVisibleRow(int target)
+	{
+		if (tree == nullptr) return;
+		const auto layout = GetScrollbarLayout();
+		target = std::clamp(target, 0, layout.maximumTop);
+		auto item = TreeView_GetRoot(tree);
+		for (int index = 0; item != nullptr && index < target; ++index) item = TreeView_GetNextVisible(tree, item);
+		if (item != nullptr) (void)TreeView_SelectSetFirstVisible(tree, item);
+		UpdateOverlayScrollbar();
+	}
+
+	void DragScrollbarTo(int pointerY)
+	{
+		if (!scrollbarDragging) return;
+		const auto layout = GetScrollbarLayout();
+		if (!layout.scrollable) {
+			EndScrollbarDrag(true);
+			return;
+		}
+		const int thumbHeight = layout.thumb.bottom - layout.thumb.top;
+		const int travel = (layout.track.bottom - layout.track.top) - thumbHeight;
+		if (travel <= 0) return;
+		const int position = std::clamp(
+			pointerY - scrollbarThumbGrabOffset - static_cast<int>(layout.track.top), 0, travel);
+		const int target = static_cast<int>((static_cast<long long>(layout.maximumTop) * position) / travel);
+		SetFirstVisibleRow(target);
+	}
+
+	void PaintScrollbar(HDC dc) const
+	{
+		const auto layout = GetScrollbarLayout();
+		if (dc == nullptr || !layout.scrollable) return;
+		const HBRUSH background = ::CreateSolidBrush(scrollbarHover || scrollbarDragging
+			? palette.scrollbarTrackHover : palette.background);
+		if (background != nullptr) {
+			::FillRect(dc, &layout.track, background);
+			::DeleteObject(background);
+		}
+		RECT thumb = layout.thumb;
+		thumb.left = std::max(thumb.left, thumb.right - ScaleDip(6));
+		const HBRUSH thumbBrush = ::CreateSolidBrush(scrollbarHover || scrollbarDragging
+			? palette.scrollbarThumbHover : palette.scrollbarThumb);
+		if (thumbBrush != nullptr) {
+			::FillRect(dc, &thumb, thumbBrush);
+			::DeleteObject(thumbBrush);
+		}
+	}
+
+	void UpdateScrollbarHover(POINT point)
+	{
+		const auto layout = GetScrollbarLayout();
+		const bool hover = layout.scrollable && point.x >= layout.track.left && point.x < layout.track.right
+			&& point.y >= layout.track.top && point.y < layout.track.bottom;
+		if (scrollbarHover != hover) {
+			scrollbarHover = hover;
+			if (scrollbar != nullptr) ::InvalidateRect(scrollbar, nullptr, FALSE);
+		}
+		if (hover && !trackingScrollbarMouseLeave && scrollbar != nullptr) {
+			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, scrollbar, 0 };
+			trackingScrollbarMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+		}
+	}
+
+	void UpdateOverlayScrollbar()
+	{
+		if (tree == nullptr || scrollbar == nullptr || window == nullptr) return;
+		const LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
+		if ((style & (WS_HSCROLL | WS_VSCROLL)) != 0) (void)::ShowScrollBar(tree, SB_BOTH, FALSE);
+		RECT client{};
+		if (!::GetClientRect(window, &client)) return;
+		const int width = ScaleDip(10);
+		const int clientWidth = std::max(0, static_cast<int>(client.right - client.left));
+		const int clientHeight = std::max(0, static_cast<int>(client.bottom - client.top));
+		const int overlayWidth = std::min(width, clientWidth);
+		::SetWindowPos(scrollbar, HWND_TOP, static_cast<int>(client.right) - overlayWidth,
+			static_cast<int>(client.top), overlayWidth, clientHeight,
+			SWP_NOACTIVATE);
+		const bool show = GetScrollbarLayout().scrollable;
+		::ShowWindow(scrollbar, show ? SW_SHOWNOACTIVATE : SW_HIDE);
+		if (!show) {
+			scrollbarHover = false;
+			trackingScrollbarMouseLeave = false;
+			EndScrollbarDrag(true);
+		}
+		if (show) ::InvalidateRect(scrollbar, nullptr, FALSE);
+	}
+
+	static LRESULT CALLBACK TreeSubclassProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
+		UINT_PTR subclassId, DWORD_PTR referenceData)
+	{
+		auto* impl = reinterpret_cast<Impl*>(referenceData);
+		if (message == WM_NCDESTROY) {
+			::RemoveWindowSubclass(hwnd, TreeSubclassProc, subclassId);
+			return ::DefSubclassProc(hwnd, message, wParam, lParam);
+		}
+		const LRESULT result = ::DefSubclassProc(hwnd, message, wParam, lParam);
+		if (impl != nullptr && (message == WM_MOUSEWHEEL || message == WM_VSCROLL || message == WM_KEYDOWN
+			|| message == TVM_SELECTITEM || message == TVM_EXPAND || message == TVM_DELETEITEM
+			|| message == TVM_INSERTITEMW)) {
+			impl->UpdateOverlayScrollbar();
+		}
+		return result;
+	}
+
+	static LRESULT CALLBACK ScrollbarWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
+	{
+		if (message == WM_NCCREATE) {
+			const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+			::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+		}
+		auto* impl = reinterpret_cast<Impl*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+		if (impl == nullptr) return ::DefWindowProcW(hwnd, message, wParam, lParam);
+		switch (message) {
+		case WM_ERASEBKGND:
+			return 1;
+		case WM_PAINT: {
+			PAINTSTRUCT paint{};
+			const HDC dc = ::BeginPaint(hwnd, &paint);
+			impl->PaintScrollbar(dc);
+			::EndPaint(hwnd, &paint);
+			return 0;
+		}
+		case WM_MOUSEMOVE: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			impl->UpdateScrollbarHover(point);
+			impl->DragScrollbarTo(point.y);
+			return 0;
+		}
+		case WM_MOUSELEAVE:
+			impl->trackingScrollbarMouseLeave = false;
+			if (!impl->scrollbarDragging && impl->scrollbarHover) {
+				impl->scrollbarHover = false;
+				::InvalidateRect(hwnd, nullptr, FALSE);
+			}
+			return 0;
+		case WM_LBUTTONDOWN: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			const auto layout = impl->GetScrollbarLayout();
+			if (!layout.scrollable) return 0;
+			::SetFocus(impl->tree);
+			if (point.y >= layout.thumb.top && point.y < layout.thumb.bottom) {
+				impl->scrollbarDragging = true;
+				impl->scrollbarThumbGrabOffset = point.y - layout.thumb.top;
+				::SetCapture(hwnd);
+			} else {
+				impl->SetFirstVisibleRow(layout.topRow + (point.y < layout.thumb.top
+					? -layout.visibleRows : layout.visibleRows));
+			}
+			impl->UpdateScrollbarHover(point);
+			::InvalidateRect(hwnd, nullptr, FALSE);
+			return 0;
+		}
+		case WM_LBUTTONUP:
+			impl->EndScrollbarDrag(true);
+			return 0;
+		case WM_MOUSEWHEEL:
+			if (impl->tree != nullptr) (void)::SendMessageW(impl->tree, message, wParam, lParam);
+			impl->UpdateOverlayScrollbar();
+			return 0;
+		case WM_NCDESTROY:
+			impl->EndScrollbarDrag(true);
+			impl->scrollbar = nullptr;
+			::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+			break;
+		default:
+			break;
+		}
+		return ::DefWindowProcW(hwnd, message, wParam, lParam);
+	}
+
+	static bool EnsureScrollbarClass(HINSTANCE instance)
+	{
+		WNDCLASSEXW windowClass{};
+		windowClass.cbSize = sizeof(windowClass);
+		windowClass.lpfnWndProc = ScrollbarWindowProc;
+		windowClass.hInstance = instance;
+		windowClass.hCursor = ::LoadCursor(nullptr, IDC_ARROW);
+		windowClass.lpszClassName = kExplorerScrollbarClass;
+		return ::RegisterClassExW(&windowClass) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+	}
 
 	void StartWorker()
 	{
@@ -555,8 +806,9 @@ struct CExplorerTool::Impl {
 		(void)TreeView_InsertItem(tree, &insert);
 	}
 
-	HTREEITEM InsertNode(HTREEITEM parent, ExplorerEntry entry)
+	HTREEITEM InsertNode(HTREEITEM parent, ExplorerEntry entry, HTREEITEM insertAfter = TVI_LAST)
 	{
+		const bool canExpand = CanExpand(entry);
 		Node node;
 		node.id = nextNodeId++;
 		node.name = entry.name;
@@ -566,7 +818,7 @@ struct CExplorerTool::Impl {
 		node.isWorkspaceRoot = parent == TVI_ROOT;
 		TVINSERTSTRUCTW insert{};
 		insert.hParent = parent;
-		insert.hInsertAfter = TVI_LAST;
+		insert.hInsertAfter = insertAfter;
 		insert.item.mask = TVIF_TEXT | TVIF_PARAM;
 		insert.item.pszText = entry.name.data();
 		insert.item.lParam = static_cast<LPARAM>(node.id);
@@ -580,7 +832,12 @@ struct CExplorerTool::Impl {
 		if (item == nullptr) return nullptr;
 		node.item = item;
 		const auto [it, inserted] = nodes.emplace(node.id, std::move(node));
-		if (inserted && CanExpand(entry)) InsertPlaceholder(item);
+		if (inserted && canExpand) {
+			InsertPlaceholder(item);
+			if (expandedPaths.contains(it->second.path)) {
+				(void)TreeView_Expand(tree, item, TVE_EXPAND);
+			}
+		}
 		return item;
 	}
 
@@ -589,13 +846,17 @@ struct CExplorerTool::Impl {
 		if (tree == nullptr) return;
 		TreeView_DeleteAllItems(tree);
 		nodes.clear();
-		if (root.empty()) return;
+		if (root.empty()) {
+			UpdateOverlayScrollbar();
+			return;
+		}
 		ExplorerEntry entry;
 		entry.name = CExplorerTool::WorkspaceDisplayName(root);
 		entry.path = root;
 		entry.isDirectory = true;
 		const auto item = InsertNode(TVI_ROOT, std::move(entry));
 		if (item != nullptr) (void)TreeView_Expand(tree, item, TVE_EXPAND);
+		UpdateOverlayScrollbar();
 	}
 
 	void QueueEnumeration(Node& node, bool refresh)
@@ -639,6 +900,17 @@ struct CExplorerTool::Impl {
 		}
 	}
 
+	void DeleteNode(HTREEITEM item)
+	{
+		if (item == nullptr) return;
+		DeleteChildNodes(item);
+		TVITEMW info{};
+		info.mask = TVIF_PARAM;
+		info.hItem = item;
+		if (TreeView_GetItem(tree, &info) && info.lParam != 0) nodes.erase(static_cast<std::uint64_t>(info.lParam));
+		(void)TreeView_DeleteItem(tree, item);
+	}
+
 	void ApplyResult(std::unique_ptr<WorkerResult> result)
 	{
 		if (!result || !CExplorerTool::IsCurrentGeneration(currentRootGeneration, result->rootGeneration)) return;
@@ -647,9 +919,71 @@ struct CExplorerTool::Impl {
 		node->queued = false;
 		const bool refreshAgain = node->refreshAfterQueued;
 		node->refreshAfterQueued = false;
-		DeleteChildNodes(node->item);
-		for (auto& entry : result->entries) (void)InsertNode(node->item, std::move(entry));
-		if (refreshAgain) QueueEnumeration(*node, true);
+		const auto parentItem = node->item;
+		const auto parentNodeId = node->id;
+		struct ExistingChild {
+			HTREEITEM item{};
+			std::uint64_t nodeId{};
+		};
+		std::map<std::wstring, ExistingChild, ExplorerPathLess> existing;
+		std::vector<HTREEITEM> placeholders;
+		for (auto child = TreeView_GetChild(tree, parentItem); child != nullptr; child = TreeView_GetNextSibling(tree, child)) {
+			TVITEMW info{};
+			info.mask = TVIF_PARAM;
+			info.hItem = child;
+			if (!TreeView_GetItem(tree, &info) || info.lParam == 0) {
+				placeholders.push_back(child);
+				continue;
+			}
+			const auto childId = static_cast<std::uint64_t>(info.lParam);
+			const auto* childNode = FindNode(childId);
+			if (childNode != nullptr) existing.emplace(childNode->path, ExistingChild{ child, childId });
+		}
+
+		std::set<std::uint64_t> retained;
+		bool changed = !placeholders.empty();
+		(void)::SendMessageW(tree, WM_SETREDRAW, FALSE, 0);
+		HTREEITEM insertAfter = TVI_FIRST;
+		for (auto& entry : result->entries) {
+			const auto found = existing.find(entry.path);
+			Node* childNode = found == existing.end() ? nullptr : FindNode(found->second.nodeId);
+			if (childNode != nullptr && childNode->isDirectory == entry.isDirectory
+				&& childNode->isReparsePoint == entry.isReparsePoint) {
+				if (childNode->name != entry.name) {
+					TVITEMW update{};
+					update.hItem = childNode->item;
+					update.mask = TVIF_TEXT;
+					update.pszText = entry.name.data();
+					(void)TreeView_SetItem(tree, &update);
+					changed = true;
+				}
+				childNode->name = entry.name;
+				childNode->path = std::move(entry.path);
+				retained.insert(childNode->id);
+				insertAfter = childNode->item;
+				continue;
+			}
+			const auto inserted = InsertNode(parentItem, std::move(entry), insertAfter);
+			if (inserted != nullptr) insertAfter = inserted;
+			changed = true;
+		}
+		for (const auto item : placeholders) (void)TreeView_DeleteItem(tree, item);
+		for (const auto& [path, child] : existing) {
+			(void)path;
+			if (!retained.contains(child.nodeId)) {
+				DeleteNode(child.item);
+				changed = true;
+			}
+		}
+		(void)::SendMessageW(tree, WM_SETREDRAW, TRUE, 0);
+		if (changed) {
+			(void)::RedrawWindow(tree, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		}
+		UpdateOverlayScrollbar();
+		if (refreshAgain) {
+			if (auto* refreshedParent = FindNode(parentNodeId); refreshedParent != nullptr) QueueEnumeration(*refreshedParent, true);
+		}
 	}
 
 	[[nodiscard]] std::unique_ptr<WorkerResult> TakePendingResult(WorkerResult* raw)
@@ -678,6 +1012,7 @@ struct CExplorerTool::Impl {
 	void UpdateRoot(std::wstring newRoot)
 	{
 		root = std::move(newRoot);
+		expandedPaths.clear();
 		currentRootGeneration = shared->rootGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
 		if (currentRootGeneration == 0) currentRootGeneration = shared->rootGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
 		{
@@ -704,7 +1039,7 @@ bool CExplorerTool::Create(HWND parent)
 {
 	if (m_impl->closed || m_impl->window != nullptr || parent == nullptr) return false;
 	const HINSTANCE instance = ::GetModuleHandleW(nullptr);
-	if (!EnsureExplorerClass(instance)) return false;
+	if (!EnsureExplorerClass(instance) || !Impl::EnsureScrollbarClass(instance)) return false;
 	INITCOMMONCONTROLSEX common{};
 	common.dwSize = sizeof(common);
 	common.dwICC = ICC_TREEVIEW_CLASSES;
@@ -713,11 +1048,21 @@ bool CExplorerTool::Create(HWND parent)
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_impl->window == nullptr) return false;
 	m_impl->tree = ::CreateWindowExW(0, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-		TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS,
+		TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL,
 		0, 0, 0, 0, m_impl->window, nullptr, instance, nullptr);
 	if (m_impl->tree == nullptr) {
 		::DestroyWindow(m_impl->window);
 		m_impl->window = nullptr;
+		return false;
+	}
+	m_impl->scrollbar = ::CreateWindowExW(0, kExplorerScrollbarClass, L"", WS_CHILD | WS_CLIPSIBLINGS,
+		0, 0, 0, 0, m_impl->window, nullptr, instance, m_impl.get());
+	if (m_impl->scrollbar == nullptr || !::SetWindowSubclass(m_impl->tree, Impl::TreeSubclassProc, 1,
+		reinterpret_cast<DWORD_PTR>(m_impl.get()))) {
+		::DestroyWindow(m_impl->window);
+		m_impl->window = nullptr;
+		m_impl->tree = nullptr;
+		m_impl->scrollbar = nullptr;
 		return false;
 	}
 	::SendMessageW(m_impl->tree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
@@ -727,6 +1072,7 @@ bool CExplorerTool::Create(HWND parent)
 	m_impl->SetNotificationWindow(m_impl->window, true);
 	m_impl->StartWorker();
 	m_impl->UpdateRoot(m_impl->root);
+	m_impl->UpdateOverlayScrollbar();
 	return true;
 }
 
@@ -778,6 +1124,7 @@ void CExplorerTool::Close()
 	if (m_impl->window != nullptr && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->tree = nullptr;
+	m_impl->scrollbar = nullptr;
 	if (m_impl->shared->stopEvent != nullptr) { ::CloseHandle(m_impl->shared->stopEvent); m_impl->shared->stopEvent = nullptr; }
 	if (m_impl->shared->wakeEvent != nullptr) { ::CloseHandle(m_impl->shared->wakeEvent); m_impl->shared->wakeEvent = nullptr; }
 }
@@ -789,6 +1136,7 @@ void CExplorerTool::SetRoot(std::wstring root)
 		m_impl->root = std::move(root);
 		return;
 	}
+	if (CompareNoCase(m_impl->root, root) == 0) return;
 	m_impl->UpdateRoot(std::move(root));
 }
 
@@ -808,6 +1156,7 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 	}
 	m_impl->RebuildIconImages();
 	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+	if (m_impl->scrollbar != nullptr) ::InvalidateRect(m_impl->scrollbar, nullptr, FALSE);
 }
 
 void CExplorerTool::SetFileIconTheme(
@@ -871,6 +1220,7 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 	switch (message) {
 	case WM_SIZE:
 		if (impl.tree != nullptr) ::MoveWindow(impl.tree, 0, 0, LOWORD(lParam), HIWORD(lParam), TRUE);
+		impl.UpdateOverlayScrollbar();
 		return 0;
 	case WM_ERASEBKGND:
 		return 1;
@@ -905,12 +1255,18 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 			const bool expanded = (expanding->action & TVE_EXPAND) != 0;
 			auto* node = impl.FindNode(static_cast<std::uint64_t>(expanding->itemNew.lParam));
 			if (node != nullptr) {
+				if (expanded) {
+					impl.expandedPaths.insert(node->path);
+				} else {
+					impl.expandedPaths.erase(node->path);
+				}
 				impl.UpdateNodeIcon(*node, expanded);
 				if (expanded) impl.QueueEnumeration(*node, false);
 			}
+			impl.UpdateOverlayScrollbar();
 			return 0;
 		}
-		if (notification->code == NM_DBLCLK) {
+		if (notification->code == NM_CLICK) {
 			impl.ActivateSelectedFile();
 			return 0;
 		}
@@ -929,6 +1285,7 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		impl.SetNotificationWindow(nullptr, false);
 		impl.window = nullptr;
 		impl.tree = nullptr;
+		impl.scrollbar = nullptr;
 		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
 		break;
 	default:

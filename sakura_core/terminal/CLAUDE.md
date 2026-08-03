@@ -96,6 +96,17 @@ glyphs (notably Japanese) until a later click, move, or full repaint. Preserve
 the pixel regression that draws Japanese below row zero and immediately copies
 only that damaged row.
 
+Interactive terminal output uses leading-edge delivery with a trailing frame
+gate. Drain the first output notification immediately so a key echo or short
+command response is never held behind low-priority `WM_TIMER` dispatch. Output
+that arrives during the following frame interval may be coalesced and painted
+together to bound sustained rendering work. This mirrors Windows Terminal's
+`Renderer::NotifyPaintFrame` contract: an explicit redraw request sets the
+redraw state and wakes the render thread immediately; timers are used for their
+own expiry work, not as a prerequisite for the first response frame. Sakura's
+trailing gate remains necessary while parsing and invalidation are UI-thread
+owned rather than render-thread owned.
+
 ## Clipboard and Selection Interaction
 
 On Windows, the native terminal follows the VS Code/Windows Terminal host

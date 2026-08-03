@@ -113,10 +113,12 @@ void PaintUnusedDarkTabArea( HWND hwnd )
 
 	LONG usedRight = client.left;
 	LONG usedBottom = client.top;
+	LONG usedLeft = client.right;
 	const int itemCount = TabCtrl_GetItemCount(hwnd);
 	for( int index = 0; index < itemCount; ++index ) {
 		RECT item{};
 		if( TabCtrl_GetItemRect(hwnd, index, &item) ) {
+			usedLeft = std::min(usedLeft, item.left);
 			usedRight = std::max(usedRight, item.right);
 			usedBottom = std::max(usedBottom, item.bottom);
 		}
@@ -127,6 +129,14 @@ void PaintUnusedDarkTabArea( HWND hwnd )
 	if( brush == nullptr ) return;
 	const HDC dc = ::GetDC(hwnd);
 	if( dc != nullptr ) {
+		// The themed native tab control draws a light pane edge before the
+		// owner-drawn dark items.  Cover the unused leading inset as well as the
+		// trailing/bottom areas so that edge cannot appear as a white vertical bar.
+		if( client.left < usedLeft ) {
+			RECT left = client;
+			left.right = usedLeft;
+			::FillRect(dc, &left, brush);
+		}
 		if( usedRight < client.right ) {
 			RECT right = client;
 			right.left = usedRight;
@@ -2414,6 +2424,27 @@ void CTabWnd::TabWnd_ActivateFrameWindow( HWND hwnd, bool bForeground )
 */
 void CTabWnd::LayoutTab( void )
 {
+	RECT rcWnd{};
+	::GetWindowRect(GetHwnd(), &rcWnd);
+	RECT rcActions{ 0, 0, rcWnd.right - rcWnd.left,
+		(std::max)(TAB_WINDOW_HEIGHT, rcWnd.bottom - rcWnd.top) };
+	int tabControlRight = 0;
+	GetDocumentActionRects(rcActions, nullptr, nullptr, nullptr, &tabControlRight);
+	const int tabMarginLeft = static_cast<int>(TAB_MARGIN_LEFT);
+	const int targetTabWidth = (std::max)(0, tabControlRight - tabMarginLeft);
+
+	// Size the native tab control to the current parent width before deriving item
+	// widths or multiline height.  During live side-bar resize the parent changes
+	// on every mouse sample; measuring the previous child width made tab widths lag
+	// one frame behind and become visibly compressed.
+	RECT rcTab{};
+	::GetWindowRect(m_hwndTab, &rcTab);
+	const int currentTabHeight = (std::max)(1, static_cast<int>(rcTab.bottom - rcTab.top));
+	if (targetTabWidth != rcTab.right - rcTab.left) {
+		::SetWindowPos(m_hwndTab, nullptr, TAB_MARGIN_LEFT, TAB_MARGIN_TOP,
+			targetTabWidth, currentTabHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+
 	// フォントを切り替える 2011.12.01 Moca
 	bool bChgFont = (0 != memcmp( &m_lf, &m_pShareData->m_Common.m_sTabBar.m_lf, sizeof(m_lf) ));
 	if( bChgFont ){
@@ -2461,7 +2492,6 @@ void CTabWnd::LayoutTab( void )
 
 	// タブのアイテムサイズを調整する（等幅のときのサイズやフォント切替時の高さ調整）
 	// ※ 画面のちらつきや体感性能にさほど影響は無さそうなので条件を絞らず毎回 TabCtrl_SetItemSize() を実行する
-	RECT rcTab;
 	int nCount;
 	int cx;
 	::GetClientRect( m_hwndTab, &rcTab );
@@ -2505,14 +2535,6 @@ void CTabWnd::LayoutTab( void )
 			::SetWindowLongPtr( m_hwndTab, GWL_STYLE, lStyle );
 		}
 	}
-	RECT rcWnd;
-	::GetWindowRect( GetHwnd(), &rcWnd );
-	RECT rcActions{ 0, 0, rcWnd.right - rcWnd.left,
-		(std::max)(TAB_WINDOW_HEIGHT, rcWnd.bottom - rcWnd.top) };
-	int tabControlRight = 0;
-	GetDocumentActionRects(rcActions, nullptr, nullptr, nullptr, &tabControlRight);
-	const int tabMarginLeft = static_cast<int>(TAB_MARGIN_LEFT);
-
 	int nHeight = TAB_WINDOW_HEIGHT;
 	::GetWindowRect( m_hwndTab, &rcTab );
 	if( m_pShareData->m_Common.m_sTabBar.m_bTabMultiLine
@@ -2525,9 +2547,8 @@ void CTabWnd::LayoutTab( void )
 		nHeight = (rcDisp.top - rcTab.top - 2) + TAB_MARGIN_TOP;
 	}
 	::SetWindowPos( GetHwnd(), nullptr, 0, 0, rcWnd.right - rcWnd.left, nHeight, SWP_NOMOVE | SWP_NOZORDER );
-	int nWidth = (std::max)(0, tabControlRight - tabMarginLeft);
-	if( (nWidth != rcTab.right - rcTab.left) || (nHeight != rcTab.bottom - rcTab.top) ){
-		::MoveWindow( m_hwndTab, TAB_MARGIN_LEFT, TAB_MARGIN_TOP, nWidth, nHeight, TRUE );
+	if( (targetTabWidth != rcTab.right - rcTab.left) || (nHeight != rcTab.bottom - rcTab.top) ){
+		::MoveWindow( m_hwndTab, TAB_MARGIN_LEFT, TAB_MARGIN_TOP, targetTabWidth, nHeight, TRUE );
 	}
 }
 

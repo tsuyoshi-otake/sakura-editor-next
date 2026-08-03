@@ -246,6 +246,12 @@ TEST(CustomFrame, PreservesCornerAndEdgeResizeHits)
 	EXPECT_EQ(HTBOTTOMLEFT, HitTestCustomFrame(layout, { 1, 698 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 998, 698 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTRIGHT, HitTestCustomFrame(layout, { 998, 300 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTLEFT, HitTestCustomFrame(layout, { -1, 300 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTRIGHT, HitTestCustomFrame(layout, { 1001, 300 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTTOP, HitTestCustomFrame(layout, { 500, -1 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTBOTTOM, HitTestCustomFrame(layout, { 500, 701 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTTOPLEFT, HitTestCustomFrame(layout, { -1, -1 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 1001, 701 }, 1000, 700, 8, false));
 }
 
 TEST(CustomFrame, MaximizedWindowDisablesResizeBorderButKeepsSnapButton)

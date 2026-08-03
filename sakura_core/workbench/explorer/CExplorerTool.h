@@ -44,12 +44,17 @@ struct ExplorerPalette {
 	COLORREF text = RGB(0xE8, 0xEB, 0xF0);
 	COLORREF border = RGB(0x38, 0x3E, 0x49);
 	COLORREF focus = RGB(0xEB, 0x6A, 0x9A);
+	COLORREF scrollbarThumb = RGB(0x38, 0x3E, 0x49);
+	COLORREF scrollbarThumbHover = RGB(0x8B, 0x91, 0x9B);
+	COLORREF scrollbarTrackHover = RGB(0x2A, 0x2E, 0x36);
 };
 
-//! Left workbench Explorer implemented with the standard Win32 TreeView control.
+//! Left workbench Explorer backed by a Win32 TreeView with native scrollbars
+//! suppressed and a VS Code-shaped overlay vertical scrollbar owned here.
 //!
-//! SetRoot only adds a root item.  Child directories are enumerated on the one worker
-//! thread when their item is expanded; reparse points are deliberately displayed as leaves.
+//! SetRoot only adds a root item. Child directories are enumerated on the one worker
+//! thread when their item is expanded; refreshes restore expansion by filesystem path,
+//! files activate on single click or Enter, and reparse points are displayed as leaves.
 class CExplorerTool final : public IWorkbenchTool {
 public:
 	using FileActivationCallback = std::function<void(std::wstring_view path)>;
@@ -66,7 +71,7 @@ public:
 	bool PreTranslateMessage(MSG& message) override;
 	void Close() override;
 
-	//! Replaces the sole, window-local root. An empty value clears the tree.
+	//! Replaces the sole, window-local root. The same path is a no-op; an empty value clears the tree.
 	void SetRoot(std::wstring root);
 	[[nodiscard]] const std::wstring& GetRoot() const noexcept;
 	void SetFileActivationCallback(FileActivationCallback callback);

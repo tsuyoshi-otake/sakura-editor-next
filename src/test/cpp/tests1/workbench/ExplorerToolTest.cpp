@@ -134,6 +134,20 @@ HTREEITEM FindDirectChild(HWND tree, HTREEITEM parent, std::wstring_view text)
 	return nullptr;
 }
 
+bool IsExpanded(HWND tree, HTREEITEM item)
+{
+	return item != nullptr &&
+		(TreeView_GetItemState(tree, item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
+}
+
+void SendTreeClick(HWND toolWindow, HWND tree)
+{
+	NMHDR notification{};
+	notification.hwndFrom = tree;
+	notification.code = NM_CLICK;
+	(void)::SendMessageW(toolWindow, WM_NOTIFY, 0, reinterpret_cast<LPARAM>(&notification));
+}
+
 HWND CreateHiddenParentWindow()
 {
 	return ::CreateWindowExW(0, L"STATIC", L"Explorer test parent", WS_OVERLAPPED,
@@ -217,6 +231,8 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_BORDER);
 	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_EXSTYLE) &
 		(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE));
+	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & TVS_NOHSCROLL);
+	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_HSCROLL);
 	const auto rootItem = TreeView_GetRoot(tree);
 	ASSERT_NE(nullptr, rootItem);
 	EXPECT_EQ(CExplorerTool::WorkspaceDisplayName(root.Path().wstring()), ItemText(tree, rootItem));
@@ -236,6 +252,138 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 
 	tool.Close();
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());
+	::DestroyWindow(parent);
+}
+
+TEST(ExplorerTool, UsesOverlayVerticalScrollbarWithoutHorizontalScrollbar)
+{
+	TemporaryDirectory root;
+	for (int index = 0; index < 40; ++index) {
+		CreateEmptyFile(root.Path() / (L"file-with-a-long-name-" + std::to_wstring(index) + L".txt"));
+	}
+
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 180, 100 }, 96);
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	ASSERT_TRUE(PumpMessagesUntil([&] { return TreeView_GetCount(tree) >= 41; }, std::chrono::seconds(2)));
+	const HWND overlay = ::FindWindowExW(
+		tool.GetHwnd(), nullptr, L"SakuraExplorerOverlayScrollbar", nullptr);
+	ASSERT_NE(nullptr, overlay);
+	EXPECT_NE(0, ::GetWindowLongPtrW(overlay, GWL_STYLE) & WS_VISIBLE);
+	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & (WS_HSCROLL | WS_VSCROLL));
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(ExplorerTool, SingleClickActivatesFilesButNotDirectories)
+{
+	TemporaryDirectory root;
+	ASSERT_TRUE(std::filesystem::create_directory(root.Path() / L"child"));
+	const auto filePath = root.Path() / L"root.txt";
+	CreateEmptyFile(filePath);
+
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	std::wstring activatedPath;
+	int activationCount = 0;
+	tool.SetFileActivationCallback([&](std::wstring_view path) {
+		activatedPath = path;
+		++activationCount;
+	});
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	const auto rootItem = TreeView_GetRoot(tree);
+	ASSERT_NE(nullptr, rootItem);
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return FindDirectChild(tree, rootItem, L"child") != nullptr &&
+			FindDirectChild(tree, rootItem, L"root.txt") != nullptr;
+	}, std::chrono::seconds(2)));
+
+	const auto fileItem = FindDirectChild(tree, rootItem, L"root.txt");
+	ASSERT_NE(nullptr, fileItem);
+	ASSERT_TRUE(TreeView_SelectItem(tree, fileItem));
+	SendTreeClick(tool.GetHwnd(), tree);
+	EXPECT_EQ(1, activationCount);
+	EXPECT_EQ(filePath.wstring(), activatedPath);
+
+	const auto childItem = FindDirectChild(tree, rootItem, L"child");
+	ASSERT_NE(nullptr, childItem);
+	ASSERT_TRUE(TreeView_SelectItem(tree, childItem));
+	SendTreeClick(tool.GetHwnd(), tree);
+	EXPECT_EQ(1, activationCount);
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(ExplorerTool, RefreshRestoresExpandedDescendantsByFilesystemPath)
+{
+	TemporaryDirectory root;
+	const auto childDirectory = root.Path() / L"child";
+	const auto grandchildDirectory = childDirectory / L"grandchild";
+	ASSERT_TRUE(std::filesystem::create_directories(grandchildDirectory));
+	CreateEmptyFile(grandchildDirectory / L"nested.txt");
+
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	const auto rootItem = TreeView_GetRoot(tree);
+	ASSERT_NE(nullptr, rootItem);
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return FindDirectChild(tree, rootItem, L"child") != nullptr;
+	}, std::chrono::seconds(2)));
+
+	auto childItem = FindDirectChild(tree, rootItem, L"child");
+	ASSERT_NE(nullptr, childItem);
+	ASSERT_TRUE(TreeView_Expand(tree, childItem, TVE_EXPAND));
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return FindDirectChild(tree, childItem, L"grandchild") != nullptr;
+	}, std::chrono::seconds(2)));
+	auto grandchildItem = FindDirectChild(tree, childItem, L"grandchild");
+	ASSERT_NE(nullptr, grandchildItem);
+	const auto originalChildItem = childItem;
+	const auto originalGrandchildItem = grandchildItem;
+	ASSERT_TRUE(TreeView_Expand(tree, grandchildItem, TVE_EXPAND));
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return FindDirectChild(tree, grandchildItem, L"nested.txt") != nullptr;
+	}, std::chrono::seconds(2)));
+
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		return tool.GetWorkerState() == workbench::explorer::ExplorerWorkerState::Idle;
+	}, std::chrono::seconds(1)));
+	std::this_thread::sleep_for(std::chrono::milliseconds(30));
+	CreateEmptyFile(root.Path() / L"later.txt");
+	ASSERT_TRUE(PumpMessagesUntil([&] {
+		childItem = FindDirectChild(tree, rootItem, L"child");
+		if (!IsExpanded(tree, childItem)) return false;
+		grandchildItem = FindDirectChild(tree, childItem, L"grandchild");
+		return IsExpanded(tree, grandchildItem) &&
+			FindDirectChild(tree, grandchildItem, L"nested.txt") != nullptr &&
+			FindDirectChild(tree, rootItem, L"later.txt") != nullptr;
+	}, std::chrono::seconds(3)));
+	EXPECT_EQ(originalChildItem, childItem);
+	EXPECT_EQ(originalGrandchildItem, grandchildItem);
+
+	// Reapplying the same workspace root must not rebuild the TreeView or lose
+	// path-owned expansion state during ordinary workbench synchronization.
+	tool.SetRoot(root.Path().wstring());
+	EXPECT_TRUE(IsExpanded(tree, childItem));
+	EXPECT_TRUE(IsExpanded(tree, grandchildItem));
+
+	tool.Close();
 	::DestroyWindow(parent);
 }
 

@@ -64,6 +64,10 @@ whether an editor input is open or active.
   accessible name instead of the canvas. Both the label and its keybinding use
   the `descriptionText` token; do not reintroduce `secondaryText` or the removed
   `editorWatermark.foreground` token, which no longer exists upstream.
+- The entire empty editor group is a double-click target. Match
+  `EditorGroupView.registerContainerListeners`: a double-click anywhere on the
+  empty surface creates the pinned Untitled input, while the group continues to
+  show no document tab before that explicit transition.
 - `CExtensionDetailSurface` is a native composition-layer metadata projection,
   not an `EditorInput` and not a second document model. `CEditWnd` may show it
   only while the native editor has no active document, and must hide it before

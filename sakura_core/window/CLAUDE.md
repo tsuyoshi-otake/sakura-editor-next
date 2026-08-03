@@ -211,10 +211,16 @@ backend whose service owner remains active.
 - A runtime-backed window owns one `WorkbenchContextKeyService` and
   `WorkbenchCommandRegistry`. Destroy the registry/context before the native
   hosts captured by their executor callbacks.
-- Explorer Activity Bar activation and legacy
-  `F_TOGGLE_LEFT_EXPLORER` dispatch both execute
-  `workbench.view.explorer`. Strip only the base 16-bit function code for alias
-  comparison; preserve source/high-bit flags until that boundary.
+- Explorer Command Palette and inactive Activity Bar activation execute the
+  reveal-only `workbench.view.explorer`. Legacy `F_TOGGLE_LEFT_EXPLORER`
+  dispatch from the title-bar control, View menu, and `Ctrl+B` executes
+  `workbench.action.toggleSidebarVisibility`. Strip only the base 16-bit
+  function code for alias comparison; preserve source/high-bit flags until that
+  boundary.
+- Explorer TreeView item handles are transient refresh projections. Retain
+  expansion by stable filesystem path across watcher refreshes, treat setting
+  the same workspace root as a no-op, and activate files on single click or
+  Enter while directory clicks remain navigation-only.
 - Once the registry recognizes a stable command, Disabled, Unsupported, Failed,
   or context-refresh failure is terminal and must not fall through to the
   historical native action.
@@ -261,6 +267,13 @@ wiring.
 - Use upstream stable IDs when VS Code owns the concept, including `status.scm`,
   `status.editor.selection`, `status.editor.eol`, `status.editor.encoding`,
   `status.editor.inputMode`, `status.editor.zoom`, and `status.notifications`.
+- The native status bar must not use `SBARS_SIZEGRIP`. VS Code anchors its
+  rightmost item directly to the status-bar client edge; reserving a legacy
+  resize-grip width leaves the notifications icon visibly too far left.
+- Resizing belongs to the custom frame, not the removed status-bar grip.
+  `WM_NCHITTEST` must expose every edge and corner, including the invisible
+  outer half of the DWM resize border after custom `WM_NCCALCSIZE`; maximized
+  windows continue to suppress resize hits.
   **Documented divergence:** Sakura's character-code display and macro-recording
   indicator have no VS Code counterparts. Their IDs are therefore explicitly
   product-owned as `sakura.status.editor.characterCode` and

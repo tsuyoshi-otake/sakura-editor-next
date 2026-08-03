@@ -77,9 +77,9 @@ WorkbenchCommandDescriptor MakeToggleSidebarDescriptor()
 		EWorkbenchCommandExecutorTarget::Layout,
 		{
 			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.toggleSidebarVisibility.palette", std::nullopt },
-			{ EWorkbenchCommandSurface::Menu, "workbench.action.toggleSidebarVisibility.menu", std::nullopt },
+			{ EWorkbenchCommandSurface::Menu, "workbench.action.toggleSidebarVisibility.menu", kLegacyToggleLeftExplorerFunctionCode },
 			{ EWorkbenchCommandSurface::ActivityBar, "workbench.action.toggleSidebarVisibility.activity", std::nullopt },
-			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.toggleSidebarVisibility.key", std::nullopt },
+			{ EWorkbenchCommandSurface::Keybinding, "workbench.action.toggleSidebarVisibility.key", kLegacyToggleLeftExplorerFunctionCode },
 		},
 	};
 }
@@ -95,9 +95,7 @@ WorkbenchCommandDescriptor MakeExplorerDescriptor()
 		EWorkbenchCommandExecutorTarget::Layout,
 		{
 			{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.explorer.palette", std::nullopt },
-			{ EWorkbenchCommandSurface::Menu, "workbench.view.explorer.menu", kLegacyToggleLeftExplorerFunctionCode },
 			{ EWorkbenchCommandSurface::ActivityBar, "workbench.view.explorer.activity", std::nullopt },
-			{ EWorkbenchCommandSurface::Keybinding, "workbench.view.explorer.key", kLegacyToggleLeftExplorerFunctionCode },
 		},
 	};
 }

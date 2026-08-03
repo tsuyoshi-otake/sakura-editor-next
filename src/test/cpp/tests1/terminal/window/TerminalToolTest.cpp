@@ -405,6 +405,36 @@ TEST(TerminalTool, RestoredVisiblePanelStartsExactlyOneSessionWithoutTakingFocus
 	::DestroyWindow(parent);
 }
 
+TEST(TerminalTool, FirstOutputDrainDoesNotWaitForFrameTimer)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b]0;Immediate response\x07";
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 480, 240 }, 96);
+	tool.Activate();
+	ASSERT_EQ(1u, harness.backends.size());
+	ASSERT_TRUE(WaitUntil([&] {
+		return harness.backends[0]->outputOffset.load() == harness.scriptedOutput.size();
+	}));
+
+	// Dispatch only application messages. WM_TIMER is deliberately excluded so
+	// this fails if the leading output drain is deferred to the 16 ms frame timer.
+	MSG message{};
+	while( ::PeekMessageW(&message, tool.GetHwnd(), WM_APP, 0xBFFF, PM_REMOVE) ) {
+		::TranslateMessage(&message);
+		::DispatchMessageW(&message);
+	}
+	ASSERT_EQ(1u, tool.Tabs().size());
+	EXPECT_EQ(L"Immediate response", tool.Tabs().front().label);
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, FirstSessionFailureIsReportedWithoutRemovingTheFailedTab)
 {
 	ToolHarness harness;

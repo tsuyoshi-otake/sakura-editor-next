@@ -34,6 +34,10 @@ constexpr int kFocusInsetDip = 2;
 	WNDCLASSEXW windowClass{};
 	windowClass.cbSize = sizeof(windowClass);
 	windowClass.hInstance = instance;
+	// VS Code opens a pinned Untitled editor when the user double-clicks an
+	// empty editor group.  Win32 only emits WM_LBUTTONDBLCLK for classes that
+	// opt in with CS_DBLCLKS.
+	windowClass.style = CS_DBLCLKS;
 	windowClass.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
 	windowClass.lpfnWndProc = CEmptyEditorSurface::WindowProc;
 	windowClass.lpszClassName = kEmptyEditorSurfaceClass;
@@ -291,6 +295,13 @@ LRESULT CEmptyEditorSurface::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 		static_cast<void>(InvokeRequest(invoked));
 		return 0;
 	}
+	case WM_LBUTTONDBLCLK:
+		// Match EditorGroupView.registerContainerListeners(): the entire empty
+		// editor group, not just the watermark action rows, creates an Untitled
+		// editor on double-click.  This surface is shown only while the group has
+		// no active input, and its stable command callback owns the transition.
+		static_cast<void>(Invoke(EmptyEditorSurfaceAction::NewFile));
+		return 0;
 	case WM_CAPTURECHANGED:
 		m_captureAction.reset();
 		m_model.SetPressed(std::nullopt);

@@ -170,7 +170,8 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 		// Explorer is a Side Bar ViewContainer; its injected background also backs
 		// the TreeView's generated font-icon tiles.
 		m_explorer->SetPalette({ palette.sideBar.ToColorRef(), palette.primaryText.ToColorRef(),
-			palette.border.ToColorRef(), palette.accent.ToColorRef() });
+			palette.border.ToColorRef(), palette.accent.ToColorRef(), palette.border.ToColorRef(),
+			palette.secondaryText.ToColorRef(), palette.raised.ToColorRef() });
 	}
 	if (m_outline) m_outline->SetPalette(palette);
 	if (m_scm) m_scm->SetPalette(palette);

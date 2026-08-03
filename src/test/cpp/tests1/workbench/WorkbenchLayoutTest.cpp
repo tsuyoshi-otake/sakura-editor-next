@@ -18,6 +18,9 @@ TEST(WorkbenchLayout, ScalesStandardChromeAtExplicitDpi)
 		EXPECT_EQ(32 * static_cast<int>(dpi) / 96, layout.documentTabs.Height());
 		EXPECT_EQ(42 * static_cast<int>(dpi) / 96, layout.activityBar.Width());
 		EXPECT_EQ(22 * static_cast<int>(dpi) / 96, layout.statusBar.Height());
+		EXPECT_EQ(::MulDiv(1, static_cast<int>(dpi), 96), layout.leftSplitter.Width());
+		EXPECT_EQ(::MulDiv(1, static_cast<int>(dpi), 96), layout.rightSplitter.Width());
+		EXPECT_EQ(::MulDiv(1, static_cast<int>(dpi), 96), layout.bottomSplitter.Height());
 		EXPECT_EQ(30 * static_cast<int>(dpi) / 96, layout.leftPaneHeader.Height());
 		EXPECT_EQ(layout.titleBar.bottom, layout.documentTabs.top);
 		EXPECT_EQ(layout.titleBar.bottom, layout.activityBar.top);

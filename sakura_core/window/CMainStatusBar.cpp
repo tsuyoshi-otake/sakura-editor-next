@@ -137,7 +137,10 @@ void CMainStatusBar::CreateStatusBar()
 		WS_EX_RIGHT | WS_EX_COMPOSITED,
 		STATUSCLASSNAME,
 		nullptr,
-		WS_CHILD/* | WS_VISIBLE*/ | SBARS_SIZEGRIP,	// 2007.03.08 ryoji WS_VISIBLE 除去
+		// VS Code's status bar has no legacy resize grip.  Keeping SBARS_SIZEGRIP
+		// reserves an extra system-scrollbar width after the rightmost item and
+		// leaves the notifications bell visibly detached from the window edge.
+		WS_CHILD/* | WS_VISIBLE*/,	// 2007.03.08 ryoji WS_VISIBLE 除去
 		0, 0, 0, 0, // X, Y, nWidth, nHeight
 		m_pOwner->GetHwnd(),
 		(HMENU)IDW_STATUSBAR,
@@ -553,10 +556,10 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		(void)::SendMessageW(m_hwndStatusBar, SB_GETRECT, 0, reinterpret_cast<LPARAM>(&messageRect));
 	}
 	messageRect.left = std::max<LONG>(messageRect.left, scmWidth);
+	// The final right-aligned entry owns the full client edge.  The notification
+	// item's own 28-DIP hit target supplies its padding, matching VS Code's
+	// rightmost statusbar item instead of preserving a removed size-grip gap.
 	LONG statusContentRight = client.right;
-	if (!::IsZoomed(m_pOwner->GetHwnd())) {
-		statusContentRight -= ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE);
-	}
 	statusContentRight = (std::max<LONG>)(messageRect.left, statusContentRight);
 	RECT notificationRect{};
 	if (IsStatusbarEntryVisible(kNotificationStatusId)) {

@@ -220,10 +220,14 @@ LRESULT HitTestCustomFrame(
 	const int height = std::max(0, clientHeight);
 	const int border = std::max(0, resizeBorder);
 	if (!maximized && border > 0) {
-		const bool left = point.x >= 0 && point.x < border;
-		const bool right = point.x < width && point.x >= width - border;
-		const bool top = point.y >= 0 && point.y < border;
-		const bool bottom = point.y < height && point.y >= height - border;
+		// WM_NCCALCSIZE extends the client over the old frame, but Windows can still
+		// send WM_NCHITTEST for the invisible resize border just outside that client.
+		// Accept both halves of the system-sized target, as VS Code does, instead of
+		// leaving the status-bar size grip as the only reachable resize surface.
+		const bool left = point.x >= -border && point.x < border;
+		const bool right = point.x < width + border && point.x >= width - border;
+		const bool top = point.y >= -border && point.y < border;
+		const bool bottom = point.y < height + border && point.y >= height - border;
 		if (top && left) return HTTOPLEFT;
 		if (top && right) return HTTOPRIGHT;
 		if (bottom && left) return HTBOTTOMLEFT;

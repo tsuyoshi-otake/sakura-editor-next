@@ -709,12 +709,17 @@ struct CTerminalTool::Impl {
 			pendingOutputTabs.push_back(tabId);
 		}
 		if( outputFrameScheduled || window == nullptr ) return;
+
+		// Windows Terminal's Renderer::NotifyPaintFrame wakes its render thread on
+		// the leading edge instead of waiting for a periodic timer. Mirror that
+		// interactive contract here so a key echo or short command response is not
+		// held behind low-priority WM_TIMER dispatch. Sakura still needs a trailing
+		// frame gate because parsing runs on the UI thread: notifications arriving
+		// during the next 16 ms are coalesced by DrainOutputFrame().
 		outputFrameScheduled = ::SetTimer(window, kOutputFrameTimer, kOutputFrameMilliseconds, nullptr) != 0;
-		if( !outputFrameScheduled ) {
-			auto pending = std::move(pendingOutputTabs);
-			pendingOutputTabs.clear();
-			for( const auto pendingId : pending ) HandleOutput(pendingId);
-		}
+		auto pending = std::move(pendingOutputTabs);
+		pendingOutputTabs.clear();
+		for( const auto pendingId : pending ) HandleOutput(pendingId);
 	}
 
 	void DrainOutputFrame()

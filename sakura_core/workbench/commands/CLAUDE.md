@@ -35,11 +35,13 @@
 `workbench.action.toggleSidebarVisibility`, `workbench.view.explorer`,
 `workbench.actions.view.problems`, and
 `workbench.action.output.toggleOutput` are registered with real native
-executors. Explorer Activity Bar, Menu, and Keybinding routes converge on
-`workbench.view.explorer`; Menu and Keybinding retain
-`F_TOGGLE_LEFT_EXPLORER` only as the integer compatibility alias after the
-source/high bits have been preserved by the native dispatcher. Problems and
-Output are Command Palette/Menu/Keybinding commands, not Activity Bar commands.
+executors. Explorer Command Palette and Activity Bar reveal routes converge on
+`workbench.view.explorer`. The title-bar control, View menu, and `Ctrl+B`
+keybinding converge on `workbench.action.toggleSidebarVisibility`; Menu and
+Keybinding retain `F_TOGGLE_LEFT_EXPLORER` only as the integer compatibility
+alias after the source/high bits have been preserved by the native dispatcher.
+Problems and Output are Command Palette/Menu/Keybinding commands, not Activity
+Bar commands.
 
 Output also has a distinct native show-only route for extension
 `OutputChannel.show`; it must not toggle an already visible panel off.

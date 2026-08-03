@@ -21,7 +21,10 @@ constexpr int kTitleHeightDip = 34;
 constexpr int kDocumentTabsHeightDip = 32;
 constexpr int kActivityBarWidthDip = 42;
 constexpr int kStatusHeightDip = 22;
-constexpr int kSplitterDip = 4;
+// VS Code's sash reserves only the one-pixel part boundary.  Its easier-to-hit
+// four-DIP interaction target is projected by the native host and must not take
+// four visible pixels away from the editor.
+constexpr int kSplitterDip = 1;
 constexpr int kEditorMinimumWidthDip = 320;
 constexpr int kEditorMinimumHeightDip = 180;
 

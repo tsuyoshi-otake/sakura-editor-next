@@ -1329,7 +1329,7 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 	}
 	if (baseCode == F_TOGGLE_LEFT_EXPLORER && m_workbenchRuntime != nullptr) {
 		bool handled = false;
-		(void)TryExecuteWorkbenchStableCommand("workbench.view.explorer", handled);
+		(void)TryExecuteWorkbenchStableCommand("workbench.action.toggleSidebarVisibility", handled);
 		if (handled) return;
 	}
 	if (baseCode == F_FILENEW && !HasActiveEditorInput()) {
@@ -1368,11 +1368,12 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (m_editorServiceAdapter == nullptr) return;
 
 	const bool hasActiveInput = snapshot.group.activeInputId.has_value();
+	// Editor tabs belong to this editor group.  Other native editor processes
+	// may exist while this group is genuinely empty; their global node count
+	// must not manufacture an Untitled tab above the empty-editor surface.
 	const bool previousShowDocumentTabs =
-		(m_editorCorePresentationInitialized && m_hasActiveEditorInput)
-		|| m_pShareData->m_sNodes.m_nEditArrNum > 1;
-	const bool showDocumentTabs = hasActiveInput
-		|| m_pShareData->m_sNodes.m_nEditArrNum > 1;
+		m_editorCorePresentationInitialized && m_hasActiveEditorInput;
+	const bool showDocumentTabs = hasActiveInput;
 	const bool documentTabVisibilityChanged = previousShowDocumentTabs != showDocumentTabs;
 	const bool presentationChanged = !m_editorCorePresentationInitialized
 		|| m_hasActiveEditorInput != hasActiveInput;
@@ -9064,6 +9065,34 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		bMiniMapSizeBox = false;
 	}
 	::GetClientRect( GetHwnd(), &rcClient );
+	const auto physicalDpi = GetHwnd() == nullptr ? 96 : ::GetDpiForWindow(GetHwnd());
+	workbench::WorkbenchLayoutRequest layoutRequest;
+	layoutRequest.clientWidth = cx;
+	layoutRequest.clientHeight = cy;
+	layoutRequest.dpi = workbench::ScaleDpi(physicalDpi, m_workbenchZoomPercent);
+	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
+	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
+		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);
+	layoutRequest.documentTabsHeightPixels = 0;
+	layoutRequest.bottomAccessoryHeightPixels =
+		m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 1 ? nFuncKeyWndHeight : 0;
+	layoutRequest.statusBarHeightPixels = nStatusBarHeight;
+	layoutRequest.leftPane = m_leftWorkbenchPanel
+		? m_leftWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.rightPane = m_rightWorkbenchPanel
+		? m_rightWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.bottomPane = m_bottomWorkbenchPanel
+		? m_bottomWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.bottomPaneMaximized = m_bottomWorkbenchMaximized
+		&& layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden;
+	layoutRequest.showMinimap = HasActiveEditorInput() && m_cMiniMapView.GetHwnd() != nullptr;
+	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
+		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
+	layoutRequest.rightPaneWidthDip = m_rightWorkbenchPanel
+		? m_rightWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nExtensionViewsExtent96;
+	layoutRequest.bottomPaneHeightDip = m_bottomWorkbenchPanel
+		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
+	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;
 
 	//@@@ From 2003.05.31 MIK
 	//タブウインドウ追加に伴い，ファンクションキー表示位置も調整
@@ -9071,8 +9100,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	//タブウインドウ
 	int nTabHeightBottom = 0;
 	nTabWndHeight = 0;
-	const bool showDocumentTabs = HasActiveEditorInput()
-		|| m_pShareData->m_sNodes.m_nEditArrNum > 1;
+	const bool showDocumentTabs = HasActiveEditorInput();
 	if (m_cTabWnd.GetHwnd()) {
 		::ShowWindow(m_cTabWnd.GetHwnd(), showDocumentTabs ? SW_SHOWNA : SW_HIDE);
 	}
@@ -9090,20 +9118,17 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cTabWnd.SizeBox_ONOFF( false );
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			nTabWndHeight = rc.bottom - rc.top;
-			if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ){
-				::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight + nFuncKeyWndHeight, cx, nTabWndHeight, TRUE );
-			}else{
-				::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight, cx, nTabWndHeight, TRUE );
-			}
+			const auto tabMeasurementLayout = workbench::CalculateWorkbenchLayout(layoutRequest);
+			::MoveWindow(m_cTabWnd.GetHwnd(), tabMeasurementLayout.documentTabs.left,
+				tabMeasurementLayout.documentTabs.top, tabMeasurementLayout.documentTabs.Width(),
+				nTabWndHeight, TRUE);
 			m_cTabWnd.OnSize();
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			if( nTabWndHeight != rc.bottom - rc.top ){
 				nTabWndHeight = rc.bottom - rc.top;
-				if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ){
-					::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight + nFuncKeyWndHeight, cx, nTabWndHeight, TRUE );
-				}else{
-					::MoveWindow( m_cTabWnd.GetHwnd(), 0, nCustomTitleHeight + nToolBarHeight, cx, nTabWndHeight, TRUE );
-				}
+				::MoveWindow(m_cTabWnd.GetHwnd(), tabMeasurementLayout.documentTabs.left,
+					tabMeasurementLayout.documentTabs.top, tabMeasurementLayout.documentTabs.Width(),
+					nTabWndHeight, TRUE);
 			}
 		}else if( tabPosition == TabPosition_Bottom ){
 			// 上から下に移動するとゴミが表示されるので一度非表示にする
@@ -9180,34 +9205,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		}
 	}
 
-	workbench::WorkbenchLayoutRequest layoutRequest;
-	layoutRequest.clientWidth = cx;
-	layoutRequest.clientHeight = cy;
-	const auto physicalDpi = GetHwnd() == nullptr ? 96 : ::GetDpiForWindow(GetHwnd());
-	layoutRequest.dpi = workbench::ScaleDpi(physicalDpi, m_workbenchZoomPercent);
-	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
-	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
-		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);
 	layoutRequest.documentTabsHeightPixels = nTabWndHeight;
 	layoutRequest.bottomAccessoryHeightPixels = nTabHeightBottom
 		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 1 ? nFuncKeyWndHeight : 0);
-	layoutRequest.statusBarHeightPixels = nStatusBarHeight;
-	layoutRequest.leftPane = m_leftWorkbenchPanel
-		? m_leftWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
-	layoutRequest.rightPane = m_rightWorkbenchPanel
-		? m_rightWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
-	layoutRequest.bottomPane = m_bottomWorkbenchPanel
-		? m_bottomWorkbenchPanel->GetState() : workbench::WorkbenchPanelState::Hidden;
-	layoutRequest.bottomPaneMaximized = m_bottomWorkbenchMaximized
-		&& layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden;
-	layoutRequest.showMinimap = HasActiveEditorInput() && m_cMiniMapView.GetHwnd() != nullptr;
-	layoutRequest.leftPaneWidthDip = m_leftWorkbenchPanel
-		? m_leftWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nLeftPanelExtent96;
-	layoutRequest.rightPaneWidthDip = m_rightWorkbenchPanel
-		? m_rightWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nExtensionViewsExtent96;
-	layoutRequest.bottomPaneHeightDip = m_bottomWorkbenchPanel
-		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
-	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;
 	const auto layout = workbench::CalculateWorkbenchLayout(layoutRequest);
 	m_leftWorkbenchSplitter = ToWinRect(layout.leftSplitter);
 	m_rightWorkbenchSplitter = ToWinRect(layout.rightSplitter);
@@ -9262,6 +9262,22 @@ LRESULT CEditWnd::OnPaint(
 	if( !m_pPrintPreview ){
 		PAINTSTRUCT		ps;
 		const HDC dc = ::BeginPaint(hwnd, &ps);
+		// The edit window has no class background brush because its client area is
+		// normally covered by child Parts.  Live workbench resizing temporarily
+		// exposes the old child bounds, though, and leaving those pixels untouched
+		// preserves every previous splitter position as a vertical/horizontal trail.
+		// Paint only the invalid parent area; WS_CLIPCHILDREN keeps the current Parts
+		// out of this fill.
+		if (!::IsRectEmpty(&ps.rcPaint)) {
+			const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+				? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+			const auto backgroundBrush = ::CreateSolidBrush(
+				theme::CThemeService::EffectivePalette(mode).canvas.ToColorRef());
+			if (backgroundBrush != nullptr) {
+				::FillRect(dc, &ps.rcPaint, backgroundBrush);
+				::DeleteObject(backgroundBrush);
+			}
+		}
 		if (m_customFrame) {
 			m_customFrame->Paint(dc, ps.rcPaint);
 		}
@@ -9401,6 +9417,12 @@ LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType,
 			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		// MoveWindow invalidates the vacated child rectangles, but the controls can
+		// otherwise paint on different message-loop turns.  Commit one complete
+		// workbench frame while the pointer is captured so tabs, editor, panel, and
+		// terminal never expose geometry from different resize samples.
+		::RedrawWindow(GetHwnd(), nullptr, nullptr,
+			RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
 		return 0;
 	}
 
@@ -9461,9 +9483,24 @@ LRESULT CEditWnd::OnCaptureChanged(LPARAM lParam)
 
 workbench::CWorkbenchPanelHost* CEditWnd::HitTestWorkbenchSplitter(POINT point) const noexcept
 {
-	if (m_leftWorkbenchPanel && ContainsPoint(m_leftWorkbenchSplitter, point)) return m_leftWorkbenchPanel.get();
-	if (m_rightWorkbenchPanel && ContainsPoint(m_rightWorkbenchSplitter, point)) return m_rightWorkbenchPanel.get();
-	if (m_bottomWorkbenchPanel && ContainsPoint(m_bottomWorkbenchSplitter, point)) return m_bottomWorkbenchPanel.get();
+	const int sashHitSize = std::max(1, ::MulDiv(4, static_cast<int>(::GetDpiForWindow(GetHwnd())), 96));
+	const auto containsVerticalSash = [point, sashHitSize](RECT rect) noexcept {
+		if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+		const int extra = std::max(0, sashHitSize - static_cast<int>(rect.right - rect.left));
+		rect.left -= extra / 2;
+		rect.right += extra - extra / 2;
+		return ContainsPoint(rect, point);
+	};
+	const auto containsHorizontalSash = [point, sashHitSize](RECT rect) noexcept {
+		if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+		const int extra = std::max(0, sashHitSize - static_cast<int>(rect.bottom - rect.top));
+		rect.top -= extra / 2;
+		rect.bottom += extra - extra / 2;
+		return ContainsPoint(rect, point);
+	};
+	if (m_leftWorkbenchPanel && containsVerticalSash(m_leftWorkbenchSplitter)) return m_leftWorkbenchPanel.get();
+	if (m_rightWorkbenchPanel && containsVerticalSash(m_rightWorkbenchSplitter)) return m_rightWorkbenchPanel.get();
+	if (m_bottomWorkbenchPanel && containsHorizontalSash(m_bottomWorkbenchSplitter)) return m_bottomWorkbenchPanel.get();
 	return nullptr;
 }
 

@@ -203,22 +203,33 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 	EXPECT_TRUE(registry.Find("notifications.hideList").has_value());
 	EXPECT_TRUE(registry.Find("workbench.action.toggleStatusbarVisibility").has_value());
 
-	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 4> bindings = {
-		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.explorer.palette" },
-		std::pair{ EWorkbenchCommandSurface::Menu, "workbench.view.explorer.menu" },
-		std::pair{ EWorkbenchCommandSurface::ActivityBar, "workbench.view.explorer.activity" },
-		std::pair{ EWorkbenchCommandSurface::Keybinding, "workbench.view.explorer.key" },
+	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 4> toggleBindings = {
+		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.toggleSidebarVisibility.palette" },
+		std::pair{ EWorkbenchCommandSurface::Menu, "workbench.action.toggleSidebarVisibility.menu" },
+		std::pair{ EWorkbenchCommandSurface::ActivityBar, "workbench.action.toggleSidebarVisibility.activity" },
+		std::pair{ EWorkbenchCommandSurface::Keybinding, "workbench.action.toggleSidebarVisibility.key" },
 	};
-	for (const auto& [surface, slot] : bindings) {
+	for (const auto& [surface, slot] : toggleBindings) {
 		const auto resolved = registry.ResolveSurface(surface, slot);
 		ASSERT_TRUE(resolved.has_value());
-		EXPECT_EQ("workbench.view.explorer", resolved->commandId);
+		EXPECT_EQ("workbench.action.toggleSidebarVisibility", resolved->commandId);
 		if (surface == EWorkbenchCommandSurface::Menu || surface == EWorkbenchCommandSurface::Keybinding) {
 			ASSERT_TRUE(resolved->binding.legacyFunctionCode.has_value());
 			EXPECT_EQ(30991, *resolved->binding.legacyFunctionCode);
 		} else {
 			EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
 		}
+	}
+
+	const std::array<std::pair<EWorkbenchCommandSurface, std::string_view>, 2> explorerBindings = {
+		std::pair{ EWorkbenchCommandSurface::CommandPalette, "workbench.view.explorer.palette" },
+		std::pair{ EWorkbenchCommandSurface::ActivityBar, "workbench.view.explorer.activity" },
+	};
+	for (const auto& [surface, slot] : explorerBindings) {
+		const auto resolved = registry.ResolveSurface(surface, slot);
+		ASSERT_TRUE(resolved.has_value());
+		EXPECT_EQ("workbench.view.explorer", resolved->commandId);
+		EXPECT_FALSE(resolved->binding.legacyFunctionCode.has_value());
 	}
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
 }
