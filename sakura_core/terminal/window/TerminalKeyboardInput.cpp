@@ -183,13 +183,21 @@ std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const Terminal
 
 TerminalShortcutAction ResolveTerminalShortcut( const TerminalKeyEvent& event, bool hasSelection ) noexcept
 {
+	if( event.virtualKey == VK_INSERT && event.shift && !event.alt ) return TerminalShortcutAction::Paste;
 	if( !event.control || event.alt ) return TerminalShortcutAction::None;
 	if( event.virtualKey == 'C' ) {
 		if( event.shift || hasSelection ) return TerminalShortcutAction::Copy;
 		return TerminalShortcutAction::SendInterrupt;
 	}
+	if( event.virtualKey == VK_INSERT ) return TerminalShortcutAction::Copy;
 	if( event.virtualKey == 'V' ) return TerminalShortcutAction::Paste;
 	return TerminalShortcutAction::None;
+}
+
+TerminalRightClickAction ResolveTerminalRightClick( bool hasSelection, bool mouseReporting, bool shift ) noexcept
+{
+	if( mouseReporting && !shift ) return TerminalRightClickAction::SendToApplication;
+	return hasSelection ? TerminalRightClickAction::CopySelection : TerminalRightClickAction::PasteClipboard;
 }
 
 } // namespace terminal

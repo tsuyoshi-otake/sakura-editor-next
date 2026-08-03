@@ -611,6 +611,9 @@
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h" />
+	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h" />
+	<ClInclude Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\statusbar\StatusbarVisibilityMementoCodec.h" />
 	<ClInclude Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkspaceContext.h" />
@@ -707,6 +710,7 @@
     <ClInclude Include="..\sakura_core\_main\CMutex.h" />
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h" />
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.h" />
     <ClInclude Include="..\sakura_core\_main\CProcess.h" />
     <ClInclude Include="..\sakura_core\_main\CProcessFactory.h" />
@@ -1249,6 +1253,8 @@
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarVisibilityMementoCodec.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkspaceContext.cpp" />
@@ -1328,6 +1334,7 @@
     <ClCompile Include="..\sakura_core\_main\CControlTray.cpp" />
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp" />
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkingCopyPersistenceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\CProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\CProcessFactory.cpp" />

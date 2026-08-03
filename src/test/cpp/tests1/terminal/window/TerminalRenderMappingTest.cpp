@@ -79,6 +79,22 @@ TEST(TerminalRenderMapping, MapsPixelsToClampedGlobalCells)
 	EXPECT_EQ(model.Columns(), terminal::TerminalCellFromPoint(viewport, 9999, 0, 8, 16, model.Columns()).column);
 }
 
+TEST(TerminalRenderMapping, NormalizesSelectionToIncludeBothEndpointsAndWideCells)
+{
+	terminal::TerminalModel model(8, 1);
+	model.Print(U'\u65e5');
+	model.Print(U'A');
+
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 0 }, { 0, 0 } }),
+		terminal::NormalizeTerminalSelection(model, { 0, 0 }, { 0, 0 }));
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 0 }, { 0, 2 } }),
+		terminal::NormalizeTerminalSelection(model, { 0, 0 }, { 0, 1 }));
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 0 }, { 0, 3 } }),
+		terminal::NormalizeTerminalSelection(model, { 0, 0 }, { 0, 2 }));
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 0 }, { 0, 3 } }),
+		terminal::NormalizeTerminalSelection(model, { 0, 2 }, { 0, 0 }));
+}
+
 TEST(TerminalRenderMapping, ExtractsWideAndCombiningCellsWithoutContinuationDuplicates)
 {
 	terminal::TerminalModel model(8, 2);

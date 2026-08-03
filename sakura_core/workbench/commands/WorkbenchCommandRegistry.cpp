@@ -209,6 +209,34 @@ WorkbenchCommandDescriptor MakeFileIconThemeDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeShowNotificationsDescriptor()
+{
+	return {
+		"notifications.showList", "Show Notifications", kBuiltinOwner,
+		"workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::Editor, {}
+	};
+}
+
+WorkbenchCommandDescriptor MakeHideNotificationsDescriptor()
+{
+	return {
+		"notifications.hideList", "Hide Notifications", kBuiltinOwner,
+		"workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::Editor, {}
+	};
+}
+
+WorkbenchCommandDescriptor MakeToggleStatusbarDescriptor()
+{
+	return {
+		"workbench.action.toggleStatusbarVisibility", "Toggle Status Bar Visibility", kBuiltinOwner,
+		"workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::LegacyNative,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette,
+				"workbench.action.toggleStatusbarVisibility.palette", std::nullopt },
+		}
+	};
+}
+
 } // namespace
 
 bool WorkbenchCommandRegistry::IsValidCommandId(std::string_view value) noexcept
@@ -255,6 +283,9 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 	const auto openGlobalKeybindings = MakeOpenGlobalKeybindingsDescriptor();
 	const auto colorTheme = MakeColorThemeDescriptor();
 	const auto fileIconTheme = MakeFileIconThemeDescriptor();
+	const auto showNotifications = MakeShowNotificationsDescriptor();
+	const auto hideNotifications = MakeHideNotificationsDescriptor();
+	const auto toggleStatusbar = MakeToggleStatusbarDescriptor();
 	std::lock_guard lock(m_mutex);
 	const auto conflicts = [&](const WorkbenchCommandDescriptor& requested) {
 		for (const auto& [id, entry] : m_entries) {
@@ -272,9 +303,12 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		|| m_entries.contains(fileIconTheme.id) || m_entries.contains(showCommands.id)
 		|| m_entries.contains(openSettings.id) || m_entries.contains(extensions.id)
 		|| m_entries.contains(openGlobalKeybindings.id)
+		|| m_entries.contains(showNotifications.id) || m_entries.contains(hideNotifications.id)
+		|| m_entries.contains(toggleStatusbar.id)
 		|| conflicts(toggle) || conflicts(explorer) || conflicts(problems) || conflicts(output)
 		|| conflicts(colorTheme) || conflicts(fileIconTheme) || conflicts(showCommands)
-		|| conflicts(openSettings) || conflicts(extensions) || conflicts(openGlobalKeybindings)) {
+		|| conflicts(openSettings) || conflicts(extensions) || conflicts(openGlobalKeybindings)
+		|| conflicts(showNotifications) || conflicts(hideNotifications) || conflicts(toggleStatusbar)) {
 		return { EWorkbenchCommandRegistrationStatus::Conflict, m_revision };
 	}
 	m_entries.emplace(toggle.id, Entry{ toggle, std::move(executors.toggleSidebarVisibility) });
@@ -287,6 +321,12 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 	m_entries.emplace(openGlobalKeybindings.id, Entry{ openGlobalKeybindings, std::move(executors.openGlobalKeybindings) });
 	m_entries.emplace(colorTheme.id, Entry{ colorTheme, std::move(executors.selectTheme) });
 	m_entries.emplace(fileIconTheme.id, Entry{ fileIconTheme, std::move(executors.selectFileIconTheme) });
+	m_entries.emplace(showNotifications.id,
+		Entry{ showNotifications, std::move(executors.showNotifications) });
+	m_entries.emplace(hideNotifications.id,
+		Entry{ hideNotifications, std::move(executors.hideNotifications) });
+	m_entries.emplace(toggleStatusbar.id,
+		Entry{ toggleStatusbar, std::move(executors.toggleStatusbarVisibility) });
 	return { EWorkbenchCommandRegistrationStatus::Succeeded, ++m_revision };
 }
 

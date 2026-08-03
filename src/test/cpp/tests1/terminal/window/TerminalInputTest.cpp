@@ -39,6 +39,24 @@ TEST(TerminalInput, ResolvesTerminalClipboardAndInterruptShortcuts)
 		terminal::ResolveTerminalShortcut({ 'C', true, true, false }, false));
 	EXPECT_EQ(terminal::TerminalShortcutAction::Paste,
 		terminal::ResolveTerminalShortcut({ 'V', true, true, false }, false));
+	EXPECT_EQ(terminal::TerminalShortcutAction::Paste,
+		terminal::ResolveTerminalShortcut({ VK_INSERT, true, false, false }, false));
+	EXPECT_EQ(terminal::TerminalShortcutAction::Copy,
+		terminal::ResolveTerminalShortcut({ VK_INSERT, false, true, false }, true));
+}
+
+TEST(TerminalInput, ResolvesRightClickClipboardBehavior)
+{
+	EXPECT_EQ(terminal::TerminalRightClickAction::CopySelection,
+		terminal::ResolveTerminalRightClick(true, false, false));
+	EXPECT_EQ(terminal::TerminalRightClickAction::PasteClipboard,
+		terminal::ResolveTerminalRightClick(false, false, false));
+	EXPECT_EQ(terminal::TerminalRightClickAction::SendToApplication,
+		terminal::ResolveTerminalRightClick(true, true, false));
+	EXPECT_EQ(terminal::TerminalRightClickAction::CopySelection,
+		terminal::ResolveTerminalRightClick(true, true, true));
+	EXPECT_EQ(terminal::TerminalRightClickAction::PasteClipboard,
+		terminal::ResolveTerminalRightClick(false, true, true));
 }
 
 TEST(TerminalInput, EncodesSgrMouseAndHonorsTrackingMode)

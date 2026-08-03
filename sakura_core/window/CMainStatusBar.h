@@ -13,8 +13,10 @@
 #include "extension/CExtensionStatusBar.h"
 #include "theme/CThemeService.h"
 #include "workbench/hover/CHoverWidget.h"
+#include "workbench/statusbar/StatusbarViewModel.h"
 
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -58,6 +60,14 @@ public:
 	void SetExtensionItems(std::vector<SExtensionStatusBarItem> items);
 	//! Invoked when a clickable extension item is activated.
 	void SetExtensionCommandCallback(std::function<void(std::wstring_view)> callback);
+	//! Stable workbench commands used by built-in status entries and the context menu.
+	void SetWorkbenchCommandCallback(std::function<void(std::string_view)> callback);
+	void SetStatusbarVisibilityCallback(std::function<void(std::string_view, bool)> callback);
+	void SetStatusbarViewSnapshot(workbench::statusbar::StatusbarViewSnapshot snapshot);
+	void SetNotificationState(std::size_t pendingCount, std::size_t unreadCount, bool centerVisible);
+	[[nodiscard]] bool IsStatusbarEntryVisible(std::string_view id, bool providerVisible = true) const noexcept;
+	[[nodiscard]] int ReservedRightWidth() const noexcept;
+	[[nodiscard]] static std::string_view LegacyEntryIdForPart(int part) noexcept;
 	/*!
 		@brief contributes.icons のレジストリを借りる（所有しない）
 
@@ -79,6 +89,7 @@ private:
 
 	struct ExtensionHitTarget {
 		std::wstring handle;
+		std::string statusbarId;
 		RECT bounds{};
 		std::wstring command;
 		//! 拡張機能が渡した Markdown 原文。空ならホバーを出さない。解析はホバーを実際に
@@ -89,11 +100,18 @@ private:
 	bool tooltipIsTrusted = false;
 	std::vector<std::wstring> tooltipTrustedCommands;
 	};
+	struct StatusbarHitTarget {
+		std::string id;
+		RECT bounds{};
+	};
 
 	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
 		UINT_PTR subclassId, DWORD_PTR referenceData);
 	void PaintStatusBar(HDC dc) const noexcept;
 	[[nodiscard]] bool InvokeExtensionItemAt(POINT point) const;
+	[[nodiscard]] bool InvokeBuiltinItemAt(POINT point) const;
+	void ShowContextMenu(POINT screenPoint);
+	[[nodiscard]] std::optional<std::string> EntryIdAt(POINT clientPoint) const;
 	//! ツールチップ本文を持つ項目のうち、指定クライアント座標を含む最初のものを返す。
 	[[nodiscard]] const ExtensionHitTarget* FindHoverTargetAt(POINT point) const noexcept;
 	//! WM_MOUSEMOVE。VS Code の workbench.hover.delay と同じ遅延タイマーを張り直す。
@@ -120,6 +138,11 @@ private:
 	std::wstring m_scmText;
 	std::vector<SExtensionStatusBarItem> m_extensionItems;
 	mutable std::vector<ExtensionHitTarget> m_extensionHitTargets;
+	mutable std::vector<StatusbarHitTarget> m_statusbarHitTargets;
+	workbench::statusbar::StatusbarViewSnapshot m_statusbarViewSnapshot;
+	std::size_t m_notificationPendingCount = 0;
+	std::size_t m_notificationUnreadCount = 0;
+	bool m_notificationCenterVisible = false;
 	//! VS Code の HoverWidget 相当。TOOLTIPS_CLASSW では描けない書式付き本文を自前で描く。
 	workbench::hover::CHoverWidget m_extensionHover;
 	//! ホバー待機中/表示中の項目矩形（ステータスバーのクライアント座標）。
@@ -133,6 +156,8 @@ private:
 	//! TrackMouseEvent(TME_LEAVE) 済み。WM_MOUSELEAVE で false に戻る。
 	bool m_hoverTracking = false;
 	std::function<void(std::wstring_view)> m_extensionCommandCallback;
+	std::function<void(std::string_view)> m_workbenchCommandCallback;
+	std::function<void(std::string_view, bool)> m_statusbarVisibilityCallback;
 	//! 借り物。所有者は CEditWnd。null なら寄与アイコンを解決しない
 	const workbench::icons::CExtensionIconFontRegistry* m_extensionIconFonts = nullptr;
 	mutable std::vector<IconFont> m_iconFontCache;

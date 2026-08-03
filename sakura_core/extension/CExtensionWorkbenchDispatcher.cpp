@@ -838,6 +838,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchStatusB
 	SExtensionStatusBarItem item{
 		.handle = std::move(handle),
 		.itemId = OptionalString(params, "itemId"),
+		.name = OptionalString(params, "name"),
 		.extensionId = std::move(extensionId),
 		.generation = generation,
 		.alignment = OptionalString(params, "alignment") == L"right"

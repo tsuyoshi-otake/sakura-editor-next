@@ -22,7 +22,8 @@ bool Valid(std::wstring_view value, std::size_t maximum, bool allowEmpty = false
 
 bool CExtensionStatusBar::Upsert(SExtensionStatusBarItem item)
 {
-	if (!Valid(item.handle, 512) || !Valid(item.itemId, 512, true) || !Valid(item.extensionId, 255) ||
+	if (!Valid(item.handle, 512) || !Valid(item.itemId, 512, true) || !Valid(item.name, 4096, true)
+		|| !Valid(item.extensionId, 255) ||
 		!Valid(item.text, 4096, true) || !Valid(item.tooltip, 16384, true) ||
 		!Valid(item.command, 512, true) || !Valid(item.accessibilityLabel, 4096, true) ||
 		item.generation == 0 || !std::isfinite(item.priority)) return false;

@@ -43,6 +43,11 @@ namespace workbench::scm {
 class SourceControlService;
 }
 
+namespace workbench::statusbar {
+class StatusbarViewModel;
+struct StatusbarMementoSaveResult;
+}
+
 namespace workbench {
 
 //! Only terminal states are observable outside the runtime. Starting and
@@ -130,6 +135,9 @@ public:
 	[[nodiscard]] virtual const layout::WorkbenchContributionRegistry& Contributions() const noexcept = 0;
 	[[nodiscard]] virtual layout::WorkbenchLayoutStateService& LayoutState() noexcept = 0;
 	[[nodiscard]] virtual const layout::WorkbenchLayoutStateService& LayoutState() const noexcept = 0;
+	[[nodiscard]] virtual statusbar::StatusbarViewModel& StatusbarState() noexcept = 0;
+	[[nodiscard]] virtual const statusbar::StatusbarViewModel& StatusbarState() const noexcept = 0;
+	[[nodiscard]] virtual statusbar::StatusbarMementoSaveResult PersistStatusbarVisibility() = 0;
 	//! Typed workspace-document state. This is metadata only; consumers must use
 	//! Configuration() for effective settings and cannot accidentally merge tasks,
 	//! launch, or extension declarations into it.

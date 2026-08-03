@@ -112,6 +112,36 @@ request lifetime and proxy contract.
   state; correctness here depends on that host-side idempotence, not on the
   native side tracking which roots were already sent.
 
+## Profile-Scoped Extension Enablement (2026-08-01)
+
+- The installed extension payload remains in the control/profile-owned shared
+  `extensions` directory, while the selected user-data profile owns a sparse
+  enablement map at its `extensions.json` resource. This matches VS Code's
+  important behavior: installing a package and selecting it for a profile are
+  separate operations, and disabling one profile must not uninstall the shared
+  package or change another profile.
+- The active profile's enabled IDs are the exact extension-host registration
+  set. Installing, enabling, disabling, uninstalling, or switching profile
+  selection cancels the old session and rebuilds the host registration set;
+  an empty set is terminal and must release the host lease rather than enter a
+  reconnect loop. Corrupt or unreadable selection state fails closed.
+- A missing selection file preserves the legacy default profile's installed
+  extensions for backward compatibility. Named and transient profiles treat a
+  missing file as empty. When a package is installed from a named profile, the
+  default profile receives an explicit disabled entry so that the package does
+  not leak into the default profile merely because the shared payload exists.
+- **Documented divergence:** Sakura does not copy VS Code's private
+  extension-management metadata format. Its existing profile bootstrap already
+  owns the `extensions.json` resource and `CExtensionManager` owns global
+  package transport, so Sakura stores only the bounded profile-selection
+  projection needed by the native host. The observable profile/install,
+  enable/disable, host-lifecycle, and fail-closed semantics are the compatibility
+  contract; importing VS Code's internal metadata would create a second package
+  authority.
+- Icon-font contributions are rebuilt from the same active-profile selection,
+  so a disabled or removed extension cannot leave stale status-bar icons in a
+  running window.
+
 ## P2 Contributions
 
 Commands, menus, keybindings, configuration, views, diagnostics, output,

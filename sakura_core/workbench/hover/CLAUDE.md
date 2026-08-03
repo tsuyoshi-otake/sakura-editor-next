@@ -98,23 +98,23 @@ HTML5 named character reference list (over 2000 names). A name outside the table
 still renders literally. Extend the table when an extension is found to depend
 on a name it does not yet cover.
 
-## Documented divergence — the hover is non-interactive
+## Documented divergence — hover contents are pointer-retentive but links are not interactive
 
-`CHoverWidget` is created `WS_EX_NOACTIVATE | WS_EX_TRANSPARENT` and answers
-`WM_NCHITTEST` with `HTTRANSPARENT`. Consequences, all deliberate:
+CHoverWidget is created WS_EX_NOACTIVATE and accepts mouse input so the pointer
+can move from the status-bar item into the popup. CMainStatusBar keeps the
+popup alive while the pointer crosses the small anchor gap and dismisses it
+with a short polling timer that checks the pointer against both surfaces and
+the path between them. This avoids depending on the message ordering of
+WM_MOUSELEAVE and WM_MOUSEMOVE between separate top-level windows, and mirrors
+VS Code's hover-target/hover-element pair rather than treating WM_MOUSELEAVE
+from the anchor as an unconditional close signal.
 
-- A `command:` link inside the hover renders as link-colored text but cannot be
-  clicked. VS Code's hover does support that.
-- The pointer cannot rest *inside* the hover to keep it open; moving toward the
-  hover leaves the anchoring item and dismisses it.
+External `http:`, `https:`, and `mailto:` links are opened through the
+default Windows handler. A `command:` link is activated only when the
+serialized `MarkdownString.isTrusted` flag is true, and then goes through the
+host extension-command callback. Untrusted `command:`, `file:`, and
+`javascript:` links remain non-activatable and are never handed to the shell.
 
-The reason is that a hover which accepts mouse input covers its own anchor. The
-host would see `WM_MOUSELEAVE`, hide the hover, immediately see `WM_MOUSEMOVE`
-back over the anchor, and re-show it — a visible flicker loop. Upstream solves
-this in the DOM with a hover-target/hover-element pair and a grace period;
-reproducing that natively needs a real focus-and-grace state machine, which is
-separate work. Until then a non-interactive hover is a *degraded presentation of
-the same concept*, not a faked capability: nothing here pretends the link works.
 
 ## Host contract
 

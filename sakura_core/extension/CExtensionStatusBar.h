@@ -23,6 +23,8 @@ enum class EExtensionStatusBarAlignment : std::uint8_t {
 struct SExtensionStatusBarItem {
 	std::wstring handle;
 	std::wstring itemId;
+	//! VS Code StatusBarItem.name; used by the status bar context menu.
+	std::wstring name;
 	std::wstring extensionId;
 	std::uint64_t generation = 0;
 	EExtensionStatusBarAlignment alignment = EExtensionStatusBarAlignment::Left;

@@ -10,6 +10,7 @@
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -31,6 +32,21 @@ struct TerminalPanelActions {
 	bool renderHeader = true;
 };
 
+enum class TerminalWorkspaceResetOutcome : std::uint8_t {
+	Cleared,
+	Restarted,
+	RestartFailed,
+	Busy,
+	Unavailable,
+};
+
+struct TerminalWorkspaceResetResult {
+	TerminalWorkspaceResetOutcome outcome{ TerminalWorkspaceResetOutcome::Unavailable };
+	std::size_t clearedTabCount{};
+	bool closeDeadlineExceeded{};
+	std::uint32_t errorCode{};
+};
+
 //! Bottom-panel terminal tool with up to two viewports and multiple session tabs.
 class CTerminalTool final : public workbench::IWorkbenchTool {
 public:
@@ -47,6 +63,11 @@ public:
 	void Close() override;
 
 	void SetWorkingDirectory( std::wstring workingDirectory );
+	//! Rebinds the terminal authority to a new workspace. Existing sessions,
+	//! split state, and queued input are never allowed to cross this boundary.
+	//! When requested, one replacement tab is created without taking focus.
+	[[nodiscard]] TerminalWorkspaceResetResult ResetForWorkspace(
+		std::wstring workingDirectory, bool recreateSession );
 	void SetPalette( const theme::ThemePalette& palette );
 	void SetPanelActions( TerminalPanelActions actions );
 	//! Sets the physical Panel Part that owns the terminal-specific header actions.

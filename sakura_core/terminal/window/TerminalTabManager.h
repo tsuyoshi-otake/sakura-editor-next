@@ -9,6 +9,7 @@
 #include "terminal/model/TerminalModel.h"
 #include "terminal/session/TerminalSession.h"
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -56,6 +57,24 @@ struct TerminalDrainResult {
 	std::vector<std::size_t> dirtyRows;
 };
 
+enum class TerminalTabClearStatus : std::uint8_t {
+	Cleared,
+	DeadlineExceeded,
+	InProgress,
+	Unavailable,
+};
+
+struct TerminalTabClearResult {
+	TerminalTabClearStatus status{ TerminalTabClearStatus::Cleared };
+	std::size_t clearedTabCount{};
+
+	[[nodiscard]] constexpr bool IsQuiescent() const noexcept
+	{
+		return status == TerminalTabClearStatus::Cleared
+			|| status == TerminalTabClearStatus::DeadlineExceeded;
+	}
+};
+
 using TerminalSessionFactory = std::function<std::unique_ptr<CTerminalSession>(TerminalSessionCallbacks callbacks)>;
 using TerminalLaunchResolver = std::function<std::optional<TerminalLaunchOptions>(TerminalSize size, std::wstring_view workingDirectory)>;
 using TerminalTabEventCallback = std::function<void(const TerminalTabEvent& event)>;
@@ -83,6 +102,10 @@ public:
 	[[nodiscard]] bool SelectTab( std::uint64_t tabId ) noexcept;
 	[[nodiscard]] bool RestartTab( std::uint64_t tabId, TerminalSize size, std::wstring_view workingDirectory );
 	[[nodiscard]] bool DeleteTab( std::uint64_t tabId ) noexcept;
+	//! Closes every tab without closing the manager. All sessions receive
+	//! BeginClose before any wait, then share one absolute reporting deadline.
+	//! Tab IDs remain monotonic so late notifications cannot alias replacement tabs.
+	[[nodiscard]] TerminalTabClearResult ClearTabs( std::chrono::steady_clock::time_point deadline ) noexcept;
 	void Resize( TerminalSize size );
 	[[nodiscard]] bool ResizeTab( std::uint64_t tabId, TerminalSize size );
 	void Close() noexcept;

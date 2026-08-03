@@ -21,6 +21,8 @@
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "workbench/scm/SourceControlService.h"
+#include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
+#include "workbench/statusbar/StatusbarViewModel.h"
 #include "workbench/tasks/FolderTaskCatalogRegistry.h"
 #include "workbench/tasks/TaskExecutionService.h"
 #include "workbench/workspace/WorkspaceConfigurationTypes.h"
@@ -58,6 +60,7 @@ struct WorkbenchRuntimeDependencies final {
 	//! Optional production composition seam. The pure layout model never sees
 	//! control IPC or a durable writer through this interface.
 	std::unique_ptr<layout::IWorkbenchLayoutMementoStore> layoutMementoStore;
+	std::unique_ptr<statusbar::IStatusbarVisibilityMementoStore> statusbarVisibilityMementoStore;
 	//! Optional host adapter. Tests may leave this null to prove the runtime
 	//! rejects execution without creating operating-system processes.
 	std::shared_ptr<tasks::ITaskExecutionSessionFactory> taskExecutionSessionFactory;
@@ -91,6 +94,9 @@ public:
 	[[nodiscard]] const layout::WorkbenchContributionRegistry& Contributions() const noexcept override { return m_contributions; }
 	[[nodiscard]] layout::WorkbenchLayoutStateService& LayoutState() noexcept override { return m_layoutState; }
 	[[nodiscard]] const layout::WorkbenchLayoutStateService& LayoutState() const noexcept override { return m_layoutState; }
+	[[nodiscard]] statusbar::StatusbarViewModel& StatusbarState() noexcept override { return m_statusbarState; }
+	[[nodiscard]] const statusbar::StatusbarViewModel& StatusbarState() const noexcept override { return m_statusbarState; }
+	[[nodiscard]] statusbar::StatusbarMementoSaveResult PersistStatusbarVisibility() override;
 	[[nodiscard]] workspace::WorkspaceConfigurationRuntimeSnapshot WorkspaceConfiguration() const override;
 	[[nodiscard]] const workspace::CWorkspaceArtifactDocumentService& WorkspaceArtifacts() const noexcept override { return m_workspaceArtifacts; }
 	[[nodiscard]] problems::MarkerService* Markers() noexcept override;
@@ -124,6 +130,7 @@ private:
 	void RefreshFileWatching();
 	void OnConfigurationFileWatchChange(config::EConfigurationFileWatchChange change) noexcept;
 	void RestoreInitialLayoutMemento();
+	void RestoreStatusbarVisibilityMemento();
 	void PersistFinalLayoutMemento() noexcept;
 	void ReloadWorkspaceSettings(const config::WorkspaceContextSnapshot& snapshot);
 	void ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot);
@@ -176,6 +183,9 @@ private:
 	layout::WorkbenchContributionRegistry m_contributions;
 	layout::WorkbenchLayoutStateService m_layoutState;
 	std::unique_ptr<layout::IWorkbenchLayoutMementoStore> m_layoutMementoStore;
+	statusbar::StatusbarViewModel m_statusbarState;
+	std::unique_ptr<statusbar::IStatusbarVisibilityMementoStore> m_statusbarVisibilityMementoStore;
+	bool m_statusbarPersistenceReady = false;
 	std::uint64_t m_layoutBaselineRevision = 0;
 	bool m_layoutPersistenceReady = false;
 	std::optional<layout::WorkbenchContributionSubscriptionId> m_contributionSubscription;

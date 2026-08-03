@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <set>
 #include <string_view>
 #include <utility>
 
@@ -34,6 +35,15 @@ ULONGLONG TimeoutFor(EExtensionNotificationSeverity severity) noexcept
 	default:
 		return 10'000;
 	}
+}
+
+bool IsSticky(const SExtensionNotification& notification) noexcept
+{
+	// VS Code keeps errors and notifications with primary actions visible until
+	// the user explicitly closes them or chooses an action. A button prompt must
+	// never disappear while it is still waiting for that decision.
+	return notification.severity == EExtensionNotificationSeverity::Error
+		|| !notification.actions.empty();
 }
 
 int SafeWidth(int width) noexcept
@@ -149,7 +159,17 @@ void CNotificationHost::Destroy() noexcept
 	m_hwnd = nullptr;
 	m_owner = nullptr;
 	m_layouts.clear();
+	m_notifications.clear();
 	m_toasts.clear();
+	m_knownNotificationIds.clear();
+	m_hiddenToastIds.clear();
+	m_unreadNotificationIds.clear();
+	m_centerClose = {};
+	m_centerContentHeight = 0;
+	m_centerViewportHeight = 0;
+	m_centerScrollOffset = 0;
+	m_keyboardTarget.reset();
+	m_centerVisible = false;
 	m_trackingMouse = false;
 	m_lastTimerTick = 0;
 	m_font.Reset();
@@ -167,15 +187,60 @@ void CNotificationHost::SetResolveCallback(ResolveCallback callback)
 	m_resolveCallback = std::move(callback);
 }
 
+void CNotificationHost::SetStatusChangedCallback(StatusChangedCallback callback)
+{
+	m_statusChangedCallback = std::move(callback);
+	NotifyStatusChanged();
+}
+
+CNotificationHost::StatusSnapshot CNotificationHost::Status() const noexcept
+{
+	return { m_notifications.size(), m_unreadNotificationIds.size(), m_centerVisible };
+}
+
+void CNotificationHost::NotifyStatusChanged() noexcept
+{
+	if (!m_statusChangedCallback) return;
+	try {
+		m_statusChangedCallback(Status());
+	} catch (...) {
+		// Presentation observers must never break notification finalization.
+	}
+}
+
 void CNotificationHost::SetNotifications(std::vector<SExtensionNotification> notifications)
 {
 	const auto now = ::GetTickCount64();
+	std::set<std::uint64_t> currentIds;
+	std::vector<SExtensionNotification> pending;
+	pending.reserve(notifications.size());
+	for (auto& notification : notifications) {
+		if (notification.modal || notification.state != EExtensionNotificationState::Pending) continue;
+		currentIds.insert(notification.id);
+		if (!m_knownNotificationIds.contains(notification.id) && !m_centerVisible) {
+			m_unreadNotificationIds.insert(notification.id);
+		}
+		pending.emplace_back(std::move(notification));
+	}
+	std::erase_if(m_hiddenToastIds, [&currentIds](std::uint64_t id) { return !currentIds.contains(id); });
+	std::erase_if(m_unreadNotificationIds, [&currentIds](std::uint64_t id) { return !currentIds.contains(id); });
+	m_knownNotificationIds = std::move(currentIds);
+	m_notifications = std::move(pending);
+	if (m_centerVisible) m_unreadNotificationIds.clear();
+	RebuildPresentation(now);
+	NotifyStatusChanged();
+	if (m_hwnd == nullptr) return;
+	Layout();
+}
+
+void CNotificationHost::RebuildPresentation(ULONGLONG now)
+{
 	std::vector<ToastState> old = std::move(m_toasts);
 	std::vector<ToastState> next;
-	next.reserve((std::min)(kMaximumToasts, notifications.size()));
+	next.reserve(m_centerVisible ? m_notifications.size() : (std::min)(kMaximumToasts, m_notifications.size()));
 	// The model retains insertion order, while VS Code presents the newest toast first.
-	for (auto it = notifications.rbegin(); it != notifications.rend() && next.size() < kMaximumToasts; ++it) {
-		if (it->modal || it->state != EExtensionNotificationState::Pending) continue;
+	for (auto it = m_notifications.rbegin(); it != m_notifications.rend(); ++it) {
+		if (!m_centerVisible && (next.size() >= kMaximumToasts || m_hiddenToastIds.contains(it->id))) continue;
 		ToastState state;
 		const auto previous = std::find_if(old.begin(), old.end(), [id = it->id](const ToastState& value) {
 			return value.notification.id == id;
@@ -185,20 +250,47 @@ void CNotificationHost::SetNotifications(std::vector<SExtensionNotification> not
 			state.notification = *it;
 		} else {
 			state.notification = *it;
-			state.deadline = now + TimeoutFor(it->severity);
+			state.deadline = m_centerVisible || IsSticky(*it) ? 0 : now + TimeoutFor(it->severity);
 		}
+		if (m_centerVisible || IsSticky(*it)) state.deadline = 0;
 		next.emplace_back(std::move(state));
 	}
 	m_toasts = std::move(next);
-	if (m_hwnd == nullptr) return;
-	if (m_toasts.empty()) {
-		::KillTimer(m_hwnd, kTimerId);
-		m_lastTimerTick = 0;
-		::ShowWindow(m_hwnd, SW_HIDE);
-		m_layouts.clear();
-		return;
-	}
+}
+
+void CNotificationHost::ShowCenter() noexcept
+{
+	if (m_centerVisible) return;
+	m_centerVisible = true;
+	m_unreadNotificationIds.clear();
+	m_centerScrollOffset = 0;
+	m_keyboardTarget = 0;
+	RebuildPresentation(::GetTickCount64());
+	NotifyStatusChanged();
 	Layout();
+	if (m_hwnd != nullptr) {
+		::ShowWindow(m_hwnd, SW_SHOWNORMAL);
+		::SetForegroundWindow(m_hwnd);
+		::SetFocus(m_hwnd);
+	}
+}
+
+void CNotificationHost::HideCenter() noexcept
+{
+	if (!m_centerVisible) return;
+	for (const auto& notification : m_notifications) m_hiddenToastIds.insert(notification.id);
+	m_centerVisible = false;
+	m_centerScrollOffset = 0;
+	m_keyboardTarget.reset();
+	RebuildPresentation(::GetTickCount64());
+	NotifyStatusChanged();
+	Layout();
+}
+
+void CNotificationHost::ToggleCenter() noexcept
+{
+	if (m_centerVisible) HideCenter();
+	else ShowCenter();
 }
 
 int CNotificationHost::Scale(int value, UINT dpi) const noexcept
@@ -281,18 +373,27 @@ std::wstring CNotificationHost::SourceText(std::wstring_view extensionId)
 void CNotificationHost::RebuildLayout(HDC dc, int width, UINT dpi) noexcept
 {
 	m_layouts.clear();
-	if (m_toasts.empty()) return;
 	const int padding = Scale(12, dpi);
 	const int iconSize = Scale(20, dpi);
 	const int gap = Scale(8, dpi);
 	const int closeSize = Scale(18, dpi);
+	const int headerHeight = m_centerVisible ? Scale(36, dpi) : 0;
+	m_centerClose = m_centerVisible
+		? RECT{ width - padding - closeSize, (headerHeight - closeSize) / 2,
+			width - padding, (headerHeight - closeSize) / 2 + closeSize }
+		: RECT{};
+	if (m_toasts.empty()) {
+		m_centerContentHeight = 0;
+		return;
+	}
 	const int actionHeight = Scale(26, dpi);
 	const int lineHeight = LineHeight(dc);
 	const int textLeft = padding + iconSize + gap;
 	const int textRight = (std::max)(textLeft + lineHeight * 4, width - padding - closeSize - gap);
 	const int textWidth = (std::max)(80, textRight - textLeft);
 	const int buttonGap = Scale(6, dpi);
-	int top = 0;
+	int top = headerHeight - (m_centerVisible ? m_centerScrollOffset : 0);
+	const int contentStart = top;
 
 	for (const auto& toast : m_toasts) {
 		ToastLayout layout;
@@ -340,16 +441,26 @@ void CNotificationHost::RebuildLayout(HDC dc, int width, UINT dpi) noexcept
 		const int height = cursor + padding;
 		layout.bounds = { 0, top, width, top + height };
 		layout.close = { width - padding - closeSize, padding / 2, width - padding, padding / 2 + closeSize };
+		const auto offsetContentRect = [top](RECT& rect) noexcept {
+			if (rect.right > rect.left && rect.bottom > rect.top) {
+				::OffsetRect(&rect, 0, top);
+			}
+		};
+		offsetContentRect(layout.message);
+		offsetContentRect(layout.detail);
+		offsetContentRect(layout.source);
+		offsetContentRect(layout.close);
+		for (auto& action : layout.actions) offsetContentRect(action);
 		m_layouts.emplace_back(std::move(layout));
 		top += height + gap;
 	}
-	if (!m_layouts.empty()) m_layouts.back().bounds.bottom -= gap;
+	m_centerContentHeight = (std::max)(0, top - contentStart - gap);
 }
 
 void CNotificationHost::Layout() noexcept
 {
 	if (m_hwnd == nullptr) return;
-	if (m_toasts.empty() || m_owner == nullptr || ::IsWindow(m_owner) == FALSE ||
+	if ((!m_centerVisible && m_toasts.empty()) || m_owner == nullptr || ::IsWindow(m_owner) == FALSE ||
 		::IsWindowVisible(m_owner) == FALSE || ::IsIconic(m_owner) != FALSE) {
 		::KillTimer(m_hwnd, kTimerId);
 		m_lastTimerTick = 0;
@@ -367,11 +478,27 @@ void CNotificationHost::Layout() noexcept
 	(void)m_font.RecreateForWindow(theme::ThemeFontKind::Chrome, m_hwnd);
 	const HGDIOBJ oldFont = m_font.Get() != nullptr ? ::SelectObject(dc, m_font.Get()) : nullptr;
 	RebuildLayout(dc, width, dpi);
+	const int headerHeight = m_centerVisible ? Scale(36, dpi) : 0;
+	const int emptyHeight = m_centerVisible && m_layouts.empty() ? Scale(72, dpi) : 0;
+	const int maximumCenterHeight = (std::max)(Scale(120, dpi),
+		static_cast<int>(client.bottom - client.top) - Scale(48, dpi));
+	int height = m_centerVisible
+		? (std::min)(maximumCenterHeight, headerHeight + (std::max)(m_centerContentHeight, emptyHeight))
+		: (m_layouts.empty() ? 0 : static_cast<int>(m_layouts.back().bounds.bottom));
+	if (m_centerVisible) {
+		m_centerViewportHeight = (std::max)(0, height - headerHeight);
+		const int maximumScroll = (std::max)(0, m_centerContentHeight - m_centerViewportHeight);
+		const int clampedScroll = (std::clamp)(m_centerScrollOffset, 0, maximumScroll);
+		if (clampedScroll != m_centerScrollOffset) {
+			m_centerScrollOffset = clampedScroll;
+			RebuildLayout(dc, width, dpi);
+		}
+	} else {
+		m_centerViewportHeight = 0;
+	}
 	if (oldFont != nullptr) ::SelectObject(dc, oldFont);
 	::ReleaseDC(m_hwnd, dc);
-	if (m_layouts.empty()) return;
-
-	int height = m_layouts.back().bounds.bottom;
+	if (height <= 0) return;
 	const int bottomMargin = Scale(34, dpi);
 	POINT bottomRight{ client.right, client.bottom };
 	::ClientToScreen(m_owner, &bottomRight);
@@ -383,10 +510,18 @@ void CNotificationHost::Layout() noexcept
 		x = (std::max)(static_cast<int>(monitor.rcWork.left) + Scale(8, dpi), x);
 		y = (std::max)(static_cast<int>(monitor.rcWork.top) + Scale(8, dpi), y);
 	}
-	::SetWindowPos(m_hwnd, HWND_TOP, x, y, width, height, SWP_NOACTIVATE | SWP_SHOWWINDOW);
-	if (::IsWindowVisible(m_hwnd) == FALSE) ::ShowWindow(m_hwnd, SW_SHOWNOACTIVATE);
-	if (m_lastTimerTick == 0) m_lastTimerTick = ::GetTickCount64();
-	::SetTimer(m_hwnd, kTimerId, kTimerPeriodMs, nullptr);
+	const UINT positionFlags = (m_centerVisible ? 0 : SWP_NOACTIVATE) | SWP_SHOWWINDOW;
+	::SetWindowPos(m_hwnd, HWND_TOP, x, y, width, height, positionFlags);
+	if (::IsWindowVisible(m_hwnd) == FALSE) {
+		::ShowWindow(m_hwnd, m_centerVisible ? SW_SHOWNORMAL : SW_SHOWNOACTIVATE);
+	}
+	if (m_centerVisible) {
+		::KillTimer(m_hwnd, kTimerId);
+		m_lastTimerTick = 0;
+	} else {
+		if (m_lastTimerTick == 0) m_lastTimerTick = ::GetTickCount64();
+		::SetTimer(m_hwnd, kTimerId, kTimerPeriodMs, nullptr);
+	}
 	::InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -398,7 +533,45 @@ void CNotificationHost::OnPaint(HDC dc) noexcept
 	const int closeSize = Scale(18, dpi);
 	const HGDIOBJ oldFont = m_font.Get() != nullptr ? ::SelectObject(dc, m_font.Get()) : nullptr;
 	::SetBkMode(dc, TRANSPARENT);
+	RECT client{};
+	::GetClientRect(m_hwnd, &client);
+	if (m_centerVisible) {
+		HBRUSH background = ::CreateSolidBrush(m_palette.panel.ToColorRef());
+		if (background != nullptr) {
+			::FillRect(dc, &client, background);
+			::DeleteObject(background);
+		}
+		const int headerHeight = Scale(36, dpi);
+		RECT header{ client.left, client.top, client.right, headerHeight };
+		HBRUSH border = ::CreateSolidBrush(m_palette.border.ToColorRef());
+		if (border != nullptr) {
+			RECT line{ header.left, header.bottom - 1, header.right, header.bottom };
+			::FillRect(dc, &line, border);
+			::DeleteObject(border);
+		}
+		::SetTextColor(dc, m_palette.primaryText.ToColorRef());
+		RECT title{ Scale(12, dpi), 0, m_centerClose.left - Scale(8, dpi), headerHeight };
+		::DrawTextW(dc, L"Notifications", -1, &title,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		const auto closeGlyph = workbench::icons::FindCodiconGlyph(L"close");
+		const workbench::icons::IconRect closeBox{
+			m_centerClose.left, m_centerClose.top, m_centerClose.right, m_centerClose.bottom };
+		if (!PaintFontGlyph(dc, closeBox, AcquireCodiconFont(closeSize), closeGlyph.value_or(L'\0'),
+			m_palette.secondaryText.ToColorRef())) {
+			workbench::icons::codicons::Draw(dc, closeBox, workbench::icons::codicons::Icon::Close,
+				m_palette.secondaryText.ToColorRef());
+		}
+		if (m_layouts.empty()) {
+			::SetTextColor(dc, m_palette.descriptionText.ToColorRef());
+			RECT empty{ client.left + Scale(12, dpi), headerHeight,
+				client.right - Scale(12, dpi), client.bottom };
+			::DrawTextW(dc, L"No Notifications", -1, &empty,
+				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		}
+		::IntersectClipRect(dc, client.left, headerHeight, client.right, client.bottom);
+	}
 	for (const auto& layout : m_layouts) {
+		if (m_centerVisible && (layout.bounds.bottom <= Scale(36, dpi) || layout.bounds.top >= client.bottom)) continue;
 		HBRUSH background = ::CreateSolidBrush(m_palette.panel.ToColorRef());
 		HBRUSH border = ::CreateSolidBrush(m_palette.border.ToColorRef());
 		if (background != nullptr) {
@@ -471,6 +644,14 @@ void CNotificationHost::OnPaint(HDC dc) noexcept
 				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 		}
 	}
+	if (m_centerVisible) {
+		::SelectClipRgn(dc, nullptr);
+		if (m_keyboardTarget && *m_keyboardTarget == 0) {
+			RECT focus = m_centerClose;
+			::InflateRect(&focus, 2, 2);
+			::DrawFocusRect(dc, &focus);
+		}
+	}
 	if (oldFont != nullptr) ::SelectObject(dc, oldFont);
 }
 
@@ -478,34 +659,48 @@ void CNotificationHost::OnTimer() noexcept
 {
 	if (m_toasts.empty()) return;
 	const ULONGLONG now = ::GetTickCount64();
-	const ULONGLONG elapsed = m_lastTimerTick == 0 ? kTimerPeriodMs : now - m_lastTimerTick;
-	m_lastTimerTick = now;
 	POINT cursor{};
 	RECT window{};
 	const bool pointerInside = ::GetCursorPos(&cursor) != FALSE &&
 		::GetWindowRect(m_hwnd, &window) != FALSE && ::PtInRect(&window, cursor) != FALSE;
-	if (pointerInside) {
-		for (auto& toast : m_toasts) toast.deadline += elapsed;
+	const HWND foreground = ::GetForegroundWindow();
+	const bool ownerInactive = foreground != m_owner && foreground != m_hwnd &&
+		(foreground == nullptr || ::GetWindow(foreground, GW_OWNER) != m_owner);
+	AdvanceTimer(now, pointerInside || ownerInactive);
+}
+
+void CNotificationHost::AdvanceTimer(ULONGLONG now, bool pause) noexcept
+{
+	const ULONGLONG elapsed = m_lastTimerTick == 0 ? kTimerPeriodMs : now - m_lastTimerTick;
+	m_lastTimerTick = now;
+	if (pause) {
+		for (auto& toast : m_toasts) {
+			if (toast.deadline != 0) toast.deadline += elapsed;
+		}
 		return;
 	}
 
-	std::vector<std::uint64_t> dismissed;
+	bool hidden = false;
 	for (auto it = m_toasts.begin(); it != m_toasts.end();) {
 		if (it->deadline != 0 && it->deadline <= now) {
-			dismissed.push_back(it->notification.id);
+			m_hiddenToastIds.insert(it->notification.id);
 			it = m_toasts.erase(it);
+			hidden = true;
 		} else {
 			++it;
 		}
 	}
-	for (const auto id : dismissed) {
-		if (m_resolveCallback) m_resolveCallback(id, std::nullopt);
-	}
-	if (!dismissed.empty()) Layout();
+	// A timeout retracts only the toast. The pending request remains available
+	// in the notification center and is completed only by close/action.
+	if (hidden) Layout();
 }
 
 void CNotificationHost::ResolveAt(POINT point) noexcept
 {
+	if (m_centerVisible && ::PtInRect(&m_centerClose, point) != FALSE) {
+		HideCenter();
+		return;
+	}
 	std::uint64_t id = 0;
 	std::optional<std::size_t> selected;
 	for (const auto& layout : m_layouts) {
@@ -524,11 +719,55 @@ void CNotificationHost::ResolveAt(POINT point) noexcept
 		if (id != 0) break;
 	}
 	if (id == 0) return;
+	m_notifications.erase(std::remove_if(m_notifications.begin(), m_notifications.end(), [id](const auto& notification) {
+		return notification.id == id;
+	}), m_notifications.end());
 	m_toasts.erase(std::remove_if(m_toasts.begin(), m_toasts.end(), [id](const ToastState& toast) {
 		return toast.notification.id == id;
 	}), m_toasts.end());
+	m_knownNotificationIds.erase(id);
+	m_hiddenToastIds.erase(id);
+	m_unreadNotificationIds.erase(id);
 	if (m_resolveCallback) m_resolveCallback(id, selected);
+	NotifyStatusChanged();
 	Layout();
+}
+
+void CNotificationHost::MoveKeyboardTarget(bool backwards) noexcept
+{
+	if (!m_centerVisible) return;
+	std::size_t count = 1; // center close button
+	for (const auto& layout : m_layouts) count += 1 + layout.actions.size();
+	if (count == 0) return;
+	const std::size_t current = m_keyboardTarget.value_or(0);
+	m_keyboardTarget = backwards ? (current == 0 ? count - 1 : current - 1) : (current + 1) % count;
+	::InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void CNotificationHost::ActivateKeyboardTarget() noexcept
+{
+	if (!m_centerVisible || !m_keyboardTarget) return;
+	std::size_t cursor = 0;
+	if (*m_keyboardTarget == cursor) {
+		HideCenter();
+		return;
+	}
+	++cursor;
+	for (const auto& layout : m_layouts) {
+		if (*m_keyboardTarget == cursor) {
+			ResolveAt({ (layout.close.left + layout.close.right) / 2,
+				(layout.close.top + layout.close.bottom) / 2 });
+			return;
+		}
+		++cursor;
+		for (const auto& action : layout.actions) {
+			if (*m_keyboardTarget == cursor) {
+				ResolveAt({ (action.left + action.right) / 2, (action.top + action.bottom) / 2 });
+				return;
+			}
+			++cursor;
+		}
+	}
 }
 
 void CNotificationHost::TrackMouse() noexcept
@@ -585,7 +824,7 @@ LRESULT CNotificationHost::HandleMessage(HWND hwnd, UINT message, WPARAM wParam,
 	case WM_NCHITTEST:
 		return HTCLIENT;
 	case WM_MOUSEACTIVATE:
-		return MA_NOACTIVATE;
+		return m_centerVisible ? MA_ACTIVATE : MA_NOACTIVATE;
 	case WM_ERASEBKGND:
 		return 1;
 	case WM_PAINT: {
@@ -617,11 +856,39 @@ LRESULT CNotificationHost::HandleMessage(HWND hwnd, UINT message, WPARAM wParam,
 		ResolveAt(point);
 		return 0;
 	}
+	case WM_MOUSEWHEEL:
+		if (m_centerVisible && m_centerContentHeight > m_centerViewportHeight) {
+			const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+			const UINT dpi = (std::max)(96u, ::GetDpiForWindow(m_hwnd));
+			m_centerScrollOffset -= (delta / WHEEL_DELTA) * Scale(48, dpi);
+			Layout();
+			return 0;
+		}
+		break;
+	case WM_KEYDOWN:
+		if (m_centerVisible) {
+			switch (wParam) {
+			case VK_ESCAPE:
+				HideCenter();
+				return 0;
+			case VK_TAB:
+				MoveKeyboardTarget((::GetKeyState(VK_SHIFT) & 0x8000) != 0);
+				return 0;
+			case VK_RETURN:
+			case VK_SPACE:
+				ActivateKeyboardTarget();
+				return 0;
+			default:
+				break;
+			}
+		}
+		break;
 	case WM_DPICHANGED:
 		Layout();
 		return 0;
 	case WM_CLOSE:
-		::ShowWindow(m_hwnd, SW_HIDE);
+		if (m_centerVisible) HideCenter();
+		else ::ShowWindow(m_hwnd, SW_HIDE);
 		return 0;
 	case WM_DESTROY:
 		::KillTimer(m_hwnd, kTimerId);
@@ -632,6 +899,8 @@ LRESULT CNotificationHost::HandleMessage(HWND hwnd, UINT message, WPARAM wParam,
 		// m_hwnd is assigned. Use the message's HWND for the default procedure.
 		return ::DefWindowProcW(hwnd, message, wParam, lParam);
 	}
+
+	return ::DefWindowProcW(hwnd, message, wParam, lParam);
 }
 
 } // namespace workbench::notification

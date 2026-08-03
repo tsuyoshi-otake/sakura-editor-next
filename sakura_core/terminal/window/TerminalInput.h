@@ -55,10 +55,17 @@ enum class TerminalShortcutAction : std::uint8_t {
 	SendInterrupt,
 };
 
+enum class TerminalRightClickAction : std::uint8_t {
+	SendToApplication,
+	CopySelection,
+	PasteClipboard,
+};
+
 [[nodiscard]] std::string EncodeTerminalKey( const TerminalKeyEvent& event );
 [[nodiscard]] std::string EncodeTerminalText( std::wstring_view text );
 [[nodiscard]] std::string EncodeTerminalPaste( std::wstring_view text, bool bracketedPaste );
 [[nodiscard]] std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const TerminalModes& modes );
 [[nodiscard]] TerminalShortcutAction ResolveTerminalShortcut( const TerminalKeyEvent& event, bool hasSelection ) noexcept;
+[[nodiscard]] TerminalRightClickAction ResolveTerminalRightClick( bool hasSelection, bool mouseReporting, bool shift ) noexcept;
 
 } // namespace terminal

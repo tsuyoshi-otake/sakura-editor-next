@@ -272,6 +272,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_contributions()
 	, m_layoutState(m_contributions.Snapshot())
 	, m_layoutMementoStore(std::move(dependencies.layoutMementoStore))
+	, m_statusbarVisibilityMementoStore(std::move(dependencies.statusbarVisibilityMementoStore))
 	, m_fileService(std::move(dependencies.fileService))
 	, m_taskExecution(std::move(dependencies.taskExecutionSessionFactory))
 	, m_markers(problems::MarkerServiceLimits {
@@ -772,6 +773,62 @@ void CWorkbenchRuntime::RestoreInitialLayoutMemento()
 	}
 	recordFailure(EWorkbenchRuntimeDiagnosticCode::LayoutRestoreFailed,
 		"layout memento restore returned an unknown terminal state");
+}
+
+void CWorkbenchRuntime::RestoreStatusbarVisibilityMemento()
+{
+	m_statusbarPersistenceReady = false;
+	if (!m_statusbarVisibilityMementoStore) return;
+	const auto result = m_statusbarVisibilityMementoStore->Load();
+	using LoadStatus = statusbar::EStatusbarMementoLoadStatus;
+	switch (result.status) {
+	case LoadStatus::Loaded:
+	case LoadStatus::NotFound:
+		if (!result.hiddenIds || !m_statusbarState.RestoreHiddenIds(*result.hiddenIds)) {
+			SetDiagnostic("statusbar.restore", WorkbenchRuntimeDiagnostic{
+				.source = EWorkbenchRuntimeDiagnosticSource::Layout,
+				.code = EWorkbenchRuntimeDiagnosticCode::LayoutRestoreFailed,
+				.message = "status bar visibility memento could not be applied",
+			});
+			return;
+		}
+		m_statusbarPersistenceReady = true;
+		SetDiagnostic("statusbar.restore", std::nullopt);
+		return;
+	case LoadStatus::Unavailable:
+		SetDiagnostic("statusbar.restore", WorkbenchRuntimeDiagnostic{
+			.source = EWorkbenchRuntimeDiagnosticSource::Layout,
+			.code = EWorkbenchRuntimeDiagnosticCode::LayoutPersistenceUnavailable,
+			.message = "status bar visibility persistence was unavailable",
+		});
+		return;
+	case LoadStatus::Invalid:
+	case LoadStatus::Failed:
+		SetDiagnostic("statusbar.restore", WorkbenchRuntimeDiagnostic{
+			.source = EWorkbenchRuntimeDiagnosticSource::Layout,
+			.code = EWorkbenchRuntimeDiagnosticCode::LayoutRestoreFailed,
+			.message = "status bar visibility memento was invalid or failed",
+		});
+		return;
+	}
+}
+
+statusbar::StatusbarMementoSaveResult CWorkbenchRuntime::PersistStatusbarVisibility()
+{
+	using SaveStatus = statusbar::EStatusbarMementoSaveStatus;
+	if (!m_statusbarVisibilityMementoStore || !m_statusbarPersistenceReady) {
+		return { SaveStatus::Unavailable, L"status bar visibility persistence is unavailable" };
+	}
+	const auto result = m_statusbarVisibilityMementoStore->Save(m_statusbarState.Snapshot().hiddenIds);
+	if (result.Succeeded()) SetDiagnostic("statusbar.persist", std::nullopt);
+	else SetDiagnostic("statusbar.persist", WorkbenchRuntimeDiagnostic{
+		.source = EWorkbenchRuntimeDiagnosticSource::Layout,
+		.code = result.status == SaveStatus::Conflict
+			? EWorkbenchRuntimeDiagnosticCode::LayoutPersistenceConflict
+			: EWorkbenchRuntimeDiagnosticCode::LayoutPersistFailed,
+		.message = "status bar visibility memento was not persisted",
+	});
+	return result;
 }
 
 void CWorkbenchRuntime::PersistFinalLayoutMemento() noexcept
@@ -1474,6 +1531,7 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 
 	try {
 		RestoreInitialLayoutMemento();
+		RestoreStatusbarVisibilityMemento();
 		if (auto terminal = terminalResult()) return std::move(*terminal);
 
 		if (!ApplyBootstrapWorkspace()) {

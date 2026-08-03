@@ -68,6 +68,31 @@ TerminalSelectionPoint TerminalCellFromPoint( const TerminalViewport& viewport, 
 	};
 }
 
+TerminalSelectionRange NormalizeTerminalSelection( const TerminalModel& model, TerminalSelectionPoint origin, TerminalSelectionPoint point ) noexcept
+{
+	if( origin == point ) return { origin, origin };
+	if( PointLess(point, origin) ) std::swap(origin, point);
+	const auto snapStart = [&model]( TerminalSelectionPoint value ) noexcept {
+		const auto* row = GetTerminalRow(model, value.row);
+		if( row == nullptr ) return value;
+		value.column = std::min(value.column, row->cells.size());
+		while( value.column > 0 && value.column < row->cells.size() && row->cells[value.column].continuation ) --value.column;
+		return value;
+	};
+	const auto snapEnd = [&model]( TerminalSelectionPoint value ) noexcept {
+		const auto* row = GetTerminalRow(model, value.row);
+		if( row == nullptr ) return value;
+		value.column = std::min(value.column, row->cells.size());
+		if( value.column < row->cells.size() ) {
+			const auto width = std::max<std::size_t>(1, row->cells[value.column].width);
+			value.column = std::min(row->cells.size(), value.column + width);
+			while( value.column < row->cells.size() && row->cells[value.column].continuation ) ++value.column;
+		}
+		return value;
+	};
+	return { snapStart(origin), snapEnd(point) };
+}
+
 std::vector<std::size_t> MapDirtyRowsToViewport( const TerminalModel& model, const TerminalViewport& viewport, const std::vector<std::size_t>& dirtyScreenRows )
 {
 	std::vector<std::size_t> result;

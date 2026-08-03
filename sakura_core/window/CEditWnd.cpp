@@ -83,6 +83,8 @@
 #include "workbench/extension/CExtensionSidebarTool.h"
 #include "workbench/explorer/CExplorerTool.h"
 #include "workbench/notification/CNotificationHost.h"
+#include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
+#include "workbench/statusbar/StatusbarViewModel.h"
 #include "workbench/viewcontainer/CViewContainerHost.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/WorkbenchZoom.h"
@@ -202,6 +204,15 @@ static const SFuncMenuName	sFuncMenuName[] = {
 namespace {
 
 constexpr std::string_view kLegacyEditorInputId = "legacy.editor.1";
+
+[[nodiscard]] std::string ExtensionStatusbarId(const SExtensionStatusBarItem& item)
+{
+	const std::string extensionId = wcstou8s(item.extensionId);
+	const std::string itemId = wcstou8s(item.itemId);
+	if (extensionId.empty()) return itemId;
+	if (itemId.empty() || itemId == extensionId) return extensionId;
+	return extensionId + "." + itemId;
+}
 
 //! Width of the frame-edge drop zone that stands in for a hidden side bar during a
 //! composite drag. VS Code accepts an edge drop to reveal the Secondary Side Bar; the
@@ -1997,6 +2008,32 @@ bool CEditWnd::InitializeWorkbench()
 					: workbench::commands::WorkbenchCommandExecutionResult{
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "no file icon theme is available" };
 			},
+			.showNotifications = [this]() {
+				EnsureNotificationHost();
+				if (!m_notificationHost) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Unsupported,
+						"notification center is unavailable" };
+				}
+				m_notificationHost->ShowCenter();
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.hideNotifications = [this]() {
+				if (!m_notificationHost) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable,
+						"notification center is not visible" };
+				}
+				m_notificationHost->HideCenter();
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.toggleStatusbarVisibility = [this]() {
+				DispatchEditorFunction(F_SHOWSTATUSBAR);
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
 		});
 		if (!registration.Succeeded()) {
 			CloseWorkbench();
@@ -2108,6 +2145,17 @@ bool CEditWnd::InitializeWorkbench()
 	m_cStatusBar.SetExtensionCommandCallback([this](std::wstring_view command) {
 		if (m_extensionService) m_extensionService->ExecuteCommand(command);
 	});
+	m_cStatusBar.SetWorkbenchCommandCallback([this](std::string_view command) {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(command, handled);
+	});
+	m_cStatusBar.SetStatusbarVisibilityCallback([this](std::string_view id, bool hidden) {
+		SetStatusbarEntryHidden(id, hidden);
+	});
+	if (m_extensionService) {
+		m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
+	}
+	RefreshStatusbarPresentation();
 	m_extensionSidebarTool->SetRequestChildrenCallback([this](std::wstring_view view, std::wstring_view parent) {
 		if (m_extensionService) m_extensionService->RequestTreeChildren(view, parent);
 	});
@@ -2688,6 +2736,9 @@ void CEditWnd::EnsureNotificationHost() noexcept
 		[this](std::uint64_t id, std::optional<std::size_t> selectedAction) {
 			if (m_extensionService) m_extensionService->ResolveNotification(id, selectedAction);
 		});
+	host->SetStatusChangedCallback([this](const auto& status) {
+		m_cStatusBar.SetNotificationState(status.pendingCount, status.unreadCount, status.centerVisible);
+	});
 	host->SetPalette(theme::CThemeService::EffectivePalette(
 		m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
 	m_notificationHost = std::move(host);
@@ -2695,6 +2746,49 @@ void CEditWnd::EnsureNotificationHost() noexcept
 	// the service projection here so that the pending request is not dependent on
 	// another workbench-change message being posted after creation.
 	m_notificationHost->SetNotifications(m_extensionService->PendingNotifications());
+}
+
+void CEditWnd::RefreshStatusbarPresentation()
+{
+	if (m_workbenchRuntime == nullptr) return;
+	using workbench::statusbar::EStatusbarEntryAlignment;
+	using workbench::statusbar::StatusbarEntry;
+	std::vector<StatusbarEntry> entries{
+		{ "status.scm", L"ソース管理", EStatusbarEntryAlignment::Left, true },
+		{ "status.editor.selection", L"選択範囲", EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.eol", L"改行コード", EStatusbarEntryAlignment::Right, true },
+		{ "sakura.status.editor.characterCode", L"文字コード値", EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.encoding", L"エンコード", EStatusbarEntryAlignment::Right, true },
+		{ "sakura.status.macroRecording", L"キーマクロ記録", EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.inputMode", L"入力モード", EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.zoom", L"ズーム", EStatusbarEntryAlignment::Right, true },
+		{ "status.notifications", L"通知", EStatusbarEntryAlignment::Right, true },
+	};
+	if (m_extensionService) {
+		for (const auto& item : m_extensionService->StatusBarItems()) {
+			const auto id = ExtensionStatusbarId(item);
+			if (!workbench::statusbar::StatusbarViewModel::IsValidId(id)) continue;
+			std::wstring name = item.name.empty() ? item.itemId : item.name;
+			if (name.empty()) name = item.extensionId;
+			if (name.empty()) continue;
+			entries.push_back({ std::move(id), std::move(name),
+				item.alignment == EExtensionStatusBarAlignment::Right
+					? EStatusbarEntryAlignment::Right : EStatusbarEntryAlignment::Left,
+				item.visible });
+		}
+	}
+	if (!m_workbenchRuntime->StatusbarState().SetEntries(std::move(entries))) return;
+	m_cStatusBar.SetStatusbarViewSnapshot(m_workbenchRuntime->StatusbarState().Snapshot());
+	LayoutStatusBarParts();
+}
+
+void CEditWnd::SetStatusbarEntryHidden(std::string_view id, bool hidden)
+{
+	if (m_workbenchRuntime == nullptr) return;
+	const bool changed = m_workbenchRuntime->StatusbarState().SetHidden(id, hidden);
+	if (changed) (void)m_workbenchRuntime->PersistStatusbarVisibility();
+	m_cStatusBar.SetStatusbarViewSnapshot(m_workbenchRuntime->StatusbarState().Snapshot());
+	LayoutStatusBarParts();
 }
 
 void CEditWnd::CloseWorkbench() noexcept
@@ -2763,11 +2857,14 @@ void CEditWnd::CloseWorkbench() noexcept
 		m_extensionBottomPanelTool->SetTabSelectionCallback({});
 	}
 	m_cStatusBar.SetExtensionCommandCallback({});
+	m_cStatusBar.SetWorkbenchCommandCallback({});
+	m_cStatusBar.SetStatusbarVisibilityCallback({});
 	// ステータスバーはレジストリを非所有で借りているだけなので、破棄より先に
 	// 借用を明示的に返させる。宣言順に依存した暗黙のメンバー破棄順に頼らない。
 	m_cStatusBar.SetExtensionIconFonts(nullptr);
 	if (m_notificationHost) {
 		m_notificationHost->SetResolveCallback({});
+		m_notificationHost->SetStatusChangedCallback({});
 		m_notificationHost->Destroy();
 		m_notificationHost.reset();
 	}
@@ -4347,6 +4444,10 @@ void CEditWnd::ToggleBottomWorkbenchMaximized()
 void CEditWnd::OpenWorkspaceFolder()
 {
 	if (!m_workspaceContext) return;
+	const bool terminalWasVisible = IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom)
+		&& (m_workbenchRuntime != nullptr
+			? IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal)
+			: m_pShareData->m_Common.m_sWorkbench.m_eActiveTool == WORKBENCH_TOOL_TERMINAL);
 
 	// SelectDir uses the native IFileDialog with FOS_PICKFOLDERS and
 	// FOS_FORCEFILESYSTEM. Keep all state intact when the user cancels or the
@@ -4380,10 +4481,28 @@ void CEditWnd::OpenWorkspaceFolder()
 		if (result.outcome != config::EWorkspaceContextOutcome::Succeeded
 			&& result.outcome != config::EWorkspaceContextOutcome::NotApplicable) return;
 		ApplySemanticWorkspaceContext();
+		const auto after = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		if (m_terminalTool != nullptr && before.workspaceIdentityKey != after.workspaceIdentityKey) {
+			const auto reset = m_terminalTool->ResetForWorkspace(
+				m_workspaceContext->GetNewTerminalWorkingDirectory(), terminalWasVisible);
+			if (reset.outcome == terminal::TerminalWorkspaceResetOutcome::RestartFailed
+				|| reset.outcome == terminal::TerminalWorkspaceResetOutcome::Busy
+				|| reset.outcome == terminal::TerminalWorkspaceResetOutcome::Unavailable) {
+				::OutputDebugStringW(L"Sakura Editor NEXT: terminal workspace reset did not complete normally.\n");
+			} else if (reset.closeDeadlineExceeded) {
+				::OutputDebugStringW(L"Sakura Editor NEXT: terminal workspace reset exceeded its close deadline.\n");
+			}
+		}
 	} else {
 		// Unit-only/legacy construction keeps the pre-runtime fallback.
+		const auto previousRoot = GetSemanticWorkspaceRoot();
 		m_workspaceContext->SetExplicitRoot(absoluteRoot);
 		ApplySemanticWorkspaceContext();
+		if (m_terminalTool != nullptr
+			&& ::CompareStringOrdinal(previousRoot.c_str(), -1, absoluteRoot.c_str(), -1, TRUE) != CSTR_EQUAL) {
+			static_cast<void>(m_terminalTool->ResetForWorkspace(
+				m_workspaceContext->GetNewTerminalWorkingDirectory(), terminalWasVisible));
+		}
 	}
 	SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true);
 }
@@ -5833,6 +5952,7 @@ LRESULT CEditWnd::DispatchEvent(
 			const auto bits = static_cast<std::uint32_t>(changes);
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::StatusBar)) != 0) {
 				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
+				RefreshStatusbarPresentation();
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Views)) != 0 && m_extensionSidebarTool) {
 				m_extensionSidebarTool->Refresh();
@@ -5843,6 +5963,7 @@ LRESULT CEditWnd::DispatchEvent(
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Progress)) != 0) {
 				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
+				RefreshStatusbarPresentation();
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Notifications)) != 0 &&
 				m_extensionService) {
@@ -7955,7 +8076,7 @@ void CEditWnd::LayoutStatusBarParts()
 	}
 
 	int partEdges[partCount]{};
-	partEdges[partCount - 1] = client.right - client.left;
+	partEdges[partCount - 1] = client.right - client.left - m_cStatusBar.ReservedRightWidth();
 	if (!::IsZoomed(GetHwnd())) {
 		partEdges[partCount - 1] -= ::GetSystemMetrics(SM_CXVSCROLL) + ::GetSystemMetrics(SM_CXEDGE);
 	}
@@ -7973,7 +8094,9 @@ void CEditWnd::LayoutStatusBarParts()
 		if (dc != nullptr && !labels[part].empty()) {
 			::GetTextExtentPoint32W(dc, labels[part].c_str(), static_cast<int>(labels[part].size()), &extent);
 		}
-		const int width = workbench::icons::StatusItemPartWidthPixels(extent.cx, dpi);
+		const auto entryId = CMainStatusBar::LegacyEntryIdForPart(part);
+		const int width = labels[part].empty() || !m_cStatusBar.IsStatusbarEntryVisible(entryId)
+			? 0 : workbench::icons::StatusItemPartWidthPixels(extent.cx, dpi);
 		partEdges[part - 1] = std::max(0, partEdges[part] - width);
 	}
 	if (dc != nullptr) {
