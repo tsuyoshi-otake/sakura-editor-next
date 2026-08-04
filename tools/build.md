@@ -124,9 +124,15 @@ sakura-build.bat inventory observe-product ^
   --context msvc-x64-debug --product sakura_app --jobs 1 --rebuild ^
   --output build/evidence/r0/native-msbuild-product.json
 
+sakura-build.bat inventory observe-resources ^
+  --context msvc-x64-debug --product sakura_app ^
+  --native-evidence build/evidence/r0/native-msbuild-product.json ^
+  --output build/evidence/r0/native-resource-table.json
+
 sakura-build.bat inventory repository ^
   --context msvc-x64-debug --product sakura_app --provider sakura_uri ^
   --native-evidence build/evidence/r0/native-msbuild-product.json ^
+  --resource-evidence build/evidence/r0/native-resource-table.json ^
   --output build/evidence/r0/repository-inventory.json --strict
 ```
 
@@ -143,6 +149,17 @@ SHA-256を保持し、欠落、変更、別context、Build未実行のsnapshot�
 実行をgreenにするには、対象targetの実行だけでなく、その厳密なoutput pathが同じ観測のcompiler/RC/link
 inputに現れ、producerとconsumerを相関できなければなりません。diagnostic logの時刻や所要時間、一時pathは
 hard evidence hashへ含めません。
+
+`observe-resources`は、先に収集したnative product evidenceと現在の製品EXEのhashが一致する場合だけ、
+そのEXEをWindowsのdata/image resourceとして開きます。アプリケーションのentry pointは実行しません。
+PE resource tableのtype、name、language ID、size、content SHA-256を正規化し、100,000 entry、1 entry
+64 MiB、合計512 MiBを上限として収集します。生成済み製品を再利用するため、このcommand自体はcompile、
+link、package restoreを起動しません。
+
+この観測が証明するのはtop-level PE resource tableです。dialog/menu/accelerator内部のcommand/control ID、
+string block内の個別ID、`sakura_rc.h`と各言語DLLを含むcanonical numeric-ID compatibilityは別gateです。
+したがってresource tableを観測できても、compatibility baselineが確立するまでは
+`RESOURCE_ID_COMPATIBILITY_UNOBSERVED`をblockerとして残します。
 
 Debug製品にはMAPがないため、link input setの観測だけでstatic archive内の採用memberを証明したとは
 扱いません。またgeneratorのExecと消費先を相関できても、生成規則の`Inputs`/`DEPENDS`が完全であること、
