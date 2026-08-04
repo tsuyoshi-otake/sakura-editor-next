@@ -19,7 +19,7 @@ struct OutlineDocumentVersion {
 	std::uint64_t identity = 0;
 	std::uint64_t version = 0;
 
-	[[nodiscard]] bool IsValid() const noexcept { return identity != 0; }
+	[[nodiscard]] constexpr bool IsValid() const noexcept { return identity != 0; }
 
 	friend bool operator==( const OutlineDocumentVersion&, const OutlineDocumentVersion& ) noexcept = default;
 };

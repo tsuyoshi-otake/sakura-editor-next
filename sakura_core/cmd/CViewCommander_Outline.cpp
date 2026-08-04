@@ -88,6 +88,59 @@ BOOL CViewCommander::Command_FUNCLIST(
 		}
 	}
 
+	// Built-in C/C++ and Java parsing in the workbench uses the snapshot worker.
+	// Keep all other outline types below on the legacy synchronous boundary: those
+	// parsers may call document/layout/settings state or invoke an outline plugin.
+	const bool asyncWorkbenchOutline = GetEditWindow()->m_cDlgFuncList.IsWorkbenchMode()
+		&& (nOutlineType == OUTLINE_C || nOutlineType == OUTLINE_C_CPP
+			|| nOutlineType == OUTLINE_CPP || nOutlineType == OUTLINE_JAVA);
+	if( asyncWorkbenchOutline ) {
+		// SHOW_TOGGLE is normally consumed by the host visibility block above. If
+		// it reaches this point, the host has just made the panel visible; treat it
+		// as an activation/reparse request rather than silently dropping the action.
+		if( nAction == SHOW_TOGGLE ) nAction = SHOW_NORMAL;
+		const bool forceRefresh = nAction == SHOW_RELOAD;
+		bool createdChild = false;
+		if( GetEditWindow()->m_cDlgFuncList.GetHwnd() != nullptr
+			&& !GetEditWindow()->m_cDlgFuncList.CheckListType(nOutlineType) ) {
+			// The dialog template is selected when the child is created. Recreate it
+			// for a type change; the workbench mode and host parent remain owned by
+			// COutlineWorkbenchTool.
+			::DestroyWindow( GetEditWindow()->m_cDlgFuncList.GetHwnd() );
+		}
+
+		CLayoutPoint poCaret = GetCaret().GetCaretLayoutPos();
+		if( GetEditWindow()->m_cDlgFuncList.GetHwnd() == nullptr ) {
+			HWND hWnd = GetEditWindow()->m_cDlgFuncList.DoModeless(
+				G_AppInstance(),
+				m_pCommanderView->GetHwnd(),
+				(LPARAM)m_pCommanderView,
+				nullptr,
+				poCaret.GetY2() + CLayoutInt(1),
+				poCaret.GetX2() + CLayoutInt(1),
+				nOutlineType,
+				nOutlineType,
+				m_pCommanderView->m_pTypeData->m_bLineNumIsCRLF );
+			DarkMode::setDarkWndSafe(hWnd);
+			createdChild = hWnd != nullptr;
+			if( hWnd == nullptr || !GetEditWindow()->m_cDlgFuncList.RequestWorkbenchOutline(nOutlineType, forceRefresh) ) {
+				if( createdChild ) ::DestroyWindow( hWnd );
+				GetEditWindow()->SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right, false, false);
+				bIsProcessing = false;
+				return FALSE;
+			}
+		}else if( !GetEditWindow()->m_cDlgFuncList.RequestWorkbenchOutline(nOutlineType, forceRefresh) ){
+			GetEditWindow()->SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right, false, false);
+			bIsProcessing = false;
+			return FALSE;
+		}
+		GetEditWindow()->SetWorkbenchPanelVisible(
+			workbench::WorkbenchEdge::Right, true, nAction == SHOW_NORMAL && bForeground );
+		if( bForeground ) ::SetFocus( GetEditWindow()->m_cDlgFuncList.GetHwnd() );
+		bIsProcessing = false;
+		return TRUE;
+	}
+
 	if( nullptr != GetEditWindow()->m_cDlgFuncList.GetHwnd() && nAction != SHOW_RELOAD ){
 		switch(nAction ){
 		case SHOW_NORMAL: // アクティブにする

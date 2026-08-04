@@ -181,13 +181,18 @@ void COutlineWorkbenchTool::Close()
 {
 	if( m_lifecycle == OutlineToolLifecycle::Closed ) return;
 	const HWND window = GetDialogWindow();
+	if( m_dialog != nullptr ) {
+		// Stop the snapshot worker while the dialog still owns its result gate.
+		// Close joins before the HWND is destroyed, so no worker can post into a
+		// reclaimed dialog or outlive this tool.
+		m_dialog->StopWorkbenchOutlineWorker();
+	}
 	if( window != nullptr ) ::DestroyWindow( window );
 	if( m_dialog != nullptr ) {
 		m_dialog->SetWorkbenchMode( false );
 		m_dialog->SetWorkbenchParent( nullptr );
 	}
 	m_parent = nullptr;
-	m_refresh.Close();
 	m_appliedWindow = nullptr;
 	m_appearanceWindow = nullptr;
 	m_hasAppliedLayout = false;
@@ -201,7 +206,6 @@ void COutlineWorkbenchTool::Close()
 void COutlineWorkbenchTool::SetVisible( bool visible ) noexcept
 {
 	m_visible = visible;
-	m_refresh.SetVisible(visible);
 	const HWND window = GetDialogWindow();
 	if( window != nullptr && (::IsWindowVisible(window) != FALSE) != visible ) {
 		::ShowWindow(window, visible ? SW_SHOWNA : SW_HIDE);
@@ -215,25 +219,6 @@ void COutlineWorkbenchTool::SetPalette( const theme::ThemePalette& palette )
 	m_appearanceDirty = true;
 	if( m_symbolImages != nullptr ) RecreateSymbolImages();
 	ApplyAppearance();
-}
-
-OutlineRefreshRequest COutlineWorkbenchTool::RequestRefresh() noexcept
-{
-	if( m_dialog == nullptr ) return { OutlineRefreshRequestStatus::Closed, 0 };
-	const auto documentVersion = m_dialog->GetWorkbenchDocumentVersion();
-	if( !m_refresh.Snapshot().refreshInFlight && m_dialog->HasCurrentWorkbenchModel() ) {
-		m_refresh.AdoptCommitted(documentVersion);
-	}
-	return m_refresh.Request(documentVersion);
-}
-
-OutlineRefreshCompletion COutlineWorkbenchTool::CompleteRefresh(
-	std::uint64_t generation, bool succeeded ) noexcept
-{
-	if( m_dialog == nullptr ) return OutlineRefreshCompletion::Closed;
-	const auto observedVersion = m_dialog->GetWorkbenchDocumentVersion();
-	return m_refresh.Complete(
-		generation, succeeded && m_dialog->HasCurrentWorkbenchModel(), observedVersion );
 }
 
 bool COutlineWorkbenchTool::Reparent( HWND parent ) noexcept

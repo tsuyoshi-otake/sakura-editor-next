@@ -77,11 +77,14 @@ void CDocOutline::MakeFuncList_Java( CFuncInfoArr* pcFuncInfoArr )
 	nClassNestArrNum = 0;
 	CLogicInt		nLineCount;
 	const wchar_t*	szJavaKigou = L"!\"#%&'()=-^|\\`@[{+;*}]<,>?/";	//識別子に使用できない半角記号。_:~.$は許可
-	bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+	bool bExtEol = IsExtEolEnabled();
+	const wchar_t* const pszDefinitionPosition = GetJavaDefinitionPosition();
 
-	for( nLineCount = CLogicInt(0); nLineCount <  m_pcDocRef->m_cDocLineMgr.GetLineCount(); ++nLineCount ){
-		pLine = m_pcDocRef->m_cDocLineMgr.GetLine(nLineCount)->GetDocLineStrWithEOL(&nLineLen);
+	for( nLineCount = CLogicInt(0); nLineCount < GetLineCount() && !IsCancellationRequested(); ++nLineCount ){
+		pLine = GetLine(nLineCount, &nLineLen);
 		for( i = 0; i < nLineLen; i += nCharChars ){
+			// Bound cancellation latency on generated/minified single-line input.
+			if( (i & 0x0fff) == 0 && IsCancellationRequested() ) return;
 			nCharChars = CNativeW::GetSizeOfChar( pLine, nLineLen, i );
 
 			/* エスケープシーケンスは常に取り除く */
@@ -152,14 +155,18 @@ void CDocOutline::MakeFuncList_Java( CFuncInfoArr* pcFuncInfoArr )
 						  レイアウト位置(行頭からの表示桁位置、折り返しあり行位置)
 						*/
 						CLogicPoint  ptPosXY_Logic = CLogicPoint(CLogicInt(0), nLineCount);
-						CLayoutPoint ptPosXY_Layout;
-						m_pcDocRef->m_cLayoutMgr.LogicToLayout(
+						CLayoutPoint ptPosXY_Layout(0, 0);
+						const bool hasLayoutPosition = TryLogicToLayout(
 							ptPosXY_Logic,
 							&ptPosXY_Layout
 						);
 						wchar_t szWork[256];
-						if( 0 < auto_snprintf_s(szWork, std::size(szWork), L"%ls::%ls", szClass, LS(STR_OUTLINE_JAVA_DEFPOS) ) ){
-							pcFuncInfoArr->AppendData( ptPosXY_Logic.GetY2() + CLogicInt(1), ptPosXY_Layout.GetY2() + CLayoutInt(1), szWork, nFuncId ); //2007.10.09 kobake レイアウト・ロジックの混在バグ修正
+						if( 0 < auto_snprintf_s(szWork, std::size(szWork), L"%ls::%ls", szClass, pszDefinitionPosition ) ){
+							if( hasLayoutPosition ){
+								pcFuncInfoArr->AppendData( ptPosXY_Logic.GetY2() + CLogicInt(1), ptPosXY_Layout.GetY2() + CLayoutInt(1), szWork, nFuncId ); //2007.10.09 kobake レイアウト・ロジックの混在バグ修正
+							}else{
+								pcFuncInfoArr->AppendDataLogical( ptPosXY_Logic.GetY2() + CLogicInt(1), szWork, nFuncId );
+							}
 						}
 					}
 
@@ -254,14 +261,18 @@ void CDocOutline::MakeFuncList_Java( CFuncInfoArr* pcFuncInfoArr )
 							  →
 							  レイアウト位置(行頭からの表示桁位置、折り返しあり行位置)
 							*/
-							CLayoutPoint ptPosXY;
-							m_pcDocRef->m_cLayoutMgr.LogicToLayout(
+							CLayoutPoint ptPosXY(0, 0);
+							const bool hasLayoutPosition = TryLogicToLayout(
 								CLogicPoint(CLogicInt(0), nFuncLine - CLogicInt(1)),
 								&ptPosXY
 							);
 							wchar_t szWork[256];
 							if( 0 < auto_snprintf_s(szWork, std::size(szWork), L"%ls::%ls", szClass, szFuncName ) ){
-								pcFuncInfoArr->AppendData( nFuncLine, ptPosXY.GetY2() + CLayoutInt(1), szWork, nFuncId );
+								if( hasLayoutPosition ){
+									pcFuncInfoArr->AppendData( nFuncLine, ptPosXY.GetY2() + CLayoutInt(1), szWork, nFuncId );
+								}else{
+									pcFuncInfoArr->AppendDataLogical( nFuncLine, szWork, nFuncId );
+								}
 							}
 						}
 					}
@@ -347,7 +358,7 @@ void CDocOutline::MakeFuncList_Java( CFuncInfoArr* pcFuncInfoArr )
 					if( k >= nLineLen2 ){
 						k = 0;
 						++nLineCount2;
-						pLine2 = m_pcDocRef->m_cDocLineMgr.GetLine(nLineCount2)->GetDocLineStrWithEOL(&nLineLen2);
+						pLine2 = GetLine(nLineCount2, &nLineLen2);
 						if( nullptr != pLine2 ){
 							goto loop_is_func;
 						}
@@ -395,14 +406,18 @@ void CDocOutline::MakeFuncList_Java( CFuncInfoArr* pcFuncInfoArr )
 							  →
 							  レイアウト位置(行頭からの表示桁位置、折り返しあり行位置)
 							*/
-							CLayoutPoint ptPosXY;
-							m_pcDocRef->m_cLayoutMgr.LogicToLayout(
+							CLayoutPoint ptPosXY(0, 0);
+							const bool hasLayoutPosition = TryLogicToLayout(
 								CLogicPoint(CLogicInt(0), nFuncLine - CLogicInt(1)),
 								&ptPosXY
 							);
 							wchar_t szWork[256];
 							if( 0 < auto_snprintf_s(szWork, std::size(szWork), L"%ls::%ls", szClass, szFuncName ) ){
-								pcFuncInfoArr->AppendData( nFuncLine, ptPosXY.GetY2() + CLayoutInt(1), szWork, nFuncId );
+								if( hasLayoutPosition ){
+									pcFuncInfoArr->AppendData( nFuncLine, ptPosXY.GetY2() + CLayoutInt(1), szWork, nFuncId );
+								}else{
+									pcFuncInfoArr->AppendDataLogical( nFuncLine, szWork, nFuncId );
+								}
 							}
 						}
 					}

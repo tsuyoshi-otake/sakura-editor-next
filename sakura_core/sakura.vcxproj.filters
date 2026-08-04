@@ -2902,6 +2902,12 @@
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\outline\OutlineParserWorker.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\outline\OutlineSnapshotParser.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>

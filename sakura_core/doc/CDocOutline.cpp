@@ -19,10 +19,13 @@
 
 #include "StdAfx.h"
 #include <string.h>
+#include <limits>
 #include <memory>
+#include <utility>
 #include "doc/CDocOutline.h"
 #include "doc/CEditDoc.h"
 #include "doc/logic/CDocLine.h"
+#include "workbench/outline/OutlineDocumentSnapshot.h"
 #include "_main/global.h"
 #include "outline/CFuncInfoArr.h"
 #include "outline/CFuncInfo.h"
@@ -46,6 +49,259 @@ struct SOneRule {
 	int		nRegexOption;
 	int		nRegexMode; // 0 ==「Mode=Regex」, 1 == 「Mode=RegexReplace」
 };
+
+namespace {
+
+class LiveDocumentSource final : public CDocOutlineDocumentSource {
+public:
+	explicit LiveDocumentSource( CEditDoc* document ) noexcept
+		: m_document(document)
+	{
+	}
+
+	[[nodiscard]] CLogicInt GetLineCount() const noexcept override
+	{
+		return m_document != nullptr ? m_document->m_cDocLineMgr.GetLineCount() : CLogicInt(0);
+	}
+
+	[[nodiscard]] const wchar_t* GetLine( CLogicInt line, CLogicInt* length ) const noexcept override
+	{
+		if( length != nullptr ) *length = CLogicInt(0);
+		if( m_document == nullptr ) return nullptr;
+		const auto* docLine = m_document->m_cDocLineMgr.GetLine(line);
+		return docLine != nullptr ? docLine->GetDocLineStrWithEOL(length) : nullptr;
+	}
+
+	[[nodiscard]] bool TryLogicToLayout( const CLogicPoint& logic, CLayoutPoint* layout ) const noexcept override
+	{
+		if( layout == nullptr ) return false;
+		*layout = CLayoutPoint(0, 0);
+		if( m_document == nullptr ) return false;
+		m_document->m_cLayoutMgr.LogicToLayout(logic, layout);
+		return true;
+	}
+
+	[[nodiscard]] const wchar_t* GetFilePath() const noexcept override
+	{
+		return m_document != nullptr ? m_document->m_cDocFile.GetFilePath() : L"";
+	}
+
+	[[nodiscard]] const wchar_t* GetOutlineRuleFileName() const noexcept override
+	{
+		return m_document != nullptr
+			? m_document->m_cDocType.GetDocumentAttribute().m_szOutlineRuleFilename
+			: L"";
+	}
+
+	[[nodiscard]] int GetNewLineLength() const noexcept override
+	{
+		return m_document != nullptr ? m_document->m_cDocEditor.m_cNewLineCode.GetLen() : 0;
+	}
+
+	[[nodiscard]] bool IsBookmarked( CLogicInt line ) const noexcept override
+	{
+		return m_document != nullptr
+			&& CBookmarkGetter(m_document->m_cDocLineMgr.GetLine(line)).IsBookmarked();
+	}
+
+	[[nodiscard]] bool IsExtEolEnabled() const noexcept override
+	{
+		return GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+	}
+
+	[[nodiscard]] bool ShouldMarkBlankLines() const noexcept override
+	{
+		return GetDllShareData().m_Common.m_sOutline.m_bMarkUpBlankLineEnable != FALSE;
+	}
+
+	[[nodiscard]] const wchar_t* GetCppAnonymousName() const noexcept override
+	{
+		return LS(STR_OUTLINE_CPP_NONAME);
+	}
+
+	[[nodiscard]] const wchar_t* GetCppDefinitionPosition() const noexcept override
+	{
+		return LS(STR_OUTLINE_CPP_DEFPOS);
+	}
+
+	[[nodiscard]] const wchar_t* GetJavaDefinitionPosition() const noexcept override
+	{
+		return LS(STR_OUTLINE_JAVA_DEFPOS);
+	}
+
+private:
+	CEditDoc* m_document = nullptr;
+};
+
+class SnapshotDocumentSource final : public CDocOutlineDocumentSource {
+public:
+	explicit SnapshotDocumentSource( const workbench::outline::OutlineDocumentSnapshot& snapshot ) noexcept
+		: m_snapshot(snapshot)
+	{
+	}
+
+	[[nodiscard]] CLogicInt GetLineCount() const noexcept override
+	{
+		return CLogicInt(m_snapshot.LineCount());
+	}
+
+	[[nodiscard]] const wchar_t* GetLine( CLogicInt line, CLogicInt* length ) const noexcept override
+	{
+		if( length != nullptr ) *length = CLogicInt(0);
+		if( line < 0 || static_cast<std::size_t>(line) >= m_snapshot.lineSpans.size() ) return nullptr;
+		const auto span = m_snapshot.lineSpans[static_cast<std::size_t>(line)];
+		if( span.offset > m_snapshot.textWithEol.size()
+			|| span.length > m_snapshot.textWithEol.size() - span.offset
+			|| span.length > static_cast<std::size_t>((std::numeric_limits<int>::max)())
+			|| span.offset + span.length >= m_snapshot.textWithEol.size()
+			|| m_snapshot.textWithEol[span.offset + span.length] != L'\0' ) return nullptr;
+		if( length != nullptr ) *length = CLogicInt(span.length);
+		return m_snapshot.textWithEol.data() + span.offset;
+	}
+
+	[[nodiscard]] bool TryLogicToLayout(
+		[[maybe_unused]] const CLogicPoint& logic,
+		[[maybe_unused]] CLayoutPoint* layout ) const noexcept override
+	{
+		// Snapshot parsing is explicitly logical-only.  The worker must not ask
+		// for layout coordinates; the UI commit maps only returned symbol rows.
+		return false;
+	}
+
+	[[nodiscard]] const wchar_t* GetFilePath() const noexcept override
+	{
+		return m_snapshot.filePath.c_str();
+	}
+
+	[[nodiscard]] const wchar_t* GetOutlineRuleFileName() const noexcept override
+	{
+		return L"";
+	}
+
+	[[nodiscard]] int GetNewLineLength() const noexcept override
+	{
+		return 0;
+	}
+
+	[[nodiscard]] bool IsBookmarked( CLogicInt line ) const noexcept override
+	{
+		(void)line;
+		return false;
+	}
+
+	[[nodiscard]] bool IsExtEolEnabled() const noexcept override
+	{
+		return m_snapshot.extendedLineDelimiters;
+	}
+
+	[[nodiscard]] bool ShouldMarkBlankLines() const noexcept override
+	{
+		return false;
+	}
+
+	[[nodiscard]] const wchar_t* GetCppAnonymousName() const noexcept override
+	{
+		return m_snapshot.cppAnonymousName.c_str();
+	}
+
+	[[nodiscard]] const wchar_t* GetCppDefinitionPosition() const noexcept override
+	{
+		return m_snapshot.cppDefinitionPosition.c_str();
+	}
+
+	[[nodiscard]] const wchar_t* GetJavaDefinitionPosition() const noexcept override
+	{
+		return m_snapshot.javaDefinitionPosition.c_str();
+	}
+
+private:
+	const workbench::outline::OutlineDocumentSnapshot& m_snapshot;
+};
+
+} // namespace
+
+CDocOutline::CDocOutline( CEditDoc* pcDoc )
+	: m_pcDocRef(pcDoc)
+	, m_source(std::make_unique<LiveDocumentSource>(pcDoc))
+{
+}
+
+CDocOutline::CDocOutline(
+	const workbench::outline::OutlineDocumentSnapshot& snapshot,
+	std::function<bool()> cancellationCheck )
+	: m_source(std::make_unique<SnapshotDocumentSource>(snapshot))
+	, m_cancellationCheck(std::move(cancellationCheck))
+{
+}
+
+CDocOutline::~CDocOutline() = default;
+CDocOutline::CDocOutline(CDocOutline&&) noexcept = default;
+CDocOutline& CDocOutline::operator=(CDocOutline&&) noexcept = default;
+
+CLogicInt CDocOutline::GetLineCount() const noexcept
+{
+	return m_source != nullptr ? m_source->GetLineCount() : CLogicInt(0);
+}
+
+const wchar_t* CDocOutline::GetLine( CLogicInt line, CLogicInt* length ) const noexcept
+{
+	return m_source != nullptr ? m_source->GetLine(line, length) : nullptr;
+}
+
+bool CDocOutline::TryLogicToLayout( const CLogicPoint& logic, CLayoutPoint* layout ) const noexcept
+{
+	return m_source != nullptr && m_source->TryLogicToLayout(logic, layout);
+}
+
+const wchar_t* CDocOutline::GetFilePath() const noexcept
+{
+	return m_source != nullptr ? m_source->GetFilePath() : L"";
+}
+
+const wchar_t* CDocOutline::GetOutlineRuleFileName() const noexcept
+{
+	return m_source != nullptr ? m_source->GetOutlineRuleFileName() : L"";
+}
+
+int CDocOutline::GetNewLineLength() const noexcept
+{
+	return m_source != nullptr ? m_source->GetNewLineLength() : 0;
+}
+
+bool CDocOutline::IsBookmarked( CLogicInt line ) const noexcept
+{
+	return m_source != nullptr && m_source->IsBookmarked(line);
+}
+
+bool CDocOutline::IsExtEolEnabled() const noexcept
+{
+	return m_source != nullptr && m_source->IsExtEolEnabled();
+}
+
+bool CDocOutline::ShouldMarkBlankLines() const noexcept
+{
+	return m_source != nullptr && m_source->ShouldMarkBlankLines();
+}
+
+const wchar_t* CDocOutline::GetCppAnonymousName() const noexcept
+{
+	return m_source != nullptr ? m_source->GetCppAnonymousName() : L"";
+}
+
+const wchar_t* CDocOutline::GetCppDefinitionPosition() const noexcept
+{
+	return m_source != nullptr ? m_source->GetCppDefinitionPosition() : L"";
+}
+
+const wchar_t* CDocOutline::GetJavaDefinitionPosition() const noexcept
+{
+	return m_source != nullptr ? m_source->GetJavaDefinitionPosition() : L"";
+}
+
+bool CDocOutline::IsCancellationRequested() const noexcept
+{
+	return m_cancellationCheck && m_cancellationCheck();
+}
 
 /*! ルールファイルを読み込み、ルール構造体の配列を作成する
 
@@ -220,7 +476,7 @@ void CDocOutline::MakeFuncList_RuleFile( CFuncInfoArr* pcFuncInfoArr, std::wstri
 	auto test = std::make_unique<SOneRule[]>(1024);	// 1024個許可。 2007.11.29 kobake スタック使いすぎなので、ヒープに確保するように修正。
 	bool bRegex;
 	std::wstring title;
-	int nCount = ReadRuleFile(m_pcDocRef->m_cDocType.GetDocumentAttribute().m_szOutlineRuleFilename, test.get(), 1024, bRegex, title );
+	int nCount = ReadRuleFile(GetOutlineRuleFileName(), test.get(), 1024, bRegex, title );
 	if ( nCount < 1 ){
 		return;
 	}
@@ -287,11 +543,11 @@ void CDocOutline::MakeFuncList_RuleFile( CFuncInfoArr* pcFuncInfoArr, std::wstri
 		pcFuncInfoArr->AppendData( CLogicInt(1), CLayoutInt(1), mem.GetStringPtr(), FUNCINFO_NOCLIPTEXT, nDepth );
 		nDepth = 1;
 	}
-	for( CLogicInt nLineCount = CLogicInt(0); nLineCount <  m_pcDocRef->m_cDocLineMgr.GetLineCount(); ++nLineCount )
+	for( CLogicInt nLineCount = CLogicInt(0); nLineCount < GetLineCount(); ++nLineCount )
 	{
 		//行取得
 		CLogicInt		nLineLen;
-		const wchar_t*	pLine = m_pcDocRef->m_cDocLineMgr.GetLine(nLineCount)->GetDocLineStrWithEOL(&nLineLen);
+		const wchar_t*	pLine = GetLine(nLineCount, &nLineLen);
 		if( nullptr == pLine ){
 			break;
 		}
@@ -359,7 +615,7 @@ void CDocOutline::MakeFuncList_RuleFile( CFuncInfoArr* pcFuncInfoArr, std::wstri
 		if( nullptr == pszText ){
 			pszText = &pLine[i];
 			nLineLen -= i;
-			const bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+			const bool bExtEol = IsExtEolEnabled();
 			for( i = 0; i < nLineLen; ++i ){
 				if( WCODE::IsLineDelimiter(pszText[i], bExtEol) ){
 					break;
@@ -376,7 +632,7 @@ void CDocOutline::MakeFuncList_RuleFile( CFuncInfoArr* pcFuncInfoArr, std::wstri
 		  レイアウト位置(行頭からの表示桁位置、折り返しあり行位置)
 		*/
 		CLayoutPoint ptPos;
-		m_pcDocRef->m_cLayoutMgr.LogicToLayout(
+		TryLogicToLayout(
 			CLogicPoint(0, nLineCount),
 			&ptPos
 		);
@@ -438,14 +694,14 @@ void CDocOutline::MakeFuncList_BookMark( CFuncInfoArr* pcFuncInfoArr )
 	CLogicInt		nLineLen;
 	CLogicInt		nLineCount;
 	int		leftspace, pos_wo_space, k;
-	BOOL	bMarkUpBlankLineEnable = GetDllShareData().m_Common.m_sOutline.m_bMarkUpBlankLineEnable;	//! 空行をマーク対象にするフラグ 20020119 aroka
-	int		nNewLineLen	= m_pcDocRef->m_cDocEditor.m_cNewLineCode.GetLen();
-	CLogicInt	nLineLast	= m_pcDocRef->m_cDocLineMgr.GetLineCount();
+	BOOL	bMarkUpBlankLineEnable = ShouldMarkBlankLines();	//! 空行をマーク対象にするフラグ 20020119 aroka
+	int		nNewLineLen	= GetNewLineLength();
+	CLogicInt	nLineLast	= GetLineCount();
 	int		nCharChars;
 
 	for( nLineCount = CLogicInt(0); nLineCount <  nLineLast; ++nLineCount ){
-		if(!CBookmarkGetter(m_pcDocRef->m_cDocLineMgr.GetLine(nLineCount)).IsBookmarked())continue;
-		pLine = m_pcDocRef->m_cDocLineMgr.GetLine(nLineCount)->GetDocLineStrWithEOL(&nLineLen);
+		if(!IsBookmarked(nLineCount))continue;
+		pLine = GetLine(nLineCount, &nLineLen);
 		if( nullptr == pLine ){
 			break;
 		}
@@ -470,7 +726,7 @@ void CDocOutline::MakeFuncList_BookMark( CFuncInfoArr* pcFuncInfoArr )
 		}// RTrim
 		// 2005.10.11 ryoji 右から遡るのではなく左から探すように修正（"ａ@" の右２バイトが全角空白と判定される問題の対処）
 		k = pos_wo_space = leftspace;
-		bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+		bool bExtEol = IsExtEolEnabled();
 		while( k < nLineLen ){
 			nCharChars = CNativeW::GetSizeOfChar( pLine, nLineLen, k );
 			if( 1 == nCharChars ){
@@ -487,7 +743,7 @@ void CDocOutline::MakeFuncList_BookMark( CFuncInfoArr* pcFuncInfoArr )
 		std::wstring strText( &pLine[leftspace], pos_wo_space - leftspace );
 
 		CLayoutPoint ptXY;
-		m_pcDocRef->m_cLayoutMgr.LogicToLayout( CLogicPoint(CLogicInt(0), nLineCount), &ptXY );
+		TryLogicToLayout( CLogicPoint(CLogicInt(0), nLineCount), &ptXY );
 		pcFuncInfoArr->AppendData( nLineCount+CLogicInt(1), ptXY.GetY2()+CLayoutInt(1), strText.c_str(), 0 );
 	}
 	return;

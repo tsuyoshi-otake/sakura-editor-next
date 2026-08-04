@@ -27,9 +27,16 @@
 #include <CommCtrl.h>
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <memory>
+#include <string>
 #include <string_view>
+#include <vector>
 #include "dlg/CDialog.h"
 #include "doc/CEditDoc.h"
+#include "outline/CFuncInfoArr.h"
+#include "workbench/outline/OutlineParserWorker.h"
+#include "workbench/outline/OutlineRefreshScheduler.h"
 #include "workbench/outline/OutlineViewLifecycle.h"
 
 class CFuncInfo;
@@ -103,10 +110,13 @@ public:
 	[[nodiscard]] static std::wstring_view WorkbenchSymbolCodiconName( int imageIndex ) noexcept;
 	[[nodiscard]] HWND GetWorkbenchParent() const noexcept { return m_hwndWorkbenchParent; }
 	[[nodiscard]] bool IsWorkbenchMode() const noexcept { return m_bWorkbenchMode; }
+	[[nodiscard]] static bool IsAsyncWorkbenchOutlineType( int outlineType ) noexcept;
 	[[nodiscard]] workbench::outline::OutlineDocumentVersion GetWorkbenchDocumentVersion() noexcept;
 	[[nodiscard]] bool HasCurrentWorkbenchModel() noexcept;
 	[[nodiscard]] std::uint64_t GetWorkbenchModelGeneration() const noexcept { return m_workbenchModelGeneration; }
 	[[nodiscard]] std::uint64_t GetWorkbenchReparseCount() const noexcept { return m_workbenchReparseCount; }
+	[[nodiscard]] const workbench::outline::OutlinePhaseTimings& GetLastWorkbenchTimings() const noexcept { return m_workbenchLastTimings; }
+	[[nodiscard]] workbench::outline::OutlineWorkerTerminal GetLastWorkbenchTerminal() const noexcept { return m_workbenchLastTerminal; }
 	[[nodiscard]] bool IsDocking() const noexcept { return !m_bWorkbenchMode && m_eDockSide > DOCKSIDE_FLOAT; }
 	[[nodiscard]] EDockSide GetDockSide() const noexcept { return m_eDockSide; }
 
@@ -139,6 +149,10 @@ public:
 	void LoadFileTreeSetting( CFileTreeSetting& data, SFilePath& IniDirPath );
 	void NotifyCaretMovement( CLayoutInt nCurLine, CLayoutInt nCurCol );
 	void NotifyDocModification();
+	[[nodiscard]] bool RequestWorkbenchOutline( int outlineType, bool forceRefresh = false );
+	void StopWorkbenchOutlineWorker() noexcept;
+	void HandleWorkbenchWorkerResult( LPARAM lParam ) noexcept;
+	[[nodiscard]] workbench::outline::OutlineWorkerStateSnapshot GetWorkbenchWorkerState() const noexcept;
 
 protected:
 	bool m_bInChangeLayout;
@@ -224,8 +238,14 @@ protected:
 private:
 	[[nodiscard]] bool UsesCompactPanelLayout() const noexcept { return m_bWorkbenchMode || IsDocking(); }
 	void ApplyWorkbenchAppearance() noexcept;
+	void DisarmWorkbenchRefreshTimer() noexcept;
 	void ObserveWorkbenchDocument( CEditView* view ) noexcept;
 	void CommitWorkbenchModel() noexcept;
+	[[nodiscard]] std::shared_ptr<const workbench::outline::OutlineDocumentSnapshot>
+		CaptureWorkbenchSnapshot( std::uint64_t* captureUs ) const;
+	void CommitWorkbenchParseResult(
+		std::unique_ptr<workbench::outline::OutlineWorkerResult> result ) noexcept;
+	void BuildWorkbenchClipboardText();
 
 	//	May 18, 2001 genta
 	/*!
@@ -269,6 +289,23 @@ private:
 	std::uint64_t m_workbenchNextDocumentIdentity = 0;
 	std::uint64_t m_workbenchModelGeneration = 0;
 	std::uint64_t m_workbenchReparseCount = 0;
+	workbench::outline::OutlineDocumentVersion m_workbenchRequestedVersion{};
+	std::uint64_t m_workbenchRequestedGeneration = 0;
+	std::uint64_t m_workbenchRequestStartUs = 0;
+	workbench::outline::OutlineRefreshScheduler m_workbenchRefreshScheduler;
+	workbench::outline::OutlineWorkerTerminal m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
+	workbench::outline::OutlinePhaseTimings m_workbenchLastTimings{};
+	std::unique_ptr<CFuncInfoArr> m_workbenchCommittedModel;
+	std::unique_ptr<workbench::outline::OutlineParserWorker> m_workbenchParser;
+	std::vector<HTREEITEM> m_workbenchTreeItems;
+	struct WorkbenchTreeLabel final {
+		std::wstring text;
+		int depth = 0;
+	};
+	std::map<HTREEITEM, WorkbenchTreeLabel> m_workbenchTreeLabels;
+	bool m_workbenchClipboardUsesGenericTree = false;
+	bool m_workbenchClipboardTagJump = false;
+	bool m_workbenchClipboardNoLabel = false;
 	int			m_workbenchAppearanceWidth = -1;
 	bool		m_workbenchAppearanceDirty = true;
 	bool		m_workbenchTreeContentDirty = true;

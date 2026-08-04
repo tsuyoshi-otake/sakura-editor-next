@@ -134,9 +134,9 @@ static bool C_IsOperator( wchar_t* szStr, int nLen	)
 
 	@date 2005.12.06 じゅうじ 最後の1文字しか見ないと2バイトコードの後半がバックスラッシュの場合に誤認する
 */
-static bool C_IsLineEsc(const wchar_t *s, int len)
+static bool C_IsLineEsc(const wchar_t *s, int len, bool bExtEol)
 {
-	if ( len > 0 && WCODE::IsLineDelimiter(s[len-1], GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol) ) len--;
+	if ( len > 0 && WCODE::IsLineDelimiter(s[len-1], bExtEol) ) len--;
 	if ( len > 0 && s[len-1] == L'\r' ) len--;
 
 	if ( len > 0 && s[len-1] == L'\\' ) {
@@ -181,7 +181,7 @@ class CCppPreprocessMng {
 public:
 	CCppPreprocessMng(void) = default;
 
-	CLogicInt ScanLine(const wchar_t*, CLogicInt);
+	CLogicInt ScanLine(const wchar_t*, CLogicInt, bool bExtEol);
 
 private:
 	bool m_ismultiline = false; //!< 複数行のディレクティブ
@@ -228,14 +228,12 @@ private:
 	@date 2007.12.13 じゅうじ : ifの直後にスペースがない場合の対応
 
 */
-CLogicInt CCppPreprocessMng::ScanLine( const wchar_t* str, CLogicInt _length )
+CLogicInt CCppPreprocessMng::ScanLine( const wchar_t* str, CLogicInt _length, bool bExtEol )
 {
 	int length=_length;
 
 	const wchar_t* lastptr = str + length;	//	処理文字列末尾
 	const wchar_t* p;	//	処理中の位置
-	bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
-
 	//	skip whitespace
 	for( p = str; C_IsSpace( *p, bExtEol ) && p < lastptr ; ++p )
 		;
@@ -243,7 +241,7 @@ CLogicInt CCppPreprocessMng::ScanLine( const wchar_t* str, CLogicInt _length )
 		return CLogicInt(length);	//	空行のため処理不要
 
 	if(m_ismultiline){ // 複数行のディレクティブは無視
-		m_ismultiline = C_IsLineEsc(str, length); // 行末が \ で終わっていないか
+		m_ismultiline = C_IsLineEsc(str, length, bExtEol); // 行末が \ で終わっていないか
 		return CLogicInt(length);
 	}
 
@@ -342,7 +340,7 @@ CLogicInt CCppPreprocessMng::ScanLine( const wchar_t* str, CLogicInt _length )
 		break;
 	case Directive_None:
 	default:
-		m_ismultiline = C_IsLineEsc(str, length); // 行末が \ で終わっていないか
+		m_ismultiline = C_IsLineEsc(str, length, bExtEol); // 行末が \ で終わっていないか
 	}
 
 	return CLogicInt(length);	//	基本的にプリプロセッサ指令は無視
@@ -490,23 +488,25 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 	nMode = 0;
 
 	// finalで無名ではない
-	auto is_final_context = [](const wchar_t* pszWord, const wchar_t* pszItemName) {
-		return wcscmp(L"final", pszWord) == 0 && wcscmp(LS(STR_OUTLINE_CPP_NONAME), pszItemName) != 0;
+	const wchar_t* const pszAnonymousName = GetCppAnonymousName();
+	const wchar_t* const pszDefinitionPosition = GetCppDefinitionPosition();
+	auto is_final_context = [pszAnonymousName](const wchar_t* pszWord, const wchar_t* pszItemName) {
+		return wcscmp(L"final", pszWord) == 0 && wcscmp(pszAnonymousName, pszItemName) != 0;
 	};
 	
 	//	Aug. 10, 2004 genta プリプロセス処理クラス
 	CCppPreprocessMng cCppPMng;
-	bool bExtEol = GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol;
+	bool bExtEol = IsExtEolEnabled();
 	
 	CLogicInt		nLineCount;
-	for( nLineCount = CLogicInt(0); nLineCount <  m_pcDocRef->m_cDocLineMgr.GetLineCount(); ++nLineCount ){
-		pLine = m_pcDocRef->m_cDocLineMgr.GetLine(nLineCount)->GetDocLineStrWithEOL(&nLineLen);
+	for( nLineCount = CLogicInt(0); nLineCount < GetLineCount() && !IsCancellationRequested(); ++nLineCount ){
+		pLine = GetLine(nLineCount, &nLineLen);
 
 		//	From Here Aug. 10, 2004 genta
 		//	プリプロセス処理
 		//	コメント中でなければプリプロセッサ指令を先に判定させる
 		if( 8 != nMode && 10 != nMode ){	/* chg 2005/12/6 じゅうじ 次の行が空白でもよい	*/
-			i = cCppPMng.ScanLine( pLine, nLineLen );
+			i = cCppPMng.ScanLine( pLine, nLineLen, bExtEol );
 		}
 		else {
 			i = CLogicInt(0);
@@ -518,6 +518,9 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 		DEBUG_TRACE(L"line:%ls", pLine);
 #endif
 		for( ; i < nLineLen; ++i ){
+			// A minified/generated file can contain a multi-megabyte physical line.
+			// Keep cancellation bounded without paying an atomic load per character.
+			if( (static_cast<int>(i) & 0x0fff) == 0 && IsCancellationRequested() ) return;
 #ifdef TRACE_OUTLINE
 			DEBUG_TRACE(L"%2d [%lc] %d %x %d %d %d wd[%ls] pre[%ls] tmp[%ls] til[%ls] %d\n", int((Int)i), pLine[i], nMode, nMode2,
 				nNestLevel_global, nNestLevel_func, nNestLevel_fparam, szWord, szWordPrev, szTemplateName, szItemName, nWordIdx );
@@ -541,7 +544,7 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 			// 2003/06/24 zenryaku
 			else if( 10 == nMode)
 			{
-				if(!C_IsLineEsc(pLine, nLineLen)){
+				if(!C_IsLineEsc(pLine, nLineLen, bExtEol)){
 					nMode = 0;
 				}
 				i = nLineLen;
@@ -664,7 +667,7 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 						{
 							nMode2 = M2_NAMESPACE_SAVE;
 							nItemLine = nLineCount + CLogicInt(1);
-							wcscpy(szItemName,LS(STR_OUTLINE_CPP_NONAME));
+							wcscpy(szItemName, pszAnonymousName);
 						}
 					}
 					/*else*/ if( nMode2 == M2_FUNC_NAME_END )	// 2010.07.08 ryoji 上で条件変更したので行頭の else を除去
@@ -830,7 +833,7 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 						bAddFunction = true;
 					}
 					int nItemNameLen = 0;
-					auto nLenDefPos = int(wcslen(LS(STR_OUTLINE_CPP_DEFPOS)));
+						auto nLenDefPos = int(wcslen(pszDefinitionPosition));
 					if( nNestLevel_func !=0 || (szWordPrev[0] == L'=' && szWordPrev[1] == L'\0') || nMode2 == M2_AFTER_EQUAL )
 						++nNestLevel_func;
 					else if(
@@ -857,7 +860,7 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 							++ nNestLevel_global;
 							nNamespaceLen[nNestLevel_global] = nNamespaceLen[nNestLevel_global-1] + nItemNameLen;
 							if( nItemFuncId == FL_OBJ_NAMESPACE )
-								wcscpy(&szNamespace[nNamespaceLen[nNestLevel_global]], LS(STR_OUTLINE_CPP_DEFPOS));
+								wcscpy(&szNamespace[nNamespaceLen[nNestLevel_global]], pszDefinitionPosition);
 							else
 							{
 								szNamespace[nNamespaceLen[nNestLevel_global]] = L'\0';
@@ -872,15 +875,19 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 						  →
 						  レイアウト位置(行頭からの表示桁位置、折り返しあり行位置)
 						*/
-						CLayoutPoint ptPosXY;
-						m_pcDocRef->m_cLayoutMgr.LogicToLayout(
+						CLayoutPoint ptPosXY(0, 0);
+						const bool hasLayoutPosition = TryLogicToLayout(
 							CLogicPoint(0, nItemLine - 1),
 							&ptPosXY
 						);
 #ifdef TRACE_OUTLINE
 						DEBUG_TRACE( L"AppendData %d %ls\n", nItemLine, szNamespace );
 #endif
-						pcFuncInfoArr->AppendData( nItemLine, ptPosXY.GetY2() + CLayoutInt(1) , szNamespace, nItemFuncId);
+						if( hasLayoutPosition ){
+							pcFuncInfoArr->AppendData( nItemLine, ptPosXY.GetY2() + CLayoutInt(1), szNamespace, nItemFuncId);
+						}else{
+							pcFuncInfoArr->AppendDataLogical( nItemLine, szNamespace, nItemFuncId);
+						}
 						bDefinedTypedef = false;
 						nItemLine = -1;
 						//	Jan. 30, 2005 genta M2_KR_FUNC 追加
@@ -1106,15 +1113,19 @@ void CDocOutline::MakeFuncList_C( CFuncInfoArr* pcFuncInfoArr ,EOutlineType& nOu
 						  →
 						  レイアウト位置(行頭からの表示桁位置、折り返しあり行位置)
 						*/
-						CLayoutPoint ptPosXY;
-						m_pcDocRef->m_cLayoutMgr.LogicToLayout(
+						CLayoutPoint ptPosXY(0, 0);
+						const bool hasLayoutPosition = TryLogicToLayout(
 							CLogicPoint(0, nItemLine - 1),
 							&ptPosXY
 						);
 #ifdef TRACE_OUTLINE
 						DEBUG_TRACE( L"AppendData %d %ls\n", nItemLine, szNamespace );
 #endif
-						pcFuncInfoArr->AppendData( nItemLine, ptPosXY.GetY2() + CLayoutInt(1), szNamespace, nItemFuncId);
+						if( hasLayoutPosition ){
+							pcFuncInfoArr->AppendData( nItemLine, ptPosXY.GetY2() + CLayoutInt(1), szNamespace, nItemFuncId);
+						}else{
+							pcFuncInfoArr->AppendDataLogical( nItemLine, szNamespace, nItemFuncId);
+						}
 					}
 					nItemLine = -1;
 					szWordPrev[0] = L'\0';

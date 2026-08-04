@@ -48,6 +48,8 @@ public:
 	void AppendData( CLogicInt nFuncLineCRLF, CLayoutInt nFuncLineLAYOUT, const WCHAR* pszFuncName,
 					 int nInfo, int nDepth = 0 );	/* 配列の最後にデータを追加する 2002.04.01 YAZAKI 深さ導入*/
 	void AppendData( CLogicInt nLogicLine, CLogicInt nLogicCol, CLayoutInt nLayoutLine, CLayoutInt nLayoutCol, const WCHAR*, const WCHAR*, int, int nDepth = 0 );	/* 配列の最後にデータを追加する 2010.03.01 syat 桁導入*/
+	//! Append an item when the parser intentionally has no layout mapping.
+	void AppendDataLogical( CLogicInt nLogicLine, const WCHAR*, int nInfo, int nDepth = 0 );
 	int	GetNum( void ){	return static_cast<int>(m_funcInfoArr.size()); }	/* 配列要素数を返す */
 	void Empty( void );
 	void DUMP( void );

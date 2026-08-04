@@ -79,6 +79,25 @@ void CFuncInfoArr::AppendData(
 	return;
 }
 
+void CFuncInfoArr::AppendDataLogical(
+	CLogicInt nLogicLine,
+	const WCHAR* pszFuncName,
+	int nInfo,
+	int nDepth )
+{
+	AppendData(
+		nLogicLine,
+		// The legacy five-argument parser overload uses column 1.  Keep that
+		// logical position when layout conversion is intentionally deferred.
+		CLogicInt(1),
+		CLayoutInt(0),
+		CLayoutInt(0),
+		pszFuncName,
+		nullptr,
+		nInfo,
+		nDepth );
+}
+
 void CFuncInfoArr::AppendData(
 	CLogicInt		nFuncLineCRLF,		//!< 関数のある行(CRLF単位)
 	CLayoutInt		nFuncLineLAYOUT,	//!< 関数のある行(折り返し単位)

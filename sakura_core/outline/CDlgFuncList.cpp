@@ -26,8 +26,10 @@
 #include "StdAfx.h"
 #include <cstddef>
 #include <cstdint>
+#include <chrono>
 #include <cstring>
 #include <limits>
+#include <algorithm>
 #include <limits.h>
 #include "outline/CDlgFuncList.h"
 #include "outline/CFuncInfo.h"
@@ -71,6 +73,29 @@
 #define VIEWTYPE_TREE	1
 
 namespace {
+
+constexpr UINT_PTR kWorkbenchRefreshTimerIdBase = 0x10000;
+constexpr UINT kWorkbenchRefreshDebounceMs = 75;
+
+[[nodiscard]] constexpr UINT_PTR WorkbenchRefreshTimerId( std::uint64_t token ) noexcept
+{
+	if( token == 0
+		|| token > static_cast<std::uint64_t>((std::numeric_limits<UINT_PTR>::max)())
+			- kWorkbenchRefreshTimerIdBase ) return 0;
+	return kWorkbenchRefreshTimerIdBase + static_cast<UINT_PTR>(token);
+}
+
+[[nodiscard]] constexpr std::uint64_t WorkbenchRefreshTimerToken( UINT_PTR timerId ) noexcept
+{
+	return timerId > kWorkbenchRefreshTimerIdBase
+		? static_cast<std::uint64_t>(timerId - kWorkbenchRefreshTimerIdBase) : 0;
+}
+
+[[nodiscard]] std::uint64_t WorkbenchNowUs() noexcept
+{
+	return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
 class DialogTemplateCursor final {
 public:
@@ -376,6 +401,7 @@ CDlgFuncList::CDlgFuncList() : CDialog(true)
 	m_ptDefaultSize.x = -1;
 	m_ptDefaultSize.y = -1;
 	m_bDummyLParamMode = false;
+	m_workbenchCommittedModel = std::make_unique<CFuncInfoArr>();
 }
 
 void CDlgFuncList::SetWorkbenchParent( HWND parent ) noexcept
@@ -392,14 +418,38 @@ void CDlgFuncList::SetWorkbenchMode( bool enabled ) noexcept
 	}
 }
 
+void CDlgFuncList::DisarmWorkbenchRefreshTimer() noexcept
+{
+	m_workbenchRefreshScheduler.Disarm([this](std::uint64_t token) {
+		const UINT_PTR timerId = WorkbenchRefreshTimerId(token);
+		if( GetHwnd() != nullptr && timerId != 0 ) ::KillTimer(GetHwnd(), timerId);
+	});
+}
+
 void CDlgFuncList::ObserveWorkbenchDocument( CEditView* view ) noexcept
 {
 	CEditDoc* const document = view != nullptr ? view->GetDocument() : nullptr;
 	if( document == m_workbenchDocument ) return;
 
+	// A document switch invalidates both queued UI debounce callbacks and the
+	// worker's result fence before the new identity is published.
+	StopWorkbenchOutlineWorker();
+	if( IsWorkbenchMode() && GetHwnd() != nullptr ) {
+		// Do not leave the previous document's handles selectable while the new
+		// document is being parsed.  The model owner is retained for rollback,
+		// but all native actions are disabled until the new version commits.
+		TreeView_DeleteAllItems(GetItemHwnd(IDC_TREE_FL));
+		ListView_DeleteAllItems(GetItemHwnd(IDC_LIST_FL));
+		::EnableWindow(GetItemHwnd(IDC_BUTTON_COPY), FALSE);
+		m_workbenchTreeItems.clear();
+		m_workbenchTreeLabels.clear();
+		m_cmemClipText.SetString(L"");
+	}
 	m_workbenchDocument = document;
 	m_workbenchDocumentVersion = {};
 	m_workbenchModelVersion = {};
+	m_workbenchRequestedVersion = {};
+	m_workbenchRequestedGeneration = 0;
 	m_bFuncInfoArrIsUpToDate = false;
 	m_workbenchTreeContentDirty = true;
 	if( document == nullptr ) return;
@@ -431,6 +481,383 @@ void CDlgFuncList::CommitWorkbenchModel() noexcept
 	}
 	if( m_workbenchReparseCount != std::numeric_limits<std::uint64_t>::max() ) {
 		++m_workbenchReparseCount;
+	}
+}
+
+bool CDlgFuncList::IsAsyncWorkbenchOutlineType( int outlineType ) noexcept
+{
+	return outlineType == OUTLINE_C || outlineType == OUTLINE_C_CPP
+		|| outlineType == OUTLINE_CPP || outlineType == OUTLINE_JAVA;
+}
+
+std::shared_ptr<const workbench::outline::OutlineDocumentSnapshot>
+CDlgFuncList::CaptureWorkbenchSnapshot( std::uint64_t* captureUs ) const
+{
+	const auto begin = std::chrono::steady_clock::now();
+	const CEditDoc* const document = m_workbenchDocument;
+	if( document == nullptr || !m_workbenchDocumentVersion.IsValid() ) return nullptr;
+
+	auto snapshot = std::make_shared<workbench::outline::OutlineDocumentSnapshot>();
+	snapshot->documentVersion = m_workbenchDocumentVersion;
+	const wchar_t* const filePath = document->m_cDocFile.GetFilePath();
+	if( filePath != nullptr ) snapshot->filePath = filePath;
+	snapshot->extendedLineDelimiters = m_pShareData->m_Common.m_sEdit.m_bEnableExtEol != FALSE;
+	// Copy the small parser presentation values once.  The worker must not call
+	// LS() or read shared settings after this boundary has been published.
+	snapshot->cppAnonymousName = LS(STR_OUTLINE_CPP_NONAME);
+	snapshot->cppDefinitionPosition = LS(STR_OUTLINE_CPP_DEFPOS);
+	snapshot->javaDefinitionPosition = LS(STR_OUTLINE_JAVA_DEFPOS);
+	for( const auto [info, resource] : {
+		std::pair{ FL_OBJ_DECLARE, STR_DLGFNCLST_APND_DECLARE },
+		std::pair{ FL_OBJ_CLASS, STR_DLGFNCLST_APND_CLASS },
+		std::pair{ FL_OBJ_STRUCT, STR_DLGFNCLST_APND_STRUCT },
+		std::pair{ FL_OBJ_ENUM, STR_DLGFNCLST_APND_ENUM },
+		std::pair{ FL_OBJ_UNION, STR_DLGFNCLST_APND_UNION },
+		std::pair{ FL_OBJ_NAMESPACE, STR_DLGFNCLST_APND_NAMESPACE },
+		std::pair{ FL_OBJ_INTERFACE, STR_DLGFNCLST_APND_INTERFACE },
+		std::pair{ FL_OBJ_GLOBAL, STR_DLGFNCLST_APND_GLOBAL }
+	} ) {
+		snapshot->appendText.emplace(info, LS(resource));
+	}
+
+	const CLogicInt lineCount = document->m_cDocLineMgr.GetLineCount();
+	if( lineCount < CLogicInt(0)
+		|| lineCount > CLogicInt((std::numeric_limits<int>::max)())
+		|| static_cast<std::size_t>(lineCount) > snapshot->lineSpans.max_size() ) return nullptr;
+	snapshot->lineSpans.reserve(static_cast<std::size_t>(lineCount));
+	// Walk the intrusive line chain once.  GetLine(line) is optimized for nearby
+	// accesses, but still contains direction/cache selection on every call; the
+	// chain makes the capture cost unambiguously O(lines + text) with one branch
+	// per line and does not perturb CDocLineMgr's mutable lookup cursor.
+	const CDocLine* docLine = document->m_cDocLineMgr.GetDocLineTop();
+	for( CLogicInt line = CLogicInt(0); line < lineCount; ++line ) {
+		if( docLine == nullptr ) return nullptr;
+		CLogicInt length = CLogicInt(0);
+		const auto* const text = docLine->GetDocLineStrWithEOL(&length);
+		if( length < CLogicInt(0) ) return nullptr;
+		const auto lineLength = text != nullptr && length > CLogicInt(0)
+			? static_cast<std::size_t>(length) : std::size_t(0);
+		if( text == nullptr && length > CLogicInt(0) ) return nullptr;
+		if( !snapshot->AppendLine(text != nullptr
+			? std::wstring_view(text, lineLength) : std::wstring_view()) ) return nullptr;
+		docLine = docLine->GetNextLine();
+	}
+	if( captureUs != nullptr ) {
+		*captureUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - begin).count());
+	}
+	return snapshot;
+}
+
+bool CDlgFuncList::RequestWorkbenchOutline( int outlineType, bool forceRefresh )
+{
+	if( !IsWorkbenchMode() || !IsAsyncWorkbenchOutlineType(outlineType) || GetHwnd() == nullptr ) return false;
+	ObserveWorkbenchDocument( reinterpret_cast<CEditView*>(m_lParam) );
+	if( !m_workbenchDocumentVersion.IsValid() ) {
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+		m_workbenchLastTimings = {};
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+		return false;
+	}
+	// Ordinary activation is allowed to reuse either the already-submitted
+	// generation or the one quiet-period callback.  This check intentionally
+	// precedes snapshot capture: the snapshot is O(total document text).
+	if( m_workbenchRefreshScheduler.CanReuse(
+		forceRefresh,
+		m_nOutlineType,
+		outlineType,
+		m_workbenchRequestedVersion,
+		m_workbenchRequestedGeneration,
+		m_workbenchDocumentVersion ) ) return true;
+	DisarmWorkbenchRefreshTimer();
+	if( !forceRefresh && m_nOutlineType == outlineType && HasCurrentWorkbenchModel() ) return true;
+
+	const std::uint64_t captureStartUs = WorkbenchNowUs();
+	std::uint64_t captureUs = 0;
+	const auto snapshot = CaptureWorkbenchSnapshot(&captureUs);
+	if( snapshot == nullptr ) {
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+		m_workbenchLastTimings = {};
+		m_workbenchLastTimings.snapshotCaptureUs = captureUs;
+		m_workbenchLastTimings.totalUs = captureUs;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+		return false;
+	}
+	if( m_workbenchParser == nullptr ) m_workbenchParser = std::make_unique<workbench::outline::OutlineParserWorker>();
+	m_workbenchParser->SetNotificationWindow(GetHwnd(), true);
+	const std::uint64_t previousGeneration = m_workbenchRequestedGeneration;
+	const std::uint64_t previousRequestStartUs = m_workbenchRequestStartUs;
+	const auto submission = m_workbenchParser->Submit(snapshot, outlineType, outlineType, captureUs);
+	if( (submission.status == workbench::outline::OutlineWorkerRequestStatus::ActiveDeduplicated
+		|| submission.status == workbench::outline::OutlineWorkerRequestStatus::PendingDeduplicated)
+		&& previousGeneration != 0 && submission.generation == previousGeneration ) {
+		// Submit confirms the same generation under its mutex.  Keep the original
+		// capture-start timestamp and request version for end-to-end timing.
+		m_workbenchRequestStartUs = previousRequestStartUs;
+		return true;
+	}
+	if( submission.status == workbench::outline::OutlineWorkerRequestStatus::GenerationExhausted
+		|| submission.status == workbench::outline::OutlineWorkerRequestStatus::Closed
+		|| submission.status == workbench::outline::OutlineWorkerRequestStatus::InvalidSnapshot
+		|| submission.generation == 0 ) {
+		// Generation exhaustion and all other schedule failures are explicit UI
+		// terminals.  They never leave a request marker that could cause a retry
+		// storm; a later explicit reload may start a new lifecycle if possible.
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+		m_workbenchLastTimings = {};
+		m_workbenchLastTimings.snapshotCaptureUs = captureUs;
+		m_workbenchLastTimings.totalUs = WorkbenchNowUs() - captureStartUs;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+		return false;
+	}
+
+	m_nOutlineType = outlineType;
+	m_nListType = outlineType;
+	m_workbenchRequestedVersion = snapshot->documentVersion;
+	m_workbenchRequestedGeneration = submission.generation;
+	m_workbenchRequestStartUs = captureStartUs;
+	m_bFuncInfoArrIsUpToDate = false;
+	return true;
+}
+
+void CDlgFuncList::StopWorkbenchOutlineWorker() noexcept
+{
+	m_workbenchRefreshScheduler.Stop([this](std::uint64_t token) {
+		const UINT_PTR timerId = WorkbenchRefreshTimerId(token);
+		if( GetHwnd() != nullptr && timerId != 0 ) ::KillTimer(GetHwnd(), timerId);
+	});
+	if( m_workbenchParser == nullptr ) {
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
+		m_workbenchLastTimings = {};
+		m_bFuncInfoArrIsUpToDate = false;
+		return;
+	}
+	m_workbenchParser->SetNotificationWindow(nullptr, false);
+	m_workbenchParser->Close();
+	m_workbenchParser.reset();
+	m_workbenchRequestedVersion = {};
+	m_workbenchRequestedGeneration = 0;
+	m_workbenchRequestStartUs = 0;
+	m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
+	m_workbenchLastTimings = {};
+	m_bFuncInfoArrIsUpToDate = false;
+}
+
+workbench::outline::OutlineWorkerStateSnapshot CDlgFuncList::GetWorkbenchWorkerState() const noexcept
+{
+	return m_workbenchParser != nullptr
+		? m_workbenchParser->GetStateSnapshot()
+		: workbench::outline::OutlineWorkerStateSnapshot{};
+}
+
+void CDlgFuncList::HandleWorkbenchWorkerResult( LPARAM lParam ) noexcept
+{
+	if( m_workbenchParser == nullptr ) return;
+	auto result = m_workbenchParser->TakePendingResult(
+		reinterpret_cast<workbench::outline::OutlineWorkerResult*>(lParam));
+	if( result == nullptr ) return;
+	CommitWorkbenchParseResult(std::move(result));
+}
+
+void CDlgFuncList::CommitWorkbenchParseResult(
+	std::unique_ptr<workbench::outline::OutlineWorkerResult> result ) noexcept
+{
+	if( result == nullptr || !IsWorkbenchMode() ) return;
+	if( result->generation == 0 ) {
+		// Generation zero is an invalid sentinel.  Do not let a malformed or
+		// late notification consume a newer request marker.
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Superseded;
+		m_workbenchLastTimings = result->parse.timings;
+		return;
+	}
+	if( result->generation != m_workbenchRequestedGeneration ) {
+		// Out-of-order completion is a terminal stale result for this delivery,
+		// but the newer request remains the owner of the in-flight markers.
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Superseded;
+		m_workbenchLastTimings = result->parse.timings;
+		return;
+	}
+
+	auto finishSuperseded = [&]() noexcept {
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Superseded;
+		m_workbenchLastTimings = result->parse.timings;
+		m_workbenchLastTimings.totalUs = m_workbenchRequestStartUs != 0
+			? WorkbenchNowUs() - m_workbenchRequestStartUs : result->parse.timings.totalUs;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+	};
+
+	CEditView* const view = reinterpret_cast<CEditView*>(m_lParam);
+	CEditDoc* const document = view != nullptr ? view->GetDocument() : nullptr;
+	if( document == nullptr ) {
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
+		m_workbenchLastTimings = result->parse.timings;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+		return;
+	}
+	if( GetWorkbenchDocumentVersion() != result->parse.documentVersion ) {
+		finishSuperseded();
+		return;
+	}
+
+	auto finishFailure = [&]() noexcept {
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+		m_workbenchLastTimings = result->parse.timings;
+		m_workbenchLastTimings.totalUs = m_workbenchRequestStartUs != 0
+			? WorkbenchNowUs() - m_workbenchRequestStartUs : result->parse.timings.totalUs;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+	};
+
+	if( result->terminal == workbench::outline::OutlineWorkerTerminal::Failed ) {
+		// A current failure is observable and terminal, while the previously
+		// committed model remains intact.  Older failures are rejected above.
+		finishFailure();
+		return;
+	}
+	if( result->terminal == workbench::outline::OutlineWorkerTerminal::Closed ) {
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
+		m_workbenchLastTimings = result->parse.timings;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+		return;
+	}
+	if( result->terminal == workbench::outline::OutlineWorkerTerminal::Cancelled
+		|| result->terminal == workbench::outline::OutlineWorkerTerminal::Superseded ) {
+		finishSuperseded();
+		return;
+	}
+	if( result->terminal != workbench::outline::OutlineWorkerTerminal::Parsed ) {
+		finishFailure();
+		return;
+	}
+
+	std::unique_ptr<CFuncInfoArr> rollbackModel;
+	int rollbackOutlineType = m_nOutlineType;
+	int rollbackListType = m_nListType;
+	try {
+		auto nextModel = std::make_unique<CFuncInfoArr>();
+		nextModel->m_szFilePath = result->parse.filePath.c_str();
+		const auto layoutBegin = std::chrono::steady_clock::now();
+		for( const auto& symbol : result->parse.symbols ) {
+			const CLogicInt logicalLine = CLogicInt(std::max(0, symbol.logicalLine));
+			const CLogicInt logicalColumn = CLogicInt(std::max(0, symbol.logicalColumn));
+			CLayoutPoint layout(0, 0);
+			document->m_cLayoutMgr.LogicToLayout(
+				CLogicPoint(logicalColumn > 0 ? logicalColumn - CLogicInt(1) : CLogicInt(0),
+					logicalLine > 0 ? logicalLine - CLogicInt(1) : CLogicInt(0)),
+				&layout);
+			const wchar_t* const fileName = symbol.fileName.empty() ? nullptr : symbol.fileName.c_str();
+			nextModel->AppendData(
+				logicalLine,
+				logicalColumn,
+				layout.GetY2() + CLayoutInt(1),
+				layout.GetX2() + CLayoutInt(1),
+				symbol.name.c_str(),
+				fileName,
+				symbol.info,
+				symbol.depth);
+		}
+		result->parse.timings.layoutProjectionUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - layoutBegin).count());
+		for( const auto& [info, text] : result->parse.appendText ) {
+			nextModel->SetAppendText(info, text, true);
+		}
+		if( GetWorkbenchDocumentVersion() != result->parse.documentVersion ) {
+			finishSuperseded();
+			return;
+		}
+
+		rollbackOutlineType = m_nOutlineType;
+		rollbackListType = m_nListType;
+		rollbackModel = std::move(m_workbenchCommittedModel);
+		CFuncInfoArr* const oldModel = rollbackModel.get();
+		m_pcFuncInfoArr = nextModel.get();
+		m_nOutlineType = result->parse.outlineType;
+		m_nListType = result->parse.listType;
+		m_bFuncInfoArrIsUpToDate = false;
+
+		m_workbenchLastTimings = {};
+		const auto commitBegin = std::chrono::steady_clock::now();
+		SetData();
+		result->parse.timings.nativeCommitUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - commitBegin).count());
+		result->parse.timings.lineMarkProjectionUs = m_workbenchLastTimings.lineMarkProjectionUs;
+		result->parse.timings.nativeTreeBuildUs = m_workbenchLastTimings.nativeTreeBuildUs;
+		result->parse.timings.appearanceUs = m_workbenchLastTimings.appearanceUs;
+		result->parse.timings.expansionUs = m_workbenchLastTimings.expansionUs;
+
+		if( GetWorkbenchDocumentVersion() != result->parse.documentVersion ) {
+			// Rebuild the old projection before returning so a re-entrant document
+			// change cannot leave a stale tree paired with the old model.
+			m_pcFuncInfoArr = oldModel;
+			m_workbenchCommittedModel = std::move(rollbackModel);
+			m_nOutlineType = rollbackOutlineType;
+			m_nListType = rollbackListType;
+			m_bFuncInfoArrIsUpToDate = false;
+			try { SetData(); } catch( ... ) {}
+			finishSuperseded();
+			return;
+		}
+
+		m_workbenchCommittedModel = std::move(nextModel);
+		m_pcFuncInfoArr = m_workbenchCommittedModel.get();
+		rollbackModel.reset();
+		m_bFuncInfoArrIsUpToDate = true;
+		CommitWorkbenchModel();
+
+		const auto selectionBegin = std::chrono::steady_clock::now();
+		m_nCurLine = view->GetCaret().GetCaretLayoutPos().GetY2() + CLayoutInt(1);
+		m_nCurCol = view->GetCaret().GetCaretLayoutPos().GetX2() + CLayoutInt(1);
+		int selection = -1;
+		if( GetFuncInfoIndex(m_nCurLine, m_nCurCol, &selection) ) SetItemSelection(selection, false);
+		result->parse.timings.selectionUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - selectionBegin).count());
+		result->parse.timings.totalUs = m_workbenchRequestStartUs != 0
+			? WorkbenchNowUs() - m_workbenchRequestStartUs
+			: result->parse.timings.snapshotCaptureUs + result->parse.timings.queueWaitUs
+				+ result->parse.timings.parserUs + result->parse.timings.dtoConstructionUs
+				+ result->parse.timings.layoutProjectionUs + result->parse.timings.nativeCommitUs
+				+ result->parse.timings.selectionUs;
+		m_workbenchLastTimings = result->parse.timings;
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Parsed;
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+	}catch( ... ) {
+		// SetData is run against the temporary model.  On any allocation/native
+		// failure, keep the old owner and expose one Failed terminal; no retry is
+		// scheduled implicitly.
+		if( rollbackModel != nullptr ) {
+			m_workbenchCommittedModel = std::move(rollbackModel);
+			m_pcFuncInfoArr = m_workbenchCommittedModel.get();
+			m_nOutlineType = rollbackOutlineType;
+			m_nListType = rollbackListType;
+			m_bFuncInfoArrIsUpToDate = false;
+			try { SetData(); } catch( ... ) {}
+		}
+		finishFailure();
 	}
 }
 
@@ -521,11 +948,32 @@ void CDlgFuncList::SetWorkbenchAppearance(
 	if( m_workbenchAppearanceDirty || m_workbenchTreeContentDirty ) ApplyWorkbenchAppearance();
 }
 
+struct WorkbenchTreeTextMetrics final {
+	HWND window = nullptr;
+	HDC dc = nullptr;
+	HGDIOBJ oldFont = nullptr;
+	int clientWidth = 0;
+	int indent = 0;
+	int imageWidth = 0;
+	int scrollWidth = 0;
+	int ellipsisWidth = 0;
+	~WorkbenchTreeTextMetrics() noexcept
+	{
+		if( dc != nullptr ) {
+			if( oldFont != nullptr ) (void)::SelectObject(dc, oldFont);
+			if( window != nullptr ) ::ReleaseDC(window, dc);
+		}
+	}
+};
+
+static int TreeDummylParamToFuncInfoIndex(const std::vector<int>& vec, LPARAM lParam);
+
 static std::wstring CompactWorkbenchTreeText(
-	HWND hwndTree, const wchar_t* text, int depth, HFONT fontOverride );
+	const WorkbenchTreeTextMetrics& metrics, const wchar_t* text, int depth );
 
 void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 {
+	const auto appearanceBegin = std::chrono::steady_clock::now();
 	if( !IsWorkbenchMode() || GetHwnd() == nullptr ) return;
 	if( !m_workbenchAppearanceDirty && !m_workbenchTreeContentDirty ) return;
 	const bool updateTreeContent = m_workbenchTreeContentDirty;
@@ -552,6 +1000,29 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 		TreeView_SetImageList( hwndTree, m_workbenchSymbolImages, TVSIL_NORMAL );
 
 		if( updateTreeContent ){
+			WorkbenchTreeTextMetrics metrics;
+			metrics.window = hwndTree;
+			RECT client{};
+			if( ::GetClientRect(hwndTree, &client) ) {
+				metrics.clientWidth = client.right - client.left;
+				metrics.indent = static_cast<int>(TreeView_GetIndent(hwndTree));
+				if( const HIMAGELIST images = TreeView_GetImageList(hwndTree, TVSIL_NORMAL); images != nullptr ) {
+					int imageHeight = 0;
+					(void)::ImageList_GetIconSize(images, &metrics.imageWidth, &imageHeight);
+				}
+				metrics.scrollWidth = ::GetSystemMetrics(SM_CXVSCROLL) + 6;
+				metrics.dc = ::GetDC(hwndTree);
+				if( metrics.dc != nullptr ) {
+					const HFONT font = m_workbenchFont != nullptr
+						? m_workbenchFont
+						: reinterpret_cast<HFONT>(::SendMessageW(hwndTree, WM_GETFONT, 0, 0));
+					if( font != nullptr ) metrics.oldFont = ::SelectObject(metrics.dc, font);
+					SIZE ellipsis{};
+					if( ::GetTextExtentPoint32W(metrics.dc, L"...", 3, &ellipsis) ) {
+						metrics.ellipsisWidth = ellipsis.cx;
+					}
+				}
+			}
 			std::vector<HTREEITEM> pending;
 			if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
 			while( !pending.empty() ){
@@ -563,13 +1034,20 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 				(void)TreeView_GetItem( hwndTree, &source );
 				std::wstring compactText;
 				const CFuncInfo* info = nullptr;
-				if( !m_bDummyLParamMode && m_pcFuncInfoArr != nullptr
-					&& source.lParam >= 0 && source.lParam < m_pcFuncInfoArr->GetNum() ){
-					info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(source.lParam));
-					if( info != nullptr ){
-						compactText = CompactWorkbenchTreeText(
-							hwndTree, info->m_cmemFuncName.GetStringPtr(), info->m_nDepth, m_workbenchFont );
-					}
+				int modelIndex = -1;
+				if( source.lParam >= 0 ) {
+					modelIndex = m_bDummyLParamMode
+						? TreeDummylParamToFuncInfoIndex(m_vecDummylParams, source.lParam)
+						: static_cast<int>(source.lParam);
+				}
+				if( m_pcFuncInfoArr != nullptr
+					&& modelIndex >= 0 && modelIndex < m_pcFuncInfoArr->GetNum() ){
+					info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(modelIndex));
+				}
+				const auto label = m_workbenchTreeLabels.find(itemHandle);
+				if( label != m_workbenchTreeLabels.end() ) {
+					compactText = CompactWorkbenchTreeText(
+						metrics, label->second.text.c_str(), label->second.depth );
 				}
 				TVITEMW item{};
 				item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
@@ -616,6 +1094,8 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 	m_workbenchTreeContentDirty = false;
 	::RedrawWindow( GetHwnd(), nullptr, nullptr,
 		RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_NOINTERNALPAINT );
+	m_workbenchLastTimings.appearanceUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+		std::chrono::steady_clock::now() - appearanceBegin).count());
 }
 
 /*!
@@ -625,6 +1105,10 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 */
 INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM lParam )
 {
+	if( wMsg == workbench::outline::OutlineParserWorker::kWorkerResultMessage ) {
+		HandleWorkbenchWorkerResult(lParam);
+		return 0;
+	}
 	INT_PTR result;
 	result = CDialog::DispatchEvent( hWnd, wMsg, wParam, lParam );
 
@@ -730,6 +1214,58 @@ INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM
 	return result;
 }
 
+void CDlgFuncList::BuildWorkbenchClipboardText()
+{
+	if( !IsWorkbenchMode() || m_pcFuncInfoArr == nullptr ) return;
+	m_cmemClipText.SetString(L"");
+	if( !HasCurrentWorkbenchModel() ) return;
+	if( m_workbenchClipboardUsesGenericTree ) {
+		// SetTree's legacy format is intentionally retained for synchronous
+		// workbench/plugin analyzers.  The async C++/Java path below uses the
+		// historical SetTreeJava format instead.
+		for( int index = 0; index < m_pcFuncInfoArr->GetNum(); ++index ) {
+			const CFuncInfo* const info = m_pcFuncInfoArr->GetAt(index);
+			if( info == nullptr || !info->IsAddClipText() ) continue;
+			CNativeW text;
+			if( m_workbenchClipboardTagJump ) {
+				const WCHAR* fileName = info->m_cmemFileName.GetStringPtr();
+				if( fileName == nullptr ) fileName = m_pcFuncInfoArr->m_szFilePath;
+				text.AppendString(fileName);
+				if( info->m_nFuncLineCRLF > 0 ) {
+					WCHAR line[32];
+					auto_sprintf(line, L"(%d,%d): ", info->m_nFuncLineCRLF, info->m_nFuncColCRLF);
+					text.AppendString(line);
+				}
+			}
+			if( !m_workbenchClipboardNoLabel ) {
+				for( int depth = 0; depth < info->m_nDepth; ++depth ) text.AppendString(L"  ");
+				text.AppendString(L" ");
+				text.AppendNativeData(info->m_cmemFuncName);
+			}
+			text.AppendString(L"\r\n");
+			m_cmemClipText.AppendNativeData(text);
+		}
+		return;
+	}
+	for( int index = 0; index < m_pcFuncInfoArr->GetNum(); ++index ) {
+		const CFuncInfo* const info = m_pcFuncInfoArr->GetAt(index);
+		if( info == nullptr ) continue;
+		WCHAR prefix[2048];
+		auto_sprintf(
+			prefix,
+			L"%s(%d,%d): ",
+			m_pcFuncInfoArr->m_szFilePath.c_str(),
+			info->m_nFuncLineCRLF,
+			info->m_nFuncColCRLF );
+		m_cmemClipText.AppendString(prefix);
+		m_cmemClipText.AppendNativeData(info->m_cmemFuncName);
+		if( info->m_nInfo == FL_OBJ_DECLARE ) {
+			m_cmemClipText.AppendString(m_pcFuncInfoArr->GetAppendText(FL_OBJ_DECLARE).c_str());
+		}
+		m_cmemClipText.AppendString(L"\r\n");
+	}
+}
+
 /* モードレスダイアログの表示 */
 /*
  * @note 2011.06.25 syat nOutlineTypeを追加
@@ -751,8 +1287,14 @@ HWND CDlgFuncList::DoModeless(
 	CEditView* pcEditView=(CEditView*)lParam;
 	if( !pcEditView ) return nullptr;
 	ObserveWorkbenchDocument( pcEditView );
-	m_pcFuncInfoArr = pcFuncInfoArr;	/* 関数情報配列 */
-	m_bFuncInfoArrIsUpToDate = true;
+	if( IsWorkbenchMode() && pcFuncInfoArr == nullptr ) {
+		if( m_workbenchCommittedModel == nullptr ) m_workbenchCommittedModel = std::make_unique<CFuncInfoArr>();
+		m_pcFuncInfoArr = m_workbenchCommittedModel.get();
+		m_bFuncInfoArrIsUpToDate = false;
+	}else{
+		m_pcFuncInfoArr = pcFuncInfoArr;	/* 関数情報配列 */
+		m_bFuncInfoArrIsUpToDate = true;
+	}
 	m_nCurLine = nCurLine;				/* 現在行 */
 	m_nCurCol = nCurCol;				/* 現在桁 */
 	m_nOutlineType = nOutlineType;		/* アウトライン解析の種別 */
@@ -811,7 +1353,7 @@ HWND CDlgFuncList::DoModeless(
 	}else{
 		hwndRet = CDialog::DoModeless( hInstance, MyGetAncestor(hwndParent, GA_ROOT), IDD_FUNCLIST, lParam, SW_SHOW );
 	}
-	if( hwndRet != nullptr ) CommitWorkbenchModel();
+	if( hwndRet != nullptr && (!IsWorkbenchMode() || pcFuncInfoArr != nullptr) ) CommitWorkbenchModel();
 	return hwndRet;
 }
 
@@ -826,7 +1368,15 @@ void CDlgFuncList::ChangeView( LPARAM pcEditView )
 /*! ダイアログデータの設定 */
 void CDlgFuncList::SetData()
 {
-	if( IsWorkbenchMode() ) m_workbenchTreeContentDirty = true;
+	if( IsWorkbenchMode() ) {
+		m_workbenchTreeContentDirty = true;
+		// These are commit-scoped scratch measurements.  Retained timings are
+		// published only after the complete result projection succeeds.
+		m_workbenchLastTimings.lineMarkProjectionUs = 0;
+		m_workbenchLastTimings.nativeTreeBuildUs = 0;
+		m_workbenchLastTimings.appearanceUs = 0;
+		m_workbenchLastTimings.expansionUs = 0;
+	}
 	HWND			hwndList;
 	HWND			hwndTree;
 	hwndList = GetItemHwnd( IDC_LIST_FL );
@@ -834,6 +1384,11 @@ void CDlgFuncList::SetData()
 
 	m_bDummyLParamMode = false;
 	m_vecDummylParams.clear();
+	m_workbenchTreeItems.clear();
+	m_workbenchTreeLabels.clear();
+	m_workbenchClipboardUsesGenericTree = false;
+	m_workbenchClipboardTagJump = false;
+	m_workbenchClipboardNoLabel = false;
 
 	::SendMessage(hwndList, WM_SETREDRAW, (WPARAM)FALSE, 0);
 	::SendMessage(hwndTree, WM_SETREDRAW, (WPARAM)FALSE, 0);
@@ -842,7 +1397,13 @@ void CDlgFuncList::SetData()
 	::ShowWindow( GetItemHwnd(IDC_BUTTON_SETTING), SW_HIDE );
 	const HTREEITEM hInsertAfter = (m_nSortType == SORTTYPE_DEFAULT_DESC) ? TVI_FIRST : TVI_LAST;
 
+	const auto lineMarkBegin = std::chrono::steady_clock::now();
 	SetDocLineFuncList();
+	if( IsWorkbenchMode() ) {
+		m_workbenchLastTimings.lineMarkProjectionUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - lineMarkBegin).count());
+	}
+	const auto nativeTreeBegin = std::chrono::steady_clock::now();
 	if( OUTLINE_C_CPP == m_nListType || OUTLINE_CPP == m_nListType ){	/* C++メソッドリスト */
 		m_nViewType = VIEWTYPE_TREE;
 		SetTreeJava( GetHwnd(), hInsertAfter, TRUE );	// Jan. 04, 2002 genta Java Method Treeに統合
@@ -1092,6 +1653,10 @@ void CDlgFuncList::SetData()
 		ListView_SetExtendedListViewStyle( hwndList, dwExStyle );
 		}
 	}
+	if( IsWorkbenchMode() ) {
+		m_workbenchLastTimings.nativeTreeBuildUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - nativeTreeBegin).count());
+	}
 
 	/* アウトライン ダイアログを自動的に閉じる */
 	::CheckDlgButton( GetHwnd(), IDC_CHECK_bAutoCloseDlgFuncList, m_pShareData->m_Common.m_sOutline.m_bAutoCloseDlgFuncList );
@@ -1180,7 +1745,11 @@ void CDlgFuncList::SetData()
 	::ShowWindow(hwndShow, SW_SHOW);
 	::SendMessage(hwndList, WM_SETREDRAW, (WPARAM)TRUE, 0);
 	::SendMessage(hwndTree, WM_SETREDRAW, (WPARAM)TRUE, 0);
+	// Workbench keeps the established default-expanded Outline behavior.  This is
+	// the one expansion pass for a commit; SetTreeJava does not also expand root
+	// siblings in workbench mode.
 	if( IsWorkbenchMode() ){
+		const auto expansionBegin = std::chrono::steady_clock::now();
 		std::vector<HTREEITEM> pending;
 		if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
 		while( !pending.empty() ){
@@ -1190,11 +1759,13 @@ void CDlgFuncList::SetData()
 			if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, item); sibling != nullptr ) pending.push_back(sibling);
 			if( const HTREEITEM child = TreeView_GetChild(hwndTree, item); child != nullptr ) pending.push_back(child);
 		}
-		ApplyWorkbenchAppearance();
+		m_workbenchLastTimings.expansionUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+			std::chrono::steady_clock::now() - expansionBegin).count());
+		if( m_workbenchAppearanceDirty || m_workbenchTreeContentDirty ) ApplyWorkbenchAppearance();
 	}
 	// 選択状態更新
 	int nFuncInfoIndex = -1;
-	if (GetFuncInfoIndex(m_nCurLine, m_nCurCol, &nFuncInfoIndex)) {
+	if ( !IsWorkbenchMode() && GetFuncInfoIndex(m_nCurLine, m_nCurCol, &nFuncInfoIndex) ) {
 		SetItemSelection(nFuncInfoIndex, true);
 	}
 	if (::GetForegroundWindow() == MyGetAncestor(GetHwnd(), GA_ROOT) && IsChild(GetHwnd(), GetFocus()))
@@ -1240,29 +1811,26 @@ bool CDlgFuncList::GetTreeFileFullName(HWND hwndTree, HTREEITEM target, std::wst
 /*! lParamからFuncInfoの番号を算出
 	vecにはダミーのlParam番号が入っているのでずれている数を数える
 */
-static int TreeDummylParamToFuncInfoIndex(std::vector<int>& vec, LPARAM lParam)
+static int TreeDummylParamToFuncInfoIndex(const std::vector<int>& vec, LPARAM lParam)
 {
-	// vec = { 3,6,7 }
-	// lParam 0,1,2,3,4,5,6,7,8
-	// return 0 1 2-1 3 4-1-1 5
-	int nCount = (int)vec.size();
-	int nDiff = 0;
-	for( int i = 0; i < nCount; i++ ){
-		if( vec[i] < lParam ){
-			nDiff++;
-		}else if( vec[i] == lParam ){
-			return -1;
-		}else{
-			break;
-		}
-	}
-	return int(lParam - nDiff);
+	// vec = { 3,6,7 }; count dummies below lParam with one lower_bound.
+	// lParam 0,1,2,3,4,5,6,7,8 -> return 0,1,2,-1,3,4,-1,-1,5.
+	if( lParam < 0 ) return -1;
+	const int item = static_cast<int>(lParam);
+	const auto it = std::lower_bound(vec.cbegin(), vec.cend(), item);
+	if( it != vec.cend() && *it == item ) return -1;
+	return item - static_cast<int>(std::distance(vec.cbegin(), it));
 }
 
 /* ダイアログデータの取得 */
 /* 0==条件未入力   0より大きい==正常   0より小さい==入力エラー */
 int CDlgFuncList::GetData( void )
 {
+	if( IsWorkbenchMode() && !HasCurrentWorkbenchModel() ) {
+		m_cFuncInfo = nullptr;
+		m_sJumpFile.clear();
+		return -1;
+	}
 	HWND			hwndList;
 	HWND			hwndTree;
 	int				nItem;
@@ -1345,11 +1913,21 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 	TV_INSERTSTRUCT	tvis;
 	const WCHAR*	pPos;
 	HTREEITEM		htiGlobal = nullptr;	// Jan. 04, 2001 genta C++と統合
-	HTREEITEM		htiClass;
+	HTREEITEM		htiClass = nullptr;
 	HTREEITEM		htiItem;
 	TV_ITEM			tvi;
 	int				nClassNest;
 	std::vector<std::wstring> vStrClasses;
+	std::map<std::wstring, HTREEITEM> workbenchClassItems;
+	const bool workbenchMode = IsWorkbenchMode();
+	if( workbenchMode ) {
+		m_workbenchClipboardUsesGenericTree = false;
+		m_workbenchClipboardTagJump = false;
+		m_workbenchClipboardNoLabel = false;
+	}
+	if( workbenchMode ) m_workbenchTreeItems.assign(
+		static_cast<std::size_t>((std::max)(0, m_pcFuncInfoArr->GetNum())), nullptr);
+	if( workbenchMode ) m_workbenchTreeLabels.clear();
 
 	::EnableWindow( GetItemHwnd( IDC_BUTTON_COPY ), TRUE );
 	m_bDummyLParamMode = true;
@@ -1358,8 +1936,8 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 
 	hwndTree = GetItemHwnd( IDC_TREE_FL );
 
-	m_cmemClipText.SetString( L"" );
-	{
+	if( !workbenchMode ) {
+		m_cmemClipText.SetString( L"" );
 		const int nBuffLenTag = int(13 + wcslen(m_pcFuncInfoArr->m_szFilePath));
 		const int nNum = m_pcFuncInfoArr->GetNum();
 		int nBuffLen = 0;
@@ -1448,8 +2026,9 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 			pWork = pWork + m; // 2 == lstrlen( "::" );
 
 			/* クラス名のアイテムが登録されているか */
-			htiClass = TreeView_GetFirstVisible( hwndTree );
 			HTREEITEM htiParent = TVI_ROOT;
+			std::wstring classPathKey;
+			if( !workbenchMode ) htiClass = TreeView_GetFirstVisible( hwndTree );
 			for( k = 0; k < nClassNest; ++k ){
 				//	Apr. 1, 2001 genta
 				//	追加文字列を全角にしたのでメモリもそれだけ必要
@@ -1461,23 +2040,30 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 				// となっているとみなし、szClassArr[k] が 「クラス名」と一致すれば、それを親ノードに設定。
 				// ただし、一致する項目が複数ある場合は最初の項目を親ノードにする。
 				// 一致しない場合は「(クラス名)(半角スペース一個)クラス」のノードを作成する。
-				size_t nClassNameLen = vStrClasses[k].size();
-				for( ; nullptr != htiClass ; htiClass = TreeView_GetNextSibling( hwndTree, htiClass ))
-				{
-					tvi.mask = TVIF_HANDLE | TVIF_TEXT;
-					tvi.hItem = htiClass;
+				classPathKey.append(vStrClasses[k]);
+				classPathKey.push_back(L'\0');
+				if( workbenchMode ) {
+					const auto found = workbenchClassItems.find(classPathKey);
+					htiClass = found != workbenchClassItems.end() ? found->second : nullptr;
+				}else{
+					size_t nClassNameLen = vStrClasses[k].size();
+					for( ; nullptr != htiClass ; htiClass = TreeView_GetNextSibling( hwndTree, htiClass ))
+					{
+						tvi.mask = TVIF_HANDLE | TVIF_TEXT;
+						tvi.hItem = htiClass;
 
-					std::vector<WCHAR> vecStr;
-					if( ApiWrap::TreeView_GetItemTextVector(hwndTree, tvi, vecStr) ){
-						const WCHAR* pszLabel = &vecStr[0];
-						if( 0 == wcsncmp(vStrClasses[k].c_str(), pszLabel, nClassNameLen) ){
-							if( bAddClass ){
-								if( pszLabel[nClassNameLen]==L' ' ){
-									break;
-								}
-							}else{
-								if( pszLabel[nClassNameLen]==L'\0' ){
-									break;
+						std::vector<WCHAR> vecStr;
+						if( ApiWrap::TreeView_GetItemTextVector(hwndTree, tvi, vecStr) ){
+							const WCHAR* pszLabel = &vecStr[0];
+							if( 0 == wcsncmp(vStrClasses[k].c_str(), pszLabel, nClassNameLen) ){
+								if( bAddClass ){
+									if( pszLabel[nClassNameLen]==L' ' ){
+										break;
+									}
+								}else{
+									if( pszLabel[nClassNameLen]==L'\0' ){
+										break;
+									}
 								}
 							}
 						}
@@ -1509,7 +2095,11 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 					m_vecDummylParams.push_back(nlParamCount);
 					nlParamCount++;
 
-					htiClass = TreeView_InsertItem( hwndTree, &tvis );
+				htiClass = TreeView_InsertItem( hwndTree, &tvis );
+				if( workbenchMode ) {
+					workbenchClassItems.emplace(classPathKey, htiClass);
+					m_workbenchTreeLabels[htiClass] = { strClassName, k };
+				}
 				}else{
 					//none
 				}
@@ -1517,7 +2107,7 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 				//if( k + 1 >= nClassNest ){
 				//	break;
 				//}
-				htiClass = TreeView_GetChild( hwndTree, htiClass );
+				if( !workbenchMode ) htiClass = TreeView_GetChild( hwndTree, htiClass );
 			}
 			htiClass = htiParent;
 		}else{
@@ -1546,6 +2136,7 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 					m_vecDummylParams.push_back(nlParamCount);
 					nlParamCount++;
 					htiGlobal = TreeView_InsertItem( hwndTree, &tvg );
+					if( workbenchMode ) m_workbenchTreeLabels[htiGlobal] = { sGlobal, 0 };
 				}
 				htiClass = htiGlobal;
 			}
@@ -1571,32 +2162,41 @@ void CDlgFuncList::SetTreeJava( [[maybe_unused]] HWND hwndDlg, HTREEITEM hInsert
 		tvis.item.lParam = nlParamCount;
 		nlParamCount++;
 		htiItem = TreeView_InsertItem( hwndTree, &tvis );
+		if( workbenchMode && static_cast<std::size_t>(i) < m_workbenchTreeItems.size() ) {
+			m_workbenchTreeItems[static_cast<std::size_t>(i)] = htiItem;
+		}
+		if( workbenchMode ) m_workbenchTreeLabels[htiItem] = { strFuncName, nClassNest };
 
 		/* クリップボードにコピーするテキストを編集 */
-		WCHAR szText[2048];
-		auto_sprintf(
-			szText,
-			L"%s(%d,%d): ",
-			m_pcFuncInfoArr->m_szFilePath.c_str(),		/* 解析対象ファイル名 */
-			pcFuncInfo->m_nFuncLineCRLF,		/* 検出行番号 */
-			pcFuncInfo->m_nFuncColCRLF		/* 検出桁番号 */
-		);
-		m_cmemClipText.AppendString( szText ); /* クリップボードコピー用テキスト */
-		// "%s%ls\r\n"
-		m_cmemClipText.AppendNativeData(pcFuncInfo->m_cmemFuncName);
-		m_cmemClipText.AppendString(FL_OBJ_DECLARE == pcFuncInfo->m_nInfo ? m_pcFuncInfoArr->GetAppendText( FL_OBJ_DECLARE ).c_str() : L"" ); 	//	Jan. 04, 2001 genta C++で使用
-		m_cmemClipText.AppendString(L"\r\n");
+		if( !workbenchMode ) {
+			WCHAR szText[2048];
+			auto_sprintf(
+				szText,
+				L"%s(%d,%d): ",
+				m_pcFuncInfoArr->m_szFilePath.c_str(),		/* 解析対象ファイル名 */
+				pcFuncInfo->m_nFuncLineCRLF,		/* 検出行番号 */
+				pcFuncInfo->m_nFuncColCRLF		/* 検出桁番号 */
+			);
+			m_cmemClipText.AppendString( szText ); /* クリップボードコピー用テキスト */
+			// "%s%ls\r\n"
+			m_cmemClipText.AppendNativeData(pcFuncInfo->m_cmemFuncName);
+			m_cmemClipText.AppendString(FL_OBJ_DECLARE == pcFuncInfo->m_nInfo ? m_pcFuncInfoArr->GetAppendText( FL_OBJ_DECLARE ).c_str() : L"" ); 	//	Jan. 04, 2001 genta C++で使用
+			m_cmemClipText.AppendString(L"\r\n");
+		}
 
 		//	Jan. 04, 2001 genta
 		//	deleteはその都度行うのでここでは不要
 	}
 	/* ソート、ノードの展開をする */
 //	TreeView_SortChildren( hwndTree, TVI_ROOT, 0 );
-	htiClass = TreeView_GetFirstVisible( hwndTree );
-	while( nullptr != htiClass ){
-//		TreeView_SortChildren( hwndTree, htiClass, 0 );
-		TreeView_Expand( hwndTree, htiClass, TVE_EXPAND );
-		htiClass = TreeView_GetNextSibling( hwndTree, htiClass );
+	if( !workbenchMode ) {
+		const auto expansionBegin = std::chrono::steady_clock::now();
+		htiClass = TreeView_GetFirstVisible( hwndTree );
+		while( nullptr != htiClass ){
+		//		TreeView_SortChildren( hwndTree, htiClass, 0 );
+			TreeView_Expand( hwndTree, htiClass, TVE_EXPAND );
+			htiClass = TreeView_GetNextSibling( hwndTree, htiClass );
+		}
 	}
 
 //	GetTreeTextNext( hwndTree, NULL, 0 );
@@ -1819,61 +2419,63 @@ void CDlgFuncList::SetListVB (void)
 	@date 2020.09.12 選択処理をGetFuncInfoIndex,SetItemSelectionへ移動
 */
 static std::wstring CompactWorkbenchTreeText(
-	HWND hwndTree, const wchar_t* text, int depth, HFONT fontOverride )
+	const WorkbenchTreeTextMetrics& metrics, const wchar_t* text, int depth )
 {
 	std::wstring result = text != nullptr ? text : L"";
-	if( hwndTree == nullptr || result.empty() ) return result;
-
-	RECT client{};
-	if( !::GetClientRect(hwndTree, &client) ) return result;
-	int imageWidth = 0;
-	int imageHeight = 0;
-	if( const HIMAGELIST images = TreeView_GetImageList(hwndTree, TVSIL_NORMAL); images != nullptr ){
-		(void)::ImageList_GetIconSize( images, &imageWidth, &imageHeight );
-	}
-	const int indent = static_cast<int>(TreeView_GetIndent(hwndTree));
-	const int textLeft = (std::max)(0, depth) * indent + imageWidth + 11;
-	const int available = (std::max)(0L,
-		client.right - client.left - textLeft - ::GetSystemMetrics(SM_CXVSCROLL) - 6);
+	if( metrics.dc == nullptr || result.empty() ) return result;
+	const int textLeft = (std::max)(0, depth) * metrics.indent + metrics.imageWidth + 11;
+	const int available = (std::max)(0, metrics.clientWidth - textLeft - metrics.scrollWidth);
 	if( available <= 0 ) return L"...";
-
-	const HDC dc = ::GetDC(hwndTree);
-	if( dc == nullptr ) return result;
-	const HFONT font = fontOverride != nullptr
-		? fontOverride : reinterpret_cast<HFONT>(::SendMessageW(hwndTree, WM_GETFONT, 0, 0));
-	const HGDIOBJ oldFont = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+	const int length = static_cast<int>((std::min)(result.size(), static_cast<std::size_t>((std::numeric_limits<int>::max)())));
 	SIZE size{};
-	(void)::GetTextExtentPoint32W( dc, result.c_str(), static_cast<int>(result.size()), &size );
-	if( size.cx > available ){
-		constexpr wchar_t ellipsis[] = L"...";
-		SIZE ellipsisSize{};
-		(void)::GetTextExtentPoint32W( dc, ellipsis, 3, &ellipsisSize );
-		while( !result.empty() ){
-			result.pop_back();
-			(void)::GetTextExtentPoint32W( dc, result.c_str(), static_cast<int>(result.size()), &size );
-			if( size.cx + ellipsisSize.cx <= available ) break;
+	if( ::GetTextExtentPoint32W(metrics.dc, result.c_str(), length, &size)
+		&& size.cx > available ) {
+		int fit = 0;
+		const int prefixWidth = (std::max)(0, available - metrics.ellipsisWidth);
+		if( !::GetTextExtentExPointW(
+			metrics.dc, result.c_str(), length, prefixWidth, &fit, nullptr, &size) ) {
+			// The fallback is logarithmic in label length and still reuses the
+			// commit-scoped DC/font/metrics snapshot.
+			int low = 0;
+			int high = length;
+			while( low < high ) {
+				const int mid = low + (high - low + 1) / 2;
+				SIZE prefix{};
+				if( ::GetTextExtentPoint32W(metrics.dc, result.c_str(), mid, &prefix)
+					&& prefix.cx <= prefixWidth ) low = mid;
+				else high = mid - 1;
+			}
+			fit = low;
 		}
-		result += ellipsis;
+		result.resize(static_cast<std::size_t>((std::max)(0, fit)));
+		result += L"...";
 	}
-	if( oldFont != nullptr ) ::SelectObject(dc, oldFont);
-	::ReleaseDC( hwndTree, dc );
 	return result;
 }
 
 void CDlgFuncList::SetTree(HTREEITEM hInsertAfter, bool tagjump, bool nolabel)
 {
 	HWND hwndTree = GetItemHwnd( IDC_TREE_FL );
+	const bool workbenchMode = IsWorkbenchMode();
+	if( workbenchMode ) {
+		m_workbenchClipboardUsesGenericTree = true;
+		m_workbenchClipboardTagJump = tagjump;
+		m_workbenchClipboardNoLabel = nolabel;
+		m_workbenchTreeLabels.clear();
+	}
 
 	int i;
 	int nFuncInfoArrNum = m_pcFuncInfoArr->GetNum();
+	if( workbenchMode ) m_workbenchTreeItems.assign(
+		static_cast<std::size_t>((std::max)(0, nFuncInfoArrNum)), nullptr);
 	int nStackPointer = 0;
 	int nStackDepth = 32; // phParentStack の確保している数
 	HTREEITEM* phParentStack;
 	phParentStack = (HTREEITEM*)malloc( nStackDepth * sizeof( HTREEITEM ) );
 	phParentStack[ nStackPointer ] = TVI_ROOT;
 
-	m_cmemClipText.SetString(L"");
-	{
+	if( !workbenchMode ) {
+		m_cmemClipText.SetString(L"");
 		int nCount = 0;
 		int nBuffLen = 0;
 		int nBuffLenTag = 3; // " \r\n"
@@ -1901,16 +2503,12 @@ void CDlgFuncList::SetTree(HTREEITEM hInsertAfter, bool tagjump, bool nolabel)
 		cTVInsertStruct.hParent = phParentStack[ nStackPointer ];
 		cTVInsertStruct.hInsertAfter = hInsertAfter;
 		cTVInsertStruct.item.mask = TVIF_TEXT | TVIF_PARAM;
-		std::wstring workbenchText;
-		if( IsWorkbenchMode() ){
-			workbenchText = CompactWorkbenchTreeText(
-				hwndTree, pcFuncInfo->m_cmemFuncName.GetStringPtr(), pcFuncInfo->m_nDepth,
-				m_workbenchFont );
-		}
-		cTVInsertStruct.item.pszText = IsWorkbenchMode()
-			? workbenchText.data() : pcFuncInfo->m_cmemFuncName.GetStringPtr();
+		// ApplyWorkbenchAppearance owns the single workbench text pass.  The
+		// insertion path keeps the full label so a later resize/font change can
+		// compact from the value-owned model instead of a previously truncated label.
+		cTVInsertStruct.item.pszText = pcFuncInfo->m_cmemFuncName.GetStringPtr();
 		cTVInsertStruct.item.lParam = i;	//	あとでこの数値（＝m_pcFuncInfoArrの何番目のアイテムか）を見て、目的地にジャンプするぜ!!。
-		if( IsWorkbenchMode() ){
+		if( workbenchMode ){
 			cTVInsertStruct.item.mask |= TVIF_IMAGE | TVIF_SELECTEDIMAGE;
 			const int imageIndex = WorkbenchSymbolImageIndex(pcFuncInfo->m_nInfo);
 			cTVInsertStruct.item.iImage = imageIndex;
@@ -1939,11 +2537,18 @@ void CDlgFuncList::SetTree(HTREEITEM hInsertAfter, bool tagjump, bool nolabel)
 			cTVInsertStruct.hParent = phParentStack[ nStackPointer ];
 		}
 		hItem = TreeView_InsertItem( hwndTree, &cTVInsertStruct );
+		if( workbenchMode && static_cast<std::size_t>(i) < m_workbenchTreeItems.size() ) {
+			m_workbenchTreeItems[static_cast<std::size_t>(i)] = hItem;
+		}
+		if( workbenchMode ) m_workbenchTreeLabels[hItem] = {
+			pcFuncInfo->m_cmemFuncName.GetStringPtr() != nullptr
+				? pcFuncInfo->m_cmemFuncName.GetStringPtr() : L"",
+			pcFuncInfo->m_nDepth };
 		phParentStack[ nStackPointer+1 ] = hItem;
 
 		/* クリップボードコピー用テキストを作成する */
 		//	2003.06.22 Moca dummy要素はツリーに入れるがTAGJUMPには加えない
-		if( pcFuncInfo->IsAddClipText() ){
+		if( !workbenchMode && pcFuncInfo->IsAddClipText() ){
 			CNativeW text;
 			if( tagjump ){
 				const WCHAR* pszFileName = pcFuncInfo->m_cmemFileName.GetStringPtr();
@@ -2422,6 +3027,7 @@ BOOL CDlgFuncList::OnBnClicked( int wID )
 	case IDC_BUTTON_COPY:
 		// Windowsクリップボードにコピー 
 		// 2004.02.17 Moca 関数化
+		if( IsWorkbenchMode() && (IsAsyncWorkbenchOutlineType(m_nListType) || m_workbenchClipboardUsesGenericTree) ) BuildWorkbenchClipboardText();
 		SetClipboardText( GetHwnd(), m_cmemClipText.GetStringPtr(), m_cmemClipText.GetStringLength() );
 		return TRUE;
 	case IDC_BUTTON_WINSIZE:
@@ -2839,6 +3445,7 @@ static int CALLBACK Compare_by_ItemTextDesc(LPARAM lParam1, LPARAM lParam2, LPAR
 
 BOOL CDlgFuncList::OnDestroy( void )
 {
+	StopWorkbenchOutlineWorker();
 	CDialog::OnDestroy();
 
 	/* アウトライン ■位置とサイズを記憶する */ // 20060201 aroka
@@ -3005,6 +3612,7 @@ bool CDlgFuncList::TagJumpTimer( const WCHAR* pFile, CMyPoint point, bool bCheck
 
 BOOL CDlgFuncList::OnJump( bool bCheckAutoClose, bool bFileJump )	//2002.02.08 hor 引数追加
 {
+	if( IsWorkbenchMode() && !HasCurrentWorkbenchModel() ) return FALSE;
 	int				nLineTo;
 	int				nColTo;
 	/* ダイアログデータの取得 */
@@ -3370,7 +3978,26 @@ INT_PTR CDlgFuncList::OnNcHitTest( [[maybe_unused]] HWND hwnd, [[maybe_unused]] 
 */
 BOOL CDlgFuncList::OnTimer( HWND hwnd, [[maybe_unused]] UINT uMsg, WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 {
-	if( wParam == 2 ){
+	const auto workbenchTimerToken = WorkbenchRefreshTimerToken(static_cast<UINT_PTR>(wParam));
+	if( workbenchTimerToken != 0 ) {
+		const auto currentVersion = GetWorkbenchDocumentVersion();
+		(void)m_workbenchRefreshScheduler.ConsumeTimer(
+			workbenchTimerToken,
+			IsWorkbenchMode() && IsAsyncWorkbenchOutlineType(m_nOutlineType),
+			GetHwnd() != nullptr,
+			currentVersion,
+			[hwnd](std::uint64_t token) {
+				const UINT_PTR timerId = WorkbenchRefreshTimerId(token);
+				if( timerId != 0 ) ::KillTimer(hwnd, timerId);
+			},
+			[this] {
+				// The timer is the only path that captures a burst of edit notifications.
+				// RequestWorkbenchOutline revalidates the current document and arms the
+				// notification gate before submitting the immutable snapshot.
+				(void)RequestWorkbenchOutline(m_nOutlineType, true);
+			});
+		return FALSE;
+	}else if( wParam == 2 ){
 		CEditView* pcView = reinterpret_cast<CEditView*>(m_lParam);
 		if( m_pszTimerJumpFile ){
 			const WCHAR* pszFile = m_pszTimerJumpFile;
@@ -3851,6 +4478,7 @@ void CDlgFuncList::DoMenu( POINT pt, HWND hwndFrom )
 	}
 	else if( nId == 451 ){	// コピー
 		// Windowsクリップボードにコピー 
+		if( IsWorkbenchMode() && (IsAsyncWorkbenchOutlineType(m_nListType) || m_workbenchClipboardUsesGenericTree) ) BuildWorkbenchClipboardText();
 		SetClipboardText( GetHwnd(), m_cmemClipText.GetStringPtr(), m_cmemClipText.GetStringLength() );
 	}
 	else if( nId == 452 ){	// 閉じる
@@ -4564,6 +5192,40 @@ void CDlgFuncList::NotifyDocModification()
 			m_workbenchDocumentVersion = {};
 		}
 	}
+	if( IsWorkbenchMode() && IsAsyncWorkbenchOutlineType(m_nOutlineType) ) {
+		if( m_workbenchParser != nullptr ) {
+			(void)m_workbenchParser->CancelObsolete(m_workbenchDocumentVersion);
+		}
+		// Edits only advance the revision and arm one quiet-period callback.
+		// Capturing the full document is deliberately deferred so a typing burst
+		// pays one O(total text) snapshot copy instead of one per keystroke.
+		(void)m_workbenchRefreshScheduler.NotifyChange(
+			true,
+			GetHwnd() != nullptr,
+			m_workbenchDocumentVersion,
+			[this](std::uint64_t timerToken) {
+				const UINT_PTR timerId = WorkbenchRefreshTimerId(timerToken);
+				return timerId != 0 && ::SetTimer(GetHwnd(), timerId,
+					kWorkbenchRefreshDebounceMs, nullptr) != 0;
+			},
+			[this](std::uint64_t timerToken) {
+				const UINT_PTR timerId = WorkbenchRefreshTimerId(timerToken);
+				if( GetHwnd() != nullptr && timerId != 0 ) ::KillTimer(GetHwnd(), timerId);
+			},
+			[this] {
+				// Timer allocation failure falls back to one immediate latest-version
+				// request; an edit notification is never silently dropped.
+				(void)RequestWorkbenchOutline(m_nOutlineType, true);
+			},
+			[this] {
+				m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
+				m_workbenchLastTimings = {};
+				m_workbenchRequestedVersion = {};
+				m_workbenchRequestedGeneration = 0;
+				m_workbenchRequestStartUs = 0;
+				m_bFuncInfoArrIsUpToDate = false;
+			});
+	}
 
 	return;
 }
@@ -4575,6 +5237,7 @@ void CDlgFuncList::NotifyDocModification()
 */
 void CDlgFuncList::SetItemSelection( int nFuncInfoIndex, bool bAllowExpand )
 {
+	if( IsWorkbenchMode() && !HasCurrentWorkbenchModel() ) return;
 	if( m_nViewType == VIEWTYPE_TREE ){
 		HWND hwndTree = GetItemHwnd( IDC_TREE_FL );
 		SetItemSelectionForTreeView( hwndTree, nFuncInfoIndex, bAllowExpand );
@@ -4603,28 +5266,35 @@ void CDlgFuncList::SetItemSelectionForTreeView( HWND hwndTree, int nFuncInfoInde
 
 	std::vector<HTREEITEM> htiStack;
 	HTREEITEM htiFound = nullptr;
-	htiStack.reserve( TreeView_GetCount( hwndTree ) );
-	htiStack.push_back( TreeView_GetRoot( hwndTree ) );
-	size_t nStackIndex = 0;
-	while( htiFound == nullptr && nStackIndex < htiStack.size() ){
-		HTREEITEM htiCurrent = htiStack[nStackIndex];
-		for( ; nullptr != htiCurrent ; htiCurrent = TreeView_GetNextSibling( hwndTree, htiCurrent ) ){
-			TVITEM tvItem = {};
-			tvItem.mask = TVIF_HANDLE | TVIF_PARAM;
-			tvItem.hItem = htiCurrent;
-			TreeView_GetItem( hwndTree, &tvItem );
-			if( nFuncInfoIndex == TreeDummylParamToFuncInfoIndex( m_vecDummylParams, tvItem.lParam ) ){
-				// 発見
-				htiFound = htiCurrent;
-				break;
-			}
+	if( IsWorkbenchMode()
+		&& nFuncInfoIndex >= 0
+		&& static_cast<std::size_t>(nFuncInfoIndex) < m_workbenchTreeItems.size() ) {
+		htiFound = m_workbenchTreeItems[static_cast<std::size_t>(nFuncInfoIndex)];
+	}
+	if( htiFound == nullptr ) {
+		htiStack.reserve( TreeView_GetCount( hwndTree ) );
+		htiStack.push_back( TreeView_GetRoot( hwndTree ) );
+		size_t nStackIndex = 0;
+		while( htiFound == nullptr && nStackIndex < htiStack.size() ){
+			HTREEITEM htiCurrent = htiStack[nStackIndex];
+			for( ; nullptr != htiCurrent ; htiCurrent = TreeView_GetNextSibling( hwndTree, htiCurrent ) ){
+				TVITEM tvItem = {};
+				tvItem.mask = TVIF_HANDLE | TVIF_PARAM;
+				tvItem.hItem = htiCurrent;
+				TreeView_GetItem( hwndTree, &tvItem );
+				if( nFuncInfoIndex == TreeDummylParamToFuncInfoIndex( m_vecDummylParams, tvItem.lParam ) ){
+					// 発見
+					htiFound = htiCurrent;
+					break;
+				}
 
-			HTREEITEM htiChild = TreeView_GetChild( hwndTree, htiCurrent );
-			if( htiChild != nullptr ){
-				htiStack.push_back( htiChild );
+				HTREEITEM htiChild = TreeView_GetChild( hwndTree, htiCurrent );
+				if( htiChild != nullptr ){
+					htiStack.push_back( htiChild );
+				}
 			}
+			++nStackIndex;
 		}
-		++nStackIndex;
 	}
 
 	if( htiFound != nullptr ){
@@ -4697,6 +5367,31 @@ bool CDlgFuncList::GetFuncInfoIndex( [[maybe_unused]] CLayoutInt nCurLine, [[may
 
 	if( m_pcFuncInfoArr == nullptr || pnIndexOut == nullptr ){
 		return false;
+	}
+	if( IsWorkbenchMode()
+		&& IsAsyncWorkbenchOutlineType(m_nListType)
+		&& m_workbenchCommittedModel.get() == m_pcFuncInfoArr ) {
+		const int count = m_pcFuncInfoArr->GetNum();
+		if( count == 0 ) return false;
+		int low = 0;
+		int high = count;
+		bool canUseBinarySearch = true;
+		while( low < high ) {
+			const int middle = low + (high - low) / 2;
+			const CFuncInfo* const info = m_pcFuncInfoArr->GetAt(middle);
+			if( info == nullptr ) {
+				canUseBinarySearch = false;
+				break;
+			}
+			const bool notAfterCaret = info->m_nFuncLineLAYOUT < nCurLine
+				|| (info->m_nFuncLineLAYOUT == nCurLine && info->m_nFuncColLAYOUT <= nCurCol);
+			if( notAfterCaret ) low = middle + 1;
+			else high = middle;
+		}
+		if( canUseBinarySearch ) {
+			*pnIndexOut = low > 0 ? low - 1 : 0;
+			return true;
+		}
 	}
 
 	// SetTree,SetTreeJava,SetListVB,SetDataにあった処理を持ってきました
