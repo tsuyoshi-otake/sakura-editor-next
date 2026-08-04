@@ -25,14 +25,17 @@ from .runner import BuildError, EventWriter, msbuild_command
 
 EVIDENCE_SCHEMA_VERSION = 2
 _OUTPUT_ROOTS = frozenset({"build", "x64", "win32", "mingw"})
-_PATH_INPUT_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".inc", ".rc", ".rc2", ".obj", ".res", ".lib", ".natvis"})
+_PATH_INPUT_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".inc", ".rc", ".rc2", ".obj", ".res", ".lib", ".natvis", ".manifest"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".inc"})
 _MONITORED_MSBUILD_TARGET = re.compile(
-    r"(?:^generate|^configurecmaketools$|^runcompiletests$|vcpkginstallmanifestdependencies|^copy|^stage)",
+    r"^(?:"
+    r"Generate(?:VersionHeader|FuncCodeDefine|FuncCodeEnum|SakuraExeManifest|Bregonig|Migemo|CTags|Diff|Lang_.+)"
+    r"|ConfigureCMakeTools|RunCompileTests|VcpkgInstallManifestDependencies"
+    r")$",
     re.IGNORECASE,
 )
 _TARGET_START_RE = re.compile(
-    r'(?:target|ターゲット)\s+"(?P<name>[^":]+):\s+\((?:target\s*id|ターゲット\s*ID):',
+    r'(?:target|ターゲット)\s*"(?P<name>[^":]+):\s+\((?:target\s*id|ターゲット\s*ID):',
     re.IGNORECASE,
 )
 _EXEC_TASK_START_RE = re.compile(r'(?:task|タスク)\s+"Exec"\s+\(TaskId:', re.IGNORECASE)
@@ -414,6 +417,8 @@ def _collect_link_record(
         raise BuildError("NATIVE_PRODUCT_LINK_COMMAND_EMPTY", f"no link record in {command_tlog}", 5)
     command = " ".join(command_records[0][1])
     raw_inputs: list[str] = []
+    for match in re.finditer(r'(?i)(?:^|\s)/MANIFESTINPUT:(?:"([^"]+)"|(\S+))', command):
+        raw_inputs.append(match.group(1) or match.group(2))
     for headers, payload in _tracker_records(read_tlog):
         raw_inputs.extend(headers)
         raw_inputs.extend(line for line in payload if _single_path_line(line))
@@ -526,7 +531,8 @@ def collect_product_native_evidence(
         graph.repo_root, project_dir, tlogs["link_command"], tlogs["link_read"]
     )
     all_source_inputs = source_inputs | resource_source_inputs
-    all_generated_inputs = generated_inputs | resource_generated_inputs
+    link_generated_inputs = {value for value in link_inputs if _is_output_path(value)}
+    all_generated_inputs = generated_inputs | resource_generated_inputs | link_generated_inputs
     definition_candidates = (
         project_relative,
         "Directory.Build.props",

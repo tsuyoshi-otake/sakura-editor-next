@@ -30,6 +30,8 @@ def _native_fixture(root: Path):
     graph = _fixture(root)
     generated = root / "build/x64/version.h"
     _write(generated, "#define VERSION 1\n")
+    generated_manifest = root / "build/x64/app.exe.manifest"
+    _write(generated_manifest, "<assembly />\n")
     output_dir = root / "build/x64/Debug/app"
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "main.obj").write_bytes(b"main-object")
@@ -72,7 +74,8 @@ def _native_fixture(root: Path):
         tlog / "link.command.1.tlog",
         [
             f"^{output_dir / 'main.obj'}|{output_dir / 'provider.obj'}|{output_dir / 'app.res'}",
-            f'/OUT:"{executable}" KERNEL32.LIB "{root / "build/x64/vcpkg/fmtd.lib"}"',
+            f'/OUT:"{executable}" /MANIFESTINPUT:"{generated_manifest}" '
+            f'KERNEL32.LIB "{root / "build/x64/vcpkg/fmtd.lib"}"',
         ],
     )
     _write_tlog(
@@ -127,6 +130,9 @@ class ProductNativeEvidenceTests(unittest.TestCase):
             )
             evidence_path = graph.repo_root / "build/evidence/native-product.json"
             write_product_native_evidence(evidence_path, evidence)
+            evidence_mtime = evidence_path.stat().st_mtime_ns
+            write_product_native_evidence(evidence_path, evidence)
+            self.assertEqual(evidence_mtime, evidence_path.stat().st_mtime_ns)
             validation = validate_product_native_evidence(
                 graph,
                 evidence_path,
@@ -318,6 +324,32 @@ class ProductNativeEvidenceTests(unittest.TestCase):
         self.assertFalse(inventory["native_product_observation"]["valid"])
         self.assertFalse(inventory["product_link_provenance"]["native_input_set_observed"])
         self.assertIn("NATIVE_PRODUCT_EVIDENCE_INPUT_CHANGED", {item["code"] for item in inventory["findings"]})
+
+    def test_link_manifest_is_hashed_and_invalidates_stale_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog = _native_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(graph, "product", "msvc-x64-debug", build_observed=True)
+            manifest = "build/x64/app.exe.manifest"
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+
+            self.assertIn(manifest, evidence["link"]["repo_inputs"])
+            self.assertIn(manifest, evidence["freshness"]["generated_inputs"])
+
+            _write(graph.repo_root / manifest, "<assembly changed=\"true\" />\n")
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        self.assertFalse(validation["valid"])
+        self.assertEqual("stale_or_mismatched", validation["status"])
+        self.assertIn(
+            "NATIVE_PRODUCT_EVIDENCE_INPUT_CHANGED",
+            {item["code"] for item in validation["failures"]},
+        )
 
     def test_context_mismatch_is_explicit_and_not_observed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
