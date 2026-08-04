@@ -133,4 +133,5 @@ CMake root-only stale scopeを確認した。これはnative URI実行や製品c
    [`issuecomment-5175202617`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175202617)、R0 inventory baselineの
    [`issuecomment-5175424887`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175424887)、native product観測の
    [`issuecomment-5175817226`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175817226)、generator実行と実消費相関の
-   [`issuecomment-5176160587`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5176160587)を追記した。
+   [`issuecomment-5176160587`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5176160587)、native PE resource table観測の
+   [`issuecomment-5176365272`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5176365272)を追記した。

@@ -39,6 +39,10 @@
   RC/RC2 inputs from Sakura-owned component inputs before assigning missing-owner or generated-output findings.
   Evidence: the Issue #15 inventory recovered 19 include edges and 6 generated includes from UTF-16 Sakura/language
   resources while keeping 7 external resource files outside Sakura ownership blockers.
+- [native resource evidence] Validate the current product hash before PE resource enumeration, open the image with
+  data/image-resource flags, and keep top-level type/name/language/content observation separate from nested numeric
+  resource-ID compatibility. Evidence: Issue #15 observed 260 stable top-level entries without executing `sakura.exe`,
+  while strict inventory correctly retained `RESOURCE_ID_COMPATIBILITY_UNOBSERVED`.
 - VS-bundled CMake 3.31.6 can fast-fail with `0xC0000409` when either its source or build tree uses a
   Japanese path. Keep the checkout authoritative, but run only the affected CMake component child
   through a short-lived ASCII junction verified with `os.path.samefile`; persist the lexical alias so
