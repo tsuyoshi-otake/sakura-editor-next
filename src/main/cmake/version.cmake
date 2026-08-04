@@ -86,7 +86,9 @@ else()
   set(BUILD_ENV_NAME "Local")
 
   # Get git information if Git is available
-  if(IS_DIRECTORY "${SOURCE_DIR}/.git")
+  # A linked Git worktree stores repository metadata in a .git file rather
+  # than a .git directory.  Git commands work in both layouts.
+  if(EXISTS "${SOURCE_DIR}/.git")
     message(STATUS "Git repository detected, extracting version information...")
     
     # Get remote origin URL
@@ -117,7 +119,7 @@ endif()
 # Get short commit hash
 string(SUBSTRING "${GIT_COMMIT_HASH}" 0 8 GIT_SHORT_COMMIT_HASH)
 
-if(IS_DIRECTORY "${SOURCE_DIR}/.git")
+if(EXISTS "${SOURCE_DIR}/.git")
   # Get commit count (build version)
   execute_process(
     COMMAND ${GIT_EXECUTABLE} rev-list --count --no-merges @
