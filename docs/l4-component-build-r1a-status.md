@@ -124,6 +124,8 @@ CMake root-only stale scopeを確認した。これはnative URI実行や製品c
 - `docs/l4-component-build-v2.1.md`に記されたR1a hard gateを、このpilotのunit/graph結果だけでgreenへ繰り上げない。
 - 本書に記載する実装一式は、GitHub Issue #15の追跡対象として統合する。Issueにはbasic path/revertの
   [`issuecomment-5174514088`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5174514088)と、今回のABI gateの
-  [`issuecomment-5174652528`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5174652528)、rebuild closureの
-  [`issuecomment-5175202617`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175202617)、R0 inventory baselineの
-  [`issuecomment-5175424887`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175424887)を追記した。
+   [`issuecomment-5174652528`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5174652528)、rebuild closureの
+   [`issuecomment-5175202617`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175202617)、R0 inventory baselineの
+   [`issuecomment-5175424887`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175424887)、native product観測の
+   [`issuecomment-5175817226`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5175817226)、generator実行と実消費相関の
+   [`issuecomment-5176160587`](https://github.com/tsuyoshi-otake/sakura-editor-next/issues/15#issuecomment-5176160587)を追記した。
