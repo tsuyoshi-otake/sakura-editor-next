@@ -1,0 +1,118 @@
+{
+  "schema_version": 3,
+  "minimum_generator_version": "0.3.4",
+  "contexts": [
+    {"id": "msvc-x64-debug", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "msbuild", "role": "development", "features": []},
+    {"id": "cmake-msvc-x64-debug", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "cmake", "role": "component-pilot", "features": []},
+    {"id": "msvc-x64-release", "platform": "x64", "arch": "x64", "configuration": "Release", "toolchain": "msvc", "backend": "msbuild", "role": "distribution", "features": ["ltcg"]},
+    {"id": "mingw-x64-debug", "platform": "MinGW", "arch": "x64", "configuration": "Debug", "toolchain": "mingw", "backend": "cmake", "role": "experimental", "features": []},
+    {"id": "mingw-x64-release", "platform": "MinGW", "arch": "x64", "configuration": "Release", "toolchain": "mingw", "backend": "cmake", "role": "experimental", "features": []}
+  ],
+  "components": [
+    {
+      "id": "sakura_app",
+      "family": "legacy",
+      "kind": "executable",
+      "maturity": "legacy",
+      "build_definition": "legacy",
+      "supported_contexts": ["msvc-x64-debug", "msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "owner": "sakura_core",
+      "sources": ["sakura_core"],
+      "public_headers": [],
+      "private_headers": [],
+      "ownership_exclusions": ["sakura_core/platform/uri"],
+      "public_include_roots": [],
+      "private_include_roots": ["."],
+      "state_owner": "legacy application and process state",
+      "backend_targets": {"msbuild": ["sakura_core/sakura.vcxproj"], "cmake": ["sakura"]},
+      "compile_profile": null
+    },
+    {
+      "id": "tests1",
+      "family": "legacy-tests",
+      "kind": "test",
+      "maturity": "legacy",
+      "build_definition": "legacy",
+      "supported_contexts": ["msvc-x64-debug", "msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "owner": "src/test",
+      "sources": ["src/test"],
+      "public_headers": [],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": [],
+      "private_include_roots": ["."],
+      "state_owner": "legacy test process state",
+      "backend_targets": {"msbuild": ["sakura_core/tests1.vcxproj"], "cmake": ["tests1"]},
+      "compile_profile": null
+    },
+    {
+      "id": "sakura_uri",
+      "family": "platform-primitives",
+      "kind": "implementation",
+      "maturity": "candidate",
+      "build_definition": "generated",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug"],
+      "owner": "sakura_core/platform/uri",
+      "sources": ["sakura_core/platform/uri/UriIdentity.cpp"],
+      "public_headers": ["sakura_core/platform/uri/UriIdentity.h"],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": ["sakura_core"],
+      "private_include_roots": [],
+      "state_owner": null,
+      "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_uri.vcxproj"], "cmake": ["sakura_uri"]},
+      "compile_profile": null
+    },
+    {
+      "id": "sakura_uri_tests",
+      "family": "platform-primitives-tests",
+      "kind": "test",
+      "maturity": "candidate",
+      "build_definition": "generated",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug"],
+      "owner": "tools/build/pilots",
+      "sources": ["tools/build/pilots/uri_contract_test.cpp"],
+      "public_headers": [],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": [],
+      "private_include_roots": [],
+      "state_owner": null,
+      "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_uri_tests.vcxproj"], "cmake": ["sakura_uri_tests"]},
+      "compile_profile": null
+    }
+  ],
+  "contracts": [],
+  "artifacts": [],
+  "edges": [
+    {
+      "id": "tests1-to-sakura-app",
+      "from": "tests1",
+      "to": "sakura_app",
+      "kind": "test",
+      "phases": ["compile", "link", "test", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": false,
+      "witnesses": []
+    },
+    {
+      "id": "sakura-uri-tests-to-sakura-uri",
+      "from": "sakura_uri_tests",
+      "to": "sakura_uri",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/pilots/uri_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/pilots/uri_contract_test.cpp"}
+      ]
+    }
+  ]
+}

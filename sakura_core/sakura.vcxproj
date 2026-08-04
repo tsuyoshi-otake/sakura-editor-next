@@ -1207,7 +1207,9 @@
     <ClCompile Include="..\sakura_core\platform\storage\CAtomicFileStorageService.cpp" />
     <ClCompile Include="..\sakura_core\platform\storage\CInMemoryStorageService.cpp" />
     <ClCompile Include="..\sakura_core\platform\storage\StorageTypes.cpp" />
-    <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp" />
+    <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp" />
     <ClCompile Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.cpp" />
     <ClCompile Include="..\sakura_core\terminal\model\TerminalModel.cpp" />

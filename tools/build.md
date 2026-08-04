@@ -81,6 +81,24 @@ Visual Studio で `sakura.sln` を開いてビルドします。
 
 用途に応じて次のコマンドを使い分けます。
 
+ビルドのcanonical APIは、Python 3.10以上の標準ライブラリだけで動く
+`py -3 tools/build/sakura_build.py`です。`sakura-build.bat`だけが全引数と終了コードを
+無変更で転送する正規shimです。既存のnamed `build-*.bat`は旧構文を変換する暫定compatibility
+adapterであり、厳密な無判断shimではありません。新規のCI、IDE、文書からは直接Python CLIを使い、
+named batchはR10で削除します。
+
+```cmd
+sakura-build.bat manifest check
+sakura-build.bat generate --check
+sakura-build.bat graph check --all-contexts
+sakura-build.bat build dev x64 Debug --jobs 8
+```
+
+`--jobs` は MSBuild/CMake へ渡す全体予算です。MSBuild では `/m:P` と `/MP:C` を
+`P*C <= jobs` となるよう設定し、`--jobs 1` では `/m:1` と `/MP1` を明示します。
+既存 batch shim の既定予算は論理 CPU 数で、`SAKURA_BUILD_JOBS` で上書きできます。
+低レベルの task scheduling は MSBuild/CMake が担当し、CLI は独自 jobserver を実装しません。
+
 | 用途 | コマンド | ビルドする範囲 |
 |--|--|--|
 | 普段の編集・動作確認 | `build-dev.bat` | `sakura_core\sakura.vcxproj` のみ |
@@ -88,6 +106,53 @@ Visual Studio で `sakura.sln` を開いてビルドします。
 | 配布成果物の作成 | `build-all.bat` | 本体、単体テスト、HTML ヘルプ、インストーラ、ZIP |
 
 通常の編集では `build-dev.bat` を使用すると、`tests1` プロジェクトの評価・コンパイル・リンクを省略できます。単体テストのビルドや配布準備には `build-sln.bat` または `build-all.bat` を使用してください。
+
+component graph の唯一の定義は `src/main/modules/modules.json` です。manifest変更後は
+`sakura-build.bat generate` を明示的に実行し、CIや通常ビルドでは
+`sakura-build.bat generate --check` により生成物のstalenessを検査します。通常ビルドが
+生成済みproject fragmentを暗黙に書き換えることはありません。
+
+R0の製品実行証跡は、静的なrepository台帳とは別に収集してから明示的にmergeします。
+
+```cmd
+sakura-build.bat inventory observe-product ^
+  --context msvc-x64-debug --product sakura_app --jobs 1 ^
+  --output build/evidence/r0/native-msbuild-product.json
+
+sakura-build.bat inventory repository ^
+  --context msvc-x64-debug --product sakura_app --provider sakura_uri ^
+  --native-evidence build/evidence/r0/native-msbuild-product.json ^
+  --output build/evidence/r0/repository-inventory.json --strict
+```
+
+`observe-product`はMSBuildの製品Buildが成功した後、`CL.read`/`CL.command`、`rc.read`、
+`link.read`/`link.command` trackerを解析します。翻訳単位、source-controlled input、生成header/PCH、
+RC input、link object/resource/libraryをrepository-relativeな証跡として保存します。証跡にはgraph、context、
+product、観測source/生成物/trackerのSHA-256を保持し、欠落、変更、別context、Build未実行のsnapshotは
+repository台帳でblockerになります。
+
+Debug製品にはMAPがないため、link input setの観測だけでstatic archive内の採用memberを証明したとは
+扱いません。また生成物がcompiler/RCへ入力された事実はgenerator実行の観測、RC inputの観測はresource
+table/ID互換の観測、vcpkg trackerの存在はrestore実行の観測ではありません。これらの未観測gateが残る間、
+`--strict`は終了コード5を返します。
+
+`tests1`分割前の保証集合は`src/test/test-inventory.json`で凍結します。`test_id`は
+source-controlledな安定ID、`runtime.runner_id`と`runtime.selector`は実行時mappingです。
+runner分割時は安定IDを維持し、runtime mappingだけを変更します。discovery失敗、0件取得、
+重複ID/selector、fingerprint不一致は終了コード7で失敗します。
+
+```cmd
+sakura-build.bat test inventory collect --runner-id tests1 ^
+  --executable x64/Debug/tests1.exe ^
+  --output build/evidence/tests-current.json
+
+sakura-build.bat test inventory compare ^
+  src/test/test-inventory.json build/evidence/tests-current.json
+```
+
+比較のhard gateはstable ID集合とenabled/disabled状態です。runner/selectorのremapは
+明示的に報告しますが、stable IDが維持されていれば保証差分とは扱いません。baselineには
+収集元revision、dirty状態、test executableのSHA-256を保存します。
 
 ```cmd
 build-dev.bat <Platform> <Configuration>
@@ -141,6 +206,99 @@ x64 Release は、最小要件を AVX とする単一の `x64\Release\sakura.exe
 AVX2 および AVX-512F/BW を使う処理はソース単位で分離してコンパイルし、プロセス起動時に
 CPUID と XGETBV で CPU・OS の保存状態を一度だけ確認して、利用可能な最上位実装へ
 関数ポインターを固定します。追加の ISA 別バイナリは生成しません。
+
+### R1 candidate component pilot (URI)
+
+Issue #15のR1基盤では、URIをcandidate vertical sliceとして検証します。これはL4独立性の完成、
+`sakura_app`/`tests1`の置換、またはR1a完了の宣言ではありません。semantic graphと生成projectionの
+確認は次のコマンドで行えます。
+
+```cmd
+py -3 tools/build/sakura_build.py manifest check
+py -3 tools/build/sakura_build.py generate --check
+py -3 tools/build/sakura_build.py graph check --all-contexts
+py -3 tools/build/sakura_build.py inventory repository --context msvc-x64-debug --product sakura_app --provider sakura_uri
+py -3 tools/build/sakura_build.py inventory repository --context msvc-x64-debug --product sakura_app --provider sakura_uri --strict
+py -3 tools/build/sakura_build.py plan component sakura_uri_tests --context msvc-x64-debug --phases compile,link
+py -3 tools/build/sakura_build.py plan component sakura_uri_tests --context cmake-msvc-x64-debug --phases compile,link
+py -3 tools/build/sakura_build.py test component sakura_uri_tests --context msvc-x64-debug --jobs 1
+py -3 tools/build/sakura_build.py test component sakura_uri_tests --context cmake-msvc-x64-debug --jobs 1
+py -3 tools/build/sakura_build.py build fixture abi-pack-mismatch --context msvc-x64-debug
+py -3 tools/build/sakura_build.py build fixture abi-iterator-mismatch --context msvc-x64-debug
+py -3 tools/build/sakura_build.py build fixture abi-opaque-compatible --context msvc-x64-debug
+py -3 tools/build/sakura_build.py path-matrix test component sakura_uri_tests --contexts msvc-x64-debug,cmake-msvc-x64-debug --jobs 1
+py -3 tools/build/sakura_build.py verify rebuild-closure sakura_uri_tests --contexts msvc-x64-debug,cmake-msvc-x64-debug --jobs 1 --samples 5
+```
+
+`inventory repository`はR0 dependency/provenance台帳を
+`build/evidence/r0/repository-inventory.json`へ保存します。baseline modeは収集に成功すればexit 0ですが、
+それはL4独立性の合格を意味しません。`--strict`は未所有file、未申告include、未解決quoted include、
+source内link directive、製品へのprovider source埋込み、CMake source glob、未分類package、global restore、
+testからの製品object取り込み、共有resource ID header、partial/not-observed classが一つでも残ればexit 5です。
+台帳はMSBuild/CMakeの生成出力・入力・tool witness、RC/RC2 include、AdditionalDependencies/ProjectReference、
+vcpkg manifest install triggerも構造化します。ただし、build定義の静的観測はnative compiler/linker/resource compiler/
+package restoreの実行観測を代替しません。全witnessはevidence fileに保持し、端末出力は件数とhashの有界な要約にします。
+
+2026-08-04のbaselineでは`collection_ok=true`、`graduation_ready=false`でした。URIは`sakura_app`に
+`UriIdentity.cpp`が直接compileされる`embedded_in_product`状態であり、生成provider projectへの参照もmanifest edgeもありません。
+したがってcomponent pilotの単独build成功だけをもって製品上の独立componentとは扱いません。
+
+public usage closureとfinal static-link closureは別の情報です。`propagation=none`はpublic propagationを
+止めますが、providerのprivate/transitive static archiveをfinal linkから削除しません。compile-only edgeは
+providerのpublic include rootだけを渡し、MSBuild ProjectReferenceやCMake link targetを追加しません。
+component stale checkはcommitted stampのcontent hashを使い、選択contextのnative closureだけを検査します。
+全projectionの再描画、generated root全走査、別context専用provider追跡は行いません。repository全体の
+stale/unexpected outputはfull `generate --check`が検査します。条件付きlink edgeのMSBuild
+`ProjectReference`はactiveな`Configuration|Platform`だけで有効になり、同じMSBuild物理キーを複数contextへ
+割り当てるmanifestは拒否されます。
+
+public-type-onlyの`contract`/`aggregate`はsource/private state/runtime assetを持たないheader-only interfaceです。
+MSBuildではUtility、CMakeではINTERFACEへ投影し、空archiveを作りません。component CMake childではtoolchain/package
+discovery環境を除去しますが、legacy/full commandの環境は変更しません。
+
+C++ contract edgeは、consumerとproviderのproject compile profileから契約種別が要求するfieldだけを比較します。
+MSVC projectionはedge/field単位の`#pragma detect_mismatch`をforce-includeし、`default_pack`や
+`iterator_debug_level`の不一致をLNK2038で名前付き拒否します。これはgraph checkを置き換えるものではありません。
+opaque C handle契約は`abi_family`と`arch`だけを要求するため、C++内部のpack差を理由に過剰拒否しません。
+上記3 fixtureは「期待したlink失敗」を成功として型付きterminal stateへ変換し、opaque fixtureは実行まで検証します。
+
+`path-matrix`はnormal、ASCII space、日本語の3 checkoutを実際に作り、canonical component testとboundary
+evidenceをMSBuild/CMakeで実行します。semantic graph hashとroot非依存hard evidence hashが3 caseで一致し、
+最後にcandidate componentだけをmanifestから戻すstandalone revert rehearsalが成功した場合だけgreenです。
+VS付属CMakeが日本語pathで異常終了する環境では、CMake childの間だけ同一checkoutを指す短いASCII junctionを
+使用します。`os.path.samefile`で同一性を確認し、build treeに記録したidentityからevidence収集時のpath spellingを
+再生成します。junctionはsuccess、failure、timeoutの終了経路で削除され、MSBuildとlegacy/full CMakeには適用しません。
+
+`verify rebuild-closure`は元checkoutを変更せず、`~/tmp`配下の短い隔離コピーでclean、反復no-op、
+private cpp、public contract、MSBuild DesignTimeBuildを実行します。object、archive、executableの
+mtime・size・SHA-256をphase間で比較し、期待したcompile/archive/link集合との過不足、生成projectionの
+書換え、package restore、component test終了値をJSONへ保存します。既定出力は
+`build/evidence/r1a/rebuild-closure/evidence.json`です。URI pilotはprivate header、PCH、resource、generated inputを
+所有しないため、それらのmutationを検証したことにはなりません。
+
+有効なCMake/Ninja component build treeでは、canonical CLIは毎回の明示configureを省略し、native build graphへ
+直接渡します。source root、generator、configuration、cache、native build fileのいずれかが一致しない場合は
+configureを実行します。CMakeLists等が変更された場合の自動再configureはNinja/Makefilesが所有します。
+
+この作業時点で、manifest/graph check、generator再生成、tools/buildの69 unit tests、URIのMSBuild Debug
+component test、MSBuild `/t:Rebuild`、CMake/Ninja `--clean-first` + CTest Debug、component-boundary evidenceを
+実行済みです。MSBuild rebuildは`/MP1`でcl.exe/link.exeを実行し、0 warning/0 errorでした。CMakeは明示的な
+MSVC toolchain environmentを構築した後、component childだけの環境分離を有効にして4 build stepsとCTest
+1/1 passを確認しました。生成URI projectのDesignTimeBuild、ABI mismatch/opaque C fixture、基本path matrix/standalone revert、
+両backendのclean/no-op/private cpp/public contract rebuild closureは確認済みです。5回no-opのevidence-mode native child中央値は
+MSBuild 363.451 ms、CMake/Ninja 73.755 msで、CMakeの明示configureは0回でした。MSBuild DesignTimeBuild中央値は
+267.125 msです。これらは移行前比較のないbaseline-onlyであり、canonical CLI全体の改善率とは扱いません。
+R0 repository inventoryは2,673 C/C++/resource候補と8,647 includeを走査し、未所有file 27、
+未所有providerへのinclude 250、未解決quoted include 17、source link directive 17を記録しました。
+さらにgenerated/resource/product-link/packageの静的provenanceを記録し、global vcpkg restore、`tests1`の
+製品object取り込み、language resourceの未所有、共有resource ID headerをblockerにしました。MSBuild x64 Debugの
+native product observationでは566翻訳単位、PCH create 1/use 556/none 9、source input 1,151、生成header 16、
+link object 566、resource 1を観測し、`sakura_app -> sakura_uri`が`UriIdentity.obj`を直接linkするwitnessを得ました。
+一方、selected archive member、generator実行、resource table、package restoreは未観測のままです。同一入力の再収集で
+hard evidence hash、JSON SHA-256、mtimeが不変で、strictは規範終了コード5でした。
+legacy Release、MinGW、R1bのjunction/long-path/response-file matrixは別gateとして未実行であり、未実行の結果を
+passとは扱いません。詳細な採否と残余riskは[`docs/l4-component-build-r1a-status.md`](../docs/l4-component-build-r1a-status.md)
+に記録します。
 
 ## 開発者向け情報
 

@@ -1,0 +1,34 @@
+{
+  "active_artifacts": [],
+  "active_components": [
+    "sakura_app",
+    "tests1"
+  ],
+  "active_contracts": [],
+  "active_edges": [
+    "tests1-to-sakura-app"
+  ],
+  "compile_profiles": [
+    "msvc-x64-release",
+    "msvc-release-ltcg"
+  ],
+  "context": {
+    "arch": "x64",
+    "backend": "msbuild",
+    "configuration": "Release",
+    "features": [
+      "ltcg"
+    ],
+    "id": "msvc-x64-release",
+    "platform": "x64",
+    "role": "distribution",
+    "toolchain": "msvc"
+  },
+  "context_id": "msvc-x64-release",
+  "generated_artifacts": [],
+  "generator_version": "0.3.4",
+  "package_sets": [],
+  "projection_schema": 1,
+  "semantic_graph_hash": "sha256:323f9ab6f5e344a6e2a18c6ce9ab435d94b9c877b9a3c8a2cf45cc4ba75ec47c",
+  "staging_sets": []
+}

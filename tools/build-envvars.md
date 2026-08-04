@@ -58,6 +58,11 @@
 |変数名|既定値|説明|
 |--|--|--|
 |NUM_VSVERSION|インストール済みの最新バージョン|使用する Visual Studio のメジャーバージョン。例: `16` は Visual Studio 2019、`17` は Visual Studio 2022。詳細は [MSBuild の検索について](./find-tools.md#msbuild) を参照。|
+|CMD_MSBUILD|自動検出|canonical CLIが使用する `MSBuild.exe` の明示パス。未設定時はPATHとvswhereで探索する。|
+|SAKURA_BUILD_JOBS|論理CPU数|既存 `build-*.bat` 互換shimがcanonical CLIへ渡す全体並列予算。正の整数を指定する。canonical CLIを直接使う場合は `--jobs` を優先する。|
+|SakuraSkipModulesCheck|`false`|MSBuild内部用の緊急診断escape hatch。`true`でread-only manifest stamp検査を省略する。通常開発・CI・配布では設定せず、この値を使った成果物を検証済みと扱わない。|
+
+CMakeには同じ目的のcache option `SAKURA_SKIP_MODULES_CHECK=ON` がある。これも診断専用であり、通常のMinGW/CIビルドでは使用しない。
 |SAKURA_GENERATE_ASSEMBLY_LISTINGS|未設定（無効）|`1` または `true` の場合、MSVC の `/FAsu` を有効にして `.asm` 一覧を生成し、あわせてリンカーに `/CGTHREADS:1` を渡してコード生成を直列化する（同一ソース由来の一覧ファイルへの同時書き込みを避けるため）。値を切り替えた次のビルドでは再コンパイルが発生する場合がある。`build-all.bat` と配布 CI の Release ビルドは、配布成果物のため限定されたスコープで `1` を設定する。|
 |SAKURA_DEV_BUILD_TARGET|`Build`|診断専用。`build-dev.bat` が実行する MSBuild ターゲットを上書きする。`Build` 以外では成果物が完成しない場合があるため、通常は設定せず、使用後は解除する。|
 

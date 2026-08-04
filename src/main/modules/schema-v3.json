@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sakura-editor-next.invalid/schemas/modules-v3.json",
+  "title": "Sakura semantic component graph v3",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "minimum_generator_version", "contexts", "components", "contracts", "artifacts", "edges"],
+  "properties": {
+    "schema_version": {"const": 3},
+    "minimum_generator_version": {"type": "string", "minLength": 1},
+    "contexts": {"type": "array", "items": {"$ref": "#/$defs/context"}},
+    "components": {"type": "array", "items": {"$ref": "#/$defs/component"}},
+    "contracts": {"type": "array", "items": {"$ref": "#/$defs/contract"}},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "edges": {"type": "array", "items": {"$ref": "#/$defs/edge"}}
+  },
+  "$defs": {
+    "nonEmptyString": {"type": "string", "minLength": 1},
+    "stringArray": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/$defs/nonEmptyString"}},
+    "condition": {
+      "anyOf": [
+        {"const": true},
+        {
+          "oneOf": [
+            {"type": "object", "additionalProperties": false, "required": ["all"], "properties": {"all": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/condition"}}}},
+            {"type": "object", "additionalProperties": false, "required": ["any"], "properties": {"any": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/condition"}}}},
+            {"type": "object", "additionalProperties": false, "required": ["not"], "properties": {"not": {"$ref": "#/$defs/condition"}}},
+            {"type": "object", "additionalProperties": false, "required": ["has_feature"], "properties": {"has_feature": {"$ref": "#/$defs/nonEmptyString"}}},
+            {"type": "object", "additionalProperties": false, "required": ["eq"], "properties": {"eq": {"type": "object", "additionalProperties": false, "required": ["field", "value"], "properties": {"field": {"enum": ["platform", "arch", "configuration", "toolchain", "backend", "role"]}, "value": {"$ref": "#/$defs/nonEmptyString"}}}}},
+            {"type": "object", "additionalProperties": false, "required": ["in"], "properties": {"in": {"type": "object", "additionalProperties": false, "required": ["field", "values"], "properties": {"field": {"enum": ["platform", "arch", "configuration", "toolchain", "backend", "role"]}, "values": {"$ref": "#/$defs/stringArray"}}}}}
+          ]
+        }
+      ]
+    },
+    "context": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "platform", "arch", "configuration", "toolchain", "backend", "role", "features"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"}, "platform": {"$ref": "#/$defs/nonEmptyString"},
+        "arch": {"$ref": "#/$defs/nonEmptyString"}, "configuration": {"$ref": "#/$defs/nonEmptyString"},
+        "toolchain": {"$ref": "#/$defs/nonEmptyString"}, "backend": {"enum": ["msbuild", "cmake"]},
+        "role": {"$ref": "#/$defs/nonEmptyString"}, "features": {"$ref": "#/$defs/stringArray"}
+      }
+    },
+    "component": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "enum": ["contract", "aggregate"]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "sources": {"maxItems": 0},
+              "private_headers": {"maxItems": 0},
+              "private_include_roots": {"maxItems": 0},
+              "state_owner": {"type": "null"}
+            }
+          }
+        }
+      ],
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "family", "kind", "maturity", "build_definition", "supported_contexts", "owner", "sources", "public_headers", "private_headers", "ownership_exclusions", "public_include_roots", "private_include_roots", "state_owner", "backend_targets", "compile_profile"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"}, "family": {"$ref": "#/$defs/nonEmptyString"},
+        "kind": {"enum": ["implementation", "contract", "composition", "executable", "test", "aggregate"]},
+        "maturity": {"enum": ["legacy", "candidate", "transitional", "independent"]},
+        "build_definition": {"enum": ["legacy", "generated"]},
+        "supported_contexts": {"$ref": "#/$defs/stringArray"},
+        "owner": {"$ref": "#/$defs/nonEmptyString"}, "sources": {"$ref": "#/$defs/stringArray"},
+        "public_headers": {"$ref": "#/$defs/stringArray"}, "private_headers": {"$ref": "#/$defs/stringArray"},
+        "ownership_exclusions": {"$ref": "#/$defs/stringArray"},
+        "public_include_roots": {"$ref": "#/$defs/stringArray"},
+        "private_include_roots": {"$ref": "#/$defs/stringArray"},
+        "state_owner": {"type": ["string", "null"]},
+        "backend_targets": {"type": "object", "additionalProperties": false, "properties": {"msbuild": {"$ref": "#/$defs/stringArray"}, "cmake": {"$ref": "#/$defs/stringArray"}}},
+        "compile_profile": {"type": ["string", "null"]}
+      }
+    },
+    "contractDecision": {
+      "type": "object", "additionalProperties": false,
+      "required": ["owner_reason", "why_not_inbound_api", "adapter_owner"],
+      "properties": {
+        "owner_reason": {"$ref": "#/$defs/nonEmptyString"},
+        "why_not_inbound_api": {"$ref": "#/$defs/nonEmptyString"},
+        "adapter_owner": {"$ref": "#/$defs/nonEmptyString"}
+      }
+    },
+    "contract": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "contract_kind", "contract_owner", "capability_id", "canonical_value_types", "contract_decision"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "contract_kind": {"enum": ["inbound_api", "outbound_port", "wire_protocol", "abi_contract"]},
+        "contract_owner": {"$ref": "#/$defs/nonEmptyString"},
+        "capability_id": {"$ref": "#/$defs/nonEmptyString"},
+        "canonical_value_types": {"$ref": "#/$defs/stringArray"},
+        "contract_decision": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/contractDecision"}]}
+      }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "owner", "artifact_kind", "inputs", "outputs", "tool_id", "condition"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"},
+        "owner": {"$ref": "#/$defs/nonEmptyString"},
+        "artifact_kind": {"enum": ["generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product"]},
+        "inputs": {"$ref": "#/$defs/stringArray"},
+        "outputs": {"$ref": "#/$defs/stringArray"},
+        "tool_id": {"anyOf": [{"type": "null"}, {"enum": ["sakura-module-generator", "header-make", "cmake", "msbuild", "rc", "copy"]}]},
+        "condition": {"$ref": "#/$defs/condition"}
+      }
+    },
+    "witness": {
+      "type": "object", "additionalProperties": false, "required": ["context", "probe"],
+      "properties": {"context": {"$ref": "#/$defs/nonEmptyString"}, "probe": {"$ref": "#/$defs/nonEmptyString"}}
+    },
+    "edge": {
+      "type": "object", "additionalProperties": false,
+      "required": ["id", "from", "to", "kind", "phases", "visibility", "propagation", "contract_profile", "condition", "required", "witnesses"],
+      "properties": {
+        "id": {"$ref": "#/$defs/nonEmptyString"}, "from": {"$ref": "#/$defs/nonEmptyString"}, "to": {"$ref": "#/$defs/nonEmptyString"},
+        "kind": {"enum": ["api", "implementation", "tool", "asset", "package", "protocol", "test"]},
+        "phases": {"$ref": "#/$defs/stringArray"}, "visibility": {"enum": ["public", "private"]},
+        "propagation": {"enum": ["none", "public"]}, "contract_profile": {"type": ["string", "null"]},
+        "condition": {"$ref": "#/$defs/condition"}, "required": {"type": "boolean"},
+        "witnesses": {"type": "array", "items": {"$ref": "#/$defs/witness"}}
+      }
+    }
+  }
+}

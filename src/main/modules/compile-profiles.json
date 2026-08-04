@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "project_profiles": [
+    {
+      "id": "msvc-x64-debug",
+      "abi_family": "msvc",
+      "toolset": "v143",
+      "arch": "x64",
+      "configuration": "Debug",
+      "crt": "MTd",
+      "iterator_debug_level": 2,
+      "wchar_t_builtin": true,
+      "default_pack": 8,
+      "unicode": true,
+      "win32_winnt": "0x0A00",
+      "cpp_standard": "c++20"
+    },
+    {
+      "id": "msvc-x64-release",
+      "abi_family": "msvc",
+      "toolset": "v143",
+      "arch": "x64",
+      "configuration": "Release",
+      "crt": "MT",
+      "iterator_debug_level": 0,
+      "wchar_t_builtin": true,
+      "default_pack": 8,
+      "unicode": true,
+      "win32_winnt": "0x0A00",
+      "cpp_standard": "c++20"
+    },
+    {
+      "id": "mingw-x64-debug",
+      "abi_family": "mingw",
+      "toolset": "repository-baseline",
+      "arch": "x64",
+      "configuration": "Debug",
+      "crt": "mingw-static",
+      "iterator_debug_level": 0,
+      "wchar_t_builtin": true,
+      "default_pack": 8,
+      "unicode": true,
+      "win32_winnt": "0x0A00",
+      "cpp_standard": "c++20"
+    },
+    {
+      "id": "mingw-x64-release",
+      "abi_family": "mingw",
+      "toolset": "repository-baseline",
+      "arch": "x64",
+      "configuration": "Release",
+      "crt": "mingw-static",
+      "iterator_debug_level": 0,
+      "wchar_t_builtin": true,
+      "default_pack": 8,
+      "unicode": true,
+      "win32_winnt": "0x0A00",
+      "cpp_standard": "c++20"
+    }
+  ],
+  "contract_profiles": [
+    {
+      "id": "internal-cpp-value",
+      "uses_stl_types": true,
+      "crosses_allocator_boundary": false,
+      "exception_boundary": "same-runtime-cpp",
+      "rtti_boundary": "none",
+      "layout_boundary": "value",
+      "required_project_fields": [
+        "abi_family",
+        "toolset",
+        "arch",
+        "crt",
+        "iterator_debug_level",
+        "wchar_t_builtin",
+        "default_pack",
+        "unicode",
+        "win32_winnt",
+        "cpp_standard"
+      ]
+    },
+    {
+      "id": "opaque-c-handle",
+      "uses_stl_types": false,
+      "crosses_allocator_boundary": false,
+      "exception_boundary": "no_throw",
+      "rtti_boundary": "none",
+      "layout_boundary": "opaque",
+      "required_project_fields": ["abi_family", "arch"]
+    }
+  ],
+  "link_profiles": [
+    {"id": "msvc-debug-link", "lto": "off", "sanitizer": "none", "debug_format": "pdb", "incremental_link": false},
+    {"id": "msvc-release-ltcg", "lto": "ltcg", "sanitizer": "none", "debug_format": "pdb", "incremental_link": false},
+    {"id": "mingw-debug-link", "lto": "off", "sanitizer": "none", "debug_format": "dwarf", "incremental_link": false},
+    {"id": "mingw-release-link", "lto": "off", "sanitizer": "none", "debug_format": "dwarf", "incremental_link": false}
+  ],
+  "context_profiles": [
+    {"id": "context-msvc-x64-debug", "context_id": "msvc-x64-debug", "project_profile": "msvc-x64-debug", "link_profile": "msvc-debug-link"},
+    {"id": "context-cmake-msvc-x64-debug", "context_id": "cmake-msvc-x64-debug", "project_profile": "msvc-x64-debug", "link_profile": "msvc-debug-link"},
+    {"id": "context-msvc-x64-release", "context_id": "msvc-x64-release", "project_profile": "msvc-x64-release", "link_profile": "msvc-release-ltcg"},
+    {"id": "context-mingw-x64-debug", "context_id": "mingw-x64-debug", "project_profile": "mingw-x64-debug", "link_profile": "mingw-debug-link"},
+    {"id": "context-mingw-x64-release", "context_id": "mingw-x64-release", "project_profile": "mingw-x64-release", "link_profile": "mingw-release-link"}
+  ]
+}

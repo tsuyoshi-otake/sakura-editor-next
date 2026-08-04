@@ -16,8 +16,14 @@
 
 ## 使用するバッチファイルの一覧
 
+`sakura-build.bat` が canonical build CLI です。`build-dev.bat`、`build-sln.bat`、
+`build-all.bat`、`build-gnu.bat` は argv と exit code だけを中継する互換shimです。
+引数検証、tool discovery、実行計画、並列予算、staging は
+`tools/build/sakura_build.py` が所有します。
+
 | ファイル名 | 説明 |
 |----|----|
+|[sakura-build.bat](../sakura-build.bat)| canonical CLIへのWindows入口 |
 |[tools\githash.bat](./githash.bat) | Git や CI の環境変数から githash.h を生成する |
 |[tools\find-tools.bat](./find-tools.md) | ビルド関連ツールのパスを探す |
 |[build-all.bat](../build-all.bat)| 配布に必要な本体、ヘルプ、インストーラ、ZIP をビルドする |
@@ -30,9 +36,15 @@
 
 ## 呼び出し構造
 
-- [build-dev.bat](../build-dev.bat)
+- [build-dev.bat](../build-dev.bat) / [build-sln.bat](../build-sln.bat) / [build-all.bat](../build-all.bat) / [build-gnu.bat](../build-gnu.bat)
+    - `py -3 tools/build/sakura_build.py compat ...`（薄い互換shim）
+- [sakura-build.bat](../sakura-build.bat)
+    - `py -3 tools/build/sakura_build.py`
+        - strict manifest / ContextProjection / BuildIntent を検証
+        - MSBuildまたはCMakeのnative schedulerへ実行を委譲
+- canonical CLIによる `build dev`
     - MSBuild.exe sakura_core\sakura.vcxproj (`/nr:false`)
-- [build-sln.bat](../build-sln.bat)
+- canonical CLIによる `build solution`
     - MSBuild.exe sakura.sln (`/nr:false`)
         - cmake.exe Gitリポジトリ情報を version.h に書き出す。
             - git.exe
@@ -63,7 +75,7 @@
     - cmake --build build/MinGW --config Debug --target tests1
     - ctest --test-dir build/MinGW --build-config Debug --output-on-failure
 
-`build-dev.bat` と `build-sln.bat` は MSBuild のノード再利用を無効にしているため、正常終了後に再利用待ちの MSBuild プロセスを残しません。
+canonical CLIはMSBuildのノード再利用を無効にするため、正常終了後に再利用待ちのMSBuildプロセスを残しません。
 
 ## ビルドに使用するバッチファイルの引数
 

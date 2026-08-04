@@ -31,6 +31,13 @@ cleanup rules centralized here.
 
 ## Running Tests
 
+`src/test/test-inventory.json` is the source-controlled pre-split guarantee
+baseline.  Refresh it only from a successfully rebuilt Debug `tests1.exe` via
+the canonical `test inventory collect` command.  Preserve each `test_id` when
+moving a test to a new executable; change only its runtime runner/selector
+mapping.  A discovery failure or an unexpected zero-test result must never
+replace the baseline.
+
 Full suite for a built configuration:
 
 ```cmd

@@ -12,6 +12,35 @@ if(CMAKE_GENERATOR_PLATFORM)
   endif()
 endif()
 
+# Keep direct CMake/IDE builds on the same read-only semantic-graph trust path.
+# This runs before compiler probing, so a stale graph fails before restore/build.
+option(SAKURA_SKIP_MODULES_CHECK "Diagnostic-only: skip semantic graph staleness check" OFF)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+  "${CMAKE_SOURCE_DIR}/src/main/modules/modules.json"
+  "${CMAKE_SOURCE_DIR}/src/main/modules/schema-v3.json"
+  "${CMAKE_SOURCE_DIR}/src/main/modules/compile-profiles.json"
+  "${CMAKE_SOURCE_DIR}/tools/build/sakura_build.py"
+  "${CMAKE_SOURCE_DIR}/tools/build/sakura_build_lib/model.py"
+  "${CMAKE_SOURCE_DIR}/tools/build/sakura_build_lib/generator.py"
+  "${CMAKE_SOURCE_DIR}/tools/build/sakura_build_lib/runner.py")
+if(NOT SAKURA_SKIP_MODULES_CHECK)
+  find_program(_sakura_build_python NAMES python3 python py REQUIRED)
+  get_filename_component(_sakura_build_python_name "${_sakura_build_python}" NAME_WE)
+  set(_sakura_build_python_args)
+  if(_sakura_build_python_name STREQUAL "py")
+    list(APPEND _sakura_build_python_args -3)
+  endif()
+  execute_process(
+    COMMAND "${_sakura_build_python}" ${_sakura_build_python_args}
+      "${CMAKE_SOURCE_DIR}/tools/build/sakura_build.py" generate --check
+    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+    RESULT_VARIABLE _sakura_modules_check_result)
+  if(NOT _sakura_modules_check_result EQUAL 0)
+    message(FATAL_ERROR
+      "Component projections are stale. Run: py -3 tools/build/sakura_build.py generate")
+  endif()
+endif()
+
 # Define primary project
 project(sakura LANGUAGES CXX)
 

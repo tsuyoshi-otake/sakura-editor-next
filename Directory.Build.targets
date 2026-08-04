@@ -1,3 +1,48 @@
 ﻿<Project>
+  <PropertyGroup>
+    <SakuraRepositoryRoot>$([MSBuild]::NormalizeDirectory('$(MSBuildThisFileDirectory)'))</SakuraRepositoryRoot>
+    <SakuraModulesManifest>$(SakuraRepositoryRoot)src\main\modules\modules.json</SakuraModulesManifest>
+    <SakuraModulesStamp>$(SakuraRepositoryRoot)src\main\modules\generated\manifest.stamp.json</SakuraModulesStamp>
+    <SakuraModulesCheckMarker>$(SakuraRepositoryRoot)build\.sakura\modules-check\verified.stamp</SakuraModulesCheckMarker>
+    <SakuraModulesContextId Condition="'$(Platform)' == 'x64' and '$(Configuration)' == 'Debug'">msvc-x64-debug</SakuraModulesContextId>
+    <SakuraModulesContextId Condition="'$(Platform)' == 'x64' and '$(Configuration)' == 'Release'">msvc-x64-release</SakuraModulesContextId>
+    <SakuraModulesGeneratedProps Condition="'$(SakuraModulesContextId)' != ''">$(SakuraRepositoryRoot)src\main\modules\generated\msbuild\$(SakuraModulesContextId).props</SakuraModulesGeneratedProps>
+  </PropertyGroup>
+  <!-- DesignTimeBuild reads only the committed projection. It must not launch
+       Python, restore, code generation, staging, nested builds, or probes. -->
+  <Import Project="$(SakuraModulesGeneratedProps)"
+          Condition="'$(SakuraModulesGeneratedProps)' != '' and Exists('$(SakuraModulesGeneratedProps)')" />
+  <ItemGroup>
+    <SakuraBuildModelInputs Include="$(SakuraModulesManifest)" />
+    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)src\main\modules\schema-v3.json" />
+    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)src\main\modules\compile-profiles.json" />
+    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)tools\build\sakura_build.py" />
+    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)tools\build\sakura_build_lib\*.py" />
+    <SakuraBuildModelInputs Include="$(SakuraRepositoryRoot)src\main\modules\generated\**\*" />
+  </ItemGroup>
+
+  <!-- Normal builds pay for the read-only hash check only after a model input changes. -->
+  <Target Name="SakuraVerifyModuleGraph"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SakuraSkipModulesCheck)' != 'true'"
+          Inputs="@(SakuraBuildModelInputs)"
+          Outputs="$(SakuraModulesCheckMarker)">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(SakuraModulesCheckMarker)'))" />
+    <Exec Command="py -3 &quot;$(SakuraRepositoryRoot)tools\build\sakura_build.py&quot; generate --check"
+          WorkingDirectory="$(SakuraRepositoryRoot)" />
+    <Touch Files="$(SakuraModulesCheckMarker)" AlwaysCreate="true" />
+  </Target>
+
+  <Target Name="SakuraValidateGeneratedModelForDesignTime"
+          BeforeTargets="ClCompile"
+          Condition="'$(DesignTimeBuild)' == 'true' and '$(SakuraSkipModulesCheck)' != 'true'">
+    <Error Condition="'$(SakuraModulesContextId)' == ''"
+           Text="No committed Sakura component projection exists for Platform=$(Platform), Configuration=$(Configuration)." />
+    <Error Condition="!Exists('$(SakuraModulesGeneratedProps)')"
+           Text="Committed Sakura component projection is missing: $(SakuraModulesGeneratedProps). Run: py -3 tools/build/sakura_build.py generate" />
+    <Error Condition="'$(SakuraSemanticGraphHash)' == '' or '$(SakuraModulesGeneratorVersion)' == ''"
+           Text="Committed Sakura component projection is invalid: $(SakuraModulesGeneratedProps). Run: py -3 tools/build/sakura_build.py generate" />
+  </Target>
+
   <Import Project="$(VcpkgRoot)scripts\buildsystems\msbuild\vcpkg.targets" />
 </Project>

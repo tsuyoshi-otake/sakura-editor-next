@@ -1,0 +1,37 @@
+{
+  "contexts": [
+    "cmake-msvc-x64-debug",
+    "mingw-x64-debug",
+    "mingw-x64-release",
+    "msvc-x64-debug",
+    "msvc-x64-release"
+  ],
+  "generator_version": "0.3.4",
+  "output_hashes": {
+    "src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_uri.h": "sha256:7986758703a8578055da895f12af295a0f2db6d58dbde5e0c64b28629cdfa28d",
+    "src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_uri_tests.h": "sha256:7986758703a8578055da895f12af295a0f2db6d58dbde5e0c64b28629cdfa28d",
+    "src/main/modules/generated/abi/msvc-x64-debug/sakura_uri.h": "sha256:7986758703a8578055da895f12af295a0f2db6d58dbde5e0c64b28629cdfa28d",
+    "src/main/modules/generated/abi/msvc-x64-debug/sakura_uri_tests.h": "sha256:7986758703a8578055da895f12af295a0f2db6d58dbde5e0c64b28629cdfa28d",
+    "src/main/modules/generated/cmake/cmake-msvc-x64-debug.cmake": "sha256:9db86b4e54b7fc9c14ae934a10669cf6e2ebe943771b2b2fe3232dfe2a00a411",
+    "src/main/modules/generated/cmake/mingw-x64-debug.cmake": "sha256:b8d26c2d3110e63ec04324b094a681b2b00e170b7edcaf7159710fa1250a605b",
+    "src/main/modules/generated/cmake/mingw-x64-release.cmake": "sha256:c52e6608655b5f760df5ed24e145c9607047b48e0bd30ff1b0423d01894f8e64",
+    "src/main/modules/generated/cmake/msvc-x64-debug.cmake": "sha256:a90a91e40cd3d2f149b79efb3eca329a6dfc63cc11e23082d04ca4807250904e",
+    "src/main/modules/generated/cmake/msvc-x64-release.cmake": "sha256:988e5ef48459030af1fe3bef9a7ce57a2e41f53f9a8ddade807b0c5b1f267f93",
+    "src/main/modules/generated/cmake/projects/cmake-msvc-x64-debug/sakura_uri/CMakeLists.txt": "sha256:a2ffd61f4a7c2fc2615d28b3fa3b8734cfec1fd4df280ed24b6a7ae841667e88",
+    "src/main/modules/generated/cmake/projects/cmake-msvc-x64-debug/sakura_uri_tests/CMakeLists.txt": "sha256:432c929da6a5d4c0197a26f99f0376093ee368b3a8af54152693ea6f9933a30b",
+    "src/main/modules/generated/context/cmake-msvc-x64-debug.json": "sha256:7403e70c0d2d3cef5d01f74f759abc07c228d94278a13b053e15a760c9854eb1",
+    "src/main/modules/generated/context/mingw-x64-debug.json": "sha256:cf89e3db2ba7d371b9089dae8e6abd7dea892e1e8ec0b00d2abf9ba2af114544",
+    "src/main/modules/generated/context/mingw-x64-release.json": "sha256:fde8607cfe701527b359d412a37dc8b95a2c5ea0445a1a7e2c39d75dacb3d99a",
+    "src/main/modules/generated/context/msvc-x64-debug.json": "sha256:0070287a102887e8a45602badefcbb83802512334a0acb790080afb7703acde8",
+    "src/main/modules/generated/context/msvc-x64-release.json": "sha256:4c39196e5dd489bca8913dd34b51b09b7173bec78a9df1c87d057fda6fd21973",
+    "src/main/modules/generated/msbuild/cmake-msvc-x64-debug.props": "sha256:83d870785d7707896fe3ede565c1e19c9989b607133ff6a8afe1b4813401a69f",
+    "src/main/modules/generated/msbuild/mingw-x64-debug.props": "sha256:c8a071234a1e370dfa30d70ae81724c99cdb01cea434f3004767ff5b652d7787",
+    "src/main/modules/generated/msbuild/mingw-x64-release.props": "sha256:6b16f96e9d64081fdad68d1db7d2b8aed29396500b44be05fa732fc5e55051bc",
+    "src/main/modules/generated/msbuild/msvc-x64-debug.props": "sha256:da6a97bb3e9e9f631fb14c46bb1a9ea1efb2fa9e1901c9b9f8abedbdbccc8246",
+    "src/main/modules/generated/msbuild/msvc-x64-release.props": "sha256:e9e504c495610e33db567b0a691d302237f4a03927a77995325b0b6c8f200cc5",
+    "src/main/modules/generated/msbuild/projects/sakura_uri.vcxproj": "sha256:8ad7141a4b3d7c8df9d1142a835f9b5dd798a21b78a5166944e3cee3c2a7e04b",
+    "src/main/modules/generated/msbuild/projects/sakura_uri_tests.vcxproj": "sha256:8a9577eb0d7a42d38cd04dfbdc76d999c093cf1f26fd57e71efdfc267a384210"
+  },
+  "schema_version": 3,
+  "semantic_graph_hash": "sha256:323f9ab6f5e344a6e2a18c6ce9ab435d94b9c877b9a3c8a2cf45cc4ba75ec47c"
+}

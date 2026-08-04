@@ -1,0 +1,32 @@
+{
+  "active_artifacts": [],
+  "active_components": [
+    "sakura_uri",
+    "sakura_uri_tests"
+  ],
+  "active_contracts": [],
+  "active_edges": [
+    "sakura-uri-tests-to-sakura-uri"
+  ],
+  "compile_profiles": [
+    "msvc-x64-debug",
+    "msvc-debug-link"
+  ],
+  "context": {
+    "arch": "x64",
+    "backend": "cmake",
+    "configuration": "Debug",
+    "features": [],
+    "id": "cmake-msvc-x64-debug",
+    "platform": "x64",
+    "role": "component-pilot",
+    "toolchain": "msvc"
+  },
+  "context_id": "cmake-msvc-x64-debug",
+  "generated_artifacts": [],
+  "generator_version": "0.3.4",
+  "package_sets": [],
+  "projection_schema": 1,
+  "semantic_graph_hash": "sha256:323f9ab6f5e344a6e2a18c6ce9ab435d94b9c877b9a3c8a2cf45cc4ba75ec47c",
+  "staging_sets": []
+}
