@@ -3906,14 +3906,12 @@ void CEditWnd::ReloadWorkbenchOutlineAndRelayout()
 {
 	if (m_outlineWorkbenchTool == nullptr) return;
 	m_cDlgFuncList.ChangeView(reinterpret_cast<LPARAM>(&GetActiveView()));
-	const auto refresh = m_outlineWorkbenchTool->RequestRefresh();
-	if (refresh.status != workbench::outline::OutlineRefreshRequestStatus::Started) return;
-
+	// Command_FUNCLIST now delegates workbench parsing to CDlgFuncList's snapshot
+	// worker.  That dialog owns request deduplication and every async completion;
+	// the tool adapter only owns HWND lifetime, layout, and appearance.
 	const bool commandSucceeded = GetActiveView().GetCommander().Command_FUNCLIST(
 		SHOW_RELOAD, OUTLINE_DEFAULT ) != FALSE;
-	const auto completion = m_outlineWorkbenchTool->CompleteRefresh(
-		refresh.generation, commandSucceeded );
-	if (completion != workbench::outline::OutlineRefreshCompletion::Committed) return;
+	if( !commandSucceeded ) return;
 	const bool rightPanelVisible = IsOutlineViewExpanded();
 	const bool dialogCreated = m_cDlgFuncList.GetHwnd() != nullptr;
 	if( !workbench::outline::ShouldRelayoutOutlineAfterReload(
