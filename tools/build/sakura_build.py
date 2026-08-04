@@ -20,8 +20,13 @@ from sakura_build_lib.product_native_evidence import (
 )
 from sakura_build_lib.rebuild_evidence import run_rebuild_closure_rehearsal, write_rebuild_evidence
 from sakura_build_lib.resource_native_evidence import (
+    collect_resource_id_baseline,
     collect_resource_native_evidence,
     write_resource_native_evidence,
+)
+from sakura_build_lib.resource_id_compatibility import (
+    require_resource_id_baseline_version_advance,
+    write_resource_id_baseline,
 )
 from sakura_build_lib.repository_inventory import (
     collect_repository_inventory,
@@ -60,6 +65,12 @@ EXIT_TIMEOUT = 8
 EXIT_CLEANUP = 9
 EXIT_PERFORMANCE = 10
 
+RESOURCE_SOURCE_ROLES = {
+    "ja-JP": (Path("sakura_core/sakura_rc.rc"), Path("sakura_core/sakura_rc.rc2")),
+    "en-US": (Path("sakura_lang/sakura_rc_en-US.rc"), Path("sakura_lang/sakura_rc_en-US.rc2")),
+    "zh-CN": (Path("sakura_lang/sakura_rc_zh-CN.rc"), Path("sakura_lang/sakura_rc_zh-CN.rc2")),
+}
+
 
 def repo_root_from_script() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -71,6 +82,41 @@ def context_id(platform: str, configuration: str) -> str:
     if platform == "MinGW":
         return f"mingw-x64-{configuration.lower()}"
     raise BuildError("PLATFORM_INVALID", f"unsupported platform: {platform}", EXIT_USAGE)
+
+
+def _repository_path(repo: Path, value: Path, label: str) -> Path:
+    path = value if value.is_absolute() else repo / value
+    try:
+        path.resolve().relative_to(repo.resolve())
+    except ValueError as error:
+        raise BuildError(
+            "EVIDENCE_PATH_ESCAPE",
+            f"{label} must be inside the repository: {path}",
+            EXIT_USAGE,
+        ) from error
+    return path
+
+
+def _role_paths(repo: Path, values: list[str], option: str) -> dict[str, Path]:
+    result: dict[str, Path] = {}
+    for value in values:
+        role, separator, raw_path = value.partition("=")
+        role = role.strip()
+        raw_path = raw_path.strip()
+        if separator != "=" or not role or not raw_path:
+            raise BuildError(
+                "RESOURCE_ID_ROLE_PATH",
+                f"{option} expects ROLE=PATH, got: {value}",
+                EXIT_USAGE,
+            )
+        if role in result:
+            raise BuildError(
+                "RESOURCE_ID_ROLE_DUPLICATE",
+                f"{option} repeats role {role}",
+                EXIT_USAGE,
+            )
+        result[role] = _repository_path(repo, Path(raw_path), option)
+    return result
 
 
 def validate_legacy_pair(platform: str, configuration: str, expected: str | None = None) -> None:
@@ -149,7 +195,40 @@ def parser() -> argparse.ArgumentParser:
     inventory_observe_resources.add_argument("--context", default="msvc-x64-debug")
     inventory_observe_resources.add_argument("--product", default="sakura_app")
     inventory_observe_resources.add_argument("--native-evidence", type=Path, required=True)
+    inventory_observe_resources.add_argument("--resource-id-baseline", type=Path)
+    inventory_observe_resources.add_argument(
+        "--compat-image",
+        action="append",
+        default=[],
+        metavar="ROLE=PATH",
+        help="additional resource-only image for numeric-ID compatibility (repeatable)",
+    )
     inventory_observe_resources.add_argument("--output", type=Path, default=Path("build/evidence/r0/native-resource-table.json"))
+    inventory_snapshot_resource_ids = inventory_commands.add_parser("snapshot-resource-ids")
+    inventory_snapshot_resource_ids.add_argument(
+        "--header",
+        type=Path,
+        default=Path("src/main/resources/sakura_rc.h"),
+    )
+    inventory_snapshot_resource_ids.add_argument(
+        "--image",
+        action="append",
+        required=True,
+        metavar="ROLE=PATH",
+        help="compiled image used to establish the compatibility contract (repeatable)",
+    )
+    inventory_snapshot_resource_ids.add_argument("--compatibility-version", type=int, default=1)
+    inventory_snapshot_resource_ids.add_argument(
+        "--accept-current",
+        action="store_true",
+        required=True,
+        help="explicitly accept the current numeric contracts as the new golden baseline",
+    )
+    inventory_snapshot_resource_ids.add_argument(
+        "--output",
+        type=Path,
+        default=Path("tools/build/baselines/sakura_resource_ids.json"),
+    )
 
     verify = commands.add_parser("verify")
     verify_commands = verify.add_subparsers(dest="verify_command", required=True)
@@ -516,6 +595,42 @@ def main(argv: list[str] | None = None) -> int:
                 destination.resolve().relative_to(repo)
             except ValueError as error:
                 raise BuildError("EVIDENCE_PATH_ESCAPE", f"inventory output must be inside the repository: {destination}", EXIT_USAGE) from error
+            if args.inventory_command == "snapshot-resource-ids":
+                image_paths = _role_paths(repo, args.image, "--image")
+                header_path = _repository_path(repo, args.header, "--header")
+                source_roles = {
+                    role: tuple(repo / path for path in paths)
+                    for role, paths in RESOURCE_SOURCE_ROLES.items()
+                }
+                result = collect_resource_id_baseline(
+                    repo,
+                    header_path,
+                    source_roles,
+                    image_paths,
+                    compatibility_version=args.compatibility_version,
+                )
+                require_resource_id_baseline_version_advance(repo, destination, result)
+                write_resource_id_baseline(destination, result)
+                output(
+                    {
+                        "ok": True,
+                        "compatibility_version": result["compatibility_version"],
+                        "baseline_hash": result["baseline_hash"],
+                        "header_definition_count": result["header"]["definition_count"],
+                        "source_roles": [item["role"] for item in result["sources"]],
+                        "image_roles": [
+                            {
+                                "role": item["role"],
+                                "contract_hash": item["contract"]["contract_hash"],
+                                "counts": item["contract"]["counts"],
+                            }
+                            for item in result["images"]
+                        ],
+                        "output": str(destination),
+                    },
+                    args.format,
+                )
+                return 0
             if args.inventory_command == "observe-product":
                 result = observe_product_native_evidence(
                     graph,
@@ -556,16 +671,23 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 return 0
             if args.inventory_command == "observe-resources":
-                native_evidence = args.native_evidence if args.native_evidence.is_absolute() else repo / args.native_evidence
-                try:
-                    native_evidence.resolve().relative_to(repo)
-                except ValueError as error:
-                    raise BuildError("EVIDENCE_PATH_ESCAPE", f"native evidence must be inside the repository: {native_evidence}", EXIT_USAGE) from error
+                native_evidence = _repository_path(repo, args.native_evidence, "--native-evidence")
+                resource_id_baseline = None
+                compatibility_images: dict[str, Path] = {}
+                if args.resource_id_baseline is not None:
+                    resource_id_baseline = _repository_path(
+                        repo,
+                        args.resource_id_baseline,
+                        "--resource-id-baseline",
+                    )
+                    compatibility_images = _role_paths(repo, args.compat_image, "--compat-image")
                 result = collect_resource_native_evidence(
                     graph,
                     native_evidence,
                     args.product,
                     args.context,
+                    resource_id_baseline_path=resource_id_baseline,
+                    compatibility_images=compatibility_images,
                 )
                 write_resource_native_evidence(destination, result)
                 resource_table = result["resource_table"]

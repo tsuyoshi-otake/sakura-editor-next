@@ -124,9 +124,18 @@ sakura-build.bat inventory observe-product ^
   --context msvc-x64-debug --product sakura_app --jobs 1 --rebuild ^
   --output build/evidence/r0/native-msbuild-product.json
 
+sakura-build.bat inventory snapshot-resource-ids ^
+  --image ja-JP=x64/Debug/sakura.exe ^
+  --image en-US=x64/Debug/sakura_lang_en_US.dll ^
+  --image zh-CN=x64/Debug/sakura_lang_zh_CN.dll ^
+  --accept-current
+
 sakura-build.bat inventory observe-resources ^
   --context msvc-x64-debug --product sakura_app ^
   --native-evidence build/evidence/r0/native-msbuild-product.json ^
+  --resource-id-baseline tools/build/baselines/sakura_resource_ids.json ^
+  --compat-image en-US=x64/Debug/sakura_lang_en_US.dll ^
+  --compat-image zh-CN=x64/Debug/sakura_lang_zh_CN.dll ^
   --output build/evidence/r0/native-resource-table.json
 
 sakura-build.bat inventory repository ^
@@ -156,10 +165,16 @@ PE resource tableのtype、name、language ID、size、content SHA-256を正規�
 64 MiB、合計512 MiBを上限として収集します。生成済み製品を再利用するため、このcommand自体はcompile、
 link、package restoreを起動しません。
 
-この観測が証明するのはtop-level PE resource tableです。dialog/menu/accelerator内部のcommand/control ID、
-string block内の個別ID、`sakura_rc.h`と各言語DLLを含むcanonical numeric-ID compatibilityは別gateです。
-したがってresource tableを観測できても、compatibility baselineが確立するまでは
-`RESOURCE_ID_COMPATIBILITY_UNOBSERVED`をblockerとして残します。
+`snapshot-resource-ids`は、`sakura_rc.h`の数値mapping、各言語RC/RC2内で参照されるsymbol、実バイナリの
+top-level resource IDとdialog/menu/accelerator/string block内部の数値IDを、content非依存のgolden baselineへ
+保存します。出力先の既定値は`tools/build/baselines/sakura_resource_ids.json`です。既存baselineの内容を変更する
+場合は`--compatibility-version`を増加させる必要があり、`--accept-current`の明示なしではsnapshotを作成できません。
+
+`observe-resources`へbaselineと全言語imageを渡すと、現在のheader/source/image contractをbaselineと比較し、
+一致した場合だけcanonical/nested numeric resource-ID compatibilityをobservedにします。日本語imageには検証済み
+native productを必ず使用し、`--compat-image`では残りの言語roleを指定します。baseline、header、RC/RC2、imageの
+SHA-256をresource evidenceへ保持するため、採取後の入力変更はvalidationでstaleになります。baselineを指定しない
+従来のtop-level table観測も可能ですが、その場合は`RESOURCE_ID_COMPATIBILITY_UNOBSERVED`をblockerとして残します。
 
 Debug製品にはMAPがないため、link input setの観測だけでstatic archive内の採用memberを証明したとは
 扱いません。またgeneratorのExecと消費先を相関できても、生成規則の`Inputs`/`DEPENDS`が完全であること、

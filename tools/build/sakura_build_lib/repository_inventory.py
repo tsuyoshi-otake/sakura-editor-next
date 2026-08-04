@@ -915,7 +915,7 @@ def collect_repository_inventory(
         {"class": "native_source_ownership", "status": "partial", "evidence": "MSBuild exact; CMake GLOB_RECURSE diagnostic"},
         {"class": "link", "status": "partial", "evidence": "MSBuild definitions plus native product link input set when valid evidence is supplied; selected archive members/link-map closure pending"},
         {"class": "generated", "status": "partial", "evidence": "declared outputs/tools plus native generated-input consumption, target terminal outcomes, and exact producer correlations when valid evidence is supplied; declared-input gaps and all-context closure pending"},
-        {"class": "resource", "status": "partial", "evidence": "repository definitions plus native RC input trace and top-level PE resource table when valid evidence is supplied; canonical and nested resource ID compatibility pending"},
+        {"class": "resource", "status": "partial", "evidence": "repository definitions plus native RC input trace, top-level PE resource table, and canonical/nested numeric resource-ID compatibility when valid evidence is supplied; component ownership and all-context closure pending"},
         {"class": "package", "status": "partial", "evidence": "root vcpkg manifest and global MSBuild restore definition observed; per-component restore closure and native restore trace pending"},
         {"class": "runtime_asset", "status": "not_observed", "evidence": "staging/runtime file access inventory pending"},
         {"class": "test_fixture", "status": "partial", "evidence": "stable test inventory exists; fixture/asset edges pending"},

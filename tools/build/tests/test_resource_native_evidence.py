@@ -17,6 +17,11 @@ from sakura_build_lib.product_native_evidence import (  # noqa: E402
     write_product_native_evidence,
 )
 from sakura_build_lib.repository_inventory import collect_repository_inventory  # noqa: E402
+from sakura_build_lib.resource_id_compatibility import (  # noqa: E402
+    ResourceIdContractBuilder,
+    build_resource_id_baseline,
+    write_resource_id_baseline,
+)
 from sakura_build_lib.resource_native_evidence import (  # noqa: E402
     collect_resource_native_evidence,
     validate_resource_native_evidence,
@@ -58,6 +63,68 @@ def _evidence_fixture(root: Path):
 
 
 class ResourceNativeEvidenceTests(unittest.TestCase):
+    def test_valid_canonical_id_contract_removes_only_id_compatibility_blocker(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, native_path = _evidence_fixture(Path(temporary))
+            header = graph.repo_root / "src/main/resources/sakura_rc.h"
+            source = graph.repo_root / "sakura_core/sakura_rc.rc"
+            header.parent.mkdir(parents=True, exist_ok=True)
+            source.parent.mkdir(parents=True, exist_ok=True)
+            header.write_text("#define IDD_MAIN 100\n", encoding="utf-8")
+            source.write_text("IDD_MAIN DIALOG 0, 0, 1, 1\n", encoding="utf-8")
+            contract = ResourceIdContractBuilder().finish()
+            baseline = build_resource_id_baseline(
+                graph.repo_root,
+                header,
+                {"ja-JP": (source,)},
+                {"ja-JP": contract},
+            )
+            baseline_path = graph.repo_root / "tools/build/baselines/sakura_resource_ids.json"
+            write_resource_id_baseline(baseline_path, baseline)
+            evidence = collect_resource_native_evidence(
+                graph,
+                native_path,
+                "product",
+                "msvc-x64-debug",
+                table_reader=lambda _path: list(RESOURCE_ENTRIES),
+                resource_id_baseline_path=baseline_path,
+                contract_reader=lambda _path: contract,
+            )
+            evidence_path = graph.repo_root / "build/evidence/native-resources.json"
+            write_resource_native_evidence(evidence_path, evidence)
+            validation = validate_resource_native_evidence(
+                graph,
+                evidence_path,
+                native_path,
+                "product",
+                "msvc-x64-debug",
+            )
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+                native_evidence_path=native_path,
+                resource_evidence_path=evidence_path,
+            )
+            source.write_text("IDD_MAIN DIALOGEX 0, 0, 1, 1\n", encoding="utf-8")
+            stale = validate_resource_native_evidence(
+                graph,
+                evidence_path,
+                native_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        self.assertTrue(evidence["resource_id_compatibility"]["observed"])
+        self.assertTrue(validation["coverage"]["resource_id_compatibility_observed"])
+        self.assertNotIn(
+            "RESOURCE_ID_COMPATIBILITY_UNOBSERVED",
+            {item["code"] for item in inventory["findings"]},
+        )
+        self.assertFalse(stale["valid"])
+        self.assertIn("RESOURCE_ID_INPUT_CHANGED", {item["code"] for item in stale["failures"]})
+
     def test_collect_validate_and_merge_preserve_id_compatibility_blocker(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph, native_path = _evidence_fixture(Path(temporary))
@@ -194,6 +261,41 @@ class ResourceNativeEvidenceTests(unittest.TestCase):
                 table_reader=lambda _path: list(RESOURCE_ENTRIES),
             )
 
+        self.assertEqual(first_evidence["hard_evidence_hash"], second_evidence["hard_evidence_hash"])
+
+    def test_compatible_id_hard_evidence_hash_is_checkout_independent(self) -> None:
+        def collect(root: Path) -> dict[str, object]:
+            graph, native_path = _evidence_fixture(root)
+            header = graph.repo_root / "src/main/resources/sakura_rc.h"
+            source = graph.repo_root / "sakura_core/sakura_rc.rc"
+            header.parent.mkdir(parents=True, exist_ok=True)
+            source.parent.mkdir(parents=True, exist_ok=True)
+            header.write_text("#define IDD_MAIN 100\n", encoding="utf-8")
+            source.write_text("IDD_MAIN DIALOG 0, 0, 1, 1\n", encoding="utf-8")
+            contract = ResourceIdContractBuilder().finish()
+            baseline = build_resource_id_baseline(
+                graph.repo_root,
+                header,
+                {"ja-JP": (source,)},
+                {"ja-JP": contract},
+            )
+            baseline_path = graph.repo_root / "tools/build/baselines/sakura_resource_ids.json"
+            write_resource_id_baseline(baseline_path, baseline)
+            return collect_resource_native_evidence(
+                graph,
+                native_path,
+                "product",
+                "msvc-x64-debug",
+                table_reader=lambda _path: list(RESOURCE_ENTRIES),
+                resource_id_baseline_path=baseline_path,
+                contract_reader=lambda _path: contract,
+            )
+
+        with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
+            first_evidence = collect(Path(first))
+            second_evidence = collect(Path(second))
+
+        self.assertTrue(first_evidence["resource_id_compatibility"]["observed"])
         self.assertEqual(first_evidence["hard_evidence_hash"], second_evidence["hard_evidence_hash"])
 
 

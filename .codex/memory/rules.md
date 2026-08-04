@@ -41,8 +41,10 @@
   resources while keeping 7 external resource files outside Sakura ownership blockers.
 - [native resource evidence] Validate the current product hash before PE resource enumeration, open the image with
   data/image-resource flags, and keep top-level type/name/language/content observation separate from nested numeric
-  resource-ID compatibility. Evidence: Issue #15 observed 260 stable top-level entries without executing `sakura.exe`,
-  while strict inventory correctly retained `RESOURCE_ID_COMPATIBILITY_UNOBSERVED`.
+  resource-ID compatibility. A golden ID contract must include the canonical header mapping, each language's RC/RC2
+  references, and nested IDs decoded from every language image; hash every input so later mutation makes evidence stale.
+  Evidence: Issue #15 observed 260 stable top-level entries without executing `sakura.exe`, then matched the versioned
+  three-language baseline and removed only `RESOURCE_ID_COMPATIBILITY_UNOBSERVED` while other strict gates stayed red.
 - VS-bundled CMake 3.31.6 can fast-fail with `0xC0000409` when either its source or build tree uses a
   Japanese path. Keep the checkout authoritative, but run only the affected CMake component child
   through a short-lived ASCII junction verified with `os.path.samefile`; persist the lexical alias so

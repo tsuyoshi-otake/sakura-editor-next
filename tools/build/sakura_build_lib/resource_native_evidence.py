@@ -11,6 +11,12 @@ from typing import Callable, Mapping, Sequence
 
 from .model import SemanticGraph
 from .product_native_evidence import validate_product_native_evidence
+from .resource_id_compatibility import (
+    ResourceIdContractBuilder,
+    build_resource_id_baseline,
+    evaluate_resource_id_compatibility,
+    validate_resource_id_compatibility_inputs,
+)
 from .runner import BuildError
 
 
@@ -113,7 +119,10 @@ def _resource_table_payload(entries: Sequence[Mapping[str, object]]) -> dict[str
     }
 
 
-def _enumerate_pe_resource_table(path: Path) -> list[dict[str, object]]:
+def _enumerate_pe_resource_table(
+    path: Path,
+    entry_observer: Callable[[Mapping[str, object], Mapping[str, object], int, bytes], None] | None = None,
+) -> list[dict[str, object]]:
     if os.name != "nt":
         raise BuildError(
             "RESOURCE_TABLE_PLATFORM_UNSUPPORTED",
@@ -247,10 +256,14 @@ def _enumerate_pe_resource_table(path: Path) -> list[dict[str, object]]:
                     if size and not pointer:
                         raise OSError(f"LockResource failed with Win32 error {ctypes.get_last_error()}")
                     data = ctypes.string_at(pointer, size) if size else b""
+                    resource_type = _identifier(type_value)
+                    resource_name = _identifier(name_value)
+                    if entry_observer is not None:
+                        entry_observer(resource_type, resource_name, int(language_id), data)
                     total_bytes += size
                     entries.append({
-                        "type": _identifier(type_value),
-                        "name": _identifier(name_value),
+                        "type": resource_type,
+                        "name": resource_name,
                         "language_id": int(language_id),
                         "size": size,
                         "content_hash": _sha256_bytes(data),
@@ -326,6 +339,34 @@ def _enumerate_pe_resource_table(path: Path) -> list[dict[str, object]]:
     return _normalize_entries(entries)
 
 
+def collect_pe_resource_id_contract(path: Path) -> dict[str, object]:
+    builder = ResourceIdContractBuilder()
+    _enumerate_pe_resource_table(path, builder.observe)
+    return builder.finish()
+
+
+def collect_resource_id_baseline(
+    repo_root: Path,
+    header_path: Path,
+    source_roles: Mapping[str, Sequence[Path]],
+    image_paths: Mapping[str, Path],
+    *,
+    compatibility_version: int,
+    contract_reader: Callable[[Path], Mapping[str, object]] = collect_pe_resource_id_contract,
+) -> dict[str, object]:
+    contracts = {
+        role: dict(contract_reader(path))
+        for role, path in sorted(image_paths.items())
+    }
+    return build_resource_id_baseline(
+        repo_root,
+        header_path,
+        source_roles,
+        contracts,
+        compatibility_version=compatibility_version,
+    )
+
+
 def _inside_repository(repo_root: Path, path: Path, code: str) -> tuple[Path, str]:
     resolved = path.resolve()
     try:
@@ -342,6 +383,9 @@ def collect_resource_native_evidence(
     context_id: str,
     *,
     table_reader: Callable[[Path], list[dict[str, object]]] = _enumerate_pe_resource_table,
+    resource_id_baseline_path: Path | None = None,
+    compatibility_images: Mapping[str, Path] | None = None,
+    contract_reader: Callable[[Path], Mapping[str, object]] = collect_pe_resource_id_contract,
 ) -> dict[str, object]:
     native_validation = validate_product_native_evidence(
         graph,
@@ -391,6 +435,28 @@ def collect_resource_native_evidence(
         **table_payload,
         "table_hash": _sha256_json(table_payload),
     }
+    if resource_id_baseline_path is None:
+        resource_id_compatibility = {
+            "observed": False,
+            "reason": "top-level PE resource table is observed; canonical numeric ID and nested dialog/menu/control compatibility baseline is not established",
+        }
+    else:
+        image_paths = dict(compatibility_images or {})
+        existing_product = image_paths.get("ja-JP")
+        if existing_product is not None and existing_product.resolve() != product_path.resolve():
+            raise BuildError(
+                "RESOURCE_ID_PRODUCT_IMAGE_MISMATCH",
+                "ja-JP compatibility image must be the validated native product",
+                5,
+            )
+        image_paths["ja-JP"] = product_path
+        resource_id_compatibility = evaluate_resource_id_compatibility(
+            graph.repo_root,
+            resource_id_baseline_path,
+            image_paths,
+            contract_reader,
+        )
+
     stable_payload = {
         "semantic_graph_hash": graph.semantic_graph_hash,
         "product_id": product_id,
@@ -405,10 +471,7 @@ def collect_resource_native_evidence(
             "hash": product_hash,
         },
         "resource_table": resource_table,
-        "resource_id_compatibility": {
-            "observed": False,
-            "reason": "top-level PE resource table is observed; canonical numeric ID and nested dialog/menu/control compatibility baseline is not established",
-        },
+        "resource_id_compatibility": resource_id_compatibility,
     }
     return {
         "schema_version": EVIDENCE_SCHEMA_VERSION,
@@ -557,6 +620,13 @@ def validate_resource_native_evidence(
     compatibility_observed = (
         isinstance(compatibility, dict) and compatibility.get("observed") is True
     )
+    if isinstance(compatibility, dict) and compatibility_observed:
+        failures.extend(validate_resource_id_compatibility_inputs(graph.repo_root, compatibility))
+        compatibility_observed = not any(
+            str(item.get("code", "")).startswith("RESOURCE_ID_")
+            for item in failures
+        )
+        valid = not failures
     return {
         "status": "observed" if valid else "stale_or_mismatched",
         "valid": valid,
