@@ -58,12 +58,15 @@ vertical sliceとして扱い、L4独立性、`sakura_app`/`tests1`の置換、�
   抽出する。通常Buildのup-to-date skipはschedulingだけ、`--rebuild`で確認した`Exec`だけをexecutionとして扱い、
   outputの厳密なpathがcompiler/RC/link inputへ現れた場合だけproducerとconsumerを相関する。diagnostic logは実行ごとの
   一意な一時fileで、収集後に削除する。生成規則の`Inputs`/`DEPENDS`欠落は実行観測とは別blockerにする。
+- `inventory observe-resources`はcurrentなnative product evidenceと製品hashを前提に、`sakura.exe`をdata/image
+  resourceとして非実行で開く。top-level PE resourceのtype、name、language ID、size、content hashを有界に列挙する。
+  table観測とcanonical/nested numeric resource-ID互換を別gateとし、後者はbaseline未確立のままgreenにしない。
 
 ## 今回のVerify / Expect
 
 | Verify | Expect / 実結果 |
 |---|---|
-| `rtk proxy py -3 -m unittest discover -s tools/build/tests -p "test_*.py" -v` | exit 0、75 tests passed。敵対的台帳fixtureに加え、native trackerのcompiler/PCH/生成header/RC/link input、source変更によるstale、context不一致、Build未実行snapshot、tracker欠落、壊れたevidence JSON、generatorの実行/up-to-date/condition-false/無関係target混入、manifest link input、hard-evidence tamper、入力宣言欠落を検証した。MAPなしでselected archive memberを誤ってobservedにしない。 |
+| `rtk proxy py -3 -m unittest discover -s tools/build/tests -p "test_*.py" -v` | exit 0、80 tests passed。敵対的台帳fixtureに加え、native trackerのcompiler/PCH/生成header/RC/link input、source/product変更によるstale、context不一致、Build未実行snapshot、tracker欠落、壊れたevidence JSON、generatorの実行/up-to-date/condition-false/無関係target混入、manifest link input、hard-evidence tamper、入力宣言欠落、resource tableの正規化/改ざん/checkout独立hash/ID互換blockerを検証した。MAPなしでselected archive memberを誤ってobservedにしない。 |
 | `rtk proxy py -3 -m compileall -q tools/build` | exit 0。Python build CLI一式の構文検査に成功した。 |
 | `rtk proxy py -3 tools/build/sakura_build.py manifest check --format json` | exit 0、schema 3、graph hash `sha256:323f9ab6f5e344a6e2a18c6ce9ab435d94b9c877b9a3c8a2cf45cc4ba75ec47c`。 |
 | `rtk proxy python tools/build/sakura_build.py graph check --all-contexts --format json` | exit 0、5 context、SCC failure 0、witness failure 0。 |
@@ -77,8 +80,9 @@ vertical sliceとして扱い、L4独立性、`sakura_app`/`tests1`の置換、�
 | `path-matrix test component sakura_uri_tests --contexts msvc-x64-debug,cmake-msvc-x64-debug --jobs 1` | exit 0。normal/ASCII space/日本語の両backend test/evidenceが成功し、semantic graph hashとbackend別hard evidence hashが全case一致。standalone revertのlegacy hash/source/reference維持とcandidate生成project除去が成功。workspace cleanup true。 |
 | `verify rebuild-closure sakura_uri_tests --contexts msvc-x64-debug,cmake-msvc-x64-debug --jobs 1 --samples 5` | exit 0、両backendでclean/no-op/private cpp/public contractの期待compile/archive/link集合と観測集合が完全一致。全phaseでprojection変更0、package restore 0、test exit 0、workspace cleanup true。no-opの明示CMake configureは5回とも0。evidence-mode native child中央値はMSBuild 363.451 ms、CMake/Ninja 73.755 ms、MSBuild DesignTimeBuildは267.125 ms。いずれも移行前比較を持たないbaseline-onlyで、canonical CLI全体の性能値や改善率とは扱わない。 |
 | `inventory observe-product --context msvc-x64-debug --product sakura_app --jobs 1 --rebuild` | MSBuild製品Rebuildと収集はexit 0。568翻訳単位、source input 1,162、生成header 16、PCH create 1/use 558/none 9、RC unit 1、link object 568/resource 1、repository library 6/external library 35を観測した。13 generator targetの終端状態を記録し、実`Exec`を伴うproducerからFunccode define→RC、Funccode enum→compiler、manifest→link、version→compiler/RCの5消費を厳密pathで相関した。native evidence hashは`sha256:30a6e9f26059a94813f987ca6515dffca77b76f7cb0b78d761a163df65988bcd`。selected archive memberと実package restoreは`false`のまま。 |
-| `inventory repository ... --native-evidence build/evidence/r0/native-msbuild-product.json` | 収集exit 0、`collection_ok=true`、`graduation_ready=false`。静的件数はrepository C/C++/resource候補2,678、scan済みC/C++ 1,378、include 8,709、未所有file 27、未所有provider include 250、未解決quoted include 17、source link directive 17。native compiler/PCH、生成input消費、generator scheduling/execution、5 producer-consumer相関、RC input、link input setをvalid evidenceとしてmergeし、`sakura_app -> sakura_uri`が`UriIdentity.obj`を直接linkする1 witnessを記録した。一方、CMake custom command等に入力宣言のない生成規則10件をblockerとして記録した。selected archive member、resource table、package restoreは未観測。hard evidence hashは`sha256:77db103cec56682ccbbe273d15db7e59496f6ba20b5ee305bee4e89ab2b92d6e`。 |
-| 同inventoryの`--strict`と決定性再収集 | 規範終了コード5。46 blocker recordを要約し、10 dependency classすべてがpartial/not-observedのためR0卒業を拒否した。再収集前後のJSON SHA-256は`fd3bc579e7519242caa3ab367bd9d29ec980d7e1af6b9cd1da7df4662e0ba24c`で一致し、mtimeも不変だった。これは期待したred gateであり、収集失敗ではない。 |
+| `inventory observe-resources ... --native-evidence build/evidence/r0/native-msbuild-product.json` | exit 0。製品hash `sha256:3499cc6bbd1b5d178ce0d546b75382c1ea72de2e6330dfe52f5be046b99a280e`とnative evidenceの一致を確認し、top-level PE resource 260 entry、12 type、language ID 1033/1041、合計414,505 bytesを観測した。table hashは`sha256:599ddf551c18cb5c2ccc108e196a13bf3a24e88efe9a2781b4fca361e6eefa31`、resource hard evidence hashは`sha256:05d7d4ecaa5c766e04b45c408bf8b8e649f1386745256f907f322c1e62426cab`。canonical/nested resource-ID compatibilityは`false`のまま。 |
+| `inventory repository ... --native-evidence ... --resource-evidence ...` | 収集exit 0、`collection_ok=true`、`graduation_ready=false`。静的件数はrepository C/C++/resource候補2,678、scan済みC/C++ 1,378、include 8,709、未所有file 27、未所有provider include 250、未解決quoted include 17、source link directive 17。native compiler/PCH、生成input消費、generator scheduling/execution、5 producer-consumer相関、RC input、top-level PE resource table、link input setをvalid evidenceとしてmergeし、`sakura_app -> sakura_uri`が`UriIdentity.obj`を直接linkする1 witnessを記録した。入力宣言のない生成規則10件と`RESOURCE_ID_COMPATIBILITY_UNOBSERVED`をblockerとして維持した。selected archive memberとpackage restoreは未観測。hard evidence hashは`sha256:ebd1a5bd54dd36a3d19ff4c9551e7e42f57a6841e025309398f1af688df80a34`。 |
+| 同inventoryの`--strict`と決定性再収集 | 規範終了コード5。46 blocker recordを要約し、10 dependency classすべてがpartial/not-observedのためR0卒業を拒否した。resource evidence JSON SHA-256 `43a095ab6dff64847d8eb8ff067d3b20b529bc50a70f66b69ba11a99357e3846`、inventory JSON SHA-256 `dfbe7ed5dad7187483d61aa54820299cd0d4d77b307062844233b1af1c865da7`はそれぞれ再収集前後で一致し、mtimeも不変だった。これは期待したred gateであり、収集失敗ではない。 |
 | component `plan`/dry-run、legacy Release、MinGW | plan/dry-runはexit 0。legacy Release、MinGWは未実行。未検証をPASSとは扱わない。 |
 
 生成器とmodelのunit fixtureでは、3-nodeの`consumer -> provider -> private-provider` final-link closure、
@@ -114,10 +118,11 @@ CMake root-only stale scopeを確認した。これはnative URI実行や製品c
   `ProjectReference`とmanifestの`consumer -> provider` compile/link edgeはない。CMake本体も`GLOB_RECURSE`でsourceを
   収集する。このためURIはpilot単独buildが成功していても製品上のL4独立componentではない。
 - R0台帳はMSBuild Debug製品のcompiler/PCH/include、生成target scheduling/execution、5件の厳密なproducer-consumer相関、
-  RC input、link input setまで観測したが、依然partialである。CMake custom command等の入力宣言欠落10件があり、変更時の
-  正しい再生成閉包をまだ保証できない。selected archive member/link map、resource table/ID、実restore、他context、
-  staging/file accessは未観測で、runtime asset/state/protocolはnot-observedである。実行されたこと、入力宣言が完全であること、
-  互換性が保たれたことを混同しない。
+  RC input、top-level PE resource table、link input setまで観測したが、依然partialである。CMake custom command等の入力宣言欠落
+  10件があり、変更時の正しい再生成閉包をまだ保証できない。resource tableは260 entryを観測したが、dialog/menu/accelerator
+  内部のcommand/control ID、string blockの個別ID、`sakura_rc.h`と言語DLLを含むcanonical互換baselineは未確立である。
+  selected archive member/link map、実restore、他context、staging/file accessは未観測で、runtime asset/state/protocolは
+  not-observedである。実行・table列挙・入力宣言・互換性を混同しない。
   未観測を依存ゼロとして扱わず、残る27未所有file、250 include witness、1件の未分類quoted include
   (`cmigemo/migemo.h`)、17 source link directive、4 language resource、9 root package、global restore、tests1 object結合を
   後続gateで解消する。

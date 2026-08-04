@@ -292,6 +292,7 @@ def _enumerate_pe_resource_table(path: Path) -> list[dict[str, object]]:
 
     type_callback = enum_type_callback(on_type)
     callback_refs.append(type_callback)
+    release_error = 0
     try:
         ctypes.set_last_error(0)
         result = kernel32.EnumResourceTypesW(module, type_callback, 0)
@@ -311,7 +312,16 @@ def _enumerate_pe_resource_table(path: Path) -> list[dict[str, object]]:
                 5,
             )
     finally:
-        kernel32.FreeLibrary(module)
+        ctypes.set_last_error(0)
+        if not kernel32.FreeLibrary(module):
+            release_error = ctypes.get_last_error()
+
+    if release_error:
+        raise BuildError(
+            "RESOURCE_TABLE_IMAGE_CLOSE",
+            f"could not release PE image {path}: Win32 error {release_error}",
+            5,
+        )
 
     return _normalize_entries(entries)
 
