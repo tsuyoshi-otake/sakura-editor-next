@@ -19,6 +19,10 @@ from sakura_build_lib.product_native_evidence import (
     write_product_native_evidence,
 )
 from sakura_build_lib.rebuild_evidence import run_rebuild_closure_rehearsal, write_rebuild_evidence
+from sakura_build_lib.resource_native_evidence import (
+    collect_resource_native_evidence,
+    write_resource_native_evidence,
+)
 from sakura_build_lib.repository_inventory import (
     collect_repository_inventory,
     repository_inventory_summary,
@@ -129,6 +133,7 @@ def parser() -> argparse.ArgumentParser:
     inventory_repository.add_argument("--strict", action="store_true", help="fail when blockers or incomplete dependency classes remain")
     inventory_repository.add_argument("--output", type=Path, default=Path("build/evidence/r0/repository-inventory.json"))
     inventory_repository.add_argument("--native-evidence", type=Path, help="merge a separately collected native product observation")
+    inventory_repository.add_argument("--resource-evidence", type=Path, help="merge a separately collected native PE resource-table observation")
     inventory_observe_product = inventory_commands.add_parser("observe-product")
     inventory_observe_product.add_argument("--context", default="msvc-x64-debug")
     inventory_observe_product.add_argument("--product", default="sakura_app")
@@ -140,6 +145,11 @@ def parser() -> argparse.ArgumentParser:
         help="clean and rebuild the product so generator Exec tasks can be observed",
     )
     inventory_observe_product.add_argument("--output", type=Path, default=Path("build/evidence/r0/native-msbuild-product.json"))
+    inventory_observe_resources = inventory_commands.add_parser("observe-resources")
+    inventory_observe_resources.add_argument("--context", default="msvc-x64-debug")
+    inventory_observe_resources.add_argument("--product", default="sakura_app")
+    inventory_observe_resources.add_argument("--native-evidence", type=Path, required=True)
+    inventory_observe_resources.add_argument("--output", type=Path, default=Path("build/evidence/r0/native-resource-table.json"))
 
     verify = commands.add_parser("verify")
     verify_commands = verify.add_subparsers(dest="verify_command", required=True)
@@ -545,6 +555,38 @@ def main(argv: list[str] | None = None) -> int:
                     args.format,
                 )
                 return 0
+            if args.inventory_command == "observe-resources":
+                native_evidence = args.native_evidence if args.native_evidence.is_absolute() else repo / args.native_evidence
+                try:
+                    native_evidence.resolve().relative_to(repo)
+                except ValueError as error:
+                    raise BuildError("EVIDENCE_PATH_ESCAPE", f"native evidence must be inside the repository: {native_evidence}", EXIT_USAGE) from error
+                result = collect_resource_native_evidence(
+                    graph,
+                    native_evidence,
+                    args.product,
+                    args.context,
+                )
+                write_resource_native_evidence(destination, result)
+                resource_table = result["resource_table"]
+                output(
+                    {
+                        "collection_ok": result["collection_ok"],
+                        "semantic_graph_hash": result["semantic_graph_hash"],
+                        "hard_evidence_hash": result["hard_evidence_hash"],
+                        "context_id": result["context_id"],
+                        "product_id": result["product_id"],
+                        "resource_table_entry_count": resource_table["entry_count"],
+                        "resource_table_distinct_type_count": resource_table["distinct_type_count"],
+                        "resource_table_language_ids": resource_table["language_ids"],
+                        "resource_table_total_bytes": resource_table["total_bytes"],
+                        "resource_table_hash": resource_table["table_hash"],
+                        "resource_id_compatibility_observed": result["resource_id_compatibility"]["observed"],
+                        "output": str(destination),
+                    },
+                    args.format,
+                )
+                return 0
             native_evidence = None
             if args.native_evidence is not None:
                 native_evidence = args.native_evidence if args.native_evidence.is_absolute() else repo / args.native_evidence
@@ -552,12 +594,20 @@ def main(argv: list[str] | None = None) -> int:
                     native_evidence.resolve().relative_to(repo)
                 except ValueError as error:
                     raise BuildError("EVIDENCE_PATH_ESCAPE", f"native evidence must be inside the repository: {native_evidence}", EXIT_USAGE) from error
+            resource_evidence = None
+            if args.resource_evidence is not None:
+                resource_evidence = args.resource_evidence if args.resource_evidence.is_absolute() else repo / args.resource_evidence
+                try:
+                    resource_evidence.resolve().relative_to(repo)
+                except ValueError as error:
+                    raise BuildError("EVIDENCE_PATH_ESCAPE", f"resource evidence must be inside the repository: {resource_evidence}", EXIT_USAGE) from error
             result = collect_repository_inventory(
                 graph,
                 product_id=args.product,
                 provider_id=args.provider,
                 context_id=args.context,
                 native_evidence_path=native_evidence,
+                resource_evidence_path=resource_evidence,
             )
             write_repository_inventory(destination, result)
             rendered = repository_inventory_summary(result, output_path=destination)

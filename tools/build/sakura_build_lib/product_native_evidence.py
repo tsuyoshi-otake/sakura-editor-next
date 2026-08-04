@@ -895,6 +895,22 @@ def validate_product_native_evidence(
     link = evidence.get("link") if isinstance(evidence.get("link"), dict) else {}
     if evidence.get("build_target") not in {"Build", "Rebuild"}:
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_BUILD_TARGET_INVALID"})
+    product_relative = link.get("output")
+    if not isinstance(product_relative, str) or not product_relative:
+        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_PATH_MISSING"})
+    else:
+        product_path = (graph.repo_root / product_relative).resolve()
+        try:
+            product_path.relative_to(graph.repo_root.resolve())
+        except ValueError:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_PATH_ESCAPE", "path": product_relative})
+        else:
+            if not product_path.is_file():
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_MISSING", "path": product_relative})
+            elif not isinstance(link.get("product_hash"), str):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_HASH_MISSING"})
+            elif _sha256_file(product_path, "NATIVE_PRODUCT_EVIDENCE_PRODUCT_VALIDATE") != link.get("product_hash"):
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_CHANGED", "path": product_relative})
     valid = not failures
     return {
         "status": "observed" if valid else "stale_or_mismatched",

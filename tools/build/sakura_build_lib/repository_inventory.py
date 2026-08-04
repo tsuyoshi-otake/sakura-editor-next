@@ -19,6 +19,7 @@ from typing import Mapping
 
 from .model import SemanticGraph
 from .product_native_evidence import validate_product_native_evidence
+from .resource_native_evidence import validate_resource_native_evidence
 from .runner import BuildError
 
 
@@ -618,6 +619,8 @@ def _resource_provenance(graph: SemanticGraph, generated: Mapping[str, object]) 
         "canonical_sakura_rc_header_consumers": sorted(shared_resource_header_consumers),
         "semantic_resource_artifacts": sorted(artifact.id for artifact in graph.artifacts.values() if artifact.artifact_kind == "resource"),
         "native_resource_table_observed": False,
+        "native_resource_id_compatibility_observed": False,
+        "native_resource_table": {},
     }
 
 
@@ -842,6 +845,7 @@ def collect_repository_inventory(
     provider_id: str = "sakura_uri",
     context_id: str = "msvc-x64-debug",
     native_evidence_path: Path | None = None,
+    resource_evidence_path: Path | None = None,
 ) -> dict[str, object]:
     source = _source_inventory(graph)
     reachability = _product_reachability(graph, source, product_id, provider_id, context_id)
@@ -851,6 +855,13 @@ def collect_repository_inventory(
     packages = _package_provenance(graph)
     native_observation = validate_product_native_evidence(
         graph,
+        native_evidence_path,
+        product_id,
+        context_id,
+    )
+    resource_observation = validate_resource_native_evidence(
+        graph,
+        resource_evidence_path,
         native_evidence_path,
         product_id,
         context_id,
@@ -882,6 +893,12 @@ def collect_repository_inventory(
         "producer_consumer_correlations", []
     )
     resources["native_compiler_inputs_observed"] = bool(native_coverage.get("resource_compiler_inputs_observed"))
+    resource_coverage = resource_observation.get("coverage", {})
+    resources["native_resource_table_observed"] = bool(resource_coverage.get("resource_table_observed"))
+    resources["native_resource_id_compatibility_observed"] = bool(
+        resource_coverage.get("resource_id_compatibility_observed")
+    )
+    resources["native_resource_table"] = resource_observation.get("resource_table", {})
     product_link["native_input_set_observed"] = bool(native_coverage.get("link_input_set_observed"))
     product_link["native_selected_archive_members_observed"] = bool(native_coverage.get("selected_archive_members_observed"))
     product_link["native_consumer_provider_edges"] = native_observation["consumer_provider_edges"]
@@ -898,7 +915,7 @@ def collect_repository_inventory(
         {"class": "native_source_ownership", "status": "partial", "evidence": "MSBuild exact; CMake GLOB_RECURSE diagnostic"},
         {"class": "link", "status": "partial", "evidence": "MSBuild definitions plus native product link input set when valid evidence is supplied; selected archive members/link-map closure pending"},
         {"class": "generated", "status": "partial", "evidence": "declared outputs/tools plus native generated-input consumption, target terminal outcomes, and exact producer correlations when valid evidence is supplied; declared-input gaps and all-context closure pending"},
-        {"class": "resource", "status": "partial", "evidence": "repository definitions plus native RC input trace when valid evidence is supplied; resource table/ID compatibility pending"},
+        {"class": "resource", "status": "partial", "evidence": "repository definitions plus native RC input trace and top-level PE resource table when valid evidence is supplied; canonical and nested resource ID compatibility pending"},
         {"class": "package", "status": "partial", "evidence": "root vcpkg manifest and global MSBuild restore definition observed; per-component restore closure and native restore trace pending"},
         {"class": "runtime_asset", "status": "not_observed", "evidence": "staging/runtime file access inventory pending"},
         {"class": "test_fixture", "status": "partial", "evidence": "stable test inventory exists; fixture/asset edges pending"},
@@ -908,6 +925,8 @@ def collect_repository_inventory(
 
     findings: list[dict[str, object]] = []
     for failure in native_observation["failures"]:
+        findings.append({"severity": "blocker", **failure})
+    for failure in resource_observation["failures"]:
         findings.append({"severity": "blocker", **failure})
     for edge in source["undeclared_cross_component_edges"]:
         findings.append({
@@ -989,6 +1008,8 @@ def collect_repository_inventory(
         })
     if not resources["native_resource_table_observed"]:
         findings.append({"code": "NATIVE_RESOURCE_TABLE_UNOBSERVED", "severity": "blocker"})
+    if not resources["native_resource_id_compatibility_observed"]:
+        findings.append({"code": "RESOURCE_ID_COMPATIBILITY_UNOBSERVED", "severity": "blocker"})
     expression_tokens = sorted({
         str(token)
         for record in product_link["msbuild_additional_dependencies"]
@@ -1032,6 +1053,7 @@ def collect_repository_inventory(
         "product_link_provenance": product_link,
         "package_provenance": packages,
         "native_product_observation": native_observation,
+        "native_resource_observation": resource_observation,
         "artifacts_by_kind": artifacts_by_kind,
         "coverage": coverage,
         "findings": findings,
@@ -1075,6 +1097,7 @@ def repository_inventory_summary(
     product_link = inventory["product_link_provenance"]
     packages = inventory["package_provenance"]
     native = inventory["native_product_observation"]
+    native_resource = inventory["native_resource_observation"]
     findings_by_code: dict[str, int] = defaultdict(int)
     for finding in inventory["findings"]:
         findings_by_code[str(finding["code"])] += 1
@@ -1109,6 +1132,8 @@ def repository_inventory_summary(
             "generated_include_count": len(resources["generated_resource_includes"]),
             "unresolved_include_count": len(resources["unresolved_resource_includes"]),
             "native_resource_table_observed": resources["native_resource_table_observed"],
+            "native_resource_id_compatibility_observed": resources["native_resource_id_compatibility_observed"],
+            "native_resource_table_entry_count": int(resources["native_resource_table"].get("entry_count", 0)),
             "native_compiler_inputs_observed": resources["native_compiler_inputs_observed"],
         },
         "product_link_provenance": {
@@ -1132,6 +1157,13 @@ def repository_inventory_summary(
             "coverage": native.get("coverage", {}),
             "counts": native.get("counts", {}),
             "consumer_provider_edge_count": len(native.get("consumer_provider_edges", [])),
+        },
+        "native_resource_observation": {
+            "status": native_resource["status"],
+            "valid": native_resource["valid"],
+            "hard_evidence_hash": native_resource.get("hard_evidence_hash"),
+            "coverage": native_resource.get("coverage", {}),
+            "resource_table_entry_count": int(native_resource.get("resource_table", {}).get("entry_count", 0)),
         },
         "finding_count": len(inventory["findings"]),
         "findings_by_code": dict(sorted(findings_by_code.items())),

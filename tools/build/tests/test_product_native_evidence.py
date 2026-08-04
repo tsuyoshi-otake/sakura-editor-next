@@ -351,6 +351,28 @@ class ProductNativeEvidenceTests(unittest.TestCase):
             {item["code"] for item in validation["failures"]},
         )
 
+    def test_changed_product_binary_makes_evidence_stale(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, _tlog = _native_fixture(Path(temporary))
+            evidence = collect_product_native_evidence(graph, "product", "msvc-x64-debug", build_observed=True)
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+
+            (graph.repo_root / "x64/Debug/app.exe").write_bytes(b"changed-product")
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        self.assertFalse(validation["valid"])
+        self.assertEqual("stale_or_mismatched", validation["status"])
+        self.assertIn(
+            "NATIVE_PRODUCT_EVIDENCE_PRODUCT_CHANGED",
+            {item["code"] for item in validation["failures"]},
+        )
+
     def test_context_mismatch_is_explicit_and_not_observed(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph, _tlog = _native_fixture(Path(temporary))
