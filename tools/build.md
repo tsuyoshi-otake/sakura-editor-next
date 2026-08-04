@@ -119,6 +119,11 @@ sakura-build.bat inventory observe-product ^
   --context msvc-x64-debug --product sakura_app --jobs 1 ^
   --output build/evidence/r0/native-msbuild-product.json
 
+rem generatorのExec実行まで観測する場合だけ、clean rebuildを明示する
+sakura-build.bat inventory observe-product ^
+  --context msvc-x64-debug --product sakura_app --jobs 1 --rebuild ^
+  --output build/evidence/r0/native-msbuild-product.json
+
 sakura-build.bat inventory repository ^
   --context msvc-x64-debug --product sakura_app --provider sakura_uri ^
   --native-evidence build/evidence/r0/native-msbuild-product.json ^
@@ -126,15 +131,23 @@ sakura-build.bat inventory repository ^
 ```
 
 `observe-product`はMSBuildの製品Buildが成功した後、`CL.read`/`CL.command`、`rc.read`、
-`link.read`/`link.command` trackerを解析します。翻訳単位、source-controlled input、生成header/PCH、
-RC input、link object/resource/libraryをrepository-relativeな証跡として保存します。証跡にはgraph、context、
-product、観測source/生成物/trackerのSHA-256を保持し、欠落、変更、別context、Build未実行のsnapshotは
-repository台帳でblockerになります。
+`link.read`/`link.command` trackerと、今回の実行だけに属するdiagnostic logを解析します。diagnostic logは
+PIDとUUIDで一意な一時pathへ出力し、成否にかかわらず収集後に削除します。翻訳単位、source-controlled
+input、生成header/PCH、RC input、link object/resource/library、対象generator targetの終端状態を
+repository-relativeな証跡として保存します。証跡にはgraph、context、product、観測source/生成物/trackerの
+SHA-256を保持し、欠落、変更、別context、Build未実行のsnapshotはrepository台帳でblockerになります。
+
+通常のBuildでgeneratorがup-to-date skipになった場合は、target schedulingの観測であってExec実行の
+観測ではありません。`--rebuild`は製品をclean rebuildして実際の`Exec` taskを観測するための証跡専用optionです。
+全翻訳単位を再構築し、外部package処理も起動し得るため、通常の局所開発ループでは使用しません。generator
+実行をgreenにするには、対象targetの実行だけでなく、その厳密なoutput pathが同じ観測のcompiler/RC/link
+inputに現れ、producerとconsumerを相関できなければなりません。diagnostic logの時刻や所要時間、一時pathは
+hard evidence hashへ含めません。
 
 Debug製品にはMAPがないため、link input setの観測だけでstatic archive内の採用memberを証明したとは
-扱いません。また生成物がcompiler/RCへ入力された事実はgenerator実行の観測、RC inputの観測はresource
-table/ID互換の観測、vcpkg trackerの存在はrestore実行の観測ではありません。これらの未観測gateが残る間、
-`--strict`は終了コード5を返します。
+扱いません。またgeneratorのExecと消費先を相関できても、生成規則の`Inputs`/`DEPENDS`が完全であること、
+RC inputの観測がresource table/ID互換であること、vcpkg targetの実行やtrackerの存在がrestore内容であることは
+別の証明です。これらの未宣言・未観測gateが残る間、`--strict`は終了コード5を返します。
 
 `tests1`分割前の保証集合は`src/test/test-inventory.json`で凍結します。`test_id`は
 source-controlledな安定ID、`runtime.runner_id`と`runtime.selector`は実行時mappingです。

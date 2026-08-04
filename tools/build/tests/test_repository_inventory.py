@@ -80,6 +80,7 @@ def _fixture(root: Path) -> SemanticGraph:
     _write(
         root / "src/main/cmake/product.cmake",
         'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/version.h" COMMAND generator DEPENDS version.h.in)\n'
+        'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/manifest.rc" COMMAND generator)\n'
         "file(GLOB_RECURSE SOURCES app/*.cpp)\n",
     )
     _write(root / "vcpkg.json", json.dumps({"dependencies": ["fmt"]}) + "\n")
@@ -193,6 +194,7 @@ class RepositoryInventoryTests(unittest.TestCase):
         self.assertIn("PRODUCT_EMBEDS_PROVIDER_SOURCE", codes)
         self.assertIn("PRODUCT_PROVIDER_EDGE_MISSING", codes)
         self.assertIn("CMAKE_SOURCE_OWNERSHIP_OPAQUE", codes)
+        self.assertIn("GENERATOR_DECLARED_INPUT_GAP", codes)
         self.assertIn("ROOT_PACKAGE_SET_UNCLASSIFIED", codes)
         self.assertIn("NATIVE_GENERATOR_EXECUTION_UNOBSERVED", codes)
         self.assertIn("NATIVE_PRODUCT_EVIDENCE_NOT_PROVIDED", codes)
@@ -207,6 +209,17 @@ class RepositoryInventoryTests(unittest.TestCase):
         self.assertEqual(
             ["${CMAKE_BINARY_DIR}/version.h"],
             inventory["generated_provenance"]["cmake_custom_commands"][0]["outputs"],
+        )
+        self.assertEqual(
+            [
+                {
+                    "backend": "cmake",
+                    "ordinal": 2,
+                    "outputs": ["${CMAKE_BINARY_DIR}/manifest.rc"],
+                    "source": "src/main/cmake/product.cmake",
+                }
+            ],
+            inventory["generated_provenance"]["declared_input_gaps"],
         )
         self.assertEqual(2, len(inventory["resource_provenance"]["canonical_sakura_rc_header_consumers"]))
         self.assertEqual(1, len(inventory["product_link_provenance"]["test_product_object_aggregation"]))

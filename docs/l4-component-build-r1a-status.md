@@ -54,13 +54,18 @@ vertical sliceとして扱い、L4独立性、`sakura_app`/`tests1`の置換、�
   source-controlled/生成input、RC input、link object/resource/libraryを記録し、graph/context/productと全観測入力の
   SHA-256でstalenessを検査する。欠落、変更、別context、Build未実行snapshotはgreenにしない。merge後の依存方向も
   `consumer -> dependency/provider`とし、MAPのないDebug linkではselected archive memberを未観測のまま残す。
+- 同じ観測に属するMSBuild diagnostic logから、対象generator targetの開始、終端状態、`Exec` task、宣言outputを
+  抽出する。通常Buildのup-to-date skipはschedulingだけ、`--rebuild`で確認した`Exec`だけをexecutionとして扱い、
+  outputの厳密なpathがcompiler/RC/link inputへ現れた場合だけproducerとconsumerを相関する。diagnostic logは実行ごとの
+  一意な一時fileで、収集後に削除する。生成規則の`Inputs`/`DEPENDS`欠落は実行観測とは別blockerにする。
 
 ## 今回のVerify / Expect
 
 | Verify | Expect / 実結果 |
 |---|---|
-| `rtk proxy py -3 -m unittest discover -s tools/build/tests -p "test_*.py" -v` | exit 0、69 tests passed。敵対的台帳fixtureに加え、native trackerのcompiler/PCH/生成header/RC/link input、source変更によるstale、context不一致、Build未実行snapshot、tracker欠落、壊れたevidence JSONを検証した。MAPなしでselected archive memberを誤ってobservedにしない。 |
-| `rtk proxy py -3 tools/build/sakura_build.py manifest check --format json` | exit 0、schema 3、graph hash `sha256:56a57c0e3b64f96032eaec1758b1f4cfba4c461b18a4ae25adb225ec68ddd821`。 |
+| `rtk proxy py -3 -m unittest discover -s tools/build/tests -p "test_*.py" -v` | exit 0、75 tests passed。敵対的台帳fixtureに加え、native trackerのcompiler/PCH/生成header/RC/link input、source変更によるstale、context不一致、Build未実行snapshot、tracker欠落、壊れたevidence JSON、generatorの実行/up-to-date/condition-false/無関係target混入、manifest link input、hard-evidence tamper、入力宣言欠落を検証した。MAPなしでselected archive memberを誤ってobservedにしない。 |
+| `rtk proxy py -3 -m compileall -q tools/build` | exit 0。Python build CLI一式の構文検査に成功した。 |
+| `rtk proxy py -3 tools/build/sakura_build.py manifest check --format json` | exit 0、schema 3、graph hash `sha256:323f9ab6f5e344a6e2a18c6ce9ab435d94b9c877b9a3c8a2cf45cc4ba75ec47c`。 |
 | `rtk proxy python tools/build/sakura_build.py graph check --all-contexts --format json` | exit 0、5 context、SCC failure 0、witness failure 0。 |
 | `rtk proxy python tools/build/sakura_build.py generate --format json` | exit 0。generator 0.3.4からMSBuild/CMake projectionとcontext別ABI headerを再生成した。生成rootの候補worktree全置換は行っていない。 |
 | `rtk proxy python tools/build/sakura_build.py generate --check --format json` | exit 0、`stale=[]`。 |
@@ -71,9 +76,9 @@ vertical sliceとして扱い、L4独立性、`sakura_app`/`tests1`の置換、�
 | `build fixture abi-pack-mismatch` / `abi-iterator-mismatch` / `abi-opaque-compatible` | 3件ともCLI exit 0。最初の2件はnative linkがLNK2038となり、それぞれ`sakura.edge.abi-fixture.default_pack`、`sakura.edge.abi-fixture.iterator_debug_level`を診断して`expected_failure`へ終端した。opaque Cはpack差があってもlink/runtime exit 0。 |
 | `path-matrix test component sakura_uri_tests --contexts msvc-x64-debug,cmake-msvc-x64-debug --jobs 1` | exit 0。normal/ASCII space/日本語の両backend test/evidenceが成功し、semantic graph hashとbackend別hard evidence hashが全case一致。standalone revertのlegacy hash/source/reference維持とcandidate生成project除去が成功。workspace cleanup true。 |
 | `verify rebuild-closure sakura_uri_tests --contexts msvc-x64-debug,cmake-msvc-x64-debug --jobs 1 --samples 5` | exit 0、両backendでclean/no-op/private cpp/public contractの期待compile/archive/link集合と観測集合が完全一致。全phaseでprojection変更0、package restore 0、test exit 0、workspace cleanup true。no-opの明示CMake configureは5回とも0。evidence-mode native child中央値はMSBuild 363.451 ms、CMake/Ninja 73.755 ms、MSBuild DesignTimeBuildは267.125 ms。いずれも移行前比較を持たないbaseline-onlyで、canonical CLI全体の性能値や改善率とは扱わない。 |
-| `inventory observe-product --context msvc-x64-debug --product sakura_app --jobs 1` | MSBuild製品Buildと収集はexit 0。566翻訳単位、source input 1,151、生成header 16、PCH create 1/use 556/none 9、RC unit 1、link object 566/resource 1、repository library 6/external library 35を観測した。native evidence hashは`sha256:61bd325df9318fae9c72d9a152d0497d76fdc41c89e0f01ca83b4fdd97a5f9a4`。selected archive memberは`false`のまま。 |
-| `inventory repository ... --native-evidence build/evidence/r0/native-msbuild-product.json` | 収集exit 0、`collection_ok=true`、`graduation_ready=false`。静的件数は従来どおり2,673候補、1,373 owned C/C++、8,647 include、未所有file 27、未所有provider include 250、未解決quoted include 17、source link directive 17。native compiler/PCH、生成input消費、RC input、link input setをvalid evidenceとしてmergeし、`sakura_app -> sakura_uri`が`UriIdentity.obj`を直接linkする1 witnessを記録した。selected archive member、generator実行、resource table、package restoreは未観測。hard evidence hashは`sha256:dd0381b5fb5c1d902014c3a3d381ae2ec483c3fad8729a7a15fb673668cdb5d6`。 |
-| 同inventoryの`--strict` | 規範終了コード5。46 blocker recordを要約し、10 dependency classすべてがpartial/not-observedのためR0卒業を拒否した。これは期待したred gateであり、収集失敗ではない。 |
+| `inventory observe-product --context msvc-x64-debug --product sakura_app --jobs 1 --rebuild` | MSBuild製品Rebuildと収集はexit 0。568翻訳単位、source input 1,162、生成header 16、PCH create 1/use 558/none 9、RC unit 1、link object 568/resource 1、repository library 6/external library 35を観測した。13 generator targetの終端状態を記録し、実`Exec`を伴うproducerからFunccode define→RC、Funccode enum→compiler、manifest→link、version→compiler/RCの5消費を厳密pathで相関した。native evidence hashは`sha256:30a6e9f26059a94813f987ca6515dffca77b76f7cb0b78d761a163df65988bcd`。selected archive memberと実package restoreは`false`のまま。 |
+| `inventory repository ... --native-evidence build/evidence/r0/native-msbuild-product.json` | 収集exit 0、`collection_ok=true`、`graduation_ready=false`。静的件数はrepository C/C++/resource候補2,678、scan済みC/C++ 1,378、include 8,709、未所有file 27、未所有provider include 250、未解決quoted include 17、source link directive 17。native compiler/PCH、生成input消費、generator scheduling/execution、5 producer-consumer相関、RC input、link input setをvalid evidenceとしてmergeし、`sakura_app -> sakura_uri`が`UriIdentity.obj`を直接linkする1 witnessを記録した。一方、CMake custom command等に入力宣言のない生成規則10件をblockerとして記録した。selected archive member、resource table、package restoreは未観測。hard evidence hashは`sha256:77db103cec56682ccbbe273d15db7e59496f6ba20b5ee305bee4e89ab2b92d6e`。 |
+| 同inventoryの`--strict`と決定性再収集 | 規範終了コード5。46 blocker recordを要約し、10 dependency classすべてがpartial/not-observedのためR0卒業を拒否した。再収集前後のJSON SHA-256は`fd3bc579e7519242caa3ab367bd9d29ec980d7e1af6b9cd1da7df4662e0ba24c`で一致し、mtimeも不変だった。これは期待したred gateであり、収集失敗ではない。 |
 | component `plan`/dry-run、legacy Release、MinGW | plan/dry-runはexit 0。legacy Release、MinGWは未実行。未検証をPASSとは扱わない。 |
 
 生成器とmodelのunit fixtureでは、3-nodeの`consumer -> provider -> private-provider` final-link closure、
@@ -108,9 +113,11 @@ CMake root-only stale scopeを確認した。これはnative URI実行や製品c
 - URI実装`UriIdentity.cpp`は現在も`sakura_core/sakura.vcxproj`へ直接含まれ、製品から生成URI projectへの
   `ProjectReference`とmanifestの`consumer -> provider` compile/link edgeはない。CMake本体も`GLOB_RECURSE`でsourceを
   収集する。このためURIはpilot単独buildが成功していても製品上のL4独立componentではない。
-- R0台帳はMSBuild Debug製品のcompiler/PCH/include、生成input消費、RC input、link input setまで観測したが、依然partialである。
-  selected archive member/link map、generatorの実行、resource table/ID、実restore、他context、staging/file accessは未観測で、
-  runtime asset/state/protocolはnot-observedである。入力として現れたことと、そのproducer実行や互換性を証明したことを混同しない。
+- R0台帳はMSBuild Debug製品のcompiler/PCH/include、生成target scheduling/execution、5件の厳密なproducer-consumer相関、
+  RC input、link input setまで観測したが、依然partialである。CMake custom command等の入力宣言欠落10件があり、変更時の
+  正しい再生成閉包をまだ保証できない。selected archive member/link map、resource table/ID、実restore、他context、
+  staging/file accessは未観測で、runtime asset/state/protocolはnot-observedである。実行されたこと、入力宣言が完全であること、
+  互換性が保たれたことを混同しない。
   未観測を依存ゼロとして扱わず、残る27未所有file、250 include witness、1件の未分類quoted include
   (`cmigemo/migemo.h`)、17 source link directive、4 language resource、9 root package、global restore、tests1 object結合を
   後続gateで解消する。
