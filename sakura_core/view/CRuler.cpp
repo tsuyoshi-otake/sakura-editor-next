@@ -8,6 +8,7 @@
 #include "CRuler.h"
 #include "CTextArea.h"
 #include "view/CEditView.h"
+#include "view/RulerLayout.h"
 #include "doc/CEditDoc.h"
 #include "types/CTypeSupport.h"
 #include "util/window.h"
@@ -111,8 +112,10 @@ void CRuler::DrawRulerBg(CGraphics& gr)
 		lf.lfStrikeOut		= 0;
 		lf.lfCharSet		= 0;
 		lf.lfOutPrecision	= 3;
-		lf.lfClipPrecision	= 2;
-		lf.lfQuality		= 1;
+		lf.lfClipPrecision	= CLIP_DEFAULT_PRECIS;
+		// Grayscale antialiasing keeps ruler labels neutral instead of exposing
+		// coloured ClearType fringes at the clipped text-area boundary.
+		lf.lfQuality		= ANTIALIASED_QUALITY;
 		lf.lfPitchAndFamily	= 34;
 		wcscpy_s( lf.lfFaceName, L"Arial" );
 		m_hFont = ::CreateFontIndirect( &lf );
@@ -137,6 +140,11 @@ void CRuler::DrawRulerBg(CGraphics& gr)
 	//描画開始位置
 	int nX = m_pEditView->GetTextArea().GetAreaLeft();
 	int nY = m_pEditView->GetTextArea().GetRulerHeight() - 2;
+	const UINT dpi = m_pEditView->GetHwnd() == nullptr
+		? 96U : ::GetDpiForWindow(m_pEditView->GetHwnd());
+	const RECT rcLabelClip{
+		m_pEditView->GetTextArea().GetAreaLeft(), 0,
+		m_pEditView->GetTextArea().GetAreaRight(), nY + 1 };
 
 	//	Aug. 14, 2005 genta 折り返し幅をLayoutMgrから取得するように
 	//	2005.11.10 Moca 1dot足りない
@@ -183,7 +191,10 @@ void CRuler::DrawRulerBg(CGraphics& gr)
 			wchar_t szColumn[32];
 			apt[idx * 2 + 1] = POINT{nX, 0};
 			_itow( ((Int)keta) / 10, szColumn, 10 );
-			::TextOutW(gr, nX + 2 + 0, -1 + 0, PSZ_ARGS(szColumn));
+			const auto label = view::ruler::CalculateMajorLabelPosition(
+				nX, m_pEditView->GetTextArea().GetAreaLeft(), dpi);
+			::ExtTextOutW(gr, label.x, label.y, ETO_CLIPPED, &rcLabelClip,
+				szColumn, static_cast<UINT>(wcslen(szColumn)), nullptr);
 		}
 		//5目盛おきの区切り(中)
 		else if( 0 == keta % 5 ){

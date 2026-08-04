@@ -40,6 +40,9 @@ constexpr std::string_view kSakuraDefaultDarkThemeJson = R"json({
 	"type": "dark",
 	"colors": {
 		"editor.background": "#1E1E1E",
+		"editorGutter.background": "#1E1E1E",
+		"editorLineNumber.foreground": "#858585",
+		"editorLineNumber.activeForeground": "#CCCCCC",
 		"sideBar.background": "#293134",
 		"panel.background": "#252526",
 		"sideBarSectionHeader.background": "#2A2D2E",
@@ -77,6 +80,9 @@ constexpr std::string_view kSakuraDefaultLightThemeJson = R"json({
 	"type": "light",
 	"colors": {
 		"editor.background": "#F4F5F7",
+		"editorGutter.background": "#F4F5F7",
+		"editorLineNumber.foreground": "#237893",
+		"editorLineNumber.activeForeground": "#171184",
 		"sideBar.background": "#FFFFFF",
 		"panel.background": "#FFFFFF",
 		"sideBarSectionHeader.background": "#E9ECF1",
@@ -570,7 +576,20 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			}
 			return background;
 		};
+		const auto firstOverWithFallback = [&colors](ThemeColor background, ThemeColor fallback,
+			std::initializer_list<std::wstring_view> names) {
+			for (const auto name : names) {
+				const auto found = colors.find(std::wstring(name));
+				if (found != colors.end()) return Composite(found->second, background);
+			}
+			return fallback;
+		};
 		palette.canvas = first(palette.canvas, { L"editor.background", L"editorGroup.emptyBackground" });
+		palette.editorGutterBackground = first(palette.canvas, { L"editorGutter.background" });
+		palette.editorLineNumberForeground = firstOverWithFallback(palette.editorGutterBackground,
+			palette.editorLineNumberForeground, { L"editorLineNumber.foreground" });
+		palette.editorLineNumberActiveForeground = firstOverWithFallback(palette.editorGutterBackground,
+			palette.editorLineNumberActiveForeground, { L"editorLineNumber.activeForeground" });
 		// Side Bar and Panel are separate VS Code Parts. `sideBar` serves both
 		// physical side-bar hosts; `bottomPanel` is the Panel surface and the
 		// fallback base for the Panel-only Terminal ViewContainer.

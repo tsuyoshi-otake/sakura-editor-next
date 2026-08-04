@@ -193,6 +193,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownCodeHighlighterTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp" />

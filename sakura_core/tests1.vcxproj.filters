@@ -448,6 +448,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp">
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownCodeHighlighterTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp">
       <Filter>Test Files\markdown</Filter>
     </ClCompile>

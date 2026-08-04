@@ -24,6 +24,10 @@
 */
 
 #include "StdAfx.h"
+#include <cstddef>
+#include <cstdint>
+#include <cstring>
+#include <limits>
 #include <limits.h>
 #include "outline/CDlgFuncList.h"
 #include "outline/CFuncInfo.h"
@@ -65,6 +69,156 @@
 // ビューの種別
 #define VIEWTYPE_LIST	0
 #define VIEWTYPE_TREE	1
+
+namespace {
+
+class DialogTemplateCursor final {
+public:
+	DialogTemplateCursor( void* data, size_t size ) noexcept
+		: m_data(static_cast<std::byte*>(data)), m_size(size) {}
+
+	[[nodiscard]] bool CanRead( size_t offset, size_t size ) const noexcept
+	{
+		return offset <= m_size && size <= m_size - offset;
+	}
+
+	template <class T>
+	[[nodiscard]] bool Read( size_t offset, T& value ) const noexcept
+	{
+		if( !CanRead(offset, sizeof(T)) ) return false;
+		std::memcpy( &value, m_data + offset, sizeof(T) );
+		return true;
+	}
+
+	template <class T>
+	[[nodiscard]] bool Write( size_t offset, T value ) noexcept
+	{
+		if( !CanRead(offset, sizeof(T)) ) return false;
+		std::memcpy( m_data + offset, &value, sizeof(T) );
+		return true;
+	}
+
+	[[nodiscard]] bool Advance( size_t& offset, size_t amount ) const noexcept
+	{
+		if( !CanRead(offset, amount) ) return false;
+		offset += amount;
+		return true;
+	}
+
+	[[nodiscard]] bool AlignDword( size_t& offset ) const noexcept
+	{
+		const auto address = reinterpret_cast<std::uintptr_t>(m_data) + offset;
+		const size_t padding = static_cast<size_t>((4u - (address & 3u)) & 3u);
+		return Advance( offset, padding );
+	}
+
+	[[nodiscard]] bool SkipStringOrOrdinal( size_t& offset ) const noexcept
+	{
+		WORD value = 0;
+		if( !Read(offset, value) || !Advance(offset, sizeof(value)) ) return false;
+		if( value == 0 ) return true;
+		if( value == 0xffff ) return Advance(offset, sizeof(WORD));
+		while( value != 0 ){
+			if( !Read(offset, value) || !Advance(offset, sizeof(value)) ) return false;
+		}
+		return true;
+	}
+
+	[[nodiscard]] bool SkipFont( size_t& offset, bool extended ) const noexcept
+	{
+		const size_t fixedSize = extended ? 6u : sizeof(WORD);
+		return Advance(offset, fixedSize) && SkipStringOrOrdinal(offset);
+	}
+
+private:
+	std::byte* m_data;
+	size_t m_size;
+};
+
+} // namespace
+
+DWORD workbench::outline::NormalizeWorkbenchOutlineTreeStyle( DWORD style ) noexcept
+{
+	return (style & ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS))
+		| TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
+}
+
+DWORD workbench::outline::NormalizeWorkbenchOutlineListStyle( DWORD style ) noexcept
+{
+	return style & ~WS_BORDER;
+}
+
+DWORD workbench::outline::NormalizeWorkbenchOutlineControlExStyle( DWORD exStyle ) noexcept
+{
+	return exStyle & ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+}
+
+bool workbench::outline::NormalizeWorkbenchOutlineDialogTemplate( void* data, size_t size ) noexcept
+{
+	if( data == nullptr ) return false;
+	DialogTemplateCursor cursor(data, size);
+	WORD first = 0;
+	WORD second = 0;
+	if( !cursor.Read(0, first) || !cursor.Read(sizeof(WORD), second) ) return false;
+	const bool extended = first == 1 && second == 0xffff;
+
+	DWORD dialogStyle = 0;
+	WORD itemCount = 0;
+	size_t offset = extended ? 26u : 18u;
+	if( !cursor.Read(extended ? 12u : 0u, dialogStyle)
+		|| !cursor.Read(extended ? 16u : 8u, itemCount)
+		|| !cursor.CanRead(0, offset) ){
+		return false;
+	}
+	if( !cursor.SkipStringOrOrdinal(offset)
+		|| !cursor.SkipStringOrOrdinal(offset)
+		|| !cursor.SkipStringOrOrdinal(offset) ){
+		return false;
+	}
+	if( (dialogStyle & DS_SETFONT) != 0 && !cursor.SkipFont(offset, extended) ) return false;
+
+	bool foundTree = false;
+	bool foundList = false;
+	for( WORD item = 0; item < itemCount; ++item ){
+		if( !cursor.AlignDword(offset) ) return false;
+		const size_t itemHeader = offset;
+		const size_t itemHeaderSize = extended ? 24u : 18u;
+		const size_t exStyleOffset = itemHeader + (extended ? 4u : 4u);
+		const size_t styleOffset = itemHeader + (extended ? 8u : 0u);
+		DWORD itemId = 0;
+		if( extended ){
+			if( !cursor.Read(itemHeader + 20u, itemId) ) return false;
+		}else{
+			WORD shortId = 0;
+			if( !cursor.Read(itemHeader + 16u, shortId) ) return false;
+			itemId = shortId;
+		}
+		DWORD style = 0;
+		DWORD exStyle = 0;
+		if( !cursor.Read(styleOffset, style) || !cursor.Read(exStyleOffset, exStyle)
+			|| !cursor.Advance(offset, itemHeaderSize) ){
+			return false;
+		}
+
+		if( itemId == IDC_TREE_FL ){
+			foundTree = cursor.Write(styleOffset, NormalizeWorkbenchOutlineTreeStyle(style))
+				&& cursor.Write(exStyleOffset, NormalizeWorkbenchOutlineControlExStyle(exStyle));
+			if( !foundTree ) return false;
+		}else if( itemId == IDC_LIST_FL ){
+			foundList = cursor.Write(styleOffset, NormalizeWorkbenchOutlineListStyle(style))
+				&& cursor.Write(exStyleOffset, NormalizeWorkbenchOutlineControlExStyle(exStyle));
+			if( !foundList ) return false;
+		}
+
+		if( !cursor.SkipStringOrOrdinal(offset) || !cursor.SkipStringOrOrdinal(offset) ) return false;
+		WORD extraBytes = 0;
+		if( !cursor.Read(offset, extraBytes) || !cursor.Advance(offset, sizeof(extraBytes))
+			|| !cursor.Advance(offset, extraBytes) ){
+			return false;
+		}
+	}
+	return foundTree && foundList;
+}
 
 //アウトライン解析 CDlgFuncList.cpp	//@@@ 2002.01.07 add start MIK
 const DWORD p_helpids[] = {	//12200
@@ -238,6 +392,48 @@ void CDlgFuncList::SetWorkbenchMode( bool enabled ) noexcept
 	}
 }
 
+void CDlgFuncList::ObserveWorkbenchDocument( CEditView* view ) noexcept
+{
+	CEditDoc* const document = view != nullptr ? view->GetDocument() : nullptr;
+	if( document == m_workbenchDocument ) return;
+
+	m_workbenchDocument = document;
+	m_workbenchDocumentVersion = {};
+	m_workbenchModelVersion = {};
+	m_bFuncInfoArrIsUpToDate = false;
+	m_workbenchTreeContentDirty = true;
+	if( document == nullptr ) return;
+	if( m_workbenchNextDocumentIdentity == std::numeric_limits<std::uint64_t>::max() ) return;
+
+	m_workbenchDocumentVersion.identity = ++m_workbenchNextDocumentIdentity;
+	m_workbenchDocumentVersion.version = 0;
+}
+
+workbench::outline::OutlineDocumentVersion CDlgFuncList::GetWorkbenchDocumentVersion() noexcept
+{
+	ObserveWorkbenchDocument( reinterpret_cast<CEditView*>(m_lParam) );
+	return m_workbenchDocumentVersion;
+}
+
+bool CDlgFuncList::HasCurrentWorkbenchModel() noexcept
+{
+	const auto documentVersion = GetWorkbenchDocumentVersion();
+	return documentVersion.IsValid() && m_bFuncInfoArrIsUpToDate
+		&& m_workbenchModelVersion == documentVersion;
+}
+
+void CDlgFuncList::CommitWorkbenchModel() noexcept
+{
+	if( !IsWorkbenchMode() || !m_workbenchDocumentVersion.IsValid() ) return;
+	m_workbenchModelVersion = m_workbenchDocumentVersion;
+	if( m_workbenchModelGeneration != std::numeric_limits<std::uint64_t>::max() ) {
+		++m_workbenchModelGeneration;
+	}
+	if( m_workbenchReparseCount != std::numeric_limits<std::uint64_t>::max() ) {
+		++m_workbenchReparseCount;
+	}
+}
+
 int CDlgFuncList::WorkbenchSymbolImageIndex( int info ) noexcept
 {
 	switch( info & FUNCINFO_INFOMASK ){
@@ -302,15 +498,27 @@ void CDlgFuncList::SetWorkbenchAppearance(
 	int itemHeight,
 	HIMAGELIST symbolImages ) noexcept
 {
+	const int normalizedItemHeight = (std::max)(1, itemHeight);
+	const bool treeContentChanged = m_workbenchFont != font
+		|| m_workbenchItemHeight != normalizedItemHeight
+		|| m_workbenchSymbolImages != symbolImages;
+	const bool appearanceChanged = treeContentChanged
+		|| m_workbenchText != text
+		|| m_workbenchBackground != background
+		|| m_workbenchHover != hover
+		|| m_workbenchSelection != selection
+		|| m_workbenchSelectionText != selectionText;
 	m_workbenchText = text;
 	m_workbenchBackground = background;
 	m_workbenchHover = hover;
 	m_workbenchSelection = selection;
 	m_workbenchSelectionText = selectionText;
 	m_workbenchFont = font;
-	m_workbenchItemHeight = (std::max)(1, itemHeight);
+	m_workbenchItemHeight = normalizedItemHeight;
 	m_workbenchSymbolImages = symbolImages;
-	ApplyWorkbenchAppearance();
+	m_workbenchAppearanceDirty = m_workbenchAppearanceDirty || appearanceChanged;
+	m_workbenchTreeContentDirty = m_workbenchTreeContentDirty || treeContentChanged;
+	if( m_workbenchAppearanceDirty || m_workbenchTreeContentDirty ) ApplyWorkbenchAppearance();
 }
 
 static std::wstring CompactWorkbenchTreeText(
@@ -319,14 +527,17 @@ static std::wstring CompactWorkbenchTreeText(
 void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 {
 	if( !IsWorkbenchMode() || GetHwnd() == nullptr ) return;
+	if( !m_workbenchAppearanceDirty && !m_workbenchTreeContentDirty ) return;
+	const bool updateTreeContent = m_workbenchTreeContentDirty;
 
 	const HWND hwndTree = GetItemHwnd( IDC_TREE_FL );
 	if( hwndTree != nullptr ){
 		const LONG_PTR currentStyle = ::GetWindowLongPtrW( hwndTree, GWL_STYLE );
-		const LONG_PTR style = (currentStyle & ~(WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS))
-			| TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT;
+		const LONG_PTR style = workbench::outline::NormalizeWorkbenchOutlineTreeStyle(
+			static_cast<DWORD>(currentStyle) );
 		const LONG_PTR currentExStyle = ::GetWindowLongPtrW( hwndTree, GWL_EXSTYLE );
-		const LONG_PTR exStyle = currentExStyle & ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+		const LONG_PTR exStyle = workbench::outline::NormalizeWorkbenchOutlineControlExStyle(
+			static_cast<DWORD>(currentExStyle) );
 		// Redraw() reaches here for every document update. Recalculate the native frame only
 		// when the edge styles actually change; otherwise the common control can flash its
 		// non-client border over the workbench surface.
@@ -340,52 +551,55 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 		TreeView_SetTextColor( hwndTree, m_workbenchText );
 		TreeView_SetImageList( hwndTree, m_workbenchSymbolImages, TVSIL_NORMAL );
 
-		std::vector<HTREEITEM> pending;
-		if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
-		while( !pending.empty() ){
-			const HTREEITEM itemHandle = pending.back();
-			pending.pop_back();
-			TVITEMW source{};
-			source.mask = TVIF_PARAM;
-			source.hItem = itemHandle;
-			(void)TreeView_GetItem( hwndTree, &source );
-			std::wstring compactText;
-			const CFuncInfo* info = nullptr;
-			if( !m_bDummyLParamMode && m_pcFuncInfoArr != nullptr
-				&& source.lParam >= 0 && source.lParam < m_pcFuncInfoArr->GetNum() ){
-				info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(source.lParam));
-				if( info != nullptr ){
-					compactText = CompactWorkbenchTreeText(
-						hwndTree, info->m_cmemFuncName.GetStringPtr(), info->m_nDepth, m_workbenchFont );
+		if( updateTreeContent ){
+			std::vector<HTREEITEM> pending;
+			if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
+			while( !pending.empty() ){
+				const HTREEITEM itemHandle = pending.back();
+				pending.pop_back();
+				TVITEMW source{};
+				source.mask = TVIF_PARAM;
+				source.hItem = itemHandle;
+				(void)TreeView_GetItem( hwndTree, &source );
+				std::wstring compactText;
+				const CFuncInfo* info = nullptr;
+				if( !m_bDummyLParamMode && m_pcFuncInfoArr != nullptr
+					&& source.lParam >= 0 && source.lParam < m_pcFuncInfoArr->GetNum() ){
+					info = m_pcFuncInfoArr->GetAt(static_cast<size_t>(source.lParam));
+					if( info != nullptr ){
+						compactText = CompactWorkbenchTreeText(
+							hwndTree, info->m_cmemFuncName.GetStringPtr(), info->m_nDepth, m_workbenchFont );
+					}
 				}
+				TVITEMW item{};
+				item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+				item.hItem = itemHandle;
+				const int imageIndex = info != nullptr ? WorkbenchSymbolImageIndex(info->m_nInfo) : 0;
+				item.iImage = imageIndex;
+				item.iSelectedImage = imageIndex;
+				if( !compactText.empty() ){
+					item.mask |= TVIF_TEXT;
+					item.pszText = compactText.data();
+				}
+				(void)TreeView_SetItem( hwndTree, &item );
+				if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, itemHandle); sibling != nullptr ) pending.push_back(sibling);
+				if( const HTREEITEM child = TreeView_GetChild(hwndTree, itemHandle); child != nullptr ) pending.push_back(child);
 			}
-			TVITEMW item{};
-			item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
-			item.hItem = itemHandle;
-			const int imageIndex = info != nullptr ? WorkbenchSymbolImageIndex(info->m_nInfo) : 0;
-			item.iImage = imageIndex;
-			item.iSelectedImage = imageIndex;
-			if( !compactText.empty() ){
-				item.mask |= TVIF_TEXT;
-				item.pszText = compactText.data();
-			}
-			(void)TreeView_SetItem( hwndTree, &item );
-			if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, itemHandle); sibling != nullptr ) pending.push_back(sibling);
-			if( const HTREEITEM child = TreeView_GetChild(hwndTree, itemHandle); child != nullptr ) pending.push_back(child);
 		}
 		if( frameChanged ){
 			::SetWindowPos( hwndTree, nullptr, 0, 0, 0, 0,
 				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
 		}
-		::InvalidateRect( hwndTree, nullptr, FALSE );
 	}
 
 	const HWND hwndList = GetItemHwnd( IDC_LIST_FL );
 	if( hwndList != nullptr ){
 		const LONG_PTR currentStyle = ::GetWindowLongPtrW( hwndList, GWL_STYLE );
-		const LONG_PTR style = currentStyle & ~WS_BORDER;
+		const LONG_PTR style = workbench::outline::NormalizeWorkbenchOutlineListStyle(
+			static_cast<DWORD>(currentStyle) );
 		const LONG_PTR currentExStyle = ::GetWindowLongPtrW( hwndList, GWL_EXSTYLE );
-		const LONG_PTR exStyle = currentExStyle & ~(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE);
+		const LONG_PTR exStyle = workbench::outline::NormalizeWorkbenchOutlineControlExStyle(
+			static_cast<DWORD>(currentExStyle) );
 		const bool frameChanged = currentStyle != style || currentExStyle != exStyle;
 		if( currentStyle != style ) ::SetWindowLongPtrW( hwndList, GWL_STYLE, style );
 		if( currentExStyle != exStyle ) ::SetWindowLongPtrW( hwndList, GWL_EXSTYLE, exStyle );
@@ -397,8 +611,11 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 			::SetWindowPos( hwndList, nullptr, 0, 0, 0, 0,
 				SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER | SWP_FRAMECHANGED );
 		}
-		::InvalidateRect( hwndList, nullptr, FALSE );
 	}
+	m_workbenchAppearanceDirty = false;
+	m_workbenchTreeContentDirty = false;
+	::RedrawWindow( GetHwnd(), nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_NOINTERNALPAINT );
 }
 
 /*!
@@ -533,6 +750,7 @@ HWND CDlgFuncList::DoModeless(
 {
 	CEditView* pcEditView=(CEditView*)lParam;
 	if( !pcEditView ) return nullptr;
+	ObserveWorkbenchDocument( pcEditView );
 	m_pcFuncInfoArr = pcFuncInfoArr;	/* 関数情報配列 */
 	m_bFuncInfoArrIsUpToDate = true;
 	m_nCurLine = nCurLine;				/* 現在行 */
@@ -581,6 +799,11 @@ HWND CDlgFuncList::DoModeless(
 		::CopyMemory( pDlgTemplate, m_pDlgTemplate, m_dwDlgTmpSize );
 		pDlgTemplate->style = (WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | DS_SETFONT)
 			| (IsWorkbenchMode()? DS_CONTROL: 0);
+		if( IsWorkbenchMode()
+			&& !workbench::outline::NormalizeWorkbenchOutlineDialogTemplate(pDlgTemplate, m_dwDlgTmpSize) ){
+			::GlobalFree( pDlgTemplate );
+			return nullptr;
+		}
 		HWND dialogParent = IsWorkbenchMode()? m_hwndWorkbenchParent: MyGetAncestor(hwndParent, GA_ROOT);
 		hwndRet = CDialog::DoModeless( hInstance, dialogParent, pDlgTemplate, lParam, SW_HIDE );
 		::GlobalFree( pDlgTemplate );
@@ -588,6 +811,7 @@ HWND CDlgFuncList::DoModeless(
 	}else{
 		hwndRet = CDialog::DoModeless( hInstance, MyGetAncestor(hwndParent, GA_ROOT), IDD_FUNCLIST, lParam, SW_SHOW );
 	}
+	if( hwndRet != nullptr ) CommitWorkbenchModel();
 	return hwndRet;
 }
 
@@ -595,12 +819,14 @@ HWND CDlgFuncList::DoModeless(
 void CDlgFuncList::ChangeView( LPARAM pcEditView )
 {
 	m_lParam = pcEditView;
+	ObserveWorkbenchDocument( reinterpret_cast<CEditView*>(pcEditView) );
 	return;
 }
 
 /*! ダイアログデータの設定 */
 void CDlgFuncList::SetData()
 {
+	if( IsWorkbenchMode() ) m_workbenchTreeContentDirty = true;
 	HWND			hwndList;
 	HWND			hwndTree;
 	hwndList = GetItemHwnd( IDC_LIST_FL );
@@ -2503,14 +2729,33 @@ BOOL CDlgFuncList::OnSize( WPARAM wParam, LPARAM lParam )
 	/* 基底クラスメンバ */
 	CDialog::OnSize( wParam, lParam );
 	if( IsWorkbenchMode() ){
-		const int width = (std::max)(0L, rcDlg.right - rcDlg.left);
-		const int height = (std::max)(0L, rcDlg.bottom - rcDlg.top);
-		for( const int id : { IDC_TREE_FL, IDC_LIST_FL } ){
-			const HWND control = GetItemHwnd(id);
-			if( control != nullptr ) ::SetWindowPos( control, nullptr, 0, 0, width, height,
-				SWP_NOACTIVATE | SWP_NOZORDER );
+		const auto childLayout = workbench::outline::MakeOutlineChildLayout(
+			rcDlg.right - rcDlg.left, rcDlg.bottom - rcDlg.top );
+		const int width = childLayout.bounds.right - childLayout.bounds.left;
+		const int height = childLayout.bounds.bottom - childLayout.bounds.top;
+		const HWND controls[] = { GetItemHwnd(IDC_TREE_FL), GetItemHwnd(IDC_LIST_FL) };
+		HDWP deferred = ::BeginDeferWindowPos(static_cast<int>(std::size(controls)));
+		for( const HWND control : controls ){
+			if( deferred == nullptr || control == nullptr ) continue;
+			deferred = ::DeferWindowPos( deferred, control, nullptr,
+				childLayout.bounds.left, childLayout.bounds.top, width, height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
 		}
-		ApplyWorkbenchAppearance();
+		const bool positioned = deferred != nullptr && ::EndDeferWindowPos(deferred) != FALSE;
+		if( !positioned ){
+			for( const HWND control : controls ){
+				if( control != nullptr ) ::SetWindowPos( control, nullptr,
+					childLayout.bounds.left, childLayout.bounds.top, width, height,
+					SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
+			}
+		}
+		if( m_workbenchAppearanceWidth != width ){
+			m_workbenchAppearanceWidth = width;
+			m_workbenchTreeContentDirty = true;
+		}
+		if( m_workbenchAppearanceDirty || m_workbenchTreeContentDirty ) ApplyWorkbenchAppearance();
+		else ::RedrawWindow( GetHwnd(), nullptr, nullptr,
+			RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_NOINTERNALPAINT );
 		return TRUE;
 	}
 
@@ -2877,6 +3122,7 @@ void CDlgFuncList::Key2Command(WORD KeyCode)
 void CDlgFuncList::Redraw( int nOutLineType, int nListType, CFuncInfoArr* pcFuncInfoArr, CLayoutInt nCurLine, CLayoutInt nCurCol )
 {
 	CEditView* pcEditView = (CEditView*)m_lParam;
+	ObserveWorkbenchDocument( pcEditView );
 	m_nDocType = pcEditView->GetDocument()->m_cDocType.GetDocumentType().GetIndex();
 	CDocTypeManager().GetTypeConfig(CTypeConfig(m_nDocType), m_type);
 	SyncColor();
@@ -2897,6 +3143,7 @@ void CDlgFuncList::Redraw( int nOutLineType, int nListType, CFuncInfoArr* pcFunc
 	}
 
 	SetData();
+	CommitWorkbenchModel();
 }
 
 //ダイアログタイトルの設定
@@ -4306,6 +4553,17 @@ void CDlgFuncList::NotifyDocModification()
 {
 	// もう最新ではなくなりました
 	m_bFuncInfoArrIsUpToDate = false;
+	ObserveWorkbenchDocument( reinterpret_cast<CEditView*>(m_lParam) );
+	if( m_workbenchDocumentVersion.IsValid() ){
+		if( m_workbenchDocumentVersion.version != std::numeric_limits<std::uint64_t>::max() ){
+			++m_workbenchDocumentVersion.version;
+		}else if( m_workbenchNextDocumentIdentity != std::numeric_limits<std::uint64_t>::max() ){
+			m_workbenchDocumentVersion.identity = ++m_workbenchNextDocumentIdentity;
+			m_workbenchDocumentVersion.version = 0;
+		}else{
+			m_workbenchDocumentVersion = {};
+		}
+	}
 
 	return;
 }

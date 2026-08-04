@@ -90,6 +90,14 @@ file(GLOB_RECURSE TESTS1_SOURCES
   ${CMAKE_SOURCE_DIR}/src/test/resources/*.cpp
 )
 
+# Keep the native Markdown code-highlighter suite explicit so the MSBuild and
+# CMake registrations remain aligned even though the recursive glob sees it.
+set(MARKDOWN_CODE_HIGHLIGHTER_TEST_SOURCE
+  ${CMAKE_SOURCE_DIR}/src/test/cpp/tests1/markdown/MarkdownCodeHighlighterTest.cpp
+)
+list(REMOVE_ITEM TESTS1_SOURCES ${MARKDOWN_CODE_HIGHLIGHTER_TEST_SOURCE})
+list(APPEND TESTS1_SOURCES ${MARKDOWN_CODE_HIGHLIGHTER_TEST_SOURCE})
+
 # The terminal renderer focused suites under tests1/terminal/window are picked
 # up by the recursive source glob above; keep this explicit note beside the
 # discovery contract so the MSBuild and CMake registrations stay intentional.

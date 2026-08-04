@@ -31,10 +31,19 @@ constexpr int kPreferredPreviewWidthDip = 540;
 
 PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned int dpi, bool previewVisible) noexcept
 {
+	return CalculateMarkdownPreviewLayout(left, right, dpi,
+		previewVisible ? PreviewPaneMode::NativeSibling : PreviewPaneMode::Hidden);
+}
+
+PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned int dpi, PreviewPaneMode mode) noexcept
+{
 	left = std::max(0, left);
 	right = std::max(left, right);
-	if (!previewVisible) {
+	if (mode == PreviewPaneMode::Hidden) {
 		return { left, right, right, right, right, right };
+	}
+	if (mode == PreviewPaneMode::Replacement) {
+		return { left, left, left, left, left, right };
 	}
 
 	const auto available = right - left;

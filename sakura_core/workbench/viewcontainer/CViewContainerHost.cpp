@@ -87,9 +87,10 @@ bool EnsureWindowClass(HINSTANCE instance)
 } // namespace
 
 CViewContainerHost::CViewContainerHost(std::shared_ptr<CViewContainerPages> pages,
-	OutlineExpandedCallback outlineExpanded)
+	OutlineExpandedCallback outlineExpanded, OutlineRevealCallback outlineRevealed)
 	: m_pages(std::move(pages))
 	, m_outlineExpandedCallback(std::move(outlineExpanded))
+	, m_outlineRevealCallback(std::move(outlineRevealed))
 {
 }
 
@@ -266,12 +267,38 @@ void CViewContainerHost::SetOutlineExpanded(bool expanded)
 {
 	if (!m_pages || m_pages->IsOutlineExpanded() == expanded) return;
 	m_pages->SetOutlineExpanded(expanded);
-	if (auto* outline = m_pages->Outline()) {
-		outline->SetVisible(expanded && m_page == ViewContainerPage::Explorer
-			&& OwnsPage(ViewContainerPage::Explorer));
-	}
+
+	// Retain the child/model across collapse.  On reopen, keep both the host and the
+	// cached child non-painting until the child has its final bounds and visibility; this
+	// prevents the old/zero rectangle from producing an intermediate empty frame.
+	auto* outline = m_pages->Outline();
+	const HWND outlineWindow = outline != nullptr ? outline->GetHwnd() : nullptr;
+	if (m_window != nullptr) ::SendMessageW(m_window, WM_SETREDRAW, FALSE, 0);
+	if (outlineWindow != nullptr) ::SendMessageW(outlineWindow, WM_SETREDRAW, FALSE, 0);
 	LayoutChildren();
-	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
+	if (outlineWindow != nullptr) ::SendMessageW(outlineWindow, WM_SETREDRAW, TRUE, 0);
+	if (m_window != nullptr) {
+		::SendMessageW(m_window, WM_SETREDRAW, TRUE, 0);
+		::RedrawWindow(m_window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE | RDW_NOINTERNALPAINT);
+	}
+	if (expanded) NotifyOutlineRevealed();
+}
+
+void CViewContainerHost::NotifyOutlineRevealed() noexcept
+{
+	if (m_closed || !m_outlineRevealCallback || !m_pages || !m_pages->IsUsable()
+		|| !m_pages->IsOutlineExpanded() || m_page != ViewContainerPage::Explorer
+		|| !OwnsPage(ViewContainerPage::Explorer)) {
+		return;
+	}
+	try {
+		m_outlineRevealCallback();
+	}
+	catch (...) {
+		// A projection callback cannot unwind through the native window procedure. The
+		// retained cached model remains the explicit visible terminal state.
+	}
 }
 
 bool CViewContainerHost::RequestOutlineExpanded(bool expanded) noexcept

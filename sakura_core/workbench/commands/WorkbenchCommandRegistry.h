@@ -107,6 +107,16 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor showNotifications;
 	WorkbenchCommandExecutor hideNotifications;
 	WorkbenchCommandExecutor toggleStatusbarVisibility;
+	WorkbenchCommandExecutor markdownShowPreview;
+	WorkbenchCommandExecutor markdownShowPreviewToSide;
+	WorkbenchCommandExecutor markdownShowLockedPreviewToSide;
+	WorkbenchCommandExecutor markdownShowSource;
+	WorkbenchCommandExecutor markdownShowPreviewSecuritySelector;
+	WorkbenchCommandExecutor markdownPreviewRefresh;
+	WorkbenchCommandExecutor markdownPreviewToggleLock;
+	WorkbenchCommandExecutor markdownReopenAsPreview;
+	WorkbenchCommandExecutor markdownReopenAsSource;
+	WorkbenchCommandExecutor markdownTogglePreview;
 };
 
 enum class EWorkbenchCommandRegistrationStatus : std::uint8_t {

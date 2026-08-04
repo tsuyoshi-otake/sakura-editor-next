@@ -14,6 +14,44 @@
 
 namespace {
 
+struct MouseDownRecorder {
+	int count = 0;
+	POINT point{};
+};
+
+LRESULT CALLBACK RecordingParentProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	if (message == WM_NCCREATE) {
+		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+		::SetWindowLongPtrW(window, GWLP_USERDATA,
+			reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+	}
+	auto* recorder = reinterpret_cast<MouseDownRecorder*>(
+		::GetWindowLongPtrW(window, GWLP_USERDATA));
+	if (message == WM_LBUTTONDOWN && recorder != nullptr) {
+		++recorder->count;
+		recorder->point = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		return 0;
+	}
+	if (message == WM_NCDESTROY) ::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+	return ::DefWindowProcW(window, message, wParam, lParam);
+}
+
+HWND CreateRecordingParent(MouseDownRecorder& recorder)
+{
+	constexpr wchar_t className[] = L"SakuraWorkbenchPanelHostTestParent";
+	const HINSTANCE instance = ::GetModuleHandleW(nullptr);
+	WNDCLASSEXW windowClass{};
+	windowClass.cbSize = sizeof(windowClass);
+	windowClass.hInstance = instance;
+	windowClass.lpfnWndProc = RecordingParentProc;
+	windowClass.lpszClassName = className;
+	if (::RegisterClassExW(&windowClass) == 0
+		&& ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return nullptr;
+	return ::CreateWindowExW(0, className, L"", WS_POPUP,
+		0, 0, 800, 600, nullptr, nullptr, instance, &recorder);
+}
+
 class RecordingTool final : public workbench::IWorkbenchTool {
 public:
 	bool Create(HWND parent) override { createParent = parent; return parent != nullptr; }
@@ -156,6 +194,43 @@ TEST(WorkbenchPanelHost, SharedExtentApplicationDoesNotPersistOrEnterResize)
 	EXPECT_EQ(315, host.GetPendingExtentDip());
 	EXPECT_EQ(workbench::WorkbenchPanelState::Hidden, host.GetState());
 	EXPECT_EQ(0, persistCount);
+}
+
+TEST(WorkbenchPanelHost, SashOverlaysAdjacentChildrenAndForwardsInitialPress)
+{
+	MouseDownRecorder recorder;
+	const HWND parent = CreateRecordingParent(recorder);
+	ASSERT_NE(nullptr, parent);
+	workbench::CWorkbenchPanelHost host(workbench::WorkbenchEdge::Left, 280);
+	auto tool = std::make_unique<RecordingTool>();
+	ASSERT_TRUE(host.Create(parent, ::GetModuleHandleW(nullptr), std::move(tool)));
+	host.Layout(RECT{ 0, 0, 360, 500 }, 144);
+	host.Show();
+	host.LayoutSash(RECT{ 360, 0, 361, 500 });
+
+	const HWND sash = host.GetSashHwnd();
+	ASSERT_NE(nullptr, sash);
+	EXPECT_NE(0L, ::GetWindowLongPtrW(sash, GWL_STYLE) & WS_VISIBLE);
+	RECT sashBounds{};
+	ASSERT_TRUE(::GetWindowRect(sash, &sashBounds));
+	POINT corners[2]{
+		{ sashBounds.left, sashBounds.top },
+		{ sashBounds.right, sashBounds.bottom },
+	};
+	(void)::MapWindowPoints(HWND_DESKTOP, parent, corners, 2);
+	EXPECT_EQ(6, corners[1].x - corners[0].x);
+	EXPECT_LE(corners[0].x, 360);
+	EXPECT_GT(corners[1].x, 360);
+
+	(void)::SendMessageW(sash, WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(0, 12));
+	EXPECT_EQ(1, recorder.count);
+	EXPECT_EQ(corners[0].x, recorder.point.x);
+	EXPECT_EQ(12, recorder.point.y);
+
+	host.Hide();
+	EXPECT_EQ(0L, ::GetWindowLongPtrW(sash, GWL_STYLE) & WS_VISIBLE);
+	host.Close();
+	::DestroyWindow(parent);
 }
 
 } // namespace

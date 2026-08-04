@@ -16,6 +16,26 @@
 
 namespace {
 
+constexpr wchar_t kResizeOverlayClass[] = L"SakuraCustomFrameResizeOverlay";
+
+[[nodiscard]] bool EnsureResizeOverlayWindowClass(HINSTANCE instance) noexcept
+{
+	static ATOM atom = 0;
+	if (atom != 0) return true;
+	WNDCLASSEXW windowClass{};
+	windowClass.cbSize = sizeof(windowClass);
+	windowClass.hInstance = instance;
+	windowClass.lpfnWndProc = CCustomFrameController::ResizeOverlayWindowProc;
+	windowClass.lpszClassName = kResizeOverlayClass;
+	atom = ::RegisterClassExW(&windowClass);
+	if (atom != 0) return true;
+	if (::GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+		atom = 1;
+		return true;
+	}
+	return false;
+}
+
 constexpr int kMenuBarNode = 1000;
 constexpr int kMenuItemBaseNode = 1100;
 constexpr int kMinimizeNode = 1200;
@@ -88,6 +108,30 @@ CustomFrameManageAction ManageActionFromMenuCommand(UINT command) noexcept
 int ScaleCustomFrameDip(int value, UINT dpi) noexcept
 {
 	return ::MulDiv(value, static_cast<int>(dpi == 0 ? 96 : dpi), 96);
+}
+
+std::array<RECT, static_cast<size_t>(CustomFrameResizeEdge::Count)>
+CalculateCustomFrameResizeOverlayBounds(
+	int clientWidth,
+	int clientHeight,
+	int resizeBorder,
+	bool maximized
+) noexcept
+{
+	std::array<RECT, static_cast<size_t>(CustomFrameResizeEdge::Count)> bounds{};
+	if (maximized) return bounds;
+	const int width = std::max(0, clientWidth);
+	const int height = std::max(0, clientHeight);
+	const int border = std::clamp(resizeBorder, 0, std::min(width, height));
+	if (border == 0) return bounds;
+	const auto index = [](CustomFrameResizeEdge edge) noexcept { return static_cast<size_t>(edge); };
+	// Top and bottom own the corner squares. The vertical strips deliberately
+	// exclude them so exactly one overlay receives each initial press.
+	bounds[index(CustomFrameResizeEdge::Top)] = MakeRect(0, 0, width, border);
+	bounds[index(CustomFrameResizeEdge::Bottom)] = MakeRect(0, height - border, width, height);
+	bounds[index(CustomFrameResizeEdge::Left)] = MakeRect(0, border, border, height - border);
+	bounds[index(CustomFrameResizeEdge::Right)] = MakeRect(width - border, border, width, height - border);
+	return bounds;
 }
 
 CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int preferredMenuWidth) noexcept
@@ -281,13 +325,25 @@ UINT CaptionButtonSystemCommand(LRESULT hit, bool maximized) noexcept
 
 CCustomFrameController::~CCustomFrameController()
 {
+	DestroyResizeOverlays();
 	m_accessibilityLifetime->Invalidate();
 }
 
 void CCustomFrameController::Attach(HWND window, theme::ThemeMode savedMode) noexcept
 {
+	DestroyResizeOverlays();
 	if (!m_accessibilityLifetime->IsAlive()) m_accessibilityLifetime = std::make_shared<accessibility::CustomUiAutomationLifetime>();
 	m_window = window;
+	const std::array<CustomFrameResizeEdge, static_cast<size_t>(CustomFrameResizeEdge::Count)> edges{
+		CustomFrameResizeEdge::Top,
+		CustomFrameResizeEdge::Bottom,
+		CustomFrameResizeEdge::Left,
+		CustomFrameResizeEdge::Right,
+	};
+	for (size_t i = 0; i < edges.size(); ++i) {
+		m_resizeOverlays[i].owner = this;
+		m_resizeOverlays[i].edge = edges[i];
+	}
 	m_savedMode = savedMode;
 	m_active = window == nullptr || ::GetActiveWindow() == window;
 	RefreshMetrics();
@@ -300,6 +356,7 @@ void CCustomFrameController::Attach(HWND window, theme::ThemeMode savedMode) noe
 
 void CCustomFrameController::Detach() noexcept
 {
+	DestroyResizeOverlays();
 	m_accessibilityLifetime->Invalidate();
 	m_menuBar.SetMenu(nullptr);
 	m_font.Reset();
@@ -368,13 +425,136 @@ void CCustomFrameController::RefreshLayout() noexcept
 	m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get());
 }
 
+void CCustomFrameController::CreateResizeOverlays() noexcept
+{
+	if (m_window == nullptr) return;
+	const HINSTANCE instance = reinterpret_cast<HINSTANCE>(
+		::GetWindowLongPtrW(m_window, GWLP_HINSTANCE));
+	if (instance == nullptr || !EnsureResizeOverlayWindowClass(instance)) return;
+	for (auto& slot : m_resizeOverlays) {
+		if (slot.window != nullptr) continue;
+		(void)::CreateWindowExW(
+			WS_EX_TRANSPARENT | WS_EX_NOPARENTNOTIFY,
+			kResizeOverlayClass,
+			L"",
+			WS_CHILD | WS_CLIPSIBLINGS,
+			0, 0, 0, 0,
+			m_window,
+			nullptr,
+			instance,
+			&slot);
+	}
+}
+
+void CCustomFrameController::LayoutResizeOverlays() noexcept
+{
+	if (m_window == nullptr) return;
+	CreateResizeOverlays();
+	RECT client{};
+	if (!::GetClientRect(m_window, &client)) return;
+	const auto bounds = CalculateCustomFrameResizeOverlayBounds(
+		client.right - client.left,
+		client.bottom - client.top,
+		ResizeBorder(),
+		::IsZoomed(m_window) != FALSE);
+	for (size_t i = 0; i < m_resizeOverlays.size(); ++i) {
+		const HWND overlay = m_resizeOverlays[i].window;
+		if (overlay == nullptr) continue;
+		const RECT& rect = bounds[i];
+		if (rect.right <= rect.left || rect.bottom <= rect.top) {
+			::ShowWindow(overlay, SW_HIDE);
+			continue;
+		}
+		::SetWindowPos(overlay, HWND_TOP, rect.left, rect.top,
+			rect.right - rect.left, rect.bottom - rect.top,
+			SWP_NOACTIVATE | SWP_SHOWWINDOW);
+	}
+}
+
+void CCustomFrameController::DestroyResizeOverlays() noexcept
+{
+	for (auto& slot : m_resizeOverlays) {
+		if (slot.window != nullptr) {
+			::DestroyWindow(slot.window);
+			slot.window = nullptr;
+		}
+		slot.owner = nullptr;
+	}
+}
+
 int CCustomFrameController::ResizeBorder() const noexcept
 {
 	if (m_window == nullptr) {
 		return 0;
 	}
-	return ::GetSystemMetricsForDpi(SM_CXFRAME, m_dpi)
-		+ ::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, m_dpi);
+	return ::GetSystemMetricsForDpi(SM_CXFRAME, m_physicalDpi)
+		+ ::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, m_physicalDpi);
+}
+
+LRESULT CALLBACK CCustomFrameController::ResizeOverlayWindowProc(
+	HWND window,
+	UINT message,
+	WPARAM wParam,
+	LPARAM lParam)
+{
+	if (message == WM_NCCREATE) {
+		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+		auto* slot = static_cast<ResizeOverlaySlot*>(create->lpCreateParams);
+		::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(slot));
+		if (slot != nullptr) slot->window = window;
+	}
+	auto* slot = reinterpret_cast<ResizeOverlaySlot*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
+	if (slot == nullptr || slot->owner == nullptr) {
+		return ::DefWindowProcW(window, message, wParam, lParam);
+	}
+	if (message == WM_NCDESTROY) {
+		slot->window = nullptr;
+		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+		return ::DefWindowProcW(window, message, wParam, lParam);
+	}
+	const auto resizeCursor = [](LRESULT hit) noexcept -> LPCWSTR {
+		switch (hit) {
+		case HTTOPLEFT:
+		case HTBOTTOMRIGHT: return IDC_SIZENWSE;
+		case HTTOPRIGHT:
+		case HTBOTTOMLEFT: return IDC_SIZENESW;
+		case HTTOP:
+		case HTBOTTOM: return IDC_SIZENS;
+		case HTLEFT:
+		case HTRIGHT: return IDC_SIZEWE;
+		default: return IDC_ARROW;
+		}
+	};
+	switch (message) {
+	case WM_ERASEBKGND:
+		return 1;
+	case WM_PAINT: {
+		PAINTSTRUCT paint{};
+		::BeginPaint(window, &paint);
+		::EndPaint(window, &paint);
+		return 0;
+	}
+	case WM_SETCURSOR: {
+		POINT screen{};
+		const LRESULT hit = ::GetCursorPos(&screen)
+			? slot->owner->HitTestScreenPoint(screen)
+			: HTNOWHERE;
+		::SetCursor(::LoadCursorW(nullptr, resizeCursor(hit)));
+		return TRUE;
+	}
+	case WM_LBUTTONDOWN: {
+		POINT screen{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		(void)::ClientToScreen(window, &screen);
+		const LRESULT hit = slot->owner->HitTestScreenPoint(screen);
+		if (hit >= HTLEFT && hit <= HTBOTTOMRIGHT) {
+			return ::SendMessageW(slot->owner->m_window, WM_NCLBUTTONDOWN, hit,
+				MAKELPARAM(screen.x, screen.y));
+		}
+		return 0;
+	}
+	default:
+		return ::DefWindowProcW(window, message, wParam, lParam);
+	}
 }
 
 bool CCustomFrameController::IsCaptionButton(LRESULT hit) const noexcept
@@ -722,11 +902,13 @@ bool CCustomFrameController::HandleWindowMessage(
 				SWP_NOACTIVATE | SWP_NOZORDER);
 		}
 		RefreshLayout();
+		LayoutResizeOverlays();
 		InvalidateTitle();
 		result = 0;
 		return true;
 	case WM_SIZE:
 		RefreshLayout();
+		LayoutResizeOverlays();
 		InvalidateTitle();
 		return false;
 	case WM_NCACTIVATE:

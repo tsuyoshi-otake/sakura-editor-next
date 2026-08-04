@@ -386,6 +386,27 @@ WorkbenchCommandDescriptor MakeToggleStatusbarDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeMarkdownPreviewDescriptor(
+	std::string id, std::string title, bool hasDefaultKeybinding)
+{
+	const auto slotBase = id;
+	std::vector<WorkbenchCommandSurfaceBinding> bindings{
+		{ EWorkbenchCommandSurface::CommandPalette, slotBase + ".palette", std::nullopt },
+	};
+	if (hasDefaultKeybinding) {
+		bindings.push_back({ EWorkbenchCommandSurface::Keybinding, slotBase + ".key", std::nullopt });
+	}
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"editorHasActiveEditor",
+		EWorkbenchCommandExecutorTarget::Editor,
+		std::move(bindings),
+	};
+}
+
 } // namespace
 
 bool WorkbenchCommandRegistry::IsValidCommandId(std::string_view value) noexcept
@@ -454,6 +475,26 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		std::pair{ MakeShowNotificationsDescriptor(), std::move(executors.showNotifications) },
 		std::pair{ MakeHideNotificationsDescriptor(), std::move(executors.hideNotifications) },
 		std::pair{ MakeToggleStatusbarDescriptor(), std::move(executors.toggleStatusbarVisibility) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showPreview", "Markdown: Open Preview", false),
+			std::move(executors.markdownShowPreview) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showPreviewToSide", "Markdown: Open Preview to the Side", true),
+			std::move(executors.markdownShowPreviewToSide) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showLockedPreviewToSide", "Markdown: Open Locked Preview to the Side", false),
+			std::move(executors.markdownShowLockedPreviewToSide) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showSource", "Markdown: Show Source", false),
+			std::move(executors.markdownShowSource) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showPreviewSecuritySelector", "Markdown: Change Preview Security Settings", false),
+			std::move(executors.markdownShowPreviewSecuritySelector) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.preview.refresh", "Markdown: Refresh Preview", false),
+			std::move(executors.markdownPreviewRefresh) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.preview.toggleLock", "Markdown: Toggle Preview Locking", false),
+			std::move(executors.markdownPreviewToggleLock) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.reopenAsPreview", "Markdown: Reopen Editor With Preview", false),
+			std::move(executors.markdownReopenAsPreview) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.reopenAsSource", "Markdown: Reopen Editor With Text Editor", false),
+			std::move(executors.markdownReopenAsSource) },
+		std::pair{ MakeMarkdownPreviewDescriptor("markdown.togglePreview", "Markdown: Toggle Preview", true),
+			std::move(executors.markdownTogglePreview) },
 	};
 	std::lock_guard lock(m_mutex);
 	const auto conflicts = [&](const WorkbenchCommandDescriptor& requested) {

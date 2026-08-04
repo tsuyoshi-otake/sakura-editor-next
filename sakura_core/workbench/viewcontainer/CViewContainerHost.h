@@ -31,9 +31,13 @@ public:
 	//! Return false to veto. The callback carries only the requested value, so it stays
 	//! independent of HWND and layout/model types.
 	using OutlineExpandedCallback = std::function<bool(bool expanded)>;
+	//! Runs only after a retained Outline View has been laid out, shown, and painted.
+	//! Parsing is deliberately outside the expansion-model callback so cached content can
+	//! appear synchronously before document-version refresh work starts.
+	using OutlineRevealCallback = std::function<void()>;
 
 	explicit CViewContainerHost(std::shared_ptr<CViewContainerPages> pages,
-		OutlineExpandedCallback outlineExpanded = {});
+		OutlineExpandedCallback outlineExpanded = {}, OutlineRevealCallback outlineRevealed = {});
 	~CViewContainerHost() override;
 	CViewContainerHost(const CViewContainerHost&) = delete;
 	CViewContainerHost& operator=(const CViewContainerHost&) = delete;
@@ -74,12 +78,14 @@ private:
 	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
 	void ReleaseCodiconFont() noexcept;
 	void Paint();
+	void NotifyOutlineRevealed() noexcept;
 	[[nodiscard]] bool IsOutlineHeaderPoint(POINT point) const noexcept;
 	//! True when this host, and not the other side bar, currently owns the page window.
 	[[nodiscard]] bool OwnsPage(ViewContainerPage page) const noexcept;
 
 	std::shared_ptr<CViewContainerPages> m_pages;
 	OutlineExpandedCallback m_outlineExpandedCallback;
+	OutlineRevealCallback m_outlineRevealCallback;
 	HWND m_window = nullptr;
 	HINSTANCE m_instance = nullptr;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);

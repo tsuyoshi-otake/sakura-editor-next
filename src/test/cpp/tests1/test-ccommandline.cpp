@@ -252,6 +252,14 @@ TEST(CCommandLine, ParseWorkspaceConfig)
 #undef TESTLOCAL_WORKSPACE_CONFIG
 }
 
+TEST(CCommandLine, ParseExplorerPreview)
+{
+	CCommandLine cCommandLine;
+	EXPECT_FALSE(cCommandLine.IsExplorerPreview());
+	cCommandLine.ParseCommandLine(L"-EXPLORERPREVIEW", false);
+	EXPECT_TRUE(cCommandLine.IsExplorerPreview());
+}
+
 /*!
  * @brief パラメータ解析(-PROFMGR)の仕様
  * @remark -PROFMGRが指定されていなければFALSE

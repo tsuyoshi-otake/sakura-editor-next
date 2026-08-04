@@ -119,12 +119,21 @@ CpuDispatch::Dispatch CreateDispatch() noexcept
 	switch (dispatch.isa) {
 	case CpuDispatch::Isa::Avx512:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx512;
+		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx512;
+		dispatch.findMarkdownInlineSpecialUtf16 =
+			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx512;
 		break;
 	case CpuDispatch::Isa::Avx2:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx2;
+		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx2;
+		dispatch.findMarkdownInlineSpecialUtf16 =
+			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx2;
 		break;
 	default:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx;
+		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx;
+		dispatch.findMarkdownInlineSpecialUtf16 =
+			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx;
 		break;
 	}
 
@@ -179,6 +188,38 @@ FindCrOrLfFunction GetSupportedFindCrOrLf(Isa isa) noexcept
 		return dispatch.capabilities.avx2 ? Internal::FindCrOrLfAvx2 : nullptr;
 	default:
 		return dispatch.capabilities.avx ? Internal::FindCrOrLfAvx : nullptr;
+	}
+}
+
+FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512 ? Internal::FindCrOrLfUtf16Avx512 : nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2 ? Internal::FindCrOrLfUtf16Avx2 : nullptr;
+	default:
+		return dispatch.capabilities.avx ? Internal::FindCrOrLfUtf16Avx : nullptr;
+	}
+}
+
+FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512
+			? Internal::FindMarkdownInlineSpecialUtf16Avx512
+			: nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2
+			? Internal::FindMarkdownInlineSpecialUtf16Avx2
+			: nullptr;
+	default:
+		return dispatch.capabilities.avx
+			? Internal::FindMarkdownInlineSpecialUtf16Avx
+			: nullptr;
 	}
 }
 }

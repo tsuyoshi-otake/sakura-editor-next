@@ -63,6 +63,7 @@
 #define CMDLINEOPT_PROFMGR		502  //!< プロファイルマネージャを起動時に表示
 #define CMDLINEOPT_FOLDER		503  //!< ワークベンチの作業フォルダー
 #define CMDLINEOPT_WORKSPACE	504  //!< ワークベンチのワークスペース構成ファイル
+#define CMDLINEOPT_EXPLORERPREVIEW 505 //!< Explorerの置換可能なプレビュー入力
 
 /*!
 	コマンドラインのチェックを行って、オプション番号と
@@ -103,6 +104,7 @@ int CCommandLine::CheckCommandLine(
 		{L"GREPDLG",		7,	CMDLINEOPT_GREPDLG, false},
 		{L"DEBUGMODE",	9,	CMDLINEOPT_DEBUGMODE, false},
 		{L"PROFMGR",		7,	CMDLINEOPT_PROFMGR, false},
+		{L"EXPLORERPREVIEW", 15, CMDLINEOPT_EXPLORERPREVIEW, false},
 		{nullptr, 0, 0}
 	};
 
@@ -192,6 +194,7 @@ CCommandLine::CCommandLine() noexcept
 	, m_bSetProfile(false)
 	, m_bSetWorkspaceFolder(false)
 	, m_bSetWorkspaceConfig(false)
+	, m_bExplorerPreview(false)
 	, m_bParsed(false)
 	, m_fi()
 	, m_gi()
@@ -538,6 +541,9 @@ void CCommandLine::ParseCommandLine( LPCWSTR pszCmdLineSrc, bool bResponse )
 				m_cmWorkspaceConfig.SetString(arg, nArgLen);
 				m_cmWorkspaceConfig.Replace(L"\"\"", L"\"");
 				m_bSetWorkspaceConfig = true;
+				break;
+			case CMDLINEOPT_EXPLORERPREVIEW:
+				m_bExplorerPreview = true;
 				break;
 			default:
 				break;

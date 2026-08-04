@@ -8,6 +8,7 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/outline/OutlineViewLifecycle.h"
 
 #include <CommCtrl.h>
 #include <cstdint>
@@ -89,6 +90,9 @@ public:
 	void Close() override;
 	void SetVisible( bool visible ) noexcept;
 	void SetPalette( const theme::ThemePalette& palette );
+	[[nodiscard]] OutlineRefreshRequest RequestRefresh() noexcept;
+	[[nodiscard]] OutlineRefreshCompletion CompleteRefresh(
+		std::uint64_t generation, bool succeeded ) noexcept;
 
 	//! Moves this View under another host window.  Outline is a View inside the Explorer
 	//! ViewContainer, so it travels with that container when VS Code moves it between the
@@ -98,6 +102,9 @@ public:
 	[[nodiscard]] OutlineToolLifecycle GetLifecycle() const noexcept { return m_lifecycle; }
 	[[nodiscard]] OutlineToolLayout GetLayout() const noexcept { return m_layout; }
 	[[nodiscard]] HWND GetParent() const noexcept { return m_parent; }
+	[[nodiscard]] HWND GetHwnd() const noexcept { return GetDialogWindow(); }
+	[[nodiscard]] bool IsVisible() const noexcept { return m_visible; }
+	[[nodiscard]] OutlineRefreshSnapshot GetRefreshSnapshot() const noexcept { return m_refresh.Snapshot(); }
 
 private:
 	void ApplyLayout() noexcept;
@@ -112,6 +119,12 @@ private:
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
 	HIMAGELIST m_symbolImages = nullptr;
+	OutlineRefreshCoordinator m_refresh;
+	HWND m_appliedWindow = nullptr;
+	OutlineToolLayout m_appliedLayout{};
+	HWND m_appearanceWindow = nullptr;
+	bool m_hasAppliedLayout = false;
+	bool m_appearanceDirty = true;
 	bool m_visible = true;
 };
 

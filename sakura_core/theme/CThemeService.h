@@ -68,6 +68,12 @@ struct ThemePalette {
 	//! Panel; color-theme projection falls back to the resolved `bottomPanel` role
 	//! when this optional token is absent.
 	ThemeColor terminalBackground = { 0x25, 0x25, 0x26 };
+	//! VS Code `editorGutter.background`; falls back to `editor.background`.
+	ThemeColor editorGutterBackground = { 0x1E, 0x1E, 0x1E };
+	//! VS Code `editorLineNumber.foreground`.
+	ThemeColor editorLineNumberForeground = { 0x85, 0x85, 0x85 };
+	//! VS Code `editorLineNumber.activeForeground`.
+	ThemeColor editorLineNumberActiveForeground = { 0xCC, 0xCC, 0xCC };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -241,6 +247,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xFF, 0xFF, 0xFF }, // panel.background
 			{ 0xFF, 0xFF, 0xFF }, // sideBar.background
 			{ 0xFF, 0xFF, 0xFF }, // terminal.background fallback: panel.background
+			{ 0xF4, 0xF5, 0xF7 }, // editorGutter.background fallback: editor.background
+			{ 0x23, 0x78, 0x93 }, // editorLineNumber.foreground
+			{ 0x17, 0x11, 0x84 }, // editorLineNumber.activeForeground
 		};
 	}
 	return {
@@ -261,6 +270,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x25, 0x25, 0x26 }, // panel.background
 		{ 0x29, 0x31, 0x34 }, // sideBar.background
 		{ 0x25, 0x25, 0x26 }, // terminal.background fallback: panel.background
+		{ 0x1E, 0x1E, 0x1E }, // editorGutter.background fallback: editor.background
+		{ 0x85, 0x85, 0x85 }, // editorLineNumber.foreground
+		{ 0xCC, 0xCC, 0xCC }, // editorLineNumber.activeForeground
 	};
 }
 

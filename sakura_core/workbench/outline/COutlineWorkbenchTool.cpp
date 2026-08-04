@@ -143,6 +143,7 @@ void COutlineWorkbenchTool::Layout( const RECT& contentRect, unsigned int dpi )
 	if( m_font.Dpi() != m_layout.dpi ){
 		(void)m_font.Recreate( theme::ThemeFontKind::Chrome, m_layout.dpi );
 		RecreateSymbolImages();
+		m_appearanceDirty = true;
 	}
 	ApplyLayout();
 }
@@ -186,6 +187,10 @@ void COutlineWorkbenchTool::Close()
 		m_dialog->SetWorkbenchParent( nullptr );
 	}
 	m_parent = nullptr;
+	m_refresh.Close();
+	m_appliedWindow = nullptr;
+	m_appearanceWindow = nullptr;
+	m_hasAppliedLayout = false;
 	if( m_symbolImages != nullptr ){
 		::ImageList_Destroy( m_symbolImages );
 		m_symbolImages = nullptr;
@@ -196,15 +201,39 @@ void COutlineWorkbenchTool::Close()
 void COutlineWorkbenchTool::SetVisible( bool visible ) noexcept
 {
 	m_visible = visible;
+	m_refresh.SetVisible(visible);
 	const HWND window = GetDialogWindow();
-	if( window != nullptr ) ::ShowWindow(window, visible ? SW_SHOWNA : SW_HIDE);
+	if( window != nullptr && (::IsWindowVisible(window) != FALSE) != visible ) {
+		::ShowWindow(window, visible ? SW_SHOWNA : SW_HIDE);
+	}
 }
 
 void COutlineWorkbenchTool::SetPalette( const theme::ThemePalette& palette )
 {
+	if( m_palette == palette ) return;
 	m_palette = palette;
+	m_appearanceDirty = true;
 	if( m_symbolImages != nullptr ) RecreateSymbolImages();
 	ApplyAppearance();
+}
+
+OutlineRefreshRequest COutlineWorkbenchTool::RequestRefresh() noexcept
+{
+	if( m_dialog == nullptr ) return { OutlineRefreshRequestStatus::Closed, 0 };
+	const auto documentVersion = m_dialog->GetWorkbenchDocumentVersion();
+	if( !m_refresh.Snapshot().refreshInFlight && m_dialog->HasCurrentWorkbenchModel() ) {
+		m_refresh.AdoptCommitted(documentVersion);
+	}
+	return m_refresh.Request(documentVersion);
+}
+
+OutlineRefreshCompletion COutlineWorkbenchTool::CompleteRefresh(
+	std::uint64_t generation, bool succeeded ) noexcept
+{
+	if( m_dialog == nullptr ) return OutlineRefreshCompletion::Closed;
+	const auto observedVersion = m_dialog->GetWorkbenchDocumentVersion();
+	return m_refresh.Complete(
+		generation, succeeded && m_dialog->HasCurrentWorkbenchModel(), observedVersion );
 }
 
 bool COutlineWorkbenchTool::Reparent( HWND parent ) noexcept
@@ -217,6 +246,7 @@ bool COutlineWorkbenchTool::Reparent( HWND parent ) noexcept
 	// not exist yet, updating the recorded workbench parent is the whole operation.
 	if( const HWND window = GetDialogWindow(); window != nullptr ){
 		if( ::SetParent( window, parent ) == nullptr ) return false;
+		m_hasAppliedLayout = false;
 		ApplyLayout();
 	}
 	return true;
@@ -228,22 +258,28 @@ void COutlineWorkbenchTool::ApplyLayout() noexcept
 	if( window == nullptr ) return;
 	const LONG width = m_layout.bounds.right - m_layout.bounds.left;
 	const LONG height = m_layout.bounds.bottom - m_layout.bounds.top;
-	::SetWindowPos( window, nullptr, m_layout.bounds.left, m_layout.bounds.top, width, height,
-		SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER );
-	ApplyAppearance();
+	if( !m_hasAppliedLayout || m_appliedWindow != window || !(m_appliedLayout == m_layout) ){
+		::SetWindowPos( window, nullptr, m_layout.bounds.left, m_layout.bounds.top, width, height,
+			SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER );
+		m_appliedWindow = window;
+		m_appliedLayout = m_layout;
+		m_hasAppliedLayout = true;
+	}
+	if( m_appearanceDirty || m_appearanceWindow != window ) ApplyAppearance();
 	// SHOW_RELOAD creates the child with SW_HIDE while the right panel is already
 	// visible.  The outline must become visible on this layout pass without making
 	// the panel active; Activate() remains the only focus-changing path.
-	if( m_visible && ShouldShowOutlineDialog(m_lifecycle) ) {
-		::ShowWindow( window, SW_SHOWNA );
-	} else if( !m_visible ) {
-		::ShowWindow( window, SW_HIDE );
+	const bool shouldShow = m_visible && ShouldShowOutlineDialog(m_lifecycle);
+	if( (::IsWindowVisible(window) != FALSE) != shouldShow ) {
+		::ShowWindow( window, shouldShow ? SW_SHOWNA : SW_HIDE );
 	}
 }
 
 void COutlineWorkbenchTool::ApplyAppearance() noexcept
 {
 	if( m_dialog == nullptr || GetDialogWindow() == nullptr ) return;
+	const HWND window = GetDialogWindow();
+	if( !m_appearanceDirty && m_appearanceWindow == window ) return;
 	const unsigned int dpi = m_layout.dpi == 0 ? kDefaultDpi : m_layout.dpi;
 	if( m_font.Get() == nullptr ) (void)m_font.Recreate( theme::ThemeFontKind::Chrome, dpi );
 	if( m_symbolImages == nullptr ) RecreateSymbolImages();
@@ -257,10 +293,13 @@ void COutlineWorkbenchTool::ApplyAppearance() noexcept
 		m_font.Get(),
 		ScaleDip(kOutlineRowHeightDip, dpi),
 		m_symbolImages );
+	m_appearanceWindow = window;
+	m_appearanceDirty = false;
 }
 
 void COutlineWorkbenchTool::RecreateSymbolImages() noexcept
 {
+	m_appearanceDirty = true;
 	if( m_symbolImages != nullptr ){
 		::ImageList_Destroy( m_symbolImages );
 		m_symbolImages = nullptr;

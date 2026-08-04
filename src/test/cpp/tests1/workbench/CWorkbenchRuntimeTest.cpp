@@ -745,15 +745,13 @@ TEST(CWorkbenchRuntime, AddsAndRemovesKnownEmptyTaskCatalogSlotsWithWorkspaceTop
 {
 	const auto folder = Parse(L"file:///C:/Dynamic");
 	RuntimeFixture fixture(Bootstrap());
+	const auto* const runtimeAddress = fixture.runtime.get();
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 	EXPECT_FALSE(fixture.runtime->TaskCatalogForFolder(folder).has_value());
 
-	const auto opened = fixture.runtime->WorkspaceContext().SetFolder({
-		.operation = { .operationId = "test.tasks.open", .expectedRevision = 0 },
-		.folderUri = folder,
-		.displayName = L"Dynamic",
-	});
+	const auto opened = fixture.runtime->SwitchToFolderWorkspace(folder, L"Dynamic");
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, opened.outcome);
+	EXPECT_EQ(runtimeAddress, fixture.runtime.get());
 	const auto knownEmpty = fixture.runtime->TaskCatalogForFolder(folder);
 	ASSERT_TRUE(knownEmpty.has_value());
 	EXPECT_TRUE(knownEmpty->catalog.definitions.empty());
@@ -1421,11 +1419,7 @@ TEST(CWorkbenchRuntime, WorkspaceTransitionsReplaceSourcesAndStopDisposesRefresh
 		Bytes(R"json({ "workbench.editor.showTabs": "single" })json"));
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
 
-	auto opened = fixture.runtime->WorkspaceContext().SetFolder({
-		.operation = { .operationId = "test.open.first", .expectedRevision = 0 },
-		.folderUri = first,
-		.displayName = L"First",
-	});
+	auto opened = fixture.runtime->SwitchToFolderWorkspace(first, L"First");
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, opened.outcome);
 	ConfigurationTarget firstTarget = ProfileTarget(fixture.runtime->Bootstrap());
 	firstTarget.workspaceUri = first;
@@ -1441,12 +1435,9 @@ TEST(CWorkbenchRuntime, WorkspaceTransitionsReplaceSourcesAndStopDisposesRefresh
 	const auto stopped = fixture.runtime->Stop();
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, stopped.code);
 	EXPECT_EQ(EWorkbenchRuntimeState::Stopped, stopped.snapshot.state);
-	auto afterStop = fixture.runtime->WorkspaceContext().SetFolder({
-		.operation = { .operationId = "test.open.second", .expectedRevision = emptied.revision },
-		.folderUri = second,
-		.displayName = L"Second",
-	});
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, afterStop.outcome);
+	auto afterStop = fixture.runtime->SwitchToFolderWorkspace(second, L"Second");
+	ASSERT_EQ(EWorkspaceContextOutcome::Failed, afterStop.outcome);
+	EXPECT_EQ(EWorkspaceKind::Empty, afterStop.snapshot.kind);
 	EXPECT_EQ(readsBeforeStop, fixture.files->Reads().size());
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Start().code);
 }

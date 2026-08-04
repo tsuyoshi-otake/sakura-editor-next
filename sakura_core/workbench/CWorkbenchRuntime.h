@@ -95,6 +95,8 @@ public:
 	[[nodiscard]] const WorkbenchBootstrapContext& Bootstrap() const noexcept override { return m_bootstrap; }
 	[[nodiscard]] config::IConfigurationService& Configuration() noexcept override { return m_configuration; }
 	[[nodiscard]] config::IWorkspaceContextService& WorkspaceContext() noexcept override { return m_workspaceContext; }
+	[[nodiscard]] config::WorkspaceContextResult SwitchToFolderWorkspace(
+		platform::uri::Uri folderUri, std::wstring displayName) override;
 	[[nodiscard]] workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept override { return m_workspaceEditing.get(); }
 	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
 		const workspace::WorkspaceFoldersEditRequest& request) override;

@@ -607,6 +607,7 @@
     <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
     <ClInclude Include="..\sakura_core\theme\CColorThemeRegistry.h" />
 	<ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h" />
+	<ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
@@ -1253,6 +1254,7 @@
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
     <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />

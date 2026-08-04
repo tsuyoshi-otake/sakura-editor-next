@@ -8,6 +8,12 @@
 
 namespace markdown {
 
+enum class PreviewPaneMode {
+	Hidden,
+	Replacement,
+	NativeSibling,
+};
+
 //! The editor and preview bounds within the existing central editor region.
 struct PreviewPaneLayout {
 	int editorLeft = 0;
@@ -24,5 +30,8 @@ struct PreviewPaneLayout {
 //! Splits a physical-pixel central editor region without consuming minimap or workbench space.
 [[nodiscard]] PreviewPaneLayout CalculateMarkdownPreviewLayout(
 	int left, int right, unsigned int dpi, bool previewVisible) noexcept;
+
+[[nodiscard]] PreviewPaneLayout CalculateMarkdownPreviewLayout(
+	int left, int right, unsigned int dpi, PreviewPaneMode mode) noexcept;
 
 } // namespace markdown

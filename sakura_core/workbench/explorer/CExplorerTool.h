@@ -49,6 +49,49 @@ struct ExplorerPalette {
 	COLORREF scrollbarTrackHover = RGB(0x2A, 0x2E, 0x36);
 };
 
+//! Matches VS Code's editor-opening intent: a selection previews, while an
+//! explicit activation pins the editor and prevents the next preview replacing it.
+enum class ExplorerFileActivationKind : unsigned char {
+	Preview,
+	Pinned,
+};
+
+//! Process-local projection of VS Code's editor-group preview rules.  The
+//! current native editor process owns one input; OpenNewEditor composes another
+//! process in the same tab group, while ReplaceCurrentPreview reuses this one.
+enum class ExplorerEditorActivationAction : unsigned char {
+	ActivateCurrent,
+	ReplaceCurrentPreview,
+	OpenNewEditor,
+};
+
+struct ExplorerEditorActivationPlan final {
+	ExplorerEditorActivationAction action = ExplorerEditorActivationAction::OpenNewEditor;
+	bool nextEditorIsPreview = false;
+};
+
+[[nodiscard]] constexpr ExplorerEditorActivationPlan PlanExplorerEditorActivation(
+	bool currentEditorIsPreview, bool sameResource, ExplorerFileActivationKind kind) noexcept
+{
+	if (sameResource) {
+		return {
+			.action = ExplorerEditorActivationAction::ActivateCurrent,
+			.nextEditorIsPreview = kind == ExplorerFileActivationKind::Preview
+				&& currentEditorIsPreview,
+		};
+	}
+	if (kind == ExplorerFileActivationKind::Preview && currentEditorIsPreview) {
+		return {
+			.action = ExplorerEditorActivationAction::ReplaceCurrentPreview,
+			.nextEditorIsPreview = true,
+		};
+	}
+	return {
+		.action = ExplorerEditorActivationAction::OpenNewEditor,
+		.nextEditorIsPreview = kind == ExplorerFileActivationKind::Preview,
+	};
+}
+
 //! Left workbench Explorer backed by a Win32 TreeView with native scrollbars
 //! suppressed and a VS Code-shaped overlay vertical scrollbar owned here.
 //!
@@ -57,7 +100,8 @@ struct ExplorerPalette {
 //! files activate on single click or Enter, and reparse points are displayed as leaves.
 class CExplorerTool final : public IWorkbenchTool {
 public:
-	using FileActivationCallback = std::function<void(std::wstring_view path)>;
+	using FileActivationCallback = std::function<void(
+		std::wstring_view path, ExplorerFileActivationKind kind)>;
 
 	CExplorerTool();
 	~CExplorerTool() override;

@@ -41,6 +41,7 @@ enum class ECtrlKChordAction : std::uint8_t {
 	OpenFolder,
 	SaveAll,
 	CloseFolder,
+	MarkdownShowPreviewToSide,
 };
 
 //! How a pending Ctrl+K chord handles its next key-down message.
@@ -65,6 +66,7 @@ struct CtrlKChordKeyResult {
 		case ECtrlKChordAction::OpenFolder: return command_ids::OpenFolder;
 		case ECtrlKChordAction::SaveAll: return command_ids::SaveAll;
 		case ECtrlKChordAction::CloseFolder: return command_ids::CloseFolder;
+		case ECtrlKChordAction::MarkdownShowPreviewToSide: return command_ids::MarkdownShowPreviewToSide;
 		case ECtrlKChordAction::None: break;
 		}
 		return {};
@@ -145,6 +147,10 @@ public:
 			Clear();
 			return { ECtrlKChordKeyDecision::Execute, ECtrlKChordAction::CloseFolder };
 		}
+		if (virtualKey == static_cast<std::uint32_t>('V') && modifiers.IsUnmodified()) {
+			Clear();
+			return { ECtrlKChordKeyDecision::Execute, ECtrlKChordAction::MarkdownShowPreviewToSide };
+		}
 		Clear();
 		return { ECtrlKChordKeyDecision::CancelAndConsume, ECtrlKChordAction::None };
 	}
@@ -220,7 +226,8 @@ public:
 		}
 
 		if (virtualKey == static_cast<std::uint32_t>('K') && modifiers.IsControlOnly()
-			&& isCommandAvailable(command_ids::OpenFolder)) {
+			&& (isCommandAvailable(command_ids::OpenFolder)
+				|| isCommandAvailable(command_ids::MarkdownShowPreviewToSide))) {
 			m_ctrlKChord.Begin(now, focusToken);
 			return { EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume, {} };
 		}
@@ -234,6 +241,10 @@ public:
 	[[nodiscard]] static constexpr std::string_view DirectCommandId(std::uint32_t virtualKey,
 		WorkbenchKeyModifiers modifiers) noexcept
 	{
+		if (virtualKey == static_cast<std::uint32_t>('V') && modifiers.control
+			&& modifiers.shift && !modifiers.alt) {
+			return command_ids::MarkdownTogglePreview;
+		}
 		if (!modifiers.IsControlOnly()) return {};
 		switch (virtualKey) {
 		case 'R': return command_ids::OpenRecent;

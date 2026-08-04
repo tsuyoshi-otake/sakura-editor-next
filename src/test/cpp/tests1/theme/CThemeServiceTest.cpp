@@ -20,6 +20,7 @@ TEST(CThemeService, DarkPaletteMatchesWorkbenchTokensExactly)
 		{ 0x98, 0x98, 0x98 }, { 0x75, 0x75, 0x75 }, { 0x1F, 0x8A, 0xD2 }, { 0xFF, 0xFF, 0xFF },
 		{ 0x3C, 0x3C, 0x3C }, { 0x33, 0x33, 0x33 }, { 0xC4, 0x2B, 0x1C }, { 0xCC, 0xA7, 0x00 },
 		{ 0x25, 0x25, 0x26 }, { 0x29, 0x31, 0x34 }, { 0x25, 0x25, 0x26 },
+		{ 0x1E, 0x1E, 0x1E }, { 0x85, 0x85, 0x85 }, { 0xCC, 0xCC, 0xCC },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Dark));
 	EXPECT_EQ(ThemeMode::Dark, CThemeService::DefaultMode());
@@ -41,6 +42,7 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 		{ 0x71, 0x71, 0x71 }, { 0xAA, 0xAB, 0xAC }, { 0xB8, 0x32, 0x68 }, { 0xFF, 0xFF, 0xFF },
 		{ 0xF3, 0xF3, 0xF3 }, { 0xF3, 0xF3, 0xF3 }, { 0xC4, 0x2B, 0x1C }, { 0xBF, 0x88, 0x00 },
 		{ 0xFF, 0xFF, 0xFF }, { 0xFF, 0xFF, 0xFF }, { 0xFF, 0xFF, 0xFF },
+		{ 0xF4, 0xF5, 0xF7 }, { 0x23, 0x78, 0x93 }, { 0x17, 0x11, 0x84 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 }
@@ -52,6 +54,7 @@ TEST(CThemeService, HighContrastOverlayDoesNotChangeSavedModeSelection)
 		{ 13, 14, 15 }, { 16, 17, 18 }, { 19, 20, 21 }, { 22, 23, 24 },
 		{ 25, 26, 27 }, { 28, 29, 30 }, { 31, 32, 33 }, { 34, 35, 36 }, { 37, 38, 39 }, { 40, 41, 42 },
 		{ 43, 44, 45 }, { 46, 47, 48 }, { 49, 50, 51 },
+		{ 52, 53, 54 }, { 55, 56, 57 }, { 58, 59, 60 },
 	};
 	EXPECT_EQ(highContrast, CThemeService::SelectPalette(ThemeMode::Dark, true, highContrast));
 	EXPECT_EQ(CThemeService::PaletteFor(ThemeMode::Light),
@@ -62,6 +65,9 @@ TEST(CThemeService, HighContrastTerminalBackgroundUsesThePanelFace)
 {
 	const ThemePalette highContrast = CThemeService::HighContrastPalette();
 	EXPECT_EQ(highContrast.bottomPanel, highContrast.terminalBackground);
+	EXPECT_EQ(highContrast.canvas, highContrast.editorGutterBackground);
+	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberForeground);
+	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberActiveForeground);
 }
 
 TEST(CThemeService, FontPolicyPrefersNativeWindowsElevenFamilies)

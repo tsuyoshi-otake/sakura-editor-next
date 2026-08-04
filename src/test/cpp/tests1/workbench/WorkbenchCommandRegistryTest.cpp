@@ -30,6 +30,7 @@ using workbench::commands::EWorkbenchCommandRegistrationStatus;
 using workbench::commands::EWorkbenchCommandSurface;
 using workbench::commands::EWorkbenchContextMutationStatus;
 using workbench::commands::WorkbenchCommandDescriptor;
+using workbench::commands::WorkbenchCommandExecutionResult;
 using workbench::commands::WorkbenchCommandOwner;
 using workbench::commands::WorkbenchCommandRegistry;
 using workbench::commands::WorkbenchContextKeyService;
@@ -729,4 +730,62 @@ TEST(WorkbenchCommandRegistry, DisabledCommandNeverInvokesExecutorAndUnknownUnsu
 		throw std::runtime_error("test");
 	}).status);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Failed, registry.Execute("publisher.extension.throwing", EnabledContext()).status);
+}
+
+TEST(WorkbenchCommandRegistry, RegistersExactMarkdownCommandIdsWithTheirOwnExecutors)
+{
+	WorkbenchCommandRegistry registry;
+	std::array<int, 10> calls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
+		.markdownShowPreview = [&calls] { ++calls[0]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownShowPreviewToSide = [&calls] { ++calls[1]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownShowLockedPreviewToSide = [&calls] { ++calls[2]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownShowSource = [&calls] { ++calls[3]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownShowPreviewSecuritySelector = [&calls] { ++calls[4]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownPreviewRefresh = [&calls] { ++calls[5]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownPreviewToggleLock = [&calls] { ++calls[6]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownReopenAsPreview = [&calls] { ++calls[7]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownReopenAsSource = [&calls] { ++calls[8]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+		.markdownTogglePreview = [&calls] { ++calls[9]; return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} }; },
+	}).status);
+
+	constexpr std::array commandIds{
+		"markdown.showPreview",
+		"markdown.showPreviewToSide",
+		"markdown.showLockedPreviewToSide",
+		"markdown.showSource",
+		"markdown.showPreviewSecuritySelector",
+		"markdown.preview.refresh",
+		"markdown.preview.toggleLock",
+		"markdown.reopenAsPreview",
+		"markdown.reopenAsSource",
+		"markdown.togglePreview",
+	};
+	const auto context = EnabledFileCommandContext();
+	for (std::size_t index = 0; index < commandIds.size(); ++index) {
+		const auto descriptor = registry.Find(commandIds[index]);
+		ASSERT_TRUE(descriptor.has_value()) << commandIds[index];
+		EXPECT_EQ(EWorkbenchCommandExecutorTarget::Editor, descriptor->executorTarget);
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute(commandIds[index], context).status) << commandIds[index];
+		EXPECT_EQ(1, calls[index]) << commandIds[index];
+	}
+}
+
+TEST(WorkbenchCommandRegistry, MarkdownDefaultKeybindingsUseOnlyVsCodeCommandSlots)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_TRUE(registry.RegisterBuiltinCommands().Succeeded());
+	const auto side = registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
+		"markdown.showPreviewToSide.key");
+	ASSERT_TRUE(side.has_value());
+	EXPECT_EQ("markdown.showPreviewToSide", side->commandId);
+	const auto toggle = registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
+		"markdown.togglePreview.key");
+	ASSERT_TRUE(toggle.has_value());
+	EXPECT_EQ("markdown.togglePreview", toggle->commandId);
+	EXPECT_FALSE(registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
+		"markdown.showPreview.key").has_value());
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		registry.Execute("markdown.showPreview", EnabledFileCommandContext()).status);
 }

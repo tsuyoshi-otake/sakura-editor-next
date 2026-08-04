@@ -8,6 +8,7 @@
 
 #include "StdAfx.h"
 #include "CTextDrawer.h"
+#include <array>
 #include <vector>
 #include "CTextMetrics.h"
 #include "CTextArea.h"
@@ -15,7 +16,9 @@
 #include "basis/CEol.h"
 #include "view/CEditView.h"
 #include "doc/CEditDoc.h"
+#include "theme/CThemeService.h"
 #include "types/CTypeSupport.h"
+#include "window/CEditWnd.h"
 #include "charset/charcode.h"
 #include "doc/layout/CLayout.h"
 #include "debug/StartupTrace.h"
@@ -366,6 +369,7 @@ void CTextDrawer::DispLineNumber(
 
 	const CEditView* pView=m_pEditView;
 	const STypeConfig* pTypes=&pView->m_pcEditDoc->m_cDocType.GetDocumentAttribute();
+	const bool workbenchLineNumbers = !pView->m_bMiniMap && GetEditWnd().IsWorkbenchRuntimeBacked();
 
 	int				nLineHeight = pView->GetTextMetrics().GetHankakuDy();
 	int				nCharWidth = pView->GetTextMetrics().GetHankakuDx();
@@ -423,7 +427,7 @@ void CTextDrawer::DispLineNumber(
 	//該当行の行番号エリア矩形
 	RECT	rcLineNum;
 	rcLineNum.left = 0;
-	rcLineNum.right = nLineNumAreaWidth;
+	rcLineNum.right = workbenchLineNumbers ? pView->GetTextArea().GetAreaLeft() : nLineNumAreaWidth;
 	rcLineNum.top = y;
 	rcLineNum.bottom = y + nLineHeight;
 	
@@ -444,23 +448,36 @@ void CTextDrawer::DispLineNumber(
 			bTrans = pView->IsBkBitmap() && cTextType.GetBackColor() == cGyouModType.GetBackColor();
 		}
 	}
+	if (workbenchLineNumbers) {
+		const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+			? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+		const auto palette = theme::CThemeService::EffectivePalette(mode);
+		const bool activeLogicalLine = pcLayout != nullptr
+			&& pView->GetCaret().GetCaretLogicPos().GetY() == pcLayout->GetLogicLineNo();
+		fgcolor = activeLogicalLine
+			? palette.editorLineNumberActiveForeground.ToColorRef()
+			: palette.editorLineNumberForeground.ToColorRef();
+		bgcolor = palette.editorGutterBackground.ToColorRef();
+		gr.FillSolidMyRect(rcLineNum, bgcolor);
+		bTrans = true;
+	}
 	// 2014.01.29 Moca 背景色がテキストと同じなら、透過色として行背景色を適用
-	if( bgcolor == cTextType.GetBackColor() ){
+	if( !workbenchLineNumbers && bgcolor == cTextType.GetBackColor() ){
 		bgcolor = cBackType.GetBackColor();
 		bTrans = pView->IsBkBitmap() && cTextType.GetBackColor() == bgcolor;
 		bDispLineNumTrans = true;
 	}
 	if(!pcLayout){
 		//行が存在しない場合は、テキスト描画色で塗りつぶし
-		if( !bTransText ){
+		if( !workbenchLineNumbers && !bTransText ){
 			cBackType.FillBack(gr,rcLineNum);
 		}
 		bDispLineNumTrans = true;
 	}
 	else if( CTypeSupport(pView,COLORIDX_GYOU).IsDisp() ){ /* 行番号表示／非表示 */
-		SFONT sFont = cColorType.GetTypeFont();
+		SFONT sFont = workbenchLineNumbers ? cTextType.GetTypeFont() : cColorType.GetTypeFont();
 	 	// 2013.12.30 変更行の色・フォント属性をDIFFブックマーク行に継承するように
-		if( bGyouMod && nColorIndex != COLORIDX_GYOU_MOD ){
+		if( !workbenchLineNumbers && bGyouMod && nColorIndex != COLORIDX_GYOU_MOD ){
 			bool bChange = true;
 			if( cGyouType.IsBoldFont() == cColorType.IsBoldFont() ){
 		 		sFont.m_sFontAttr.m_bBoldFont = cGyouModType.IsBoldFont();
@@ -484,7 +501,7 @@ void CTextDrawer::DispLineNumber(
 		int nLineNumCols;
 		{
 			/* 行番号の表示 false=折り返し単位／true=改行単位 */
-			if( pTypes->m_bLineNumIsCRLF ){
+			if( workbenchLineNumbers || pTypes->m_bLineNumIsCRLF ){
 				/* 論理行番号表示モード */
 				if( nullptr == pcLayout || 0 != pcLayout->GetLogicOffset() ){ //折り返しレイアウト行
 					wcscpy( szLineNum, L" " );
@@ -501,14 +518,24 @@ void CTextDrawer::DispLineNumber(
 			nLineNumCols = nLineCols; // 2010.08.17 Moca 位置決定に行番号区切りは含めない
 
 			/* 行番号区切り 0=なし 1=縦線 2=任意 */
-			if( 2 == pTypes->m_nLineTermType ){
+			if( !workbenchLineNumbers && 2 == pTypes->m_nLineTermType ){
 				const wchar_t szSeparator[] = { pTypes->m_cLineTermChar, 0 };
 				::wcscat_s(szLineNum, szSeparator);
 			}
 		}
 
 		//	Sep. 23, 2002 genta
-		int drawNumTop = (pView->GetTextArea().m_nViewAlignLeftCols - nLineNumCols - 1) * ( nCharWidth );
+		int drawNumTop;
+		const int* digitAdvances = pView->GetTextMetrics().GetDxArray_AllHankaku();
+		std::array<int, 18> workbenchDigitAdvances{};
+		if (workbenchLineNumbers) {
+			const int digitWidth = pView->GetTextArea().GetLineNumberDigitWidth();
+			workbenchDigitAdvances.fill(digitWidth);
+			digitAdvances = workbenchDigitAdvances.data();
+			drawNumTop = std::max(0, nLineNumAreaWidth - nLineNumCols * digitWidth);
+		} else {
+			drawNumTop = (pView->GetTextArea().m_nViewAlignLeftCols - nLineNumCols - 1) * nCharWidth;
+		}
 		int fontNo = WCODE::GetFontNo('0');
 		int nHeightMargin = pView->GetTextMetrics().GetCharHeightMarginByFontNo(fontNo);
 		::ExtTextOut( gr,
@@ -518,11 +545,11 @@ void CTextDrawer::DispLineNumber(
 			&rcLineNum,
 			szLineNum,
 			nLineCols,
-			pView->GetTextMetrics().GetDxArray_AllHankaku()
+			digitAdvances
 		);
 
 		/* 行番号区切り 0=なし 1=縦線 2=任意 */
-		if( 1 == pTypes->m_nLineTermType ){
+		if( !workbenchLineNumbers && 1 == pTypes->m_nLineTermType ){
 			RECT rc;
 			rc.left = nLineNumAreaWidth - 2;
 			rc.top = y;

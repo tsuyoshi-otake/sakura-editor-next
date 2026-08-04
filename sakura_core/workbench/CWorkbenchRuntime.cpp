@@ -373,6 +373,34 @@ config::SettingsWritebackResult CWorkbenchRuntime::WriteSetting(const config::Se
 	return m_settingsWriteback->Write(request);
 }
 
+config::WorkspaceContextResult CWorkbenchRuntime::SwitchToFolderWorkspace(
+	platform::uri::Uri folderUri, std::wstring displayName)
+{
+	const auto failed = [this](std::string reason) {
+		return config::WorkspaceContextResult {
+			.outcome = EWorkspaceContextOutcome::Failed,
+			.reason = std::move(reason),
+			.snapshot = m_workspaceContext.Snapshot(),
+		};
+	};
+	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	{
+		std::lock_guard stateLock(m_stateMutex);
+		if (!IsReadyForServiceAccessLocked()) return failed("workbench runtime is not ready");
+	}
+	const auto before = m_workspaceContext.Snapshot();
+	auto operationId = NextWorkspaceOperationId();
+	if (!operationId) return failed("workspace operation identifier space is exhausted");
+	return m_workspaceContext.SetFolder({
+		.operation = {
+			.operationId = std::move(*operationId),
+			.expectedRevision = before.revision,
+		},
+		.folderUri = std::move(folderUri),
+		.displayName = std::move(displayName),
+	});
+}
+
 workspace::WorkspaceEditingResult CWorkbenchRuntime::ReplaceCurrentWorkspaceFolders(
 	const workspace::WorkspaceFoldersEditRequest& request)
 {

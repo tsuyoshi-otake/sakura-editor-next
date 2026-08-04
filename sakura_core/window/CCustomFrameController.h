@@ -9,6 +9,7 @@
 
 #include <Windows.h>
 
+#include <array>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -81,6 +82,25 @@ enum class CustomFrameManageAction : unsigned char {
 	SelectFileIconTheme,
 };
 
+//! Physical edge covered by an input-only child overlay. The custom client
+//! fills the whole top-level window, so child controls would otherwise consume
+//! the initial press before the frame can return an HT* resize result.
+enum class CustomFrameResizeEdge : unsigned char {
+	Top,
+	Bottom,
+	Left,
+	Right,
+	Count,
+};
+
+[[nodiscard]] std::array<RECT, static_cast<size_t>(CustomFrameResizeEdge::Count)>
+CalculateCustomFrameResizeOverlayBounds(
+	int clientWidth,
+	int clientHeight,
+	int resizeBorder,
+	bool maximized
+) noexcept;
+
 using CustomFrameManageActionCallback = std::function<void(CustomFrameManageAction)>;
 
 //! Owns non-client extension, hit-testing, custom title/menu painting, and per-window DPI state.
@@ -114,6 +134,9 @@ public:
 	[[nodiscard]] bool PreTranslateMessage(MSG& message) noexcept;
 	void Paint(HDC dc, const RECT& paintRect) noexcept;
 	void InvalidateTitle() const noexcept;
+	//! Reasserts the input-only edge overlays after sibling HWND layout.
+	void LayoutResizeOverlays() noexcept;
+	static LRESULT CALLBACK ResizeOverlayWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
 private:
 	[[nodiscard]] HWND AccessibilityWindow() const noexcept override { return m_window; }
@@ -131,6 +154,8 @@ private:
 
 	void RefreshMetrics() noexcept;
 	void RefreshLayout() noexcept;
+	void CreateResizeOverlays() noexcept;
+	void DestroyResizeOverlays() noexcept;
 	[[nodiscard]] int ResizeBorder() const noexcept;
 	[[nodiscard]] LRESULT HitTestScreenPoint(POINT screenPoint) noexcept;
 	void SetHotHit(LRESULT hit) noexcept;
@@ -144,6 +169,11 @@ private:
 	void ShowLayoutMenu(const RECT& anchor) noexcept;
 	void ShowAccountMenu(const RECT& anchor) noexcept;
 	void ShowManageMenu(const RECT& anchor) noexcept;
+	struct ResizeOverlaySlot {
+		CCustomFrameController* owner = nullptr;
+		CustomFrameResizeEdge edge = CustomFrameResizeEdge::Top;
+		HWND window = nullptr;
+	};
 
 	HWND m_window = nullptr;
 	UINT m_dpi = 96;
@@ -165,5 +195,6 @@ private:
 	bool m_trackingNonClientLeave = false;
 	bool m_trackingTitleControlLeave = false;
 	int m_accessibilityFocusedNode = -1;
+	std::array<ResizeOverlaySlot, static_cast<size_t>(CustomFrameResizeEdge::Count)> m_resizeOverlays{};
 	std::shared_ptr<accessibility::CustomUiAutomationLifetime> m_accessibilityLifetime = std::make_shared<accessibility::CustomUiAutomationLifetime>();
 };

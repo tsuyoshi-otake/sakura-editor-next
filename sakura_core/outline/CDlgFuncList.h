@@ -25,13 +25,26 @@
 
 #include <Windows.h>
 #include <CommCtrl.h>
+#include <cstddef>
+#include <cstdint>
 #include <string_view>
 #include "dlg/CDialog.h"
 #include "doc/CEditDoc.h"
+#include "workbench/outline/OutlineViewLifecycle.h"
 
 class CFuncInfo;
 class CFuncInfoArr; // 2002/2/10 aroka
 class CDataProfile;
+class CEditView;
+
+namespace workbench::outline {
+
+[[nodiscard]] DWORD NormalizeWorkbenchOutlineTreeStyle( DWORD style ) noexcept;
+[[nodiscard]] DWORD NormalizeWorkbenchOutlineListStyle( DWORD style ) noexcept;
+[[nodiscard]] DWORD NormalizeWorkbenchOutlineControlExStyle( DWORD exStyle ) noexcept;
+[[nodiscard]] bool NormalizeWorkbenchOutlineDialogTemplate( void* data, size_t size ) noexcept;
+
+} // namespace workbench::outline
 
 //! アウトライン動作指定
 #define OUTLINE_LAYOUT_FOREGROUND (0)   //!< 前面用の動作
@@ -90,6 +103,10 @@ public:
 	[[nodiscard]] static std::wstring_view WorkbenchSymbolCodiconName( int imageIndex ) noexcept;
 	[[nodiscard]] HWND GetWorkbenchParent() const noexcept { return m_hwndWorkbenchParent; }
 	[[nodiscard]] bool IsWorkbenchMode() const noexcept { return m_bWorkbenchMode; }
+	[[nodiscard]] workbench::outline::OutlineDocumentVersion GetWorkbenchDocumentVersion() noexcept;
+	[[nodiscard]] bool HasCurrentWorkbenchModel() noexcept;
+	[[nodiscard]] std::uint64_t GetWorkbenchModelGeneration() const noexcept { return m_workbenchModelGeneration; }
+	[[nodiscard]] std::uint64_t GetWorkbenchReparseCount() const noexcept { return m_workbenchReparseCount; }
 	[[nodiscard]] bool IsDocking() const noexcept { return !m_bWorkbenchMode && m_eDockSide > DOCKSIDE_FLOAT; }
 	[[nodiscard]] EDockSide GetDockSide() const noexcept { return m_eDockSide; }
 
@@ -207,6 +224,8 @@ protected:
 private:
 	[[nodiscard]] bool UsesCompactPanelLayout() const noexcept { return m_bWorkbenchMode || IsDocking(); }
 	void ApplyWorkbenchAppearance() noexcept;
+	void ObserveWorkbenchDocument( CEditView* view ) noexcept;
+	void CommitWorkbenchModel() noexcept;
 
 	//	May 18, 2001 genta
 	/*!
@@ -244,6 +263,15 @@ private:
 	HFONT		m_workbenchFont = nullptr;
 	int			m_workbenchItemHeight = 22;
 	HIMAGELIST	m_workbenchSymbolImages = nullptr;
+	CEditDoc*	m_workbenchDocument = nullptr;
+	workbench::outline::OutlineDocumentVersion m_workbenchDocumentVersion{};
+	workbench::outline::OutlineDocumentVersion m_workbenchModelVersion{};
+	std::uint64_t m_workbenchNextDocumentIdentity = 0;
+	std::uint64_t m_workbenchModelGeneration = 0;
+	std::uint64_t m_workbenchReparseCount = 0;
+	int			m_workbenchAppearanceWidth = -1;
+	bool		m_workbenchAppearanceDirty = true;
+	bool		m_workbenchTreeContentDirty = true;
 	HWND		m_hwndToolTip;	/*!< ツールチップ（ボタン用） */
 	bool		m_bStretching;
 	bool		m_bHovering;
@@ -261,6 +289,6 @@ private:
 	POINT				m_ptDefaultSizeClient;
 	RECT				m_rcItems[12];
 
-	bool		m_bFuncInfoArrIsUpToDate;
+	bool		m_bFuncInfoArrIsUpToDate = false;
 };
 #endif /* SAKURA_CDLGFUNCLIST_B22A3877_572A_49B7_B683_50ECA451A6F8_H_ */

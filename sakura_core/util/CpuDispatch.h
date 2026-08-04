@@ -24,11 +24,14 @@ struct Capabilities {
 };
 
 using FindCrOrLfFunction = std::size_t (*)(const char* data, std::size_t length) noexcept;
+using FindUtf16Function = std::size_t (*)(const wchar_t* data, std::size_t length) noexcept;
 
 struct Dispatch {
 	Isa isa{Isa::Avx};
 	Capabilities capabilities{};
 	FindCrOrLfFunction findCrOrLf{};
+	FindUtf16Function findCrOrLfUtf16{};
+	FindUtf16Function findMarkdownInlineSpecialUtf16{};
 	std::int64_t initializationTicks{};
 };
 
@@ -45,5 +48,7 @@ namespace Testing
 {
 // Returns nullptr when the requested implementation is unsafe on this machine.
 FindCrOrLfFunction GetSupportedFindCrOrLf(Isa isa) noexcept;
+FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept;
+FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept;
 }
 }

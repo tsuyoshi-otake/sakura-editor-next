@@ -33,6 +33,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 #include "_main/global.h"
 #include "_os/CDropTarget.h"
 #include "CMainToolBar.h"
@@ -65,6 +66,7 @@
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
+#include "markdown/MarkdownPreviewCommandState.h"
 
 static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
@@ -113,9 +115,11 @@ enum class BuiltinActiveSurface : std::uint8_t;
 }
 namespace commands {
 class WorkbenchCommandRegistry;
+struct WorkbenchCommandExecutionResult;
 }
 namespace explorer {
 class CExplorerTool;
+enum class ExplorerFileActivationKind : unsigned char;
 }
 namespace viewcontainer {
 class CViewContainerHost;
@@ -209,15 +213,14 @@ enum class EOpenWorkspaceFolderResult : std::uint8_t {
 	Cancelled,
 	InvalidSelection,
 	PickerFailed,
-	DirtyPreflightFailed,
-	HandoffFailed,
 	WorkspaceContextFailed,
 	ExplorerProjectionFailed,
 };
 
-//! Every native workspace picker/handoff path has one terminal result.  The
+//! Every native workspace picker/transition path has one terminal result.  The
 //! window owns picker and process composition; the workbench service remains
-//! HWND-free.
+//! HWND-free. Folder transitions stay in-process; only explicit window
+//! composition paths launch a successor.
 enum class EWorkspaceWindowTransitionResult : std::uint8_t {
 	Succeeded,
 	Cancelled,
@@ -399,6 +402,8 @@ public:
 	//! Native-command bridge for the workspace File-menu function codes.  It
 	//! keeps CViewCommander on the same stable-command path as menu dispatch.
 	void ExecuteWorkbenchFileFunction(EFunctionCode functionCode);
+	//! True only for the real runtime-backed Workbench composition, never the classic test/legacy path.
+	[[nodiscard]] bool IsWorkbenchRuntimeBacked() const noexcept { return m_workbenchRuntime != nullptr; }
 	[[nodiscard]] bool IsWorkbenchPanelVisible(workbench::WorkbenchEdge edge) const noexcept;
 	//! `workbench.action.toggleAuxiliaryBar` (Ctrl+Alt+B). This is the physical Secondary
 	//! Side Bar Part, never the Outline View nested in the Primary Side Bar.
@@ -487,6 +492,8 @@ public:
 	CMenuDrawer&	GetMenuDrawer()			{ return m_cMenuDrawer; }
 	CEditDoc*		GetDocument()           { return m_pcEditDoc; }
 	const CEditDoc*	GetDocument() const     { return m_pcEditDoc; }
+	//! Filesystem breadcrumbs for the active input, relative to its longest matching workspace root.
+	[[nodiscard]] std::vector<std::wstring> BuildActiveDocumentBreadcrumbSegments() const;
 
 	//ビュー
 	const CEditView&	GetActiveView() const { return *m_pcEditView; }
@@ -627,6 +634,9 @@ private:
 	[[nodiscard]] std::wstring GetSemanticWorkspaceRoot() const;
 	void ApplySemanticWorkspaceContext();
 	void UpdateWorkspaceFromDocument();
+	void OpenExplorerFile(std::wstring_view path,
+		workbench::explorer::ExplorerFileActivationKind kind);
+	[[nodiscard]] std::wstring BuildExplorerLaunchOptions(bool preview) const;
 	void RefreshEditorCorePresentation();
 	void ApplyEditorCoreSnapshot(const workbench::editor::EditorCoreSnapshot& snapshot, bool restoreFocus = true);
 	[[nodiscard]] bool AdoptLoadedLegacyFile();
@@ -635,6 +645,8 @@ private:
 	[[nodiscard]] bool CloseActiveEditorInput();
 	void ConfigureCustomFrameActions();
 	[[nodiscard]] bool ExecuteWorkbenchEditorCommand(std::string_view commandId);
+	[[nodiscard]] EOpenWorkspaceFolderResult ApplyFolderWorkspace(
+		const std::wstring& absoluteRoot, bool revealExplorer);
 	[[nodiscard]] EWorkspaceWindowTransitionResult OpenWorkspaceConfiguration();
 	[[nodiscard]] EWorkspaceWindowTransitionResult AddFolderToWorkspace();
 	[[nodiscard]] EWorkspaceWindowTransitionResult SaveWorkspaceAs();
@@ -769,6 +781,10 @@ private:
 	void UpdateMarkdownPreviewIfNeeded();
 	[[nodiscard]] std::wstring GetMarkdownPreviewSource(bool* truncated = nullptr);
 	void LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi);
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteMarkdownPreviewCommand(
+		markdown::MarkdownPreviewCommand command);
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ApplyMarkdownPreviewCommandResult(
+		const markdown::MarkdownPreviewCommandResult& result);
 
 	//共有データ
 	DLLSHAREDATA*	m_pShareData = &GetDllShareData();
@@ -818,6 +834,9 @@ private:
 	//! Presentation cache derived only by ApplyEditorCoreSnapshot.
 	bool m_hasActiveEditorInput = false;
 	bool m_editorCorePresentationInitialized = false;
+	//! One unpinned Explorer preview is replaceable by the next single-click.
+	//! Double-clicking or editing clears this state, matching VS Code editor groups.
+	bool m_explorerPreviewEditor = false;
 	//! Set only while a coordinator backend call may synchronously raise OnAfterSave.
 	//! The RAII scope restores it on every completion path, including a legacy exception.
 	bool m_workingCopyBackendEffectInProgress = false;
@@ -871,9 +890,11 @@ private:
 	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
+	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;
 	bool m_markdownPreviewVisible = false;
 	bool m_markdownPreviewDirty = false;
 	int m_markdownPreviewRevision = -1;
+	std::uint64_t m_markdownPreviewGeneration = 0;
 	RECT m_markdownPreviewDivider{};
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;

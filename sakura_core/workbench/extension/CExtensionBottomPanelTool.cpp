@@ -282,7 +282,9 @@ struct CExtensionBottomPanelTool::Impl {
 		if (!window) return;
 		const int width = std::max(0L, bounds.right - bounds.left);
 		const int height = std::max(0L, bounds.bottom - bounds.top);
-		const int headerHeight = Scale(34, dpi);
+		const auto vertical = CalculateExtensionBottomPanelVerticalLayout(
+			height, Scale(34, dpi), Scale(28, dpi));
+		const int headerHeight = vertical.headerHeight;
 		const int actionWidth = Scale(30, dpi);
 		::MoveWindow(window, bounds.left, bounds.top, width, height, TRUE);
 
@@ -339,13 +341,12 @@ struct CExtensionBottomPanelTool::Impl {
 			--remainingTabs;
 		}
 
-		RECT content{ 0, headerHeight, width, height };
+		RECT content{ 0, vertical.contentTop, width, vertical.contentTop + vertical.contentHeight };
 		terminal->Layout(content, dpi);
-		::MoveWindow(problemsList, 0, headerHeight, width, std::max(0, height - headerHeight), TRUE);
-		const int selectorHeight = Scale(28, dpi);
-		::MoveWindow(outputSelector, 0, headerHeight, width, selectorHeight, TRUE);
-		::MoveWindow(outputText, 0, headerHeight + selectorHeight, width,
-			std::max(0, height - headerHeight - selectorHeight), TRUE);
+		::MoveWindow(problemsList, 0, vertical.contentTop, width, vertical.contentHeight, TRUE);
+		::MoveWindow(outputSelector, 0, vertical.contentTop, width, vertical.outputSelectorHeight, TRUE);
+		::MoveWindow(outputText, 0, vertical.contentTop + vertical.outputSelectorHeight, width,
+			vertical.contentHeight - vertical.outputSelectorHeight, TRUE);
 	}
 
 	void RefreshProblems()

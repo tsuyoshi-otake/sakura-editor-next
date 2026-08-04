@@ -77,6 +77,7 @@ public:
 	bool IsSetProfile() const noexcept { return m_bSetProfile; }
 	bool IsSetWorkspaceFolder() const noexcept { return m_bSetWorkspaceFolder; }
 	bool IsSetWorkspaceConfig() const noexcept { return m_bSetWorkspaceConfig; }
+	bool IsExplorerPreview() const noexcept { return m_bExplorerPreview; }
 	bool IsParsed() const noexcept { return m_bParsed; }
 	void SetProfileName(LPCWSTR s){
 		m_bSetProfile = true;
@@ -106,6 +107,7 @@ private:
 	bool		m_bSetProfile;
 	bool		m_bSetWorkspaceFolder;
 	bool		m_bSetWorkspaceConfig;
+	bool		m_bExplorerPreview;
 	bool		m_bParsed;
 	EditInfo	m_fi;				//!
 	GrepInfo	m_gi;				//!

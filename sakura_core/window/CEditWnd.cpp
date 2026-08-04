@@ -68,6 +68,7 @@
 #include "recent/CRecentFolder.h"
 #include "apiwrap/DarkMode.h"
 #include "window/CCustomFrameController.h"
+#include "window/DocumentBreadcrumbs.h"
 #include "markdown/CMarkdownPreviewWnd.h"
 #include "markdown/MarkdownPreviewLayout.h"
 #include "terminal/window/CTerminalTool.h"
@@ -1399,6 +1400,7 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 		}
 		PublishExtensionDocumentOpen(false);
 	} else {
+		m_markdownPreviewCommandState.Reset();
 		m_markdownPreviewVisible = false;
 		m_markdownPreviewDirty = false;
 		m_markdownPreviewRevision = -1;
@@ -1723,9 +1725,80 @@ void CEditWnd::RecordFirstStartupContentPaint() noexcept
 	PostDeferredStartupWorkbenchIfReady();
 }
 
+std::wstring CEditWnd::BuildExplorerLaunchOptions(bool preview) const
+{
+	std::wstring options;
+	const auto append = [&options](std::wstring option) {
+		if (option.empty()) return;
+		if (!options.empty()) options.push_back(L' ');
+		options += std::move(option);
+	};
+	if (preview) append(L"-EXPLORERPREVIEW");
+
+	if (m_workbenchRuntime != nullptr) {
+		const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		if (workspace.kind == config::EWorkspaceKind::Workspace && workspace.workspaceConfigUri) {
+			if (const auto path = workspace.workspaceConfigUri->ToWindowsPath(); path.value) {
+				append(L"-WORKSPACE=\"" + *path.value + L"\"");
+				return options;
+			}
+		}
+		if (workspace.kind == config::EWorkspaceKind::Folder && workspace.folders.size() == 1) {
+			if (const auto path = workspace.folders.front().uri.ToWindowsPath(); path.value) {
+				append(L"-FOLDER=\"" + *path.value + L"\"");
+				return options;
+			}
+		}
+	}
+
+	const auto* commandLine = CCommandLine::getInstance();
+	if (commandLine->IsSetWorkspaceConfig()) {
+		append(L"-WORKSPACE=\"" + std::wstring(commandLine->GetWorkspaceConfig()) + L"\"");
+	} else if (commandLine->IsSetWorkspaceFolder()) {
+		append(L"-FOLDER=\"" + std::wstring(commandLine->GetWorkspaceFolder()) + L"\"");
+	}
+	return options;
+}
+
+void CEditWnd::OpenExplorerFile(std::wstring_view path,
+	workbench::explorer::ExplorerFileActivationKind kind)
+{
+	if (path.empty()) return;
+	const std::wstring ownedPath(path);
+	SLoadInfo loadInfo(ownedPath.c_str(), CODE_AUTODETECT, false);
+	const auto currentPath = GetDocument()->m_cDocFile.GetFilePath();
+	const auto plan = workbench::explorer::PlanExplorerEditorActivation(
+		m_explorerPreviewEditor, loadInfo.IsSamePath(currentPath), kind);
+	if (plan.action == workbench::explorer::ExplorerEditorActivationAction::ActivateCurrent) {
+		m_explorerPreviewEditor = plan.nextEditorIsPreview;
+		return;
+	}
+
+	if (plan.action == workbench::explorer::ExplorerEditorActivationAction::ReplaceCurrentPreview) {
+		loadInfo.eWindowDisposition = ELoadWindowDisposition::ReplaceCurrentEditor;
+		if (GetDocument()->m_cDocFileOperation.FileCloseOpen(loadInfo)) {
+			m_explorerPreviewEditor = plan.nextEditorIsPreview;
+		}
+		return;
+	}
+
+	if (GetDocument()->IsAcceptLoad()) {
+		if (GetDocument()->m_cDocFileOperation.FileLoad(&loadInfo)) {
+			m_explorerPreviewEditor = plan.nextEditorIsPreview;
+		}
+		return;
+	}
+
+	const auto options = BuildExplorerLaunchOptions(plan.nextEditorIsPreview);
+	(void)CControlTray::OpenNewEditor(
+		G_AppInstance(), GetHwnd(), loadInfo,
+		options.empty() ? nullptr : options.c_str(), false, nullptr, false);
+}
+
 bool CEditWnd::InitializeWorkbench()
 {
 	if (m_workspaceContext != nullptr) return true;
+	m_explorerPreviewEditor = CCommandLine::getInstance()->IsExplorerPreview();
 
 	std::wstring terminalLaunchDirectory = GetProcessCurrentDirectory();
 	if (m_workbenchRuntime != nullptr) {
@@ -1876,9 +1949,9 @@ bool CEditWnd::InitializeWorkbench()
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
 	m_scmTool->SetRoot(workspaceRoot);
-	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path) {
-		const std::wstring ownedPath(path);
-		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
+	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path,
+		workbench::explorer::ExplorerFileActivationKind kind) {
+		OpenExplorerFile(path, kind);
 	});
 	m_scmTool->SetFileActivationCallback([this](std::wstring_view path) {
 		const std::wstring ownedPath(path);
@@ -1898,8 +1971,10 @@ bool CEditWnd::InitializeWorkbench()
 			workbenchSettings.m_bRightPanelVisible = value;
 			BroadcastWorkbenchSettings();
 		}
-		if (expanded && m_dispatchReady) ReloadWorkbenchOutlineAndRelayout();
 		return true;
+	};
+	const auto refreshOutlineAfterReveal = [this]() {
+		if (m_dispatchReady) ReloadWorkbenchOutlineAndRelayout();
 	};
 	const auto onHeaderDrag = [this](workbench::WorkbenchEdge edge, POINT screenPoint) {
 		const auto* source = edge == workbench::WorkbenchEdge::Right ? m_auxiliaryBarHost : m_sidebarHost;
@@ -1914,7 +1989,7 @@ bool CEditWnd::InitializeWorkbench()
 	m_leftWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
 		workbench::WorkbenchEdge::Left, settings.m_nLeftPanelExtent96, commitExtent);
 	auto sidebarHost = std::make_unique<workbench::viewcontainer::CViewContainerHost>(
-		m_viewContainerPages, requestOutlineExpanded);
+		m_viewContainerPages, requestOutlineExpanded, refreshOutlineAfterReveal);
 	m_sidebarHost = sidebarHost.get();
 	m_leftWorkbenchPanel->SetHeaderDragCallback(onHeaderDrag);
 	if (!m_leftWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(sidebarHost))) {
@@ -1928,7 +2003,7 @@ bool CEditWnd::InitializeWorkbench()
 		workbench::WorkbenchEdge::Right, settings.m_nExtensionViewsExtent96, commitExtensionViewsExtent);
 	m_rightWorkbenchPanel->SetTitle(L"SECONDARY SIDE BAR");
 	auto auxiliaryHost = std::make_unique<workbench::viewcontainer::CViewContainerHost>(
-		m_viewContainerPages, requestOutlineExpanded);
+		m_viewContainerPages, requestOutlineExpanded, refreshOutlineAfterReveal);
 	m_auxiliaryBarHost = auxiliaryHost.get();
 	m_rightWorkbenchPanel->SetHeaderDragCallback(onHeaderDrag);
 	if (!m_rightWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(auxiliaryHost))) {
@@ -2372,6 +2447,36 @@ bool CEditWnd::InitializeWorkbench()
 				return workbench::commands::WorkbenchCommandExecutionResult{
 					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
 			},
+			.markdownShowPreview = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowPreview);
+			},
+			.markdownShowPreviewToSide = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowPreviewToSide);
+			},
+			.markdownShowLockedPreviewToSide = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowLockedPreviewToSide);
+			},
+			.markdownShowSource = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowSource);
+			},
+			.markdownShowPreviewSecuritySelector = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowPreviewSecuritySelector);
+			},
+			.markdownPreviewRefresh = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::Refresh);
+			},
+			.markdownPreviewToggleLock = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ToggleLock);
+			},
+			.markdownReopenAsPreview = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ReopenAsPreview);
+			},
+			.markdownReopenAsSource = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ReopenAsSource);
+			},
+			.markdownTogglePreview = [this]() {
+				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::TogglePreview);
+			},
 		});
 		if (!registration.Succeeded()) {
 			CloseWorkbench();
@@ -2604,6 +2709,20 @@ void CEditWnd::CompleteDeferredStartupWorkbench()
 	}
 }
 
+std::vector<std::wstring> CEditWnd::BuildActiveDocumentBreadcrumbSegments() const
+{
+	if (!HasActiveEditorInput() || m_workbenchRuntime == nullptr || GetDocument() == nullptr) return {};
+	const auto& file = GetDocument()->m_cDocFile;
+	if (!file.GetFilePathClass().IsValidPath()) return {};
+
+	std::vector<std::wstring> workspaceRoots;
+	for (const auto& folder : m_workbenchRuntime->WorkspaceContext().Snapshot().folders) {
+		const auto windowsPath = folder.uri.ToWindowsPath();
+		if (windowsPath && windowsPath.value) workspaceRoots.push_back(*windowsPath.value);
+	}
+	return breadcrumbs::BuildDocumentBreadcrumbs(file.GetFilePath(), workspaceRoots).segments;
+}
+
 std::vector<SExtensionDiagnostic> CEditWnd::ExtensionDiagnosticsForCurrentDocument() const
 {
 	if (!HasActiveEditorInput() || !m_extensionService
@@ -2663,6 +2782,10 @@ void CEditWnd::PublishExtensionDocumentOpen(bool forceReopen)
 void CEditWnd::NotifyExtensionDocumentChanged()
 {
 	if (!HasActiveEditorInput()) return;
+	if (m_explorerPreviewEditor && GetDocument()->m_cDocEditor.IsModified()) {
+		// VS Code pins a preview as soon as the working copy becomes dirty.
+		m_explorerPreviewEditor = false;
+	}
 	const bool synchronized = SynchronizeLegacyDocumentState(
 		GetDocument()->m_cDocEditor.IsModified(), true);
 	if (synchronized && !m_workingCopyBackendEffectInProgress && m_workingCopyLifecycleBridge) {
@@ -3781,8 +3904,16 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 
 void CEditWnd::ReloadWorkbenchOutlineAndRelayout()
 {
+	if (m_outlineWorkbenchTool == nullptr) return;
+	m_cDlgFuncList.ChangeView(reinterpret_cast<LPARAM>(&GetActiveView()));
+	const auto refresh = m_outlineWorkbenchTool->RequestRefresh();
+	if (refresh.status != workbench::outline::OutlineRefreshRequestStatus::Started) return;
+
 	const bool commandSucceeded = GetActiveView().GetCommander().Command_FUNCLIST(
 		SHOW_RELOAD, OUTLINE_DEFAULT ) != FALSE;
+	const auto completion = m_outlineWorkbenchTool->CompleteRefresh(
+		refresh.generation, commandSucceeded );
+	if (completion != workbench::outline::OutlineRefreshCompletion::Committed) return;
 	const bool rightPanelVisible = IsOutlineViewExpanded();
 	const bool dialogCreated = m_cDlgFuncList.GetHwnd() != nullptr;
 	if( !workbench::outline::ShouldRelayoutOutlineAfterReload(
@@ -4491,7 +4622,6 @@ bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	// shell's startup output before the first resize.
 	if (host != nullptr && visible && activate) {
 		if (edge == workbench::WorkbenchEdge::Right && m_viewContainerPages) {
-			if (m_dispatchReady) ReloadWorkbenchOutlineAndRelayout();
 			if (auto* explorerHost = HostShowingPage(
 				workbench::viewcontainer::ViewContainerPage::Explorer)) {
 				explorerHost->FocusOutline();
@@ -4814,10 +4944,6 @@ void CEditWnd::ToggleWorkbenchPanel(workbench::WorkbenchEdge edge, bool activate
 {
 	const bool show = !IsWorkbenchPanelVisible(edge);
 	SetWorkbenchPanelVisible(edge, show, activate);
-	if (m_workbenchRuntime == nullptr && edge == workbench::WorkbenchEdge::Right
-		&& show && m_dispatchReady) {
-		(void)GetActiveView().GetCommander().Command_FUNCLIST(SHOW_RELOAD, OUTLINE_DEFAULT);
-	}
 }
 
 void CEditWnd::ToggleBottomWorkbenchMaximized()
@@ -5107,6 +5233,60 @@ void CEditWnd::RecordCurrentWorkspaceAfterReady()
 	}
 }
 
+EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
+	const std::wstring& absoluteRoot, bool revealExplorer)
+{
+	if (m_workspaceContext == nullptr || absoluteRoot.empty()) {
+		return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+	}
+	auto folderUri = platform::uri::Uri::FromWindowsPath(absoluteRoot);
+	if (!folderUri) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+
+	const bool terminalWasVisible = IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom)
+		&& (m_workbenchRuntime != nullptr
+			? IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal)
+			: m_pShareData->m_Common.m_sWorkbench.m_eActiveTool == WORKBENCH_TOOL_TERMINAL);
+	const auto previousRoot = GetSemanticWorkspaceRoot();
+
+	if (m_workbenchRuntime != nullptr) {
+		auto displayName = std::filesystem::path(absoluteRoot).filename().wstring();
+		if (displayName.empty()) displayName = std::filesystem::path(absoluteRoot).root_name().wstring();
+		if (displayName.empty() || displayName.size() > 256) displayName = L"Folder";
+		const auto accepted = m_workbenchRuntime->SwitchToFolderWorkspace(
+			std::move(*folderUri.value), std::move(displayName));
+		if (accepted.outcome != config::EWorkspaceContextOutcome::Succeeded
+			&& accepted.outcome != config::EWorkspaceContextOutcome::NotApplicable) {
+			return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+		}
+	} else {
+		// Unit-only/legacy construction keeps the pre-runtime projection.
+		m_workspaceContext->SetExplicitRoot(absoluteRoot);
+	}
+
+	ApplySemanticWorkspaceContext();
+	const auto acceptedRoot = GetSemanticWorkspaceRoot();
+	if (acceptedRoot.empty()) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
+	if (m_terminalTool != nullptr
+		&& ::CompareStringOrdinal(previousRoot.c_str(), -1, acceptedRoot.c_str(), -1, TRUE) != CSTR_EQUAL) {
+		(void)m_terminalTool->ResetForWorkspace(
+			m_workspaceContext->GetNewTerminalWorkingDirectory(), terminalWasVisible);
+	}
+	if (revealExplorer
+		&& !SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true)) {
+		return EOpenWorkspaceFolderResult::ExplorerProjectionFailed;
+	}
+	if (m_workbenchRuntime != nullptr) {
+		const auto accepted = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		if (accepted.kind == config::EWorkspaceKind::Folder && accepted.folders.size() == 1) {
+			RecordRecentlyOpenedWorkspaceAfterReady(
+				workbench::recent::ERecentlyOpenedWorkspaceKind::Folder,
+				accepted.folders.front().uri);
+		}
+		(void)RefreshWorkbenchCommandContext();
+	}
+	return EOpenWorkspaceFolderResult::Succeeded;
+}
+
 EWorkspaceWindowTransitionResult CEditWnd::OpenRecentlyOpenedWorkspace(
 	const workbench::recent::RecentlyOpenedWorkspaceEntry& entry)
 {
@@ -5131,10 +5311,12 @@ EWorkspaceWindowTransitionResult CEditWnd::OpenRecentlyOpenedWorkspace(
 			&& (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0)) {
 		return EWorkspaceWindowTransitionResult::Failed;
 	}
-	const auto option = normalized->kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Workspace
-		? L"-WORKSPACE=\"" + *localPath.value + L"\""
-		: L"-FOLDER=\"" + *localPath.value + L"\"";
-	return LaunchWorkspaceTarget(option, true);
+	if (normalized->kind == workbench::recent::ERecentlyOpenedWorkspaceKind::Folder) {
+		return ApplyFolderWorkspace(*localPath.value, true) == EOpenWorkspaceFolderResult::Succeeded
+			? EWorkspaceWindowTransitionResult::Succeeded
+			: EWorkspaceWindowTransitionResult::Failed;
+	}
+	return LaunchWorkspaceTarget(L"-WORKSPACE=\"" + *localPath.value + L"\"", true);
 }
 
 bool CEditWnd::TryExecuteRecentlyOpenedWorkspaceMenuCommand(std::int32_t commandId)
@@ -5177,10 +5359,6 @@ EWorkspaceWindowTransitionResult CEditWnd::ShowRecentlyOpenedWorkspaceMenu()
 EOpenWorkspaceFolderResult CEditWnd::OpenWorkspaceFolder()
 {
 	if (!m_workspaceContext) return EOpenWorkspaceFolderResult::WorkspaceContextFailed;
-	const bool terminalWasVisible = IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom)
-		&& (m_workbenchRuntime != nullptr
-			? IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal)
-			: m_pShareData->m_Common.m_sWorkbench.m_eActiveTool == WORKBENCH_TOOL_TERMINAL);
 
 	// SelectDir uses the native IFileDialog with FOS_PICKFOLDERS and
 	// FOS_FORCEFILESYSTEM. Keep all state intact when the user cancels or the
@@ -5204,34 +5382,7 @@ EOpenWorkspaceFolderResult CEditWnd::OpenWorkspaceFolder()
 		return EOpenWorkspaceFolderResult::InvalidSelection;
 	}
 
-	if (m_workbenchRuntime != nullptr) {
-		switch (LaunchWorkspaceTarget(L"-FOLDER=\"" + absoluteRoot + L"\"", true)) {
-		case EWorkspaceWindowTransitionResult::Succeeded: return EOpenWorkspaceFolderResult::Succeeded;
-		case EWorkspaceWindowTransitionResult::Cancelled: return EOpenWorkspaceFolderResult::DirtyPreflightFailed;
-		case EWorkspaceWindowTransitionResult::Failed: return EOpenWorkspaceFolderResult::HandoffFailed;
-		}
-		return EOpenWorkspaceFolderResult::HandoffFailed;
-	} else {
-		// Unit-only/legacy construction keeps the pre-runtime fallback.
-		const auto previousRoot = GetSemanticWorkspaceRoot();
-		m_workspaceContext->SetExplicitRoot(absoluteRoot);
-		ApplySemanticWorkspaceContext();
-		if (m_terminalTool != nullptr
-			&& ::CompareStringOrdinal(previousRoot.c_str(), -1, absoluteRoot.c_str(), -1, TRUE) != CSTR_EQUAL) {
-			static_cast<void>(m_terminalTool->ResetForWorkspace(
-				m_workspaceContext->GetNewTerminalWorkingDirectory(), terminalWasVisible));
-		}
-	}
-	// Unit-only legacy construction remains a local projection path. Production
-	// runtime composition has already handed off to a ready editor above.
-	// The command is successful only after the selected folder has been projected
-	// into the Explorer Part as well as the workspace context.  The setter
-	// returns the native projection result instead of reading the model back,
-	// because a failed host application can leave model visibility committed.
-	if (!SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, true, true)) {
-		return EOpenWorkspaceFolderResult::ExplorerProjectionFailed;
-	}
-	return EOpenWorkspaceFolderResult::Succeeded;
+	return ApplyFolderWorkspace(absoluteRoot, true);
 }
 
 void CEditWnd::FocusIntegratedTerminal()
@@ -5281,14 +5432,29 @@ bool CEditWnd::EnsureMarkdownPreview()
 	m_markdownPreview->SetPalette(theme::CThemeService::EffectivePalette(mode));
 	const auto dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
 	m_markdownPreview->SetEditorFont(GetLogfont(), dpi);
+	m_markdownPreview->SetSourceLineCallback([this](std::size_t sourceLine) {
+		if (!HasActiveEditorInput()) return;
+		if (m_markdownPreviewCommandState.SourceIdentity()
+			!= GetDocument()->m_cDocFile.GetFilePath()) return;
+		const auto boundedLine = static_cast<int>((std::min)(sourceLine,
+			static_cast<std::size_t>(std::numeric_limits<int>::max())));
+		CLayoutPoint layoutPosition;
+		GetDocument()->m_cLayoutMgr.LogicToLayout(
+			CLogicPoint(CLogicInt(0), CLogicInt(boundedLine)), &layoutPosition);
+		auto& activeView = GetActiveView();
+		const auto delta = activeView.ScrollAtV(layoutPosition.y);
+		activeView.SyncScrollV(delta);
+	});
 	return true;
 }
 
 void CEditWnd::CloseMarkdownPreview() noexcept
 {
+	m_markdownPreviewCommandState.Reset();
 	m_markdownPreviewVisible = false;
 	m_markdownPreviewDirty = false;
 	m_markdownPreviewRevision = -1;
+	m_markdownPreviewGeneration = 0;
 	if (m_markdownPreview) m_markdownPreview->Close();
 	m_markdownPreview.reset();
 }
@@ -5336,11 +5502,38 @@ void CEditWnd::RefreshMarkdownPreview()
 	if (!m_markdownPreviewVisible || !m_markdownPreview) {
 		return;
 	}
+	const auto activeSourceIdentity = GetDocument()->m_cDocFile.GetFilePath();
+	if (m_markdownPreviewCommandState.IsLocked()
+		&& m_markdownPreviewCommandState.SourceIdentity() != activeSourceIdentity) {
+		return;
+	}
 	bool truncated = false;
-	m_markdownPreview->SetDocument(markdown::ParseMarkdown(GetMarkdownPreviewSource(&truncated)));
-	m_markdownPreview->SetSourceTruncated(truncated);
-	m_markdownPreviewRevision = GetDocument()->m_cDocEditor.m_cOpeBuf.GetCurrentPointer();
-	m_markdownPreviewDirty = false;
+	markdown::ParseOptions parseOptions;
+	parseOptions.documentPath = GetDocument()->m_cDocFile.GetFilePath();
+	parseOptions.workspaceRoot = GetSemanticWorkspaceRoot();
+	const auto revision = GetDocument()->m_cDocEditor.m_cOpeBuf.GetCurrentPointer();
+	auto source = GetMarkdownPreviewSource(&truncated);
+	if (m_markdownPreviewGeneration == std::numeric_limits<std::uint64_t>::max()) {
+		// Stop and join the old worker before restarting the generation space, so
+		// no pre-wrap completion can compare equal to a new request.
+		m_markdownPreview->Close();
+		m_markdownPreview.reset();
+		m_markdownPreviewGeneration = 0;
+		if (!EnsureMarkdownPreview()) {
+			m_markdownPreviewCommandState.Reset();
+			m_markdownPreviewVisible = false;
+			return;
+		}
+	}
+	const markdown::PreviewRenderKey key{ ++m_markdownPreviewGeneration, revision };
+	if (m_markdownPreview->QueueDocument(
+		std::move(source), std::move(parseOptions), truncated, key)) {
+		m_markdownPreviewRevision = revision;
+		m_markdownPreviewDirty = false;
+		const int caretLine = static_cast<int>(Int(GetActiveView().GetCaret().GetCaretLogicPos().y));
+		m_markdownPreview->RevealSourceLine(
+			static_cast<std::size_t>((std::max)(0, caretLine)));
+	}
 }
 
 void CEditWnd::UpdateMarkdownPreviewIfNeeded()
@@ -5348,7 +5541,16 @@ void CEditWnd::UpdateMarkdownPreviewIfNeeded()
 	if (!m_markdownPreviewVisible || !m_markdownPreview) {
 		return;
 	}
+	const auto activeSourceIdentity = GetDocument()->m_cDocFile.GetFilePath();
+	if (m_markdownPreviewCommandState.IsLocked()
+		&& m_markdownPreviewCommandState.SourceIdentity() != activeSourceIdentity) {
+		// The locked projection owns its previous immutable render. Never refresh
+		// or scroll an unrelated active editor through that retained identity.
+		m_markdownPreviewDirty = false;
+		return;
+	}
 	if (!IsMarkdownPreviewAvailable()) {
+		m_markdownPreviewCommandState.Reset();
 		m_markdownPreviewVisible = false;
 		m_markdownPreview->Show(false);
 		return;
@@ -5386,21 +5588,38 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 	}
 	if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
-	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr && !m_pPrintPreview) {
-		::ShowWindow(splitter, SW_SHOWNA);
-	}
 	const bool showPreview = m_markdownPreviewVisible && m_markdownPreview != nullptr && !m_pPrintPreview;
-	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, showPreview);
+	auto paneMode = markdown::PreviewPaneMode::Hidden;
+	if (showPreview) {
+		switch (m_markdownPreviewCommandState.Placement()) {
+		case markdown::MarkdownPreviewPlacement::CurrentEditorGroup:
+			paneMode = markdown::PreviewPaneMode::Replacement;
+			break;
+		case markdown::MarkdownPreviewPlacement::NativeSiblingPane:
+			paneMode = markdown::PreviewPaneMode::NativeSibling;
+			break;
+		case markdown::MarkdownPreviewPlacement::SideEditorGroup:
+			// A second EditorGroup is not yet a native capability. Exact to-side
+			// commands fail closed before this projection boundary.
+			paneMode = markdown::PreviewPaneMode::Hidden;
+			break;
+		}
+	}
+	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, paneMode);
 	m_markdownPreviewDivider = { layout.dividerLeft, top, layout.dividerRight, bottom };
-	if (!showPreview || layout.PreviewWidth() == 0) {
+	if (paneMode != markdown::PreviewPaneMode::NativeSibling || layout.PreviewWidth() == 0) {
 		m_markdownPreviewDivider = {};
 	}
 	if (GetHwnd() != nullptr) {
 		::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
 		::InvalidateRect(GetHwnd(), &m_markdownPreviewDivider, FALSE);
 	}
-	::MoveWindow(m_cSplitterWnd.GetHwnd(), layout.editorLeft, top,
-		layout.EditorWidth(), std::max(0, bottom - top), TRUE);
+	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
+		::MoveWindow(splitter, layout.editorLeft, top,
+			layout.EditorWidth(), std::max(0, bottom - top), TRUE);
+		::ShowWindow(splitter, paneMode == markdown::PreviewPaneMode::Replacement || m_pPrintPreview
+			? SW_HIDE : SW_SHOWNA);
+	}
 	if (!m_markdownPreview) {
 		return;
 	}
@@ -5412,14 +5631,46 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 
 void CEditWnd::ToggleMarkdownPreview()
 {
-	if (!IsMarkdownPreviewAvailable()) {
-		return;
+	const auto sourceIdentity = GetDocument()->m_cDocFile.GetFilePath();
+	const auto result = m_markdownPreviewCommandState.ToggleNativeSibling(
+		sourceIdentity, IsMarkdownPreviewAvailable());
+	(void)ApplyMarkdownPreviewCommandResult(result);
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteMarkdownPreviewCommand(
+	markdown::MarkdownPreviewCommand command)
+{
+	const auto sourceIdentity = GetDocument()->m_cDocFile.GetFilePath();
+	return ApplyMarkdownPreviewCommandResult(m_markdownPreviewCommandState.Apply(
+		command, sourceIdentity, IsMarkdownPreviewAvailable()));
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ApplyMarkdownPreviewCommandResult(
+	const markdown::MarkdownPreviewCommandResult& result)
+{
+	using Status = workbench::commands::EWorkbenchCommandExecutionStatus;
+	switch (result.outcome) {
+	case markdown::MarkdownPreviewCommandOutcome::NotApplicable:
+		return { Status::NotApplicable, "Markdown preview command is not applicable" };
+	case markdown::MarkdownPreviewCommandOutcome::UnsupportedSideEditorGroup:
+		return { Status::Unsupported, "Markdown preview to side requires a second EditorGroup" };
+	case markdown::MarkdownPreviewCommandOutcome::UnsupportedSecuritySelector:
+		return { Status::Unsupported, "native Markdown preview has no security selector" };
+	case markdown::MarkdownPreviewCommandOutcome::UnavailableLockedSource:
+		return { Status::Unsupported, "locked Markdown preview source is no longer active" };
+	case markdown::MarkdownPreviewCommandOutcome::RefreshRequested:
+		RefreshMarkdownPreview();
+		return { Status::Succeeded, {} };
+	case markdown::MarkdownPreviewCommandOutcome::Applied:
+		break;
 	}
-	m_markdownPreviewVisible = !m_markdownPreviewVisible;
+
+	m_markdownPreviewVisible = m_markdownPreviewCommandState.IsVisible();
 	if (m_markdownPreviewVisible) {
 		if (!EnsureMarkdownPreview()) {
+			m_markdownPreviewCommandState.Reset();
 			m_markdownPreviewVisible = false;
-			return;
+			return { Status::Failed, "native Markdown preview window could not be created" };
 		}
 		m_markdownPreviewDirty = true;
 		m_markdownPreviewRevision = -1;
@@ -5433,6 +5684,7 @@ void CEditWnd::ToggleMarkdownPreview()
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
 	}
+	return { Status::Succeeded, {} };
 }
 
 bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
@@ -5681,12 +5933,17 @@ bool CEditWnd::FinalizeSuccessfulLegacyLoad()
 		PublishExtensionDocumentOpen(true);
 	}
 	if (m_markdownPreviewVisible) {
-		if (IsMarkdownPreviewAvailable()) {
+		const auto sourceIdentity = GetDocument()->m_cDocFile.GetFilePath();
+		const bool sourceIsMarkdown = IsMarkdownPreviewAvailable();
+		const bool wasLocked = m_markdownPreviewCommandState.IsLocked();
+		const bool sameIdentity = m_markdownPreviewCommandState.SourceIdentity() == sourceIdentity;
+		(void)m_markdownPreviewCommandState.ObserveActiveSource(sourceIdentity, sourceIsMarkdown);
+		m_markdownPreviewVisible = m_markdownPreviewCommandState.IsVisible();
+		if (m_markdownPreviewVisible && sourceIsMarkdown && (!wasLocked || sameIdentity)) {
 			m_markdownPreviewDirty = true;
 			m_markdownPreviewRevision = -1;
 			RefreshMarkdownPreview();
-		} else if (m_markdownPreview) {
-			m_markdownPreviewVisible = false;
+		} else if (!m_markdownPreviewVisible && m_markdownPreview) {
 			m_markdownPreview->Show(false);
 		}
 		if (GetHwnd() != nullptr) {
@@ -9239,6 +9496,13 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 
 	LayoutMarkdownPreview(editorBounds.left, editorBounds.top, editorBounds.right, editorBounds.bottom,
 		physicalDpi);
+	// The visible Part boundary is one DIP, while VS Code exposes a four-DIP sash
+	// hit target. These sibling overlays sit above adjacent child controls so all
+	// four pixels receive the initial press instead of only the parent-owned line.
+	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->LayoutSash(m_leftWorkbenchSplitter);
+	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->LayoutSash(m_rightWorkbenchSplitter);
+	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->LayoutSash(m_bottomWorkbenchSplitter);
+	if (m_customFrame) m_customFrame->LayoutResizeOverlays();
 	//@@@ To 2003.05.31 MIK
 
 	/* 印刷プレビューモードか */

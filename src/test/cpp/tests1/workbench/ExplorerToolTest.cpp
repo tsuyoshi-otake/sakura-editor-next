@@ -23,8 +23,11 @@
 namespace {
 
 using workbench::explorer::CExplorerTool;
+using workbench::explorer::ExplorerEditorActivationAction;
 using workbench::explorer::ExplorerEntry;
+using workbench::explorer::ExplorerFileActivationKind;
 using workbench::explorer::ExplorerPalette;
+using workbench::explorer::PlanExplorerEditorActivation;
 
 struct JunctionReparseData {
 	DWORD reparseTag;
@@ -140,12 +143,35 @@ bool IsExpanded(HWND tree, HTREEITEM item)
 		(TreeView_GetItemState(tree, item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
 }
 
-void SendTreeClick(HWND toolWindow, HWND tree)
+void SendTreeMouseClickAt(HWND tree, int x, int y)
 {
+	(void)::SendMessageW(tree, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
 	NMHDR notification{};
 	notification.hwndFrom = tree;
+	notification.idFrom = static_cast<UINT_PTR>(::GetDlgCtrlID(tree));
 	notification.code = NM_CLICK;
-	(void)::SendMessageW(toolWindow, WM_NOTIFY, 0, reinterpret_cast<LPARAM>(&notification));
+	(void)::SendMessageW(::GetParent(tree), WM_NOTIFY, notification.idFrom,
+		reinterpret_cast<LPARAM>(&notification));
+}
+
+void SendTreeMouseClick(HWND tree, HTREEITEM item)
+{
+	RECT label{};
+	ASSERT_TRUE(TreeView_GetItemRect(tree, item, &label, TRUE));
+	const int x = label.left + std::max(1L, (label.right - label.left) / 2);
+	const int y = label.top + std::max(1L, (label.bottom - label.top) / 2);
+	SendTreeMouseClickAt(tree, x, y);
+}
+
+void SendTreeMouseDoubleClick(HWND tree, HTREEITEM item)
+{
+	RECT label{};
+	ASSERT_TRUE(TreeView_GetItemRect(tree, item, &label, TRUE));
+	const int x = label.left + std::max(1L, (label.right - label.left) / 2);
+	const int y = label.top + std::max(1L, (label.bottom - label.top) / 2);
+	(void)::SendMessageW(tree, WM_MOUSEMOVE, 0, MAKELPARAM(x, y));
+	(void)::SendMessageW(tree, WM_LBUTTONDBLCLK, MK_LBUTTON, MAKELPARAM(x, y));
+	(void)::SendMessageW(tree, WM_LBUTTONUP, 0, MAKELPARAM(x, y));
 }
 
 HWND CreateHiddenParentWindow()
@@ -255,6 +281,29 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 	::DestroyWindow(parent);
 }
 
+TEST(ExplorerTool, PreviewReusesOneEditorUntilDoubleClickOrEditPinsIt)
+{
+	auto first = PlanExplorerEditorActivation(
+		false, false, ExplorerFileActivationKind::Preview);
+	EXPECT_EQ(ExplorerEditorActivationAction::OpenNewEditor, first.action);
+	ASSERT_TRUE(first.nextEditorIsPreview);
+
+	auto second = PlanExplorerEditorActivation(
+		first.nextEditorIsPreview, false, ExplorerFileActivationKind::Preview);
+	EXPECT_EQ(ExplorerEditorActivationAction::ReplaceCurrentPreview, second.action);
+	ASSERT_TRUE(second.nextEditorIsPreview);
+
+	auto pinned = PlanExplorerEditorActivation(
+		second.nextEditorIsPreview, true, ExplorerFileActivationKind::Pinned);
+	EXPECT_EQ(ExplorerEditorActivationAction::ActivateCurrent, pinned.action);
+	ASSERT_FALSE(pinned.nextEditorIsPreview);
+
+	const auto afterEdit = PlanExplorerEditorActivation(
+		false, false, ExplorerFileActivationKind::Preview);
+	EXPECT_EQ(ExplorerEditorActivationAction::OpenNewEditor, afterEdit.action);
+	EXPECT_TRUE(afterEdit.nextEditorIsPreview);
+}
+
 TEST(ExplorerTool, UsesOverlayVerticalScrollbarWithoutHorizontalScrollbar)
 {
 	TemporaryDirectory root;
@@ -281,45 +330,110 @@ TEST(ExplorerTool, UsesOverlayVerticalScrollbarWithoutHorizontalScrollbar)
 	::DestroyWindow(parent);
 }
 
-TEST(ExplorerTool, SingleClickActivatesFilesButNotDirectories)
+TEST(ExplorerTool, SingleClickActivatesHitFileFromNativeClickNotification)
 {
 	TemporaryDirectory root;
 	ASSERT_TRUE(std::filesystem::create_directory(root.Path() / L"child"));
-	const auto filePath = root.Path() / L"root.txt";
-	CreateEmptyFile(filePath);
+	const auto firstFilePath = root.Path() / L"first.txt";
+	const auto secondFilePath = root.Path() / L"second.txt";
+	CreateEmptyFile(firstFilePath);
+	CreateEmptyFile(secondFilePath);
 
 	const HWND parent = CreateHiddenParentWindow();
 	ASSERT_NE(nullptr, parent);
 	CExplorerTool tool;
 	std::wstring activatedPath;
+	ExplorerFileActivationKind activatedKind = ExplorerFileActivationKind::Pinned;
 	int activationCount = 0;
-	tool.SetFileActivationCallback([&](std::wstring_view path) {
+	tool.SetFileActivationCallback([&](std::wstring_view path, ExplorerFileActivationKind kind) {
 		activatedPath = path;
+		activatedKind = kind;
 		++activationCount;
 	});
 	tool.SetRoot(root.Path().wstring());
 	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 400, 300 }, 96);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+	::UpdateWindow(parent);
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
 	const auto rootItem = TreeView_GetRoot(tree);
 	ASSERT_NE(nullptr, rootItem);
 	ASSERT_TRUE(PumpMessagesUntil([&] {
 		return FindDirectChild(tree, rootItem, L"child") != nullptr &&
-			FindDirectChild(tree, rootItem, L"root.txt") != nullptr;
+			FindDirectChild(tree, rootItem, L"first.txt") != nullptr &&
+			FindDirectChild(tree, rootItem, L"second.txt") != nullptr;
 	}, std::chrono::seconds(2)));
 
-	const auto fileItem = FindDirectChild(tree, rootItem, L"root.txt");
-	ASSERT_NE(nullptr, fileItem);
-	ASSERT_TRUE(TreeView_SelectItem(tree, fileItem));
-	SendTreeClick(tool.GetHwnd(), tree);
-	EXPECT_EQ(1, activationCount);
-	EXPECT_EQ(filePath.wstring(), activatedPath);
-
+	const auto firstFileItem = FindDirectChild(tree, rootItem, L"first.txt");
+	ASSERT_NE(nullptr, firstFileItem);
+	const auto secondFileItem = FindDirectChild(tree, rootItem, L"second.txt");
+	ASSERT_NE(nullptr, secondFileItem);
 	const auto childItem = FindDirectChild(tree, rootItem, L"child");
 	ASSERT_NE(nullptr, childItem);
 	ASSERT_TRUE(TreeView_SelectItem(tree, childItem));
-	SendTreeClick(tool.GetHwnd(), tree);
-	EXPECT_EQ(1, activationCount);
+	SendTreeMouseClick(tree, firstFileItem);
+	ASSERT_TRUE(PumpMessagesUntil([&] { return activationCount == 1; }, std::chrono::seconds(1)));
+	EXPECT_EQ(firstFilePath.wstring(), activatedPath);
+	EXPECT_EQ(ExplorerFileActivationKind::Preview, activatedKind);
+	EXPECT_EQ(root.Path().wstring(), tool.GetRoot());
+	EXPECT_EQ(rootItem, TreeView_GetRoot(tree));
+
+	SendTreeMouseClick(tree, secondFileItem);
+	ASSERT_TRUE(PumpMessagesUntil([&] { return activationCount == 2; }, std::chrono::seconds(1)));
+	EXPECT_EQ(secondFilePath.wstring(), activatedPath);
+	EXPECT_EQ(ExplorerFileActivationKind::Preview, activatedKind);
+	EXPECT_EQ(root.Path().wstring(), tool.GetRoot());
+	EXPECT_EQ(rootItem, TreeView_GetRoot(tree));
+	EXPECT_NE(nullptr, FindDirectChild(tree, rootItem, L"first.txt"));
+	EXPECT_NE(nullptr, FindDirectChild(tree, rootItem, L"second.txt"));
+
+	SendTreeMouseDoubleClick(tree, secondFileItem);
+	ASSERT_TRUE(PumpMessagesUntil([&] { return activationCount == 3; }, std::chrono::seconds(1)));
+	EXPECT_EQ(secondFilePath.wstring(), activatedPath);
+	EXPECT_EQ(ExplorerFileActivationKind::Pinned, activatedKind);
+
+	SendTreeMouseClick(tree, childItem);
+	ASSERT_TRUE(PumpMessagesUntil([] { return true; }, std::chrono::milliseconds(0)));
+	EXPECT_EQ(3, activationCount);
+
+	RECT client{};
+	ASSERT_TRUE(::GetClientRect(tree, &client));
+	SendTreeMouseClickAt(tree, client.right - 20, client.bottom - 20);
+	ASSERT_TRUE(PumpMessagesUntil([] { return true; }, std::chrono::milliseconds(0)));
+	EXPECT_EQ(3, activationCount);
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(ExplorerTool, MouseWheelScrollsTheTreeWithHiddenNativeScrollbars)
+{
+	TemporaryDirectory root;
+	for (int index = 0; index < 40; ++index) {
+		CreateEmptyFile(root.Path() / (L"file-" + std::to_wstring(index) + L".txt"));
+	}
+
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	CExplorerTool tool;
+	tool.SetRoot(root.Path().wstring());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout(RECT{ 0, 0, 240, 100 }, 96);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+	::UpdateWindow(parent);
+	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
+	ASSERT_NE(nullptr, tree);
+	ASSERT_TRUE(PumpMessagesUntil([&] { return TreeView_GetCount(tree) >= 41; }, std::chrono::seconds(2)));
+	const auto firstBefore = TreeView_GetFirstVisible(tree);
+	ASSERT_NE(nullptr, firstBefore);
+
+	(void)::SendMessageW(tree, WM_MOUSEWHEEL,
+		MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA / 2)), 0);
+	EXPECT_EQ(firstBefore, TreeView_GetFirstVisible(tree));
+	(void)::SendMessageW(tree, WM_MOUSEWHEEL,
+		MAKEWPARAM(0, static_cast<WORD>(-WHEEL_DELTA / 2)), 0);
+	EXPECT_NE(firstBefore, TreeView_GetFirstVisible(tree));
 
 	tool.Close();
 	::DestroyWindow(parent);

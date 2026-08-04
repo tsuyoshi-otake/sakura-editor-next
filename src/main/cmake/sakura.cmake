@@ -539,6 +539,19 @@ file(GLOB_RECURSE SOURCES
   ${CMAKE_SOURCE_DIR}/sakura_core/*.cpp
 )
 
+# Keep the native Markdown code highlighter explicit so its MSBuild and CMake
+# registrations remain aligned even though the broad source discovery sees it.
+set(MARKDOWN_CODE_HIGHLIGHTER_HEADERS
+  ${CMAKE_SOURCE_DIR}/sakura_core/markdown/MarkdownCodeHighlighter.h
+)
+set(MARKDOWN_CODE_HIGHLIGHTER_SOURCES
+  ${CMAKE_SOURCE_DIR}/sakura_core/markdown/MarkdownCodeHighlighter.cpp
+)
+list(REMOVE_ITEM HEADERS ${MARKDOWN_CODE_HIGHLIGHTER_HEADERS})
+list(APPEND HEADERS ${MARKDOWN_CODE_HIGHLIGHTER_HEADERS})
+list(REMOVE_ITEM SOURCES ${MARKDOWN_CODE_HIGHLIGHTER_SOURCES})
+list(APPEND SOURCES ${MARKDOWN_CODE_HIGHLIGHTER_SOURCES})
+
 # Keep the native terminal rendering seam explicit even though the broad source
 # discovery above also sees these paths.  This makes CMake registration match
 # the MSBuild project and preserves their deterministic build order.

@@ -17,8 +17,10 @@ namespace workbench {
 namespace {
 
 constexpr wchar_t kPanelHostClass[] = L"SakuraWorkbenchPanelHost";
+constexpr wchar_t kPanelSashClass[] = L"SakuraWorkbenchPanelSash";
 constexpr int kDefaultDpi = 96;
 constexpr int kHeaderHeightDip = 30;
+constexpr int kSashHitTargetDip = 4;
 
 BOOL CALLBACK ApplyChromeFont(HWND window, LPARAM parameter)
 {
@@ -50,6 +52,25 @@ BOOL CALLBACK ApplyChromeFont(HWND window, LPARAM parameter)
 	return false;
 }
 
+[[nodiscard]] bool EnsureSashWindowClass(HINSTANCE instance)
+{
+	static ATOM atom = 0;
+	if (atom != 0) return true;
+	WNDCLASSEXW windowClass{};
+	windowClass.cbSize = sizeof(windowClass);
+	windowClass.hInstance = instance;
+	windowClass.hCursor = ::LoadCursor(nullptr, IDC_SIZEWE);
+	windowClass.lpfnWndProc = CWorkbenchPanelHost::SashWindowProc;
+	windowClass.lpszClassName = kPanelSashClass;
+	atom = ::RegisterClassExW(&windowClass);
+	if (atom != 0) return true;
+	if (::GetLastError() == ERROR_CLASS_ALREADY_EXISTS) {
+		atom = 1;
+		return true;
+	}
+	return false;
+}
+
 } // namespace
 
 CWorkbenchPanelHost::CWorkbenchPanelHost(WorkbenchEdge edge, int extentDip, CommitExtentCallback commitExtent)
@@ -68,13 +89,23 @@ CWorkbenchPanelHost::~CWorkbenchPanelHost()
 bool CWorkbenchPanelHost::Create(HWND parent, HINSTANCE instance, std::unique_ptr<IWorkbenchTool> tool)
 {
 	if (m_closed || m_window != nullptr || parent == nullptr || instance == nullptr || !tool) return false;
-	if (!EnsureWindowClass(instance)) return false;
+	if (!EnsureWindowClass(instance) || !EnsureSashWindowClass(instance)) return false;
 
 	m_window = ::CreateWindowExW(0, kPanelHostClass, L"", WS_CHILD | WS_CLIPSIBLINGS | WS_CLIPCHILDREN,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_window == nullptr) return false;
 	m_tool = std::move(tool);
 	if (!m_tool->Create(m_window)) {
+		m_tool.reset();
+		::DestroyWindow(m_window);
+		m_window = nullptr;
+		return false;
+	}
+	m_sashWindow = ::CreateWindowExW(WS_EX_TRANSPARENT | WS_EX_NOPARENTNOTIFY,
+		kPanelSashClass, L"", WS_CHILD | WS_CLIPSIBLINGS,
+		0, 0, 0, 0, parent, nullptr, instance, this);
+	if (m_sashWindow == nullptr) {
+		m_tool->Close();
 		m_tool.reset();
 		::DestroyWindow(m_window);
 		m_window = nullptr;
@@ -114,6 +145,7 @@ void CWorkbenchPanelHost::Hide()
 	m_pendingExtentDip = m_extentDip;
 	m_tool->Deactivate();
 	::ShowWindow(m_window, SW_HIDE);
+	if (m_sashWindow != nullptr) ::ShowWindow(m_sashWindow, SW_HIDE);
 }
 
 void CWorkbenchPanelHost::ActivateTool()
@@ -151,6 +183,48 @@ void CWorkbenchPanelHost::ApplyExtentDip(int extentDip)
 	if (m_closed || m_state == WorkbenchPanelState::DragResizing) return;
 	m_extentDip = ClampExtent(extentDip);
 	m_pendingExtentDip = m_extentDip;
+}
+
+void CWorkbenchPanelHost::LayoutSash(const RECT& visibleBoundary)
+{
+	if (m_closed || m_sashWindow == nullptr) return;
+	RECT hit = visibleBoundary;
+	const bool vertical = m_edge != WorkbenchEdge::Bottom;
+	const int visibleExtent = vertical
+		? static_cast<int>(hit.right - hit.left)
+		: static_cast<int>(hit.bottom - hit.top);
+	if (m_state == WorkbenchPanelState::Hidden || visibleExtent <= 0
+		|| hit.right <= hit.left || hit.bottom <= hit.top) {
+		::ShowWindow(m_sashWindow, SW_HIDE);
+		return;
+	}
+
+	const int targetExtent = std::max(1, ScaleDip(kSashHitTargetDip, m_dpi));
+	const int extra = std::max(0, targetExtent - visibleExtent);
+	if (vertical) {
+		hit.left -= extra / 2;
+		hit.right += extra - extra / 2;
+	} else {
+		hit.top -= extra / 2;
+		hit.bottom += extra - extra / 2;
+	}
+	RECT parentClient{};
+	const HWND parent = ::GetParent(m_sashWindow);
+	if (parent == nullptr || !::GetClientRect(parent, &parentClient)) {
+		::ShowWindow(m_sashWindow, SW_HIDE);
+		return;
+	}
+	hit.left = std::clamp(hit.left, parentClient.left, parentClient.right);
+	hit.right = std::clamp(hit.right, hit.left, parentClient.right);
+	hit.top = std::clamp(hit.top, parentClient.top, parentClient.bottom);
+	hit.bottom = std::clamp(hit.bottom, hit.top, parentClient.bottom);
+	if (hit.right <= hit.left || hit.bottom <= hit.top) {
+		::ShowWindow(m_sashWindow, SW_HIDE);
+		return;
+	}
+	::SetWindowPos(m_sashWindow, HWND_TOP, hit.left, hit.top,
+		hit.right - hit.left, hit.bottom - hit.top,
+		SWP_NOACTIVATE | SWP_SHOWWINDOW);
 }
 
 void CWorkbenchPanelHost::BeginResize()
@@ -210,6 +284,10 @@ void CWorkbenchPanelHost::Close()
 	m_closed = true;
 	m_headerPressed = false;
 	m_headerDragging = false;
+	if (m_sashWindow != nullptr) {
+		::DestroyWindow(m_sashWindow);
+		m_sashWindow = nullptr;
+	}
 	if (m_tool) {
 		m_tool->Close();
 		m_tool.reset();
@@ -219,6 +297,52 @@ void CWorkbenchPanelHost::Close()
 		m_window = nullptr;
 	}
 	m_state = WorkbenchPanelState::Hidden;
+}
+
+LRESULT CWorkbenchPanelHost::HandleSashMessage(UINT message, WPARAM wParam, LPARAM lParam)
+{
+	switch (message) {
+	case WM_ERASEBKGND:
+		return 1;
+	case WM_PAINT: {
+		PAINTSTRUCT paint{};
+		::BeginPaint(m_sashWindow, &paint);
+		::EndPaint(m_sashWindow, &paint);
+		return 0;
+	}
+	case WM_SETCURSOR:
+		::SetCursor(::LoadCursor(nullptr, m_edge == WorkbenchEdge::Bottom ? IDC_SIZENS : IDC_SIZEWE));
+		return TRUE;
+	case WM_LBUTTONDOWN: {
+		POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		const HWND parent = ::GetParent(m_sashWindow);
+		if (parent != nullptr) {
+			(void)::MapWindowPoints(m_sashWindow, parent, &point, 1);
+			return ::SendMessageW(parent, WM_LBUTTONDOWN, wParam, MAKELPARAM(point.x, point.y));
+		}
+		return 0;
+	}
+	default:
+		return ::DefWindowProcW(m_sashWindow, message, wParam, lParam);
+	}
+}
+
+LRESULT CALLBACK CWorkbenchPanelHost::SashWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	if (message == WM_NCCREATE) {
+		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+		::SetWindowLongPtrW(window, GWLP_USERDATA,
+			reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+	}
+	auto* self = reinterpret_cast<CWorkbenchPanelHost*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
+	if (self == nullptr) return ::DefWindowProcW(window, message, wParam, lParam);
+	if (message == WM_NCCREATE) self->m_sashWindow = window;
+	if (message == WM_NCDESTROY) {
+		self->m_sashWindow = nullptr;
+		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+		return ::DefWindowProcW(window, message, wParam, lParam);
+	}
+	return self->HandleSashMessage(message, wParam, lParam);
 }
 
 int CWorkbenchPanelHost::GetHeaderHeightPixels() const noexcept

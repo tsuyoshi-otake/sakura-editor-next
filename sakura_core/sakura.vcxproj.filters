@@ -1471,6 +1471,9 @@
     <ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\markdown\MarkdownParser.h">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClInclude>
@@ -3149,6 +3152,9 @@
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp">

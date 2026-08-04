@@ -158,8 +158,11 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
 ### Native sash and Explorer scrolling compatibility (2026-08-04)
 
 - Workbench Part boundaries reserve one DPI-independent pixel, matching VS
-  Code's visible sash border. Native hit testing expands that line to a four-DIP
-  interaction target without changing layout geometry or painting a thick bar.
+  Code's visible sash border. A sibling, input-only HWND overlays that line as a
+  four-DIP interaction target without changing layout geometry or painting a
+  thick bar. Parent-only hit-test math is insufficient because the adjacent
+  child HWNDs consume three of those four pixels before `CEditWnd` can see the
+  initial press; keep the overlay above siblings after every layout pass.
 - Explorer never exposes a horizontal scrollbar. Its TreeView keeps
   `TVS_NOHSCROLL`, native scrollbars are suppressed, and the owned vertical
   scrollbar overlays the content instead of reserving a permanent gutter.

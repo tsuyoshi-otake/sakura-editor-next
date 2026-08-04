@@ -6,9 +6,12 @@
 */
 #include "StdAfx.h"
 #include "CTextArea.h"
+#include "LineNumberLayout.h"
 #include "CViewFont.h"
 #include "CRuler.h"
 #include "CEditView.h"
+#include "window/CEditWnd.h"
+#include "charset/charcode.h"
 #include "env/CShareData.h"
 #include "env/DLLSHAREDATA.h"
 #include "doc/CEditDoc.h"
@@ -40,6 +43,9 @@ CTextArea::CTextArea(CEditView* pEditView)
 
 	m_nViewAlignLeft = 0;		/* 表示域の左端座標 */
 	m_nViewAlignLeftCols = 0;	/* 行番号域の桁数 */
+	m_nLineNumberWidth = 0;
+	m_nLineNumberDigitWidth = 1;
+	m_nLineNumberDecorationsWidth = 0;
 	m_nViewCx = 0;				/* 表示域の幅 */
 	m_nViewCy = 0;				/* 表示域の高さ */
 	m_nViewColNum = CLayoutInt(0);			/* 表示域の桁数 */
@@ -59,6 +65,9 @@ void CTextArea::CopyTextAreaStatus(CTextArea* pDst) const
 {
 	pDst->SetAreaLeft				( this->GetAreaLeft() );		// 表示域の左端座標
 	pDst->m_nViewAlignLeftCols		= this->m_nViewAlignLeftCols;	// 行番号域の桁数
+	pDst->m_nLineNumberWidth		= this->m_nLineNumberWidth;
+	pDst->m_nLineNumberDigitWidth	= this->m_nLineNumberDigitWidth;
+	pDst->m_nLineNumberDecorationsWidth = this->m_nLineNumberDecorationsWidth;
 	pDst->SetAreaTop				(this->GetAreaTop());			// 表示域の上端座標
 //	pDst->m_nViewCx					= m_nViewCx;					// 表示域の幅
 //	pDst->m_nViewCy					= m_nViewCy;					// 表示域の高さ
@@ -160,22 +169,56 @@ bool CTextArea::DetectWidthOfLineNumberArea( bool bRedraw )
 	CEditView* pView2=m_pEditView;
 
 	int				nViewAlignLeftNew;
+	const bool workbenchLineNumbers = !pView->m_bMiniMap && GetEditWnd().IsWorkbenchRuntimeBacked();
+	const auto windowDpi = pView->GetHwnd() == nullptr ? view::line_number::kDefaultDpi
+		: ::GetDpiForWindow(pView->GetHwnd());
 
-	if( pView->m_pTypeData->m_ColorInfoArr[COLORIDX_GYOU].m_bDisp && !pView->m_bMiniMap ){
-		/* 行番号表示に必要な桁数を計算 */
-		int i = DetectWidthOfLineNumberArea_calculate(&pView->m_pcEditDoc->m_cLayoutMgr);
-		nViewAlignLeftNew = pView->GetTextMetrics().GetHankakuDx() * (i + 1);	/* 表示域の左端座標 */
-		m_nViewAlignLeftCols = i + 1;
-	}else if( pView->m_bMiniMap ){
-		nViewAlignLeftNew = 4;
-		m_nViewAlignLeftCols = 0;
-	}else{
-		nViewAlignLeftNew = 8;
-		m_nViewAlignLeftCols = 0;
+	int maxDigitWidth = 1;
+	if (workbenchLineNumbers) {
+		auto& widthCache = GetCharWidthCache();
+		const int characterSpacing = static_cast<Int>(pView->GetTextMetrics().GetCharSpacing());
+		for (wchar_t digit = L'0'; digit <= L'9'; ++digit) {
+			maxDigitWidth = std::max(maxDigitWidth, widthCache.CalcPxWidthByFont(digit) + characterSpacing);
+		}
 	}
 
-	//	Sep 18, 2002 genta
-	nViewAlignLeftNew += GetLeftYohaku();
+	if( pView->m_pTypeData->m_ColorInfoArr[COLORIDX_GYOU].m_bDisp && !pView->m_bMiniMap ){
+		if (workbenchLineNumbers) {
+			// VS Code numbers model lines. Wrapped continuation rows never acquire
+			// independent numbers in the Workbench composition.
+			const int lineCount = pView->m_pcEditDoc->m_cDocLineMgr.GetLineCount();
+			const auto layout = view::line_number::CalculateWorkbenchLineNumberLayout(
+				lineCount, maxDigitWidth, windowDpi);
+			m_nViewAlignLeftCols = layout.digitCount;
+			m_nLineNumberWidth = layout.lineNumbersWidth;
+			m_nLineNumberDigitWidth = layout.maxDigitWidth;
+			m_nLineNumberDecorationsWidth = layout.decorationsWidth;
+			nViewAlignLeftNew = layout.totalWidth;
+		} else {
+			/* 行番号表示に必要な桁数を計算 */
+			int i = DetectWidthOfLineNumberArea_calculate(&pView->m_pcEditDoc->m_cLayoutMgr);
+			m_nLineNumberDigitWidth = pView->GetTextMetrics().GetHankakuDx();
+			m_nLineNumberWidth = m_nLineNumberDigitWidth * (i + 1);
+			m_nLineNumberDecorationsWidth = GetLeftYohaku();
+			nViewAlignLeftNew = m_nLineNumberWidth;	/* 表示域の左端座標 */
+			m_nViewAlignLeftCols = i + 1;
+			nViewAlignLeftNew += m_nLineNumberDecorationsWidth;
+		}
+	}else if( pView->m_bMiniMap ){
+		m_nLineNumberWidth = 4;
+		m_nLineNumberDigitWidth = pView->GetTextMetrics().GetHankakuDx();
+		m_nLineNumberDecorationsWidth = GetLeftYohaku();
+		nViewAlignLeftNew = m_nLineNumberWidth + m_nLineNumberDecorationsWidth;
+		m_nViewAlignLeftCols = 0;
+	}else{
+		m_nLineNumberWidth = workbenchLineNumbers ? 0 : 8;
+		m_nLineNumberDigitWidth = workbenchLineNumbers ? maxDigitWidth : pView->GetTextMetrics().GetHankakuDx();
+		m_nLineNumberDecorationsWidth = workbenchLineNumbers
+			? view::line_number::ScaleDip(view::line_number::kDecorationWidthDip, windowDpi)
+			: GetLeftYohaku();
+		nViewAlignLeftNew = m_nLineNumberWidth + m_nLineNumberDecorationsWidth;
+		m_nViewAlignLeftCols = 0;
+	}
 	if( nViewAlignLeftNew != GetAreaLeft() ){
 		CMyRect			rc;
 		SetAreaLeft(nViewAlignLeftNew);

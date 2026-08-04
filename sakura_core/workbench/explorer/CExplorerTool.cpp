@@ -37,6 +37,7 @@ constexpr wchar_t kExplorerWindowClass[] = L"SakuraNativeExplorerTool";
 constexpr wchar_t kExplorerScrollbarClass[] = L"SakuraExplorerOverlayScrollbar";
 constexpr UINT kWorkerResultMessage = WM_APP + 0x571;
 constexpr UINT kDirectoryChangedMessage = WM_APP + 0x572;
+constexpr UINT kActivateFileMessage = WM_APP + 0x573;
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr unsigned int kDefaultDpi = 96;
 
@@ -377,6 +378,15 @@ struct CExplorerTool::Impl {
 	bool scrollbarDragging{};
 	bool trackingScrollbarMouseLeave{};
 	int scrollbarThumbGrabOffset{};
+	int wheelDeltaRemainder{};
+	HTREEITEM pointerDownItem{};
+	HTREEITEM pointerHoverItem{};
+	ExplorerFileActivationKind pointerActivationKind{ ExplorerFileActivationKind::Preview };
+	HTREEITEM clickNotificationItem{};
+	bool clickNotificationItemReady{};
+	std::wstring pendingActivationPath;
+	ExplorerFileActivationKind pendingActivationKind{ ExplorerFileActivationKind::Preview };
+	bool fileActivationPosted{};
 
 	struct ScrollbarLayout {
 		RECT track{};
@@ -517,6 +527,110 @@ struct CExplorerTool::Impl {
 		if (show) ::InvalidateRect(scrollbar, nullptr, FALSE);
 	}
 
+	[[nodiscard]] HTREEITEM HitTestFileActivationItem(POINT point) const noexcept
+	{
+		if (tree == nullptr) return nullptr;
+		TVHITTESTINFO hit{};
+		hit.pt = point;
+		const auto item = TreeView_HitTest(tree, &hit);
+		constexpr UINT kActivationFlags = TVHT_ONITEMICON | TVHT_ONITEMLABEL;
+		return item != nullptr && (hit.flags & kActivationFlags) != 0 ? item : nullptr;
+	}
+
+	[[nodiscard]] HTREEITEM HitTestFileActivationAtCursor() const noexcept
+	{
+		if (tree == nullptr) return nullptr;
+		const DWORD position = ::GetMessagePos();
+		POINT messagePoint{ GET_X_LPARAM(position), GET_Y_LPARAM(position) };
+		if (::ScreenToClient(tree, &messagePoint)) {
+			if (const auto item = HitTestFileActivationItem(messagePoint); item != nullptr) return item;
+		}
+		// NM_CLICK is sent synchronously from the TreeView's pointer handling, but
+		// synthetic input and some capture transitions can leave GetMessagePos on
+		// the preceding queued message. The live cursor is a safe fallback because
+		// this route is mouse-only and still requires an icon/label hit.
+		POINT cursorPoint{};
+		if (!::GetCursorPos(&cursorPoint) || !::ScreenToClient(tree, &cursorPoint)) return nullptr;
+		return HitTestFileActivationItem(cursorPoint);
+	}
+
+	[[nodiscard]] HTREEITEM ResolveClickNotificationItem() noexcept
+	{
+		if (clickNotificationItemReady) {
+			clickNotificationItemReady = false;
+			const auto item = clickNotificationItem;
+			clickNotificationItem = nullptr;
+			return item;
+		}
+		if (const auto item = HitTestFileActivationAtCursor(); item != nullptr) return item;
+		return pointerHoverItem;
+	}
+
+	void QueueFileActivation(HTREEITEM item, ExplorerFileActivationKind kind)
+	{
+		if (closed || !activateFile || window == nullptr || tree == nullptr || item == nullptr) return;
+		TVITEMW info{};
+		info.mask = TVIF_PARAM;
+		info.hItem = item;
+		if (!TreeView_GetItem(tree, &info)) return;
+		const auto* node = FindNode(static_cast<std::uint64_t>(info.lParam));
+		if (node == nullptr || node->isDirectory) return;
+		if (pendingActivationPath != node->path) {
+			pendingActivationPath = node->path;
+			pendingActivationKind = kind;
+		} else if (kind == ExplorerFileActivationKind::Pinned) {
+			// A double-click can arrive while the first click's preview dispatch is
+			// posted. Explicit activation must dominate the queued preview.
+			pendingActivationKind = ExplorerFileActivationKind::Pinned;
+		}
+		if (fileActivationPosted) return;
+		fileActivationPosted = ::PostMessageW(window, kActivateFileMessage, 0, 0) != FALSE;
+		if (!fileActivationPosted) {
+			pendingActivationPath.clear();
+			pendingActivationKind = ExplorerFileActivationKind::Preview;
+		}
+	}
+
+	void DispatchQueuedFileActivation()
+	{
+		fileActivationPosted = false;
+		auto path = std::move(pendingActivationPath);
+		const auto kind = pendingActivationKind;
+		pendingActivationPath.clear();
+		pendingActivationKind = ExplorerFileActivationKind::Preview;
+		if (!closed && activateFile && !path.empty()) activateFile(path, kind);
+	}
+
+	void ScrollByMouseWheel(WPARAM wheelState)
+	{
+		if (tree == nullptr) return;
+		wheelDeltaRemainder += GET_WHEEL_DELTA_WPARAM(wheelState);
+		const int notches = wheelDeltaRemainder / WHEEL_DELTA;
+		wheelDeltaRemainder %= WHEEL_DELTA;
+		if (notches == 0) return;
+
+		UINT configuredLines = 3;
+		(void)::SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &configuredLines, 0);
+		if (configuredLines == 0) return;
+		RECT client{};
+		(void)::GetClientRect(tree, &client);
+		const int itemHeight = std::max(1, static_cast<int>(TreeView_GetItemHeight(tree)));
+		const int pageRows = std::max(1, static_cast<int>(client.bottom - client.top) / itemHeight);
+		const bool scrollByPage = configuredLines == WHEEL_PAGESCROLL;
+		const int rowsPerNotch = scrollByPage
+			? 1
+			: std::min(pageRows, static_cast<int>(std::min(configuredLines, static_cast<UINT>(pageRows))));
+		const int notchCount = notches < 0 ? -notches : notches;
+		const int requestCount = notchCount * rowsPerNotch;
+		const UINT request = notches > 0
+			? (scrollByPage ? SB_PAGEUP : SB_LINEUP)
+			: (scrollByPage ? SB_PAGEDOWN : SB_LINEDOWN);
+		for (int index = 0; index < requestCount; ++index) {
+			(void)::SendMessageW(tree, WM_VSCROLL, static_cast<WPARAM>(request), 0);
+		}
+		UpdateOverlayScrollbar();
+	}
+
 	static LRESULT CALLBACK TreeSubclassProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam,
 		UINT_PTR subclassId, DWORD_PTR referenceData)
 	{
@@ -525,8 +639,55 @@ struct CExplorerTool::Impl {
 			::RemoveWindowSubclass(hwnd, TreeSubclassProc, subclassId);
 			return ::DefSubclassProc(hwnd, message, wParam, lParam);
 		}
+		if (impl != nullptr && message == WM_MOUSEWHEEL) {
+			impl->ScrollByMouseWheel(wParam);
+			return 0;
+		}
+		HTREEITEM releasedItem = nullptr;
+		HTREEITEM pressedItem = nullptr;
+		if (impl != nullptr) {
+			if (message == WM_MOUSEMOVE) {
+				impl->pointerHoverItem = impl->HitTestFileActivationItem(
+					POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+			} else if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) {
+				impl->pointerDownItem = impl->HitTestFileActivationItem(
+					POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+				impl->pointerHoverItem = impl->pointerDownItem;
+				impl->pointerActivationKind = message == WM_LBUTTONDBLCLK
+					? ExplorerFileActivationKind::Pinned : ExplorerFileActivationKind::Preview;
+				impl->clickNotificationItemReady = false;
+				impl->clickNotificationItem = nullptr;
+			} else if (message == WM_LBUTTONUP) {
+				pressedItem = impl->pointerDownItem;
+				releasedItem = impl->HitTestFileActivationItem(
+					POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+				impl->pointerDownItem = nullptr;
+				impl->pointerHoverItem = releasedItem;
+				impl->clickNotificationItem = pressedItem != nullptr && pressedItem == releasedItem
+					? releasedItem : nullptr;
+				impl->clickNotificationItemReady = true;
+			} else if (message == WM_CANCELMODE) {
+				// TreeView releases capture synchronously during a normal button-up
+				// sequence. WM_CAPTURECHANGED is therefore not cancellation authority:
+				// clearing here can erase the matching down item before WM_LBUTTONUP.
+				impl->pointerDownItem = nullptr;
+				impl->clickNotificationItem = nullptr;
+				impl->clickNotificationItemReady = false;
+			}
+		}
 		const LRESULT result = ::DefSubclassProc(hwnd, message, wParam, lParam);
-		if (impl != nullptr && (message == WM_MOUSEWHEEL || message == WM_VSCROLL || message == WM_KEYDOWN
+		// TreeView's NM_CLICK notification carries no item or pointer coordinates.
+		// Resolve the physical down/up gesture at the control boundary instead of
+		// opening whichever item happened to be selected when the notification ran.
+		if (impl != nullptr && message == WM_LBUTTONUP
+			&& pressedItem != nullptr && pressedItem == releasedItem) {
+			impl->QueueFileActivation(releasedItem, impl->pointerActivationKind);
+		}
+		if (impl != nullptr && message == WM_LBUTTONUP) {
+			impl->clickNotificationItem = nullptr;
+			impl->clickNotificationItemReady = false;
+		}
+		if (impl != nullptr && (message == WM_VSCROLL || message == WM_KEYDOWN
 			|| message == TVM_SELECTITEM || message == TVM_EXPAND || message == TVM_DELETEITEM
 			|| message == TVM_INSERTITEMW)) {
 			impl->UpdateOverlayScrollbar();
@@ -999,14 +1160,8 @@ struct CExplorerTool::Impl {
 
 	void ActivateSelectedFile()
 	{
-		if (!activateFile || tree == nullptr) return;
-		const auto item = TreeView_GetSelection(tree);
-		TVITEMW info{};
-		info.mask = TVIF_PARAM;
-		info.hItem = item;
-		if (item == nullptr || !TreeView_GetItem(tree, &info)) return;
-		const auto* node = FindNode(static_cast<std::uint64_t>(info.lParam));
-		if (node != nullptr && !node->isDirectory) activateFile(node->path);
+		QueueFileActivation(tree == nullptr ? nullptr : TreeView_GetSelection(tree),
+			ExplorerFileActivationKind::Pinned);
 	}
 
 	void UpdateRoot(std::wstring newRoot)
@@ -1238,6 +1393,9 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 	case kWorkerResultMessage:
 		impl.ApplyResult(impl.TakePendingResult(reinterpret_cast<WorkerResult*>(lParam)));
 		return 0;
+	case kActivateFileMessage:
+		impl.DispatchQueuedFileActivation();
+		return 0;
 	case kDirectoryChangedMessage:
 		if (static_cast<std::uint64_t>(wParam) == impl.currentRootGeneration) ::SetTimer(window, kRefreshTimer, 150, nullptr);
 		return 0;
@@ -1266,8 +1424,22 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 			impl.UpdateOverlayScrollbar();
 			return 0;
 		}
+		if (notification->code == TVN_SELCHANGEDW) {
+			const auto* changed = reinterpret_cast<const NMTREEVIEWW*>(lParam);
+			if (changed->action == TVC_BYKEYBOARD) {
+				impl.QueueFileActivation(changed->itemNew.hItem, ExplorerFileActivationKind::Preview);
+			}
+			return 0;
+		}
 		if (notification->code == NM_CLICK) {
-			impl.ActivateSelectedFile();
+			// TreeView selects on button-down but emits NM_CLICK on button-up. Queueing
+			// from this semantic notification keeps file opening outside the native
+			// control's input stack and also survives focus/capture transitions.
+			impl.QueueFileActivation(impl.ResolveClickNotificationItem(), ExplorerFileActivationKind::Preview);
+			return 0;
+		}
+		if (notification->code == NM_DBLCLK) {
+			impl.QueueFileActivation(impl.HitTestFileActivationAtCursor(), ExplorerFileActivationKind::Pinned);
 			return 0;
 		}
 		if (notification->code == NM_CUSTOMDRAW) {

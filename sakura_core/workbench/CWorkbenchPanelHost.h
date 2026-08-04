@@ -40,6 +40,9 @@ public:
 	void SetHeaderDragCallback(HeaderDragCallback callback) { m_headerDrag = std::move(callback); }
 	//! Applies a shared extent without entering resize state or invoking persistence.
 	void ApplyExtentDip(int extentDip);
+	//! Places the four-DIP interactive sash over the one-DIP visible Part boundary.
+	//! The sash is a sibling overlay, so the wider hit target never consumes editor space.
+	void LayoutSash(const RECT& visibleBoundary);
 	void BeginResize();
 	void UpdateResize(int extentDip);
 	//! Returns true when the resize is accepted (or needed no model update).
@@ -49,6 +52,7 @@ public:
 	void Close();
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
+	[[nodiscard]] HWND GetSashHwnd() const noexcept { return m_sashWindow; }
 	[[nodiscard]] WorkbenchEdge GetEdge() const noexcept { return m_edge; }
 	[[nodiscard]] WorkbenchPanelState GetState() const noexcept { return m_state; }
 	[[nodiscard]] int GetExtentDip() const noexcept { return m_extentDip; }
@@ -56,9 +60,11 @@ public:
 	[[nodiscard]] unsigned int GetDpi() const noexcept { return m_dpi; }
 	[[nodiscard]] int GetHeaderHeightPixels() const noexcept;
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
+	static LRESULT CALLBACK SashWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
 private:
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
+	LRESULT HandleSashMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	void LayoutTool();
 	void Paint();
 	//! True while the pointer is over this Part's title, the only drag handle it owns.
@@ -75,6 +81,7 @@ private:
 	theme::CThemeFont m_font;
 	RECT m_bounds{};
 	HWND m_window = nullptr;
+	HWND m_sashWindow = nullptr;
 	std::unique_ptr<IWorkbenchTool> m_tool;
 	std::wstring m_title;
 	CommitExtentCallback m_commitExtent;

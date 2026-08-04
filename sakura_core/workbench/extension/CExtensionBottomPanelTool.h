@@ -13,6 +13,7 @@
 #include "workbench/IWorkbenchTool.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -24,6 +25,32 @@ namespace workbench::extension {
 //! Console are visible as explicit, disabled boundaries until their native view
 //! projections are implemented; they never select a fake placeholder surface.
 enum class ExtensionBottomPanelTab { Problems, Output, Terminal, Ports, DebugConsole };
+
+struct ExtensionBottomPanelVerticalLayout final {
+	int headerHeight = 0;
+	int contentTop = 0;
+	int contentHeight = 0;
+	int outputSelectorHeight = 0;
+};
+
+//! Normalizes the panel's vertical geometry before it reaches child HWNDs.
+//! During live resize the Panel can be shorter than its preferred header; no
+//! child may receive an inverted rectangle or start below the client bottom.
+[[nodiscard]] constexpr ExtensionBottomPanelVerticalLayout CalculateExtensionBottomPanelVerticalLayout(
+	int availableHeight, int preferredHeaderHeight, int preferredOutputSelectorHeight) noexcept
+{
+	availableHeight = (std::max)(0, availableHeight);
+	preferredHeaderHeight = (std::max)(0, preferredHeaderHeight);
+	preferredOutputSelectorHeight = (std::max)(0, preferredOutputSelectorHeight);
+	const int headerHeight = (std::min)(availableHeight, preferredHeaderHeight);
+	const int contentHeight = availableHeight - headerHeight;
+	return {
+		headerHeight,
+		headerHeight,
+		contentHeight,
+		(std::min)(contentHeight, preferredOutputSelectorHeight),
+	};
+}
 
 class CExtensionBottomPanelTool final : public IWorkbenchTool {
 public:

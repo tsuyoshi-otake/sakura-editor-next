@@ -84,6 +84,12 @@ TEST(WorkbenchKeybindingState, CtrlKSecondStrokesSelectTheExactStableCommands)
 	result = state.HandleKeyDown('F', {}, 1201, 11, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::CloseFolder, result.commandId);
+
+	EXPECT_EQ(EWorkbenchKeyInputDecision::BeginOrRestartChordAndConsume,
+		state.HandleKeyDown('K', controlOnly, 1300, 11, available).decision);
+	result = state.HandleKeyDown('V', {}, 1301, 11, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::MarkdownShowPreviewToSide, result.commandId);
 }
 
 TEST(WorkbenchKeybindingState, WrongModifiersAndSecondStrokesClearAndAreConsumed)
@@ -143,10 +149,13 @@ TEST(WorkbenchKeybindingState, FocusCancellationAndExactDirectBindingsAreModeled
 	result = state.HandleKeyDown('W', controlOnly, 201, 12, available);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
 	EXPECT_EQ(command_ids::CloseActiveEditor, result.commandId);
+	result = state.HandleKeyDown('V', { .control = true, .shift = true }, 202, 12, available);
+	EXPECT_EQ(EWorkbenchKeyInputDecision::ExecuteStableCommandAndConsume, result.decision);
+	EXPECT_EQ(command_ids::MarkdownTogglePreview, result.commandId);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown('R', { .control = true, .shift = true }, 202, 12, available).decision);
+		state.HandleKeyDown('R', { .control = true, .shift = true }, 203, 12, available).decision);
 	EXPECT_EQ(EWorkbenchKeyInputDecision::PassThrough,
-		state.HandleKeyDown('W', { .alt = true }, 203, 12, available).decision);
+		state.HandleKeyDown('W', { .alt = true }, 204, 12, available).decision);
 }
 
 TEST(WorkbenchKeybindingState, RegisteredDisabledCommandIsStillATerminalConsumedBinding)

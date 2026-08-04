@@ -273,7 +273,12 @@ wiring.
 - Resizing belongs to the custom frame, not the removed status-bar grip.
   `WM_NCHITTEST` must expose every edge and corner, including the invisible
   outer half of the DWM resize border after custom `WM_NCCALCSIZE`; maximized
-  windows continue to suppress resize hits.
+  windows continue to suppress resize hits. Because custom `WM_NCCALCSIZE`
+  makes the entire frame client-owned, topmost input-only child overlays must
+  cover all four inside edge strips and forward their initial press to the
+  top-level non-client resize path. Pure `WM_NCHITTEST` geometry is not enough:
+  Activity Bar, editor, panel, and status child HWNDs otherwise receive the
+  press first and leave only the legacy bottom-right grip reachable.
   **Documented divergence:** Sakura's character-code display and macro-recording
   indicator have no VS Code counterparts. Their IDs are therefore explicitly
   product-owned as `sakura.status.editor.characterCode` and

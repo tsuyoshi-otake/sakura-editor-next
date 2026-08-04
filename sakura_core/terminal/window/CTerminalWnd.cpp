@@ -1324,15 +1324,26 @@ bool CTerminalWnd::Create( HWND parent, HINSTANCE instance )
 void CTerminalWnd::Layout( const RECT& bounds, unsigned int dpi )
 {
 	if( m_impl->closed || !m_impl->window ) return;
+	RECT previousClient{};
+	(void)::GetClientRect(m_impl->window, &previousClient);
+	const bool wasDrawable = previousClient.right > previousClient.left
+		&& previousClient.bottom > previousClient.top;
 	const auto effectiveDpi = dpi == 0 ? kDefaultDpi : dpi;
 	if( m_impl->dpi != effectiveDpi ) {
 		m_impl->dpi = effectiveDpi;
 		m_impl->RecreateFont();
 	}
-	::SetWindowPos(m_impl->window, nullptr, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
-		std::max(0L, bounds.bottom - bounds.top), SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
+	const int width = std::max(0L, bounds.right - bounds.left);
+	const int height = std::max(0L, bounds.bottom - bounds.top);
+	::SetWindowPos(m_impl->window, nullptr, bounds.left, bounds.top, width,
+		height, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
 	m_impl->NotifySize();
-	::InvalidateRect(m_impl->window, nullptr, FALSE);
+	if (!wasDrawable && width > 0 && height > 0) {
+		(void)::RedrawWindow(m_impl->window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+	} else {
+		::InvalidateRect(m_impl->window, nullptr, FALSE);
+	}
 }
 
 void CTerminalWnd::SetModel( TerminalModel* model )

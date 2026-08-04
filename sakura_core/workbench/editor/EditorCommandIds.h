@@ -35,5 +35,15 @@ inline constexpr std::string_view ShowExtensions = "workbench.view.extensions";
 inline constexpr std::string_view OpenGlobalKeybindings = "workbench.action.openGlobalKeybindings";
 inline constexpr std::string_view SelectTheme = "workbench.action.selectTheme";
 inline constexpr std::string_view SelectIconTheme = "workbench.action.selectIconTheme";
+inline constexpr std::string_view MarkdownShowPreview = "markdown.showPreview";
+inline constexpr std::string_view MarkdownShowPreviewToSide = "markdown.showPreviewToSide";
+inline constexpr std::string_view MarkdownShowLockedPreviewToSide = "markdown.showLockedPreviewToSide";
+inline constexpr std::string_view MarkdownShowSource = "markdown.showSource";
+inline constexpr std::string_view MarkdownShowPreviewSecuritySelector = "markdown.showPreviewSecuritySelector";
+inline constexpr std::string_view MarkdownPreviewRefresh = "markdown.preview.refresh";
+inline constexpr std::string_view MarkdownPreviewToggleLock = "markdown.preview.toggleLock";
+inline constexpr std::string_view MarkdownReopenAsPreview = "markdown.reopenAsPreview";
+inline constexpr std::string_view MarkdownReopenAsSource = "markdown.reopenAsSource";
+inline constexpr std::string_view MarkdownTogglePreview = "markdown.togglePreview";
 
 } // namespace workbench::editor::command_ids

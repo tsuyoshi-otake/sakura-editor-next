@@ -135,6 +135,18 @@ public:
 	[[nodiscard]] virtual const WorkbenchBootstrapContext& Bootstrap() const noexcept = 0;
 	[[nodiscard]] virtual config::IConfigurationService& Configuration() noexcept = 0;
 	[[nodiscard]] virtual config::IWorkspaceContextService& WorkspaceContext() noexcept = 0;
+	//! Enter a single-folder workspace in this process. The runtime owns the
+	//! bounded operation id, CAS revision, settings/artifact reload, and watcher
+	//! refresh; native windows only project the accepted terminal snapshot.
+	[[nodiscard]] virtual config::WorkspaceContextResult SwitchToFolderWorkspace(
+		platform::uri::Uri, std::wstring)
+	{
+		return {
+			.outcome = config::EWorkspaceContextOutcome::Failed,
+			.reason = "runtime does not support an in-process folder transition",
+			.snapshot = WorkspaceContext().Snapshot(),
+		};
+	}
 	//! Runtime-owned editor for .code-workspace documents. It is the only window-facing
 	//! write path and keeps the process-local file provider private.
 	[[nodiscard]] virtual workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept = 0;

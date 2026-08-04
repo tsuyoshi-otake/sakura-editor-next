@@ -254,6 +254,45 @@ TEST(CustomFrame, PreservesCornerAndEdgeResizeHits)
 	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 1001, 701 }, 1000, 700, 8, false));
 }
 
+TEST(CustomFrame, CoversEveryClientEdgeWithNonOverlappingResizeOverlays)
+{
+	const auto bounds = CalculateCustomFrameResizeOverlayBounds(1000, 700, 8, false);
+	const auto at = [&](CustomFrameResizeEdge edge) -> const RECT& {
+		return bounds[static_cast<size_t>(edge)];
+	};
+	const auto expectRect = [](const RECT& rect, LONG left, LONG top, LONG right, LONG bottom) {
+		EXPECT_EQ(left, rect.left);
+		EXPECT_EQ(top, rect.top);
+		EXPECT_EQ(right, rect.right);
+		EXPECT_EQ(bottom, rect.bottom);
+	};
+	expectRect(at(CustomFrameResizeEdge::Top), 0, 0, 1000, 8);
+	expectRect(at(CustomFrameResizeEdge::Bottom), 0, 692, 1000, 700);
+	expectRect(at(CustomFrameResizeEdge::Left), 0, 8, 8, 692);
+	expectRect(at(CustomFrameResizeEdge::Right), 992, 8, 1000, 692);
+
+	const auto maximized = CalculateCustomFrameResizeOverlayBounds(1000, 700, 8, true);
+	for (const RECT& rect : maximized) EXPECT_TRUE(::IsRectEmpty(&rect));
+}
+
+TEST(CustomFrame, ClampsResizeOverlaysForTinyWindows)
+{
+	const auto bounds = CalculateCustomFrameResizeOverlayBounds(6, 4, 8, false);
+	const auto at = [&](CustomFrameResizeEdge edge) -> const RECT& {
+		return bounds[static_cast<size_t>(edge)];
+	};
+	EXPECT_EQ(0, at(CustomFrameResizeEdge::Top).left);
+	EXPECT_EQ(0, at(CustomFrameResizeEdge::Top).top);
+	EXPECT_EQ(6, at(CustomFrameResizeEdge::Top).right);
+	EXPECT_EQ(4, at(CustomFrameResizeEdge::Top).bottom);
+	EXPECT_EQ(0, at(CustomFrameResizeEdge::Bottom).left);
+	EXPECT_EQ(0, at(CustomFrameResizeEdge::Bottom).top);
+	EXPECT_EQ(6, at(CustomFrameResizeEdge::Bottom).right);
+	EXPECT_EQ(4, at(CustomFrameResizeEdge::Bottom).bottom);
+	EXPECT_TRUE(::IsRectEmpty(&at(CustomFrameResizeEdge::Left)));
+	EXPECT_TRUE(::IsRectEmpty(&at(CustomFrameResizeEdge::Right)));
+}
+
 TEST(CustomFrame, MaximizedWindowDisablesResizeBorderButKeepsSnapButton)
 {
 	const auto layout = CalculateCustomFrameLayout(1000, 96, 300);

@@ -110,8 +110,10 @@ public:
 	// 行番号の幅(余白なし)
 	int GetLineNumberWidth() const
 	{
-		return m_nViewAlignLeft - m_nLeftYohaku;
+		return m_nLineNumberWidth;
 	}
+	[[nodiscard]] int GetLineNumberDigitWidth() const { return m_nLineNumberDigitWidth; }
+	[[nodiscard]] int GetLineNumberDecorationsWidth() const { return m_nLineNumberDecorationsWidth; }
 
 	//! クライアントサイズ更新
 	void TextArea_OnSize(
@@ -230,5 +232,8 @@ public:
 
 	//その他
 	int		m_nViewAlignLeftCols;	/* 行番号域の桁数 */
+	int		m_nLineNumberWidth;		/* 行番号の数字列の幅（装飾余白なし） */
+	int		m_nLineNumberDigitWidth;	/* 行番号のtabular digit幅 */
+	int		m_nLineNumberDecorationsWidth;	/* 行番号右側の装飾余白 */
 };
 #endif /* SAKURA_CTEXTAREA_E3BB290D_608F_4F86_B460_8D84F171CB11_H_ */

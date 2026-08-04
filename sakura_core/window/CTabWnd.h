@@ -25,6 +25,9 @@
 #include "util/design_template.h"
 #include "env/CommonSetting.h"
 
+#include <string>
+#include <vector>
+
 class CGraphics;
 struct EditNode;
 struct DLLSHAREDATA;
@@ -141,6 +144,7 @@ protected:
 	void DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient );			/*!< 閉じるボタン描画処理 */		// 2006.10.21 ryoji
 	void DrawTabCloseBtn( CGraphics& gr, const LPRECT lprcClient, bool selected, bool bHover );	/*!< タブを閉じるボタン描画処理 */		// 2012.04.14 syat
 	void DrawTopBand( const CGraphics& gr, const RECT& rcClient, int nTabIndex ) const;
+	void DrawBreadcrumbs( CGraphics& gr, const RECT& rcClient, const std::vector<std::wstring>& segments ) const;
 	void GetMarkdownPreviewBtnRect( const LPRECT lprcClient, LPRECT lprc );	/*!< Markdownプレビューボタンの矩形取得処理 */
 	void GetListBtnRect( const LPRECT lprcClient, LPRECT lprc );	/*!< 一覧ボタンの矩形取得処理 */
 	void GetCloseBtnRect( const LPRECT lprcClient, LPRECT lprc );	/*!< 閉じるボタンの矩形取得処理 */	// 2006.10.21 ryoji
@@ -148,6 +152,9 @@ protected:
 	void GetDocumentActionRects( const RECT& rcClient, RECT* preview, RECT* list, RECT* close, int* tabControlRight ) const;
 	[[nodiscard]] bool IsMarkdownPreviewActionAvailable() const;
 	[[nodiscard]] bool IsMarkdownPreviewActionActive() const;
+	[[nodiscard]] bool IsCloseAllActionAvailable() const;
+	[[nodiscard]] std::vector<std::wstring> GetBreadcrumbSegments() const;
+	[[nodiscard]] int GetBreadcrumbHeight( const std::vector<std::wstring>& segments ) const;
 
 	HFONT CreateMenuFont( void )
 	{
@@ -204,6 +211,7 @@ private:
 
 	HWND		m_hwndSizeBox = nullptr;
 	bool		m_bSizeBox = false;
+	int			m_nBreadcrumbHeight = 0;
 
 	DISALLOW_COPY_AND_ASSIGN(CTabWnd);
 };

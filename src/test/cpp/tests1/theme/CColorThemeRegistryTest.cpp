@@ -217,6 +217,9 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 		"type": "dark",
 		"colors": {
 			"editor.background": "#202020",
+			"editorGutter.background": "#101112",
+			"editorLineNumber.foreground": "#858585",
+			"editorLineNumber.activeForeground": "#cccccc",
 			"sideBar.background": "#293134",
 			"panel.background": "#252526",
 			"terminal.background": "#12345680",
@@ -259,6 +262,9 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 	EXPECT_TRUE(snapshot.semanticHighlighting);
 
 	EXPECT_EQ((ThemeColor{ 0x20, 0x20, 0x20, 0xFF }), snapshot.palette.canvas);
+	EXPECT_EQ((ThemeColor{ 0x10, 0x11, 0x12, 0xFF }), snapshot.palette.editorGutterBackground);
+	EXPECT_EQ((ThemeColor{ 0x85, 0x85, 0x85, 0xFF }), snapshot.palette.editorLineNumberForeground);
+	EXPECT_EQ((ThemeColor{ 0xCC, 0xCC, 0xCC, 0xFF }), snapshot.palette.editorLineNumberActiveForeground);
 	EXPECT_EQ((ThemeColor{ 0x29, 0x31, 0x34, 0xFF }), snapshot.palette.sideBar);
 	EXPECT_EQ((ThemeColor{ 0x25, 0x25, 0x26, 0xFF }), snapshot.palette.panel);
 	EXPECT_EQ((ThemeColor{ 0x25, 0x25, 0x26, 0xFF }), snapshot.palette.bottomPanel);
@@ -284,6 +290,7 @@ TEST(CColorThemeRegistry, FallsBackToProjectedPanelBackgroundWhenTerminalTokenIs
 	ASSERT_TRUE(extension.Write(L"theme.json", R"json({
 		"type": "dark",
 		"colors": {
+			"editor.background": "#202122",
 			"panel.background": "#123456"
 		}
 	})json"));
@@ -298,6 +305,7 @@ TEST(CColorThemeRegistry, FallsBackToProjectedPanelBackgroundWhenTerminalTokenIs
 	EXPECT_EQ(snapshot.colors.end(), snapshot.colors.find(L"terminal.background"));
 	EXPECT_EQ((ThemeColor{ 0x12, 0x34, 0x56, 0xFF }), snapshot.palette.bottomPanel);
 	EXPECT_EQ(snapshot.palette.bottomPanel, snapshot.palette.terminalBackground);
+	EXPECT_EQ((ThemeColor{ 0x20, 0x21, 0x22, 0xFF }), snapshot.palette.editorGutterBackground);
 }
 
 TEST(CColorThemeRegistry, RejectsThemeIncludesOutsideExtensionRoot)

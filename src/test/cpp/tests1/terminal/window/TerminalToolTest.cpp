@@ -3,6 +3,7 @@
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
+#include "workbench/extension/CExtensionBottomPanelTool.h"
 #include "terminal/model/TerminalModel.h"
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 
@@ -282,6 +283,47 @@ TEST(TerminalTool, QueueFullInteractiveInputIsRetriedInsteadOfSilentlyDiscarded)
 	::SendMessageW(renderer.GetHwnd(), WM_TIMER, 0x5345, 0);
 	EXPECT_EQ("x", received);
 	EXPECT_GE(calls.load(), 2);
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, BottomPanelLayoutNeverInvertsContentWhileShrinking)
+{
+	using workbench::extension::CalculateExtensionBottomPanelVerticalLayout;
+
+	const auto collapsed = CalculateExtensionBottomPanelVerticalLayout(12, 34, 28);
+	EXPECT_EQ(12, collapsed.headerHeight);
+	EXPECT_EQ(12, collapsed.contentTop);
+	EXPECT_EQ(0, collapsed.contentHeight);
+	EXPECT_EQ(0, collapsed.outputSelectorHeight);
+
+	const auto visible = CalculateExtensionBottomPanelVerticalLayout(200, 34, 28);
+	EXPECT_EQ(34, visible.headerHeight);
+	EXPECT_EQ(34, visible.contentTop);
+	EXPECT_EQ(166, visible.contentHeight);
+	EXPECT_EQ(28, visible.outputSelectorHeight);
+}
+
+TEST(TerminalTool, RendererInvalidatesWhenRestoredFromZeroHeight)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+	terminal::TerminalModel model(80, 24);
+	renderer.SetModel(&model);
+	::SetWindowPos(parent, nullptr, -32000, -32000, 800, 600, SWP_NOACTIVATE | SWP_NOZORDER);
+	::ShowWindow(parent, SW_SHOWNOACTIVATE);
+
+	renderer.Layout(RECT{ 0, 0, 480, 0 }, 96);
+	renderer.Layout(RECT{ 0, 0, 480, 240 }, 96);
+	RECT client{};
+	ASSERT_TRUE(::GetClientRect(renderer.GetHwnd(), &client));
+	EXPECT_EQ(480, client.right - client.left);
+	EXPECT_EQ(240, client.bottom - client.top);
+	RECT update{};
+	EXPECT_TRUE(::GetUpdateRect(renderer.GetHwnd(), &update, FALSE));
 
 	renderer.Close();
 	::DestroyWindow(parent);

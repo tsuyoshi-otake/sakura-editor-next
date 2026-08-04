@@ -44,12 +44,13 @@
 // 2006.01.30 ryoji タブのサイズ／位置に関する定義
 // 2009.10.01 ryoji 高DPI対応スケーリング
 #define TAB_MARGIN_TOP		DpiScaleY(0)
-#define TAB_MARGIN_LEFT		DpiScaleX(1)
+#define TAB_MARGIN_LEFT		DpiScaleX(tabbar::CalculateDocumentTabControlLeftInset())
 
 //#define TAB_FONT_HEIGHT		DpiPointsToPixels(9)
 #define TAB_FONT_HEIGHT		abs(GetDllShareData().m_Common.m_sTabBar.m_lf.lfHeight)
 #define TAB_ITEM_HEIGHT		DpiScaleY(32)
 #define TAB_WINDOW_HEIGHT	DpiScaleY(32)
+#define BREADCRUMB_HEIGHT	DpiScaleY(22)
 
 #define MAX_TABITEM_WIDTH	DpiScaleX(GetDllShareData().m_Common.m_sTabBar.m_nTabMaxWidth)
 #define MIN_TABITEM_WIDTH	DpiScaleX(GetDllShareData().m_Common.m_sTabBar.m_nTabMinWidth)
@@ -58,7 +59,6 @@
 #define CX_SMICON			DpiScaleX(16)
 #define CY_SMICON			DpiScaleY(16)
 
-static const RECT rcBtnBase = { 0, 0, 16, 16 };
 
 /*! ダークモード対応のボタン前景色を取得する
 	@param[in] bHilighted	ハイライト状態か
@@ -917,8 +917,10 @@ HWND CTabWnd::Open( HINSTANCE hInstance, HWND hwndParent )
 
 	RECT rcParent;
 	::GetWindowRect( hwndParent, &rcParent );
-	const int initialActionMargin = tabbar::ScaleDocumentTabDip(
-		IsMarkdownPreviewActionAvailable() ? 70 : 47, ::GetDpiForWindow(hwndParent));
+	const auto initialActions = tabbar::CalculateDocumentTabActionLayout(
+		0, 0, rcParent.right - rcParent.left, TAB_WINDOW_HEIGHT, ::GetDpiForWindow(hwndParent),
+		IsMarkdownPreviewActionAvailable(), IsCloseAllActionAvailable());
+	const int initialActionMargin = initialActions.reservedRight;
 	const int initialTabWidth = (std::max)(0,
 		static_cast<int>(rcParent.right - rcParent.left - TAB_MARGIN_LEFT) - initialActionMargin);
 
@@ -1167,6 +1169,7 @@ LRESULT CTabWnd::OnLButtonDblClk( [[maybe_unused]] HWND hwnd, [[maybe_unused]] U
 	::GetClientRect(GetHwnd(), &client);
 	GetDocumentActionRects(client, &preview, &list, &close, nullptr);
 	const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+	if (m_nBreadcrumbHeight > 0 && point.y >= client.bottom - m_nBreadcrumbHeight) return 0L;
 	if (::PtInRect(&preview, point) || ::PtInRect(&list, point) || ::PtInRect(&close, point)) {
 		return 0L;
 	}
@@ -1534,20 +1537,26 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 			}
 		}
 
-		rcItem.left += DpiScaleX(8);
-
-		// VS Code と同じ汎用ファイル Codicon を描画する。
 		const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
-		const int cxIcon = workbench::icons::ScaleDip(workbench::icons::kStatusIconDip, dpi);
+		EDispTabClose bDispTabClose = m_pShareData->m_Common.m_sTabBar.m_bDispTabClose;
+		const bool bDrawTabCloseBtn = bDispTabClose != DISPTABCLOSE_NO
+			&& (bSelected || bDispTabClose == DISPTABCLOSE_ALLWAYS
+				|| (bDispTabClose == DISPTABCLOSE_AUTO && nTabIndex == m_nTabHover));
+		RECT rcGetItemRect{};
+		TabCtrl_GetItemRect(m_hwndTab, nTabIndex, &rcGetItemRect);
+		const auto content = tabbar::CalculateDocumentTabContentLayout(
+			{ rcGetItemRect.left, rcGetItemRect.top, rcGetItemRect.right, rcGetItemRect.bottom },
+			dpi, m_pShareData->m_Common.m_sTabBar.m_bDispTabIcon != FALSE, bDrawTabCloseBtn);
+
+		// VS Code と同じ汎用ファイル Codicon を、設定が有効で収まる場合だけ描画する。
 		const COLORREF glyphColor = IsDarkModeActive()
 			? theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark).secondaryText.ToColorRef()
 			: ::GetSysColor(COLOR_BTNTEXT);
-		const auto iconBox = workbench::icons::CenteredIconBounds(
-			{ rcItem.left, rcItem.top, rcItem.left + cxIcon, rcItem.bottom },
-			workbench::icons::kStatusIconDip, dpi);
-		workbench::icons::codicons::Draw(hdc, iconBox,
-			workbench::icons::codicons::Icon::File, glyphColor);
-		rcItem.left += cxIcon + DpiScaleX(6);
+		if (!content.icon.IsEmpty()) {
+			workbench::icons::codicons::Draw(hdc,
+				{ content.icon.left, content.icon.top, content.icon.right, content.icon.bottom },
+				workbench::icons::codicons::Icon::File, glyphColor);
+		}
 
 		// テキスト描画
 		COLORREF clrText;
@@ -1559,20 +1568,7 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 		}
 		gr.PushTextForeColor( clrText );
 		gr.SetTextBackTransparent(true);
-		RECT rcText = rcItem;
-
-		// テキスト矩形は最大でもタブを閉じるボタンの左端までに切り詰める
-		// タブを閉じるボタンの矩形は他の箇所と同様 TabCtrl_GetItemRect の矩形から取得（lpdis->rcItem の矩形だと若干ずれる）
-		EDispTabClose bDispTabClose = m_pShareData->m_Common.m_sTabBar.m_bDispTabClose;
-		bool bDrawTabCloseBtn = bSelected || bDispTabClose == DISPTABCLOSE_ALLWAYS
-			|| (bDispTabClose == DISPTABCLOSE_AUTO && nTabIndex == m_nTabHover);
-		RECT rcGetItemRect;
-		TabCtrl_GetItemRect(m_hwndTab, nTabIndex, &rcGetItemRect);
-		if( bDrawTabCloseBtn ){
-			RECT rcClose;
-			GetTabCloseBtnRect(&rcGetItemRect, &rcClose, nTabIndex == TabCtrl_GetCurSel(m_hwndTab));
-			rcText.right = rcClose.left;
-		}
+		RECT rcText{ content.text.left, content.text.top, content.text.right, content.text.bottom };
 
 		::DrawText( gr, szBuf, -1, &rcText,
 			DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX );
@@ -1742,6 +1738,7 @@ LRESULT CTabWnd::OnPaint( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]
 	DrawMarkdownPreviewBtn( gr, &rc );
 	DrawListBtn( gr, &rc );
 	DrawCloseBtn( gr, &rc );	// 2006.10.21 ryoji 追加
+	DrawBreadcrumbs( gr, rc, GetBreadcrumbSegments() );
 
 	// 上側に境界線を描画する
 	if( IsDarkModeActive() ){
@@ -1817,6 +1814,7 @@ ETabWindowNotifyImpact CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 	const int nCountBefore = TabCtrl_GetItemCount( m_hwndTab );
 	const bool tabControlVisibleBefore =
 		(static_cast<LONG_PTR>(::GetWindowLongPtr( m_hwndTab, GWL_STYLE )) & WS_VISIBLE) != 0;
+	const int breadcrumbHeightBefore = m_nBreadcrumbHeight;
 
 	BreakDrag();	// 2006.01.28 ryoji ドラッグ状態を解除する(関数化)
 
@@ -2022,6 +2020,7 @@ ETabWindowNotifyImpact CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 
 //	LayoutTab();	// 2006.01.28 ryoji タブのレイアウト調整処理
 
+	if (wParam == TWNT_FILE) LayoutTab();
 	const int nCountAfter = TabCtrl_GetItemCount( m_hwndTab );
 	const bool tabControlVisibleAfter =
 		(static_cast<LONG_PTR>(::GetWindowLongPtr( m_hwndTab, GWL_STYLE )) & WS_VISIBLE) != 0;
@@ -2030,7 +2029,8 @@ ETabWindowNotifyImpact CTabWnd::TabWindowNotify( WPARAM wParam, LPARAM lParam )
 	const bool tabStripHeightMayChange = m_bMultiLine && itemCountChanged;
 	const bool workbenchLayoutChanged = modeChanged
 		|| tabControlVisibleBefore != tabControlVisibleAfter
-		|| tabStripHeightMayChange;
+		|| tabStripHeightMayChange
+		|| breadcrumbHeightBefore != m_nBreadcrumbHeight;
 
 	// TabCtrl_* already invalidates the control for item changes. Invalidate
 	// only the tab host here so its action buttons are refreshed without
@@ -2498,26 +2498,20 @@ void CTabWnd::LayoutTab( void )
 	nCount = TabCtrl_GetItemCount( m_hwndTab );
 	if( 0 < nCount )
 	{
-		cx = (rcTab.right - rcTab.left - 8) / nCount;
 		int min = MIN_TABITEM_WIDTH;
 		if( m_pShareData->m_Common.m_sTabBar.m_bTabMultiLine ){
 			min = MIN_TABITEM_WIDTH_MULTI;
 		}
-		if( MAX_TABITEM_WIDTH < cx )
-			cx = MAX_TABITEM_WIDTH;
-		else if( min > cx )
-			cx = min;
+		cx = tabbar::CalculateDocumentTabItemWidth(
+			rcTab.right - rcTab.left, nCount, min, MAX_TABITEM_WIDTH );
 		TabCtrl_SetItemSize( m_hwndTab, cx, TAB_ITEM_HEIGHT );
 	}
 
 	// タブ余白設定（「閉じるボタン」や「アイコン」の設定切替時の余白切替）
 	// ※ 画面のちらつきや体感性能にさほど影響は無さそうなので条件を絞らず毎回 TabCtrl_SetPadding() を実行する
 	cx = 6;
-	if( bDispTabClose == DISPTABCLOSE_ALLWAYS ){
-		// 閉じるボタンの分だけパディングを追加して横幅を広げる
-		int nWidth = rcBtnBase.right - rcBtnBase.left;
-		cx += bDispTabIcon? (nWidth + 2)/3: (nWidth + 1)/2;	// それっぽく調整: ボタン幅の 1/3（アイコン有） or 1/2（アイコン無）
-	}
+	cx = tabbar::CalculateDocumentTabNativeHorizontalPaddingDip(
+		bDispTabIcon != FALSE, bDispTabClose != DISPTABCLOSE_NO);
 	TabCtrl_SetPadding( m_hwndTab, DpiScaleX(cx), DpiScaleY(3) );
 
 	// 新しいウィンドウスタイルを適用する
@@ -2535,7 +2529,7 @@ void CTabWnd::LayoutTab( void )
 			::SetWindowLongPtr( m_hwndTab, GWL_STYLE, lStyle );
 		}
 	}
-	int nHeight = TAB_WINDOW_HEIGHT;
+	int tabRowHeight = TAB_WINDOW_HEIGHT;
 	::GetWindowRect( m_hwndTab, &rcTab );
 	if( m_pShareData->m_Common.m_sTabBar.m_bTabMultiLine
 		&& TabCtrl_GetItemCount( m_hwndTab ) ){
@@ -2544,11 +2538,13 @@ void CTabWnd::LayoutTab( void )
 		rcDisp.left = tabMarginLeft;
 		rcDisp.right = rcTab.left + (std::max)(0, tabControlRight - tabMarginLeft);
 		TabCtrl_AdjustRect( m_hwndTab, FALSE, &rcDisp );
-		nHeight = (rcDisp.top - rcTab.top - 2) + TAB_MARGIN_TOP;
+		tabRowHeight = (rcDisp.top - rcTab.top - 2) + TAB_MARGIN_TOP;
 	}
-	::SetWindowPos( GetHwnd(), nullptr, 0, 0, rcWnd.right - rcWnd.left, nHeight, SWP_NOMOVE | SWP_NOZORDER );
-	if( (targetTabWidth != rcTab.right - rcTab.left) || (nHeight != rcTab.bottom - rcTab.top) ){
-		::MoveWindow( m_hwndTab, TAB_MARGIN_LEFT, TAB_MARGIN_TOP, targetTabWidth, nHeight, TRUE );
+	m_nBreadcrumbHeight = GetBreadcrumbHeight(GetBreadcrumbSegments());
+	const int hostHeight = tabRowHeight + m_nBreadcrumbHeight;
+	::SetWindowPos( GetHwnd(), nullptr, 0, 0, rcWnd.right - rcWnd.left, hostHeight, SWP_NOMOVE | SWP_NOZORDER );
+	if( (targetTabWidth != rcTab.right - rcTab.left) || (tabRowHeight != rcTab.bottom - rcTab.top) ){
+		::MoveWindow( m_hwndTab, TAB_MARGIN_LEFT, TAB_MARGIN_TOP, targetTabWidth, tabRowHeight, TRUE );
 	}
 }
 
@@ -2753,10 +2749,13 @@ void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
 	const auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 	const auto palette = theme::CThemeService::EffectivePalette(mode);
-	const bool pressed = m_eCaptureSrc == CAPT_MARKDOWN_PREVIEW
-		&& ::GetCapture() == GetHwnd() && m_bMarkdownPreviewBtnHilighted;
-	if (pressed || m_bMarkdownPreviewBtnHilighted) {
-		::MyFillRect(gr, rcBtn, (pressed ? palette.border : palette.raised).ToColorRef());
+	const auto visualState = tabbar::ResolveDocumentTabActionVisualState(
+		m_bMarkdownPreviewBtnHilighted != FALSE,
+		m_eCaptureSrc == CAPT_MARKDOWN_PREVIEW, ::GetCapture() == GetHwnd());
+	if (visualState != tabbar::DocumentTabActionVisualState::Normal) {
+		::MyFillRect(gr, rcBtn,
+			(visualState == tabbar::DocumentTabActionVisualState::Pressed
+				? palette.border : palette.raised).ToColorRef());
 	}
 
 	const bool active = IsMarkdownPreviewActionActive();
@@ -2765,10 +2764,10 @@ void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
 	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
 	const int lineWidth = (std::max)(1, tabbar::ScaleDocumentTabDip(1, dpi));
 	const int insetX = tabbar::ScaleDocumentTabDip(2, dpi);
-	const auto iconBox = workbench::icons::CenteredIconBounds(
-		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
-		workbench::icons::kStatusIconDip, dpi);
-	workbench::icons::codicons::Draw(gr, iconBox,
+	const auto iconBox = tabbar::CalculateDocumentTabActionGlyphBounds(
+		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom }, dpi);
+	workbench::icons::codicons::Draw(gr,
+		{ iconBox.left, iconBox.top, iconBox.right, iconBox.bottom },
 		workbench::icons::codicons::Icon::OpenPreview, iconColor);
 	if (active) {
 		RECT indicator = rcBtn;
@@ -2828,23 +2827,12 @@ void CTabWnd::DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient )
 
 	DrawBtnBkgnd( gr, &rcBtn, m_bCloseBtnHilighted );
 
-	COLORREF clrBtn = GetBtnTextColor( m_bCloseBtnHilighted );
-	if( m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd &&
-		!m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin &&
-		!m_pShareData->m_Common.m_sTabBar.m_bTab_CloseOneWin			// 2007.02.13 ryoji 条件追加（ウィンドウの閉じるボタンは全部閉じる）
-		)
-	{
-		DrawCloseFigure( gr, rcBtn, clrBtn );
-	}
-	else
-	{
-		const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
-		const auto iconBox = workbench::icons::CenteredIconBounds(
-			{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
-			workbench::icons::kStatusIconDip, dpi);
-		workbench::icons::codicons::Draw(gr, iconBox,
-			workbench::icons::codicons::Icon::CloseAll, clrBtn);
-	}
+	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
+	const auto iconBox = workbench::icons::CenteredIconBounds(
+		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
+		workbench::icons::kStatusIconDip, dpi);
+	workbench::icons::codicons::Draw(gr, iconBox,
+		workbench::icons::codicons::Icon::CloseAll, GetBtnTextColor(m_bCloseBtnHilighted));
 }
 
 /*! タブを閉じるボタン描画処理
@@ -2918,15 +2906,62 @@ bool CTabWnd::IsMarkdownPreviewActionActive() const
 		&& editWnd->IsMarkdownPreviewVisible();
 }
 
+bool CTabWnd::IsCloseAllActionAvailable() const
+{
+	return !(m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd
+		&& !m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin
+		&& !m_pShareData->m_Common.m_sTabBar.m_bTab_CloseOneWin);
+}
+
+std::vector<std::wstring> CTabWnd::GetBreadcrumbSegments() const
+{
+	if (m_eTabPosition != TabPosition_Top) return {};
+	const auto* editWnd = GetEditWndPtr();
+	if (editWnd == nullptr || editWnd->GetHwnd() != GetParentHwnd()) return {};
+	return editWnd->BuildActiveDocumentBreadcrumbSegments();
+}
+
+int CTabWnd::GetBreadcrumbHeight( const std::vector<std::wstring>& segments ) const
+{
+	return segments.empty() ? 0 : BREADCRUMB_HEIGHT;
+}
+
+void CTabWnd::DrawBreadcrumbs(
+	CGraphics& gr, const RECT& rcClient, const std::vector<std::wstring>& segments ) const
+{
+	if (segments.empty() || m_nBreadcrumbHeight <= 0) return;
+	RECT row = rcClient;
+	row.top = (std::max)(row.top, row.bottom - m_nBreadcrumbHeight);
+	const auto mode = IsDarkModeActive() ? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette(mode);
+	::MyFillRect(gr, row, palette.canvas.ToColorRef());
+
+	std::wstring text;
+	for (const auto& segment : segments) {
+		if (!text.empty()) text += L"  ›  ";
+		text += segment;
+	}
+	row.left += DpiScaleX(8);
+	row.right -= DpiScaleX(8);
+	gr.SetTextBackTransparent(true);
+	gr.PushTextForeColor(palette.secondaryText.ToColorRef());
+	if (m_hFont != nullptr) gr.PushMyFont(m_hFont);
+	::DrawTextW(gr, text.c_str(), static_cast<int>(text.size()), &row,
+		DT_SINGLELINE | DT_LEFT | DT_VCENTER | DT_END_ELLIPSIS | DT_NOPREFIX);
+	if (m_hFont != nullptr) gr.PopMyFont();
+	gr.PopTextForeColor();
+}
+
 void CTabWnd::GetDocumentActionRects( const RECT& rcClient, RECT* preview, RECT* list,
 	RECT* close, int* tabControlRight ) const
 {
 	const HWND dpiWindow = GetHwnd() != nullptr ? GetHwnd() : GetParentHwnd();
 	const UINT dpi = dpiWindow == nullptr ? 96U : ::GetDpiForWindow(dpiWindow);
 	const int sizeBoxWidth = m_hwndSizeBox == nullptr ? 0 : ::GetSystemMetrics(SM_CXVSCROLL);
+	const int tabRowBottom = (std::min)(rcClient.bottom, rcClient.top + TAB_WINDOW_HEIGHT);
 	const auto layout = tabbar::CalculateDocumentTabActionLayout(
-		rcClient.left, rcClient.top, rcClient.right, rcClient.bottom, dpi,
-		IsMarkdownPreviewActionAvailable(), sizeBoxWidth);
+		rcClient.left, rcClient.top, rcClient.right, tabRowBottom, dpi,
+		IsMarkdownPreviewActionAvailable(), IsCloseAllActionAvailable(), sizeBoxWidth);
 	const auto copyRect = [](const tabbar::ActionRect& source, RECT* destination) {
 		if (destination != nullptr) {
 			*destination = { source.left, source.top, source.right, source.bottom };
@@ -2965,11 +3000,13 @@ void CTabWnd::GetCloseBtnRect( const LPRECT lprcClient, LPRECT lprc )
 */
 void CTabWnd::GetTabCloseBtnRect( const LPRECT lprcTab, LPRECT lprc, bool selected )
 {
-	*lprc = rcBtnBase;
-	DpiScaleRect(lprc);	// 2009.10.01 ryoji 高DPI対応スケーリング
-	::OffsetRect(lprc,
-		(lprcTab->right + (selected ? 0: -2)) - ((DpiScaleX(rcBtnBase.right) - DpiScaleX(rcBtnBase.left)) + DpiScaleX(2)),
-		(lprcTab->top + (selected ? -2: 0)) + DpiScaleY(2) );
+	UNREFERENCED_PARAMETER(selected);
+	const HWND dpiWindow = GetHwnd() != nullptr ? GetHwnd() : GetParentHwnd();
+	const UINT dpi = dpiWindow == nullptr ? 96U : ::GetDpiForWindow(dpiWindow);
+	const auto content = tabbar::CalculateDocumentTabContentLayout(
+		{ lprcTab->left, lprcTab->top, lprcTab->right, lprcTab->bottom },
+		dpi, m_pShareData->m_Common.m_sTabBar.m_bDispTabIcon != FALSE, true);
+	*lprc = { content.close.left, content.close.top, content.close.right, content.close.bottom };
 }
 
 /** タブ名取得処理

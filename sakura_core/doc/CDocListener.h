@@ -60,6 +60,13 @@ enum ECallbackResult{
 	CALLBACK_INTERRUPT,			//!< 中断
 };
 
+enum class ELoadWindowDisposition : unsigned char {
+	Default,
+	//! The caller owns an accepted in-place editor replacement transaction.
+	//! CLoadAgent must not redirect this load to a new editor process.
+	ReplaceCurrentEditor,
+};
+
 //###
 struct SLoadInfo
 {
@@ -72,6 +79,7 @@ struct SLoadInfo
 
 	//モード
 	bool		bRequestReload = false;	//リロード要求
+	ELoadWindowDisposition eWindowDisposition = ELoadWindowDisposition::Default;
 
 	//出力
 	bool		bOpened = false;
