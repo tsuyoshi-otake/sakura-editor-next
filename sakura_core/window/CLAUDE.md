@@ -42,6 +42,57 @@ backend whose service owner remains active.
   assertion cannot see this class of defect, because the layout is already
   correct when it happens.
 
+### What that repaint costs, and what does not make it cheaper (2026-08-05, #17)
+
+Measure this path by the editor and control processes' own CPU time across a
+whole gesture, drained to idle — never by the wall-clock time of the driving
+`SetWindowPos`/`SendMessage` call. Those calls block until the target has
+handled the message, so `RDW_UPDATENOW` pulls the paint *into* the call and
+removing it pushes the same paint into the message loop just after it returns.
+Per-call wall clock therefore measures when the paint happens, not how much
+paint happens, and it overstates the saving of any change that defers work.
+Absolute numbers also drift between sessions — the identical binary measured
+45.6 ms and 31.9 ms per bottom-Panel toggle hours apart — so only A/B pairs
+collected adjacently in one run are comparable.
+
+Two attribution results bound the search space. x64 Release and x64 Debug cost
+the same (10.286 ms versus 10.026 ms of CPU per resize step; 44.922 ms versus
+45.573 ms per Panel toggle), so `/O2` buys nothing here and the cost lives in
+GDI/USER32/DWM system work rather than in compiled C++. A bare top-level window
+driven through the identical resize loop costs 0.979 ms per step, so the roughly
+10 ms this window spends is our own painting, not a fixed OS charge. Hiding the
+Primary Side Bar left the resize step unchanged (10.417 ms) but cut the Panel
+toggle to 27.344 ms, which is what rasterization-dominated cost looks like: it
+scales with the painted area, not with the number of layout decisions.
+
+Two optimizations were implemented, measured, and rejected. Do not re-attempt
+either without new evidence.
+
+- **Gating the synchronous commit on changed geometry is a five-fold
+  pessimization.** Dropping `immediate ||` from the change test, so that the
+  `RDW_UPDATENOW` commit also requires the cached rectangles to differ, moved the
+  bottom-Panel toggle from 43–46 ms to 220–230 ms of CPU per toggle and the whole
+  24-toggle gesture from about 1.8 s to about 6.1 s, reproducibly across three
+  gated and two ungated runs. The resize gesture was unaffected because its
+  geometry always changes. One synchronous whole-frame paint is far cheaper than
+  the many fragmented asynchronous paints that replace it.
+- **Silencing per-child invalidation buys nothing.** Passing `FALSE` for
+  `bRepaint` at every `MoveWindow` in `OnSize2` and deleting the 2006-era
+  intermediate `UpdateWindow` calls for the status bar and function-key bar — on
+  the theory that the committed frame repaint already covers them — measured
+  33.203 ms per toggle and 9.375 ms per resize step against 31.901 ms and
+  8.333 ms for the committed code in the adjacent pair. That is no improvement,
+  and slightly worse inside the run-to-run drift.
+
+Conclusion: inside this GDI architecture the commit's cost is essentially the
+rasterization of the frame, and it cannot be reduced without shrinking the
+painted area — which is exactly what caused #17. Further gains require a
+different rendering architecture rather than a cheaper invalidation. Note that
+nothing in the application renders through the GPU today: the editor view
+composites with `CreateCompatibleDC`/`BitBlt`, and even
+`terminal/window/TerminalDWriteRenderer.cpp` binds Direct2D through
+`CreateDCRenderTarget` + `BindDC`, which rasterizes on the CPU into a GDI DC.
+
 ## Recovery and load projection
 
 - Native recovery content is not selection authority. After lifecycle commit,
