@@ -16,6 +16,7 @@ if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
 from sakura_build_lib import generator as build_generator
+from sakura_build_lib import test_inventory as test_inventory_module
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
 from sakura_build_lib.model import GENERATOR_VERSION, ManifestError, evaluate_condition, load_semantic_graph, normalize_condition
 from sakura_build_lib.runner import (
@@ -31,7 +32,9 @@ from sakura_build_lib.test_inventory import (
     compare_inventories,
     guarantee_fingerprint,
     parse_gtest_list,
+    refresh_runtime_mappings,
     validate_inventory,
+    verify_runtime_mappings,
 )
 
 
@@ -411,11 +414,12 @@ class ManifestTests(unittest.TestCase):
             consumer_msbuild = (root / "src/main/modules/generated/msbuild/projects/consumer.vcxproj").read_text(encoding="utf-8")
             provider_msbuild = (root / "src/main/modules/generated/msbuild/projects/provider.vcxproj").read_text(encoding="utf-8")
             self.assertIn("provider.vcxproj", consumer_msbuild)
-            self.assertNotIn("private-provider.vcxproj", consumer_msbuild)
+            self.assertIn("private-provider.vcxproj", consumer_msbuild)
             self.assertIn("private-provider.vcxproj", provider_msbuild)
             consumer_cmake = (root / "src/main/modules/generated/cmake/projects/cmake-ctx/consumer/CMakeLists.txt").read_text(encoding="utf-8")
             self.assertIn("target_link_libraries(consumer PUBLIC provider)", consumer_cmake)
             self.assertIn("target_link_libraries(provider PRIVATE private-provider)", consumer_cmake)
+            self.assertIn("target_link_libraries(consumer PRIVATE private-provider)", consumer_cmake)
             self.assertIn("add_library(private-provider STATIC", consumer_cmake)
             from sakura_build_lib.component_evidence import _expected_link_providers
             self.assertEqual({"provider.lib", "private-provider.lib"}, _expected_link_providers(graph, "consumer", "ctx"))
@@ -436,6 +440,24 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(1, len(references))
             self.assertEqual("provider.vcxproj", references[0].attrib["Include"])
             self.assertEqual("'$(Configuration)|$(Platform)'=='Debug|x64'", references[0].attrib["Condition"])
+
+    def test_system_libraries_are_declared_by_owner_and_projected_to_both_backends(self):
+        with RepositoryFixture() as (root, manifest):
+            value, profiles = generated_dual_backend_data(root)
+            value["components"][0]["system_libraries"] = ["advapi32"]
+            value["components"][1]["kind"] = "test"
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            (manifest.parent / "compile-profiles.json").write_text(json.dumps(profiles), encoding="utf-8")
+
+            graph = load_semantic_graph(root, manifest)
+            generate(graph)
+
+            consumer_msbuild = (root / "src/main/modules/generated/msbuild/projects/consumer.vcxproj").read_text(encoding="utf-8")
+            self.assertIn("advapi32.lib", consumer_msbuild)
+            provider_cmake = (root / "src/main/modules/generated/cmake/projects/cmake-ctx/provider/CMakeLists.txt").read_text(encoding="utf-8")
+            self.assertIn("target_link_libraries(provider PUBLIC advapi32)", provider_cmake)
+            consumer_cmake = (root / "src/main/modules/generated/cmake/projects/cmake-ctx/consumer/CMakeLists.txt").read_text(encoding="utf-8")
+            self.assertIn("target_link_libraries(consumer PUBLIC provider)", consumer_cmake)
 
     def test_rejects_duplicate_msbuild_physical_context_key(self):
         with RepositoryFixture() as (root, manifest):
@@ -587,6 +609,55 @@ class ManifestTests(unittest.TestCase):
             self.assertIn("/Zp8", cmake)
             self.assertIn("/FI${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/cmake-ctx/consumer.h", cmake)
 
+    def test_legacy_consumer_projection_replaces_embedded_source_and_rolls_back(self):
+        with RepositoryFixture() as (root, manifest):
+            value, profiles = generated_dual_backend_data(root)
+            consumer = next(item for item in value["components"] if item["id"] == "consumer")
+            consumer["build_definition"] = "legacy"
+            consumer["compile_profile"] = "project-compile"
+            consumer["backend_targets"] = {"msbuild": ["consumer.vcxproj"], "cmake": ["consumer"]}
+            (root / "consumer.vcxproj").write_text(
+                '<?xml version="1.0" encoding="utf-8"?>\n'
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemGroup><ClCompile Include="provider\\provider.cpp" /></ItemGroup>\n'
+                '</Project>\n',
+                encoding="utf-8",
+            )
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            (manifest.parent / "compile-profiles.json").write_text(json.dumps(profiles), encoding="utf-8")
+            graph = load_semantic_graph(root, manifest)
+            generate(graph)
+
+            props_path = root / "src/main/modules/generated/msbuild/consumers/consumer.props"
+            props = props_path.read_text(encoding="utf-8")
+            self.assertIn('<ClCompile Remove="provider\\provider.cpp"', props)
+            self.assertIn("generated\\msbuild\\projects\\provider.vcxproj", props)
+            self.assertIn("generated\\abi\\ctx\\consumer.h", props)
+            self.assertIn("<SetConfiguration", props)
+            self.assertIn(">Configuration=Debug</SetConfiguration>", props)
+            self.assertIn("<SetPlatform", props)
+            self.assertIn(">Platform=x64</SetPlatform>", props)
+
+            ownership_path = root / "src/main/modules/generated/cmake/legacy/source-ownership.cmake"
+            ownership = ownership_path.read_text(encoding="utf-8")
+            self.assertIn('list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/provider/provider.cpp")', ownership)
+            self.assertIn("add_library(provider STATIC", ownership)
+            consumer_cmake_path = root / "src/main/modules/generated/cmake/legacy/consumers/consumer.cmake"
+            consumer_cmake = consumer_cmake_path.read_text(encoding="utf-8")
+            self.assertIn('target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE provider)', consumer_cmake)
+            self.assertIn("generated/abi/cmake-ctx/consumer.h", consumer_cmake)
+            self.assertNotIn("execution-charset", consumer_cmake)
+            self.assertEqual([], stale_component_outputs(graph, "consumer", "ctx"))
+            self.assertEqual([], stale_component_outputs(graph, "consumer", "cmake-ctx"))
+
+            value["edges"] = []
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+            rollback_graph = load_semantic_graph(root, manifest)
+            generate(rollback_graph)
+            self.assertFalse(props_path.exists())
+            self.assertFalse(consumer_cmake_path.exists())
+            self.assertFalse(ownership_path.exists())
+
     def test_component_stale_check_is_backend_and_root_scoped(self):
         with RepositoryFixture() as (root, manifest):
             value, profiles = generated_dual_backend_data(root)
@@ -727,6 +798,28 @@ class RunnerTests(unittest.TestCase):
                 self.assertEqual(1, len(no_op))
                 self.assertEqual("--build", no_op[0][1])
 
+                forced_build_only = cmake_component_commands(
+                    root,
+                    "leaf",
+                    "ctx",
+                    "Debug",
+                    "msvc",
+                    1,
+                    configure_if_needed=False,
+                )
+                self.assertEqual(1, len(forced_build_only))
+                self.assertEqual("--build", forced_build_only[0][1])
+
+                compiler = build / "CMakeFiles/3.31.6-msvc6"
+                compiler.mkdir(parents=True)
+                (compiler / "CMakeCXXCompiler.cmake").write_text(
+                    'set(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX "繝｡繝｢: 繧､繝ｳ繧ｯ繝ｫ繝ｼ繝・繝輔ぃ繧､繫:  ")\n',
+                    encoding="utf-8",
+                )
+                stale_prefix = cmake_component_commands(root, "leaf", "ctx", "Debug", "msvc", 1)
+                self.assertEqual(2, len(stale_prefix))
+                self.assertEqual("-S", stale_prefix[0][1])
+
                 moved = source.with_name("moved")
                 moved.mkdir()
                 (moved / "CMakeLists.txt").touch()
@@ -766,6 +859,7 @@ class RunnerTests(unittest.TestCase):
                 self.assertNotIn(name.lower(), child_environment)
             self.assertEqual("toolchain-path", child_environment["PATH"])
             self.assertEqual("17.0", child_environment["VSCMD_VER"])
+            self.assertEqual("1033", child_environment["VSLANG"])
             self.assertEqual("1", child_environment["MSBUILDDISABLENODEREUSE"])
 
     def test_legacy_and_full_cmake_environment_keeps_discovery_inputs(self):
@@ -808,6 +902,110 @@ class RunnerTests(unittest.TestCase):
 
 
 class TestInventoryTests(unittest.TestCase):
+    def test_runtime_verification_requires_exact_selectors_across_split_runners(self):
+        tests = parse_gtest_list("Suite.\n  Legacy\n  Leaf\n", "tests1")
+        next(item for item in tests if item["runtime"]["selector"] == "Suite.Leaf")["runtime"] = {
+            "runner_id": "leaf-tests",
+            "selector": "Suite.Leaf",
+        }
+        inventory = {
+            "schema_version": 1,
+            "inventory_id": "split",
+            "source_revision": "a",
+            "source_dirty": True,
+            "discovery": {"framework": "googletest", "executable": "old.exe", "arguments": ["--gtest_list_tests"], "executable_sha256": "0" * 64},
+            "test_count": 2,
+            "disabled_count": 0,
+            "guarantee_fingerprint": guarantee_fingerprint(tests),
+            "tests": tests,
+        }
+
+        def discovered(_path, runner_id, *_args):
+            selector = "Suite.Legacy" if runner_id == "tests1" else "Suite.Leaf"
+            runtime_tests = [{"test_id": f"tests1:{selector}", "runtime": {"runner_id": runner_id, "selector": selector}, "status": "enabled"}]
+            return {"tests": runtime_tests}
+
+        with patch.object(test_inventory_module, "collect_gtest_inventory", side_effect=discovered):
+            result = verify_runtime_mappings(
+                inventory,
+                {"tests1": Path("tests1.exe"), "leaf-tests": Path("leaf.exe")},
+                Path.cwd(),
+                1,
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(2, result["test_count"])
+
+    def test_runtime_verification_reports_missing_and_unexpected_selectors(self):
+        tests = parse_gtest_list("Suite.\n  Expected\n", "leaf-tests")
+        inventory = {
+            "schema_version": 1,
+            "inventory_id": "split",
+            "source_revision": "a",
+            "source_dirty": True,
+            "discovery": {"framework": "googletest", "executable": "old.exe", "arguments": ["--gtest_list_tests"], "executable_sha256": "0" * 64},
+            "test_count": 1,
+            "disabled_count": 0,
+            "guarantee_fingerprint": guarantee_fingerprint(tests),
+            "tests": tests,
+        }
+        runtime_tests = [{
+            "test_id": "tests1:Suite.Unexpected",
+            "runtime": {"runner_id": "leaf-tests", "selector": "Suite.Unexpected"},
+            "status": "enabled",
+        }]
+
+        with patch.object(test_inventory_module, "collect_gtest_inventory", return_value={"tests": runtime_tests}):
+            result = verify_runtime_mappings(
+                inventory,
+                {"leaf-tests": Path("leaf.exe")},
+                Path.cwd(),
+                1,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(["Suite.Expected"], result["runners"][0]["missing_selectors"])
+        self.assertEqual(["Suite.Unexpected"], result["runners"][0]["unexpected_selectors"])
+
+    def test_runtime_refresh_preserves_ids_requires_remap_and_adds_guarantees(self):
+        old_tests = parse_gtest_list("Suite.\n  RenamedOld\n", "tests1")
+        inventory = {
+            "schema_version": 1,
+            "inventory_id": "split",
+            "source_revision": "a",
+            "source_dirty": False,
+            "discovery": {"framework": "googletest", "executable": "old.exe", "arguments": ["--gtest_list_tests"], "executable_sha256": "0" * 64},
+            "test_count": 1,
+            "disabled_count": 0,
+            "guarantee_fingerprint": guarantee_fingerprint(old_tests),
+            "tests": old_tests,
+        }
+        current_tests = parse_gtest_list("Suite.\n  RenamedNew\n  Added\n", "leaf-tests")
+        current = {
+            "discovery": {"executable": "leaf.exe", "executable_sha256": "1" * 64},
+            "tests": current_tests,
+        }
+        runners = {"leaf-tests": Path("leaf.exe")}
+
+        with patch.object(test_inventory_module, "collect_gtest_inventory", return_value=current):
+            with self.assertRaisesRegex(TestInventoryError, "disappeared without explicit remap"):
+                refresh_runtime_mappings(inventory, runners, {}, Path.cwd(), "b", True, 1)
+            refreshed, report = refresh_runtime_mappings(
+                inventory,
+                runners,
+                {"tests1:Suite.RenamedOld": ("leaf-tests", "Suite.RenamedNew")},
+                Path.cwd(),
+                "b",
+                True,
+                1,
+            )
+
+        remapped = next(item for item in refreshed["tests"] if item["test_id"] == "tests1:Suite.RenamedOld")
+        self.assertEqual("Suite.RenamedNew", remapped["runtime"]["selector"])
+        self.assertIn("leaf-tests:Suite.Added", {item["test_id"] for item in refreshed["tests"]})
+        self.assertEqual(1, len(report["runtime_remaps"]))
+        self.assertEqual(1, len(report["additions"]))
+
     def test_import_separates_stable_id_from_runtime_selector(self):
         tests = parse_gtest_list(
             "Running main() from repo\\code-main.cpp\n"

@@ -77,7 +77,8 @@
         "private_include_roots": {"$ref": "#/$defs/stringArray"},
         "state_owner": {"type": ["string", "null"]},
         "backend_targets": {"type": "object", "additionalProperties": false, "properties": {"msbuild": {"$ref": "#/$defs/stringArray"}, "cmake": {"$ref": "#/$defs/stringArray"}}},
-        "compile_profile": {"type": ["string", "null"]}
+        "compile_profile": {"type": ["string", "null"]},
+        "system_libraries": {"$ref": "#/$defs/stringArray"}
       }
     },
     "contractDecision": {

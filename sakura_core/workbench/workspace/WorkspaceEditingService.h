@@ -8,8 +8,8 @@
 #pragma once
 
 #include "config/editing/CJsoncConfigurationEditor.h"
-#include "platform/filesystem/IFileService.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/filesystem/IFileService.h>
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 #include "workbench/workspace/WorkspaceFolderLimits.h"
 

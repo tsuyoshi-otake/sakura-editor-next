@@ -99,7 +99,10 @@ substitute.
   same operation ID; Apply never starts hidden bootstrap or retry work.
 - `CControlPlatformRuntime` binds authority acquisition, durable storage open,
   and host startup into one typed lifecycle and rolls back in exact reverse
-  order. `CControlProcess` now owns that runtime and publishes the legacy
+  order. The Control RPC adapters and service host borrow an already-open
+  `IStorageAuthority`; only the runtime owns `Open`/`Close`, and it closes the
+  authority after host shutdown and active-frame drain. The synchronous RPC
+  session consumes the narrower base `IStorageService` contract only. `CControlProcess` now owns that runtime and publishes the legacy
   control-ready handoff only after the endpoint is `Accepting`.
 - `CEditorControlPlatformRuntime` freezes the first trusted endpoint identity,
   owns one discovery reader/client/synchronized cache and exactly one retry
@@ -175,3 +178,23 @@ and runtime tests passing.
 - Secret values and capability bytes never enter endpoint metadata, storage
   snapshots, diagnostics, normal logs, or change events. `SecretStorage.keys()`
   is rejected in the host API and is not part of this wire protocol.
+
+## Phase 0 Protocol Leaf Checkpoint (2026-08-05)
+
+The versioned byte framing/field codec is now a separately owned leaf:
+`sakura_controlipc_protocol`. Its public contract is
+`sakura_core/include/sakura/controlipc/ControlIpcProtocol.h`; transport, RPC,
+security, endpoint discovery, and process composition remain private consumers
+and must include the public contract rather than a sibling private header. The
+protocol leaf has no UI, resource bundle, language DLL, package, or process
+runtime dependency. `sakura_controlipc_protocol_tests` is a package/resource-less
+contract runner and is the only owner of the v1 golden fixture at
+`tools/build/fixtures/controlipc/protocol-v1.json`.
+
+The fixture pins the producer, consumer set, major/minor version, exact Hello
+request bytes, and terminal CancelAck bytes. The runner covers fragmented and
+coalesced stream decoding, forward-compatible minor fields, UTF-8/bounds,
+direction rejection, and sticky decode failure with explicit reset. The fixture
+and runner are compatibility evidence only; they do not authorize changing
+Control IPC wire shape, endpoint generation/profile identity, or persistence
+keys without a versioned contract decision and golden migration plan.

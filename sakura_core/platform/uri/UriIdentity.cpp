@@ -5,7 +5,8 @@
 	SPDX-License-Identifier: Zlib
 */
 
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
+#include "UriIdentityInternal.h"
 
 #include <algorithm>
 #include <cwctype>
@@ -13,27 +14,10 @@
 namespace platform::uri {
 namespace {
 
-constexpr wchar_t kSeparator = L'\x1f';
-
-bool IsAsciiAlpha(wchar_t value) noexcept
-{
-	return (value >= L'a' && value <= L'z') || (value >= L'A' && value <= L'Z');
-}
-
-bool IsAsciiDigit(wchar_t value) noexcept
-{
-	return value >= L'0' && value <= L'9';
-}
-
-bool IsSchemeCharacter(wchar_t value) noexcept
-{
-	return IsAsciiAlpha(value) || IsAsciiDigit(value) || value == L'+' || value == L'-' || value == L'.';
-}
-
-bool IsUnreserved(wchar_t value) noexcept
-{
-	return IsAsciiAlpha(value) || IsAsciiDigit(value) || value == L'-' || value == L'.' || value == L'_' || value == L'~';
-}
+using internal::IsAsciiAlpha;
+using internal::IsSchemeCharacter;
+using internal::IsUnreserved;
+using internal::ToLowerAscii;
 
 bool IsSubDelimiter(wchar_t value) noexcept
 {
@@ -44,11 +28,6 @@ bool IsSubDelimiter(wchar_t value) noexcept
 	default:
 		return false;
 	}
-}
-
-wchar_t ToLowerAscii(wchar_t value) noexcept
-{
-	return value >= L'A' && value <= L'Z' ? static_cast<wchar_t>(value - L'A' + L'a') : value;
 }
 
 std::wstring ToLowerInvariant(std::wstring_view value)
@@ -346,7 +325,7 @@ void AppendKeyPart(std::wstring& key, std::wstring_view value)
 	key.append(std::to_wstring(value.size()));
 	key.push_back(L':');
 	key.append(value);
-	key.push_back(kSeparator);
+	key.push_back(internal::kComparisonKeySeparator);
 }
 
 } // namespace
@@ -571,16 +550,16 @@ std::wstring UriIdentityService::MakeComparisonKey(const Uri& uri, ENonFileUriCa
 	// address the same local resource.  Preserve authority syntax for non-file
 	// schemes while canonicalizing these local file aliases.
 	key.push_back(isFile ? L'1' : (uri.HasAuthority() ? L'1' : L'0'));
-	key.push_back(kSeparator);
+	key.push_back(internal::kComparisonKeySeparator);
 	AppendKeyPart(key, isLocalFileAuthority ? std::wstring{}
 		: ((isFile || foldAll) ? ToLowerInvariant(uri.Authority()) : uri.Authority()));
 	AppendKeyPart(key, (isFile || foldAll) ? ToLowerInvariant(uri.Path()) : uri.Path());
 	key.push_back(uri.Query().has_value() ? L'1' : L'0');
-	key.push_back(kSeparator);
+	key.push_back(internal::kComparisonKeySeparator);
 	const std::wstring query = uri.Query() ? *uri.Query() : std::wstring{};
 	AppendKeyPart(key, foldAll ? ToLowerInvariant(query) : query);
 	key.push_back(uri.Fragment().has_value() ? L'1' : L'0');
-	key.push_back(kSeparator);
+	key.push_back(internal::kComparisonKeySeparator);
 	const std::wstring fragment = uri.Fragment() ? *uri.Fragment() : std::wstring{};
 	AppendKeyPart(key, foldAll ? ToLowerInvariant(fragment) : fragment);
 	return key;

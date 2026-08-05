@@ -11,7 +11,7 @@
 #include "platform/profiles/ProfileAuthorityIdentity.h"
 
 #if defined(_WIN32)
-#include "platform/security/CurrentUserSecurityAttributes.h"
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 
 #include <Aclapi.h>
 #include <bcrypt.h>

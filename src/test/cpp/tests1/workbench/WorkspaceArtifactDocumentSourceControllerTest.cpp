@@ -9,7 +9,7 @@
 
 #include "workbench/workspace/WorkspaceArtifactDocumentSourceController.h"
 
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 
 #include <atomic>
 #include <chrono>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -11,10 +12,73 @@ TOOLS_BUILD = Path(__file__).resolve().parents[1]
 if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
-from sakura_build_lib.path_matrix import _run_child  # noqa: E402
+from sakura_build_lib.path_matrix import _MATRIX_FILES, _copy_minimal_repository, _run_child  # noqa: E402
 
 
 class PathMatrixChildTests(unittest.TestCase):
+    def test_minimal_repository_copy_includes_private_component_headers(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            destination = root / "destination"
+            for relative_text in _MATRIX_FILES:
+                path = source / relative_text
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative_text, encoding="utf-8")
+
+            private_header = Path("component/private.h")
+            witness = Path("consumer/witness.cpp")
+            legacy_project = Path("component/provider.vcxproj")
+            for relative in (private_header, witness, legacy_project):
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative.as_posix(), encoding="utf-8")
+            (source / "legacy-owner").mkdir(parents=True)
+            manifest = {
+                "components": [{
+                    "sources": ["legacy-owner"],
+                    "public_headers": [],
+                    "private_headers": [private_header.as_posix()],
+                    "backend_targets": {"msbuild": [legacy_project.as_posix()]},
+                }],
+                "edges": [{"witnesses": [{"probe": witness.as_posix()}]}],
+                "artifacts": [],
+            }
+            (source / "src/main/modules/modules.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            _copy_minimal_repository(source, destination)
+
+            self.assertEqual(private_header.as_posix(), (destination / private_header).read_text(encoding="utf-8"))
+            self.assertEqual(witness.as_posix(), (destination / witness).read_text(encoding="utf-8"))
+            self.assertEqual(legacy_project.as_posix(), (destination / legacy_project).read_text(encoding="utf-8"))
+            self.assertTrue((destination / "legacy-owner").is_dir())
+
+    def test_minimal_repository_copy_rejects_a_missing_manifest_source(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source"
+            destination = root / "destination"
+            for relative_text in _MATRIX_FILES:
+                path = source / relative_text
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(relative_text, encoding="utf-8")
+            manifest = {
+                "components": [{
+                    "sources": ["component/missing.cpp"],
+                    "public_headers": [],
+                    "private_headers": [],
+                    "backend_targets": {},
+                }],
+                "edges": [],
+                "artifacts": [],
+            }
+            (source / "src/main/modules/modules.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+            with self.assertRaisesRegex(FileNotFoundError, r"components\[0\]\.sources\[0\]"):
+                _copy_minimal_repository(source, destination)
+
+            self.assertFalse((destination / "component/missing.cpp").exists())
+
     def test_child_terminal_states_are_explicit(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             cwd = Path(temporary)

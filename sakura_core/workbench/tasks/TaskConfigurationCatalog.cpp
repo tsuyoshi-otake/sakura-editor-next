@@ -9,7 +9,7 @@
 
 #include "workbench/tasks/TaskConfigurationCatalog.h"
 
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <algorithm>
 #include <set>

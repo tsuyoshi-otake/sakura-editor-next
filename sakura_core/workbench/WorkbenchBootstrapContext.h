@@ -12,7 +12,7 @@
 #include "config/WorkspaceContextTypes.h"
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <cstdint>
 #include <optional>

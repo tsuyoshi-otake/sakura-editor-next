@@ -8,7 +8,7 @@
 
 #include "workbench/editor/persistence/WorkingCopyPersistenceCodec.h"
 
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 
 #include <picojson/picojson.h>
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -101,6 +102,32 @@ def _native_fixture(root: Path):
 
 
 class ProductNativeEvidenceTests(unittest.TestCase):
+    def test_declared_intdir_selects_product_tlogs_over_release_variants(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, tlog = _native_fixture(Path(temporary))
+            project = graph.repo_root / "app.vcxproj"
+            project.write_text(
+                project.read_text(encoding="utf-8").replace(
+                    "  <ItemGroup>\n",
+                    "  <PropertyGroup><IntDir>build\\$(Platform)\\$(Configuration)\\app\\</IntDir></PropertyGroup>\n"
+                    "  <ItemGroup>\n",
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            shutil.copytree(tlog, graph.repo_root / "build/x64/Debug/app-avx2/app.tlog")
+
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+
+            tracker_inputs = evidence["freshness"]["tracker_inputs"]
+            self.assertTrue(tracker_inputs)
+            self.assertTrue(all("app-avx2" not in value for value in tracker_inputs))
+
     def test_diagnostic_targets_distinguish_execution_from_localized_skips_and_correlate_exact_output(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph, _tlog = _native_fixture(Path(temporary))
@@ -300,6 +327,83 @@ class ProductNativeEvidenceTests(unittest.TestCase):
         codes = {item["code"] for item in inventory["findings"]}
         self.assertNotIn("NATIVE_PRODUCT_EVIDENCE_NOT_PROVIDED", codes)
         self.assertIn("NATIVE_PRODUCT_LINK_CLOSURE_UNOBSERVED", codes)
+
+    def test_link_map_proves_selected_provider_archive_member_and_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph, tlog = _native_fixture(Path(temporary))
+            output_dir = graph.repo_root / "build/x64/Debug/app"
+            executable = graph.repo_root / "x64/Debug/app.exe"
+            provider_library = graph.repo_root / "build/components/provider.lib"
+            provider_library.parent.mkdir(parents=True, exist_ok=True)
+            provider_library.write_bytes(b"provider-library")
+            _write_tlog(
+                tlog / "link.command.1.tlog",
+                [
+                    f"^{output_dir / 'main.obj'}|{output_dir / 'app.res'}|{provider_library}",
+                    f'/OUT:"{executable}" /MAP KERNEL32.LIB',
+                ],
+            )
+            _write_tlog(
+                tlog / "link.read.1.tlog",
+                [
+                    f"^{output_dir / 'main.obj'}|{output_dir / 'app.res'}|{provider_library}",
+                    str(provider_library),
+                    r"C:\SDK\lib\kernel32.lib",
+                ],
+            )
+            _write(
+                executable.with_suffix(".map"),
+                " 0001:00000000 direct 00000000 f main.obj\n"
+                " 0001:00000010 provider 00000010 f provider:provider.obj\n",
+            )
+
+            evidence = collect_product_native_evidence(
+                graph,
+                "product",
+                "msvc-x64-debug",
+                build_observed=True,
+            )
+            evidence_path = graph.repo_root / "build/evidence/native-product.json"
+            write_product_native_evidence(evidence_path, evidence)
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+                native_evidence_path=evidence_path,
+            )
+
+            self.assertTrue(evidence["link"]["selected_archive_members_observed"])
+            self.assertNotIn(
+                "repo:build/components/provider.lib",
+                evidence["link"]["command_libraries"],
+            )
+            self.assertIn(
+                "build/components/provider.lib",
+                evidence["link"]["repository_libraries"],
+            )
+            self.assertEqual(
+                ["provider.obj"],
+                evidence["link"]["selected_archive_member_evidence"]["members"],
+            )
+            self.assertTrue(inventory["product_link_provenance"]["native_product_link_closure_observed"])
+            edge = inventory["native_product_observation"]["consumer_provider_edges"][0]
+            self.assertEqual("provider", edge["provider"])
+            self.assertEqual("provider.obj", edge["witnesses"][0]["archive_member"])
+
+            executable.with_suffix(".map").write_text("changed\n", encoding="utf-8")
+            validation = validate_product_native_evidence(
+                graph,
+                evidence_path,
+                "product",
+                "msvc-x64-debug",
+            )
+
+        self.assertFalse(validation["valid"])
+        self.assertIn(
+            "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED",
+            {item["code"] for item in validation["failures"]},
+        )
 
     def test_changed_source_input_makes_evidence_stale(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

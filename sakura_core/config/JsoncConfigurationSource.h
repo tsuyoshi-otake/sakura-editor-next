@@ -8,7 +8,7 @@
 #pragma once
 
 #include "config/IConfigurationService.h"
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 
 #include <cstddef>
 #include <cstdint>

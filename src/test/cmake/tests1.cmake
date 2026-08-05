@@ -211,6 +211,15 @@ target_link_libraries(tests1
     GTest::gmock
 )
 
+set(SAKURA_LEGACY_CONSUMER_COMPILE_TARGET tests1)
+set(SAKURA_LEGACY_CONSUMER_LINK_TARGET tests1)
+include(
+  "${CMAKE_SOURCE_DIR}/src/main/modules/generated/cmake/legacy/consumers/tests1.cmake"
+  OPTIONAL
+)
+unset(SAKURA_LEGACY_CONSUMER_COMPILE_TARGET)
+unset(SAKURA_LEGACY_CONSUMER_LINK_TARGET)
+
 if(WIN32)
   target_link_libraries(tests1
     PRIVATE

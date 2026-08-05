@@ -83,6 +83,15 @@ target_link_libraries(${PROJECT_NAME}
     sakura_core
 )
 
+set(SAKURA_LEGACY_CONSUMER_COMPILE_TARGET sakura_core)
+set(SAKURA_LEGACY_CONSUMER_LINK_TARGET ${PROJECT_NAME})
+include(
+  "${CMAKE_SOURCE_DIR}/src/main/modules/generated/cmake/legacy/consumers/sakura_app.cmake"
+  OPTIONAL
+)
+unset(SAKURA_LEGACY_CONSUMER_COMPILE_TARGET)
+unset(SAKURA_LEGACY_CONSUMER_LINK_TARGET)
+
 add_custom_command(TARGET ${PROJECT_NAME} PRE_LINK
   COMMAND ${CMAKE_COMMAND} -E remove -f $<TARGET_FILE:${PROJECT_NAME}>
 )

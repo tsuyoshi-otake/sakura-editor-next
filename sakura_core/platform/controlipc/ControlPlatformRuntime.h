@@ -16,7 +16,8 @@
 #include "platform/secrets/ISecretVaultExtensionGrantAuthority.h"
 #include "platform/secrets/ISecretVaultLegacyMigrationCoordinator.h"
 #include "platform/secrets/ISecretVaultService.h"
-#include "platform/storage/CAtomicFileStorageService.h"
+
+#include <sakura/storage/IStorageAuthority.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -85,7 +86,7 @@ struct ControlPlatformRuntimeOptions {
 	std::filesystem::path profileDirectory;
 	std::filesystem::path storageDirectory;
 	std::wstring legacyProfileAlias;
-	std::size_t maximumCompletedOperations = storage::CAtomicFileStorageService::kMaximumCompletedOperations;
+	std::size_t maximumCompletedOperations = storage::kMaximumStorageCompletedOperations;
 	ControlIpcNamedPipeOptions pipeOptions;
 };
 
@@ -147,7 +148,10 @@ struct ControlPlatformRuntimeCapabilityCreateResult {
 //! an engaged value must contain both factories.
 struct ControlPlatformRuntimeDependencies {
 	std::shared_ptr<profiles::IProfileAuthorityStoreBackend> profileAuthorityBackend;
-	std::shared_ptr<storage::IAtomicFileStorageFileOperations> storageFileOperations;
+	//! Control composition supplies the concrete authority. The default factory is
+	//! bound by the Control process and is the only route that knows durable I/O.
+	std::function<std::shared_ptr<storage::IStorageAuthority>(
+		const std::filesystem::path&, std::uint64_t, std::size_t)> storageFactory;
 	std::function<ControlPlatformRuntimeVaultCreateResult(const std::filesystem::path&, std::string)> vaultFactory;
 	//! Test seam only. Production constructs a CSecretVaultLegacyMigrationCoordinator
 	//! over the concrete DPAPI vault and this profile's legacy extensionData\\secrets root.
@@ -168,7 +172,7 @@ struct ControlPlatformRuntimeResult {
 	EControlPlatformRuntimeResultCode code = EControlPlatformRuntimeResultCode::UnexpectedFailure;
 	EControlPlatformRuntimeState state = EControlPlatformRuntimeState::Stopped;
 	std::optional<profiles::ProfileAuthorityResult> authorityResult;
-	std::optional<storage::AtomicFileStorageOpenResult> storageOpenResult;
+	std::optional<storage::StorageAuthorityOpenResult> storageOpenResult;
 	std::optional<ControlPlatformRuntimeVaultCreateResult> vaultCreateResult;
 	std::optional<ControlPlatformRuntimeMigrationCreateResult> migrationCreateResult;
 	std::optional<ControlPlatformRuntimeCapabilityCreateResult> capabilityCreateResult;
@@ -219,7 +223,7 @@ private:
 	[[nodiscard]] bool HasValidOptions(std::wstring& diagnostic) const;
 	[[nodiscard]] ControlPlatformRuntimeResult Result(EControlPlatformRuntimeResultCode code,
 		std::optional<profiles::ProfileAuthorityResult> authorityResult = std::nullopt,
-		std::optional<storage::AtomicFileStorageOpenResult> storageOpenResult = std::nullopt,
+		std::optional<storage::StorageAuthorityOpenResult> storageOpenResult = std::nullopt,
 		std::optional<ControlPlatformRuntimeVaultCreateResult> vaultCreateResult = std::nullopt,
 		std::optional<ControlPlatformRuntimeCapabilityCreateResult> capabilityCreateResult = std::nullopt,
 		std::optional<ControlPlatformServiceHostResult> hostResult = std::nullopt,
@@ -233,7 +237,7 @@ private:
 	mutable std::mutex m_mutex;
 	EControlPlatformRuntimeState m_state = EControlPlatformRuntimeState::Stopped;
 	std::optional<ControlPlatformRuntimeIdentity> m_identity;
-	std::shared_ptr<storage::CAtomicFileStorageService> m_storage;
+	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profileRegistry;
 	std::string m_profileRegistryShutdownOperationId;
 	std::shared_ptr<secrets::ISecretVaultService> m_vault;

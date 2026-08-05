@@ -15,6 +15,7 @@ import os
 import re
 import subprocess
 import uuid
+import xml.etree.ElementTree as ET
 from collections import defaultdict
 from pathlib import Path
 from typing import Mapping, Sequence
@@ -23,7 +24,7 @@ from .model import SemanticGraph
 from .runner import BuildError, EventWriter, msbuild_command
 
 
-EVIDENCE_SCHEMA_VERSION = 2
+EVIDENCE_SCHEMA_VERSION = 3
 _OUTPUT_ROOTS = frozenset({"build", "x64", "win32", "mingw"})
 _PATH_INPUT_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".inc", ".rc", ".rc2", ".obj", ".res", ".lib", ".natvis", ".manifest"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".inc"})
@@ -406,6 +407,48 @@ def _link_output(command: str, project_dir: Path) -> Path | None:
     return _resolve_path(project_dir, match.group(1) or match.group(2)) if match else None
 
 
+def _link_map_output(command: str, project_dir: Path, output: Path) -> Path | None:
+    explicit = re.search(r'(?i)(?:^|\s)/MAP:(?:"([^"]+)"|(\S+))', command)
+    if explicit:
+        return _resolve_path(project_dir, explicit.group(1) or explicit.group(2))
+    if re.search(r'(?i)(?:^|\s)/MAP(?:\s|$)', command):
+        return output.with_suffix(".map")
+    return None
+
+
+def _selected_archive_members_from_map(
+    map_path: Path,
+    direct_object_inputs: Sequence[str],
+) -> list[str]:
+    """Return MAP object contributors that were not direct linker inputs.
+
+    MSVC MAP rows name the contributing object at the end of each symbol row.
+    Comparing those names with the exact link tracker inputs distinguishes an
+    archive member from a directly supplied object without relying on linker
+    stdout localization.
+    """
+
+    direct_names = {Path(value).name.casefold() for value in direct_object_inputs}
+    selected: set[str] = set()
+    try:
+        with map_path.open("r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                match = re.search(r'(?i)([^\s]+\.obj)\s*$', line)
+                if not match:
+                    continue
+                token = match.group(1).replace("\\", "/")
+                # MSVC can render an archive contributor as either
+                # ``archive.lib:member.obj`` or ``target:member.obj``.
+                # A drive-qualified direct path is safe here as Path still
+                # reduces the suffix to the final basename.
+                member = Path(token.rsplit(":", 1)[-1]).name
+                if member.casefold() not in direct_names:
+                    selected.add(member)
+    except OSError as error:
+        raise BuildError("NATIVE_PRODUCT_MAP_READ", f"could not read {map_path}: {error}", 5) from error
+    return sorted(selected, key=str.casefold)
+
+
 def _collect_link_record(
     repo_root: Path,
     project_dir: Path,
@@ -440,6 +483,15 @@ def _collect_link_record(
     object_inputs = sorted(value for value in repo_inputs if Path(value).suffix.lower() == ".obj")
     resource_inputs = sorted(value for value in repo_inputs if Path(value).suffix.lower() == ".res")
     repository_libraries = sorted(value for value in repo_inputs if Path(value).suffix.lower() == ".lib")
+    map_path = _link_map_output(command, project_dir, output)
+    map_relative: str | None = None
+    map_hash: str | None = None
+    selected_members: list[str] = []
+    map_observed = map_path is not None and map_path.is_file()
+    if map_observed and map_path is not None:
+        map_relative = _repo_relative(repo_root, map_path)
+        map_hash = _sha256_file(map_path, "NATIVE_PRODUCT_MAP_HASH")
+        selected_members = _selected_archive_members_from_map(map_path, object_inputs)
     return ({
         "output": output_relative,
         "product_hash": _sha256_file(output, "NATIVE_PRODUCT_OUTPUT_HASH"),
@@ -451,9 +503,42 @@ def _collect_link_record(
         "external_input_count": external_input_count,
         "command_libraries": _command_libraries(command, repo_root, project_dir),
         "input_set_observed": bool(raw_inputs),
-        "selected_archive_members_observed": False,
-        "selected_archive_member_evidence": None,
+        "selected_archive_members_observed": map_observed,
+        "selected_archive_member_evidence": {
+            "method": "msvc_map_minus_direct_link_inputs",
+            "map": map_relative,
+            "map_hash": map_hash,
+            "members": selected_members,
+            "member_count": len(selected_members),
+        } if map_observed else None,
     }, repo_inputs)
+
+
+def _declared_tlog_roots(project: Path, platform: str, configuration: str) -> tuple[Path, ...]:
+    """Resolve literal MSBuild IntDir declarations before considering sibling variants."""
+    try:
+        root = ET.parse(project).getroot()
+    except (ET.ParseError, OSError):
+        return ()
+
+    replacements = {
+        "$(Platform)": platform,
+        "$(Configuration)": configuration,
+        "$(ProjectName)": project.stem,
+        "$(MSBuildProjectName)": project.stem,
+    }
+    candidates: set[Path] = set()
+    for node in root.findall(".//{*}IntDir"):
+        value = (node.text or "").strip()
+        for key, replacement in replacements.items():
+            value = value.replace(key, replacement)
+        if not value or "$(" in value:
+            continue
+        directory = Path(value.replace("\\", "/"))
+        if not directory.is_absolute():
+            directory = project.parent / directory
+        candidates.add((directory.resolve() / f"{project.stem}.tlog").resolve())
+    return tuple(sorted(candidates))
 
 
 def _tlog_root(graph: SemanticGraph, product_id: str, context_id: str) -> tuple[Path, str]:
@@ -473,6 +558,19 @@ def _tlog_root(graph: SemanticGraph, product_id: str, context_id: str) -> tuple[
         path for path in base.glob(f"*/{project.stem}.tlog")
         if path.is_dir() and any(path.glob("CL.read.*.tlog")) and any(path.glob("link.read.*.tlog"))
     )
+    declared = tuple(
+        path
+        for path in _declared_tlog_roots(project, context.platform, context.configuration)
+        if path in candidates
+    )
+    if len(declared) == 1:
+        return declared[0], project_relative
+    if len(declared) > 1:
+        raise BuildError(
+            "NATIVE_PRODUCT_TLOG_AMBIGUOUS",
+            f"MSBuild IntDir resolves to multiple {project.stem}.tlog directories: {', '.join(str(path) for path in declared)}",
+            5,
+        )
     if len(candidates) != 1:
         raise BuildError(
             "NATIVE_PRODUCT_TLOG_MISSING" if not candidates else "NATIVE_PRODUCT_TLOG_AMBIGUOUS",
@@ -680,6 +778,16 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
         process.kill()
 
 
+def _native_observation_command(argv: Sequence[str], build_target: str) -> list[str]:
+    result = list(argv)
+    if build_target == "Rebuild":
+        # Rebuild owns compiler/link outputs, but the nested CMake workspace is
+        # shared by the app and language-resource projects. Only this explicit
+        # full generator observation may remove it before CoreClean.
+        result.append("/p:SakuraCleanCMakeToolsBuildDir=true")
+    return result
+
+
 def observe_product_native_evidence(
     graph: SemanticGraph,
     product_id: str,
@@ -701,18 +809,22 @@ def observe_product_native_evidence(
     targets = component.backend_targets.get("msbuild", ())
     if context.backend != "msbuild" or len(targets) != 1:
         raise BuildError("NATIVE_PRODUCT_TARGET", f"{product_id} must name one MSBuild product target in {context_id}", 2)
-    argv = msbuild_command(
-        graph.repo_root,
-        graph.repo_root / targets[0],
-        context.platform,
-        context.configuration,
-        jobs,
-        build_target=build_target,
+    argv = _native_observation_command(
+        msbuild_command(
+            graph.repo_root,
+            graph.repo_root / targets[0],
+            context.platform,
+            context.configuration,
+            jobs,
+            build_target=build_target,
+        ),
+        build_target,
     )
     log_root = graph.repo_root / "build/evidence/r0/.native-product-logs"
     log_root.mkdir(parents=True, exist_ok=True)
     diagnostic_log = log_root / f"{os.getpid()}-{uuid.uuid4().hex}.log"
     argv.extend([
+        "/p:SakuraNativeProductMapEvidence=true",
         "/v:minimal",
         "/fl",
         f"/flp:logfile={diagnostic_log};verbosity=diagnostic;encoding=UTF-8",
@@ -911,6 +1023,28 @@ def validate_product_native_evidence(
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_HASH_MISSING"})
             elif _sha256_file(product_path, "NATIVE_PRODUCT_EVIDENCE_PRODUCT_VALIDATE") != link.get("product_hash"):
                 failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PRODUCT_CHANGED", "path": product_relative})
+    selected_evidence = link.get("selected_archive_member_evidence")
+    if link.get("selected_archive_members_observed"):
+        if not isinstance(selected_evidence, dict):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_METADATA_MISSING"})
+        else:
+            map_relative = selected_evidence.get("map")
+            map_hash = selected_evidence.get("map_hash")
+            if not isinstance(map_relative, str) or not map_relative:
+                failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_PATH_MISSING"})
+            else:
+                map_path = (graph.repo_root / map_relative).resolve()
+                try:
+                    map_path.relative_to(graph.repo_root.resolve())
+                except ValueError:
+                    failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_PATH_ESCAPE", "path": map_relative})
+                else:
+                    if not map_path.is_file():
+                        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_MISSING", "path": map_relative})
+                    elif not isinstance(map_hash, str):
+                        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_HASH_MISSING"})
+                    elif _sha256_file(map_path, "NATIVE_PRODUCT_EVIDENCE_MAP_VALIDATE") != map_hash:
+                        failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_MAP_CHANGED", "path": map_relative})
     valid = not failures
     return {
         "status": "observed" if valid else "stale_or_mismatched",
@@ -949,6 +1083,7 @@ def validate_product_native_evidence(
             "object_inputs": link.get("object_inputs", []) if valid else [],
             "resource_inputs": link.get("resource_inputs", []) if valid else [],
             "product_hash": link.get("product_hash") if valid else None,
+            "selected_archive_member_evidence": link.get("selected_archive_member_evidence") if valid else None,
         },
         "generator_observation": {
             "build_target": evidence.get("build_target") if valid else None,

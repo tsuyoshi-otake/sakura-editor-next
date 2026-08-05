@@ -50,7 +50,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Label="sakura.common">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\sakura_core\terminal\vendor\windows_terminal\sakura_compat;..\sakura_core\terminal\vendor\windows_terminal\src;..\sakura_core\terminal\vendor\windows_terminal\src\inc;..\sakura_core\terminal\vendor\windows_terminal\src\types;..\src\main\cpp;..\src\main\resources;..\sakura_core;..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\sakura_core\terminal\vendor\windows_terminal\sakura_compat;..\sakura_core\terminal\vendor\windows_terminal\src;..\sakura_core\terminal\vendor\windows_terminal\src\inc;..\sakura_core\terminal\vendor\windows_terminal\src\types;..\src\main\cpp;..\src\main\resources;..\sakura_core\include;..\sakura_core;..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>NOMINMAX;_WIN32_WINNT=0x0A00;NTDDI_VERSION=NTDDI_WIN10_CO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <TreatWChar_tAsBuiltInType>true</TreatWChar_tAsBuiltInType>
       <ForceConformanceInForLoopScope>true</ForceConformanceInForLoopScope>
@@ -67,7 +67,7 @@
       <ConformanceMode>true</ConformanceMode>
     </ClCompile>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\src\main\resources;..\sakura_core\include;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Culture>0x0411</Culture>
     </ResourceCompile>
     <Link>
@@ -526,8 +526,9 @@
     <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CFileService.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.h" />
-    <ClInclude Include="..\sakura_core\platform\filesystem\IFileService.h" />
-    <ClInclude Include="..\sakura_core\platform\filesystem\IFileSystemProvider.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\filesystem\FileSystemFactory.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileService.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileSystemProvider.h" />
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformLifecycleCoordinator.h" />
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformServiceRegistry.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileRegistry.h" />
@@ -539,10 +540,7 @@
     <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileIdentity.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\ProfileBootstrapSnapshot.h" />
     <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.h" />
-    <ClInclude Include="..\sakura_core\platform\request\RequestService.h" />
-    <ClInclude Include="..\sakura_core\platform\request\win32\WinHttpRequestRuntime.h" />
-    <ClInclude Include="..\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.h" />
-    <ClInclude Include="..\sakura_core\platform\serialization\JsoncDocument.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\serialization\JsoncDocument.h" />
     <ClInclude Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.h" />
     <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultCapabilityService.h" />
     <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultExtensionGrantAuthority.h" />
@@ -556,7 +554,6 @@
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultCapabilityTypes.h" />
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultExtensionGrantAuthorityTypes.h" />
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultTypes.h" />
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcProtocol.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h" />
@@ -571,12 +568,13 @@
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformClient.h" />
 	<ClInclude Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.h" />
-    <ClInclude Include="..\sakura_core\platform\security\CurrentUserSecurityAttributes.h" />
-    <ClInclude Include="..\sakura_core\platform\storage\CAtomicFileStorageService.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\security\CurrentUserSecurityAttributes.h" />
     <ClInclude Include="..\sakura_core\platform\storage\CInMemoryStorageService.h" />
-    <ClInclude Include="..\sakura_core\platform\storage\IStorageService.h" />
-    <ClInclude Include="..\sakura_core\platform\storage\StorageTypes.h" />
-    <ClInclude Include="..\sakura_core\platform\uri\UriIdentity.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\storage\IStorageAuthority.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\storage\IStorageService.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\storage\StorageSnapshotCache.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\storage\StorageTypes.h" />
+    <ClInclude Include="..\sakura_core\include\sakura\uri\UriIdentity.h" />
     <ClInclude Include="..\sakura_core\accessibility\CustomUiAutomationProvider.h" />
     <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h" />
     <ClInclude Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.h" />
@@ -1170,6 +1168,7 @@
     <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.cpp" />
+    <ClCompile Include="..\sakura_core\platform\filesystem\FileSystemFactory.cpp" />
     <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileRegistryCodec.cpp" />
 	<ClCompile Include="..\sakura_core\platform\profiles\DurableUserDataProfileRegistryService.cpp" />
@@ -1177,9 +1176,6 @@
     <ClCompile Include="..\sakura_core\platform\profiles\ProfileAuthorityStore.cpp" />
     <ClCompile Include="..\sakura_core\platform\profiles\ProfileBootstrapSnapshot.cpp" />
     <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.cpp" />
-    <ClCompile Include="..\sakura_core\platform\request\RequestService.cpp" />
-    <ClCompile Include="..\sakura_core\platform\request\win32\WinHttpRequestRuntime.cpp" />
-    <ClCompile Include="..\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.cpp" />
     <ClCompile Include="..\sakura_core\platform\serialization\JsoncDocument.cpp" />
     <ClCompile Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.cpp" />
     <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultCapabilityService.cpp" />
@@ -1188,7 +1184,6 @@
     <ClCompile Include="..\sakura_core\platform\secrets\CWindowsDpapiSecretVaultService.cpp" />
     <ClCompile Include="..\sakura_core\platform\secrets\LegacyExtensionSecretVaultReader.cpp" />
     <ClCompile Include="..\sakura_core\platform\secrets\SecretVaultTypes.cpp" />
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcProtocol.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp" />
@@ -1203,10 +1198,7 @@
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformClient.cpp" />
 	<ClCompile Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.cpp" />
-    <ClCompile Include="..\sakura_core\platform\security\CurrentUserSecurityAttributes.cpp" />
-    <ClCompile Include="..\sakura_core\platform\storage\CAtomicFileStorageService.cpp" />
     <ClCompile Include="..\sakura_core\platform\storage\CInMemoryStorageService.cpp" />
-    <ClCompile Include="..\sakura_core\platform\storage\StorageTypes.cpp" />
     <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
     </ClCompile>
@@ -1375,6 +1367,8 @@
   <ItemGroup>
     <FuncCodeRes Include="..\sakura_core\Funccode_x.hsrc" />
   </ItemGroup>
+  <Import Project="..\src\main\modules\generated\msbuild\consumers\sakura_app.props"
+          Condition="Exists('..\src\main\modules\generated\msbuild\consumers\sakura_app.props')" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

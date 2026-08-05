@@ -6,7 +6,7 @@
 */
 #pragma once
 
-#include "platform/storage/IStorageService.h"
+#include <sakura/storage/IStorageAuthority.h>
 
 #include <cstddef>
 #include <deque>
@@ -14,7 +14,6 @@
 #include <map>
 #include <mutex>
 #include <optional>
-#include <shared_mutex>
 #include <string>
 
 namespace platform::storage {
@@ -28,13 +27,20 @@ struct StorageSubscriptionState;
 	replay rules with a durable database. Editor processes must not instantiate
 	this class as an independent writer.
 */
-class CInMemoryStorageService final : public IStorageService {
+class CInMemoryStorageService final : public IStorageAuthority {
 public:
 	explicit CInMemoryStorageService(
 		std::uint64_t generation = 1,
 		std::size_t maxCompletedOperations = 4096,
 		std::uint64_t initialRevision = 0) noexcept;
 	~CInMemoryStorageService() override;
+
+	// The in-memory implementation is a test/legacy authority. It starts in an
+	// already-open state so existing service-only tests remain source-compatible;
+	// production composition still requires an explicit durable Open().
+	[[nodiscard]] StorageAuthorityOpenResult Open() override;
+	void Close() noexcept override;
+	[[nodiscard]] bool IsOpen() const noexcept override;
 
 	[[nodiscard]] StorageMutationResult Apply(const StorageMutationRequest& request) override;
 	[[nodiscard]] StorageSnapshot Snapshot() const override;
@@ -58,6 +64,7 @@ private:
 	void DrainNotifications();
 
 	mutable std::mutex m_mutex;
+	bool m_open = true;
 	std::uint64_t m_generation = 1;
 	std::uint64_t m_revision = 0;
 	std::size_t m_snapshotPayloadBytes = 20;
@@ -70,27 +77,6 @@ private:
 	std::mutex m_notificationMutex;
 	std::deque<StorageChangeBatch> m_notificationQueue;
 	bool m_dispatchingNotifications = false;
-};
-
-//! Read cache used by editor/extension clients after snapshot synchronization.
-class CStorageSnapshotCache final {
-public:
-	void Replace(StorageSnapshot snapshot);
-	[[nodiscard]] EStorageChangeApplyStatus Apply(const StorageChangeBatch& batch);
-	[[nodiscard]] std::optional<StorageEntry> Find(const StorageAddress& address) const;
-	[[nodiscard]] std::uint64_t GetGeneration() const;
-	[[nodiscard]] std::uint64_t GetRevision() const;
-	//! Tests both snapshot coordinates while holding one cache-state lock.
-	[[nodiscard]] bool Matches(std::uint64_t generation, std::uint64_t revision) const;
-
-private:
-	// All cache state is observed and replaced atomically at an operation boundary.
-	// Entries leave this class only as value copies, so readers cannot retain mutable
-	// access while a retry worker applies a later revision.
-	mutable std::shared_mutex m_mutex;
-	std::uint64_t m_generation = 0;
-	std::uint64_t m_revision = 0;
-	std::map<StorageAddress, StorageEntry> m_entries;
 };
 
 } // namespace platform::storage

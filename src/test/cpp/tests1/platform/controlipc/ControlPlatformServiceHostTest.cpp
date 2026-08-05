@@ -143,7 +143,7 @@ ControlPlatformServiceHostOptions ValidOptions()
 	return options;
 }
 
-std::shared_ptr<storage::IStorageService> Storage()
+std::shared_ptr<storage::IStorageAuthority> Storage()
 {
 	return std::make_shared<storage::CInMemoryStorageService>(9);
 }

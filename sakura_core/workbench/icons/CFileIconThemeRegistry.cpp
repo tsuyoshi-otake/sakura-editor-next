@@ -8,7 +8,7 @@
 
 #include "workbench/icons/CFileIconThemeRegistry.h"
 
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 #include "util/string_ex.h"
 
 #include <algorithm>

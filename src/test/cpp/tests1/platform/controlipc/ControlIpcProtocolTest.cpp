@@ -6,7 +6,7 @@
 */
 #include "pch.h"
 
-#include "platform/controlipc/ControlIpcProtocol.h"
+#include <sakura/controlipc/ControlIpcProtocol.h>
 
 #include <array>
 #include <span>

@@ -216,20 +216,22 @@ add_custom_target(show_dev_banner ALL
 # Include compiletests.cmake
 include(${CMAKE_SOURCE_DIR}/src/test/cmake/compiletests.cmake)
 
-# Create a custom command for version.h generation
-add_custom_command(
-  OUTPUT "${CMAKE_BINARY_DIR}/version.h"
-  COMMAND ${CMAKE_COMMAND} 
+# Git and CI metadata are dynamic inputs that cannot be represented completely
+# by file timestamps. Observe them on each requested build, while
+# configure_file keeps version.h content- and timestamp-stable on a true no-op.
+add_custom_target(generate_version_header
+  COMMAND ${CMAKE_COMMAND}
     -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     -DGIT_EXECUTABLE=${GIT_EXECUTABLE}
+    -DOUTPUT_FILE=${CMAKE_BINARY_DIR}/version.h
+    -DQUIET=ON
     -P ${CMAKE_SOURCE_DIR}/src/main/cmake/version.cmake
-  COMMENT "Generating version.h"
-)
-
-# Create a custom target that depends on the generated file
-add_custom_target(generate_version_header
+  BYPRODUCTS "${CMAKE_BINARY_DIR}/version.h"
   DEPENDS
-    "${CMAKE_BINARY_DIR}/version.h"
+    "${CMAKE_SOURCE_DIR}/src/main/cmake/version.cmake"
+    "${CMAKE_SOURCE_DIR}/src/main/cmake/version.h.in"
+  COMMENT "Ensuring version.h matches Git and CI state"
+  VERBATIM
 )
 
 # Create a custom command for funccode_define generation
@@ -275,22 +277,22 @@ add_custom_target(generate_funccode_enum
     "${CMAKE_BINARY_DIR}/Funccode_enum.h"
 )
 
-# Create a custom command for sakura.exe.manifest generation
-add_custom_command(
-  OUTPUT "${CMAKE_BINARY_DIR}/sakura.exe.manifest"
+# The manifest has a stable template contract. Running the lightweight
+# renderer is cheaper and more reliable than coupling a Visual Studio phony
+# target to a file custom command; configure_file preserves a true no-op.
+add_custom_target(generate_sakura_exe_manifest
   COMMAND ${CMAKE_COMMAND} 
     -DSOURCE_DIR=${CMAKE_SOURCE_DIR}
     -DEXE_NAME=sakura.exe
     -DEXE_ARCH=${EXE_ARCH}
     -DOUTPUT_FILE=${CMAKE_BINARY_DIR}/sakura.exe.manifest
     -P ${CMAKE_SOURCE_DIR}/src/main/cmake/manifest.cmake
-  COMMENT "Generating sakura.exe.manifest"
-)
-
-# Create a custom target that depends on the generated file
-add_custom_target(generate_sakura_exe_manifest
+  BYPRODUCTS "${CMAKE_BINARY_DIR}/sakura.exe.manifest"
   DEPENDS
-    "${CMAKE_BINARY_DIR}/sakura.exe.manifest"
+    "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest.cmake"
+    "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest.in"
+  COMMENT "Ensuring sakura.exe.manifest matches its template"
+  VERBATIM
 )
 
 # Resolve darkmodelib from vcpkg local registry
@@ -301,68 +303,74 @@ find_package(WIL CONFIG REQUIRED)
 
 # Resolve bregonig from vcpkg local registry
 find_package(bregonig CONFIG REQUIRED)
-
-add_custom_command(
-  OUTPUT "${OUTPUT_DIRECTORY}/bregonig.dll"
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIRECTORY}"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/bregonig.dll"
-    "${OUTPUT_DIRECTORY}/bregonig.dll"
-  COMMENT "Copying bregonig.dll from vcpkg_installed to output directory"
-)
+set(BREGONIG_RUNTIME
+  "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/bregonig.dll")
+set(COPY_RUNTIME_ASSET_SCRIPT
+  "${CMAKE_SOURCE_DIR}/src/main/cmake/copy_runtime_asset.cmake")
 
 add_custom_target(generate_bregonig
+  COMMAND ${CMAKE_COMMAND}
+    -DINPUT_FILE:FILEPATH=${BREGONIG_RUNTIME}
+    -DOUTPUT_FILE:FILEPATH=${OUTPUT_DIRECTORY}/bregonig.dll
+    -P ${COPY_RUNTIME_ASSET_SCRIPT}
+  BYPRODUCTS "${OUTPUT_DIRECTORY}/bregonig.dll"
   DEPENDS
-    "${OUTPUT_DIRECTORY}/bregonig.dll"
+    "${BREGONIG_RUNTIME}"
+    "${COPY_RUNTIME_ASSET_SCRIPT}"
+  COMMENT "Ensuring bregonig.dll is staged"
+  VERBATIM
 )
 
 # Resolve cmigemo from vcpkg local registry
 find_package(cmigemo CONFIG REQUIRED)
-
-add_custom_command(
-  OUTPUT "${OUTPUT_DIRECTORY}/migemo.dll"
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIRECTORY}"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/migemo.dll"
-    "${OUTPUT_DIRECTORY}/migemo.dll"
-  COMMENT "Copying migemo.dll from vcpkg_installed to output directory"
-)
+set(CMIGEMO_RUNTIME
+  "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/migemo.dll")
 
 add_custom_target(generate_cmigemo
+  COMMAND ${CMAKE_COMMAND}
+    -DINPUT_FILE:FILEPATH=${CMIGEMO_RUNTIME}
+    -DOUTPUT_FILE:FILEPATH=${OUTPUT_DIRECTORY}/migemo.dll
+    -P ${COPY_RUNTIME_ASSET_SCRIPT}
+  BYPRODUCTS "${OUTPUT_DIRECTORY}/migemo.dll"
   DEPENDS
-    "${OUTPUT_DIRECTORY}/migemo.dll"
+    "${CMIGEMO_RUNTIME}"
+    "${COPY_RUNTIME_ASSET_SCRIPT}"
+  COMMENT "Ensuring migemo.dll is staged"
+  VERBATIM
 )
 
 find_package(ppa-stub CONFIG REQUIRED)
-
-add_custom_command(
-  OUTPUT "${OUTPUT_DIRECTORY}/ppa_stub.dll"
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIRECTORY}"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/ppa_stub.dll"
-    "${OUTPUT_DIRECTORY}/ppa_stub.dll"
-  COMMENT "Copying ppa_stub.dll from vcpkg_installed to output directory"
-)
+set(PPA_STUB_RUNTIME
+  "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/ppa_stub.dll")
 
 add_custom_target(ppa_stub
+  COMMAND ${CMAKE_COMMAND}
+    -DINPUT_FILE:FILEPATH=${PPA_STUB_RUNTIME}
+    -DOUTPUT_FILE:FILEPATH=${OUTPUT_DIRECTORY}/ppa_stub.dll
+    -P ${COPY_RUNTIME_ASSET_SCRIPT}
+  BYPRODUCTS "${OUTPUT_DIRECTORY}/ppa_stub.dll"
   DEPENDS
-    "${OUTPUT_DIRECTORY}/ppa_stub.dll"
+    "${PPA_STUB_RUNTIME}"
+    "${COPY_RUNTIME_ASSET_SCRIPT}"
+  COMMENT "Ensuring ppa_stub.dll is staged"
+  VERBATIM
 )
 
 find_package(dll-plugin1 CONFIG REQUIRED)
-
-add_custom_command(
-  OUTPUT "${OUTPUT_DIRECTORY}/dll_plugin1.dll"
-  COMMAND ${CMAKE_COMMAND} -E make_directory "${OUTPUT_DIRECTORY}"
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/dll_plugin1.dll"
-    "${OUTPUT_DIRECTORY}/dll_plugin1.dll"
-  COMMENT "Copying dll_plugin1.dll from vcpkg_installed to output directory"
-)
+set(DLL_PLUGIN1_RUNTIME
+  "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/dll_plugin1.dll")
 
 add_custom_target(dll_plugin1
+  COMMAND ${CMAKE_COMMAND}
+    -DINPUT_FILE:FILEPATH=${DLL_PLUGIN1_RUNTIME}
+    -DOUTPUT_FILE:FILEPATH=${OUTPUT_DIRECTORY}/dll_plugin1.dll
+    -P ${COPY_RUNTIME_ASSET_SCRIPT}
+  BYPRODUCTS "${OUTPUT_DIRECTORY}/dll_plugin1.dll"
   DEPENDS
-    "${OUTPUT_DIRECTORY}/dll_plugin1.dll"
+    "${DLL_PLUGIN1_RUNTIME}"
+    "${COPY_RUNTIME_ASSET_SCRIPT}"
+  COMMENT "Ensuring dll_plugin1.dll is staged"
+  VERBATIM
 )
 
 if(MINGW)
@@ -495,6 +503,7 @@ include_directories(
   ${CMAKE_BINARY_DIR}
   ${CMAKE_SOURCE_DIR}/src/main/cpp
   ${CMAKE_SOURCE_DIR}/src/main/resources
+  ${CMAKE_SOURCE_DIR}/sakura_core/include
   ${CMAKE_SOURCE_DIR}/sakura_core
 )
 
@@ -586,6 +595,14 @@ list(FILTER SOURCES EXCLUDE REGEX
   ".*/sakura_core/terminal/vendor/windows_terminal/.*\\.cpp$"
 )
 list(APPEND SOURCES ${WINDOWS_TERMINAL_VENDOR_SOURCES})
+
+# A committed generated projection removes extracted provider sources from the
+# legacy glob and defines their standalone native targets.  The OPTIONAL hook
+# is the rollback seam: without the projection the original glob owns them.
+include(
+  "${CMAKE_SOURCE_DIR}/src/main/modules/generated/cmake/legacy/source-ownership.cmake"
+  OPTIONAL
+)
 
 set(RESOURCE_SCRIPTS
   ${CMAKE_SOURCE_DIR}/sakura_core/sakura_rc.rc
@@ -769,6 +786,11 @@ if(MINGW)
       -DOUTPUT_FILE="${SAKURA_MANIFEST_RC}"
       -DMANIFEST_FILE="${SAKURA_EXE_MANIFEST}"
       -P ${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake
+    DEPENDS
+      "${SAKURA_EXE_MANIFEST}"
+      "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake"
+      "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.in"
     COMMENT "Generating sakura_manifest.rc"
+    VERBATIM
   )
 endif(MINGW)

@@ -24,12 +24,7 @@ _MATRIX_FILES = (
     "src/main/modules/modules.json",
     "src/main/modules/schema-v3.json",
     "src/main/modules/compile-profiles.json",
-    "sakura_core/sakura.vcxproj",
     "sakura_core/sakura.vcxproj.filters",
-    "sakura_core/tests1.vcxproj",
-    "sakura_core/platform/uri/UriIdentity.cpp",
-    "sakura_core/platform/uri/UriIdentity.h",
-    "tools/build/pilots/uri_contract_test.cpp",
 )
 
 
@@ -114,18 +109,92 @@ def _sha256(path: Path) -> str:
     return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def _safe_manifest_relative(value: object, location: str) -> Path:
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"path-matrix manifest path must be a non-empty string at {location}")
+    path = Path(value)
+    if path.is_absolute() or ".." in path.parts:
+        raise ValueError(f"path-matrix manifest path escapes the repository at {location}: {value}")
+    return path
+
+
+def _manifest_copy_entries(source: Path) -> tuple[set[Path], set[Path]]:
+    manifest_path = source / "src/main/modules/modules.json"
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files: set[Path] = set()
+    directories: set[Path] = set()
+
+    for component_index, component in enumerate(data.get("components", [])):
+        for value_index, value in enumerate(component.get("sources", [])):
+            location = f"components[{component_index}].sources[{value_index}]"
+            relative = _safe_manifest_relative(value, location)
+            source_path = source / relative
+            if source_path.is_file():
+                files.add(relative)
+            elif source_path.is_dir():
+                directories.add(relative)
+            else:
+                raise FileNotFoundError(f"path-matrix manifest input is missing at {location}: {relative.as_posix()}")
+        for field in ("public_headers", "private_headers"):
+            for value_index, value in enumerate(component.get(field, [])):
+                location = f"components[{component_index}].{field}[{value_index}]"
+                relative = _safe_manifest_relative(value, location)
+                if not (source / relative).is_file():
+                    raise FileNotFoundError(
+                        f"path-matrix manifest header is missing at {location}: {relative.as_posix()}"
+                    )
+                files.add(relative)
+        for backend, targets in component.get("backend_targets", {}).items():
+            for target_index, value in enumerate(targets):
+                location = f"components[{component_index}].backend_targets.{backend}[{target_index}]"
+                relative = _safe_manifest_relative(
+                    value,
+                    location,
+                )
+                source_path = source / relative
+                if source_path.is_file():
+                    files.add(relative)
+                elif len(relative.parts) > 1 or relative.suffix:
+                    raise FileNotFoundError(
+                        f"path-matrix backend target is missing at {location}: {relative.as_posix()}"
+                    )
+
+    for edge_index, edge in enumerate(data.get("edges", [])):
+        for witness_index, witness in enumerate(edge.get("witnesses", [])):
+            relative = _safe_manifest_relative(
+                witness.get("probe"),
+                f"edges[{edge_index}].witnesses[{witness_index}].probe",
+            )
+            if not (source / relative).is_file():
+                raise FileNotFoundError(f"path-matrix edge witness is missing: {relative.as_posix()}")
+            files.add(relative)
+
+    for artifact_index, artifact in enumerate(data.get("artifacts", [])):
+        for input_index, value in enumerate(artifact.get("inputs", [])):
+            relative = _safe_manifest_relative(value, f"artifacts[{artifact_index}].inputs[{input_index}]")
+            source_path = source / relative
+            if source_path.is_file():
+                files.add(relative)
+            elif source_path.is_dir():
+                directories.add(relative)
+            else:
+                raise FileNotFoundError(f"path-matrix artifact input is missing: {relative.as_posix()}")
+
+    return files, directories
+
+
 def _copy_minimal_repository(source: Path, destination: Path) -> None:
-    for relative_text in _MATRIX_FILES:
-        relative = Path(relative_text)
+    manifest_files, manifest_directories = _manifest_copy_entries(source)
+    files = {Path(value) for value in _MATRIX_FILES} | manifest_files
+    for relative in sorted(files, key=lambda item: item.as_posix()):
         source_file = source / relative
         if not source_file.is_file():
             raise FileNotFoundError(f"path-matrix input is missing: {relative.as_posix()}")
         destination_file = destination / relative
         destination_file.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source_file, destination_file)
-    # The legacy manifest owner is a directory even though the matrix does not
-    # need to copy the monolithic test tree.
-    (destination / "src/test").mkdir(parents=True, exist_ok=True)
+    for relative in sorted(manifest_directories, key=lambda item: item.as_posix()):
+        (destination / relative).mkdir(parents=True, exist_ok=True)
 
 
 def _cli_command(script: Path, repo: Path, *arguments: str) -> list[str]:

@@ -5,8 +5,7 @@
 	SPDX-License-Identifier: Zlib
 */
 
-#include "StdAfx.h"
-#include "platform/filesystem/CFileService.h"
+#include "CFileService.h"
 
 #include <utility>
 

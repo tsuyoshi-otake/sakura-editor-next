@@ -205,18 +205,109 @@ def _expected_actions(graph: SemanticGraph, root_id: str, context_id: str) -> di
         raise BuildError("REBUILD_EVIDENCE_PROVIDER", "pilot closure has no sourceful provider with a public contract", 2)
     private_cpp = next((source for source in graph.components[provider].sources if Path(source).suffix.lower() in {".c", ".cc", ".cpp", ".cxx"}), None)
     public_header = next(iter(graph.components[provider].public_headers), None)
+    private_header = next(iter(graph.components[provider].private_headers), None)
     if private_cpp is None or public_header is None:
-        raise BuildError("REBUILD_EVIDENCE_INPUT", "pilot requires one provider cpp and one public header", 2)
+        raise BuildError(
+            "REBUILD_EVIDENCE_INPUT",
+            "pilot requires one provider cpp and one public header",
+            2,
+        )
     archive = sorted(providers)
-    return {
+    expected = {
         "clean": {"compile": source_identities, "archive": archive, "link": [root_id]},
         "no_op": {"compile": [], "archive": [], "link": []},
-        "private_cpp": {"compile": [f"{provider}:{private_cpp}"], "archive": archive, "link": [root_id]},
+        "private_cpp": {"compile": [f"{provider}:{private_cpp}"], "archive": [provider], "link": [root_id]},
         "public_contract": {"compile": source_identities, "archive": archive, "link": [root_id]},
         "design_time": {"compile": [], "archive": [], "link": []},
         "mutation_inputs": {
             "private_cpp": [private_cpp],
             "public_contract": [public_header],
+        },
+    }
+    if private_header is not None:
+        expected["private_header"] = {
+            "compile": [f"{provider}:{private_cpp}"],
+            "archive": [provider],
+            "link": [root_id],
+        }
+        expected["mutation_inputs"]["private_header"] = [private_header]
+    return expected
+
+
+def _mutation_applicability(graph: SemanticGraph, root_id: str, context_id: str) -> dict[str, dict[str, object]]:
+    """Classify mutation kinds without manufacturing dependencies for a leaf.
+
+    A headless leaf with no resource, component generator, or PCH must not gain
+    one merely so the rebuild probe has something to touch.  Conversely, an
+    omitted classification must not be mistaken for a passing mutation test.
+    The manifest owns resource/generated dependencies; generated component
+    projects currently make the small-leaf PCH policy explicit as NotUsing.
+    """
+    closure = set(graph.final_link_closure((root_id,), context_id))
+    components = [graph.components[node_id] for node_id in sorted(closure) if node_id in graph.components]
+    artifacts = [
+        artifact
+        for artifact in graph.artifacts.values()
+        if artifact.owner in closure or artifact.id in closure
+    ]
+    resource_inputs = sorted({
+        path
+        for component in components
+        for path in (*component.sources, *component.public_headers, *component.private_headers)
+        if Path(path).suffix.lower() == ".rc"
+    } | {
+        path
+        for artifact in artifacts
+        if artifact.artifact_kind == "resource"
+        for path in artifact.inputs
+    })
+    generated_inputs = sorted({
+        path
+        for artifact in artifacts
+        if artifact.artifact_kind == "generated"
+        for path in artifact.inputs
+    })
+    generated_components = sorted(
+        component.id for component in components if component.build_definition == "generated" and component.sources
+    )
+    legacy_components = sorted(
+        component.id for component in components if component.build_definition != "generated" and component.sources
+    )
+    pch_status = "not_applicable" if generated_components and not legacy_components else "not_classified"
+    pch_reason = (
+        "generated small-leaf projects explicitly set PrecompiledHeader=NotUsing and emit no "
+        "target_precompile_headers; adding a PCH would enlarge invalidation for this pilot"
+        if pch_status == "not_applicable"
+        else "the closure contains a legacy source owner whose PCH policy is not represented by the semantic manifest"
+    )
+    return {
+        "pch": {
+            "status": pch_status,
+            "applicable": False if pch_status == "not_applicable" else None,
+            "reason": pch_reason,
+            "witnesses": generated_components if pch_status == "not_applicable" else legacy_components,
+        },
+        "resource": {
+            "status": "applicable" if resource_inputs else "not_applicable",
+            "applicable": bool(resource_inputs),
+            "reason": "owned resource inputs exist" if resource_inputs else "the headless leaf closure owns no resource input",
+            "witnesses": resource_inputs,
+        },
+        "component_generated_input": {
+            "status": "applicable" if generated_inputs else "not_applicable",
+            "applicable": bool(generated_inputs),
+            "reason": (
+                "owned generated-artifact inputs exist"
+                if generated_inputs
+                else "the leaf closure owns no component-specific generated artifact"
+            ),
+            "witnesses": generated_inputs,
+        },
+        "projection_input": {
+            "status": "covered_by_staleness_gate",
+            "applicable": True,
+            "reason": "modules.json and compile-profiles.json are generator inputs; ordinary component builds must fail stale instead of regenerating",
+            "witnesses": ["src/main/modules/modules.json", "src/main/modules/compile-profiles.json"],
         },
     }
 
@@ -354,6 +445,12 @@ def _environment_for_context(graph: SemanticGraph, context_id: str) -> dict[str,
         environment.update(msvc_environment(graph.repo_root, environment))
         blocked = {name.upper() for name in COMPONENT_ISOLATED_ENVIRONMENT}
         environment = {key: value for key, value in environment.items() if key.upper() not in blocked}
+        # The direct subprocess path used by the rebuild rehearsal does not
+        # pass through runner.run_commands, so pin the same English
+        # `/showIncludes` prefix here. Without this, an ambient Japanese
+        # VSLANG makes every CMake phase reconfigure and invalidates the
+        # no-op/rebuild-closure measurement.
+        environment["VSLANG"] = "1033"
     return environment
 
 
@@ -364,6 +461,8 @@ def _native_commands(
     jobs: int,
     phase_id: str,
     log_root: Path,
+    *,
+    configure_if_needed: bool = True,
 ) -> list[list[str]]:
     context = graph.context(context_id)
     if context.backend == "msbuild":
@@ -385,6 +484,7 @@ def _native_commands(
         context.configuration,
         context.toolchain,
         jobs,
+        configure_if_needed=configure_if_needed,
     )
     for command in commands:
         if "--build" in command:
@@ -418,7 +518,15 @@ def _run_phase(
 ) -> tuple[dict[str, object], list[_Artifact]]:
     before_projection = _projection_snapshot(graph.repo_root)
     before = _snapshot(artifacts or ())
-    commands = _native_commands(graph, root_id, context_id, jobs, phase_id, log_root)
+    commands = _native_commands(
+        graph,
+        root_id,
+        context_id,
+        jobs,
+        phase_id,
+        log_root,
+        configure_if_needed=artifacts is None,
+    )
     results = _run_all(commands, graph.repo_root, environment, timeout_seconds, events)
     current_artifacts = list(artifacts or _discover_artifacts(graph, root_id, context_id))
     after = _snapshot(current_artifacts)
@@ -505,6 +613,26 @@ def _design_time_evidence(
     }
 
 
+def _not_applicable_phase(phase_id: str, reason: str) -> dict[str, object]:
+    return {
+        "id": phase_id,
+        "ok": True,
+        "status": "not_applicable",
+        "expected": {"compile": [], "archive": [], "link": []},
+        "observed": {"compile": [], "archive": [], "link": []},
+        "missing": {"compile": [], "archive": [], "link": []},
+        "unexpected": {"compile": [], "archive": [], "link": []},
+        "projection_changes": [],
+        "package_restore_observed": False,
+        "explicit_configure_count": 0,
+        "native_command_count": 0,
+        "elapsed_ms": 0.0,
+        "test_exit_code": None,
+        "failures": [],
+        "reason": reason,
+    }
+
+
 def _context_rehearsal(
     graph: SemanticGraph,
     root_id: str,
@@ -552,6 +680,19 @@ def _context_rehearsal(
         environment, timeout_seconds, events, log_root, run_test=True,
     )
 
+    if "private_header" in mutation_inputs:
+        private_header_path = graph.repo_root / mutation_inputs["private_header"][0]
+        _append_mutation(private_header_path, "sakura rebuild evidence private header")
+        private_header, artifacts = _run_phase(
+            graph, root_id, context_id, jobs, "private_header", expected["private_header"], artifacts,
+            environment, timeout_seconds, events, log_root, run_test=True,
+        )
+    else:
+        private_header = _not_applicable_phase(
+            "private_header",
+            "provider declares no private header; private-header invalidation is not applicable",
+        )
+
     public_header_path = graph.repo_root / mutation_inputs["public_contract"][0]
     _append_mutation(public_header_path, "sakura rebuild evidence public contract")
     public_contract, artifacts = _run_phase(
@@ -563,7 +704,7 @@ def _context_rehearsal(
         graph, root_id, context_id, samples, artifacts, environment,
         timeout_seconds, events, log_root,
     )
-    phases = [clean, no_op, private_cpp, public_contract]
+    phases = [clean, no_op, private_cpp, private_header, public_contract]
     failures = [failure for phase in phases for failure in phase["failures"]]
     if design_time is not None:
         failures.extend(design_time["failures"])
@@ -572,6 +713,7 @@ def _context_rehearsal(
         "backend": graph.context(context_id).backend,
         "ok": not failures,
         "expected": expected,
+        "mutation_applicability": _mutation_applicability(graph, root_id, context_id),
         "phases": phases,
         "design_time": design_time,
         "failures": failures,
@@ -589,8 +731,6 @@ def run_rebuild_closure_rehearsal(
     *,
     workspace_root: Path | None = None,
 ) -> dict[str, object]:
-    if component_id != "sakura_uri_tests":
-        raise BuildError("REBUILD_EVIDENCE_COMPONENT", "R1a rebuild rehearsal currently supports sakura_uri_tests only", 2)
     if jobs < 1 or samples < 1 or timeout_seconds < 1:
         raise BuildError("REBUILD_EVIDENCE_ARGUMENT", "jobs, samples, and timeout must be at least 1", 2)
     # Keep the default below the mandated user temp root, but deliberately

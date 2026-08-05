@@ -6,8 +6,8 @@
 */
 #pragma once
 
-#include "platform/controlipc/ControlIpcProtocol.h"
-#include "platform/storage/IStorageService.h"
+#include <sakura/controlipc/ControlIpcProtocol.h>
+#include <sakura/storage/IStorageService.h>
 
 #include <cstdint>
 #include <optional>

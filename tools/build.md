@@ -151,6 +151,11 @@ PIDとUUIDで一意な一時pathへ出力し、成否にかかわらず収集後
 input、生成header/PCH、RC input、link object/resource/library、対象generator targetの終端状態を
 repository-relativeな証跡として保存します。証跡にはgraph、context、product、観測source/生成物/trackerの
 SHA-256を保持し、欠落、変更、別context、Build未実行のsnapshotはrepository台帳でblockerになります。
+製品trackerはvcxprojで宣言された`IntDir`を評価して解決し、`app-avx2`や`app-o1`等の兄弟variantを
+名前の類似だけで選びません。observerは内部propertyでそのBuildだけlink MAPを有効化し、宣言providerの
+archive memberが最終製品へ実際に選択されたことを記録します。Release LTCGでprovider libraryがlink command
+payloadへ現れない場合も、trackerのrepository library inputとの和集合で照合します。MAP生成propertyは証跡収集専用で、
+通常buildの出力契約へは追加しません。
 
 通常のBuildでgeneratorがup-to-date skipになった場合は、target schedulingの観測であってExec実行の
 観測ではありません。`--rebuild`は製品をclean rebuildして実際の`Exec` taskを観測するための証跡専用optionです。
@@ -158,6 +163,17 @@ SHA-256を保持し、欠落、変更、別context、Build未実行のsnapshot�
 実行をgreenにするには、対象targetの実行だけでなく、その厳密なoutput pathが同じ観測のcompiler/RC/link
 inputに現れ、producerとconsumerを相関できなければなりません。diagnostic logの時刻や所要時間、一時pathは
 hard evidence hashへ含めません。
+
+`build/<Platform>/CMakeTools`は本体と言語DLLが共有するgenerator workspaceです。通常のproject／言語DLLの
+Clean・Rebuildはこのdirectoryを削除せず、各generator targetの`Inputs`／`Outputs`で必要な更新だけを行います。
+完全なgenerator実行を採取する`inventory observe-product --rebuild`だけが、内部MSBuild propertyを明示して
+共有workspaceを先にcleanします。このpropertyは通常のビルド操作用の公開環境変数ではありません。
+
+CMakeがVisual Studio向けに生成する`add_custom_target`は、phony outputのため親buildごとに要求される場合があります。
+この場合もobserverは実inputと実outputのcontent hashを比較し、変更がなければ展開、nested build、copy、state更新を
+行いません。state fileは全outputの生成成功後だけ発行します。ctagsは親repositoryのgitlinkが指すexact commitを
+lock内でarchive/buildし、submodule worktreeのdirty/untracked fileを入力にしません。runtime assetはsymlinkを
+実providerへ解決してSHA-256で比較するため、同一内容のstageによってmtimeを更新しません。
 
 `observe-resources`は、先に収集したnative product evidenceと現在の製品EXEのhashが一致する場合だけ、
 そのEXEをWindowsのdata/image resourceとして開きます。アプリケーションのentry pointは実行しません。
@@ -187,17 +203,27 @@ runner分割時は安定IDを維持し、runtime mappingだけを変更します
 重複ID/selector、fingerprint不一致は終了コード7で失敗します。
 
 ```cmd
-sakura-build.bat test inventory collect --runner-id tests1 ^
+py -3 tools/build/sakura_build.py test inventory collect --runner-id tests1 ^
   --executable x64/Debug/tests1.exe ^
   --output build/evidence/tests-current.json
 
-sakura-build.bat test inventory compare ^
+py -3 tools/build/sakura_build.py test inventory compare ^
   src/test/test-inventory.json build/evidence/tests-current.json
+
+py -3 tools/build/sakura_build.py test inventory verify-runtime ^
+  src/test/test-inventory.json ^
+  --runner tests1=x64/Debug/tests1.exe ^
+  --runner sakura_uri_tests=build/components/msvc-x64-debug/sakura_uri_tests/bin/sakura_uri_tests.exe
 ```
 
 比較のhard gateはstable ID集合とenabled/disabled状態です。runner/selectorのremapは
 明示的に報告しますが、stable IDが維持されていれば保証差分とは扱いません。baselineには
 収集元revision、dirty状態、test executableのSHA-256を保存します。
+
+複数runnerの現在値で台帳を更新する場合は`refresh-runtime`を使います。既存selectorが消えた場合は
+silent deleteを拒否し、意味を維持した名称変更だけを`--remap stable-test-id=runner-id::selector`で
+明示します。新規selectorは保証追加としてstable ID集合へ加わります。更新後は必ず同じrunner集合で
+`verify-runtime`を実行し、missing／unexpectedがともに0であることを確認します。
 
 ```cmd
 build-dev.bat <Platform> <Configuration>
@@ -315,11 +341,12 @@ VS付属CMakeが日本語pathで異常終了する環境では、CMake childの�
 再生成します。junctionはsuccess、failure、timeoutの終了経路で削除され、MSBuildとlegacy/full CMakeには適用しません。
 
 `verify rebuild-closure`は元checkoutを変更せず、`~/tmp`配下の短い隔離コピーでclean、反復no-op、
-private cpp、public contract、MSBuild DesignTimeBuildを実行します。object、archive、executableの
+private cpp、private header、public contract、MSBuild DesignTimeBuildを実行します。object、archive、executableの
 mtime・size・SHA-256をphase間で比較し、期待したcompile/archive/link集合との過不足、生成projectionの
 書換え、package restore、component test終了値をJSONへ保存します。既定出力は
-`build/evidence/r1a/rebuild-closure/evidence.json`です。URI pilotはprivate header、PCH、resource、generated inputを
-所有しないため、それらのmutationを検証したことにはなりません。
+`build/evidence/r1a/rebuild-closure/evidence.json`です。URI pilotはprivate headerを明示所有し、providerだけの
+compile/archiveと対象test linkへ閉じることを検査します。PCH、resource、generated inputは所有しないため、
+それらのmutationを検証したことにはなりません。
 
 有効なCMake/Ninja component build treeでは、canonical CLIは毎回の明示configureを省略し、native build graphへ
 直接渡します。source root、generator、configuration、cache、native build fileのいずれかが一致しない場合は
@@ -330,7 +357,7 @@ component test、MSBuild `/t:Rebuild`、CMake/Ninja `--clean-first` + CTest Debu
 実行済みです。MSBuild rebuildは`/MP1`でcl.exe/link.exeを実行し、0 warning/0 errorでした。CMakeは明示的な
 MSVC toolchain environmentを構築した後、component childだけの環境分離を有効にして4 build stepsとCTest
 1/1 passを確認しました。生成URI projectのDesignTimeBuild、ABI mismatch/opaque C fixture、基本path matrix/standalone revert、
-両backendのclean/no-op/private cpp/public contract rebuild closureは確認済みです。5回no-opのevidence-mode native child中央値は
+両backendのclean/no-op/private cpp/private header/public contract rebuild closureは確認済みです。5回no-opのevidence-mode native child中央値は
 MSBuild 363.451 ms、CMake/Ninja 73.755 msで、CMakeの明示configureは0回でした。MSBuild DesignTimeBuild中央値は
 267.125 msです。これらは移行前比較のないbaseline-onlyであり、canonical CLI全体の改善率とは扱いません。
 R0 repository inventoryは2,673 C/C++/resource候補と8,647 includeを走査し、未所有file 27、

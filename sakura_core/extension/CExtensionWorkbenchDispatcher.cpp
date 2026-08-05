@@ -8,7 +8,7 @@
 #include "extension/CExtensionWorkbenchDispatcher.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
 
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 
 #include <picojson/picojson.h>
 

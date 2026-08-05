@@ -7,10 +7,11 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlPlatformRuntime.h"
 
-#include "platform/controlipc/ControlIpcProtocol.h"
+#include <sakura/controlipc/ControlIpcProtocol.h>
 #include "platform/secrets/CSecretVaultCapabilityService.h"
 #include "platform/secrets/CSecretVaultExtensionGrantAuthority.h"
 #include "platform/secrets/CSecretVaultLegacyMigrationCoordinator.h"
+#include <sakura/storage/StorageAuthorityFactory.h>
 
 #include <chrono>
 #include <string>
@@ -103,6 +104,12 @@ ControlPlatformRuntimeMigrationCreateResult CreateProductionMigration(
 	}
 }
 
+std::shared_ptr<storage::IStorageAuthority> CreateProductionStorage(
+	const std::filesystem::path& directory, std::uint64_t generation, std::size_t maxCompletedOperations)
+{
+	return storage::CreateAtomicFileStorageAuthority(directory, generation, maxCompletedOperations);
+}
+
 } // namespace
 
 CControlPlatformRuntime::CControlPlatformRuntime(ControlPlatformRuntimeOptions options) :
@@ -131,7 +138,7 @@ bool CControlPlatformRuntime::HasValidOptions(std::wstring& diagnostic) const
 	if (!IsResolvedPath(m_options.profileDirectory)) diagnostic = L"profileDirectory must be an absolute resolved path";
 	else if (!IsResolvedPath(m_options.storageDirectory)) diagnostic = L"storageDirectory must be an absolute resolved path";
 	else if (m_options.maximumCompletedOperations == 0 ||
-		m_options.maximumCompletedOperations > storage::CAtomicFileStorageService::kMaximumCompletedOperations) {
+		m_options.maximumCompletedOperations > storage::kMaximumStorageCompletedOperations) {
 		diagnostic = L"maximumCompletedOperations is out of range";
 	}
 	else if (m_options.pipeOptions.maximumSessions == 0 || m_options.pipeOptions.maximumSessions > 63) {
@@ -161,7 +168,7 @@ bool CControlPlatformRuntime::HasValidOptions(std::wstring& diagnostic) const
 
 ControlPlatformRuntimeResult CControlPlatformRuntime::Result(EControlPlatformRuntimeResultCode code,
 	std::optional<profiles::ProfileAuthorityResult> authorityResult,
-	std::optional<storage::AtomicFileStorageOpenResult> storageOpenResult,
+	std::optional<storage::StorageAuthorityOpenResult> storageOpenResult,
 	std::optional<ControlPlatformRuntimeVaultCreateResult> vaultCreateResult,
 	std::optional<ControlPlatformRuntimeCapabilityCreateResult> capabilityCreateResult,
 	std::optional<ControlPlatformServiceHostResult> hostResult,
@@ -243,7 +250,7 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 	}
 
 	std::optional<profiles::ProfileAuthorityResult> authorityResult;
-	std::optional<storage::AtomicFileStorageOpenResult> storageOpenResult;
+	std::optional<storage::StorageAuthorityOpenResult> storageOpenResult;
 	std::optional<ControlPlatformRuntimeVaultCreateResult> vaultCreateResult;
 	std::optional<ControlPlatformRuntimeMigrationCreateResult> migrationCreateResult;
 	std::optional<ControlPlatformRuntimeCapabilityCreateResult> capabilityCreateResult;
@@ -258,26 +265,32 @@ ControlPlatformRuntimeResult CControlPlatformRuntime::Start()
 			return Result(EControlPlatformRuntimeResultCode::AuthorityFailed, std::move(authorityResult));
 		}
 
+		auto storageFactory = m_dependencies.storageFactory;
+		if (!storageFactory) storageFactory = CreateProductionStorage;
 		try {
-			m_storage = std::make_shared<storage::CAtomicFileStorageService>(m_options.storageDirectory,
-				authorityResult->authorityGeneration, m_options.maximumCompletedOperations,
-				m_dependencies.storageFileOperations);
+			m_storage = storageFactory(m_options.storageDirectory, authorityResult->authorityGeneration,
+				m_options.maximumCompletedOperations);
 		} catch (...) {
 			RollbackStart();
 			return Result(EControlPlatformRuntimeResultCode::StorageCreateFailed, std::move(authorityResult),
 				std::nullopt, std::nullopt, std::nullopt, std::nullopt, L"durable storage creation failed");
 		}
+		if (!m_storage) {
+			RollbackStart();
+			return Result(EControlPlatformRuntimeResultCode::StorageCreateFailed, std::move(authorityResult),
+				std::nullopt, std::nullopt, std::nullopt, std::nullopt, L"storage factory returned null");
+		}
 
 		storageOpenResult = m_storage->Open();
 		switch (storageOpenResult->status) {
-		case storage::EAtomicFileStorageOpenStatus::Opened:
-		case storage::EAtomicFileStorageOpenStatus::AlreadyOpen:
+		case storage::EStorageAuthorityOpenStatus::Opened:
+		case storage::EStorageAuthorityOpenStatus::AlreadyOpen:
 			break;
-		case storage::EAtomicFileStorageOpenStatus::InvalidArgument:
-		case storage::EAtomicFileStorageOpenStatus::WriterBusy:
-		case storage::EAtomicFileStorageOpenStatus::IoError:
-		case storage::EAtomicFileStorageOpenStatus::CorruptData:
-		case storage::EAtomicFileStorageOpenStatus::UnsupportedFormat:
+		case storage::EStorageAuthorityOpenStatus::InvalidArgument:
+		case storage::EStorageAuthorityOpenStatus::WriterBusy:
+		case storage::EStorageAuthorityOpenStatus::IoError:
+		case storage::EStorageAuthorityOpenStatus::CorruptData:
+		case storage::EStorageAuthorityOpenStatus::UnsupportedFormat:
 		default:
 			RollbackStart();
 			return Result(EControlPlatformRuntimeResultCode::StorageOpenFailed, std::move(authorityResult),

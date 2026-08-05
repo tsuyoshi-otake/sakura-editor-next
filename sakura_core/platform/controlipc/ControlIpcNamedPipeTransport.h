@@ -8,7 +8,7 @@
 */
 #pragma once
 
-#include "platform/controlipc/ControlIpcProtocol.h"
+#include <sakura/controlipc/ControlIpcProtocol.h>
 #include "platform/controlipc/ControlPlatformEndpoint.h"
 
 #include <chrono>

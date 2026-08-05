@@ -10,6 +10,7 @@ sys.path.insert(0, str(REPO_ROOT / "tools" / "build"))
 
 from sakura_build_lib.component_evidence import (  # noqa: E402
     _declared_inputs,
+    _declared_system_libraries,
     _expected_map_members,
     _hard_evidence_hash,
     _link_libraries,
@@ -32,6 +33,12 @@ class ComponentEvidenceTests(unittest.TestCase):
         self.assertEqual(
             {"sakura_uri.lib", "kernel32.lib"},
             _link_libraries(command),
+        )
+
+    def test_declared_system_libraries_follow_final_link_closure(self) -> None:
+        self.assertEqual(
+            {"advapi32.lib"},
+            _declared_system_libraries(self.graph, ("sakura_security", "sakura_security_tests")),
         )
 
     def test_expected_map_members_cover_msbuild_and_cmake_object_names(self) -> None:
@@ -82,7 +89,9 @@ class ComponentEvidenceTests(unittest.TestCase):
             "declared_repo_inputs": ["sakura_core/platform/uri/UriIdentity.cpp"],
             "observed_repo_inputs": ["sakura_core/platform/uri/UriIdentity.cpp"],
             "expected_link_providers": ["sakura_uri.lib"],
-            "observed_link_libraries": ["sakura_uri.lib"],
+            "declared_system_libraries": [],
+            "implicit_system_libraries": ["kernel32.lib"],
+            "observed_link_libraries": ["kernel32.lib", "sakura_uri.lib"],
             "expected_link_map_members": {"sakura_uri.lib": ["sakura_uri:uriidentity.obj"]},
             "observed_link_map_members": {"sakura_uri.lib": ["sakura_uri:uriidentity.obj"]},
             "package_restore_observed": False,

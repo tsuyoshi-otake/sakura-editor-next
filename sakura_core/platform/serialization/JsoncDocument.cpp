@@ -5,9 +5,7 @@
  * SPDX-License-Identifier: Zlib
  */
 
-#include "StdAfx.h"
-
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 
 #include <charconv>
 #include <cmath>

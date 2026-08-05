@@ -9,7 +9,7 @@
 
 #pragma once
 
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 #include "workbench/workspace/WorkspaceArtifactDocumentService.h"
 
 #include <cstddef>

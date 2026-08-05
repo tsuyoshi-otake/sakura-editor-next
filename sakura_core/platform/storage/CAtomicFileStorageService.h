@@ -8,7 +8,7 @@
 */
 #pragma once
 
-#include "platform/storage/IStorageService.h"
+#include <sakura/storage/IStorageAuthority.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -61,25 +61,11 @@ public:
 
 [[nodiscard]] std::shared_ptr<IAtomicFileStorageFileOperations> CreateWin32AtomicFileStorageFileOperations();
 
-enum class EAtomicFileStorageOpenStatus : std::uint8_t {
-	Opened,
-	AlreadyOpen,
-	InvalidArgument,
-	WriterBusy,
-	IoError,
-	CorruptData,
-	UnsupportedFormat,
-};
-
-struct AtomicFileStorageOpenResult {
-	EAtomicFileStorageOpenStatus status = EAtomicFileStorageOpenStatus::IoError;
-	std::string diagnostic;
-
-	[[nodiscard]] bool Succeeded() const noexcept
-	{
-		return status == EAtomicFileStorageOpenStatus::Opened || status == EAtomicFileStorageOpenStatus::AlreadyOpen;
-	}
-};
+// Compatibility aliases keep the durable implementation's existing tests and
+// callers source-compatible while the Control composition depends only on the
+// public lifecycle port.
+using EAtomicFileStorageOpenStatus = EStorageAuthorityOpenStatus;
+using AtomicFileStorageOpenResult = StorageAuthorityOpenResult;
 
 /*! 
 	@brief Versioned, checksummed, atomic-file storage for the single control writer.
@@ -90,13 +76,13 @@ struct AtomicFileStorageOpenResult {
 	the current control-IPC limits; it has no paging protocol with which to expose
 	larger state safely.
 */
-class CAtomicFileStorageService final : public IStorageService {
+class CAtomicFileStorageService final : public IStorageAuthority {
 public:
 	struct SubscriptionState;
 
 	static constexpr std::size_t kMaximumItems = kMaximumStorageItems;
 	static constexpr std::size_t kMaximumStringBytes = kMaximumStorageStringBytes;
-	static constexpr std::size_t kMaximumCompletedOperations = 4096;
+	static constexpr std::size_t kMaximumCompletedOperations = kMaximumStorageCompletedOperations;
 	static constexpr std::size_t kMaximumPersistedBytes = 8 * 1024 * 1024;
 	//! Reserves enough room for the largest transport-visible snapshot and file header.
 	static constexpr std::size_t kMaximumCompletedPayloadBytes =
@@ -110,9 +96,9 @@ public:
 	CAtomicFileStorageService(const CAtomicFileStorageService&) = delete;
 	CAtomicFileStorageService& operator=(const CAtomicFileStorageService&) = delete;
 
-	[[nodiscard]] AtomicFileStorageOpenResult Open();
-	void Close() noexcept;
-	[[nodiscard]] bool IsOpen() const noexcept;
+	[[nodiscard]] AtomicFileStorageOpenResult Open() override;
+	void Close() noexcept override;
+	[[nodiscard]] bool IsOpen() const noexcept override;
 
 	[[nodiscard]] StorageMutationResult Apply(const StorageMutationRequest& request) override;
 	[[nodiscard]] StorageSnapshot Snapshot() const override;

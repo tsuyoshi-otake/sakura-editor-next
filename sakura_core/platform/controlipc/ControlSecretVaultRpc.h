@@ -8,7 +8,7 @@
 */
 #pragma once
 
-#include "platform/controlipc/ControlIpcProtocol.h"
+#include <sakura/controlipc/ControlIpcProtocol.h>
 #include "platform/secrets/ISecretVaultCapabilityService.h"
 #include "platform/secrets/ISecretVaultExtensionGrantAuthority.h"
 #include "platform/secrets/ISecretVaultLegacyMigrationCoordinator.h"

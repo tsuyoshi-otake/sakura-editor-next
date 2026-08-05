@@ -149,6 +149,175 @@ def collect_gtest_inventory(
     }
 
 
+def verify_runtime_mappings(
+    inventory: Mapping[str, Any],
+    runners: Mapping[str, Path],
+    repo_root: Path,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    """Verify that a split inventory is exactly discoverable from its runners."""
+    validated = validate_inventory(inventory)
+    expected: dict[str, set[str]] = {}
+    for item in validated["tests"]:
+        runtime = item["runtime"]
+        expected.setdefault(runtime["runner_id"], set()).add(runtime["selector"])
+    missing_runners = sorted(set(expected) - set(runners))
+    extra_runners = sorted(set(runners) - set(expected))
+    if missing_runners or extra_runners:
+        raise TestInventoryError(
+            "TEST_RUNNER_SET",
+            f"runner set mismatch: missing={missing_runners}, extra={extra_runners}",
+        )
+
+    reports: list[dict[str, Any]] = []
+    failures: list[str] = []
+    for runner_id in sorted(expected):
+        discovered = collect_gtest_inventory(
+            runners[runner_id], runner_id, repo_root, "runtime-verification", True, timeout_seconds
+        )
+        actual = {item["runtime"]["selector"] for item in discovered["tests"]}
+        missing = sorted(expected[runner_id] - actual)
+        unexpected = sorted(actual - expected[runner_id])
+        if missing:
+            failures.append(f"{runner_id} missing {len(missing)} selectors")
+        if unexpected:
+            failures.append(f"{runner_id} exposed {len(unexpected)} untracked selectors")
+        reports.append({
+            "runner_id": runner_id,
+            "expected_count": len(expected[runner_id]),
+            "observed_count": len(actual),
+            "missing_selectors": missing,
+            "unexpected_selectors": unexpected,
+        })
+    return {
+        "ok": not failures,
+        "test_count": validated["test_count"],
+        "guarantee_fingerprint": validated["guarantee_fingerprint"],
+        "runners": reports,
+        "failures": failures,
+    }
+
+
+def refresh_runtime_mappings(
+    inventory: Mapping[str, Any],
+    runners: Mapping[str, Path],
+    remaps: Mapping[str, tuple[str, str]],
+    repo_root: Path,
+    source_revision: str,
+    source_dirty: bool,
+    timeout_seconds: int,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Refresh discovery while preserving stable IDs and rejecting silent loss.
+
+    Existing runtime selectors keep their stable IDs. A disappeared selector is
+    an error unless the caller explicitly maps its stable ID to a discovered
+    runner/selector pair. Newly discovered selectors extend the guarantee set.
+    """
+    validated = validate_inventory(inventory)
+    discovered_by_runtime: dict[tuple[str, str], dict[str, Any]] = {}
+    runner_discovery: list[dict[str, Any]] = []
+    for runner_id in sorted(runners):
+        discovered = collect_gtest_inventory(
+            runners[runner_id], runner_id, repo_root, source_revision, source_dirty, timeout_seconds
+        )
+        runner_discovery.append({
+            "runner_id": runner_id,
+            "executable": discovered["discovery"]["executable"],
+            "executable_sha256": discovered["discovery"]["executable_sha256"],
+        })
+        for item in discovered["tests"]:
+            runtime = item["runtime"]
+            key = (runtime["runner_id"], runtime["selector"])
+            if key in discovered_by_runtime:
+                raise TestInventoryError("TEST_RUNTIME_DUPLICATE", f"duplicate runtime selector across discovery: {key}")
+            discovered_by_runtime[key] = item
+
+    known_ids = {item["test_id"] for item in validated["tests"]}
+    unknown_remaps = sorted(set(remaps) - known_ids)
+    if unknown_remaps:
+        raise TestInventoryError("TEST_REMAP_UNKNOWN", f"remap references unknown stable IDs: {unknown_remaps}")
+
+    refreshed: list[dict[str, Any]] = []
+    claimed: set[tuple[str, str]] = set()
+    applied_remaps: list[dict[str, str]] = []
+    missing: list[str] = []
+    for old in validated["tests"]:
+        old_runtime = old["runtime"]
+        old_key = (old_runtime["runner_id"], old_runtime["selector"])
+        target_key = old_key if old_key in discovered_by_runtime else remaps.get(old["test_id"])
+        if target_key is None or target_key not in discovered_by_runtime:
+            missing.append(old["test_id"])
+            continue
+        if target_key in claimed:
+            raise TestInventoryError("TEST_REMAP_COLLISION", f"multiple stable IDs map to runtime selector: {target_key}")
+        current = discovered_by_runtime[target_key]
+        if current["status"] != old["status"]:
+            raise TestInventoryError(
+                "TEST_STATUS_CHANGED",
+                f"{old['test_id']} changed status from {old['status']} to {current['status']}",
+            )
+        claimed.add(target_key)
+        refreshed.append({
+            "test_id": old["test_id"],
+            "runtime": dict(current["runtime"]),
+            "status": old["status"],
+        })
+        if target_key != old_key:
+            applied_remaps.append({
+                "test_id": old["test_id"],
+                "from": f"{old_key[0]}::{old_key[1]}",
+                "to": f"{target_key[0]}::{target_key[1]}",
+            })
+    if missing:
+        raise TestInventoryError(
+            "TEST_RUNTIME_MISSING",
+            f"{len(missing)} stable tests disappeared without explicit remap: {missing}",
+        )
+
+    additions: list[str] = []
+    for key, current in sorted(discovered_by_runtime.items()):
+        if key in claimed:
+            continue
+        # New component runners must own the stable ID namespace as well.  The
+        # legacy tests1 prefix remains unchanged for existing entries, while a
+        # newly discovered selector from (for example) sakura_security_tests
+        # must not be silently attributed to tests1.
+        test_id = f"{current['runtime']['runner_id']}:{current['runtime']['selector']}"
+        if test_id in known_ids or any(item["test_id"] == test_id for item in refreshed):
+            raise TestInventoryError("TEST_ID_COLLISION", f"new runtime selector collides with stable ID: {test_id}")
+        refreshed.append({
+            "test_id": test_id,
+            "runtime": dict(current["runtime"]),
+            "status": current["status"],
+        })
+        additions.append(test_id)
+
+    refreshed.sort(key=lambda item: item["test_id"])
+    discovery_payload = _canonical_json(runner_discovery)
+    result = dict(validated)
+    result.update({
+        "source_revision": source_revision,
+        "source_dirty": source_dirty,
+        "discovery": {
+            "framework": "googletest",
+            "executable": "runtime-set:" + ",".join(sorted(runners)),
+            "arguments": ["--gtest_list_tests"],
+            "executable_sha256": hashlib.sha256(discovery_payload.encode("utf-8")).hexdigest(),
+        },
+        "test_count": len(refreshed),
+        "disabled_count": sum(item["status"] == "disabled" for item in refreshed),
+        "guarantee_fingerprint": guarantee_fingerprint(refreshed),
+        "tests": refreshed,
+    })
+    return validate_inventory(result), {
+        "previous_test_count": validated["test_count"],
+        "test_count": len(refreshed),
+        "additions": additions,
+        "runtime_remaps": applied_remaps,
+        "runners": runner_discovery,
+    }
+
+
 def validate_inventory(value: Any, location: str = "inventory") -> dict[str, Any]:
     if not isinstance(value, dict):
         raise TestInventoryError("TEST_INVENTORY_TYPE", f"{location}: expected object")

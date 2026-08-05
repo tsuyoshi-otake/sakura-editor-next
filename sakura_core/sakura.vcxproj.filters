@@ -1240,10 +1240,13 @@
     <ClInclude Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\filesystem\IFileService.h">
+    <ClInclude Include="..\sakura_core\include\sakura\filesystem\FileSystemFactory.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\filesystem\IFileSystemProvider.h">
+    <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileService.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\include\sakura\filesystem\IFileSystemProvider.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformServiceRegistry.h">
@@ -1276,16 +1279,7 @@
     <ClInclude Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\serialization\JsoncDocument.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\request\RequestService.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\request\win32\WinHttpRequestRuntime.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.h">
+    <ClInclude Include="..\sakura_core\include\sakura\serialization\JsoncDocument.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.h">
@@ -1325,9 +1319,6 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultTypes.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcProtocol.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.h">
@@ -1372,22 +1363,25 @@
     <ClInclude Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\security\CurrentUserSecurityAttributes.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\storage\CAtomicFileStorageService.h">
+    <ClInclude Include="..\sakura_core\include\sakura\security\CurrentUserSecurityAttributes.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\platform\storage\CInMemoryStorageService.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\storage\IStorageService.h">
+    <ClInclude Include="..\sakura_core\include\sakura\storage\IStorageAuthority.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\storage\StorageTypes.h">
+    <ClInclude Include="..\sakura_core\include\sakura\storage\IStorageService.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\uri\UriIdentity.h">
+    <ClInclude Include="..\sakura_core\include\sakura\storage\StorageSnapshotCache.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\include\sakura\storage\StorageTypes.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\include\sakura\uri\UriIdentity.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h">
@@ -2977,6 +2971,9 @@
     <ClCompile Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\filesystem\FileSystemFactory.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileRegistry.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
@@ -2998,15 +2995,6 @@
     <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\request\RequestService.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\request\win32\WinHttpRequestRuntime.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\request\win32\WinHttpSystemProxyResolver.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
     <ClCompile Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
@@ -3026,9 +3014,6 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\secrets\SecretVaultTypes.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcProtocol.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.cpp">
@@ -3073,16 +3058,7 @@
     <ClCompile Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\security\CurrentUserSecurityAttributes.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\storage\CAtomicFileStorageService.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
     <ClCompile Include="..\sakura_core\platform\storage\CInMemoryStorageService.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\storage\StorageTypes.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\uri\UriIdentity.cpp">

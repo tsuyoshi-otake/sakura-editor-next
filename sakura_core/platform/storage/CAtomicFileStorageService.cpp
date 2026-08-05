@@ -4,11 +4,11 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
+#include "CAtomicFileStorageService.h"
+#include <sakura/storage/StorageAuthorityFactory.h>
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 
-#include "platform/storage/CAtomicFileStorageService.h"
-#include "platform/security/CurrentUserSecurityAttributes.h"
-
+#include <Windows.h>
 #include <Aclapi.h>
 #include <bcrypt.h>
 
@@ -433,6 +433,12 @@ CAtomicFileStorageService::CAtomicFileStorageService(std::filesystem::path direc
 	, m_fileOperations(fileOperations ? std::move(fileOperations) : CreateWin32AtomicFileStorageFileOperations())
 	, m_subscriptionState(std::make_shared<SubscriptionState>())
 {
+}
+
+std::shared_ptr<IStorageAuthority> CreateAtomicFileStorageAuthority(
+	const std::filesystem::path& directory, std::uint64_t generation, std::size_t maxCompletedOperations)
+{
+	return std::make_shared<CAtomicFileStorageService>(directory, generation, maxCompletedOperations);
 }
 
 CAtomicFileStorageService::~CAtomicFileStorageService()

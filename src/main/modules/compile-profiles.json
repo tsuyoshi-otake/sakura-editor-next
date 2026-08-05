@@ -98,6 +98,7 @@
   "context_profiles": [
     {"id": "context-msvc-x64-debug", "context_id": "msvc-x64-debug", "project_profile": "msvc-x64-debug", "link_profile": "msvc-debug-link"},
     {"id": "context-cmake-msvc-x64-debug", "context_id": "cmake-msvc-x64-debug", "project_profile": "msvc-x64-debug", "link_profile": "msvc-debug-link"},
+    {"id": "context-cmake-msvc-x64-release", "context_id": "cmake-msvc-x64-release", "project_profile": "msvc-x64-release", "link_profile": "msvc-release-ltcg"},
     {"id": "context-msvc-x64-release", "context_id": "msvc-x64-release", "project_profile": "msvc-x64-release", "link_profile": "msvc-release-ltcg"},
     {"id": "context-mingw-x64-debug", "context_id": "mingw-x64-debug", "project_profile": "mingw-x64-debug", "link_profile": "mingw-debug-link"},
     {"id": "context-mingw-x64-release", "context_id": "mingw-x64-release", "project_profile": "mingw-x64-release", "link_profile": "mingw-release-link"}

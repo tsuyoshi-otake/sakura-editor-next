@@ -10,7 +10,7 @@
 
 #include "platform/profiles/ProfileAuthorityIdentity.h"
 #include "platform/profiles/UserDataProfileRegistry.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <cstdint>
 #include <optional>

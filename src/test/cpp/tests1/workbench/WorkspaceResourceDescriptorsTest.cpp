@@ -11,7 +11,7 @@
 
 #include <utility>
 
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/workspace/WorkspaceResourceDescriptors.h"
 
 namespace {

@@ -14,4 +14,5 @@ This directory contains the resource DLL projects for English (`en-US`) and Simp
 ## Project Maintenance
 
 - Keep `.vcxproj` and `.vcxproj.filters` entries synchronized.
+- Language DLL projects consume generated resource contracts, but they do not build or link the Sakura product. Do not add a `ProjectReference` from a language DLL to `sakura.vcxproj` or let a language-DLL Clean/Rebuild delete the shared CMakeTools workspace.
 - Use `sakura_lang/sakura_lang.sln` for focused MSVC language-DLL verification. Shared CMake language-DLL generation is defined from the root CMake build, so resource changes that affect both paths should verify both.

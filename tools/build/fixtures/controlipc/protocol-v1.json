@@ -1,0 +1,37 @@
+{
+  "fixture_schema_version": 1,
+  "protocol": "control-ipc",
+  "protocol_major": 1,
+  "protocol_minor": 0,
+  "producer": "sakura_controlipc_protocol",
+  "consumers": [
+    "sakura_controlipc_protocol_tests",
+    "sakura_controlipc_client",
+    "sakura_controlipc_server"
+  ],
+  "compatibility": "exact-wire-bytes-for-v1",
+  "frames": [
+    {
+      "id": "hello-request-v1",
+      "kind": "Hello",
+      "kind_value": 1,
+      "flags": ["Request"],
+      "flags_value": 1,
+      "request_id": 1,
+      "generation": 0,
+      "payload_hex": "",
+      "frame_hex": "1c00000053434950010000000100010001000000000000000000000000000000"
+    },
+    {
+      "id": "cancel-terminal-response-v1",
+      "kind": "CancelAck",
+      "kind_value": 8,
+      "flags": ["Response", "Terminal"],
+      "flags_value": 6,
+      "request_id": 2,
+      "generation": 7,
+      "payload_hex": "",
+      "frame_hex": "1c00000053434950010000000800060002000000000000000700000000000000"
+    }
+  ]
+}

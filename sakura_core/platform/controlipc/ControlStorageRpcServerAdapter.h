@@ -10,6 +10,7 @@
 
 #include "platform/controlipc/ControlIpcNamedPipeTransport.h"
 #include "platform/controlipc/ControlStorageRpc.h"
+#include <sakura/storage/IStorageAuthority.h>
 
 #include <cstdint>
 #include <memory>
@@ -30,12 +31,14 @@ enum class EControlStorageRpcServerAdapterState : std::uint8_t {
 	CreateSession() call creates a fresh CControlStorageRpcSession, so a completed
 	Hello never authenticates another connection. BeginStopping()/Stop() close the
 	shared gate: no new session is created and existing connections receive one
-	terminal ServerStopping error before their transport closes.
+	terminal ServerStopping error before their transport closes. The adapter borrows
+	an already-open Control-owned authority; lifecycle ownership remains with the
+	Control composition root.
 */
 class CControlStorageRpcServerAdapter final : public IControlIpcFrameHandler {
 public:
 	CControlStorageRpcServerAdapter(ControlStorageRpcSessionIdentity identity,
-		std::shared_ptr<storage::IStorageService> storage);
+		std::shared_ptr<storage::IStorageAuthority> storage);
 	~CControlStorageRpcServerAdapter() override;
 	CControlStorageRpcServerAdapter(const CControlStorageRpcServerAdapter&) = delete;
 	CControlStorageRpcServerAdapter& operator=(const CControlStorageRpcServerAdapter&) = delete;
@@ -56,7 +59,7 @@ private:
 	class SessionHandler;
 
 	ControlStorageRpcSessionIdentity m_identity;
-	std::shared_ptr<storage::IStorageService> m_storage;
+	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<Gate> m_gate;
 };
 

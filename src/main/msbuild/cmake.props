@@ -7,6 +7,9 @@
     <VersionHeader>$(CMakeToolsBuildDir)version.h</VersionHeader>
     <FuncCodeDefine>$(CMakeToolsBuildDir)Funccode_define.h</FuncCodeDefine>
     <FuncCodeEnum>$(CMakeToolsBuildDir)Funccode_enum.h</FuncCodeEnum>
+    <!-- A leaf project's Clean/Rebuild must not delete this shared generator
+         workspace. Canonical full generator observations opt in explicitly. -->
+    <SakuraCleanCMakeToolsBuildDir Condition="'$(SakuraCleanCMakeToolsBuildDir)'==''">false</SakuraCleanCMakeToolsBuildDir>
     <!-- Limit this workaround to generated CMake/MSBuild children. The regular
          project keeps FileTracker enabled for correct incremental compilation. -->
     <CMakeBuildEnvironmentVariables>TrackFileAccess=false;MSBUILDDISABLENODEREUSE=1</CMakeBuildEnvironmentVariables>

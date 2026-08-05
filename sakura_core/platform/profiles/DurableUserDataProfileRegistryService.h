@@ -7,7 +7,7 @@
 #pragma once
 
 #include "platform/profiles/UserDataProfileRegistryCodec.h"
-#include "platform/storage/IStorageService.h"
+#include <sakura/storage/IStorageService.h>
 
 #include <optional>
 

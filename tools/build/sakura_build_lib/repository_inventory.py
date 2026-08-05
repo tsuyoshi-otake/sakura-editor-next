@@ -334,6 +334,22 @@ def _literal_msbuild_imports(repo_root: Path, project_relative: str) -> tuple[st
     return tuple(sorted(imports))
 
 
+def _resolve_msbuild_project_directory_item(
+    repo_root: Path,
+    consumer_project: str,
+    item_spec: str,
+) -> str | None:
+    """Resolve an item that is relative to the consuming MSBuild project."""
+    normalized = item_spec.replace("\\", "/")
+    prefix = "$(MSBuildProjectDirectory)/"
+    if normalized.lower().startswith(prefix.lower()):
+        normalized = normalized[len(prefix):]
+    elif any(marker in normalized for marker in ("$", "%", "@")):
+        return None
+    project_directory = (repo_root / consumer_project).parent
+    return _relative(repo_root, project_directory / Path(normalized))
+
+
 def _msbuild_target_records(
     repo_root: Path,
     project_relative: str,
@@ -403,7 +419,8 @@ def _cmake_command_blocks(text: str, command_name: str) -> tuple[str, ...]:
 def _cmake_section(block: str, section: str) -> list[str]:
     boundary = (
         "OUTPUT|COMMAND|MAIN_DEPENDENCY|DEPENDS|BYPRODUCTS|IMPLICIT_DEPENDS|WORKING_DIRECTORY|"
-        "COMMENT|DEPFILE|JOB_POOL|JOB_SERVER_AWARE|VERBATIM|APPEND|USES_TERMINAL|COMMAND_EXPAND_LISTS|CODEGEN"
+        "COMMENT|DEPFILE|JOB_POOL|JOB_SERVER_AWARE|VERBATIM|APPEND|USES_TERMINAL|COMMAND_EXPAND_LISTS|"
+        "CODEGEN|SOURCES"
     )
     match = re.search(
         rf"(?:^|\s){section}\s+(.+?)(?=\s+(?:{boundary})(?:\s|$)|$)",
@@ -447,12 +464,34 @@ def _generated_provenance(graph: SemanticGraph, source: Mapping[str, object]) ->
             text = _read_text(path, relative, "INVENTORY_CMAKE_READ")
             for index, block in enumerate(_cmake_command_blocks(text, "add_custom_command"), 1):
                 outputs = _cmake_section(block, "OUTPUT")
-                if not outputs:
+                byproducts = _cmake_section(block, "BYPRODUCTS")
+                if not outputs and not byproducts:
                     continue
                 cmake_commands.append({
+                    "kind": "custom-command",
                     "source": relative,
                     "ordinal": index,
                     "outputs": outputs,
+                    "byproducts": byproducts,
+                    "inputs": _cmake_section(block, "DEPENDS"),
+                    "commands": _cmake_section(block, "COMMAND"),
+                })
+            for index, block in enumerate(_cmake_command_blocks(text, "add_custom_target"), 1):
+                byproducts = _cmake_section(block, "BYPRODUCTS")
+                if not byproducts:
+                    continue
+                try:
+                    target_tokens = shlex.split(block, posix=True)
+                except ValueError:
+                    target_tokens = block.split()
+                target_name = target_tokens[0].strip('"') if target_tokens else ""
+                cmake_commands.append({
+                    "kind": "custom-target",
+                    "target": target_name,
+                    "source": relative,
+                    "ordinal": index,
+                    "outputs": [],
+                    "byproducts": byproducts,
                     "inputs": _cmake_section(block, "DEPENDS"),
                     "commands": _cmake_section(block, "COMMAND"),
                 })
@@ -468,10 +507,17 @@ def _generated_provenance(graph: SemanticGraph, source: Mapping[str, object]) ->
                 "backend": "msbuild-target", "source": target["source"], "target": target["target"], "output": output
             })
     for command in cmake_commands:
-        for output in command["outputs"]:
-            declared_outputs[_output_basename(str(output))].append({
-                "backend": "cmake", "source": command["source"], "ordinal": command["ordinal"], "output": output
-            })
+        for output_kind in ("outputs", "byproducts"):
+            for output in command[output_kind]:
+                declared_outputs[_output_basename(str(output))].append({
+                    "backend": "cmake",
+                    "kind": command["kind"],
+                    "source": command["source"],
+                    "ordinal": command["ordinal"],
+                    "output": output,
+                    "output_kind": output_kind,
+                    **({"target": command["target"]} if "target" in command else {}),
+                })
 
     generated_includes: list[dict[str, object]] = []
     unclassified: list[dict[str, object]] = []
@@ -501,9 +547,11 @@ def _generated_provenance(graph: SemanticGraph, source: Mapping[str, object]) ->
             "source": command["source"],
             "ordinal": command["ordinal"],
             "outputs": command["outputs"],
+            "byproducts": command["byproducts"],
+            **({"target": command["target"]} if "target" in command else {}),
         }
         for command in cmake_commands
-        if command["outputs"] and not command["inputs"]
+        if (command["outputs"] or command["byproducts"]) and not command["inputs"]
     ]
     declared_input_gaps.extend(
         {
@@ -642,8 +690,11 @@ def _product_link_provenance(graph: SemanticGraph) -> dict[str, object]:
                     "literal_libraries": sorted(token for token in tokens if token.lower().endswith(".lib") and not any(marker in token for marker in ("$", "%", "@"))),
                     "expression_tokens": sorted(token for token in tokens if any(marker in token for marker in ("$", "%", "@"))),
                 })
-        for reference in _msbuild_item_records(graph.repo_root, project, "ProjectReference"):
-            project_references.append({"consumer": component_id, **reference})
+        for source in (project, *_literal_msbuild_imports(graph.repo_root, project)):
+            if not (graph.repo_root / source).is_file():
+                continue
+            for reference in _msbuild_item_records(graph.repo_root, source, "ProjectReference"):
+                project_references.append({"consumer": component_id, **reference})
         for target in root.findall(".//{*}Target"):
             body = ET.tostring(target, encoding="unicode")
             links_item_vector = bool(re.search(r"<[^>]*Link\s+Include=\"@\(", body, re.IGNORECASE))
@@ -688,10 +739,30 @@ def _product_reachability(
     if len(product_targets) != 1 or len(provider_targets) != 1:
         raise BuildError("INVENTORY_TARGET", "product/provider must each have exactly one MSBuild target", 2)
 
-    compiled = set(_msbuild_items(graph.repo_root, product_targets[0], "ClCompile"))
-    references = set(_msbuild_items(graph.repo_root, product_targets[0], "ProjectReference"))
+    product_project = product_targets[0]
+    compiled = set(_msbuild_items(graph.repo_root, product_project, "ClCompile"))
+    projection = f"src/main/modules/generated/msbuild/consumers/{product_id}.props"
+    imports = set(_literal_msbuild_imports(graph.repo_root, product_project))
+    projection_imported = projection in imports and (graph.repo_root / projection).is_file()
+    removed_sources: set[str] = set()
+    references: set[str] = set(_msbuild_items(graph.repo_root, product_project, "ProjectReference"))
+    if projection_imported:
+        projection_root = _parse_msbuild(graph.repo_root, projection)
+        for item in projection_root.findall(".//{*}ClCompile"):
+            remove = item.get("Remove")
+            if remove:
+                resolved = _resolve_msbuild_project_directory_item(graph.repo_root, product_project, remove)
+                if resolved is not None:
+                    removed_sources.add(resolved)
+        for item in projection_root.findall(".//{*}ProjectReference"):
+            include = item.get("Include")
+            if include:
+                resolved = _resolve_msbuild_project_directory_item(graph.repo_root, product_project, include)
+                if resolved is not None:
+                    references.add(resolved)
     provider_project = provider_targets[0]
-    direct_sources = sorted(set(provider.sources) & compiled)
+    raw_direct_sources = sorted(set(provider.sources) & compiled)
+    direct_sources = sorted((set(provider.sources) & compiled) - removed_sources)
     has_project_reference = provider_project in references
     active = graph.active_edges(context_id)
     declared_edges = [
@@ -707,6 +778,7 @@ def _product_reachability(
             include_witnesses.extend(edge["witnesses"])
 
     cmake_globs: list[dict[str, object]] = []
+    cmake_sources: dict[str, str] = {}
     cmake_candidates = [graph.repo_root / "CMakeLists.txt", graph.repo_root / "src/main/cmake"]
     for candidate in cmake_candidates:
         paths = [candidate] if candidate.is_file() else sorted(candidate.glob("*.cmake")) if candidate.is_dir() else []
@@ -714,16 +786,53 @@ def _product_reachability(
             relative = _relative(graph.repo_root, path)
             if relative is None:
                 continue
-            for line_number, line in enumerate(_read_text(path, relative, "INVENTORY_CMAKE_READ").splitlines(), 1):
+            text = _read_text(path, relative, "INVENTORY_CMAKE_READ")
+            cmake_sources[relative] = text
+            for line_number, line in enumerate(text.splitlines(), 1):
                 if re.search(r"\bGLOB_RECURSE\b", line, re.IGNORECASE):
                     cmake_globs.append({"source": relative, "line": line_number, "text": line.strip()})
 
-    independent = bool(declared_edges) and has_project_reference and not direct_sources and not cmake_globs
+    cmake_ownership_projection = "src/main/modules/generated/cmake/legacy/source-ownership.cmake"
+    cmake_consumer_projection = f"src/main/modules/generated/cmake/legacy/consumers/{product_id}.cmake"
+    ownership_imported = any(cmake_ownership_projection in text.replace("\\", "/") for text in cmake_sources.values())
+    consumer_projection_imported = any(cmake_consumer_projection in text.replace("\\", "/") for text in cmake_sources.values())
+    ownership_path = graph.repo_root / cmake_ownership_projection
+    consumer_path = graph.repo_root / cmake_consumer_projection
+    ownership_text = _read_text(ownership_path, cmake_ownership_projection, "INVENTORY_CMAKE_READ") if ownership_path.is_file() else ""
+    consumer_text = _read_text(consumer_path, cmake_consumer_projection, "INVENTORY_CMAKE_READ") if consumer_path.is_file() else ""
+    removed_cmake_sources = sorted(
+        source
+        for source in provider.sources
+        if re.search(
+            rf"list\s*\(\s*REMOVE_ITEM\s+SOURCES\s+[^)]*{re.escape(source)}",
+            ownership_text,
+            re.IGNORECASE | re.DOTALL,
+        )
+    )
+    provider_target_defined = bool(re.search(
+        rf"add_library\s*\(\s*{re.escape(provider_id)}\s+STATIC\b",
+        ownership_text,
+        re.IGNORECASE,
+    ))
+    consumer_linked = bool(re.search(
+        rf"target_link_libraries\s*\([^)]*\b{re.escape(provider_id)}\b",
+        consumer_text,
+        re.IGNORECASE | re.DOTALL,
+    ))
+    cmake_ownership_verified = (
+        ownership_imported
+        and consumer_projection_imported
+        and set(removed_cmake_sources) == set(provider.sources)
+        and provider_target_defined
+        and consumer_linked
+    )
+
+    independent = bool(declared_edges) and has_project_reference and not direct_sources and cmake_ownership_verified
     if direct_sources:
         status = "embedded_in_product"
     elif not declared_edges or not has_project_reference:
         status = "not_connected_through_declared_provider"
-    elif cmake_globs:
+    elif not cmake_ownership_verified:
         status = "cmake_source_ownership_opaque"
     else:
         status = "independent_provider"
@@ -736,14 +845,25 @@ def _product_reachability(
         "declared_compile_link_edges": sorted(declared_edges),
         "include_witnesses": sorted(include_witnesses, key=lambda item: (str(item["source"]), int(item["line"]))),
         "msbuild": {
-            "product_project": product_targets[0],
+            "product_project": product_project,
             "provider_project": provider_project,
+            "consumer_projection": projection,
+            "consumer_projection_imported": projection_imported,
             "provider_project_reference": has_project_reference,
+            "provider_sources_declared_in_handwritten_project": raw_direct_sources,
+            "provider_sources_removed_by_projection": sorted(set(provider.sources) & removed_sources),
             "provider_sources_compiled_directly": direct_sources,
         },
         "cmake": {
             "glob_recurse_witnesses": sorted(cmake_globs, key=lambda item: (str(item["source"]), int(item["line"]))),
-            "source_ownership_verified": not cmake_globs,
+            "ownership_projection": cmake_ownership_projection,
+            "ownership_projection_imported": ownership_imported,
+            "consumer_projection": cmake_consumer_projection,
+            "consumer_projection_imported": consumer_projection_imported,
+            "provider_sources_removed_by_projection": removed_cmake_sources,
+            "provider_target_defined": provider_target_defined,
+            "consumer_linked_to_provider": consumer_linked,
+            "source_ownership_verified": cmake_ownership_verified,
         },
     }
 
@@ -876,6 +996,35 @@ def collect_repository_inventory(
             if provider is None or provider == product_id or not object_path or object_path not in linked_objects:
                 continue
             observed_native_edges[provider].append({"source": source_path, "object": object_path})
+        link_observation = native_observation.get("link", {})
+        command_libraries = [str(value) for value in link_observation.get("command_libraries", [])]
+        repository_libraries = [str(value) for value in link_observation.get("repository_libraries", [])]
+        observed_libraries = tuple(dict.fromkeys(command_libraries + repository_libraries))
+        archive_evidence = link_observation.get("selected_archive_member_evidence")
+        selected_members = {
+            str(value).casefold()
+            for value in archive_evidence.get("members", [])
+        } if isinstance(archive_evidence, dict) else set()
+        for dependency in graph.components.values():
+            if dependency.id == product_id or dependency.build_definition != "generated":
+                continue
+            provider_libraries = [
+                value
+                for value in observed_libraries
+                if Path(value.split(":", 1)[-1]).stem.casefold() == dependency.id.casefold()
+            ]
+            if not provider_libraries:
+                continue
+            for source_path in dependency.sources:
+                member = Path(source_path).with_suffix(".obj").name
+                if member.casefold() not in selected_members:
+                    continue
+                observed_native_edges[dependency.id].append({
+                    "source": source_path,
+                    "object": f"archive:{dependency.id}.lib({member})",
+                    "archive_member": member,
+                    "libraries": provider_libraries,
+                })
     native_observation["consumer_provider_edges"] = [
         {
             "consumer": product_id,
@@ -902,9 +1051,22 @@ def collect_repository_inventory(
     product_link["native_input_set_observed"] = bool(native_coverage.get("link_input_set_observed"))
     product_link["native_selected_archive_members_observed"] = bool(native_coverage.get("selected_archive_members_observed"))
     product_link["native_consumer_provider_edges"] = native_observation["consumer_provider_edges"]
+    declared_native_providers = {
+        edge.target
+        for edge in graph.active_edges(context_id)
+        if edge.source == product_id
+        and "link" in edge.phases
+        and edge.target in graph.components
+        and graph.components[edge.target].build_definition == "generated"
+    }
+    observed_native_providers = set(observed_native_edges)
+    product_link["native_declared_provider_edges_observed"] = declared_native_providers.issubset(
+        observed_native_providers
+    )
     product_link["native_product_link_closure_observed"] = (
         product_link["native_input_set_observed"]
         and product_link["native_selected_archive_members_observed"]
+        and product_link["native_declared_provider_edges_observed"]
     )
     artifacts_by_kind = {
         kind: sorted(artifact.id for artifact in graph.artifacts.values() if artifact.artifact_kind == kind)
@@ -913,7 +1075,7 @@ def collect_repository_inventory(
     coverage = [
         {"class": "include", "status": "partial", "evidence": "owned C/C++ lexical scan plus native compiler/PCH trace when valid evidence is supplied; public/private and all-context closure pending"},
         {"class": "native_source_ownership", "status": "partial", "evidence": "MSBuild exact; CMake GLOB_RECURSE diagnostic"},
-        {"class": "link", "status": "partial", "evidence": "MSBuild definitions plus native product link input set when valid evidence is supplied; selected archive members/link-map closure pending"},
+        {"class": "link", "status": "partial", "evidence": "MSBuild definitions plus native product link input set and selected archive members from a fresh link map when valid evidence is supplied; all-context closure pending"},
         {"class": "generated", "status": "partial", "evidence": "declared outputs/tools plus native generated-input consumption, target terminal outcomes, and exact producer correlations when valid evidence is supplied; declared-input gaps and all-context closure pending"},
         {"class": "resource", "status": "partial", "evidence": "repository definitions plus native RC input trace, top-level PE resource table, and canonical/nested numeric resource-ID compatibility when valid evidence is supplied; component ownership and all-context closure pending"},
         {"class": "package", "status": "partial", "evidence": "root vcpkg manifest and global MSBuild restore definition observed; per-component restore closure and native restore trace pending"},
@@ -966,7 +1128,7 @@ def collect_repository_inventory(
         })
     if not reachability["declared_compile_link_edges"]:
         findings.append({"code": "PRODUCT_PROVIDER_EDGE_MISSING", "severity": "blocker", "consumer": product_id, "provider": provider_id})
-    if reachability["cmake"]["glob_recurse_witnesses"]:
+    if not reachability["cmake"]["source_ownership_verified"]:
         findings.append({"code": "CMAKE_SOURCE_OWNERSHIP_OPAQUE", "severity": "blocker", "witnesses": reachability["cmake"]["glob_recurse_witnesses"]})
     if generated["unclassified_unresolved_quoted_includes"]:
         findings.append({
@@ -1143,6 +1305,7 @@ def repository_inventory_summary(
             "native_product_link_closure_observed": product_link["native_product_link_closure_observed"],
             "native_input_set_observed": product_link["native_input_set_observed"],
             "native_selected_archive_members_observed": product_link["native_selected_archive_members_observed"],
+            "native_declared_provider_edges_observed": product_link["native_declared_provider_edges_observed"],
         },
         "package_provenance": {
             "root_package_count": len(packages["root_manifest_packages"]),

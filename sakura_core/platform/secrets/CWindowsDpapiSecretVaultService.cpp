@@ -9,7 +9,7 @@
 #include "platform/secrets/CWindowsDpapiSecretVaultService.h"
 
 #include "platform/profiles/ProfileAuthorityIdentity.h"
-#include "platform/security/CurrentUserSecurityAttributes.h"
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 
 #include <Aclapi.h>
 #include <bcrypt.h>

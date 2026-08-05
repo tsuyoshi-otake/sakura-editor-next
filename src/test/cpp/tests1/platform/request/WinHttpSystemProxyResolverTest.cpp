@@ -7,7 +7,7 @@
 
 #include "pch.h"
 
-#include "platform/request/win32/WinHttpSystemProxyResolver.h"
+#include <sakura/request/win32/WinHttpSystemProxyResolver.h>
 
 #include <winhttp.h>
 
@@ -16,10 +16,10 @@
 #include <future>
 #include <thread>
 
-using namespace config;
 using namespace platform::request::win32;
 using platform::request::EProxyMode;
 using platform::request::EProxySupport;
+using platform::request::ESystemProxyResolutionOutcome;
 using platform::request::IRequestCancellation;
 using platform::request::ProxyRequest;
 

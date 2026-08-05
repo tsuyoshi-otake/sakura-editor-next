@@ -12,6 +12,7 @@
 #include "platform/controlipc/ControlProfileRpc.h"
 #include "platform/controlipc/ControlSecretVaultRpc.h"
 #include "platform/controlipc/ControlStorageRpc.h"
+#include <sakura/storage/IStorageAuthority.h>
 
 #include <cstdint>
 #include <memory>
@@ -53,7 +54,7 @@ enum class EControlPlatformRpcServerAdapterState : std::uint8_t {
 class CControlPlatformRpcServerAdapter final : public IControlIpcFrameHandler {
 public:
 	CControlPlatformRpcServerAdapter(ControlStorageRpcSessionIdentity identity,
-		std::shared_ptr<storage::IStorageService> storage,
+		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<secrets::ISecretVaultService> vault,
 		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
@@ -76,7 +77,7 @@ private:
 	class SessionHandler;
 
 	ControlStorageRpcSessionIdentity m_identity;
-	std::shared_ptr<storage::IStorageService> m_storage;
+	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<secrets::ISecretVaultService> m_vault;
 	std::shared_ptr<secrets::ISecretVaultCapabilityService> m_capabilities;
 	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> m_grantAuthority;

@@ -13,7 +13,7 @@
 
 #include "doc/CEditDoc.h"
 #include "doc/logic/CDocLine.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/editor/persistence/WorkingCopyPersistenceCodec.h"
 
 #include <limits>

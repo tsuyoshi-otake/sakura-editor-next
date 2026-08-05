@@ -5,8 +5,9 @@
 	SPDX-License-Identifier: Zlib
 */
 
-#include "StdAfx.h"
-#include "platform/filesystem/CWin32FileSystemProvider.h"
+#include "CWin32FileSystemProvider.h"
+
+#include <Windows.h>
 
 #include <algorithm>
 #include <array>

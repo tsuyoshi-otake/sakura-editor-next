@@ -4,8 +4,7 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-#include "platform/controlipc/ControlIpcProtocol.h"
+#include <sakura/controlipc/ControlIpcProtocol.h>
 
 #include <algorithm>
 #include <limits>

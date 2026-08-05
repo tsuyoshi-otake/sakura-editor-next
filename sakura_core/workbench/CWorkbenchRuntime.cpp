@@ -12,9 +12,8 @@
 #include "config/ConfigurationFileSourceController.h"
 #include "config/ConfigurationFileWatchController.h"
 #include "config/JsoncConfigurationSource.h"
-#include "platform/filesystem/CFileService.h"
-#include "platform/filesystem/CWin32FileSystemProvider.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/filesystem/FileSystemFactory.h>
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 #include "workbench/workspace/WorkspaceArtifactDocumentSourceController.h"
@@ -304,13 +303,13 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 {
 	m_listenerGate->owner = this;
 	if (!m_fileService) {
-		auto files = std::make_unique<platform::filesystem::CFileService>();
-		auto registration = files->RegisterProvider(
-			L"file", std::make_shared<platform::filesystem::CWin32FileSystemProvider>());
-		if (!registration.Succeeded()) {
-			m_initializationFailure = "local filesystem provider registration failed";
+		auto files = platform::filesystem::CreateWin32FileService();
+		if (!files.Succeeded() || !files.value) {
+			m_initializationFailure = files.diagnostic.empty()
+				? "local filesystem provider registration failed"
+				: std::string(files.diagnostic.begin(), files.diagnostic.end());
 		} else {
-			m_fileService = std::move(files);
+			m_fileService = std::move(*files.value);
 		}
 	}
 	if (m_fileService) {

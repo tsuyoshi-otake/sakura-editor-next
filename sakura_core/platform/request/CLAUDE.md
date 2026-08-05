@@ -7,6 +7,17 @@ orchestration, challenge-scoped credential seam, response cache seam, and Win32
 transport adapters. Configuration, OpenVSX, extension UI, and HWND state do not
 belong here.
 
+The public boundary is `sakura_core/include/sakura/request/`. Consumers include
+`<sakura/request/RequestService.h>` and the explicit Win32 adapter contracts under
+`<sakura/request/win32/>`; the deleted `platform/request/*.h` files are private
+implementation history and must not be recreated or reached through a relative
+include. The `sakura_request` target owns the three request implementation
+translation units and declares `winhttp` in `src/main/modules/modules.json`.
+`sakura_request_tests` owns the package/resource-less contract pilot. `sakura_app`
+and `tests1` are integration consumers that link the provider through generated
+manifest edges; they do not own the provider sources or private headers. A
+`#pragma comment(lib)` is forbidden here and in its tests.
+
 ## Dependency and Lifetime Rules
 
 - Consumers depend on `IRequestService`; `RequestService` depends on injected
@@ -109,4 +120,3 @@ belong here.
   teardown.
 - Live proxy, PAC, TLS, authentication, and registry tests require an isolated
   opt-in environment and must never run as part of the default suite.
-

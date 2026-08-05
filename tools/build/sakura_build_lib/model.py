@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-GENERATOR_VERSION = "0.3.4"
+GENERATOR_VERSION = "0.3.6"
 
 PROJECT_PROFILE_FIELDS = frozenset({
     "abi_family",
@@ -256,6 +256,7 @@ class Component:
     state_owner: str | None
     backend_targets: Mapping[str, tuple[str, ...]]
     compile_profile: str | None
+    system_libraries: tuple[str, ...] = ()
 
     def as_mapping(self) -> dict[str, Any]:
         return {
@@ -275,6 +276,7 @@ class Component:
             "state_owner": self.state_owner,
             "backend_targets": {key: list(value) for key, value in sorted(self.backend_targets.items())},
             "compile_profile": self.compile_profile,
+            "system_libraries": list(self.system_libraries),
         }
 
 
@@ -641,6 +643,7 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
         value,
         location,
         required={"id", "family", "kind", "maturity", "build_definition", "supported_contexts", "owner", "sources", "public_headers", "private_headers", "ownership_exclusions", "public_include_roots", "private_include_roots", "state_owner", "backend_targets", "compile_profile"},
+        optional={"system_libraries"},
     )
     kind = _string(obj["kind"], f"{location}.kind")
     if kind not in COMPONENT_KINDS:
@@ -661,6 +664,10 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
     compile_profile = obj["compile_profile"]
     if compile_profile is not None:
         compile_profile = _string(compile_profile, f"{location}.compile_profile")
+    system_libraries = _string_list(obj.get("system_libraries", []), f"{location}.system_libraries")
+    for index, library in enumerate(system_libraries):
+        if not re.fullmatch(r"[A-Za-z0-9_.+-]+", library):
+            _fail("SYSTEM_LIBRARY_NAME", f"{location}.system_libraries[{index}]", "library names must not contain path separators or shell metacharacters")
     backend_targets: dict[str, tuple[str, ...]] = {}
     for backend, values in sorted(targets_obj.items()):
         parsed: list[str] = []
@@ -754,6 +761,7 @@ def _parse_component(repo_root: Path, value: Any, location: str) -> Component:
         state_owner=state_owner,
         backend_targets=backend_targets,
         compile_profile=compile_profile,
+        system_libraries=system_libraries,
     )
 
 

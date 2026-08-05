@@ -12,7 +12,7 @@
 #include <string>
 #include <utility>
 
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/workspace/WorkspaceConfigurationDocumentParser.h"
 #include "workbench/workspace/WorkspaceFolderLimits.h"
 

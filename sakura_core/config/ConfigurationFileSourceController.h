@@ -8,7 +8,7 @@
 #pragma once
 
 #include "config/JsoncConfigurationSource.h"
-#include "platform/filesystem/IFileService.h"
+#include <sakura/filesystem/IFileService.h>
 
 #include <cstdint>
 #include <map>

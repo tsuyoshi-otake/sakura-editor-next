@@ -9,10 +9,10 @@
 #include "extension/CExtensionSecretStorage.h"
 #include "extension/CExtensionWorkbenchDispatcher.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
-#include "platform/filesystem/IFileService.h"
+#include <sakura/filesystem/IFileService.h>
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 #include "workbench/CWorkbenchRuntime.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"

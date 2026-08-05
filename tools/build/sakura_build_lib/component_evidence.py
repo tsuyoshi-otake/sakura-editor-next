@@ -18,6 +18,26 @@ class ComponentEvidenceError(RuntimeError):
     pass
 
 
+# MSVC emits this stable default set when a generated Windows target uses the
+# standard CRT/Win32 project settings.  These are toolchain defaults, not
+# component-owned dependencies; component-specific native APIs still have to be
+# declared by the owning manifest component (for example `advapi32`).
+IMPLICIT_MSVC_SYSTEM_LIBRARIES = frozenset({
+    "advapi32.lib",
+    "comdlg32.lib",
+    "gdi32.lib",
+    "kernel32.lib",
+    "odbc32.lib",
+    "odbccp32.lib",
+    "ole32.lib",
+    "oleaut32.lib",
+    "shell32.lib",
+    "user32.lib",
+    "uuid.lib",
+    "winspool.lib",
+})
+
+
 def _read_text(path: Path, *, encoding: str = "utf-8") -> str:
     try:
         return path.read_text(encoding=encoding, errors="replace")
@@ -108,6 +128,8 @@ def _hard_evidence_hash(evidence: dict[str, object]) -> str:
         "declared_repo_inputs",
         "observed_repo_inputs",
         "expected_link_providers",
+        "declared_system_libraries",
+        "implicit_system_libraries",
         "observed_link_libraries",
         "expected_link_map_members",
         "observed_link_map_members",
@@ -126,6 +148,18 @@ def _link_libraries(command_text: str) -> set[str]:
     for quoted, plain in re.findall(r'"([^\"]+\.lib)"|([^\s\"]+\.lib)', without_outputs, flags=re.IGNORECASE):
         token = (quoted or plain).replace("\\", "/")
         result.add(token.rsplit("/", 1)[-1].lower())
+    return result
+
+
+def _declared_system_libraries(graph: SemanticGraph, component_ids: Iterable[str]) -> set[str]:
+    result: set[str] = set()
+    for component_id in component_ids:
+        component = graph.components.get(component_id)
+        if component is None:
+            continue
+        for library in component.system_libraries:
+            normalized = library.lower()
+            result.add(normalized if normalized.endswith(".lib") else f"{normalized}.lib")
     return result
 
 
@@ -278,8 +312,10 @@ def collect_component_evidence(graph: SemanticGraph, component_id: str, context_
 
     observed_inputs = set(raw["observed_repo_inputs"])
     expected_providers = _expected_link_providers(graph, component_id, context_id)
+    declared_system_libraries = _declared_system_libraries(graph, final_link_closure)
     expected_map_members = _expected_map_members(graph, expected_providers)
     observed_libraries = _link_libraries(str(raw["link_command"]))
+    implicit_system_libraries = observed_libraries & IMPLICIT_MSVC_SYSTEM_LIBRARIES
     map_text = str(raw["map_text"]).lower()
     observed_map_members = {
         provider: [member for member in members if member in map_text]
@@ -299,7 +335,10 @@ def collect_component_evidence(graph: SemanticGraph, component_id: str, context_
         ("UNDECLARED_REPO_INPUT", sorted(observed_inputs - declared_inputs)),
         ("DECLARED_INPUT_NOT_OBSERVED", sorted(declared_inputs - observed_inputs)),
         ("LINK_PROVIDER_MISSING", sorted(expected_providers - observed_libraries)),
-        ("LINK_PROVIDER_UNDECLARED", sorted(observed_libraries - expected_providers)),
+        (
+            "LINK_PROVIDER_UNDECLARED",
+            sorted(observed_libraries - expected_providers - declared_system_libraries - IMPLICIT_MSVC_SYSTEM_LIBRARIES),
+        ),
         ("LINK_MAP_PROVIDER_MISSING", missing_map_providers),
         ("FORBIDDEN_BUILD_INPUT", forbidden_tokens),
         ("PACKAGE_METADATA_PRESENT", package_mentions),
@@ -325,6 +364,8 @@ def collect_component_evidence(graph: SemanticGraph, component_id: str, context_
         "observed_repo_inputs": sorted(observed_inputs),
         "external_input_count": raw["external_input_count"],
         "expected_link_providers": sorted(expected_providers),
+        "declared_system_libraries": sorted(declared_system_libraries),
+        "implicit_system_libraries": sorted(implicit_system_libraries),
         "observed_link_libraries": sorted(observed_libraries),
         "expected_link_map_members": {
             provider: list(members) for provider, members in sorted(expected_map_members.items())

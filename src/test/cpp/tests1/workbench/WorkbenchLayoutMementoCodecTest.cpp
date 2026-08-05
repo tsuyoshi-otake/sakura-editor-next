@@ -6,7 +6,7 @@
 */
 #include "pch.h"
 
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 #include "workbench/layout/WorkbenchLayoutMementoCodec.h"
 
 #include <algorithm>

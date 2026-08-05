@@ -7,7 +7,7 @@
 
 #pragma once
 
-#include "platform/filesystem/IFileService.h"
+#include <sakura/filesystem/IFileService.h>
 
 #include <map>
 #include <memory>
@@ -35,7 +35,7 @@ class CFileService final : public IFileService {
 public:
 	[[nodiscard]] FileResult<void> RegisterProvider(
 		std::wstring_view scheme,
-		std::shared_ptr<IFileSystemProvider> provider);
+		std::shared_ptr<IFileSystemProvider> provider) override;
 
 	[[nodiscard]] FileResult<FileStat> Stat(const platform::uri::Uri& resource) override;
 	[[nodiscard]] FileResult<std::vector<DirectoryEntry>> Enumerate(const platform::uri::Uri& directory) override;

@@ -7,7 +7,7 @@
 
 #include "workbench/recent/RecentlyOpenedWorkspaceService.h"
 
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/serialization/JsoncDocument.h>
 
 #include <algorithm>
 #include <array>

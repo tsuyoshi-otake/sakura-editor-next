@@ -52,6 +52,8 @@ from sakura_build_lib.test_inventory import (
     collect_gtest_inventory,
     compare_inventories,
     load_inventory,
+    refresh_runtime_mappings,
+    verify_runtime_mappings,
     write_inventory,
 )
 
@@ -293,6 +295,20 @@ def parser() -> argparse.ArgumentParser:
     inventory_compare = inventory_commands.add_parser("compare")
     inventory_compare.add_argument("before", type=Path)
     inventory_compare.add_argument("after", type=Path)
+    inventory_verify_runtime = inventory_commands.add_parser("verify-runtime")
+    inventory_verify_runtime.add_argument("inventory", type=Path)
+    inventory_verify_runtime.add_argument("--runner", action="append", required=True, help="runner-id=executable")
+    inventory_verify_runtime.add_argument("--timeout-seconds", type=int, default=60)
+    inventory_refresh_runtime = inventory_commands.add_parser("refresh-runtime")
+    inventory_refresh_runtime.add_argument("inventory", type=Path)
+    inventory_refresh_runtime.add_argument("--runner", action="append", required=True, help="runner-id=executable")
+    inventory_refresh_runtime.add_argument(
+        "--remap",
+        action="append",
+        default=[],
+        help="stable-test-id=runner-id::selector; required when an existing selector was renamed",
+    )
+    inventory_refresh_runtime.add_argument("--timeout-seconds", type=int, default=60)
 
     path_matrix = commands.add_parser("path-matrix")
     path_matrix_commands = path_matrix.add_subparsers(dest="path_matrix_command", required=True)
@@ -541,6 +557,56 @@ def _run_test_inventory(args, repo: Path) -> int:
                 args.format,
             )
             return 0
+        if args.inventory_command in {"verify-runtime", "refresh-runtime"}:
+            inventory_path = args.inventory if args.inventory.is_absolute() else repo / args.inventory
+            runners: dict[str, Path] = {}
+            for value in args.runner:
+                runner_id, separator, executable_value = value.partition("=")
+                if not separator or not runner_id or not executable_value or runner_id in runners:
+                    raise TestInventoryError("TEST_RUNNER_ARGUMENT", f"expected unique runner-id=executable: {value}")
+                executable = Path(executable_value)
+                runners[runner_id] = executable if executable.is_absolute() else repo / executable
+            if args.inventory_command == "refresh-runtime":
+                remaps: dict[str, tuple[str, str]] = {}
+                for value in args.remap:
+                    test_id, separator, runtime_value = value.partition("=")
+                    runner_id, runtime_separator, selector = runtime_value.partition("::")
+                    if (
+                        not separator
+                        or runtime_separator != "::"
+                        or not test_id
+                        or not runner_id
+                        or not selector
+                        or test_id in remaps
+                    ):
+                        raise TestInventoryError(
+                            "TEST_REMAP_ARGUMENT",
+                            f"expected unique stable-test-id=runner-id::selector: {value}",
+                        )
+                    remaps[test_id] = (runner_id, selector)
+                revision, source_dirty = _git_source_state(repo)
+                refreshed, report = refresh_runtime_mappings(
+                    load_inventory(inventory_path),
+                    runners,
+                    remaps,
+                    repo,
+                    revision,
+                    source_dirty,
+                    args.timeout_seconds,
+                )
+                report.update({
+                    "ok": True,
+                    "changed": write_inventory(inventory_path, refreshed),
+                    "output": str(inventory_path),
+                    "guarantee_fingerprint": refreshed["guarantee_fingerprint"],
+                })
+                output(report, args.format)
+                return 0
+            result = verify_runtime_mappings(
+                load_inventory(inventory_path), runners, repo, args.timeout_seconds
+            )
+            output(result, args.format)
+            return 0 if result["ok"] else EXIT_TEST
         before_path = args.before if args.before.is_absolute() else repo / args.before
         after_path = args.after if args.after.is_absolute() else repo / args.after
         result = compare_inventories(load_inventory(before_path), load_inventory(after_path))

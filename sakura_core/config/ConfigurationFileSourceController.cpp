@@ -9,7 +9,7 @@
 
 #include "config/ConfigurationFileSourceController.h"
 
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <atomic>
 #include <limits>

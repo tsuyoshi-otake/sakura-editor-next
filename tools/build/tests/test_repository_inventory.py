@@ -5,6 +5,7 @@ import os
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 
 
@@ -16,6 +17,7 @@ from sakura_build_lib.model import (  # noqa: E402
     CompileProfiles,
     Component,
     Context,
+    Edge,
     SemanticGraph,
 )
 from sakura_build_lib.repository_inventory import (  # noqa: E402
@@ -79,8 +81,9 @@ def _fixture(root: Path) -> SemanticGraph:
     )
     _write(
         root / "src/main/cmake/product.cmake",
-        'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/version.h" COMMAND generator DEPENDS version.h.in)\n'
+        'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/version.h" BYPRODUCTS "${CMAKE_BINARY_DIR}/version.trace" COMMAND generator DEPENDS version.h.in)\n'
         'add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/manifest.rc" COMMAND generator)\n'
+        'add_custom_target(generate_runtime COMMAND copier BYPRODUCTS "${CMAKE_BINARY_DIR}/runtime.dll" DEPENDS runtime-source.dll)\n'
         "file(GLOB_RECURSE SOURCES app/*.cpp)\n",
     )
     _write(root / "vcpkg.json", json.dumps({"dependencies": ["fmt"]}) + "\n")
@@ -211,9 +214,25 @@ class RepositoryInventoryTests(unittest.TestCase):
             inventory["generated_provenance"]["cmake_custom_commands"][0]["outputs"],
         )
         self.assertEqual(
+            ["${CMAKE_BINARY_DIR}/version.trace"],
+            inventory["generated_provenance"]["cmake_custom_commands"][0]["byproducts"],
+        )
+        runtime_targets = [
+            item
+            for item in inventory["generated_provenance"]["cmake_custom_commands"]
+            if item.get("target") == "generate_runtime"
+        ]
+        self.assertEqual(1, len(runtime_targets))
+        self.assertEqual("custom-target", runtime_targets[0]["kind"])
+        self.assertEqual(
+            ["${CMAKE_BINARY_DIR}/runtime.dll"], runtime_targets[0]["byproducts"]
+        )
+        self.assertEqual(["runtime-source.dll"], runtime_targets[0]["inputs"])
+        self.assertEqual(
             [
                 {
                     "backend": "cmake",
+                    "byproducts": [],
                     "ordinal": 2,
                     "outputs": ["${CMAKE_BINARY_DIR}/manifest.rc"],
                     "source": "src/main/cmake/product.cmake",
@@ -225,6 +244,78 @@ class RepositoryInventoryTests(unittest.TestCase):
         self.assertEqual(1, len(inventory["product_link_provenance"]["test_product_object_aggregation"]))
         self.assertTrue(inventory["package_provenance"]["global_restore_scope"])
         self.assertFalse(inventory["package_provenance"]["component_package_isolation_verified"])
+
+    def test_product_provider_projection_is_reported_as_independent(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(
+                graph.repo_root / "app.vcxproj",
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemGroup><ClCompile Include="app\\main.cpp" /><ClCompile Include="provider\\provider.cpp" /></ItemGroup>\n'
+                '  <Import Project="src\\main\\modules\\generated\\msbuild\\consumers\\product.props" Condition="Exists(\'src\\main\\modules\\generated\\msbuild\\consumers\\product.props\')" />\n'
+                '</Project>\n',
+            )
+            _write(
+                graph.repo_root / "src/main/modules/generated/msbuild/consumers/product.props",
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <ItemGroup>\n'
+                '    <ClCompile Remove="provider\\provider.cpp" />\n'
+                '    <ProjectReference Include="$(MSBuildProjectDirectory)\\src\\main\\modules\\generated\\msbuild\\projects\\provider.vcxproj" />\n'
+                '  </ItemGroup>\n'
+                '</Project>\n',
+            )
+            _write(
+                graph.repo_root / "src/main/cmake/product.cmake",
+                'file(GLOB_RECURSE SOURCES app/*.cpp provider/*.cpp)\n'
+                'include("${CMAKE_SOURCE_DIR}/src/main/modules/generated/cmake/legacy/source-ownership.cmake" OPTIONAL)\n'
+                'include("${CMAKE_SOURCE_DIR}/src/main/modules/generated/cmake/legacy/consumers/product.cmake" OPTIONAL)\n',
+            )
+            _write(
+                graph.repo_root / "src/main/modules/generated/cmake/legacy/source-ownership.cmake",
+                'list(REMOVE_ITEM SOURCES "${CMAKE_SOURCE_DIR}/provider/provider.cpp")\n'
+                'add_library(provider STATIC "${CMAKE_SOURCE_DIR}/provider/provider.cpp")\n',
+            )
+            _write(
+                graph.repo_root / "src/main/modules/generated/cmake/legacy/consumers/product.cmake",
+                'target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE provider)\n',
+            )
+            graph = replace(
+                graph,
+                edges=(
+                    Edge(
+                        "product-to-provider",
+                        "product",
+                        "provider",
+                        "implementation",
+                        ("compile", "link"),
+                        "private",
+                        "none",
+                        None,
+                        True,
+                        True,
+                        (),
+                    ),
+                ),
+            )
+
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+            )
+
+        reachability = inventory["product_reachability"]
+        self.assertEqual("independent_provider", reachability["status"])
+        self.assertTrue(reachability["independent"])
+        self.assertTrue(reachability["msbuild"]["consumer_projection_imported"])
+        self.assertEqual(["provider/provider.cpp"], reachability["msbuild"]["provider_sources_removed_by_projection"])
+        self.assertEqual([], reachability["msbuild"]["provider_sources_compiled_directly"])
+        self.assertTrue(reachability["cmake"]["source_ownership_verified"])
+        codes = {finding["code"] for finding in inventory["findings"]}
+        self.assertNotIn("PRODUCT_EMBEDS_PROVIDER_SOURCE", codes)
+        self.assertNotIn("PRODUCT_PROVIDER_EDGE_MISSING", codes)
+        self.assertNotIn("CMAKE_SOURCE_OWNERSHIP_OPAQUE", codes)
 
     def test_hard_evidence_hash_is_checkout_independent(self) -> None:
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:

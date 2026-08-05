@@ -10,7 +10,7 @@
 
 #include "platform/controlipc/ControlPlatformClient.h"
 #include "platform/controlipc/ControlPlatformEndpointDiscoveryReader.h"
-#include "platform/storage/CInMemoryStorageService.h"
+#include <sakura/storage/StorageSnapshotCache.h>
 
 #include <chrono>
 #include <condition_variable>

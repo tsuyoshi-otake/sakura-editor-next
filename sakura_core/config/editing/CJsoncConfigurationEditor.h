@@ -8,8 +8,8 @@
 #pragma once
 
 #include "config/ConfigurationTypes.h"
-#include "platform/filesystem/IFileService.h"
-#include "platform/serialization/JsoncDocument.h"
+#include <sakura/filesystem/IFileService.h>
+#include <sakura/serialization/JsoncDocument.h>
 
 #include <charconv>
 #include <cmath>

@@ -5,9 +5,9 @@
 	SPDX-License-Identifier: Zlib
 */
 
-#include "StdAfx.h"
-#include "platform/request/win32/WinHttpRequestRuntime.h"
+#include <sakura/request/win32/WinHttpRequestRuntime.h>
 
+#include <windows.h>
 #include <winhttp.h>
 
 #include <algorithm>

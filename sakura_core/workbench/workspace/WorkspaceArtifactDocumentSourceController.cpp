@@ -9,8 +9,8 @@
 
 #include "workbench/workspace/WorkspaceArtifactDocumentSourceController.h"
 
-#include "platform/serialization/JsoncDocument.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/serialization/JsoncDocument.h>
+#include <sakura/uri/UriIdentity.h>
 
 #include <algorithm>
 #include <chrono>

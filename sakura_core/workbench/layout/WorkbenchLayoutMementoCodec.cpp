@@ -8,7 +8,7 @@
 
 #include "workbench/layout/WorkbenchLayoutMementoCodec.h"
 
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 
 #include <picojson/picojson.h>
 

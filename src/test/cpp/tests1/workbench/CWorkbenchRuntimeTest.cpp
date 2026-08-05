@@ -8,10 +8,10 @@
 #include "pch.h"
 
 #include "config/BuiltinConfigurationDescriptors.h"
-#include "platform/filesystem/IFileService.h"
+#include <sakura/filesystem/IFileService.h>
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/CWorkbenchRuntime.h"
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"
 #include "workbench/layout/WorkbenchIds.h"

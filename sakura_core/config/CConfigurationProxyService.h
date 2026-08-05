@@ -17,42 +17,11 @@
 
 namespace config {
 
-//! The system resolver is deliberately a narrow boundary: PAC, WinHTTP, WPAD,
-//! and environment discovery belong behind this contract, not in Settings.
-//! Each value is a terminal result; adapters must not return a partial choice.
-enum class ESystemProxyResolutionOutcome : std::uint8_t {
-	Selected,
-	//! The system could not be asked at all -- unreadable configuration, a
-	//! WinHTTP query failure, or another inability to produce an answer. This
-	//! is strictly "unable to resolve"; it must never stand in for "the
-	//! system authoritatively says no proxy applies", which is
-	//! NoProxyRequired below.
-	Unavailable,
-	Cancelled,
-	DeadlineExceeded,
-	InvalidResult,
-	//! The system answered authoritatively that this target needs no proxy.
-	//! This is a selection ("connect directly"), not a failure to resolve.
-	NoProxyRequired,
-};
-
-struct SystemProxyResolution final {
-	ESystemProxyResolutionOutcome outcome = ESystemProxyResolutionOutcome::Unavailable;
-	platform::request::ProxySelection selection;
-};
-
-class ISystemProxyResolver {
-public:
-	virtual ~ISystemProxyResolver() = default;
-
-	//! The resolver may block, but must use only the supplied shared deadline and
-	//! cancellation token. It must return exactly one ESystemProxyResolutionOutcome.
-	virtual SystemProxyResolution Resolve(
-		const platform::request::ProxyRequest& request,
-		std::optional<std::chrono::steady_clock::time_point> deadline,
-		const platform::request::IRequestCancellation* cancellation
-	) = 0;
-};
+// Compatibility aliases keep configuration consumers source-stable while the
+// actual resolver contract belongs to the lower-level request component.
+using ESystemProxyResolutionOutcome = platform::request::ESystemProxyResolutionOutcome;
+using SystemProxyResolution = platform::request::SystemProxyResolution;
+using ISystemProxyResolver = platform::request::ISystemProxyResolver;
 
 //! Profile-scoped proxy policy adapter. It reads one coherent settings snapshot
 //! per selection; it never reads PAC data, credential material, or raw settings.

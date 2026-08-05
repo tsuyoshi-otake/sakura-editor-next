@@ -33,6 +33,7 @@ COMPONENT_ISOLATED_ENVIRONMENT = (
 )
 _CMAKE_DISCOVERY_ENVIRONMENT_VARIABLES = frozenset(COMPONENT_ISOLATED_ENVIRONMENT)
 NATIVE_PATH_IDENTITY_FILE = ".sakura-native-path.json"
+MSVC_SHOWINCLUDES_PREFIX = "Note: including file:"
 
 
 class BuildError(RuntimeError):
@@ -449,8 +450,16 @@ def cmake_component_commands(
     configuration: str,
     toolchain: str,
     jobs: int,
+    *,
+    configure_if_needed: bool = True,
 ) -> list[list[str]]:
-    """Configure and build one generated component root without root vcpkg state."""
+    """Configure and build one generated component root without root vcpkg state.
+
+    ``configure_if_needed`` is disabled by the rebuild-closure rehearsal after
+    its clean phase.  That keeps the no-op and mutation measurements honest:
+    an existing native tree must be built as-is, while the normal component
+    build path retains automatic configure/reconfigure behavior.
+    """
     allocate_parallelism(jobs)
     source_dir = repo_root / f"src/main/modules/generated/cmake/projects/{context_id}/{component_id}"
     if not (source_dir / "CMakeLists.txt").is_file():
@@ -488,7 +497,7 @@ def cmake_component_commands(
         raise BuildError("COMPONENT_TOOLCHAIN_UNSUPPORTED", f"unsupported component CMake toolchain: {toolchain}", 2)
     build = [cmake, "--build", str(build_dir), "--config", configuration, "--target", component_id, "--parallel", str(jobs)]
     commands: list[list[str]] = []
-    if _cmake_component_needs_configure(source_dir, build_dir, generator, configuration):
+    if configure_if_needed and _cmake_component_needs_configure(source_dir, build_dir, generator, configuration):
         commands.append(configure)
     commands.append(build)
     return commands
@@ -529,11 +538,26 @@ def _cmake_component_needs_configure(
         return True
     expected_source = os.path.normcase(os.path.abspath(source_dir))
     actual_source = os.path.normcase(os.path.abspath(cached_source))
-    return (
+    if (
         actual_source != expected_source
         or entries.get("CMAKE_GENERATOR") != generator
         or entries.get("CMAKE_BUILD_TYPE") != configuration
-    )
+    ):
+        return True
+    if generator == "Ninja":
+        # Existing trees may have been configured before the component
+        # environment pinned VSLANG.  Reconfigure those trees so Ninja's
+        # MSVC dependency scanner uses a prefix it can match deterministically
+        # instead of silently recording zero header dependencies.
+        compiler_files = sorted((build_dir / "CMakeFiles").glob("*/CMakeCXXCompiler.cmake"))
+        if compiler_files:
+            try:
+                compiler_text = compiler_files[0].read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                return True
+            if f'CMAKE_CXX_CL_SHOWINCLUDES_PREFIX "{MSVC_SHOWINCLUDES_PREFIX}' not in compiler_text:
+                return True
+    return False
 
 
 def cmake_component_test_commands(
@@ -582,6 +606,14 @@ def run_commands(
         env.update(environment)
     if isolate_cmake_environment:
         env = _without_cmake_discovery_environment(env)
+        # CMake's Ninja/MSVC dependency scanner persists the compiler's
+        # localized `/showIncludes` prefix in ``rules.ninja``.  A locale
+        # dependent prefix can be decoded differently by CMake (for example
+        # after a UTF-8 code-page change), leaving Ninja with zero recorded
+        # header dependencies and making component-boundary evidence
+        # incomplete.  Component builds are hermetic, so force the stable
+        # English MSVC diagnostic prefix for both configure and build.
+        env["VSLANG"] = "1033"
     env["MSBUILDDISABLENODEREUSE"] = "1"
     for command in commands:
         rendered = render_command(command)

@@ -9,7 +9,7 @@
 
 #include "config/SettingsWritebackCoordinator.h"
 
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <utility>
 

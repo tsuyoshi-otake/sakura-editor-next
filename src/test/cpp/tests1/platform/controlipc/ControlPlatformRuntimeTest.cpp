@@ -11,6 +11,7 @@
 #include "platform/secrets/CInMemorySecretVaultService.h"
 #include "platform/secrets/CSecretVaultExtensionGrantAuthority.h"
 #include "platform/secrets/ISecretVaultLegacyMigrationCoordinator.h"
+#include "platform/storage/CAtomicFileStorageService.h"
 
 #include <algorithm>
 #include <chrono>
@@ -401,7 +402,11 @@ struct TestComposition final {
 		};
 		return {
 			.profileAuthorityBackend = authority,
-			.storageFileOperations = storage,
+			.storageFactory = [fileOperations = storage](const std::filesystem::path& directory,
+				std::uint64_t generation, std::size_t maxCompletedOperations) {
+				return std::make_shared<storage::CAtomicFileStorageService>(directory, generation,
+					maxCompletedOperations, fileOperations);
+			},
 			.vaultFactory = [trace = trace](const std::filesystem::path&, std::string profileId) {
 				trace->events.emplace_back(L"vault.open");
 				std::shared_ptr<secrets::ISecretVaultService> vault =

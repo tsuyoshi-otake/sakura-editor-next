@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 #include "platform/profiles/ControlUserDataProfileRegistry.h"
 
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 
 namespace platform::profiles {
 namespace {

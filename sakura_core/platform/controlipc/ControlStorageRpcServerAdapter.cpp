@@ -47,7 +47,7 @@ struct CControlStorageRpcServerAdapter::Gate final {
 class CControlStorageRpcServerAdapter::SessionHandler final : public IControlIpcSessionHandler {
 public:
 	SessionHandler(ControlStorageRpcSessionIdentity identity,
-		std::shared_ptr<storage::IStorageService> storage,
+		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<Gate> gate)
 		: m_session(std::move(identity), *storage), m_storage(std::move(storage)), m_gate(std::move(gate))
 	{
@@ -58,7 +58,7 @@ public:
 private:
 	CControlStorageRpcSession m_session;
 	// The connection must keep the control-owned service alive through its last response.
-	std::shared_ptr<storage::IStorageService> m_storage;
+	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<Gate> m_gate;
 };
 
@@ -75,7 +75,7 @@ ControlIpcFrameDispatchResult CControlStorageRpcServerAdapter::SessionHandler::H
 }
 
 CControlStorageRpcServerAdapter::CControlStorageRpcServerAdapter(
-	ControlStorageRpcSessionIdentity identity, std::shared_ptr<storage::IStorageService> storage)
+	ControlStorageRpcSessionIdentity identity, std::shared_ptr<storage::IStorageAuthority> storage)
 	: m_storage(std::move(storage))
 {
 	if (!m_storage) {

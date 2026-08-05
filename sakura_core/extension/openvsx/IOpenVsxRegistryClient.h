@@ -7,7 +7,7 @@
 #pragma once
 
 #include "extension/openvsx/OpenVsxProtocol.h"
-#include "platform/request/RequestService.h"
+#include <sakura/request/RequestService.h>
 
 #include <cstdint>
 #include <optional>

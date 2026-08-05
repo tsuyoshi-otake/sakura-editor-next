@@ -253,9 +253,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\FileServiceTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\PlatformServiceRegistryTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
@@ -266,9 +263,6 @@
       <Filter>Test Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\JsoncDocumentTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\LegacyExtensionSecretVaultReaderTest.cpp">
@@ -352,9 +346,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\extension\SecretVaultStorageTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\UriIdentityTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
@@ -367,9 +358,6 @@
 	<ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ControlUserDataProfileRegistryTest.cpp">
 	  <Filter>Test Files\platform\profiles</Filter>
 	</ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\Win32FileSystemProviderTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationServiceTest.cpp">
       <Filter>Test Files\config</Filter>
     </ClCompile>

@@ -10,7 +10,7 @@
 #include "config/CConfigurationNetworkPolicy.h"
 
 #include "platform/profiles/UserDataProfileIdentity.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <chrono>
 #include <limits>

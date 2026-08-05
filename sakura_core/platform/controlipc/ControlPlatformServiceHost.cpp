@@ -64,7 +64,7 @@ ControlPlatformServiceHostDependencies ProductionDependencies()
 } // namespace
 
 CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
-	std::shared_ptr<storage::IStorageService> storage, std::shared_ptr<secrets::ISecretVaultService> vault,
+	std::shared_ptr<storage::IStorageAuthority> storage, std::shared_ptr<secrets::ISecretVaultService> vault,
 	std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
 	std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
@@ -75,7 +75,7 @@ CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceH
 }
 
 CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
-	std::shared_ptr<storage::IStorageService> storage,
+	std::shared_ptr<storage::IStorageAuthority> storage,
 	std::shared_ptr<secrets::ISecretVaultService> vault,
 	std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,

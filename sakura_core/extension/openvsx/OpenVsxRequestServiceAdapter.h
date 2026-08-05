@@ -8,7 +8,7 @@
 #pragma once
 
 #include "extension/openvsx/IOpenVsxRegistryClient.h"
-#include "platform/request/RequestService.h"
+#include <sakura/request/RequestService.h>
 #include "util/string_ex.h"
 
 #include <chrono>

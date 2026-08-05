@@ -52,7 +52,7 @@
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 #include "workbench/CWorkbenchRuntime.h"
 #include "workbench/WorkbenchBootstrapContext.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"

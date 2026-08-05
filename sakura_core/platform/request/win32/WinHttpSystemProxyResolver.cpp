@@ -5,8 +5,7 @@
  * SPDX-License-Identifier: Zlib
  */
 
-#include "StdAfx.h"
-#include "platform/request/win32/WinHttpSystemProxyResolver.h"
+#include <sakura/request/win32/WinHttpSystemProxyResolver.h>
 
 #include <windows.h>
 #include <winhttp.h>
@@ -27,20 +26,20 @@ namespace {
 constexpr unsigned long kErrorIoPending = ERROR_IO_PENDING;
 constexpr std::chrono::milliseconds kCancellationPollInterval(25);
 
-config::SystemProxyResolution Resolution(config::ESystemProxyResolutionOutcome outcome) noexcept
+SystemProxyResolution Resolution(ESystemProxyResolutionOutcome outcome) noexcept
 {
 	return { outcome, {} };
 }
 
-config::SystemProxyResolution Direct(bool bypassed = false) noexcept
+SystemProxyResolution Direct(bool bypassed = false) noexcept
 {
-	return { config::ESystemProxyResolutionOutcome::Selected,
+	return { ESystemProxyResolutionOutcome::Selected,
 		{ EProxyMode::Direct, std::nullopt, bypassed, EProxySelectionOutcome::Selected } };
 }
 
-config::SystemProxyResolution Manual(std::wstring proxyUrl)
+SystemProxyResolution Manual(std::wstring proxyUrl)
 {
-	return { config::ESystemProxyResolutionOutcome::Selected,
+	return { ESystemProxyResolutionOutcome::Selected,
 		{ EProxyMode::Manual, std::move(proxyUrl), false, EProxySelectionOutcome::Selected } };
 }
 
@@ -502,19 +501,19 @@ bool IsAutoProxyUnavailableError(unsigned long error) noexcept
 		|| error == ERROR_WINHTTP_UNABLE_TO_DOWNLOAD_SCRIPT;
 }
 
-config::SystemProxyResolution MapAutoProxyFailure(
+SystemProxyResolution MapAutoProxyFailure(
 	unsigned long error,
 	const std::optional<std::chrono::steady_clock::time_point>& deadline,
 	const IRequestCancellation* cancellation
 ) noexcept
 {
-	if (IsCancelled(cancellation)) return Resolution(config::ESystemProxyResolutionOutcome::Cancelled);
-	if (IsDeadlineExceeded(deadline)) return Resolution(config::ESystemProxyResolutionOutcome::DeadlineExceeded);
-	if (IsAutoProxyUnavailableError(error)) return Resolution(config::ESystemProxyResolutionOutcome::Unavailable);
-	return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	if (IsCancelled(cancellation)) return Resolution(ESystemProxyResolutionOutcome::Cancelled);
+	if (IsDeadlineExceeded(deadline)) return Resolution(ESystemProxyResolutionOutcome::DeadlineExceeded);
+	if (IsAutoProxyUnavailableError(error)) return Resolution(ESystemProxyResolutionOutcome::Unavailable);
+	return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 }
 
-config::SystemProxyResolution ResolveStaticProxy(
+SystemProxyResolution ResolveStaticProxy(
 	EStaticProxyParse parsed,
 	std::wstring proxyUrl,
 	std::wstring_view bypasses,
@@ -522,13 +521,13 @@ config::SystemProxyResolution ResolveStaticProxy(
 	unsigned short targetPort
 )
 {
-	if (parsed == EStaticProxyParse::Invalid) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	if (parsed == EStaticProxyParse::Invalid) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 	// An empty static proxy configuration is the system's authoritative "no
 	// proxy applies here" answer (VS Code's Electron resolver would report
 	// DIRECT), not a failure to resolve one -- so this is a selection.
-	if (parsed == EStaticProxyParse::None) return Resolution(config::ESystemProxyResolutionOutcome::NoProxyRequired);
+	if (parsed == EStaticProxyParse::None) return Resolution(ESystemProxyResolutionOutcome::NoProxyRequired);
 	const auto bypass = IsBypassed(bypasses, targetHost, targetPort);
-	if (bypass == EBypassMatch::Invalid) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	if (bypass == EBypassMatch::Invalid) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 	if (bypass == EBypassMatch::Match) return Direct(true);
 	return Manual(std::move(proxyUrl));
 }
@@ -548,24 +547,24 @@ WinHttpSystemProxyResolver::WinHttpSystemProxyResolver(IWinHttpSystemProxyFacade
 
 WinHttpSystemProxyResolver::~WinHttpSystemProxyResolver() = default;
 
-config::SystemProxyResolution WinHttpSystemProxyResolver::Resolve(
+SystemProxyResolution WinHttpSystemProxyResolver::Resolve(
 	const ProxyRequest& request,
 	std::optional<std::chrono::steady_clock::time_point> deadline,
 	const IRequestCancellation* cancellation
 )
 {
-	if (IsCancelled(cancellation)) return Resolution(config::ESystemProxyResolutionOutcome::Cancelled);
-	if (IsDeadlineExceeded(deadline)) return Resolution(config::ESystemProxyResolutionOutcome::DeadlineExceeded);
+	if (IsCancelled(cancellation)) return Resolution(ESystemProxyResolutionOutcome::Cancelled);
+	if (IsDeadlineExceeded(deadline)) return Resolution(ESystemProxyResolutionOutcome::DeadlineExceeded);
 
 	std::wstring targetScheme;
 	std::wstring targetHost;
 	unsigned short targetPort = 0;
-	if (!ParseTarget(request.targetUrl, targetScheme, targetHost, targetPort)) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	if (!ParseTarget(request.targetUrl, targetScheme, targetHost, targetPort)) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 
 	WinHttpCurrentUserProxyConfig config;
-	if (!m_facade->ReadCurrentUserProxyConfig(config)) return Resolution(config::ESystemProxyResolutionOutcome::Unavailable);
-	if (IsCancelled(cancellation)) return Resolution(config::ESystemProxyResolutionOutcome::Cancelled);
-	if (IsDeadlineExceeded(deadline)) return Resolution(config::ESystemProxyResolutionOutcome::DeadlineExceeded);
+	if (!m_facade->ReadCurrentUserProxyConfig(config)) return Resolution(ESystemProxyResolutionOutcome::Unavailable);
+	if (IsCancelled(cancellation)) return Resolution(ESystemProxyResolutionOutcome::Cancelled);
+	if (IsDeadlineExceeded(deadline)) return Resolution(ESystemProxyResolutionOutcome::DeadlineExceeded);
 
 	std::wstring staticProxy;
 	const auto staticProxyParse = SelectStaticProxy(config.proxy, targetScheme, staticProxy);
@@ -578,30 +577,30 @@ config::SystemProxyResolution WinHttpSystemProxyResolver::Resolve(
 		std::wstring pacHost;
 		unsigned short pacPort = 0;
 		if (!ParseTarget(config.autoConfigUrl, pacScheme, pacHost, pacPort)) {
-			return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+			return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 		}
 	}
 
 	auto session = m_facade->OpenAsyncSession();
-	if (!session) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	if (!session) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 	struct CloseSession final {
 		IWinHttpSystemProxyFacade& facade;
 		WinHttpSystemProxyHandle handle;
 		~CloseSession() { (void)facade.CloseHandle(handle); }
 	} closeSession{ *m_facade, session };
-	if (!m_facade->SetHighAutoLogonPolicy(session)) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
-	if (!m_facade->SetStatusCallback(session)) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	if (!m_facade->SetHighAutoLogonPolicy(session)) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
+	if (!m_facade->SetStatusCallback(session)) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 
 	WinHttpSystemProxyHandle resolver = nullptr;
 	if (!m_facade->CreateProxyResolver(session, resolver) || !resolver) {
 		if (resolver) (void)m_facade->CloseHandle(resolver);
-		return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+		return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 	}
 	auto callbackState = CallbackState::Create();
 	if (!m_facade->SetHandleContext(resolver, *callbackState)) {
 		(void)m_facade->CloseHandle(resolver);
 		callbackState->DisarmBeforeBinding();
-		return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+		return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 	}
 
 	const auto closeResolver = [&]() noexcept {
@@ -620,28 +619,28 @@ config::SystemProxyResolution WinHttpSystemProxyResolver::Resolve(
 	const auto beginStatus = m_facade->BeginGetProxyForUrl(resolver, request.targetUrl, options, *callbackState);
 	if (beginStatus != kErrorIoPending) {
 		auto outcome = MapAutoProxyFailure(beginStatus, deadline, cancellation);
-		if (!closeResolver()) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
-		if (outcome.outcome == config::ESystemProxyResolutionOutcome::Unavailable) {
+		if (!closeResolver()) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
+		if (outcome.outcome == ESystemProxyResolutionOutcome::Unavailable) {
 			return ResolveStaticProxy(staticProxyParse, std::move(staticProxy), config.proxyBypass, targetHost, targetPort);
 		}
 		return outcome;
 	}
 
-	config::SystemProxyResolution outcome = Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+	SystemProxyResolution outcome = Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 	const auto completion = callbackState->Wait(deadline, cancellation);
 	if (completion.completion == CallbackState::ECompletion::Cancelled || IsCancelled(cancellation)) {
-		outcome = Resolution(config::ESystemProxyResolutionOutcome::Cancelled);
+		outcome = Resolution(ESystemProxyResolutionOutcome::Cancelled);
 	} else if (completion.completion == CallbackState::ECompletion::DeadlineExceeded || IsDeadlineExceeded(deadline)) {
-		outcome = Resolution(config::ESystemProxyResolutionOutcome::DeadlineExceeded);
+		outcome = Resolution(ESystemProxyResolutionOutcome::DeadlineExceeded);
 	} else if (completion.completion == CallbackState::ECompletion::Failed) {
 		outcome = MapAutoProxyFailure(completion.error, deadline, cancellation);
 	} else if (completion.completion == CallbackState::ECompletion::Complete) {
 		WinHttpSystemProxyResult result;
 		struct FreeResult final { IWinHttpSystemProxyFacade& facade; WinHttpSystemProxyResult& result; ~FreeResult() { facade.FreeProxyResult(result); } } freeResult{ *m_facade, result };
 		if (!m_facade->GetProxyResult(resolver, result)) {
-			outcome = Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+			outcome = Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 		} else if (result.entries.size() != 1) {
-			outcome = Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+			outcome = Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 		} else {
 			const auto& entry = result.entries.front();
 			if (!entry.isProxy) {
@@ -649,21 +648,21 @@ config::SystemProxyResolution WinHttpSystemProxyResolver::Resolve(
 				// public header does not define an "unknown" sentinel for DIRECT.
 				outcome = (entry.host.empty() && entry.port == 0)
 					? Direct(entry.bypassed)
-					: Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+					: Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 			} else if (entry.bypassed || entry.scheme != INTERNET_SCHEME_HTTP || entry.port == 0) {
-				outcome = Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+				outcome = Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 			} else {
 				std::wstring proxyUrl;
 				const auto authority = entry.host.find(L':') == std::wstring::npos
 					? entry.host + L":" + std::to_wstring(entry.port)
 					: (entry.host.starts_with(L"[") ? entry.host : L"[" + entry.host + L"]") + L":" + std::to_wstring(entry.port);
 				outcome = ParseHttpProxyAuthority(authority, proxyUrl) ? Manual(std::move(proxyUrl))
-					: Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
+					: Resolution(ESystemProxyResolutionOutcome::InvalidResult);
 			}
 		}
 	}
-	if (!closeResolver()) return Resolution(config::ESystemProxyResolutionOutcome::InvalidResult);
-	if (outcome.outcome == config::ESystemProxyResolutionOutcome::Unavailable) {
+	if (!closeResolver()) return Resolution(ESystemProxyResolutionOutcome::InvalidResult);
+	if (outcome.outcome == ESystemProxyResolutionOutcome::Unavailable) {
 		return ResolveStaticProxy(staticProxyParse, std::move(staticProxy), config.proxyBypass, targetHost, targetPort);
 	}
 	return outcome;

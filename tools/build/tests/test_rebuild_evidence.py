@@ -4,6 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 
@@ -13,6 +14,9 @@ if str(TOOLS_BUILD) not in sys.path:
 
 from sakura_build_lib.rebuild_evidence import (
     _RunResult,
+    _expected_actions,
+    _environment_for_context,
+    _mutation_applicability,
     _phase_result,
     run_rebuild_closure_rehearsal,
 )
@@ -20,6 +24,148 @@ from sakura_build_lib.runner import EventWriter
 
 
 class RebuildEvidenceTests(unittest.TestCase):
+    def test_cmake_rebuild_environment_pins_english_showincludes_prefix(self):
+        class Graph:
+            @staticmethod
+            def context(context_id):
+                _ = context_id
+                return SimpleNamespace(toolchain="msvc", backend="cmake")
+
+            repo_root = Path(".")
+
+        with patch(
+            "sakura_build_lib.rebuild_evidence.msvc_environment",
+            return_value={"VSLANG": "1041", "PATH": "compiler"},
+        ):
+            environment = _environment_for_context(Graph(), "cmake-msvc-x64-debug")
+        self.assertEqual("1033", environment["VSLANG"])
+
+    def test_mutation_applicability_does_not_invent_pch_resource_or_codegen_for_headless_leaf(self):
+        class Graph:
+            components = {
+                "pilot_tests": SimpleNamespace(
+                    id="pilot_tests",
+                    build_definition="generated",
+                    sources=("tests/pilot.cpp",),
+                    public_headers=(),
+                    private_headers=(),
+                ),
+                "provider": SimpleNamespace(
+                    id="provider",
+                    build_definition="generated",
+                    sources=("provider/implementation.cpp",),
+                    public_headers=("provider/public.h",),
+                    private_headers=("provider/private.h",),
+                ),
+            }
+            artifacts = {}
+
+            @staticmethod
+            def final_link_closure(root_ids, context_id):
+                _ = (root_ids, context_id)
+                return ("pilot_tests", "provider")
+
+        applicability = _mutation_applicability(Graph(), "pilot_tests", "ctx")
+
+        self.assertEqual("not_applicable", applicability["pch"]["status"])
+        self.assertEqual("not_applicable", applicability["resource"]["status"])
+        self.assertEqual("not_applicable", applicability["component_generated_input"]["status"])
+        self.assertEqual("covered_by_staleness_gate", applicability["projection_input"]["status"])
+
+    def test_mutation_applicability_finds_owned_resource_and_generated_inputs(self):
+        class Graph:
+            components = {
+                "pilot_tests": SimpleNamespace(
+                    id="pilot_tests",
+                    build_definition="generated",
+                    sources=("tests/pilot.cpp", "tests/pilot.rc"),
+                    public_headers=(),
+                    private_headers=(),
+                ),
+            }
+            artifacts = {
+                "generated-contract": SimpleNamespace(
+                    id="generated-contract",
+                    owner="pilot_tests",
+                    artifact_kind="generated",
+                    inputs=("tests/contract.in",),
+                ),
+            }
+
+            @staticmethod
+            def final_link_closure(root_ids, context_id):
+                _ = (root_ids, context_id)
+                return ("pilot_tests",)
+
+        applicability = _mutation_applicability(Graph(), "pilot_tests", "ctx")
+
+        self.assertEqual(["tests/pilot.rc"], applicability["resource"]["witnesses"])
+        self.assertEqual(["tests/contract.in"], applicability["component_generated_input"]["witnesses"])
+
+    def test_expected_actions_keep_private_mutations_inside_provider(self):
+        class Graph:
+            components = {
+                "pilot_tests": SimpleNamespace(
+                    kind="test",
+                    sources=("tests/pilot.cpp",),
+                    public_headers=(),
+                    private_headers=(),
+                ),
+                "provider": SimpleNamespace(
+                    kind="implementation",
+                    sources=("provider/implementation.cpp",),
+                    public_headers=("provider/public.h",),
+                    private_headers=("provider/private.h",),
+                ),
+                "private_provider": SimpleNamespace(
+                    kind="implementation",
+                    sources=("private-provider/implementation.cpp",),
+                    public_headers=(),
+                    private_headers=(),
+                ),
+            }
+
+            @staticmethod
+            def final_link_closure(root_ids, context_id):
+                _ = (root_ids, context_id)
+                return ("pilot_tests", "provider", "private_provider")
+
+        expected = _expected_actions(Graph(), "pilot_tests", "ctx")
+
+        provider_compile = ["provider:provider/implementation.cpp"]
+        self.assertEqual(expected["private_cpp"]["compile"], provider_compile)
+        self.assertEqual(expected["private_cpp"]["archive"], ["provider"])
+        self.assertEqual(expected["private_header"]["compile"], provider_compile)
+        self.assertEqual(expected["private_header"]["archive"], ["provider"])
+        self.assertEqual(expected["private_header"]["link"], ["pilot_tests"])
+        self.assertEqual(expected["mutation_inputs"]["private_header"], ["provider/private.h"])
+
+    def test_expected_actions_mark_private_header_mutation_not_applicable_when_absent(self):
+        class Graph:
+            components = {
+                "pilot_tests": SimpleNamespace(
+                    kind="test",
+                    sources=("tests/pilot.cpp",),
+                    public_headers=(),
+                    private_headers=(),
+                ),
+                "provider": SimpleNamespace(
+                    kind="implementation",
+                    sources=("provider/implementation.cpp",),
+                    public_headers=("provider/public.h",),
+                    private_headers=(),
+                ),
+            }
+
+            @staticmethod
+            def final_link_closure(root_ids, context_id):
+                _ = (root_ids, context_id)
+                return ("pilot_tests", "provider")
+
+        expected = _expected_actions(Graph(), "pilot_tests", "ctx")
+        self.assertNotIn("private_header", expected)
+        self.assertNotIn("private_header", expected["mutation_inputs"])
+
     def test_phase_rejects_unexpected_native_and_projection_work(self):
         expected = {"compile": [], "archive": [], "link": []}
         observed = {
@@ -85,7 +231,7 @@ class RebuildEvidenceTests(unittest.TestCase):
             ):
                 report = run_rebuild_closure_rehearsal(
                     root,
-                    "sakura_uri_tests",
+                    "sakura_request_tests",
                     ("msvc-x64-debug",),
                     1,
                     1,

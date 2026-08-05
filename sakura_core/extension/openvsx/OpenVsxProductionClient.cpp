@@ -11,8 +11,8 @@
 #include "config/CConfigurationNetworkPolicy.h"
 #include "config/CConfigurationProxyService.h"
 #include "platform/profiles/UserDataProfileIdentity.h"
-#include "platform/request/win32/WinHttpRequestRuntime.h"
-#include "platform/request/win32/WinHttpSystemProxyResolver.h"
+#include <sakura/request/win32/WinHttpRequestRuntime.h>
+#include <sakura/request/win32/WinHttpSystemProxyResolver.h>
 
 #include <chrono>
 #include <cstddef>

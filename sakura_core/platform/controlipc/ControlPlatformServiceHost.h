@@ -19,7 +19,7 @@
 #include <string>
 
 namespace platform::storage {
-class IStorageService;
+class IStorageAuthority;
 }
 
 namespace platform::secrets {
@@ -116,14 +116,14 @@ struct ControlPlatformServiceHostDependencies {
 class CControlPlatformServiceHost final {
 public:
 	CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
-		std::shared_ptr<storage::IStorageService> storage,
+		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<secrets::ISecretVaultService> vault,
 		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
 		std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles);
 	CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
-		std::shared_ptr<storage::IStorageService> storage,
+		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<secrets::ISecretVaultService> vault,
 		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
@@ -147,7 +147,7 @@ private:
 	void ReleaseStoppedResources() noexcept;
 
 	const ControlPlatformServiceHostOptions m_options;
-	const std::shared_ptr<storage::IStorageService> m_storage;
+	const std::shared_ptr<storage::IStorageAuthority> m_storage;
 	const std::shared_ptr<secrets::ISecretVaultService> m_vault;
 	const std::shared_ptr<secrets::ISecretVaultCapabilityService> m_capabilities;
 	const std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> m_grantAuthority;

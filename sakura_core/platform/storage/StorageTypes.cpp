@@ -4,9 +4,7 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 
 #include <span>
 #include <tuple>

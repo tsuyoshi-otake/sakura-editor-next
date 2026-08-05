@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Iterable, Mapping
 from xml.sax.saxutils import escape
@@ -17,6 +18,10 @@ from .model import Component, Context, GENERATOR_VERSION, INTERFACE_COMPONENT_KI
 
 GENERATED_ROOT = Path("src/main/modules/generated")
 ABI_STAMP_ROOT = GENERATED_ROOT / "abi"
+MSBUILD_LEGACY_CONSUMER_ROOT = GENERATED_ROOT / "msbuild" / "consumers"
+CMAKE_LEGACY_ROOT = GENERATED_ROOT / "cmake" / "legacy"
+CMAKE_LEGACY_CONSUMER_ROOT = CMAKE_LEGACY_ROOT / "consumers"
+CMAKE_LEGACY_OWNERSHIP_PATH = CMAKE_LEGACY_ROOT / "source-ownership.cmake"
 
 
 def _json_text(value: object) -> str:
@@ -41,6 +46,53 @@ def _component_edges(graph: SemanticGraph, component_id: str, context_id: str):
         and edge.target in graph.components
         and "link" in edge.phases
     )
+
+
+def _final_link_generated_dependencies(
+    graph: SemanticGraph,
+    component_id: str,
+    context_id: str,
+) -> tuple[str, ...]:
+    """Return generated archive providers required by a native final link.
+
+    Static-library link requirements do not propagate through every native
+    backend in the same way.  In particular, an MSBuild ProjectReference to a
+    static library does not reliably carry that library's private archive
+    providers into the final executable.  The semantic graph already owns the
+    complete private link closure, so project generation must materialize that
+    closure at each native final-link root.  This keeps ``propagation=none``
+    private for compile/API usage while preventing an unresolved symbol from
+    being hidden behind a transitive archive dependency.
+    """
+    providers: set[str] = set()
+    for dependency_id in graph.final_link_closure((component_id,), context_id):
+        if dependency_id == component_id or dependency_id not in graph.components:
+            continue
+        dependency = graph.components[dependency_id]
+        if dependency.build_definition == "generated" and dependency.sources:
+            providers.add(dependency_id)
+    return tuple(sorted(providers))
+
+
+def _system_libraries_for_link(
+    graph: SemanticGraph,
+    component_id: str,
+    context_id: str,
+) -> tuple[str, ...]:
+    """Return system libraries required by a component's final static link.
+
+    System libraries are declared by the component that owns the native API
+    usage.  A static archive cannot carry those requirements by itself, so the
+    executable/legacy consumer receives the deterministic union of its link
+    closure.  The same declaration is projected to CMake as a transitive
+    PUBLIC dependency below.
+    """
+    libraries: set[str] = set()
+    for current_id in graph.final_link_closure((component_id,), context_id):
+        current = graph.components.get(current_id)
+        if current is not None:
+            libraries.update(current.system_libraries)
+    return tuple(sorted(libraries, key=str.casefold))
 
 
 def _compile_include_roots(graph: SemanticGraph, component_id: str, context_id: str) -> tuple[str, ...]:
@@ -72,6 +124,368 @@ def _abi_header_text(graph: SemanticGraph, component_id: str, context_id: str) -
         for field in sorted(policy["required_project_fields"]):
             stamps.append((f"sakura.edge.{edge.id}.{field}", profile[field]))
     return render_detect_mismatch_header(stamps)
+
+
+def _legacy_generated_link_dependencies(
+    graph: SemanticGraph,
+    component_id: str,
+    context_id: str,
+) -> tuple[Component, ...]:
+    """Return generated providers linked directly by a legacy native target."""
+    component = graph.components[component_id]
+    if component.build_definition != "legacy":
+        return ()
+    return tuple(
+        graph.components[dependency_id]
+        for dependency_id in _final_link_generated_dependencies(graph, component_id, context_id)
+    )
+
+
+def _legacy_consumer_contexts(
+    graph: SemanticGraph,
+    component: Component,
+    backend: str,
+) -> tuple[Context, ...]:
+    return tuple(
+        graph.contexts[context_id]
+        for context_id in component.supported_contexts
+        if graph.contexts[context_id].backend == backend
+        and _legacy_generated_link_dependencies(graph, component.id, context_id)
+    )
+
+
+def _msbuild_condition(contexts: Iterable[Context], all_contexts: Iterable[Context]) -> str:
+    selected = tuple(sorted(contexts, key=lambda item: item.id))
+    available = tuple(sorted(all_contexts, key=lambda item: item.id))
+    if len(selected) == len(available):
+        return ""
+    terms = [
+        f"'$(Configuration)|$(Platform)'=='{item.configuration}|{item.platform}'"
+        for item in selected
+    ]
+    return f' Condition="{escape(" Or ".join(terms))}"'
+
+
+def _msbuild_source_item_spec(
+    graph: SemanticGraph,
+    project_path: Path,
+    source: str,
+) -> str | None:
+    """Find the exact handwritten ClCompile identity for a provider source."""
+    project_directory = graph.repo_root / project_path.parent
+    expected = (graph.repo_root / source).resolve()
+    root = ET.parse(graph.repo_root / project_path).getroot()
+    namespace = {"msbuild": "http://schemas.microsoft.com/developer/msbuild/2003"}
+    for item in root.findall(".//msbuild:ClCompile", namespace):
+        include = item.get("Include")
+        if not include or "$" in include or "*" in include or "?" in include:
+            continue
+        if (project_directory / include).resolve() == expected:
+            return include
+    return None
+
+
+def _msbuild_legacy_consumer_projection(graph: SemanticGraph, component: Component) -> str:
+    """Project an always-green legacy consumer -> generated provider edge.
+
+    The handwritten project keeps its original source item.  While this props
+    file exists, the extracted provider sources are removed and replaced by a
+    ProjectReference.  Removing the manifest edge and regenerating deletes this
+    file, so the conditional import restores legacy ownership without editing
+    the handwritten source list again.
+    """
+    contexts = _legacy_consumer_contexts(graph, component, "msbuild")
+    if not contexts:
+        raise ValueError(f"legacy MSBuild consumer has no generated dependency: {component.id}")
+    targets = component.backend_targets.get("msbuild", ())
+    if len(targets) != 1:
+        raise ValueError(f"legacy MSBuild consumer must have exactly one project: {component.id}")
+    project_path = Path(targets[0])
+    project_directory = graph.repo_root / project_path.parent
+    dependency_contexts: dict[str, list[Context]] = {}
+    for context in contexts:
+        for dependency in _legacy_generated_link_dependencies(graph, component.id, context.id):
+            dependency_contexts.setdefault(dependency.id, []).append(context)
+
+    lines = [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">',
+        '  <!-- Generated by tools/build/sakura_build.py. Do not edit. -->',
+        '  <!-- Removing this projection restores the handwritten legacy source ownership. -->',
+    ]
+    source_records: dict[str, list[Context]] = {}
+    for dependency_id, active_contexts in dependency_contexts.items():
+        dependency = graph.components[dependency_id]
+        for source in dependency.sources:
+            source_records.setdefault(source, []).extend(active_contexts)
+    if source_records:
+        removal_lines: list[str] = []
+        for source, active_contexts in sorted(source_records.items()):
+            item_spec = _msbuild_source_item_spec(graph, project_path, source)
+            if item_spec is None:
+                continue
+            unique_contexts = {item.id: item for item in active_contexts}.values()
+            condition = _msbuild_condition(unique_contexts, contexts)
+            removal_lines.append(f'    <ClCompile Remove="{escape(item_spec)}"{condition} />')
+        if removal_lines:
+            lines.append('  <ItemGroup>')
+            lines.extend(removal_lines)
+            lines.append('  </ItemGroup>')
+
+    for context in sorted(contexts, key=lambda item: item.id):
+        include_roots: set[str] = set()
+        for dependency in _legacy_generated_link_dependencies(graph, component.id, context.id):
+            include_roots.update(dependency.public_include_roots)
+        abi_relative = os.path.relpath(
+            graph.repo_root / _abi_header_path(component.id, context.id),
+            project_directory,
+        ).replace("/", "\\")
+        condition = escape(f"'$(Configuration)|$(Platform)'=='{context.configuration}|{context.platform}'")
+        system_libraries = _system_libraries_for_link(graph, component.id, context.id)
+        lines.extend([
+            f'  <ItemDefinitionGroup Condition="{condition}">',
+            '    <ClCompile>',
+        ])
+        if include_roots:
+            include_text = ";".join(
+                f"$(MSBuildProjectDirectory)\\{os.path.relpath(graph.repo_root / item, project_directory).replace('/', '\\')}"
+                for item in sorted(include_roots)
+            )
+            lines.append(f'      <AdditionalIncludeDirectories>{escape(include_text)};%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>')
+        lines.extend([
+            f'      <ForcedIncludeFiles>$(MSBuildProjectDirectory)\\{escape(abi_relative)};%(ForcedIncludeFiles)</ForcedIncludeFiles>',
+            '    </ClCompile>',
+        ])
+        if system_libraries:
+            additional_dependencies = ";".join(
+                [*(f"{library}.lib" for library in system_libraries), "%(AdditionalDependencies)"]
+            )
+            lines.extend([
+                '    <Link>',
+                f'      <AdditionalDependencies>{escape(additional_dependencies)}</AdditionalDependencies>',
+                '    </Link>',
+            ])
+        lines.append('  </ItemDefinitionGroup>')
+
+    lines.extend([
+        "  <ItemDefinitionGroup Condition=\"'$(SakuraNativeProductMapEvidence)'=='true'\">",
+        '    <Link>',
+        '      <GenerateMapFile>true</GenerateMapFile>',
+        '    </Link>',
+        '  </ItemDefinitionGroup>',
+    ])
+
+    lines.append('  <ItemGroup>')
+    for dependency_id, active_contexts in sorted(dependency_contexts.items()):
+        dependency = graph.components[dependency_id]
+        dependency_targets = dependency.backend_targets.get("msbuild", ())
+        generated_targets = [item for item in dependency_targets if item.startswith("src/main/modules/generated/msbuild/projects/")]
+        if len(generated_targets) != 1:
+            raise ValueError(f"generated component dependency must have one generated MSBuild target: {component.id} -> {dependency_id}")
+        relative = os.path.relpath(graph.repo_root / generated_targets[0], project_directory).replace("/", "\\")
+        condition = _msbuild_condition(active_contexts, contexts)
+        lines.extend([
+            f'    <ProjectReference Include="$(MSBuildProjectDirectory)\\{escape(relative)}"{condition}>',
+            f'      <Project>{_project_guid(dependency_id)}</Project>',
+        ])
+        for context in sorted({item.id: item for item in active_contexts}.values(), key=lambda item: item.id):
+            metadata_condition = escape(
+                f"'$(Configuration)|$(Platform)'=='{context.configuration}|{context.platform}'"
+            )
+            lines.extend([
+                f'      <SetConfiguration Condition="{metadata_condition}">Configuration={escape(context.configuration)}</SetConfiguration>',
+                f'      <SetPlatform Condition="{metadata_condition}">Platform={escape(context.platform)}</SetPlatform>',
+            ])
+        lines.append('    </ProjectReference>')
+    lines.extend(['  </ItemGroup>', '</Project>', ''])
+    return "\n".join(lines)
+
+
+def _cmake_config_expression(configuration: str, value: str) -> str:
+    return f'"$<$<CONFIG:{configuration}>:{value}>"'
+
+
+def _cmake_abi_options(
+    graph: SemanticGraph,
+    component_id: str,
+    contexts: Iterable[Context],
+    target: str,
+) -> list[str]:
+    """Render compiler/config-specific ABI enforcement for a native target."""
+    by_toolchain: dict[str, dict[str, Context]] = {}
+    for context in contexts:
+        by_toolchain.setdefault(context.toolchain, {})[context.configuration] = context
+    lines: list[str] = []
+    if "msvc" in by_toolchain:
+        lines.append('if(MSVC)')
+        runtime_values: list[str] = []
+        option_values: list[str] = []
+        definition_values: list[str] = []
+        for configuration, context in sorted(by_toolchain["msvc"].items()):
+            profile = graph.project_profile(component_id, context.id)
+            runtime = {"MTd": "MultiThreadedDebug", "MT": "MultiThreaded"}.get(profile["crt"])
+            if runtime is None:
+                raise ValueError(f"unsupported generated CMake MSVC CRT profile: {profile['crt']}")
+            runtime_values.append(f'$<$<CONFIG:{configuration}>:{runtime}>')
+            wchar_option = "/Zc:wchar_t" if profile["wchar_t_builtin"] else "/Zc:wchar_t-"
+            abi_header = _abi_header_path(component_id, context.id).as_posix()
+            for value in (
+                "/source-charset:utf-8",
+                "/execution-charset:utf-8",
+                f'/Zp{profile["default_pack"]}',
+                wchar_option,
+                f'/FI${{CMAKE_SOURCE_DIR}}/{abi_header}',
+            ):
+                option_values.append(_cmake_config_expression(configuration, value))
+            definitions = [
+                f'_ITERATOR_DEBUG_LEVEL={profile["iterator_debug_level"]}',
+                f'_WIN32_WINNT={profile["win32_winnt"]}',
+                "NOMINMAX",
+            ]
+            if profile["unicode"]:
+                definitions.extend(("UNICODE", "_UNICODE"))
+            definition_values.extend(_cmake_config_expression(configuration, value) for value in definitions)
+        lines.append(f'  set_property(TARGET {target} PROPERTY MSVC_RUNTIME_LIBRARY "{"".join(runtime_values)}")')
+        lines.append(f'  target_compile_options({target} PRIVATE {" ".join(option_values)})')
+        lines.append(f'  target_compile_definitions({target} PRIVATE {" ".join(definition_values)})')
+    if "mingw" in by_toolchain:
+        lines.append('elseif(MINGW)' if "msvc" in by_toolchain else 'if(MINGW)')
+        option_values = []
+        definition_values = []
+        for configuration, context in sorted(by_toolchain["mingw"].items()):
+            profile = graph.project_profile(component_id, context.id)
+            abi_header = _abi_header_path(component_id, context.id).as_posix()
+            option_values.extend([
+                _cmake_config_expression(configuration, f'-fpack-struct={profile["default_pack"]}'),
+                _cmake_config_expression(configuration, "-include"),
+                _cmake_config_expression(configuration, f'${{CMAKE_SOURCE_DIR}}/{abi_header}'),
+            ])
+            definitions = [f'_WIN32_WINNT={profile["win32_winnt"]}', "NOMINMAX"]
+            if profile["unicode"]:
+                definitions.extend(("UNICODE", "_UNICODE"))
+            definition_values.extend(_cmake_config_expression(configuration, value) for value in definitions)
+        lines.append(f'  target_compile_options({target} PRIVATE {" ".join(option_values)})')
+        lines.append(f'  target_compile_definitions({target} PRIVATE {" ".join(definition_values)})')
+    if by_toolchain:
+        lines.append('endif()')
+    return lines
+
+
+def _cmake_abi_force_include(
+    graph: SemanticGraph,
+    component_id: str,
+    contexts: Iterable[Context],
+    target: str,
+) -> list[str]:
+    """Force only the edge guard into a legacy target; keep its native flags."""
+    by_toolchain: dict[str, dict[str, Context]] = {}
+    for context in contexts:
+        by_toolchain.setdefault(context.toolchain, {})[context.configuration] = context
+    lines: list[str] = []
+    if "msvc" in by_toolchain:
+        values = [
+            _cmake_config_expression(
+                configuration,
+                f'/FI${{CMAKE_SOURCE_DIR}}/{_abi_header_path(component_id, context.id).as_posix()}',
+            )
+            for configuration, context in sorted(by_toolchain["msvc"].items())
+        ]
+        lines.extend(['if(MSVC)', f'  target_compile_options({target} PRIVATE {" ".join(values)})'])
+    if "mingw" in by_toolchain:
+        values: list[str] = []
+        for configuration, context in sorted(by_toolchain["mingw"].items()):
+            values.extend([
+                _cmake_config_expression(configuration, "-include"),
+                _cmake_config_expression(
+                    configuration,
+                    f'${{CMAKE_SOURCE_DIR}}/{_abi_header_path(component_id, context.id).as_posix()}',
+                ),
+            ])
+        lines.extend([
+            'elseif(MINGW)' if "msvc" in by_toolchain else 'if(MINGW)',
+            f'  target_compile_options({target} PRIVATE {" ".join(values)})',
+        ])
+    if by_toolchain:
+        lines.append('endif()')
+    return lines
+
+
+def _cmake_legacy_providers(graph: SemanticGraph) -> tuple[Component, ...]:
+    providers: dict[str, Component] = {}
+    for component in graph.components.values():
+        if component.build_definition != "legacy":
+            continue
+        for context_id in component.supported_contexts:
+            if graph.contexts[context_id].backend != "cmake":
+                continue
+            for dependency in _legacy_generated_link_dependencies(graph, component.id, context_id):
+                providers[dependency.id] = dependency
+    return tuple(providers[item] for item in sorted(providers))
+
+
+def _cmake_legacy_source_ownership(graph: SemanticGraph) -> str:
+    providers = _cmake_legacy_providers(graph)
+    if not providers:
+        raise ValueError("legacy CMake source ownership has no generated providers")
+    lines = [
+        '# Generated by tools/build/sakura_build.py. Do not edit.',
+        '# Removing this projection restores the legacy GLOB-owned source list.',
+    ]
+    for provider in providers:
+        for source in sorted(provider.sources):
+            lines.append(f'list(REMOVE_ITEM SOURCES "${{CMAKE_SOURCE_DIR}}/{source}")')
+    lines.append('')
+    for provider in providers:
+        contexts = tuple(
+            graph.contexts[context_id]
+            for context_id in provider.supported_contexts
+            if graph.contexts[context_id].backend == "cmake"
+        )
+        target_files = [*provider.sources, *provider.public_headers, *provider.private_headers]
+        lines.append(f'if(NOT TARGET {provider.id})')
+        lines.append(f'  add_library({provider.id} STATIC')
+        lines.extend(f'    "${{CMAKE_SOURCE_DIR}}/{item}"' for item in target_files)
+        lines.append('  )')
+        if provider.public_include_roots:
+            roots = " ".join(f'"${{CMAKE_SOURCE_DIR}}/{item}"' for item in provider.public_include_roots)
+            lines.append(f'  target_include_directories({provider.id} PUBLIC {roots})')
+        if provider.private_include_roots:
+            roots = " ".join(f'"${{CMAKE_SOURCE_DIR}}/{item}"' for item in provider.private_include_roots)
+            lines.append(f'  target_include_directories({provider.id} PRIVATE {roots})')
+        lines.append(f'  target_compile_features({provider.id} PRIVATE cxx_std_20)')
+        if provider.system_libraries:
+            lines.append(f'  target_link_libraries({provider.id} PUBLIC {" ".join(provider.system_libraries)})')
+        lines.extend(f'  {item}' for item in _cmake_abi_options(graph, provider.id, contexts, provider.id))
+        lines.append('endif()')
+        lines.append('')
+    return "\n".join(lines)
+
+
+def _cmake_legacy_consumer_projection(graph: SemanticGraph, component: Component) -> str:
+    contexts = _legacy_consumer_contexts(graph, component, "cmake")
+    if not contexts:
+        raise ValueError(f"legacy CMake consumer has no generated dependency: {component.id}")
+    dependencies = {
+        dependency.id
+        for context in contexts
+        for dependency in _legacy_generated_link_dependencies(graph, component.id, context.id)
+    }
+    lines = [
+        '# Generated by tools/build/sakura_build.py. Do not edit.',
+        'if(NOT DEFINED SAKURA_LEGACY_CONSUMER_COMPILE_TARGET OR',
+        '   NOT DEFINED SAKURA_LEGACY_CONSUMER_LINK_TARGET)',
+        f'  message(FATAL_ERROR "Legacy component integration targets were not provided for {component.id}")',
+        'endif()',
+        'if(NOT TARGET "${SAKURA_LEGACY_CONSUMER_COMPILE_TARGET}" OR',
+        '   NOT TARGET "${SAKURA_LEGACY_CONSUMER_LINK_TARGET}")',
+        f'  message(FATAL_ERROR "Legacy component integration targets do not exist for {component.id}")',
+        'endif()',
+    ]
+    for dependency_id in sorted(dependencies):
+        lines.append(f'target_link_libraries("${{SAKURA_LEGACY_CONSUMER_LINK_TARGET}}" PRIVATE {dependency_id})')
+    lines.extend(_cmake_abi_force_include(graph, component.id, contexts, '"${SAKURA_LEGACY_CONSUMER_COMPILE_TARGET}"'))
+    lines.append('')
+    return "\n".join(lines)
 
 
 def _msbuild_project(graph: SemanticGraph, component: Component, project_path: Path) -> str:
@@ -188,9 +602,13 @@ def _msbuild_project(graph: SemanticGraph, component: Component, project_path: P
                 '    </Lib>',
             ])
         elif configuration_type == "Application":
+            system_libraries = _system_libraries_for_link(graph, component.id, context.id)
+            additional_dependencies = ";".join(
+                [*(f"{library}.lib" for library in system_libraries), "%(AdditionalDependencies)"]
+            )
             lines.extend([
                 '    <Link>',
-                '      <AdditionalDependencies></AdditionalDependencies>',
+                f'      <AdditionalDependencies>{escape(additional_dependencies)}</AdditionalDependencies>',
                 '      <SubSystem>Console</SubSystem>',
                 '      <GenerateDebugInformation>true</GenerateDebugInformation>',
                 '      <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>',
@@ -213,8 +631,8 @@ def _msbuild_project(graph: SemanticGraph, component: Component, project_path: P
         lines.append('  </ItemGroup>')
     dependency_contexts: dict[str, list[Context]] = {}
     for context in contexts:
-        for edge in _component_edges(graph, component.id, context.id):
-            dependency_contexts.setdefault(edge.target, []).append(context)
+        for dependency_id in _final_link_generated_dependencies(graph, component.id, context.id):
+            dependency_contexts.setdefault(dependency_id, []).append(context)
     dependency_ids = sorted(dependency_contexts)
     if dependency_ids:
         lines.append('  <ItemGroup>')
@@ -236,8 +654,16 @@ def _msbuild_project(graph: SemanticGraph, component: Component, project_path: P
             lines.extend([
                 f'    <ProjectReference Include="{escape(relative)}"{condition}>',
                 f'      <Project>{_project_guid(dependency_id)}</Project>',
-                '    </ProjectReference>',
             ])
+            for active_context in sorted(active_contexts, key=lambda item: item.id):
+                metadata_condition = escape(
+                    f"'$(Configuration)|$(Platform)'=='{active_context.configuration}|{active_context.platform}'"
+                )
+                lines.extend([
+                    f'      <SetConfiguration Condition="{metadata_condition}">Configuration={escape(active_context.configuration)}</SetConfiguration>',
+                    f'      <SetPlatform Condition="{metadata_condition}">Platform={escape(active_context.platform)}</SetPlatform>',
+                ])
+            lines.append('    </ProjectReference>')
         lines.append('  </ItemGroup>')
     lines.extend([
         '  <Import Project="$(VCTargetsPath)\\Microsoft.Cpp.targets" />',
@@ -255,8 +681,8 @@ def _cmake_component_order(graph: SemanticGraph, root_id: str, context_id: str) 
         if component_id in visited:
             return
         visited.add(component_id)
-        for edge in sorted(_component_edges(graph, component_id, context_id), key=lambda item: item.id):
-            visit(edge.target)
+        for dependency_id in _final_link_generated_dependencies(graph, component_id, context_id):
+            visit(dependency_id)
         ordered.append(component_id)
 
     visit(root_id)
@@ -268,6 +694,12 @@ def _cmake_project(graph: SemanticGraph, root: Component, context_id: str) -> st
     lines = [
         'cmake_minimum_required(VERSION 3.24)',
         f'project({root.id} LANGUAGES CXX)',
+        # MSVC emits /showIncludes diagnostics as UTF-8 on this toolchain,
+        # while CMake's compiler probe can decode the captured pipe using the
+        # active ANSI code page.  Pin the byte prefix consumed by Ninja after
+        # project() so localized probe decoding cannot erase header deps.
+        'set(CMAKE_CXX_CL_SHOWINCLUDES_PREFIX "メモ: インクルード ファイル:  ")',
+        'set(CMAKE_CL_SHOWINCLUDES_PREFIX "${CMAKE_CXX_CL_SHOWINCLUDES_PREFIX}")',
         '',
         '# Generated by tools/build/sakura_build.py. Do not edit.',
         'get_filename_component(SAKURA_REPO_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../../../../.." ABSOLUTE)',
@@ -281,6 +713,8 @@ def _cmake_project(graph: SemanticGraph, root: Component, context_id: str) -> st
     ]
     if context.toolchain == "msvc":
         lines.append('set(CMAKE_CXX_STANDARD_LIBRARIES "")')
+    if context.toolchain == "msvc":
+        lines.append('file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")')
     lines.append('')
     for component_id in _cmake_component_order(graph, root.id, context_id):
         component = graph.components[component_id]
@@ -334,6 +768,20 @@ def _cmake_project(graph: SemanticGraph, root: Component, context_id: str) -> st
                 wchar_option = "/Zc:wchar_t" if profile["wchar_t_builtin"] else "/Zc:wchar_t-"
                 abi_header = _abi_header_path(component.id, context_id).as_posix()
                 lines.append(f'set_property(TARGET {component.id} PROPERTY MSVC_RUNTIME_LIBRARY "{runtime}")')
+                # CMake's Ninja/MSVC generator otherwise emits `/Fd<dir>\\` for
+                # executable targets.  That trailing-directory form is accepted
+                # in a normal checkout on some toolchains but is rejected by
+                # cl.exe in the short-lived cloned workspaces used by rebuild
+                # evidence.  Give every native component an explicit, unique
+                # compile/link PDB path so the hermetic path matrix behaves the
+                # same as the in-place build.
+                lines.append(
+                    f'set_target_properties({component.id} PROPERTIES '
+                    f'COMPILE_PDB_NAME "{component.id}.compile" '
+                    f'COMPILE_PDB_OUTPUT_DIRECTORY "${{CMAKE_BINARY_DIR}}/pdb" '
+                    f'PDB_NAME "{component.id}" '
+                    f'PDB_OUTPUT_DIRECTORY "${{CMAKE_BINARY_DIR}}/pdb")'
+                )
                 lines.append(
                     f'target_compile_options({component.id} PRIVATE /source-charset:utf-8 /execution-charset:utf-8 '
                     f'/Zp{profile["default_pack"]} {wchar_option} "/FI${{SAKURA_REPO_ROOT}}/{abi_header}")'
@@ -351,9 +799,23 @@ def _cmake_project(graph: SemanticGraph, root: Component, context_id: str) -> st
                 lines.append(f'target_compile_definitions({component.id} PRIVATE {" ".join(definitions)})')
         elif component.kind in INTERFACE_COMPONENT_KINDS:
             lines.append(f'target_compile_features({component.id} INTERFACE cxx_std_20)')
-        for edge in sorted(_component_edges(graph, component.id, context_id), key=lambda item: item.id):
+        direct_edges = sorted(_component_edges(graph, component.id, context_id), key=lambda item: item.id)
+        direct_targets = {edge.target for edge in direct_edges}
+        for edge in direct_edges:
             scope = "INTERFACE" if not has_sources else ("PUBLIC" if edge.propagation == "public" else "PRIVATE")
             lines.append(f'target_link_libraries({component.id} {scope} {edge.target})')
+        # A private static provider must be repeated at the final native link
+        # root.  CMake can carry some PRIVATE link interfaces transitively, but
+        # keeping the generated root explicit makes the closure deterministic
+        # across CMake and MSBuild and gives the evidence checker a real link
+        # provider to inspect.
+        if has_sources:
+            for dependency_id in _final_link_generated_dependencies(graph, component.id, context_id):
+                if dependency_id not in direct_targets:
+                    lines.append(f'target_link_libraries({component.id} PRIVATE {dependency_id})')
+        if component.system_libraries:
+            scope = "INTERFACE" if not has_sources else "PUBLIC"
+            lines.append(f'target_link_libraries({component.id} {scope} {" ".join(component.system_libraries)})')
         if component.kind == "test":
             lines.append(f'target_link_options({component.id} PRIVATE /INCREMENTAL:NO "/MAP:${{CMAKE_BINARY_DIR}}/{component.id}.map")')
         lines.append('')
@@ -426,6 +888,9 @@ def scoped_output_paths(graph: SemanticGraph, component_id: str, context_id: str
     paths: set[Path] = {GENERATED_ROOT / "manifest.stamp.json"}
     if context.backend == "msbuild":
         paths.add(GENERATED_ROOT / "msbuild" / f"{context_id}.props")
+        if component.build_definition == "legacy" and _legacy_generated_link_dependencies(graph, component_id, context_id):
+            paths.add(MSBUILD_LEGACY_CONSUMER_ROOT / f"{component_id}.props")
+            paths.add(_abi_header_path(component_id, context_id))
         for current_id in graph.final_link_closure((component_id,), context_id):
             current = graph.components.get(current_id)
             if current is None or current.build_definition != "generated":
@@ -442,6 +907,14 @@ def scoped_output_paths(graph: SemanticGraph, component_id: str, context_id: str
             for current_id in _cmake_component_order(graph, component_id, context_id):
                 current = graph.components[current_id]
                 if current.build_definition == "generated":
+                    paths.add(_abi_header_path(current.id, context_id))
+        elif _legacy_generated_link_dependencies(graph, component_id, context_id):
+            paths.add(CMAKE_LEGACY_OWNERSHIP_PATH)
+            paths.add(CMAKE_LEGACY_CONSUMER_ROOT / f"{component_id}.cmake")
+            paths.add(_abi_header_path(component_id, context_id))
+            for current_id in graph.final_link_closure((component_id,), context_id):
+                current = graph.components.get(current_id)
+                if current is not None and current.build_definition == "generated":
                     paths.add(_abi_header_path(current.id, context_id))
     return tuple(sorted(paths, key=lambda item: item.as_posix()))
 
@@ -526,6 +999,21 @@ def expected_outputs(graph: SemanticGraph) -> Mapping[Path, str]:
             if graph.contexts[context_id].backend == "cmake":
                 project_path = GENERATED_ROOT / "cmake" / "projects" / context_id / component.id / "CMakeLists.txt"
                 outputs[project_path] = _cmake_project(graph, component, context_id)
+    for component in sorted(graph.components.values(), key=lambda item: item.id):
+        if component.build_definition != "legacy":
+            continue
+        msbuild_contexts = _legacy_consumer_contexts(graph, component, "msbuild")
+        if msbuild_contexts:
+            outputs[MSBUILD_LEGACY_CONSUMER_ROOT / f"{component.id}.props"] = _msbuild_legacy_consumer_projection(graph, component)
+            for context in msbuild_contexts:
+                outputs[_abi_header_path(component.id, context.id)] = _abi_header_text(graph, component.id, context.id)
+        cmake_contexts = _legacy_consumer_contexts(graph, component, "cmake")
+        if cmake_contexts:
+            outputs[CMAKE_LEGACY_CONSUMER_ROOT / f"{component.id}.cmake"] = _cmake_legacy_consumer_projection(graph, component)
+            for context in cmake_contexts:
+                outputs[_abi_header_path(component.id, context.id)] = _abi_header_text(graph, component.id, context.id)
+    if _cmake_legacy_providers(graph):
+        outputs[CMAKE_LEGACY_OWNERSHIP_PATH] = _cmake_legacy_source_ownership(graph)
     output_hashes = {relative.as_posix(): _output_hash(text) for relative, text in outputs.items()}
     outputs[GENERATED_ROOT / "manifest.stamp.json"] = _manifest_stamp_text(graph, output_hashes)
     return dict(sorted(outputs.items(), key=lambda item: item[0].as_posix()))

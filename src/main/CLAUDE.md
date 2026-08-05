@@ -22,6 +22,10 @@ Keep the hand-written MSBuild path and the CMake/MinGW path behaviorally aligned
 ## Incremental and Nested-Build Rules
 
 - Every expensive generator or child build must declare the real source/configuration inputs and stable outputs that invalidate it. A no-op parent build must skip unchanged generated headers, package staging, PPA, and nested build work.
+- `build/<platform>/CMakeTools` is a shared generator workspace, not a leaf-project intermediate directory. Ordinary project and language-DLL Clean/Rebuild operations must preserve it; only an explicit full-generator observation or repository-wide clean owner may request its removal.
+- A CMake `add_custom_target` emitted for Visual Studio can be requested on every parent build because its generated project contains a phony output. Keep such observers lightweight and content-aware: hash or compare the real inputs and outputs, skip expensive extraction/build/copy work when unchanged, and publish a state file only after every output succeeds. Never use an unconditional `touch` as the no-op contract.
+- Resolve runtime-asset symlinks to their real provider before comparing content. `cmake -E copy_if_different` alone is not a stable timestamp contract for every Windows symlink provider.
+- For a Git submodule-backed tool, the parent repository gitlink is the authoritative source version. Build and archive that exact commit under a lock; do not let dirty or untracked submodule worktree state enter the generated artifact implicitly.
 - If a CMake-generated Visual Studio child build is added, keep its MSBuild-only arguments behind the Visual Studio generator check. Disable node reuse and child FileTracker injection without changing non-MSBuild generators.
 - Never pass `/nr:false` or `/p:TrackFileAccess=false` to Ninja, Makefiles, or other non-Visual-Studio generators.
 - `CMakeBuildEnvironmentVariables` in `msbuild/cmake.props` is deliberately scoped to nested CMake/MSBuild commands. Do not disable FileTracker for the parent `sakura` or `tests1` projects.

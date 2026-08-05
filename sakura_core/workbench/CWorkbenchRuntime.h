@@ -13,7 +13,7 @@
 #include "config/CWorkspaceContextService.h"
 #include "config/JsoncConfigurationSource.h"
 #include "config/SettingsWritebackCoordinator.h"
-#include "platform/filesystem/IFileService.h"
+#include <sakura/filesystem/IFileService.h>
 #include "workbench/IWorkbenchRuntime.h"
 #include "workbench/layout/WorkbenchContributionRegistry.h"
 #include "workbench/layout/IWorkbenchLayoutMementoStore.h"

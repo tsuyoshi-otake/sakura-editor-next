@@ -5,12 +5,12 @@
 	SPDX-License-Identifier: Zlib
 */
 
-#include "StdAfx.h"
-
-#include "platform/security/CurrentUserSecurityAttributes.h"
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 
 #include <Aclapi.h>
 
+#include <cstdint>
+#include <string_view>
 #include <vector>
 
 namespace platform::security {

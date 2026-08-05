@@ -8,7 +8,7 @@
 
 #include "workbench/statusbar/StatusbarViewModel.h"
 
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 
 #include <algorithm>
 

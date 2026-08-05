@@ -6,7 +6,7 @@
 
 #include "workbench/statusbar/StatusbarVisibilityMementoCodec.h"
 
-#include "platform/storage/StorageTypes.h"
+#include <sakura/storage/StorageTypes.h>
 #include "workbench/statusbar/StatusbarViewModel.h"
 
 #include <picojson/picojson.h>

@@ -9,8 +9,8 @@
 
 #pragma once
 
-#include "platform/serialization/JsoncDocument.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/serialization/JsoncDocument.h>
+#include <sakura/uri/UriIdentity.h>
 
 #include <cstdint>
 #include <functional>

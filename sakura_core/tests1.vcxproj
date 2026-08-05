@@ -43,7 +43,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Label="tests1.common">
     <ClCompile>
-      <AdditionalIncludeDirectories>..\src\test\cpp\tests1\;..\src\test\resources\;..\src\main\cpp;..\src\main\resources;..\sakura_core;..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\src\test\cpp\tests1\;..\src\test\resources\;..\src\main\cpp;..\src\main\resources;..\sakura_core\include;..\sakura_core;..\externals;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>_CONSOLE;NOMINMAX;_WIN32_WINNT=0x0A00;NTDDI_VERSION=NTDDI_WIN10_CO;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -53,7 +53,7 @@
       <AdditionalOptions>/FS /source-charset:utf-8 /execution-charset:shift_jis /w34996 %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <ResourceCompile>
-      <AdditionalIncludeDirectories>..\src\test\resources\;..\src\main\resources;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\src\test\resources\;..\src\main\resources;..\sakura_core\include;..\sakura_core;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Culture>0x0411</Culture>
     </ResourceCompile>
     <Link>
@@ -127,12 +127,10 @@
 	<ClCompile Include="..\src\test\cpp\tests1\window\DocumentTabActionLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\Windows11PlatformTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\VirtualStoreMigrationTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\FileServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\PlatformServiceRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\RequestServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpRequestRuntimeTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\JsoncDocumentTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\LegacyExtensionSecretVaultReaderTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultLegacyMigrationCoordinatorTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultCapabilityServiceTest.cpp" />
@@ -162,10 +160,8 @@
     <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionHostSecretVaultGrantLifecycleTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionHostControllerTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\extension\SecretVaultStorageTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\UriIdentityTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileBootstrapTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\Win32FileSystemProviderTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationNetworkPolicyTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationProxyServiceTest.cpp" />
@@ -355,6 +351,8 @@
       <Project>{af03508c-515e-4a0e-87be-67ed1e254bd0}</Project>
     </ProjectReference>
   </ItemGroup>
+  <Import Project="..\src\main\modules\generated\msbuild\consumers\tests1.props"
+          Condition="Exists('..\src\main\modules\generated\msbuild\consumers\tests1.props')" />
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <Target Name="CollectSakuraObjectsForTests1" DependsOnTargets="ResolveProjectReferences" BeforeTargets="Link">
     <!--

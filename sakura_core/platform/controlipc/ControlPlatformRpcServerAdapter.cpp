@@ -83,7 +83,7 @@ struct CControlPlatformRpcServerAdapter::Gate final {
 class CControlPlatformRpcServerAdapter::SessionHandler final : public IControlIpcSessionHandler {
 public:
 	SessionHandler(ControlStorageRpcSessionIdentity identity, const ControlIpcSessionContext& context,
-		std::shared_ptr<storage::IStorageService> storage,
+		std::shared_ptr<storage::IStorageAuthority> storage,
 		std::shared_ptr<secrets::ISecretVaultService> vault,
 		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
@@ -135,7 +135,7 @@ private:
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profiles;
 	CControlProfileRpcSession m_profileSession;
 	bool m_storageHelloCompleted = false;
-	std::shared_ptr<storage::IStorageService> m_storage;
+	std::shared_ptr<storage::IStorageAuthority> m_storage;
 	std::shared_ptr<secrets::ISecretVaultService> m_vault;
 	std::shared_ptr<secrets::ISecretVaultCapabilityService> m_capabilities;
 	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> m_grantAuthority;
@@ -144,7 +144,7 @@ private:
 };
 
 CControlPlatformRpcServerAdapter::CControlPlatformRpcServerAdapter(ControlStorageRpcSessionIdentity identity,
-	std::shared_ptr<storage::IStorageService> storage, std::shared_ptr<secrets::ISecretVaultService> vault,
+	std::shared_ptr<storage::IStorageAuthority> storage, std::shared_ptr<secrets::ISecretVaultService> vault,
 	std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
 	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
 	std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,

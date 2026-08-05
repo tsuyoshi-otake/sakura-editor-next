@@ -3,6 +3,7 @@
 # arguments(required):
 #   ${SOURCE_DIR}
 #   ${GIT_EXECUTABLE}
+#   ${OUTPUT_FILE} (optional; defaults to ${CMAKE_BINARY_DIR}/version.h)
 #
 # Environment variables (optional):
 #   $ENV{GITHUB_ACTIONS}
@@ -89,7 +90,9 @@ else()
   # A linked Git worktree stores repository metadata in a .git file rather
   # than a .git directory.  Git commands work in both layouts.
   if(EXISTS "${SOURCE_DIR}/.git")
-    message(STATUS "Git repository detected, extracting version information...")
+    if(NOT QUIET)
+      message(STATUS "Git repository detected, extracting version information...")
+    endif()
     
     # Get remote origin URL
     execute_process(
@@ -112,7 +115,9 @@ else()
       ERROR_QUIET
     )
   else()
-    message(STATUS "Git repository not detected.")
+    if(NOT QUIET)
+      message(STATUS "Git repository not detected.")
+    endif()
   endif()
 endif()
 
@@ -150,29 +155,36 @@ generate_url_define(GITHUB_PR_HEAD_COMMIT       GITHUB_PR_HEAD_COMMIT)
 generate_url_define(GITHUB_PR_HEAD_SHORT_COMMIT GITHUB_PR_HEAD_SHORT_COMMIT)
 generate_url_define(CI_BUILD_URL                CI_BUILD_URL)
 
-# Configure the version.h file
+# Configure the version state/header file. configure_file preserves the output
+# timestamp when the rendered content is unchanged, so an always-run external
+# state observer does not recompile consumers on a true no-op build.
+if(NOT DEFINED OUTPUT_FILE OR "${OUTPUT_FILE}" STREQUAL "")
+  set(OUTPUT_FILE "${CMAKE_BINARY_DIR}/version.h")
+endif()
 configure_file(
   ${SOURCE_DIR}/src/main/cmake/version.h.in
-  ${CMAKE_BINARY_DIR}/version.h
+  ${OUTPUT_FILE}
   @ONLY
 )
 
 # Print information (like the original batch file)
-message(STATUS "BUILD_ENV_NAME              : ${BUILD_ENV_NAME}")
-message(STATUS "")
-message(STATUS "GIT_REMOTE_ORIGIN_URL       : ${GIT_REMOTE_ORIGIN_URL}")
-message(STATUS "GIT_COMMIT_HASH             : ${GIT_COMMIT_HASH}")
-message(STATUS "GIT_SHORT_COMMIT_HASH       : ${GIT_SHORT_COMMIT_HASH}")
-message(STATUS "BUILD_VERSION               : ${BUILD_VERSION}")
-message(STATUS "")
-message(STATUS "GITHUB_COMMIT_URL           : ${GITHUB_COMMIT_URL}")
-message(STATUS "CI_BUILD_NUMBER             : ${CI_BUILD_NUMBER}")
-message(STATUS "CI_BUILD_URL                : ${CI_BUILD_URL}")
-message(STATUS "GITHUB_PR_HEAD_URL          : ${GITHUB_PR_HEAD_URL}")
-message(STATUS "GITHUB_PR_NUMBER            : ${GITHUB_PR_NUMBER}")
-message(STATUS "GITHUB_PR_HEAD_COMMIT       : ${GITHUB_PR_HEAD_COMMIT}")
-message(STATUS "GITHUB_PR_HEAD_SHORT_COMMIT : ${GITHUB_PR_HEAD_SHORT_COMMIT}")
-message(STATUS "")
-message(STATUS "GIT_TAG_NAME                : ${GIT_TAG_NAME}")
-message(STATUS "")
-message(STATUS "version.h has been generated.")
+if(NOT QUIET)
+  message(STATUS "BUILD_ENV_NAME              : ${BUILD_ENV_NAME}")
+  message(STATUS "")
+  message(STATUS "GIT_REMOTE_ORIGIN_URL       : ${GIT_REMOTE_ORIGIN_URL}")
+  message(STATUS "GIT_COMMIT_HASH             : ${GIT_COMMIT_HASH}")
+  message(STATUS "GIT_SHORT_COMMIT_HASH       : ${GIT_SHORT_COMMIT_HASH}")
+  message(STATUS "BUILD_VERSION               : ${BUILD_VERSION}")
+  message(STATUS "")
+  message(STATUS "GITHUB_COMMIT_URL           : ${GITHUB_COMMIT_URL}")
+  message(STATUS "CI_BUILD_NUMBER             : ${CI_BUILD_NUMBER}")
+  message(STATUS "CI_BUILD_URL                : ${CI_BUILD_URL}")
+  message(STATUS "GITHUB_PR_HEAD_URL          : ${GITHUB_PR_HEAD_URL}")
+  message(STATUS "GITHUB_PR_NUMBER            : ${GITHUB_PR_NUMBER}")
+  message(STATUS "GITHUB_PR_HEAD_COMMIT       : ${GITHUB_PR_HEAD_COMMIT}")
+  message(STATUS "GITHUB_PR_HEAD_SHORT_COMMIT : ${GITHUB_PR_HEAD_SHORT_COMMIT}")
+  message(STATUS "")
+  message(STATUS "GIT_TAG_NAME                : ${GIT_TAG_NAME}")
+  message(STATUS "")
+  message(STATUS "${OUTPUT_FILE} has been generated.")
+endif()

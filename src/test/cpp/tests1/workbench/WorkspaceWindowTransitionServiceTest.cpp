@@ -10,7 +10,7 @@
 
 #include "_main/FailedEditorProcessShutdown.h"
 #include "config/WorkspaceContextTypes.h"
-#include "platform/filesystem/IFileService.h"
+#include <sakura/filesystem/IFileService.h>
 #include "workbench/workspace/WorkspaceEditingService.h"
 #include "workbench/workspace/WorkspaceWindowTransitionService.h"
 #include "workbench/workspace/WorkspaceWindowTransitionPlanner.h"

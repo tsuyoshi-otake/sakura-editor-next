@@ -10,7 +10,12 @@
 #include "platform/storage/CInMemoryStorageService.h"
 
 #include <memory>
+#include <condition_variable>
+#include <chrono>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <thread>
 #include <utility>
 
 namespace platform::controlipc {
@@ -58,11 +63,63 @@ void Handshake(IControlIpcSessionHandler& session, std::uint64_t requestId = 1)
 	EXPECT_EQ(EControlIpcSessionDecision::KeepOpen, response.decision);
 }
 
-class CThrowingStorage final : public storage::IStorageService {
+class CThrowingStorage final : public storage::IStorageAuthority {
 public:
+	storage::StorageAuthorityOpenResult Open() override
+	{
+		return { storage::EStorageAuthorityOpenStatus::AlreadyOpen, "test storage is already open" };
+	}
+	void Close() noexcept override {}
+	[[nodiscard]] bool IsOpen() const noexcept override { return true; }
 	storage::StorageMutationResult Apply(const storage::StorageMutationRequest&) override { throw std::runtime_error("apply"); }
 	storage::StorageSnapshot Snapshot() const override { throw std::runtime_error("snapshot"); }
 	std::unique_ptr<storage::IStorageChangeSubscription> Subscribe(storage::StorageChangeCallback) override { return nullptr; }
+};
+
+class CBlockingStorage final : public storage::IStorageAuthority {
+public:
+	storage::StorageAuthorityOpenResult Open() override
+	{
+		return { storage::EStorageAuthorityOpenStatus::AlreadyOpen, "test storage is already open" };
+	}
+	void Close() noexcept override {}
+	[[nodiscard]] bool IsOpen() const noexcept override { return true; }
+	storage::StorageMutationResult Apply(const storage::StorageMutationRequest&) override { return {}; }
+
+	storage::StorageSnapshot Snapshot() const override
+	{
+		std::unique_lock lock(m_mutex);
+		m_snapshotEntered = true;
+		m_condition.notify_all();
+		m_condition.wait(lock, [this] { return m_releaseSnapshot; });
+		return {};
+	}
+
+	std::unique_ptr<storage::IStorageChangeSubscription> Subscribe(storage::StorageChangeCallback) override
+	{
+		return nullptr;
+	}
+
+	bool WaitUntilSnapshotEntered() const
+	{
+		std::unique_lock lock(m_mutex);
+		return m_condition.wait_for(lock, std::chrono::seconds(5), [this] { return m_snapshotEntered; });
+	}
+
+	void ReleaseSnapshot()
+	{
+		{
+			std::lock_guard lock(m_mutex);
+			m_releaseSnapshot = true;
+		}
+		m_condition.notify_all();
+	}
+
+private:
+	mutable std::mutex m_mutex;
+	mutable std::condition_variable m_condition;
+	mutable bool m_snapshotEntered = false;
+	mutable bool m_releaseSnapshot = false;
 };
 
 TEST(ControlStorageRpcServerAdapter, ValidatesConstructorInputsBeforeSessionsCanBeCreated)
@@ -156,6 +213,68 @@ TEST(ControlStorageRpcServerAdapter, ClosingGateRejectsNewSessionsAndClosesExist
 	EXPECT_EQ(nullptr, adapter.CreateSession({ 106, 1006 }));
 }
 
+TEST(ControlStorageRpcServerAdapter, BeginStoppingWaitsForAnActiveFrameBeforeReturning)
+{
+	auto storage = std::make_shared<CBlockingStorage>();
+	CControlStorageRpcServerAdapter adapter(kIdentity, storage);
+	auto session = adapter.CreateSession({ 109, 1009 });
+	ASSERT_NE(nullptr, session);
+	Handshake(*session);
+
+	std::optional<ControlIpcFrameDispatchResult> frameResult;
+	std::thread frameThread([&] {
+		frameResult = session->HandleFrame({ 109, 1009 }, Request(EControlIpcKind::StorageSnapshotRequest, 51, 9));
+	});
+	const bool frameEntered = storage->WaitUntilSnapshotEntered();
+
+	std::mutex stopMutex;
+	std::condition_variable stopCondition;
+	bool stopStarted = false;
+	bool stopReturned = false;
+	bool stopResult = false;
+	std::thread stopThread([&] {
+		{
+			std::lock_guard lock(stopMutex);
+			stopStarted = true;
+		}
+		stopCondition.notify_all();
+		const bool result = adapter.BeginStopping();
+		{
+			std::lock_guard lock(stopMutex);
+			stopResult = result;
+			stopReturned = true;
+		}
+		stopCondition.notify_all();
+	});
+
+	bool stopStartedObserved = false;
+	bool stopReturnedBeforeRelease = false;
+	{
+		std::unique_lock lock(stopMutex);
+		stopStartedObserved = stopCondition.wait_for(lock, std::chrono::seconds(5), [&] { return stopStarted; });
+		if (stopStartedObserved) {
+			stopReturnedBeforeRelease = stopCondition.wait_for(lock, std::chrono::milliseconds(100), [&] { return stopReturned; });
+		}
+	}
+
+	storage->ReleaseSnapshot();
+	frameThread.join();
+	stopThread.join();
+
+	EXPECT_TRUE(frameEntered);
+	EXPECT_TRUE(stopStartedObserved);
+	EXPECT_FALSE(stopReturnedBeforeRelease);
+	EXPECT_TRUE(stopResult);
+	EXPECT_TRUE(stopReturned);
+	ASSERT_TRUE(frameResult.has_value());
+	ASSERT_EQ(1u, frameResult->responseFrames.size());
+	EXPECT_EQ(EControlIpcKind::StorageSnapshotResponse, frameResult->responseFrames.front().header.kind);
+	EXPECT_EQ(EControlIpcSessionDecision::KeepOpen, frameResult->decision);
+	EXPECT_EQ(EControlStorageRpcServerAdapterState::Stopping, adapter.State());
+
+	adapter.Stop();
+}
+
 TEST(ControlStorageRpcServerAdapter, DelegatesServiceExceptionsToTheRpcInternalErrorResponse)
 {
 	auto storage = std::make_shared<CThrowingStorage>();
@@ -175,7 +294,7 @@ TEST(ControlStorageRpcServerAdapter, DelegatesServiceExceptionsToTheRpcInternalE
 TEST(ControlStorageRpcServerAdapter, SessionOwnsItsLocalHandshakeAndServiceLifetime)
 {
 	auto storage = std::make_shared<storage::CInMemoryStorageService>(9);
-	std::weak_ptr<storage::IStorageService> weakStorage = storage;
+	std::weak_ptr<storage::IStorageAuthority> weakStorage = storage;
 	auto adapter = std::make_unique<CControlStorageRpcServerAdapter>(kIdentity, storage);
 	auto session = adapter->CreateSession({ 108, 1008 });
 	ASSERT_NE(nullptr, session);

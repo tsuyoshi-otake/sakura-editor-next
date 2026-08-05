@@ -11,7 +11,7 @@
 #include "platform/controlipc/ControlIpcNamedPipeTransport.h"
 #include "platform/controlipc/ControlProfileRpc.h"
 #include "platform/controlipc/ControlStorageRpc.h"
-#include "platform/storage/CInMemoryStorageService.h"
+#include <sakura/storage/StorageSnapshotCache.h>
 
 #include <chrono>
 #include <cstdint>

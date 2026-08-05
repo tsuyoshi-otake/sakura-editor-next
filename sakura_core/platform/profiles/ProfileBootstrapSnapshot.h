@@ -9,7 +9,7 @@
 #pragma once
 
 #include "platform/profiles/ProfileAuthorityIdentity.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include <cstdint>
 #include <optional>
