@@ -10,6 +10,38 @@ snapshot. Do not add new peer-coordinate inference to `OnSize2`. Destroying or
 hiding a window surface must explicitly transfer focus and must not terminate a
 backend whose service owner remains active.
 
+## Committed layout must invalidate the whole frame (2026-08-05, #17)
+
+- A committed geometry change invalidates the frame **once, synchronously**,
+  through `CEditWnd::RedrawWorkbenchFrameForCommittedLayout`. `OnSize2` and the
+  `OnLButtonUp` sash-commit branch pass `immediate = true`; the remaining call
+  sites are fallbacks for paths that bypass `OnSize2`.
+- Children reposition through `SetWindowPos`/`MoveWindow`, which copies the old
+  client bits into the new rectangle and invalidates only what became newly
+  visible. Every other pixel — the area a sibling vacated and the copied bits
+  themselves — stays valid and stale. Repositioning children is therefore never
+  by itself sufficient to update the screen.
+- **A queued invalidation is not enough, and this is measured, not assumed.**
+  With `RDW_INVALIDATE` alone the stale pixels survived past 900 ms and the
+  screen-versus-`PrintWindow` difference was indistinguishable from the
+  uninvalidated build (6.490% / 13.367%). `RDW_UPDATENOW` took the same gesture
+  to 0.000%. VS Code updates a resized or toggled frame atomically with no
+  ghosting, so a one-frame synchronous commit is the compatible behavior, not an
+  optimization.
+- `CWorkbenchPanelHost::Layout` passes `SWP_NOCOPYBITS`, because the default
+  bit-copy smears the old client content across the moved rectangle before
+  `WM_PAINT` arrives.
+- The helper compares the applied client and host rectangles and skips the
+  repaint when nothing moved, so geometry-neutral projections (active-view
+  switches, mirror updates) do not repaint the window. It also early-returns
+  while `m_startupDrawState` is `Suppressing` or `Committing`: the startup draw
+  transaction suppresses painting deliberately and commits one complete frame
+  itself, so invalidating there would only duplicate work the commit repeats.
+- Verify any change to this path with the screen-versus-`PrintWindow`
+  differential method in the root [`CLAUDE.md`](../../CLAUDE.md); a layout
+  assertion cannot see this class of defect, because the layout is already
+  correct when it happens.
+
 ## Recovery and load projection
 
 - Native recovery content is not selection authority. After lifecycle commit,

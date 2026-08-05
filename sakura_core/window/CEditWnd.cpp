@@ -111,7 +111,7 @@
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/win32/BuiltinPartProjection.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
-#include "platform/uri/UriIdentity.h"
+#include <sakura/uri/UriIdentity.h>
 
 #include "macro/CMacroFactory.h"
 #include "view/colors/CColorStrategy.h"
@@ -3882,6 +3882,7 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType,
 			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		RedrawWorkbenchFrameForCommittedLayout(false);
 	}
 	const bool terminalSelected = m_workbenchRuntime == nullptr
 		? settings.m_eActiveTool == WORKBENCH_TOOL_TERMINAL
@@ -3900,6 +3901,47 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 		&& m_cDlgFuncList.GetHwnd() == nullptr && m_dispatchReady) {
 		ReloadWorkbenchOutlineAndRelayout();
 	}
+}
+
+void CEditWnd::RedrawWorkbenchFrameForCommittedLayout(bool immediate)
+{
+	if (GetHwnd() == nullptr) return;
+	// The startup draw transaction suppresses painting on purpose and commits
+	// one complete frame itself, so invalidating here would only add work that
+	// the commit repeats.
+	if (m_startupDrawState == StartupDrawState::Suppressing
+		|| m_startupDrawState == StartupDrawState::Committing) {
+		m_appliedWorkbenchHostGeometry.reset();
+		return;
+	}
+	// Children reposition through SetWindowPos/MoveWindow, which copies the old
+	// client bits into the new rectangle and invalidates only what became newly
+	// visible. Every other pixel — the area a sibling vacated and the copied
+	// bits themselves — stays valid and stale, so a committed geometry change
+	// must invalidate the whole frame once. Comparing the applied rectangles
+	// keeps geometry-neutral projections (active-view switches, mirror updates)
+	// from repainting the window.
+	const auto hostRect = [this](const workbench::CWorkbenchPanelHost* host) {
+		RECT rect{};
+		if (host != nullptr && host->GetHwnd() != nullptr
+			&& host->GetState() != workbench::WorkbenchPanelState::Hidden
+			&& ::GetWindowRect(host->GetHwnd(), &rect)) {
+			(void)::MapWindowPoints(nullptr, GetHwnd(), reinterpret_cast<POINT*>(&rect), 2);
+			return rect;
+		}
+		return RECT{};
+	};
+	RECT client{};
+	::GetClientRect(GetHwnd(), &client);
+	const std::array<RECT, 4> geometry{ client, hostRect(m_leftWorkbenchPanel.get()),
+		hostRect(m_bottomWorkbenchPanel.get()), hostRect(m_rightWorkbenchPanel.get()) };
+	const bool changed = immediate || !m_appliedWorkbenchHostGeometry
+		|| !std::ranges::equal(*m_appliedWorkbenchHostGeometry, geometry,
+			[](const RECT& lhs, const RECT& rhs) { return ::EqualRect(&lhs, &rhs) != FALSE; });
+	m_appliedWorkbenchHostGeometry = geometry;
+	if (!changed) return;
+	::RedrawWindow(GetHwnd(), nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | (immediate ? RDW_UPDATENOW : 0));
 }
 
 void CEditWnd::ReloadWorkbenchOutlineAndRelayout()
@@ -4613,6 +4655,7 @@ bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		RedrawWorkbenchFrameForCommittedLayout(false);
 	}
 	// Materialize a newly shown tool only after the host has received its real
 	// bounds.  In particular, ConPTY must not be started from the host's initial
@@ -4688,6 +4731,7 @@ void CEditWnd::ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage p
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		RedrawWorkbenchFrameForCommittedLayout(false);
 	}
 	m_leftWorkbenchPanel->ActivateTool();
 	if (m_activityBar) m_activityBar->SetSelectedItem(activityItem);
@@ -9503,6 +9547,20 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if (m_customFrame) m_customFrame->LayoutResizeOverlays();
 	//@@@ To 2003.05.31 MIK
 
+	// A frame resize relocates every child the same way a sash commit does, so
+	// it leaves the same stale bits behind: without this the watermark, the
+	// welcome actions, and the status bar stay drawn at their previous
+	// coordinates until something else happens to invalidate them. The same
+	// applies to a part-visibility change, which reaches this function through
+	// FinalizeWorkbenchPanelProjection.
+	//
+	// The commit must be synchronous. A queued RDW_INVALIDATE here measurably
+	// did not reach the screen: the stale pixels survived past 900 ms and the
+	// screen-versus-PrintWindow difference was unchanged from the uninvalidated
+	// build. RDW_UPDATENOW paints the whole frame within this relayout, which is
+	// what makes the frame update atomically, the way VS Code's does.
+	RedrawWorkbenchFrameForCommittedLayout(true);
+
 	/* 印刷プレビューモードか */
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
 	if( !m_pPrintPreview ){
@@ -9632,6 +9690,11 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType,
 			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		// CommitResize may clamp or reject the dragged extent, so this final
+		// OnSize2 can move children after the last drag-step repaint. Commit one
+		// complete frame unconditionally; SetWindowPos alone leaves the vacated
+		// sibling areas valid and stale.
+		RedrawWorkbenchFrameForCommittedLayout(true);
 		return 0;
 	}
 

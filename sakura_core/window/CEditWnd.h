@@ -27,6 +27,7 @@
 #pragma once
 
 #include <shellapi.h>// HDROP
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -629,6 +630,7 @@ private:
 	void CloseWorkbenchServiceProjection() noexcept;
 	void FinalizeWorkbenchPanelProjection(
 		const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection = nullptr);
+	void RedrawWorkbenchFrameForCommittedLayout(bool immediate);
 	void ReloadWorkbenchOutlineAndRelayout();
 	void BroadcastWorkbenchSettings();
 	[[nodiscard]] std::wstring GetSemanticWorkspaceRoot() const;
@@ -917,6 +919,7 @@ private:
 	RECT m_leftWorkbenchSplitter{};
 	RECT m_rightWorkbenchSplitter{};
 	RECT m_bottomWorkbenchSplitter{};
+	std::optional<std::array<RECT, 4>> m_appliedWorkbenchHostGeometry;
 	bool m_bottomWorkbenchMaximized = false;
 	int m_workbenchZoomPercent = 100;
 	int m_workbenchZoomBasePointSize = 0;

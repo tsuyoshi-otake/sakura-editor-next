@@ -123,9 +123,12 @@ void CWorkbenchPanelHost::Layout(const RECT& bounds, unsigned int dpi)
 		(void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_dpi);
 	}
 	if (m_window != nullptr) {
+		// SWP_NOCOPYBITS: the default bit-copy smears the old client content
+		// across the moved rectangle before WM_PAINT arrives, which reads as
+		// ghost pixels whenever a sash commit or toggle relocates this host.
 		::SetWindowPos(m_window, nullptr, bounds.left, bounds.top,
 			std::max(0L, bounds.right - bounds.left), std::max(0L, bounds.bottom - bounds.top),
-			SWP_NOACTIVATE | SWP_NOZORDER);
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS);
 	}
 	LayoutTool();
 }
