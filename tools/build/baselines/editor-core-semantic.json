@@ -1,0 +1,732 @@
+{
+  "filtered_test_hint_files": [
+    ".github/workflows/build-sakura.yml",
+    "src/test/cpp/tests1/extension/OpenVsxProductionClientTest.cpp",
+    "src/test/cpp/tests1/platform/profiles/DurableUserDataProfileRegistryServiceTest.cpp",
+    "src/test/cpp/tests1/terminal/window/TerminalLegacyRendererBaseline.cpp",
+    "src/test/cpp/tests1/terminal/window/TerminalToolTest.cpp",
+    "src/test/cpp/tests1/test-cclipboard.cpp",
+    "src/test/cpp/tests1/test-cextensioniconfont.cpp",
+    "src/test/cpp/tests1/test-cextensionmanager.cpp",
+    "src/test/cpp/tests1/test-copenvsxclient.cpp",
+    "src/test/cpp/tests1/test-czipfile.cpp",
+    "src/test/cpp/tests1/test-window.cpp",
+    "src/test/cpp/tests1/workbench/WorkspaceWindowTransitionServiceTest.cpp",
+    "src/test/integration/Measure-ExtensionHostPerformance.ps1",
+    "src/test/integration/run-extension-host-tests.bat",
+    "src/test/py/test_header_make.py",
+    "src/test/resources/coverage.cpp",
+    "tools/vcpkg/.github/workflows/untrustedPR.yml",
+    "tools/vcpkg/buildtrees/fmt/src/10.1.1-281bbdd8af.clean/.github/workflows/macos.yml",
+    "tools/vcpkg/buildtrees/fmt/src/10.1.1-281bbdd8af.clean/.github/workflows/windows.yml",
+    "tools/vcpkg/buildtrees/fmt/src/10.1.1-281bbdd8af.clean/test/gtest/gmock/gmock.h",
+    "tools/vcpkg/buildtrees/fmt/src/10.1.1-281bbdd8af.clean/test/gtest/gtest/gtest.h",
+    "tools/vcpkg/buildtrees/wil/src/0.231028.1-2698fce114.clean/tests/ComTests.cpp",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeParseImplicitIncludeInfo.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeParseImplicitLinkInfo.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestCCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestCUDACompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestCXXCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestFortranCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestHIPCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestISPCCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestOBJCCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CMakeTestOBJCXXCompiler.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CTestCoverageCollectGCOV.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/CTestUseLaunchers.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/GoogleTest.cmake",
+    "tools/vcpkg/downloads/tools/cmake-4.3.3-windows/cmake-4.3.3-windows-x86_64/share/cmake-4.3/Modules/GoogleTestAddTests.cmake",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gmock/gmock-actions.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gmock/gmock-matchers.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gmock/gmock-spec-builders.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gtest/gtest-param-test.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gtest/gtest-test-part.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gtest/gtest.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gtest/internal/gtest-death-test-internal.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gtest/internal/gtest-internal.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/include/gtest/internal/gtest-port.h",
+    "tools/vcpkg/packages/gtest_x64-windows-static/share/gtest/GTestConfigVersion.cmake",
+    "tools/vcpkg/packages/gtest_x64-windows-static/src/gtest-internal-inl.h",
+    "tools/vcpkg/ports/concurrentqueue/unofficial-concurrentqueue-config.cmake",
+    "tools/vcpkg/ports/webrtc/generate_external_absl_test.py",
+    "tools/vcpkg/scripts/azure-pipelines/test-modified-ports.ps1",
+    "tools/vcpkg/scripts/test_ports/cmake-user/portfile.cmake",
+    "tools/vcpkg/scripts/test_ports/vcpkg-ci-nanobind/portfile.cmake",
+    "tools/vcpkg/scripts/test_ports/vcpkg-from-git-test/portfile.cmake"
+  ],
+  "hotspots": {
+    "sakura_core/CEditApp.cpp": {
+      "catch_all_count": 2,
+      "getter_call_count": 0,
+      "include_count": 29,
+      "line_count": 253,
+      "raw_delete_expression_count": 9,
+      "raw_new_expression_count": 9
+    },
+    "sakura_core/doc/CEditDoc.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 58,
+      "include_count": 35,
+      "line_count": 1107,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/doc/CEditDoc.h": {
+      "catch_all_count": 0,
+      "getter_call_count": 2,
+      "include_count": 17,
+      "line_count": 152,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/env/CShareData.h": {
+      "catch_all_count": 0,
+      "getter_call_count": 0,
+      "include_count": 5,
+      "line_count": 126,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/env/DLLSHAREDATA.h": {
+      "catch_all_count": 0,
+      "getter_call_count": 1,
+      "include_count": 12,
+      "line_count": 156,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 59,
+      "include_count": 25,
+      "line_count": 2780,
+      "raw_delete_expression_count": 3,
+      "raw_new_expression_count": 8
+    },
+    "sakura_core/view/CEditView.h": {
+      "catch_all_count": 0,
+      "getter_call_count": 0,
+      "include_count": 29,
+      "line_count": 792,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_CmdHokan.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 8,
+      "include_count": 8,
+      "line_count": 298,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Cmdgrep.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 2,
+      "include_count": 9,
+      "line_count": 57,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Cmdisrch.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 4,
+      "include_count": 9,
+      "line_count": 600,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Command.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 8,
+      "include_count": 19,
+      "line_count": 475,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Command_New.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 13,
+      "include_count": 16,
+      "line_count": 1005,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 7
+    },
+    "sakura_core/view/CEditView_Diff.cpp": {
+      "catch_all_count": 2,
+      "getter_call_count": 4,
+      "include_count": 22,
+      "line_count": 555,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_ExecCmd.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 1,
+      "include_count": 16,
+      "line_count": 680,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Ime.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 1,
+      "include_count": 6,
+      "line_count": 401,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Mouse.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 57,
+      "include_count": 26,
+      "line_count": 2253,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 3
+    },
+    "sakura_core/view/CEditView_Paint.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 13,
+      "include_count": 22,
+      "line_count": 1794,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Paint.h": {
+      "catch_all_count": 0,
+      "getter_call_count": 0,
+      "include_count": 0,
+      "line_count": 35,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Paint_Bracket.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 2,
+      "include_count": 5,
+      "line_count": 580,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Scroll.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 15,
+      "include_count": 9,
+      "line_count": 775,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/view/CEditView_Search.cpp": {
+      "catch_all_count": 0,
+      "getter_call_count": 8,
+      "include_count": 8,
+      "line_count": 499,
+      "raw_delete_expression_count": 4,
+      "raw_new_expression_count": 0
+    },
+    "sakura_core/window/CEditWnd.cpp": {
+      "catch_all_count": 29,
+      "getter_call_count": 11,
+      "include_count": 108,
+      "line_count": 11253,
+      "raw_delete_expression_count": 8,
+      "raw_new_expression_count": 13
+    },
+    "sakura_core/window/CEditWnd.h": {
+      "catch_all_count": 0,
+      "getter_call_count": 3,
+      "include_count": 40,
+      "line_count": 996,
+      "raw_delete_expression_count": 0,
+      "raw_new_expression_count": 1
+    }
+  },
+  "inventory_kind": "editor-core-semantic",
+  "metrics": {
+    "catch_all_count": 635,
+    "direct_global_getter_calls": {
+      "GetDllShareData": 749,
+      "GetEditDoc": 8,
+      "GetEditWnd": 293
+    },
+    "direct_global_getter_calls_by_file": {
+      "sakura_core/_main/CAppMode.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/_main/CControlProcess.cpp": {
+        "GetDllShareData": 4
+      },
+      "sakura_core/_main/CControlTray.cpp": {
+        "GetDllShareData": 14
+      },
+      "sakura_core/_main/CNormalProcess.cpp": {
+        "GetDllShareData": 12
+      },
+      "sakura_core/_main/CProcess.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/_os/CClipboard.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/agent/CAutoReloadAgent.cpp": {
+        "GetDllShareData": 2,
+        "GetEditWnd": 2
+      },
+      "sakura_core/agent/CAutoSaveAgent.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/agent/CBackupAgent.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/agent/CGrepAgent.cpp": {
+        "GetDllShareData": 12,
+        "GetEditWnd": 5
+      },
+      "sakura_core/agent/CLoadAgent.cpp": {
+        "GetDllShareData": 5,
+        "GetEditWnd": 15
+      },
+      "sakura_core/agent/CSearchAgent.cpp": {
+        "GetDllShareData": 4
+      },
+      "sakura_core/charset/charcode.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/cmd/CViewCommander.cpp": {
+        "GetDllShareData": 9
+      },
+      "sakura_core/cmd/CViewCommander_Bookmark.cpp": {
+        "GetDllShareData": 7
+      },
+      "sakura_core/cmd/CViewCommander_Clipboard.cpp": {
+        "GetDllShareData": 20
+      },
+      "sakura_core/cmd/CViewCommander_Cursor.cpp": {
+        "GetDllShareData": 25
+      },
+      "sakura_core/cmd/CViewCommander_CustMenu.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/cmd/CViewCommander_Diff.cpp": {
+        "GetDllShareData": 13
+      },
+      "sakura_core/cmd/CViewCommander_Edit.cpp": {
+        "GetDllShareData": 5
+      },
+      "sakura_core/cmd/CViewCommander_Edit_advanced.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/cmd/CViewCommander_Edit_word_line.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/cmd/CViewCommander_Grep.cpp": {
+        "GetDllShareData": 6
+      },
+      "sakura_core/cmd/CViewCommander_Macro.cpp": {
+        "GetDllShareData": 36
+      },
+      "sakura_core/cmd/CViewCommander_ModeChange.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/cmd/CViewCommander_Search.cpp": {
+        "GetDllShareData": 14
+      },
+      "sakura_core/cmd/CViewCommander_Select.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/cmd/CViewCommander_Settings.cpp": {
+        "GetDllShareData": 23
+      },
+      "sakura_core/cmd/CViewCommander_Support.cpp": {
+        "GetDllShareData": 10
+      },
+      "sakura_core/cmd/CViewCommander_TagJump.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/cmd/CViewCommander_Window.cpp": {
+        "GetDllShareData": 13,
+        "GetEditWnd": 4
+      },
+      "sakura_core/cmd/CViewCommander_inline.h": {
+        "GetEditWnd": 1
+      },
+      "sakura_core/dlg/CDialog.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/dlg/CDlgCompare.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/dlg/CDlgDiff.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/dlg/CDlgFavorite.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/dlg/CDlgFind.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/dlg/CDlgGrepReplace.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/dlg/CDlgJump.cpp": {
+        "GetEditWnd": 1
+      },
+      "sakura_core/dlg/CDlgOpenFile.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/dlg/CDlgOpenFile_CommonFileDialog.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/dlg/CDlgOpenFile_CommonItemDialog.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/dlg/CDlgReplace.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/dlg/CDlgTagJumpList.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/dlg/CDlgWindowList.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/doc/CDocEditor.cpp": {
+        "GetDllShareData": 3,
+        "GetEditWnd": 4
+      },
+      "sakura_core/doc/CDocFileOperation.cpp": {
+        "GetDllShareData": 11,
+        "GetEditWnd": 25
+      },
+      "sakura_core/doc/CDocOutline.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/doc/CDocType.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 4
+      },
+      "sakura_core/doc/CDocVisitor.cpp": {
+        "GetEditWnd": 1
+      },
+      "sakura_core/doc/CEditDoc.cpp": {
+        "GetDllShareData": 10,
+        "GetEditDoc": 1,
+        "GetEditWnd": 47
+      },
+      "sakura_core/doc/CEditDoc.h": {
+        "GetDllShareData": 1,
+        "GetEditDoc": 1
+      },
+      "sakura_core/doc/layout/CLayoutMgr.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/doc/layout/CLayoutMgr.h": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/doc/layout/CLayoutMgr_DoLayout.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/doc/layout/CLayoutMgr_New2.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/env/CAppNodeManager.cpp": {
+        "GetDllShareData": 16
+      },
+      "sakura_core/env/CCodeChecker.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 1
+      },
+      "sakura_core/env/CHokanMgr.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/env/CPropertyManager.cpp": {
+        "GetDllShareData": 6
+      },
+      "sakura_core/env/CReadManager.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/env/CSakuraEnvironment.cpp": {
+        "GetDllShareData": 6
+      },
+      "sakura_core/env/CSakuraEnvironment.h": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/env/CSearchKeywordManager.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/env/CShareData_IO.cpp": {
+        "GetDllShareData": 29
+      },
+      "sakura_core/env/DLLSHAREDATA.cpp": {
+        "GetDllShareData": 8
+      },
+      "sakura_core/env/DLLSHAREDATA.h": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/extmodule/CBregexp.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/extmodule/CMigemo.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/func/CFuncKeyWnd.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/func/CKeyBind.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/func/Funccode.cpp": {
+        "GetEditWnd": 10
+      },
+      "sakura_core/io/CFileLoad.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/macro/CMacro.cpp": {
+        "GetDllShareData": 43,
+        "GetEditWnd": 18
+      },
+      "sakura_core/macro/CMacroManagerBase.cpp": {
+        "GetEditWnd": 1
+      },
+      "sakura_core/macro/CPythonMacroManager.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 2
+      },
+      "sakura_core/macro/CWSH.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/mem/CMemoryIterator.h": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/outline/CDlgFileTree.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/outline/CDlgFuncList.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 22
+      },
+      "sakura_core/plugin/CPluginIfObj.h": {
+        "GetEditWnd": 1
+      },
+      "sakura_core/plugin/CPluginManager.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/prop/CPropComPlugin.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/prop/CPropCommon.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/recent/CMruListener.cpp": {
+        "GetDllShareData": 5,
+        "GetEditWnd": 1
+      },
+      "sakura_core/recent/CRecent.h": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/typeprop/CDlgTypeAscertain.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/typeprop/CDlgTypeList.cpp": {
+        "GetDllShareData": 15
+      },
+      "sakura_core/typeprop/CImpExpManager.cpp": {
+        "GetDllShareData": 4
+      },
+      "sakura_core/typeprop/CImpExpManager.h": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/typeprop/CPropTypes.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/types/CType_Cobol.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/types/CType_Html.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/types/CType_Perl.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/types/CType_Python.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/types/CType_Sql.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/types/CType_Text.cpp": {
+        "GetDllShareData": 5
+      },
+      "sakura_core/types/CType_Vb.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/util/shell.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/util/window.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/view/CCaret.cpp": {
+        "GetDllShareData": 7,
+        "GetEditWnd": 9
+      },
+      "sakura_core/view/CEditView.cpp": {
+        "GetDllShareData": 28,
+        "GetEditWnd": 31
+      },
+      "sakura_core/view/CEditView_CmdHokan.cpp": {
+        "GetEditWnd": 8
+      },
+      "sakura_core/view/CEditView_Cmdgrep.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/view/CEditView_Cmdisrch.cpp": {
+        "GetDllShareData": 3,
+        "GetEditWnd": 1
+      },
+      "sakura_core/view/CEditView_Command.cpp": {
+        "GetDllShareData": 6,
+        "GetEditWnd": 2
+      },
+      "sakura_core/view/CEditView_Command_New.cpp": {
+        "GetDllShareData": 4,
+        "GetEditWnd": 9
+      },
+      "sakura_core/view/CEditView_Diff.cpp": {
+        "GetDllShareData": 3,
+        "GetEditWnd": 1
+      },
+      "sakura_core/view/CEditView_ExecCmd.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/view/CEditView_Ime.cpp": {
+        "GetEditWnd": 1
+      },
+      "sakura_core/view/CEditView_Mouse.cpp": {
+        "GetDllShareData": 31,
+        "GetEditWnd": 26
+      },
+      "sakura_core/view/CEditView_Paint.cpp": {
+        "GetEditWnd": 13
+      },
+      "sakura_core/view/CEditView_Paint_Bracket.cpp": {
+        "GetEditWnd": 2
+      },
+      "sakura_core/view/CEditView_Scroll.cpp": {
+        "GetDllShareData": 7,
+        "GetEditWnd": 8
+      },
+      "sakura_core/view/CEditView_Search.cpp": {
+        "GetDllShareData": 8
+      },
+      "sakura_core/view/CRuler.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/view/CTextArea.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 1
+      },
+      "sakura_core/view/CTextDrawer.cpp": {
+        "GetDllShareData": 2,
+        "GetEditWnd": 1
+      },
+      "sakura_core/view/CViewFont.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/view/CViewParser.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/view/CViewSelect.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 7
+      },
+      "sakura_core/view/colors/CColor_Comment.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/view/colors/CColor_Heredoc.cpp": {
+        "GetDllShareData": 3
+      },
+      "sakura_core/view/colors/CColor_KeywordSet.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/view/colors/CColor_Quote.cpp": {
+        "GetDllShareData": 2
+      },
+      "sakura_core/window/CEditWnd.cpp": {
+        "GetDllShareData": 6,
+        "GetEditDoc": 2,
+        "GetEditWnd": 3
+      },
+      "sakura_core/window/CEditWnd.h": {
+        "GetDllShareData": 1,
+        "GetEditDoc": 1,
+        "GetEditWnd": 1
+      },
+      "sakura_core/window/CMainStatusBar.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/window/CMainToolBar.cpp": {
+        "GetDllShareData": 20
+      },
+      "sakura_core/window/CSplitterWnd.cpp": {
+        "GetDllShareData": 1,
+        "GetEditWnd": 2
+      },
+      "sakura_core/window/CTabWnd.cpp": {
+        "GetDllShareData": 5
+      },
+      "sakura_core/window/CTipWnd.cpp": {
+        "GetDllShareData": 1
+      },
+      "sakura_core/workbench/editor/persistence/CEditDocWorkingCopyPersistenceAdapter.cpp": {
+        "GetDllShareData": 1
+      },
+      "src/test/cpp/tests1/macro/test-macro.cpp": {
+        "GetDllShareData": 4
+      },
+      "src/test/cpp/tests1/test-cdlgopenfile.cpp": {
+        "GetDllShareData": 2
+      },
+      "src/test/cpp/tests1/test-csakuraenvironment.cpp": {
+        "GetDllShareData": 5
+      },
+      "src/test/cpp/tests1/test-csharedata.cpp": {
+        "GetDllShareData": 23
+      },
+      "src/test/cpp/tests1/test-extmodules.cpp": {
+        "GetDllShareData": 7
+      },
+      "src/test/cpp/tests1/test-window.cpp": {
+        "GetDllShareData": 62
+      },
+      "src/test/cpp/tests1/window/EditorTestSuite.cpp": {
+        "GetDllShareData": 1,
+        "GetEditDoc": 3,
+        "GetEditWnd": 2
+      },
+      "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp": {
+        "GetDllShareData": 1
+      }
+    },
+    "filtered_test_hint_count": 53,
+    "include_directive_count": 11541,
+    "monolith_link_hint_count": 2,
+    "private_include_mention_count": 45,
+    "raw_delete_expression_count": 722,
+    "raw_new_expression_count": 929,
+    "source_file_count": 2087,
+    "source_line_count": 783549,
+    "win32_parameter_mention_count": 4614
+  },
+  "monolith_link_hint_files": [
+    "sakura_core/sakura.vcxproj",
+    "sakura_core/tests1.vcxproj"
+  ],
+  "schema_version": 1,
+  "scope": [
+    "sakura_core",
+    "sakura_lang",
+    "src/main",
+    "src/test",
+    "tools"
+  ],
+  "source_fingerprint": "sha256:c964abc16057692c9dd7e1991dfeaf0fabf2eec0b1359ba98f21894b65f0b957"
+}

@@ -21,6 +21,7 @@
     - [githash.h の更新をスキップ](#githashh-の更新をスキップ)
     - [PowerShellによるZIPファイル処理の強制](#powershellによるzipファイル処理の強制)
     - [CIビルドのスキップ](#ciビルドのスキップ)
+    - [Editor Core意味的負債台帳](#editor-core意味的負債台帳)
   - [MinGWビルド (実験的)](#mingwビルド-実験的)
     - [MinGWでのビルド方法](#mingwでのビルド方法)
   - [参考情報](#参考情報)
@@ -196,6 +197,29 @@ Debug製品にはMAPがないため、link input setの観測だけでstatic arc
 扱いません。またgeneratorのExecと消費先を相関できても、生成規則の`Inputs`/`DEPENDS`が完全であること、
 RC inputの観測がresource table/ID互換であること、vcpkg targetの実行やtrackerの存在がrestore内容であることは
 別の証明です。これらの未宣言・未観測gateが残る間、`--strict`は終了コード5を返します。
+
+### Editor Core意味的負債台帳
+
+Issue #18のR0/R1ゲートは、ビルド依存グラフとは別に、Editor Coreの意味的な結合を
+再現可能なソース観測として記録します。canonical CLIから次を実行します。
+
+```cmd
+py -3 tools/build/sakura_build.py inventory semantic ^
+  --baseline tools/build/baselines/editor-core-semantic.json ^
+  --output build/evidence/r0/editor-core-semantic.json --strict
+```
+
+`--strict`の終了コードは、baselineのスキーマ不一致・読み取り失敗が2、ラチェット対象の
+増加が11、成功が0です。`--accept-current`は、レビュー済みの基準更新時だけ使用します。
+baselineはソース相対パスと内容から決定的なfingerprintを作り、出力は一時ファイルから
+atomic replaceします。同じ入力で再実行しても不要なmtime更新は発生しません。
+
+台帳はASTや所有権解析の代替ではありません。現在は、`GetDllShareData`/
+`GetEditWnd`/`GetEditDoc`、生の`new`/`delete`、`catch (...)`、Win32型の言及、private
+include、tests1全体リンク・filtered testのヒントを明示的なラチェット対象にしています。
+source file/line/include数とCEditWnd/CEditView/CEditDoc/CEditApp/DLLSHAREDATAのhotspotは
+診断情報です。R2以降のSelection/CaretまたはWorking Copyの縦切りでは、台帳を更新してから
+型付きport、ライフサイクル、テストの独立性を別ゲートで証明します。
 
 `tests1`分割前の保証集合は`src/test/test-inventory.json`で凍結します。`test_id`は
 source-controlledな安定ID、`runtime.runner_id`と`runtime.selector`は実行時mappingです。

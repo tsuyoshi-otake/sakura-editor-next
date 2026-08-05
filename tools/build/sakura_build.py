@@ -33,6 +33,12 @@ from sakura_build_lib.repository_inventory import (
     repository_inventory_summary,
     write_repository_inventory,
 )
+from sakura_build_lib.semantic_inventory import (
+    collect_semantic_inventory,
+    compare_semantic_inventory,
+    semantic_inventory_summary,
+    write_semantic_inventory,
+)
 from sakura_build_lib.runner import (
     BuildError,
     EventWriter,
@@ -66,6 +72,7 @@ EXIT_TEST = 7
 EXIT_TIMEOUT = 8
 EXIT_CLEANUP = 9
 EXIT_PERFORMANCE = 10
+EXIT_RATCHET = 11
 
 RESOURCE_SOURCE_ROLES = {
     "ja-JP": (Path("sakura_core/sakura_rc.rc"), Path("sakura_core/sakura_rc.rc2")),
@@ -182,6 +189,30 @@ def parser() -> argparse.ArgumentParser:
     inventory_repository.add_argument("--output", type=Path, default=Path("build/evidence/r0/repository-inventory.json"))
     inventory_repository.add_argument("--native-evidence", type=Path, help="merge a separately collected native product observation")
     inventory_repository.add_argument("--resource-evidence", type=Path, help="merge a separately collected native PE resource-table observation")
+    inventory_semantic = inventory_commands.add_parser(
+        "semantic",
+        help="collect the Editor Core semantic-debt baseline and enforce its ratchet",
+    )
+    inventory_semantic.add_argument(
+        "--baseline",
+        type=Path,
+        default=Path("tools/build/baselines/editor-core-semantic.json"),
+    )
+    inventory_semantic.add_argument(
+        "--output",
+        type=Path,
+        default=Path("build/evidence/r0/editor-core-semantic.json"),
+    )
+    inventory_semantic.add_argument(
+        "--accept-current",
+        action="store_true",
+        help="explicitly replace the baseline with the current observation",
+    )
+    inventory_semantic.add_argument(
+        "--strict",
+        action="store_true",
+        help="return a non-zero exit code when a ratcheted metric increases",
+    )
     inventory_observe_product = inventory_commands.add_parser("observe-product")
     inventory_observe_product.add_argument("--context", default="msvc-x64-debug")
     inventory_observe_product.add_argument("--product", default="sakura_app")
@@ -697,6 +728,39 @@ def main(argv: list[str] | None = None) -> int:
                     args.format,
                 )
                 return 0
+            if args.inventory_command == "semantic":
+                baseline_path = _repository_path(repo, args.baseline, "--baseline")
+                current = collect_semantic_inventory(repo)
+                baseline_changed = False
+                comparison = None
+                if args.accept_current:
+                    baseline_changed = write_semantic_inventory(baseline_path, current)
+                    comparison = {
+                        "ok": True,
+                        "accepted_current": True,
+                        "baseline_source_fingerprint": current["source_fingerprint"],
+                        "current_source_fingerprint": current["source_fingerprint"],
+                        "increases": [],
+                        "ratcheted_metrics": [],
+                    }
+                else:
+                    try:
+                        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+                    except FileNotFoundError as error:
+                        raise BuildError(
+                            "SEMANTIC_BASELINE_MISSING",
+                            f"semantic baseline is missing; rerun with --accept-current: {baseline_path}",
+                            EXIT_USAGE,
+                        ) from error
+                    except (OSError, json.JSONDecodeError) as error:
+                        raise BuildError("SEMANTIC_BASELINE_INVALID", f"could not read semantic baseline: {baseline_path}", EXIT_USAGE) from error
+                    comparison = compare_semantic_inventory(current, baseline)
+                write_semantic_inventory(destination, current)
+                report = semantic_inventory_summary(current, comparison, output_path=destination)
+                report["baseline"] = str(baseline_path)
+                report["baseline_changed"] = baseline_changed
+                output(report, args.format)
+                return 0 if not args.strict or comparison["ok"] else EXIT_RATCHET
             if args.inventory_command == "observe-product":
                 result = observe_product_native_evidence(
                     graph,
