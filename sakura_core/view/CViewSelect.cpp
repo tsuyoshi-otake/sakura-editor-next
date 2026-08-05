@@ -22,10 +22,6 @@ CViewSelect::CViewSelect(CEditView* pcEditView)
 : m_pcEditView(pcEditView)
 {
 	m_bSelectingLock   = false;	// 選択状態のロック
-	m_bBeginSelect     = false;		// 範囲選択中
-	m_bBeginBoxSelect  = false;	// 矩形範囲選択中
-	m_bBeginLineSelect = false;	// 行単位選択中
-	m_bBeginWordSelect = false;	// 単語単位選択中
 
 	m_sSelectBgn.Clear(-1); // 範囲選択(原点)
 	m_sSelect   .Clear(-1); // 範囲選択
@@ -37,8 +33,7 @@ CViewSelect::CViewSelect(CEditView* pcEditView)
 void CViewSelect::CopySelectStatus(CViewSelect* pSelect) const
 {
 	pSelect->m_bSelectingLock		= m_bSelectingLock;		/* 選択状態のロック */
-	pSelect->m_bBeginSelect			= m_bBeginSelect;		/* 範囲選択中 */
-	pSelect->m_bBeginBoxSelect		= m_bBeginBoxSelect;	/* 矩形範囲選択中 */
+	pSelect->m_selectionSession		= m_selectionSession;
 
 	pSelect->m_sSelectBgn			= m_sSelectBgn;			//範囲選択(原点)
 	pSelect->m_sSelect				= m_sSelect;			//範囲選択
@@ -69,6 +64,7 @@ void CViewSelect::DisableSelectArea( bool bDraw, bool bDrawBracketCursorLine )
 	m_sSelectOld = m_sSelect;		//範囲選択(Old)
 	m_sSelect.Clear(-1);
 	m_bSelectingLock	 = false;	// 選択状態のロック
+	(void)m_selectionSession.End();
 
 	if( bDraw ){
 		DrawSelectArea( bDrawBracketCursorLine );
@@ -76,9 +72,6 @@ void CViewSelect::DisableSelectArea( bool bDraw, bool bDrawBracketCursorLine )
 	m_bDrawSelectArea = false;	// 02/12/13 ai // 2011.12.24 bDraw括弧内から移動
 
 	m_sSelectOld.Clear(0);			// 範囲選択(Old)
-	m_bBeginBoxSelect = false;		// 矩形範囲選択中
-	m_bBeginLineSelect = false;		// 行単位選択中
-	m_bBeginWordSelect = false;		// 単語単位選択中
 	m_nLastSelectedByteLen = 0;		// 前回選択時の選択バイト数
 
 	// 2002.02.16 hor 直前のカーソル位置をリセット
@@ -293,7 +286,7 @@ void CViewSelect::DrawSelectArea2( HDC hdc ) const
 	}
 	// To Here 2007.09.09 Moca
 
-//	MYTRACE( L"DrawSelectArea()  m_bBeginBoxSelect=%hs\n", m_bBeginBoxSelect?"true":"false" );
+//	MYTRACE( L"DrawSelectArea()  IsBoxSelecting=%hs\n", IsBoxSelecting()?"true":"false" );
 	if( IsBoxSelecting() ){		// 矩形範囲選択中
 		// 2001.12.21 hor 矩形エリアにEOFがある場合、RGN_XORで結合すると
 		// EOF以降のエリアも反転してしまうので、この場合はRedrawを使う

@@ -9,6 +9,15 @@ order:
 
 `native/legacy adapters -> operation coordinator -> editor/working-copy models`
 
+The selection pilot is a deliberately narrower leaf. `sakura_editor_selection`
+owns only the presentation-neutral selection phase and mode (`SelectionSession`);
+its public contract is under `sakura/editor/SelectionSession.h` and must not
+include a document, layout, HWND, or legacy view type. `CViewSelect` remains the
+compatibility adapter for native input/drawing and still owns selection ranges,
+locks, and geometry. Do not treat this pilot as full selection independence or
+move those remaining fields without a typed coordinate/lifecycle contract and a
+standalone contract runner.
+
 Pure models and codecs must not include or retain HWND, `CEditWnd`, `CEditDoc`,
 Win32 dialogs, `EFunctionCode`, IPC clients, profile paths, or direct filesystem
 writes. Adapters may translate those facilities into bounded DTOs and typed

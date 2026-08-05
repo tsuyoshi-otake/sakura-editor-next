@@ -22,6 +22,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sakura", "sakura_core\sakur
 		{6499F505-C6B0-58F0-B3E7-70E32EB75439} = {6499F505-C6B0-58F0-B3E7-70E32EB75439}
 		{2EAFFF0B-6ED3-569B-9402-F1D5C9955F03} = {2EAFFF0B-6ED3-569B-9402-F1D5C9955F03}
 		{D7FBAA67-475E-5C67-B513-5DB1E035B14D} = {D7FBAA67-475E-5C67-B513-5DB1E035B14D}
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4} = {E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tests1", "sakura_core\tests1.vcxproj", "{701E3407-EC27-49F7-ADC7-520CF2B4B438}"
@@ -35,6 +36,7 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "tests1", "sakura_core\tests
 		{6499F505-C6B0-58F0-B3E7-70E32EB75439} = {6499F505-C6B0-58F0-B3E7-70E32EB75439}
 		{2EAFFF0B-6ED3-569B-9402-F1D5C9955F03} = {2EAFFF0B-6ED3-569B-9402-F1D5C9955F03}
 		{D7FBAA67-475E-5C67-B513-5DB1E035B14D} = {D7FBAA67-475E-5C67-B513-5DB1E035B14D}
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4} = {E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "extension_host_security", "sakura_core\extension_host_security.vcxproj", "{2C5F5234-4377-44B1-A848-A900523E69F0}"
@@ -54,6 +56,13 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sakura_storage", "src\main\modules\generated\msbuild\projects\sakura_storage.vcxproj", "{2EAFFF0B-6ED3-569B-9402-F1D5C9955F03}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sakura_security", "src\main\modules\generated\msbuild\projects\sakura_security.vcxproj", "{D7FBAA67-475E-5C67-B513-5DB1E035B14D}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sakura_editor_selection", "src\main\modules\generated\msbuild\projects\sakura_editor_selection.vcxproj", "{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "sakura_editor_selection_tests", "src\main\modules\generated\msbuild\projects\sakura_editor_selection_tests.vcxproj", "{88BB532F-4AC6-5345-9D9E-82D672D47D3C}"
+	ProjectSection(ProjectDependencies) = postProject
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4} = {E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -105,6 +114,14 @@ Global
 		{D7FBAA67-475E-5C67-B513-5DB1E035B14D}.Debug|x64.Build.0 = Debug|x64
 		{D7FBAA67-475E-5C67-B513-5DB1E035B14D}.Release|x64.ActiveCfg = Release|x64
 		{D7FBAA67-475E-5C67-B513-5DB1E035B14D}.Release|x64.Build.0 = Release|x64
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}.Debug|x64.ActiveCfg = Debug|x64
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}.Debug|x64.Build.0 = Debug|x64
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}.Release|x64.ActiveCfg = Release|x64
+		{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}.Release|x64.Build.0 = Release|x64
+		{88BB532F-4AC6-5345-9D9E-82D672D47D3C}.Debug|x64.ActiveCfg = Debug|x64
+		{88BB532F-4AC6-5345-9D9E-82D672D47D3C}.Debug|x64.Build.0 = Debug|x64
+		{88BB532F-4AC6-5345-9D9E-82D672D47D3C}.Release|x64.ActiveCfg = Release|x64
+		{88BB532F-4AC6-5345-9D9E-82D672D47D3C}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

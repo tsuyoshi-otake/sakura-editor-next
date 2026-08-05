@@ -13,6 +13,7 @@ class CEditView;
 
 #include "basis/SakuraBasis.h"
 #include "doc/layout/CLayout.h"
+#include <sakura/editor/SelectionSession.h>
 
 class CViewSelect{
 public:
@@ -43,40 +44,43 @@ public:
 	//!単語選択開始
 	void SelectBeginWord()
 	{
-		m_bBeginSelect     = true;				/* 範囲選択中 */
-		m_bBeginBoxSelect  = false;			/* 矩形範囲選択中でない */
-		m_bBeginLineSelect = false;			/* 行単位選択中 */
-		m_bBeginWordSelect = true;			/* 単語単位選択中 */
+		(void)m_selectionSession.Begin(editor::selection::ESelectionMode::Word);
 	}
 
 	//!矩形選択開始
 	void SelectBeginBox()
 	{
-		m_bBeginSelect     = true;			/* 範囲選択中 */
-		m_bBeginBoxSelect  = true;		/* 矩形範囲選択中 */
-		m_bBeginLineSelect = false;		/* 行単位選択中 */
-		m_bBeginWordSelect = false;		/* 単語単位選択中 */
+		(void)m_selectionSession.Begin(editor::selection::ESelectionMode::Box);
 	}
 
 	//!謎の選択開始
 	void SelectBeginNazo()
 	{
-		m_bBeginSelect     = true;			/* 範囲選択中 */
-//		m_bBeginBoxSelect  = false;		/* 矩形範囲選択中でない */
-		m_bBeginLineSelect = false;		/* 行単位選択中 */
-		m_bBeginWordSelect = false;		/* 単語単位選択中 */
+		(void)m_selectionSession.Begin(editor::selection::ESelectionMode::Nazo);
 	}
 
 	//!範囲選択終了
 	void SelectEnd()
 	{
-		m_bBeginSelect = false;
+		(void)m_selectionSession.End();
 	}
 
-	//!m_bBeginBoxSelectを設定。
+	//! 矩形選択モードを設定する。
 	void SetBoxSelect(bool b)
 	{
-		m_bBeginBoxSelect = b;
+		(void)m_selectionSession.SetModeEnabled(editor::selection::ESelectionMode::Box, b);
+	}
+
+	//! 行単位選択状態をlegacy入力アダプターから更新する。
+	void SetLineSelecting(bool b)
+	{
+		(void)m_selectionSession.SetModeEnabled(editor::selection::ESelectionMode::Line, b);
+	}
+
+	//! 単語単位選択状態をlegacy入力アダプターから更新する。
+	void SetWordSelecting(bool b)
+	{
+		(void)m_selectionSession.SetModeEnabled(editor::selection::ESelectionMode::Word, b);
 	}
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -127,18 +131,29 @@ public:
 	//!マウスで選択中か
 	bool IsMouseSelecting() const
 	{
-		return m_bBeginSelect;
+		return m_selectionSession.IsActive();
 	}
 
 	//!矩形選択中か
 	bool IsBoxSelecting() const
 	{
-		return m_bBeginBoxSelect;
+		return m_selectionSession.IsBoxSelecting();
+	}
+
+	bool IsLineSelecting() const
+	{
+		return m_selectionSession.IsLineSelecting();
+	}
+
+	bool IsWordSelecting() const
+	{
+		return m_selectionSession.IsWordSelecting();
 	}
 
 private:
 	//参照
 	CEditView*	m_pcEditView;
+	editor::selection::SelectionSession m_selectionSession;
 
 public:
 
@@ -147,15 +162,10 @@ public:
 	// 選択状態
 	bool	m_bSelectingLock;		// 選択状態のロック
 private:
-	bool	m_bBeginSelect;			// 範囲選択中
-	bool	m_bBeginBoxSelect;		// 矩形範囲選択中
 	bool	m_bSelectAreaChanging;	// 選択範囲変更中
 	int		m_nLastSelectedByteLen;	// 前回選択時の選択バイト数
 
 public:
-	bool	m_bBeginLineSelect;		// 行単位選択中
-	bool	m_bBeginWordSelect;		// 単語単位選択中
-
 	// 選択範囲を保持するための変数群
 	// これらはすべて折り返し行と、折り返し桁を保持している。
 	CLayoutRange m_sSelectBgn; //範囲選択(原点)

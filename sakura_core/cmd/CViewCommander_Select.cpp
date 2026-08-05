@@ -103,7 +103,7 @@ void CViewCommander::Command_SELECTLINE([[maybe_unused]] LPARAM lparam1)
 	// 改行単位で1行選択する
 	Command_GOLINETOP( false, 0x9 );	// 物理行頭に移動
 
-	m_pCommanderView->GetSelectionInfo().m_bBeginLineSelect = true;		// 行単位選択中
+	m_pCommanderView->GetSelectionInfo().SetLineSelecting(true);		// 行単位選択中
 
 	CLayoutPoint ptCaret;
 
@@ -131,7 +131,7 @@ void CViewCommander::Command_SELECTLINE([[maybe_unused]] LPARAM lparam1)
 		}
 	}
 
-	if( m_pCommanderView->GetSelectionInfo().m_bBeginLineSelect ){
+	if( m_pCommanderView->GetSelectionInfo().IsLineSelecting() ){
 		// 範囲選択開始行・カラムを記憶
 		m_pCommanderView->GetSelectionInfo().m_sSelect.SetTo( ptCaret );
 		m_pCommanderView->GetSelectionInfo().m_sSelectBgn.SetTo( ptCaret );

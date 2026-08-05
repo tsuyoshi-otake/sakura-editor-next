@@ -6,6 +6,8 @@
     "sakura_app",
     "sakura_controlipc_protocol",
     "sakura_controlipc_protocol_tests",
+    "sakura_editor_selection",
+    "sakura_editor_selection_tests",
     "sakura_filesystem",
     "sakura_filesystem_tests",
     "sakura_request",
@@ -21,7 +23,8 @@
     "tests1"
   ],
   "active_contracts": [
-    "sakura-controlipc-v1-wire-contract"
+    "sakura-controlipc-v1-wire-contract",
+    "sakura-editor-selection-session-contract"
   ],
   "active_edges": [
     "tests1-to-sakura-app",
@@ -48,7 +51,10 @@
     "sakura-app-to-sakura-controlipc-protocol",
     "tests1-to-sakura-controlipc-protocol",
     "sakura-controlipc-protocol-tests-to-sakura-controlipc-protocol",
-    "sakura-controlipc-protocol-tests-to-golden-fixture"
+    "sakura-controlipc-protocol-tests-to-golden-fixture",
+    "sakura-app-to-sakura-editor-selection",
+    "tests1-to-sakura-editor-selection",
+    "sakura-editor-selection-tests-to-sakura-editor-selection"
   ],
   "compile_profiles": [
     "msvc-x64-release",
@@ -69,6 +75,6 @@
   "generator_version": "0.3.6",
   "package_sets": [],
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:9c912a52e0bbd320756369f126622131b66acfe4398275d08f6e561ff5ddfa97",
+  "semantic_graph_hash": "sha256:b91af480205560c06d40f6763ec561da3d50000b2ad9dabf48805dca1aee2860",
   "staging_sets": []
 }

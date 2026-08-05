@@ -1,4 +1,4 @@
-# Issue #18 R0/R1 実装状態
+# Issue #18 R0/R1/R2 実装状態
 
 最終更新: 2026-08-05
 
@@ -56,10 +56,38 @@ filtered-test hintに限定している。source file/line/include数は診断�
 保守的な観測であるため、R2以降では対象コンポーネントごとにtyped port、owner、thread/lifecycle、
 fake交換、contract test、monolith非リンクを別の受入条件として追加する。
 
+## R2 Selection/Caret pilot
+
+R2の最初の安全な縦切りとして、選択の表示座標や範囲を先に移動せず、presentation-neutralな
+phase/modeだけを `sakura_editor_selection` へ抽出した。`CViewSelect` は既存Win32入力・描画と
+legacyの選択範囲、ロック、座標状態を所有するadapterのままであり、このpilotを選択機能全体の
+L4独立性とは扱わない。
+
+- provider: `sakura_editor_selection` (`SelectionSession`)
+- consumer: `sakura_app` -> `sakura_editor_selection`（consumer -> provider）
+- compatibility adapter: `CViewSelect` / `CEditView_Mouse` / `CViewCommander_Select`
+- contract: `sakura/editor/SelectionSession.h`（`ESelectionMode`、`ESelectionTransition`、`SelectionSession`）
+- dedicated runner: `sakura_editor_selection_tests`（resource/package-less、provider private header非公開）
+- terminal coverage: start/restart/end/no-op/mode fallbackを4件で検証
+
+次のコマンドで、生成物を再生成せずにmanifest、依存DAG、専用runnerを確認できる。
+
+```cmd
+py -3 tools/build/sakura_build.py generate --check
+py -3 tools/build/sakura_build.py graph check --all-contexts
+py -3 tools/build/sakura_build.py --format json build component sakura_editor_selection_tests --context msvc-x64-debug
+py -3 tools/build/sakura_build.py --format json test component sakura_editor_selection_tests --context msvc-x64-debug
+```
+
+MSVC x64 Debug/ReleaseおよびCMake MSVC x64 Debug/Releaseで本体・runnerのbuild/testが成功し、
+本体統合（MSVC x64 Debug）も0 errorでリンクできた。CMakeでは既存の長いobject pathに対する
+`CMAKE_OBJECT_PATH_MAX` 警告が残るため、これはSelection固有の失敗ではなく、ビルドパス短縮を
+別gateで扱う。専用runnerは資源bundle、言語DLL、配布asset、全体package restoreに依存しない。
+
 ## 未完了と次のgraduation gate
 
 - R0のraw pointer/public mutable field/`CEditApp` lifecycleの完全な型解析は未実施。
-- R2の最初の縦切り（Selection/CaretまたはWorking Copy）は未着手。
+- Selection/Caretのphase/mode pilotは完了したが、選択range/lock/geometryとWorking Copyは未着手。
 - R3のWin32 typed event adapter、R4のDocument Core、R5のDLLSHAREDATA capability facadeは未着手。
 - tests1の実体分割、CIでのstrict実行、既存global getterの減少は未完了。
 - Issue #15のresource/package/runtimeとControl IPC transportのgraduationも別途継続中。
