@@ -13,7 +13,14 @@
     -->
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;chcp 65001 &gt; NUL; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' -A $(Platform) -B '$(CMakeToolsPath)' -S '$([MSBuild]::NormalizePath('$(CMakeToolsSourceDir)', '.'))' -DCMAKE_CONFIGURATION_TYPES='Debug;Release' -DCMAKE_SYSTEM_VERSION='10.0.22621.0' -DCMAKE_TOOLCHAIN_FILE='$(VcpkgRoot)scripts/buildsystems/vcpkg.cmake' -DVCPKG_TARGET_TRIPLET=$(VcpkgTriplet)&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" StdErrEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
-  <Target Name="GenerateVersionHeader" Inputs="..\src\main\cmake\version.h.in" Outputs="$(VersionHeader)" DependsOnTargets="ConfigureCMakeTools" BeforeTargets="ResourceCompile;ClCompile">
+  <!--
+    version.h embeds the commit hash and the build revision derived from a
+    `git rev-list` commit count, so HEAD is a real input even though the template
+    is unchanged. `.git\logs\HEAD` is appended on every commit, checkout, merge, and
+    reset, which makes it the one file that moves whenever those derived values
+    change; a checkout without a reflog simply regenerates unconditionally.
+  -->
+  <Target Name="GenerateVersionHeader" Inputs="..\src\main\cmake\version.h.in;..\.git\logs\HEAD" Outputs="$(VersionHeader)" DependsOnTargets="ConfigureCMakeTools" BeforeTargets="ResourceCompile;ClCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_version_header -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <Target Name="GenerateFuncCodeDefine" Inputs="@(FuncCodeRes)" Outputs="$(FuncCodeDefine)" DependsOnTargets="ConfigureCMakeTools" AfterTargets="GenerateVersionHeader" BeforeTargets="ResourceCompile">
