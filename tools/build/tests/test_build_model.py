@@ -24,7 +24,9 @@ from sakura_build_lib.runner import (
     EventWriter,
     allocate_parallelism,
     cmake_component_commands,
+    distribution_commands,
     msbuild_command,
+    msbuild_log_path,
     run_commands,
 )
 from sakura_build_lib.test_inventory import (
@@ -767,6 +769,46 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("/m:1", command)
             self.assertIn("/p:MultiProcessorCompilation=true", command)
             self.assertIn("/p:CL_MPCount=1", command)
+
+    def test_verification_rebuilds_do_not_write_the_packaged_build_log(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            command = msbuild_command(root, target, "x64", "Release", 1, environment={"CMD_MSBUILD": sys.executable})
+            self.assertNotIn("/fileLogger", command)
+            self.assertFalse((root / "build/logs").exists())
+
+    def test_solution_build_writes_the_log_zip_artifacts_requires(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            solution = root / "sakura.sln"
+            solution.touch()
+            expected = root / "build/logs/msbuild-x64-Release.log"
+            command = msbuild_command(
+                root,
+                solution,
+                "x64",
+                "Release",
+                1,
+                environment={"CMD_MSBUILD": sys.executable},
+                log_file=msbuild_log_path(root, "x64", "Release"),
+            )
+            self.assertIn("/fileLogger", command)
+            self.assertIn(f"/fileLoggerParameters:LogFile={expected};Verbosity=normal;Encoding=UTF-8", command)
+            # MSBuild does not create the directory of ``LogFile`` itself.
+            self.assertTrue(expected.parent.is_dir())
+
+    def test_distribution_build_writes_the_log_before_packaging(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "sakura.sln").touch()
+            with patch("sakura_build_lib.runner.find_msbuild", return_value=sys.executable):
+                commands = distribution_commands(root, "x64", "Release", 1)
+            expected = root / "build/logs/msbuild-x64-Release.log"
+            self.assertIn(f"/fileLoggerParameters:LogFile={expected};Verbosity=normal;Encoding=UTF-8", commands[0])
+            packaging = [index for index, command in enumerate(commands) if any("zipArtifacts.bat" in item for item in command)]
+            self.assertEqual([len(commands) - 1], packaging)
 
     def test_parallel_budget_is_bounded(self):
         for budget in range(1, 33):

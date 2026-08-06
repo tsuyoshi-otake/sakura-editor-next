@@ -401,6 +401,7 @@ def msbuild_command(
     *,
     build_target: str = "Build",
     environment: Mapping[str, str] | None = None,
+    log_file: Path | None = None,
 ) -> list[str]:
     parallel = allocate_parallelism(jobs)
     command = [
@@ -413,7 +414,28 @@ def msbuild_command(
         f"/m:{parallel.projects}",
     ]
     command.extend(["/p:MultiProcessorCompilation=true", f"/p:CL_MPCount={parallel.compiler_processes}"])
+    if log_file is not None:
+        command.extend(msbuild_file_logger_arguments(log_file))
     return command
+
+
+def msbuild_log_path(repo_root: Path, platform: str, configuration: str) -> Path:
+    """Where ``zipArtifacts.bat`` expects to find the MSBuild log."""
+    return repo_root / "build" / "logs" / f"msbuild-{platform}-{configuration}.log"
+
+
+def msbuild_file_logger_arguments(log_file: Path) -> list[str]:
+    """File logger switches that write the log the packaging step requires.
+
+    ``zipArtifacts.bat`` copies ``build/logs/msbuild-<platform>-<configuration>.log``
+    as a *required* artifact, so a build that never writes it makes packaging
+    fail after an otherwise successful compile.  Only the builds whose output is
+    packaged ask for this log; the evidence collectors reuse ``msbuild_command``
+    for verification rebuilds and must not overwrite the product build's log.
+    MSBuild does not create the directory of ``LogFile``, hence the mkdir here.
+    """
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    return ["/fileLogger", f"/fileLoggerParameters:LogFile={log_file};Verbosity=normal;Encoding=UTF-8"]
 
 
 def cmake_commands(repo_root: Path, configuration: str, jobs: int, *, run_tests: bool) -> list[list[str]]:
@@ -634,7 +656,16 @@ def run_commands(
 
 
 def distribution_commands(repo_root: Path, platform: str, configuration: str, jobs: int) -> list[list[str]]:
-    commands = [msbuild_command(repo_root, repo_root / "sakura.sln", platform, configuration, jobs)]
+    commands = [
+        msbuild_command(
+            repo_root,
+            repo_root / "sakura.sln",
+            platform,
+            configuration,
+            jobs,
+            log_file=msbuild_log_path(repo_root, platform, configuration),
+        )
+    ]
     for script, arguments in (
         ("build-chm.bat", []),
         ("build-installer.bat", [platform, configuration]),
