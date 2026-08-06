@@ -395,7 +395,9 @@ bool WorkbenchContextKeyService::IsReservedCoreKey(std::string_view key) noexcep
 {
 	return key == "workbenchReady" || key.starts_with("workbench.")
 		|| key == "workbenchState" || key == "workspaceFolderCount"
-		|| key == "editorHasActiveEditor" || key == "editorIsDirty";
+		|| key == "editorHasActiveEditor" || key == "editorIsDirty"
+		|| key == "isInDiffEditor"
+		|| key == "gitOpenRepositoryCount";
 }
 
 WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
@@ -416,7 +418,8 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	const layout::WorkbenchLayoutStateSnapshot& snapshot,
 	const config::WorkspaceContextSnapshot& workspace,
 	WorkbenchEditorCommandContext editor,
-	bool recentlyOpenedAvailable)
+	bool recentlyOpenedAvailable,
+	WorkbenchScmCommandContext scm)
 {
 	WorkbenchContextKeyMap values;
 	const auto sidebar = std::find_if(snapshot.parts.begin(), snapshot.parts.end(), [](const auto& part) {
@@ -447,7 +450,9 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	values.emplace("workspaceFolderCount", static_cast<std::int64_t>(workspace.folders.size()));
 	values.emplace("editorHasActiveEditor", editor.hasActiveEditor);
 	values.emplace("editorIsDirty", editor.activeEditorDirty);
+	values.emplace("isInDiffEditor", editor.inDiffEditor);
 	values.emplace("workbench.recentlyOpenedAvailable", recentlyOpenedAvailable);
+	values.emplace("gitOpenRepositoryCount", scm.gitOpenRepositoryCount);
 
 	std::lock_guard lock(m_mutex);
 	if (m_coreValues == values) {

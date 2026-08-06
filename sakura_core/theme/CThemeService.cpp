@@ -155,8 +155,12 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	const ThemeColor grayText = FromColorRef(::GetSysColor(COLOR_GRAYTEXT));
 	// High Contrast never lowers contrast to imitate VS Code's translucent description token:
 	// the description role takes the full window text color and only the disabled role dims.
+	// The three diff roles register `null` for hcDark/hcLight upstream, i.e. High Contrast
+	// paints no inserted/removed wash and no diagonal fill at all; giving them the window
+	// color is exactly that absence, not a chosen highlight color.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
-		face, face, highlight, highlight, face, face, face, window, windowText, windowText };
+		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
+		window, window, window };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

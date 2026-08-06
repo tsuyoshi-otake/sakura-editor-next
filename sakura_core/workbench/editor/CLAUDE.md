@@ -85,6 +85,16 @@ whether an editor input is open or active.
   represented by stale or fake document state. README Markdown may be supplied
   through its typed state API after a bounded OpenVSX text fetch; the surface
   renders that content natively and never executes remote HTML or links.
+- `CDiffSurface` is the same kind of native projection for a side-by-side
+  comparison: not an `EditorInput`, no document model, shown only while the
+  native editor has no active document, and hidden before a document is
+  projected. It renders content handed to it and never reads files or runs git.
+  It keeps its own presentation-neutral row type, `SDiffSurfaceRow`, so this
+  subtree never names an SCM type; the composition root translates
+  `workbench::scm::GitDiffViewRow` into it. Its `truncated` flag carries the
+  diff model's bound to the user, so a bounded alignment is never rendered as a
+  complete one. The comparison's own divergences from VS Code's diff editor are
+  recorded in [`../scm/CLAUDE.md`](../scm/CLAUDE.md); do not restate them here.
 
 ## Backup and Session Persistence
 

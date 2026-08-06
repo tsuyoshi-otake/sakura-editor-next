@@ -13,6 +13,7 @@
 #include "extension/CExtensionStatusBar.h"
 #include "theme/CThemeService.h"
 #include "workbench/hover/CHoverWidget.h"
+#include "workbench/scm/SourceControlService.h"
 #include "workbench/statusbar/StatusbarViewModel.h"
 
 #include <functional>
@@ -55,7 +56,15 @@ public:
 	bool SetStatusText(int nIndex, int nOption, const WCHAR* pszText, size_t textLen = SIZE_MAX);
 	void ShowProgressBar(bool bShow) const;
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
-	void SetScmText(std::wstring text);
+	/*!
+		@brief SCM プロバイダーが公開した statusBarCommands をそのまま描く
+
+		実 VS Code のステータスバー左端は `SourceControl.statusBarCommands` の
+		射影であって、独自に組み立てた 1 本のテキストではない。ラベルは
+		`$(git-branch) main` のように `Command.title` そのもので、アイコンも
+		クリック先コマンドもそこに含まれる。
+	*/
+	void SetScmStatusCommands(std::vector<workbench::scm::ScmCommand> commands);
 	//! Applies the visible StatusBarItem snapshot on the UI thread.
 	void SetExtensionItems(std::vector<SExtensionStatusBarItem> items);
 	//! Invoked when a clickable extension item is activated.
@@ -103,6 +112,10 @@ private:
 	struct StatusbarHitTarget {
 		std::string id;
 		RECT bounds{};
+		//! クリック時に実行する安定コマンド ID。空なら押しても何も起きない項目。
+		//! 1 つの表示 ID（`status.scm`）に複数の項目がぶら下がるため、実行先は
+		//! 表示 ID ではなくヒット領域ごとに持つ。
+		std::string command;
 	};
 
 	static LRESULT CALLBACK StatusBarSubclassProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam,
@@ -135,7 +148,7 @@ private:
 	HWND		m_hwndStatusBar = nullptr;
 	HWND		m_hwndProgressBar = nullptr;
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
-	std::wstring m_scmText;
+	std::vector<workbench::scm::ScmCommand> m_scmCommands;
 	std::vector<SExtensionStatusBarItem> m_extensionItems;
 	mutable std::vector<ExtensionHitTarget> m_extensionHitTargets;
 	mutable std::vector<StatusbarHitTarget> m_statusbarHitTargets;

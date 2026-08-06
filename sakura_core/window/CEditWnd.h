@@ -79,6 +79,8 @@ class IExtensionSecretSessionStorage;
 struct SExtensionNativeEditorOptions;
 class CExtensionViewRegistry;
 class CExtensionDetailSurface;
+class CDiffSurface;
+struct SDiffSurfaceContent;
 namespace config {
 class ConfigurationSubscription;
 }
@@ -216,6 +218,58 @@ enum class EOpenWorkspaceFolderResult : std::uint8_t {
 	PickerFailed,
 	WorkspaceContextFailed,
 	ExplorerProjectionFailed,
+};
+
+//! The four branch commands the built-in Git provider contributes, named after
+//! upstream's own command IDs (`git.checkout`, `git.checkoutDetached`,
+//! `git.branch`, `git.branchFrom`) so the native adapter cannot drift from the
+//! identity it is registered under.
+enum class EGitBranchCommand : std::uint8_t {
+	Checkout,
+	CheckoutDetached,
+	Branch,
+	BranchFrom,
+};
+
+//! The six working-tree commands the built-in Git provider contributes, named
+//! after upstream's own command IDs. The `*All` members carry no operand
+//! because upstream's handlers for them take only the repository; the other
+//! three act on the rows the invocation named.
+enum class EGitStageCommand : std::uint8_t {
+	Stage,
+	StageAll,
+	Unstage,
+	UnstageAll,
+	Clean,
+	CleanAll,
+};
+
+//! The three commit commands the built-in Git provider contributes, named after
+//! upstream's own command IDs. All three are repository-scoped: upstream's
+//! `commitWithAnyInput` takes only the repository and reads its message off that
+//! repository's own SCM input box, so none of them carries an operand payload.
+enum class EGitCommitCommand : std::uint8_t {
+	Commit,
+	CommitAmend,
+	UndoCommit,
+};
+
+//! The nine remote commands the built-in Git provider contributes, named after
+//! upstream's own command IDs. Upstream ships the prune, all-remotes, and
+//! rebase variants as separate commands rather than as flags on one, so they
+//! are separate members here: a caller-supplied flag would be a payload shape
+//! upstream never publishes. All nine are repository-scoped — which remote and
+//! which branch come from HEAD's own upstream or from a Quick Pick.
+enum class EGitSyncCommand : std::uint8_t {
+	Fetch,
+	FetchPrune,
+	FetchAll,
+	Pull,
+	PullRebase,
+	Push,
+	Sync,
+	SyncRebase,
+	Publish,
 };
 
 //! Every native workspace picker/transition path has one terminal result.  The
@@ -706,6 +760,62 @@ private:
 	//! Shows the native equivalent of VS Code's Preferences: File Icon Theme picker.
 	[[nodiscard]] bool ShowFileIconThemePicker();
 	[[nodiscard]] bool PersistFileIconThemeSelection(std::wstring_view themeId);
+	//! Runs one of the built-in Git provider's branch commands, presenting its
+	//! Quick Pick and input box through the same native surfaces every other
+	//! workbench picker uses.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitBranchCommand(
+		EGitBranchCommand command);
+	//! Runs one of the built-in Git provider's working-tree commands.
+	//! `argumentsJson` is the payload `BuildGitStageArguments` produces; it is
+	//! empty for the `*All` members and for a Command Palette invocation.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitStageCommand(
+		EGitStageCommand command, std::string_view argumentsJson);
+	//! Runs one of the built-in Git provider's commit commands. The message comes
+	//! from the Source Control view's own input box, exactly as upstream reads
+	//! `repository.inputBox.value`, so a window without that view has no message
+	//! to commit rather than an empty one.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCommitCommand(
+		EGitCommitCommand command);
+	//! Runs VS Code's `vscode.diff` API command: reads both named sides, diffs
+	//! them, and projects the result onto the native diff surface. Like upstream
+	//! it is a general command over two URIs, not a Git-specific entry point;
+	//! `git.openChange` is one of its callers rather than a parallel pipeline.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteVsCodeDiffCommand(
+		std::string_view argumentsJson);
+	//! Runs VS Code's `vscode.open` API command. A working-tree URI opens the real
+	//! document; a `git:` URI names committed or staged content, which needs a
+	//! read-only editor this product does not have, so it fails closed.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteVsCodeOpenCommand(
+		std::string_view argumentsJson);
+	//! Runs the built-in Git provider's `git.openChange`. Upstream resolves each
+	//! named row's own change command and executes it, so this resolves the row
+	//! against the **live** Source Control state and then delegates to the two API
+	//! commands above rather than repeating their work.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitOpenChangeCommand(
+		std::string_view argumentsJson);
+	//! Runs `git.stageSelectedRanges` (`stage == true`) or
+	//! `git.unstageSelectedRanges`. Upstream's handlers read the active diff
+	//! editor's selections; this reads the diff surface's selected rows, which is
+	//! the same operand in the shape this surface can express.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitSelectedRangesCommand(bool stage);
+	//! Runs one of the built-in Git provider's remote commands. The repository's
+	//! HEAD, upstream, and ahead/behind counts come from the published SCM state,
+	//! and its remotes from `git remote --verbose`, exactly as upstream's
+	//! `getRemotes` reads them; neither is inferred from the other.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitSyncCommand(
+		EGitSyncCommand command);
+	//! Projects one resolved comparison onto the native diff surface.
+	//!
+	//! Like the extension detail surface this is a composition-layer projection
+	//! rather than an `EditorInput`, so it is refused while a document input is
+	//! active instead of displacing the open document. Showing a diff also
+	//! retracts the extension detail surface, mirroring VS Code, where opening an
+	//! editor replaces whatever the group was showing.
+	[[nodiscard]] bool ShowDiffSurface(SDiffSurfaceContent content);
+	//! Retracts the diff surface and restores whichever projection ranks next.
+	void ClearDiffSurface();
+	//! Re-runs one full client-area layout pass after a projection changed.
+	void RelayoutEditorProjections();
 	//! Applies the selected file icon theme to the native Explorer control.
 	void ApplyFileIconTheme();
 	SExtensionApplyEditResult ApplyExtensionEdits(
@@ -728,8 +838,13 @@ private:
 	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
 	[[nodiscard]] workbench::commands::WorkbenchEditorCommandContext BuildWorkbenchEditorCommandContext() const;
+	[[nodiscard]] workbench::commands::WorkbenchScmCommandContext BuildWorkbenchScmCommandContext() const;
 	[[nodiscard]] bool RefreshWorkbenchCommandContext();
-	[[nodiscard]] bool TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled);
+	//! `argumentsJson` is the invocation's `Command.arguments` payload. Empty is
+	//! the argument-less invocation every surface but the SCM view produces, and
+	//! a command bound to an argument-less executor ignores it either way.
+	[[nodiscard]] bool TryExecuteWorkbenchStableCommand(
+		std::string_view commandId, bool& handled, std::string_view argumentsJson = {});
 	[[nodiscard]] bool ArmWorkbenchKeybindingChordTimer() noexcept;
 	void ClearWorkbenchKeybindingChord() noexcept;
 	void ExpireWorkbenchKeybindingChord() noexcept;
@@ -823,6 +938,17 @@ private:
 	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
 	std::unique_ptr<workbench::editor::CEmptyEditorSurface> m_emptyEditorSurface;
 	std::unique_ptr<CExtensionDetailSurface> m_extensionDetailSurface;
+	//! Native side-by-side comparison surface. Like `m_extensionDetailSurface` this is a
+	//! composition-layer projection rather than an `EditorInput`, so it may be visible only
+	//! while the native editor has no active document.
+	std::unique_ptr<CDiffSurface> m_diffSurface;
+	//! Where the comparison on the diff surface came from, retained so a selection
+	//! can be staged. Only the three strings are kept: the text itself lives in the
+	//! surface, and a second copy could describe a comparison the screen replaced.
+	//! All three are empty exactly when no comparison is shown.
+	std::wstring m_diffRepositoryRoot;
+	std::wstring m_diffOriginalUri;
+	std::wstring m_diffModifiedUri;
 	std::unique_ptr<workbench::editor::IEditorCoreSubscription> m_editorCoreSubscription;
 	std::unique_ptr<workbench::layout::IWorkbenchLayoutSubscription> m_layoutStateSubscription;
 	//! Window-local command/context boundary; only initialized for runtime-backed workbench windows.

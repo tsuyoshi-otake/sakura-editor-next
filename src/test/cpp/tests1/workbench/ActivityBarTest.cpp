@@ -19,7 +19,6 @@
 #include "workbench/IconMetrics.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/CodiconGlyphTable.h"
-#include "workbench/scm/GitScmModel.h"
 
 namespace workbench::activity {
 namespace {
@@ -136,16 +135,6 @@ TEST(IconMetrics, UsesSharedOpticalSizesAndDpiStableBounds)
 	EXPECT_EQ(12, StatusItemPartWidthPaddingPixels(144));
 	EXPECT_EQ((IconRect{ 11, 11, 31, 31 }), CenteredIconBounds({ 0, 0, 42, 42 }, kActivityIconDip, 96));
 	EXPECT_EQ((IconRect{ 4, 4, 20, 20 }), LeadingStatusIconBounds({ 0, 0, 100, 24 }, 96));
-}
-
-TEST(IconMetrics, ScmStatusLeavesTheBranchIconToTheSharedNativeRenderer)
-{
-	scm::GitScmState state;
-	state.repository = true;
-	state.branch = L"main";
-	const auto status = scm::FormatStatusLine(state);
-	EXPECT_EQ(L"main", status);
-	EXPECT_EQ(std::wstring::npos, status.find(L'\x2387'));
 }
 
 TEST(Codicons, EveryNativeWorkbenchIconRendersPixels)

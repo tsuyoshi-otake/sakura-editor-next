@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -73,10 +73,19 @@ GitScmState ParsePorcelainV2(std::string_view bytes)
 		const auto end = bytes.find('\0', position);
 		const auto record = bytes.substr(position, end == std::string_view::npos ? bytes.size() - position : end - position);
 		position = end == std::string_view::npos ? bytes.size() : end + 1;
-		if (record.starts_with("# branch.head ")) {
+		if (record.starts_with("# branch.oid ")) {
+			state.repository = true;
+			// `(initial)` means there is no commit yet, which is upstream's
+			// undefined `HEAD.commit`, not an object name to display.
+			const auto oid = record.substr(13);
+			if (oid != "(initial)") state.commit = FromUtf8(oid);
+		} else if (record.starts_with("# branch.head ")) {
 			state.repository = true;
 			state.branch = FromUtf8(record.substr(14));
-			if (state.branch == L"(detached)") state.branch = L"detached HEAD";
+			// A detached HEAD has no branch name upstream either; naming it
+			// "detached HEAD" would invent a branch that does not exist, and the
+			// short object name is what VS Code shows in that state.
+			if (state.branch == L"(detached)") state.branch.clear();
 		} else if (record.starts_with("# branch.upstream ")) {
 			state.upstream = FromUtf8(record.substr(18));
 		} else if (record.starts_with("# branch.ab ")) {
@@ -110,14 +119,120 @@ GitScmState ParsePorcelainV2(std::string_view bytes)
 	return state;
 }
 
-std::wstring FormatStatusLine(const GitScmState& state)
+std::optional<EGitFileStatus> ClassifyGitFileStatus(const GitChange& change, EGitChangeArea area) noexcept
 {
-	if (!state.repository) return {};
-	std::wstring text = state.branch.empty() ? L"HEAD" : state.branch;
-	if (state.ahead > 0) text += L"  \x2191" + std::to_wstring(state.ahead);
-	if (state.behind > 0) text += L"  \x2193" + std::to_wstring(state.behind);
-	if (!state.changes.empty()) text += L"  " + std::to_wstring(state.changes.size()) + L" changes";
-	return text;
+	// Upstream's first switch is on `raw.x + raw.y`, and every one of its cases
+	// returns before the per-area switches run. A conflicted or untracked path
+	// therefore has exactly one status no matter which area asks for it.
+	if (change.conflicted) {
+		const wchar_t ours = change.indexStatus;
+		const wchar_t theirs = change.worktreeStatus;
+		if (ours == L'D' && theirs == L'D') return EGitFileStatus::BothDeleted;
+		if (ours == L'A' && theirs == L'U') return EGitFileStatus::AddedByUs;
+		if (ours == L'U' && theirs == L'D') return EGitFileStatus::DeletedByThem;
+		if (ours == L'U' && theirs == L'A') return EGitFileStatus::AddedByThem;
+		if (ours == L'D' && theirs == L'U') return EGitFileStatus::DeletedByUs;
+		if (ours == L'A' && theirs == L'A') return EGitFileStatus::BothAdded;
+		if (ours == L'U' && theirs == L'U') return EGitFileStatus::BothModified;
+		// An unmerged entry whose XY matches none of upstream's seven cases falls
+		// through upstream's switch into the per-area ones, where `U` matches no
+		// case either. No row is what upstream produces, so no status is what this
+		// returns; inventing `BothModified` here would offer to diff two sides
+		// git never said existed.
+		return std::nullopt;
+	}
+	if (change.untracked) return EGitFileStatus::Untracked;
+
+	if (area == EGitChangeArea::Index) {
+		switch (change.indexStatus) {
+		case L'M': return EGitFileStatus::IndexModified;
+		case L'A': return EGitFileStatus::IndexAdded;
+		case L'D': return EGitFileStatus::IndexDeleted;
+		case L'R': return EGitFileStatus::IndexRenamed;
+		case L'C': return EGitFileStatus::IndexCopied;
+		default: break;
+		}
+		// Upstream lists no index `T`, so a type change staged in the index
+		// contributes only its working-tree row.
+		return std::nullopt;
+	}
+
+	switch (change.worktreeStatus) {
+	case L'M': return EGitFileStatus::Modified;
+	case L'D': return EGitFileStatus::Deleted;
+	case L'A': return EGitFileStatus::IntentToAdd;
+	case L'R': return EGitFileStatus::IntentToRename;
+	case L'T': return EGitFileStatus::TypeChanged;
+	default: break;
+	}
+	return std::nullopt;
+}
+
+std::string_view GitFileStatusText(EGitFileStatus status) noexcept
+{
+	switch (status) {
+	case EGitFileStatus::IndexModified: return "Index Modified";
+	case EGitFileStatus::Modified: return "Modified";
+	case EGitFileStatus::IndexAdded: return "Index Added";
+	case EGitFileStatus::IndexDeleted: return "Index Deleted";
+	case EGitFileStatus::Deleted: return "Deleted";
+	case EGitFileStatus::IndexRenamed: return "Index Renamed";
+	case EGitFileStatus::IndexCopied: return "Index Copied";
+	case EGitFileStatus::Untracked: return "Untracked";
+	case EGitFileStatus::IntentToAdd: return "Intent to Add";
+	case EGitFileStatus::IntentToRename: return "Intent to Rename";
+	case EGitFileStatus::TypeChanged: return "Type Changed";
+	case EGitFileStatus::BothDeleted: return "Conflict: Both Deleted";
+	case EGitFileStatus::AddedByUs: return "Conflict: Added By Us";
+	case EGitFileStatus::DeletedByThem: return "Conflict: Deleted By Them";
+	case EGitFileStatus::AddedByThem: return "Conflict: Added By Them";
+	case EGitFileStatus::DeletedByUs: return "Conflict: Deleted By Us";
+	case EGitFileStatus::BothAdded: return "Conflict: Both Added";
+	case EGitFileStatus::BothModified: return "Conflict: Both Modified";
+	}
+	return {};
+}
+
+wchar_t GitFileStatusLetter(EGitFileStatus status) noexcept
+{
+	switch (status) {
+	case EGitFileStatus::IndexModified:
+	case EGitFileStatus::Modified:
+		return L'M';
+	case EGitFileStatus::IndexAdded:
+	case EGitFileStatus::IntentToAdd:
+		return L'A';
+	case EGitFileStatus::IndexDeleted:
+	case EGitFileStatus::Deleted:
+		return L'D';
+	case EGitFileStatus::IndexRenamed:
+	case EGitFileStatus::IntentToRename:
+		return L'R';
+	case EGitFileStatus::TypeChanged:
+		return L'T';
+	case EGitFileStatus::Untracked:
+		return L'U';
+	case EGitFileStatus::IndexCopied:
+		return L'C';
+	default:
+		// Upstream returns `!` for every conflict, with the comment that the
+		// warning sign renders badly on Windows.
+		return L'!';
+	}
+}
+
+bool IsGitFileStatusStruckThrough(EGitFileStatus status) noexcept
+{
+	switch (status) {
+	case EGitFileStatus::Deleted:
+	case EGitFileStatus::BothDeleted:
+	case EGitFileStatus::DeletedByThem:
+	case EGitFileStatus::DeletedByUs:
+	case EGitFileStatus::IndexDeleted:
+		return true;
+	default:
+		return false;
+	}
 }
 
 } // namespace workbench::scm

@@ -1048,6 +1048,12 @@
 	<ClInclude Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\commands\CommandArgumentsJson.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\commands\ApiCommandArguments.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchContributionRegistry.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1096,7 +1102,43 @@
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitCommandRunner.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitBranchCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitFailureText.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitPrompt.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitSyncCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitStageCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitDiffModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitLineStaging.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitScmPublisher.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitScmMenus.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h">
@@ -1118,6 +1160,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h">
@@ -2854,6 +2899,12 @@
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\commands\CommandArgumentsJson.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\commands\ApiCommandArguments.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchContributionRegistry.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -2902,7 +2953,37 @@
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineSnapshotParser.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitCommandRunner.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitBranchCommands.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitCommitCommands.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitSyncCommands.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitStageCommands.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitRefModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitDiffModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitLineStaging.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitScmPublisher.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitScmMenus.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp">
@@ -2924,6 +3005,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp">

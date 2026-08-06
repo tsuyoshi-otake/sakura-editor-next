@@ -46,6 +46,11 @@ struct ScmInputBoxState final {
 struct ScmCommand final {
 	std::string command;
 	std::string title;
+	//! `vscode.Command.tooltip`. Upstream's status bar and the repository row's
+	//! toolbar both render it as the hover text, and it is where the Git
+	//! extension puts the remote name and the commit counts that the short
+	//! title has no room for. Empty means the command contributes no tooltip.
+	std::string tooltip;
 	std::string argumentsJson{ "[]" };
 
 	[[nodiscard]] bool operator==(const ScmCommand&) const noexcept = default;
@@ -78,7 +83,21 @@ struct ScmProviderState final {
 	ScmOwner owner;
 	std::string handle;
 	std::string id;
+	//! `ISCMProvider.label`: what the source-control system calls itself, e.g.
+	//! "Git". It identifies the provider, not the repository.
 	std::string label;
+	/*!
+		@brief `ISCMProvider.name`: what this particular repository is called.
+
+		`MainThreadSCMProvider` derives it from the workspace folder whose URI
+		matches `rootUri`, else from `basename(rootUri)`, and its getter falls
+		back to `label` when neither applies. `RepositoryRenderer` renders
+		`name` as the row's label and `label` only inside the row's title, so
+		collapsing the two would make the repository row read "Git" instead of
+		naming the repository. Empty here is upstream's `undefined`; read it
+		through `Name()` rather than the field so the fallback is not skipped.
+	*/
+	std::string name;
 	std::optional<platform::uri::Uri> rootUri;
 	ScmInputBoxState inputBox;
 	std::optional<std::int32_t> count;
@@ -86,6 +105,9 @@ struct ScmProviderState final {
 	std::optional<ScmCommand> acceptInputCommand;
 	std::vector<ScmCommand> statusBarCommands;
 	std::vector<ScmResourceGroupState> groups;
+
+	//! Upstream's `get name()`: the derived name, or `label` when there is none.
+	[[nodiscard]] const std::string& Name() const noexcept { return name.empty() ? label : name; }
 };
 
 struct ScmGlobalInputState final {

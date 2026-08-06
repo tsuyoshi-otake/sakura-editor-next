@@ -96,11 +96,13 @@
 #include "workbench/viewcontainer/CViewContainerHost.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/WorkbenchZoom.h"
+#include "workbench/commands/ApiCommandArguments.h"
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 #include "workbench/editor/CEditDocLegacyEditorBackend.h"
 #include "workbench/editor/CEditorServiceLegacyAdapter.h"
+#include "workbench/editor/CDiffSurface.h"
 #include "workbench/editor/CEmptyEditorSurface.h"
 #include "workbench/editor/CExtensionDetailSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
@@ -108,6 +110,14 @@
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
 #include "workbench/editor/persistence/EditorWorkingCopyLifecycleBridge.h"
 #include "workbench/layout/WorkbenchIds.h"
+#include "workbench/scm/GitBranchCommands.h"
+#include "workbench/scm/GitCommitCommands.h"
+#include "workbench/scm/GitDiffModel.h"
+#include "workbench/scm/GitFailureText.h"
+#include "workbench/scm/GitLineStaging.h"
+#include "workbench/scm/GitScmPublisher.h"
+#include "workbench/scm/GitStageCommands.h"
+#include "workbench/scm/GitSyncCommands.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/win32/BuiltinPartProjection.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
@@ -1385,15 +1395,25 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	const HWND splitter = m_cSplitterWnd.GetHwnd();
 	const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
 	const HWND extensionDetailSurface = m_extensionDetailSurface ? m_extensionDetailSurface->GetHwnd() : nullptr;
+	const HWND diffSurface = m_diffSurface ? m_diffSurface->GetHwnd() : nullptr;
 	const HWND focused = ::GetFocus();
 	const bool editorOwnedFocus = focused != nullptr
 		&& ((splitter != nullptr && (focused == splitter || ::IsChild(splitter, focused)))
 			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused)))
-			|| (extensionDetailSurface != nullptr && (focused == extensionDetailSurface || ::IsChild(extensionDetailSurface, focused))));
+			|| (extensionDetailSurface != nullptr && (focused == extensionDetailSurface || ::IsChild(extensionDetailSurface, focused)))
+			|| (diffSurface != nullptr && (focused == diffSurface || ::IsChild(diffSurface, focused))));
 
 	if (hasActiveInput) {
 		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 		if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
+		// A document input outranks every composition-layer projection, so the
+		// comparison is retracted outright rather than merely hidden: it would
+		// otherwise reappear the next time the group became empty, showing a diff
+		// the user never asked for again.
+		if (m_diffSurface) {
+			m_diffSurface->ClearDiff();
+			m_diffSurface->Hide();
+		}
 		if (splitter != nullptr && !m_pPrintPreview) ::ShowWindow(splitter, SW_SHOWNA);
 		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr && !m_pPrintPreview) {
 			::ShowWindow(minimap, SW_SHOWNA);
@@ -1410,7 +1430,11 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
 			::ShowWindow(minimap, SW_HIDE);
 		}
-		if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension() && !m_pPrintPreview) {
+		// Exactly one projection is visible, in this precedence: a comparison, then
+		// the extension metadata surface, then the watermark.
+		if (m_diffSurface && m_diffSurface->HasDiff() && !m_pPrintPreview) {
+			m_diffSurface->Show();
+		} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension() && !m_pPrintPreview) {
 			m_extensionDetailSurface->Show();
 		} else if (m_emptyEditorSurface && !m_pPrintPreview) {
 			m_emptyEditorSurface->Show();
@@ -1433,6 +1457,8 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
 	if (hasActiveInput) {
 		if (const HWND view = GetActiveView().GetHwnd(); ::IsWindowVisible(view)) ::SetFocus(view);
+	} else if (m_diffSurface && m_diffSurface->HasDiff()) {
+		m_diffSurface->Focus();
 	} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
 		m_extensionDetailSurface->Focus();
 	} else if (m_emptyEditorSurface) {
@@ -1901,6 +1927,12 @@ bool CEditWnd::InitializeWorkbench()
 					return;
 				}
 				m_extensionDetailSurface->ShowExtension(extension);
+				// One projection at a time, exactly as opening an editor replaces
+				// whatever the group was showing in VS Code.
+				if (m_diffSurface) {
+					m_diffSurface->ClearDiff();
+					m_diffSurface->Hide();
+				}
 				if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 				RECT client{};
 				if (GetHwnd() != nullptr && ::GetClientRect(GetHwnd(), &client)) {
@@ -1957,9 +1989,31 @@ bool CEditWnd::InitializeWorkbench()
 		const std::wstring ownedPath(path);
 		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
 	});
-	m_scmTool->SetStateChangedCallback([this](const workbench::scm::GitScmState& state) {
-		m_cStatusBar.SetScmText(workbench::scm::FormatStatusLine(state));
+	// The status bar renders the provider's own `statusBarCommands`, the same way
+	// VS Code's SCMStatusBarController does. It must not build a second label out
+	// of the parse result: the branch shown beside the file list and the branch
+	// shown in the status bar would then be able to disagree.
+	m_scmTool->SetStatusBarCommandsCallback([this](const std::vector<workbench::scm::ScmCommand>& commands) {
+		m_cStatusBar.SetScmStatusCommands(commands);
 	});
+	// The repository row's own toolbar runs the same published commands the status
+	// bar does, through the same registry, so the branch item and the row cannot
+	// mean different things. `handled` is the registry's recognition, which is
+	// terminal; an unrecognized id lets the view fall back to opening the file,
+	// which is what `git.openFile` means while no diff editor exists.
+	// A published `ScmCommand` carries its own `arguments`, and a resource-scoped
+	// one is meaningless without them, so the payload travels with the id instead
+	// of being dropped here.
+	m_scmTool->SetCommandCallback([this](std::string_view command, std::string_view argumentsJson) {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(command, handled, argumentsJson);
+		return handled;
+	});
+	// The built-in Git repository is published through the same SCM authority an
+	// extension-contributed provider uses, so the view has one truth to render
+	// instead of a private Git model beside the service. A window with no runtime
+	// has no service to borrow and keeps rendering its own publication locally.
+	m_scmTool->SetSourceControlService(m_workbenchRuntime != nullptr ? m_workbenchRuntime->Scm() : nullptr);
 
 	const auto requestOutlineExpanded = [this](bool expanded) {
 		if (m_workbenchRuntime != nullptr) {
@@ -2146,13 +2200,22 @@ bool CEditWnd::InitializeWorkbench()
 				}
 			});
 		}
+		m_diffSurface = std::make_unique<CDiffSurface>();
+		if (m_diffSurface->Open(G_AppInstance(), GetHwnd()) == nullptr) {
+			m_diffSurface.reset();
+		} else {
+			m_diffSurface->Hide();
+			m_diffSurface->SetOnCloseRequested([this]() { ClearDiffSurface(); });
+		}
 	}
 
 	const bool initialized = m_leftWorkbenchPanel != nullptr
 		&& m_rightWorkbenchPanel != nullptr
 		&& m_bottomWorkbenchPanel != nullptr
 		&& m_activityBar != nullptr
-		&& (!editorBridgeEnabled || (m_emptyEditorSurface != nullptr && m_extensionDetailSurface != nullptr));
+		&& (!editorBridgeEnabled
+			|| (m_emptyEditorSurface != nullptr && m_extensionDetailSurface != nullptr
+				&& m_diffSurface != nullptr));
 	if (!initialized) {
 		// Workbench initialization is all-or-nothing. Do not leave an editor in
 		// an unobservable partial state where a configured tool has no HWND.
@@ -2477,8 +2540,63 @@ bool CEditWnd::InitializeWorkbench()
 			.markdownTogglePreview = [this]() {
 				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::TogglePreview);
 			},
+			// VS Code's two API commands. They are registered by the workbench, not
+			// by the Git provider, because upstream registers them in
+			// `workbench/api/common/apiCommands.ts` — any caller may issue them, and
+			// the Git provider is only their best-known one.
+			.vscodeDiff = [this](std::string_view argumentsJson) {
+				return ExecuteVsCodeDiffCommand(argumentsJson);
+			},
+			.vscodeOpen = [this](std::string_view argumentsJson) {
+				return ExecuteVsCodeOpenCommand(argumentsJson);
+			},
 		});
 		if (!registration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+		// The built-in Git provider contributes its own commands, exactly as
+		// `vscode.git` does, rather than being folded into the workbench shell's
+		// list. Every command in this batch has a real executor: a registered id
+		// with an empty executor would turn a missing route into a silent no-op
+		// instead of the typed `Unsupported` the registry returns for an id it
+		// does not know at all. See `workbench/scm/CLAUDE.md`.
+		const auto gitRegistration = m_workbenchCommandRegistry->RegisterGitCommands({
+			.checkout = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::Checkout); },
+			.checkoutDetached = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::CheckoutDetached); },
+			.branch = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::Branch); },
+			.branchFrom = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::BranchFrom); },
+			.stage = [this](std::string_view argumentsJson) {
+				return ExecuteGitStageCommand(EGitStageCommand::Stage, argumentsJson);
+			},
+			.unstage = [this](std::string_view argumentsJson) {
+				return ExecuteGitStageCommand(EGitStageCommand::Unstage, argumentsJson);
+			},
+			.clean = [this](std::string_view argumentsJson) {
+				return ExecuteGitStageCommand(EGitStageCommand::Clean, argumentsJson);
+			},
+			.openChange = [this](std::string_view argumentsJson) {
+				return ExecuteGitOpenChangeCommand(argumentsJson);
+			},
+			.stageAll = [this]() { return ExecuteGitStageCommand(EGitStageCommand::StageAll, {}); },
+			.unstageAll = [this]() { return ExecuteGitStageCommand(EGitStageCommand::UnstageAll, {}); },
+			.cleanAll = [this]() { return ExecuteGitStageCommand(EGitStageCommand::CleanAll, {}); },
+			.commit = [this]() { return ExecuteGitCommitCommand(EGitCommitCommand::Commit); },
+			.commitAmend = [this]() { return ExecuteGitCommitCommand(EGitCommitCommand::CommitAmend); },
+			.undoCommit = [this]() { return ExecuteGitCommitCommand(EGitCommitCommand::UndoCommit); },
+			.stageSelectedRanges = [this]() { return ExecuteGitSelectedRangesCommand(true); },
+			.unstageSelectedRanges = [this]() { return ExecuteGitSelectedRangesCommand(false); },
+			.fetch = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Fetch); },
+			.fetchPrune = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::FetchPrune); },
+			.fetchAll = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::FetchAll); },
+			.pull = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Pull); },
+			.pullRebase = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::PullRebase); },
+			.push = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Push); },
+			.sync = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Sync); },
+			.syncRebase = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::SyncRebase); },
+			.publish = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Publish); },
+		});
+		if (!gitRegistration.Succeeded()) {
 			CloseWorkbench();
 			return false;
 		}
@@ -3110,6 +3228,1158 @@ bool CEditWnd::ShowFileIconThemePicker()
 	return PersistFileIconThemeSelection(themes[themeIndex].id);
 }
 
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchCommand(EGitBranchCommand command)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+
+	// Every branch command shows exactly one caption, and it is upstream's own
+	// command title. Real VS Code's quick input has no title bar at all; this
+	// dialog is a framed window and must caption itself with something, so it
+	// reuses the string upstream already publishes for the command.
+	const wchar_t* caption = L"Checkout to...";
+	switch (command) {
+	case EGitBranchCommand::CheckoutDetached: caption = L"Checkout to (Detached)..."; break;
+	case EGitBranchCommand::Branch: caption = L"Create Branch..."; break;
+	case EGitBranchCommand::BranchFrom: caption = L"Create Branch From..."; break;
+	case EGitBranchCommand::Checkout:
+	default:
+		break;
+	}
+
+	workbench::scm::GitBranchCommandContext context;
+	context.run = [&root](const std::vector<std::wstring>& arguments) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = root;
+		request.arguments = arguments;
+		return workbench::scm::RunGit(request, nullptr);
+	};
+	context.quickPick = [this, caption](const std::vector<workbench::scm::GitCheckoutItem>& items,
+		std::wstring_view placeholder) -> std::optional<std::size_t> {
+		SExtensionQuickInputRequest request;
+		request.kind = EExtensionQuickInputKind::QuickPick;
+		request.title = caption;
+		request.placeholder = placeholder;
+		// The native list has no group headers, so upstream's `RefItemSeparator`
+		// rows are dropped rather than rendered as selectable text. `positions`
+		// maps a rendered row back to the model row it came from, so dropping a
+		// separator can never shift the selection onto the wrong ref.
+		std::vector<std::size_t> positions;
+		request.items.reserve(items.size());
+		positions.reserve(items.size());
+		for (std::size_t index = 0; index < items.size(); ++index) {
+			if (items[index].kind == workbench::scm::EGitCheckoutItemKind::Separator) continue;
+			request.items.push_back({
+				.sourceIndex = positions.size(),
+				.label = items[index].label,
+				.description = items[index].description,
+			});
+			positions.push_back(index);
+		}
+		if (request.items.empty()) return std::nullopt;
+		CExtensionQuickInputDialog dialog(request);
+		const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EExtensionQuickInputState::Accepted
+			|| completion.selectedIndices.size() != 1) {
+			return std::nullopt;
+		}
+		const auto selected = completion.selectedIndices.front();
+		if (selected >= positions.size()) return std::nullopt;
+		return positions[selected];
+	};
+	context.inputBox = [this, caption](std::wstring_view prompt, std::wstring_view placeholder,
+		std::wstring_view value) -> std::optional<std::wstring> {
+		SExtensionQuickInputRequest request;
+		request.kind = EExtensionQuickInputKind::InputBox;
+		// Upstream's input box carries a title and a separate prompt line. This
+		// dialog renders only a caption, so the prompt takes it: the validation
+		// message a rejected name produces must stay visible on the modal that
+		// asks for the replacement, not go to a surface behind it.
+		request.title = prompt.empty() ? caption : std::wstring(prompt);
+		request.placeholder = placeholder;
+		request.value = value;
+		CExtensionQuickInputDialog dialog(request);
+		const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EExtensionQuickInputState::Accepted) return std::nullopt;
+		return completion.value.value_or(std::wstring{});
+	};
+	context.message = [this](std::wstring_view message) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
+	};
+
+	workbench::scm::GitBranchCommandResult result{};
+	switch (command) {
+	case EGitBranchCommand::Checkout:
+		result = workbench::scm::RunGitCheckout(context, false);
+		break;
+	case EGitBranchCommand::CheckoutDetached:
+		result = workbench::scm::RunGitCheckout(context, true);
+		break;
+	case EGitBranchCommand::Branch:
+		result = workbench::scm::RunGitCreateBranch(context, false);
+		break;
+	case EGitBranchCommand::BranchFrom:
+		result = workbench::scm::RunGitCreateBranch(context, true);
+		break;
+	}
+
+	switch (result.status) {
+	case workbench::scm::EGitBranchCommandStatus::Succeeded:
+		// HEAD moved, so every published SCM fact is stale. Refreshing here is
+		// what upstream's repository status refresh does after an operation.
+		if (m_scmTool != nullptr) m_scmTool->Refresh();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case workbench::scm::EGitBranchCommandStatus::Cancelled:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the user dismissed the picker" };
+	case workbench::scm::EGitBranchCommandStatus::Failed:
+	default:
+		break;
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitStageCommand(
+	EGitStageCommand command, std::string_view argumentsJson)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+
+	workbench::scm::GitStageCommandContext context;
+	context.repositoryRoot = root;
+	context.run = [&root](const std::vector<std::wstring>& arguments) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = root;
+		request.arguments = arguments;
+		return workbench::scm::RunGit(request, nullptr);
+	};
+	context.message = [this](std::wstring_view message) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
+	};
+	// Upstream's discard confirmation is `window.showWarningMessage(..., { modal:
+	// true }, ...buttons)`, whose buttons are the two different discard sets. A
+	// task dialog is the native modal that can carry that many labelled choices,
+	// and dismissing it is a cancel, never the primary action.
+	context.confirm = [this](const workbench::scm::GitDiscardPrompt& prompt) -> std::optional<std::size_t> {
+		if (prompt.choices.empty()) return std::nullopt;
+		std::vector<TASKDIALOG_BUTTON> buttons;
+		buttons.reserve(prompt.choices.size());
+		for (std::size_t index = 0; index < prompt.choices.size(); ++index) {
+			buttons.push_back({ 1000 + static_cast<int>(index), prompt.choices[index].label.c_str() });
+		}
+		TASKDIALOGCONFIG config{};
+		config.cbSize = sizeof(config);
+		config.hwndParent = GetHwnd();
+		config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT;
+		config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+		config.pszWindowTitle = L"Sakura Editor NEXT";
+		config.pszMainIcon = TD_WARNING_ICON;
+		config.pszMainInstruction = prompt.message.c_str();
+		config.pszContent = prompt.detail.empty() ? nullptr : prompt.detail.c_str();
+		config.cButtons = static_cast<UINT>(buttons.size());
+		config.pButtons = buttons.data();
+		int selected = 0;
+		if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) return std::nullopt;
+		if (selected < 1000) return std::nullopt;
+		const auto index = static_cast<std::size_t>(selected - 1000);
+		if (index >= prompt.choices.size()) return std::nullopt;
+		return index;
+	};
+	// `git.discardUntrackedChangesToTrash` defaults to true, so an untracked file
+	// goes to the Recycle Bin rather than being erased. The returned list is the
+	// paths the shell refused, so the permanent fallback re-deletes only those.
+	context.trash = [](const std::vector<std::wstring>& absolutePaths) {
+		std::vector<std::wstring> failed;
+		for (const auto& path : absolutePaths) {
+			// SHFileOperationW wants a double-null-terminated list; one call per
+			// path is what makes a single refusal attributable to that path.
+			std::wstring buffer = path;
+			buffer.push_back(L'\0');
+			buffer.push_back(L'\0');
+			SHFILEOPSTRUCTW operation{};
+			operation.wFunc = FO_DELETE;
+			operation.pFrom = buffer.c_str();
+			operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+			const int status = ::SHFileOperationW(&operation);
+			if (status != 0 || operation.fAnyOperationsAborted) failed.push_back(path);
+		}
+		return failed;
+	};
+
+	std::vector<workbench::scm::GitStageResource> resources;
+	switch (command) {
+	case EGitStageCommand::Stage:
+	case EGitStageCommand::Unstage:
+	case EGitStageCommand::Clean: {
+		// The invocation names its own rows. A payload that does not parse is a
+		// hard failure rather than an empty selection, because an empty selection
+		// would silently look like "nothing to do".
+		auto parsed = workbench::scm::ParseGitStageArguments(argumentsJson);
+		if (!parsed) return { EWorkbenchCommandExecutionStatus::Failed, "malformed command arguments" };
+		resources = std::move(*parsed);
+		break;
+	}
+	case EGitStageCommand::StageAll:
+	case EGitStageCommand::CleanAll:
+		// Upstream's group-scoped handlers read the repository's own resource
+		// groups. Ours derives them from the state the publication was built from,
+		// through the same classification, so this operand list is exactly the set
+		// of rows the view is showing.
+		if (m_scmTool == nullptr) {
+			return { EWorkbenchCommandExecutionStatus::NotApplicable, "no source control view is open" };
+		}
+		resources = workbench::scm::CollectGitStageResources(m_scmTool->State());
+		break;
+	case EGitStageCommand::UnstageAll:
+		// `revert([])`: a whole-index reset, not a listing of every staged path.
+		break;
+	}
+
+	workbench::scm::GitStageCommandResult result{};
+	switch (command) {
+	case EGitStageCommand::Stage:
+	case EGitStageCommand::StageAll:
+		result = workbench::scm::RunGitStage(context, resources);
+		break;
+	case EGitStageCommand::Unstage:
+		result = workbench::scm::RunGitUnstage(context, resources);
+		break;
+	case EGitStageCommand::UnstageAll:
+		result = workbench::scm::RunGitUnstageAll(context);
+		break;
+	case EGitStageCommand::Clean:
+	case EGitStageCommand::CleanAll:
+		result = workbench::scm::RunGitDiscard(context, resources);
+		break;
+	}
+
+	switch (result.status) {
+	case workbench::scm::EGitStageCommandStatus::Succeeded:
+		// The index or the worktree moved, so every published SCM fact is stale.
+		if (m_scmTool != nullptr) m_scmTool->Refresh();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case workbench::scm::EGitStageCommandStatus::NotApplicable:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no resource of this command's groups was named" };
+	case workbench::scm::EGitStageCommandStatus::Cancelled:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the user dismissed the confirmation" };
+	case workbench::scm::EGitStageCommandStatus::UnsupportedMergeConflict:
+		return { EWorkbenchCommandExecutionStatus::Unsupported, wcstou8s(result.message) };
+	case workbench::scm::EGitStageCommandStatus::Failed:
+	default:
+		break;
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+}
+
+namespace {
+
+//!
+//! @brief The bound on one side of a comparison, in bytes.
+//!
+//! `GitExecutionRequest::maximumOutputBytes`' own default, applied to the
+//! working-tree side as well. One side read through git and the other read from
+//! disk must refuse the same file for the same reason; two different bounds
+//! would make "too large to compare" depend on which half of the comparison the
+//! file happened to occupy.
+//!
+constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
+
+//! The last path segment, over the forward slashes a repository-relative path uses.
+[[nodiscard]] std::wstring_view DiffPathBasename(std::wstring_view path)
+{
+	const auto separator = path.find_last_of(L"/\\");
+	return separator == std::wstring_view::npos ? path : path.substr(separator + 1);
+}
+
+//!
+//! @brief The column caption one side renders under.
+//!
+//! Upstream labels a diff editor's sides from its URIs, where the repository
+//! side reads `<name> (<ref>)`. The surface already carries the file name in its
+//! own title, so each column names only the **area** its text came from, which
+//! is the fact a user checking what they are about to commit needs.
+//!
+[[nodiscard]] std::wstring DiffEndpointLabel(const workbench::scm::GitDiffEndpoint& endpoint)
+{
+	if (endpoint.source == workbench::scm::EGitDiffSource::WorkingTree) return L"Working Tree";
+	// An empty ref is the index, not an absent one: `git show :path`.
+	return endpoint.ref.empty() ? std::wstring(L"Index") : endpoint.ref;
+}
+
+//! Read one side's raw bytes. `failure` carries a sentence only when this fails.
+[[nodiscard]] bool ReadDiffEndpointBytes(
+	const workbench::scm::GitDiffEndpoint& endpoint, std::wstring_view repositoryRoot,
+	std::vector<std::uint8_t>& bytes, std::wstring& failure)
+{
+	bytes.clear();
+	if (endpoint.source == workbench::scm::EGitDiffSource::Repository) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = std::wstring(repositoryRoot);
+		request.arguments = workbench::scm::BuildGitShowArguments(endpoint);
+		request.maximumOutputBytes = kMaximumDiffSideBytes;
+		auto result = workbench::scm::RunGit(request, nullptr);
+		if (!result.Succeeded()) {
+			failure = workbench::scm::DescribeGitFailure(result);
+			return false;
+		}
+		bytes = std::move(result.standardOutput);
+		return true;
+	}
+
+	// The working-tree side is the file on disk and must never be read through
+	// `git show`: it is the only side the user can edit, and git knows nothing
+	// about the edit that has not been staged yet.
+	const auto absolute = workbench::scm::JoinRepositoryPath(repositoryRoot, endpoint.path);
+	if (absolute.empty()) {
+		failure = L"The compared path could not be resolved.";
+		return false;
+	}
+	const HANDLE file = ::CreateFileW(absolute.c_str(), GENERIC_READ,
+		FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+		nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	if (file == INVALID_HANDLE_VALUE) {
+		// A refresh is periodic, so the file can legitimately vanish between the
+		// row being rendered and the row being clicked. Reporting that is honest;
+		// substituting an empty side would render the whole file as deleted.
+		failure = L"The file could not be opened.";
+		return false;
+	}
+	LARGE_INTEGER size{};
+	if (!::GetFileSizeEx(file, &size) || size.QuadPart < 0) {
+		::CloseHandle(file);
+		failure = L"The file could not be read.";
+		return false;
+	}
+	if (static_cast<unsigned long long>(size.QuadPart) > kMaximumDiffSideBytes) {
+		::CloseHandle(file);
+		failure = L"The file is too large to compare.";
+		return false;
+	}
+	bytes.resize(static_cast<std::size_t>(size.QuadPart));
+	std::size_t offset = 0;
+	while (offset < bytes.size()) {
+		const std::size_t remaining = bytes.size() - offset;
+		const DWORD wanted = static_cast<DWORD>(remaining > (1u << 20) ? (1u << 20) : remaining);
+		DWORD read = 0;
+		if (!::ReadFile(file, bytes.data() + offset, wanted, &read, nullptr) || read == 0) {
+			::CloseHandle(file);
+			failure = L"The file could not be read.";
+			return false;
+		}
+		offset += read;
+	}
+	::CloseHandle(file);
+	return true;
+}
+
+//! `DecodeGitOutput` over a byte vector, without forming a view over a null pointer.
+[[nodiscard]] std::wstring DecodeDiffSide(const std::vector<std::uint8_t>& bytes)
+{
+	if (bytes.empty()) return {};
+	return workbench::scm::DecodeGitOutput(
+		std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+}
+
+} // namespace
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteVsCodeDiffCommand(std::string_view argumentsJson)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+	const auto parsed = workbench::commands::ParseApiDiffArguments(argumentsJson);
+	if (!parsed) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "malformed command arguments" };
+	}
+	// A URI naming a file outside this repository is refused rather than read.
+	// The only producer of these URIs is the built-in Git provider for the
+	// repository this window has open, and a path that escapes that root is
+	// exactly what `ResolveGitDiffEndpointUri` exists to reject.
+	const auto original = workbench::scm::ResolveGitDiffEndpointUri(parsed->originalUri, root);
+	const auto modified = workbench::scm::ResolveGitDiffEndpointUri(parsed->modifiedUri, root);
+	if (!original || !modified) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"only files inside this window's repository can be compared" };
+	}
+
+	std::vector<std::uint8_t> originalBytes;
+	std::vector<std::uint8_t> modifiedBytes;
+	std::wstring failure;
+	if (!ReadDiffEndpointBytes(*original, root, originalBytes, failure)
+		|| !ReadDiffEndpointBytes(*modified, root, modifiedBytes, failure)) {
+		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(failure) };
+	}
+
+	SDiffSurfaceContent content;
+	content.originalLabel = DiffEndpointLabel(*original);
+	content.modifiedLabel = DiffEndpointLabel(*modified);
+	content.title = parsed->title;
+	if (content.title.empty()) {
+		// Upstream derives a label from the two URIs when the caller passes no
+		// title. `git.openChange` always passes one, so this is the shape an
+		// extension-issued `vscode.diff` lands on.
+		content.title.append(DiffPathBasename(modified->path))
+			.append(L" (").append(content.originalLabel)
+			.append(L" ↔ ").append(content.modifiedLabel).append(L")");
+	}
+	// Both sides go through one decoder. Two decoders that disagreed by a single
+	// character would render identical text as a change, which is precisely the
+	// lie this surface exists to prevent.
+	content.originalLines = workbench::scm::SplitGitDiffLines(DecodeDiffSide(originalBytes));
+	content.modifiedLines = workbench::scm::SplitGitDiffLines(DecodeDiffSide(modifiedBytes));
+	const auto diff = workbench::scm::ComputeGitLineDiff(content.originalLines, content.modifiedLines);
+	content.truncated = diff.hitTimeout;
+	// The composition root is the only place that may translate between the SCM
+	// subtree's row and the editor subtree's row; neither subtree may name the
+	// other's type.
+	const auto viewRows = workbench::scm::BuildGitDiffViewRows(
+		static_cast<int>(content.originalLines.size()),
+		static_cast<int>(content.modifiedLines.size()), diff);
+	content.rows.reserve(viewRows.size());
+	for (const auto& row : viewRows) {
+		content.rows.push_back(
+			SDiffSurfaceRow{ row.changed, row.originalLineNumber, row.modifiedLineNumber });
+	}
+
+	if (!ShowDiffSurface(std::move(content))) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable,
+			"a document is open in this editor group" };
+	}
+	// Recorded only after the surface accepted the comparison, so the retained
+	// endpoints can never name a comparison that is not on screen.
+	m_diffRepositoryRoot = root;
+	m_diffOriginalUri = parsed->originalUri;
+	m_diffModifiedUri = parsed->modifiedUri;
+	// `isInDiffEditor` just became true, and the selected-range commands are
+	// gated on it. A stale snapshot would leave them listed as out of scope.
+	(void)RefreshWorkbenchCommandContext();
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteVsCodeOpenCommand(std::string_view argumentsJson)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+	const auto parsed = workbench::commands::ParseApiOpenArguments(argumentsJson);
+	if (!parsed) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "malformed command arguments" };
+	}
+	const auto resource = workbench::scm::ResolveGitDiffEndpointUri(parsed->resourceUri, root);
+	if (!resource) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"only files inside this window's repository can be opened here" };
+	}
+	if (resource->source == workbench::scm::EGitDiffSource::Repository) {
+		// Upstream opens a `git:` URI as a read-only document through its
+		// `GitFileSystemProvider`. There is no read-only document input here, and
+		// the diff surface is a *comparison*: showing one side of it with the other
+		// left empty would draw a whole-file insertion git never reported.
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"opening committed or staged content needs a read-only editor, which is not implemented" };
+	}
+	// `TextDocumentShowOptions.override` chooses between a registered custom
+	// editor and the default text editor. There are no custom editors here, so
+	// both of its values already resolve to this one route; it is carried through
+	// the arguments so a caller's request is not silently rewritten.
+	const auto absolute = workbench::scm::JoinRepositoryPath(root, resource->path);
+	if (absolute.empty()) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the named path could not be resolved" };
+	}
+	GetActiveView().GetCommander().Command_FILEOPEN(absolute.c_str());
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitOpenChangeCommand(std::string_view argumentsJson)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+	if (m_scmTool == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no source control view is open" };
+	}
+	const auto parsed = workbench::scm::ParseGitStageArguments(argumentsJson);
+	if (!parsed) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "malformed command arguments" };
+	}
+	if (parsed->empty()) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no resource was named" };
+	}
+
+	// Upstream's handler calls `openChange()` on the resource **object**, so the
+	// comparison it opens always belongs to the live row. A native menu can only
+	// name a row by `(path, group)`, so the row is re-derived from the current
+	// state rather than carried across from the snapshot the menu was built from.
+	const auto rows = workbench::scm::CollectGitDiffRows(m_scmTool->State());
+	WorkbenchCommandExecutionResult result{ EWorkbenchCommandExecutionStatus::NotApplicable, "no resource was named" };
+	for (const auto& resource : *parsed) {
+		const workbench::scm::GitDiffRow* found = nullptr;
+		for (const auto& entry : rows) {
+			if (entry.group == resource.group && entry.row.path == resource.path) {
+				found = &entry.row;
+				break;
+			}
+		}
+		if (found == nullptr) {
+			return { EWorkbenchCommandExecutionStatus::NotApplicable,
+				"that row is no longer in the Source Control view" };
+		}
+		const auto input = workbench::scm::ResolveGitDiffInput(*found);
+		switch (input.kind) {
+		case workbench::scm::EGitDiffCommandKind::Diff: {
+			workbench::commands::ApiDiffArguments arguments;
+			arguments.originalUri = workbench::scm::BuildGitDiffEndpointUri(*input.original, root);
+			arguments.modifiedUri = workbench::scm::BuildGitDiffEndpointUri(*input.modified, root);
+			arguments.title = input.title;
+			if (arguments.originalUri.empty() || arguments.modifiedUri.empty()) {
+				return { EWorkbenchCommandExecutionStatus::Failed, "the compared path could not be resolved" };
+			}
+			result = ExecuteVsCodeDiffCommand(workbench::commands::BuildApiDiffArguments(arguments));
+			break;
+		}
+		case workbench::scm::EGitDiffCommandKind::Open: {
+			workbench::commands::ApiOpenArguments arguments;
+			arguments.resourceUri = workbench::scm::BuildGitDiffEndpointUri(*input.modified, root);
+			// Upstream passes `override: false` for a both-modified conflict and
+			// leaves it undefined otherwise. Absent and `false` are different
+			// requests, so the distinction is carried rather than flattened.
+			if (found->status == workbench::scm::EGitFileStatus::BothModified) arguments.overrideEditor = false;
+			arguments.label = input.title;
+			if (arguments.resourceUri.empty()) {
+				return { EWorkbenchCommandExecutionStatus::Failed, "the named path could not be resolved" };
+			}
+			result = ExecuteVsCodeOpenCommand(workbench::commands::BuildApiOpenArguments(arguments));
+			break;
+		}
+		case workbench::scm::EGitDiffCommandKind::None:
+		default:
+			// Upstream reaches its `vscode.open` branch with an undefined URI here.
+			// There is no text on either side, so refusing is the honest form of it.
+			return { EWorkbenchCommandExecutionStatus::NotApplicable, "this row has no content to compare" };
+		}
+		if (result.status != EWorkbenchCommandExecutionStatus::Succeeded) return result;
+	}
+	return result;
+}
+
+namespace {
+
+//!
+//! @brief The 0-based modified-side line span a run of rendered rows names.
+//!
+//! The surface selects **rows**, and a row is a position in the alignment, not a
+//! line of either text. A row that carries a modified line number names that
+//! line. A row that does not is a line the original side has and the modified
+//! side does not, and upstream's `getModifiedRange` places such a deletion on
+//! the seam between the two modified lines that surround it —
+//! `intersectDiffWithRange` reaches that seam from either side, so the preceding
+//! modified line names it. A deletion at the very top has no preceding line, and
+//! there the following line is the one that reaches the seam.
+//!
+//! False when the row range is empty or lies outside the rows, and then neither
+//! output is written.
+//!
+[[nodiscard]] bool SelectedModifiedLineSpan(
+	const std::vector<SDiffSurfaceRow>& rows, int firstRow, int lastRow, int& startLine, int& endLine)
+{
+	int precedingModifiedLines = 0;
+	int first = -1;
+	int last = -1;
+	for (int index = 0; index < static_cast<int>(rows.size()); ++index) {
+		const int modifiedLineNumber = rows[index].modifiedLineNumber;
+		if (index >= firstRow && index <= lastRow) {
+			const int line = modifiedLineNumber > 0
+				? modifiedLineNumber - 1
+				: (precedingModifiedLines > 0 ? precedingModifiedLines - 1 : 0);
+			if (first < 0 || line < first) first = line;
+			if (last < 0 || line > last) last = line;
+		}
+		if (modifiedLineNumber > 0) ++precedingModifiedLines;
+	}
+	if (first < 0) return false;
+	startLine = first;
+	endLine = last;
+	return true;
+}
+
+//! `ClassifyGitTextEncoding` over a byte vector, without forming a view over a null pointer.
+[[nodiscard]] workbench::scm::EGitTextEncoding ClassifyDiffSide(const std::vector<std::uint8_t>& bytes) noexcept
+{
+	if (bytes.empty()) return workbench::scm::EGitTextEncoding::Utf8;
+	return workbench::scm::ClassifyGitTextEncoding(
+		std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
+}
+
+} // namespace
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSelectedRangesCommand(bool stage)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	if (GetHwnd() == nullptr || m_diffSurface == nullptr || !m_diffSurface->HasDiff()
+		|| m_diffRepositoryRoot.empty() || m_diffModifiedUri.empty()) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no comparison is open in this window" };
+	}
+	int firstRow = 0;
+	int lastRow = 0;
+	if (!m_diffSurface->SelectedRowRange(firstRow, lastRow)) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no lines are selected in the comparison" };
+	}
+
+	// Copied, because refreshing the comparison at the end of a successful stage
+	// rewrites these members.
+	const std::wstring root = m_diffRepositoryRoot;
+	const std::wstring originalUri = m_diffOriginalUri;
+	const std::wstring modifiedUri = m_diffModifiedUri;
+	const auto original = workbench::scm::ResolveGitDiffEndpointUri(originalUri, root);
+	const auto modified = workbench::scm::ResolveGitDiffEndpointUri(modifiedUri, root);
+	if (!original || !modified) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the compared path could not be resolved" };
+	}
+
+	// Upstream gates each command on what the open comparison *is*, not on which
+	// button was pressed. `stageSelectedRanges` requires the right-hand side to be
+	// the working tree, and `unstageSelectedRanges` requires it to be the index
+	// (`fromGitUri(...).ref === ''`) with HEAD on the left. A comparison that is
+	// neither has no index entry these lines could be written into, so refusing is
+	// the honest answer rather than picking a path and writing somewhere.
+	if (stage) {
+		if (original->source != workbench::scm::EGitDiffSource::Repository
+			|| modified->source != workbench::scm::EGitDiffSource::WorkingTree) {
+			return { EWorkbenchCommandExecutionStatus::Unsupported,
+				"staging selected ranges needs a comparison whose right-hand side is the working tree" };
+		}
+	} else if (modified->source != workbench::scm::EGitDiffSource::Repository || !modified->ref.empty()
+		|| original->source != workbench::scm::EGitDiffSource::Repository || original->ref.empty()) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"unstaging selected ranges needs a comparison whose right-hand side is the index" };
+	}
+
+	std::vector<std::uint8_t> originalBytes;
+	std::vector<std::uint8_t> modifiedBytes;
+	std::wstring failure;
+	if (!ReadDiffEndpointBytes(*original, root, originalBytes, failure)
+		|| !ReadDiffEndpointBytes(*modified, root, modifiedBytes, failure)) {
+		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(failure) };
+	}
+	const auto originalText = DecodeDiffSide(originalBytes);
+	const auto modifiedText = DecodeDiffSide(modifiedBytes);
+
+	// Both sides are re-read and compared against what is on screen, because the
+	// rows the user selected are the only description of their intent and a row
+	// index means nothing against text that has moved. Upstream never faces this:
+	// its diff editor holds live documents and recomputes the diff as they change.
+	// Here a stale comparison would stage a region the user never looked at, so
+	// this fails closed rather than staging against the newer text.
+	const auto& content = m_diffSurface->Content();
+	if (workbench::scm::SplitGitDiffLines(originalText) != content.originalLines
+		|| workbench::scm::SplitGitDiffLines(modifiedText) != content.modifiedLines) {
+		return { EWorkbenchCommandExecutionStatus::Failed,
+			"the compared files changed after this comparison was opened; open the comparison again" };
+	}
+
+	const auto originalStaging = workbench::scm::MakeGitStagingText(originalText);
+	const auto modifiedStaging = workbench::scm::MakeGitStagingText(modifiedText);
+	int startLine = 0;
+	int endLine = 0;
+	if (!SelectedModifiedLineSpan(content.rows, firstRow, lastRow, startLine, endLine)) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable,
+			"the selection names no line of the right-hand side" };
+	}
+	const auto selections = workbench::scm::NormalizeGitSelectedLines(
+		{ workbench::scm::GitSelectedLines{ startLine, endLine } }, modifiedStaging);
+	const auto diff = workbench::scm::ComputeGitLineDiff(content.originalLines, content.modifiedLines);
+	if (diff.hitTimeout) {
+		// A bounded alignment is not a complete description of the change, so the
+		// changes it names are not the changes the selection covers. The surface
+		// already tells the user the comparison is truncated; staging from it would
+		// write an index entry built from a partial diff.
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"this comparison is too large to be diffed completely, so part of it cannot be staged" };
+	}
+	auto selected = workbench::scm::SelectGitLineChanges(
+		modifiedStaging, workbench::scm::ToGitLineChanges(diff), selections);
+	if (selected.empty()) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the selected lines contain no change" };
+	}
+
+	// Upstream builds no patch. It assembles the complete new content of the index
+	// entry and writes that, and unstaging is the same assembly with the two sides
+	// exchanged and every selected change inverted.
+	std::wstring staged;
+	if (stage) {
+		staged = workbench::scm::ApplyGitLineChanges(originalStaging, modifiedStaging, selected);
+	} else {
+		for (auto& change : selected) change = workbench::scm::InvertGitLineChange(change);
+		staged = workbench::scm::ApplyGitLineChanges(modifiedStaging, originalStaging, selected);
+	}
+
+	// The assembled content carries text from both sides, so it can be written
+	// back exactly only in an encoding both sides round-trip. UTF-8 is used when
+	// both decoded as UTF-8; otherwise the byte-wise fallback applies, and
+	// `EncodeGitText` refuses anything it cannot represent rather than
+	// substituting a replacement character into a durable blob.
+	const auto encoding =
+		(ClassifyDiffSide(originalBytes) == workbench::scm::EGitTextEncoding::Utf8
+			&& ClassifyDiffSide(modifiedBytes) == workbench::scm::EGitTextEncoding::Utf8)
+		? workbench::scm::EGitTextEncoding::Utf8
+		: workbench::scm::EGitTextEncoding::Latin1Fallback;
+	auto encoded = workbench::scm::EncodeGitText(staged, encoding);
+	if (!encoded) {
+		return { EWorkbenchCommandExecutionStatus::Failed,
+			"the selected text cannot be written back in the encoding it was read with" };
+	}
+
+	const auto runGit = [&root](const std::vector<std::wstring>& arguments, std::string standardInput) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = root;
+		request.arguments = arguments;
+		request.standardInput = std::move(standardInput);
+		return workbench::scm::RunGit(request, nullptr);
+	};
+
+	const auto& path = modified->path;
+	const auto hashed = runGit(workbench::scm::BuildGitHashObjectArguments(path), std::move(*encoded));
+	if (!hashed.Succeeded()) {
+		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(workbench::scm::DescribeGitFailure(hashed)) };
+	}
+	const auto object = workbench::scm::ParseGitHashObjectName(DecodeDiffSide(hashed.standardOutput));
+	if (!object) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "git wrote no object name for the staged content" };
+	}
+
+	// Upstream reads the mode from HEAD rather than from the index, so staging
+	// part of a change cannot silently change the file's mode, and falls back to
+	// the index for a repository that has no HEAD commit yet.
+	std::wstring mode;
+	auto details = runGit(workbench::scm::BuildGitHeadObjectDetailsArguments(path), {});
+	if (!details.Succeeded()) {
+		details = runGit(workbench::scm::BuildGitStagedObjectDetailsArguments(path), {});
+	}
+	if (details.Succeeded()) {
+		if (auto parsed = workbench::scm::ParseGitObjectMode(DecodeDiffSide(details.standardOutput))) {
+			mode = std::move(*parsed);
+		}
+	}
+	// Upstream's `UnknownPath`: git knows nothing about this path, so the entry is
+	// created at the default mode instead of replacing one that does not exist.
+	const bool add = mode.empty();
+	if (add) mode = L"100644";
+
+	const auto updated = runGit(workbench::scm::BuildGitUpdateIndexArguments(mode, *object, path, add), {});
+	if (!updated.Succeeded()) {
+		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(workbench::scm::DescribeGitFailure(updated)) };
+	}
+
+	// The index moved, so every published SCM fact is stale.
+	if (m_scmTool != nullptr) m_scmTool->Refresh();
+	// So is the comparison: at least one of its two sides is now different text.
+	// Upstream's diff editor recomputes itself from its live documents; the
+	// nearest thing here is to open the same comparison again, which re-reads both
+	// sides. A comparison that can no longer be opened is retracted rather than
+	// left showing text that no longer exists.
+	workbench::commands::ApiDiffArguments arguments;
+	arguments.originalUri = originalUri;
+	arguments.modifiedUri = modifiedUri;
+	arguments.title = m_diffSurface->Title();
+	if (ExecuteVsCodeDiffCommand(workbench::commands::BuildApiDiffArguments(arguments)).status
+		!= EWorkbenchCommandExecutionStatus::Succeeded) {
+		ClearDiffSurface();
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitCommand(EGitCommitCommand command)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+	// Upstream's `commitWithAnyInput` reads the message off the repository's own
+	// SCM input box. With no view there is no box, and treating its absence as an
+	// empty message would commit without the text the user believes they typed.
+	if (m_scmTool == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no source control view is open" };
+	}
+
+	workbench::scm::GitCommitCommandContext context;
+	context.repositoryRoot = root;
+	context.run = [&root](const std::vector<std::wstring>& arguments, std::string_view standardInput) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = root;
+		request.arguments = arguments;
+		// The message always travels through `--file -`, so it reaches git on the
+		// runner's stdin thread. An argument would be length-bounded and could be
+		// reread as an option.
+		request.standardInput = std::string(standardInput);
+		return workbench::scm::RunGit(request, nullptr);
+	};
+	context.message = [this](std::wstring_view message) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
+	};
+	// Upstream's gates are `showWarningMessage(..., { modal: true }, ...buttons)`
+	// plus one `showInformationMessage`. A task dialog is the native modal that
+	// carries that many labelled choices; index 0 is the primary action, and
+	// dismissal is a cancel rather than an implicit yes.
+	context.confirm = [this](const workbench::scm::GitCommitPrompt& prompt) -> std::optional<std::size_t> {
+		if (prompt.choices.empty()) return std::nullopt;
+		std::vector<TASKDIALOG_BUTTON> buttons;
+		buttons.reserve(prompt.choices.size());
+		for (std::size_t index = 0; index < prompt.choices.size(); ++index) {
+			buttons.push_back({ 1000 + static_cast<int>(index), prompt.choices[index].c_str() });
+		}
+		TASKDIALOGCONFIG config{};
+		config.cbSize = sizeof(config);
+		config.hwndParent = GetHwnd();
+		config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT;
+		config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+		config.pszWindowTitle = L"Sakura Editor NEXT";
+		// `warning` carries which of the two upstream message functions produced
+		// this prompt, so "there are no changes to commit" stays informational
+		// instead of being escalated into a warning it never was.
+		config.pszMainIcon = prompt.warning ? TD_WARNING_ICON : TD_INFORMATION_ICON;
+		config.pszMainInstruction = prompt.message.c_str();
+		config.pszContent = prompt.detail.empty() ? nullptr : prompt.detail.c_str();
+		config.cButtons = static_cast<UINT>(buttons.size());
+		config.pButtons = buttons.data();
+		int selected = 0;
+		if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) return std::nullopt;
+		if (selected < 1000) return std::nullopt;
+		const auto index = static_cast<std::size_t>(selected - 1000);
+		if (index >= prompt.choices.size()) return std::nullopt;
+		return index;
+	};
+	context.promptForMessage = [this](std::wstring_view placeholder,
+		std::wstring_view prompt) -> std::optional<std::wstring> {
+		SExtensionQuickInputRequest request;
+		request.kind = EExtensionQuickInputKind::InputBox;
+		// Upstream's box carries a title and a separate prompt line. This dialog
+		// paints only a caption, so the prompt takes it and the placeholder - the
+		// half that names the branch being committed on - stays in the field.
+		request.title = prompt;
+		request.placeholder = placeholder;
+		CExtensionQuickInputDialog dialog(request);
+		const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EExtensionQuickInputState::Accepted) return std::nullopt;
+		return completion.value.value_or(std::wstring{});
+	};
+	// Upstream enumerates every dirty `workspace.textDocument` inside the
+	// repository. An editor process owns exactly one document, so this can only
+	// report that one; the divergence is recorded in `workbench/scm/CLAUDE.md`.
+	std::wstring rootPrefix = root;
+	while (!rootPrefix.empty() && (rootPrefix.back() == L'\\' || rootPrefix.back() == L'/')) {
+		rootPrefix.pop_back();
+	}
+	context.dirtyDocuments = [this, rootPrefix]() {
+		std::vector<std::wstring> documents;
+		if (!HasActiveEditorInput() || !GetDocument()->m_cDocEditor.IsModified()) return documents;
+		if (!GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath()) return documents;
+		std::wstring path = GetDocument()->m_cDocFile.GetFilePath();
+		// `isDescendant`: a dirty document outside this repository is not this
+		// commit's business, and prompting about it would name an unrelated file.
+		if (rootPrefix.empty() || path.size() <= rootPrefix.size()) return documents;
+		if (::_wcsnicmp(path.c_str(), rootPrefix.c_str(), rootPrefix.size()) != 0) return documents;
+		const auto boundary = path[rootPrefix.size()];
+		if (boundary != L'\\' && boundary != L'/') return documents;
+		documents.push_back(std::move(path));
+		return documents;
+	};
+	// The prompt's primary action is upstream's `Save All & Commit`, and the one
+	// document above is the whole set this process can save.
+	context.saveDocuments = [this]() { return GetDocument()->m_cDocFileOperation.FileSave(); };
+
+	const auto& scmState = m_scmTool->State();
+	const auto state = workbench::scm::BuildGitCommitRepositoryState(root,
+		workbench::scm::CollectGitStageResources(scmState),
+		u8stowcs(workbench::scm::GitHeadShortName(scmState)),
+		!scmState.commit.empty());
+
+	workbench::scm::GitCommitCommandResult result{};
+	if (command == EGitCommitCommand::UndoCommit) {
+		result = workbench::scm::RunGitUndoCommit(context, state);
+	}
+	else {
+		workbench::scm::GitCommitOptions options;
+		options.amend = command == EGitCommitCommand::CommitAmend;
+		const auto typed = m_scmTool->CommitMessage();
+		result = workbench::scm::RunGitCommit(context, state, typed, options);
+	}
+
+	// Upstream assigns `repository.inputBox.value` inside the command itself, so
+	// the box changes independently of what the command then reports. An absent
+	// value means "leave it alone", which is what keeps a failed commit from
+	// discarding the message that failed.
+	if (result.inputBoxValue) m_scmTool->SetCommitMessage(*result.inputBoxValue);
+
+	switch (result.status) {
+	case workbench::scm::EGitCommitCommandStatus::Succeeded:
+		// HEAD and the index both moved, so every published SCM fact is stale.
+		m_scmTool->Refresh();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case workbench::scm::EGitCommitCommandStatus::NotApplicable:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "there was nothing to commit" };
+	case workbench::scm::EGitCommitCommandStatus::Cancelled:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the user dismissed the prompt" };
+	case workbench::scm::EGitCommitCommandStatus::UnsupportedRebaseInProgress:
+		return { EWorkbenchCommandExecutionStatus::Unsupported, wcstou8s(result.message) };
+	case workbench::scm::EGitCommitCommandStatus::Failed:
+	default:
+		break;
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCommand(EGitSyncCommand command)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	const auto root = GetSemanticWorkspaceRoot();
+	if (root.empty() || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
+	}
+	// Upstream's handlers read HEAD's name, its upstream, and the ahead/behind
+	// counts off the repository. Those are exactly the facts the published SCM
+	// state carries, so a window with no Source Control view has no repository
+	// state to act on; inventing one would push against a branch nobody read.
+	if (m_scmTool == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no source control view is open" };
+	}
+
+	// Every command captions its own dialogs with the title upstream publishes
+	// for it, for the same reason the branch commands do: a framed dialog must
+	// caption itself with something, and upstream's own string is not an
+	// invented label.
+	const wchar_t* caption = L"Fetch";
+	switch (command) {
+	case EGitSyncCommand::FetchPrune: caption = L"Fetch (Prune)"; break;
+	case EGitSyncCommand::FetchAll: caption = L"Fetch From All Remotes"; break;
+	case EGitSyncCommand::Pull: caption = L"Pull"; break;
+	case EGitSyncCommand::PullRebase: caption = L"Pull (Rebase)"; break;
+	case EGitSyncCommand::Push: caption = L"Push"; break;
+	case EGitSyncCommand::Sync: caption = L"Sync"; break;
+	case EGitSyncCommand::SyncRebase: caption = L"Sync (Rebase)"; break;
+	case EGitSyncCommand::Publish: caption = L"Publish Branch..."; break;
+	case EGitSyncCommand::Fetch:
+	default:
+		break;
+	}
+
+	workbench::scm::GitSyncCommandContext context;
+	context.run = [&root](const std::vector<std::wstring>& arguments) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = root;
+		request.arguments = arguments;
+		return workbench::scm::RunGit(request, nullptr);
+	};
+	context.message = [this](std::wstring_view message) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
+	};
+	// The same native modal the commit gates use. Index 0 is upstream's primary
+	// action and dismissal is a cancel, never an implicit yes - which matters
+	// most here, where the primary action pushes commits to a remote.
+	context.confirm = [this](const workbench::scm::GitPrompt& prompt) -> std::optional<std::size_t> {
+		if (prompt.choices.empty()) return std::nullopt;
+		std::vector<TASKDIALOG_BUTTON> buttons;
+		buttons.reserve(prompt.choices.size());
+		for (std::size_t index = 0; index < prompt.choices.size(); ++index) {
+			buttons.push_back({ 1000 + static_cast<int>(index), prompt.choices[index].c_str() });
+		}
+		TASKDIALOGCONFIG config{};
+		config.cbSize = sizeof(config);
+		config.hwndParent = GetHwnd();
+		config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT;
+		config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+		config.pszWindowTitle = L"Sakura Editor NEXT";
+		config.pszMainIcon = prompt.warning ? TD_WARNING_ICON : TD_INFORMATION_ICON;
+		config.pszMainInstruction = prompt.message.c_str();
+		config.pszContent = prompt.detail.empty() ? nullptr : prompt.detail.c_str();
+		config.cButtons = static_cast<UINT>(buttons.size());
+		config.pButtons = buttons.data();
+		int selected = 0;
+		if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) return std::nullopt;
+		if (selected < 1000) return std::nullopt;
+		const auto index = static_cast<std::size_t>(selected - 1000);
+		if (index >= prompt.choices.size()) return std::nullopt;
+		return index;
+	};
+	context.pickRemote = [this, caption](const std::vector<workbench::scm::GitRemotePickItem>& items,
+		std::wstring_view placeholder) -> std::optional<std::size_t> {
+		if (items.empty()) return std::nullopt;
+		SExtensionQuickInputRequest request;
+		request.kind = EExtensionQuickInputKind::QuickPick;
+		request.title = caption;
+		request.placeholder = placeholder;
+		request.items.reserve(items.size());
+		for (std::size_t index = 0; index < items.size(); ++index) {
+			// The native list renders label text literally, so upstream's leading
+			// `$(cloud)` / `$(cloud-download)` codicon markup is removed here
+			// rather than drawn as the characters `$(cloud) origin`. The model
+			// keeps upstream's own label, exactly as it keeps the checkout
+			// picker's separator rows, so a list that can draw a codicon needs no
+			// model change.
+			std::wstring label = items[index].label;
+			if (label.starts_with(L"$(")) {
+				if (const auto close = label.find(L')'); close != std::wstring::npos) {
+					label.erase(0, close + 1);
+					while (!label.empty() && label.front() == L' ') label.erase(0, 1);
+				}
+			}
+			request.items.push_back({
+				.sourceIndex = index,
+				.label = std::move(label),
+				.description = items[index].description,
+			});
+		}
+		CExtensionQuickInputDialog dialog(request);
+		const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EExtensionQuickInputState::Accepted
+			|| completion.selectedIndices.size() != 1) {
+			return std::nullopt;
+		}
+		const auto selected = completion.selectedIndices.front();
+		if (selected >= items.size()) return std::nullopt;
+		return selected;
+	};
+
+	// Upstream's `getRemotes` asks git rather than deriving the remote set from
+	// the branch state, so an unreadable remote list is reported as the failure
+	// it is instead of silently becoming "this repository has no remotes".
+	const auto remotesResult = context.run(workbench::scm::BuildGitRemoteArguments());
+	if (!remotesResult.Succeeded() || remotesResult.exitCode != 0) {
+		return { EWorkbenchCommandExecutionStatus::Failed,
+			wcstou8s(workbench::scm::DescribeGitFailure(remotesResult)) };
+	}
+	auto remotes = workbench::scm::ParseGitRemotes({
+		reinterpret_cast<const char*>(remotesResult.standardOutput.data()),
+		remotesResult.standardOutput.size() });
+	const auto state = workbench::scm::BuildGitSyncRepositoryState(m_scmTool->State(), std::move(remotes));
+
+	workbench::scm::GitSyncCommandResult result{};
+	switch (command) {
+	case EGitSyncCommand::Fetch:
+		result = workbench::scm::RunGitFetch(context, state, workbench::scm::EGitFetchScope::Default);
+		break;
+	case EGitSyncCommand::FetchPrune:
+		result = workbench::scm::RunGitFetch(context, state, workbench::scm::EGitFetchScope::Prune);
+		break;
+	case EGitSyncCommand::FetchAll:
+		result = workbench::scm::RunGitFetch(context, state, workbench::scm::EGitFetchScope::All);
+		break;
+	case EGitSyncCommand::Pull:
+		result = workbench::scm::RunGitPull(context, state, false);
+		break;
+	case EGitSyncCommand::PullRebase:
+		result = workbench::scm::RunGitPull(context, state, true);
+		break;
+	case EGitSyncCommand::Push:
+		result = workbench::scm::RunGitPush(context, state);
+		break;
+	case EGitSyncCommand::Sync:
+		// Upstream's `_sync` computes `rebase || rebaseWhenSync`, and `git.sync`
+		// passes `false`, so the setting is what decides here. `git.syncRebase`
+		// passes `true` and the setting cannot turn it back off.
+		result = workbench::scm::RunGitSync(context, state, context.configuration.rebaseWhenSync);
+		break;
+	case EGitSyncCommand::SyncRebase:
+		result = workbench::scm::RunGitSync(context, state, true);
+		break;
+	case EGitSyncCommand::Publish:
+		result = workbench::scm::RunGitPublish(context, state);
+		break;
+	}
+
+	switch (result.status) {
+	case workbench::scm::EGitSyncCommandStatus::Succeeded:
+		// Remote-tracking refs, the ahead/behind counts, and possibly HEAD's own
+		// upstream all moved, so every published SCM fact is stale.
+		m_scmTool->Refresh();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case workbench::scm::EGitSyncCommandStatus::NotApplicable:
+	case workbench::scm::EGitSyncCommandStatus::Cancelled:
+		// Both are upstream's own early returns rather than errors, and each one
+		// already says which gate it was, so the reason is carried through rather
+		// than replaced with a sentence that names the status instead of the gate.
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, wcstou8s(result.message) };
+	case workbench::scm::EGitSyncCommandStatus::Failed:
+	default:
+		break;
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+}
+
+void CEditWnd::RelayoutEditorProjections()
+{
+	RECT client{};
+	if (GetHwnd() == nullptr || !::GetClientRect(GetHwnd(), &client)) return;
+	(void)OnSize2(m_nWinSizeType,
+		MAKELONG(client.right - client.left, client.bottom - client.top), false);
+}
+
+bool CEditWnd::ShowDiffSurface(SDiffSurfaceContent content)
+{
+	if (!m_diffSurface) return false;
+	// The surface is a composition-layer projection, not an `EditorInput`. It has
+	// no document model and no tab, so showing it over an open document would
+	// hide a document the user can no longer reach. Refusing is the honest
+	// boundary until a real diff `EditorInput` exists.
+	if (HasActiveEditorInput()) return false;
+	m_diffSurface->ShowDiff(std::move(content));
+	// Opening a comparison replaces whatever the group was showing, exactly as it
+	// does in VS Code.
+	if (m_extensionDetailSurface) {
+		m_extensionDetailSurface->ClearExtension();
+		m_extensionDetailSurface->Hide();
+	}
+	if (m_viewContainerPages && m_viewContainerPages->Marketplace()) {
+		// The Marketplace holds the selection that produced the detail surface; a
+		// stale selection there would re-show it on the next refresh.
+		m_viewContainerPages->Marketplace()->ClearExtensionSelection();
+	}
+	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+	if (!m_pPrintPreview) m_diffSurface->Show();
+	RelayoutEditorProjections();
+	return true;
+}
+
+void CEditWnd::ClearDiffSurface()
+{
+	if (!m_diffSurface) return;
+	m_diffSurface->ClearDiff();
+	m_diffSurface->Hide();
+	m_diffRepositoryRoot.clear();
+	m_diffOriginalUri.clear();
+	m_diffModifiedUri.clear();
+	if (m_emptyEditorSurface && !HasActiveEditorInput() && !m_pPrintPreview) {
+		m_emptyEditorSurface->Show();
+	}
+	RelayoutEditorProjections();
+	(void)RefreshWorkbenchCommandContext();
+}
+
 SExtensionApplyEditResult CEditWnd::ApplyExtensionEdits(
 	const std::vector<SExtensionDocumentEdit>& edits,
 	std::vector<SExtensionDocumentSnapshot>& snapshots)
@@ -3296,6 +4566,12 @@ void CEditWnd::CloseWorkbench() noexcept
 		m_extensionDetailSurface->Destroy();
 	}
 	m_extensionDetailSurface.reset();
+	if (m_diffSurface) {
+		m_diffSurface->SetOnCloseRequested({});
+		m_diffSurface->ClearDiff();
+		m_diffSurface->Destroy();
+	}
+	m_diffSurface.reset();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Destroy();
 	m_emptyEditorSurface.reset();
 	ClosePublishedExtensionDocument();
@@ -3466,6 +4742,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
 	if (m_emptyEditorSurface) m_emptyEditorSurface->SetPalette(palette);
 	if (m_extensionDetailSurface) m_extensionDetailSurface->SetPalette(palette);
+	if (m_diffSurface) m_diffSurface->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -3540,7 +4817,7 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(
 			snapshot, m_workbenchRuntime->WorkspaceContext().Snapshot(), BuildWorkbenchEditorCommandContext(),
-			recentlyOpenedAvailable);
+			recentlyOpenedAvailable, BuildWorkbenchScmCommandContext());
 		if (!contextResult.Succeeded()
 			&& contextResult.status != workbench::commands::EWorkbenchContextMutationStatus::NotApplicable) {
 			return false;
@@ -4330,7 +5607,7 @@ bool CEditWnd::RefreshWorkbenchCommandContext()
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto result = m_workbenchContextKeyService->SetCoreProjection(
 			m_workbenchRuntime->LayoutState().Snapshot(), m_workbenchRuntime->WorkspaceContext().Snapshot(),
-			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable);
+			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable, BuildWorkbenchScmCommandContext());
 		return result.Succeeded()
 			|| result.status == workbench::commands::EWorkbenchContextMutationStatus::NotApplicable;
 	}
@@ -4339,7 +5616,8 @@ bool CEditWnd::RefreshWorkbenchCommandContext()
 	}
 }
 
-bool CEditWnd::TryExecuteWorkbenchStableCommand(std::string_view commandId, bool& handled)
+bool CEditWnd::TryExecuteWorkbenchStableCommand(
+	std::string_view commandId, bool& handled, std::string_view argumentsJson)
 {
 	handled = false;
 	if (m_workbenchCommandRegistry == nullptr || m_workbenchContextKeyService == nullptr) return false;
@@ -4350,7 +5628,8 @@ bool CEditWnd::TryExecuteWorkbenchStableCommand(std::string_view commandId, bool
 		return false;
 	}
 
-	const auto result = m_workbenchCommandRegistry->Execute(commandId, m_workbenchContextKeyService->Snapshot());
+	const auto result = m_workbenchCommandRegistry->Execute(
+		commandId, m_workbenchContextKeyService->Snapshot(), argumentsJson);
 	switch (result.status) {
 	case workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded:
 		return true;
@@ -4389,9 +5668,26 @@ bool CEditWnd::ArmWorkbenchKeybindingChordTimer() noexcept
 	return true;
 }
 
+workbench::commands::WorkbenchScmCommandContext CEditWnd::BuildWorkbenchScmCommandContext() const
+{
+	// Pulled from the SCM tool's published provider snapshot rather than pushed
+	// from its refresh, so the key can never describe a publication the view has
+	// not rendered.
+	workbench::commands::WorkbenchScmCommandContext scm;
+	if (m_scmTool != nullptr) {
+		scm.gitOpenRepositoryCount = static_cast<std::int64_t>(m_scmTool->OpenRepositoryCount());
+	}
+	return scm;
+}
+
 workbench::commands::WorkbenchEditorCommandContext CEditWnd::BuildWorkbenchEditorCommandContext() const
 {
 	workbench::commands::WorkbenchEditorCommandContext editor;
+	// The retained endpoints are set only after the surface accepted a
+	// comparison and cleared when it is retracted, so they are the one fact that
+	// says a comparison is on screen. Set before the early returns below, because
+	// a diff is shown precisely when no document input is active.
+	editor.inDiffEditor = m_diffSurface != nullptr && m_diffSurface->HasDiff() && !m_diffModifiedUri.empty();
 	if (m_editorServiceAdapter != nullptr) {
 		const auto editorSnapshot = m_editorServiceAdapter->Snapshot();
 		editor.hasActiveEditor = editorSnapshot.group.activeInputId.has_value();
@@ -5618,17 +6914,28 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			::ShowWindow(splitter, SW_HIDE);
 		}
 		if (m_markdownPreview) m_markdownPreview->Show(false);
-		if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
+		// Same precedence as `ApplyEditorCoreSnapshot`: comparison, then extension
+		// metadata, then the watermark. Only the winner is laid out, so a hidden
+		// projection never claims the editor rectangle.
+		if (m_diffSurface && m_diffSurface->HasDiff()) {
+			m_diffSurface->Layout({ left, top, right, bottom }, dpi);
+			if (!m_pPrintPreview) m_diffSurface->Show();
+			if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
+			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+		} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
 			m_extensionDetailSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_extensionDetailSurface->Show();
+			if (m_diffSurface) m_diffSurface->Hide();
 			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 		} else if (m_emptyEditorSurface) {
 			m_emptyEditorSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_emptyEditorSurface->Show();
+			if (m_diffSurface) m_diffSurface->Hide();
 		}
 		return;
 	}
 	if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
+	if (m_diffSurface) m_diffSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 	const bool showPreview = m_markdownPreviewVisible && m_markdownPreview != nullptr && !m_pPrintPreview;
 	auto paneMode = markdown::PreviewPaneMode::Hidden;

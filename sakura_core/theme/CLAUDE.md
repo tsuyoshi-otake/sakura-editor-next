@@ -16,13 +16,25 @@ comment beside the literal so it stays checkable:
   `#989898`; light is VS Code's own `#717171` literal.
 - `disabledText` is `disabledForeground` (`#CCCCCC80` / `#61616180`) composited
   the same way.
+- `diffInsertedLineBackground` and `diffRemovedLineBackground` are
+  `diffEditor.insertedLineBackground` / `diffEditor.removedLineBackground`, whose
+  registered defaults are the shared `defaultInsertColor`
+  `rgba(155, 185, 85, .2)` and `defaultRemoveColor` `rgba(255, 0, 0, .2)` for
+  both dark and light. `diffDiagonalFill` is `diffEditor.diagonalFill`
+  (`#cccccc33` dark, `#22222233` light), the hatch drawn where one side of a
+  side-by-side diff has no line at all. All three are backgrounds rather than
+  foregrounds, but they composite over `canvas` for the same reason: upstream
+  paints them over the editor background, not over the gutter.
 
 High Contrast never imitates the translucency: the description role takes
 `COLOR_WINDOWTEXT` and only the disabled role dims to `COLOR_GRAYTEXT`, so the
-overlay cannot lower system-guaranteed contrast. Recompute both literals when a
-canvas color changes; a palette field added anywhere but the end also updates
-every positional initializer, including `HighContrastPalette` and the exact-token
-tests.
+overlay cannot lower system-guaranteed contrast. The three diff roles register
+`null` for `hcDark`/`hcLight` upstream — High Contrast paints no inserted or
+removed wash and no diagonal fill at all — so `HighContrastPalette` gives them
+the window color, which is that absence rather than a chosen highlight color.
+Recompute every literal when a canvas color changes; a palette field added
+anywhere but the end also updates every positional initializer, including
+`HighContrastPalette` and the exact-token tests.
 
 Theme changes publish one revisioned snapshot and invalidate all affected
 surfaces. Validate native and extension-contributed UI at supported DPI values

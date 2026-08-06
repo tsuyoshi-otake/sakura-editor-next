@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -407,6 +407,86 @@ WorkbenchCommandDescriptor MakeMarkdownPreviewDescriptor(
 	};
 }
 
+//! Upstream gates all four branch commands on `gitOpenRepositoryCount != 0`
+//! (`extensions/git/package.json`, `menus.commandPalette`). The two remaining
+//! conjuncts there, `config.git.enabled` and `!git.missing`, describe the
+//! extension's own enablement and the absence of a git binary; neither is a
+//! context key this native provider publishes yet, so the clause carries only
+//! the conjunct backed by real state rather than a hard-coded `true`.
+constexpr std::string_view kGitRepositoryWhenClause = "gitOpenRepositoryCount != 0";
+
+//!
+//! @brief The added conjunct for the selected-range commands.
+//!
+//! Upstream's Command Palette clause for `git.stageSelectedRanges` and
+//! `git.unstageSelectedRanges` is the repository clause **and**
+//! `isInDiffEditor`. That conjunct is not decoration: these commands act on the
+//! selection of an open comparison, so listing them while no comparison is open
+//! would offer an action with no operand.
+//!
+constexpr std::string_view kGitDiffEditorWhenClause = "gitOpenRepositoryCount != 0 && isInDiffEditor";
+
+//!
+//! @brief One of VS Code's API commands, which are callable but never listed.
+//!
+//! `ApiCommand` entries go into `CommandsRegistry` only; they have no
+//! `MenuRegistry` contribution, no category, and no keybinding, so
+//! `surfaceBindings` is deliberately empty. `IsValidDescriptor` accepts that -
+//! a command with no surface is exactly what an API command is, and giving one
+//! a Command Palette slot would put an argument-taking internal command in a
+//! list where the user could invoke it with no arguments.
+//!
+//! The `when`/enablement clause is `workbenchReady` alone. Upstream imposes no
+//! context condition on these at all; this native registry has no
+//! unconditional clause, and `workbenchReady` is the weakest real one - it says
+//! the workbench exists, which is the actual prerequisite for opening anything.
+//!
+WorkbenchCommandDescriptor MakeApiCommandDescriptor(std::string id, std::string title)
+{
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{},
+	};
+}
+
+WorkbenchCommandDescriptor MakeGitDescriptor(std::string id, std::string title)
+{
+	const auto slot = id + ".palette";
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		std::string(kGitRepositoryWhenClause),
+		std::string(kGitRepositoryWhenClause),
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, slot, std::nullopt },
+		},
+	};
+}
+
+//! `MakeGitDescriptor` with the diff-editor conjunct added to both clauses.
+WorkbenchCommandDescriptor MakeGitDiffEditorDescriptor(std::string id, std::string title)
+{
+	const auto slot = id + ".palette";
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		std::string(kGitDiffEditorWhenClause),
+		std::string(kGitDiffEditorWhenClause),
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, slot, std::nullopt },
+		},
+	};
+}
+
 } // namespace
 
 bool WorkbenchCommandRegistry::IsValidCommandId(std::string_view value) noexcept
@@ -438,64 +518,132 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::Register(
 		return { EWorkbenchCommandRegistrationStatus::Conflict, m_revision };
 	}
 	const std::string commandId = descriptor.id;
-	m_entries.emplace(commandId, Entry{ std::move(descriptor), std::move(executor) });
+	m_entries.emplace(commandId, Entry{ std::move(descriptor), std::move(executor), {} });
 	return { EWorkbenchCommandRegistrationStatus::Succeeded, ++m_revision };
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterWithArguments(
+	WorkbenchCommandDescriptor descriptor, WorkbenchCommandArgumentExecutor executor)
+{
+	if (!IsValidDescriptor(descriptor)) {
+		return { EWorkbenchCommandRegistrationStatus::Invalid, Revision() };
+	}
+	std::vector<Entry> batch;
+	batch.push_back(Entry{ std::move(descriptor), {}, std::move(executor) });
+	return RegisterAtomicBatch(std::move(batch));
 }
 
 WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinCommands(
 	WorkbenchBuiltinCommandExecutors executors)
 {
-	auto builtins = std::array{
-		std::pair{ MakeToggleSidebarDescriptor(), std::move(executors.toggleSidebarVisibility) },
-		std::pair{ MakeExplorerDescriptor(), std::move(executors.showExplorer) },
-		std::pair{ MakeProblemsDescriptor(), std::move(executors.showProblems) },
-		std::pair{ MakeOutputDescriptor(), std::move(executors.toggleOutput) },
-		std::pair{ MakeShowCommandsDescriptor(), std::move(executors.showCommands) },
-		std::pair{ MakeOpenSettingsDescriptor(), std::move(executors.openSettings) },
-		std::pair{ MakeOpenFolderDescriptor(), std::move(executors.openFolder) },
-		std::pair{ MakeExtensionsDescriptor(), std::move(executors.showExtensions) },
-		std::pair{ MakeOpenGlobalKeybindingsDescriptor(), std::move(executors.openGlobalKeybindings) },
-		std::pair{ MakeColorThemeDescriptor(), std::move(executors.selectTheme) },
-		std::pair{ MakeFileIconThemeDescriptor(), std::move(executors.selectFileIconTheme) },
-		std::pair{ MakeNewUntitledFileDescriptor(), std::move(executors.newUntitledFile) },
-		std::pair{ MakeNewWindowDescriptor(), std::move(executors.newWindow) },
-		std::pair{ MakeOpenFileDescriptor(), std::move(executors.openFile) },
-		std::pair{ MakeOpenWorkspaceDescriptor(), std::move(executors.openWorkspace) },
-		std::pair{ MakeOpenRecentDescriptor(), std::move(executors.openRecent) },
-		std::pair{ MakeAddRootFolderDescriptor(), std::move(executors.addRootFolder) },
-		std::pair{ MakeSaveWorkspaceAsDescriptor(), std::move(executors.saveWorkspaceAs) },
-		std::pair{ MakeDuplicateWorkspaceDescriptor(), std::move(executors.duplicateWorkspaceInNewWindow) },
-		std::pair{ MakeSaveDescriptor(), std::move(executors.save) },
-		std::pair{ MakeSaveAsDescriptor(), std::move(executors.saveAs) },
-		std::pair{ MakeSaveAllDescriptor(), std::move(executors.saveAll) },
-		std::pair{ MakeCloseActiveEditorDescriptor(), std::move(executors.closeActiveEditor) },
-		std::pair{ MakeCloseFolderDescriptor(), std::move(executors.closeFolder) },
-		std::pair{ MakeCloseWindowDescriptor(), std::move(executors.closeWindow) },
-		std::pair{ MakeQuitDescriptor(), std::move(executors.quit) },
-		std::pair{ MakeShowNotificationsDescriptor(), std::move(executors.showNotifications) },
-		std::pair{ MakeHideNotificationsDescriptor(), std::move(executors.hideNotifications) },
-		std::pair{ MakeToggleStatusbarDescriptor(), std::move(executors.toggleStatusbarVisibility) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showPreview", "Markdown: Open Preview", false),
-			std::move(executors.markdownShowPreview) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showPreviewToSide", "Markdown: Open Preview to the Side", true),
-			std::move(executors.markdownShowPreviewToSide) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showLockedPreviewToSide", "Markdown: Open Locked Preview to the Side", false),
-			std::move(executors.markdownShowLockedPreviewToSide) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showSource", "Markdown: Show Source", false),
-			std::move(executors.markdownShowSource) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.showPreviewSecuritySelector", "Markdown: Change Preview Security Settings", false),
-			std::move(executors.markdownShowPreviewSecuritySelector) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.preview.refresh", "Markdown: Refresh Preview", false),
-			std::move(executors.markdownPreviewRefresh) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.preview.toggleLock", "Markdown: Toggle Preview Locking", false),
-			std::move(executors.markdownPreviewToggleLock) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.reopenAsPreview", "Markdown: Reopen Editor With Preview", false),
-			std::move(executors.markdownReopenAsPreview) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.reopenAsSource", "Markdown: Reopen Editor With Text Editor", false),
-			std::move(executors.markdownReopenAsSource) },
-		std::pair{ MakeMarkdownPreviewDescriptor("markdown.togglePreview", "Markdown: Toggle Preview", true),
-			std::move(executors.markdownTogglePreview) },
+	std::vector<Entry> builtins{
+		Entry{ MakeToggleSidebarDescriptor(), std::move(executors.toggleSidebarVisibility), {} },
+		Entry{ MakeExplorerDescriptor(), std::move(executors.showExplorer), {} },
+		Entry{ MakeProblemsDescriptor(), std::move(executors.showProblems), {} },
+		Entry{ MakeOutputDescriptor(), std::move(executors.toggleOutput), {} },
+		Entry{ MakeShowCommandsDescriptor(), std::move(executors.showCommands), {} },
+		Entry{ MakeOpenSettingsDescriptor(), std::move(executors.openSettings), {} },
+		Entry{ MakeOpenFolderDescriptor(), std::move(executors.openFolder), {} },
+		Entry{ MakeExtensionsDescriptor(), std::move(executors.showExtensions), {} },
+		Entry{ MakeOpenGlobalKeybindingsDescriptor(), std::move(executors.openGlobalKeybindings), {} },
+		Entry{ MakeColorThemeDescriptor(), std::move(executors.selectTheme), {} },
+		Entry{ MakeFileIconThemeDescriptor(), std::move(executors.selectFileIconTheme), {} },
+		Entry{ MakeNewUntitledFileDescriptor(), std::move(executors.newUntitledFile), {} },
+		Entry{ MakeNewWindowDescriptor(), std::move(executors.newWindow), {} },
+		Entry{ MakeOpenFileDescriptor(), std::move(executors.openFile), {} },
+		Entry{ MakeOpenWorkspaceDescriptor(), std::move(executors.openWorkspace), {} },
+		Entry{ MakeOpenRecentDescriptor(), std::move(executors.openRecent), {} },
+		Entry{ MakeAddRootFolderDescriptor(), std::move(executors.addRootFolder), {} },
+		Entry{ MakeSaveWorkspaceAsDescriptor(), std::move(executors.saveWorkspaceAs), {} },
+		Entry{ MakeDuplicateWorkspaceDescriptor(), std::move(executors.duplicateWorkspaceInNewWindow), {} },
+		Entry{ MakeSaveDescriptor(), std::move(executors.save), {} },
+		Entry{ MakeSaveAsDescriptor(), std::move(executors.saveAs), {} },
+		Entry{ MakeSaveAllDescriptor(), std::move(executors.saveAll), {} },
+		Entry{ MakeCloseActiveEditorDescriptor(), std::move(executors.closeActiveEditor), {} },
+		Entry{ MakeCloseFolderDescriptor(), std::move(executors.closeFolder), {} },
+		Entry{ MakeCloseWindowDescriptor(), std::move(executors.closeWindow), {} },
+		Entry{ MakeQuitDescriptor(), std::move(executors.quit), {} },
+		Entry{ MakeShowNotificationsDescriptor(), std::move(executors.showNotifications), {} },
+		Entry{ MakeHideNotificationsDescriptor(), std::move(executors.hideNotifications), {} },
+		Entry{ MakeToggleStatusbarDescriptor(), std::move(executors.toggleStatusbarVisibility), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreview", "Markdown: Open Preview", false),
+			std::move(executors.markdownShowPreview), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreviewToSide", "Markdown: Open Preview to the Side", true),
+			std::move(executors.markdownShowPreviewToSide), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.showLockedPreviewToSide", "Markdown: Open Locked Preview to the Side", false),
+			std::move(executors.markdownShowLockedPreviewToSide), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.showSource", "Markdown: Show Source", false),
+			std::move(executors.markdownShowSource), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreviewSecuritySelector", "Markdown: Change Preview Security Settings", false),
+			std::move(executors.markdownShowPreviewSecuritySelector), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.preview.refresh", "Markdown: Refresh Preview", false),
+			std::move(executors.markdownPreviewRefresh), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.preview.toggleLock", "Markdown: Toggle Preview Locking", false),
+			std::move(executors.markdownPreviewToggleLock), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.reopenAsPreview", "Markdown: Reopen Editor With Preview", false),
+			std::move(executors.markdownReopenAsPreview), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.reopenAsSource", "Markdown: Reopen Editor With Text Editor", false),
+			std::move(executors.markdownReopenAsSource), {} },
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.togglePreview", "Markdown: Toggle Preview", true),
+			std::move(executors.markdownTogglePreview), {} },
+		// Titles are upstream's own `ApiCommand` descriptions, verbatim.
+		Entry{ MakeApiCommandDescriptor("vscode.diff",
+				   "Opens the provided resources in the diff editor to compare their contents."),
+			{}, std::move(executors.vscodeDiff) },
+		Entry{ MakeApiCommandDescriptor("vscode.open", "Opens the provided resource in the editor."),
+			{}, std::move(executors.vscodeOpen) },
 	};
+	return RegisterAtomicBatch(std::move(builtins));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands(
+	WorkbenchGitCommandExecutors executors)
+{
+	// Titles are upstream's own, from `extensions/git/package.nls.json`
+	// (`command.checkout`, `command.checkoutDetached`, `command.branch`,
+	// `command.branchFrom`, `command.openChange`, `command.stage`, `command.stageAll`,
+	// `command.unstage`, `command.unstageAll`, `command.clean`,
+	// `command.cleanAll`, `command.commit`, `command.commitAmend`,
+	// `command.undoCommit`, `command.stageSelectedRanges`,
+	// `command.unstageSelectedRanges`, `command.fetch`, `command.fetchPrune`,
+	// `command.fetchAll`, `command.pull`, `command.pullRebase`, `command.push`,
+	// `command.sync`, `command.syncRebase`, `command.publish`), prefixed with the
+	// `Git` category `package.json` declares for every one of them.
+	std::vector<Entry> commands{
+		Entry{ MakeGitDescriptor("git.checkout", "Git: Checkout to..."), std::move(executors.checkout), {} },
+		Entry{ MakeGitDescriptor("git.checkoutDetached", "Git: Checkout to (Detached)..."),
+			std::move(executors.checkoutDetached), {} },
+		Entry{ MakeGitDescriptor("git.branch", "Git: Create Branch..."), std::move(executors.branch), {} },
+		Entry{ MakeGitDescriptor("git.branchFrom", "Git: Create Branch From..."), std::move(executors.branchFrom), {} },
+		Entry{ MakeGitDescriptor("git.openChange", "Git: Open Changes"), {}, std::move(executors.openChange) },
+		Entry{ MakeGitDescriptor("git.stage", "Git: Stage Changes"), {}, std::move(executors.stage) },
+		Entry{ MakeGitDescriptor("git.stageAll", "Git: Stage All Changes"), std::move(executors.stageAll), {} },
+		Entry{ MakeGitDescriptor("git.unstage", "Git: Unstage Changes"), {}, std::move(executors.unstage) },
+		Entry{ MakeGitDescriptor("git.unstageAll", "Git: Unstage All Changes"), std::move(executors.unstageAll), {} },
+		Entry{ MakeGitDescriptor("git.clean", "Git: Discard Changes"), {}, std::move(executors.clean) },
+		Entry{ MakeGitDescriptor("git.cleanAll", "Git: Discard All Changes"), std::move(executors.cleanAll), {} },
+		Entry{ MakeGitDescriptor("git.commit", "Git: Commit"), std::move(executors.commit), {} },
+		Entry{ MakeGitDescriptor("git.commitAmend", "Git: Commit (Amend)"), std::move(executors.commitAmend), {} },
+		Entry{ MakeGitDescriptor("git.undoCommit", "Git: Undo Last Commit"), std::move(executors.undoCommit), {} },
+		Entry{ MakeGitDiffEditorDescriptor("git.stageSelectedRanges", "Git: Stage Selected Ranges"),
+			std::move(executors.stageSelectedRanges), {} },
+		Entry{ MakeGitDiffEditorDescriptor("git.unstageSelectedRanges", "Git: Unstage Selected Ranges"),
+			std::move(executors.unstageSelectedRanges), {} },
+		Entry{ MakeGitDescriptor("git.fetch", "Git: Fetch"), std::move(executors.fetch), {} },
+		Entry{ MakeGitDescriptor("git.fetchPrune", "Git: Fetch (Prune)"), std::move(executors.fetchPrune), {} },
+		Entry{ MakeGitDescriptor("git.fetchAll", "Git: Fetch From All Remotes"), std::move(executors.fetchAll), {} },
+		Entry{ MakeGitDescriptor("git.pull", "Git: Pull"), std::move(executors.pull), {} },
+		Entry{ MakeGitDescriptor("git.pullRebase", "Git: Pull (Rebase)"), std::move(executors.pullRebase), {} },
+		Entry{ MakeGitDescriptor("git.push", "Git: Push"), std::move(executors.push), {} },
+		Entry{ MakeGitDescriptor("git.sync", "Git: Sync"), std::move(executors.sync), {} },
+		Entry{ MakeGitDescriptor("git.syncRebase", "Git: Sync (Rebase)"), std::move(executors.syncRebase), {} },
+		Entry{ MakeGitDescriptor("git.publish", "Git: Publish Branch..."), std::move(executors.publish), {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterAtomicBatch(std::vector<Entry> builtins)
+{
 	std::lock_guard lock(m_mutex);
 	const auto conflicts = [&](const WorkbenchCommandDescriptor& requested) {
 		for (const auto& [id, entry] : m_entries) {
@@ -510,16 +658,15 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		}
 		return false;
 	};
-	for (const auto& [descriptor, executor] : builtins) {
-		(void)executor;
-		if (m_entries.contains(descriptor.id) || conflicts(descriptor)) {
+	for (const auto& entry : builtins) {
+		if (m_entries.contains(entry.descriptor.id) || conflicts(entry.descriptor)) {
 			return { EWorkbenchCommandRegistrationStatus::Conflict, m_revision };
 		}
 	}
 	for (std::size_t left = 0; left < builtins.size(); ++left) {
 		for (std::size_t right = left + 1; right < builtins.size(); ++right) {
-			for (const auto& leftBinding : builtins[left].first.surfaceBindings) {
-				for (const auto& rightBinding : builtins[right].first.surfaceBindings) {
+			for (const auto& leftBinding : builtins[left].descriptor.surfaceBindings) {
+				for (const auto& rightBinding : builtins[right].descriptor.surfaceBindings) {
 					if (leftBinding.surface == rightBinding.surface && leftBinding.slotId == rightBinding.slotId) {
 						return { EWorkbenchCommandRegistrationStatus::Conflict, m_revision };
 					}
@@ -531,9 +678,9 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 			}
 		}
 	}
-	for (auto& [descriptor, executor] : builtins) {
-		const std::string commandId = descriptor.id;
-		m_entries.emplace(commandId, Entry{ std::move(descriptor), std::move(executor) });
+	for (auto& entry : builtins) {
+		const std::string commandId = entry.descriptor.id;
+		m_entries.emplace(commandId, std::move(entry));
 	}
 	return { EWorkbenchCommandRegistrationStatus::Succeeded, ++m_revision };
 }
@@ -611,6 +758,12 @@ std::vector<WorkbenchCommandDescriptor> WorkbenchCommandRegistry::EnumerateSurfa
 WorkbenchCommandExecutionResult WorkbenchCommandRegistry::Execute(std::string_view commandId,
 	const WorkbenchContextKeySnapshot& context) const noexcept
 {
+	return Execute(commandId, context, std::string_view{});
+}
+
+WorkbenchCommandExecutionResult WorkbenchCommandRegistry::Execute(std::string_view commandId,
+	const WorkbenchContextKeySnapshot& context, std::string_view argumentsJson) const noexcept
+{
 	Entry entry;
 	{
 		std::lock_guard lock(m_mutex);
@@ -627,8 +780,12 @@ WorkbenchCommandExecutionResult WorkbenchCommandRegistry::Execute(std::string_vi
 		if (!WorkbenchWhenClauseEvaluator::Evaluate(entry.descriptor.enablementClause, context)) {
 			return { EWorkbenchCommandExecutionStatus::Disabled, "enablement clause did not match" };
 		}
-		if (entry.descriptor.executorTarget == EWorkbenchCommandExecutorTarget::None || !entry.executor) {
+		if (entry.descriptor.executorTarget == EWorkbenchCommandExecutorTarget::None
+			|| (!entry.executor && !entry.argumentExecutor)) {
 			return { EWorkbenchCommandExecutionStatus::Unsupported, "executor target is not bound" };
+		}
+		if (entry.argumentExecutor) {
+			return entry.argumentExecutor(argumentsJson);
 		}
 		return entry.executor();
 	} catch (...) {

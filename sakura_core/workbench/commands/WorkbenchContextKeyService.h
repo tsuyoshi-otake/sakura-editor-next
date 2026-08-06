@@ -32,6 +32,19 @@ using WorkbenchContextKeyMap = std::map<std::string, WorkbenchContextValue, std:
 struct WorkbenchEditorCommandContext {
 	bool hasActiveEditor = false;
 	bool activeEditorDirty = false;
+	//! Upstream's `EditorContextKeys.inDiffEditor` (`isInDiffEditor`). It is a core
+	//! editor key, not a Git one, even though the Git extension is what gates its
+	//! selected-range commands on it: the question it answers is what kind of
+	//! editor is active, which only the editor layer can know.
+	bool inDiffEditor = false;
+};
+
+//! Source-control state the command surfaces gate on. Upstream's Git extension
+//! publishes `gitOpenRepositoryCount` from the extension host; our Git provider
+//! is native, so the core projection owns the key instead. Same key, same
+//! meaning, different owner - see `workbench/scm/CLAUDE.md`.
+struct WorkbenchScmCommandContext {
+	std::int64_t gitOpenRepositoryCount = 0;
 };
 
 //! An owner/generation pair deliberately independent of the extension transport.
@@ -90,7 +103,8 @@ public:
 		const layout::WorkbenchLayoutStateSnapshot& snapshot,
 		const config::WorkspaceContextSnapshot& workspace,
 		WorkbenchEditorCommandContext editor,
-		bool recentlyOpenedAvailable = false);
+		bool recentlyOpenedAvailable = false,
+		WorkbenchScmCommandContext scm = {});
 	[[nodiscard]] WorkbenchContextMutationResult SetExtensionOverlay(
 		const WorkbenchCommandOwner& owner, WorkbenchContextKeyMap values);
 	[[nodiscard]] WorkbenchContextMutationResult DisposeExtensionOverlay(

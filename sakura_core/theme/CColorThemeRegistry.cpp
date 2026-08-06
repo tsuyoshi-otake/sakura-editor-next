@@ -590,6 +590,14 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			palette.editorLineNumberForeground, { L"editorLineNumber.foreground" });
 		palette.editorLineNumberActiveForeground = firstOverWithFallback(palette.editorGutterBackground,
 			palette.editorLineNumberActiveForeground, { L"editorLineNumber.activeForeground" });
+		// The diff washes are translucent by definition, and upstream composites them
+		// over the editor background rather than over the gutter, so `canvas` is the base.
+		palette.diffInsertedLineBackground = firstOverWithFallback(palette.canvas,
+			palette.diffInsertedLineBackground, { L"diffEditor.insertedLineBackground" });
+		palette.diffRemovedLineBackground = firstOverWithFallback(palette.canvas,
+			palette.diffRemovedLineBackground, { L"diffEditor.removedLineBackground" });
+		palette.diffDiagonalFill = firstOverWithFallback(palette.canvas,
+			palette.diffDiagonalFill, { L"diffEditor.diagonalFill" });
 		// Side Bar and Panel are separate VS Code Parts. `sideBar` serves both
 		// physical side-bar hosts; `bottomPanel` is the Panel surface and the
 		// fallback base for the Panel-only Terminal ViewContainer.

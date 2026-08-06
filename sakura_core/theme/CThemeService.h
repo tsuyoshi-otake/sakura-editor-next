@@ -74,6 +74,16 @@ struct ThemePalette {
 	ThemeColor editorLineNumberForeground = { 0x85, 0x85, 0x85 };
 	//! VS Code `editorLineNumber.activeForeground`.
 	ThemeColor editorLineNumberActiveForeground = { 0xCC, 0xCC, 0xCC };
+	//! VS Code `diffEditor.insertedLineBackground`, whose registered default is the
+	//! shared `defaultInsertColor` = `rgba(155, 185, 85, .2)` for both dark and
+	//! light. GDI has no alpha, so it is composited over `canvas` at design time.
+	ThemeColor diffInsertedLineBackground = { 0x37, 0x3D, 0x29 };
+	//! VS Code `diffEditor.removedLineBackground`, registered default
+	//! `defaultRemoveColor` = `rgba(255, 0, 0, .2)`, composited the same way.
+	ThemeColor diffRemovedLineBackground = { 0x4B, 0x18, 0x18 };
+	//! VS Code `diffEditor.diagonalFill` (`#cccccc33` dark, `#22222233` light):
+	//! the hatch drawn where one side of a side-by-side diff has no line at all.
+	ThemeColor diffDiagonalFill = { 0x41, 0x41, 0x41 };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -250,6 +260,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xF4, 0xF5, 0xF7 }, // editorGutter.background fallback: editor.background
 			{ 0x23, 0x78, 0x93 }, // editorLineNumber.foreground
 			{ 0x17, 0x11, 0x84 }, // editorLineNumber.activeForeground
+			{ 0xE2, 0xE9, 0xD7 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the light canvas
+			{ 0xF6, 0xC4, 0xC6 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the light canvas
+			{ 0xCA, 0xCB, 0xCC }, // diffEditor.diagonalFill: #22222233 over the light canvas
 		};
 	}
 	return {
@@ -273,6 +286,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x1E, 0x1E, 0x1E }, // editorGutter.background fallback: editor.background
 		{ 0x85, 0x85, 0x85 }, // editorLineNumber.foreground
 		{ 0xCC, 0xCC, 0xCC }, // editorLineNumber.activeForeground
+		{ 0x37, 0x3D, 0x29 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the dark canvas
+		{ 0x4B, 0x18, 0x18 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the dark canvas
+		{ 0x41, 0x41, 0x41 }, // diffEditor.diagonalFill: #cccccc33 over the dark canvas
 	};
 }
 

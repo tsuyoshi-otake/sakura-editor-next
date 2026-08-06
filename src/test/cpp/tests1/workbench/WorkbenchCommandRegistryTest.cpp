@@ -1,4 +1,4 @@
-/*! @file */
+﻿﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -6,6 +6,7 @@
 */
 #include "pch.h"
 
+#include "workbench/commands/ApiCommandArguments.h"
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "Funccode_enum.h"
@@ -16,6 +17,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -788,4 +790,293 @@ TEST(WorkbenchCommandRegistry, MarkdownDefaultKeybindingsUseOnlyVsCodeCommandSlo
 		"markdown.showPreview.key").has_value());
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
 		registry.Execute("markdown.showPreview", EnabledFileCommandContext()).status);
+}
+
+namespace {
+
+WorkbenchContextKeySnapshot GitRepositoryContext()
+{
+	auto context = EnabledContext();
+	// `git.*` is gated on `gitOpenRepositoryCount != 0`, which the core context
+	// projection owns because this product's Git provider is native.
+	context.values.insert_or_assign("gitOpenRepositoryCount", std::int64_t{ 1 });
+	return context;
+}
+
+WorkbenchCommandExecutionResult Succeeded()
+{
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+} // namespace
+
+TEST(WorkbenchCommandRegistry, DeliversTheArgumentsPayloadToGitResourceCommands)
+{
+	WorkbenchCommandRegistry registry;
+	std::map<std::string, std::string> received;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.stage = [&received](std::string_view arguments) {
+			received.emplace("git.stage", arguments); return Succeeded(); },
+		.unstage = [&received](std::string_view arguments) {
+			received.emplace("git.unstage", arguments); return Succeeded(); },
+		.clean = [&received](std::string_view arguments) {
+			received.emplace("git.clean", arguments); return Succeeded(); },
+	}).status);
+
+	// A resource-scoped command is meaningless without its rows, so the payload
+	// has to reach the executor byte for byte rather than being dropped en route.
+	constexpr std::string_view payload = R"([{"group":"workingTree","path":"src/a.cpp","untracked":false,"deleted":false}])";
+	const auto context = GitRepositoryContext();
+	for (const auto* commandId : { "git.stage", "git.unstage", "git.clean" }) {
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute(commandId, context, payload).status) << commandId;
+		ASSERT_TRUE(received.contains(commandId)) << commandId;
+		EXPECT_EQ(payload, received[commandId]) << commandId;
+	}
+}
+
+TEST(WorkbenchCommandRegistry, TheArgumentLessOverloadDeliversAnEmptyPayload)
+{
+	WorkbenchCommandRegistry registry;
+	std::optional<std::string> received;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.stage = [&received](std::string_view arguments) { received = arguments; return Succeeded(); },
+	}).status);
+
+	// Every surface but the SCM view invokes without arguments; that is an empty
+	// selection the command reports as not applicable, not a malformed payload.
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("git.stage", GitRepositoryContext()).status);
+	ASSERT_TRUE(received.has_value());
+	EXPECT_TRUE(received->empty());
+}
+
+TEST(WorkbenchCommandRegistry, GitGroupCommandsIgnoreAnArgumentsPayload)
+{
+	WorkbenchCommandRegistry registry;
+	int calls = 0;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.stageAll = [&calls] { ++calls; return Succeeded(); },
+		.unstageAll = [&calls] { ++calls; return Succeeded(); },
+		.cleanAll = [&calls] { ++calls; return Succeeded(); },
+	}).status);
+
+	// Upstream's group-scoped handlers take only the repository, so binding them
+	// to an argument-less executor is the faithful shape; a payload aimed at one
+	// of them is simply not part of its contract.
+	const auto context = GitRepositoryContext();
+	for (const auto* commandId : { "git.stageAll", "git.unstageAll", "git.cleanAll" }) {
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute(commandId, context, R"([{"group":"index","path":"a.txt"}])").status) << commandId;
+	}
+	EXPECT_EQ(3, calls);
+}
+
+TEST(WorkbenchCommandRegistry, AnUnboundGitCommandIsUnsupportedRatherThanASilentNoOp)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({}).status);
+
+	const auto context = GitRepositoryContext();
+	for (const auto* commandId : { "git.stage", "git.unstage", "git.clean",
+			"git.stageAll", "git.unstageAll", "git.cleanAll" }) {
+		const auto descriptor = registry.Find(commandId);
+		ASSERT_TRUE(descriptor.has_value()) << commandId;
+		EXPECT_EQ("gitOpenRepositoryCount != 0", descriptor->whenClause) << commandId;
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+			registry.Execute(commandId, context).status) << commandId;
+	}
+	// With the count published as zero the whole batch is out of scope, not
+	// merely disabled.
+	auto noRepository = EnabledContext();
+	noRepository.values.insert_or_assign("gitOpenRepositoryCount", std::int64_t{ 0 });
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::NotApplicable,
+		registry.Execute("git.stage", noRepository).status);
+
+	// An *absent* key is a different fact and must not be mistaken for zero:
+	// upstream evaluates `!=` loosely, so `undefined != 0` is true and the clause
+	// matches. The core projection always publishes the key, so production never
+	// reaches this state; the assertion pins the semantics rather than blessing it.
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		registry.Execute("git.stage", EnabledContext()).status);
+}
+
+TEST(WorkbenchCommandRegistry, GitStagingCommandsCarryUpstreamTitlesAndPaletteSlots)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({}).status);
+
+	// `extensions/git/package.nls.json` titles under the `Git` category every one
+	// of these commands declares in `package.json`.
+	const std::map<std::string, std::string> titles{
+		{ "git.stage", "Git: Stage Changes" },
+		{ "git.stageAll", "Git: Stage All Changes" },
+		{ "git.unstage", "Git: Unstage Changes" },
+		{ "git.unstageAll", "Git: Unstage All Changes" },
+		{ "git.clean", "Git: Discard Changes" },
+		{ "git.cleanAll", "Git: Discard All Changes" },
+	};
+	for (const auto& [commandId, title] : titles) {
+		const auto descriptor = registry.Find(commandId);
+		ASSERT_TRUE(descriptor.has_value()) << commandId;
+		EXPECT_EQ(title, descriptor->title) << commandId;
+		const auto slot = registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette, commandId + ".palette");
+		ASSERT_TRUE(slot.has_value()) << commandId;
+		EXPECT_EQ(commandId, slot->commandId) << commandId;
+	}
+}
+
+TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfaceOfTheirOwn)
+{
+	WorkbenchCommandRegistry registry;
+	std::map<std::string, std::string> received;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
+		.vscodeDiff = [&received](std::string_view arguments) {
+			received.emplace("vscode.diff", arguments); return Succeeded(); },
+		.vscodeOpen = [&received](std::string_view arguments) {
+			received.emplace("vscode.open", arguments); return Succeeded(); },
+	}).status);
+
+	// Upstream registers these in `workbench/api/common/apiCommands.ts` through
+	// `CommandsRegistry` alone: no `MenuRegistry` contribution, no category, and
+	// no keybinding. A palette slot here would put a raw URI-taking command in
+	// front of a user who has no way to supply one.
+	const std::map<std::string, std::string> titles{
+		{ "vscode.diff", "Opens the provided resources in the diff editor to compare their contents." },
+		{ "vscode.open", "Opens the provided resource in the editor." },
+	};
+	const auto context = EnabledContext();
+	for (const auto& [commandId, title] : titles) {
+		const auto descriptor = registry.Find(commandId);
+		ASSERT_TRUE(descriptor.has_value()) << commandId;
+		EXPECT_EQ(title, descriptor->title) << commandId;
+		EXPECT_TRUE(descriptor->surfaceBindings.empty()) << commandId;
+		// They are the Git provider's route to a comparison, but they are not the
+		// Git provider's commands: `workbenchReady` is the whole condition, so an
+		// extension can issue one in a window with no repository open.
+		EXPECT_EQ("workbenchReady", descriptor->whenClause) << commandId;
+
+		constexpr std::string_view payload = R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])";
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute(commandId, context, payload).status) << commandId;
+		ASSERT_TRUE(received.contains(commandId)) << commandId;
+		EXPECT_EQ(payload, received[commandId]) << commandId;
+	}
+}
+
+TEST(WorkbenchCommandRegistry, GitOpenChangeIsAResourceScopedGitCommandLikeStage)
+{
+	WorkbenchCommandRegistry registry;
+	std::optional<std::string> received;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.openChange = [&received](std::string_view arguments) { received = arguments; return Succeeded(); },
+	}).status);
+
+	const auto descriptor = registry.Find("git.openChange");
+	ASSERT_TRUE(descriptor.has_value());
+	// `command.openChange` in `extensions/git/package.nls.json`, under the `Git`
+	// category `package.json` declares for it.
+	EXPECT_EQ("Git: Open Changes", descriptor->title);
+	EXPECT_EQ("gitOpenRepositoryCount != 0", descriptor->whenClause);
+	const auto slot = registry.ResolveSurface(
+		EWorkbenchCommandSurface::CommandPalette, "git.openChange.palette");
+	ASSERT_TRUE(slot.has_value());
+	EXPECT_EQ("git.openChange", slot->commandId);
+
+	// It names rows exactly as the staging commands do, because upstream's
+	// handler takes the same `SourceControlResourceState[]`.
+	constexpr std::string_view payload = R"([{"group":"index","path":"src/a.cpp","untracked":false,"deleted":false}])";
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("git.openChange", GitRepositoryContext(), payload).status);
+	ASSERT_TRUE(received.has_value());
+	EXPECT_EQ(payload, *received);
+
+	// Unbound it is the same typed `Unsupported` every other Git command is, not
+	// a silent no-op that would look like a diff the user simply cannot see.
+	WorkbenchCommandRegistry unbound;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, unbound.RegisterGitCommands({}).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		unbound.Execute("git.openChange", GitRepositoryContext(), payload).status);
+}
+
+namespace {
+
+using workbench::commands::ApiDiffArguments;
+using workbench::commands::ApiOpenArguments;
+using workbench::commands::BuildApiDiffArguments;
+using workbench::commands::BuildApiOpenArguments;
+using workbench::commands::ParseApiDiffArguments;
+using workbench::commands::ParseApiOpenArguments;
+
+} // namespace
+
+TEST(ApiCommandArguments, DiffCarriesBothSidesAndUpstreamsTitle)
+{
+	const ApiDiffArguments arguments{ L"git:///C:/repo/a.cpp?x", L"file:///C:/repo/a.cpp", L"Open" };
+	const auto encoded = BuildApiDiffArguments(arguments);
+	EXPECT_EQ(R"(["git:///C:/repo/a.cpp?x","file:///C:/repo/a.cpp","Open"])", encoded);
+
+	const auto parsed = ParseApiDiffArguments(encoded);
+	ASSERT_TRUE(parsed.has_value());
+	EXPECT_EQ(arguments, *parsed);
+}
+
+TEST(ApiCommandArguments, DiffAcceptsAnAbsentTitleButNeverOneSide)
+{
+	const auto twoElements = ParseApiDiffArguments(R"(["left","right"])");
+	ASSERT_TRUE(twoElements.has_value());
+	EXPECT_TRUE(twoElements->title.empty());
+
+	// A comparison needs both sides; one URI is not a shorter `vscode.diff`.
+	EXPECT_FALSE(ParseApiDiffArguments(R"(["left"])").has_value());
+	EXPECT_FALSE(ParseApiDiffArguments("[]").has_value());
+	EXPECT_FALSE(ParseApiDiffArguments(R"(["a","b","c","d"])").has_value());
+	EXPECT_FALSE(ParseApiDiffArguments(R"(["a","b"] x)").has_value());
+	EXPECT_FALSE(ParseApiDiffArguments(R"(["a",5])").has_value());
+	EXPECT_FALSE(ParseApiDiffArguments("").has_value());
+}
+
+TEST(ApiCommandArguments, OpenKeepsAnAbsentOverrideApartFromAFalseOne)
+{
+	// `JSON.stringify({ override: undefined })` is `{}`, so absent travels as an
+	// empty object rather than as a member whose value is null.
+	const ApiOpenArguments absent{ L"file:///C:/repo/a.cpp", std::nullopt, L"Open" };
+	EXPECT_EQ(R"(["file:///C:/repo/a.cpp",{},"Open"])", BuildApiOpenArguments(absent));
+
+	// The built-in Git provider sets `false` for a both-modified merge resource,
+	// which forces the default text editor. That is a different request.
+	const ApiOpenArguments forced{ L"file:///C:/repo/a.cpp", false, L"Open" };
+	const auto encoded = BuildApiOpenArguments(forced);
+	EXPECT_EQ(R"(["file:///C:/repo/a.cpp",{"override":false},"Open"])", encoded);
+
+	const auto parsedAbsent = ParseApiOpenArguments(BuildApiOpenArguments(absent));
+	ASSERT_TRUE(parsedAbsent.has_value());
+	EXPECT_EQ(absent, *parsedAbsent);
+
+	const auto parsedForced = ParseApiOpenArguments(encoded);
+	ASSERT_TRUE(parsedForced.has_value());
+	EXPECT_EQ(forced, *parsedForced);
+	EXPECT_NE(*parsedAbsent, *parsedForced);
+}
+
+TEST(ApiCommandArguments, OpenNeedsOnlyItsResourceAndRefusesAnythingElse)
+{
+	const auto bare = ParseApiOpenArguments(R"(["file:///C:/a.cpp"])");
+	ASSERT_TRUE(bare.has_value());
+	EXPECT_FALSE(bare->overrideEditor.has_value());
+	EXPECT_TRUE(bare->label.empty());
+
+	EXPECT_FALSE(ParseApiOpenArguments("[]").has_value());
+	// A show option this command does not define is a request it cannot honour.
+	EXPECT_FALSE(ParseApiOpenArguments(R"(["a",{"preview":true}])").has_value());
+	EXPECT_FALSE(ParseApiOpenArguments(R"(["a",{"override":1}])").has_value());
+	EXPECT_FALSE(ParseApiOpenArguments(R"(["a","b"])").has_value());
+	EXPECT_FALSE(ParseApiOpenArguments(R"(["a",{},"b","c"])").has_value());
+}
+
+TEST(ApiCommandArguments, AnOverLongStringIsRefusedRatherThanTruncated)
+{
+	const std::string overLong(workbench::commands::kMaximumApiCommandStringLength + 1, 'a');
+	EXPECT_FALSE(ParseApiDiffArguments(R"([")" + overLong + R"(","b"])").has_value());
+	EXPECT_TRUE(ParseApiDiffArguments(R"([")" + overLong.substr(1) + R"(","b"])").has_value());
 }

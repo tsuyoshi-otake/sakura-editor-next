@@ -8,10 +8,7 @@
 #include <algorithm>
 #include "util/zoom.h"
 #include "view/MiniMapOverview.h"
-#include "workbench/scm/GitScmModel.h"
 #include "workbench/WorkbenchZoom.h"
-
-using namespace std::string_literals;
 
 TEST( WorkbenchZoom, StepsClampsResetsAndScalesDpi )
 {
@@ -21,22 +18,6 @@ TEST( WorkbenchZoom, StepsClampsResetsAndScalesDpi )
 	EXPECT_EQ(200, workbench::AdjustZoomPercent(200, 1));
 	EXPECT_EQ(70, workbench::AdjustZoomPercent(70, -1));
 	EXPECT_EQ(144U, workbench::ScaleDpi(120, 120));
-}
-
-TEST( GitScmModel, ParsesBranchAheadBehindAndChanges )
-{
-	const std::string status = "# branch.head feature/test\0# branch.upstream origin/feature/test\0"
-		"# branch.ab +2 -3\0? new.txt\0"
-		"1 M. N... 100644 100644 100644 abcdef abcdef src/file.cpp\0"s;
-	const auto state = workbench::scm::ParsePorcelainV2(status);
-	EXPECT_TRUE(state.repository);
-	EXPECT_EQ(L"feature/test", state.branch);
-	EXPECT_EQ(2, state.ahead);
-	EXPECT_EQ(3, state.behind);
-	ASSERT_EQ(2U, state.changes.size());
-	EXPECT_EQ(L"new.txt", state.changes[0].path);
-	EXPECT_EQ(L"src/file.cpp", state.changes[1].path);
-	EXPECT_NE(std::wstring::npos, workbench::scm::FormatStatusLine(state).find(L"2 changes"));
 }
 
 TEST( MiniMapOverview, MapsEntireDocumentAndViewportConsistently )

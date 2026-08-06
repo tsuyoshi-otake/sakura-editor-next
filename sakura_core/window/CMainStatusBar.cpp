@@ -76,16 +76,6 @@ void FillSolidRect(HDC dc, const RECT& rect, COLORREF color) noexcept
 	return true;
 }
 
-void DrawBranchIcon(HDC dc, const RECT& part, COLORREF color, UINT dpi) noexcept
-{
-	if (dc == nullptr) return;
-	const auto box = workbench::icons::LeadingStatusIconBounds(
-		{ part.left, part.top, part.right, part.bottom }, dpi);
-	if (box.Width() <= 0 || box.Height() <= 0) return;
-	workbench::icons::codicons::Draw(dc, box,
-		workbench::icons::codicons::Icon::GitBranch, color);
-}
-
 //! インラインアイコン 1 個が占める正方形の一辺。矩形の高さで頭打ちにする。
 [[nodiscard]] int InlineStatusIconSide(int availableHeight, UINT dpi) noexcept
 {
@@ -244,10 +234,10 @@ void CMainStatusBar::SetPalette(const theme::ThemePalette& palette) noexcept
 	}
 }
 
-void CMainStatusBar::SetScmText(std::wstring text)
+void CMainStatusBar::SetScmStatusCommands(std::vector<workbench::scm::ScmCommand> commands)
 {
-	if (m_scmText == text) return;
-	m_scmText = std::move(text);
+	if (m_scmCommands == commands) return;
+	m_scmCommands = std::move(commands);
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
@@ -466,7 +456,11 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 			POINT point{};
 			if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)) {
 				for (const auto& target : self->m_statusbarHitTargets) {
-					if (target.id == kNotificationStatusId && ::PtInRect(&target.bounds, point)) {
+					// 通知は状態で show/hide が入れ替わるため command を持たないが、
+					// 押せば必ず何かが起きる。それ以外は command を持つ項目だけを
+					// クリック可能に見せる。
+					const bool clickable = target.id == kNotificationStatusId || !target.command.empty();
+					if (clickable && ::PtInRect(&target.bounds, point)) {
 						::SetCursor(::LoadCursor(nullptr, IDC_HAND));
 						return TRUE;
 					}
@@ -526,25 +520,100 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const HGDIOBJ oldFont = font == nullptr ? nullptr : ::SelectObject(target, font);
 	m_extensionHitTargets.clear();
 	m_statusbarHitTargets.clear();
-	int scmWidth = 0;
-	if (!m_scmText.empty() && IsStatusbarEntryVisible("status.scm")) {
-		SIZE extent{};
-		if (::GetTextExtentPoint32W(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &extent)) {
-			const UINT scmDpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
-			const int textInset = workbench::icons::StatusTextInsetPixels(scmDpi);
-			scmWidth = std::min(width, static_cast<int>(extent.cx) + textInset + 8);
-			const RECT scmIconRect{ 0, 0, scmWidth, height };
-			DrawBranchIcon(target, scmIconRect, m_palette.highlightText.ToColorRef(), scmDpi);
-			RECT scmRect{ textInset, 0, scmWidth - 4, height };
-			::DrawTextW(target, m_scmText.c_str(), static_cast<int>(m_scmText.size()), &scmRect,
+
+	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
+	const int itemInset = workbench::icons::ScaleDip(workbench::icons::kStatusItemInsetDip, dpi);
+	const COLORREF iconColor = m_palette.highlightText.ToColorRef();
+
+	// 実 VS Code は StatusBarItem.text も SourceControl.statusBarCommands の
+	// Command.title も同じ renderLabelWithIcons で描く。ここでも両者は同じ 2 つの
+	// ラムダを通す。SCM だけ専用の分岐を持つと、同じ `$(name)` が場所によって
+	// 別の絵になり得る。
+	const auto measureLabelRuns = [&](const std::vector<workbench::icons::SLabelRun>& runs, int iconSide) {
+		int contentWidth = 0;
+		for (const auto& run : runs) {
+			if (run.icon) {
+				contentWidth += iconSide;
+				continue;
+			}
+			SIZE extent{};
+			if (::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent)) {
+				contentWidth += extent.cx;
+			}
+		}
+		return contentWidth;
+	};
+	const auto drawLabelRuns = [&](const std::vector<workbench::icons::SLabelRun>& runs,
+		const RECT& itemRect, int iconSide) {
+		const int boxHeight = std::max<int>(0, itemRect.bottom - itemRect.top);
+		const LONG contentRight = std::max<LONG>(itemRect.left, itemRect.right - itemInset);
+		LONG cursorX = std::min<LONG>(contentRight, itemRect.left + itemInset);
+		for (const auto& run : runs) {
+			if (cursorX >= contentRight) break;
+			if (run.icon) {
+				const int side = std::min<int>(iconSide, static_cast<int>(contentRight - cursorX));
+				if (side <= 0) break;
+				const workbench::icons::IconRect box{
+					static_cast<int>(cursorX),
+					itemRect.top + (boxHeight - side) / 2,
+					static_cast<int>(cursorX) + side,
+					itemRect.top + (boxHeight - side) / 2 + side,
+				};
+				if (run.resolved.font) {
+					// アイコンフォント（寄与アイコンも同梱 codicon.ttf も）は em ボックス
+					// いっぱいにグリフを置く前提で作られている。負の lfHeight は文字高
+					// （em 高）指定なので、アイコンの正方形と同じ高さを渡してから矩形の
+					// 中央へ寄せる。
+					const HFONT glyphFont = AcquireIconFont(
+						run.resolved.fontIcon.faceName, std::max(1, box.Height()));
+					if (glyphFont != nullptr && !run.resolved.fontIcon.glyph.empty()) {
+						const HFONT previousFont = static_cast<HFONT>(::SelectObject(target, glyphFont));
+						RECT glyphRect{ box.left, box.top, box.right, box.bottom };
+						::DrawTextW(target, run.resolved.fontIcon.glyph.c_str(),
+							static_cast<int>(run.resolved.fontIcon.glyph.size()), &glyphRect,
+							DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+						::SelectObject(target, previousFont);
+					}
+				} else {
+					workbench::icons::codicons::Draw(target, box, run.resolved.builtin, iconColor);
+				}
+				cursorX += side;
+				continue;
+			}
+			if (run.text.empty()) continue;
+			SIZE extent{};
+			(void)::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent);
+			RECT textRect{ cursorX, itemRect.top, contentRight, itemRect.bottom };
+			::DrawTextW(target, run.text.c_str(), static_cast<int>(run.text.size()), &textRect,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-			m_statusbarHitTargets.push_back({ "status.scm", scmIconRect });
+			cursorX = std::min<LONG>(contentRight, cursorX + extent.cx);
+		}
+	};
+
+	// 実 VS Code のステータスバー左端は SCM プロバイダーが公開した
+	// statusBarCommands の並びそのもの。git なら `$(git-branch) main` と
+	// `$(sync) 0↓ 1↑` の 2 項目で、それぞれ別のコマンドを実行する。1 本の
+	// テキストに畳むと、押した位置とコマンドの対応が失われる。
+	int scmWidth = 0;
+	if (IsStatusbarEntryVisible("status.scm")) {
+		const int scmIconSide = InlineStatusIconSide(height, dpi);
+		for (const auto& command : m_scmCommands) {
+			if (command.title.empty()) break;
+			const std::wstring title = u8stowcs(command.title);
+			const auto runs = workbench::icons::ParseLabelWithIcons(
+				title, m_extensionIconFonts, workbench::icons::CCodiconFont::Instance().FaceName());
+			const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+				measureLabelRuns(runs, scmIconSide), dpi);
+			const int right = std::min(width, scmWidth + itemWidth);
+			if (right <= scmWidth) break;
+			const RECT itemRect{ scmWidth, 0, right, height };
+			drawLabelRuns(runs, itemRect, scmIconSide);
+			m_statusbarHitTargets.push_back({ "status.scm", itemRect, command.command });
+			scmWidth = right;
 		}
 	}
 
 	const int partCount = static_cast<int>(::SendMessageW(m_hwndStatusBar, SB_GETPARTS, 0, 0));
-	const UINT dpi = static_cast<UINT>(::GetDpiForWindow(m_hwndStatusBar));
-	const int itemInset = workbench::icons::ScaleDip(workbench::icons::kStatusItemInsetDip, dpi);
 	// パート 0 はレガシーのドキュメント状態（カーソル位置・文字コード等）が占める帯で、
 	// ドキュメントが 1 つも開いていなければパートは 1 つも無い。しかし拡張のステータス
 	// 項目はそれとは別のレイヤーで、実 VS Code はエディターが開いていなくても
@@ -587,17 +656,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		// 登録に失敗しているので、取り込み済みベクターへ縮退する。
 		auto runs = workbench::icons::ParseLabelWithIcons(
 			item.text, m_extensionIconFonts, workbench::icons::CCodiconFont::Instance().FaceName());
-		int contentWidth = 0;
-		for (const auto& run : runs) {
-			if (run.icon) {
-				contentWidth += inlineIconSide;
-				continue;
-			}
-			SIZE extent{};
-			if (::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent)) {
-				contentWidth += extent.cx;
-			}
-		}
+		const int contentWidth = measureLabelRuns(runs, inlineIconSide);
 		ExtensionLayoutItem layout{
 			.item = &item,
 			.runs = std::move(runs),
@@ -608,50 +667,8 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	}
 	const auto drawExtensionItem = [&](const ExtensionLayoutItem& layout, int left, int right) {
 		if (layout.item == nullptr || right <= left) return;
-		RECT itemRect{ left, messageRect.top, right, messageRect.bottom };
-		const COLORREF iconColor = m_palette.highlightText.ToColorRef();
-		const LONG contentRight = std::max<LONG>(itemRect.left, itemRect.right - itemInset);
-		LONG cursorX = std::min<LONG>(contentRight, itemRect.left + itemInset);
-		for (const auto& run : layout.runs) {
-			if (cursorX >= contentRight) break;
-			if (run.icon) {
-				const int side = std::min<int>(inlineIconSide, static_cast<int>(contentRight - cursorX));
-				if (side <= 0) break;
-				const workbench::icons::IconRect box{
-					static_cast<int>(cursorX),
-					itemRect.top + (statusHeight - side) / 2,
-					static_cast<int>(cursorX) + side,
-					itemRect.top + (statusHeight - side) / 2 + side,
-				};
-				if (run.resolved.font) {
-					// アイコンフォント（寄与アイコンも同梱 codicon.ttf も）は em ボックス
-					// いっぱいにグリフを置く前提で作られている。負の lfHeight は文字高
-					// （em 高）指定なので、アイコンの正方形と同じ高さを渡してから矩形の
-					// 中央へ寄せる。
-					const HFONT glyphFont = AcquireIconFont(
-						run.resolved.fontIcon.faceName, std::max(1, box.Height()));
-					if (glyphFont != nullptr && !run.resolved.fontIcon.glyph.empty()) {
-						const HFONT previousFont = static_cast<HFONT>(::SelectObject(target, glyphFont));
-						RECT glyphRect{ box.left, box.top, box.right, box.bottom };
-						::DrawTextW(target, run.resolved.fontIcon.glyph.c_str(),
-							static_cast<int>(run.resolved.fontIcon.glyph.size()), &glyphRect,
-							DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
-						::SelectObject(target, previousFont);
-					}
-				} else {
-					workbench::icons::codicons::Draw(target, box, run.resolved.builtin, iconColor);
-				}
-				cursorX += side;
-				continue;
-			}
-			if (run.text.empty()) continue;
-			SIZE extent{};
-			(void)::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent);
-			RECT textRect{ cursorX, itemRect.top, contentRight, itemRect.bottom };
-			::DrawTextW(target, run.text.c_str(), static_cast<int>(run.text.size()), &textRect,
-				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-			cursorX = std::min<LONG>(contentRight, cursorX + extent.cx);
-		}
+		const RECT itemRect{ left, messageRect.top, right, messageRect.bottom };
+		drawLabelRuns(layout.runs, itemRect, inlineIconSide);
 		// ツールチップは Markdown 原文のまま持ち、実際にホバーを出す瞬間に解析する。
 		// 再描画のたびに解析すると、書式付きホバーでは平文射影より明確に高くつく。
 		if (!layout.item->command.empty() || !layout.item->tooltip.empty()) {
@@ -762,9 +779,16 @@ bool CMainStatusBar::InvokeBuiltinItemAt(POINT point) const
 {
 	if (!m_workbenchCommandCallback) return false;
 	for (const auto& target : m_statusbarHitTargets) {
-		if (target.id == kNotificationStatusId && ::PtInRect(&target.bounds, point)) {
+		if (!::PtInRect(&target.bounds, point)) continue;
+		if (target.id == kNotificationStatusId) {
+			// 通知だけは表示状態で show/hide が入れ替わるので、公開された 1 本の
+			// コマンドではなく現在の状態から決める。
 			m_workbenchCommandCallback(
 				m_notificationCenterVisible ? kHideNotificationsCommand : kShowNotificationsCommand);
+			return true;
+		}
+		if (!target.command.empty()) {
+			m_workbenchCommandCallback(target.command);
 			return true;
 		}
 	}

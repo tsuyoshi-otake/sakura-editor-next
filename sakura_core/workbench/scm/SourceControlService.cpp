@@ -85,6 +85,7 @@ bool IsValidCommand(const ScmCommand& command) noexcept
 {
 	return IsValidStableIdValue(command.command) &&
 		IsValidText(command.title, kMaximumLabelBytes, false) &&
+		IsValidText(command.tooltip, kMaximumTooltipBytes) &&
 		IsValidText(command.argumentsJson, kMaximumCommandArgumentsBytes, false);
 }
 
@@ -111,6 +112,9 @@ bool IsValidProviderMetadata(const ScmProviderState& provider) noexcept
 		!IsValidInputBox(provider.inputBox)) {
 		return false;
 	}
+	// `name` is optional exactly as upstream's `_name` is. When it is present it
+	// is rendered as the repository row's label, so it obeys the label bounds.
+	if (!IsValidText(provider.name, kMaximumLabelBytes)) return false;
 	if (provider.commitTemplate && !IsValidText(*provider.commitTemplate, kMaximumInputValueBytes)) return false;
 	if (provider.acceptInputCommand && !IsValidCommand(*provider.acceptInputCommand)) return false;
 	if (!std::all_of(provider.statusBarCommands.begin(), provider.statusBarCommands.end(), IsValidCommand)) return false;
@@ -125,7 +129,9 @@ std::size_t SaturatingAdd(const std::size_t left, const std::size_t right) noexc
 
 std::size_t PayloadBytes(const ScmCommand& command) noexcept
 {
-	return SaturatingAdd(SaturatingAdd(command.command.size(), command.title.size()), command.argumentsJson.size());
+	std::size_t total = SaturatingAdd(command.command.size(), command.title.size());
+	total = SaturatingAdd(total, command.tooltip.size());
+	return SaturatingAdd(total, command.argumentsJson.size());
 }
 
 std::size_t PayloadBytes(const ScmResourceState& resource) noexcept
@@ -153,6 +159,7 @@ std::size_t PayloadBytes(const ScmProviderState& provider) noexcept
 	std::size_t total = provider.handle.size();
 	total = SaturatingAdd(total, provider.id.size());
 	total = SaturatingAdd(total, provider.label.size());
+	total = SaturatingAdd(total, provider.name.size());
 	total = SaturatingAdd(total, provider.inputBox.value.size());
 	total = SaturatingAdd(total, provider.inputBox.placeholder.size());
 	if (provider.rootUri) total = SaturatingAdd(total, provider.rootUri->ToString().size() * sizeof(wchar_t));

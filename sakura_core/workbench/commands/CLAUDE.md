@@ -15,6 +15,39 @@
   bind executors and integer compatibility aliases, but the pure registry does
   not dispatch legacy commands itself.
 
+## API Commands and Their Argument Lists
+
+VS Code's *API commands* (`workbench/api/common/apiCommands.ts`) are a distinct
+kind of command and must be registered as one.
+
+- Upstream registers `vscode.diff` and `vscode.open` in `CommandsRegistry` only:
+  no `MenuRegistry` contribution, no category, and no keybinding. They therefore
+  carry **no surface bindings** here — no Command Palette slot, no menu, no
+  Activity Bar entry — and their `when` clause is `workbenchReady`. A command an
+  extension calls is not a command a user finds, and giving one a palette slot
+  upstream does not have would invent a surface.
+- They belong to the workbench, not to a feature, so they are registered in
+  `RegisterBuiltinCommands` rather than in a feature batch such as
+  `RegisterGitCommands`. A Git command that *calls* an API command
+  (`git.openChange`) stays in the feature batch with the feature's own `when`
+  clause.
+- `ApiCommandArguments.h/.cpp` owns the argument lists. Upstream passes real
+  `URI` objects because its caller and its handler share a process; here the
+  argument list is a wire payload, so the string form is what crosses. That is
+  the same string an extension would pass, which is the point of registering the
+  API command at all.
+- The builders and parsers are symmetric and the parsers fail closed on anything
+  malformed, over-long, or carrying a member the command does not define. An
+  absent trailing argument (`title`, `label`, `options`) is not malformed —
+  upstream declares those optional. A bound on string length exists so a hostile
+  payload cannot make a decoder allocate without limit; it is not a statement
+  about how long a real path may be.
+- An optional argument's *absence* is preserved rather than flattened to a
+  default. `TextDocumentShowOptions.override` is `std::optional<bool>` because
+  the built-in Git provider passes `false` for a both-modified conflict and
+  leaves it undefined otherwise, and those are different requests even where
+  this product currently routes both the same way.
+
 ## Stateful Operations
 
 - Registration is atomic, revisioned, bounded, and conflict checked across

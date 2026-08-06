@@ -1,0 +1,913 @@
+# Source Control Guidance
+
+## Scope
+
+This directory owns the SCM authority (`SourceControlService`), the built-in Git
+repository reader (`GitCommandRunner`, `GitScmModel`), the bridge that publishes
+that repository into the SCM model (`GitScmPublisher`), and the native Source
+Control view (`CScmWorkbenchTool`).
+
+The tracking Issue for the current work is #19.
+
+## One SCM Authority, No Second Truth
+
+`SourceControlService` is the only authority for what the Source Control view
+shows. The built-in Git repository is **not** a special case: it is published
+through the same service an extension-contributed provider uses, under VS Code's
+own `vscode.git` / `git` identities, so a consumer that already knows VS Code's
+SCM model finds the provider it expects.
+
+- `GitScmState` is a **parse result**, never a render source. `CScmWorkbenchTool`
+  builds its rows from published `ScmProviderState` values only. A change to the
+  view must not reintroduce a path that reads `GitScmState` directly, because two
+  render paths drift and the branch and the file list would then be able to
+  disagree.
+- One `CreateProvider` call carries the provider and all four groups, and the
+  service applies it as one revision. Do not replace it with an update followed
+  by per-group `ReplaceResources` calls: that reopens a window in which the
+  branch has already changed but the file list still belongs to the previous one.
+- A publisher that has not changed its (root, state, policy) publishes nothing,
+  so an idle 5-second refresh costs no service revision.
+- `state.repository == false` **retracts** the provider. "No repository here" and
+  "a repository with no changes" are different facts and must never render the
+  same.
+- A window with no `CWorkbenchRuntime` has no service to borrow. It builds the
+  same publication locally through `BuildGitPublication` and renders that, rather
+  than growing a second row-shaping path for that configuration.
+
+## Verified VS Code Behavior Reproduced Here
+
+Verified against `microsoft/vscode` sources, not inferred from screenshots.
+
+- Groups and labels, in upstream declaration order: `merge`/`Merge Changes`,
+  `index`/`Staged Changes`, `workingTree`/`Changes`,
+  `untracked`/`Untracked Changes`.
+- `hideWhenEmpty` is `true` for `merge` and `untracked` (explicit upstream
+  assignments) and for `index` (upstream drives it from
+  `git.alwaysShowStagedChangesResourceGroup`, default `false`). `workingTree`
+  has no assignment, so it stays `false` and its header shows while empty.
+- The view filter is upstream's `SCMTreeFilter`, verbatim:
+  `resources.length > 0 || !hideWhenEmpty`. `IsVisibleGroup` in
+  `CScmWorkbenchTool.cpp` is that condition and nothing else.
+- Git has two areas, so one path with both staged and unstaged edits appears in
+  **both** Staged Changes and Changes. `GitResourceGroupSet` is a set, not an
+  enum, for exactly this reason, and the provider `count` counts resources, not
+  files.
+- A conflicted path belongs to Merge Changes alone. Listing it under Changes as
+  well would offer a stage action for a file that must be resolved first.
+- Status text (`Index Modified`, `Conflict: Both Added`, …) and the
+  strike-through rule for every deleted status follow upstream's own strings.
+- The status bar encodes dirtiness in the **icon** — `$(git-branch)`,
+  `$(git-branch-changes)`, `$(git-branch-staged-changes)`,
+  `$(git-branch-conflicts)`, `$(git-commit)` when detached — **and** in the
+  label's trailing markers. **Corrected record:** an earlier version of this
+  section said the markers must not be appended because upstream does not append
+  them. That was wrong. Upstream's `headLabel` is `headShortName` plus `*` for
+  working-tree or untracked changes, `+` for staged changes, and `!` for a merge
+  or rebase in progress, in that order, and its status item renders icon and
+  label together. `GitHeadLabel` reproduces exactly that; the icon is not a
+  substitute for the markers, nor the markers for the icon.
+- `headShortName` is the branch name, else the object name cut by upstream's
+  literal `substr(0, 8)`. That 8 is **not** `git.commitShortHashLength`, whose
+  default is 7 and which governs only the checkout Quick Pick's object-name
+  descriptions. The two lengths differ in upstream, and `kGitCommitShortHashLength`
+  must not be substituted here: doing so would put this status item one character
+  off a real VS Code. `headShortName` is empty only when HEAD names nothing at
+  all — a detached HEAD with no commit — where upstream's callers take their
+  no-branch path. The status item names `HEAD` there rather than rendering a
+  blank, unclickable gap.
+- The commit input box placeholder is
+  `Message (Ctrl+Enter to commit on "<headShortName>")`, with the branch in
+  double quotes, and drops the `on "…"` clause entirely when there is no short
+  name. `{0}` is upstream's resolved `git.commit` keybinding.
+- The status items carry upstream's own tooltips: `<headLabel>, Checkout
+  Branch/Tag...` for the branch item, and `Publish Branch`,
+  `Synchronize Changes`, `Pull N commits from <upstream>`,
+  `Push N commits to <upstream>`, or `Pull N and push M commits between
+  <upstream>` for the sync item.
+- The sync item is `git.publish` / `$(cloud-upload) Publish Branch` with no
+  upstream branch, otherwise `git.sync` / `$(sync)` with `N↓ M↑` appended only
+  when the branch has actually diverged.
+- The status letter (`M`, `A`, `D`, `R`, `C`, `U`, `!`) is **not** part of
+  `SourceControlResourceState`; upstream publishes it through a separate
+  FileDecorationProvider. `GitResourceDecoration` is a side table keyed by
+  `Uri::ToString()` for the same reason. A provider we did not publish therefore
+  has no badge of ours, and the view renders none rather than inventing one.
+- One file has one badge even when it occupies two rows, because that table is
+  keyed by URI. Upstream fills its map in the order index, untracked,
+  workingTree, merge, and a later group overwrites an earlier one, so the
+  effective precedence is merge > untracked > workingTree > index and
+  `GitStatusLetter` reproduces exactly that. Do not "simplify" it to always read
+  the index column: a staged add that was edited again must show `M`, not `A`.
+  Provider `count` counts resources and the decoration table counts files, so
+  the two numbers legitimately differ and must not be conflated.
+
+## The Repository Row
+
+The band between the pane header and the resource list is upstream's
+`RepositoryRenderer` (`vs/workbench/contrib/scm/browser/scmRepositoryRenderer.ts`),
+read verbatim rather than inferred from a screenshot.
+
+- Template order, left to right: the icon, the `IconLabel`, the actions toolbar,
+  the `CountBadge`. `CScmWorkbenchTool` lays the band out in that order and
+  right-aligns the count, then the actions. The count occupies no width under
+  the default `scm.providerCountBadge` policy below, exactly as upstream's
+  `display: none` removes it from the flex row.
+- The icon is `ThemeIcon.isThemeIcon(provider.iconPath) ? provider.iconPath :
+  Codicon.repo`, and `repoSelected` applies only when more than one repository is
+  visible. A single repository therefore always renders a plain `$(repo)`.
+- The label is `provider.name` rendered with `IconLabel(..., { supportIcons:
+  false })`. The repository name is **never** parsed for `$(name)` tokens; a
+  directory literally called `$(x)` must render as itself. `description` is
+  `undefined` for a single repository, so the band shows none.
+- The row's title is `${provider.label}: ${labelService.getUriLabel(rootUri)}`,
+  i.e. `Git: C:\path\to\repo`, falling back to `label` alone with no `rootUri`.
+  It reaches the user through the band's tooltip.
+- The toolbar is `statusBarCommands.map(c => new StatusBarAction(c,
+  commandService))` followed by the menu actions. The band therefore renders the
+  **same published `ScmCommand` values** the status bar renders and runs them
+  through the same `CommandCallback`, so the branch item and the row can never
+  mean different things. The menu actions have no native counterpart yet and are
+  absent rather than approximated.
+
+### Native band divergences
+
+- **`scm.alwaysShowRepositories` is hard-coded to `true`.** Upstream renders the
+  repository row only when `visibleRepositories.length > 1 ||
+  scm.alwaysShowRepositories === true`, and `SCMViewPane` has no title override,
+  so its pane header is unconditionally `Source Control`. With one repository and
+  the default setting, upstream shows no repository name, no path, and no branch
+  inside the view at all. That is precisely the operational-safety gap this work
+  exists to close — "which repository, which branch" must be visible before a
+  commit — so the row is always rendered here. This is a deliberate divergence
+  from a **default**, not from a capability: the concept, its identifiers, its
+  contents, and its ordering are upstream's, and the setting's other value is
+  what upstream users already see. Revisit when `scm.*` settings are readable
+  from configuration.
+- **The band is painted by the tool, not by the list.** The view body is a plain
+  `LISTBOX`, which can render neither a codicon nor a per-row toolbar. The band
+  is therefore drawn in `CScmWorkbenchTool`'s own `WM_PAINT` and hit-tested in
+  its window proc, between the 30-DIP pane header and the list, at 22 DIP. Its
+  segments are recomputed on every re-layout, and `WM_LBUTTONUP` invokes the
+  segment under the cursor. This mirrors `CMainStatusBar`'s existing
+  `m_statusbarHitTargets` design rather than inventing a second interaction
+  model.
+- **`scm.providerCountBadge` is hard-coded to its documented default, `hidden`,
+  so the row shows no count.** Upstream sets
+  `countContainer.setAttribute('data-count', String(count))` and toggles
+  `hide-provider-counts` / `auto-provider-counts` on the tree container from that
+  setting; `scm.css` then hides `.scm-provider > .count` outright under `hidden`
+  and only at `data-count="0"` under `auto`. **Corrected record:** an earlier
+  version of this entry inferred a zero-only rule from the `data-count` attribute
+  without reading the stylesheet, and the band rendered a nonzero count. That was
+  a divergence from a stock VS Code, which shows nothing here. The count is still
+  computed exactly as upstream computes it
+  (`provider.count ?? getRepositoryResourceCount(provider)`), so `auto` and
+  `visible` need only the setting to be readable.
+- **Unresolved: the pane header's trailing `(N)`.** `SOURCE CONTROL  (N)`
+  predates this work. `SCMViewPane` has no `renderHeaderTitle` override, and no
+  `CountBadge` was found in `scmViewPane.ts`, but that file was read through a
+  fetch that may truncate, so its absence is not proven and `ViewPane`'s own
+  header-badge mechanism was not checked. Do not treat the `(N)` as verified
+  either way; resolve it against the real header before relying on it. It is
+  independent of the row's badge above, which is settled.
+- **The band's tooltips are Win32 tooltips, not hovers.** The name segment shows
+  the row title and each action segment shows its command tooltip, delivered
+  through `LPSTR_TEXTCALLBACKW` / `TTN_GETDISPINFOW` because the strings change
+  with every refresh. Upstream renders a `HoverWidget`; the richer surface this
+  repository already has (`workbench/hover/`) is not wired here yet, so a plain
+  tooltip is a degraded presentation of the same text rather than a different
+  one.
+- **`git.branchProtection`'s `$(lock)` icon case is absent.** Upstream's `getIcon`
+  has a protected-branch branch that depends on that setting. The setting is not
+  read, so the case does not exist here rather than being approximated by an
+  unrelated condition.
+- **`syncTooltip`'s read-only-remote branch is not evaluated.** Upstream's first
+  case also covers a remote it knows to be read-only. **Updated record:** the
+  remote commands now do read that fact — `ParseGitRemotes` derives
+  `GitRemote::isReadOnly` exactly as upstream does, and `RunGitSync` stops at
+  `the remote is read-only, so nothing was pushed`. The *tooltip* still does not,
+  because `GitScmPublisher` runs no `git remote --verbose`: the publisher refreshes
+  on a 5-second timer and adding a second git invocation to it would pay for that
+  string on every idle tick. So only the "nothing to push" half of the condition
+  applies to the wording, and a read-only remote with local commits still gets the
+  push tooltip — but invoking it now reports the real reason instead of failing at
+  git. Revisit when the publisher's refresh carries remote metadata.
+- **`Publish to {0}` is simplified to `Publish Branch`.** Upstream names the
+  remote when exactly one remote-source publisher is registered and says
+  `Publish to...` otherwise. There is no publisher registry here, so the general
+  form is used rather than naming a remote that was never resolved.
+
+## Branch Commands
+
+The status bar's branch item runs `git.checkout`, exactly as in VS Code. All
+four commands are registered under upstream's own IDs — `git.checkout`,
+`git.checkoutDetached`, `git.branch`, `git.branchFrom` — through
+`RegisterGitCommands`, which is a separate atomic batch from the workbench
+shell's `RegisterBuiltinCommands` because upstream ships them from `vscode.git`
+rather than from the workbench itself.
+
+`GitBranchCommands.h/.cpp` owns the orchestration and takes its Quick Pick,
+input box, git invoker, and message sink as injected callables. It has no HWND,
+no `CEditWnd`, and no `SourceControlService` dependency, so every flow below is
+asserted without a window (`GitBranchCommands.*`).
+
+- Titles, placeholders, and prompts are upstream's published strings:
+  `Checkout to...`, `Checkout to (Detached)...`, `Create Branch...`,
+  `Create Branch From...`, `Select a branch or tag to checkout`,
+  `Select a branch to checkout in detached mode`,
+  `Select a ref to create the branch from`, `Branch name`,
+  `Please provide a new branch name`.
+- Checking out a **remote head** reproduces `CheckoutRemoteHeadItem.run`:
+  `for-each-ref --format %(refname:short)%00%(upstream:short) refs/heads` finds a
+  local branch whose upstream is exactly that ref and checks that branch out;
+  with no such branch, `checkout -q --track <remote/ref>` creates it. Checking
+  the remote ref out directly would detach HEAD, which is a different operation
+  the user did not ask for. The lookup is restricted to `refs/heads` so a remote
+  ref cannot match itself.
+- The listing and the tracking lookup share one decoder, `DecodeGitOutput`. Two
+  decoders that disagreed by one character would silently turn "switch to the
+  existing local branch" into "create it again".
+- `promptForBranchName`'s order is preserved: existing-branch collision, then the
+  sanitize notice. A collision re-asks with the rejected text still in the field;
+  a sanitized name is accepted without a second ask. An empty box is upstream's
+  cancel path, not an error.
+- A failed listing never opens a picker. An unreadable ref list and an empty one
+  are different facts, and an empty picker would render the second as the first.
+- A non-zero exit reports git's own trimmed stderr ("local changes would be
+  overwritten", "pathspec did not match"); the hand-written sentences cover only
+  the terminal states where git produced no output at all.
+
+## Resource and Group Context Menus
+
+`GitScmMenus.h/.cpp` is a pure model of upstream's `scm/resourceState/context`
+and `scm/resourceGroup/context` contributions, read from the built-in Git
+extension's own `package.json` and `package.nls.json` rather than from memory.
+It takes no HWND and knows nothing about `TrackPopupMenu`; `CScmWorkbenchTool`
+is the only thing that renders it.
+
+- Ordering is upstream's `MenuInfo._compareMenuItems`: the `navigation` group
+  first, the remaining groups alphabetically (`1_modification` < `2_view` <
+  `worktree_diff`), and within one group by `order` and then by **title**.
+  `Discard Changes` therefore precedes `Stage Changes`, and `Discard All
+  Changes` precedes `Stage All Changes`, because each pair shares a group and an
+  order and upstream breaks that tie by title.
+- Titles are upstream's **bare** `package.nls.json` strings.
+  `WorkbenchCommandDescriptor::title` carries the category-prefixed `Git: Stage
+  Changes`, which belongs to the Command Palette; a menu must not reuse it.
+- A row names its operand through a side table, `GitPublication::operands`,
+  keyed by `(resourceUri, group)`. Both halves are required: the same path
+  legitimately occupies a row in Staged Changes and a row in Changes, and those
+  two rows stage and unstage different things. The table is emitted by
+  `AppendStageResources`, the same single derivation `CollectGitStageResources`
+  uses, so a row the view renders and the operand a menu names cannot drift. Its
+  order follows the change walk, not group order; consumers join on the key.
+- Group-scoped entries pass **no** arguments. Upstream's `stageAll`, `unstageAll`
+  and `cleanAll` read the repository's own groups, and so do ours through
+  `CollectGitStageResources`.
+- `git.stage` is kept on a Merge Changes row because upstream contributes it
+  there. Ours returns a typed `UnsupportedMergeConflict` with an actionable
+  message, which is a reported boundary rather than a silent no-op.
+
+### Native menu divergences
+
+- **Every upstream entry whose command has no route here is absent**, not
+  rendered disabled and not approximated by a different command. The omitted set
+  is `git.openHEADFile`, `git.openFile2`, `git.ignore`,
+  `git.revealFileInOS.{linux,mac,windows}`, `git.revealInExplorer`,
+  `git.compareWithWorkspace`, `git.stageAllMerge`, `git.viewChanges`,
+  `git.viewStagedChanges`, `git.viewUntrackedChanges`, `git.stageAllTracked`,
+  `git.stageAllUntracked`, `git.cleanAllTracked`, and `git.cleanAllUntracked`.
+  Merge Changes and Untracked Changes headers therefore have **no** group menu at
+  all, and so does a Changes header under any policy other than `mixed`. A caller
+  that receives an empty model must show no popup: an empty menu would claim the
+  row has actions that merely happen to be unavailable.
+- **`git.untrackedChanges` is hard-coded to its documented default, `mixed`.**
+  That is the policy both publish paths already use, so the menu's untracked
+  branch matches the groups its rows were built from. Revisit with the rest of
+  the `git.*` settings.
+- **Upstream's `inline` actions are not rendered.** The contributions place
+  `git.stage` / `git.clean` / `git.unstage` at `inline@2`, which VS Code draws as
+  hover buttons on the row. The view body is a plain `LISTBOX` with no per-row
+  toolbar, so those actions are reachable only through the context menu for now.
+  The same commands, with the same operand, run either way. **Corrected record:**
+  an earlier version of this entry called the `inline@1` slot "an open-diff
+  action" and elsewhere called it `git.openChange`. Upstream contributes *both*,
+  under complementary `when` clauses: `git.openFile2` when
+  `config.git.showInlineOpenFileAction && config.git.openDiffOnClick`, and
+  `git.openChange` when the same setting is `false`. `git.openDiffOnClick`
+  defaults to `true`, so the action a stock VS Code actually draws there is
+  `git.openFile2`, which is why that id stays in the omitted set above while
+  `git.openChange` has left it.
+- **`git.openChange` is in `navigation` for Index, Changes, and Untracked
+  Changes, and deliberately not for Merge Changes.** Read from the built-in Git
+  extension's own `package.json` rather than from memory: the `merge` group's
+  `navigation` contains `git.openFile` alone. A conflicted file is opened, not
+  compared, so adding an Open Changes entry there would offer a comparison
+  upstream does not. Within `navigation` every entry carries no explicit
+  `order`, so `MenuInfo._compareMenuItems` breaks the tie by title and
+  `Open Changes` precedes `Open File`.
+- **The menu is selected by the row, and a row we did not publish gets none.**
+  `ParseGitResourceGroupId` returns nothing for a group id no built-in Git group
+  publishes, and an extension-contributed provider's rows are therefore never
+  given Git's menu — it would offer to stage something Git does not own. A
+  resource row with no operand is refused for the same reason: a menu that cannot
+  say what it would act on is worse than no menu.
+- **Right-click selects the row first**, as VS Code's list does, so the row the
+  user is looking at and the row the command receives are the same row. The
+  menu-key path has no cursor position and anchors on the focused row's bottom
+  left instead.
+- **The row is copied before the menu is tracked.** `TrackPopupMenu` pumps
+  messages, so a background refresh can rebuild the row vector while the menu is
+  open; holding a reference across it would name a row that no longer exists.
+- **Multi-selection is not offered.** Upstream's handlers take the whole
+  selection; the list is single-select here, so every menu invocation names
+  exactly one row. `BuildGitStageArguments` already carries a vector, so a
+  multi-select list needs no model change.
+
+## Commit Commands and the Input Box
+
+`GitCommitCommands.h/.cpp` is a pure model of the built-in Git extension's
+`Repository.commit`, `commitWithAnyInput`, `handleCommitError`, and
+`undoCommit`, read from `microsoft/vscode`'s own `extensions/git/src/commands.ts`
+and `repository.ts`. It takes its git invoker, confirmation presenter, message
+prompt, dirty-document enumerator, document saver, and message sink as injected
+callables, so every flow is asserted without a window (`GitCommitCommands.*`).
+`git.commit`, `git.commitAmend`, and `git.undoCommit` are registered under
+upstream's own IDs through the same `RegisterGitCommands` batch as the branch
+and working-tree commands.
+
+- The message always travels through `--file -` on stdin, never as an argument.
+  `RunGit` writes stdin on its own thread, so a message larger than the pipe
+  buffer cannot deadlock; an argument would additionally be length-bounded and
+  could be reread as an option.
+- Upstream emits `--allow-empty-message` **twice** for a non-empty message — once
+  for the message and again on its `!useEditor` branch — and `-c
+  user.useConfigOnly=true` is spliced at the front, not appended. Emitting the
+  flag once would be tidier and would also be a different command line.
+- Gate order is upstream's and is load-bearing: unsaved documents, then the
+  smart-commit suggestion, then the no-changes/empty-commit offer, then the
+  `--no-verify` gates, then message resolution. Each one can end the command, so
+  reordering them changes which prompt a user sees.
+- `add([], …)` is `add -A -- .`: the **whole worktree**, not a listing of the rows
+  the last refresh happened to know about. A file changed since that refresh is
+  therefore included, exactly as upstream.
+- Saving unsaved documents re-adds only the documents that belong to the index
+  group, because saving them made the worktree differ from what was staged.
+- An amend over an existing commit deliberately yields **no** message, so
+  `--amend --no-edit` keeps the previous one. An empty message with nothing to
+  amend commits nothing.
+- A failed commit returns no input-box value at all, which is what keeps the
+  message that failed from being discarded. Only success clears the box.
+- `undoCommit` is `reset --soft HEAD~`, which keeps the undone commit's content
+  staged; a mixed or hard reset would unstage or destroy it. The first commit has
+  no parent, so it is `update-ref -d HEAD` followed by `rm --cached -r -- .`. The
+  undone message is read **before** the reset and restored into the box.
+- `handleCommitError`'s order is preserved: git's own stderr is matched first, and
+  only then is git asked whether `user.name` / `user.email` are configured, so a
+  failure that merely mentions a name cannot be reported as a missing identity.
+
+### Commit divergences
+
+- **Merge and rebase state are read from `git rev-parse --absolute-git-dir`,
+  not from a literal `<root>/.git` join.** Upstream joins the path. A worktree,
+  a submodule, and a `.git` file all put the metadata directory elsewhere, and
+  the joined path would then miss `MERGE_HEAD` and report "no merge in progress"
+  for a repository that is mid-merge. One extra invocation buys a correct answer.
+- **A rebase in progress fails closed as
+  `EGitCommitCommandStatus::UnsupportedRebaseInProgress`.** Upstream's
+  `Repository.commit` never reaches `git commit` there; it runs `git rebase
+  --continue`. There is no rebase model here, so the command refuses with an
+  actionable message rather than writing a commit the user did not ask for.
+  The state is read once, before any prompt, so the user is not walked through a
+  confirmation for something that cannot happen.
+- **`git.useEditorAsCommitInput` is hard-coded to `false`, against an upstream
+  default of `true`.** This is the one place a hard-coded default deliberately
+  differs from upstream's. That setting makes git open `core.editor` on a commit
+  message file and makes VS Code itself the editor; there is no such editor
+  integration here, so honouring the default would hand the message to whatever
+  `core.editor` happens to be — frequently a console editor with no window — and
+  the commit would appear to hang. `false` is the value that keeps the message in
+  the SCM input box, which is the surface this work exists to make usable.
+- **Upstream's `Always` / `Never` and `OK, Don't Ask Again` buttons are
+  absent.** Each writes a `git.*` setting, and there is no Settings writer on
+  this path. A button that silently failed to persist the user's choice would be
+  worse than no button; the remaining choices are upstream's own.
+- **The unsaved-documents prompt can only see this editor process's own
+  document.** Upstream enumerates every dirty `workspace.textDocument` inside the
+  repository. An editor process owns exactly one document, so the prompt names at
+  most that one, and a dirty document in another window is neither named nor
+  saved. Revisit when a cross-window document authority exists.
+- **The post-commit input reset goes to empty, not to `commit.template`.**
+  Upstream's `commitOperationCleanup` resets the box to `getInputTemplate()`,
+  which reads `git config commit.template` and loads that file. Reading it is not
+  implemented, so the reset is to empty.
+- **The diagnostics and branch-protection commit hooks are not implemented.**
+  Upstream's commit path also consults `git.diagnosticsCommitHook` and
+  `git.branchProtectionPrompt`. Neither setting is readable and neither model
+  exists here, so those gates do not exist rather than being approximated.
+- **The commit confirmations are native task dialogs, so upstream's one
+  non-modal `showInformationMessage` becomes modal here.** `BuildNoChangesPrompt`
+  carries `modal = false` and `warning = false` so the model still records which
+  of upstream's two message functions produced it, and the presenter renders the
+  information icon rather than the warning icon; only the modality differs.
+  Revisit when a native notification producer exists — see the branch-command
+  entry below for why there is none today.
+- **The message prompt puts upstream's prompt line into the dialog caption.**
+  `SExtensionQuickInputRequest` has no `prompt` field, so `Please provide a
+  commit message` becomes the caption and the placeholder — the half that names
+  the branch being committed on, `Message (commit on "<branch>")` — stays in the
+  field. Both are degraded presentations of the same two strings.
+- **The input box's background and border use the `raised` and `border` palette
+  tokens.** VS Code styles it from `input.background` / `input.border`, which
+  this theme palette does not publish. The nearest published tokens are used
+  rather than a hard-coded colour that no theme could change.
+- **The placeholder is painted by the tool, not by the control.**
+  `EM_SETCUEBANNER` works only on a single-line edit, and the commit box is
+  multi-line, so the placeholder is drawn in the tool's own paint path.
+- **`scm.inputMinLineCount`, `scm.inputMaxLineCount`, and `scm.inputFontSize`
+  are hard-coded to their documented defaults.** Hard-coding the upstream default
+  keeps the box identical to a stock VS Code; inventing a third size would not.
+
+## Opening a Change
+
+`GitDiffModel.h/.cpp` is a pure model of the built-in Git extension's
+`getLeftResource` / `getRightResource` / `resolveChangeCommand` and of the
+`git:` URI that `toGitUri` builds, plus the line-level diff and the row
+alignment a side-by-side diff editor needs. It takes no HWND, reads no file, and
+runs no git; `CEditWnd` is the only thing that turns its output into a surface.
+
+- The published resource command is upstream's own: `vscode.diff` with
+  `[left, right, title]` when both sides resolve, `vscode.open` with
+  `[resource, options, label]` when only the right-hand side does, and **no
+  command at all** when neither does. Both branches are titled
+  `localize('open', "Open")`, so a diff and a plain open are named the same
+  thing, exactly as upstream names them.
+- `vscode.diff` and `vscode.open` are registered as VS Code **API commands**.
+  Upstream registers them in `CommandsRegistry` only — no `MenuRegistry`
+  contribution, no category, no keybinding — so they carry no surface bindings
+  here either, and their `when` clause is `workbenchReady` rather than
+  `gitOpenRepositoryCount != 0`: they are workbench commands an extension may
+  call, not Git commands. `git.openChange` is the Git command, registered in the
+  same `RegisterGitCommands` batch as the stage and commit commands.
+- The argument lists cross as JSON through
+  [`../commands/ApiCommandArguments.h`](../commands/ApiCommandArguments.h), so a
+  `ScmCommand` a native row publishes and a payload an extension sends are the
+  same wire shape. `TextDocumentShowOptions.override` is carried rather than
+  flattened: the built-in Git provider passes `false` for a both-modified
+  conflict and leaves it undefined otherwise, and absent and `false` are
+  different requests.
+- `sanitizeRef('~')` is one fact **per change**, not per row. A path that is both
+  staged and edited again compares its unstaged row against the **index**, not
+  against HEAD; comparing against HEAD there would fold the staged edit into the
+  diff and show the user changes they have already staged. `stagedInIndex`
+  carries that fact from the change walk so the resolver never has to search the
+  published groups.
+- A `git:` URI round-trips through `BuildGitDiffEndpointUri` /
+  `ResolveGitDiffEndpointUri`, and an endpoint whose path will not join onto the
+  repository root resolves to nothing. A side that cannot be read cannot be
+  published either, so the refusal happens at publication rather than at the
+  click.
+
+### Diff divergences
+
+- **The surface is a projection, not an `EditorInput`.** `CDiffSurface` is a
+  native composition-layer surface in exactly the sense `CExtensionDetailSurface`
+  is, so `CEditWnd` shows it only while the native editor has no active
+  document, and a diff requested while a document is open returns
+  `NotApplicable` with that reason. Upstream opens a real diff editor in the
+  group. Revisit when a second editor input can be projected.
+- **`vscode.open` on a repository-side endpoint is `Unsupported`.** Upstream
+  opens a `git:` URI as a read-only document through its `GitFileSystemProvider`.
+  There is no read-only document input here, and showing one side of a
+  comparison with the other left empty would draw a whole-file insertion git
+  never reported. Working-tree endpoints open normally.
+- **No character-level inner diff.** Upstream computes one and uses its
+  alignment points to align *inside* a changed region. `BuildGitDiffViewRows`
+  starts a region level on both sides and pads the shorter side at the region's
+  **end**. The rows are therefore a coarser alignment of the same regions, never
+  a different set of regions.
+- **The diff is bounded by edit distance, not by a clock.** Upstream's
+  `IDocumentDiff.hitTimeout` means "this diff is not authoritative" and is set
+  when its time budget runs out. A pure model has no clock, so the bound here is
+  the quantity that budget was standing in for. The field keeps upstream's name
+  and meaning, and `SDiffSurfaceContent::truncated` carries it to the surface so
+  a bounded result is never rendered as a complete one.
+- **No index-side reverse lookup for a staged rename.** Upstream's
+  `getRightResource` additionally searches the index group to pick up a staged
+  rename's new name. Porcelain v2 already reports the new name in the change's
+  own path, so that lookup would only ever find the same string here.
+- **No merge editor.** Upstream routes a both-modified conflict to its
+  three-way merge editor when `git.mergeEditor` is on. That setting is not read
+  and no merge editor exists, so the conflict follows upstream's other branch and
+  opens the working-tree file.
+- **`diffEditor.diagonalFill` is drawn as an `HS_FDIAGONAL` hatch brush.** VS
+  Code paints CSS repeating stripes at its own angle and spacing. GDI's hatch is
+  the nearest primitive; it is the same role, the same theme token, and the same
+  meaning — "this side has no line here" — at a coarser rendering.
+- **The three diff palette roles are composited at design time.** VS Code's
+  registered defaults are translucent (`rgba(155,185,85,.2)`,
+  `rgba(255,0,0,.2)`, `#cccccc33` / `#22222233`) and composite over the editor
+  background. GDI has no alpha, so `diffInsertedLineBackground`,
+  `diffRemovedLineBackground`, and `diffDiagonalFill` are published pre-composited
+  over `canvas`. High Contrast registers all three as `null` upstream — it paints
+  no wash and no fill at all — and the palette reproduces that absence by giving
+  them the window color rather than choosing a highlight color.
+- **Both sides are decoded by `DecodeGitOutput`**, which is UTF-8 with a
+  Latin-1 fallback. A file in another encoding renders as that fallback rather
+  than through the editor's own charset detection. One decoder serves both sides
+  deliberately: two decoders that disagreed by a single character would render
+  identical text as a change, which is exactly the lie this surface exists to
+  prevent.
+
+## Staging Selected Lines
+
+`GitLineStaging.h/.cpp` is a pure model of the built-in Git extension's
+`extensions/git/src/staging.ts` — `applyLineChanges`, `toLineRanges`,
+`getModifiedRange`, `intersectDiffWithRange`, `invertLineChange`,
+`toLineChanges` — and of `Repository.stage`'s object-writing half. It takes no
+HWND, reads no file, and runs no git; the executor is the only thing that turns
+its output into an invocation (`GitLineStaging.*`).
+
+- **Upstream builds no patch.** `git.stageSelectedRanges` does not construct a
+  diff and feed it to `git apply --cached`; it assembles the *complete* new
+  index-entry content from the original and modified texts and stages that
+  content. `ApplyGitLineChanges` reproduces that assembly line for line. A patch
+  path would additionally have to agree with git on context, whitespace, and
+  rename detection; the content path has nothing to agree about.
+- `GitLineChange` keeps upstream's inclusive-end, 1-based encoding **including
+  its degenerate cases**: an insertion is `originalEndLineNumber == 0` and a
+  deletion is `modifiedEndLineNumber == 0`. That is a different type from the
+  half-open `GitLineRangeMapping` the diff produces, and `ToGitLineChanges` is
+  the only conversion. Collapsing the two would silently turn a zero-length
+  range into a one-line one.
+- Unstaging is the same algorithm with the two sides swapped:
+  `InvertGitLineChange` exchanges the original and modified fields, and the
+  result is staged as the new index content. There is no second implementation
+  to keep in step with the first.
+- **A deletion that reaches the last line also drops the previous line's
+  terminator**, which is upstream's fix for microsoft/vscode#59670. Without it
+  the assembled content keeps a trailing newline the modified text does not
+  have, and the staged blob differs from what the user selected by one byte.
+  `ApplyGitLineChangesDropsTheTerminatorOfADeletedLastLine` exists to catch
+  exactly that.
+- The staged content is written with `hash-object --stdin -w --path
+  <relativePath>` and installed with `update-index --cacheinfo <mode> <hash>
+  <relativePath>`. `--path` is required: without it git applies no clean/smudge
+  filter and `core.autocrlf` or a `.gitattributes` rule would be skipped for
+  this one write.
+- The mode is read from HEAD (`ls-tree -l`), falling back to the index
+  (`ls-files --stage`) when there is no HEAD commit, exactly as upstream. A file
+  git knows nothing about takes `100644` and `--add`. Guessing `100644` for a
+  file that is `100755` in HEAD would silently clear its executable bit.
+- The text is normalized to one EOL before any of this, as
+  `PieceTreeTextBufferBuilder._getEOL` does: CRLF when more than half the
+  terminators carry a CR, otherwise LF. The C++ integer `total / 2` and the
+  JavaScript float division agree for both parities, so the boundary case picks
+  the same terminator here as in VS Code.
+
+### Line-staging divergences
+
+- **Overlapping selections are unioned, where upstream intersects them.**
+  Upstream's `toLineRanges` reduce replaces the accumulated span with
+  `l.intersection(last)` when two selections overlap, so selecting lines 1–5 and
+  then 3–8 stages **3–5 only** and silently drops 1–2 and 6–8.
+  `NormalizeGitSelectedLines` takes the union and stages 1–8. This is a
+  deliberate divergence from an upstream defect, not from an upstream design:
+  every other case — sorting, merging a span that starts on the line after the
+  previous one ends, keeping separated spans apart — is upstream's, and the
+  divergence is confined to the one branch where upstream discards lines the
+  user selected. Staging less than was selected is the failure mode this work
+  exists to prevent.
+- **A text with no line terminator at all takes the platform default, CRLF.**
+  VS Code's builder falls back to the platform EOL for that input, and this is
+  Windows. The value only matters for a single-line file that is about to gain a
+  second line, and it is the value a real VS Code on this platform would use.
+- **`EncodeGitText` fails closed rather than substituting.** `DecodeGitOutput`
+  is UTF-8 with a byte-wise Latin-1 fallback and has no inverse, so staging is
+  the first place this subsystem writes bytes. The encoder is told which branch
+  the decoder took and refuses — returning no value — when the text cannot be
+  represented in it: a character outside Latin-1 under the fallback branch, or
+  an unpaired surrogate under UTF-8. A replacement character would stage a blob
+  that differs from the file the user was looking at, which is a data-loss bug
+  wearing a success return.
+- **The empty `--add` slot is omitted rather than passed empty.** Upstream keeps
+  an empty string in that argument position when it is not adding. An empty
+  argument survives this product's `CommandLineToArgvW` quoting as `""`, which
+  git reads as a pathspec matching nothing, so the argument is dropped instead.
+  The command line git actually receives is the one upstream means.
+- **Every position is validated instead of being allowed to throw.** Upstream
+  relies on `TextDocument.lineAt()` throwing for an out-of-range line, which is
+  unreachable for the changes its own diff produces. Here every position goes
+  through a `validatePosition` equivalent and a reversed range appends nothing,
+  so a malformed change list produces a wrong staged content rather than an
+  unwind through native window code. On the inputs upstream can reach, the two
+  behave identically.
+
+### Selecting the lines to stage
+
+`git.stageSelectedRanges` and `git.unstageSelectedRanges` are registered under
+upstream's own IDs in the same `RegisterGitCommands` batch, with upstream's own
+`isInDiffEditor` in their `when` clause. `CEditWnd::ExecuteGitSelectedRangesCommand`
+is the executor for both; there is one code path because unstaging is the same
+algorithm with the two sides exchanged.
+
+- **The operand is a row selection, not a text selection.** Upstream reads the
+  active diff editor's `selections` and widens each to whole lines in
+  `toLineRanges`. `CDiffSurface` has no caret and no per-glyph measurement, so it
+  selects **rows** of the rendered alignment, which is the widened form upstream
+  computes anyway. A row that carries a modified line names that line.
+- **A row with no modified line names the seam beside it.** That row is a line
+  the original side has and the modified side does not.
+  `GetModifiedRange` puts such a deletion on the seam between the two modified
+  lines that surround it, and `IntersectGitLineChange` reaches that seam from
+  either side, so the executor names the seam by the **preceding** modified line
+  — or by line 0 for a deletion at the very top, where there is no preceding
+  line. Upstream's modified-side selection over those same screen rows would be
+  empty, so this is a divergence in the user's favour: selecting a visible
+  deletion stages it, where upstream requires the user to also select a
+  neighbouring line.
+- **The one-line extension cannot swallow an unselected region.**
+  `ComputeGitLineDiff` merges adjacent edits into one region, so two distinct
+  regions always have at least one unchanged line between them on both sides.
+  The neighbour of a pure-deletion seam is therefore always an unchanged line,
+  and inside a mixed region the padding rows name that same region's last
+  modified line — the region the user was looking at, never the next one.
+- **Applicability is gated on what the open comparison is**, exactly as
+  upstream's two handlers are, not on which command was invoked. Staging needs a
+  working-tree right-hand side; unstaging needs the index (`ref === ''`) on the
+  right and HEAD on the left. Any other comparison returns `Unsupported`: there
+  is no index entry those lines could be written into, and picking one would
+  write somewhere the user did not ask for.
+- **Both sides are re-read and compared against what is on screen, and a
+  difference fails closed.** Upstream's diff editor holds live documents and
+  recomputes its diff as they change; a surface holds a snapshot. A row index
+  means nothing against text that has moved, so a changed side reports
+  `the compared files changed after this comparison was opened` rather than
+  staging a region the user never looked at. A truncated diff (`hitTimeout`) is
+  refused for the same reason: a bounded alignment does not name the same
+  changes the selection covers.
+- **A mixed-encoding comparison fails closed.** The assembled content carries
+  text from both sides, so UTF-8 is used only when both sides decoded as UTF-8;
+  otherwise the byte-wise fallback applies and `EncodeGitText` refuses anything
+  it cannot represent, as described above.
+- **Success refreshes the comparison instead of leaving the snapshot stale.**
+  The index moved, so `SourceControlService` is refreshed and the same two URIs
+  are re-opened through `vscode.diff`, which re-reads both sides —
+  `CDiffSurface::ShowDiff` clears the selection, so no selection survives into a
+  comparison it no longer describes. A comparison that can no longer be opened
+  is retracted rather than left showing text that no longer exists.
+- **The selection colour wins over the diff wash.** GDI has no alpha, so a
+  selected changed row paints the selection colour rather than compositing it
+  over `diffInsertedLineBackground` / `diffRemovedLineBackground` the way VS
+  Code's translucent defaults do. Which rows are selected is the fact the user
+  is about to act on, so it is the one that must stay legible.
+
+## Remote Commands
+
+`GitSyncCommands.h/.cpp` is a pure model of the built-in Git extension's
+`fetch` / `fetchPrune` / `fetchAll` / `pull` / `pullRebase` / `push` / `sync` /
+`syncRebase` / `publish` commands, of `Repository.fetch`, `Repository.pull`,
+`Repository.pushTo`, `Repository._sync`, and of `getRemotesGit`'s
+`git remote --verbose` parse. It takes its git invoker, remote picker,
+confirmation presenter, and message sink as injected callables and has **no
+HWND** — no `GitSyncCommandContext` member carries one — so every flow is
+asserted without a window (`GitSyncCommands.*`, 63 tests).
+
+All nine are registered under upstream's own IDs in the same
+`RegisterGitCommands` batch as the branch, stage, and commit commands, because
+upstream ships them from `vscode.git` rather than from the workbench.
+`CEditWnd::ExecuteGitSyncCommand` is the single executor; `EGitSyncCommand`
+names the nine, one member each.
+
+- **Nine commands, not one command with flags.** Upstream publishes the prune,
+  all-remotes, and rebase variants as separate command IDs, so they are separate
+  members here. Collapsing them into one executor reading a caller-supplied flag
+  would invent a payload shape upstream never publishes, and the Command Palette
+  would then show one entry where VS Code shows three.
+- **Where to push and what to push are read from two different places.** HEAD,
+  its upstream, and the ahead/behind counts come from the published
+  `GitScmState`; the remotes come from a fresh `git remote --verbose`.
+  `BuildGitSyncRepositoryState` joins them without inferring either from the
+  other, which is what keeps a stale refresh from choosing the remote.
+- **A repository with no remote is a warning, not a failure.** Upstream shows
+  `Your repository has no remotes configured to publish to.` and stops;
+  `EGitSyncCommandStatus::NotApplicable` carries that sentence to the status bar.
+  A detached HEAD declines for the same reason.
+- **The sync confirmation is upstream's own, and `git.confirmSync` defaults
+  true**, so syncing asks first exactly as a stock VS Code does.
+- **`RunGitSync`'s `rebase` parameter is not OR-ed with `git.rebaseWhenSync`
+  inside the model.** Upstream's `_sync` computes `rebase || rebaseWhenSync` in
+  its caller, so the OR lives at the `CEditWnd` call site: `git.sync` passes
+  `configuration.rebaseWhenSync` and `git.syncRebase` passes `true`, which the
+  setting cannot turn back off. Putting the OR in the model would make
+  `git.syncRebase` indistinguishable from `git.sync` under a true setting.
+- A non-zero exit reports git's own trimmed stderr through `DescribeGitFailure`;
+  the hand-written sentences cover only the terminal states where git produced no
+  output at all. Authentication failures therefore arrive as git's own wording
+  rather than as a guess about why the remote refused.
+- Success refreshes `SourceControlService`, because a fetch, pull, or push moves
+  the counts the branch and sync status items render.
+
+### Remote-command divergences
+
+- **The remote pick strips upstream's leading `$(name)` markup at the presenter
+  boundary.** `BuildFetchRemotePickItems` emits `$(cloud) origin` and
+  `$(cloud-download) Fetch all remotes`, which is upstream's own label text.
+  `CExtensionQuickInputDialog` does no codicon parsing at all — verified by
+  reading it, not assumed — so those rows would render the literal characters
+  `$(cloud) origin`. The executor removes the leading `$(…)` token and the space
+  after it, the same treatment the checkout picker's separator rows already get
+  there. The model keeps upstream's strings, so a picker that can render
+  codicons needs no model change.
+- **No `git.*` configuration is read.** `GitSyncConfiguration` is constructed at
+  its documented upstream defaults and nothing writes to it: `git.confirmSync`
+  (`true`), `git.rebaseWhenSync` (`false`), `git.followTagsWhenSync` (`false`),
+  `git.pullTags` (`true`), `git.fetchOnPull` (`false`), `git.autoStash`
+  (`false`), `git.allowForcePush` (`false`), `git.useForcePushWithLease`
+  (`true`). Hard-coding the upstream default keeps behavior identical to a stock
+  VS Code; inventing a third behavior would not.
+- **Upstream's setting- and memento-writing buttons are absent.**
+  `OK, Don't Show Again` writes `git.confirmSync`, `OK, Don't Ask Again` writes
+  the `confirmBranchPublish` memento, and `Always Pull` writes
+  `git.autofetch`-adjacent state. There is no Settings writer and no memento
+  store on this path, and a button that silently failed to persist the user's
+  choice would be worse than no button. The remaining choices are upstream's own.
+- **There is no `RemoteSourcePublisher` registry, so publishing never offers to
+  add a remote.** Upstream falls back to registered publishers and to its
+  `AddRemoteItem` row when a repository has none. Here the no-remote case is
+  upstream's warning and nothing else, rather than a row that cannot do anything.
+- **`maybeAutoStash` is not implemented, so `git.autoStash` is unreachable.**
+  The setting is carried as data at its real default precisely so the gap is
+  visible; `GitPullOptions::autoStash` exists and nothing sets it. A pull that
+  hit local changes reports git's own refusal instead of silently stashing.
+- **There is no git-version probe.** Upstream guards `--autostash` and
+  `--force-if-includes` on git >= 2.30. `BuildGitPushArguments` emits
+  `--force-if-includes` alongside `--force-with-lease` unconditionally, which is
+  currently unreachable — `git.allowForcePush` defaults false and no registered
+  command surfaces a force push — so the argument builder is the only place a
+  force push can be produced at all. Add the probe before any command reaches it.
+- **The fetch pick has no separator row**, for the same reason the checkout
+  picker has none: `CExtensionQuickInputDialog` cannot render one, and an inert
+  selectable line would be a faked capability.
+- **No progress indicator and no operation queue.** As with the branch commands,
+  each remote command runs `RunGit` synchronously on the UI thread, so the window
+  blocks for the duration of one bounded, timeout-guarded invocation. A fetch or
+  push over a slow network is where this is most visible; it is the same absent
+  queue recorded under "Divergences" below, not a separate gap.
+- **Messages go to the status bar, not to a notification**, and the
+  confirmations are native task dialogs, so upstream's non-modal
+  `showInformationMessage` is modal here. Both are the subsystem-wide boundaries
+  already recorded under "Divergences" below.
+
+## Divergences
+
+Each entry states the constraint and the chosen behavior. An undocumented
+divergence is a bug.
+
+- **Retracted: "Resource click opens the file, not a diff."** That entry recorded
+  the absence of a diff editor and said it would end with slice 3. It has. The
+  published resource command is now upstream's own `resolveChangeCommand`
+  result — `vscode.diff` when both sides resolve, `vscode.open` when only the
+  right-hand side does — and `git.openChange` is registered and routed. The
+  remaining diff-side divergences are in "Opening a Change" above.
+- **`ScmResourceState::contextValue` is left empty for built-in Git resources.**
+  Upstream's getter returns its `_repositoryKind`. **Updated record:** resource
+  context menus have now landed, and they still do not consume `contextValue`:
+  the built-in Git menus are selected by the row's *group*, exactly as upstream's
+  `when` clauses select them by `scmResourceGroup`. `contextValue` is what an
+  extension-contributed `when` clause would match on, and there is no such
+  clause here yet. Publishing an invented value would still be worse than
+  publishing none. Revisit when extension-contributed SCM menus land.
+- **`git.alwaysShowStagedChangesResourceGroup` is not read.** Its documented
+  default (`false`) is hard-coded into the `index` group's `hideWhenEmpty`.
+  Hard-coding the upstream default keeps the empty state identical to a stock VS
+  Code; inventing a third behavior would not. Revisit when the setting is
+  readable from configuration.
+- **`CommandCallback` reports recognition, not success.** `CEditWnd` now installs
+  one; it forwards to `TryExecuteWorkbenchStableCommand` and returns that
+  method's `handled` flag, which is true only once
+  `WorkbenchCommandRegistry::Find` matched the id. Returning recognition rather
+  than `void` is what preserves the `git.openFile` route below: an unregistered
+  id falls back to the file-activation callback, exactly as it did before a
+  callback existed, while `git.checkout` reaches the real registry. A callback
+  that swallowed unimplemented command IDs silently would be worse than none.
+- **The native Quick Pick cannot render a group separator.** Upstream's picker
+  is grouped by `branches` / `remote branches` / `tags` separators.
+  `CExtensionQuickInputDialog` has no separator row, so `EGitCheckoutItemKind::
+  Separator` items are dropped at the presenter boundary and a `positions` vector
+  maps each rendered row back to its model row. Rendering a separator as an inert
+  selectable line would be a faked capability, and renumbering without the map
+  would silently check out the wrong ref. The separators stay in the model, so
+  the model remains the faithful description and a picker that can group them
+  needs no model change.
+- **The native Quick Pick has no filter box, so upstream's typed-filter
+  reordering never applies.** VS Code moves the three command rows below the refs
+  once the user types. Here the filter is always empty, so
+  `BuildCheckoutItems(..., filterIsEmpty = true)` — commands first — is the one
+  ordering the user ever sees. `filterIsEmpty = false` is implemented and tested
+  so a searchable picker needs no new model work.
+- **The input box has no live validation callback, so the collision message
+  becomes the dialog caption.** `SExtensionQuickInputRequest` has no `prompt`
+  field and no validation hook; upstream keeps its box open and renders the error
+  inline. The re-prompt therefore passes the validation message as
+  `request.title`, which the dialog paints as its window caption, and preserves
+  the rejected text as the initial value. The sanitize notice, which upstream
+  shows as a separate information message, goes to the status bar. Both are
+  degraded presentations of the same message, not a different message.
+- **The picker captions itself with the command title.** Real VS Code's quick
+  input is a chromeless overlay with no caption at all; this dialog is a framed
+  window that must caption itself with something, so it reuses the title upstream
+  already publishes for that command rather than inventing a label.
+- **Branch-command messages go to the status bar, not to a notification.**
+  `CNotificationHost` is fed exclusively from
+  `CExtensionService::PendingNotifications()`; there is no native notification
+  producer, and adding one here would create a second notification authority.
+  The status bar is the same surface the colour-theme and file-icon-theme pickers
+  already report through. Revisit when a native notification source exists.
+- **The commands run `RunGit` synchronously on the UI thread with no progress
+  indicator.** Upstream runs them through its operation queue and reports
+  progress in the SCM view, and `enablement: !operationInProgress` disables a
+  command while another is running. Neither the queue nor that context key exists
+  here yet, so the window blocks for the duration of one bounded, timeout-guarded
+  git invocation instead of pretending to be asynchronous.
+- **The `when` clause is `gitOpenRepositoryCount != 0` alone.** Upstream's is
+  `config.git.enabled && !git.missing && gitOpenRepositoryCount != 0`. The other
+  two are not keys this product publishes: there is no `git.enabled` setting to
+  read and no `git.missing` probe, and a clause referencing an unpublished key
+  would evaluate false and hide the commands entirely.
+  `gitOpenRepositoryCount` is owned by the core context projection rather than by
+  an extension, because our Git provider is native.
+- **Retracted: "`git.sync` and `git.publish` are deliberately not registered."**
+  That entry recorded the absence of a remote-command route and said it would end
+  with slice 4. It has. All nine remote commands are registered with real
+  executors; see "Remote Commands" above for what they do and where they still
+  diverge.
+- **Upstream's branch-related settings are hard-coded to their documented
+  defaults.** `git.branchPrefix` (empty), `git.branchWhitespaceChar` (`-`),
+  `git.branchValidationRegex` (empty), `git.branchProtection` (none),
+  `git.checkoutType` (all three groups), `git.showReferenceDetails` (`true`),
+  `git.commitShortHashLength` (`7`), and `git.pullBeforeCheckout` (`false`) are
+  not read from configuration. Hard-coding the upstream default keeps behavior
+  identical to a stock VS Code; inventing a third behavior would not. Revisit
+  when these settings are readable.
+- **Both SCM status items share one `status.scm` visibility ID, and only the
+  first provider's commands are shown.** Upstream gives each contributed status
+  command its own entry and shows every provider's. The native status bar's
+  hidden-item model is keyed by stable ID, so the branch item and the sync item
+  are one hideable unit here. Inventing per-item IDs VS Code does not publish
+  would break the customization menu's identity contract; a second provider's
+  commands are absent rather than merged into the first provider's row. Revisit
+  when a provider actually publishes a second set.
+
+## Running git
+
+`RunGit` is the only way this subsystem starts a git process. It is bounded and
+cancellable, and its terminal state is typed.
+
+- Terminal states are distinct on purpose: `GitUnavailable`, `LaunchFailed`,
+  `TimedOut`, `Cancelled`, `OutputLimitExceeded`, `InvalidRequest`, `Failed`,
+  `Succeeded`. An empty change list means "clean" **only** when the refresh
+  reported `Succeeded`; otherwise it means "unknown", and `CScmWorkbenchTool`
+  keeps `execution` and `failureReason` separate from `state` so the two can
+  never be confused.
+- The child environment sets `GIT_TERMINAL_PROMPT=0`. Without it a credential
+  prompt makes fetch/pull/push hang forever and surface only as a timeout, which
+  names the wrong cause.
+- `BuildEffectiveGitArguments` prepends `-C <workingDirectory>`. The working
+  directory alone is not enough: a directory can sit inside a different
+  repository's worktree, and `-C` is what makes git resolve the repository the
+  request names.
+- stdin is written on its own thread while the parent drains stdout and stderr.
+  A commit message can exceed the pipe buffer, and a blocking parent write would
+  deadlock against a child waiting for its stdout to be drained.
+- Argument quoting follows `CommandLineToArgvW`, including the trailing
+  backslash-run rule. Branch names, paths, and commit messages all reach git
+  through it.
+
+## Verification
+
+- `build-sln.bat x64 Debug`, then the focused filter
+  `tests1.exe --gtest_filter=GitCommandRunner.*:GitScmModel.*:GitScmPublisher.*:GitScmMenus.*:GitRefModel.*:GitBranchCommands.*:GitStageCommands.*:GitCommitCommands.*:GitDiffModel.*:GitLineStaging.*:GitSyncCommands.*`.
+  Add `ApiCommandArguments.*:WorkbenchCommandRegistry.*:WorkbenchContextKeyService.*:WorkbenchWhenClauseEvaluator.*`
+  when the command registration or `when` clause changes; that cohort passed
+  295/295 across 15 suites on 2026-08-06 with no surviving `tests1` or
+  repository-built `sakura` process. It passed 232/232 earlier the same day,
+  before the remote commands, 194/194 before line staging, 141/141 before the
+  diff model, and 102/102 on 2026-08-05, before the commit commands.
+- `ApiCommandArguments.*` was silently outside the focused filter until the diff
+  work widened it, so its tests built and linked without ever running in a
+  focused pass. Widen the filter with the suite name whenever a new suite lands;
+  a suite the filter does not name is indistinguishable from a suite that passes.
+- The publisher tests read the two compared sides back out of the published
+  URIs, through `ParseApiDiffArguments` / `ParseApiOpenArguments` and
+  `ResolveGitDiffEndpointUri`, rather than comparing URI strings. The assertion
+  is about *which two texts a click compares*; a string comparison would instead
+  pin down how `toGitUri` happens to spell them.
+- The rebase/merge tests create a throwaway directory under
+  `std::filesystem::temp_directory_path()`, because `ReadInProgressState` probes
+  `MERGE_HEAD` and the rebase state directories with `GetFileAttributesW` and no
+  injected callable can intercept a real filesystem call.
+- `sakura.vcxproj` deletes `x64\Debug\sakura.exe` before linking, so a running
+  editor fails the build with `MSB3073` even when every translation unit
+  compiled. Close the running editor rather than assuming a compile error.

@@ -16,6 +16,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace workbench::commands {
@@ -76,6 +77,22 @@ struct WorkbenchCommandExecutionResult {
 
 using WorkbenchCommandExecutor = std::function<WorkbenchCommandExecutionResult()>;
 
+/*!
+	@brief An executor that receives the invocation's arguments payload.
+
+	VS Code commands take arguments (`Command.arguments`), and a resource-scoped
+	one is meaningless without them: `git.stage` must know *which* rows of *which*
+	group it was asked to stage. An argument-less executor cannot express that, so
+	this is an additive second executor shape rather than a change to the one
+	above - the existing argument-less commands neither need nor gain a payload.
+
+	The payload is opaque to the registry. Its shape is a contract between the
+	surface that publishes the command's arguments and the executor the
+	composition root binds, exactly as in VS Code.
+*/
+using WorkbenchCommandArgumentExecutor =
+	std::function<WorkbenchCommandExecutionResult(std::string_view argumentsJson)>;
+
 //! Optional bindings supplied by the native composition root. Empty executors remain explicitly Unsupported.
 struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor showCommands;
@@ -117,6 +134,74 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor markdownReopenAsPreview;
 	WorkbenchCommandExecutor markdownReopenAsSource;
 	WorkbenchCommandExecutor markdownTogglePreview;
+	//! VS Code's own **API commands** (`workbench/api/common/apiCommands.ts`).
+	//! They exist so that any contributor - the built-in Git provider included -
+	//! can open a comparison or a resource without knowing which editor will
+	//! serve it. Upstream registers them through `CommandsRegistry` with no
+	//! `MenuRegistry` contribution, so they carry no surface binding here either:
+	//! they are callable, never listed. Both take arguments, because a comparison
+	//! with no operands is not a comparison.
+	WorkbenchCommandArgumentExecutor vscodeDiff;
+	WorkbenchCommandArgumentExecutor vscodeOpen;
+};
+
+/*!
+	@brief Executors for the built-in Git provider's branch commands.
+
+	Kept separate from `WorkbenchBuiltinCommandExecutors` because they belong to
+	one provider rather than to the workbench shell, and because upstream ships
+	them from the `vscode.git` extension rather than from the workbench itself.
+	A command left empty here still registers and still resolves, but executes as
+	`Unsupported` - the sanctioned typed boundary.
+*/
+struct WorkbenchGitCommandExecutors {
+	WorkbenchCommandExecutor checkout;
+	WorkbenchCommandExecutor checkoutDetached;
+	WorkbenchCommandExecutor branch;
+	WorkbenchCommandExecutor branchFrom;
+	//! Resource-scoped: upstream declares these on `scm/resourceState/context`
+	//! and passes the selected `SourceControlResourceState` values as arguments.
+	//! Which rows, and which group each row came from, is the whole operand.
+	WorkbenchCommandArgumentExecutor stage;
+	WorkbenchCommandArgumentExecutor unstage;
+	WorkbenchCommandArgumentExecutor clean;
+	//! `git.openChange`. Resource-scoped like the three above, and for the same
+	//! reason: the operand is one row, and which group that row came from decides
+	//! whether the comparison is HEAD-against-index or index-against-working-tree.
+	WorkbenchCommandArgumentExecutor openChange;
+	//! Group-scoped: upstream declares these on `scm/resourceGroup/context`, and
+	//! their handlers take only the repository. The group is implied by the
+	//! command, so they need no payload.
+	WorkbenchCommandExecutor stageAll;
+	WorkbenchCommandExecutor unstageAll;
+	WorkbenchCommandExecutor cleanAll;
+	//! Repository-scoped: upstream's `commitWithAnyInput` takes only the
+	//! repository and reads the commit message off its own SCM input box, so
+	//! these carry no payload either.
+	WorkbenchCommandExecutor commit;
+	WorkbenchCommandExecutor commitAmend;
+	WorkbenchCommandExecutor undoCommit;
+	//! Diff-editor-scoped: upstream's handlers take no operand at all. They read
+	//! the active diff editor and its current selections, so the operand is the
+	//! editor state at the moment of invocation rather than anything a caller
+	//! could pass.
+	WorkbenchCommandExecutor stageSelectedRanges;
+	WorkbenchCommandExecutor unstageSelectedRanges;
+	//! Remote-scoped: upstream's `fetch`, `pull`, `push`, `sync`, and `publish`
+	//! handlers take only the repository. Which remote, which branch, and whether
+	//! to rebase come from the repository's own HEAD/upstream state or from a
+	//! Quick Pick, never from a caller's payload. The rebase and prune variants
+	//! are separate commands upstream, so they are separate executors here rather
+	//! than one executor reading a flag a caller invented.
+	WorkbenchCommandExecutor fetch;
+	WorkbenchCommandExecutor fetchPrune;
+	WorkbenchCommandExecutor fetchAll;
+	WorkbenchCommandExecutor pull;
+	WorkbenchCommandExecutor pullRebase;
+	WorkbenchCommandExecutor push;
+	WorkbenchCommandExecutor sync;
+	WorkbenchCommandExecutor syncRebase;
+	WorkbenchCommandExecutor publish;
 };
 
 enum class EWorkbenchCommandRegistrationStatus : std::uint8_t {
@@ -151,8 +236,25 @@ public:
 
 	[[nodiscard]] WorkbenchCommandRegistrationResult Register(
 		WorkbenchCommandDescriptor descriptor, WorkbenchCommandExecutor executor = {});
+	//! `Register` for a command whose executor needs the invocation's arguments.
+	//! Deliberately a distinct name rather than an overload: `Register(d, {})`
+	//! would otherwise become ambiguous, and which executor shape a command has
+	//! is worth stating at the call site.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterWithArguments(
+		WorkbenchCommandDescriptor descriptor, WorkbenchCommandArgumentExecutor executor);
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterBuiltinCommands(
 		WorkbenchBuiltinCommandExecutors executors = {});
+	//! Registers the built-in Git provider's branch commands (`git.checkout`,
+	//! `git.checkoutDetached`, `git.branch`, `git.branchFrom`) and its working-
+	//! tree commands (`git.stage`, `git.stageAll`, `git.unstage`,
+	//! `git.unstageAll`, `git.clean`, `git.cleanAll`) and its commit commands
+	//! (`git.commit`, `git.commitAmend`, `git.undoCommit`) and its remote
+	//! commands (`git.fetch`, `git.fetchPrune`, `git.fetchAll`, `git.pull`,
+	//! `git.pullRebase`, `git.push`, `git.sync`, `git.syncRebase`,
+	//! `git.publish`) as one atomic batch, using upstream's own stable IDs,
+	//! titles, and `when` clause.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterGitCommands(
+		WorkbenchGitCommandExecutors executors = {});
 	[[nodiscard]] WorkbenchCommandRegistrationResult DisposeOwner(const WorkbenchCommandOwner& owner);
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(
@@ -166,6 +268,12 @@ public:
 		EWorkbenchCommandSurface surface) const;
 	[[nodiscard]] WorkbenchCommandExecutionResult Execute(std::string_view commandId,
 		const WorkbenchContextKeySnapshot& context) const noexcept;
+	//! Executes with an arguments payload. A command bound to the argument-less
+	//! executor ignores the payload, exactly as a VS Code handler that declares
+	//! no parameters ignores the arguments it is passed; the two-argument form
+	//! above is this one with an empty payload.
+	[[nodiscard]] WorkbenchCommandExecutionResult Execute(std::string_view commandId,
+		const WorkbenchContextKeySnapshot& context, std::string_view argumentsJson) const noexcept;
 	[[nodiscard]] std::uint64_t Revision() const noexcept;
 
 	[[nodiscard]] static bool IsValidCommandId(std::string_view value) noexcept;
@@ -174,7 +282,14 @@ private:
 	struct Entry {
 		WorkbenchCommandDescriptor descriptor;
 		WorkbenchCommandExecutor executor;
+		//! At most one of the two is ever bound. A command with neither is the
+		//! sanctioned typed `Unsupported` boundary.
+		WorkbenchCommandArgumentExecutor argumentExecutor;
 	};
+	//! Registers a whole batch or none of it. A conflict against an already
+	//! registered command, or between two members of the batch, leaves the
+	//! registry untouched.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterAtomicBatch(std::vector<Entry> batch);
 	mutable std::mutex m_mutex;
 	std::uint64_t m_revision{};
 	std::map<std::string, Entry, std::less<>> m_entries;
