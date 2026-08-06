@@ -54,6 +54,21 @@ also upstream's answer — `$(name)` in a plain string is literal text. The nati
 consumer is
 [`../../sakura_core/workbench/hover/CLAUDE.md`](../../sakura_core/workbench/hover/CLAUDE.md).
 
+## Contribution Loading
+
+`contributes.viewsContainers` is an object keyed by location, and VS Code
+accepts exactly three keys: `activitybar`, `panel`, `secondarySidebar`. The
+loader passes the key through verbatim and drops any group under another key,
+the way VS Code treats it as a contribution error. Never fold an unknown key
+into a default — that puts a container somewhere the extension never declared.
+
+A container entry's `when` travels with it. It is not a View-only field: an
+extension that supports more than one location declares the same container once
+per location and gates each copy on a context key, so a dropped clause renders
+every alternative at once. The clause is forwarded, never evaluated here; the
+native projection owns evaluation
+([`../../sakura_core/window/CLAUDE.md`](../../sakura_core/window/CLAUDE.md)).
+
 ## API Compatibility
 
 Do not implement an API as successful until a native service owns its real

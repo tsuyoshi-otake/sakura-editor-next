@@ -63,8 +63,23 @@ const CLAUDE_CODE_LIKE = {
       { command: 'claude-code.run', title: 'Run Claude', category: 'Claude Code' },
       { command: 'claude-code.focus', title: 'Focus Claude' },
     ],
+    /*
+      実物と同じく、排他的な 3 コンテナを `when` で切り替える形。
+      `when` を落とすとアクティビティバーに同じアイコンが 3 つ並ぶ。
+    */
     viewsContainers: {
-      activitybar: [{ id: 'claude-code', title: 'Claude Code', icon: 'resources/claude.svg' }],
+      activitybar: [
+        {
+          id: 'claude-code', title: 'Claude Code', icon: 'resources/claude.svg',
+          when: 'claude-code:doesNotSupportSecondarySidebar',
+        },
+      ],
+      secondarySidebar: [
+        {
+          id: 'claude-code-secondary', title: 'Claude Code', icon: 'resources/claude.svg',
+          when: '!claude-code:doesNotSupportSecondarySidebar',
+        },
+      ],
     },
     views: {
       'claude-code': [{ id: 'claude-code.sidebar', name: 'Claude', type: 'webview' }],
@@ -106,9 +121,22 @@ test('carries the full Claude Code contribution surface into register metadata',
     visibility: '',
   }]);
 
-  assert.deepEqual(metadata.viewsContainers, [{
-    id: 'claude-code', title: 'Claude Code', location: 'activitybar', icon: 'resources/claude.svg', codicon: '',
-  }]);
+  /*
+    `location` は既定値へ丸めず、`when` はコンテナでも保持する。どちらを落としても
+    「排他のはずのコンテナが全部同時に出る」になる。
+  */
+  assert.deepEqual(metadata.viewsContainers, [
+    {
+      id: 'claude-code', title: 'Claude Code', location: 'activitybar',
+      icon: 'resources/claude.svg', codicon: '',
+      when: 'claude-code:doesNotSupportSecondarySidebar',
+    },
+    {
+      id: 'claude-code-secondary', title: 'Claude Code', location: 'secondarySidebar',
+      icon: 'resources/claude.svg', codicon: '',
+      when: '!claude-code:doesNotSupportSecondarySidebar',
+    },
+  ]);
 
   assert.deepEqual(metadata.menus['editor/title'], [{
     command: 'claude-code.run', submenu: '', alt: '', when: 'editorIsOpen', group: 'navigation@1',
@@ -153,12 +181,35 @@ test('splits codicon references from image paths and keeps the container locatio
       viewsContainers: {
         activitybar: [{ id: 'a', title: 'A', icon: '$(beaker)' }],
         panel: [{ id: 'b', title: 'B', icon: { dark: 'dark.svg', light: 'light.svg' } }],
+        secondarySidebar: [{ id: 'c', title: 'C', when: 'config.x' }],
       },
     },
   });
   assert.deepEqual(containers, [
-    { id: 'a', title: 'A', location: 'activitybar', icon: '', codicon: 'beaker' },
-    { id: 'b', title: 'B', location: 'panel', icon: 'dark.svg', codicon: '' },
+    { id: 'a', title: 'A', location: 'activitybar', icon: '', codicon: 'beaker', when: '' },
+    { id: 'b', title: 'B', location: 'panel', icon: 'dark.svg', codicon: '', when: '' },
+    { id: 'c', title: 'C', location: 'secondarySidebar', icon: '', codicon: '', when: 'config.x' },
+  ]);
+});
+
+/*
+  VS Code の `viewsContainers` は location をキーにした object で、受け付けるキーは
+  3 つだけ。未知のキーは VS Code 自身も contribution エラーとして無視するので、
+  ここでも既定の activitybar へ丸めない — 丸めると、宣言していない場所に
+  アイコンが生える。
+*/
+test('drops a viewsContainers group whose location key is not a real VS Code location', () => {
+  const containers = contributionViewsContainers({
+    contributes: {
+      viewsContainers: {
+        activitybar: [{ id: 'a', title: 'A' }],
+        auxiliarybar: [{ id: 'bogus', title: 'Bogus' }],
+        '': [{ id: 'empty-key', title: 'Empty' }],
+      },
+    },
+  });
+  assert.deepEqual(containers, [
+    { id: 'a', title: 'A', location: 'activitybar', icon: '', codicon: '', when: '' },
   ]);
 });
 

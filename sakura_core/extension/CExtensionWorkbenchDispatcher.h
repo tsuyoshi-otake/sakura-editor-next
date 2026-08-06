@@ -43,6 +43,15 @@ enum class EExtensionWorkbenchChange : std::uint32_t {
 	//! の応答、またはその取り消し）。Hover は `Dispatch()` を経由しない outbound request/response なので、
 	//! ここは他の inbound capability の bit と違い `CExtensionService` 側だけが立てる。
 	Hover = 1u << 10,
+	/*!
+		@brief context key が変わった（`setContext`）
+
+		`when` を投影時に評価する面 — メニュー・コマンドパレット・キーバインド・
+		ビューコンテナ — は、宣言が 1 つも変わらなくても context key が変われば
+		見せる集合が変わる。`Commands` と分けているのは、コマンド登録のたびに
+		コンテナ投影をやり直さないため。
+	*/
+	ContextKeys = 1u << 11,
 };
 
 constexpr EExtensionWorkbenchChange operator|(EExtensionWorkbenchChange left, EExtensionWorkbenchChange right) noexcept

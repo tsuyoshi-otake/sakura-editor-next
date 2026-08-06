@@ -518,14 +518,25 @@ bool CExtensionWorkbenchServiceBridge::RegisterViewContributions(
 	try {
 		for (const auto& container : containers) {
 			if (container.id.empty()) continue;
+			// Every manifest location has a real Part behind it. Collapsing secondarySidebar onto
+			// the Activity Bar would put a container somewhere VS Code never puts it.
+			auto location = workbench::layout::EViewContainerLocation::Sidebar;
+			switch (container.location) {
+			case EExtensionViewContainerLocation::Panel:
+				location = workbench::layout::EViewContainerLocation::Panel;
+				break;
+			case EExtensionViewContainerLocation::SecondarySidebar:
+				location = workbench::layout::EViewContainerLocation::AuxiliaryBar;
+				break;
+			case EExtensionViewContainerLocation::ActivityBar:
+				break;
+			}
 			request.viewContainers.push_back({
 				.id = wcstou8s(container.id),
 				// An empty title would fail descriptor validation; the ID is the least surprising
 				// fallback and keeps the container visible instead of silently dropping it.
 				.title = wcstou8s(container.title.empty() ? container.id : container.title),
-				.location = container.location == EExtensionViewContainerLocation::Panel
-					? workbench::layout::EViewContainerLocation::Panel
-					: workbench::layout::EViewContainerLocation::Sidebar,
+				.location = location,
 			});
 		}
 		for (const auto& view : views) {

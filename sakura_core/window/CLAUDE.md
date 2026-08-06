@@ -258,6 +258,45 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   host DPI. Dropping outside both side bar windows and outside that strip is a
   no-op, never a guess.
 
+## Extension-contributed ViewContainer projection (2026-08-07, #29)
+
+`CEditWnd::SyncViewContainers` is the only place that turns contributed
+ViewContainer declarations into Activity Bar icons and side bar pages. Four
+invariants, all of which were violated at once by Anthropic.claude-code, which
+declares the *same* container three times — once per location — and gates each
+copy on `claude-code:doesNotSupportSecondarySidebar`:
+
+- **A container's `when` is evaluated at projection time, not at registration
+  time.** Registration deliberately keeps every declared container, so flipping
+  the context key later reveals the other one without a re-register; the
+  projection filters. A built-in container has no presentation record and
+  therefore no clause, so it is always allowed. Dropping the clause is what made
+  three mutually exclusive containers render as three identical icons.
+- **`setContext` must re-run this projection.**
+  `EExtensionWorkbenchChange::ContextKeys` exists for exactly that and is
+  deliberately separate from `Commands`, so registering a command does not
+  rebuild container projection. Without it the strip would only ever show the
+  containers whose clauses happened to hold at register time.
+- **The page pool is derived from the registry, not from the Activity Bar entry
+  list.** `ProjectActivityBarEntries` renders Primary Side Bar containers only,
+  so a container contributed to the Secondary Side Bar would otherwise get no
+  page and its Part would render nothing. The page loop covers `Sidebar` and
+  `AuxiliaryBar` and applies the same `when` filter.
+- **Every icon must have a page, and the invariant is enforced, not assumed.**
+  The Activity Bar click callback does nothing unless
+  `CViewContainerPages::Contains` is true, so an icon whose page failed to be
+  created silently absorbs clicks. `SyncViewContainers` therefore erases
+  contributed entries with no page after `SyncContributedContainers`, and
+  `ActivateSidebarPage` emits a diagnostic instead of returning silently when
+  activation is rejected.
+
+Consequently, installing Claude Code adds **zero** Activity Bar icons on a
+default profile: its surviving container lives in the Secondary Side Bar, which
+by design has no Activity Bar entry (see "Moving a ViewContainer between the
+side bars" above). Its container renders the explicit
+`kWebviewUnsupportedMessage` boundary, because all of its Views are
+`"type": "webview"`.
+
 ## Extension `editor/title` menu projection (2026-08-06, #23)
 
 `extension::menus::ProjectMenu(..., kEditorTitle)` is rendered by

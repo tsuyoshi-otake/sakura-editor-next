@@ -939,6 +939,76 @@ TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
 	EXPECT_TRUE(m_commands.Contains(L"vendor.broken.run"));
 }
 
+/*!
+	Anthropic.claude-code は同じ内容のコンテナを 3 か所へ宣言し、`when` で 1 つだけを
+	見せる。location を activitybar へ丸めたり `when` を捨てたりすると、排他だった
+	コンテナがそのままアクティビティバーに 3 つ並ぶ（#29 で実際に起きた症状）。
+	投影時に `when` を評価できるよう、登録自体は 3 つとも残す。
+*/
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	KeepsTheDeclaredLocationAndWhenClauseOfEveryContributedContainer)
+{
+	auto registration = Dispatch("workbench/extensions/register", R"({
+		"extensionId": "Anthropic.claude-code",
+		"generation": 1,
+		"commands": [],
+		"viewsContainers": [
+			{ "id": "claude-code", "title": "Claude Code", "location": "activitybar",
+			  "when": "claude-code:doesNotSupportSecondarySidebar" },
+			{ "id": "claude-code-secondary", "title": "Claude Code", "location": "secondarySidebar",
+			  "when": "!claude-code:doesNotSupportSecondarySidebar" },
+			{ "id": "claude-code-panel", "title": "Claude Code", "location": "panel" }
+		],
+		"views": []
+	})");
+	ASSERT_TRUE(registration.success) << registration.errorMessage;
+
+	const auto snapshot = m_runtime->Contributions().Snapshot();
+	const auto locationOf = [&snapshot](const char* id) {
+		const auto found = std::ranges::find_if(snapshot.viewContainers,
+			[id](const auto& entry) { return entry.descriptor.id == id; });
+		return found == snapshot.viewContainers.end()
+			? std::optional<workbench::layout::EViewContainerLocation>{}
+			: std::optional{ found->descriptor.location };
+	};
+
+	EXPECT_EQ(workbench::layout::EViewContainerLocation::Sidebar, locationOf("claude-code"));
+	EXPECT_EQ(workbench::layout::EViewContainerLocation::AuxiliaryBar, locationOf("claude-code-secondary"));
+	EXPECT_EQ(workbench::layout::EViewContainerLocation::Panel, locationOf("claude-code-panel"));
+
+	EXPECT_EQ(L"claude-code:doesNotSupportSecondarySidebar",
+		m_contributions.ContainerPresentation(L"claude-code").whenClause);
+	EXPECT_EQ(L"!claude-code:doesNotSupportSecondarySidebar",
+		m_contributions.ContainerPresentation(L"claude-code-secondary").whenClause);
+	EXPECT_TRUE(m_contributions.ContainerPresentation(L"claude-code-panel").whenClause.empty());
+}
+
+//! 実在しない location は既定へ丸めず落とす。丸めると、拡張が宣言していない場所へ
+//! コンテナが生える。
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	DropsAContributedContainerWhoseLocationIsNotARealVsCodeLocation)
+{
+	auto registration = Dispatch("workbench/extensions/register", R"({
+		"extensionId": "vendor.bogus",
+		"generation": 1,
+		"commands": [{ "id": "vendor.bogus.run", "title": "Run" }],
+		"viewsContainers": [
+			{ "id": "vendor-bogus", "title": "Bogus", "location": "auxiliarybar" },
+			{ "id": "vendor-none", "title": "No Location" }
+		],
+		"views": []
+	})");
+	ASSERT_TRUE(registration.success) << registration.errorMessage;
+
+	const auto snapshot = m_runtime->Contributions().Snapshot();
+	EXPECT_TRUE(std::ranges::none_of(snapshot.viewContainers, [](const auto& entry) {
+		return entry.descriptor.id == "vendor-bogus" || entry.descriptor.id == "vendor-none";
+	}));
+	EXPECT_TRUE(m_contributions.ContainerPresentation(L"vendor-bogus").id.empty());
+	// 壊れているのはコンテナ宣言だけ。拡張のコマンドは使えなければならない。
+	EXPECT_TRUE(m_commands.Contains(L"vendor.bogus.run"));
+}
+
 //! `createTreeView` は宣言したコンテナに出なければならない。ここが効いていないと、
 //! 拡張がアクティビティバーに自分のコンテナを出しても中身は空のままで、ツリーは
 //! ホスト既定の Extensions バケットに積み上がる。
