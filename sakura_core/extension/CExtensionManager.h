@@ -14,6 +14,7 @@
 #include <atomic>
 #include <filesystem>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "extension/openvsx/IOpenVsxRegistryClient.h"
@@ -112,6 +113,29 @@ public:
 
 	//! ファイルの sha256 を 16 進小文字で求める。失敗時は空
 	static std::wstring ComputeSha256Hex(const std::filesystem::path& path);
+
+	/*!
+		@brief 検索応答とメタデータ応答から、このホストで動く配布物を決める
+
+		Open VSX の `/api/-/search` は targetPlatform を無視して任意の 1 ビルドを
+		返すため、検索結果の download URL をそのまま使うと別プラットフォームの
+		VSIX を掴む。メタデータ endpoint の downloads で解決し直すのがこの関数。
+
+		通信を行わないので単体で検証できる。
+
+		@param[in]  ext				検索応答由来の拡張。download URL は信用しない
+		@param[in]  assets			メタデータ endpoint の結果。Unsupported なら ext へ退避
+		@param[in]  targetPlatform	このホストが必要とする targetPlatform
+		@param[out] resolved		実際に取得すべき配布物で上書きした拡張
+		@param[out] errorMsg		解決できなかった理由
+		@retval false このホスト向けの配布物が無い（別プラットフォームを掴ませない）
+	*/
+	static bool ResolveInstallTarget(
+		const SOpenVsxExtension& ext,
+		const extension::openvsx::OpenVsxExtensionAssetsOperation& assets,
+		std::wstring_view targetPlatform,
+		SOpenVsxExtension& resolved,
+		std::wstring& errorMsg);
 
 private:
 	//! package.json から表示名を読む。読めなければ空

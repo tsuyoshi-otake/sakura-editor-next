@@ -101,6 +101,32 @@ public:
 		return FetchBinary(*validatedHttpsSha256Uri, m_policy.sha256Limits, L"text/plain", cancellation);
 	}
 
+	OpenVsxExtensionAssetsOperation FetchExtensionAssets(
+		std::wstring_view namespaceName,
+		std::wstring_view extensionName,
+		const platform::request::IRequestCancellation* cancellation = nullptr) const override
+	{
+		OpenVsxExtensionAssetsOperation operation;
+		const std::wstring uri = OpenVsxProtocol::BuildExtensionMetadataUrl(m_registryUri, namespaceName, extensionName);
+		if (uri.empty()) {
+			operation.status = { EOpenVsxRequestOutcome::InvalidEndpointUri,
+				platform::request::ERequestOutcome::InvalidRequest, std::nullopt,
+				L"extension identifier is not usable as a URI path segment" };
+			return operation;
+		}
+
+		// メタデータは JSON なので、VSIX ではなく検索と同じ小さな予算で足りる。
+		const auto execution = ExecuteGet(uri, m_policy.searchLimits, L"application/json", cancellation);
+		operation.status = execution.status;
+		if (!operation.status) return operation;
+
+		const std::string json(execution.response->body.begin(), execution.response->body.end());
+		if (!OpenVsxProtocol::ParseExtensionMetadataResponse(json, operation.value, operation.status.message)) {
+			operation.status.outcome = EOpenVsxRequestOutcome::InvalidResponse;
+		}
+		return operation;
+	}
+
 	OpenVsxTextOperation FetchText(
 		std::wstring_view validatedHttpsTextUri,
 		const platform::request::IRequestCancellation* cancellation = nullptr) const override
@@ -118,6 +144,79 @@ public:
 			operation.status.message = L"text response was not valid UTF-8";
 		}
 		return operation;
+	}
+
+	/*!
+	 * @brief HTTPS VSIX URI を chunk sink へ直接ストリーミングする
+	 *
+	 * ExecuteGet()（メモリー取得の全 endpoint が使う共通経路）はあえて変更しない。
+	 * この経路は自身では応答本体を保持しないので、response->body ではなく sink へ
+	 * 渡した後の終端状態だけを組み立てる。既存の ExecuteGet() が持つ検証手順
+	 * （registry/endpoint URI の HTTPS 検証、limits の健全性、最終 URI の HTTPS 維持、
+	 * 応答ヘッダー上限）は private static helper 経由でそのまま再利用する。
+	 */
+	OpenVsxOperationStatus FetchVsixStreamed(
+		std::wstring_view validatedHttpsVsixUri,
+		const OpenVsxBodyChunkSink& sink,
+		const platform::request::IRequestCancellation* cancellation = nullptr) const override
+	{
+		using namespace platform::request;
+		if (cancellation && cancellation->IsCancellationRequested()) {
+			return { EOpenVsxRequestOutcome::Cancelled, ERequestOutcome::Cancelled, std::nullopt, L"request was cancelled before dispatch" };
+		}
+		if (!m_hasValidRegistryUri) {
+			return { EOpenVsxRequestOutcome::InvalidRegistryUri, ERequestOutcome::InvalidRequest, std::nullopt, L"registry URI must be an absolute HTTPS URI without userinfo" };
+		}
+		if (!IsHttpsAbsoluteUri(validatedHttpsVsixUri)) {
+			return { EOpenVsxRequestOutcome::InvalidEndpointUri, ERequestOutcome::InvalidRequest, std::nullopt, L"Open VSX endpoint must be an absolute HTTPS URI without userinfo" };
+		}
+		if (!HasValidLimits(m_policy.vsixLimits)) {
+			return { EOpenVsxRequestOutcome::InvalidRequest, ERequestOutcome::InvalidRequest, std::nullopt, L"request limits are invalid" };
+		}
+		if (!sink) {
+			return { EOpenVsxRequestOutcome::InvalidRequest, ERequestOutcome::InvalidRequest, std::nullopt, L"streamed fetch requires a body sink" };
+		}
+
+		Request request;
+		request.method = L"GET";
+		request.url.assign(validatedHttpsVsixUri);
+		request.headers.push_back({ L"Accept", L"application/octet-stream" });
+		request.cachePolicy = m_policy.cachePolicy;
+		request.allowRedirects = m_policy.allowRedirects;
+		request.limits = m_policy.vsixLimits;
+		request.proxySupport = m_policy.proxySupport;
+		request.bodySink = sink;
+
+		RequestResult result = m_requestService.Execute(request, cancellation);
+		OpenVsxOperationStatus status{ MapRequestOutcome(result.outcome), result.outcome, std::nullopt, {} };
+		if (result.response) status.httpStatusCode = result.response->statusCode;
+		if (status.outcome != EOpenVsxRequestOutcome::Success) return status;
+		if (!result.response) {
+			status.outcome = EOpenVsxRequestOutcome::InvalidResponse;
+			status.message = L"request service returned success without a response";
+			return status;
+		}
+		if (!IsHttpsAbsoluteUri(result.response->finalUrl)) {
+			status.outcome = HasAsciiScheme(result.response->finalUrl, L"http://")
+				? EOpenVsxRequestOutcome::HttpsDowngradeRejected
+				: EOpenVsxRequestOutcome::InvalidResponse;
+			status.message = L"request service returned a non-HTTPS final URI";
+			return status;
+		}
+		if (ResponseHeaderBytes(result.response->headers) > m_policy.vsixLimits.maxResponseHeaderBytes) {
+			status.outcome = EOpenVsxRequestOutcome::ResponseHeaderLimitExceeded;
+			status.requestOutcome = ERequestOutcome::ResponseHeaderLimitExceeded;
+			status.message = L"response headers exceeded the caller-provided limit";
+			return status;
+		}
+		// response body はストリーミング済みで空のまま残る。上限強制は transport 側の
+		// chunk ごとの逐次チェックが既に担っているので、ここで response->body の
+		// サイズを二重判定しない（常に 0 で無意味なため）。
+		if (!IsSuccessfulHttpStatus(result.response->statusCode)) {
+			status.outcome = EOpenVsxRequestOutcome::HttpStatusFailure;
+			status.message = L"unexpected HTTP status " + std::to_wstring(result.response->statusCode);
+		}
+		return status;
 	}
 
 private:

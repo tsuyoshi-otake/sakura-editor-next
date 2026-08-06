@@ -84,6 +84,18 @@ struct ThemePalette {
 	//! VS Code `diffEditor.diagonalFill` (`#cccccc33` dark, `#22222233` light):
 	//! the hatch drawn where one side of a side-by-side diff has no line at all.
 	ThemeColor diffDiagonalFill = { 0x41, 0x41, 0x41 };
+	//! VS Code `button.background`. `media/updateTitleBarEntry.css` paints the
+	//! actionable ("prominent") title-bar Update button with
+	//! `--vscode-button-background` / `--vscode-button-foreground` and hovers it
+	//! with `--vscode-button-hoverBackground`, so the Update indicator needs the
+	//! button role rather than the badge role. Sakura's built-in defaults keep the
+	//! product's own accent instead of importing VS Code's `#0E639C`/`#007ACC`.
+	ThemeColor buttonBackground = { 0x1F, 0x8A, 0xD2 };
+	//! VS Code `button.foreground`.
+	ThemeColor buttonForeground = { 0xFF, 0xFF, 0xFF };
+	//! VS Code `button.hoverBackground`, registered upstream as
+	//! `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
+	ThemeColor buttonHoverBackground = { 0x3F, 0xA1, 0xE3 };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -263,6 +275,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xE2, 0xE9, 0xD7 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the light canvas
 			{ 0xF6, 0xC4, 0xC6 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the light canvas
 			{ 0xCA, 0xCB, 0xCC }, // diffEditor.diagonalFill: #22222233 over the light canvas
+			{ 0xB8, 0x32, 0x68 }, // button.background: the Sakura light accent, not VS Code's #007ACC
+			{ 0xFF, 0xFF, 0xFF }, // button.foreground
+			{ 0x93, 0x28, 0x53 }, // button.hoverBackground: darken(button.background, 0.2) as upstream registers it for light
 		};
 	}
 	return {
@@ -289,6 +304,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x37, 0x3D, 0x29 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the dark canvas
 		{ 0x4B, 0x18, 0x18 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the dark canvas
 		{ 0x41, 0x41, 0x41 }, // diffEditor.diagonalFill: #cccccc33 over the dark canvas
+		{ 0x1F, 0x8A, 0xD2 }, // button.background: the Sakura dark accent, not VS Code's #0E639C
+		{ 0xFF, 0xFF, 0xFF }, // button.foreground
+		{ 0x3F, 0xA1, 0xE3 }, // button.hoverBackground: lighten(button.background, 0.2) as upstream registers it for dark
 	};
 }
 

@@ -79,6 +79,7 @@ struct CExtensionSidebarTool::Impl {
 	CheckboxChangedCallback checkboxChanged;
 	CommandCallback command;
 	VisibilityChangedCallback visibilityChanged;
+	ViewFilter viewFilter;
 	std::vector<std::unique_ptr<Node>> nodes;
 	std::vector<PendingRequest> pendingRequests;
 	std::unordered_set<std::wstring> inFlight;
@@ -89,7 +90,17 @@ struct CExtensionSidebarTool::Impl {
 	bool rebuilding = false;
 	bool closed = false;
 
-	explicit Impl(std::shared_ptr<CExtensionViewRegistry> value) : registry(std::move(value)) {}
+	explicit Impl(std::shared_ptr<CExtensionViewRegistry> value, ViewFilter filter)
+		: registry(std::move(value)), viewFilter(std::move(filter)) {}
+
+	//! Every view this container renders. The registry is shared by all containers, so the
+	//! filter — not the registry — decides which of them are this tool's.
+	[[nodiscard]] std::vector<SExtensionViewDescriptor> OwnedViews() const
+	{
+		auto views = registry->Views();
+		if (viewFilter) std::erase_if(views, [this](const auto& view) { return !viewFilter(view); });
+		return views;
+	}
 
 	Node* NewNode(Node value)
 	{
@@ -174,7 +185,7 @@ struct CExtensionSidebarTool::Impl {
 		::SendMessageW(tree, WM_SETREDRAW, FALSE, 0);
 		TreeView_DeleteAllItems(tree);
 		nodes.clear();
-		const auto views = registry->Views();
+		const auto views = OwnedViews();
 		std::unordered_set<std::wstring> liveViews;
 		for (const auto& view : views) liveViews.emplace(view.handle);
 		std::erase_if(inFlight, [&](const auto& key) {
@@ -280,8 +291,9 @@ struct CExtensionSidebarTool::Impl {
 	}
 };
 
-CExtensionSidebarTool::CExtensionSidebarTool(std::shared_ptr<CExtensionViewRegistry> registry)
-	: m_impl(std::make_unique<Impl>(std::move(registry)))
+CExtensionSidebarTool::CExtensionSidebarTool(
+	std::shared_ptr<CExtensionViewRegistry> registry, ViewFilter viewFilter)
+	: m_impl(std::make_unique<Impl>(std::move(registry), std::move(viewFilter)))
 {
 }
 

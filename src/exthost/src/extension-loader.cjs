@@ -114,6 +114,27 @@ function contributionCommands(manifest) {
   });
 }
 
+//! マニフェスト由来の任意文字列。型が違う値は「無い」として扱い、例外にはしない。
+//! contributes は拡張作者の手書きなので、1 項目の型崩れで拡張全体を落とすのは過剰。
+function optionalString(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+//! アイコンは文字列（画像への相対パス）と `{ light, dark }` の 2 形態がある。
+//! ネイティブ側が扱えるのは 1 本のパスなので dark を代表に選ぶ（既定テーマが暗色のため）。
+function optionalIcon(value) {
+  if (typeof value === 'string') return value;
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return optionalString(value.dark) || optionalString(value.light);
+  }
+  return '';
+}
+
+//! VS Code は `$(codicon-name)` 形式のアイコン ID も受け付ける。パスと区別できるよう分離する。
+function isCodiconReference(icon) {
+  return /^\$\([\w-]+\)$/.test(icon);
+}
+
 function contributionViews(manifest) {
   const result = [];
   const containers = manifest?.contributes?.views;
@@ -122,10 +143,191 @@ function contributionViews(manifest) {
     if (!Array.isArray(views)) continue;
     for (const view of views) {
       if (!view || typeof view.id !== 'string' || !view.id) continue;
-      result.push({ id: view.id, name: typeof view.name === 'string' ? view.name : view.id, containerId });
+      /*
+        `type` は VS Code では省略時 "tree"。Claude Code の sidebar は "webview" を使う。
+        ここで型を落とすと、ネイティブ側は webview ビューを tree として登録してしまい、
+        「登録は成功したのに永久に空」という最悪の壊れ方をする。必ず伝える。
+      */
+      const type = optionalString(view.type).toLowerCase();
+      result.push({
+        id: view.id,
+        name: optionalString(view.name) || view.id,
+        containerId,
+        type: type === 'webview' ? 'webview' : 'tree',
+        when: optionalString(view.when),
+        icon: optionalIcon(view.icon),
+        contextualTitle: optionalString(view.contextualTitle),
+        visibility: optionalString(view.visibility),
+      });
     }
   }
   return result;
+}
+
+/*!
+  @brief `contributes.viewsContainers` を location 付きの平坦な配列へ変換する
+
+  VS Code は `{ activitybar: [...], panel: [...] }` という location をキーにした
+  object で受け取る。ネイティブ側はアクティビティバーとパネルで別の受け皿を持つので、
+  どちらに属するかを失わないよう location を各要素へ畳み込む。
+*/
+function contributionViewsContainers(manifest) {
+  const result = [];
+  const containers = manifest?.contributes?.viewsContainers;
+  if (!containers || typeof containers !== 'object' || Array.isArray(containers)) return result;
+  for (const [location, entries] of Object.entries(containers)) {
+    if (!Array.isArray(entries)) continue;
+    for (const entry of entries) {
+      if (!entry || typeof entry.id !== 'string' || !entry.id) continue;
+      const icon = optionalIcon(entry.icon);
+      result.push({
+        id: entry.id,
+        title: optionalString(entry.title) || entry.id,
+        location: location === 'panel' ? 'panel' : 'activitybar',
+        icon: isCodiconReference(icon) ? '' : icon,
+        codicon: isCodiconReference(icon) ? icon.slice(2, -1) : '',
+      });
+    }
+  }
+  return result;
+}
+
+/*!
+  @brief `contributes.menus` をメニュー面ごとの項目一覧へ変換する
+
+  面（`editor/title` などのキー）は VS Code が増やし続けるので、ここでは白名簿を作らず
+  形の妥当性だけを見る。どの面を実際に描くかはネイティブ側の判断に委ねる。
+  そうしないと VS Code が新しい面を足すたびに拡張ホストの改修が必要になる。
+*/
+function contributionMenus(manifest) {
+  const result = Object.create(null);
+  const menus = manifest?.contributes?.menus;
+  if (!menus || typeof menus !== 'object' || Array.isArray(menus)) return result;
+  for (const [location, entries] of Object.entries(menus)) {
+    if (!Array.isArray(entries)) continue;
+    const items = [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== 'object') continue;
+      const command = optionalString(entry.command);
+      const submenu = optionalString(entry.submenu);
+      // command も submenu も無い項目は何も起動できない。持たせても害にしかならない。
+      if (!command && !submenu) continue;
+      items.push({
+        command,
+        submenu,
+        alt: optionalString(entry.alt),
+        when: optionalString(entry.when),
+        group: optionalString(entry.group),
+      });
+    }
+    if (items.length !== 0) result[location] = items;
+  }
+  return result;
+}
+
+//! `contributes.submenus`。`menus` の項目が `submenu` で参照する入れ子メニューの定義。
+function contributionSubmenus(manifest) {
+  const submenus = Array.isArray(manifest?.contributes?.submenus) ? manifest.contributes.submenus : [];
+  return submenus.flatMap((entry) => {
+    if (!entry || typeof entry.id !== 'string' || !entry.id) return [];
+    return [{ id: entry.id, label: optionalString(entry.label) || entry.id, icon: optionalIcon(entry.icon) }];
+  });
+}
+
+/*!
+  @brief `contributes.keybindings` を、このホストが解釈できる 1 本のキー式へ正規化する
+
+  VS Code は `key`（既定）と `mac`/`linux`/`win` の上書きを持つ。Windows 専用ホストなので
+  `win` があればそれを、無ければ `key` を採る。`mac`/`linux` は捨てる（保持しても
+  このホストでは決して使われず、ネイティブ側に「どれを使うか」の判断を持ち込むだけになる）。
+*/
+function contributionKeybindings(manifest) {
+  const keybindings = Array.isArray(manifest?.contributes?.keybindings) ? manifest.contributes.keybindings : [];
+  return keybindings.flatMap((entry) => {
+    if (!entry || typeof entry.command !== 'string' || !entry.command) return [];
+    const key = optionalString(entry.win) || optionalString(entry.key);
+    if (!key) return [];
+    const result = { command: entry.command, key, when: optionalString(entry.when) };
+    if (entry.args !== undefined) result.args = entry.args;
+    return [result];
+  });
+}
+
+/*!
+  @brief `contributes.languages` を言語 ID とその識別規則へ変換する
+
+  `onLanguage:` の発火と `vscode.languages.getLanguages()` の土台になる。
+  `configuration`（言語設定 JSON）は拡張ルートからの相対パスなので、
+  ルート外への脱出を防ぐ検証は呼び出し側（register）で行う。
+*/
+function contributionLanguages(manifest) {
+  const languages = Array.isArray(manifest?.contributes?.languages) ? manifest.contributes.languages : [];
+  const stringArray = (value) => (Array.isArray(value) ? value.filter((item) => typeof item === 'string' && item) : []);
+  return languages.flatMap((entry) => {
+    if (!entry || typeof entry.id !== 'string' || !entry.id) return [];
+    return [{
+      id: entry.id,
+      aliases: stringArray(entry.aliases),
+      extensions: stringArray(entry.extensions),
+      filenames: stringArray(entry.filenames),
+      filenamePatterns: stringArray(entry.filenamePatterns),
+      mimetypes: stringArray(entry.mimetypes),
+      firstLine: optionalString(entry.firstLine),
+      icon: optionalIcon(entry.icon),
+      configuration: optionalString(entry.configuration),
+    }];
+  });
+}
+
+//! `contributes.snippets`。`path` は拡張ルート相対で、検証は register 側で行う。
+function contributionSnippets(manifest) {
+  const snippets = Array.isArray(manifest?.contributes?.snippets) ? manifest.contributes.snippets : [];
+  return snippets.flatMap((entry) => {
+    if (!entry || typeof entry.path !== 'string' || !entry.path) return [];
+    const language = optionalString(entry.language);
+    if (!language) return [];
+    return [{ language, path: entry.path }];
+  });
+}
+
+/*!
+  @brief 未実装だが「宣言されていること自体は正常」な contribution の一覧
+
+  これを返さないと、ネイティブ側は知らないキーを見て UnsupportedCapability を出すか、
+  逆に何も言わずに落とすかのどちらかになる。前者は正常な拡張を壊れているように見せ、
+  後者は本当の欠落を隠す。「受理したが未実装」という第 3 の状態を明示的に持つ。
+*/
+const ACKNOWLEDGED_CONTRIBUTIONS = Object.freeze([
+  'jsonValidation',
+  'walkthroughs',
+  'grammars',
+  'themes',
+  'iconThemes',
+  'productIconThemes',
+  'debuggers',
+  'breakpoints',
+  'taskDefinitions',
+  'problemMatchers',
+  'problemPatterns',
+  'terminal',
+  'customEditors',
+  'notebooks',
+  'semanticTokenScopes',
+  'semanticTokenTypes',
+  'semanticTokenModifiers',
+  'resourceLabelFormatters',
+  'authentication',
+  'colors',
+  'icons',
+  'localizations',
+  'markdown.previewStyles',
+  'typescriptServerPlugins',
+]);
+
+function acknowledgedContributions(manifest) {
+  const contributes = manifest?.contributes;
+  if (!contributes || typeof contributes !== 'object' || Array.isArray(contributes)) return [];
+  return ACKNOWLEDGED_CONTRIBUTIONS.filter((key) => Object.prototype.hasOwnProperty.call(contributes, key));
 }
 
 function contributionConfigurationDefaults(manifest) {
@@ -156,6 +358,90 @@ function activationEvents(record) {
   return new Set([...explicit, ...inferred]);
 }
 
+/*
+  workspaceContains: の探索予算。
+  VS Code はワークスペース全体を検索インデックス越しに引けるが、このホストは持たない。
+  無制限に歩くと、巨大なリポジトリを開いた瞬間に拡張ホストが数秒固まる。
+  「深さ 4・2 万エントリ」を超えたら探索を打ち切り、その拡張は起動しない。
+  取りこぼす可能性はあるが、固まらないことの方が重要で、しかもコマンド実行や
+  onLanguage: など他の経路で起動する道は残る。
+*/
+const WORKSPACE_CONTAINS_MAX_DEPTH = 4;
+const WORKSPACE_CONTAINS_MAX_ENTRIES = 20000;
+const WORKSPACE_CONTAINS_SKIP = new Set(['node_modules', '.git', '.hg', '.svn', 'out', 'dist', 'build', '.venv']);
+
+//! glob メタ文字を含むか。含まなければ存在確認 1 回で済むので、歩かずに答えを出せる。
+function hasGlobMetacharacters(pattern) {
+  return /[*?{}[\]]/.test(pattern);
+}
+
+/*!
+  @brief VS Code の relative glob を RegExp へ変換する
+
+  対応するのは `**`（0 個以上のパスセグメント）・`*`（区切りを跨がない任意文字列）・
+  `?`（区切り以外の 1 文字）・`{a,b}`（択一）。それ以外のメタ文字はリテラルとして
+  エスケープする。未対応の構文を黙って近似すると、意図しない拡張が起動してしまうため
+  「解釈できない部分は一致しない」側へ倒す。
+*/
+function globToRegExp(pattern) {
+  let source = '';
+  for (let index = 0; index < pattern.length; index += 1) {
+    const char = pattern[index];
+    if (char === '*') {
+      if (pattern[index + 1] === '*') {
+        // `**/` は 0 個以上のセグメント。末尾の `**` は残り全部。
+        if (pattern[index + 2] === '/') { source += '(?:[^/]+/)*'; index += 2; } else { source += '.*'; index += 1; }
+      } else {
+        source += '[^/]*';
+      }
+    } else if (char === '?') source += '[^/]';
+    else if (char === '{') source += '(?:';
+    else if (char === '}') source += ')';
+    else if (char === ',') source += '|';
+    else source += char.replace(/[.+^$()|[\]\\/]/g, '\\$&');
+  }
+  return new RegExp(`^${source}$`);
+}
+
+//! 予算内でワークスペースを歩き、相対パスを 1 件ずつ visit へ渡す。true を返したら打ち切る。
+function walkWorkspace(folder, visit) {
+  let budget = WORKSPACE_CONTAINS_MAX_ENTRIES;
+  const stack = [{ dir: folder, prefix: '', depth: 0 }];
+  while (stack.length !== 0) {
+    const { dir, prefix, depth } = stack.pop();
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (budget-- <= 0) return false;
+      const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
+      if (visit(relative)) return true;
+      if (entry.isDirectory() && !entry.isSymbolicLink()
+        && depth + 1 < WORKSPACE_CONTAINS_MAX_DEPTH && !WORKSPACE_CONTAINS_SKIP.has(entry.name)) {
+        stack.push({ dir: path.join(dir, entry.name), prefix: relative, depth: depth + 1 });
+      }
+    }
+  }
+  return false;
+}
+
+/*!
+  @brief `workspaceContains:<pattern>` が、与えられたワークスペースフォルダーに該当するか
+  @param folders 絶対パスの配列
+  @param pattern `workspaceContains:` を取り除いた残り
+*/
+function workspaceContainsMatches(folders, pattern) {
+  if (!pattern) return false;
+  for (const folder of folders) {
+    if (!hasGlobMetacharacters(pattern)) {
+      try { if (fs.existsSync(path.join(folder, pattern))) return true; } catch {}
+      continue;
+    }
+    const matcher = globToRegExp(pattern);
+    if (walkWorkspace(folder, (relative) => matcher.test(relative))) return true;
+  }
+  return false;
+}
+
 function resolveMainEntry(root, main) {
   const candidate = path.resolve(root, main);
   if (!isWithin(root, candidate)) throw new Error(`extension main escapes extension root: ${main}`);
@@ -174,6 +460,26 @@ function resolveMainEntry(root, main) {
   return realEntry;
 }
 
+/*!
+  @brief 拡張ルート相対のパスを絶対パスへ解決する。ルート外へ出るものは空文字列。
+
+  スニペットや言語設定のパスはマニフェスト由来なので `../../` を仕込める。
+  resolveMainEntry と同じ規律をここにも適用し、脱出するものは「無かったこと」にする。
+*/
+function safeContributedPath(root, relative) {
+  if (typeof relative !== 'string' || !relative) return '';
+  const candidate = path.resolve(root, relative);
+  if (!isWithin(root, candidate)) return '';
+  try {
+    const stat = fs.lstatSync(candidate);
+    if (!stat.isFile() || stat.isSymbolicLink()) return '';
+    if (!isWithin(root, fs.realpathSync.native(candidate))) return '';
+  } catch {
+    return '';
+  }
+  return candidate;
+}
+
 class ExtensionLoader {
   constructor(generation, transport, options = {}) {
     if (!Number.isSafeInteger(generation) || generation <= 0) throw new TypeError('generation must be positive');
@@ -183,12 +489,83 @@ class ExtensionLoader {
     this.extensions = new Map();
     this.commandOwners = new Map();
     this.viewOwners = new Map();
+    this.workspaceFolders = Array.isArray(options.workspaceFolders)
+      ? options.workspaceFolders.filter((value) => typeof value === 'string' && value) : [];
     this.disposed = false;
   }
 
-  register(extensionPaths) {
+  /*!
+    @brief ワークスペースフォルダーを差し替え、`workspaceContains:` を再評価する
+
+    フォルダーは後から開かれる（起動時には空のことがある）ので、register とは
+    独立に呼べる必要がある。戻り値は activateByEvent と同じ要約。
+  */
+  async setWorkspaceFolders(folders) {
+    if (this.disposed) throw new Error('extension loader is disposed');
+    this.workspaceFolders = Array.isArray(folders)
+      ? folders.filter((value) => typeof value === 'string' && value) : [];
+    return this.activateByWorkspaceContains();
+  }
+
+  /*!
+    @brief `workspaceContains:` を満たす未起動の拡張をまとめて起動する
+
+    activateByEvent と違いイベント名が固定でないので、登録済みの拡張それぞれが
+    宣言した pattern を評価する。ワークスペースが無ければ何もしない。
+  */
+  async activateByWorkspaceContains() {
+    if (this.workspaceFolders.length === 0) return { activated: [], failed: [] };
+    const targets = [];
+    for (const record of this.extensions.values()) {
+      if (record.state !== 'registered') continue;
+      for (const event of record.events) {
+        if (!event.startsWith('workspaceContains:')) continue;
+        if (workspaceContainsMatches(this.workspaceFolders, event.slice('workspaceContains:'.length))) {
+          targets.push({ extensionId: record.extensionId, event });
+          break;
+        }
+      }
+    }
+    const activated = [];
+    const failed = [];
+    const results = await Promise.all(targets.map(({ extensionId, event }) => this.activate(extensionId, event).then(
+      () => ({ extensionId, error: null }),
+      (error) => ({ extensionId, error: error instanceof Error ? error.message : String(error) }))));
+    for (const result of results) {
+      if (result.error === null) activated.push(result.extensionId);
+      else failed.push({ extensionId: result.extensionId, message: result.error });
+    }
+    return { activated, failed };
+  }
+
+  /*!
+    @brief ネイティブから届いた configuration / workspaceFolders スナップショットを session options
+    へ反映する。
+
+    register() は再接続の度に extensions を丸ごと送り直す契約（`workbench/extensions/register` の
+    冪等な再送）で、これも同じく差分ではなく最新スナップショットへの総入れ替えとして扱う。ここでの
+    workspaceFolders は `{uri, name}` 形の vscode.workspace.workspaceFolders 用の形であり、
+    setWorkspaceFolders が保持する `workspaceContains:` 判定専用の文字列配列 (this.workspaceFolders)
+    とは別物 — 互いに上書きしない。configurationDefaults と同様、ここに積んだ options は
+    activateRecord が ...this.options で spread するので、以後アクティベートされる拡張から反映される
+    （既にアクティブなセッションへは遡って反映しない。反映するには
+    extension/workspace/didChangeConfiguration の能動的な通知が別途必要で、これは現状ネイティブ側から
+    送られていない既知のギャップ）。
+  */
+  mergeSessionOptions(sessionOptions) {
+    if (!sessionOptions || typeof sessionOptions !== 'object') return;
+    if (sessionOptions.configuration && typeof sessionOptions.configuration === 'object') {
+      this.options.configuration = { ...sessionOptions.configuration };
+    }
+    if (Array.isArray(sessionOptions.workspaceFolders)) {
+      this.options.workspaceFolders = sessionOptions.workspaceFolders;
+    }
+  }
+
+  register(extensionPaths, sessionOptions) {
     if (this.disposed) throw new Error('extension loader is disposed');
     if (!Array.isArray(extensionPaths)) throw new TypeError('extensions must be an array');
+    this.mergeSessionOptions(sessionOptions);
     const registered = [];
     const failed = [];
     let added = false;
@@ -210,6 +587,19 @@ class ExtensionLoader {
           ...parsed,
           commands: contributionCommands(parsed.manifest),
           views: contributionViews(parsed.manifest),
+          viewsContainers: contributionViewsContainers(parsed.manifest),
+          menus: contributionMenus(parsed.manifest),
+          submenus: contributionSubmenus(parsed.manifest),
+          keybindings: contributionKeybindings(parsed.manifest),
+          // 相対パスはここで実ファイルへ解決する。解決できないものは落とす:
+          // 存在しないパスをネイティブへ渡しても、あちらで同じ失敗を繰り返すだけ。
+          languages: contributionLanguages(parsed.manifest).map((language) => ({
+            ...language, configuration: safeContributedPath(parsed.root, language.configuration),
+          })),
+          snippets: contributionSnippets(parsed.manifest)
+            .map((snippet) => ({ ...snippet, path: safeContributedPath(parsed.root, snippet.path) }))
+            .filter((snippet) => snippet.path !== ''),
+          acknowledged: acknowledgedContributions(parsed.manifest),
           configurationDefaults: contributionConfigurationDefaults(parsed.manifest),
           events: null,
           state: 'registered',
@@ -236,6 +626,16 @@ class ExtensionLoader {
           displayName: typeof record.manifest.displayName === 'string' ? record.manifest.displayName : record.extensionId,
           commands: record.commands,
           views: record.views,
+          viewsContainers: record.viewsContainers,
+          menus: record.menus,
+          submenus: record.submenus,
+          keybindings: record.keybindings,
+          languages: record.languages,
+          snippets: record.snippets,
+          // 「宣言されているが未実装」の一覧。ネイティブ側が UnsupportedCapability を
+          // 出すかどうかの判断材料であって、欠落を隠すための握り潰しではない。
+          acknowledgedContributions: record.acknowledged,
+          extensionPath: record.root,
           activationEvents: [...record.events],
         };
         record.metadata = metadata;
@@ -245,7 +645,12 @@ class ExtensionLoader {
         failed.push({ path: typeof descriptor === 'string' ? descriptor : descriptor?.path, message: error instanceof Error ? error.message : String(error) });
       }
     }
-    if (added) this.fireExtensionsChanged();
+    if (added) {
+      this.fireExtensionsChanged();
+      // register は同期契約なので待てない。workspaceContains: の起動は独立に走らせ、
+      // 結果は didActivate / didFailActivation 通知でネイティブ側へ届く。
+      if (this.workspaceFolders.length !== 0) this.activateByWorkspaceContains().catch(() => {});
+    }
     return { registered, failed };
   }
 
@@ -254,6 +659,18 @@ class ExtensionLoader {
     const record = this.extensions.get(String(extensionId).toLowerCase());
     if (!record) throw new Error(`extension is not registered: ${extensionId}`);
     if (record.state === 'active') return record.exports;
+    // 実 VS Code の ExtensionsActivator は一度失敗した activate() を呼び出す
+    // たびに再実行しない — ActivationFailedError をキャッシュして再スローする
+    // だけである。ここで毎回再試行すると、下の activateRecord が (このコミット
+    // 以降) 失敗前に完了していた登録を保持したまま抜けるようになったのと組み
+    // 合わさって、失敗するたびに新しい ExtensionApiSession を作って古い
+    // セッションを迷子にし続ける (リソースリーク)。失敗は一度だけ記録し、以降は
+    // 同じエラーを再スローする。
+    if (record.state === 'failed') {
+      throw record.activationError instanceof Error
+        ? record.activationError
+        : new Error(`extension failed to activate: ${record.extensionId}`);
+    }
     if (record.activation) return record.activation;
     record.activation = this.activateRecord(record, reason);
     try {
@@ -343,9 +760,30 @@ class ExtensionLoader {
       return record.exports;
     } catch (error) {
       record.state = 'failed';
-      session.dispose();
-      record.session = null;
-      record.context = null;
+      record.activationError = error instanceof Error ? error : new Error(String(error));
+      // 実 VS Code (AbstractExtensionService._doActivateExtension) は activate()
+      // が例外を投げても、それより前に完了していた個々の登録 (registerCommand
+      // など) を巻き戻さない。コマンド登録は MainThreadCommands への即時 RPC
+      // であり、activate() 全体を包む「トランザクション」という概念はどこにも
+      // 存在しない。
+      //
+      // そのためここでは意図的に session.dispose() を呼ばず、record.session /
+      // record.context も null にしない: 呼んでしまうと session.disposables に
+      // 積まれた「例外より前に registerCommand が成功させていた」Disposable
+      // まで一緒に破棄され、後発の未対応 API 呼び出し 1 つの失敗で、その拡張が
+      // 既に登録できていたコマンド・キーバインドまで丸ごと消えてしまう
+      // (Issue #23 のコマンドパレット/キーバインド互換ゲートが、例えば
+      // window.createWebviewPanel のような未対応 API を activate() の後半で
+      // 呼ぶだけの拡張によって壊れる)。未対応 API 自体は呼び出しごとに
+      // UnsupportedCapabilityError (vscode-api.cjs) として型付きで診断可能に
+      // 失敗しており、ここで成功を装っているわけではない — 失敗は
+      // record.state / record.activationError / didFailActivation 通知として
+      // 隠さず記録しつつ、それより前に完了していた登録だけは生かす。
+      //
+      // 以降の再アクティブ化試行を打ち切るのは上の activate() 側 (state ===
+      // 'failed' の早期リターン) の役目であり、ここでは record.session を
+      // 残すことで extension/commands/execute のセッション参照が引き続き
+      // 有効なままになる。
       moduleApis.delete(normalizedRoot);
       maybeUninstallVscodeBridge();
       this.transport.notify('workbench/extensions/didFailActivation', {
@@ -400,7 +838,19 @@ class ExtensionLoader {
     if (method === 'extension/commands/execute') {
       const command = params?.command;
       const owner = this.commandOwners.get(command);
-      if (owner) await this.activate(owner, `onCommand:${command}`);
+      if (owner) {
+        try {
+          await this.activate(owner, `onCommand:${command}`);
+        } catch {
+          // activate() の失敗は didFailActivation で既に記録済み
+          // (activateRecord のコメント参照)。ここで再スローすると、
+          // activate() の後半 (例えば未対応の webview API 呼び出し) で
+          // 失敗した拡張が、その前半で登録できていたコマンドまで実行不能に
+          // なってしまう。実際に呼び出せるかどうかは下の session の有無、
+          // および session.handleRequest 自身の
+          // 「command handler is not registered」チェックに委ねる。
+        }
+      }
       const session = owner ? this.extensions.get(owner)?.session : null;
       if (!session) throw new Error(`command handler is not registered: ${command}`);
       return session.handleRequest(method, params);
@@ -490,12 +940,23 @@ class ExtensionLoader {
 }
 
 module.exports = {
+  ACKNOWLEDGED_CONTRIBUTIONS,
   ExtensionLoader,
   MAX_MANIFEST_BYTES,
+  acknowledgedContributions,
   contributionCommands,
   contributionConfigurationDefaults,
+  contributionKeybindings,
+  contributionLanguages,
+  contributionMenus,
+  contributionSnippets,
+  contributionSubmenus,
   contributionViews,
+  contributionViewsContainers,
+  globToRegExp,
   isWithin,
   readManifest,
   resolveMainEntry,
+  safeContributedPath,
+  workspaceContainsMatches,
 };

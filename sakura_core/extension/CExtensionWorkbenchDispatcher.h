@@ -9,6 +9,7 @@
 #pragma once
 
 #include "extension/CExtensionCommandPalette.h"
+#include "extension/CExtensionContributionRegistry.h"
 #include "extension/CExtensionNotificationCenter.h"
 #include "extension/CExtensionRpcProtocol.h"
 #include "extension/IExtensionSecretStorage.h"
@@ -36,6 +37,12 @@ enum class EExtensionWorkbenchChange : std::uint32_t {
 	Progress = 1u << 6,
 	QuickInput = 1u << 7,
 	Scm = 1u << 8,
+	//! menus / keybindings / viewsContainers / languages / snippets の集合が変わった
+	Contributions = 1u << 9,
+	//! `CExtensionHoverCenter` に新しい Hover 結果が Publish/Clear された（`CExtensionService::RequestHover`
+	//! の応答、またはその取り消し）。Hover は `Dispatch()` を経由しない outbound request/response なので、
+	//! ここは他の inbound capability の bit と違い `CExtensionService` 側だけが立てる。
+	Hover = 1u << 10,
 };
 
 constexpr EExtensionWorkbenchChange operator|(EExtensionWorkbenchChange left, EExtensionWorkbenchChange right) noexcept
@@ -79,7 +86,14 @@ public:
 		CExtensionQuickInput& quickInput,
 		CExtensionOutputChannel& output,
 		CExtensionProgressCenter& progress,
-		CExtensionWorkbenchServiceBridge* serviceBridge = nullptr);
+		CExtensionWorkbenchServiceBridge* serviceBridge = nullptr,
+		/*
+			contribution レジストリはディスパッチャより長生きする。ディスパッチャは
+			拡張ホストの再接続ごとに作り直される（CExtensionService::ResetDispatcherWorker）
+			ので、ここで所有すると、その度にアクティビティバーやキーマップが消えてしまう。
+			所有は CExtensionService に置き、ここは参照だけを持つ。
+		*/
+		CExtensionContributionRegistry* contributions = nullptr);
 
 	void SetNotificationHandler(NotificationHandler handler);
 	void SetDeferredNotificationHandler(DeferredNotificationHandler handler);
@@ -131,6 +145,7 @@ private:
 	CExtensionOutputChannel& m_output;
 	CExtensionProgressCenter& m_progress;
 	CExtensionWorkbenchServiceBridge* m_serviceBridge = nullptr;
+	CExtensionContributionRegistry* m_contributions = nullptr;
 	NotificationHandler m_notificationHandler;
 	DeferredNotificationHandler m_deferredNotificationHandler;
 	QuickInputHandler m_quickInputHandler;

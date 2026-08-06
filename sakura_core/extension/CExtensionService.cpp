@@ -8,6 +8,8 @@
 #include "extension/CExtensionService.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
 
+#include "config/ConfigurationTypes.h"
+#include "config/WorkspaceContextTypes.h"
 #include "config/system_constants.h"
 #include "extension/CExtensionManager.h"
 #include "extension/CExtensionQuickInputDialog.h"
@@ -24,7 +26,9 @@
 #include <cmath>
 #include <limits>
 #include <span>
+#include <type_traits>
 #include <utility>
+#include <variant>
 
 namespace {
 
@@ -172,6 +176,115 @@ picojson::object SerializePosition(const SExtensionTextPosition& position)
 	value["line"] = picojson::value(static_cast<double>(position.line));
 	value["character"] = picojson::value(static_cast<double>(position.character));
 	return value;
+}
+
+//! One `Hover.contents[i]` entry, per `vscode-api.cjs`: either a bare string, or a
+//! generically-serialized `MarkdownString` object (`{value, isTrusted, supportHtml,
+//! supportThemeIcons, baseUri}`). Native only ever reads `value`/the plain string --
+//! the other MarkdownString flags describe host-side trust/rendering policy that does
+//! not apply here, because every hover resource is already forced ExternalBlocked by
+//! the empty documentPath/workspaceRoot this uses when parsing (see
+//! `CExtensionDetailSurface::PublishReadme()` for the identical pattern on READMEs).
+std::wstring HoverContentPartMarkdown(const picojson::value& part)
+{
+	if (part.is<std::string>()) return u8stowcs(part.get<std::string>());
+	if (part.is<picojson::object>()) {
+		if (const auto* value = Find(part.get<picojson::object>(), "value"); value && value->is<std::string>()) {
+			return u8stowcs(value->get<std::string>());
+		}
+	}
+	return {};
+}
+
+//! One Hover object (`{"contents":[...], "range"?}`) folded into a single Markdown
+//! blob. VS Code's own hover widget stacks multiple `contents` entries with a rule
+//! between them; a Markdown horizontal rule is the closest native equivalent.
+std::wstring HoverObjectMarkdown(const picojson::value& hover)
+{
+	if (!hover.is<picojson::object>()) return {};
+	const auto* contents = Find(hover.get<picojson::object>(), "contents");
+	if (!contents || !contents->is<picojson::array>()) return {};
+	std::wstring merged;
+	for (const auto& part : contents->get<picojson::array>()) {
+		auto text = HoverContentPartMarkdown(part);
+		if (text.empty()) continue;
+		if (!merged.empty()) merged += L"\n\n---\n\n";
+		merged += text;
+	}
+	return merged;
+}
+
+//! `invokeLanguageProvider`'s merge policy returns a single Hover when exactly one
+//! provider matched, an array of Hover when several did, or an absent/null `value`
+//! when none did (see the class CLAUDE.md for the exact host-side merge rule). Native
+//! must accept both shapes; this folds either into one Markdown blob using the same
+//! horizontal-rule separator between providers as within one provider's contents.
+std::wstring MergeHoverMarkdown(const picojson::value* value)
+{
+	if (!value || value->is<picojson::null>()) return {};
+	std::wstring merged;
+	const auto append = [&merged](const picojson::value& hover) {
+		auto text = HoverObjectMarkdown(hover);
+		if (text.empty()) return;
+		if (!merged.empty()) merged += L"\n\n---\n\n";
+		merged += text;
+	};
+	if (value->is<picojson::array>()) {
+		for (const auto& item : value->get<picojson::array>()) append(item);
+	} else {
+		append(*value);
+	}
+	return merged;
+}
+
+//! The reverse of CExtensionWorkbenchDispatcher's bounded ToConfigurationValue: turns a
+//! validated config::ConfigurationValue read back from CConfigurationService into the plain
+//! JSON shape the extension host's `session.configuration` Map expects. There is no size
+//! budget to enforce here (unlike the inbound direction) because every value already passed
+//! through that same bounded conversion, or a built-in descriptor's default, on the way in.
+picojson::value ConfigurationValueToJson(const config::ConfigurationValue& value)
+{
+	return std::visit([](const auto& held) -> picojson::value {
+		using Held = std::decay_t<decltype(held)>;
+		if constexpr (std::is_same_v<Held, std::monostate>) {
+			return picojson::value();
+		} else if constexpr (std::is_same_v<Held, bool>) {
+			return picojson::value(held);
+		} else if constexpr (std::is_same_v<Held, std::int64_t>) {
+			return picojson::value(static_cast<double>(held));
+		} else if constexpr (std::is_same_v<Held, double>) {
+			return picojson::value(held);
+		} else if constexpr (std::is_same_v<Held, std::wstring>) {
+			return picojson::value(wcstou8s(held));
+		} else if constexpr (std::is_same_v<Held, config::ConfigurationValue::Array>) {
+			picojson::array array;
+			array.reserve(held.size());
+			for (const auto& element : held) array.push_back(ConfigurationValueToJson(element));
+			return picojson::value(std::move(array));
+		} else {
+			static_assert(std::is_same_v<Held, config::ConfigurationValue::Object>);
+			picojson::object object;
+			for (const auto& [key, element] : held) object[wcstou8s(key)] = ConfigurationValueToJson(element);
+			return picojson::value(std::move(object));
+		}
+	}, value.Value());
+}
+
+//! `vscode.workspace.workspaceFolders` must be `undefined` (not an empty array) when no
+//! workspace is open; the caller omits the "workspaceFolders" param entirely for that case
+//! rather than calling this with an empty snapshot, so the extension host never receives an
+//! empty-array signal that would satisfy Array.isArray and produce the wrong observable shape.
+picojson::array WorkspaceFoldersJson(const config::WorkspaceContextSnapshot& snapshot)
+{
+	picojson::array folders;
+	folders.reserve(snapshot.folders.size());
+	for (const auto& folder : snapshot.folders) {
+		picojson::object object;
+		object["uri"] = picojson::value(wcstou8s(folder.uri.ToString()));
+		if (!folder.displayName.empty()) object["name"] = picojson::value(wcstou8s(folder.displayName));
+		folders.push_back(picojson::value(std::move(object)));
+	}
+	return folders;
 }
 
 bool SendBrokerMessage(HWND broker, UINT message, WPARAM wParam, LPARAM lParam, DWORD_PTR& result)
@@ -364,6 +477,26 @@ void CExtensionService::SetWindowState(bool focused)
 		(void)SendRequestWorker("extension/window/didChangeState",
 			picojson::value(std::move(params)).serialize(), { .kind = PendingKind::DocumentEvent });
 	});
+}
+
+void CExtensionService::RequestHover(SExtensionDocumentId id, SExtensionTextPosition position)
+{
+	if (!id.IsValid()) {
+		CancelHover();
+		return;
+	}
+	// Advanced synchronously (before Enqueue, not inside the enqueued lambda) so two
+	// back-to-back calls from the UI thread -- a dwell timer refiring, or a request
+	// immediately followed by CancelHover -- are ordered even before either reaches
+	// the worker thread's queue.
+	const auto sequence = m_hoverSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
+	Enqueue([this, id, position, sequence]() { RequestHoverWorker(id, position, sequence); });
+}
+
+void CExtensionService::CancelHover()
+{
+	const auto sequence = m_hoverSequence.fetch_add(1, std::memory_order_acq_rel) + 1;
+	Enqueue([this, sequence]() { CancelHoverWorker(sequence); });
 }
 
 void CExtensionService::SetApplyEditHandler(ApplyEditHandler handler)
@@ -1190,6 +1323,8 @@ void CExtensionService::HandleResponseWorker(const SExtensionRpcMessage& message
 			const auto result = m_dispatcher->ApplyTreeChildrenResult(
 				pending.viewHandle, pending.parentHandle, pending.extensionId, pending.generation, message.sResultJson);
 			PostWorkbenchChanges(result.changes);
+		} else if (pending.kind == PendingKind::Hover) {
+			HandleHoverResponseWorker(pending, message.sResultJson);
 		}
 		return;
 	}
@@ -1197,6 +1332,13 @@ void CExtensionService::HandleResponseWorker(const SExtensionRpcMessage& message
 		const auto result = m_dispatcher->ApplyTreeChildrenResult(
 			pending.viewHandle, pending.parentHandle, pending.extensionId, pending.generation, "{\"items\":[]}");
 		PostWorkbenchChanges(result.changes);
+	} else if (pending.kind == PendingKind::Hover &&
+		pending.hoverSequence == m_hoverSequence.load(std::memory_order_acquire)) {
+		// An RPC-level error (host threw, host lost, malformed response) for a hover
+		// request that is still the most recent one: fail closed by hiding rather
+		// than leaving a stale popup up with no way to know it will never update.
+		m_hover.Clear();
+		PostWorkbenchChanges(EExtensionWorkbenchChange::Hover);
 	}
 }
 
@@ -1233,6 +1375,77 @@ void CExtensionService::HandleFormatDocumentResponseWorker(
 		if (updated != EExtensionDocumentUpdateResult::Applied) (void)m_documents.Open(snapshot);
 		SendDocumentSnapshotWorker("extension/workspace/didChange", snapshot, true);
 	}
+}
+
+void CExtensionService::HandleHoverResponseWorker(
+	const PendingRequest& pending,
+	std::string_view resultJson)
+{
+	// A newer RequestHover/CancelHover call has already superseded this one -- the
+	// mouse moved on, or hover was dismissed, before the host answered. Discard
+	// instead of racing a late answer onto a screen state it no longer describes;
+	// same ordering rule HandleFormatDocumentResponseWorker enforces with a document
+	// version fence, applied here with the hover-specific sequence fence instead
+	// because a hover request has no document mutation to fence against.
+	if (pending.hoverSequence != m_hoverSequence.load(std::memory_order_acquire)) return;
+	const auto current = m_documents.Snapshot(pending.documentId);
+	if (!current || current->version != pending.expectedVersion) {
+		m_hover.Clear();
+		PostWorkbenchChanges(EExtensionWorkbenchChange::Hover);
+		return;
+	}
+	picojson::object providerResult;
+	SExtensionHoverResult result;
+	result.documentId = pending.documentId;
+	result.position = pending.hoverPosition;
+	if (ParseObject(resultJson, providerResult)) {
+		result.markdown = MergeHoverMarkdown(Find(providerResult, "value"));
+	}
+	result.empty = result.markdown.empty();
+	m_hover.Publish(std::move(result));
+	PostWorkbenchChanges(EExtensionWorkbenchChange::Hover);
+}
+
+void CExtensionService::RequestHoverWorker(
+	SExtensionDocumentId id, SExtensionTextPosition position, std::uint64_t sequence)
+{
+	// Superseded before this task even reached the front of the worker queue.
+	if (sequence != m_hoverSequence.load(std::memory_order_acquire)) return;
+	const auto snapshot = m_documents.Snapshot(id);
+	if (!snapshot) {
+		m_hover.Clear();
+		PostWorkbenchChanges(EExtensionWorkbenchChange::Hover);
+		return;
+	}
+	picojson::object params;
+	params["kind"] = picojson::value("hover");
+	params["documentId"] = picojson::value(id.ToString());
+	params["uri"] = picojson::value(wcstou8s(snapshot->uri));
+	params["position"] = picojson::value(SerializePosition(position));
+	const bool sent = SendRequestWorker("extension/languages/provide", picojson::value(std::move(params)).serialize(), {
+		.kind = PendingKind::Hover,
+		.documentId = id,
+		.expectedVersion = snapshot->version,
+		.hoverPosition = position,
+		.hoverSequence = sequence,
+	});
+	// Not connected / not registered / pending-request limit reached: there is no
+	// outstanding request that could later resolve this, so fail closed now
+	// instead of leaving a stale (or perpetually absent) hover on screen.
+	if (!sent) {
+		m_hover.Clear();
+		PostWorkbenchChanges(EExtensionWorkbenchChange::Hover);
+	}
+}
+
+void CExtensionService::CancelHoverWorker(std::uint64_t sequence)
+{
+	// An even newer request/cancel already superseded this one; whatever it did
+	// (or will do) to m_hover is authoritative, this stale cancel must not
+	// clobber it.
+	if (sequence != m_hoverSequence.load(std::memory_order_acquire)) return;
+	m_hover.Clear();
+	PostWorkbenchChanges(EExtensionWorkbenchChange::Hover);
 }
 
 bool CExtensionService::HandleHelloWorker(const SExtensionRpcMessage& message)
@@ -1278,6 +1491,25 @@ void CExtensionService::SendRegisterExtensionsWorker()
 	for (const auto& root : m_installedRoots) extensions.emplace_back(Utf8Path(root));
 	picojson::object params;
 	params["extensions"] = picojson::value(std::move(extensions));
+
+	// Every registration (initial connect and each reconnect resend) carries a fresh
+	// configuration/workspaceFolders snapshot, mirroring how `extensions` itself is resent
+	// in full rather than diffed: the host stores the latest snapshot on the loader and
+	// merges it into every ExtensionApiSession it constructs from then on, including ones
+	// activated long after this RPC completes.
+	if (m_workbenchServiceBridge) {
+		picojson::object configuration;
+		for (const auto& entry : m_workbenchServiceBridge->BuildConfigurationSnapshot()) {
+			configuration[entry.key] = ConfigurationValueToJson(entry.value);
+		}
+		params["configuration"] = picojson::value(std::move(configuration));
+
+		const auto workspace = m_workbenchServiceBridge->WorkspaceContextSnapshotForExtensions();
+		if (!workspace.folders.empty()) {
+			params["workspaceFolders"] = picojson::value(WorkspaceFoldersJson(workspace));
+		}
+	}
+
 	(void)SendRequestWorker("host/registerExtensions", picojson::value(std::move(params)).serialize(),
 		{ .kind = PendingKind::RegisterExtensions });
 }
@@ -1673,19 +1905,27 @@ void CExtensionService::ClearWorkbenchWorker()
 	m_quickInput.Clear();
 	m_output.ClearAll();
 	m_progress.Clear();
+	m_hover.Clear();
+	// No in-flight hover response can arrive after this point for the request(s)
+	// that were just discarded with m_pendingRequests -- but advance the sequence
+	// anyway so a hover UI-thread caller that raced this reset cannot have its
+	// now-meaningless RequestHover/CancelHover silently mistaken for current.
+	m_hoverSequence.fetch_add(1, std::memory_order_acq_rel);
 	m_views->Clear();
+	m_contributions.Clear();
 	ResetDispatcherWorker();
 	PostWorkbenchChanges(EExtensionWorkbenchChange::Commands | EExtensionWorkbenchChange::StatusBar |
 		EExtensionWorkbenchChange::Views | EExtensionWorkbenchChange::Notifications |
 		EExtensionWorkbenchChange::Diagnostics | EExtensionWorkbenchChange::QuickInput |
-		EExtensionWorkbenchChange::Output | EExtensionWorkbenchChange::Progress);
+		EExtensionWorkbenchChange::Output | EExtensionWorkbenchChange::Progress |
+		EExtensionWorkbenchChange::Contributions | EExtensionWorkbenchChange::Hover);
 }
 
 void CExtensionService::ResetDispatcherWorker()
 {
 	m_dispatcher = std::make_unique<CExtensionWorkbenchDispatcher>(
 		m_contextKeys, m_commands, m_statusBar, m_notifications, *m_views, *m_secrets,
-		m_diagnostics, m_quickInput, m_output, m_progress, m_workbenchServiceBridge.get());
+		m_diagnostics, m_quickInput, m_output, m_progress, m_workbenchServiceBridge.get(), &m_contributions);
 	m_dispatcher->SetNotificationHandler([this](const SExtensionNotification& notification) {
 		return ShowNotificationOnUi(notification);
 	});

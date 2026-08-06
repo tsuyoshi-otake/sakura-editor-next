@@ -15,9 +15,7 @@
 #include <string>
 #include <vector>
 
-#define MINIZ_HEADER_FILE_ONLY
-#include <miniz-cpp/zip_file.hpp>
-#undef MINIZ_HEADER_FILE_ONLY
+#include "ZipArchiveFixture.h"
 
 #include "util/file.h"
 
@@ -99,9 +97,9 @@ void extract_zip(
 	// 出力先ディレクトリを作成する
 	std::filesystem::create_directories(outDir);
 
-	miniz_cpp::zip_file z(zipPath.string());
+	const auto zipEntries = tests1::ReadZipArchive(zipPath);
 
-	for (const auto& name : z.namelist()) {
+	for (const auto& [name, data] : zipEntries) {
 		const auto outPath = outDir / std::filesystem::path(name);
 
 		// base 配下に収まってるか（../ 脱出対策）
@@ -124,7 +122,7 @@ void extract_zip(
 			std::filesystem::create_directories(parentDir);
 		}
 
-        const auto data = z.read(name); // 展開済みバイト列が std::string で返る
+        // data は展開済みバイト列（std::string）。ディレクトリエントリは上で continue 済み。
 
         std::ofstream ofs(outPath, std::ios::binary);
         if (!ofs) {
@@ -213,10 +211,10 @@ TEST(CZipFile, ExtractVsixSafely_ValidatesAllCentralDirectoryEntriesBeforeWritin
 	std::filesystem::remove(outsidePath, ec);
 
 	{
-		miniz_cpp::zip_file archive;
-		archive.writestr("extension/package.json", "{\"name\":\"safe\"}");
-		archive.writestr("extension/readme.md", "safe content");
-		archive.save(zipPath.string());
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"safe\"}" },
+			{ .name = "extension/readme.md", .content = "safe content" },
+		});
 	}
 	std::wstring errorMsg;
 	ASSERT_TRUE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg)) << errorMsg;
@@ -224,10 +222,10 @@ TEST(CZipFile, ExtractVsixSafely_ValidatesAllCentralDirectoryEntriesBeforeWritin
 	std::filesystem::remove_all(outputDir, ec);
 
 	{
-		miniz_cpp::zip_file archive;
-		archive.writestr("extension/package.json", "{\"name\":\"unsafe\"}");
-		archive.writestr("../outside.txt", "must not be written");
-		archive.save(zipPath.string());
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"unsafe\"}" },
+			{ .name = "../outside.txt", .content = "must not be written" },
+		});
 	}
 	errorMsg.clear();
 	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
@@ -249,10 +247,10 @@ TEST(CZipFile, ExtractVsixSafely_RejectsAmbiguousOrIncompleteArchives)
 	std::filesystem::remove(outputDir, ec);
 
 	{
-		miniz_cpp::zip_file archive;
-		archive.writestr("extension/package.json", "{\"name\":\"safe\"}");
-		archive.writestr("extension/PACKAGE.JSON", "{\"name\":\"duplicate\"}");
-		archive.save(zipPath.string());
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"safe\"}" },
+			{ .name = "extension/PACKAGE.JSON", .content = "{\"name\":\"duplicate\"}" },
+		});
 	}
 	std::wstring errorMsg;
 	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
@@ -260,13 +258,110 @@ TEST(CZipFile, ExtractVsixSafely_RejectsAmbiguousOrIncompleteArchives)
 	std::filesystem::remove_all(outputDir, ec);
 
 	{
-		miniz_cpp::zip_file archive;
-		archive.writestr("extension/readme.md", "missing manifest");
-		archive.save(zipPath.string());
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/readme.md", .content = "missing manifest" },
+		});
 	}
 	errorMsg.clear();
 	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
 	EXPECT_FALSE(std::filesystem::exists(outputDir / L"extension" / L"readme.md"));
+
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove_all(outputDir, ec);
+}
+
+namespace {
+
+//! deflate でほとんど縮まない、決定的な擬似ランダム列を作る
+std::string MakeIncompressiblePayload(size_t bytes)
+{
+	std::string payload;
+	payload.resize(bytes);
+	uint64_t state = 0x9E3779B97F4A7C15ull;
+	for (size_t i = 0; i < bytes; ++i) {
+		state ^= state << 13;
+		state ^= state >> 7;
+		state ^= state << 17;
+		payload[i] = static_cast<char>(state & 0xFF);
+	}
+	return payload;
+}
+
+} // namespace
+
+/*!
+	@brief 旧上限（エントリ 64 MiB）に阻まれていた実サイズの拡張が展開できる
+
+	Anthropic.claude-code の win32-x64 ビルドは単一エントリ 267 MiB を含む。
+	テストで 267 MiB を扱うのは重いので、旧上限をまたぐ最小の大きさで
+	「絶対サイズだけで殺す判定はもう無い」ことを示す。
+ */
+TEST(CZipFile, ExtractVsixSafely_AcceptsEntriesLargerThanTheFormerAbsoluteLimit)
+{
+	const auto zipPath = GetTempFilePath(L"vxl");
+	const auto outputDir = GetTempFilePath(L"vxm");
+	std::error_code ec;
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove(outputDir, ec);
+
+	// 旧 kMaxVsixEntryBytes は 64 MiB。これを 1 MiB だけ超える。
+	constexpr size_t kPayloadBytes = 65u * 1024 * 1024;
+	const std::string payload = MakeIncompressiblePayload(kPayloadBytes);
+	{
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"large\"}" },
+			{ .name = "extension/resources/native-binary/big.bin", .content = payload },
+		});
+	}
+
+	std::wstring errorMsg;
+	ASSERT_TRUE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg)) << errorMsg;
+	const auto extracted = outputDir / L"extension" / L"resources" / L"native-binary" / L"big.bin";
+	ASSERT_TRUE(std::filesystem::exists(extracted));
+	EXPECT_EQ(static_cast<uintmax_t>(kPayloadBytes), std::filesystem::file_size(extracted, ec));
+
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove_all(outputDir, ec);
+}
+
+/*!
+	@brief 絶対サイズを緩めた代わりに、圧縮比で zip 爆弾を弾く
+
+	そして拒否の理由は、どのエントリがどれだけ膨らんだのかまで述べる。
+	"exceeds extraction limits" だけでは利用者は何もできない。
+ */
+TEST(CZipFile, ExtractVsixSafely_RejectsHighCompressionRatioAndNamesTheEntry)
+{
+	const auto zipPath = GetTempFilePath(L"vxe");
+	const auto outputDir = GetTempFilePath(L"vxf");
+	std::error_code ec;
+	std::filesystem::remove(zipPath, ec);
+	std::filesystem::remove(outputDir, ec);
+
+	// 8 MiB のゼロ埋めは数 KiB まで縮む。比は 100:1 を優に超える。
+	{
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"bomb\"}" },
+			{ .name = "extension/bomb.bin", .content = std::string(8u * 1024 * 1024, '\0') },
+		});
+	}
+
+	std::wstring errorMsg;
+	EXPECT_FALSE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg));
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"extension/bomb.bin")) << errorMsg;
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"zip bomb")) << errorMsg;
+	EXPECT_FALSE(std::filesystem::exists(outputDir / L"extension" / L"bomb.bin"));
+
+	// 1 MiB 以下は比の判定を免除する。小さな入力が数千倍になるのは正常。
+	std::filesystem::remove_all(outputDir, ec);
+	{
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"small\"}" },
+			{ .name = "extension/padding.txt", .content = std::string(256u * 1024, '\0') },
+		});
+	}
+	errorMsg.clear();
+	EXPECT_TRUE(CZipFile::ExtractVsixSafely(zipPath, outputDir, errorMsg)) << errorMsg;
 
 	std::filesystem::remove(zipPath, ec);
 	std::filesystem::remove_all(outputDir, ec);
@@ -281,9 +376,9 @@ TEST(CZipFile, ExtractVsixSafely_HonorsPreCancellation)
 	std::filesystem::remove(zipPath, ec);
 	std::filesystem::remove(outputDir, ec);
 	{
-		miniz_cpp::zip_file archive;
-		archive.writestr("extension/package.json", "{\"name\":\"safe\"}");
-		archive.save(zipPath.string());
+		tests1::WriteZipArchive(zipPath, {
+			{ .name = "extension/package.json", .content = "{\"name\":\"safe\"}" },
+		});
 	}
 
 	std::atomic<bool> cancelled{ true };
@@ -364,21 +459,12 @@ TEST(CZipFile, CZipFIle)
 }
 
 // InflateZlibStream() 用のテストデータ生成ヘルパー。
-// mz_compress() は宣言（このファイル冒頭の MINIZ_HEADER_FILE_ONLY 付き
-// include）のみを見ており、実体は CZipFile.cpp が唯一ガードなしで取り込む
-// 側にある。両者は同一ヘッダーテキストの extern "C" 宣言を経由するため
-// リンク時に解決できる。テスト専用の圧縮 API を新たに増やす代わりに、
-// この既存の再利用パターン（miniz_cpp::zip_file 等ですでに使われている
-// ものと同じ仕組み）を使い、本物の RFC 1950 zlib ストリームを合成する。
+// 圧縮そのものは ZipArchiveFixture が持つ（miniz を取り込む tests1 唯一の翻訳単位）。
+// ここでは失敗を GoogleTest の失敗として報告する薄い包みだけを置く。
 std::vector<std::byte> CompressWithMzForTest(std::string_view source)
 {
-	mz_ulong destLen = mz_compressBound(static_cast<mz_ulong>(source.size()));
-	std::vector<std::byte> dest(destLen);
-	const int status = mz_compress(
-		reinterpret_cast<unsigned char*>(dest.data()), &destLen,
-		reinterpret_cast<const unsigned char*>(source.data()), static_cast<mz_ulong>(source.size()));
-	EXPECT_EQ(MZ_OK, status);
-	dest.resize(destLen);
+	std::vector<std::byte> dest = tests1::CompressZlibStream(source);
+	EXPECT_FALSE(dest.empty());
 	return dest;
 }
 

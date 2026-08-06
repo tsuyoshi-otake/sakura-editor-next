@@ -460,6 +460,152 @@ TEST(CExtensionManager, DISABLED_Install_Live)
 	::OleUninitialize();
 }
 
+/*!
+	@brief メタデータが引けないとき、検索応答の URL が語るビルドを見て判断する
+
+	検索応答は targetPlatform フィールドを持たないことがある。フィールドが空でも
+	`@alpine-arm64.vsix` という URL は「これは alpine-arm64 のビルドだ」と言っている。
+	これを読まないと、別プラットフォームのバイナリを黙って展開してしまう。
+ */
+TEST(CExtensionManager, ResolveInstallTarget_UsesUrlPlatformWhenMetadataIsUnavailable)
+{
+	using extension::openvsx::EOpenVsxRequestOutcome;
+	using extension::openvsx::OpenVsxExtensionAssetsOperation;
+
+	OpenVsxExtensionAssetsOperation unavailable;
+	unavailable.status.outcome = EOpenVsxRequestOutcome::Unsupported;
+
+	SOpenVsxExtension ext;
+	ext.sNamespace = L"Anthropic";
+	ext.sName = L"claude-code";
+	ext.sVersion = L"2.1.223";
+	ext.sDownloadUrl =
+		L"https://open-vsx.org/api/Anthropic/claude-code/alpine-arm64/2.1.223/"
+		L"file/Anthropic.claude-code-2.1.223@alpine-arm64.vsix";
+
+	SOpenVsxExtension resolved;
+	std::wstring errorMsg;
+	EXPECT_FALSE(CExtensionManager::ResolveInstallTarget(ext, unavailable, L"win32-x64", resolved, errorMsg));
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"alpine-arm64")) << errorMsg;
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"win32-x64")) << errorMsg;
+
+	// 同じホストのビルドなら通す
+	ext.sDownloadUrl =
+		L"https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.223/"
+		L"file/Anthropic.claude-code-2.1.223@win32-x64.vsix";
+	errorMsg.clear();
+	EXPECT_TRUE(CExtensionManager::ResolveInstallTarget(ext, unavailable, L"win32-x64", resolved, errorMsg)) << errorMsg;
+	EXPECT_EQ(ext.sDownloadUrl, resolved.sDownloadUrl);
+
+	// プラットフォーム修飾の無い配布物はどのホストでも使える
+	ext.sDownloadUrl = L"https://open-vsx.org/api/foo/bar/1.0.0/file/foo.bar-1.0.0.vsix";
+	errorMsg.clear();
+	EXPECT_TRUE(CExtensionManager::ResolveInstallTarget(ext, unavailable, L"win32-x64", resolved, errorMsg)) << errorMsg;
+}
+
+//! メタデータが引けたら、そこから必ずこのホスト向けのビルドを選ぶ
+TEST(CExtensionManager, ResolveInstallTarget_PrefersMetadataOverSearchResult)
+{
+	using extension::openvsx::EOpenVsxRequestOutcome;
+	using extension::openvsx::OpenVsxExtensionAssetsOperation;
+
+	OpenVsxExtensionAssetsOperation assets;
+	assets.status.outcome = EOpenVsxRequestOutcome::Success;
+	assets.value.sVersion = L"2.1.223";
+	assets.value.sTargetPlatform = L"alpine-arm64";
+	assets.value.sDownloadUrl = L"https://open-vsx.org/a/alpine-arm64/x@alpine-arm64.vsix";
+	assets.value.downloads = {
+		{ L"alpine-arm64", L"https://open-vsx.org/a/alpine-arm64/x@alpine-arm64.vsix" },
+		{ L"win32-x64", L"https://open-vsx.org/a/win32-x64/x@win32-x64.vsix" },
+	};
+
+	SOpenVsxExtension ext;
+	ext.sNamespace = L"Anthropic";
+	ext.sName = L"claude-code";
+	ext.sDownloadUrl = L"https://open-vsx.org/a/alpine-arm64/x@alpine-arm64.vsix";
+
+	SOpenVsxExtension resolved;
+	std::wstring errorMsg;
+	ASSERT_TRUE(CExtensionManager::ResolveInstallTarget(ext, assets, L"win32-x64", resolved, errorMsg)) << errorMsg;
+	EXPECT_EQ(L"https://open-vsx.org/a/win32-x64/x@win32-x64.vsix", resolved.sDownloadUrl);
+	EXPECT_EQ(L"win32-x64", resolved.sTargetPlatform);
+	EXPECT_EQ(L"2.1.223", resolved.sVersion);
+	// 既定ビルド以外を選んだので sha256 は選んだ配布物から導く
+	EXPECT_EQ(L"https://open-vsx.org/a/win32-x64/x@win32-x64.sha256", resolved.sSha256Url);
+
+	// このホスト向けが無いなら、別のもので代用せず失敗させる
+	assets.value.downloads = { { L"alpine-arm64", L"https://open-vsx.org/a/alpine-arm64/x@alpine-arm64.vsix" } };
+	errorMsg.clear();
+	EXPECT_FALSE(CExtensionManager::ResolveInstallTarget(ext, assets, L"win32-x64", resolved, errorMsg));
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"win32-x64")) << errorMsg;
+}
+
+/*!
+	@brief Claude Code for VS Code を実際に導入する（parity gate）
+
+	この 1 本が Phase 1 の主張をまとめて検証する。
+	- `/api/-/search` は targetPlatform を無視して alpine-arm64 等を返し得るので、
+	  メタデータ endpoint で win32-x64 に解決し直せていること
+	- 267 MiB の単一エントリを含む 88 MiB の VSIX が展開上限に阻まれないこと
+	導入先は一時ディレクトリに隔離するので、実プロファイルは汚さない。
+	@code
+	tests1.exe --gtest_also_run_disabled_tests --gtest_filter=*Install_Live_ClaudeCode*
+	@endcode
+ */
+TEST(CExtensionManager, DISABLED_Install_Live_ClaudeCode)
+{
+	ASSERT_HRESULT_SUCCEEDED(::OleInitialize(nullptr));
+
+	config::CConfigurationService configuration(config::BuiltinConfigurationDescriptors());
+	const auto clientResult = extension::openvsx::CreateOpenVsxProductionClient(
+		configuration, std::wstring(kCanonicalProfileId));
+	ASSERT_TRUE(clientResult) << clientResult.diagnostic.c_str();
+
+	const auto search = clientResult.client->Search(L"claude code", 0, 10);
+	ASSERT_TRUE(search.status) << search.status.message;
+
+	const SOpenVsxExtension* found = nullptr;
+	for (const SOpenVsxExtension& candidate : search.value.extensions) {
+		if (candidate.GetUniqueId() == L"Anthropic.claude-code") {
+			found = &candidate;
+			break;
+		}
+	}
+	ASSERT_NE(nullptr, found) << L"Anthropic.claude-code が検索結果に無い";
+
+	// 検索応答だけでは別プラットフォームを掴む。メタデータ endpoint で解決できること。
+	const auto assets = clientResult.client->FetchExtensionAssets(L"Anthropic", L"claude-code");
+	ASSERT_TRUE(assets.status) << assets.status.message;
+	const std::wstring selected = extension::openvsx::OpenVsxProtocol::SelectPlatformDownloadUrl(
+		assets.value, extension::openvsx::OpenVsxProtocol::HostTargetPlatform());
+	ASSERT_NE(std::wstring::npos, selected.find(L"win32-x64")) << selected;
+
+	TempDirectory directory;
+	CExtensionManager manager(directory.GetPath());
+	std::wstring errorMsg;
+	ASSERT_TRUE(manager.Install(*found, *clientResult.client, errorMsg)) << errorMsg;
+
+	SInstalledExtension installed;
+	ASSERT_TRUE(manager.FindInstalled(L"Anthropic.claude-code", installed));
+	const auto manifest = installed.dir / CExtensionManager::kVsixContentDir
+		/ CExtensionManager::kManifestFileName;
+	ASSERT_TRUE(std::filesystem::exists(manifest)) << manifest.wstring();
+
+	// win32-x64 ビルドの証拠。他プラットフォームのビルドには含まれない。
+	const auto nativeBinary = installed.dir / CExtensionManager::kVsixContentDir
+		/ L"resources" / L"native-binary" / L"claude.exe";
+	if (!std::filesystem::exists(nativeBinary)) {
+		std::error_code ec;
+		for (const auto& entry : std::filesystem::recursive_directory_iterator(
+			installed.dir / CExtensionManager::kVsixContentDir / L"resources", ec)) {
+			ADD_FAILURE() << "resources entry: " << entry.path().string();
+		}
+	}
+	EXPECT_TRUE(std::filesystem::exists(nativeBinary)) << nativeBinary.wstring();
+
+	::OleUninitialize();
+}
+
 //! sha256 が合わない配布物を展開しないこと
 TEST(CExtensionManager, DISABLED_Install_Live_RejectsTamperedSha256)
 {

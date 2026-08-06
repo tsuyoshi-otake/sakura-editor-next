@@ -56,6 +56,15 @@ public:
 	void Close() override;
 
 	void SetRoot(std::wstring root);
+	//! Whether the current window has a single open workspace folder, i.e.
+	//! `CWorkbenchRuntime`'s state is `Folder` (see that class's own state
+	//! enum). This decides which of upstream's two mutually exclusive
+	//! `viewsWelcome` empty states the Source Control view shows when no
+	//! repository is open: `Initialize Repository` with a folder open,
+	//! `Clone Repository` with none. Defaults to `false` until the composition
+	//! root calls this; see `GitInitCloneCommands.h`'s `BuildGitScmWelcomeModel`
+	//! and this directory's CLAUDE.md for the exact split.
+	void SetHasOpenFolder(bool hasOpenFolder);
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetFileActivationCallback(FileActivationCallback callback);
 	void SetStatusBarCommandsCallback(StatusBarCommandsCallback callback);

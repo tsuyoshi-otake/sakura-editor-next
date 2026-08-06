@@ -77,11 +77,22 @@ async function main() {
       ]);
     }
     const diagnosticUpdates = notifications.filter((entry) => entry.method === 'languages/diagnostics/set');
+    // The gap between what the manifest declares and what the loader turned into
+    // records is the contribution-point coverage, measured rather than asserted.
+    const declared = record.manifest?.contributes && typeof record.manifest.contributes === 'object'
+      ? Object.keys(record.manifest.contributes).sort() : [];
     process.stdout.write(`${JSON.stringify({
       extensionId: activeExtensionId,
       activated: true,
       methods: [...new Set(notifications.map((entry) => entry.method))].sort(),
       requestMethods: [...new Set(requests.map((entry) => entry.method))].sort(),
+      declaredContributions: declared,
+      recognizedContributions: {
+        commands: record.commands.map((command) => command.id).sort(),
+        views: record.views.map((view) => `${view.containerId}/${view.id}`).sort(),
+        configurationDefaults: Object.keys(record.configurationDefaults || {}).length,
+      },
+      activationEvents: [...(record.events || [])].sort(),
       formatResult,
       diagnosticCount: diagnosticUpdates.reduce(
         (count, entry) => count + (entry.params.diagnostics?.length || 0), 0),

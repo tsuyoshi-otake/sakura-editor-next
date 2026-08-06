@@ -218,8 +218,82 @@ private:
 	bool m_released = false;
 };
 
+// Simulates a transport that streams a fixed sequence of chunks directly into
+// request.bodySink, the way WinHttpRequestRuntime does for a 2xx response with
+// a sink configured. RequestService itself never reads response bytes when a
+// sink is present; it only forwards the sink through TransportRequest, so this
+// fake is what lets RequestServiceTest observe streaming/rejection/partial-body
+// behavior without depending on WinHTTP or the network.
+class SinkStreamingTransport final : public IRequestTransport {
+public:
+	std::vector<std::vector<std::uint8_t>> chunks;
+	// If set, delivery stops (without exhausting `chunks`) once this many chunks
+	// have been accepted by the sink, and Send() reports `failureAfterChunks`
+	// instead of `finalResult` — modeling a connection drop after some bytes
+	// already reached the caller-owned sink.
+	std::optional<std::size_t> failAfterChunkCount;
+	ETransportFailure failureAfterChunks = ETransportFailure::Network;
+	TransportResult finalResult{ Response(200) };
+	std::vector<std::vector<std::uint8_t>> deliveredChunks;
+	std::size_t sendCount = 0;
+
+	TransportResult Send(const TransportRequest& request, const IRequestCancellation*) override
+	{
+		++sendCount;
+		deliveredChunks.clear();
+		for (const auto& chunk : chunks) {
+			if (!request.bodySink(chunk.data(), chunk.size())) {
+				return { std::nullopt, ETransportFailure::SinkFailure };
+			}
+			deliveredChunks.push_back(chunk);
+			if (failAfterChunkCount && deliveredChunks.size() == *failAfterChunkCount) {
+				return { std::nullopt, failureAfterChunks };
+			}
+		}
+		return finalResult;
+	}
+};
+
+// Tracks how many overlapping Send() calls are simultaneously blocked inside
+// the transport, so a test can prove two concurrent Execute() calls both
+// reached the transport instead of one waiting on the other's in-flight
+// deduplication result.
+class ConcurrentEntryTransport final : public IRequestTransport {
+public:
+	std::vector<TransportRequest> requests;
+
+	TransportResult Send(const TransportRequest& request, const IRequestCancellation*) override
+	{
+		std::unique_lock lock(m_mutex);
+		requests.push_back(request);
+		++m_activeCount;
+		m_changed.notify_all();
+		m_changed.wait_for(lock, std::chrono::seconds(2), [this] { return m_released; });
+		return { Response(200) };
+	}
+
+	bool WaitUntilAtLeast(std::size_t count)
+	{
+		std::unique_lock lock(m_mutex);
+		return m_changed.wait_for(lock, std::chrono::seconds(1), [this, count] { return m_activeCount >= count; });
+	}
+
+	void Release()
+	{
+		std::lock_guard lock(m_mutex);
+		m_released = true;
+		m_changed.notify_all();
+	}
+
+private:
+	std::mutex m_mutex;
+	std::condition_variable m_changed;
+	std::size_t m_activeCount = 0;
+	bool m_released = false;
+};
+
 RequestService CreateService(
-	FakeTransport& transport,
+	IRequestTransport& transport,
 	FakeProxyService& proxy,
 	FakeCredentialService& credentials,
 	FakeClock& clock,
@@ -746,4 +820,329 @@ TEST(RequestService, RejectsUnsafePerRequestLimitsBeforeCallingAdapters)
 	EXPECT_EQ(ERequestOutcome::InvalidRequest, bodyResult.outcome);
 	EXPECT_TRUE(proxy.requests.empty());
 	EXPECT_TRUE(transport.requests.empty());
+}
+
+// --- IsValidRequest: bodySink vs. deduplication/cache guard -----------------
+
+TEST(RequestService, RejectsBodySinkCombinedWithANonEmptyDeduplicationKey)
+{
+	FakeTransport transport;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream" };
+	request.deduplicationKey = L"logical-operation";
+	request.bodySink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	const auto result = service.Execute(request);
+
+	EXPECT_EQ(ERequestOutcome::InvalidRequest, result.outcome);
+	EXPECT_TRUE(proxy.selectedUrls.empty());
+	EXPECT_TRUE(transport.requests.empty());
+}
+
+TEST(RequestService, RejectsBodySinkCombinedWithOfflineOnlyCachePolicy)
+{
+	FakeTransport transport;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream" };
+	request.cachePolicy = ERequestCachePolicy::OfflineOnly;
+	request.bodySink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	const auto result = service.Execute(request);
+
+	EXPECT_EQ(ERequestOutcome::InvalidRequest, result.outcome);
+	EXPECT_TRUE(transport.requests.empty());
+}
+
+TEST(RequestService, RejectsBodySinkCombinedWithPreferCacheCachePolicy)
+{
+	FakeTransport transport;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream" };
+	request.cachePolicy = ERequestCachePolicy::PreferCache;
+	request.bodySink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	const auto result = service.Execute(request);
+
+	EXPECT_EQ(ERequestOutcome::InvalidRequest, result.outcome);
+	EXPECT_TRUE(transport.requests.empty());
+}
+
+TEST(RequestService, AllowsBodySinkWithAnEmptyDeduplicationKeyAtTheGuardBoundary)
+{
+	FakeTransport transport;
+	transport.results.push_back({ Response(200) });
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream" };
+	// A present-but-empty deduplicationKey is not rejected: IsValidRequest's bodySink guard
+	// tests `!deduplicationKey->empty()`, matching Execute()'s own dedup-eligibility test
+	// (`!deduplicationKey || deduplicationKey->empty()` also treats "" as "no dedup key").
+	request.deduplicationKey = L"";
+	request.bodySink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	const auto result = service.Execute(request);
+
+	ASSERT_TRUE(result);
+	ASSERT_EQ(1u, transport.requests.size());
+	EXPECT_TRUE(static_cast<bool>(transport.requests.front().bodySink));
+}
+
+// --- bodySink streaming behavior ---------------------------------------------
+
+TEST(RequestService, StreamsResponseBodyToSinkAcrossMultipleChunksAndLeavesHttpResponseBodyEmpty)
+{
+	SinkStreamingTransport transport;
+	transport.chunks = { { 0x01, 0x02 }, { 0x03 }, { 0x04, 0x05, 0x06 } };
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream" };
+	std::vector<std::uint8_t> received;
+	std::size_t invocationCount = 0;
+	request.bodySink = [&received, &invocationCount](const std::uint8_t* data, std::size_t size) {
+		++invocationCount;
+		received.insert(received.end(), data, data + size);
+		return true;
+	};
+
+	const auto result = service.Execute(request);
+
+	ASSERT_TRUE(result);
+	EXPECT_EQ(3u, invocationCount);
+	const std::vector<std::uint8_t> expected = { 0x01, 0x02, 0x03, 0x04, 0x05, 0x06 };
+	EXPECT_EQ(expected, received);
+	ASSERT_TRUE(result.response);
+	EXPECT_TRUE(result.response->body.empty());
+}
+
+TEST(RequestService, NeverCachesASuccessfulResponseWhenBodySinkIsSet)
+{
+	SinkStreamingTransport transport;
+	transport.chunks = { { 0x01 } };
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	FakeResponseCache cache;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter, &cache);
+	Request request{ L"GET", L"https://example.test/no-cache-stream" };
+	request.bodySink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	const auto result = service.Execute(request);
+
+	ASSERT_TRUE(result);
+	EXPECT_TRUE(cache.values.empty());
+}
+
+TEST(RequestService, ReportsSinkFailureAndStopsStreamingWhenTheSinkRejectsAChunk)
+{
+	SinkStreamingTransport transport;
+	transport.chunks = { { 0x01 }, { 0x02 }, { 0x03 } };
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream-reject" };
+	std::size_t invocationCount = 0;
+	request.bodySink = [&invocationCount](const std::uint8_t*, std::size_t) {
+		++invocationCount;
+		return invocationCount < 2; // accept the first chunk, reject the second
+	};
+
+	const auto result = service.Execute(request);
+
+	EXPECT_EQ(ERequestOutcome::TransportFailure, result.outcome);
+	EXPECT_EQ(ETransportFailure::SinkFailure, result.transportFailure);
+	EXPECT_EQ(2u, invocationCount);
+	// Only the accepted chunk was recorded as delivered; the third chunk was never attempted.
+	EXPECT_EQ(1u, transport.deliveredChunks.size());
+}
+
+TEST(RequestService, PreservesPartiallyStreamedChunksWhenTheRequestSubsequentlyFails)
+{
+	SinkStreamingTransport transport;
+	transport.chunks = { { 0x01, 0x02 }, { 0x03, 0x04 } };
+	transport.failAfterChunkCount = 1;
+	transport.failureAfterChunks = ETransportFailure::Network;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/stream-drop" };
+	std::vector<std::uint8_t> received;
+	request.bodySink = [&received](const std::uint8_t* data, std::size_t size) {
+		received.insert(received.end(), data, data + size);
+		return true;
+	};
+
+	const auto result = service.Execute(request);
+
+	EXPECT_EQ(ERequestOutcome::TransportFailure, result.outcome);
+	EXPECT_EQ(ETransportFailure::Network, result.transportFailure);
+	EXPECT_FALSE(result.response.has_value());
+	// The sink already consumed the first chunk before the simulated connection drop.
+	// RequestService streams as bytes arrive and cannot retract data a caller-owned sink
+	// has already accepted, even though the overall request ends in failure.
+	const std::vector<std::uint8_t> expected = { 0x01, 0x02 };
+	EXPECT_EQ(expected, received);
+}
+
+// --- deduplication guard: exactly which requests are coalesced --------------
+
+TEST(RequestService, DoesNotCoalesceANonIdempotentMethodEvenWithAMatchingDeduplicationKey)
+{
+	ConcurrentEntryTransport transport;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	RequestService service(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"POST", L"https://example.test/publish", {}, { 0x01 } };
+	request.deduplicationKey = L"logical-operation";
+
+	RequestResult firstResult;
+	RequestResult secondResult;
+	std::jthread firstCaller([&] { firstResult = service.Execute(request); });
+	ASSERT_TRUE(transport.WaitUntilAtLeast(1));
+	std::jthread secondCaller([&] { secondResult = service.Execute(request); });
+	// If POST were coalesced like an idempotent method, the second call would block on the
+	// first's in-flight result instead of ever reaching the transport, and this would time out.
+	ASSERT_TRUE(transport.WaitUntilAtLeast(2));
+
+	transport.Release();
+	firstCaller.join();
+	secondCaller.join();
+
+	EXPECT_TRUE(firstResult);
+	EXPECT_TRUE(secondResult);
+	EXPECT_EQ(2u, transport.requests.size());
+}
+
+TEST(RequestService, DoesNotCoalesceWhenTheCallerSuppliesACancellationTokenEvenWithAMatchingDeduplicationKey)
+{
+	ConcurrentEntryTransport transport;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	RequestService service(transport, proxy, credentials, clock, scheduler, jitter);
+	Request request{ L"GET", L"https://example.test/shared" };
+	request.deduplicationKey = L"logical-operation";
+	FakeCancellation firstCancellation;
+	FakeCancellation secondCancellation;
+
+	RequestResult firstResult;
+	RequestResult secondResult;
+	std::jthread firstCaller([&] { firstResult = service.Execute(request, &firstCancellation); });
+	ASSERT_TRUE(transport.WaitUntilAtLeast(1));
+	std::jthread secondCaller([&] { secondResult = service.Execute(request, &secondCancellation); });
+	// Supplying any cancellation token — even one that is never actually cancelled — routes
+	// through ExecuteUnshared directly, bypassing the in-flight map entirely.
+	ASSERT_TRUE(transport.WaitUntilAtLeast(2));
+
+	transport.Release();
+	firstCaller.join();
+	secondCaller.join();
+
+	EXPECT_TRUE(firstResult);
+	EXPECT_TRUE(secondResult);
+	EXPECT_EQ(2u, transport.requests.size());
+}
+
+// --- cache guard: exactly which policies read/write the cache ---------------
+
+TEST(RequestService, IgnoresAnAvailableCacheEntryUnderOnlineOnlyPolicy)
+{
+	FakeTransport transport;
+	transport.results.push_back({ Response(200) });
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	FakeResponseCache cache;
+	cache.values.emplace(L"GET https://example.test/online-only", Response(200));
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter, &cache);
+	Request request{ L"GET", L"https://example.test/online-only" };
+	request.cachePolicy = ERequestCachePolicy::OnlineOnly;
+
+	const auto result = service.Execute(request);
+
+	ASSERT_TRUE(result);
+	EXPECT_FALSE(result.fromCache);
+	EXPECT_TRUE(cache.reads.empty());
+	EXPECT_EQ(1u, transport.requests.size());
+}
+
+TEST(RequestService, ServesFromCacheUnderPreferCachePolicyWithoutCallingTransport)
+{
+	FakeTransport transport;
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	FakeResponseCache cache;
+	cache.values.emplace(L"GET https://example.test/prefer-cache", Response(200));
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter, &cache);
+	Request request{ L"GET", L"https://example.test/prefer-cache" };
+	request.cachePolicy = ERequestCachePolicy::PreferCache;
+
+	const auto result = service.Execute(request);
+
+	ASSERT_TRUE(result);
+	EXPECT_TRUE(result.fromCache);
+	EXPECT_TRUE(transport.requests.empty());
+	ASSERT_EQ(1u, cache.reads.size());
+	EXPECT_EQ(L"GET https://example.test/prefer-cache", cache.reads.front());
+}
+
+TEST(RequestService, FallsBackToNetworkOnPreferCacheMissInsteadOfATypedCacheMiss)
+{
+	FakeTransport transport;
+	transport.results.push_back({ Response(200) });
+	FakeProxyService proxy;
+	FakeCredentialService credentials;
+	FakeClock clock;
+	FakeScheduler scheduler;
+	FakeJitterSource jitter;
+	FakeResponseCache cache;
+	auto service = CreateService(transport, proxy, credentials, clock, scheduler, jitter, &cache);
+	Request request{ L"GET", L"https://example.test/prefer-cache-miss" };
+	request.cachePolicy = ERequestCachePolicy::PreferCache;
+
+	const auto result = service.Execute(request);
+
+	ASSERT_TRUE(result);
+	EXPECT_FALSE(result.fromCache);
+	EXPECT_EQ(1u, transport.requests.size());
 }

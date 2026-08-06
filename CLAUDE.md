@@ -75,6 +75,7 @@ This file contains repository-wide guidance. More specific `CLAUDE.md` files are
 | Configuration, Settings, and workspace sources | [`sakura_core/config/CLAUDE.md`](sakura_core/config/CLAUDE.md) |
 | Workbench, editor, working copy, and layout state | [`sakura_core/workbench/CLAUDE.md`](sakura_core/workbench/CLAUDE.md), [`sakura_core/workbench/editor/CLAUDE.md`](sakura_core/workbench/editor/CLAUDE.md), [`sakura_core/workbench/layout/CLAUDE.md`](sakura_core/workbench/layout/CLAUDE.md) |
 | Filesystem resource/version boundary | [`sakura_core/platform/filesystem/CLAUDE.md`](sakura_core/platform/filesystem/CLAUDE.md) |
+| Self-update and the installer relaunch contract | [`sakura_core/update/CLAUDE.md`](sakura_core/update/CLAUDE.md) |
 | Terminal and debug capability boundaries | [`sakura_core/terminal/CLAUDE.md`](sakura_core/terminal/CLAUDE.md), [`sakura_core/debug/CLAUDE.md`](sakura_core/debug/CLAUDE.md) |
 | Extension integration and extension host | [`sakura_core/extension/CLAUDE.md`](sakura_core/extension/CLAUDE.md), [`src/exthost/CLAUDE.md`](src/exthost/CLAUDE.md) |
 | Build generation and shared resources | [`src/main/CLAUDE.md`](src/main/CLAUDE.md) |

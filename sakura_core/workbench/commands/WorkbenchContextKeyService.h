@@ -47,6 +47,16 @@ struct WorkbenchScmCommandContext {
 	std::int64_t gitOpenRepositoryCount = 0;
 };
 
+//! The update state the `update.*` surfaces gate on. Upstream declares
+//! `CONTEXT_UPDATE_STATE = new RawContextKey<string>('updateState',
+//! StateType.Uninitialized)` and publishes the raw `StateType` string, so this
+//! carries a string rather than an enum: the command layer must not depend on
+//! `update/`, and the value that crosses is the one upstream's `when` clauses
+//! compare against (`"checking for updates"`, spaces and all).
+struct WorkbenchUpdateCommandContext {
+	std::string updateState{"uninitialized"};
+};
+
 //! An owner/generation pair deliberately independent of the extension transport.
 struct WorkbenchCommandOwner {
 	std::string ownerId;
@@ -104,7 +114,8 @@ public:
 		const config::WorkspaceContextSnapshot& workspace,
 		WorkbenchEditorCommandContext editor,
 		bool recentlyOpenedAvailable = false,
-		WorkbenchScmCommandContext scm = {});
+		WorkbenchScmCommandContext scm = {},
+		WorkbenchUpdateCommandContext update = {});
 	[[nodiscard]] WorkbenchContextMutationResult SetExtensionOverlay(
 		const WorkbenchCommandOwner& owner, WorkbenchContextKeyMap values);
 	[[nodiscard]] WorkbenchContextMutationResult DisposeExtensionOverlay(

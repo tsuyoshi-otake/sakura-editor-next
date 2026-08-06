@@ -106,6 +106,39 @@ public:
 	void SetApplyEditHandler(ApplyEditHandler handler);
 	void SetEditorOptionsHandler(EditorOptionsHandler handler);
 
+	/*!
+		@brief カーソル位置の Hover を要求する
+
+		UI スレッド（マウス dwell タイマー等）から直接呼べる。呼ぶたびに内部の
+		sequence を進めてから worker スレッドへ投げるので、応答が届く前に次の
+		`RequestHover`/`CancelHover` が来れば古い方の応答は
+		`HandleHoverResponseWorker` が sequence 不一致で無視する -- 新しい結果の上に
+		古い結果が描かれることはない。`id` の文書がまだ開いていない・スナップショットが
+		無い場合は何も送らず Hover を隠す。
+	*/
+	void RequestHover(SExtensionDocumentId id, SExtensionTextPosition position);
+	//! 進行中の Hover 要求を無効化し、表示中の Hover 結果を隠す（マウスが離れた等）。
+	void CancelHover();
+	//! UI スレッドが `EExtensionWorkbenchChange::Hover` を受けてから読む。
+	[[nodiscard]] std::optional<SExtensionHoverResult> HoverResult() const { return m_hover.Snapshot(); }
+
+	/*!
+		@brief マニフェスト由来の contribution points を読む
+
+		アクティビティバー・メニュー・キーマップは、ディスパッチャや RPC を知らずに
+		このレジストリだけを見る。レジストリ自身が thread-safe なので参照を渡す。
+	*/
+	[[nodiscard]] const CExtensionContributionRegistry& Contributions() const noexcept { return m_contributions; }
+
+	/*!
+		@brief `when` 節 1 本を評価する
+
+		メニュー項目の可視判定とキーバインドの適用判定は同じ context key ストアを
+		見なければならない。ストアそのものを公開すると呼び出し側が書き込めてしまうので、
+		読む口だけを出す。空の節は真（VS Code の「節が無ければ常に有効」と同じ）。
+	*/
+	[[nodiscard]] bool EvaluateWhenClause(std::wstring_view clause) const { return m_contextKeys.Evaluate(clause); }
+
 	[[nodiscard]] std::vector<SExtensionStatusBarItem> StatusBarItems() const;
 	[[nodiscard]] std::vector<SExtensionCommandPaletteItem> SearchCommands(
 		std::wstring_view query, std::size_t maximumResults = 200) const;
@@ -152,6 +185,8 @@ private:
 		DocumentEvent,
 		//! Fire-and-forget acknowledgement for a source-control input update.
 		ScmInputChange,
+		//! `extension/languages/provide` with kind="hover", answered by `HandleHoverResponseWorker`.
+		Hover,
 	};
 	struct PendingRequest {
 		PendingKind kind = PendingKind::ViewEvent;
@@ -161,6 +196,16 @@ private:
 		std::uint64_t generation = 0;
 		SExtensionDocumentId documentId;
 		std::uint64_t expectedVersion = 0;
+		//! Hover only: the requested caret/mouse position, echoed back into the
+		//! published `SExtensionHoverResult` so a UI-thread consumer knows where
+		//! to anchor the popup without keeping its own side table.
+		SExtensionTextPosition hoverPosition;
+		//! Hover only: the `m_hoverSequence` value in effect when this request was
+		//! sent. A response is applied only while it still matches the service's
+		//! current sequence; `RequestHover`/`CancelHover` advance the sequence, so
+		//! a superseded response is recognized and discarded instead of racing a
+		//! newer one onto the screen.
+		std::uint64_t hoverSequence = 0;
 	};
 	struct NotificationPrompt {
 		const SExtensionNotification* notification = nullptr;
@@ -214,6 +259,9 @@ private:
 	void HandleResponseWorker(const SExtensionRpcMessage& message);
 	void HandleFormatDocumentResponseWorker(
 		const PendingRequest& pending, std::string_view resultJson);
+	void RequestHoverWorker(SExtensionDocumentId id, SExtensionTextPosition position, std::uint64_t sequence);
+	void CancelHoverWorker(std::uint64_t sequence);
+	void HandleHoverResponseWorker(const PendingRequest& pending, std::string_view resultJson);
 	bool HandleHelloWorker(const SExtensionRpcMessage& message);
 	void SendRegisterExtensionsWorker();
 	void HandleRegistrationResultWorker(std::string_view resultJson);
@@ -268,6 +316,15 @@ private:
 	CExtensionQuickInput m_quickInput;
 	CExtensionOutputChannel m_output;
 	CExtensionProgressCenter m_progress;
+	//! Thread-safe like the other *Center members above; `Publish`/`Clear` come
+	//! from the worker thread, `Snapshot()` from the UI thread.
+	CExtensionHoverCenter m_hover;
+	/*
+		contribution points はディスパッチャより長生きする。ディスパッチャは拡張ホストの
+		再接続ごとに作り直されるので、そこに持たせるとアクティビティバーやキーマップが
+		再接続の度に消える。所有はここに置き、ディスパッチャへは参照だけ渡す。
+	*/
+	CExtensionContributionRegistry m_contributions;
 	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_workbenchServiceBridge;
 	ApplyEditHandler m_applyEditHandler;
 	EditorOptionsHandler m_editorOptionsHandler;
@@ -280,6 +337,12 @@ private:
 	std::atomic_bool m_taskQueueOverloaded = false;
 	std::atomic_uint64_t m_pipeCallbackAttemptToken = 0;
 	std::atomic_uint64_t m_pipeCallbackGeneration = 0;
+	//! Advanced synchronously by `RequestHover`/`CancelHover` on whichever thread
+	//! calls them (normally the UI thread), and read by the worker thread to
+	//! decide whether an in-flight or just-arrived hover response is still the
+	//! most recent one. Atomic because it is the cross-thread fence itself, not
+	//! state that Enqueue's task-queue ordering already protects.
+	std::atomic_uint64_t m_hoverSequence = 0;
 	std::thread m_worker;
 
 	// worker-thread-only state

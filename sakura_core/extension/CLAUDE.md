@@ -291,3 +291,94 @@ transport. An absent flag means `false`, matching a plain-string tooltip.
   `vscode.workspace.getConfiguration(...).get(...)` before ever calling
   `update()`. This is a pre-existing, separate gap from the `update()` path
   this checkpoint delivers, and was not modified here.
+
+## Extensions View Search Filtering, Row Icons, Context Menu, and Paging (2026-08-07)
+
+`CExtensionPane` now wires `ParseExtensionSearchQuery` and
+`ApplyExtensionSearchFilters` into the search box, renders each row's icon
+through `ExtensionIconDecoder`, adds a per-row right-click context menu, and
+supports `IOpenVsxRegistryClient::Search`'s existing offset-based paging as a
+"Load More" button. All four pieces stay inside the pure/impure boundary: the
+new pure helpers (`ExtensionSearchQuery`, `ExtensionSearchFilter`,
+`ExtensionIconDecoder`) remain free of HWND/network/filesystem, and only
+`CExtensionPane` (the adapter) performs Win32 calls or triggers jobs.
+
+- **Search syntax and its fail-closed boundary.** `StartSearch()` parses the
+  search box through `ParseExtensionSearchQuery` and rejects (status text, no
+  list change) rather than silently treating as free text: any unrecognized
+  `@`-token (`parsed.unknownTokens`), and `@recommended` specifically, because
+  no recommendation data source exists anywhere in this application. Supported
+  tokens are exactly what `ExtensionSearchQuery.h` models: `@installed`,
+  `@enabled`, `@disabled`, `@outdated`, `@deprecated`, and `@sort:installs`/
+  `@sort:rating`/`@sort:name`. `@installed`/`@enabled`/`@disabled`/`@outdated`
+  are always answered from local installed-set state (`ShowFilteredInstalledList`)
+  and never reach the marketplace, even combined with free text -- this matches
+  VS Code, which also answers those four from local extension state rather than
+  a server query. Free text (with or without `@sort:`/`@deprecated`) becomes a
+  marketplace `Search` job; `@deprecated`/`@sort:` are then re-applied locally
+  to the fetched page (`ApplySearchResultRefinement`) with `searchText` cleared,
+  because the server already narrowed by the free text and re-running it as a
+  local substring filter could drop server-relevant matches this local check
+  does not attempt to reproduce. `@outdated` reports "no known outdated
+  extensions" rather than fabricating one when only an installed-only
+  enumeration is available (`installedVersion == sVersion` by construction);
+  see `ExtensionSearchFilter.h`'s own documented scope for why.
+- **Row icons: bytes only ever arrive from the composition root.** This
+  subtree performs no network access anywhere; `SetExtensionIconBytes(id,
+  bytes)` is the sole entry point for icon pixels, and it is the composition
+  root's job to fetch `SOpenVsxExtension::sIconUrl` (when present) and hand the
+  raw encoded bytes in. `SetExtensionIconBytes` decodes through
+  `DecodeExtensionIconBitmap` (same WIC/`CreateDIBSection`/premultiplied-BGRA
+  pattern as `CExtensionDetailSurface`'s icon path) and caches the resulting
+  `HBITMAP` per extension unique ID; `OnDrawItem`/`DrawRowIcon` paint it with
+  `AlphaBlend`. **Must be called on the UI thread**: like
+  `CExtensionDetailSurface`, decoding requires an already-initialized COM
+  apartment on the calling thread, and `DecodeExtensionIconBitmap` is
+  `noexcept` and fails closed (indistinguishable from bad input) without one.
+  Unavailable bytes (never supplied, empty, or failed to decode) always fall
+  back to VS Code's real fallback shape -- an accent-colored initials tile (up
+  to two initials, skipping space/hyphen/underscore, or "?" when the name is
+  empty), the same pattern `CExtensionDetailSurface::PaintHeader` already
+  established for its hero image -- never a fake or placeholder image.
+  `ReleaseIconBitmaps()` frees every cached bitmap and is called from both
+  `OnDestroy` and the destructor, matching this class's existing dual-teardown
+  pattern for jobs/timers.
+- **Context menu: only genuinely performable items, and it is mouse-only.**
+  `ShowRowContextMenu` (invoked from `NM_RCLICK` in `OnNotify`) offers exactly:
+  "Enable"/"Disable" + "Uninstall" when the row is installed, or "Install" when
+  it is not installed and has a download URL. If neither branch adds an item
+  (for example, a not-installed row with no download URL), no menu is shown at
+  all -- an empty popup would look broken, so absence is explicit rather than
+  faked. **There is no "Update" item anywhere, ever**, because no working
+  reinstall-over-an-installed-extension capability exists in this application:
+  `CExtensionManager::Install` fails closed whenever the destination directory
+  already exists, and `CExtensionPane::StartInstall()`'s own guard already
+  refuses to run when a row is installed. The same reasoning is why
+  `OnDrawItem`'s row affordance label only ever says "Install", using the exact
+  condition `sInstalledVersion.empty() && !sDownloadUrl.empty()` that
+  `StartInstall()` itself checks.
+  **Divergence: the context menu is mouse-only (`NM_RCLICK`), with no keyboard
+  equivalent (Menu key / Shift+F10).** `CWnd::DispatchEvent` (in
+  `sakura_core/window/CWnd.cpp`, outside this pane's editable scope) handles a
+  fixed message set that does not include `WM_CONTEXTMENU`, so a keyboard
+  invocation falls through to `DefWindowProc` and never reaches this pane.
+  Closing this gap requires adding `WM_CONTEXTMENU` handling to `CWnd` itself,
+  which is a `window/`-owned change, not an `extension/`-owned one.
+- **Paging: a dedicated "Load More" button, not an inline row.**
+  `IOpenVsxRegistryClient::Search` already accepts an offset, so `SJob` gained
+  `nOffset`/`bAppendResults` fields and `StartLoadMoreSearch()` requests the
+  next page at `m_searchRawRows.size()`, appending into the same raw-result
+  buffer that `ApplySearchResultRefinement` re-filters/re-sorts on receipt.
+  **Divergence: paging is a dedicated button in a fixed, always-reserved layout
+  slot** (hidden, not removed or reflowed, when there is nothing more to load
+  or no search result is showing) **rather than an inline "$(more) Show More"
+  row appended to the list**, which is how real VS Code's Extensions view
+  presents continuation. A future native owner-drawn "more" row inside the
+  `ListView` itself could close this gap; the current shape was chosen to avoid
+  adding list-item-kind branching (row vs. sentinel) to `OnDrawItem`/
+  `OnMeasureItem` in this delivery.
+- **Publisher line uses the raw namespace.** `SOpenVsxExtension` has no
+  separate "publisher display name" field (only `sNamespace`, the segment also
+  used to build the unique ID), so the row's publisher line shows `sNamespace`
+  as-is. This differs from VS Code's marketplace publisher display name, which
+  can differ from the raw publisher/namespace segment.

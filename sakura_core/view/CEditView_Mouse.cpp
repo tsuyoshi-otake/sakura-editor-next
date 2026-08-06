@@ -922,6 +922,7 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 
 	// オートスクロール
 	if( 1 == m_nAutoScrollMode ){
+		CancelHoverTracking();	// 拡張機能: ホバー -- オートスクロール中は対象外
 		if( ::GetSystemMetrics(SM_CXDOUBLECLK) < abs(ptMouse.x - m_cAutoScrollMousePos.x) ||
 		    ::GetSystemMetrics(SM_CYDOUBLECLK) < abs(ptMouse.y - m_cAutoScrollMousePos.y) ){
 			m_bAutoScrollDragMode = true;
@@ -929,11 +930,13 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 		}
 		return;
 	}else if( 2 == m_nAutoScrollMode ){
+		CancelHoverTracking();	// 拡張機能: ホバー -- オートスクロール中は対象外
 		AutoScrollMove(ptMouse);
 		return;
 	}
 
 	if( m_bMiniMap ){
+		CancelHoverTracking();	// 拡張機能: ホバー -- ミニマップ上は対象外
 		POINT		po;
 		::GetCursorPos( &po );
 		// 辞書Tipが起動されている
@@ -1003,6 +1006,13 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 		CLayoutPoint ptNew;
 		GetTextArea().ClientToLayout(ptMouse, &ptNew);
 
+		// 拡張機能: ホバー -- 余白領域上やドラッグ中は対象外。マージン判定は
+		// このすぐ下のカーソル分岐が使う条件 (GetAreaLeft/GetAreaTop) と揃えている。
+		const bool bHoverEligible = !m_bDragMode
+			&& ptMouse.x >= GetTextArea().GetAreaLeft()
+			&& ptMouse.y >= GetTextArea().GetAreaTop();
+		UpdateHoverTracking( ptNew, bHoverEligible );
+
 		CLogicRange	cUrlRange;	//URL範囲
 
 		/* 選択テキストのドラッグ中か */
@@ -1058,6 +1068,7 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 		return;
 	}
 	// 以下、マウスでの選択中(ドラッグ中)
+	CancelHoverTracking();	// 拡張機能: ホバー -- テキスト範囲選択中は対象外
 
 	if( 0 <= m_nMousePause ){
 		::SetCursor( ::LoadCursor( nullptr, IDC_IBEAM ) );
@@ -1189,6 +1200,50 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 		}
 	}
 	return;
+}
+
+//! 拡張機能: ホバー -- マウスの論理位置が変わったときに dwell タイマーを
+//! 再アームする。KeyWordHelpSearchDict/辞書Tip の dwell 判定 (OnTimer 側)
+//! と同じ「位置が変わったら仕切り直す」設計だが、こちらは実際の RPC 発行を
+//! 一切行わない -- OnTimer がタイマー経過を見て m_hoverRequestHandler を
+//! 呼び出す。
+void CEditView::UpdateHoverTracking( const CLayoutPoint& ptLayout, bool eligible )
+{
+	if( !eligible || !m_hoverRequestHandler ){
+		CancelHoverTracking();
+		return;
+	}
+	CLogicPoint ptLogic;
+	GetDocument()->m_cLayoutMgr.LayoutToLogic( ptLayout, &ptLogic );
+	if( m_bHoverLogicPosValid && ptLogic == m_ptHoverLogicPos ){
+		// 同じ論理位置に留まっている間はタイマーを仕切り直さない。
+		return;
+	}
+	CancelHoverTracking();
+	m_ptHoverLogicPos = ptLogic;
+	m_bHoverLogicPosValid = true;
+	m_dwHoverTimer = ::GetTickCount();
+	if( 0 == m_dwHoverTimer ){
+		// GetTickCount()==0 はほぼ起こらないが、0 を「未アーム」の意味に
+		// 使っているため万一発生しても区別できるようにしておく。
+		m_dwHoverTimer = 1;
+	}
+}
+
+//! 拡張機能: ホバー -- アームされていた dwell タイマー、発行済みリクエスト
+//! (m_hoverCancelHandler 経由でキャンセル)、表示中のポップアップをすべて
+//! 解除する。何も追跡していない状態で呼んでも安全。
+void CEditView::CancelHoverTracking()
+{
+	const bool bHadState = 0 != m_dwHoverTimer || m_bHoverLogicPosValid || m_bHoverPopupVisible || m_bHoverRequested;
+	m_dwHoverTimer = 0;
+	m_bHoverLogicPosValid = false;
+	m_bHoverRequested = false;
+	if( bHadState && m_hoverCancelHandler ){
+		m_hoverCancelHandler();
+	}
+	m_cHoverPopup.Hide();
+	m_bHoverPopupVisible = false;
 }
 //m_dwTipTimerm_dwTipTimerm_dwTipTimer
 

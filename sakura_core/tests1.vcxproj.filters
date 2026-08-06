@@ -56,11 +56,17 @@
     <Filter Include="Test Files\markdown">
       <UniqueIdentifier>{812bfa2c-bc3f-4632-9877-fd0db69f872a}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Test Files\textmate">
+      <UniqueIdentifier>{c0e4dc7e-1b5c-4589-b0a7-5f45e4dee811}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Test Files\window">
       <UniqueIdentifier>{3c46cf4d-69ef-4f62-95c3-2e4fd01980a4}</UniqueIdentifier>
     </Filter>
     <Filter Include="Test Files\env">
       <UniqueIdentifier>{5bf0f7ad-0291-4dac-b6dc-1f07b0df702a}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Test Files\update">
+      <UniqueIdentifier>{7e3f9a21-4c58-4b0d-9f6e-2a1d5c8b47e3}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -99,6 +105,21 @@
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\window\CustomUiAutomationProviderTest.cpp">
       <Filter>Test Files\window</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\update\UpdateVersionTest.cpp">
+      <Filter>Test Files\update</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\update\UpdateFeedTest.cpp">
+      <Filter>Test Files\update</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallerCommandLineTest.cpp">
+      <Filter>Test Files\update</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\update\UpdateServiceTest.cpp">
+      <Filter>Test Files\update</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\update\WorkbenchUpdateCommandsTest.cpp">
+      <Filter>Test Files\update</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\agent\LoadFinalizationTest.cpp">
       <Filter>Test Files</Filter>
@@ -196,6 +217,12 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutStateServiceTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionKeybindingMapTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -221,6 +248,27 @@
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\NativeWorkbenchToolRequestTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandsTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewIconDecoderTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewInstallButtonStateTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchFilterTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchQueryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandRegistryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\WebviewUnsupportedTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp">
@@ -457,6 +505,21 @@
     <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp">
       <Filter>Test Files\theme</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateGrammarCompilerTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateJsonGrammarLoaderTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMatePlistGrammarLoaderTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateScopeColorResolverTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateTokenizerTest.cpp">
+      <Filter>Test Files\textmate</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-cmemory.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
@@ -598,10 +661,19 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionContributionRegistryTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionMenuProjectionTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxRequestServiceAdapterTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxProductionClientTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionManagerStreamedInstallTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-ctextmetrics.cpp">
@@ -661,6 +733,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-crunningtimer.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\ZipArchiveFixture.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
@@ -704,6 +779,9 @@
     </ClInclude>
     <ClInclude Include="..\src\test\resources\testing\StartEditorProcess.hpp">
       <Filter>Other Files\testing</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\test\cpp\tests1\ZipArchiveFixture.h">
+      <Filter>Other Files</Filter>
     </ClInclude>
     <ClInclude Include="..\src\test\cpp\tests1\dlg\ModalDialogCloser.hpp">
       <Filter>Other Files\dlg</Filter>

@@ -21,7 +21,6 @@
 #include <algorithm>
 #include <array>
 #include <cwctype>
-#include <fstream>
 #include <limits>
 #include <set>
 #include <system_error>
@@ -29,10 +28,48 @@
 
 namespace {
 
-constexpr uintmax_t kMaxVsixArchiveBytes = 128u * 1024 * 1024;
-constexpr uint64_t kMaxVsixExtractedBytes = 256u * 1024 * 1024;
-constexpr uint64_t kMaxVsixEntryBytes = 64u * 1024 * 1024;
-constexpr mz_uint kMaxVsixEntries = 4096;
+/*
+	VSIX の展開予算。
+
+	絶対サイズだけで殺すと、zip 爆弾ではなく「大きいだけの正当な拡張」を落とす。
+	実測値: Anthropic.claude-code 2.1.223 (win32-x64) は archive 88.8 MiB / 29 エントリで、
+	単一エントリ extension/resources/native-binary/claude.exe が 267 MiB、合計 277 MiB。
+	旧値（entry 64 MiB / total 256 MiB）はこれを必ず弾いた。
+
+	そこで絶対量は「機械が耐えられる上限」まで引き上げ、爆弾の判定は
+	kMaxVsixCompressionRatio による圧縮比へ移す。爆弾の本質は総量ではなく
+	「小さな入力から巨大な出力が出ること」なので、こちらの方が的を射ている。
+*/
+constexpr uintmax_t kMaxVsixArchiveBytes = 512u * 1024 * 1024;
+constexpr uint64_t kMaxVsixExtractedBytes = 1024ull * 1024 * 1024;
+constexpr uint64_t kMaxVsixEntryBytes = 512u * 1024 * 1024;
+constexpr mz_uint kMaxVsixEntries = 16384;
+
+/*!
+	圧縮比の上限。
+
+	実行ファイルは 2〜4 倍、ソースや JSON でも 10 倍程度に収まる。
+	100 倍を超える展開は正当な配布物には現れず、zip 爆弾の特徴そのもの。
+	エントリ単位と archive 全体の両方に適用する。
+*/
+constexpr uint64_t kMaxVsixCompressionRatio = 100;
+
+/*!
+	圧縮比の判定を免除する小エントリの上限。
+
+	数十バイトの入力が数 KiB に伸びるのは珍しくないが、それは害にならない。
+	比が意味を持つ大きさまで育ったエントリだけを見る。
+*/
+constexpr uint64_t kVsixCompressionRatioExemptBytes = 1u * 1024 * 1024;
+
+//! 上限超過を説明するための、桁を読み違えない大きさ表記
+std::wstring FormatByteCount(uint64_t bytes)
+{
+	if (bytes < 1024ull * 1024) {
+		return std::to_wstring(bytes) + L" bytes";
+	}
+	return std::to_wstring(bytes / (1024ull * 1024)) + L" MiB (" + std::to_wstring(bytes) + L" bytes)";
+}
 
 // InflateZlibStream() の展開後サイズ上限。単一 VSIX エントリの上限
 // kMaxVsixEntryBytes を踏襲する。呼び出し元（WOFF フォントのテーブル等）は
@@ -161,6 +198,44 @@ size_t WriteZipFileSink(void* opaque, mz_uint64 offset, const void* data, size_t
 	return bytes;
 }
 
+/*!
+	miniz へ渡す、Win32 HANDLE を直に読む読み出し器。
+
+	archive 全体をヒープに載せると 512 MiB の VSIX で 512 MiB の常駐が生まれる。
+	miniz は必要な範囲しか読まないので、中央ディレクトリと展開中のエントリだけが
+	流れれば足りる。`mz_zip_reader_init_file` は narrow な MZ_FOPEN を使うため
+	非 ASCII のプロファイルパスで開けない。だから独自の read callback を挿す。
+*/
+struct ZipReadSource {
+	HANDLE handle = INVALID_HANDLE_VALUE;
+	mz_uint64 size = 0;
+};
+
+size_t ReadZipFileSource(void* opaque, mz_uint64 offset, void* buffer, size_t bytes)
+{
+	auto* source = static_cast<ZipReadSource*>(opaque);
+	if (bytes == 0 || offset > source->size || static_cast<mz_uint64>(bytes) > source->size - offset) {
+		return 0;
+	}
+	LARGE_INTEGER position;
+	position.QuadPart = static_cast<LONGLONG>(offset);
+	if (!::SetFilePointerEx(source->handle, position, nullptr, FILE_BEGIN)) {
+		return 0;
+	}
+	auto* cursor = static_cast<BYTE*>(buffer);
+	size_t remaining = bytes;
+	while (remaining != 0) {
+		const DWORD chunk = static_cast<DWORD>((std::min)(remaining, static_cast<size_t>(1u << 20)));
+		DWORD read = 0;
+		if (!::ReadFile(source->handle, cursor, chunk, &read, nullptr) || read == 0) {
+			return bytes - remaining;
+		}
+		cursor += read;
+		remaining -= read;
+	}
+	return bytes;
+}
+
 struct ZipReaderHolder {
 	mz_zip_archive archive = {};
 	bool initialized = false;
@@ -279,8 +354,13 @@ bool CZipFile::SetZip(const std::filesystem::path& zipPath)
 		}
 		std::error_code ec;
 		const uintmax_t archiveSize = std::filesystem::file_size(zipPath, ec);
-		if (ec || archiveSize == 0 || archiveSize > kMaxVsixArchiveBytes) {
-			errorMsg = L"invalid VSIX archive size";
+		if (ec || archiveSize == 0) {
+			errorMsg = L"the downloaded package is empty or unreadable";
+			return false;
+		}
+		if (archiveSize > kMaxVsixArchiveBytes) {
+			errorMsg = L"the VSIX archive is " + FormatByteCount(archiveSize)
+				+ L", which exceeds the " + FormatByteCount(kMaxVsixArchiveBytes) + L" archive limit";
 			return false;
 		}
 		if (!std::filesystem::create_directory(outDir, ec) && ec && ec != std::errc::file_exists) {
@@ -292,26 +372,33 @@ bool CZipFile::SetZip(const std::filesystem::path& zipPath)
 			return false;
 		}
 
-		std::ifstream input(zipPath, std::ios::binary);
-		if (!input) {
-			errorMsg = L"cannot read VSIX archive";
+		FileHandle input;
+		input.handle = ::CreateFileW(zipPath.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL | FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+		if (input.handle == INVALID_HANDLE_VALUE) {
+			errorMsg = L"cannot read VSIX archive '" + zipPath.wstring() + L"'";
 			return false;
 		}
-		std::vector<char> archive(static_cast<size_t>(archiveSize));
-		if (!input.read(archive.data(), static_cast<std::streamsize>(archive.size()))) {
-			errorMsg = L"cannot read VSIX archive";
-			return false;
-		}
+		ZipReadSource source{ input.handle, static_cast<mz_uint64>(archiveSize) };
 
 		ZipReaderHolder reader;
-		if (!mz_zip_reader_init_mem(&reader.archive, archive.data(), archive.size(), 0)) {
+		// mz_zip_reader_init_internal は m_pRead を触らないので、init の前に
+		// 差し込んだ読み出し器がそのまま使われる（init は m_pRead 必須）。
+		reader.archive.m_pRead = ReadZipFileSource;
+		reader.archive.m_pIO_opaque = &source;
+		if (!mz_zip_reader_init(&reader.archive, source.size, 0)) {
 			errorMsg = L"the downloaded package is not a valid zip archive";
 			return false;
 		}
 		reader.initialized = true;
 		const mz_uint count = mz_zip_reader_get_num_files(&reader.archive);
-		if (count == 0 || count > kMaxVsixEntries) {
-			errorMsg = L"VSIX archive has an unsafe number of entries";
+		if (count == 0) {
+			errorMsg = L"the VSIX archive contains no entries";
+			return false;
+		}
+		if (count > kMaxVsixEntries) {
+			errorMsg = L"the VSIX archive contains " + std::to_wstring(count)
+				+ L" entries, which exceeds the limit of " + std::to_wstring(kMaxVsixEntries);
 			return false;
 		}
 
@@ -319,6 +406,7 @@ bool CZipFile::SetZip(const std::filesystem::path& zipPath)
 		entries.reserve(count);
 		std::set<std::wstring> outputNames;
 		uint64_t totalExtracted = 0;
+		uint64_t totalCompressed = 0;
 		bool hasManifest = false;
 		for (mz_uint index = 0; index < count; ++index) {
 			if (IsCancelled(pCancelled)) {
@@ -334,21 +422,45 @@ bool CZipFile::SetZip(const std::filesystem::path& zipPath)
 				errorMsg = L"VSIX archive contains an unsafe entry";
 				return false;
 			}
-			const bool directory = mz_zip_reader_is_file_a_directory(&reader.archive, index) != MZ_FALSE;
-			if (!directory && (stat.m_uncomp_size > kMaxVsixEntryBytes ||
-				totalExtracted > kMaxVsixExtractedBytes - stat.m_uncomp_size)) {
-				errorMsg = L"VSIX archive exceeds extraction limits";
-				return false;
-			}
-			if (!directory) {
-				totalExtracted += stat.m_uncomp_size;
-			}
-
 			std::wstring relativeName;
 			if (!Utf8ToWideStrict(stat.m_filename, relativeName)) {
 				errorMsg = L"VSIX archive contains a non-UTF-8 entry";
 				return false;
 			}
+
+			const bool directory = mz_zip_reader_is_file_a_directory(&reader.archive, index) != MZ_FALSE;
+			if (!directory) {
+				if (stat.m_uncomp_size > kMaxVsixEntryBytes) {
+					errorMsg = L"entry '" + relativeName + L"' expands to " + FormatByteCount(stat.m_uncomp_size)
+						+ L", which exceeds the per-entry limit of " + FormatByteCount(kMaxVsixEntryBytes);
+					return false;
+				}
+				if (totalExtracted > kMaxVsixExtractedBytes - stat.m_uncomp_size) {
+					errorMsg = L"the archive expands to more than the total limit of "
+						+ FormatByteCount(kMaxVsixExtractedBytes) + L" once entry '" + relativeName
+						+ L"' (" + FormatByteCount(stat.m_uncomp_size) + L") is included";
+					return false;
+				}
+				/*
+					圧縮比で zip 爆弾を見る。総量ではなく「入力に対して出力が異常に大きいこと」が
+					爆弾の正体なので、絶対サイズを緩めた分はここで受け止める。
+					格納サイズ 0 で中身がある、という比が計算できない形も同様に拒否する。
+				*/
+				if (stat.m_uncomp_size > kVsixCompressionRatioExemptBytes &&
+					(stat.m_comp_size == 0 ||
+						stat.m_uncomp_size / stat.m_comp_size > kMaxVsixCompressionRatio)) {
+					errorMsg = L"entry '" + relativeName + L"' expands "
+						+ (stat.m_comp_size == 0
+							? std::wstring(L"from nothing")
+							: std::to_wstring(stat.m_uncomp_size / stat.m_comp_size) + L":1")
+						+ L" (" + FormatByteCount(stat.m_comp_size) + L" stored, "
+						+ FormatByteCount(stat.m_uncomp_size) + L" expanded), which looks like a zip bomb";
+					return false;
+				}
+				totalExtracted += stat.m_uncomp_size;
+				totalCompressed += stat.m_comp_size;
+			}
+
 			const std::filesystem::path relativePath(relativeName);
 			std::wstring comparison = relativePath.lexically_normal().wstring();
 			std::transform(comparison.begin(), comparison.end(), comparison.begin(), [](wchar_t ch) {
@@ -365,6 +477,14 @@ bool CZipFile::SetZip(const std::filesystem::path& zipPath)
 		}
 		if (!hasManifest) {
 			errorMsg = L"VSIX archive does not contain extension/package.json";
+			return false;
+		}
+		// エントリ単位では比が正常でも、archive 全体では異常に膨らむ組み方があり得る。
+		if (totalExtracted > kVsixCompressionRatioExemptBytes && totalCompressed != 0 &&
+			totalExtracted / totalCompressed > kMaxVsixCompressionRatio) {
+			errorMsg = L"the archive expands " + std::to_wstring(totalExtracted / totalCompressed)
+				+ L":1 in total (" + FormatByteCount(totalCompressed) + L" stored, "
+				+ FormatByteCount(totalExtracted) + L" expanded), which looks like a zip bomb";
 			return false;
 		}
 

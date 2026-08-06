@@ -91,3 +91,44 @@ TEST(CExtensionProgress, HasExplicitStartReportCancelEndAndCleanupStates)
 	EXPECT_TRUE(progress.End(L"progress:1", L"sample", 5));
 	EXPECT_TRUE(progress.Snapshot().empty());
 }
+
+TEST(CExtensionHoverCenter, HasNoResultUntilPublishedAndClearRestoresNoResult)
+{
+	CExtensionHoverCenter hover;
+
+	// Nothing published yet: distinct from a real "no content" answer, which is
+	// SExtensionHoverResult{.empty = true} carried inside a real snapshot, not
+	// nullopt (see the struct's own doc comment in CExtensionWorkbenchUi.h).
+	EXPECT_FALSE(hover.Snapshot().has_value());
+
+	SExtensionHoverResult result;
+	result.documentId = { .editorProcessId = 4321, .localDocumentId = 1 };
+	result.position = { .line = 7, .character = 3 };
+	result.markdown = L"**bold**";
+	result.empty = false;
+	hover.Publish(result);
+
+	const auto published = hover.Snapshot();
+	ASSERT_TRUE(published.has_value());
+	EXPECT_EQ(result.documentId, published->documentId);
+	EXPECT_EQ(result.position, published->position);
+	EXPECT_EQ(L"**bold**", published->markdown);
+	EXPECT_FALSE(published->empty);
+
+	// A later publish (e.g. a subsequent request at a new position) replaces the
+	// prior snapshot outright; the center never merges two results.
+	SExtensionHoverResult empty;
+	empty.documentId = result.documentId;
+	empty.position = { .line = 9, .character = 0 };
+	empty.empty = true;
+	hover.Publish(empty);
+	const auto replaced = hover.Snapshot();
+	ASSERT_TRUE(replaced.has_value());
+	EXPECT_TRUE(replaced->markdown.empty());
+	EXPECT_TRUE(replaced->empty);
+
+	// Clear (mouse left the word, or a new request superseded this one before any
+	// response arrived) returns to "no result yet", not to an empty-but-present one.
+	hover.Clear();
+	EXPECT_FALSE(hover.Snapshot().has_value());
+}

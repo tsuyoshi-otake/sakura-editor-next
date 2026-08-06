@@ -116,6 +116,14 @@ bool CExtensionCommandPalette::Contains(std::wstring_view commandId) const
 	return m_commands.contains(std::wstring(commandId));
 }
 
+std::optional<SExtensionCommandDescriptor> CExtensionCommandPalette::Find(std::wstring_view commandId) const
+{
+	std::shared_lock lock(m_mutex);
+	const auto found = m_commands.find(std::wstring(commandId));
+	if (found == m_commands.end()) return std::nullopt;
+	return found->second;
+}
+
 std::vector<std::wstring> CExtensionCommandPalette::CommandIds(bool filterInternal) const
 {
 	std::shared_lock lock(m_mutex);

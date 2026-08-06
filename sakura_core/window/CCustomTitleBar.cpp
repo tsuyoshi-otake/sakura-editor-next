@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cwchar>
 #include <string_view>
 
 #include "window/CCustomFrameController.h"
@@ -52,6 +53,7 @@ RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl contro
 	case CustomFrameControl::PrimarySidebar: return layout.primarySidebarButton;
 	case CustomFrameControl::BottomPanel: return layout.bottomPanelButton;
 	case CustomFrameControl::SecondarySidebar: return layout.secondarySidebarButton;
+	case CustomFrameControl::Update: return layout.updateButton;
 	case CustomFrameControl::Account: return layout.accountButton;
 	case CustomFrameControl::Manage: return layout.manageButton;
 	case CustomFrameControl::None: break;
@@ -179,6 +181,10 @@ void PaintTitleControlGlyph(
 		icon = Icon::Gear;
 		glyphName = L"gear";
 		break;
+	// The Update indicator is a labelled action, not a codicon. Upstream's
+	// `updateTitleBarEntry.ts` contributes it with a title and no icon, so there is no
+	// glyph to substitute here and inventing one would not be the same control.
+	case CustomFrameControl::Update:
 	case CustomFrameControl::None: return;
 	}
 	const UINT dpi = static_cast<UINT>(std::max(96, ::GetDeviceCaps(dc, LOGPIXELSX)));
@@ -188,11 +194,38 @@ void PaintTitleControlGlyph(
 	workbench::icons::codicons::Draw(dc, box, icon, color);
 }
 
-void PaintTitleControlFocus(HDC dc, const RECT& rect, const theme::ThemePalette& palette) noexcept
+//! VS Code's `.update-indicator.prominent` (`media/updateTitleBarEntry.css`) fills the
+//! actionable indicator with `--vscode-button-background`, labels it in
+//! `--vscode-button-foreground`, and hovers it to `--vscode-button-hoverBackground`.
+//! It is a labelled action rather than a codicon, so it never goes through
+//! `PaintTitleControlGlyph`, and it is drawn with the caption font because
+//! `MeasureCustomFrameUpdateButtonWidth` measured its width with that same font.
+void PaintUpdateIndicator(
+	HDC dc,
+	const RECT& rect,
+	bool highlighted,
+	const theme::ThemePalette& palette,
+	HFONT font
+) noexcept
+{
+	Fill(dc, rect, (highlighted ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef());
+	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
+	const int saved = ::SaveDC(dc);
+	if (saved == 0) return;
+	if (font != nullptr) (void)::SelectObject(dc, font);
+	::SetBkMode(dc, TRANSPARENT);
+	::SetTextColor(dc, palette.buttonForeground.ToColorRef());
+	RECT textRect = rect;
+	::DrawTextW(dc, label, static_cast<int>(::wcslen(label)), &textRect,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+	::RestoreDC(dc, saved);
+}
+
+void PaintTitleControlFocus(HDC dc, const RECT& rect, COLORREF color) noexcept
 {
 	RECT focus = rect;
 	::InflateRect(&focus, -3, -3);
-	const HPEN pen = ::CreatePen(PS_SOLID, 1, palette.accent.ToColorRef());
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
 	const HGDIOBJ oldPen = ::SelectObject(dc, pen);
 	const HGDIOBJ oldBrush = ::SelectObject(dc, ::GetStockObject(NULL_BRUSH));
 	::Rectangle(dc, focus.left, focus.top, focus.right, focus.bottom);
@@ -249,6 +282,10 @@ const wchar_t* CustomFrameControlName(CustomFrameControl control) noexcept
 	case CustomFrameControl::PrimarySidebar: return L"Toggle Primary Side Bar";
 	case CustomFrameControl::BottomPanel: return L"Toggle Bottom Panel";
 	case CustomFrameControl::SecondarySidebar: return L"Toggle Secondary Side Bar";
+	// Upstream's `workbench.actions.updateIndicator` title, used verbatim as both the
+	// accessible name and the painted label. `MeasureCustomFrameUpdateButtonWidth`
+	// measures this exact string, so the two can never disagree.
+	case CustomFrameControl::Update: return L"Update";
 	case CustomFrameControl::Account: return L"Account";
 	case CustomFrameControl::Manage: return L"Manage";
 	case CustomFrameControl::None: return L"";
@@ -263,6 +300,7 @@ const wchar_t* CustomFrameControlAutomationId(CustomFrameControl control) noexce
 	case CustomFrameControl::PrimarySidebar: return L"Sakura.TitleBar.PrimarySidebar";
 	case CustomFrameControl::BottomPanel: return L"Sakura.TitleBar.BottomPanel";
 	case CustomFrameControl::SecondarySidebar: return L"Sakura.TitleBar.SecondarySidebar";
+	case CustomFrameControl::Update: return L"Sakura.TitleBar.Update";
 	case CustomFrameControl::Account: return L"Sakura.TitleBar.Account";
 	case CustomFrameControl::Manage: return L"Sakura.TitleBar.Manage";
 	case CustomFrameControl::None: return L"";
@@ -321,17 +359,28 @@ void CCustomTitleBar::Paint(
 		CustomFrameControl::PrimarySidebar,
 		CustomFrameControl::BottomPanel,
 		CustomFrameControl::SecondarySidebar,
+		CustomFrameControl::Update,
 		CustomFrameControl::Account,
 		CustomFrameControl::Manage,
 	}) {
 		const RECT rect = TitleControlRect(layout, control);
 		if (::IsRectEmpty(&rect)) continue;
+		if (control == CustomFrameControl::Update) {
+			PaintUpdateIndicator(
+				dc, rect, control == hotControl || control == pressedControl, palette, font);
+			// The focus ring is drawn in the label color, not in `accent`: the indicator is
+			// already a filled accent-like pill, and an accent ring on it would vanish.
+			if (control == focusedControl) {
+				PaintTitleControlFocus(dc, rect, palette.buttonForeground.ToColorRef());
+			}
+			continue;
+		}
 		PaintTitleControlBackground(dc, rect, control, hotControl, pressedControl, palette);
 		const COLORREF controlColor = control == pressedControl
 			? palette.highlightText.ToColorRef()
 			: (active ? palette.primaryText : palette.secondaryText).ToColorRef();
 		PaintTitleControlGlyph(dc, rect, control, controlColor, codiconFont);
-		if (control == focusedControl) PaintTitleControlFocus(dc, rect, palette);
+		if (control == focusedControl) PaintTitleControlFocus(dc, rect, palette.accent.ToColorRef());
 	}
 
 	const COLORREF glyphColor = (active ? palette.primaryText : palette.secondaryText).ToColorRef();

@@ -11,6 +11,8 @@
 
 #include "config/ConfigurationTypes.h"
 #include "config/SettingsWritebackCoordinator.h"
+#include "config/WorkspaceContextTypes.h"
+#include "extension/CExtensionContributionRegistry.h"
 #include "extension/CExtensionWorkbenchUi.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
@@ -62,6 +64,29 @@ public:
 		std::string_view key,
 		const std::optional<config::ConfigurationValue>& value,
 		std::wstring_view overrideLanguageId);
+
+	//! Builds the effective Profile-scoped value for every built-in configuration
+	//! descriptor key, for delivery to the extension host as the `configuration`
+	//! snapshot in `host/registerExtensions` (backs
+	//! `vscode.workspace.getConfiguration(...).get(...)` before any `update()` is
+	//! ever called). This deliberately only covers keys with a registered
+	//! `ConfigurationDescriptor`: `IConfigurationService::ReadSnapshot` rejects the
+	//! whole batch if any requested key is unregistered, and there is no bulk
+	//! "list every effective key" accessor to fall back on. A key an extension has
+	//! durably written through `workspace/configuration/update` but that has no
+	//! built-in descriptor (for example an extension's own private setting) is
+	//! therefore not included here either; see extension/CLAUDE.md's descriptor-
+	//! gating note. Returns an empty vector when no runtime is bound or the read
+	//! is rejected, so callers degrade to "no native snapshot" rather than fail
+	//! extension registration.
+	[[nodiscard]] std::vector<config::ConfigurationEntry> BuildConfigurationSnapshot() const;
+
+	//! Read-only projection of the runtime's current workspace identity, for
+	//! describing `vscode.workspace.workspaceFolders` to the extension host.
+	//! Returns a default-constructed (EWorkspaceKind::Empty, no folders) snapshot
+	//! when no runtime is bound, matching "no workspace is open" rather than
+	//! signaling a distinct failure.
+	[[nodiscard]] config::WorkspaceContextSnapshot WorkspaceContextSnapshotForExtensions() const;
 
 	//! Stable identity for the host-owned Extension Host log channel (see AppendExtensionHostLog).
 	//! This is a native-only identifier; it has no legacy CExtensionOutputChannel projection because
@@ -117,6 +142,39 @@ public:
 		std::wstring_view handle, std::wstring_view extensionId, std::uint64_t generation,
 		std::string_view operationId, CExtensionOutputChannel& legacyCache);
 
+	/*!
+	 * @brief Registers manifest-declared view containers and views into the workbench layout registry.
+	 *
+	 * The layout registry is the single source of truth for container/view identity, ordering,
+	 * duplicate rejection and owner generations, so extension-contributed containers must live
+	 * there rather than in a parallel extension-side store. Only the attributes that registry
+	 * deliberately does not model (icon, `when`, tree/webview kind) stay in
+	 * CExtensionContributionRegistry.
+	 *
+	 * Re-registration is a full replace: any previously registered generation of the same
+	 * extension is disposed first, because the registry rejects duplicate container IDs. Returns
+	 * false when there is no runtime to register into or the registry rejected the batch; the
+	 * caller's RPC still succeeds, so a rejected batch degrades to "no contributed containers"
+	 * rather than to a failed extension activation.
+	 */
+	[[nodiscard]] bool RegisterViewContributions(
+		std::wstring_view extensionId, std::uint64_t generation,
+		const std::vector<SExtensionViewContainerDeclaration>& containers,
+		const std::vector<SExtensionViewDeclaration>& views);
+
+	//! Removes every layout contribution owned by one extension generation. Safe when nothing was registered.
+	bool DisposeViewContributions(std::wstring_view extensionId, std::uint64_t generation) noexcept;
+
+	/*!
+	 * @brief The ViewContainer a manifest-declared view belongs to.
+	 *
+	 * Read back from the layout registry, which is the sole owner of that identity, so a runtime
+	 * `createTreeView` lands in the container its manifest declared instead of in the host's
+	 * default bucket. Returns empty when the view was never declared or there is no runtime; the
+	 * caller then keeps the default bucket rather than inventing a container.
+	 */
+	[[nodiscard]] std::wstring ViewContainerOf(std::wstring_view viewId) const;
+
 	//! Dispose exactly one accepted owner generation before its legacy projections are removed.
 	[[nodiscard]] bool DisposeOwner(
 		std::wstring_view extensionId, std::uint64_t generation,
@@ -141,6 +199,8 @@ private:
 	//! Separate non-wrapping operation ID sequence dedicated to the host-owned Extension Host log
 	//! channel, following the same fail-closed-on-exhaustion contract as NextDisposeOperationId.
 	[[nodiscard]] bool NextExtensionHostLogOperationId(std::string& operationId) noexcept;
+	//! Separate non-wrapping sequence for layout contribution batches, same fail-closed contract.
+	[[nodiscard]] bool NextContributionOperationId(std::string& operationId) noexcept;
 
 	workbench::problems::MarkerService* m_markerService = nullptr;
 	workbench::output::OutputService* m_outputService = nullptr;
@@ -152,4 +212,5 @@ private:
 	//! Deliberately untracked in m_trackedOwners: see AppendExtensionHostLog.
 	bool m_extensionHostLogChannelCreated = false;
 	std::uint64_t m_nextExtensionHostLogOperationId = 1;
+	std::uint64_t m_nextContributionOperationId = 1;
 };

@@ -121,7 +121,15 @@ std::wstring ExtractTerminalSelection( const TerminalModel& model, TerminalSelec
 		std::wstring line;
 		for( auto column = begin; column < end; ++column ) {
 			const auto& cell = row->cells[column];
-			if( !cell.continuation ) line.append(cell.Text());
+			if( cell.continuation ) continue;
+			// An unwritten cell (for example a column a horizontal tab jumped over
+			// without printing anything) still occupies exactly one selected
+			// column. Extract it as the space it visually is instead of collapsing
+			// it away, matching Windows Terminal/VS Code copy behavior for a
+			// selection that spans a tab gap. Trailing spaces at a wrapped-row
+			// boundary are trimmed below exactly as before.
+			if( cell.length == 0 ) line.push_back(L' ');
+			else line.append(cell.Text());
 		}
 		if( rowIndex != active.row ) {
 			while( !line.empty() && line.back() == L' ' ) line.pop_back();

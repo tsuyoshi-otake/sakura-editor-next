@@ -76,7 +76,7 @@ test('registers metadata and lazily activates a command through the vscode bridg
   assert.equal(transport.notified('workbench/extensions/removeGeneration').length, 1);
 });
 
-test('activation failure reaches a terminal state and disposes the API session', async (t) => {
+test('activation failure reaches a terminal state without disposing already-completed registrations', async (t) => {
   const root = createExtension({
     name: 'unsafe', publisher: 'test', main: '../outside.cjs',
   });
@@ -89,10 +89,75 @@ test('activation failure reaches a terminal state and disposes the API session',
   await assert.rejects(loader.activate('test.unsafe'), /escapes extension root/);
   const record = loader.extensions.get('test.unsafe');
   assert.equal(record.state, 'failed');
-  assert.equal(record.session, null);
-  assert.equal(record.context, null);
+  // 実 VS Code (AbstractExtensionService._doActivateExtension) は activate() の
+  // 失敗で個々の登録を巻き戻さない — activate() 全体を包む「トランザクション」
+  // は存在しない。ここでは何も登録されないまま失敗するケースだが、その場合
+  // でも session / context 自体を null にして握りつぶすことはしない。session
+  // を破棄すると、後半の未対応 API 呼び出し 1 つの失敗が、それより前に
+  // 成功していた registerCommand まで巻き添えにしてしまう
+  // (下の 'a command registered before an unsupported-API throw...' テスト参照)。
+  assert.notEqual(record.session, null);
+  assert.notEqual(record.context, null);
+  assert.match(record.activationError.message, /escapes extension root/);
   assert.equal(transport.notified('workbench/extensions/didFailActivation').length, 1);
+
+  // 失敗した activate() は呼び出しのたびに再実行しない: 実 VS Code の
+  // ExtensionsActivator と同様、キャッシュした同じエラーを再スローするだけで
+  // 新しい ExtensionApiSession を積み増さない。
+  const sessionAfterFirstFailure = record.session;
+  await assert.rejects(loader.activate('test.unsafe'), /escapes extension root/);
+  assert.equal(record.session, sessionAfterFirstFailure);
+  assert.equal(transport.notified('workbench/extensions/didFailActivation').length, 1);
+
+  await loader.dispose();
   assert.equal(transport.notified('workbench/extensions/removeGeneration').length, 1);
+});
+
+test('a command registered before an unsupported-API throw in activate() survives the activation failure', async (t) => {
+  // Issue #23 で懸念されたシナリオの再現・固定化: 拡張の activate() が
+  // vscode.commands.registerCommand を成功させた直後に、未対応 API
+  // (window.createWebviewPanel — vscode-api.cjs の UnsupportedCapabilityError)
+  // を呼んで同期的に例外を投げても、その手前で登録できていたコマンドは
+  // コマンドパレット/キーバインド経由で引き続き実行可能でなければならない。
+  const root = createExtension({
+    name: 'partial', publisher: 'test', main: './extension',
+    contributes: {
+      commands: [{ command: 'test.partial.run', title: 'Run Partial', category: 'Test' }],
+    },
+  }, `
+    const vscode = require('vscode');
+    exports.activate = (context) => {
+      context.subscriptions.push(vscode.commands.registerCommand('test.partial.run', () => 'partial-ran'));
+      vscode.window.createWebviewPanel();
+    };
+  `);
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const transport = new RecordingTransport();
+  const loader = new ExtensionLoader(9, transport);
+  t.after(() => loader.dispose());
+
+  assert.equal(loader.register([root]).failed.length, 0);
+  await assert.rejects(loader.activate('test.partial'), /window\.createWebviewPanel/);
+
+  const record = loader.extensions.get('test.partial');
+  assert.equal(record.state, 'failed');
+  assert.equal(transport.notified('workbench/extensions/didFailActivation').length, 1);
+  assert.match(record.activationError.message, /window\.createWebviewPanel/);
+
+  // 本命の確認: 失敗した拡張でも、失敗より前に登録できていたコマンドは
+  // extension/commands/execute (コマンドパレット/キーバインドの実行経路) から
+  // 引き続き呼び出せる。
+  const executed = await loader.handleRequest('extension/commands/execute', {
+    command: 'test.partial.run', args: [],
+  });
+  assert.deepEqual(executed, { value: 'partial-ran' });
+
+  // 再実行してもキャッシュされた失敗を再スローするだけで、再アクティブ化に
+  // よってコマンドが失われたり例外が実行経路に漏れたりしない。
+  const executedAgain = await loader.handleRequest('extension/commands/execute', {
+    command: 'test.partial.run', args: [],
+  });
+  assert.deepEqual(executedAgain, { value: 'partial-ran' });
 });
 
 test('a manifest-only extension activates without loading JavaScript', async (t) => {

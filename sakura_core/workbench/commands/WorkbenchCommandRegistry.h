@@ -159,6 +159,15 @@ struct WorkbenchGitCommandExecutors {
 	WorkbenchCommandExecutor checkoutDetached;
 	WorkbenchCommandExecutor branch;
 	WorkbenchCommandExecutor branchFrom;
+	//! Repository-creation-scoped: unlike every other member of this struct,
+	//! `git.init` and `git.clone` are the two commands upstream still offers
+	//! when **no** repository is open at all - their entire purpose is to
+	//! create the state every other Git command requires. `git.init` carries
+	//! the `skipFolderPrompt` boolean the built-in provider's `viewsWelcome`
+	//! button passes (`git.init true`) as its argument payload; `git.clone`
+	//! takes no argument, exactly like upstream's own zero-parameter handler.
+	WorkbenchCommandArgumentExecutor init;
+	WorkbenchCommandExecutor clone;
 	//! Resource-scoped: upstream declares these on `scm/resourceState/context`
 	//! and passes the selected `SourceControlResourceState` values as arguments.
 	//! Which rows, and which group each row came from, is the whole operand.
@@ -204,6 +213,58 @@ struct WorkbenchGitCommandExecutors {
 	WorkbenchCommandExecutor publish;
 };
 
+/*!
+	@brief Executors for the update surfaces.
+
+	Upstream splits the same four operations across two command families: the
+	Command Palette actions in `update.contribution.ts`
+	(`update.checkForUpdate`, `update.downloadUpdate`, `update.installUpdate`,
+	`update.restartToUpdate`, `update.showUpdateInfo`) and the gear menu's
+	`7_update` group in `update.ts` (`update.check`, `update.downloadNow`,
+	`update.install`, `update.restart`). Both families call the same
+	`IUpdateService` methods, so one executor is bound to both members of each
+	pair rather than two callbacks that could drift apart.
+
+	The four progress entries (`update.checking`, `update.downloading`,
+	`update.updating`, `update.cancelling`) take no executor at all: upstream
+	registers them with `precondition: false`, so they are labels showing what
+	the update is doing, not actions. They register with an enablement clause of
+	`false` and terminate as `Disabled`, never as `Unsupported`, because being
+	unavailable *right now* is different from not being implemented.
+*/
+struct WorkbenchUpdateCommandExecutors {
+	WorkbenchCommandExecutor checkForUpdates;
+	WorkbenchCommandExecutor downloadUpdate;
+	WorkbenchCommandExecutor applyUpdate;
+	WorkbenchCommandExecutor quitAndInstall;
+	WorkbenchCommandExecutor showUpdateInfo;
+};
+
+//! Upstream's title-bar entry, registered into `MenuId.TitleBarUpdate` at
+//! order 0 with the title `"Update"`.
+inline constexpr std::string_view kUpdateIndicatorCommandId = "workbench.actions.updateIndicator";
+
+//! The states in which upstream's title-bar entry is visible
+//! (`updateTitleBarEntry.ts`'s `ACTIONABLE_STATES`), as one `when` clause.
+inline constexpr std::string_view kUpdateIndicatorWhenClause =
+	"updateState == 'available for download' || updateState == 'downloaded' || updateState == 'ready'";
+
+/*!
+	@brief The command `workbench.actions.updateIndicator` delegates to.
+
+	Upstream's title-bar entry is one button whose click runs a different command
+	depending on the state it is showing. Resolving that here, from the same
+	immutable context snapshot the `when` clause is evaluated against, keeps the
+	choice in the pure layer and keeps the title bar from holding a second copy
+	of the update state.
+
+	Returns `std::nullopt` for any state outside `ACTIONABLE_STATES`, including a
+	missing or non-string `updateState`. A non-actionable state has no command,
+	which is exactly why the button is not visible in it.
+*/
+[[nodiscard]] std::optional<std::string> ResolveUpdateIndicatorCommand(
+	const WorkbenchContextKeySnapshot& context);
+
 enum class EWorkbenchCommandRegistrationStatus : std::uint8_t {
 	Succeeded,
 	NotApplicable,
@@ -244,7 +305,8 @@ public:
 		WorkbenchCommandDescriptor descriptor, WorkbenchCommandArgumentExecutor executor);
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterBuiltinCommands(
 		WorkbenchBuiltinCommandExecutors executors = {});
-	//! Registers the built-in Git provider's branch commands (`git.checkout`,
+	//! Registers the built-in Git provider's repository-creation commands
+	//! (`git.init`, `git.clone`) and its branch commands (`git.checkout`,
 	//! `git.checkoutDetached`, `git.branch`, `git.branchFrom`) and its working-
 	//! tree commands (`git.stage`, `git.stageAll`, `git.unstage`,
 	//! `git.unstageAll`, `git.clean`, `git.cleanAll`) and its commit commands
@@ -252,9 +314,17 @@ public:
 	//! commands (`git.fetch`, `git.fetchPrune`, `git.fetchAll`, `git.pull`,
 	//! `git.pullRebase`, `git.push`, `git.sync`, `git.syncRebase`,
 	//! `git.publish`) as one atomic batch, using upstream's own stable IDs,
-	//! titles, and `when` clause.
+	//! titles, and `when` clause. `git.init`/`git.clone` use a distinct
+	//! always-available clause; see `MakeGitAlwaysAvailableDescriptor` in the
+	//! implementation file.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterGitCommands(
 		WorkbenchGitCommandExecutors executors = {});
+	//! Registers the update surfaces as one atomic batch: upstream's five Command
+	//! Palette actions, its eight state-scoped `7_update` gear entries, and the
+	//! title-bar entry `workbench.actions.updateIndicator`, using upstream's own
+	//! stable IDs, titles, and `updateState` clauses.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterUpdateCommands(
+		WorkbenchUpdateCommandExecutors executors = {});
 	[[nodiscard]] WorkbenchCommandRegistrationResult DisposeOwner(const WorkbenchCommandOwner& owner);
 	[[nodiscard]] std::optional<WorkbenchCommandDescriptor> Find(std::string_view commandId) const;
 	[[nodiscard]] std::optional<ResolvedWorkbenchCommandSurface> ResolveSurface(
@@ -274,6 +344,12 @@ public:
 	//! above is this one with an empty payload.
 	[[nodiscard]] WorkbenchCommandExecutionResult Execute(std::string_view commandId,
 		const WorkbenchContextKeySnapshot& context, std::string_view argumentsJson) const noexcept;
+	//! Runs `workbench.actions.updateIndicator` by executing whichever command
+	//! `ResolveUpdateIndicatorCommand` selects for the snapshot. A non-actionable
+	//! state is `NotApplicable`, not `Failed`: the button should not have been
+	//! visible, and pressing a stale one must not fabricate an update action.
+	[[nodiscard]] WorkbenchCommandExecutionResult ExecuteUpdateIndicator(
+		const WorkbenchContextKeySnapshot& context) const noexcept;
 	[[nodiscard]] std::uint64_t Revision() const noexcept;
 
 	[[nodiscard]] static bool IsValidCommandId(std::string_view value) noexcept;

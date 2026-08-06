@@ -17,6 +17,7 @@
 #include <vector>
 
 class CExtensionViewRegistry;
+struct SExtensionViewDescriptor;
 
 namespace workbench::extension {
 
@@ -28,8 +29,18 @@ public:
 	using CommandCallback = std::function<void(std::wstring_view command, std::string_view argumentsJson,
 		std::wstring_view viewHandle, std::wstring_view itemHandle)>;
 	using VisibilityChangedCallback = std::function<void(bool visible)>;
+	/*!
+		@brief Decides whether one contributed view belongs to this tool's ViewContainer.
 
-	explicit CExtensionSidebarTool(std::shared_ptr<CExtensionViewRegistry> registry);
+		A tool renders exactly one container, but which views a container owns is the pool's
+		knowledge, not this control's: the fallback container has to accept everything no
+		dedicated container claimed. An empty filter accepts every view, so a composition with
+		a single container needs to know nothing about containers at all.
+	*/
+	using ViewFilter = std::function<bool(const SExtensionViewDescriptor&)>;
+
+	explicit CExtensionSidebarTool(
+		std::shared_ptr<CExtensionViewRegistry> registry, ViewFilter viewFilter = {});
 	~CExtensionSidebarTool() override;
 	CExtensionSidebarTool(const CExtensionSidebarTool&) = delete;
 	CExtensionSidebarTool& operator=(const CExtensionSidebarTool&) = delete;

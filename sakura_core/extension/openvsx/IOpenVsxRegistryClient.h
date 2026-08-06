@@ -10,6 +10,7 @@
 #include <sakura/request/RequestService.h>
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -67,6 +68,16 @@ struct OpenVsxTextOperation {
 	std::wstring value;
 };
 
+struct OpenVsxExtensionAssetsOperation {
+	OpenVsxOperationStatus status;
+	SOpenVsxExtensionAssets value;
+};
+
+//! VSIX 本体を chunk 単位で受け取る sink。false を返すと取得を打ち切る。
+//! platform::request::ResponseBodyChunkSink と同じ形だが、この層は request
+//! 実装の詳細を知らずに済むよう独自の別名として持つ。
+using OpenVsxBodyChunkSink = std::function<bool(const std::uint8_t* data, std::size_t size)>;
+
 /*! 
  * @brief Open VSX registry の通信契約。
  *
@@ -101,6 +112,47 @@ public:
 		return { { EOpenVsxRequestOutcome::Unsupported,
 			platform::request::ERequestOutcome::InvalidRequest,
 			std::nullopt, L"text fetch is unsupported" }, {} };
+	}
+
+	/*!
+	 * @brief 拡張メタデータ endpoint から全 targetPlatform の配布物一覧を取る
+	 *
+	 * 検索応答は targetPlatform を尊重しないので、導入時にはこちらで解決し直す。
+	 * 既定実装が Unsupported を返すのは、これを実装しない client（テスト用の
+	 * fake など）が検索応答の URL にフォールバックできるようにするため。
+	 */
+	virtual OpenVsxExtensionAssetsOperation FetchExtensionAssets(
+		std::wstring_view namespaceName,
+		std::wstring_view extensionName,
+		const platform::request::IRequestCancellation* cancellation = nullptr) const
+	{
+		(void)namespaceName;
+		(void)extensionName;
+		(void)cancellation;
+		return { { EOpenVsxRequestOutcome::Unsupported,
+			platform::request::ERequestOutcome::InvalidRequest,
+			std::nullopt, L"extension metadata fetch is unsupported" }, {} };
+	}
+
+	/*!
+	 * @brief VSIX を全量メモリーへためずに sink へストリーミング取得する
+	 *
+	 * 既定実装が Unsupported を返すのは、これを実装しない client（テスト用の
+	 * fake を含む）を呼び出し元が FetchVsix によるメモリー取得へ安全に
+	 * フォールバックできるようにするため。値は sink 側へ渡るため、他の
+	 * 操作と異なり戻り値に本体バイト列を持たない。
+	 */
+	virtual OpenVsxOperationStatus FetchVsixStreamed(
+		std::wstring_view validatedHttpsVsixUri,
+		const OpenVsxBodyChunkSink& sink,
+		const platform::request::IRequestCancellation* cancellation = nullptr) const
+	{
+		(void)validatedHttpsVsixUri;
+		(void)sink;
+		(void)cancellation;
+		return { EOpenVsxRequestOutcome::Unsupported,
+			platform::request::ERequestOutcome::InvalidRequest,
+			std::nullopt, L"streamed VSIX fetch is unsupported" };
 	}
 };
 

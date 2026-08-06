@@ -158,9 +158,11 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// The three diff roles register `null` for hcDark/hcLight upstream, i.e. High Contrast
 	// paints no inserted/removed wash and no diagonal fill at all; giving them the window
 	// color is exactly that absence, not a chosen highlight color.
+	// The three button roles take the system highlight pair rather than a chosen brand color:
+	// a High Contrast theme guarantees that pairing's contrast, and an accent we picked does not.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
 		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
-		window, window, window };
+		window, window, window, highlight, highlightText, highlight };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

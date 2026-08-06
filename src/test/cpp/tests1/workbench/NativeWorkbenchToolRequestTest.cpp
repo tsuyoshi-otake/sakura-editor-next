@@ -123,40 +123,38 @@ TEST_F(NativeWorkbenchToolRequest, OutlineProjectionDoesNotCallOwner)
 //! page must stop claiming it even before its owner applies a new selection.
 TEST_F(NativeWorkbenchToolRequest, SideBarHostsShareOnePagePoolWithoutBothClaimingIt)
 {
-	using workbench::viewcontainer::ViewContainerPage;
+	namespace pageIds = workbench::viewcontainer::pageIds;
 	CDlgFuncList dialog;
 	auto pages = MakePages(dialog);
 	CViewContainerHost primary(pages);
 	CViewContainerHost secondary(pages);
 
-	primary.ShowPage(ViewContainerPage::Extensions);
-	EXPECT_TRUE(primary.ActivePage().has_value());
-	EXPECT_EQ(ViewContainerPage::Extensions, *primary.ActivePage());
-	EXPECT_FALSE(secondary.ActivePage().has_value());
+	primary.ShowPage(pageIds::Extensions);
+	EXPECT_EQ(pageIds::Extensions, primary.ActivePage());
+	EXPECT_TRUE(secondary.ActivePage().empty());
 
-	primary.ShowPage(std::nullopt);
-	secondary.ShowPage(ViewContainerPage::Extensions);
-	EXPECT_FALSE(primary.ActivePage().has_value());
-	ASSERT_TRUE(secondary.ActivePage().has_value());
-	EXPECT_EQ(ViewContainerPage::Extensions, *secondary.ActivePage());
+	primary.ShowPage({});
+	secondary.ShowPage(pageIds::Extensions);
+	EXPECT_TRUE(primary.ActivePage().empty());
+	EXPECT_EQ(pageIds::Extensions, secondary.ActivePage());
 }
 
 //! Outline visibility is one model fact, not a per-Part one: it must survive the Explorer
 //! container moving to the other side bar.
 TEST_F(NativeWorkbenchToolRequest, OutlineExpansionIsSharedByBothSideBars)
 {
-	using workbench::viewcontainer::ViewContainerPage;
+	namespace pageIds = workbench::viewcontainer::pageIds;
 	CDlgFuncList dialog;
 	auto pages = MakePages(dialog);
 	CViewContainerHost primary(pages);
 	CViewContainerHost secondary(pages);
 
-	primary.ShowPage(ViewContainerPage::Explorer);
+	primary.ShowPage(pageIds::Explorer);
 	primary.SetOutlineExpanded(false);
 	EXPECT_FALSE(secondary.IsOutlineExpanded());
 
-	primary.ShowPage(std::nullopt);
-	secondary.ShowPage(ViewContainerPage::Explorer);
+	primary.ShowPage({});
+	secondary.ShowPage(pageIds::Explorer);
 	secondary.SetOutlineExpanded(true);
 	EXPECT_TRUE(primary.IsOutlineExpanded());
 }

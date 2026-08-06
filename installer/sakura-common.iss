@@ -443,6 +443,11 @@ Name: "{usersendto}\{cm:AppName}";                                           Fil
 
 [Run]
 FileName: "{app}\sakura.exe"; Description: "{cm:StartNow}"; WorkingDir: "{app}"; Flags: postinstall nowait skipifsilent runasoriginaluser
+; In-application update relaunch.  Deliberately not `postinstall` and not
+; `skipifsilent`: it is not a checkbox the user ticks, and the whole point is
+; that it runs during the /VERYSILENT install the exiting editor started.  The
+; entry above is skipped in that run, so exactly one of the two ever fires.
+FileName: "{app}\sakura.exe"; WorkingDir: "{app}"; Flags: nowait runasoriginaluser; Check: ShouldRelaunchAfterUpdate
 
 [UninstallDelete]
 ;Uninstall時に確認無く消されるのでコメントアウト
@@ -695,8 +700,47 @@ begin
   end;
 end;
 
+{ True when the editor itself started this setup to apply a downloaded update.
+  Read from the command line rather than from a file, so a stale marker can never
+  make an ordinary interactive install relaunch the application. }
+function ShouldRelaunchAfterUpdate: Boolean;
+begin
+  Result := ExpandConstant('{param:UPDATERELAUNCH|0}') = '1';
+end;
+
+{ Waits for the last editor process to release its mutex.  The update installer
+  is started by the exiting application, so the mutex is normally held for the
+  moment it takes that process to finish exiting: this is a race to wait out, not
+  a user who left the editor open. }
+function WaitForApplicationToClose(TimeoutMilliseconds: Integer): Boolean;
+var
+  Waited: Integer;
+begin
+  Waited := 0;
+  while CheckForMutexes('MutexSakuraEditor') and (Waited < TimeoutMilliseconds) do
+  begin
+    Sleep(250);
+    Waited := Waited + 250;
+  end;
+  Result := not CheckForMutexes('MutexSakuraEditor');
+end;
+
 function ConfirmApplicationIsClosed: Boolean;
 begin
+  { An update relaunch runs under /VERYSILENT /SUPPRESSMSGBOXES.  The retry
+    dialog below is a custom form, which /SUPPRESSMSGBOXES does not suppress, so
+    showing it there would block the install forever on a window nobody can see.
+    Wait for a bounded time instead and fail the setup if the editor really is
+    still running; the staged installer stays on disk and the next Ready gesture
+    can try again. }
+  if ShouldRelaunchAfterUpdate then
+  begin
+    Result := WaitForApplicationToClose(30000);
+    if not Result then
+      Log('The editor is still running after the update wait; aborting the update install.');
+    Exit;
+  end;
+
   Result := True;
   while CheckForMutexes('MutexSakuraEditor') do
   begin

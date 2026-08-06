@@ -29,6 +29,10 @@ struct CustomFrameLayout {
 	RECT primarySidebarButton{};
 	RECT bottomPanelButton{};
 	RECT secondarySidebarButton{};
+	//! Empty unless the update state is actionable. Unlike the glyph controls this
+	//! one is a labelled button, so its width is measured from the caption font
+	//! instead of being the fixed compact-control width.
+	RECT updateButton{};
 	RECT accountButton{};
 	RECT manageButton{};
 	RECT minimizeButton{};
@@ -37,11 +41,17 @@ struct CustomFrameLayout {
 };
 
 [[nodiscard]] int ScaleCustomFrameDip(int value, UINT dpi) noexcept;
+//! `updateButtonWidth` is the measured physical width of the Update indicator, or
+//! zero when the update state is not actionable. Zero must leave every other
+//! rectangle exactly where it would be without the indicator.
 [[nodiscard]] CustomFrameLayout CalculateCustomFrameLayout(
 	int clientWidth,
 	UINT dpi,
-	int preferredMenuWidth
+	int preferredMenuWidth,
+	int updateButtonWidth = 0
 ) noexcept;
+//! Physical width the Update indicator needs for its label, including its padding.
+[[nodiscard]] int MeasureCustomFrameUpdateButtonWidth(HDC dc, UINT dpi) noexcept;
 [[nodiscard]] LRESULT HitTestCustomFrame(
 	const CustomFrameLayout& layout,
 	POINT clientPoint,
@@ -80,6 +90,29 @@ enum class CustomFrameManageAction : unsigned char {
 	OpenKeyboardShortcuts,
 	SelectColorTheme,
 	SelectFileIconTheme,
+	//! Group `7_update`. Only the four actionable upstream entries can be chosen;
+	//! the in-progress ones are contributed with `precondition: false` and are
+	//! therefore drawn greyed and never produce an action.
+	CheckForUpdates,
+	DownloadUpdate,
+	InstallUpdate,
+	RestartToUpdate,
+};
+
+//! The single `7_update` entry the current update state makes visible. Upstream
+//! registers eight items into `MenuId.GlobalActivity` group `7_update`, each gated
+//! on `CONTEXT_UPDATE_STATE == '<state>'`, so at most one is visible at a time.
+//! `None` is the `disabled`/`uninitialized` case, where upstream contributes nothing.
+enum class CustomFrameUpdateMenuEntry : unsigned char {
+	None,
+	Check,       //!< `update.check`       "Check for Updates..."
+	Checking,    //!< `update.checking`    "Checking for Updates..."  (disabled upstream)
+	DownloadNow, //!< `update.downloadNow` "Download Update (1)"
+	Downloading, //!< `update.downloading` "Downloading Update..."    (disabled upstream)
+	Install,     //!< `update.install`     "Install Update... (1)"
+	Updating,    //!< `update.updating`    "Installing Update..."     (disabled upstream)
+	Cancelling,  //!< `update.cancelling`  "Cancelling Update..."     (disabled upstream)
+	Restart,     //!< `update.restart`     "Restart to Update (1)"
 };
 
 //! Physical edge covered by an input-only child overlay. The custom client
@@ -103,6 +136,12 @@ CalculateCustomFrameResizeOverlayBounds(
 
 using CustomFrameManageActionCallback = std::function<void(CustomFrameManageAction)>;
 
+//! Invoked when the title-bar Update indicator is pressed. The frame does not know
+//! which update command that means; the composition root resolves the current
+//! update state to `update.downloadNow` / `update.install` / `update.restart`
+//! exactly as upstream's `updateTitleBarEntry.ts` does.
+using CustomFrameUpdateIndicatorCallback = std::function<void()>;
+
 //! Owns non-client extension, hit-testing, custom title/menu painting, and per-window DPI state.
 class CCustomFrameController final : public accessibility::ICustomUiAutomationHost {
 public:
@@ -125,6 +164,20 @@ public:
 	{
 		m_manageMenuActionCallback = std::move(callback);
 	}
+	//! Binds the window-local dispatcher for the title-bar Update indicator.
+	void SetUpdateIndicatorCallback(CustomFrameUpdateIndicatorCallback callback) noexcept
+	{
+		m_updateIndicatorCallback = std::move(callback);
+	}
+	//! Shows or hides the Update indicator. Upstream shows it only for the
+	//! actionable states and only while `update.titleBar` is enabled; both
+	//! decisions belong to the composition root, so this takes the answer.
+	void SetUpdateIndicatorVisible(bool visible) noexcept;
+	[[nodiscard]] bool IsUpdateIndicatorVisible() const noexcept { return m_updateIndicatorVisible; }
+	//! Selects the `7_update` entry the Manage popup contributes. The popup is built
+	//! on demand, so this needs no invalidation; `None` contributes nothing at all.
+	void SetUpdateMenuEntry(CustomFrameUpdateMenuEntry entry) noexcept { m_updateMenuEntry = entry; }
+	[[nodiscard]] CustomFrameUpdateMenuEntry UpdateMenuEntry() const noexcept { return m_updateMenuEntry; }
 	[[nodiscard]] theme::ThemeMode GetThemeMode() const noexcept { return m_savedMode; }
 	[[nodiscard]] UINT Dpi() const noexcept { return m_dpi; }
 	[[nodiscard]] int TitleHeight() const noexcept { return ScaleCustomFrameDip(34, m_dpi); }
@@ -154,6 +207,11 @@ private:
 
 	void RefreshMetrics() noexcept;
 	void RefreshLayout() noexcept;
+	//! Zero while the indicator is hidden; the caption-font measurement otherwise.
+	[[nodiscard]] int MeasureUpdateIndicatorWidth() const noexcept;
+	//! Title controls that currently have a rectangle, in left-to-right order.
+	[[nodiscard]] int VisibleTitleControlCount() const noexcept;
+	[[nodiscard]] CustomFrameControl VisibleTitleControlAt(int index) const noexcept;
 	void CreateResizeOverlays() noexcept;
 	void DestroyResizeOverlays() noexcept;
 	[[nodiscard]] int ResizeBorder() const noexcept;
@@ -187,6 +245,9 @@ private:
 	CClientMenuBar m_menuBar;
 	CCustomTitleBar m_titleBar;
 	CustomFrameManageActionCallback m_manageMenuActionCallback;
+	CustomFrameUpdateIndicatorCallback m_updateIndicatorCallback;
+	bool m_updateIndicatorVisible = false;
+	CustomFrameUpdateMenuEntry m_updateMenuEntry = CustomFrameUpdateMenuEntry::None;
 	LRESULT m_hotHit = HTNOWHERE;
 	LRESULT m_pressedHit = HTNOWHERE;
 	CustomFrameControl m_hotControl = CustomFrameControl::None;

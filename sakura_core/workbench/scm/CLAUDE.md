@@ -760,6 +760,205 @@ names the nine, one member each.
   `showInformationMessage` is modal here. Both are the subsystem-wide boundaries
   already recorded under "Divergences" below.
 
+## Init and Clone Commands, and the Empty-State Welcome Content
+
+`GitInitCloneCommands.h/.cpp` is a pure model of the built-in Git extension's
+`init` and `clone` commands (`Repository`-less operations: there is no
+repository yet when either one runs) and of `viewsWelcome`'s two Source
+Control empty states, read from `microsoft/vscode` tag `1.95.3`'s
+`extensions/git/package.json` and `package.nls.json` rather than from memory.
+It takes its folder pick, folder browse, URL prompt, path-existence probe,
+confirmation presenter, git invoker, and message sink as injected callables
+and has **no HWND**, so every flow is asserted without a window
+(`GitInitCloneCommands.*`). `git.init` and `git.clone` are registered under
+upstream's own IDs; see "Wiring `git.init` and `git.clone` into the Command
+Registry" below for the exact `when` clauses this pass determined but did not
+apply.
+
+- The two `viewsWelcome` entries are mutually exclusive by upstream's own
+  `when` clauses — `view.workbench.scm.folder` fires on
+  `workbenchState == folder` and offers `Initialize Repository`;
+  `view.workbench.scm.empty` fires on `workbenchState == empty` and offers
+  `Open Folder` and `Clone Repository`. `BuildGitScmWelcomeModel(hasFolder,
+  hasRepository)` reproduces that split as `EGitScmWelcomeContent::
+  FolderNoRepository` versus `EmptyWorkbench`, and `hasRepository` collapses
+  both to `None` because a repository already open needs no welcome content
+  at all.
+- `git.init`'s command argument is upstream's own: the Command Palette entry
+  and the `viewsWelcome` link both invoke it, but the link passes
+  `[true]` (`command:git.init?%5Btrue%5D`, URL-decoded), which is
+  `skipFolderPrompt`. `RunGitInit`'s fast path — a single open folder, no
+  picker shown — exists only because that argument is threaded through, not
+  because skipping the picker is this model's own idea.
+- `RunGitInit`'s folder resolution follows upstream's `init` command: with
+  more than one open folder, or the fast path declined, a Quick Pick lists
+  every open folder plus a trailing "Choose Folder..." row
+  (`BuildGitInitFolderPickItems`); picking that row opens a folder browser.
+  Only a **browsed** folder is subject to the home-directory guard — a folder
+  already open was, by definition, already an accepted workspace root.
+- The home-directory guard (`IsGitInitHomeDirectoryGuardTriggered`,
+  `BuildGitInitHomeDirectoryPrompt`) reproduces upstream's refusal to
+  initialize a repository directly in the user's home directory without
+  confirmation. `git init` runs from a single resolved working directory that
+  is not known until the picker or browser answers, which is why
+  `GitCommandInvoker` takes that directory as a parameter — every other
+  command family in this directory instead composes its working directory
+  once, outside the pure model, because it already operates on a known
+  repository.
+- `RunGitClonePrepare` / `RunGitCloneExecute` / `RunGitCloneComplete` are three
+  separate functions on purpose, matching the shape "prompt and validate,
+  then run the long operation, then classify the result" that a non-blocking
+  caller needs: the middle phase is the only one that may run off the UI
+  thread, and it is the only one that receives a `HANDLE stop`.
+- `DeriveGitCloneFolderName` reproduces upstream's own derivation from
+  `parseGitmodules`/clone-command URL handling: strip trailing slashes, take
+  the last path segment, strip a trailing `.git`. It is used only to name the
+  destination subdirectory under the chosen parent directory, exactly as
+  upstream's clone flow does before ever invoking git.
+
+### Init/Clone divergences
+
+- **`EGitInitPostAction::OfferToOpen` is data-only.** Upstream's `init`
+  command offers to open the newly initialized folder — in this window, a new
+  window, or added to the workspace — after a successful `git init` in a
+  folder that was not already open. There is no cross-window/open-folder
+  capability confirmed to exist on this pass, so `RunGitInit` reports which
+  case applies (`AlreadyOpen` vs. `OfferToOpen`) as data and performs no open
+  itself. A caller that ignores `OfferToOpen` has not lost correctness, only
+  upstream's convenience follow-up.
+- **The home-directory guard is a naive string-prefix comparison, not a path-
+  descendant check.** `IsGitInitHomeDirectoryGuardTriggered` compares
+  `chosenPath.substr(0, homeDirectory.size()) == homeDirectory`. A sibling
+  directory that shares every character of the home directory as a prefix
+  (for example `C:\Users\devx` against a home directory of `C:\Users\dev`)
+  would be misclassified as the home directory itself. Upstream resolves this
+  with a real path/URI comparison. Revisit before relying on this guard for a
+  destructive-operation gate stronger than "ask once."
+- **`RunGitClonePrepare` refuses a `NonEmpty` destination outright, with a
+  message, instead of presenting `BuildGitCloneOverwritePrompt` and deleting on
+  acceptance.** Upstream deletes the existing directory's contents after the
+  user confirms an overwrite. No recursive-delete primitive exists on this
+  pass, and showing a confirmation whose "yes" answer this code could not
+  honor would itself be a faked capability — the one thing this repository's
+  root guidance forbids outright. `BuildGitCloneOverwritePrompt` is still built
+  and exported so a future pass that adds a real delete primitive needs no
+  model change, only a new branch at the call site.
+- **The `git.clone` URL prompt degrades upstream's live-typed Quick Pick to a
+  plain input box.** Upstream's clone Quick Pick re-queries as the user types
+  (recently opened repositories, GitHub/GitLab suggestions once signed in).
+  `CExtensionQuickInputDialog` cannot render a live-updating list, so
+  `GitCloneUrlPresenter` is a single prompt/placeholder/value input box
+  instead. The URL upstream would have resolved either way reaches the same
+  `git clone <url>`.
+- **`view.workbench.scm.empty`'s `Open Folder` link is not modeled.** That
+  view offers two actions; `BuildGitScmWelcomeModel`'s `EmptyWorkbench` branch
+  publishes only `Clone Repository` (`git.clone`), matching this Issue's
+  scope. `vscode.openFolder` already exists as a separate workbench concept
+  outside this directory's ownership; wiring the empty-state's other link to
+  it is future work, not a divergence in the sense of an abandoned upstream
+  behavior — it is simply not yet connected to this welcome model.
+- **The upstream `git.missing`, `git.parentRepositoryCount`,
+  `git.unsafeRepositoryCount`, and `git.closedRepositoryCount` context keys are
+  not read.** `BuildGitScmWelcomeModel` takes only `hasFolder` and
+  `hasRepository`, which map to `CWorkbenchRuntime`'s Folder/Workspace state
+  and `SourceControlService`'s provider presence. The richer upstream gates
+  fold into `EGitScmWelcomeContent::None` (no welcome content) rather than
+  being approximated by a partial read of keys this product does not publish.
+- **No progress indicator, and `git clone` still runs to completion or
+  cancellation without a queue.** This mirrors the remote-commands and
+  branch-commands divergences below: there is no operation queue and no
+  `operationInProgress` context key here yet. The clone's own responsiveness
+  comes from `RunGitCloneExecute` taking a `HANDLE stop` and being callable
+  off the UI thread, not from a shared queue.
+- **`git.defaultCloneDirectory` is not read.** `GitCloneOptions` hard-codes
+  upstream's `recurseSubmodules` default (`false`); the parent directory always
+  comes from `browseForParentDirectory`, matching upstream's behavior when the
+  setting is unset. Revisit alongside the other `git.*` settings recorded
+  elsewhere in this file as not yet readable from configuration.
+- **The welcome content's `<a href="command:...">` Markdown links become plain
+  hit-testable button rectangles.** Upstream's `viewsWelcome` body is rendered
+  Markdown, and the action is an inline link styled as a monaco button by CSS.
+  `CScmWorkbenchTool`'s view body is a plain `LISTBOX`-hosting window with no
+  Markdown or HTML renderer, so `LayoutWelcome`/`PaintWelcome` draw the same two
+  facts — a message and a set of labeled, clickable actions — as GDI `RoundRect`
+  buttons instead, hit-tested and dispatched by `WelcomeSegmentIndexAt` /
+  `InvokeWelcomeSegmentAt`. This mirrors the repository band's own
+  "painted by the tool, not by the list" divergence recorded above rather than
+  inventing a second interaction model.
+- **The welcome message's Markdown formatting is flattened to plain
+  word-wrapped text.** Upstream's welcome body can carry inline emphasis and
+  other Markdown spans; `PaintWelcome` measures and draws the message with a
+  single `DrawTextW(DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX)` call
+  and one text colour (`palette.primaryText`). The message's *content* is
+  upstream's own string from `BuildGitScmWelcomeModel`; only its typographic
+  styling is simplified, the same trade-off the commit-message prompt's caption
+  substitution above already makes for a different upstream surface.
+- **The message-and-buttons block is centered as one unit inside the view body
+  rather than following upstream's own flow layout.** Upstream's welcome
+  content lays out top-down inside a scrollable pane with CSS-driven spacing;
+  there is no exact GDI equivalent to reproduce, and the empty state has no
+  scrollable content to justify keeping it pinned to the top. `LayoutWelcome`
+  computes the message and button block's total height and vertically centers
+  it within `[ListTop(), client.bottom]`, which is a presentation choice for a
+  concept (the welcome content) that is otherwise upstream's own, not a
+  divergence in what is shown or in the order top-to-bottom.
+- **Corrected record — `SetHasOpenFolder` now has a production caller, so both
+  welcome states are reachable.** An earlier version of this entry recorded that
+  `CScmWorkbenchTool::Impl::hasOpenFolder` stayed `false` forever, pinning the
+  view to `EmptyWorkbench` (Clone-only) and making `FolderNoRepository` (Init)
+  dead code. `CEditWnd` now calls `SetHasOpenFolder(!root.empty())` at exactly
+  the two places it already calls `SetRoot(root)` — `InitializeWorkbench()` and
+  `ApplySemanticWorkspaceContext()` — where `root` is
+  `CEditWnd::GetSemanticWorkspaceRoot()`. That accessor returns a non-empty path
+  only when `CWorkbenchRuntime`'s workspace snapshot is `Folder` with exactly one
+  folder, which is the state this flag is defined against. Deriving both from the
+  same expression is the point: the root the view lists files under and the
+  welcome branch it shows when there is no repository cannot disagree, and a
+  multi-root workspace correctly reports neither a root nor an open folder.
+
+### Wiring `git.init` and `git.clone` into the Command Registry
+
+**Corrected record:** the entry below described a gap that has since been
+closed. `git.init` and `git.clone` are now registered in
+`WorkbenchCommandRegistry.cpp`'s `RegisterGitCommands` batch through a new
+`MakeGitAlwaysAvailableDescriptor(id, title)` factory — distinct from
+`MakeGitDescriptor`, which every other entry in that batch uses — and
+`CScmWorkbenchTool` now renders the empty-state welcome content and dispatches
+both commands from it. What was recorded as future work is now the shipped
+shape:
+
+- Both commands carry a `when` clause of `"workbenchReady"`, not
+  `"gitOpenRepositoryCount != 0"` the way the rest of `RegisterGitCommands`'s
+  entries do — `git.init` and `git.clone` are precisely the commands that must
+  stay available when there is **no** open Git repository, which is the
+  opposite condition the other remote/branch/commit/stage commands require.
+  `MakeGitAlwaysAvailableDescriptor` sets both `whenClause` and
+  `enablementClause` to `"workbenchReady"` for exactly this reason; using
+  `MakeGitDescriptor` here would have been backwards.
+- Both are in the same atomic `RegisterGitCommands` batch as the remote,
+  branch, commit, and stage commands, under upstream's own IDs `git.init` and
+  `git.clone`, with the Command Palette titles `Git: Initialize Repository`
+  and `Git: Clone`, matching upstream's category-prefixed Command Palette
+  convention already used for every other entry in that batch. `git.init` is
+  registered as a `WorkbenchCommandArgumentExecutor`
+  (`WorkbenchGitCommandExecutors::init`) because the welcome content's
+  `Initialize Repository` button dispatches it with the `[true]`
+  `skipFolderPrompt` argument documented above; `git.clone` is a plain
+  `WorkbenchCommandExecutor` (`WorkbenchGitCommandExecutors::clone`) because
+  upstream's own handler takes no argument.
+- `CScmWorkbenchTool`'s welcome content now renders `BuildGitScmWelcomeModel`'s
+  message and action buttons natively and dispatches each button's `command`/
+  `argumentsJson` through the same `CommandCallback` the repository band and
+  resource-row commands already use (`InvokeWelcomeSegmentAt` →
+  `Impl::runCommand`), so a click on `Initialize Repository` or
+  `Clone Repository` reaches the registry entries above end-to-end. Coverage
+  for the registry wiring itself lives in a new suite,
+  `GitInitCloneCommandRegistry.*`
+  (`src/test/cpp/tests1/workbench/GitInitCloneCommandRegistryTest.cpp`), kept
+  separate from `WorkbenchCommandRegistryTest.cpp` only because that file was
+  outside this pass's editable scope, not because the two commands need a
+  different contract from the rest of the batch.
+
 ## Divergences
 
 Each entry states the constraint and the chosen behavior. An undocumented
@@ -888,13 +1087,29 @@ cancellable, and its terminal state is typed.
 ## Verification
 
 - `build-sln.bat x64 Debug`, then the focused filter
-  `tests1.exe --gtest_filter=GitCommandRunner.*:GitScmModel.*:GitScmPublisher.*:GitScmMenus.*:GitRefModel.*:GitBranchCommands.*:GitStageCommands.*:GitCommitCommands.*:GitDiffModel.*:GitLineStaging.*:GitSyncCommands.*`.
+  `tests1.exe --gtest_filter=GitCommandRunner.*:GitScmModel.*:GitScmPublisher.*:GitScmMenus.*:GitRefModel.*:GitBranchCommands.*:GitStageCommands.*:GitCommitCommands.*:GitDiffModel.*:GitLineStaging.*:GitSyncCommands.*:GitInitCloneCommands.*:GitInitCloneCommandRegistry.*`.
   Add `ApiCommandArguments.*:WorkbenchCommandRegistry.*:WorkbenchContextKeyService.*:WorkbenchWhenClauseEvaluator.*`
   when the command registration or `when` clause changes; that cohort passed
   295/295 across 15 suites on 2026-08-06 with no surviving `tests1` or
   repository-built `sakura` process. It passed 232/232 earlier the same day,
   before the remote commands, 194/194 before line staging, 141/141 before the
-  diff model, and 102/102 on 2026-08-05, before the commit commands.
+  diff model, and 102/102 on 2026-08-05, before the commit commands. Neither
+  the `GitInitCloneCommands.*` suite added by Issue #27 nor the new
+  `GitInitCloneCommandRegistry.*` suite covering the `git.init`/`git.clone`
+  registry wiring and `CScmWorkbenchTool`'s welcome-content rendering has been
+  run through this filter yet — this pass wrote the source and tests but did
+  not build, per this pass's own prohibitions; run the widened filter before
+  relying on the new pass/fail count. `CScmWorkbenchTool`'s own
+  `LayoutWelcome`/`PaintWelcome`/`WelcomeSegmentIndexAt`/
+  `InvokeWelcomeSegmentAt` methods have no dedicated test of their own — there
+  is no existing precedent in this repository for testing that HWND-owning
+  class's paint/hit-test logic in isolation (the repository band's equivalent
+  `PaintBand`/`SegmentIndexAt` methods are likewise untested directly), so
+  coverage stops at the pure `BuildGitScmWelcomeModel` decision function
+  (`GitInitCloneCommandsTest.cpp`) and the registry wiring
+  (`GitInitCloneCommandRegistryTest.cpp`) above it. A future pass adding native
+  UI test infrastructure for this window should close that gap rather than
+  inventing a one-off harness here.
 - `ApiCommandArguments.*` was silently outside the focused filter until the diff
   work widened it, so its tests built and linked without ever running in a
   focused pass. Widen the filter with the suite name whenever a new suite lands;

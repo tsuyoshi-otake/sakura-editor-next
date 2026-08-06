@@ -29,11 +29,14 @@
 #include <ObjIdl.h>  // LPDATAOBJECT
 #include <shellapi.h>  // HDROP
 #include <cstdint>
+#include <functional>
+#include <string>
 #include <vector>
 
 #include "CTextMetrics.h"
 #include "CTextDrawer.h"
 #include "view/CCaret.h"
+#include "view/CEditViewHoverPopup.h"
 #include "view/CRuler.h"
 #include "view/CTextArea.h"
 #include "view/CViewFont.h"
@@ -620,6 +623,72 @@ public:
 	CViewCommander& GetCommander(){ return m_cCommander; }
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
+	//                    拡張機能: ホバー                          //
+	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
+public:
+	//! One poll of the extension host's `provideHover` result. `hasResult`
+	//! is false while the request is still in flight (or was never sent);
+	//! once true, `empty` distinguishes "the provider(s) answered with
+	//! nothing" from a real `markdown` payload to show. This mirrors the
+	//! shape CExtensionService/CExtensionHoverCenter already expose --
+	//! CEditView never interprets extension-host-specific types directly,
+	//! only this small primitive/std::wstring snapshot.
+	struct SHoverResultSnapshot {
+		bool hasResult = false;
+		bool empty = true;
+		std::wstring markdown;
+	};
+	//! (line, character) are the same raw, non-tab-expanded, UTF-16
+	//! code-unit position CExtensionDocumentBridge's SExtensionTextPosition
+	//! already uses -- CLogicPoint's x is a raw wchar_t index and y is the
+	//! physical (real-EOL) line number, so the caller converts CLogicPoint
+	//! straight into these two integers with no adapter.
+	using HoverRequestHandler = std::function<void(std::uint32_t line, std::uint32_t character)>;
+	using HoverCancelHandler = std::function<void()>;
+	using HoverResultPoller = std::function<SHoverResultSnapshot()>;
+
+	//! Injected by the composition root (CEditWnd, outside this class's own
+	//! editing scope) once a real CExtensionService is available. CEditView
+	//! never constructs or owns an extension-host connection itself; the
+	//! handlers already close over a real SExtensionDocumentId and a live
+	//! CExtensionService*. Passing empty handlers (the default-constructed
+	//! state before this is called, or an explicit reset) disables hover
+	//! tracking: UpdateHoverTracking treats "no request handler" the same
+	//! as "not eligible", so a window with no extension service wired in
+	//! never arms a dwell timer it could not honor.
+	void SetHoverHandlers(HoverRequestHandler onRequest, HoverCancelHandler onCancel, HoverResultPoller poller)
+	{
+		CancelHoverTracking();
+		m_hoverRequestHandler = std::move(onRequest);
+		m_hoverCancelHandler = std::move(onCancel);
+		m_hoverResultPoller = std::move(poller);
+	}
+
+private:
+	//! Called from OnMOUSEMOVE with the mouse's current layout position and
+	//! whether that position is eligible for a hover request at all (not in
+	//! the margin, not while dragging/selecting). Arms a dwell timer on a
+	//! genuine position change and cancels tracking otherwise; never issues
+	//! the RPC request itself -- OnTimer does that once the dwell elapses,
+	//! matching the existing KeyWordHelpSearchDict dwell-then-fire shape.
+	void UpdateHoverTracking(const CLayoutPoint& ptLayout, bool eligible);
+	//! Cancels any armed dwell timer and any in-flight request (via
+	//! m_hoverCancelHandler), and hides the popup. Safe to call repeatedly
+	//! and when nothing is tracked/showing.
+	void CancelHoverTracking();
+	//! Called every OnTimer (IDT_ROLLMOUSE) tick. Fires m_hoverRequestHandler
+	//! at most once per armed dwell period, after re-verifying focus/cursor
+	//! containment/menu-loop the same way KeyWordHelpSearchDict does for the
+	//! dictionary tip, so a request is never sent for a stale mouse position
+	//! (moved off-window, a menu opened, focus lost) between the mousemove
+	//! that armed the timer and this tick.
+	void FireHoverRequestIfDue();
+	//! Called every OnTimer tick while a request is outstanding. A no-op
+	//! until m_hoverResultPoller reports hasResult; then shows or hides
+	//! m_cHoverPopup and clears the outstanding flag exactly once.
+	void PollHoverResult();
+
+	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                       メンバ変数群                          //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 public:
@@ -741,6 +810,21 @@ public:
 	POINT			m_poTipCurPos;			/* Tip起動時のマウスカーソル位置 */
 	BOOL			m_bInMenuLoop;			/* メニュー モーダル ループに入っています */
 	CDicMgr			m_cDicMgr;				/* 辞書マネージャ */
+
+	// 拡張機能: ホバー (registerHoverProvider / provideHover)。
+	// IDT_ROLLMOUSE の同じ WM_TIMER が辞書Tipとホバーの両方の
+	// dwell 判定を駆動する -- CEditWnd 側のプッシュ通知
+	// (MYWM_EXTENSION_WORKBENCH_CHANGED) を必要としない、
+	// OnTimer からのポーリング読み取りとして設計されている。
+	CEditViewHoverPopup	m_cHoverPopup;			//!< ホバー内容を表示するネイティブポップアップ
+	DWORD			m_dwHoverTimer = 0;			//!< 0=未アーム、非0=このGetTickCount()からdwell待ち
+	CLogicPoint		m_ptHoverLogicPos;			//!< dwell対象の論理位置 (m_bHoverLogicPosValid==falseの間は無効)
+	bool			m_bHoverLogicPosValid = false;
+	bool			m_bHoverRequested = false;	//!< m_hoverRequestHandlerを呼び出し済みで結果待ちか
+	bool			m_bHoverPopupVisible = false;
+	HoverRequestHandler	m_hoverRequestHandler;	//!< CEditWnd合成時に注入される、実CExtensionServiceへのアダプタ
+	HoverCancelHandler	m_hoverCancelHandler;
+	HoverResultPoller	m_hoverResultPoller;
 
 	WCHAR			m_szComposition[512]; // IMR_DOCUMENTFEED用入力中文字列データ
 

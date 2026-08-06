@@ -14,7 +14,8 @@ if errorlevel 1 (
     goto :cleanup
 )
 
-powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%ACCEPTANCE_SCRIPT%"
+rem Forward arguments so -IncludeParityTargets can reach the acceptance script.
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "%ACCEPTANCE_SCRIPT%" %*
 if errorlevel 1 set "RESULT=!errorlevel!"
 
 :cleanup

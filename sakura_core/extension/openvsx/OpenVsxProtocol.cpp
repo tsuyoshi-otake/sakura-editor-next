@@ -83,6 +83,31 @@ const picojson::object* GetObject(const picojson::object& object, const char* ke
 	return &it->second.get<picojson::object>();
 }
 
+/*!
+ * @brief URI の path segment としてそのまま置ける識別子か
+ *
+ * 拡張の名前空間名と拡張名は Open VSX 側の一意キーなので、encode して形を
+ * 変えると別の拡張を要求することになる。encode せずに済む文字だけを許し、
+ * それ以外は呼び出し元に拒否させる。
+ */
+bool IsSafePathSegment(std::wstring_view segment)
+{
+	if (segment.empty()) return false;
+	if (segment == L"." || segment == L"..") return false;
+	for (const wchar_t character : segment) {
+		const bool allowed =
+			(character >= L'A' && character <= L'Z') ||
+			(character >= L'a' && character <= L'z') ||
+			(character >= L'0' && character <= L'9') ||
+			character == L'-' || character == L'_' || character == L'.' || character == L'~';
+		if (!allowed) return false;
+	}
+	return true;
+}
+
+//! downloads に載り得る targetPlatform の数の上限。VS Code の語彙は十数種しかない。
+constexpr size_t kMaxTargetPlatformCount = 64;
+
 } // namespace
 
 namespace extension::openvsx {
@@ -93,7 +118,12 @@ std::wstring OpenVsxProtocol::NormalizeRegistryUrl(std::wstring registryUrl)
 	return registryUrl;
 }
 
-std::wstring OpenVsxProtocol::BuildSearchUrl(std::wstring_view registryUrl, std::wstring_view query, int offset, int pageSize)
+std::wstring OpenVsxProtocol::BuildSearchUrl(
+	std::wstring_view registryUrl,
+	std::wstring_view query,
+	int offset,
+	int pageSize,
+	std::wstring_view targetPlatform)
 {
 	const int clampedOffset = (std::max)(0, offset);
 	const int clampedPageSize = std::clamp(pageSize, 1, kMaxPageSize);
@@ -105,7 +135,137 @@ std::wstring OpenVsxProtocol::BuildSearchUrl(std::wstring_view registryUrl, std:
 	else {
 		url += L"&query=" + UrlEncode(query);
 	}
+	if (!targetPlatform.empty()) {
+		url += L"&targetPlatform=" + UrlEncode(targetPlatform);
+	}
 	return url;
+}
+
+std::wstring OpenVsxProtocol::BuildExtensionMetadataUrl(
+	std::wstring_view registryUrl,
+	std::wstring_view namespaceName,
+	std::wstring_view extensionName)
+{
+	if (!IsSafePathSegment(namespaceName) || !IsSafePathSegment(extensionName)) return {};
+	return std::wstring(registryUrl) + L"/api/" + std::wstring(namespaceName) + L"/" + std::wstring(extensionName);
+}
+
+bool OpenVsxProtocol::ParseExtensionMetadataResponse(
+	const std::string& json,
+	SOpenVsxExtensionAssets& assets,
+	std::wstring& errorMsg)
+{
+	assets = SOpenVsxExtensionAssets();
+	errorMsg.clear();
+
+	picojson::value root;
+	if (const std::string parseError = picojson::parse(root, json); !parseError.empty()) {
+		errorMsg = L"invalid JSON: " + u8stowcs(parseError);
+		return false;
+	}
+	if (!root.is<picojson::object>()) {
+		errorMsg = L"invalid JSON: root is not an object";
+		return false;
+	}
+
+	const picojson::object& rootObject = root.get<picojson::object>();
+
+	// レジストリは見つからない拡張にも 200 と error 本文を返し得るので、
+	// HTTP status だけでは足りない。error があれば失敗として扱う。
+	if (const std::wstring error = GetWString(rootObject, "error"); !error.empty()) {
+		errorMsg = error;
+		return false;
+	}
+
+	assets.sVersion = GetWString(rootObject, "version");
+	assets.sTargetPlatform = GetWString(rootObject, "targetPlatform");
+
+	if (const picojson::object* files = GetObject(rootObject, "files"); files) {
+		assets.sDownloadUrl = GetWString(*files, "download");
+		assets.sSha256Url = GetWString(*files, "sha256");
+		assets.sIconUrl = GetWString(*files, "icon");
+		assets.sReadmeUrl = GetWString(*files, "readme");
+		assets.sChangelogUrl = GetWString(*files, "changelog");
+	}
+
+	if (const picojson::object* downloads = GetObject(rootObject, "downloads"); downloads) {
+		if (downloads->size() > kMaxTargetPlatformCount) {
+			errorMsg = L"invalid JSON: too many target platforms in one response";
+			return false;
+		}
+		assets.downloads.reserve(downloads->size());
+		for (const auto& [platform, url] : *downloads) {
+			if (!url.is<std::string>()) continue;
+			std::wstring downloadUrl = u8stowcs(url.get<std::string>());
+			if (platform.empty() || downloadUrl.empty()) continue;
+			assets.downloads.emplace_back(u8stowcs(platform), std::move(downloadUrl));
+		}
+	}
+
+	if (assets.sVersion.empty() && assets.sDownloadUrl.empty() && assets.downloads.empty()) {
+		errorMsg = L"invalid JSON: response carries no distribution";
+		return false;
+	}
+	return true;
+}
+
+std::wstring OpenVsxProtocol::SelectPlatformDownloadUrl(
+	const SOpenVsxExtensionAssets& assets,
+	std::wstring_view targetPlatform)
+{
+	// downloads を持たない古い応答では、files が唯一の配布物を指している。
+	// その targetPlatform が合っているときだけ採用する。
+	if (assets.downloads.empty()) {
+		if (assets.sDownloadUrl.empty()) return {};
+		if (assets.sTargetPlatform.empty()
+			|| assets.sTargetPlatform == targetPlatform
+			|| assets.sTargetPlatform == kUniversalTargetPlatform) {
+			return assets.sDownloadUrl;
+		}
+		return {};
+	}
+
+	for (const auto& [platform, url] : assets.downloads) {
+		if (platform == targetPlatform) return url;
+	}
+	for (const auto& [platform, url] : assets.downloads) {
+		if (platform == kUniversalTargetPlatform) return url;
+	}
+	return {};
+}
+
+std::wstring OpenVsxProtocol::DeriveSha256Url(std::wstring_view vsixUrl)
+{
+	constexpr std::wstring_view vsixSuffix = L".vsix";
+	if (vsixUrl.size() <= vsixSuffix.size()) return {};
+	if (vsixUrl.substr(vsixUrl.size() - vsixSuffix.size()) != vsixSuffix) return {};
+	return std::wstring(vsixUrl.substr(0, vsixUrl.size() - vsixSuffix.size())) + L".sha256";
+}
+
+std::wstring OpenVsxProtocol::TargetPlatformFromVsixUrl(std::wstring_view vsixUrl)
+{
+	constexpr std::wstring_view vsixSuffix = L".vsix";
+	if (vsixUrl.size() <= vsixSuffix.size()) return {};
+	if (vsixUrl.substr(vsixUrl.size() - vsixSuffix.size()) != vsixSuffix) return {};
+	vsixUrl.remove_suffix(vsixSuffix.size());
+
+	// '@' はファイル名の中だけを見る。path や query 側の '@' を拾わない。
+	const size_t nameBegin = vsixUrl.find_last_of(L"/?#");
+	const std::wstring_view fileName =
+		(nameBegin == std::wstring_view::npos) ? vsixUrl : vsixUrl.substr(nameBegin + 1);
+	const size_t at = fileName.rfind(L'@');
+	if (at == std::wstring_view::npos) return {};
+
+	const std::wstring_view platform = fileName.substr(at + 1);
+	if (platform.empty() || platform.size() > 32) return {};
+	for (const wchar_t character : platform) {
+		const bool allowed =
+			(character >= L'a' && character <= L'z') ||
+			(character >= L'0' && character <= L'9') ||
+			character == L'-';
+		if (!allowed) return {};
+	}
+	return std::wstring(platform);
 }
 
 bool OpenVsxProtocol::ParseSearchResponse(const std::string& json, SOpenVsxSearchResult& result, std::wstring& errorMsg)
@@ -156,6 +316,7 @@ bool OpenVsxProtocol::ParseSearchResponse(const std::string& json, SOpenVsxSearc
 		extension.dAverageRating = std::isfinite(averageRating) ? averageRating : -1.0;
 		extension.bVerified = GetBool(extensionObject, "verified", false);
 		extension.bDeprecated = GetBool(extensionObject, "deprecated", false);
+		extension.sTargetPlatform = GetWString(extensionObject, "targetPlatform");
 
 		if (const picojson::object* files = GetObject(extensionObject, "files"); files) {
 			extension.sDownloadUrl = GetWString(*files, "download");

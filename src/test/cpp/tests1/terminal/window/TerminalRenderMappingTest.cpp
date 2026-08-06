@@ -115,4 +115,65 @@ TEST(TerminalRenderMapping, UsesCrLfBetweenUnwrappedSelectedRows)
 	EXPECT_EQ(L"a\r\nb", terminal::ExtractTerminalSelection(model, { 0, 0 }, { 1, 1 }));
 }
 
+TEST(TerminalRenderMapping, NormalizesAndExtractsSelectionAcrossAnAstralSurrogatePairEmoji)
+{
+	// Unlike the single-UTF-16-unit CJK cell above, this codepoint is above
+	// U+FFFF: TerminalModel::AppendCodepoint stores it as a real UTF-16
+	// surrogate pair (two code units) inside one wide cell. The selection
+	// endpoint math must treat that cell as one grapheme of width 2, the same
+	// as any other wide cell, and extraction must hand back the complete pair
+	// rather than truncating to its high surrogate.
+	terminal::TerminalModel model(8, 1);
+	model.Print(U'\U0001F600');
+	model.Print(U'A');
+
+	const auto* row = terminal::GetTerminalRow(model, 0);
+	ASSERT_NE(nullptr, row);
+	ASSERT_EQ(2u, row->cells[0].width);
+	EXPECT_TRUE(row->cells[1].continuation);
+	EXPECT_EQ(2u, row->cells[0].Text().size());
+
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 0 }, { 0, 2 } }),
+		terminal::NormalizeTerminalSelection(model, { 0, 0 }, { 0, 1 }));
+	EXPECT_EQ(std::wstring(L"\U0001F600"),
+		terminal::ExtractTerminalSelection(model, { 0, 0 }, { 0, 2 }));
+}
+
+TEST(TerminalRenderMapping, ExtractsSpacesForCellsATabJumpedOverWithoutPrinting)
+{
+	// A horizontal tab only moves the cursor; it never prints into the cells it
+	// skips. Those cells stay at their default zero-length state, but each one
+	// still occupies exactly one selected column, so extraction must yield a
+	// space per skipped column instead of silently gluing the surrounding text
+	// together.
+	terminal::TerminalModel model(12, 1);
+	model.Print(U'a');
+	model.ExecuteControl(L'\t');
+	model.Print(U'b');
+
+	EXPECT_EQ(L"a" + std::wstring(7, L' ') + L"b",
+		terminal::ExtractTerminalSelection(model, { 0, 0 }, { 0, 9 }));
+}
+
+TEST(TerminalRenderMapping, NormalizesSelectionEndAtExactRowWidthWithTrailingWideCell)
+{
+	// The active endpoint can already sit at the row width (selecting through
+	// end-of-line) when the last visible cell is the trailing half of a wide
+	// grapheme. Normalization must clamp there instead of indexing past the
+	// last cell while looking for a width to extend by.
+	terminal::TerminalModel model(4, 1);
+	model.Print(U'A');
+	model.Print(U'B');
+	model.Print(U'日');
+
+	const auto* row = terminal::GetTerminalRow(model, 0);
+	ASSERT_NE(nullptr, row);
+	ASSERT_EQ(4u, row->cells.size());
+	EXPECT_TRUE(row->cells[3].continuation);
+
+	EXPECT_EQ((terminal::TerminalSelectionRange{ { 0, 0 }, { 0, 4 } }),
+		terminal::NormalizeTerminalSelection(model, { 0, 0 }, { 0, 4 }));
+	EXPECT_EQ(L"AB日", terminal::ExtractTerminalSelection(model, { 0, 0 }, { 0, 4 }));
+}
+
 } // namespace

@@ -23,6 +23,7 @@
 */
 
 #include "StdAfx.h"
+#include <algorithm>
 #include <limits.h>
 #include "view/CEditView.h"
 #include "view/CViewFont.h"
@@ -295,6 +296,14 @@ BOOL CEditView::Create(
 	/* 辞書Tip表示ウィンドウ作成 */
 	m_cTipWnd.Create( G_AppInstance(), GetHwnd()/*GetDllShareData().m_sHandles.m_hwndTray*/ );
 
+	// 拡張機能: ホバー表示用ポップアップ作成。作成失敗はキーワード辞書Tip
+	// と異なり戻り値チェックが無い前例に倣い、失敗してもビュー自体の作成は
+	// 継続する -- m_cHoverPopup.IsVisible()/GetHwnd()が常にnullptrのまま
+	// になるだけで、ShowMarkdown側は非作成状態を安全に無視する。
+	m_cHoverPopup.Create( G_AppInstance(), GetHwnd() );
+	m_cHoverPopup.SetPalette( theme::CThemeService::PaletteFor(
+		IsDarkModeActive() ? theme::ThemeMode::Dark : theme::ThemeMode::Light ) );
+
 	/* 再描画用コンパチブルＤＣ */
 	// 2007.09.09 Moca 互換BMPによる画面バッファ
 	// 2007.09.30 genta 関数化
@@ -357,6 +366,14 @@ CEditView::~CEditView()
 
 void CEditView::Close()
 {
+	// 拡張機能: ホバー -- ウィンドウ/ハンドラを破棄する前に、進行中の
+	// リクエストをキャンセルし、ポップアップを隠しておく。m_hoverXxxHandler
+	// は CEditWnd 合成時に注入された実CExtensionServiceへのアダプタであり、
+	// このビューより後で解体される前提のもの (see SetHoverHandlers) だが、
+	// 早めに手放しておくことで、破棄後にコールバックが誤って生き残った
+	// ハンドラを呼び出す余地をなくす。
+	CancelHoverTracking();
+
 	if( GetHwnd() != nullptr ){
 		::DestroyWindow( GetHwnd() );
 	}
@@ -1279,6 +1296,77 @@ VOID CEditView::OnTimer(
 			OnMOUSEMOVE( 0, GetSelectionInfo().m_ptMouseRollPosOld.x, GetSelectionInfo().m_ptMouseRollPosOld.y );
 		}
 	}
+
+	// 拡張機能: ホバー -- IDT_ROLLMOUSE の同じタイマーで dwell 判定と結果
+	// ポーリングを行う。CEditWnd 側からのプッシュ通知を必要としない設計
+	// (詳細は sakura_core/view/CLAUDE.md)。
+	FireHoverRequestIfDue();
+	PollHoverResult();
+}
+
+namespace {
+//! Dwell threshold before a hover request is fired, chosen to match the
+//! existing 300ms dictionary-tip dwell (KeyWordHelpSearchDict) plus margin,
+//! since a hover round trip to the extension host is a slower operation than
+//! a local dictionary lookup.
+constexpr DWORD kHoverDwellMilliseconds = 500;
+}
+
+//! 拡張機能: ホバー -- dwell 経過後に一度だけ m_hoverRequestHandler を呼ぶ。
+void CEditView::FireHoverRequestIfDue()
+{
+	if( 0 == m_dwHoverTimer || m_bHoverRequested || !m_hoverRequestHandler ){
+		return;
+	}
+	// KeyWordHelpSearchDictと同じ前提条件 (メニューモーダルループ中でない、
+	// キャレットにフォーカスがある、マウスカーソルがウィンドウ内にある) を
+	// 再確認する。マウスが動かないまま別のウィンドウ操作が割り込んだ場合に
+	// 古いマウス位置へリクエストを送らないようにするため。
+	if( m_bInMenuLoop != FALSE || !GetCaret().ExistCaretFocus() ){
+		return;
+	}
+	POINT po;
+	RECT rc;
+	::GetCursorPos( &po );
+	::GetWindowRect( GetHwnd(), &rc );
+	if( !PtInRect( &rc, po ) ){
+		return;
+	}
+	if( ::GetTickCount() - m_dwHoverTimer < kHoverDwellMilliseconds ){
+		return;
+	}
+	m_bHoverRequested = true;
+	m_dwHoverTimer = 0;
+	const std::uint32_t nLine = static_cast<std::uint32_t>(std::max(0, static_cast<int>(m_ptHoverLogicPos.GetY2())));
+	const std::uint32_t nCharacter = static_cast<std::uint32_t>(std::max(0, static_cast<int>(m_ptHoverLogicPos.GetX2())));
+	m_hoverRequestHandler( nLine, nCharacter );
+}
+
+//! 拡張機能: ホバー -- リクエスト中の結果を毎tickポーリングし、届いていれば
+//! ポップアップに反映する。
+void CEditView::PollHoverResult()
+{
+	if( !m_bHoverRequested || !m_hoverResultPoller ){
+		return;
+	}
+	const SHoverResultSnapshot sSnapshot = m_hoverResultPoller();
+	if( !sSnapshot.hasResult ){
+		return;
+	}
+	m_bHoverRequested = false;
+	if( sSnapshot.empty ){
+		// プロバイダが「該当なし」と答えた、または応答前にキャンセルされた
+		// -- どちらも正当な「表示しない」結果であり、失敗ではない。
+		m_cHoverPopup.Hide();
+		m_bHoverPopupVisible = false;
+		return;
+	}
+	POINT poAnchor;
+	::GetCursorPos( &poAnchor );
+	const UINT nRawDpi = ::GetDpiForWindow( GetHwnd() );
+	const unsigned int nDpi = 0 == nRawDpi ? 96U : nRawDpi;
+	m_cHoverPopup.ShowMarkdown( sSnapshot.markdown, poAnchor, nDpi );
+	m_bHoverPopupVisible = true;
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -1674,6 +1762,12 @@ void CEditView::OnChangeSetting()
 
 	/* フォントが変わった */
 	m_cTipWnd.ChangeFont( &(GetDllShareData().m_Common.m_sHelper.m_lf) );
+
+	// 拡張機能: ホバー -- ダーク/ライトモードが切り替わった場合に備えて、
+	// 表示中でなくても最新のパレットへ更新しておく (次回ShowMarkdown時に
+	// 古い配色が一瞬でも見えないようにするため)。
+	m_cHoverPopup.SetPalette( theme::CThemeService::PaletteFor(
+		IsDarkModeActive() ? theme::ThemeMode::Dark : theme::ThemeMode::Light ) );
 
 	/* 再描画 */
 	if( !GetEditWnd().m_pPrintPreview ){

@@ -57,6 +57,9 @@ private:
 	std::filesystem::path GetPrivateIniFileName(const std::wstring& exeIniPath, const std::wstring& filename) const;
 	bool StartControlPlatform();
 	void StopControlPlatform() noexcept;
+	//! Applies an update the user already asked for, on the way out. Never
+	//! throws: process exit is not a place that can report a failure.
+	void RunPendingUpdateInstaller() noexcept;
 
 	HANDLE			m_hMutex = nullptr;					//!< アプリケーション実行検出用ミューテックス
 	HANDLE			m_hMutexCP = nullptr;				//!< コントロールプロセスミューテックス

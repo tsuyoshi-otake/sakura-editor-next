@@ -397,7 +397,8 @@ bool WorkbenchContextKeyService::IsReservedCoreKey(std::string_view key) noexcep
 		|| key == "workbenchState" || key == "workspaceFolderCount"
 		|| key == "editorHasActiveEditor" || key == "editorIsDirty"
 		|| key == "isInDiffEditor"
-		|| key == "gitOpenRepositoryCount";
+		|| key == "gitOpenRepositoryCount"
+		|| key == "updateState";
 }
 
 WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
@@ -419,7 +420,8 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	const config::WorkspaceContextSnapshot& workspace,
 	WorkbenchEditorCommandContext editor,
 	bool recentlyOpenedAvailable,
-	WorkbenchScmCommandContext scm)
+	WorkbenchScmCommandContext scm,
+	WorkbenchUpdateCommandContext update)
 {
 	WorkbenchContextKeyMap values;
 	const auto sidebar = std::find_if(snapshot.parts.begin(), snapshot.parts.end(), [](const auto& part) {
@@ -453,6 +455,12 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	values.emplace("isInDiffEditor", editor.inDiffEditor);
 	values.emplace("workbench.recentlyOpenedAvailable", recentlyOpenedAvailable);
 	values.emplace("gitOpenRepositoryCount", scm.gitOpenRepositoryCount);
+	// An absent value becomes upstream's `RawContextKey` default rather than an
+	// empty string: every `update.*` surface is gated on an exact state match,
+	// so publishing `""` would silently hide all of them instead of showing the
+	// uninitialized surface, and the two are different facts.
+	values.emplace("updateState", update.updateState.empty()
+		? std::string("uninitialized") : update.updateState);
 
 	std::lock_guard lock(m_mutex);
 	if (m_coreValues == values) {

@@ -78,12 +78,30 @@ public:
 		return m_adapter.Search(query, offset, pageSize, cancellation);
 	}
 
+	OpenVsxExtensionAssetsOperation FetchExtensionAssets(
+		std::wstring_view namespaceName,
+		std::wstring_view extensionName,
+		const platform::request::IRequestCancellation* cancellation = nullptr
+	) const override
+	{
+		return m_adapter.FetchExtensionAssets(namespaceName, extensionName, cancellation);
+	}
+
 	OpenVsxBinaryOperation FetchVsix(
 		std::wstring_view validatedHttpsVsixUri,
 		const platform::request::IRequestCancellation* cancellation = nullptr
 	) const override
 	{
 		return m_adapter.FetchVsix(validatedHttpsVsixUri, cancellation);
+	}
+
+	OpenVsxOperationStatus FetchVsixStreamed(
+		std::wstring_view validatedHttpsVsixUri,
+		const OpenVsxBodyChunkSink& sink,
+		const platform::request::IRequestCancellation* cancellation = nullptr
+	) const override
+	{
+		return m_adapter.FetchVsixStreamed(validatedHttpsVsixUri, sink, cancellation);
 	}
 
 	OpenVsxBinaryOperation FetchOptionalSha256(

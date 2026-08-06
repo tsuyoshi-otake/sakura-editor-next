@@ -16,6 +16,35 @@
 - Keep live network or machine-specific integration checks disabled by default and clearly named. Routine verification must be deterministic.
 - When a test needs a generated library, DLL, ZIP, or header, update both its CMake dependency and the MSBuild staging/invalidation contract.
 
+### Shared single-owner fixtures
+
+Some third-party headers may be included by exactly one translation unit in
+`tests1`. Use the existing fixture instead of including such a header again;
+add an API to the fixture when it does not cover your case.
+
+- **ZIP and zlib: use `ZipArchiveFixture.h`.** `externals/miniz-cpp/zip_file.hpp`
+  emits two different kinds of definition. `MINIZ_HEADER_FILE_ONLY` suppresses
+  the miniz C API bodies (`mz_*`) so they resolve against `CZipFile.obj`, which
+  is the only production TU that instantiates them — but it does **not**
+  suppress the non-inline `miniz_cpp::detail::*` helpers. `CZipFile.cpp` renames
+  its wrapper namespace to `sakura_czip_miniz_cpp`, so production never collides;
+  two tests including the header do. `ZipArchiveFixture.cpp` is therefore the
+  sole includer in `tests1`, and it needs the guard as well. This stayed
+  invisible while only `test-czipfile.cpp` used ZIP: adding a second ZIP test in
+  2026-08 produced `LNK2005` on both `mz_*` and `miniz_cpp::detail::*` at once.
+  `externals/` is upstream code and must not be edited to work around this.
+
+### COM-dependent tests
+
+A GoogleTest body runs on a thread with no COM apartment. Production UI code
+runs on an OLE-initialized thread, so a component that decodes or renders
+through COM works there and returns nothing under test. When the code under
+test fails closed (as `DecodeExtensionIconBitmap` does, being `noexcept`), the
+missing apartment is indistinguishable from bad input and reads as a defect in
+the code under test. Initialize the apartment in a fixture for the cases that
+expect success, and leave the rejection cases — which return before reaching
+COM — as plain `TEST`s.
+
 ## Phase-Scoped Tests
 
 | Priority | Additional guidance |

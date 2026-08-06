@@ -9,8 +9,18 @@
 
 #include "extension/CExtensionPane.h"
 #include "extension/CExtensionViewRegistry.h"
+#include "util/string_ex.h"
+
+#include <algorithm>
+#include <utility>
 
 namespace workbench::viewcontainer {
+namespace {
+
+//! Number of built-in pages, which always occupy the front of the page list.
+constexpr std::size_t kBuiltinPageCount = 3;
+
+} // namespace
 
 CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog,
 	std::shared_ptr<CExtensionViewRegistry> extensionViews,
@@ -18,10 +28,18 @@ CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog,
 	: m_explorer(std::make_unique<explorer::CExplorerTool>())
 	, m_outline(std::make_unique<outline::COutlineWorkbenchTool>(dialog))
 	, m_scm(std::make_unique<scm::CScmWorkbenchTool>())
-	, m_extensions(std::make_unique<extension::CExtensionSidebarTool>(extensionViews))
+	, m_extensions(std::make_unique<extension::CExtensionSidebarTool>(extensionViews,
+		  // The Extensions container is the fallback bucket: it renders every contributed View
+		  // that no dedicated container claimed, so a manifest that declares no container of
+		  // its own still gets its tree somewhere visible.
+		  [this](const SExtensionViewDescriptor& view) { return !IsClaimedByContributedPage(view.containerId); }))
 	, m_extensionViews(std::move(extensionViews))
 	, m_marketplaceFactory(std::move(marketplaceFactory))
 {
+	m_pages.reserve(kBuiltinPageCount);
+	m_pages.push_back({ std::string(pageIds::Explorer), L"EXPLORER" });
+	m_pages.push_back({ std::string(pageIds::SourceControl), L"SOURCE CONTROL" });
+	m_pages.push_back({ std::string(pageIds::Extensions), L"EXTENSIONS" });
 }
 
 CViewContainerPages::~CViewContainerPages()
@@ -56,7 +74,7 @@ bool CViewContainerPages::Create(HWND owner)
 	if (m_marketplace) {
 		if (const HWND window = m_marketplace->GetHwnd()) ::ShowWindow(window, SW_HIDE);
 	}
-	m_attached.fill(nullptr);
+	for (auto& page : m_pages) page.attached = nullptr;
 	m_created = true;
 	return true;
 }
@@ -65,46 +83,186 @@ void CViewContainerPages::Close()
 {
 	if (m_closed) return;
 	m_closed = true;
+	// Contributed pages die first: their trees hold callbacks into the composition, which is
+	// tearing down, and nothing below depends on them.
+	for (auto& page : m_pages) {
+		if (page.views) page.views->Close();
+	}
+	m_pages.erase(m_pages.begin() + std::min<std::size_t>(kBuiltinPageCount, m_pages.size()), m_pages.end());
 	if (m_outline) m_outline->Close();
 	if (m_scm) m_scm->Close();
 	if (m_extensions) m_extensions->Close();
 	// `CWnd` destroys its window, and the pane cancels any in-flight OpenVSX job first.
 	m_marketplace.reset();
 	if (m_explorer) m_explorer->Close();
-	m_attached.fill(nullptr);
+	for (auto& page : m_pages) page.attached = nullptr;
+	m_callbacks = {};
 	m_owner = nullptr;
 }
 
-HWND CViewContainerPages::PageWindow(ViewContainerPage page) const noexcept
+CViewContainerPages::Page* CViewContainerPages::Find(const std::string_view containerId) noexcept
 {
-	switch (page) {
-	case ViewContainerPage::Explorer: return m_explorer ? m_explorer->GetHwnd() : nullptr;
-	case ViewContainerPage::SourceControl: return m_scm ? m_scm->GetHwnd() : nullptr;
-	case ViewContainerPage::Extensions: return m_extensions ? m_extensions->GetHwnd() : nullptr;
-	case ViewContainerPage::Count: break;
+	const auto found = std::find_if(m_pages.begin(), m_pages.end(),
+		[containerId](const Page& page) { return page.id == containerId; });
+	return found == m_pages.end() ? nullptr : &*found;
+}
+
+const CViewContainerPages::Page* CViewContainerPages::Find(const std::string_view containerId) const noexcept
+{
+	const auto found = std::find_if(m_pages.begin(), m_pages.end(),
+		[containerId](const Page& page) { return page.id == containerId; });
+	return found == m_pages.end() ? nullptr : &*found;
+}
+
+bool CViewContainerPages::Contains(const std::string_view containerId) const noexcept
+{
+	return Find(containerId) != nullptr;
+}
+
+std::vector<std::string> CViewContainerPages::PageIds() const
+{
+	std::vector<std::string> ids;
+	ids.reserve(m_pages.size());
+	for (const auto& page : m_pages) ids.push_back(page.id);
+	return ids;
+}
+
+bool CViewContainerPages::IsClaimedByContributedPage(const std::wstring_view containerId) const
+{
+	if (containerId.empty() || m_pages.size() <= kBuiltinPageCount) return false;
+	const auto narrow = wcstou8s(containerId);
+	return std::any_of(m_pages.begin() + kBuiltinPageCount, m_pages.end(),
+		[&narrow](const Page& page) { return page.id == narrow; });
+}
+
+std::unique_ptr<extension::CExtensionSidebarTool> CViewContainerPages::CreateContributedViews(
+	const std::string_view containerId) const
+{
+	const auto wide = u8stowcs(containerId);
+	return std::make_unique<extension::CExtensionSidebarTool>(m_extensionViews,
+		[wide](const SExtensionViewDescriptor& view) { return view.containerId == wide; });
+}
+
+void CViewContainerPages::ApplyCallbacks(extension::CExtensionSidebarTool& tool) const
+{
+	tool.SetRequestChildrenCallback(m_callbacks.requestChildren);
+	tool.SetSelectionChangedCallback(m_callbacks.selectionChanged);
+	tool.SetCheckboxChangedCallback(m_callbacks.checkboxChanged);
+	tool.SetCommandCallback(m_callbacks.command);
+	tool.SetVisibilityChangedCallback(m_callbacks.visibilityChanged);
+}
+
+bool CViewContainerPages::SyncContributedContainers(std::vector<ContributedViewContainer> containers)
+{
+	if (!IsUsable()) return false;
+
+	// A container an extension declares twice, or one colliding with a built-in page, would
+	// give two pages the same identity. The first declaration wins, matching the layout
+	// registry's own duplicate rejection.
+	std::vector<ContributedViewContainer> wanted;
+	wanted.reserve(containers.size());
+	for (auto& container : containers) {
+		if (container.id.empty()) continue;
+		if (container.id == pageIds::Explorer || container.id == pageIds::SourceControl
+			|| container.id == pageIds::Extensions) {
+			continue;
+		}
+		if (std::any_of(wanted.begin(), wanted.end(),
+				[&container](const ContributedViewContainer& kept) { return kept.id == container.id; })) {
+			continue;
+		}
+		if (container.title.empty()) container.title = u8stowcs(container.id);
+		wanted.push_back(std::move(container));
 	}
+
+	bool changed = false;
+	// Drop the pages whose container vanished. Erasing destroys the tree control, so the
+	// window goes away with the container instead of lingering under the host.
+	for (std::size_t index = m_pages.size(); index > kBuiltinPageCount; --index) {
+		auto& page = m_pages[index - 1];
+		if (std::any_of(wanted.begin(), wanted.end(),
+				[&page](const ContributedViewContainer& keep) { return keep.id == page.id; })) {
+			continue;
+		}
+		if (page.views) page.views->Close();
+		m_pages.erase(m_pages.begin() + static_cast<std::ptrdiff_t>(index - 1));
+		changed = true;
+	}
+
+	// Add the new ones, and keep the surviving ones as they are: an unrelated extension
+	// update must not reset a user's expanded tree.
+	for (const auto& container : wanted) {
+		if (Page* existing = Find(container.id)) {
+			if (existing->title != container.title) {
+				existing->title = container.title;
+				changed = true;
+			}
+			if (existing->webviewOnly != container.webviewOnly) {
+				existing->webviewOnly = container.webviewOnly;
+				changed = true;
+			}
+			continue;
+		}
+		auto views = CreateContributedViews(container.id);
+		if (!views || !views->Create(m_owner)) continue;
+		ApplyCallbacks(*views);
+		if (const HWND window = views->GetHwnd(); window != nullptr) ::ShowWindow(window, SW_HIDE);
+		m_pages.push_back({ container.id, container.title, std::move(views), nullptr, container.webviewOnly });
+		changed = true;
+	}
+
+	// The Extensions page is the fallback bucket, so the set of contributed containers changes
+	// which views it owns. Rebuild it rather than waiting for the next registry change.
+	if (changed && m_extensions) m_extensions->Refresh();
+	return changed;
+}
+
+void CViewContainerPages::SetExtensionViewCallbacks(ExtensionViewCallbacks callbacks)
+{
+	m_callbacks = std::move(callbacks);
+	if (m_extensions) ApplyCallbacks(*m_extensions);
+	for (auto& page : m_pages) {
+		if (page.views) ApplyCallbacks(*page.views);
+	}
+}
+
+void CViewContainerPages::RefreshExtensionViews()
+{
+	if (m_extensions) m_extensions->Refresh();
+	for (auto& page : m_pages) {
+		if (page.views) page.views->Refresh();
+	}
+}
+
+HWND CViewContainerPages::PageWindow(const Page& page) const noexcept
+{
+	if (page.views) return page.views->GetHwnd();
+	if (page.id == pageIds::Explorer) return m_explorer ? m_explorer->GetHwnd() : nullptr;
+	if (page.id == pageIds::SourceControl) return m_scm ? m_scm->GetHwnd() : nullptr;
+	if (page.id == pageIds::Extensions) return m_extensions ? m_extensions->GetHwnd() : nullptr;
 	return nullptr;
 }
 
-void CViewContainerPages::Attach(ViewContainerPage page, HWND host)
+void CViewContainerPages::Attach(const std::string_view containerId, HWND host)
 {
-	if (!IsUsable() || page == ViewContainerPage::Count) return;
-	const auto index = static_cast<std::size_t>(page);
+	if (!IsUsable()) return;
+	Page* page = Find(containerId);
+	if (page == nullptr) return;
 	const HWND target = host != nullptr ? host : m_owner;
 	if (target == nullptr) return;
-	if (m_attached[index] == host) return;
+	if (page->attached == host) return;
 
-	SetPageVisible(page, false);
-	const HWND window = PageWindow(page);
+	SetPageVisible(containerId, false);
+	const HWND window = PageWindow(*page);
 	if (window != nullptr && ::IsWindow(window) && ::GetParent(window) != target) {
 		if (::SetParent(window, target) == nullptr) return;
 	}
-	if (page == ViewContainerPage::Explorer && m_outline) {
+	if (page->id == pageIds::Explorer && m_outline) {
 		// Outline is a View nested inside the Explorer ViewContainer, so it always
 		// follows that container to its new physical Part.
 		(void)m_outline->Reparent(target);
 	}
-	if (page == ViewContainerPage::Extensions && m_marketplace) {
+	if (page->id == pageIds::Extensions && m_marketplace) {
 		// The Marketplace is part of the Extensions ViewContainer, so it moves with it
 		// just like Outline moves with Explorer.
 		if (const HWND marketplaceWindow = m_marketplace->GetHwnd();
@@ -113,25 +271,38 @@ void CViewContainerPages::Attach(ViewContainerPage page, HWND host)
 			(void)::SetParent(marketplaceWindow, target);
 		}
 	}
-	m_attached[index] = host;
+	page->attached = host;
 }
 
-void CViewContainerPages::SetPageVisible(ViewContainerPage page, bool visible)
+void CViewContainerPages::SetPageVisible(const std::string_view containerId, const bool visible)
 {
 	if (!IsUsable()) return;
-	switch (page) {
-	case ViewContainerPage::Explorer:
-		if (const HWND window = PageWindow(page); window != nullptr && ::IsWindow(window)) {
+	const Page* page = Find(containerId);
+	if (page == nullptr) return;
+
+	if (page->views) {
+		// A contributed container is nothing but its views, so the whole page shows or hides
+		// with the container and the extension observes exactly that.
+		if (const HWND window = page->views->GetHwnd(); window != nullptr && ::IsWindow(window)) {
+			::ShowWindow(window, visible ? SW_SHOW : SW_HIDE);
+		}
+		page->views->SetSidebarVisible(visible);
+		return;
+	}
+	if (page->id == pageIds::Explorer) {
+		if (const HWND window = PageWindow(*page); window != nullptr && ::IsWindow(window)) {
 			::ShowWindow(window, visible ? SW_SHOW : SW_HIDE);
 		}
 		// The nested Outline View is only visible when its container is, and only while
 		// the user keeps that section expanded.
 		if (m_outline) m_outline->SetVisible(visible && m_outlineExpanded);
 		return;
-	case ViewContainerPage::SourceControl:
+	}
+	if (page->id == pageIds::SourceControl) {
 		if (m_scm) m_scm->SetVisible(visible);
 		return;
-	case ViewContainerPage::Extensions:
+	}
+	if (page->id == pageIds::Extensions) {
 		// The Marketplace is this container's own content and is shown whenever the
 		// container is.
 		if (m_marketplace) {
@@ -140,28 +311,41 @@ void CViewContainerPages::SetPageVisible(ViewContainerPage page, bool visible)
 			}
 		}
 		// A contributed tree View is an additional section, so it appears only while an
-		// extension really contributes one.
-		if (const HWND window = PageWindow(page); window != nullptr && ::IsWindow(window)) {
+		// extension really contributes one to this container.
+		if (const HWND window = PageWindow(*page); window != nullptr && ::IsWindow(window)) {
 			::ShowWindow(window, visible && HasContributedExtensionViews() ? SW_SHOW : SW_HIDE);
 		}
 		// Extensions still observe the ViewContainer's own visibility, not the visibility
 		// of the section that happens to render their views.
 		if (m_extensions) m_extensions->SetSidebarVisible(visible);
-		return;
-	case ViewContainerPage::Count:
-		return;
 	}
 }
 
 bool CViewContainerPages::HasContributedExtensionViews() const
 {
-	return m_extensionViews != nullptr && !m_extensionViews->Views().empty();
+	if (m_extensionViews == nullptr) return false;
+	const auto views = m_extensionViews->Views();
+	return std::any_of(views.begin(), views.end(),
+		[this](const SExtensionViewDescriptor& view) { return !IsClaimedByContributedPage(view.containerId); });
 }
 
-HWND CViewContainerPages::AttachedHost(ViewContainerPage page) const noexcept
+bool CViewContainerPages::IsWebviewOnly(const std::string_view containerId) const noexcept
 {
-	if (page == ViewContainerPage::Count) return nullptr;
-	return m_attached[static_cast<std::size_t>(page)];
+	const Page* page = Find(containerId);
+	return page != nullptr && page->webviewOnly;
+}
+
+HWND CViewContainerPages::AttachedHost(const std::string_view containerId) const noexcept
+{
+	const Page* page = Find(containerId);
+	return page == nullptr ? nullptr : page->attached;
+}
+
+extension::CExtensionSidebarTool* CViewContainerPages::ContributedViews(
+	const std::string_view containerId) const noexcept
+{
+	const Page* page = Find(containerId);
+	return page == nullptr ? nullptr : page->views.get();
 }
 
 void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
@@ -176,17 +360,15 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 	if (m_outline) m_outline->SetPalette(palette);
 	if (m_scm) m_scm->SetPalette(palette);
 	if (m_extensions) m_extensions->SetPalette(palette);
+	for (auto& page : m_pages) {
+		if (page.views) page.views->SetPalette(palette);
+	}
 }
 
-const wchar_t* CViewContainerPages::PageTitle(ViewContainerPage page) noexcept
+std::wstring CViewContainerPages::PageTitle(const std::string_view containerId) const
 {
-	switch (page) {
-	case ViewContainerPage::SourceControl: return L"SOURCE CONTROL";
-	case ViewContainerPage::Extensions: return L"EXTENSIONS";
-	case ViewContainerPage::Explorer: return L"EXPLORER";
-	case ViewContainerPage::Count: break;
-	}
-	return L"";
+	const Page* page = Find(containerId);
+	return page == nullptr ? std::wstring{} : page->title;
 }
 
 } // namespace workbench::viewcontainer

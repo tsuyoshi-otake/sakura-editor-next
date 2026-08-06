@@ -54,6 +54,21 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 			{ Kind::Integer, std::nullopt, {}, 1000, 120000 } },
 		{ "extensions.openVsx.registry", ConfigurationValue(L"https://open-vsx.org"),
 			{ Scope::Application, Scope::Profile }, { Kind::String, 2048 } },
+
+		// Update policy is application/profile-only for the same reason network
+		// policy is: opening a repository must never be able to change whether,
+		// how, or from where this editor updates itself. VS Code registers all
+		// four with ConfigurationScope.APPLICATION; the divergence to
+		// Application/Profile is the one already recorded for `http.*` in
+		// config/CLAUDE.md, not a new one.
+		{ "update.mode", ConfigurationValue(L"default"), { Scope::Application, Scope::Profile },
+			{ Kind::String, 16, { L"none", L"manual", L"start", L"default" } } },
+		{ "update.enableWindowsBackgroundUpdates", ConfigurationValue(true),
+			{ Scope::Application, Scope::Profile }, { Kind::Boolean } },
+		{ "update.showReleaseNotes", ConfigurationValue(true),
+			{ Scope::Application, Scope::Profile }, { Kind::Boolean } },
+		{ "update.titleBar", ConfigurationValue(true),
+			{ Scope::Application, Scope::Profile }, { Kind::Boolean } },
 	};
 }
 

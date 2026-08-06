@@ -14,12 +14,17 @@
 struct CustomFrameLayout;
 
 //! Sakura-owned compact title-bar controls placed immediately before the native caption buttons.
+//! `Update` is VS Code's `workbench.actions.updateIndicator`
+//! (`contrib/update/browser/updateTitleBarEntry.ts`, `MenuId.TitleBarUpdate` order 0).
+//! It is a labelled button rather than a glyph, and it exists only while the update
+//! state is actionable, so its rectangle is empty in every other state.
 enum class CustomFrameControl : unsigned char {
 	None,
 	Layout,
 	PrimarySidebar,
 	BottomPanel,
 	SecondarySidebar,
+	Update,
 	Account,
 	Manage,
 };

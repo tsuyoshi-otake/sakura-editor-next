@@ -789,4 +789,6 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 #define MYWM_COMPLETE_STARTUP_WORKBENCH (WM_APP+242)
 //! Effective workbench color-theme setting changed; the UI thread must reapply the selected snapshot.
 #define MYWM_WORKBENCH_THEME_CHANGED (WM_APP+243)
+//! Committed update state changed; the UI thread must re-read `IUpdateService::State()`.
+#define MYWM_WORKBENCH_UPDATE_STATE_CHANGED (WM_APP+244)
 #endif /* SAKURA_SYSTEM_CONSTANTS_DACC287C_DAC4_4FC7_8AEC_8DB5BE6BFB8B_H_ */
