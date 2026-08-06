@@ -49,6 +49,7 @@ from sakura_build_lib.runner import (
     mingw_environment,
     msvc_environment,
     msbuild_command,
+    msbuild_log_path,
     native_execution_root,
     run_commands,
     write_native_path_identity,
@@ -398,7 +399,16 @@ def _run_build(args, graph, events: EventWriter) -> int:
             target_name = os.environ.get("SAKURA_DEV_BUILD_TARGET", "Build")
             commands = [msbuild_command(repo, target, args.platform, args.configuration, args.jobs, build_target=target_name)]
         elif command == "solution":
-            commands = [msbuild_command(repo, repo / "sakura.sln", args.platform, args.configuration, args.jobs)]
+            commands = [
+                msbuild_command(
+                    repo,
+                    repo / "sakura.sln",
+                    args.platform,
+                    args.configuration,
+                    args.jobs,
+                    log_file=msbuild_log_path(repo, args.platform, args.configuration),
+                )
+            ]
         else:
             commands = distribution_commands(repo, args.platform, args.configuration, args.jobs)
         env = {"SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1"} if command == "distribution" else {}
@@ -510,7 +520,18 @@ def _run_compat(args, graph, events: EventWriter) -> int:
         commands = [msbuild_command(graph.repo_root, graph.repo_root / "sakura_core/sakura.vcxproj", platform, configuration, compat_jobs, build_target=os.environ.get("SAKURA_DEV_BUILD_TARGET", "Build"))]
         env = {}
     elif args.entrypoint == "build-sln":
-        commands = [msbuild_command(graph.repo_root, graph.repo_root / "sakura.sln", platform, configuration, compat_jobs)]
+        # CI builds the solution here and packages it with a separate
+        # ``zipArtifacts.bat`` step, which requires this log.
+        commands = [
+            msbuild_command(
+                graph.repo_root,
+                graph.repo_root / "sakura.sln",
+                platform,
+                configuration,
+                compat_jobs,
+                log_file=msbuild_log_path(graph.repo_root, platform, configuration),
+            )
+        ]
         env = {}
     else:
         commands = distribution_commands(graph.repo_root, platform, configuration, compat_jobs)
