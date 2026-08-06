@@ -7,6 +7,7 @@
 
 #include "pch.h"
 
+#include "extension/openvsx/OpenVsxProtocol.h"
 #include "extension/openvsx/OpenVsxRequestServiceAdapter.h"
 
 #include <deque>
@@ -95,7 +96,11 @@ TEST(OpenVsxRequestServiceAdapter, RoutesSearchVsixAndOptionalSha256ThroughTheSh
 	EXPECT_EQ(L"# README", readme.value);
 
 	ASSERT_EQ(4u, requestService.requests.size());
-	EXPECT_EQ(L"https://registry.example/api/-/search?offset=0&size=25&query=a%26b", requestService.requests[0].url);
+	// 検索 URL には VS Code と同じく必ず targetPlatform が乗る。ホストの語彙を使うので
+	// x64 / ARM64 のどちらのビルドでも同じ期待値で通る。
+	EXPECT_EQ(std::wstring(L"https://registry.example/api/-/search?offset=0&size=25&query=a%26b&targetPlatform=") +
+			std::wstring(OpenVsxProtocol::HostTargetPlatform()),
+		requestService.requests[0].url);
 	EXPECT_EQ(L"https://cdn.example/tool.vsix", requestService.requests[1].url);
 	EXPECT_EQ(L"https://cdn.example/tool.sha256", requestService.requests[2].url);
 	EXPECT_EQ(L"https://cdn.example/tool.readme", requestService.requests[3].url);
@@ -190,6 +195,112 @@ TEST(OpenVsxRequestServiceAdapter, MapsEveryRequestServiceTerminalOutcome)
 		const auto operation = adapter.FetchVsix(L"https://cdn.example/tool.vsix");
 		EXPECT_EQ(mapping.adapterOutcome, operation.status.outcome);
 		EXPECT_EQ(mapping.requestOutcome, operation.status.requestOutcome);
+	}
+}
+
+TEST(OpenVsxRequestServiceAdapter, RoutesFetchVsixStreamedThroughTheSharedServiceWithTheSameVsixPolicy)
+{
+	FakeRequestService requestService;
+	requestService.results.push_back(HttpResult(200, L"https://cdn.example/tool.vsix"));
+
+	const auto policy = MakePolicy();
+	const OpenVsxRequestServiceAdapter adapter(requestService, L"https://registry.example", policy);
+	const IOpenVsxRegistryClient& registryClient = adapter;
+
+	std::vector<std::uint8_t> received;
+	const OpenVsxBodyChunkSink sink = [&received](const std::uint8_t* data, std::size_t size) {
+		received.insert(received.end(), data, data + size);
+		return true;
+	};
+
+	const auto status = registryClient.FetchVsixStreamed(L"https://cdn.example/tool.vsix", sink);
+	EXPECT_TRUE(status);
+	EXPECT_EQ(EOpenVsxRequestOutcome::Success, status.outcome);
+
+	ASSERT_EQ(1u, requestService.requests.size());
+	const Request& dispatched = requestService.requests[0];
+	EXPECT_EQ(L"GET", dispatched.method);
+	EXPECT_EQ(L"https://cdn.example/tool.vsix", dispatched.url);
+	ASSERT_EQ(1u, dispatched.headers.size());
+	EXPECT_EQ(L"Accept", dispatched.headers[0].name);
+	EXPECT_EQ(L"application/octet-stream", dispatched.headers[0].value);
+	ExpectExactLimits(policy.vsixLimits, dispatched.limits);
+	EXPECT_EQ(policy.cachePolicy, dispatched.cachePolicy);
+	EXPECT_EQ(policy.allowRedirects, dispatched.allowRedirects);
+	EXPECT_EQ(policy.proxySupport, dispatched.proxySupport);
+
+	// adapter が Request へ載せる bodySink は呼び出し元の sink そのもの。RequestService/
+	// transport が実際にこれを chunk ごとに呼ぶ経路は WinHttpRequestRuntime 側の責務なので、
+	// ここでは adapter が正しい sink を配線したことだけを、直接 1 回呼び出して確認する。
+	ASSERT_TRUE(static_cast<bool>(dispatched.bodySink));
+	const std::vector<std::uint8_t> chunk{ 10, 20, 30 };
+	EXPECT_TRUE(dispatched.bodySink(chunk.data(), chunk.size()));
+	EXPECT_EQ(chunk, received);
+}
+
+TEST(OpenVsxRequestServiceAdapter, RejectsFetchVsixStreamedWithoutDispatchingWhenSinkOrUriOrCancellationIsInvalid)
+{
+	FakeRequestService requestService;
+	const auto policy = MakePolicy();
+	const OpenVsxRequestServiceAdapter adapter(requestService, L"https://registry.example", policy);
+	const OpenVsxBodyChunkSink noopSink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	const auto missingSink = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", OpenVsxBodyChunkSink{});
+	EXPECT_EQ(EOpenVsxRequestOutcome::InvalidRequest, missingSink.outcome);
+	EXPECT_TRUE(requestService.requests.empty());
+
+	FakeCancellation cancellation;
+	cancellation.cancelled = true;
+	const auto cancelled = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", noopSink, &cancellation);
+	EXPECT_EQ(EOpenVsxRequestOutcome::Cancelled, cancelled.outcome);
+	EXPECT_EQ(ERequestOutcome::Cancelled, cancelled.requestOutcome);
+	EXPECT_TRUE(requestService.requests.empty());
+
+	const auto plainHttp = adapter.FetchVsixStreamed(L"http://cdn.example/tool.vsix", noopSink);
+	EXPECT_EQ(EOpenVsxRequestOutcome::InvalidEndpointUri, plainHttp.outcome);
+	EXPECT_TRUE(requestService.requests.empty());
+}
+
+TEST(OpenVsxRequestServiceAdapter, MapsFetchVsixStreamedTerminalOutcomesFromTheSharedServiceResponse)
+{
+	FakeRequestService requestService;
+	const auto policy = MakePolicy();
+	const OpenVsxRequestServiceAdapter adapter(requestService, L"https://registry.example", policy);
+	const OpenVsxBodyChunkSink noopSink = [](const std::uint8_t*, std::size_t) { return true; };
+
+	requestService.results.push_back({ ERequestOutcome::Timeout, ETransportFailure::Timeout });
+	const auto timeout = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", noopSink);
+	EXPECT_EQ(EOpenVsxRequestOutcome::Timeout, timeout.outcome);
+	EXPECT_EQ(ERequestOutcome::Timeout, timeout.requestOutcome);
+
+	requestService.results.push_back(HttpResult(404, L"https://cdn.example/tool.vsix"));
+	const auto notFound = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", noopSink);
+	EXPECT_EQ(EOpenVsxRequestOutcome::HttpStatusFailure, notFound.outcome);
+	EXPECT_EQ(404, *notFound.httpStatusCode);
+
+	requestService.results.push_back(HttpResult(200, L"http://cdn.example/tool.vsix"));
+	const auto downgrade = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", noopSink);
+	EXPECT_EQ(EOpenVsxRequestOutcome::HttpsDowngradeRejected, downgrade.outcome);
+
+	auto oversizedHeaders = HttpResult(200, L"https://cdn.example/tool.vsix");
+	oversizedHeaders.response->headers.push_back({ std::wstring(100, L'h'), std::wstring(100, L'v') });
+	requestService.results.push_back(std::move(oversizedHeaders));
+	const auto oversizedHeaderResult = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", noopSink);
+	EXPECT_EQ(EOpenVsxRequestOutcome::ResponseHeaderLimitExceeded, oversizedHeaderResult.outcome);
+	EXPECT_EQ(ERequestOutcome::ResponseHeaderLimitExceeded, oversizedHeaderResult.requestOutcome);
+
+	// ストリーミング経路は応答本体を保持しない（transport が sink へ渡し終えた後は空のまま
+	// 返る）ので、response->body の長さで上限を二重判定しない。実際の上限強制は
+	// transport 側の chunk 単位チェック（WinHttpRequestRuntime.cpp）が既に担っている。
+	// ここでは fake があえて本体付きの応答を返しても、この adapter 層では拒否されない
+	// ことを確認して、この設計判断（二重判定しない）を固定する。
+	requestService.results.push_back(HttpResult(200, L"https://cdn.example/tool.vsix", std::vector<std::uint8_t>(500, 0)));
+	const auto notDoubleCheckedByBodySize = adapter.FetchVsixStreamed(L"https://cdn.example/tool.vsix", noopSink);
+	EXPECT_TRUE(notDoubleCheckedByBodySize);
+
+	ASSERT_EQ(5u, requestService.requests.size());
+	for (const auto& dispatched : requestService.requests) {
+		ASSERT_TRUE(static_cast<bool>(dispatched.bodySink));
 	}
 }
 

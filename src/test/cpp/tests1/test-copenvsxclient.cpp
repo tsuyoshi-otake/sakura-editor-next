@@ -17,20 +17,36 @@
 	URL の組み立てと応答の解析は純粋な変換なので、ここで固定する。
  */
 
+namespace {
+
+/*!
+	@brief 検索 URL の末尾に必ず付く targetPlatform
+
+	期待値をビルドターゲットから組み立てる。x64 と ARM64 で違う文字列を
+	書き分けずに済み、かつ「送っていない」ことは検出できる。
+ */
+std::wstring TargetPlatformSuffix()
+{
+	using extension::openvsx::OpenVsxProtocol;
+	return L"&targetPlatform=" + std::wstring(OpenVsxProtocol::HostTargetPlatform());
+}
+
+} // namespace
+
 TEST(COpenVsxClient, BuildSearchUrl_WithQuery)
 {
 	const COpenVsxClient client(L"https://open-vsx.org");
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=eslint",
-		client.BuildSearchUrl(L"eslint", 0, 25).c_str());
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=eslint" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"eslint", 0, 25));
 }
 
 TEST(COpenVsxClient, BuildSearchUrl_EmptyQueryFallsBackToPopularityOrder)
 {
 	const COpenVsxClient client(L"https://open-vsx.org");
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=50&size=10&sortBy=downloadCount&sortOrder=desc",
-		client.BuildSearchUrl(L"", 50, 10).c_str());
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=50&size=10&sortBy=downloadCount&sortOrder=desc" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"", 50, 10));
 }
 
 //! 検索語はレジストリに素の文字列として渡してはならない
@@ -39,19 +55,19 @@ TEST(COpenVsxClient, BuildSearchUrl_EncodesQuery)
 	const COpenVsxClient client(L"https://open-vsx.org");
 
 	// & や = で追加のパラメーターを注入できないこと
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=a%26size%3D999",
-		client.BuildSearchUrl(L"a&size=999", 0, 25).c_str());
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=a%26size%3D999" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"a&size=999", 0, 25));
 
 	// 非 ASCII は UTF-8 バイト単位で符号化される（"日" == E6 97 A5）
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=%E6%97%A5",
-		client.BuildSearchUrl(L"日", 0, 25).c_str());
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=%E6%97%A5" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"日", 0, 25));
 
 	// 空白とスラッシュ
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=a%20b%2Fc",
-		client.BuildSearchUrl(L"a b/c", 0, 25).c_str());
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=0&size=25&query=a%20b%2Fc" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"a b/c", 0, 25));
 }
 
 TEST(COpenVsxClient, BuildSearchUrl_ClampsRange)
@@ -59,21 +75,21 @@ TEST(COpenVsxClient, BuildSearchUrl_ClampsRange)
 	const COpenVsxClient client(L"https://open-vsx.org");
 
 	// 負の開始位置は 0 に、件数は [1, 100] に収める
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=0&size=1&query=x",
-		client.BuildSearchUrl(L"x", -1, 0).c_str());
-	EXPECT_STREQ(
-		L"https://open-vsx.org/api/-/search?offset=0&size=100&query=x",
-		client.BuildSearchUrl(L"x", 0, 1000).c_str());
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=0&size=1&query=x" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"x", -1, 0));
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/-/search?offset=0&size=100&query=x" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"x", 0, 1000));
 }
 
 //! 末尾の '/' を含む指定でも URL が二重の区切りにならないこと
 TEST(COpenVsxClient, Constructor_StripsTrailingSlash)
 {
 	const COpenVsxClient client(L"https://example.test///");
-	EXPECT_STREQ(
-		L"https://example.test/api/-/search?offset=0&size=25&query=x",
-		client.BuildSearchUrl(L"x", 0, 25).c_str());
+	EXPECT_EQ(
+		L"https://example.test/api/-/search?offset=0&size=25&query=x" + TargetPlatformSuffix(),
+		client.BuildSearchUrl(L"x", 0, 25));
 }
 
 //! protocol は legacy HTTP client を生成せず URL の入力境界を固定できること
@@ -83,9 +99,226 @@ TEST(OpenVsxProtocol, BuildSearchUrl_NormalizesAndClampsWithoutTransport)
 	const auto registryUrl = OpenVsxProtocol::NormalizeRegistryUrl(L"https://example.test///");
 
 	EXPECT_STREQ(L"https://example.test", registryUrl.c_str());
-	EXPECT_STREQ(
-		L"https://example.test/api/-/search?offset=0&size=100&query=a%26b",
-		OpenVsxProtocol::BuildSearchUrl(registryUrl, L"a&b", -1, 101).c_str());
+	EXPECT_EQ(
+		L"https://example.test/api/-/search?offset=0&size=100&query=a%26b&targetPlatform=win32-arm64",
+		OpenVsxProtocol::BuildSearchUrl(registryUrl, L"a&b", -1, 101, L"win32-arm64"));
+}
+
+//! ホストの targetPlatform は Windows ビルドの語彙から外れないこと
+TEST(OpenVsxProtocol, HostTargetPlatform_IsAWindowsTriple)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	constexpr std::wstring_view platform = OpenVsxProtocol::HostTargetPlatform();
+	EXPECT_EQ(0u, platform.find(L"win32-")) << std::wstring(platform);
+	EXPECT_NE(platform, OpenVsxProtocol::kUniversalTargetPlatform);
+}
+
+//! targetPlatform を空にすればパラメーターごと落ちること（レジストリ差異への逃げ道）
+TEST(OpenVsxProtocol, BuildSearchUrl_OmitsEmptyTargetPlatform)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	EXPECT_EQ(
+		L"https://example.test/api/-/search?offset=0&size=25&query=x",
+		OpenVsxProtocol::BuildSearchUrl(L"https://example.test", L"x", 0, 25, L""));
+}
+
+TEST(OpenVsxProtocol, BuildExtensionMetadataUrl_UsesIdentifierAsPathSegments)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/Anthropic/claude-code",
+		OpenVsxProtocol::BuildExtensionMetadataUrl(L"https://open-vsx.org", L"Anthropic", L"claude-code"));
+}
+
+/*!
+	@brief 識別子は encode ではなく拒否されること
+
+	encode すると別の拡張を要求してしまうので、通信を起こさせない。
+ */
+TEST(OpenVsxProtocol, BuildExtensionMetadataUrl_RejectsUnsafeIdentifiers)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	constexpr std::wstring_view registry = L"https://open-vsx.org";
+
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"", L"name").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L"").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"..", L"name").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L".").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"a/b", L"name").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L"a\\b").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L"a%2Fb").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L"a?b").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L"a#b").empty());
+	EXPECT_TRUE(OpenVsxProtocol::BuildExtensionMetadataUrl(registry, L"ns", L"a b").empty());
+}
+
+/*!
+	@brief 実際のメタデータ応答と同じ形から downloads を取り出せること
+
+	https://open-vsx.org/api/Anthropic/claude-code の応答から抜粋したもの。
+	files がどのビルドを指しているかに関わらず downloads で選び直せることが要点。
+ */
+TEST(OpenVsxProtocol, ParseExtensionMetadataResponse_RealShape)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	const std::string sJson = R"({
+		"namespace": "Anthropic",
+		"name": "claude-code",
+		"version": "2.1.223",
+		"targetPlatform": "alpine-arm64",
+		"allTargetPlatformVersions": null,
+		"files": {
+			"download": "https://open-vsx.org/api/Anthropic/claude-code/alpine-arm64/2.1.223/file/Anthropic.claude-code-2.1.223@alpine-arm64.vsix",
+			"sha256": "https://open-vsx.org/api/Anthropic/claude-code/alpine-arm64/2.1.223/file/Anthropic.claude-code-2.1.223@alpine-arm64.sha256",
+			"icon": "https://example.test/icon.png",
+			"readme": "https://example.test/readme.md",
+			"changelog": "https://example.test/changelog.md"
+		},
+		"downloads": {
+			"alpine-arm64": "https://open-vsx.org/api/Anthropic/claude-code/alpine-arm64/2.1.223/file/Anthropic.claude-code-2.1.223@alpine-arm64.vsix",
+			"win32-arm64": "https://open-vsx.org/api/Anthropic/claude-code/win32-arm64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-arm64.vsix",
+			"win32-x64": "https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-x64.vsix"
+		}
+	})";
+
+	SOpenVsxExtensionAssets assets;
+	std::wstring errorMsg;
+	ASSERT_TRUE(OpenVsxProtocol::ParseExtensionMetadataResponse(sJson, assets, errorMsg)) << errorMsg;
+
+	EXPECT_STREQ(L"2.1.223", assets.sVersion.c_str());
+	EXPECT_STREQ(L"alpine-arm64", assets.sTargetPlatform.c_str());
+	EXPECT_STREQ(L"https://example.test/icon.png", assets.sIconUrl.c_str());
+	EXPECT_STREQ(L"https://example.test/changelog.md", assets.sChangelogUrl.c_str());
+	ASSERT_EQ(3u, assets.downloads.size());
+
+	// 検索応答が掴んだ alpine-arm64 ではなく、要求した win32-x64 が選ばれること
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-x64.vsix",
+		OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-x64"));
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/Anthropic/claude-code/win32-arm64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-arm64.vsix",
+		OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-arm64"));
+
+	// 該当ビルドが無いなら、別プラットフォームで代替せず空を返すこと
+	EXPECT_TRUE(OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-ia32").empty());
+}
+
+//! プラットフォーム別ビルドを持たない拡張は universal に落ちること
+TEST(OpenVsxProtocol, SelectPlatformDownloadUrl_FallsBackToUniversal)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	const std::string sJson = R"({
+		"version": "0.17.2",
+		"files": { "download": "https://example.test/editorconfig-0.17.2.vsix" },
+		"downloads": { "universal": "https://example.test/editorconfig-0.17.2.vsix" }
+	})";
+
+	SOpenVsxExtensionAssets assets;
+	std::wstring errorMsg;
+	ASSERT_TRUE(OpenVsxProtocol::ParseExtensionMetadataResponse(sJson, assets, errorMsg)) << errorMsg;
+	EXPECT_EQ(
+		L"https://example.test/editorconfig-0.17.2.vsix",
+		OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-x64"));
+}
+
+/*!
+	@brief downloads を持たない応答では files の targetPlatform で判定すること
+
+	downloads が無いのに files が別プラットフォームを指しているなら、
+	それを掴ませてはならない。
+ */
+TEST(OpenVsxProtocol, SelectPlatformDownloadUrl_WithoutDownloadsHonoursFilesPlatform)
+{
+	using extension::openvsx::OpenVsxProtocol;
+
+	SOpenVsxExtensionAssets assets;
+	assets.sDownloadUrl = L"https://example.test/a.vsix";
+
+	// targetPlatform 不明は「プラットフォーム別ビルドを持たない」とみなす
+	EXPECT_EQ(L"https://example.test/a.vsix", OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-x64"));
+
+	assets.sTargetPlatform = L"universal";
+	EXPECT_EQ(L"https://example.test/a.vsix", OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-x64"));
+
+	assets.sTargetPlatform = L"alpine-arm64";
+	EXPECT_TRUE(OpenVsxProtocol::SelectPlatformDownloadUrl(assets, L"win32-x64").empty());
+}
+
+TEST(OpenVsxProtocol, ParseExtensionMetadataResponse_RejectsErrorAndEmptyBodies)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	SOpenVsxExtensionAssets assets;
+	std::wstring errorMsg;
+
+	// レジストリは「見つからない」を 200 + error 本文で返し得る。
+	// 本文に )" が現れるので、既定の区切りでは raw string がそこで閉じてしまう。
+	EXPECT_FALSE(OpenVsxProtocol::ParseExtensionMetadataResponse(
+		R"json({"error":"Extension not found: EditorConfig.EditorConfig (win32-x64)"})json", assets, errorMsg));
+	EXPECT_NE(std::wstring::npos, errorMsg.find(L"Extension not found"));
+
+	EXPECT_FALSE(OpenVsxProtocol::ParseExtensionMetadataResponse("{}", assets, errorMsg));
+	EXPECT_FALSE(OpenVsxProtocol::ParseExtensionMetadataResponse("[1,2,3]", assets, errorMsg));
+	EXPECT_FALSE(OpenVsxProtocol::ParseExtensionMetadataResponse("not json", assets, errorMsg));
+}
+
+//! downloads は VSIX URL しか持たないので、sha256 は同じ path から導く
+TEST(OpenVsxProtocol, DeriveSha256Url)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	EXPECT_EQ(
+		L"https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-x64.sha256",
+		OpenVsxProtocol::DeriveSha256Url(
+			L"https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-x64.vsix"));
+
+	// 推測で URL を組み立てない
+	EXPECT_TRUE(OpenVsxProtocol::DeriveSha256Url(L"https://example.test/a.zip").empty());
+	EXPECT_TRUE(OpenVsxProtocol::DeriveSha256Url(L".vsix").empty());
+	EXPECT_TRUE(OpenVsxProtocol::DeriveSha256Url(L"").empty());
+}
+
+//! 検索応答が targetPlatform を語らないとき、URL の `@修飾` が唯一の証拠になる
+TEST(OpenVsxProtocol, TargetPlatformFromVsixUrl)
+{
+	using extension::openvsx::OpenVsxProtocol;
+	EXPECT_EQ(L"alpine-arm64", OpenVsxProtocol::TargetPlatformFromVsixUrl(
+		L"https://open-vsx.org/api/Anthropic/claude-code/alpine-arm64/2.1.223/"
+		L"file/Anthropic.claude-code-2.1.223@alpine-arm64.vsix"));
+	EXPECT_EQ(L"win32-x64", OpenVsxProtocol::TargetPlatformFromVsixUrl(
+		L"https://open-vsx.org/x/Anthropic.claude-code-2.1.223@win32-x64.vsix"));
+
+	// プラットフォーム修飾を持たない配布物
+	EXPECT_TRUE(OpenVsxProtocol::TargetPlatformFromVsixUrl(
+		L"https://open-vsx.org/api/EditorConfig/EditorConfig/0.18.2/file/EditorConfig.EditorConfig-0.18.2.vsix").empty());
+
+	// ファイル名の外の '@'（credential 形式など）は拾わない
+	EXPECT_TRUE(OpenVsxProtocol::TargetPlatformFromVsixUrl(
+		L"https://user@open-vsx.org/api/x/y/1.0.0/file/y-1.0.0.vsix").empty());
+
+	// 素性の分からない値は platform 名として採用しない
+	EXPECT_TRUE(OpenVsxProtocol::TargetPlatformFromVsixUrl(L"https://example.test/a@WIN32_X64.vsix").empty());
+	EXPECT_TRUE(OpenVsxProtocol::TargetPlatformFromVsixUrl(L"https://example.test/a@.vsix").empty());
+	EXPECT_TRUE(OpenVsxProtocol::TargetPlatformFromVsixUrl(L"https://example.test/a.zip").empty());
+	EXPECT_TRUE(OpenVsxProtocol::TargetPlatformFromVsixUrl(L"").empty());
+}
+
+//! 検索応答の targetPlatform は、そのビルドが何であるかとして取り込まれること
+TEST(COpenVsxClient, ParseSearchResponse_CapturesTargetPlatform)
+{
+	const std::string sJson = R"({
+		"extensions": [
+			{
+				"namespace": "Anthropic", "name": "claude-code", "version": "2.1.223",
+				"targetPlatform": "alpine-arm64",
+				"files": { "download": "https://example.test/a.vsix" }
+			}
+		]
+	})";
+
+	SOpenVsxSearchResult result;
+	std::wstring errorMsg;
+	ASSERT_TRUE(COpenVsxClient::ParseSearchResponse(sJson, result, errorMsg)) << errorMsg;
+	ASSERT_EQ(1u, result.extensions.size());
+	EXPECT_STREQ(L"alpine-arm64", result.extensions[0].sTargetPlatform.c_str());
 }
 
 //! 実際のレジストリ応答と同じ形を解析できること

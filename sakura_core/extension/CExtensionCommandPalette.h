@@ -11,6 +11,7 @@
 #include "extension/CExtensionContextKeys.h"
 
 #include <cstdint>
+#include <optional>
 #include <shared_mutex>
 #include <string>
 #include <string_view>
@@ -46,6 +47,14 @@ public:
 	void Clear();
 
 	[[nodiscard]] bool Contains(std::wstring_view commandId) const;
+	/*!
+		@brief コマンド 1 件の宣言をコピーで返す。未登録なら nullopt。
+
+		メニュー投影はコマンドの `title` と `enablement` を必要とするが、
+		パレット検索の経路（Search）を通すと関係のない絞り込みと並べ替えが挟まる。
+		参照ではなくコピーを返すのは、返した後にロックが外れるため。
+	*/
+	[[nodiscard]] std::optional<SExtensionCommandDescriptor> Find(std::wstring_view commandId) const;
 	[[nodiscard]] std::vector<std::wstring> CommandIds(bool filterInternal = false) const;
 	[[nodiscard]] std::vector<SExtensionCommandPaletteItem> Search(
 		std::wstring_view query,

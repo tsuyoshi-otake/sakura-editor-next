@@ -12,20 +12,49 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
+#include "workbench/activity/ActivityBarEntryProjection.h"
 #include "workbench/activity/ActivityBarModel.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/layout/WorkbenchIds.h"
 
 namespace workbench::activity {
 namespace {
 
+namespace ids = workbench::layout::ids::viewContainer;
+
+//! The three built-in containers the native side bar can render, in registry order.
+constexpr std::array kRenderable{
+	std::string_view(ids::Explorer),
+	std::string_view(ids::SourceControl),
+	std::string_view(ids::Extensions),
+};
+
+[[nodiscard]] ActivityBarEntry MakeEntry(std::string_view id, std::wstring_view label, bool builtin = true)
+{
+	return { .id = std::string(id), .label = std::wstring(label),
+		.codicon = std::wstring(BuiltinContainerCodicon(id)), .builtin = builtin };
+}
+
+[[nodiscard]] std::vector<ActivityBarEntry> BuiltinEntries()
+{
+	return {
+		MakeEntry(ids::Explorer, L"Explorer"),
+		MakeEntry(ids::SourceControl, L"Source Control"),
+		MakeEntry(ids::Extensions, L"Extensions"),
+	};
+}
+
 TEST(ActivityBarModel, Uses42DipWidthAndSquareVerticalButtonsAtDpi)
 {
 	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
 	model.SetViewport(500, 400, 144);
 
 	EXPECT_EQ(63, model.GetPreferredWidthPixels());
@@ -36,35 +65,32 @@ TEST(ActivityBarModel, Uses42DipWidthAndSquareVerticalButtonsAtDpi)
 	EXPECT_EQ((ActivityBarRect{ 0, 0, 63, 63 }), explorer.bounds);
 	EXPECT_EQ((ActivityBarRect{ 0, 63, 63, 126 }), sourceControl.bounds);
 	EXPECT_EQ((ActivityBarRect{ 0, 126, 63, 189 }), extensions.bounds);
-	EXPECT_EQ(ActivityBarItem::Explorer, *model.HitTest(62, 62));
-	EXPECT_EQ(ActivityBarItem::SourceControl, *model.HitTest(10, 100));
-	EXPECT_EQ(ActivityBarItem::Extensions, *model.HitTest(10, 150));
-	EXPECT_FALSE(model.HitTest(10, 210).has_value());
-	EXPECT_FALSE(model.HitTest(63, 10).has_value());
+	EXPECT_EQ(ids::Explorer, model.HitTest(62, 62));
+	EXPECT_EQ(ids::SourceControl, model.HitTest(10, 100));
+	EXPECT_EQ(ids::Extensions, model.HitTest(10, 150));
+	EXPECT_TRUE(model.HitTest(10, 210).empty());
+	EXPECT_TRUE(model.HitTest(63, 10).empty());
 }
 
 TEST(ActivityBarModel, MapsEveryRenderedContainerToItsBundledCodicon)
 {
-	const std::array mappings{
-		std::pair{ ActivityBarItem::Explorer, std::wstring_view(L"files") },
-		std::pair{ ActivityBarItem::SourceControl, std::wstring_view(L"source-control") },
-		std::pair{ ActivityBarItem::Extensions, std::wstring_view(L"extensions") },
-	};
-	for (const auto& [item, name] : mappings) {
-		EXPECT_EQ(name, ActivityBarItemCodiconName(item));
-		EXPECT_TRUE(workbench::icons::FindCodiconGlyph(name).has_value());
+	for (const auto id : kRenderable) {
+		const auto name = BuiltinContainerCodicon(id);
+		EXPECT_FALSE(name.empty()) << id;
+		EXPECT_TRUE(workbench::icons::FindCodiconGlyph(name).has_value()) << id;
 	}
-	EXPECT_TRUE(ActivityBarItemCodiconName(ActivityBarItem::Count).empty());
+	EXPECT_TRUE(BuiltinContainerCodicon("claude-code").empty());
 }
 
 TEST(ActivityBarModel, ExposesIndependentVisualStateForProviders)
 {
 	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
 	model.SetViewport(42, 200);
-	model.SetSelectedItem(ActivityBarItem::SourceControl);
-	model.SetHoveredItem(ActivityBarItem::Explorer);
-	model.SetPressedItem(ActivityBarItem::Explorer);
-	model.SetFocusedItem(ActivityBarItem::Explorer);
+	model.SetSelectedItem(ids::SourceControl);
+	model.SetHoveredItem(ids::Explorer);
+	model.SetPressedItem(ids::Explorer);
+	model.SetFocusedItem(ids::Explorer);
 
 	const auto explorer = model.GetButton(0);
 	const auto sourceControl = model.GetButton(1);
@@ -72,40 +98,43 @@ TEST(ActivityBarModel, ExposesIndependentVisualStateForProviders)
 	EXPECT_TRUE(explorer.pressed);
 	EXPECT_TRUE(explorer.focused);
 	EXPECT_TRUE(sourceControl.selected);
-	EXPECT_EQ(ActivityBarItem::Explorer, *model.GetFocusedItem());
+	EXPECT_EQ(ids::Explorer, model.GetFocusedItem());
 }
 
 TEST(ActivityBarModel, FocusNavigationSkipsDisabledItemsAndWraps)
 {
 	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
 	model.SetViewport(42, 200);
-	model.SetItemEnabled(ActivityBarItem::SourceControl, false);
-	model.SetFocusedItem(ActivityBarItem::Explorer);
+	model.SetItemEnabled(ids::SourceControl, false);
+	model.SetFocusedItem(ids::Explorer);
 
-	EXPECT_EQ(ActivityBarItem::Extensions, *model.MoveFocus(1));
-	EXPECT_EQ(ActivityBarItem::Explorer, *model.MoveFocus(-1));
+	EXPECT_EQ(ids::Extensions, model.MoveFocus(1));
+	EXPECT_EQ(ids::Explorer, model.MoveFocus(-1));
 	EXPECT_FALSE(model.GetButton(1).enabled);
-	EXPECT_FALSE(model.HitTest(10, 60).has_value());
-	EXPECT_EQ(ActivityBarItem::Extensions, *model.HitTest(10, 100));
+	EXPECT_TRUE(model.HitTest(10, 60).empty());
+	EXPECT_EQ(ids::Extensions, model.HitTest(10, 100));
 }
 
 TEST(ActivityBarModel, InvokeOnlyReturnsEnabledRequestedItemAndDoesNotChangeSelection)
 {
 	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
 	model.SetViewport(42, 200);
-	model.SetSelectedItem(ActivityBarItem::Explorer);
-	model.SetFocusedItem(ActivityBarItem::SourceControl);
+	model.SetSelectedItem(ids::Explorer);
+	model.SetFocusedItem(ids::SourceControl);
 
-	EXPECT_EQ(ActivityBarItem::SourceControl, *model.InvokeFocused());
-	EXPECT_EQ(ActivityBarItem::Explorer, *model.GetSelectedItem());
-	model.SetItemEnabled(ActivityBarItem::SourceControl, false);
-	EXPECT_FALSE(model.Invoke(ActivityBarItem::SourceControl).has_value());
-	EXPECT_FALSE(model.InvokeFocused().has_value());
+	EXPECT_EQ(ids::SourceControl, model.InvokeFocused());
+	EXPECT_EQ(ids::Explorer, model.GetSelectedItem());
+	model.SetItemEnabled(ids::SourceControl, false);
+	EXPECT_TRUE(model.Invoke(ids::SourceControl).empty());
+	EXPECT_TRUE(model.InvokeFocused().empty());
 }
 
 TEST(ActivityBarModel, ClampsShortClientsWithoutInvertedButtonBounds)
 {
 	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
 	model.SetViewport(-1, 20, 192);
 
 	EXPECT_EQ(84, model.GetPreferredWidthPixels());
@@ -117,6 +146,100 @@ TEST(ActivityBarModel, ClampsShortClientsWithoutInvertedButtonBounds)
 		EXPECT_GE(bounds.bottom, bounds.top);
 		EXPECT_LE(bounds.bottom, 20);
 	}
+}
+
+TEST(ActivityBarModel, KeepsSelectionByContainerIdWhenAnExtensionInsertsAnEntryAbove)
+{
+	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
+	model.SetViewport(42, 400);
+	model.SetSelectedItem(ids::Extensions);
+	ASSERT_EQ(2U, model.IndexOf(ids::Extensions));
+
+	auto grown = BuiltinEntries();
+	grown.insert(grown.begin(), MakeEntry("claude-code", L"Claude Code", false));
+	model.SetEntries(std::move(grown));
+
+	// Position moved, identity did not: the user's selected container must not change
+	// because an extension registered a container that sorts above it.
+	EXPECT_EQ(3U, model.IndexOf(ids::Extensions));
+	EXPECT_EQ(ids::Extensions, model.GetSelectedItem());
+	EXPECT_TRUE(model.GetButton(3).selected);
+}
+
+TEST(ActivityBarModel, DropsSelectionWhenItsContainerDisappears)
+{
+	ActivityBarModel model;
+	model.SetEntries(BuiltinEntries());
+	model.SetSelectedItem(ids::SourceControl);
+	model.SetFocusedItem(ids::SourceControl);
+
+	model.SetEntries({ MakeEntry(ids::Explorer, L"Explorer") });
+
+	EXPECT_TRUE(model.GetSelectedItem().empty());
+	EXPECT_TRUE(model.GetFocusedItem().empty());
+	EXPECT_EQ(ids::Explorer, model.FocusEdge(1));
+	EXPECT_EQ(ids::Explorer, model.FocusEdge(-1));
+}
+
+//! Registers one contributed side-bar container, the way the extension bridge does.
+void ContributeContainer(layout::WorkbenchContributionRegistry& registry, std::string_view ownerId,
+	std::string_view containerId, std::string_view title, std::int32_t order)
+{
+	const auto result = registry.Register({
+		.operation = { .operationId = std::string(containerId) + ".register" },
+		.owner = { .ownerId = std::string(ownerId), .generation = 1 },
+		.viewContainers = { {
+			.id = std::string(containerId),
+			.title = std::string(title),
+			.location = layout::EViewContainerLocation::Sidebar,
+			.order = order,
+		} },
+	});
+	ASSERT_EQ(layout::EWorkbenchContributionOperationStatus::Succeeded, result.status);
+}
+
+TEST(ActivityBarEntryProjection, RendersContributedContainersAndSkipsUnrenderableBuiltins)
+{
+	layout::WorkbenchContributionRegistry registry;
+	ASSERT_NO_FATAL_FAILURE(
+		ContributeContainer(registry, "Anthropic.claude-code", "claude-code", "Claude Code", 100));
+
+	const auto entries = ProjectActivityBarEntries(registry.Snapshot(), {
+		.renderableBuiltins = kRenderable,
+		.extensionCodicon = [](std::string_view) -> std::wstring { return {}; },
+	});
+
+	// Search and Run and Debug are declared but have no native page, so projecting them
+	// would put buttons on the strip that open nothing.
+	ASSERT_EQ(4U, entries.size());
+	EXPECT_EQ(ids::Explorer, entries[0].id);
+	EXPECT_EQ(ids::SourceControl, entries[1].id);
+	EXPECT_EQ(ids::Extensions, entries[2].id);
+	EXPECT_EQ("claude-code", entries[3].id);
+	EXPECT_EQ(L"Claude Code", entries[3].label);
+	EXPECT_FALSE(entries[3].builtin);
+	// Claude Code ships an image, not a codicon; the control falls back to an initial tile.
+	EXPECT_TRUE(entries[3].codicon.empty());
+	EXPECT_EQ(L"files", entries[0].codicon);
+}
+
+TEST(ActivityBarEntryProjection, TakesTheDeclaredCodiconForAContributedContainer)
+{
+	layout::WorkbenchContributionRegistry registry;
+	ASSERT_NO_FATAL_FAILURE(ContributeContainer(registry, "acme.tools", "acme-tools", "Acme Tools", 5));
+
+	const auto entries = ProjectActivityBarEntries(registry.Snapshot(), {
+		.renderableBuiltins = kRenderable,
+		.extensionCodicon = [](std::string_view containerId) -> std::wstring {
+			return containerId == "acme-tools" ? L"beaker" : std::wstring{};
+		},
+	});
+
+	ASSERT_FALSE(entries.empty());
+	// order 5 sorts ahead of Explorer's 10, exactly as the registry declares it.
+	EXPECT_EQ("acme-tools", entries[0].id);
+	EXPECT_EQ(L"beaker", entries[0].codicon);
 }
 
 TEST(IconMetrics, UsesSharedOpticalSizesAndDpiStableBounds)

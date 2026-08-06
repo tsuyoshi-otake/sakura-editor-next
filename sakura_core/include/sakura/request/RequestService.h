@@ -12,6 +12,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -144,6 +145,7 @@ enum class ETransportFailure : std::uint8_t {
 	ResponseBodyLimitExceeded,
 	ProxyAuthenticationRequired,
 	UnsupportedProxyPolicy,
+	SinkFailure,
 };
 
 struct RequestLimits final {
@@ -152,6 +154,11 @@ struct RequestLimits final {
 	std::size_t maxResponseHeaderBytes = 64 * 1024;
 	std::size_t maxResponseBodyBytes = 32 * 1024 * 1024;
 };
+
+//! 応答本体を chunk 単位で受け取る sink。false を返すと転送を打ち切る。
+//! 設定されていれば transport は応答本体をメモリー上に溜め込まず、
+//! 受信した端から sink へ渡す（HttpResponse::body は空のまま残る）。
+using ResponseBodyChunkSink = std::function<bool(const std::uint8_t* data, std::size_t size)>;
 
 struct TransportRequest final {
 	std::wstring method = L"GET";
@@ -163,6 +170,7 @@ struct TransportRequest final {
 	std::optional<RequestCredential> proxyCredential;
 	RequestLimits limits;
 	std::optional<std::chrono::steady_clock::time_point> deadline;
+	ResponseBodyChunkSink bodySink;
 };
 
 struct TransportResult final {
@@ -218,6 +226,9 @@ struct Request final {
 	std::optional<std::wstring> deduplicationKey;
 	RequestLimits limits;
 	EProxySupport proxySupport = EProxySupport::Fallback;
+	//! 設定されていれば応答本体を溜め込まずこの sink へ流す。
+	//! deduplication・キャッシュヒットとは併用しない（IsValidRequest が拒否する）。
+	ResponseBodyChunkSink bodySink;
 };
 
 enum class ERequestOutcome : std::uint8_t {

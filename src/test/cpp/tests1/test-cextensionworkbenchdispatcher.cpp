@@ -14,9 +14,11 @@
 #include "platform/profiles/UserDataProfileBootstrap.h"
 #include <sakura/serialization/JsoncDocument.h>
 #include "workbench/CWorkbenchRuntime.h"
+#include "workbench/layout/WorkbenchContributionRegistry.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <optional>
 #include <string>
@@ -34,7 +36,7 @@ protected:
 		m_bridge = std::make_unique<CExtensionWorkbenchServiceBridge>(&m_markerService, &m_outputService);
 		m_dispatcher = std::make_unique<CExtensionWorkbenchDispatcher>(
 			m_context, m_commands, m_status, m_notifications, m_views, *m_secrets,
-			m_diagnostics, m_quickInput, m_output, m_progress, m_bridge.get());
+			m_diagnostics, m_quickInput, m_output, m_progress, m_bridge.get(), &m_contributions);
 	}
 
 	void TearDown() override
@@ -67,6 +69,7 @@ protected:
 	CExtensionQuickInput m_quickInput;
 	CExtensionOutputChannel m_output;
 	CExtensionProgressCenter m_progress;
+	CExtensionContributionRegistry m_contributions;
 	workbench::problems::MarkerService m_markerService;
 	workbench::output::OutputService m_outputService;
 	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_bridge;
@@ -216,7 +219,7 @@ protected:
 		m_bridge = std::make_unique<CExtensionWorkbenchServiceBridge>(nullptr, nullptr, m_runtime.get());
 		m_dispatcher = std::make_unique<CExtensionWorkbenchDispatcher>(
 			m_context, m_commands, m_status, m_notifications, m_views, *m_secrets,
-			m_diagnostics, m_quickInput, m_output, m_progress, m_bridge.get());
+			m_diagnostics, m_quickInput, m_output, m_progress, m_bridge.get(), &m_contributions);
 	}
 
 	void TearDown() override
@@ -252,6 +255,7 @@ protected:
 	CExtensionQuickInput m_quickInput;
 	CExtensionOutputChannel m_output;
 	CExtensionProgressCenter m_progress;
+	CExtensionContributionRegistry m_contributions;
 	ConfigurationWriteFakeFileService* m_files = nullptr;
 	std::unique_ptr<workbench::CWorkbenchRuntime> m_runtime;
 	std::unique_ptr<CExtensionWorkbenchServiceBridge> m_bridge;
@@ -822,6 +826,164 @@ TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
 	EXPECT_EQ(-32001, result.errorCode);
 	EXPECT_NE(std::string::npos, result.errorMessage.find("workbench settings owner is not available"));
 	EXPECT_TRUE(m_files->Document().empty());
+}
+
+// contributes.viewsContainers / contributes.views ------------------------------------------
+//
+// Container and view identity belongs to workbench::layout::WorkbenchContributionRegistry, not
+// to a parallel extension-side store, so the assertions below read that registry's snapshot
+// rather than CExtensionContributionRegistry. What the extension registry keeps is only what
+// the layout model deliberately does not have: the activity bar icon, the `when` clause, and
+// whether the view is a tree or a webview.
+
+//! Mirrors Anthropic.claude-code 2.1.223: one activitybar container holding one webview view.
+constexpr char kClaudeCodeLikeRegistration[] = R"({
+	"extensionId": "Anthropic.claude-code",
+	"generation": 1,
+	"commands": [{ "id": "claude-code.focus", "title": "Focus Claude Code" }],
+	"viewsContainers": [
+		{ "id": "claude-code", "title": "Claude Code", "location": "activitybar", "codicon": "comment-discussion" }
+	],
+	"views": [
+		{ "id": "claude-code.sidebar", "name": "Claude Code", "containerId": "claude-code",
+		  "type": "webview", "when": "claude-code.enabled", "contextualTitle": "Claude Code" }
+	]
+})";
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	RoutesContributedViewContainersIntoTheWorkbenchLayoutRegistry)
+{
+	auto registration = Dispatch("workbench/extensions/register", kClaudeCodeLikeRegistration);
+	ASSERT_TRUE(registration.success) << registration.errorMessage;
+
+	const auto snapshot = m_runtime->Contributions().Snapshot();
+	const auto container = std::ranges::find_if(snapshot.viewContainers,
+		[](const auto& entry) { return entry.descriptor.id == "claude-code"; });
+	ASSERT_NE(snapshot.viewContainers.end(), container);
+	EXPECT_EQ("Claude Code", container->descriptor.title);
+	EXPECT_EQ(workbench::layout::EViewContainerLocation::Sidebar, container->descriptor.location);
+	EXPECT_EQ("Anthropic.claude-code", container->owner.ownerId);
+	EXPECT_EQ(1u, container->owner.generation);
+	EXPECT_FALSE(container->isBuiltin);
+
+	const auto view = std::ranges::find_if(snapshot.views,
+		[](const auto& entry) { return entry.descriptor.id == "claude-code.sidebar"; });
+	ASSERT_NE(snapshot.views.end(), view);
+	EXPECT_EQ("claude-code", view->descriptor.containerId);
+	EXPECT_EQ("Claude Code", view->descriptor.title);
+
+	// レイアウト側が持たない属性だけが拡張レジストリに残る。
+	EXPECT_EQ(L"comment-discussion", m_contributions.ContainerPresentation(L"claude-code").codicon);
+	const auto presentation = m_contributions.ViewPresentation(L"claude-code.sidebar");
+	EXPECT_EQ(EExtensionViewKind::Webview, presentation.kind);
+	EXPECT_EQ(L"claude-code.enabled", presentation.whenClause);
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	ReplacesContributedContainersOnReRegistrationAndRemovesThemWithTheOwnerGeneration)
+{
+	const auto first = Dispatch("workbench/extensions/register", kClaudeCodeLikeRegistration);
+	ASSERT_TRUE(first.success) << first.errorMessage;
+
+	// 同じ拡張の再送。レイアウトレジストリは同じコンテナ ID の二重登録を拒否するので、
+	// 先に前世代を捨てられていないと、ここでコンテナが 1 つも残らなくなる。
+	auto reregistration = Dispatch("workbench/extensions/register", R"({
+		"extensionId": "Anthropic.claude-code",
+		"generation": 2,
+		"commands": [],
+		"viewsContainers": [{ "id": "claude-code", "title": "Claude Code v2", "location": "panel" }],
+		"views": []
+	})");
+	ASSERT_TRUE(reregistration.success) << reregistration.errorMessage;
+
+	auto snapshot = m_runtime->Contributions().Snapshot();
+	auto containers = std::ranges::count_if(snapshot.viewContainers,
+		[](const auto& entry) { return entry.descriptor.id == "claude-code"; });
+	ASSERT_EQ(1, containers);
+	const auto container = std::ranges::find_if(snapshot.viewContainers,
+		[](const auto& entry) { return entry.descriptor.id == "claude-code"; });
+	EXPECT_EQ("Claude Code v2", container->descriptor.title);
+	EXPECT_EQ(workbench::layout::EViewContainerLocation::Panel, container->descriptor.location);
+	EXPECT_EQ(2u, container->owner.generation);
+	// 前世代のビューも一緒に消えている（残ると存在しないコンテナを指すビューになる）。
+	EXPECT_TRUE(std::ranges::none_of(snapshot.views,
+		[](const auto& entry) { return entry.descriptor.id == "claude-code.sidebar"; }));
+
+	auto removal = Dispatch("workbench/extensions/removeGeneration",
+		R"({"extensionId":"Anthropic.claude-code","generation":2})");
+	ASSERT_TRUE(removal.success) << removal.errorMessage;
+
+	snapshot = m_runtime->Contributions().Snapshot();
+	EXPECT_TRUE(std::ranges::none_of(snapshot.viewContainers,
+		[](const auto& entry) { return entry.descriptor.id == "claude-code"; }));
+	EXPECT_TRUE(m_contributions.ContainerPresentation(L"claude-code").id.empty());
+}
+
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	AcceptsTheExtensionEvenWhenItsContributedContainersAreRejected)
+{
+	// コンテナ ID が空 / ビューが存在しないコンテナを指す、という壊れた宣言。
+	// コンテナは出ないが、拡張の登録そのものは成功しなければならない（コマンドは使えるべき）。
+	auto registration = Dispatch("workbench/extensions/register", R"({
+		"extensionId": "vendor.broken",
+		"generation": 1,
+		"commands": [{ "id": "vendor.broken.run", "title": "Run" }],
+		"viewsContainers": [{ "id": "", "title": "Nameless" }],
+		"views": [{ "id": "vendor.broken.view", "name": "View", "containerId": "does-not-exist" }]
+	})");
+	ASSERT_TRUE(registration.success) << registration.errorMessage;
+
+	const auto snapshot = m_runtime->Contributions().Snapshot();
+	EXPECT_TRUE(std::ranges::none_of(snapshot.views,
+		[](const auto& entry) { return entry.descriptor.id == "vendor.broken.view"; }));
+	EXPECT_TRUE(m_commands.Contains(L"vendor.broken.run"));
+}
+
+//! `createTreeView` は宣言したコンテナに出なければならない。ここが効いていないと、
+//! 拡張がアクティビティバーに自分のコンテナを出しても中身は空のままで、ツリーは
+//! ホスト既定の Extensions バケットに積み上がる。
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	PlacesARuntimeTreeViewIntoTheContainerItsManifestDeclared)
+{
+	auto registration = Dispatch("workbench/extensions/register", R"({
+		"extensionId": "vendor.trees",
+		"generation": 1,
+		"commands": [],
+		"viewsContainers": [{ "id": "vendor-trees", "title": "Vendor Trees", "location": "activitybar" }],
+		"views": [{ "id": "vendor.trees.explorer", "name": "Vendor Explorer", "containerId": "vendor-trees" }]
+	})");
+	ASSERT_TRUE(registration.success) << registration.errorMessage;
+
+	auto view = Dispatch("workbench/views/register", R"({
+		"handle":"view:vendor.trees:1:1","viewId":"vendor.trees.explorer",
+		"extensionId":"vendor.trees","generation":1,"title":"Vendor Explorer"
+	})");
+	ASSERT_TRUE(view.success) << view.errorMessage;
+
+	const auto views = m_views.Views();
+	const auto registered = std::ranges::find_if(views,
+		[](const auto& entry) { return entry.viewId == L"vendor.trees.explorer"; });
+	ASSERT_NE(views.end(), registered);
+	EXPECT_EQ(L"vendor-trees", registered->containerId);
+}
+
+//! 宣言されていないビューは既定バケットのまま。存在しないコンテナへ送ると、
+//! どこにも描画されないビューになる。
+TEST_F(CExtensionWorkbenchDispatcherConfigurationUpdateTest,
+	KeepsAnUndeclaredTreeViewInTheHostDefaultContainer)
+{
+	auto view = Dispatch("workbench/views/register", R"({
+		"handle":"view:vendor.trees:1:2","viewId":"vendor.trees.undeclared",
+		"extensionId":"vendor.trees","generation":1,"title":"Undeclared"
+	})");
+	ASSERT_TRUE(view.success) << view.errorMessage;
+
+	const auto views = m_views.Views();
+	const auto registered = std::ranges::find_if(views,
+		[](const auto& entry) { return entry.viewId == L"vendor.trees.undeclared"; });
+	ASSERT_NE(views.end(), registered);
+	EXPECT_NE(L"vendor-trees", registered->containerId);
+	EXPECT_FALSE(registered->containerId.empty());
 }
 
 } // namespace

@@ -98,6 +98,7 @@ msbuild-*.log.xlsx
 sakura-*.zip
 tags
 testData_*.txt
+test_1000lines.txt
 UpgradeLog.htm
 
 # PyTest出力ファイルは除外する

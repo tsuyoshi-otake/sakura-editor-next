@@ -11,12 +11,16 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/layout/WorkbenchIds.h"
+#include "util/string_ex.h"
 
 #include <CommCtrl.h>
 #include <windowsx.h>
 
 #include <algorithm>
 #include <cstdlib>
+#include <cwctype>
+#include <string>
 #include <string_view>
 
 namespace workbench {
@@ -83,6 +87,64 @@ constexpr int kIndicatorWidthDip = 2;
 	return drawn != 0;
 }
 
+/*
+	The hand-drawn vector paths remain only as the explicit fallback for Sakura's own containers
+	when codicon.ttf could not be registered. Keyed by container id rather than by an enum so
+	that adding a container never means teaching this function a second identity system.
+*/
+[[nodiscard]] bool PaintBuiltinGlyph(
+	HDC dc, const icons::IconRect& box, std::string_view containerId, COLORREF color) noexcept
+{
+	if (containerId == layout::ids::viewContainer::Explorer) {
+		icons::codicons::DrawFiles(dc, box, color);
+		return true;
+	}
+	if (containerId == layout::ids::viewContainer::SourceControl) {
+		icons::codicons::DrawSourceControl(dc, box, color);
+		return true;
+	}
+	if (containerId == layout::ids::viewContainer::Extensions) {
+		icons::codicons::Draw(dc, box, icons::codicons::Icon::Extensions, color);
+		return true;
+	}
+	return false;
+}
+
+/*
+	Fallback for a contributed ViewContainer whose manifest supplied an image path instead of a
+	`$(codicon)` reference. Rasterizing the extension's own SVG or PNG is not implemented yet,
+	and a blank square is indistinguishable from a broken button, so the container's initial is
+	drawn the way the Marketplace list already draws its initials tile.
+*/
+[[nodiscard]] bool PaintInitialTile(
+	HDC dc, const icons::IconRect& box, std::wstring_view label, COLORREF color, unsigned int dpi) noexcept
+{
+	if (dc == nullptr || label.empty() || box.Width() <= 0 || box.Height() <= 0) return false;
+	LOGFONTW description{};
+	description.lfHeight = -ScaleDip(14, dpi);
+	description.lfWeight = FW_SEMIBOLD;
+	description.lfCharSet = DEFAULT_CHARSET;
+	description.lfQuality = CLEARTYPE_QUALITY;
+	description.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
+	const HFONT font = ::CreateFontIndirectW(&description);
+	if (font == nullptr) return false;
+	const int saved = ::SaveDC(dc);
+	if (saved == 0) {
+		::DeleteObject(font);
+		return false;
+	}
+	::SelectObject(dc, font);
+	::SetBkMode(dc, TRANSPARENT);
+	::SetTextColor(dc, color);
+	RECT bounds{ box.left, box.top, box.right, box.bottom };
+	const wchar_t initial[] = { static_cast<wchar_t>(::towupper(label.front())), L'\0' };
+	const int drawn = ::DrawTextW(dc, initial, 1, &bounds,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::RestoreDC(dc, saved);
+	::DeleteObject(font);
+	return drawn != 0;
+}
+
 } // namespace
 
 ActivityBarPalette ActivityBarPalette::Dark() noexcept
@@ -143,19 +205,7 @@ bool CActivityBar::Create(HWND parent, HINSTANCE instance)
 	m_tooltip = ::CreateWindowExW(WS_EX_TOPMOST, TOOLTIPS_CLASSW, nullptr,
 		WS_POPUP | TTS_ALWAYSTIP | TTS_NOPREFIX, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
 		m_window, nullptr, instance, nullptr);
-	if (m_tooltip != nullptr) {
-		::SendMessageW(m_tooltip, TTM_SETMAXTIPWIDTH, 0, ScaleDip(240, m_model.GetDpi()));
-		for (std::size_t index = 0; index < m_model.GetButtonCount(); ++index) {
-			const auto item = static_cast<ActivityBarItem>(index);
-			TOOLINFOW tool{};
-			tool.cbSize = sizeof(tool);
-			tool.uFlags = TTF_SUBCLASS;
-			tool.hwnd = m_window;
-			tool.uId = static_cast<UINT_PTR>(index + 1);
-			tool.lpszText = const_cast<wchar_t*>(ActivityBarItemName(item));
-			::SendMessageW(m_tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
-		}
-	}
+	RebuildTooltips();
 	UpdateClientLayout(static_cast<unsigned int>(::GetDpiForWindow(m_window)));
 	return true;
 }
@@ -170,7 +220,7 @@ void CActivityBar::Destroy() noexcept
 {
 	if (m_destroyed || m_destroying) return;
 	m_destroying = true;
-	m_captureItem.reset();
+	m_captureItem.clear();
 	m_dragging = false;
 	if (m_iconFont != nullptr) {
 		::DeleteObject(m_iconFont);
@@ -203,44 +253,62 @@ void CActivityBar::SetPalette(const ActivityBarPalette& palette) noexcept
 	Invalidate();
 }
 
-void CActivityBar::SetSelectedItem(std::optional<ActivityBarItem> item) noexcept
+void CActivityBar::SetEntries(std::vector<ActivityBarEntry> entries)
 {
-	m_model.SetSelectedItem(item);
+	// A container the user was dragging may not exist any more.
+	m_model.SetEntries(std::move(entries));
+	if (!m_captureItem.empty() && !m_model.Contains(m_captureItem)) {
+		m_captureItem.clear();
+		m_dragging = false;
+		if (m_window != nullptr && ::GetCapture() == m_window) ::ReleaseCapture();
+	}
+	RebuildTooltips();
 	Invalidate();
 }
 
-void CActivityBar::SetPressed(std::optional<ActivityBarItem> item) noexcept
+void CActivityBar::SetSelectedItem(std::string_view containerId) noexcept
 {
-	m_model.SetPressedItem(item);
+	m_model.SetSelectedItem(containerId);
 	Invalidate();
 }
 
-void CActivityBar::SetItemEnabled(ActivityBarItem item, bool enabled) noexcept
+void CActivityBar::SetPressed(std::string_view containerId) noexcept
 {
-	const bool oldEnabled = m_model.IsEnabled(item);
-	m_model.SetEnabled(item, enabled);
-	if (oldEnabled != enabled) accessibility::RaiseEnabledChanged(*this, static_cast<int>(item), oldEnabled, enabled);
+	m_model.SetPressedItem(containerId);
 	Invalidate();
 }
 
-void CActivityBar::SetItemVisible(ActivityBarItem item, bool visible) noexcept
+void CActivityBar::SetItemEnabled(std::string_view containerId, bool enabled) noexcept
 {
-	if (m_model.IsVisible(item) == visible) return;
-	if (!visible && m_captureItem == item) {
-		m_captureItem.reset();
+	const auto index = m_model.IndexOf(containerId);
+	if (index == ActivityBarModel::kNoIndex) return;
+	const bool oldEnabled = m_model.IsEnabled(containerId);
+	m_model.SetEnabled(containerId, enabled);
+	if (oldEnabled != enabled) {
+		accessibility::RaiseEnabledChanged(*this, static_cast<int>(index), oldEnabled, enabled);
+	}
+	Invalidate();
+}
+
+void CActivityBar::SetItemVisible(std::string_view containerId, bool visible) noexcept
+{
+	if (m_model.IsVisible(containerId) == visible) return;
+	if (!visible && m_captureItem == containerId) {
+		m_captureItem.clear();
 		m_dragging = false;
 		if (::GetCapture() == m_window) ::ReleaseCapture();
 	}
-	m_model.SetItemVisible(item, visible);
+	m_model.SetItemVisible(containerId, visible);
 	// Every remaining entry moved, so the tooltip rectangles are stale.
 	UpdateTooltipRects();
 	Invalidate();
 }
 
-bool CActivityBar::Invoke(ActivityBarItem item) noexcept
+bool CActivityBar::Invoke(std::string_view containerId) noexcept
 {
-	const auto requested = m_model.Invoke(item);
-	if (requested) accessibility::RaiseInvoked(*this, static_cast<int>(*requested));
+	const auto requested = m_model.Invoke(containerId);
+	if (requested.empty()) return false;
+	accessibility::RaiseInvoked(*this, static_cast<int>(m_model.IndexOf(requested)));
 	return InvokeRequest(requested);
 }
 
@@ -266,7 +334,7 @@ LRESULT CALLBACK CActivityBar::WindowProc(HWND window, UINT message, WPARAM wPar
 		activityBar->m_accessibilityLifetime->Invalidate();
 		activityBar->m_window = nullptr;
 		activityBar->m_tooltip = nullptr;
-		activityBar->m_captureItem.reset();
+		activityBar->m_captureItem.clear();
 		if (!activityBar->m_destroying) activityBar->m_destroyed = true;
 		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
 		return ::DefWindowProcW(window, message, wParam, lParam);
@@ -296,12 +364,14 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_GETDLGCODE:
 		return DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTTAB;
 	case WM_SETFOCUS:
-		if (!m_model.GetFocusedItem()) static_cast<void>(m_model.MoveFocus(1));
-		if (const auto item = m_model.GetFocusedItem()) accessibility::RaiseFocusChanged(*this, static_cast<int>(*item));
+		if (m_model.GetFocusedItem().empty()) static_cast<void>(m_model.MoveFocus(1));
+		if (const auto item = m_model.GetFocusedItem(); !item.empty()) {
+			accessibility::RaiseFocusChanged(*this, static_cast<int>(m_model.IndexOf(item)));
+		}
 		Invalidate();
 		return 0;
 	case WM_KILLFOCUS:
-		m_model.SetFocusedItem(std::nullopt);
+		m_model.SetFocusedItem({});
 		Invalidate();
 		return 0;
 	case WM_KEYDOWN:
@@ -312,16 +382,18 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 	case WM_MOUSEMOVE: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-		if (m_captureItem && BeginDragIfPastThreshold(point)) {
+		if (!m_captureItem.empty() && BeginDragIfPastThreshold(point)) {
 			// A drag has started, so the press affordance must stop pretending a click
 			// is still pending.
-			m_model.SetPressedItem(std::nullopt);
-			m_model.SetHoveredItem(std::nullopt);
+			m_model.SetPressedItem({});
+			m_model.SetHoveredItem({});
 			Invalidate();
 			return 0;
 		}
 		SetHoverFromPoint(point);
-		if (m_captureItem) m_model.SetPressedItem(m_model.HitTest(point.x, point.y) == m_captureItem ? m_captureItem : std::nullopt);
+		if (!m_captureItem.empty()) {
+			m_model.SetPressedItem(m_model.HitTest(point.x, point.y) == m_captureItem ? m_captureItem : std::string_view{});
+		}
 		if (!m_trackingMouseLeave) {
 			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, m_window, 0 };
 			m_trackingMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
@@ -331,17 +403,17 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	}
 	case WM_MOUSELEAVE:
 		m_trackingMouseLeave = false;
-		m_model.SetHoveredItem(std::nullopt);
-		if (!m_captureItem) m_model.SetPressedItem(std::nullopt);
+		m_model.SetHoveredItem({});
+		if (m_captureItem.empty()) m_model.SetPressedItem({});
 		Invalidate();
 		return 0;
 	case WM_LBUTTONDOWN: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-		const auto item = m_model.HitTest(point.x, point.y);
-		if (!item) break;
+		const std::string item(m_model.HitTest(point.x, point.y));
+		if (item.empty()) break;
 		::SetFocus(m_window);
 		m_model.SetFocusedItem(item);
-		accessibility::RaiseFocusChanged(*this, static_cast<int>(*item));
+		accessibility::RaiseFocusChanged(*this, static_cast<int>(m_model.IndexOf(item)));
 		m_model.SetPressedItem(item);
 		m_captureItem = item;
 		m_dragOrigin = point;
@@ -357,31 +429,31 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		break;
 	case WM_LBUTTONUP: {
-		if (!m_captureItem) break;
+		if (m_captureItem.empty()) break;
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-		const auto captured = m_captureItem;
+		const std::string captured = std::move(m_captureItem);
 		const bool dragged = m_dragging;
-		m_captureItem.reset();
+		m_captureItem.clear();
 		m_dragging = false;
-		m_model.SetPressedItem(std::nullopt);
+		m_model.SetPressedItem({});
 		if (::GetCapture() == m_window) ::ReleaseCapture();
 		if (dragged) {
 			// A completed drag is a move gesture, never the toggle it started as.
 			Invalidate();
-			static_cast<void>(FinishDrag(*captured, point));
+			static_cast<void>(FinishDrag(captured, point));
 			return 0;
 		}
 		SetHoverFromPoint(point);
 		Invalidate();
-	const auto invoked = m_model.HitTest(point.x, point.y) == captured ? captured : std::nullopt;
-	if (invoked) accessibility::RaiseInvoked(*this, static_cast<int>(*invoked));
-	static_cast<void>(InvokeRequest(invoked));
+		if (m_model.HitTest(point.x, point.y) != captured) return 0;
+		accessibility::RaiseInvoked(*this, static_cast<int>(m_model.IndexOf(captured)));
+		static_cast<void>(InvokeRequest(captured));
 		return 0;
 	}
 	case WM_CAPTURECHANGED:
-		m_captureItem.reset();
+		m_captureItem.clear();
 		m_dragging = false;
-		m_model.SetPressedItem(std::nullopt);
+		m_model.SetPressedItem({});
 		Invalidate();
 		return 0;
 	default:
@@ -402,6 +474,37 @@ void CActivityBar::UpdateClientLayout(unsigned int dpi) noexcept
 	}
 	UpdateTooltipRects();
 	Invalidate();
+}
+
+void CActivityBar::RebuildTooltips()
+{
+	if (m_tooltip == nullptr || !::IsWindow(m_tooltip)) return;
+	// Tools are addressed by slot, so shrinking the strip must delete the tail rather than
+	// leave a tool pointing at a label whose container is gone.
+	for (std::size_t index = 0; index < m_tooltipLabels.size(); ++index) {
+		TOOLINFOW tool{};
+		tool.cbSize = sizeof(tool);
+		tool.hwnd = m_window;
+		tool.uId = static_cast<UINT_PTR>(index + 1);
+		::SendMessageW(m_tooltip, TTM_DELTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+	}
+
+	m_tooltipLabels.clear();
+	m_tooltipLabels.reserve(m_model.GetButtonCount());
+	for (std::size_t index = 0; index < m_model.GetButtonCount(); ++index) {
+		m_tooltipLabels.emplace_back(m_model.GetButton(index).label);
+	}
+	::SendMessageW(m_tooltip, TTM_SETMAXTIPWIDTH, 0, ScaleDip(240, m_model.GetDpi()));
+	for (std::size_t index = 0; index < m_tooltipLabels.size(); ++index) {
+		TOOLINFOW tool{};
+		tool.cbSize = sizeof(tool);
+		tool.uFlags = TTF_SUBCLASS;
+		tool.hwnd = m_window;
+		tool.uId = static_cast<UINT_PTR>(index + 1);
+		tool.lpszText = m_tooltipLabels[index].data();
+		::SendMessageW(m_tooltip, TTM_ADDTOOLW, 0, reinterpret_cast<LPARAM>(&tool));
+	}
+	UpdateTooltipRects();
 }
 
 void CActivityBar::UpdateTooltipRects() noexcept
@@ -497,21 +600,12 @@ void CActivityBar::Paint() noexcept
 		// anti-aliasing and optical weight visibly inconsistent. The 20-DIP bounds
 		// and normal font weight stay unchanged; the vector paths remain only as
 		// the explicit fallback when the embedded font could not be registered.
-		if (!PaintFontGlyph(buffer, iconBounds, m_iconFont,
-			CodiconGlyph(ActivityBarItemCodiconName(button.item)), iconColor)) {
-			switch (button.item) {
-			case ActivityBarItem::Explorer:
-				icons::codicons::DrawFiles(buffer, iconBounds, iconColor);
-				break;
-			case ActivityBarItem::SourceControl:
-				icons::codicons::DrawSourceControl(buffer, iconBounds, iconColor);
-				break;
-			case ActivityBarItem::Extensions:
-				icons::codicons::Draw(buffer, iconBounds, icons::codicons::Icon::Extensions, iconColor);
-				break;
-			case ActivityBarItem::Count:
-				break;
-			}
+		// A contributed container names a codicon or an image; only the former can be drawn
+		// from the font, so the initial tile is what actually renders extensions like
+		// Claude Code, which ship a PNG.
+		if (!PaintFontGlyph(buffer, iconBounds, m_iconFont, CodiconGlyph(button.codicon), iconColor)
+			&& !PaintBuiltinGlyph(buffer, iconBounds, button.id, iconColor)) {
+			static_cast<void>(PaintInitialTile(buffer, iconBounds, button.label, iconColor, m_model.GetDpi()));
 		}
 		if (button.focused) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.focusBorder);
@@ -537,11 +631,14 @@ void CActivityBar::Invalidate() const noexcept
 	if (m_window != nullptr && ::IsWindow(m_window)) ::InvalidateRect(m_window, nullptr, FALSE);
 }
 
-bool CActivityBar::InvokeRequest(std::optional<ActivityBarItem> item) noexcept
+bool CActivityBar::InvokeRequest(std::string_view containerId) noexcept
 {
-	if (!item || !m_onToggleRequest) return false;
+	if (containerId.empty() || !m_onToggleRequest) return false;
 	try {
-		m_onToggleRequest(*item);
+		// The owner answers a toggle by re-projecting the entry list, which replaces the
+		// storage `containerId` may point into. Hand the callback a copy it cannot outlive.
+		const std::string requested(containerId);
+		m_onToggleRequest(requested);
 		return true;
 	} catch (...) {
 		return false;
@@ -551,7 +648,7 @@ bool CActivityBar::InvokeRequest(std::optional<ActivityBarItem> item) noexcept
 bool CActivityBar::BeginDragIfPastThreshold(POINT point) noexcept
 {
 	if (m_dragging) return true;
-	if (!m_captureItem || !m_onContainerDrag) return false;
+	if (m_captureItem.empty() || !m_onContainerDrag) return false;
 	const int dragX = std::max(1, ::GetSystemMetrics(SM_CXDRAG));
 	const int dragY = std::max(1, ::GetSystemMetrics(SM_CYDRAG));
 	if (std::abs(point.x - m_dragOrigin.x) < dragX && std::abs(point.y - m_dragOrigin.y) < dragY) return false;
@@ -560,13 +657,16 @@ bool CActivityBar::BeginDragIfPastThreshold(POINT point) noexcept
 	return true;
 }
 
-bool CActivityBar::FinishDrag(ActivityBarItem item, POINT clientPoint) noexcept
+bool CActivityBar::FinishDrag(std::string_view containerId, POINT clientPoint) noexcept
 {
-	if (!m_onContainerDrag || m_window == nullptr) return false;
+	if (containerId.empty() || !m_onContainerDrag || m_window == nullptr) return false;
 	POINT screenPoint = clientPoint;
 	if (::ClientToScreen(m_window, &screenPoint) == FALSE) return false;
 	try {
-		m_onContainerDrag(item, screenPoint);
+		// Same lifetime rule as InvokeRequest: a drop can move the container to another
+		// part, and the resulting re-projection invalidates views into the entry list.
+		const std::string dragged(containerId);
+		m_onContainerDrag(dragged, screenPoint);
 		return true;
 	} catch (...) {
 		return false;
@@ -575,7 +675,7 @@ bool CActivityBar::FinishDrag(ActivityBarItem item, POINT clientPoint) noexcept
 
 bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 {
-	std::optional<ActivityBarItem> invoked;
+	std::string invoked;
 	bool focusChanged = false;
 	switch (key) {
 	case VK_TAB:
@@ -593,13 +693,13 @@ bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 		focusChanged = true;
 		break;
 	case VK_HOME:
-		m_model.SetFocusedItem(ActivityBarItem::Explorer);
-		if (!m_model.GetFocusedItem()) static_cast<void>(m_model.MoveFocus(1));
+		// Home and End mean first and last rendered entry, not a particular container:
+		// which container sits at either edge now depends on what extensions contributed.
+		static_cast<void>(m_model.FocusEdge(1));
 		focusChanged = true;
 		break;
 	case VK_END:
-		m_model.SetFocusedItem(ActivityBarItem::Extensions);
-		if (!m_model.GetFocusedItem()) static_cast<void>(m_model.MoveFocus(-1));
+		static_cast<void>(m_model.FocusEdge(-1));
 		focusChanged = true;
 		break;
 	case VK_RETURN:
@@ -611,9 +711,10 @@ bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 	}
 	Invalidate();
 	if (focusChanged) {
-		if (const auto item = m_model.GetFocusedItem()) accessibility::RaiseFocusChanged(*this, static_cast<int>(*item));
+		const auto focused = m_model.GetFocusedItem();
+		if (!focused.empty()) accessibility::RaiseFocusChanged(*this, static_cast<int>(m_model.IndexOf(focused)));
 	}
-	if (invoked) accessibility::RaiseInvoked(*this, static_cast<int>(*invoked));
+	if (!invoked.empty()) accessibility::RaiseInvoked(*this, static_cast<int>(m_model.IndexOf(invoked)));
 	static_cast<void>(InvokeRequest(invoked));
 	return true;
 }
@@ -637,11 +738,13 @@ accessibility::CustomUiAutomationNode CActivityBar::AccessibilityNode(int nodeId
 {
 	if (nodeId < 0 || nodeId >= static_cast<int>(m_model.GetButtonCount())) return {};
 	const auto button = m_model.GetButton(static_cast<std::size_t>(nodeId));
-	const auto item = static_cast<ActivityBarItem>(nodeId);
 	return {
 		nodeId,
-		ActivityBarItemName(item),
-		std::wstring(L"Sakura.ActivityBar.") + ActivityBarItemName(item),
+		std::wstring(button.label),
+		// The automation id must stay keyed to the container id: a UI test that targets
+		// "Sakura.ActivityBar.workbench.view.explorer" must not start matching a different
+		// button because an extension inserted itself above Explorer.
+		std::wstring(L"Sakura.ActivityBar.") + u8stowcs(button.id),
 		UIA_ButtonControlTypeId,
 		{ button.bounds.left, button.bounds.top, button.bounds.right, button.bounds.bottom },
 		button.enabled,
@@ -652,19 +755,20 @@ accessibility::CustomUiAutomationNode CActivityBar::AccessibilityNode(int nodeId
 
 int CActivityBar::AccessibilityFocusedNode() const noexcept
 {
-	const auto focused = m_model.GetFocusedItem();
-	return focused ? static_cast<int>(*focused) : -1;
+	const auto index = m_model.IndexOf(m_model.GetFocusedItem());
+	return index == ActivityBarModel::kNoIndex ? -1 : static_cast<int>(index);
 }
 
 bool CActivityBar::AccessibilityInvoke(int nodeId) noexcept
 {
-	return nodeId >= 0 && nodeId < static_cast<int>(m_model.GetButtonCount()) && Invoke(static_cast<ActivityBarItem>(nodeId));
+	if (nodeId < 0 || nodeId >= static_cast<int>(m_model.GetButtonCount())) return false;
+	return Invoke(m_model.IdAt(static_cast<std::size_t>(nodeId)));
 }
 
 void CActivityBar::AccessibilitySetFocus(int nodeId) noexcept
 {
 	if (nodeId < 0 || nodeId >= static_cast<int>(m_model.GetButtonCount())) return;
-	m_model.SetFocusedItem(static_cast<ActivityBarItem>(nodeId));
+	m_model.SetFocusedItem(m_model.IdAt(static_cast<std::size_t>(nodeId)));
 	Invalidate();
 }
 

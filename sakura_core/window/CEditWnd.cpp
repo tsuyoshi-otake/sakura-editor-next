@@ -32,6 +32,7 @@
 #include "_main/CCommandLine.h"	/// 2003/1/26 aroka
 #include "_main/CAppMode.h"
 #include "basis/CErrorInfo.h"
+#include "func/CKeyBind.h"
 #include "dlg/CDlgAbout.h"
 #include "dlg/CDlgOpenFile.h"
 #include "dlg/CDlgPrintSetting.h"
@@ -74,6 +75,8 @@
 #include "terminal/window/CTerminalTool.h"
 #include "theme/CThemeService.h"
 #include "theme/CColorThemeRegistry.h"
+#include "update/UpdateComposition.h"
+#include "update/IUpdateService.h"
 #include "config/ConfigurationTypes.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include "config/editing/CJsoncConfigurationEditor.h"
@@ -86,6 +89,7 @@
 #include "workbench/workspace/WorkspaceWindowTransitionPlanner.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/WorkbenchLayout.h"
+#include "workbench/activity/ActivityBarEntryProjection.h"
 #include "workbench/activity/CActivityBar.h"
 #include "workbench/extension/CExtensionBottomPanelTool.h"
 #include "workbench/extension/CExtensionSidebarTool.h"
@@ -139,6 +143,7 @@
 #include "cmd/COpeBlk.h"
 #include "cmd/CViewCommander_inline.h"
 
+#include <array>
 #include <cwctype>
 #include <functional>
 #include <limits>
@@ -308,48 +313,32 @@ constexpr int kSideBarDropEdgeDip = 48;
 //! Maps the legacy shared-memory active tool onto a Primary Side Bar ViewContainer.
 //! Outline and Terminal are not Primary Side Bar containers, so both fall back to
 //! Explorer: Outline is a View nested in Explorer, and Terminal lives in the Panel.
-[[nodiscard]] workbench::viewcontainer::ViewContainerPage SidebarPageForLegacyTool(
-	EWorkbenchActiveTool tool) noexcept
+[[nodiscard]] std::string_view SidebarPageForLegacyTool(EWorkbenchActiveTool tool) noexcept
 {
-	using workbench::viewcontainer::ViewContainerPage;
+	namespace pageIds = workbench::viewcontainer::pageIds;
 	switch (tool) {
-	case WORKBENCH_TOOL_SCM: return ViewContainerPage::SourceControl;
-	case WORKBENCH_TOOL_EXTENSIONS: return ViewContainerPage::Extensions;
+	case WORKBENCH_TOOL_SCM: return pageIds::SourceControl;
+	case WORKBENCH_TOOL_EXTENSIONS: return pageIds::Extensions;
 	case WORKBENCH_TOOL_EXPLORER:
 	case WORKBENCH_TOOL_OUTLINE:
 	case WORKBENCH_TOOL_TERMINAL:
 		break;
 	}
-	return ViewContainerPage::Explorer;
+	return pageIds::Explorer;
 }
 
-//! The Activity Bar entry for one ViewContainer. Every built-in page has exactly one.
-[[nodiscard]] workbench::ActivityBarItem ActivityBarItemForPage(
-	workbench::viewcontainer::ViewContainerPage page) noexcept
-{
-	using workbench::viewcontainer::ViewContainerPage;
-	switch (page) {
-	case ViewContainerPage::SourceControl: return workbench::ActivityBarItem::SourceControl;
-	case ViewContainerPage::Extensions: return workbench::ActivityBarItem::Extensions;
-	case ViewContainerPage::Explorer:
-	case ViewContainerPage::Count:
-		break;
-	}
-	return workbench::ActivityBarItem::Explorer;
-}
+/*!
+	@brief The built-in ViewContainers the native side bar can actually open.
 
-[[nodiscard]] std::optional<workbench::viewcontainer::ViewContainerPage> PageForActivityBarItem(
-	workbench::ActivityBarItem item) noexcept
-{
-	using workbench::viewcontainer::ViewContainerPage;
-	switch (item) {
-	case workbench::ActivityBarItem::Explorer: return ViewContainerPage::Explorer;
-	case workbench::ActivityBarItem::SourceControl: return ViewContainerPage::SourceControl;
-	case workbench::ActivityBarItem::Extensions: return ViewContainerPage::Extensions;
-	case workbench::ActivityBarItem::Count: break;
-	}
-	return std::nullopt;
-}
+	The layout registry declares VS Code's full built-in set, Search and Run and Debug included,
+	but `CViewContainerPages` has no page for those two yet. Projecting them onto the Activity
+	Bar would add buttons that open nothing, so the composition passes only what it can show.
+*/
+constexpr std::array kRenderableBuiltinContainers{
+	std::string_view(workbench::layout::ids::viewContainer::Explorer),
+	std::string_view(workbench::layout::ids::viewContainer::SourceControl),
+	std::string_view(workbench::layout::ids::viewContainer::Extensions),
+};
 
 class ScopedWorkingCopyBackendEffect final {
 public:
@@ -578,6 +567,26 @@ struct CEditWnd::ThemeConfigurationGate final {
 		if (!gate->connected || gate->window == nullptr || gate->messageQueued) return;
 		gate->messageQueued = true;
 		if (::PostMessageW(gate->window, MYWM_WORKBENCH_THEME_CHANGED, 0, 0)) return;
+		gate->messageQueued = false;
+	}
+};
+
+struct CEditWnd::UpdateStateGate final {
+	std::mutex mutex;
+	HWND window{};
+	bool connected{ true };
+	bool messageQueued{};
+
+	//! The state itself is deliberately not carried through the message. The UI
+	//! thread re-reads `IUpdateService::State()`, so coalescing several worker
+	//! transitions into one post can never show an intermediate state that the
+	//! service has already left.
+	static void Notify(const std::shared_ptr<UpdateStateGate>& gate) noexcept
+	{
+		std::lock_guard lock(gate->mutex);
+		if (!gate->connected || gate->window == nullptr || gate->messageQueued) return;
+		gate->messageQueued = true;
+		if (::PostMessageW(gate->window, MYWM_WORKBENCH_UPDATE_STATE_CHANGED, 0, 0)) return;
 		gate->messageQueued = false;
 	}
 };
@@ -1040,11 +1049,34 @@ void CEditWnd::ConfigureCustomFrameActions()
 		case CustomFrameManageAction::SelectFileIconTheme:
 			commandId = command_ids::SelectIconTheme;
 			break;
+		// Upstream's `7_update` group. Only the four actionable entries reach here;
+		// the in-progress ones are contributed with `precondition: false` and the
+		// menu never returns them.
+		case CustomFrameManageAction::CheckForUpdates:
+			commandId = "update.check";
+			break;
+		case CustomFrameManageAction::DownloadUpdate:
+			commandId = "update.downloadNow";
+			break;
+		case CustomFrameManageAction::InstallUpdate:
+			commandId = "update.install";
+			break;
+		case CustomFrameManageAction::RestartToUpdate:
+			commandId = "update.restart";
+			break;
 		case CustomFrameManageAction::None:
 			return;
 		}
 		bool handled = false;
 		(void)TryExecuteWorkbenchStableCommand(commandId, handled);
+	});
+	// The title-bar button is one command whose meaning depends on the state it is
+	// showing; the registry resolves which one from the same context snapshot the
+	// button's own visibility clause was evaluated against, so the frame never
+	// holds a second copy of the update state.
+	m_customFrame->SetUpdateIndicatorCallback([this]() {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(workbench::commands::kUpdateIndicatorCommandId, handled);
 	});
 }
 
@@ -1981,6 +2013,11 @@ bool CEditWnd::InitializeWorkbench()
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
 	m_scmTool->SetRoot(workspaceRoot);
+	// upstream の viewsWelcome は「フォルダーが開いている＝Initialize Repository」
+	// 「開いていない＝Clone Repository」の排他 2 状態。GetSemanticWorkspaceRoot() が
+	// 非空になるのは runtime の状態が単一フォルダーの Folder のときだけなので、
+	// SCM のルートと welcome の分岐は同じ 1 つの事実から導かれ、食い違えない。
+	m_scmTool->SetHasOpenFolder(!workspaceRoot.empty());
 	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path,
 		workbench::explorer::ExplorerFileActivationKind kind) {
 		OpenExplorerFile(path, kind);
@@ -2034,9 +2071,9 @@ bool CEditWnd::InitializeWorkbench()
 		const auto* source = edge == workbench::WorkbenchEdge::Right ? m_auxiliaryBarHost : m_sidebarHost;
 		if (source == nullptr) return;
 		const auto page = source->ActivePage();
-		if (!page) return;
+		if (page.empty()) return;
 		if (const auto target = HitTestSideBarEdge(screenPoint); target && *target != edge) {
-			MoveViewContainerToEdge(*page, *target);
+			MoveViewContainerToEdge(page, *target);
 		}
 	};
 
@@ -2066,7 +2103,7 @@ bool CEditWnd::InitializeWorkbench()
 	}
 	if (m_sidebarHost != nullptr) {
 		// Explorer is VS Code's default Primary Side Bar container.
-		m_sidebarHost->ShowPage(workbench::viewcontainer::ViewContainerPage::Explorer);
+		m_sidebarHost->ShowPage(workbench::viewcontainer::pageIds::Explorer);
 	}
 	RefreshSidebarTitles();
 
@@ -2123,18 +2160,18 @@ bool CEditWnd::InitializeWorkbench()
 		m_bottomWorkbenchPanel.reset();
 	}
 
-	m_activityBar = std::make_unique<workbench::CActivityBar>([this](workbench::ActivityBarItem item) {
-		const auto resolved = PageForActivityBarItem(item);
-		if (!resolved) return;
-		const auto page = *resolved;
+	m_activityBar = std::make_unique<workbench::CActivityBar>([this](std::string_view containerId) {
+		// A container the page pool cannot render would toggle a side bar that then shows
+		// nothing, so the click is ignored rather than producing an empty Part.
+		if (m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(containerId)) return;
 		// VS Code's `ViewContainerActivityAction` hides the Primary Side Bar when the clicked
 		// ViewContainer already is the visible active one, and opens it otherwise; the default
 		// `workbench.activityBar.iconClickBehavior` is "toggle". Hiding therefore belongs to the
 		// click gesture, never to `workbench.view.*`, which only ever reveals a container.
 		if (m_workbenchRuntime != nullptr) {
-			const std::string_view commandId = IsSidebarViewContainerActive(SidebarViewContainerId(page))
+			const std::string_view commandId = IsSidebarViewContainerActive(containerId)
 				? std::string_view("workbench.action.toggleSidebarVisibility")
-				: page == workbench::viewcontainer::ViewContainerPage::Explorer
+				: containerId == workbench::viewcontainer::pageIds::Explorer
 					? std::string_view("workbench.view.explorer")
 					: std::string_view();
 			if (!commandId.empty()) {
@@ -2143,19 +2180,21 @@ bool CEditWnd::InitializeWorkbench()
 				if (handled) return;
 			}
 		}
-		ActivateSidebarPage(page, true);
+		ActivateSidebarPage(containerId, true);
 	});
 	// VS Code's Activity Bar icon is a composite drag handle: dropping it on another side
 	// bar runs the same `moveViewContainerToLocation` the Command Palette move uses.
-	m_activityBar->SetContainerDragCallback([this](workbench::ActivityBarItem item, POINT screenPoint) {
-		const auto resolved = PageForActivityBarItem(item);
-		if (!resolved) return;
+	m_activityBar->SetContainerDragCallback([this](std::string_view containerId, POINT screenPoint) {
+		if (m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(containerId)) return;
 		if (const auto target = HitTestSideBarEdge(screenPoint);
 			target && *target != workbench::WorkbenchEdge::Left) {
-			MoveViewContainerToEdge(*resolved, *target);
+			MoveViewContainerToEdge(containerId, *target);
 		}
 	});
 	if (!m_activityBar->Create(GetHwnd(), G_AppInstance())) m_activityBar.reset();
+	// The strip is empty until it is projected, and the first layout commit can be far away
+	// (or never arrive at all on the legacy path), so seed it as soon as the window exists.
+	SyncViewContainers(nullptr);
 
 	const bool hasEditorAdapter = m_editorServiceAdapter != nullptr;
 	const bool hasLegacyBackend = m_legacyEditorBackend != nullptr;
@@ -2600,7 +2639,54 @@ bool CEditWnd::InitializeWorkbench()
 			CloseWorkbench();
 			return false;
 		}
+		// Registered before the stack exists, because the stack is optional and the
+		// commands are not: a machine with no writable staging root must still
+		// answer `update.check` with a typed `Unsupported`, not with the
+		// `UnknownCommand` an unregistered id would produce.
+		const auto updateRegistration = m_workbenchCommandRegistry->RegisterUpdateCommands({
+			.checkForUpdates = [this]() { return ExecuteUpdateCommand(EUpdateCommand::CheckForUpdates); },
+			.downloadUpdate = [this]() { return ExecuteUpdateCommand(EUpdateCommand::DownloadUpdate); },
+			.applyUpdate = [this]() { return ExecuteUpdateCommand(EUpdateCommand::ApplyUpdate); },
+			.quitAndInstall = [this]() { return ExecuteUpdateCommand(EUpdateCommand::QuitAndInstall); },
+			.showUpdateInfo = [this]() { return ExecuteUpdateCommand(EUpdateCommand::ShowUpdateInfo); },
+		});
+		if (!updateRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+		// `editor/title` の投影に唯一つながる呼び出し口。VS Code 本来のタブバー
+		// ツールバーアイコン列はこの配信で触れられるファイルの外側にあるため、
+		// 製品所有のコマンドとして Command Palette から見つかる形にしている。
+		// 詳しい理由は `ShowExtensionEditorTitleMenu` の doc comment (CEditWnd.h) を参照。
+		const auto editorTitleMenuRegistration = m_workbenchCommandRegistry->Register(
+			workbench::commands::WorkbenchCommandDescriptor{
+				"sakura.workbench.action.showEditorTitleActions",
+				"Show Editor Title Actions",
+				workbench::commands::WorkbenchCommandOwner{ "sakura.window", 1 },
+				"workbenchReady",
+				"workbenchReady",
+				workbench::commands::EWorkbenchCommandExecutorTarget::ExtensionHost,
+				{
+					{ workbench::commands::EWorkbenchCommandSurface::CommandPalette,
+						"sakura.workbench.action.showEditorTitleActions.palette", std::nullopt },
+				},
+			},
+			[this]() {
+				return ShowExtensionEditorTitleMenu()
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"editor/title menu is unavailable" };
+			});
+		if (!editorTitleMenuRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
 		ConfigureCustomFrameActions();
+		// After the frame callbacks exist, so the first committed state can paint
+		// the indicator instead of waiting for the next transition.
+		InitializeUpdateProjection();
 	}
 	if (m_workbenchRuntime != nullptr && !InitializeWorkbenchServiceProjection()) {
 		CloseWorkbench();
@@ -2666,6 +2752,9 @@ bool CEditWnd::InitializeWorkbench()
 	m_extensionService->SetEditorOptionsHandler([this](const SExtensionNativeEditorOptions& options) {
 		return ApplyExtensionEditorOptions(options);
 	});
+	// 拡張ホストへの接続が用意できたので、各ペインの Hover シームをここで繋ぐ。
+	// 分割で後からペインが増えたときは CreateEditViewBySplit が同じ関数を呼び直す。
+	WireExtensionHoverHandlers();
 	// The workbench can be composed before the native editor HWND has reached its
 	// final lifetime.  EnsureNotificationHost retries once the real owner exists.
 	EnsureNotificationHost();
@@ -2717,25 +2806,29 @@ bool CEditWnd::InitializeWorkbench()
 		m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
 	}
 	RefreshStatusbarPresentation();
-	m_extensionSidebarTool->SetRequestChildrenCallback([this](std::wstring_view view, std::wstring_view parent) {
-		if (m_extensionService) m_extensionService->RequestTreeChildren(view, parent);
-	});
-	m_extensionSidebarTool->SetSelectionChangedCallback(
-		[this](std::wstring_view view, const std::vector<std::wstring>& items) {
-			if (m_extensionService) m_extensionService->NotifyTreeSelection(view, items);
+	// The pool applies these to every contributed tree, including the ones created later when
+	// an extension contributes its own ViewContainer, so a container that appears at runtime
+	// is wired exactly like the ones that existed at startup.
+	if (m_viewContainerPages) {
+		m_viewContainerPages->SetExtensionViewCallbacks({
+			.requestChildren = [this](std::wstring_view view, std::wstring_view parent) {
+				if (m_extensionService) m_extensionService->RequestTreeChildren(view, parent);
+			},
+			.selectionChanged = [this](std::wstring_view view, const std::vector<std::wstring>& items) {
+				if (m_extensionService) m_extensionService->NotifyTreeSelection(view, items);
+			},
+			.checkboxChanged = [this](std::wstring_view view, std::wstring_view item, bool checked) {
+				if (m_extensionService) m_extensionService->NotifyTreeCheckbox(view, item, checked);
+			},
+			.command = [this](std::wstring_view command, std::string_view argumentsJson,
+				std::wstring_view, std::wstring_view) {
+				if (m_extensionService) m_extensionService->ExecuteCommand(command, argumentsJson);
+			},
+			.visibilityChanged = [this](bool visible) {
+				if (m_extensionService) m_extensionService->NotifyViewVisibility(visible);
+			},
 		});
-	m_extensionSidebarTool->SetCheckboxChangedCallback(
-		[this](std::wstring_view view, std::wstring_view item, bool checked) {
-			if (m_extensionService) m_extensionService->NotifyTreeCheckbox(view, item, checked);
-		});
-	m_extensionSidebarTool->SetCommandCallback(
-		[this](std::wstring_view command, std::string_view argumentsJson,
-			std::wstring_view, std::wstring_view) {
-			if (m_extensionService) m_extensionService->ExecuteCommand(command, argumentsJson);
-		});
-	m_extensionSidebarTool->SetVisibilityChangedCallback([this](bool visible) {
-		if (m_extensionService) m_extensionService->NotifyViewVisibility(visible);
-	});
+	}
 
 	if (m_workbenchRuntime != nullptr) {
 		const HWND editorWindow = GetHwnd();
@@ -4455,6 +4548,43 @@ bool CEditWnd::ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& 
 	return true;
 }
 
+/*!
+	@brief 各ペインの Hover シームに、生きている CExtensionService を注入する
+
+	CEditView 側は dwell/poll の gesture だけを持ち、拡張ホストへの接続は一切
+	知らない。ここが唯一の composition root であり、`this` を捕捉したハンドラは
+	すべて `m_extensionService` の生存を毎回確認してから使う。サービスが無い
+	ウィンドウでは空ハンドラを渡す（= UpdateHoverTracking が「対象外」と同じ扱いに
+	し、応えられない dwell タイマーを起動しない）。
+*/
+void CEditWnd::WireExtensionHoverHandlers()
+{
+	if (!m_extensionService) {
+		for (int i = 0; i < GetAllViewCount(); ++i) {
+			GetView(i).SetHoverHandlers({}, {}, {});
+		}
+		return;
+	}
+	for (int i = 0; i < GetAllViewCount(); ++i) {
+		GetView(i).SetHoverHandlers(
+			[this](std::uint32_t line, std::uint32_t character) {
+				if (!m_extensionService) return;
+				m_extensionService->RequestHover(
+					SExtensionDocumentId{ ::GetCurrentProcessId(), 1 },
+					SExtensionTextPosition{ line, character });
+			},
+			[this]() {
+				if (m_extensionService) m_extensionService->CancelHover();
+			},
+			[this]() -> CEditView::SHoverResultSnapshot {
+				if (!m_extensionService) return {};
+				const auto result = m_extensionService->HoverResult();
+				if (!result) return {};
+				return { .hasResult = true, .empty = result->empty, .markdown = result->markdown };
+			});
+	}
+}
+
 void CEditWnd::EnsureNotificationHost() noexcept
 {
 	if (m_notificationHost || m_extensionService == nullptr) return;
@@ -4534,6 +4664,10 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_themeConfigurationSubscription.reset();
 	m_themeConfigurationGate.reset();
 	CloseWorkbenchServiceProjection();
+	// The update worker can be mid-download. Closing its gate and joining the
+	// worker here is what makes the registry executors below safe to destroy: an
+	// update notification after this point has nowhere to arrive.
+	CloseUpdateProjection();
 	// The Quick Input surface owns callbacks into this composition root. Detach and
 	// destroy it before the command registry/service it queries can disappear.
 	if (m_commandPaletteOverlay) {
@@ -4582,13 +4716,9 @@ void CEditWnd::CloseWorkbench() noexcept
 		::KillTimer(GetHwnd(), IDT_EXTENSION_DOCUMENT_SYNC);
 		m_extensionDocumentSyncTimerPending = false;
 	}
-	if (m_extensionSidebarTool) {
-		m_extensionSidebarTool->SetRequestChildrenCallback({});
-		m_extensionSidebarTool->SetSelectionChangedCallback({});
-		m_extensionSidebarTool->SetCheckboxChangedCallback({});
-		m_extensionSidebarTool->SetCommandCallback({});
-		m_extensionSidebarTool->SetVisibilityChangedCallback({});
-	}
+	// Clears every contributed tree at once, including any container an extension added after
+	// startup, so no tree can call back into a service that is being torn down.
+	if (m_viewContainerPages) m_viewContainerPages->SetExtensionViewCallbacks({});
 	if (m_extensionBottomPanelTool) {
 		m_extensionBottomPanelTool->SetProblemActivationCallback({});
 		m_extensionBottomPanelTool->SetOutputChannelSelectionCallback({});
@@ -4817,7 +4947,7 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto contextResult = m_workbenchContextKeyService->SetCoreProjection(
 			snapshot, m_workbenchRuntime->WorkspaceContext().Snapshot(), BuildWorkbenchEditorCommandContext(),
-			recentlyOpenedAvailable, BuildWorkbenchScmCommandContext());
+			recentlyOpenedAvailable, BuildWorkbenchScmCommandContext(), BuildWorkbenchUpdateCommandContext());
 		if (!contextResult.Succeeded()
 			&& contextResult.status != workbench::commands::EWorkbenchContextMutationStatus::NotApplicable) {
 			return false;
@@ -4881,30 +5011,47 @@ bool CEditWnd::ApplyBuiltinWorkbenchSurfaces(
 		SetOutlineExpandedInHosts(outline->visible);
 	}
 
+	// A page must exist before a host can be told to render it, so the pool is reconciled with
+	// this snapshot first. A container an extension contributed this generation gets its page
+	// here, in the same pass that gives it an Activity Bar icon.
+	SyncViewContainers(&snapshot);
+
 	// Both side bars are the same composite concept in VS Code, so each resolves its own
 	// active container independently and a container may legitimately live in either one.
-	std::optional<workbench::viewcontainer::ViewContainerPage> sidebarPage;
-	std::optional<workbench::viewcontainer::ViewContainerPage> auxiliaryPage;
+	std::string_view sidebarPage;
+	std::string_view auxiliaryPage;
 	if (projection.sidebar) {
 		sidebarPage = SidebarPageForActiveSurface(*projection.sidebar);
-		if (!sidebarPage) return false;
+		if (sidebarPage.empty()) return false;
 	}
 	if (projection.auxiliaryBar) {
 		auxiliaryPage = SidebarPageForActiveSurface(*projection.auxiliaryBar);
-		if (!auxiliaryPage) return false;
+		if (auxiliaryPage.empty()) return false;
+	}
+	// A contributed ViewContainer has no built-in surface to be projected onto, so its identity
+	// comes straight from the layout state instead. Consulting the projection first leaves every
+	// built-in path byte-for-byte unchanged; only a container it cannot name reaches this.
+	const auto renderableContainer =
+		[this](const std::optional<std::string>& containerId) -> std::string_view {
+		if (!containerId || m_viewContainerPages == nullptr) return {};
+		return m_viewContainerPages->Contains(*containerId) ? std::string_view(*containerId)
+															: std::string_view();
+	};
+	if (sidebarPage.empty()) sidebarPage = renderableContainer(snapshot.activeContainers.sideBar);
+	if (auxiliaryPage.empty()) {
+		auxiliaryPage = renderableContainer(snapshot.activeContainers.auxiliaryBar);
 	}
 	// One ViewContainer has exactly one location; two hosts claiming it is incoherent.
-	if (sidebarPage && auxiliaryPage && *sidebarPage == *auxiliaryPage) return false;
+	if (!sidebarPage.empty() && sidebarPage == auxiliaryPage) return false;
 	ApplyAuxiliaryBarPage(auxiliaryPage);
-	if (sidebarPage) {
-		ApplySidebarPage(*sidebarPage);
-	} else if (auxiliaryPage && m_sidebarHost->ActivePage() == auxiliaryPage) {
+	if (!sidebarPage.empty()) {
+		ApplySidebarPage(sidebarPage);
+	} else if (!auxiliaryPage.empty() && m_sidebarHost->ActivePage() == auxiliaryPage) {
 		// The container this side bar used to render has moved out, and no replacement is
 		// active, so the Primary Side Bar is genuinely empty.
-		m_sidebarHost->ShowPage(std::nullopt);
+		m_sidebarHost->ShowPage({});
 		RefreshSidebarTitles();
 	}
-	SyncActivityBarEntries(snapshot);
 
 	if (projection.panel) {
 		switch (*projection.panel) {
@@ -4932,30 +5079,30 @@ bool CEditWnd::ApplyBuiltinWorkbenchSurfaces(
 	};
 	// The Activity Bar belongs to the Primary Side Bar. A container that moved to the
 	// Secondary Side Bar has no Activity Bar entry at all, so it can never be selected here.
-	std::optional<workbench::ActivityBarItem> activeItem;
-	if (partVisible(workbench::layout::ids::part::Sidebar) && sidebarPage) {
-		activeItem = ActivityBarItemForPage(*sidebarPage);
+	std::string_view activeContainer;
+	if (partVisible(workbench::layout::ids::part::Sidebar)) {
+		activeContainer = sidebarPage;
 	}
-	if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
+	if (m_activityBar) m_activityBar->SetSelectedItem(activeContainer);
 	return true;
 }
 
-std::optional<workbench::viewcontainer::ViewContainerPage> CEditWnd::SidebarPageForActiveSurface(
+std::string_view CEditWnd::SidebarPageForActiveSurface(
 	workbench::win32::BuiltinActiveSurface surface) noexcept
 {
-	using workbench::viewcontainer::ViewContainerPage;
+	namespace pageIds = workbench::viewcontainer::pageIds;
 	switch (surface) {
 	case workbench::win32::BuiltinActiveSurface::Explorer:
 	case workbench::win32::BuiltinActiveSurface::Outline:
-		return ViewContainerPage::Explorer;
+		return pageIds::Explorer;
 	case workbench::win32::BuiltinActiveSurface::SourceControl:
-		return ViewContainerPage::SourceControl;
+		return pageIds::SourceControl;
 	case workbench::win32::BuiltinActiveSurface::Extensions:
-		return ViewContainerPage::Extensions;
+		return pageIds::Extensions;
 	default:
 		break;
 	}
-	return std::nullopt;
+	return {};
 }
 
 void CEditWnd::ApplyBuiltinWorkbenchFocus(
@@ -4968,13 +5115,13 @@ void CEditWnd::ApplyBuiltinWorkbenchFocus(
 		case workbench::win32::BuiltinActiveSurface::Extensions: {
 			// Focus follows the container, and the container decides which Part hosts it.
 			const auto page = SidebarPageForActiveSurface(*projection.focus);
-			auto* host = page ? PanelHostFor(HostShowingPage(*page)) : nullptr;
+			auto* host = page.empty() ? nullptr : PanelHostFor(HostShowingPage(page));
 			if (host != nullptr) host->ActivateTool();
 			break;
 		}
 		case workbench::win32::BuiltinActiveSurface::Outline:
 			if (auto* explorerHost = HostShowingPage(
-				workbench::viewcontainer::ViewContainerPage::Explorer)) {
+				workbench::viewcontainer::pageIds::Explorer)) {
 				explorerHost->FocusOutline();
 			}
 			break;
@@ -5081,6 +5228,201 @@ void CEditWnd::CloseWorkbenchServiceProjection() noexcept
 	m_outputService = nullptr;
 }
 
+namespace {
+
+//! Upstream contributes exactly one `7_update` item per state, and contributes
+//! nothing at all for `uninitialized`, `disabled`, `overwriting`, and
+//! `restarting`. Those four therefore map to `None` rather than to whichever
+//! neighbouring label looks closest.
+[[nodiscard]] CustomFrameUpdateMenuEntry UpdateMenuEntryFor(update::EUpdateStateType state) noexcept
+{
+	switch (state) {
+	case update::EUpdateStateType::Idle:                 return CustomFrameUpdateMenuEntry::Check;
+	case update::EUpdateStateType::CheckingForUpdates:   return CustomFrameUpdateMenuEntry::Checking;
+	case update::EUpdateStateType::AvailableForDownload: return CustomFrameUpdateMenuEntry::DownloadNow;
+	case update::EUpdateStateType::Downloading:          return CustomFrameUpdateMenuEntry::Downloading;
+	case update::EUpdateStateType::Downloaded:           return CustomFrameUpdateMenuEntry::Install;
+	case update::EUpdateStateType::Updating:             return CustomFrameUpdateMenuEntry::Updating;
+	case update::EUpdateStateType::Cancelling:           return CustomFrameUpdateMenuEntry::Cancelling;
+	case update::EUpdateStateType::Ready:                return CustomFrameUpdateMenuEntry::Restart;
+	case update::EUpdateStateType::Uninitialized:
+	case update::EUpdateStateType::Disabled:
+	case update::EUpdateStateType::Overwriting:
+	case update::EUpdateStateType::Restarting:
+		break;
+	}
+	return CustomFrameUpdateMenuEntry::None;
+}
+
+} // namespace
+
+void CEditWnd::InitializeUpdateProjection() noexcept
+{
+	if (m_workbenchRuntime == nullptr || m_updateComposition || m_updateStateGate) return;
+	const HWND window = GetHwnd();
+	if (window == nullptr) return;
+
+	try {
+		// Same profile authority every other profile-scoped service in this window
+		// uses. See `config/CLAUDE.md`: the control authority id would read as a
+		// valid target and silently return descriptor defaults.
+		auto result = update::CreateUpdateComposition(
+			m_workbenchRuntime->Configuration(),
+			m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
+		if (!result) {
+			// A machine with no writable staging root, or an installation whose
+			// network policy cannot be read, simply has no update surfaces. That is
+			// an absence, not a startup failure, and the window must still open.
+			return;
+		}
+
+		auto gate = std::make_shared<UpdateStateGate>();
+		gate->window = window;
+		const auto subscription = result.composition->Service().Subscribe(
+			[gate](const update::UpdateState&) { UpdateStateGate::Notify(gate); });
+		if (!subscription) {
+			result.composition->Shutdown();
+			return;
+		}
+
+		m_updateComposition = std::move(result.composition);
+		m_updateStateGate = gate;
+		m_updateSubscriptionId = *subscription;
+		OnWorkbenchUpdateStateChanged();
+	}
+	catch (...) {
+		CloseUpdateProjection();
+	}
+}
+
+void CEditWnd::CloseUpdateProjection() noexcept
+{
+	const auto gate = std::move(m_updateStateGate);
+	if (gate) {
+		std::lock_guard lock(gate->mutex);
+		gate->connected = false;
+		gate->window = nullptr;
+		gate->messageQueued = false;
+	}
+	if (m_updateComposition && m_updateSubscriptionId) {
+		m_updateComposition->Service().Unsubscribe(*m_updateSubscriptionId);
+	}
+	m_updateSubscriptionId.reset();
+	// Stop the worker before releasing the stack: a posted download still holds a
+	// weak reference to the service, and joining here is what makes the window's
+	// teardown order observable rather than incidental.
+	if (m_updateComposition) m_updateComposition->Shutdown();
+	m_updateComposition.reset();
+	m_updateStateId = "uninitialized";
+	if (m_customFrame) {
+		m_customFrame->SetUpdateIndicatorCallback({});
+		m_customFrame->SetUpdateIndicatorVisible(false);
+		m_customFrame->SetUpdateMenuEntry(CustomFrameUpdateMenuEntry::None);
+	}
+}
+
+void CEditWnd::OnWorkbenchUpdateStateChanged()
+{
+	if (m_updateStateGate) {
+		std::lock_guard lock(m_updateStateGate->mutex);
+		m_updateStateGate->messageQueued = false;
+	}
+	if (!m_updateComposition) return;
+
+	const auto state = m_updateComposition->Service().State();
+	m_updateStateId = std::string(update::UpdateStateTypeId(state.type));
+	// The context projection is refreshed before the surfaces are, so a click
+	// arriving in the same message batch is evaluated against the state the
+	// button is about to show rather than the one it is leaving.
+	(void)RefreshWorkbenchCommandContext();
+
+	if (!m_customFrame) return;
+	const bool actionable = update::IsActionableUpdateState(state.type)
+		&& m_updateComposition->Configuration().titleBar;
+	m_customFrame->SetUpdateIndicatorVisible(actionable);
+	m_customFrame->SetUpdateMenuEntry(UpdateMenuEntryFor(state.type));
+	m_customFrame->InvalidateTitle();
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteUpdateCommand(EUpdateCommand command)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	if (!m_updateComposition) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"This installation has no update stack: it could not resolve a staging location or an update policy." };
+	}
+
+	auto& service = m_updateComposition->Service();
+	switch (command) {
+	case EUpdateCommand::CheckForUpdates:
+		// `true`: this path is only ever reached from a user gesture. The periodic
+		// poll calls the service directly and is what `update.mode` = `manual`
+		// suppresses.
+		service.CheckForUpdates(true);
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case EUpdateCommand::DownloadUpdate:
+		service.DownloadUpdate();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case EUpdateCommand::ApplyUpdate:
+		service.ApplyUpdate();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case EUpdateCommand::QuitAndInstall:
+		return ExecuteUpdateQuitAndInstall();
+	case EUpdateCommand::ShowUpdateInfo: {
+		const auto state = service.State();
+		if (!state.update || state.update->releaseUrl.empty()) {
+			return { EWorkbenchCommandExecutionStatus::NotApplicable,
+				"No update is currently known, so there is no release to show." };
+		}
+		if (!m_updateComposition->Launcher().OpenReleasePage(state.update->releaseUrl)) {
+			return { EWorkbenchCommandExecutionStatus::Failed, "The release page could not be opened." };
+		}
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	}
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, "Unknown update command." };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteUpdateQuitAndInstall()
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	// Arm first, then quit: the last process to exit reads the armed manifest, so
+	// arming after the quit has begun would race the very exit it is meant to
+	// describe.
+	m_updateComposition->Service().QuitAndInstall();
+
+	// The quit runs synchronously and may destroy this window before it returns,
+	// so nothing below may touch `this` unconditionally. The gate is the one piece
+	// of this object's state that outlives it: `CloseUpdateProjection` clears
+	// `connected` during teardown, so a still-connected gate afterwards is proof
+	// that the window survived — which can only mean the user cancelled the quit.
+	const std::weak_ptr<UpdateStateGate> weakGate = m_updateStateGate;
+	GetDocument()->HandleCommand(F_EXITALL);
+
+	const auto gate = weakGate.lock();
+	if (!gate) return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	bool survived = false;
+	{
+		std::lock_guard lock(gate->mutex);
+		survived = gate->connected;
+	}
+	if (!survived) return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+
+	// Upstream's `update.restart` leaves the update staged but unarmed when the
+	// quit does not happen, so the next `Ready` gesture starts from the same place
+	// rather than silently updating at some unrelated later exit.
+	m_updateComposition->Service().AbortQuitAndInstall();
+	return { EWorkbenchCommandExecutionStatus::NotApplicable, "The restart was cancelled." };
+}
+
+workbench::commands::WorkbenchUpdateCommandContext CEditWnd::BuildWorkbenchUpdateCommandContext() const
+{
+	return workbench::commands::WorkbenchUpdateCommandContext{ m_updateStateId };
+}
+
 void CEditWnd::OnWorkbenchServiceProjectionChanged()
 {
 	if (m_extensionBottomPanelTool == nullptr || m_markerService == nullptr || m_outputService == nullptr
@@ -5128,30 +5470,33 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 		&& m_bottomWorkbenchPanel->GetState() != workbench::WorkbenchPanelState::Hidden;
 
 	if (m_workbenchRuntime == nullptr) {
-		std::optional<workbench::ActivityBarItem> activeItem;
+		using workbench::layout::ids::viewContainer::Explorer;
+		using workbench::layout::ids::viewContainer::Extensions;
+		using workbench::layout::ids::viewContainer::SourceControl;
+		std::string_view activeContainer;
 		switch (settings.m_eActiveTool) {
 		case WORKBENCH_TOOL_EXPLORER:
-			if (leftVisible) activeItem = workbench::ActivityBarItem::Explorer;
+			if (leftVisible) activeContainer = Explorer;
 			break;
 		case WORKBENCH_TOOL_OUTLINE:
 			// Outline now lives inside Explorer.
-			if (leftVisible) activeItem = workbench::ActivityBarItem::Explorer;
+			if (leftVisible) activeContainer = Explorer;
 			break;
 		case WORKBENCH_TOOL_TERMINAL:
 			// Terminal is reached from the bottom panel/title-bar controls rather
 			// than occupying a dedicated Activity Bar button.
 			break;
 		case WORKBENCH_TOOL_SCM:
-			if (leftVisible) activeItem = workbench::ActivityBarItem::SourceControl;
+			if (leftVisible) activeContainer = SourceControl;
 			break;
 		case WORKBENCH_TOOL_EXTENSIONS:
-			if (leftVisible) activeItem = workbench::ActivityBarItem::Extensions;
+			if (leftVisible) activeContainer = Extensions;
 			break;
 		}
 		// Secondary Side Bar visibility owns no Activity Bar item; every Activity Bar
 		// ViewContainer lives in the Primary Side Bar, exactly like VS Code.
 		(void)rightVisible;
-		if (m_activityBar) m_activityBar->SetSelectedItem(activeItem);
+		if (m_activityBar) m_activityBar->SetSelectedItem(activeContainer);
 	}
 	ApplyWorkbenchTheme();
 	if (GetHwnd() != nullptr) {
@@ -5278,7 +5623,13 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 		else m_workspaceContext->SetExplicitRoot(root);
 	}
 	if (m_explorerTool) m_explorerTool->SetRoot(root);
-	if (m_scmTool) m_scmTool->SetRoot(root);
+	if (m_scmTool) {
+		m_scmTool->SetRoot(root);
+		// フォルダーを開いた／閉じた瞬間に welcome の分岐も追随させる。
+		// SetHasOpenFolder は値が変わったときだけ再構築するので、ここで毎回
+		// 呼んでも余分な再レイアウトにはならない。
+		m_scmTool->SetHasOpenFolder(!root.empty());
+	}
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 }
 
@@ -5501,6 +5852,85 @@ bool CEditWnd::ActivateBuiltinWorkbenchView(std::string_view viewId, bool reques
 	}
 }
 
+bool CEditWnd::ActivateContributedViewContainer(const std::string_view containerId, bool requestFocus)
+{
+	if (m_workbenchRuntime == nullptr || containerId.empty()) return false;
+	const auto succeeded = [](const workbench::layout::WorkbenchLayoutOperationResult& result) {
+		return result.status == workbench::layout::EWorkbenchLayoutOperationStatus::Succeeded
+			|| result.status == workbench::layout::EWorkbenchLayoutOperationStatus::NotApplicable;
+	};
+	try {
+		auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		auto operationId = NextWorkbenchLayoutOperationId("activate-view-container");
+		if (!operationId) return false;
+		auto result = m_workbenchRuntime->LayoutState().ActivateContainer({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.containerId = std::string(containerId),
+		});
+		if (!succeeded(result)) return false;
+		snapshot = std::move(result.snapshot);
+
+		const auto container = std::ranges::find(snapshot.containers, containerId,
+			&workbench::layout::WorkbenchViewContainerState::containerId);
+		if (container == snapshot.containers.end()) return false;
+
+		std::string_view partId;
+		switch (container->location) {
+		case workbench::layout::EWorkbenchViewContainerLocation::SideBar:
+			partId = workbench::layout::ids::part::Sidebar;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::Panel:
+			partId = workbench::layout::ids::part::Panel;
+			break;
+		case workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar:
+			partId = workbench::layout::ids::part::Auxiliarybar;
+			break;
+		}
+		if (partId.empty()) return false;
+
+		const auto part = std::ranges::find(snapshot.parts, partId,
+			&workbench::layout::WorkbenchPartState::partId);
+		if (part == snapshot.parts.end()) return false;
+		if (!part->visible) {
+			operationId = NextWorkbenchLayoutOperationId("reveal-active-container-part");
+			if (!operationId) return false;
+			result = m_workbenchRuntime->LayoutState().SetPartVisibility({
+				.operation = {
+					.operationId = std::move(*operationId),
+					.expectedRevision = snapshot.revision,
+				},
+				.partId = std::string(partId),
+				.visible = true,
+			});
+			if (!succeeded(result)) return false;
+			snapshot = std::move(result.snapshot);
+		}
+
+		if (!requestFocus) return true;
+		operationId = NextWorkbenchLayoutOperationId("focus-active-container");
+		if (!operationId) return false;
+		// Focus stops at the container: a contributed container's active View is its own
+		// business, and naming a view this window never registered would be a lie.
+		result = m_workbenchRuntime->LayoutState().SetFocus({
+			.operation = {
+				.operationId = std::move(*operationId),
+				.expectedRevision = snapshot.revision,
+			},
+			.focus = {
+				.partId = std::string(partId),
+				.containerId = std::string(containerId),
+			},
+		});
+		return succeeded(result);
+	}
+	catch (...) {
+		return false;
+	}
+}
+
 bool CEditWnd::IsBuiltinWorkbenchViewActive(std::string_view viewId) const
 {
 	if (m_workbenchRuntime == nullptr) return false;
@@ -5545,36 +5975,6 @@ bool CEditWnd::IsBuiltinWorkbenchViewActive(std::string_view viewId) const
 	}
 }
 
-std::string_view CEditWnd::SidebarViewContainerId(
-	workbench::viewcontainer::ViewContainerPage page) noexcept
-{
-	using workbench::viewcontainer::ViewContainerPage;
-	switch (page) {
-	case ViewContainerPage::SourceControl:
-		return workbench::layout::ids::viewContainer::SourceControl;
-	case ViewContainerPage::Extensions:
-		return workbench::layout::ids::viewContainer::Extensions;
-	case ViewContainerPage::Explorer:
-	case ViewContainerPage::Count:
-		break;
-	}
-	return workbench::layout::ids::viewContainer::Explorer;
-}
-
-std::optional<workbench::viewcontainer::ViewContainerPage> CEditWnd::ViewContainerPageForId(
-	std::string_view containerId) noexcept
-{
-	using workbench::viewcontainer::ViewContainerPage;
-	if (containerId == workbench::layout::ids::viewContainer::Explorer) return ViewContainerPage::Explorer;
-	if (containerId == workbench::layout::ids::viewContainer::SourceControl) {
-		return ViewContainerPage::SourceControl;
-	}
-	if (containerId == workbench::layout::ids::viewContainer::Extensions) {
-		return ViewContainerPage::Extensions;
-	}
-	return std::nullopt;
-}
-
 bool CEditWnd::IsSidebarViewContainerActive(std::string_view containerId) const
 {
 	// VS Code's Activity Bar compares the clicked container with `getActivePaneComposite()`, so
@@ -5607,7 +6007,8 @@ bool CEditWnd::RefreshWorkbenchCommandContext()
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto result = m_workbenchContextKeyService->SetCoreProjection(
 			m_workbenchRuntime->LayoutState().Snapshot(), m_workbenchRuntime->WorkspaceContext().Snapshot(),
-			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable, BuildWorkbenchScmCommandContext());
+			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable, BuildWorkbenchScmCommandContext(),
+			BuildWorkbenchUpdateCommandContext());
 		return result.Succeeded()
 			|| result.status == workbench::commands::EWorkbenchContextMutationStatus::NotApplicable;
 	}
@@ -5718,6 +6119,94 @@ void CEditWnd::ExpireWorkbenchKeybindingChord() noexcept
 	if (m_workbenchKeybindingState.ExpireIfNeeded(::GetTickCount64())) {
 		if (GetHwnd() != nullptr) ::KillTimer(GetHwnd(), IDT_WORKBENCH_KEYBINDING_CHORD);
 	}
+}
+
+void CEditWnd::SyncExtensionKeybindings()
+{
+	if (m_extensionService == nullptr) {
+		m_extensionKeybindings.Clear();
+		return;
+	}
+	const auto declared = m_extensionService->Contributions().Keybindings();
+	std::vector<workbench::keybinding::ExtensionKeybinding> bindings;
+	bindings.reserve(declared.size());
+	for (const auto& entry : declared) {
+		auto sequence = workbench::keybinding::ParseKeybinding(entry.keyChord);
+		// 読めないキー式はここで落ちる。式の側を直せるのは拡張の作者だけなので、
+		// このホストにできるのは「その 1 本だけを無効にする」ことまで。
+		if (sequence.empty() || entry.commandId.empty()) continue;
+		bindings.push_back({
+			.sequence = std::move(sequence),
+			.commandId = entry.commandId,
+			.whenClause = entry.whenClause,
+			.argumentsJson = entry.argumentsJson,
+			.extensionId = entry.extensionId,
+		});
+	}
+	m_extensionKeybindings.SetBindings(std::move(bindings));
+}
+
+bool CEditWnd::IsLegacyKeyAssigned(
+	const std::uint32_t virtualKey, const bool control, const bool shift, const bool alt) noexcept
+{
+	if (virtualKey >= 256) return false;
+	auto& keyBind = GetDllShareData().m_Common.m_sKeyBind;
+	const auto index = keyBind.m_VKeyToKeyNameArr[virtualKey];
+	if (index >= std::size(keyBind.m_pKeyNameArr)) return false;
+	// 状態インデックスは Shift=1 / Ctrl=2 / Alt=4 の組み合わせ（CKeyBind の表と同じ）。
+	const int state = (shift ? 1 : 0) | (control ? 2 : 0) | (alt ? 4 : 0);
+	return CKeyBind::GetFuncCodeAt(keyBind.m_pKeyNameArr[index], state, TRUE) != F_DEFAULT;
+}
+
+bool CEditWnd::TryHandleExtensionKeybinding(const MSG& message)
+{
+	if (m_extensionService == nullptr || m_extensionKeybindings.Empty()) return false;
+	const auto now = ::GetTickCount64();
+	(void)m_extensionKeybindings.ExpireIfNeeded(now);
+
+	const workbench::keybinding::KeyStroke stroke{
+		.virtualKey = static_cast<std::uint32_t>(message.wParam),
+		.control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0,
+		.shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0,
+		.alt = (::GetKeyState(VK_MENU) & 0x8000) != 0,
+		.win = (::GetKeyState(VK_LWIN) & 0x8000) != 0 || (::GetKeyState(VK_RWIN) & 0x8000) != 0,
+	};
+	// 修飾キー単独の押下は打鍵として数えない。数えると、Ctrl を押した瞬間に
+	// 待機中の chord が「一致しない 2 打鍵目」で潰れる。
+	if (workbench::editor::CtrlKChordState::IsModifierOnlyVirtualKey(stroke.virtualKey)) return false;
+
+	/*
+		Sakura 自身の割り当てがある組み合わせは拡張へ渡さない。この関数が true を
+		返した打鍵はアクセラレータまで届かないので、譲らなければ拡張 1 つで本文編集の
+		キーが黙って奪われる。chord の 2 打鍵目だけは例外で、そこは既に拡張が
+		主導権を持っている（`ctrl+k` の後の `s` を保存に取られる方が壊れている）。
+	*/
+	const bool chordPending = m_extensionKeybindings.IsChordPending();
+	if (!chordPending && !stroke.win
+		&& IsLegacyKeyAssigned(stroke.virtualKey, stroke.control, stroke.shift, stroke.alt)) {
+		return false;
+	}
+
+	const auto resolved = m_extensionKeybindings.Resolve(stroke, [this](std::wstring_view clause) {
+		return m_extensionService->EvaluateWhenClause(clause);
+	});
+	switch (resolved.resolution) {
+	case workbench::keybinding::EKeybindingResolution::NoMatch:
+		return false;
+	case workbench::keybinding::EKeybindingResolution::ChordPending:
+		m_extensionKeybindings.BeginChord(stroke, now);
+		return true;
+	case workbench::keybinding::EKeybindingResolution::ChordCancelled:
+		m_extensionKeybindings.ClearChord();
+		return true;
+	case workbench::keybinding::EKeybindingResolution::Execute:
+		m_extensionKeybindings.ClearChord();
+		m_extensionService->Start();
+		m_extensionService->ExecuteCommand(resolved.commandId,
+			resolved.argumentsJson.empty() ? std::string_view("[]") : std::string_view(resolved.argumentsJson));
+		return true;
+	}
+	return false;
 }
 
 bool CEditWnd::ExecuteToggleSidebarVisibilityCommand()
@@ -5901,17 +6390,17 @@ bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	workbench::CWorkbenchPanelHost* host = nullptr;
 	BOOL* savedVisible = nullptr;
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
-	std::optional<workbench::ActivityBarItem> item;
+	std::string_view selectedContainer;
 	switch (edge) {
 	case workbench::WorkbenchEdge::Left:
 		host = m_leftWorkbenchPanel.get();
 		savedVisible = &settings.m_bLeftPanelVisible;
-		item = workbench::ActivityBarItem::Explorer;
+		selectedContainer = workbench::layout::ids::viewContainer::Explorer;
 		break;
 	case workbench::WorkbenchEdge::Right:
 		host = m_leftWorkbenchPanel.get();
 		savedVisible = &settings.m_bRightPanelVisible;
-		item = workbench::ActivityBarItem::Explorer;
+		selectedContainer = workbench::layout::ids::viewContainer::Explorer;
 		break;
 	case workbench::WorkbenchEdge::Bottom:
 		host = m_bottomWorkbenchPanel.get();
@@ -5943,7 +6432,7 @@ bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 		SetOutlineExpandedInHosts(visible);
 	} else if (host != nullptr) {
 		if (edge == workbench::WorkbenchEdge::Left && visible && activate && m_viewContainerPages) {
-			ApplySidebarPage(workbench::viewcontainer::ViewContainerPage::Explorer);
+			ApplySidebarPage(workbench::viewcontainer::pageIds::Explorer);
 		}
 		if (visible) host->Show(); else host->Hide();
 	}
@@ -5959,57 +6448,60 @@ bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 	// shell's startup output before the first resize.
 	if (host != nullptr && visible && activate) {
 		if (edge == workbench::WorkbenchEdge::Right && m_viewContainerPages) {
-			if (auto* explorerHost = HostShowingPage(
-				workbench::viewcontainer::ViewContainerPage::Explorer)) {
+			if (auto* explorerHost = HostShowingPage(workbench::viewcontainer::pageIds::Explorer)) {
 				explorerHost->FocusOutline();
 			}
 		} else {
 			host->ActivateTool();
 		}
 	}
-	if (m_activityBar && visible && activate) m_activityBar->SetSelectedItem(item);
+	if (m_activityBar && visible && activate) m_activityBar->SetSelectedItem(selectedContainer);
 	if (visibilityChanged || leftVisibilityChanged || oldActiveTool != settings.m_eActiveTool) {
 		BroadcastWorkbenchSettings();
 	}
 	return true;
 }
 
-void CEditWnd::ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage page, bool toggleIfActive)
+void CEditWnd::ActivateSidebarPage(const std::string_view containerId, bool toggleIfActive)
 {
-	if (!m_leftWorkbenchPanel || !m_sidebarHost) return;
-	using workbench::viewcontainer::ViewContainerPage;
-	std::string_view requestedView = workbench::layout::ids::view::Explorer;
+	if (!m_leftWorkbenchPanel || !m_sidebarHost || containerId.empty()) return;
+	namespace pageIds = workbench::viewcontainer::pageIds;
+	// Only a built-in container is identified by a View here; a contributed one is activated
+	// as a container, so `requestedView` stays empty for it.
+	std::string_view requestedView;
 	auto legacyTool = WORKBENCH_TOOL_EXPLORER;
-	const auto activityItem = ActivityBarItemForPage(page);
-	switch (page) {
-	case ViewContainerPage::SourceControl:
+	if (containerId == pageIds::Explorer) {
+		requestedView = workbench::layout::ids::view::Explorer;
+	} else if (containerId == pageIds::SourceControl) {
 		requestedView = workbench::layout::ids::view::SourceControl;
 		legacyTool = WORKBENCH_TOOL_SCM;
-		break;
-	case ViewContainerPage::Extensions:
+	} else if (containerId == pageIds::Extensions) {
 		requestedView = workbench::layout::ids::view::Extensions;
 		legacyTool = WORKBENCH_TOOL_EXTENSIONS;
-		break;
-	case ViewContainerPage::Explorer:
-	case ViewContainerPage::Count:
-		break;
+	} else if (m_workbenchRuntime == nullptr) {
+		// The legacy path has no registry to hold a contributed container, so there is nothing
+		// it could activate and mirroring it onto a built-in tool would be a lie.
+		return;
 	}
 	// The toggle compares ViewContainers exactly as VS Code does, so an Outline selection inside
 	// the Explorer container still counts as "Explorer is already active".
 	const bool alreadyActive = m_workbenchRuntime != nullptr
-		? IsSidebarViewContainerActive(SidebarViewContainerId(page))
+		? IsSidebarViewContainerActive(containerId)
 		: IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Left)
 			&& m_pShareData->m_Common.m_sWorkbench.m_eActiveTool == legacyTool;
 	if (toggleIfActive && alreadyActive) {
 		SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Left, false, false);
 		if (m_workbenchRuntime == nullptr && m_activityBar) {
-			m_activityBar->SetSelectedItem(std::nullopt);
+			m_activityBar->SetSelectedItem({});
 		}
 		return;
 	}
 	if (m_workbenchRuntime != nullptr) {
 		if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
-		if (!ActivateBuiltinWorkbenchView(requestedView, true)) return;
+		const bool activated = requestedView.empty()
+			? ActivateContributedViewContainer(containerId, true)
+			: ActivateBuiltinWorkbenchView(requestedView, true);
+		if (!activated) return;
 		bool mirrorChanged = false;
 		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
 			::OutputDebugStringW(L"Sakura Editor NEXT: left tool projection failed.\n");
@@ -6021,7 +6513,7 @@ void CEditWnd::ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage p
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	settings.m_bLeftPanelVisible = TRUE;
 	settings.m_eActiveTool = legacyTool;
-	ApplySidebarPage(page);
+	ApplySidebarPage(containerId);
 	m_leftWorkbenchPanel->Show();
 	if (GetHwnd()) {
 		RECT client{};
@@ -6030,55 +6522,58 @@ void CEditWnd::ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage p
 		RedrawWorkbenchFrameForCommittedLayout(false);
 	}
 	m_leftWorkbenchPanel->ActivateTool();
-	if (m_activityBar) m_activityBar->SetSelectedItem(activityItem);
+	if (m_activityBar) m_activityBar->SetSelectedItem(containerId);
 	BroadcastWorkbenchSettings();
 }
 
-void CEditWnd::ApplySidebarPage(workbench::viewcontainer::ViewContainerPage page)
+void CEditWnd::ApplySidebarPage(const std::string_view containerId)
 {
 	if (m_sidebarHost == nullptr) return;
 	// A ViewContainer has exactly one location, so the side bar that just gained it takes
 	// the page window away from the other one instead of both claiming to render it.
-	if (m_auxiliaryBarHost != nullptr && m_auxiliaryBarHost->ActivePage() == page) {
-		m_auxiliaryBarHost->ShowPage(std::nullopt);
+	if (m_auxiliaryBarHost != nullptr && !containerId.empty()
+		&& m_auxiliaryBarHost->ActivePage() == containerId) {
+		m_auxiliaryBarHost->ShowPage({});
 	}
-	m_sidebarHost->ShowPage(page);
+	m_sidebarHost->ShowPage(containerId);
 	RefreshSidebarTitles();
 }
 
-void CEditWnd::ApplyAuxiliaryBarPage(std::optional<workbench::viewcontainer::ViewContainerPage> page)
+void CEditWnd::ApplyAuxiliaryBarPage(const std::string_view containerId)
 {
 	if (m_auxiliaryBarHost == nullptr) return;
-	if (page && m_sidebarHost != nullptr && m_sidebarHost->ActivePage() == page) {
-		m_sidebarHost->ShowPage(std::nullopt);
+	if (!containerId.empty() && m_sidebarHost != nullptr
+		&& m_sidebarHost->ActivePage() == containerId) {
+		m_sidebarHost->ShowPage({});
 	}
-	m_auxiliaryBarHost->ShowPage(page);
+	m_auxiliaryBarHost->ShowPage(containerId);
 	RefreshSidebarTitles();
 }
 
 void CEditWnd::RefreshSidebarTitles()
 {
 	// The host header is the VS Code ViewContainer title, so it follows whichever container
-	// that side bar currently renders.
+	// that side bar currently renders. Only the pool knows the title of a contributed
+	// container, so it is asked rather than a table this window would have to keep in sync.
+	const auto titleOf = [this](std::string_view containerId) -> std::wstring {
+		if (containerId.empty() || m_viewContainerPages == nullptr) return {};
+		return m_viewContainerPages->PageTitle(containerId);
+	};
 	if (m_leftWorkbenchPanel && m_sidebarHost != nullptr) {
-		const auto page = m_sidebarHost->ActivePage();
-		m_leftWorkbenchPanel->SetTitle(page
-			? workbench::viewcontainer::CViewContainerPages::PageTitle(*page)
-			: L"");
+		m_leftWorkbenchPanel->SetTitle(titleOf(m_sidebarHost->ActivePage()));
 	}
 	if (m_rightWorkbenchPanel && m_auxiliaryBarHost != nullptr) {
 		const auto page = m_auxiliaryBarHost->ActivePage();
-		m_rightWorkbenchPanel->SetTitle(page
-			? workbench::viewcontainer::CViewContainerPages::PageTitle(*page)
-			: L"SECONDARY SIDE BAR");
+		m_rightWorkbenchPanel->SetTitle(page.empty() ? L"SECONDARY SIDE BAR" : titleOf(page));
 	}
 }
 
 workbench::viewcontainer::CViewContainerHost* CEditWnd::HostShowingPage(
-	workbench::viewcontainer::ViewContainerPage page) const noexcept
+	const std::string_view containerId) const noexcept
 {
-	if (m_sidebarHost != nullptr && m_sidebarHost->ActivePage() == page) return m_sidebarHost;
-	if (m_auxiliaryBarHost != nullptr && m_auxiliaryBarHost->ActivePage() == page) {
+	if (containerId.empty()) return nullptr;
+	if (m_sidebarHost != nullptr && m_sidebarHost->ActivePage() == containerId) return m_sidebarHost;
+	if (m_auxiliaryBarHost != nullptr && m_auxiliaryBarHost->ActivePage() == containerId) {
 		return m_auxiliaryBarHost;
 	}
 	return nullptr;
@@ -6097,7 +6592,7 @@ bool CEditWnd::IsOutlineViewExpanded() const noexcept
 {
 	// Outline is a View inside the Explorer ViewContainer, so "is it showing" depends on
 	// where that container lives now, not on a fixed physical Part.
-	const auto* host = HostShowingPage(workbench::viewcontainer::ViewContainerPage::Explorer);
+	const auto* host = HostShowingPage(workbench::viewcontainer::pageIds::Explorer);
 	if (host == nullptr) return false;
 	const auto* panel = PanelHostFor(host);
 	return panel != nullptr
@@ -6107,7 +6602,7 @@ bool CEditWnd::IsOutlineViewExpanded() const noexcept
 
 void CEditWnd::SetOutlineExpandedInHosts(bool expanded)
 {
-	if (auto* host = HostShowingPage(workbench::viewcontainer::ViewContainerPage::Explorer)) {
+	if (auto* host = HostShowingPage(workbench::viewcontainer::pageIds::Explorer)) {
 		host->SetOutlineExpanded(expanded);
 		return;
 	}
@@ -6116,20 +6611,93 @@ void CEditWnd::SetOutlineExpandedInHosts(bool expanded)
 	if (m_viewContainerPages) m_viewContainerPages->SetOutlineExpanded(expanded);
 }
 
-void CEditWnd::SyncActivityBarEntries(const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot)
+void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState)
 {
-	if (!m_activityBar) return;
+	if (!m_activityBar && !m_viewContainerPages) return;
+	const workbench::activity::ActivityBarProjectionOptions options{
+		.renderableBuiltins = kRenderableBuiltinContainers,
+		// Identity comes from the layout registry, presentation from the extension registry.
+		// Asking the latter only about contributed containers keeps that split intact.
+		.extensionCodicon = [this](std::string_view containerId) -> std::wstring {
+			if (m_extensionService == nullptr) return {};
+			return m_extensionService->Contributions().ContainerPresentation(u8stowcs(containerId)).codicon;
+		},
+	};
+	// Without a runtime no extension has anywhere to register, so the strip is exactly the
+	// built-in set the registry seeds itself with. Reusing the registry rather than a second
+	// hard-coded table keeps container titles from drifting between the two paths.
+	static const workbench::layout::WorkbenchContributionSnapshot builtinsOnly =
+		workbench::layout::WorkbenchContributionRegistry{}.Snapshot();
+	// Taken once and kept: the contributed-page loop below needs the same snapshot's `views` to
+	// decide which containers are webview-only, and re-snapshotting per container would copy the
+	// whole registry once per Activity Bar icon.
+	const auto contributions =
+		m_workbenchRuntime != nullptr ? m_workbenchRuntime->Contributions().Snapshot() : builtinsOnly;
+	auto entries = workbench::activity::ProjectActivityBarEntries(contributions, options);
+
 	// VS Code moves the whole composite entry together with its ViewContainer: a container
 	// that now lives in the Secondary Side Bar has no Activity Bar icon at all. A greyed-out
-	// placeholder would be a fake capability, so the entry is removed instead.
-	for (std::size_t index = 0; index < workbench::viewcontainer::kViewContainerPageCount; ++index) {
-		const auto page = static_cast<workbench::viewcontainer::ViewContainerPage>(index);
-		const auto container = std::ranges::find(snapshot.containers, SidebarViewContainerId(page),
-			&workbench::layout::WorkbenchViewContainerState::containerId);
-		const bool inSideBar = container != snapshot.containers.end()
-			&& container->location == workbench::layout::EWorkbenchViewContainerLocation::SideBar;
-		m_activityBar->SetItemVisible(ActivityBarItemForPage(page), inSideBar);
+	// placeholder would be a fake capability, so the entry is hidden instead.
+	if (layoutState != nullptr) {
+		for (auto& entry : entries) {
+			const auto container = std::ranges::find(layoutState->containers, entry.id,
+				&workbench::layout::WorkbenchViewContainerState::containerId);
+			entry.visible = container == layoutState->containers.end()
+				|| container->location == workbench::layout::EWorkbenchViewContainerLocation::SideBar;
+		}
 	}
+
+	// The strip and the page pool are two projections of one registry, so they are rebuilt from
+	// the same entry list. An icon with no page behind it, or a page with no icon in front of
+	// it, would be a container the user can see but not reach.
+	if (m_viewContainerPages) {
+		std::vector<workbench::viewcontainer::ContributedViewContainer> contributed;
+		contributed.reserve(entries.size());
+		for (const auto& entry : entries) {
+			// A container Sakura itself contributes already has a hand-built page; only the
+			// ones an extension declared need one created for them. An entry hidden because
+			// its container moved to the Secondary Side Bar still needs its page, so
+			// `visible` is deliberately not consulted here.
+			if (entry.builtin) continue;
+			// A container every one of whose Views wants a webview can never fill its tree, so the
+			// page says so instead of rendering an empty one forever. "Every one" is deliberate:
+			// a container mixing a tree View with a webview View still has something real to show.
+			// With no extension registry there is no way to know a View's kind, and guessing
+			// "webview" would put an unsupported notice in front of a tree that works — so the
+			// unknown case stays false and keeps today's behavior.
+			bool webviewOnly = false;
+			if (m_extensionService != nullptr) {
+				bool sawAnyView = false;
+				bool everyViewIsWebview = true;
+				for (const auto& view : contributions.views) {
+					if (view.descriptor.containerId != entry.id) continue;
+					sawAnyView = true;
+					const auto presentation =
+						m_extensionService->Contributions().ViewPresentation(u8stowcs(view.descriptor.id));
+					if (presentation.kind != EExtensionViewKind::Webview) {
+						everyViewIsWebview = false;
+						break;
+					}
+				}
+				webviewOnly = sawAnyView && everyViewIsWebview;
+			}
+			contributed.push_back({ .id = entry.id, .title = entry.label, .webviewOnly = webviewOnly });
+		}
+		if (m_viewContainerPages->SyncContributedContainers(std::move(contributed))) {
+			// A container that vanished may have been the one a side bar was rendering, so the
+			// headers are re-read rather than left naming a page that no longer exists.
+			if (m_sidebarHost != nullptr && !m_sidebarHost->ActivePage().empty()
+				&& !m_viewContainerPages->Contains(m_sidebarHost->ActivePage())) {
+				m_sidebarHost->ShowPage({});
+			}
+			if (m_auxiliaryBarHost != nullptr && !m_auxiliaryBarHost->ActivePage().empty()
+				&& !m_viewContainerPages->Contains(m_auxiliaryBarHost->ActivePage())) {
+				m_auxiliaryBarHost->ShowPage({});
+			}
+			RefreshSidebarTitles();
+		}
+	}
+	if (m_activityBar) m_activityBar->SetEntries(std::move(entries));
 }
 
 std::optional<workbench::WorkbenchEdge> CEditWnd::HitTestSideBarEdge(POINT screenPoint) const
@@ -6161,18 +6729,17 @@ std::optional<workbench::WorkbenchEdge> CEditWnd::HitTestSideBarEdge(POINT scree
 	return std::nullopt;
 }
 
-void CEditWnd::MoveViewContainerToEdge(workbench::viewcontainer::ViewContainerPage page,
+void CEditWnd::MoveViewContainerToEdge(const std::string_view containerId,
 	workbench::WorkbenchEdge edge)
 {
 	// Only the two side bars are composite drop targets here. Moving a ViewContainer into
 	// the Panel is VS Code's separate `workbench.action.movePanelTo*` family and is not
 	// approximated by this gesture.
 	if (edge != workbench::WorkbenchEdge::Left && edge != workbench::WorkbenchEdge::Right) return;
-	if (m_workbenchRuntime == nullptr) return;
+	if (m_workbenchRuntime == nullptr || containerId.empty()) return;
 	const auto location = edge == workbench::WorkbenchEdge::Right
 		? workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar
 		: workbench::layout::EWorkbenchViewContainerLocation::SideBar;
-	const auto containerId = SidebarViewContainerId(page);
 	try {
 		auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
 		const auto container = std::ranges::find(snapshot.containers, containerId,
@@ -6198,13 +6765,17 @@ void CEditWnd::MoveViewContainerToEdge(workbench::viewcontainer::ViewContainerPa
 		snapshot = std::move(result.snapshot);
 
 		// VS Code's `CompositeDragAndDrop.drop` opens the dropped composite in its new home,
-		// which also reveals that Part when it was hidden.
-		const std::string_view viewId = page == workbench::viewcontainer::ViewContainerPage::SourceControl
-			? workbench::layout::ids::view::SourceControl
-			: page == workbench::viewcontainer::ViewContainerPage::Extensions
-				? workbench::layout::ids::view::Extensions
-				: workbench::layout::ids::view::Explorer;
-		if (!ActivateBuiltinWorkbenchView(viewId, true)) return;
+		// which also reveals that Part when it was hidden. A contributed container is opened as
+		// a container; only a built-in one is addressed through its View.
+		namespace pageIds = workbench::viewcontainer::pageIds;
+		std::string_view viewId;
+		if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
+		else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
+		else if (containerId == pageIds::Extensions) viewId = workbench::layout::ids::view::Extensions;
+		const bool activated = viewId.empty()
+			? ActivateContributedViewContainer(containerId, true)
+			: ActivateBuiltinWorkbenchView(viewId, true);
+		if (!activated) return;
 
 		bool mirrorChanged = false;
 		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
@@ -7107,6 +7678,9 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 			return true;
 		}
 	}
+	// 拡張のキーバインドは、組み込みのワークベンチ割り当てより後・アクセラレータより前。
+	// 組み込みを拡張に上書きさせないための順序で、譲る判断自体はこの関数の中にある。
+	if (message.message == WM_KEYDOWN && TryHandleExtensionKeybinding(message)) return true;
 	if (message.message == WM_KEYDOWN && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
 		&& (::GetKeyState(VK_MENU) & 0x8000) == 0) {
 		if (message.wParam == L'P' && (::GetKeyState(VK_SHIFT) & 0x8000) != 0) {
@@ -7207,6 +7781,93 @@ bool CEditWnd::ShowExtensionCommandPalette()
 	const auto convertedRegisteredItems = convertRegisteredItems(registeredCommands);
 	items.insert(items.end(), convertedRegisteredItems.begin(), convertedRegisteredItems.end());
 	return m_commandPaletteOverlay->Show(std::move(items));
+}
+
+std::vector<extension::menus::SProjectedMenuItem> CEditWnd::ProjectExtensionEditorTitleMenu() const
+{
+	if (!m_extensionService) return {};
+	// `CExtensionService` は内部の `CExtensionCommandPalette`／`CExtensionContextKeys` を
+	// 貸し出さないため、`ProjectMenu` の追加オーバーロードへ渡す 2 つの関数オブジェクトを
+	// 既存の公開 API だけから組む。
+	const extension::menus::WhenClauseEvaluator evaluateWhenClause =
+		[this](std::wstring_view clause) { return m_extensionService->EvaluateWhenClause(clause); };
+	const extension::menus::CommandInfoLookup lookupCommand =
+		[this](std::wstring_view commandId) -> std::optional<extension::menus::SProjectedMenuCommandInfo> {
+			// SearchCommands は語のあいまい一致検索であり id 完全一致検索ではないため、
+			// 上限いっぱいまで取ってから id が一致する 1 件だけを拾い直す。
+			// `CExtensionWorkbenchDispatcher::DispatchExtensionRegistration` は実運用の
+			// コマンド登録で `whenClause` を設定しないので、`Search` 内部の when 絞り込みは
+			// 常に無条件で真になり、この代替は安全（コマンド 1 件の表示名・可否だけを使う）。
+			const auto results = m_extensionService->SearchCommands(
+				commandId, (std::numeric_limits<std::size_t>::max)());
+			for (const auto& item : results) {
+				if (item.id != commandId) continue;
+				return extension::menus::SProjectedMenuCommandInfo{ item.label, item.enabled };
+			}
+			return std::nullopt;
+		};
+	return extension::menus::ProjectMenu(
+		m_extensionService->Contributions(), evaluateWhenClause, lookupCommand, extension::menus::kEditorTitle);
+}
+
+bool CEditWnd::ShowExtensionEditorTitleMenu()
+{
+	if (!GetHwnd()) return false;
+	const auto projected = ProjectExtensionEditorTitleMenu();
+	if (projected.empty()) {
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"editor/title に投影できる項目はありません");
+		return false;
+	}
+
+	HMENU menu = ::CreatePopupMenu();
+	if (menu == nullptr) return false;
+	struct MenuHandle final { HMENU value; ~MenuHandle() { if (value != nullptr) ::DestroyMenu(value); } } menuHandle{ menu };
+
+	// TrackPopupMenu(TPM_RETURNCMD) は WM_COMMAND を経由せず選択結果を直接返すため、
+	// このポップアップ専用の連番 ID (1 始まり。0 は「選択なし」の予約値) を毎回作り直せる。
+	m_extensionEditorTitleMenuCommandIds.clear();
+	const std::function<void(HMENU, const std::vector<extension::menus::SProjectedMenuItem>&)> appendItems =
+		[this, &appendItems](HMENU targetMenu, const std::vector<extension::menus::SProjectedMenuItem>& items) {
+			for (const auto& item : items) {
+				if (item.separatorBefore) ::AppendMenuW(targetMenu, MF_SEPARATOR, 0, nullptr);
+				if (!item.submenuId.empty()) {
+					HMENU submenu = ::CreatePopupMenu();
+					if (submenu == nullptr) continue;
+					appendItems(submenu, item.children);
+					if (!::AppendMenuW(targetMenu, MF_POPUP | MF_STRING,
+						reinterpret_cast<UINT_PTR>(submenu), item.label.c_str())) {
+						::DestroyMenu(submenu);
+					}
+					continue;
+				}
+				m_extensionEditorTitleMenuCommandIds.push_back(item.commandId);
+				const UINT id = static_cast<UINT>(m_extensionEditorTitleMenuCommandIds.size());
+				const UINT flags = MF_STRING | (item.enabled ? MF_ENABLED : (MF_DISABLED | MF_GRAYED));
+				::AppendMenuW(targetMenu, flags, id, item.label.c_str());
+			}
+		};
+	appendItems(menu, projected);
+
+	POINT point{};
+	if (::GetCursorPos(&point) == FALSE) return false;
+	const UINT selected = ::TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON,
+		point.x, point.y, 0, GetHwnd(), nullptr);
+	if (selected == 0) return false;
+	if (selected > m_extensionEditorTitleMenuCommandIds.size()) return false;
+	const std::wstring commandId = m_extensionEditorTitleMenuCommandIds[selected - 1];
+
+	// `ShowExtensionCommandPalette` の accept コールバックと同じ二段構え:
+	// まずネイティブの安定コマンドとして解決を試み、当たらなければ拡張コマンドへ渡す。
+	if (m_workbenchCommandRegistry
+		&& workbench::editor::DispatchRegisteredCommandPaletteSelection(*m_workbenchCommandRegistry, commandId,
+		[this](std::string_view stableCommandId) {
+			bool handled = false;
+			(void)TryExecuteWorkbenchStableCommand(stableCommandId, handled);
+		})) {
+		return true;
+	}
+	if (m_extensionService) m_extensionService->ExecuteCommand(commandId);
+	return true;
 }
 
 void CEditWnd::SetWorkbenchZoomPercent(int percent)
@@ -8150,7 +8811,7 @@ void CEditWnd::ShowExtensionsViewContainer()
 {
 	// VS Code's `workbench.view.*` commands only ever reveal a container; hiding belongs
 	// to the Activity Bar click gesture (`workbench.action.toggleSidebarVisibility`).
-	ActivateSidebarPage( workbench::viewcontainer::ViewContainerPage::Extensions, false );
+	ActivateSidebarPage( workbench::viewcontainer::pageIds::Extensions, false );
 }
 
 //! True while the Extensions ViewContainer is the active, visible container of its Part.
@@ -8318,6 +8979,9 @@ LRESULT CEditWnd::DispatchEvent(
 	case MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED:
 		OnWorkbenchServiceProjectionChanged();
 		return 0;
+	case MYWM_WORKBENCH_UPDATE_STATE_CHANGED:
+		OnWorkbenchUpdateStateChanged();
+		return 0;
 	case MYWM_WORKBENCH_THEME_CHANGED:
 		if (m_themeConfigurationGate) {
 			std::lock_guard lock(m_themeConfigurationGate->mutex);
@@ -8333,8 +8997,16 @@ LRESULT CEditWnd::DispatchEvent(
 				m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
 				RefreshStatusbarPresentation();
 			}
-			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Views)) != 0 && m_extensionSidebarTool) {
-				m_extensionSidebarTool->Refresh();
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Views)) != 0
+				&& m_viewContainerPages) {
+				// Every container renders a slice of the one shared view registry, so a view
+				// change is republished to all of them, not just the Extensions bucket.
+				m_viewContainerPages->RefreshExtensionViews();
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Contributions)) != 0) {
+				// キー式の解釈は contribution が変わったときだけ。打鍵ごとに
+				// 文字列を読み直すと、押すたびに同じ解析を繰り返すことになる。
+				SyncExtensionKeybindings();
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Diagnostics)) != 0) {
 				Views_DeleteCompatibleBitmap();
@@ -12013,6 +12685,10 @@ bool CEditWnd::CreateEditViewBySplit(int nViewCount )
 			m_pcEditViewArr[i]->Create( m_cSplitterWnd.GetHwnd(), GetDocument(), i, FALSE, false );
 		}
 		m_nEditViewCount = nViewCount;
+		// 新しく生まれたペインにも Hover シームを注入する（既存ペインは同じ
+		// ハンドラで上書きされるだけで、進行中の要求は SetHoverHandlers 内の
+		// CancelHoverTracking が畳む）。
+		WireExtensionHoverHandlers();
 
 		std::vector<HWND> hWndArr;
 		hWndArr.reserve(nViewCount + 1);

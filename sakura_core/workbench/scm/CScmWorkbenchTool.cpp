@@ -8,6 +8,7 @@
 #include "workbench/scm/CScmWorkbenchTool.h"
 
 #include "workbench/scm/GitCommandRunner.h"
+#include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitScmMenus.h"
 #include "workbench/scm/GitScmPublisher.h"
 
@@ -66,6 +67,22 @@ constexpr int kInputOuterMarginDip = 5;
 constexpr int kInputPaddingDip = 4;
 //! The commit box's child-control id. The list predates it and keeps 1.
 constexpr int kInputControlId = 2;
+//! The empty-state welcome content's own left/right inset. Upstream's
+//! `.scm-view-welcome` pads its message and buttons; there is no flex-box
+//! here, so this is the width `LayoutWelcome` measures and centers inside.
+constexpr int kWelcomeInsetDip = 20;
+//! Horizontal/vertical padding inside one welcome action button, matching a
+//! `monaco-button`'s own padding closely enough to read as a button rather
+//! than as plain text.
+constexpr int kWelcomeButtonPaddingXDip = 14;
+constexpr int kWelcomeButtonPaddingYDip = 6;
+//! Vertical gap between stacked welcome buttons.
+constexpr int kWelcomeButtonGapDip = 8;
+//! Vertical gap between the welcome message and its first button.
+constexpr int kWelcomeBlockGapDip = 12;
+//! The welcome button's corner radius, matching `monaco-button`'s small
+//! rounding rather than SCM's otherwise-rectangular rows.
+constexpr int kWelcomeButtonCornerRadiusDip = 4;
 
 //!
 //! @brief `scm.providerCountBadge`'s documented default, `hidden`.
@@ -198,6 +215,17 @@ struct BandSegment final {
 	std::string command;
 	std::string argumentsJson;
 	std::wstring tooltip;
+};
+
+//! One clickable action button inside the Source Control empty-state welcome
+//! content (`GitScmWelcomeModel::actions`). Mirrors `BandSegment`'s
+//! rect/command/argumentsJson hit-test-and-dispatch shape rather than
+//! inventing a second interaction model — see this directory's CLAUDE.md.
+struct WelcomeSegment final {
+	RECT rect{};
+	std::wstring label;
+	std::string command;
+	std::string argumentsJson;
 };
 
 //! What the repository row renders, copied out of the published provider so the
@@ -451,6 +479,19 @@ struct CScmWorkbenchTool::Impl {
 	bool trackingMouse{};
 	bool active{};
 	bool closed{};
+	//! Whether the current window has a single open workspace folder. Set by
+	//! `CScmWorkbenchTool::SetHasOpenFolder`; see that method's declaration for
+	//! why it defaults to `false`.
+	bool hasOpenFolder{};
+	//! What the Source Control empty state currently shows. Recomputed from
+	//! `hasOpenFolder` and `openRepositoryCount` every `PublishAndRender()`,
+	//! never read directly from `GitScmState` — the same "derive, don't
+	//! duplicate" rule `band` and `inputModel` already follow.
+	GitScmWelcomeModel welcomeModel;
+	std::vector<WelcomeSegment> welcomeSegments;
+	RECT welcomeMessageRect{};
+	//! `welcomeSegments` index plus one, or zero when the pointer is over none.
+	std::size_t hoveredWelcomeSegment{};
 
 	void Start() { if (!worker.joinable()) worker = std::thread(WorkerMain, shared); }
 	void NotifyWindow(HWND target, bool alive) {
@@ -504,6 +545,7 @@ struct CScmWorkbenchTool::Impl {
 			operands = std::move(publication.operands);
 		}
 		openRepositoryCount = providers.size();
+		RebuildWelcome();
 		RebuildRows(providers, decorations, operands);
 		RebuildBand(providers);
 		RebuildInput(providers);
@@ -828,6 +870,177 @@ struct CScmWorkbenchTool::Impl {
 				DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		}
 	}
+	[[nodiscard]] RECT WelcomeBounds() const
+	{
+		RECT client{};
+		if (window) ::GetClientRect(window, &client);
+		return RECT{ client.left, ListTop(), client.right, client.bottom };
+	}
+	//! Recompute upstream's `viewsWelcome` choice from the same providers count
+	//! already read for `openRepositoryCount` and from `hasOpenFolder` (set by
+	//! the composition root from `CWorkbenchRuntime`'s state; see
+	//! `CScmWorkbenchTool::SetHasOpenFolder` and this directory's CLAUDE.md).
+	void RebuildWelcome()
+	{
+		const auto previous = welcomeModel;
+		welcomeModel = BuildGitScmWelcomeModel(hasOpenFolder, openRepositoryCount != 0);
+		if (welcomeModel == previous) return;
+		hoveredWelcomeSegment = 0;
+		// The empty resource list and the welcome content occupy the same region
+		// and are mutually exclusive, exactly as upstream's tree body and its
+		// `viewsWelcome` overlay are: showing both would draw an "open a folder"
+		// prompt over rows that do not exist.
+		if (list) {
+			::ShowWindow(list, welcomeModel.content == EGitScmWelcomeContent::None ? SW_SHOW : SW_HIDE);
+		}
+		LayoutWelcome();
+		if (window) ::InvalidateRect(window, nullptr, TRUE);
+	}
+	//! Upstream's `viewsWelcome` content has no flex-box equivalent here, so the
+	//! message and its stacked buttons are measured as one block and that block
+	//! is centered manually inside the area the resource list would otherwise
+	//! occupy.
+	void LayoutWelcome()
+	{
+		welcomeSegments.clear();
+		welcomeMessageRect = RECT{};
+		if (!window || welcomeModel.content == EGitScmWelcomeContent::None) return;
+		RECT client{};
+		::GetClientRect(window, &client);
+		const int inset = icons::ScaleDip(kWelcomeInsetDip, dpi);
+		const LONG left = client.left + inset;
+		const LONG right = std::max(left, client.right - inset);
+		const LONG top = ListTop();
+		const LONG bottom = std::max(top, client.bottom);
+		if (right <= left || bottom <= top) return;
+
+		const HDC dc = ::GetDC(window);
+		if (dc == nullptr) return;
+		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
+
+		RECT messageRect{ left, 0, right, 0 };
+		if (!welcomeModel.message.empty()) {
+			::DrawTextW(dc, welcomeModel.message.c_str(), static_cast<int>(welcomeModel.message.size()),
+				&messageRect, DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+		}
+		const LONG messageHeight = messageRect.bottom - messageRect.top;
+
+		const int buttonPaddingX = icons::ScaleDip(kWelcomeButtonPaddingXDip, dpi);
+		const int buttonPaddingY = icons::ScaleDip(kWelcomeButtonPaddingYDip, dpi);
+		const int buttonGap = icons::ScaleDip(kWelcomeButtonGapDip, dpi);
+		const int blockGap = icons::ScaleDip(kWelcomeBlockGapDip, dpi);
+
+		struct MeasuredButton {
+			std::wstring label;
+			std::string command;
+			std::string argumentsJson;
+			LONG width{};
+			LONG height{};
+		};
+		std::vector<MeasuredButton> buttons;
+		for (const auto& action : welcomeModel.actions) {
+			if (action.label.empty() || action.command.empty()) continue;
+			SIZE extent{};
+			(void)::GetTextExtentPoint32W(dc, action.label.c_str(), static_cast<int>(action.label.size()), &extent);
+			MeasuredButton button;
+			button.label = action.label;
+			button.command = action.command;
+			button.argumentsJson = action.argumentsJson;
+			button.width = std::min<LONG>(right - left, extent.cx + 2 * buttonPaddingX);
+			button.height = extent.cy + 2 * buttonPaddingY;
+			buttons.push_back(std::move(button));
+		}
+
+		LONG totalHeight = messageHeight;
+		if (!buttons.empty()) {
+			totalHeight += blockGap;
+			for (std::size_t index = 0; index < buttons.size(); ++index) {
+				totalHeight += buttons[index].height;
+				if (index + 1 < buttons.size()) totalHeight += buttonGap;
+			}
+		}
+
+		LONG cursorTop = top + std::max<LONG>(0, (bottom - top - totalHeight) / 2);
+		if (messageHeight > 0) {
+			messageRect.top = cursorTop;
+			messageRect.bottom = cursorTop + messageHeight;
+			welcomeMessageRect = messageRect;
+			cursorTop = messageRect.bottom;
+		}
+		if (!buttons.empty()) cursorTop += blockGap;
+		for (const auto& button : buttons) {
+			const LONG buttonLeft = left + std::max<LONG>(0, ((right - left) - button.width) / 2);
+			WelcomeSegment segment;
+			segment.rect = RECT{ buttonLeft, cursorTop, buttonLeft + button.width, cursorTop + button.height };
+			segment.label = button.label;
+			segment.command = button.command;
+			segment.argumentsJson = button.argumentsJson;
+			welcomeSegments.push_back(std::move(segment));
+			cursorTop += button.height + buttonGap;
+		}
+
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		::ReleaseDC(window, dc);
+	}
+	void PaintWelcome(HDC dc)
+	{
+		if (welcomeModel.content == EGitScmWelcomeContent::None) return;
+		if (welcomeMessageRect.right > welcomeMessageRect.left && !welcomeModel.message.empty()) {
+			::SetTextColor(dc, palette.primaryText.ToColorRef());
+			RECT message = welcomeMessageRect;
+			::DrawTextW(dc, welcomeModel.message.c_str(), static_cast<int>(welcomeModel.message.size()),
+				&message, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+		}
+		const int radius = icons::ScaleDip(kWelcomeButtonCornerRadiusDip, dpi);
+		for (std::size_t index = 0; index < welcomeSegments.size(); ++index) {
+			const auto& segment = welcomeSegments[index];
+			if (segment.rect.right <= segment.rect.left) continue;
+			const bool hovered = hoveredWelcomeSegment == index + 1;
+			const HBRUSH brush = ::CreateSolidBrush(
+				(hovered ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef());
+			if (brush != nullptr) {
+				const HGDIOBJ previousBrush = ::SelectObject(dc, brush);
+				const HGDIOBJ previousPen = ::SelectObject(dc, ::GetStockObject(NULL_PEN));
+				::RoundRect(dc, segment.rect.left, segment.rect.top, segment.rect.right, segment.rect.bottom,
+					radius, radius);
+				::SelectObject(dc, previousPen);
+				::SelectObject(dc, previousBrush);
+				::DeleteObject(brush);
+			}
+			::SetTextColor(dc, palette.buttonForeground.ToColorRef());
+			RECT text = segment.rect;
+			::DrawTextW(dc, segment.label.c_str(), static_cast<int>(segment.label.size()), &text,
+				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		}
+	}
+	[[nodiscard]] std::size_t WelcomeSegmentIndexAt(POINT point) const
+	{
+		for (std::size_t index = 0; index < welcomeSegments.size(); ++index) {
+			if (::PtInRect(&welcomeSegments[index].rect, point)) return index + 1;
+		}
+		return 0;
+	}
+	void SetHoveredWelcomeSegment(std::size_t segment)
+	{
+		if (hoveredWelcomeSegment == segment) return;
+		hoveredWelcomeSegment = segment;
+		if (window) {
+			const RECT bounds = WelcomeBounds();
+			::InvalidateRect(window, &bounds, TRUE);
+		}
+	}
+	//! Run the pressed welcome action button, which dispatches `git.init` or
+	//! `git.clone` exactly as the Command Palette entry for the same command
+	//! would.
+	bool InvokeWelcomeSegmentAt(POINT point)
+	{
+		const auto index = WelcomeSegmentIndexAt(point);
+		if (index == 0) return false;
+		const auto& segment = welcomeSegments[index - 1];
+		if (segment.command.empty() || !runCommand) return false;
+		(void)runCommand(segment.command, segment.argumentsJson);
+		return true;
+	}
 	//! Replace the row's tools. Upstream's title and its command tooltips are the
 	//! only place the repository path, the remote, and the commit counts appear.
 	void SyncTooltips()
@@ -1134,6 +1347,7 @@ void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 	m_impl->LayoutInput();
 	m_impl->LayoutList();
 	m_impl->LayoutBand();
+	m_impl->LayoutWelcome();
 }
 
 void CScmWorkbenchTool::Activate()
@@ -1188,6 +1402,9 @@ void CScmWorkbenchTool::Close()
 	if (m_impl->worker.joinable()) m_impl->worker.join();
 	m_impl->bandSegments.clear();
 	m_impl->band = {};
+	m_impl->welcomeSegments.clear();
+	m_impl->welcomeModel = {};
+	m_impl->hoveredWelcomeSegment = 0;
 	m_impl->tooltipToolCount = 0;
 	if (m_impl->tooltip && ::IsWindow(m_impl->tooltip)) ::DestroyWindow(m_impl->tooltip);
 	m_impl->tooltip = nullptr;
@@ -1208,6 +1425,12 @@ void CScmWorkbenchTool::SetRoot(std::wstring root)
 	}
 	m_impl->shared->generation.fetch_add(1, std::memory_order_acq_rel);
 	Refresh();
+}
+void CScmWorkbenchTool::SetHasOpenFolder(bool hasOpenFolder)
+{
+	if (m_impl->hasOpenFolder == hasOpenFolder) return;
+	m_impl->hasOpenFolder = hasOpenFolder;
+	if (!m_impl->closed) m_impl->RebuildWelcome();
 }
 void CScmWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
 {
@@ -1269,6 +1492,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		impl.LayoutInput();
 		impl.LayoutList();
 		impl.LayoutBand();
+		impl.LayoutWelcome();
 		return 0;
 	}
 	case WM_ERASEBKGND: return 1;
@@ -1292,12 +1516,14 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		::DrawTextW(dc, title.c_str(), -1, &header, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		impl.PaintBand(dc);
 		impl.PaintInputFrame(dc);
+		impl.PaintWelcome(dc);
 		::EndPaint(window, &paint);
 		return 0;
 	}
 	case WM_LBUTTONUP: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		if (impl.InvokeSegmentAt(point)) return 0;
+		if (impl.InvokeWelcomeSegmentAt(point)) return 0;
 		break;
 	}
 	case WM_SETCURSOR: {
@@ -1309,6 +1535,10 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 			::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
 			return TRUE;
 		}
+		if (impl.WelcomeSegmentIndexAt(point) != 0) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
+			return TRUE;
+		}
 		break;
 	}
 	case WM_MOUSEMOVE: {
@@ -1317,6 +1547,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		// Only an action highlights: the name segment carries a title but runs
 		// nothing, and highlighting it would advertise a click that does nothing.
 		impl.SetHoveredSegment(index != 0 && impl.bandSegments[index - 1].kind == EBandSegment::Action ? index : 0);
+		impl.SetHoveredWelcomeSegment(impl.WelcomeSegmentIndexAt(point));
 		if (!impl.trackingMouse) {
 			TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 };
 			impl.trackingMouse = ::TrackMouseEvent(&track) != FALSE;
@@ -1326,6 +1557,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	case WM_MOUSELEAVE:
 		impl.trackingMouse = false;
 		impl.SetHoveredSegment(0);
+		impl.SetHoveredWelcomeSegment(0);
 		return 0;
 	case WM_NOTIFY: {
 		auto* const header = reinterpret_cast<NMHDR*>(lParam);

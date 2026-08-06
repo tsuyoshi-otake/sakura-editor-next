@@ -20,7 +20,11 @@ $repoPrefixes = @(
     "$repoRoot\",
     (($repoRoot -replace '\\', '/') + '/')
 )
-$testProcessNamePattern = '^(OpenCppCoverage|tests1|sakura)\.exe$'
+# node.exe is here because `node --test` has no default timeout: a hung test
+# file outlives the command that returned, and keeps burning a core unnoticed.
+# The repository-path check below still applies, so unrelated node processes
+# on the machine are never touched.
+$testProcessNamePattern = '^(OpenCppCoverage|tests1|sakura|node)\.exe$'
 
 function Test-RepositoryLinkedProcess {
     param([Parameter(Mandatory)] $Process)

@@ -226,6 +226,172 @@ TEST(CustomFrame, CompactTitleControlsExposeAccessibleButtonsWithInvokeMetadata)
 	EXPECT_TRUE(account.invoke);
 }
 
+namespace {
+
+//! Every title-control rectangle except the indicator's own, so a hidden indicator can be
+//! proven to change nothing at all rather than only nothing obvious.
+void ExpectSameFrameExceptUpdateIndicator(const CustomFrameLayout& expected, const CustomFrameLayout& actual)
+{
+	const auto same = [](const RECT& a, const RECT& b) {
+		EXPECT_EQ(a.left, b.left);
+		EXPECT_EQ(a.top, b.top);
+		EXPECT_EQ(a.right, b.right);
+		EXPECT_EQ(a.bottom, b.bottom);
+	};
+	same(expected.title, actual.title);
+	same(expected.systemMenu, actual.systemMenu);
+	same(expected.menu, actual.menu);
+	same(expected.captionText, actual.captionText);
+	same(expected.layoutButton, actual.layoutButton);
+	same(expected.primarySidebarButton, actual.primarySidebarButton);
+	same(expected.bottomPanelButton, actual.bottomPanelButton);
+	same(expected.secondarySidebarButton, actual.secondarySidebarButton);
+	same(expected.accountButton, actual.accountButton);
+	same(expected.manageButton, actual.manageButton);
+	same(expected.minimizeButton, actual.minimizeButton);
+	same(expected.maximizeButton, actual.maximizeButton);
+	same(expected.closeButton, actual.closeButton);
+}
+
+} // namespace
+
+TEST(CustomFrameUpdateControl, LeavesEveryOtherRectangleUntouchedWhileTheStateIsNotActionable)
+{
+	// The indicator exists only for `available for download` / `downloaded` / `ready`.
+	// In all nine other states the composition root passes width zero, and zero must be
+	// indistinguishable from a build that never had an indicator at all.
+	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
+		const auto withoutIndicator = CalculateCustomFrameLayout(1200, dpi, 430);
+		const auto hidden = CalculateCustomFrameLayout(1200, dpi, 430, 0);
+		ExpectSameFrameExceptUpdateIndicator(withoutIndicator, hidden);
+		EXPECT_TRUE(::IsRectEmpty(&hidden.updateButton));
+		// A degenerate rectangle at the current offset would still hit-test as absent, but
+		// it would also paint and expose an accessible node; the layout skips it outright.
+		EXPECT_EQ(0, hidden.updateButton.left);
+		EXPECT_EQ(0, hidden.updateButton.right);
+
+		// A negative measurement is clamped to hidden rather than shifting controls right.
+		const auto negative = CalculateCustomFrameLayout(1200, dpi, 430, -40);
+		ExpectSameFrameExceptUpdateIndicator(withoutIndicator, negative);
+		EXPECT_TRUE(::IsRectEmpty(&negative.updateButton));
+	}
+}
+
+TEST(CustomFrameUpdateControl, InsertsTheLabelledIndicatorBetweenSecondarySideBarAndAccount)
+{
+	constexpr int kIndicatorWidth = 56;
+	const auto hidden = CalculateCustomFrameLayout(1200, 96, 430, 0);
+	const auto shown = CalculateCustomFrameLayout(1200, 96, 430, kIndicatorWidth);
+
+	EXPECT_FALSE(::IsRectEmpty(&shown.updateButton));
+	EXPECT_EQ(kIndicatorWidth, shown.updateButton.right - shown.updateButton.left);
+	EXPECT_EQ(shown.title.bottom, shown.updateButton.bottom);
+	EXPECT_EQ(shown.secondarySidebarButton.right, shown.updateButton.left);
+	EXPECT_EQ(shown.updateButton.right, shown.accountButton.left);
+	EXPECT_EQ(shown.accountButton.right, shown.manageButton.left);
+	EXPECT_EQ(shown.manageButton.right, shown.minimizeButton.left);
+
+	// The run is right-aligned against the native caption buttons and the indicator is
+	// inserted before Account, so Account and Manage do not move at all and the four
+	// glyph controls to its left move left by exactly the measured width.
+	EXPECT_EQ(hidden.accountButton.left, shown.accountButton.left);
+	EXPECT_EQ(hidden.manageButton.left, shown.manageButton.left);
+	EXPECT_EQ(hidden.minimizeButton.left, shown.minimizeButton.left);
+	EXPECT_EQ(hidden.layoutButton.left - kIndicatorWidth, shown.layoutButton.left);
+	EXPECT_EQ(hidden.primarySidebarButton.left - kIndicatorWidth, shown.primarySidebarButton.left);
+	EXPECT_EQ(hidden.bottomPanelButton.left - kIndicatorWidth, shown.bottomPanelButton.left);
+	EXPECT_EQ(hidden.secondarySidebarButton.left - kIndicatorWidth, shown.secondarySidebarButton.left);
+	// The indicator takes its width from its label; the glyph controls keep the fixed one.
+	EXPECT_EQ(ScaleCustomFrameDip(30, 96), shown.layoutButton.right - shown.layoutButton.left);
+	EXPECT_EQ(ScaleCustomFrameDip(30, 96), shown.accountButton.right - shown.accountButton.left);
+	EXPECT_LE(shown.captionText.right, shown.layoutButton.left);
+}
+
+TEST(CustomFrameUpdateControl, CollapsesTheWholeRunWhenTheIndicatorNoLongerFits)
+{
+	// 380px shows all six glyph controls, but not once the indicator claims 56 more.
+	// Partially drawing the run, or letting it overlap the system menu, is not an option.
+	const auto hidden = CalculateCustomFrameLayout(380, 96, 300, 0);
+	EXPECT_FALSE(::IsRectEmpty(&hidden.layoutButton));
+	EXPECT_FALSE(::IsRectEmpty(&hidden.manageButton));
+
+	const auto shown = CalculateCustomFrameLayout(380, 96, 300, 56);
+	EXPECT_TRUE(::IsRectEmpty(&shown.updateButton));
+	EXPECT_TRUE(::IsRectEmpty(&shown.layoutButton));
+	EXPECT_TRUE(::IsRectEmpty(&shown.secondarySidebarButton));
+	EXPECT_TRUE(::IsRectEmpty(&shown.accountButton));
+	EXPECT_TRUE(::IsRectEmpty(&shown.manageButton));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(shown, { 300, 16 }));
+
+	// 418px is the first width that fits the indicator as well.
+	const auto fits = CalculateCustomFrameLayout(418, 96, 300, 56);
+	EXPECT_FALSE(::IsRectEmpty(&fits.updateButton));
+	EXPECT_EQ(ScaleCustomFrameDip(42, 96), fits.layoutButton.left);
+}
+
+TEST(CustomFrameUpdateControl, HitTestsTheIndicatorWithTheSameHalfOpenBoundsAsEveryOtherControl)
+{
+	const auto layout = CalculateCustomFrameLayout(1200, 96, 300, 56);
+	const auto center = [](const RECT& rect) {
+		return POINT{ (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2 };
+	};
+	EXPECT_EQ(CustomFrameControl::Update, HitTestCustomFrameControl(layout, center(layout.updateButton)));
+	EXPECT_EQ(CustomFrameControl::Update, HitTestCustomFrameControl(layout, { layout.updateButton.left, 16 }));
+	EXPECT_EQ(CustomFrameControl::SecondarySidebar,
+		HitTestCustomFrameControl(layout, { layout.updateButton.left - 1, 16 }));
+	EXPECT_EQ(CustomFrameControl::Account, HitTestCustomFrameControl(layout, { layout.updateButton.right, 16 }));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.updateButton), 1200, 700, 8, false));
+
+	// While the indicator is hidden its empty rectangle can never contain a point, so no
+	// client point anywhere in the caption resolves to Update.  The point that used to be
+	// the indicator is not caption drag either: the layout is right-aligned, so the fixed
+	// controls reclaim exactly the width the indicator gave up and one of them now owns
+	// that x.  Asserting None there would pin a false fact about right alignment.
+	const auto hidden = CalculateCustomFrameLayout(1200, 96, 300, 0);
+	EXPECT_TRUE(::IsRectEmpty(&hidden.updateButton));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(hidden, { 0, 0 }));
+	for (int x = 0; x < 1200; ++x) {
+		ASSERT_NE(CustomFrameControl::Update, HitTestCustomFrameControl(hidden, { x, 16 }))
+			<< "x = " << x;
+	}
+}
+
+TEST(CustomFrameUpdateControl, HasNoLegacyFunctionCodeBecauseItsCommandDependsOnTheUpdateState)
+{
+	// `update.downloadNow` / `update.install` / `update.restart` are resolved from the
+	// current context snapshot by the registry, so pinning one `EFunctionCode` here would
+	// be wrong in two of the three actionable states.
+	EXPECT_EQ(0u, CustomFrameControlCommand(CustomFrameControl::Update));
+}
+
+TEST(CustomFrameUpdateControl, ExposesUpstreamsUpdateTitleAsItsAccessibleNameAndAutomationId)
+{
+	const auto layout = CalculateCustomFrameLayout(1200, 96, 300, 56);
+	const auto node = CustomFrameControlAccessibilityNode(CustomFrameControl::Update, layout, true);
+	EXPECT_EQ(L"Update", node.name);
+	EXPECT_EQ(L"Sakura.TitleBar.Update", node.automationId);
+	EXPECT_EQ(UIA_ButtonControlTypeId, node.controlType);
+	EXPECT_EQ(layout.updateButton.left, node.bounds.left);
+	EXPECT_EQ(layout.updateButton.right, node.bounds.right);
+	EXPECT_TRUE(node.enabled);
+	EXPECT_TRUE(node.focused);
+	EXPECT_TRUE(node.invoke);
+
+	const auto hidden = CalculateCustomFrameLayout(1200, 96, 300, 0);
+	const auto hiddenNode = CustomFrameControlAccessibilityNode(CustomFrameControl::Update, hidden, false);
+	EXPECT_EQ(hiddenNode.bounds.left, hiddenNode.bounds.right);
+	EXPECT_EQ(hiddenNode.bounds.top, hiddenNode.bounds.bottom);
+}
+
+TEST(CustomFrameUpdateControl, FallsBackToAMinimumButtonWidthWhenTheCaptionFontCannotBeMeasured)
+{
+	// A zero width here would mean "hidden", which is a different fact from "unmeasurable".
+	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
+		EXPECT_EQ(ScaleCustomFrameDip(56, dpi), MeasureCustomFrameUpdateButtonWidth(nullptr, dpi));
+		EXPECT_GT(MeasureCustomFrameUpdateButtonWidth(nullptr, dpi), ScaleCustomFrameDip(30, dpi));
+	}
+}
+
 TEST(CustomFrame, ReturnsSnapCompatibleCaptionButtonHits)
 {
 	const auto layout = CalculateCustomFrameLayout(1000, 96, 400);

@@ -243,6 +243,13 @@ bool IsValidRequest(const Request& request)
 	default:
 		return false;
 	}
+	// bodySink はストリーミング専用の受け口。dedup（複数待機者へ同じ応答を配ろうとする）
+	// や OfflineOnly 以外のキャッシュ利用（sink を経由しないキャッシュ済み本体を返し得る）
+	// と組み合わせると sink が呼ばれない経路が生まれるため、ここで明示的に拒否する。
+	if (request.bodySink) {
+		if (request.deduplicationKey && !request.deduplicationKey->empty()) return false;
+		if (request.cachePolicy != ERequestCachePolicy::OnlineOnly) return false;
+	}
 	return std::all_of(request.headers.begin(), request.headers.end(), [](const HttpHeader& header) {
 		return !header.name.empty() &&
 			std::all_of(header.name.begin(), header.name.end(), IsHttpTokenCharacter) &&
@@ -589,6 +596,7 @@ RequestResult RequestService::ExecuteUnshared(const Request& request, const IReq
 		transportRequest.proxyCredential = proxyCredential;
 		transportRequest.limits = current.limits;
 		transportRequest.deadline = deadline;
+		transportRequest.bodySink = current.bodySink;
 		auto transportResult = m_transport.Send(transportRequest, cancellation);
 		if (cancellation && cancellation->IsCancellationRequested()) {
 			return { ERequestOutcome::Cancelled, ETransportFailure::None, std::nullopt, false, redirects, retries };
@@ -684,7 +692,7 @@ RequestResult RequestService::ExecuteUnshared(const Request& request, const IReq
 			continue;
 		}
 
-		if (m_responseCache && request.cachePolicy != ERequestCachePolicy::OfflineOnly && response.statusCode >= 200 && response.statusCode < 300) {
+		if (m_responseCache && !request.bodySink && request.cachePolicy != ERequestCachePolicy::OfflineOnly && response.statusCode >= 200 && response.statusCode < 300) {
 			m_responseCache->Put(cacheKey, response);
 		}
 		return { ERequestOutcome::Success, ETransportFailure::None, std::move(response), false, redirects, retries };

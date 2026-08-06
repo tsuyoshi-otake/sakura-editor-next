@@ -261,6 +261,22 @@ were clean.
   to it, so Tab/arrow navigation inside one control cannot swallow input meant
   for another.
 
+### Webview-unsupported is about webviews, not about Markdown (2026-08-06)
+
+A `"type": "webview"` contributed View is unsupported because it renders
+arbitrary extension-authored HTML and JavaScript, which this product has no
+engine for and deliberately will not acquire. `kWebviewUnsupportedMessage` and
+`CViewContainerPages::IsWebviewOnly` scope that boundary to exactly that case.
+
+Do not widen it into a general "this product cannot render rich content" claim.
+Markdown supplied as data is a different problem with a different answer: the
+native `markdown::` pipeline renders it, and the Extensions Marketplace detail
+README now goes through that renderer. See
+[`editor/CLAUDE.md`](editor/CLAUDE.md) for that surface's own invariants. When a
+new surface needs formatted content, first ask whether the content is Markdown
+data (render it) or extension-authored active content (fail closed) — the two
+must never be answered together.
+
 See [`../window/CLAUDE.md`](../window/CLAUDE.md) for the profile-scoped factory
 composition and the retired legacy floating dock, and
 [`../extension/CLAUDE.md`](../extension/CLAUDE.md) for how `CExtensionPane`

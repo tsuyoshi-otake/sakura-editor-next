@@ -7,9 +7,13 @@
 #include "StdAfx.h"
 #include "extension/CExtensionWorkbenchServiceBridge.h"
 
+#include "config/BuiltinConfigurationDescriptors.h"
+#include "config/IConfigurationService.h"
+#include "config/IWorkspaceContextService.h"
 #include "config/editing/CJsoncConfigurationEditor.h"
 #include "workbench/IWorkbenchRuntime.h"
 #include "workbench/WorkbenchBootstrapContext.h"
+#include "workbench/layout/WorkbenchContributionRegistry.h"
 
 #include <algorithm>
 #include <limits>
@@ -36,6 +40,20 @@ bool IsAccepted(const workbench::output::OutputOperationResult& result) noexcept
 bool IsFresh(const workbench::output::OutputOperationResult& result) noexcept
 {
 	return result.status == EOutputOperationStatus::Succeeded;
+}
+
+//! Accepts the outcomes of disposing one owner in the source control service.
+//!
+//! SourceControlService only knows an owner once that owner has registered a provider or the global
+//! input box, and answers InvalidOwner for anyone else. Most extensions never touch SCM at all, so
+//! treating that answer as a failure would mean "an extension that contributes no source control can
+//! never be disabled". Nothing to remove is a successful removal here.
+bool IsAcceptedOwnerDisposal(const workbench::scm::ScmOperationResult& result) noexcept
+{
+	using workbench::scm::EScmOperationStatus;
+	return result.status == EScmOperationStatus::Succeeded || result.status == EScmOperationStatus::Replayed ||
+		result.status == EScmOperationStatus::NotApplicable || result.status == EScmOperationStatus::Stopped ||
+		result.status == EScmOperationStatus::InvalidOwner;
 }
 
 std::optional<std::string> OptionalUtf8(const std::wstring_view value)
@@ -141,6 +159,44 @@ config::SettingsWritebackResult CExtensionWorkbenchServiceBridge::WriteGlobalCon
 		.source = source,
 	};
 	return m_workbenchRuntime->WriteSetting(request);
+}
+
+std::vector<config::ConfigurationEntry> CExtensionWorkbenchServiceBridge::BuildConfigurationSnapshot() const
+{
+	if (!m_workbenchRuntime) return {};
+
+	const auto descriptors = config::BuiltinConfigurationDescriptors();
+	std::vector<std::string> keys;
+	keys.reserve(descriptors.size());
+	for (const auto& descriptor : descriptors) keys.push_back(descriptor.key);
+	if (keys.empty()) return {};
+
+	// Same target identity as WriteGlobalConfiguration's write path: only the selected
+	// profile is set, so this reads the same Profile/Global-scoped effective values that
+	// path can durably write. Workspace/folder/language overrides are intentionally absent
+	// here, matching workspace/configuration/update's own Global-only support.
+	const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+	config::ConfigurationTarget target;
+	target.profileId = profile.SelectedProfileId();
+
+	const auto result = m_workbenchRuntime->Configuration().ReadSnapshot(keys, target);
+	if (result.outcome != config::EConfigurationOutcome::Applied || !result.snapshot ||
+		result.snapshot->values.size() != keys.size()) {
+		return {};
+	}
+
+	std::vector<config::ConfigurationEntry> entries;
+	entries.reserve(keys.size());
+	for (std::size_t index = 0; index < keys.size(); ++index) {
+		entries.push_back({ keys[index], result.snapshot->values[index] });
+	}
+	return entries;
+}
+
+config::WorkspaceContextSnapshot CExtensionWorkbenchServiceBridge::WorkspaceContextSnapshotForExtensions() const
+{
+	if (!m_workbenchRuntime) return {};
+	return m_workbenchRuntime->WorkspaceContext().Snapshot();
 }
 
 bool CExtensionWorkbenchServiceBridge::PrepareOwner(
@@ -395,6 +451,126 @@ bool CExtensionWorkbenchServiceBridge::AppendExtensionHostLog(
 	return IsAccepted(appended);
 }
 
+bool CExtensionWorkbenchServiceBridge::NextContributionOperationId(std::string& operationId) noexcept
+{
+	if (m_nextContributionOperationId == std::numeric_limits<std::uint64_t>::max()) return false;
+	try {
+		operationId = "extension-bridge-contrib-" + std::to_string(m_nextContributionOperationId++);
+		return workbench::layout::WorkbenchContributionRegistry::IsValidOperationId(operationId);
+	} catch (...) {
+		return false;
+	}
+}
+
+bool CExtensionWorkbenchServiceBridge::DisposeViewContributions(
+	const std::wstring_view extensionId, const std::uint64_t generation) noexcept
+{
+	if (!m_workbenchRuntime) return false;
+	try {
+		auto& registry = m_workbenchRuntime->Contributions();
+		std::string operationId;
+		if (!NextContributionOperationId(operationId)) return false;
+		const auto result = registry.DisposeOwner({
+			.operation = { .operationId = std::move(operationId) },
+			.owner = { .ownerId = wcstou8s(std::wstring(extensionId)), .generation = generation },
+		});
+		// NotApplicable simply means this generation never registered anything, which is the
+		// common case for extensions that contribute no views at all.
+		return result.status == workbench::layout::EWorkbenchContributionOperationStatus::Succeeded ||
+			result.status == workbench::layout::EWorkbenchContributionOperationStatus::Replayed ||
+			result.status == workbench::layout::EWorkbenchContributionOperationStatus::NotApplicable;
+	} catch (...) {
+		return false;
+	}
+}
+
+bool CExtensionWorkbenchServiceBridge::RegisterViewContributions(
+	const std::wstring_view extensionId, const std::uint64_t generation,
+	const std::vector<SExtensionViewContainerDeclaration>& containers,
+	const std::vector<SExtensionViewDeclaration>& views)
+{
+	if (!m_workbenchRuntime) return false;
+	if (containers.empty() && views.empty()) return true;
+
+	const std::string ownerId = wcstou8s(std::wstring(extensionId));
+	auto& registry = m_workbenchRuntime->Contributions();
+
+	/*
+		The registry rejects duplicate container IDs even for the same owner, so a re-registration
+		(extension update, or a host that replays its manifest) has to start from a clean slate.
+		Dispose whichever generation currently holds this owner's contributions, not just `generation`:
+		a reconnect arrives with a new generation while the previous one is still registered, and
+		disposing with the wrong generation is a Conflict rather than a removal.
+	*/
+	std::uint64_t activeGeneration = generation;
+	try {
+		const auto snapshot = registry.Snapshot();
+		for (const auto& container : snapshot.viewContainers) {
+			if (container.owner.ownerId == ownerId) { activeGeneration = container.owner.generation; break; }
+		}
+	} catch (...) {
+		return false;
+	}
+	if (!DisposeViewContributions(extensionId, activeGeneration)) return false;
+
+	workbench::layout::RegisterWorkbenchContributionsRequest request;
+	request.owner = { .ownerId = ownerId, .generation = generation };
+	try {
+		for (const auto& container : containers) {
+			if (container.id.empty()) continue;
+			request.viewContainers.push_back({
+				.id = wcstou8s(container.id),
+				// An empty title would fail descriptor validation; the ID is the least surprising
+				// fallback and keeps the container visible instead of silently dropping it.
+				.title = wcstou8s(container.title.empty() ? container.id : container.title),
+				.location = container.location == EExtensionViewContainerLocation::Panel
+					? workbench::layout::EViewContainerLocation::Panel
+					: workbench::layout::EViewContainerLocation::Sidebar,
+			});
+		}
+		for (const auto& view : views) {
+			if (view.id.empty() || view.containerId.empty()) continue;
+			request.views.push_back({
+				.id = wcstou8s(view.id),
+				.containerId = wcstou8s(view.containerId),
+				.title = wcstou8s(view.title.empty() ? view.id : view.title),
+			});
+		}
+		if (request.viewContainers.empty() && request.views.empty()) return true;
+
+		std::string operationId;
+		if (!NextContributionOperationId(operationId)) return false;
+		request.operation.operationId = std::move(operationId);
+		const auto result = registry.Register(request);
+		if (result.status != workbench::layout::EWorkbenchContributionOperationStatus::Succeeded &&
+			result.status != workbench::layout::EWorkbenchContributionOperationStatus::Replayed) {
+			return false;
+		}
+	} catch (...) {
+		return false;
+	}
+
+	TrackedOwner prepared;
+	if (PrepareOwner(ownerId, generation, prepared)) RememberPreparedOwner(std::move(prepared));
+	return true;
+}
+
+std::wstring CExtensionWorkbenchServiceBridge::ViewContainerOf(const std::wstring_view viewId) const
+{
+	if (!m_workbenchRuntime || viewId.empty()) return {};
+	const auto id = wcstou8s(std::wstring(viewId));
+	try {
+		const auto snapshot = m_workbenchRuntime->Contributions().Snapshot();
+		for (const auto& view : snapshot.views) {
+			if (view.descriptor.id == id) return u8stowcs(view.descriptor.containerId);
+		}
+	} catch (...) {
+		// A failed read is the same answer as "not declared": keep the default bucket rather
+		// than dropping the view into a container that may not exist.
+	}
+	return {};
+}
+
 bool CExtensionWorkbenchServiceBridge::DisposeTrackedOwner(
 	const TrackedOwner& owner, CExtensionDiagnostics& diagnosticsCache, CExtensionOutputChannel& outputCache)
 {
@@ -413,13 +589,12 @@ bool CExtensionWorkbenchServiceBridge::DisposeTrackedOwner(
 			result.status != EOutputOperationStatus::Stopped) return false;
 	}
 	if (auto* scm = Scm()) {
-		const auto result = scm->DisposeOwner({ .extensionId = owner.id, .generation = owner.generation });
-		if (result.status != workbench::scm::EScmOperationStatus::Succeeded &&
-			result.status != workbench::scm::EScmOperationStatus::Replayed &&
-			result.status != workbench::scm::EScmOperationStatus::NotApplicable &&
-			result.status != workbench::scm::EScmOperationStatus::Stopped) return false;
+		if (!IsAcceptedOwnerDisposal(scm->DisposeOwner({ .extensionId = owner.id, .generation = owner.generation }))) return false;
 	}
 	const auto wideId = u8stowcs(owner.id);
+	// Contributed containers/views must go with the generation that declared them, otherwise a
+	// disabled extension keeps its activity bar icon until the next restart.
+	if (m_workbenchRuntime) (void)DisposeViewContributions(wideId, owner.generation);
 	try { diagnosticsCache.RemoveOwnedBy(wideId, owner.generation); } catch (...) {}
 	try { outputCache.RemoveOwnedBy(wideId, owner.generation); } catch (...) {}
 	return true;
@@ -435,11 +610,7 @@ bool CExtensionWorkbenchServiceBridge::DisposeOwner(
 		if (!DisposeTrackedOwner(owner, diagnosticsCache, outputCache)) return false;
 		ForgetTracked(ownerId, generation);
 	} else if (auto* scm = Scm()) {
-		const auto result = scm->DisposeOwner({ .extensionId = ownerId, .generation = generation });
-		if (result.status != workbench::scm::EScmOperationStatus::Succeeded &&
-			result.status != workbench::scm::EScmOperationStatus::Replayed &&
-			result.status != workbench::scm::EScmOperationStatus::NotApplicable &&
-			result.status != workbench::scm::EScmOperationStatus::Stopped) return false;
+		if (!IsAcceptedOwnerDisposal(scm->DisposeOwner({ .extensionId = ownerId, .generation = generation }))) return false;
 	}
 	return true;
 }

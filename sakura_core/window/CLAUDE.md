@@ -186,6 +186,55 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   the title bar only for top/bottom positions. Do not duplicate those actions or
   add placeholder Search/Run and Debug containers in the meantime.
 
+## Title-bar Update indicator (2026-08-06)
+
+- The button is VS Code's `workbench.actions.updateIndicator`, title `"Update"`,
+  contributed to `MenuId.TitleBarUpdate` at order 0
+  (`contrib/update/browser/updateTitleBarEntry.ts`). Placing it in the title bar
+  is upstream's own placement, not a divergence — unlike Account and Manage
+  above, which are here because this adapter has no Activity Bar position
+  setting yet.
+- It is visible **only** for the three actionable states
+  (`available for download`, `downloaded`, `ready`) and only while
+  `update.titleBar` is true. `CCustomFrameController::SetUpdateIndicatorVisible`
+  takes that answer rather than computing it; the composition root owns both
+  halves of the decision because only it can see the update state and the frozen
+  setting.
+- It is a **labelled** button, not a glyph, so `CustomFrameLayout::updateButton`
+  is measured from the caption font through
+  `MeasureCustomFrameUpdateButtonWidth` instead of using the fixed compact
+  control width. A hidden indicator passes width zero, and zero must leave every
+  other title control's rectangle exactly where it would be without the
+  indicator — that invariant is what `CustomFrameUpdateControlTest` pins.
+- Prominence uses the `button.*` palette roles, not `activityBarBadge.*`; see
+  [`../theme/CLAUDE.md`](../theme/CLAUDE.md) for why those are a separate role
+  from `accent`.
+- The frame does not know which command the press means. It invokes one callback,
+  and `CEditWnd` executes `workbench.actions.updateIndicator`, whose registry
+  executor resolves the current state to `update.downloadNow` / `update.install`
+  / `update.restart` from the same context snapshot the button's own visibility
+  clause was evaluated against. The frame therefore never holds a second copy of
+  the update state.
+- The gear menu contributes upstream's `7_update` group through
+  `CustomFrameUpdateMenuEntry`. At most one entry is visible, matching the eight
+  upstream items each gated on `updateState == '<state>'`; the four in-progress
+  ones are contributed with `precondition: false` upstream and are drawn disabled
+  here rather than omitted. `None` — the `disabled`/`uninitialized` case —
+  contributes nothing at all.
+- The window's update stack is optional. `update.*` commands are registered
+  **before** it is composed, so an installation with no writable staging root or
+  no readable update policy answers with a typed `Unsupported` instead of the
+  `UnknownCommand` an unregistered id would produce. `InitializeUpdateProjection`
+  runs after the frame callbacks exist so the first committed state paints the
+  indicator immediately.
+- The service subscription follows the existing HWND-only coalescing gate
+  contract: the callback captures no raw `CEditWnd`, and `CloseWorkbench` calls
+  `CloseUpdateProjection` — which closes the gate and joins the worker, possibly
+  mid-download — before destroying the registry executors an update notification
+  would otherwise reach. The same gate is what makes cancelled-restart detection
+  safe; that reasoning lives in
+  [`../update/CLAUDE.md`](../update/CLAUDE.md) and is not repeated here.
+
 ## Moving a ViewContainer between the side bars (2026-08-01)
 
 - The gesture reproduces VS Code's `CompositeDragAndDrop`: an Activity Bar icon
@@ -208,6 +257,71 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   width is a native detail with no upstream counterpart and is scaled by the
   host DPI. Dropping outside both side bar windows and outside that strip is a
   no-op, never a guess.
+
+## Extension `editor/title` menu projection (2026-08-06, #23)
+
+`extension::menus::ProjectMenu(..., kEditorTitle)` is rendered by
+`CEditWnd::ShowExtensionEditorTitleMenu` as a native `TrackPopupMenu`, built
+recursively from the projection and reached through the product-owned command
+`sakura.workbench.action.showEditorTitleActions`, which `InitializeWorkbench`
+registers on the Command Palette surface. `ProjectExtensionEditorTitleMenu`
+supplies the `WhenClauseEvaluator` and `CommandInfoLookup` from
+`m_extensionService->Contributions()`, `EvaluateWhenClause()`, and
+`SearchCommands()`; a selection dispatches through
+`DispatchRegisteredCommandPaletteSelection` and falls back to
+`m_extensionService->ExecuteCommand()`.
+
+Two divergences, both real and neither hidden:
+
+- **The trigger is the Command Palette, not the tab bar.** In VS Code
+  `editor/title` is the icon row at the top-right of the editor tab bar, owned
+  here by `CTabWnd` / `DocumentTabActionLayout.h`. Those files were outside the
+  editable scope of the delivery that built this, so the projection is currently
+  reachable only by command. This is a **placement divergence against the
+  repository's highest-priority rule and is therefore temporary, not a settled
+  design.** The projection, the `when`-clause filtering, the separator and
+  submenu rules, and the dispatch are the real ones; only the surface that opens
+  them is wrong. Moving it to the tab-bar toolbar is the completion of this work,
+  not an enhancement of it. Do not treat the Command Palette entry as the final
+  answer, and do not delete it until the tab-bar surface actually renders.
+- **`altCommandId` is projected but not honored.** `SProjectedMenuItem` carries
+  it, and the generic overload resolves it exactly as the palette path does, but
+  a standard Win32 popup menu has no Alt-modifier detection without a message
+  hook. The item shows its primary command; holding Alt changes nothing.
+
+## Extension hover seam injection (2026-08-07, #23)
+
+`CEditView` renders the `registerHoverProvider` popup and owns the dwell/poll
+gesture, but it must never own an extension-host connection. The three
+`std::function` seams it exposes (`HoverRequestHandler`, `HoverCancelHandler`,
+`HoverResultPoller`) therefore have exactly one production supplier:
+`CEditWnd::WireExtensionHoverHandlers()`. The rendering-side contract lives in
+[`../view/CLAUDE.md`](../view/CLAUDE.md) and is not restated here.
+
+- The helper is **idempotent and total**: it walks `GetAllViewCount()` and calls
+  `SetHoverHandlers` on every pane, so re-running it after a split re-arms the
+  new pane and merely overwrites the existing ones. `SetHoverHandlers` calls
+  `CancelHoverTracking()` first, so an in-flight dwell is folded rather than
+  orphaned.
+- With no `m_extensionService` it installs **empty** handlers rather than
+  skipping the call. An empty request handler is how `UpdateHoverTracking`
+  learns this window is not a hover target, so a service-less window never arms
+  a dwell timer whose request nothing could answer. Silently leaving stale
+  handlers in place would be the fake-capability failure mode.
+- Call sites are exactly two: `InitializeWorkbench()` (after the service is
+  constructed, immediately before `EnsureNotificationHost()`) and
+  `CreateEditViewBySplit()` (right after `m_nEditViewCount` is updated, before
+  the new pane's HWND array is assembled). `Create()` builds view 0 before
+  `InitializeWorkbench()` runs, so `GetAllViewCount()` is already non-zero at
+  the first call.
+- Teardown needs no counterpart. `CloseWorkbench()` calls
+  `m_extensionService->Shutdown()` and then resets the pointer *before* the
+  views are destroyed, and every captured lambda re-checks `m_extensionService`
+  on entry, so each seam degrades to a no-op for the rest of the window's life.
+- The document identity passed to `RequestHover` is the established
+  `SExtensionDocumentId{ ::GetCurrentProcessId(), 1 }` convention already used
+  elsewhere in this file. Do not introduce a second document-identity scheme for
+  hover; a per-editor identity is a document-bridge change, not a window one.
 
 ## File Menu "Open Recent" (2026-08-01)
 

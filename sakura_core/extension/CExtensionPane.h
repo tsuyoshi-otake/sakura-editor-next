@@ -12,17 +12,21 @@
 #pragma once
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "extension/CExtensionManager.h"
 #include "extension/CExtensionProfileState.h"
 #include "extension/openvsx/OpenVsxProductionClient.h"
 #include "window/CWnd.h"
+#include "workbench/extension/ExtensionSearchFilter.h"
+#include "workbench/extension/ExtensionSearchQuery.h"
 
 /*!
 	@brief 拡張のサイドバー
@@ -111,6 +115,20 @@ public:
 	void InstallSelectedExtension();
 	void ClearExtensionSelection();
 
+	/*!
+		@brief Supplies already-fetched, already-decoded-ready icon bytes for one extension's row icon
+
+		This pane performs no network access anywhere in this subtree; the composition
+		root fetches `SOpenVsxExtension::sIconUrl` (when present) and hands the raw
+		encoded bytes here once they arrive. An empty @p encodedBytes clears any
+		previously supplied icon for @p sUniqueId (falls back to the initials tile).
+
+		@warning Must be called on this window's UI thread: it decodes through
+			ExtensionIconDecoder, which requires an already-initialized COM apartment
+			on the calling thread, exactly like CExtensionDetailSurface's icon path.
+	*/
+	void SetExtensionIconBytes( const std::wstring& sUniqueId, std::vector<std::byte> encodedBytes );
+
 private:
 	//! ジョブの種類
 	enum class EJobKind {
@@ -137,6 +155,8 @@ private:
 		std::wstring		sUniqueId;				//!< Uninstall の対象
 		std::wstring		sTargetName;			//!< 進捗表示に使う名前
 		std::wstring		sReadmeUrl;
+		int					nOffset = 0;			//!< Search のページ先頭オフセット（Load More で前回件数を渡す）
+		bool				bAppendResults = false;	//!< true なら結果を末尾へ追記する（Load More）
 
 		// Search/Install only.  This client owns its network composition and has no runtime/config reference.
 		std::shared_ptr<extension::openvsx::IOpenVsxRegistryClient> registryClient;
@@ -186,6 +206,21 @@ private:
 	//! 各行の導入状態を最新にする（通信しない）
 	void RefreshInstalledState();
 
+	//! 導入済み拡張から検索フィルタ候補の一覧を作る（通信しない）
+	std::vector<workbench::extension::ExtensionSearchCandidate> BuildInstalledCandidates() const;
+
+	//! 導入済み一覧へ @installed 系フィルタ／並び替えを適用して表示する（通信しない）
+	void ShowFilteredInstalledList( const workbench::extension::ParsedExtensionSearchQuery& parsed );
+
+	//! 取得済みの検索結果（m_searchRawRows）へ @deprecated と @sort: をローカル適用し直す
+	void ApplySearchResultRefinement( bool bDeprecatedOnly, workbench::extension::ExtensionSearchSortKey sortKey );
+
+	//! 表示中の一覧の種別（検索結果／フィルタ済み導入済み／単純な導入済み）に応じて再表示する
+	void RefreshCurrentListAfterMutation();
+
+	//! 次ページを追加取得する（Search 結果表示中のみ有効）
+	void StartLoadMoreSearch();
+
 	//! 行の内容を一覧に流し込む
 	void UpdateListView();
 
@@ -224,12 +259,25 @@ private:
 	//! ワーカースレッドの本体。UI に触れてはならない
 	static void RunJob( std::shared_ptr<SJob> pJob, HWND hwndNotify );
 
+	//! SetExtensionIconBytes が作った HBITMAP を全て解放する
+	void ReleaseIconBitmaps() noexcept;
+
+	//! 1 行分のアイコンタイルを描く（キャッシュ済みビットマップ、無ければ頭文字タイルにフォールバック）
+	void DrawRowIcon( HDC dc, const RECT& tile, const SRow& row, bool bDark ) const;
+
+	//! 行の右クリック（NM_RCLICK）で、その行に対して実際に実行できる操作だけを載せたメニューを出す
+	//! @note キーボード（メニューキー／Shift+F10）からは呼び出せない。CWnd::DispatchEvent には
+	//!     WM_CONTEXTMENU の処理が無く、CWnd.h/.cpp はこのペインの編集許可範囲外にあるため、この
+	//!     ペインからフックを追加できない。extension/CLAUDE.md に既知の乖離として記録する。
+	void ShowRowContextMenu( int nRow, POINT ptScreen );
+
 	HWND	m_hwndSearchEdit    = nullptr;
 	HWND	m_hwndSearchButton  = nullptr;
 	HWND	m_hwndSectionLabel  = nullptr;
 	HWND	m_hwndList          = nullptr;
 	HWND	m_hwndInstallButton = nullptr;
 	HWND	m_hwndRemoveButton  = nullptr;
+	HWND	m_hwndLoadMoreButton = nullptr;	//!< 検索結果表示中、まだ取得していない残りがある間だけ有効になる
 	HWND	m_hwndStatus        = nullptr;
 	HFONT	m_hFont             = nullptr;
 	CExtensionProfileState	m_profileState;
@@ -252,6 +300,27 @@ private:
 	EExtensionReadmeState	m_eReadmeCacheState = EExtensionReadmeState::Unsupported;
 	std::wstring			m_sReadmeCachePayload;
 	std::wstring			m_sReadmeCacheError;
+
+	// -- @filter search / paging / icon state (Issue #23) -- //
+
+	//! 検索結果として最後に取得した生の行（@deprecated と @sort: を適用する前）
+	std::vector<SOpenVsxExtension>	m_searchRawRows;
+	//! レジストリが報告した全体件数。m_searchRawRows.size() と比較して Load More の可否を決める
+	int						m_nSearchTotalSize = 0;
+	//! マーケットプレイスへ送った素の検索語（Load More が同じ語で続きを取るために保持する）
+	std::wstring			m_sSearchRawQuery;
+	//! 直近の検索で指定された @sort:
+	workbench::extension::ExtensionSearchSortKey m_eSearchSortKey =
+		workbench::extension::ExtensionSearchSortKey::Relevance;
+	//! 直近の検索で @deprecated が指定されたか
+	bool					m_bSearchDeprecatedOnly = false;
+	//! 一覧が「フィルタ済みの導入済み一覧」か（m_bSearchResultShown と排他）
+	bool					m_bFilteredInstalledShown = false;
+	//! m_bFilteredInstalledShown 表示中に再表示する際の直近クエリ
+	workbench::extension::ParsedExtensionSearchQuery m_lastInstalledFilterQuery;
+
+	//! SetExtensionIconBytes が供給したバイト列から作った、行アイコンのキャッシュ（拡張の一意 ID -> HBITMAP）
+	std::unordered_map<std::wstring, HBITMAP> m_iconBitmaps;
 };
 
 #endif /* SAKURA_CEXTENSIONPANE_5B1D8C74_0A93_4E62_9F27_6D48B0C5E31A_H_ */

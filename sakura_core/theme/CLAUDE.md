@@ -72,6 +72,20 @@ font styles remain explicit unsupported portions of the boundary.
 `contributes.iconThemes` and `workbench.iconTheme` are a separate capability and
 remain governed by `workbench/icons/CLAUDE.md`.
 
+`TextMateScopeColorResolver` (`TextMateScopeColorResolver.h/.cpp`) is a second,
+narrower boundary: given a full scope path (outermost to innermost, the same
+shape `sakura_core/textmate`'s tokenizer produces per token) and a theme's
+already-parsed `ThemeTokenColorRule` list, it resolves the single
+highest-specificity matching rule using VS Code's own dot-segment specificity
+scoring and later-rule-wins tie-break. It has no compile dependency on
+`sakura_core/textmate` — callers pass a plain `std::vector<std::wstring>` — so
+it can be exercised and tested independently of the grammar engine's own
+completeness. It supports only whitespace-separated descendant-combinator
+selectors; the `>`, `-`, and `|`/`,` combinators are not recognized and fail
+closed rather than being misinterpreted. No production caller wires real
+per-token TextMate scopes into it yet: see `sakura_core/textmate/CLAUDE.md`
+for the tokenizer side of that still-missing connection.
+
 The registry also owns the two built-in Sakura defaults as embedded VS Code
 JSONC theme documents (`sakura.default-dark` and `sakura.default-light`, owned
 by the `sakura.builtin` virtual extension). `CEditWnd::RefreshColorThemes()`
@@ -83,3 +97,27 @@ theme matching Sakura's saved Dark/Light preference. The compiled
 `CThemeService::PaletteFor()` values remain the deterministic fail-closed fallback
 when the registry itself cannot load; focused tests require the embedded
 documents to produce exactly the same `ThemePalette`.
+
+## Button role colors (2026-08-06)
+
+`ThemePalette` carries `buttonBackground` / `buttonForeground` /
+`buttonHoverBackground`, mapping VS Code's `button.background`,
+`button.foreground`, and `button.hoverBackground`. They exist because upstream's
+`media/updateTitleBarEntry.css` paints the actionable title-bar Update button
+with exactly those three variables; the button role is therefore **not** a
+synonym for `accent`, even though `accent` already lists `button.background` as
+one of its own fallback candidates. The two answer different questions — what
+focus looks like versus what a prominent button looks like — and a theme is free
+to set only one of them.
+
+`button.hoverBackground` is derived from the *resolved* background rather than
+from the compiled default when a theme supplies no explicit value, using
+upstream's own registration: `lighten(button.background, 0.2)` for dark themes
+and `darken(..., 0.2)` for light. The local `AdjustLightness` helper reproduces
+VS Code's `lighten`/`darken`, which scale HSL lightness by `l * factor` and leave
+hue and saturation alone. Deriving rather than defaulting is what prevents a
+hover color from one theme sitting on a background from another.
+
+The built-in defaults keep Sakura's own accent (`#1F8AD2` dark, `#B83268` light)
+instead of importing VS Code's `#0E639C`/`#007ACC`, consistent with the rest of
+the compiled fallback palette.

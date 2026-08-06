@@ -486,6 +486,51 @@ ThemeColor Composite(ThemeColor foreground, ThemeColor background) noexcept
 	};
 }
 
+//! Reproduces VS Code's `lighten(color, factor)` / `darken(color, factor)`, which
+//! move the HSL lightness by `l * factor` and leave hue/saturation alone. A
+//! positive factor lightens, a negative one darkens. Alpha is dropped because
+//! every derived role here is already composited to an opaque GDI color.
+ThemeColor AdjustLightness(ThemeColor color, double factor) noexcept
+{
+	const double red = color.red / 255.0;
+	const double green = color.green / 255.0;
+	const double blue = color.blue / 255.0;
+	const double maximum = std::max({ red, green, blue });
+	const double minimum = std::min({ red, green, blue });
+	double hue = 0.0;
+	double saturation = 0.0;
+	const double lightness = (maximum + minimum) / 2.0;
+	const double chroma = maximum - minimum;
+	if (chroma > 0.0) {
+		saturation = lightness > 0.5 ? chroma / (2.0 - maximum - minimum) : chroma / (maximum + minimum);
+		if (maximum == red) hue = (green - blue) / chroma + (green < blue ? 6.0 : 0.0);
+		else if (maximum == green) hue = (blue - red) / chroma + 2.0;
+		else hue = (red - green) / chroma + 4.0;
+		hue /= 6.0;
+	}
+	const double adjusted = std::clamp(lightness + lightness * factor, 0.0, 1.0);
+	const auto channel = [](double p, double q, double t) noexcept {
+		if (t < 0.0) t += 1.0;
+		if (t > 1.0) t -= 1.0;
+		if (t < 1.0 / 6.0) return p + (q - p) * 6.0 * t;
+		if (t < 1.0 / 2.0) return q;
+		if (t < 2.0 / 3.0) return p + (q - p) * (2.0 / 3.0 - t) * 6.0;
+		return p;
+	};
+	const auto quantize = [](double value) noexcept {
+		return static_cast<std::uint8_t>(std::lround(std::clamp(value, 0.0, 1.0) * 255.0));
+	};
+	if (saturation <= 0.0) {
+		const std::uint8_t gray = quantize(adjusted);
+		return { gray, gray, gray, 0xFF };
+	}
+	const double q = adjusted < 0.5 ? adjusted * (1.0 + saturation)
+		: adjusted + saturation - adjusted * saturation;
+	const double p = 2.0 * adjusted - q;
+	return { quantize(channel(p, q, hue + 1.0 / 3.0)), quantize(channel(p, q, hue)),
+		quantize(channel(p, q, hue - 1.0 / 3.0)), 0xFF };
+}
+
 } // namespace
 
 std::optional<ThemeColor> CColorThemeRegistry::ParseColor(std::wstring_view value) noexcept
@@ -623,6 +668,22 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		palette.danger = first(palette.danger, { L"errorForeground", L"editorError.foreground", L"errorLens.foreground" });
 		palette.warning = first(palette.warning, { L"notificationsWarningIcon.foreground", L"editorWarning.foreground",
 			L"problemsWarningIcon.foreground" });
+		// The button role is its own token, not a synonym for `accent`: upstream's
+		// `media/updateTitleBarEntry.css` paints the actionable title-bar Update button
+		// with `--vscode-button-background`/`--vscode-button-foreground` and hovers it
+		// with `--vscode-button-hoverBackground`. `accent` may already have consumed
+		// `button.background` as its third fallback candidate above, which is a
+		// deliberately different question (what does focus look like) from this one.
+		palette.buttonBackground = first(palette.buttonBackground, { L"button.background" });
+		palette.buttonForeground = first(palette.buttonForeground, { L"button.foreground" });
+		// A theme that sets only `button.background` gets a hover derived from the
+		// resolved background rather than the compiled default, so the two colors can
+		// never come from different themes. Upstream registers exactly this derivation:
+		// `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
+		palette.buttonHoverBackground = firstOverWithFallback(palette.canvas,
+			AdjustLightness(palette.buttonBackground,
+				ModeForKind(kind) == ThemeMode::Dark ? 0.2 : -0.2),
+			{ L"button.hoverBackground" });
 	}
 	catch (...) {
 		// A malformed/oversized map cannot make the native workbench lose its

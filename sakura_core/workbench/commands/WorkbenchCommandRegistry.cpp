@@ -470,6 +470,38 @@ WorkbenchCommandDescriptor MakeGitDescriptor(std::string id, std::string title)
 	};
 }
 
+//!
+//! @brief `git.init` and `git.clone`'s descriptor: available with no repository open.
+//!
+//! Every other Git command in this batch requires an open repository
+//! (`kGitRepositoryWhenClause`), which is exactly backwards for the two
+//! commands whose entire purpose is to create that repository state. Upstream
+//! gates `git.init` on `config.git.enabled && !git.missing &&
+//! !operationInProgress` and `git.clone` on `config.git.enabled &&
+//! !git.missing && remoteName != 'codespaces'`
+//! (`extensions/git/package.json`, `menus.commandPalette`) - none of those
+//! conjuncts are context keys this native provider publishes yet, so, like
+//! `MakeApiCommandDescriptor`, the clause carries `workbenchReady` alone
+//! rather than a fabricated conjunct. Unlike an API command, `git.init` and
+//! `git.clone` are real Command Palette entries upstream, so they keep the
+//! Command Palette surface binding an API command deliberately omits.
+//!
+WorkbenchCommandDescriptor MakeGitAlwaysAvailableDescriptor(std::string id, std::string title)
+{
+	const auto slot = id + ".palette";
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, slot, std::nullopt },
+		},
+	};
+}
+
 //! `MakeGitDescriptor` with the diff-editor conjunct added to both clauses.
 WorkbenchCommandDescriptor MakeGitDiffEditorDescriptor(std::string id, std::string title)
 {
@@ -487,7 +519,86 @@ WorkbenchCommandDescriptor MakeGitDiffEditorDescriptor(std::string id, std::stri
 	};
 }
 
+//! `updateState == '<state>'`, the exact shape upstream's `when` clauses take.
+//! The state strings carry upstream's spaces; quoting is what makes
+//! `'checking for updates'` one operand rather than three tokens.
+std::string UpdateStateWhenClause(std::string_view state)
+{
+	return "updateState == '" + std::string(state) + "'";
+}
+
+//! One of upstream's Command Palette update actions
+//! (`update.contribution.ts`). Each is `f1: true` with a precondition on one
+//! `updateState` value, so it is a palette entry that simply is not listed in
+//! any other state.
+WorkbenchCommandDescriptor MakeUpdatePaletteDescriptor(
+	std::string id, std::string title, std::string_view state)
+{
+	const auto slot = id + ".palette";
+	auto clause = UpdateStateWhenClause(state);
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		clause,
+		clause,
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, slot, std::nullopt },
+		},
+	};
+}
+
+//!
+//! @brief One entry of the gear menu's `7_update` group.
+//!
+//! Upstream contributes these to `MenuId.GlobalActivity` in group `7_update`,
+//! each gated on a single `updateState`. The menu slot names the group so the
+//! native gear menu can order them the way upstream orders them, instead of
+//! inferring an order from the command IDs.
+//!
+//! `actionable` distinguishes upstream's two kinds of entry. An actionable one
+//! carries the same enablement as its `when` clause; a progress one carries
+//! upstream's `precondition: false`, so it is listed and greyed out - the entry
+//! is how the user learns the update is downloading, and hiding it would just
+//! make the gear menu look idle while it is not.
+//!
+WorkbenchCommandDescriptor MakeUpdateMenuDescriptor(
+	std::string id, std::string title, std::string_view state, bool actionable)
+{
+	const auto slot = "workbench.manage.7_update." + id;
+	auto clause = UpdateStateWhenClause(state);
+	auto enablement = actionable ? clause : std::string("false");
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		std::move(clause),
+		std::move(enablement),
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::Menu, slot, std::nullopt },
+		},
+	};
+}
+
 } // namespace
+
+std::optional<std::string> ResolveUpdateIndicatorCommand(const WorkbenchContextKeySnapshot& context)
+{
+	const auto found = context.values.find("updateState");
+	if (found == context.values.end()) return std::nullopt;
+	const auto* state = std::get_if<std::string>(&found->second);
+	if (state == nullptr) return std::nullopt;
+	// Upstream's `updateTitleBarEntry.ts` maps exactly these three states to
+	// exactly these three commands. Every other state - `idle`, `disabled`, the
+	// four progress states - has no entry at all, so it resolves to nothing
+	// rather than to a nearest-looking action.
+	if (*state == "available for download") return std::string("update.downloadNow");
+	if (*state == "downloaded") return std::string("update.install");
+	if (*state == "ready") return std::string("update.restart");
+	return std::nullopt;
+}
 
 bool WorkbenchCommandRegistry::IsValidCommandId(std::string_view value) noexcept
 {
@@ -600,7 +711,8 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 	WorkbenchGitCommandExecutors executors)
 {
 	// Titles are upstream's own, from `extensions/git/package.nls.json`
-	// (`command.checkout`, `command.checkoutDetached`, `command.branch`,
+	// (`command.init`, `command.clone`, `command.checkout`,
+	// `command.checkoutDetached`, `command.branch`,
 	// `command.branchFrom`, `command.openChange`, `command.stage`, `command.stageAll`,
 	// `command.unstage`, `command.unstageAll`, `command.clean`,
 	// `command.cleanAll`, `command.commit`, `command.commitAmend`,
@@ -610,6 +722,9 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 	// `command.sync`, `command.syncRebase`, `command.publish`), prefixed with the
 	// `Git` category `package.json` declares for every one of them.
 	std::vector<Entry> commands{
+		Entry{ MakeGitAlwaysAvailableDescriptor("git.init", "Git: Initialize Repository"),
+			{}, std::move(executors.init) },
+		Entry{ MakeGitAlwaysAvailableDescriptor("git.clone", "Git: Clone"), std::move(executors.clone), {} },
 		Entry{ MakeGitDescriptor("git.checkout", "Git: Checkout to..."), std::move(executors.checkout), {} },
 		Entry{ MakeGitDescriptor("git.checkoutDetached", "Git: Checkout to (Detached)..."),
 			std::move(executors.checkoutDetached), {} },
@@ -638,6 +753,59 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 		Entry{ MakeGitDescriptor("git.sync", "Git: Sync"), std::move(executors.sync), {} },
 		Entry{ MakeGitDescriptor("git.syncRebase", "Git: Sync (Rebase)"), std::move(executors.syncRebase), {} },
 		Entry{ MakeGitDescriptor("git.publish", "Git: Publish Branch..."), std::move(executors.publish), {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterUpdateCommands(
+	WorkbenchUpdateCommandExecutors executors)
+{
+	// Titles are upstream's own, from `update.contribution.ts` (the palette
+	// actions) and `update.ts` (the `7_update` gear group). The trailing `(1)` on
+	// three gear entries is upstream's literal text, not a placeholder: it is the
+	// badge count VS Code shows beside the gear, spelled out in the menu label.
+	std::vector<Entry> commands{
+		Entry{ MakeUpdatePaletteDescriptor("update.checkForUpdate", "Check for Updates...", "idle"),
+			executors.checkForUpdates, {} },
+		Entry{ MakeUpdatePaletteDescriptor("update.downloadUpdate", "Download Update", "available for download"),
+			executors.downloadUpdate, {} },
+		Entry{ MakeUpdatePaletteDescriptor("update.installUpdate", "Install Update", "downloaded"),
+			executors.applyUpdate, {} },
+		Entry{ MakeUpdatePaletteDescriptor("update.restartToUpdate", "Restart to Update", "ready"),
+			executors.quitAndInstall, {} },
+		// Deliberately gated on `workbenchReady` rather than on a state. What this
+		// command shows is what the editor currently knows about updating, which
+		// is a meaningful answer in every state - including `disabled` and a state
+		// that just failed, where it is the only way to read the diagnostic.
+		Entry{ WorkbenchCommandDescriptor{
+				   "update.showUpdateInfo", "Show Update Info", kBuiltinOwner,
+				   "workbenchReady", "workbenchReady", EWorkbenchCommandExecutorTarget::Editor,
+				   { { EWorkbenchCommandSurface::CommandPalette, "update.showUpdateInfo.palette", std::nullopt } } },
+			std::move(executors.showUpdateInfo), {} },
+
+		Entry{ MakeUpdateMenuDescriptor("update.check", "Check for Updates...", "idle", true),
+			std::move(executors.checkForUpdates), {} },
+		Entry{ MakeUpdateMenuDescriptor("update.checking", "Checking for Updates...", "checking for updates", false),
+			{}, {} },
+		Entry{ MakeUpdateMenuDescriptor("update.downloadNow", "Download Update (1)", "available for download", true),
+			std::move(executors.downloadUpdate), {} },
+		Entry{ MakeUpdateMenuDescriptor("update.downloading", "Downloading Update...", "downloading", false),
+			{}, {} },
+		Entry{ MakeUpdateMenuDescriptor("update.install", "Install Update... (1)", "downloaded", true),
+			std::move(executors.applyUpdate), {} },
+		Entry{ MakeUpdateMenuDescriptor("update.updating", "Installing Update...", "updating", false), {}, {} },
+		Entry{ MakeUpdateMenuDescriptor("update.cancelling", "Cancelling Update...", "cancelling", false), {}, {} },
+		Entry{ MakeUpdateMenuDescriptor("update.restart", "Restart to Update (1)", "ready", true),
+			std::move(executors.quitAndInstall), {} },
+
+		// The title-bar entry itself. No executor: `Execute` delegates it to
+		// whichever of the three actionable commands the current state selects.
+		Entry{ WorkbenchCommandDescriptor{
+				   std::string(kUpdateIndicatorCommandId), "Update", kBuiltinOwner,
+				   std::string(kUpdateIndicatorWhenClause), std::string(kUpdateIndicatorWhenClause),
+				   EWorkbenchCommandExecutorTarget::Editor,
+				   { { EWorkbenchCommandSurface::Menu, "workbench.titleBar.update", std::nullopt } } },
+			{}, {} },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }
@@ -780,6 +948,16 @@ WorkbenchCommandExecutionResult WorkbenchCommandRegistry::Execute(std::string_vi
 		if (!WorkbenchWhenClauseEvaluator::Evaluate(entry.descriptor.enablementClause, context)) {
 			return { EWorkbenchCommandExecutionStatus::Disabled, "enablement clause did not match" };
 		}
+		// The title-bar indicator is a delegating command, exactly as upstream's
+		// `updateTitleBarEntry.ts` is: its `run` picks `update.downloadNow`,
+		// `update.install`, or `update.restart` from the state it is showing. It
+		// therefore has no executor of its own, and resolving the target here
+		// rather than in the title bar keeps the button from carrying a second
+		// copy of the update state. The target is never the indicator itself, so
+		// this cannot recurse.
+		if (entry.descriptor.id == kUpdateIndicatorCommandId && !entry.executor && !entry.argumentExecutor) {
+			return ExecuteUpdateIndicator(context);
+		}
 		if (entry.descriptor.executorTarget == EWorkbenchCommandExecutorTarget::None
 			|| (!entry.executor && !entry.argumentExecutor)) {
 			return { EWorkbenchCommandExecutionStatus::Unsupported, "executor target is not bound" };
@@ -791,6 +969,20 @@ WorkbenchCommandExecutionResult WorkbenchCommandRegistry::Execute(std::string_vi
 	} catch (...) {
 		return { EWorkbenchCommandExecutionStatus::Failed, "executor threw" };
 	}
+}
+
+WorkbenchCommandExecutionResult WorkbenchCommandRegistry::ExecuteUpdateIndicator(
+	const WorkbenchContextKeySnapshot& context) const noexcept
+{
+	const auto target = ResolveUpdateIndicatorCommand(context);
+	if (!target) {
+		// The button is only drawn in an actionable state, so arriving here means
+		// the state changed between paint and click. Reporting NotApplicable
+		// leaves the stale press with no effect rather than picking whichever
+		// update action looks closest.
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "update state is not actionable" };
+	}
+	return Execute(*target, context, std::string_view{});
 }
 
 std::uint64_t WorkbenchCommandRegistry::Revision() const noexcept

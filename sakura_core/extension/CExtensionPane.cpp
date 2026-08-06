@@ -21,8 +21,12 @@
 #include "util/MessageBoxF.h"
 #include "util/string_ex.h"
 #include "util/window.h"
+#include "workbench/extension/ExtensionIconDecoder.h"
 #include "CSelectLang.h"
 #include "sakura_rc.h"
+
+// AlphaBlend for premultiplied-alpha row icons, same as CExtensionDetailSurface's icon path.
+#pragma comment(lib, "Msimg32.lib")
 
 namespace {
 
@@ -35,6 +39,14 @@ enum EChildId {
 	ID_REMOVE_BUTTON	= 1005,
 	ID_STATUS			= 1006,
 	ID_SECTION_LABEL	= 1007,
+	ID_LOAD_MORE_BUTTON	= 1008,
+};
+
+//! 行の右クリックメニューの項目 ID。EChildId とも WM_APP レンジとも衝突しない番台を使う
+enum EContextMenuId {
+	MENU_ID_INSTALL		= 2001,
+	MENU_ID_TOGGLE		= 2002,
+	MENU_ID_UNINSTALL	= 2003,
 };
 
 //! 一覧の列
@@ -52,12 +64,16 @@ constexpr int kExtensionRowHeight = 78;
 constexpr int kLineHeight		= 22;
 constexpr int kSearchButtonWidth = 52;
 constexpr int kStatusHeight		= 40;
+constexpr int kRowIconSize			= 48;	//!< 1 行のアイコンタイルの一辺（DPI 拡大前の論理ピクセル）
+constexpr int kRowIconMargin		= 8;
 
 constexpr COLORREF kDarkCardColor = RGB( 37, 37, 38 );
 constexpr COLORREF kDarkCardHoverColor = RGB( 50, 50, 50 );
 constexpr COLORREF kDarkCardSelectedColor = RGB( 0, 122, 204 );
 constexpr COLORREF kDarkTextColor = RGB( 224, 224, 224 );
 constexpr COLORREF kDarkSecondaryTextColor = RGB( 170, 170, 170 );
+//! 頭文字タイルの下地。CExtensionDetailSurface のヒーロー画像と同じアクセント色（VS Code の既定の青）
+constexpr COLORREF kIconAccentColor = RGB( 0, 122, 204 );
 
 //! 検索欄のサブクラス識別子
 constexpr UINT_PTR kSearchEditSubclassId = 1;
@@ -272,6 +288,146 @@ void CExtensionPane::ClearExtensionSelection()
 	NotifySelectionChanged();
 }
 
+void CExtensionPane::SetExtensionIconBytes( const std::wstring& sUniqueId, std::vector<std::byte> encodedBytes )
+{
+	const auto existing = m_iconBitmaps.find( sUniqueId );
+	if( existing != m_iconBitmaps.end() ){
+		if( existing->second != nullptr ) ::DeleteObject( existing->second );
+		m_iconBitmaps.erase( existing );
+	}
+	if( !encodedBytes.empty() ){
+		const workbench::extension::DecodedExtensionIcon decoded =
+			workbench::extension::DecodeExtensionIconBitmap(
+				std::span<const std::byte>( encodedBytes.data(), encodedBytes.size() ),
+				DpiScaleX( kRowIconSize ) );
+		if( decoded.IsValid() ){
+			m_iconBitmaps.emplace( sUniqueId, decoded.bitmap );
+		}
+	}
+	if( m_hwndList ){
+		::InvalidateRect( m_hwndList, nullptr, TRUE );
+	}
+}
+
+void CExtensionPane::ReleaseIconBitmaps() noexcept
+{
+	for( auto& [id, bitmap] : m_iconBitmaps ){
+		if( bitmap != nullptr ) ::DeleteObject( bitmap );
+	}
+	m_iconBitmaps.clear();
+}
+
+void CExtensionPane::DrawRowIcon( HDC dc, const RECT& tile, const SRow& row, bool bDark ) const
+{
+	const std::wstring sUniqueId = row.ext.GetUniqueId();
+	const auto it = m_iconBitmaps.find( sUniqueId );
+	if( it != m_iconBitmaps.end() && it->second != nullptr ){
+		const int tileWidth = tile.right - tile.left;
+		const int tileHeight = tile.bottom - tile.top;
+		if( tileWidth > 0 && tileHeight > 0 ){
+			BITMAP bm{};
+			if( ::GetObject( it->second, sizeof(bm), &bm ) != 0 && bm.bmWidth > 0 && bm.bmHeight > 0 ){
+				HDC memDc = ::CreateCompatibleDC( dc );
+				if( memDc ){
+					HGDIOBJ old = ::SelectObject( memDc, it->second );
+					if( old && old != HGDI_ERROR ){
+						BLENDFUNCTION blend{};
+						blend.BlendOp = AC_SRC_OVER;
+						blend.SourceConstantAlpha = 255;
+						blend.AlphaFormat = AC_SRC_ALPHA;
+						::AlphaBlend( dc, tile.left, tile.top, tileWidth, tileHeight,
+							memDc, 0, 0, bm.bmWidth, bm.bmHeight, blend );
+						::SelectObject( memDc, old );
+						::DeleteDC( memDc );
+						return;
+					}
+					::DeleteDC( memDc );
+				}
+			}
+		}
+	}
+	// Fallback: accent-colored initials tile, matching CExtensionDetailSurface's
+	// PaintHeader pattern (the icon-decode path shares the same "no bytes yet, or
+	// decode failed" outcome as "no icon at all" -- both fall back here rather
+	// than showing nothing or a placeholder image). The accent color is the same
+	// regardless of theme, matching the reference surface's blue accent.
+	(void)bDark;
+	RECT tileFill = tile;
+	HBRUSH brush = ::CreateSolidBrush( kIconAccentColor );
+	::FillRect( dc, &tileFill, brush );
+	::DeleteObject( brush );
+	const std::wstring name = row.ext.sDisplayName.empty() ? row.ext.sName : row.ext.sDisplayName;
+	std::wstring initials;
+	for( const wchar_t ch : name ){
+		if( ch == L' ' || ch == L'-' || ch == L'_' ) continue;
+		initials += ch;
+		if( initials.size() == 2 ) break;
+	}
+	if( initials.empty() ) initials = L"?";
+	::SetBkMode( dc, TRANSPARENT );
+	::SetTextColor( dc, RGB(255,255,255) );
+	RECT textRect = tileFill;
+	::DrawText( dc, initials.c_str(), -1, &textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE );
+}
+
+void CExtensionPane::ShowRowContextMenu( int nRow, POINT ptScreen )
+{
+	if( nRow < 0 || static_cast<size_t>(nRow) >= m_rows.size() ) return;
+
+	// Re-select the row under the cursor so the action targets what the user
+	// right-clicked, matching VS Code's gear menu acting on the hovered row.
+	LVITEM clearState = {};
+	clearState.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+	::SendMessage( m_hwndList, LVM_SETITEMSTATE, static_cast<WPARAM>(-1), (LPARAM)&clearState );
+	LVITEM setState = {};
+	setState.stateMask = LVIS_SELECTED | LVIS_FOCUSED;
+	setState.state = LVIS_SELECTED | LVIS_FOCUSED;
+	::SendMessage( m_hwndList, LVM_SETITEMSTATE, static_cast<WPARAM>(nRow), (LPARAM)&setState );
+
+	const SRow& row = m_rows[static_cast<size_t>(nRow)];
+	const bool bBusy = ( m_pJob != nullptr );
+	const bool bInstalled = !row.sInstalledVersion.empty();
+
+	// Only actions this pane can genuinely perform are ever offered here. In
+	// particular there is no "Update" item: no working reinstall-over-an-
+	// installed-extension capability exists anywhere in this application
+	// (CExtensionManager::Install fails closed whenever the destination already
+	// exists), so showing one would fake a capability. See extension/CLAUDE.md.
+	HMENU hMenu = ::CreatePopupMenu();
+	if( !hMenu ) return;
+	int iPos = 0;
+	if( bInstalled ){
+		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_STRING | ( bBusy ? MF_GRAYED : 0 ),
+			MENU_ID_TOGGLE, row.bEnabled ? L"Disable" : L"Enable" );
+		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_STRING | ( bBusy ? MF_GRAYED : 0 ),
+			MENU_ID_UNINSTALL, LS( STR_EXTENSION_REMOVE ) );
+	}
+	else if( !row.ext.sDownloadUrl.empty() ){
+		::InsertMenu( hMenu, iPos++, MF_BYPOSITION | MF_STRING | ( bBusy ? MF_GRAYED : 0 ),
+			MENU_ID_INSTALL, LS( STR_EXTENSION_INSTALL ) );
+	}
+
+	if( iPos == 0 ){
+		// Nothing on this row is genuinely performable right now (for example a
+		// row with no download URL); an empty popup would look broken, so no menu
+		// is shown at all rather than a placeholder.
+		::DestroyMenu( hMenu );
+		return;
+	}
+
+	const int nId = ::TrackPopupMenu( hMenu,
+		TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_RETURNCMD,
+		ptScreen.x, ptScreen.y, 0, GetHwnd(), nullptr );
+	::DestroyMenu( hMenu );
+
+	switch( nId ){
+	case MENU_ID_INSTALL:   StartInstall();   break;
+	case MENU_ID_TOGGLE:    StartToggle();    break;
+	case MENU_ID_UNINSTALL: StartUninstall(); break;
+	default: break;
+	}
+}
+
 CExtensionPane::~CExtensionPane()
 {
 	// 実行中のワーカーが居るかもしれないので、結果の宛先を無効にしておく。
@@ -287,6 +443,7 @@ CExtensionPane::~CExtensionPane()
 		m_hFont = nullptr;
 	}
 	CancelReadmeJob();
+	ReleaseIconBitmaps();
 	m_onExtensionSelected = nullptr;
 	m_onExtensionInstalled = nullptr;
 }
@@ -377,19 +534,26 @@ bool CExtensionPane::CreateChildren()
 		WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
 		0, 0, 0, 0, hwnd, (HMENU)ID_REMOVE_BUTTON, hInstance, nullptr );
 
+	// Search-result paging (VS Code's "Show More"). Hidden until a search result
+	// with more rows than currently shown exists; see UpdateButtons.
+	m_hwndLoadMoreButton = ::CreateWindowEx(
+		0, WC_BUTTON, L"Load More",
+		WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
+		0, 0, 0, 0, hwnd, (HMENU)ID_LOAD_MORE_BUTTON, hInstance, nullptr );
+
 	m_hwndStatus = ::CreateWindowEx(
 		0, WC_STATIC, nullptr,
 		WS_CHILD | WS_VISIBLE | SS_LEFT,
 		0, 0, 0, 0, hwnd, (HMENU)ID_STATUS, hInstance, nullptr );
 
 	if( !m_hwndSearchEdit || !m_hwndSearchButton || !m_hwndSectionLabel || !m_hwndList
-		|| !m_hwndInstallButton || !m_hwndRemoveButton || !m_hwndStatus ){
+		|| !m_hwndInstallButton || !m_hwndRemoveButton || !m_hwndLoadMoreButton || !m_hwndStatus ){
 		return false;
 	}
 
 	if( m_hFont ){
 		for( HWND hwndChild : { m_hwndSearchEdit, m_hwndSearchButton, m_hwndList,
-			m_hwndInstallButton, m_hwndRemoveButton, m_hwndStatus, m_hwndSectionLabel } ){
+			m_hwndInstallButton, m_hwndRemoveButton, m_hwndLoadMoreButton, m_hwndStatus, m_hwndSectionLabel } ){
 			::SendMessage( hwndChild, WM_SETFONT, (WPARAM)m_hFont, MAKELPARAM( TRUE, 0 ) );
 		}
 	}
@@ -471,16 +635,21 @@ void CExtensionPane::LayoutChildren( int cx, int cy )
 	// 下段：操作ボタンと状態表示
 	const int nStatusTop = std::max( nMargin, cy - nMargin - nStatusH );
 	const int nButtonTop = std::max( nMargin, nStatusTop - nMargin - nLine );
+	// Load More gets its own fixed slot directly above the action-button row. It is
+	// hidden (not removed) when there is nothing more to load, so the list simply
+	// leaves this slot blank rather than reflowing every time paging state changes.
+	const int nLoadMoreTop = std::max( nMargin, nButtonTop - nMargin - nLine );
 	const int nActionW = ( cx - nMargin * 3 ) / 2;
 	::MoveWindow( m_hwndInstallButton, nMargin, nButtonTop, nActionW, nLine, TRUE );
 	::MoveWindow( m_hwndRemoveButton, nMargin * 2 + nActionW, nButtonTop, nActionW, nLine, TRUE );
+	::MoveWindow( m_hwndLoadMoreButton, nMargin, nLoadMoreTop, cx - nMargin * 2, nLine, TRUE );
 	::MoveWindow( m_hwndStatus, nMargin, nStatusTop, cx - nMargin * 2, nStatusH, TRUE );
 
 	// 中段：一覧。残りをすべて使う
 	::MoveWindow( m_hwndSectionLabel, nMargin, nMargin * 2 + nLine,
 		cx - nMargin * 2, nSectionH, TRUE );
 	const int nListTop = nMargin * 2 + nLine + nSectionH;
-	int nListHeight = nButtonTop - nMargin - nListTop;
+	int nListHeight = nLoadMoreTop - nMargin - nListTop;
 	if( nListHeight < nLine ){
 		nListHeight = nLine;
 	}
@@ -518,6 +687,9 @@ LRESULT CExtensionPane::OnCommand( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 	case ID_REMOVE_BUTTON:
 		StartUninstall();
 		return 0;
+	case ID_LOAD_MORE_BUTTON:
+		StartLoadMoreSearch();
+		return 0;
 	default:
 		break;
 	}
@@ -550,6 +722,18 @@ LRESULT CExtensionPane::OnNotify( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 		case LVN_ITEMACTIVATE:
 			// ダブルクリックで導入
 			StartInstall();
+			return 0;
+		case NM_RCLICK:
+			{
+				// Mouse-only: see ShowRowContextMenu's doc comment for why there is no
+				// keyboard (Menu key / Shift+F10) equivalent from this pane.
+				const NMITEMACTIVATE* pItemActivate = (const NMITEMACTIVATE*)lp;
+				if( pItemActivate->iItem >= 0 ){
+					POINT pt = pItemActivate->ptAction;
+					::ClientToScreen( m_hwndList, &pt );
+					ShowRowContextMenu( pItemActivate->iItem, pt );
+				}
+			}
 			return 0;
 		default:
 			break;
@@ -590,16 +774,55 @@ LRESULT CExtensionPane::OnDrawItem( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 	HBRUSH brush = ::CreateSolidBrush( background );
 	::FillRect( draw->hDC, &draw->rcItem, brush );
 	::DeleteObject( brush );
+
+	// Icon tile: matches VS Code's row layout (icon, name, publisher, version,
+	// description). Bytes only ever arrive via SetExtensionIconBytes -- this pane
+	// does no network access -- so a row with no supplied bytes yet, or whose
+	// bytes failed to decode, always falls back to the initials tile rather than
+	// showing nothing or a placeholder image.
+	const int nIconSize = DpiScaleX( kRowIconSize );
+	const int nIconMargin = DpiScaleX( kRowIconMargin );
+	RECT tile{
+		draw->rcItem.left + nIconMargin,
+		draw->rcItem.top + ( ( draw->rcItem.bottom - draw->rcItem.top ) - nIconSize ) / 2,
+		draw->rcItem.left + nIconMargin + nIconSize,
+		0 };
+	tile.bottom = tile.top + nIconSize;
+	DrawRowIcon( draw->hDC, tile, row, dark );
+
 	::SetBkMode( draw->hDC, TRANSPARENT );
 	::SetTextColor( draw->hDC, foreground );
 	RECT text = draw->rcItem;
-	text.left += DpiScaleX( 8 ); text.right -= DpiScaleX( 8 );
+	text.left = tile.right + nIconMargin;
+	text.right -= DpiScaleX( 8 );
+
+	// Right-aligned "Install" affordance. This is the ONLY label ever drawn here:
+	// it mirrors exactly the condition under which StartInstall() (also reachable
+	// via double-click / LVN_ITEMACTIVATE) actually installs the row. There is no
+	// "Update" affordance anywhere in this pane -- CExtensionManager::Install fails
+	// closed whenever the destination already exists, so no working
+	// reinstall-over-an-installed-extension capability exists to expose. An
+	// installed row's state is already communicated by the details line below.
+	const bool bCanInstall = row.sInstalledVersion.empty() && !row.ext.sDownloadUrl.empty();
+	if( bCanInstall ){
+		const int nLabelWidth = DpiScaleX( 56 );
+		RECT label = text;
+		label.left = std::max( text.left, text.right - nLabelWidth );
+		text.right = std::max( text.left, label.left - DpiScaleX( 4 ) );
+		::SetTextColor( draw->hDC, dark ? RGB( 90, 165, 255 ) : ::GetSysColor( COLOR_HOTLIGHT ) );
+		::DrawText( draw->hDC, LS( STR_EXTENSION_INSTALL ), -1, &label, DT_SINGLELINE | DT_RIGHT | DT_NOPREFIX );
+		::SetTextColor( draw->hDC, foreground );
+	}
+
 	const std::wstring name = row.ext.sDisplayName.empty() ? row.ext.sName : row.ext.sDisplayName;
 	::DrawText( draw->hDC, name.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
 	text.top += DpiScaleY( 18 );
-	const std::wstring id = row.ext.GetUniqueId();
+	// Publisher line. SOpenVsxExtension has no separate "publisher display name"
+	// field (only the raw namespace segment used to build the unique ID), so the
+	// namespace is shown as-is -- a documented divergence from VS Code's marketplace
+	// publisher display name, recorded in extension/CLAUDE.md.
 	::SetTextColor( draw->hDC, secondary );
-	::DrawText( draw->hDC, id.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
+	::DrawText( draw->hDC, row.ext.sNamespace.c_str(), -1, &text, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX );
 	text.top += DpiScaleY( 16 );
 	std::wstring details = row.sInstalledVersion.empty()
 		? L"Available  " : row.bEnabled ? L"Installed  " : L"Disabled  ";
@@ -627,6 +850,7 @@ LRESULT CExtensionPane::OnDestroy( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp )
 	// README runs on the same detached-worker boundary and must not publish after
 	// the pane HWND has begun destruction.
 	CancelReadmeJob();
+	ReleaseIconBitmaps();
 	::KillTimer( hwnd, kJobPollTimerId );
 	return CallDefWndProc( hwnd, msg, wp, lp );
 }
@@ -661,6 +885,7 @@ LRESULT CExtensionPane::DispatchEvent_WM_APP( HWND hwnd, UINT msg, WPARAM wp, LP
 void CExtensionPane::ShowInstalledList()
 {
 	m_bSearchResultShown = false;
+	m_bFilteredInstalledShown = false;
 	m_rows.clear();
 	for( const auto& installed : m_cManager.EnumInstalled() ){
 		SRow row;
@@ -683,6 +908,111 @@ void CExtensionPane::RefreshInstalledState()
 		row.bEnabled = !row.sInstalledVersion.empty() && CExtensionProfileState::IsEnabled(
 			profileState, row.ext.GetUniqueId(), m_defaultProfileExtensionsWhenMissing );
 	}
+}
+
+std::vector<workbench::extension::ExtensionSearchCandidate> CExtensionPane::BuildInstalledCandidates() const
+{
+	std::vector<workbench::extension::ExtensionSearchCandidate> candidates;
+	const auto profileState = m_profileState.Load();
+	for( const auto& installed : m_cManager.EnumInstalled() ){
+		workbench::extension::ExtensionSearchCandidate candidate;
+		candidate.extension = MakeExtensionFromUniqueId( installed.sUniqueId, installed.sDisplayName, installed.sVersion );
+		candidate.installedVersion = installed.sVersion;
+		candidate.enabled = CExtensionProfileState::IsEnabled(
+			profileState, installed.sUniqueId, m_defaultProfileExtensionsWhenMissing );
+		candidates.push_back( std::move( candidate ) );
+	}
+	return candidates;
+}
+
+void CExtensionPane::ShowFilteredInstalledList( const workbench::extension::ParsedExtensionSearchQuery& parsed )
+{
+	m_bSearchResultShown = false;
+	m_bFilteredInstalledShown = true;
+	m_lastInstalledFilterQuery = parsed;
+	const std::vector<workbench::extension::ExtensionSearchCandidate> candidates = BuildInstalledCandidates();
+	const std::vector<std::size_t> indices = workbench::extension::ApplyExtensionSearchFilters( parsed, candidates );
+	m_rows.clear();
+	m_rows.reserve( indices.size() );
+	for( const std::size_t i : indices ){
+		SRow row;
+		row.ext = candidates[i].extension;
+		row.sInstalledVersion = candidates[i].installedVersion;
+		row.bEnabled = candidates[i].enabled;
+		m_rows.push_back( std::move( row ) );
+	}
+	UpdateListView();
+}
+
+void CExtensionPane::ApplySearchResultRefinement( bool bDeprecatedOnly, workbench::extension::ExtensionSearchSortKey sortKey )
+{
+	std::vector<workbench::extension::ExtensionSearchCandidate> candidates;
+	candidates.reserve( m_searchRawRows.size() );
+	const auto profileState = m_profileState.Load();
+	for( const auto& ext : m_searchRawRows ){
+		workbench::extension::ExtensionSearchCandidate candidate;
+		candidate.extension = ext;
+		SInstalledExtension found;
+		candidate.installedVersion = m_cManager.FindInstalled( ext.GetUniqueId(), found ) ? found.sVersion : std::wstring();
+		if( !candidate.installedVersion.empty() ){
+			candidate.enabled = CExtensionProfileState::IsEnabled(
+				profileState, ext.GetUniqueId(), m_defaultProfileExtensionsWhenMissing );
+		}
+		candidates.push_back( std::move( candidate ) );
+	}
+
+	workbench::extension::ParsedExtensionSearchQuery query;
+	if( bDeprecatedOnly ) query.filters.push_back( workbench::extension::ExtensionSearchFilter::Deprecated );
+	query.sortKey = sortKey;
+	// searchText stays empty: the registry already narrowed by the free text, and
+	// re-applying it as a local substring filter here could drop results the
+	// server judged relevant through matching this local check does not attempt
+	// to reproduce.
+	const std::vector<std::size_t> indices = workbench::extension::ApplyExtensionSearchFilters( query, candidates );
+
+	m_rows.clear();
+	m_rows.reserve( indices.size() );
+	for( const std::size_t i : indices ){
+		SRow row;
+		row.ext = candidates[i].extension;
+		row.sInstalledVersion = candidates[i].installedVersion;
+		row.bEnabled = candidates[i].enabled;
+		m_rows.push_back( std::move( row ) );
+	}
+	UpdateListView();
+}
+
+void CExtensionPane::RefreshCurrentListAfterMutation()
+{
+	if( m_bSearchResultShown ){
+		ApplySearchResultRefinement( m_bSearchDeprecatedOnly, m_eSearchSortKey );
+	}
+	else if( m_bFilteredInstalledShown ){
+		ShowFilteredInstalledList( m_lastInstalledFilterQuery );
+	}
+	else{
+		ShowInstalledList();
+	}
+}
+
+void CExtensionPane::StartLoadMoreSearch()
+{
+	if( m_pJob ){
+		SetStatusText( LS( STR_EXTENSION_STATUS_BUSY ) );
+		return;
+	}
+	if( !m_bSearchResultShown
+		|| m_searchRawRows.size() >= static_cast<size_t>( std::max( 0, m_nSearchTotalSize ) ) ){
+		return;
+	}
+
+	auto pJob = std::make_shared<SJob>();
+	pJob->eKind = EJobKind::Search;
+	pJob->sQuery = m_sSearchRawQuery;
+	pJob->nOffset = static_cast<int>( m_searchRawRows.size() );
+	pJob->bAppendResults = true;
+	SetStatusText( LS( STR_EXTENSION_STATUS_SEARCHING ) );
+	StartJob( std::move( pJob ) );
 }
 
 void CExtensionPane::UpdateListView()
@@ -774,6 +1104,14 @@ void CExtensionPane::UpdateButtons()
 	}
 	::EnableWindow( m_hwndInstallButton, bCanInstall || bCanToggle );
 	::EnableWindow( m_hwndRemoveButton, bCanRemove );
+
+	if( m_hwndLoadMoreButton ){
+		const bool bHasMore = m_bSearchResultShown
+			&& m_nSearchTotalSize > 0
+			&& m_searchRawRows.size() < static_cast<size_t>( m_nSearchTotalSize );
+		::ShowWindow( m_hwndLoadMoreButton, bHasMore ? SW_SHOW : SW_HIDE );
+		::EnableWindow( m_hwndLoadMoreButton, bHasMore && !bBusy );
+	}
 }
 
 void CExtensionPane::SetStatusText( const std::wstring& sText )
@@ -880,17 +1218,72 @@ void CExtensionPane::StartSearch()
 		return;
 	}
 
-	const std::wstring sQuery = GetWindowTextAsString( m_hwndSearchEdit );
-	if( sQuery.empty() ){
-		// 検索語が無いときは導入済み一覧に戻す。通信しない
-		ShowInstalledList();
+	const std::wstring sRawQuery = GetWindowTextAsString( m_hwndSearchEdit );
+	const workbench::extension::ParsedExtensionSearchQuery parsed =
+		workbench::extension::ParseExtensionSearchQuery( sRawQuery );
+
+	// Fail closed rather than silently treating an unrecognized token as free
+	// text: VS Code's own filter tokens are a fixed vocabulary, and folding an
+	// unrecognized "@" token into a marketplace search term would send it to the
+	// registry as if the user had typed it literally, which is not what they
+	// asked for.
+	if( !parsed.unknownTokens.empty() ){
+		SetStatusText( L"Unrecognized search filter: " + parsed.unknownTokens.front() );
+		return;
+	}
+	// @recommended has no backing data source anywhere in this application (no
+	// workspace/user recommendation source exists), so it must fail closed
+	// rather than silently matching everything or nothing.
+	if( parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Recommended ) ){
+		SetStatusText( L"@recommended is not supported: no recommendation source is available." );
+		return;
+	}
+
+	const bool bInstalledScopeFilter =
+		parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Installed ) ||
+		parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Enabled ) ||
+		parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Disabled ) ||
+		parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Outdated );
+
+	if( bInstalledScopeFilter ){
+		// These filters can only be answered from locally known installed-set
+		// state (enabled/disabled profile selection, installed version), so they
+		// never reach the marketplace -- matching VS Code, which also answers
+		// @installed/@enabled/@disabled/@outdated from its local extension state.
+		ShowFilteredInstalledList( parsed );
 		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED_COUNT ), (int)m_rows.size() ) );
 		return;
 	}
 
+	if( parsed.searchText.empty() ){
+		if( parsed.sortKey == workbench::extension::ExtensionSearchSortKey::Relevance
+			&& !parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Deprecated ) ){
+			// No filter, no sort, no text: identical to the empty search box.
+			ShowInstalledList();
+			SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED_COUNT ), (int)m_rows.size() ) );
+			return;
+		}
+		// A bare @sort:/@deprecated with no free text still has nothing to send to
+		// the marketplace, so it refines the local installed list instead.
+		ShowFilteredInstalledList( parsed );
+		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED_COUNT ), (int)m_rows.size() ) );
+		return;
+	}
+
+	// Free text (optionally with @sort:/@deprecated) becomes a marketplace
+	// search. @deprecated and @sort: are re-applied locally to the fetched page
+	// in FinishJob (via ApplySearchResultRefinement), since the registry has no
+	// such refinement and the free text itself must not be re-applied as a local
+	// substring filter (the server already narrowed by it).
+	m_sSearchRawQuery = parsed.searchText;
+	m_eSearchSortKey = parsed.sortKey;
+	m_bSearchDeprecatedOnly = parsed.HasFilter( workbench::extension::ExtensionSearchFilter::Deprecated );
+
 	auto pJob = std::make_shared<SJob>();
 	pJob->eKind = EJobKind::Search;
-	pJob->sQuery = sQuery;
+	pJob->sQuery = parsed.searchText;
+	pJob->nOffset = 0;
+	pJob->bAppendResults = false;
 	SetStatusText( LS( STR_EXTENSION_STATUS_SEARCHING ) );
 	StartJob( std::move( pJob ) );
 }
@@ -931,8 +1324,7 @@ void CExtensionPane::StartToggle()
 		UpdateButtons();
 		return;
 	}
-	RefreshInstalledState();
-	UpdateListView();
+	RefreshCurrentListAfterMutation();
 	SetStatusText( enabled ? L"Extension enabled." : L"Extension disabled." );
 	if( m_onExtensionInstalled ) m_onExtensionInstalled();
 }
@@ -1041,7 +1433,7 @@ void CExtensionPane::StartJob( std::shared_ptr<SJob> pJob )
 			const AtomicJobCancellation cancellation( pJob->bCancelled );
 			auto operation = pJob->registryClient->Search(
 				pJob->sQuery,
-				0,
+				pJob->nOffset,
 				extension::openvsx::OpenVsxRequestServiceAdapter::kDefaultPageSize,
 				&cancellation
 			);
@@ -1193,16 +1585,17 @@ void CExtensionPane::FinishJob( int nSerial )
 	switch( pJob->eKind ){
 	case EJobKind::Search:
 		m_bSearchResultShown = true;
-		m_rows.clear();
-		for( const auto& ext : pJob->result.extensions ){
-			SRow row;
-			row.ext = ext;
-			m_rows.push_back( std::move( row ) );
+		m_bFilteredInstalledShown = false;
+		if( !pJob->bAppendResults ){
+			m_searchRawRows.clear();
 		}
-		RefreshInstalledState();
-		UpdateListView();
+		for( const auto& ext : pJob->result.extensions ){
+			m_searchRawRows.push_back( ext );
+		}
+		m_nSearchTotalSize = pJob->result.nTotalSize;
+		ApplySearchResultRefinement( m_bSearchDeprecatedOnly, m_eSearchSortKey );
 		SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_FOUND ),
-			(int)m_rows.size(), pJob->result.nTotalSize ) );
+			(int)m_rows.size(), m_nSearchTotalSize ) );
 		break;
 
 	case EJobKind::Install:
@@ -1218,13 +1611,7 @@ void CExtensionPane::FinishJob( int nSerial )
 				SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_INSTALLED ), pJob->sTargetName.c_str() ) );
 			}
 		}
-		if( m_bSearchResultShown ){
-			RefreshInstalledState();
-			UpdateListView();
-		}
-		else{
-			ShowInstalledList();
-		}
+		RefreshCurrentListAfterMutation();
 		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
 			SetStatusText( L"Extension installed, but the extension-host inventory refresh failed." );
 		}
@@ -1249,13 +1636,7 @@ void CExtensionPane::FinishJob( int nSerial )
 				SetStatusText( strprintf( LS( STR_EXTENSION_STATUS_REMOVED ), pJob->sTargetName.c_str() ) );
 			}
 		}
-		if( m_bSearchResultShown ){
-			RefreshInstalledState();
-			UpdateListView();
-		}
-		else{
-			ShowInstalledList();
-		}
+		RefreshCurrentListAfterMutation();
 		if( !RefreshExtensionHostInventory( m_controlProcessWindow ) ){
 			SetStatusText( L"Extension removed, but the extension-host inventory refresh failed." );
 		}

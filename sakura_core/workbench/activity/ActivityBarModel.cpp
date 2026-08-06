@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <utility>
 
 namespace workbench::activity {
 namespace {
@@ -23,6 +24,27 @@ constexpr int kDefaultDpi = 96;
 
 } // namespace
 
+void ActivityBarModel::SetEntries(std::vector<ActivityBarEntry> entries)
+{
+	// Identity, not position, decides what survives: an extension that reconnects re-sends the
+	// same container id, and the user must not lose the selected container because a different
+	// extension happened to register earlier this time.
+	const std::string selected(IdAt(m_selected));
+	const std::string hovered(IdAt(m_hovered));
+	const std::string pressed(IdAt(m_pressed));
+	const std::string focused(IdAt(m_focused));
+
+	std::erase_if(entries, [](const ActivityBarEntry& entry) { return entry.id.empty(); });
+	m_entries = std::move(entries);
+	m_bounds.assign(m_entries.size(), ActivityBarRect{});
+
+	m_selected = ResolveInteractive(selected);
+	m_hovered = ResolveInteractive(hovered);
+	m_pressed = ResolveInteractive(pressed);
+	m_focused = ResolveInteractive(focused);
+	Reflow();
+}
+
 void ActivityBarModel::SetViewport(int widthPixels, int heightPixels, unsigned int dpi) noexcept
 {
 	m_widthPixels = NonNegative(widthPixels);
@@ -31,122 +53,154 @@ void ActivityBarModel::SetViewport(int widthPixels, int heightPixels, unsigned i
 	Reflow();
 }
 
-void ActivityBarModel::SetSelectedItem(std::optional<ActivityBarItem> item) noexcept
+std::size_t ActivityBarModel::IndexOf(std::string_view id) const noexcept
 {
-	m_selected = item && IsValid(*item) ? item : std::nullopt;
-}
-
-void ActivityBarModel::SetEnabled(ActivityBarItem item, bool enabled) noexcept
-{
-	if (!IsValid(item)) return;
-	m_enabled[ToIndex(item)] = enabled;
-	if (!enabled) {
-		if (m_hovered == item) m_hovered.reset();
-		if (m_pressed == item) m_pressed.reset();
-		if (m_focused == item) m_focused.reset();
-		if (m_selected == item) m_selected.reset();
+	if (id.empty()) return kNoIndex;
+	for (std::size_t index = 0; index < m_entries.size(); ++index) {
+		if (m_entries[index].id == id) return index;
 	}
+	return kNoIndex;
 }
 
-bool ActivityBarModel::IsEnabled(ActivityBarItem item) const noexcept
+std::string_view ActivityBarModel::IdAt(std::size_t index) const noexcept
 {
-	return IsValid(item) && IsInteractive(ToIndex(item));
+	return index < m_entries.size() ? std::string_view(m_entries[index].id) : std::string_view{};
 }
 
-void ActivityBarModel::SetItemVisible(ActivityBarItem item, bool visible) noexcept
+std::size_t ActivityBarModel::ResolveInteractive(std::string_view id) const noexcept
 {
-	if (!IsValid(item)) return;
-	const auto index = ToIndex(item);
-	if (m_visible[index] == visible) return;
-	m_visible[index] = visible;
-	if (!visible) {
-		if (m_hovered == item) m_hovered.reset();
-		if (m_pressed == item) m_pressed.reset();
-		if (m_focused == item) m_focused.reset();
-		if (m_selected == item) m_selected.reset();
-	}
+	const auto index = IndexOf(id);
+	return IsInteractive(index) ? index : kNoIndex;
+}
+
+void ActivityBarModel::SetSelectedItem(std::string_view id) noexcept
+{
+	m_selected = ResolveInteractive(id);
+}
+
+void ActivityBarModel::SetEnabled(std::string_view id, bool enabled) noexcept
+{
+	const auto index = IndexOf(id);
+	if (index == kNoIndex) return;
+	m_entries[index].enabled = enabled;
+	ForgetUnusableStates();
+}
+
+bool ActivityBarModel::IsEnabled(std::string_view id) const noexcept
+{
+	return IsInteractive(IndexOf(id));
+}
+
+void ActivityBarModel::SetItemVisible(std::string_view id, bool visible) noexcept
+{
+	const auto index = IndexOf(id);
+	if (index == kNoIndex || m_entries[index].visible == visible) return;
+	m_entries[index].visible = visible;
+	ForgetUnusableStates();
 	// A removed entry closes its gap, so every remaining entry shifts.
 	Reflow();
 }
 
-bool ActivityBarModel::IsVisible(ActivityBarItem item) const noexcept
+bool ActivityBarModel::IsVisible(std::string_view id) const noexcept
 {
-	return IsValid(item) && m_visible[ToIndex(item)];
+	const auto index = IndexOf(id);
+	return index != kNoIndex && m_entries[index].visible;
 }
 
 bool ActivityBarModel::IsInteractive(std::size_t index) const noexcept
 {
-	return index < kItemCount && m_enabled[index] && m_visible[index];
+	return index < m_entries.size() && m_entries[index].enabled && m_entries[index].visible;
 }
 
-void ActivityBarModel::SetHoveredItem(std::optional<ActivityBarItem> item) noexcept
+void ActivityBarModel::ForgetUnusableStates() noexcept
 {
-	m_hovered = item && IsEnabled(*item) ? item : std::nullopt;
+	for (auto* state : { &m_selected, &m_hovered, &m_pressed, &m_focused }) {
+		if (!IsInteractive(*state)) *state = kNoIndex;
+	}
 }
 
-void ActivityBarModel::SetPressedItem(std::optional<ActivityBarItem> item) noexcept
+void ActivityBarModel::SetHoveredItem(std::string_view id) noexcept
 {
-	m_pressed = item && IsEnabled(*item) ? item : std::nullopt;
+	m_hovered = ResolveInteractive(id);
 }
 
-void ActivityBarModel::SetFocusedItem(std::optional<ActivityBarItem> item) noexcept
+void ActivityBarModel::SetPressedItem(std::string_view id) noexcept
 {
-	m_focused = item && IsEnabled(*item) ? item : std::nullopt;
+	m_pressed = ResolveInteractive(id);
+}
+
+void ActivityBarModel::SetFocusedItem(std::string_view id) noexcept
+{
+	m_focused = ResolveInteractive(id);
 }
 
 ActivityBarButtonInfo ActivityBarModel::GetButton(std::size_t index) const noexcept
 {
-	if (index >= kItemCount) return {};
-	const auto item = static_cast<ActivityBarItem>(index);
+	if (index >= m_entries.size()) return {};
+	const auto& entry = m_entries[index];
 	return {
-		.item = item,
+		.id = entry.id,
+		.label = entry.label,
+		.codicon = entry.codicon,
+		.builtin = entry.builtin,
 		.bounds = m_bounds[index],
-		.selected = m_selected == item,
-		.hovered = m_hovered == item,
-		.pressed = m_pressed == item,
-		.focused = m_focused == item,
-		.enabled = m_enabled[index],
-		.visible = m_visible[index],
+		.selected = m_selected == index,
+		.hovered = m_hovered == index,
+		.pressed = m_pressed == index,
+		.focused = m_focused == index,
+		.enabled = entry.enabled,
+		.visible = entry.visible,
 	};
 }
 
-std::optional<ActivityBarItem> ActivityBarModel::HitTest(int x, int y) const noexcept
+std::string_view ActivityBarModel::HitTest(int x, int y) const noexcept
 {
-	for (std::size_t index = 0; index < kItemCount; ++index) {
-		if (IsInteractive(index) && m_bounds[index].Contains(x, y)) return static_cast<ActivityBarItem>(index);
+	for (std::size_t index = 0; index < m_entries.size(); ++index) {
+		if (IsInteractive(index) && m_bounds[index].Contains(x, y)) return m_entries[index].id;
 	}
-	return std::nullopt;
+	return {};
 }
 
-std::optional<ActivityBarItem> ActivityBarModel::MoveFocus(int direction) noexcept
+std::string_view ActivityBarModel::MoveFocus(int direction) noexcept
 {
-	if (direction == 0) return m_focused;
+	if (m_entries.empty()) return {};
+	if (direction == 0) return IdAt(m_focused);
 	const int step = direction < 0 ? -1 : 1;
-	if (!m_focused || !IsEnabled(*m_focused)) {
+	if (!IsInteractive(m_focused)) {
 		m_focused = FirstEnabled(step);
-		return m_focused;
+		return IdAt(m_focused);
 	}
 
-	const int start = static_cast<int>(ToIndex(*m_focused));
-	for (int offset = 1; offset <= static_cast<int>(kItemCount); ++offset) {
-		const int index = (start + step * offset + static_cast<int>(kItemCount)) % static_cast<int>(kItemCount);
-		if (IsInteractive(static_cast<std::size_t>(index))) {
-			m_focused = static_cast<ActivityBarItem>(index);
-			return m_focused;
+	const auto count = m_entries.size();
+	for (std::size_t offset = 1; offset <= count; ++offset) {
+		// Walking backwards is walking forwards by (count - 1) steps, which keeps the
+		// arithmetic unsigned and free of the wrap-around sign games a negative step needs.
+		const std::size_t stride = step < 0 ? count - 1 : 1;
+		const std::size_t index = (m_focused + stride * offset) % count;
+		if (IsInteractive(index)) {
+			m_focused = index;
+			return IdAt(m_focused);
 		}
 	}
-	m_focused.reset();
-	return std::nullopt;
+	m_focused = kNoIndex;
+	return {};
 }
 
-std::optional<ActivityBarItem> ActivityBarModel::Invoke(ActivityBarItem item) noexcept
+std::string_view ActivityBarModel::FocusEdge(int direction) noexcept
 {
-	return IsEnabled(item) ? std::optional<ActivityBarItem>{ item } : std::nullopt;
+	m_focused = FirstEnabled(direction < 0 ? -1 : 1);
+	return IdAt(m_focused);
 }
 
-std::optional<ActivityBarItem> ActivityBarModel::InvokeFocused() noexcept
+std::string_view ActivityBarModel::Invoke(std::string_view id) const noexcept
 {
-	return m_focused ? Invoke(*m_focused) : std::nullopt;
+	const auto index = ResolveInteractive(id);
+	return IdAt(index);
+}
+
+std::string_view ActivityBarModel::InvokeFocused() const noexcept
+{
+	return IsInteractive(m_focused) ? IdAt(m_focused) : std::string_view{};
 }
 
 int ActivityBarModel::GetPreferredWidthPixels() const noexcept
@@ -161,23 +215,18 @@ int ActivityBarModel::ScaleDip(int dip, unsigned int dpi) noexcept
 	return static_cast<int>(std::min<std::int64_t>(scaled, std::numeric_limits<int>::max()));
 }
 
-bool ActivityBarModel::IsValid(ActivityBarItem item) const noexcept
-{
-	return ToIndex(item) < kItemCount;
-}
-
-std::optional<ActivityBarItem> ActivityBarModel::FirstEnabled(int direction) const noexcept
+std::size_t ActivityBarModel::FirstEnabled(int direction) const noexcept
 {
 	if (direction < 0) {
-		for (std::size_t index = kItemCount; index-- > 0;) {
-			if (IsInteractive(index)) return static_cast<ActivityBarItem>(index);
+		for (std::size_t index = m_entries.size(); index-- > 0;) {
+			if (IsInteractive(index)) return index;
 		}
 	} else {
-		for (std::size_t index = 0; index < kItemCount; ++index) {
-			if (IsInteractive(index)) return static_cast<ActivityBarItem>(index);
+		for (std::size_t index = 0; index < m_entries.size(); ++index) {
+			if (IsInteractive(index)) return index;
 		}
 	}
-	return std::nullopt;
+	return kNoIndex;
 }
 
 void ActivityBarModel::Reflow() noexcept
@@ -187,8 +236,8 @@ void ActivityBarModel::Reflow() noexcept
 	// Only present entries occupy a slot, so a container moved out of the Primary Side
 	// Bar leaves no gap behind, exactly as VS Code's composite bar reflows.
 	std::size_t slotIndex = 0;
-	for (std::size_t index = 0; index < kItemCount; ++index) {
-		if (!m_visible[index]) {
+	for (std::size_t index = 0; index < m_entries.size(); ++index) {
+		if (!m_entries[index].visible) {
 			m_bounds[index] = {};
 			continue;
 		}

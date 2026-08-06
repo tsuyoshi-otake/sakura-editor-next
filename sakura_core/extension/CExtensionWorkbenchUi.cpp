@@ -384,3 +384,21 @@ std::vector<SExtensionProgress> CExtensionProgressCenter::Snapshot() const
 	std::ranges::sort(result, {}, &SExtensionProgress::handle);
 	return result;
 }
+
+void CExtensionHoverCenter::Publish(SExtensionHoverResult result)
+{
+	std::lock_guard lock(m_mutex);
+	m_result = std::move(result);
+}
+
+void CExtensionHoverCenter::Clear()
+{
+	std::lock_guard lock(m_mutex);
+	m_result.reset();
+}
+
+std::optional<SExtensionHoverResult> CExtensionHoverCenter::Snapshot() const
+{
+	std::lock_guard lock(m_mutex);
+	return m_result;
+}

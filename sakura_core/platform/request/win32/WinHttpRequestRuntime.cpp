@@ -408,6 +408,16 @@ TransportResult WinHttpRequestTransport::Send(const TransportRequest& request, c
 			return Failure(rawBytes > request.limits.maxResponseHeaderBytes ? ETransportFailure::ResponseHeaderLimitExceeded : ETransportFailure::Protocol);
 		}
 
+		// bodySink が設定され、かつ成功応答（2xx）のときだけ本体をメモリーに溜め込まず
+		// chunk ごとに sink へ流す。3xx/401/407/429/503 等の制御用応答は呼び出し元
+		// （RequestService）がヘッダーだけで判断するため、これらは従来どおり
+		// response.body に溜めて返す（sink は無視する）。streamedBytes は sink 経路専用の
+		// 「これまでに消費したバイト数」で、response.body.size() の代わりに上限判定へ使う。
+		const bool streamToSink = static_cast<bool>(request.bodySink) && response.statusCode >= 200 && response.statusCode < 300;
+		std::vector<std::uint8_t> chunkBuffer;
+		if (streamToSink) chunkBuffer.resize(kReadChunkBytes);
+		std::size_t streamedBytes = 0;
+
 		for (;;) {
 			if (IsCancelled(cancellation)) return Failure(ETransportFailure::Network);
 			if (HasTimedOut(deadline)) return Failure(ETransportFailure::Timeout);
@@ -415,7 +425,8 @@ TransportResult WinHttpRequestTransport::Send(const TransportRequest& request, c
 			DWORD available = 0;
 			if (!::WinHttpQueryDataAvailable(winHttpRequest.Get(), &available)) return Failure(FailureForWinHttpError(::GetLastError()));
 			if (available == 0) break;
-			if (static_cast<std::size_t>(available) > request.limits.maxResponseBodyBytes - response.body.size()) {
+			const std::size_t consumedSoFar = streamToSink ? streamedBytes : response.body.size();
+			if (static_cast<std::size_t>(available) > request.limits.maxResponseBodyBytes - consumedSoFar) {
 				return Failure(ETransportFailure::ResponseBodyLimitExceeded);
 			}
 			DWORD remaining = available;
@@ -424,14 +435,25 @@ TransportResult WinHttpRequestTransport::Send(const TransportRequest& request, c
 				if (HasTimedOut(deadline)) return Failure(ETransportFailure::Timeout);
 				if (!SetRemainingTimeouts(winHttpRequest.Get(), deadline)) return Failure(HasTimedOut(deadline) ? ETransportFailure::Timeout : ETransportFailure::Network);
 				const DWORD toRead = std::min(remaining, kReadChunkBytes);
-				const auto previousSize = response.body.size();
-				if (toRead > request.limits.maxResponseBodyBytes - previousSize) return Failure(ETransportFailure::ResponseBodyLimitExceeded);
-				response.body.resize(previousSize + toRead);
-				DWORD read = 0;
-				if (!::WinHttpReadData(winHttpRequest.Get(), response.body.data() + previousSize, toRead, &read)) return Failure(FailureForWinHttpError(::GetLastError()));
-				response.body.resize(previousSize + read);
-				if (read == 0) return Failure(ETransportFailure::Protocol);
-				remaining -= read;
+				if (streamToSink) {
+					const auto previousStreamed = streamedBytes;
+					if (toRead > request.limits.maxResponseBodyBytes - previousStreamed) return Failure(ETransportFailure::ResponseBodyLimitExceeded);
+					DWORD read = 0;
+					if (!::WinHttpReadData(winHttpRequest.Get(), chunkBuffer.data(), toRead, &read)) return Failure(FailureForWinHttpError(::GetLastError()));
+					if (read == 0) return Failure(ETransportFailure::Protocol);
+					if (!request.bodySink(chunkBuffer.data(), static_cast<std::size_t>(read))) return Failure(ETransportFailure::SinkFailure);
+					streamedBytes = previousStreamed + read;
+					remaining -= read;
+				} else {
+					const auto previousSize = response.body.size();
+					if (toRead > request.limits.maxResponseBodyBytes - previousSize) return Failure(ETransportFailure::ResponseBodyLimitExceeded);
+					response.body.resize(previousSize + toRead);
+					DWORD read = 0;
+					if (!::WinHttpReadData(winHttpRequest.Get(), response.body.data() + previousSize, toRead, &read)) return Failure(FailureForWinHttpError(::GetLastError()));
+					response.body.resize(previousSize + read);
+					if (read == 0) return Failure(ETransportFailure::Protocol);
+					remaining -= read;
+				}
 			}
 		}
 		response.finalUrl = request.url;

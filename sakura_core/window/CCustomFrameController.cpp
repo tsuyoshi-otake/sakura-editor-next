@@ -48,6 +48,13 @@ constexpr UINT kManageShowExtensions = 0x5A03;
 constexpr UINT kManageOpenKeyboardShortcuts = 0x5A04;
 constexpr UINT kManageSelectColorTheme = 0x5A05;
 constexpr UINT kManageSelectFileIconTheme = 0x5A06;
+// Group `7_update`. Only the four actionable upstream entries need a command id;
+// the in-progress ones are contributed with `precondition: false` and are appended
+// greyed, so `TrackPopupMenu` can never return them.
+constexpr UINT kManageUpdateCheck = 0x5A07;
+constexpr UINT kManageUpdateDownload = 0x5A08;
+constexpr UINT kManageUpdateInstall = 0x5A09;
+constexpr UINT kManageUpdateRestart = 0x5A0A;
 
 bool Contains(const RECT& rect, POINT point) noexcept
 {
@@ -67,12 +74,24 @@ RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl contro
 	case CustomFrameControl::PrimarySidebar: return layout.primarySidebarButton;
 	case CustomFrameControl::BottomPanel: return layout.bottomPanelButton;
 	case CustomFrameControl::SecondarySidebar: return layout.secondarySidebarButton;
+	case CustomFrameControl::Update: return layout.updateButton;
 	case CustomFrameControl::Account: return layout.accountButton;
 	case CustomFrameControl::Manage: return layout.manageButton;
 	case CustomFrameControl::None: break;
 	}
 	return {};
 }
+
+//! Every Sakura-owned title control, in the order they are laid out left to right.
+constexpr std::array<CustomFrameControl, 7> kTitleControls = {
+	CustomFrameControl::Layout,
+	CustomFrameControl::PrimarySidebar,
+	CustomFrameControl::BottomPanel,
+	CustomFrameControl::SecondarySidebar,
+	CustomFrameControl::Update,
+	CustomFrameControl::Account,
+	CustomFrameControl::Manage,
+};
 
 CustomFrameControl TitleControlFromNode(int nodeId) noexcept
 {
@@ -99,8 +118,41 @@ CustomFrameManageAction ManageActionFromMenuCommand(UINT command) noexcept
 	case kManageOpenKeyboardShortcuts: return CustomFrameManageAction::OpenKeyboardShortcuts;
 	case kManageSelectColorTheme: return CustomFrameManageAction::SelectColorTheme;
 	case kManageSelectFileIconTheme: return CustomFrameManageAction::SelectFileIconTheme;
+	case kManageUpdateCheck: return CustomFrameManageAction::CheckForUpdates;
+	case kManageUpdateDownload: return CustomFrameManageAction::DownloadUpdate;
+	case kManageUpdateInstall: return CustomFrameManageAction::InstallUpdate;
+	case kManageUpdateRestart: return CustomFrameManageAction::RestartToUpdate;
 	default: return CustomFrameManageAction::None;
 	}
+}
+
+//! Appends VS Code's `MenuId.GlobalActivity` group `7_update` with its labels verbatim
+//! (`contrib/update/browser/update.ts`). Upstream registers eight items there, each
+//! gated on `CONTEXT_UPDATE_STATE == '<state>'`, so at most one is visible at a time;
+//! `None` is the `disabled`/`uninitialized` case where upstream contributes nothing and
+//! the menu must therefore not grow a stray separator either.
+bool AppendUpdateMenuGroup(HMENU menu, CustomFrameUpdateMenuEntry entry) noexcept
+{
+	UINT command = 0;
+	const wchar_t* label = nullptr;
+	switch (entry) {
+	case CustomFrameUpdateMenuEntry::None: return true;
+	case CustomFrameUpdateMenuEntry::Check:
+		command = kManageUpdateCheck; label = L"Check for Updates..."; break;
+	case CustomFrameUpdateMenuEntry::Checking: label = L"Checking for Updates..."; break;
+	case CustomFrameUpdateMenuEntry::DownloadNow:
+		command = kManageUpdateDownload; label = L"Download Update (1)"; break;
+	case CustomFrameUpdateMenuEntry::Downloading: label = L"Downloading Update..."; break;
+	case CustomFrameUpdateMenuEntry::Install:
+		command = kManageUpdateInstall; label = L"Install Update... (1)"; break;
+	case CustomFrameUpdateMenuEntry::Updating: label = L"Installing Update..."; break;
+	case CustomFrameUpdateMenuEntry::Cancelling: label = L"Cancelling Update..."; break;
+	case CustomFrameUpdateMenuEntry::Restart:
+		command = kManageUpdateRestart; label = L"Restart to Update (1)"; break;
+	}
+	if (label == nullptr) return true;
+	return ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
+		&& ::AppendMenuW(menu, command == 0 ? MF_STRING | MF_GRAYED : MF_STRING, command, label) != FALSE;
 }
 
 } // namespace
@@ -134,7 +186,8 @@ CalculateCustomFrameResizeOverlayBounds(
 	return bounds;
 }
 
-CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int preferredMenuWidth) noexcept
+CustomFrameLayout CalculateCustomFrameLayout(
+	int clientWidth, UINT dpi, int preferredMenuWidth, int updateButtonWidth) noexcept
 {
 	const int width = std::max(0, clientWidth);
 	const int titleHeight = ScaleCustomFrameDip(34, dpi);
@@ -143,13 +196,17 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	const int closeWidth = ScaleCustomFrameDip(48, dpi);
 	const int captionPadding = ScaleCustomFrameDip(10, dpi);
 	const int titleControlWidth = ScaleCustomFrameDip(30, dpi);
+	// Layout, Primary Side Bar, Panel, Secondary Side Bar, Account, and Manage are the
+	// fixed-width controls. The Update indicator is measured separately because its width
+	// comes from its label, and it is absent entirely unless the update state is actionable.
 	const int titleControlCount = 6;
+	const int updateWidth = std::max(0, updateButtonWidth);
 	const int buttonsWidth = buttonWidth * 2 + closeWidth;
 	const int buttonLeft = std::max(0, width - buttonsWidth);
 	const int menuLeft = std::min(width, systemWidth);
-	const int titleControlsWidth = titleControlWidth * titleControlCount;
+	const int titleControlsWidth = titleControlWidth * titleControlCount + updateWidth;
 	// Never partially draw a title control or let it overlap the system menu. On a
-	// narrow window all six collapse together, preserving caption drag and native buttons.
+	// narrow window they all collapse together, preserving caption drag and native buttons.
 	const bool showTitleControls = buttonLeft >= systemWidth + titleControlsWidth;
 	const int titleControlsLeft = showTitleControls ? buttonLeft - titleControlsWidth : buttonLeft;
 	const int maximumMenuRight = std::max(menuLeft, titleControlsLeft - ScaleCustomFrameDip(80, dpi));
@@ -176,17 +233,22 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	);
 	if (showTitleControls) {
 		int controlLeft = titleControlsLeft;
-		const auto nextControl = [&]() noexcept {
-			const RECT rect = MakeRect(controlLeft, 0, controlLeft + titleControlWidth, titleHeight);
-			controlLeft += titleControlWidth;
+		const auto nextControl = [&](int controlWidth) noexcept {
+			const RECT rect = MakeRect(controlLeft, 0, controlLeft + controlWidth, titleHeight);
+			controlLeft += controlWidth;
 			return rect;
 		};
-		layout.layoutButton = nextControl();
-		layout.primarySidebarButton = nextControl();
-		layout.bottomPanelButton = nextControl();
-		layout.secondarySidebarButton = nextControl();
-		layout.accountButton = nextControl();
-		layout.manageButton = nextControl();
+		layout.layoutButton = nextControl(titleControlWidth);
+		layout.primarySidebarButton = nextControl(titleControlWidth);
+		layout.bottomPanelButton = nextControl(titleControlWidth);
+		layout.secondarySidebarButton = nextControl(titleControlWidth);
+		// A zero measured width means the update state is not actionable. `nextControl`
+		// would still produce a degenerate rectangle at the current offset, and an empty
+		// RECT is what every hit-test/paint/accessibility path treats as absent, so skip
+		// it outright rather than emitting one that starts and ends at the same x.
+		if (updateWidth > 0) layout.updateButton = nextControl(updateWidth);
+		layout.accountButton = nextControl(titleControlWidth);
+		layout.manageButton = nextControl(titleControlWidth);
 	}
 	layout.minimizeButton = MakeRect(buttonLeft, 0, std::min(width, buttonLeft + buttonWidth), titleHeight);
 	layout.maximizeButton = MakeRect(
@@ -199,16 +261,24 @@ CustomFrameLayout CalculateCustomFrameLayout(int clientWidth, UINT dpi, int pref
 	return layout;
 }
 
+int MeasureCustomFrameUpdateButtonWidth(HDC dc, UINT dpi) noexcept
+{
+	// The label plus VS Code's horizontal action padding on each side. A minimum keeps
+	// the button a button when the caption font cannot be measured at all.
+	const int padding = ScaleCustomFrameDip(8, dpi);
+	const int minimumWidth = ScaleCustomFrameDip(56, dpi);
+	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
+	SIZE extent{};
+	if (dc == nullptr
+		|| ::GetTextExtentPoint32W(dc, label, static_cast<int>(::wcslen(label)), &extent) == FALSE) {
+		return minimumWidth;
+	}
+	return std::max(minimumWidth, static_cast<int>(extent.cx) + padding * 2);
+}
+
 CustomFrameControl HitTestCustomFrameControl(const CustomFrameLayout& layout, POINT point) noexcept
 {
-	for (const CustomFrameControl control : {
-		CustomFrameControl::Layout,
-		CustomFrameControl::PrimarySidebar,
-		CustomFrameControl::BottomPanel,
-		CustomFrameControl::SecondarySidebar,
-		CustomFrameControl::Account,
-		CustomFrameControl::Manage,
-	}) {
+	for (const CustomFrameControl control : kTitleControls) {
 		if (Contains(TitleControlRect(layout, control), point)) return control;
 	}
 	return CustomFrameControl::None;
@@ -225,6 +295,11 @@ UINT CustomFrameControlCommand(CustomFrameControl control) noexcept
 	case CustomFrameControl::SecondarySidebar: return F_TOGGLE_SECONDARY_SIDEBAR;
 	case CustomFrameControl::None:
 	case CustomFrameControl::Layout:
+	// The Update indicator has no legacy function code by design: which command it
+	// runs depends on the current update state, so it is resolved by the composition
+	// root through `WorkbenchCommandRegistry::ResolveUpdateIndicatorCommand` rather
+	// than being pinned to one `EFunctionCode` here.
+	case CustomFrameControl::Update:
 	case CustomFrameControl::Account:
 	case CustomFrameControl::Manage:
 		return 0;
@@ -420,9 +495,42 @@ void CCustomFrameController::RefreshLayout() noexcept
 	RECT client{};
 	::GetClientRect(m_window, &client);
 	const int menuWidth = m_menuBar.MeasurePreferredWidth(m_window, m_menuFont.Get(), m_dpi);
-	m_layout = CalculateCustomFrameLayout(client.right - client.left, m_dpi, menuWidth);
+	m_layout = CalculateCustomFrameLayout(
+		client.right - client.left, m_dpi, menuWidth, MeasureUpdateIndicatorWidth());
 	m_menuBar.SetBounds(m_layout.menu);
 	m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get());
+}
+
+int CCustomFrameController::MeasureUpdateIndicatorWidth() const noexcept
+{
+	if (!m_updateIndicatorVisible || m_window == nullptr) return 0;
+	// The indicator is drawn with the caption font, so it must be measured with the
+	// same font; a width measured against the DC's default face would ellipsize or
+	// leave a gap the moment the caption font is not the stock system font.
+	const HDC dc = ::GetDC(m_window);
+	if (dc == nullptr) return MeasureCustomFrameUpdateButtonWidth(nullptr, m_dpi);
+	const HFONT previous = static_cast<HFONT>(::SelectObject(dc, m_font.Get()));
+	const int measured = MeasureCustomFrameUpdateButtonWidth(dc, m_dpi);
+	if (previous != nullptr) (void)::SelectObject(dc, previous);
+	::ReleaseDC(m_window, dc);
+	return measured;
+}
+
+void CCustomFrameController::SetUpdateIndicatorVisible(bool visible) noexcept
+{
+	if (m_updateIndicatorVisible == visible) return;
+	m_updateIndicatorVisible = visible;
+	// The indicator disappearing while it is hot or pressed would otherwise leave the
+	// frame reporting a control that no longer has a rectangle.
+	if (!visible) {
+		if (m_hotControl == CustomFrameControl::Update) SetHotControl(CustomFrameControl::None);
+		if (m_pressedControl == CustomFrameControl::Update) SetPressedControl(CustomFrameControl::None);
+		if (TitleControlFromNode(m_accessibilityFocusedNode) == CustomFrameControl::Update) {
+			ClearAccessibilityFocus();
+		}
+	}
+	RefreshLayout();
+	InvalidateTitle();
 }
 
 void CCustomFrameController::CreateResizeOverlays() noexcept
@@ -676,6 +784,17 @@ void CCustomFrameController::InvokeTitleControl(CustomFrameControl control) noex
 		::SendMessageW(m_window, WM_COMMAND, MAKEWPARAM(command, 0), 0);
 		return;
 	}
+	if (control == CustomFrameControl::Update) {
+		// A press while the indicator has no rectangle is not reachable through the
+		// mouse path, but the accessibility Invoke path can still arrive here.
+		if (!m_updateIndicatorVisible || !m_updateIndicatorCallback) return;
+		try {
+			m_updateIndicatorCallback();
+		} catch (...) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: Update indicator callback threw.\n");
+		}
+		return;
+	}
 	const RECT anchor = TitleControlRect(m_layout, control);
 	if (control == CustomFrameControl::Layout) {
 		ShowLayoutMenu(anchor);
@@ -738,9 +857,12 @@ void CCustomFrameController::ShowManageMenu(const RECT& anchor) noexcept
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
 		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme, L"Color Theme\tCtrl+K Ctrl+T") != FALSE
 		&& ::AppendMenuW(themes, MF_STRING, kManageSelectFileIconTheme, L"File Icon Theme") != FALSE;
-	if (!menuItemsAppended
-		|| ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes), L"Themes") == FALSE) {
-		::DestroyMenu(themes);
+	const bool themesAttached = menuItemsAppended
+		&& ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes), L"Themes") != FALSE;
+	if (!themesAttached || !AppendUpdateMenuGroup(menu, m_updateMenuEntry)) {
+		// An attached submenu is owned by its parent, so destroying it again after
+		// `DestroyMenu(menu)` would be a double free. Only an unattached one is ours.
+		if (!themesAttached) ::DestroyMenu(themes);
 		::DestroyMenu(menu);
 		return;
 	}
@@ -983,8 +1105,33 @@ int CCustomFrameController::AccessibilityChildCount(int parentId) const noexcept
 {
 	if (parentId == kMenuBarNode) return m_menuBar.AccessibilityItemCount();
 	if (parentId != -1) return 0;
-	const bool hasTitleControls = !::IsRectEmpty(&m_layout.layoutButton);
-	return 3 + (hasTitleControls ? 6 : 0) + (m_menuBar.AccessibilityItemCount() > 0 ? 1 : 0);
+	return 3 + VisibleTitleControlCount() + (m_menuBar.AccessibilityItemCount() > 0 ? 1 : 0);
+}
+
+int CCustomFrameController::VisibleTitleControlCount() const noexcept
+{
+	// Counted from the rectangles rather than from a fixed number, because the Update
+	// indicator is present only while the update state is actionable and the whole set
+	// collapses on a narrow window.
+	int count = 0;
+	for (const CustomFrameControl control : kTitleControls) {
+		const RECT bounds = TitleControlRect(m_layout, control);
+		if (!::IsRectEmpty(&bounds)) ++count;
+	}
+	return count;
+}
+
+CustomFrameControl CCustomFrameController::VisibleTitleControlAt(int index) const noexcept
+{
+	if (index < 0) return CustomFrameControl::None;
+	int remaining = index;
+	for (const CustomFrameControl control : kTitleControls) {
+		const RECT bounds = TitleControlRect(m_layout, control);
+		if (::IsRectEmpty(&bounds)) continue;
+		if (remaining == 0) return control;
+		--remaining;
+	}
+	return CustomFrameControl::None;
 }
 
 int CCustomFrameController::AccessibilityChildAt(int parentId, int index) const noexcept
@@ -999,12 +1146,11 @@ int CCustomFrameController::AccessibilityChildAt(int parentId, int index) const 
 		if (childIndex == 0) return kMenuBarNode;
 		--childIndex;
 	}
-	if (!::IsRectEmpty(&m_layout.layoutButton)) {
-		if (childIndex >= 0 && childIndex < 6) {
-			return TitleControlNode(static_cast<CustomFrameControl>(childIndex + 1));
-		}
-		childIndex -= 6;
+	const int titleControlCount = VisibleTitleControlCount();
+	if (childIndex < titleControlCount) {
+		return TitleControlNode(VisibleTitleControlAt(childIndex));
 	}
+	childIndex -= titleControlCount;
 	const int captionIndex = childIndex;
 	switch (captionIndex) {
 	case 0: return kMinimizeNode;

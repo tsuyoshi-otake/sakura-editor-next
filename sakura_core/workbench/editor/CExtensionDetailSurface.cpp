@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -7,6 +7,10 @@
 #include "StdAfx.h"
 
 #include "workbench/editor/CExtensionDetailSurface.h"
+
+#include "markdown/CMarkdownPreviewWnd.h"
+#include "workbench/extension/ExtensionIconDecoder.h"
+#include "workbench/extension/ExtensionInstallButtonState.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
@@ -16,19 +20,15 @@
 #include <utility>
 #include <vector>
 
+// AlphaBlend is the established GDI compositing call for a premultiplied-alpha
+// DIB section in this codebase (see CMarkdownPreviewWnd.cpp); linking it here
+// keeps the icon-paint dependency self-contained instead of touching the
+// project's AdditionalDependencies.
+#pragma comment(lib, "Msimg32.lib")
+
 namespace {
 constexpr wchar_t kWindowClass[] = L"SakuraWorkbenchExtensionDetailSurface";
 constexpr std::size_t kMaxReadmeCharacters = 64 * 1024;
-
-enum class MarkdownBlockKind { Paragraph, Heading, ListItem, Code, Rule };
-
-struct MarkdownBlock {
-	MarkdownBlockKind kind = MarkdownBlockKind::Paragraph;
-	std::wstring text;
-	int level = 0;
-	bool ordered = false;
-	int number = 0;
-};
 
 [[nodiscard]] bool PaintFontGlyph(
 	HDC dc,
@@ -58,129 +58,12 @@ struct MarkdownBlock {
 	return drawn != 0;
 }
 
-std::wstring_view Trim(std::wstring_view value) noexcept
+//! A registry entry that simply has no README is a real answer, not a failure,
+//! so it must not reach the preview: an empty parse would render an unexplained
+//! blank body instead of saying so.
+[[nodiscard]] bool IsBlankReadme(std::wstring_view markdown) noexcept
 {
-	while (!value.empty() && (value.front() == L' ' || value.front() == L'\t')) value.remove_prefix(1);
-	while (!value.empty() && (value.back() == L' ' || value.back() == L'\t' || value.back() == L'\r')) value.remove_suffix(1);
-	return value;
-}
-
-bool IsRule(std::wstring_view line) noexcept
-{
-	line = Trim(line);
-	if (line.size() < 3) return false;
-	wchar_t marker = 0;
-	std::size_t count = 0;
-	for (const wchar_t character : line) {
-		if (character == L' ' || character == L'\t') continue;
-		if (marker == 0) marker = character;
-		if (character != marker || (marker != L'-' && marker != L'*' && marker != L'_')) return false;
-		++count;
-	}
-	return count >= 3;
-}
-
-std::wstring InlineText(std::wstring_view source)
-{
-	std::wstring result(source);
-	std::size_t open = 0;
-	while ((open = result.find(L'[', open)) != std::wstring::npos) {
-		const std::size_t close = result.find(L"](", open + 1);
-		if (close == std::wstring::npos) break;
-		const std::size_t end = result.find(L')', close + 2);
-		if (end == std::wstring::npos) break;
-		const std::wstring label = result.substr(open + 1, close - open - 1);
-		const std::wstring url = result.substr(close + 2, end - close - 2);
-		result.replace(open, end - open + 1, label + L" (" + url + L")");
-		open += label.size() + url.size() + 3;
-	}
-	std::wstring plain;
-	plain.reserve(result.size());
-	for (std::size_t index = 0; index < result.size(); ++index) {
-		if (result[index] == L'\\' && index + 1 < result.size()) {
-			plain += result[++index];
-			continue;
-		}
-		if (result[index] == L'*' || result[index] == L'_' || result[index] == L'~' || result[index] == L'`') continue;
-		plain += result[index];
-	}
-	return plain;
-}
-
-std::vector<MarkdownBlock> ParseMarkdown(std::wstring_view source)
-{
-	if (source.size() > kMaxReadmeCharacters) source = source.substr(0, kMaxReadmeCharacters);
-	std::vector<MarkdownBlock> blocks;
-	std::wstring paragraph;
-	bool inFence = false;
-	std::wstring code;
-
-	const auto flushParagraph = [&]() {
-		if (!paragraph.empty()) {
-			blocks.push_back({ MarkdownBlockKind::Paragraph, InlineText(paragraph), 0, false, 0 });
-			paragraph.clear();
-		}
-	};
-	const auto flushCode = [&]() {
-		if (!code.empty()) {
-			blocks.push_back({ MarkdownBlockKind::Code, code, 0, false, 0 });
-			code.clear();
-		}
-	};
-
-	std::size_t start = 0;
-	while (start <= source.size()) {
-		const std::size_t end = source.find(L'\n', start);
-		const std::wstring_view raw = source.substr(start, end == std::wstring::npos ? source.size() - start : end - start);
-		const std::wstring_view line = Trim(raw);
-		if (line.size() >= 3 && line.substr(0, 3) == L"```") {
-			if (inFence) flushCode();
-			else flushParagraph();
-			inFence = !inFence;
-		} else if (inFence) {
-			if (!code.empty()) code += L'\n';
-			code += raw;
-		} else if (line.empty()) {
-			flushParagraph();
-		} else if (IsRule(line)) {
-			flushParagraph();
-			blocks.push_back({ MarkdownBlockKind::Rule, {}, 0, false, 0 });
-		} else {
-			std::size_t hashCount = 0;
-			while (hashCount < line.size() && line[hashCount] == L'#') ++hashCount;
-			if (hashCount > 0 && hashCount <= 6 && hashCount < line.size() && line[hashCount] == L' ') {
-				flushParagraph();
-				blocks.push_back({ MarkdownBlockKind::Heading, InlineText(Trim(line.substr(hashCount))), static_cast<int>(hashCount), false, 0 });
-			} else {
-				std::wstring_view item = line;
-				bool ordered = false;
-				int number = 0;
-				if (item.size() >= 2 && (item[0] == L'-' || item[0] == L'*' || item[0] == L'+') && (item[1] == L' ' || item[1] == L'\t')) {
-					item = Trim(item.substr(2));
-				} else {
-					std::size_t digits = 0;
-					while (digits < item.size() && item[digits] >= L'0' && item[digits] <= L'9') ++digits;
-					if (digits > 0 && digits + 1 < item.size() && item[digits] == L'.' && (item[digits + 1] == L' ' || item[digits + 1] == L'\t')) {
-						ordered = true;
-						for (std::size_t digit = 0; digit < digits; ++digit) number = number * 10 + (item[digit] - L'0');
-						item = Trim(item.substr(digits + 1));
-					}
-				}
-				if (item.data() != line.data() || ordered) {
-					flushParagraph();
-					blocks.push_back({ MarkdownBlockKind::ListItem, InlineText(item), 0, ordered, number });
-				} else {
-					if (!paragraph.empty()) paragraph += L' ';
-					paragraph += line;
-				}
-			}
-		}
-		if (end == std::wstring::npos) break;
-		start = end + 1;
-	}
-	if (inFence) flushCode();
-	else flushParagraph();
-	return blocks;
+	return markdown.find_first_not_of(L" \t\r\n\f\v") == std::wstring_view::npos;
 }
 
 int ScaleValue(int dip, unsigned int dpi) noexcept
@@ -201,10 +84,14 @@ CExtensionDetailSurface::CExtensionDetailSurface()
 {
 }
 
+//! Defined out of line so the header can forward-declare CMarkdownPreviewWnd.
+//! Destroy() runs first, which joins the preview's worker and destroys its
+//! window before the unique_ptr releases it.
 CExtensionDetailSurface::~CExtensionDetailSurface()
 {
 	Destroy();
 	ReleaseFont();
+	ReleaseIconBitmap();
 }
 
 HWND CExtensionDetailSurface::Open(HINSTANCE hInstance, HWND hwndParent)
@@ -212,8 +99,11 @@ HWND CExtensionDetailSurface::Open(HINSTANCE hInstance, HWND hwndParent)
 	if (hInstance == nullptr || hwndParent == nullptr || GetHwnd() != nullptr) return nullptr;
 	if (RegisterWC(hInstance, nullptr, nullptr, ::LoadCursorW(nullptr, IDC_ARROW), nullptr, nullptr, kWindowClass) == 0
 		&& ::GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return nullptr;
+	// No WS_VSCROLL: the metadata header has a fixed height and the README body
+	// is a child window that owns its own scrollbar, exactly as VS Code's
+	// extension editor keeps its header pinned while the README scrolls.
 	const HWND window = Create(hwndParent, 0, kWindowClass, L"Extension Details",
-		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_TABSTOP | WS_VSCROLL, 0, 0, 0, 0, nullptr);
+		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_TABSTOP, 0, 0, 0, 0, nullptr);
 	if (window == nullptr) return nullptr;
 	EnsureFont();
 	m_hwndClose = ::CreateWindowExW(0, WC_BUTTONW, L"", WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
@@ -221,20 +111,30 @@ HWND CExtensionDetailSurface::Open(HINSTANCE hInstance, HWND hwndParent)
 	m_hwndInstall = ::CreateWindowExW(0, WC_BUTTONW, L"Install / Update", WS_CHILD | WS_TABSTOP | BS_PUSHBUTTON,
 		0, 0, 0, 0, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kInstallButtonId)), hInstance, nullptr);
 	if (m_hwndClose != nullptr) ::SendMessageW(m_hwndClose, WM_SETFONT, reinterpret_cast<WPARAM>(m_font), TRUE);
-	if (m_hwndInstall != nullptr) {
-		::SendMessageW(m_hwndInstall, WM_SETFONT, reinterpret_cast<WPARAM>(m_font), TRUE);
-		::EnableWindow(m_hwndInstall, FALSE);
-	}
+	if (m_hwndInstall != nullptr) ::SendMessageW(m_hwndInstall, WM_SETFONT, reinterpret_cast<WPARAM>(m_font), TRUE);
 	if (m_hwndClose == nullptr || m_hwndInstall == nullptr) {
 		Destroy();
 		return nullptr;
 	}
+	// The README body reuses the editor's Markdown preview window. A failure to
+	// create it is not fatal to the metadata surface: PublishReadme keeps the
+	// typed state and PaintReadmeStatus reports it, so the extension still opens.
+	auto preview = std::make_unique<markdown::CMarkdownPreviewWnd>();
+	if (preview->Create(window)) {
+		preview->SetPalette(m_palette);
+		m_readmePreview = std::move(preview);
+	}
+	RefreshInstallButtonState();
 	LayoutChildren();
 	return window;
 }
 
 void CExtensionDetailSurface::Destroy() noexcept
 {
+	// Close the preview before the parent window dies so its worker thread is
+	// joined while this object is still fully alive.
+	if (m_readmePreview) m_readmePreview->Close();
+	m_readmePreview.reset();
 	if (GetHwnd() != nullptr && ::IsWindow(GetHwnd())) {
 		CWnd::DestroyWindow();
 	} else {
@@ -279,6 +179,7 @@ bool CExtensionDetailSurface::IsVisible() const noexcept
 void CExtensionDetailSurface::SetPalette(const theme::ThemePalette& palette) noexcept
 {
 	m_palette = palette;
+	if (m_readmePreview) m_readmePreview->SetPalette(m_palette);
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
@@ -288,11 +189,12 @@ void CExtensionDetailSurface::ShowExtension(const SOpenVsxExtension& extension)
 	m_readmeMarkdown.clear();
 	m_readmeError.clear();
 	m_readmeState = ReadmeState::Unsupported;
+	ReleaseIconBitmap();
+	m_iconState = IconState::Unsupported;
+	m_installedVersion.reset();
 	m_hasExtension = true;
-	m_scrollOffset = 0;
-	m_contentHeight = 0;
-	m_maxScrollOffset = 0;
-	if (m_hwndInstall != nullptr) ::EnableWindow(m_hwndInstall, m_onInstallRequested ? TRUE : FALSE);
+	RefreshInstallButtonState();
+	PublishReadme();
 	LayoutChildren();
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
@@ -303,11 +205,12 @@ void CExtensionDetailSurface::ClearExtension()
 	m_readmeMarkdown.clear();
 	m_readmeError.clear();
 	m_readmeState = ReadmeState::Unsupported;
+	ReleaseIconBitmap();
+	m_iconState = IconState::Unsupported;
+	m_installedVersion.reset();
 	m_hasExtension = false;
-	m_scrollOffset = 0;
-	m_contentHeight = 0;
-	m_maxScrollOffset = 0;
-	if (m_hwndInstall != nullptr) ::EnableWindow(m_hwndInstall, FALSE);
+	RefreshInstallButtonState();
+	PublishReadme();
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
@@ -316,7 +219,7 @@ void CExtensionDetailSurface::SetReadmeMarkdown(std::wstring markdown)
 	m_readmeMarkdown = std::move(markdown);
 	m_readmeError.clear();
 	m_readmeState = ReadmeState::Ready;
-	m_scrollOffset = 0;
+	PublishReadme();
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
@@ -325,7 +228,7 @@ void CExtensionDetailSurface::SetReadmeLoading()
 	m_readmeMarkdown.clear();
 	m_readmeError.clear();
 	m_readmeState = ReadmeState::Loading;
-	m_scrollOffset = 0;
+	PublishReadme();
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
@@ -334,7 +237,7 @@ void CExtensionDetailSurface::SetReadmeError(std::wstring message)
 	m_readmeMarkdown.clear();
 	m_readmeError = std::move(message);
 	m_readmeState = ReadmeState::Error;
-	m_scrollOffset = 0;
+	PublishReadme();
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
@@ -343,14 +246,51 @@ void CExtensionDetailSurface::SetReadmeUnsupported()
 	m_readmeMarkdown.clear();
 	m_readmeError.clear();
 	m_readmeState = ReadmeState::Unsupported;
-	m_scrollOffset = 0;
+	PublishReadme();
+	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
+}
+
+void CExtensionDetailSurface::SetIconImage(std::vector<std::byte> encodedBytes)
+{
+	ReleaseIconBitmap();
+	const workbench::extension::DecodedExtensionIcon decoded =
+		workbench::extension::DecodeExtensionIconBitmap(encodedBytes);
+	if (decoded.IsValid()) {
+		m_iconBitmap = decoded.bitmap;
+		m_iconWidth = decoded.width;
+		m_iconHeight = decoded.height;
+		m_iconState = IconState::Ready;
+	} else {
+		m_iconState = IconState::Error;
+	}
+	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
+}
+
+void CExtensionDetailSurface::SetIconLoading()
+{
+	ReleaseIconBitmap();
+	m_iconState = IconState::Loading;
+	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
+}
+
+void CExtensionDetailSurface::SetIconUnsupported()
+{
+	ReleaseIconBitmap();
+	m_iconState = IconState::Unsupported;
+	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
+}
+
+void CExtensionDetailSurface::SetInstalledVersion(std::optional<std::wstring> installedVersion)
+{
+	m_installedVersion = std::move(installedVersion);
+	RefreshInstallButtonState();
 	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
 void CExtensionDetailSurface::SetOnInstallRequested(InstallRequestedCallback callback)
 {
 	m_onInstallRequested = std::move(callback);
-	if (m_hwndInstall != nullptr) ::EnableWindow(m_hwndInstall, m_hasExtension && m_onInstallRequested ? TRUE : FALSE);
+	RefreshInstallButtonState();
 }
 
 void CExtensionDetailSurface::SetOnCloseRequested(CloseRequestedCallback callback)
@@ -451,6 +391,49 @@ void CExtensionDetailSurface::DrawCloseButton(const DRAWITEMSTRUCT& draw) noexce
 	}
 }
 
+void CExtensionDetailSurface::ReleaseIconBitmap() noexcept
+{
+	if (m_iconBitmap != nullptr) ::DeleteObject(m_iconBitmap);
+	m_iconBitmap = nullptr;
+	m_iconWidth = 0;
+	m_iconHeight = 0;
+}
+
+bool CExtensionDetailSurface::DrawIconBitmap(HDC dc, const RECT& tile) noexcept
+{
+	if (dc == nullptr || m_iconState != IconState::Ready || m_iconBitmap == nullptr
+		|| m_iconWidth <= 0 || m_iconHeight <= 0) return false;
+	const int tileWidth = static_cast<int>(tile.right - tile.left);
+	const int tileHeight = static_cast<int>(tile.bottom - tile.top);
+	if (tileWidth <= 0 || tileHeight <= 0) return false;
+
+	const HDC memDc = ::CreateCompatibleDC(dc);
+	if (memDc == nullptr) return false;
+	const HGDIOBJ oldBitmap = ::SelectObject(memDc, m_iconBitmap);
+	if (oldBitmap == nullptr || oldBitmap == HGDI_ERROR) {
+		::DeleteDC(memDc);
+		return false;
+	}
+	BLENDFUNCTION blend{};
+	blend.BlendOp = AC_SRC_OVER;
+	blend.SourceConstantAlpha = 255;
+	blend.AlphaFormat = AC_SRC_ALPHA; // m_iconBitmap is premultiplied-alpha 32bpp BGRA
+	const BOOL blended = ::AlphaBlend(dc, tile.left, tile.top, tileWidth, tileHeight,
+		memDc, 0, 0, m_iconWidth, m_iconHeight, blend);
+	::SelectObject(memDc, oldBitmap);
+	::DeleteDC(memDc);
+	return blended != FALSE;
+}
+
+void CExtensionDetailSurface::RefreshInstallButtonState() noexcept
+{
+	if (m_hwndInstall == nullptr) return;
+	const workbench::extension::InstallButtonState state = workbench::extension::ComputeInstallButtonState(
+		m_hasExtension, m_installedVersion, m_extension.sVersion, m_onInstallRequested != nullptr);
+	::SetWindowTextW(m_hwndInstall, state.label.c_str());
+	::EnableWindow(m_hwndInstall, state.enabled ? TRUE : FALSE);
+}
+
 void CExtensionDetailSurface::LayoutChildren()
 {
 	if (GetHwnd() == nullptr) return;
@@ -464,10 +447,70 @@ void CExtensionDetailSurface::LayoutChildren()
 		closeSide, closeSide, SWP_NOZORDER | SWP_NOACTIVATE);
 	if (m_hwndInstall != nullptr) ::SetWindowPos(m_hwndInstall, nullptr, std::max(0L, client.right - padding - buttonWidth), ScaleDip(64),
 		buttonWidth, buttonHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+	LayoutReadmePreview();
+}
+
+void CExtensionDetailSurface::LayoutReadmePreview()
+{
+	if (!m_readmePreview || GetHwnd() == nullptr) return;
+	RECT client{};
+	::GetClientRect(GetHwnd(), &client);
+	const int padding = ScaleDip(18);
+	// Measure the header and the pinned boundary footer through the same code
+	// that paints them, so the body can never start or end at a different y than
+	// the surrounding chrome actually occupies.
+	const int bodyTop = PaintHeader(nullptr, client);
+	const int bodyBottom = PaintBoundaryFooter(nullptr, client);
+	const RECT body{
+		padding,
+		bodyTop,
+		(std::max)(padding, static_cast<int>(client.right) - padding),
+		(std::max)(bodyTop, bodyBottom) };
+	m_readmePreview->Layout(body, Dpi());
+	// A body with no room left is a normal state for a very short window; hide
+	// the preview rather than leaving a zero-height child asserting a scrollbar.
+	const bool renderable = m_hasExtension
+		&& m_readmeState == ReadmeState::Ready
+		&& !IsBlankReadme(m_readmeMarkdown)
+		&& body.bottom > body.top && body.right > body.left;
+	m_readmePreview->Show(renderable);
+}
+
+void CExtensionDetailSurface::PublishReadme()
+{
+	if (!m_readmePreview) return;
+	if (m_readmeState != ReadmeState::Ready || IsBlankReadme(m_readmeMarkdown)) {
+		m_readmePreview->Show(false);
+		// Drop the previous extension's README so a later Ready state cannot
+		// briefly show the wrong content before its own parse completes.
+		m_readmePreview->SetDocument({});
+		return;
+	}
+	std::wstring source = m_readmeMarkdown;
+	const bool truncated = source.size() > kMaxReadmeCharacters;
+	if (truncated) source.resize(kMaxReadmeCharacters);
+	// No documentPath and no workspaceRoot: a Marketplace README has no local
+	// root, so the parser classifies every image and link as external and the
+	// preview reports them instead of fetching them. This surface performs no
+	// network access, and that boundary is what keeps it true.
+	markdown::ParseOptions options;
+	options.frontMatterMode = markdown::FrontMatterMode::Hide;
+	// The generation alone orders renders here; there is no editable buffer to
+	// carry a revision, so it stays 0 and only the generation moves.
+	const markdown::PreviewRenderKey key{ ++m_readmeGeneration, 0 };
+	if (!m_readmePreview->QueueDocument(std::move(source), std::move(options), truncated, key)) {
+		m_readmePreview->Show(false);
+		return;
+	}
+	LayoutReadmePreview();
 }
 
 void CExtensionDetailSurface::PaintText(HDC dc, const wchar_t* text, RECT bounds, COLORREF color, UINT format, bool bold)
 {
+	// A null dc means the caller is measuring the layout, not drawing it. Every
+	// advance in PaintHeader/PaintBoundaryFooter is a plain arithmetic step, so
+	// swallowing the draw here is what lets one code path serve both passes.
+	if (dc == nullptr) return;
 	::SetTextColor(dc, color);
 	::SetBkMode(dc, TRANSPARENT);
 	const HGDIOBJ old = ::SelectObject(dc, bold ? m_boldFont : m_font);
@@ -482,93 +525,163 @@ void CExtensionDetailSurface::PaintSectionHeading(HDC dc, const wchar_t* text, i
 	*top += ScaleDip(32);
 }
 
-void CExtensionDetailSurface::PaintReadme(HDC dc, int left, int* top, int right, int bottom)
+int CExtensionDetailSurface::PaintHeader(HDC dc, const RECT& client)
 {
-	const int width = std::max(1, right - left);
-	const int lineGap = ScaleDip(7);
-	const auto drawMessage = [&](const std::wstring& message, COLORREF color) {
-		if (*top >= bottom) return;
-		RECT bounds{ left, *top, right, bottom };
-		PaintText(dc, message.c_str(), bounds, color, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
-		RECT measured = bounds;
-		const HGDIOBJ old = ::SelectObject(dc, m_font);
-		::DrawTextW(dc, message.c_str(), -1, &measured, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT);
-		if (old != nullptr) ::SelectObject(dc, old);
-		*top = std::min(bottom, static_cast<int>(measured.bottom) + lineGap);
-	};
+	const int padding = ScaleDip(18);
+	const int contentRight = (std::max)(padding, static_cast<int>(client.right) - padding);
+	int top = ScaleDip(58);
 
+	if (dc != nullptr) {
+		RECT header{ 0, 0, client.right, ScaleDip(44) };
+		const HBRUSH headerBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
+		::FillRect(dc, &header, headerBrush);
+		::DeleteObject(headerBrush);
+	}
+	const std::wstring headerText = m_hasExtension
+		? (L"Extension: " + (m_extension.sDisplayName.empty() ? m_extension.sName : m_extension.sDisplayName))
+		: L"Extension";
+	PaintText(dc, headerText.c_str(),
+		RECT{ padding, 0, (std::max)(padding, static_cast<int>(client.right) - padding * 3), ScaleDip(44) },
+		m_palette.primaryText.ToColorRef(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, true);
+	PaintText(dc, L"Details", RECT{ padding, top, contentRight, top + ScaleDip(30) },
+		m_palette.disabledText.ToColorRef(), DT_LEFT | DT_SINGLELINE, false);
+	top += ScaleDip(42);
+	if (!m_hasExtension) return top;
+
+	const std::wstring displayName = m_extension.sDisplayName.empty() ? m_extension.sName : m_extension.sDisplayName;
+	const int heroRight = (std::max)(padding, contentRight - ScaleDip(140));
+	const int tileSide = ScaleDip(64);
+	const RECT tile{ padding, top, padding + tileSide, top + tileSide };
+	if (dc != nullptr && !DrawIconBitmap(dc, tile)) {
+		// No decoded icon (Unsupported/Loading/Error) falls back to an initials
+		// tile rather than leaving a blank hole or a fake image.
+		RECT tileFill = tile;
+		const HBRUSH tileBrush = ::CreateSolidBrush(m_palette.accent.ToColorRef());
+		::FillRect(dc, &tileFill, tileBrush);
+		::DeleteObject(tileBrush);
+		std::wstring initials;
+		for (const wchar_t character : displayName) {
+			if (character == L' ' || character == L'-' || character == L'_') continue;
+			initials += character;
+			if (initials.size() == 2) break;
+		}
+		if (initials.empty()) initials = L"?";
+		PaintText(dc, initials.c_str(), tile, m_palette.highlightText.ToColorRef(), DT_CENTER | DT_VCENTER | DT_SINGLELINE, true);
+	}
+	const int textLeft = tile.right + ScaleDip(14);
+	PaintText(dc, displayName.c_str(), RECT{ textLeft, top, heroRight, top + ScaleDip(38) },
+		m_palette.primaryText.ToColorRef(), DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS, true);
+	top += ScaleDip(34);
+	const std::wstring publisher = (m_extension.bVerified ? L"\u2713 Verified " : L"") + m_extension.sNamespace;
+	PaintText(dc, publisher.c_str(), RECT{ textLeft, top, heroRight, top + ScaleDip(24) },
+		m_extension.bVerified ? RGB(88, 166, 255) : m_palette.secondaryText.ToColorRef(),
+		DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+	const std::wstring version = L"Version " + (m_extension.sVersion.empty() ? L"\u2014" : m_extension.sVersion) + L"   \u2022   " + CountText(m_extension.nDownloadCount) +
+		(m_extension.HasRating() ? L"   \u2022   \u2605 " + std::to_wstring(m_extension.dAverageRating).substr(0, 3) : L"");
+	PaintText(dc, version.c_str(), RECT{ textLeft, top + ScaleDip(24), heroRight, top + ScaleDip(48) },
+		m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+	top += ScaleDip(70);
+	if (m_extension.bDeprecated) {
+		// Wording matches VS Code's DeprecatedExtensionsView banner base string
+		// (extensionsWidgets.ts): "This extension is deprecated as it is no
+		// longer being maintained." Real VS Code appends an extension/setting
+		// migration suggestion when the registry supplies one; this DTO does
+		// not carry that structured migration data, so only the base sentence
+		// is shown rather than fabricating a suggestion.
+		const int bannerHeight = ScaleDip(36);
+		if (dc != nullptr) {
+			RECT banner{ padding, top, contentRight, top + bannerHeight };
+			const HBRUSH bannerBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
+			::FillRect(dc, &banner, bannerBrush);
+			::DeleteObject(bannerBrush);
+		}
+		PaintText(dc, L"\u26a0 This extension is deprecated as it is no longer being maintained.",
+			RECT{ padding + ScaleDip(10), top, contentRight - ScaleDip(10), top + bannerHeight },
+			m_palette.danger.ToColorRef(), DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+		top += bannerHeight + ScaleDip(14);
+	}
+	PaintSectionHeading(dc, L"DETAILS", padding, &top, contentRight);
+	if (!m_extension.sDescription.empty()) {
+		PaintText(dc, m_extension.sDescription.c_str(), RECT{ padding, top, contentRight, top + ScaleDip(72) },
+			m_palette.primaryText.ToColorRef(), DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+		top += ScaleDip(86);
+	}
+	return top;
+}
+
+int CExtensionDetailSurface::PaintBoundaryFooter(HDC dc, const RECT& client)
+{
+	if (!m_hasExtension) return (std::max)(0, static_cast<int>(client.bottom));
+	const int padding = ScaleDip(18);
+	const int contentRight = (std::max)(padding, static_cast<int>(client.right) - padding);
+
+	// FEATURES: SOpenVsxExtension carries no contributed-command/configuration
+	// data at all (see OpenVsxProtocol.h), so this is an invariant capability
+	// boundary rather than a per-extension fact. CHANGELOG differs: the registry
+	// DTO does carry sChangelogUrl, so branch on it instead of unconditionally
+	// claiming nothing exists -- this class still never fetches remote content,
+	// so a present URL is reported as an explicit "not fetched" boundary.
+	// Both stay pinned to the bottom rather than scrolling away inside the
+	// README, per this directory's CLAUDE.md ("must remain explicit").
+	const int rowHeight = ScaleDip(20);
+	const int footerHeight = ScaleDip(12) + rowHeight * 2 + ScaleDip(8);
+	const int footerTop = (std::max)(0, static_cast<int>(client.bottom) - footerHeight);
+	if (dc != nullptr) {
+		const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.border.ToColorRef());
+		const HGDIOBJ oldPen = ::SelectObject(dc, pen);
+		::MoveToEx(dc, padding, footerTop, nullptr);
+		::LineTo(dc, contentRight, footerTop);
+		if (oldPen != nullptr) ::SelectObject(dc, oldPen);
+		::DeleteObject(pen);
+	}
+	const int labelWidth = ScaleDip(84);
+	int rowTop = footerTop + ScaleDip(12);
+	const auto paintRow = [&](const wchar_t* label, const wchar_t* text) {
+		PaintText(dc, label, RECT{ padding, rowTop, padding + labelWidth, rowTop + rowHeight },
+			m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_VCENTER | DT_SINGLELINE, true);
+		PaintText(dc, text, RECT{ padding + labelWidth, rowTop, contentRight, rowTop + rowHeight },
+			m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+		rowTop += rowHeight;
+	};
+	paintRow(L"FEATURES", L"This view does not read extension-contributed commands or configuration.");
+	paintRow(L"CHANGELOG", m_extension.sChangelogUrl.empty()
+		? L"No changelog was supplied by this extension's registry entry."
+		: L"A changelog is available upstream; this view does not fetch remote content.");
+	// EXTENSION PACK: the DTO has no extensionPack field in any state, so unlike
+	// FEATURES/CHANGELOG there is no fact to report at all. Real VS Code only
+	// renders that tab when the manifest declares a pack; omit the row entirely
+	// rather than printing an eternally-static placeholder under a label that
+	// implies a checked-and-empty result.
+	return footerTop;
+}
+
+void CExtensionDetailSurface::PaintReadmeStatus(HDC dc, const RECT& body)
+{
+	if (body.bottom <= body.top || body.right <= body.left) return;
+	std::wstring message;
+	COLORREF color = m_palette.secondaryText.ToColorRef();
 	switch (m_readmeState) {
 	case ReadmeState::Loading:
-		drawMessage(L"Loading README…", m_palette.secondaryText.ToColorRef());
-		return;
+		message = L"Loading README\u2026";
+		break;
 	case ReadmeState::Error:
-		drawMessage(m_readmeError.empty() ? L"README could not be loaded." : m_readmeError, m_palette.danger.ToColorRef());
-		return;
+		message = m_readmeError.empty() ? L"README could not be loaded." : m_readmeError;
+		color = m_palette.danger.ToColorRef();
+		break;
 	case ReadmeState::Unsupported:
-		drawMessage(L"README/Markdown content was not supplied by the extension model.", m_palette.disabledText.ToColorRef());
-		return;
+		message = L"README/Markdown content was not supplied by the extension model.";
+		color = m_palette.disabledText.ToColorRef();
+		break;
 	case ReadmeState::Ready:
+		// A Ready-but-blank README is a real registry answer rather than a
+		// failure, and the preview child is hidden for it, so report the fact
+		// instead of leaving an unexplained empty body.
+		if (!IsBlankReadme(m_readmeMarkdown)) return;
+		message = L"This extension did not provide README content.";
+		color = m_palette.disabledText.ToColorRef();
 		break;
 	}
-
-	const std::vector<MarkdownBlock> blocks = ParseMarkdown(m_readmeMarkdown);
-	if (blocks.empty()) {
-		drawMessage(L"This extension did not provide README content.", m_palette.disabledText.ToColorRef());
-		return;
-	}
-
-	for (const MarkdownBlock& block : blocks) {
-		if (*top >= bottom) break;
-		if (block.kind == MarkdownBlockKind::Rule) {
-			const int y = *top + ScaleDip(6);
-			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.border.ToColorRef());
-			const HGDIOBJ old = ::SelectObject(dc, pen);
-			::MoveToEx(dc, left, y, nullptr);
-			::LineTo(dc, right, y);
-			if (old != nullptr) ::SelectObject(dc, old);
-			::DeleteObject(pen);
-			*top = std::min(bottom, y + ScaleDip(14));
-			continue;
-		}
-
-		std::wstring text = block.text;
-		COLORREF color = m_palette.primaryText.ToColorRef();
-		UINT format = DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS;
-		bool bold = false;
-		int extraTop = ScaleDip(8);
-		if (block.kind == MarkdownBlockKind::Heading) {
-			bold = true;
-			extraTop = ScaleDip(block.level <= 2 ? 12 : 8);
-			color = m_palette.primaryText.ToColorRef();
-		} else if (block.kind == MarkdownBlockKind::ListItem) {
-			text = (block.ordered ? std::to_wstring(block.number) + L". " : L"• ") + text;
-		} else if (block.kind == MarkdownBlockKind::Code) {
-			const int codePadding = ScaleDip(8);
-			RECT measured{ 0, 0, width - codePadding * 2, 0 };
-			const HGDIOBJ oldFont = ::SelectObject(dc, m_font);
-			::DrawTextW(dc, text.c_str(), -1, &measured, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_CALCRECT);
-			if (oldFont != nullptr) ::SelectObject(dc, oldFont);
-			const int codeHeight = std::max(ScaleDip(24), static_cast<int>(measured.bottom) + codePadding * 2);
-			RECT codeBounds{ left, *top + extraTop, right, std::min(bottom, *top + extraTop + codeHeight) };
-			const HBRUSH codeBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
-			::FillRect(dc, &codeBounds, codeBrush);
-			::DeleteObject(codeBrush);
-			RECT codeText{ left + codePadding, codeBounds.top + codePadding, right - codePadding, codeBounds.bottom - codePadding };
-			PaintText(dc, text.c_str(), codeText, m_palette.primaryText.ToColorRef(), format, false);
-			*top = codeBounds.bottom + lineGap;
-			continue;
-		}
-
-		RECT measured{ left, *top + extraTop, right, *top + extraTop };
-		const HGDIOBJ oldFont = ::SelectObject(dc, bold ? m_boldFont : m_font);
-		::DrawTextW(dc, text.c_str(), -1, &measured, format | DT_CALCRECT);
-		if (oldFont != nullptr) ::SelectObject(dc, oldFont);
-		measured.bottom = static_cast<LONG>(std::min(
-			bottom,
-			std::max(static_cast<int>(measured.bottom), static_cast<int>(measured.top) + ScaleDip(20))));
-		PaintText(dc, text.c_str(), measured, color, format, bold);
-		*top = std::min(bottom, static_cast<int>(measured.bottom) + lineGap);
-	}
+	PaintText(dc, message.c_str(), body, color, DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
 }
 
 void CExtensionDetailSurface::Paint()
@@ -582,81 +695,19 @@ void CExtensionDetailSurface::Paint()
 	::FillRect(dc, &client, background);
 	::DeleteObject(background);
 	const int padding = ScaleDip(18);
-	const int contentRight = std::max<int>(padding, static_cast<int>(client.right) - padding);
-	int top = ScaleDip(58);
-
-	RECT header{ 0, 0, client.right, ScaleDip(44) };
-	const HBRUSH headerBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
-	::FillRect(dc, &header, headerBrush);
-	::DeleteObject(headerBrush);
-	const std::wstring headerText = m_hasExtension ? (L"Extension: " + (m_extension.sDisplayName.empty() ? m_extension.sName : m_extension.sDisplayName)) : L"Extension";
-	PaintText(dc, headerText.c_str(), RECT{ padding, 0, std::max<int>(padding, static_cast<int>(client.right) - padding * 3), header.bottom }, m_palette.primaryText.ToColorRef(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, true);
-	PaintText(dc, L"Details", RECT{ padding, top, contentRight, top + ScaleDip(30) }, m_palette.disabledText.ToColorRef(), DT_LEFT | DT_SINGLELINE, false);
-	top += ScaleDip(42);
-
+	const int bodyTop = PaintHeader(dc, client);
+	const int bodyBottom = PaintBoundaryFooter(dc, client);
 	if (m_hasExtension) {
-		const std::wstring displayName = m_extension.sDisplayName.empty() ? m_extension.sName : m_extension.sDisplayName;
-		const int heroRight = std::max(padding, contentRight - ScaleDip(140));
-		const int tileSide = ScaleDip(64);
-		RECT tile{ padding, top, padding + tileSide, top + tileSide };
-		const HBRUSH tileBrush = ::CreateSolidBrush(m_palette.accent.ToColorRef());
-		::FillRect(dc, &tile, tileBrush);
-		::DeleteObject(tileBrush);
-		std::wstring initials;
-		for (const wchar_t character : displayName) {
-			if (character == L' ' || character == L'-' || character == L'_') continue;
-			initials += character;
-			if (initials.size() == 2) break;
-		}
-		if (initials.empty()) initials = L"?";
-		PaintText(dc, initials.c_str(), tile, m_palette.highlightText.ToColorRef(), DT_CENTER | DT_VCENTER | DT_SINGLELINE, true);
-		const int textLeft = tile.right + ScaleDip(14);
-		PaintText(dc, displayName.c_str(), RECT{ textLeft, top, heroRight, top + ScaleDip(38) }, m_palette.primaryText.ToColorRef(), DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS, true);
-		top += ScaleDip(34);
-		const std::wstring publisher = (m_extension.bVerified ? L"✓ Verified " : L"") + m_extension.sNamespace;
-		PaintText(dc, publisher.c_str(), RECT{ textLeft, top, heroRight, top + ScaleDip(24) }, m_extension.bVerified ? RGB(88, 166, 255) : m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-		const std::wstring version = L"Version " + (m_extension.sVersion.empty() ? L"—" : m_extension.sVersion) + L"   •   " + CountText(m_extension.nDownloadCount) +
-			(m_extension.HasRating() ? L"   •   ★ " + std::to_wstring(m_extension.dAverageRating).substr(0, 3) : L"");
-		PaintText(dc, version.c_str(), RECT{ textLeft, top + ScaleDip(24), heroRight, top + ScaleDip(48) }, m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
-		top += ScaleDip(70);
-		PaintSectionHeading(dc, L"DETAILS", padding, &top, contentRight);
-		if (!m_extension.sDescription.empty()) {
-			RECT description{ padding, top, contentRight, top + ScaleDip(72) };
-			PaintText(dc, m_extension.sDescription.c_str(), description, m_palette.primaryText.ToColorRef(), DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
-			top += ScaleDip(86);
-		}
-		const int contentStart = top;
-		const int viewportBottom = (std::max)(contentStart, static_cast<int>(client.bottom) - padding);
-		const int savedDc = ::SaveDC(dc);
-		::IntersectClipRect(dc, 0, contentStart, client.right, client.bottom);
-		top -= m_scrollOffset;
-		PaintReadme(dc, padding, &top, contentRight, viewportBottom);
-		PaintSectionHeading(dc, L"FEATURES", padding, &top, contentRight);
-		PaintText(dc, L"No feature list was supplied by this extension model.", RECT{ padding, top, contentRight, top + ScaleDip(44) }, m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_TOP | DT_WORDBREAK);
-		top += ScaleDip(58);
-		PaintSectionHeading(dc, L"CHANGELOG", padding, &top, contentRight);
-		PaintText(dc, L"No changelog was supplied by this extension model.", RECT{ padding, top, contentRight, top + ScaleDip(44) }, m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_TOP | DT_WORDBREAK);
-		top += ScaleDip(58);
-		PaintSectionHeading(dc, L"EXTENSION PACK", padding, &top, contentRight);
-		PaintText(dc, L"No extension pack information was supplied by this extension model.", RECT{ padding, top, contentRight, top + ScaleDip(36) }, m_palette.secondaryText.ToColorRef(), DT_LEFT | DT_TOP | DT_WORDBREAK);
-		m_contentHeight = (std::max)(0, top + m_scrollOffset + padding - contentStart);
-		if (savedDc != 0) ::RestoreDC(dc, savedDc);
-		const int viewportHeight = (std::max)(1, static_cast<int>(client.bottom) - contentStart);
-		const int maxScroll = (std::max)(0, m_contentHeight - viewportHeight);
-		m_maxScrollOffset = maxScroll;
-		if (m_scrollOffset > maxScroll) m_scrollOffset = maxScroll;
-		SCROLLINFO scrollInfo{ sizeof(scrollInfo), SIF_RANGE | SIF_PAGE | SIF_POS, 0, m_contentHeight, static_cast<UINT>(viewportHeight), m_scrollOffset, 0 };
-		::SetScrollInfo(GetHwnd(), SB_VERT, &scrollInfo, TRUE);
+		const RECT body{
+			padding,
+			bodyTop,
+			(std::max)(padding, static_cast<int>(client.right) - padding),
+			(std::max)(bodyTop, bodyBottom) };
+		// Ready content belongs to the preview child, which WS_CLIPCHILDREN keeps
+		// this pass out of; only the states it cannot render are painted here.
+		PaintReadmeStatus(dc, body);
 	}
 	::EndPaint(GetHwnd(), &ps);
-}
-
-void CExtensionDetailSurface::ScrollTo(int offset) noexcept
-{
-	const int clamped = (std::max)(0, (std::min)(offset, m_maxScrollOffset));
-	if (clamped == m_scrollOffset) return;
-	m_scrollOffset = clamped;
-	if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), nullptr, FALSE);
 }
 
 void CExtensionDetailSurface::InvokeInstall()
@@ -683,28 +734,9 @@ LRESULT CExtensionDetailSurface::DispatchEvent(HWND hwnd, UINT msg, WPARAM wp, L
 		}
 		break;
 	case WM_SIZE: LayoutChildren(); return 0;
-	case WM_VSCROLL: {
-		SCROLLINFO info{ sizeof(info), SIF_ALL };
-		::GetScrollInfo(hwnd, SB_VERT, &info);
-		int next = m_scrollOffset;
-		switch (LOWORD(wp)) {
-		case SB_LINEUP: next -= ScaleDip(32); break;
-		case SB_LINEDOWN: next += ScaleDip(32); break;
-		case SB_PAGEUP: next -= static_cast<int>(info.nPage); break;
-		case SB_PAGEDOWN: next += static_cast<int>(info.nPage); break;
-		case SB_THUMBTRACK: next = info.nTrackPos; break;
-		case SB_TOP: next = 0; break;
-		case SB_BOTTOM: next = m_maxScrollOffset; break;
-		default: return 0;
-		}
-		ScrollTo(next);
-		return 0;
-	}
-	case WM_MOUSEWHEEL: {
-		const int notches = GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
-		ScrollTo(m_scrollOffset - notches * ScaleDip(48));
-		return 0;
-	}
+	// No WM_VSCROLL/WM_MOUSEWHEEL here: the README body is the shared Markdown
+	// preview child, which owns its own scrollbar and wheel handling. Adding a
+	// second scroll authority on the parent would fight it.
 	case WM_DPICHANGED:
 		ReleaseFont();
 		ReleaseCodiconFont();

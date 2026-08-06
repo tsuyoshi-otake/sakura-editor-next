@@ -62,12 +62,14 @@
 #include "print/CPrintPreview.h"
 #include "workbench/editor/EditorWorkingCopyTypes.h"
 #include "workbench/editor/WorkbenchKeybindingState.h"
+#include "workbench/keybinding/ExtensionKeybindingMap.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "markdown/MarkdownPreviewCommandState.h"
+#include "extension/ExtensionMenuProjection.h"
 
 static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
@@ -98,6 +100,13 @@ class CColorThemeRegistry;
 namespace markdown {
 class CMarkdownPreviewWnd;
 }
+namespace update {
+class UpdateComposition;
+//! Repeating the alias keeps `update/IUpdateService.h` out of this header; an
+//! identical alias redeclaration is the same declaration, so the two cannot
+//! drift into different types without a compile error here.
+using UpdateServiceSubscriptionId = std::uint64_t;
+}
 namespace workbench {
 class CActivityBar;
 class IWorkbenchRuntime;
@@ -127,7 +136,6 @@ enum class ExplorerFileActivationKind : unsigned char;
 namespace viewcontainer {
 class CViewContainerHost;
 class CViewContainerPages;
-enum class ViewContainerPage : std::uint8_t;
 }
 namespace outline {
 class COutlineWorkbenchTool;
@@ -270,6 +278,19 @@ enum class EGitSyncCommand : std::uint8_t {
 	Sync,
 	SyncRebase,
 	Publish,
+};
+
+//! The five update operations the workbench can ask for, named after the
+//! `IUpdateService` members they call rather than after any one of the two
+//! command families that reach them: upstream binds both `update.checkForUpdate`
+//! and `update.check` to `checkForUpdates`, so naming these after a command ID
+//! would make one of each pair look like the odd one out.
+enum class EUpdateCommand : std::uint8_t {
+	CheckForUpdates,
+	DownloadUpdate,
+	ApplyUpdate,
+	QuitAndInstall,
+	ShowUpdateInfo,
 };
 
 //! Every native workspace picker/transition path has one terminal result.  The
@@ -682,6 +703,15 @@ private:
 	void OnWorkbenchServiceProjectionChanged();
 	[[nodiscard]] bool InitializeWorkbenchServiceProjection();
 	void CloseWorkbenchServiceProjection() noexcept;
+	//! Composes the per-window update stack and subscribes to it. Returns false
+	//! only for a programming error; a machine that cannot update at all (no
+	//! staging root, unreadable network policy) is a normal absence and leaves
+	//! the window running with no update surfaces at all.
+	void InitializeUpdateProjection() noexcept;
+	void CloseUpdateProjection() noexcept;
+	//! UI-thread terminal for `MYWM_WORKBENCH_UPDATE_STATE_CHANGED`: re-reads the
+	//! committed state, refreshes the context projection, and repaints the title.
+	void OnWorkbenchUpdateStateChanged();
 	void FinalizeWorkbenchPanelProjection(
 		const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection = nullptr);
 	void RedrawWorkbenchFrameForCommittedLayout(bool immediate);
@@ -765,6 +795,15 @@ private:
 	//! workbench picker uses.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitBranchCommand(
 		EGitBranchCommand command);
+	//! Runs one update operation. Returns `Unsupported` when this window has no
+	//! update stack at all, which is the honest answer for an installation that
+	//! cannot update itself rather than a silently successful no-op.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteUpdateCommand(
+		EUpdateCommand command);
+	//! `update.restart`'s two halves: arm the staged installer, then run the
+	//! ordinary quit. Separate because the quit can destroy this window before it
+	//! returns, and that constraint is worth stating in one place.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteUpdateQuitAndInstall();
 	//! Runs one of the built-in Git provider's working-tree commands.
 	//! `argumentsJson` is the payload `BuildGitStageArguments` produces; it is
 	//! empty for the `*All` members and for a Command Palette invocation.
@@ -804,6 +843,20 @@ private:
 	//! `getRemotes` reads them; neither is inferred from the other.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitSyncCommand(
 		EGitSyncCommand command);
+	//! Runs `git.init`. `argumentsJson` is the payload a Source Control welcome-
+	//! content link or a Command Palette invocation carries; it decodes to the
+	//! `skipFolderPrompt` bool `RunGitInit` takes through
+	//! `ParseGitInitSkipFolderPromptArgument`. A successful initialize followed
+	//! by an accepted "open the repository?" prompt calls `ApplyFolderWorkspace`
+	//! on this window, resolving `EGitInitPostAction::OfferToOpen`'s decision
+	//! into the real capability - see `workbench/scm/CLAUDE.md`.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitInitCommand(
+		std::string_view argumentsJson);
+	//! Runs `git.clone`. Takes no argument, matching upstream's own
+	//! zero-parameter handler. Unlike `git.init`, the pure `GitCloneCommandResult`
+	//! carries no post-clone "open it?" decision, so this window does not offer
+	//! one either - a recorded divergence in `workbench/scm/CLAUDE.md`.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCloneCommand();
 	//! Projects one resolved comparison onto the native diff surface.
 	//!
 	//! Like the extension detail surface this is a composition-layer projection
@@ -822,23 +875,29 @@ private:
 		const std::vector<SExtensionDocumentEdit>& edits,
 		std::vector<SExtensionDocumentSnapshot>& snapshots);
 	bool ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& options);
+	//! Injects (or clears) the hover seams every CEditView exposes. The view owns the
+	//! dwell/poll gesture but never an extension-host connection, so the composition
+	//! root is what closes handlers over the live CExtensionService. Called after the
+	//! service is constructed and again whenever a split creates a new pane; passing
+	//! empty handlers when no service exists is what keeps a service-less window from
+	//! arming a dwell timer it could not honor.
+	void WireExtensionHoverHandlers();
 	[[nodiscard]] std::optional<std::string> NextWorkbenchLayoutOperationId(std::string_view action);
 	[[nodiscard]] std::optional<std::string> NextOutputPanelOperationId();
 	[[nodiscard]] bool SetBuiltinPartVisibility(std::string_view partId, bool visible);
 	[[nodiscard]] bool SetBuiltinPartExtent(std::string_view partId, int extentDip);
 	[[nodiscard]] bool SetBuiltinViewVisibility(std::string_view viewId, bool visible);
 	[[nodiscard]] bool ActivateBuiltinWorkbenchView(std::string_view viewId, bool requestFocus);
+	//! Activates a contributed ViewContainer and reveals the Part that hosts it. A built-in
+	//! container is activated through its View instead, because a built-in side-bar surface is
+	//! identified by a View; a contributed container may have no view registered yet at all.
+	[[nodiscard]] bool ActivateContributedViewContainer(std::string_view containerId, bool requestFocus);
 	[[nodiscard]] bool IsBuiltinWorkbenchViewActive(std::string_view viewId) const;
-	//! Stable VS Code ViewContainer ID rendered by one side-bar page.
-	[[nodiscard]] static std::string_view SidebarViewContainerId(
-		workbench::viewcontainer::ViewContainerPage page) noexcept;
-	//! Inverse of SidebarViewContainerId; std::nullopt for a container this adapter cannot render.
-	[[nodiscard]] static std::optional<workbench::viewcontainer::ViewContainerPage>
-		ViewContainerPageForId(std::string_view containerId) noexcept;
 	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
 	[[nodiscard]] workbench::commands::WorkbenchEditorCommandContext BuildWorkbenchEditorCommandContext() const;
 	[[nodiscard]] workbench::commands::WorkbenchScmCommandContext BuildWorkbenchScmCommandContext() const;
+	[[nodiscard]] workbench::commands::WorkbenchUpdateCommandContext BuildWorkbenchUpdateCommandContext() const;
 	[[nodiscard]] bool RefreshWorkbenchCommandContext();
 	//! `argumentsJson` is the invocation's `Command.arguments` payload. Empty is
 	//! the argument-less invocation every surface but the SCM view produces, and
@@ -848,6 +907,48 @@ private:
 	[[nodiscard]] bool ArmWorkbenchKeybindingChordTimer() noexcept;
 	void ClearWorkbenchKeybindingChord() noexcept;
 	void ExpireWorkbenchKeybindingChord() noexcept;
+	/*!
+		@brief 拡張の `contributes.keybindings` を打鍵表へ載せ直す
+
+		キー式の解釈は登録時に一度だけ行い、打鍵ごとには行わない。式が読めない項目は
+		ここで落とす。落とした事実は診断出力に残す（黙って効かないのが一番たちが悪い）。
+	*/
+	void SyncExtensionKeybindings();
+	/*!
+		@brief 1 打鍵を拡張のキーバインドへ突き合わせ、消費したなら true
+
+		この関数が true を返した打鍵はアクセラレータへ届かない。だから
+		「Sakura のキー割り当て表に既にある組み合わせは拡張に渡さない」を
+		ここで守る。VS Code の既定より保守的だが、拡張を 1 つ入れただけで
+		本文編集のキーが黙って奪われる方が壊れ方として重い。
+	*/
+	[[nodiscard]] bool TryHandleExtensionKeybinding(const MSG& message);
+	//! Sakura 自身のキー割り当て表がこの打鍵を既に使っているか。
+	[[nodiscard]] static bool IsLegacyKeyAssigned(
+		std::uint32_t virtualKey, bool control, bool shift, bool alt) noexcept;
+	/*!
+		@brief `contributes.menus["editor/title"]` を投影する
+
+		`extension::menus::ProjectMenu` の追加オーバーロードへ、`CExtensionService` が既に公開している
+		`Contributions()`／`EvaluateWhenClause()`／`SearchCommands()` だけから組んだ関数オブジェクトを渡す。
+		`CExtensionService` は内部の `CExtensionCommandPalette`／`CExtensionContextKeys` を外部へ貸し出さない
+		ため、コマンド 1 件の表示名・可否は id 完全一致検索で代替している
+		（`CExtensionWorkbenchDispatcher::DispatchExtensionRegistration` は実運用のコマンド登録で
+		`whenClause` を設定しないため、`CExtensionCommandPalette::Search` 内の `when` 絞り込みは常に
+		無条件で真になり、この代替は安全）。拡張サービスが無ければ空を返す。
+	*/
+	[[nodiscard]] std::vector<extension::menus::SProjectedMenuItem> ProjectExtensionEditorTitleMenu() const;
+	/*!
+		@brief `editor/title` の投影をネイティブのコンテキストメニューとして表示し、選択されたコマンドを実行する
+
+		VS Code 本来の配置はタブバー右上のツールバーアイコン列（`CTabWnd`/`DocumentTabActionLayout.h` が
+		所有）だが、この配信では触れられるファイルが `CEditWnd.{h,cpp}` と
+		`extension/ExtensionMenuProjection.{h,cpp}` に限られているため届かない。代わりに、この関数と
+		製品所有のコマンド `sakura.workbench.action.showEditorTitleActions`
+		（Command Palette から見つかる）が実際に描画・クリックへつながる面になる。詳しい理由は
+		`sakura_core/window/CLAUDE.md` の「editor/title projection surface」に記録する想定。
+	*/
+	[[nodiscard]] bool ShowExtensionEditorTitleMenu();
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
@@ -856,16 +957,17 @@ private:
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
 	void PersistExtensionViewsExtent(int extentDip);
 	//! Activates one Primary Side Bar ViewContainer, mirroring a VS Code Activity Bar click.
-	void ActivateSidebarPage(workbench::viewcontainer::ViewContainerPage page, bool toggleIfActive);
+	void ActivateSidebarPage(std::string_view containerId, bool toggleIfActive);
 	//! Applies an already-decided container selection to whichever side bar now owns it.
-	void ApplySidebarPage(workbench::viewcontainer::ViewContainerPage page);
-	//! Applies an already-decided Secondary Side Bar container selection.
-	void ApplyAuxiliaryBarPage(std::optional<workbench::viewcontainer::ViewContainerPage> page);
+	//! An empty ID renders the empty state.
+	void ApplySidebarPage(std::string_view containerId);
+	//! Applies an already-decided Secondary Side Bar container selection. Empty for none.
+	void ApplyAuxiliaryBarPage(std::string_view containerId);
 	//! Refreshes both side-bar titles from the containers they currently render.
 	void RefreshSidebarTitles();
-	//! The side-bar host that currently renders `page`, or nullptr when neither does.
+	//! The side-bar host that currently renders `containerId`, or nullptr when neither does.
 	[[nodiscard]] workbench::viewcontainer::CViewContainerHost* HostShowingPage(
-		workbench::viewcontainer::ViewContainerPage page) const noexcept;
+		std::string_view containerId) const noexcept;
 	//! The Part host that physically contains `host`, or nullptr.
 	[[nodiscard]] workbench::CWorkbenchPanelHost* PanelHostFor(
 		const workbench::viewcontainer::CViewContainerHost* host) const noexcept;
@@ -874,18 +976,25 @@ private:
 	[[nodiscard]] bool IsOutlineViewExpanded() const noexcept;
 	//! Applies already-committed Outline visibility to whichever host renders Explorer.
 	void SetOutlineExpandedInHosts(bool expanded);
-	//! The ViewContainer behind one projected side-bar surface, or std::nullopt when the
-	//! surface does not belong to a side bar at all.
-	[[nodiscard]] static std::optional<workbench::viewcontainer::ViewContainerPage>
-		SidebarPageForActiveSurface(workbench::win32::BuiltinActiveSurface surface) noexcept;
-	//! Adds or removes Activity Bar entries so only Primary Side Bar containers have one.
-	void SyncActivityBarEntries(const workbench::layout::WorkbenchLayoutStateSnapshot& snapshot);
+	//! The ViewContainer behind one projected side-bar surface, empty when the surface does
+	//! not belong to a side bar at all.
+	[[nodiscard]] static std::string_view SidebarPageForActiveSurface(
+		workbench::win32::BuiltinActiveSurface surface) noexcept;
+	/*!
+		@brief Rebuilds the Activity Bar strip and the side-bar page pool from the registry.
+
+		Both follow the registry, so a container an extension contributed gets an icon *and* a
+		renderable page without this window knowing that extension exists. Driving them from one
+		snapshot keeps the strip and the pool from disagreeing about which containers exist.
+		`layoutState` is nullptr before the runtime has committed any layout, in which case every
+		projected container is treated as living where its declaration put it: the Primary Side Bar.
+	*/
+	void SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState);
 	//! Which physical side bar the pointer is over, if any. VS Code's composite drag and
 	//! drop is resolved by the drop target, not by the handle that started the gesture.
 	[[nodiscard]] std::optional<workbench::WorkbenchEdge> HitTestSideBarEdge(POINT screenPoint) const;
 	//! Runs `workbench.action.moveView` semantics for a container dropped on a side bar.
-	void MoveViewContainerToEdge(workbench::viewcontainer::ViewContainerPage page,
-		workbench::WorkbenchEdge edge);
+	void MoveViewContainerToEdge(std::string_view containerId, workbench::WorkbenchEdge edge);
 	void ToggleBottomWorkbenchMaximized();
 	void SetWorkbenchZoomPercent(int percent);
 	[[nodiscard]] bool PreTranslateWorkbenchMessage(MSG& message);
@@ -930,6 +1039,19 @@ private:
 	std::optional<workbench::problems::MarkerSubscriptionId> m_markerSubscriptionId;
 	workbench::output::OutputService* m_outputService = nullptr;
 	std::optional<workbench::output::OutputServiceSubscriptionId> m_outputSubscriptionId;
+	//! The window's own update stack. Owned rather than borrowed because the
+	//! update service has no runtime owner: it is composed from configuration and
+	//! the build's own identity, both of which are available per window.
+	std::unique_ptr<update::UpdateComposition> m_updateComposition;
+	//! Update notifications arrive on the service's worker thread; like the
+	//! service-projection gate this one only ever posts to an HWND.
+	struct UpdateStateGate;
+	std::shared_ptr<UpdateStateGate> m_updateStateGate;
+	std::optional<update::UpdateServiceSubscriptionId> m_updateSubscriptionId;
+	//! The last committed `updateState` id, read and written on the UI thread
+	//! only. It is the single source the context projection, the title-bar
+	//! indicator, and the gear entry all derive from, so they cannot disagree.
+	std::string m_updateStateId{ "uninitialized" };
 
 	//自ウィンドウ
 	HWND			m_hWnd = nullptr;
@@ -956,6 +1078,13 @@ private:
 	std::unique_ptr<workbench::commands::WorkbenchCommandRegistry> m_workbenchCommandRegistry;
 	//! State for the VS Code Windows File-menu keybindings, including Ctrl+K chords.
 	workbench::editor::WorkbenchKeybindingState m_workbenchKeybindingState;
+	//! Extension-contributed keybindings, parsed once per contribution change.
+	workbench::keybinding::ExtensionKeybindingMap m_extensionKeybindings;
+	//! `ShowExtensionEditorTitleMenu` の 1 回のポップアップ表示だけで有効な、
+	//! ネイティブ `TrackPopupMenu` の連番 ID (1 始まり) から拡張の commandId への対応表。
+	//! `TrackPopupMenu(TPM_RETURNCMD)` は選択結果を `WM_COMMAND` に流さず直接返すため、
+	//! この対応表は他の ID 名前空間と衝突する心配がなく、表示のたびに作り直してよい。
+	std::vector<std::wstring> m_extensionEditorTitleMenuCommandIds;
 	//! The native dynamic-command IDs are resolved against this popup/menu-open
 	//! snapshot, never against mutable legacy CMRU state.
 	std::vector<workbench::recent::RecentlyOpenedWorkspaceEntry> m_recentlyOpenedWorkspaceMenuSnapshot;

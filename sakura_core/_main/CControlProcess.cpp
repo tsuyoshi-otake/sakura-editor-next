@@ -30,6 +30,9 @@
 #include "platform/controlipc/ControlPlatformRuntime.h"
 #include "platform/profiles/ProfileAuthorityStore.h"
 #include "extension/CExtensionHostSecretVaultGrantRuntimeAdapter.h"
+#include "update/UpdateService.h"
+#include "update/UpdateStagingStore.h"
+#include "update/Win32UpdateLauncher.h"
 
 //-------------------------------------------------
 
@@ -297,6 +300,40 @@ void CControlProcess::OnExitProcess()
 	if (m_pcTray) m_pcTray->ShutdownExtensionHost();
 	StopControlPlatform();
 	GetDllShareData().m_sHandles.m_hwndTray = nullptr;
+	RunPendingUpdateInstaller();
+}
+
+/*!
+	@brief 予約済みアップデートがあればインストーラーを起動する
+
+	The control process is the last process of the application to exit, so this is
+	the only place where "replace the running installation" is a possible request
+	rather than a request to overwrite files that are still open. It runs after
+	the extension host and the control platform have stopped, so no storage lock
+	survives into the install, and before the destructor releases
+	`MutexSakuraEditor` — the installer waits that mutex out; see
+	`installer/sakura-common.iss`.
+
+	No update staged is by far the common case and costs one absent-file check.
+*/
+void CControlProcess::RunPendingUpdateInstaller() noexcept
+{
+	try {
+		auto root = update::UpdateStagingStore::DefaultRoot();
+		if (root.empty()) return;
+
+		update::UpdateStagingStore stagingStore(std::move(root));
+		update::Win32UpdateLauncher launcher;
+		const auto outcome = update::RunPendingUpdate(stagingStore, launcher);
+		if (outcome == update::EPendingUpdateOutcome::LaunchFailed) {
+			// The failure is already recorded in the manifest, which is what the
+			// next session reports. There is no UI left to show it in here.
+			::OutputDebugStringW(L"The staged update installer could not be started.\n");
+		}
+	}
+	catch (...) {
+		::OutputDebugStringW(L"Running the staged update installer raised an unexpected exception.\n");
+	}
 }
 
 CControlProcess::~CControlProcess()

@@ -32,6 +32,21 @@ constexpr int kContributedViewsMinimumHeightDip = 96;
 //! drop affordance discoverable instead of leaving a blank Part.
 constexpr wchar_t kEmptyMessage[] = L"Drag a view here to display it.";
 
+/*!
+	@brief Shown instead of a permanently empty tree for a `"type": "webview"` contributed View.
+
+	WebView2/Chromium is not used in this product, so a manifest-declared WebviewView has no
+	native content this host can render — see root `CLAUDE.md`, "Never fake a capability to
+	make a screenshot look right." Rendering nothing here would look identical to a tree
+	container whose extension has not registered any children yet, which is exactly the
+	fake-looking gap this message closes. It names the concrete reason and points at the
+	channel that already reports this per-extension, so the two surfaces stay one diagnostic
+	story instead of two.
+*/
+constexpr wchar_t kWebviewUnsupportedMessage[] =
+	L"This view needs a webview, which Sakura Editor NEXT does not render natively. "
+	L"See the \"Extension Compatibility\" output channel for details.";
+
 int ScaleDip(int dip, unsigned int dpi) noexcept
 {
 	return ::MulDiv(dip, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), kDefaultDpi);
@@ -158,13 +173,13 @@ void CViewContainerHost::ReleaseCodiconFont() noexcept
 
 void CViewContainerHost::Activate()
 {
-	if (!m_page || !m_pages || !m_pages->IsUsable()) return;
-	if (!OwnsPage(*m_page)) return;
-	switch (*m_page) {
-	case ViewContainerPage::SourceControl:
+	if (m_page.empty() || !m_pages || !m_pages->IsUsable()) return;
+	if (!OwnsPage(m_page)) return;
+	if (m_page == pageIds::SourceControl) {
 		if (auto* scm = m_pages->SourceControl()) scm->Activate();
 		return;
-	case ViewContainerPage::Extensions:
+	}
+	if (m_page == pageIds::Extensions) {
 		// VS Code's Extensions view puts the caret in its Marketplace search box.
 		if (auto* marketplace = m_pages->Marketplace();
 			marketplace != nullptr && marketplace->GetHwnd() != nullptr) {
@@ -173,42 +188,41 @@ void CViewContainerHost::Activate()
 		}
 		if (auto* extensions = m_pages->Extensions()) extensions->Activate();
 		return;
-	case ViewContainerPage::Explorer:
+	}
+	if (m_page == pageIds::Explorer) {
 		if (auto* explorer = m_pages->Explorer()) explorer->Activate();
 		return;
-	case ViewContainerPage::Count:
-		return;
 	}
+	if (auto* contributed = m_pages->ContributedViews(m_page)) contributed->Activate();
 }
 
 void CViewContainerHost::Deactivate()
 {
-	if (!m_pages || !m_pages->IsUsable() || !m_page || !OwnsPage(*m_page)) return;
-	switch (*m_page) {
-	case ViewContainerPage::SourceControl:
+	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)) return;
+	if (m_page == pageIds::SourceControl) {
 		if (auto* scm = m_pages->SourceControl()) scm->Deactivate();
 		return;
-	case ViewContainerPage::Extensions:
+	}
+	if (m_page == pageIds::Extensions) {
 		if (auto* extensions = m_pages->Extensions()) extensions->Deactivate();
 		return;
-	case ViewContainerPage::Explorer:
+	}
+	if (m_page == pageIds::Explorer) {
 		if (auto* explorer = m_pages->Explorer()) explorer->Deactivate();
 		if (auto* outline = m_pages->Outline()) outline->Deactivate();
 		return;
-	case ViewContainerPage::Count:
-		return;
 	}
+	if (auto* contributed = m_pages->ContributedViews(m_page)) contributed->Deactivate();
 }
 
 bool CViewContainerHost::PreTranslateMessage(MSG& message)
 {
-	if (!m_pages || !m_pages->IsUsable() || !m_page || !OwnsPage(*m_page)) return false;
-	switch (*m_page) {
-	case ViewContainerPage::SourceControl: {
+	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)) return false;
+	if (m_page == pageIds::SourceControl) {
 		auto* scm = m_pages->SourceControl();
 		return scm != nullptr && scm->PreTranslateMessage(message);
 	}
-	case ViewContainerPage::Extensions: {
+	if (m_page == pageIds::Extensions) {
 		// The Marketplace is a control container, so Tab/arrow navigation between its
 		// search box, list, and buttons needs dialog-message handling. Only messages that
 		// really belong to it are offered, so no other surface loses its own keys.
@@ -223,10 +237,9 @@ bool CViewContainerHost::PreTranslateMessage(MSG& message)
 		auto* extensions = m_pages->Extensions();
 		return extensions != nullptr && extensions->PreTranslateMessage(message);
 	}
-	case ViewContainerPage::Explorer:
-		break;
-	case ViewContainerPage::Count:
-		return false;
+	if (m_page != pageIds::Explorer) {
+		auto* contributed = m_pages->ContributedViews(m_page);
+		return contributed != nullptr && contributed->PreTranslateMessage(message);
 	}
 	auto* outline = m_pages->Outline();
 	auto* explorer = m_pages->Explorer();
@@ -241,9 +254,8 @@ void CViewContainerHost::Close()
 	// The pages are shared with the other side bar and are owned elsewhere. Detaching
 	// them before this window dies keeps their HWNDs valid for the surviving host.
 	if (m_pages && m_pages->IsUsable()) {
-		for (std::size_t index = 0; index < kViewContainerPageCount; ++index) {
-			const auto page = static_cast<ViewContainerPage>(index);
-			if (m_pages->AttachedHost(page) == m_window) m_pages->Attach(page, nullptr);
+		for (const auto& id : m_pages->PageIds()) {
+			if (m_pages->AttachedHost(id) == m_window) m_pages->Attach(id, nullptr);
 		}
 	}
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
@@ -288,8 +300,8 @@ void CViewContainerHost::SetOutlineExpanded(bool expanded)
 void CViewContainerHost::NotifyOutlineRevealed() noexcept
 {
 	if (m_closed || !m_outlineRevealCallback || !m_pages || !m_pages->IsUsable()
-		|| !m_pages->IsOutlineExpanded() || m_page != ViewContainerPage::Explorer
-		|| !OwnsPage(ViewContainerPage::Explorer)) {
+		|| !m_pages->IsOutlineExpanded() || m_page != pageIds::Explorer
+		|| !OwnsPage(pageIds::Explorer)) {
 		return;
 	}
 	try {
@@ -321,7 +333,7 @@ void CViewContainerHost::FocusOutline()
 {
 	// Outline is a View nested in the Explorer ViewContainer, so focusing it also
 	// selects that container. This mirrors VS Code's `outline.focus`.
-	ShowPage(ViewContainerPage::Explorer);
+	ShowPage(pageIds::Explorer);
 	// Focus is a projection/activation operation, not a user expansion request.
 	SetOutlineExpanded(true);
 	if (m_pages) {
@@ -329,19 +341,21 @@ void CViewContainerHost::FocusOutline()
 	}
 }
 
-void CViewContainerHost::ShowPage(std::optional<ViewContainerPage> page)
+void CViewContainerHost::ShowPage(const std::string_view containerId)
 {
 	if (m_closed || !m_pages) return;
-	if (page && *page == ViewContainerPage::Count) page.reset();
-	m_page = page;
-	if (m_page && m_pages->IsUsable()) m_pages->Attach(*m_page, m_window);
+	// A container with no page in the pool would leave this Part claiming to render something
+	// that has no window, so it degrades to the empty state instead.
+	m_page = m_pages->Contains(containerId) ? std::string(containerId) : std::string{};
+	if (!m_page.empty() && m_pages->IsUsable()) m_pages->Attach(m_page, m_window);
 	LayoutChildren();
 	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
 }
 
-bool CViewContainerHost::OwnsPage(ViewContainerPage page) const noexcept
+bool CViewContainerHost::OwnsPage(const std::string_view containerId) const noexcept
 {
-	return m_pages != nullptr && m_window != nullptr && m_pages->AttachedHost(page) == m_window;
+	return m_pages != nullptr && m_window != nullptr && !containerId.empty()
+		&& m_pages->AttachedHost(containerId) == m_window;
 }
 
 int CViewContainerHost::OutlineHeaderHeightPixels(unsigned int dpi) noexcept
@@ -382,7 +396,7 @@ LRESULT CViewContainerHost::HandleMessage(UINT message, WPARAM wParam, LPARAM lP
 		::InvalidateRect(m_window, nullptr, FALSE);
 		return 0;
 	case WM_LBUTTONUP: {
-		if (m_page != ViewContainerPage::Explorer) break;
+		if (m_page != pageIds::Explorer) break;
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 		if (IsOutlineHeaderPoint(point)) {
 			(void)RequestOutlineExpanded(!IsOutlineExpanded());
@@ -420,29 +434,47 @@ void CViewContainerHost::LayoutChildren()
 
 	// Never touch a page the other side bar now renders; only pages still parented here
 	// are this host's to hide.
-	for (std::size_t index = 0; index < kViewContainerPageCount; ++index) {
-		const auto page = static_cast<ViewContainerPage>(index);
-		if (!OwnsPage(page)) continue;
-		if (m_page && *m_page == page) continue;
-		m_pages->SetPageVisible(page, false);
+	for (const auto& id : m_pages->PageIds()) {
+		if (!OwnsPage(id)) continue;
+		if (m_page == id) continue;
+		m_pages->SetPageVisible(id, false);
 	}
 
-	if (!m_page || !OwnsPage(*m_page)) {
+	if (m_page.empty() || !OwnsPage(m_page)) {
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;
 	}
 
-	if (*m_page == ViewContainerPage::SourceControl) {
+	if (m_page == pageIds::SourceControl) {
 		if (auto* scm = m_pages->SourceControl()) scm->Layout(client, m_dpi);
-		m_pages->SetPageVisible(ViewContainerPage::SourceControl, true);
+		m_pages->SetPageVisible(pageIds::SourceControl, true);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;
 	}
-	if (*m_page == ViewContainerPage::Extensions) {
+	if (m_page == pageIds::Extensions) {
 		LayoutExtensionsPage(client);
-		m_pages->SetPageVisible(ViewContainerPage::Extensions, true);
+		m_pages->SetPageVisible(pageIds::Extensions, true);
+		m_outlineHeader = {};
+		invalidateHeaderChange();
+		return;
+	}
+	if (m_page != pageIds::Explorer) {
+		if (m_pages->IsWebviewOnly(m_page)) {
+			// Nothing to lay out: this container's only content is the fixed unsupported
+			// message `Paint` draws directly, matching `LayoutExtensionsPage`'s rule that an
+			// absent section reserves no space and is never given a live but empty control.
+			// The tree window stays hidden rather than shown-and-empty, so it cannot paint a
+			// blank rectangle over the message this host draws.
+			m_pages->SetPageVisible(m_page, false);
+			m_outlineHeader = {};
+			invalidateHeaderChange();
+			return;
+		}
+		// A contributed container is nothing but its views, so its tree fills the Part.
+		if (auto* contributed = m_pages->ContributedViews(m_page)) contributed->Layout(client, m_dpi);
+		m_pages->SetPageVisible(m_page, true);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;
@@ -467,7 +499,7 @@ void CViewContainerHost::LayoutChildren()
 	const RECT outlineBounds{ client.left, m_outlineHeader.bottom, client.right, client.bottom };
 	explorer->Layout(explorerBounds, m_dpi);
 	outline->Layout(outlineBounds, m_dpi);
-	m_pages->SetPageVisible(ViewContainerPage::Explorer, true);
+	m_pages->SetPageVisible(pageIds::Explorer, true);
 	invalidateHeaderChange();
 }
 
@@ -517,18 +549,19 @@ void CViewContainerHost::Paint()
 	::SetBkMode(dc, TRANSPARENT);
 	// A container that the other side bar has taken over is no longer rendered here, so
 	// this Part is empty even though its owner has not applied the new selection yet.
-	if (!m_page || !OwnsPage(*m_page)) {
-		RECT client{};
-		::GetClientRect(m_window, &client);
-		const int inset = ScaleDip(kEmptyTextInsetDip, m_dpi);
-		RECT text{ client.left + inset, client.top + inset, client.right - inset, client.bottom - inset };
-		::SetTextColor(dc, m_palette.secondaryText.ToColorRef());
-		RECT measured = text;
-		::DrawTextW(dc, kEmptyMessage, -1, &measured, DT_CALCRECT | DT_WORDBREAK | DT_LEFT);
-		const int height = measured.bottom - measured.top;
-		const int room = std::max(0L, text.bottom - text.top);
-		if (height < room) text.top += (room - height) / 2;
-		::DrawTextW(dc, kEmptyMessage, -1, &text, DT_WORDBREAK | DT_LEFT);
+	if (m_page.empty() || !OwnsPage(m_page)) {
+		DrawCenteredMessage(dc, kEmptyMessage);
+		::EndPaint(m_window, &paint);
+		return;
+	}
+	// A `"type": "webview"` contributed View has no native renderer. Showing this message
+	// instead of the (permanently empty) contributed-views tree is the explicit, typed
+	// Unsupported boundary root `CLAUDE.md` requires in place of an indistinguishable blank
+	// tree; see `kWebviewUnsupportedMessage` above and `LayoutChildren`, which keeps the tree
+	// window hidden so it cannot paint over this text.
+	if (m_page != pageIds::Explorer && m_page != pageIds::SourceControl && m_page != pageIds::Extensions
+		&& m_pages->IsWebviewOnly(m_page)) {
+		DrawCenteredMessage(dc, kWebviewUnsupportedMessage);
 		::EndPaint(m_window, &paint);
 		return;
 	}
@@ -565,6 +598,22 @@ void CViewContainerHost::Paint()
 bool CViewContainerHost::IsOutlineHeaderPoint(POINT point) const noexcept
 {
 	return ::PtInRect(&m_outlineHeader, point) != FALSE;
+}
+
+void CViewContainerHost::DrawCenteredMessage(HDC dc, std::wstring_view message) const
+{
+	RECT client{};
+	::GetClientRect(m_window, &client);
+	const int inset = ScaleDip(kEmptyTextInsetDip, m_dpi);
+	RECT text{ client.left + inset, client.top + inset, client.right - inset, client.bottom - inset };
+	::SetTextColor(dc, m_palette.secondaryText.ToColorRef());
+	RECT measured = text;
+	::DrawTextW(dc, message.data(), static_cast<int>(message.size()), &measured,
+		DT_CALCRECT | DT_WORDBREAK | DT_LEFT);
+	const int height = measured.bottom - measured.top;
+	const int room = std::max(0L, text.bottom - text.top);
+	if (height < room) text.top += (room - height) / 2;
+	::DrawTextW(dc, message.data(), static_cast<int>(message.size()), &text, DT_WORDBREAK | DT_LEFT);
 }
 
 } // namespace workbench::viewcontainer

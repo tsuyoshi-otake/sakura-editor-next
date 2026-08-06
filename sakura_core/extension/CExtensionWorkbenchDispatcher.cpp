@@ -547,6 +547,219 @@ SExtensionWorkbenchDispatchResult ConfigurationWriteFailure(const config::Settin
 	}
 }
 
+/*
+	contributes の写し取り。
+
+	方針は「1 項目の型崩れで拡張全体の登録を落とさない」。拡張ホスト側で既に形は
+	検証済みなので、ここで型が違う値に出会うのは異常だが、そのとき正常な contribution
+	まで巻き添えにすると、拡張が丸ごと使えなくなる。壊れた項目だけ落として先へ進む。
+	その代わり件数には上限を置き、悪意ある拡張ホストがメモリを食い潰せないようにする。
+*/
+constexpr std::size_t kMaxContributionEntries = 4096;
+
+std::vector<std::wstring> StringArray(const picojson::object& object, const char* key)
+{
+	std::vector<std::wstring> result;
+	const auto* source = Find(object, key);
+	if (!source || !source->is<picojson::array>()) return result;
+	for (const auto& value : source->get<picojson::array>()) {
+		if (!value.is<std::string>() || value.get<std::string>().empty()) continue;
+		if (result.size() >= kMaxContributionEntries) break;
+		result.push_back(u8stowcs(value.get<std::string>()));
+	}
+	return result;
+}
+
+/*!
+	@brief `"navigation@1"` を group 名と並び順へ分解する
+
+	`@` が無ければ順序は 0。`@` の後ろが数値でなければ、順序の指定が無かったものとして
+	扱い、group 名だけを採る（`@` 以降を group 名に含めると、同じ group の項目が
+	別グループに散らばる）。
+*/
+void SplitMenuGroup(const std::wstring& group, std::wstring& groupName, int& groupOrder)
+{
+	groupOrder = 0;
+	const std::size_t at = group.rfind(L'@');
+	if (at == std::wstring::npos) {
+		groupName = group;
+		return;
+	}
+	groupName = group.substr(0, at);
+	const std::wstring order = group.substr(at + 1);
+	if (order.empty() || order.size() > 9 ||
+		order.find_first_not_of(L"0123456789") != std::wstring::npos) {
+		return;
+	}
+	groupOrder = std::stoi(order);
+}
+
+/*!
+	@brief マニフェスト由来のビュー宣言
+
+	identity はレイアウトレジストリ、表示属性は contribution レジストリ、と行き先が
+	分かれるので、パース結果もその 2 つに分けて返す。
+*/
+struct SParsedViewDeclarations {
+	std::vector<SExtensionViewContainerDeclaration>	containers;
+	std::vector<SExtensionViewDeclaration>			views;
+};
+
+/*
+	レイアウトレジストリは 1 バッチ 128 件までしか受け取らない（WorkbenchContributionRegistry.cpp
+	の kMaxBatchContributions）。ここで超過を切っておかないと、バッチ全体が
+	BatchLimitExceeded で落ち、1 件も登録されない。
+*/
+constexpr std::size_t kMaxLayoutBatchContributions = 128;
+
+SParsedViewDeclarations ParseViewDeclarations(
+	const picojson::object& params, SExtensionContributions& contributions)
+{
+	SParsedViewDeclarations declarations;
+	const auto batchFull = [&]() noexcept {
+		return declarations.containers.size() + declarations.views.size() >= kMaxLayoutBatchContributions;
+	};
+
+	if (const auto* containers = Find(params, "viewsContainers"); containers && containers->is<picojson::array>()) {
+		for (const auto& value : containers->get<picojson::array>()) {
+			if (!value.is<picojson::object>()) continue;
+			const auto& object = value.get<picojson::object>();
+			const std::wstring id = OptionalString(object, "id");
+			if (id.empty() || batchFull()) continue;
+			const std::wstring location = OptionalString(object, "location");
+			declarations.containers.push_back({
+				.id = id,
+				.title = OptionalString(object, "title"),
+				.location = location == L"panel"
+					? EExtensionViewContainerLocation::Panel : EExtensionViewContainerLocation::ActivityBar,
+			});
+			contributions.containerPresentations.push_back({
+				.id = id,
+				.iconPath = OptionalString(object, "icon"),
+				.codicon = OptionalString(object, "codicon"),
+			});
+		}
+	}
+
+	if (const auto* views = Find(params, "views"); views && views->is<picojson::array>()) {
+		for (const auto& value : views->get<picojson::array>()) {
+			if (!value.is<picojson::object>()) continue;
+			const auto& object = value.get<picojson::object>();
+			const std::wstring id = OptionalString(object, "id");
+			const std::wstring containerId = OptionalString(object, "containerId");
+			if (id.empty() || containerId.empty() || batchFull()) continue;
+			declarations.views.push_back({
+				.id = id, .containerId = containerId, .title = OptionalString(object, "name") });
+			contributions.viewPresentations.push_back({
+				.id = id,
+				.iconPath = OptionalString(object, "icon"),
+				.codicon = OptionalString(object, "codicon"),
+				.whenClause = OptionalString(object, "when"),
+				.contextualTitle = OptionalString(object, "contextualTitle"),
+				// `"type": "webview"` を落とすとツリーとして登録され、Claude Code の
+				// サイドバーは永久に空のまま出る。既定はツリー（VS Code と同じ）。
+				.kind = OptionalString(object, "type") == L"webview"
+					? EExtensionViewKind::Webview : EExtensionViewKind::Tree,
+			});
+		}
+	}
+
+	return declarations;
+}
+
+SExtensionContributions ParseContributions(const picojson::object& params)
+{
+	SExtensionContributions contributions;
+
+	if (const auto* menus = Find(params, "menus"); menus && menus->is<picojson::object>()) {
+		for (const auto& [location, entries] : menus->get<picojson::object>()) {
+			if (!entries.is<picojson::array>() || location.empty()) continue;
+			const std::wstring locationName = u8stowcs(location);
+			for (const auto& value : entries.get<picojson::array>()) {
+				if (!value.is<picojson::object>()) continue;
+				const auto& object = value.get<picojson::object>();
+				const std::wstring commandId = OptionalString(object, "command");
+				const std::wstring submenuId = OptionalString(object, "submenu");
+				if ((commandId.empty() && submenuId.empty()) ||
+					contributions.menuItems.size() >= kMaxContributionEntries) continue;
+				SExtensionMenuItem item{
+					.location = locationName,
+					.commandId = commandId,
+					.submenuId = submenuId,
+					.altCommandId = OptionalString(object, "alt"),
+					.whenClause = OptionalString(object, "when"),
+				};
+				SplitMenuGroup(OptionalString(object, "group"), item.groupName, item.groupOrder);
+				contributions.menuItems.push_back(std::move(item));
+			}
+		}
+	}
+
+	if (const auto* submenus = Find(params, "submenus"); submenus && submenus->is<picojson::array>()) {
+		for (const auto& value : submenus->get<picojson::array>()) {
+			if (!value.is<picojson::object>()) continue;
+			const auto& object = value.get<picojson::object>();
+			const std::wstring id = OptionalString(object, "id");
+			if (id.empty() || contributions.submenus.size() >= kMaxContributionEntries) continue;
+			contributions.submenus.push_back({
+				.id = id, .label = OptionalString(object, "label"), .iconPath = OptionalString(object, "icon") });
+		}
+	}
+
+	if (const auto* keybindings = Find(params, "keybindings"); keybindings && keybindings->is<picojson::array>()) {
+		for (const auto& value : keybindings->get<picojson::array>()) {
+			if (!value.is<picojson::object>()) continue;
+			const auto& object = value.get<picojson::object>();
+			const std::wstring commandId = OptionalString(object, "command");
+			const std::wstring keyChord = OptionalString(object, "key");
+			if (commandId.empty() || keyChord.empty() ||
+				contributions.keybindings.size() >= kMaxContributionEntries) continue;
+			// args は任意の JSON。コマンド実行時にそのまま返送するので、解釈せず生のまま持つ。
+			const auto* args = Find(object, "args");
+			contributions.keybindings.push_back({
+				.commandId = commandId,
+				.keyChord = keyChord,
+				.whenClause = OptionalString(object, "when"),
+				.argumentsJson = args ? args->serialize() : std::string(),
+			});
+		}
+	}
+
+	if (const auto* languages = Find(params, "languages"); languages && languages->is<picojson::array>()) {
+		for (const auto& value : languages->get<picojson::array>()) {
+			if (!value.is<picojson::object>()) continue;
+			const auto& object = value.get<picojson::object>();
+			const std::wstring id = OptionalString(object, "id");
+			if (id.empty() || contributions.languages.size() >= kMaxContributionEntries) continue;
+			contributions.languages.push_back({
+				.id = id,
+				.aliases = StringArray(object, "aliases"),
+				.extensions = StringArray(object, "extensions"),
+				.filenames = StringArray(object, "filenames"),
+				.filenamePatterns = StringArray(object, "filenamePatterns"),
+				.mimetypes = StringArray(object, "mimetypes"),
+				.firstLinePattern = OptionalString(object, "firstLine"),
+				.configurationPath = OptionalString(object, "configuration"),
+			});
+		}
+	}
+
+	if (const auto* snippets = Find(params, "snippets"); snippets && snippets->is<picojson::array>()) {
+		for (const auto& value : snippets->get<picojson::array>()) {
+			if (!value.is<picojson::object>()) continue;
+			const auto& object = value.get<picojson::object>();
+			const std::wstring languageId = OptionalString(object, "language");
+			const std::wstring path = OptionalString(object, "path");
+			if (languageId.empty() || path.empty() ||
+				contributions.snippets.size() >= kMaxContributionEntries) continue;
+			contributions.snippets.push_back({ .languageId = languageId, .path = path });
+		}
+	}
+
+	contributions.acknowledged = StringArray(params, "acknowledgedContributions");
+	return contributions;
+}
+
 } // namespace
 
 CExtensionWorkbenchDispatcher::CExtensionWorkbenchDispatcher(
@@ -560,7 +773,8 @@ CExtensionWorkbenchDispatcher::CExtensionWorkbenchDispatcher(
 	CExtensionQuickInput& quickInput,
 	CExtensionOutputChannel& output,
 	CExtensionProgressCenter& progress,
-	CExtensionWorkbenchServiceBridge* serviceBridge)
+	CExtensionWorkbenchServiceBridge* serviceBridge,
+	CExtensionContributionRegistry* contributions)
 	: m_contextKeys(contextKeys)
 	, m_commands(commands)
 	, m_statusBar(statusBar)
@@ -572,6 +786,7 @@ CExtensionWorkbenchDispatcher::CExtensionWorkbenchDispatcher(
 	, m_output(output)
 	, m_progress(progress)
 	, m_serviceBridge(serviceBridge)
+	, m_contributions(contributions)
 {
 }
 
@@ -667,7 +882,42 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchExtensi
 			state.contributed = true;
 		}
 	}
-	return Success(EExtensionWorkbenchChange::Commands);
+
+	if (!m_contributions) return Success(EExtensionWorkbenchChange::Commands);
+
+	SExtensionContributions contributions = ParseContributions(params);
+	const SParsedViewDeclarations viewDeclarations = ParseViewDeclarations(params, contributions);
+	const std::vector<std::wstring> acknowledged = contributions.acknowledged;
+	m_contributions->Register({ .extensionId = extensionId, .generation = generation }, std::move(contributions));
+
+	/*
+		コンテナとビューの identity はワークベンチのレイアウトレジストリが唯一の出所。
+		拒否されても拡張の登録自体は成功させる（コンテナが出ないだけに留め、
+		拡張が丸ごと使えなくなることは避ける）。
+	*/
+	if (m_serviceBridge && !(viewDeclarations.containers.empty() && viewDeclarations.views.empty())) {
+		(void)m_serviceBridge->RegisterViewContributions(
+			extensionId, generation, viewDeclarations.containers, viewDeclarations.views);
+	}
+
+	/*
+		「宣言は受理したが未実装」を Extension Host ログへ 1 行だけ残す。
+		黙って受理すると欠落が見えなくなり、UnsupportedCapability を出すと
+		正常な拡張が壊れているように見える。第 3 の扱いとして記録に留める。
+	*/
+	bool recorded = false;
+	if (!acknowledged.empty() && m_serviceBridge) {
+		std::wstring names;
+		for (const auto& name : acknowledged) {
+			if (!names.empty()) names += L", ";
+			names += name;
+		}
+		recorded = m_serviceBridge->AppendExtensionHostLog(
+			workbench::output::EOutputLogLevel::Info,
+			L"Accepted but not yet implemented for " + extensionId + L": " + names);
+	}
+	return Success(EExtensionWorkbenchChange::Commands | EExtensionWorkbenchChange::Contributions |
+		(recorded ? EExtensionWorkbenchChange::Output : EExtensionWorkbenchChange::None));
 }
 
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchRemoveGeneration(std::string_view paramsJson)
@@ -682,6 +932,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchRemoveG
 		return Failure("workbench service owner disposal failed", -32012);
 	}
 	m_commands.RemoveOwnedBy(extensionId, generation);
+	if (m_contributions) m_contributions->RemoveOwnedBy(extensionId, generation);
 	m_contextKeys.RemoveOwnedBy(extensionId);
 	m_statusBar.RemoveOwnedBy(extensionId, generation);
 	m_views.RemoveOwnedBy(extensionId, generation);
@@ -704,7 +955,7 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchRemoveG
 		EExtensionWorkbenchChange::Views | EExtensionWorkbenchChange::Notifications |
 		EExtensionWorkbenchChange::Diagnostics | EExtensionWorkbenchChange::Output |
 		EExtensionWorkbenchChange::Progress | EExtensionWorkbenchChange::QuickInput |
-		EExtensionWorkbenchChange::Scm);
+		EExtensionWorkbenchChange::Scm | EExtensionWorkbenchChange::Contributions);
 }
 
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchActivationFailure(std::string_view paramsJson)
@@ -881,6 +1132,14 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchView(
 			.showCollapseAll = OptionalBool(params, "showCollapseAll"),
 		};
 		if (descriptor.title.empty()) descriptor.title = descriptor.viewId;
+		// VS Code renders a tree view inside the ViewContainer its manifest declared. Only a view
+		// that was never declared falls back to the host's own bucket, so a contributed container
+		// gets its views instead of rendering empty while they pile into Extensions.
+		if (m_serviceBridge != nullptr) {
+			if (auto container = m_serviceBridge->ViewContainerOf(descriptor.viewId); !container.empty()) {
+				descriptor.containerId = std::move(container);
+			}
+		}
 		if (!m_views.Register(descriptor)) return Failure("invalid or conflicting tree view", -32011);
 		m_viewDescriptors.emplace(handle, std::move(descriptor));
 		return Success(EExtensionWorkbenchChange::Views);

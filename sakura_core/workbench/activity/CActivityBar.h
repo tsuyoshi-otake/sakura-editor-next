@@ -13,15 +13,15 @@
 
 #include <functional>
 #include <memory>
-#include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
 
 namespace workbench {
 
 using activity::ActivityBarButtonInfo;
-using activity::ActivityBarItem;
-using activity::ActivityBarItemName;
+using activity::ActivityBarEntry;
 using activity::ActivityBarModel;
 
 //! Caller-supplied colours. High contrast is explicit so callers can inject their system palette.
@@ -47,12 +47,13 @@ struct ActivityBarPalette {
 //! A native vertical workbench switcher. Selection is controlled by its owner; activation emits a toggle request.
 class CActivityBar final : public accessibility::ICustomUiAutomationHost {
 public:
-	using ToggleRequestCallback = std::function<void(ActivityBarItem item)>;
+	//! The argument is the ViewContainer id of the clicked entry.
+	using ToggleRequestCallback = std::function<void(std::string_view containerId)>;
 	//! Raised when the user drops a dragged Activity Bar entry. VS Code treats both the
 	//! Activity Bar icon and the side-bar title as composite drag handles, and the drop
 	//! target decides whether the ViewContainer changes location. The point is in screen
 	//! coordinates because the target is usually a different window.
-	using ContainerDragCallback = std::function<void(ActivityBarItem item, POINT screenPoint)>;
+	using ContainerDragCallback = std::function<void(std::string_view containerId, POINT screenPoint)>;
 
 	explicit CActivityBar(ToggleRequestCallback onToggleRequest = {});
 	~CActivityBar();
@@ -70,13 +71,18 @@ public:
 	void SetToggleRequestCallback(ToggleRequestCallback callback) { m_onToggleRequest = std::move(callback); }
 	void SetContainerDragCallback(ContainerDragCallback callback) { m_onContainerDrag = std::move(callback); }
 
-	void SetSelectedItem(std::optional<ActivityBarItem> item) noexcept;
-	void SetSelected(std::optional<ActivityBarItem> item) noexcept { SetSelectedItem(item); }
-	void SetPressed(std::optional<ActivityBarItem> item) noexcept;
-	void SetItemEnabled(ActivityBarItem item, bool enabled) noexcept;
+	//! Replaces the rendered ViewContainers, including any an extension contributed.
+	//! Tooltips and accessibility follow, so this is the only entry point a composition needs.
+	void SetEntries(std::vector<ActivityBarEntry> entries);
+	[[nodiscard]] const std::vector<ActivityBarEntry>& GetEntries() const noexcept { return m_model.Entries(); }
+
+	void SetSelectedItem(std::string_view containerId) noexcept;
+	void SetSelected(std::string_view containerId) noexcept { SetSelectedItem(containerId); }
+	void SetPressed(std::string_view containerId) noexcept;
+	void SetItemEnabled(std::string_view containerId, bool enabled) noexcept;
 	//! Adds or removes the entry for a ViewContainer that left the Primary Side Bar.
-	void SetItemVisible(ActivityBarItem item, bool visible) noexcept;
-	[[nodiscard]] bool IsItemVisible(ActivityBarItem item) const noexcept { return m_model.IsVisible(item); }
+	void SetItemVisible(std::string_view containerId, bool visible) noexcept;
+	[[nodiscard]] bool IsItemVisible(std::string_view containerId) const noexcept { return m_model.IsVisible(containerId); }
 	[[nodiscard]] int GetPreferredWidthPixels() const noexcept { return m_model.GetPreferredWidthPixels(); }
 	[[nodiscard]] unsigned int GetDpi() const noexcept { return m_model.GetDpi(); }
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
@@ -84,10 +90,10 @@ public:
 	// Provider-ready logical API. Bounds and state stay valid even before a window is created.
 	[[nodiscard]] std::size_t GetButtonCount() const noexcept { return m_model.GetButtonCount(); }
 	[[nodiscard]] ActivityBarButtonInfo GetButton(std::size_t index) const noexcept { return m_model.GetButton(index); }
-	[[nodiscard]] std::optional<ActivityBarItem> HitTest(int x, int y) const noexcept { return m_model.HitTest(x, y); }
-	[[nodiscard]] std::optional<ActivityBarItem> GetFocusedItem() const noexcept { return m_model.GetFocusedItem(); }
+	[[nodiscard]] std::string_view HitTest(int x, int y) const noexcept { return m_model.HitTest(x, y); }
+	[[nodiscard]] std::string_view GetFocusedItem() const noexcept { return m_model.GetFocusedItem(); }
 	//! Emits the callback for an enabled item; it does not change selected state optimistically.
-	[[nodiscard]] bool Invoke(ActivityBarItem item) noexcept;
+	[[nodiscard]] bool Invoke(std::string_view containerId) noexcept;
 	//! Routes keyboard messages before the application's accelerator table.
 	[[nodiscard]] bool PreTranslateMessage(MSG& message) noexcept;
 	[[nodiscard]] bool PreTranslate(MSG& message) noexcept { return PreTranslateMessage(message); }
@@ -115,13 +121,16 @@ private:
 	void EnsureIconFont() noexcept;
 	void Paint() noexcept;
 	void Invalidate() const noexcept;
-	[[nodiscard]] bool InvokeRequest(std::optional<ActivityBarItem> item) noexcept;
+	[[nodiscard]] bool InvokeRequest(std::string_view containerId) noexcept;
 	[[nodiscard]] bool HandleNavigationKey(WPARAM key) noexcept;
 	void SetHoverFromPoint(POINT point) noexcept;
 	//! True once the pointer has left the system drag threshold while a button is held.
 	[[nodiscard]] bool BeginDragIfPastThreshold(POINT point) noexcept;
 	//! Delivers the drop to the owner. Returns true when a drag consumed the click.
-	[[nodiscard]] bool FinishDrag(ActivityBarItem item, POINT clientPoint) noexcept;
+	[[nodiscard]] bool FinishDrag(std::string_view containerId, POINT clientPoint) noexcept;
+	//! Rebuilds the tooltip tools after the entry list changed. Tooltips are keyed by index,
+	//! so a new container must not inherit the label of whoever held that slot before.
+	void RebuildTooltips();
 
 	ActivityBarModel m_model;
 	ActivityBarPalette m_palette = ActivityBarPalette::Dark();
@@ -130,7 +139,11 @@ private:
 	HWND m_window = nullptr;
 	HWND m_tooltip = nullptr;
 	HFONT m_iconFont = nullptr;
-	std::optional<ActivityBarItem> m_captureItem;
+	//! ViewContainer id under the pressed pointer, empty while nothing is captured. It is a
+	//! copy rather than a view because the entry list can be replaced between messages.
+	std::string m_captureItem;
+	//! Tooltip labels must outlive TTM_ADDTOOLW, which stores the pointer it was given.
+	std::vector<std::wstring> m_tooltipLabels;
 	POINT m_dragOrigin{};
 	bool m_dragging = false;
 	bool m_trackingMouseLeave = false;

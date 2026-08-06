@@ -85,6 +85,52 @@ whether an editor input is open or active.
   represented by stale or fake document state. README Markdown may be supplied
   through its typed state API after a bounded OpenVSX text fetch; the surface
   renders that content natively and never executes remote HTML or links.
+
+### Marketplace README rendering (2026-08-06)
+
+The README body is the shared native Markdown preview,
+`markdown::CMarkdownPreviewWnd` — the same renderer the editor's Markdown
+preview uses — hosted as a child of the detail surface. A Marketplace README is
+ordinary Markdown, so it gets real headings, lists, tables, inline styles, and
+syntax-highlighted code instead of a reduced private approximation. Do not
+reintroduce a second parser here: this surface owns metadata projection, not
+Markdown semantics.
+
+Keep the following invariants, and note that they are *not* the extension
+webview boundary. `createWebviewPanel` renders arbitrary extension-authored
+HTML/JS and remains a typed unsupported capability; rendering a Markdown README
+is a different problem and is supported. Do not collapse the two.
+
+- **No network access moves into this subtree.** The composition root fetches the
+  README text and hands it in through the typed state API. The surface and the
+  preview both stay fetch-free.
+- **Every README resource is external and therefore blocked.** `ParseOptions`
+  is built with an empty `documentPath` and an empty `workspaceRoot`, because a
+  Marketplace README has no local root. Every image and link in it resolves as
+  `ResourceDisposition::ExternalBlocked`, so it is reported rather than fetched.
+  That is a deliberate fail-closed divergence from VS Code, which does load
+  Marketplace images: acquiring them would add a new network boundary to a
+  surface whose contract is that it has none.
+- **Header pinned, body scrolled, boundary footer pinned.** VS Code's extension
+  editor keeps its metadata header fixed while the README scrolls, so the parent
+  carries no `WS_VSCROLL` and adds no `WM_VSCROLL`/`WM_MOUSEWHEEL` handler; the
+  preview child owns the only scroll authority. `PaintHeader` and
+  `PaintBoundaryFooter` each measure with a null `HDC` and paint with a real
+  one, so the paint pass and the child-layout pass cannot disagree about where
+  the body starts and ends.
+- **FEATURES and CHANGELOG stay explicit.** VS Code puts them in editor tabs;
+  this surface has no tab strip, so they are a pinned two-row footer instead of
+  scrolling away inside the README. FEATURES is an invariant boundary
+  (`SOpenVsxExtension` carries no contributed-command or configuration data at
+  all); CHANGELOG branches on `sChangelogUrl` and reports "available upstream,
+  not fetched" rather than claiming nothing exists. EXTENSION PACK is omitted
+  entirely, matching VS Code, because the DTO has no pack field to check.
+- **A blank README is an answer, not a failure.** `Ready` with whitespace-only
+  Markdown hides the preview and states that the extension supplied no README,
+  instead of rendering an unexplained empty body.
+- **Renders are generation-ordered.** Each publish takes a new
+  `markdown::PreviewRenderKey` generation, so a superseded parse can never
+  commit over a newer one when the user switches extensions quickly.
 - `CDiffSurface` is the same kind of native projection for a side-by-side
   comparison: not an `EditorInput`, no document model, shown only while the
   native editor has no active document, and hidden before a document is

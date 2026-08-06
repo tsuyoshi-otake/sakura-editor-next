@@ -196,3 +196,44 @@ private:
 	mutable std::mutex m_mutex;
 	std::unordered_map<std::wstring, SExtensionProgress> m_items;
 };
+
+//! Merged, ready-to-render VS Code `Hover.contents` for one document position.
+//! `markdown` is already the joined Markdown text (see
+//! `CExtensionService::HandleHoverResponseWorker`); this struct never carries
+//! raw provider JSON. A UI-thread consumer hands `markdown` straight to
+//! `markdown::ParseMarkdown` -- the same renderer `CExtensionDetailSurface`
+//! uses for Marketplace READMEs -- with an empty `documentPath`/`workspaceRoot`
+//! so every resource reference resolves as `ResourceDisposition::ExternalBlocked`.
+struct SExtensionHoverResult {
+	SExtensionDocumentId documentId;
+	SExtensionTextPosition position;
+	std::wstring markdown;
+	//! True when the host answered this exact request with no content at all
+	//! (every provider returned nothing, or none matched). Distinct from "no
+	//! result published yet" (a request still in flight, or one that was
+	//! cancelled/superseded before a response ever arrived) -- that case never
+	//! calls Publish at all, so Snapshot() simply returns nullopt for it.
+	bool empty = true;
+};
+
+/*!
+	@brief UI スレッドが最新の Hover 結果を読む窓口
+
+	worker thread が `CExtensionService::RequestHover` の応答を `Publish` で書き、
+	マウスが離れた・新しい要求で置き換えられた等の理由で `Clear` する。UI スレッドは
+	`MYWM_EXTENSION_WORKBENCH_CHANGED`（`EExtensionWorkbenchChange::Hover`）を受けてから
+	`Snapshot()` で読む。「その応答がまだ最新の要求に対するものか」の判定は
+	`CExtensionService` 側の generation フェンス（サービス自身が要求ごとに進める
+	sequence カウンタ）が Publish を呼ぶ前に行うので、このクラス自身は sequence を
+	持たない -- 常に「そのとき最新だった結果、またはまだ何も無い」だけを保持する。
+*/
+class CExtensionHoverCenter final {
+public:
+	void Publish(SExtensionHoverResult result);
+	void Clear();
+	[[nodiscard]] std::optional<SExtensionHoverResult> Snapshot() const;
+
+private:
+	mutable std::mutex m_mutex;
+	std::optional<SExtensionHoverResult> m_result;
+};

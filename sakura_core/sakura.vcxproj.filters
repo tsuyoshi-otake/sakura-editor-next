@@ -107,8 +107,20 @@
     <Filter Include="Cpp Source Files\markdown">
       <UniqueIdentifier>{9804f6cb-9b93-457a-9830-6d8d9af0a2fc}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Cpp Source Files\textmate">
+      <UniqueIdentifier>{69fe5215-dceb-4b3a-bc5d-008353d018b8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Cpp Source Files\externals">
+      <UniqueIdentifier>{29e70cdd-355d-4954-be6c-54e8cfd725c8}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Cpp Source Files\externals\Onigmo">
+      <UniqueIdentifier>{638f3d6d-82a0-4ade-b573-bf9d4bc39c1c}</UniqueIdentifier>
+    </Filter>
     <Filter Include="Cpp Source Files\workbench">
       <UniqueIdentifier>{0ca91f97-48a4-492d-86da-028cc85ae124}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Cpp Source Files\update">
+      <UniqueIdentifier>{5b1a6e42-9c17-4d63-9a4e-3f7b0c58d211}</UniqueIdentifier>
     </Filter>
     <Filter Include="Cpp Source Files\docplus">
       <UniqueIdentifier>{26846f98-18ea-4ef9-bcf0-67feff76dea8}</UniqueIdentifier>
@@ -652,6 +664,9 @@
     <ClInclude Include="..\sakura_core\view\CEditView.h">
       <Filter>Cpp Source Files\view</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\view\CEditViewHoverPopup.h">
+      <Filter>Cpp Source Files\view</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\view\CEditView_Paint.h">
       <Filter>Cpp Source Files\view</Filter>
     </ClInclude>
@@ -1069,6 +1084,12 @@
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\keybinding\ExtensionKeybindingMap.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\keybinding\KeybindingChord.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateTypes.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1076,6 +1097,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h">
@@ -1117,6 +1141,21 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitSyncCommands.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionIconDecoder.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionInstallButtonState.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionSearchFilter.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionSearchQuery.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1146,6 +1185,45 @@
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateTypes.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateVersion.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateFeed.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateInstallerCommandLine.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\IUpdateService.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateService.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateStagingStore.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateInstallLocation.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\Win32UpdateLauncher.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateDigest.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateExecutor.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateComposition.h">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\update\UpdateAutoCheckTimer.h">
+	  <Filter>Cpp Source Files\update</Filter>
 	</ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h">
       <Filter>Cpp Source Files\workbench</Filter>
@@ -1525,6 +1603,33 @@
     <ClInclude Include="..\sakura_core\theme\CColorThemeRegistry.h">
       <Filter>Cpp Source Files\theme</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\theme\TextMateScopeColorResolver.h">
+      <Filter>Cpp Source Files\theme</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\OnigmoRegexEngine.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateGrammarCompiler.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateGrammarModel.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateGrammarValue.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateTokenizer.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\textmate\TextMateUtf8.h">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\window\CMainStatusBar.h">
       <Filter>Cpp Source Files\window</Filter>
     </ClInclude>
@@ -1691,6 +1796,12 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionCommandPalette.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\ExtensionMenuProjection.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\CExtensionContributionRegistry.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.h">
@@ -2431,6 +2542,9 @@
     <ClCompile Include="..\sakura_core\view\CEditView.cpp">
       <Filter>Cpp Source Files\view</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\view\CEditViewHoverPopup.cpp">
+      <Filter>Cpp Source Files\view</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\view\CEditView_Cmdgrep.cpp">
       <Filter>Cpp Source Files\view</Filter>
     </ClCompile>
@@ -2917,10 +3031,19 @@
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\keybinding\ExtensionKeybindingMap.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\keybinding\KeybindingChord.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp">
@@ -2965,6 +3088,21 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitSyncCommands.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitInitCloneCommands.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionIconDecoder.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionInstallButtonState.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionSearchFilter.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionSearchQuery.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitStageCommands.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -2991,6 +3129,42 @@
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateTypes.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateVersion.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateFeed.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateInstallerCommandLine.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateService.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateStagingStore.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateInstallLocation.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\Win32UpdateLauncher.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateDigest.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateExecutor.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateComposition.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\update\UpdateAutoCheckTimer.cpp">
+	  <Filter>Cpp Source Files\update</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\DocumentRegistry.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
@@ -3235,6 +3409,177 @@
     <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp">
       <Filter>Cpp Source Files\theme</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\theme\TextMateScopeColorResolver.cpp">
+      <Filter>Cpp Source Files\theme</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\OnigmoRegexEngine.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\TextMateGrammarCompiler.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\TextMateTokenizer.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\textmate\TextMateUtf8.cpp">
+      <Filter>Cpp Source Files\textmate</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regcomp.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regenc.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regerror.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regexec.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regext.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\reggnu.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regparse.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regposerr.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regposix.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regsyntax.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regtrav.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regversion.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\st.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\ascii.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\big5.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\euc_jp.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\euc_kr.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\euc_tw.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\gb18030.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_1.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_2.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_3.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_4.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_5.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_6.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_7.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_8.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_9.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_10.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_11.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_13.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_14.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_15.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_16.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\koi8_r.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\koi8_u.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\shift_jis.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\unicode.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_8.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_16be.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_16le.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_32be.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_32le.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1250.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1251.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1252.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1253.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1254.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1257.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_31j.c">
+      <Filter>Cpp Source Files\externals\Onigmo</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\window\CMainStatusBar.cpp">
       <Filter>Cpp Source Files\window</Filter>
     </ClCompile>
@@ -3443,6 +3788,12 @@
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionCommandPalette.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\ExtensionMenuProjection.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\CExtensionContributionRegistry.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.cpp">

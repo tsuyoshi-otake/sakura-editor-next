@@ -114,6 +114,108 @@ bool WriteDownloadedVsix(
 	return true;
 }
 
+/*!
+	@brief VSIX をディスクへ逐次書き込みながら sha256 を計算するための状態
+
+	FetchVsixStreamed() の chunk sink はこの構造体だけを介して呼ばれる。
+	CExtensionManager::ComputeSha256Hex と同じ BCrypt 手順（SHA256 provider →
+	hash object → 16 進エンコード）を、ファイル全体の再読み込みではなく
+	chunk ごとの BCryptHashData 呼び出しへ置き換えたもの。
+*/
+struct StreamedVsixWrite {
+	std::ofstream out;
+	AlgProviderHolder alg;
+	HashHolder hash;
+	bool hashReady = false;
+};
+
+//! ストリーミング書き込みを開始する。出力ファイルと sha256 の両方を準備できなければ false。
+bool BeginStreamedVsixWrite(
+	const std::filesystem::path& path,
+	StreamedVsixWrite& state,
+	std::wstring& errorMsg)
+{
+	state.out.open(path, std::ios::binary | std::ios::trunc);
+	if (!state.out) {
+		errorMsg = L"cannot create temporary VSIX";
+		return false;
+	}
+	if (::BCryptOpenAlgorithmProvider(&state.alg.h, BCRYPT_SHA256_ALGORITHM, nullptr, 0) < 0) {
+		errorMsg = L"cannot initialize sha256 for streamed download";
+		return false;
+	}
+	if (::BCryptCreateHash(state.alg.h, &state.hash.h, nullptr, 0, nullptr, 0, 0) < 0) {
+		errorMsg = L"cannot initialize sha256 for streamed download";
+		return false;
+	}
+	state.hashReady = true;
+	return true;
+}
+
+/*!
+	@brief 1 chunk をファイルへ書き、同時に sha256 へ取り込む
+
+	platform::request::ResponseBodyChunkSink / OpenVsxBodyChunkSink の契約どおり、
+	書き込みまたはハッシュ更新に失敗したら false を返して転送を打ち切らせる。
+*/
+bool WriteStreamedVsixChunk(StreamedVsixWrite& state, const std::uint8_t* data, std::size_t size)
+{
+	if (!state.hashReady) {
+		return false;
+	}
+	if (size == 0) {
+		return true;
+	}
+	if (size > static_cast<std::size_t>((std::numeric_limits<std::streamsize>::max)())) {
+		return false;
+	}
+	state.out.write(reinterpret_cast<const char*>(data), static_cast<std::streamsize>(size));
+	if (!state.out) {
+		return false;
+	}
+	if (::BCryptHashData(state.hash.h, const_cast<PUCHAR>(data), static_cast<ULONG>(size), 0) < 0) {
+		return false;
+	}
+	return true;
+}
+
+//! 書き込みを終え、16 進小文字の sha256 を返す。失敗時は空文字列
+std::wstring FinishStreamedVsixWrite(StreamedVsixWrite& state)
+{
+	if (!state.hashReady) {
+		return std::wstring();
+	}
+	state.out.flush();
+	if (!state.out) {
+		return std::wstring();
+	}
+	state.out.close();
+	if (!state.out) {
+		return std::wstring();
+	}
+
+	DWORD dwHashLength = 0;
+	DWORD dwResultSize = 0;
+	if (::BCryptGetProperty(state.alg.h, BCRYPT_HASH_LENGTH,
+			reinterpret_cast<PUCHAR>(&dwHashLength), sizeof(dwHashLength), &dwResultSize, 0) < 0) {
+		return std::wstring();
+	}
+
+	std::vector<UCHAR> digest(dwHashLength);
+	if (::BCryptFinishHash(state.hash.h, digest.data(), dwHashLength, 0) < 0) {
+		return std::wstring();
+	}
+
+	constexpr wchar_t szHex[] = L"0123456789abcdef";
+	std::wstring sResult;
+	sResult.reserve(digest.size() * 2);
+	for (const UCHAR byte : digest) {
+		sResult += szHex[byte >> 4];
+		sResult += szHex[byte & 0x0F];
+	}
+	return sResult;
+}
+
 bool IsDirectoryWithoutReparsePoint(const std::filesystem::path& path)
 {
 	const DWORD attributes = ::GetFileAttributesW(path.c_str());
@@ -352,6 +454,89 @@ std::wstring CExtensionManager::ComputeSha256Hex(const std::filesystem::path& pa
 	return sResult;
 }
 
+// 検索応答とメタデータ応答から、このホストで動く配布物を決める
+bool CExtensionManager::ResolveInstallTarget(
+	const SOpenVsxExtension& ext,
+	const extension::openvsx::OpenVsxExtensionAssetsOperation& assets,
+	std::wstring_view targetPlatform,
+	SOpenVsxExtension& resolved,
+	std::wstring& errorMsg)
+{
+	using extension::openvsx::OpenVsxProtocol;
+
+	resolved = ext;
+	errorMsg.clear();
+
+	const auto IsUsableForThisHost = [&targetPlatform](std::wstring_view platform) {
+		// 空は「プラットフォーム別ビルドを持たない拡張」を意味する
+		return platform.empty()
+			|| platform == targetPlatform
+			|| platform == OpenVsxProtocol::kUniversalTargetPlatform;
+	};
+
+	if (!assets.status) {
+		// Unsupported はメタデータ解決を持たない client。それ以外は通信・解析の失敗。
+		// どちらでも手掛かりは検索応答の 1 ビルドだけなので、それがこのホストで
+		// 動くと言える場合に限って使う。動かないものを黙って掴ませない。
+		//
+		// 検索応答は targetPlatform フィールドを持たないことがあり、そのときは
+		// download URL の `@<platform>` だけがどのビルドかを語る。実測では
+		// win32 機からの検索でも alpine-arm64 の URL が返るので、ここを見ないと
+		// 「フィールドが空だから安全」と誤読して別プラットフォームを展開してしまう。
+		std::wstring searchPlatform = ext.sTargetPlatform;
+		if (searchPlatform.empty()) {
+			searchPlatform = OpenVsxProtocol::TargetPlatformFromVsixUrl(ext.sDownloadUrl);
+		}
+		if (!IsUsableForThisHost(searchPlatform)) {
+			errorMsg = L"the registry offered a " + searchPlatform + L" build but this host needs "
+				+ std::wstring(targetPlatform) + L", and the extension metadata could not be resolved";
+			return false;
+		}
+		if (resolved.sDownloadUrl.empty()) {
+			errorMsg = L"the registry did not provide a download URL";
+			return false;
+		}
+		return true;
+	}
+
+	const std::wstring sDownloadUrl = OpenVsxProtocol::SelectPlatformDownloadUrl(assets.value, targetPlatform);
+	if (sDownloadUrl.empty()) {
+		errorMsg = L"the extension does not provide a build for " + std::wstring(targetPlatform);
+		return false;
+	}
+
+	resolved.sDownloadUrl = sDownloadUrl;
+	if (!assets.value.sVersion.empty()) {
+		// downloads はメタデータが指すバージョンのものなので、導入先フォルダー名も
+		// そちらへ合わせる。検索応答との食い違いを名前に持ち込まない。
+		resolved.sVersion = assets.value.sVersion;
+	}
+
+	resolved.sTargetPlatform.clear();
+	for (const auto& [platform, url] : assets.value.downloads) {
+		if (url == sDownloadUrl) {
+			resolved.sTargetPlatform = platform;
+			break;
+		}
+	}
+
+	if (sDownloadUrl == assets.value.sDownloadUrl) {
+		// files は選んだ配布物そのものを指しているので、副次資産まで信用できる
+		resolved.sSha256Url = assets.value.sSha256Url;
+		if (resolved.sTargetPlatform.empty()) resolved.sTargetPlatform = assets.value.sTargetPlatform;
+		if (resolved.sIconUrl.empty()) resolved.sIconUrl = assets.value.sIconUrl;
+		if (resolved.sReadmeUrl.empty()) resolved.sReadmeUrl = assets.value.sReadmeUrl;
+		if (resolved.sChangelogUrl.empty()) resolved.sChangelogUrl = assets.value.sChangelogUrl;
+	}
+	else {
+		// downloads は VSIX の URL しか持たない。別ビルドを選んだ以上、files の
+		// sha256 は別物のハッシュなので使えない。同じ path の .sha256 を導く。
+		// 導けなければ空にして、レジストリが sha256 を公開していない場合と同じ扱いにする。
+		resolved.sSha256Url = OpenVsxProtocol::DeriveSha256Url(sDownloadUrl);
+	}
+	return true;
+}
+
 // package.json から表示名を読む
 std::wstring CExtensionManager::ReadDisplayName(const std::filesystem::path& manifestPath)
 {
@@ -399,7 +584,29 @@ bool CExtensionManager::Install(
 		errorMsg = L"extension installation cancelled";
 		return false;
 	}
-	const std::wstring sFolderName = MakeInstallFolderName(ext);
+	if (!IsSafeNameComponent(ext.sNamespace) || !IsSafeNameComponent(ext.sName)) {
+		errorMsg = L"registry returned an unsafe extension identifier";
+		return false;
+	}
+
+	// 検索応答の download URL はプラットフォームを選べていない。取得を始める前に
+	// メタデータ endpoint で解決し直す。
+	constexpr std::wstring_view targetPlatform = extension::openvsx::OpenVsxProtocol::HostTargetPlatform();
+	const auto assets = registryClient.FetchExtensionAssets(ext.sNamespace, ext.sName, requestCancellation);
+	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
+		errorMsg = L"extension installation cancelled";
+		return false;
+	}
+	if (assets.status.outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled) {
+		errorMsg = L"extension installation cancelled";
+		return false;
+	}
+	SOpenVsxExtension target;
+	if (!ResolveInstallTarget(ext, assets, targetPlatform, target, errorMsg)) {
+		return false;
+	}
+
+	const std::wstring sFolderName = MakeInstallFolderName(target);
 	if (sFolderName.empty()) {
 		errorMsg = L"registry returned an unsafe extension identifier";
 		return false;
@@ -430,27 +637,68 @@ bool CExtensionManager::Install(
 	const std::filesystem::path tempPath = stagingDir / L"package.vsix";
 	const std::filesystem::path extractedDir = stagingDir / L"contents";
 
-	const auto vsixResponse = registryClient.FetchVsix(ext.sDownloadUrl, requestCancellation);
-	if (!vsixResponse.status) {
-		errorMsg = vsixResponse.status.outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled ||
-			IsInstallationCancelled(requestCancellation, pCancelled)
-			? L"extension installation cancelled"
-			: L"cannot fetch extension package";
-		return false;
+	// VSIX を全量メモリーへためず、ディスクへ逐次書き込みながら sha256 も同時に
+	// 計算する経路を優先する。registryClient が FetchVsixStreamed を実装しない
+	// （既定の Unsupported を返す。テスト用 fake を含む）場合は、従来どおり
+	// FetchVsix でメモリー上に取得してから書き出す経路へフォールバックする。
+	bool usedStreamedFetch = false;
+	std::wstring streamedSha256Hex;
+	{
+		StreamedVsixWrite streamState;
+		std::wstring beginError;
+		if (BeginStreamedVsixWrite(tempPath, streamState, beginError)) {
+			const auto sink = [&streamState](const std::uint8_t* data, std::size_t size) {
+				return WriteStreamedVsixChunk(streamState, data, size);
+			};
+			const auto streamedStatus = registryClient.FetchVsixStreamed(target.sDownloadUrl, sink, requestCancellation);
+			if (streamedStatus.outcome != extension::openvsx::EOpenVsxRequestOutcome::Unsupported) {
+				usedStreamedFetch = true;
+				if (!streamedStatus) {
+					errorMsg = streamedStatus.outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled ||
+						IsInstallationCancelled(requestCancellation, pCancelled)
+						? L"extension installation cancelled"
+						: L"cannot fetch extension package";
+					return false;
+				}
+				if (IsInstallationCancelled(requestCancellation, pCancelled)) {
+					errorMsg = L"extension installation cancelled";
+					return false;
+				}
+				streamedSha256Hex = FinishStreamedVsixWrite(streamState);
+				if (streamedSha256Hex.empty()) {
+					errorMsg = L"cannot write temporary VSIX";
+					return false;
+				}
+			}
+		}
+		// streamState（と保持している ofstream）はここでスコープを抜けて破棄される。
+		// 実際にストリーミングを使わなかった場合でも、同じ tempPath を次の
+		// フォールバック書き込みが開く前にファイルハンドルを確実に解放する。
 	}
-	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
-		errorMsg = L"extension installation cancelled";
-		return false;
-	}
-	if (!WriteDownloadedVsix(tempPath, vsixResponse.value, errorMsg)) {
-		return false;
+
+	if (!usedStreamedFetch) {
+		const auto vsixResponse = registryClient.FetchVsix(target.sDownloadUrl, requestCancellation);
+		if (!vsixResponse.status) {
+			errorMsg = vsixResponse.status.outcome == extension::openvsx::EOpenVsxRequestOutcome::Cancelled ||
+				IsInstallationCancelled(requestCancellation, pCancelled)
+				? L"extension installation cancelled"
+				: L"cannot fetch extension package";
+			return false;
+		}
+		if (IsInstallationCancelled(requestCancellation, pCancelled)) {
+			errorMsg = L"extension installation cancelled";
+			return false;
+		}
+		if (!WriteDownloadedVsix(tempPath, vsixResponse.value, errorMsg)) {
+			return false;
+		}
 	}
 
 	// レジストリが sha256 を公開しているなら必ず検証する。
 	// 取得したバイト列が公開されたものと一致することの確認になる。
-	const std::optional<std::wstring> sha256Uri = ext.sSha256Url.empty()
+	const std::optional<std::wstring> sha256Uri = target.sSha256Url.empty()
 		? std::nullopt
-		: std::optional<std::wstring>(ext.sSha256Url);
+		: std::optional<std::wstring>(target.sSha256Url);
 	const auto sha256Response = registryClient.FetchOptionalSha256(sha256Uri, requestCancellation);
 	if (IsInstallationCancelled(requestCancellation, pCancelled)) {
 		errorMsg = L"extension installation cancelled";
@@ -472,7 +720,10 @@ bool CExtensionManager::Install(
 			return false;
 		}
 
-		const std::wstring sActual = ComputeSha256Hex(tempPath);
+		// ストリーミング経路は書き込みと同時に増分計算した digest を再利用する。
+		// tempPath を再度読み直す必要はない。フォールバック経路のみ ComputeSha256Hex
+		// でファイルを読み直す。
+		const std::wstring sActual = usedStreamedFetch ? streamedSha256Hex : ComputeSha256Hex(tempPath);
 		if (sActual.empty()) {
 			errorMsg = L"cannot compute the sha256 of the downloaded package";
 			return false;

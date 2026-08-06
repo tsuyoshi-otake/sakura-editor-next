@@ -560,12 +560,23 @@ class ExtensionHost {
         setImmediate(() => this.stop());
         return { accepted: true };
       case 'host/registerExtensions':
-        return this.extensionLoader.register(params?.extensions);
+        // configuration/workspaceFolders は登録の度にネイティブが総入れ替えで送ってくる
+        // スナップショット（extensions 自体の再送契約と同じ）。両方省略時は
+        // mergeSessionOptions が何もしないので、configuration 非対応の古いネイティブや
+        // ワークスペース未対応時でも extensions 登録そのものは今まで通り動く。
+        return this.extensionLoader.register(params?.extensions, {
+          configuration: params?.configuration,
+          workspaceFolders: params?.workspaceFolders,
+        });
       case 'host/activateExtension':
         await this.extensionLoader.activate(params?.extensionId, params?.reason || 'api');
         return { activated: true };
       case 'host/activateByEvent':
         return this.extensionLoader.activateByEvent(params?.event);
+      // ワークスペースは後から開かれるので、登録とは独立にフォルダーを差し替えられる必要がある。
+      // 差し替えの度に workspaceContains: を再評価して該当する拡張を起動する。
+      case 'host/setWorkspaceFolders':
+        return this.extensionLoader.setWorkspaceFolders(params?.folders);
       case '$/cancelRequest':
         return null;
       default:

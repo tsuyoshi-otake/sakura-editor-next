@@ -63,9 +63,26 @@ general HTTP policy, credentials, or SecretStorage.
   uses a no-credential adapter until a separate challenge-scoped credential
   service is composed. SecretStorage must never be treated as implicit registry
   or proxy authentication.
-- VSIX transfer is bounded but currently materialized in memory before staging.
-  A future streaming request/file sink may reduce peak memory, but it must keep
-  the same limits, cancellation, hash verification, and atomic commit contract.
+- VSIX transfer now streams: `IOpenVsxRegistryClient::FetchVsixStreamed` (default
+  `Unsupported`, implemented by `OpenVsxRequestServiceAdapter` and delegated by
+  `OpenVsxProductionClient`) delivers the response body to a caller-supplied
+  chunk sink instead of returning a fully buffered value. `CExtensionManager::
+  Install` writes each chunk straight to the staging temp file and folds it into
+  an incremental BCrypt SHA-256 hash, so peak resident memory for a VSIX no
+  longer scales with archive size. The 512 MiB response-body ceiling
+  (`kMaximumVsixResponseBytes`) is unchanged and is still enforced by the shared
+  `RequestService`/WinHTTP transport while streaming, not relaxed. A client that
+  does not implement streaming (returns `Unsupported`) falls back to the
+  original fully-buffered `FetchVsix` + post-write hash path unchanged, so this
+  is strictly additive. `platform::request::Request`/`TransportRequest` gained
+  one optional trailing `bodySink` field (a `ResponseBodyChunkSink`) rather than
+  a broader streaming-interface redesign: both structs are always built by
+  default-construction plus named-field assignment in production code, so a new
+  trailing optional field is a backward-compatible addition, and the WinHTTP
+  transport's existing 64 KiB chunked `WinHttpReadData` loop only needed a
+  branch on whether a sink is present, not a new read strategy. `RequestService`
+  rejects combining `bodySink` with deduplication or non-`OnlineOnly` caching
+  rather than trying to make a streamed body cacheable/replayable.
 
 ## Tests
 

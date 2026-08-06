@@ -76,6 +76,52 @@ jobs:
       - name: Check encoding
         run: checkEncoding.bat
 
+  # 拡張ホストは Node で動くので、C++ のビルドとは独立して検証できる。
+  # vcpkg も MSBuild も要らない軽量ジョブとして先に回し、拡張ホストの退行を
+  # 重いビルドの完走を待たずに落とす。
+  test-exthost:
+    name: Test extension host
+    runs-on: *windows_runner
+    needs: check-encoding
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        fetch-depth: 1
+
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ vars.NODE_VERSION || '22.x' }}
+
+    # 拡張ホストは依存パッケージを持たない (package.json に dependencies なし)。
+    # npm ci を呼ぶとロックファイルが無いので失敗する。install は行わない。
+    - name: Node version check
+      run: node --version
+
+    # バンドルは MSBuild からも生成されるが、ここで単独に通しておくと
+    # bundler の壊れ方が C++ ビルドのログに埋もれない。
+    - name: Build extension host bundle
+      run: npm --prefix src/exthost run build
+
+    - name: Verify bundle output
+      run: |
+        $bundle = 'src/exthost/dist/extension-host.js'
+        if (-not (Test-Path -LiteralPath $bundle -PathType Leaf)) {
+          throw "extension host bundle was not produced at $bundle"
+        }
+        Write-Host "bundle size: $((Get-Item -LiteralPath $bundle).Length) bytes"
+
+    # node --test は既定でタイムアウトを持たない。ハングしたテストが
+    # ランナーの時間を食い潰さないよう、明示的に上限を与える。
+    - name: Run extension host tests
+      run: npm --prefix src/exthost test -- --test-timeout=60000
+
+    # テストコマンドが返ったことは、テストプロセスが終わったことの証明にならない。
+    - name: Clean up test process survivors
+      if: ${{ always() }}
+      run: .\tools\Cleanup-TestProcessSurvivors.ps1
+
   build-vcpkg:
     name: Build vcpkg
     runs-on: *windows_runner

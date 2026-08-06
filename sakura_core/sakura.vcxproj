@@ -336,6 +336,8 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionProfileState.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionPane.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionCommandPalette.h" />
+    <ClInclude Include="..\sakura_core\extension\ExtensionMenuProjection.h" />
+    <ClInclude Include="..\sakura_core\extension\CExtensionContributionRegistry.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionContextKeys.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionDocumentBridge.h" />
     <ClInclude Include="..\sakura_core\extension\CExtensionHostBroker.h" />
@@ -493,6 +495,7 @@
     <ClInclude Include="..\sakura_core\util\zoom.h" />
     <ClInclude Include="..\sakura_core\view\CCaret.h" />
     <ClInclude Include="..\sakura_core\view\CEditView.h" />
+    <ClInclude Include="..\sakura_core\view\CEditViewHoverPopup.h" />
     <ClInclude Include="..\sakura_core\view\CEditView_Paint.h" />
     <ClInclude Include="..\sakura_core\view\CMiniMapView.h" />
     <ClInclude Include="..\sakura_core\view\colors\CColorStrategy.h" />
@@ -604,10 +607,19 @@
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h" />
     <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
     <ClInclude Include="..\sakura_core\theme\CColorThemeRegistry.h" />
+    <ClInclude Include="..\sakura_core\theme\TextMateScopeColorResolver.h" />
 	<ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
+    <ClInclude Include="..\sakura_core\textmate\OnigmoRegexEngine.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateGrammarCompiler.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateGrammarModel.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateGrammarValue.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateTokenizer.h" />
+    <ClInclude Include="..\sakura_core\textmate\TextMateUtf8.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h" />
@@ -647,8 +659,11 @@
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutMementoCodec.h" />
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.h" />
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateTypes.h" />
+	<ClInclude Include="..\sakura_core\workbench\keybinding\ExtensionKeybindingMap.h" />
+	<ClInclude Include="..\sakura_core\workbench\keybinding\KeybindingChord.h" />
 	<ClInclude Include="..\sakura_core\workbench\win32\BuiltinPartProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h" />
+	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\CActivityBar.h" />
 	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.h" />
@@ -662,6 +677,11 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitFailureText.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitPrompt.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitSyncCommands.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h" />
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionIconDecoder.h" />
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionInstallButtonState.h" />
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionSearchFilter.h" />
+	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionSearchQuery.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitStageCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h" />
@@ -672,6 +692,19 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmMenus.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateTypes.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateVersion.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateFeed.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateInstallerCommandLine.h" />
+    <ClInclude Include="..\sakura_core\update\IUpdateService.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateService.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateStagingStore.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateInstallLocation.h" />
+    <ClInclude Include="..\sakura_core\update\Win32UpdateLauncher.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateDigest.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateExecutor.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateComposition.h" />
+    <ClInclude Include="..\sakura_core\update\UpdateAutoCheckTimer.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\DocumentRegistry.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
@@ -949,6 +982,8 @@
     <ClCompile Include="..\sakura_core\extension\CExtensionProfileState.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionCommandPalette.cpp" />
+    <ClCompile Include="..\sakura_core\extension\ExtensionMenuProjection.cpp" />
+    <ClCompile Include="..\sakura_core\extension\CExtensionContributionRegistry.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionContextKeys.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionDocumentBridge.cpp" />
     <ClCompile Include="..\sakura_core\extension\CExtensionHostBroker.cpp" />
@@ -1139,6 +1174,7 @@
     <ClCompile Include="..\sakura_core\util\zoom.cpp" />
     <ClCompile Include="..\sakura_core\view\CCaret.cpp" />
     <ClCompile Include="..\sakura_core\view\CEditView.cpp" />
+    <ClCompile Include="..\sakura_core\view\CEditViewHoverPopup.cpp" />
     <ClCompile Include="..\sakura_core\view\CEditView_Cmdgrep.cpp" />
     <ClCompile Include="..\sakura_core\view\CEditView_CmdHokan.cpp" />
     <ClCompile Include="..\sakura_core\view\CEditView_Cmdisrch.cpp" />
@@ -1262,10 +1298,17 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
     <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp" />
+    <ClCompile Include="..\sakura_core\theme\TextMateScopeColorResolver.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\OnigmoRegexEngine.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\TextMateGrammarCompiler.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\TextMatePlistGrammarLoader.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\TextMateTokenizer.cpp" />
+    <ClCompile Include="..\sakura_core\textmate\TextMateUtf8.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp" />
@@ -1297,8 +1340,11 @@
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchIds.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutMementoCodec.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\keybinding\ExtensionKeybindingMap.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\keybinding\KeybindingChord.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\CActivityBar.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.cpp" />
@@ -1313,6 +1359,11 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitBranchCommands.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommitCommands.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitSyncCommands.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\GitInitCloneCommands.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionIconDecoder.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionInstallButtonState.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionSearchFilter.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionSearchQuery.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitStageCommands.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitRefModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmModel.cpp" />
@@ -1322,6 +1373,18 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmMenus.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateTypes.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateVersion.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateFeed.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateInstallerCommandLine.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateService.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateStagingStore.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateInstallLocation.cpp" />
+    <ClCompile Include="..\sakura_core\update\Win32UpdateLauncher.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateDigest.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateExecutor.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateComposition.cpp" />
+    <ClCompile Include="..\sakura_core\update\UpdateAutoCheckTimer.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\DocumentRegistry.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp" />
@@ -1375,6 +1438,280 @@
     <ClCompile Include="..\sakura_core\_os\CClipboard.cpp" />
     <ClCompile Include="..\sakura_core\_os\CDropTarget.cpp" />
     <ClCompile Include="..\src\main\cpp\cxx\load_string.cpp" />
+    <!--
+      Onigmo is vendored as a submodule under externals\Onigmo and is compiled
+      as ordinary C translation units directly into sakura_core (Option A in
+      sakura_core\textmate\CLAUDE.md, "Onigmo build integration"), matching
+      the vetted-but-dormant tools\vcpkg-local-registry\ports\onigmo\CMakeLists.txt
+      ONIGMO_SOURCES list. Do not add testc.c, test_enc_utf8.c, or testu.c,
+      which are Onigmo's own test executables. Each entry disables Sakura's
+      C++ StdAfx precompiled header (a C translation unit cannot consume a
+      C++ PCH), adds Onigmo's own win32\config.h and enc\unicode headers, and
+      defines HAVE_CONFIG_H/ONIG_EXTERN=extern scoped to just these files so
+      they do not leak into the rest of sakura_core.
+    -->
+    <ClCompile Include="..\externals\Onigmo\regcomp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regenc.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regerror.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regexec.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regext.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\reggnu.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regparse.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <!--
+        This project sets SDLCheck (/sdl) project-wide (see the shared
+        ItemDefinitionGroup above), which promotes a fixed set of warnings,
+        including C4703 ("potentially uninitialized local pointer variable
+        used"), to hard errors even without /WX. regparse.c triggers C4703 at
+        the vendored Onigmo source's own line 3722. regparse.c is under
+        externals/ and must not be edited (see the hard constraint against
+        modifying vendored/upstream code), so the suppression is scoped to
+        this one file only via AdditionalOptions rather than disabling /sdl
+        or the warning project-wide.
+      -->
+      <AdditionalOptions>/wd4703 %(AdditionalOptions)</AdditionalOptions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regposerr.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regposix.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regsyntax.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regtrav.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\regversion.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\st.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\ascii.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\big5.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\euc_jp.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\euc_kr.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\euc_tw.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\gb18030.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_1.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_2.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_3.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_4.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_5.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_6.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_7.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_8.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_9.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_10.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_11.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_13.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_14.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_15.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_16.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\koi8_r.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\koi8_u.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\shift_jis.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\unicode.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_8.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_16be.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_16le.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_32be.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\utf_32le.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1250.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1251.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1252.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1253.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1254.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_1257.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <ClCompile Include="..\externals\Onigmo\enc\windows_31j.c">
+      <PrecompiledHeader>NotUsing</PrecompiledHeader>
+      <AdditionalIncludeDirectories>..\externals\Onigmo;..\externals\Onigmo\win32;..\externals\Onigmo\enc\unicode;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>HAVE_CONFIG_H;ONIG_EXTERN=extern;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <Natvis Include="..\src\main\resources\sakura.natvis" />

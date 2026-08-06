@@ -1,6 +1,10 @@
 [CmdletBinding()]
 param(
-    [string]$CacheRoot = (Join-Path $env:USERPROFILE "tmp\sakura-open-vsx-acceptance")
+    [string]$CacheRoot = (Join-Path $env:USERPROFILE "tmp\sakura-open-vsx-acceptance"),
+    # Parity targets are the extensions the host cannot yet run end to end.
+    # They are opt-in so the four-extension regression gate keeps its meaning
+    # while the parity work is in flight; see issue #23.
+    [switch]$IncludeParityTargets
 )
 
 $ErrorActionPreference = "Stop"
@@ -57,6 +61,22 @@ $extensions = @(
         Expectation = "diagnostics"
     }
 )
+
+# Claude Code for VS Code is the parity gate. One extension exercises the
+# platform-specific download, a 267 MiB payload, an activitybar view container,
+# a webview view, menus and keybindings at once, so partial progress cannot be
+# mistaken for success. Expected to fail until the matching phases land.
+$parityExtensions = @(
+    [pscustomobject]@{
+        Slug = "claude-code"
+        ExtensionId = "anthropic.claude-code"
+        Version = "2.1.223"
+        Url = "https://open-vsx.org/api/Anthropic/claude-code/win32-x64/2.1.223/file/Anthropic.claude-code-2.1.223@win32-x64.vsix"
+        Sha256 = "dd9e8d7f03847b0ec649e998936f241218b97e4705d1ca8cbfc14b9c26e3ae88"
+        Expectation = "webview"
+    }
+)
+if ($IncludeParityTargets) { $extensions += $parityExtensions }
 
 function Assert-CacheChild([string]$Path) {
     $full = [IO.Path]::GetFullPath($Path)
@@ -151,6 +171,23 @@ function Assert-AcceptanceResult($extension, $result, [string]$sampleText) {
         "diagnostics" {
             if ([int]$result.diagnosticCount -le 0) {
                 throw "$($extension.ExtensionId) produced no diagnostics for the known-bad sample"
+            }
+        }
+        "webview" {
+            # registerUnsupported is the current stub. Seeing it means the
+            # extension asked for a webview view and the host declined, which
+            # is a failure, not a pass.
+            if ($result.methods -contains "workbench/webview/registerUnsupported") {
+                throw "$($extension.ExtensionId) registered a webview view the host cannot render"
+            }
+            if ($result.methods -notcontains "workbench/webview/registerViewProvider") {
+                throw "$($extension.ExtensionId) did not register a webview view provider"
+            }
+            $ignored = @($result.declaredContributions | Where-Object {
+                $_ -notin @("commands", "configuration", "configurationDefaults", "views")
+            })
+            if ($ignored.Count -gt 0) {
+                throw "$($extension.ExtensionId) declares contribution points the loader ignores: $($ignored -join ', ')"
             }
         }
         default { throw "Unknown acceptance expectation: $($extension.Expectation)" }

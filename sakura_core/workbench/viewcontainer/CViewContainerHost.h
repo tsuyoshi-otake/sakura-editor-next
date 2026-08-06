@@ -12,7 +12,8 @@
 
 #include <functional>
 #include <memory>
-#include <optional>
+#include <string>
+#include <string_view>
 
 namespace workbench::viewcontainer {
 
@@ -59,10 +60,13 @@ public:
 	[[nodiscard]] bool RequestOutlineExpanded(bool expanded) noexcept;
 	void FocusOutline();
 
-	//! Renders one ViewContainer, or the empty state when there is none. This applies an
-	//! already-decided model fact and borrows the page from the shared pool.
-	void ShowPage(std::optional<ViewContainerPage> page);
-	[[nodiscard]] std::optional<ViewContainerPage> ActivePage() const noexcept { return m_page; }
+	//! Renders one ViewContainer, or the empty state when `containerId` is empty or names a
+	//! container the pool does not render. This applies an already-decided model fact and
+	//! borrows the page from the shared pool.
+	void ShowPage(std::string_view containerId);
+	//! The ViewContainer this Part renders, or empty for the empty state. The view points at
+	//! this host's own storage and stays valid until the next `ShowPage`.
+	[[nodiscard]] std::string_view ActivePage() const noexcept { return m_page; }
 	[[nodiscard]] bool IsOutlineExpanded() const noexcept;
 
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
@@ -78,10 +82,16 @@ private:
 	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
 	void ReleaseCodiconFont() noexcept;
 	void Paint();
+	//! Draws an inset, vertically-centered, word-wrapped status message over the whole
+	//! client area, in the secondary text color. Shared by the "no container shown" empty
+	//! state and the webview-unsupported state so both read as the same kind of native
+	//! placeholder text VS Code itself uses for an empty ViewContainer, instead of each
+	//! state inventing its own drawing.
+	void DrawCenteredMessage(HDC dc, std::wstring_view message) const;
 	void NotifyOutlineRevealed() noexcept;
 	[[nodiscard]] bool IsOutlineHeaderPoint(POINT point) const noexcept;
 	//! True when this host, and not the other side bar, currently owns the page window.
-	[[nodiscard]] bool OwnsPage(ViewContainerPage page) const noexcept;
+	[[nodiscard]] bool OwnsPage(std::string_view containerId) const noexcept;
 
 	std::shared_ptr<CViewContainerPages> m_pages;
 	OutlineExpandedCallback m_outlineExpandedCallback;
@@ -95,7 +105,8 @@ private:
 	unsigned int m_dpi = 96;
 	HFONT m_codiconFont = nullptr;
 	int m_codiconFontHeight = 0;
-	std::optional<ViewContainerPage> m_page;
+	//! The rendered ViewContainer's ID, empty for none.
+	std::string m_page;
 	bool m_closed = false;
 };
 

@@ -22,6 +22,10 @@ TEST(CThemeService, DarkPaletteMatchesWorkbenchTokensExactly)
 		{ 0x25, 0x25, 0x26 }, { 0x29, 0x31, 0x34 }, { 0x25, 0x25, 0x26 },
 		{ 0x1E, 0x1E, 0x1E }, { 0x85, 0x85, 0x85 }, { 0xCC, 0xCC, 0xCC },
 		{ 0x37, 0x3D, 0x29 }, { 0x4B, 0x18, 0x18 }, { 0x41, 0x41, 0x41 },
+		// The dark button role: the Sakura dark accent with lighten(accent, 0.2) as its hover.
+		// These equal the ThemePalette member initializers, so omitting them would still pass
+		// while asserting nothing about what the registry actually produces.
+		{ 0x1F, 0x8A, 0xD2 }, { 0xFF, 0xFF, 0xFF }, { 0x3F, 0xA1, 0xE3 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Dark));
 	EXPECT_EQ(ThemeMode::Dark, CThemeService::DefaultMode());
@@ -45,6 +49,11 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 		{ 0xFF, 0xFF, 0xFF }, { 0xFF, 0xFF, 0xFF }, { 0xFF, 0xFF, 0xFF },
 		{ 0xF4, 0xF5, 0xF7 }, { 0x23, 0x78, 0x93 }, { 0x17, 0x11, 0x84 },
 		{ 0xE2, 0xE9, 0xD7 }, { 0xF6, 0xC4, 0xC6 }, { 0xCA, 0xCB, 0xCC },
+		// The light workbench token set does not define `button.background`, so it falls back
+		// to the Sakura light accent and the hover is darken(accent, 0.2) as upstream registers
+		// it for light themes. Spelled out rather than left to the ThemePalette member
+		// initializers, which hold the dark values and would make this assertion vacuous.
+		{ 0xB8, 0x32, 0x68 }, { 0xFF, 0xFF, 0xFF }, { 0x93, 0x28, 0x53 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 }
