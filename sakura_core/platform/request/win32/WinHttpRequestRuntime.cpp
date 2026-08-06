@@ -14,6 +14,7 @@
 #include <limits>
 #include <string_view>
 #include <thread>
+#include <utility>
 
 namespace platform::request::win32 {
 namespace {
