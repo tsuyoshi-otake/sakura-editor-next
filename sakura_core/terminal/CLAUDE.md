@@ -12,6 +12,17 @@ Bound output queues and background work, and never block the UI thread on PTY
 I/O. Tasks compose terminal sessions and problem matchers through stable
 services, with deduplicated launch and bounded retry/cancellation.
 
+No terminal here is reachable from an extension. `TerminalTabManager::Impl::Tab`
+co-owns the input adapter, model, parser, and `CTerminalSession`, so the UI tab
+is currently the authority for process lifetime and there is nothing an
+extension-facing service could borrow. The VS Code Terminal API therefore fails
+closed with `UnsupportedCapability`; the reasoning and the gating conditions are
+recorded in [`../../src/exthost/CLAUDE.md`](../../src/exthost/CLAUDE.md).
+Extracting a runtime-owned terminal-instance authority — shared with Task
+execution, with this manager and the panel becoming projections of it — is the
+prerequisite for changing that, and it is a larger change than wiring an RPC to
+`CTerminalTool`.
+
 ## Verified Terminal Boundary (2026-07-31)
 
 `CTerminalSession` already isolates the ConPTY backend behind

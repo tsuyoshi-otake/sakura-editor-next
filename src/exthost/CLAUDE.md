@@ -74,3 +74,63 @@ reuses an earlier ID.
 Run Node tests for protocol/API changes and the native integration suite for
 wire changes. The current API cohort passes 15/15. Confirm the Node host and
 Sakura test processes exit afterward.
+
+## Terminal API: unsupported, and unsupported out loud (2026-08-07, #31)
+
+This host owns no extension-facing terminal. The native terminal under
+`sakura_core/terminal/` is real — a ConPTY backend, VT parser, and renderer —
+but its instance authority lives inside the UI tab that draws it
+(`TerminalTabManager::Impl::Tab` co-owns the input adapter, model, parser, and
+`CTerminalSession`), so no service exists that could answer an extension's
+question about a terminal. Until a runtime-owned terminal-instance authority
+exists, every member of the Terminal API reports `UnsupportedCapability`.
+
+Three consequences are deliberate divergences from upstream, and each has a
+reason:
+
+- **`window.terminals` and `window.activeTerminal` throw rather than answering
+  `[]` and `undefined`.** VS Code never throws here. But native terminals do
+  exist in this product, so an empty answer is not the truthful "there are none"
+  it would be for notebooks — it is a false statement about the world, and an
+  extension would take the wrong branch on it. Compare `visibleNotebookEditors`,
+  which returns `[]` correctly because notebooks genuinely do not exist here.
+- **Terminal events throw at subscription instead of returning a listener that
+  never fires.** Handing back a live-looking subscription for an event this host
+  can never raise is the "approximate a capability" pattern the root
+  `CLAUDE.md` forbids. `noOpEvent` remains correct only where the underlying
+  concept is genuinely absent.
+`window.registerTerminalProfileProvider` is the exception and keeps the
+`registerWebviewViewProvider` treatment: it notifies and returns a `Disposable`
+instead of throwing. Registering a provider is not a claim that a terminal
+exists — it is a callback for a user action, and upstream also never invokes the
+provider until the user picks that profile, so an extension cannot tell the two
+apart. Throwing would kill activation over a capability the extension may never
+have reached. The native dispatcher routes `workbench/terminal/` by prefix into
+`DispatchUnsupportedCapability`, so the gap is reported to the user in the
+Extension Compatibility output channel; the notification now carries its own
+`error.capability` so that report no longer depends on the dispatcher inferring
+a name from the method prefix.
+
+Known gap, deliberately not fixed here: an imperative unsupported member
+(`createTerminal`, `createWebviewPanel`, `tasks.executeTask`, `debug.*`,
+`SecretStorage.keys`) throws without notifying, so it never reaches the Extension
+Compatibility channel — only the extension sees it. That is uniform across every
+such member today; fix it for all of them at once or not at all, and do not make
+one capability report differently from its siblings.
+
+`ExtensionContext.environmentVariableCollection` is an unsupported namespace
+rather than `undefined`, so the failure lands on the mutator the extension
+actually called. The `TerminalLocation`, `TerminalExitReason`,
+`EnvironmentVariableMutatorType`, and
+`TerminalShellExecutionCommandLineConfidence` value tables are exported with
+upstream-exact values: they are constants, not capabilities, and their presence
+moves an extension's failure from an untyped read at module scope onto the
+typed boundary at the call it meant to make.
+
+Before any of this becomes supported, `workspace.isTrusted` must stop being a
+hardcoded `true`. Terminal creation is process creation, and exposing it under
+an unconditional trust answer would let any installed extension spawn a process
+with no user gesture. Implementing the Terminal API is therefore gated on an
+extension-origin process-launch policy, not merely on a native service being
+ready. Shell integration must never be aliased to `sendText`, and no code path
+may special-case a particular extension's ID or command.
