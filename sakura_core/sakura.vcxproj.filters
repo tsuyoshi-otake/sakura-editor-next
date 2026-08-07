@@ -397,6 +397,9 @@
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\config\maxdata.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
@@ -3989,6 +3992,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\recent\CRecentExcludeFile.cpp">

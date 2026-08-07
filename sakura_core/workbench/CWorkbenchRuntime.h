@@ -12,6 +12,7 @@
 #include "config/CConfigurationService.h"
 #include "config/CWorkspaceContextService.h"
 #include "config/JsoncConfigurationSource.h"
+#include "config/WorkspaceTrustPolicy.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include <sakura/filesystem/IFileService.h>
 #include "workbench/IWorkbenchRuntime.h"
@@ -176,6 +177,10 @@ private:
 		const std::optional<platform::serialization::JsoncValue::Object>& settings);
 	void ClearWorkspaceSettings();
 	void SetWorkspaceConfigurationSnapshot(workspace::WorkspaceConfigurationRuntimeSnapshot snapshot);
+	[[nodiscard]] config::WorkspaceTrustSettings ReadWorkspaceTrustSettings() const;
+	//! Resolves trust from the workspace shape and the profile trust settings, and
+	//! commits it. This is the only production caller of SetTrust.
+	void ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace);
 	void OnWorkspaceContextChanged(const config::WorkspaceContextChange& change) noexcept;
 	void OnContributionRegistryChanged(const layout::WorkbenchContributionChange& change) noexcept;
 	void RecordFileSourceResult(
@@ -231,6 +236,10 @@ private:
 	std::mutex m_sourceMutex;
 	std::shared_ptr<ListenerGate> m_listenerGate;
 	config::WorkspaceContextSubscription m_workspaceSubscription;
+	//! Each trust resolution needs its own durable operation identifier: the context
+	//! service treats a repeated identifier carrying a different value as a conflict,
+	//! not as a new request.
+	std::atomic<std::uint64_t> m_trustResolutionCount { 0 };
 	std::map<std::wstring, std::string, std::less<>> m_activeWorkspaceDocuments;
 	std::set<std::string, std::less<>> m_workspaceDiagnosticKeys;
 	//! Owner identity is independent from folder order. It determines whether an

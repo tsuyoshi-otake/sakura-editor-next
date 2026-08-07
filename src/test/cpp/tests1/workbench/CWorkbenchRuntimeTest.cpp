@@ -1285,29 +1285,40 @@ TEST(CWorkbenchRuntime, ArtifactTopologyTransitionsClearDocumentsAndAdvanceSeman
 {
 	RuntimeFixture fixture(Bootstrap());
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
-	EXPECT_EQ(1U, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
+	// Startup resolves workspace trust and every topology change re-resolves it.
+	// Trust is context state, so those resolutions advance the semantic revision on
+	// their own. This test therefore pins the artifact-to-revision relationship and
+	// the direction of travel, never a literal revision count, and it passes no
+	// expectedRevision because a trust commit may legitimately land between reading
+	// a revision and using it.
+	const auto settled = [&fixture] {
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (std::chrono::steady_clock::now() < deadline) {
+			const auto revision = fixture.runtime->WorkspaceContext().Snapshot().revision;
+			if (fixture.runtime->WorkspaceArtifacts().Snapshot().generation == revision + 1U) return true;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		return false;
+	};
+	ASSERT_TRUE(settled());
+	const auto startedGeneration = fixture.runtime->WorkspaceArtifacts().Snapshot().generation;
+
 	auto folder = Parse(L"file:///C:/Artifacts");
 	const auto opened = fixture.runtime->WorkspaceContext().SetFolder({
-		.operation = { .operationId = "test.artifacts.open", .expectedRevision = 0 },
+		.operation = { .operationId = "test.artifacts.open" },
 		.folderUri = folder, .displayName = L"Artifacts",
 	});
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, opened.outcome);
-	const auto folderDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-	while (fixture.runtime->WorkspaceArtifacts().Snapshot().generation != opened.revision + 1U
-		&& std::chrono::steady_clock::now() < folderDeadline) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
-	EXPECT_EQ(opened.revision + 1U, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
+	ASSERT_TRUE(settled());
+	const auto openedGeneration = fixture.runtime->WorkspaceArtifacts().Snapshot().generation;
+	EXPECT_LT(startedGeneration, openedGeneration);
+
 	const auto emptied = fixture.runtime->WorkspaceContext().SetEmpty({
-		.operationId = "test.artifacts.empty", .expectedRevision = opened.revision,
+		.operationId = "test.artifacts.empty",
 	});
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, emptied.outcome);
-	const auto emptyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-	while (fixture.runtime->WorkspaceArtifacts().Snapshot().generation != emptied.revision + 1U
-		&& std::chrono::steady_clock::now() < emptyDeadline) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
-	EXPECT_EQ(emptied.revision + 1U, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
+	ASSERT_TRUE(settled());
+	EXPECT_LT(openedGeneration, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
 	EXPECT_FALSE(fixture.runtime->WorkspaceArtifacts().Tasks(folder).document.has_value());
 }
 

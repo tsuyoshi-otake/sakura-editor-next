@@ -20,6 +20,8 @@
 #include "extension/CExtensionStatusBar.h"
 #include "extension/CExtensionViewRegistry.h"
 
+#include "config/WorkspaceContextTypes.h"
+
 class CExtensionWorkbenchServiceBridge;
 namespace workbench { class IWorkbenchRuntime; }
 namespace workbench::output { class OutputService; }
@@ -103,6 +105,10 @@ public:
 	void CloseDocument(SExtensionDocumentId id);
 	void SetActiveEditor(SExtensionDocumentId id, SExtensionTextPosition caret);
 	void SetWindowState(bool focused);
+	//! Projects the resolved workspace trust onto the extension host. Only a
+	//! transition to trusted is an event upstream can express; a downgrade updates
+	//! the reported value without one.
+	void SetWorkspaceTrusted(bool trusted);
 	void SetApplyEditHandler(ApplyEditHandler handler);
 	void SetEditorOptionsHandler(EditorOptionsHandler handler);
 
@@ -357,6 +363,21 @@ private:
 	std::optional<SExtensionDocumentId> m_activeDocument;
 	SExtensionTextPosition m_activeCaret;
 	bool m_windowFocused = false;
+	//! Non-owning. The runtime outlives this service, which the window destroys first.
+	workbench::IWorkbenchRuntime* m_workbenchRuntime = nullptr;
+	//! Keeps a workspace-context delivery that is already in flight from reaching a
+	//! service that has begun shutting down. Releasing the subscription only stops
+	//! deliveries that have not started: the context service copies its listeners and
+	//! invokes them outside its own lock, so one can still be running when `Reset`
+	//! returns. Holding this mutex across the call is what closes that window.
+	struct WorkspaceTrustListenerGate final {
+		std::mutex mutex;
+		CExtensionService* owner = nullptr;
+	};
+	std::shared_ptr<WorkspaceTrustListenerGate> m_workspaceTrustGate;
+	config::WorkspaceContextSubscription m_workspaceTrustSubscription;
+	//! The last value sent to the host, so a resend is not mistaken for a grant.
+	std::optional<bool> m_sentWorkspaceTrusted;
 	CExtensionHostSharedState m_sharedState;
 	SExtensionHostBrokerSnapshot m_connectionSnapshot;
 	std::unique_ptr<CExtensionPipeTransport> m_transport;

@@ -319,6 +319,7 @@ CExtensionService::CExtensionService(
 	, m_workbenchServiceBridge(markerService || outputService || workbenchRuntime
 		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService, workbenchRuntime,
 			128, workbenchRuntime ? workbenchRuntime->Scm() : nullptr) : nullptr)
+	, m_workbenchRuntime(workbenchRuntime)
 {
 	const auto tick = static_cast<std::uint64_t>(::GetTickCount64());
 	const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
@@ -340,11 +341,32 @@ void CExtensionService::Start()
 	m_stopping.store(false, std::memory_order_release);
 	m_worker = std::thread(&CExtensionService::WorkerMain, this);
 	Enqueue([this]() { WorkerInitialize(); });
+	if (m_workbenchRuntime) {
+		// The runtime resolves trust; this service only projects it. Registration
+		// already carries the value at connect time, so this subscription exists for
+		// the transitions that happen while the host is live.
+		m_workspaceTrustGate = std::make_shared<WorkspaceTrustListenerGate>();
+		m_workspaceTrustGate->owner = this;
+		m_workspaceTrustSubscription = m_workbenchRuntime->WorkspaceContext().Subscribe(
+			[gate = m_workspaceTrustGate](const config::WorkspaceContextChange& change) {
+				std::lock_guard lock(gate->mutex);
+				if (!gate->owner) return;
+				gate->owner->SetWorkspaceTrusted(change.current.trust == config::EWorkspaceTrustState::Trusted);
+			});
+	}
 }
 
 void CExtensionService::Shutdown() noexcept
 {
 	if (!m_started.load(std::memory_order_acquire)) return;
+	// Close the trust listener before anything else: releasing the subscription only
+	// stops new deliveries, so the gate is what makes an in-flight one return without
+	// touching a service that is shutting down.
+	if (m_workspaceTrustGate) {
+		std::lock_guard lock(m_workspaceTrustGate->mutex);
+		m_workspaceTrustGate->owner = nullptr;
+	}
+	m_workspaceTrustSubscription.Reset();
 	m_stopping.store(true, std::memory_order_release);
 	m_taskReady.notify_all();
 	if (m_worker.joinable()) m_worker.join();
@@ -475,6 +497,22 @@ void CExtensionService::SetWindowState(bool focused)
 		params["focused"] = picojson::value(focused);
 		params["active"] = picojson::value(true);
 		(void)SendRequestWorker("extension/window/didChangeState",
+			picojson::value(std::move(params)).serialize(), { .kind = PendingKind::DocumentEvent });
+	});
+}
+
+void CExtensionService::SetWorkspaceTrusted(bool trusted)
+{
+	Enqueue([this, trusted]() {
+		if (!m_registered || (m_sentWorkspaceTrusted && *m_sentWorkspaceTrusted == trusted)) return;
+		m_sentWorkspaceTrusted = trusted;
+		// The wire carries the current value rather than a grant signal, because a
+		// downgrade must still correct what the host reports. The host raises VS Code's
+		// grant event only on the untrusted-to-trusted edge; upstream has no revoke
+		// event and this must not invent one.
+		picojson::object params;
+		params["trusted"] = picojson::value(trusted);
+		(void)SendRequestWorker("extension/workspace/didChangeTrust",
 			picojson::value(std::move(params)).serialize(), { .kind = PendingKind::DocumentEvent });
 	});
 }
@@ -1508,6 +1546,15 @@ void CExtensionService::SendRegisterExtensionsWorker()
 		if (!workspace.folders.empty()) {
 			params["workspaceFolders"] = picojson::value(WorkspaceFoldersJson(workspace));
 		}
+		// VS Code's `workspace.isTrusted` is a plain boolean meaning "the user granted
+		// trust". Native Unknown and native Untrusted both answer that question with no,
+		// so both project to false; only an explicit grant projects to true. The field is
+		// always sent, because omitting it would leave the host free to assume trust.
+		const bool trusted = workspace.trust == config::EWorkspaceTrustState::Trusted;
+		params["workspaceTrusted"] = picojson::value(trusted);
+		// Registration is the baseline the later transition notifications diff against,
+		// including after a reconnect, where the host has no memory of the old value.
+		m_sentWorkspaceTrusted = trusted;
 	}
 
 	(void)SendRequestWorker("host/registerExtensions", picojson::value(std::move(params)).serialize(),

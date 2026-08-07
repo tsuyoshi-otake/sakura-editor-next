@@ -169,6 +169,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\config\JsoncConfigurationSourceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\editing\JsoncConfigurationEditorTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceContextServiceTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustPolicyTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\agent\LoadFinalizationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalModelTest.cpp" />

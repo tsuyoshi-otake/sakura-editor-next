@@ -10,6 +10,7 @@ const {
   ExtensionApiSession,
   Diagnostic,
   DiagnosticSeverity,
+  Disposable,
   EndOfLine,
   MarkdownString,
   Position,
@@ -613,6 +614,113 @@ test('window.state always exists and tracks the native window state notification
 
   await session.handleRequest('extension/window/didChangeState', { focused: true, active: false });
   assert.deepEqual(api.window.state, { focused: true, active: false });
+
+  session.dispose();
+});
+
+// workspace.isTrusted is fail-closed: absent/non-boolean options never grant trust, and
+// onDidGrantWorkspaceTrust only fires on the untrusted -> trusted transition, matching
+// upstream (there is no downstream "revoke" event).
+test('workspace.isTrusted defaults to false when workspaceTrusted is not specified', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 5, transport);
+  assert.equal(session.api.workspace.isTrusted, false);
+  session.dispose();
+});
+
+test('workspace.isTrusted is true when the session is constructed with workspaceTrusted: true', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 6, transport, { workspaceTrusted: true });
+  assert.equal(session.api.workspace.isTrusted, true);
+  session.dispose();
+});
+
+test('workspace.isTrusted stays false for a non-boolean truthy workspaceTrusted value', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 7, transport, { workspaceTrusted: 'yes' });
+  assert.equal(session.api.workspace.isTrusted, false);
+  session.dispose();
+});
+
+test('didChangeTrust flips isTrusted and fires onDidGrantWorkspaceTrust exactly once on the untrusted -> trusted transition', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 8, transport);
+  const api = session.api;
+  assert.equal(api.workspace.isTrusted, false);
+
+  const seen = [];
+  api.workspace.onDidGrantWorkspaceTrust(() => {
+    // ハンドラの中から読んだ isTrusted は、通知より先にフィールドが更新されているので
+    // 必ず true になる。
+    seen.push(api.workspace.isTrusted);
+  });
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: true }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], true);
+
+  session.dispose();
+});
+
+test('didChangeTrust does not re-fire onDidGrantWorkspaceTrust when the session is already trusted', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 9, transport, { workspaceTrusted: true });
+  const api = session.api;
+  assert.equal(api.workspace.isTrusted, true);
+
+  let fireCount = 0;
+  api.workspace.onDidGrantWorkspaceTrust(() => { fireCount += 1; });
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: true }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, true);
+  assert.equal(fireCount, 0);
+
+  session.dispose();
+});
+
+test('onDidGrantWorkspaceTrust returns a real Disposable that stops delivering events once disposed', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 10, transport);
+  const api = session.api;
+
+  let fireCount = 0;
+  const disposable = api.workspace.onDidGrantWorkspaceTrust(() => { fireCount += 1; });
+  assert.ok(disposable instanceof Disposable);
+
+  disposable.dispose();
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: true }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, true);
+  assert.equal(fireCount, 0);
+
+  session.dispose();
+});
+
+// 上流に revoke イベントは無い（上流は信頼降格時に拡張ホストごと再起動するため、降格を
+// live なセッションへ伝える手段自体が存在しない）。降格でイベントを捏造しないことの回帰。
+test('didChangeTrust with trusted: false demotes isTrusted without firing onDidGrantWorkspaceTrust', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 11, transport, { workspaceTrusted: true });
+  const api = session.api;
+  assert.equal(api.workspace.isTrusted, true);
+
+  let fireCount = 0;
+  api.workspace.onDidGrantWorkspaceTrust(() => { fireCount += 1; });
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: false }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, false);
+  assert.equal(fireCount, 0);
+
+  session.dispose();
+});
+
+test('didChangeTrust treats a non-boolean truthy trusted value as false', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 12, transport);
+  const api = session.api;
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: 'yes' }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, false);
 
   session.dispose();
 });
