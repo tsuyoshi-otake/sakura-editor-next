@@ -231,6 +231,7 @@
     <ClInclude Include="..\sakura_core\config\editing\CJsoncConfigurationEditor.h" />
     <ClInclude Include="..\sakura_core\config\IWorkspaceContextService.h" />
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h" />
+    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h" />
     <ClInclude Include="..\sakura_core\config\maxdata.h" />
     <ClInclude Include="..\sakura_core\config\system_constants.h" />
     <ClInclude Include="..\sakura_core\convert\CConvert.h" />
@@ -876,6 +877,7 @@
     <ClCompile Include="..\sakura_core\config\SettingsWritebackCoordinator.cpp" />
     <ClCompile Include="..\sakura_core\config\ConfigurationTypes.cpp" />
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp" />
+    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeAutoToSjis.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeFromSjis.cpp" />

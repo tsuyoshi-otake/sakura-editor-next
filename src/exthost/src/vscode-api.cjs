@@ -1765,6 +1765,10 @@ class ExtensionApiSession {
     // 実 VS Code の ExtHostWindow.InitialState と同じ初期値。`window.state` は
     // 常に存在するプロパティで、undefined になる状態は上流には無い。
     this.windowState = Object.freeze({ focused: true, active: true });
+    // Workspace Trust は fail-closed: options.workspaceTrusted が明示的に true でない
+    // 限り信頼しない。未指定・undefined・非 boolean の truthy 値はすべて false 扱いにする。
+    this.workspaceTrusted = options.workspaceTrusted === true;
+    this.workspaceTrustEmitter = new EventEmitter();
     this.extensionsChangeEmitter = new EventEmitter();
     this.secrets = new SecretStorage(this);
     this.disposed = false;
@@ -2055,7 +2059,7 @@ class ExtensionApiSession {
 
     const workspaceFileSystem = createWorkspaceFileSystem();
     const workspace = {
-      isTrusted: true,
+      get isTrusted() { return session.workspaceTrusted; },
       get textDocuments() { return [...session.documents.values()]; },
       get workspaceFolders() {
         return Array.isArray(session.options.workspaceFolders) ? session.options.workspaceFolders.map((folder, index) => ({
@@ -2073,7 +2077,7 @@ class ExtensionApiSession {
       onDidCloseTextDocument: session.documentCloseEmitter.event,
       onWillSaveTextDocument: session.documentWillSaveEmitter.event,
       onDidChangeConfiguration: session.configurationEmitter.event,
-      onDidGrantWorkspaceTrust() { return new Disposable(); },
+      onDidGrantWorkspaceTrust: session.workspaceTrustEmitter.event,
       onDidChangeWorkspaceFolders() { return new Disposable(); },
       onDidCreateFiles: noOpEvent,
       onDidDeleteFiles: noOpEvent,
@@ -2705,6 +2709,19 @@ class ExtensionApiSession {
           affectsConfiguration: (section) => Object.keys(params?.values || {}).some((key) => key === section || key.startsWith(`${section}.`)),
         }));
         return { accepted: true };
+      case 'extension/workspace/didChangeTrust': {
+        // 上流の onDidGrantWorkspaceTrust は untrusted → trusted の遷移でだけ発火する。
+        // 上流に revoke イベントは無く、上流は信頼降格時に拡張ホストごと再起動するため
+        // 降格を live なセッションへ伝える手段自体が存在しない。ここではイベントを
+        // 捏造せず、フィールドだけを現在の事実へ更新する。isTrusted が実態より広い
+        // 信頼を報告することは無い。
+        const trusted = params?.trusted === true;
+        const granted = trusted && !this.workspaceTrusted;
+        // window.state と同じく、通知より先にフィールドを更新する。
+        this.workspaceTrusted = trusted;
+        if (granted) this.workspaceTrustEmitter.fire();
+        return { accepted: true };
+      }
       case 'extension/languages/provide':
         return this.invokeLanguageProvider(requireString(params?.kind, 'provider kind'), params);
       case 'extension/views/getChildren': {
@@ -2780,7 +2797,7 @@ class ExtensionApiSession {
     for (const emitter of [this.documentOpenEmitter, this.documentChangeEmitter, this.documentSaveEmitter,
       this.documentCloseEmitter, this.documentWillSaveEmitter, this.configurationEmitter, this.activeEditorEmitter,
       this.visibleEditorsEmitter, this.selectionEmitter, this.editorOptionsEmitter, this.windowStateEmitter,
-      this.extensionsChangeEmitter]) emitter.dispose();
+      this.workspaceTrustEmitter, this.extensionsChangeEmitter]) emitter.dispose();
     this.statusBarMessages.length = 0;
     this.statusBarMessageItem = null;
     this.extensionObjects.clear();

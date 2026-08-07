@@ -127,10 +127,80 @@ upstream-exact values: they are constants, not capabilities, and their presence
 moves an extension's failure from an untyped read at module scope onto the
 typed boundary at the call it meant to make.
 
-Before any of this becomes supported, `workspace.isTrusted` must stop being a
-hardcoded `true`. Terminal creation is process creation, and exposing it under
-an unconditional trust answer would let any installed extension spawn a process
-with no user gesture. Implementing the Terminal API is therefore gated on an
-extension-origin process-launch policy, not merely on a native service being
-ready. Shell integration must never be aliased to `sendText`, and no code path
-may special-case a particular extension's ID or command.
+`workspace.isTrusted` no longer needs fixing before any of this can move: it is
+a real, native-backed answer as of "workspace.isTrusted is now a real answer,
+and a downgrade raises no event (2026-08-07, #33)" below. That removes the
+specific precondition this section used to name, but it does not remove the
+gate itself. Terminal creation is process creation, and
+a truthful `isTrusted` is not the same thing as a decision to allow it — nothing
+in this host yet consumes trust to gate extension-originated process launch.
+Implementing the Terminal API therefore remains gated on an extension-origin
+process-launch policy, not merely on a native service being ready and not
+merely on trust being reported correctly. Shell integration must never be
+aliased to `sendText`, and no code path may special-case a particular
+extension's ID or command.
+
+## workspace.isTrusted is now a real answer, and a downgrade raises no event (2026-08-07, #33)
+
+`workspace.isTrusted` used to be a hardcoded `true`, which is exactly the
+overstatement the Terminal API section above warned against. It is now backed
+by `session.workspaceTrusted`, seeded from the `workspaceTrusted` field of the
+extension registration payload and kept current afterward by the
+`extension/workspace/didChangeTrust` notification.
+
+The read is fail-closed and strictly boolean. `options.workspaceTrusted ===
+true` is the only thing that grants trust at construction: absent, `undefined`,
+and non-boolean truthy values (the string `'yes'`, for instance) all read as
+`false`. The wire notification enforces the identical rule, `params?.trusted
+=== true`, so a malformed or missing `trusted` field can never be
+misinterpreted as a grant. Both directions are pinned by regression tests in
+`test/vscode-api.test.cjs`.
+
+On the native side, `CExtensionService` projects `EWorkspaceTrustState::Trusted`
+to `true` and both `Unknown` and `Untrusted` to `false`. That is not a lossy
+approximation of three states into two: VS Code's `isTrusted` is a plain
+boolean answering "did the user explicitly grant trust," and neither `Unknown`
+nor `Untrusted` can answer that with anything but no. The field is always sent
+on registration — omitting it would leave the host free to assume trust — and
+registration doubles as the baseline every later notification diffs against,
+which is exactly what makes a reconnect correct even though the host has no
+memory of the pre-reconnect value.
+
+**The documented divergence.** Upstream VS Code restarts the extension host
+whenever workspace trust is downgraded, so it never has to express a downgrade
+to a still-running host, and consequently upstream has no revoke event at
+all — `onDidGrantWorkspaceTrust` is the only workspace-trust event that exists.
+This fork instead transitions a window's trust in place, without restarting
+the host. The chosen behavior: the wire always carries the current value
+rather than a grant signal, the host always updates `isTrusted` to match that
+current fact, and it fires `onDidGrantWorkspaceTrust` only on the
+untrusted-to-trusted edge. A downgrade therefore flips `isTrusted` to `false`
+with zero listener invocations — silent by design, not a missed case. Leaving
+`isTrusted` at `true` after a downgrade was rejected because it overstates
+trust, which is the dangerous direction of the root `CLAUDE.md`'s "never fake a
+capability" rule. Inventing a revoke event to announce the downgrade was also
+rejected: the extension-facing public API stays byte-for-byte upstream, with
+no new event VS Code doesn't have. A dedicated test pins the zero-fire
+demotion.
+
+`onDidGrantWorkspaceTrust` is now a real `EventEmitter.event` returning a real
+`Disposable`, where it previously returned a bare `Disposable` that never
+fired anything. Its emitter is disposed alongside the session's other
+emitters. The field is updated before the emitter fires — the same ordering
+`window.state` already uses — so a listener that reads `workspace.isTrusted`
+from inside its own handler observes `true`, never the stale value.
+
+Two update paths are required, not one, because `session.options` is a
+spread-copy taken at activation time: mutating the loader's options is not
+retroactive to a session that already activated. `ExtensionLoader.handleRequest`
+therefore updates `this.options.workspaceTrusted` so any extension activated
+later starts with the current value, while the same notification also fans out
+to every live session so each one updates its own instance field directly.
+`mergeSessionOptions` accepts `workspaceTrusted` as a boolean for the same
+reason — a registration resync must be able to seed the loader-level value too.
+
+The native push deduplicates: `CExtensionService::SetWorkspaceTrusted` remembers
+the last value it sent and skips a resend of an identical value, so a repeated
+identical push can never be mistaken downstream for a fresh grant.
+
+The exthost cohort passes 58/58.

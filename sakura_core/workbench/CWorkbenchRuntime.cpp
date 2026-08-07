@@ -1527,6 +1527,71 @@ void CWorkbenchRuntime::OnWorkspaceArtifactsChanged(
 	ReconcileTaskCatalogs(m_workspaceContext.Snapshot());
 }
 
+config::WorkspaceTrustSettings CWorkbenchRuntime::ReadWorkspaceTrustSettings() const
+{
+	// Trust policy is profile-owned and is never accepted from a workspace or folder
+	// document, so the read target carries only the selected profile.
+	ConfigurationTarget target;
+	target.profileId = m_bootstrap.UserDataProfile().SelectedProfileId();
+
+	config::WorkspaceTrustSettings settings;
+	const auto read = m_configuration.ReadSnapshot(
+		{ "security.workspace.trust.enabled", "security.workspace.trust.emptyWindow" }, target);
+	// A failed read must never widen trust. The defaults deny it for every folder and
+	// match VS Code for an empty window, so falling back to them is the safe answer.
+	if (read.outcome != config::EConfigurationOutcome::Applied || !read.snapshot || read.snapshot->values.size() != 2) {
+		return settings;
+	}
+	const auto readBoolean = [](const config::ConfigurationValue& value, bool fallback) {
+		const auto* boolean = std::get_if<bool>(&value.Value());
+		return boolean ? *boolean : fallback;
+	};
+	settings.enabled = readBoolean(read.snapshot->values[0], settings.enabled);
+	settings.emptyWindow = readBoolean(read.snapshot->values[1], settings.emptyWindow);
+	return settings;
+}
+
+void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace)
+{
+	if (IsStopRequested()) return;
+
+	config::WorkspaceTrustResolveRequest request;
+	request.kind = workspace.kind;
+	request.workspaceConfigUri = workspace.workspaceConfigUri;
+	request.folderUris.reserve(workspace.folders.size());
+	for (const auto& folder : workspace.folders) request.folderUris.push_back(folder.uri);
+	request.settings = ReadWorkspaceTrustSettings();
+	// The durable Trusted Folders and Workspaces list is not implemented yet, so the
+	// entry list is empty by construction and no folder can resolve to Trusted. That
+	// is the honest answer for a folder whose trust was never granted, and it is not
+	// a placeholder standing in for a decision this runtime already knows.
+
+	const auto resolution = config::ResolveWorkspaceTrust(request);
+	// Clearing on every settled resolution, not only after a repair, is what stops one
+	// transient commit failure from pinning the runtime in ReadyWithDiagnostics forever.
+	if (workspace.trust == resolution.state) {
+		SetDiagnostic("workspace.trust", std::nullopt);
+		return;
+	}
+
+	config::SetTrustRequest setTrust;
+	// A fresh identifier per resolution, because the value carried differs between
+	// resolutions and a reused identifier would be reported as an operation conflict.
+	setTrust.operation.operationId =
+		"workbench.trust.resolve." + std::to_string(m_trustResolutionCount.fetch_add(1) + 1);
+	setTrust.trust = resolution.state;
+	const auto result = m_workspaceContext.SetTrust(setTrust);
+	if (IsWorkspaceMutationSuccess(result.outcome)) {
+		SetDiagnostic("workspace.trust", std::nullopt);
+		return;
+	}
+	SetDiagnostic("workspace.trust", WorkbenchRuntimeDiagnostic {
+		.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceContext,
+		.code = EWorkbenchRuntimeDiagnosticCode::WorkspaceTransitionFailed,
+		.message = "workspace trust could not be committed to the semantic workspace service",
+	});
+}
+
 void CWorkbenchRuntime::OnWorkspaceContextChanged(const config::WorkspaceContextChange& change) noexcept
 {
 	try {
@@ -1535,6 +1600,11 @@ void CWorkbenchRuntime::OnWorkspaceContextChanged(const config::WorkspaceContext
 			if (IsStopRequested()
 				|| (m_state != EWorkbenchRuntimeState::Ready && m_state != EWorkbenchRuntimeState::ReadyWithDiagnostics)) return;
 		}
+		// Trust follows the workspace shape, so it must be re-resolved even when the
+		// configuration shape is unchanged and the reload below is skipped. Resolving
+		// an unchanged value commits nothing, so this converges after one step and
+		// never recurses through its own notification.
+		ResolveAndApplyWorkspaceTrust(change.current);
 		{
 			std::lock_guard sourceLock(m_sourceMutex);
 			if (m_exactWorkspaceAcceptanceActive) return;
@@ -1669,6 +1739,12 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 		if (auto terminal = terminalResult()) return std::move(*terminal);
 		const auto initiallyLoadedWorkspace = m_workspaceContext.Snapshot();
 		ReloadWorkspaceSettings(initiallyLoadedWorkspace);
+		if (auto terminal = terminalResult()) return std::move(*terminal);
+
+		// Trust resolves after the profile settings are loaded, because it reads
+		// security.workspace.trust.*, and before anything can observe the context.
+		// Bootstrap leaves trust unresolved rather than guessing it.
+		ResolveAndApplyWorkspaceTrust(m_workspaceContext.Snapshot());
 		if (auto terminal = terminalResult()) return std::move(*terminal);
 
 		const auto gate = m_listenerGate;

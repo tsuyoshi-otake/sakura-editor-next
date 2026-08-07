@@ -43,6 +43,8 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   configuration URI is optional metadata, not a substitute for that identity.
 - Trust is explicit workspace state and is carried with context snapshots; do
   not infer trust from a path, file extension, or successful configuration load.
+  See the Workspace Trust Resolution Checkpoint below for how that state is
+  actually resolved.
 - Context/configuration changes use CAS revisions, bounded replay, and ordered
   notifications. Every accepted update has one revisioned terminal outcome;
   stale writers must observe a conflict rather than overwrite newer state.
@@ -113,3 +115,70 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   way VS Code pins it. Closing this divergence requires adding a true
   Application scope shared by every profile, not merely validating the
   selected profile's id correctly.
+
+## Workspace Trust Resolution Checkpoint (2026-08-07, #33)
+
+- `config::ResolveWorkspaceTrust` (`WorkspaceTrustPolicy.h`/`.cpp`) is a pure
+  function: no I/O, no HWND, no service handle. It reads only the workspace
+  kind, the optional workspace-configuration URI, the folder URIs, the
+  `security.workspace.trust.enabled` / `.emptyWindow` settings, and the
+  Trusted Folders and Workspaces entry list. It is fully covered by
+  `WorkspaceTrustPolicyTest`.
+- Precedence is fixed and ordered. `security.workspace.trust.enabled = false`
+  trusts everything and outranks every other rule, including an explicit
+  empty-window opt-out. An empty window otherwise follows
+  `security.workspace.trust.emptyWindow` (default `true`). Otherwise a
+  `.code-workspace` file that is itself trusted covers the whole multi-root
+  workspace regardless of where its folders live. Otherwise every folder root
+  must be covered; trust is not the union of the roots, because extension
+  code runs once for all of them, so one uncovered root leaves the whole
+  window untrusted.
+- The resolver never produces `EWorkspaceTrustState::Untrusted`. `Untrusted`
+  denotes an explicit user denial, and no amount of derived state can
+  establish one; withheld trust resolves `Unknown` instead. A dedicated test
+  asserts this distinction.
+- Ancestor containment ("trust the parent folder") is a path-segment-boundary
+  rule, not a string-prefix rule. `WorkspaceTrustEntryCovers` rebuilds the
+  resource URI at each of its own `/` boundaries and asks
+  `UriIdentityService` whether the rebuilt URI is the entry, so every
+  case-folding, authority-aliasing, and escaping rule stays in one place.
+  Comparing `MakeComparisonKey` outputs as strings would be wrong: those keys
+  are length-prefixed and structured, so a prefix test on one carries no
+  ancestor meaning. Proven by test: `file:///c:/codes/app` does not cover
+  `file:///c:/codes/application`.
+- `CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust` is the only production
+  caller of `CWorkspaceContextService::SetTrust`. It runs once during
+  `Start()` after the profile settings load (because it reads
+  `security.workspace.trust.*`), and again at the top of
+  `OnWorkspaceContextChanged`, because trust follows the workspace shape and
+  must be re-resolved even when the configuration shape is unchanged and the
+  settings reload below it is skipped.
+- Each resolution mints a fresh `workbench.trust.resolve.<N>` operation ID
+  from a runtime-owned atomic counter. `SetTrust`'s replay/conflict
+  bookkeeping is keyed on `(operationId, fingerprint)` with the trust value
+  folded into the fingerprint, so a reused identifier carrying a different
+  value is reported as a conflict rather than accepted as a new request.
+- The trust settings read targets only the selected user-data profile
+  (`Bootstrap().UserDataProfile().SelectedProfileId()`); trust policy is
+  profile-owned and is never accepted from a workspace or folder document. A
+  failed or short read falls back to the struct defaults, which withhold
+  trust for every folder — a failed read must never widen trust.
+- Trust is context state, so committing it advances the semantic workspace
+  revision. A topology change therefore settles as two revisions (topology,
+  then trust), and `WorkspaceArtifacts` generation tracks whichever revision
+  was current when artifacts were last routed. Asking to set trust to its
+  current value resolves `NotApplicable` and commits nothing, so resolution
+  converges after one step and never recurses through its own notification.
+  Tests must not hard-code a literal post-`Start()` revision —
+  `CWorkbenchRuntime.ArtifactTopologyTransitionsClearDocumentsAndAdvanceSemanticGeneration`
+  was rewritten to settle on the generation/revision relationship instead of
+  a fixed count.
+- The durable Trusted Folders and Workspaces list is not implemented yet. The
+  entry list is empty by construction, so no folder can currently resolve to
+  `Trusted`; only the disabled-feature and empty-window rules can. That is
+  the honest answer for a folder whose trust was never granted, and it must
+  not be replaced with a placeholder that assumes trust.
+  `workbench.trust.manage`, the trust dialog, Restricted Mode UI,
+  `security.workspace.trust.untrustedFiles`, `startupPrompt`, `banner`, and
+  activation gating on `capabilities.untrustedWorkspaces` all remain
+  unimplemented.
