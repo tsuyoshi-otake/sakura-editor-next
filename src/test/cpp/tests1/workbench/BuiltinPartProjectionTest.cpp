@@ -315,12 +315,6 @@ TEST(BuiltinPartProjection, RejectsUnsupportedActiveSurfaceWithoutAffectingPhysi
 			workbench::layout::EWorkbenchViewContainerLocation::Panel },
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::DebugConsole,
 			workbench::layout::ids::view::DebugConsole, workbench::layout::EWorkbenchViewContainerLocation::Panel },
-		UnsupportedSurface{ "publisher.future.container", "publisher.future.view",
-			workbench::layout::EWorkbenchViewContainerLocation::SideBar },
-		// Moving a container into the Secondary Side Bar is supported, but that does not
-		// make the Auxiliary Bar a renderer for surfaces this adapter never mapped.
-		UnsupportedSurface{ "publisher.future.container", "publisher.future.view",
-			workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar },
 		// A Panel container stays in the Panel here. Relocating the whole Panel is
 		// `workbench.action.movePanelToSecondarySideBar`, a separate unsupported gate.
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::Terminal,
@@ -338,6 +332,80 @@ TEST(BuiltinPartProjection, RejectsUnsupportedActiveSurfaceWithoutAffectingPhysi
 
 		const auto physical = ProjectBuiltinParts(snapshot);
 		EXPECT_TRUE(physical.Succeeded());
+	}
+}
+
+//! An extension-contributed ViewContainer is outside this projector's vocabulary, not a
+//! malformed snapshot. `WorkbenchLayoutStateService` activates each location's first visible
+//! container, so installing one extension makes its container the active container of a Part;
+//! failing here would abort every later layout projection for the rest of the session, which is
+//! exactly the Issue #29 defect (every Part toggle, Outline reveal, and focus apply no-opped).
+TEST(BuiltinPartProjection, LeavesContributedActiveViewContainersUnprojectedInsteadOfFailing)
+{
+	constexpr std::array locations{
+		workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar,
+		workbench::layout::EWorkbenchViewContainerLocation::SideBar,
+		workbench::layout::EWorkbenchViewContainerLocation::Panel,
+	};
+
+	for (const auto location : locations) {
+		auto snapshot = ActiveSurfaceSample();
+		SelectActiveSurface(snapshot, "claude-sidebar-secondary", "claude.view.sidebar", location);
+
+		const auto result = ProjectBuiltinActiveSurfaces(snapshot);
+		ASSERT_EQ(EBuiltinActiveSurfaceProjectionStatus::Succeeded, result.status);
+		ASSERT_TRUE(result.projection.has_value());
+		// No built-in surface can name a contributed container, so every slot stays unset and
+		// the window layer resolves the page from the layout state itself.
+		EXPECT_FALSE(result.projection->sidebar.has_value());
+		EXPECT_FALSE(result.projection->auxiliaryBar.has_value());
+		EXPECT_FALSE(result.projection->panel.has_value());
+		EXPECT_FALSE(result.projection->focus.has_value());
+
+		// The whole composite must survive too: this is what the Window adapter actually calls.
+		const auto composite = ProjectBuiltinWorkbench(snapshot);
+		EXPECT_TRUE(composite.Succeeded());
+	}
+}
+
+//! A contributed container may also hold focus, and focus is the other half of the same rule.
+TEST(BuiltinPartProjection, LeavesFocusOnAContributedViewContainerUnprojectedInsteadOfFailing)
+{
+	auto snapshot = ActiveSurfaceSample();
+	SelectActiveSurface(snapshot, "claude-sidebar-secondary", "claude.view.sidebar",
+		workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar);
+	snapshot.focus = {
+		.partId = std::string(workbench::layout::ids::part::Auxiliarybar),
+		.containerId = std::string("claude-sidebar-secondary"),
+		.viewId = std::string("claude.view.sidebar"),
+	};
+
+	const auto result = ProjectBuiltinActiveSurfaces(snapshot);
+	ASSERT_EQ(EBuiltinActiveSurfaceProjectionStatus::Succeeded, result.status);
+	ASSERT_TRUE(result.projection.has_value());
+	EXPECT_FALSE(result.projection->focus.has_value());
+	EXPECT_FALSE(result.projection->auxiliaryBar.has_value());
+}
+
+//! Skipping contributed containers must not weaken the built-in boundary: a container the
+//! product itself declares but cannot render still fails closed, in every location.
+TEST(BuiltinPartProjection, StillFailsClosedForBuiltinViewContainersWithNoNativeSurface)
+{
+	constexpr std::array unimplemented{
+		std::pair{ workbench::layout::ids::viewContainer::Search, workbench::layout::ids::view::Search },
+		std::pair{ workbench::layout::ids::viewContainer::RunAndDebug,
+			workbench::layout::ids::view::DebugVariables },
+	};
+
+	for (const auto& [containerId, viewId] : unimplemented) {
+		for (const auto location : { workbench::layout::EWorkbenchViewContainerLocation::SideBar,
+				workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar }) {
+			auto snapshot = ActiveSurfaceSample();
+			SelectActiveSurface(snapshot, containerId, viewId, location);
+			const auto result = ProjectBuiltinActiveSurfaces(snapshot);
+			EXPECT_EQ(EBuiltinActiveSurfaceProjectionStatus::UnsupportedSurface, result.status);
+			ExpectNoActiveSurfaceProjection(result);
+		}
 	}
 }
 
@@ -437,7 +505,11 @@ TEST(BuiltinPartProjection, ProjectsCompleteWorkbenchAtomicallyFromOneSnapshot)
 TEST(BuiltinPartProjection, DoesNotExposePhysicalProjectionWhenActiveSurfaceProjectionFails)
 {
 	auto snapshot = ActiveSurfaceSample();
-	SelectActiveSurface(snapshot, "future.container", "future.view",
+	// Debug Console is a real VS Code ViewContainer with no native surface here, so it is the
+	// honest way to fail this projection; an extension-contributed container is not, because it
+	// is outside this projector's vocabulary rather than an unimplemented capability.
+	SelectActiveSurface(snapshot, workbench::layout::ids::viewContainer::DebugConsole,
+		workbench::layout::ids::view::DebugConsole,
 		workbench::layout::EWorkbenchViewContainerLocation::Panel);
 
 	const auto result = ProjectBuiltinWorkbench(snapshot);
