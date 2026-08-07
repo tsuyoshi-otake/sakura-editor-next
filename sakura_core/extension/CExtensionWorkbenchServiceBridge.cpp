@@ -89,7 +89,7 @@ std::wstring BoundedExtensionHostLogMessage(const std::wstring_view message)
 {
 	if (message.size() <= kMaximumExtensionHostLogMessageCodeUnits) return std::wstring(message);
 	std::wstring bounded(message.substr(0, kMaximumExtensionHostLogMessageCodeUnits));
-	bounded += L"…[truncated]";
+	bounded += L"...[truncated]";
 	return bounded;
 }
 

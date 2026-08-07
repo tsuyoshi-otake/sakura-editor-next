@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief `renderLabelWithIcons` の断片列を 1 つの規則で測って描く
 
 	実 VS Code は `StatusBarItem.text` も `Command.title` も banner のメッセージも、
