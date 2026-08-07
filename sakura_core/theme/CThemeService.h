@@ -111,6 +111,39 @@ struct ThemePalette {
 	//! `#FFFFFF` for dark/light, matching `statusBarItem.prominentForeground`'s
 	//! default), so no new foreground role was added.
 	ThemeColor statusBarProminentBackground = { 0x0F, 0x45, 0x69 };
+	//! VS Code `banner.background`, the fill behind the Banner Part shown under the
+	//! title bar (Restricted Mode's "This workspace is not trusted" strip is the
+	//! motivating instance, but the Part is a generic banner mechanism upstream).
+	//! Upstream registers it as `{ dark: list.activeSelectionBackground, light:
+	//! darken(list.activeSelectionBackground, 0.3), hcDark: list.activeSelectionBackground,
+	//! hcLight: list.activeSelectionBackground }` -- a live alias to the selection role,
+	//! not an independent literal -- so dark is `#04395E` unchanged and light is
+	//! `darken(#0060C0, 0.3)` = `#004386`, using the same HSL `AdjustLightness` this
+	//! codebase already applies for `button.hoverBackground`. It cannot reuse `accent`:
+	//! `accent`'s compiled defaults (`#1F8AD2` dark / `#B83268` light) are a different
+	//! color family from `list.activeSelectionBackground` entirely, and `accent`'s own
+	//! fallback chain (`focusBorder`/`textLink.foreground`/`button.background`/
+	//! `activityBarBadge.background`) has no relationship to list selection. It cannot
+	//! reuse `danger` or `warning` either, for the same reason `statusBarProminentBackground`
+	//! could not: those are foreground roles from unrelated error/warning tokens, and a
+	//! banner is not inherently an error or warning surface upstream.
+	ThemeColor bannerBackground = { 0x04, 0x39, 0x5E };
+	//! VS Code `banner.foreground`, registered upstream as a bare alias of
+	//! `list.activeSelectionForeground` (white in both dark and light) rather than a
+	//! per-kind object of its own. It cannot reuse `highlightText`: that role's own
+	//! fallback chain already prefers `button.foreground` over `list.activeSelectionForeground`
+	//! (see `CColorThemeRegistry::ProjectPalette`), so a theme that overrides
+	//! `button.foreground` without touching selection or banner colors would silently
+	//! retint the banner text through a token upstream's `banner.foreground` has no
+	//! relationship to. A dedicated field keeps the banner's own alias chain intact.
+	ThemeColor bannerForeground = { 0xFF, 0xFF, 0xFF };
+	//! VS Code `banner.iconForeground`, registered upstream as a bare alias of
+	//! `editorInfo.foreground` (`#59A4F9` dark, `#0063D3` light) -- the editor's "info"
+	//! diagnostic blue, a color family no other `ThemePalette` role represents. It
+	//! cannot reuse `accent`, `highlightText`, `danger`, or `warning`: none of those
+	//! carry the info-diagnostic semantic, and conflating the banner icon with any of
+	//! them would misreport what upstream's own icon token actually derives from.
+	ThemeColor bannerIconForeground = { 0x59, 0xA4, 0xF9 };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -294,6 +327,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xFF, 0xFF, 0xFF }, // button.foreground
 			{ 0x93, 0x28, 0x53 }, // button.hoverBackground: darken(button.background, 0.2) as upstream registers it for light
 			{ 0x5C, 0x19, 0x34 }, // statusBarItem.prominentBackground: black.transparent(0.5) over the light accent #B83268
+			{ 0x00, 0x43, 0x86 }, // banner.background: darken(list.activeSelectionBackground #0060C0, 0.3)
+			{ 0xFF, 0xFF, 0xFF }, // banner.foreground: list.activeSelectionForeground (white in both modes)
+			{ 0x00, 0x63, 0xD3 }, // banner.iconForeground: editorInfo.foreground light literal
 		};
 	}
 	return {
@@ -324,6 +360,9 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0xFF, 0xFF, 0xFF }, // button.foreground
 		{ 0x3F, 0xA1, 0xE3 }, // button.hoverBackground: lighten(button.background, 0.2) as upstream registers it for dark
 		{ 0x0F, 0x45, 0x69 }, // statusBarItem.prominentBackground: black.transparent(0.5) over the dark accent #1F8AD2
+		{ 0x04, 0x39, 0x5E }, // banner.background: list.activeSelectionBackground, unchanged for dark
+		{ 0xFF, 0xFF, 0xFF }, // banner.foreground: list.activeSelectionForeground (white in both modes)
+		{ 0x59, 0xA4, 0xF9 }, // banner.iconForeground: editorInfo.foreground dark literal
 	};
 }
 

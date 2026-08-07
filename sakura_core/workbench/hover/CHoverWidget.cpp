@@ -13,6 +13,7 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CExtensionIconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/LabelRunPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
 
 #include <algorithm>
@@ -363,16 +364,12 @@ HFONT CHoverWidget::AcquireIconFont(const std::wstring& faceName, int height) co
 	for (const auto& entry : m_iconFonts) {
 		if (entry.height == height && entry.faceName == faceName) return entry.font;
 	}
-	LOGFONTW logFont{};
-	logFont.lfHeight = -height;
-	logFont.lfWeight = FW_NORMAL;
-	logFont.lfCharSet = DEFAULT_CHARSET;
-	logFont.lfOutPrecision = OUT_TT_PRECIS;
-	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
-	logFont.lfQuality = CLEARTYPE_QUALITY;
-	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
-	::wcsncpy_s(logFont.lfFaceName, faceName.c_str(), _TRUNCATE);
-	const HFONT font = ::CreateFontIndirectW(&logFont);
+	// `workbench/icons/LabelRunPainter.h` が唯一の LOGFONTW 組み立て規則。ここで
+	// 別の複製を持つと、ステータスバーと違う書体でグリフが描かれかねない。
+	// なお `LF_FACESIZE` を超える書体名は、以前のように黙って切り詰めるのではなく
+	// 描かないほうを選ぶ（別書体で代替されるより誤解が少ない）。CMainStatusBar
+	// 側は既にこの契約なので、両者を揃える。
+	const HFONT font = workbench::icons::CreateLabelRunGlyphFont(faceName, height);
 	if (font == nullptr) return nullptr;
 	m_iconFonts.push_back(SIconFont{ faceName, height, font });
 	return font;

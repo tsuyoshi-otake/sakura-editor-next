@@ -625,6 +625,7 @@
     <ClInclude Include="..\sakura_core\textmate\TextMateTokenizer.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateUtf8.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
+	<ClInclude Include="..\sakura_core\workbench\CWorkbenchBannerHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h" />
 	<ClInclude Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.h" />
@@ -735,12 +736,14 @@
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceTypes.h" />
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h" />
+	<ClInclude Include="..\sakura_core\workbench\WorkbenchBannerLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CExtensionIconFont.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\LabelRunPainter.h" />
 	<ClInclude Include="..\sakura_core\workbench\hover\HoverMarkdown.h" />
 	<ClInclude Include="..\sakura_core\workbench\hover\CHoverWidget.h" />
     <ClInclude Include="..\sakura_core\window\CAutoScrollWnd.h" />
@@ -1318,6 +1321,7 @@
     <ClCompile Include="..\sakura_core\textmate\TextMateTokenizer.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateUtf8.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\CWorkbenchBannerHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarVisibilityMementoCodec.cpp" />
@@ -1411,6 +1415,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycleBridge.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.cpp" />
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\WorkbenchBannerLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\icons\CExtensionIconFont.cpp" />

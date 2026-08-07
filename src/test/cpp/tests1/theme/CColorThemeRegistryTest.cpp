@@ -279,6 +279,13 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 	// not over the compiled default (#1F8AD2) — proving the JSON-key mapping actually
 	// composites over what the theme itself resolved.
 	EXPECT_EQ((ThemeColor{ 0x00, 0x3C, 0x6A, 0xFF }), snapshot.palette.statusBarProminentBackground);
+	// Neither `banner.*` nor either of their alias candidates
+	// (`list.activeSelectionBackground`/`list.activeSelectionForeground`/
+	// `editorInfo.foreground`) is set by this theme, so all three roles fall back to
+	// the compiled dark defaults untouched.
+	EXPECT_EQ((ThemeColor{ 0x04, 0x39, 0x5E, 0xFF }), snapshot.palette.bannerBackground);
+	EXPECT_EQ((ThemeColor{ 0xFF, 0xFF, 0xFF, 0xFF }), snapshot.palette.bannerForeground);
+	EXPECT_EQ((ThemeColor{ 0x59, 0xA4, 0xF9, 0xFF }), snapshot.palette.bannerIconForeground);
 	ASSERT_TRUE(snapshot.syntaxPalette.string.foreground.has_value());
 	EXPECT_EQ((ThemeColor{ 0xCE, 0x91, 0x78, 0xFF }), *snapshot.syntaxPalette.string.foreground);
 	ASSERT_TRUE(snapshot.syntaxPalette.variable.foreground.has_value());
@@ -316,6 +323,72 @@ TEST(CColorThemeRegistry, FallsBackToProjectedPanelBackgroundWhenTerminalTokenIs
 	// statusBarItem.prominentBackground's fallback composites over exactly that,
 	// matching the compiled ThemePalette default field-for-field.
 	EXPECT_EQ((ThemeColor{ 0x0F, 0x45, 0x69, 0xFF }), snapshot.palette.statusBarProminentBackground);
+}
+
+TEST(CColorThemeRegistry, ProjectsBannerRolesFromAliasedTokensWhenBannerKeysAreAbsent)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ThemeColor;
+
+	// `banner.background`/`banner.foreground`/`banner.iconForeground` are each registered
+	// upstream as a bare alias of another color, not an independent per-kind object. A
+	// theme that sets only the aliased key must still resolve the banner role through it.
+	TemporaryThemeExtension extension;
+	ASSERT_FALSE(extension.Root().empty());
+	ASSERT_TRUE(extension.Write(L"theme.json", R"json({
+		"type": "dark",
+		"colors": {
+			"editor.background": "#202020",
+			"list.activeSelectionBackground": "#334455",
+			"list.activeSelectionForeground": "#eeeeee",
+			"editorInfo.foreground": "#66ccff"
+		}
+	})json"));
+	WriteManifest(extension);
+
+	CColorThemeRegistry registry;
+	ASSERT_TRUE(registry.RegisterExtension(L"publisher.test-theme", extension.Root()));
+	const auto loaded = registry.Load(L"publisher.test-theme");
+	ASSERT_TRUE(loaded.Succeeded()) << loaded.diagnostic.c_str();
+	ASSERT_TRUE(loaded.theme.has_value());
+	const auto& snapshot = *loaded.theme;
+	EXPECT_EQ((ThemeColor{ 0x33, 0x44, 0x55, 0xFF }), snapshot.palette.bannerBackground);
+	EXPECT_EQ((ThemeColor{ 0xEE, 0xEE, 0xEE, 0xFF }), snapshot.palette.bannerForeground);
+	EXPECT_EQ((ThemeColor{ 0x66, 0xCC, 0xFF, 0xFF }), snapshot.palette.bannerIconForeground);
+}
+
+TEST(CColorThemeRegistry, PrefersDirectBannerTokensOverTheirAliasedCandidates)
+{
+	using theme::CColorThemeRegistry;
+	using theme::ThemeColor;
+
+	// A theme that sets `banner.*` directly must win over its alias candidate, the same
+	// first-listed-candidate priority every other multi-source role in ProjectPalette uses.
+	TemporaryThemeExtension extension;
+	ASSERT_FALSE(extension.Root().empty());
+	ASSERT_TRUE(extension.Write(L"theme.json", R"json({
+		"type": "dark",
+		"colors": {
+			"editor.background": "#202020",
+			"banner.background": "#112233",
+			"banner.foreground": "#ddddff",
+			"banner.iconForeground": "#ffcc00",
+			"list.activeSelectionBackground": "#334455",
+			"list.activeSelectionForeground": "#eeeeee",
+			"editorInfo.foreground": "#66ccff"
+		}
+	})json"));
+	WriteManifest(extension);
+
+	CColorThemeRegistry registry;
+	ASSERT_TRUE(registry.RegisterExtension(L"publisher.test-theme", extension.Root()));
+	const auto loaded = registry.Load(L"publisher.test-theme");
+	ASSERT_TRUE(loaded.Succeeded()) << loaded.diagnostic.c_str();
+	ASSERT_TRUE(loaded.theme.has_value());
+	const auto& snapshot = *loaded.theme;
+	EXPECT_EQ((ThemeColor{ 0x11, 0x22, 0x33, 0xFF }), snapshot.palette.bannerBackground);
+	EXPECT_EQ((ThemeColor{ 0xDD, 0xDD, 0xFF, 0xFF }), snapshot.palette.bannerForeground);
+	EXPECT_EQ((ThemeColor{ 0xFF, 0xCC, 0x00, 0xFF }), snapshot.palette.bannerIconForeground);
 }
 
 TEST(CColorThemeRegistry, RejectsThemeIncludesOutsideExtensionRoot)

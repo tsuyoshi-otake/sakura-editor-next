@@ -179,9 +179,17 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// `statusBarProminentBackground` composites black.transparent(0.5) over `highlight` (the same
 	// role High Contrast uses for `accent`), matching upstream's single non-per-theme registration.
 	const ThemeColor prominentBackground = CompositeBlackHalfOver(highlight);
+	// `banner.background` upstream registers `hcDark`/`hcLight` as the same live alias to
+	// `list.activeSelectionBackground` it uses for dark/light, so High Contrast takes the same
+	// `highlight` system color already used for `accent` rather than a chosen literal. Pairing
+	// it with `highlightText` for both the banner text and its icon guarantees the contrast a
+	// picked "info blue" (upstream's own hcDark/hcLight `editorInfo.foreground` literal) cannot
+	// promise against an arbitrary system High Contrast theme -- the same reasoning already
+	// applied to the three button roles above.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
 		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
-		window, window, window, highlight, highlightText, highlight, prominentBackground };
+		window, window, window, highlight, highlightText, highlight, prominentBackground,
+		highlight, highlightText, highlightText };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

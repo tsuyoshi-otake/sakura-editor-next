@@ -1003,6 +1003,9 @@
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\WorkbenchBannerLayout.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1010,6 +1013,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\CWorkbenchBannerHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h">
@@ -1058,6 +1064,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\LabelRunPainter.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\hover\HoverMarkdown.h">
@@ -2980,7 +2989,13 @@
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\WorkbenchBannerLayout.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\CWorkbenchBannerHost.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp">

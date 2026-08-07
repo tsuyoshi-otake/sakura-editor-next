@@ -107,25 +107,28 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 
 	const int titleHeight = ResolveChromeHeight(
 		request.titleBarHeightPixels, kTitleHeightDip, dpi, height);
+	const int bannerHeight = ResolveChromeHeight(
+		request.bannerHeightPixels, 0, dpi, height - titleHeight);
 	const int topAccessoryHeight = ResolveChromeHeight(
-		request.topAccessoryHeightPixels, 0, dpi, height - titleHeight);
+		request.topAccessoryHeightPixels, 0, dpi, height - titleHeight - bannerHeight);
 	const int tabsHeight = ResolveChromeHeight(
 		request.documentTabsHeightPixels, kDocumentTabsHeightDip, dpi,
-		height - titleHeight - topAccessoryHeight);
+		height - titleHeight - bannerHeight - topAccessoryHeight);
 	const int statusHeight = ResolveChromeHeight(
 		request.statusBarHeightPixels, kStatusHeightDip, dpi,
-		height - titleHeight - topAccessoryHeight - tabsHeight);
+		height - titleHeight - bannerHeight - topAccessoryHeight - tabsHeight);
 	const int bottomAccessoryHeight = ResolveChromeHeight(
 		request.bottomAccessoryHeightPixels, 0, dpi,
-		height - titleHeight - topAccessoryHeight - tabsHeight - statusHeight);
-	const int sidePaneTop = titleHeight + topAccessoryHeight;
+		height - titleHeight - bannerHeight - topAccessoryHeight - tabsHeight - statusHeight);
+	const int sidePaneTop = titleHeight + bannerHeight + topAccessoryHeight;
 	const int editorTop = sidePaneTop + tabsHeight;
 	const int bodyBottom = height - statusHeight - bottomAccessoryHeight;
 	const int activityWidth = std::min(width, ScaleDip(kActivityBarWidthDip, dpi));
 
 	WorkbenchLayout layout;
 	layout.titleBar = MakeRect(0, 0, width, titleHeight);
-	layout.topAccessory = MakeRect(0, titleHeight, width, titleHeight + topAccessoryHeight);
+	layout.banner = MakeRect(0, titleHeight, width, titleHeight + bannerHeight);
+	layout.topAccessory = MakeRect(0, titleHeight + bannerHeight, width, sidePaneTop);
 	layout.activityBar = MakeRect(0, sidePaneTop, activityWidth, bodyBottom);
 	layout.bottomAccessory = MakeRect(0, bodyBottom, width, bodyBottom + bottomAccessoryHeight);
 	layout.statusBar = MakeRect(0, bodyBottom, width, height);
