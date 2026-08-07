@@ -12,6 +12,10 @@
 #include "config/ConfigurationFileSourceController.h"
 #include "config/ConfigurationFileWatchController.h"
 #include "config/JsoncConfigurationSource.h"
+// The grant path must not append past the bound the codec will refuse to encode,
+// so the persistence limit is read from the codec that owns it rather than
+// restated here as a second number that could drift.
+#include "config/TrustedFoldersCodec.h"
 #include <sakura/filesystem/FileSystemFactory.h>
 #include <sakura/uri/UriIdentity.h>
 #include "workbench/layout/WorkbenchIds.h"
@@ -272,6 +276,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_layoutState(m_contributions.Snapshot())
 	, m_layoutMementoStore(std::move(dependencies.layoutMementoStore))
 	, m_statusbarVisibilityMementoStore(std::move(dependencies.statusbarVisibilityMementoStore))
+	, m_trustedFoldersStore(std::move(dependencies.trustedFoldersStore))
 	, m_fileService(std::move(dependencies.fileService))
 	, m_recentlyOpenedWorkspaces(dependencies.recentlyOpenedWorkspaceStore
 		? std::make_unique<recent::CRecentlyOpenedWorkspaceService>(std::move(dependencies.recentlyOpenedWorkspaceStore))
@@ -882,6 +887,58 @@ void CWorkbenchRuntime::RestoreInitialLayoutMemento()
 	}
 	recordFailure(EWorkbenchRuntimeDiagnosticCode::LayoutRestoreFailed,
 		"layout memento restore returned an unknown terminal state");
+}
+
+void CWorkbenchRuntime::RestoreTrustedFolders()
+{
+	m_trustedFolders.entries.clear();
+	m_trustedFoldersPersistenceReady = false;
+	// A runtime composed without the store is not degraded: it simply has no durable
+	// trust list, so every folder resolves untrusted. That is the same answer a fresh
+	// profile gives, and it must not be diagnosed as a failure.
+	if (!m_trustedFoldersStore) return;
+
+	const auto result = m_trustedFoldersStore->Load();
+	const auto recordFailure = [this](EWorkbenchRuntimeDiagnosticCode code, std::string message) {
+		SetDiagnostic("trust.restore", WorkbenchRuntimeDiagnostic {
+			.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceTrust,
+			.code = code,
+			.message = std::move(message),
+		});
+	};
+
+	switch (result.status) {
+	case config::ETrustedFoldersLoadStatus::Loaded:
+		if (!result.snapshot) {
+			recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+				"trusted folders store returned no snapshot for a loaded result");
+			return;
+		}
+		m_trustedFolders = *result.snapshot;
+		m_trustedFoldersPersistenceReady = true;
+		SetDiagnostic("trust.restore", std::nullopt);
+		return;
+	case config::ETrustedFoldersLoadStatus::NotFound:
+		// No folder has ever been trusted in this profile. The empty list is the
+		// correct record, and a later grant may write it.
+		m_trustedFoldersPersistenceReady = true;
+		SetDiagnostic("trust.restore", std::nullopt);
+		return;
+	case config::ETrustedFoldersLoadStatus::InvalidStoredList:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+			"stored trusted folders list is invalid and was preserved without replacement");
+		return;
+	case config::ETrustedFoldersLoadStatus::Unavailable:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustPersistenceUnavailable,
+			"trusted folders persistence was unavailable during startup");
+		return;
+	case config::ETrustedFoldersLoadStatus::Failed:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+			"trusted folders restore failed");
+		return;
+	}
+	recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+		"trusted folders restore returned an unknown terminal state");
 }
 
 void CWorkbenchRuntime::RestoreStatusbarVisibilityMemento()
@@ -1561,10 +1618,11 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 	request.folderUris.reserve(workspace.folders.size());
 	for (const auto& folder : workspace.folders) request.folderUris.push_back(folder.uri);
 	request.settings = ReadWorkspaceTrustSettings();
-	// The durable Trusted Folders and Workspaces list is not implemented yet, so the
-	// entry list is empty by construction and no folder can resolve to Trusted. That
-	// is the honest answer for a folder whose trust was never granted, and it is not
-	// a placeholder standing in for a decision this runtime already knows.
+	// The durable list read once at Start. It stays empty when no store is composed,
+	// when the profile has never trusted anything, and when the stored bytes failed to
+	// decode — in every one of those cases no folder resolves to Trusted, which is the
+	// honest answer rather than a placeholder assuming trust.
+	request.trustedEntries = m_trustedFolders.entries;
 
 	const auto resolution = config::ResolveWorkspaceTrust(request);
 	// Clearing on every settled resolution, not only after a repair, is what stops one
@@ -1590,6 +1648,146 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 		.code = EWorkbenchRuntimeDiagnosticCode::WorkspaceTransitionFailed,
 		.message = "workspace trust could not be committed to the semantic workspace service",
 	});
+}
+
+std::vector<config::WorkspaceTrustEntry> CWorkbenchRuntime::BuildTrustGrantEntries(
+	const config::WorkspaceContextSnapshot& workspace,
+	EWorkspaceTrustGrantScope scope)
+{
+	std::vector<config::WorkspaceTrustEntry> entries;
+	switch (scope) {
+	case EWorkspaceTrustGrantScope::CurrentWorkspace:
+		// A .code-workspace file is itself the trustable item, and the resolver treats
+		// trusting it as covering every folder that workspace lists no matter where
+		// those folders live. It therefore never needs descendant coverage, and giving
+		// it any would silently trust the directory the file happens to sit in.
+		if (workspace.kind == config::EWorkspaceKind::Workspace && workspace.workspaceConfigUri) {
+			entries.push_back(config::WorkspaceTrustEntry{ *workspace.workspaceConfigUri, false });
+			return entries;
+		}
+		entries.reserve(workspace.folders.size());
+		for (const auto& folder : workspace.folders) {
+			entries.push_back(config::WorkspaceTrustEntry{ folder.uri, true });
+		}
+		return entries;
+	case EWorkspaceTrustGrantScope::ParentFolder:
+		// Upstream offers the parent only for a single folder root. With several roots
+		// the label names one folder while the grant would widen every root's parent at
+		// once, which is not the decision the user was shown.
+		if (workspace.kind != config::EWorkspaceKind::Folder || workspace.folders.size() != 1) return entries;
+		if (auto parent = config::WorkspaceTrustParentFolder(workspace.folders.front().uri)) {
+			entries.push_back(config::WorkspaceTrustEntry{ std::move(*parent), true });
+		}
+		return entries;
+	}
+	return entries;
+}
+
+WorkspaceTrustPromptModel CWorkbenchRuntime::WorkspaceTrustPrompt()
+{
+	WorkspaceTrustPromptModel model;
+	if (IsStopRequested()) return model;
+
+	const auto workspace = m_workspaceContext.Snapshot();
+	model.state = workspace.trust;
+	// A grant that cannot be written is refused, so a prompt that cannot see this
+	// would offer a choice the runtime already knows it will reject.
+	model.persistenceReady = m_trustedFoldersStore != nullptr && m_trustedFoldersPersistenceReady;
+
+	for (const auto scope : { EWorkspaceTrustGrantScope::CurrentWorkspace, EWorkspaceTrustGrantScope::ParentFolder }) {
+		const auto entries = BuildTrustGrantEntries(workspace, scope);
+		if (entries.empty()) continue;
+		model.options.push_back(WorkspaceTrustGrantOption {
+			.scope = scope,
+			.displayUri = entries.front().uri.ToString(),
+			.resourceCount = entries.size(),
+		});
+	}
+	return model;
+}
+
+WorkspaceTrustGrantResult CWorkbenchRuntime::GrantWorkspaceTrust(EWorkspaceTrustGrantScope scope)
+{
+	if (IsStopRequested()) {
+		return { EWorkspaceTrustGrantStatus::Stopped, "the workbench runtime is stopping" };
+	}
+	if (m_trustedFoldersStore == nullptr || !m_trustedFoldersPersistenceReady) {
+		// Refusing is the whole point. Applying the grant in memory only would report
+		// trust this window cannot keep: the next launch would drop back to withheld
+		// trust with nothing recorded to explain why.
+		return { EWorkspaceTrustGrantStatus::PersistenceUnavailable,
+			"the durable trusted folders list is unavailable, so trust was not granted" };
+	}
+
+	const auto workspace = m_workspaceContext.Snapshot();
+	auto requested = BuildTrustGrantEntries(workspace, scope);
+	if (requested.empty()) {
+		return { EWorkspaceTrustGrantStatus::NotApplicable,
+			"this workspace has no resource that the requested scope can trust" };
+	}
+
+	auto next = m_trustedFolders;
+	for (auto& entry : requested) {
+		// The codec accepts duplicates, so nothing would reject a repeated grant -- the
+		// durable list would just grow by one entry every time the user confirms. An
+		// existing entry that already covers the resource with at least the same reach
+		// is the same decision, so it is left alone.
+		const auto alreadyCovers = [&entry](const config::WorkspaceTrustEntry& existing) {
+			return (existing.includesDescendants || !entry.includesDescendants)
+				&& config::WorkspaceTrustEntryCovers(existing, entry.uri);
+		};
+		if (std::any_of(next.entries.begin(), next.entries.end(), alreadyCovers)) continue;
+		next.entries.push_back(std::move(entry));
+	}
+	if (next.entries.size() == m_trustedFolders.entries.size()) {
+		return { EWorkspaceTrustGrantStatus::AlreadyTrusted, {} };
+	}
+	if (next.entries.size() > config::kMaximumTrustedFolderEntries) {
+		return { EWorkspaceTrustGrantStatus::Failed,
+			"the trusted folders list is at its maximum size" };
+	}
+
+	const auto recordFailure = [this](EWorkbenchRuntimeDiagnosticCode code, std::string message) {
+		SetDiagnostic("trust.persist", WorkbenchRuntimeDiagnostic {
+			.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceTrust,
+			.code = code,
+			.message = std::move(message),
+		});
+	};
+
+	const auto saved = m_trustedFoldersStore->Save(next);
+	switch (saved.status) {
+	case config::ETrustedFoldersSaveStatus::Persisted:
+	case config::ETrustedFoldersSaveStatus::NotDirty:
+		break;
+	case config::ETrustedFoldersSaveStatus::Conflict:
+		// Another window committed a different list. Its bytes stay; this grant is
+		// reported as a conflict rather than replayed over the newer state.
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustPersistenceConflict,
+			"another window committed a different trusted folders list");
+		return { EWorkspaceTrustGrantStatus::Conflict,
+			"another window committed a different trusted folders list" };
+	case config::ETrustedFoldersSaveStatus::Unavailable:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustPersistenceUnavailable,
+			"trusted folders persistence was unavailable while granting trust");
+		return { EWorkspaceTrustGrantStatus::PersistenceUnavailable,
+			"trusted folders persistence was unavailable" };
+	case config::ETrustedFoldersSaveStatus::Stopped:
+		return { EWorkspaceTrustGrantStatus::Stopped, "trusted folders persistence is stopping" };
+	case config::ETrustedFoldersSaveStatus::RetryExhausted:
+	case config::ETrustedFoldersSaveStatus::Failed:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustPersistFailed,
+			"the trusted folders list could not be written");
+		return { EWorkspaceTrustGrantStatus::Failed, "the trusted folders list could not be written" };
+	}
+
+	// Only now, with the durable bytes committed, may this window act trusted. The
+	// resolver is re-run rather than trusted directly, so one code path decides trust
+	// and a grant that does not actually cover the workspace cannot fake it.
+	m_trustedFolders = std::move(next);
+	SetDiagnostic("trust.persist", std::nullopt);
+	ResolveAndApplyWorkspaceTrust(m_workspaceContext.Snapshot());
+	return { EWorkspaceTrustGrantStatus::Granted, {} };
 }
 
 void CWorkbenchRuntime::OnWorkspaceContextChanged(const config::WorkspaceContextChange& change) noexcept
@@ -1743,7 +1941,12 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 
 		// Trust resolves after the profile settings are loaded, because it reads
 		// security.workspace.trust.*, and before anything can observe the context.
-		// Bootstrap leaves trust unresolved rather than guessing it.
+		// Bootstrap leaves trust unresolved rather than guessing it. The durable
+		// trusted-folders list is read immediately before that resolution, and only
+		// there: re-reading it per workspace change would let a concurrent write from
+		// another window silently change this window's trust mid-session.
+		RestoreTrustedFolders();
+		if (auto terminal = terminalResult()) return std::move(*terminal);
 		ResolveAndApplyWorkspaceTrust(m_workspaceContext.Snapshot());
 		if (auto terminal = terminalResult()) return std::move(*terminal);
 

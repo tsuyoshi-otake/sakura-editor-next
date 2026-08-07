@@ -804,6 +804,12 @@ private:
 	//! ordinary quit. Separate because the quit can destroy this window before it
 	//! returns, and that constraint is worth stating in one place.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteUpdateQuitAndInstall();
+	//! Runs `workbench.trust.manage`. It shows what the runtime says is grantable
+	//! and grants exactly the choice the user picked, so the modal decides
+	//! nothing: it neither computes a scope nor treats a dismissal as consent.
+	//! **This is a workspace-level decision and must never be framed, titled, or
+	//! triggered as a per-extension activation gate.**
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteManageWorkspaceTrust();
 	//! Runs one of the built-in Git provider's working-tree commands.
 	//! `argumentsJson` is the payload `BuildGitStageArguments` produces; it is
 	//! empty for the `*All` members and for a Command Palette invocation.

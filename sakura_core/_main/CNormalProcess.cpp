@@ -47,6 +47,7 @@
 #include "_main/ControlPlatformWorkbenchLayoutMementoStore.h"
 #include "_main/ControlPlatformRecentlyOpenedWorkspaceStore.h"
 #include "_main/ControlPlatformStatusbarVisibilityMementoStore.h"
+#include "_main/ControlPlatformTrustedFoldersStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
 #include "extension/CExtensionSecretVaultStorage.h"
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
@@ -534,6 +535,11 @@ bool CNormalProcess::InitializeProcess()
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.statusbarVisibilityMementoStore =
 		std::make_unique<CControlPlatformStatusbarVisibilityMementoStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	// Trust is a property of a resource, so its durable list is scoped to the control
+	// profile like every other Machine-target key, never to this window or PID.
+	workbenchDependencies.trustedFoldersStore =
+		std::make_unique<CControlPlatformTrustedFoldersStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	workbenchDependencies.taskExecutionSessionFactory =
 		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();

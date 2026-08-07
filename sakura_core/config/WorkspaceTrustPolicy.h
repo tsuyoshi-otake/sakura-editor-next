@@ -69,6 +69,20 @@ struct WorkspaceTrustResolution final {
 [[nodiscard]] bool WorkspaceTrustEntryCovers(const WorkspaceTrustEntry& entry, const platform::uri::Uri& resource);
 
 /*!
+	@brief The parent folder of @p resource, or nothing when it has none.
+
+	This is what backs VS Code's "Trust the authors of all files in the parent
+	folder" choice. Pure and path-only: it rebuilds @p resource at its own last
+	path-segment boundary and performs no filesystem lookup, so it cannot follow a
+	link or resolve a relative segment.
+
+	A resource whose parent would be the scheme root -- a drive root, a UNC share
+	root, a path that is only a separator -- returns nothing. "Trust the parent"
+	must never silently widen into a whole volume or host.
+ */
+[[nodiscard]] std::optional<platform::uri::Uri> WorkspaceTrustParentFolder(const platform::uri::Uri& resource);
+
+/*!
 	@brief Resolve workspace trust from state alone.
 
 	Pure: no I/O, no clock, no global state, no window. Trust is never inferred from a

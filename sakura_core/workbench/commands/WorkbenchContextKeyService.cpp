@@ -397,6 +397,7 @@ bool WorkbenchContextKeyService::IsReservedCoreKey(std::string_view key) noexcep
 		|| key == "workbenchState" || key == "workspaceFolderCount"
 		|| key == "editorHasActiveEditor" || key == "editorIsDirty"
 		|| key == "isInDiffEditor"
+		|| key == "isWorkspaceTrusted"
 		|| key == "gitOpenRepositoryCount"
 		|| key == "updateState";
 }
@@ -450,6 +451,12 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	}
 	values.emplace("workbenchState", std::string(workbenchState));
 	values.emplace("workspaceFolderCount", static_cast<std::int64_t>(workspace.folders.size()));
+	// Upstream's `isWorkspaceTrusted` is a plain boolean, so the three-state
+	// model has to collapse here -- and it collapses toward withholding trust.
+	// Unknown means trust was never granted and Untrusted means it was denied;
+	// a `when` clause gated on trust must treat both as "not trusted" rather
+	// than treating "we do not know" as permission.
+	values.emplace("isWorkspaceTrusted", workspace.trust == config::EWorkspaceTrustState::Trusted);
 	values.emplace("editorHasActiveEditor", editor.hasActiveEditor);
 	values.emplace("editorIsDirty", editor.activeEditorDirty);
 	values.emplace("isInDiffEditor", editor.inDiffEditor);

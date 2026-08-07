@@ -20,6 +20,7 @@ using config::EWorkspaceTrustState;
 using config::ResolveWorkspaceTrust;
 using config::WorkspaceTrustEntry;
 using config::WorkspaceTrustEntryCovers;
+using config::WorkspaceTrustParentFolder;
 using config::WorkspaceTrustResolveRequest;
 using platform::uri::Uri;
 
@@ -260,4 +261,81 @@ TEST(WorkspaceTrustPolicy, ResolutionNeverProducesUntrusted)
 	for (const auto& request : requests) {
 		EXPECT_NE(EWorkspaceTrustState::Untrusted, ResolveWorkspaceTrust(request).state);
 	}
+}
+
+// ---------------------------------------------------------------------------
+// WorkspaceTrustParentFolder
+// ---------------------------------------------------------------------------
+
+TEST(WorkspaceTrustPolicy, ParentFolderOfNestedResourceIsItsImmediateAncestor)
+{
+	const auto parent = WorkspaceTrustParentFolder(ParseUri(L"file:///c:/codes/app/sub"));
+	ASSERT_TRUE(parent);
+	EXPECT_EQ(L"file:///c:/codes/app", parent->ToString());
+}
+
+//! A stored trailing separator must not make the folder its own parent: the
+//! implementation strips it before finding the last path-segment boundary, so
+//! both spellings of the same folder resolve to the same, next-level-up parent.
+TEST(WorkspaceTrustPolicy, ParentFolderIsSameRegardlessOfTrailingSeparatorSpelling)
+{
+	const auto withSeparator = WorkspaceTrustParentFolder(ParseUri(L"file:///c:/codes/app/"));
+	const auto withoutSeparator = WorkspaceTrustParentFolder(ParseUri(L"file:///c:/codes/app"));
+	ASSERT_TRUE(withSeparator);
+	ASSERT_TRUE(withoutSeparator);
+	EXPECT_EQ(L"file:///c:/codes", withSeparator->ToString());
+	EXPECT_EQ(withoutSeparator->ToString(), withSeparator->ToString());
+}
+
+TEST(WorkspaceTrustPolicy, ParentFolderOfADriveRootIsNullopt)
+{
+	EXPECT_FALSE(WorkspaceTrustParentFolder(ParseUri(L"file:///c:/")));
+}
+
+TEST(WorkspaceTrustPolicy, ParentFolderOfAPathThatIsOnlyASeparatorIsNullopt)
+{
+	EXPECT_FALSE(WorkspaceTrustParentFolder(ParseUri(L"file:///")));
+}
+
+TEST(WorkspaceTrustPolicy, ParentFolderOfASingleTopLevelSegmentIsNullopt)
+{
+	EXPECT_FALSE(WorkspaceTrustParentFolder(ParseUri(L"file:///c:")));
+}
+
+//! The authority is carried over unchanged, so a UNC-style resource's parent
+//! stays on the same share.
+TEST(WorkspaceTrustPolicy, ParentFolderCarriesUncAuthorityUnchanged)
+{
+	const auto parent = WorkspaceTrustParentFolder(ParseUri(L"file://server-a/share/sub"));
+	ASSERT_TRUE(parent);
+	EXPECT_EQ(L"file://server-a/share", parent->ToString());
+}
+
+//! A share root has no parent within the share, and that must not be papered
+//! over by widening the answer to the bare host.
+TEST(WorkspaceTrustPolicy, ParentFolderOfAShareRootIsNulloptNotTheHost)
+{
+	EXPECT_FALSE(WorkspaceTrustParentFolder(ParseUri(L"file://server-a/share")));
+}
+
+//! WithPath rebuilds through FromComponents, so query and fragment ride along
+//! unchanged while only the path is truncated.
+TEST(WorkspaceTrustPolicy, ParentFolderCarriesQueryAndFragmentUnchanged)
+{
+	const auto parent = WorkspaceTrustParentFolder(ParseUri(L"file:///c:/codes/app/sub?ref=1#section"));
+	ASSERT_TRUE(parent);
+	EXPECT_EQ(L"file:///c:/codes/app?ref=1#section", parent->ToString());
+}
+
+//! This is what backs "Trust the authors of all files in the parent folder":
+//! the computed parent, stored as a descendants-including entry, must cover
+//! the very resource it was derived from.
+TEST(WorkspaceTrustPolicy, ParentFolderAsATrustedEntryCoversItsOriginalResource)
+{
+	const auto resource = ParseUri(L"file:///c:/codes/app/sub");
+	const auto parent = WorkspaceTrustParentFolder(resource);
+	ASSERT_TRUE(parent);
+
+	const WorkspaceTrustEntry entry{ *parent, true };
+	EXPECT_TRUE(WorkspaceTrustEntryCovers(entry, resource));
 }

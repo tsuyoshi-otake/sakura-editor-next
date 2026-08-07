@@ -173,12 +173,89 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   `CWorkbenchRuntime.ArtifactTopologyTransitionsClearDocumentsAndAdvanceSemanticGeneration`
   was rewritten to settle on the generation/revision relationship instead of
   a fixed count.
-- The durable Trusted Folders and Workspaces list is not implemented yet. The
-  entry list is empty by construction, so no folder can currently resolve to
-  `Trusted`; only the disabled-feature and empty-window rules can. That is
-  the honest answer for a folder whose trust was never granted, and it must
-  not be replaced with a placeholder that assumes trust.
-  `workbench.trust.manage`, the trust dialog, Restricted Mode UI,
-  `security.workspace.trust.untrustedFiles`, `startupPrompt`, `banner`, and
-  activation gating on `capabilities.untrustedWorkspaces` all remain
-  unimplemented.
+## Trusted Folders Store and Grant Path Checkpoint (2026-08-07, #35)
+
+- `config::ITrustedFoldersStore` is the port for the durable Trusted Folders
+  and Workspaces list. `CControlPlatformTrustedFoldersStore` is its only
+  production implementation, and it is the only thing allowed to write that
+  list. The record is the profile-scoped `workbench.trust` owner's
+  `trustedFolders` key at `Machine` target, using the canonical profile ID —
+  the same shape as the layout memento, for the same reason: a machine-owned
+  decision must not travel with synchronized user settings.
+- `CTrustedFoldersCodec` owns the payload. It is bounded machine-owned JSON
+  (`kMaximumTrustedFolderEntries = 256`, `kMaximumTrustedFolderUriBytes =
+  2048`, `kMaximumTrustedFoldersJsonDepth = 8`), validated as UTF-8 before
+  parsing, and checked against
+  `platform::storage::kMaximumStorageMutationPayloadBytes` on both ends.
+  Two deliberate divergences from the sibling layout codec:
+  duplicate entries are **accepted** on decode, because a list that already
+  covers a resource twice is a redundancy and not a corruption, and the grant
+  path is what prevents duplicates from accumulating; and a `formatVersion`
+  that is present but not a finite non-negative integral number resolves
+  `UnsupportedSchema` rather than `CorruptPayload`, because a newer writer
+  choosing a different version encoding is a schema fact, and both statuses
+  preserve the payload untouched anyway.
+- Persistence discipline mirrors the layout memento store exactly: a double
+  read of the storage-cache coordinates brackets the `find`, the write is a
+  CAS on the captured revision, an ambiguous transport failure retries **at
+  most once with the identical operation ID**, and a `Conflict` is terminal —
+  never retried, never overwritten. An invalid stored payload is preserved for
+  diagnosis, marked with a sticky flag, and never replaced with defaults.
+- `CWorkbenchRuntime::GrantWorkspaceTrust` writes the durable bytes **first**
+  and only then re-runs `ResolveAndApplyWorkspaceTrust`. A runtime that cannot
+  commit refuses the grant rather than trusting for this session only: a
+  session-only grant would report trust the window cannot keep, and the next
+  launch would silently drop back to withheld trust with nothing recorded to
+  explain why. Trust is therefore still decided by exactly one code path — the
+  pure resolver — so a grant that does not actually cover the workspace cannot
+  fake it.
+- `BuildTrustGrantEntries` is pure and is shared by the prompt and the grant,
+  so the two can never disagree about what a choice means. `CurrentWorkspace`
+  on a `Workspace` writes exactly one entry, the `.code-workspace` file, with
+  `includesDescendants = false` — the resolver already treats a trusted
+  workspace file as covering every folder it lists, and descendant coverage
+  would silently trust whatever directory the file happens to sit in.
+  `CurrentWorkspace` on a `Folder` writes each root with descendants.
+  `ParentFolder` is offered only for a **single** folder root, matching
+  upstream: with several roots the label names one folder while the grant
+  would widen every root's parent at once, which is not the decision shown.
+- `config::WorkspaceTrustParentFolder` is path-only and performs no filesystem
+  lookup, so it cannot follow a link or resolve a relative segment. A parent
+  that would be the scheme root — a drive root, a UNC share root, a path that
+  is only a separator — returns nothing. "Trust the parent" must never
+  silently widen into a whole volume or host.
+- An existing entry that already covers the requested resource with at least
+  the same reach suppresses the append, so repeating a grant returns
+  `AlreadyTrusted` and writes nothing. Without that check the durable list
+  would grow by one entry every time the user confirms, since the codec
+  accepts duplicates.
+- The still-unimplemented surfaces are: Restricted Mode UI (banner and the
+  `$(shield) Restricted Mode` status-bar entry), the full Workspace Trust
+  editor page, activation gating on `capabilities.untrustedWorkspaces`,
+  `restrictedConfigurations`, `extensions.supportUntrustedWorkspaces`, and
+  `security.workspace.trust.startupPrompt` / `.banner` / `.untrustedFiles`.
+  Each must stay an explicit typed boundary; none may be approximated.
+
+### `workbench.trust.manage` divergence
+
+Upstream's `workbench.trust.manage` opens the Workspace Trust **editor page**,
+a full editor input with its own body copy, per-folder table, and settings
+links. This product opens a native `TaskDialogIndirect` modal instead, because
+that page is an editor-hosted rich surface this shell has no renderer for, and
+because a browser engine is a product-level non-goal.
+
+What the modal keeps identical to upstream: the command ID, the title
+(`Workspaces: Manage Workspace Trust`), the set of grantable choices and their
+exact scope semantics, the shield iconography, and that dismissal grants
+nothing. Each button is labelled with the canonical URI the grant would
+actually write, so the consent names a resource rather than a category.
+
+Upstream additionally gates the command on
+`config.security.workspace.trust.enabled`. This registry has no `config.`
+context-key namespace, so the `when` clause is `workbenchReady` and the palette
+entry stays listed where upstream would hide it. It cannot grant trust the
+settings did not allow: with the feature disabled every workspace already
+resolves `Trusted`, so the modal reports that state and offers no button.
+
+**This command is a workspace-level decision and must never be framed, titled,
+or triggered as a per-extension activation gate.**

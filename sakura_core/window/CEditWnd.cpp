@@ -2549,6 +2549,7 @@ bool CEditWnd::InitializeWorkbench()
 				return workbench::commands::WorkbenchCommandExecutionResult{
 					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
 			},
+			.manageWorkspaceTrust = [this]() { return ExecuteManageWorkspaceTrust(); },
 			.markdownShowPreview = [this]() {
 				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowPreview);
 			},
@@ -3434,6 +3435,114 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchC
 		break;
 	}
 	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteManageWorkspaceTrust()
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	if (m_workbenchRuntime == nullptr || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"this window has no workbench runtime to own workspace trust" };
+	}
+
+	const auto model = m_workbenchRuntime->WorkspaceTrustPrompt();
+	// Every branch below reports a real state. None of them fabricates a
+	// grantable choice to keep the dialog from looking empty.
+	const bool alreadyTrusted = model.state == config::EWorkspaceTrustState::Trusted;
+
+	std::wstring instruction;
+	std::wstring content;
+	if (alreadyTrusted) {
+		instruction = L"You trust the authors of the files in this window.";
+	} else if (!model.persistenceReady) {
+		instruction = L"Workspace trust cannot be granted right now.";
+		content = L"The Trusted Folders and Workspaces list could not be read, so a grant "
+				  L"would not survive this session. No trust decision was recorded.";
+	} else if (model.options.empty()) {
+		instruction = L"There is nothing in this window to trust.";
+		content = L"Open a folder or a workspace first. Trust applies to files on disk, so an "
+				  L"empty window has no resource a decision could name.";
+	} else {
+		instruction = L"Do you trust the authors of the files in this window?";
+		content = L"Until you do, this window stays in Restricted Mode: extension code that "
+				  L"declares it needs a trusted workspace does not run.";
+	}
+
+	// Only an untrusted window with a writable list gets buttons; every other
+	// state is informational, and a dismissal there decides nothing either.
+	const bool offersGrant = !alreadyTrusted && model.persistenceReady && !model.options.empty();
+	std::vector<std::wstring> labels;
+	std::vector<TASKDIALOG_BUTTON> buttons;
+	if (offersGrant) {
+		labels.reserve(model.options.size());
+		buttons.reserve(model.options.size());
+		for (const auto& option : model.options) {
+			// The label names the exact resource the grant will write, because the
+			// user is consenting to that resource and not to a category.
+			std::wstring label = option.scope == workbench::EWorkspaceTrustGrantScope::ParentFolder
+				? L"Trust the authors of all files in the parent folder\n"
+				: (option.resourceCount > 1
+						  ? L"Yes, I trust the authors of every folder in this workspace\n"
+						  : L"Yes, I trust the authors\n");
+			label += option.displayUri;
+			labels.push_back(std::move(label));
+		}
+		for (std::size_t index = 0; index < labels.size(); ++index) {
+			buttons.push_back({ 1000 + static_cast<int>(index), labels[index].c_str() });
+		}
+	}
+
+	TASKDIALOGCONFIG config{};
+	config.cbSize = sizeof(config);
+	config.hwndParent = GetHwnd();
+	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW
+		| TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS;
+	// Cancel, never a default "yes": dismissing the dialog must leave trust exactly
+	// where it was. `TDCBF_CLOSE_BUTTON` is the honest verb when nothing is offered.
+	config.dwCommonButtons = offersGrant ? TDCBF_CANCEL_BUTTON : TDCBF_CLOSE_BUTTON;
+	config.pszWindowTitle = L"Workspace Trust";
+	config.pszMainIcon = alreadyTrusted ? TD_INFORMATION_ICON : TD_SHIELD_ICON;
+	config.pszMainInstruction = instruction.c_str();
+	config.pszContent = content.empty() ? nullptr : content.c_str();
+	config.cButtons = static_cast<UINT>(buttons.size());
+	config.pButtons = buttons.empty() ? nullptr : buttons.data();
+
+	int selected = 0;
+	if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the workspace trust dialog could not be shown" };
+	}
+	if (!offersGrant || selected < 1000) {
+		// Showing the current state, or being dismissed, is a completed command.
+		// It simply committed nothing.
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	}
+	const auto index = static_cast<std::size_t>(selected - 1000);
+	if (index >= model.options.size()) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the selected trust choice no longer exists" };
+	}
+
+	const auto granted = m_workbenchRuntime->GrantWorkspaceTrust(model.options[index].scope);
+	if (granted.Succeeded()) {
+		// Trust changed what `when` clauses resolve to, so the command context has
+		// to be re-read rather than left holding the pre-grant projection. The
+		// result is deliberately discarded: the durable grant is already committed,
+		// so a stale projection cannot un-grant it and must not be reported as a
+		// failed grant.
+		(void)RefreshWorkbenchCommandContext();
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	}
+	switch (granted.status) {
+	case workbench::EWorkspaceTrustGrantStatus::NotApplicable:
+	case workbench::EWorkspaceTrustGrantStatus::Stopped:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, granted.diagnostic };
+	case workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable:
+		return { EWorkbenchCommandExecutionStatus::Unsupported, granted.diagnostic };
+	default:
+		break;
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, granted.diagnostic };
 }
 
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitStageCommand(

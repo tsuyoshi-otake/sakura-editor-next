@@ -439,6 +439,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustPolicyTest.cpp">
       <Filter>Test Files\config</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\TrustedFoldersCodecTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\config\ControlPlatformTrustedFoldersStoreTest.cpp">
+      <Filter>Test Files\config</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>

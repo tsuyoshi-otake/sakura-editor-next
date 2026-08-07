@@ -78,6 +78,22 @@ bool WorkspaceTrustEntryCovers(const WorkspaceTrustEntry& entry, const platform:
 	return false;
 }
 
+std::optional<platform::uri::Uri> WorkspaceTrustParentFolder(const platform::uri::Uri& resource)
+{
+	std::wstring path = resource.Path();
+	// Both spellings of a directory address the same directory, so a stored trailing
+	// separator must not make a folder its own parent.
+	while (path.size() > 1 && path.back() == L'/') path.pop_back();
+
+	const auto lastSeparator = path.find_last_of(L'/');
+	if (lastSeparator == std::wstring::npos) return std::nullopt;
+	std::wstring parentPath = path.substr(0, lastSeparator);
+	// An empty remainder means the only separator was the leading one, so the parent
+	// would be the scheme root itself rather than a folder anyone chose to trust.
+	if (parentPath.empty()) return std::nullopt;
+	return WithPath(resource, std::move(parentPath));
+}
+
 WorkspaceTrustResolution ResolveWorkspaceTrust(const WorkspaceTrustResolveRequest& request)
 {
 	// A disabled feature means everything is trusted, and it outranks every other rule

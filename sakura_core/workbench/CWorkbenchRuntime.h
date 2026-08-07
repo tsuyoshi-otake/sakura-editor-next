@@ -11,6 +11,7 @@
 
 #include "config/CConfigurationService.h"
 #include "config/CWorkspaceContextService.h"
+#include "config/ITrustedFoldersStore.h"
 #include "config/JsoncConfigurationSource.h"
 #include "config/WorkspaceTrustPolicy.h"
 #include "config/SettingsWritebackCoordinator.h"
@@ -70,6 +71,11 @@ struct WorkbenchRuntimeDependencies final {
 	//! Profile/User persistence stays behind a control-process adapter. The
 	//! runtime owns the UI-independent service, never the durable backend.
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceStore> recentlyOpenedWorkspaceStore;
+	//! The durable Trusted Folders and Workspaces list. Null is a real state: the
+	//! runtime then resolves trust against an empty entry list, which is honest —
+	//! no folder has been granted trust — rather than a degraded mode. It must
+	//! never fall back to trusting anything.
+	std::unique_ptr<config::ITrustedFoldersStore> trustedFoldersStore;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -98,6 +104,8 @@ public:
 	[[nodiscard]] config::IWorkspaceContextService& WorkspaceContext() noexcept override { return m_workspaceContext; }
 	[[nodiscard]] config::WorkspaceContextResult SwitchToFolderWorkspace(
 		platform::uri::Uri folderUri, std::wstring displayName) override;
+	[[nodiscard]] WorkspaceTrustPromptModel WorkspaceTrustPrompt() override;
+	[[nodiscard]] WorkspaceTrustGrantResult GrantWorkspaceTrust(EWorkspaceTrustGrantScope scope) override;
 	[[nodiscard]] workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept override { return m_workspaceEditing.get(); }
 	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
 		const workspace::WorkspaceFoldersEditRequest& request) override;
@@ -143,6 +151,10 @@ private:
 	void OnConfigurationFileWatchChange(config::EConfigurationFileWatchChange change) noexcept;
 	void RestoreInitialLayoutMemento();
 	void RestoreStatusbarVisibilityMemento();
+	//! Reads the durable Trusted Folders and Workspaces list once, before the first
+	//! trust resolution. It must run after the profile settings load and before
+	//! ResolveAndApplyWorkspaceTrust, because the resolver reads the list it produces.
+	void RestoreTrustedFolders();
 	void PersistFinalLayoutMemento() noexcept;
 	void ReloadWorkspaceSettings(const config::WorkspaceContextSnapshot& snapshot);
 	void ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot,
@@ -181,6 +193,12 @@ private:
 	//! Resolves trust from the workspace shape and the profile trust settings, and
 	//! commits it. This is the only production caller of SetTrust.
 	void ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace);
+	//! The entries one grant scope would add for one workspace shape. Pure: it reads
+	//! only the snapshot, so the prompt and the grant cannot disagree about what a
+	//! choice means.
+	[[nodiscard]] static std::vector<config::WorkspaceTrustEntry> BuildTrustGrantEntries(
+		const config::WorkspaceContextSnapshot& workspace,
+		EWorkspaceTrustGrantScope scope);
 	void OnWorkspaceContextChanged(const config::WorkspaceContextChange& change) noexcept;
 	void OnContributionRegistryChanged(const layout::WorkbenchContributionChange& change) noexcept;
 	void RecordFileSourceResult(
@@ -205,6 +223,20 @@ private:
 	bool m_statusbarPersistenceReady = false;
 	std::uint64_t m_layoutBaselineRevision = 0;
 	bool m_layoutPersistenceReady = false;
+	std::unique_ptr<config::ITrustedFoldersStore> m_trustedFoldersStore;
+	//! The durable list, read once at Start and thereafter the runtime's working
+	//! copy. Re-reading it on every workspace change would let a concurrent write
+	//! from another window silently change this window's trust mid-session; VS
+	//! Code's own trust list is likewise session-stable until this window edits it.
+	config::TrustedFoldersSnapshot m_trustedFolders;
+	/*!
+		Whether the durable list is usable for granting. False after a load that
+		returned InvalidStoredList or a transport failure. Trust still resolves in
+		that state — against the empty in-memory list, so nothing is trusted — but a
+		grant must be refused rather than written, because writing would overwrite
+		durable bytes this runtime failed to understand.
+	 */
+	bool m_trustedFoldersPersistenceReady = false;
 	std::optional<layout::WorkbenchContributionSubscriptionId> m_contributionSubscription;
 	std::unique_ptr<platform::filesystem::IFileService> m_fileService;
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
