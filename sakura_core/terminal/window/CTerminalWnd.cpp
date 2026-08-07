@@ -133,8 +133,9 @@ TerminalKeyEvent KeyEventFromMessage( const MSG& message ) noexcept
 
 bool MapsToCharacter( std::uint32_t virtualKey ) noexcept
 {
-	// レイアウト上の文字を持つキーだけを対象にする。修飾キー単体、VK_APPS、
-	// IME 変換中の VK_PROCESSKEY はここでゼロになり、従来どおり素通りする。
+	// Only keys that carry a character in the current layout qualify. A bare modifier,
+	// VK_APPS, and the VK_PROCESSKEY an IME sends while composing all map to zero here
+	// and keep their existing routing.
 	return ::MapVirtualKeyW(static_cast<UINT>(virtualKey), MAPVK_VK_TO_CHAR) != 0;
 }
 
@@ -1471,13 +1472,13 @@ bool CTerminalWnd::PreTranslateMessage( MSG& message )
 			return true;
 		}
 	}
-	// 文字入力キーはこのフックで完結させる。フレームはこの後にレガシーな
-	// アクセラレータテーブルを引くが、既定のキー割り当ては素の Space に
-	// F_INDENT_SPACE、Shift+Space に F_UNINDENT_SPACE を持つ。
-	// TranslateAccelerator が WM_KEYDOWN を消費すると TranslateMessage が
-	// 走らず、この端末がシェルへ流す WM_CHAR がそもそも生成されない。
-	// VS Code も terminal.integrated.commandsToSkipShell で明示的に除外した
-	// バインドを除き、文字入力はシェルへ渡す。
+	// Finish the text-input path inside this hook. The frame consults the legacy
+	// accelerator table after this, and the default key assignments bind bare Space to
+	// F_INDENT_SPACE and Shift+Space to F_UNINDENT_SPACE. Once TranslateAccelerator
+	// consumes the WM_KEYDOWN, TranslateMessage never runs and the WM_CHAR this
+	// terminal forwards to the shell is never produced. VS Code likewise sends text
+	// input to the shell except for bindings explicitly excluded through
+	// terminal.integrated.commandsToSkipShell.
 	if( TerminalKeyNeedsTextDelivery(event, MapsToCharacter(event.virtualKey)) ) {
 		::TranslateMessage(&message);
 		::DispatchMessageW(&message);

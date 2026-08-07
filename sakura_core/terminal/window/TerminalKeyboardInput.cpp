@@ -184,8 +184,9 @@ std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const Terminal
 bool TerminalKeyNeedsTextDelivery( const TerminalKeyEvent& event, bool mapsToCharacter ) noexcept
 {
 	if( !event.keyDown || !mapsToCharacter ) return false;
-	// Ctrl / Alt 付きは制御シーケンスの領分で、EncodeTerminalKey と Alt 印字可能キーの
-	// 経路が先に所有する。ここが引き取るのは素の文字入力と Shift 修飾だけ。
+	// Ctrl and Alt combinations belong to the control-sequence side: EncodeTerminalKey
+	// and the Alt-printable path own them earlier. This claims plain text input and
+	// Shift only.
 	return !event.control && !event.alt;
 }
 

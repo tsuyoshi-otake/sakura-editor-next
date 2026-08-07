@@ -31,14 +31,15 @@ TEST(TerminalInput, EncodesNavigationModifiersAndControlKeys)
 
 TEST(TerminalInput, ClaimsPlainTextKeysBeforeTheHostKeybindingTable)
 {
-	// Space も Shift+Space も端末側の文字入力。既定のキー割り当てが
-	// F_INDENT_SPACE / F_UNINDENT_SPACE を持つため、ここで引き取らないと
-	// アクセラレータに奪われて WM_CHAR が生成されない。
+	// Space and Shift+Space are both terminal text input. The default key assignments
+	// bind them to F_INDENT_SPACE / F_UNINDENT_SPACE, so unless the terminal claims
+	// them here the accelerator takes the key and no WM_CHAR is produced.
 	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE }, true));
 	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, true }, true));
 	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ 'A' }, true));
 
-	// Ctrl / Alt 付きは制御シーケンス側の所有。文字を持たないキーも対象外。
+	// Ctrl and Alt combinations belong to the control-sequence side, and a key with no
+	// character is out of scope too.
 	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, false, true, false }, true));
 	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, false, false, true }, true));
 	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_APPS }, false));
