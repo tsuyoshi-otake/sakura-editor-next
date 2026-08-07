@@ -203,4 +203,23 @@ The native push deduplicates: `CExtensionService::SetWorkspaceTrusted` remembers
 the last value it sent and skips a resend of an identical value, so a repeated
 identical push can never be mistaken downstream for a fresh grant.
 
-The exthost cohort passes 58/58.
+**The registration seed must be tested through the RPC, not through the loader.**
+The first delivery of this feature shipped with `host/registerExtensions` in
+`extension-host.cjs` forwarding only `configuration` and `workspaceFolders` into
+`ExtensionLoader.register()`, silently dropping `workspaceTrusted`. Every
+loader-level and API-level test still passed, because those tests construct the
+loader or session with an options object directly and never cross the handler
+that was losing the field. Combined with the native deduplication above, the
+defect was total for the most common case: a workspace whose trust never changes
+after registration gets no `didChangeTrust` at all, so `workspace.isTrusted`
+stayed pinned at `false` even for a default empty window, which
+`security.workspace.trust.emptyWindow` resolves to `Trusted`. It failed closed,
+so nothing was over-trusted — but the entire projection was inert in production
+while the tests read green. The regression test for this lives in
+`test/extension-host.test.cjs` and asserts the value an activated extension
+actually reads from `vscode.workspace.isTrusted` after a real
+`host/registerExtensions` round trip. Any future session-scoped field added to
+that payload needs the same end-to-end test; a loader-level one cannot prove the
+wire is connected.
+
+The exthost cohort passes 59/59.

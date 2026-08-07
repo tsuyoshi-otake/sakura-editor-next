@@ -560,13 +560,18 @@ class ExtensionHost {
         setImmediate(() => this.stop());
         return { accepted: true };
       case 'host/registerExtensions':
-        // configuration/workspaceFolders は登録の度にネイティブが総入れ替えで送ってくる
-        // スナップショット（extensions 自体の再送契約と同じ）。両方省略時は
+        // configuration/workspaceFolders/workspaceTrusted は登録の度にネイティブが総入れ替えで
+        // 送ってくるスナップショット（extensions 自体の再送契約と同じ）。省略時は
         // mergeSessionOptions が何もしないので、configuration 非対応の古いネイティブや
         // ワークスペース未対応時でも extensions 登録そのものは今まで通り動く。
+        // workspaceTrusted はここで必ず素通しすること。ネイティブ側の
+        // CExtensionService::SetWorkspaceTrusted は最後に送った値を覚えていて同値の再送を
+        // 抑止するので、登録で落とすと「登録後に信頼が変化しないワークスペース」には
+        // didChangeTrust が永久に届かず、workspace.isTrusted が false に固定される。
         return this.extensionLoader.register(params?.extensions, {
           configuration: params?.configuration,
           workspaceFolders: params?.workspaceFolders,
+          workspaceTrusted: params?.workspaceTrusted,
         });
       case 'host/activateExtension':
         await this.extensionLoader.activate(params?.extensionId, params?.reason || 'api');
