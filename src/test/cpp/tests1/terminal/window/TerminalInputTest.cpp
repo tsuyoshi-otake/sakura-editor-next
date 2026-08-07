@@ -29,6 +29,26 @@ TEST(TerminalInput, EncodesNavigationModifiersAndControlKeys)
 	EXPECT_EQ(std::string("\x1b\x03", 2), terminal::EncodeTerminalKey({ 'C', false, true, true }));
 }
 
+TEST(TerminalInput, ClaimsPlainTextKeysBeforeTheHostKeybindingTable)
+{
+	// Space and Shift+Space are both terminal text input. The default key assignments
+	// bind them to F_INDENT_SPACE / F_UNINDENT_SPACE, so unless the terminal claims
+	// them here the accelerator takes the key and no WM_CHAR is produced.
+	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE }, true));
+	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, true }, true));
+	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ 'A' }, true));
+
+	// Ctrl and Alt combinations belong to the control-sequence side, and a key with no
+	// character is out of scope too.
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, false, true, false }, true));
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, false, false, true }, true));
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_APPS }, false));
+
+	terminal::TerminalKeyEvent keyUp{ VK_SPACE };
+	keyUp.keyDown = false;
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery(keyUp, true));
+}
+
 TEST(TerminalInput, ResolvesTerminalClipboardAndInterruptShortcuts)
 {
 	EXPECT_EQ(terminal::TerminalShortcutAction::Copy,

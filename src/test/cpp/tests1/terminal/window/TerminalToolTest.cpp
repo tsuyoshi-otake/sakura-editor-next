@@ -233,7 +233,7 @@ TEST(TerminalTool, RendererSizeInvalidatesBeforeItReceivesFocus)
 	::DestroyWindow(parent);
 }
 
-TEST(TerminalTool, PrintableKeyDownFallsThroughToCharMessage)
+TEST(TerminalTool, PrintableKeyDownIsClaimedAndStillBecomesACharMessage)
 {
 	// This test directly constructs a MSG instead of retrieving it from the
 	// thread queue.  Arrange the modifier state explicitly so a physically held
@@ -252,10 +252,30 @@ TEST(TerminalTool, PrintableKeyDownFallsThroughToCharMessage)
 		return terminal::TerminalQueueInputResult::Accepted;
 	});
 
-	MSG keyDown{ renderer.GetHwnd(), WM_KEYDOWN, static_cast<WPARAM>('A'), 1 };
-	EXPECT_FALSE(renderer.PreTranslateMessage(keyDown));
+	// Empty the thread queue so the pump below can only observe what this key
+	// produced.
+	MSG stale{};
+	while( ::PeekMessageW(&stale, nullptr, 0, 0, PM_REMOVE) ) {}
+
+	// TranslateMessage needs the real scan code to produce a WM_CHAR.
+	const LPARAM keyLParam = static_cast<LPARAM>(1 | (::MapVirtualKeyW('A', MAPVK_VK_TO_VSC) << 16));
+	MSG keyDown{ renderer.GetHwnd(), WM_KEYDOWN, static_cast<WPARAM>('A'), keyLParam };
+	// The terminal claims the printable key itself.  The frame runs
+	// TranslateAccelerator after this hook against the legacy key-assignment
+	// table, and a translated accelerator consumes the WM_KEYDOWN so that
+	// TranslateMessage never runs and no WM_CHAR is ever produced.
+	EXPECT_TRUE(renderer.PreTranslateMessage(keyDown));
+	// Claiming it sends nothing by itself: TranslateMessage posts the WM_CHAR to
+	// this thread's queue, and the shell bytes appear only once it is dispatched.
 	EXPECT_TRUE(received.empty());
-	::SendMessageW(renderer.GetHwnd(), WM_CHAR, L'a', 1);
+
+	bool sawCharMessage = false;
+	MSG queued{};
+	while( ::PeekMessageW(&queued, nullptr, 0, 0, PM_REMOVE) ) {
+		if( queued.message == WM_CHAR && queued.hwnd == renderer.GetHwnd() ) sawCharMessage = true;
+		::DispatchMessageW(&queued);
+	}
+	EXPECT_TRUE(sawCharMessage);
 	EXPECT_EQ("a", received);
 
 	renderer.Close();

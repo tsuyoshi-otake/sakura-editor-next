@@ -65,6 +65,12 @@ enum class TerminalRightClickAction : std::uint8_t {
 [[nodiscard]] std::string EncodeTerminalText( std::wstring_view text );
 [[nodiscard]] std::string EncodeTerminalPaste( std::wstring_view text, bool bracketedPaste );
 [[nodiscard]] std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const TerminalModes& modes );
+//! Whether the terminal must claim this key as text input before the host resolves
+//! its keybindings.
+//! @param event            the key event to classify
+//! @param mapsToCharacter  whether the key produces a character in the current layout
+//!                         (on Win32, `MapVirtualKey(vk, MAPVK_VK_TO_CHAR)` is nonzero)
+[[nodiscard]] bool TerminalKeyNeedsTextDelivery( const TerminalKeyEvent& event, bool mapsToCharacter ) noexcept;
 [[nodiscard]] TerminalShortcutAction ResolveTerminalShortcut( const TerminalKeyEvent& event, bool hasSelection ) noexcept;
 [[nodiscard]] TerminalRightClickAction ResolveTerminalRightClick( bool hasSelection, bool mouseReporting, bool shift ) noexcept;
 
