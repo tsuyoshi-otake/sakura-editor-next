@@ -219,3 +219,45 @@ test('shared host loads one extension instance and broadcasts its workbench stat
     second.waitFor((message) => message.method === 'workbench/commands/registerHandler'),
   ]);
 });
+
+test('registration payload workspaceTrusted reaches an extension through the real host path', async (t) => {
+  // 回帰テスト: host/registerExtensions が workspaceTrusted を ExtensionLoader へ素通しし
+  // なかった時期があり、ネイティブ側の同値抑止と組み合わさって、登録後に信頼が変化しない
+  // ワークスペースでは workspace.isTrusted が false に固定されていた。ローダー単体テストは
+  // options を直接渡すのでこの穴を素通りする。ここは必ず RPC 経由で検証すること。
+  const extensionRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'sakura-trusted-extension-'));
+  fs.writeFileSync(path.join(extensionRoot, 'package.json'), JSON.stringify({
+    name: 'trusted', publisher: 'test', main: './extension.js',
+    contributes: { commands: [{ command: 'test.trusted.read', title: 'Read Trust' }] },
+  }));
+  fs.writeFileSync(path.join(extensionRoot, 'extension.js'), `
+    const vscode = require('vscode');
+    exports.activate = (context) => {
+      context.subscriptions.push(
+        vscode.commands.registerCommand('test.trusted.read', () => vscode.workspace.isTrusted));
+    };
+  `);
+  t.after(() => fs.rmSync(extensionRoot, { recursive: true, force: true }));
+
+  const config = {
+    profileHash: 'e'.repeat(32), bootId: 'f'.repeat(32), pipeName: uniquePipeName(),
+    generation: 5, brokerProcessId: process.pid,
+  };
+  const host = new ExtensionHost(config);
+  await host.start();
+  t.after(() => host.stop());
+  const client = new TestClient(config.pipeName);
+  t.after(() => client.close());
+  await client.connect();
+  await client.waitFor((message) => message.method === 'host/hello');
+
+  const registered = await client.request('host/registerExtensions', {
+    extensions: [extensionRoot], workspaceTrusted: true,
+  });
+  assert.equal(registered.result.failed.length, 0);
+
+  const trusted = await client.request('extension/commands/execute', {
+    command: 'test.trusted.read', args: [],
+  });
+  assert.deepEqual(trusted.result, { value: true });
+});
