@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief 拡張マニフェストの contribution points を保持する所有権付きモデル
 */
 /*
