@@ -12,6 +12,7 @@ the `workbench::icons` namespace:
 | `ThemeIconResolver.h` | The pure joining step both call sites share |
 | `CodiconsActivityIcons.h` | Vector geometry for icons drawn as GDI paths, not text |
 | `CFileIconThemeRegistry.h`/`.cpp` | `contributes.iconThemes`, selection lookup, association precedence, and registered file-icon resources |
+| `LabelRunPainter.h` | Shared vocabulary for measuring/drawing `$(icon)`-mixed labels; the status bar, the hover widget, the SCM tool, and the banner host share the same implementation instead of each keeping a copy. `CreateLabelRunGlyphFont` fails closed (`nullptr`) on a face name at or past `LF_FACESIZE` rather than truncating it — consolidating the hover widget onto it changed that widget from silent truncation to fail-closed |
 
 `CExtensionIconFont.h`/`.cpp` reads an extension's `package.json`,
 decodes the referenced icon font (WOFF1 or a bare TTF/OTF/TTC), registers it

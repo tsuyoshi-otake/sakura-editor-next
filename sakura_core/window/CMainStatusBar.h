@@ -9,6 +9,7 @@
 #define SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_
 #pragma once
 
+#include "config/WorkspaceContextTypes.h"
 #include "doc/CDocListener.h"
 #include "extension/CExtensionStatusBar.h"
 #include "theme/CThemeService.h"
@@ -74,6 +75,16 @@ public:
 	void SetStatusbarVisibilityCallback(std::function<void(std::string_view, bool)> callback);
 	void SetStatusbarViewSnapshot(workbench::statusbar::StatusbarViewSnapshot snapshot);
 	void SetNotificationState(std::size_t pendingCount, std::size_t unreadCount, bool centerVisible);
+	/*!
+		@brief 現在のワークスペース信頼状態を投影する
+
+		VS Code の `status.workspaceTrust`（far-left の `$(shield) Restricted
+		Mode`）を塗るための純粋な射影。`Unknown` と `Untrusted` はどちらも
+		「制限モード」を意味するので、bool へ早期に潰さず三値のまま保持する。
+		`SetScmStatusCommands` / `SetNotificationState` と同じくコールバックを
+		一切呼ばない ── コマンド実行や所有者への通知はここではしない。
+	*/
+	void SetWorkspaceTrustState(config::EWorkspaceTrustState state) noexcept;
 	[[nodiscard]] bool IsStatusbarEntryVisible(std::string_view id, bool providerVisible = true) const noexcept;
 	[[nodiscard]] int ReservedRightWidth() const noexcept;
 	[[nodiscard]] static std::string_view LegacyEntryIdForPart(int part) noexcept;
@@ -140,7 +151,7 @@ private:
 	void HideExtensionHover() noexcept;
 	//! 寄与アイコン用の HFONT を書体名と字高の組で貸し出す。同じ組は 1 個だけ作り、
 	//! 再描画のたびに CreateFontIndirectW を呼ばない。失敗したら nullptr を返す。
-	[[nodiscard]] HFONT AcquireIconFont(const std::wstring& faceName, int height) const noexcept;
+	[[nodiscard]] HFONT AcquireIconFont(std::wstring_view faceName, int height) const noexcept;
 	//! 貸し出し済みの HFONT をすべて破棄する。DC に選択されたままにしてはならない。
 	void ReleaseIconFonts() const noexcept;
 
@@ -156,6 +167,10 @@ private:
 	std::size_t m_notificationPendingCount = 0;
 	std::size_t m_notificationUnreadCount = 0;
 	bool m_notificationCenterVisible = false;
+	//! Unknown until CEditWnd's first workbench-context refresh pushes the real
+	//! value; Unknown paints as restricted, so an un-refreshed window never
+	//! shows a false "trusted" state.
+	config::EWorkspaceTrustState m_workspaceTrustState = config::EWorkspaceTrustState::Unknown;
 	//! VS Code の HoverWidget 相当。TOOLTIPS_CLASSW では描けない書式付き本文を自前で描く。
 	workbench::hover::CHoverWidget m_extensionHover;
 	//! ホバー待機中/表示中の項目矩形（ステータスバーのクライアント座標）。

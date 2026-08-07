@@ -14,12 +14,14 @@
 #include "config/WorkspaceContextTypes.h"
 #include "extension/CExtensionContributionRegistry.h"
 #include "extension/CExtensionWorkbenchUi.h"
+#include "extension/ExtensionUntrustedWorkspaceOverride.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "workbench/scm/SourceControlService.h"
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -87,6 +89,18 @@ public:
 	//! when no runtime is bound, matching "no workspace is open" rather than
 	//! signaling a distinct failure.
 	[[nodiscard]] config::WorkspaceContextSnapshot WorkspaceContextSnapshotForExtensions() const;
+
+	//! Forwards the restricted-configuration key set to the runtime. Returns
+	//! Unsupported when no runtime is bound, matching every other bridge accessor's
+	//! "no runtime" degradation rather than inventing a distinct failure.
+	[[nodiscard]] config::EConfigurationOutcome PublishExtensionRestrictedConfigurations(std::vector<std::string> keys) const;
+
+	//! Reads and parses the `extensions.supportUntrustedWorkspaces` user override at
+	//! the selected-profile target. Returns an empty map when no runtime is bound or
+	//! the read is rejected, so a failed read falls back to the manifest declaration
+	//! rather than silently widening or narrowing an exemption.
+	[[nodiscard]] std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>>
+	ExtensionUntrustedWorkspaceOverrides() const;
 
 	//! Stable identity for the host-owned Extension Host log channel (see AppendExtensionHostLog).
 	//! This is a native-only identifier; it has no legacy CExtensionOutputChannel projection because

@@ -10,6 +10,7 @@ const {
   ExtensionApiSession,
   Diagnostic,
   DiagnosticSeverity,
+  Disposable,
   EndOfLine,
   MarkdownString,
   Position,
@@ -613,6 +614,212 @@ test('window.state always exists and tracks the native window state notification
 
   await session.handleRequest('extension/window/didChangeState', { focused: true, active: false });
   assert.deepEqual(api.window.state, { focused: true, active: false });
+
+  session.dispose();
+});
+
+// workspace.isTrusted is fail-closed: absent/non-boolean options never grant trust, and
+// onDidGrantWorkspaceTrust only fires on the untrusted -> trusted transition, matching
+// upstream (there is no downstream "revoke" event).
+test('workspace.isTrusted defaults to false when workspaceTrusted is not specified', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 5, transport);
+  assert.equal(session.api.workspace.isTrusted, false);
+  session.dispose();
+});
+
+test('workspace.isTrusted is true when the session is constructed with workspaceTrusted: true', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 6, transport, { workspaceTrusted: true });
+  assert.equal(session.api.workspace.isTrusted, true);
+  session.dispose();
+});
+
+test('workspace.isTrusted stays false for a non-boolean truthy workspaceTrusted value', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 7, transport, { workspaceTrusted: 'yes' });
+  assert.equal(session.api.workspace.isTrusted, false);
+  session.dispose();
+});
+
+test('didChangeTrust flips isTrusted and fires onDidGrantWorkspaceTrust exactly once on the untrusted -> trusted transition', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 8, transport);
+  const api = session.api;
+  assert.equal(api.workspace.isTrusted, false);
+
+  const seen = [];
+  api.workspace.onDidGrantWorkspaceTrust(() => {
+    // ハンドラの中から読んだ isTrusted は、通知より先にフィールドが更新されているので
+    // 必ず true になる。
+    seen.push(api.workspace.isTrusted);
+  });
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: true }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, true);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0], true);
+
+  session.dispose();
+});
+
+test('didChangeTrust does not re-fire onDidGrantWorkspaceTrust when the session is already trusted', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 9, transport, { workspaceTrusted: true });
+  const api = session.api;
+  assert.equal(api.workspace.isTrusted, true);
+
+  let fireCount = 0;
+  api.workspace.onDidGrantWorkspaceTrust(() => { fireCount += 1; });
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: true }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, true);
+  assert.equal(fireCount, 0);
+
+  session.dispose();
+});
+
+test('onDidGrantWorkspaceTrust returns a real Disposable that stops delivering events once disposed', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 10, transport);
+  const api = session.api;
+
+  let fireCount = 0;
+  const disposable = api.workspace.onDidGrantWorkspaceTrust(() => { fireCount += 1; });
+  assert.ok(disposable instanceof Disposable);
+
+  disposable.dispose();
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: true }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, true);
+  assert.equal(fireCount, 0);
+
+  session.dispose();
+});
+
+// 上流に revoke イベントは無い（上流は信頼降格時に拡張ホストごと再起動するため、降格を
+// live なセッションへ伝える手段自体が存在しない）。降格でイベントを捏造しないことの回帰。
+test('didChangeTrust with trusted: false demotes isTrusted without firing onDidGrantWorkspaceTrust', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 11, transport, { workspaceTrusted: true });
+  const api = session.api;
+  assert.equal(api.workspace.isTrusted, true);
+
+  let fireCount = 0;
+  api.workspace.onDidGrantWorkspaceTrust(() => { fireCount += 1; });
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: false }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, false);
+  assert.equal(fireCount, 0);
+
+  session.dispose();
+});
+
+test('didChangeTrust treats a non-boolean truthy trusted value as false', async () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.trust', 12, transport);
+  const api = session.api;
+
+  assert.deepEqual(await session.handleRequest('extension/workspace/didChangeTrust', { trusted: 'yes' }), { accepted: true });
+  assert.equal(api.workspace.isTrusted, false);
+
+  session.dispose();
+});
+
+test('the Terminal API surface reports UnsupportedCapability instead of being absent', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 11, transport);
+  const api = session.api;
+
+  const expectUnsupported = (capability, run) => {
+    assert.throws(run, (error) => {
+      assert.ok(error instanceof UnsupportedCapabilityError, `${capability} threw ${error}`);
+      assert.equal(error.code, 'UnsupportedCapability');
+      assert.equal(error.extensionId, 'sample.extension');
+      assert.equal(error.capability, capability);
+      return true;
+    });
+  };
+
+  expectUnsupported('window.createTerminal', () => api.window.createTerminal({ name: 'Claude Code' }));
+  // ネイティブのターミナルは実在するので、`[]` や `undefined` を返すのは
+  // 「存在しない」という誤った事実表明になる。読み取り自体を型付きで失敗させる。
+  expectUnsupported('window.terminals', () => api.window.terminals);
+  expectUnsupported('window.activeTerminal', () => api.window.activeTerminal);
+  expectUnsupported('window.registerTerminalLinkProvider', () => api.window.registerTerminalLinkProvider({}));
+  expectUnsupported('window.registerTerminalQuickFixProvider', () => api.window.registerTerminalQuickFixProvider('id', {}));
+
+  // 発火しない購読を返すのではなく、購読した時点で失敗させる。
+  for (const name of ['onDidOpenTerminal', 'onDidCloseTerminal', 'onDidChangeActiveTerminal',
+    'onDidChangeTerminalState', 'onDidChangeTerminalShellIntegration', 'onDidStartTerminalShellExecution',
+    'onDidEndTerminalShellExecution', 'onDidWriteTerminalData']) {
+    expectUnsupported(`window.${name}`, () => api.window[name](() => {}));
+  }
+
+  assert.deepEqual(transport.notifications, []);
+  session.dispose();
+});
+
+test('registerTerminalProfileProvider names its own unsupported capability on the wire', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 12, transport);
+
+  // registerWebviewViewProvider と同じ扱い: activation を殺さず、ネイティブ側の
+  // Extension Compatibility 出力へ未対応として届ける。
+  const disposable = session.api.window.registerTerminalProfileProvider('sample.profile', {
+    provideTerminalProfile() { return undefined; },
+  });
+
+  const [notification] = transport.notified('workbench/terminal/registerProfileProvider');
+  assert.deepEqual(notification.params, {
+    id: 'sample.profile',
+    extensionId: 'sample.extension',
+    generation: 12,
+    // capability を payload で名乗るので、ネイティブ側が method の接頭辞から
+    // 名前を推測する必要がなくなる。
+    error: { code: 'UnsupportedCapability', capability: 'window.registerTerminalProfileProvider' },
+  });
+
+  disposable.dispose();
+  assert.equal(transport.notified('workbench/terminal/unregisterProfileProvider').length, 1);
+  session.dispose();
+});
+
+test('ExtensionContext.environmentVariableCollection is a typed unsupported namespace', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 13, transport);
+  const collection = session.createExtensionContext().environmentVariableCollection;
+
+  assert.notEqual(collection, undefined);
+  for (const [member, run] of [
+    ['replace', () => collection.replace('CLAUDE_CODE_SSE_PORT', '1234')],
+    ['append', () => collection.append('PATH', ';C:\tools')],
+    ['prepend', () => collection.prepend('PATH', 'C:\tools;')],
+    ['clear', () => collection.clear()],
+    ['getScoped', () => collection.getScoped({})],
+    ['persistent', () => collection.persistent],
+  ]) {
+    assert.throws(run, (error) => {
+      assert.ok(error instanceof UnsupportedCapabilityError, `${member} threw ${error}`);
+      assert.equal(error.capability, `ExtensionContext.environmentVariableCollection.${member}`);
+      assert.equal(error.extensionId, 'sample.extension');
+      return true;
+    });
+  }
+
+  assert.deepEqual(transport.notifications, []);
+  session.dispose();
+});
+
+test('Terminal value enums match upstream VS Code', () => {
+  const transport = new RecordingTransport();
+  const session = new ExtensionApiSession('sample.extension', 14, transport);
+  const api = session.api;
+
+  assert.deepEqual({ ...api.TerminalLocation }, { Panel: 1, Editor: 2 });
+  assert.deepEqual({ ...api.TerminalExitReason }, { Unknown: 0, Shutdown: 1, Process: 2, User: 3, Extension: 4 });
+  assert.deepEqual({ ...api.EnvironmentVariableMutatorType }, { Replace: 1, Append: 2, Prepend: 3 });
+  assert.deepEqual({ ...api.TerminalShellExecutionCommandLineConfidence }, { Low: 0, Medium: 1, High: 2 });
+  assert.ok(Object.isFrozen(api.TerminalLocation));
 
   session.dispose();
 });

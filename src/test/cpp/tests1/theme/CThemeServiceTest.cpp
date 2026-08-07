@@ -26,6 +26,12 @@ TEST(CThemeService, DarkPaletteMatchesWorkbenchTokensExactly)
 		// These equal the ThemePalette member initializers, so omitting them would still pass
 		// while asserting nothing about what the registry actually produces.
 		{ 0x1F, 0x8A, 0xD2 }, { 0xFF, 0xFF, 0xFF }, { 0x3F, 0xA1, 0xE3 },
+		// statusBarItem.prominentBackground: black.transparent(0.5) over the dark accent #1F8AD2.
+		{ 0x0F, 0x45, 0x69 },
+		// banner.background: list.activeSelectionBackground, unchanged for dark.
+		// banner.foreground: list.activeSelectionForeground (white in both modes).
+		// banner.iconForeground: editorInfo.foreground dark literal.
+		{ 0x04, 0x39, 0x5E }, { 0xFF, 0xFF, 0xFF }, { 0x59, 0xA4, 0xF9 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Dark));
 	EXPECT_EQ(ThemeMode::Dark, CThemeService::DefaultMode());
@@ -54,6 +60,12 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 		// it for light themes. Spelled out rather than left to the ThemePalette member
 		// initializers, which hold the dark values and would make this assertion vacuous.
 		{ 0xB8, 0x32, 0x68 }, { 0xFF, 0xFF, 0xFF }, { 0x93, 0x28, 0x53 },
+		// statusBarItem.prominentBackground: black.transparent(0.5) over the light accent #B83268.
+		{ 0x5C, 0x19, 0x34 },
+		// banner.background: darken(list.activeSelectionBackground #0060C0, 0.3).
+		// banner.foreground: list.activeSelectionForeground (white in both modes).
+		// banner.iconForeground: editorInfo.foreground light literal.
+		{ 0x00, 0x43, 0x86 }, { 0xFF, 0xFF, 0xFF }, { 0x00, 0x63, 0xD3 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 }
@@ -67,6 +79,7 @@ TEST(CThemeService, HighContrastOverlayDoesNotChangeSavedModeSelection)
 		{ 43, 44, 45 }, { 46, 47, 48 }, { 49, 50, 51 },
 		{ 52, 53, 54 }, { 55, 56, 57 }, { 58, 59, 60 },
 		{ 61, 62, 63 }, { 64, 65, 66 }, { 67, 68, 69 },
+		{ 70, 71, 72 },
 	};
 	EXPECT_EQ(highContrast, CThemeService::SelectPalette(ThemeMode::Dark, true, highContrast));
 	EXPECT_EQ(CThemeService::PaletteFor(ThemeMode::Light),
@@ -80,6 +93,44 @@ TEST(CThemeService, HighContrastTerminalBackgroundUsesThePanelFace)
 	EXPECT_EQ(highContrast.canvas, highContrast.editorGutterBackground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberActiveForeground);
+}
+
+TEST(CThemeService, HighContrastStatusBarProminentBackgroundCompositesBlackHalfOverHighlight)
+{
+	// Upstream registers `statusBarItem.prominentBackground` as a single
+	// non-per-theme default, `Color.black.transparent(0.5)`, that applies to
+	// hcDark/hcLight exactly like the ordinary dark/light themes. High Contrast
+	// has no compiled literal for it: it is composited at read time over the
+	// live system highlight (the same role High Contrast uses for `accent`).
+	const ThemePalette highContrast = CThemeService::HighContrastPalette();
+	const COLORREF highlight = ::GetSysColor(COLOR_HIGHLIGHT);
+	EXPECT_EQ(highlight, highContrast.accent.ToColorRef());
+	// Reproduces CThemeService.cpp's CompositeBlackHalfOver: round-to-nearest
+	// via `(channel * 127 + 127) / 255`, the same arithmetic CColorThemeRegistry
+	// uses for every other translucent VS Code token.
+	const auto blend = [](BYTE channel) noexcept -> BYTE {
+		return static_cast<BYTE>((static_cast<unsigned int>(channel) * 127U + 127U) / 255U);
+	};
+	const ThemeColor expected{
+		blend(GetRValue(highlight)), blend(GetGValue(highlight)), blend(GetBValue(highlight)) };
+	EXPECT_EQ(expected, highContrast.statusBarProminentBackground);
+}
+
+TEST(CThemeService, HighContrastBannerRolesUseTheSystemHighlightPair)
+{
+	// Upstream registers `banner.background`/`banner.foreground` as bare aliases of
+	// `list.activeSelectionBackground`/`list.activeSelectionForeground`, whose own
+	// hcDark/hcLight registrations are in turn the live system highlight pair, not a
+	// chosen literal. `banner.iconForeground` reuses the same foreground rather than
+	// upstream's hardcoded `editorInfo.foreground` HC literal, matching the pairing
+	// this codebase already applies to the button roles and to
+	// `statusBarProminentBackground`'s own accent/highlight pairing.
+	const ThemePalette highContrast = CThemeService::HighContrastPalette();
+	const COLORREF highlight = ::GetSysColor(COLOR_HIGHLIGHT);
+	const COLORREF highlightText = ::GetSysColor(COLOR_HIGHLIGHTTEXT);
+	EXPECT_EQ(highlight, highContrast.bannerBackground.ToColorRef());
+	EXPECT_EQ(highlightText, highContrast.bannerForeground.ToColorRef());
+	EXPECT_EQ(highlightText, highContrast.bannerIconForeground.ToColorRef());
 }
 
 TEST(CThemeService, FontPolicyPrefersNativeWindowsElevenFamilies)

@@ -43,6 +43,8 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   configuration URI is optional metadata, not a substitute for that identity.
 - Trust is explicit workspace state and is carried with context snapshots; do
   not infer trust from a path, file extension, or successful configuration load.
+  See the Workspace Trust Resolution Checkpoint below for how that state is
+  actually resolved.
 - Context/configuration changes use CAS revisions, bounded replay, and ordered
   notifications. Every accepted update has one revisioned terminal outcome;
   stale writers must observe a conflict rather than overwrite newer state.
@@ -113,3 +115,352 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   way VS Code pins it. Closing this divergence requires adding a true
   Application scope shared by every profile, not merely validating the
   selected profile's id correctly.
+
+## Workspace Trust Resolution Checkpoint (2026-08-07, #33)
+
+- `config::ResolveWorkspaceTrust` (`WorkspaceTrustPolicy.h`/`.cpp`) is a pure
+  function: no I/O, no HWND, no service handle. It reads only the workspace
+  kind, the optional workspace-configuration URI, the folder URIs, the
+  `security.workspace.trust.enabled` / `.emptyWindow` settings, and the
+  Trusted Folders and Workspaces entry list. It is fully covered by
+  `WorkspaceTrustPolicyTest`.
+- Precedence is fixed and ordered. `security.workspace.trust.enabled = false`
+  trusts everything and outranks every other rule, including an explicit
+  empty-window opt-out. An empty window otherwise follows
+  `security.workspace.trust.emptyWindow` (default `true`). Otherwise a
+  `.code-workspace` file that is itself trusted covers the whole multi-root
+  workspace regardless of where its folders live. Otherwise every folder root
+  must be covered; trust is not the union of the roots, because extension
+  code runs once for all of them, so one uncovered root leaves the whole
+  window untrusted.
+- The resolver never produces `EWorkspaceTrustState::Untrusted`. `Untrusted`
+  denotes an explicit user denial, and no amount of derived state can
+  establish one; withheld trust resolves `Unknown` instead. A dedicated test
+  asserts this distinction.
+- Ancestor containment ("trust the parent folder") is a path-segment-boundary
+  rule, not a string-prefix rule. `WorkspaceTrustEntryCovers` rebuilds the
+  resource URI at each of its own `/` boundaries and asks
+  `UriIdentityService` whether the rebuilt URI is the entry, so every
+  case-folding, authority-aliasing, and escaping rule stays in one place.
+  Comparing `MakeComparisonKey` outputs as strings would be wrong: those keys
+  are length-prefixed and structured, so a prefix test on one carries no
+  ancestor meaning. Proven by test: `file:///c:/codes/app` does not cover
+  `file:///c:/codes/application`.
+- `CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust` is the only production
+  caller of `CWorkspaceContextService::SetTrust`. It runs once during
+  `Start()` after the profile settings load (because it reads
+  `security.workspace.trust.*`), and again at the top of
+  `OnWorkspaceContextChanged`, because trust follows the workspace shape and
+  must be re-resolved even when the configuration shape is unchanged and the
+  settings reload below it is skipped.
+- Each resolution mints a fresh `workbench.trust.resolve.<N>` operation ID
+  from a runtime-owned atomic counter. `SetTrust`'s replay/conflict
+  bookkeeping is keyed on `(operationId, fingerprint)` with the trust value
+  folded into the fingerprint, so a reused identifier carrying a different
+  value is reported as a conflict rather than accepted as a new request.
+- The trust settings read targets only the selected user-data profile
+  (`Bootstrap().UserDataProfile().SelectedProfileId()`); trust policy is
+  profile-owned and is never accepted from a workspace or folder document. A
+  failed or short read falls back to the struct defaults, which withhold
+  trust for every folder — a failed read must never widen trust.
+- Trust is context state, so committing it advances the semantic workspace
+  revision. A topology change therefore settles as two revisions (topology,
+  then trust), and `WorkspaceArtifacts` generation tracks whichever revision
+  was current when artifacts were last routed. Asking to set trust to its
+  current value resolves `NotApplicable` and commits nothing, so resolution
+  converges after one step and never recurses through its own notification.
+  Tests must not hard-code a literal post-`Start()` revision —
+  `CWorkbenchRuntime.ArtifactTopologyTransitionsClearDocumentsAndAdvanceSemanticGeneration`
+  was rewritten to settle on the generation/revision relationship instead of
+  a fixed count.
+## Trusted Folders Store and Grant Path Checkpoint (2026-08-07, #35)
+
+- `config::ITrustedFoldersStore` is the port for the durable Trusted Folders
+  and Workspaces list. `CControlPlatformTrustedFoldersStore` is its only
+  production implementation, and it is the only thing allowed to write that
+  list. The record is the profile-scoped `workbench.trust` owner's
+  `trustedFolders` key at `Machine` target, using the canonical profile ID —
+  the same shape as the layout memento, for the same reason: a machine-owned
+  decision must not travel with synchronized user settings.
+- `CTrustedFoldersCodec` owns the payload. It is bounded machine-owned JSON
+  (`kMaximumTrustedFolderEntries = 256`, `kMaximumTrustedFolderUriBytes =
+  2048`, `kMaximumTrustedFoldersJsonDepth = 8`), validated as UTF-8 before
+  parsing, and checked against
+  `platform::storage::kMaximumStorageMutationPayloadBytes` on both ends.
+  Two deliberate divergences from the sibling layout codec:
+  duplicate entries are **accepted** on decode, because a list that already
+  covers a resource twice is a redundancy and not a corruption, and the grant
+  path is what prevents duplicates from accumulating; and a `formatVersion`
+  that is present but not a finite non-negative integral number resolves
+  `UnsupportedSchema` rather than `CorruptPayload`, because a newer writer
+  choosing a different version encoding is a schema fact, and both statuses
+  preserve the payload untouched anyway.
+- Persistence discipline mirrors the layout memento store exactly: a double
+  read of the storage-cache coordinates brackets the `find`, the write is a
+  CAS on the captured revision, an ambiguous transport failure retries **at
+  most once with the identical operation ID**, and a `Conflict` is terminal —
+  never retried, never overwritten. An invalid stored payload is preserved for
+  diagnosis, marked with a sticky flag, and never replaced with defaults.
+- `CWorkbenchRuntime::GrantWorkspaceTrust` writes the durable bytes **first**
+  and only then re-runs `ResolveAndApplyWorkspaceTrust`. A runtime that cannot
+  commit refuses the grant rather than trusting for this session only: a
+  session-only grant would report trust the window cannot keep, and the next
+  launch would silently drop back to withheld trust with nothing recorded to
+  explain why. Trust is therefore still decided by exactly one code path — the
+  pure resolver — so a grant that does not actually cover the workspace cannot
+  fake it.
+- `BuildTrustGrantEntries` is pure and is shared by the prompt and the grant,
+  so the two can never disagree about what a choice means. `CurrentWorkspace`
+  on a `Workspace` writes exactly one entry, the `.code-workspace` file, with
+  `includesDescendants = false` — the resolver already treats a trusted
+  workspace file as covering every folder it lists, and descendant coverage
+  would silently trust whatever directory the file happens to sit in.
+  `CurrentWorkspace` on a `Folder` writes each root with descendants.
+  `ParentFolder` is offered only for a **single** folder root, matching
+  upstream: with several roots the label names one folder while the grant
+  would widen every root's parent at once, which is not the decision shown.
+- `config::WorkspaceTrustParentFolder` is path-only and performs no filesystem
+  lookup, so it cannot follow a link or resolve a relative segment. A parent
+  that would be the scheme root — a drive root, a UNC share root, a path that
+  is only a separator — returns nothing. "Trust the parent" must never
+  silently widen into a whole volume or host.
+- An existing entry that already covers the requested resource with at least
+  the same reach suppresses the append, so repeating a grant returns
+  `AlreadyTrusted` and writes nothing. Without that check the durable list
+  would grow by one entry every time the user confirms, since the codec
+  accepts duplicates.
+- The Workspace Trust **editor page** (native GDI, not upstream's rich HTML
+  editor input), `security.workspace.trust.startupPrompt`, and
+  `security.workspace.trust.untrustedFiles` all landed in #39, below.
+  `CWorkbenchRuntime::WorkspaceTrustUntrustedFiles` and the pure
+  `config::ResolveWorkspaceTrustUntrustedFiles` it calls decide what a loose
+  file opened into a trusted window should do, and `CEditWnd::RequestUntrustedFileLoad`
+  now calls that decision from the load path itself
+  (`CLoadAgent::OnCheckLoad`), gated on a `TaskDialogIndirect` prompt when the
+  policy resolves `Prompt`. `CWorkbenchRuntime::RecordUntrustedFilesAccepted`
+  persists an accepted decision in `WorkspaceTrustMemento::untrustedFilesAccepted`
+  for a Folder/Workspace window; an Empty window has no workspace identity to
+  key that durable record on, so its acceptance is remembered only in-session
+  (`m_untrustedFilesAcceptedInSession`) and is asked again on the next launch.
+  See [`../window/CLAUDE.md`](../window/CLAUDE.md)'s "Untrusted file load gate"
+  section for the load-path wiring and its divergence from upstream's narrower
+  `validateTrust` trigger.
+  (`$(shield) Restricted Mode` in the status bar and activation gating on
+  `capabilities.untrustedWorkspaces` landed in #36; `restrictedConfigurations`
+  and `extensions.supportUntrustedWorkspaces` landed in #37; the Restricted
+  Mode **banner** Part (`workbench.parts.banner`) and
+  `security.workspace.trust.banner` landed in #38, below.)
+
+### `workbench.trust.manage` divergence (updated 2026-08-07, #39)
+
+Upstream's `workbench.trust.manage` opens the Workspace Trust **editor page**,
+a full editor input with its own body copy, per-folder table, and settings
+links. `CEditWnd::ExecuteManageWorkspaceTrust` now opens a real native page for
+it: `CWorkspaceTrustEditorSurface`
+(`workbench/editor/CWorkspaceTrustEditorSurface.h`/`.cpp`) is native GDI
+painting and `WC_BUTTONW` children only — no WebView2, no HTML — because a
+browser engine remains a product-level non-goal. **The `TaskDialogIndirect`
+modal this section used to describe as the answer to this command did not
+disappear; it was repurposed.** It now lives at
+`CEditWnd::ShowWorkspaceTrustStartupPrompt` and answers a different upstream
+command entirely (`requestWorkspaceTrust`, gated by
+`security.workspace.trust.startupPrompt`, documented below). The two upstream
+concepts must never substitute for each other: `ExecuteManageWorkspaceTrust`
+never falls back to the modal, and the startup-prompt path never opens this
+page.
+
+What the page keeps identical to upstream: the command ID, the page title
+(`Workspace Trust`), the set of grantable choices and their exact scope
+semantics, the shield iconography, and that closing the page grants nothing.
+Each grant button is labelled with the canonical URI the grant would actually
+write, so consent names a resource rather than a category — the same
+command-link labelling the old modal used, carried over unchanged.
+
+Two divergences remain, both real and neither hidden:
+
+- **This is a composition-layer projection, not a real editor input.** Like
+  `CExtensionDetailSurface` and `CDiffSurface`
+  (see [`../workbench/editor/CLAUDE.md`](../workbench/editor/CLAUDE.md)), the
+  page has no `EditorInput`, no tab, and no document model.
+  `CEditWnd::ShowWorkspaceTrustPage` therefore refuses to show it while
+  `HasActiveEditorInput()` is true, and `ExecuteManageWorkspaceTrust` reports
+  `NotApplicable` rather than displacing an open document the user could no
+  longer reach — it never falls back to a modal in that case either. Upstream's
+  real editor input can sit in a tab beside an open document; this page cannot.
+- **The `config.` context-key gap is unchanged.** Upstream gates the command on
+  `config.security.workspace.trust.enabled`. This registry still has no
+  `config.` context-key namespace, so the `when` clause stays `workbenchReady`
+  and the palette entry stays listed where upstream would hide it. It cannot
+  grant trust the settings did not allow: with the feature disabled every
+  workspace already resolves `Trusted`, so the page reports that state and
+  offers no button.
+
+**This command is a workspace-level decision and must never be framed, titled,
+or triggered as a per-extension activation gate.**
+
+### `security.workspace.trust.startupPrompt` (2026-08-07, #39)
+
+Upstream's separate `requestWorkspaceTrust` startup prompt is implemented as
+`CEditWnd::ShowWorkspaceTrustStartupPrompt`, reusing the `TaskDialogIndirect`
+modal this file previously (and wrongly, as of #39) attributed to
+`workbench.trust.manage` above. It answers a different upstream command and a
+different setting than that entry point, and it must never be reached from it
+or substitute for it.
+
+- `config::EWorkspaceTrustStartupPrompt` (`WorkspaceTrustPromptPolicy.h`)
+  models the setting's three values, `always` / `once` / `never`, default
+  `never` — verified against upstream's `workspaceTrust` contribution.
+  `config::ResolveWorkspaceTrustStartupPrompt` is the pure decision function:
+  no I/O, no clock, no window. Its precedence mirrors upstream's
+  `showModalOnStart`: `security.workspace.trust.enabled = false` and an
+  already-`Trusted` window short-circuit first (there is nothing to ask),
+  then `never` skips unconditionally, then `once` consults the durable record
+  below and shows only when that record is absent or unreadable, and a window
+  with no grantable option (an empty window above all) is skipped even under
+  `always`, because a dialog whose every button is absent has nothing to offer.
+- The durable record is `config::WorkspaceTrustMemento`
+  (`IWorkspaceTrustMementoStore.h`), persisted by
+  `_main::ControlPlatformWorkspaceTrustMementoStore` and encoded by
+  `config::WorkspaceTrustMementoCodec`. It is deliberately **not** the Trusted
+  Folders list: that list is profile-scoped and records what the user
+  *granted*, so a granted folder is trusted in every window, while this record
+  is workspace-scoped and remembers only what the user was *asked*, so an
+  answer to one workspace says nothing about another. It holds exactly two
+  fields — `startupPromptShown` and `untrustedFilesAccepted` — both defaulting
+  to `false`, the direction that asks again. **It carries no banner-dismissal
+  field**; see the `security.workspace.trust.banner` section below for why
+  that distinction still matters.
+- **Record-then-act ordering is deliberate.** `ShowWorkspaceTrustStartupPrompt`
+  calls `m_workbenchRuntime->RecordWorkspaceTrustStartupPromptShown()`
+  immediately after `TaskDialogIndirect` returns and *before* interpreting
+  which button the user pressed. A dismissal spends `once` exactly as much as
+  a grant does: the prompt was put on screen, so the workspace has been
+  "asked" regardless of the answer, and a record that does not stick would make
+  `once` prompt again on every subsequent launch — the same fail-open direction
+  the policy chooses throughout (see `PostWorkspaceTrustStartupPromptOnce`
+  below, which leaves the prompt unshown rather than recording anything when
+  the message queue itself refuses the post).
+- The prompt is reached only from `MYWM_WORKSPACE_TRUST_STARTUP_PROMPT`
+  (`WM_APP+245`, `config/system_constants.h`), posted at most once per window
+  by `CEditWnd::PostWorkspaceTrustStartupPromptOnce`, called from the end of
+  `CommitStartupDrawTransaction()`. The prompt runs after the workbench is on
+  screen, not before, because its copy describes the specific window the user
+  is looking at; posting rather than calling synchronously also means a
+  message-queue failure leaves the prompt unshown with nothing recorded —
+  fail-open toward asking again, never toward silently skipping.
+
+### `security.workspace.trust.banner` divergence — no dismissal field yet (2026-08-07, #38; corrected #39)
+
+- **This product now has a durable per-workspace record, but it does not carry
+  a dismissal field — that is a narrower gap than this section used to claim.**
+  An earlier version of this section stated flatly that "this product has no
+  durable per-workspace dismissal store yet." That is now misleading:
+  `config::WorkspaceTrustMemento` (see `security.workspace.trust.startupPrompt`
+  immediately above) is a real durable per-workspace store that landed in #39.
+  But it holds only `startupPromptShown` and `untrustedFilesAccepted`; it has
+  no third field recording that the banner was dismissed. Upstream's
+  Restricted Mode banner (`workbench.parts.banner`) writes an `untilDismissed`
+  memento when the user closes it, so that workspace stays quiet on later
+  windows, and nothing in this record plays that role yet.
+- Because of that narrower gap, `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility`
+  (`CWorkbenchRuntime.cpp`) still treats a resolved `security.workspace.trust.banner`
+  value of `"untilDismissed"` exactly like `"always"`: fail-closed, not an
+  approximation. The banner is the only banner-side Restricted Mode signal (see
+  [`../window/CLAUDE.md`](../window/CLAUDE.md)'s status-bar-entry checkpoint for
+  the other one), so leaving it visible is safer than a runtime silently
+  pretending it remembered a dismissal it never persisted — a session-only
+  dismissal flag would make exactly that false claim the moment the process
+  restarted.
+- The same gap is why the banner draws no close/dismiss affordance:
+  `CWorkbenchBannerHost` only ever draws the actions its caller hands it (see
+  its own header comment), so `CEditWnd::RefreshRestrictedModeBannerContent`
+  withholds the `Dismiss` action kind entirely rather than wiring it to
+  something that cannot actually persist the user's choice.
+- Closing this gap means adding a third field to the existing
+  `config::WorkspaceTrustMemento` rather than standing up a new store: it
+  already shares scope, target, and lifetime with `startupPromptShown` and
+  `untrustedFilesAccepted` for the same reason those two share one document
+  instead of two — all three answer "what has this workspace already been
+  told or asked?", and splitting them across separate records would mean
+  independent compare-and-swap transactions that could disagree about which
+  workspace revision they belong to. This is separate follow-up work and out
+  of this checkpoint's scope. Once it lands, `"untilDismissed"` should read
+  that field instead of behaving like `"always"`, and the banner should gain a
+  real `Dismiss` action that writes it.
+
+## Restricted Configurations Checkpoint (2026-08-07, #37)
+
+- A restricted setting is one an extension named in
+  `capabilities.untrustedWorkspaces.restrictedConfigurations`. While the window
+  is not `Trusted`, that key's **Workspace- and Folder-scoped** contributions do
+  not apply. `CollectProvenanceLocked` still collects them and marks them
+  `ConfigurationProvenance::withheld`; `SelectEffectiveValueLocked` then returns
+  the last **non-withheld** entry instead of `provenance.back()`. Both
+  `EffectiveLocked` and `Inspect` go through that one helper, so the effective
+  value and the inspection can never disagree about which contribution won.
+- **Inspection truth is deliberately unchanged.** Upstream's `inspect()` still
+  reports `workspaceValue` for a restricted setting, because the Settings UI
+  needs it to explain *why* the value is not in effect. Dropping the withheld
+  entry from the provenance vector would look tidier and would destroy exactly
+  the information that explanation is made of.
+- `CConfigurationService::ApplyRestrictedConfigurations` is the single writer of
+  that policy and takes the key set, the trust flag, and an `evaluationTarget`
+  **together**, because a key list means nothing without a trust state and a
+  trust state withholds nothing without a key list. It stays off
+  `IConfigurationService`: `CWorkbenchRuntime` holds the concrete service, and
+  every extension-facing consumer must keep reading a trust-agnostic contract
+  and simply receive the already-withheld value.
+- `evaluationTarget` is validated with the same `IsContextValid` the read paths
+  use; an invalid target returns `InvalidScope` and commits nothing. It exists
+  because the restricted policy is service-wide while "which keys actually
+  moved" is only answerable for one concrete identity — an earlier draft
+  compared before/after against a default-constructed target, which
+  `IsSourceTargetValid` can never match, so the method structurally could never
+  notify. A method that looks like it has a change contract and cannot honour it
+  is worse than one that declares no contract at all.
+- `CWorkbenchRuntime::ApplyRestrictedConfigurationPolicy` is the only caller. It
+  supplies a **profile-only** target, matching
+  `CExtensionWorkbenchServiceBridge::BuildConfigurationSnapshot` and
+  `WriteGlobalConfiguration`: a Workspace-scope source is keyed by the
+  `.code-workspace` configuration URI and each Folder-scope source by
+  `(workspaceUri, folderUri)`, so a multi-root workspace has no single folder
+  URI the runtime could name without guessing which root a notification is
+  about. The consequence is narrow and must not be mistaken for weak
+  enforcement: withholding itself is evaluated against whatever target a real
+  `GetValue`/`ReadSnapshot`/`Inspect` caller supplies later and is entirely
+  independent of `evaluationTarget`, which only decides which
+  `ConfigurationChange`s this one call emits.
+- Both inputs re-enter the same path. `SetExtensionRestrictedConfigurations`
+  calls it when the key set moves; `ResolveAndApplyWorkspaceTrust` calls it
+  after committing a new trust value, so a grant or a downgrade re-evaluates the
+  already-published set without waiting for the next extension rescan. The
+  published set is guarded by its own mutex because `CExtensionService` writes
+  it from its worker thread while the runtime reads it from its own.
+- **`LanguageOverride` is deliberately left unwithheld, and this is a recorded
+  gap, not an oversight.** A language override can originate from a workspace's
+  `.vscode/settings.json`, but this service models *scope*, not physical
+  document identity — by the time the contribution reaches
+  `CollectProvenanceLocked`, which document produced it is already gone.
+  Guessing would either withhold a legitimately profile-owned override or honour
+  one that came from an untrusted workspace. Closing it requires carrying the
+  originating document identity on the source, not a heuristic here.
+- **`ConfigurationDescriptor` deliberately has no `restricted` field yet.**
+  Upstream expresses restricted-ness as a per-property flag on the configuration
+  registry. No built-in descriptor here is both Workspace/Folder-permitted and
+  security-sensitive, so the field would have zero non-test users; the runtime
+  policy set is the authority instead. Add the field when the first built-in
+  restricted key exists.
+- **Known limit, recorded rather than papered over:** this repository has no
+  extension-contributed `ConfigurationDescriptor` yet, so an extension can only
+  restrict a key the built-in registry already declares. The mechanism is real
+  and enforced; its reach grows when extension-contributed configuration lands.
+- `extensions.supportUntrustedWorkspaces` is registered `Scope::Profile` only —
+  the same Application-to-Profile divergence already recorded for `http.*`,
+  `update.*`, and `security.workspace.trust.*`. A workspace document must never
+  be able to grant its own extensions an untrusted-workspace exemption. It is
+  the first `Kind::Object` descriptor in the repository; its semantics belong to
+  [`../extension/CLAUDE.md`](../extension/CLAUDE.md).
+- `CExtensionManager.cpp` carries its own file-local copy of the canonical-key
+  predicate rather than including this directory's, so `extension/` stays
+  independent of `config/`. **The two copies must be kept in sync**: a key this
+  service would reject must not be accepted there and then silently dropped.

@@ -19,12 +19,32 @@
 
 #include "extension/openvsx/IOpenVsxRegistryClient.h"
 
+//! 拡張が信頼されていないワークスペースをどこまで支える宣言をしているか
+enum class EExtensionUntrustedWorkspaceSupport {
+	Supported,      //!< 制限モードでもそのまま動かしてよい
+	Limited,        //!< 動かしてよいが、一部の設定は差し止められる
+	NotSupported,   //!< 制限モードでは読み込んではならない
+};
+
 //! 導入済み拡張
 struct SInstalledExtension {
 	std::wstring			sUniqueId;		//!< "namespace.name"
 	std::wstring			sVersion;		//!< バージョン
 	std::wstring			sDisplayName;	//!< 表示名。package.json から読めなければ sUniqueId
 	std::filesystem::path	dir;			//!< 導入先フォルダー
+	//! 信頼されていないワークスペースへの対応。package.json から読めなければ NotSupported（fail closed）
+	EExtensionUntrustedWorkspaceSupport untrustedWorkspaceSupport = EExtensionUntrustedWorkspaceSupport::NotSupported;
+	/*!
+		@brief capabilities.untrustedWorkspaces.restrictedConfigurations の宣言
+
+		制限モードでも untrustedWorkspaceSupport が Limited のまま読み込んでよいが、
+		ここに挙げたキーはワークスペース・スコープの値を効かせてはならない、という
+		拡張自身の申告。package.json から読めなければ（宣言なし・型違い・不正 JSON の
+		いずれでも）空になる。空は「制限なし」を意味してしまうため、この一覧だけでは
+		Limited 拡張の安全性を語れない -- untrustedWorkspaceSupport 側の fail closed
+		（読めなければ NotSupported）と組み合わせて初めて意味を持つ。
+	*/
+	std::vector<std::string> restrictedConfigurations;
 };
 
 /*!
@@ -137,9 +157,29 @@ public:
 		SOpenVsxExtension& resolved,
 		std::wstring& errorMsg);
 
+	/*! @brief package.json 本文から untrustedWorkspaces の宣言を読む */
+	static EExtensionUntrustedWorkspaceSupport ParseUntrustedWorkspaceSupport(const std::string& sManifestJson);
+
+	//! 1 拡張が capabilities.untrustedWorkspaces.restrictedConfigurations に宣言できる項目数の上限。
+	//! ParseRestrictedConfigurations がこれを超えた分を切り捨てる境界であり、テストからも参照できるよう公開する。
+	static constexpr size_t kMaxRestrictedConfigurationEntries = 128;
+
+	/*!
+		@brief package.json 本文から capabilities.untrustedWorkspaces.restrictedConfigurations を読む
+
+		ParseUntrustedWorkspaceSupport と同じ入力（本文の文字列そのもの）を受け取る純粋関数。
+		宣言が無い・型が違う・JSON が壊れているなど、あらゆる読み取れない形は「制限なし」ではなく
+		空の一覧として fail closed する（＝より少ない制限を勝手に発明しない）。文字列でないメンバーは
+		そのメンバーだけを読み捨て、一覧全体は打ち切らない。
+	*/
+	static std::vector<std::string> ParseRestrictedConfigurations(const std::string& sManifestJson);
+
 private:
-	//! package.json から表示名を読む。読めなければ空
-	static std::wstring ReadDisplayName(const std::filesystem::path& manifestPath);
+	//! package.json をバイト境界（kMaxManifestBytes）内で読む。読めなければ空
+	static std::string ReadManifestBody(const std::filesystem::path& manifestPath);
+
+	//! package.json 本文から表示名を読む。読めなければ空
+	static std::wstring ReadDisplayNameFromBody(const std::string& sManifestJson);
 
 	std::filesystem::path	m_baseDir;	//!< extensions フォルダー
 };

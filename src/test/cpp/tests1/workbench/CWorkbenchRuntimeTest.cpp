@@ -418,6 +418,35 @@ public:
 	std::vector<std::string> lastSavedHiddenIds;
 };
 
+class FakeTrustedFoldersStore final : public config::ITrustedFoldersStore {
+public:
+	config::TrustedFoldersLoadResult Load() override
+	{
+		++loadCalls;
+		return loadResult;
+	}
+
+	config::TrustedFoldersSaveResult Save(const config::TrustedFoldersSnapshot& snapshot) override
+	{
+		++saveCalls;
+		lastSavedSnapshot = snapshot;
+		return saveResult;
+	}
+
+	// NotFound is the default because it is the normal, non-degraded starting
+	// state for a profile that has never trusted a folder: it makes the store
+	// ready without pre-seeding any entry.
+	config::TrustedFoldersLoadResult loadResult{
+		config::ETrustedFoldersLoadStatus::NotFound, std::nullopt, {}
+	};
+	config::TrustedFoldersSaveResult saveResult{
+		config::ETrustedFoldersSaveStatus::Persisted, {}
+	};
+	std::size_t loadCalls = 0;
+	std::size_t saveCalls = 0;
+	std::optional<config::TrustedFoldersSnapshot> lastSavedSnapshot;
+};
+
 struct RuntimeTaskSessionState final {
 	explicit RuntimeTaskSessionState(tasks::TaskExecutionSessionCallbacks value)
 		: callbacks(std::move(value))
@@ -476,17 +505,20 @@ struct RuntimeFixture final {
 		WorkbenchBootstrapContext bootstrap,
 		std::unique_ptr<FakeLayoutMementoStore> ownedLayoutStore = {},
 		std::shared_ptr<workbench::tasks::ITaskExecutionSessionFactory> taskFactory = {},
-		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {})
+		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {},
+		std::unique_ptr<FakeTrustedFoldersStore> ownedTrustedFoldersStore = {})
 	{
 		auto ownedFiles = std::make_unique<FakeFileService>();
 		files = ownedFiles.get();
 		layoutStore = ownedLayoutStore.get();
 		statusbarStore = ownedStatusbarStore.get();
+		trustedFoldersStore = ownedTrustedFoldersStore.get();
 		WorkbenchRuntimeDependencies dependencies;
 		dependencies.fileService = std::move(ownedFiles);
 		dependencies.layoutMementoStore = std::move(ownedLayoutStore);
 		dependencies.taskExecutionSessionFactory = std::move(taskFactory);
 		dependencies.statusbarVisibilityMementoStore = std::move(ownedStatusbarStore);
+		dependencies.trustedFoldersStore = std::move(ownedTrustedFoldersStore);
 		runtime = std::make_unique<CWorkbenchRuntime>(
 			std::move(bootstrap), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
 	}
@@ -494,6 +526,7 @@ struct RuntimeFixture final {
 	FakeFileService* files = nullptr;
 	FakeLayoutMementoStore* layoutStore = nullptr;
 	FakeStatusbarVisibilityMementoStore* statusbarStore = nullptr;
+	FakeTrustedFoldersStore* trustedFoldersStore = nullptr;
 	std::unique_ptr<CWorkbenchRuntime> runtime;
 };
 
@@ -1285,29 +1318,40 @@ TEST(CWorkbenchRuntime, ArtifactTopologyTransitionsClearDocumentsAndAdvanceSeman
 {
 	RuntimeFixture fixture(Bootstrap());
 	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
-	EXPECT_EQ(1U, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
+	// Startup resolves workspace trust and every topology change re-resolves it.
+	// Trust is context state, so those resolutions advance the semantic revision on
+	// their own. This test therefore pins the artifact-to-revision relationship and
+	// the direction of travel, never a literal revision count, and it passes no
+	// expectedRevision because a trust commit may legitimately land between reading
+	// a revision and using it.
+	const auto settled = [&fixture] {
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (std::chrono::steady_clock::now() < deadline) {
+			const auto revision = fixture.runtime->WorkspaceContext().Snapshot().revision;
+			if (fixture.runtime->WorkspaceArtifacts().Snapshot().generation == revision + 1U) return true;
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+		return false;
+	};
+	ASSERT_TRUE(settled());
+	const auto startedGeneration = fixture.runtime->WorkspaceArtifacts().Snapshot().generation;
+
 	auto folder = Parse(L"file:///C:/Artifacts");
 	const auto opened = fixture.runtime->WorkspaceContext().SetFolder({
-		.operation = { .operationId = "test.artifacts.open", .expectedRevision = 0 },
+		.operation = { .operationId = "test.artifacts.open" },
 		.folderUri = folder, .displayName = L"Artifacts",
 	});
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, opened.outcome);
-	const auto folderDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-	while (fixture.runtime->WorkspaceArtifacts().Snapshot().generation != opened.revision + 1U
-		&& std::chrono::steady_clock::now() < folderDeadline) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
-	EXPECT_EQ(opened.revision + 1U, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
+	ASSERT_TRUE(settled());
+	const auto openedGeneration = fixture.runtime->WorkspaceArtifacts().Snapshot().generation;
+	EXPECT_LT(startedGeneration, openedGeneration);
+
 	const auto emptied = fixture.runtime->WorkspaceContext().SetEmpty({
-		.operationId = "test.artifacts.empty", .expectedRevision = opened.revision,
+		.operationId = "test.artifacts.empty",
 	});
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, emptied.outcome);
-	const auto emptyDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-	while (fixture.runtime->WorkspaceArtifacts().Snapshot().generation != emptied.revision + 1U
-		&& std::chrono::steady_clock::now() < emptyDeadline) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-	}
-	EXPECT_EQ(emptied.revision + 1U, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
+	ASSERT_TRUE(settled());
+	EXPECT_LT(openedGeneration, fixture.runtime->WorkspaceArtifacts().Snapshot().generation);
 	EXPECT_FALSE(fixture.runtime->WorkspaceArtifacts().Tasks(folder).document.has_value());
 }
 
@@ -1702,4 +1746,406 @@ TEST(CWorkbenchRuntime, StartAndStopAreIdempotentTerminalOperations)
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	EXPECT_EQ(EWorkbenchRuntimeState::Stopped, fixture.runtime->Snapshot().state);
+}
+
+TEST(CWorkbenchRuntime, GrantWorkspaceTrustWithoutAStoreRefusesAsPersistenceUnavailable)
+{
+	// No trustedFoldersStore is injected at all, so the runtime never had a
+	// durable list to become ready against.
+	RuntimeFixture fixture(Bootstrap());
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable, result.status);
+	EXPECT_FALSE(result.Succeeded());
+}
+
+TEST(CWorkbenchRuntime, GrantWorkspaceTrustAfterAnInvalidStoredListRefusesAsPersistenceUnavailable)
+{
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->loadResult = {
+		config::ETrustedFoldersLoadStatus::InvalidStoredList, std::nullopt, L"corrupt trust list"
+	};
+	RuntimeFixture fixture(Bootstrap(Parse(L"file:///C:/Project")), {}, {}, {}, std::move(store));
+
+	// RestoreTrustedFolders never fails Start outright -- an invalid stored list
+	// is preserved for diagnosis and Start still reaches a usable state, just
+	// with persistence left not-ready.
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable, result.status);
+	EXPECT_EQ(0U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, GrantingCurrentWorkspaceOnAFolderPersistsTheFolderWithDescendantsAndTrustsTheWindow)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, result.status);
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+	ASSERT_TRUE(fixture.trustedFoldersStore->lastSavedSnapshot.has_value());
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->lastSavedSnapshot->entries.size());
+	const auto& entry = fixture.trustedFoldersStore->lastSavedSnapshot->entries.front();
+	EXPECT_TRUE(UriIdentityService::IsEqual(folder, entry.uri));
+	EXPECT_TRUE(entry.includesDescendants);
+	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, GrantingTheSameScopeTwiceIsIdempotentAndDoesNotSaveAgain)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted,
+		fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace).status);
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+
+	const auto second = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::AlreadyTrusted, second.status);
+	EXPECT_TRUE(second.Succeeded());
+	EXPECT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, GrantingCurrentWorkspaceOnAWorkspaceFileTrustsOnlyTheWorkspaceFileNotEachRoot)
+{
+	// A multi-root .code-workspace file is itself the trustable item: trusting
+	// it must write exactly one entry, never one entry per root.
+	auto workspaceConfig = Parse(L"file:///C:/Project/multi.code-workspace");
+	std::vector<config::WorkspaceFolderDescriptor> folders {
+		{ Parse(L"file:///C:/Project/one"), L"one" },
+		{ Parse(L"file:///C:/Project/two"), L"two" },
+	};
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(WorkspaceBootstrap(workspaceConfig, folders), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, result.status);
+	ASSERT_TRUE(fixture.trustedFoldersStore->lastSavedSnapshot.has_value());
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->lastSavedSnapshot->entries.size());
+	const auto& entry = fixture.trustedFoldersStore->lastSavedSnapshot->entries.front();
+	EXPECT_TRUE(UriIdentityService::IsEqual(workspaceConfig, entry.uri));
+	EXPECT_FALSE(entry.includesDescendants);
+}
+
+TEST(CWorkbenchRuntime, GrantingParentFolderOnASingleRootFolderPersistsTheParentWithDescendants)
+{
+	auto folder = Parse(L"file:///C:/Project/app");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::ParentFolder);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, result.status);
+	ASSERT_TRUE(fixture.trustedFoldersStore->lastSavedSnapshot.has_value());
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->lastSavedSnapshot->entries.size());
+	const auto& entry = fixture.trustedFoldersStore->lastSavedSnapshot->entries.front();
+	const auto expectedParent = config::WorkspaceTrustParentFolder(folder);
+	ASSERT_TRUE(expectedParent.has_value());
+	EXPECT_TRUE(UriIdentityService::IsEqual(*expectedParent, entry.uri));
+	EXPECT_TRUE(entry.includesDescendants);
+}
+
+TEST(CWorkbenchRuntime, GrantingParentFolderOnAMultiRootWorkspaceIsNotApplicable)
+{
+	// ParentFolder is only offered for a single Folder-kind root: with several
+	// roots, "trust the parent" would silently widen every root's parent at
+	// once, which upstream never lets happen.
+	auto workspaceConfig = Parse(L"file:///C:/Project/multi.code-workspace");
+	std::vector<config::WorkspaceFolderDescriptor> folders {
+		{ Parse(L"file:///C:/Project/one"), L"one" },
+		{ Parse(L"file:///C:/Project/two"), L"two" },
+	};
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(WorkspaceBootstrap(workspaceConfig, folders), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::ParentFolder);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::NotApplicable, result.status);
+	EXPECT_EQ(0U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, GrantingAnyScopeOnAnEmptyWindowIsNotApplicable)
+{
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::NotApplicable,
+		fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace).status);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::NotApplicable,
+		fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::ParentFolder).status);
+	EXPECT_EQ(0U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, ConflictingSaveDuringGrantDoesNotUpdateTheInMemoryListOrTrustTheWindow)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::Conflict, L"remote list won" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Conflict, result.status);
+	EXPECT_FALSE(result.Succeeded());
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+
+	// The in-memory list was never advanced past the conflicting save, so a
+	// later grant on the same scope must still see the folder as ungranted --
+	// not report AlreadyTrusted for a grant that was actually refused.
+	fixture.trustedFoldersStore->saveResult = { config::ETrustedFoldersSaveStatus::Persisted, {} };
+	const auto retried = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, retried.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, UnavailableSaveDuringGrantRefusesAsPersistenceUnavailableAndLeavesTheWindowUntrusted)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::Unavailable, L"store unavailable" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable, result.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, FailedSaveDuringGrantReportsFailedAndLeavesTheWindowUntrusted)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::Failed, L"disk error" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Failed, result.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, RetryExhaustedSaveDuringGrantReportsFailedAndLeavesTheWindowUntrusted)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::RetryExhausted, L"retries exhausted" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Failed, result.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, WorkspaceTrustPromptOnASingleRootFolderOffersBothScopesWithCanonicalUris)
+{
+	auto folder = Parse(L"file:///C:/Project/app");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto model = fixture.runtime->WorkspaceTrustPrompt();
+	EXPECT_TRUE(model.persistenceReady);
+	ASSERT_EQ(2U, model.options.size());
+
+	// WorkspaceTrustPrompt walks { CurrentWorkspace, ParentFolder } in that
+	// fixed order, so the option indices below are not incidental.
+	const auto& current = model.options[0];
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace, current.scope);
+	EXPECT_EQ(1U, current.resourceCount);
+	// The expected display text is derived from the committed snapshot's
+	// canonicalized folder URI, not the raw Parse()'d input, so a canonicalizer
+	// difference between the two can never produce a false failure here.
+	const auto canonicalFolder = fixture.runtime->WorkspaceContext().Snapshot().folders.front().uri;
+	EXPECT_EQ(canonicalFolder.ToString(), current.displayUri);
+
+	const auto& parent = model.options[1];
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantScope::ParentFolder, parent.scope);
+	EXPECT_EQ(1U, parent.resourceCount);
+	const auto expectedParent = config::WorkspaceTrustParentFolder(canonicalFolder);
+	ASSERT_TRUE(expectedParent.has_value());
+	EXPECT_EQ(expectedParent->ToString(), parent.displayUri);
+}
+
+TEST(CWorkbenchRuntime, WorkspaceTrustPromptWithoutAStoreReportsPersistenceNotReady)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	RuntimeFixture fixture(Bootstrap(folder));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto model = fixture.runtime->WorkspaceTrustPrompt();
+	EXPECT_FALSE(model.persistenceReady);
+}
+
+TEST(CWorkbenchRuntime, WorkspaceTrustPromptOnAnEmptyWindowOffersNoOptions)
+{
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto model = fixture.runtime->WorkspaceTrustPrompt();
+	EXPECT_TRUE(model.options.empty());
+}
+
+TEST(CWorkbenchRuntime, ExtensionRestrictedConfigurationsWithholdAWorkspaceValueUntilTrustIsGrantedWithoutARepublish)
+{
+	// workbench.editor.showTabs is Profile/Workspace/Folder scoped
+	// (BuiltinConfigurationDescriptors.cpp), which is exactly the shape a
+	// restricted key needs: a Folder-scope contribution Workspace Trust can
+	// withhold, with a Default fallback ("multiple") distinct from the
+	// folder value ("none") so withholding is observable rather than assumed.
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	fixture.files->Set(Parse(L"file:///C:/Project/.vscode/settings.json"),
+		Bytes(R"json({ "workbench.editor.showTabs": "none" })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+	ConfigurationTarget target = ProfileTarget(fixture.runtime->Bootstrap());
+	target.workspaceUri = folder;
+	target.folderUri = folder;
+	// Before anything is published as restricted, the folder value reads
+	// through untouched: Workspace Trust only withholds keys this runtime was
+	// actually told are restricted.
+	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
+
+	const auto published = fixture.runtime->SetExtensionRestrictedConfigurations({ "workbench.editor.showTabs" });
+	EXPECT_EQ(EConfigurationOutcome::Applied, published);
+	// Untrusted, so the Folder-scope "none" is withheld and a real reader
+	// observes the descriptor default ("multiple") instead.
+	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
+
+	const auto granted = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, granted.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+	// No second SetExtensionRestrictedConfigurations call: GrantWorkspaceTrust's
+	// own ResolveAndApplyWorkspaceTrust -> ApplyRestrictedConfigurationPolicy
+	// call is what stops withholding this key, exactly as
+	// CWorkbenchRuntime.cpp's ResolveAndApplyWorkspaceTrust comment documents.
+	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
+}
+
+TEST(CWorkbenchRuntime, SetExtensionRestrictedConfigurationsWithAnEmptySetClearsAPreviouslyPublishedRestriction)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	RuntimeFixture fixture(Bootstrap(folder));
+	fixture.files->Set(Parse(L"file:///C:/Project/.vscode/settings.json"),
+		Bytes(R"json({ "workbench.editor.showTabs": "none" })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+	ConfigurationTarget target = ProfileTarget(fixture.runtime->Bootstrap());
+	target.workspaceUri = folder;
+	target.folderUri = folder;
+
+	ASSERT_EQ(EConfigurationOutcome::Applied,
+		fixture.runtime->SetExtensionRestrictedConfigurations({ "workbench.editor.showTabs" }));
+	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
+
+	// Publishing an empty set -- the shape a scan with no restricted
+	// declarations left behind publishes -- must clear the previous
+	// restriction rather than being treated as a no-op that leaves a stale
+	// key withheld forever.
+	const auto cleared = fixture.runtime->SetExtensionRestrictedConfigurations({});
+	EXPECT_EQ(EConfigurationOutcome::Applied, cleared);
+	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
+}
+
+TEST(CWorkbenchRuntime, RestrictedModeBannerFollowsBannerPolicyWhileWorkspaceTrustIsWithheld)
+{
+	// security.workspace.trust.banner is Profile-scoped
+	// (BuiltinConfigurationDescriptors.cpp), so seeding it in the profile
+	// settings document and reloading through Start() is the same path a real
+	// Settings edit takes.
+	struct Case {
+		const char* banner;
+		bool expectedVisible;
+	};
+	const Case cases[] = {
+		// "always" is the plain visible-while-restricted case.
+		{ "always", true },
+		// "untilDismissed" is this runtime's typed-unsupported boundary: no durable
+		// per-workspace dismissal store exists yet, so it behaves exactly like
+		// "always" rather than faking a session-only dismissal.
+		{ "untilDismissed", true },
+		{ "never", false },
+	};
+
+	for (const auto& testCase : cases) {
+		auto folder = Parse(L"file:///C:/Project");
+		RuntimeFixture fixture(Bootstrap(folder));
+		fixture.files->Set(fixture.runtime->Bootstrap().UserDataProfile().Resources().Settings(),
+			Bytes(std::string(R"json({ "security.workspace.trust.banner": ")json") + testCase.banner + "\" }"));
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+		// No trustedFoldersStore was injected, so this folder can never be
+		// granted trust and stays Unknown -- i.e. restricted -- for the whole test.
+		ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+		EXPECT_EQ(testCase.expectedVisible,
+			Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible)
+			<< "banner=" << testCase.banner;
+	}
+}
+
+TEST(CWorkbenchRuntime, RestrictedModeBannerStaysHiddenUnderEveryBannerPolicyOnceTrusted)
+{
+	const char* const banners[] = { "always", "untilDismissed", "never" };
+	for (const auto* banner : banners) {
+		auto folder = Parse(L"file:///C:/Project");
+		auto store = std::make_unique<FakeTrustedFoldersStore>();
+		RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+		fixture.files->Set(fixture.runtime->Bootstrap().UserDataProfile().Resources().Settings(),
+			Bytes(std::string(R"json({ "security.workspace.trust.banner": ")json") + banner + "\" }"));
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+		ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+		// GrantWorkspaceTrust's own ResolveAndApplyWorkspaceTrust call is the only
+		// thing that recomputes banner visibility here -- no second, explicit
+		// banner-visibility call exists on IWorkbenchRuntime for a caller to invoke.
+		const auto granted = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+		ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, granted.status);
+		ASSERT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+		EXPECT_FALSE(Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible)
+			<< "banner=" << banner;
+	}
+}
+
+TEST(CWorkbenchRuntime, RestrictedModeBannerPolicyChangeTakesEffectThroughAProfileSettingsReloadWithoutRestart)
+{
+	// Proves the "editing the setting takes effect without a restart" call site:
+	// an advisory profile-settings watch reload, the same path
+	// AdvisoryProfileWatchResnapshotsThroughTheExistingFileSourceController above
+	// exercises for an ordinary setting.
+	auto folder = Parse(L"file:///C:/Project");
+	RuntimeFixture fixture(Bootstrap(folder));
+	const auto settings = fixture.runtime->Bootstrap().UserDataProfile().Resources().Settings();
+	fixture.files->Set(settings, Bytes(R"json({ "security.workspace.trust.banner": "always" })json"));
+	fixture.files->EnableWatches();
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+	EXPECT_TRUE(Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible);
+
+	fixture.files->Set(settings, Bytes(R"json({ "security.workspace.trust.banner": "never" })json"));
+	fixture.files->EmitFirstWatchEvent({ .type = EFileWatchEventType::Changed, .uri = settings });
+	ASSERT_TRUE(fixture.files->WaitUntilReadCount(2));
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible
+		&& std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	EXPECT_FALSE(Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible);
+
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 }

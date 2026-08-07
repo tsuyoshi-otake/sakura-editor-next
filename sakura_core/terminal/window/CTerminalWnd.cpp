@@ -131,6 +131,14 @@ TerminalKeyEvent KeyEventFromMessage( const MSG& message ) noexcept
 	return event;
 }
 
+bool MapsToCharacter( std::uint32_t virtualKey ) noexcept
+{
+	// Only keys that carry a character in the current layout qualify. A bare modifier,
+	// VK_APPS, and the VK_PROCESSKEY an IME sends while composing all map to zero here
+	// and keep their existing routing.
+	return ::MapVirtualKeyW(static_cast<UINT>(virtualKey), MAPVK_VK_TO_CHAR) != 0;
+}
+
 std::string EncodeAltPrintable( const MSG& message )
 {
 	BYTE keyboardState[256]{};
@@ -1463,6 +1471,18 @@ bool CTerminalWnd::PreTranslateMessage( MSG& message )
 			m_impl->Send(printable);
 			return true;
 		}
+	}
+	// Finish the text-input path inside this hook. The frame consults the legacy
+	// accelerator table after this, and the default key assignments bind bare Space to
+	// F_INDENT_SPACE and Shift+Space to F_UNINDENT_SPACE. Once TranslateAccelerator
+	// consumes the WM_KEYDOWN, TranslateMessage never runs and the WM_CHAR this
+	// terminal forwards to the shell is never produced. VS Code likewise sends text
+	// input to the shell except for bindings explicitly excluded through
+	// terminal.integrated.commandsToSkipShell.
+	if( TerminalKeyNeedsTextDelivery(event, MapsToCharacter(event.virtualKey)) ) {
+		::TranslateMessage(&message);
+		::DispatchMessageW(&message);
+		return true;
 	}
 	return false;
 }

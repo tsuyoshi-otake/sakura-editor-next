@@ -684,6 +684,27 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			AdjustLightness(palette.buttonBackground,
 				ModeForKind(kind) == ThemeMode::Dark ? 0.2 : -0.2),
 			{ L"button.hoverBackground" });
+		// `statusBarItem.prominentBackground` is the one status-bar item that paints its
+		// own fill instead of relying on the bar's single flat background (see
+		// `CMainStatusBar`'s Restricted Mode entry), so it composites over the resolved
+		// `accent` (the status bar's own background) rather than over `canvas` like the
+		// translucent tokens above. Upstream registers a single non-per-theme default,
+		// `Color.black.transparent(0.5)`, for dark/light/hcDark/hcLight alike.
+		palette.statusBarProminentBackground = firstOverWithFallback(palette.accent,
+			Composite({ 0, 0, 0, 0x80 }, palette.accent), { L"statusBarItem.prominentBackground" });
+		// `banner.background`/`banner.foreground`/`banner.iconForeground` are each registered
+		// upstream as a bare alias of another color (`list.activeSelectionBackground`,
+		// `list.activeSelectionForeground`, `editorInfo.foreground` respectively), not an
+		// independent per-kind object. A theme that sets the aliased key but not the banner
+		// key directly still reaches VS Code's own default resolution, so the alias key is
+		// offered as a second fallback source before the compiled literal, the same shape
+		// `accent`'s multi-candidate chain already uses above.
+		palette.bannerBackground = first(palette.bannerBackground,
+			{ L"banner.background", L"list.activeSelectionBackground" });
+		palette.bannerForeground = first(palette.bannerForeground,
+			{ L"banner.foreground", L"list.activeSelectionForeground" });
+		palette.bannerIconForeground = first(palette.bannerIconForeground,
+			{ L"banner.iconForeground", L"editorInfo.foreground" });
 	}
 	catch (...) {
 		// A malformed/oversized map cannot make the native workbench lose its

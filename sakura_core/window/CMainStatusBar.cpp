@@ -16,6 +16,7 @@
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CExtensionIconFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/LabelRunPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
 
 #include "charset/CCodeFactory.h"
@@ -291,6 +292,13 @@ void CMainStatusBar::SetNotificationState(
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
+void CMainStatusBar::SetWorkspaceTrustState(config::EWorkspaceTrustState state) noexcept
+{
+	if (m_workspaceTrustState == state) return;
+	m_workspaceTrustState = state;
+	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
+}
+
 bool CMainStatusBar::IsStatusbarEntryVisible(std::string_view id, bool providerVisible) const noexcept
 {
 	if (!providerVisible || !workbench::statusbar::StatusbarViewModel::IsValidId(id)) return false;
@@ -326,31 +334,19 @@ void CMainStatusBar::SetExtensionIconFonts(
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
-HFONT CMainStatusBar::AcquireIconFont(const std::wstring& faceName, int height) const noexcept
+HFONT CMainStatusBar::AcquireIconFont(std::wstring_view faceName, int height) const noexcept
 {
-	if (faceName.empty() || height <= 0) return nullptr;
-	// LOGFONTW::lfFaceName は LF_FACESIZE 文字（終端含む）まで。溢れる書体名は
-	// 黙って切り詰めず、描かないほうを選ぶ（別書体で代替されるより誤解が少ない）。
-	if (faceName.size() >= LF_FACESIZE) return nullptr;
-
 	for (const auto& cached : m_iconFontCache) {
 		if (cached.height == height && cached.faceName == faceName) return cached.font;
 	}
 
-	LOGFONTW logFont{};
-	logFont.lfHeight = -height;	// 負値は em 高（文字高）指定
-	logFont.lfWeight = FW_NORMAL;
-	logFont.lfCharSet = DEFAULT_CHARSET;
-	logFont.lfOutPrecision = OUT_TT_PRECIS;
-	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
-	logFont.lfQuality = CLEARTYPE_QUALITY;
-	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
-	::wcsncpy_s(logFont.lfFaceName, faceName.c_str(), _TRUNCATE);
-
-	const HFONT font = ::CreateFontIndirectW(&logFont);
+	// `workbench/icons/LabelRunPainter.h` が唯一の LOGFONTW 組み立て規則。ここで
+	// 別の複製を持つと、ホバーと違う書体でグリフが描かれかねない。空の書体名・
+	// 高さ 0 以下・LF_FACESIZE を超える書体名はそちら側で弾かれる（fail-closed）。
+	const HFONT font = workbench::icons::CreateLabelRunGlyphFont(faceName, height);
 	if (font == nullptr) return nullptr;
 	try {
-		m_iconFontCache.push_back({ faceName, height, font });
+		m_iconFontCache.push_back({ std::wstring(faceName), height, font });
 	}
 	catch (const std::bad_alloc&) {
 		::DeleteObject(font);
@@ -526,75 +522,63 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const COLORREF iconColor = m_palette.highlightText.ToColorRef();
 
 	// 実 VS Code は StatusBarItem.text も SourceControl.statusBarCommands の
-	// Command.title も同じ renderLabelWithIcons で描く。ここでも両者は同じ 2 つの
-	// ラムダを通す。SCM だけ専用の分岐を持つと、同じ `$(name)` が場所によって
-	// 別の絵になり得る。
+	// Command.title も同じ renderLabelWithIcons で描く。
+	// 測る側も描く側も `workbench/icons/LabelRunPainter.h` が唯一の規則。ここに 3 つ目
+	// の写しを置くと、同じ `$(name)` がステータスバーと SCM ビューと banner で別の絵・
+	// 別の幅になり得る。`itemInset` の扱いだけはこの呼び出し側の都合なので、内側余白を
+	// 差し引いた矩形を渡す（矩形の解釈を 2 通りにしない）。
 	const auto measureLabelRuns = [&](const std::vector<workbench::icons::SLabelRun>& runs, int iconSide) {
-		int contentWidth = 0;
-		for (const auto& run : runs) {
-			if (run.icon) {
-				contentWidth += iconSide;
-				continue;
-			}
-			SIZE extent{};
-			if (::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent)) {
-				contentWidth += extent.cx;
-			}
-		}
-		return contentWidth;
+		return workbench::icons::MeasureLabelRuns(target, runs, iconSide);
+	};
+	// `release` は空。ここで返る `HFONT` は `m_iconFontCache` の所有物で、書体レジストリ
+	// 差し替え時にキャッシュ側がまとめて解放する（window/CLAUDE.md の解放契約）。
+	// 描画のたびに破棄すると、次の再描画がぶら下がったハンドルを選択することになる。
+	const workbench::icons::SLabelRunFontProvider glyphFonts{
+		.acquire = [this](std::wstring_view faceName, int height) { return AcquireIconFont(faceName, height); },
+		.release = {},
 	};
 	const auto drawLabelRuns = [&](const std::vector<workbench::icons::SLabelRun>& runs,
 		const RECT& itemRect, int iconSide) {
-		const int boxHeight = std::max<int>(0, itemRect.bottom - itemRect.top);
-		const LONG contentRight = std::max<LONG>(itemRect.left, itemRect.right - itemInset);
-		LONG cursorX = std::min<LONG>(contentRight, itemRect.left + itemInset);
-		for (const auto& run : runs) {
-			if (cursorX >= contentRight) break;
-			if (run.icon) {
-				const int side = std::min<int>(iconSide, static_cast<int>(contentRight - cursorX));
-				if (side <= 0) break;
-				const workbench::icons::IconRect box{
-					static_cast<int>(cursorX),
-					itemRect.top + (boxHeight - side) / 2,
-					static_cast<int>(cursorX) + side,
-					itemRect.top + (boxHeight - side) / 2 + side,
-				};
-				if (run.resolved.font) {
-					// アイコンフォント（寄与アイコンも同梱 codicon.ttf も）は em ボックス
-					// いっぱいにグリフを置く前提で作られている。負の lfHeight は文字高
-					// （em 高）指定なので、アイコンの正方形と同じ高さを渡してから矩形の
-					// 中央へ寄せる。
-					const HFONT glyphFont = AcquireIconFont(
-						run.resolved.fontIcon.faceName, std::max(1, box.Height()));
-					if (glyphFont != nullptr && !run.resolved.fontIcon.glyph.empty()) {
-						const HFONT previousFont = static_cast<HFONT>(::SelectObject(target, glyphFont));
-						RECT glyphRect{ box.left, box.top, box.right, box.bottom };
-						::DrawTextW(target, run.resolved.fontIcon.glyph.c_str(),
-							static_cast<int>(run.resolved.fontIcon.glyph.size()), &glyphRect,
-							DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
-						::SelectObject(target, previousFont);
-					}
-				} else {
-					workbench::icons::codicons::Draw(target, box, run.resolved.builtin, iconColor);
-				}
-				cursorX += side;
-				continue;
-			}
-			if (run.text.empty()) continue;
-			SIZE extent{};
-			(void)::GetTextExtentPoint32W(target, run.text.c_str(), static_cast<int>(run.text.size()), &extent);
-			RECT textRect{ cursorX, itemRect.top, contentRight, itemRect.bottom };
-			::DrawTextW(target, run.text.c_str(), static_cast<int>(run.text.size()), &textRect,
-				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-			cursorX = std::min<LONG>(contentRight, cursorX + extent.cx);
-		}
+		const RECT content{
+			std::min<LONG>(std::max<LONG>(itemRect.left, itemRect.right - itemInset), itemRect.left + itemInset),
+			itemRect.top,
+			std::max<LONG>(itemRect.left, itemRect.right - itemInset),
+			itemRect.bottom,
+		};
+		workbench::icons::DrawLabelRuns(target, runs, content, iconSide, iconColor, glyphFonts);
 	};
+
+	// VS Code の `status.workspaceTrust`（far-left の `$(shield) Restricted Mode`）
+	// は SCM ブロックよりさらに左、ワークスペースが信頼されていない間だけ現れる。
+	// `Unknown` も `Untrusted` も「制限モード」を意味するので、`Trusted` の否定で
+	// 判定する。ステータスバー全体は 1 枚塗り（上の FillSolidRect）だけで済むが、
+	// この項目だけは VS Code の `statusBarItem.prominentBackground` を自分の矩形に
+	// 上塗りしてから描く、唯一の例外。
+	int workspaceTrustWidth = 0;
+	if (IsStatusbarEntryVisible("status.workspaceTrust")
+		&& m_workspaceTrustState != config::EWorkspaceTrustState::Trusted) {
+		const int trustIconSide = InlineStatusIconSide(height, dpi);
+		const auto runs = workbench::icons::ParseLabelWithIcons(
+			L"$(shield) Restricted Mode", m_extensionIconFonts,
+			workbench::icons::CCodiconFont::Instance().FaceName());
+		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+			measureLabelRuns(runs, trustIconSide), dpi);
+		const int right = std::min(width, itemWidth);
+		if (right > 0) {
+			const RECT itemRect{ 0, 0, right, height };
+			FillSolidRect(target, itemRect, m_palette.statusBarProminentBackground.ToColorRef());
+			drawLabelRuns(runs, itemRect, trustIconSide);
+			m_statusbarHitTargets.push_back({ "status.workspaceTrust", itemRect, "workbench.trust.manage" });
+			workspaceTrustWidth = right;
+		}
+	}
 
 	// 実 VS Code のステータスバー左端は SCM プロバイダーが公開した
 	// statusBarCommands の並びそのもの。git なら `$(git-branch) main` と
 	// `$(sync) 0↓ 1↑` の 2 項目で、それぞれ別のコマンドを実行する。1 本の
-	// テキストに畳むと、押した位置とコマンドの対応が失われる。
-	int scmWidth = 0;
+	// テキストに畳むと、押した位置とコマンドの対応が失われる。Restricted Mode
+	// 項目が描かれていれば、その幅ぶん右へずれた位置から始まる。
+	int scmWidth = workspaceTrustWidth;
 	if (IsStatusbarEntryVisible("status.scm")) {
 		const int scmIconSide = InlineStatusIconSide(height, dpi);
 		for (const auto& command : m_scmCommands) {
@@ -736,7 +720,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 			m_notificationUnreadCount == 0 ? L"bell" : L"bell-dot");
 		const auto& codiconFont = workbench::icons::CCodiconFont::Instance();
 		const HFONT glyphFont = codiconFont.IsAvailable()
-			? AcquireIconFont(std::wstring(codiconFont.FaceName()), std::max(1, side)) : nullptr;
+			? AcquireIconFont(codiconFont.FaceName(), std::max(1, side)) : nullptr;
 		if (glyph && glyphFont != nullptr) {
 			const HFONT previousFont = static_cast<HFONT>(::SelectObject(target, glyphFont));
 			wchar_t text[2]{ *glyph, L'\0' };

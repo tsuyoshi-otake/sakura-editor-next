@@ -89,7 +89,7 @@ std::wstring BoundedExtensionHostLogMessage(const std::wstring_view message)
 {
 	if (message.size() <= kMaximumExtensionHostLogMessageCodeUnits) return std::wstring(message);
 	std::wstring bounded(message.substr(0, kMaximumExtensionHostLogMessageCodeUnits));
-	bounded += L"…[truncated]";
+	bounded += L"...[truncated]";
 	return bounded;
 }
 
@@ -197,6 +197,37 @@ config::WorkspaceContextSnapshot CExtensionWorkbenchServiceBridge::WorkspaceCont
 {
 	if (!m_workbenchRuntime) return {};
 	return m_workbenchRuntime->WorkspaceContext().Snapshot();
+}
+
+config::EConfigurationOutcome CExtensionWorkbenchServiceBridge::PublishExtensionRestrictedConfigurations(
+	std::vector<std::string> keys) const
+{
+	if (!m_workbenchRuntime) return config::EConfigurationOutcome::Unsupported;
+	return m_workbenchRuntime->SetExtensionRestrictedConfigurations(std::move(keys));
+}
+
+std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>>
+CExtensionWorkbenchServiceBridge::ExtensionUntrustedWorkspaceOverrides() const
+{
+	if (!m_workbenchRuntime) return {};
+
+	// Same target identity as BuildConfigurationSnapshot/WriteGlobalConfiguration:
+	// only the selected profile is set, because extensions.supportUntrustedWorkspaces
+	// is a user override and is never accepted from a workspace or folder document.
+	const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+	config::ConfigurationTarget target;
+	target.profileId = profile.SelectedProfileId();
+
+	const auto result = m_workbenchRuntime->Configuration().GetValue(
+		"extensions.supportUntrustedWorkspaces", target);
+	if (result.outcome != config::EConfigurationOutcome::Applied || !result.value) {
+		// A rejected or absent read falls back to "no overrides" rather than
+		// guessing: the caller then uses each extension's own manifest
+		// declaration unchanged, which can only narrow or leave support as
+		// declared -- never widen it beyond what a failed read could justify.
+		return {};
+	}
+	return ParseExtensionUntrustedWorkspaceOverrides(*result.value);
 }
 
 bool CExtensionWorkbenchServiceBridge::PrepareOwner(

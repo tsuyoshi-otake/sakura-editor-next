@@ -386,6 +386,33 @@ WorkbenchCommandDescriptor MakeToggleStatusbarDescriptor()
 	};
 }
 
+/*!
+	@brief `workbench.trust.manage`, upstream's Workspace Trust entry point.
+
+	Upstream's precondition is `IsWorkspaceTrustEnabledContext &&
+	config.security.workspace.trust.enabled`. This registry has no `config.`
+	context-key namespace, so the clause is `workbenchReady` and the runtime
+	decides instead: with the feature disabled every workspace already resolves
+	Trusted, so the surface it opens reports that rather than offering a grant.
+	The divergence is that the palette entry stays listed where upstream would
+	hide it; it can never grant trust the settings did not allow.
+ */
+WorkbenchCommandDescriptor MakeManageWorkspaceTrustDescriptor()
+{
+	return {
+		"workbench.trust.manage",
+		// Upstream's own title and `WORKSPACE_TRUST_CATEGORY`, verbatim.
+		"Workspaces: Manage Workspace Trust",
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette, "workbench.trust.manage.palette", std::nullopt },
+		},
+	};
+}
+
 WorkbenchCommandDescriptor MakeMarkdownPreviewDescriptor(
 	std::string id, std::string title, bool hasDefaultKeybinding)
 {
@@ -677,6 +704,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		Entry{ MakeShowNotificationsDescriptor(), std::move(executors.showNotifications), {} },
 		Entry{ MakeHideNotificationsDescriptor(), std::move(executors.hideNotifications), {} },
 		Entry{ MakeToggleStatusbarDescriptor(), std::move(executors.toggleStatusbarVisibility), {} },
+		Entry{ MakeManageWorkspaceTrustDescriptor(), std::move(executors.manageWorkspaceTrust), {} },
 		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreview", "Markdown: Open Preview", false),
 			std::move(executors.markdownShowPreview), {} },
 		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreviewToSide", "Markdown: Open Preview to the Side", true),

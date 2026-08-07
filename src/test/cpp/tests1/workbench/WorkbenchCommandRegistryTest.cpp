@@ -423,6 +423,51 @@ TEST(WorkbenchContextKeyService, ProjectsWorkspaceAndEditorStateInTheSameImmutab
 	EXPECT_EQ(WorkbenchContextValue(true), snapshot.values.at("editorIsDirty"));
 }
 
+TEST(WorkbenchContextKeyService, ProjectsIsWorkspaceTrustedTrueOnlyForExplicitTrust)
+{
+	WorkbenchLayoutStateSnapshot layout;
+	config::WorkspaceContextSnapshot workspace;
+	workspace.kind = config::EWorkspaceKind::Folder;
+	workspace.trust = config::EWorkspaceTrustState::Trusted;
+
+	WorkbenchContextKeyService service;
+	const auto mutation = service.SetCoreProjection(layout, workspace);
+
+	ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded, mutation.status);
+	EXPECT_EQ(WorkbenchContextValue(true), service.Snapshot().values.at("isWorkspaceTrusted"));
+}
+
+//! Upstream's context key is a plain boolean, so the three-state trust model
+//! has to collapse toward withholding trust: Unknown means never granted and
+//! Untrusted means denied, and a `when` clause must not treat either as
+//! permission.
+TEST(WorkbenchContextKeyService, ProjectsIsWorkspaceTrustedFalseForUnknownAndUntrustedTrust)
+{
+	WorkbenchLayoutStateSnapshot layout;
+	for (const auto trust : { config::EWorkspaceTrustState::Unknown, config::EWorkspaceTrustState::Untrusted }) {
+		config::WorkspaceContextSnapshot workspace;
+		workspace.kind = config::EWorkspaceKind::Folder;
+		workspace.trust = trust;
+
+		WorkbenchContextKeyService service;
+		const auto mutation = service.SetCoreProjection(layout, workspace);
+
+		ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded, mutation.status);
+		EXPECT_EQ(WorkbenchContextValue(false), service.Snapshot().values.at("isWorkspaceTrusted"))
+			<< static_cast<int>(trust);
+	}
+}
+
+TEST(WorkbenchContextKeyService, IsWorkspaceTrustedIsAReservedCoreKeyRejectedFromExtensionOverlays)
+{
+	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("isWorkspaceTrusted"));
+
+	WorkbenchContextKeyService service;
+	EXPECT_EQ(EWorkbenchContextMutationStatus::Invalid,
+		service.SetExtensionOverlay(kExtensionGenerationOne,
+			{ { "isWorkspaceTrusted", WorkbenchContextValue(true) } }).status);
+}
+
 TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatchesStableIds)
 {
 	WorkbenchCommandRegistry registry;
@@ -924,6 +969,41 @@ TEST(WorkbenchCommandRegistry, GitStagingCommandsCarryUpstreamTitlesAndPaletteSl
 		ASSERT_TRUE(slot.has_value()) << commandId;
 		EXPECT_EQ(commandId, slot->commandId) << commandId;
 	}
+}
+
+TEST(WorkbenchCommandRegistry, ManageWorkspaceTrustIsUpstreamsCommandWithAPaletteEntry)
+{
+	WorkbenchCommandRegistry registry;
+	bool invoked = false;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
+		.manageWorkspaceTrust = [&invoked]() { invoked = true; return Succeeded(); },
+	}).status);
+
+	// `workbench/contrib/workspace/browser/workspace.contribution.ts` registers
+	// `workbench.trust.manage` with `f1: true` under the `Workspaces` category,
+	// so the palette is the surface it is actually reachable from.
+	const auto descriptor = registry.Find("workbench.trust.manage");
+	ASSERT_TRUE(descriptor.has_value());
+	EXPECT_EQ("Workspaces: Manage Workspace Trust", descriptor->title);
+	const auto slot = registry.ResolveSurface(
+		EWorkbenchCommandSurface::CommandPalette, "workbench.trust.manage.palette");
+	ASSERT_TRUE(slot.has_value());
+	EXPECT_EQ("workbench.trust.manage", slot->commandId);
+
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("workbench.trust.manage", EnabledContext()).status);
+	EXPECT_TRUE(invoked);
+}
+
+TEST(WorkbenchCommandRegistry, UnboundManageWorkspaceTrustIsUnsupportedRatherThanASilentGrant)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
+
+	// A shell with no trust surface must say so. Reporting success here would
+	// claim a trust decision was taken when nothing was shown and nothing written.
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
+		registry.Execute("workbench.trust.manage", EnabledContext()).status);
 }
 
 TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfaceOfTheirOwn)

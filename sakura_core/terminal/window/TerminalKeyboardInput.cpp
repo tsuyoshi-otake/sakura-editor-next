@@ -181,6 +181,15 @@ std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const Terminal
 	return result;
 }
 
+bool TerminalKeyNeedsTextDelivery( const TerminalKeyEvent& event, bool mapsToCharacter ) noexcept
+{
+	if( !event.keyDown || !mapsToCharacter ) return false;
+	// Ctrl and Alt combinations belong to the control-sequence side: EncodeTerminalKey
+	// and the Alt-printable path own them earlier. This claims plain text input and
+	// Shift only.
+	return !event.control && !event.alt;
+}
+
 TerminalShortcutAction ResolveTerminalShortcut( const TerminalKeyEvent& event, bool hasSelection ) noexcept
 {
 	if( event.virtualKey == VK_INSERT && event.shift && !event.alt ) return TerminalShortcutAction::Paste;

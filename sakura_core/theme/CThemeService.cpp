@@ -59,6 +59,22 @@ int CALLBACK FindFontFamilyProc(const LOGFONTW*, const TEXTMETRICW*, DWORD, LPAR
 	return -::MulDiv(effectivePoints, static_cast<int>(effectiveDpi), 72);
 }
 
+// Reproduces CColorThemeRegistry.cpp's alpha-compositing convention
+// (round-to-nearest via `(product + 127) / 255`) for the one High Contrast
+// role that still needs it: `statusBarItem.prominentBackground` registers a
+// single non-per-theme default, `Color.black.transparent(0.5)`, that applies
+// to hcDark/hcLight exactly like it does to the ordinary dark/light themes.
+// GDI has no alpha channel, so it is composited here, at read time, over the
+// live system highlight color rather than stored as a separate alpha value.
+[[nodiscard]] theme::ThemeColor CompositeBlackHalfOver(theme::ThemeColor background) noexcept
+{
+	constexpr unsigned int kInverseAlpha = 255U - 128U;
+	const auto blend = [](std::uint8_t channel) noexcept -> std::uint8_t {
+		return static_cast<std::uint8_t>((static_cast<unsigned int>(channel) * kInverseAlpha + 127U) / 255U);
+	};
+	return { blend(background.red), blend(background.green), blend(background.blue) };
+}
+
 [[nodiscard]] HFONT CreateThemeFont(theme::ThemeFontKind kind, UINT dpi, int pointSize) noexcept
 {
 	const theme::ThemeFontSpec spec = theme::CThemeService::FontSpec(kind);
@@ -160,9 +176,20 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// color is exactly that absence, not a chosen highlight color.
 	// The three button roles take the system highlight pair rather than a chosen brand color:
 	// a High Contrast theme guarantees that pairing's contrast, and an accent we picked does not.
+	// `statusBarProminentBackground` composites black.transparent(0.5) over `highlight` (the same
+	// role High Contrast uses for `accent`), matching upstream's single non-per-theme registration.
+	const ThemeColor prominentBackground = CompositeBlackHalfOver(highlight);
+	// `banner.background` upstream registers `hcDark`/`hcLight` as the same live alias to
+	// `list.activeSelectionBackground` it uses for dark/light, so High Contrast takes the same
+	// `highlight` system color already used for `accent` rather than a chosen literal. Pairing
+	// it with `highlightText` for both the banner text and its icon guarantees the contrast a
+	// picked "info blue" (upstream's own hcDark/hcLight `editorInfo.foreground` literal) cannot
+	// promise against an arbitrary system High Contrast theme -- the same reasoning already
+	// applied to the three button roles above.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
 		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
-		window, window, window, highlight, highlightText, highlight };
+		window, window, window, highlight, highlightText, highlight, prominentBackground,
+		highlight, highlightText, highlightText };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

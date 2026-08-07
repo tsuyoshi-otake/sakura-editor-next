@@ -154,11 +154,20 @@ in PrintWindow but absent on screen.
   top-level window invalidates that trial. Without this, another application's
   pixels are indistinguishable from a repaint bug. Park the cursor off the window
   first so hover highlighting cannot differ between the two captures.
-- **Use a throwaway profile per run.** Launch with `sakura.exe -PROF=<name>`,
-  which creates its profile directory beside the executable, and delete that
-  directory before and after the run. Panel visibility and sash extents persist
-  there, so reusing a profile makes run N's end state run N+1's start state and
-  silently destroys the A/B comparison.
+- **Use a throwaway profile per run.** Launch with `sakura.exe -PROF=<name>` and
+  delete that profile directory before and after the run. Panel visibility and
+  sash extents persist there, so reusing a profile makes run N's end state run
+  N+1's start state and silently destroys the A/B comparison.
+  **The profile directory is `%APPDATA%\sakura\<name>\`, not a directory beside
+  the executable** — the exe-adjacent location is used only when a `sakura.ini`
+  already sits next to the executable. Verified 2026-08-07 while investigating
+  why an edited setting had no effect: the default profile's `settings.json` is
+  `%APPDATA%\sakura\settings.json`, and the `settings.json` and
+  `.sakura-platform\` left in `x64\Debug\` are stale artifacts of earlier runs
+  that the running editor never reads. Before concluding that a setting is
+  ignored, prove which `settings.json` the process actually loaded — change a
+  setting with an unmistakable effect (`workbench.colorTheme`) in the candidate
+  file and confirm the window changes.
 - **Repeat the identical gesture many times in one process.** Stale-pixel
   survival is a paint-timing race: the same binary produced 6.948% on one
   single-trial run and 0.000% on the next. Report the distribution over the
@@ -358,3 +367,4 @@ the confidential input path.
 - Do not edit generated `Funccode_define.h`, `Funccode_enum.h`, or `version.h`; edit their source inputs instead.
 - When adding C++ sources to an MSBuild project, update both the `.vcxproj` and matching `.vcxproj.filters`. The CMake build discovers source files separately, so verify both build paths when relevant.
 - Preserve user-facing Japanese documentation and resources unless the task calls for another language; keep identifiers and code names in their established language.
+- Every changed `.cpp`/`.h` must detect as `ascii` or `utf-8-sig`; `.rc`/`.rc2` must be UTF-16. `src/main/py/check_encoding.py` enforces this in CI over the diff against `origin/master`, and UTF-8 *without* a BOM is rejected. Adding a non-ASCII comment to an ASCII-only file therefore breaks the build unless a BOM is added too. Match the surrounding file: keep an ASCII-only subtree ASCII rather than converting it. Markdown is skipped by the checker, so subsystem `CLAUDE.md` files stay unconstrained.

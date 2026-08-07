@@ -89,3 +89,152 @@ reuses an earlier ID.
 Run Node tests for protocol/API changes and the native integration suite for
 wire changes. The current API cohort passes 15/15. Confirm the Node host and
 Sakura test processes exit afterward.
+
+## Terminal API: unsupported, and unsupported out loud (2026-08-07, #31)
+
+This host owns no extension-facing terminal. The native terminal under
+`sakura_core/terminal/` is real — a ConPTY backend, VT parser, and renderer —
+but its instance authority lives inside the UI tab that draws it
+(`TerminalTabManager::Impl::Tab` co-owns the input adapter, model, parser, and
+`CTerminalSession`), so no service exists that could answer an extension's
+question about a terminal. Until a runtime-owned terminal-instance authority
+exists, every member of the Terminal API reports `UnsupportedCapability`.
+
+Three consequences are deliberate divergences from upstream, and each has a
+reason:
+
+- **`window.terminals` and `window.activeTerminal` throw rather than answering
+  `[]` and `undefined`.** VS Code never throws here. But native terminals do
+  exist in this product, so an empty answer is not the truthful "there are none"
+  it would be for notebooks — it is a false statement about the world, and an
+  extension would take the wrong branch on it. Compare `visibleNotebookEditors`,
+  which returns `[]` correctly because notebooks genuinely do not exist here.
+- **Terminal events throw at subscription instead of returning a listener that
+  never fires.** Handing back a live-looking subscription for an event this host
+  can never raise is the "approximate a capability" pattern the root
+  `CLAUDE.md` forbids. `noOpEvent` remains correct only where the underlying
+  concept is genuinely absent.
+`window.registerTerminalProfileProvider` is the exception and keeps the
+`registerWebviewViewProvider` treatment: it notifies and returns a `Disposable`
+instead of throwing. Registering a provider is not a claim that a terminal
+exists — it is a callback for a user action, and upstream also never invokes the
+provider until the user picks that profile, so an extension cannot tell the two
+apart. Throwing would kill activation over a capability the extension may never
+have reached. The native dispatcher routes `workbench/terminal/` by prefix into
+`DispatchUnsupportedCapability`, so the gap is reported to the user in the
+Extension Compatibility output channel; the notification now carries its own
+`error.capability` so that report no longer depends on the dispatcher inferring
+a name from the method prefix.
+
+Known gap, deliberately not fixed here: an imperative unsupported member
+(`createTerminal`, `createWebviewPanel`, `tasks.executeTask`, `debug.*`,
+`SecretStorage.keys`) throws without notifying, so it never reaches the Extension
+Compatibility channel — only the extension sees it. That is uniform across every
+such member today; fix it for all of them at once or not at all, and do not make
+one capability report differently from its siblings.
+
+`ExtensionContext.environmentVariableCollection` is an unsupported namespace
+rather than `undefined`, so the failure lands on the mutator the extension
+actually called. The `TerminalLocation`, `TerminalExitReason`,
+`EnvironmentVariableMutatorType`, and
+`TerminalShellExecutionCommandLineConfidence` value tables are exported with
+upstream-exact values: they are constants, not capabilities, and their presence
+moves an extension's failure from an untyped read at module scope onto the
+typed boundary at the call it meant to make.
+
+`workspace.isTrusted` no longer needs fixing before any of this can move: it is
+a real, native-backed answer as of "workspace.isTrusted is now a real answer,
+and a downgrade raises no event (2026-08-07, #33)" below. That removes the
+specific precondition this section used to name, but it does not remove the
+gate itself. Terminal creation is process creation, and
+a truthful `isTrusted` is not the same thing as a decision to allow it — nothing
+in this host yet consumes trust to gate extension-originated process launch.
+Implementing the Terminal API therefore remains gated on an extension-origin
+process-launch policy, not merely on a native service being ready and not
+merely on trust being reported correctly. Shell integration must never be
+aliased to `sendText`, and no code path may special-case a particular
+extension's ID or command.
+
+## workspace.isTrusted is now a real answer, and a downgrade raises no event (2026-08-07, #33)
+
+`workspace.isTrusted` used to be a hardcoded `true`, which is exactly the
+overstatement the Terminal API section above warned against. It is now backed
+by `session.workspaceTrusted`, seeded from the `workspaceTrusted` field of the
+extension registration payload and kept current afterward by the
+`extension/workspace/didChangeTrust` notification.
+
+The read is fail-closed and strictly boolean. `options.workspaceTrusted ===
+true` is the only thing that grants trust at construction: absent, `undefined`,
+and non-boolean truthy values (the string `'yes'`, for instance) all read as
+`false`. The wire notification enforces the identical rule, `params?.trusted
+=== true`, so a malformed or missing `trusted` field can never be
+misinterpreted as a grant. Both directions are pinned by regression tests in
+`test/vscode-api.test.cjs`.
+
+On the native side, `CExtensionService` projects `EWorkspaceTrustState::Trusted`
+to `true` and both `Unknown` and `Untrusted` to `false`. That is not a lossy
+approximation of three states into two: VS Code's `isTrusted` is a plain
+boolean answering "did the user explicitly grant trust," and neither `Unknown`
+nor `Untrusted` can answer that with anything but no. The field is always sent
+on registration — omitting it would leave the host free to assume trust — and
+registration doubles as the baseline every later notification diffs against,
+which is exactly what makes a reconnect correct even though the host has no
+memory of the pre-reconnect value.
+
+**The documented divergence.** Upstream VS Code restarts the extension host
+whenever workspace trust is downgraded, so it never has to express a downgrade
+to a still-running host, and consequently upstream has no revoke event at
+all — `onDidGrantWorkspaceTrust` is the only workspace-trust event that exists.
+This fork instead transitions a window's trust in place, without restarting
+the host. The chosen behavior: the wire always carries the current value
+rather than a grant signal, the host always updates `isTrusted` to match that
+current fact, and it fires `onDidGrantWorkspaceTrust` only on the
+untrusted-to-trusted edge. A downgrade therefore flips `isTrusted` to `false`
+with zero listener invocations — silent by design, not a missed case. Leaving
+`isTrusted` at `true` after a downgrade was rejected because it overstates
+trust, which is the dangerous direction of the root `CLAUDE.md`'s "never fake a
+capability" rule. Inventing a revoke event to announce the downgrade was also
+rejected: the extension-facing public API stays byte-for-byte upstream, with
+no new event VS Code doesn't have. A dedicated test pins the zero-fire
+demotion.
+
+`onDidGrantWorkspaceTrust` is now a real `EventEmitter.event` returning a real
+`Disposable`, where it previously returned a bare `Disposable` that never
+fired anything. Its emitter is disposed alongside the session's other
+emitters. The field is updated before the emitter fires — the same ordering
+`window.state` already uses — so a listener that reads `workspace.isTrusted`
+from inside its own handler observes `true`, never the stale value.
+
+Two update paths are required, not one, because `session.options` is a
+spread-copy taken at activation time: mutating the loader's options is not
+retroactive to a session that already activated. `ExtensionLoader.handleRequest`
+therefore updates `this.options.workspaceTrusted` so any extension activated
+later starts with the current value, while the same notification also fans out
+to every live session so each one updates its own instance field directly.
+`mergeSessionOptions` accepts `workspaceTrusted` as a boolean for the same
+reason — a registration resync must be able to seed the loader-level value too.
+
+The native push deduplicates: `CExtensionService::SetWorkspaceTrusted` remembers
+the last value it sent and skips a resend of an identical value, so a repeated
+identical push can never be mistaken downstream for a fresh grant.
+
+**The registration seed must be tested through the RPC, not through the loader.**
+The first delivery of this feature shipped with `host/registerExtensions` in
+`extension-host.cjs` forwarding only `configuration` and `workspaceFolders` into
+`ExtensionLoader.register()`, silently dropping `workspaceTrusted`. Every
+loader-level and API-level test still passed, because those tests construct the
+loader or session with an options object directly and never cross the handler
+that was losing the field. Combined with the native deduplication above, the
+defect was total for the most common case: a workspace whose trust never changes
+after registration gets no `didChangeTrust` at all, so `workspace.isTrusted`
+stayed pinned at `false` even for a default empty window, which
+`security.workspace.trust.emptyWindow` resolves to `Trusted`. It failed closed,
+so nothing was over-trusted — but the entire projection was inert in production
+while the tests read green. The regression test for this lives in
+`test/extension-host.test.cjs` and asserts the value an activated extension
+actually reads from `vscode.workspace.isTrusted` after a real
+`host/registerExtensions` round trip. Any future session-scoped field added to
+that payload needs the same end-to-end test; a loader-level one cannot prove the
+wire is connected.
+
+The exthost cohort passes 59/59.

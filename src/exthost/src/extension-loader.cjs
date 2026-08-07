@@ -565,7 +565,7 @@ class ExtensionLoader {
     activateRecord が ...this.options で spread するので、以後アクティベートされる拡張から反映される
     （既にアクティブなセッションへは遡って反映しない。反映するには
     extension/workspace/didChangeConfiguration の能動的な通知が別途必要で、これは現状ネイティブ側から
-    送られていない既知のギャップ）。
+    送られていない既知のギャップ）。workspaceTrusted も同じく最新スナップショットへの総入れ替えとして扱う。
   */
   mergeSessionOptions(sessionOptions) {
     if (!sessionOptions || typeof sessionOptions !== 'object') return;
@@ -574,6 +574,9 @@ class ExtensionLoader {
     }
     if (Array.isArray(sessionOptions.workspaceFolders)) {
       this.options.workspaceFolders = sessionOptions.workspaceFolders;
+    }
+    if (typeof sessionOptions.workspaceTrusted === 'boolean') {
+      this.options.workspaceTrusted = sessionOptions.workspaceTrusted;
     }
   }
 
@@ -891,6 +894,12 @@ class ExtensionLoader {
     if (method === 'extension/secrets/didChange') {
       const record = this.extensions.get(String(params?.extensionId || '').toLowerCase());
       return record?.session?.handleRequest(method, params) ?? { accepted: false };
+    }
+    if (method === 'extension/workspace/didChangeTrust') {
+      // これから activate される拡張にも現在の信頼状態で起動させる。既存セッションへは
+      // 下の fan-out が届く。session.options は activate 時の spread コピーなので、
+      // この 2 経路の両方が必要。
+      this.options.workspaceTrusted = params?.trusted === true;
     }
     if (method.startsWith('extension/workspace/')) {
       if (method === 'extension/workspace/didOpen' && typeof params?.snapshot?.languageId === 'string') {

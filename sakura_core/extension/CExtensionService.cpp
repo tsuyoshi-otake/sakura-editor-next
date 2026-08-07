@@ -13,6 +13,7 @@
 #include "config/system_constants.h"
 #include "extension/CExtensionManager.h"
 #include "extension/CExtensionQuickInputDialog.h"
+#include "extension/ExtensionUntrustedWorkspaceOverride.h"
 #include "workbench/IWorkbenchRuntime.h"
 #include "_os/CClipboard.h"
 #include "util/string_ex.h"
@@ -319,6 +320,7 @@ CExtensionService::CExtensionService(
 	, m_workbenchServiceBridge(markerService || outputService || workbenchRuntime
 		? std::make_unique<CExtensionWorkbenchServiceBridge>(markerService, outputService, workbenchRuntime,
 			128, workbenchRuntime ? workbenchRuntime->Scm() : nullptr) : nullptr)
+	, m_workbenchRuntime(workbenchRuntime)
 {
 	const auto tick = static_cast<std::uint64_t>(::GetTickCount64());
 	const auto address = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(this));
@@ -340,11 +342,32 @@ void CExtensionService::Start()
 	m_stopping.store(false, std::memory_order_release);
 	m_worker = std::thread(&CExtensionService::WorkerMain, this);
 	Enqueue([this]() { WorkerInitialize(); });
+	if (m_workbenchRuntime) {
+		// The runtime resolves trust; this service only projects it. Registration
+		// already carries the value at connect time, so this subscription exists for
+		// the transitions that happen while the host is live.
+		m_workspaceTrustGate = std::make_shared<WorkspaceTrustListenerGate>();
+		m_workspaceTrustGate->owner = this;
+		m_workspaceTrustSubscription = m_workbenchRuntime->WorkspaceContext().Subscribe(
+			[gate = m_workspaceTrustGate](const config::WorkspaceContextChange& change) {
+				std::lock_guard lock(gate->mutex);
+				if (!gate->owner) return;
+				gate->owner->SetWorkspaceTrusted(change.current.trust == config::EWorkspaceTrustState::Trusted);
+			});
+	}
 }
 
 void CExtensionService::Shutdown() noexcept
 {
 	if (!m_started.load(std::memory_order_acquire)) return;
+	// Close the trust listener before anything else: releasing the subscription only
+	// stops new deliveries, so the gate is what makes an in-flight one return without
+	// touching a service that is shutting down.
+	if (m_workspaceTrustGate) {
+		std::lock_guard lock(m_workspaceTrustGate->mutex);
+		m_workspaceTrustGate->owner = nullptr;
+	}
+	m_workspaceTrustSubscription.Reset();
 	m_stopping.store(true, std::memory_order_release);
 	m_taskReady.notify_all();
 	if (m_worker.joinable()) m_worker.join();
@@ -476,6 +499,43 @@ void CExtensionService::SetWindowState(bool focused)
 		params["active"] = picojson::value(true);
 		(void)SendRequestWorker("extension/window/didChangeState",
 			picojson::value(std::move(params)).serialize(), { .kind = PendingKind::DocumentEvent });
+	});
+}
+
+void CExtensionService::SetWorkspaceTrusted(bool trusted)
+{
+	Enqueue([this, trusted]() {
+		// `m_filterWorkspaceTrusted` and `m_sentWorkspaceTrusted` deliberately track the same
+		// resolved value on two independent clocks. The RPC clock only advances while
+		// `m_registered`, because sending the host notification before any session is
+		// registered to receive it is meaningless. The filter clock must advance regardless
+		// of registration, because an unregistered service still owns what
+		// `LoadInstalledExtensionRootsWorker` allows into the *next* registration. Folding
+		// the two into one member would make an unregistered window's trust change silently
+		// skip the rescan that is supposed to withhold/admit extensions, or make a registered
+		// resend silently skip the RPC dedupe -- two different bugs this split avoids.
+		const bool filterChanged = !m_filterWorkspaceTrusted || *m_filterWorkspaceTrusted != trusted;
+		m_filterWorkspaceTrusted = trusted;
+
+		if (m_registered && (!m_sentWorkspaceTrusted || *m_sentWorkspaceTrusted != trusted)) {
+			m_sentWorkspaceTrusted = trusted;
+			// The wire carries the current value rather than a grant signal, because a
+			// downgrade must still correct what the host reports. The host raises VS Code's
+			// grant event only on the untrusted-to-trusted edge; upstream has no revoke
+			// event and this must not invent one.
+			picojson::object params;
+			params["trusted"] = picojson::value(trusted);
+			(void)SendRequestWorker("extension/workspace/didChangeTrust",
+				picojson::value(std::move(params)).serialize(), { .kind = PendingKind::DocumentEvent });
+		}
+
+		// A trust change is exactly upstream's own reason to restart the extension host
+		// session -- VS Code re-derives the whole activation set rather than deactivating one
+		// extension in place -- so a grant must re-admit previously withheld roots and a
+		// downgrade must remove them. `RescanInstalledExtensionsWorker` already recomputes,
+		// compares, and reconnects only on an actual set change, so this reuses it instead of
+		// inventing a second reconnect path.
+		if (filterChanged) RescanInstalledExtensionsWorker();
 	});
 }
 
@@ -756,7 +816,40 @@ void CExtensionService::WorkerMain() noexcept
 	m_reconnectPolicy.Shutdown();
 }
 
-std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRootsWorker() const
+bool CExtensionService::CurrentWorkspaceTrustedWorker() const
+{
+	if (!m_workbenchServiceBridge) return false;
+	return m_workbenchServiceBridge->WorkspaceContextSnapshotForExtensions().trust ==
+		config::EWorkspaceTrustState::Trusted;
+}
+
+void CExtensionService::ReportWithheldExtensionWorker(const std::wstring& uniqueId)
+{
+	if (uniqueId.empty() || !m_workbenchServiceBridge || m_reportedWithheldExtensions.contains(uniqueId)) return;
+	// Deliberately NOT the `m_output` "Extension Compatibility" channel that
+	// `CExtensionWorkbenchDispatcher::DispatchUnsupportedCapability` writes to. `m_output` is the
+	// bridge's *fallback* cache for windows that have no runtime-owned OutputService, and nothing
+	// projects it to a user-visible surface: `CExtensionService::OutputChannels()` has no
+	// production caller and `MYWM_EXTENSION_WORKBENCH_CHANGED` has no `Output` branch. Reporting
+	// there would satisfy the "never silent" rule only on paper.
+	//
+	// This is also not a capability an extension asked for and was refused; it is a host decision
+	// taken before the extension existed, so there is no host-assigned generation and no RPC
+	// operation ID to route a channel mutation with. The Extension Host log is exactly where
+	// upstream records a trust-disabled extension, and `AppendExtensionHostLog` owns its own
+	// bounded operation IDs and its own host-owned channel.
+	const std::wstring diagnostic = L"UnsupportedCapability: " + uniqueId +
+		L" requires a trusted workspace and was withheld from the extension host";
+	if (!m_workbenchServiceBridge->AppendExtensionHostLog(
+		workbench::output::EOutputLogLevel::Warning, diagnostic)) {
+		// The diagnostic was not recorded anywhere, so do not mark this ID as reported: a later
+		// rescan must be free to try again rather than inheriting silence from a failed attempt.
+		return;
+	}
+	m_reportedWithheldExtensions.insert(uniqueId);
+}
+
+std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRootsWorker()
 {
 	const auto profileState = m_extensionProfileState.Load();
 	if (profileState.status == CExtensionProfileState::EStatus::Invalid ||
@@ -764,11 +857,54 @@ std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRoot
 		return {};
 	}
 
+	// Workspace Trust gates the installed set the same way profile enablement does one clause
+	// up: an extension whose *resolved* untrusted-workspace support -- the manifest
+	// declaration, unless the user's `extensions.supportUntrustedWorkspaces` override below
+	// names this extension and replaces it -- is NotSupported must never reach
+	// `host/registerExtensions` while the workspace is not trusted. `Limited` and `Supported`
+	// both mean "may load" -- only `NotSupported` is withheld. This matches upstream's
+	// `ExtensionEnablementService` / `DisabledByTrustRequirement`, which withholds at the
+	// enablement layer rather than the activation path.
+	const bool trusted = CurrentWorkspaceTrustedWorker();
+
+	// Read the user's `extensions.supportUntrustedWorkspaces` override once, before the scan,
+	// not once per extension: it is one configuration read against one snapshot of the setting,
+	// and every candidate in this scan must be resolved against that same snapshot rather than
+	// risking a value that moves mid-scan. A null bridge (no runtime bound, the historical
+	// no-runtime unit-test shape) yields an empty map the same way `ExtensionUntrustedWorkspaceOverrides`
+	// itself does for a rejected read, so every candidate falls back to its own manifest
+	// declaration -- fail closed, never fail open.
+	const auto untrustedWorkspaceOverrides = m_workbenchServiceBridge
+		? m_workbenchServiceBridge->ExtensionUntrustedWorkspaceOverrides()
+		: std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>>{};
+
 	CExtensionManager manager;
 	std::vector<std::filesystem::path> roots;
+	std::unordered_set<std::wstring> withheldThisScan;
+	// The set of configuration keys every profile-enabled installed extension declares
+	// restricted in an untrusted workspace, deduplicated and published once below. A key
+	// collected from an extension withheld this very scan is still included: withholding
+	// means this one extension is not loaded into the host this scan, not that the setting
+	// stops needing protection. The same key can still be read by another, currently-loaded
+	// extension, by native settings code, or by this same extension the moment trust is later
+	// granted and it reconnects -- so the lock the manifest declared for that key must not
+	// lapse just because its own declaring extension is not the one running right now.
+	std::vector<std::string> restrictedKeys;
+	std::unordered_set<std::string> restrictedKeySeen;
 	for (const auto& installed : manager.EnumInstalled()) {
 		if (!CExtensionProfileState::IsEnabled(
 			profileState, installed.sUniqueId, m_defaultProfileExtensionsWhenMissing)) {
+			continue;
+		}
+		for (const auto& key : installed.restrictedConfigurations) {
+			if (restrictedKeySeen.insert(key).second) restrictedKeys.push_back(key);
+		}
+		const auto resolvedSupport = ResolveUntrustedWorkspaceSupport(
+			installed.untrustedWorkspaceSupport, installed.sUniqueId, installed.sVersion,
+			untrustedWorkspaceOverrides);
+		if (!trusted && resolvedSupport == EExtensionUntrustedWorkspaceSupport::NotSupported) {
+			withheldThisScan.insert(installed.sUniqueId);
+			ReportWithheldExtensionWorker(installed.sUniqueId);
 			continue;
 		}
 		const auto root = installed.dir / CExtensionManager::kVsixContentDir;
@@ -777,11 +913,30 @@ std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRoot
 			roots.push_back(root);
 		}
 	}
+	// An ID that leaves the withheld set (trust granted, disabled, uninstalled) must be able
+	// to report again if it is ever withheld a second time, rather than staying silent forever
+	// because of a report that applied to a now-stale reason.
+	std::erase_if(m_reportedWithheldExtensions,
+		[&withheldThisScan](const std::wstring& id) { return !withheldThisScan.contains(id); });
+	if (m_workbenchServiceBridge) {
+		// Published unconditionally, including when `restrictedKeys` is empty: an empty
+		// publish is how a previously published set gets cleared (every extension that
+		// declared restrictions was disabled or uninstalled since the last scan), and a
+		// failed publish must not fail this scan -- the installed roots this function
+		// computed are still correct and still returned below regardless of whether the
+		// runtime accepted the restricted-key set.
+		(void)m_workbenchServiceBridge->PublishExtensionRestrictedConfigurations(std::move(restrictedKeys));
+	}
 	return roots;
 }
 
 void CExtensionService::WorkerInitialize()
 {
+	// Established explicitly here rather than left to wait for the first change
+	// notification: `Start()` installs the WorkspaceContext subscription only after this
+	// task is already queued, so a window that starts untrusted needs something to compare
+	// a later transition against from the very first registration.
+	m_filterWorkspaceTrusted = CurrentWorkspaceTrustedWorker();
 	m_installedRoots = LoadInstalledExtensionRootsWorker();
 	if (!m_installedRoots.empty()) RequestReconnectWorker();
 }
@@ -1508,6 +1663,15 @@ void CExtensionService::SendRegisterExtensionsWorker()
 		if (!workspace.folders.empty()) {
 			params["workspaceFolders"] = picojson::value(WorkspaceFoldersJson(workspace));
 		}
+		// VS Code's `workspace.isTrusted` is a plain boolean meaning "the user granted
+		// trust". Native Unknown and native Untrusted both answer that question with no,
+		// so both project to false; only an explicit grant projects to true. The field is
+		// always sent, because omitting it would leave the host free to assume trust.
+		const bool trusted = workspace.trust == config::EWorkspaceTrustState::Trusted;
+		params["workspaceTrusted"] = picojson::value(trusted);
+		// Registration is the baseline the later transition notifications diff against,
+		// including after a reconnect, where the host has no memory of the old value.
+		m_sentWorkspaceTrusted = trusted;
 	}
 
 	(void)SendRequestWorker("host/registerExtensions", picojson::value(std::move(params)).serialize(),

@@ -33,6 +33,18 @@ class UnsupportedCapabilityError extends Error {
   }
 }
 
+// An object whose every member access reports the capability as unsupported. Used where VS Code
+// exposes a namespace of members and this host owns none of them, so the extension meets one
+// typed error at the member it actually reached rather than an untyped `undefined` read.
+function unsupportedNamespace(extensionId, name) {
+  return new Proxy(Object.create(null), {
+    get(_target, property) {
+      if (property === Symbol.toStringTag) return 'UnsupportedCapability';
+      throw new UnsupportedCapabilityError(extensionId, `${name}.${String(property)}`);
+    },
+  });
+}
+
 function requireString(value, name, allowEmpty = false) {
   if (typeof value !== 'string' || (!allowEmpty && value.length === 0) || value.includes('\0')) {
     throw new TypeError(`${name} must be a ${allowEmpty ? '' : 'non-empty '}string`);
@@ -297,6 +309,14 @@ const ViewColumn = Object.freeze({ Active: -1, Beside: -2, One: 1, Two: 2, Three
 const OverviewRulerLane = Object.freeze({ Left: 1, Center: 2, Right: 4, Full: 7 });
 const ColorThemeKind = Object.freeze({ Light: 1, Dark: 2, HighContrast: 3, HighContrastLight: 4 });
 const ExtensionKind = Object.freeze({ UI: 1, Workspace: 2 });
+// Upstream-exact value tables for the Terminal API. They are constants, not capabilities:
+// exporting them lets an extension that reads `TerminalLocation.Panel` at module scope reach
+// the typed unsupported boundary at its `createTerminal` call instead of dying earlier on an
+// untyped read of an absent namespace member.
+const TerminalLocation = Object.freeze({ Panel: 1, Editor: 2 });
+const TerminalExitReason = Object.freeze({ Unknown: 0, Shutdown: 1, Process: 2, User: 3, Extension: 4 });
+const EnvironmentVariableMutatorType = Object.freeze({ Replace: 1, Append: 2, Prepend: 3 });
+const TerminalShellExecutionCommandLineConfidence = Object.freeze({ Low: 0, Medium: 1, High: 2 });
 
 class TextEdit {
   constructor(range, newText) {
@@ -1745,6 +1765,10 @@ class ExtensionApiSession {
     // 実 VS Code の ExtHostWindow.InitialState と同じ初期値。`window.state` は
     // 常に存在するプロパティで、undefined になる状態は上流には無い。
     this.windowState = Object.freeze({ focused: true, active: true });
+    // Workspace Trust は fail-closed: options.workspaceTrusted が明示的に true でない
+    // 限り信頼しない。未指定・undefined・非 boolean の truthy 値はすべて false 扱いにする。
+    this.workspaceTrusted = options.workspaceTrusted === true;
+    this.workspaceTrustEmitter = new EventEmitter();
     this.extensionsChangeEmitter = new EventEmitter();
     this.secrets = new SecretStorage(this);
     this.disposed = false;
@@ -1987,6 +2011,11 @@ class ExtensionApiSession {
   createApi() {
     const session = this;
     const noOpEvent = () => new Disposable();
+    // For an event this host will never raise because it owns no source for it. Subscribing fails
+    // typed and immediately; it never hands back a subscription that silently waits forever.
+    const unsupportedEvent = (capability) => () => {
+      throw new UnsupportedCapabilityError(session.extensionId, capability);
+    };
     const commands = {
       registerCommand(command, callback, thisArg) {
         requireString(command, 'command');
@@ -2030,7 +2059,7 @@ class ExtensionApiSession {
 
     const workspaceFileSystem = createWorkspaceFileSystem();
     const workspace = {
-      isTrusted: true,
+      get isTrusted() { return session.workspaceTrusted; },
       get textDocuments() { return [...session.documents.values()]; },
       get workspaceFolders() {
         return Array.isArray(session.options.workspaceFolders) ? session.options.workspaceFolders.map((folder, index) => ({
@@ -2048,7 +2077,7 @@ class ExtensionApiSession {
       onDidCloseTextDocument: session.documentCloseEmitter.event,
       onWillSaveTextDocument: session.documentWillSaveEmitter.event,
       onDidChangeConfiguration: session.configurationEmitter.event,
-      onDidGrantWorkspaceTrust() { return new Disposable(); },
+      onDidGrantWorkspaceTrust: session.workspaceTrustEmitter.event,
       onDidChangeWorkspaceFolders() { return new Disposable(); },
       onDidCreateFiles: noOpEvent,
       onDidDeleteFiles: noOpEvent,
@@ -2313,11 +2342,49 @@ class ExtensionApiSession {
           },
         }));
       },
+      // Terminal API: an explicit, typed, fail-closed boundary.
+      //
+      // This host owns no extension-facing terminal. The native terminal in `sakura_core/terminal/`
+      // is real, but its instance authority currently lives inside the UI tab that renders it, so no
+      // service can answer an extension's terminal question. Until one does, every member here
+      // reports `UnsupportedCapability` rather than approximating an answer.
+      //
+      // `terminals` deliberately throws instead of returning `[]`, and the events throw instead of
+      // returning a listener that can never fire. Native terminals do exist, so "there are none" and
+      // "you will never hear about one" would both be false statements about the world, and the root
+      // CLAUDE.md forbids approximating a capability the product does not have.
+      createTerminal() { throw new UnsupportedCapabilityError(session.extensionId, 'window.createTerminal'); },
+      get terminals() { throw new UnsupportedCapabilityError(session.extensionId, 'window.terminals'); },
+      get activeTerminal() { throw new UnsupportedCapabilityError(session.extensionId, 'window.activeTerminal'); },
+      onDidOpenTerminal: unsupportedEvent('window.onDidOpenTerminal'),
+      onDidCloseTerminal: unsupportedEvent('window.onDidCloseTerminal'),
+      onDidChangeActiveTerminal: unsupportedEvent('window.onDidChangeActiveTerminal'),
+      onDidChangeTerminalState: unsupportedEvent('window.onDidChangeTerminalState'),
+      onDidChangeTerminalShellIntegration: unsupportedEvent('window.onDidChangeTerminalShellIntegration'),
+      onDidStartTerminalShellExecution: unsupportedEvent('window.onDidStartTerminalShellExecution'),
+      onDidEndTerminalShellExecution: unsupportedEvent('window.onDidEndTerminalShellExecution'),
+      onDidWriteTerminalData: unsupportedEvent('window.onDidWriteTerminalData'),
+      registerTerminalLinkProvider() {
+        throw new UnsupportedCapabilityError(session.extensionId, 'window.registerTerminalLinkProvider');
+      },
+      registerTerminalQuickFixProvider() {
+        throw new UnsupportedCapabilityError(session.extensionId, 'window.registerTerminalQuickFixProvider');
+      },
+      // Registering a provider is not the same shape of call as the members above, and it keeps
+      // the `registerWebviewViewProvider` treatment: notify natively so the user sees the gap in
+      // the Extension Compatibility channel, and hand back a Disposable rather than throwing. A
+      // provider that is never invoked is indistinguishable from upstream, where it is also only
+      // invoked when the user picks that profile — whereas throwing here would kill activation for
+      // a capability the extension may never actually have needed.
+      //
+      // The notification carries its own `error.capability` so the native dispatcher no longer has
+      // to infer the capability name from the `workbench/terminal/` method prefix.
       registerTerminalProfileProvider(id, provider) {
         requireString(id, 'terminal profile id');
         if (!provider || typeof provider.provideTerminalProfile !== 'function') throw new TypeError('TerminalProfileProvider expected');
         session.notify('workbench/terminal/registerProfileProvider', {
           id, extensionId: session.extensionId, generation: session.generation,
+          error: { code: 'UnsupportedCapability', capability: 'window.registerTerminalProfileProvider' },
         });
         return session.track(new Disposable(() => session.notify('workbench/terminal/unregisterProfileProvider', {
           id, extensionId: session.extensionId, generation: session.generation,
@@ -2472,13 +2539,6 @@ class ExtensionApiSession {
       onDidChange: session.extensionsChangeEmitter.event,
     });
 
-    const unsupportedNamespace = (name) => new Proxy(Object.create(null), {
-      get(_target, property) {
-        if (property === Symbol.toStringTag) return 'UnsupportedCapability';
-        throw new UnsupportedCapabilityError(session.extensionId, `${name}.${String(property)}`);
-      },
-    });
-
     const scm = Object.freeze({
       get inputBox() { return session.getGlobalSourceControlInputBox(); },
       createSourceControl(id, label, rootUri) {
@@ -2498,7 +2558,7 @@ class ExtensionApiSession {
       languages: Object.freeze(languages),
       env,
       extensions,
-      debug: unsupportedNamespace('debug'),
+      debug: unsupportedNamespace(session.extensionId, 'debug'),
       tasks,
       scm,
       Disposable,
@@ -2520,6 +2580,10 @@ class ExtensionApiSession {
       OverviewRulerLane,
       ColorThemeKind,
       ExtensionKind,
+      TerminalLocation,
+      TerminalExitReason,
+      EnvironmentVariableMutatorType,
+      TerminalShellExecutionCommandLineConfidence,
       Diagnostic,
       DiagnosticRelatedInformation,
       DiagnosticSeverity,
@@ -2645,6 +2709,19 @@ class ExtensionApiSession {
           affectsConfiguration: (section) => Object.keys(params?.values || {}).some((key) => key === section || key.startsWith(`${section}.`)),
         }));
         return { accepted: true };
+      case 'extension/workspace/didChangeTrust': {
+        // 上流の onDidGrantWorkspaceTrust は untrusted → trusted の遷移でだけ発火する。
+        // 上流に revoke イベントは無く、上流は信頼降格時に拡張ホストごと再起動するため
+        // 降格を live なセッションへ伝える手段自体が存在しない。ここではイベントを
+        // 捏造せず、フィールドだけを現在の事実へ更新する。isTrusted が実態より広い
+        // 信頼を報告することは無い。
+        const trusted = params?.trusted === true;
+        const granted = trusted && !this.workspaceTrusted;
+        // window.state と同じく、通知より先にフィールドを更新する。
+        this.workspaceTrusted = trusted;
+        if (granted) this.workspaceTrustEmitter.fire();
+        return { accepted: true };
+      }
       case 'extension/languages/provide':
         return this.invokeLanguageProvider(requireString(params?.kind, 'provider kind'), params);
       case 'extension/views/getChildren': {
@@ -2692,6 +2769,10 @@ class ExtensionApiSession {
       workspaceState,
       globalState,
       secrets: this.secrets,
+      // Injecting variables into terminal environments requires an owner of terminal process
+      // creation, which this host does not have. The property exists so the failure is typed at the
+      // mutator the extension actually called, instead of an untyped read of `undefined`.
+      environmentVariableCollection: unsupportedNamespace(this.extensionId, 'ExtensionContext.environmentVariableCollection'),
       extensionMode: 1,
       extension: Object.freeze({ id: this.extensionId, extensionPath, extensionUri: extensionPath ? Uri.file(extensionPath) : undefined,
         isActive: true, packageJSON: paths.packageJSON || {} }),
@@ -2716,7 +2797,7 @@ class ExtensionApiSession {
     for (const emitter of [this.documentOpenEmitter, this.documentChangeEmitter, this.documentSaveEmitter,
       this.documentCloseEmitter, this.documentWillSaveEmitter, this.configurationEmitter, this.activeEditorEmitter,
       this.visibleEditorsEmitter, this.selectionEmitter, this.editorOptionsEmitter, this.windowStateEmitter,
-      this.extensionsChangeEmitter]) emitter.dispose();
+      this.workspaceTrustEmitter, this.extensionsChangeEmitter]) emitter.dispose();
     this.statusBarMessages.length = 0;
     this.statusBarMessageItem = null;
     this.extensionObjects.clear();
@@ -2798,5 +2879,9 @@ module.exports = {
   ViewColumn,
   OverviewRulerLane,
   ColorThemeKind,
+  TerminalLocation,
+  TerminalExitReason,
+  EnvironmentVariableMutatorType,
+  TerminalShellExecutionCommandLineConfidence,
   WorkspaceEdit,
 };
