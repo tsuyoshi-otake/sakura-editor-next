@@ -83,6 +83,10 @@ enum class EWorkbenchRuntimeDiagnosticSource : std::uint8_t {
 	WorkspaceContext,
 	WorkspaceArtifacts,
 	Layout,
+	//! The durable Trusted Folders and Workspaces list. Separate from
+	//! WorkspaceContext because a failure here is a persistence failure, not a
+	//! failure of the semantic workspace state that trust is applied to.
+	WorkspaceTrust,
 };
 
 enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
@@ -96,8 +100,75 @@ enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
 	LayoutPersistenceUnavailable,
 	LayoutPersistenceConflict,
 	LayoutPersistFailed,
+	//! The stored trusted-folders list could not be read or decoded. Trust still
+	//! resolves — against an empty list, so nothing is trusted — but the durable
+	//! bytes are left untouched, so a grant must be refused rather than written.
+	TrustRestoreFailed,
+	TrustPersistenceUnavailable,
+	TrustPersistenceConflict,
+	TrustPersistFailed,
 	WorkspaceFolderDuplicate,
 	InternalFailure,
+};
+
+//! The choices VS Code's trust prompt actually offers that change the durable
+//! Trusted Folders and Workspaces list. Declining is not one of them: it commits
+//! nothing, so it has no scope here and no code path that writes.
+enum class EWorkspaceTrustGrantScope : std::uint8_t {
+	//! Trust exactly what this window has open -- the `.code-workspace` file for a
+	//! Workspace, or every folder root for a Folder.
+	CurrentWorkspace,
+	//! Upstream's "Trust the authors of all files in the parent folder". Offered
+	//! only for a single folder root that actually has a parent.
+	ParentFolder,
+};
+
+enum class EWorkspaceTrustGrantStatus : std::uint8_t {
+	Granted,
+	//! The list already covers the requested resource with at least the same
+	//! reach, so nothing was appended and nothing was written.
+	AlreadyTrusted,
+	//! Nothing about this window can be trusted through the requested scope: an
+	//! empty window, or a root with no parent folder.
+	NotApplicable,
+	//! The durable list could not be read or is not writable. The grant is
+	//! refused rather than applied in memory, because a session-only grant would
+	//! report trust this window cannot keep.
+	PersistenceUnavailable,
+	Conflict,
+	Stopped,
+	Failed,
+};
+
+struct WorkspaceTrustGrantResult final {
+	EWorkspaceTrustGrantStatus status = EWorkspaceTrustGrantStatus::Failed;
+	std::string diagnostic;
+
+	[[nodiscard]] bool Succeeded() const noexcept
+	{
+		return status == EWorkspaceTrustGrantStatus::Granted
+			|| status == EWorkspaceTrustGrantStatus::AlreadyTrusted;
+	}
+};
+
+//! One offerable choice, already resolved to the resource it would trust. The
+//! display text is the canonical URI the runtime would actually write; a prompt
+//! shows it and never re-parses it to decide anything.
+struct WorkspaceTrustGrantOption final {
+	EWorkspaceTrustGrantScope scope = EWorkspaceTrustGrantScope::CurrentWorkspace;
+	std::wstring displayUri;
+	std::size_t resourceCount = 0;
+};
+
+//! Everything a native trust prompt needs, with no policy left for it to decide.
+//! An empty option list means there is nothing to grant, which is a real state
+//! and must be shown as such rather than filled with a disabled placeholder.
+struct WorkspaceTrustPromptModel final {
+	config::EWorkspaceTrustState state = config::EWorkspaceTrustState::Unknown;
+	//! False when the durable list is missing or was preserved as invalid. A
+	//! prompt must not offer a grant it already knows will be refused.
+	bool persistenceReady = false;
+	std::vector<WorkspaceTrustGrantOption> options;
 };
 
 //! Diagnostics intentionally omit profile IDs and resource paths. Consumers
@@ -145,6 +216,20 @@ public:
 			.outcome = config::EWorkspaceContextOutcome::Failed,
 			.reason = "runtime does not support an in-process folder transition",
 			.snapshot = WorkspaceContext().Snapshot(),
+		};
+	}
+	//! What a native Workspace Trust prompt may offer for the current workspace.
+	//! A narrow test runtime has no durable list, so the fail-closed default
+	//! offers nothing rather than pretending a grant would stick.
+	[[nodiscard]] virtual WorkspaceTrustPromptModel WorkspaceTrustPrompt() { return {}; }
+	//! Grant workspace trust and persist it. The durable write happens first: a
+	//! runtime that cannot commit the bytes refuses instead of trusting for this
+	//! session only, so trust never outlives, or falls short of, the record.
+	[[nodiscard]] virtual WorkspaceTrustGrantResult GrantWorkspaceTrust(EWorkspaceTrustGrantScope)
+	{
+		return {
+			.status = EWorkspaceTrustGrantStatus::PersistenceUnavailable,
+			.diagnostic = "runtime does not own a durable trusted folders list",
 		};
 	}
 	//! Runtime-owned editor for .code-workspace documents. It is the only window-facing

@@ -231,6 +231,8 @@
     <ClInclude Include="..\sakura_core\config\editing\CJsoncConfigurationEditor.h" />
     <ClInclude Include="..\sakura_core\config\IWorkspaceContextService.h" />
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h" />
+    <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h" />
+    <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h" />
     <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h" />
     <ClInclude Include="..\sakura_core\config\maxdata.h" />
     <ClInclude Include="..\sakura_core\config\system_constants.h" />
@@ -760,6 +762,7 @@
     <ClInclude Include="..\sakura_core\_main\FailedEditorProcessShutdown.h" />
     <ClInclude Include="..\sakura_core\_main\CMutex.h" />
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h" />
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.h" />
@@ -877,6 +880,7 @@
     <ClCompile Include="..\sakura_core\config\SettingsWritebackCoordinator.cpp" />
     <ClCompile Include="..\sakura_core\config\ConfigurationTypes.cpp" />
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp" />
+    <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp" />
     <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeAutoToSjis.cpp" />
@@ -1429,6 +1433,7 @@
     <ClCompile Include="..\sakura_core\_main\CControlProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\CControlTray.cpp" />
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp" />
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.cpp" />

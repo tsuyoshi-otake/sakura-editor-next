@@ -397,6 +397,12 @@
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
@@ -1700,6 +1706,9 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
@@ -3643,6 +3652,9 @@
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
@@ -3992,6 +4004,9 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp">

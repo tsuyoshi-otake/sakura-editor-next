@@ -418,6 +418,35 @@ public:
 	std::vector<std::string> lastSavedHiddenIds;
 };
 
+class FakeTrustedFoldersStore final : public config::ITrustedFoldersStore {
+public:
+	config::TrustedFoldersLoadResult Load() override
+	{
+		++loadCalls;
+		return loadResult;
+	}
+
+	config::TrustedFoldersSaveResult Save(const config::TrustedFoldersSnapshot& snapshot) override
+	{
+		++saveCalls;
+		lastSavedSnapshot = snapshot;
+		return saveResult;
+	}
+
+	// NotFound is the default because it is the normal, non-degraded starting
+	// state for a profile that has never trusted a folder: it makes the store
+	// ready without pre-seeding any entry.
+	config::TrustedFoldersLoadResult loadResult{
+		config::ETrustedFoldersLoadStatus::NotFound, std::nullopt, {}
+	};
+	config::TrustedFoldersSaveResult saveResult{
+		config::ETrustedFoldersSaveStatus::Persisted, {}
+	};
+	std::size_t loadCalls = 0;
+	std::size_t saveCalls = 0;
+	std::optional<config::TrustedFoldersSnapshot> lastSavedSnapshot;
+};
+
 struct RuntimeTaskSessionState final {
 	explicit RuntimeTaskSessionState(tasks::TaskExecutionSessionCallbacks value)
 		: callbacks(std::move(value))
@@ -476,17 +505,20 @@ struct RuntimeFixture final {
 		WorkbenchBootstrapContext bootstrap,
 		std::unique_ptr<FakeLayoutMementoStore> ownedLayoutStore = {},
 		std::shared_ptr<workbench::tasks::ITaskExecutionSessionFactory> taskFactory = {},
-		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {})
+		std::unique_ptr<FakeStatusbarVisibilityMementoStore> ownedStatusbarStore = {},
+		std::unique_ptr<FakeTrustedFoldersStore> ownedTrustedFoldersStore = {})
 	{
 		auto ownedFiles = std::make_unique<FakeFileService>();
 		files = ownedFiles.get();
 		layoutStore = ownedLayoutStore.get();
 		statusbarStore = ownedStatusbarStore.get();
+		trustedFoldersStore = ownedTrustedFoldersStore.get();
 		WorkbenchRuntimeDependencies dependencies;
 		dependencies.fileService = std::move(ownedFiles);
 		dependencies.layoutMementoStore = std::move(ownedLayoutStore);
 		dependencies.taskExecutionSessionFactory = std::move(taskFactory);
 		dependencies.statusbarVisibilityMementoStore = std::move(ownedStatusbarStore);
+		dependencies.trustedFoldersStore = std::move(ownedTrustedFoldersStore);
 		runtime = std::make_unique<CWorkbenchRuntime>(
 			std::move(bootstrap), config::BuiltinConfigurationDescriptors(), std::move(dependencies));
 	}
@@ -494,6 +526,7 @@ struct RuntimeFixture final {
 	FakeFileService* files = nullptr;
 	FakeLayoutMementoStore* layoutStore = nullptr;
 	FakeStatusbarVisibilityMementoStore* statusbarStore = nullptr;
+	FakeTrustedFoldersStore* trustedFoldersStore = nullptr;
 	std::unique_ptr<CWorkbenchRuntime> runtime;
 };
 
@@ -1713,4 +1746,254 @@ TEST(CWorkbenchRuntime, StartAndStopAreIdempotentTerminalOperations)
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
 	EXPECT_EQ(EWorkbenchRuntimeState::Stopped, fixture.runtime->Snapshot().state);
+}
+
+TEST(CWorkbenchRuntime, GrantWorkspaceTrustWithoutAStoreRefusesAsPersistenceUnavailable)
+{
+	// No trustedFoldersStore is injected at all, so the runtime never had a
+	// durable list to become ready against.
+	RuntimeFixture fixture(Bootstrap());
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable, result.status);
+	EXPECT_FALSE(result.Succeeded());
+}
+
+TEST(CWorkbenchRuntime, GrantWorkspaceTrustAfterAnInvalidStoredListRefusesAsPersistenceUnavailable)
+{
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->loadResult = {
+		config::ETrustedFoldersLoadStatus::InvalidStoredList, std::nullopt, L"corrupt trust list"
+	};
+	RuntimeFixture fixture(Bootstrap(Parse(L"file:///C:/Project")), {}, {}, {}, std::move(store));
+
+	// RestoreTrustedFolders never fails Start outright -- an invalid stored list
+	// is preserved for diagnosis and Start still reaches a usable state, just
+	// with persistence left not-ready.
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable, result.status);
+	EXPECT_EQ(0U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, GrantingCurrentWorkspaceOnAFolderPersistsTheFolderWithDescendantsAndTrustsTheWindow)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, result.status);
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+	ASSERT_TRUE(fixture.trustedFoldersStore->lastSavedSnapshot.has_value());
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->lastSavedSnapshot->entries.size());
+	const auto& entry = fixture.trustedFoldersStore->lastSavedSnapshot->entries.front();
+	EXPECT_TRUE(UriIdentityService::IsEqual(folder, entry.uri));
+	EXPECT_TRUE(entry.includesDescendants);
+	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, GrantingTheSameScopeTwiceIsIdempotentAndDoesNotSaveAgain)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted,
+		fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace).status);
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+
+	const auto second = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::AlreadyTrusted, second.status);
+	EXPECT_TRUE(second.Succeeded());
+	EXPECT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, GrantingCurrentWorkspaceOnAWorkspaceFileTrustsOnlyTheWorkspaceFileNotEachRoot)
+{
+	// A multi-root .code-workspace file is itself the trustable item: trusting
+	// it must write exactly one entry, never one entry per root.
+	auto workspaceConfig = Parse(L"file:///C:/Project/multi.code-workspace");
+	std::vector<config::WorkspaceFolderDescriptor> folders {
+		{ Parse(L"file:///C:/Project/one"), L"one" },
+		{ Parse(L"file:///C:/Project/two"), L"two" },
+	};
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(WorkspaceBootstrap(workspaceConfig, folders), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, result.status);
+	ASSERT_TRUE(fixture.trustedFoldersStore->lastSavedSnapshot.has_value());
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->lastSavedSnapshot->entries.size());
+	const auto& entry = fixture.trustedFoldersStore->lastSavedSnapshot->entries.front();
+	EXPECT_TRUE(UriIdentityService::IsEqual(workspaceConfig, entry.uri));
+	EXPECT_FALSE(entry.includesDescendants);
+}
+
+TEST(CWorkbenchRuntime, GrantingParentFolderOnASingleRootFolderPersistsTheParentWithDescendants)
+{
+	auto folder = Parse(L"file:///C:/Project/app");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::ParentFolder);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, result.status);
+	ASSERT_TRUE(fixture.trustedFoldersStore->lastSavedSnapshot.has_value());
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->lastSavedSnapshot->entries.size());
+	const auto& entry = fixture.trustedFoldersStore->lastSavedSnapshot->entries.front();
+	const auto expectedParent = config::WorkspaceTrustParentFolder(folder);
+	ASSERT_TRUE(expectedParent.has_value());
+	EXPECT_TRUE(UriIdentityService::IsEqual(*expectedParent, entry.uri));
+	EXPECT_TRUE(entry.includesDescendants);
+}
+
+TEST(CWorkbenchRuntime, GrantingParentFolderOnAMultiRootWorkspaceIsNotApplicable)
+{
+	// ParentFolder is only offered for a single Folder-kind root: with several
+	// roots, "trust the parent" would silently widen every root's parent at
+	// once, which upstream never lets happen.
+	auto workspaceConfig = Parse(L"file:///C:/Project/multi.code-workspace");
+	std::vector<config::WorkspaceFolderDescriptor> folders {
+		{ Parse(L"file:///C:/Project/one"), L"one" },
+		{ Parse(L"file:///C:/Project/two"), L"two" },
+	};
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(WorkspaceBootstrap(workspaceConfig, folders), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::ParentFolder);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::NotApplicable, result.status);
+	EXPECT_EQ(0U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, GrantingAnyScopeOnAnEmptyWindowIsNotApplicable)
+{
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::NotApplicable,
+		fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace).status);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::NotApplicable,
+		fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::ParentFolder).status);
+	EXPECT_EQ(0U, fixture.trustedFoldersStore->saveCalls);
+}
+
+TEST(CWorkbenchRuntime, ConflictingSaveDuringGrantDoesNotUpdateTheInMemoryListOrTrustTheWindow)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::Conflict, L"remote list won" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Conflict, result.status);
+	EXPECT_FALSE(result.Succeeded());
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+	ASSERT_EQ(1U, fixture.trustedFoldersStore->saveCalls);
+
+	// The in-memory list was never advanced past the conflicting save, so a
+	// later grant on the same scope must still see the folder as ungranted --
+	// not report AlreadyTrusted for a grant that was actually refused.
+	fixture.trustedFoldersStore->saveResult = { config::ETrustedFoldersSaveStatus::Persisted, {} };
+	const auto retried = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, retried.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, UnavailableSaveDuringGrantRefusesAsPersistenceUnavailableAndLeavesTheWindowUntrusted)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::Unavailable, L"store unavailable" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable, result.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, FailedSaveDuringGrantReportsFailedAndLeavesTheWindowUntrusted)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::Failed, L"disk error" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Failed, result.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, RetryExhaustedSaveDuringGrantReportsFailedAndLeavesTheWindowUntrusted)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	store->saveResult = { config::ETrustedFoldersSaveStatus::RetryExhausted, L"retries exhausted" };
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto result = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantStatus::Failed, result.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+}
+
+TEST(CWorkbenchRuntime, WorkspaceTrustPromptOnASingleRootFolderOffersBothScopesWithCanonicalUris)
+{
+	auto folder = Parse(L"file:///C:/Project/app");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto model = fixture.runtime->WorkspaceTrustPrompt();
+	EXPECT_TRUE(model.persistenceReady);
+	ASSERT_EQ(2U, model.options.size());
+
+	// WorkspaceTrustPrompt walks { CurrentWorkspace, ParentFolder } in that
+	// fixed order, so the option indices below are not incidental.
+	const auto& current = model.options[0];
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace, current.scope);
+	EXPECT_EQ(1U, current.resourceCount);
+	// The expected display text is derived from the committed snapshot's
+	// canonicalized folder URI, not the raw Parse()'d input, so a canonicalizer
+	// difference between the two can never produce a false failure here.
+	const auto canonicalFolder = fixture.runtime->WorkspaceContext().Snapshot().folders.front().uri;
+	EXPECT_EQ(canonicalFolder.ToString(), current.displayUri);
+
+	const auto& parent = model.options[1];
+	EXPECT_EQ(workbench::EWorkspaceTrustGrantScope::ParentFolder, parent.scope);
+	EXPECT_EQ(1U, parent.resourceCount);
+	const auto expectedParent = config::WorkspaceTrustParentFolder(canonicalFolder);
+	ASSERT_TRUE(expectedParent.has_value());
+	EXPECT_EQ(expectedParent->ToString(), parent.displayUri);
+}
+
+TEST(CWorkbenchRuntime, WorkspaceTrustPromptWithoutAStoreReportsPersistenceNotReady)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	RuntimeFixture fixture(Bootstrap(folder));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto model = fixture.runtime->WorkspaceTrustPrompt();
+	EXPECT_FALSE(model.persistenceReady);
+}
+
+TEST(CWorkbenchRuntime, WorkspaceTrustPromptOnAnEmptyWindowOffersNoOptions)
+{
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(), {}, {}, {}, std::move(store));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+	const auto model = fixture.runtime->WorkspaceTrustPrompt();
+	EXPECT_TRUE(model.options.empty());
 }
