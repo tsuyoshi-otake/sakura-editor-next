@@ -19,12 +19,21 @@
 
 #include "extension/openvsx/IOpenVsxRegistryClient.h"
 
+//! 拡張が信頼されていないワークスペースをどこまで支える宣言をしているか
+enum class EExtensionUntrustedWorkspaceSupport {
+	Supported,      //!< 制限モードでもそのまま動かしてよい
+	Limited,        //!< 動かしてよいが、一部の設定は差し止められる
+	NotSupported,   //!< 制限モードでは読み込んではならない
+};
+
 //! 導入済み拡張
 struct SInstalledExtension {
 	std::wstring			sUniqueId;		//!< "namespace.name"
 	std::wstring			sVersion;		//!< バージョン
 	std::wstring			sDisplayName;	//!< 表示名。package.json から読めなければ sUniqueId
 	std::filesystem::path	dir;			//!< 導入先フォルダー
+	//! 信頼されていないワークスペースへの対応。package.json から読めなければ NotSupported（fail closed）
+	EExtensionUntrustedWorkspaceSupport untrustedWorkspaceSupport = EExtensionUntrustedWorkspaceSupport::NotSupported;
 };
 
 /*!
@@ -137,9 +146,15 @@ public:
 		SOpenVsxExtension& resolved,
 		std::wstring& errorMsg);
 
+	/*! @brief package.json 本文から untrustedWorkspaces の宣言を読む */
+	static EExtensionUntrustedWorkspaceSupport ParseUntrustedWorkspaceSupport(const std::string& sManifestJson);
+
 private:
-	//! package.json から表示名を読む。読めなければ空
-	static std::wstring ReadDisplayName(const std::filesystem::path& manifestPath);
+	//! package.json をバイト境界（kMaxManifestBytes）内で読む。読めなければ空
+	static std::string ReadManifestBody(const std::filesystem::path& manifestPath);
+
+	//! package.json 本文から表示名を読む。読めなければ空
+	static std::wstring ReadDisplayNameFromBody(const std::string& sManifestJson);
 
 	std::filesystem::path	m_baseDir;	//!< extensions フォルダー
 };

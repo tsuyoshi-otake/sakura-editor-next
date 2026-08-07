@@ -274,6 +274,11 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 	EXPECT_EQ((ThemeColor{ 144, 144, 144, 0xFF }), snapshot.palette.disabledText);
 	EXPECT_EQ((ThemeColor{ 0x33, 0x33, 0x33, 0xFF }), snapshot.palette.activityBar);
 	EXPECT_EQ((ThemeColor{ 0x00, 0x78, 0xD4, 0xFF }), snapshot.palette.accent);
+	// statusBarItem.prominentBackground: not set by this theme, so it falls back to
+	// black.transparent(0.5) composited over the *resolved* accent above (#0078D4),
+	// not over the compiled default (#1F8AD2) — proving the JSON-key mapping actually
+	// composites over what the theme itself resolved.
+	EXPECT_EQ((ThemeColor{ 0x00, 0x3C, 0x6A, 0xFF }), snapshot.palette.statusBarProminentBackground);
 	ASSERT_TRUE(snapshot.syntaxPalette.string.foreground.has_value());
 	EXPECT_EQ((ThemeColor{ 0xCE, 0x91, 0x78, 0xFF }), *snapshot.syntaxPalette.string.foreground);
 	ASSERT_TRUE(snapshot.syntaxPalette.variable.foreground.has_value());
@@ -306,6 +311,11 @@ TEST(CColorThemeRegistry, FallsBackToProjectedPanelBackgroundWhenTerminalTokenIs
 	EXPECT_EQ((ThemeColor{ 0x12, 0x34, 0x56, 0xFF }), snapshot.palette.bottomPanel);
 	EXPECT_EQ(snapshot.palette.bottomPanel, snapshot.palette.terminalBackground);
 	EXPECT_EQ((ThemeColor{ 0x20, 0x21, 0x22, 0xFF }), snapshot.palette.editorGutterBackground);
+	// No `focusBorder`/`textLink.foreground`/`button.background`/`activityBarBadge.background`
+	// override here, so accent stays the compiled dark default (#1F8AD2) and
+	// statusBarItem.prominentBackground's fallback composites over exactly that,
+	// matching the compiled ThemePalette default field-for-field.
+	EXPECT_EQ((ThemeColor{ 0x0F, 0x45, 0x69, 0xFF }), snapshot.palette.statusBarProminentBackground);
 }
 
 TEST(CColorThemeRegistry, RejectsThemeIncludesOutsideExtensionRoot)

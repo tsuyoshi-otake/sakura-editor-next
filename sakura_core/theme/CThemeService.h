@@ -96,6 +96,21 @@ struct ThemePalette {
 	//! VS Code `button.hoverBackground`, registered upstream as
 	//! `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
 	ThemeColor buttonHoverBackground = { 0x3F, 0xA1, 0xE3 };
+	//! VS Code `statusBarItem.prominentBackground`, the fill behind the far-left
+	//! Restricted Mode status-bar entry (`status.workspaceTrust`). Upstream
+	//! registers one non-per-theme default, `Color.black.transparent(0.5)`, for
+	//! dark/light/hcDark/hcLight alike; GDI has no alpha, so it is stored here
+	//! pre-composited over the *resolved* `accent` (the status bar's own
+	//! background) rather than over `canvas` like the other translucent tokens,
+	//! because this is the one status-bar item that paints its own fill on top
+	//! of the bar instead of relying on the bar's single flat background. It
+	//! cannot reuse `accent`, `danger`, or `warning`: `accent` is the surface it
+	//! composites over, not a substitute for it, and `danger`/`warning` are
+	//! unrelated foreground roles from different upstream tokens. The existing
+	//! `highlightText` foreground role is reused as-is (both resolve to
+	//! `#FFFFFF` for dark/light, matching `statusBarItem.prominentForeground`'s
+	//! default), so no new foreground role was added.
+	ThemeColor statusBarProminentBackground = { 0x0F, 0x45, 0x69 };
 
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
@@ -278,6 +293,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xB8, 0x32, 0x68 }, // button.background: the Sakura light accent, not VS Code's #007ACC
 			{ 0xFF, 0xFF, 0xFF }, // button.foreground
 			{ 0x93, 0x28, 0x53 }, // button.hoverBackground: darken(button.background, 0.2) as upstream registers it for light
+			{ 0x5C, 0x19, 0x34 }, // statusBarItem.prominentBackground: black.transparent(0.5) over the light accent #B83268
 		};
 	}
 	return {
@@ -307,6 +323,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x1F, 0x8A, 0xD2 }, // button.background: the Sakura dark accent, not VS Code's #0E639C
 		{ 0xFF, 0xFF, 0xFF }, // button.foreground
 		{ 0x3F, 0xA1, 0xE3 }, // button.hoverBackground: lighten(button.background, 0.2) as upstream registers it for dark
+		{ 0x0F, 0x45, 0x69 }, // statusBarItem.prominentBackground: black.transparent(0.5) over the dark accent #1F8AD2
 	};
 }
 

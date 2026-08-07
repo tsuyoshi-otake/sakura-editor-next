@@ -121,3 +121,66 @@ hover color from one theme sitting on a background from another.
 The built-in defaults keep Sakura's own accent (`#1F8AD2` dark, `#B83268` light)
 instead of importing VS Code's `#0E639C`/`#007ACC`, consistent with the rest of
 the compiled fallback palette.
+
+## Status-bar prominent-background role (2026-08-07, #36)
+
+`ThemePalette.statusBarProminentBackground` maps VS Code's
+`statusBarItem.prominentBackground`, the fill behind the far-left Restricted
+Mode status-bar entry (`status.workspaceTrust`; see `../window/CLAUDE.md` for
+the paint/click side). It is the **last** field in `ThemePalette` — the struct
+is positionally initialized, so a field added anywhere else silently
+reinterprets every existing positional literal. Every positional initializer
+was updated in lockstep in the same change: both `PaletteFor` branches,
+`HighContrastPalette`, `CColorThemeRegistry::ProjectPalette`'s JSON-key
+mapping, and the exact-token tests in `CThemeServiceTest.cpp` and
+`CColorThemeRegistryTest.cpp`. Grep for `ThemePalette{` / `ThemePalette
+expected{` / `return {` inside `CThemeService.cpp` before adding or removing a
+field; a missed site fails silently (it still compiles, it just assigns colors
+to the wrong roles).
+
+Upstream registers **one** non-per-theme default for this token —
+`Color.black.transparent(0.5)` — applying identically to dark, light, hcDark,
+and hcLight. GDI has no alpha channel, so the value is stored pre-composited,
+like the other translucent tokens in "Translucent VS Code Tokens" above — but
+composited over a different substrate than those. The translucent tokens above
+composite over `canvas` because upstream paints them over the editor
+background. This one composites over the *resolved* `accent` (the status bar's
+own background) instead, because it is the status bar's own translucent fill,
+and `accent` is what it visually sits on: dark `#0F4569` and light `#5C1934`,
+each `black.transparent(0.5)` blended over that mode's accent
+(`#1F8AD2` / `#B83268`) using the shared `(channel * 127 + 127) / 255`
+round-to-nearest convention. `CColorThemeRegistry::ProjectPalette` composites
+over the palette's own already-resolved `accent`, not the compiled default, so
+a theme that overrides `focusBorder`/`textLink.foreground`/`button.background`
+also shifts this role's fallback — proven by
+`CColorThemeRegistryTest.cpp`'s `DiscoversLoadsAndProjectsJsoncThemeWithInclude`
+case. High Contrast has no compiled literal at all: `CompositeBlackHalfOver`
+(a private helper in `CThemeService.cpp`) composites the same formula, at read
+time, over the live `COLOR_HIGHLIGHT` — the same system color High Contrast
+already uses for `accent` — because High Contrast colors must track whatever
+the OS reports, not a value chosen ahead of time.
+
+The role could not reuse `accent`, `danger`, or `warning`. `accent` is the
+surface this role composites *over*, not a substitute for it — reusing it
+would mean the Restricted Mode item painted no fill of its own at all, which
+is not what upstream's registration says. `danger` and `warning` are
+foreground roles drawn from unrelated upstream tokens
+(`list.errorForeground`-family colors), not the neutral translucent black wash
+`statusBarItem.prominentBackground` actually is; borrowing either would tint
+Restricted Mode as an error/warning state VS Code does not intend. No new
+foreground role was added: the label reuses the existing `highlightText` role,
+which already equals `statusBarItem.prominentForeground`'s upstream default
+(`#FFFFFF`) in both dark and light, so a second foreground field would have
+been redundant.
+
+This is also the **one exception** to the status bar's flat single-fill
+painting model. Every other item — SCM commands, extension items, the
+built-in editor entries, notifications — is drawn on top of one bar-wide
+`FillSolidRect(target, client, m_palette.accent)` and never paints its own
+background. The Restricted Mode item fills its own item rectangle with
+`m_palette.statusBarProminentBackground` before drawing its label runs,
+because upstream's `statusBarItem.prominentBackground` is exactly that: a
+per-item override of the bar's own background, not a shared one. Do not
+generalize this into a per-item background mechanism for other entries; it is
+scoped to this one token because this is the only status-bar item upstream
+gives its own background color to.
