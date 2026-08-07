@@ -33,7 +33,20 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// accepted from a workspace/folder document.
 		{ "security.workspace.trust.enabled", ConfigurationValue(true), { Scope::Profile } },
 		{ "security.workspace.trust.emptyWindow", ConfigurationValue(true), { Scope::Profile } },
-		{ "security.workspace.trust.untrustedFiles", ConfigurationValue(L"prompt"), { Scope::Profile } },
+		// Verified against upstream's workspaceTrust contribution
+		// (src/vs/workbench/contrib/workspace/browser/workspace.contribution.ts):
+		// default "prompt", enum ["prompt", "open", "newWindow"],
+		// ConfigurationScope.APPLICATION. The enum was previously unconstrained
+		// here, which let an unknown value through to a consumer that then had
+		// to guess; enforcement fails closed on "prompt" instead.
+		{ "security.workspace.trust.untrustedFiles", ConfigurationValue(L"prompt"), { Scope::Profile },
+			{ Kind::String, 32, { L"prompt", L"open", L"newWindow" } } },
+		// Verified against the same upstream contribution: default "never",
+		// enum ["always", "once", "never"], ConfigurationScope.APPLICATION.
+		// "never" is upstream's default and is the fail-closed value here too --
+		// not prompting withholds trust, it never grants it.
+		{ "security.workspace.trust.startupPrompt", ConfigurationValue(L"never"), { Scope::Profile },
+			{ Kind::String, 32, { L"always", L"once", L"never" } } },
 		// Verified against upstream's workspaceTrust contribution
 		// (src/vs/workbench/contrib/workspace/browser/workspace.contribution.ts):
 		// default "untilDismissed", enum ["always", "untilDismissed", "never"],

@@ -103,7 +103,27 @@ WorkspaceTrustResolution ResolveWorkspaceTrust(const WorkspaceTrustResolveReques
 		return { EWorkspaceTrustState::Trusted, EWorkspaceTrustReason::FeatureDisabled };
 	}
 
+	const auto isCovered = [&request](const platform::uri::Uri& resource) {
+		return std::any_of(
+			request.trustedEntries.begin(),
+			request.trustedEntries.end(),
+			[&resource](const WorkspaceTrustEntry& entry) { return WorkspaceTrustEntryCovers(entry, resource); });
+	};
+
 	if (request.kind == EWorkspaceKind::Empty) {
+		// Startup files: a file opened on the command line into an otherwise-empty window
+		// is trusted only when every one of them is already covered by the durable trusted
+		// list. This mirrors upstream's `_canonicalStartupFiles` short-circuit and runs
+		// before the `emptyWindow` default, so an empty window's default-trusted posture
+		// never silently extends to an arbitrary file passed on the command line.
+		if (!request.startupFileUris.empty()) {
+			for (const auto& startupFile : request.startupFileUris) {
+				if (!isCovered(startupFile)) {
+					return { EWorkspaceTrustState::Unknown, EWorkspaceTrustReason::StartupFileNotTrusted };
+				}
+			}
+			return { EWorkspaceTrustState::Trusted, EWorkspaceTrustReason::StartupFilesTrusted };
+		}
 		if (request.settings.emptyWindow) {
 			return { EWorkspaceTrustState::Trusted, EWorkspaceTrustReason::EmptyWindowTrustedByDefault };
 		}
@@ -111,13 +131,6 @@ WorkspaceTrustResolution ResolveWorkspaceTrust(const WorkspaceTrustResolveReques
 		// withholds trust until it is granted.
 		return { EWorkspaceTrustState::Unknown, EWorkspaceTrustReason::EmptyWindowNotTrustedByDefault };
 	}
-
-	const auto isCovered = [&request](const platform::uri::Uri& resource) {
-		return std::any_of(
-			request.trustedEntries.begin(),
-			request.trustedEntries.end(),
-			[&resource](const WorkspaceTrustEntry& entry) { return WorkspaceTrustEntryCovers(entry, resource); });
-	};
 
 	// A .code-workspace file is itself a trustable item, and trusting it covers the whole
 	// multi-root workspace regardless of where its folders live.

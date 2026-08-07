@@ -232,8 +232,11 @@
     <ClInclude Include="..\sakura_core\config\IWorkspaceContextService.h" />
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h" />
     <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h" />
+    <ClInclude Include="..\sakura_core\config\IWorkspaceTrustMementoStore.h" />
     <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h" />
+    <ClInclude Include="..\sakura_core\config\WorkspaceTrustMementoCodec.h" />
     <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h" />
+    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.h" />
     <ClInclude Include="..\sakura_core\config\maxdata.h" />
     <ClInclude Include="..\sakura_core\config\system_constants.h" />
     <ClInclude Include="..\sakura_core\convert\CConvert.h" />
@@ -715,6 +718,7 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.h" />
+    <ClInclude Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.h" />
@@ -767,6 +771,7 @@
     <ClInclude Include="..\sakura_core\_main\CMutex.h" />
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h" />
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.h" />
@@ -885,7 +890,9 @@
     <ClCompile Include="..\sakura_core\config\ConfigurationTypes.cpp" />
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp" />
     <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp" />
+    <ClCompile Include="..\sakura_core\config\WorkspaceTrustMementoCodec.cpp" />
     <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp" />
+    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeAutoToSjis.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeFromSjis.cpp" />
@@ -1402,6 +1409,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.cpp" />
+    <ClCompile Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp" />
@@ -1441,6 +1449,7 @@
     <ClCompile Include="..\sakura_core\_main\CControlTray.cpp" />
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp" />
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.cpp" />

@@ -49,6 +49,7 @@
 #include "_main/ControlPlatformStatusbarVisibilityMementoStore.h"
 #include "_main/ControlPlatformTrustedFoldersStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
+#include "_main/ControlPlatformWorkspaceTrustMementoStore.h"
 #include "extension/CExtensionSecretVaultStorage.h"
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
@@ -541,6 +542,14 @@ bool CNormalProcess::InitializeProcess()
 	workbenchDependencies.trustedFoldersStore =
 		std::make_unique<CControlPlatformTrustedFoldersStore>(
 			*m_editorControlPlatformRuntime, platformIdentity->profileId);
+	// What this workspace has already been asked is a property of the workspace, not
+	// of the profile, so it is keyed by the same bounded canonical workspace identity
+	// the working-copy scope already resolved. That value is absent exactly for an
+	// empty window, which is precisely the case that has no record to key -- so the
+	// absence is passed through rather than substituted with the profile ID or a PID.
+	workbenchDependencies.workspaceTrustMementoStore =
+		std::make_unique<CControlPlatformWorkspaceTrustMementoStore>(
+			*m_editorControlPlatformRuntime, platformIdentity->profileId, workingCopyScope->workspaceId);
 	workbenchDependencies.taskExecutionSessionFactory =
 		workbench::tasks::CreateDefaultTaskTerminalSessionFactory();
 	auto workingCopyStore = std::make_unique<CControlPlatformWorkingCopyPersistenceStore>(
