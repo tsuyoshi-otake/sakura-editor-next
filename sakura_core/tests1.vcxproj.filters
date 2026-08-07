@@ -685,6 +685,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionManagerStreamedInstallTest.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionUntrustedWorkspaceSupportTest.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-ctextmetrics.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>

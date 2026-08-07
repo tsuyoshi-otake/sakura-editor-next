@@ -4724,6 +4724,7 @@ void CEditWnd::RefreshStatusbarPresentation()
 	using workbench::statusbar::EStatusbarEntryAlignment;
 	using workbench::statusbar::StatusbarEntry;
 	std::vector<StatusbarEntry> entries{
+		{ "status.workspaceTrust", L"制限モード", EStatusbarEntryAlignment::Left, true },
 		{ "status.scm", L"ソース管理", EStatusbarEntryAlignment::Left, true },
 		{ "status.editor.selection", L"選択範囲", EStatusbarEntryAlignment::Right, true },
 		{ "status.editor.eol", L"改行コード", EStatusbarEntryAlignment::Right, true },
@@ -6114,8 +6115,15 @@ bool CEditWnd::RefreshWorkbenchCommandContext()
 	if (m_workbenchRuntime == nullptr || m_workbenchContextKeyService == nullptr) return false;
 	try {
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
+		const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		// The status bar's Restricted Mode entry is a plain projection of the same
+		// workspace-context trust this function already reads for the core context
+		// keys; pushing it here keeps the two from ever disagreeing about what
+		// "trusted" means, rather than adding a second workspace-context
+		// subscription just for painting.
+		m_cStatusBar.SetWorkspaceTrustState(workspace.trust);
 		const auto result = m_workbenchContextKeyService->SetCoreProjection(
-			m_workbenchRuntime->LayoutState().Snapshot(), m_workbenchRuntime->WorkspaceContext().Snapshot(),
+			m_workbenchRuntime->LayoutState().Snapshot(), workspace,
 			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable, BuildWorkbenchScmCommandContext(),
 			BuildWorkbenchUpdateCommandContext());
 		return result.Succeeded()

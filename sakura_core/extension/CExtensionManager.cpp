@@ -537,23 +537,27 @@ bool CExtensionManager::ResolveInstallTarget(
 	return true;
 }
 
-// package.json から表示名を読む
-std::wstring CExtensionManager::ReadDisplayName(const std::filesystem::path& manifestPath)
+// package.json をバイト境界内で読む
+std::string CExtensionManager::ReadManifestBody(const std::filesystem::path& manifestPath)
 {
 	std::error_code ec;
 	const auto nSize = std::filesystem::file_size(manifestPath, ec);
 	if (ec || nSize == 0 || nSize > kMaxManifestBytes) {
-		return std::wstring();
+		return std::string();
 	}
 
 	std::ifstream in(manifestPath, std::ios::binary);
 	if (!in) {
-		return std::wstring();
+		return std::string();
 	}
-	const std::string sJson((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+	return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+}
 
+// package.json 本文から表示名を読む
+std::wstring CExtensionManager::ReadDisplayNameFromBody(const std::string& sManifestJson)
+{
 	picojson::value root;
-	if (const std::string sError = picojson::parse(root, sJson); !sError.empty()) {
+	if (const std::string sError = picojson::parse(root, sManifestJson); !sError.empty()) {
 		return std::wstring();
 	}
 	if (!root.is<picojson::object>()) {
@@ -570,6 +574,57 @@ std::wstring CExtensionManager::ReadDisplayName(const std::filesystem::path& man
 		}
 	}
 	return std::wstring();
+}
+
+// package.json 本文から untrustedWorkspaces の宣言を読む
+EExtensionUntrustedWorkspaceSupport CExtensionManager::ParseUntrustedWorkspaceSupport(const std::string& sManifestJson)
+{
+	picojson::value root;
+	if (const std::string sError = picojson::parse(root, sManifestJson); !sError.empty()) {
+		return EExtensionUntrustedWorkspaceSupport::NotSupported;
+	}
+	if (!root.is<picojson::object>()) {
+		return EExtensionUntrustedWorkspaceSupport::NotSupported;
+	}
+	const picojson::object& obj = root.get<picojson::object>();
+
+	// コードを一切実行しない宣言的な拡張（テーマ・文法・スニペット・言語設定）は、
+	// capabilities の宣言に関わらず常に Supported。まずここを判定する。
+	// browser だけのエントリーポイントも main と同様にコードとして扱う。
+	const auto HasNonEmptyStringEntryPoint = [&obj](const char* pszKey) {
+		const auto it = obj.find(pszKey);
+		return it != obj.end() && it->second.is<std::string>() && !it->second.get<std::string>().empty();
+	};
+	if (!HasNonEmptyStringEntryPoint("main") && !HasNonEmptyStringEntryPoint("browser")) {
+		return EExtensionUntrustedWorkspaceSupport::Supported;
+	}
+
+	const auto itCapabilities = obj.find("capabilities");
+	if (itCapabilities == obj.end() || !itCapabilities->second.is<picojson::object>()) {
+		return EExtensionUntrustedWorkspaceSupport::NotSupported;
+	}
+	const picojson::object& capabilities = itCapabilities->second.get<picojson::object>();
+
+	const auto itUntrustedWorkspaces = capabilities.find("untrustedWorkspaces");
+	if (itUntrustedWorkspaces == capabilities.end() || !itUntrustedWorkspaces->second.is<picojson::object>()) {
+		return EExtensionUntrustedWorkspaceSupport::NotSupported;
+	}
+	const picojson::object& untrustedWorkspaces = itUntrustedWorkspaces->second.get<picojson::object>();
+
+	const auto itSupported = untrustedWorkspaces.find("supported");
+	if (itSupported == untrustedWorkspaces.end()) {
+		return EExtensionUntrustedWorkspaceSupport::NotSupported;
+	}
+	const picojson::value& supported = itSupported->second;
+	if (supported.is<bool>()) {
+		return supported.get<bool>()
+			? EExtensionUntrustedWorkspaceSupport::Supported
+			: EExtensionUntrustedWorkspaceSupport::NotSupported;
+	}
+	if (supported.is<std::string>() && supported.get<std::string>() == "limited") {
+		return EExtensionUntrustedWorkspaceSupport::Limited;
+	}
+	return EExtensionUntrustedWorkspaceSupport::NotSupported;
 }
 
 // 拡張を導入する
@@ -814,10 +869,14 @@ std::vector<SInstalledExtension> CExtensionManager::EnumInstalled() const
 			installed.sVersion = sFolderName.substr(nHyphenPos + 1);
 		}
 
-		installed.sDisplayName = ReadDisplayName(manifestPath);
+		// 表示名と untrustedWorkspaces 対応の両方をここで導くので、
+		// 同じ package.json を 2 度読まない。
+		const std::string sManifestBody = ReadManifestBody(manifestPath);
+		installed.sDisplayName = ReadDisplayNameFromBody(sManifestBody);
 		if (installed.sDisplayName.empty()) {
 			installed.sDisplayName = installed.sUniqueId;
 		}
+		installed.untrustedWorkspaceSupport = ParseUntrustedWorkspaceSupport(sManifestBody);
 
 		results.push_back(std::move(installed));
 	}

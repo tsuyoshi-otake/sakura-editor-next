@@ -236,7 +236,18 @@ private:
 	void Enqueue(std::function<void()> task);
 	void WorkerMain() noexcept;
 	void WorkerInitialize();
-	[[nodiscard]] std::vector<std::filesystem::path> LoadInstalledExtensionRootsWorker() const;
+	[[nodiscard]] std::vector<std::filesystem::path> LoadInstalledExtensionRootsWorker();
+	//! Reads the resolved workspace trust exactly the way `SendRegisterExtensionsWorker`
+	//! already does: through the bridge's projection of
+	//! `CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust`, never by re-deriving trust here.
+	//! A null bridge means trust can never be read, and that must read as untrusted -- fail
+	//! closed, never fail open.
+	[[nodiscard]] bool CurrentWorkspaceTrustedWorker() const;
+	//! Writes one withheld-extension line to the same "Extension Compatibility" output
+	//! channel `CExtensionWorkbenchDispatcher::DispatchUnsupportedCapability` owns the
+	//! identity/message conventions for. No-op beyond the first report for a given ID while
+	//! it remains withheld; see `m_reportedWithheldExtensions`.
+	void ReportWithheldExtensionWorker(const std::wstring& uniqueId);
 	void RequestReconnectWorker();
 	void RescanInstalledExtensionsWorker();
 	void EnsureConnectedWorker(std::uint64_t attemptToken);
@@ -353,6 +364,12 @@ private:
 
 	// worker-thread-only state
 	std::vector<std::filesystem::path> m_installedRoots;
+	//! Extension unique IDs already reported to "Extension Compatibility" for being
+	//! withheld by Workspace Trust in the most recently computed installed set.
+	//! `LoadInstalledExtensionRootsWorker` drops an ID from here as soon as it leaves the
+	//! withheld set (trust granted, disabled, uninstalled), so a later re-withholding is
+	//! reported again instead of staying silent forever after the first report.
+	std::unordered_set<std::wstring> m_reportedWithheldExtensions;
 	std::vector<std::wstring> m_contributedViewIds;
 	std::unordered_set<std::wstring> m_requestedViewActivations;
 	std::deque<ClientAction> m_deferredActions;
@@ -376,8 +393,20 @@ private:
 	};
 	std::shared_ptr<WorkspaceTrustListenerGate> m_workspaceTrustGate;
 	config::WorkspaceContextSubscription m_workspaceTrustSubscription;
-	//! The last value sent to the host, so a resend is not mistaken for a grant.
+	//! The last value sent to the host, so a resend is not mistaken for a grant. Only ever
+	//! advanced while `m_registered`; the RPC it guards is never even attempted before the
+	//! first host session registers.
 	std::optional<bool> m_sentWorkspaceTrusted;
+	//! The last resolved trust value the installed-set filter reacted to, tracked
+	//! unconditionally regardless of `m_registered`. `m_sentWorkspaceTrusted` cannot serve
+	//! this second purpose: because it only advances once registered, using it here would
+	//! make every trust change before the first host session look like a no-op and silently
+	//! skip the rescan that is supposed to withhold/admit extensions from the very first
+	//! registration. `WorkerInitialize` seeds this explicitly (the WorkspaceContext
+	//! subscription in `Start()` is installed only after that task is already queued, so
+	//! there is no change notification to wait on for the initial value); `SetWorkspaceTrusted`
+	//! keeps it current afterward.
+	std::optional<bool> m_filterWorkspaceTrusted;
 	CExtensionHostSharedState m_sharedState;
 	SExtensionHostBrokerSnapshot m_connectionSnapshot;
 	std::unique_ptr<CExtensionPipeTransport> m_transport;

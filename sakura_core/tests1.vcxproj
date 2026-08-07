@@ -312,6 +312,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxRequestServiceAdapterTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxProductionClientTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionManagerStreamedInstallTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionUntrustedWorkspaceSupportTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfileext.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfuncinfoarr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-clayoutint.cpp" />

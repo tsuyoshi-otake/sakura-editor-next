@@ -684,6 +684,14 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			AdjustLightness(palette.buttonBackground,
 				ModeForKind(kind) == ThemeMode::Dark ? 0.2 : -0.2),
 			{ L"button.hoverBackground" });
+		// `statusBarItem.prominentBackground` is the one status-bar item that paints its
+		// own fill instead of relying on the bar's single flat background (see
+		// `CMainStatusBar`'s Restricted Mode entry), so it composites over the resolved
+		// `accent` (the status bar's own background) rather than over `canvas` like the
+		// translucent tokens above. Upstream registers a single non-per-theme default,
+		// `Color.black.transparent(0.5)`, for dark/light/hcDark/hcLight alike.
+		palette.statusBarProminentBackground = firstOverWithFallback(palette.accent,
+			Composite({ 0, 0, 0, 0x80 }, palette.accent), { L"statusBarItem.prominentBackground" });
 	}
 	catch (...) {
 		// A malformed/oversized map cannot make the native workbench lose its

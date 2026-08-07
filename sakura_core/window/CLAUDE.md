@@ -461,9 +461,10 @@ wiring.
   Status Bar. Hidden stable IDs are stored in the selected profile's User scope
   under `workbench.statusbar.hidden`; an extension item uses
   `<extensionId>.<itemId>` and its contributed `name` is the menu label.
-- Use upstream stable IDs when VS Code owns the concept, including `status.scm`,
-  `status.editor.selection`, `status.editor.eol`, `status.editor.encoding`,
-  `status.editor.inputMode`, `status.editor.zoom`, and `status.notifications`.
+- Use upstream stable IDs when VS Code owns the concept, including
+  `status.workspaceTrust`, `status.scm`, `status.editor.selection`,
+  `status.editor.eol`, `status.editor.encoding`, `status.editor.inputMode`,
+  `status.editor.zoom`, and `status.notifications`.
 - The native status bar must not use `SBARS_SIZEGRIP`. VS Code anchors its
   rightmost item directly to the status-bar client edge; reserving a legacy
   resize-grip width leaves the notifications icon visibly too far left.
@@ -481,6 +482,73 @@ wiring.
   product-owned as `sakura.status.editor.characterCode` and
   `sakura.status.macroRecording`; do not disguise them under unrelated VS Code
   IDs merely to make the customization menu look canonical.
+
+## Restricted Mode status-bar entry (2026-08-07, #36)
+
+- The far-left item is VS Code's `status.workspaceTrust`: a `$(shield)
+  Restricted Mode` label that appears **only** while the workspace is not
+  trusted and clicking it runs `workbench.trust.manage`. It renders further
+  left than `status.scm`, exactly where upstream places it, and shifts the SCM
+  block's own origin right by its width when visible — `PaintStatusBar` seeds
+  `scmWidth` from the trust item's measured width instead of `0`.
+- Visibility gate: `IsStatusbarEntryVisible("status.workspaceTrust")` **and**
+  `m_workspaceTrustState != config::EWorkspaceTrustState::Trusted`. Both
+  `Unknown` and `Untrusted` paint as restricted, matching the three-state
+  `config::EWorkspaceTrustState` contract in `config/CLAUDE.md`: withheld trust
+  is never fabricated into a false `Trusted`, and an un-refreshed window
+  (`Unknown`) must not silently claim to be trusted either.
+- `CEditWnd` pushes the live value through
+  `CMainStatusBar::SetWorkspaceTrustState(config::EWorkspaceTrustState)`, a
+  callback-free projection setter in the same family as
+  `SetScmStatusCommands`/`SetNotificationState` — it only stores state and
+  invalidates the bar, it never invokes a command or notifies an owner. The
+  push happens inside `RefreshWorkbenchCommandContext()`, right after that
+  function reads `WorkspaceContext().Snapshot()` for the core context keys;
+  that function already runs at every command dispatch and workspace/folder
+  transition, so trust state and the core context keys can never disagree
+  about what "trusted" means, and no second workspace-context subscription was
+  added just for painting.
+- This is the one status-bar item that paints its own fill: every other item
+  rides the bar's single flat `FillSolidRect(target, client, m_palette.accent)`
+  background, but this one fills its own rectangle with the new
+  `m_palette.statusBarProminentBackground` role (VS Code's
+  `statusBarItem.prominentBackground`) before drawing its label runs. See
+  `theme/CLAUDE.md` for why that role could not reuse an existing one. The
+  label foreground reuses the existing `m_palette.highlightText` role — no new
+  foreground role was needed, because `highlightText` already equals
+  `statusBarItem.prominentForeground`'s upstream default (`#FFFFFF`) for both
+  dark and light.
+- The click target routes through the same generic path `status.scm` uses:
+  `InvokeBuiltinItemAt` dispatches any hit target's non-empty `command` string
+  to `m_workbenchCommandCallback` without a special case, so pushing
+  `{ "status.workspaceTrust", itemRect, "workbench.trust.manage" }` onto
+  `m_statusbarHitTargets` was sufficient; no new routing branch was added.
+  `workbench.trust.manage` was already registered
+  (`WorkbenchCommandRegistry.cpp`) and its executor
+  (`CEditWnd::ExecuteManageWorkspaceTrust`) already shows a native
+  `TaskDialogIndirect` modal — that divergence from VS Code's rich trust editor
+  page is recorded in `config/CLAUDE.md` and is not repeated here.
+- **Unproven by unit test, deliberately and on the record.** The entry's
+  presence/absence by trust state, its click command, and the
+  `status.notifications`-stays-rightmost invariant have **no** automated
+  coverage. `PaintStatusBar` takes an `HDC` and reads `m_hwndStatusBar`, the
+  palette, and the icon-font registry, and the entry descriptor list is a local
+  array inside `CEditWnd::RefreshStatusbarPresentation` — so proving any of this
+  needs a real window, which is exactly the shape `EditWndTest.*` has and why it
+  is excluded from the unattended smoke filter. `StatusbarViewModelTest` covers
+  only the pure view model and knows no specific entry IDs, so it does not
+  reach this either. Do not read the green cohort as evidence that this item
+  paints correctly; verify it with the screen-versus-`PrintWindow` differential
+  method in the root [`CLAUDE.md`](../../CLAUDE.md), or close the gap by
+  extracting a testable seam, before relying on it.
+- **Documented divergence:** VS Code shows Restricted Mode in *two* places at
+  once — this status-bar entry and the `workbench.parts.banner`
+  (`RestrictedModeAction`'s banner beneath the title/menu bar). Only the
+  status-bar entry is implemented; the banner Part does not exist in this
+  adapter yet. Until it does, this status-bar item is the *only* surface that
+  tells the user a window is in Restricted Mode, so its hide/show correctness
+  matters more here than it would upstream, where the banner is a second,
+  independent signal.
 
 ## Extension Status Bar Item Hovers (2026-08-01)
 

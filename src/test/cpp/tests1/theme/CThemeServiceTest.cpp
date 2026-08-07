@@ -26,6 +26,8 @@ TEST(CThemeService, DarkPaletteMatchesWorkbenchTokensExactly)
 		// These equal the ThemePalette member initializers, so omitting them would still pass
 		// while asserting nothing about what the registry actually produces.
 		{ 0x1F, 0x8A, 0xD2 }, { 0xFF, 0xFF, 0xFF }, { 0x3F, 0xA1, 0xE3 },
+		// statusBarItem.prominentBackground: black.transparent(0.5) over the dark accent #1F8AD2.
+		{ 0x0F, 0x45, 0x69 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Dark));
 	EXPECT_EQ(ThemeMode::Dark, CThemeService::DefaultMode());
@@ -54,6 +56,8 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 		// it for light themes. Spelled out rather than left to the ThemePalette member
 		// initializers, which hold the dark values and would make this assertion vacuous.
 		{ 0xB8, 0x32, 0x68 }, { 0xFF, 0xFF, 0xFF }, { 0x93, 0x28, 0x53 },
+		// statusBarItem.prominentBackground: black.transparent(0.5) over the light accent #B83268.
+		{ 0x5C, 0x19, 0x34 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 }
@@ -67,6 +71,7 @@ TEST(CThemeService, HighContrastOverlayDoesNotChangeSavedModeSelection)
 		{ 43, 44, 45 }, { 46, 47, 48 }, { 49, 50, 51 },
 		{ 52, 53, 54 }, { 55, 56, 57 }, { 58, 59, 60 },
 		{ 61, 62, 63 }, { 64, 65, 66 }, { 67, 68, 69 },
+		{ 70, 71, 72 },
 	};
 	EXPECT_EQ(highContrast, CThemeService::SelectPalette(ThemeMode::Dark, true, highContrast));
 	EXPECT_EQ(CThemeService::PaletteFor(ThemeMode::Light),
@@ -80,6 +85,27 @@ TEST(CThemeService, HighContrastTerminalBackgroundUsesThePanelFace)
 	EXPECT_EQ(highContrast.canvas, highContrast.editorGutterBackground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberForeground);
 	EXPECT_EQ(highContrast.primaryText, highContrast.editorLineNumberActiveForeground);
+}
+
+TEST(CThemeService, HighContrastStatusBarProminentBackgroundCompositesBlackHalfOverHighlight)
+{
+	// Upstream registers `statusBarItem.prominentBackground` as a single
+	// non-per-theme default, `Color.black.transparent(0.5)`, that applies to
+	// hcDark/hcLight exactly like the ordinary dark/light themes. High Contrast
+	// has no compiled literal for it: it is composited at read time over the
+	// live system highlight (the same role High Contrast uses for `accent`).
+	const ThemePalette highContrast = CThemeService::HighContrastPalette();
+	const COLORREF highlight = ::GetSysColor(COLOR_HIGHLIGHT);
+	EXPECT_EQ(highlight, highContrast.accent.ToColorRef());
+	// Reproduces CThemeService.cpp's CompositeBlackHalfOver: round-to-nearest
+	// via `(channel * 127 + 127) / 255`, the same arithmetic CColorThemeRegistry
+	// uses for every other translucent VS Code token.
+	const auto blend = [](BYTE channel) noexcept -> BYTE {
+		return static_cast<BYTE>((static_cast<unsigned int>(channel) * 127U + 127U) / 255U);
+	};
+	const ThemeColor expected{
+		blend(GetRValue(highlight)), blend(GetGValue(highlight)), blend(GetBValue(highlight)) };
+	EXPECT_EQ(expected, highContrast.statusBarProminentBackground);
 }
 
 TEST(CThemeService, FontPolicyPrefersNativeWindowsElevenFamilies)
