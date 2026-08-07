@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cwctype>
 #include <fstream>
 #include <limits>
@@ -58,6 +59,44 @@ struct HashHolder {
 bool IsHexDigit(wchar_t ch) noexcept
 {
 	return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f') || (ch >= L'A' && ch <= L'F');
+}
+
+/*!
+	@brief restrictedConfigurations の 1 要素が正当な設定キーの形か
+
+	config::CConfigurationService.cpp の匿名名前空間にある IsCanonicalKey と
+	同じ規則（先頭・末尾が '.' でない、各セグメントの先頭は英字、以降は英数字か
+	'-'、最低 1 個の '.' を含む）をここへ複製したもの。extension/ は config/ の
+	実装（.cpp）へ依存しない方針を保っており、この 1 述語だけのために config/ を
+	ビルド上の依存へ引き込むより、単純な述語をここへ複製するほうが素直。規則を
+	変えるときは両方の場所を同時に直すこと。
+*/
+bool IsCanonicalConfigurationKey(const std::string& key)
+{
+	if (key.empty() || key.front() == '.' || key.back() == '.') {
+		return false;
+	}
+	bool needsSegmentStart = true;
+	bool hasDot = false;
+	for (const unsigned char character : key) {
+		if (character == '.') {
+			if (needsSegmentStart) {
+				return false;
+			}
+			needsSegmentStart = true;
+			hasDot = true;
+			continue;
+		}
+		if (needsSegmentStart) {
+			if (!std::isalpha(character)) {
+				return false;
+			}
+			needsSegmentStart = false;
+		} else if (!std::isalnum(character) && character != '-') {
+			return false;
+		}
+	}
+	return hasDot && !needsSegmentStart;
 }
 
 /*!
@@ -627,6 +666,63 @@ EExtensionUntrustedWorkspaceSupport CExtensionManager::ParseUntrustedWorkspaceSu
 	return EExtensionUntrustedWorkspaceSupport::NotSupported;
 }
 
+// package.json 本文から capabilities.untrustedWorkspaces.restrictedConfigurations を読む
+std::vector<std::string> CExtensionManager::ParseRestrictedConfigurations(const std::string& sManifestJson)
+{
+	std::vector<std::string> result;
+
+	picojson::value root;
+	if (const std::string sError = picojson::parse(root, sManifestJson); !sError.empty()) {
+		return result;
+	}
+	if (!root.is<picojson::object>()) {
+		return result;
+	}
+	const picojson::object& obj = root.get<picojson::object>();
+
+	const auto itCapabilities = obj.find("capabilities");
+	if (itCapabilities == obj.end() || !itCapabilities->second.is<picojson::object>()) {
+		return result;
+	}
+	const picojson::object& capabilities = itCapabilities->second.get<picojson::object>();
+
+	const auto itUntrustedWorkspaces = capabilities.find("untrustedWorkspaces");
+	if (itUntrustedWorkspaces == capabilities.end() || !itUntrustedWorkspaces->second.is<picojson::object>()) {
+		return result;
+	}
+	const picojson::object& untrustedWorkspaces = itUntrustedWorkspaces->second.get<picojson::object>();
+
+	const auto itRestricted = untrustedWorkspaces.find("restrictedConfigurations");
+	if (itRestricted == untrustedWorkspaces.end() || !itRestricted->second.is<picojson::array>()) {
+		return result;
+	}
+	const picojson::array& restricted = itRestricted->second.get<picojson::array>();
+
+	for (const picojson::value& entry : restricted) {
+		// 文字列でないメンバーはそのメンバーだけを読み捨てる。一覧全体は打ち切らない。
+		if (!entry.is<std::string>()) {
+			continue;
+		}
+		const std::string& sKey = entry.get<std::string>();
+		if (!IsCanonicalConfigurationKey(sKey)) {
+			continue;
+		}
+		if (std::find(result.begin(), result.end(), sKey) != result.end()) {
+			// 重複は 1 個にまとめる。最初に現れた順序を保つ。
+			continue;
+		}
+		if (result.size() >= kMaxRestrictedConfigurationEntries) {
+			// これ以上は取り込まない。この関数は純粋関数で、切り詰めが起きたことを
+			// 呼び出し側へ伝える経路を持たない。EnumInstalled 経由の呼び出し側
+			// （Workspace Trust ゲート）は「拡張が異常な量の設定キーを宣言している」
+			// こと自体を拒否条件にしないため、記録できない切り詰めでも実害にはならない。
+			break;
+		}
+		result.push_back(sKey);
+	}
+	return result;
+}
+
 // 拡張を導入する
 bool CExtensionManager::Install(
 	const SOpenVsxExtension& ext,
@@ -869,14 +965,15 @@ std::vector<SInstalledExtension> CExtensionManager::EnumInstalled() const
 			installed.sVersion = sFolderName.substr(nHyphenPos + 1);
 		}
 
-		// 表示名と untrustedWorkspaces 対応の両方をここで導くので、
-		// 同じ package.json を 2 度読まない。
+		// 表示名・untrustedWorkspaces 対応・restrictedConfigurations の 3 つとも
+		// ここで導くので、同じ package.json を 2 度読まない。
 		const std::string sManifestBody = ReadManifestBody(manifestPath);
 		installed.sDisplayName = ReadDisplayNameFromBody(sManifestBody);
 		if (installed.sDisplayName.empty()) {
 			installed.sDisplayName = installed.sUniqueId;
 		}
 		installed.untrustedWorkspaceSupport = ParseUntrustedWorkspaceSupport(sManifestBody);
+		installed.restrictedConfigurations = ParseRestrictedConfigurations(sManifestBody);
 
 		results.push_back(std::move(installed));
 	}

@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <bit>
+#include <cassert>
 #include <cctype>
 #include <deque>
 #include <map>
@@ -448,6 +449,14 @@ struct CConfigurationService::State final {
 	// This tracks committed service transactions independently of the
 	// per-source revisions used for compare-and-swap writes.
 	std::uint64_t committedRevision = 0;
+	// The joint fact ApplyRestrictedConfigurations commits. While
+	// workspaceTrusted is false, CollectProvenanceLocked withholds the
+	// Workspace/Folder-scope contributions of every key named here. Both
+	// members are target-independent: Workspace Trust is a single per-window
+	// fact, not something this in-memory core can resolve per workspace/folder
+	// target on its own.
+	std::set<std::string, std::less<>> restrictedKeys;
+	bool workspaceTrusted = false;
 };
 
 namespace {
@@ -584,17 +593,49 @@ std::vector<ConfigurationProvenance> CollectProvenanceLocked(
 				? left->source.sourceId < right->source.sourceId
 				: left->source.priority < right->source.priority;
 		});
+		// Workspace Trust withholds only the Workspace and Folder scopes. A
+		// LanguageOverride-scope source can also originate from a workspace's
+		// .vscode/settings.json, but this service models scope, not physical
+		// document identity: by the time a LanguageOverride contribution
+		// reaches here, the information about which document produced it is
+		// already gone. Guessing which LanguageOverride entries are
+		// workspace-owned would risk withholding a legitimately profile-owned
+		// override, or trusting one that came from an untrusted workspace, so
+		// this deliberately leaves LanguageOverride unwithheld and records the
+		// gap here rather than resolving it silently in either direction.
+		const bool scopeIsRestrictable = scope == EConfigurationScope::Workspace || scope == EConfigurationScope::Folder;
+		const bool withholdScope = scopeIsRestrictable && !state.workspaceTrusted
+			&& state.restrictedKeys.find(key) != state.restrictedKeys.end();
 		for (const auto* source : candidates) {
-			result.push_back({ scope, source->source.sourceId, source->revision, source->entries.find(key)->second, source->source.priority });
+			result.push_back({ scope, source->source.sourceId, source->revision, source->entries.find(key)->second, source->source.priority, withholdScope });
 		}
 	}
 	return result;
 }
 
+//! Selects the winning provenance entry the same way EffectiveLocked and
+//! Inspect must agree on: the last non-withheld candidate in precedence
+//! order. The Default entry is never withheld, so a provenance vector
+//! produced for a key that has a descriptor always has at least one eligible
+//! candidate; callers guarantee that by checking descriptor existence before
+//! collecting provenance, the same guarantee EffectiveLocked's callers relied
+//! on before this helper existed.
+const ConfigurationValue& SelectEffectiveValueLocked(const std::vector<ConfigurationProvenance>& provenance)
+{
+	assert(!provenance.empty());
+	for (auto it = provenance.rbegin(); it != provenance.rend(); ++it) {
+		if (!it->withheld) {
+			return it->value;
+		}
+	}
+	assert(false && "the Default provenance entry is never withheld");
+	return provenance.back().value;
+}
+
 ConfigurationValue EffectiveLocked(const State& state, const std::string& key, const ConfigurationTarget& target)
 {
 	auto provenance = CollectProvenanceLocked(state, key, target);
-	return provenance.back().value;
+	return SelectEffectiveValueLocked(provenance);
 }
 
 void Notify(const std::shared_ptr<State>& state, const std::vector<ConfigurationChange>& changes)
@@ -702,7 +743,8 @@ ConfigurationInspection CConfigurationService::Inspect(const std::string& key, c
 		return { EConfigurationOutcome::InvalidKey, std::nullopt, {}, "key is not registered by a descriptor" };
 	}
 	auto provenance = CollectProvenanceLocked(*m_state, key, target);
-	return { EConfigurationOutcome::Applied, provenance.back().value, std::move(provenance), {} };
+	auto effectiveValue = SelectEffectiveValueLocked(provenance);
+	return { EConfigurationOutcome::Applied, std::move(effectiveValue), std::move(provenance), {} };
 }
 
 ConfigurationResult CConfigurationService::Update(const ConfigurationUpdate& request)
@@ -1085,6 +1127,72 @@ ConfigurationBatchResult CConfigurationService::ReplaceSources(const Configurati
 			auto after = EffectiveLocked(*m_state, value.key, value.target);
 			if (value.before != after) {
 				changes.push_back({ value.key, value.target, std::move(value.before), std::move(after) });
+			}
+		}
+	}
+	Notify(m_state, changes);
+	return result;
+}
+
+ConfigurationResult CConfigurationService::ApplyRestrictedConfigurations(const RestrictedConfigurationPolicy& policy)
+{
+	// Validated with the same predicate the read paths (ReadSnapshot, Inspect)
+	// use, and for the same reason: an invalid target cannot name a coherent
+	// effective value, so it cannot name a coherent change either. Reject
+	// before touching state rather than silently falling back to some other
+	// identity the caller did not ask for.
+	if (!IsContextValid(policy.evaluationTarget)) {
+		return Invalid(EConfigurationOutcome::InvalidScope, "evaluationTarget has an invalid URI/profile/language combination");
+	}
+
+	std::set<std::string, std::less<>> normalizedKeys;
+	for (const auto& key : policy.restrictedKeys) {
+		if (IsCanonicalKey(key)) {
+			normalizedKeys.insert(key);
+		}
+	}
+
+	std::vector<ConfigurationChange> changes;
+	ConfigurationResult result;
+	{
+		std::unique_lock lock(m_state->mutex);
+		if (m_state->workspaceTrusted == policy.workspaceTrusted && m_state->restrictedKeys == normalizedKeys) {
+			return { EConfigurationOutcome::NoChange, m_state->committedRevision, "restricted configuration policy is unchanged" };
+		}
+
+		// The before/after effective-value comparison, and every emitted
+		// ConfigurationChange, is resolved against the caller-supplied
+		// evaluationTarget. The restricted policy itself is service-wide, but
+		// "which keys actually moved" is only answerable for one concrete
+		// profile/workspace/folder identity, and the owning runtime is the
+		// only thing that knows its own. This makes the notification name
+		// values a real consumer can read back through the same target.
+		const auto& evaluationTarget = policy.evaluationTarget;
+		std::set<std::string, std::less<>> affectedKeys;
+		for (const auto& key : m_state->restrictedKeys) {
+			if (m_state->descriptors.find(key) != m_state->descriptors.end()) {
+				affectedKeys.insert(key);
+			}
+		}
+		for (const auto& key : normalizedKeys) {
+			if (m_state->descriptors.find(key) != m_state->descriptors.end()) {
+				affectedKeys.insert(key);
+			}
+		}
+		std::map<std::string, ConfigurationValue, std::less<>> before;
+		for (const auto& key : affectedKeys) {
+			before.emplace(key, EffectiveLocked(*m_state, key, evaluationTarget));
+		}
+
+		m_state->workspaceTrusted = policy.workspaceTrusted;
+		m_state->restrictedKeys = std::move(normalizedKeys);
+		++m_state->committedRevision;
+		result = { EConfigurationOutcome::Applied, m_state->committedRevision, {} };
+
+		for (const auto& key : affectedKeys) {
+			auto after = EffectiveLocked(*m_state, key, evaluationTarget);
+			if (before.find(key)->second != after) {
+				changes.push_back({ key, evaluationTarget, before.find(key)->second, std::move(after) });
 			}
 		}
 	}

@@ -7,9 +7,11 @@
 #include "pch.h"
 
 #include "extension/CExtensionManager.h"
+#include "extension/ExtensionUntrustedWorkspaceOverride.h"
 
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -169,6 +171,126 @@ TEST(ExtensionUntrustedWorkspaceSupport, BrowserOnlyEntryPointCountsAsCode)
 		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":false}}}";
 	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported,
 		CExtensionManager::ParseUntrustedWorkspaceSupport(sJson));
+}
+
+/*!
+	@brief CExtensionManager::ParseRestrictedConfigurations の単体検証
+
+	ParseUntrustedWorkspaceSupport と同じ picojson 経路を辿る純粋関数なので、同じ流儀
+	（package.json 本文の文字列だけを組み立てて検証する）で確かめる。読めない形は
+	すべて「制限なし」ではなく空の一覧として fail closed する。
+ */
+
+TEST(CExtensionManagerParseRestrictedConfigurations, HappyPathReadsDeclaredKeys)
+{
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":[\"editor.tabSize\",\"files.autoSave\"]}}}";
+	const std::vector<std::string> result = CExtensionManager::ParseRestrictedConfigurations(sJson);
+	ASSERT_EQ(2u, result.size());
+	EXPECT_EQ("editor.tabSize", result[0]);
+	EXPECT_EQ("files.autoSave", result[1]);
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, MissingCapabilitiesIsEmpty)
+{
+	const std::string sJson = "{\"name\":\"withcode\",\"main\":\"./out/extension.js\"}";
+	EXPECT_TRUE(CExtensionManager::ParseRestrictedConfigurations(sJson).empty());
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, CapabilitiesWithoutUntrustedWorkspacesIsEmpty)
+{
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"virtualWorkspaces\":true}}";
+	EXPECT_TRUE(CExtensionManager::ParseRestrictedConfigurations(sJson).empty());
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, UntrustedWorkspacesWithoutRestrictedConfigurationsIsEmpty)
+{
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\"}}}";
+	EXPECT_TRUE(CExtensionManager::ParseRestrictedConfigurations(sJson).empty());
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, RestrictedConfigurationsNotArrayIsEmpty)
+{
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":\"editor.tabSize\"}}}";
+	EXPECT_TRUE(CExtensionManager::ParseRestrictedConfigurations(sJson).empty());
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, NonStringMembersAreDroppedIndividually)
+{
+	// 文字列でない要素はその要素だけを読み捨て、一覧全体は打ち切らない。
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":[\"editor.tabSize\",42,null,true,[],{},\"files.autoSave\"]}}}";
+	const std::vector<std::string> result = CExtensionManager::ParseRestrictedConfigurations(sJson);
+	ASSERT_EQ(2u, result.size());
+	EXPECT_EQ("editor.tabSize", result[0]);
+	EXPECT_EQ("files.autoSave", result[1]);
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, NonCanonicalKeyIsDropped)
+{
+	// アンダースコア・ドット無し・先頭/末尾ドット・空セグメント・数字始まりは、いずれも
+	// config::CConfigurationService.cpp の IsCanonicalKey と同じ規則で非正準として落ちる。
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":[\"editor.tabSize\",\"editor.tab_size\",\"nodot\","
+		"\".editor.tabSize\",\"editor.tabSize.\",\"editor..tabSize\",\"1editor.tabSize\"]}}}";
+	const std::vector<std::string> result = CExtensionManager::ParseRestrictedConfigurations(sJson);
+	ASSERT_EQ(1u, result.size());
+	EXPECT_EQ("editor.tabSize", result[0]);
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, DuplicatesCollapsePreservingFirstSeenOrder)
+{
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":[\"files.autoSave\",\"editor.tabSize\",\"files.autoSave\"]}}}";
+	const std::vector<std::string> result = CExtensionManager::ParseRestrictedConfigurations(sJson);
+	ASSERT_EQ(2u, result.size());
+	EXPECT_EQ("files.autoSave", result[0]);
+	EXPECT_EQ("editor.tabSize", result[1]);
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, OverLongArrayDropsEntriesPastTheBound)
+{
+	// kMaxRestrictedConfigurationEntries を超える分は静かに切り捨てられる。マジック
+	// ナンバーを再定義せず、テストからも参照できる公開境界そのものを使って確かめる。
+	std::string sArray = "[";
+	const std::size_t entryCount = CExtensionManager::kMaxRestrictedConfigurationEntries + 5;
+	for (std::size_t index = 0; index < entryCount; ++index) {
+		if (index != 0) {
+			sArray += ",";
+		}
+		sArray += "\"test.key" + std::to_string(index) + "\"";
+	}
+	sArray += "]";
+	const std::string sJson =
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":" + sArray + "}}}";
+
+	const std::vector<std::string> result = CExtensionManager::ParseRestrictedConfigurations(sJson);
+	ASSERT_EQ(CExtensionManager::kMaxRestrictedConfigurationEntries, result.size());
+	EXPECT_EQ("test.key0", result.front());
+	EXPECT_EQ("test.key" + std::to_string(CExtensionManager::kMaxRestrictedConfigurationEntries - 1), result.back());
+}
+
+TEST(CExtensionManagerParseRestrictedConfigurations, MalformedJsonIsEmpty)
+{
+	const std::string sJson = "{ this is not valid json";
+	EXPECT_TRUE(CExtensionManager::ParseRestrictedConfigurations(sJson).empty());
 }
 
 /*!
@@ -379,4 +501,309 @@ TEST(CExtensionManagerEnumInstalledUntrustedWorkspaceSupport, MultipleExtensions
 	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported, pNotSupported->untrustedWorkspaceSupport);
 	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported, pDeclarative->untrustedWorkspaceSupport);
 	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported, pBroken->untrustedWorkspaceSupport);
+}
+
+/*!
+	@brief CExtensionManager::EnumInstalled() が restrictedConfigurations を実ファイルから配線する検証
+
+	上の ParseRestrictedConfigurations 単体テスト群は文字列 in / vector out だけを見ており、
+	EnumInstalled が同じ sManifestBody から SInstalledExtension::restrictedConfigurations を
+	詰める配線は通っていない。EnumInstalledTempDirectory / WriteInstalledExtensionManifest /
+	FindByUniqueId は上の匿名名前空間のものをそのまま再利用する。
+ */
+
+TEST(CExtensionManagerEnumInstalledRestrictedConfigurations, DeclaredRestrictedConfigurationsArePopulated)
+{
+	const EnumInstalledTempDirectory directory;
+	WriteInstalledExtensionManifest(directory.GetPath(), L"acme.limited", L"1.0.0",
+		"{\"name\":\"limited\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":\"limited\","
+		"\"restrictedConfigurations\":[\"editor.tabSize\",\"files.autoSave\"]}}}");
+
+	CExtensionManager manager(directory.GetPath());
+	const std::vector<SInstalledExtension> installed = manager.EnumInstalled();
+
+	const SInstalledExtension* pFound = FindByUniqueId(installed, L"acme.limited");
+	ASSERT_NE(nullptr, pFound);
+	ASSERT_EQ(2u, pFound->restrictedConfigurations.size());
+	EXPECT_EQ("editor.tabSize", pFound->restrictedConfigurations[0]);
+	EXPECT_EQ("files.autoSave", pFound->restrictedConfigurations[1]);
+}
+
+TEST(CExtensionManagerEnumInstalledRestrictedConfigurations, ExtensionDeclaringNoneHasEmptyList)
+{
+	const EnumInstalledTempDirectory directory;
+	WriteInstalledExtensionManifest(directory.GetPath(), L"acme.withcode", L"1.0.0",
+		"{\"name\":\"withcode\",\"main\":\"./out/extension.js\","
+		"\"capabilities\":{\"untrustedWorkspaces\":{\"supported\":true}}}");
+
+	CExtensionManager manager(directory.GetPath());
+	const std::vector<SInstalledExtension> installed = manager.EnumInstalled();
+
+	const SInstalledExtension* pFound = FindByUniqueId(installed, L"acme.withcode");
+	ASSERT_NE(nullptr, pFound);
+	EXPECT_TRUE(pFound->restrictedConfigurations.empty());
+}
+
+//! 壊れた package.json は untrustedWorkspaceSupport 同様、restrictedConfigurations も fail closed で空になり、一覧から消えない
+TEST(CExtensionManagerEnumInstalledRestrictedConfigurations, BrokenManifestHasEmptyListAndStillEnumerates)
+{
+	const EnumInstalledTempDirectory directory;
+	WriteInstalledExtensionManifest(directory.GetPath(), L"acme.broken", L"1.0.0",
+		"{ this is not valid json");
+
+	CExtensionManager manager(directory.GetPath());
+	const std::vector<SInstalledExtension> installed = manager.EnumInstalled();
+
+	const SInstalledExtension* pFound = FindByUniqueId(installed, L"acme.broken");
+	ASSERT_NE(nullptr, pFound) << L"壊れたマニフェストでも一覧から消えてはならない";
+	EXPECT_TRUE(pFound->restrictedConfigurations.empty());
+}
+
+/*!
+	@brief ParseExtensionUntrustedWorkspaceOverrides の単体検証
+
+	extensions.supportUntrustedWorkspaces は JSONC から既にデコードされた
+	config::ConfigurationValue 経路で届くため、ParseUntrustedWorkspaceSupport /
+	ParseRestrictedConfigurations の picojson 文字列組み立てとは違い、
+	config::ConfigurationValue::Object をそのまま組み立てて検証する
+	（config/ConfigurationServiceTest.cpp の組み立て方に合わせた）。
+	読めない形はすべて「その項目だけを落とす」で fail closed する。
+ */
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, NonObjectSettingValueIsEmpty)
+{
+	const config::ConfigurationValue value(true);
+	EXPECT_TRUE(ParseExtensionUntrustedWorkspaceOverrides(value).empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, NullSettingValueIsEmpty)
+{
+	const config::ConfigurationValue value; // 既定構築 == JSON null / 未設定相当
+	EXPECT_TRUE(ParseExtensionUntrustedWorkspaceOverrides(value).empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, SupportedTrueIsSupported)
+{
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(true) },
+		}) },
+	});
+	const auto result = ParseExtensionUntrustedWorkspaceOverrides(value);
+	ASSERT_EQ(1u, result.size());
+	const auto it = result.find(L"acme.widget");
+	ASSERT_NE(result.end(), it);
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported, it->second.supported);
+	EXPECT_TRUE(it->second.version.empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, SupportedFalseIsNotSupported)
+{
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(false) },
+		}) },
+	});
+	const auto result = ParseExtensionUntrustedWorkspaceOverrides(value);
+	ASSERT_EQ(1u, result.size());
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported, result.at(L"acme.widget").supported);
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, SupportedLimitedStringIsLimited)
+{
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(L"limited") },
+		}) },
+	});
+	const auto result = ParseExtensionUntrustedWorkspaceOverrides(value);
+	ASSERT_EQ(1u, result.size());
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Limited, result.at(L"acme.widget").supported);
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, SupportedWrongTypeDropsEntry)
+{
+	// bool でも "limited" 文字列でもない値は読み取れない申告として、その項目を落とす。
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(static_cast<std::int64_t>(1)) },
+		}) },
+	});
+	EXPECT_TRUE(ParseExtensionUntrustedWorkspaceOverrides(value).empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, SupportedWrongCasedLimitedDropsEntry)
+{
+	// capabilities.untrustedWorkspaces.supported の "limited" と同じ大文字小文字の区別を踏襲する。
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(L"Limited") },
+		}) },
+	});
+	EXPECT_TRUE(ParseExtensionUntrustedWorkspaceOverrides(value).empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, MissingSupportedDropsEntry)
+{
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"version", config::ConfigurationValue(L"1.0.0") },
+		}) },
+	});
+	EXPECT_TRUE(ParseExtensionUntrustedWorkspaceOverrides(value).empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, StringVersionIsStored)
+{
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(true) },
+			{ L"version", config::ConfigurationValue(L"1.2.3") },
+		}) },
+	});
+	const auto result = ParseExtensionUntrustedWorkspaceOverrides(value);
+	ASSERT_EQ(1u, result.size());
+	EXPECT_STREQ(L"1.2.3", result.at(L"acme.widget").version.c_str());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, NonStringVersionDropsWholeEntry)
+{
+	// version が読めないまま全バージョンへ適用すると、書いていない免除を勝手に広げて
+	// しまうため、supported が正しく読めていても version ごとこの項目を落とす。
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(true) },
+			{ L"version", config::ConfigurationValue(static_cast<std::int64_t>(1)) },
+		}) },
+	});
+	EXPECT_TRUE(ParseExtensionUntrustedWorkspaceOverrides(value).empty());
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, NonObjectMemberIsDroppedWithoutAffectingOthers)
+{
+	const config::ConfigurationValue value(config::ConfigurationValue::Object {
+		{ L"acme.broken", config::ConfigurationValue(true) },
+		{ L"acme.widget", config::ConfigurationValue(config::ConfigurationValue::Object {
+			{ L"supported", config::ConfigurationValue(true) },
+		}) },
+	});
+	const auto result = ParseExtensionUntrustedWorkspaceOverrides(value);
+	ASSERT_EQ(1u, result.size());
+	EXPECT_NE(result.end(), result.find(L"acme.widget"));
+	EXPECT_EQ(result.end(), result.find(L"acme.broken"));
+}
+
+TEST(ParseExtensionUntrustedWorkspaceOverridesTest, OverLongMapDropsEntriesPastTheBound)
+{
+	// kMaxExtensionUntrustedWorkspaceOverrideEntries を超える分は静かに切り捨てられる。
+	// マジックナンバーを再定義せず、テストからも参照できる公開境界そのものを使う。
+	config::ConfigurationValue::Object root;
+	const std::size_t entryCount = kMaxExtensionUntrustedWorkspaceOverrideEntries + 5;
+	for (std::size_t index = 0; index < entryCount; ++index) {
+		root.emplace(L"acme.ext" + std::to_wstring(index),
+			config::ConfigurationValue(config::ConfigurationValue::Object {
+				{ L"supported", config::ConfigurationValue(true) },
+			}));
+	}
+	const config::ConfigurationValue value(std::move(root));
+
+	const auto result = ParseExtensionUntrustedWorkspaceOverrides(value);
+	EXPECT_EQ(kMaxExtensionUntrustedWorkspaceOverrideEntries, result.size());
+}
+
+/*!
+	@brief ResolveUntrustedWorkspaceSupport の単体検証
+
+	上書きが無ければマニフェスト値をそのまま返すこと、上書きは緩める方向にも厳しく
+	する方向にも効くこと、バージョン一致の優先順位、拡張 ID の大文字小文字を無視した
+	一致を確かめる。
+ */
+
+TEST(ResolveUntrustedWorkspaceSupportTest, NoOverrideReturnsManifestValue)
+{
+	const std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::Supported, L"acme.widget", L"1.0.0", overrides));
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Limited,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::Limited, L"acme.widget", L"1.0.0", overrides));
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"1.0.0", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, OverrideWithNoVersionApplies)
+{
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"acme.widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::Supported, L"" });
+
+	// バージョン指定なしは、問い合わせのバージョンによらず適用される。
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"1.0.0", overrides));
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"9.9.9", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, OverrideWithMatchingVersionApplies)
+{
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"acme.widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::Supported, L"1.0.0" });
+
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"1.0.0", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, OverrideWithMismatchedVersionFallsBackToManifestValue)
+{
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"acme.widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::Supported, L"1.0.0" });
+
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"2.0.0", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, OverrideWidensNotSupportedToSupported)
+{
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"acme.widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::Supported, L"" });
+
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"1.0.0", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, OverrideNarrowsSupportedToNotSupported)
+{
+	// 上書きは緩める方向にも厳しくする方向にも効く。VS Code 自身がそう動くため、
+	// 片方向だけ効かせる作りにしてはならない。
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"acme.widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::NotSupported, L"" });
+
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::Supported, L"acme.widget", L"1.0.0", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, IdMatchingIsCaseInsensitive)
+{
+	// CExtensionManager::FindInstalled が sUniqueId を大文字小文字を無視して比較しており、
+	// VS Code 自身も拡張識別子を大文字小文字を無視して比較するため、これに合わせる。
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"Acme.Widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::Supported, L"" });
+
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"1.0.0", overrides));
+}
+
+TEST(ResolveUntrustedWorkspaceSupportTest, VersionSpecificMatchWinsOverVersionAgnosticMatchForSameId)
+{
+	// 同じ拡張 ID に対して、バージョン指定なしの申告とバージョン指定ありの申告が
+	// （大文字小文字違いの 2 つの設定キーとして）両方存在するとき、より具体的な
+	// バージョン一致を優先する。
+	std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>> overrides;
+	overrides.emplace(L"acme.widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::NotSupported, L"" });
+	overrides.emplace(L"Acme.Widget", ExtensionUntrustedWorkspaceOverride{ EExtensionUntrustedWorkspaceSupport::Supported, L"1.0.0" });
+
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::Supported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::NotSupported, L"acme.widget", L"1.0.0", overrides));
+	// バージョンが一致しない問い合わせは、バージョン指定なしの申告へフォールバックする。
+	EXPECT_EQ(EExtensionUntrustedWorkspaceSupport::NotSupported,
+		ResolveUntrustedWorkspaceSupport(EExtensionUntrustedWorkspaceSupport::Supported, L"acme.widget", L"9.9.9", overrides));
 }

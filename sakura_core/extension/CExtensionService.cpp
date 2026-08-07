@@ -13,6 +13,7 @@
 #include "config/system_constants.h"
 #include "extension/CExtensionManager.h"
 #include "extension/CExtensionQuickInputDialog.h"
+#include "extension/ExtensionUntrustedWorkspaceOverride.h"
 #include "workbench/IWorkbenchRuntime.h"
 #include "_os/CClipboard.h"
 #include "util/string_ex.h"
@@ -857,22 +858,51 @@ std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRoot
 	}
 
 	// Workspace Trust gates the installed set the same way profile enablement does one clause
-	// up: an extension whose manifest declares no untrusted-workspace support must never
-	// reach `host/registerExtensions` while the workspace is not trusted. `Limited` and
-	// `Supported` both mean "may load" -- only `NotSupported` is withheld. This matches
-	// upstream's `ExtensionEnablementService` / `DisabledByTrustRequirement`, which withholds
-	// at the enablement layer rather than the activation path.
+	// up: an extension whose *resolved* untrusted-workspace support -- the manifest
+	// declaration, unless the user's `extensions.supportUntrustedWorkspaces` override below
+	// names this extension and replaces it -- is NotSupported must never reach
+	// `host/registerExtensions` while the workspace is not trusted. `Limited` and `Supported`
+	// both mean "may load" -- only `NotSupported` is withheld. This matches upstream's
+	// `ExtensionEnablementService` / `DisabledByTrustRequirement`, which withholds at the
+	// enablement layer rather than the activation path.
 	const bool trusted = CurrentWorkspaceTrustedWorker();
+
+	// Read the user's `extensions.supportUntrustedWorkspaces` override once, before the scan,
+	// not once per extension: it is one configuration read against one snapshot of the setting,
+	// and every candidate in this scan must be resolved against that same snapshot rather than
+	// risking a value that moves mid-scan. A null bridge (no runtime bound, the historical
+	// no-runtime unit-test shape) yields an empty map the same way `ExtensionUntrustedWorkspaceOverrides`
+	// itself does for a rejected read, so every candidate falls back to its own manifest
+	// declaration -- fail closed, never fail open.
+	const auto untrustedWorkspaceOverrides = m_workbenchServiceBridge
+		? m_workbenchServiceBridge->ExtensionUntrustedWorkspaceOverrides()
+		: std::map<std::wstring, ExtensionUntrustedWorkspaceOverride, std::less<>>{};
 
 	CExtensionManager manager;
 	std::vector<std::filesystem::path> roots;
 	std::unordered_set<std::wstring> withheldThisScan;
+	// The set of configuration keys every profile-enabled installed extension declares
+	// restricted in an untrusted workspace, deduplicated and published once below. A key
+	// collected from an extension withheld this very scan is still included: withholding
+	// means this one extension is not loaded into the host this scan, not that the setting
+	// stops needing protection. The same key can still be read by another, currently-loaded
+	// extension, by native settings code, or by this same extension the moment trust is later
+	// granted and it reconnects -- so the lock the manifest declared for that key must not
+	// lapse just because its own declaring extension is not the one running right now.
+	std::vector<std::string> restrictedKeys;
+	std::unordered_set<std::string> restrictedKeySeen;
 	for (const auto& installed : manager.EnumInstalled()) {
 		if (!CExtensionProfileState::IsEnabled(
 			profileState, installed.sUniqueId, m_defaultProfileExtensionsWhenMissing)) {
 			continue;
 		}
-		if (!trusted && installed.untrustedWorkspaceSupport == EExtensionUntrustedWorkspaceSupport::NotSupported) {
+		for (const auto& key : installed.restrictedConfigurations) {
+			if (restrictedKeySeen.insert(key).second) restrictedKeys.push_back(key);
+		}
+		const auto resolvedSupport = ResolveUntrustedWorkspaceSupport(
+			installed.untrustedWorkspaceSupport, installed.sUniqueId, installed.sVersion,
+			untrustedWorkspaceOverrides);
+		if (!trusted && resolvedSupport == EExtensionUntrustedWorkspaceSupport::NotSupported) {
 			withheldThisScan.insert(installed.sUniqueId);
 			ReportWithheldExtensionWorker(installed.sUniqueId);
 			continue;
@@ -888,6 +918,15 @@ std::vector<std::filesystem::path> CExtensionService::LoadInstalledExtensionRoot
 	// because of a report that applied to a now-stale reason.
 	std::erase_if(m_reportedWithheldExtensions,
 		[&withheldThisScan](const std::wstring& id) { return !withheldThisScan.contains(id); });
+	if (m_workbenchServiceBridge) {
+		// Published unconditionally, including when `restrictedKeys` is empty: an empty
+		// publish is how a previously published set gets cleared (every extension that
+		// declared restrictions was disabled or uninstalled since the last scan), and a
+		// failed publish must not fail this scan -- the installed roots this function
+		// computed are still correct and still returned below regardless of whether the
+		// runtime accepted the restricted-key set.
+		(void)m_workbenchServiceBridge->PublishExtensionRestrictedConfigurations(std::move(restrictedKeys));
+	}
 	return roots;
 }
 

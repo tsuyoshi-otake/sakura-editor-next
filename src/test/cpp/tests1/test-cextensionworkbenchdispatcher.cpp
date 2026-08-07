@@ -672,6 +672,24 @@ TEST_F(CExtensionWorkbenchDispatcherTest, RejectsConfigurationUpdateWhenNoWorkbe
 	EXPECT_NE(std::string::npos, result.errorMessage.find("workbench settings owner is not available"));
 }
 
+TEST_F(CExtensionWorkbenchDispatcherTest, RestrictedConfigurationAccessorsDegradeExplicitlyWithNoWorkbenchRuntimeBound)
+{
+	// Same "no CWorkbenchRuntime bound" fixture as the test above, exercising the bridge's
+	// two Workspace Trust accessors directly rather than through the dispatcher. Both must
+	// degrade to their documented "no runtime" value -- Unsupported, and an empty map -- so a
+	// window that has not wired a runtime yet (or a still-isolated legacy test) can never be
+	// told a restricted-configuration publish succeeded, and CExtensionService's untrusted-
+	// workspace resolution can never silently widen support because a rejected/absent read
+	// was mistaken for "no override".
+	ASSERT_FALSE(m_bridge->HasWorkbenchRuntime());
+
+	const auto published = m_bridge->PublishExtensionRestrictedConfigurations({ "some.extension.setting" });
+	EXPECT_EQ(config::EConfigurationOutcome::Unsupported, published);
+
+	const auto overrides = m_bridge->ExtensionUntrustedWorkspaceOverrides();
+	EXPECT_TRUE(overrides.empty());
+}
+
 TEST_F(CExtensionWorkbenchDispatcherTest,
 	RejectsWorkspaceScopedAndAbsentConfigurationTargetsAsUnsupportedRegardlessOfRuntimeBinding)
 {

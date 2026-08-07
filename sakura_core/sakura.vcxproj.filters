@@ -1801,6 +1801,9 @@
     <ClInclude Include="..\sakura_core\extension\CExtensionManager.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\extension\ExtensionUntrustedWorkspaceOverride.h">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\extension\CExtensionProfileState.h">
       <Filter>Cpp Source Files\extension</Filter>
     </ClInclude>
@@ -3794,6 +3797,9 @@
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp">
+      <Filter>Cpp Source Files\extension</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\extension\ExtensionUntrustedWorkspaceOverride.cpp">
       <Filter>Cpp Source Files\extension</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\extension\CExtensionProfileState.cpp">

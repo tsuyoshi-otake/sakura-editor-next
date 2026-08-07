@@ -474,20 +474,74 @@ new pure helpers (`ExtensionSearchQuery`, `ExtensionSearchFilter`,
   uninstalled), so a later re-withholding -- trust revoked again, or the extension reinstalled
   -- reports again instead of staying silent forever because of a report tied to a now-stale
   reason.
-- **Documented divergence: `Limited` is currently treated identically to `Supported`.**
-  Upstream VS Code additionally restricts a `Limited` extension's configuration surface via
-  `restrictedConfigurations` (the manifest can name which of its own settings remain live in
-  restricted mode); this repository has not implemented `restrictedConfigurations` anywhere
-  in the configuration or extension-host layers, so there is currently no mechanism to
-  express "may load, but only with these settings honoured." Until that mechanism exists,
-  `Limited` is native equivalent to `Supported`: the extension loads fully, with no setting
-  narrowed. Implementing the divergence properly is deferred, scoped work: it needs a new
-  `restrictedConfigurations` field read off the manifest into `SInstalledExtension` (or an
-  adjacent structure), a way for `CConfigurationService`/the dispatcher's
-  `workspace/configuration/update` path to consult it per-extension, and is a
-  `config/`+`extension/` cross-cutting change, not a one-line filter tweak here.
+- `Limited` and `Supported` both still admit the extension, and #37's
+  `restrictedConfigurations` support did **not** change that: upstream marks a property
+  restricted from the manifest's `restrictedConfigurations` list regardless of what
+  `supported` says, so this codebase collects that list from every profile-enabled extension
+  the same way and the `supported` value never gates it. What #37 removed is the *reason* the
+  earlier divergence note gave — "there is no mechanism to express which settings remain
+  live" — because that mechanism now exists and is enforced (see "Restricted Configurations
+  and the User Override" below). What remains true is that `Limited` and `Supported` reach
+  the identical admission decision here, which is also what they do upstream.
 - No per-extension activation prompt returns anywhere in this delivery, consistent with the
   standing rule in "Activation and Installed-Set Changes" above: Workspace Trust is the only
   gate, it is workspace-scoped rather than per-extension, and withholding is silent to the
   user's workflow (no dialog, no blocked-action toast, no revealed panel) and loud only in
   the Extension Host log.
+
+## Restricted Configurations and the User Override (2026-08-07, #37)
+
+- `CExtensionManager::ParseRestrictedConfigurations` reads
+  `capabilities.untrustedWorkspaces.restrictedConfigurations` off the same bounded picojson
+  path and the same single `ReadManifestBody` string `ParseUntrustedWorkspaceSupport` already
+  uses, so no third file open was added. Non-string members, non-canonical keys, and anything
+  past `kMaxRestrictedConfigurationEntries` are dropped; a malformed manifest yields an empty
+  list, never a partially honoured one.
+- **That predicate is a file-local copy of `config/CConfigurationService.cpp`'s
+  `IsCanonicalKey`, deliberately duplicated rather than included**, so `extension/` keeps its
+  independence from `config/`. The two must be kept in sync: a key this parser accepts and
+  the configuration service later rejects is silently dropped, which is exactly the kind of
+  quiet no-op a security boundary must not have.
+- `LoadInstalledExtensionRootsWorker` collects those keys from **every profile-enabled
+  installed extension, including one withheld by trust in that same scan**, deduplicates
+  them, and publishes them once per scan through
+  `CExtensionWorkbenchServiceBridge::PublishExtensionRestrictedConfigurations`. Withholding
+  means this one extension is not loaded *this scan*, not that the setting stops needing
+  protection: the same key can still be read by another loaded extension, by native settings
+  code, or by this extension the moment trust is granted and it reconnects. An empty publish
+  is meaningful and is issued unconditionally — it is how a previously published set is
+  cleared. A failed publish never fails the scan; the roots it computed are still correct.
+- The bridge forwards to `IWorkbenchRuntime::SetExtensionRestrictedConfigurations`, which
+  takes **only** the key set. Trust is read by the runtime from its own workspace context, so
+  nothing under `extension/` can publish a key set against a trust state the runtime does not
+  hold. See [`../config/CLAUDE.md`](../config/CLAUDE.md)'s Restricted Configurations
+  Checkpoint for what happens to the value after that.
+- `extensions.supportUntrustedWorkspaces` is the per-extension **user** override, shaped
+  `{ "<publisher>.<name>": { "supported": true | false | "limited", "version": "x.y.z" } }`.
+  `ParseExtensionUntrustedWorkspaceOverrides` and `ResolveUntrustedWorkspaceSupport`
+  (`ExtensionUntrustedWorkspaceOverride.h`) are pure — no I/O, no service handle — so the
+  whole matrix is unit-testable.
+- **The override works in both directions.** It can widen a `NotSupported` manifest
+  declaration to `Supported` and it can narrow a `Supported` one to `NotSupported`. Treating
+  it as an exemption-only mechanism would silently discard the user's ability to distrust an
+  extension the manifest declares safe, which is the direction that actually protects them.
+- A `version` that is present applies the override **only** to that exact installed version;
+  a mismatch makes the override inapplicable and the manifest declaration stands. An override
+  recorded for one version must not silently carry into the next one, which is upstream's
+  rule and the only one that survives an auto-update.
+- Extension IDs are matched case-insensitively via `AreExtensionIdsEqual` (an explicit length
+  check plus per-character `std::towupper`, **not** `wmemicmp`, because the `wstring_view`
+  arguments are not guaranteed NUL-terminated). This matches both upstream's own
+  case-insensitive comparison and `CExtensionManager::FindInstalled`'s existing behavior.
+- `CExtensionWorkbenchServiceBridge::ExtensionUntrustedWorkspaceOverrides()` reads the value
+  once per scan at the selected-profile target, through the same path
+  `BuildConfigurationSnapshot` uses, so the worker thread has one read-only accessor and no
+  second configuration cache. It is read once **before** the loop, not per extension, so
+  every candidate in a scan is resolved against one snapshot of the setting.
+- Every failure falls back to the manifest declaration: no runtime bound, a rejected read, a
+  non-object value, a malformed entry. That direction is the fail-closed one — it can only
+  leave support as declared or narrow it, never widen it on the strength of a read that did
+  not succeed.
+- `extensions.supportUntrustedWorkspaces` is a **settings value the user writes**, never a
+  prompt. The standing "no per-extension activation confirmation" rule is unchanged: nothing
+  in this delivery asks the user to approve an extension at activation time.
