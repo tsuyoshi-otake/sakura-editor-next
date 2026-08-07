@@ -145,6 +145,88 @@ TEST(WorkspaceTrustPolicy, EmptyWindowOptOutResolvesUnknownNotUntrusted)
 	EXPECT_EQ(EWorkspaceTrustReason::EmptyWindowNotTrustedByDefault, resolution.reason);
 }
 
+//! Upstream's `_canonicalStartupFiles` short-circuit: a file opened on the command
+//! line into an otherwise-empty window must not silently ride the empty-window
+//! default when the file itself is not covered by the trusted list.
+TEST(WorkspaceTrustPolicy, EmptyWindowWithUncoveredStartupFileResolvesUnknown)
+{
+	WorkspaceTrustResolveRequest request;
+	request.kind = EWorkspaceKind::Empty;
+	request.settings.emptyWindow = true;
+	request.startupFileUris.push_back(ParseUri(L"file:///c:/codes/notes.txt"));
+
+	const auto resolution = ResolveWorkspaceTrust(request);
+	EXPECT_EQ(EWorkspaceTrustState::Unknown, resolution.state);
+	EXPECT_EQ(EWorkspaceTrustReason::StartupFileNotTrusted, resolution.reason);
+}
+
+//! The rule is decided per startup file: every one of them must already be
+//! covered, not merely one.
+TEST(WorkspaceTrustPolicy, EmptyWindowWithOneUncoveredStartupFileAmongSeveralResolvesUnknown)
+{
+	WorkspaceTrustResolveRequest request;
+	request.kind = EWorkspaceKind::Empty;
+	request.settings.emptyWindow = true;
+	request.trustedEntries.push_back(Entry(L"file:///c:/codes/app", true));
+	request.startupFileUris.push_back(ParseUri(L"file:///c:/codes/app/readme.txt"));
+	request.startupFileUris.push_back(ParseUri(L"file:///d:/other/notes.txt"));
+
+	const auto resolution = ResolveWorkspaceTrust(request);
+	EXPECT_EQ(EWorkspaceTrustState::Unknown, resolution.state);
+	EXPECT_EQ(EWorkspaceTrustReason::StartupFileNotTrusted, resolution.reason);
+}
+
+TEST(WorkspaceTrustPolicy, EmptyWindowWithEveryStartupFileCoveredResolvesTrusted)
+{
+	WorkspaceTrustResolveRequest request;
+	request.kind = EWorkspaceKind::Empty;
+	request.settings.emptyWindow = false;
+	request.trustedEntries.push_back(Entry(L"file:///c:/codes/app", true));
+	request.startupFileUris.push_back(ParseUri(L"file:///c:/codes/app/readme.txt"));
+
+	const auto resolution = ResolveWorkspaceTrust(request);
+	EXPECT_EQ(EWorkspaceTrustState::Trusted, resolution.state);
+	EXPECT_EQ(EWorkspaceTrustReason::StartupFilesTrusted, resolution.reason);
+}
+
+//! The startup-files rule runs before -- and can override -- the empty-window
+//! default in either direction: it must not be skipped just because
+//! `emptyWindow` would otherwise have trusted the window anyway.
+TEST(WorkspaceTrustPolicy, StartupFilesRuleOverridesEmptyWindowDefaultTrusted)
+{
+	WorkspaceTrustResolveRequest request;
+	request.kind = EWorkspaceKind::Empty;
+	request.settings.emptyWindow = true;
+	request.startupFileUris.push_back(ParseUri(L"file:///c:/codes/notes.txt"));
+
+	EXPECT_EQ(EWorkspaceTrustState::Unknown, ResolveWorkspaceTrust(request).state);
+}
+
+//! With no startup files at all, the empty-window default is unaffected.
+TEST(WorkspaceTrustPolicy, EmptyWindowWithNoStartupFilesFallsBackToDefault)
+{
+	WorkspaceTrustResolveRequest request;
+	request.kind = EWorkspaceKind::Empty;
+	request.settings.emptyWindow = true;
+
+	const auto resolution = ResolveWorkspaceTrust(request);
+	EXPECT_EQ(EWorkspaceTrustState::Trusted, resolution.state);
+	EXPECT_EQ(EWorkspaceTrustReason::EmptyWindowTrustedByDefault, resolution.reason);
+}
+
+//! Startup files are meaningless for a non-Empty kind: a folder/workspace
+//! window's trust is decided by its roots, and the field must be ignored there.
+TEST(WorkspaceTrustPolicy, StartupFilesAreIgnoredForAFolderWindow)
+{
+	auto request = FolderRequest(L"file:///c:/codes/app");
+	request.trustedEntries.push_back(Entry(L"file:///c:/codes/app", false));
+	request.startupFileUris.push_back(ParseUri(L"file:///d:/other/notes.txt"));
+
+	const auto resolution = ResolveWorkspaceTrust(request);
+	EXPECT_EQ(EWorkspaceTrustState::Trusted, resolution.state);
+	EXPECT_EQ(EWorkspaceTrustReason::AllRootsTrusted, resolution.reason);
+}
+
 TEST(WorkspaceTrustPolicy, UngrantedFolderResolvesUnknown)
 {
 	const auto resolution = ResolveWorkspaceTrust(FolderRequest(L"file:///c:/codes/app"));

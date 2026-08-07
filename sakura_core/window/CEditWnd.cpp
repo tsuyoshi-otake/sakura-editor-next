@@ -110,6 +110,7 @@
 #include "workbench/editor/CDiffSurface.h"
 #include "workbench/editor/CEmptyEditorSurface.h"
 #include "workbench/editor/CExtensionDetailSurface.h"
+#include "workbench/editor/CWorkspaceTrustEditorSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
@@ -1429,16 +1430,25 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
 	const HWND extensionDetailSurface = m_extensionDetailSurface ? m_extensionDetailSurface->GetHwnd() : nullptr;
 	const HWND diffSurface = m_diffSurface ? m_diffSurface->GetHwnd() : nullptr;
+	const HWND trustSurface = m_workspaceTrustSurface ? m_workspaceTrustSurface->GetHwnd() : nullptr;
 	const HWND focused = ::GetFocus();
 	const bool editorOwnedFocus = focused != nullptr
 		&& ((splitter != nullptr && (focused == splitter || ::IsChild(splitter, focused)))
 			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused)))
 			|| (extensionDetailSurface != nullptr && (focused == extensionDetailSurface || ::IsChild(extensionDetailSurface, focused)))
+			|| (trustSurface != nullptr && (focused == trustSurface || ::IsChild(trustSurface, focused)))
 			|| (diffSurface != nullptr && (focused == diffSurface || ::IsChild(diffSurface, focused))));
 
 	if (hasActiveInput) {
 		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 		if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
+		// Same reasoning as the comparison below: a document input outranks the
+		// trust page, and a page left staged would reappear the next time the
+		// group emptied, showing a prompt the user never asked for again.
+		if (m_workspaceTrustSurface) {
+			m_workspaceTrustSurface->ClearPrompt();
+			m_workspaceTrustSurface->Hide();
+		}
 		// A document input outranks every composition-layer projection, so the
 		// comparison is retracted outright rather than merely hidden: it would
 		// otherwise reappear the next time the group became empty, showing a diff
@@ -1463,9 +1473,13 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
 			::ShowWindow(minimap, SW_HIDE);
 		}
-		// Exactly one projection is visible, in this precedence: a comparison, then
-		// the extension metadata surface, then the watermark.
-		if (m_diffSurface && m_diffSurface->HasDiff() && !m_pPrintPreview) {
+		// Exactly one projection is visible, in this precedence: the trust page,
+		// then a comparison, then the extension metadata surface, then the
+		// watermark. Trust ranks first because it is the only one that describes
+		// whether the window may run anything at all.
+		if (m_workspaceTrustSurface && m_workspaceTrustSurface->HasPrompt() && !m_pPrintPreview) {
+			m_workspaceTrustSurface->Show();
+		} else if (m_diffSurface && m_diffSurface->HasDiff() && !m_pPrintPreview) {
 			m_diffSurface->Show();
 		} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension() && !m_pPrintPreview) {
 			m_extensionDetailSurface->Show();
@@ -1490,6 +1504,8 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
 	if (hasActiveInput) {
 		if (const HWND view = GetActiveView().GetHwnd(); ::IsWindowVisible(view)) ::SetFocus(view);
+	} else if (m_workspaceTrustSurface && m_workspaceTrustSurface->HasPrompt()) {
+		m_workspaceTrustSurface->Focus();
 	} else if (m_diffSurface && m_diffSurface->HasDiff()) {
 		m_diffSurface->Focus();
 	} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
@@ -1767,6 +1783,33 @@ void CEditWnd::CommitStartupDrawTransaction()
 	FinishStartupTabSwap();
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, redrawResult ? 1 : 0);
 	PostDeferredStartupWorkbenchIfReady();
+	PostWorkspaceTrustStartupPromptOnce();
+}
+
+void CEditWnd::PostWorkspaceTrustStartupPromptOnce() noexcept
+{
+	// VS Code asks for workspace trust once per window, after the workbench is on
+	// screen -- never before it, because the prompt describes the window the user
+	// is looking at.  This is deliberately not folded into
+	// PostDeferredStartupWorkbenchIfReady: that helper only runs when a deferred
+	// document-dependent job is actually pending, while the trust question is owed
+	// on every startup, including the empty-window case where nothing is deferred.
+	if (m_workspaceTrustStartupPromptPosted || m_workbenchRuntime == nullptr) {
+		return;
+	}
+	const HWND hwnd = GetHwnd();
+	if (!::IsWindow(hwnd)) {
+		return;
+	}
+
+	m_workspaceTrustStartupPromptPosted = true;
+	if (!::PostMessageW(hwnd, MYWM_WORKSPACE_TRUST_STARTUP_PROMPT, 0, 0)) {
+		// The queue refused the message.  Leave the prompt unshown rather than
+		// running the modal synchronously from inside the startup draw commit: the
+		// runtime has recorded nothing, so the next launch asks again, which is the
+		// same fail-open direction the "record that it was shown" policy chooses.
+		m_workspaceTrustStartupPromptPosted = false;
+	}
 }
 
 void CEditWnd::RecordFirstStartupContentPaint() noexcept
@@ -1965,6 +2008,10 @@ bool CEditWnd::InitializeWorkbench()
 				if (m_diffSurface) {
 					m_diffSurface->ClearDiff();
 					m_diffSurface->Hide();
+				}
+				if (m_workspaceTrustSurface) {
+					m_workspaceTrustSurface->ClearPrompt();
+					m_workspaceTrustSurface->Hide();
 				}
 				if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 				RECT client{};
@@ -2260,6 +2307,18 @@ bool CEditWnd::InitializeWorkbench()
 			m_diffSurface->Hide();
 			m_diffSurface->SetOnCloseRequested([this]() { ClearDiffSurface(); });
 		}
+		m_workspaceTrustSurface = std::make_unique<CWorkspaceTrustEditorSurface>();
+		if (m_workspaceTrustSurface->Open(G_AppInstance(), GetHwnd()) == nullptr) {
+			m_workspaceTrustSurface.reset();
+		} else {
+			m_workspaceTrustSurface->Hide();
+			// The page requests; this window decides and performs. Keeping the grant
+			// out of the surface is what stops a second trust authority appearing.
+			m_workspaceTrustSurface->SetOnGrantRequested([this](workbench::EWorkspaceTrustGrantScope scope) {
+				PerformWorkspaceTrustGrantFromPage(scope);
+			});
+			m_workspaceTrustSurface->SetOnCloseRequested([this]() { ClearWorkspaceTrustPage(); });
+		}
 	}
 
 	const bool initialized = m_leftWorkbenchPanel != nullptr
@@ -2268,7 +2327,7 @@ bool CEditWnd::InitializeWorkbench()
 		&& m_activityBar != nullptr
 		&& (!editorBridgeEnabled
 			|| (m_emptyEditorSurface != nullptr && m_extensionDetailSurface != nullptr
-				&& m_diffSurface != nullptr));
+				&& m_diffSurface != nullptr && m_workspaceTrustSurface != nullptr));
 	if (!initialized) {
 		// Workbench initialization is all-or-nothing. Do not leave an editor in
 		// an unobservable partial state where a configured tool has no HWND.
@@ -3464,8 +3523,115 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteManageWork
 		return { EWorkbenchCommandExecutionStatus::Unsupported,
 			"this window has no workbench runtime to own workspace trust" };
 	}
+	// In VS Code `workbench.trust.manage` opens the Workspace Trust *editor*, not
+	// a dialog. The native page below is that concept; the modal in
+	// ShowWorkspaceTrustStartupPrompt is upstream's separate startup prompt and
+	// must never answer this command in its place.
+	if (m_workspaceTrustSurface == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"this window has no Workspace Trust page to show" };
+	}
+	if (!ShowWorkspaceTrustPage()) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable,
+			"the Workspace Trust page cannot replace the document open in this window" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
 
-	const auto model = m_workbenchRuntime->WorkspaceTrustPrompt();
+bool CEditWnd::ShowWorkspaceTrustPage()
+{
+	if (!m_workspaceTrustSurface || m_workbenchRuntime == nullptr) return false;
+	// Same composition-layer rule as the diff and extension detail surfaces: this
+	// page has no document model and no tab, so showing it over an open document
+	// would hide a document the user could no longer reach. Refusing is the honest
+	// boundary until a real Workspace Trust `EditorInput` exists.
+	if (HasActiveEditorInput()) return false;
+
+	m_workspaceTrustSurface->ShowPrompt(m_workbenchRuntime->WorkspaceTrustPrompt());
+	// Opening the page replaces whatever the group was showing, exactly as opening
+	// an editor does in VS Code.
+	if (m_diffSurface) {
+		m_diffSurface->ClearDiff();
+		m_diffSurface->Hide();
+	}
+	if (m_extensionDetailSurface) {
+		m_extensionDetailSurface->ClearExtension();
+		m_extensionDetailSurface->Hide();
+	}
+	if (m_viewContainerPages && m_viewContainerPages->Marketplace()) {
+		// The Marketplace holds the selection that produced the detail surface; a
+		// stale selection there would re-show it on the next refresh.
+		m_viewContainerPages->Marketplace()->ClearExtensionSelection();
+	}
+	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+	if (!m_pPrintPreview) m_workspaceTrustSurface->Show();
+	RelayoutEditorProjections();
+	if (!m_pPrintPreview) m_workspaceTrustSurface->Focus();
+	return true;
+}
+
+void CEditWnd::ClearWorkspaceTrustPage()
+{
+	if (!m_workspaceTrustSurface) return;
+	m_workspaceTrustSurface->ClearPrompt();
+	m_workspaceTrustSurface->Hide();
+	if (m_emptyEditorSurface && !HasActiveEditorInput() && !m_pPrintPreview) {
+		m_emptyEditorSurface->Show();
+	}
+	RelayoutEditorProjections();
+}
+
+void CEditWnd::PerformWorkspaceTrustGrantFromPage(workbench::EWorkspaceTrustGrantScope scope)
+{
+	if (!m_workspaceTrustSurface) return;
+	if (m_workbenchRuntime == nullptr) {
+		m_workspaceTrustSurface->SetGrantResult({ workbench::EWorkspaceTrustGrantStatus::NotApplicable,
+			"this window has no workbench runtime to own workspace trust" });
+		return;
+	}
+
+	const auto granted = m_workbenchRuntime->GrantWorkspaceTrust(scope);
+	if (!granted.Succeeded()) {
+		// The page reports what actually happened. A refused grant is never drawn
+		// as a success, and nothing else in the window moves.
+		m_workspaceTrustSurface->SetGrantResult(granted);
+		return;
+	}
+	// Trust changed what `when` clauses resolve to, so the command context has to
+	// be re-read rather than left holding the pre-grant projection. The result is
+	// deliberately discarded: the durable grant is already committed, so a stale
+	// projection cannot un-grant it and must not be reported as a failed grant.
+	(void)RefreshWorkbenchCommandContext();
+	// Re-project the now-resolved model so the page stops offering a grant it has
+	// already performed. ShowPrompt clears any prior outcome, so the result is
+	// reported after it rather than before.
+	m_workspaceTrustSurface->ShowPrompt(m_workbenchRuntime->WorkspaceTrustPrompt());
+	m_workspaceTrustSurface->SetGrantResult(granted);
+	RelayoutEditorProjections();
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ShowWorkspaceTrustStartupPrompt()
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	if (m_workbenchRuntime == nullptr || GetHwnd() == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Unsupported,
+			"this window has no workbench runtime to own workspace trust" };
+	}
+
+	// This is upstream's `requestWorkspaceTrust` modal, gated by
+	// `security.workspace.trust.startupPrompt`. The runtime owns the decision;
+	// this window only renders the answer and reports that it was asked.
+	const auto startup = m_workbenchRuntime->WorkspaceTrustStartupPrompt();
+	if (!startup.ShouldShow()) {
+		// Declining to prompt is a completed command that committed nothing. The
+		// specific reason stays in the typed decision rather than being flattened
+		// into a failure the caller would have to guess at.
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, {} };
+	}
+
+	const auto& model = startup.prompt;
 	// Every branch below reports a real state. None of them fabricates a
 	// grantable choice to keep the dialog from looking empty.
 	const bool alreadyTrusted = model.state == config::EWorkspaceTrustState::Trusted;
@@ -3531,6 +3697,12 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteManageWork
 	if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) {
 		return { EWorkbenchCommandExecutionStatus::Failed, "the workspace trust dialog could not be shown" };
 	}
+	// The prompt was actually put on screen, so `once` has now been spent -- record
+	// that before acting on the answer, because a dismissal is just as much "this
+	// workspace was asked" as a grant is. A record that does not stick leaves the
+	// workspace unasked, which makes the next launch prompt again; that is the
+	// fail-open direction the policy deliberately chooses over silently skipping.
+	(void)m_workbenchRuntime->RecordWorkspaceTrustStartupPromptShown();
 	if (!offersGrant || selected < 1000) {
 		// Showing the current state, or being dismissed, is a completed command.
 		// It simply committed nothing.
@@ -3561,6 +3733,80 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteManageWork
 		break;
 	}
 	return { EWorkbenchCommandExecutionStatus::Failed, granted.diagnostic };
+}
+
+EUntrustedFileLoadDecision CEditWnd::RequestUntrustedFileLoad(std::wstring_view path)
+{
+	// No runtime means no trust policy to enforce; a narrow test window must not
+	// block loads it has no service to gate. An untitled buffer never named a file
+	// on disk, so it is trivially "already covered" and is always allowed through.
+	if (m_workbenchRuntime == nullptr || path.empty()) {
+		return EUntrustedFileLoadDecision::Allowed;
+	}
+
+	const auto parsed = platform::uri::Uri::FromWindowsPath(std::wstring(path));
+	// A path this shell cannot even name as a URI is treated as not covered by the
+	// trusted list -- fail closed -- rather than silently let it bypass the gate.
+	const bool covered = parsed.value && m_workbenchRuntime->WorkspaceTrustCoversResource(*parsed.value);
+
+	const auto model = m_workbenchRuntime->WorkspaceTrustUntrustedFiles(covered);
+	switch (model.decision) {
+	case config::EWorkspaceTrustUntrustedFilesDecision::Open:
+		return EUntrustedFileLoadDecision::Allowed;
+	case config::EWorkspaceTrustUntrustedFilesDecision::OpenInNewWindow:
+	case config::EWorkspaceTrustUntrustedFilesDecision::Unsupported:
+		// `newWindow` exists precisely to keep the file out of this trusted window,
+		// and this shell cannot open a genuinely separate Restricted Mode window
+		// (workbench/CLAUDE.md). Both decisions therefore refuse rather than being
+		// silently downgraded to `Open`.
+		return EUntrustedFileLoadDecision::Refused;
+	case config::EWorkspaceTrustUntrustedFilesDecision::Prompt:
+	default:
+		break;
+	}
+
+	// The path may not have parsed into a displayable URI; show the raw path text
+	// in that case rather than an empty field.
+	std::wstring display = parsed.value ? parsed.value->ToWindowsPath().value.value_or(std::wstring(path))
+										 : std::wstring(path);
+
+	std::wstring content = L"This file is outside the folders you trust in this window:\n" + display
+		+ L"\n\nOpening it runs no untrusted code by itself, but any extension that "
+		  L"requires a trusted workspace will not run while this file is open.";
+
+	TASKDIALOGCONFIG config{};
+	config.cbSize = sizeof(config);
+	config.hwndParent = GetHwnd();
+	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW
+		| TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS;
+	// Cancel is the default and the only common button: this shell offers no
+	// "Open in Restricted Mode" or "Remember my decision for all workspaces"
+	// choice (window/CLAUDE.md documents both omissions), so declining must leave
+	// the file unopened rather than silently falling back to some other answer.
+	config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+	config.pszWindowTitle = L"Workspace Trust";
+	config.pszMainIcon = TD_SHIELD_ICON;
+	config.pszMainInstruction = L"Do you want to open this file?";
+	config.pszContent = content.c_str();
+
+	constexpr int kOpenButtonId = 1000;
+	const std::wstring openLabel = L"Open";
+	TASKDIALOG_BUTTON button{ kOpenButtonId, openLabel.c_str() };
+	config.cButtons = 1;
+	config.pButtons = &button;
+
+	int selected = 0;
+	if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr)) || selected != kOpenButtonId) {
+		// A failed dialog and an explicit decline take the same fail-closed path:
+		// the file must not enter the window on anything but an affirmative Open.
+		return EUntrustedFileLoadDecision::Refused;
+	}
+	// The save status is deliberately not gating the decision: the user just
+	// consented to open this file, and a durable-persistence failure must not
+	// silently refuse an already-granted, already-shown request. The next load
+	// simply asks again if the record did not stick.
+	(void)m_workbenchRuntime->RecordUntrustedFilesAccepted();
+	return EUntrustedFileLoadDecision::Allowed;
 }
 
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitStageCommand(
@@ -4574,6 +4820,10 @@ bool CEditWnd::ShowDiffSurface(SDiffSurfaceContent content)
 		m_extensionDetailSurface->ClearExtension();
 		m_extensionDetailSurface->Hide();
 	}
+	if (m_workspaceTrustSurface) {
+		m_workspaceTrustSurface->ClearPrompt();
+		m_workspaceTrustSurface->Hide();
+	}
 	if (m_viewContainerPages && m_viewContainerPages->Marketplace()) {
 		// The Marketplace holds the selection that produced the detail surface; a
 		// stale selection there would re-show it on the next refresh.
@@ -4828,6 +5078,13 @@ void CEditWnd::CloseWorkbench() noexcept
 		m_extensionDetailSurface->Destroy();
 	}
 	m_extensionDetailSurface.reset();
+	if (m_workspaceTrustSurface) {
+		m_workspaceTrustSurface->SetOnGrantRequested({});
+		m_workspaceTrustSurface->SetOnCloseRequested({});
+		m_workspaceTrustSurface->ClearPrompt();
+		m_workspaceTrustSurface->Destroy();
+	}
+	m_workspaceTrustSurface.reset();
 	if (m_diffSurface) {
 		m_diffSurface->SetOnCloseRequested({});
 		m_diffSurface->ClearDiff();
@@ -5004,6 +5261,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	if (m_emptyEditorSurface) m_emptyEditorSurface->SetPalette(palette);
 	if (m_extensionDetailSurface) m_extensionDetailSurface->SetPalette(palette);
 	if (m_diffSurface) m_diffSurface->SetPalette(palette);
+	if (m_workspaceTrustSurface) m_workspaceTrustSurface->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -7688,26 +7946,36 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			::ShowWindow(splitter, SW_HIDE);
 		}
 		if (m_markdownPreview) m_markdownPreview->Show(false);
-		// Same precedence as `ApplyEditorCoreSnapshot`: comparison, then extension
-		// metadata, then the watermark. Only the winner is laid out, so a hidden
-		// projection never claims the editor rectangle.
-		if (m_diffSurface && m_diffSurface->HasDiff()) {
+		// Same precedence as `ApplyEditorCoreSnapshot`: trust page, comparison,
+		// extension metadata, then the watermark. Only the winner is laid out, so
+		// a hidden projection never claims the editor rectangle.
+		if (m_workspaceTrustSurface && m_workspaceTrustSurface->HasPrompt()) {
+			m_workspaceTrustSurface->Layout({ left, top, right, bottom }, dpi);
+			if (!m_pPrintPreview) m_workspaceTrustSurface->Show();
+			if (m_diffSurface) m_diffSurface->Hide();
+			if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
+			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
+		} else if (m_diffSurface && m_diffSurface->HasDiff()) {
 			m_diffSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_diffSurface->Show();
+			if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 			if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
 			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 		} else if (m_extensionDetailSurface && m_extensionDetailSurface->HasExtension()) {
 			m_extensionDetailSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_extensionDetailSurface->Show();
+			if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 			if (m_diffSurface) m_diffSurface->Hide();
 			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 		} else if (m_emptyEditorSurface) {
 			m_emptyEditorSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_emptyEditorSurface->Show();
+			if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 			if (m_diffSurface) m_diffSurface->Hide();
 		}
 		return;
 	}
+	if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 	if (m_extensionDetailSurface) m_extensionDetailSurface->Hide();
 	if (m_diffSurface) m_diffSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
@@ -9243,6 +9511,12 @@ LRESULT CEditWnd::DispatchEvent(
 			&& m_cDlgFuncList.m_bEditWndReady) {
 			CompleteDeferredStartupWorkbench();
 		}
+		return 0;
+	case MYWM_WORKSPACE_TRUST_STARTUP_PROMPT:
+		// The runtime owns the decision; ShowWorkspaceTrustStartupPrompt resolves
+		// NotApplicable when `security.workspace.trust.startupPrompt` or the already
+		// recorded per-workspace memento says this window must not ask.
+		(void)ShowWorkspaceTrustStartupPrompt();
 		return 0;
 	case WM_LBUTTONDOWN:
 		return OnLButtonDown( wParam, lParam );

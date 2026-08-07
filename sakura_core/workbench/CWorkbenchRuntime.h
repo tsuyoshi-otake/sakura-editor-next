@@ -76,6 +76,11 @@ struct WorkbenchRuntimeDependencies final {
 	//! no folder has been granted trust -- rather than a degraded mode. It must
 	//! never fall back to trusting anything.
 	std::unique_ptr<config::ITrustedFoldersStore> trustedFoldersStore;
+	//! The durable per-workspace record of what this workspace has already been
+	//! asked. Null is a real state, and so is a composed store that reports
+	//! NoWorkspaceScope for an empty window: both mean the record is unreadable,
+	//! which makes `once` prompt again rather than silently skip.
+	std::unique_ptr<config::IWorkspaceTrustMementoStore> workspaceTrustMementoStore;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -106,6 +111,11 @@ public:
 		platform::uri::Uri folderUri, std::wstring displayName) override;
 	[[nodiscard]] WorkspaceTrustPromptModel WorkspaceTrustPrompt() override;
 	[[nodiscard]] WorkspaceTrustGrantResult GrantWorkspaceTrust(EWorkspaceTrustGrantScope scope) override;
+	[[nodiscard]] WorkspaceTrustStartupPromptModel WorkspaceTrustStartupPrompt() override;
+	[[nodiscard]] config::EWorkspaceTrustMementoSaveStatus RecordWorkspaceTrustStartupPromptShown() override;
+	[[nodiscard]] WorkspaceTrustUntrustedFilesModel WorkspaceTrustUntrustedFiles(bool allResourcesTrusted) override;
+	[[nodiscard]] config::EWorkspaceTrustMementoSaveStatus RecordUntrustedFilesAccepted() override;
+	[[nodiscard]] bool WorkspaceTrustCoversResource(const platform::uri::Uri& resource) noexcept override;
 	[[nodiscard]] workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept override { return m_workspaceEditing.get(); }
 	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
 		const workspace::WorkspaceFoldersEditRequest& request) override;
@@ -133,6 +143,15 @@ public:
 	[[nodiscard]] config::EConfigurationOutcome SetExtensionRestrictedConfigurations(std::vector<std::string> keys) override;
 
 private:
+	//! The `security.workspace.trust.*` values only the prompt policies consume.
+	//! Kept apart from config::WorkspaceTrustSettings because the trust *resolver*
+	//! must not be able to see them: neither key may ever change whether a
+	//! workspace is trusted, only whether the user is asked about it.
+	struct WorkspaceTrustPromptSettings final {
+		config::EWorkspaceTrustStartupPrompt startupPrompt = config::EWorkspaceTrustStartupPrompt::Never;
+		config::EWorkspaceTrustUntrustedFiles untrustedFiles = config::EWorkspaceTrustUntrustedFiles::Prompt;
+	};
+
 	struct ListenerGate final {
 		std::mutex mutex;
 		std::condition_variable drained;
@@ -156,6 +175,14 @@ private:
 	//! trust resolution. It must run after the profile settings load and before
 	//! ResolveAndApplyWorkspaceTrust, because the resolver reads the list it produces.
 	void RestoreTrustedFolders();
+	//! Reads the durable per-workspace trust memento once, beside RestoreTrustedFolders.
+	//! An unreadable record is not a failure of trust resolution -- it only makes the
+	//! `once` startup prompt ask again, which is the safe direction.
+	void RestoreWorkspaceTrustMemento();
+	//! Commits one field of the memento. Both callers pass the already-mutated copy,
+	//! so the store's NotDirty short-circuit stays the single "nothing changed" answer.
+	[[nodiscard]] config::EWorkspaceTrustMementoSaveStatus SaveWorkspaceTrustMemento(
+		const config::WorkspaceTrustMemento& memento);
 	void PersistFinalLayoutMemento() noexcept;
 	void ReloadWorkspaceSettings(const config::WorkspaceContextSnapshot& snapshot);
 	void ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot,
@@ -191,6 +218,10 @@ private:
 	void ClearWorkspaceSettings();
 	void SetWorkspaceConfigurationSnapshot(workspace::WorkspaceConfigurationRuntimeSnapshot snapshot);
 	[[nodiscard]] config::WorkspaceTrustSettings ReadWorkspaceTrustSettings() const;
+	//! Read live rather than cached at Start, because editing either key must take
+	//! effect without a restart -- the same reason UpdateRestrictedModeBannerVisibility
+	//! re-reads the banner key.
+	[[nodiscard]] WorkspaceTrustPromptSettings ReadWorkspaceTrustPromptSettings() const;
 	//! Resolves trust from the workspace shape and the profile trust settings, and
 	//! commits it. This is the only production caller of SetTrust.
 	void ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace);
@@ -261,6 +292,29 @@ private:
 		durable bytes this runtime failed to understand.
 	 */
 	bool m_trustedFoldersPersistenceReady = false;
+	std::unique_ptr<config::IWorkspaceTrustMementoStore> m_workspaceTrustMementoStore;
+	//! The durable per-workspace record, read once at Start and thereafter this
+	//! runtime's working copy, for the same reason m_trustedFolders is.
+	config::WorkspaceTrustMemento m_workspaceTrustMemento;
+	/*!
+		Whether that record was actually readable. False for a runtime with no store,
+		for an empty window (which has no workspace identity to key a record on), and
+		after an unreadable or invalid stored payload. It is deliberately *not* a
+		reason to skip a prompt: the policies treat an unreadable record as "ask
+		again", because honouring a record nobody could read would be a silent skip.
+	 */
+	bool m_workspaceTrustMementoReadable = false;
+	/*!
+		Session-only fallback for an empty window's untrusted-files acceptance. The
+		durable memento store returns NoWorkspaceScope for an empty window (it has no
+		workspace identity to key a record by), so an empty window's acceptance can
+		never persist across a relaunch. Upstream's own `acceptsOutOfWorkspaceFiles`
+		memento for an empty window lives in that window's empty-workspace storage,
+		whose lifetime is the window itself; holding this in memory for the runtime's
+		lifetime matches that lifetime rather than fabricating durability neither
+		upstream nor this runtime actually has.
+	 */
+	bool m_untrustedFilesAcceptedInSession = false;
 	std::optional<layout::WorkbenchContributionSubscriptionId> m_contributionSubscription;
 	std::unique_ptr<platform::filesystem::IFileService> m_fileService;
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;

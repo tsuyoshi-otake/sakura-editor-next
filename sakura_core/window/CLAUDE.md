@@ -525,9 +525,10 @@ wiring.
   `m_statusbarHitTargets` was sufficient; no new routing branch was added.
   `workbench.trust.manage` was already registered
   (`WorkbenchCommandRegistry.cpp`) and its executor
-  (`CEditWnd::ExecuteManageWorkspaceTrust`) already shows a native
-  `TaskDialogIndirect` modal — that divergence from VS Code's rich trust editor
-  page is recorded in `config/CLAUDE.md` and is not repeated here.
+  (`CEditWnd::ExecuteManageWorkspaceTrust`) opens the native Workspace Trust
+  editor page — see "Workspace Trust editor page" below for the window-side
+  facts and `config/CLAUDE.md` for the recorded divergences from VS Code's own
+  rich trust editor page; neither is repeated here.
 - **Unproven by unit test, deliberately and on the record.** The entry's
   presence/absence by trust state, its click command, and the
   `status.notifications`-stays-rightmost invariant have **no** automated
@@ -643,6 +644,105 @@ settings document reach `UpdateRestrictedModeBannerVisibility`, and the
 `visible=False (1600x0)` and `visible=True (1600x26)` across it. The status-bar
 `status.workspaceTrust` entry stayed visible in both states, which is the
 observable proof that the two Restricted Mode signals are independent.
+
+## Workspace Trust editor page (2026-08-07, #39)
+
+- `CWorkspaceTrustEditorSurface`
+  (`workbench/editor/CWorkspaceTrustEditorSurface.h`/`.cpp`) is a
+  `CEditWnd`-owned composition-layer surface, the same family as
+  `CExtensionDetailSurface` and `CDiffSurface`: not an `EditorInput`, no
+  document model, native GDI painting and `WC_BUTTONW` children only — no
+  WebView2, no HTML. `CEditWnd` constructs it alongside those two other
+  surfaces, wires its two callbacks (`SetOnGrantRequested` to
+  `PerformWorkspaceTrustGrantFromPage`, `SetOnCloseRequested` to
+  `ClearWorkspaceTrustPage`), and destroys it before the window itself tears
+  down. The surface never calls `IWorkbenchRuntime` directly: it renders an
+  already-resolved `workbench::WorkspaceTrustPromptModel` the composition root
+  hands it through `ShowPrompt`, and only reports a result back through
+  `SetGrantResult` after `CEditWnd::PerformWorkspaceTrustGrantFromPage` has
+  actually performed the grant against the runtime. The decision itself stays
+  entirely outside the surface, exactly as `config/CLAUDE.md`'s Workspace
+  Trust Resolution Checkpoint requires for every trust decision.
+- **Projection precedence.** `ApplyEditorCoreSnapshot` and the
+  `LayoutMarkdownPreview` branch that `OnSize2` drives both apply the same
+  fixed order whenever no document input is active: the trust page, then the
+  diff comparison, then the extension metadata surface, then the empty-editor
+  watermark. Exactly one of the four is shown at a time, and every non-winner
+  is explicitly hidden alongside the winner rather than left in whatever state
+  it was last in. Trust ranks first because, unlike the other three, it
+  describes whether the window may run anything at all, not merely what it is
+  showing in place of a document.
+- **Cross-retraction.** Each of the other three composition-layer surfaces
+  retracts the trust page (`ClearPrompt()` + `Hide()`) the moment it becomes
+  the new projection winner — `ShowDiffSurface`, the Marketplace pane's
+  `SetOnExtensionSelected` handler, and `ApplyEditorCoreSnapshot`'s
+  document-input branch all do this explicitly, so a stale prompt cannot
+  resurface the next time the editor group goes empty again. Symmetrically,
+  the trust page's own entry point, `ShowWorkspaceTrustPage`, retracts the
+  diff and extension-detail surfaces before showing itself. No two of the four
+  projections can claim to be the active one at once.
+- **The command is refused, never downgraded, when a document is open.**
+  `ExecuteManageWorkspaceTrust` reports `Unsupported` when the window has no
+  page at all and `NotApplicable` when `ShowWorkspaceTrustPage` refuses because
+  `HasActiveEditorInput()` is true; it never falls back to a modal in either
+  case.
+- **The startup prompt is a separate message reaching a separate function, not
+  this page.** VS Code's `requestWorkspaceTrust` startup prompt
+  (`security.workspace.trust.startupPrompt`) is unrelated upstream surface
+  area from `workbench.trust.manage`, and the two must never substitute for
+  each other here. `CEditWnd::PostWorkspaceTrustStartupPromptOnce`, called
+  from the end of `CommitStartupDrawTransaction()`, posts
+  `MYWM_WORKSPACE_TRUST_STARTUP_PROMPT` (`WM_APP+245`,
+  `config/system_constants.h`) at most once per window; the window procedure
+  dispatches that message to `ShowWorkspaceTrustStartupPrompt`, which shows a
+  `TaskDialogIndirect` modal, not this page. See `config/CLAUDE.md`'s
+  `security.workspace.trust.startupPrompt` section for the once/always/never
+  policy and the durable per-workspace record behind it.
+
+## Untrusted file load gate (2026-08-07, #39)
+
+- `CEditWnd::RequestUntrustedFileLoad(std::wstring_view path)` is the load-path
+  enforcement for `security.workspace.trust.untrustedFiles`, VS Code's
+  `requestOpenFilesTrust`. `CLoadAgent::OnCheckLoad` calls it immediately before
+  the `next:` label, so a reload (`bRequestReload`) never re-prompts. It is a
+  public member, not private like the other command-executor methods in this
+  file: `CLoadAgent` is not a member or friend of `CEditWnd`.
+- The decision comes from `IWorkbenchRuntime::WorkspaceTrustUntrustedFiles`
+  (see `config/CLAUDE.md`'s `security.workspace.trust.untrustedFiles` entry for
+  the resolution rules) with `allResourcesTrusted` computed from
+  `WorkspaceTrustCoversResource(path)`. `Prompt` shows a `TaskDialogIndirect`
+  modal offering "Open" / "Cancel"; accepting calls
+  `RecordUntrustedFilesAccepted()` before returning `Allowed`. `Open` and
+  `OpenInNewWindow` (this shell reports `newWindowSupported = false`, so the
+  setting resolves `Unsupported` rather than silently widening) both return
+  without a dialog; `Unsupported` and `Prompt`-then-Cancel return `Refused`. An
+  empty @p path (an untitled buffer) is always `Allowed`.
+- **Documented divergence — broader trigger than upstream.** Upstream's
+  `requestOpenFilesTrust` only runs for `validateTrust`: OS shell-open and
+  command-line file arguments into an existing window. This gate instead runs
+  for every load `CLoadAgent::OnCheckLoad` sees, including File > Open and
+  drag-and-drop. A narrower trigger would leave those paths pulling untrusted
+  content into a trusted window with no gate at all, which is the exact outcome
+  this setting exists to prevent; broadening the trigger is therefore the
+  safer divergence, not an unfaithful one.
+- **Documented divergence — no "Open in Restricted Mode" button and no
+  "Remember my decision for all workspaces" checkbox.** Upstream's dialog
+  offers both. This one does not: there is no per-load Restricted Mode
+  variant to open into (Restricted Mode is a whole-window state here, not a
+  per-file one — see `RestrictedModeAction`'s banner/status-bar entries
+  elsewhere in this file), and there is no durable cross-workspace memento
+  store to back a permanent "for all workspaces" choice, only the existing
+  per-workspace `WorkspaceTrustMemento::untrustedFilesAccepted`.
+- **Empty-window acceptance is session-only, not durable, and this is a real
+  gap, not a simplification.** `RecordUntrustedFilesAccepted()` always sets
+  `CWorkbenchRuntime::m_untrustedFilesAcceptedInSession` before attempting the
+  durable write, because an empty window has no workspace identity to key
+  `WorkspaceTrustMemento` on (`SaveWorkspaceTrustMemento` requires
+  `m_workspaceTrustMementoReadable`, which `NoWorkspaceScope` never sets). The
+  in-memory flag is OR'd into `WorkspaceTrustUntrustedFiles`'s acceptance check
+  alongside the durable record, so the rest of the session stops re-prompting,
+  but the process restarting or another window over the same loose files both
+  ask again.
 
 ## Extension Status Bar Item Hovers (2026-08-01)
 

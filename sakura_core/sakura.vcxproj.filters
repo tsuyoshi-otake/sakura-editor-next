@@ -400,10 +400,19 @@
     <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\config\IWorkspaceTrustMementoStore.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\config\WorkspaceTrustMementoCodec.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\config\maxdata.h">
@@ -1258,6 +1267,9 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -1718,6 +1730,9 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
@@ -3211,6 +3226,9 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
@@ -3673,6 +3691,9 @@
     <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.cpp">
+      <Filter>Cpp Source Files\_main</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
@@ -4030,7 +4051,13 @@
     <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\config\WorkspaceTrustMementoCodec.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp">
+      <Filter>Cpp Source Files\config</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\recent\CRecentExcludeFile.cpp">

@@ -41,6 +41,11 @@ struct WorkspaceTrustResolveRequest final {
 	std::vector<platform::uri::Uri> folderUris;
 	WorkspaceTrustSettings settings;
 	std::vector<WorkspaceTrustEntry> trustedEntries;
+	//! Files opened on the command line into an otherwise-empty window -- upstream's
+	//! `_canonicalStartupFiles`. Only meaningful when @c kind is @c Empty: a workspace or
+	//! folder window's trust is decided by its roots, never by which files happened to be
+	//! passed on the command line.
+	std::vector<platform::uri::Uri> startupFileUris;
 };
 
 //! Why the policy answered the way it did. Diagnostic only; never a second answer.
@@ -48,6 +53,8 @@ enum class EWorkspaceTrustReason : std::uint8_t {
 	FeatureDisabled,
 	EmptyWindowTrustedByDefault,
 	EmptyWindowNotTrustedByDefault,
+	StartupFilesTrusted,
+	StartupFileNotTrusted,
 	WorkspaceFileTrusted,
 	AllRootsTrusted,
 	RootNotTrusted,
@@ -87,6 +94,12 @@ struct WorkspaceTrustResolution final {
 
 	Pure: no I/O, no clock, no global state, no window. Trust is never inferred from a
 	path shape, a file extension, or a successful configuration load.
+
+	For an empty window with startup files, those files' trust decides the window's trust
+	before the @c emptyWindow default is consulted -- upstream's
+	`if (this._canonicalStartupFiles.length) return this.getUrisTrust(this._canonicalStartupFiles);`.
+	This keeps `sakura foo.txt` from silently trusting an unrelated file just because empty
+	windows default to trusted.
 
 	@c Untrusted is never produced here. It denotes an explicit user denial, which only
 	an interactive grant/deny surface can establish.

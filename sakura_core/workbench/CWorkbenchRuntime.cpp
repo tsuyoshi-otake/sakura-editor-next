@@ -277,6 +277,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_layoutMementoStore(std::move(dependencies.layoutMementoStore))
 	, m_statusbarVisibilityMementoStore(std::move(dependencies.statusbarVisibilityMementoStore))
 	, m_trustedFoldersStore(std::move(dependencies.trustedFoldersStore))
+	, m_workspaceTrustMementoStore(std::move(dependencies.workspaceTrustMementoStore))
 	, m_fileService(std::move(dependencies.fileService))
 	, m_recentlyOpenedWorkspaces(dependencies.recentlyOpenedWorkspaceStore
 		? std::make_unique<recent::CRecentlyOpenedWorkspaceService>(std::move(dependencies.recentlyOpenedWorkspaceStore))
@@ -946,6 +947,103 @@ void CWorkbenchRuntime::RestoreTrustedFolders()
 	}
 	recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
 		"trusted folders restore returned an unknown terminal state");
+}
+
+void CWorkbenchRuntime::RestoreWorkspaceTrustMemento()
+{
+	m_workspaceTrustMemento = {};
+	m_workspaceTrustMementoReadable = false;
+	// No store composed means no record, which the prompt policies read as "ask
+	// again". That is the same answer a fresh workspace gives, so it is not a
+	// failure and must not be diagnosed as one.
+	if (!m_workspaceTrustMementoStore) return;
+
+	const auto result = m_workspaceTrustMementoStore->Load();
+	const auto recordFailure = [this](EWorkbenchRuntimeDiagnosticCode code, std::string message) {
+		SetDiagnostic("trust.memento", WorkbenchRuntimeDiagnostic {
+			.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceTrust,
+			.code = code,
+			.message = std::move(message),
+		});
+	};
+
+	switch (result.status) {
+	case config::EWorkspaceTrustMementoLoadStatus::Loaded:
+		if (!result.memento) {
+			recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+				"workspace trust memento store returned no value for a loaded result");
+			return;
+		}
+		m_workspaceTrustMemento = *result.memento;
+		m_workspaceTrustMementoReadable = true;
+		SetDiagnostic("trust.memento", std::nullopt);
+		return;
+	case config::EWorkspaceTrustMementoLoadStatus::NotFound:
+		// This workspace has never been asked. The default record is the correct
+		// one, and a later prompt may write it.
+		m_workspaceTrustMementoReadable = true;
+		SetDiagnostic("trust.memento", std::nullopt);
+		return;
+	case config::EWorkspaceTrustMementoLoadStatus::NoWorkspaceScope:
+		// An empty window has no workspace identity to key a per-workspace record
+		// on, and none may be invented. Leaving the record unreadable is exactly
+		// right: `once` then behaves like `always` for empty windows, which is
+		// honest, because there is nothing that could remember the answer.
+		SetDiagnostic("trust.memento", std::nullopt);
+		return;
+	case config::EWorkspaceTrustMementoLoadStatus::InvalidStoredMemento:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+			"stored workspace trust memento is invalid and was preserved without replacement");
+		return;
+	case config::EWorkspaceTrustMementoLoadStatus::Unavailable:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustPersistenceUnavailable,
+			"workspace trust memento persistence was unavailable during startup");
+		return;
+	case config::EWorkspaceTrustMementoLoadStatus::Failed:
+		recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+			"workspace trust memento restore failed");
+		return;
+	}
+	recordFailure(EWorkbenchRuntimeDiagnosticCode::TrustRestoreFailed,
+		"workspace trust memento restore returned an unknown terminal state");
+}
+
+config::EWorkspaceTrustMementoSaveStatus CWorkbenchRuntime::SaveWorkspaceTrustMemento(
+	const config::WorkspaceTrustMemento& memento)
+{
+	using SaveStatus = config::EWorkspaceTrustMementoSaveStatus;
+	if (IsStopRequested()) return SaveStatus::Stopped;
+	if (!m_workspaceTrustMementoStore) return SaveStatus::Unavailable;
+	// Writing over a record this runtime failed to read would destroy durable bytes
+	// nobody understood, exactly as the trusted folders store refuses to.
+	if (!m_workspaceTrustMementoReadable) return SaveStatus::Unavailable;
+
+	const auto saved = m_workspaceTrustMementoStore->Save(memento);
+	switch (saved.status) {
+	case SaveStatus::Persisted:
+	case SaveStatus::NotDirty:
+		// The working copy advances only on a committed write, so a failed save
+		// leaves the runtime asking again rather than believing it remembered.
+		m_workspaceTrustMemento = memento;
+		SetDiagnostic("trust.memento.persist", std::nullopt);
+		break;
+	case SaveStatus::NoWorkspaceScope:
+		// Not a failure: an empty window never had a record to write.
+		SetDiagnostic("trust.memento.persist", std::nullopt);
+		break;
+	case SaveStatus::Conflict:
+	case SaveStatus::RetryExhausted:
+	case SaveStatus::Unavailable:
+	case SaveStatus::Stopped:
+	case SaveStatus::Failed:
+		SetDiagnostic("trust.memento.persist", WorkbenchRuntimeDiagnostic {
+			.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceTrust,
+			.code = EWorkbenchRuntimeDiagnosticCode::TrustPersistenceUnavailable,
+			.message = "the workspace trust memento was not committed",
+		});
+		break;
+	}
+	return saved.status;
 }
 
 void CWorkbenchRuntime::RestoreStatusbarVisibilityMemento()
@@ -1620,6 +1718,32 @@ config::WorkspaceTrustSettings CWorkbenchRuntime::ReadWorkspaceTrustSettings() c
 	return settings;
 }
 
+CWorkbenchRuntime::WorkspaceTrustPromptSettings CWorkbenchRuntime::ReadWorkspaceTrustPromptSettings() const
+{
+	// Same profile-only target and same reasoning as ReadWorkspaceTrustSettings: a
+	// workspace document must not be able to decide how loudly its own user is asked
+	// about trusting it.
+	ConfigurationTarget target;
+	target.profileId = m_bootstrap.UserDataProfile().SelectedProfileId();
+
+	WorkspaceTrustPromptSettings settings;
+	const auto read = m_configuration.ReadSnapshot(
+		{ "security.workspace.trust.startupPrompt", "security.workspace.trust.untrustedFiles" }, target);
+	// The struct defaults are the descriptors' own defaults ("never" and "prompt").
+	// A failed read therefore lands on upstream's behaviour rather than on a guess,
+	// and in particular never resolves untrustedFiles to "open".
+	if (read.outcome != config::EConfigurationOutcome::Applied || !read.snapshot || read.snapshot->values.size() != 2) {
+		return settings;
+	}
+	if (const auto* startupPrompt = std::get_if<std::wstring>(&read.snapshot->values[0].Value())) {
+		settings.startupPrompt = config::ParseWorkspaceTrustStartupPrompt(*startupPrompt);
+	}
+	if (const auto* untrustedFiles = std::get_if<std::wstring>(&read.snapshot->values[1].Value())) {
+		settings.untrustedFiles = config::ParseWorkspaceTrustUntrustedFiles(*untrustedFiles);
+	}
+	return settings;
+}
+
 void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace)
 {
 	if (IsStopRequested()) return;
@@ -1629,6 +1753,12 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 	request.workspaceConfigUri = workspace.workspaceConfigUri;
 	request.folderUris.reserve(workspace.folders.size());
 	for (const auto& folder : workspace.folders) request.folderUris.push_back(folder.uri);
+	// Upstream's `_canonicalStartupFiles`: only meaningful for an Empty window, and only
+	// populated once -- the bootstrap's initial document is fixed for this process's
+	// lifetime, so this is never re-derived from a later-opened file.
+	if (workspace.kind == config::EWorkspaceKind::Empty && m_bootstrap.InitialDocumentUri()) {
+		request.startupFileUris.push_back(*m_bootstrap.InitialDocumentUri());
+	}
 	request.settings = ReadWorkspaceTrustSettings();
 	// The durable list read once at Start. It stays empty when no store is composed,
 	// when the profile has never trusted anything, and when the stored bytes failed to
@@ -1964,6 +2094,108 @@ WorkspaceTrustGrantResult CWorkbenchRuntime::GrantWorkspaceTrust(EWorkspaceTrust
 	return { EWorkspaceTrustGrantStatus::Granted, {} };
 }
 
+WorkspaceTrustStartupPromptModel CWorkbenchRuntime::WorkspaceTrustStartupPrompt()
+{
+	WorkspaceTrustStartupPromptModel model;
+	if (IsStopRequested()) {
+		// A stopping runtime cannot host a prompt, and nothing about it is grantable.
+		model.decision = config::EWorkspaceTrustStartupPromptDecision::SkipNothingToGrant;
+		return model;
+	}
+
+	auto prompt = WorkspaceTrustPrompt();
+	const auto settings = ReadWorkspaceTrustPromptSettings();
+
+	config::WorkspaceTrustStartupPromptRequest request;
+	request.setting = settings.startupPrompt;
+	request.state = prompt.state;
+	request.featureEnabled = ReadWorkspaceTrustSettings().enabled;
+	// The same pure BuildTrustGrantEntries the prompt and the grant already share, so
+	// "would this prompt have a button" and "what would that button do" cannot disagree.
+	// persistenceReady is folded in deliberately: a prompt whose every grant the runtime
+	// would refuse offers nothing, which is exactly SkipNothingToGrant.
+	request.hasGrantableOption = prompt.persistenceReady && !prompt.options.empty();
+	request.promptRecordReadable = m_workspaceTrustMementoReadable;
+	request.promptAlreadyShown = m_workspaceTrustMemento.startupPromptShown;
+
+	model.decision = config::ResolveWorkspaceTrustStartupPrompt(request);
+	// The prompt model travels only with a decision that shows it, so a caller cannot
+	// render a surface the policy declined by reading the struct's other half.
+	if (model.ShouldShow()) model.prompt = std::move(prompt);
+	return model;
+}
+
+config::EWorkspaceTrustMementoSaveStatus CWorkbenchRuntime::RecordWorkspaceTrustStartupPromptShown()
+{
+	auto next = m_workspaceTrustMemento;
+	next.startupPromptShown = true;
+	return SaveWorkspaceTrustMemento(next);
+}
+
+WorkspaceTrustUntrustedFilesModel CWorkbenchRuntime::WorkspaceTrustUntrustedFiles(bool allResourcesTrusted)
+{
+	WorkspaceTrustUntrustedFilesModel model;
+	const auto workspace = m_workspaceContext.Snapshot();
+	model.state = workspace.trust;
+	if (IsStopRequested()) {
+		// Prompting is the fail-closed answer, and a stopping runtime will not reach a
+		// prompt anyway. What matters is that it is never reported as Open.
+		model.decision = config::EWorkspaceTrustUntrustedFilesDecision::Prompt;
+		return model;
+	}
+
+	const auto settings = ReadWorkspaceTrustPromptSettings();
+	config::WorkspaceTrustUntrustedFilesRequest request;
+	request.setting = settings.untrustedFiles;
+	request.state = workspace.trust;
+	request.featureEnabled = ReadWorkspaceTrustSettings().enabled;
+	request.allResourcesTrusted = allResourcesTrusted;
+	// The durable record and this session's in-memory fallback are two sources for the
+	// same fact -- "has this window already been told to open untrusted files?" -- and
+	// either one answering yes is enough. This is what lets an empty window's acceptance
+	// (which the durable store can never key, see m_untrustedFilesAcceptedInSession) stop
+	// re-prompting for the rest of this process, without ever claiming a durable record
+	// exists where none does.
+	request.acceptRecordReadable = m_workspaceTrustMementoReadable || m_untrustedFilesAcceptedInSession;
+	request.alreadyAccepted = m_workspaceTrustMemento.untrustedFilesAccepted || m_untrustedFilesAcceptedInSession;
+	/*
+		This shell has no way to open a resource in a separate window that is genuinely
+		in Restricted Mode: an editor process inherits the workspace it was launched
+		with, and a second window over the same workspace would resolve the same trust
+		state, so it would not be restricted at all. Reporting false is what makes the
+		policy answer an explicit Unsupported instead of quietly widening `newWindow`
+		into `open` -- which would do the one thing the setting exists to prevent.
+	 */
+	request.newWindowSupported = false;
+
+	model.decision = config::ResolveWorkspaceTrustUntrustedFiles(request);
+	return model;
+}
+
+config::EWorkspaceTrustMementoSaveStatus CWorkbenchRuntime::RecordUntrustedFilesAccepted()
+{
+	// Set unconditionally, before attempting the durable write. An empty window's save
+	// below always resolves to Unavailable (SaveWorkspaceTrustMemento requires
+	// m_workspaceTrustMementoReadable, which an empty window never has), so this session
+	// flag is the only record that acceptance ever happened for that window.
+	m_untrustedFilesAcceptedInSession = true;
+	auto next = m_workspaceTrustMemento;
+	next.untrustedFilesAccepted = true;
+	return SaveWorkspaceTrustMemento(next);
+}
+
+bool CWorkbenchRuntime::WorkspaceTrustCoversResource(const platform::uri::Uri& resource) noexcept
+{
+	// Upstream's `doGetUriTrustInfo`: only the durable trusted-URI list is consulted here,
+	// never the current workspace's folders. A file inside an untrusted workspace's own
+	// roots is not "covered" by this question -- that is the workspace trust state itself,
+	// which WorkspaceTrustUntrustedFiles()'s caller already has before it asks this.
+	return std::any_of(
+		m_trustedFolders.entries.begin(),
+		m_trustedFolders.entries.end(),
+		[&resource](const config::WorkspaceTrustEntry& entry) { return config::WorkspaceTrustEntryCovers(entry, resource); });
+}
+
 void CWorkbenchRuntime::OnWorkspaceContextChanged(const config::WorkspaceContextChange& change) noexcept
 {
 	try {
@@ -2120,6 +2352,12 @@ WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 		// there: re-reading it per workspace change would let a concurrent write from
 		// another window silently change this window's trust mid-session.
 		RestoreTrustedFolders();
+		if (auto terminal = terminalResult()) return std::move(*terminal);
+		// The per-workspace record is read beside the durable list, and for the same
+		// reason it is read only here: re-reading it per workspace change would let
+		// another window's write change what this window believes it already asked.
+		// It is not an input to trust resolution -- only to whether the user is asked.
+		RestoreWorkspaceTrustMemento();
 		if (auto terminal = terminalResult()) return std::move(*terminal);
 		ResolveAndApplyWorkspaceTrust(m_workspaceContext.Snapshot());
 		if (auto terminal = terminalResult()) return std::move(*terminal);

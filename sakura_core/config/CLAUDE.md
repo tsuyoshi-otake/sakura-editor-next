@@ -229,50 +229,141 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   `AlreadyTrusted` and writes nothing. Without that check the durable list
   would grow by one entry every time the user confirms, since the codec
   accepts duplicates.
-- The still-unimplemented surfaces are the full Workspace Trust **editor
-  page**, plus `security.workspace.trust.startupPrompt` and full
-  `.untrustedFiles` enforcement. Each must stay an explicit typed boundary;
-  none may be approximated.
+- The Workspace Trust **editor page** (native GDI, not upstream's rich HTML
+  editor input), `security.workspace.trust.startupPrompt`, and
+  `security.workspace.trust.untrustedFiles` all landed in #39, below.
+  `CWorkbenchRuntime::WorkspaceTrustUntrustedFiles` and the pure
+  `config::ResolveWorkspaceTrustUntrustedFiles` it calls decide what a loose
+  file opened into a trusted window should do, and `CEditWnd::RequestUntrustedFileLoad`
+  now calls that decision from the load path itself
+  (`CLoadAgent::OnCheckLoad`), gated on a `TaskDialogIndirect` prompt when the
+  policy resolves `Prompt`. `CWorkbenchRuntime::RecordUntrustedFilesAccepted`
+  persists an accepted decision in `WorkspaceTrustMemento::untrustedFilesAccepted`
+  for a Folder/Workspace window; an Empty window has no workspace identity to
+  key that durable record on, so its acceptance is remembered only in-session
+  (`m_untrustedFilesAcceptedInSession`) and is asked again on the next launch.
+  See [`../window/CLAUDE.md`](../window/CLAUDE.md)'s "Untrusted file load gate"
+  section for the load-path wiring and its divergence from upstream's narrower
+  `validateTrust` trigger.
   (`$(shield) Restricted Mode` in the status bar and activation gating on
   `capabilities.untrustedWorkspaces` landed in #36; `restrictedConfigurations`
   and `extensions.supportUntrustedWorkspaces` landed in #37; the Restricted
   Mode **banner** Part (`workbench.parts.banner`) and
   `security.workspace.trust.banner` landed in #38, below.)
 
-### `workbench.trust.manage` divergence
+### `workbench.trust.manage` divergence (updated 2026-08-07, #39)
 
 Upstream's `workbench.trust.manage` opens the Workspace Trust **editor page**,
 a full editor input with its own body copy, per-folder table, and settings
-links. This product opens a native `TaskDialogIndirect` modal instead, because
-that page is an editor-hosted rich surface this shell has no renderer for, and
-because a browser engine is a product-level non-goal.
+links. `CEditWnd::ExecuteManageWorkspaceTrust` now opens a real native page for
+it: `CWorkspaceTrustEditorSurface`
+(`workbench/editor/CWorkspaceTrustEditorSurface.h`/`.cpp`) is native GDI
+painting and `WC_BUTTONW` children only — no WebView2, no HTML — because a
+browser engine remains a product-level non-goal. **The `TaskDialogIndirect`
+modal this section used to describe as the answer to this command did not
+disappear; it was repurposed.** It now lives at
+`CEditWnd::ShowWorkspaceTrustStartupPrompt` and answers a different upstream
+command entirely (`requestWorkspaceTrust`, gated by
+`security.workspace.trust.startupPrompt`, documented below). The two upstream
+concepts must never substitute for each other: `ExecuteManageWorkspaceTrust`
+never falls back to the modal, and the startup-prompt path never opens this
+page.
 
-What the modal keeps identical to upstream: the command ID, the title
-(`Workspaces: Manage Workspace Trust`), the set of grantable choices and their
-exact scope semantics, the shield iconography, and that dismissal grants
-nothing. Each button is labelled with the canonical URI the grant would
-actually write, so the consent names a resource rather than a category.
+What the page keeps identical to upstream: the command ID, the page title
+(`Workspace Trust`), the set of grantable choices and their exact scope
+semantics, the shield iconography, and that closing the page grants nothing.
+Each grant button is labelled with the canonical URI the grant would actually
+write, so consent names a resource rather than a category — the same
+command-link labelling the old modal used, carried over unchanged.
 
-Upstream additionally gates the command on
-`config.security.workspace.trust.enabled`. This registry has no `config.`
-context-key namespace, so the `when` clause is `workbenchReady` and the palette
-entry stays listed where upstream would hide it. It cannot grant trust the
-settings did not allow: with the feature disabled every workspace already
-resolves `Trusted`, so the modal reports that state and offers no button.
+Two divergences remain, both real and neither hidden:
+
+- **This is a composition-layer projection, not a real editor input.** Like
+  `CExtensionDetailSurface` and `CDiffSurface`
+  (see [`../workbench/editor/CLAUDE.md`](../workbench/editor/CLAUDE.md)), the
+  page has no `EditorInput`, no tab, and no document model.
+  `CEditWnd::ShowWorkspaceTrustPage` therefore refuses to show it while
+  `HasActiveEditorInput()` is true, and `ExecuteManageWorkspaceTrust` reports
+  `NotApplicable` rather than displacing an open document the user could no
+  longer reach — it never falls back to a modal in that case either. Upstream's
+  real editor input can sit in a tab beside an open document; this page cannot.
+- **The `config.` context-key gap is unchanged.** Upstream gates the command on
+  `config.security.workspace.trust.enabled`. This registry still has no
+  `config.` context-key namespace, so the `when` clause stays `workbenchReady`
+  and the palette entry stays listed where upstream would hide it. It cannot
+  grant trust the settings did not allow: with the feature disabled every
+  workspace already resolves `Trusted`, so the page reports that state and
+  offers no button.
 
 **This command is a workspace-level decision and must never be framed, titled,
 or triggered as a per-extension activation gate.**
 
-### `security.workspace.trust.banner` divergence — no durable dismissal store (2026-08-07, #38)
+### `security.workspace.trust.startupPrompt` (2026-08-07, #39)
 
-- **This product has no durable per-workspace dismissal store yet.** Upstream's
+Upstream's separate `requestWorkspaceTrust` startup prompt is implemented as
+`CEditWnd::ShowWorkspaceTrustStartupPrompt`, reusing the `TaskDialogIndirect`
+modal this file previously (and wrongly, as of #39) attributed to
+`workbench.trust.manage` above. It answers a different upstream command and a
+different setting than that entry point, and it must never be reached from it
+or substitute for it.
+
+- `config::EWorkspaceTrustStartupPrompt` (`WorkspaceTrustPromptPolicy.h`)
+  models the setting's three values, `always` / `once` / `never`, default
+  `never` — verified against upstream's `workspaceTrust` contribution.
+  `config::ResolveWorkspaceTrustStartupPrompt` is the pure decision function:
+  no I/O, no clock, no window. Its precedence mirrors upstream's
+  `showModalOnStart`: `security.workspace.trust.enabled = false` and an
+  already-`Trusted` window short-circuit first (there is nothing to ask),
+  then `never` skips unconditionally, then `once` consults the durable record
+  below and shows only when that record is absent or unreadable, and a window
+  with no grantable option (an empty window above all) is skipped even under
+  `always`, because a dialog whose every button is absent has nothing to offer.
+- The durable record is `config::WorkspaceTrustMemento`
+  (`IWorkspaceTrustMementoStore.h`), persisted by
+  `_main::ControlPlatformWorkspaceTrustMementoStore` and encoded by
+  `config::WorkspaceTrustMementoCodec`. It is deliberately **not** the Trusted
+  Folders list: that list is profile-scoped and records what the user
+  *granted*, so a granted folder is trusted in every window, while this record
+  is workspace-scoped and remembers only what the user was *asked*, so an
+  answer to one workspace says nothing about another. It holds exactly two
+  fields — `startupPromptShown` and `untrustedFilesAccepted` — both defaulting
+  to `false`, the direction that asks again. **It carries no banner-dismissal
+  field**; see the `security.workspace.trust.banner` section below for why
+  that distinction still matters.
+- **Record-then-act ordering is deliberate.** `ShowWorkspaceTrustStartupPrompt`
+  calls `m_workbenchRuntime->RecordWorkspaceTrustStartupPromptShown()`
+  immediately after `TaskDialogIndirect` returns and *before* interpreting
+  which button the user pressed. A dismissal spends `once` exactly as much as
+  a grant does: the prompt was put on screen, so the workspace has been
+  "asked" regardless of the answer, and a record that does not stick would make
+  `once` prompt again on every subsequent launch — the same fail-open direction
+  the policy chooses throughout (see `PostWorkspaceTrustStartupPromptOnce`
+  below, which leaves the prompt unshown rather than recording anything when
+  the message queue itself refuses the post).
+- The prompt is reached only from `MYWM_WORKSPACE_TRUST_STARTUP_PROMPT`
+  (`WM_APP+245`, `config/system_constants.h`), posted at most once per window
+  by `CEditWnd::PostWorkspaceTrustStartupPromptOnce`, called from the end of
+  `CommitStartupDrawTransaction()`. The prompt runs after the workbench is on
+  screen, not before, because its copy describes the specific window the user
+  is looking at; posting rather than calling synchronously also means a
+  message-queue failure leaves the prompt unshown with nothing recorded —
+  fail-open toward asking again, never toward silently skipping.
+
+### `security.workspace.trust.banner` divergence — no dismissal field yet (2026-08-07, #38; corrected #39)
+
+- **This product now has a durable per-workspace record, but it does not carry
+  a dismissal field — that is a narrower gap than this section used to claim.**
+  An earlier version of this section stated flatly that "this product has no
+  durable per-workspace dismissal store yet." That is now misleading:
+  `config::WorkspaceTrustMemento` (see `security.workspace.trust.startupPrompt`
+  immediately above) is a real durable per-workspace store that landed in #39.
+  But it holds only `startupPromptShown` and `untrustedFilesAccepted`; it has
+  no third field recording that the banner was dismissed. Upstream's
   Restricted Mode banner (`workbench.parts.banner`) writes an `untilDismissed`
   memento when the user closes it, so that workspace stays quiet on later
-  windows. No equivalent durable record exists here — this is a different gap
-  from the Trusted Folders/Workspaces list above, which *does* have a durable
-  store.
-- Because of that gap, `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility`
-  (`CWorkbenchRuntime.cpp`) treats a resolved `security.workspace.trust.banner`
+  windows, and nothing in this record plays that role yet.
+- Because of that narrower gap, `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility`
+  (`CWorkbenchRuntime.cpp`) still treats a resolved `security.workspace.trust.banner`
   value of `"untilDismissed"` exactly like `"always"`: fail-closed, not an
   approximation. The banner is the only banner-side Restricted Mode signal (see
   [`../window/CLAUDE.md`](../window/CLAUDE.md)'s status-bar-entry checkpoint for
@@ -285,11 +376,17 @@ or triggered as a per-extension activation gate.**
   its own header comment), so `CEditWnd::RefreshRestrictedModeBannerContent`
   withholds the `Dismiss` action kind entirely rather than wiring it to
   something that cannot actually persist the user's choice.
-- Implementing the durable per-workspace dismissal store — most naturally a
-  sibling of `ITrustedFoldersStore`/`CControlPlatformTrustedFoldersStore` above
-  — is separate follow-up work and out of this checkpoint's scope. Once it
-  lands, `"untilDismissed"` should read that store instead of behaving like
-  `"always"`, and the banner should gain a real `Dismiss` action that writes it.
+- Closing this gap means adding a third field to the existing
+  `config::WorkspaceTrustMemento` rather than standing up a new store: it
+  already shares scope, target, and lifetime with `startupPromptShown` and
+  `untrustedFilesAccepted` for the same reason those two share one document
+  instead of two — all three answer "what has this workspace already been
+  told or asked?", and splitting them across separate records would mean
+  independent compare-and-swap transactions that could disagree about which
+  workspace revision they belong to. This is separate follow-up work and out
+  of this checkpoint's scope. Once it lands, `"untilDismissed"` should read
+  that field instead of behaving like `"always"`, and the banner should gain a
+  real `Dismiss` action that writes it.
 
 ## Restricted Configurations Checkpoint (2026-08-07, #37)
 
