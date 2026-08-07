@@ -85,6 +85,59 @@ between IMEs and native full-screen TUI states. Session rebinding must cancel
 composition and discard partial surrogate/backpressured input so old text can
 never enter a replacement session.
 
+## The terminal owns its own text keys (2026-08-07)
+
+`CEditWnd::MessageLoop` runs `TranslateAccelerator` against the legacy
+key-assignment table *after* the workbench `PreTranslateMessage` chain, and it
+does so regardless of which child window has focus. A translated accelerator
+consumes the `WM_KEYDOWN`, so `TranslateMessage` never runs and the `WM_CHAR`
+this terminal converts into shell input is never produced. The default
+assignment in `func/CKeyBind.cpp` binds bare `Space` to `F_INDENT_SPACE` and
+`Shift+Space` to `F_UNINDENT_SPACE`, which is exactly why Space could not be
+typed into the terminal while every other printable key worked: only Space has
+an unmodified default binding, and the keys that do have one (`Tab`, `Enter`,
+`BkSp`, `Esc`, arrows, `F1`–`F12`) are already claimed by `EncodeTerminalKey`.
+
+`CTerminalWnd::PreTranslateMessage` therefore finishes the text-input path
+itself: when `TerminalKeyNeedsTextDelivery` accepts the event it calls
+`TranslateMessage`/`DispatchMessageW` and returns `true`, so the accelerator
+never sees the key. The predicate is pure and lives beside the other encoders;
+the Win32 half is only "does this virtual key map to a character", answered by
+`MapVirtualKey(vk, MAPVK_VK_TO_CHAR)`. Modifier keys, `VK_APPS`, and the
+`VK_PROCESSKEY` an IME sends while composing all map to zero and keep their
+existing routing.
+
+This matches VS Code, where terminal input goes to the shell unless the binding
+opts out through `terminal.integrated.commandsToSkipShell`. Do not widen the
+claim to `Ctrl`/`Alt` combinations: those belong to `EncodeTerminalKey` and the
+Alt-printable path, and widening it would swallow the host commands that are
+still reached through the accelerator.
+
+Verified on 2026-08-07 against x64 Debug with a throwaway `-PROF=` profile. The
+same probe typed `echo a b c` into the terminal and pressed Enter, disabling the
+claim in place for the control run: with the claim enabled the shell received
+`echo a b c` and printed `a b c`; with it disabled the shell received `echoabc`
+and reported an unknown command. Every space, and only the spaces, disappeared.
+
+Drive that probe with `PostMessage` to the `SakuraNativeTerminalWindow` child
+and capture with `PrintWindow(hwnd, dc, PW_RENDERFULLCONTENT)`. Do **not** use
+`SendInput`: it types into whatever currently holds the foreground, so the
+moment the editor loses it the keystrokes land in an unrelated application, and
+a lost-foreground run is indistinguishable from a key that did nothing. Posting
+to the window exercises the same `GetMessage` → `PreTranslateMessage` →
+`TranslateAccelerator` path this fix lives on, without touching global input
+state or requiring the window to be unoccluded.
+
+Known remaining divergences at this boundary, none of them faked: `Ctrl+/`
+(`^_`), `Ctrl+,`, `Ctrl+.`, `Ctrl+;`, `Ctrl+:`, `Ctrl+-`, and `Ctrl+1`–`Ctrl+7`
+are still claimed by the accelerator instead of reaching the shell, because
+`EncodeTerminalKey` covers only `Ctrl`+letter, `Ctrl+Space`, and
+`Ctrl+VK_OEM_4..7`. Conversely `Ctrl+B` and `Ctrl+J` reach the shell as `^B` /
+`^J` and therefore do **not** toggle the Side Bar or Panel from a focused
+terminal, although VS Code lists both commands in its default
+`commandsToSkipShell`. Closing either gap requires a real
+`commandsToSkipShell`-shaped policy rather than more special cases here.
+
 ## DirectWrite Damage Rendering
 
 Terminal render-plan rectangles use absolute client coordinates. Bind the

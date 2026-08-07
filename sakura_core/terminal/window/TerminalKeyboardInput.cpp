@@ -181,6 +181,14 @@ std::string EncodeTerminalMouse( const TerminalMouseEvent& event, const Terminal
 	return result;
 }
 
+bool TerminalKeyNeedsTextDelivery( const TerminalKeyEvent& event, bool mapsToCharacter ) noexcept
+{
+	if( !event.keyDown || !mapsToCharacter ) return false;
+	// Ctrl / Alt 付きは制御シーケンスの領分で、EncodeTerminalKey と Alt 印字可能キーの
+	// 経路が先に所有する。ここが引き取るのは素の文字入力と Shift 修飾だけ。
+	return !event.control && !event.alt;
+}
+
 TerminalShortcutAction ResolveTerminalShortcut( const TerminalKeyEvent& event, bool hasSelection ) noexcept
 {
 	if( event.virtualKey == VK_INSERT && event.shift && !event.alt ) return TerminalShortcutAction::Paste;

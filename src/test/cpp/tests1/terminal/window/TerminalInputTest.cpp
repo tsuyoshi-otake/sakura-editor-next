@@ -29,6 +29,25 @@ TEST(TerminalInput, EncodesNavigationModifiersAndControlKeys)
 	EXPECT_EQ(std::string("\x1b\x03", 2), terminal::EncodeTerminalKey({ 'C', false, true, true }));
 }
 
+TEST(TerminalInput, ClaimsPlainTextKeysBeforeTheHostKeybindingTable)
+{
+	// Space も Shift+Space も端末側の文字入力。既定のキー割り当てが
+	// F_INDENT_SPACE / F_UNINDENT_SPACE を持つため、ここで引き取らないと
+	// アクセラレータに奪われて WM_CHAR が生成されない。
+	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE }, true));
+	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, true }, true));
+	EXPECT_TRUE(terminal::TerminalKeyNeedsTextDelivery({ 'A' }, true));
+
+	// Ctrl / Alt 付きは制御シーケンス側の所有。文字を持たないキーも対象外。
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, false, true, false }, true));
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_SPACE, false, false, true }, true));
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery({ VK_APPS }, false));
+
+	terminal::TerminalKeyEvent keyUp{ VK_SPACE };
+	keyUp.keyDown = false;
+	EXPECT_FALSE(terminal::TerminalKeyNeedsTextDelivery(keyUp, true));
+}
+
 TEST(TerminalInput, ResolvesTerminalClipboardAndInterruptShortcuts)
 {
 	EXPECT_EQ(terminal::TerminalShortcutAction::Copy,
