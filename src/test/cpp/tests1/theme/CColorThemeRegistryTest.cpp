@@ -276,7 +276,7 @@ TEST(CColorThemeRegistry, DiscoversLoadsAndProjectsJsoncThemeWithInclude)
 	EXPECT_EQ((ThemeColor{ 0x00, 0x78, 0xD4, 0xFF }), snapshot.palette.accent);
 	// statusBarItem.prominentBackground: not set by this theme, so it falls back to
 	// black.transparent(0.5) composited over the *resolved* accent above (#0078D4),
-	// not over the compiled default (#1F8AD2) — proving the JSON-key mapping actually
+	// not over the compiled default (#1F8AD2) -- proving the JSON-key mapping actually
 	// composites over what the theme itself resolved.
 	EXPECT_EQ((ThemeColor{ 0x00, 0x3C, 0x6A, 0xFF }), snapshot.palette.statusBarProminentBackground);
 	// Neither `banner.*` nor either of their alias candidates

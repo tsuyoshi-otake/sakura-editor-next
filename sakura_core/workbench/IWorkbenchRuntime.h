@@ -101,7 +101,7 @@ enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
 	LayoutPersistenceConflict,
 	LayoutPersistFailed,
 	//! The stored trusted-folders list could not be read or decoded. Trust still
-	//! resolves — against an empty list, so nothing is trusted — but the durable
+	//! resolves -- against an empty list, so nothing is trusted -- but the durable
 	//! bytes are left untouched, so a grant must be refused rather than written.
 	TrustRestoreFailed,
 	TrustPersistenceUnavailable,

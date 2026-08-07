@@ -413,7 +413,7 @@ TEST(BuiltinPartProjection, RejectsUnsupportedActiveSurfaceWithoutAffectingPhysi
 
 //! VS Code's `CompositeDragAndDrop` moves an Activity Bar ViewContainer between the
 //! Primary and the Secondary Side Bar, so the same container/view pair must project into
-//! whichever side bar currently owns it — and into that one only.
+//! whichever side bar currently owns it -- and into that one only.
 TEST(BuiltinPartProjection, ProjectsSideBarContainersMovedIntoTheSecondarySideBar)
 {
 	constexpr std::array movable{

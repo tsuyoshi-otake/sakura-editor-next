@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief `extensions.supportUntrustedWorkspaces` のユーザー上書きを解決する
 */
 /*

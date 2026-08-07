@@ -1632,7 +1632,7 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 	request.settings = ReadWorkspaceTrustSettings();
 	// The durable list read once at Start. It stays empty when no store is composed,
 	// when the profile has never trusted anything, and when the stored bytes failed to
-	// decode — in every one of those cases no folder resolves to Trusted, which is the
+	// decode -- in every one of those cases no folder resolves to Trusted, which is the
 	// honest answer rather than a placeholder assuming trust.
 	request.trustedEntries = m_trustedFolders.entries;
 

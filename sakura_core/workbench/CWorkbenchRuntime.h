@@ -72,8 +72,8 @@ struct WorkbenchRuntimeDependencies final {
 	//! runtime owns the UI-independent service, never the durable backend.
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceStore> recentlyOpenedWorkspaceStore;
 	//! The durable Trusted Folders and Workspaces list. Null is a real state: the
-	//! runtime then resolves trust against an empty entry list, which is honest —
-	//! no folder has been granted trust — rather than a degraded mode. It must
+	//! runtime then resolves trust against an empty entry list, which is honest --
+	//! no folder has been granted trust -- rather than a degraded mode. It must
 	//! never fall back to trusting anything.
 	std::unique_ptr<config::ITrustedFoldersStore> trustedFoldersStore;
 };
@@ -256,7 +256,7 @@ private:
 	/*!
 		Whether the durable list is usable for granting. False after a load that
 		returned InvalidStoredList or a transport failure. Trust still resolves in
-		that state — against the empty in-memory list, so nothing is trusted — but a
+		that state -- against the empty in-memory list, so nothing is trusted -- but a
 		grant must be refused rather than written, because writing would overwrite
 		durable bytes this runtime failed to understand.
 	 */

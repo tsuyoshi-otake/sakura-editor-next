@@ -116,7 +116,7 @@ TEST(TrustedFoldersCodec, MultipleEntriesRoundTripPreservingOrder)
 	}
 }
 
-//! Duplicate identical entries are a documented, deliberate acceptance — not a bug to "fix".
+//! Duplicate identical entries are a documented, deliberate acceptance -- not a bug to "fix".
 TEST(TrustedFoldersCodec, DuplicateIdenticalEntriesAreAcceptedAndRoundTripAsTwoEntries)
 {
 	TrustedFoldersSnapshot snapshot;
