@@ -626,17 +626,31 @@ SParsedViewDeclarations ParseViewDeclarations(
 			const auto& object = value.get<picojson::object>();
 			const std::wstring id = OptionalString(object, "id");
 			if (id.empty() || batchFull()) continue;
+			/*
+				location は VS Code が名前を持つ 3 つの Part に対応する。既定値へ丸めると
+				`secondarySidebar` のコンテナが黙って Activity Bar に化けるので、
+				白名簿に無い location はコンテナごと落とす（VS Code も無視する）。
+			*/
 			const std::wstring location = OptionalString(object, "location");
+			EExtensionViewContainerLocation resolved = EExtensionViewContainerLocation::ActivityBar;
+			if (location == L"panel") {
+				resolved = EExtensionViewContainerLocation::Panel;
+			} else if (location == L"secondarySidebar") {
+				resolved = EExtensionViewContainerLocation::SecondarySidebar;
+			} else if (location != L"activitybar") {
+				continue;
+			}
 			declarations.containers.push_back({
 				.id = id,
 				.title = OptionalString(object, "title"),
-				.location = location == L"panel"
-					? EExtensionViewContainerLocation::Panel : EExtensionViewContainerLocation::ActivityBar,
+				.location = resolved,
 			});
 			contributions.containerPresentations.push_back({
 				.id = id,
 				.iconPath = OptionalString(object, "icon"),
 				.codicon = OptionalString(object, "codicon"),
+				// コンテナの `when` は排他宣言の要。捨てると排他コンテナが全部同時に出る。
+				.whenClause = OptionalString(object, "when"),
 			});
 		}
 	}
@@ -1054,7 +1068,9 @@ SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchContext
 		}
 	} else return Failure("context value must be null, boolean, number, or string");
 	if (!m_contextKeys.Set(std::move(key), std::move(value), std::move(extensionId))) return Failure("invalid context key");
-	return Success(EExtensionWorkbenchChange::Commands);
+	// context key が変わると、宣言が変わらなくても `when` を投影時に評価する面の
+	// 見せる集合が変わる。ビューコンテナはその 1 つなので Commands だけでは足りない。
+	return Success(EExtensionWorkbenchChange::Commands | EExtensionWorkbenchChange::ContextKeys);
 }
 
 SExtensionWorkbenchDispatchResult CExtensionWorkbenchDispatcher::DispatchCommandList(std::string_view paramsJson)

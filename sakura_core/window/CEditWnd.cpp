@@ -6962,7 +6962,13 @@ void CEditWnd::ActivateSidebarPage(const std::string_view containerId, bool togg
 		const bool activated = requestedView.empty()
 			? ActivateContributedViewContainer(containerId, true)
 			: ActivateBuiltinWorkbenchView(requestedView, true);
-		if (!activated) return;
+		if (!activated) {
+			// A click that reaches here has already passed the "this container has a page"
+			// check, so a rejected activation is a real model failure, not an ordinary
+			// no-op. Leaving no trace at all is what made this class of defect invisible.
+			::OutputDebugStringW(L"Sakura Editor NEXT: view container activation was rejected.\n");
+			return;
+		}
 		bool mirrorChanged = false;
 		if (!ApplyCurrentWorkbenchLayoutState(true, false, &mirrorChanged)) {
 			::OutputDebugStringW(L"Sakura Editor NEXT: left tool projection failed.\n");
@@ -7096,6 +7102,25 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 		m_workbenchRuntime != nullptr ? m_workbenchRuntime->Contributions().Snapshot() : builtinsOnly;
 	auto entries = workbench::activity::ProjectActivityBarEntries(contributions, options);
 
+	/*
+		A container's `when` decides whether it exists on screen at all, and extensions rely on
+		that: Claude Code declares one container for the Primary Side Bar and a mutually
+		exclusive one for the Secondary Side Bar, each gated on the same context key. Ignoring
+		the clause registers both, so the strip grows a duplicate icon for every alternative the
+		extension wrote. Registration deliberately keeps them all — only the projection filters,
+		so flipping the context key later reveals the other container without a re-register.
+		A built-in container has no presentation record, hence no clause, hence always allowed.
+	*/
+	const auto containerAllowed = [this](std::string_view containerId) {
+		if (m_extensionService == nullptr) return true;
+		const auto clause =
+			m_extensionService->Contributions().ContainerPresentation(u8stowcs(containerId)).whenClause;
+		return clause.empty() || m_extensionService->EvaluateWhenClause(clause);
+	};
+	std::erase_if(entries, [&containerAllowed](const workbench::activity::ActivityBarEntry& entry) {
+		return !entry.builtin && !containerAllowed(entry.id);
+	});
+
 	// VS Code moves the whole composite entry together with its ViewContainer: a container
 	// that now lives in the Secondary Side Bar has no Activity Bar icon at all. A greyed-out
 	// placeholder would be a fake capability, so the entry is hidden instead.
@@ -7108,18 +7133,25 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 		}
 	}
 
-	// The strip and the page pool are two projections of one registry, so they are rebuilt from
-	// the same entry list. An icon with no page behind it, or a page with no icon in front of
-	// it, would be a container the user can see but not reach.
+	/*
+		The page pool is derived from the registry, not from the Activity Bar entry list. The
+		strip only ever renders Primary Side Bar containers, so deriving pages from it would
+		leave a container contributed to the Secondary Side Bar with no page at all — visible
+		in a Part that renders nothing. Both bars share this one pool, so it covers both
+		locations and the strip is reconciled against it below.
+	*/
 	if (m_viewContainerPages) {
 		std::vector<workbench::viewcontainer::ContributedViewContainer> contributed;
-		contributed.reserve(entries.size());
-		for (const auto& entry : entries) {
+		contributed.reserve(contributions.viewContainers.size());
+		for (const auto& container : contributions.viewContainers) {
 			// A container Sakura itself contributes already has a hand-built page; only the
-			// ones an extension declared need one created for them. An entry hidden because
-			// its container moved to the Secondary Side Bar still needs its page, so
-			// `visible` is deliberately not consulted here.
-			if (entry.builtin) continue;
+			// ones an extension declared need one created for them.
+			if (container.isBuiltin) continue;
+			if (container.descriptor.location != workbench::layout::EViewContainerLocation::Sidebar
+				&& container.descriptor.location != workbench::layout::EViewContainerLocation::AuxiliaryBar) {
+				continue;
+			}
+			if (!containerAllowed(container.descriptor.id)) continue;
 			// A container every one of whose Views wants a webview can never fill its tree, so the
 			// page says so instead of rendering an empty one forever. "Every one" is deliberate:
 			// a container mixing a tree View with a webview View still has something real to show.
@@ -7131,7 +7163,7 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 				bool sawAnyView = false;
 				bool everyViewIsWebview = true;
 				for (const auto& view : contributions.views) {
-					if (view.descriptor.containerId != entry.id) continue;
+					if (view.descriptor.containerId != container.descriptor.id) continue;
 					sawAnyView = true;
 					const auto presentation =
 						m_extensionService->Contributions().ViewPresentation(u8stowcs(view.descriptor.id));
@@ -7142,7 +7174,12 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 				}
 				webviewOnly = sawAnyView && everyViewIsWebview;
 			}
-			contributed.push_back({ .id = entry.id, .title = entry.label, .webviewOnly = webviewOnly });
+			const auto& descriptor = container.descriptor;
+			contributed.push_back({
+				.id = descriptor.id,
+				.title = u8stowcs(descriptor.title.empty() ? descriptor.id : descriptor.title),
+				.webviewOnly = webviewOnly,
+			});
 		}
 		if (m_viewContainerPages->SyncContributedContainers(std::move(contributed))) {
 			// A container that vanished may have been the one a side bar was rendering, so the
@@ -7158,6 +7195,19 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 			RefreshSidebarTitles();
 		}
 	}
+
+	/*
+		An icon with no page behind it is a container the user can see but cannot reach: the
+		Activity Bar click callback needs `CViewContainerPages::Contains` to be true before it
+		does anything, so such an icon absorbs the click and reports nothing. Page creation can
+		genuinely fail, so the invariant has to be enforced here rather than assumed — drop the
+		icon instead of leaving a dead one. With no page pool at all, no contributed container
+		is reachable, so none of them gets an icon.
+	*/
+	std::erase_if(entries, [this](const workbench::activity::ActivityBarEntry& entry) {
+		if (entry.builtin) return false;
+		return m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(entry.id);
+	});
 	if (m_activityBar) m_activityBar->SetEntries(std::move(entries));
 }
 
@@ -9478,6 +9528,17 @@ LRESULT CEditWnd::DispatchEvent(
 				// キー式の解釈は contribution が変わったときだけ。打鍵ごとに
 				// 文字列を読み直すと、押すたびに同じ解析を繰り返すことになる。
 				SyncExtensionKeybindings();
+			}
+			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::ContextKeys)) != 0) {
+				// A ViewContainer's `when` is evaluated when the strip and the page pool are
+				// projected, so a context key an extension just set changes which containers
+				// belong on screen even though nothing was registered or disposed.
+				if (m_workbenchRuntime != nullptr) {
+					const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+					SyncViewContainers(&snapshot);
+				} else {
+					SyncViewContainers(nullptr);
+				}
 			}
 			if ((bits & static_cast<std::uint32_t>(EExtensionWorkbenchChange::Diagnostics)) != 0) {
 				Views_DeleteCompatibleBitmap();

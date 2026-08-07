@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -237,9 +237,62 @@ TEST(ActivityBarEntryProjection, TakesTheDeclaredCodiconForAContributedContainer
 	});
 
 	ASSERT_FALSE(entries.empty());
-	// order 5 sorts ahead of Explorer's 10, exactly as the registry declares it.
-	EXPECT_EQ("acme-tools", entries[0].id);
-	EXPECT_EQ(L"beaker", entries[0].codicon);
+	// order 5 は Explorer の 10 より小さいが、寄与コンテナは常に組み込みの下。
+	// VS Code も同じで、拡張が order で組み込みの上へ割り込むことはできない。
+	EXPECT_EQ("acme-tools", entries.back().id);
+	EXPECT_EQ(L"beaker", entries.back().codicon);
+}
+
+/*!
+	A manifest has no `order` for a ViewContainer, so every contributed container arrives with
+	the default 0 while the built-ins carry 10..50. Sorting on `order` alone therefore puts
+	every extension icon above Explorer, which is not where VS Code puts them.
+*/
+TEST(ActivityBarEntryProjection, PlacesAContributedContainerBelowTheBuiltinsDespiteItsDefaultOrder)
+{
+	layout::WorkbenchContributionRegistry registry;
+	ASSERT_NO_FATAL_FAILURE(
+		ContributeContainer(registry, "Anthropic.claude-code", "claude-code", "Claude Code", 0));
+	ASSERT_NO_FATAL_FAILURE(ContributeContainer(registry, "acme.tools", "acme-tools", "Acme Tools", 0));
+
+	const auto entries = ProjectActivityBarEntries(registry.Snapshot(), {
+		.renderableBuiltins = kRenderable,
+		.extensionCodicon = [](std::string_view) -> std::wstring { return {}; },
+	});
+
+	ASSERT_EQ(5U, entries.size());
+	EXPECT_EQ(ids::Explorer, entries[0].id);
+	EXPECT_EQ(ids::SourceControl, entries[1].id);
+	EXPECT_EQ(ids::Extensions, entries[2].id);
+	// 同順位の寄与コンテナ同士は ID で安定させる。
+	EXPECT_EQ("acme-tools", entries[3].id);
+	EXPECT_EQ("claude-code", entries[4].id);
+}
+
+//! Secondary Side Bar のコンテナはアクティビティバーに出ない。VS Code と同じで、
+//! コンテナの場所は 1 つだけであり、左端は Primary Side Bar の投影だから。
+TEST(ActivityBarEntryProjection, SkipsAContributedContainerThatLivesOutsideThePrimarySideBar)
+{
+	layout::WorkbenchContributionRegistry registry;
+	const auto result = registry.Register({
+		.operation = { .operationId = "claude-code-secondary.register" },
+		.owner = { .ownerId = "Anthropic.claude-code", .generation = 1 },
+		.viewContainers = { {
+			.id = "claude-code-secondary",
+			.title = "Claude Code",
+			.location = layout::EViewContainerLocation::AuxiliaryBar,
+		} },
+	});
+	ASSERT_EQ(layout::EWorkbenchContributionOperationStatus::Succeeded, result.status);
+
+	const auto entries = ProjectActivityBarEntries(registry.Snapshot(), {
+		.renderableBuiltins = kRenderable,
+		.extensionCodicon = [](std::string_view) -> std::wstring { return {}; },
+	});
+
+	EXPECT_TRUE(std::ranges::none_of(entries,
+		[](const auto& entry) { return entry.id == "claude-code-secondary"; }));
+	EXPECT_EQ(3U, entries.size());
 }
 
 TEST(IconMetrics, UsesSharedOpticalSizesAndDpiStableBounds)

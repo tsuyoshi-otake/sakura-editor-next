@@ -117,6 +117,7 @@ Run build commands from the repository root.
 - `tests1.exe` contains UI and integration suites. A full local run can launch visible editor windows using an isolated/default profile. Read `src/test/CLAUDE.md` before unattended test execution.
 - Match verification to the affected build path: test both Debug and Release for MSBuild orchestration changes, and test MinGW when changing shared CMake logic.
 - Run static analysis with `run-cppcheck.bat <Platform> <Configuration>` when the change warrants it.
+- `requirements.txt` is a hash-locked, `--no-deps` install list, not a normal pinned requirements file: every CI workflow installs it with `uv pip install --require-hashes --no-build --no-deps -r requirements.txt`. `--no-deps` is load-bearing — it stops pip/uv from resolving each package's own transitive dependencies, so `requirements.txt` only needs a hash entry for the packages it lists directly (e.g. `chardet`), not for something like `pytest`'s Windows-only `colorama` dependency. Installing it locally with a plain `pip install -r requirements.txt` (no `--no-deps`) makes pip resolve the full dependency tree, hit an unhashed transitive package under `--require-hashes` mode, and fail with "these do not [have pinned hashes]" for a package that was never meant to need one. When reproducing a Python-tooling CI check locally (e.g. `src/main/py/check_encoding.py`), install with the exact same flags the workflow uses, in a task-specific venv — not a bare `pip install -r requirements.txt`.
 
 ## Verifying What the Window Actually Painted
 

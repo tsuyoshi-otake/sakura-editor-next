@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief 拡張マニフェストの contribution points を保持する所有権付きモデル
 */
 /*
@@ -17,12 +17,15 @@
 /*!
 	@brief ビューコンテナの置き場所
 
-	VS Code は `viewsContainers` を `{ activitybar: [...], panel: [...] }` で受け取る。
-	アクティビティバーとパネルは別の UI なので、どちらに属するかは失わせない。
+	VS Code は `viewsContainers` を
+	`{ activitybar: [...], panel: [...], secondarySidebar: [...] }` で受け取る。
+	3 つは別の Part なので、どれに属するかは失わせない。ここに無い location は
+	VS Code でも contribution エラーとして無視されるため、既定値へ丸めずに落とす。
 */
 enum class EExtensionViewContainerLocation : std::uint8_t {
 	ActivityBar,
 	Panel,
+	SecondarySidebar,
 };
 
 //! ビューの実体。`"type": "webview"` を落とすとツリーとして登録され、永久に空のまま出る。
@@ -71,7 +74,15 @@ struct SExtensionViewPresentation {
 	std::wstring	iconPath;
 	//! `$(name)` 形式で指定された codicon 名。画像指定なら空
 	std::wstring	codicon;
-	//! ビューのみ。コンテナでは常に空
+	/*!
+		@brief ビュー・コンテナ双方の `when` 句
+
+		拡張は排他的な複数コンテナを宣言し、`when` で 1 つだけ見せる
+		（Claude Code の Primary/Secondary Side Bar 切り替えなど）。
+		コンテナ側を捨てると排他が壊れて全部が同時に並ぶ。
+		評価は投影時に行い、登録自体は落とさない（後から context key が
+		変わったときにコンテナを出せるようにするため）。
+	*/
 	std::wstring	whenClause;
 	//! ビューのみ。コンテナでは常に空
 	std::wstring	contextualTitle;

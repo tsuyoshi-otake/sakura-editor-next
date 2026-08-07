@@ -225,6 +225,16 @@ the active-surface integration, the state/memento/projection filter passed
 solution build completed with zero errors and the repository process audits
 were clean.
 
+## Activity Bar ordering: built-in first (2026-08-07, #29)
+
+`ProjectActivityBarEntries` sorts on `isBuiltin` **before** `order`. A manifest
+has no `order` for a ViewContainer, so every contributed container arrives with
+the default 0 while the built-ins carry explicit orders 10..50; sorting on
+`order` alone would put every extension icon above Explorer, which is not where
+VS Code puts them. `order` and then the container ID break ties within each
+group, so same-order contributed containers stay in a stable, declaration-order-
+independent sequence.
+
 ## ViewContainer Pool/Host Boundary (2026-08-01)
 
 - `CViewContainerPages` owns every window a page renders, not just the page's

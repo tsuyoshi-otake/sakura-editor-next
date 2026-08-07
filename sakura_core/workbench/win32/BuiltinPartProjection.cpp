@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -113,6 +113,39 @@ template<typename T>
 		if (mapping.containerId == containerId && mapping.viewId == viewId) return &mapping;
 	}
 	return nullptr;
+}
+
+//! Every ViewContainer VS Code itself declares, whether or not this shell can render it.
+//!
+//! Membership is deliberately wider than `kNativeSurfaceMappings`: Search, Run and Debug,
+//! Ports, and Debug Console are real VS Code containers with no native surface here, and they
+//! must keep failing closed as `UnsupportedSurface` rather than being silently skipped.
+constexpr std::array kBuiltinViewContainerIds{
+	layout::ids::viewContainer::Explorer,
+	layout::ids::viewContainer::Search,
+	layout::ids::viewContainer::RunAndDebug,
+	layout::ids::viewContainer::SourceControl,
+	layout::ids::viewContainer::Extensions,
+	layout::ids::viewContainer::Problems,
+	layout::ids::viewContainer::Output,
+	layout::ids::viewContainer::Terminal,
+	layout::ids::viewContainer::Ports,
+	layout::ids::viewContainer::DebugConsole,
+};
+
+//! True only for the ViewContainers the product itself declares.
+//!
+//! An extension-contributed container is outside this projector's vocabulary entirely, so it is
+//! neither a supported surface nor a malformed one — the window layer renders it from the layout
+//! state directly.  Telling that case apart from an unimplemented *built-in* container is what
+//! keeps one installed extension from failing a snapshot that is perfectly coherent, without
+//! turning an unimplemented capability into a silent success.
+[[nodiscard]] bool IsBuiltinViewContainer(std::string_view containerId) noexcept
+{
+	for (const auto& id : kBuiltinViewContainerIds) {
+		if (id == containerId) return true;
+	}
+	return false;
 }
 
 [[nodiscard]] std::string_view PartIdForLocation(layout::EWorkbenchViewContainerLocation location) noexcept
@@ -234,6 +267,12 @@ BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
 	for (const auto& activeLocation : kActiveLocations) {
 		const auto& activeId = snapshot.activeContainers.*(activeLocation.activeId);
 		if (!activeId) continue;
+		// A contributed ViewContainer legitimately becomes the active container of its Part —
+		// the layout state activates the first visible container in each location — and it has
+		// no built-in native surface by definition.  Leaving this location's surface unset is
+		// what the window layer already expects; failing here instead would make one installed
+		// extension abort every later layout projection for the whole session.
+		if (!IsBuiltinViewContainer(*activeId)) continue;
 
 		bool duplicateContainer = false;
 		const auto* container = FindUniqueById(snapshot.containers, *activeId,
@@ -312,6 +351,12 @@ BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
 		}
 	}
 
+	// Focus on a contributed ViewContainer is the same "not our vocabulary" case as an active
+	// contributed container above: the container is real, but no built-in surface can carry the
+	// focus, so it is left unset rather than treated as a malformed hierarchy.
+	if (!IsBuiltinViewContainer(focusedContainer->containerId)) {
+		return { EBuiltinActiveSurfaceProjectionStatus::Succeeded, std::move(projection) };
+	}
 	if (!focusedContainer->activeViewId) {
 		return NativeSurfaceFailure(EBuiltinActiveSurfaceProjectionStatus::InvalidFocus);
 	}

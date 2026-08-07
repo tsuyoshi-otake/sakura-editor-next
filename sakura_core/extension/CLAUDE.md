@@ -159,6 +159,27 @@ renderer that actually draws it
 ([`../workbench/hover/CLAUDE.md`](../workbench/hover/CLAUDE.md)), not to the
 transport. An absent flag means `false`, matching a plain-string tooltip.
 
+## Contributed ViewContainer location and `when` (2026-08-07, #29)
+
+- `EExtensionViewContainerLocation` has three values —  `ActivityBar`, `Panel`,
+  `SecondarySidebar` — matching the exactly three keys VS Code's
+  `contributes.viewsContainers` accepts. `CExtensionWorkbenchDispatcher`'s
+  `ParseViewDeclarations` resolves them explicitly and **rejects** anything else
+  rather than defaulting to `activitybar`; a container declared at a location
+  that does not exist must not appear at a location the extension never named.
+  `CExtensionWorkbenchServiceBridge` maps `SecondarySidebar` onto
+  `workbench::layout::EViewContainerLocation::AuxiliaryBar`.
+- `SExtensionViewPresentation::whenClause` now carries container clauses as well
+  as View clauses. `contextualTitle` remains View-only. The clause is kept, not
+  acted on, here: registration stays complete and the *projection* decides what
+  renders, so a later context-key change can reveal a container without a
+  re-register. See [`../window/CLAUDE.md`](../window/CLAUDE.md) for the
+  projection-side contract.
+- `DispatchContextSet` reports `Commands | ContextKeys`.
+  `EExtensionWorkbenchChange::ContextKeys` is a distinct bit precisely so a
+  `setContext` refreshes `when`-gated projections without every command
+  registration rebuilding them.
+
 ## Phase 6 Workbench Service Bridge Checkpoint (2026-07-31)
 
 - `CExtensionWorkbenchServiceBridge` borrows runtime-owned Marker/Output

@@ -165,27 +165,42 @@ function contributionViews(manifest) {
 }
 
 /*!
+  @brief viewsContainers として VS Code が受け付ける location キー
+
+  VS Code の `viewsContainers` は location をキーにした object で、キーは
+  `activitybar` / `panel` / `secondarySidebar` の 3 つ。ここに無いキーは
+  VS Code 側でも contribution エラーとして無視されるので、既定値へ丸めない。
+*/
+const VIEW_CONTAINER_LOCATIONS = new Set(['activitybar', 'panel', 'secondarySidebar']);
+
+/*!
   @brief `contributes.viewsContainers` を location 付きの平坦な配列へ変換する
 
-  VS Code は `{ activitybar: [...], panel: [...] }` という location をキーにした
-  object で受け取る。ネイティブ側はアクティビティバーとパネルで別の受け皿を持つので、
-  どちらに属するかを失わないよう location を各要素へ畳み込む。
+  ネイティブ側は Activity Bar（Primary Side Bar）・Panel・Secondary Side Bar で別の
+  受け皿を持つので、どこに属するかを失わないよう location を各要素へ畳み込む。
+  未知の location を既定値へ丸めると、VS Code が名前を持つ概念を別の場所へ配ってしまう
+  ので、白名簿に無いキーはコンテナごと落とす。
+
+  `when` はコンテナにも付く。拡張は排他的な複数コンテナを宣言して `when` で 1 つだけ
+  見せる（Claude Code の Primary/Secondary 切り替えなど）ので、ここで落とすと排他が
+  壊れて全部が同時に出る。評価はネイティブ側の context key に依るため、句は素通しする。
 */
 function contributionViewsContainers(manifest) {
   const result = [];
   const containers = manifest?.contributes?.viewsContainers;
   if (!containers || typeof containers !== 'object' || Array.isArray(containers)) return result;
   for (const [location, entries] of Object.entries(containers)) {
-    if (!Array.isArray(entries)) continue;
+    if (!Array.isArray(entries) || !VIEW_CONTAINER_LOCATIONS.has(location)) continue;
     for (const entry of entries) {
       if (!entry || typeof entry.id !== 'string' || !entry.id) continue;
       const icon = optionalIcon(entry.icon);
       result.push({
         id: entry.id,
         title: optionalString(entry.title) || entry.id,
-        location: location === 'panel' ? 'panel' : 'activitybar',
+        location,
         icon: isCodiconReference(icon) ? '' : icon,
         codicon: isCodiconReference(icon) ? icon.slice(2, -1) : '',
+        when: optionalString(entry.when),
       });
     }
   }

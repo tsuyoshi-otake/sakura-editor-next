@@ -54,7 +54,14 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 		rendered.push_back(&container);
 	}
 
+	/*
+		VS Code places contributed containers below the built-in ones, so "built-in first" is
+		the primary key. Order alone cannot express that here: the built-ins carry explicit
+		orders (10..50) while a contributed container has no manifest order at all and keeps
+		the default 0, which would otherwise sort every extension icon above Explorer.
+	*/
 	std::ranges::sort(rendered, [](const auto* left, const auto* right) {
+		if (left->isBuiltin != right->isBuiltin) return left->isBuiltin;
 		if (left->descriptor.order != right->descriptor.order) {
 			return left->descriptor.order < right->descriptor.order;
 		}
