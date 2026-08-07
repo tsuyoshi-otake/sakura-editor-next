@@ -45,6 +45,33 @@ the code under test. Initialize the apartment in a fixture for the cases that
 expect success, and leave the rejection cases — which return before reaching
 COM — as plain `TEST`s.
 
+**Never rely on an apartment another suite happened to leave behind.** A test
+that needs COM must own its own apartment, in its own scope, with a matching
+uninitialize. The ambient apartment is not a shared fixture: it is an artifact
+of link order, because gtest runs suites in the order their translation units
+were linked, and `tests1.vcxproj` is an explicit source list. Adding one
+unrelated `.cpp` to that list reorders the suites and can move the leak away
+from the test that was silently consuming it.
+
+This is not hypothetical. Verified 2026-08-07: `CSakuraEnvironmentTest.ResolvePath001`
+had always depended on an ambient apartment — `test-cextensionmanager.cpp`
+calls `::OleInitialize` three times with no matching `::OleUninitialize`, so it
+leaks an initialized apartment for whatever runs after it. Adding five test
+files for #35–#38 changed the link order, and the test began failing with
+`0x800401F0 CoInitialize has not been called` on `CLSID_ShellLink`. CI is the
+harsher environment here: its headless `GTEST_FILTER` excludes the GUI suites
+(`EditWndTest`, `WinMainTest`, `TrayWndTest`, and the dialog/macro suites) that
+carry `cxx::COleInit` via `UiaTestSuite`, so fewer apartments exist to borrow.
+Reproduce this class of failure by running the single test alone
+(`tests1.exe --gtest_filter=<Suite>.<Test>`); an isolated run has no ambient
+state to hide the dependency.
+
+Existing patterns to reuse rather than reinvent: `cxx::COleInit` in
+`cpp/tests1/window/UiaTestSuite.hpp` (RAII `OleInitialize`/`OleUninitialize`),
+and the scoped `CoInitializeEx`/conditional-`CoUninitialize` guard in
+`test-csakuraenvironment.cpp`, which also tolerates `RPC_E_CHANGED_MODE` by
+riding an already-initialized apartment without releasing one it does not own.
+
 ## Phase-Scoped Tests
 
 | Priority | Additional guidance |
