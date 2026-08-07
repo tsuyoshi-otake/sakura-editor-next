@@ -264,6 +264,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkingCopyPersistenceCodecTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBootstrapContextTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBannerLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdocline.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoclinemgr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-codechecker.cpp" />

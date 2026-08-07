@@ -110,6 +110,7 @@ using UpdateServiceSubscriptionId = std::uint64_t;
 namespace workbench {
 class CActivityBar;
 class IWorkbenchRuntime;
+class CWorkbenchBannerHost;
 class CWorkbenchPanelHost;
 class CWorkspaceContext;
 enum class WorkbenchEdge : std::uint8_t;
@@ -719,6 +720,14 @@ private:
 	void BroadcastWorkbenchSettings();
 	[[nodiscard]] std::wstring GetSemanticWorkspaceRoot() const;
 	void ApplySemanticWorkspaceContext();
+	/*!
+		@brief `workbench.parts.banner` の Restricted Mode 用内容を作り直す
+
+		内容だけを決める。表示するかどうかは決して決めない ── 可視性は
+		`CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility` がレイアウト
+		モデルへ書き、`ApplyCurrentWorkbenchLayoutState` がそれを射影する。
+	*/
+	void RefreshRestrictedModeBannerContent();
 	void UpdateWorkspaceFromDocument();
 	void OpenExplorerFile(std::wstring_view path,
 		workbench::explorer::ExplorerFileActivationKind kind);
@@ -1119,6 +1128,10 @@ private:
 	std::uint64_t m_workbenchLayoutOperationSequence = 0;
 	std::uint64_t m_outputPanelOperationSequence = 0;
 	std::unique_ptr<workbench::CActivityBar> m_activityBar;
+	//! `workbench.parts.banner`. Unlike the three panel hosts this Part has no sash
+	//! and no persisted extent: its height is content-driven, so nothing here may
+	//! store or expose a user-adjustable size for it.
+	std::unique_ptr<workbench::CWorkbenchBannerHost> m_workbenchBanner;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;

@@ -194,6 +194,17 @@ private:
 	//! Resolves trust from the workspace shape and the profile trust settings, and
 	//! commits it. This is the only production caller of SetTrust.
 	void ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace);
+	//! Computes whether the Restricted Mode banner Part should be visible and
+	//! pushes that single answer through WorkbenchLayoutStateService::SetPartVisibility.
+	//! This is the only production writer of the banner Part's visibility: a native
+	//! host reads WorkbenchLayoutStateService, it never re-derives the answer from
+	//! trust state and configuration itself (see this method's definition for why).
+	//! Called after ResolveAndApplyWorkspaceTrust settles a trust decision, after a
+	//! profile settings reload, and after a successful WriteSetting -- every place
+	//! this runtime already reacts to a configuration or trust change -- so editing
+	//! security.workspace.trust.banner or granting trust takes effect without a
+	//! restart.
+	void UpdateRestrictedModeBannerVisibility();
 	//! Recomputes the joint restricted-configuration fact (published key set plus
 	//! current trust) and commits it to the configuration service. Called both from
 	//! SetExtensionRestrictedConfigurations (key set changed) and from
@@ -228,7 +239,13 @@ private:
 	statusbar::StatusbarViewModel m_statusbarState;
 	std::unique_ptr<statusbar::IStatusbarVisibilityMementoStore> m_statusbarVisibilityMementoStore;
 	bool m_statusbarPersistenceReady = false;
-	std::uint64_t m_layoutBaselineRevision = 0;
+	/*!
+		The layout revision the durable memento already records. Atomic because a
+		derived, non-durable Part change can advance it from a settings-writeback or
+		trust-resolution thread, while orderly shutdown reads it to decide whether a
+		write is needed at all.
+	*/
+	std::atomic<std::uint64_t> m_layoutBaselineRevision { 0 };
 	bool m_layoutPersistenceReady = false;
 	std::unique_ptr<config::ITrustedFoldersStore> m_trustedFoldersStore;
 	//! The durable list, read once at Start and thereafter the runtime's working
@@ -279,6 +296,10 @@ private:
 	//! service treats a repeated identifier carrying a different value as a conflict,
 	//! not as a new request.
 	std::atomic<std::uint64_t> m_trustResolutionCount { 0 };
+	//! Each banner visibility push needs its own operation identifier for the same
+	//! reason m_trustResolutionCount does: WorkbenchLayoutStateService treats a
+	//! repeated identifier carrying a different visible value as a conflict.
+	std::atomic<std::uint64_t> m_bannerVisibilityUpdateCount { 0 };
 	//! The extension-declared restricted-configuration key set most recently
 	//! published by CExtensionService::LoadInstalledExtensionRootsWorker, which
 	//! runs on that service's own worker thread. ApplyRestrictedConfigurationPolicy

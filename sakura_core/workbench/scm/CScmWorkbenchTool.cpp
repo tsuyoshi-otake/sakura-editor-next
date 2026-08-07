@@ -16,6 +16,7 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/LabelRunPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
 
 #include <CommCtrl.h>
@@ -110,82 +111,12 @@ constexpr EProviderCountBadgePolicy kProviderCountBadgePolicy = EProviderCountBa
 	return false;
 }
 
-//! Build the icon font for one glyph run. The caller owns the returned handle.
-HFONT CreateGlyphFont(std::wstring_view faceName, int height)
+//! この band は自前のフォントキャッシュを持たない。ステータスバーと違って
+//! `renderLabelWithIcons` を描くのは行の再構築時だけなので、都度生成で足りる。
+const icons::SLabelRunFontProvider& GlyphFonts()
 {
-	if (faceName.empty() || faceName.size() >= LF_FACESIZE || height <= 0) return nullptr;
-	LOGFONTW logFont{};
-	logFont.lfHeight = -height;
-	logFont.lfWeight = FW_NORMAL;
-	logFont.lfCharSet = DEFAULT_CHARSET;
-	logFont.lfOutPrecision = OUT_TT_PRECIS;
-	logFont.lfClipPrecision = CLIP_DEFAULT_PRECIS;
-	logFont.lfQuality = CLEARTYPE_QUALITY;
-	logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
-	std::copy(faceName.begin(), faceName.end(), logFont.lfFaceName);
-	logFont.lfFaceName[faceName.size()] = L'\0';
-	return ::CreateFontIndirectW(&logFont);
-}
-
-//! An icon run is one square; a text run is its measured extent. Same two rules
-//! the status bar measures `renderLabelWithIcons` output by.
-int MeasureLabelRuns(HDC dc, const std::vector<icons::SLabelRun>& runs, int iconSide)
-{
-	int width = 0;
-	for (const auto& run : runs) {
-		if (run.icon) { width += iconSide; continue; }
-		SIZE extent{};
-		if (::GetTextExtentPoint32W(dc, run.text.c_str(), static_cast<int>(run.text.size()), &extent)) {
-			width += extent.cx;
-		}
-	}
-	return width;
-}
-
-void DrawLabelRuns(HDC dc, const std::vector<icons::SLabelRun>& runs, const RECT& bounds, int iconSide, COLORREF color)
-{
-	const LONG right = bounds.right;
-	const int height = std::max<int>(0, bounds.bottom - bounds.top);
-	LONG cursor = bounds.left;
-	::SetTextColor(dc, color);
-	for (const auto& run : runs) {
-		if (cursor >= right) break;
-		if (run.icon) {
-			const int side = std::min<int>(iconSide, static_cast<int>(right - cursor));
-			if (side <= 0) break;
-			const icons::IconRect box{
-				static_cast<int>(cursor),
-				bounds.top + (height - side) / 2,
-				static_cast<int>(cursor) + side,
-				bounds.top + (height - side) / 2 + side,
-			};
-			if (run.resolved.font) {
-				const HFONT glyphFont = CreateGlyphFont(run.resolved.fontIcon.faceName, std::max(1, box.Height()));
-				if (glyphFont != nullptr) {
-					if (!run.resolved.fontIcon.glyph.empty()) {
-						const HGDIOBJ previous = ::SelectObject(dc, glyphFont);
-						RECT glyph{ box.left, box.top, box.right, box.bottom };
-						::DrawTextW(dc, run.resolved.fontIcon.glyph.c_str(),
-							static_cast<int>(run.resolved.fontIcon.glyph.size()), &glyph,
-							DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
-						::SelectObject(dc, previous);
-					}
-					::DeleteObject(glyphFont);
-				}
-			} else {
-				icons::codicons::Draw(dc, box, run.resolved.builtin, color);
-			}
-			cursor += side;
-			continue;
-		}
-		if (run.text.empty()) continue;
-		SIZE extent{};
-		(void)::GetTextExtentPoint32W(dc, run.text.c_str(), static_cast<int>(run.text.size()), &extent);
-		RECT textRect{ cursor, bounds.top, right, bounds.bottom };
-		::DrawTextW(dc, run.text.c_str(), static_cast<int>(run.text.size()), &textRect,
-			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-		cursor = std::min<LONG>(right, cursor + extent.cx);
-	}
+	static const icons::SLabelRunFontProvider provider = icons::OwnedGlyphFontProvider();
+	return provider;
 }
 
 std::vector<icons::SLabelRun> ParseRuns(std::wstring_view label)
@@ -788,7 +719,7 @@ struct CScmWorkbenchTool::Impl {
 			segment.command = command.command;
 			segment.argumentsJson = command.argumentsJson;
 			segment.tooltip = ToWide(command.tooltip);
-			const int width = MeasureLabelRuns(dc, segment.runs, iconSide) + 2 * actionInset;
+			const int width = icons::MeasureLabelRuns(dc, segment.runs, iconSide) + 2 * actionInset;
 			segment.rect = RECT{ 0, bounds.top, width, bounds.bottom };
 			actionsWidth += width;
 			actions.push_back(std::move(segment));
@@ -833,7 +764,7 @@ struct CScmWorkbenchTool::Impl {
 				const auto icon = icons::ResolveThemeIcon(L"repo", nullptr, icons::CCodiconFont::Instance().FaceName());
 				const COLORREF color = palette.primaryText.ToColorRef();
 				if (icon.font) {
-					const HFONT glyphFont = CreateGlyphFont(icon.fontIcon.faceName, std::max(1, box.Height()));
+					const HFONT glyphFont = icons::CreateLabelRunGlyphFont(icon.fontIcon.faceName, std::max(1, box.Height()));
 					if (glyphFont != nullptr) {
 						if (!icon.fontIcon.glyph.empty()) {
 							const HGDIOBJ previous = ::SelectObject(dc, glyphFont);
@@ -861,7 +792,7 @@ struct CScmWorkbenchTool::Impl {
 			}
 			const RECT content{ segment.rect.left + actionInset, segment.rect.top,
 				std::max(segment.rect.left + actionInset, segment.rect.right - actionInset), segment.rect.bottom };
-			DrawLabelRuns(dc, segment.runs, content, iconSide, palette.primaryText.ToColorRef());
+			icons::DrawLabelRuns(dc, segment.runs, content, iconSide, palette.primaryText.ToColorRef(), GlyphFonts());
 		}
 		if (!band.count.empty() && bandCountRect.right > bandCountRect.left) {
 			::SetTextColor(dc, palette.descriptionText.ToColorRef());

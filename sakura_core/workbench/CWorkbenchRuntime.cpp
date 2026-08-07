@@ -374,7 +374,14 @@ config::SettingsWritebackResult CWorkbenchRuntime::WriteSetting(const config::Se
 	if (!m_settingsWriteback) {
 		return { .status = config::ESettingsWritebackStatus::Failed, .diagnostic = "workbench settings writeback owner is unavailable" };
 	}
-	return m_settingsWriteback->Write(request);
+	auto result = m_settingsWriteback->Write(request);
+	// A live edit -- most importantly to security.workspace.trust.banner itself,
+	// but any Profile-scoped write can move it -- must change what the banner
+	// Part shows immediately, not only after the next trust transition or restart.
+	if (result.Succeeded()) {
+		UpdateRestrictedModeBannerVisibility();
+	}
+	return result;
 }
 
 config::WorkspaceContextResult CWorkbenchRuntime::SwitchToFolderWorkspace(
@@ -1095,6 +1102,11 @@ void CWorkbenchRuntime::ReloadProfileSettings()
 		kProfileDocumentKey, source, m_bootstrap.UserDataProfile().Resources().Settings());
 	if (IsStopRequested()) return;
 	RecordFileSourceResult("profile.settings", EWorkbenchRuntimeDiagnosticSource::ProfileSettings, result);
+	// security.workspace.trust.banner is Profile-scoped (BuiltinConfigurationDescriptors.cpp),
+	// so both the initial Start() load and a later file-watch-triggered reload of
+	// this same document are places an edited banner policy must take effect
+	// without waiting for a trust transition.
+	UpdateRestrictedModeBannerVisibility();
 }
 
 void CWorkbenchRuntime::StartFileWatching()
@@ -1629,6 +1641,12 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 	// transient commit failure from pinning the runtime in ReadyWithDiagnostics forever.
 	if (workspace.trust == resolution.state) {
 		SetDiagnostic("workspace.trust", std::nullopt);
+		// Nothing moved, but this is still a settled resolution -- in particular the
+		// first one, at Start(), where the resting Unknown trust never differs from
+		// itself and this branch is the only one that ever runs. The banner must
+		// reflect that settled state rather than sit on the layout model's
+		// visible-by-default construction value until some later trust transition.
+		UpdateRestrictedModeBannerVisibility();
 		return;
 	}
 
@@ -1650,12 +1668,97 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 		// the next successful SetExtensionRestrictedConfigurations call applies,
 		// remain the recovery signal for a restricted-policy commit that lags.
 		(void)ApplyRestrictedConfigurationPolicy();
+		// Same reasoning as ApplyRestrictedConfigurationPolicy just above: trust
+		// moving is exactly the "commits a new trust value" case the banner must
+		// react to without waiting for a later configuration change.
+		UpdateRestrictedModeBannerVisibility();
 		return;
 	}
 	SetDiagnostic("workspace.trust", WorkbenchRuntimeDiagnostic {
 		.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceContext,
 		.code = EWorkbenchRuntimeDiagnosticCode::WorkspaceTransitionFailed,
 		.message = "workspace trust could not be committed to the semantic workspace service",
+	});
+}
+
+void CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility()
+{
+	if (IsStopRequested()) return;
+
+	// Only Trusted counts as trusted, exactly matching ApplyRestrictedConfigurationPolicy:
+	// ResolveWorkspaceTrust never produces Untrusted on its own (config/CLAUDE.md's
+	// Workspace Trust Resolution Checkpoint), so Unknown reaches here whenever trust
+	// has been withheld rather than explicitly granted, and the banner must treat
+	// that exactly like Untrusted.
+	const bool restricted = m_workspaceContext.Snapshot().trust != config::EWorkspaceTrustState::Trusted;
+
+	bool visible = false;
+	if (restricted) {
+		// Banner policy is profile-owned, like every other security.workspace.trust.*
+		// setting (BuiltinConfigurationDescriptors.cpp), so the read target carries
+		// only the selected profile, never a workspace/folder URI.
+		ConfigurationTarget target;
+		target.profileId = m_bootstrap.UserDataProfile().SelectedProfileId();
+		const auto read = m_configuration.ReadSnapshot({ "security.workspace.trust.banner" }, target);
+		// The descriptor's own default ("untilDismissed") is also the safe fallback
+		// for a read that failed outright: an unreadable setting must never resolve
+		// to the banner silently disappearing.
+		std::wstring banner = L"untilDismissed";
+		if (read.outcome == config::EConfigurationOutcome::Applied && read.snapshot && read.snapshot->values.size() == 1) {
+			if (const auto* string = std::get_if<std::wstring>(&read.snapshot->values[0].Value())) {
+				banner = *string;
+			}
+		}
+		if (banner == L"never") {
+			visible = false;
+		} else if (banner == L"always") {
+			visible = true;
+		} else {
+			// "untilDismissed" -- and this is also where any other unrecognized
+			// stored value lands -- is an explicit typed-unsupported boundary, not an
+			// approximation. This runtime has no durable per-workspace dismissal
+			// record yet (config/CLAUDE.md's Restricted Configurations checkpoint
+			// tracks the banner Part and the dismissal store as still open work), so
+			// "untilDismissed" behaves exactly like "always" until that store lands.
+			// The alternative -- a session-only dismissal flag that forgets itself on
+			// restart -- would silently misrepresent "untilDismissed" as working, which
+			// the root CLAUDE.md's fake-capability rule forbids; failing closed to
+			// "always shown" is the honest answer instead.
+			visible = true;
+		}
+	}
+
+	const auto revisionBeforeWrite = m_layoutState.Snapshot().revision;
+	const auto result = m_layoutState.SetPartVisibility({
+		.operation = { .operationId =
+			"workbench.trust.banner." + std::to_string(m_bannerVisibilityUpdateCount.fetch_add(1) + 1) },
+		.partId = std::string(layout::ids::part::Banner),
+		.visible = visible,
+	});
+	// NotApplicable means the Part was already showing the answer just computed --
+	// a normal, frequent outcome (e.g. a profile settings reload that did not touch
+	// trust or the banner setting), not a failure.
+	if (result.status == layout::EWorkbenchLayoutOperationStatus::Succeeded
+		|| result.status == layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
+		if (result.status == layout::EWorkbenchLayoutOperationStatus::Succeeded) {
+			// This Part's visibility is derived, never chosen: it is recomputed from
+			// trust and the banner setting on every startup, and WorkbenchLayoutState
+			// Service::MementoSnapshot() therefore keeps it out of the durable payload
+			// entirely. A revision produced by nothing but this derived write must not
+			// make the memento look dirty, or every launch of a restricted window would
+			// perform an O(N) full-file layout write that changes not one stored byte.
+			// The CAS only advances the baseline when this write is the sole change
+			// since it, so a real user change still to be persisted is never swallowed.
+			auto expected = revisionBeforeWrite;
+			(void)m_layoutBaselineRevision.compare_exchange_strong(expected, result.revision);
+		}
+		SetDiagnostic("workbench.trust.banner", std::nullopt);
+		return;
+	}
+	SetDiagnostic("workbench.trust.banner", WorkbenchRuntimeDiagnostic {
+		.source = EWorkbenchRuntimeDiagnosticSource::WorkspaceTrust,
+		.code = EWorkbenchRuntimeDiagnosticCode::BannerVisibilityFailed,
+		.message = "restricted mode banner visibility could not be committed to the layout state",
 	});
 }
 

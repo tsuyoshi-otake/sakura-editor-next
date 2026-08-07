@@ -229,13 +229,15 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   `AlreadyTrusted` and writes nothing. Without that check the durable list
   would grow by one entry every time the user confirms, since the codec
   accepts duplicates.
-- The still-unimplemented surfaces are the Restricted Mode **banner** Part and
-  the full Workspace Trust **editor page**, plus
-  `security.workspace.trust.startupPrompt` / `.banner` / `.untrustedFiles`.
-  Each must stay an explicit typed boundary; none may be approximated.
+- The still-unimplemented surfaces are the full Workspace Trust **editor
+  page**, plus `security.workspace.trust.startupPrompt` and full
+  `.untrustedFiles` enforcement. Each must stay an explicit typed boundary;
+  none may be approximated.
   (`$(shield) Restricted Mode` in the status bar and activation gating on
   `capabilities.untrustedWorkspaces` landed in #36; `restrictedConfigurations`
-  and `extensions.supportUntrustedWorkspaces` landed in #37, below.)
+  and `extensions.supportUntrustedWorkspaces` landed in #37; the Restricted
+  Mode **banner** Part (`workbench.parts.banner`) and
+  `security.workspace.trust.banner` landed in #38, below.)
 
 ### `workbench.trust.manage` divergence
 
@@ -260,6 +262,34 @@ resolves `Trusted`, so the modal reports that state and offers no button.
 
 **This command is a workspace-level decision and must never be framed, titled,
 or triggered as a per-extension activation gate.**
+
+### `security.workspace.trust.banner` divergence — no durable dismissal store (2026-08-07, #38)
+
+- **This product has no durable per-workspace dismissal store yet.** Upstream's
+  Restricted Mode banner (`workbench.parts.banner`) writes an `untilDismissed`
+  memento when the user closes it, so that workspace stays quiet on later
+  windows. No equivalent durable record exists here — this is a different gap
+  from the Trusted Folders/Workspaces list above, which *does* have a durable
+  store.
+- Because of that gap, `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility`
+  (`CWorkbenchRuntime.cpp`) treats a resolved `security.workspace.trust.banner`
+  value of `"untilDismissed"` exactly like `"always"`: fail-closed, not an
+  approximation. The banner is the only banner-side Restricted Mode signal (see
+  [`../window/CLAUDE.md`](../window/CLAUDE.md)'s status-bar-entry checkpoint for
+  the other one), so leaving it visible is safer than a runtime silently
+  pretending it remembered a dismissal it never persisted — a session-only
+  dismissal flag would make exactly that false claim the moment the process
+  restarted.
+- The same gap is why the banner draws no close/dismiss affordance:
+  `CWorkbenchBannerHost` only ever draws the actions its caller hands it (see
+  its own header comment), so `CEditWnd::RefreshRestrictedModeBannerContent`
+  withholds the `Dismiss` action kind entirely rather than wiring it to
+  something that cannot actually persist the user's choice.
+- Implementing the durable per-workspace dismissal store — most naturally a
+  sibling of `ITrustedFoldersStore`/`CControlPlatformTrustedFoldersStore` above
+  — is separate follow-up work and out of this checkpoint's scope. Once it
+  lands, `"untilDismissed"` should read that store instead of behaving like
+  `"always"`, and the banner should gain a real `Dismiss` action that writes it.
 
 ## Restricted Configurations Checkpoint (2026-08-07, #37)
 

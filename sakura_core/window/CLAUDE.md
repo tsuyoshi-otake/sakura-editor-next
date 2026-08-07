@@ -541,14 +541,108 @@ wiring.
   paints correctly; verify it with the screen-versus-`PrintWindow` differential
   method in the root [`CLAUDE.md`](../../CLAUDE.md), or close the gap by
   extracting a testable seam, before relying on it.
-- **Documented divergence:** VS Code shows Restricted Mode in *two* places at
-  once — this status-bar entry and the `workbench.parts.banner`
-  (`RestrictedModeAction`'s banner beneath the title/menu bar). Only the
-  status-bar entry is implemented; the banner Part does not exist in this
-  adapter yet. Until it does, this status-bar item is the *only* surface that
-  tells the user a window is in Restricted Mode, so its hide/show correctness
-  matters more here than it would upstream, where the banner is a second,
-  independent signal.
+- VS Code shows Restricted Mode in *two* places at once — this status-bar
+  entry and the `workbench.parts.banner` (`RestrictedModeAction`'s banner
+  beneath the title/menu bar). See "Restricted Mode banner Part" below for the
+  second signal; this status-bar item's hide/show correctness still matters on
+  its own, independent of whether the banner happens to be visible.
+
+## Restricted Mode banner Part (2026-08-07, #38)
+
+- `CWorkbenchBannerHost` (`workbench/CWorkbenchBannerHost.h`/`.cpp`) is a
+  `CEditWnd`-child window that paints `workbench.parts.banner` and nothing
+  more: it measures its own text, draws the message and action links it was
+  handed, and reports clicks. It never decides its own visibility.
+  `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility` is the sole
+  authority: it treats both `Unknown` and `Untrusted` workspace trust as
+  restricted (the same three-state contract as the status-bar entry above),
+  reads the profile-scoped `security.workspace.trust.banner` setting, and
+  writes the answer through `WorkbenchLayoutStateService::SetPartVisibility`.
+  `CEditWnd::ApplyCurrentWorkbenchLayoutState` then projects that committed
+  Part state onto the host with `Show()`/`Hide()` — the same
+  authority-writes-model / adapter-projects-snapshot split every other Part in
+  this file follows.
+- `BuiltinPartProjection`'s `std::optional<BuiltinBannerProjectionState>
+  banner` keeps "unregistered" (`nullopt`) and "registered but hidden"
+  (engaged, `visible == false`) as two different facts, even though the native
+  result is identical either way (the window stays hidden). `CEditWnd` reads
+  `projection.parts.banner && projection.parts.banner->visible` rather than
+  collapsing the optional into a bool, because a caller that only ever needs
+  "is it on screen" is not the only caller this projection has to serve.
+- The message follows workbench state, matching upstream
+  `WorkspaceTrustUXHandler.getBannerItem`: `config::EWorkspaceKind` (Empty /
+  Folder / Workspace) selects "Trust this window / folder / workspace to
+  enable all features," appended to a fixed lead sentence carrying the
+  banner's own `$(shield)` icon as a label run — the same icon vocabulary the
+  `status.workspaceTrust` status-bar item uses, so one `$(name)` token cannot
+  render two different ways depending on which surface drew it.
+- The only action offered is `Manage` (`workbench.trust.manage`), and only
+  while that command is actually registered in the workbench command
+  registry. This follows `CWorkbenchBannerHost`'s own contract: the host draws
+  exactly the actions it is given, so an action nothing could perform must be
+  withheld by the caller rather than drawn dead.
+- **Documented divergence — two upstream affordances are absent, not faked:**
+  - `Learn More` is an `href` to an external documentation URL upstream; this
+    product has no `env.openExternal` equivalent yet.
+  - The close/dismiss button is absent because there is no durable
+    per-workspace dismissal store to back upstream's `onClose`, which writes
+    an `untilDismissed` memento. This is the same gap that makes
+    `UpdateRestrictedModeBannerVisibility` treat a stored
+    `security.workspace.trust.banner` value of `"untilDismissed"` as
+    `"always"` (fail-closed): a session-only dismissal would hide the only
+    banner-side Restricted Mode signal while claiming to have remembered a
+    choice it never persisted.
+- Layout: the banner sits directly below the title bar and above everything
+  else, spanning the full client width — VS Code's own stacking order. It has
+  no sash and no persisted extent: its height is content-driven
+  (`CWorkbenchBannerHost::PreferredHeightPixels` measures the current text),
+  so there is no user-adjustable size to save or expose, unlike the Sidebar/
+  Panel/Auxiliary Bar extents elsewhere in this file. `OnSize2` positions the
+  banner, toolbar, and function-key bar from `chromeLayout` — an early
+  `CalculateWorkbenchLayout()` evaluation — instead of deriving the toolbar's
+  top from `nCustomTitleHeight + nToolBarHeight`: once the banner can occupy
+  that band, that peer-coordinate arithmetic would be wrong the moment the
+  banner exists, and this function already forbids adding new peer-coordinate
+  inference (see the rule at the top of this file).
+- `RefreshRestrictedModeBannerContent()` sets the message and action list and
+  is called from two places: once in `InitializeWorkbench`, immediately after
+  `RefreshStatusbarPresentation()` — deliberately after the workbench command
+  registry is built, because calling it earlier would permanently withhold
+  `Manage` — and again from `ApplySemanticWorkspaceContext()`, so the message
+  tracks the workspace kind across folder/workspace transitions instead of
+  freezing at startup.
+
+### Painted-result verification (2026-08-07, x64 Debug)
+
+Because this Part occupies a chrome band that `OnSize2` now derives from
+`chromeLayout`, it was verified with the screen-versus-`PrintWindow`
+differential method in the root [`CLAUDE.md`](../../CLAUDE.md), not with a
+layout assertion. The window ran under a throwaway `-PROF=` profile whose
+`settings.json` carried `security.workspace.trust.emptyWindow: false`, which is
+what makes an empty window resolve to `Unknown` trust and therefore restricted;
+the profile was deleted afterwards. The window was made topmost for the run —
+`SetForegroundWindow` from the measuring process is refused, and without it the
+occlusion grid rejected every trial.
+
+| Gesture | Valid trials | Stale median | Stale max |
+|---|---:|---:|---:|
+| Forced full `RedrawWindow` (noise floor) | 4/4 | 0.0000% | 0.0000% |
+| Bottom-Panel toggle, banner visible | 10/10 | 0.0000% | 0.1281% |
+| Frame resize, alternating sizes, banner visible | 12/12 | 0.0000% | 0.0000% |
+| Banner shown/hidden live | 6/8 | 0.0000% | 0.0000% |
+
+The single 0.1281% panel trial is not a stale-pixel defect: its heat map
+localizes the whole difference to the TERMINAL prompt line, which the just-started
+ConPTY shell printed between the two captures. Two banner trials were discarded
+by the occlusion grid, as designed.
+
+The banner gesture is a real product path, not a test hook: rewriting the
+profile-scoped `security.workspace.trust.banner` value makes the watched
+settings document reach `UpdateRestrictedModeBannerVisibility`, and the
+`SakuraWorkbenchBannerHost` window was confirmed to move between
+`visible=False (1600x0)` and `visible=True (1600x26)` across it. The status-bar
+`status.workspaceTrust` entry stayed visible in both states, which is the
+observable proof that the two Restricted Mode signals are independent.
 
 ## Extension Status Bar Item Hovers (2026-08-01)
 

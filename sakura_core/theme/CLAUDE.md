@@ -184,3 +184,60 @@ per-item override of the bar's own background, not a shared one. Do not
 generalize this into a per-item background mechanism for other entries; it is
 scoped to this one token because this is the only status-bar item upstream
 gives its own background color to.
+
+## Banner Part color roles (2026-08-07, #38)
+
+`ThemePalette` carries `bannerBackground` / `bannerForeground` /
+`bannerIconForeground`, mapping VS Code's `banner.background`,
+`banner.foreground`, and `banner.iconForeground` — the Banner Part shown under
+the title bar, of which Restricted Mode's "This workspace is not trusted"
+strip is the motivating instance, though the Part itself is a generic upstream
+banner mechanism. They are the **last three** fields in `ThemePalette` —
+following the same positional-initialization discipline as
+`statusBarProminentBackground` above, every site was updated in lockstep in
+the same change: both `PaletteFor` branches, `HighContrastPalette`,
+`CColorThemeRegistry::ProjectPalette`'s JSON-key mapping, and the exact-token
+tests in `CThemeServiceTest.cpp` and `CColorThemeRegistryTest.cpp`.
+
+All three roles are registered upstream as **bare aliases** of another color,
+not an independent per-kind object, which is a different shape from
+`statusBarProminentBackground`'s single translucent literal above:
+
+- `banner.background` is `{ dark: list.activeSelectionBackground, light:
+  darken(list.activeSelectionBackground, 0.3), hcDark/hcLight:
+  list.activeSelectionBackground }`. Dark stays `#04395E` unchanged; light is
+  `darken(#0060C0, 0.3)` = `#004386`, computed by hand with the same HSL
+  `AdjustLightness` reproduction this codebase already applies for
+  `button.hoverBackground` (the compiled `PaletteFor` literals cannot call the
+  runtime helper, since HSL derivation is not `constexpr` here).
+- `banner.foreground` is `list.activeSelectionForeground`, `#FFFFFF` in both
+  modes.
+- `banner.iconForeground` is `editorInfo.foreground` (`#59A4F9` dark, `#0063D3`
+  light) — the editor's "info" diagnostic blue, a color family no other
+  `ThemePalette` role represents.
+
+`CColorThemeRegistry::ProjectPalette` offers each alias name as a second
+fallback candidate behind the primary token, the same multi-candidate shape
+`accent`'s chain already uses: a theme that sets
+`list.activeSelectionBackground`/`list.activeSelectionForeground`/
+`editorInfo.foreground` but not `banner.*` directly still reaches the color
+VS Code's own default resolution would produce, and a theme that sets
+`banner.*` directly still wins over the alias. Both directions are proven by
+`CColorThemeRegistryTest.cpp`'s `ProjectsBannerRolesFromAliasedTokensWhenBannerKeysAreAbsent`
+and `PrefersDirectBannerTokensOverTheirAliasedCandidates`.
+
+None of the three roles could reuse an existing field. `accent` is a different
+question (what focus/prominent UI looks like) already answered by a disjoint
+token family; `highlightText` equals `list.activeSelectionForeground`'s value
+today but is a status-bar-scoped role by name and could diverge from the
+banner's own alias chain if either is themed independently; `danger` and
+`warning` are unrelated error/warning foregrounds, not this info-diagnostic
+blue. A picked "info blue" literal was also rejected for High Contrast:
+`HighContrastPalette` gives `bannerBackground` the same system `highlight`
+color it already uses for `accent` (both are ultimately `hcDark`/`hcLight`
+aliases of `list.activeSelectionBackground`), and gives both
+`bannerForeground` and `bannerIconForeground` the paired `highlightText` —
+rather than upstream's own hardcoded `hcDark`/`hcLight` literal for
+`editorInfo.foreground` — because a chosen literal cannot promise the contrast
+an arbitrary system High Contrast theme guarantees, the same reasoning already
+applied to the three button roles and to `statusBarProminentBackground`.

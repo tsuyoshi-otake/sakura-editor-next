@@ -139,5 +139,89 @@ TEST(WorkbenchLayout, RepeatedCalculationIsIdempotent)
 	EXPECT_EQ(CalculateWorkbenchLayout(request), CalculateWorkbenchLayout(request));
 }
 
+TEST(WorkbenchLayout, ZeroBannerLeavesEveryOtherRectExactlyAsToday)
+{
+	// The explicit-zero request and the request that never touches the field
+	// both default to bannerHeightPixels = 0, so their layouts must be
+	// byte-identical: an existing caller that never sets the field must
+	// observe no geometry change at all.
+	const WorkbenchLayoutRequest withExplicitZero{ .clientWidth = 1600, .clientHeight = 1000, .dpi = 144,
+		.topAccessoryHeightPixels = 51, .bannerHeightPixels = 0,
+		.rightPane = WorkbenchPaneState::DragResizing, .showMinimap = true };
+	const WorkbenchLayoutRequest withFieldUntouched{ .clientWidth = 1600, .clientHeight = 1000, .dpi = 144,
+		.topAccessoryHeightPixels = 51,
+		.rightPane = WorkbenchPaneState::DragResizing, .showMinimap = true };
+
+	const auto layoutExplicitZero = CalculateWorkbenchLayout(withExplicitZero);
+	const auto layoutFieldUntouched = CalculateWorkbenchLayout(withFieldUntouched);
+	EXPECT_EQ(layoutExplicitZero, layoutFieldUntouched);
+
+	// A zero-height banner occupies no space and topAccessory starts exactly
+	// where it always did: directly below the title bar.
+	EXPECT_EQ(0, layoutExplicitZero.banner.Height());
+	EXPECT_EQ(layoutExplicitZero.titleBar.bottom, layoutExplicitZero.banner.top);
+	EXPECT_EQ(layoutExplicitZero.titleBar.bottom, layoutExplicitZero.topAccessory.top);
+}
+
+TEST(WorkbenchLayout, BannerSitsBelowTitleBarAndPushesLowerBandsDown)
+{
+	const WorkbenchLayoutRequest baseline{ .clientWidth = 1600, .clientHeight = 1000 };
+	WorkbenchLayoutRequest withBanner = baseline;
+	withBanner.bannerHeightPixels = 40;
+
+	const auto baselineLayout = CalculateWorkbenchLayout(baseline);
+	const auto bannerLayout = CalculateWorkbenchLayout(withBanner);
+
+	// The banner sits directly under the title bar and spans the full width.
+	EXPECT_EQ(bannerLayout.titleBar.bottom, bannerLayout.banner.top);
+	EXPECT_EQ(0, bannerLayout.banner.left);
+	EXPECT_EQ(1600, bannerLayout.banner.right);
+	EXPECT_EQ(40, bannerLayout.banner.Height());
+	EXPECT_EQ(bannerLayout.banner.bottom, bannerLayout.topAccessory.top);
+
+	// Everything that used to start at titleHeight + topAccessoryHeight now
+	// starts exactly 40 pixels lower; nothing anchored to the bottom moves.
+	EXPECT_EQ(baselineLayout.topAccessory.top + 40, bannerLayout.topAccessory.top);
+	EXPECT_EQ(baselineLayout.documentTabs.top + 40, bannerLayout.documentTabs.top);
+	EXPECT_EQ(baselineLayout.activityBar.top + 40, bannerLayout.activityBar.top);
+	EXPECT_EQ(baselineLayout.leftPane.top + 40, bannerLayout.leftPane.top);
+	EXPECT_EQ(baselineLayout.rightPane.top + 40, bannerLayout.rightPane.top);
+	EXPECT_EQ(baselineLayout.editor.top + 40, bannerLayout.editor.top);
+	EXPECT_EQ(baselineLayout.statusBar.top, bannerLayout.statusBar.top);
+	EXPECT_EQ(baselineLayout.statusBar.bottom, bannerLayout.statusBar.bottom);
+}
+
+TEST(WorkbenchLayout, BannerTallerThanClientClampsWithoutInvertingAnyEdgeAndStatusStaysOnScreen)
+{
+	const auto layout = CalculateWorkbenchLayout(
+		{ .clientWidth = 400, .clientHeight = 50, .titleBarHeightPixels = 34, .bannerHeightPixels = 5000 });
+
+	for (const auto& rect : { layout.titleBar, layout.banner, layout.topAccessory, layout.activityBar,
+		layout.documentTabs, layout.leftPane, layout.leftPaneHeader, layout.leftSplitter, layout.editor,
+		layout.minimap, layout.rightSplitter, layout.rightPane, layout.rightPaneHeader, layout.bottomSplitter,
+		layout.bottomPane, layout.bottomPaneHeader, layout.bottomAccessory, layout.statusBar }) {
+		EXPECT_GE(rect.left, 0);
+		EXPECT_GE(rect.top, 0);
+		EXPECT_GE(rect.right, rect.left);
+		EXPECT_GE(rect.bottom, rect.top);
+	}
+
+	EXPECT_LE(layout.banner.bottom, 50);
+	EXPECT_EQ(50, layout.statusBar.bottom);
+	EXPECT_LE(layout.statusBar.top, layout.statusBar.bottom);
+}
+
+TEST(WorkbenchLayout, BannerHeightPixelsIsPhysicalAndIsNotRescaledByDpi)
+{
+	// bannerHeightPixels behaves exactly like topAccessoryHeightPixels: it is
+	// already a physical pixel count supplied by the native control that
+	// measured its own text, so DPI must not scale it a second time.
+	for (const unsigned int dpi : { 96U, 144U, 192U }) {
+		const auto layout = CalculateWorkbenchLayout(
+			{ .clientWidth = 1600, .clientHeight = 1000, .dpi = dpi, .bannerHeightPixels = 40 });
+		EXPECT_EQ(40, layout.banner.Height());
+	}
+}
+
 } // namespace
 } // namespace workbench

@@ -107,6 +107,12 @@ enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
 	TrustPersistenceUnavailable,
 	TrustPersistenceConflict,
 	TrustPersistFailed,
+	//! The Restricted Mode banner Part's computed visibility could not be
+	//! committed to WorkbenchLayoutStateService. The layout model's own part
+	//! visibility remains the single source of truth; this diagnostic only
+	//! reports that the runtime's most recent attempt to push a fresh answer
+	//! into it did not land.
+	BannerVisibilityFailed,
 	WorkspaceFolderDuplicate,
 	InternalFailure,
 };
@@ -293,7 +299,7 @@ public:
 	//! restricted in an untrusted workspace. Trust itself is deliberately not a
 	//! parameter: the runtime reads its own workspace context, so a caller can
 	//! never publish a key set against a trust state the runtime does not hold.
-	[[nodiscard]] virtual config::EConfigurationOutcome SetExtensionRestrictedConfigurations(std::vector<std::string> keys)
+	[[nodiscard]] virtual config::EConfigurationOutcome SetExtensionRestrictedConfigurations(std::vector<std::string>)
 	{
 		return config::EConfigurationOutcome::Unsupported;
 	}

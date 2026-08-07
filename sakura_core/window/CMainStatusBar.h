@@ -151,7 +151,7 @@ private:
 	void HideExtensionHover() noexcept;
 	//! 寄与アイコン用の HFONT を書体名と字高の組で貸し出す。同じ組は 1 個だけ作り、
 	//! 再描画のたびに CreateFontIndirectW を呼ばない。失敗したら nullptr を返す。
-	[[nodiscard]] HFONT AcquireIconFont(const std::wstring& faceName, int height) const noexcept;
+	[[nodiscard]] HFONT AcquireIconFont(std::wstring_view faceName, int height) const noexcept;
 	//! 貸し出し済みの HFONT をすべて破棄する。DC に選択されたままにしてはならない。
 	void ReleaseIconFonts() const noexcept;
 

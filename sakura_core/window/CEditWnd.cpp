@@ -80,6 +80,7 @@
 #include "config/ConfigurationTypes.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include "config/editing/CJsoncConfigurationEditor.h"
+#include "workbench/CWorkbenchBannerHost.h"
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
 #include "workbench/IWorkbenchRuntime.h"
@@ -2160,6 +2161,19 @@ bool CEditWnd::InitializeWorkbench()
 		m_bottomWorkbenchPanel.reset();
 	}
 
+	// `workbench.parts.banner`. VS Code's Restricted Mode banner is the second, independent
+	// signal beside the `status.workspaceTrust` entry, and its actions run ordinary commands,
+	// so the host is wired to the same single dispatch every other workbench surface uses.
+	m_workbenchBanner = std::make_unique<workbench::CWorkbenchBannerHost>();
+	m_workbenchBanner->SetExecuteCommandCallback([this](std::string_view commandId) {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(commandId, handled);
+	});
+	// Deliberately no SetDismissCallback: see RefreshRestrictedModeBannerContent.
+	if (!m_workbenchBanner->Create(GetHwnd(), G_AppInstance())) {
+		m_workbenchBanner.reset();
+	}
+
 	m_activityBar = std::make_unique<workbench::CActivityBar>([this](std::string_view containerId) {
 		// A container the page pool cannot render would toggle a side bar that then shows
 		// nothing, so the click is ignored rather than producing an empty Part.
@@ -2807,6 +2821,10 @@ bool CEditWnd::InitializeWorkbench()
 		m_cStatusBar.SetExtensionItems(m_extensionService->StatusBarItems());
 	}
 	RefreshStatusbarPresentation();
+	// The command registry now exists, so the banner can finally decide whether its
+	// `Manage` action is performable at all. Composing it earlier would have withheld
+	// the action permanently.
+	RefreshRestrictedModeBannerContent();
 	// The pool applies these to every contributed tree, including the ones created later when
 	// an extension contributes its own ViewContainer, so a container that appears at runtime
 	// is wired exactly like the ones that existed at startup.
@@ -4861,10 +4879,12 @@ void CEditWnd::CloseWorkbench() noexcept
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Close();
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Close();
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Close();
+	if (m_workbenchBanner) m_workbenchBanner->Close();
 	m_activityBar.reset();
 	m_leftWorkbenchPanel.reset();
 	m_rightWorkbenchPanel.reset();
 	m_bottomWorkbenchPanel.reset();
+	m_workbenchBanner.reset();
 	m_sidebarHost = nullptr;
 	m_auxiliaryBarHost = nullptr;
 	m_viewContainerPages.reset();
@@ -4977,6 +4997,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	if (m_sidebarHost) m_sidebarHost->SetPalette(palette);
 	if (m_auxiliaryBarHost) m_auxiliaryBarHost->SetPalette(palette);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->SetPalette(palette);
+	if (m_workbenchBanner) m_workbenchBanner->SetPalette(palette);
 	if (m_extensionBottomPanelTool) m_extensionBottomPanelTool->SetPalette(palette);
 	if (m_terminalTool) m_terminalTool->SetPalette(palette);
 	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
@@ -5075,6 +5096,17 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	applyPart(*m_bottomWorkbenchPanel, projection.parts.bottom);
 	applyPart(*m_rightWorkbenchPanel, projection.parts.right);
 	if (!projection.parts.bottom.visible) m_bottomWorkbenchMaximized = false;
+	if (m_workbenchBanner) {
+		// The three Parts above always exist; `workbench.parts.banner` is optional, so its
+		// projection is engaged only when the Part is actually registered. Disengaged means
+		// this model has no banner capability at all, while engaged-and-not-visible means a
+		// registered banner the runtime is deliberately keeping quiet. Both hide the window
+		// here, but they are not the same fact and must not be collapsed into one: a future
+		// caller that needs to know whether a banner could ever appear reads the optional,
+		// not the boolean.
+		const bool bannerVisible = projection.parts.banner && projection.parts.banner->visible;
+		if (bannerVisible) m_workbenchBanner->Show(); else m_workbenchBanner->Hide();
+	}
 
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	bool changed = false;
@@ -5741,6 +5773,60 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 		m_scmTool->SetHasOpenFolder(!root.empty());
 	}
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	// The banner's message names the thing the user would be trusting, so it follows the
+	// workspace shape exactly as VS Code's does.
+	RefreshRestrictedModeBannerContent();
+}
+
+void CEditWnd::RefreshRestrictedModeBannerContent()
+{
+	if (!m_workbenchBanner) return;
+
+	// VS Code's `WorkspaceTrustUXHandler.getBannerItem` picks its message from the
+	// workbench state, so "trust this window/folder/workspace" names what the grant
+	// would actually cover. `$(shield)` is the banner item's own `shieldIcon`.
+	auto kind = config::EWorkspaceKind::Empty;
+	if (m_workbenchRuntime != nullptr) kind = m_workbenchRuntime->WorkspaceContext().Snapshot().kind;
+	std::wstring message = L"$(shield) Restricted Mode is intended for safe code browsing. ";
+	switch (kind) {
+	case config::EWorkspaceKind::Folder:
+		message += L"Trust this folder to enable all features.";
+		break;
+	case config::EWorkspaceKind::Workspace:
+		message += L"Trust this workspace to enable all features.";
+		break;
+	case config::EWorkspaceKind::Empty:
+	default:
+		message += L"Trust this window to enable all features.";
+		break;
+	}
+
+	// Upstream's banner carries `Manage` and `Learn More`, and a close button whose
+	// `onClose` writes the `untilDismissed` memento.
+	//
+	// `Manage` is offered only while `workbench.trust.manage` is actually registered:
+	// the host draws exactly the actions it is handed, so an action nothing could
+	// perform has to be withheld here rather than drawn dead.
+	//
+	// `Learn More` is absent because it is an `href` to an external documentation URL
+	// and this product has no `env.openExternal` equivalent yet.
+	//
+	// The close/dismiss affordance is absent because there is no durable per-workspace
+	// dismissal store; that is the same gap that makes
+	// `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility` treat the
+	// `security.workspace.trust.banner` value `untilDismissed` as `always`. A
+	// session-only dismissal would hide the only banner-side Restricted Mode signal
+	// while claiming to have remembered a choice it did not persist.
+	std::vector<workbench::WorkbenchBannerAction> actions;
+	if (m_workbenchCommandRegistry != nullptr
+		&& m_workbenchCommandRegistry->Find("workbench.trust.manage")) {
+		actions.push_back({
+			.label = L"Manage",
+			.kind = workbench::EWorkbenchBannerActionKind::Command,
+			.commandId = "workbench.trust.manage",
+		});
+	}
+	m_workbenchBanner->SetContent(std::move(message), std::move(actions));
 }
 
 void CEditWnd::UpdateWorkspaceFromDocument()
@@ -11418,7 +11504,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		::SendMessage( hwndToolBar, WM_SIZE, wParam, lParam );
 		::GetWindowRect( hwndToolBar, &rc );
 		nToolBarHeight = rc.bottom - rc.top;
-		::MoveWindow(hwndToolBar, 0, nCustomTitleHeight, cx, nToolBarHeight, TRUE);
+		// Placement is deferred to the chrome layout below.  `workbench.parts.banner`
+		// sits between the title bar and this accessory band, so the toolbar's top is
+		// no longer `nCustomTitleHeight`; only the layout model knows where it goes.
 	}
 	nFuncKeyWndHeight = 0;
 	if( nullptr != m_cFuncKeyWnd.GetHwnd() ){
@@ -11466,6 +11554,11 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.clientHeight = cy;
 	layoutRequest.dpi = workbench::ScaleDpi(physicalDpi, m_workbenchZoomPercent);
 	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
+	// The banner measures its own text, so its height is asked for rather than
+	// looked up, and only while the Part is actually visible: a hidden banner
+	// must reserve nothing, exactly as a hidden Panel reserves nothing.
+	layoutRequest.bannerHeightPixels = (m_workbenchBanner && m_workbenchBanner->IsVisible())
+		? m_workbenchBanner->PreferredHeightPixels(layoutRequest.dpi) : 0;
 	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
 		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);
 	layoutRequest.documentTabsHeightPixels = 0;
@@ -11488,6 +11581,21 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.bottomPaneHeightDip = m_bottomWorkbenchPanel
 		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
 	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;
+
+	// The chrome bands — title bar, banner, top accessory — and the central
+	// column's horizontal extent are all decided above the document tabs, so this
+	// early evaluation produces the same rectangles for them as the final one
+	// below.  Everything that has to be positioned before the tab height is known
+	// reads it, so no code here re-derives a sibling's coordinates by adding
+	// heights together, which `window/CLAUDE.md` forbids in this function.
+	const auto chromeLayout = workbench::CalculateWorkbenchLayout(layoutRequest);
+	if (m_workbenchBanner) {
+		m_workbenchBanner->Layout(ToWinRect(chromeLayout.banner), layoutRequest.dpi);
+	}
+	if( nullptr != hwndToolBar ){
+		::MoveWindow(hwndToolBar, chromeLayout.topAccessory.left, chromeLayout.topAccessory.top,
+			chromeLayout.topAccessory.Width(), nToolBarHeight, TRUE);
+	}
 
 	//@@@ From 2003.05.31 MIK
 	//タブウインドウ追加に伴い，ファンクションキー表示位置も調整
@@ -11513,16 +11621,15 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cTabWnd.SizeBox_ONOFF( false );
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			nTabWndHeight = rc.bottom - rc.top;
-			const auto tabMeasurementLayout = workbench::CalculateWorkbenchLayout(layoutRequest);
-			::MoveWindow(m_cTabWnd.GetHwnd(), tabMeasurementLayout.documentTabs.left,
-				tabMeasurementLayout.documentTabs.top, tabMeasurementLayout.documentTabs.Width(),
+			::MoveWindow(m_cTabWnd.GetHwnd(), chromeLayout.documentTabs.left,
+				chromeLayout.documentTabs.top, chromeLayout.documentTabs.Width(),
 				nTabWndHeight, TRUE);
 			m_cTabWnd.OnSize();
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			if( nTabWndHeight != rc.bottom - rc.top ){
 				nTabWndHeight = rc.bottom - rc.top;
-				::MoveWindow(m_cTabWnd.GetHwnd(), tabMeasurementLayout.documentTabs.left,
-					tabMeasurementLayout.documentTabs.top, tabMeasurementLayout.documentTabs.Width(),
+				::MoveWindow(m_cTabWnd.GetHwnd(), chromeLayout.documentTabs.left,
+					chromeLayout.documentTabs.top, chromeLayout.documentTabs.Width(),
 					nTabWndHeight, TRUE);
 			}
 		}else if( tabPosition == TabPosition_Bottom ){
@@ -11568,11 +11675,15 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if( m_cFuncKeyWnd.GetHwnd() != nullptr ){
 		if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 )
 		{	/* ファンクションキー表示位置／0:上 1:下 */
+			// The top accessory band holds the toolbar and this bar in that order, so
+			// this bar starts where the band starts plus the toolbar's own height.
+			// `nCustomTitleHeight + nToolBarHeight` would be a peer-coordinate
+			// inference and would additionally be wrong the moment the banner exists.
 			::MoveWindow(
 				m_cFuncKeyWnd.GetHwnd(),
-				0,
-				nCustomTitleHeight + nToolBarHeight,
-				cx,
+				chromeLayout.topAccessory.left,
+				chromeLayout.topAccessory.top + nToolBarHeight,
+				chromeLayout.topAccessory.Width(),
 				nFuncKeyWndHeight, TRUE );
 		}
 		else if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 1 )

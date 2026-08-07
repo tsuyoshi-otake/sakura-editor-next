@@ -34,6 +34,14 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		{ "security.workspace.trust.enabled", ConfigurationValue(true), { Scope::Profile } },
 		{ "security.workspace.trust.emptyWindow", ConfigurationValue(true), { Scope::Profile } },
 		{ "security.workspace.trust.untrustedFiles", ConfigurationValue(L"prompt"), { Scope::Profile } },
+		// Verified against upstream's workspaceTrust contribution
+		// (src/vs/workbench/contrib/workspace/browser/workspace.contribution.ts):
+		// default "untilDismissed", enum ["always", "untilDismissed", "never"],
+		// ConfigurationScope.APPLICATION -- the same scope every other
+		// security.workspace.trust.* setting above already registers as
+		// Scope::Profile here, for the same recorded reason.
+		{ "security.workspace.trust.banner", ConfigurationValue(L"untilDismissed"), { Scope::Profile },
+			{ Kind::String, 32, { L"always", L"untilDismissed", L"never" } } },
 		// Per-extension user override that lets an untrusted workspace still
 		// activate an extension the workspace itself has not been granted an
 		// exemption for. This is profile-owned for the same reason the trust

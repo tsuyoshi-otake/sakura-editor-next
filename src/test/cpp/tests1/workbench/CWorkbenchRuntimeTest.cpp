@@ -2062,3 +2062,90 @@ TEST(CWorkbenchRuntime, SetExtensionRestrictedConfigurationsWithAnEmptySetClears
 	EXPECT_EQ(EConfigurationOutcome::Applied, cleared);
 	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
 }
+
+TEST(CWorkbenchRuntime, RestrictedModeBannerFollowsBannerPolicyWhileWorkspaceTrustIsWithheld)
+{
+	// security.workspace.trust.banner is Profile-scoped
+	// (BuiltinConfigurationDescriptors.cpp), so seeding it in the profile
+	// settings document and reloading through Start() is the same path a real
+	// Settings edit takes.
+	struct Case {
+		const char* banner;
+		bool expectedVisible;
+	};
+	const Case cases[] = {
+		// "always" is the plain visible-while-restricted case.
+		{ "always", true },
+		// "untilDismissed" is this runtime's typed-unsupported boundary: no durable
+		// per-workspace dismissal store exists yet, so it behaves exactly like
+		// "always" rather than faking a session-only dismissal.
+		{ "untilDismissed", true },
+		{ "never", false },
+	};
+
+	for (const auto& testCase : cases) {
+		auto folder = Parse(L"file:///C:/Project");
+		RuntimeFixture fixture(Bootstrap(folder));
+		fixture.files->Set(fixture.runtime->Bootstrap().UserDataProfile().Resources().Settings(),
+			Bytes(std::string(R"json({ "security.workspace.trust.banner": ")json") + testCase.banner + "\" }"));
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+
+		// No trustedFoldersStore was injected, so this folder can never be
+		// granted trust and stays Unknown -- i.e. restricted -- for the whole test.
+		ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+		EXPECT_EQ(testCase.expectedVisible,
+			Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible)
+			<< "banner=" << testCase.banner;
+	}
+}
+
+TEST(CWorkbenchRuntime, RestrictedModeBannerStaysHiddenUnderEveryBannerPolicyOnceTrusted)
+{
+	const char* const banners[] = { "always", "untilDismissed", "never" };
+	for (const auto* banner : banners) {
+		auto folder = Parse(L"file:///C:/Project");
+		auto store = std::make_unique<FakeTrustedFoldersStore>();
+		RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+		fixture.files->Set(fixture.runtime->Bootstrap().UserDataProfile().Resources().Settings(),
+			Bytes(std::string(R"json({ "security.workspace.trust.banner": ")json") + banner + "\" }"));
+		ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+		ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+		// GrantWorkspaceTrust's own ResolveAndApplyWorkspaceTrust call is the only
+		// thing that recomputes banner visibility here -- no second, explicit
+		// banner-visibility call exists on IWorkbenchRuntime for a caller to invoke.
+		const auto granted = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+		ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, granted.status);
+		ASSERT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+		EXPECT_FALSE(Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible)
+			<< "banner=" << banner;
+	}
+}
+
+TEST(CWorkbenchRuntime, RestrictedModeBannerPolicyChangeTakesEffectThroughAProfileSettingsReloadWithoutRestart)
+{
+	// Proves the "editing the setting takes effect without a restart" call site:
+	// an advisory profile-settings watch reload, the same path
+	// AdvisoryProfileWatchResnapshotsThroughTheExistingFileSourceController above
+	// exercises for an ordinary setting.
+	auto folder = Parse(L"file:///C:/Project");
+	RuntimeFixture fixture(Bootstrap(folder));
+	const auto settings = fixture.runtime->Bootstrap().UserDataProfile().Resources().Settings();
+	fixture.files->Set(settings, Bytes(R"json({ "security.workspace.trust.banner": "always" })json"));
+	fixture.files->EnableWatches();
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+	EXPECT_TRUE(Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible);
+
+	fixture.files->Set(settings, Bytes(R"json({ "security.workspace.trust.banner": "never" })json"));
+	fixture.files->EmitFirstWatchEvent({ .type = EFileWatchEventType::Changed, .uri = settings });
+	ASSERT_TRUE(fixture.files->WaitUntilReadCount(2));
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible
+		&& std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	EXPECT_FALSE(Part(fixture.runtime->LayoutState().Snapshot(), layout::ids::part::Banner).visible);
+
+	EXPECT_EQ(EWorkbenchRuntimeResultCode::Stopped, fixture.runtime->Stop().code);
+}

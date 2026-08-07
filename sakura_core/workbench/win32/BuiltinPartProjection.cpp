@@ -31,6 +31,15 @@ constexpr std::array kRequiredBuiltinParts{
 	RequiredBuiltinPart{ layout::ids::part::Auxiliarybar, layout::EWorkbenchPartPosition::Right },
 };
 
+//! The Banner Part is a deliberately optional member of `ProjectBuiltinParts`:
+//! unlike the three required parts above it never participates in the native
+//! shell's sash-driven editor-rectangle math, so a snapshot that has not (yet)
+//! registered `workbench.parts.banner` is a valid projection with no banner,
+//! not a projection failure. See `BuiltinPartProjection::banner` for the full
+//! reasoning and the "absent vs. present-and-hidden" contract this preserves.
+constexpr RequiredBuiltinPart kOptionalBannerPart{
+	layout::ids::part::Banner, layout::EWorkbenchPartPosition::Top };
+
 [[nodiscard]] std::optional<std::size_t> RequiredPartIndex(std::string_view id) noexcept
 {
 	for (std::size_t index = 0; index < kRequiredBuiltinParts.size(); ++index) {
@@ -180,14 +189,38 @@ BuiltinPartProjectionResult ProjectBuiltinParts(const layout::WorkbenchLayoutSta
 		}
 	}
 
-	return {
-		EBuiltinPartProjectionStatus::Succeeded,
-		BuiltinPartProjection{
-			{ parts[0]->visible, parts[0]->committedExtentDip },
-			{ parts[1]->visible, parts[1]->committedExtentDip },
-			{ parts[2]->visible, parts[2]->committedExtentDip },
-		},
+	// The banner is optional (see kOptionalBannerPart): a snapshot that never
+	// registered it produces bannerCount == 0 and projects std::nullopt below,
+	// which is success, not MissingRequiredPart. A duplicate or mispositioned
+	// registration is still malformed data and fails the whole projection, the
+	// same way it would for any required part.
+	const layout::WorkbenchPartState* banner = nullptr;
+	std::size_t bannerCount = 0;
+	for (const auto& part : snapshot.parts) {
+		if (part.partId != kOptionalBannerPart.id) continue;
+		++bannerCount;
+		if (bannerCount == 1) banner = &part;
+	}
+	if (bannerCount > 1) {
+		return { EBuiltinPartProjectionStatus::DuplicateOptionalPart, std::nullopt };
+	}
+	if (banner != nullptr && banner->position != kOptionalBannerPart.position) {
+		return { EBuiltinPartProjectionStatus::UnsupportedPosition, std::nullopt };
+	}
+
+	BuiltinPartProjection projection{
+		{ parts[0]->visible, parts[0]->committedExtentDip },
+		{ parts[1]->visible, parts[1]->committedExtentDip },
+		{ parts[2]->visible, parts[2]->committedExtentDip },
 	};
+	// The banner has no sash-driven extent (see BuiltinBannerProjectionState),
+	// so any committedExtentDip the model happens to carry for it is
+	// intentionally never read here.
+	if (banner != nullptr) {
+		projection.banner = BuiltinBannerProjectionState{ banner->visible };
+	}
+
+	return { EBuiltinPartProjectionStatus::Succeeded, std::move(projection) };
 }
 
 BuiltinActiveSurfaceProjectionResult ProjectBuiltinActiveSurfaces(
