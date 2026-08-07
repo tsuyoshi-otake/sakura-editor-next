@@ -318,12 +318,57 @@ TEST_F(CSakuraEnvironmentTest, GetDlgInitialDir001)
 }
 
 /*!
+ * @brief テスト本体でCOMアパートメントを所有するRAIIヘルパー
+ *
+ * GoogleTestの本体はCOMアパートメントを持たないスレッドで動く。
+ * このテストは以前、たまたま先に走った別スイートが初期化したアパートメントに
+ * 暗黙に相乗りしていたが、それはリンク順に依存する偶然でしかなく、
+ * CIのヘッドレス用フィルタはCOMを初期化するGUIスイートを丸ごと除外する。
+ * よって、このテストが自分のアパートメントを所有する。
+ * 既に別モードで初期化済みの場合(RPC_E_CHANGED_MODE)は、そのアパートメントに
+ * 相乗りするが、自分では解放しない。
+ */
+class CScopedComApartment final
+{
+public:
+	CScopedComApartment() noexcept
+		: m_result(::CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED))
+	{
+	}
+
+	~CScopedComApartment() noexcept
+	{
+		if (SUCCEEDED(m_result)) {
+			::CoUninitialize();
+		}
+	}
+
+	CScopedComApartment(const CScopedComApartment&) = delete;
+	CScopedComApartment& operator = (const CScopedComApartment&) = delete;
+	CScopedComApartment(CScopedComApartment&&) = delete;
+	CScopedComApartment& operator = (CScopedComApartment&&) = delete;
+
+	//! アパートメントが利用可能かどうか
+	[[nodiscard]] bool IsAvailable() const noexcept
+	{
+		return SUCCEEDED(m_result) || m_result == RPC_E_CHANGED_MODE;
+	}
+
+private:
+	HRESULT m_result = E_FAIL;
+};
+
+/*!
  * @brief ショートカットの解決とロングファイル名へ変換
  *
  * 実際にショートカットを生成して、パス解決できることを確認する
  */
 TEST_F(CSakuraEnvironmentTest, ResolvePath001)
 {
+	// CLSID_ShellLinkの生成には初期化済みのCOMアパートメントが要る
+	const CScopedComApartment comApartment;
+	ASSERT_TRUE(comApartment.IsAvailable());
+
 	// ショートカットのターゲットとなるファイルを作成する
 	const auto target = GetTempFilePathWithExt(L"lnk", L"txt");
 	std::wofstream fs(target);
