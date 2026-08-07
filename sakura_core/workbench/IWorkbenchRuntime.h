@@ -289,6 +289,14 @@ public:
 	//! performing any filesystem work, so callers have one status to branch on.
 	[[nodiscard]] virtual config::SettingsWritebackResult WriteSetting(
 		const config::SettingsWritebackRequest& request) = 0;
+	//! Publishes the set of configuration keys installed extensions declared
+	//! restricted in an untrusted workspace. Trust itself is deliberately not a
+	//! parameter: the runtime reads its own workspace context, so a caller can
+	//! never publish a key set against a trust state the runtime does not hold.
+	[[nodiscard]] virtual config::EConfigurationOutcome SetExtensionRestrictedConfigurations(std::vector<std::string> keys)
+	{
+		return config::EConfigurationOutcome::Unsupported;
+	}
 };
 
 } // namespace workbench

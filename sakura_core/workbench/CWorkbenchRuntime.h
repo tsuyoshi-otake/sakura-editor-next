@@ -130,6 +130,7 @@ public:
 	[[nodiscard]] tasks::TaskExecutionService* TaskExecution() noexcept override;
 	[[nodiscard]] const tasks::TaskExecutionService* TaskExecution() const noexcept override;
 	[[nodiscard]] WorkbenchRuntimeSnapshot Snapshot() const override;
+	[[nodiscard]] config::EConfigurationOutcome SetExtensionRestrictedConfigurations(std::vector<std::string> keys) override;
 
 private:
 	struct ListenerGate final {
@@ -193,6 +194,12 @@ private:
 	//! Resolves trust from the workspace shape and the profile trust settings, and
 	//! commits it. This is the only production caller of SetTrust.
 	void ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace);
+	//! Recomputes the joint restricted-configuration fact (published key set plus
+	//! current trust) and commits it to the configuration service. Called both from
+	//! SetExtensionRestrictedConfigurations (key set changed) and from
+	//! ResolveAndApplyWorkspaceTrust (trust changed), so either input moving is
+	//! enough to keep withholding correct without waiting for the other to change too.
+	[[nodiscard]] config::EConfigurationOutcome ApplyRestrictedConfigurationPolicy();
 	//! The entries one grant scope would add for one workspace shape. Pure: it reads
 	//! only the snapshot, so the prompt and the grant cannot disagree about what a
 	//! choice means.
@@ -272,6 +279,16 @@ private:
 	//! service treats a repeated identifier carrying a different value as a conflict,
 	//! not as a new request.
 	std::atomic<std::uint64_t> m_trustResolutionCount { 0 };
+	//! The extension-declared restricted-configuration key set most recently
+	//! published by CExtensionService::LoadInstalledExtensionRootsWorker, which
+	//! runs on that service's own worker thread. ApplyRestrictedConfigurationPolicy
+	//! reads it from this runtime's thread (Start()/OnWorkspaceContextChanged/
+	//! GrantWorkspaceTrust, all invoked on the runtime's owning thread), so the two
+	//! threads can race to write and read the set; this dedicated mutex guards only
+	//! the set itself and is held just long enough to copy it, never across the
+	//! configuration-service call that follows.
+	std::mutex m_extensionRestrictedConfigurationsMutex;
+	std::vector<std::string> m_extensionRestrictedConfigurations;
 	std::map<std::wstring, std::string, std::less<>> m_activeWorkspaceDocuments;
 	std::set<std::string, std::less<>> m_workspaceDiagnosticKeys;
 	//! Owner identity is independent from folder order. It determines whether an

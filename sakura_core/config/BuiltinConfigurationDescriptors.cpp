@@ -34,6 +34,16 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		{ "security.workspace.trust.enabled", ConfigurationValue(true), { Scope::Profile } },
 		{ "security.workspace.trust.emptyWindow", ConfigurationValue(true), { Scope::Profile } },
 		{ "security.workspace.trust.untrustedFiles", ConfigurationValue(L"prompt"), { Scope::Profile } },
+		// Per-extension user override that lets an untrusted workspace still
+		// activate an extension the workspace itself has not been granted an
+		// exemption for. This is profile-owned for the same reason the trust
+		// policy above is: a repository must never be able to grant its own
+		// extensions an exemption by committing a .vscode/settings.json entry
+		// here. It is also upstream's `application` scope, which is the
+		// Application-to-Profile divergence this file already records for
+		// `http.*` and `update.*`.
+		{ "extensions.supportUntrustedWorkspaces", ConfigurationValue(ConfigurationValue::Object{}),
+			{ Scope::Profile }, { Kind::Object } },
 
 		// Network policy is deliberately application/profile-only.  A repository
 		// must not be able to redirect an editor to a proxy or registry, weaken

@@ -1997,3 +1997,68 @@ TEST(CWorkbenchRuntime, WorkspaceTrustPromptOnAnEmptyWindowOffersNoOptions)
 	const auto model = fixture.runtime->WorkspaceTrustPrompt();
 	EXPECT_TRUE(model.options.empty());
 }
+
+TEST(CWorkbenchRuntime, ExtensionRestrictedConfigurationsWithholdAWorkspaceValueUntilTrustIsGrantedWithoutARepublish)
+{
+	// workbench.editor.showTabs is Profile/Workspace/Folder scoped
+	// (BuiltinConfigurationDescriptors.cpp), which is exactly the shape a
+	// restricted key needs: a Folder-scope contribution Workspace Trust can
+	// withhold, with a Default fallback ("multiple") distinct from the
+	// folder value ("none") so withholding is observable rather than assumed.
+	auto folder = Parse(L"file:///C:/Project");
+	auto store = std::make_unique<FakeTrustedFoldersStore>();
+	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
+	fixture.files->Set(Parse(L"file:///C:/Project/.vscode/settings.json"),
+		Bytes(R"json({ "workbench.editor.showTabs": "none" })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+	ConfigurationTarget target = ProfileTarget(fixture.runtime->Bootstrap());
+	target.workspaceUri = folder;
+	target.folderUri = folder;
+	// Before anything is published as restricted, the folder value reads
+	// through untouched: Workspace Trust only withholds keys this runtime was
+	// actually told are restricted.
+	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
+
+	const auto published = fixture.runtime->SetExtensionRestrictedConfigurations({ "workbench.editor.showTabs" });
+	EXPECT_EQ(EConfigurationOutcome::Applied, published);
+	// Untrusted, so the Folder-scope "none" is withheld and a real reader
+	// observes the descriptor default ("multiple") instead.
+	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
+
+	const auto granted = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
+	ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, granted.status);
+	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
+	// No second SetExtensionRestrictedConfigurations call: GrantWorkspaceTrust's
+	// own ResolveAndApplyWorkspaceTrust -> ApplyRestrictedConfigurationPolicy
+	// call is what stops withholding this key, exactly as
+	// CWorkbenchRuntime.cpp's ResolveAndApplyWorkspaceTrust comment documents.
+	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
+}
+
+TEST(CWorkbenchRuntime, SetExtensionRestrictedConfigurationsWithAnEmptySetClearsAPreviouslyPublishedRestriction)
+{
+	auto folder = Parse(L"file:///C:/Project");
+	RuntimeFixture fixture(Bootstrap(folder));
+	fixture.files->Set(Parse(L"file:///C:/Project/.vscode/settings.json"),
+		Bytes(R"json({ "workbench.editor.showTabs": "none" })json"));
+	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
+	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
+
+	ConfigurationTarget target = ProfileTarget(fixture.runtime->Bootstrap());
+	target.workspaceUri = folder;
+	target.folderUri = folder;
+
+	ASSERT_EQ(EConfigurationOutcome::Applied,
+		fixture.runtime->SetExtensionRestrictedConfigurations({ "workbench.editor.showTabs" }));
+	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
+
+	// Publishing an empty set -- the shape a scan with no restricted
+	// declarations left behind publishes -- must clear the previous
+	// restriction rather than being treated as a no-op that leaves a stale
+	// key withheld forever.
+	const auto cleared = fixture.runtime->SetExtensionRestrictedConfigurations({});
+	EXPECT_EQ(EConfigurationOutcome::Applied, cleared);
+	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
+}

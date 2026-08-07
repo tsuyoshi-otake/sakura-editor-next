@@ -229,12 +229,13 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   `AlreadyTrusted` and writes nothing. Without that check the durable list
   would grow by one entry every time the user confirms, since the codec
   accepts duplicates.
-- The still-unimplemented surfaces are: Restricted Mode UI (banner and the
-  `$(shield) Restricted Mode` status-bar entry), the full Workspace Trust
-  editor page, activation gating on `capabilities.untrustedWorkspaces`,
-  `restrictedConfigurations`, `extensions.supportUntrustedWorkspaces`, and
+- The still-unimplemented surfaces are the Restricted Mode **banner** Part and
+  the full Workspace Trust **editor page**, plus
   `security.workspace.trust.startupPrompt` / `.banner` / `.untrustedFiles`.
   Each must stay an explicit typed boundary; none may be approximated.
+  (`$(shield) Restricted Mode` in the status bar and activation gating on
+  `capabilities.untrustedWorkspaces` landed in #36; `restrictedConfigurations`
+  and `extensions.supportUntrustedWorkspaces` landed in #37, below.)
 
 ### `workbench.trust.manage` divergence
 
@@ -259,3 +260,80 @@ resolves `Trusted`, so the modal reports that state and offers no button.
 
 **This command is a workspace-level decision and must never be framed, titled,
 or triggered as a per-extension activation gate.**
+
+## Restricted Configurations Checkpoint (2026-08-07, #37)
+
+- A restricted setting is one an extension named in
+  `capabilities.untrustedWorkspaces.restrictedConfigurations`. While the window
+  is not `Trusted`, that key's **Workspace- and Folder-scoped** contributions do
+  not apply. `CollectProvenanceLocked` still collects them and marks them
+  `ConfigurationProvenance::withheld`; `SelectEffectiveValueLocked` then returns
+  the last **non-withheld** entry instead of `provenance.back()`. Both
+  `EffectiveLocked` and `Inspect` go through that one helper, so the effective
+  value and the inspection can never disagree about which contribution won.
+- **Inspection truth is deliberately unchanged.** Upstream's `inspect()` still
+  reports `workspaceValue` for a restricted setting, because the Settings UI
+  needs it to explain *why* the value is not in effect. Dropping the withheld
+  entry from the provenance vector would look tidier and would destroy exactly
+  the information that explanation is made of.
+- `CConfigurationService::ApplyRestrictedConfigurations` is the single writer of
+  that policy and takes the key set, the trust flag, and an `evaluationTarget`
+  **together**, because a key list means nothing without a trust state and a
+  trust state withholds nothing without a key list. It stays off
+  `IConfigurationService`: `CWorkbenchRuntime` holds the concrete service, and
+  every extension-facing consumer must keep reading a trust-agnostic contract
+  and simply receive the already-withheld value.
+- `evaluationTarget` is validated with the same `IsContextValid` the read paths
+  use; an invalid target returns `InvalidScope` and commits nothing. It exists
+  because the restricted policy is service-wide while "which keys actually
+  moved" is only answerable for one concrete identity — an earlier draft
+  compared before/after against a default-constructed target, which
+  `IsSourceTargetValid` can never match, so the method structurally could never
+  notify. A method that looks like it has a change contract and cannot honour it
+  is worse than one that declares no contract at all.
+- `CWorkbenchRuntime::ApplyRestrictedConfigurationPolicy` is the only caller. It
+  supplies a **profile-only** target, matching
+  `CExtensionWorkbenchServiceBridge::BuildConfigurationSnapshot` and
+  `WriteGlobalConfiguration`: a Workspace-scope source is keyed by the
+  `.code-workspace` configuration URI and each Folder-scope source by
+  `(workspaceUri, folderUri)`, so a multi-root workspace has no single folder
+  URI the runtime could name without guessing which root a notification is
+  about. The consequence is narrow and must not be mistaken for weak
+  enforcement: withholding itself is evaluated against whatever target a real
+  `GetValue`/`ReadSnapshot`/`Inspect` caller supplies later and is entirely
+  independent of `evaluationTarget`, which only decides which
+  `ConfigurationChange`s this one call emits.
+- Both inputs re-enter the same path. `SetExtensionRestrictedConfigurations`
+  calls it when the key set moves; `ResolveAndApplyWorkspaceTrust` calls it
+  after committing a new trust value, so a grant or a downgrade re-evaluates the
+  already-published set without waiting for the next extension rescan. The
+  published set is guarded by its own mutex because `CExtensionService` writes
+  it from its worker thread while the runtime reads it from its own.
+- **`LanguageOverride` is deliberately left unwithheld, and this is a recorded
+  gap, not an oversight.** A language override can originate from a workspace's
+  `.vscode/settings.json`, but this service models *scope*, not physical
+  document identity — by the time the contribution reaches
+  `CollectProvenanceLocked`, which document produced it is already gone.
+  Guessing would either withhold a legitimately profile-owned override or honour
+  one that came from an untrusted workspace. Closing it requires carrying the
+  originating document identity on the source, not a heuristic here.
+- **`ConfigurationDescriptor` deliberately has no `restricted` field yet.**
+  Upstream expresses restricted-ness as a per-property flag on the configuration
+  registry. No built-in descriptor here is both Workspace/Folder-permitted and
+  security-sensitive, so the field would have zero non-test users; the runtime
+  policy set is the authority instead. Add the field when the first built-in
+  restricted key exists.
+- **Known limit, recorded rather than papered over:** this repository has no
+  extension-contributed `ConfigurationDescriptor` yet, so an extension can only
+  restrict a key the built-in registry already declares. The mechanism is real
+  and enforced; its reach grows when extension-contributed configuration lands.
+- `extensions.supportUntrustedWorkspaces` is registered `Scope::Profile` only —
+  the same Application-to-Profile divergence already recorded for `http.*`,
+  `update.*`, and `security.workspace.trust.*`. A workspace document must never
+  be able to grant its own extensions an untrusted-workspace exemption. It is
+  the first `Kind::Object` descriptor in the repository; its semantics belong to
+  [`../extension/CLAUDE.md`](../extension/CLAUDE.md).
+- `CExtensionManager.cpp` carries its own file-local copy of the canonical-key
+  predicate rather than including this directory's, so `extension/` stays
+  independent of `config/`. **The two copies must be kept in sync**: a key this
+  service would reject must not be accepted there and then silently dropped.
