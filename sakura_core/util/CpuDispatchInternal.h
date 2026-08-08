@@ -24,4 +24,18 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx2(
 	const wchar_t* data, std::size_t length) noexcept;
 std::size_t FindMarkdownInlineSpecialUtf16Avx512(
 	const wchar_t* data, std::size_t length) noexcept;
+
+std::size_t WidenAsciiToUtf16Avx(
+	const char* source, std::size_t length, wchar_t* destination) noexcept;
+std::size_t WidenAsciiToUtf16Avx2(
+	const char* source, std::size_t length, wchar_t* destination) noexcept;
+std::size_t WidenAsciiToUtf16Avx512(
+	const char* source, std::size_t length, wchar_t* destination) noexcept;
+
+std::size_t FindUtf16CharAvx(
+	const wchar_t* data, std::size_t length, wchar_t target) noexcept;
+std::size_t FindUtf16CharAvx2(
+	const wchar_t* data, std::size_t length, wchar_t target) noexcept;
+std::size_t FindUtf16CharAvx512(
+	const wchar_t* data, std::size_t length, wchar_t target) noexcept;
 }

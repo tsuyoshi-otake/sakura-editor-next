@@ -36,6 +36,43 @@ namespace
 	return static_cast<__mmask32>((std::uint32_t{1} << count) - 1u);
 }
 
+[[nodiscard]] __mmask64 LowBitsMask64(std::size_t count) noexcept
+{
+	if (count >= 64) {
+		return static_cast<__mmask64>(~std::uint64_t{0});
+	}
+	return static_cast<__mmask64>((std::uint64_t{1} << count) - 1u);
+}
+
+[[nodiscard]] unsigned long FirstByteLane(std::uint64_t byteMask) noexcept
+{
+	unsigned long index{};
+#if defined(_MSC_VER)
+	_BitScanForward64(&index, byteMask);
+#else
+	index = static_cast<unsigned long>(__builtin_ctzll(byteMask));
+#endif
+	return index;
+}
+
+// Widens the low `count` bytes of one loaded vector. The masked stores write
+// exactly `count` UTF-16 units, so a destination sized to the ASCII run is
+// never touched past its end.
+std::size_t WidenAsciiPartial(__m512i bytes, std::size_t count, wchar_t* destination) noexcept
+{
+	_mm512_mask_storeu_epi16(
+		destination,
+		LowBitsMask32(count),
+		_mm512_cvtepu8_epi16(_mm512_castsi512_si256(bytes)));
+	if (count > 32) {
+		_mm512_mask_storeu_epi16(
+			destination + 32,
+			LowBitsMask32(count - 32),
+			_mm512_cvtepu8_epi16(_mm512_extracti64x4_epi64(bytes, 1)));
+	}
+	return count;
+}
+
 [[nodiscard]] __mmask32 MatchMarkdownInlineSpecial(__m512i units) noexcept
 {
 	__mmask32 matches = _mm512_cmpeq_epi16_mask(units, _mm512_set1_epi16(L'\\'));
@@ -186,6 +223,68 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx512(
 	const __m512i units = _mm512_maskz_loadu_epi16(valid, data + offset);
 	const std::uint32_t mask = static_cast<std::uint32_t>(
 		MatchMarkdownInlineSpecial(units) & valid);
+	return mask != 0 ? offset + FirstUtf16Lane(mask) : length;
+}
+
+std::size_t WidenAsciiToUtf16Avx512(
+	const char* source, std::size_t length, wchar_t* destination) noexcept
+{
+	static_assert(sizeof(wchar_t) == 2, "The widening kernel requires 16-bit wchar_t");
+	constexpr std::size_t vectorWidth = 64;
+	std::size_t offset = 0;
+	for (; length - offset >= vectorWidth; offset += vectorWidth) {
+		const __m512i bytes = _mm512_loadu_si512(source + offset);
+		const std::uint64_t nonAscii =
+			static_cast<std::uint64_t>(_mm512_movepi8_mask(bytes));
+		if (nonAscii != 0) {
+			return offset
+				+ WidenAsciiPartial(bytes, FirstByteLane(nonAscii), destination + offset);
+		}
+		_mm512_storeu_si512(
+			destination + offset,
+			_mm512_cvtepu8_epi16(_mm512_castsi512_si256(bytes)));
+		_mm512_storeu_si512(
+			destination + offset + vectorWidth / 2,
+			_mm512_cvtepu8_epi16(_mm512_extracti64x4_epi64(bytes, 1)));
+	}
+	// The fault-suppressed masked load covers the 1..63-byte tail (and short
+	// inputs entirely) without touching bytes past `length`. Masked-off lanes
+	// load as zero and can never raise the sign bit, so the non-ASCII mask
+	// needs no additional clamp.
+	const std::size_t remaining = length - offset;
+	if (remaining == 0) {
+		return offset;
+	}
+	const __m512i bytes = _mm512_maskz_loadu_epi8(LowBitsMask64(remaining), source + offset);
+	const std::uint64_t nonAscii = static_cast<std::uint64_t>(_mm512_movepi8_mask(bytes));
+	const std::size_t run = nonAscii != 0 ? FirstByteLane(nonAscii) : remaining;
+	return offset + WidenAsciiPartial(bytes, run, destination + offset);
+}
+
+std::size_t FindUtf16CharAvx512(
+	const wchar_t* data, std::size_t length, wchar_t target) noexcept
+{
+	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
+	constexpr std::size_t vectorWidth = 32;
+	const __m512i needle = _mm512_set1_epi16(static_cast<short>(target));
+	std::size_t offset = 0;
+	for (; length - offset >= vectorWidth; offset += vectorWidth) {
+		const std::uint32_t mask = static_cast<std::uint32_t>(
+			_mm512_cmpeq_epi16_mask(_mm512_loadu_si512(data + offset), needle));
+		if (mask != 0) {
+			return offset + FirstUtf16Lane(mask);
+		}
+	}
+	// Invalid lanes load as zero, which would match a NUL target, so the match
+	// mask is clamped to the valid lanes.
+	const std::size_t remaining = length - offset;
+	if (remaining == 0) {
+		return length;
+	}
+	const __mmask32 valid = LowBitsMask32(remaining);
+	const __m512i units = _mm512_maskz_loadu_epi16(valid, data + offset);
+	const std::uint32_t mask =
+		static_cast<std::uint32_t>(_mm512_cmpeq_epi16_mask(units, needle) & valid);
 	return mask != 0 ? offset + FirstUtf16Lane(mask) : length;
 }
 }
