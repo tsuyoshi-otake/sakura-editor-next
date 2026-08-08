@@ -194,42 +194,23 @@ def test_get_diff_files_propagates_invalid_base_failure(mocker, check_encoding_m
 
 
 @pytest.mark.parametrize("base_sha", ["", "0" * 40])
-def test_empty_or_all_zero_base_uses_tracked_files(base_sha, mocker, check_encoding_module):
-    mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.return_value = b"src/test.cpp\0README.md\0src/style.rc\0"
+def test_empty_or_all_zero_base_is_a_branch_creation_noop(base_sha, mocker, check_encoding_module):
+	get_diff_files = mocker.patch.object(
+		check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
+	)
 
-    assert check_encoding_module._is_full_scan_base(base_sha) is True
-    files = list(check_encoding_module.get_tracked_files())
-
-    assert files == ["src/test.cpp", "src/style.rc"]
-    assert mock_check_output.call_args.args[0] == ["git", "ls-files", "-z", "--"]
+	assert check_encoding_module._is_full_scan_base(base_sha) is True
+	assert list(check_encoding_module.get_ci_files(base_sha)) == []
+	get_diff_files.assert_not_called()
 
 
 def test_get_ci_files_uses_diff_for_valid_base(mocker, check_encoding_module):
     get_diff_files = mocker.patch.object(
         check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
     )
-    get_tracked_files = mocker.patch.object(
-        check_encoding_module, "get_tracked_files", return_value=["src/tracked.h"]
-    )
 
     assert list(check_encoding_module.get_ci_files("abc123")) == ["src/test.cpp"]
     get_diff_files.assert_called_once_with("abc123")
-    get_tracked_files.assert_not_called()
-
-
-@pytest.mark.parametrize("base_sha", ["", "0" * 40])
-def test_get_ci_files_uses_tracked_fallback(base_sha, mocker, check_encoding_module):
-    get_diff_files = mocker.patch.object(
-        check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
-    )
-    get_tracked_files = mocker.patch.object(
-        check_encoding_module, "get_tracked_files", return_value=["src/tracked.h"]
-    )
-
-    assert list(check_encoding_module.get_ci_files(base_sha)) == ["src/tracked.h"]
-    get_diff_files.assert_not_called()
-    get_tracked_files.assert_called_once_with()
 
 
 def test_check_all_generator_yields_target_extensions(mocker, check_encoding_module):
