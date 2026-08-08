@@ -1,0 +1,244 @@
+name: release promotion
+
+on:
+  push:
+    tags:
+      - 'v[0-9]*-build.[0-9]*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing canonical v<major>.<minor>.<patch>-build.<revision> tag to validate and package.
+        required: true
+        type: string
+      publish:
+        description: Publish after provenance and distribution smoke validation. Leave false for a dry run.
+        required: true
+        default: false
+        type: boolean
+
+defaults:
+  run:
+    shell: pwsh
+
+# Every job starts read-only. Only the final job receives contents: write, and
+# it runs after the artifact-only smoke job has succeeded.
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+concurrency:
+  group: release-promotion-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve tested release source
+    runs-on: windows-2022
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      file_version: ${{ steps.release.outputs.file_version }}
+    steps:
+    - name: Select release tag
+      id: tag
+      env:
+        EVENT_NAME: ${{ github.event_name }}
+        EVENT_TAG: ${{ github.ref_name }}
+        INPUT_TAG: ${{ inputs.tag }}
+      run: |
+        $tag = if ($env:EVENT_NAME -eq 'workflow_dispatch') { $env:INPUT_TAG } else { $env:EVENT_TAG }
+        if ([string]::IsNullOrWhiteSpace($tag)) {
+          throw 'A release tag is required.'
+        }
+        "tag=$($tag.Trim())" >> $env:GITHUB_OUTPUT
+
+    # The target tag controls only the immutable package source.  Keep the
+    # orchestration helpers at the revision that defined this workflow so a
+    # manual dry run can validate an older tag and no target checkout supplies
+    # code to the later smoke/publish boundary.
+    - name: Checkout release orchestration
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 1
+
+    - name: Validate tag source and required main gate
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        .\github\scripts\Resolve-ReleasePromotion.ps1
+        -TagName "${{ steps.tag.outputs.tag }}"
+        -Repository "${{ github.repository }}"
+        -Token "$env:GITHUB_TOKEN"
+        -OutputPath release-source.json
+
+    - name: Export validated release source
+      id: release
+      run: |
+        $source = Get-Content -LiteralPath release-source.json -Raw | ConvertFrom-Json
+        "release_tag=$($source.tag_name)" >> $env:GITHUB_OUTPUT
+        "source_sha=$($source.source_sha)" >> $env:GITHUB_OUTPUT
+        "file_version=$($source.file_version)" >> $env:GITHUB_OUTPUT
+
+    - name: Upload validated release source
+      uses: actions/upload-artifact@v7
+      with:
+        name: Release source evidence
+        path: release-source.json
+        if-no-files-found: error
+        retention-days: 30
+
+  package:
+    name: Package exact tested source
+    needs: resolve
+    uses: ./.github/workflows/build-sakura.yml
+    with:
+      source_sha: ${{ needs.resolve.outputs.source_sha }}
+      release_tag: ${{ needs.resolve.outputs.release_tag }}
+      release_promotion: true
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+
+  smoke:
+    name: Smoke packaged distribution
+    needs: [resolve, package]
+    runs-on: windows-2022
+    permissions:
+      actions: read
+      contents: read
+    steps:
+    - name: Checkout release orchestration
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 1
+
+    - name: Download release source evidence
+      uses: actions/download-artifact@v8
+      with:
+        name: Release source evidence
+        path: release-artifacts/source
+
+    - name: Download release provenance
+      uses: actions/download-artifact@v8
+      with:
+        name: Release provenance x64 Release
+        path: release-artifacts/provenance
+
+    - name: Download installer archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Installer x64 Release
+        path: release-artifacts/installer
+
+    - name: Download executable archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Exe x64 Release
+        path: release-artifacts/executable
+
+    - name: Install and open packaged payload
+      run: |
+        $installerArchives = @([IO.Directory]::EnumerateFiles((Join-Path $PWD 'release-artifacts/installer'), '*.zip', [IO.SearchOption]::TopDirectoryOnly))
+        $executableArchives = @([IO.Directory]::EnumerateFiles((Join-Path $PWD 'release-artifacts/executable'), '*.zip', [IO.SearchOption]::TopDirectoryOnly))
+        if ($installerArchives.Count -ne 1 -or $executableArchives.Count -ne 1) {
+          throw "Expected one installer and one executable archive; found installer=$($installerArchives.Count), executable=$($executableArchives.Count)."
+        }
+        .\github\scripts\Test-ReleaseDistribution.ps1 `
+          -SourceEvidencePath release-artifacts/source/release-source.json `
+          -ProvenancePath release-artifacts/provenance/release-provenance.json `
+          -InstallerArchivePath $installerArchives[0] `
+          -ExecutableArchivePath $executableArchives[0] `
+          -EvidencePath release-smoke.json
+
+    - name: Upload distribution smoke evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: Release smoke evidence
+        path: release-smoke.json
+        if-no-files-found: warn
+        retention-days: 30
+
+  publish:
+    name: Publish verified release
+    needs: [resolve, package, smoke]
+    if: ${{ github.event_name == 'push' || inputs.publish }}
+    runs-on: windows-2022
+    permissions:
+      actions: read
+      contents: write
+    steps:
+    - name: Checkout release orchestration
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 1
+
+    - name: Download release source evidence
+      uses: actions/download-artifact@v8
+      with:
+        name: Release source evidence
+        path: release-artifacts/source
+
+    - name: Download release provenance
+      uses: actions/download-artifact@v8
+      with:
+        name: Release provenance x64 Release
+        path: release-artifacts/provenance
+
+    - name: Download installer archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Installer x64 Release
+        path: release-artifacts/installer
+
+    - name: Download executable archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Exe x64 Release
+        path: release-artifacts/executable
+
+    - name: Download log archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Log x64 Release
+        path: release-artifacts/log
+
+    - name: Download assembly archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Asm x64 Release
+        path: release-artifacts/assembly
+
+    - name: Download development archive
+      uses: actions/download-artifact@v8
+      with:
+        name: Dev x64 Release
+        path: release-artifacts/development
+
+    - name: Publish only the provenance-verified draft
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        .\github\scripts\Publish-ReleasePromotion.ps1
+        -TagName "${{ needs.resolve.outputs.release_tag }}"
+        -Repository "${{ github.repository }}"
+        -Token "$env:GITHUB_TOKEN"
+        -SourceEvidencePath release-artifacts/source/release-source.json
+        -ProvenancePath release-artifacts/provenance/release-provenance.json
+        -ArtifactRoot release-artifacts
+        -OutputDirectory "$env:RUNNER_TEMP\release-assets-${{ github.run_id }}"
+        -ResultPath release-publication.json
+
+    - name: Upload publication evidence
+      if: ${{ always() }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: Release publication evidence
+        path: release-publication.json
+        if-no-files-found: warn
+        retention-days: 30
