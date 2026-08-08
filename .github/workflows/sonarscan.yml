@@ -18,7 +18,12 @@ jobs:
   sonar:
     name: Scan
     runs-on: windows-latest
-    if: github.event.workflow_run.conclusion == 'success'
+    # workflow_run runs with repository secrets and write-capable tokens. Only
+    # process successful runs whose head commit belongs to this repository;
+    # fork PR commits must never reach privileged checkout or artifact steps.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
 
     steps:
     - name: Checkout
@@ -27,7 +32,6 @@ jobs:
         ref: ${{ github.event.workflow_run.head_sha }}
         fetch-depth: 0
         submodules: true
-        allow-unsafe-pr-checkout: true
 
     - name: Download sonar-input artifact
       uses: actions/download-artifact@v8
