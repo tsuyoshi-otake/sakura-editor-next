@@ -392,6 +392,49 @@ def mingw_environment(environment: Mapping[str, str] | None = None) -> dict[str,
     return {"PATH": os.pathsep.join(additions + existing)}
 
 
+_MSBUILD_PERFORMANCE_SUMMARY_TRUE = {"1", "true"}
+_MSBUILD_PERFORMANCE_SUMMARY_FALSE = {"0", "false"}
+
+
+def msbuild_binlog_arguments(env: Mapping[str, str]) -> list[str]:
+    """``/bl:`` switch for ``SAKURA_MSBUILD_BINLOG``, a diagnostic-only escape hatch.
+
+    Unset leaves the command unchanged. A set-but-empty value is rejected
+    rather than silently treated as unset, since that is almost always a
+    shell-quoting mistake, not an intentional choice.
+    """
+    value = env.get("SAKURA_MSBUILD_BINLOG")
+    if value is None:
+        return []
+    path = value.strip()
+    if not path:
+        raise BuildError("MSBUILD_BINLOG_INVALID", "SAKURA_MSBUILD_BINLOG must not be empty when set", 2)
+    return [f"/bl:{path}"]
+
+
+def msbuild_performance_summary_arguments(env: Mapping[str, str]) -> list[str]:
+    """``/clp:PerformanceSummary`` switch for ``SAKURA_MSBUILD_PERFORMANCE_SUMMARY``.
+
+    Only the ``1``/``true`` and ``0``/``false`` spellings are accepted, matching
+    ``SAKURA_GENERATE_ASSEMBLY_LISTINGS``. Any other value fails explicitly
+    instead of being treated as falsy, so a typo cannot silently disable the
+    diagnostic.
+    """
+    value = env.get("SAKURA_MSBUILD_PERFORMANCE_SUMMARY")
+    if value is None:
+        return []
+    normalized = value.strip().lower()
+    if normalized in _MSBUILD_PERFORMANCE_SUMMARY_TRUE:
+        return ["/clp:PerformanceSummary"]
+    if normalized in _MSBUILD_PERFORMANCE_SUMMARY_FALSE:
+        return []
+    raise BuildError(
+        "MSBUILD_PERFORMANCE_SUMMARY_INVALID",
+        f"SAKURA_MSBUILD_PERFORMANCE_SUMMARY must be 1/true or 0/false, got {value!r}",
+        2,
+    )
+
+
 def msbuild_command(
     repo_root: Path,
     target: Path,
@@ -404,8 +447,9 @@ def msbuild_command(
     log_file: Path | None = None,
 ) -> list[str]:
     parallel = allocate_parallelism(jobs)
+    env = dict(environment or os.environ)
     command = [
-        find_msbuild(repo_root, environment),
+        find_msbuild(repo_root, env),
         str(target),
         f"/p:Platform={platform}",
         f"/p:Configuration={configuration}",
@@ -416,6 +460,8 @@ def msbuild_command(
     command.extend(["/p:MultiProcessorCompilation=true", f"/p:CL_MPCount={parallel.compiler_processes}"])
     if log_file is not None:
         command.extend(msbuild_file_logger_arguments(log_file))
+    command.extend(msbuild_binlog_arguments(env))
+    command.extend(msbuild_performance_summary_arguments(env))
     return command
 
 
