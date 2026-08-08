@@ -1,0 +1,41 @@
+name: PR target policy
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate PR target
+    runs-on: ubuntu-latest
+    env:
+      BASE_REF: ${{ github.base_ref }}
+      HEAD_REF: ${{ github.head_ref }}
+      HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
+      REPOSITORY: ${{ github.repository }}
+    steps:
+      - name: Validate branch direction
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ "$BASE_REF" != "main" ]]; then
+            echo "PR base '$BASE_REF' is not main; the main-only direction policy does not apply."
+            exit 0
+          fi
+
+          if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
+            echo "::error::Only same-repository develop or hotfix/* branches may target main."
+            exit 1
+          fi
+
+          if [[ "$HEAD_REF" == "develop" || "$HEAD_REF" == hotfix/* ]]; then
+            echo "Accepted main target from same-repository '$HEAD_REF'."
+            exit 0
+          fi
+
+          echo "::error::Feature, fix, and dependabot PRs must target develop; only develop or hotfix/* may target main."
+          exit 1
