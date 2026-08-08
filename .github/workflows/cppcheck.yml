@@ -2,6 +2,8 @@ name: Cppcheck
 
 on:
   push:
+    branches:
+      - master
     paths-ignore:
       - '**/*.md'
       - '.gitignore'
@@ -14,7 +16,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
