@@ -629,12 +629,24 @@ jobs:
       if: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' }}
       shell: cmd
 
+    # The package workspace intentionally contains the immutable release source,
+    # which can predate this workflow and therefore cannot supply its own
+    # promotion helper. Keep the helper at the trusted workflow revision and in
+    # a separate directory so it cannot affect the packaged source tree.
+    - name: Checkout release provenance helper
+      if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
+      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 1
+        path: release-orchestration
+
     - name: Record release provenance
       if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
       env:
         RELEASE_TAG: ${{ inputs.release_tag }}
       run: >-
-        .\github\scripts\Write-ReleaseProvenance.ps1
+        .\release-orchestration\.github\scripts\Write-ReleaseProvenance.ps1
         -SourceSha "${{ inputs.source_sha }}"
         -ReleaseTag "$env:RELEASE_TAG"
         -OutputPath release-provenance.json

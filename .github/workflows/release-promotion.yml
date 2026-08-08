@@ -67,7 +67,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: >-
-        .\github\scripts\Resolve-ReleasePromotion.ps1
+        .\.github\scripts\Resolve-ReleasePromotion.ps1
         -TagName "${{ steps.tag.outputs.tag }}"
         -Repository "${{ github.repository }}"
         -Token "$env:GITHUB_TOKEN"
@@ -147,7 +147,7 @@ jobs:
         if ($installerArchives.Count -ne 1 -or $executableArchives.Count -ne 1) {
           throw "Expected one installer and one executable archive; found installer=$($installerArchives.Count), executable=$($executableArchives.Count)."
         }
-        .\github\scripts\Test-ReleaseDistribution.ps1 `
+        .\.github\scripts\Test-ReleaseDistribution.ps1 `
           -SourceEvidencePath release-artifacts/source/release-source.json `
           -ProvenancePath release-artifacts/provenance/release-provenance.json `
           -InstallerArchivePath $installerArchives[0] `
@@ -224,7 +224,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: >-
-        .\github\scripts\Publish-ReleasePromotion.ps1
+        .\.github\scripts\Publish-ReleasePromotion.ps1
         -TagName "${{ needs.resolve.outputs.release_tag }}"
         -Repository "${{ github.repository }}"
         -Token "$env:GITHUB_TOKEN"
