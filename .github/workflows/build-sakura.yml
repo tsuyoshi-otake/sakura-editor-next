@@ -2,6 +2,21 @@ name: build sakura
 
 # Run push builds on the protected integration and release branches.
 on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Immutable source commit to package.
+        required: true
+        type: string
+      release_tag:
+        description: Canonical release tag for the immutable source commit.
+        required: true
+        type: string
+      release_promotion:
+        description: Build only the Release packaging path for an already tested release source.
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
   push:
     branches:
@@ -19,7 +34,9 @@ env:
   CI_BUILD_VERSION: ${{ github.run_id }}
   CI_BUILD_NUMBER: ${{ github.run_number }}
   CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-  GITHUB_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+  RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+  CHECKOUT_REF: ${{ inputs.source_sha || github.sha }}
+  GITHUB_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ inputs.source_sha || github.sha }}
   VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,read
   VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
   VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
@@ -44,6 +61,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0  # check_encoding.py validates the event-provided base SHA
 
       - name: Show environment variables for debug
@@ -69,7 +87,10 @@ jobs:
 
       - name: Check encoding
         env:
-          CHECK_ENCODING_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
+          # A release promotion has already validated the main-push gate for
+          # its immutable source SHA. It must not reinterpret the caller's tag
+          # push `before` value as a source-code diff.
+          CHECK_ENCODING_BASE_SHA: ${{ inputs.release_promotion && '0000000000000000000000000000000000000000' || github.event.pull_request.base.sha || github.event.before || '' }}
         run: checkEncoding.bat
 
   # 拡張ホストは Node で動くので、C++ のビルドとは独立して検証できる。
@@ -79,10 +100,14 @@ jobs:
     name: Test extension host
     runs-on: *windows_runner
     needs: check-encoding
+    # The release promotion validates this immutable SHA's required main gate
+    # before it invokes packaging, so avoid re-running its independent Node job.
+    if: ${{ !inputs.release_promotion }}
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
+        ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
 
     - name: Set up Node.js
@@ -134,6 +159,7 @@ jobs:
     ## see https://github.com/actions/checkout
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
+        ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1  # 過去の履歴は含めず取得
         submodules: true
 
@@ -205,6 +231,9 @@ jobs:
     needs: check-encoding
     # MinGW is experimental and advisory; it must not block the MSVC gate.
     continue-on-error: true
+    # Release promotion intentionally consumes the tested MSVC source path;
+    # MinGW remains advisory and is not repeated before publication.
+    if: ${{ !inputs.release_promotion }}
 
     env:
       VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
@@ -216,6 +245,7 @@ jobs:
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
+        ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
         submodules: true
 
@@ -297,6 +327,7 @@ jobs:
     steps:
     - uses: actions/checkout@v7
       with:
+        ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
         submodules: true
 
@@ -343,7 +374,7 @@ jobs:
     name: Build BmpTools
     runs-on: *windows_runner
     needs: check-encoding
-    if: ${{ github.event_name != 'pull_request' }}
+    if: ${{ github.event_name != 'pull_request' && !inputs.release_promotion }}
 
     strategy:
       matrix:
@@ -355,6 +386,7 @@ jobs:
     ## see https://github.com/actions/checkout
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
+        ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1  # 過去の履歴は含めず取得
         submodules: true
 
@@ -381,9 +413,10 @@ jobs:
 
     strategy:
       matrix:
-        config:
-          - Debug
-          - Release
+        # A release promotion already validates the source's Debug/Release
+        # main gate. It re-runs only the Release package/test path at a fixed
+        # source SHA; ordinary CI continues to cover both configurations.
+        config: ${{ inputs.release_promotion && fromJSON('["Release"]') || fromJSON('["Debug", "Release"]') }}
         platform:
           - x64
 
@@ -412,6 +445,7 @@ jobs:
     ## see https://github.com/actions/checkout
     - uses: actions/checkout@v7
       with:
+        ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 0
         submodules: true
 
@@ -594,6 +628,24 @@ jobs:
       run: zipArtifacts.bat ${{ matrix.platform }} ${{ matrix.config }}
       if: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' }}
       shell: cmd
+
+    - name: Record release provenance
+      if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
+      env:
+        RELEASE_TAG: ${{ inputs.release_tag }}
+      run: >-
+        .\github\scripts\Write-ReleaseProvenance.ps1
+        -SourceSha "${{ inputs.source_sha }}"
+        -ReleaseTag "$env:RELEASE_TAG"
+        -OutputPath release-provenance.json
+
+    - name: Upload release provenance
+      uses: actions/upload-artifact@v7
+      if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
+      with:
+        name: Release provenance ${{ matrix.platform }} ${{ matrix.config }}
+        path: release-provenance.json
+        if-no-files-found: error
 
     ## see https://github.com/actions/upload-artifact
     - name: Upload Installer

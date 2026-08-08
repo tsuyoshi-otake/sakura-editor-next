@@ -17,9 +17,11 @@
 - Encoding, Python, cppcheck, and Doxygen workflows are separate checks. The required build, cppcheck, and Doxygen workflows have no path filters so a docs-only PR cannot leave a required context expected forever; the advisory MinGW workflow retains its path filters.
 - Push workflows target the protected `main` and `develop` branches. Normal feature, fix, and Dependabot pull requests target `develop`; only same-repository `develop` and `hotfix/*` branches may target `main`.
 - A branch-creation push reports an all-zero `github.event.before` and has no content diff. The encoding check treats that event as a successful no-op rather than scanning the historical baseline, which contains pre-existing UTF-8-no-BOM files; pull-request/base-SHA checks remain authoritative for changed files.
+- `workflows/release-promotion.yml` promotes only a canonical tag whose commit is reachable from `main`, has a successful required source gate, and matches the tag's non-merge build revision. It calls `build-sakura.yml` with the exact source SHA, checks executable/installer hashes and version metadata, installs and opens the packaged payload in an isolated smoke job, then grants `contents: write` only to the final draft-and-publish job. Do not move publication permission or artifact execution into an earlier job.
 
 ## Workflow Changes
 
 - Preserve the distinction between local speed optimizations and release/CI completeness.
 - Keep action permissions and downloaded tooling narrowly scoped. Pin or update actions deliberately and retain any existing commit pin where the workflow uses one.
 - Verify YAML structure and inspect every changed matrix branch; a condition that works for Release must not accidentally add work to Debug or Sonar jobs.
+- Repository PowerShell scripts follow `.gitattributes`: UTF-16LE with BOM and CRLF in the working tree. Preserve that encoding when adding workflow helpers; Git converts the committed representation to UTF-8.
