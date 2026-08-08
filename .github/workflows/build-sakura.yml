@@ -574,8 +574,19 @@ jobs:
       if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
       run: build-wrapper-win-x86-64.exe --out-dir bw-output MsBuild.exe /p:Platform=${{ matrix.platform }} /p:Configuration=${{ matrix.config }}
 
+    # Historic tag sources predate SAKURA_BUILD_SOURCE_SHA and read the
+    # runner's GITHUB_SHA directly in version.cmake. Do not attempt to change
+    # the protected job environment; shadow it only in the cmd child that
+    # builds the immutable checkout.
+    - name: MSBuild release promotion
+      if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && inputs.release_promotion }}
+      run: |
+        set "GITHUB_SHA=${{ env.RELEASE_SOURCE_SHA }}"
+        call build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
+      shell: cmd
+
     - name: MSBuild
-      if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') }}
+      if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && !inputs.release_promotion }}
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
