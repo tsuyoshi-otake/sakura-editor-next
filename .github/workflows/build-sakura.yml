@@ -1,12 +1,10 @@
 name: build sakura
 
-# Controls when the action will run. The bridge keeps all integration branches live
-# through the master -> main rename.
+# Run push builds on the protected integration and release branches.
 on:
   workflow_dispatch:
   push:
     branches:
-      - master
       - main
       - develop
   pull_request:

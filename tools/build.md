@@ -499,15 +499,9 @@ set FORCE_POWERSHELL_ZIP=1
 build-sln.bat x64 Release
 ```
 
-### CIビルドのスキップ
+### Pull RequestではCIビルドをスキップしない
 
-ドキュメント修正など、ビルドが不要な変更の場合、コミットメッセージに `[ci skip]` または `[skip ci]` を含めることでCIビルドをスキップできます。
-
-**注意:** PRマージ時は実行されます。
-
-**参考:**
-- https://qiita.com/vmmhypervisor/items/f10c77a375c2a663b300
-- https://github.blog/changelog/2021-02-08-github-actions-skip-pull-request-and-push-workflows-with-skip-ci/
+`main` と `develop` は required checks で保護されています。ドキュメントのみの Pull Request でも必要な Workflow が起動して成功結果を報告するため、コミットメッセージに `[ci skip]` または `[skip ci]` を含めないでください。Workflow 自体が起動しないと required check が未報告のままになり、Pull Request をマージできません。
 
 ## MinGWビルド (実験的)
 
