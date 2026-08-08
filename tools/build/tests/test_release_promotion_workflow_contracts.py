@@ -6,6 +6,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOW = REPO_ROOT / ".github/workflows/build-sakura.yml"
+RELEASE_PROMOTION_WORKFLOW = REPO_ROOT / ".github/workflows/release-promotion.yml"
 
 
 class ReleasePromotionWorkflowContractTests(unittest.TestCase):
@@ -26,6 +27,17 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
             "if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && !inputs.release_promotion }}",
             ordinary,
         )
+
+    def test_distribution_smoke_uses_a_runner_compatible_with_the_installer(self) -> None:
+        text = RELEASE_PROMOTION_WORKFLOW.read_text(encoding="utf-8-sig")
+        smoke_start = text.index("  smoke:\n")
+        publish_start = text.index("  publish:\n", smoke_start)
+        smoke = text[smoke_start:publish_start]
+
+        self.assertIn("    runs-on: windows-2025\n", smoke)
+        self.assertNotIn("runs-on: windows-2022", smoke)
+        self.assertIn("    - name: Verify smoke runner compatibility\n", smoke)
+        self.assertIn("$minimum = [Version]::new(10, 0, 22000)", smoke)
 
 
 if __name__ == "__main__":

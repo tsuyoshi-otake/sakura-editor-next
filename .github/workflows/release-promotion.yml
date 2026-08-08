@@ -106,11 +106,22 @@ jobs:
   smoke:
     name: Smoke packaged distribution
     needs: [resolve, package]
-    runs-on: windows-2022
+    # The shipped installer requires Windows 10.0.22000 or later. The
+    # windows-2022 image is build 20348, which rejects the installer before it
+    # can copy any files; pin the smoke environment to a compatible image.
+    runs-on: windows-2025
     permissions:
       actions: read
       contents: read
     steps:
+    - name: Verify smoke runner compatibility
+      run: |
+        $minimum = [Version]::new(10, 0, 22000)
+        $actual = [Environment]::OSVersion.Version
+        if ($actual -lt $minimum) {
+          throw "Release installer requires Windows version $minimum or later; runner is $actual."
+        }
+
     - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
