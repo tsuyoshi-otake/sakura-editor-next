@@ -156,72 +156,80 @@ def test_check_encoding_result_rc_rejects_utf8(check_encoding_module):
 # ============================================================================
 
 
-def test_check_origin_master_success(mocker, check_encoding_module):
-    """Test check_origin_master when origin/master check succeeds"""
-    # Mock subprocess.check_output to simulate successful git command
+# Base-SHA-driven diff and safe fallback tests
+
+
+def test_get_diff_files_uses_valid_base_sha_and_filters_extensions(mocker, check_encoding_module):
     mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.return_value = b"valid_output"
-    
-    # check_origin_master returns 0 on success (git returncode)
-    result = check_encoding_module.check_origin_master()
-    assert result == 0
+    mock_check_output.side_effect = [b"abc123def456\n", b"src/test.cpp\0README.md\0src/style.rc\0"]
+
+    files = list(check_encoding_module.get_diff_files("abc123def456"))
+
+    assert files == ["src/test.cpp", "src/style.rc"]
+    assert mock_check_output.call_args_list[0].args[0] == [
+        "git", "rev-parse", "--verify", "--end-of-options", "abc123def456^{commit}"
+    ]
+    assert mock_check_output.call_args_list[1].args[0] == [
+        "git", "diff", "--name-only", "--diff-filter=d", "-z",
+        "abc123def456", "HEAD", "--"
+    ]
 
 
-def test_check_origin_master_failure(mocker, check_encoding_module):
-    """Test check_origin_master when origin/master check fails"""
-    # Mock subprocess.check_output to raise CalledProcessError
+def test_get_diff_files_excludes_deleted_and_keeps_rename_destination(mocker, check_encoding_module):
     mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.side_effect = subprocess.CalledProcessError(1, "git")
-    
-    # check_origin_master returns non-zero returncode on failure
-    result = check_encoding_module.check_origin_master()
-    assert result != 0
+    mock_check_output.side_effect = [b"abc123\n", b"src/renamed.cpp\0src/removed.h\0"]
+
+    files = list(check_encoding_module.get_diff_files("abc123"))
+
+    assert files == ["src/renamed.cpp", "src/removed.h"]
+    assert "--diff-filter=d" in mock_check_output.call_args_list[1].args[0]
 
 
-def test_get_merge_base_valid_commit(mocker, check_encoding_module):
-    """Test get_merge_base returns valid commit hash"""
-    # Mock subprocess.check_output to return commit hash as bytes
+def test_get_diff_files_propagates_invalid_base_failure(mocker, check_encoding_module):
     mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.return_value = b"abc123def456\n"
-    
-    result = check_encoding_module.get_merge_base()
-    assert result is not None
-    assert result == "abc123def456"
+    mock_check_output.side_effect = subprocess.CalledProcessError(128, "git")
 
-
-def test_get_merge_base_invalid_no_commit(mocker, check_encoding_module):
-    """Test get_merge_base when no commit is found or error occurs"""
-    # Mock subprocess.check_output to raise CalledProcessError
-    mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.side_effect = subprocess.CalledProcessError(1, "git")
-    
-    # get_merge_base will raise exception; test that it propagates
     with pytest.raises(subprocess.CalledProcessError):
-        check_encoding_module.get_merge_base()
+        list(check_encoding_module.get_diff_files("not-a-commit"))
 
 
-# ============================================================================
-# Generator Function Tests
-# ============================================================================
-
-
-def test_get_diff_files_generators_valid_files(mocker, check_encoding_module):
-    """Test get_diff_files generator yields files with target extensions"""
-    # Mock get_merge_base to return a valid commit
-    mock_merge_base = mocker.patch.object(
-        check_encoding_module, "get_merge_base"
-    )
-    mock_merge_base.return_value = "abc123"
-    
-    # Mock subprocess.check_output to return diff output
+@pytest.mark.parametrize("base_sha", ["", "0" * 40])
+def test_empty_or_all_zero_base_uses_tracked_files(base_sha, mocker, check_encoding_module):
     mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.return_value = b"src/test.cpp\nREADME.md\nsrc/style.rc"
-    
-    # Collect results from generator
-    files = list(check_encoding_module.get_diff_files())
-    
-    # Should yield only .cpp and .rc files, not .md
-    assert len(files) >= 1
+    mock_check_output.return_value = b"src/test.cpp\0README.md\0src/style.rc\0"
+
+    assert check_encoding_module._is_full_scan_base(base_sha) is True
+    files = list(check_encoding_module.get_tracked_files())
+
+    assert files == ["src/test.cpp", "src/style.rc"]
+    assert mock_check_output.call_args.args[0] == ["git", "ls-files", "-z", "--"]
+
+
+def test_get_ci_files_uses_diff_for_valid_base(mocker, check_encoding_module):
+    get_diff_files = mocker.patch.object(
+        check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
+    )
+    get_tracked_files = mocker.patch.object(
+        check_encoding_module, "get_tracked_files", return_value=["src/tracked.h"]
+    )
+
+    assert list(check_encoding_module.get_ci_files("abc123")) == ["src/test.cpp"]
+    get_diff_files.assert_called_once_with("abc123")
+    get_tracked_files.assert_not_called()
+
+
+@pytest.mark.parametrize("base_sha", ["", "0" * 40])
+def test_get_ci_files_uses_tracked_fallback(base_sha, mocker, check_encoding_module):
+    get_diff_files = mocker.patch.object(
+        check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
+    )
+    get_tracked_files = mocker.patch.object(
+        check_encoding_module, "get_tracked_files", return_value=["src/tracked.h"]
+    )
+
+    assert list(check_encoding_module.get_ci_files(base_sha)) == ["src/tracked.h"]
+    get_diff_files.assert_not_called()
+    get_tracked_files.assert_called_once_with()
 
 
 def test_check_all_generator_yields_target_extensions(mocker, check_encoding_module):

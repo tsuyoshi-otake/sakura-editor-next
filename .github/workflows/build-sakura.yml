@@ -1,21 +1,15 @@
 name: build sakura
 
-# Controls when the action will run. Triggers the workflow on push or pull request
-# events but only for the master branch
+# Controls when the action will run. The bridge keeps all integration branches live
+# through the master -> main rename.
 on:
   workflow_dispatch:
   push:
     branches:
       - master
-    paths-ignore:
-      - '**/*.md'
-      - .gitignore
-      - .editorconfig
+      - main
+      - develop
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - .gitignore
-      - .editorconfig
 
 defaults:
   run:
@@ -52,7 +46,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          fetch-depth: 0  # 過去の履歴も含めて全て取得 (check_encoding.py で origin/master にアクセスするため)
+          fetch-depth: 0  # check_encoding.py validates the event-provided base SHA
 
       - name: Show environment variables for debug
         run: set
@@ -76,6 +70,8 @@ jobs:
         run: python -m compileall -f .
 
       - name: Check encoding
+        env:
+          CHECK_ENCODING_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || '' }}
         run: checkEncoding.bat
 
   # 拡張ホストは Node で動くので、C++ のビルドとは独立して検証できる。

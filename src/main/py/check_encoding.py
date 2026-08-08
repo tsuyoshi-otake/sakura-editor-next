@@ -44,36 +44,64 @@ def check_extension(file_name):
 	_, ext = os.path.splitext(file_name)
 	return (ext in extensions)
 
-# origin/master が存在するか確認する
-# 戻り値
-# origin/master が有効な場合 → 0
-# origin/master が無効な場合 → 0以外
-def check_origin_master():
-	ret_code = 0
-	try:
-		subprocess.check_output('git show -s origin/master --')
-	except subprocess.CalledProcessError as gitcode:
-		ret_code = gitcode.returncode
-	return ret_code
+# Git command output is decoded here so the unit tests can use either bytes or
+# text mocks while CI still receives the exact subprocess argument arrays.
+def _decode_output(output):
+	if isinstance(output, bytes):
+		return output.decode()
+	return output
 
-def get_merge_base():
-	output = subprocess.check_output('git show-branch --merge-base origin/master HEAD')
-	output_dec = output.decode()
-	merge_base = output_dec.splitlines()
-	return merge_base[0]
+
+def _is_full_scan_base(base_sha):
+	return not base_sha or base_sha == ('0' * 40)
+
+
+def _validate_base_sha(base_sha):
+	"""Validate that a non-fallback base value resolves to a commit.
+
+	The SHA comes from the workflow event, but it is still passed as one
+	argument and validated before it is used in the diff command.
+	"""
+	subprocess.check_output([
+		'git', 'rev-parse', '--verify', '--end-of-options',
+		base_sha + '^{commit}'
+	], stderr=subprocess.STDOUT)
+
 
 # ベースとの差分をチェック
-def get_diff_files():
-	merge_base = get_merge_base()
-
-	output = subprocess.check_output('git diff ' + merge_base + ' --name-only --diff-filter=dr')
-	output_dec = output.decode()
-	diff_files = output_dec.splitlines()
-	for file_name in diff_files:
+def get_diff_files(base_sha):
+	_validate_base_sha(base_sha)
+	output = subprocess.check_output([
+		'git', 'diff', '--name-only', '--diff-filter=d', '-z',
+		base_sha, 'HEAD', '--'
+	], stderr=subprocess.STDOUT)
+	for file_name in _decode_output(output).split('\0'):
+		if not file_name:
+			continue
 		if check_extension(file_name):
 			yield file_name
 		else:
 			print ("skip " + file_name)
+
+
+def get_tracked_files():
+	"""Return tracked target files without walking build/venv directories."""
+	output = subprocess.check_output([
+		'git', 'ls-files', '-z', '--'
+	], stderr=subprocess.STDOUT)
+	for file_name in _decode_output(output).split('\0'):
+		if file_name and check_extension(file_name):
+			yield file_name
+		elif file_name:
+			print ("skip " + file_name)
+
+
+def get_ci_files(base_sha):
+	"""Select a diff scan or safe tracked-file fallback for CI."""
+	if _is_full_scan_base(base_sha):
+		print ("base SHA is empty or all-zero; checking tracked files")
+		return get_tracked_files()
+	return get_diff_files(base_sha)
 
 # デバッグ用
 # すべてのファイルを対象にチェック対象の拡張子のファイルの文字コードを調べてチェックする
@@ -117,11 +145,8 @@ if __name__ == '__main__':
 	if len(sys.argv) > 1 and sys.argv[1] == "all":
 		count = process_files(check_all())
 	else:
-		ret_code = check_origin_master()
-		if ret_code == 0:
-			count = process_files(get_diff_files())
-		else:
-			print ("skip. origin/master doesn't exist." + " ret_code = " + str(ret_code))
+		base_sha = os.environ.get('CHECK_ENCODING_BASE_SHA', '').strip()
+		count = process_files(get_ci_files(base_sha))
 
 	if count > 0:
 		print ("return 1")

@@ -4,15 +4,9 @@ on:
   push:
     branches:
       - master
-    paths-ignore:
-      - '**/*.md'
-      - '.gitignore'
-      - '.editorconfig'
+      - main
+      - develop
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - '.gitignore'
-      - '.editorconfig'
   workflow_dispatch:
 
 concurrency:
