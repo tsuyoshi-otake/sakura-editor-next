@@ -53,11 +53,15 @@ jobs:
         }
         "tag=$($tag.Trim())" >> $env:GITHUB_OUTPUT
 
-    - name: Checkout tagged source
+    # The target tag controls only the immutable package source.  Keep the
+    # orchestration helpers at the revision that defined this workflow so a
+    # manual dry run can validate an older tag and no target checkout supplies
+    # code to the later smoke/publish boundary.
+    - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
-        ref: ${{ steps.tag.outputs.tag }}
-        fetch-depth: 0
+        ref: ${{ github.workflow_sha }}
+        fetch-depth: 1
 
     - name: Validate tag source and required main gate
       env:
@@ -106,10 +110,10 @@ jobs:
       actions: read
       contents: read
     steps:
-    - name: Checkout validated smoke script
+    - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
-        ref: ${{ needs.resolve.outputs.source_sha }}
+        ref: ${{ github.workflow_sha }}
         fetch-depth: 1
 
     - name: Download release source evidence
@@ -168,10 +172,10 @@ jobs:
       actions: read
       contents: write
     steps:
-    - name: Checkout validated publication script
+    - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
-        ref: ${{ needs.resolve.outputs.source_sha }}
+        ref: ${{ github.workflow_sha }}
         fetch-depth: 1
 
     - name: Download release source evidence

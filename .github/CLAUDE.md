@@ -18,6 +18,7 @@
 - Push workflows target the protected `main` and `develop` branches. Normal feature, fix, and Dependabot pull requests target `develop`; only same-repository `develop` and `hotfix/*` branches may target `main`.
 - A branch-creation push reports an all-zero `github.event.before` and has no content diff. The encoding check treats that event as a successful no-op rather than scanning the historical baseline, which contains pre-existing UTF-8-no-BOM files; pull-request/base-SHA checks remain authoritative for changed files.
 - `workflows/release-promotion.yml` promotes only a canonical tag whose commit is reachable from `main`, has a successful required source gate, and matches the tag's non-merge build revision. It calls `build-sakura.yml` with the exact source SHA, checks executable/installer hashes and version metadata, installs and opens the packaged payload in an isolated smoke job, then grants `contents: write` only to the final draft-and-publish job. Do not move publication permission or artifact execution into an earlier job.
+- Promotion helpers check out `github.workflow_sha`, not the target tag. The resolver and reusable package workflow may consume the target only as an immutable data/source reference; smoke and publication must never execute helper code supplied by that target checkout.
 
 ## Workflow Changes
 
