@@ -34,6 +34,10 @@ env:
   CI_BUILD_VERSION: ${{ github.run_id }}
   CI_BUILD_NUMBER: ${{ github.run_number }}
   CI_BUILD_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+  # github.sha names the caller/workflow revision for reusable workflows. Keep
+  # the source that is actually checked out available to version.cmake as a
+  # separate, non-reserved variable.
+  SAKURA_BUILD_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
   RELEASE_SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
   CHECKOUT_REF: ${{ inputs.source_sha || github.sha }}
   GITHUB_COMMIT_URL: ${{ github.server_url }}/${{ github.repository }}/commit/${{ inputs.source_sha || github.sha }}

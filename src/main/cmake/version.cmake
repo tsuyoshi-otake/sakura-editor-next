@@ -10,6 +10,7 @@
 #   $ENV{GITHUB_SERVER_URL}
 #   $ENV{GITHUB_REPOSITORY}
 #   $ENV{GITHUB_SHA}
+#   $ENV{SAKURA_BUILD_SOURCE_SHA}
 #   $ENV{GITHUB_RUN_NUMBER}
 #   $ENV{GITHUB_RUN_ID}
 #   $ENV{GITHUB_REF_NAME}
@@ -80,7 +81,14 @@ if("$ENV{GITHUB_ACTIONS}" STREQUAL "true")
   endif()
 
   set(GIT_REMOTE_ORIGIN_URL "$ENV{GITHUB_SERVER_URL}/$ENV{GITHUB_REPOSITORY}")
-  set(GIT_COMMIT_HASH "$ENV{GITHUB_SHA}")
+  # A reusable workflow keeps GITHUB_SHA bound to the caller/workflow revision,
+  # which can differ from the immutable source ref it checks out for a release
+  # promotion. Prefer the explicit build source when the workflow provides it.
+  if(DEFINED ENV{SAKURA_BUILD_SOURCE_SHA} AND NOT "$ENV{SAKURA_BUILD_SOURCE_SHA}" STREQUAL "")
+    set(GIT_COMMIT_HASH "$ENV{SAKURA_BUILD_SOURCE_SHA}")
+  else()
+    set(GIT_COMMIT_HASH "$ENV{GITHUB_SHA}")
+  endif()
   set(GITHUB_COMMIT_URL "$ENV{GITHUB_COMMIT_URL}")
 
 else()
