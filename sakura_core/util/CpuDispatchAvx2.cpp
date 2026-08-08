@@ -15,7 +15,9 @@ namespace CpuDispatch::Internal
 {
 namespace
 {
-constexpr std::size_t kUtf16VectorThreshold = 64;
+// One 256-bit vector holds 16 UTF-16 units; below that only the scalar loop
+// can run. Callers consult Utf16ScanPolicy before delegating this short.
+constexpr std::size_t kUtf16VectorThreshold = 16;
 
 [[nodiscard]] bool IsMarkdownInlineSpecial(wchar_t value) noexcept
 {

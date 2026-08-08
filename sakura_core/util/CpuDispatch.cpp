@@ -116,6 +116,7 @@ CpuDispatch::Dispatch CreateDispatch() noexcept
 	CpuDispatch::Dispatch dispatch{};
 	dispatch.capabilities = DetectCapabilities();
 	dispatch.isa = CpuDispatch::SelectBestIsa(dispatch.capabilities);
+	dispatch.utf16ScanPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.isa);
 	switch (dispatch.isa) {
 	case CpuDispatch::Isa::Avx512:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx512;
@@ -154,6 +155,27 @@ Isa SelectBestIsa(const Capabilities& capabilities) noexcept
 		return Isa::Avx2;
 	}
 	return Isa::Avx;
+}
+
+Utf16ScanPolicy GetUtf16ScanPolicy(Isa isa) noexcept
+{
+	// The AVX and AVX2 minimums equal their implementations' internal vector
+	// widths (8 and 16 UTF-16 units): below that the implementation would run
+	// its own scalar fallback behind an indirect call. The AVX-512
+	// implementations handle any length with masked loads, so their minimums
+	// are purely benchmark-derived break-even points against a caller-local
+	// scalar loop: the masked scan costs a flat ~2ns (CR/LF) / ~4ns (inline
+	// specials) per call regardless of length, crossing the scalar loop at
+	// about 8 and 6 units. Median of three runs of the disabled CpuDispatchTest
+	// microbenchmark, x64 Release, 2026-08-08, Ryzen 7 9700X (Zen 5).
+	switch (isa) {
+	case Isa::Avx512:
+		return Utf16ScanPolicy{8, 6};
+	case Isa::Avx2:
+		return Utf16ScanPolicy{16, 16};
+	default:
+		return Utf16ScanPolicy{8, 8};
+	}
 }
 
 const char* GetIsaName(Isa isa) noexcept

@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
 #include <memory>
 #include <string>
 
@@ -391,4 +392,133 @@ TEST(CpuDispatchTest, ProcessDispatchIsStable)
 	EXPECT_EQ(3U, first->findCrOrLf("abc\rdef", 7));
 	EXPECT_EQ(3U, first->findCrOrLfUtf16(L"abc\rdef", 7));
 	EXPECT_EQ(3U, first->findMarkdownInlineSpecialUtf16(L"abc`def", 7));
+}
+
+TEST(CpuDispatchTest, Utf16ScanPolicyLocksPerIsaMinimumLengths)
+{
+	using CpuDispatch::GetUtf16ScanPolicy;
+	using CpuDispatch::Isa;
+
+	// AVX and AVX2 minimums equal their implementations' internal vector
+	// widths; delegating below them reaches only the scalar fallback behind an
+	// indirect call. The AVX-512 minimums are benchmark-derived break-even
+	// points for the masked-load short path.
+	const auto avx = GetUtf16ScanPolicy(Isa::Avx);
+	EXPECT_EQ(8U, avx.crOrLfMinimumLength);
+	EXPECT_EQ(8U, avx.markdownInlineSpecialMinimumLength);
+
+	const auto avx2 = GetUtf16ScanPolicy(Isa::Avx2);
+	EXPECT_EQ(16U, avx2.crOrLfMinimumLength);
+	EXPECT_EQ(16U, avx2.markdownInlineSpecialMinimumLength);
+
+	const auto avx512 = GetUtf16ScanPolicy(Isa::Avx512);
+	EXPECT_EQ(8U, avx512.crOrLfMinimumLength);
+	EXPECT_EQ(6U, avx512.markdownInlineSpecialMinimumLength);
+
+	// The frozen process dispatch must carry the policy of its selected ISA.
+	const auto& dispatch = CpuDispatch::Get();
+	const auto selected = GetUtf16ScanPolicy(dispatch.isa);
+	EXPECT_EQ(selected.crOrLfMinimumLength,
+		dispatch.utf16ScanPolicy.crOrLfMinimumLength);
+	EXPECT_EQ(selected.markdownInlineSpecialMinimumLength,
+		dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength);
+}
+
+TEST(CpuDispatchTest, Utf16ScannersDoNotReadPastGuardPageForDirectShortInputs)
+{
+	SYSTEM_INFO systemInfo{};
+	::GetSystemInfo(&systemInfo);
+	const std::size_t pageSize = systemInfo.dwPageSize;
+	std::unique_ptr<void, VirtualAllocationDeleter> allocation{
+		::VirtualAlloc(nullptr, pageSize * 2, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+	};
+	ASSERT_NE(nullptr, allocation);
+	DWORD previousProtection{};
+	ASSERT_TRUE(::VirtualProtect(
+		static_cast<char*>(allocation.get()) + pageSize,
+		pageSize,
+		PAGE_NOACCESS,
+		&previousProtection));
+
+	wchar_t* const pageEnd = reinterpret_cast<wchar_t*>(
+		static_cast<char*>(allocation.get()) + pageSize);
+	for (const auto isa : kImplementations) {
+		const auto crOrLf = CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(isa);
+		const auto markdownSpecial =
+			CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(isa);
+		if (crOrLf == nullptr || markdownSpecial == nullptr) {
+			continue;
+		}
+		// Whole inputs of 1..63 units ending exactly at the guard page: this is
+		// the masked-load short path on AVX-512 (main vector plus 1..31 tail)
+		// and the scalar fallback below vector width on AVX/AVX2.
+		for (std::size_t length = 1; length <= 63; ++length) {
+			wchar_t* const data = pageEnd - length;
+			std::fill(data, data + length, L'\u754c');
+			EXPECT_EQ(length, crOrLf(data, length))
+				<< "isa=" << CpuDispatch::GetIsaName(isa)
+				<< " length=" << length;
+			EXPECT_EQ(length, markdownSpecial(data, length))
+				<< "isa=" << CpuDispatch::GetIsaName(isa)
+				<< " length=" << length;
+
+			for (std::size_t position = 0; position < length; ++position) {
+				data[position] = L'\n';
+				EXPECT_EQ(position, crOrLf(data, length))
+					<< "isa=" << CpuDispatch::GetIsaName(isa)
+					<< " length=" << length << " position=" << position;
+				data[position] = L'$';
+				EXPECT_EQ(position, markdownSpecial(data, length))
+					<< "isa=" << CpuDispatch::GetIsaName(isa)
+					<< " length=" << length << " position=" << position;
+				data[position] = L'\u754c';
+			}
+		}
+	}
+}
+
+// Manual microbenchmark used to derive the Utf16ScanPolicy minimum lengths.
+// Run explicitly with a Release tests1 build:
+//   tests1.exe --gtest_also_run_disabled_tests \
+//     --gtest_filter=CpuDispatchTest.DISABLED_Utf16ShortInputMicrobenchmark
+TEST(CpuDispatchTest, DISABLED_Utf16ShortInputMicrobenchmark)
+{
+	constexpr std::array<std::size_t, 10> lengths{1, 2, 4, 6, 8, 12, 16, 24, 32, 48};
+	constexpr int iterations = 2'000'000;
+	alignas(64) std::array<wchar_t, 64> buffer{};
+	buffer.fill(L'x');
+
+	LARGE_INTEGER frequency{};
+	::QueryPerformanceFrequency(&frequency);
+	const auto measure = [&](auto&& function, std::size_t length) {
+		volatile std::size_t sink = 0;
+		LARGE_INTEGER begin{};
+		LARGE_INTEGER end{};
+		::QueryPerformanceCounter(&begin);
+		for (int i = 0; i < iterations; ++i) {
+			sink = sink + function(buffer.data(), length);
+		}
+		::QueryPerformanceCounter(&end);
+		return static_cast<double>(end.QuadPart - begin.QuadPart)
+			* 1e9 / frequency.QuadPart / iterations;
+	};
+
+	for (const auto length : lengths) {
+		printf("length=%2zu scalarCrOrLf=%7.2fns scalarSpecial=%7.2fns",
+			length,
+			measure(FindCrOrLfUtf16Reference, length),
+			measure(FindMarkdownInlineSpecialUtf16Reference, length));
+		for (const auto isa : kImplementations) {
+			const auto crOrLf = CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(isa);
+			const auto markdownSpecial =
+				CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(isa);
+			if (crOrLf == nullptr || markdownSpecial == nullptr) {
+				continue;
+			}
+			printf(" %sCrOrLf=%7.2fns %sSpecial=%7.2fns",
+				CpuDispatch::GetIsaName(isa), measure(crOrLf, length),
+				CpuDispatch::GetIsaName(isa), measure(markdownSpecial, length));
+		}
+		printf("\n");
+	}
 }
