@@ -781,22 +781,28 @@ class RunnerTests(unittest.TestCase):
             self.assertFalse((root / "build/logs").exists())
 
     def test_unset_diagnostics_leave_the_command_unchanged(self):
+        # Pinned to the exact argv the pre-diagnostics msbuild_command() produced,
+        # so a regression that starts adding switches by default fails this test
+        # even though it never sets SAKURA_MSBUILD_BINLOG/SAKURA_MSBUILD_PERFORMANCE_SUMMARY.
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             target = root / "project.vcxproj"
             target.touch()
-            baseline = msbuild_command(root, target, "x64", "Debug", 1, environment={"CMD_MSBUILD": sys.executable})
-            command = msbuild_command(
-                root,
-                target,
-                "x64",
-                "Debug",
-                1,
-                environment={"CMD_MSBUILD": sys.executable},
+            command = msbuild_command(root, target, "x64", "Debug", 1, environment={"CMD_MSBUILD": sys.executable})
+            self.assertEqual(
+                [
+                    sys.executable,
+                    str(target),
+                    "/p:Platform=x64",
+                    "/p:Configuration=Debug",
+                    "/t:Build",
+                    "/nr:false",
+                    "/m:1",
+                    "/p:MultiProcessorCompilation=true",
+                    "/p:CL_MPCount=1",
+                ],
+                command,
             )
-            self.assertEqual(baseline, command)
-            self.assertFalse(any(item.startswith("/bl:") for item in command))
-            self.assertNotIn("/clp:PerformanceSummary", command)
 
     def test_binlog_env_var_adds_the_binlog_switch_once(self):
         with tempfile.TemporaryDirectory() as temporary:
