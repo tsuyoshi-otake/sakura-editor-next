@@ -461,6 +461,20 @@ set SAKURA_GENERATE_ASSEMBLY_LISTINGS=
 
 一覧ファイル名はソースファイル名から決まりますが、Release の全プログラム最適化ではコード生成がリンカーへ遅延され、翻訳単位ではなく関数単位で分割されます。同じソース由来の関数が複数のコード生成スレッドに割り当てられると、同一の `.asm` を同時に開こうとして Win32 の共有チェックに失敗し、`C1083 ... Permission denied` と `LNK1257` として観測されます。そのため一覧生成が有効なときだけリンカーに `/CGTHREADS:1` を渡してコード生成を直列化しています。一覧を生成しない通常ビルドの並列度は変わりません。
 
+### MSBuild の実行観測（バイナリログ／PerformanceSummary）
+
+MSBuild ステップがどこで時間を使っているかを調べたいだけで、最適化・アセンブリ一覧・LTCG・ビルドターゲット・CI トリガーは何も変えたくない場合は、診断専用の環境変数を使います。`build-dev.bat`/`build-sln.bat`/`build-all.bat` のいずれで実行しても、内部で組み立てるすべての MSBuild コマンドラインに反映されます。
+
+```cmd
+set SAKURA_MSBUILD_BINLOG=%CD%\build\logs\msbuild.binlog
+set SAKURA_MSBUILD_PERFORMANCE_SUMMARY=1
+build-sln.bat x64 Release
+set SAKURA_MSBUILD_BINLOG=
+set SAKURA_MSBUILD_PERFORMANCE_SUMMARY=
+```
+
+`SAKURA_MSBUILD_BINLOG` はパスを設定すると `/bl:<パス>` を追加し、[MSBuild Structured Log Viewer](https://msbuildlog.com/) 等で開けるバイナリログを出力します。空文字列（空白のみを含む）を設定するのは明示的エラーです。`SAKURA_MSBUILD_PERFORMANCE_SUMMARY` は `1`/`true` で `/clp:PerformanceSummary` を追加してコンソール末尾にタスク別実行時間の要約を出力し、`0`/`false` は未設定と同じ無効な状態になります。それ以外の値はどちらの変数も明示的エラーとして失敗します。計測が終わったら両方とも解除してください。
+
 ### githash.h の更新をスキップ
 
 ビルド時に git の commit hash を `githash.h` に出力します。これによりバイナリが commit hash から特定できますが、バイナリが変化しないリファクタリングでもバイナリが異なってしまいます。

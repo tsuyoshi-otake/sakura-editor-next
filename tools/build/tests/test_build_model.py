@@ -21,6 +21,7 @@ from sakura_build_lib.generator import generate, stale_component_outputs, stale_
 from sakura_build_lib.model import GENERATOR_VERSION, ManifestError, evaluate_condition, load_semantic_graph, normalize_condition
 from sakura_build_lib.runner import (
     COMPONENT_ISOLATED_ENVIRONMENT,
+    BuildError,
     EventWriter,
     allocate_parallelism,
     cmake_component_commands,
@@ -778,6 +779,123 @@ class RunnerTests(unittest.TestCase):
             command = msbuild_command(root, target, "x64", "Release", 1, environment={"CMD_MSBUILD": sys.executable})
             self.assertNotIn("/fileLogger", command)
             self.assertFalse((root / "build/logs").exists())
+
+    def test_unset_diagnostics_leave_the_command_unchanged(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            baseline = msbuild_command(root, target, "x64", "Debug", 1, environment={"CMD_MSBUILD": sys.executable})
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Debug",
+                1,
+                environment={"CMD_MSBUILD": sys.executable},
+            )
+            self.assertEqual(baseline, command)
+            self.assertFalse(any(item.startswith("/bl:") for item in command))
+            self.assertNotIn("/clp:PerformanceSummary", command)
+
+    def test_binlog_env_var_adds_the_binlog_switch_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            binlog_path = str(root / "msbuild.binlog")
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Debug",
+                1,
+                environment={"CMD_MSBUILD": sys.executable, "SAKURA_MSBUILD_BINLOG": binlog_path},
+            )
+            self.assertEqual(1, command.count(f"/bl:{binlog_path}"))
+
+    def test_performance_summary_env_var_adds_the_switch_once(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Debug",
+                1,
+                environment={"CMD_MSBUILD": sys.executable, "SAKURA_MSBUILD_PERFORMANCE_SUMMARY": "1"},
+            )
+            self.assertEqual(1, command.count("/clp:PerformanceSummary"))
+
+    def test_performance_summary_false_spelling_adds_nothing(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Debug",
+                1,
+                environment={"CMD_MSBUILD": sys.executable, "SAKURA_MSBUILD_PERFORMANCE_SUMMARY": "false"},
+            )
+            self.assertNotIn("/clp:PerformanceSummary", command)
+
+    def test_both_diagnostics_together_add_both_switches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            binlog_path = str(root / "msbuild.binlog")
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Debug",
+                1,
+                environment={
+                    "CMD_MSBUILD": sys.executable,
+                    "SAKURA_MSBUILD_BINLOG": binlog_path,
+                    "SAKURA_MSBUILD_PERFORMANCE_SUMMARY": "true",
+                },
+            )
+            self.assertIn(f"/bl:{binlog_path}", command)
+            self.assertIn("/clp:PerformanceSummary", command)
+
+    def test_invalid_performance_summary_value_fails_explicitly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            with self.assertRaises(BuildError) as raised:
+                msbuild_command(
+                    root,
+                    target,
+                    "x64",
+                    "Debug",
+                    1,
+                    environment={"CMD_MSBUILD": sys.executable, "SAKURA_MSBUILD_PERFORMANCE_SUMMARY": "yes"},
+                )
+            self.assertEqual("MSBUILD_PERFORMANCE_SUMMARY_INVALID", raised.exception.code)
+
+    def test_empty_binlog_path_fails_explicitly(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            with self.assertRaises(BuildError) as raised:
+                msbuild_command(
+                    root,
+                    target,
+                    "x64",
+                    "Debug",
+                    1,
+                    environment={"CMD_MSBUILD": sys.executable, "SAKURA_MSBUILD_BINLOG": "   "},
+                )
+            self.assertEqual("MSBUILD_BINLOG_INVALID", raised.exception.code)
 
     def test_solution_build_writes_the_log_zip_artifacts_requires(self):
         with tempfile.TemporaryDirectory() as temporary:
