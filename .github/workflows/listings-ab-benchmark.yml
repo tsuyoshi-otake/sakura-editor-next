@@ -1,0 +1,119 @@
+name: listings A/B benchmark
+
+# Manual-only diagnostic workflow for Issue #43 Phase 2b. It measures a single
+# `build-sln.bat x64 Release` invocation with SAKURA_GENERATE_ASSEMBLY_LISTINGS
+# either on or off, using the SAKURA_MSBUILD_BINLOG / SAKURA_MSBUILD_PERFORMANCE_SUMMARY
+# diagnostics added in PR #45. It intentionally does not run tests, the installer,
+# ZIP packaging, CHM, BmpTools, Sonar, coverage, Cppcheck, or Doxygen: the goal is
+# to isolate the MSBuild invocation itself, not to reproduce the full CI matrix.
+#
+# The MSBuild binary log is written to a runner-local temporary path and is not
+# uploaded as a workflow artifact, since this is a public repository and a raw
+# .binlog has not been checked for leaked secrets/environment data. The GitHub
+# Actions step duration and the /clp:PerformanceSummary console output are enough
+# for the first A/B pass.
+on:
+  workflow_dispatch:
+    inputs:
+      assembly_listings:
+        description: SAKURA_GENERATE_ASSEMBLY_LISTINGS value for this run
+        type: choice
+        required: true
+        options:
+          - "on"
+          - "off"
+
+env:
+  VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,read
+  VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
+  VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
+  VCPKG_ROOT: ${{ github.workspace }}\tools\vcpkg
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  benchmark:
+    name: MSBuild (Listings ${{ inputs.assembly_listings }})
+    runs-on: windows-2022 # VS 2022 + Windows SDK 10.0.22621.0, matches build-sakura.yml
+
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        fetch-depth: 0
+        submodules: true
+
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
+
+    # Keeps ctags.cmake/diffutils.cmake on the fast "copy the system binary" path
+    # instead of falling back to building ctags from source or extracting the
+    # archived diffutils zip. That fallback path has its own, unrelated build
+    # time that would otherwise leak into the MSBuild timing this workflow exists
+    # to measure.
+    - name: Install Ctags (Chocolatey)
+      run: choco install universal-ctags --version=2022.6.5 --yes --no-progress
+
+    - name: Install DiffUtils (Chocolatey)
+      run: choco install diffutils --version=2.8.7 --yes --no-progress
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
+
+    - name: Install the latest version of uv
+      uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      with:
+        activate-environment: true
+
+    - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
+
+    - name: Bootstrap vcpkg
+      run: |
+        if (-not (Test-Path ".\bootstrap-vcpkg.bat" -PathType Leaf)) {
+            throw ".\bootstrap-vcpkg.bat not found."
+        }
+
+        & .\bootstrap-vcpkg.bat -disableMetrics
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to bootstrap vcpkg (exit code: $LASTEXITCODE)."
+        }
+      working-directory: ${{ env.VCPKG_ROOT }}
+
+    - name: Configure GitHub Packages for vcpkg
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        $vcpkg = "$env:VCPKG_ROOT\vcpkg.exe"
+        $nuget = & $vcpkg fetch nuget
+
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path $nuget -PathType Leaf)) {
+            throw "Failed to obtain nuget.exe."
+        }
+
+        & $nuget sources remove `
+            -Name GitHubPackages `
+            -NonInteractive 2>$null
+
+        & $nuget sources add `
+            -Name GitHubPackages `
+            -Source "$env:VCPKG_NUGET_FEED" `
+            -UserName "$env:VCPKG_NUGET_OWNER" `
+            -Password "$env:GITHUB_TOKEN" `
+            -StorePasswordInClearText `
+            -NonInteractive
+
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to add the GitHub Packages NuGet source."
+        }
+
+    - name: MSBuild
+      env:
+        SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ inputs.assembly_listings == 'on' && '1' || '0' }}
+        SAKURA_MSBUILD_PERFORMANCE_SUMMARY: "1"
+        SAKURA_MSBUILD_BINLOG: ${{ runner.temp }}\listings-ab.binlog
+      run: build-sln.bat x64 Release
+      shell: cmd
