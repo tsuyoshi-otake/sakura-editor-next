@@ -14,8 +14,9 @@
 ## Other Workflows
 
 - `workflows/build-on-msys2.yml` owns the experimental MinGW build and repeated test run.
-- Encoding, Python, cppcheck, and Doxygen workflows are separate checks. During the master-to-main bridge, the required build, cppcheck, and Doxygen workflows have no path filters so a docs-only PR cannot leave a required context expected forever; the advisory MinGW workflow retains its path filters.
-- The bridge keeps push triggers on `master`, `main`, and `develop` until the administrative rename and post-rename cleanup PR are complete. The final branch allow-list is documented and applied in that cleanup PR.
+- Encoding, Python, cppcheck, and Doxygen workflows are separate checks. The required build, cppcheck, and Doxygen workflows have no path filters so a docs-only PR cannot leave a required context expected forever; the advisory MinGW workflow retains its path filters.
+- Push workflows target the protected `main` and `develop` branches. Normal feature, fix, and Dependabot pull requests target `develop`; only same-repository `develop` and `hotfix/*` branches may target `main`.
+- A branch-creation push reports an all-zero `github.event.before` and has no content diff. The encoding check treats that event as a successful no-op rather than scanning the historical baseline, which contains pre-existing UTF-8-no-BOM files; pull-request/base-SHA checks remain authoritative for changed files.
 
 ## Workflow Changes
 

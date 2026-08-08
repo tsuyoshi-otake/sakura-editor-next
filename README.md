@@ -28,7 +28,7 @@
 
 | 種類 | 入手先 | 内容 |
 | --- | --- | --- |
-| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Amaster) | `master` の最新ビルド |
+| 開発版 | [GitHub Actions](https://github.com/tsuyoshi-otake/sakura-editor-next/actions/workflows/build-sakura.yml?query=branch%3Adevelop) | `develop` の最新ビルド |
 | リリース版 | [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) | 公開済みの配布パッケージ |
 
 ## 主な特徴
@@ -98,6 +98,6 @@ Visual Studio で [`sakura.sln`](./sakura.sln) を開くこともできます。
 | --- | --- |
 | コントリビュート | [CONTRIBUTING.md](./CONTRIBUTING.md) |
 | セキュリティ | [GitHub Security Advisories](https://github.com/tsuyoshi-otake/sakura-editor-next/security/advisories) |
-| 最新の変更 | [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/master/) ・ [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) |
+| 最新の変更 | [コミット履歴](https://github.com/tsuyoshi-otake/sakura-editor-next/commits/main/) ・ [Releases](https://github.com/tsuyoshi-otake/sakura-editor-next/releases) |
 | 引き継いだ変更履歴 | [CHANGELOG.md](./CHANGELOG.md) |
 | ライセンス | [zlib License](./LICENSE) |
