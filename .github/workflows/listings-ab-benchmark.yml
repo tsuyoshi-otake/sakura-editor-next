@@ -20,7 +20,7 @@ name: listings A/B benchmark
 # measurement of asm output alone.
 #
 # Run both arms from the same tagged commit (workflow_dispatch's `ref` only
-# accepts a branch or tag, and master can move between the two dispatches),
+# accepts a branch or tag, and a branch can move between the two dispatches),
 # and confirm both runs report the same headSha before comparing them.
 on:
   workflow_dispatch:

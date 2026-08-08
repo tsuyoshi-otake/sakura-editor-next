@@ -12,6 +12,10 @@ WikiのPull Requestガイドラインをごらんください。
 
 https://github.com/tsuyoshi-otake/sakura-editor-next/pulls
 
+通常の機能追加、修正、ドキュメント更新、依存関係更新の Pull Request は `develop` を base branch にしてください。GitHub CLI では `gh pr create --base develop` を明示します。`main` は同一リポジトリの `develop` または `hotfix/*` から作成するリリース用 Pull Request のみを受け付けます。
+
+`develop` 向け Pull Request は squash merge、`develop` から `main` へのリリース Pull Request は merge commit を使用します。保護ブランチの required checks はドキュメントのみの変更でも必要なため、Pull Request のコミットに `[ci skip]` または `[skip ci]` を含めないでください。
+
 # ライセンス
 Sakura Editor NEXT は誰もが自由にプログラムを使用できるように [zlib License](LICENSE) で提供されています。
 

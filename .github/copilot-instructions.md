@@ -177,4 +177,4 @@ All third-party code lives under `externals/` as git submodules:
 
 ### CI
 
-GitHub Actions workflows are in `.github/workflows/`. The main build workflow (`build-sakura.yml`) builds the supported x64 Debug and Release configurations. To skip CI for documentation-only changes, include `[ci skip]` or `[skip ci]` in the commit message (note: this does not apply on PR merge).
+GitHub Actions workflows are in `.github/workflows/`. The main build workflow (`build-sakura.yml`) builds the supported x64 Debug and Release configurations. Required workflows also run for documentation-only pull requests. Do not include `[ci skip]` or `[skip ci]` in pull-request commits because the protected branch would keep the required checks pending.
