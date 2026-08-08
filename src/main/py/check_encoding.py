@@ -84,23 +84,18 @@ def get_diff_files(base_sha):
 			print ("skip " + file_name)
 
 
-def get_tracked_files():
-	"""Return tracked target files without walking build/venv directories."""
-	output = subprocess.check_output([
-		'git', 'ls-files', '-z', '--'
-	], stderr=subprocess.STDOUT)
-	for file_name in _decode_output(output).split('\0'):
-		if file_name and check_extension(file_name):
-			yield file_name
-		elif file_name:
-			print ("skip " + file_name)
-
-
 def get_ci_files(base_sha):
-	"""Select a diff scan or safe tracked-file fallback for CI."""
+	"""Select the event diff, or no files for a branch-creation event.
+
+	A push that creates a branch reports an all-zero ``before`` SHA even when the
+	branch already points at an existing commit.  There is no content change to
+	check in that event.  Scanning every tracked file here would re-validate the
+	repository's historical baseline and fail on pre-existing UTF-8-no-BOM files,
+	so the PR/base-SHA check remains the authoritative check for new changes.
+	"""
 	if _is_full_scan_base(base_sha):
-		print ("base SHA is empty or all-zero; checking tracked files")
-		return get_tracked_files()
+		print ("base SHA is empty or all-zero; branch creation has no diff")
+		return iter(())
 	return get_diff_files(base_sha)
 
 # デバッグ用
