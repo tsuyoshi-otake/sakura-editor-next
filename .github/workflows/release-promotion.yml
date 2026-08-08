@@ -56,12 +56,13 @@ jobs:
     # The target tag controls only the immutable package source.  Keep the
     # orchestration helpers at the revision that defined this workflow so a
     # manual dry run can validate an older tag and no target checkout supplies
-    # code to the later smoke/publish boundary.
+    # code to the later smoke/publish boundary. Reachability and the canonical
+    # non-merge build number are graph queries, so this checkout needs history.
     - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         ref: ${{ github.workflow_sha }}
-        fetch-depth: 1
+        fetch-depth: 0
 
     - name: Validate tag source and required main gate
       env:
