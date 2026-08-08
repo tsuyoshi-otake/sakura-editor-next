@@ -176,6 +176,46 @@ class CMakeGenerationContractTests(unittest.TestCase):
             with self.subTest(output=output):
                 self.assertEqual(inputs, set(_record_for_output(sakura, output)["inputs"]))
 
+    @unittest.skipUnless(GIT_EXECUTABLE and CMAKE_EXECUTABLE, "git and cmake are required")
+    def test_version_header_prefers_explicit_build_source_sha(self) -> None:
+        git = GIT_EXECUTABLE
+        cmake = CMAKE_EXECUTABLE
+        assert git is not None and cmake is not None
+        script = REPO_ROOT / "src/main/cmake/version.cmake"
+        source_sha = "0123456789abcdef0123456789abcdef01234567"
+        workflow_sha = "fedcba9876543210fedcba9876543210fedcba98"
+        env = {
+            **os.environ,
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY": "owner/repository",
+            "GITHUB_SERVER_URL": "https://github.example.invalid",
+            "GITHUB_SHA": workflow_sha,
+            "SAKURA_BUILD_SOURCE_SHA": source_sha,
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / "version.h"
+            result = subprocess.run(
+                [
+                    cmake,
+                    f"-DSOURCE_DIR:PATH={REPO_ROOT}",
+                    f"-DGIT_EXECUTABLE:FILEPATH={git}",
+                    f"-DOUTPUT_FILE:FILEPATH={output}",
+                    "-DQUIET=ON",
+                    "-P",
+                    str(script),
+                ],
+                capture_output=True,
+                check=False,
+                env=env,
+                text=True,
+            )
+            self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+            rendered = output.read_text(encoding="utf-8")
+
+        self.assertIn(f'#define GIT_COMMIT_HASH "{source_sha}"', rendered)
+        self.assertIn(f'#define GIT_SHORT_COMMIT_HASH "{source_sha[:8]}"', rendered)
+        self.assertNotIn(workflow_sha, rendered)
+
     @unittest.skipUnless(CMAKE_EXECUTABLE, "cmake is required")
     def test_copy_runtime_asset_preserves_noop_timestamp(self) -> None:
         cmake = CMAKE_EXECUTABLE
