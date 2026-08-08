@@ -336,6 +336,15 @@ jobs:
         platform:
           - x64
 
+    # SAKURA_GENERATE_ASSEMBLY_LISTINGS also serializes LTCG codegen
+    # (/CGTHREADS:1). pull_request Release builds never publish the Asm
+    # artifact, so leave it off there; push/workflow_dispatch Release builds
+    # keep it on for the published Asm zip. Job-level (not step-level) so
+    # zipArtifacts.bat and the Upload Asm step below see the same value the
+    # MSBuild step used.
+    env:
+      SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' && '1' || '0' }}
+
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
     ## see https://github.com/actions/checkout
@@ -467,8 +476,6 @@ jobs:
 
     - name: MSBuild
       if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') }}
-      env:
-        SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ matrix.config == 'Release' && '1' || '0' }}
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
@@ -548,7 +555,7 @@ jobs:
 
     - name: Upload Asm
       uses: actions/upload-artifact@v7
-      if: ${{ matrix.config == 'Release' }}
+      if: ${{ matrix.config == 'Release' && env.SAKURA_GENERATE_ASSEMBLY_LISTINGS == '1' }}
       with:
         name: Asm ${{ matrix.platform }} ${{ matrix.config }}
         path: 'sakura-*-Asm.zip'

@@ -63,7 +63,7 @@
 |SakuraSkipModulesCheck|`false`|MSBuild内部用の緊急診断escape hatch。`true`でread-only manifest stamp検査を省略する。通常開発・CI・配布では設定せず、この値を使った成果物を検証済みと扱わない。|
 
 CMakeには同じ目的のcache option `SAKURA_SKIP_MODULES_CHECK=ON` がある。これも診断専用であり、通常のMinGW/CIビルドでは使用しない。
-|SAKURA_GENERATE_ASSEMBLY_LISTINGS|未設定（無効）|`1` または `true` の場合、MSVC の `/FAsu` を有効にして `.asm` 一覧を生成し、あわせてリンカーに `/CGTHREADS:1` を渡してコード生成を直列化する（同一ソース由来の一覧ファイルへの同時書き込みを避けるため）。値を切り替えた次のビルドでは再コンパイルが発生する場合がある。`build-all.bat` と配布 CI の Release ビルドは、配布成果物のため限定されたスコープで `1` を設定する。|
+|SAKURA_GENERATE_ASSEMBLY_LISTINGS|未設定（無効）|`1` または `true` の場合、MSVC の `/FAsu` を有効にして `.asm` 一覧を生成し、あわせてリンカーに `/CGTHREADS:1` を渡してコード生成を直列化する（同一ソース由来の一覧ファイルへの同時書き込みを避けるため）。値を切り替えた次のビルドでは再コンパイルが発生する場合がある。`build-all.bat` は配布成果物のため常に `1` を設定する。CI (`build-sakura.yml`) の Release ビルドは `pull_request` 以外のトリガー（`push`/`workflow_dispatch`）でのみ `1` を設定し、`pull_request` では `0` のままにする。`zipArtifacts.bat` は値が `1`/`true` でない場合、`.asm` の収集と `Asm` zip の生成を必須とせず skip する。|
 |SAKURA_DEV_BUILD_TARGET|`Build`|診断専用。`build-dev.bat` が実行する MSBuild ターゲットを上書きする。`Build` 以外では成果物が完成しない場合があるため、通常は設定せず、使用後は解除する。|
 |SAKURA_MSBUILD_BINLOG|未設定（無効）|診断専用。`msbuild_command` が構築するすべての MSBuild 呼び出し（`build-dev.bat`/`build-sln.bat`/`build-all.bat`）に `/bl:<パス>` を追加し、MSBuild バイナリログを指定パスへ出力する。値は空文字列であってはならず、設定した場合は空白のみの値も含めて明示的エラーになる。ビルド最適化・アセンブリ一覧・LTCG・ビルドターゲットには影響しない。計測が終わったら解除する。|
 |SAKURA_MSBUILD_PERFORMANCE_SUMMARY|未設定（無効）|診断専用。`1` または `true` の場合、`msbuild_command` が構築するすべての MSBuild 呼び出しに `/clp:PerformanceSummary` を追加し、コンソールログの末尾にタスク別実行時間の要約を出力する。`0` または `false` は明示的に無効（未設定と同じ挙動）。それ以外の値は明示的エラーになる（無効値を暗黙に無効側へ倒さない）。ビルド最適化・アセンブリ一覧・LTCG・ビルドターゲットには影響しない。|
