@@ -368,14 +368,25 @@ if errorlevel 1 exit /b 1
 call :archiveRequired "%WORKDIR_DEV%" "%OUTFILE_DEV%" "development"
 if errorlevel 1 exit /b 1
 
-@echo start zip asm
-mkdir %WORKDIR_ASM%
-call :copyRequired "build\%platform%\%configuration%\sakura_core\*.asm" "%WORKDIR_ASM%\" "assembly listings"
-if errorlevel 1 exit /b 1
-call :archiveRequired "%WORKDIR_ASM%" "%OUTFILE_ASM%" "assembly"
-if errorlevel 1 exit /b 1
+@rem SAKURA_GENERATE_ASSEMBLY_LISTINGS=0 (or unset) means MSBuild produced no
+@rem .asm files. copyRequired would abort the whole packaging run on missing
+@rem files, so treat the Asm archive as optional instead of required.
+set ZIP_ASM=0
+if /I "%SAKURA_GENERATE_ASSEMBLY_LISTINGS%" == "1" set ZIP_ASM=1
+if /I "%SAKURA_GENERATE_ASSEMBLY_LISTINGS%" == "true" set ZIP_ASM=1
 
-@echo end   zip asm
+if "%ZIP_ASM%" == "1" (
+	@echo start zip asm
+	mkdir %WORKDIR_ASM%
+	call :copyRequired "build\%platform%\%configuration%\sakura_core\*.asm" "%WORKDIR_ASM%\" "assembly listings"
+	if errorlevel 1 exit /b 1
+	call :archiveRequired "%WORKDIR_ASM%" "%OUTFILE_ASM%" "assembly"
+	if errorlevel 1 exit /b 1
+
+	@echo end   zip asm
+) else (
+	@echo skip zip asm because SAKURA_GENERATE_ASSEMBLY_LISTINGS is not "1" or "true"
+)
 
 if exist "%WORKDIR%" (
 	rmdir /s /q "%WORKDIR%"

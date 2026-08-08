@@ -4,7 +4,8 @@
 
 - `workflows/build-sakura.yml` builds the x64 `{Debug, Release}` matrix. Debug compilation runs under Build Wrapper for analysis, while the regular MSBuild step builds Release with `build-sln.bat`.
 - The workflow runs the test suite before creating the installer. Release jobs package and upload one AVX-baseline `sakura.exe`; AVX2 and AVX-512F/BW implementations are selected inside that binary at runtime.
-- Release MSBuild must set `SAKURA_GENERATE_ASSEMBLY_LISTINGS=1` because the workflow calls `build-sln.bat` directly but later publishes the ASM ZIP. Keep the setting scoped to the MSBuild step; Debug does not need listing I/O.
+- `SAKURA_GENERATE_ASSEMBLY_LISTINGS` is a job-level env on `build`, not scoped to the MSBuild step alone: `zipArtifacts.bat` and the Upload Asm step both need to see the same value the MSBuild step used. It resolves to `1` only for `matrix.config == 'Release'` on non-`pull_request` triggers (`push` to `master`, `workflow_dispatch`); Debug never needs listing I/O, and `pull_request` Release builds leave it `0` since they never publish the Asm artifact.
+- This setting does more than emit `.asm` files: it also serializes LTCG codegen (`/CGTHREADS:1`), which Issue #43 Phase 2b measured as a same-SHA, same-workflow ~68% (about 10.5 minutes) addition to a Release `build-sln.bat` invocation, ~99% of it in the Link task rather than CL. `zipArtifacts.bat` treats the Asm archive as optional (skips the `.asm` copy and zip instead of failing `copyRequired`'s missing-file check) when the value isn't `1`/`true`, and the workflow's Upload Asm step mirrors that with `env.SAKURA_GENERATE_ASSEMBLY_LISTINGS == '1'`.
 - Do not replace CI's solution build with `build-dev.bat`, and do not apply the local headless test filter to the required full CI suite solely for speed.
 - The Sonar job has its own rebuild/coverage flow; do not assume the main matrix's incremental settings apply to it.
 
