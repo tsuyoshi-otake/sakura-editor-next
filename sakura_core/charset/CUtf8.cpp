@@ -11,6 +11,7 @@
 #include "charset/codechecker.h"
 #include "basis/CEol.h"
 #include "env/CommonSetting.h"
+#include "util/CpuDispatch.h"
 
 /*!
 	UTF-8 → Unicode 実装
@@ -32,7 +33,35 @@ int CUtf8::Utf8ToUni( const char* pSrc, const int nSrcLen, wchar_t* pDst, bool b
 	pr_end = reinterpret_cast<const unsigned char*>(pSrc+nSrcLen);
 	pw = reinterpret_cast<unsigned short*>(pDst);
 
+	// ASCII バイト (0x80 未満) は UTF-8/CESU-8 いずれでも 1 バイト = 1 UTF-16
+	// 単位へそのまま拡幅されるため、連続区間は文字単位チェックを介さず一括変換
+	// できる。短い区間の間接呼び出しを避けるため、ポリシー最小長までは
+	// 呼び出し側スカラーで消化し、まだ続く場合のみ SIMD カーネルへ委譲する。
+	const auto& cpuDispatch = CpuDispatch::Get();
+	const std::size_t nWidenMinimum = cpuDispatch.utf8ConversionPolicy.widenAsciiMinimumLength;
+
 	for( ; ; ){
+
+		if( pr < pr_end && *pr < 0x80 ){
+			const std::size_t nRemaining = pr_end - pr;
+			const std::size_t nScalarSpan = nRemaining < nWidenMinimum ? nRemaining : nWidenMinimum;
+			std::size_t nAscii = 0;
+			while( nAscii < nScalarSpan && pr[nAscii] < 0x80 ){
+				pw[nAscii] = pr[nAscii];
+				++nAscii;
+			}
+			if( nAscii == nScalarSpan && nRemaining > nScalarSpan ){
+				nAscii += cpuDispatch.widenAsciiToUtf16(
+					reinterpret_cast<const char*>(pr + nAscii),
+					nRemaining - nAscii,
+					reinterpret_cast<wchar_t*>(pw + nAscii));
+			}
+			pr += nAscii;
+			pw += nAscii;
+			if( pr >= pr_end ){
+				break;
+			}
+		}
 
 		// 文字をチェック
 		if( bCESU8Mode != true ){

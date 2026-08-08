@@ -117,24 +117,31 @@ CpuDispatch::Dispatch CreateDispatch() noexcept
 	dispatch.capabilities = DetectCapabilities();
 	dispatch.isa = CpuDispatch::SelectBestIsa(dispatch.capabilities);
 	dispatch.utf16ScanPolicy = CpuDispatch::GetUtf16ScanPolicy(dispatch.isa);
+	dispatch.utf8ConversionPolicy = CpuDispatch::GetUtf8ConversionPolicy(dispatch.isa);
 	switch (dispatch.isa) {
 	case CpuDispatch::Isa::Avx512:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx512;
 		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx512;
 		dispatch.findMarkdownInlineSpecialUtf16 =
 			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx512;
+		dispatch.widenAsciiToUtf16 = CpuDispatch::Internal::WidenAsciiToUtf16Avx512;
+		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharAvx512;
 		break;
 	case CpuDispatch::Isa::Avx2:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx2;
 		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx2;
 		dispatch.findMarkdownInlineSpecialUtf16 =
 			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx2;
+		dispatch.widenAsciiToUtf16 = CpuDispatch::Internal::WidenAsciiToUtf16Avx2;
+		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharAvx2;
 		break;
 	default:
 		dispatch.findCrOrLf = CpuDispatch::Internal::FindCrOrLfAvx;
 		dispatch.findCrOrLfUtf16 = CpuDispatch::Internal::FindCrOrLfUtf16Avx;
 		dispatch.findMarkdownInlineSpecialUtf16 =
 			CpuDispatch::Internal::FindMarkdownInlineSpecialUtf16Avx;
+		dispatch.widenAsciiToUtf16 = CpuDispatch::Internal::WidenAsciiToUtf16Avx;
+		dispatch.findUtf16Char = CpuDispatch::Internal::FindUtf16CharAvx;
 		break;
 	}
 
@@ -168,13 +175,40 @@ Utf16ScanPolicy GetUtf16ScanPolicy(Isa isa) noexcept
 	// specials) per call regardless of length, crossing the scalar loop at
 	// about 8 and 6 units. Median of three runs of the disabled CpuDispatchTest
 	// microbenchmark, x64 Release, 2026-08-08, Ryzen 7 9700X (Zen 5).
+	// The find-char minimums follow the same shape: vector width for AVX/AVX2.
+	// For AVX-512 the masked find-char call costs a flat ~2.0-2.5ns while the
+	// caller-local scalar loop still wins at 8 units (~1.7ns) and roughly ties
+	// at 12, so its break-even is 16 units (three runs of the disabled
+	// CpuDispatchTest microbenchmark, x64 Release, 2026-08-08, Ryzen 7 9700X /
+	// Zen 5).
 	switch (isa) {
 	case Isa::Avx512:
-		return Utf16ScanPolicy{8, 6};
+		return Utf16ScanPolicy{8, 6, 16};
 	case Isa::Avx2:
-		return Utf16ScanPolicy{16, 16};
+		return Utf16ScanPolicy{16, 16, 16};
 	default:
-		return Utf16ScanPolicy{8, 8};
+		return Utf16ScanPolicy{8, 8, 8};
+	}
+}
+
+Utf8ConversionPolicy GetUtf8ConversionPolicy(Isa isa) noexcept
+{
+	// The AVX and AVX2 minimums equal their widening kernels' input vector
+	// widths (16 and 32 bytes); below that the kernel would only run its own
+	// scalar prefix loop behind an indirect call. The AVX-512 kernel handles
+	// any length with masked loads and stores, so its minimum is the
+	// benchmark-derived break-even against a caller-local scalar widening loop:
+	// the masked call costs a flat ~2.2ns, the scalar loop still wins at 8
+	// bytes (~1.6ns) and ties at 12, so the kernel takes over at 16 (three runs
+	// of the disabled CpuDispatchTest microbenchmark, x64 Release, 2026-08-08,
+	// Ryzen 7 9700X / Zen 5).
+	switch (isa) {
+	case Isa::Avx512:
+		return Utf8ConversionPolicy{16};
+	case Isa::Avx2:
+		return Utf8ConversionPolicy{32};
+	default:
+		return Utf8ConversionPolicy{16};
 	}
 }
 
@@ -242,6 +276,32 @@ FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept
 		return dispatch.capabilities.avx
 			? Internal::FindMarkdownInlineSpecialUtf16Avx
 			: nullptr;
+	}
+}
+
+WidenAsciiToUtf16Function GetSupportedWidenAsciiToUtf16(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512 ? Internal::WidenAsciiToUtf16Avx512 : nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2 ? Internal::WidenAsciiToUtf16Avx2 : nullptr;
+	default:
+		return dispatch.capabilities.avx ? Internal::WidenAsciiToUtf16Avx : nullptr;
+	}
+}
+
+FindUtf16CharFunction GetSupportedFindUtf16Char(Isa isa) noexcept
+{
+	const auto& dispatch = Get();
+	switch (isa) {
+	case Isa::Avx512:
+		return dispatch.capabilities.avx512 ? Internal::FindUtf16CharAvx512 : nullptr;
+	case Isa::Avx2:
+		return dispatch.capabilities.avx2 ? Internal::FindUtf16CharAvx2 : nullptr;
+	default:
+		return dispatch.capabilities.avx ? Internal::FindUtf16CharAvx : nullptr;
 	}
 }
 }

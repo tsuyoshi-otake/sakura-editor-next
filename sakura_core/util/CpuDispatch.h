@@ -26,6 +26,17 @@ struct Capabilities {
 using FindCrOrLfFunction = std::size_t (*)(const char* data, std::size_t length) noexcept;
 using FindUtf16Function = std::size_t (*)(const wchar_t* data, std::size_t length) noexcept;
 
+// Widens the longest leading run of ASCII bytes (values below 0x80) into
+// UTF-16 units and returns the run length. Exactly that many units are
+// written to `destination`; bytes at and after the first non-ASCII byte are
+// neither read past nor converted.
+using WidenAsciiToUtf16Function =
+	std::size_t (*)(const char* source, std::size_t length, wchar_t* destination) noexcept;
+
+// Returns the index of the first UTF-16 unit equal to `target`, or `length`.
+using FindUtf16CharFunction =
+	std::size_t (*)(const wchar_t* data, std::size_t length, wchar_t target) noexcept;
+
 // Minimum input length at which delegating a UTF-16 scan to the dispatched
 // function beats a caller-local scalar loop. Below the minimum the indirect
 // call plus the implementation's own scalar fallback would only add overhead,
@@ -35,6 +46,14 @@ using FindUtf16Function = std::size_t (*)(const wchar_t* data, std::size_t lengt
 struct Utf16ScanPolicy {
 	std::size_t crOrLfMinimumLength{64};
 	std::size_t markdownInlineSpecialMinimumLength{64};
+	std::size_t findCharMinimumLength{64};
+};
+
+// Minimum remaining source length at which delegating ASCII-prefix widening
+// to the dispatched function beats a caller-local scalar widening loop. Same
+// contract as Utf16ScanPolicy: a caller-local loop covers shorter runs.
+struct Utf8ConversionPolicy {
+	std::size_t widenAsciiMinimumLength{64};
 };
 
 struct Dispatch {
@@ -43,7 +62,10 @@ struct Dispatch {
 	FindCrOrLfFunction findCrOrLf{};
 	FindUtf16Function findCrOrLfUtf16{};
 	FindUtf16Function findMarkdownInlineSpecialUtf16{};
+	WidenAsciiToUtf16Function widenAsciiToUtf16{};
+	FindUtf16CharFunction findUtf16Char{};
 	Utf16ScanPolicy utf16ScanPolicy{};
+	Utf8ConversionPolicy utf8ConversionPolicy{};
 	std::int64_t initializationTicks{};
 };
 
@@ -55,6 +77,7 @@ const Dispatch& Get() noexcept;
 // Pure selection helpers used to lock the fallback order in unit tests.
 Isa SelectBestIsa(const Capabilities& capabilities) noexcept;
 Utf16ScanPolicy GetUtf16ScanPolicy(Isa isa) noexcept;
+Utf8ConversionPolicy GetUtf8ConversionPolicy(Isa isa) noexcept;
 const char* GetIsaName(Isa isa) noexcept;
 
 namespace Testing
@@ -63,5 +86,7 @@ namespace Testing
 FindCrOrLfFunction GetSupportedFindCrOrLf(Isa isa) noexcept;
 FindUtf16Function GetSupportedFindCrOrLfUtf16(Isa isa) noexcept;
 FindUtf16Function GetSupportedFindMarkdownInlineSpecialUtf16(Isa isa) noexcept;
+WidenAsciiToUtf16Function GetSupportedWidenAsciiToUtf16(Isa isa) noexcept;
+FindUtf16CharFunction GetSupportedFindUtf16Char(Isa isa) noexcept;
 }
 }
