@@ -235,4 +235,59 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx2(
 	}
 	return offset + FindUtf16Scalar<true>(data + offset, length - offset);
 }
+
+std::size_t WidenAsciiToUtf16Avx2(
+	const char* source, std::size_t length, wchar_t* destination) noexcept
+{
+	static_assert(sizeof(wchar_t) == 2, "The widening kernel requires 16-bit wchar_t");
+	constexpr std::size_t vectorWidth = 32;
+	std::size_t offset = 0;
+	for (; offset + vectorWidth <= length; offset += vectorWidth) {
+		const __m256i bytes = _mm256_loadu_si256(
+			reinterpret_cast<const __m256i*>(source + offset));
+		if (_mm256_movemask_epi8(bytes) != 0) {
+			break;
+		}
+		// Both stores land entirely inside the returned ASCII run, so a
+		// destination sized to the run is never overwritten past its end.
+		_mm256_storeu_si256(
+			reinterpret_cast<__m256i*>(destination + offset),
+			_mm256_cvtepu8_epi16(_mm256_castsi256_si128(bytes)));
+		_mm256_storeu_si256(
+			reinterpret_cast<__m256i*>(destination + offset + vectorWidth / 2),
+			_mm256_cvtepu8_epi16(_mm256_extracti128_si256(bytes, 1)));
+	}
+	for (; offset < length; ++offset) {
+		const unsigned char byte = static_cast<unsigned char>(source[offset]);
+		if (byte >= 0x80) {
+			break;
+		}
+		destination[offset] = static_cast<wchar_t>(byte);
+	}
+	return offset;
+}
+
+std::size_t FindUtf16CharAvx2(
+	const wchar_t* data, std::size_t length, wchar_t target) noexcept
+{
+	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
+	constexpr std::size_t vectorWidth = 16;
+	const __m256i needle = _mm256_set1_epi16(static_cast<short>(target));
+	std::size_t offset = 0;
+	for (; length - offset >= vectorWidth; offset += vectorWidth) {
+		const __m256i units = _mm256_loadu_si256(
+			reinterpret_cast<const __m256i*>(data + offset));
+		const unsigned long mask = static_cast<unsigned long>(
+			_mm256_movemask_epi8(_mm256_cmpeq_epi16(units, needle)));
+		if (mask != 0) {
+			return offset + FirstUtf16Lane(mask);
+		}
+	}
+	for (; offset < length; ++offset) {
+		if (data[offset] == target) {
+			break;
+		}
+	}
+	return offset;
+}
 }

@@ -239,4 +239,61 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx(
 	}
 	return offset + FindUtf16Scalar<true>(data + offset, length - offset);
 }
+
+std::size_t WidenAsciiToUtf16Avx(
+	const char* source, std::size_t length, wchar_t* destination) noexcept
+{
+	static_assert(sizeof(wchar_t) == 2, "The widening kernel requires 16-bit wchar_t");
+	constexpr std::size_t vectorWidth = 16;
+	const __m128i zero = _mm_setzero_si128();
+	std::size_t offset = 0;
+	for (; offset + vectorWidth <= length; offset += vectorWidth) {
+		const __m128i bytes = _mm_loadu_si128(
+			reinterpret_cast<const __m128i*>(source + offset));
+		if (_mm_movemask_epi8(bytes) != 0) {
+			break;
+		}
+		// Zero-extension via unpack against zero matches little-endian UTF-16.
+		// Both stores land entirely inside the returned ASCII run, so a
+		// destination sized to the run is never overwritten past its end.
+		_mm_storeu_si128(
+			reinterpret_cast<__m128i*>(destination + offset),
+			_mm_unpacklo_epi8(bytes, zero));
+		_mm_storeu_si128(
+			reinterpret_cast<__m128i*>(destination + offset + vectorWidth / 2),
+			_mm_unpackhi_epi8(bytes, zero));
+	}
+	for (; offset < length; ++offset) {
+		const unsigned char byte = static_cast<unsigned char>(source[offset]);
+		if (byte >= 0x80) {
+			break;
+		}
+		destination[offset] = static_cast<wchar_t>(byte);
+	}
+	return offset;
+}
+
+std::size_t FindUtf16CharAvx(
+	const wchar_t* data, std::size_t length, wchar_t target) noexcept
+{
+	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
+	constexpr std::size_t vectorWidth = 8;
+	const __m128i needle = _mm_set1_epi16(static_cast<short>(target));
+	std::size_t offset = 0;
+	for (; length - offset >= vectorWidth; offset += vectorWidth) {
+		const __m128i units = _mm_loadu_si128(
+			reinterpret_cast<const __m128i*>(data + offset));
+		const unsigned long mask = static_cast<unsigned long>(
+			_mm_movemask_epi8(_mm_cmpeq_epi16(units, needle)));
+		if (mask != 0) {
+			return offset + FirstUtf16Lane(mask);
+		}
+	}
+	for (; offset < length; ++offset) {
+		if (data[offset] == target) {
+			break;
+		}
+	}
+	return offset;
+}
 }
