@@ -15,44 +15,6 @@ namespace CpuDispatch::Internal
 {
 namespace
 {
-constexpr std::size_t kUtf16VectorThreshold = 64;
-
-[[nodiscard]] bool IsMarkdownInlineSpecial(wchar_t value) noexcept
-{
-	switch (value) {
-	case L'\\':
-	case L'`':
-	case L'!':
-	case L'[':
-	case L'*':
-	case L'_':
-	case L'~':
-	case L'<':
-	case L'&':
-	case L'$':
-		return true;
-	default:
-		return false;
-	}
-}
-
-template <bool MarkdownInlineSpecial>
-std::size_t FindUtf16Scalar(const wchar_t* data, std::size_t length) noexcept
-{
-	std::size_t offset = 0;
-	for (; offset < length; ++offset) {
-		const wchar_t value = data[offset];
-		if constexpr (MarkdownInlineSpecial) {
-			if (IsMarkdownInlineSpecial(value)) {
-				break;
-			}
-		} else if (value == L'\r' || value == L'\n') {
-			break;
-		}
-	}
-	return offset;
-}
-
 [[nodiscard]] unsigned long FirstUtf16Lane(std::uint32_t laneMask) noexcept
 {
 	unsigned long index{};
@@ -62,6 +24,16 @@ std::size_t FindUtf16Scalar(const wchar_t* data, std::size_t length) noexcept
 	index = static_cast<unsigned long>(__builtin_ctz(laneMask));
 #endif
 	return index;
+}
+
+// Low `count` bits set. A width-exact shift (`1 << 32`) is undefined
+// behavior, so both edges are handled explicitly.
+[[nodiscard]] __mmask32 LowBitsMask32(std::size_t count) noexcept
+{
+	if (count >= 32) {
+		return static_cast<__mmask32>(0xffffffffu);
+	}
+	return static_cast<__mmask32>((std::uint32_t{1} << count) - 1u);
 }
 
 [[nodiscard]] __mmask32 MatchMarkdownInlineSpecial(__m512i units) noexcept
@@ -164,10 +136,6 @@ std::size_t FindCrOrLfAvx512(const char* data, std::size_t length) noexcept
 std::size_t FindCrOrLfUtf16Avx512(const wchar_t* data, std::size_t length) noexcept
 {
 	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
-	if (length < kUtf16VectorThreshold) {
-		return FindUtf16Scalar<false>(data, length);
-	}
-
 	constexpr std::size_t vectorWidth = 32;
 	const __m512i cr = _mm512_set1_epi16(L'\r');
 	const __m512i lf = _mm512_set1_epi16(L'\n');
@@ -180,17 +148,26 @@ std::size_t FindCrOrLfUtf16Avx512(const wchar_t* data, std::size_t length) noexc
 			return offset + FirstUtf16Lane(mask);
 		}
 	}
-	return offset + FindUtf16Scalar<false>(data + offset, length - offset);
+	// The fault-suppressed masked load covers the 1..31-unit tail (and short
+	// inputs entirely) without touching bytes past `length`. Invalid lanes are
+	// excluded from the match mask by contract even though zeroed lanes cannot
+	// equal CR or LF.
+	const std::size_t remaining = length - offset;
+	if (remaining == 0) {
+		return length;
+	}
+	const __mmask32 valid = LowBitsMask32(remaining);
+	const __m512i units = _mm512_maskz_loadu_epi16(valid, data + offset);
+	const std::uint32_t mask = static_cast<std::uint32_t>(
+		(_mm512_cmpeq_epi16_mask(units, cr) | _mm512_cmpeq_epi16_mask(units, lf))
+		& valid);
+	return mask != 0 ? offset + FirstUtf16Lane(mask) : length;
 }
 
 std::size_t FindMarkdownInlineSpecialUtf16Avx512(
 	const wchar_t* data, std::size_t length) noexcept
 {
 	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
-	if (length < kUtf16VectorThreshold) {
-		return FindUtf16Scalar<true>(data, length);
-	}
-
 	constexpr std::size_t vectorWidth = 32;
 	std::size_t offset = 0;
 	for (; length - offset >= vectorWidth; offset += vectorWidth) {
@@ -201,6 +178,14 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx512(
 			return offset + FirstUtf16Lane(mask);
 		}
 	}
-	return offset + FindUtf16Scalar<true>(data + offset, length - offset);
+	const std::size_t remaining = length - offset;
+	if (remaining == 0) {
+		return length;
+	}
+	const __mmask32 valid = LowBitsMask32(remaining);
+	const __m512i units = _mm512_maskz_loadu_epi16(valid, data + offset);
+	const std::uint32_t mask = static_cast<std::uint32_t>(
+		MatchMarkdownInlineSpecial(units) & valid);
+	return mask != 0 ? offset + FirstUtf16Lane(mask) : length;
 }
 }

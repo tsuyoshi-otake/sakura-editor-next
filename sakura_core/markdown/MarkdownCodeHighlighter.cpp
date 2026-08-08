@@ -410,6 +410,25 @@ public:
 		return position + offset;
 	}
 
+	[[nodiscard]] static bool IsMarkdownInlineSpecial(wchar_t value) noexcept
+	{
+		switch (value) {
+		case L'\\':
+		case L'`':
+		case L'!':
+		case L'[':
+		case L'*':
+		case L'_':
+		case L'~':
+		case L'<':
+		case L'&':
+		case L'$':
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	[[nodiscard]] std::size_t FindMarkdownSpecial(
 		std::size_t position,
 		std::size_t end) noexcept
@@ -418,8 +437,18 @@ public:
 			return std::min(end, Size());
 		}
 		const std::size_t length = std::min(end, Size()) - position;
-		const std::size_t offset = m_dispatch.findMarkdownInlineSpecialUtf16(
-			m_source.data() + position, length);
+		std::size_t offset = 0;
+		// Token-bounded scans are usually short; below the per-ISA minimum the
+		// local scalar loop beats an indirect call into the dispatched scanner.
+		if (length >= m_dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength) {
+			offset = m_dispatch.findMarkdownInlineSpecialUtf16(
+				m_source.data() + position, length);
+		} else {
+			while (offset < length
+				&& !IsMarkdownInlineSpecial(m_source[position + offset])) {
+				++offset;
+			}
+		}
 		RecordWork(offset + (offset < length ? 1 : 0));
 		return position + offset;
 	}

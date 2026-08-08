@@ -21,12 +21,12 @@ namespace {
 
 constexpr std::size_t kMaximumInlineDepth = 32;
 constexpr std::size_t kInlineWorkPerCharacter = 64;
-constexpr std::size_t kUtf16VectorThreshold = 64;
 
 struct ParseContext {
 	const ParseOptions& options;
 	std::size_t imageReferences = 0;
 	CpuDispatch::FindUtf16Function findMarkdownInlineSpecial = nullptr;
+	std::size_t findMarkdownInlineSpecialMinimumLength = 64;
 };
 
 [[nodiscard]] bool CanDescendInline(const ParseContext& context, std::size_t depth) noexcept
@@ -140,10 +140,11 @@ enum class AngleAutolinkKind {
 }
 
 [[nodiscard]] std::size_t FindMarkdownInlineSpecial(
-	std::wstring_view source, std::size_t start, CpuDispatch::FindUtf16Function vectorScan) noexcept
+	std::wstring_view source, std::size_t start, CpuDispatch::FindUtf16Function vectorScan,
+	std::size_t vectorMinimumLength) noexcept
 {
 	const auto remaining = source.size() - start;
-	if (remaining >= kUtf16VectorThreshold) {
+	if (remaining >= vectorMinimumLength) {
 		return start + vectorScan(source.data() + start, remaining);
 	}
 	for (std::size_t index = start; index < source.size(); ++index) {
@@ -153,10 +154,10 @@ enum class AngleAutolinkKind {
 }
 
 [[nodiscard]] std::size_t FindCrOrLf(std::wstring_view source, std::size_t start,
-	CpuDispatch::FindUtf16Function vectorScan) noexcept
+	CpuDispatch::FindUtf16Function vectorScan, std::size_t vectorMinimumLength) noexcept
 {
 	const auto remaining = source.size() - start;
-	if (remaining >= kUtf16VectorThreshold) {
+	if (remaining >= vectorMinimumLength) {
 		return start + vectorScan(source.data() + start, remaining);
 	}
 	for (std::size_t index = start; index < source.size(); ++index) {
@@ -594,11 +595,13 @@ struct HtmlFrame {
 	wchar_t fenceMarker = L'\0';
 	std::size_t fenceMarkerCount = 0;
 	std::size_t codeSearchBudget = MakeSanitizerCodeSearchBudget(source.size());
+	const auto& dispatch = CpuDispatch::Get();
 	for (std::size_t index = 0; index < source.size();) {
 		// Markdown code is already inert source. Preserve it exactly so the HTML
 		// projection cannot reinterpret literal tags inside code spans or fences.
 		if (suppressedDepth == 0 && stack.size() == 1 && IsSourceLineStart(source, index)) {
-			const auto lineEnd = FindCrOrLf(source, index, CpuDispatch::Get().findCrOrLfUtf16);
+			const auto lineEnd = FindCrOrLf(source, index, dispatch.findCrOrLfUtf16,
+				dispatch.utf16ScanPolicy.crOrLfMinimumLength);
 			const auto line = source.substr(index, lineEnd - index);
 			std::size_t nextLine = lineEnd;
 			if (nextLine < source.size()) {
@@ -1031,7 +1034,8 @@ void AppendNestedText(ParsedText& result, ParsedText nested, std::size_t start)
 			result.limitExceeded = true;
 			break;
 		}
-		const auto special = FindMarkdownInlineSpecial(source, index, context.findMarkdownInlineSpecial);
+		const auto special = FindMarkdownInlineSpecial(source, index,
+			context.findMarkdownInlineSpecial, context.findMarkdownInlineSpecialMinimumLength);
 		if (special > index) {
 			const auto count = special - index;
 			if (!budget.Consume(count)) continue;
@@ -1472,10 +1476,12 @@ void ParseTaskListMarker(ListMatch* match) noexcept
 [[nodiscard]] std::vector<std::wstring_view> SplitLines(std::wstring_view source)
 {
 	std::vector<std::wstring_view> lines;
-	const auto vectorScan = CpuDispatch::Get().findCrOrLfUtf16;
+	const auto& dispatch = CpuDispatch::Get();
+	const auto vectorScan = dispatch.findCrOrLfUtf16;
+	const auto vectorMinimumLength = dispatch.utf16ScanPolicy.crOrLfMinimumLength;
 	std::size_t lineStart = 0;
 	while (lineStart < source.size()) {
-		const auto lineEnd = FindCrOrLf(source, lineStart, vectorScan);
+		const auto lineEnd = FindCrOrLf(source, lineStart, vectorScan, vectorMinimumLength);
 		lines.push_back(source.substr(lineStart, lineEnd - lineStart));
 		if (lineEnd == source.size()) break;
 		lineStart = lineEnd + (source[lineEnd] == L'\r' && lineEnd + 1 < source.size()
@@ -1703,10 +1709,12 @@ struct FrontMatterMatch {
 
 [[nodiscard]] std::size_t CharacterOffsetAfterLines(std::wstring_view source, std::size_t lineCount) noexcept
 {
-	const auto vectorScan = CpuDispatch::Get().findCrOrLfUtf16;
+	const auto& dispatch = CpuDispatch::Get();
+	const auto vectorScan = dispatch.findCrOrLfUtf16;
+	const auto vectorMinimumLength = dispatch.utf16ScanPolicy.crOrLfMinimumLength;
 	std::size_t offset = 0;
 	for (std::size_t line = 0; line < lineCount && offset < source.size(); ++line) {
-		const auto newline = FindCrOrLf(source, offset, vectorScan);
+		const auto newline = FindCrOrLf(source, offset, vectorScan, vectorMinimumLength);
 		if (newline == source.size()) return source.size();
 		offset = newline + (source[newline] == L'\r' && newline + 1 < source.size()
 			&& source[newline + 1] == L'\n' ? 2 : 1);
@@ -1731,7 +1739,9 @@ Document ParseMarkdown(std::wstring_view source, const ParseOptions& options)
 		source = source.substr(0, cappedLength);
 		document.completion = ParseCompletion::InputLimitReached;
 	}
-	ParseContext context{ options, 0, CpuDispatch::Get().findMarkdownInlineSpecialUtf16 };
+	const auto& parseDispatch = CpuDispatch::Get();
+	ParseContext context{ options, 0, parseDispatch.findMarkdownInlineSpecialUtf16,
+		parseDispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength };
 	std::size_t sourceLineOffset = 0;
 	const auto originalLines = SplitLines(source);
 	const auto frontMatter = ParseInitialFrontMatter(originalLines, options);

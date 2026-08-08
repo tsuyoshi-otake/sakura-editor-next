@@ -26,12 +26,24 @@ struct Capabilities {
 using FindCrOrLfFunction = std::size_t (*)(const char* data, std::size_t length) noexcept;
 using FindUtf16Function = std::size_t (*)(const wchar_t* data, std::size_t length) noexcept;
 
+// Minimum input length at which delegating a UTF-16 scan to the dispatched
+// function beats a caller-local scalar loop. Below the minimum the indirect
+// call plus the implementation's own scalar fallback would only add overhead,
+// so callers keep their local loop. The AVX-512 implementations accept any
+// length via masked loads; their minimums are benchmark-derived, not safety
+// bounds.
+struct Utf16ScanPolicy {
+	std::size_t crOrLfMinimumLength{64};
+	std::size_t markdownInlineSpecialMinimumLength{64};
+};
+
 struct Dispatch {
 	Isa isa{Isa::Avx};
 	Capabilities capabilities{};
 	FindCrOrLfFunction findCrOrLf{};
 	FindUtf16Function findCrOrLfUtf16{};
 	FindUtf16Function findMarkdownInlineSpecialUtf16{};
+	Utf16ScanPolicy utf16ScanPolicy{};
 	std::int64_t initializationTicks{};
 };
 
@@ -40,8 +52,9 @@ struct Dispatch {
 const Dispatch& Initialize() noexcept;
 const Dispatch& Get() noexcept;
 
-// Pure selection helper used to lock the fallback order in unit tests.
+// Pure selection helpers used to lock the fallback order in unit tests.
 Isa SelectBestIsa(const Capabilities& capabilities) noexcept;
+Utf16ScanPolicy GetUtf16ScanPolicy(Isa isa) noexcept;
 const char* GetIsaName(Isa isa) noexcept;
 
 namespace Testing
