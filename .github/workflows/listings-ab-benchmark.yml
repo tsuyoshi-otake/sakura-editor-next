@@ -12,6 +12,16 @@ name: listings A/B benchmark
 # .binlog has not been checked for leaked secrets/environment data. The GitHub
 # Actions step duration and the /clp:PerformanceSummary console output are enough
 # for the first A/B pass.
+#
+# SAKURA_GENERATE_ASSEMBLY_LISTINGS does more than write .asm files: it also
+# adds /CGTHREADS:1 to the linker, serializing LTCG code generation. Release
+# already builds with Fast LTCG. Treat the "on" vs "off" result as the combined
+# cost of listing generation plus that LTCG serialization, not as an isolated
+# measurement of asm output alone.
+#
+# Run both arms from the same tagged commit (workflow_dispatch's `ref` only
+# accepts a branch or tag, and master can move between the two dispatches),
+# and confirm both runs report the same headSha before comparing them.
 on:
   workflow_dispatch:
     inputs:
@@ -32,6 +42,7 @@ env:
 permissions:
   actions: read
   contents: read
+  packages: read
 
 jobs:
   benchmark:
