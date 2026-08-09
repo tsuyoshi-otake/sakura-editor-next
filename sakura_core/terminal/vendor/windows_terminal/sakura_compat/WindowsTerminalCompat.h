@@ -169,7 +169,7 @@ public:
 
 private:
 	friend class ::Microsoft::Console::VirtualTerminal::TerminalInput;
-	friend constexpr INPUT_RECORD ::SynthesizeMouseEvent(point, std::uint32_t, std::uint32_t, std::uint32_t);
+	friend constexpr INPUT_RECORD SynthesizeMouseEvent(point, std::uint32_t, std::uint32_t, std::uint32_t);
 	CoordType x{};
 	CoordType y{};
 };
@@ -184,7 +184,7 @@ public:
 	}
 
 private:
-	friend constexpr INPUT_RECORD ::SynthesizeWindowBufferSizeEvent(size);
+	friend constexpr INPUT_RECORD SynthesizeWindowBufferSizeEvent(size);
 	CoordType width{};
 	CoordType height{};
 };
