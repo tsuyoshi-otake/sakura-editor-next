@@ -10370,7 +10370,7 @@ LRESULT CEditWnd::DispatchEvent(
 			bool bSelect = (0!= (lParam & 1));
 			if( lParam & 2 ){
 				// 現在の状態をKEEP
-				bSelect = GetActiveView().GetSelectionInfo().m_bSelectingLock;
+				bSelect = GetActiveView().GetSelectionInfo().IsSelectionLocked();
 			}
 
 			//	2006.07.09 genta 強制解除しない

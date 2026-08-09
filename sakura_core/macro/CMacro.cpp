@@ -2299,7 +2299,7 @@ bool CMacro::HandleFunction(CEditView *View, EFunctionCode ID, VARIANT *Argument
 		}
 	case F_ISTEXTSELECTINGLOCK:
 		{
-			if( View->GetSelectionInfo().m_bSelectingLock ) {
+			if( View->GetSelectionInfo().IsSelectionLocked() ) {
 				if( View->GetSelectionInfo().IsBoxSelecting() ) {
 					Wrap( &Result )->Receive( 2 );	//選択ロック+矩形選択中
 				}else{

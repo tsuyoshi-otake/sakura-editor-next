@@ -149,11 +149,11 @@ void CViewCommander::Command_BEGIN_SELECT( void )
 	}
 
 	//	ロックの解除切り替え
-	if ( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ) {
-		m_pCommanderView->GetSelectionInfo().m_bSelectingLock = false;	/* 選択状態のロック解除 */
+	if ( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ) {
+		m_pCommanderView->GetSelectionInfo().SetSelectionLocked(false);	/* 選択状態のロック解除 */
 	}
 	else {
-		m_pCommanderView->GetSelectionInfo().m_bSelectingLock = true;	/* 選択状態のロック */
+		m_pCommanderView->GetSelectionInfo().SetSelectionLocked(true);	/* 選択状態のロック */
 	}
 	if( GetSelect().IsOne() ){
 		GetCaret().m_cUnderLine.CaretUnderLineOFF(true);
@@ -178,7 +178,7 @@ void CViewCommander::Command_BEGIN_BOXSELECT( bool bSelectingLock )
 	/* 現在のカーソル位置から選択を開始する */
 	m_pCommanderView->GetSelectionInfo().BeginSelectArea();
 
-	m_pCommanderView->GetSelectionInfo().m_bSelectingLock = bSelectingLock;	/* 選択状態のロック */
+	m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock);	/* 選択状態のロック */
 	m_pCommanderView->GetSelectionInfo().SetBoxSelect(true);	/* 矩形範囲選択中 */
 
 	m_pCommanderView->GetSelectionInfo().PrintSelectionInfoMsg();

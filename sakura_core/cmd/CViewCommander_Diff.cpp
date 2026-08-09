@@ -417,14 +417,14 @@ re_do:;
 		bFound = TRUE;
 		CLayoutPoint ptXY_Layout;
 		GetDocument()->m_cLayoutMgr.LogicToLayout( ptXY, &ptXY_Layout );
-		if( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ){
+		if( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ){
 			if( !m_pCommanderView->GetSelectionInfo().IsTextSelected() ) m_pCommanderView->GetSelectionInfo().BeginSelectArea();
 		}
 		else{
 			if( m_pCommanderView->GetSelectionInfo().IsTextSelected() ) m_pCommanderView->GetSelectionInfo().DisableSelectArea( true );
 		}
 
-		if( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ){
+		if( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ){
 			m_pCommanderView->GetSelectionInfo().ChangeSelectAreaByCurrentCursor( ptXY_Layout );
 		}
 		GetCaret().MoveCursor( ptXY_Layout, true );
@@ -467,14 +467,14 @@ re_do:;
 		bFound = TRUE;
 		CLayoutPoint ptXY_Layout;
 		GetDocument()->m_cLayoutMgr.LogicToLayout( ptXY, &ptXY_Layout );
-		if( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ){
+		if( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ){
 			if( !m_pCommanderView->GetSelectionInfo().IsTextSelected() ) m_pCommanderView->GetSelectionInfo().BeginSelectArea();
 		}
 		else{
 			if( m_pCommanderView->GetSelectionInfo().IsTextSelected() ) m_pCommanderView->GetSelectionInfo().DisableSelectArea( true );
 		}
 
-		if( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ){
+		if( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ){
 			m_pCommanderView->GetSelectionInfo().ChangeSelectAreaByCurrentCursor( ptXY_Layout );
 		}
 		GetCaret().MoveCursor( ptXY_Layout, true );

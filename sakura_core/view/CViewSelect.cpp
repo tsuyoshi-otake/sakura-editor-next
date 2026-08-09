@@ -21,8 +21,6 @@
 CViewSelect::CViewSelect(CEditView* pcEditView)
 : m_pcEditView(pcEditView)
 {
-	m_bSelectingLock   = false;	// 選択状態のロック
-
 	m_sSelectBgn.Clear(-1); // 範囲選択(原点)
 	m_sSelect   .Clear(-1); // 範囲選択
 	m_sSelectOld.Clear(0);  // 範囲選択(Old)
@@ -32,7 +30,6 @@ CViewSelect::CViewSelect(CEditView* pcEditView)
 
 void CViewSelect::CopySelectStatus(CViewSelect* pSelect) const
 {
-	pSelect->m_bSelectingLock		= m_bSelectingLock;		/* 選択状態のロック */
 	pSelect->m_selectionSession		= m_selectionSession;
 
 	pSelect->m_sSelectBgn			= m_sSelectBgn;			//範囲選択(原点)
@@ -63,8 +60,7 @@ void CViewSelect::DisableSelectArea( bool bDraw, bool bDrawBracketCursorLine )
 
 	m_sSelectOld = m_sSelect;		//範囲選択(Old)
 	m_sSelect.Clear(-1);
-	m_bSelectingLock	 = false;	// 選択状態のロック
-	(void)m_selectionSession.End();
+	m_selectionSession.Clear();
 
 	if( bDraw ){
 		DrawSelectArea( bDrawBracketCursorLine );
@@ -638,7 +634,7 @@ void CViewSelect::PrintSelectionInfoMsg() const
 		const_cast<CEditView*>(pView)->GetCaret().m_bClearStatus = false;
 		if( IsBoxSelecting() ){
 			GetEditWnd().m_cStatusBar.SendStatusMessage2( L"box selecting" );
-		}else if( m_bSelectingLock ){
+		}else if( IsSelectionLocked() ){
 			GetEditWnd().m_cStatusBar.SendStatusMessage2( L"selecting" );
 		}else{
 			GetEditWnd().m_cStatusBar.SendStatusMessage2( L"" );

@@ -128,9 +128,9 @@ void CViewCommander::Command_SEARCH_NEXT(
 	bFlag1 = false;
 	if( nullptr == pcSelectLogic && m_pCommanderView->GetSelectionInfo().IsTextSelected() ){	/* テキストが選択されているか */
 		/* 矩形範囲選択中でない & 選択状態のロック */
-		if( !m_pCommanderView->GetSelectionInfo().IsBoxSelecting() && m_pCommanderView->GetSelectionInfo().m_bSelectingLock ){
+		if( !m_pCommanderView->GetSelectionInfo().IsBoxSelecting() && m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ){
 			bSelecting = true;
-			bSelectingLock_Old = m_pCommanderView->GetSelectionInfo().m_bSelectingLock;
+			bSelectingLock_Old = m_pCommanderView->GetSelectionInfo().IsSelectionLocked();
 
 			sSelectBgn_Old = m_pCommanderView->GetSelectionInfo().m_sSelectBgn; //範囲選択(原点)
 			sSelect_Old = GetSelect();
@@ -230,7 +230,7 @@ re_do:;
 		if( bSelecting ){
 			/* 現在のカーソル位置によって選択範囲を変更 */
 			m_pCommanderView->GetSelectionInfo().ChangeSelectAreaByCurrentCursor( sRangeA.GetTo() );
-			m_pCommanderView->GetSelectionInfo().m_bSelectingLock = bSelectingLock_Old;	/* 選択状態のロック */
+			m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock_Old);	/* 選択状態のロック */
 		}else if( nullptr == pcSelectLogic ){
 			/* 選択範囲の変更 */
 			//	2005.06.24 Moca
@@ -255,7 +255,7 @@ re_do:;
 	}
 	else{
 		if( bSelecting ){
-			m_pCommanderView->GetSelectionInfo().m_bSelectingLock = bSelectingLock_Old;	/* 選択状態のロック */
+			m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock_Old);	/* 選択状態のロック */
 
 			/* 選択範囲の変更 */
 			m_pCommanderView->GetSelectionInfo().m_sSelectBgn = sSelectBgn_Old; //範囲選択(原点)
@@ -362,10 +362,10 @@ void CViewCommander::Command_SEARCH_PREV( bool bReDraw, HWND hwndParent )
 		sSelectBgn_Old = m_pCommanderView->GetSelectionInfo().m_sSelectBgn; //範囲選択(原点)
 		sSelect_Old = GetSelect();
 		
-		bSelectingLock_Old = m_pCommanderView->GetSelectionInfo().m_bSelectingLock;
+		bSelectingLock_Old = m_pCommanderView->GetSelectionInfo().IsSelectionLocked();
 
 		/* 矩形範囲選択中か */
-		if( !m_pCommanderView->GetSelectionInfo().IsBoxSelecting() && m_pCommanderView->GetSelectionInfo().m_bSelectingLock ){	/* 選択状態のロック */
+		if( !m_pCommanderView->GetSelectionInfo().IsBoxSelecting() && m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ){	/* 選択状態のロック */
 			bSelecting = true;
 		}
 		else{
@@ -412,7 +412,7 @@ re_do:;							//	hor
 		if( bSelecting ){
 			/* 現在のカーソル位置によって選択範囲を変更 */
 			m_pCommanderView->GetSelectionInfo().ChangeSelectAreaByCurrentCursor( sRangeA.GetFrom() );
-			m_pCommanderView->GetSelectionInfo().m_bSelectingLock = bSelectingLock_Old;	/* 選択状態のロック */
+			m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock_Old);	/* 選択状態のロック */
 		}else{
 			/* 選択範囲の変更 */
 			//	2005.06.24 Moca
@@ -431,7 +431,7 @@ re_do:;							//	hor
 		bFound = TRUE;
 	}else{
 		if( bSelecting ){
-			m_pCommanderView->GetSelectionInfo().m_bSelectingLock = bSelectingLock_Old;	/* 選択状態のロック */
+			m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock_Old);	/* 選択状態のロック */
 			/* 選択範囲の変更 */
 			m_pCommanderView->GetSelectionInfo().m_sSelectBgn = sSelectBgn_Old;
 			GetSelect() = sSelect_Old;
@@ -1566,7 +1566,7 @@ void CViewCommander::Command_BRACKETPAIR( void )
 	if( m_pCommanderView->SearchBracket( GetCaret().GetCaretLayoutPos(), &ptColLine, &mode ) ){	// 02/09/18 ai
 		//	2005.06.24 Moca
 		//	2006.07.09 genta 表示更新漏れ：新規関数にて対応
-		m_pCommanderView->MoveCursorSelecting( ptColLine, m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+		m_pCommanderView->MoveCursorSelecting( ptColLine, m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 	}
 	else{
 		//	失敗した場合は nCol/nLineには有効な値が入っていない.

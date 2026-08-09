@@ -65,6 +65,17 @@ public:
 		(void)m_selectionSession.End();
 	}
 
+	//! 選択状態のロックをpresentation-neutralなsessionへ委譲する。
+	void SetSelectionLocked(bool locked) noexcept
+	{
+		m_selectionSession.SetLocked(locked);
+	}
+
+	[[nodiscard]] bool IsSelectionLocked() const noexcept
+	{
+		return m_selectionSession.IsLocked();
+	}
+
 	//! 矩形選択モードを設定する。
 	void SetBoxSelect(bool b)
 	{
@@ -125,7 +136,7 @@ public:
 	bool IsTextSelecting() const
 	{
 		// ジャンプ回数を減らして、一気に判定。
-		return m_bSelectingLock || IsTextSelected();
+		return IsSelectionLocked() || IsTextSelected();
 	}
 
 	//!マウスで選択中か
@@ -159,8 +170,6 @@ public:
 
 	bool	m_bDrawSelectArea;		// 選択範囲を描画したか	// 02/12/13 ai
 
-	// 選択状態
-	bool	m_bSelectingLock;		// 選択状態のロック
 private:
 	bool	m_bSelectAreaChanging;	// 選択範囲変更中
 	int		m_nLastSelectedByteLen;	// 前回選択時の選択バイト数
