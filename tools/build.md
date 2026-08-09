@@ -222,9 +222,11 @@ scope definition hash、rule catalog hash、および`rule × path × line × co
 新規first-party sourceの違反は0件から開始し、削除は純減、pure renameは同一負債として追跡します。
 scanner/scope/rule catalogのhashがbaselineと異なる場合はfail-closedです。
 
-PR 1A時点のv1 baselineは履歴資料であり、v2の`--strict`比較には使用できません。PR 1Bで、PR 1A
-マージ後のclean exact commitからv2 baselineとappend-only acceptance ledgerを作成してから、
-`--strict`をCI gateへ接続します。`--collect-only`と`--strict`は併用できません。
+v1 baselineは履歴資料であり、v2の`--strict`比較には使用できません。PR 1Bでは
+`1723ccab53e597f3017a65a91da8e13cb5cae66d` のclean exact commitからv2 baselineと
+append-only acceptance ledgerを作成した。baseline commitはGit objectのLFとWindows worktreeの
+CRLFを同じ行内容として対応付けるため、platformごとに既存debtを新規findingへ誤変換しない。
+`--collect-only`と`--strict`は併用できない。
 
 `--accept-current`は通常の収集やCIから使えません。baselineを受理する開発者操作には、clean tree、
 明示したfull HEAD SHA、現在scannerとpath-setの一致、non-CI environment、理由、tracking Issueを要求します。
@@ -238,6 +240,17 @@ py -3 tools/build/sakura_build.py inventory semantic ^
 この操作はold/new baseline SHA、source commit、scanner/scope/rule/path-set hash、rule/file delta、理由、
 Issue番号をbaseline横のimmutable history recordへ書きます。inventory/evidenceは一時ファイルからatomic
 replaceし、同じ入力の通常収集で不要なmtime更新は発生しません。
+
+`.github/workflows/architecture-gates.yml`はPR、`main`/`develop`へのpush、手動実行で常に
+`architecture-gates` jobを生成する。path filterやjob条件を置かないので、documentation-only PRでも
+required checkがpendingのままにはならない。baseline commitのancestor判定とblob比較に必要な履歴を
+checkoutするため、workflowは`fetch-depth: 0`を使う。jobは次の3検証をfail-closedで順に実行する。
+
+```cmd
+py -3 tools/build/sakura_build.py --format json inventory semantic --strict
+py -3 tools/build/sakura_build.py generate --check
+py -3 tools/build/sakura_build.py graph check --all-contexts
+```
 
 台帳はASTや所有権解析の代替ではありません。現在は、`GetDllShareData`/
 `GetEditWnd`/`GetEditDoc`、生の`new`/`delete`、`catch (...)`、Win32型の言及、public mutable/raw pointer
