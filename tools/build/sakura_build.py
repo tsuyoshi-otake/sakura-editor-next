@@ -20,6 +20,8 @@ from sakura_build_lib.coverage_map import (
     coverage_cache_key,
     load_coverage_map,
     load_module_index,
+    merge_coverage_map_partials,
+    plan_coverage_map_shard,
     select_tests,
     sha256_file,
     write_json,
@@ -370,6 +372,20 @@ def parser() -> argparse.ArgumentParser:
     coverage_map_merge.add_argument("--configuration", choices=("Debug", "Release"), default="Debug")
     coverage_map_merge.add_argument("--runner-id", default="tests1")
 
+    coverage_map_merge_partials = coverage_map_commands.add_parser("merge-partials")
+    coverage_map_merge_partials.add_argument("--base-sha", required=True)
+    coverage_map_merge_partials.add_argument("--inventory", type=Path, required=True)
+    coverage_map_merge_partials.add_argument("--partial-map", action="append", required=True, type=Path)
+    coverage_map_merge_partials.add_argument("--output", type=Path, required=True)
+
+    coverage_map_plan = coverage_map_commands.add_parser("plan")
+    coverage_map_plan.add_argument("--inventory", type=Path, required=True)
+    coverage_map_plan.add_argument("--runner-id", default="tests1")
+    coverage_map_plan.add_argument("--shard-index", type=int, required=True)
+    coverage_map_plan.add_argument("--shard-count", type=int, required=True)
+    coverage_map_plan.add_argument("--exclude-selector", action="append", default=[])
+    coverage_map_plan.add_argument("--output", type=Path, required=True)
+
     coverage_map_validate = coverage_map_commands.add_parser("validate")
     coverage_map_validate.add_argument("--map", dest="coverage_map", type=Path, required=True)
     coverage_map_validate.add_argument("--inventory", type=Path, required=True)
@@ -691,6 +707,44 @@ def _run_test_coverage_map(args, repo: Path) -> int:
                 },
                 args.format,
             )
+            return 0
+        if command == "merge-partials":
+            partials = [
+                load_coverage_map(resolve(path), inventory, expected_base_sha=args.base_sha)
+                for path in args.partial_map
+            ]
+            result = merge_coverage_map_partials(
+                partial_maps=partials,
+                inventory=inventory,
+                expected_base_sha=args.base_sha,
+            )
+            destination = resolve(args.output)
+            write_coverage_map(destination, result)
+            output(
+                {
+                    "ok": True,
+                    "output": str(destination),
+                    "base_sha": result["base_sha"],
+                    "cache_key": coverage_cache_key(result["base_sha"], platform=result["platform"]),
+                    "source_count": len(result["source_to_tests"]),
+                    "fragment_count": len(result["fragments"]),
+                    "test_count": result["test_count"],
+                    "inventory_guarantee_fingerprint": result["inventory_guarantee_fingerprint"],
+                },
+                args.format,
+            )
+            return 0
+        if command == "plan":
+            result = plan_coverage_map_shard(
+                inventory=inventory,
+                runner_id=args.runner_id,
+                shard_index=args.shard_index,
+                shard_count=args.shard_count,
+                excluded_selectors=args.exclude_selector,
+            )
+            destination = resolve(args.output)
+            write_json(destination, result)
+            output({"ok": True, "output": str(destination), **result}, args.format)
             return 0
 
         coverage_value = None

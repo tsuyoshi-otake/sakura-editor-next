@@ -17,7 +17,9 @@ from sakura_build_lib.coverage_map import (  # noqa: E402
     build_coverage_map,
     coverage_cache_key,
     load_module_index,
+    merge_coverage_map_partials,
     parse_cobertura_fragment,
+    plan_coverage_map_shard,
     select_tests,
     validate_coverage_map,
 )
@@ -130,10 +132,105 @@ class CoverageMapTests(unittest.TestCase):
             coverage_cache_key(BASE_SHA),
         )
 
+    def test_plans_deterministic_runner_specific_suite_shards(self):
+        with_other_runner = json.loads(json.dumps(self.inventory))
+        with_other_runner["tests"].append(
+            {
+                "test_id": "other:OtherSuite.DoesNotBelongToTests1",
+                "runtime": {"runner_id": "other", "selector": "OtherSuite.DoesNotBelongToTests1"},
+                "status": "enabled",
+            }
+        )
+        with_other_runner["test_count"] = len(with_other_runner["tests"])
+        with_other_runner["guarantee_fingerprint"] = guarantee_fingerprint(with_other_runner["tests"])
+
+        first = plan_coverage_map_shard(
+            inventory=with_other_runner,
+            runner_id="tests1",
+            shard_index=0,
+            shard_count=2,
+            excluded_selectors=("SmokeSuite.*",),
+        )
+        second = plan_coverage_map_shard(
+            inventory=with_other_runner,
+            runner_id="tests1",
+            shard_index=1,
+            shard_count=2,
+            excluded_selectors=("SmokeSuite.*",),
+        )
+        self.assertEqual(2, first["total_suite_count"])
+        self.assertEqual(["BarTest.*"], first["selectors"])
+        self.assertEqual(["FooTest.*"], second["selectors"])
+
+    def test_rejects_invalid_coverage_shard(self):
+        with self.assertRaisesRegex(CoverageMapError, "shard_index"):
+            plan_coverage_map_shard(
+                inventory=self.inventory,
+                runner_id="tests1",
+                shard_index=2,
+                shard_count=2,
+            )
+
+    def test_merges_partial_maps_only_with_matching_provenance(self):
+        bar_xml = self.root / "BarTest.xml"
+        bar_xml.write_text(cobertura(self.root, "sakura_core/foo.hpp"), encoding="utf-8")
+        bar_map = build_coverage_map(
+            base_sha=BASE_SHA,
+            test_binary_sha256=BINARY_SHA,
+            inventory=self.inventory,
+            fragments=(("BarTest.*", bar_xml),),
+            repo_root=self.root,
+        )
+        merged = merge_coverage_map_partials(
+            partial_maps=(self.map, bar_map),
+            inventory=self.inventory,
+            expected_base_sha=BASE_SHA,
+        )
+        self.assertEqual(
+            {
+                "sakura_core/foo.cpp": ["FooTest.*"],
+                "sakura_core/foo.hpp": ["BarTest.*"],
+            },
+            merged["source_to_tests"],
+        )
+        self.assertEqual(2, len(merged["fragments"]))
+
     def test_canonical_cli_merges_and_selects_from_the_same_map(self):
         repository = Path(__file__).resolve().parents[3]
         inventory_path = self.root / "inventory.json"
         inventory_path.write_text(json.dumps(self.inventory), encoding="utf-8")
+        plan_path = self.root / "coverage-plan.json"
+        planned = subprocess.run(
+            [
+                sys.executable,
+                str(repository / "tools/build/sakura_build.py"),
+                "--repo-root",
+                str(repository),
+                "--format",
+                "json",
+                "test",
+                "coverage-map",
+                "plan",
+                "--inventory",
+                str(inventory_path),
+                "--runner-id",
+                "tests1",
+                "--shard-index",
+                "0",
+                "--shard-count",
+                "2",
+                "--exclude-selector",
+                "SmokeSuite.*",
+                "--output",
+                str(plan_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, planned.returncode, planned.stderr)
+        self.assertEqual(2, json.loads(planned.stdout)["total_suite_count"])
+
         binary = self.root / "tests1.exe"
         binary.write_bytes(b"fixture-binary")
         output_map = self.root / "coverage-map.json"
@@ -192,6 +289,67 @@ class CoverageMapTests(unittest.TestCase):
         selected_value = json.loads(selected.stdout)
         self.assertEqual("selected", selected_value["mode"])
         self.assertIn("FooTest.*", selected_value["gtest_filter"])
+
+        bar_xml = self.root / "BarTest.xml"
+        bar_xml.write_text(cobertura(self.root, "sakura_core/foo.hpp"), encoding="utf-8")
+        bar_map = self.root / "bar-coverage-map.json"
+        bar_merged = subprocess.run(
+            [
+                sys.executable,
+                str(repository / "tools/build/sakura_build.py"),
+                "--repo-root",
+                str(repository),
+                "--format",
+                "json",
+                "test",
+                "coverage-map",
+                "merge",
+                "--base-sha",
+                BASE_SHA,
+                "--test-binary",
+                str(binary),
+                "--inventory",
+                str(inventory_path),
+                "--fragment",
+                f"BarTest.*::{bar_xml}",
+                "--output",
+                str(bar_map),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, bar_merged.returncode, bar_merged.stderr)
+
+        merged_partials = self.root / "merged-partials.json"
+        merged_partial_result = subprocess.run(
+            [
+                sys.executable,
+                str(repository / "tools/build/sakura_build.py"),
+                "--repo-root",
+                str(repository),
+                "--format",
+                "json",
+                "test",
+                "coverage-map",
+                "merge-partials",
+                "--base-sha",
+                BASE_SHA,
+                "--inventory",
+                str(inventory_path),
+                "--partial-map",
+                str(output_map),
+                "--partial-map",
+                str(bar_map),
+                "--output",
+                str(merged_partials),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(0, merged_partial_result.returncode, merged_partial_result.stderr)
+        self.assertEqual(2, json.loads(merged_partial_result.stdout)["fragment_count"])
 
     def test_selects_impacted_suite_and_always_adds_smoke(self):
         result = self.decision((ChangedFile("sakura_core/foo.cpp"),))

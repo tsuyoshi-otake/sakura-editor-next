@@ -45,6 +45,12 @@ env:
   VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
   VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
   VCPKG_ROOT: ${{ github.workspace }}\tools\vcpkg
+  # Keep this source-of-truth exclusion list identical for ordinary full CI,
+  # feature-PR selection, and develop coverage-map collection. Hosted runners
+  # are non-interactive, so these UI/external suites are intentionally outside
+  # all three paths.
+  HEADLESS_GTEST_EXCLUDES: MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
+  COVERAGE_MAP_SCHEMA_VERSION: '1'
 
 permissions:
   actions: read
@@ -453,6 +459,12 @@ jobs:
         fetch-depth: 0
         submodules: true
 
+    # Job-level env values cannot reference the workflow env context.  Export
+    # the regular headless filter for every later step; feature-map selection
+    # below may replace only its positive portion.
+    - name: Set default headless test filter
+      run: '"GTEST_FILTER=-$env:HEADLESS_GTEST_EXCLUDES" >> $env:GITHUB_ENV'
+
     ## see https://github.com/microsoft/setup-msbuild
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@v3
@@ -530,6 +542,109 @@ jobs:
         echo "GITHUB_PR_HEAD_COMMIT=${{ github.event.pull_request.head.sha }}" >> $env:GITHUB_ENV
         echo "GITHUB_PR_HEAD_SHORT_COMMIT=$('${{ github.event.pull_request.head.sha }}'.SubString(0, 8))" >> $env:GITHUB_ENV
 
+    # Only same-repository feature branches targeting develop consume a map.
+    # Forks, fix/hotfix/dependabot PRs, develop/main promotion PRs, and every
+    # missing or invalid map retain the regular full headless suite.
+    - name: Restore develop coverage map
+      id: restore-coverage-map
+      if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      uses: actions/cache/restore@v4
+      with:
+        path: .coverage-map-cache
+        key: tia-map-windows-x64-${{ github.event.pull_request.base.sha }}-${{ env.COVERAGE_MAP_SCHEMA_VERSION }}
+
+    - name: Select feature PR tests
+      if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      env:
+        COVERAGE_MAP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        COVERAGE_MAP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        COVERAGE_MAP_CACHE_HIT: ${{ steps.restore-coverage-map.outputs.cache-hit }}
+      run: |
+        $fullFilter = "-$env:HEADLESS_GTEST_EXCLUDES"
+        $decisionPath = Join-Path $env:RUNNER_TEMP "tia-selection-${{ matrix.config }}.json"
+        try {
+          $selectionArguments = @(
+            'tools/build/sakura_build.py', '--format', 'json', 'test', 'coverage-map', 'select',
+            '--map', '.coverage-map-cache/coverage-map.json',
+            '--inventory', 'src/test/test-inventory.json',
+            '--base-sha', $env:COVERAGE_MAP_BASE_SHA,
+            '--modules-json', 'src/main/modules/modules.json',
+            '--smoke-selector', 'CNativeW.*',
+            '--output', $decisionPath
+          )
+          foreach ($selector in ($env:HEADLESS_GTEST_EXCLUDES -split ':')) {
+            $selectionArguments += '--exclude-selector'
+            $selectionArguments += $selector
+          }
+
+          $changes = @(git diff --name-status --find-renames --no-ext-diff $env:COVERAGE_MAP_BASE_SHA $env:COVERAGE_MAP_HEAD_SHA --)
+          if ($LASTEXITCODE -ne 0) {
+            throw "git diff failed with exit code $LASTEXITCODE."
+          }
+          foreach ($change in $changes) {
+            if ([string]::IsNullOrWhiteSpace($change)) {
+              continue
+            }
+            $fields = $change -split "`t"
+            if ($fields.Count -lt 2) {
+              throw "Unexpected git diff --name-status record: $change"
+            }
+            $status = [string]$fields[0]
+            $path = if ($status.StartsWith('R') -or $status.StartsWith('C')) {
+              if ($fields.Count -lt 3) {
+                throw "Unexpected rename/copy record: $change"
+              }
+              [string]$fields[2]
+            } else {
+              [string]$fields[1]
+            }
+            $selectionArguments += '--changed-file'
+            $selectionArguments += "${status}::${path}"
+          }
+
+          & python @selectionArguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "coverage-map selection failed with exit code $LASTEXITCODE."
+          }
+          $decision = Get-Content -LiteralPath $decisionPath -Raw | ConvertFrom-Json
+          $mode = [string]$decision.mode
+          if (@('selected', 'smoke', 'full') -notcontains $mode) {
+            throw "coverage-map returned an unsupported mode: $mode"
+          }
+          $filter = [string]$decision.gtest_filter
+          if ($decision.full_fallback -or [string]::IsNullOrWhiteSpace($filter)) {
+            $filter = $fullFilter
+          }
+        } catch {
+          Write-Warning "Coverage-map selection is unavailable; running the full headless suite. $($_.Exception.Message)"
+          $filter = $fullFilter
+          $decision = [ordered]@{
+            ok = $true
+            mode = 'full'
+            full_fallback = $true
+            reason_codes = @('selection_workflow_error')
+            gtest_filter = ''
+            changed_paths = @()
+            impacted_paths = @()
+            impacted_selectors = @()
+            run_selectors = @()
+            cache_hit = $env:COVERAGE_MAP_CACHE_HIT
+          }
+          $decision | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $decisionPath
+        }
+
+        "GTEST_FILTER=$filter" >> $env:GITHUB_ENV
+        "TIA_SELECTION_MODE=$($decision.mode)" >> $env:GITHUB_ENV
+        "TIA_SELECTION_CACHE_HIT=$env:COVERAGE_MAP_CACHE_HIT" >> $env:GITHUB_ENV
+        Copy-Item -LiteralPath $decisionPath -Destination 'tia-test-selection.json' -Force
+        @(
+          '### Feature PR test selection',
+          '',
+          '```json',
+          ($decision | ConvertTo-Json -Depth 8 -Compress),
+          '```'
+        ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
     - name: Bootstrap vcpkg
       run: |
         if (-not (Test-Path ".\bootstrap-vcpkg.bat" -PathType Leaf)) {
@@ -600,26 +715,87 @@ jobs:
     # The full native suite opens real windows and is not reliable in a
     # non-interactive hosted-runner session. Keep those tests available for
     # interactive validation and run the documented headless suite in CI.
+    #
+    # A coverage map names only tests1 suites.  When a feature PR has a valid
+    # selected/smoke decision, run that target through its narrow filter but
+    # still execute every separately registered component test and pytest with
+    # the normal headless filter.  A positive GTEST_FILTER applied to all of
+    # CTest would otherwise turn those component executables into zero-test
+    # successes.
     - name: Run headless tests
       timeout-minutes: 15
-      env:
-        GTEST_FILTER: >-
-          -MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
-      run: ctest
-        --test-dir build/${{ matrix.platform }}/CMakeTools
-        -C ${{ matrix.config }}
-        --output-on-failure
-        --timeout 600
-        -V
+      run: |
+        $commonArguments = @(
+          '--test-dir', 'build/${{ matrix.platform }}/CMakeTools',
+          '-C', '${{ matrix.config }}',
+          '--output-on-failure',
+          '--timeout', '600',
+          '-V'
+        )
+
+        function Invoke-Ctest {
+          param([string[]]$Arguments)
+
+          & ctest @Arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "ctest failed with exit code $LASTEXITCODE."
+          }
+        }
+
+        if ($env:TIA_SELECTION_MODE -in @('selected', 'smoke')) {
+          Write-Host "Running selected tests1 suites ($env:TIA_SELECTION_MODE mode)."
+          Invoke-Ctest ($commonArguments + @('--tests-regex', '^(CoverageTest|UnitTest)$'))
+
+          # Keep the map's positive filter from suppressing the independent
+          # component-test executables.  They run under the ordinary negative
+          # headless exclusion list, which is the same behavior as full CI.
+          $selectedFilter = $env:GTEST_FILTER
+          try {
+            $env:GTEST_FILTER = "-$env:HEADLESS_GTEST_EXCLUDES"
+            Invoke-Ctest ($commonArguments + @('--exclude-regex', '^(CoverageTest|UnitTest)$'))
+          } finally {
+            $env:GTEST_FILTER = $selectedFilter
+          }
+        } else {
+          Write-Host 'Running the full headless suite.'
+          Invoke-Ctest $commonArguments
+        }
 
     - name: Clean up test process survivors
       if: ${{ always() }}
       run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
+    - name: Upload feature test-selection evidence
+      if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: test-selection-${{ matrix.platform }}-${{ matrix.config }}
+        path: tia-test-selection.json
+        if-no-files-found: warn
+        retention-days: 14
+
     # Lightweight release-only verification; this does not schedule another clean build.
     - name: Verify release build provenance
       if: ${{ matrix.platform == 'x64' && matrix.config == 'Release' }}
       run: .\tools\verify-build-incremental.ps1 -ValidateImportedFiles
+
+    # The PDB is intentionally short-lived and used only by the trusted
+    # develop-push map workflow.  Passing compact partial maps afterwards
+    # avoids transferring hundreds of verbose Cobertura XML reports.
+    - name: Upload coverage-map Debug test bundle
+      if: ${{ success() && matrix.platform == 'x64' && matrix.config == 'Debug' && github.event_name == 'push' && github.ref_name == 'develop' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-map-input
+        path: |
+          x64/Debug/tests1.exe
+          x64/Debug/tests1.pdb
+          x64/Debug/*.dll
+          x64/Debug/*.json
+          x64/Debug/*.ini
+        if-no-files-found: error
+        retention-days: 1
+        compression-level: 0
 
     - name: Upload sonar-input artifact
       if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
@@ -709,3 +885,16 @@ jobs:
       with:
         name: Dev ${{ matrix.platform }} ${{ matrix.config }}
         path: 'sakura-*-Dev.zip'
+
+  coverage-map:
+    name: Build coverage map
+    needs: build
+    # The reusable workflow marks map-only failures non-blocking and publishes
+    # no cache in that case.  Future feature PRs therefore retain the full-suite
+    # fallback until a later successful develop push refreshes the map.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_name == 'develop' && !inputs.release_promotion }}
+    uses: ./.github/workflows/coverage-map.yml
+    with:
+      source_sha: ${{ github.sha }}
+      shard_count: 8
+      headless_excludes: MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*

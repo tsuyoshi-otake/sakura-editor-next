@@ -490,6 +490,134 @@ def build_coverage_map(
     return validate_coverage_map(value, inventory_value)
 
 
+def plan_coverage_map_shard(
+    *,
+    inventory: Mapping[str, Any],
+    runner_id: str,
+    shard_index: int,
+    shard_count: int,
+    excluded_selectors: Sequence[str] = (),
+) -> dict[str, Any]:
+    """Return one deterministic suite-level coverage-map shard.
+
+    A map is collected from one executable at a time.  Splitting its suite
+    selectors across a fixed number of shards makes the expensive coverage
+    collection parallel without changing the selector granularity that a
+    feature PR later executes.
+    """
+
+    if not isinstance(shard_count, int) or isinstance(shard_count, bool) or shard_count < 1:
+        raise CoverageMapError("COVERAGE_SHARD_INVALID", "shard_count must be a positive integer")
+    if (
+        not isinstance(shard_index, int)
+        or isinstance(shard_index, bool)
+        or shard_index < 0
+        or shard_index >= shard_count
+    ):
+        raise CoverageMapError("COVERAGE_SHARD_INVALID", "shard_index must be within shard_count")
+
+    inventory_value = validate_inventory(inventory)
+    normalized_runner = _require_string(runner_id, "runner_id")
+    runner_tests = [
+        item
+        for item in _enabled_tests(inventory_value)
+        if item["runtime"]["runner_id"] == normalized_runner
+    ]
+    if not runner_tests:
+        raise CoverageMapError("COVERAGE_RUNNER_UNKNOWN", f"runner_id has no enabled inventory tests: {normalized_runner}")
+
+    excluded = _validate_selector_set(excluded_selectors, "excluded_selectors", runner_tests)
+    suite_selectors: set[str] = set()
+    for item in runner_tests:
+        selector = item["runtime"]["selector"]
+        suite, separator, test_name = selector.rpartition(".")
+        if not separator or not suite or not test_name:
+            raise CoverageMapError(
+                "COVERAGE_SUITE_INVALID",
+                f"runner {normalized_runner} has a selector without suite/test delimiter: {selector}",
+            )
+        if any(_gtest_pattern_matches(pattern, selector) for pattern in excluded):
+            continue
+        suite_selectors.add(_validate_selector(f"{suite}.*", "suite selector"))
+
+    selectors = sorted(suite_selectors)
+    return {
+        "schema_version": COVERAGE_MAP_SCHEMA_VERSION,
+        "runner_id": normalized_runner,
+        "shard_index": shard_index,
+        "shard_count": shard_count,
+        "total_suite_count": len(selectors),
+        "selectors": selectors[shard_index::shard_count],
+    }
+
+
+def merge_coverage_map_partials(
+    *,
+    partial_maps: Iterable[Mapping[str, Any]],
+    inventory: Mapping[str, Any],
+    expected_base_sha: str,
+) -> dict[str, Any]:
+    """Merge independently collected shard maps after checking provenance.
+
+    Each shard validates and parses its Cobertura XML where it was produced.
+    Only its compact, validated partial map crosses the workflow-job boundary.
+    The final map preserves fragment digests as provenance while avoiding a
+    transfer of hundreds of verbose XML reports.
+    """
+
+    inventory_value = validate_inventory(inventory)
+    expected = _require_sha(expected_base_sha, "expected_base_sha", _BASE_SHA_PATTERN)
+    values = [validate_coverage_map(value, inventory_value) for value in partial_maps]
+    if not values:
+        raise CoverageMapError("COVERAGE_MAP_PARTIAL_EMPTY", "at least one partial coverage map is required")
+
+    reference = values[0]
+    provenance_fields = (
+        "base_sha",
+        "platform",
+        "configuration",
+        "runner_id",
+        "test_binary_sha256",
+        "inventory_guarantee_fingerprint",
+        "test_count",
+    )
+    if reference["base_sha"] != expected:
+        raise CoverageMapError("COVERAGE_MAP_BASE_SHA", "partial coverage map base SHA does not match expected base SHA")
+
+    source_to_tests: dict[str, set[str]] = {}
+    fragments: list[dict[str, str]] = []
+    seen_selectors: set[str] = set()
+    for index, partial in enumerate(values):
+        for field in provenance_fields:
+            if partial[field] != reference[field]:
+                raise CoverageMapError(
+                    "COVERAGE_MAP_PARTIAL_PROVENANCE",
+                    f"partial coverage map {index} disagrees on {field}",
+                )
+        for selector in (fragment["selector"] for fragment in partial["fragments"]):
+            if selector in seen_selectors:
+                raise CoverageMapError(
+                    "COVERAGE_MAP_PARTIAL_DUPLICATE",
+                    f"coverage suite appears in multiple partial maps: {selector}",
+                )
+            seen_selectors.add(selector)
+        fragments.extend(partial["fragments"])
+        for path, selectors in partial["source_to_tests"].items():
+            source_to_tests.setdefault(path, set()).update(selectors)
+
+    return validate_coverage_map(
+        {
+            "schema_version": COVERAGE_MAP_SCHEMA_VERSION,
+            **{field: reference[field] for field in provenance_fields},
+            "source_to_tests": {
+                path: sorted(selectors) for path, selectors in sorted(source_to_tests.items())
+            },
+            "fragments": fragments,
+        },
+        inventory_value,
+    )
+
+
 def _path_matches_pattern(path: str, pattern: str) -> bool:
     if fnmatch.fnmatchcase(path, pattern):
         return True

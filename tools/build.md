@@ -470,6 +470,27 @@ py -3 tools/build/sakura_build.py --format json test coverage-map select ^
   --smoke-selector RequestService.CancellationIsTerminalBeforeTransport
 ```
 
+スイート単位の収集を複数 runner に分割する場合は、同じ inventory・runner・除外 selector
+から `plan` を作ります。各 shard は通常の `merge` で小さな partial map を作り、最後に
+`merge-partials` で provenance が一致するものだけを統合します。巨大な Cobertura XML を
+job 間で渡してはいけません。
+
+```cmd
+py -3 tools/build/sakura_build.py --format json test coverage-map plan ^
+  --inventory src/test/test-inventory.json ^
+  --runner-id tests1 ^
+  --shard-index 0 --shard-count 8 ^
+  --exclude-selector MacroMgrTest.* ^
+  --output coverage/plan-0.json
+
+py -3 tools/build/sakura_build.py --format json test coverage-map merge-partials ^
+  --base-sha <develop-sha> ^
+  --inventory src/test/test-inventory.json ^
+  --partial-map coverage/partial-0.json ^
+  --partial-map coverage/partial-1.json ^
+  --output coverage/coverage-map.json
+```
+
 `select` の `mode` は `selected`、`smoke`、`full` のいずれかです。マップ不在・SHA／inventory
 不一致・Cobertura に存在しない production file・削除／rename・CMake/MSBuild/vcpkg/modules/
 test-runner/PCH の変更・選択テストが全体の 65% 以上、または smoke selector の不整合は、
@@ -479,9 +500,21 @@ test-runner/PCH の変更・選択テストが全体の 65% 以上、または s
 
 `modules.json` の source/header/include root は module 単位の展開に使われるため、header や
 inline/template の変更も同じ module の coverage suite を選べます。modules の所有範囲に
-入らない production file は安全側に全件へフォールバックします。ワークフローへの組み込み
-（required check、cache、develop push の map 生成）は #43 の CI/CD topology 側で行い、
-この CLI はローカル再現と Actions step の判定を同じ実装に揃えるためのものです。
+入らない production file は安全側に全件へフォールバックします。
+
+Actions では `build-sakura.yml` が full Debug/Release 成功後の trusted `develop` push だけで
+`coverage-map.yml` を呼びます。Debug の `tests1.exe` と PDB は retention 1 日の入力 artifact
+として渡し、8 shard が XML を各 runner 内で検証して compact partial map だけを集約します。
+最終 map は正確な develop SHA を含む cache key で保存されます。map 作成は required check では
+なく、失敗時には cache を保存しません。
+
+同一リポジトリの `feature/*` → `develop` PR はその PR の `base.sha` と完全一致する map だけを
+restore し、selector の結果と `CNativeW.*` の smoke を `tests1` の `GTEST_FILTER` に渡します。
+coverage map は `tests1` 専用なので、別々に CTest へ登録された component test executable と
+pytest は、この選択時にも従来の full headless filter で必ず実行します。map 不在・provenance
+不一致・不明な差分・選択器の例外は、従来の full headless suite へ戻ります。fork、`fix/*`、
+`hotfix/*`、Dependabot、`develop` → `main` は常に full suite です。したがって map は高速化の
+ためのヒントであり、テスト0件の成功や cache 書き込み権限を与えるものではありません。
 
 ### デバッグ方法
 
