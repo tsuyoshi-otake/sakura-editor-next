@@ -137,10 +137,16 @@ def _rule_catalog_definition() -> list[dict[str, object]]:
     ]
 
 
+def _normalise_line_endings(data: bytes) -> bytes:
+    """Canonicalise checkout-specific line endings without changing source content."""
+
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def _scanner_version() -> str:
     """Make scanner implementation changes fail closed against an old baseline."""
 
-    return _sha256(Path(__file__).read_bytes())
+    return _sha256(_normalise_line_endings(Path(__file__).read_bytes()))
 
 
 def _decode_source(data: bytes) -> str:
@@ -695,8 +701,11 @@ def _git_blob_texts(root: Path, commit: str, paths: Sequence[str]) -> dict[str, 
 def _unchanged_line_map(before: str, after: str) -> dict[int, int]:
     """Map unchanged baseline lines to current lines without treating insertions as debt moves."""
 
-    before_lines = before.splitlines(keepends=True)
-    after_lines = after.splitlines(keepends=True)
+    # Git object contents use LF, while a Windows worktree can use CRLF for the
+    # same tracked source.  Line terminators are not semantic source changes and
+    # must not turn every existing finding into a new one.
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
     mapping: dict[int, int] = {}
     matcher = SequenceMatcher(a=before_lines, b=after_lines, autojunk=False)
     for tag, before_start, before_end, after_start, _after_end in matcher.get_opcodes():

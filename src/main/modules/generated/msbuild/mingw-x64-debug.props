@@ -4,7 +4,7 @@
   <PropertyGroup>
     <SakuraModulesSchemaVersion>3</SakuraModulesSchemaVersion>
     <SakuraModulesGeneratorVersion>0.3.6</SakuraModulesGeneratorVersion>
-    <SakuraSemanticGraphHash>sha256:b76520ba9ad8e06d6f0e118ac5ba98b0c4eba36fad1359019f3f0349965cbf4d</SakuraSemanticGraphHash>
+    <SakuraSemanticGraphHash>sha256:9ef3259c79545816cda5e98a7717e245cb7e117af611ad4cf72d0a17c753403e</SakuraSemanticGraphHash>
     <SakuraBuildContextId>mingw-x64-debug</SakuraBuildContextId>
   </PropertyGroup>
 </Project>

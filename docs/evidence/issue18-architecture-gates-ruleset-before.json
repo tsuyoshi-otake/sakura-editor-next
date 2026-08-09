@@ -1,0 +1,89 @@
+{
+  "id": 20587143,
+  "name": "Protect develop integration",
+  "target": "branch",
+  "source_type": "Repository",
+  "source": "tsuyoshi-otake/sakura-editor-next",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": [
+        "refs/heads/develop"
+      ]
+    }
+  },
+  "rules": [
+    {
+      "type": "deletion"
+    },
+    {
+      "type": "non_fast_forward"
+    },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "required_reviewers": [],
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false,
+        "allowed_merge_methods": [
+          "squash",
+          "merge"
+        ]
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": false,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          {
+            "context": "check-encoding",
+            "integration_id": 15368
+          },
+          {
+            "context": "MSBuild (Debug, x64)",
+            "integration_id": 15368
+          },
+          {
+            "context": "MSBuild (Release, x64)",
+            "integration_id": 15368
+          },
+          {
+            "context": "Test extension host",
+            "integration_id": 15368
+          },
+          {
+            "context": "cppcheck (x64, Release)",
+            "integration_id": 15368
+          },
+          {
+            "context": "doxygen (x64, Release)",
+            "integration_id": 15368
+          },
+          {
+            "context": "Validate PR target",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ],
+  "node_id": "RRS_lACqUmVwb3NpdG9yec5Ocur8zgE6Ioc",
+  "created_at": "2026-08-08T23:22:04.637+09:00",
+  "updated_at": "2026-08-09T03:44:24.524+09:00",
+  "bypass_actors": [],
+  "current_user_can_bypass": "never",
+  "_links": {
+    "self": {
+      "href": "https://api.github.com/repos/tsuyoshi-otake/sakura-editor-next/rulesets/20587143"
+    },
+    "html": {
+      "href": "https://github.com/tsuyoshi-otake/sakura-editor-next/rules/20587143"
+    }
+  }
+}

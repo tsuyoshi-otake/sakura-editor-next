@@ -15,6 +15,8 @@ if str(TOOLS_BUILD) not in sys.path:
 
 from sakura_build_lib.runner import BuildError  # noqa: E402
 from sakura_build_lib.semantic_inventory import (  # noqa: E402
+    _normalise_line_endings,
+    _unchanged_line_map,
     accept_semantic_inventory,
     collect_semantic_inventory,
     compare_semantic_inventory,
@@ -116,6 +118,18 @@ void f() {
             inventory = collect_semantic_inventory(root)
             self.assertEqual(set(), _finding_paths(inventory))
 
+    def test_line_mapping_is_independent_of_windows_line_endings(self) -> None:
+        self.assertEqual(
+            {1: 1, 2: 2, 3: 3},
+            _unchanged_line_map("first\nsecond\nthird\n", "first\r\nsecond\r\nthird\r\n"),
+        )
+
+    def test_scanner_version_input_is_independent_of_checkout_line_endings(self) -> None:
+        self.assertEqual(
+            b"first\nsecond\nthird\n",
+            _normalise_line_endings(b"first\r\nsecond\nthird\r"),
+        )
+
     def test_file_a_minus_one_and_file_b_plus_one_still_fails(self) -> None:
         temporary, root = self._temporary_repo(
             {"sakura_core/a.cpp": "void A() { GetDllShareData(); }\n"}
@@ -143,6 +157,20 @@ void f() {
             self.assertFalse(comparison["ok"])
             self.assertEqual("sakura_core/new.cpp", comparison["new_findings"][0]["path"])
             self.assertEqual("global.get_edit_doc", comparison["new_findings"][0]["rule_id"])
+
+    def test_new_source_violation_succeeds_after_removal(self) -> None:
+        temporary, root = self._temporary_repo()
+        with temporary:
+            baseline = collect_semantic_inventory(root)
+            _write(root, "sakura_core/new.cpp", "void NewFile() { GetEditDoc(); }\n")
+            _commit(root, "add violating source")
+            self.assertFalse(compare_semantic_inventory(collect_semantic_inventory(root), baseline, repo_root=root)["ok"])
+
+            _write(root, "sakura_core/new.cpp", "void NewFile() {}\n")
+            _commit(root, "remove violating source")
+            comparison = compare_semantic_inventory(collect_semantic_inventory(root), baseline, repo_root=root)
+            self.assertTrue(comparison["ok"])
+            self.assertEqual([], comparison["new_findings"])
 
     def test_renaming_a_file_does_not_erase_existing_debt(self) -> None:
         temporary, root = self._temporary_repo(

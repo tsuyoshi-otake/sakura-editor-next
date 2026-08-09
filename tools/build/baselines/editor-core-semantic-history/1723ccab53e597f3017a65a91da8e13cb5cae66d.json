@@ -1,0 +1,16 @@
+{
+  "accepted_reason": "Establish the reviewed tracked first-party schema v2 semantic baseline after CRLF-safe line matching.",
+  "history_kind": "editor-core-semantic-baseline-acceptance",
+  "new_baseline_sha256": "sha256:3f87e1bc6a9de27d9debfd3f55d1efa866fddd26de70b32eef6fae6749f237b5",
+  "per_file_delta": {},
+  "per_rule_delta": {},
+  "previous_baseline_sha256": "sha256:72f9e42e0e340bd5f7f645176804b0742172c9374f2c0d31b7d5fd6d40f46ad5",
+  "rule_catalog_sha256": "sha256:477cf5526c3955aa7bde1fe5f797448ad5ce0fc5688730f4aecadb86bc2246ed",
+  "scanner_version": "sha256:df148aa51c3495ca5d112d9a5c2cb53748afd4b605679815708e57bb3d0eb8ff",
+  "schema_version": 1,
+  "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
+  "source_commit": "1723ccab53e597f3017a65a91da8e13cb5cae66d",
+  "source_fingerprint": "sha256:88b8437d96ff4afa7e80db6d658cdc0c14471661cfe632bdd70393b84d706270",
+  "tracked_source_set_sha256": "sha256:ed36777bf3dd107195e5e1a33bc929032fa1630c881fc60c246ce27118c9da5a",
+  "tracking_issue": 18
+}
