@@ -22,6 +22,7 @@ import re
 import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any, Iterable, Mapping, Sequence
 
@@ -281,23 +282,40 @@ def _matching_tests(selector: str, tests: Sequence[Mapping[str, Any]]) -> set[st
     }
 
 
-def _gtest_pattern_matches(pattern: str, value: str) -> bool:
-    """Match Google's ``*``/``?`` filter syntax without fnmatch character classes."""
-
+@lru_cache(maxsize=1024)
+def _compile_gtest_pattern(pattern: str) -> re.Pattern[str]:
     expression = "".join(
         ".*" if character == "*" else "." if character == "?" else re.escape(character)
         for character in pattern
     )
-    return re.fullmatch(expression, value) is not None
+    return re.compile(expression)
 
 
-def _validate_selector_set(selectors: Iterable[Any], label: str, tests: Sequence[Mapping[str, Any]] | None = None) -> list[str]:
+def _gtest_pattern_matches(pattern: str, value: str) -> bool:
+    """Match Google's ``*``/``?`` filter syntax without fnmatch character classes."""
+
+    return _compile_gtest_pattern(pattern).fullmatch(value) is not None
+
+
+def _validate_selector_set(
+    selectors: Iterable[Any],
+    label: str,
+    tests: Sequence[Mapping[str, Any]] | None = None,
+    selector_match_cache: dict[str, bool] | None = None,
+) -> list[str]:
     if not isinstance(selectors, (list, tuple, set)):
         raise CoverageMapError("COVERAGE_MAP_TYPE", f"{label}: expected an array")
     result = sorted({_validate_selector(value, f"{label}[]") for value in selectors})
     if tests is not None:
         for selector in result:
-            if not _matching_tests(selector, tests):
+            if selector_match_cache is None:
+                matches_inventory = bool(_matching_tests(selector, tests))
+            else:
+                matches_inventory = selector_match_cache.get(selector)
+                if matches_inventory is None:
+                    matches_inventory = bool(_matching_tests(selector, tests))
+                    selector_match_cache[selector] = matches_inventory
+            if not matches_inventory:
                 raise CoverageMapError("COVERAGE_SELECTOR_UNKNOWN", f"{label}: selector matches no enabled inventory test: {selector}")
     return result
 
@@ -385,11 +403,24 @@ def validate_coverage_map(value: Any, inventory: Mapping[str, Any] | None = None
         if inventory_value["test_count"] != test_count:
             raise CoverageMapError("COVERAGE_MAP_INVENTORY", "coverage map test_count is stale")
         enabled = _enabled_tests(inventory_value)
+        # A coverage map can contain many source paths that refer to the same
+        # suite selector.  Validate each unique selector once rather than
+        # repeatedly scanning the full inventory for every source-path entry.
+        selector_match_cache: dict[str, bool] = {}
         for path, selectors in map_entries.items():
-            _validate_selector_set(selectors, f"source_to_tests[{path}]", enabled)
+            _validate_selector_set(
+                selectors,
+                f"source_to_tests[{path}]",
+                enabled,
+                selector_match_cache,
+            )
         for index, item in enumerate(fragments):
-            if not _matching_tests(item["selector"], enabled):
-                raise CoverageMapError("COVERAGE_SELECTOR_UNKNOWN", f"fragments[{index}].selector matches no enabled inventory test")
+            _validate_selector_set(
+                (item["selector"],),
+                f"fragments[{index}].selector",
+                enabled,
+                selector_match_cache,
+            )
     return validated
 
 
