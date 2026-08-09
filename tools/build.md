@@ -202,22 +202,48 @@ RC inputの観測がresource table/ID互換であること、vcpkg targetの実�
 ### Editor Core意味的負債台帳
 
 Issue #18のR0/R1ゲートは、ビルド依存グラフとは別に、Editor Coreの意味的な結合を
-再現可能なソース観測として記録します。canonical CLIから次を実行します。
+再現可能なソース観測として記録します。schema v2では、入力集合をファイルシステム走査から
+切り離し、`git ls-files --stage -z`のstage 0 regular fileだけで構成します。gitlink（submodule）、
+`externals/`、生成されたmodule projection、vcpkg worktree/local registry、未追跡ファイルは
+入力にしません。source/config/testのpath categoryごとに明示したruleだけを適用します。
+
+PR 1Aではbaselineを更新せず、まず次でv2の観測だけを出力します。
 
 ```cmd
 py -3 tools/build/sakura_build.py inventory semantic ^
-  --baseline tools/build/baselines/editor-core-semantic.json ^
-  --output build/evidence/r0/editor-core-semantic.json --strict
+  --collect-only ^
+  --output build/evidence/r0/editor-core-semantic-v2.json
 ```
 
-`--strict`の終了コードは、baselineのスキーマ不一致・読み取り失敗が2、ラチェット対象の
-増加が11、成功が0です。`--accept-current`は、レビュー済みの基準更新時だけ使用します。
-baselineはソース相対パスと内容から決定的なfingerprintを作り、出力は一時ファイルから
-atomic replaceします。同じ入力で再実行しても不要なmtime更新は発生しません。
+v2 inventoryはexact `source_commit`、scanner implementation hash、tracked source path-set hash、
+scope definition hash、rule catalog hash、および`rule × path × line × column`のfindingを保存します。
+比較時はbaseline commitからのrenameと不変行を追跡するため、別fileへの負債移動では相殺できません。
+変更済みfileの既存負債は増加不可で、既存findingを持つ変更fileは少なくとも1件を減らす必要があります。
+新規first-party sourceの違反は0件から開始し、削除は純減、pure renameは同一負債として追跡します。
+scanner/scope/rule catalogのhashがbaselineと異なる場合はfail-closedです。
+
+PR 1A時点のv1 baselineは履歴資料であり、v2の`--strict`比較には使用できません。PR 1Bで、PR 1A
+マージ後のclean exact commitからv2 baselineとappend-only acceptance ledgerを作成してから、
+`--strict`をCI gateへ接続します。`--collect-only`と`--strict`は併用できません。
+
+`--accept-current`は通常の収集やCIから使えません。baselineを受理する開発者操作には、clean tree、
+明示したfull HEAD SHA、現在scannerとpath-setの一致、non-CI environment、理由、tracking Issueを要求します。
+
+```cmd
+py -3 tools/build/sakura_build.py inventory semantic ^
+  --accept-current --source-commit <40-character-HEAD-SHA> ^
+  --reason "Reviewed v2 baseline acceptance" --tracking-issue 18
+```
+
+この操作はold/new baseline SHA、source commit、scanner/scope/rule/path-set hash、rule/file delta、理由、
+Issue番号をbaseline横のimmutable history recordへ書きます。inventory/evidenceは一時ファイルからatomic
+replaceし、同じ入力の通常収集で不要なmtime更新は発生しません。
 
 台帳はASTや所有権解析の代替ではありません。現在は、`GetDllShareData`/
-`GetEditWnd`/`GetEditDoc`、生の`new`/`delete`、`catch (...)`、Win32型の言及、private
-include、tests1全体リンク・filtered testのヒントを明示的なラチェット対象にしています。
+`GetEditWnd`/`GetEditDoc`、生の`new`/`delete`、`catch (...)`、Win32型の言及、public mutable/raw pointer
+state、private include、stop不能resource acquisition、test publicization、tests1全体リンク・filtered testの
+ヒントを明示的なラチェット対象にしています。C++ codeの検出前にはcomment、ordinary/raw string、character
+literalをmaskするため、それらに現れたpatternはfindingになりません。
 source file/line/include数とCEditWnd/CEditView/CEditDoc/CEditApp/DLLSHAREDATAのhotspotは
 診断情報です。R2以降のSelection/CaretまたはWorking Copyの縦切りでは、台帳を更新してから
 型付きport、ライフサイクル、テストの独立性を別ゲートで証明します。
