@@ -15,6 +15,7 @@ if str(TOOLS_BUILD) not in sys.path:
 
 from sakura_build_lib.runner import BuildError  # noqa: E402
 from sakura_build_lib.semantic_inventory import (  # noqa: E402
+    _normalise_line_endings,
     _unchanged_line_map,
     accept_semantic_inventory,
     collect_semantic_inventory,
@@ -121,6 +122,12 @@ void f() {
         self.assertEqual(
             {1: 1, 2: 2, 3: 3},
             _unchanged_line_map("first\nsecond\nthird\n", "first\r\nsecond\r\nthird\r\n"),
+        )
+
+    def test_scanner_version_input_is_independent_of_checkout_line_endings(self) -> None:
+        self.assertEqual(
+            b"first\nsecond\nthird\n",
+            _normalise_line_endings(b"first\r\nsecond\nthird\r"),
         )
 
     def test_file_a_minus_one_and_file_b_plus_one_still_fails(self) -> None:

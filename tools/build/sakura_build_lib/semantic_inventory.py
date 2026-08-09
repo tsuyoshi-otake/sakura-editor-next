@@ -137,10 +137,16 @@ def _rule_catalog_definition() -> list[dict[str, object]]:
     ]
 
 
+def _normalise_line_endings(data: bytes) -> bytes:
+    """Canonicalise checkout-specific line endings without changing source content."""
+
+    return data.replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+
+
 def _scanner_version() -> str:
     """Make scanner implementation changes fail closed against an old baseline."""
 
-    return _sha256(Path(__file__).read_bytes())
+    return _sha256(_normalise_line_endings(Path(__file__).read_bytes()))
 
 
 def _decode_source(data: bytes) -> str:
