@@ -91,7 +91,7 @@ _CODE_PATTERNS = (
 )
 _LEGACY_SELECTION_RANGE_DIRECT_ACCESS_RE = re.compile(
     r"\bm_sSelect(?:Bgn|Old)?\b"
-    r"|\bCLayoutRange\s*&\s*GetSelect\s*\("
+    r"|(?<!const\s)\bCLayoutRange\s*&\s*GetSelect\s*\("
     r"|\bGetSelect\s*\(\s*\)\s*(?:=|\.Set(?:From|To|ToX)?\s*\(|\.Clear\s*\(|\.Get(?:From|To)Pointer\s*\()"
 )
 _PRIVATE_INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]*/(?:platform|window|view|doc)/[^>\"]+)[>\"]")

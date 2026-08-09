@@ -135,7 +135,15 @@ void f() {
                 "sakura_core/cmd/CViewCommander_Select.cpp": (
                     "void Select() { m_sSelect.SetTo(point); GetSelect().Clear(-1); }\n"
                 ),
-                "sakura_core/cmd/CViewCommander.h": "class CViewCommander { public: CLayoutRange& GetSelect(); };\n",
+                "sakura_core/cmd/CViewCommander.h": (
+                    "class CViewCommander {\n"
+                    "public:\n"
+                    "    CLayoutRange& GetSelect();\n"
+                    "};\n"
+                ),
+                "sakura_core/cmd/CViewCommander_inline.h": (
+                    "inline const CLayoutRange& CViewCommander::GetSelect() const { return range; }\n"
+                ),
                 "sakura_core/view/CViewSelect.cpp": "void Select() { m_sSelect.SetTo(point); }\n",
             }
         )
@@ -144,7 +152,7 @@ void f() {
             self.assertEqual(
                 {
                     ("state.legacy_selection_range_direct_access", "sakura_core/cmd/CViewCommander_Select.cpp", 1),
-                    ("state.legacy_selection_range_direct_access", "sakura_core/cmd/CViewCommander.h", 1),
+                    ("state.legacy_selection_range_direct_access", "sakura_core/cmd/CViewCommander.h", 3),
                 },
                 _finding_paths(inventory),
             )
