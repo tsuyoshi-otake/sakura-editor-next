@@ -87810,7 +87810,7 @@
     }
   ],
   "rule_catalog_sha256": "sha256:809a929b94fb83874705d06cfecb1a7e02a1516ad29aa371df6cd708779ec9e6",
-  "scanner_version": "sha256:57b84df94045d377900097d96c96035bf175dfb06863e356420f6dce3b900ac7",
+  "scanner_version": "sha256:14828bc382f131c74e864e55043b72d7425a5744682b50c3c422d8ce38621c32",
   "schema_version": 2,
   "scope": [
     "sakura_core",
@@ -87875,7 +87875,7 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "4cb8a1fcc6eaf77f2b4ffd700916f7b2dd711f1b",
+  "source_commit": "52e5ee1358ebd93e57e1aaaf199cb485105051c7",
   "source_fingerprint": "sha256:fae266e66b8bf225ff12351662f61f530013510974205244f4f22bdb8bb1ea98",
   "tracked_source_paths": [
     ".github/dependabot.yml",
