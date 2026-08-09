@@ -61,6 +61,8 @@ RULE_CATALOG = (
     ("error.catch_all", "code", 1),
     ("boundary.win32_type", "code", 1),
     ("state.public_mutable_field", "code", 1),
+    ("state.legacy_selection_lock_direct_access", "code", 1),
+    ("state.legacy_selection_range_direct_access", "code", 1),
     ("state.mutable_member", "code", 1),
     ("state.raw_pointer_member", "code", 1),
     ("test.publicization_macro", "code", 1),
@@ -79,12 +81,18 @@ _CODE_PATTERNS = (
     ("memory.raw_delete", re.compile(r"\bdelete(?:\s*\[\s*\])?\s*[A-Za-z_][A-Za-z0-9_]*")),
     ("error.catch_all", re.compile(r"\bcatch\s*\(\s*\.\.\.\s*\)")),
     ("boundary.win32_type", re.compile(r"\b(?:HWND|WPARAM|LPARAM)\b")),
+    ("state.legacy_selection_lock_direct_access", re.compile(r"\bm_bSelectingLock\b")),
     ("state.mutable_member", re.compile(r"\bmutable\b")),
     ("test.publicization_macro", re.compile(r"(?m)^\s*#\s*define\s+(?:private|protected)\s+public\b")),
     (
         "resource.stop_required_acquisition",
         re.compile(r"\b(?:std::(?:j)?thread|CreateThread|CreateProcess(?:W|A)?|SetTimer|Subscribe)\s*(?:<[^>]*>)?\s*\("),
     ),
+)
+_LEGACY_SELECTION_RANGE_DIRECT_ACCESS_RE = re.compile(
+    r"\bm_sSelect(?:Bgn|Old)?\b"
+    r"|(?<!const\s)\bCLayoutRange\s*&\s*GetSelect\s*\("
+    r"|\bGetSelect\s*\(\s*\)\s*(?:=|\.Set(?:From|To|ToX)?\s*\(|\.Clear\s*\(|\.Get(?:From|To)Pointer\s*\()"
 )
 _PRIVATE_INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]*/(?:platform|window|view|doc)/[^>\"]+)[>\"]")
 _MONOLITH_LINK_RE = re.compile(r"(?:CollectSakuraObjectsForTests1|SakuraLinkInputsForTests1|sakura_core/.*\.obj)")
@@ -416,6 +424,16 @@ def _cpp_findings(relative: str, text: str) -> list[dict[str, object]]:
         findings.extend(_regex_findings(rule_id, pattern, masked, relative, starts))
     for rule_id, pattern in _CODE_PATTERNS:
         findings.extend(_regex_findings(rule_id, pattern, masked, relative, starts))
+    if relative not in {"sakura_core/view/CViewSelect.cpp", "sakura_core/view/CViewSelect.h"}:
+        findings.extend(
+            _regex_findings(
+                "state.legacy_selection_range_direct_access",
+                _LEGACY_SELECTION_RANGE_DIRECT_ACCESS_RE,
+                masked,
+                relative,
+                starts,
+            )
+        )
     findings.extend(_public_state_findings(masked, relative, starts))
 
     original_lines = text.splitlines(keepends=True)

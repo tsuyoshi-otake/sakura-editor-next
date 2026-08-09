@@ -36,9 +36,9 @@ inline void CViewCommander::SetOpeBlk(COpeBlk* p)
 	GetDocument()->m_cDocEditor.m_pcOpeBlk = p;
 	GetDocument()->m_cDocEditor.m_nOpeBlkRedawCount = 0;
 }
-inline CLayoutRange& CViewCommander::GetSelect()
+inline const CLayoutRange& CViewCommander::GetSelect() const
 {
-	return m_pCommanderView->GetSelectionInfo().m_sSelect;
+	return m_pCommanderView->GetSelectionInfo().GetSelectionRange();
 }
 inline CCaret& CViewCommander::GetCaret()
 {

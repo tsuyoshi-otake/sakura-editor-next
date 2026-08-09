@@ -1590,7 +1590,7 @@ void CEditView::DispTextSelected(
 	int			nCharWidth = GetTextMetrics().GetCharPxWidth();
 	HRGN		hrgnDraw;
 	const CLayout* pcLayout = m_pcEditDoc->m_cLayoutMgr.SearchLineByLayoutY( nLineNum );
-	CLayoutRange& sSelect = GetSelectionInfo().m_sSelect;
+	const CLayoutRange& sSelect = GetSelectionInfo().GetSelectionRange();
 
 	/* 選択範囲内の行かな */
 //	if( IsTextSelected() ){

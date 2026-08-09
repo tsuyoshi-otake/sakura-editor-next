@@ -455,12 +455,12 @@ void CEditView::DeleteData(
 
 	// テキストの存在しないエリアの削除は、選択範囲のキャンセルとカーソル移動のみとする	// 2008.08.05 ryoji
 	if( GetSelectionInfo().IsTextSelected() ){		// テキストが選択されているか
-		if( IsEmptyArea( GetSelectionInfo().m_sSelect.GetFrom(), GetSelectionInfo().m_sSelect.GetTo(), true, GetSelectionInfo().IsBoxSelecting() ) ){
+		if( IsEmptyArea( GetSelectionInfo().GetSelectionRange().GetFrom(), GetSelectionInfo().GetSelectionRange().GetTo(), true, GetSelectionInfo().IsBoxSelecting() ) ){
 			// カーソルを選択範囲の左上に移動
 			GetCaret().MoveCursor(
 				CLayoutPoint(
-					GetSelectionInfo().m_sSelect.GetFrom().GetX2() < GetSelectionInfo().m_sSelect.GetTo().GetX2() ? GetSelectionInfo().m_sSelect.GetFrom().GetX2() : GetSelectionInfo().m_sSelect.GetTo().GetX2(),
-					GetSelectionInfo().m_sSelect.GetFrom().GetY2() < GetSelectionInfo().m_sSelect.GetTo().GetY2() ? GetSelectionInfo().m_sSelect.GetFrom().GetY2() : GetSelectionInfo().m_sSelect.GetTo().GetY2()
+					GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() < GetSelectionInfo().GetSelectionRange().GetTo().GetX2() ? GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() : GetSelectionInfo().GetSelectionRange().GetTo().GetX2(),
+					GetSelectionInfo().GetSelectionRange().GetFrom().GetY2() < GetSelectionInfo().GetSelectionRange().GetTo().GetY2() ? GetSelectionInfo().GetSelectionRange().GetFrom().GetY2() : GetSelectionInfo().GetSelectionRange().GetTo().GetY2()
 				), bRedraw
 			);
 			GetCaret().m_nCaretPosX_Prev = GetCaret().GetCaretLayoutPos().GetX2();
@@ -497,8 +497,8 @@ void CEditView::DeleteData(
 			/* ２点を対角とする矩形を求める */
 			TwoPointToRect(
 				&rcSel,
-				GetSelectionInfo().m_sSelect.GetFrom(),	// 範囲選択開始
-				GetSelectionInfo().m_sSelect.GetTo()		// 範囲選択終了
+				GetSelectionInfo().GetSelectionRange().GetFrom(),	// 範囲選択開始
+				GetSelectionInfo().GetSelectionRange().GetTo()		// 範囲選択終了
 			);
 			/* 現在の選択範囲を非選択状態に戻す */
 			GetSelectionInfo().DisableSelectArea( bRedraw );
@@ -576,7 +576,7 @@ void CEditView::DeleteData(
 		}else{
 			/* データ置換 削除&挿入にも使える */
 			ReplaceData_CEditView(
-				GetSelectionInfo().m_sSelect,
+				GetSelectionInfo().GetSelectionRange(),
 				L"",					/* 挿入するデータ */
 				CLogicInt(0),			/* 挿入するデータの長さ */
 				bRedraw,
@@ -739,7 +739,7 @@ bool CEditView::ReplaceData_CEditView3(
 				//	これをやってしまうと存在しない行をPointして落ちる．
 				if( sDelRange.GetFrom().y < m_pcEditDoc->m_cLayoutMgr.GetLineCount() - 1 && pos >= len){
 					if( sDelRange.GetFrom().y == sDelRange.GetTo().y  ){
-						//	GetSelectionInfo().m_sSelect.GetFrom().y <= GetSelectionInfo().m_sSelect.GetTo().y はチェックしない
+						//	GetSelectionInfo().GetSelectionRange().GetFrom().y <= GetSelectionInfo().GetSelectionRange().GetTo().y はチェックしない
 						CLayoutPoint tmp = sDelRange.GetFrom();
 						tmp.y++;
 						tmp.x = CLayoutInt(0);

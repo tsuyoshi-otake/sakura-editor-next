@@ -4,7 +4,7 @@
   <PropertyGroup>
     <SakuraModulesSchemaVersion>3</SakuraModulesSchemaVersion>
     <SakuraModulesGeneratorVersion>0.3.6</SakuraModulesGeneratorVersion>
-    <SakuraSemanticGraphHash>sha256:9ef3259c79545816cda5e98a7717e245cb7e117af611ad4cf72d0a17c753403e</SakuraSemanticGraphHash>
+    <SakuraSemanticGraphHash>sha256:0a5f717e83a13bf1f69379a2bf272e43947246a9ce2c8c1f755811b9b70eaa92</SakuraSemanticGraphHash>
     <SakuraBuildContextId>msvc-x64-debug</SakuraBuildContextId>
   </PropertyGroup>
 </Project>

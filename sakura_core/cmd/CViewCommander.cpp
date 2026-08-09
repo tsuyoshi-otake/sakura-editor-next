@@ -290,25 +290,25 @@ BOOL CViewCommander::HandleCommand(
 	case F_IME_CHAR:		Command_IME_CHAR( (WORD)lparam1 ); break;					//全角文字入力
 	case F_MOVECURSOR:			Command_MOVECURSOR(CLogicPoint(CLogicInt((int)lparam2), CLogicInt((int)lparam1)), (int)lparam3); break;
 	case F_MOVECURSORLAYOUT:	Command_MOVECURSORLAYOUT(CLayoutPoint(CLayoutInt((int)lparam2), CLayoutInt((int)lparam1)), (int)lparam3); break;
-	case F_UP:				Command_UP( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, bRepeat ); break;				//カーソル上移動
-	case F_DOWN:			Command_DOWN( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, bRepeat ); break;			//カーソル下移動
-	case F_LEFT:			Command_LEFT( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, bRepeat ); break;			//カーソル左移動
-	case F_RIGHT:			Command_RIGHT( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, false, bRepeat ); break;	//カーソル右移動
-	case F_UP2:				Command_UP2( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;						//カーソル上移動(２行づつ)
-	case F_DOWN2:			Command_DOWN2( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;					//カーソル下移動(２行づつ)
-	case F_WORDLEFT:		Command_WORDLEFT( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;				/* 単語の左端に移動 */
-	case F_WORDRIGHT:		Command_WORDRIGHT( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;				/* 単語の右端に移動 */
+	case F_UP:				Command_UP( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), bRepeat ); break;				//カーソル上移動
+	case F_DOWN:			Command_DOWN( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), bRepeat ); break;			//カーソル下移動
+	case F_LEFT:			Command_LEFT( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), bRepeat ); break;			//カーソル左移動
+	case F_RIGHT:			Command_RIGHT( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), false, bRepeat ); break;	//カーソル右移動
+	case F_UP2:				Command_UP2( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;						//カーソル上移動(２行づつ)
+	case F_DOWN2:			Command_DOWN2( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;					//カーソル下移動(２行づつ)
+	case F_WORDLEFT:		Command_WORDLEFT( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;				/* 単語の左端に移動 */
+	case F_WORDRIGHT:		Command_WORDRIGHT( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;				/* 単語の右端に移動 */
 	//	0ct. 29, 2001 genta マクロ向け機能拡張
-	case F_GOLINETOP:		Command_GOLINETOP( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, lparam1  ); break;		//行頭に移動(折り返し単位/改行単位)
-	case F_GOLINEEND:		Command_GOLINEEND( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, 0, lparam1 ); break;		//行末に移動(折り返し単位)
-//	case F_ROLLDOWN:		Command_ROLLDOWN( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;				//スクロールダウン
-//	case F_ROLLUP:			Command_ROLLUP( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;					//スクロールアップ
-	case F_HalfPageUp:		Command_HalfPageUp( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, CLayoutYInt(lparam1) ); break;				//半ページアップ	//Oct. 6, 2000 JEPRO 名称をPC-AT互換機系に変更(ROLL→PAGE) //Oct. 10, 2000 JEPRO 名称変更
-	case F_HalfPageDown:	Command_HalfPageDown( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, CLayoutYInt(lparam1) ); break;			//半ページダウン	//Oct. 6, 2000 JEPRO 名称をPC-AT互換機系に変更(ROLL→PAGE) //Oct. 10, 2000 JEPRO 名称変更
-	case F_1PageUp:			Command_1PageUp( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, CLayoutYInt(lparam1) ); break;					//１ページアップ	//Oct. 10, 2000 JEPRO 従来のページアップを半ページアップと名称変更し１ページアップを追加
-	case F_1PageDown:		Command_1PageDown( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, CLayoutYInt(lparam1) ); break;				//１ページダウン	//Oct. 10, 2000 JEPRO 従来のページダウンを半ページダウンと名称変更し１ページダウンを追加
-	case F_GOFILETOP:		Command_GOFILETOP( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;				//ファイルの先頭に移動
-	case F_GOFILEEND:		Command_GOFILEEND( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;				//ファイルの最後に移動
+	case F_GOLINETOP:		Command_GOLINETOP( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), lparam1  ); break;		//行頭に移動(折り返し単位/改行単位)
+	case F_GOLINEEND:		Command_GOLINEEND( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), 0, lparam1 ); break;		//行末に移動(折り返し単位)
+//	case F_ROLLDOWN:		Command_ROLLDOWN( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;				//スクロールダウン
+//	case F_ROLLUP:			Command_ROLLUP( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;					//スクロールアップ
+	case F_HalfPageUp:		Command_HalfPageUp( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), CLayoutYInt(lparam1) ); break;				//半ページアップ	//Oct. 6, 2000 JEPRO 名称をPC-AT互換機系に変更(ROLL→PAGE) //Oct. 10, 2000 JEPRO 名称変更
+	case F_HalfPageDown:	Command_HalfPageDown( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), CLayoutYInt(lparam1) ); break;			//半ページダウン	//Oct. 6, 2000 JEPRO 名称をPC-AT互換機系に変更(ROLL→PAGE) //Oct. 10, 2000 JEPRO 名称変更
+	case F_1PageUp:			Command_1PageUp( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), CLayoutYInt(lparam1) ); break;					//１ページアップ	//Oct. 10, 2000 JEPRO 従来のページアップを半ページアップと名称変更し１ページアップを追加
+	case F_1PageDown:		Command_1PageDown( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), CLayoutYInt(lparam1) ); break;				//１ページダウン	//Oct. 10, 2000 JEPRO 従来のページダウンを半ページダウンと名称変更し１ページダウンを追加
+	case F_GOFILETOP:		Command_GOFILETOP( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;				//ファイルの先頭に移動
+	case F_GOFILEEND:		Command_GOFILEEND( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;				//ファイルの最後に移動
 	case F_CURLINECENTER:	Command_CURLINECENTER(); break;								/* カーソル行をウィンドウ中央へ */
 	case F_CURLINETOP:		Command_CURLINETOP(); break;								/* カーソル行をウィンドウ上部へ */
 	case F_CURLINEBOTTOM:	Command_CURLINEBOTTOM(); break;								/* カーソル行をウィンドウ下部へ */
@@ -317,8 +317,8 @@ BOOL CViewCommander::HandleCommand(
 	case F_JUMPHIST_SET:	Command_JUMPHIST_SET(); break;								//現在位置を移動履歴に登録
 	case F_WndScrollDown:	Command_WndScrollDown(); break;								//テキストを１行下へスクロール	// 2001/06/20 asa-o
 	case F_WndScrollUp:		Command_WndScrollUp(); break;								//テキストを１行上へスクロール	// 2001/06/20 asa-o
-	case F_GONEXTPARAGRAPH:	Command_GONEXTPARAGRAPH( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;			//次の段落へ進む
-	case F_GOPREVPARAGRAPH:	Command_GOPREVPARAGRAPH( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;			//前の段落へ戻る
+	case F_GONEXTPARAGRAPH:	Command_GONEXTPARAGRAPH( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;			//次の段落へ進む
+	case F_GOPREVPARAGRAPH:	Command_GOPREVPARAGRAPH( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;			//前の段落へ戻る
 	case F_AUTOSCROLL:	Command_AUTOSCROLL(); break;	//オートスクロール
 	case F_WHEELUP:			Command_WHEELUP(lparam1); break;
 	case F_WHEELDOWN:		Command_WHEELDOWN(lparam1); break;
@@ -328,8 +328,8 @@ BOOL CViewCommander::HandleCommand(
 	case F_WHEELPAGEDOWN:	Command_WHEELPAGEDOWN(lparam1); break;
 	case F_WHEELPAGELEFT:	Command_WHEELPAGELEFT(lparam1); break;
 	case F_WHEELPAGERIGHT:	Command_WHEELPAGERIGHT(lparam1); break;
-	case F_MODIFYLINE_NEXT:	Command_MODIFYLINE_NEXT( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;	// 次の変更行へ
-	case F_MODIFYLINE_PREV:	Command_MODIFYLINE_PREV( m_pCommanderView->GetSelectionInfo().m_bSelectingLock ); break;	// 前の変更行へ
+	case F_MODIFYLINE_NEXT:	Command_MODIFYLINE_NEXT( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;	// 次の変更行へ
+	case F_MODIFYLINE_PREV:	Command_MODIFYLINE_PREV( m_pCommanderView->GetSelectionInfo().IsSelectionLocked() ); break;	// 前の変更行へ
 
 	/* 選択系 */
 	case F_SELECTWORD:		Command_SELECTWORD();break;						//現在位置の単語選択

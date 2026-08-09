@@ -41,6 +41,72 @@ public:
 		m_sSelect = sRange;
 	}
 
+	//! 現在の選択範囲を参照する。呼出側は snapshot を作ってから更新操作を呼ぶ。
+	[[nodiscard]] const CLayoutRange& GetSelectionRange() const noexcept
+	{
+		return m_sSelect;
+	}
+
+	//! 現在の選択範囲だけを置換する。原点は維持する。
+	void ReplaceSelectionRange(const CLayoutRange& sRange)
+	{
+		m_sSelect = sRange;
+	}
+
+	void SetSelectionRangeFrom(const CLayoutPoint& point)
+	{
+		m_sSelect.SetFrom(point);
+	}
+
+	void SetSelectionRangeTo(const CLayoutPoint& point)
+	{
+		m_sSelect.SetTo(point);
+	}
+
+	void SetSelectionRangeToX(CLayoutInt x)
+	{
+		m_sSelect.SetToX(x);
+	}
+
+	//! 現在の選択範囲だけを非選択値へ戻す。session 状態は変更しない。
+	void ClearSelectionRange()
+	{
+		m_sSelect.Clear(-1);
+	}
+
+	//! 描画差分用の previous range と現在範囲を同じ更新単位で置換する。
+	void ReplaceSelectionRangeForRedraw(const CLayoutRange& sRange, const CLayoutRange& previousRange)
+	{
+		m_sSelectOld = previousRange;
+		m_sSelect = sRange;
+	}
+
+	//! 選択原点を参照する。呼出側は snapshot を作ってから更新操作を呼ぶ。
+	[[nodiscard]] const CLayoutRange& GetSelectionAnchorRange() const noexcept
+	{
+		return m_sSelectBgn;
+	}
+
+	void SetSelectionAnchorRange(const CLayoutRange& sRange)
+	{
+		m_sSelectBgn = sRange;
+	}
+
+	void SetSelectionAnchorFrom(const CLayoutPoint& point)
+	{
+		m_sSelectBgn.SetFrom(point);
+	}
+
+	void SetSelectionAnchorTo(const CLayoutPoint& point)
+	{
+		m_sSelectBgn.SetTo(point);
+	}
+
+	void ClearSelectionAnchorRange()
+	{
+		m_sSelectBgn.Clear(-1);
+	}
+
 	//!単語選択開始
 	void SelectBeginWord()
 	{
@@ -63,6 +129,17 @@ public:
 	void SelectEnd()
 	{
 		(void)m_selectionSession.End();
+	}
+
+	//! 選択状態のロックをpresentation-neutralなsessionへ委譲する。
+	void SetSelectionLocked(bool locked) noexcept
+	{
+		m_selectionSession.SetLocked(locked);
+	}
+
+	[[nodiscard]] bool IsSelectionLocked() const noexcept
+	{
+		return m_selectionSession.IsLocked();
 	}
 
 	//! 矩形選択モードを設定する。
@@ -125,7 +202,7 @@ public:
 	bool IsTextSelecting() const
 	{
 		// ジャンプ回数を減らして、一気に判定。
-		return m_bSelectingLock || IsTextSelected();
+		return IsSelectionLocked() || IsTextSelected();
 	}
 
 	//!マウスで選択中か
@@ -159,19 +236,19 @@ public:
 
 	bool	m_bDrawSelectArea;		// 選択範囲を描画したか	// 02/12/13 ai
 
-	// 選択状態
-	bool	m_bSelectingLock;		// 選択状態のロック
 private:
 	bool	m_bSelectAreaChanging;	// 選択範囲変更中
 	int		m_nLastSelectedByteLen;	// 前回選択時の選択バイト数
+	CLayoutRange m_sSelectBgn; //範囲選択(原点)
+
+	// 選択範囲を保持するための変数群。外部利用は GetSelectionRange() と
+	// ReplaceSelectionRange()/SetSelectionRange*() を経由し、描画・範囲計算の
+	// 不変条件を CViewSelect が所有する。
+	// これらはすべて折り返し行と、折り返し桁を保持している。
+	CLayoutRange m_sSelect;    //範囲選択
+	CLayoutRange m_sSelectOld; //範囲選択Old。描画差分は CViewSelect だけが所有する。
 
 public:
-	// 選択範囲を保持するための変数群
-	// これらはすべて折り返し行と、折り返し桁を保持している。
-	CLayoutRange m_sSelectBgn; //範囲選択(原点)
-	CLayoutRange m_sSelect;    //範囲選択
-	CLayoutRange m_sSelectOld; //範囲選択Old
-
 	CMyPoint	m_ptMouseRollPosOld;	// マウス範囲選択前回位置(XY座標)
 };
 

@@ -118,6 +118,45 @@ void f() {
             inventory = collect_semantic_inventory(root)
             self.assertEqual(set(), _finding_paths(inventory))
 
+    def test_legacy_selection_lock_direct_access_is_ratcheted(self) -> None:
+        temporary, root = self._temporary_repo(
+            {"sakura_core/view/CViewSelect.cpp": "void Select() { if (m_bSelectingLock) {} }\n"}
+        )
+        with temporary:
+            inventory = collect_semantic_inventory(root)
+            self.assertEqual(
+                {("state.legacy_selection_lock_direct_access", "sakura_core/view/CViewSelect.cpp", 1)},
+                _finding_paths(inventory),
+            )
+
+    def test_legacy_selection_range_direct_access_is_ratcheted(self) -> None:
+        temporary, root = self._temporary_repo(
+            {
+                "sakura_core/cmd/CViewCommander_Select.cpp": (
+                    "void Select() { m_sSelect.SetTo(point); GetSelect().Clear(-1); }\n"
+                ),
+                "sakura_core/cmd/CViewCommander.h": (
+                    "class CViewCommander {\n"
+                    "public:\n"
+                    "    CLayoutRange& GetSelect();\n"
+                    "};\n"
+                ),
+                "sakura_core/cmd/CViewCommander_inline.h": (
+                    "inline const CLayoutRange& CViewCommander::GetSelect() const { return range; }\n"
+                ),
+                "sakura_core/view/CViewSelect.cpp": "void Select() { m_sSelect.SetTo(point); }\n",
+            }
+        )
+        with temporary:
+            inventory = collect_semantic_inventory(root)
+            self.assertEqual(
+                {
+                    ("state.legacy_selection_range_direct_access", "sakura_core/cmd/CViewCommander_Select.cpp", 1),
+                    ("state.legacy_selection_range_direct_access", "sakura_core/cmd/CViewCommander.h", 3),
+                },
+                _finding_paths(inventory),
+            )
+
     def test_line_mapping_is_independent_of_windows_line_endings(self) -> None:
         self.assertEqual(
             {1: 1, 2: 2, 3: 3},

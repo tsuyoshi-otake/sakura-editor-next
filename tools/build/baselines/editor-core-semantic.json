@@ -39217,7 +39217,7 @@
     {
       "column": 29,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 678,
+      "line": 674,
       "path": "sakura_core/view/CViewSelect.cpp",
       "rule_id": "global.get_dll_share_data"
     },
@@ -42213,7 +42213,21 @@
     {
       "column": 8,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 633,
+      "line": 629,
+      "path": "sakura_core/view/CViewSelect.cpp",
+      "rule_id": "global.get_edit_wnd"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
+      "line": 636,
+      "path": "sakura_core/view/CViewSelect.cpp",
+      "rule_id": "global.get_edit_wnd"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
+      "line": 638,
       "path": "sakura_core/view/CViewSelect.cpp",
       "rule_id": "global.get_edit_wnd"
     },
@@ -42225,37 +42239,23 @@
       "rule_id": "global.get_edit_wnd"
     },
     {
-      "column": 4,
-      "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 642,
-      "path": "sakura_core/view/CViewSelect.cpp",
-      "rule_id": "global.get_edit_wnd"
-    },
-    {
-      "column": 4,
-      "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 644,
-      "path": "sakura_core/view/CViewSelect.cpp",
-      "rule_id": "global.get_edit_wnd"
-    },
-    {
       "column": 25,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 679,
+      "line": 675,
       "path": "sakura_core/view/CViewSelect.cpp",
       "rule_id": "global.get_edit_wnd"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 681,
+      "line": 677,
       "path": "sakura_core/view/CViewSelect.cpp",
       "rule_id": "global.get_edit_wnd"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 824,
+      "line": 820,
       "path": "sakura_core/view/CViewSelect.cpp",
       "rule_id": "global.get_edit_wnd"
     },
@@ -43704,7 +43704,7 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:d46747e1f4c54f009924fc759262e9695a5b554088b71fb85837a4510cf465d3",
-      "line": 750,
+      "line": 746,
       "path": "sakura_core/view/CViewSelect.cpp",
       "rule_id": "memory.raw_delete"
     },
@@ -47949,6 +47949,1392 @@
       "line": 58,
       "path": "tools/build/pilots/storage_contract_test.cpp",
       "rule_id": "resource.stop_required_acquisition"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:e5fbab260bf2105f8406a428d314e82733d730b2ba2bcff762251585ef32bd76",
+      "line": 38,
+      "path": "sakura_core/cmd/CViewCommander.h",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 100,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 257,
+      "path": "sakura_core/cmd/CViewCommander_Bookmark.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 159,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 257,
+      "path": "sakura_core/cmd/CViewCommander_Bookmark.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 69,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 261,
+      "path": "sakura_core/cmd/CViewCommander_Bookmark.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 69,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 265,
+      "path": "sakura_core/cmd/CViewCommander_Bookmark.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 364,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 365,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 100,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 365,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 366,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 367,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 372,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 43,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 384,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 43,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 385,
+      "path": "sakura_core/cmd/CViewCommander_Edit.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:7e5e78b459a81305cf37317de281c45fa6f4fdfe2584fc5e7cccb4fc2417dfb8",
+      "line": 46,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 5,
+      "evidence_sha256": "sha256:796b29e23f104202e9e7fdbd7dbb1ff9b24bc847c2d4ee7df3bebd1efadf3aac",
+      "line": 134,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:f5fc2c992201827efedcb7c860dd35af7d214407c2411a964915b350185e6fec",
+      "line": 308,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:d69bac9bd1373d278a089a9b31abf8a8b6c4643c32ee23947469a2d1250d79ae",
+      "line": 309,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:796b29e23f104202e9e7fdbd7dbb1ff9b24bc847c2d4ee7df3bebd1efadf3aac",
+      "line": 391,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:796b29e23f104202e9e7fdbd7dbb1ff9b24bc847c2d4ee7df3bebd1efadf3aac",
+      "line": 528,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 561,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 567,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 48,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 653,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 654,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 104,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 654,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 656,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 43,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 658,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 102,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 658,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 659,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 660,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 662,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 663,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 669,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 789,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 791,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 57,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 793,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 794,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 796,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 841,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 112,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 850,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 921,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 923,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 57,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 925,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 926,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 928,
+      "path": "sakura_core/cmd/CViewCommander_Edit_advanced.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:f5fc2c992201827efedcb7c860dd35af7d214407c2411a964915b350185e6fec",
+      "line": 328,
+      "path": "sakura_core/cmd/CViewCommander_Edit_word_line.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:0804d9a58149282f2a35017052dffe83be6a3200073692fc9798baccb7b7f484",
+      "line": 329,
+      "path": "sakura_core/cmd/CViewCommander_Edit_word_line.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 49,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 824,
+      "path": "sakura_core/cmd/CViewCommander_File.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 135,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 138,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 261,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:fb2706802fbc0d16febb6cfdb3a60e58c82be6d74528654b60ade1ff16ffa329",
+      "line": 262,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:f5fc2c992201827efedcb7c860dd35af7d214407c2411a964915b350185e6fec",
+      "line": 263,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:d69bac9bd1373d278a089a9b31abf8a8b6c4643c32ee23947469a2d1250d79ae",
+      "line": 264,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 57,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 362,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 436,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 4,
+      "evidence_sha256": "sha256:796b29e23f104202e9e7fdbd7dbb1ff9b24bc847c2d4ee7df3bebd1efadf3aac",
+      "line": 437,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 5,
+      "evidence_sha256": "sha256:ccf4f009934fd293f92da5b0a09b199f58e22b5690374f6d7e63306ffaecd133",
+      "line": 601,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 5,
+      "evidence_sha256": "sha256:ccf4f009934fd293f92da5b0a09b199f58e22b5690374f6d7e63306ffaecd133",
+      "line": 606,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 81,
+      "evidence_sha256": "sha256:807c9a9f11937f4005902323761f6cde402ae0552a2623e67e38dd90e3e546b6",
+      "line": 681,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 79,
+      "evidence_sha256": "sha256:807c9a9f11937f4005902323761f6cde402ae0552a2623e67e38dd90e3e546b6",
+      "line": 690,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 6,
+      "evidence_sha256": "sha256:ccf4f009934fd293f92da5b0a09b199f58e22b5690374f6d7e63306ffaecd133",
+      "line": 1176,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 6,
+      "evidence_sha256": "sha256:ccf4f009934fd293f92da5b0a09b199f58e22b5690374f6d7e63306ffaecd133",
+      "line": 1187,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 67,
+      "evidence_sha256": "sha256:807c9a9f11937f4005902323761f6cde402ae0552a2623e67e38dd90e3e546b6",
+      "line": 1299,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 70,
+      "evidence_sha256": "sha256:807c9a9f11937f4005902323761f6cde402ae0552a2623e67e38dd90e3e546b6",
+      "line": 1327,
+      "path": "sakura_core/cmd/CViewCommander_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 136,
+      "path": "sakura_core/cmd/CViewCommander_Select.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 40,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 137,
+      "path": "sakura_core/cmd/CViewCommander_Select.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 46,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 41,
+      "path": "sakura_core/cmd/CViewCommander_inline.h",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 396,
+      "path": "sakura_core/dlg/CDlgFind.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 606,
+      "path": "sakura_core/dlg/CDlgReplace.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 60,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1599,
+      "path": "sakura_core/macro/CMacro.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 60,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1605,
+      "path": "sakura_core/macro/CMacro.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 60,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1611,
+      "path": "sakura_core/macro/CMacro.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 60,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1617,
+      "path": "sakura_core/macro/CMacro.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1399,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1410,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1411,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1498,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1503,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1518,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1898,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1899,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 60,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1975,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 36,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1978,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 77,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1978,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 38,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2023,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 98,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2023,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2028,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 64,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2030,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2034,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2036,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2141,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2142,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2162,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2163,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2206,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2207,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2234,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2237,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2240,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2243,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2247,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2252,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2256,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2259,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2263,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2268,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2313,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2329,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 58,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2643,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2644,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2648,
+      "path": "sakura_core/view/CEditView.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 386,
+      "path": "sakura_core/view/CEditView_Cmdisrch.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 387,
+      "path": "sakura_core/view/CEditView_Cmdisrch.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 392,
+      "path": "sakura_core/view/CEditView_Cmdisrch.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 393,
+      "path": "sakura_core/view/CEditView_Cmdisrch.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 67,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 437,
+      "path": "sakura_core/view/CEditView_Cmdisrch.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 458,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 79,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 458,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 462,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 74,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 462,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 121,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 462,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 170,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 462,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 463,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 74,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 463,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 121,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 463,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 170,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 463,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 500,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 501,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 579,
+      "path": "sakura_core/view/CEditView_Command_New.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 160,
+      "path": "sakura_core/view/CEditView_ExecCmd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 143,
+      "path": "sakura_core/view/CEditView_Ime.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 62,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 144,
+      "path": "sakura_core/view/CEditView_Ime.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 381,
+      "path": "sakura_core/view/CEditView_Ime.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 387,
+      "path": "sakura_core/view/CEditView_Ime.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 44,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 391,
+      "path": "sakura_core/view/CEditView_Ime.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 332,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 59,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 332,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 342,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 61,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 347,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 350,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 370,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 28,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 372,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 70,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 377,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 61,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 379,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 382,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 395,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 398,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 401,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 452,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 63,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 452,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 483,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 484,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 51,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 921,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 118,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1106,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 50,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1116,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 50,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1135,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1530,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1687,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 61,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1687,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 42,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1871,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 42,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1872,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1887,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1890,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 46,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1891,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 57,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1909,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 54,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1910,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1918,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1919,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1976,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 1992,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1993,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2028,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 2038,
+      "path": "sakura_core/view/CEditView_Mouse.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 1593,
+      "path": "sakura_core/view/CEditView_Paint.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 756,
+      "path": "sakura_core/view/CEditView_Scroll.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 76,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 756,
+      "path": "sakura_core/view/CEditView_Scroll.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 757,
+      "path": "sakura_core/view/CEditView_Scroll.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 38,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 758,
+      "path": "sakura_core/view/CEditView_Scroll.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 41,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 760,
+      "path": "sakura_core/view/CEditView_Scroll.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 38,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 761,
+      "path": "sakura_core/view/CEditView_Scroll.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 318,
+      "path": "sakura_core/view/CEditView_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 319,
+      "path": "sakura_core/view/CEditView_Search.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13576,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13578,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13582,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13584,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13588,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13590,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13594,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13596,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13629,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13632,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13635,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:cf9d526bfa1ca5e13a25431fd776fde10a16dcf0294f9aad437b9ff746c95253",
+      "line": 13638,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13641,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13644,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13647,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:552ffbc529dae3775bd34d3205f7ca0dc0446aec701cf16db3293b4f507e64cd",
+      "line": 13650,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "state.legacy_selection_range_direct_access"
     },
     {
       "column": 2,
@@ -68316,42 +69702,35 @@
     {
       "column": 7,
       "evidence_sha256": "sha256:d73b1f40440be32db03d005c03252d6d5b6784267fb0f9376e512cefd5b5ecd7",
-      "line": 160,
-      "path": "sakura_core/view/CViewSelect.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 7,
-      "evidence_sha256": "sha256:6886a31a9a50e367cc86355d8ec56e6494721d3d043a9e6be45bcfb4454f29d7",
-      "line": 163,
-      "path": "sakura_core/view/CViewSelect.h",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 15,
-      "evidence_sha256": "sha256:2304d9dfd116960ee649f271a2bccbe698deb638a852a8ba74b3aedda5cb2b63",
       "line": 171,
       "path": "sakura_core/view/CViewSelect.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
+      "evidence_sha256": "sha256:2304d9dfd116960ee649f271a2bccbe698deb638a852a8ba74b3aedda5cb2b63",
+      "line": 180,
+      "path": "sakura_core/view/CViewSelect.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
       "evidence_sha256": "sha256:81bfa0883aa736d5dc21ec5a6c12649f1efff310697ae64ff7fc1d790a45183a",
-      "line": 172,
+      "line": 181,
       "path": "sakura_core/view/CViewSelect.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:9c1623fae72365e6d439d1b8cb7d3d3f9c459b65b3993180c7bb692a9cc6c194",
-      "line": 173,
+      "line": 182,
       "path": "sakura_core/view/CViewSelect.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 11,
       "evidence_sha256": "sha256:dd514c2a8638492eebb8a87312edaa7cda1a720f2993bf9296ce04b51d22283f",
-      "line": 175,
+      "line": 184,
       "path": "sakura_core/view/CViewSelect.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -85067,13 +86446,6 @@
     {
       "column": 19,
       "evidence_sha256": "sha256:9dde6089082ef62295e7cc25d053a887b5ba55ef0745b60c3945a7dab1cab73c",
-      "line": 60,
-      "path": "tools/build/pilots/selection_contract_test.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 19,
-      "evidence_sha256": "sha256:9dde6089082ef62295e7cc25d053a887b5ba55ef0745b60c3945a7dab1cab73c",
       "line": 71,
       "path": "tools/build/pilots/serialization_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
@@ -86322,7 +87694,7 @@
       }
     },
     "filtered_test_hint_count": 28,
-    "finding_count": 12236,
+    "finding_count": 12432,
     "finding_count_by_rule": {
       "boundary.private_include": 45,
       "boundary.win32_type": 4489,
@@ -86333,8 +87705,9 @@
       "memory.raw_delete": 325,
       "memory.raw_new": 250,
       "resource.stop_required_acquisition": 230,
+      "state.legacy_selection_range_direct_access": 198,
       "state.mutable_member": 132,
-      "state.public_mutable_field": 5175,
+      "state.public_mutable_field": 5173,
       "state.raw_pointer_member": 39,
       "test.filtered_or_skipped": 28,
       "test.monolith_link": 12
@@ -86345,7 +87718,7 @@
     "raw_delete_expression_count": 325,
     "raw_new_expression_count": 250,
     "source_file_count": 1557,
-    "source_line_count": 457931,
+    "source_line_count": 457977,
     "tracked_file_count": 1599,
     "win32_parameter_mention_count": 4489
   },
@@ -86392,6 +87765,16 @@
     },
     {
       "category": "code",
+      "id": "state.legacy_selection_lock_direct_access",
+      "version": 1
+    },
+    {
+      "category": "code",
+      "id": "state.legacy_selection_range_direct_access",
+      "version": 1
+    },
+    {
+      "category": "code",
       "id": "state.mutable_member",
       "version": 1
     },
@@ -86426,8 +87809,8 @@
       "version": 1
     }
   ],
-  "rule_catalog_sha256": "sha256:477cf5526c3955aa7bde1fe5f797448ad5ce0fc5688730f4aecadb86bc2246ed",
-  "scanner_version": "sha256:4430758bf108e5d112e7cc9e877c62306a6f87728f8252bd9c47095ed20fb3fe",
+  "rule_catalog_sha256": "sha256:809a929b94fb83874705d06cfecb1a7e02a1516ad29aa371df6cd708779ec9e6",
+  "scanner_version": "sha256:14828bc382f131c74e864e55043b72d7425a5744682b50c3c422d8ce38621c32",
   "schema_version": 2,
   "scope": [
     "sakura_core",
@@ -86492,8 +87875,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "4c07ae0058273433e65266809a250304208a49a8",
-  "source_fingerprint": "sha256:7298c6ca2e18982b790b08c0e89cf78069fd81ed48d4d698a57895631c5c5aa2",
+  "source_commit": "52e5ee1358ebd93e57e1aaaf199cb485105051c7",
+  "source_fingerprint": "sha256:fae266e66b8bf225ff12351662f61f530013510974205244f4f22bdb8bb1ea98",
   "tracked_source_paths": [
     ".github/dependabot.yml",
     ".github/workflows/architecture-gates.yml",

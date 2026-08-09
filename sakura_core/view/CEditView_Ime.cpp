@@ -140,8 +140,8 @@ LRESULT CEditView::SetReconvertStruct(PRECONVERTSTRING pReconv, bool bDocumentFe
 	int			nSelectedLen;
 	if( GetSelectionInfo().IsTextSelected() ){
 		//テキストが選択されているとき
-		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().m_sSelect.GetFrom(), &ptSelect);
-		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().m_sSelect.GetTo(), &ptSelectTo);
+		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().GetSelectionRange().GetFrom(), &ptSelect);
+		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().GetSelectionRange().GetTo(), &ptSelectTo);
 		
 		// 選択範囲が複数行の時、１ロジック行以内に制限
 		if (ptSelectTo.y != ptSelect.y){
@@ -375,20 +375,23 @@ LRESULT CEditView::SetSelectionFromReonvert(const RECONVERTSTRING* pReconv)
 	dwOffset = pReconv->dwCompStrOffset/sizeof(WCHAR);	//0またはデータ長。バイト単位。→文字単位
 	dwLen    = pReconv->dwCompStrLen;					//0または文字列長。文字単位。
 	
+	CLayoutRange selectionRange(GetSelectionInfo().GetSelectionRange());
+
 	//選択開始の位置を取得
 	m_pcEditDoc->m_cLayoutMgr.LogicToLayout(
 		CLogicPoint(m_nLastReconvIndex + dwOffset, m_nLastReconvLine),
-		GetSelectionInfo().m_sSelect.GetFromPointer()
+		selectionRange.GetFromPointer()
 	);
 
 	//選択終了の位置を取得
 	m_pcEditDoc->m_cLayoutMgr.LogicToLayout(
 		CLogicPoint(m_nLastReconvIndex + dwOffset + dwLen, m_nLastReconvLine),
-		GetSelectionInfo().m_sSelect.GetToPointer()
+		selectionRange.GetToPointer()
 	);
+	GetSelectionInfo().ReplaceSelectionRange(selectionRange);
 
 	// 単語の先頭にカーソルを移動
-	GetCaret().MoveCursor( GetSelectionInfo().m_sSelect.GetFrom(), true );
+	GetCaret().MoveCursor( selectionRange.GetFrom(), true );
 
 	//選択範囲再描画 
 	GetSelectionInfo().DrawSelectArea();

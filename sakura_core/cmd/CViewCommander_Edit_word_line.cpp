@@ -325,8 +325,8 @@ void CViewCommander::Command_DELETE_LINE( void )
 		ErrorBeep();
 		return;
 	}
-	GetSelect().SetFrom(CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2()    ));	//範囲選択開始位置
-	GetSelect().SetTo  (CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2() + 1));	//範囲選択終了位置
+	m_pCommanderView->GetSelectionInfo().SetSelectionRangeFrom(CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2()    ));	//範囲選択開始位置
+	m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo  (CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2() + 1));	//範囲選択終了位置
 
 	CLayoutPoint ptCaretPos_OLD = GetCaret().GetCaretLayoutPos();
 
@@ -395,7 +395,7 @@ void CViewCommander::Command_DUPLICATELINE( void )
 	CLayoutPoint ptCaretPosOld = GetCaret().GetCaretLayoutPos() + CLayoutPoint(0,1);
 
 	//行頭に移動(折り返し単位)
-	Command_GOLINETOP( m_pCommanderView->GetSelectionInfo().m_bSelectingLock, 0x1 /* カーソル位置に関係なく行頭に移動 */ );
+	Command_GOLINETOP( m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), 0x1 /* カーソル位置に関係なく行頭に移動 */ );
 
 	if( !m_pCommanderView->m_bDoing_UndoRedo ){	/* アンドゥ・リドゥの実行中か */
 		/* 操作の追加 */

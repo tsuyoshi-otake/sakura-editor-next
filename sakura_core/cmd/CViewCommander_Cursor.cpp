@@ -911,7 +911,7 @@ void CViewCommander::Command_JUMPHIST_PREV( void )
 			&pt
 		);
 		//	2006.07.09 genta 選択を考慮
-		m_pCommanderView->MoveCursorSelecting( pt, m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+		m_pCommanderView->MoveCursorSelecting( pt, m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 	}
 }
 
@@ -928,7 +928,7 @@ void CViewCommander::Command_JUMPHIST_NEXT( void )
 			&pt
 		);
 		//	2006.07.09 genta 選択を考慮
-		m_pCommanderView->MoveCursorSelecting( pt, m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+		m_pCommanderView->MoveCursorSelecting( pt, m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 	}
 }
 
