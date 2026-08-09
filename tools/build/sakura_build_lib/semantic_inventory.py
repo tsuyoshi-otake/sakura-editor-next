@@ -61,6 +61,7 @@ RULE_CATALOG = (
     ("error.catch_all", "code", 1),
     ("boundary.win32_type", "code", 1),
     ("state.public_mutable_field", "code", 1),
+    ("state.legacy_selection_lock_direct_access", "code", 1),
     ("state.mutable_member", "code", 1),
     ("state.raw_pointer_member", "code", 1),
     ("test.publicization_macro", "code", 1),
@@ -79,6 +80,7 @@ _CODE_PATTERNS = (
     ("memory.raw_delete", re.compile(r"\bdelete(?:\s*\[\s*\])?\s*[A-Za-z_][A-Za-z0-9_]*")),
     ("error.catch_all", re.compile(r"\bcatch\s*\(\s*\.\.\.\s*\)")),
     ("boundary.win32_type", re.compile(r"\b(?:HWND|WPARAM|LPARAM)\b")),
+    ("state.legacy_selection_lock_direct_access", re.compile(r"\bm_bSelectingLock\b")),
     ("state.mutable_member", re.compile(r"\bmutable\b")),
     ("test.publicization_macro", re.compile(r"(?m)^\s*#\s*define\s+(?:private|protected)\s+public\b")),
     (
