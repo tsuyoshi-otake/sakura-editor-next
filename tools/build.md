@@ -16,6 +16,7 @@
     - [ビルドに使用されるバッチファイル](#ビルドに使用されるバッチファイル)
     - [x64 ビルドの増分検証](#x64-ビルドの増分検証)
     - [単体テストの実行](#単体テストの実行)
+    - [カバレッジマップによる影響テスト選択](#カバレッジマップによる影響テスト選択)
     - [デバッグ方法](#デバッグ方法)
     - [アセンブリ一覧の生成](#アセンブリ一覧の生成)
     - [githash.h の更新をスキップ](#githashh-の更新をスキップ)
@@ -441,6 +442,46 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 このフィルターは UI・外部連携を含むテストを省くため、最終確認では必要なテストを別途実行してください。
 
 GitHub-hosted runner は非対話セッションのため、標準 CI でも同じフィルターを環境変数 `GTEST_FILTER` から適用します。CI では CTest と Actions の両方に上限時間を設け、失敗時を含めてリポジトリ配下の `tests1.exe`、`sakura.exe`、および関連するカバレッジプロセスを検査・終了します。完全な UI・連携テストは、対話可能な Windows セッションで別途実行してください。
+
+### カバレッジマップによる影響テスト選択
+
+Issue #47 の feature PR 用選択器は、develop の全件テストから作った OpenCppCoverage
+Cobertura 断片をスイート単位で統合し、変更ファイルを GoogleTest selector へ変換します。
+マップのスキーマは [`tools/build/coverage-map.schema.json`](build/coverage-map.schema.json)
+です。マップには develop の `base_sha`、`tests1.exe` の SHA-256、テスト inventory の
+guarantee fingerprint を保存するため、別の develop 成果物を誤って再利用できません。
+Actions cache は `tia-map-windows-x64-<base-sha>-<schema-version>`（CLI の
+`coverage_cache_key` と同じ形式）を使い、base SHA を省略した共有キーを作ってはいけません。
+
+```cmd
+py -3 tools/build/sakura_build.py test coverage-map merge ^
+  --base-sha <develop-sha> ^
+  --test-binary x64/Debug/tests1.exe ^
+  --inventory src/test/test-inventory.json ^
+  --fragment FooTest.*::coverage/FooTest.xml ^
+  --output coverage/coverage-map.json
+
+py -3 tools/build/sakura_build.py --format json test coverage-map select ^
+  --map coverage/coverage-map.json ^
+  --inventory src/test/test-inventory.json ^
+  --base-sha <develop-sha> ^
+  --modules-json src/main/modules/modules.json ^
+  --changed-file M::sakura_core/CEditView.cpp ^
+  --smoke-selector RequestService.CancellationIsTerminalBeforeTransport
+```
+
+`select` の `mode` は `selected`、`smoke`、`full` のいずれかです。マップ不在・SHA／inventory
+不一致・Cobertura に存在しない production file・削除／rename・CMake/MSBuild/vcpkg/modules/
+test-runner/PCH の変更・選択テストが全体の 65% 以上、または smoke selector の不整合は、
+`full_fallback: true` と空の positive filter を返します。呼び出し側はこの結果を全件実行へ
+渡し、0件成功として扱ってはいけません。Markdown等の文書だけが変更された場合は
+`mode: smoke` となり、影響テスト数が0でも指定した smoke selector を必ず実行します。
+
+`modules.json` の source/header/include root は module 単位の展開に使われるため、header や
+inline/template の変更も同じ module の coverage suite を選べます。modules の所有範囲に
+入らない production file は安全側に全件へフォールバックします。ワークフローへの組み込み
+（required check、cache、develop push の map 生成）は #43 の CI/CD topology 側で行い、
+この CLI はローカル再現と Actions step の判定を同じ実装に揃えるためのものです。
 
 ### デバッグ方法
 

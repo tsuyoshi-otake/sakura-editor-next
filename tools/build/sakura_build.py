@@ -8,10 +8,23 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Sequence
 
 from sakura_build_lib.abi_fixture import ABI_FIXTURES, run_abi_fixture
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
 from sakura_build_lib.component_evidence import ComponentEvidenceError, collect_component_evidence, write_component_evidence
+from sakura_build_lib.coverage_map import (
+    ChangedFile,
+    CoverageMapError,
+    build_coverage_map,
+    coverage_cache_key,
+    load_coverage_map,
+    load_module_index,
+    select_tests,
+    sha256_file,
+    write_json,
+    write_coverage_map,
+)
 from sakura_build_lib.model import ManifestError, PHASES, load_semantic_graph
 from sakura_build_lib.path_matrix import run_basic_path_matrix
 from sakura_build_lib.product_native_evidence import (
@@ -342,6 +355,38 @@ def parser() -> argparse.ArgumentParser:
     )
     inventory_refresh_runtime.add_argument("--timeout-seconds", type=int, default=60)
 
+    coverage_map = test_commands.add_parser(
+        "coverage-map",
+        help="build or consume a develop-based Cobertura coverage map",
+    )
+    coverage_map_commands = coverage_map.add_subparsers(dest="coverage_map_command", required=True)
+    coverage_map_merge = coverage_map_commands.add_parser("merge")
+    coverage_map_merge.add_argument("--base-sha", required=True)
+    coverage_map_merge.add_argument("--test-binary", type=Path, required=True)
+    coverage_map_merge.add_argument("--inventory", type=Path, required=True)
+    coverage_map_merge.add_argument("--fragment", action="append", required=True, metavar="SELECTOR::PATH")
+    coverage_map_merge.add_argument("--output", type=Path, required=True)
+    coverage_map_merge.add_argument("--platform", default="x64")
+    coverage_map_merge.add_argument("--configuration", choices=("Debug", "Release"), default="Debug")
+    coverage_map_merge.add_argument("--runner-id", default="tests1")
+
+    coverage_map_validate = coverage_map_commands.add_parser("validate")
+    coverage_map_validate.add_argument("--map", dest="coverage_map", type=Path, required=True)
+    coverage_map_validate.add_argument("--inventory", type=Path, required=True)
+    coverage_map_validate.add_argument("--base-sha")
+
+    coverage_map_select = coverage_map_commands.add_parser("select")
+    coverage_map_select.add_argument("--map", dest="coverage_map", type=Path)
+    coverage_map_select.add_argument("--inventory", type=Path, required=True)
+    coverage_map_select.add_argument("--base-sha")
+    coverage_map_select.add_argument("--changed-file", action="append", default=[], metavar="[STATUS::]PATH")
+    coverage_map_select.add_argument("--smoke-selector", action="append", default=[])
+    coverage_map_select.add_argument("--exclude-selector", action="append", default=[])
+    coverage_map_select.add_argument("--modules-json", type=Path)
+    coverage_map_select.add_argument("--module-path", action="append", default=[], metavar="MODULE::PATH")
+    coverage_map_select.add_argument("--threshold", type=float, default=0.65)
+    coverage_map_select.add_argument("--output", type=Path)
+
     path_matrix = commands.add_parser("path-matrix")
     path_matrix_commands = path_matrix.add_subparsers(dest="path_matrix_command", required=True)
     path_matrix_test = path_matrix_commands.add_parser("test")
@@ -586,6 +631,117 @@ def _git_source_state(repo: Path) -> tuple[str, bool]:
     if status.returncode != 0:
         raise BuildError("SOURCE_STATUS_UNAVAILABLE", "git status --porcelain failed", EXIT_TOOL)
     return completed.stdout.strip(), bool(status.stdout.strip())
+
+
+def _run_test_coverage_map(args, repo: Path) -> int:
+    def resolve(value: Path) -> Path:
+        return value if value.is_absolute() else repo / value
+
+    try:
+        inventory_path = resolve(args.inventory)
+        inventory = load_inventory(inventory_path)
+        command = args.coverage_map_command
+        if command == "merge":
+            fragments: list[tuple[str, Path]] = []
+            for value in args.fragment:
+                selector, separator, raw_path = value.partition("::")
+                if separator != "::" or not selector or not raw_path:
+                    raise CoverageMapError("COVERAGE_FRAGMENT_ARGUMENT", f"expected SELECTOR::PATH: {value}")
+                fragments.append((selector, resolve(Path(raw_path))))
+            binary = resolve(args.test_binary)
+            result = build_coverage_map(
+                base_sha=args.base_sha,
+                test_binary_sha256=sha256_file(binary),
+                inventory=inventory,
+                fragments=fragments,
+                repo_root=repo,
+                platform=args.platform,
+                configuration=args.configuration,
+                runner_id=args.runner_id,
+            )
+            destination = resolve(args.output)
+            write_coverage_map(destination, result)
+            output(
+                {
+                    "ok": True,
+                    "output": str(destination),
+                    "base_sha": result["base_sha"],
+                    "cache_key": coverage_cache_key(result["base_sha"], platform=result["platform"]),
+                    "source_count": len(result["source_to_tests"]),
+                    "fragment_count": len(result["fragments"]),
+                    "test_count": result["test_count"],
+                    "inventory_guarantee_fingerprint": result["inventory_guarantee_fingerprint"],
+                },
+                args.format,
+            )
+            return 0
+        if command == "validate":
+            result = load_coverage_map(
+                resolve(args.coverage_map),
+                inventory,
+                expected_base_sha=args.base_sha,
+            )
+            output(
+                {
+                    "ok": True,
+                    "base_sha": result["base_sha"],
+                    "source_count": len(result["source_to_tests"]),
+                    "fragment_count": len(result["fragments"]),
+                    "test_count": result["test_count"],
+                },
+                args.format,
+            )
+            return 0
+
+        coverage_value = None
+        if args.coverage_map is not None:
+            coverage_path = resolve(args.coverage_map)
+            if coverage_path.exists():
+                try:
+                    coverage_value = json.loads(coverage_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    # An unreadable map is input uncertainty, not a reason to
+                    # abort the job. select_tests will return full fallback.
+                    coverage_value = {}
+
+        module_index: dict[str, Sequence[str]] = {}
+        if args.modules_json is not None:
+            module_index.update(load_module_index(resolve(args.modules_json), repo))
+        for value in args.module_path:
+            module_id, separator, raw_path = value.partition("::")
+            if separator != "::" or not module_id or not raw_path:
+                raise CoverageMapError("MODULE_PATH_ARGUMENT", f"expected MODULE::PATH: {value}")
+            existing = list(module_index.get(module_id, ()))
+            existing.append(raw_path.replace("\\", "/"))
+            module_index[module_id] = tuple(sorted(set(existing)))
+
+        changed_files: list[ChangedFile] = []
+        for value in args.changed_file:
+            status, separator, raw_path = value.partition("::")
+            if separator == "::" and status and status[0].upper() in "ACDMRTU":
+                changed_files.append(ChangedFile(raw_path, status))
+            else:
+                changed_files.append(ChangedFile(value, "M"))
+        result = select_tests(
+            changed_files=changed_files,
+            coverage_map=coverage_value,
+            inventory=inventory,
+            repo_root=repo,
+            expected_base_sha=args.base_sha,
+            smoke_selectors=args.smoke_selector,
+            module_index=module_index,
+            excluded_selectors=args.exclude_selector,
+            threshold=args.threshold,
+        )
+        if args.output is not None:
+            destination = resolve(args.output)
+            write_json(destination, result)
+            result = {**result, "output": str(destination)}
+        output(result, args.format)
+        return 0
+    except (CoverageMapError, TestInventoryError) as error:
+        code = getattr(error, "code", "COVERAGE_MAP_ERROR")
+        raise BuildError(code, str(error), EXIT_TEST) from error
 
 
 def _run_test_inventory(args, repo: Path) -> int:
@@ -937,6 +1093,8 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "test":
             if args.test_command == "inventory":
                 return _run_test_inventory(args, repo)
+            if args.test_command == "coverage-map":
+                return _run_test_coverage_map(args, repo)
             if args.test_command == "component":
                 return _run_test_component(args, graph, events)
             validate_legacy_pair(args.platform, args.configuration, "MinGW")
