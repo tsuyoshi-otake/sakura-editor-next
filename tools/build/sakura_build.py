@@ -49,6 +49,7 @@ from sakura_build_lib.repository_inventory import (
     write_repository_inventory,
 )
 from sakura_build_lib.semantic_inventory import (
+    accept_semantic_inventory,
     collect_semantic_inventory,
     compare_semantic_inventory,
     semantic_inventory_summary,
@@ -219,15 +220,39 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("build/evidence/r0/editor-core-semantic.json"),
     )
-    inventory_semantic.add_argument(
+    semantic_action = inventory_semantic.add_mutually_exclusive_group()
+    semantic_action.add_argument(
         "--accept-current",
         action="store_true",
-        help="explicitly replace the baseline with the current observation",
+        help="accept a clean, exact-SHA observation and write an immutable ledger record",
+    )
+    semantic_action.add_argument(
+        "--collect-only",
+        action="store_true",
+        help="collect the v2 inventory without reading or changing a baseline",
+    )
+    inventory_semantic.add_argument(
+        "--history-dir",
+        type=Path,
+        help="append-only baseline acceptance ledger directory (default: beside --baseline)",
+    )
+    inventory_semantic.add_argument(
+        "--source-commit",
+        help="full HEAD object ID required with --accept-current",
+    )
+    inventory_semantic.add_argument(
+        "--reason",
+        help="reviewed reason required with --accept-current",
+    )
+    inventory_semantic.add_argument(
+        "--tracking-issue",
+        type=int,
+        help="positive GitHub Issue number required with --accept-current",
     )
     inventory_semantic.add_argument(
         "--strict",
         action="store_true",
-        help="return a non-zero exit code when a ratcheted metric increases",
+        help="return a non-zero exit code for a new finding or missing touched-file reduction",
     )
     inventory_observe_product = inventory_commands.add_parser("observe-product")
     inventory_observe_product.add_argument("--context", default="msvc-x64-debug")
@@ -961,20 +986,54 @@ def main(argv: list[str] | None = None) -> int:
                 return 0
             if args.inventory_command == "semantic":
                 baseline_path = _repository_path(repo, args.baseline, "--baseline")
+                accept_options_supplied = any(
+                    value is not None
+                    for value in (args.history_dir, args.source_commit, args.reason, args.tracking_issue)
+                )
+                if args.collect_only and args.strict:
+                    raise BuildError("SEMANTIC_COLLECT_STRICT", "--collect-only cannot be combined with --strict", EXIT_USAGE)
+                if not args.accept_current and accept_options_supplied:
+                    raise BuildError(
+                        "SEMANTIC_ACCEPT_ARGUMENT",
+                        "--history-dir, --source-commit, --reason, and --tracking-issue require --accept-current",
+                        EXIT_USAGE,
+                    )
+                if args.accept_current:
+                    if not args.source_commit:
+                        raise BuildError("SEMANTIC_ACCEPT_COMMIT", "--accept-current requires --source-commit", EXIT_USAGE)
+                    if args.reason is None:
+                        raise BuildError("SEMANTIC_ACCEPT_REASON", "--accept-current requires --reason", EXIT_USAGE)
+                    if args.tracking_issue is None:
+                        raise BuildError("SEMANTIC_ACCEPT_ISSUE", "--accept-current requires --tracking-issue", EXIT_USAGE)
                 current = collect_semantic_inventory(repo)
                 baseline_changed = False
                 comparison = None
                 if args.accept_current:
-                    baseline_changed = write_semantic_inventory(baseline_path, current)
+                    history_directory = (
+                        _repository_path(repo, args.history_dir, "--history-dir") if args.history_dir is not None else None
+                    )
+                    accepted = accept_semantic_inventory(
+                        repo,
+                        current,
+                        baseline_path,
+                        history_directory=history_directory,
+                        source_commit=args.source_commit,
+                        accepted_reason=args.reason,
+                        tracking_issue=args.tracking_issue,
+                    )
+                    baseline_changed = bool(accepted["baseline_changed"])
                     comparison = {
                         "ok": True,
                         "accepted_current": True,
                         "baseline_source_fingerprint": current["source_fingerprint"],
                         "current_source_fingerprint": current["source_fingerprint"],
                         "increases": [],
-                        "ratcheted_metrics": [],
+                        "new_findings": [],
+                        "missing_touched_reductions": [],
+                        "ratcheted_rules": [],
+                        **accepted,
                     }
-                else:
+                elif not args.collect_only:
                     try:
                         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
                     except FileNotFoundError as error:
@@ -985,13 +1044,13 @@ def main(argv: list[str] | None = None) -> int:
                         ) from error
                     except (OSError, json.JSONDecodeError) as error:
                         raise BuildError("SEMANTIC_BASELINE_INVALID", f"could not read semantic baseline: {baseline_path}", EXIT_USAGE) from error
-                    comparison = compare_semantic_inventory(current, baseline)
+                    comparison = compare_semantic_inventory(current, baseline, repo_root=repo)
                 write_semantic_inventory(destination, current)
                 report = semantic_inventory_summary(current, comparison, output_path=destination)
                 report["baseline"] = str(baseline_path)
                 report["baseline_changed"] = baseline_changed
                 output(report, args.format)
-                return 0 if not args.strict or comparison["ok"] else EXIT_RATCHET
+                return 0 if comparison is None or not args.strict or comparison["ok"] else EXIT_RATCHET
             if args.inventory_command == "observe-product":
                 result = observe_product_native_evidence(
                     graph,

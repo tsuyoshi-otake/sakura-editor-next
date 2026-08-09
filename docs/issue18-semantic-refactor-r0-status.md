@@ -1,6 +1,12 @@
 # Issue #18 R0/R1/R2 実装状態
 
-最終更新: 2026-08-05
+最終更新: 2026-08-09
+
+> **schema v2 移行中（PR 1A）:** 以下のv1 baseline値は当時の観測記録であり、製品コードの
+> 許容負債として再承認されたものではない。v2 scannerはGit index上のfirst-party regular fileだけを
+> 入力にし、gitlink/submodule、third-party、生成物、未追跡ファイルを除外する。PR 1Aはdetector、
+> finding単位ratchet、acceptance guard、negative testだけを導入し、baseline、workflow、rulesetは
+> 変更しない。v2 baselineの採取・append-only ledger・required CI化はPR 1Bの責務である。
 
 ## 今回の完了範囲
 
