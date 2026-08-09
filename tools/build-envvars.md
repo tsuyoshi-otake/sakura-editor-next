@@ -20,7 +20,8 @@
 |CI_BUILD_VERSION|常に|`github.run_id`|
 |CI_BUILD_NUMBER|常に|`github.run_number`|
 |CI_BUILD_URL|常に|`github.server_url`/`github.repository`/actions/runs/`github.run_id`|
-|GITHUB_COMMIT_URL|常に|`github.server_url`/`github.repository`/commit/`github.sha`|
+|SAKURA_BUILD_SOURCE_SHA|常に|実際に checkout する不変のソースSHA (`inputs.source_sha`、なければ `github.sha`)。再利用Workflowでは `github.sha` が呼出元のWorkflow SHAを指すため、成果物の版情報にはこの値を使う。旧タグの `version.cmake` はこの変数をまだ読まないため、release promotion は MSBuild の子プロセス内だけ `GITHUB_SHA` を同じ値へ差し替える。GitHub Actions のジョブ環境自体は変更しない。|
+|GITHUB_COMMIT_URL|常に|`github.server_url`/`github.repository`/commit/`SAKURA_BUILD_SOURCE_SHA`|
 |GITHUB_PR_NUMBER|pull_request のみ|`github.event.pull_request.number`|
 |GITHUB_PR_HEAD_SHORT_COMMIT|pull_request のみ|`github.event.pull_request.head.sha` の先頭8文字|
 |GITHUB_PR_HEAD_COMMIT|pull_request のみ|`github.event.pull_request.head.sha`|
@@ -32,7 +33,7 @@
 |--|--|--|
 |BUILD_ENV_NAME|常に|"GHA"|
 |GIT_REMOTE_ORIGIN_URL|常に|`GITHUB_SERVER_URL`/`GITHUB_REPOSITORY`|
-|GIT_COMMIT_HASH|常に|``|
+|GIT_COMMIT_HASH|常に|`SAKURA_BUILD_SOURCE_SHA` が定義されていればその値、なければ `GITHUB_SHA`|
 |BUILD_VERSION|.git がある|カレントブランチの累積コミット数|
 |DEV_VERSION|32bit以外|(値なし)|
 |CI_BUILD_NUMBER_INT|pull_request のみ|CI_BUILD_NUMBERを数値化。|

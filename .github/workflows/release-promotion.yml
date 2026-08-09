@@ -56,18 +56,19 @@ jobs:
     # The target tag controls only the immutable package source.  Keep the
     # orchestration helpers at the revision that defined this workflow so a
     # manual dry run can validate an older tag and no target checkout supplies
-    # code to the later smoke/publish boundary.
+    # code to the later smoke/publish boundary. Reachability and the canonical
+    # non-merge build number are graph queries, so this checkout needs history.
     - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
         ref: ${{ github.workflow_sha }}
-        fetch-depth: 1
+        fetch-depth: 0
 
     - name: Validate tag source and required main gate
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: >-
-        .\github\scripts\Resolve-ReleasePromotion.ps1
+        .\.github\scripts\Resolve-ReleasePromotion.ps1
         -TagName "${{ steps.tag.outputs.tag }}"
         -Repository "${{ github.repository }}"
         -Token "$env:GITHUB_TOKEN"
@@ -105,11 +106,22 @@ jobs:
   smoke:
     name: Smoke packaged distribution
     needs: [resolve, package]
-    runs-on: windows-2022
+    # The shipped installer requires Windows 10.0.22000 or later. The
+    # windows-2022 image is build 20348, which rejects the installer before it
+    # can copy any files; pin the smoke environment to a compatible image.
+    runs-on: windows-2025
     permissions:
       actions: read
       contents: read
     steps:
+    - name: Verify smoke runner compatibility
+      run: |
+        $minimum = [Version]::new(10, 0, 22000)
+        $actual = [Environment]::OSVersion.Version
+        if ($actual -lt $minimum) {
+          throw "Release installer requires Windows version $minimum or later; runner is $actual."
+        }
+
     - name: Checkout release orchestration
       uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
@@ -147,7 +159,7 @@ jobs:
         if ($installerArchives.Count -ne 1 -or $executableArchives.Count -ne 1) {
           throw "Expected one installer and one executable archive; found installer=$($installerArchives.Count), executable=$($executableArchives.Count)."
         }
-        .\github\scripts\Test-ReleaseDistribution.ps1 `
+        .\.github\scripts\Test-ReleaseDistribution.ps1 `
           -SourceEvidencePath release-artifacts/source/release-source.json `
           -ProvenancePath release-artifacts/provenance/release-provenance.json `
           -InstallerArchivePath $installerArchives[0] `
@@ -224,7 +236,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ github.token }}
       run: >-
-        .\github\scripts\Publish-ReleasePromotion.ps1
+        .\.github\scripts\Publish-ReleasePromotion.ps1
         -TagName "${{ needs.resolve.outputs.release_tag }}"
         -Repository "${{ github.repository }}"
         -Token "$env:GITHUB_TOKEN"
