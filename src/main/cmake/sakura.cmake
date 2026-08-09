@@ -767,12 +767,22 @@ endif()
 target_compile_features(sakura_core PUBLIC cxx_std_20)
 
 # Add include directories for sakura_core
+set(WINDOWS_TERMINAL_MINGW_COMPAT_INCLUDE_DIRS)
+if(MINGW)
+  # Keep MinGW-only stubs ahead of the vendor include roots without shadowing
+  # Windows SDK headers on the MSVC path.
+  list(APPEND WINDOWS_TERMINAL_MINGW_COMPAT_INCLUDE_DIRS
+    ${WINDOWS_TERMINAL_VENDOR_ROOT}/sakura_compat/mingw
+  )
+endif()
+
 target_include_directories(sakura_core
   SYSTEM
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_BINARY_DIR}/include>"
     "$<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/externals>"
   PRIVATE
+    ${WINDOWS_TERMINAL_MINGW_COMPAT_INCLUDE_DIRS}
     ${WINDOWS_TERMINAL_VENDOR_ROOT}/sakura_compat
     ${WINDOWS_TERMINAL_VENDOR_ROOT}/src
     ${WINDOWS_TERMINAL_VENDOR_ROOT}/src/inc
