@@ -339,15 +339,15 @@ normal_action:;
 				/* 指定された桁に対応する行のデータ内の位置を調べる */
 				const CLayout* pcLayout;
 				pLine = m_pcEditDoc->m_cLayoutMgr.GetLineStr(
-					GetSelectionInfo().m_sSelect.GetFrom().GetY2(),
+					GetSelectionInfo().GetSelectionRange().GetFrom().GetY2(),
 					&nLineLen,
 					&pcLayout
 				);
 				if( nullptr != pLine ){
-					nIdx = LineColumnToIndex( pcLayout, GetSelectionInfo().m_sSelect.GetFrom().GetX2() );
+					nIdx = LineColumnToIndex( pcLayout, GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() );
 					/* 現在位置の単語の範囲を調べる */
 					bool bWhareResult = m_pcEditDoc->m_cLayoutMgr.WhereCurrentWord(
-						GetSelectionInfo().m_sSelect.GetFrom().GetY2(),
+						GetSelectionInfo().GetSelectionRange().GetFrom().GetY2(),
 						nIdx,
 						&sRange,
 						nullptr,
@@ -367,19 +367,19 @@ normal_action:;
 							sRange.GetFrom()	// カーソル位置
 						);
 						if( -1 == nWork || 0 == nWork ){
-							GetSelectionInfo().m_sSelect.SetFrom(sRange.GetFrom());
+							GetSelectionInfo().SetSelectionRangeFrom(sRange.GetFrom());
 							if( 1 == nWorkRel ){
 								GetSelectionInfo().SetSelectionAnchorRange(sRange);
 							}
 						}
 					}
 				}
-				pLine = m_pcEditDoc->m_cLayoutMgr.GetLineStr( GetSelectionInfo().m_sSelect.GetTo().GetY2(), &nLineLen, &pcLayout );
+				pLine = m_pcEditDoc->m_cLayoutMgr.GetLineStr( GetSelectionInfo().GetSelectionRange().GetTo().GetY2(), &nLineLen, &pcLayout );
 				if( nullptr != pLine ){
-					nIdx = LineColumnToIndex( pcLayout, GetSelectionInfo().m_sSelect.GetTo().GetX2() );
+					nIdx = LineColumnToIndex( pcLayout, GetSelectionInfo().GetSelectionRange().GetTo().GetX2() );
 					/* 現在位置の単語の範囲を調べる */
 					if( m_pcEditDoc->m_cLayoutMgr.WhereCurrentWord(
-						GetSelectionInfo().m_sSelect.GetTo().GetY2(), nIdx, &sRange, nullptr, nullptr )
+						GetSelectionInfo().GetSelectionRange().GetTo().GetY2(), nIdx, &sRange, nullptr, nullptr )
 					){
 						// 指定された行のデータ内の位置に対応する桁の位置を調べる
 						// 2007.10.15 kobake 既にレイアウト単位なので変換は不要
@@ -392,10 +392,10 @@ normal_action:;
 
 						nWork = IsCurrentPositionSelected(sRange.GetFrom());
 						if( -1 == nWork || 0 == nWork ){
-							GetSelectionInfo().m_sSelect.SetTo(sRange.GetFrom());
+							GetSelectionInfo().SetSelectionRangeTo(sRange.GetFrom());
 						}
 						if( 1 == IsCurrentPositionSelected(sRange.GetTo()) ){
-							GetSelectionInfo().m_sSelect.SetTo(sRange.GetTo());
+							GetSelectionInfo().SetSelectionRangeTo(sRange.GetTo());
 						}
 						if( -1 == nWorkRel || 0 == nWorkRel ){
 							GetSelectionInfo().SetSelectionAnchorRange(sRange);
@@ -442,10 +442,10 @@ normal_action:;
 			//	Apr. 14, 2003 genta
 			//	行番号の下をクリックしてドラッグを開始するとおかしくなるのを修正
 			//	行番号をクリックした場合にはGetSelectionInfo().ChangeSelectAreaByCurrentCursor()にて
-			//	GetSelectionInfo().m_sSelect.GetTo().x/GetSelectionInfo().m_sSelect.GetTo().yに-1が設定されるが、上の
+			//	GetSelectionInfo().GetSelectionRange().GetTo().x/GetSelectionInfo().GetSelectionRange().GetTo().yに-1が設定されるが、上の
 			//	GetCommander().Command_GOLINEEND(), Command_RIGHT()によって行選択が行われる。
 			//	しかしキャレットが末尾にある場合にはキャレットが移動しないので
-			//	GetSelectionInfo().m_sSelect.GetTo().x/GetSelectionInfo().m_sSelect.GetTo().yが-1のまま残ってしまい、それが
+			//	GetSelectionInfo().GetSelectionRange().GetTo().x/GetSelectionInfo().GetSelectionRange().GetTo().yが-1のまま残ってしまい、それが
 			//	原点に設定されるためにおかしくなっていた。
 			//	なので、範囲選択が行われていない場合は起点末尾の設定を行わないようにする
 			if( GetSelectionInfo().IsTextSelected() ){
@@ -918,7 +918,7 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 		}
 	}
 
-	CLayoutRange sSelect_Old    = GetSelectionInfo().m_sSelect;
+	CLayoutRange sSelect_Old    = GetSelectionInfo().GetSelectionRange();
 
 	// オートスクロール
 	if( 1 == m_nAutoScrollMode ){
@@ -1527,7 +1527,7 @@ void CEditView::OnLBUTTONUP( [[maybe_unused]] WPARAM fwKeys, [[maybe_unused]] in
 		m_cMouseDownPos.Set(-INT_MAX, -INT_MAX);
 
 		GetCaret().m_cUnderLine.UnderLineUnLock();
-		if( GetSelectionInfo().m_sSelect.IsOne() ){
+		if( GetSelectionInfo().GetSelectionRange().IsOne() ){
 			/* 現在の選択範囲を非選択状態に戻す */
 			GetSelectionInfo().DisableSelectArea( true );
 		}
@@ -1868,8 +1868,8 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 			/* 2点を対角とする矩形を求める */
 			TwoPointToRect(
 				&rcSel,
-				pcDragSourceView->GetSelectionInfo().m_sSelect.GetFrom(),	// 範囲選択開始
-				pcDragSourceView->GetSelectionInfo().m_sSelect.GetTo()		// 範囲選択終了
+				pcDragSourceView->GetSelectionInfo().GetSelectionRange().GetFrom(),	// 範囲選択開始
+				pcDragSourceView->GetSelectionInfo().GetSelectionRange().GetTo()		// 範囲選択終了
 			);
 			++rcSel.bottom;
 			if( GetCaret().GetCaretLayoutPos().GetY() >= rcSel.bottom ){
@@ -1884,11 +1884,11 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 				bMoveToPrev = FALSE;
 			}
 		}else{
-			if( pcDragSourceView->GetSelectionInfo().m_sSelect.GetFrom().y > GetCaret().GetCaretLayoutPos().GetY() ){
+			if( pcDragSourceView->GetSelectionInfo().GetSelectionRange().GetFrom().y > GetCaret().GetCaretLayoutPos().GetY() ){
 				bMoveToPrev = TRUE;
 			}else
-			if( pcDragSourceView->GetSelectionInfo().m_sSelect.GetFrom().y == GetCaret().GetCaretLayoutPos().GetY() ){
-				if( pcDragSourceView->GetSelectionInfo().m_sSelect.GetFrom().x > GetCaret().GetCaretLayoutPos().GetX2() ){
+			if( pcDragSourceView->GetSelectionInfo().GetSelectionRange().GetFrom().y == GetCaret().GetCaretLayoutPos().GetY() ){
+				if( pcDragSourceView->GetSelectionInfo().GetSelectionRange().GetFrom().x > GetCaret().GetCaretLayoutPos().GetX2() ){
 					bMoveToPrev = TRUE;
 				}else{
 					bMoveToPrev = FALSE;
@@ -1973,7 +1973,7 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 			// 現在の選択範囲を記憶する	// 2008.03.26 ryoji
 			CLogicRange sSelLogic;
 			m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(
-				GetSelectionInfo().m_sSelect,
+				GetSelectionInfo().GetSelectionRange(),
 				&sSelLogic
 			);
 
@@ -2025,7 +2025,7 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 					&sSelect
 				);
 				GetSelectionInfo().SetSelectArea( sSelect );	// 2009.07.25 ryoji
-				ptCaretPos_Old = GetSelectionInfo().m_sSelect.GetTo();
+				ptCaretPos_Old = GetSelectionInfo().GetSelectionRange().GetTo();
 			}
 
 			// キャレットを移動する
@@ -2035,7 +2035,7 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 			// 削除位置から移動先へのカーソル移動をアンドゥ操作に追加する	// 2008.03.26 ryoji
 			CLogicPoint ptBefore;
 			m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(
-				GetSelectionInfo().m_sSelect.GetFrom(),
+				GetSelectionInfo().GetSelectionRange().GetFrom(),
 				&ptBefore
 			);
 			m_cCommander.GetOpeBlk()->AppendOpe(

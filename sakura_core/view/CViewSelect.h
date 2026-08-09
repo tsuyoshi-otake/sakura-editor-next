@@ -241,12 +241,11 @@ private:
 	int		m_nLastSelectedByteLen;	// 前回選択時の選択バイト数
 	CLayoutRange m_sSelectBgn; //範囲選択(原点)
 
-public:
-	// 選択範囲を保持するための変数群
+	// 選択範囲を保持するための変数群。外部利用は GetSelectionRange() と
+	// ReplaceSelectionRange()/SetSelectionRange*() を経由し、描画・範囲計算の
+	// 不変条件を CViewSelect が所有する。
 	// これらはすべて折り返し行と、折り返し桁を保持している。
 	CLayoutRange m_sSelect;    //範囲選択
-
-private:
 	CLayoutRange m_sSelectOld; //範囲選択Old。描画差分は CViewSelect だけが所有する。
 
 public:

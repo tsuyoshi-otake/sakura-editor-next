@@ -393,7 +393,7 @@ BOOL CDlgFind::OnActivate( WPARAM wParam, LPARAM lParam )
 {
 	// 0文字幅マッチ描画のON/OFF	// 2009.11.29 ryoji
 	CEditView*	pcEditView = (CEditView*)m_lParam;
-	CLayoutRange cRangeSel = pcEditView->GetSelectionInfo().m_sSelect;
+	CLayoutRange cRangeSel = pcEditView->GetSelectionInfo().GetSelectionRange();
 	if( cRangeSel.IsValid() && cRangeSel.IsLineOne() && cRangeSel.IsOne() )
 		pcEditView->InvalidateRect(nullptr);	// アクティブ化／非アクティブ化が完了してから再描画
 

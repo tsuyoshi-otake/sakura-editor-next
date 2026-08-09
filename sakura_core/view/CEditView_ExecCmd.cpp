@@ -157,7 +157,7 @@ bool CEditView::ExecCmd( const WCHAR* pszCmd, int nFlgOpt, const WCHAR* pszCurDi
 	CLayoutPoint ptFrom( 0, 0 );
 	bool bBeforeTextSelected = GetSelectionInfo().IsTextSelected();
 	if (bBeforeTextSelected){
-		ptFrom = this->GetSelectionInfo().m_sSelect.GetFrom();
+		ptFrom = this->GetSelectionInfo().GetSelectionRange().GetFrom();
 	}
 
 	HANDLE hStdOutWrite = nullptr;
