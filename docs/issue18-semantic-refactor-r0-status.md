@@ -64,6 +64,10 @@ PR、`main`/`develop`へのpush、手動実行でpath filterなしにcheckout-in
 算出し、legacy MSBuild item specはWindows pathとして解釈するため、Windows/Linux間で生成projectionを
 staleと誤判定しない。
 
+`develop` rulesetには、既存7件を維持したまま`architecture-gates`を必須status checkとして追加した。
+GitHub API取得結果は追加前後を`docs/evidence/issue18-architecture-gates-ruleset-{before,after}.json`へ保存し、
+workflow contract testが「既存の要件は不変で、追加がこの1件だけ」であることを検証する。
+
 台帳はAST、型の所有権、実行時の共有状態、プロトコル互換性を証明しない。正規表現による
 保守的な観測であるため、R2以降では対象コンポーネントごとにtyped port、owner、thread/lifecycle、
 fake交換、contract test、monolith非リンクを別の受入条件として追加する。
