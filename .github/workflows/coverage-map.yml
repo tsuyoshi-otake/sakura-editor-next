@@ -1,0 +1,346 @@
+name: Coverage map
+
+# This reusable workflow runs only from build-sakura's trusted develop-push
+# path, after its full Debug and Release matrix has completed.  It deliberately
+# does not use workflow_run: cache writes must retain the caller's push/develop
+# scope so feature PRs can restore the exact base-SHA map read-only.
+on:
+  workflow_call:
+    inputs:
+      source_sha:
+        description: Exact successful develop commit that owns the test bundle.
+        required: true
+        type: string
+      shard_count:
+        description: Number of suite-level OpenCppCoverage shards.
+        required: false
+        default: 8
+        type: number
+      headless_excludes:
+        description: Colon-separated negative GoogleTest selectors used by hosted CI.
+        required: true
+        type: string
+
+defaults:
+  run:
+    shell: pwsh
+
+permissions:
+  actions: read
+  contents: read
+
+env:
+  COVERAGE_MAP_CACHE_DIRECTORY: .coverage-map-cache
+  COVERAGE_MAP_RUNNER_ID: tests1
+  COVERAGE_MAP_SCHEMA_VERSION: '1'
+  COVERAGE_MAP_SHARD_COUNT: ${{ inputs.shard_count }}
+  HEADLESS_GTEST_EXCLUDES: ${{ inputs.headless_excludes }}
+  SOURCE_SHA: ${{ inputs.source_sha }}
+
+jobs:
+  plan:
+    name: Plan coverage map
+    runs-on: windows-2022
+    timeout-minutes: 10
+    # A failed map is not a failed develop integration.  No downstream job can
+    # publish a cache unless every required map stage succeeds.
+    continue-on-error: true
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      expected_fragments: ${{ steps.plan.outputs.expected_fragments }}
+
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ inputs.source_sha }}
+        fetch-depth: 1
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
+
+    - name: Plan deterministic suite shards
+      id: plan
+      run: |
+        $planPath = Join-Path $env:RUNNER_TEMP 'coverage-map-plan.json'
+        $arguments = @(
+          'tools/build/sakura_build.py', '--format', 'json', 'test', 'coverage-map', 'plan',
+          '--inventory', 'src/test/test-inventory.json',
+          '--runner-id', $env:COVERAGE_MAP_RUNNER_ID,
+          '--shard-index', '0',
+          '--shard-count', $env:COVERAGE_MAP_SHARD_COUNT,
+          '--output', $planPath
+        )
+        foreach ($selector in ($env:HEADLESS_GTEST_EXCLUDES -split ':')) {
+          $arguments += '--exclude-selector'
+          $arguments += $selector
+        }
+        & python @arguments
+        if ($LASTEXITCODE -ne 0) {
+          throw "coverage-map plan failed with exit code $LASTEXITCODE."
+        }
+
+        $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
+        $expectedFragments = [int]$plan.total_suite_count
+        $shardCount = [int]$env:COVERAGE_MAP_SHARD_COUNT
+        if ($expectedFragments -lt 1) {
+          throw 'coverage-map plan selected zero runnable suites.'
+        }
+        if ($shardCount -gt $expectedFragments) {
+          throw "coverage-map shard count $shardCount exceeds runnable suite count $expectedFragments."
+        }
+
+        $shards = @()
+        for ($index = 0; $index -lt $shardCount; $index++) {
+          $shards += @{ shard = $index }
+        }
+        $matrix = @{ include = $shards } | ConvertTo-Json -Compress
+        "matrix=$matrix" >> $env:GITHUB_OUTPUT
+        "expected_fragments=$expectedFragments" >> $env:GITHUB_OUTPUT
+
+  collect:
+    name: Collect coverage map
+    needs: plan
+    if: ${{ needs.plan.outputs.matrix != '' }}
+    runs-on: windows-2022
+    # Eight shards bound the dominant serial coverage work.  This separate
+    # timeout also guarantees a stuck suite cannot consume a runner forever;
+    # the map remains advisory and no cache is published on timeout.
+    timeout-minutes: 90
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ inputs.source_sha }}
+        fetch-depth: 1
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
+
+    - name: Download successful Debug test bundle
+      uses: actions/download-artifact@v8
+      with:
+        name: coverage-map-input
+        path: ${{ runner.temp }}\coverage-map-input
+
+    - name: Install OpenCppCoverage
+      working-directory: ${{ runner.temp }}
+      run: |
+        $installer = '.\OpenCppCoverageSetup.exe'
+        Invoke-WebRequest `
+          -Uri 'https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/OpenCppCoverageSetup-x64-0.9.9.0.exe' `
+          -OutFile $installer
+        $expectedSha256 = '2295a733da39412c61e4f478677519dd0bb1893d88313ce56b468c9e50517888'
+        $actualSha256 = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actualSha256 -ne $expectedSha256.ToLowerInvariant()) {
+          throw "SHA256 mismatch: expected=$expectedSha256 actual=$actualSha256"
+        }
+        $process = Start-Process `
+          -FilePath $installer `
+          -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' `
+          -Wait `
+          -PassThru
+        if ($process.ExitCode -ne 0) {
+          throw "OpenCppCoverage installer failed with exit code $($process.ExitCode)."
+        }
+        'C:\Program Files\OpenCppCoverage' >> $env:GITHUB_PATH
+
+    - name: Collect suite-level Cobertura fragments
+      env:
+        SHARD_INDEX: ${{ matrix.shard }}
+      run: |
+        $planPath = Join-Path $env:RUNNER_TEMP "coverage-map-plan-$env:SHARD_INDEX.json"
+        $planArguments = @(
+          'tools/build/sakura_build.py', '--format', 'json', 'test', 'coverage-map', 'plan',
+          '--inventory', 'src/test/test-inventory.json',
+          '--runner-id', $env:COVERAGE_MAP_RUNNER_ID,
+          '--shard-index', $env:SHARD_INDEX,
+          '--shard-count', $env:COVERAGE_MAP_SHARD_COUNT,
+          '--output', $planPath
+        )
+        foreach ($selector in ($env:HEADLESS_GTEST_EXCLUDES -split ':')) {
+          $planArguments += '--exclude-selector'
+          $planArguments += $selector
+        }
+        & python @planArguments
+        if ($LASTEXITCODE -ne 0) {
+          throw "coverage-map shard plan failed with exit code $LASTEXITCODE."
+        }
+
+        $plan = Get-Content -LiteralPath $planPath -Raw | ConvertFrom-Json
+        $selectors = @($plan.selectors)
+        if ($selectors.Count -lt 1) {
+          throw "coverage-map shard $env:SHARD_INDEX has no suite selectors."
+        }
+
+        $bundleRoot = Join-Path $env:RUNNER_TEMP 'coverage-map-input'
+        # upload-artifact extracts the common x64/Debug ancestor as the bundle
+        # root.  Keep the nested fallback for a future action-version change.
+        $testRoot = $bundleRoot
+        if (-not (Test-Path -LiteralPath (Join-Path $testRoot 'tests1.exe') -PathType Leaf)) {
+          $testRoot = Join-Path $bundleRoot 'x64\Debug'
+        }
+        $testBinary = Join-Path $testRoot 'tests1.exe'
+        $testPdb = Join-Path $testRoot 'tests1.pdb'
+        foreach ($required in @($testBinary, $testPdb)) {
+          if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
+            throw "coverage-map test bundle is missing $required."
+          }
+        }
+
+        $workRoot = Join-Path $env:GITHUB_WORKSPACE ".coverage-map\shard-$env:SHARD_INDEX"
+        $fragmentRoot = Join-Path $workRoot 'fragments'
+        $resultRoot = Join-Path $workRoot 'results'
+        New-Item -ItemType Directory -Force -Path $fragmentRoot, $resultRoot | Out-Null
+        $excluded = @($env:HEADLESS_GTEST_EXCLUDES -split ':')
+        $fragments = @()
+
+        for ($index = 0; $index -lt $selectors.Count; $index++) {
+          $selector = [string]$selectors[$index]
+          $fragment = Join-Path $fragmentRoot ('{0:D3}.xml' -f $index)
+          $result = Join-Path $resultRoot ('{0:D3}-googletest.xml' -f $index)
+          $filter = "${selector}-$($excluded -join ':')"
+          & OpenCppCoverage.exe `
+            --export_type "cobertura:$fragment" `
+            --modules $testBinary `
+            --sources $env:GITHUB_WORKSPACE `
+            --excluded_sources (Join-Path $env:GITHUB_WORKSPACE 'build') `
+            --working_dir $testRoot `
+            --cover_children `
+            -- $testBinary "--gtest_filter=$filter" "--gtest_output=xml:$result"
+          if ($LASTEXITCODE -ne 0) {
+            throw "OpenCppCoverage failed for $selector with exit code $LASTEXITCODE."
+          }
+          if (-not (Test-Path -LiteralPath $fragment -PathType Leaf)) {
+            throw "OpenCppCoverage did not produce a Cobertura fragment for $selector."
+          }
+          $fragments += "${selector}::${fragment}"
+        }
+
+        $partialMap = Join-Path $workRoot 'coverage-map-partial.json'
+        $mergeArguments = @(
+          'tools/build/sakura_build.py', '--format', 'json', 'test', 'coverage-map', 'merge',
+          '--base-sha', $env:SOURCE_SHA,
+          '--test-binary', $testBinary,
+          '--inventory', 'src/test/test-inventory.json',
+          '--runner-id', $env:COVERAGE_MAP_RUNNER_ID,
+          '--output', $partialMap
+        )
+        foreach ($fragment in $fragments) {
+          $mergeArguments += '--fragment'
+          $mergeArguments += $fragment
+        }
+        & python @mergeArguments
+        if ($LASTEXITCODE -ne 0) {
+          throw "coverage-map partial merge failed with exit code $LASTEXITCODE."
+        }
+
+    - name: Clean up test process survivors
+      if: ${{ always() }}
+      run: .\tools\Cleanup-TestProcessSurvivors.ps1
+
+    - name: Upload compact partial map
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-map-partial-${{ matrix.shard }}
+        path: .coverage-map/shard-${{ matrix.shard }}/coverage-map-partial.json
+        if-no-files-found: error
+        retention-days: 1
+
+  merge:
+    name: Publish coverage map
+    needs: [plan, collect]
+    if: ${{ needs.plan.outputs.expected_fragments != '' && needs.collect.result == 'success' }}
+    runs-on: windows-2022
+    timeout-minutes: 15
+    continue-on-error: true
+
+    steps:
+    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      with:
+        ref: ${{ inputs.source_sha }}
+        fetch-depth: 1
+        submodules: true
+
+    - name: Set up Python
+      uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      with:
+        python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
+
+    - name: Download compact partial maps
+      uses: actions/download-artifact@v8
+      with:
+        pattern: coverage-map-partial-*
+        path: ${{ runner.temp }}\coverage-map-partials
+        merge-multiple: false
+
+    - name: Merge and validate coverage map
+      id: map
+      env:
+        EXPECTED_FRAGMENT_COUNT: ${{ needs.plan.outputs.expected_fragments }}
+      run: |
+        $partialRoot = Join-Path $env:RUNNER_TEMP 'coverage-map-partials'
+        $partialMaps = @([System.IO.Directory]::EnumerateFiles(
+          $partialRoot,
+          'coverage-map-partial.json',
+          [System.IO.SearchOption]::AllDirectories
+        ) | Sort-Object)
+        $expectedFragments = [int]$env:EXPECTED_FRAGMENT_COUNT
+        if ($partialMaps.Count -ne [int]$env:COVERAGE_MAP_SHARD_COUNT) {
+          throw "Expected $env:COVERAGE_MAP_SHARD_COUNT partial maps, found $($partialMaps.Count)."
+        }
+
+        New-Item -ItemType Directory -Force -Path $env:COVERAGE_MAP_CACHE_DIRECTORY | Out-Null
+        $outputPath = Join-Path $env:COVERAGE_MAP_CACHE_DIRECTORY 'coverage-map.json'
+        $arguments = @(
+          'tools/build/sakura_build.py', '--format', 'json', 'test', 'coverage-map', 'merge-partials',
+          '--base-sha', $env:SOURCE_SHA,
+          '--inventory', 'src/test/test-inventory.json',
+          '--output', $outputPath
+        )
+        foreach ($partialMap in $partialMaps) {
+          $arguments += '--partial-map'
+          $arguments += $partialMap
+        }
+        & python @arguments
+        if ($LASTEXITCODE -ne 0) {
+          throw "coverage-map final merge failed with exit code $LASTEXITCODE."
+        }
+
+        $map = Get-Content -LiteralPath $outputPath -Raw | ConvertFrom-Json
+        if (@($map.fragments).Count -ne $expectedFragments) {
+          throw "Expected $expectedFragments coverage fragments, found $(@($map.fragments).Count)."
+        }
+        $cacheKey = "tia-map-windows-x64-$($map.base_sha)-$($map.schema_version)"
+        "cache_key=$cacheKey" >> $env:GITHUB_OUTPUT
+        @(
+          "### Coverage-map publication",
+          "",
+          "- base SHA: ``$($map.base_sha)``",
+          "- suite fragments: $(@($map.fragments).Count)",
+          "- covered sources: $($map.source_to_tests.PSObject.Properties.Count)",
+          "- cache key: ``$cacheKey``"
+        ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+    - name: Save develop coverage map cache
+      uses: actions/cache/save@v4
+      with:
+        path: .coverage-map-cache
+        key: ${{ steps.map.outputs.cache_key }}
+
+    - name: Upload coverage map for diagnostics
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-map-${{ inputs.source_sha }}
+        path: .coverage-map-cache/coverage-map.json
+        if-no-files-found: error
+        retention-days: 14
