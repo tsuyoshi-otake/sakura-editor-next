@@ -61,7 +61,8 @@ py -3 tools/build/sakura_build.py --format json inventory semantic --strict
 PR、`main`/`develop`へのpush、手動実行でpath filterなしにcheckout-invariance lint、strict検証、`generate --check`、
 `graph check --all-contexts`をfail-closedで実行する。CI起動前にも同じlintを必須実行する。source file/line/include数は診断値であり、
 ソース追加だけを理由に分割作業を止めない。semantic graphのschema hashもuniversal-newline textで
-算出するため、Windows/Linux間で生成projectionをstaleと誤判定しない。
+算出し、legacy MSBuild item specはWindows pathとして解釈するため、Windows/Linux間で生成projectionを
+staleと誤判定しない。
 
 台帳はAST、型の所有権、実行時の共有状態、プロトコル互換性を証明しない。正規表現による
 保守的な観測であるため、R2以降では対象コンポーネントごとにtyped port、owner、thread/lifecycle、

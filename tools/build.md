@@ -249,6 +249,8 @@ required checkがpendingのままにはならない。baseline commitのancestor
 checkoutするため、workflowは`fetch-depth: 0`を使う。CI起動前にも同じlintを必須実行し、jobは次の4検証をfail-closedで順に実行する。
 semantic graphが参照する`schema-v3.json`のhashもuniversal-newline textから計算するため、WindowsのCRLFと
 LinuxのLFでcommitted projectionが相互にstaleになることはない。
+legacy MSBuild project内の`ClCompile Include`はWindows pathとして解釈するため、Linux CIでも
+consumer projectionのsource removalがWindows checkoutと一致する。
 
 ```cmd
 py -3 tools/build/sakura_build.py --format json lint checkout-invariance

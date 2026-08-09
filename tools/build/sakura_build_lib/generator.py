@@ -8,7 +8,7 @@ import os
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Iterable, Mapping
 from xml.sax.saxutils import escape
 
@@ -180,7 +180,10 @@ def _msbuild_source_item_spec(
         include = item.get("Include")
         if not include or "$" in include or "*" in include or "?" in include:
             continue
-        if (project_directory / include).resolve() == expected:
+        # MSBuild item specs always use Windows separators, including when this
+        # generator runs on a POSIX CI host.
+        include_path = Path(PureWindowsPath(include).as_posix())
+        if (project_directory / include_path).resolve() == expected:
             return include
     return None
 

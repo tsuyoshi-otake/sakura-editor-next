@@ -633,11 +633,12 @@ class ManifestTests(unittest.TestCase):
             consumer = next(item for item in value["components"] if item["id"] == "consumer")
             consumer["build_definition"] = "legacy"
             consumer["compile_profile"] = "project-compile"
-            consumer["backend_targets"] = {"msbuild": ["consumer.vcxproj"], "cmake": ["consumer"]}
-            (root / "consumer.vcxproj").write_text(
+            consumer["backend_targets"] = {"msbuild": ["projects/consumer.vcxproj"], "cmake": ["consumer"]}
+            (root / "projects").mkdir()
+            (root / "projects/consumer.vcxproj").write_text(
                 '<?xml version="1.0" encoding="utf-8"?>\n'
                 '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
-                '  <ItemGroup><ClCompile Include="provider\\provider.cpp" /></ItemGroup>\n'
+                '  <ItemGroup><ClCompile Include="..\\provider\\provider.cpp" /></ItemGroup>\n'
                 '</Project>\n',
                 encoding="utf-8",
             )
@@ -648,7 +649,7 @@ class ManifestTests(unittest.TestCase):
 
             props_path = root / "src/main/modules/generated/msbuild/consumers/consumer.props"
             props = props_path.read_text(encoding="utf-8")
-            self.assertIn('<ClCompile Remove="provider\\provider.cpp"', props)
+            self.assertIn('<ClCompile Remove="..\\provider\\provider.cpp"', props)
             self.assertIn("generated\\msbuild\\projects\\provider.vcxproj", props)
             self.assertIn("generated\\abi\\ctx\\consumer.h", props)
             self.assertIn("<SetConfiguration", props)
