@@ -138,6 +138,7 @@ class size;
 
 constexpr INPUT_RECORD SynthesizeMouseEvent(til::point, std::uint32_t, std::uint32_t, std::uint32_t);
 constexpr INPUT_RECORD SynthesizeWindowBufferSizeEvent(til::size);
+static constexpr til::point _winToVTCoord(til::point);
 
 namespace til {
 
@@ -170,6 +171,7 @@ public:
 private:
 	friend class ::Microsoft::Console::VirtualTerminal::TerminalInput;
 	friend constexpr auto ::SynthesizeMouseEvent(point, std::uint32_t, std::uint32_t, std::uint32_t) -> INPUT_RECORD;
+	friend constexpr auto _winToVTCoord(point) -> point;
 	CoordType x{};
 	CoordType y{};
 };
