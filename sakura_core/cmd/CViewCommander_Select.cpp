@@ -133,8 +133,8 @@ void CViewCommander::Command_SELECTLINE([[maybe_unused]] LPARAM lparam1)
 
 	if( m_pCommanderView->GetSelectionInfo().IsLineSelecting() ){
 		// 範囲選択開始行・カラムを記憶
-		m_pCommanderView->GetSelectionInfo().m_sSelect.SetTo( ptCaret );
-		m_pCommanderView->GetSelectionInfo().m_sSelectBgn.SetTo( ptCaret );
+		m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo( ptCaret );
+		m_pCommanderView->GetSelectionInfo().SetSelectionAnchorTo( ptCaret );
 	}
 
 	return;

@@ -132,10 +132,10 @@ void CViewCommander::Command_SEARCH_NEXT(
 			bSelecting = true;
 			bSelectingLock_Old = m_pCommanderView->GetSelectionInfo().IsSelectionLocked();
 
-			sSelectBgn_Old = m_pCommanderView->GetSelectionInfo().m_sSelectBgn; //範囲選択(原点)
+			sSelectBgn_Old = m_pCommanderView->GetSelectionInfo().GetSelectionAnchorRange(); //範囲選択(原点)
 			sSelect_Old = GetSelect();
 
-			if( PointCompare(m_pCommanderView->GetSelectionInfo().m_sSelectBgn.GetFrom(),GetCaret().GetCaretLayoutPos()) >= 0 ){
+			if( PointCompare(m_pCommanderView->GetSelectionInfo().GetSelectionAnchorRange().GetFrom(),GetCaret().GetCaretLayoutPos()) >= 0 ){
 				// カーソル移動
 				GetCaret().SetCaretLayoutPos(GetSelect().GetFrom());
 				if (GetSelect().IsOne()) {
@@ -258,10 +258,11 @@ re_do:;
 			m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock_Old);	/* 選択状態のロック */
 
 			/* 選択範囲の変更 */
-			m_pCommanderView->GetSelectionInfo().m_sSelectBgn = sSelectBgn_Old; //範囲選択(原点)
-			m_pCommanderView->GetSelectionInfo().m_sSelectOld = sSelect_Old;	// 2011.12.24
-			GetSelect().SetFrom(sSelect_Old.GetFrom());
-			GetSelect().SetTo(sRangeA.GetFrom());
+			m_pCommanderView->GetSelectionInfo().SetSelectionAnchorRange(sSelectBgn_Old); //範囲選択(原点)
+			m_pCommanderView->GetSelectionInfo().ReplaceSelectionRangeForRedraw(
+				CLayoutRange(sSelect_Old.GetFrom(), sRangeA.GetFrom()),
+				sSelect_Old
+			);	// 2011.12.24
 
 			/* カーソル移動 */
 			GetCaret().MoveCursor( sRangeA.GetFrom(), bRedraw );
@@ -359,7 +360,7 @@ void CViewCommander::Command_SEARCH_PREV( bool bReDraw, HWND hwndParent )
 		goto end_of_func;
 	}
 	if( m_pCommanderView->GetSelectionInfo().IsTextSelected() ){	/* テキストが選択されているか */
-		sSelectBgn_Old = m_pCommanderView->GetSelectionInfo().m_sSelectBgn; //範囲選択(原点)
+		sSelectBgn_Old = m_pCommanderView->GetSelectionInfo().GetSelectionAnchorRange(); //範囲選択(原点)
 		sSelect_Old = GetSelect();
 		
 		bSelectingLock_Old = m_pCommanderView->GetSelectionInfo().IsSelectionLocked();
@@ -433,8 +434,8 @@ re_do:;							//	hor
 		if( bSelecting ){
 			m_pCommanderView->GetSelectionInfo().SetSelectionLocked(bSelectingLock_Old);	/* 選択状態のロック */
 			/* 選択範囲の変更 */
-			m_pCommanderView->GetSelectionInfo().m_sSelectBgn = sSelectBgn_Old;
-			GetSelect() = sSelect_Old;
+			m_pCommanderView->GetSelectionInfo().SetSelectionAnchorRange(sSelectBgn_Old);
+			m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(sSelect_Old);
 
 			/* カーソル移動 */
 			GetCaret().MoveCursor( sRangeA.GetFrom(), bReDraw );
@@ -598,12 +599,12 @@ void CViewCommander::Command_REPLACE( HWND hwndParent )
 			// 正規表現時は 後方参照($&)で実現するので、正規表現は除外
 			if(nReplaceTarget==1){	//挿入位置へ移動
 				ptTmp = GetSelect().GetTo() - GetSelect().GetFrom();
-				GetSelect().Clear(-1);
+				m_pCommanderView->GetSelectionInfo().ClearSelectionRange();
 			}
 			else if(nReplaceTarget==2){	//追加位置へ移動
 				// 正規表現を除外したので、「検索後の文字が改行やったら次の行の先頭へ移動」の処理を削除
 				GetCaret().MoveCursor(GetSelect().GetTo(), false);
-				GetSelect().Clear(-1);
+				m_pCommanderView->GetSelectionInfo().ClearSelectionRange();
 			}
 			else{
 				// 位置指定ないので、何もしない
@@ -678,7 +679,9 @@ void CViewCommander::Command_REPLACE( HWND hwndParent )
 					}
 					// 無限置換しないように、１文字増やしたので１文字選択に変更
 					// 選択始点・終点への挿入の場合も０文字マッチ時は動作は同じになるので
-					rLayoutMgr.LogicToLayout( CLogicPoint(nIdxTo, pcLayout->GetLogicLineNo()), GetSelect().GetToPointer() );	// 2007.01.19 ryoji 行位置も取得する
+					CLayoutPoint newSelectionTo(GetSelect().GetTo());
+					rLayoutMgr.LogicToLayout( CLogicPoint(nIdxTo, pcLayout->GetLogicLineNo()), &newSelectionTo );	// 2007.01.19 ryoji 行位置も取得する
+					m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo(newSelectionTo);
 				}
 				// 行末から検索文字列末尾までの文字数
 				CLogicInt colDiff = nLen - nIdxTo;
@@ -687,7 +690,9 @@ void CViewCommander::Command_REPLACE( HWND hwndParent )
 				if (colDiff < pcLayout->GetDocLineRef()->GetEol().GetLen()) {
 					// 改行にかかっていたら、行全体をINSTEXTする。
 					colDiff = CLogicInt(0);
-					rLayoutMgr.LogicToLayout( CLogicPoint(nLen, pcLayout->GetLogicLineNo()), GetSelect().GetToPointer() );	// 2007.01.19 ryoji 追加
+					CLayoutPoint newSelectionTo(GetSelect().GetTo());
+					rLayoutMgr.LogicToLayout( CLogicPoint(nLen, pcLayout->GetLogicLineNo()), &newSelectionTo );	// 2007.01.19 ryoji 追加
+					m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo(newSelectionTo);
 				}
 				// 置換後文字列への書き換え(行末から検索文字列末尾までの文字を除く)
 				Command_INSTEXT( false, cRegexp.GetString(), cRegexp.GetStringLen() - colDiff, TRUE );
@@ -1173,7 +1178,7 @@ void CViewCommander::Command_REPLACE_ALL()
 				}else{
 					ptTmp.x = GetSelect().GetTo().x - GetSelect().GetFrom().x;
 					ptTmp.y = GetSelect().GetTo().y - GetSelect().GetFrom().y;
-					GetSelect().Clear(-1);
+					m_pCommanderView->GetSelectionInfo().ClearSelectionRange();
 				}
 			}
 			else if( nReplaceTarget == 2 )	//追加位置セット
@@ -1184,7 +1189,7 @@ void CViewCommander::Command_REPLACE_ALL()
 					cSelectLogic.SetFrom(cSelectLogic.GetTo());
 				}else{
 					GetCaret().MoveCursor(GetSelect().GetTo(), false);
-					GetSelect().Clear(-1);
+					m_pCommanderView->GetSelectionInfo().ClearSelectionRange();
 				}
 		    }
 			else {
@@ -1296,7 +1301,9 @@ void CViewCommander::Command_REPLACE_ALL()
 					if( bFastMode ){
 						cSelectLogic.SetTo(CLogicPoint(nLen, nLogicLineNum));
 					}else{
-						rLayoutMgr.LogicToLayout( CLogicPoint(nLen, nLogicLineNum), GetSelect().GetToPointer() );
+							CLayoutPoint newSelectionTo(GetSelect().GetTo());
+						rLayoutMgr.LogicToLayout( CLogicPoint(nLen, nLogicLineNum), &newSelectionTo );
+						m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo(newSelectionTo);
 					}
 				} else {
 					// From Here Jun. 6, 2005 かろと
@@ -1324,7 +1331,9 @@ void CViewCommander::Command_REPLACE_ALL()
 						if( bFastMode ){
 							cSelectLogic.SetTo(CLogicPoint(nIdxTo, nLogicLineNum));
 						}else{
-							rLayoutMgr.LogicToLayout( CLogicPoint(nIdxTo, nLogicLineNum), GetSelect().GetToPointer() );	// 2007.01.19 ryoji 行位置も取得する
+							CLayoutPoint newSelectionTo(GetSelect().GetTo());
+							rLayoutMgr.LogicToLayout( CLogicPoint(nIdxTo, nLogicLineNum), &newSelectionTo );	// 2007.01.19 ryoji 行位置も取得する
+							m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo(newSelectionTo);
 						}
 					}
 				}

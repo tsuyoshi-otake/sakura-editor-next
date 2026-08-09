@@ -315,8 +315,8 @@ void CEditView::GetCurrentTextForSearch( CNativeW& cmemCurText, bool bStripMaxPa
 			);
 			if( bWhere ){
 				/* 選択範囲の変更 */
-				GetSelectionInfo().m_sSelectBgn = sRange;
-				GetSelectionInfo().m_sSelect    = sRange;
+				GetSelectionInfo().SetSelectionAnchorRange(sRange);
+				GetSelectionInfo().ReplaceSelectionRange(sRange);
 
 				/* 選択範囲のデータを取得 */
 				if( GetSelectedDataOne( cmemCurText, INT_MAX ) ){

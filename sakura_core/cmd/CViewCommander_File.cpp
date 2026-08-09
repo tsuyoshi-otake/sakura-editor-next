@@ -821,7 +821,7 @@ BOOL CViewCommander::Command_INSFILE( LPCWSTR filename, ECodeType nCharCode, [[m
 	BOOL	bBeforeTextSelected = m_pCommanderView->GetSelectionInfo().IsTextSelected();
 	CLayoutPoint ptFrom;
 	if (bBeforeTextSelected){
-		ptFrom = m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom();
+		ptFrom = m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom();
 	}
 
 	ECodeType	nSaveCharCode = nCharCode;

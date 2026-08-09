@@ -361,15 +361,17 @@ void CViewCommander::Command_UNDO( void )
 					cSelectLogic.SetTo(pcOpe->m_ptCaretPos_PHY_After);
 					if( bFastMode ){
 					}else{
-						m_pCommanderView->GetSelectionInfo().m_sSelectBgn.SetFrom(ptCaretPos_Before);
-						m_pCommanderView->GetSelectionInfo().m_sSelectBgn.SetTo(m_pCommanderView->GetSelectionInfo().m_sSelectBgn.GetFrom());
-						m_pCommanderView->GetSelectionInfo().m_sSelect.SetFrom(ptCaretPos_Before);
-						m_pCommanderView->GetSelectionInfo().m_sSelect.SetTo(ptCaretPos_After);
+						m_pCommanderView->GetSelectionInfo().SetSelectionAnchorFrom(ptCaretPos_Before);
+						m_pCommanderView->GetSelectionInfo().SetSelectionAnchorTo(
+							m_pCommanderView->GetSelectionInfo().GetSelectionAnchorRange().GetFrom()
+						);
+						m_pCommanderView->GetSelectionInfo().SetSelectionRangeFrom(ptCaretPos_Before);
+						m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo(ptCaretPos_After);
 					}
 
 					/* データ置換 削除&挿入にも使える */
 					bDrawAll |= m_pCommanderView->ReplaceData_CEditView3(
-						m_pCommanderView->GetSelectionInfo().m_sSelect,				// 削除範囲
+						m_pCommanderView->GetSelectionInfo().GetSelectionRange(),				// 削除範囲
 						&pcInsertOpe->m_cOpeLineData,	// 削除されたデータのコピー(NULL可能)
 						nullptr,
 						bDraw,						// 再描画するか否か
@@ -381,8 +383,8 @@ void CViewCommander::Command_UNDO( void )
 					);
 
 					/* 選択範囲の変更 */
-					m_pCommanderView->GetSelectionInfo().m_sSelectBgn.Clear(-1); //範囲選択(原点)
-					m_pCommanderView->GetSelectionInfo().m_sSelect.Clear(-1);
+					m_pCommanderView->GetSelectionInfo().ClearSelectionAnchorRange(); //範囲選択(原点)
+					m_pCommanderView->GetSelectionInfo().ClearSelectionRange();
 				}
 				break;
 			case OPE_DELETE:

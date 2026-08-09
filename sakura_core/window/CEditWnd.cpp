@@ -13573,15 +13573,15 @@ CLogicPointEx* CEditWnd::SavePhysPosOfAllView()
 			pptPosArray[i * NUM_OF_POS + 0].y = CLogicInt(0);
 		}
 		pptPosArray[i * NUM_OF_POS + 0].ext = CLayoutInt(0);
-		if( GetView(i).GetSelectionInfo().m_sSelectBgn.GetFrom().y >= 0 ){
+		if( GetView(i).GetSelectionInfo().GetSelectionAnchorRange().GetFrom().y >= 0 ){
 			GetDocument()->m_cLayoutMgr.LayoutToLogicEx(
-				GetView(i).GetSelectionInfo().m_sSelectBgn.GetFrom(),
+				GetView(i).GetSelectionInfo().GetSelectionAnchorRange().GetFrom(),
 				&pptPosArray[i * NUM_OF_POS + 1]
 			);
 		}
-		if( GetView(i).GetSelectionInfo().m_sSelectBgn.GetTo().y >= 0 ){
+		if( GetView(i).GetSelectionInfo().GetSelectionAnchorRange().GetTo().y >= 0 ){
 			GetDocument()->m_cLayoutMgr.LayoutToLogicEx(
-				GetView(i).GetSelectionInfo().m_sSelectBgn.GetTo(),
+				GetView(i).GetSelectionInfo().GetSelectionAnchorRange().GetTo(),
 				&pptPosArray[i * NUM_OF_POS + 2]
 			);
 		}
@@ -13626,18 +13626,20 @@ void CEditWnd::RestorePhysPosOfAllView( CLogicPointEx* pptPosArray )
 		);
 		GetView(i).m_pcTextArea->SetViewTopLine(tmp.GetY2());
 
-		if( GetView(i).GetSelectionInfo().m_sSelectBgn.GetFrom().y >= 0 ){
+		CLayoutRange selectionAnchor(GetView(i).GetSelectionInfo().GetSelectionAnchorRange());
+		if( selectionAnchor.GetFrom().y >= 0 ){
 			GetDocument()->m_cLayoutMgr.LogicToLayoutEx(
 				pptPosArray[i * NUM_OF_POS + 1],
-				GetView(i).GetSelectionInfo().m_sSelectBgn.GetFromPointer()
+				selectionAnchor.GetFromPointer()
 			);
 		}
-		if( GetView(i).GetSelectionInfo().m_sSelectBgn.GetTo().y >= 0 ){
+		if( selectionAnchor.GetTo().y >= 0 ){
 			GetDocument()->m_cLayoutMgr.LogicToLayoutEx(
 				pptPosArray[i * NUM_OF_POS + 2],
-				GetView(i).GetSelectionInfo().m_sSelectBgn.GetToPointer()
+				selectionAnchor.GetToPointer()
 			);
 		}
+		GetView(i).GetSelectionInfo().SetSelectionAnchorRange(selectionAnchor);
 		if( GetView(i).GetSelectionInfo().m_sSelect.GetFrom().y >= 0 ){
 			GetDocument()->m_cLayoutMgr.LogicToLayoutEx(
 				pptPosArray[i * NUM_OF_POS + 3],

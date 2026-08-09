@@ -254,15 +254,15 @@ void CViewCommander::Command_JUMP( void )
 void CViewCommander::Command_BOOKMARK_SET(void)
 {
 	CDocLine*	pCDocLine;
-	if( m_pCommanderView->GetSelectionInfo().IsTextSelected() && m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().y<m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().y ){
+	if( m_pCommanderView->GetSelectionInfo().IsTextSelected() && m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().y<m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().y ){
 		CLogicPoint ptFrom;
 		CLogicPoint ptTo;
 		GetDocument()->m_cLayoutMgr.LayoutToLogic(
-			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().y),
+			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().y),
 			&ptFrom
 		);
 		GetDocument()->m_cLayoutMgr.LayoutToLogic(
-			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().y  ),
+			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().y  ),
 			&ptTo
 		);
 		for(CLogicInt nY=ptFrom.GetY2();nY<=ptTo.y;nY++){

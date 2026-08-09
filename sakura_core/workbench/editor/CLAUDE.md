@@ -20,6 +20,14 @@ when translating mouse release versus full selection clear. Do not treat this
 pilot as full selection independence or move the remaining range/geometry fields
 without a typed coordinate/lifecycle contract and a standalone contract runner.
 
+Within that legacy range boundary, `CViewSelect` alone owns the selection anchor
+(`m_sSelectBgn`) and previous paint range (`m_sSelectOld`). Command code reads
+through `GetSelectionRange()`, creates a snapshot before applying an explicit
+range operation, and must
+not recover a mutable range through `CViewCommander::GetSelect()` or reach either
+private field. The active `m_sSelect` remains an explicitly legacy public range
+until a typed coordinate/lifecycle contract can replace its remaining consumers.
+
 Pure models and codecs must not include or retain HWND, `CEditWnd`, `CEditDoc`,
 Win32 dialogs, `EFunctionCode`, IPC clients, profile paths, or direct filesystem
 writes. Adapters may translate those facilities into bounded DTOs and typed

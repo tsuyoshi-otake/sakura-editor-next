@@ -35,7 +35,7 @@ public:
 	HWND GetMainWindow();
 	COpeBlk* GetOpeBlk();
 	void SetOpeBlk(COpeBlk* p);
-	CLayoutRange& GetSelect();
+	const CLayoutRange& GetSelect() const;
 	CCaret& GetCaret();
 
 private:

@@ -325,8 +325,8 @@ void CViewCommander::Command_DELETE_LINE( void )
 		ErrorBeep();
 		return;
 	}
-	GetSelect().SetFrom(CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2()    ));	//範囲選択開始位置
-	GetSelect().SetTo  (CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2() + 1));	//範囲選択終了位置
+	m_pCommanderView->GetSelectionInfo().SetSelectionRangeFrom(CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2()    ));	//範囲選択開始位置
+	m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo  (CLayoutPoint(CLayoutInt(0),GetCaret().GetCaretLayoutPos().GetY2() + 1));	//範囲選択終了位置
 
 	CLayoutPoint ptCaretPos_OLD = GetCaret().GetCaretLayoutPos();
 

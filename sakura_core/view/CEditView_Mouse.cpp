@@ -329,7 +329,7 @@ normal_action:;
 				/* 現在位置の単語選択 */
 				if ( GetCommander().Command_SELECTWORD( &ptNewCaret ) ){
 					bSelectWord = true;
-					GetSelectionInfo().m_sSelectBgn = GetSelectionInfo().m_sSelect;
+					GetSelectionInfo().SetSelectionAnchorRange(GetSelectionInfo().GetSelectionRange());
 				}
 			}else{
 
@@ -369,7 +369,7 @@ normal_action:;
 						if( -1 == nWork || 0 == nWork ){
 							GetSelectionInfo().m_sSelect.SetFrom(sRange.GetFrom());
 							if( 1 == nWorkRel ){
-								GetSelectionInfo().m_sSelectBgn = sRange;
+								GetSelectionInfo().SetSelectionAnchorRange(sRange);
 							}
 						}
 					}
@@ -398,7 +398,7 @@ normal_action:;
 							GetSelectionInfo().m_sSelect.SetTo(sRange.GetTo());
 						}
 						if( -1 == nWorkRel || 0 == nWorkRel ){
-							GetSelectionInfo().m_sSelectBgn=sRange;
+							GetSelectionInfo().SetSelectionAnchorRange(sRange);
 						}
 					}
 				}
@@ -449,7 +449,7 @@ normal_action:;
 			//	原点に設定されるためにおかしくなっていた。
 			//	なので、範囲選択が行われていない場合は起点末尾の設定を行わないようにする
 			if( GetSelectionInfo().IsTextSelected() ){
-				GetSelectionInfo().m_sSelectBgn.SetTo( GetSelectionInfo().m_sSelect.GetTo() );
+				GetSelectionInfo().SetSelectionAnchorTo( GetSelectionInfo().GetSelectionRange().GetTo() );
 			}
 		}
 		else{
@@ -480,8 +480,8 @@ normal_action:;
 					m_pcEditDoc->m_cLayoutMgr.LogicToLayout( CLogicPoint(nUrlIdxBgn + nUrlLen, nUrlLine), sRangeB.GetToPointer() );
 					*/
 
-					GetSelectionInfo().m_sSelectBgn = sRangeB;
-					GetSelectionInfo().m_sSelect = sRangeB;
+					GetSelectionInfo().SetSelectionAnchorRange(sRangeB);
+					GetSelectionInfo().ReplaceSelectionRange(sRangeB);
 
 					/* 選択領域描画 */
 					GetSelectionInfo().DrawSelectArea();
@@ -1103,7 +1103,7 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 			int nLineHeight = GetTextMetrics().GetHankakuDy();
 
 			// 選択開始行以下へのドラッグ時は1行下にカーソルを移動する
-			if( GetTextArea().GetViewTopLine() + (ptMouse.y - GetTextArea().GetAreaTop()) / nLineHeight >= GetSelectionInfo().m_sSelectBgn.GetTo().y)
+			if( GetTextArea().GetViewTopLine() + (ptMouse.y - GetTextArea().GetAreaTop()) / nLineHeight >= GetSelectionInfo().GetSelectionAnchorRange().GetTo().y)
 				nNewPos.y += nLineHeight;
 
 			// カーソルを移動
@@ -1113,7 +1113,7 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 			// 2.5クリックによる行単位のドラッグ
 			if( m_dwTripleClickCheck ){
 				// 選択開始行以上にドラッグした
-				if( ptNewCursor.GetY() <= GetSelectionInfo().m_sSelectBgn.GetTo().y ){
+				if( ptNewCursor.GetY() <= GetSelectionInfo().GetSelectionAnchorRange().GetTo().y ){
 					// GetCommander().Command_GOLINETOP( true, 0x09 );		// 改行単位の行頭へ移動
 					CLogicInt nLineLen;
 					const CLayout*	pcLayout;
@@ -1132,7 +1132,7 @@ void CEditView::OnMOUSEMOVE( [[maybe_unused]] WPARAM fwKeys, int xPos_, int yPos
 
 					// 選択開始行より下にカーソルがある時は1行前と物理行番号の違いをチェックする
 					// 選択開始行にカーソルがある時はチェック不要
-					if( ptNewCursor.GetY() > GetSelectionInfo().m_sSelectBgn.GetTo().y ){
+					if( ptNewCursor.GetY() > GetSelectionInfo().GetSelectionAnchorRange().GetTo().y ){
 						// 1行前の物理行を取得する
 						m_pcEditDoc->m_cLayoutMgr.LayoutToLogic( CLayoutPoint(CLayoutInt(0), ptNewCursor.GetY() - 1), &ptCaretPrevLog );
 					}
@@ -1684,7 +1684,7 @@ void CEditView::OnLBUTTONDBLCLK( WPARAM fwKeys, int _xPos , int _yPos )
 	GetCaret().HideCaret_( GetHwnd() ); // 2002/07/22 novice
 	if( GetSelectionInfo().IsTextSelected() ){
 		/* 常時選択範囲の範囲 */
-		GetSelectionInfo().m_sSelectBgn.SetTo( GetSelectionInfo().m_sSelect.GetTo() );
+		GetSelectionInfo().SetSelectionAnchorTo( GetSelectionInfo().GetSelectionRange().GetTo() );
 	}
 	else{
 		/* 現在のカーソル位置から選択を開始する */
@@ -1906,8 +1906,8 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 		GetSelectionInfo().DisableSelectArea( true );
 	}else{
 		bBeginBoxSelect_Old = pcDragSourceView->GetSelectionInfo().IsBoxSelecting();
-		sSelectBgn_Old = pcDragSourceView->GetSelectionInfo().m_sSelectBgn;
-		sSelect_Old = pcDragSourceView->GetSelectionInfo().m_sSelect;
+		sSelectBgn_Old = pcDragSourceView->GetSelectionInfo().GetSelectionAnchorRange();
+		sSelect_Old = pcDragSourceView->GetSelectionInfo().GetSelectionRange();
 		if( bMoveToPrev ){
 			/* 移動モード & 前に移動 */
 			/* 選択エリアを削除 */
@@ -1915,8 +1915,8 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 				pcDragSourceView->GetSelectionInfo().DisableSelectArea( true );
 				GetSelectionInfo().DisableSelectArea( true );
 				GetSelectionInfo().SetBoxSelect( bBeginBoxSelect_Old );
-				GetSelectionInfo().m_sSelectBgn = sSelectBgn_Old;
-				GetSelectionInfo().m_sSelect = sSelect_Old;
+				GetSelectionInfo().SetSelectionAnchorRange(sSelectBgn_Old);
+				GetSelectionInfo().ReplaceSelectionRange(sSelect_Old);
 			}
 			DeleteData( true );
 			GetCaret().MoveCursor( ptCaretPos_Old, true );
@@ -1989,8 +1989,8 @@ STDMETHODIMP CEditView::Drop( LPDATAOBJECT pDataObject, DWORD dwKeyState, POINTL
 
 			// 以前の選択範囲を選択する
 			GetSelectionInfo().SetBoxSelect( bBeginBoxSelect_Old );
-			GetSelectionInfo().m_sSelectBgn = sSelectBgn_Old;
-			GetSelectionInfo().m_sSelect = sSelect_Old;
+			GetSelectionInfo().SetSelectionAnchorRange(sSelectBgn_Old);
+			GetSelectionInfo().ReplaceSelectionRange(sSelect_Old);
 
 			/* 選択エリアを削除 */
 			DeleteData( true );
