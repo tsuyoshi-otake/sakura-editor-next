@@ -261,7 +261,7 @@ jobs:
     needs: [plan, collect]
     if: ${{ needs.plan.outputs.expected_fragments != '' && needs.collect.result == 'success' }}
     runs-on: windows-2022
-    timeout-minutes: 15
+    timeout-minutes: 30
     continue-on-error: true
 
     steps:

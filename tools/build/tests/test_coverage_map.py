@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TOOLS_BUILD = Path(__file__).resolve().parents[1]
 if str(TOOLS_BUILD) not in sys.path:
@@ -23,6 +24,7 @@ from sakura_build_lib.coverage_map import (  # noqa: E402
     select_tests,
     validate_coverage_map,
 )
+from sakura_build_lib import coverage_map as coverage_map_module  # noqa: E402
 from sakura_build_lib.test_inventory import guarantee_fingerprint  # noqa: E402
 
 
@@ -194,6 +196,24 @@ class CoverageMapTests(unittest.TestCase):
             merged["source_to_tests"],
         )
         self.assertEqual(2, len(merged["fragments"]))
+
+    def test_validates_repeated_selectors_once_per_unique_selector(self):
+        repeated = json.loads(json.dumps(self.map))
+        repeated["source_to_tests"].update(
+            {
+                f"sakura_core/generated_{index}.cpp": ["FooTest.*"]
+                for index in range(256)
+            }
+        )
+
+        with mock.patch.object(
+            coverage_map_module,
+            "_matching_tests",
+            wraps=coverage_map_module._matching_tests,
+        ) as matching_tests:
+            validate_coverage_map(repeated, self.inventory)
+
+        self.assertEqual(1, matching_tests.call_count)
 
     def test_canonical_cli_merges_and_selects_from_the_same_map(self):
         repository = Path(__file__).resolve().parents[3]
