@@ -15,6 +15,7 @@ if str(TOOLS_BUILD) not in sys.path:
 
 from sakura_build_lib.runner import BuildError  # noqa: E402
 from sakura_build_lib.semantic_inventory import (  # noqa: E402
+    _unchanged_line_map,
     accept_semantic_inventory,
     collect_semantic_inventory,
     compare_semantic_inventory,
@@ -115,6 +116,12 @@ void f() {
         with temporary:
             inventory = collect_semantic_inventory(root)
             self.assertEqual(set(), _finding_paths(inventory))
+
+    def test_line_mapping_is_independent_of_windows_line_endings(self) -> None:
+        self.assertEqual(
+            {1: 1, 2: 2, 3: 3},
+            _unchanged_line_map("first\nsecond\nthird\n", "first\r\nsecond\r\nthird\r\n"),
+        )
 
     def test_file_a_minus_one_and_file_b_plus_one_still_fails(self) -> None:
         temporary, root = self._temporary_repo(
