@@ -62,7 +62,7 @@ RULE_CATALOG = (
     ("boundary.win32_type", "code", 1),
     ("state.public_mutable_field", "code", 1),
     ("state.legacy_selection_lock_direct_access", "code", 1),
-    ("state.legacy_selection_range_command_direct_access", "code", 1),
+    ("state.legacy_selection_range_direct_access", "code", 1),
     ("state.mutable_member", "code", 1),
     ("state.raw_pointer_member", "code", 1),
     ("test.publicization_macro", "code", 1),
@@ -89,7 +89,11 @@ _CODE_PATTERNS = (
         re.compile(r"\b(?:std::(?:j)?thread|CreateThread|CreateProcess(?:W|A)?|SetTimer|Subscribe)\s*(?:<[^>]*>)?\s*\("),
     ),
 )
-_SELECTION_COMMAND_RANGE_DIRECT_ACCESS_RE = re.compile(r"\bm_sSelect(?:Bgn|Old)?\b")
+_LEGACY_SELECTION_RANGE_DIRECT_ACCESS_RE = re.compile(
+    r"\bm_sSelect(?:Bgn|Old)?\b"
+    r"|\bCLayoutRange\s*&\s*GetSelect\s*\("
+    r"|\bGetSelect\s*\(\s*\)\s*(?:=|\.Set(?:From|To|ToX)?\s*\(|\.Clear\s*\(|\.Get(?:From|To)Pointer\s*\()"
+)
 _PRIVATE_INCLUDE_RE = re.compile(r"^\s*#\s*include\s*[<\"]([^>\"]*/(?:platform|window|view|doc)/[^>\"]+)[>\"]")
 _MONOLITH_LINK_RE = re.compile(r"(?:CollectSakuraObjectsForTests1|SakuraLinkInputsForTests1|sakura_core/.*\.obj)")
 _FILTER_RE = re.compile(r"(?:gtest_filter|--filter|\bskip(?:ped|ping)?\b|exclude(?:d|ing)?)", re.IGNORECASE)
@@ -420,11 +424,11 @@ def _cpp_findings(relative: str, text: str) -> list[dict[str, object]]:
         findings.extend(_regex_findings(rule_id, pattern, masked, relative, starts))
     for rule_id, pattern in _CODE_PATTERNS:
         findings.extend(_regex_findings(rule_id, pattern, masked, relative, starts))
-    if relative.startswith("sakura_core/cmd/"):
+    if relative not in {"sakura_core/view/CViewSelect.cpp", "sakura_core/view/CViewSelect.h"}:
         findings.extend(
             _regex_findings(
-                "state.legacy_selection_range_command_direct_access",
-                _SELECTION_COMMAND_RANGE_DIRECT_ACCESS_RE,
+                "state.legacy_selection_range_direct_access",
+                _LEGACY_SELECTION_RANGE_DIRECT_ACCESS_RE,
                 masked,
                 relative,
                 starts,
