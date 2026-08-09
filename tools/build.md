@@ -223,9 +223,10 @@ scope definition hash、rule catalog hash、および`rule × path × line × co
 scanner/scope/rule catalogのhashがbaselineと異なる場合はfail-closedです。
 
 v1 baselineは履歴資料であり、v2の`--strict`比較には使用できません。PR 1Bでは
-`1723ccab53e597f3017a65a91da8e13cb5cae66d` のclean exact commitからv2 baselineと
-append-only acceptance ledgerを作成した。baseline commitはGit objectのLFとWindows worktreeの
-CRLFを同じ行内容として対応付けるため、platformごとに既存debtを新規findingへ誤変換しない。
+`4c07ae0058273433e65266809a250304208a49a8` のclean exact commitからv2 baselineを受理した。
+Git objectのLFとWindows worktreeのCRLFは同じ行内容として対応付け、scanner implementation hashも
+改行表現を正規化してから計算するため、platformごとに既存debtを新規findingへ誤変換しない。先行する
+受理recordはappend-only ledgerに残し、最終baselineへの置換も別recordとして追跡する。
 `--collect-only`と`--strict`は併用できない。
 
 `--accept-current`は通常の収集やCIから使えません。baselineを受理する開発者操作には、clean tree、

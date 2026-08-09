@@ -86346,7 +86346,7 @@
     "raw_new_expression_count": 250,
     "source_file_count": 1557,
     "source_line_count": 457931,
-    "tracked_file_count": 1598,
+    "tracked_file_count": 1599,
     "win32_parameter_mention_count": 4489
   },
   "rule_catalog": [
@@ -86427,7 +86427,7 @@
     }
   ],
   "rule_catalog_sha256": "sha256:477cf5526c3955aa7bde1fe5f797448ad5ce0fc5688730f4aecadb86bc2246ed",
-  "scanner_version": "sha256:df148aa51c3495ca5d112d9a5c2cb53748afd4b605679815708e57bb3d0eb8ff",
+  "scanner_version": "sha256:4430758bf108e5d112e7cc9e877c62306a6f87728f8252bd9c47095ed20fb3fe",
   "schema_version": 2,
   "scope": [
     "sakura_core",
@@ -86492,10 +86492,11 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "1723ccab53e597f3017a65a91da8e13cb5cae66d",
-  "source_fingerprint": "sha256:88b8437d96ff4afa7e80db6d658cdc0c14471661cfe632bdd70393b84d706270",
+  "source_commit": "4c07ae0058273433e65266809a250304208a49a8",
+  "source_fingerprint": "sha256:7298c6ca2e18982b790b08c0e89cf78069fd81ed48d4d698a57895631c5c5aa2",
   "tracked_source_paths": [
     ".github/dependabot.yml",
+    ".github/workflows/architecture-gates.yml",
     ".github/workflows/build-on-msys2.yml",
     ".github/workflows/build-sakura.yml",
     ".github/workflows/copilot-setup-steps.yml",
@@ -88094,5 +88095,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:ed36777bf3dd107195e5e1a33bc929032fa1630c881fc60c246ce27118c9da5a"
+  "tracked_source_set_sha256": "sha256:bf98c50bff50f73bdca04230dd6001676791d4e1100f0347f2824f00ff142b9d"
 }

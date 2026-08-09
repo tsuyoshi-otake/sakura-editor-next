@@ -16,15 +16,16 @@ Issue #18の意味的分解トラックについて、R0の再現可能な基準
 - 実装: `tools/build/sakura_build_lib/semantic_inventory.py`
 - CLI: `py -3 tools/build/sakura_build.py inventory semantic`
 - baseline: `tools/build/baselines/editor-core-semantic.json`
-- immutable ledger: `tools/build/baselines/editor-core-semantic-history/1723ccab53e597f3017a65a91da8e13cb5cae66d.json`
+- immutable ledger: `tools/build/baselines/editor-core-semantic-history/4c07ae0058273433e65266809a250304208a49a8.json`
 - CI gate: `.github/workflows/architecture-gates.yml` (`architecture-gates`)
 - 実行証跡: `build/evidence/r0/editor-core-semantic.json`（生成物、通常はGit管理外）
 - 単体テスト: `tools/build/tests/test_semantic_inventory.py`
 
 ## R0 baseline
 
-2026-08-09にclean exact commit `1723ccab53e597f3017a65a91da8e13cb5cae66d` を明示的に受理し、
-次の値を保存した。Git objectのLFとWindows worktreeのCRLFは同じ論理行として比較する。
+2026-08-09にclean exact commit `4c07ae0058273433e65266809a250304208a49a8` を明示的に受理し、
+次の値を保存した。Git objectのLFとWindows worktreeのCRLFは同じ論理行として比較し、scanner hashも
+改行表現に依存しない。先行する受理recordはappend-only historyに残る。
 
 | 観測項目 | baseline |
 |---|---:|
@@ -43,10 +44,10 @@ Issue #18の意味的分解トラックについて、R0の再現可能な基準
 | filtered-test hints | 28 |
 | semantic hotspots | 25 |
 
-source fingerprintは `sha256:88b8437d96ff4afa7e80db6d658cdc0c14471661cfe632bdd70393b84d706270`、
-scanner hashは `sha256:df148aa51c3495ca5d112d9a5c2cb53748afd4b605679815708e57bb3d0eb8ff`である。
-ledgerは旧baseline `sha256:72f9e42e0e340bd5f7f645176804b0742172c9374f2c0d31b7d5fd6d40f46ad5`から
-新baseline `sha256:3f87e1bc6a9de27d9debfd3f55d1efa866fddd26de70b32eef6fae6749f237b5`への受理を記録する。
+source fingerprintは `sha256:7298c6ca2e18982b790b08c0e89cf78069fd81ed48d4d698a57895631c5c5aa2`、
+scanner hashは `sha256:4430758bf108e5d112e7cc9e877c62306a6f87728f8252bd9c47095ed20fb3fe`である。
+最終ledgerは旧baseline `sha256:3f87e1bc6a9de27d9debfd3f55d1efa866fddd26de70b32eef6fae6749f237b5`から
+新baseline `sha256:d59c49f96548fc346e2da5d7ce3f92bd3b34c950a39e2bd319b34c5791dbb340`への受理を記録する。
 
 ## R1 ratchet
 
