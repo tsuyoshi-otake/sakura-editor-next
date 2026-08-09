@@ -253,7 +253,7 @@ static constexpr int _windowsButtonToSGREncoding(const unsigned int button,
 // - the translated coordinate.
 static constexpr til::point _winToVTCoord(const til::point coordWinCoordinate) noexcept
 {
-    return { coordWinCoordinate.x + 1, coordWinCoordinate.y + 1 };
+    return { coordWinCoordinate.x() + 1, coordWinCoordinate.y() + 1 };
 }
 
 // Routine Description:
@@ -333,8 +333,8 @@ TerminalInput::OutputType TerminalInput::HandleMouse(const til::point position, 
         const auto isHover = _isHoverMsg(button);
         const auto isButton = _isButtonMsg(button);
 
-        const auto sameCoord = (position.x == _mouseInputState.lastPos.x) &&
-                               (position.y == _mouseInputState.lastPos.y) &&
+        const auto sameCoord = (position.x() == _mouseInputState.lastPos.x()) &&
+                               (position.y() == _mouseInputState.lastPos.y()) &&
                                (_mouseInputState.lastButton == button);
 
         // If we have a WM_MOUSEMOVE, we need to know if any of the mouse
@@ -356,8 +356,8 @@ TerminalInput::OutputType TerminalInput::HandleMouse(const til::point position, 
         {
             if (_inputMode.any(Mode::ButtonEventMouseTracking, Mode::AnyEventMouseTracking))
             {
-                _mouseInputState.lastPos.x = position.x;
-                _mouseInputState.lastPos.y = position.y;
+                _mouseInputState.lastPos.x() = position.x();
+                _mouseInputState.lastPos.y() = position.y();
                 _mouseInputState.lastButton = button;
             }
 
@@ -403,11 +403,11 @@ TerminalInput::OutputType TerminalInput::_GenerateDefaultSequence(const til::poi
     //   because (95+32+1)=128, which is not an ASCII character.
     // There are more details in _GenerateUtf8Sequence, but basically, we can't put anything above x80 into the input
     //   stream without bash.exe trying to convert it into utf8, and generating extra bytes in the process.
-    if (position.x <= s_MaxDefaultCoordinate && position.y <= s_MaxDefaultCoordinate)
+    if (position.x() <= s_MaxDefaultCoordinate && position.y() <= s_MaxDefaultCoordinate)
     {
         const auto vtCoords = _winToVTCoord(position);
-        const auto encodedX = _encodeDefaultCoordinate(vtCoords.x);
-        const auto encodedY = _encodeDefaultCoordinate(vtCoords.y);
+        const auto encodedX = _encodeDefaultCoordinate(vtCoords.x());
+        const auto encodedY = _encodeDefaultCoordinate(vtCoords.y());
         const auto encodedButton = _windowsButtonToXEncoding(button, isHover, modifierKeyState, delta);
 
         return fmt::format(FMT_COMPILE(L"{}M{}{}{}"), _csi, encodedButton, encodedX, encodedY);
@@ -443,11 +443,11 @@ TerminalInput::OutputType TerminalInput::_GenerateUtf8Sequence(const til::point 
     //   So bash would also need to change, but how could it tell the difference between them? no real good way.
     // I'm going to emit a utf16 encoded value for now. Besides, if a windows program really wants it, just use the SGR mode, which is unambiguous.
     // TODO: Followup once the UTF-8 input stack is ready, MSFT:8509613
-    if (position.x <= (SHORT_MAX - 33) && position.y <= (SHORT_MAX - 33))
+    if (position.x() <= (SHORT_MAX - 33) && position.y() <= (SHORT_MAX - 33))
     {
         const auto vtCoords = _winToVTCoord(position);
-        const auto encodedX = _encodeDefaultCoordinate(vtCoords.x);
-        const auto encodedY = _encodeDefaultCoordinate(vtCoords.y);
+        const auto encodedX = _encodeDefaultCoordinate(vtCoords.x());
+        const auto encodedY = _encodeDefaultCoordinate(vtCoords.y());
         const auto encodedButton = _windowsButtonToXEncoding(button, isHover, modifierKeyState, delta);
 
         return fmt::format(FMT_COMPILE(L"{}M{}{}{}"), _csi, encodedButton, encodedX, encodedY);
@@ -473,7 +473,7 @@ TerminalInput::OutputType TerminalInput::_GenerateSGRSequence(const til::point p
     // Format for SGR events is:
     // "\x1b[<%d;%d;%d;%c", xButton, x+1, y+1, isRelease? 'm' : 'M'
     const auto xbutton = _windowsButtonToSGREncoding(button, isHover, modifierKeyState, delta);
-    return fmt::format(FMT_COMPILE(L"{}<{};{};{}{}"), _csi, xbutton, position.x + 1, position.y + 1, isRelease ? L'm' : L'M');
+    return fmt::format(FMT_COMPILE(L"{}<{};{};{}{}"), _csi, xbutton, position.x() + 1, position.y() + 1, isRelease ? L'm' : L'M');
 }
 
 // Routine Description:

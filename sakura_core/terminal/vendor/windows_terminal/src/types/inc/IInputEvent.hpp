@@ -36,8 +36,8 @@ constexpr INPUT_RECORD SynthesizeMouseEvent(til::point dwMousePosition, uint32_t
         .Event = {
             .MouseEvent = {
                 .dwMousePosition = {
-                    ::base::saturated_cast<SHORT>(dwMousePosition.x),
-                    ::base::saturated_cast<SHORT>(dwMousePosition.y),
+                    ::base::saturated_cast<SHORT>(dwMousePosition.x()),
+                    ::base::saturated_cast<SHORT>(dwMousePosition.y()),
                 },
                 .dwButtonState = dwButtonState,
                 .dwControlKeyState = dwControlKeyState,
@@ -54,8 +54,8 @@ constexpr INPUT_RECORD SynthesizeWindowBufferSizeEvent(til::size dwSize)
         .Event = {
             .WindowBufferSizeEvent = {
                 .dwSize = {
-                    ::base::saturated_cast<SHORT>(dwSize.width),
-                    ::base::saturated_cast<SHORT>(dwSize.height),
+                    ::base::saturated_cast<SHORT>(dwSize.width()),
+                    ::base::saturated_cast<SHORT>(dwSize.height()),
                 },
             },
         },

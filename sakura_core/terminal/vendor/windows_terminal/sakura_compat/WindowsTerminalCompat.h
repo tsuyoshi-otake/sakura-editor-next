@@ -146,23 +146,54 @@ using small_vector = std::vector<T>;
 
 using CoordType = std::int32_t;
 
-struct point {
-	CoordType x{};
-	CoordType y{};
-	constexpr bool operator==( const point& ) const noexcept = default;
+class point {
+public:
+	constexpr point() noexcept = default;
+	constexpr point( const CoordType x, const CoordType y ) noexcept : m_x(x), m_y(y) {}
+
+	[[nodiscard]] constexpr CoordType x() const noexcept { return m_x; }
+	[[nodiscard]] constexpr CoordType y() const noexcept { return m_y; }
+	constexpr CoordType& x() noexcept { return m_x; }
+	constexpr CoordType& y() noexcept { return m_y; }
+	constexpr bool operator==( const point& other ) const noexcept
+	{
+		return m_x == other.m_x && m_y == other.m_y;
+	}
+
+private:
+	CoordType m_x{};
+	CoordType m_y{};
 };
 
-struct size {
-	CoordType width{};
-	CoordType height{};
-	constexpr bool operator==( const size& ) const noexcept = default;
+class size {
+public:
+	constexpr size() noexcept = default;
+	constexpr size( const CoordType width, const CoordType height ) noexcept : m_width(width), m_height(height) {}
+
+	[[nodiscard]] constexpr CoordType width() const noexcept { return m_width; }
+	[[nodiscard]] constexpr CoordType height() const noexcept { return m_height; }
+	constexpr bool operator==( const size& other ) const noexcept
+	{
+		return m_width == other.m_width && m_height == other.m_height;
+	}
+
+private:
+	CoordType m_width{};
+	CoordType m_height{};
 };
 
 // Only declarations from the upstream utility header instantiate this type in
 // the selected parser closure. Keep it complete without importing TIL color.
-struct color {
-	std::uint32_t value{};
-	constexpr bool operator==( const color& ) const noexcept = default;
+class color {
+public:
+	constexpr color() noexcept = default;
+	constexpr explicit color( const std::uint32_t value ) noexcept : m_value(value) {}
+
+	[[nodiscard]] constexpr std::uint32_t value() const noexcept { return m_value; }
+	constexpr bool operator==( const color& other ) const noexcept { return m_value == other.m_value; }
+
+private:
+	std::uint32_t m_value{};
 };
 
 constexpr char32_t tolower_ascii( char32_t value ) noexcept
