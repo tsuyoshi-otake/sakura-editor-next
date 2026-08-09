@@ -36,8 +36,69 @@
 #include <fmt/format.h>
 #include <fmt/xchar.h>
 #include <gsl/gsl>
+#if !defined(__MINGW32__) && !defined(__MINGW64__)
 #include <wil/resource.h>
 #include <wil/result.h>
+#endif
+
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#include "MinGWCompilerCompat.h"
+
+namespace wil {
+
+// The selected parser/input closure only needs the handle holder's complete
+// type and the formatting helper declared by TIL. Do not pretend to port all
+// of WIL to GCC; keep this minimal surface local to the vendor boundary.
+class unique_hfile final {
+public:
+	unique_hfile() noexcept = default;
+	explicit unique_hfile( HANDLE handle ) noexcept : m_handle(handle) {}
+	~unique_hfile() { reset(); }
+
+	unique_hfile( const unique_hfile& ) = delete;
+	unique_hfile& operator=( const unique_hfile& ) = delete;
+	unique_hfile( unique_hfile&& other ) noexcept : m_handle(other.release()) {}
+	unique_hfile& operator=( unique_hfile&& other ) noexcept
+	{
+		if( this != &other ) reset(other.release());
+		return *this;
+	}
+
+	[[nodiscard]] HANDLE get() const noexcept { return m_handle; }
+	[[nodiscard]] HANDLE release() noexcept
+	{
+		const auto handle = m_handle;
+		m_handle = INVALID_HANDLE_VALUE;
+		return handle;
+	}
+	void reset( HANDLE handle = INVALID_HANDLE_VALUE ) noexcept
+	{
+		if( m_handle != INVALID_HANDLE_VALUE && m_handle != nullptr ) CloseHandle(m_handle);
+		m_handle = handle;
+	}
+	[[nodiscard]] explicit operator bool() const noexcept
+	{
+		return m_handle != INVALID_HANDLE_VALUE && m_handle != nullptr;
+	}
+
+private:
+	HANDLE m_handle{ INVALID_HANDLE_VALUE };
+};
+
+template <typename String, typename... Args>
+String str_printf( const wchar_t* format, Args&&... args )
+{
+	static_assert(std::is_same_v<String, std::wstring>);
+	return fmt::format(fmt::runtime(std::wstring_view(format)), std::forward<Args>(args)...);
+}
+
+} // namespace wil
+
+#ifndef LOG_HR
+#define LOG_HR(...) ((void)0)
+#endif
+
+#endif // defined(__MINGW32__) || defined(__MINGW64__)
 
 #ifndef SHORT_MAX
 #define SHORT_MAX SHRT_MAX

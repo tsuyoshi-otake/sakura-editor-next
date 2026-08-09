@@ -20,3 +20,18 @@ This vendor drop preserves upstream source while excluding the Windows Terminal 
 - The remaining Windows Terminal parser/input files, renderer, host, XAML/WinUI, TextBuffer, application layer, build metadata, tests, fuzzers, and generated-tool projects remain excluded.
 
 No imported Microsoft source file has include rewrites, namespace changes, or behavioral changes. The compatibility shims and Sakura adapters are local files and are not represented as upstream imports.
+
+## MinGW compatibility boundary (Issue #83)
+
+The MinGW build uses the same dependency-closed subset; it does not enable a
+second terminal implementation. `sakura_compat/` supplies the narrow compiler
+surface needed by the unchanged imports: the `__assume` caller contract, the
+two ETW declaration headers required by `tracing.hpp` (the tracing TU remains
+excluded), and the `wil::unique_hfile`/`wil::str_printf` declarations reached by
+the selected parser/input headers. These shims are added only to the MinGW
+include path and do not shadow the MSVC SDK or WIL headers. The WIL portion is
+limited to the typed flag-operation macros reached by the selected input files.
+
+This is not a general WIL or Windows SDK port. Any new vendor usage outside
+this closed surface must either remain an advisory MinGW boundary or receive a
+separate compatibility decision; do not grow the shim opportunistically.

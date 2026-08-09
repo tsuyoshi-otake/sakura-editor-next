@@ -31,7 +31,7 @@ public:
 	};
 
 	[[nodiscard]] static EFailedEditorProcessShutdownResult TerminateAndWait(
-		HANDLE processHandle, DWORD exitCode, const Operations& operations = {}) noexcept
+		HANDLE processHandle, DWORD exitCode, const Operations& operations) noexcept
 	{
 		if (processHandle == nullptr || processHandle == INVALID_HANDLE_VALUE
 			|| operations.wait == nullptr || operations.terminate == nullptr) {
@@ -48,6 +48,16 @@ public:
 		return operations.wait(processHandle, INFINITE) == WAIT_OBJECT_0
 			? EFailedEditorProcessShutdownResult::Stopped
 			: EFailedEditorProcessShutdownResult::OwnershipUnresolved;
+	}
+
+	[[nodiscard]] static EFailedEditorProcessShutdownResult TerminateAndWait(
+		HANDLE processHandle, DWORD exitCode) noexcept
+	{
+		// Keep the operation table aggregate for test injection. MinGW cannot use
+		// a braced default argument for a reference to this nested aggregate, so
+		// spell the production overload explicitly.
+		return TerminateAndWait(processHandle, exitCode,
+			Operations{::WaitForSingleObject, ::TerminateProcess});
 	}
 };
 
