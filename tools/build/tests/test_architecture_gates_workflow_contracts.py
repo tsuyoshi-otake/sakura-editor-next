@@ -34,6 +34,14 @@ class ArchitectureGatesWorkflowContractTests(unittest.TestCase):
         self.assertIn("    runs-on: ubuntu-latest\n", job)
         self.assertIn("fetch-depth: 0", job)
         self.assertIn(
+            "python3 tools/build/sakura_build.py --format json lint checkout-invariance",
+            job,
+        )
+        self.assertLess(
+            job.index("python3 tools/build/sakura_build.py --format json lint checkout-invariance"),
+            job.index("python3 tools/build/sakura_build.py --format json inventory semantic --strict"),
+        )
+        self.assertIn(
             "python3 tools/build/sakura_build.py --format json inventory semantic --strict",
             job,
         )

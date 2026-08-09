@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Sequence
 
 from sakura_build_lib.abi_fixture import ABI_FIXTURES, run_abi_fixture
+from sakura_build_lib.checkout_invariance import verify_checkout_invariance
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
 from sakura_build_lib.component_evidence import ComponentEvidenceError, collect_component_evidence, write_component_evidence
 from sakura_build_lib.coverage_map import (
@@ -90,6 +91,7 @@ EXIT_TIMEOUT = 8
 EXIT_CLEANUP = 9
 EXIT_PERFORMANCE = 10
 EXIT_RATCHET = 11
+EXIT_LINT = 12
 
 RESOURCE_SOURCE_ROLES = {
     "ja-JP": (Path("sakura_core/sakura_rc.rc"), Path("sakura_core/sakura_rc.rc2")),
@@ -187,6 +189,13 @@ def parser() -> argparse.ArgumentParser:
 
     generate_parser = commands.add_parser("generate")
     generate_parser.add_argument("--check", action="store_true")
+
+    lint = commands.add_parser("lint")
+    lint_commands = lint.add_subparsers(dest="lint_command", required=True)
+    lint_commands.add_parser(
+        "checkout-invariance",
+        help="verify that LF and CRLF checkouts keep architecture-gate inputs equivalent",
+    )
 
     graph = commands.add_parser("graph")
     graph_commands = graph.add_subparsers(dest="graph_command", required=True)
@@ -934,6 +943,10 @@ def main(argv: list[str] | None = None) -> int:
             changed = generate(graph)
             output({"ok": True, "changed": changed}, args.format)
             return 0
+        if args.command == "lint":
+            result = verify_checkout_invariance(repo, manifest, current_graph=graph)
+            output(result, args.format)
+            return 0 if result["ok"] else EXIT_LINT
         if args.command == "graph":
             if args.graph_command == "project":
                 output(graph.project(args.context), args.format)

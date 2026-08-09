@@ -91,6 +91,7 @@ named batchはR10で削除します。
 
 ```cmd
 sakura-build.bat manifest check
+sakura-build.bat lint checkout-invariance
 sakura-build.bat generate --check
 sakura-build.bat graph check --all-contexts
 sakura-build.bat build dev x64 Debug --jobs 8
@@ -245,9 +246,12 @@ replaceし、同じ入力の通常収集で不要なmtime更新は発生しま�
 `.github/workflows/architecture-gates.yml`はPR、`main`/`develop`へのpush、手動実行で常に
 `architecture-gates` jobを生成する。path filterやjob条件を置かないので、documentation-only PRでも
 required checkがpendingのままにはならない。baseline commitのancestor判定とblob比較に必要な履歴を
-checkoutするため、workflowは`fetch-depth: 0`を使う。jobは次の3検証をfail-closedで順に実行する。
+checkoutするため、workflowは`fetch-depth: 0`を使う。CI起動前にも同じlintを必須実行し、jobは次の4検証をfail-closedで順に実行する。
+semantic graphが参照する`schema-v3.json`のhashもuniversal-newline textから計算するため、WindowsのCRLFと
+LinuxのLFでcommitted projectionが相互にstaleになることはない。
 
 ```cmd
+py -3 tools/build/sakura_build.py --format json lint checkout-invariance
 py -3 tools/build/sakura_build.py --format json inventory semantic --strict
 py -3 tools/build/sakura_build.py generate --check
 py -3 tools/build/sakura_build.py graph check --all-contexts

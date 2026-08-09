@@ -25,6 +25,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Verify checkout invariance
+        run: python3 tools/build/sakura_build.py --format json lint checkout-invariance
+
       - name: Verify semantic ratchet
         run: python3 tools/build/sakura_build.py --format json inventory semantic --strict
 
