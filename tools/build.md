@@ -516,6 +516,11 @@ pytest は、この選択時にも従来の full headless filter で必ず実行
 `hotfix/*`、Dependabot、`develop` → `main` は常に full suite です。したがって map は高速化の
 ためのヒントであり、テスト0件の成功や cache 書き込み権限を与えるものではありません。
 
+各構成の選択決定は Actions artifact `test-selection-x64-Debug`／
+`test-selection-x64-Release` 内の `tia-test-selection.json` に保存されます。`mode` と
+`full_fallback` を確認すると、feature PR が選択実行したか、安全側の full fallback に戻ったかを
+後から判別できます。
+
 ### デバッグ方法
 
 - [タスクトレイのメニュー項目をデバッグする方法](./debug-tasktray-menu.md)
