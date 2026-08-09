@@ -1396,7 +1396,7 @@ void CEditView::ConvSelectedArea( EFunctionCode nFuncCode )
 
 	CLogicPoint ptFromLogic;	// 2009.07.18 ryoji Logicで記憶するように変更
 	m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(
-		GetSelectionInfo().m_sSelect.GetFrom(),
+		GetSelectionInfo().GetSelectionRange().GetFrom(),
 		&ptFromLogic
 	);
 
@@ -1407,8 +1407,8 @@ void CEditView::ConvSelectedArea( EFunctionCode nFuncCode )
 		CLayoutRect	rcSelLayout;
 		TwoPointToRect(
 			&rcSelLayout,
-			GetSelectionInfo().m_sSelect.GetFrom(),	// 範囲選択開始
-			GetSelectionInfo().m_sSelect.GetTo()		// 範囲選択終了
+			GetSelectionInfo().GetSelectionRange().GetFrom(),	// 範囲選択開始
+			GetSelectionInfo().GetSelectionRange().GetTo()		// 範囲選択終了
 		);
 
 		/* 現在の選択範囲を非選択状態に戻す */
@@ -1495,12 +1495,12 @@ void CEditView::ConvSelectedArea( EFunctionCode nFuncCode )
 		GetSelectedDataSimple( cmemBuf );
 
 		/* 機能種別によるバッファの変換 */
-		int nStartColum = (Int)GetSelectionInfo().m_sSelect.GetFrom().GetX2() / (Int)GetTextMetrics().GetLayoutXDefault();
+		int nStartColum = (Int)GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() / (Int)GetTextMetrics().GetLayoutXDefault();
 		CConversionFacade(m_pcEditDoc->m_cLayoutMgr.GetTabSpaceKetas(), nStartColum, GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol, m_pcEditDoc->m_cDocType.GetDocumentAttribute().m_encoding, GetCharWidthCache()).ConvMemory(nFuncCode, cmemBuf);
 
 		/* データ置換 削除&挿入にも使える */
 		ReplaceData_CEditView(
-			GetSelectionInfo().m_sSelect,
+			GetSelectionInfo().GetSelectionRange(),
 			cmemBuf.GetStringPtr(),		/* 挿入するデータ */ // 2002/2/10 aroka CMemory変更
 			cmemBuf.GetStringLength(),	/* 挿入するデータの長さ */ // 2002/2/10 aroka CMemory変更
 			false,
@@ -1515,7 +1515,7 @@ void CEditView::ConvSelectedArea( EFunctionCode nFuncCode )
 			&ptFrom
 		);
 		GetSelectionInfo().SetSelectArea( CLayoutRange(ptFrom, GetCaret().GetCaretLayoutPos()) );	// 2009.07.25 ryoji
-		GetCaret().MoveCursor( GetSelectionInfo().m_sSelect.GetTo(), true );
+		GetCaret().MoveCursor( GetSelectionInfo().GetSelectionRange().GetTo(), true );
 		GetCaret().m_nCaretPosX_Prev = GetCaret().GetCaretLayoutPos().GetX2();
 
 		if( !m_bDoing_UndoRedo ){	/* アンドゥ・リドゥの実行中か */
@@ -1895,8 +1895,8 @@ bool CEditView::GetSelectedData(
 		/* 2点を対角とする矩形を求める */
 		TwoPointToRect(
 			&rcSel,
-			GetSelectionInfo().m_sSelect.GetFrom(),	// 範囲選択開始
-			GetSelectionInfo().m_sSelect.GetTo()		// 範囲選択終了
+			GetSelectionInfo().GetSelectionRange().GetFrom(),	// 範囲選択開始
+			GetSelectionInfo().GetSelectionRange().GetTo()		// 範囲選択終了
 		);
 		buffer->Clear();
 
@@ -1972,10 +1972,10 @@ bool CEditView::GetSelectedData(
 		//  無駄な容量確保が出ていますので、もう少し精度を上げたいところですが・・・。
 		//  とはいえ、逆に小さく見積もることになってしまうと、かなり速度をとられる要因になってしまうので
 		// 困ってしまうところですが・・・。
-		m_pcEditDoc->m_cLayoutMgr.GetLineStr( GetSelectionInfo().m_sSelect.GetFrom().GetY2(), &nLineLen, &pcLayout );
+		m_pcEditDoc->m_cLayoutMgr.GetLineStr( GetSelectionInfo().GetSelectionRange().GetFrom().GetY2(), &nLineLen, &pcLayout );
 		size_t nBufSize = 0;
 
-		int i = (Int)(GetSelectionInfo().m_sSelect.GetTo().y - GetSelectionInfo().m_sSelect.GetFrom().y);
+		int i = (Int)(GetSelectionInfo().GetSelectionRange().GetTo().y - GetSelectionInfo().GetSelectionRange().GetFrom().y);
 
 		// 先頭に引用符を付けるとき。
 		if ( nullptr != pszQuote )
@@ -2020,20 +2020,20 @@ bool CEditView::GetSelectedData(
 			return false;
 		}
 
-		for( nLineNum = GetSelectionInfo().m_sSelect.GetFrom().GetY2(); nLineNum <= GetSelectionInfo().m_sSelect.GetTo().y; ++nLineNum ){
+		for( nLineNum = GetSelectionInfo().GetSelectionRange().GetFrom().GetY2(); nLineNum <= GetSelectionInfo().GetSelectionRange().GetTo().y; ++nLineNum ){
 			pLine = m_pcEditDoc->m_cLayoutMgr.GetLineStr( nLineNum, &nLineLen, &pcLayout );
 			if( nullptr == pLine ){
 				break;
 			}
-			if( nLineNum == GetSelectionInfo().m_sSelect.GetFrom().y ){
+			if( nLineNum == GetSelectionInfo().GetSelectionRange().GetFrom().y ){
 				/* 指定された桁に対応する行のデータ内の位置を調べる */
-				nIdxFrom = LineColumnToIndex( pcLayout, GetSelectionInfo().m_sSelect.GetFrom().GetX2() );
+				nIdxFrom = LineColumnToIndex( pcLayout, GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() );
 			}else{
 				nIdxFrom = CLogicInt(0);
 			}
-			if( nLineNum == GetSelectionInfo().m_sSelect.GetTo().y ){
+			if( nLineNum == GetSelectionInfo().GetSelectionRange().GetTo().y ){
 				/* 指定された桁に対応する行のデータ内の位置を調べる */
-				nIdxTo = LineColumnToIndex( pcLayout, GetSelectionInfo().m_sSelect.GetTo().GetX2() );
+				nIdxTo = LineColumnToIndex( pcLayout, GetSelectionInfo().GetSelectionRange().GetTo().GetX2() );
 			}else{
 				nIdxTo = nLineLen;
 			}
@@ -2138,8 +2138,8 @@ bool CEditView::GetSelectedDataOne( CNativeW& cmemBuf, int nMaxLen )
 		// 2点を対角とする矩形を求める
 		TwoPointToRect(
 			&rcSel,
-			GetSelectionInfo().m_sSelect.GetFrom(),	// 範囲選択開始
-			GetSelectionInfo().m_sSelect.GetTo()	// 範囲選択終了
+			GetSelectionInfo().GetSelectionRange().GetFrom(),	// 範囲選択開始
+			GetSelectionInfo().GetSelectionRange().GetTo()	// 範囲選択終了
 		);
 
 		pLine = m_pcEditDoc->m_cLayoutMgr.GetLineStr( rcSel.top, &nLineLen, &pcLayout );
@@ -2159,8 +2159,8 @@ bool CEditView::GetSelectedDataOne( CNativeW& cmemBuf, int nMaxLen )
 		// 線形選択(ロジック行処理)
 		CLogicPoint ptFrom;
 		CLogicPoint ptTo;
-		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().m_sSelect.GetFrom(), &ptFrom);
-		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().m_sSelect.GetTo(),   &ptTo);
+		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().GetSelectionRange().GetFrom(), &ptFrom);
+		m_pcEditDoc->m_cLayoutMgr.LayoutToLogic(GetSelectionInfo().GetSelectionRange().GetTo(),   &ptTo);
 		CLogicInt targetY = ptFrom.y;
 
 		const CDocLine* pDocLine = m_pcEditDoc->m_cDocLineMgr.GetLine( targetY );
@@ -2203,8 +2203,8 @@ int CEditView::IsCurrentPositionSelected(
 		/* 2点を対角とする矩形を求める */
 		TwoPointToRect(
 			&rcSel,
-			GetSelectionInfo().m_sSelect.GetFrom(),	// 範囲選択開始
-			GetSelectionInfo().m_sSelect.GetTo()		// 範囲選択終了
+			GetSelectionInfo().GetSelectionRange().GetFrom(),	// 範囲選択開始
+			GetSelectionInfo().GetSelectionRange().GetTo()		// 範囲選択終了
 		);
 		++rcSel.bottom;
 		po = ptCaretPos;
@@ -2231,41 +2231,41 @@ int CEditView::IsCurrentPositionSelected(
 			return 1;
 		}
 	}else{
-		if( GetSelectionInfo().m_sSelect.GetFrom().y > ptCaretPos.y ){
+		if( GetSelectionInfo().GetSelectionRange().GetFrom().y > ptCaretPos.y ){
 			return -1;
 		}
-		if( GetSelectionInfo().m_sSelect.GetTo().y < ptCaretPos.y ){
+		if( GetSelectionInfo().GetSelectionRange().GetTo().y < ptCaretPos.y ){
 			return 1;
 		}
-		if( GetSelectionInfo().m_sSelect.GetFrom().y == ptCaretPos.y ){
+		if( GetSelectionInfo().GetSelectionRange().GetFrom().y == ptCaretPos.y ){
 			if( IsDragSource() ){
 				if( ApiWrap::GetKeyState_Control() ){	/* Ctrlキーが押されていたか */
-					if( GetSelectionInfo().m_sSelect.GetFrom().x >= ptCaretPos.x ){
+					if( GetSelectionInfo().GetSelectionRange().GetFrom().x >= ptCaretPos.x ){
 						return -1;
 					}
 				}else{
-					if( GetSelectionInfo().m_sSelect.GetFrom().x > ptCaretPos.x ){
+					if( GetSelectionInfo().GetSelectionRange().GetFrom().x > ptCaretPos.x ){
 						return -1;
 					}
 				}
 			}else
-			if( GetSelectionInfo().m_sSelect.GetFrom().x > ptCaretPos.x ){
+			if( GetSelectionInfo().GetSelectionRange().GetFrom().x > ptCaretPos.x ){
 				return -1;
 			}
 		}
-		if( GetSelectionInfo().m_sSelect.GetTo().y == ptCaretPos.y ){
+		if( GetSelectionInfo().GetSelectionRange().GetTo().y == ptCaretPos.y ){
 			if( IsDragSource() ){
 				if( ApiWrap::GetKeyState_Control() ){	/* Ctrlキーが押されていたか */
-					if( GetSelectionInfo().m_sSelect.GetTo().x <= ptCaretPos.x ){
+					if( GetSelectionInfo().GetSelectionRange().GetTo().x <= ptCaretPos.x ){
 						return 1;
 					}
 				}else{
-					if( GetSelectionInfo().m_sSelect.GetTo().x < ptCaretPos.x ){
+					if( GetSelectionInfo().GetSelectionRange().GetTo().x < ptCaretPos.x ){
 						return 1;
 					}
 				}
 			}else
-			if( GetSelectionInfo().m_sSelect.GetTo().x <= ptCaretPos.x ){
+			if( GetSelectionInfo().GetSelectionRange().GetTo().x <= ptCaretPos.x ){
 				return 1;
 			}
 		}
@@ -2310,7 +2310,7 @@ void CEditView::CopySelectedAllLines(
 		return;
 	}
 	{	// 選択範囲内の全行を選択状態にする
-		CLayoutRange sSelect( GetSelectionInfo().m_sSelect );
+		CLayoutRange sSelect( GetSelectionInfo().GetSelectionRange() );
 		const CLayout* pcLayout = GetDocument()->m_cLayoutMgr.SearchLineByLayoutY( sSelect.GetFrom().y );
 		if( !pcLayout ) return;
 		sSelect.SetFromX( pcLayout->GetIndent() );
@@ -2326,7 +2326,7 @@ void CEditView::CopySelectedAllLines(
 		GetSelectionInfo().DisableSelectArea( false ); // 2011.06.03 true →false
 		GetSelectionInfo().SetSelectArea( sSelect );
 
-		GetCaret().MoveCursor( GetSelectionInfo().m_sSelect.GetTo(), false );
+		GetCaret().MoveCursor( GetSelectionInfo().GetSelectionRange().GetTo(), false );
 		GetCaret().ShowEditCaret();
 	}
 	/* 再描画 */
@@ -2597,8 +2597,8 @@ void CEditView::CaretUnderLineOFF( bool bDraw, bool bDrawPaint, bool bResetFlag,
 			ps.rcPaint.bottom = ps.rcPaint.top + height;
 
 			//	不本意ながら選択情報をバックアップ。
-//			CLayoutRange sSelectBackup = GetSelectionInfo().m_sSelect;
-//			GetSelectionInfo().m_sSelect.Clear(-1);
+//			CLayoutRange sSelectBackup = GetSelectionInfo().GetSelectionRange();
+//			GetSelectionInfo().ClearSelectionRange();
 
 			if( ps.rcPaint.bottom - ps.rcPaint.top ){
 				// 描画
@@ -2640,12 +2640,12 @@ void CEditView::CaretUnderLineOFF( bool bDraw, bool bDrawPaint, bool bResetFlag,
 			HDC hdc = ::GetDC( GetHwnd() );
 			GetCaret().m_cUnderLine.Lock();
 			//	不本意ながら選択情報をバックアップ。
-			CLayoutRange sSelectBackup = this->GetSelectionInfo().m_sSelect;
-			this->GetSelectionInfo().m_sSelect.Clear(-1);
+			CLayoutRange sSelectBackup = this->GetSelectionInfo().GetSelectionRange();
+			this->GetSelectionInfo().ClearSelectionRange();
 			// 可能なら互換BMPからコピーして再作画
 			OnPaint( hdc, &ps, TRUE );
 			//	選択情報を復元
-			this->GetSelectionInfo().m_sSelect = sSelectBackup;
+			this->GetSelectionInfo().ReplaceSelectionRange(sSelectBackup);
 			GetCaret().m_cUnderLine.UnLock();
 			ReleaseDC( hdc );
 		}

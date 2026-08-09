@@ -1596,25 +1596,25 @@ bool CMacro::HandleFunction(CEditView *View, EFunctionCode ID, VARIANT *Argument
 	case F_GETSELLINEFROM:
 		//	2005.07.30 maru マクロ追加
 		{
-			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().m_sSelect.GetFrom().y + 1 );
+			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().GetSelectionRange().GetFrom().y + 1 );
 		}
 		return true;
 	case F_GETSELCOLUMNFROM:
 		//	2005.07.30 maru マクロ追加
 		{
-			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().m_sSelect.GetFrom().x + 1 );
+			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().GetSelectionRange().GetFrom().x + 1 );
 		}
 		return true;
 	case F_GETSELLINETO:
 		//	2005.07.30 maru マクロ追加
 		{
-			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().m_sSelect.GetTo().y + 1 );
+			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().GetSelectionRange().GetTo().y + 1 );
 		}
 		return true;
 	case F_GETSELCOLUMNTO:
 		//	2005.07.30 maru マクロ追加
 		{
-			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().m_sSelect.GetTo().x + 1);
+			Wrap( &Result )->Receive( (Int)View->GetSelectionInfo().GetSelectionRange().GetTo().x + 1);
 		}
 		return true;
 	case F_ISINSMODE:
@@ -2299,7 +2299,7 @@ bool CMacro::HandleFunction(CEditView *View, EFunctionCode ID, VARIANT *Argument
 		}
 	case F_ISTEXTSELECTINGLOCK:
 		{
-			if( View->GetSelectionInfo().m_bSelectingLock ) {
+			if( View->GetSelectionInfo().IsSelectionLocked() ) {
 				if( View->GetSelectionInfo().IsBoxSelecting() ) {
 					Wrap( &Result )->Receive( 2 );	//選択ロック+矩形選択中
 				}else{

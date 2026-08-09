@@ -69,6 +69,13 @@ def _fail(code: str, location: str, message: str) -> None:
     raise ManifestError(code, location, message)
 
 
+def _canonical_text_hash(text: str) -> str:
+    """Hash universal-newline text for checkout-independent projections."""
+
+    canonical = text.replace("\r\n", "\n").replace("\r", "\n")
+    return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def _object(value: Any, location: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         _fail("MANIFEST_TYPE", location, "expected object")
@@ -955,7 +962,12 @@ def _load_compile_profiles(repo_root: Path) -> CompileProfiles:
     return CompileProfiles(1, project_profiles, contract_profiles, link_profiles, context_profiles)
 
 
-def load_semantic_graph(repo_root: Path, manifest_path: Path | None = None) -> SemanticGraph:
+def load_semantic_graph(
+    repo_root: Path,
+    manifest_path: Path | None = None,
+    *,
+    schema_text: str | None = None,
+) -> SemanticGraph:
     repo_root = repo_root.resolve()
     manifest_path = (manifest_path or repo_root / "src/main/modules/modules.json").resolve()
     try:
@@ -978,9 +990,10 @@ def load_semantic_graph(repo_root: Path, manifest_path: Path | None = None) -> S
     compile_profiles = _load_compile_profiles(repo_root)
     schema_path = repo_root / "src/main/modules/schema-v3.json"
     try:
-        schema_hash = "sha256:" + hashlib.sha256(schema_path.read_bytes()).hexdigest()
+        checked_out_schema_text = schema_path.read_text(encoding="utf-8")
     except FileNotFoundError:
         _fail("MANIFEST_SCHEMA_NOT_FOUND", str(schema_path), "schema file does not exist")
+    schema_hash = _canonical_text_hash(schema_text if schema_text is not None else checked_out_schema_text)
 
     contexts_list = [_parse_context(item, f"$.contexts[{index}]") for index, item in enumerate(_array(root["contexts"], "$.contexts"))]
     components_list = [_parse_component(repo_root, item, f"$.components[{index}]") for index, item in enumerate(_array(root["components"], "$.components"))]

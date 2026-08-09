@@ -315,7 +315,7 @@
       "ownership_exclusions": [],
       "public_include_roots": ["sakura_core/include"],
       "private_include_roots": [],
-      "state_owner": "presentation-neutral selection phase and mode",
+      "state_owner": "presentation-neutral selection interaction phase, mode, and lock",
       "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_editor_selection.vcxproj"], "cmake": ["sakura_editor_selection"]},
       "compile_profile": null
     },

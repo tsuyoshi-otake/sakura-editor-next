@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <utility>
 
+#include "../../sakura_compat/MinGWCompilerCompat.h"
+
 #ifndef LOG_CAUGHT_EXCEPTION
 #define LOG_CAUGHT_EXCEPTION() ((void)0)
 #endif

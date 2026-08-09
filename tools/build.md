@@ -16,6 +16,7 @@
     - [ビルドに使用されるバッチファイル](#ビルドに使用されるバッチファイル)
     - [x64 ビルドの増分検証](#x64-ビルドの増分検証)
     - [単体テストの実行](#単体テストの実行)
+    - [カバレッジマップによる影響テスト選択](#カバレッジマップによる影響テスト選択)
     - [デバッグ方法](#デバッグ方法)
     - [アセンブリ一覧の生成](#アセンブリ一覧の生成)
     - [githash.h の更新をスキップ](#githashh-の更新をスキップ)
@@ -90,6 +91,7 @@ named batchはR10で削除します。
 
 ```cmd
 sakura-build.bat manifest check
+sakura-build.bat lint checkout-invariance
 sakura-build.bat generate --check
 sakura-build.bat graph check --all-contexts
 sakura-build.bat build dev x64 Debug --jobs 8
@@ -201,22 +203,67 @@ RC inputの観測がresource table/ID互換であること、vcpkg targetの実�
 ### Editor Core意味的負債台帳
 
 Issue #18のR0/R1ゲートは、ビルド依存グラフとは別に、Editor Coreの意味的な結合を
-再現可能なソース観測として記録します。canonical CLIから次を実行します。
+再現可能なソース観測として記録します。schema v2では、入力集合をファイルシステム走査から
+切り離し、`git ls-files --stage -z`のstage 0 regular fileだけで構成します。gitlink（submodule）、
+`externals/`、生成されたmodule projection、vcpkg worktree/local registry、未追跡ファイルは
+入力にしません。source/config/testのpath categoryごとに明示したruleだけを適用します。
+
+PR 1Aではbaselineを更新せず、まず次でv2の観測だけを出力します。
 
 ```cmd
 py -3 tools/build/sakura_build.py inventory semantic ^
-  --baseline tools/build/baselines/editor-core-semantic.json ^
-  --output build/evidence/r0/editor-core-semantic.json --strict
+  --collect-only ^
+  --output build/evidence/r0/editor-core-semantic-v2.json
 ```
 
-`--strict`の終了コードは、baselineのスキーマ不一致・読み取り失敗が2、ラチェット対象の
-増加が11、成功が0です。`--accept-current`は、レビュー済みの基準更新時だけ使用します。
-baselineはソース相対パスと内容から決定的なfingerprintを作り、出力は一時ファイルから
-atomic replaceします。同じ入力で再実行しても不要なmtime更新は発生しません。
+v2 inventoryはexact `source_commit`、scanner implementation hash、tracked source path-set hash、
+scope definition hash、rule catalog hash、および`rule × path × line × column`のfindingを保存します。
+比較時はbaseline commitからのrenameと不変行を追跡するため、別fileへの負債移動では相殺できません。
+変更済みfileの既存負債は増加不可で、既存findingを持つ変更fileは少なくとも1件を減らす必要があります。
+新規first-party sourceの違反は0件から開始し、削除は純減、pure renameは同一負債として追跡します。
+scanner/scope/rule catalogのhashがbaselineと異なる場合はfail-closedです。
+
+v1 baselineは履歴資料であり、v2の`--strict`比較には使用できません。PR 1Bでは
+`4c07ae0058273433e65266809a250304208a49a8` のclean exact commitからv2 baselineを受理した。
+Git objectのLFとWindows worktreeのCRLFは同じ行内容として対応付け、scanner implementation hashも
+改行表現を正規化してから計算するため、platformごとに既存debtを新規findingへ誤変換しない。先行する
+受理recordはappend-only ledgerに残し、最終baselineへの置換も別recordとして追跡する。
+`--collect-only`と`--strict`は併用できない。
+
+`--accept-current`は通常の収集やCIから使えません。baselineを受理する開発者操作には、clean tree、
+明示したfull HEAD SHA、現在scannerとpath-setの一致、non-CI environment、理由、tracking Issueを要求します。
+
+```cmd
+py -3 tools/build/sakura_build.py inventory semantic ^
+  --accept-current --source-commit <40-character-HEAD-SHA> ^
+  --reason "Reviewed v2 baseline acceptance" --tracking-issue 18
+```
+
+この操作はold/new baseline SHA、source commit、scanner/scope/rule/path-set hash、rule/file delta、理由、
+Issue番号をbaseline横のimmutable history recordへ書きます。inventory/evidenceは一時ファイルからatomic
+replaceし、同じ入力の通常収集で不要なmtime更新は発生しません。
+
+`.github/workflows/architecture-gates.yml`はPR、`main`/`develop`へのpush、手動実行で常に
+`architecture-gates` jobを生成する。path filterやjob条件を置かないので、documentation-only PRでも
+required checkがpendingのままにはならない。baseline commitのancestor判定とblob比較に必要な履歴を
+checkoutするため、workflowは`fetch-depth: 0`を使う。CI起動前にも同じlintを必須実行し、jobは次の4検証をfail-closedで順に実行する。
+semantic graphが参照する`schema-v3.json`のhashもuniversal-newline textから計算するため、WindowsのCRLFと
+LinuxのLFでcommitted projectionが相互にstaleになることはない。
+legacy MSBuild project内の`ClCompile Include`はWindows pathとして解釈するため、Linux CIでも
+consumer projectionのsource removalがWindows checkoutと一致する。
+
+```cmd
+py -3 tools/build/sakura_build.py --format json lint checkout-invariance
+py -3 tools/build/sakura_build.py --format json inventory semantic --strict
+py -3 tools/build/sakura_build.py generate --check
+py -3 tools/build/sakura_build.py graph check --all-contexts
+```
 
 台帳はASTや所有権解析の代替ではありません。現在は、`GetDllShareData`/
-`GetEditWnd`/`GetEditDoc`、生の`new`/`delete`、`catch (...)`、Win32型の言及、private
-include、tests1全体リンク・filtered testのヒントを明示的なラチェット対象にしています。
+`GetEditWnd`/`GetEditDoc`、生の`new`/`delete`、`catch (...)`、Win32型の言及、public mutable/raw pointer
+state、private include、stop不能resource acquisition、test publicization、tests1全体リンク・filtered testの
+ヒントを明示的なラチェット対象にしています。C++ codeの検出前にはcomment、ordinary/raw string、character
+literalをmaskするため、それらに現れたpatternはfindingになりません。
 source file/line/include数とCEditWnd/CEditView/CEditDoc/CEditApp/DLLSHAREDATAのhotspotは
 診断情報です。R2以降のSelection/CaretまたはWorking Copyの縦切りでは、台帳を更新してから
 型付きport、ライフサイクル、テストの独立性を別ゲートで証明します。
@@ -441,6 +488,84 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 このフィルターは UI・外部連携を含むテストを省くため、最終確認では必要なテストを別途実行してください。
 
 GitHub-hosted runner は非対話セッションのため、標準 CI でも同じフィルターを環境変数 `GTEST_FILTER` から適用します。CI では CTest と Actions の両方に上限時間を設け、失敗時を含めてリポジトリ配下の `tests1.exe`、`sakura.exe`、および関連するカバレッジプロセスを検査・終了します。完全な UI・連携テストは、対話可能な Windows セッションで別途実行してください。
+
+### カバレッジマップによる影響テスト選択
+
+Issue #47 の feature PR 用選択器は、develop の全件テストから作った OpenCppCoverage
+Cobertura 断片をスイート単位で統合し、変更ファイルを GoogleTest selector へ変換します。
+マップのスキーマは [`tools/build/coverage-map.schema.json`](build/coverage-map.schema.json)
+です。マップには develop の `base_sha`、`tests1.exe` の SHA-256、テスト inventory の
+guarantee fingerprint を保存するため、別の develop 成果物を誤って再利用できません。
+Actions cache は `tia-map-windows-x64-<base-sha>-<schema-version>`（CLI の
+`coverage_cache_key` と同じ形式）を使い、base SHA を省略した共有キーを作ってはいけません。
+
+```cmd
+py -3 tools/build/sakura_build.py test coverage-map merge ^
+  --base-sha <develop-sha> ^
+  --test-binary x64/Debug/tests1.exe ^
+  --inventory src/test/test-inventory.json ^
+  --fragment FooTest.*::coverage/FooTest.xml ^
+  --output coverage/coverage-map.json
+
+py -3 tools/build/sakura_build.py --format json test coverage-map select ^
+  --map coverage/coverage-map.json ^
+  --inventory src/test/test-inventory.json ^
+  --base-sha <develop-sha> ^
+  --modules-json src/main/modules/modules.json ^
+  --changed-file M::sakura_core/CEditView.cpp ^
+  --smoke-selector RequestService.CancellationIsTerminalBeforeTransport
+```
+
+スイート単位の収集を複数 runner に分割する場合は、同じ inventory・runner・除外 selector
+から `plan` を作ります。各 shard は通常の `merge` で小さな partial map を作り、最後に
+`merge-partials` で provenance が一致するものだけを統合します。巨大な Cobertura XML を
+job 間で渡してはいけません。
+
+```cmd
+py -3 tools/build/sakura_build.py --format json test coverage-map plan ^
+  --inventory src/test/test-inventory.json ^
+  --runner-id tests1 ^
+  --shard-index 0 --shard-count 8 ^
+  --exclude-selector MacroMgrTest.* ^
+  --output coverage/plan-0.json
+
+py -3 tools/build/sakura_build.py --format json test coverage-map merge-partials ^
+  --base-sha <develop-sha> ^
+  --inventory src/test/test-inventory.json ^
+  --partial-map coverage/partial-0.json ^
+  --partial-map coverage/partial-1.json ^
+  --output coverage/coverage-map.json
+```
+
+`select` の `mode` は `selected`、`smoke`、`full` のいずれかです。マップ不在・SHA／inventory
+不一致・Cobertura に存在しない production file・削除／rename・CMake/MSBuild/vcpkg/modules/
+test-runner/PCH の変更・選択テストが全体の 65% 以上、または smoke selector の不整合は、
+`full_fallback: true` と空の positive filter を返します。呼び出し側はこの結果を全件実行へ
+渡し、0件成功として扱ってはいけません。Markdown等の文書だけが変更された場合は
+`mode: smoke` となり、影響テスト数が0でも指定した smoke selector を必ず実行します。
+
+`modules.json` の source/header/include root は module 単位の展開に使われるため、header や
+inline/template の変更も同じ module の coverage suite を選べます。modules の所有範囲に
+入らない production file は安全側に全件へフォールバックします。
+
+Actions では `build-sakura.yml` が full Debug/Release 成功後の trusted `develop` push だけで
+`coverage-map.yml` を呼びます。Debug の `tests1.exe` と PDB は retention 1 日の入力 artifact
+として渡し、8 shard が XML を各 runner 内で検証して compact partial map だけを集約します。
+最終 map は正確な develop SHA を含む cache key で保存されます。map 作成は required check では
+なく、失敗時には cache を保存しません。
+
+同一リポジトリの `feature/*` → `develop` PR はその PR の `base.sha` と完全一致する map だけを
+restore し、selector の結果と `CNativeW.*` の smoke を `tests1` の `GTEST_FILTER` に渡します。
+coverage map は `tests1` 専用なので、別々に CTest へ登録された component test executable と
+pytest は、この選択時にも従来の full headless filter で必ず実行します。map 不在・provenance
+不一致・不明な差分・選択器の例外は、従来の full headless suite へ戻ります。fork、`fix/*`、
+`hotfix/*`、Dependabot、`develop` → `main` は常に full suite です。したがって map は高速化の
+ためのヒントであり、テスト0件の成功や cache 書き込み権限を与えるものではありません。
+
+各構成の選択決定は Actions artifact `test-selection-x64-Debug`／
+`test-selection-x64-Release` 内の `tia-test-selection.json` に保存されます。`mode` と
+`full_fallback` を確認すると、feature PR が選択実行したか、安全側の full fallback に戻ったかを
+後から判別できます。
 
 ### デバッグ方法
 

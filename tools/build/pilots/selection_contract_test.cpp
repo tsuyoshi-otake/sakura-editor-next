@@ -24,11 +24,27 @@ using editor::selection::SelectionSession;
 bool StartsAndEndsWithExplicitTerminalStates()
 {
 	SelectionSession session;
-	if (session.IsActive() || session.End() != ESelectionTransition::Noop) return false;
+	if (session.IsActive() || session.IsLocked() || session.End() != ESelectionTransition::Noop) return false;
 	if (session.Begin(ESelectionMode::Linear) != ESelectionTransition::Started) return false;
 	if (!session.IsActive() || !session.IsMode(ESelectionMode::Linear)) return false;
 	if (session.End() != ESelectionTransition::Ended) return false;
 	return !session.IsActive() && session.End() == ESelectionTransition::Noop;
+}
+
+bool InteractionEndPreservesLockButClearOwnsTheFullTerminal()
+{
+	SelectionSession session;
+	session.SetLocked(true);
+	if (!session.IsLocked()) return false;
+	if (session.End() != ESelectionTransition::Noop || !session.IsLocked()) return false;
+	if (session.Begin(ESelectionMode::Box) != ESelectionTransition::Started) return false;
+	if (session.End() != ESelectionTransition::Ended) return false;
+	if (session.IsActive() || !session.IsLocked() || session.Mode() != ESelectionMode::Linear) return false;
+
+	session.Clear();
+	if (session.IsActive() || session.IsLocked() || session.Mode() != ESelectionMode::Linear) return false;
+	session.Clear();
+	return !session.IsActive() && !session.IsLocked() && session.Mode() == ESelectionMode::Linear;
 }
 
 bool ModeRestartDoesNotLeakMultipleModes()
@@ -56,13 +72,25 @@ bool DisablingAnInactiveOrDifferentModeIsNoop()
 		&& session.IsMode(ESelectionMode::Nazo);
 }
 
-struct TestCase {
-	std::string_view name;
-	bool (*run)();
+class TestCase {
+public:
+	constexpr TestCase(std::string_view name, bool (*run)()) noexcept
+		: m_name(name)
+		, m_run(run)
+	{
+	}
+
+	[[nodiscard]] constexpr std::string_view Name() const noexcept { return m_name; }
+	[[nodiscard]] bool Run() const noexcept { return m_run(); }
+
+private:
+	std::string_view m_name;
+	bool (*m_run)();
 };
 
 constexpr std::array kTests{
 	TestCase{"StartsAndEndsWithExplicitTerminalStates", StartsAndEndsWithExplicitTerminalStates},
+	TestCase{"InteractionEndPreservesLockButClearOwnsTheFullTerminal", InteractionEndPreservesLockButClearOwnsTheFullTerminal},
 	TestCase{"ModeRestartDoesNotLeakMultipleModes", ModeRestartDoesNotLeakMultipleModes},
 	TestCase{"DisablingTheActiveModeFallsBackToLinear", DisablingTheActiveModeFallsBackToLinear},
 	TestCase{"DisablingAnInactiveOrDifferentModeIsNoop", DisablingAnInactiveOrDifferentModeIsNoop},
@@ -88,7 +116,7 @@ int main(int argc, char** argv)
 		const std::string_view argument = argv[index];
 		if (argument == "--gtest_list_tests") {
 			std::cout << "SelectionSession.\n";
-			for (const auto& test : kTests) std::cout << "  " << test.name << '\n';
+			for (const auto& test : kTests) std::cout << "  " << test.Name() << '\n';
 			return 0;
 		}
 		constexpr std::string_view prefix = "--gtest_filter=";
@@ -98,10 +126,10 @@ int main(int argc, char** argv)
 	int selected = 0;
 	int failed = 0;
 	for (const auto& test : kTests) {
-		const std::string fullName = "SelectionSession." + std::string(test.name);
+		const std::string fullName = "SelectionSession." + std::string(test.Name());
 		if (!Matches(fullName, filter)) continue;
 		++selected;
-		const bool passed = test.run();
+		const bool passed = test.Run();
 		std::cout << (passed ? "[       OK ] " : "[  FAILED  ] ") << fullName << '\n';
 		if (!passed) ++failed;
 	}

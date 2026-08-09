@@ -16,6 +16,7 @@ if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
 from sakura_build_lib import generator as build_generator
+from sakura_build_lib.checkout_invariance import verify_checkout_invariance
 from sakura_build_lib import test_inventory as test_inventory_module
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
 from sakura_build_lib.model import GENERATOR_VERSION, ManifestError, evaluate_condition, load_semantic_graph, normalize_condition
@@ -141,6 +142,20 @@ def generated_debug_release_data(root: Path) -> tuple[dict, dict]:
 
 
 class ManifestTests(unittest.TestCase):
+    def test_schema_hash_is_independent_of_checkout_line_endings(self):
+        with RepositoryFixture() as (root, manifest):
+            lf_graph = load_semantic_graph(root, manifest)
+            generate(lf_graph)
+
+            result = verify_checkout_invariance(root, manifest, current_graph=lf_graph)
+
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["semantic_graph"]["line_endings_invariant"])
+            self.assertTrue(result["semantic_graph"]["projection_staleness_invariant"])
+            self.assertTrue(result["semantic_graph"]["content_change_affects_graph"])
+            self.assertTrue(result["semantic_inventory_scanner"]["line_endings_invariant"])
+            self.assertTrue(result["semantic_inventory_scanner"]["current_matches_canonical"])
+
     def test_rejects_unknown_field(self):
         with RepositoryFixture() as (root, manifest):
             value = manifest_data()
@@ -618,11 +633,12 @@ class ManifestTests(unittest.TestCase):
             consumer = next(item for item in value["components"] if item["id"] == "consumer")
             consumer["build_definition"] = "legacy"
             consumer["compile_profile"] = "project-compile"
-            consumer["backend_targets"] = {"msbuild": ["consumer.vcxproj"], "cmake": ["consumer"]}
-            (root / "consumer.vcxproj").write_text(
+            consumer["backend_targets"] = {"msbuild": ["projects/consumer.vcxproj"], "cmake": ["consumer"]}
+            (root / "projects").mkdir()
+            (root / "projects/consumer.vcxproj").write_text(
                 '<?xml version="1.0" encoding="utf-8"?>\n'
                 '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
-                '  <ItemGroup><ClCompile Include="provider\\provider.cpp" /></ItemGroup>\n'
+                '  <ItemGroup><ClCompile Include="..\\provider\\provider.cpp" /></ItemGroup>\n'
                 '</Project>\n',
                 encoding="utf-8",
             )
@@ -633,7 +649,7 @@ class ManifestTests(unittest.TestCase):
 
             props_path = root / "src/main/modules/generated/msbuild/consumers/consumer.props"
             props = props_path.read_text(encoding="utf-8")
-            self.assertIn('<ClCompile Remove="provider\\provider.cpp"', props)
+            self.assertIn('<ClCompile Remove="..\\provider\\provider.cpp"', props)
             self.assertIn("generated\\msbuild\\projects\\provider.vcxproj", props)
             self.assertIn("generated\\abi\\ctx\\consumer.h", props)
             self.assertIn("<SetConfiguration", props)

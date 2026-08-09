@@ -1,0 +1,38 @@
+name: Architecture gates
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  architecture-gates:
+    name: architecture-gates
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Verify checkout invariance
+        run: python3 tools/build/sakura_build.py --format json lint checkout-invariance
+
+      - name: Verify semantic ratchet
+        run: python3 tools/build/sakura_build.py --format json inventory semantic --strict
+
+      - name: Verify generated build metadata
+        run: python3 tools/build/sakura_build.py generate --check
+
+      - name: Verify component dependency graph
+        run: python3 tools/build/sakura_build.py graph check --all-contexts

@@ -31,6 +31,11 @@ The public entry scripts live at the repository root; run them from there.
 - Avoid unconditional child-tool builds. Make dependency checks incremental at the owning MSBuild/CMake target instead of probing repeatedly in wrapper scripts.
 - Do not leave reusable MSBuild nodes, compiler/linker processes, or helper processes after a normal wrapper invocation.
 
+## CI Preflight
+
+- Before starting CI for any change, run `py -3 tools/build/sakura_build.py --format json lint checkout-invariance` from the repository root and require exit code 0. This is mandatory, not an optional diagnostic.
+- The lint simulates LF and CRLF inputs for the semantic-graph schema and semantic-inventory scanner, and verifies that committed generated projections remain equivalent. Do not substitute `generate --check` for this preflight; run both checks.
+
 ## Documentation Contract
 
 Keep these files synchronized with script behavior:

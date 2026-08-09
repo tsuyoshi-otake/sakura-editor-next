@@ -43,7 +43,7 @@ void CViewCommander::Command_INDENT( wchar_t wcChar, EIndentType eIndent )
 	/* SPACEorTABインンデントで矩形選択桁がゼロの時は選択範囲を最大にする */
 	//	Aug. 14, 2005 genta 折り返し幅をLayoutMgrから取得するように
 	if( INDENT_NONE != eIndent && m_pCommanderView->GetSelectionInfo().IsBoxSelecting() && GetSelect().GetFrom().x==GetSelect().GetTo().x ){
-		GetSelect().SetToX( GetDocument()->m_cLayoutMgr.GetMaxLineLayout() );
+		m_pCommanderView->GetSelectionInfo().SetSelectionRangeToX( GetDocument()->m_cLayoutMgr.GetMaxLineLayout() );
 		m_pCommanderView->RedrawAll();
 		return;
 	}
@@ -131,7 +131,7 @@ void CViewCommander::Command_INDENT( const wchar_t* const pData, const CLogicInt
 			if( ! m_pCommanderView->IsInsMode() /* Oct. 2, 2005 genta */){
 				sSelectOld = GetSelect();
 				m_pCommanderView->DeleteData( false );
-				GetSelect() = sSelectOld;
+				m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(sSelectOld);
 				m_pCommanderView->GetSelectionInfo().SetBoxSelect(true);
 			}
 			// To Here 2001.12.03 hor
@@ -305,8 +305,8 @@ void CViewCommander::Command_INDENT( const wchar_t* const pData, const CLogicInt
 				)
 			);
 		}
-		GetSelect().SetFrom(rcSel.GetFrom());	//範囲選択開始位置
-		GetSelect().SetTo(rcSel.GetTo());		//範囲選択終了位置
+		m_pCommanderView->GetSelectionInfo().SetSelectionRangeFrom(rcSel.GetFrom());	//範囲選択開始位置
+		m_pCommanderView->GetSelectionInfo().SetSelectionRangeTo(rcSel.GetTo());		//範囲選択終了位置
 		m_pCommanderView->GetSelectionInfo().SetBoxSelect(true);
 	}
 	else if( GetSelect().IsLineOne() ){	// 通常選択(1行内)
@@ -388,7 +388,7 @@ void CViewCommander::Command_INDENT( const wchar_t* const pData, const CLogicInt
 			::ShowWindow( hwndProgress, SW_HIDE );
 		}
 
-		GetSelect() = sSelectOld;
+		m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(sSelectOld);
 
 		// From Here 2001.12.03 hor
 		GetCaret().MoveCursor( GetSelect().GetTo(), true );
@@ -525,7 +525,7 @@ void CViewCommander::Command_UNINDENT( wchar_t wcChar )
 		if( hwndProgress ){
 			::ShowWindow( hwndProgress, SW_HIDE );
 		}
-		GetSelect() = sSelectOld;	//範囲選択
+		m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(sSelectOld);	//範囲選択
 
 		// From Here 2001.12.03 hor
 		GetCaret().MoveCursor( GetSelect().GetTo(), true );
@@ -558,13 +558,13 @@ void CViewCommander::Command_TRIM(
 	CViewSelect& cViewSelect = m_pCommanderView->GetSelectionInfo();
 
 	if(!cViewSelect.IsTextSelected()){	//	非選択時は行選択に変更
-		cViewSelect.m_sSelect.SetFrom(
+		cViewSelect.SetSelectionRangeFrom(
 			CLayoutPoint(
 				CLayoutInt(0),
 				GetCaret().GetCaretLayoutPos().GetY()
 			)
 		);
-		cViewSelect.m_sSelect.SetTo  (
+		cViewSelect.SetSelectionRangeTo(
 			CLayoutPoint(
 				GetDocument()->m_cLayoutMgr.GetMaxLineLayout(),
 				GetCaret().GetCaretLayoutPos().GetY()
@@ -650,23 +650,23 @@ void CViewCommander::Command_SORT(BOOL bAsc)	//bAsc:TRUE=昇順,FALSE=降順
 	}
 
 	if( m_pCommanderView->GetSelectionInfo().IsBoxSelecting() ){
-		sRangeA=m_pCommanderView->GetSelectionInfo().m_sSelect;
-		if( m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().x==m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().x ){
+		sRangeA=m_pCommanderView->GetSelectionInfo().GetSelectionRange();
+		if( m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().x==m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().x ){
 			//	Aug. 14, 2005 genta 折り返し幅をLayoutMgrから取得するように
-			m_pCommanderView->GetSelectionInfo().m_sSelect.SetToX( GetDocument()->m_cLayoutMgr.GetMaxLineLayout() );
+			m_pCommanderView->GetSelectionInfo().SetSelectionRangeToX( GetDocument()->m_cLayoutMgr.GetMaxLineLayout() );
 		}
-		if(m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().x<m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().x){
-			nCF=m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().GetX2();
-			nCT=m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().GetX2();
+		if(m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().x<m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().x){
+			nCF=m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().GetX2();
+			nCT=m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().GetX2();
 		}else{
-			nCF=m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().GetX2();
-			nCT=m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().GetX2();
+			nCF=m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().GetX2();
+			nCT=m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().GetX2();
 		}
 	}
 	bBeginBoxSelectOld=m_pCommanderView->GetSelectionInfo().IsBoxSelecting();
 	nCaretPosYOLD=GetCaret().GetCaretLayoutPos().GetY();
 	GetDocument()->m_cLayoutMgr.LayoutToLogic(
-		m_pCommanderView->GetSelectionInfo().m_sSelect,
+		m_pCommanderView->GetSelectionInfo().GetSelectionRange(),
 		&sSelectOld
 	);
 
@@ -786,14 +786,14 @@ void CViewCommander::Command_SORT(BOOL bAsc)	//bAsc:TRUE=昇順,FALSE=降順
 	//	選択エリアの復元
 	if(bBeginBoxSelectOld){
 		m_pCommanderView->GetSelectionInfo().SetBoxSelect(bBeginBoxSelectOld);
-		m_pCommanderView->GetSelectionInfo().m_sSelect=sRangeA;
+		m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(sRangeA);
 	}else{
-		m_pCommanderView->GetSelectionInfo().m_sSelect=sSelectOld_Layout;
+		m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(sSelectOld_Layout);
 	}
-	if(nCaretPosYOLD==m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().y || m_pCommanderView->GetSelectionInfo().IsBoxSelecting() ) {
-		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom(), true );
+	if(nCaretPosYOLD==m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().y || m_pCommanderView->GetSelectionInfo().IsBoxSelecting() ) {
+		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom(), true );
 	}else{
-		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo(), true );
+		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo(), true );
 	}
 	GetCaret().m_nCaretPosX_Prev = GetCaret().GetCaretLayoutPos().GetX();
 	if( !m_pCommanderView->m_bDoing_UndoRedo ){	/* アンドゥ・リドゥの実行中か */
@@ -838,7 +838,7 @@ void CViewCommander::Command_MERGE(void)
 	nCaretPosYOLD=GetCaret().GetCaretLayoutPos().GetY();
 	CLogicRange sSelectOld; //範囲選択
 	GetDocument()->m_cLayoutMgr.LayoutToLogic(
-		m_pCommanderView->GetSelectionInfo().m_sSelect,
+		m_pCommanderView->GetSelectionInfo().GetSelectionRange(),
 		&sSelectOld
 	);
 
@@ -847,7 +847,7 @@ void CViewCommander::Command_MERGE(void)
 	// その行も選択範囲に加える
 	if ( sSelectOld.GetTo().x > 0 ) {
 #if 0
-		const CLayout* pcLayout=GetDocument()->m_cLayoutMgr.SearchLineByLayoutY(m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().GetY2()); //2007.10.09 kobake 単位混在バグ修正
+		const CLayout* pcLayout=GetDocument()->m_cLayoutMgr.SearchLineByLayoutY(m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().GetY2()); //2007.10.09 kobake 単位混在バグ修正
 		if( NULL != pcLayout && pcLayout->GetLayoutEol().IsValid() ){
 			sSelectOld.GetToPointer()->y++;
 			//sSelectOld.GetTo().y++;
@@ -918,14 +918,15 @@ void CViewCommander::Command_MERGE(void)
 	nMergeLayoutLines -= GetDocument()->m_cLayoutMgr.GetLineCount();
 
 	//	選択エリアの復元
-	m_pCommanderView->GetSelectionInfo().m_sSelect=sSelectOld_Layout;
+	CLayoutRange restoredSelection(sSelectOld_Layout);
 	// 2010.08.22 座標混在バグ
-	m_pCommanderView->GetSelectionInfo().m_sSelect.GetToPointer()->y -= nMergeLayoutLines;
+	restoredSelection.GetToPointer()->y -= nMergeLayoutLines;
+	m_pCommanderView->GetSelectionInfo().ReplaceSelectionRange(restoredSelection);
 
-	if(nCaretPosYOLD==m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().y){
-		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom(), true );
+	if(nCaretPosYOLD==m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().y){
+		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom(), true );
 	}else{
-		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo(), true );
+		GetCaret().MoveCursor( m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo(), true );
 	}
 	GetCaret().m_nCaretPosX_Prev = GetCaret().GetCaretLayoutPos().GetX();
 	if( !m_pCommanderView->m_bDoing_UndoRedo ){	/* アンドゥ・リドゥの実行中か */

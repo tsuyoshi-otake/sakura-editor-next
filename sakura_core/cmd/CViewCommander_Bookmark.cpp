@@ -36,7 +36,7 @@ void CViewCommander::Command_JUMP_SRCHSTARTPOS(void)
 			&pt
 		);
 		//	2006.07.09 genta 選択状態を保つ
-		m_pCommanderView->MoveCursorSelecting( pt, m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+		m_pCommanderView->MoveCursorSelecting( pt, m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 	}
 	else
 	{
@@ -105,7 +105,7 @@ void CViewCommander::Command_JUMP( void )
 		//	Sep. 8, 2000 genta
 		m_pCommanderView->AddCurrentLineToHistory();
 		//	2006.07.09 genta 選択状態を解除しないように
-		m_pCommanderView->MoveCursorSelecting( CLayoutPoint(0, nLineNum - 1), m_pCommanderView->GetSelectionInfo().m_bSelectingLock, _CARETMARGINRATE / 3 );
+		m_pCommanderView->MoveCursorSelecting( CLayoutPoint(0, nLineNum - 1), m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), _CARETMARGINRATE / 3 );
 		return;
 	}
 	if( 0 >= nLineNum ){
@@ -246,7 +246,7 @@ void CViewCommander::Command_JUMP( void )
 	//	Sep. 8, 2000 genta
 	m_pCommanderView->AddCurrentLineToHistory();
 	//	2006.07.09 genta 選択状態を解除しないように
-	m_pCommanderView->MoveCursorSelecting( ptPos, m_pCommanderView->GetSelectionInfo().m_bSelectingLock, _CARETMARGINRATE / 3 );
+	m_pCommanderView->MoveCursorSelecting( ptPos, m_pCommanderView->GetSelectionInfo().IsSelectionLocked(), _CARETMARGINRATE / 3 );
 }
 
 //	from CViewCommander_New.cpp
@@ -254,15 +254,15 @@ void CViewCommander::Command_JUMP( void )
 void CViewCommander::Command_BOOKMARK_SET(void)
 {
 	CDocLine*	pCDocLine;
-	if( m_pCommanderView->GetSelectionInfo().IsTextSelected() && m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().y<m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().y ){
+	if( m_pCommanderView->GetSelectionInfo().IsTextSelected() && m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().y<m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().y ){
 		CLogicPoint ptFrom;
 		CLogicPoint ptTo;
 		GetDocument()->m_cLayoutMgr.LayoutToLogic(
-			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().m_sSelect.GetFrom().y),
+			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetFrom().y),
 			&ptFrom
 		);
 		GetDocument()->m_cLayoutMgr.LayoutToLogic(
-			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().m_sSelect.GetTo().y  ),
+			CLayoutPoint(CLayoutInt(0), m_pCommanderView->GetSelectionInfo().GetSelectionRange().GetTo().y  ),
 			&ptTo
 		);
 		for(CLogicInt nY=ptFrom.GetY2();nY<=ptTo.y;nY++){
@@ -305,7 +305,7 @@ re_do:;								// hor
 		CLayoutPoint ptLayout;
 		GetDocument()->m_cLayoutMgr.LogicToLayout(ptXY,&ptLayout);
 		//	2006.07.09 genta 新規関数にまとめた
-		m_pCommanderView->MoveCursorSelecting( ptLayout, m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+		m_pCommanderView->MoveCursorSelecting( ptLayout, m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 	}
     // 2002.01.26 hor
 	if(GetDllShareData().m_Common.m_sSearch.m_bSearchAll){
@@ -346,7 +346,7 @@ re_do:;								// hor
 		CLayoutPoint ptLayout;
 		GetDocument()->m_cLayoutMgr.LogicToLayout(ptXY,&ptLayout);
 		//	2006.07.09 genta 新規関数にまとめた
-		m_pCommanderView->MoveCursorSelecting( ptLayout, m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+		m_pCommanderView->MoveCursorSelecting( ptLayout, m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 	}
     // 2002.01.26 hor
 	if(GetDllShareData().m_Common.m_sSearch.m_bSearchAll){
@@ -404,7 +404,7 @@ void CViewCommander::Command_FUNCLIST_NEXT(void)
 			CLayoutPoint ptLayout;
 			GetDocument()->m_cLayoutMgr.LogicToLayout(ptXY,&ptLayout);
 			m_pCommanderView->MoveCursorSelecting( ptLayout,
-				m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+				m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 			if( nYOld >= ptXY.y ){
 				m_pCommanderView->SendStatusMessage(LS(STR_ERR_SRNEXT1));
 			}
@@ -432,7 +432,7 @@ void CViewCommander::Command_FUNCLIST_PREV(void)
 			CLayoutPoint ptLayout;
 			GetDocument()->m_cLayoutMgr.LogicToLayout(ptXY,&ptLayout);
 			m_pCommanderView->MoveCursorSelecting( ptLayout,
-				m_pCommanderView->GetSelectionInfo().m_bSelectingLock );
+				m_pCommanderView->GetSelectionInfo().IsSelectionLocked() );
 			if( nYOld <= ptXY.y ){
 				m_pCommanderView->SendStatusMessage(LS(STR_ERR_SRPREV1));
 			}

@@ -36,8 +36,69 @@
 #include <fmt/format.h>
 #include <fmt/xchar.h>
 #include <gsl/gsl>
+#if !defined(__MINGW32__) && !defined(__MINGW64__)
 #include <wil/resource.h>
 #include <wil/result.h>
+#endif
+
+#if defined(__MINGW32__) || defined(__MINGW64__)
+#include "MinGWCompilerCompat.h"
+
+namespace wil {
+
+// The selected parser/input closure only needs the handle holder's complete
+// type and the formatting helper declared by TIL. Do not pretend to port all
+// of WIL to GCC; keep this minimal surface local to the vendor boundary.
+class unique_hfile final {
+public:
+	unique_hfile() noexcept = default;
+	explicit unique_hfile( HANDLE handle ) noexcept : m_handle(handle) {}
+	~unique_hfile() { reset(); }
+
+	unique_hfile( const unique_hfile& ) = delete;
+	unique_hfile& operator=( const unique_hfile& ) = delete;
+	unique_hfile( unique_hfile&& other ) noexcept : m_handle(other.release()) {}
+	unique_hfile& operator=( unique_hfile&& other ) noexcept
+	{
+		if( this != &other ) reset(other.release());
+		return *this;
+	}
+
+	[[nodiscard]] HANDLE get() const noexcept { return m_handle; }
+	[[nodiscard]] HANDLE release() noexcept
+	{
+		const auto handle = m_handle;
+		m_handle = INVALID_HANDLE_VALUE;
+		return handle;
+	}
+	void reset( HANDLE handle = INVALID_HANDLE_VALUE ) noexcept
+	{
+		if( m_handle != INVALID_HANDLE_VALUE && m_handle != nullptr ) CloseHandle(m_handle);
+		m_handle = handle;
+	}
+	[[nodiscard]] explicit operator bool() const noexcept
+	{
+		return m_handle != INVALID_HANDLE_VALUE && m_handle != nullptr;
+	}
+
+private:
+	HANDLE m_handle{ INVALID_HANDLE_VALUE };
+};
+
+template <typename String, typename... Args>
+String str_printf( const wchar_t* format, Args&&... args )
+{
+	static_assert(std::is_same_v<String, std::wstring>);
+	return fmt::format(fmt::runtime(std::wstring_view(format)), std::forward<Args>(args)...);
+}
+
+} // namespace wil
+
+#ifndef LOG_HR
+#define LOG_HR(...) ((void)0)
+#endif
+
+#endif // defined(__MINGW32__) || defined(__MINGW64__)
 
 #ifndef SHORT_MAX
 #define SHORT_MAX SHRT_MAX
@@ -66,6 +127,19 @@ constexpr Target saturated_cast( Source value ) noexcept
 
 } // namespace base
 
+namespace Microsoft::Console::VirtualTerminal {
+class TerminalInput;
+}
+
+namespace til {
+class point;
+class size;
+}
+
+constexpr INPUT_RECORD SynthesizeMouseEvent(til::point, std::uint32_t, std::uint32_t, std::uint32_t);
+constexpr INPUT_RECORD SynthesizeWindowBufferSizeEvent(til::size);
+static constexpr til::point _winToVTCoord(til::point) noexcept;
+
 namespace til {
 
 template<class Container>
@@ -85,23 +159,48 @@ using small_vector = std::vector<T>;
 
 using CoordType = std::int32_t;
 
-struct point {
+class point {
+public:
+	constexpr point() noexcept = default;
+	constexpr point( const CoordType x, const CoordType y ) noexcept : x(x), y(y) {}
+	constexpr bool operator==( const point& other ) const noexcept
+	{
+		return x == other.x && y == other.y;
+	}
+
+private:
+	friend class ::Microsoft::Console::VirtualTerminal::TerminalInput;
+	friend constexpr auto ::SynthesizeMouseEvent(point, std::uint32_t, std::uint32_t, std::uint32_t) -> INPUT_RECORD;
+	friend constexpr auto ::_winToVTCoord(point) noexcept -> point;
 	CoordType x{};
 	CoordType y{};
-	constexpr bool operator==( const point& ) const noexcept = default;
 };
 
-struct size {
+class size {
+public:
+	constexpr size() noexcept = default;
+	constexpr size( const CoordType width, const CoordType height ) noexcept : width(width), height(height) {}
+	constexpr bool operator==( const size& other ) const noexcept
+	{
+		return width == other.width && height == other.height;
+	}
+
+private:
+	friend constexpr auto ::SynthesizeWindowBufferSizeEvent(size) -> INPUT_RECORD;
 	CoordType width{};
 	CoordType height{};
-	constexpr bool operator==( const size& ) const noexcept = default;
 };
 
 // Only declarations from the upstream utility header instantiate this type in
 // the selected parser closure. Keep it complete without importing TIL color.
-struct color {
+class color {
+public:
+	constexpr color() noexcept = default;
+	constexpr explicit color( const std::uint32_t value ) noexcept : value(value) {}
+	constexpr bool operator==( const color& other ) const noexcept { return value == other.value; }
+
+private:
 	std::uint32_t value{};
-	constexpr bool operator==( const color& ) const noexcept = default;
 };
 
 constexpr char32_t tolower_ascii( char32_t value ) noexcept

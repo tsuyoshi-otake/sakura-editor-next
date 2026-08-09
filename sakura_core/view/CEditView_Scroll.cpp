@@ -753,12 +753,12 @@ CLayoutInt CEditView::GetRightEdgeForScrollBar( void )
 		// 選択範囲あり かつ 範囲の右端がテキストの幅より右側
 		if( GetSelectionInfo().IsTextSelected() ){
 			// 開始位置・終了位置のより右側にある方で比較
-			if( GetSelectionInfo().m_sSelect.GetFrom().GetX2() < GetSelectionInfo().m_sSelect.GetTo().GetX2() ){
-				if( nRightEdge < GetSelectionInfo().m_sSelect.GetTo().GetX2() )
-					nRightEdge = GetSelectionInfo().m_sSelect.GetTo().GetX2();
+			if( GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() < GetSelectionInfo().GetSelectionRange().GetTo().GetX2() ){
+				if( nRightEdge < GetSelectionInfo().GetSelectionRange().GetTo().GetX2() )
+					nRightEdge = GetSelectionInfo().GetSelectionRange().GetTo().GetX2();
 			}else{
-				if( nRightEdge < GetSelectionInfo().m_sSelect.GetFrom().GetX2() )
-					nRightEdge = GetSelectionInfo().m_sSelect.GetFrom().GetX2();
+				if( nRightEdge < GetSelectionInfo().GetSelectionRange().GetFrom().GetX2() )
+					nRightEdge = GetSelectionInfo().GetSelectionRange().GetFrom().GetX2();
 			}
 		}
 

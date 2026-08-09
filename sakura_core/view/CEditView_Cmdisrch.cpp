@@ -383,14 +383,14 @@ void CEditView::ISearchExec(bool bNext)
 			case (SEARCH_FORWARD * 2): //前方検索で現在位置から検索のとき
 			case (SEARCH_BACKWARD * 2 + 1): //後方検索で次を検索のとき
 				//選択範囲の先頭を検索開始位置に
-				nLine = GetSelectionInfo().m_sSelect.GetFrom().GetY2();
-				nIdx1 = GetSelectionInfo().m_sSelect.GetFrom().GetX2();
+				nLine = GetSelectionInfo().GetSelectionRange().GetFrom().GetY2();
+				nIdx1 = GetSelectionInfo().GetSelectionRange().GetFrom().GetX2();
 				break;
 			case (SEARCH_BACKWARD * 2): //後方検索で現在位置から検索
 			case (SEARCH_FORWARD * 2 + 1): //前方検索で次を検索
 				//選択範囲の後ろから
-				nLine = GetSelectionInfo().m_sSelect.GetTo().GetY2();
-				nIdx1 = GetSelectionInfo().m_sSelect.GetTo().GetX2();
+				nLine = GetSelectionInfo().GetSelectionRange().GetTo().GetY2();
+				nIdx1 = GetSelectionInfo().GetSelectionRange().GetTo().GetX2();
 				break;
 			default:
 				break;
@@ -434,7 +434,7 @@ void CEditView::ISearchExec(bool bNext)
 		
 		if (bNext) 	m_bISearchWrap = true;
 		if (GetSelectionInfo().IsTextSelected()){
-			m_sISearchHistory[m_nISearchHistoryCount] = GetSelectionInfo().m_sSelect;
+			m_sISearchHistory[m_nISearchHistoryCount] = GetSelectionInfo().GetSelectionRange();
 		}else{
 			m_sISearchHistory[m_nISearchHistoryCount].Set(GetCaret().GetCaretLayoutPos());
 		}

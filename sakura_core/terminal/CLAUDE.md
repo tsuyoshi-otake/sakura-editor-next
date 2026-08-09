@@ -30,6 +30,18 @@ prerequisite for changing that, and it is a larger change than wiring an RPC to
 explicit Idle/Starting/Running/Closing/Exited/Failed states. Keep ConPTY handles
 private to the backend.
 
+## MinGW vendor compatibility (Issue #83)
+
+The experimental MinGW build compiles the same Sakura-selected Windows Terminal
+parser/input/Unicode subset as MSVC. Its compiler boundary is owned by
+`terminal/vendor/windows_terminal/sakura_compat`: MinGW-only `__assume`, ETW
+declarations, and the minimal WIL surface (handle/string helpers and the flag
+operations reached by the input files) are kept there while imported vendor
+files remain textually unchanged. The ETW tracing implementation is still
+excluded, so no telemetry capability is implied. Do not add a broad WIL shim or
+silently disable terminal code to make a new MinGW error disappear; stop at the
+closed subset and record a separate compatibility decision.
+
 The Task configuration catalog is owned under
 `workbench/tasks/CLAUDE.md`. A catalog entry is not an execution session.
 Execution must inject its terminal/session factory, preserve argument
