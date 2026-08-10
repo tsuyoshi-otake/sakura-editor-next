@@ -84682,28 +84682,28 @@
     {
       "column": 22,
       "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1763,
+      "line": 1762,
       "path": "sakura_core/sakura.vcxproj",
       "rule_id": "test.monolith_link"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1775,
+      "line": 1774,
       "path": "sakura_core/sakura.vcxproj",
       "rule_id": "test.monolith_link"
     },
     {
       "column": 93,
       "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1796,
+      "line": 1795,
       "path": "sakura_core/sakura.vcxproj",
       "rule_id": "test.monolith_link"
     },
     {
       "column": 25,
       "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1818,
+      "line": 1817,
       "path": "sakura_core/sakura.vcxproj",
       "rule_id": "test.monolith_link"
     },
@@ -85594,8 +85594,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "ac9e15f3c00e5b41240c0055fa9d3df71a03b295",
-  "source_fingerprint": "sha256:6b2c918714dda338f2dc264357502b0c6fec3883472854165a01f14edd179de1",
+  "source_commit": "9b08b24b320aac60e4411b43a39377841a3871d7",
+  "source_fingerprint": "sha256:e94559558199833d8caf7ef3966f5f44168601581db4833f7012ff9e9bcfe477",
   "tracked_source_paths": [
     ".github/dependabot.yml",
     ".github/workflows/architecture-gates.yml",
