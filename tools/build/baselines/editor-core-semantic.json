@@ -84477,6 +84477,13 @@
       "rule_id": "state.raw_pointer_member"
     },
     {
+      "column": 3,
+      "evidence_sha256": "sha256:45c62cb3920e6b60259bf7bec332efb9b2e9b8516c432b9ec37caaddabc65a90",
+      "line": 24,
+      "path": ".github/workflows/build-on-msys2.yml",
+      "rule_id": "test.filtered_or_skipped"
+    },
+    {
       "column": 18,
       "evidence_sha256": "sha256:88680c9ace990360aebb3ca66ac0af21b512eab068755bb6cca36ef713b951f3",
       "line": 51,
@@ -85413,8 +85420,8 @@
         "GetDllShareData": 1
       }
     },
-    "filtered_test_hint_count": 27,
-    "finding_count": 12107,
+    "filtered_test_hint_count": 28,
+    "finding_count": 12108,
     "finding_count_by_rule": {
       "boundary.private_include": 45,
       "boundary.win32_type": 4481,
@@ -85428,7 +85435,7 @@
       "state.mutable_member": 132,
       "state.public_mutable_field": 5154,
       "state.raw_pointer_member": 30,
-      "test.filtered_or_skipped": 27,
+      "test.filtered_or_skipped": 28,
       "test.monolith_link": 12
     },
     "include_directive_count": 9919,
@@ -85594,8 +85601,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "9b08b24b320aac60e4411b43a39377841a3871d7",
-  "source_fingerprint": "sha256:e94559558199833d8caf7ef3966f5f44168601581db4833f7012ff9e9bcfe477",
+  "source_commit": "08e91ae2d3e627b336df03f2bbf85f8f431300b2",
+  "source_fingerprint": "sha256:901c84d7294577b742610dc9d83806c24f6cadaad4597b75e63ed4b06e6c077f",
   "tracked_source_paths": [
     ".github/dependabot.yml",
     ".github/workflows/architecture-gates.yml",
