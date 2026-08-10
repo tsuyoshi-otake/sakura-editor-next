@@ -53,6 +53,7 @@ service-account*.json
 
 # ローカルIDE・OS・エディター設定
 /.codex/goal-loop/
+/.claude/
 /.vscode/
 /.idea/
 .DS_Store
@@ -61,6 +62,9 @@ Desktop.ini
 *.swp
 *.swo
 *~
+
+# Codex の貼り付け入力など、リポジトリ直下に置かれる一時ファイル
+/.txt
 
 # デバッグログ・診断情報・クラッシュダンプ
 *.log

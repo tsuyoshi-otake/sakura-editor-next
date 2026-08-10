@@ -315,7 +315,7 @@
       "ownership_exclusions": [],
       "public_include_roots": ["sakura_core/include"],
       "private_include_roots": [],
-      "state_owner": "presentation-neutral selection interaction phase, mode, and lock",
+      "state_owner": "presentation-neutral selection interaction phase, mode, lock, and anchor coordinates",
       "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_editor_selection.vcxproj"], "cmake": ["sakura_editor_selection"]},
       "compile_profile": null
     },
@@ -352,7 +352,7 @@
       "contract_kind": "inbound_api",
       "contract_owner": "sakura_editor_selection",
       "capability_id": "editor-selection-session",
-      "canonical_value_types": ["ESelectionMode", "ESelectionTransition", "SelectionSession"],
+      "canonical_value_types": ["ESelectionMode", "ESelectionTransition", "SelectionPoint", "SelectionRange", "SelectionSession"],
       "contract_decision": null
     }
   ],

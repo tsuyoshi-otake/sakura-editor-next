@@ -8,6 +8,7 @@
 #include <limits.h>
 #include "CViewSelect.h"
 #include "CEditView.h"
+#include "cmd/CViewCommander_inline.h"
 #include "doc/CEditDoc.h"
 #include "doc/layout/CLayout.h"
 #include "mem/CMemoryIterator.h"
@@ -21,7 +22,6 @@
 CViewSelect::CViewSelect(CEditView* pcEditView)
 : m_pcEditView(pcEditView)
 {
-	m_sSelectBgn.Clear(-1); // 範囲選択(原点)
 	m_sSelect   .Clear(-1); // 範囲選択
 	m_sSelectOld.Clear(0);  // 範囲選択(Old)
 	m_bSelectAreaChanging = false;	// 選択範囲変更中
@@ -32,7 +32,6 @@ void CViewSelect::CopySelectStatus(CViewSelect* pSelect) const
 {
 	pSelect->m_selectionSession		= m_selectionSession;
 
-	pSelect->m_sSelectBgn			= m_sSelectBgn;			//範囲選択(原点)
 	pSelect->m_sSelect				= m_sSelect;			//範囲選択
 	pSelect->m_sSelectOld			= m_sSelectOld;			//範囲選択
 
@@ -48,8 +47,34 @@ void CViewSelect::BeginSelectArea( const CLayoutPoint* po )
 		temp = pView->GetCaret().GetCaretLayoutPos();
 		po = &temp;
 	}
-	m_sSelectBgn.Set(*po); //範囲選択(原点)
+	SetSelectionAnchorRange(CLayoutRange(*po, *po)); //範囲選択(原点)
 	m_sSelect.   Set(*po); //範囲選択
+}
+
+editor::selection::SelectionPoint CViewSelect::ToSelectionPoint(const CLayoutPoint& point) noexcept
+{
+	return {
+		static_cast<std::int32_t>(point.GetX2()),
+		static_cast<std::int32_t>(point.GetY2()),
+	};
+}
+
+CLayoutPoint CViewSelect::ToLayoutPoint(const editor::selection::SelectionPoint& point) noexcept
+{
+	return CLayoutPoint(CLayoutInt(point.X()), CLayoutInt(point.Y()));
+}
+
+editor::selection::SelectionRange CViewSelect::ToSelectionRange(const CLayoutRange& range) noexcept
+{
+	return {
+		ToSelectionPoint(range.GetFrom()),
+		ToSelectionPoint(range.GetTo()),
+	};
+}
+
+CLayoutRange CViewSelect::ToLayoutRange(const editor::selection::SelectionRange& range) noexcept
+{
+	return CLayoutRange(ToLayoutPoint(range.From()), ToLayoutPoint(range.To()));
 }
 
 // 現在の選択範囲を非選択状態に戻す
@@ -97,42 +122,43 @@ void CViewSelect::ChangeSelectAreaByCurrentCursorTEST(
 	CLayoutRange* pSelect
 )
 {
-	if(m_sSelectBgn.GetFrom()==m_sSelectBgn.GetTo()){
-		if( ptCaretPos==m_sSelectBgn.GetFrom() ){
+	const CLayoutRange selectionAnchor = GetSelectionAnchorRange();
+	if(selectionAnchor.GetFrom()==selectionAnchor.GetTo()){
+		if( ptCaretPos==selectionAnchor.GetFrom() ){
 			// 選択解除
 			pSelect->Clear(-1);
 			m_nLastSelectedByteLen = 0;		// 前回選択時の選択バイト数
 		}
-		else if( PointCompare(ptCaretPos,m_sSelectBgn.GetFrom() ) < 0 ){ //キャレット位置がm_sSelectBgnのfromより小さかったら
+		else if( PointCompare(ptCaretPos,selectionAnchor.GetFrom() ) < 0 ){ //キャレット位置が選択原点のfromより小さかったら
 			 pSelect->SetFrom(ptCaretPos);
-			 pSelect->SetTo(m_sSelectBgn.GetFrom());
+			 pSelect->SetTo(selectionAnchor.GetFrom());
 		}
 		else{
-			pSelect->SetFrom(m_sSelectBgn.GetFrom());
+			pSelect->SetFrom(selectionAnchor.GetFrom());
 			pSelect->SetTo(ptCaretPos);
 		}
 	}
 	else{
 		// 常時選択範囲の範囲内
-		// キャレット位置が m_sSelectBgn の from以上で、toより小さい場合
-		if( PointCompare(ptCaretPos,m_sSelectBgn.GetFrom()) >= 0 && PointCompare(ptCaretPos,m_sSelectBgn.GetTo()) < 0 ){
-			pSelect->SetFrom(m_sSelectBgn.GetFrom());
-			if ( ptCaretPos==m_sSelectBgn.GetFrom() ){
-				pSelect->SetTo(m_sSelectBgn.GetTo());
+		// キャレット位置が選択原点の from以上で、toより小さい場合
+		if( PointCompare(ptCaretPos,selectionAnchor.GetFrom()) >= 0 && PointCompare(ptCaretPos,selectionAnchor.GetTo()) < 0 ){
+			pSelect->SetFrom(selectionAnchor.GetFrom());
+			if ( ptCaretPos==selectionAnchor.GetFrom() ){
+				pSelect->SetTo(selectionAnchor.GetTo());
 			}
 			else {
 				pSelect->SetTo(ptCaretPos);
 			}
 		}
-		//キャレット位置がm_sSelectBgnのfromより小さかったら
-		else if( PointCompare(ptCaretPos,m_sSelectBgn.GetFrom()) < 0 ){
+		//キャレット位置が選択原点のfromより小さかったら
+		else if( PointCompare(ptCaretPos,selectionAnchor.GetFrom()) < 0 ){
 			// 常時選択範囲の前方向
 			pSelect->SetFrom(ptCaretPos);
-			pSelect->SetTo(m_sSelectBgn.GetTo());
+			pSelect->SetTo(selectionAnchor.GetTo());
 		}
 		else{
 			// 常時選択範囲の後ろ方向
-			pSelect->SetFrom(m_sSelectBgn.GetFrom());
+			pSelect->SetFrom(selectionAnchor.GetFrom());
 			pSelect->SetTo(ptCaretPos);
 		}
 	}
@@ -624,20 +650,21 @@ void CViewSelect::GetSelectAreaLineFromRange(
 void CViewSelect::PrintSelectionInfoMsg() const
 {
 	const CEditView* pView=GetEditView();
+	CEditWnd& editWnd = *const_cast<CEditView*>(pView)->GetCommander().GetEditWindow();
 
 	//	出力されないなら計算を省略
-	if( ! GetEditWnd().m_cStatusBar.SendStatusMessage2IsEffective() )
+	if( ! editWnd.m_cStatusBar.SendStatusMessage2IsEffective() )
 		return;
 
 	CLayoutInt nLineCount = pView->m_pcEditDoc->m_cLayoutMgr.GetLineCount();
 	if( ! IsTextSelected() || m_sSelect.GetFrom().y >= nLineCount ){ // 先頭行が実在しない
 		const_cast<CEditView*>(pView)->GetCaret().m_bClearStatus = false;
 		if( IsBoxSelecting() ){
-			GetEditWnd().m_cStatusBar.SendStatusMessage2( L"box selecting" );
+			editWnd.m_cStatusBar.SendStatusMessage2( L"box selecting" );
 		}else if( IsSelectionLocked() ){
-			GetEditWnd().m_cStatusBar.SendStatusMessage2( L"selecting" );
+			editWnd.m_cStatusBar.SendStatusMessage2( L"selecting" );
 		}else{
-			GetEditWnd().m_cStatusBar.SendStatusMessage2( L"" );
+			editWnd.m_cStatusBar.SendStatusMessage2( L"" );
 		}
 		return;
 	}
@@ -672,9 +699,9 @@ void CViewSelect::PrintSelectionInfoMsg() const
 
 		// 共通設定・選択文字数を文字単位ではなくバイト単位で表示する
 		BOOL bCountByByteCommon = GetDllShareData().m_Common.m_sStatusbar.m_bDispSelCountByByte;
-		BOOL bCountByByte = ( GetEditWnd().m_nSelectCountMode == SELECT_COUNT_TOGGLE ?
+		BOOL bCountByByte = ( editWnd.m_nSelectCountMode == SELECT_COUNT_TOGGLE ?
 								bCountByByteCommon :
-								GetEditWnd().m_nSelectCountMode == SELECT_COUNT_BY_BYTE );
+								editWnd.m_nSelectCountMode == SELECT_COUNT_BY_BYTE );
 
 		//	1行目
 		pcLayout = pView->m_pcEditDoc->m_cLayoutMgr.SearchLineByLayoutY(m_sSelect.GetFrom().GetY2());
@@ -817,5 +844,5 @@ void CViewSelect::PrintSelectionInfoMsg() const
 #endif
 	}
 	const_cast<CEditView*>(pView)->GetCaret().m_bClearStatus = false;
-	GetEditWnd().m_cStatusBar.SendStatusMessage2( msg );
+	editWnd.m_cStatusBar.SendStatusMessage2( msg );
 }

@@ -10,23 +10,27 @@ order:
 `native/legacy adapters -> operation coordinator -> editor/working-copy models`
 
 The selection pilot is a deliberately narrower leaf. `sakura_editor_selection`
-owns the presentation-neutral selection phase, mode, and lock (`SelectionSession`);
+owns the presentation-neutral selection phase, mode, lock, and typed anchor
+coordinates (`SelectionSession`, `SelectionPoint`, and `SelectionRange`);
 its public contract is under `sakura/editor/SelectionSession.h` and must not
 include a document, layout, HWND, or legacy view type. `CViewSelect` remains the
-compatibility adapter for native input/drawing and still owns selection ranges
-and geometry. `End()` terminates only the transient input phase, while `Clear()`
-is the explicit terminal for phase, mode, and lock; preserve that distinction
+compatibility adapter for native input/drawing and still owns the active and
+previous paint ranges and their native geometry. `End()` terminates only the
+transient input phase and retains the typed anchor, while `Clear()` is the
+explicit terminal for phase, mode, lock, and anchor; preserve that distinction
 when translating mouse release versus full selection clear. Do not treat this
-pilot as full selection independence or move the remaining range/geometry fields
-without a typed coordinate/lifecycle contract and a standalone contract runner.
+pilot as full selection independence or move the remaining active range/geometry
+fields without another typed coordinate/lifecycle contract and a standalone
+contract runner.
 
 Within that legacy range boundary, `CViewSelect` alone owns the active selection
-range, selection anchor (`m_sSelectBgn`), and previous paint range
-(`m_sSelectOld`). All external code reads through `GetSelectionRange()`, creates
-a snapshot before applying an explicit range operation, and updates through the
-typed range mutators; no caller may recover mutable state through
+and previous paint ranges (`m_sSelect` and `m_sSelectOld`); the typed
+`SelectionSession` owns the selection anchor. All external code reads through
+`GetSelectionRange()` and the anchor adapter snapshot, creates a snapshot before
+applying an explicit range operation, and updates through the typed range
+mutators; no caller may recover mutable state through
 `CViewCommander::GetSelect()` or reach a range field directly. The range and
-geometry types remain a native compatibility boundary until a typed
+active geometry remain a native compatibility boundary until another typed
 coordinate/lifecycle contract can replace them.
 
 Pure models and codecs must not include or retain HWND, `CEditWnd`, `CEditDoc`,
