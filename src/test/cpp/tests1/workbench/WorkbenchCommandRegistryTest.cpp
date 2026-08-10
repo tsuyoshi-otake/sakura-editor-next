@@ -1,4 +1,4 @@
-﻿﻿/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -240,8 +240,8 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 TEST(WorkbenchCommandRegistry, FileCommandsRegisterStableIdsAliasesSurfacesAndOnlyTheirBoundExecutors)
 {
 	struct ExpectedCommand final {
-		std::string_view id;
-		std::int32_t legacyFunctionCode;
+		const std::string_view id;
+		const std::int32_t legacyFunctionCode;
 	};
 	const std::array<ExpectedCommand, 16> expected = {{
 		{ "workbench.action.files.newUntitledFile", 30101 },
