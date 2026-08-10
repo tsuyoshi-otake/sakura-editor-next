@@ -1,4 +1,4 @@
-﻿﻿/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -239,9 +239,17 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 
 TEST(WorkbenchCommandRegistry, FileCommandsRegisterStableIdsAliasesSurfacesAndOnlyTheirBoundExecutors)
 {
-	struct ExpectedCommand final {
-		std::string_view id;
-		std::int32_t legacyFunctionCode;
+	class ExpectedCommand final {
+	public:
+		constexpr ExpectedCommand(std::string_view id, std::int32_t legacyFunctionCode) noexcept
+			: m_id(id), m_legacyFunctionCode(legacyFunctionCode) {}
+
+		[[nodiscard]] constexpr std::string_view Id() const noexcept { return m_id; }
+		[[nodiscard]] constexpr std::int32_t LegacyFunctionCode() const noexcept { return m_legacyFunctionCode; }
+
+	private:
+		std::string_view m_id;
+		std::int32_t m_legacyFunctionCode;
 	};
 	const std::array<ExpectedCommand, 16> expected = {{
 		{ "workbench.action.files.newUntitledFile", 30101 },
@@ -271,22 +279,22 @@ TEST(WorkbenchCommandRegistry, FileCommandsRegisterStableIdsAliasesSurfacesAndOn
 		};
 	};
 	workbench::commands::WorkbenchBuiltinCommandExecutors executors;
-	executors.newUntitledFile = executor(expected[0].id);
-	executors.newWindow = executor(expected[1].id);
-	executors.openFile = executor(expected[2].id);
-	executors.openFolder = executor(expected[3].id);
-	executors.openWorkspace = executor(expected[4].id);
-	executors.openRecent = executor(expected[5].id);
-	executors.addRootFolder = executor(expected[6].id);
-	executors.saveWorkspaceAs = executor(expected[7].id);
-	executors.duplicateWorkspaceInNewWindow = executor(expected[8].id);
-	executors.save = executor(expected[9].id);
-	executors.saveAs = executor(expected[10].id);
-	executors.saveAll = executor(expected[11].id);
-	executors.closeActiveEditor = executor(expected[12].id);
-	executors.closeFolder = executor(expected[13].id);
-	executors.closeWindow = executor(expected[14].id);
-	executors.quit = executor(expected[15].id);
+	executors.newUntitledFile = executor(expected[0].Id());
+	executors.newWindow = executor(expected[1].Id());
+	executors.openFile = executor(expected[2].Id());
+	executors.openFolder = executor(expected[3].Id());
+	executors.openWorkspace = executor(expected[4].Id());
+	executors.openRecent = executor(expected[5].Id());
+	executors.addRootFolder = executor(expected[6].Id());
+	executors.saveWorkspaceAs = executor(expected[7].Id());
+	executors.duplicateWorkspaceInNewWindow = executor(expected[8].Id());
+	executors.save = executor(expected[9].Id());
+	executors.saveAs = executor(expected[10].Id());
+	executors.saveAll = executor(expected[11].Id());
+	executors.closeActiveEditor = executor(expected[12].Id());
+	executors.closeFolder = executor(expected[13].Id());
+	executors.closeWindow = executor(expected[14].Id());
+	executors.quit = executor(expected[15].Id());
 
 	WorkbenchCommandRegistry registry;
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded,
@@ -294,35 +302,35 @@ TEST(WorkbenchCommandRegistry, FileCommandsRegisterStableIdsAliasesSurfacesAndOn
 	const auto context = EnabledFileCommandContext();
 	std::set<std::int32_t> aliases;
 	for (const auto& command : expected) {
-		EXPECT_TRUE(aliases.insert(command.legacyFunctionCode).second);
-		const auto descriptor = registry.Find(command.id);
-		ASSERT_TRUE(descriptor.has_value()) << command.id;
+		EXPECT_TRUE(aliases.insert(command.LegacyFunctionCode()).second);
+		const auto descriptor = registry.Find(command.Id());
+		ASSERT_TRUE(descriptor.has_value()) << command.Id();
 		EXPECT_EQ(EWorkbenchCommandExecutorTarget::Editor, descriptor->executorTarget);
 
 		const auto palette = registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
-			std::string(command.id) + ".palette");
+			std::string(command.Id()) + ".palette");
 		const auto menu = registry.ResolveSurface(EWorkbenchCommandSurface::Menu,
-			std::string(command.id) + ".menu");
+			std::string(command.Id()) + ".menu");
 		const auto key = registry.ResolveSurface(EWorkbenchCommandSurface::Keybinding,
-			std::string(command.id) + ".key");
+			std::string(command.Id()) + ".key");
 		ASSERT_TRUE(palette.has_value());
 		ASSERT_TRUE(menu.has_value());
 		ASSERT_TRUE(key.has_value());
-		EXPECT_EQ(command.id, palette->commandId);
-		EXPECT_EQ(command.id, menu->commandId);
-		EXPECT_EQ(command.id, key->commandId);
+		EXPECT_EQ(command.Id(), palette->commandId);
+		EXPECT_EQ(command.Id(), menu->commandId);
+		EXPECT_EQ(command.Id(), key->commandId);
 		EXPECT_FALSE(palette->binding.legacyFunctionCode.has_value());
 		ASSERT_TRUE(menu->binding.legacyFunctionCode.has_value());
 		ASSERT_TRUE(key->binding.legacyFunctionCode.has_value());
-		EXPECT_EQ(command.legacyFunctionCode, *menu->binding.legacyFunctionCode);
-		EXPECT_EQ(command.legacyFunctionCode, *key->binding.legacyFunctionCode);
-		const auto resolvedAlias = registry.ResolveLegacyFunctionCode(command.legacyFunctionCode);
+		EXPECT_EQ(command.LegacyFunctionCode(), *menu->binding.legacyFunctionCode);
+		EXPECT_EQ(command.LegacyFunctionCode(), *key->binding.legacyFunctionCode);
+		const auto resolvedAlias = registry.ResolveLegacyFunctionCode(command.LegacyFunctionCode());
 		ASSERT_TRUE(resolvedAlias.has_value());
-		EXPECT_EQ(command.id, *resolvedAlias);
-		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, registry.Execute(command.id, context).status);
+		EXPECT_EQ(command.Id(), *resolvedAlias);
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, registry.Execute(command.Id(), context).status);
 	}
 	for (const auto& command : expected) {
-		EXPECT_EQ(1, calls[std::string(command.id)]) << command.id;
+		EXPECT_EQ(1, calls[std::string(command.Id())]) << command.Id();
 	}
 
 	const auto revision = registry.Revision();

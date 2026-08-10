@@ -37,7 +37,7 @@ ECallbackResult CSaveAgent::OnCheckSave(SSaveInfo* pSaveInfo)
 
 	// 他ウィンドウで開いているか確認する	// 2009.04.07 ryoji
 	if( !pSaveInfo->IsSamePath(pcDoc->m_cDocFile.GetFilePath()) ){
-		HWND hwndOwner;
+		decltype(CEditWnd::getInstance()->GetHwnd()) hwndOwner{};
 		if( CShareData::getInstance()->IsPathOpened( pSaveInfo->cFilePath, &hwndOwner ) ){
 			ErrorMessage(
 				CEditWnd::getInstance()->GetHwnd(),
@@ -92,7 +92,7 @@ void CSaveAgent::OnSave(const SSaveInfo& sSaveInfo)
 
 	//カキコ
 	CWriteManager cWriter;
-	CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&cWriter);
+	CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(&cWriter);
 	cWriter.WriteFile_From_CDocLineMgr(
 		pcDoc->m_cDocLineMgr,
 		sSaveInfo

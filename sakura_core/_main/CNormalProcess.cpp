@@ -156,7 +156,7 @@ std::optional<platform::uri::Uri> MakeAbsoluteFileUri(std::wstring_view input) n
 		auto uri = platform::uri::Uri::FromWindowsPath(absolute.native());
 		return uri ? std::move(uri.value) : std::nullopt;
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return std::nullopt;
 	}
 }
@@ -642,7 +642,7 @@ bool CNormalProcess::InitializeProcess()
 			//	こうしないとGrepが終わるまで新しいウィンドウを開けない
 			SetMainWindow( pEditWnd->GetHwnd() );
 			initializeMutex.Release();
-			this->m_pcEditApp->m_pcGrepAgent->DoGrep(
+			this->m_pcEditApp->GetGrepAgent()->DoGrep(
 				&pEditWnd->GetActiveView(),
 				gi.bGrepReplace,
 				&gi.cmGrepKey,

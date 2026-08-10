@@ -24,6 +24,7 @@
 #include <HtmlHelp.h>
 #include "CViewCommander.h"
 #include "CViewCommander_inline.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 
 #include "env/CPropertyManager.h"
 #include "CEditApp.h"
@@ -63,7 +64,7 @@ retry:;
 			LS(STR_ERR_DLGEDITVWHOKAN1)
 		) ){
 			/* タイプ別設定 プロパティシート */
-			if( !CEditApp::getInstance()->m_pcPropertyManager->OpenPropertySheetTypes( 2, GetDocument()->m_cDocType.GetDocumentType() ) ){
+			if( !CEditApp::getInstance()->GetPropertyManager()->OpenPropertySheetTypes( 2, GetDocument()->m_cDocType.GetDocumentType() ) ){
 				return;
 			}
 			goto retry;
@@ -87,16 +88,19 @@ retry:;
 */
 void CViewCommander::Command_ToggleKeySearch( int option )
 {	/* 共通設定ダイアログの設定をキー割り当てでも切り替えられるように */
+	auto sharedData = legacy::shareddata::RequireSharedDataCapabilities();
+	auto searchSettings = sharedData.SearchSettings().Snapshot();
+	auto searchSettingsWriter = sharedData.SearchSettingsWriter();
 	if( option == 0 ){
-		if( GetDllShareData().m_Common.m_sSearch.m_bUseCaretKeyWord ){
-			GetDllShareData().m_Common.m_sSearch.m_bUseCaretKeyWord = FALSE;
+		if( searchSettings.UsesCaretKeyword() ){
+			searchSettingsWriter.SetUseCaretKeyword(false);
 		}else{
-			GetDllShareData().m_Common.m_sSearch.m_bUseCaretKeyWord = TRUE;
+			searchSettingsWriter.SetUseCaretKeyword(true);
 		}
 	}else if( option == 1 ){
-		GetDllShareData().m_Common.m_sSearch.m_bUseCaretKeyWord = TRUE;
+		searchSettingsWriter.SetUseCaretKeyword(true);
 	}else if( option == 2 ){
-		GetDllShareData().m_Common.m_sSearch.m_bUseCaretKeyWord = FALSE;
+		searchSettingsWriter.SetUseCaretKeyword(false);
 	}
 }
 

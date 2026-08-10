@@ -63,6 +63,15 @@ public:
 		return m_pInterface.Detach();
 	}
 
+	void Attach(_In_opt_ Interface* other, bool addRef = true) noexcept
+	{
+		if (other && addRef) {
+			other->AddRef();
+		}
+		m_pInterface.Reset();
+		m_pInterface.Attach(other);
+	}
+
     Interface* GetInterfacePtr() const
     {
         return m_pInterface.Get();

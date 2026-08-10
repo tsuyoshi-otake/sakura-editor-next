@@ -10,6 +10,7 @@
 #include "CSakuraEnvironment.h"
 #include "env/CShareData.h"
 #include "env/DLLSHAREDATA.h"
+#include "env/SharedDataWin32Adapter.h"
 #include "env/CFormatManager.h"
 #include "env/CFileNameManager.h"
 #include "_main/CAppMode.h"
@@ -207,7 +208,7 @@ void CSakuraEnvironment::ExpandParameter(const wchar_t* pszSource, wchar_t* pszB
 		//	To Here 2003/06/21 Moca
 		case L'n':
 			if( !pcDoc->m_cDocFile.GetFilePathClass().IsValidPath() ){
-				if( CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode ){
+				if( CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode ){
 				}else if( CAppMode::getInstance()->IsDebugMode() ){
 				}else{
 					WCHAR szText[10];
@@ -466,7 +467,7 @@ void CSakuraEnvironment::ExpandParameter(const wchar_t* pszSource, wchar_t* pszB
 			//	現在実行しているマクロファイルパスの取得
 			{
 				// 実行中マクロのインデックス番号 (INVALID_MACRO_IDX:無効 / STAND_KEYMACRO:標準マクロ)
-				CSMacroMgr* pcSMacroMgr = CEditApp::getInstance()->m_pcSMacroMgr;
+				CSMacroMgr* pcSMacroMgr = CEditApp::getInstance()->GetMacroManager();
 				switch( pcSMacroMgr->GetCurrentIdx() ){
 				case INVALID_MACRO_IDX:
 					break;
@@ -630,7 +631,7 @@ int CSakuraEnvironment::_ExParam_Evaluate( const wchar_t* pCond )
 			return 2; // 上記以外
 		}
 	case L'w': // $w Grepモード/Output Mode
-		if( CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode ){
+		if( CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode ){
 			return 0;
 		}else if( CAppMode::getInstance()->IsDebugMode() ){
 			return 1;
@@ -638,10 +639,12 @@ int CSakuraEnvironment::_ExParam_Evaluate( const wchar_t* pCond )
 			return 2;
 		}
 	case L'M': // $M キーボードマクロの記録中
-		if( GetDllShareData().m_sFlags.m_bRecordingKeyMacro && GetDllShareData().m_sFlags.m_hwndRecordingKeyMacro==CEditWnd::getInstance()->GetHwnd() ){ /* ウィンドウ */
+		{
+		if( legacy::shareddata::win32::IsMacroRecordingOwnedBy(std::bit_cast<std::uintptr_t>(CEditWnd::getInstance()->GetHwnd())) ){ /* ウィンドウ */
 			return 0;
 		}else {
 			return 1;
+		}
 		}
 	case L'U': // $U 更新
 		if( pcDoc->m_cDocEditor.IsModified()){

@@ -26,16 +26,17 @@ namespace window {
 
 struct EditorTestSuite : public env::ShareDataTestSuite
 {
-	static inline std::unique_ptr<CEditDoc> pcEditDoc = nullptr;
-	static inline std::unique_ptr<CEditWnd> pcEditWnd = nullptr;
-	static inline std::unique_ptr<CSMacroMgr> pcSMacroMgr = nullptr;
+	// CEditApp owns these objects. The fixture borrows them for legacy tests.
+	static inline CEditDoc* pcEditDoc = nullptr;
+	static inline CEditWnd* pcEditWnd = nullptr;
+	static inline CSMacroMgr* pcSMacroMgr = nullptr;
 
-	static inline std::unique_ptr<CLoadAgent> pcLoadAgent = nullptr;
-	static inline std::unique_ptr<CSaveAgent> pcSaveAgent = nullptr;
-	static inline std::unique_ptr<CVisualProgress> pcVisualProgress = nullptr;
-	static inline std::unique_ptr<CGrepAgent> pcGrepAgent = nullptr;
-	static inline std::unique_ptr<CMruListener> pcMruListener = nullptr;
-	static inline std::unique_ptr<CPropertyManager> pcPropertyManager = nullptr;
+	static inline CLoadAgent* pcLoadAgent = nullptr;
+	static inline CSaveAgent* pcSaveAgent = nullptr;
+	static inline CVisualProgress* pcVisualProgress = nullptr;
+	static inline CGrepAgent* pcGrepAgent = nullptr;
+	static inline CMruListener* pcMruListener = nullptr;
+	static inline CPropertyManager* pcPropertyManager = nullptr;
 
 	static void SetUpEditor();
 	static void TearDownEditor();

@@ -128,6 +128,7 @@
 #include "workbench/win32/BuiltinPartProjection.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
 #include <sakura/uri/UriIdentity.h>
+#include <sakura/editor/win32/Win32EditorFrameAdapter.h>
 
 #include "macro/CMacroFactory.h"
 #include "view/colors/CColorStrategy.h"
@@ -1226,7 +1227,7 @@ SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
 	SWorkingCopyFunctionDispatchResult dispatch;
 	if (m_workingCopyCoordinator == nullptr || m_editorServiceAdapter == nullptr) return dispatch;
 
-	const auto baseCode = static_cast<EFunctionCode>(static_cast<int>(request.functionCode) & 0xffff);
+	const auto baseCode = static_cast<EFunctionCode>(static_cast<int>(request.FunctionCode()) & 0xffff);
 	switch (baseCode) {
 	case F_FILESAVE:
 	case F_FILESAVEAS_DIALOG:
@@ -1274,9 +1275,9 @@ SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
 		break;
 
 	case F_FILESAVEAS_DIALOG:
-		if (!WideToUtf8Bounded(reinterpret_cast<const wchar_t*>(request.lparam1), 4096, options.suggestedTarget)
-			|| !TryCanonicalEncodingId(static_cast<ECodeType>(request.lparam2), options.encodingId)
-			|| !TryWorkingCopyLineEnding(static_cast<EEolType>(request.lparam3), options.lineEnding)) {
+		if (!WideToUtf8Bounded(reinterpret_cast<const wchar_t*>(request.Parameter1()), 4096, options.suggestedTarget)
+			|| !TryCanonicalEncodingId(static_cast<ECodeType>(request.Parameter2()), options.encodingId)
+			|| !TryWorkingCopyLineEnding(static_cast<EEolType>(request.Parameter3()), options.lineEnding)) {
 			dispatch.operation = invalidInput();
 			dispatch.legacyResult = FALSE;
 			break;
@@ -1287,12 +1288,12 @@ SWorkingCopyFunctionDispatchResult CEditWnd::TryExecuteWorkingCopyFileCommand(
 		break;
 
 	case F_FILESAVEAS:
-		if (!TryWorkingCopyLineEnding(static_cast<EEolType>(request.lparam3), options.lineEnding)) {
+		if (!TryWorkingCopyLineEnding(static_cast<EEolType>(request.Parameter3()), options.lineEnding)) {
 			dispatch.operation = invalidInput();
 			dispatch.legacyResult = FALSE;
 			break;
 		}
-		if (auto target = FileIdentityFromLegacyPath(reinterpret_cast<const wchar_t*>(request.lparam1))) {
+		if (auto target = FileIdentityFromLegacyPath(reinterpret_cast<const wchar_t*>(request.Parameter1()))) {
 			dispatch.operation = ExecuteActiveWorkingCopyOperation(
 				command_ids::SaveAs, options, std::move(target));
 			dispatch.legacyResult = dispatch.operation->status == EEditorWorkingCopyOperationStatus::Succeeded
@@ -8596,7 +8597,7 @@ void CEditWnd::UpdateCaption()
 	CSakuraEnvironment::ExpandParameter( pszTabCaptionFormat, pszCap, int(std::size(pszCap)) );
 	ChangeFileNameNotify( pszCap,
 		GetListeningDoc()->m_cDocFile.GetFilePath(),
-		CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode ); // 2006.01.28 ryoji ファイル名、Grepモードパラメータを追加
+		CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode ); // 2006.01.28 ryoji ファイル名、Grepモードパラメータを追加
 }
 
 //!< ウィンドウ生成用の矩形を取得
@@ -9474,6 +9475,12 @@ LRESULT CEditWnd::DispatchEvent(
 	if (m_customFrame && m_customFrame->HandleWindowMessage(uMsg, wParam, lParam, customFrameResult)) {
 		return customFrameResult;
 	}
+	if (const auto event = sakura::editor::win32::Win32EditorFrameAdapter::Translate(
+		uMsg, wParam, lParam)) {
+		const auto effect = sakura::editor::DispatchEditorFrameEvent(*this, *event);
+		return sakura::editor::win32::Win32EditorFrameAdapter::Apply(
+			hwnd, uMsg, wParam, lParam, effect);
+	}
 
 	int					nRet;
 	LPNMHDR				pnmh;
@@ -9705,38 +9712,6 @@ LRESULT CEditWnd::DispatchEvent(
 		}
 		return TRUE;
 
-	case WM_ACTIVATEAPP:
-		m_bIsActiveApp = (wParam != 0);	// 自アプリがアクティブかどうか
-		if (m_extensionService) {
-			m_extensionService->SetWindowState(m_bIsActiveApp);
-			if (m_bIsActiveApp) PublishExtensionActiveEditor();
-		}
-
-		// アクティブ化なら編集ウィンドウリストの先頭に移動する		// 2007.04.08 ryoji WM_SETFOCUS から移動
-		if( m_bIsActiveApp ){
-			CAppNodeGroupHandle(0).AddEditWndList( GetHwnd() );	// リスト移動処理
-
-			// 2009.01.17 nasukoji	ホイールスクロール有無状態をクリア
-			ClearMouseState();
-		}
-
-		// キャプション設定、タイマーON/OFF		// 2007.03.08 ryoji WM_ACTIVATEから移動
-		UpdateCaption();
-		m_cFuncKeyWnd.Timer_ONOFF( m_bIsActiveApp ); // 20060126 aroka
-		this->Timer_ONOFF( m_bIsActiveApp ); // 20060128 aroka
-
-		return 0L;
-
-	case WM_ENABLE:
-		// 右ドロップファイルの受け入れ設定／解除	// 2009.01.09 ryoji
-		// Note: DragAcceptFilesを適用した左ドロップについては Enable/Disable で自動的に受け入れ設定／解除が切り替わる
-		if( (BOOL)wParam ){
-			m_pcDropTarget->Register_DropTarget( m_hWnd );
-		}else{
-			m_pcDropTarget->Revoke_DropTarget();
-		}
-		return 0L;
-
 	case WM_WINDOWPOSCHANGED: {
 		// ポップアップウィンドウの表示切替指示をポストする	// 2007.10.22 ryoji
 		// ・WM_SHOWWINDOWはすべての表示切替で呼ばれるわけではないのでWM_WINDOWPOSCHANGEDで処理
@@ -9759,46 +9734,6 @@ LRESULT CEditWnd::DispatchEvent(
 		::ShowOwnedPopups( m_hWnd, (BOOL)wParam );	// 2007.10.22 ryoji
 		return 0L;
 
-	case WM_SIZE: {
-//		MYTRACE( L"WM_SIZE\n" );
-		/* WM_SIZE 処理 */
-		if( SIZE_MINIMIZED == wParam ){
-			this->UpdateCaption();
-		}
-		const auto result = OnSize( wParam, lParam );
-		EnsureNotificationHost();
-		if (m_notificationHost) m_notificationHost->Layout();
-		if (m_commandPaletteOverlay) m_commandPaletteOverlay->Layout();
-		return result;
-	}
-
-	//From here 2003.05.31 MIK
-	case WM_MOVE: {
-		// From Here 2004.05.13 Moca ウィンドウ位置継承
-		//	最後の位置を復元するため，移動されるたびに共有メモリに位置を保存する．
-		if (WINSIZEMODE_SAVE == m_pShareData->m_Common.m_sWindow.m_eSaveWindowPos &&
-			!::IsZoomed(hWnd) &&
-			!::IsIconic(hWnd)) {
-				// 2005.11.23 Moca ワークエリア座標だとずれるのでスクリーン座標に変更
-				// Aero Snapで縦方向最大化で終了して次回起動するときは元のサイズにする必要があるので、
-				// GetWindowRect()ではなくGetWindowPlacement()で得たワークエリア座標をスクリーン座標に変換して記憶する	// 2009.09.02 ryoji
-				RECT rcWin;
-				WINDOWPLACEMENT wp;
-				wp.length = sizeof(wp);
-				::GetWindowPlacement( GetHwnd(), &wp );	// ワークエリア座標
-				rcWin = wp.rcNormalPosition;
-				RECT rcWork, rcMon;
-				GetMonitorWorkRect( GetHwnd(), &rcWork, &rcMon );
-				::OffsetRect(&rcWin, rcWork.left - rcMon.left, rcWork.top - rcMon.top);	// スクリーン座標に変換
-				m_pShareData->m_Common.m_sWindow.m_nWinPosX = rcWin.left;
-				m_pShareData->m_Common.m_sWindow.m_nWinPosY = rcWin.top;
-		}
-		// To Here 2004.05.13 Moca ウィンドウ位置継承
-		const auto result = DefWindowProc( hwnd, uMsg, wParam, lParam );
-		if (m_notificationHost) m_notificationHost->Layout();
-		return result;
-	}
-	//To here 2003.05.31 MIK
 	case WM_SYSCOMMAND:
 		// タブまとめ表示では閉じる動作はオプション指定に従う	// 2006.02.13 ryoji
 		//	Feb. 11, 2007 genta 動作を選べるように(MDI風と従来動作)
@@ -9846,30 +9781,6 @@ LRESULT CEditWnd::DispatchEvent(
 		if (!HasActiveEditorInput()) return 0;
 		/* メッセージの配送 */
 		return Views_DispatchEvent( hwnd, uMsg, wParam, lParam );
-
-	case WM_SETFOCUS:
-//		MYTRACE( L"WM_SETFOCUS\n" );
-
-		// Aug. 29, 2003 wmlhq & ryojiファイルのタイムスタンプのチェック処理 OnTimer に移行
-		m_nTimerCount = 9;
-
-		// ビューにフォーカスを移動する	// 2007.10.16 ryoji
-		if( !m_pPrintPreview ){
-			if (HasActiveEditorInput()) {
-				::SetFocus(GetActiveView().GetHwnd());
-			} else if (m_emptyEditorSurface) {
-				m_emptyEditorSurface->Focus();
-			}
-		}
-		lRes = 0;
-
-//@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
-		/* 印刷プレビューモードのときは、キー操作は全部PrintPreviewBarへ転送 */
-		if( m_pPrintPreview ){
-			m_pPrintPreview->SetFocusToPrintPreviewBar();
-		}
-
-		return lRes;
 
 	case WM_NOTIFY:
 		pnmh = (LPNMHDR) lParam;
@@ -9998,11 +9909,6 @@ LRESULT CEditWnd::DispatchEvent(
 		else{
 			return FALSE;
 		}
-	case WM_CLOSE:
-		if( OnClose( nullptr, false ) ){
-			::DestroyWindow( hwnd );
-		}
-		return 0L;
 	case WM_DESTROY:
 		AbortStartupDrawTransaction();
 		m_dispatchReady = false;
@@ -10588,6 +10494,93 @@ LRESULT CEditWnd::DispatchEvent(
 #endif
 		return DefWindowProc( hwnd, uMsg, wParam, lParam );
 	}
+}
+
+sakura::editor::EditorFrameEffect CEditWnd::HandleEditorFrameEvent(
+	const sakura::editor::EditorFrameEvent& event)
+{
+	using sakura::editor::EditorFrameEffect;
+	using sakura::editor::EditorFrameEffectKind;
+	using sakura::editor::EditorFrameEventKind;
+
+	switch (event.Kind()) {
+	case EditorFrameEventKind::Activated:
+	case EditorFrameEventKind::Deactivated:
+		m_bIsActiveApp = event.Kind() == EditorFrameEventKind::Activated;
+		if (m_extensionService) {
+			m_extensionService->SetWindowState(m_bIsActiveApp);
+			if (m_bIsActiveApp) PublishExtensionActiveEditor();
+		}
+		if (m_bIsActiveApp) {
+			CAppNodeGroupHandle(0).AddEditWndList(GetHwnd());
+			ClearMouseState();
+		}
+		UpdateCaption();
+		m_cFuncKeyWnd.Timer_ONOFF(m_bIsActiveApp);
+		Timer_ONOFF(m_bIsActiveApp);
+		return { EditorFrameEffectKind::Handled, 0 };
+
+	case EditorFrameEventKind::FocusGained:
+		m_nTimerCount = 9;
+		if (!m_pPrintPreview) {
+			if (HasActiveEditorInput()) {
+				::SetFocus(GetActiveView().GetHwnd());
+			} else if (m_emptyEditorSurface) {
+				m_emptyEditorSurface->Focus();
+			}
+		}
+		if (m_pPrintPreview) m_pPrintPreview->SetFocusToPrintPreviewBar();
+		return { EditorFrameEffectKind::Handled, 0 };
+
+	case EditorFrameEventKind::FocusLost:
+		return { EditorFrameEffectKind::ForwardToDefault, 0 };
+
+	case EditorFrameEventKind::Enabled:
+		m_pcDropTarget->Register_DropTarget(m_hWnd);
+		return { EditorFrameEffectKind::Handled, 0 };
+
+	case EditorFrameEventKind::Disabled:
+		m_pcDropTarget->Revoke_DropTarget();
+		return { EditorFrameEffectKind::Handled, 0 };
+
+	case EditorFrameEventKind::Resized: {
+		if (event.Detail() == SIZE_MINIMIZED) UpdateCaption();
+		const auto packedSize = MAKELPARAM(event.Size().Width(), event.Size().Height());
+		const auto result = OnSize(event.Detail(), packedSize);
+		EnsureNotificationHost();
+		if (m_notificationHost) m_notificationHost->Layout();
+		if (m_commandPaletteOverlay) m_commandPaletteOverlay->Layout();
+		return { EditorFrameEffectKind::Handled, result };
+	}
+
+	case EditorFrameEventKind::Moved:
+		if (WINSIZEMODE_SAVE == m_pShareData->m_Common.m_sWindow.m_eSaveWindowPos
+			&& !::IsZoomed(GetHwnd()) && !::IsIconic(GetHwnd())) {
+			WINDOWPLACEMENT placement{};
+			placement.length = sizeof(placement);
+			::GetWindowPlacement(GetHwnd(), &placement);
+			RECT windowRect = placement.rcNormalPosition;
+			RECT workRect{};
+			RECT monitorRect{};
+			GetMonitorWorkRect(GetHwnd(), &workRect, &monitorRect);
+			::OffsetRect(&windowRect, workRect.left - monitorRect.left, workRect.top - monitorRect.top);
+			m_pShareData->m_Common.m_sWindow.m_nWinPosX = windowRect.left;
+			m_pShareData->m_Common.m_sWindow.m_nWinPosY = windowRect.top;
+		}
+		if (m_notificationHost) m_notificationHost->Layout();
+		return { EditorFrameEffectKind::ForwardToDefault, 0 };
+
+	case EditorFrameEventKind::CloseRequested:
+		if (OnClose(nullptr, false)) {
+			::DestroyWindow(GetHwnd());
+			return { EditorFrameEffectKind::CloseAccepted, 0 };
+		}
+		return { EditorFrameEffectKind::CloseRefused, 0 };
+
+	case EditorFrameEventKind::DpiChanged:
+		return { EditorFrameEffectKind::ForwardToDefault, 0 };
+	}
+	return EditorFrameEffect{};
 }
 
 /*! 終了時の処理

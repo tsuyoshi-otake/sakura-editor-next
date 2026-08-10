@@ -40,6 +40,7 @@
 #include "plugin/CPluginManager.h"
 #include "prop/CPropCommon.h"
 #include "typeprop/CPropTypes.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 
 #include <fstream>
 
@@ -295,15 +296,16 @@ TEST_F(TrayWndTest, OnAddTypeSetting102)
 TEST_F(TrayWndTest, OnAddTypeSetting103)
 {
 	// 元の数をバックアップして最大数にする
-	const auto defaultCount = GetDllShareData().m_nTypesCount;
-	GetDllShareData().m_nTypesCount = int(MAX_TYPES);
+	auto sharedData = legacy::shareddata::RequireSharedDataCapabilities();
+	const auto defaultCount = sharedData.Settings().Snapshot().TypeCount();
+	sharedData.SettingsWriter().SetTypeCount(int(MAX_TYPES));
 
 	// 追加の空振り(もう追加できない)
 	HWND hWndTray = nullptr;
-	EXPECT_THAT(pcTrayWnd->DispatchEvent(hWndTray, MYWM_ADD_TYPESETTING, GetDllShareData().m_nTypesCount - 1, 0), IsFalse());
+	EXPECT_THAT(pcTrayWnd->DispatchEvent(hWndTray, MYWM_ADD_TYPESETTING, int(MAX_TYPES) - 1, 0), IsFalse());
 
 	// 数を元に戻す
-	GetDllShareData().m_nTypesCount = defaultCount;
+	sharedData.SettingsWriter().SetTypeCount(defaultCount);
 }
 
 TEST_F(TrayWndTest, OnSetTypeSetting001)
@@ -845,7 +847,7 @@ struct EditWndTest : public ::testing::Test, public window::EditorTestSuite, pub
 		pcEditDoc->m_cDocEditor.m_bIsDocModified = false;
 
 		// 強制的に「Grepモード」を解除する
-		CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode = false;
+		CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode = false;
 
 		// キューに溜まったメッセージは全部捨てる
 		MSG msg{};

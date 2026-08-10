@@ -41,7 +41,7 @@
 
 CViewCommander::CViewCommander(CEditView* pEditView) : m_pCommanderView(pEditView)
 {
-	m_pcSMacroMgr = CEditApp::getInstance()->m_pcSMacroMgr;
+	m_pcSMacroMgr = CEditApp::getInstance()->GetMacroManager();
 }
 
 /*!
@@ -166,7 +166,8 @@ BOOL CViewCommander::HandleCommand(
 	//	文書の操作を行ってはいけない
 	//@@@ 2002.2.2 YAZAKI HandleCommand内でHandleCommandを呼び出せない問題に対処（何か副作用がある？）
 	if( nullptr == GetOpeBlk() ){	/* 操作ブロック */
-		SetOpeBlk(new COpeBlk);
+		auto operationBlock = std::make_unique<COpeBlk>();
+		SetOpeBlk(operationBlock.release());
 	}
 	GetOpeBlk()->AddRef();	//参照カウンタ増加
 
@@ -175,14 +176,9 @@ BOOL CViewCommander::HandleCommand(
 	//	途中で処理の打ち切りを行ってはいけない
 	// -------------------------------------
 
-	const auto workingCopyDispatch = GetEditWindow()->TryExecuteWorkingCopyFileCommand({
-		.functionCode = originalCommand,
-		.redraw = bRedraw,
-		.lparam1 = lparam1,
-		.lparam2 = lparam2,
-		.lparam3 = lparam3,
-		.lparam4 = lparam4,
-	});
+	const auto workingCopyDispatch = GetEditWindow()->TryExecuteWorkingCopyFileCommand(
+		SLegacyEditorFunctionCommand(originalCommand, bRedraw,
+			lparam1, lparam2, lparam3, lparam4));
 	if (workingCopyDispatch.handled) {
 		bRet = workingCopyDispatch.legacyResult;
 	}
