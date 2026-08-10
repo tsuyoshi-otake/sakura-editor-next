@@ -20,6 +20,8 @@ env:
   VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
   VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
   VCPKG_ROOT: ${{ github.workspace }}\tools\vcpkg
+  # Keep the exclusions equal to build-sakura.yml. Hosted runners cannot execute UI/external suites.
+  GTEST_FILTER: -MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
 
 permissions:
   actions: read
@@ -126,11 +128,13 @@ jobs:
       - name: Run unit tests
         id: run_unit_tests
         continue-on-error: true
+        timeout-minutes: 15
         run: ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
 
       - name: Try gdb backtrace on test failure
         if: steps.run_unit_tests.outcome == 'failure' && env.Configuration != 'Release'
         continue-on-error: true
+        timeout-minutes: 5
         working-directory: ${{ github.workspace }}/${{ env.BuildPlatform }}/${{ env.Configuration }}
         run: |
           set -eo pipefail
@@ -148,3 +152,8 @@ jobs:
         run: |
           echo "Unit tests failed. See the gdb trace above."
           exit 1
+
+      - name: Clean up test process survivors
+        if: ${{ always() }}
+        shell: pwsh
+        run: .\tools\Cleanup-TestProcessSurvivors.ps1
