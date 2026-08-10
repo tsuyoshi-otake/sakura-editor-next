@@ -6,7 +6,7 @@
 */
 #include "pch.h"
 
-#include <sakura/controlipc/ControlIpcSecurity.h>
+#include "platform/controlipc/ControlIpcSecurity.h"
 #include "platform/controlipc/ControlStorageRpc.h"
 #include "platform/controlipc/EditorSecretVaultClient.h"
 

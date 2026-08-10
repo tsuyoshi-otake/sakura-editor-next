@@ -6,7 +6,7 @@
 */
 #include "pch.h"
 
-#include <sakura/controlipc/ControlIpcSecurity.h>
+#include "platform/controlipc/ControlIpcSecurity.h"
 #include "platform/controlipc/ControlPlatformClient.h"
 
 #include <chrono>

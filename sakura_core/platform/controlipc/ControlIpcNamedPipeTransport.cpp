@@ -7,8 +7,7 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlIpcNamedPipeTransport.h"
 
-#include <sakura/controlipc/ControlIpcSecurity.h>
-#include <sakura/security/CurrentUserSecurityAttributes.h>
+#include "platform/controlipc/ControlIpcSecurity.h"
 
 #include <Windows.h>
 
@@ -22,8 +21,6 @@
 
 namespace platform::controlipc {
 namespace {
-
-using ::platform::security::CurrentUserSecurityAttributes;
 
 constexpr auto kMaximumCallerTimeout = std::chrono::seconds(60);
 constexpr DWORD kMaximumBusyPipeAttempts = 4;

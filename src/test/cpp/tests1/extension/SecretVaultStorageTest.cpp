@@ -8,7 +8,7 @@
 
 #include "extension/CExtensionSecretVaultStorage.h"
 #include "extension/CExtensionWorkbenchDispatcher.h"
-#include <sakura/controlipc/ControlIpcSecurity.h>
+#include "platform/controlipc/ControlIpcSecurity.h"
 #include "platform/controlipc/ControlStorageRpc.h"
 
 #include <array>

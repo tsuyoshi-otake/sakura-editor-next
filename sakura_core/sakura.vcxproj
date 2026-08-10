@@ -1254,6 +1254,7 @@
     <ClCompile Include="..\sakura_core\platform\secrets\LegacyExtensionSecretVaultReader.cpp" />
     <ClCompile Include="..\sakura_core\platform\secrets\SecretVaultTypes.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.cpp" />
+    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\platform\controlipc\ControlProfileRpc.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.cpp" />
