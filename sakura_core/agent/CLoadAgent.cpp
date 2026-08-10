@@ -264,19 +264,20 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 
 		// 文書種別確定
 		pcDoc->m_cDocType.SetDocumentType( sLoadInfo.nType, true );
-		GetEditWnd().m_pcViewFontMiniMap->UpdateFont(&GetEditWnd().GetLogfont());
-		InitCharWidthCache( GetEditWnd().m_pcViewFontMiniMap->GetLogfont(), CWM_FONT_MINIMAP );
-		SelectCharWidthCache( CWM_FONT_EDIT, GetEditWnd().GetLogfontCacheMode() );
-		InitCharWidthCache( GetEditWnd().GetLogfont() );
-		GetEditWnd().m_pcViewFont->UpdateFont(&GetEditWnd().GetLogfont());
+		auto& editWnd = *CEditWnd::getInstance();
+		editWnd.m_pcViewFontMiniMap->UpdateFont(&editWnd.GetLogfont());
+		InitCharWidthCache( editWnd.m_pcViewFontMiniMap->GetLogfont(), CWM_FONT_MINIMAP );
+		SelectCharWidthCache( CWM_FONT_EDIT, editWnd.GetLogfontCacheMode() );
+		InitCharWidthCache( editWnd.GetLogfont() );
+		editWnd.m_pcViewFont->UpdateFont(&editWnd.GetLogfont());
 
 		// 起動と同時に読む場合は予めアウトライン解析画面を配置しておく
 		// （ファイル読み込み開始とともにビューが表示されるので、あとで配置すると画面のちらつきが大きいの）
-		if( !GetEditWnd().m_cDlgFuncList.m_bEditWndReady
-			&& !GetEditWnd().m_cDlgFuncList.IsWorkbenchMode() ){
-			GetEditWnd().m_cDlgFuncList.Refresh();
-			HWND hEditWnd = GetEditWnd().GetHwnd();
-			if( !::IsIconic( hEditWnd ) && GetEditWnd().m_cDlgFuncList.GetHwnd() ){
+		if( !editWnd.m_cDlgFuncList.m_bEditWndReady
+			&& !editWnd.m_cDlgFuncList.IsWorkbenchMode() ){
+			editWnd.m_cDlgFuncList.Refresh();
+			auto hEditWnd = editWnd.GetHwnd();
+			if( !::IsIconic( hEditWnd ) && editWnd.m_cDlgFuncList.GetHwnd() ){
 				RECT rc;
 				::GetClientRect( hEditWnd, &rc );
 				::SendMessageAny( hEditWnd, WM_SIZE, ::IsZoomed( hEditWnd )? SIZE_MAXIMIZED: SIZE_RESTORED, MAKELONG( rc.right - rc.left, rc.bottom - rc.top ) );
@@ -296,14 +297,14 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 		if(fexist(sLoadInfo.cFilePath)){
 			//CDocLineMgrの構成
 			CReadManager cReader;
-			CProgressSubject* pOld = CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&cReader);
+			CProgressSubject* pOld = CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(&cReader);
 			EConvertResult eReadResult = cReader.ReadFile_To_CDocLineMgr(
 				&pcDoc->m_cDocLineMgr,
 				sLoadInfo,
 				&pcDoc->m_cDocFile.m_sFileInfo
 			);
 			eRet = ToLoadResult(eReadResult);
-			CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
+			CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(pOld);
 			if (eRet == LOADED_FAILURE) {
 				// A cancelled/failed read must never be published as an empty successful
 				// document.  Remove any partial native data before the finalization barrier.
@@ -341,12 +342,12 @@ ELoadResult CLoadAgent::OnLoad(const SLoadInfo& sLoadInfo)
 		pcDoc->m_cLayoutMgr.m_tsvInfo.CalcTabLength(pcDoc->m_cLayoutMgr.m_pcDocLineMgr);
 	}
 
-	CProgressSubject* pOld = CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&pcDoc->m_cLayoutMgr);
+	CProgressSubject* pOld = CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(&pcDoc->m_cLayoutMgr);
 	pcDoc->m_cLayoutMgr.SetLayoutInfo( true, true, ref, ref.m_nTabSpace, ref.m_nTsvMode, nMaxLineKetas, CLayoutXInt(-1), &GetEditWnd().GetLogfont() );
 	pcDoc->m_cLayoutMgr.MarkFreshLoadLayoutComplete();
 	GetEditWnd().ClearViewCaretPosInfo();
 	
-	CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
+	CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(pOld);
 
 	return eRet;
 }

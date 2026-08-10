@@ -35,6 +35,7 @@
 #include "cmd/COpeBlk.h"
 #include "doc/layout/CLayout.h"
 #include "cmd/CViewCommander_inline.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 #include "uiparts/CWaitCursor.h"
 #include "uiparts/HandCursor.h"
 #include "util/input.h"
@@ -1611,7 +1612,8 @@ void CEditView::OnLBUTTONDBLCLK( WPARAM fwKeys, int _xPos , int _yPos )
 
 		/* GREP出力モードまたはデバッグモード かつ マウス左ボタンダブルクリックでタグジャンプ の場合 */
 		//	2004.09.20 naoh 外部コマンドの出力からTagjumpできるように
-		if( (CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode || CAppMode::getInstance()->IsDebugMode()) && GetDllShareData().m_Common.m_sSearch.m_bGTJW_LDBLCLK ){
+		const auto searchSettings = legacy::shareddata::RequireSharedDataCapabilities().SearchSettings().Snapshot();
+		if( (CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode || CAppMode::getInstance()->IsDebugMode()) && searchSettings.TagJumpOnDoubleClick() ){
 			/* タグジャンプ機能 */
 			if( GetCommander().Command_TAGJUMP() ){
 				// 2013.05.27 タグジャンプ失敗時は通常の処理を実行する

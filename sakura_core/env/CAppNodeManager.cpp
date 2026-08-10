@@ -17,6 +17,7 @@
 #include "env/CAppNodeManager.h"
 #include "env/CShareData.h"
 #include "env/DLLSHAREDATA.h"
+#include "env/SharedDataWin32Adapter.h"
 #include "env/CSakuraEnvironment.h"
 #include "recent/CRecentEditNode.h"
 #include "util/window.h"
@@ -275,15 +276,10 @@ BOOL CAppNodeGroupHandle::RequestCloseEditor( EditNode* pWndArr, int nArrCnt, BO
 	bool bTabGroup = (GetDllShareData().m_Common.m_sTabBar.m_bDispTabWnd && !GetDllShareData().m_Common.m_sTabBar.m_bDispTabWndMultiWin);
 	if( bTabGroup ){
 		hWndActive = hWndLast;	// 最後に閉じるウィンドウが担当
-	}else{
-		hWndActive = GetDllShareData().m_sHandles.m_hwndTray;	// タスクトレイが担当
-	}
-
-	// アクティブ化制御ウインドウをアクティブにしておく
-	if( IsSakuraMainWindow(hWndActive) ){
 		ActivateFrameWindow(hWndActive);	// エディタウィンドウ
 	}else{
-		::SetForegroundWindow(hWndActive);	// タスクトレイ
+		hWndActive = nullptr;
+		legacy::shareddata::win32::ActivateRequiredTrayWindow();	// タスクトレイが担当
 	}
 
 	// エディタへの終了要求

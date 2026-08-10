@@ -85,15 +85,16 @@ void CDocType::SetDocumentTypeIdx( int id, bool force )
 */
 void CDocType::SetDocumentIcon()
 {
-	if( CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode )	// Grepモードの時はアイコンを変更しない
+	if( CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode )	// Grepモードの時はアイコンを変更しない
 		return;
 	
 	HICON	hIconBig, hIconSmall;
+	auto& editWnd = *CEditWnd::getInstance();
 	if( this->GetDocumentAttribute().m_bUseDocumentIcon )
-		GetEditWnd().GetRelatedIcon( m_pcDocRef->m_cDocFile.GetFilePath(), &hIconBig, &hIconSmall );
+		editWnd.GetRelatedIcon( m_pcDocRef->m_cDocFile.GetFilePath(), &hIconBig, &hIconSmall );
 	else
-		GetEditWnd().GetDefaultIcon( &hIconBig, &hIconSmall );
+		editWnd.GetDefaultIcon( &hIconBig, &hIconSmall );
 
-	GetEditWnd().SetWindowIcon( hIconBig, ICON_BIG );
-	GetEditWnd().SetWindowIcon( hIconSmall, ICON_SMALL );
+	editWnd.SetWindowIcon( hIconBig, ICON_BIG );
+	editWnd.SetWindowIcon( hIconSmall, ICON_SMALL );
 }

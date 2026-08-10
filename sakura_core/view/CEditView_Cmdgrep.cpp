@@ -24,10 +24,11 @@
 #include "agent/CGrepAgent.h"
 #include "apiwrap/StdApi.h"
 #include "sakura_rc.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 
 [[nodiscard]] bool IsGrepMode() noexcept
 {
-	const auto pcGrepAgent = CEditApp::getInstance()->m_pcGrepAgent;
+	const auto pcGrepAgent = CEditApp::getInstance()->GetGrepAgent();
 	return pcGrepAgent && pcGrepAgent->m_bGrepMode;
 }
 
@@ -47,9 +48,10 @@ void CEditView::TranslateCommand_grep(
 		return;
 
 	if( nCommand == F_WCHAR ){
+		const auto searchSettings = legacy::shareddata::RequireSharedDataCapabilities().SearchSettings().Snapshot();
 		//	Jan. 23, 2005 genta 文字判定忘れ
-		if( WCODE::IsLineDelimiter((wchar_t)lparam1, GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol)
-				&& GetDllShareData().m_Common.m_sSearch.m_bGTJW_RETURN ){
+		if( WCODE::IsLineDelimiter((wchar_t)lparam1, searchSettings.EnablesExtendedEol())
+				&& searchSettings.TagJumpOnReturn() ){
 			nCommand = F_TAGJUMP;
 			lparam1 = ApiWrap::GetKeyState_Control()?1:0;
 		}

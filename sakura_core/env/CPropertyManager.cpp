@@ -9,6 +9,7 @@
 #include "StdAfx.h"
 #include "env/CPropertyManager.h"
 #include "env/DLLSHAREDATA.h"
+#include "env/SharedDataWin32Adapter.h"
 #include "env/CDocTypeManager.h"
 #include "apiwrap/StdApi.h"
 #include <memory>
@@ -61,7 +62,7 @@ bool CPropertyManager::OpenPropertySheet( HWND hWnd, int nPageNum, bool bTrayPro
 		}
 
 		/* アクセラレータテーブルの再作成 */
-		::SendMessageAny( GetDllShareData().m_sHandles.m_hwndTray, MYWM_CHANGESETTING,  (WPARAM)0, (LPARAM)PM_CHANGESETTING_ALL );
+		legacy::shareddata::win32::NotifyRequiredTraySettingsChanged();
 
 		/* 設定変更を反映させる */
 		/* 全編集ウィンドウへメッセージをポストする */

@@ -1,11 +1,18 @@
 {
   "active_artifacts": [
-    "controlipc-protocol-v1-golden-fixture"
+    "controlipc-protocol-v1-golden-fixture",
+    "dllsharedata-layout-v1-golden-fixture"
   ],
   "active_components": [
     "sakura_app",
     "sakura_controlipc_protocol",
     "sakura_controlipc_protocol_tests",
+    "sakura_editor_app_lifecycle",
+    "sakura_editor_app_lifecycle_tests",
+    "sakura_editor_document_core",
+    "sakura_editor_document_core_tests",
+    "sakura_editor_frame",
+    "sakura_editor_frame_tests",
     "sakura_editor_selection",
     "sakura_editor_selection_tests",
     "sakura_filesystem",
@@ -16,15 +23,23 @@
     "sakura_security_tests",
     "sakura_serialization",
     "sakura_serialization_tests",
+    "sakura_shareddata_contract",
+    "sakura_shareddata_contract_tests",
     "sakura_storage",
     "sakura_storage_tests",
     "sakura_uri",
     "sakura_uri_tests",
+    "sakura_win32_editor_frame",
+    "sakura_win32_editor_frame_tests",
     "tests1"
   ],
   "active_contracts": [
     "sakura-controlipc-v1-wire-contract",
-    "sakura-editor-selection-session-contract"
+    "sakura-editor-app-lifecycle-contract",
+    "sakura-editor-document-core-contract",
+    "sakura-editor-frame-event-contract",
+    "sakura-editor-selection-session-contract",
+    "sakura-shareddata-capability-contract"
   ],
   "active_edges": [
     "tests1-to-sakura-app",
@@ -54,7 +69,18 @@
     "sakura-controlipc-protocol-tests-to-golden-fixture",
     "sakura-app-to-sakura-editor-selection",
     "tests1-to-sakura-editor-selection",
-    "sakura-editor-selection-tests-to-sakura-editor-selection"
+    "sakura-editor-selection-tests-to-sakura-editor-selection",
+    "sakura-app-to-sakura-editor-frame",
+    "sakura-app-to-sakura-win32-editor-frame",
+    "sakura-win32-editor-frame-to-sakura-editor-frame",
+    "sakura-editor-frame-tests-to-sakura-editor-frame",
+    "sakura-win32-editor-frame-tests-to-adapter",
+    "sakura-app-to-editor-document-core",
+    "sakura-app-to-editor-app-lifecycle",
+    "sakura-app-to-shareddata-contract",
+    "sakura-editor-document-core-tests-to-core",
+    "sakura-editor-app-lifecycle-tests-to-lifecycle",
+    "sakura-shareddata-contract-tests-to-contract"
   ],
   "compile_profiles": [
     "msvc-x64-debug",
@@ -75,6 +101,6 @@
   "generator_version": "0.3.6",
   "package_sets": [],
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:34d99efd9adf55ae1959ceb19576ea2e3aa55804267a10c811a4b7f0083519e1",
+  "semantic_graph_hash": "sha256:8bf9cd4dfcf456c2e9e82dd9c27cf68124335dba819325642525e9d59bd727c0",
   "staging_sets": []
 }

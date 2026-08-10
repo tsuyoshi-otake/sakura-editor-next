@@ -8,15 +8,170 @@
 
 #include "StdAfx.h"
 #include "DLLSHAREDATA.h"
+#include "env/DLLSHAREDATA_Abi.h"
+#include "env/SharedDataWin32Adapter.h"
+#include <bit>
+#include <sakura/shareddata/SharedDataCapabilities.h>
 #include "_main/CMutex.h"
 #include "dlg/CDlgCancel.h"
 #include "uiparts/CWaitCursor.h"
 #include "util/os.h"
 #include "util/window.h"
+#include "apiwrap/StdApi.h"
 #include "apiwrap/CommonControl.h"
 #include "CSelectLang.h"
 #include "sakura_rc.h"
 #include "config/system_constants.h"
+
+namespace legacy::shareddata {
+
+namespace {
+
+using NativeWindowHandle = decltype(((DLLSHAREDATA*)nullptr)->m_sHandles.m_hwndTray);
+
+[[nodiscard]] std::uintptr_t EncodeWindowHandle(NativeWindowHandle window) noexcept
+{
+	return std::bit_cast<std::uintptr_t>(window);
+}
+
+[[nodiscard]] NativeWindowHandle DecodeWindowHandle(std::uintptr_t window) noexcept
+{
+	return std::bit_cast<NativeWindowHandle>(window);
+}
+
+} // namespace
+
+SharedDataHeaderSnapshot SharedDataHeaderReader::Snapshot() const noexcept
+{
+	return { m_data->m_vStructureVersion, m_data->m_nSize };
+}
+
+SharedDataMacroSnapshot SharedDataMacroReader::Snapshot() const noexcept
+{
+	return {
+		m_data->m_sFlags.m_bEditWndChanging != FALSE,
+		m_data->m_sFlags.m_bRecordingKeyMacro != FALSE,
+		EncodeWindowHandle(m_data->m_sFlags.m_hwndRecordingKeyMacro),
+	};
+}
+
+void SharedDataMacroWriter::SetEditWindowChanging(bool changing) noexcept
+{
+	m_data->m_sFlags.m_bEditWndChanging = changing ? TRUE : FALSE;
+}
+
+void SharedDataMacroWriter::StartRecording(std::uintptr_t ownerWindow) noexcept
+{
+	m_data->m_sFlags.m_hwndRecordingKeyMacro = DecodeWindowHandle(ownerWindow);
+	m_data->m_sFlags.m_bRecordingKeyMacro = TRUE;
+}
+
+void SharedDataMacroWriter::StopRecording() noexcept
+{
+	m_data->m_sFlags.m_bRecordingKeyMacro = FALSE;
+	m_data->m_sFlags.m_hwndRecordingKeyMacro = nullptr;
+}
+
+SharedDataWindowEndpointSnapshot SharedDataWindowEndpointReader::Snapshot() const noexcept
+{
+	return {
+		EncodeWindowHandle(m_data->m_sHandles.m_hwndTray),
+		EncodeWindowHandle(m_data->m_sHandles.m_hwndDebug),
+	};
+}
+
+void SharedDataWindowEndpointWriter::SetTrayWindow(std::uintptr_t window) noexcept
+{
+	m_data->m_sHandles.m_hwndTray = DecodeWindowHandle(window);
+}
+
+void SharedDataWindowEndpointWriter::SetDebugWindow(std::uintptr_t window) noexcept
+{
+	m_data->m_sHandles.m_hwndDebug = DecodeWindowHandle(window);
+}
+
+SharedDataSettingsSnapshot SharedDataSettingsReader::Snapshot() const noexcept
+{
+	return { m_data->m_nTypesCount, m_data->m_nLockCount };
+}
+
+SharedDataSearchSettingsSnapshot SharedDataSearchSettingsReader::Snapshot() const noexcept
+{
+	return {
+		m_data->m_Common.m_sSearch.m_bUseCaretKeyWord != FALSE,
+		m_data->m_Common.m_sSearch.m_bGTJW_LDBLCLK != FALSE,
+		m_data->m_Common.m_sSearch.m_bGTJW_RETURN != FALSE,
+		m_data->m_Common.m_sEdit.m_bEnableExtEol != FALSE,
+	};
+}
+
+void SharedDataSearchSettingsWriter::SetUseCaretKeyword(bool enabled) noexcept
+{
+	m_data->m_Common.m_sSearch.m_bUseCaretKeyWord = enabled ? TRUE : FALSE;
+}
+
+SharedDataWindowNodesSnapshot SharedDataWindowNodesReader::Snapshot() const noexcept
+{
+	return SharedDataWindowNodesSnapshot(m_data->m_sNodes.m_nEditArrNum);
+}
+
+void SharedDataSettingsWriter::SetTypeCount(int count) noexcept
+{
+	m_data->m_nTypesCount = count;
+}
+
+int SharedDataSettingsWriter::IncrementLockCount() noexcept
+{
+	return ++m_data->m_nLockCount;
+}
+
+int SharedDataSettingsWriter::DecrementLockCount() noexcept
+{
+	return --m_data->m_nLockCount;
+}
+
+SharedDataCapabilities OpenSharedDataCapabilities(DLLSHAREDATA& data) noexcept
+{
+	return SharedDataCapabilities(&data);
+}
+
+std::optional<SharedDataCapabilities> TryOpenSharedDataCapabilities() noexcept
+{
+	auto* const data = GetDllShareDataPtr();
+	if (!data) return std::nullopt;
+	return SharedDataCapabilities(data);
+}
+
+SharedDataCapabilities RequireSharedDataCapabilities()
+{
+	auto capabilities = TryOpenSharedDataCapabilities();
+	if (!capabilities) throw std::domain_error("DLLSHAREDATA is not initialized");
+	return *capabilities;
+}
+
+} // namespace legacy::shareddata
+
+namespace legacy::shareddata::win32 {
+
+void ActivateRequiredTrayWindow()
+{
+	const auto endpoints = RequireSharedDataCapabilities().WindowEndpoints().Snapshot();
+	::SetForegroundWindow(DecodeWindowHandle(endpoints.TrayWindow()));
+}
+
+void NotifyRequiredTraySettingsChanged()
+{
+	const auto endpoints = RequireSharedDataCapabilities().WindowEndpoints().Snapshot();
+	::SendMessageAny(DecodeWindowHandle(endpoints.TrayWindow()), MYWM_CHANGESETTING, 0, PM_CHANGESETTING_ALL);
+}
+
+bool IsMacroRecordingOwnedBy(std::uintptr_t window)
+{
+	const auto macro = RequireSharedDataCapabilities().Macro().Snapshot();
+	return macro.IsRecording() && macro.RecordingWindow() == window;
+}
+
+} // namespace legacy::shareddata::win32
 
 static CMutex g_cKeywordMutex( FALSE, GSTR_MUTEX_SAKURA_KEYWORD );
 
@@ -38,20 +193,27 @@ DLLSHAREDATA& GetDllShareData()
 
 CShareDataLockCounter::CShareDataLockCounter(){
 	LockGuard<CMutex> guard( g_cKeywordMutex );
-	assert_warning( 0 <= GetDllShareData().m_nLockCount );
-	GetDllShareData().m_nLockCount++;
+	auto capabilities = legacy::shareddata::TryOpenSharedDataCapabilities();
+	if (!capabilities) throw std::domain_error("DLLSHAREDATA is not initialized");
+	assert_warning( 0 <= capabilities->Settings().Snapshot().LockCount() );
+	capabilities->SettingsWriter().IncrementLockCount();
 }
 
 CShareDataLockCounter::~CShareDataLockCounter(){
 	LockGuard<CMutex> guard( g_cKeywordMutex );
-	GetDllShareData().m_nLockCount--;
-	assert_warning( 0 <= GetDllShareData().m_nLockCount );
+	auto capabilities = legacy::shareddata::TryOpenSharedDataCapabilities();
+	if (!capabilities) return;
+	const int lockCount = capabilities->SettingsWriter().DecrementLockCount();
+	assert_warning( 0 <= lockCount );
 }
 
 int CShareDataLockCounter::GetLockCounter(){
 	LockGuard<CMutex> guard( g_cKeywordMutex );
-	assert_warning( 0 <= GetDllShareData().m_nLockCount );
-	return GetDllShareData().m_nLockCount;
+	auto capabilities = legacy::shareddata::TryOpenSharedDataCapabilities();
+	if (!capabilities) throw std::domain_error("DLLSHAREDATA is not initialized");
+	const int lockCount = capabilities->Settings().Snapshot().LockCount();
+	assert_warning( 0 <= lockCount );
+	return lockCount;
 }
 
 class CLockCancel final: public CDlgCancel{
@@ -91,7 +253,9 @@ public:
 static int GetCountIf0Lock( CShareDataLockCounter** ppLock )
 {
 	LockGuard<CMutex> guard(g_cKeywordMutex);
-	int count = GetDllShareData().m_nLockCount;
+	auto capabilities = legacy::shareddata::TryOpenSharedDataCapabilities();
+	if (!capabilities) throw std::domain_error("DLLSHAREDATA is not initialized");
+	int count = capabilities->Settings().Snapshot().LockCount();
 	if( count <= 0 ){
 		if( ppLock ){
 			*ppLock = new CShareDataLockCounter();

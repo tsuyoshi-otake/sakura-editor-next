@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -12,6 +12,7 @@
 #include "doc/CEditDoc.h"
 #include "doc/logic/CDocLine.h"
 #include "env/ShareDataTestSuite.hpp"
+#include <sakura/editor/document/DocumentSession.h>
 #include "util/string_ex.h"
 #include "workbench/editor/persistence/CEditDocWorkingCopyPersistenceAdapter.h"
 #include "workbench/editor/persistence/WorkingCopyPersistenceCodec.h"
@@ -26,12 +27,18 @@ namespace {
 
 class CaptureContextSource final : public ICEditDocWorkingCopyCaptureContextSource {
 public:
-	std::optional<CEditDocWorkingCopyCaptureContext> context;
+	void SetContext(std::optional<CEditDocWorkingCopyCaptureContext> context)
+	{
+		m_context = std::move(context);
+	}
 
 	[[nodiscard]] std::optional<CEditDocWorkingCopyCaptureContext> CurrentCaptureContext() const override
 	{
-		return context;
+		return m_context;
 	}
+
+private:
+	std::optional<CEditDocWorkingCopyCaptureContext> m_context;
 };
 
 class CEditDocWorkingCopyPersistenceAdapterTest
@@ -128,12 +135,12 @@ TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, NamedDocumentRoundTripsWithout
 	SetText(*sourceDocument, L"alpha\r\n", L"さくら");
 
 	CaptureContextSource sourceContext;
-	sourceContext.context = CEditDocWorkingCopyCaptureContext{
+	sourceContext.SetContext(CEditDocWorkingCopyCaptureContext{
 		.inputId = "input.named",
 		.inputTypeId = "workbench.editor.text",
 		.documentIdentity = ResourceIdentityFromWindowsPath(sourceDocument->m_cDocFile.GetFilePath()),
 		.documentRevision = 17,
-	};
+	});
 	CEditDocWorkingCopyPersistenceAdapter source(*sourceDocument, sourceContext);
 	const auto captured = source.Capture();
 	ASSERT_EQ(EEditorWorkingCopySnapshotStatus::Captured, captured.status);
@@ -166,6 +173,39 @@ TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, NamedDocumentRoundTripsWithout
 	EXPECT_EQ(expectedText, ReadUtf8(*targetDocument));
 }
 
+TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, CaptureProjectsLegacyLogicalTextThroughDocumentCoreWithoutMutation)
+{
+	auto document = NewDocument();
+	document->m_cDocFile.SetCodeSet(CODE_UTF8, false);
+	document->m_cDocEditor.SetNewLineCode(EEolType::line_feed);
+	document->m_cDocEditor.SetModified(true, false);
+	SetText(*document, L"first\n", L"二行目");
+
+	const auto legacyText = ReadUtf8(*document);
+	const auto originalLineCount = document->m_cDocLineMgr.GetLineCount();
+	::editor::document::DocumentSession expectedCore;
+	ASSERT_EQ(::editor::document::EDocumentSessionTerminal::Succeeded,
+		expectedCore.Replace({ 0, 0 }, legacyText).Terminal());
+
+	CaptureContextSource context;
+	context.SetContext(CEditDocWorkingCopyCaptureContext{
+		.inputId = "input.document-core-projection",
+		.inputTypeId = "workbench.editor.text",
+		.documentIdentity = { .opaqueId = "untitled.document-core-projection" },
+		.documentRevision = 23,
+	});
+	CEditDocWorkingCopyPersistenceAdapter adapter(*document, context);
+	const auto captured = adapter.Capture();
+
+	ASSERT_EQ(EEditorWorkingCopySnapshotStatus::Captured, captured.status);
+	ASSERT_TRUE(captured.snapshot);
+	EXPECT_EQ(legacyText, expectedCore.Document().Text());
+	EXPECT_EQ(expectedCore.Document().Text(), captured.snapshot->content);
+	EXPECT_EQ(originalLineCount, document->m_cDocLineMgr.GetLineCount());
+	EXPECT_EQ(legacyText, ReadUtf8(*document));
+	EXPECT_TRUE(document->m_cDocEditor.IsModified());
+}
+
 TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, InvalidUtf8FailsPrepareWithoutMutatingTarget)
 {
 	auto targetDocument = NewDocument();
@@ -196,12 +236,12 @@ TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, InvalidUtf8FailsPrepareWithout
 TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, CapturePreservesNamedAndUntitledIdentityMetadata)
 {
 	CaptureContextSource context;
-	context.context = CEditDocWorkingCopyCaptureContext{
+	context.SetContext(CEditDocWorkingCopyCaptureContext{
 		.inputId = "input.identity",
 		.inputTypeId = "workbench.editor.text",
 		.documentIdentity = { .opaqueId = "untitled.stable.1" },
 		.documentRevision = 9,
-	};
+	});
 
 	auto untitled = NewDocument();
 	untitled->m_cDocFile.SetCodeSet(CODE_UTF8, false);
@@ -224,12 +264,12 @@ TEST_F(CEditDocWorkingCopyPersistenceAdapterTest, CapturePreservesNamedAndUntitl
 	named->m_cDocEditor.SetModified(true, false);
 	SetText(*named, L"named\r");
 	CaptureContextSource namedContext;
-	namedContext.context = CEditDocWorkingCopyCaptureContext{
+	namedContext.SetContext(CEditDocWorkingCopyCaptureContext{
 		.inputId = "input.identity",
 		.inputTypeId = "workbench.editor.text",
 		.documentIdentity = ResourceIdentity(L"file:///D:/core/authoritative.txt"),
 		.documentRevision = 9,
-	};
+	});
 	CEditDocWorkingCopyPersistenceAdapter namedAdapter(*named, namedContext);
 	const auto namedCapture = namedAdapter.Capture();
 	ASSERT_EQ(EEditorWorkingCopySnapshotStatus::Captured, namedCapture.status);

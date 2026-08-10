@@ -723,6 +723,28 @@ set_source_files_properties(${ONIGMO_SOURCES}
     INCLUDE_DIRECTORIES "${ONIGMO_ROOT};${ONIGMO_ROOT}/win32;${ONIGMO_ROOT}/enc/unicode"
 )
 
+# GCC 14 and later diagnose the vendored Onigmo version's K&R-compatible
+# ANYARGS callback declarations as errors, and GCC 15 defaults to C23 where an
+# empty parameter list means no arguments. Compile this legacy boundary as GNU
+# C17 and keep the diagnostic downgrade local to Onigmo's C translation units;
+# do not weaken diagnostics for Sakura.
+if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  set_property(SOURCE ${ONIGMO_SOURCES} APPEND PROPERTY
+    COMPILE_OPTIONS -std=gnu17 -Wno-error=incompatible-pointer-types
+  )
+
+  # MinGW's wincodec.h does not yet expose the Windows SDK's high-quality
+  # cubic enumerator. Keep that SDK spelling difference at the MinGW build
+  # boundary and retain cubic interpolation for the three WIC consumers.
+  set_property(SOURCE
+    ${CMAKE_SOURCE_DIR}/sakura_core/markdown/CMarkdownPreviewWnd.cpp
+    ${CMAKE_SOURCE_DIR}/sakura_core/workbench/extension/ExtensionIconDecoder.cpp
+    ${CMAKE_SOURCE_DIR}/sakura_core/workbench/explorer/CExplorerTool.cpp
+    APPEND PROPERTY COMPILE_DEFINITIONS
+      WICBitmapInterpolationModeHighQualityCubic=WICBitmapInterpolationModeCubic
+  )
+endif()
+
 # Keep higher-ISA code in isolated translation units.  The baseline executable
 # remains AVX-compatible, while the process-wide dispatch table calls these
 # implementations only after CPUID and XGETBV validation.
@@ -825,6 +847,17 @@ target_link_libraries(sakura_core
     winspool
 )
 
+# GCC does not consume MSVC's #pragma comment(lib) directives. Keep the
+# equivalent Windows SDK import libraries explicit for the MinGW link.
+if(MINGW)
+  target_link_libraries(sakura_core
+    PUBLIC
+      oleacc
+      uiautomationcore
+      version
+  )
+endif()
+
 # Add dependencies for sakura_core
 add_dependencies(sakura_core
   generate_version_header
@@ -880,11 +913,11 @@ if(MINGW)
   # Create a custom command for sakura_manifest.rc generation
   add_custom_command(
     OUTPUT "${SAKURA_MANIFEST_RC}"
-    COMMAND ${CMAKE_COMMAND} 
-      -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
-      -DOUTPUT_FILE="${SAKURA_MANIFEST_RC}"
-      -DMANIFEST_FILE="${SAKURA_EXE_MANIFEST}"
-      -P ${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DOUTPUT_FILE=${SAKURA_MANIFEST_RC}"
+      "-DMANIFEST_FILE=${SAKURA_EXE_MANIFEST}"
+      -P "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake"
     DEPENDS
       "${SAKURA_EXE_MANIFEST}"
       "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake"

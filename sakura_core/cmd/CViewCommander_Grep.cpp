@@ -15,6 +15,7 @@
 #include "StdAfx.h"
 #include "CViewCommander.h"
 #include "CViewCommander_inline.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 
 #include "_main/CControlTray.h"
 #include "CEditApp.h"
@@ -69,8 +70,8 @@ void CViewCommander::Command_GREP( void )
 		Grepモードのとき、または未編集で無題かつアウトプットでない場合。
 		自ウィンドウがGrep実行中も、(異常終了するので)別ウィンドウにする
 	*/
-	if( (  CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode &&
-		  !CEditApp::getInstance()->m_pcGrepAgent->m_bGrepRunning ) ||
+	if( (  CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode &&
+		  !CEditApp::getInstance()->GetGrepAgent()->m_bGrepRunning ) ||
 		( !GetDocument()->m_cDocEditor.IsModified() &&
 		  !GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath() &&		/* 現在編集中のファイルのパス */
 		  !CAppMode::getInstance()->IsDebugMode()
@@ -88,7 +89,7 @@ void CViewCommander::Command_GREP( void )
 			GetDocument()->OnChangeType();
 		}
 		
-		CEditApp::getInstance()->m_pcGrepAgent->DoGrep(
+		CEditApp::getInstance()->GetGrepAgent()->DoGrep(
 			m_pCommanderView,
 			false,
 			&cmWork1,
@@ -115,7 +116,7 @@ void CViewCommander::Command_GREP( void )
 	}
 	else{
 		// 編集ウィンドウの上限チェック
-		if( GetDllShareData().m_sNodes.m_nEditArrNum >= MAX_EDITWINDOWS ){	//最大値修正	//@@@ 2003.05.31 MIK
+		if( legacy::shareddata::RequireSharedDataCapabilities().WindowNodes().Snapshot().EditWindowCount() >= MAX_EDITWINDOWS ){	//最大値修正	//@@@ 2003.05.31 MIK
 			OkMessage( m_pCommanderView->GetHwnd(), LS(STR_MAXWINDOW), MAX_EDITWINDOWS );
 			return;
 		}
@@ -175,14 +176,14 @@ void CViewCommander::Command_GREP_REPLACE( void )
 		Grepモードのとき、または未編集で無題かつアウトプットでない場合。
 		自ウィンドウがGrep実行中も、(異常終了するので)別ウィンドウにする
 	*/
-	if( (  CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode &&
-		  !CEditApp::getInstance()->m_pcGrepAgent->m_bGrepRunning ) ||
+	if( (  CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode &&
+		  !CEditApp::getInstance()->GetGrepAgent()->m_bGrepRunning ) ||
 		( !GetDocument()->m_cDocEditor.IsModified() &&
 		  !GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath() &&		/* 現在編集中のファイルのパス */
 		  !CAppMode::getInstance()->IsDebugMode()
 		)
 	){
-		CEditApp::getInstance()->m_pcGrepAgent->DoGrep(
+		CEditApp::getInstance()->GetGrepAgent()->DoGrep(
 			m_pCommanderView,
 			true,
 			&cmWork1,

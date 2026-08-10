@@ -107,9 +107,18 @@ struct VirtualAllocationDeleter {
 	}
 };
 
-struct CUtf8Access : public CUtf8 {
-	using CUtf8::Utf8ToUni;
-	using CUtf8::_Utf8ToUni_char;
+class CUtf8Access final : public CUtf8 {
+public:
+	static int DecodeForTest(const char* source, int sourceLength, wchar_t* destination, bool cesu8Mode)
+	{
+		return Utf8ToUni(source, sourceLength, destination, cesu8Mode);
+	}
+
+	static int DecodeCharacterForTest(const unsigned char* source, int sourceLength,
+		unsigned short* destination, bool cesu8Mode)
+	{
+		return _Utf8ToUni_char(source, sourceLength, destination, cesu8Mode);
+	}
 };
 
 // Literal replica of the per-character loop Utf8ToUni ran before the
@@ -139,7 +148,7 @@ int Utf8ToUniPerCharacterReference(
 			break;
 		}
 		if (echarset != CHARSET_BINARY) {
-			pw += CUtf8Access::_Utf8ToUni_char(pr, nclen, pw, bCESU8Mode);
+			pw += CUtf8Access::DecodeCharacterForTest(pr, nclen, pw, bCESU8Mode);
 			pr += nclen;
 		} else {
 			if (nclen != 1) {
@@ -908,7 +917,7 @@ TEST(CUtf8Test, Utf8ToUniAsciiFastPathIsOutputInvisible)
 			std::vector<wchar_t> actual(source.size() + 8, kSentinel);
 			const int expectedLength = Utf8ToUniPerCharacterReference(
 				source.data(), sourceLength, expected.data(), cesu8Mode);
-			const int actualLength = CUtf8Access::Utf8ToUni(
+			const int actualLength = CUtf8Access::DecodeForTest(
 				source.data(), sourceLength, actual.data(), cesu8Mode);
 			EXPECT_EQ(expectedLength, actualLength)
 				<< "corpus=" << corpusIndex << " cesu8=" << cesu8Mode;
@@ -988,7 +997,7 @@ TEST(CUtf8Test, DISABLED_Utf8ToUniMicrobenchmark)
 	constexpr int iterations = 200'000;
 	LARGE_INTEGER frequency{};
 	::QueryPerformanceFrequency(&frequency);
-	const auto measure = [&](auto&& function, const std::string& source,
+	const auto measure = [&](auto function, const std::string& source,
 			std::vector<wchar_t>& destination) {
 		volatile int sink = 0;
 		LARGE_INTEGER begin{};
@@ -1008,7 +1017,7 @@ TEST(CUtf8Test, DISABLED_Utf8ToUniMicrobenchmark)
 		const double referenceNs =
 			measure(Utf8ToUniPerCharacterReference, *source, destination);
 		const double productionNs =
-			measure(CUtf8Access::Utf8ToUni, *source, destination);
+			measure(CUtf8Access::DecodeForTest, *source, destination);
 		printf("corpus=%-14s bytes=%5zu perCharRef=%10.1fns production=%10.1fns speedup=%5.2fx\n",
 			name, source->size(), referenceNs, productionNs,
 			productionNs > 0.0 ? referenceNs / productionNs : 0.0);

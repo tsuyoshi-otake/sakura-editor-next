@@ -1,0 +1,17 @@
+{
+  "layout": "DLLSHAREDATA",
+  "fixtureVersion": 1,
+  "fieldOrder": [
+    "m_vStructureVersion", "m_nSize", "m_sVersion", "m_sWorkBuffer", "m_sFlags", "m_sNodes", "m_sHandles", "m_szIniFile", "m_szPrivateIniFile", "m_sCharWidth", "m_dwCustColors", "m_PlugCmdIcon", "m_maxTBNum", "m_Common", "m_nTypesCount", "m_TypeBasis", "m_TypeMini", "m_PrintSettingArr", "m_nLockCount", "m_sSearchKeywords", "m_sTagJump", "m_sHistory", "m_nExecFlgOpt", "m_nDiffFlgOpt", "m_szTagsCmdLine", "m_nTagsOpt", "m_bLineNumIsCRLF_ForJump"
+  ],
+  "x64": {
+    "sizeof": 3241904,
+    "alignof": 8,
+    "offsets": [0, 4, 8, 16, 148352, 148368, 422824, 422840, 423360, 423880, 555084, 555148, 559148, 559152, 2659404, 2659408, 2739052, 2755372, 2781324, 2781328, 2935432, 2952656, 3241364, 3241368, 3241372, 3241892, 3241896]
+  },
+  "x86": {
+    "sizeof": 3240448,
+    "alignof": 4,
+    "offsets": [0, 4, 8, 16, 148348, 148360, 421784, 421792, 422312, 422832, 554036, 554100, 558100, 558104, 2658356, 2658360, 2738004, 2754324, 2780276, 2780280, 2934384, 2951204, 3239912, 3239916, 3239920, 3240440, 3240444]
+  }
+}
