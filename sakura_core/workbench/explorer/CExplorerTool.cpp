@@ -11,7 +11,6 @@
 #include <wincodec.h>
 
 #include "cxx/com_pointer.hpp"
-#include "util/WicCompatibility.h"
 
 #include <algorithm>
 #include <atomic>
@@ -77,7 +76,7 @@ constexpr unsigned int kDefaultDpi = 96;
 		if (scaledWidth != width || scaledHeight != height) {
 			if (FAILED(factory->CreateBitmapScaler(&scaler))
 				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					wic_compat::kHighQualityCubicInterpolation))) return nullptr;
+					WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
 			source = scaler;
 		}
 		cxx::com_pointer<IWICFormatConverter> converter;
