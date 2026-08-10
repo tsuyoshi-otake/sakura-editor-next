@@ -565,7 +565,6 @@
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultExtensionGrantAuthorityTypes.h" />
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultTypes.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.h" />
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h" />
 	<ClInclude Include="..\sakura_core\platform\controlipc\ControlProfileRpc.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.h" />

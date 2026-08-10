@@ -1477,9 +1477,6 @@
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
