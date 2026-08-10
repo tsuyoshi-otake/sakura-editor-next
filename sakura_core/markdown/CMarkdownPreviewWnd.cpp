@@ -12,6 +12,7 @@
 
 #include "cxx/com_pointer.hpp"
 #include "theme/CThemeService.h"
+#include "util/WicCompatibility.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -191,7 +192,7 @@ struct DecodedBitmap {
 		if (scaledWidth != width || scaledHeight != height) {
 			if (FAILED(factory->CreateBitmapScaler(&scaler))
 				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					WICBitmapInterpolationModeHighQualityCubic))) return result;
+					wic_compat::kHighQualityCubicInterpolation))) return result;
 			source = scaler;
 		}
 		cxx::com_pointer<IWICFormatConverter> converter;

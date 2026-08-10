@@ -616,6 +616,9 @@
     <ClInclude Include="..\sakura_core\util\tchar_template.h">
       <Filter>Cpp Source Files\util</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\util\WicCompatibility.h">
+      <Filter>Header Files\util</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\util\window.h">
       <Filter>Cpp Source Files\util</Filter>
     </ClInclude>

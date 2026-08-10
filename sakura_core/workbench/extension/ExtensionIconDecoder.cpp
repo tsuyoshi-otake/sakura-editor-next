@@ -12,6 +12,7 @@
 #include <wincodec.h>
 
 #include "cxx/com_pointer.hpp"
+#include "util/WicCompatibility.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -76,7 +77,7 @@ DecodedExtensionIcon DecodeExtensionIconBitmap(std::span<const std::byte> encode
 		if (scaledWidth != width || scaledHeight != height) {
 			if (FAILED(factory->CreateBitmapScaler(&scaler))
 				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					WICBitmapInterpolationModeHighQualityCubic))) return result;
+					wic_compat::kHighQualityCubicInterpolation))) return result;
 			source = scaler;
 		}
 		cxx::com_pointer<IWICFormatConverter> converter;
