@@ -37,7 +37,7 @@ public:
 	// 2005.06.24 Moca
 	void SetSelectArea( const CLayoutRange& sRange )
 	{
-		m_sSelectBgn.Set(sRange.GetFrom());
+		SetSelectionAnchorRange(CLayoutRange(sRange.GetFrom(), sRange.GetFrom()));
 		m_sSelect = sRange;
 	}
 
@@ -81,30 +81,30 @@ public:
 		m_sSelect = sRange;
 	}
 
-	//! 選択原点を参照する。呼出側は snapshot を作ってから更新操作を呼ぶ。
-	[[nodiscard]] const CLayoutRange& GetSelectionAnchorRange() const noexcept
+	//! 選択原点の adapter snapshot を返す。呼出側は snapshot を作ってから更新操作を呼ぶ。
+	[[nodiscard]] CLayoutRange GetSelectionAnchorRange() const noexcept
 	{
-		return m_sSelectBgn;
+		return ToLayoutRange(m_selectionSession.AnchorRange());
 	}
 
 	void SetSelectionAnchorRange(const CLayoutRange& sRange)
 	{
-		m_sSelectBgn = sRange;
+		m_selectionSession.SetAnchorRange(ToSelectionRange(sRange));
 	}
 
 	void SetSelectionAnchorFrom(const CLayoutPoint& point)
 	{
-		m_sSelectBgn.SetFrom(point);
+		m_selectionSession.SetAnchorFrom(ToSelectionPoint(point));
 	}
 
 	void SetSelectionAnchorTo(const CLayoutPoint& point)
 	{
-		m_sSelectBgn.SetTo(point);
+		m_selectionSession.SetAnchorTo(ToSelectionPoint(point));
 	}
 
 	void ClearSelectionAnchorRange()
 	{
-		m_sSelectBgn.Clear(-1);
+		m_selectionSession.ClearAnchorRange();
 	}
 
 	//!単語選択開始
@@ -228,6 +228,11 @@ public:
 	}
 
 private:
+	static editor::selection::SelectionPoint ToSelectionPoint(const CLayoutPoint& point) noexcept;
+	static CLayoutPoint ToLayoutPoint(const editor::selection::SelectionPoint& point) noexcept;
+	static editor::selection::SelectionRange ToSelectionRange(const CLayoutRange& range) noexcept;
+	static CLayoutRange ToLayoutRange(const editor::selection::SelectionRange& range) noexcept;
+
 	//参照
 	CEditView*	m_pcEditView;
 	editor::selection::SelectionSession m_selectionSession;
@@ -239,7 +244,6 @@ public:
 private:
 	bool	m_bSelectAreaChanging;	// 選択範囲変更中
 	int		m_nLastSelectedByteLen;	// 前回選択時の選択バイト数
-	CLayoutRange m_sSelectBgn; //範囲選択(原点)
 
 	// 選択範囲を保持するための変数群。外部利用は GetSelectionRange() と
 	// ReplaceSelectionRange()/SetSelectionRange*() を経由し、描画・範囲計算の

@@ -20,6 +20,7 @@ namespace {
 using editor::selection::ESelectionMode;
 using editor::selection::ESelectionTransition;
 using editor::selection::SelectionSession;
+using editor::selection::SelectionRange;
 
 bool StartsAndEndsWithExplicitTerminalStates()
 {
@@ -45,6 +46,22 @@ bool InteractionEndPreservesLockButClearOwnsTheFullTerminal()
 	if (session.IsActive() || session.IsLocked() || session.Mode() != ESelectionMode::Linear) return false;
 	session.Clear();
 	return !session.IsActive() && !session.IsLocked() && session.Mode() == ESelectionMode::Linear;
+}
+
+bool AnchorSurvivesInteractionEndAndClearsExplicitly()
+{
+	SelectionSession session;
+	const SelectionRange anchor{{2, 3}, {4, 5}};
+	if (session.AnchorRange().IsValid()) return false;
+
+	session.SetAnchorRange(anchor);
+	if (session.AnchorRange() != anchor) return false;
+	if (session.Begin(ESelectionMode::Linear) != ESelectionTransition::Started) return false;
+	if (session.End() != ESelectionTransition::Ended) return false;
+	if (session.AnchorRange() != anchor) return false;
+
+	session.Clear();
+	return !session.AnchorRange().IsValid() && session.AnchorRange() == SelectionRange{};
 }
 
 bool ModeRestartDoesNotLeakMultipleModes()
@@ -91,6 +108,7 @@ private:
 constexpr std::array kTests{
 	TestCase{"StartsAndEndsWithExplicitTerminalStates", StartsAndEndsWithExplicitTerminalStates},
 	TestCase{"InteractionEndPreservesLockButClearOwnsTheFullTerminal", InteractionEndPreservesLockButClearOwnsTheFullTerminal},
+	TestCase{"AnchorSurvivesInteractionEndAndClearsExplicitly", AnchorSurvivesInteractionEndAndClearsExplicitly},
 	TestCase{"ModeRestartDoesNotLeakMultipleModes", ModeRestartDoesNotLeakMultipleModes},
 	TestCase{"DisablingTheActiveModeFallsBackToLinear", DisablingTheActiveModeFallsBackToLinear},
 	TestCase{"DisablingAnInactiveOrDifferentModeIsNoop", DisablingAnInactiveOrDifferentModeIsNoop},
