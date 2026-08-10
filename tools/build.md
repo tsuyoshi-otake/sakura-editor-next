@@ -220,6 +220,8 @@ v2 inventoryはexact `source_commit`、scanner implementation hash、tracked sou
 scope definition hash、rule catalog hash、および`rule × path × line × column`のfindingを保存します。
 比較時はbaseline commitからのrenameと不変行を追跡するため、別fileへの負債移動では相殺できません。
 変更済みfileの既存負債は増加不可で、既存findingを持つ変更fileは少なくとも1件を減らす必要があります。
+C/C++のincludeと完全修飾using宣言だけを変更する依存移行は、無関係な既存負債の削減対象から除外します。
+この限定例外でもnew findingとfile間の負債移動は従来どおり失敗します。
 新規first-party sourceの違反は0件から開始し、削除は純減、pure renameは同一負債として追跡します。
 scanner/scope/rule catalogのhashがbaselineと異なる場合はfail-closedです。
 

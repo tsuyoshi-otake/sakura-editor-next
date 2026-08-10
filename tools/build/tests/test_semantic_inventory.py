@@ -251,6 +251,62 @@ void f() {
             self.assertEqual([], comparison["new_findings"])
             self.assertEqual(["sakura_core/a.cpp"], [item["path"] for item in comparison["missing_touched_reductions"]])
 
+    def test_include_only_change_does_not_require_unrelated_debt_reduction(self) -> None:
+        temporary, root = self._temporary_repo(
+            {
+                "sakura_core/a.cpp": (
+                    '#include "platform/controlipc/ControlIpcSecurity.h"\n'
+                    "void A() { GetDllShareData(); }\n"
+                )
+            }
+        )
+        with temporary:
+            baseline = collect_semantic_inventory(root)
+            _write(
+                root,
+                "sakura_core/a.cpp",
+                "#include <sakura/controlipc/ControlIpcSecurity.h>\n"
+                "using ::platform::security::CurrentUserSecurityAttributes;\n"
+                "void A() { GetDllShareData(); }\n",
+            )
+            _commit(root, "migrate include")
+            comparison = compare_semantic_inventory(collect_semantic_inventory(root), baseline, repo_root=root)
+            self.assertTrue(comparison["ok"])
+            self.assertEqual([], comparison["new_findings"])
+            self.assertEqual([], comparison["missing_touched_reductions"])
+
+    def test_rename_with_include_only_change_preserves_existing_debt(self) -> None:
+        temporary, root = self._temporary_repo(
+            {
+                "sakura_core/legacy.cpp": (
+                    '#include "platform/controlipc/ControlIpcSecurity.h"\n'
+                    "void HelperOne() {}\n"
+                    "void HelperTwo() {}\n"
+                    "void A() { GetDllShareData(); }\n"
+                )
+            }
+        )
+        with temporary:
+            baseline = collect_semantic_inventory(root)
+            _git(root, "mv", "sakura_core/legacy.cpp", "sakura_core/security.cpp")
+            _write(
+                root,
+                "sakura_core/security.cpp",
+                "#include <sakura/controlipc/ControlIpcSecurity.h>\n"
+                "void HelperOne() {}\n"
+                "void HelperTwo() {}\n"
+                "void A() { GetDllShareData(); }\n",
+            )
+            _commit(root, "move implementation and migrate include")
+            comparison = compare_semantic_inventory(collect_semantic_inventory(root), baseline, repo_root=root)
+            self.assertTrue(comparison["ok"])
+            self.assertEqual(
+                {"sakura_core/legacy.cpp": "sakura_core/security.cpp"},
+                comparison["renames"],
+            )
+            self.assertEqual([], comparison["new_findings"])
+            self.assertEqual([], comparison["missing_touched_reductions"])
+
     def test_accept_current_requires_clean_exact_sha_and_writes_ledger(self) -> None:
         temporary, root = self._temporary_repo()
         with temporary:

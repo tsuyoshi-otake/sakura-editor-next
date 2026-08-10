@@ -6,7 +6,7 @@
 */
 #include "pch.h"
 
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 #include "platform/controlipc/ControlPlatformEndpoint.h"
 
 #include <filesystem>

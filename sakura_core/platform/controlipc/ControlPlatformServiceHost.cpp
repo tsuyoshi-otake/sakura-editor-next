@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlPlatformServiceHost.h"
 
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 #include "platform/controlipc/ControlPlatformRpcServerAdapter.h"
 #include "platform/profiles/ProfileAuthorityIdentity.h"
 

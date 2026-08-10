@@ -21,7 +21,7 @@
       "sources": ["sakura_core"],
       "public_headers": [],
       "private_headers": [],
-      "ownership_exclusions": ["sakura_core/platform/uri", "sakura_core/include/sakura/uri", "sakura_core/platform/serialization", "sakura_core/include/sakura/serialization", "sakura_core/platform/filesystem", "sakura_core/include/sakura/filesystem", "sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/include/sakura/security", "sakura_core/platform/storage/CAtomicFileStorageService.cpp", "sakura_core/platform/storage/CAtomicFileStorageService.h", "sakura_core/platform/storage/StorageTypes.cpp", "sakura_core/platform/storage/StorageSnapshotCache.cpp", "sakura_core/include/sakura/storage", "sakura_core/platform/request", "sakura_core/include/sakura/request", "sakura_core/platform/controlipc/ControlIpcProtocol.cpp", "sakura_core/include/sakura/controlipc", "sakura_core/workbench/editor/selection/SelectionSession.cpp", "sakura_core/include/sakura/editor/SelectionSession.h", "sakura_core/workbench/editor/frame/EditorFrameEvents.cpp", "sakura_core/window/Win32EditorFrameAdapter.cpp", "sakura_core/include/sakura/editor/EditorFrameEvents.h", "sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h", "sakura_core/workbench/editor/document/DocumentSession.cpp", "sakura_core/include/sakura/editor/document", "sakura_core/_main/editor_lifecycle/EditorAppLifecycle.cpp", "sakura_core/include/sakura/editor/lifecycle", "sakura_core/include/sakura/shareddata", "sakura_core/env/DLLSHAREDATA_Abi.h"],
+      "ownership_exclusions": ["sakura_core/platform/uri", "sakura_core/include/sakura/uri", "sakura_core/platform/serialization", "sakura_core/include/sakura/serialization", "sakura_core/platform/filesystem", "sakura_core/include/sakura/filesystem", "sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/include/sakura/security", "sakura_core/platform/storage/CAtomicFileStorageService.cpp", "sakura_core/platform/storage/CAtomicFileStorageService.h", "sakura_core/platform/storage/StorageTypes.cpp", "sakura_core/platform/storage/StorageSnapshotCache.cpp", "sakura_core/include/sakura/storage", "sakura_core/platform/request", "sakura_core/include/sakura/request", "sakura_core/platform/controlipc/ControlIpcProtocol.cpp", "sakura_core/platform/controlipc/security", "sakura_core/include/sakura/controlipc", "sakura_core/workbench/editor/selection/SelectionSession.cpp", "sakura_core/include/sakura/editor/SelectionSession.h", "sakura_core/workbench/editor/frame/EditorFrameEvents.cpp", "sakura_core/window/Win32EditorFrameAdapter.cpp", "sakura_core/include/sakura/editor/EditorFrameEvents.h", "sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h", "sakura_core/workbench/editor/document/DocumentSession.cpp", "sakura_core/include/sakura/editor/document", "sakura_core/_main/editor_lifecycle/EditorAppLifecycle.cpp", "sakura_core/include/sakura/editor/lifecycle", "sakura_core/include/sakura/shareddata", "sakura_core/env/DLLSHAREDATA_Abi.h"],
       "public_include_roots": [],
       "private_include_roots": ["."],
       "state_owner": "legacy application and process state",
@@ -299,6 +299,43 @@
       "private_include_roots": [],
       "state_owner": null,
       "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_controlipc_protocol_tests.vcxproj"], "cmake": ["sakura_controlipc_protocol_tests"]},
+      "compile_profile": null
+    }
+    ,{
+      "id": "sakura_controlipc_security",
+      "family": "authority-process-platform",
+      "kind": "implementation",
+      "maturity": "candidate",
+      "build_definition": "generated",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "owner": "sakura_core/platform/controlipc/security",
+      "sources": ["sakura_core/platform/controlipc/security/ControlIpcSecurity.cpp"],
+      "public_headers": ["sakura_core/include/sakura/controlipc/ControlIpcSecurity.h"],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": ["sakura_core/include"],
+      "private_include_roots": [],
+      "state_owner": "canonical Control IPC object identity and current-user kernel-object trust verification",
+      "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_controlipc_security.vcxproj"], "cmake": ["sakura_controlipc_security"]},
+      "compile_profile": null,
+      "system_libraries": ["advapi32", "bcrypt"]
+    },
+    {
+      "id": "sakura_controlipc_security_tests",
+      "family": "authority-process-platform-tests",
+      "kind": "test",
+      "maturity": "candidate",
+      "build_definition": "generated",
+      "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
+      "owner": "tools/build/pilots",
+      "sources": ["tools/build/pilots/controlipc_security_contract_test.cpp"],
+      "public_headers": [],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": [],
+      "private_include_roots": [],
+      "state_owner": null,
+      "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_controlipc_security_tests.vcxproj"], "cmake": ["sakura_controlipc_security_tests"]},
       "compile_profile": null
     }
     ,{
@@ -1000,6 +1037,66 @@
         {"context": "cmake-msvc-x64-release", "probe": "tools/build/pilots/request_contract_test.cpp"},
         {"context": "mingw-x64-debug", "probe": "tools/build/pilots/request_contract_test.cpp"},
         {"context": "mingw-x64-release", "probe": "tools/build/pilots/request_contract_test.cpp"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-sakura-controlipc-security",
+      "from": "sakura_app",
+      "to": "sakura_controlipc_security",
+      "kind": "implementation",
+      "phases": ["compile", "link"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"},
+        {"context": "msvc-x64-release", "probe": "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"},
+        {"context": "mingw-x64-debug", "probe": "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"},
+        {"context": "mingw-x64-release", "probe": "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp"}
+      ]
+    },
+    {
+      "id": "tests1-to-sakura-controlipc-security",
+      "from": "tests1",
+      "to": "sakura_controlipc_security",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/test/cpp/tests1/platform/controlipc/ControlIpcSecurityTest.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "src/test/cpp/tests1/platform/controlipc/ControlIpcSecurityTest.cpp"},
+        {"context": "msvc-x64-release", "probe": "src/test/cpp/tests1/platform/controlipc/ControlIpcSecurityTest.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "src/test/cpp/tests1/platform/controlipc/ControlIpcSecurityTest.cpp"},
+        {"context": "mingw-x64-debug", "probe": "src/test/cpp/tests1/platform/controlipc/ControlIpcSecurityTest.cpp"},
+        {"context": "mingw-x64-release", "probe": "src/test/cpp/tests1/platform/controlipc/ControlIpcSecurityTest.cpp"}
+      ]
+    },
+    {
+      "id": "sakura-controlipc-security-tests-to-sakura-controlipc-security",
+      "from": "sakura_controlipc_security_tests",
+      "to": "sakura_controlipc_security",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/pilots/controlipc_security_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/pilots/controlipc_security_contract_test.cpp"},
+        {"context": "msvc-x64-release", "probe": "tools/build/pilots/controlipc_security_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "tools/build/pilots/controlipc_security_contract_test.cpp"},
+        {"context": "mingw-x64-debug", "probe": "tools/build/pilots/controlipc_security_contract_test.cpp"},
+        {"context": "mingw-x64-release", "probe": "tools/build/pilots/controlipc_security_contract_test.cpp"}
       ]
     },
     {

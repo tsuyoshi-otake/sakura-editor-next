@@ -745,6 +745,21 @@ def _current_path_text(root: Path, relative: str) -> str | None:
     return _decode_source(data)
 
 
+def _is_cpp_dependency_only_change(before: str, after: str) -> bool:
+    """Return whether a C/C++ change only updates includes and qualified using declarations."""
+
+    def without_dependency_declarations(text: str) -> list[str]:
+        masked_lines = _mask_cpp_non_code(text).splitlines()
+        source_lines = text.splitlines()
+        return [
+            source_line
+            for source_line, masked_line in zip(source_lines, masked_lines, strict=True)
+            if re.match(r"^\s*(?:#\s*include\b.*|using\s+::[A-Za-z_][A-Za-z0-9_:]*\s*;)\s*$", masked_line) is None
+        ]
+
+    return before != after and without_dependency_declarations(before) == without_dependency_declarations(after)
+
+
 def _rule_counts(findings: Iterable[Mapping[str, object]]) -> dict[str, int]:
     counts = Counter(str(value["rule_id"]) for value in findings)
     return dict(sorted(counts.items()))
@@ -781,12 +796,15 @@ def compare_semantic_inventory(
     matched_current: set[tuple[str, str, int, int, str]] = set()
     matched_baseline: set[tuple[str, str, int, int, str]] = set()
     line_maps: dict[tuple[str, str], dict[int, int]] = {}
+    dependency_only_paths: set[str] = set()
 
     for old_path in baseline_paths:
         current_path = renames.get(old_path, old_path)
         current_text = _current_path_text(root, current_path)
         if current_text is None:
             continue
+        if Path(current_path).suffix.lower() in SOURCE_SUFFIXES and _is_cpp_dependency_only_change(baseline_texts[old_path], current_text):
+            dependency_only_paths.add(current_path)
         line_maps[(old_path, current_path)] = _unchanged_line_map(baseline_texts[old_path], current_text)
 
     for baseline_key in baseline_keys:
@@ -811,7 +829,7 @@ def compare_semantic_inventory(
 
     missing_reductions: list[dict[str, object]] = []
     for path in sorted(changed_paths):
-        if path in pure_renames or baseline_logical_count[path] == 0:
+        if path in pure_renames or path in dependency_only_paths or baseline_logical_count[path] == 0:
             continue
         if removed_by_path[path] == 0:
             missing_reductions.append({"path": path, "baseline_finding_count": baseline_logical_count[path]})

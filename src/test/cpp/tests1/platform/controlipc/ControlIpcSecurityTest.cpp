@@ -6,7 +6,8 @@
 */
 #include "pch.h"
 
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 
 #include <array>
 #include <cstdint>
@@ -15,6 +16,8 @@
 
 namespace platform::controlipc {
 namespace {
+
+using ::platform::security::CurrentUserSecurityAttributes;
 
 class Handle final {
 public:

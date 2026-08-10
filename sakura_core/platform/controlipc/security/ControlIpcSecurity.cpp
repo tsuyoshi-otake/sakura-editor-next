@@ -4,16 +4,17 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 
 #include <Aclapi.h>
 #include <bcrypt.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace platform::controlipc {
 namespace {
@@ -230,9 +231,12 @@ bool VerifyCurrentUserOnlyDacl(HANDLE object, std::wstring& diagnostic)
 	const DWORD result = ::GetSecurityInfo(
 		object, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
 		nullptr, nullptr, &dacl, nullptr, &descriptor);
-	struct DescriptorGuard final {
-		PSECURITY_DESCRIPTOR value = nullptr;
-		~DescriptorGuard() { if (value) ::LocalFree(value); }
+	class DescriptorGuard final {
+	public:
+		explicit DescriptorGuard(PSECURITY_DESCRIPTOR value) noexcept : m_value(value) {}
+		~DescriptorGuard() { if (m_value) ::LocalFree(m_value); }
+	private:
+		PSECURITY_DESCRIPTOR m_value;
 	} descriptorGuard{ descriptor };
 	if (result != ERROR_SUCCESS || !dacl || !::IsValidAcl(dacl)) {
 		diagnostic = FormatError(L"Read endpoint DACL", result);

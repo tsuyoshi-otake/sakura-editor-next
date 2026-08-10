@@ -8,6 +8,7 @@ if(NOT TARGET "${SAKURA_LEGACY_CONSUMER_COMPILE_TARGET}" OR
   message(FATAL_ERROR "Legacy component integration targets do not exist for tests1")
 endif()
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_protocol)
+target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_security)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_editor_app_lifecycle)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_editor_document_core)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_editor_frame)
