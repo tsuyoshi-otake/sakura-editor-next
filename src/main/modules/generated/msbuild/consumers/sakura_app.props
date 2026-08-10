@@ -40,6 +40,13 @@
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
       <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
     </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_security.vcxproj">
+      <Project>{2EE23FD2-C180-5048-8369-8D95559AB798}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_editor_app_lifecycle.vcxproj">
       <Project>{33D613E1-8A85-595E-92FB-570D9126D8F7}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>

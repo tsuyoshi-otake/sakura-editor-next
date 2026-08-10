@@ -3325,9 +3325,6 @@
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcSecurity.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>

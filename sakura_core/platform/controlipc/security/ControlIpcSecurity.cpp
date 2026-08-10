@@ -4,8 +4,7 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 
 #include <Aclapi.h>
 #include <bcrypt.h>

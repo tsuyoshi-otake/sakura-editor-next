@@ -7,6 +7,8 @@
     "sakura_app",
     "sakura_controlipc_protocol",
     "sakura_controlipc_protocol_tests",
+    "sakura_controlipc_security",
+    "sakura_controlipc_security_tests",
     "sakura_editor_app_lifecycle",
     "sakura_editor_app_lifecycle_tests",
     "sakura_editor_document_core",
@@ -63,6 +65,9 @@
     "sakura-app-to-sakura-request",
     "tests1-to-sakura-request",
     "sakura-request-tests-to-sakura-request",
+    "sakura-app-to-sakura-controlipc-security",
+    "tests1-to-sakura-controlipc-security",
+    "sakura-controlipc-security-tests-to-sakura-controlipc-security",
     "sakura-app-to-sakura-controlipc-protocol",
     "tests1-to-sakura-controlipc-protocol",
     "sakura-controlipc-protocol-tests-to-sakura-controlipc-protocol",
@@ -103,6 +108,6 @@
   "generator_version": "0.3.6",
   "package_sets": [],
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:8bf9cd4dfcf456c2e9e82dd9c27cf68124335dba819325642525e9d59bd727c0",
+  "semantic_graph_hash": "sha256:a6c61f7e6acf41222ce9e3811c5911f9727ce4a467257846b7bafd8e28c1d122",
   "staging_sets": []
 }

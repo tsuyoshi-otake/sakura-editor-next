@@ -8,7 +8,7 @@
 
 #include "platform/controlipc/ControlPlatformEndpointDiscoveryReader.h"
 
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 
 #include <utility>
 
