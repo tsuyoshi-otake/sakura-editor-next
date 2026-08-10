@@ -7,7 +7,8 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlPlatformEndpoint.h"
 
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 #include "platform/profiles/ProfileAuthorityIdentity.h"
 
 #include <algorithm>
@@ -19,6 +20,8 @@
 
 namespace platform::controlipc {
 namespace {
+
+using ::platform::security::CurrentUserSecurityAttributes;
 
 constexpr std::uint32_t kEndpointMagic = 0x50494353; // SCIP
 //! Bump whenever the fixed shared-memory payload changes. Readers never
