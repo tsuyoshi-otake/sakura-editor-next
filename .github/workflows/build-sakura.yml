@@ -1,6 +1,6 @@
 name: build sakura
 
-# Run push builds on the protected integration and release branches.
+# Pull requests verify changes entering develop; push builds verify main after promotion.
 on:
   workflow_call:
     inputs:
@@ -21,7 +21,6 @@ on:
   push:
     branches:
       - main
-      - develop
   pull_request:
 
 defaults:
@@ -572,7 +571,7 @@ jobs:
             '--smoke-selector', 'CNativeW.*',
             '--output', $decisionPath
           )
-          foreach ($selector in ($env:HEADLESS_GTEST_EXCLUDES -split ':')) {
+          foreach ($selector in ($fullFilter.Substring(1) -split ':')) {
             $selectionArguments += '--exclude-selector'
             $selectionArguments += $selector
           }
