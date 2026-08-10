@@ -902,11 +902,11 @@ if(MINGW)
   # Create a custom command for sakura_manifest.rc generation
   add_custom_command(
     OUTPUT "${SAKURA_MANIFEST_RC}"
-    COMMAND ${CMAKE_COMMAND} 
-      -DSOURCE_DIR="${CMAKE_SOURCE_DIR}"
-      -DOUTPUT_FILE="${SAKURA_MANIFEST_RC}"
-      -DMANIFEST_FILE="${SAKURA_EXE_MANIFEST}"
-      -P ${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake
+    COMMAND ${CMAKE_COMMAND}
+      "-DSOURCE_DIR=${CMAKE_SOURCE_DIR}"
+      "-DOUTPUT_FILE=${SAKURA_MANIFEST_RC}"
+      "-DMANIFEST_FILE=${SAKURA_EXE_MANIFEST}"
+      -P "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake"
     DEPENDS
       "${SAKURA_EXE_MANIFEST}"
       "${CMAKE_SOURCE_DIR}/src/main/cmake/manifest_resource.cmake"
