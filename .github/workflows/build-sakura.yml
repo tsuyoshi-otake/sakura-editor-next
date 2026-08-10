@@ -571,7 +571,7 @@ jobs:
             '--smoke-selector', 'CNativeW.*',
             '--output', $decisionPath
           )
-          foreach ($selector in ($env:HEADLESS_GTEST_EXCLUDES -split ':')) {
+          foreach ($selector in ($fullFilter.Substring(1) -split ':')) {
             $selectionArguments += '--exclude-selector'
             $selectionArguments += $selector
           }
