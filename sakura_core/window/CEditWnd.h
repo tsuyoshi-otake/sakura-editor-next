@@ -35,6 +35,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <sakura/editor/EditorFrameEvents.h>
 #include "_main/global.h"
 #include "_os/CDropTarget.h"
 #include "CMainToolBar.h"
@@ -195,13 +196,34 @@ struct STabGroupInfo {
 
 //! Parameter-preserving request at the legacy command/workbench migration seam.
 //! functionCode retains its FA_* source flags; the adapter decodes only its low word.
-struct SLegacyEditorFunctionCommand final {
-	EFunctionCode functionCode = F_0;
-	bool redraw = true;
-	LPARAM lparam1 = 0;
-	LPARAM lparam2 = 0;
-	LPARAM lparam3 = 0;
-	LPARAM lparam4 = 0;
+class SLegacyEditorFunctionCommand final {
+public:
+	SLegacyEditorFunctionCommand(EFunctionCode functionCode, bool redraw,
+		std::intptr_t lparam1, std::intptr_t lparam2,
+		std::intptr_t lparam3, std::intptr_t lparam4) noexcept
+		: m_functionCode(functionCode)
+		, m_redraw(redraw)
+		, m_lparam1(lparam1)
+		, m_lparam2(lparam2)
+		, m_lparam3(lparam3)
+		, m_lparam4(lparam4)
+	{
+	}
+
+	[[nodiscard]] EFunctionCode FunctionCode() const noexcept { return m_functionCode; }
+	[[nodiscard]] bool Redraw() const noexcept { return m_redraw; }
+	[[nodiscard]] std::intptr_t Parameter1() const noexcept { return m_lparam1; }
+	[[nodiscard]] std::intptr_t Parameter2() const noexcept { return m_lparam2; }
+	[[nodiscard]] std::intptr_t Parameter3() const noexcept { return m_lparam3; }
+	[[nodiscard]] std::intptr_t Parameter4() const noexcept { return m_lparam4; }
+
+private:
+	const EFunctionCode m_functionCode;
+	const bool m_redraw;
+	const std::intptr_t m_lparam1;
+	const std::intptr_t m_lparam2;
+	const std::intptr_t m_lparam3;
+	const std::intptr_t m_lparam4;
 };
 
 //! A handled operation never falls back to the legacy implementation, including
@@ -327,6 +349,7 @@ enum class EUntrustedFileLoadDecision : std::uint8_t {
 class CEditWnd
 	: public TSingleInstance<CEditWnd>
 , public CDocListenerEx
+, public sakura::editor::IEditorFrameEventSink
 {
 private:
 	using AccelHolder = cxx::ResourceHolder<&::DestroyAcceleratorTable>;
@@ -424,6 +447,8 @@ public:
 	//管理
 	void MessageLoop( void );								/* メッセージループ */
 	LRESULT DispatchEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);	/* メッセージ処理 */
+	[[nodiscard]] sakura::editor::EditorFrameEffect HandleEditorFrameEvent(
+		const sakura::editor::EditorFrameEvent& event) override;
 	void AttachMainWindowEarly(HWND hWnd);
 	LRESULT DispatchBootstrapEvent(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam);
 	[[nodiscard]] bool IsDispatchReady() const noexcept { return m_dispatchReady; }

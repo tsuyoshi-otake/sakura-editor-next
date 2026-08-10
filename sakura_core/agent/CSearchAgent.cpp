@@ -7,6 +7,7 @@
 #include "StdAfx.h"
 
 #include <vector>
+#include <memory>
 #include <utility>
 #include "agent/CSearchAgent.h"
 #include "doc/logic/CDocLineMgr.h"
@@ -296,8 +297,7 @@ void CSearchAgent::CreateCharCharsArr(
 )
 {
 	int		i;
-	int*	pnCharCharsArr;
-	pnCharCharsArr = new int[nSrcLen];
+	auto pnCharCharsArr = std::make_unique<int[]>(nSrcLen);
 	for( i = 0; i < nSrcLen; /*i++*/ ){
 		// 2005-09-02 D.S.Koba GetSizeOfChar
 		pnCharCharsArr[i] = CNativeW::GetSizeOfChar( pszPattern, nSrcLen, i );
@@ -312,7 +312,7 @@ void CSearchAgent::CreateCharCharsArr(
 		}
 		i+= pnCharCharsArr[i];
 	}
-	*ppnCharCharsArr = pnCharCharsArr;
+	*ppnCharCharsArr = pnCharCharsArr.release();
 	return;
 }
 
@@ -805,7 +805,7 @@ void CSearchAgent::ReplaceData( DocLineReplaceArg* pArg, bool bEnableExtEol )
 	CDLgCandelCloser closer(pCDlgCancel);
 	const CLogicInt nDelLines = pArg->sDelRange.GetTo().y - pArg->sDelRange.GetFrom().y;
 	const CLogicInt nEditLines = std::max<CLogicInt>(CLogicInt(1), nDelLines + CLogicInt(pArg->pInsData ? pArg->pInsData->size(): 0));
-	if( const CGrepAgent *pcGrepAgent = CEditApp::getInstance()->m_pcGrepAgent;
+	if( const CGrepAgent *pcGrepAgent = CEditApp::getInstance()->GetGrepAgent();
 	    pcGrepAgent && !pcGrepAgent->m_bGrepRunning ){
 		if( 3000 < nEditLines ){
 			/* 進捗ダイアログの表示 */

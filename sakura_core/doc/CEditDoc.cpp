@@ -256,11 +256,12 @@ void CEditDoc::Clear()
 	// 「基本」のタイプ別設定を適用
 	m_cDocType.SetDocumentType( CDocTypeManager().GetDocumentTypeOfPath( m_cDocFile.GetFilePath() ), true );
 	m_blfCurTemp = false;
-	GetEditWnd().m_pcViewFontMiniMap->UpdateFont(&GetEditWnd().GetLogfont());
-	InitCharWidthCache( GetEditWnd().m_pcViewFontMiniMap->GetLogfont(), CWM_FONT_MINIMAP );
-	SelectCharWidthCache( CWM_FONT_EDIT, GetEditWnd().GetLogfontCacheMode() );
-	InitCharWidthCache( GetEditWnd().GetLogfont() );
-	GetEditWnd().m_pcViewFont->UpdateFont(&GetEditWnd().GetLogfont());
+	auto& editWnd = *CEditWnd::getInstance();
+	editWnd.m_pcViewFontMiniMap->UpdateFont(&editWnd.GetLogfont());
+	InitCharWidthCache( editWnd.m_pcViewFontMiniMap->GetLogfont(), CWM_FONT_MINIMAP );
+	SelectCharWidthCache( CWM_FONT_EDIT, editWnd.GetLogfontCacheMode() );
+	InitCharWidthCache( editWnd.GetLogfont() );
+	editWnd.m_pcViewFont->UpdateFont(&editWnd.GetLogfont());
 
 	// 2008.06.07 nasukoji	折り返し方法の追加に対応
 	const STypeConfig& ref = m_cDocType.GetDocumentAttribute();
@@ -268,8 +269,8 @@ void CEditDoc::Clear()
 	if( ref.m_nTextWrapMethod != WRAP_SETTING_WIDTH ){
 		nMaxLineKetas = CKetaXInt(MAXLINEKETAS);
 	}
-	m_cLayoutMgr.SetLayoutInfo( true, false, ref, ref.m_nTabSpace, ref.m_nTsvMode, nMaxLineKetas, CLayoutXInt(-1), &GetEditWnd().GetLogfont() );
-	GetEditWnd().ClearViewCaretPosInfo();
+	m_cLayoutMgr.SetLayoutInfo( true, false, ref, ref.m_nTabSpace, ref.m_nTsvMode, nMaxLineKetas, CLayoutXInt(-1), &editWnd.GetLogfont() );
+	editWnd.ClearViewCaretPosInfo();
 }
 
 /* 既存データのクリア */
@@ -278,7 +279,7 @@ void CEditDoc::InitDoc()
 	CAppMode::getInstance()->SetViewMode(false);	// ビューモード $$ 今後OnClearDocを用意したい
 	CAppMode::getInstance()->m_szGrepKey[0] = L'\0';	//$$
 
-	CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode = false;	/* Grepモード */	//$$同上
+	CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode = false;	/* Grepモード */	//$$同上
 	m_cAutoReloadAgent.m_eWatchUpdate = WU_QUERY; // Dec. 4, 2002 genta 更新監視方法 $$
 
 	// 2005.06.24 Moca バグ修正
@@ -507,7 +508,7 @@ void CEditDoc::GetEditInfo(
 	pfi->m_nTypeId = m_cDocType.GetDocumentAttribute().m_id;
 
 	//GREPモード
-	pfi->m_bIsGrep = CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode;
+	pfi->m_bIsGrep = CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode;
 	wcscpy( pfi->m_szGrepKey, CAppMode::getInstance()->m_szGrepKey );
 
 	//デバッグモニタ (アウトプットウインドウ) モード
@@ -566,7 +567,7 @@ bool CEditDoc::IsAcceptLoad() const
 {
 	if(m_cDocEditor.IsModified())return false;
 	if(m_cDocFile.GetFilePathClass().IsValidPath())return false;
-	if(CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode)return false;
+	if(CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode)return false;
 	if(CAppMode::getInstance()->IsDebugMode())return false;
 	return true;
 }
@@ -808,9 +809,9 @@ void CEditDoc::OnChangeSetting(
 		nMaxLineKetas = m_cLayoutMgr.GetMaxLineKetas();	// 現在の折り返し幅
 		nTabSpace = m_cLayoutMgr.GetTabSpaceKetas();	// 現在のタブ幅
 	}
-	CProgressSubject* pOld = CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(&m_cLayoutMgr);
+	CProgressSubject* pOld = CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(&m_cLayoutMgr);
 	m_cLayoutMgr.SetLayoutInfo( bDoLayout, bBlockingHook, ref, nTabSpace, nTsvMode, nMaxLineKetas, CLayoutXInt(-1), &GetEditWnd().GetLogfont() );
-	CEditApp::getInstance()->m_pcVisualProgress->CProgressListener::Listen(pOld);
+	CEditApp::getInstance()->GetVisualProgress()->CProgressListener::Listen(pOld);
 	GetEditWnd().ClearViewCaretPosInfo();
 
 	// 2009.08.28 nasukoji	「折り返さない」ならテキスト最大幅を算出、それ以外は変数をクリア
@@ -866,7 +867,7 @@ BOOL CEditDoc::OnFileClose(bool bGrepNoConfirm)
 
 	//GREPモードで、かつ、「GREPモードで保存確認するか」がOFFだったら、保存確認しない
 	// 2011.11.13 GrepモードでGrep直後は"未編集"状態になっているが保存確認が必要
-	if( CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode ){
+	if( CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode ){
 		if( bGrepNoConfirm ){ // Grepで保存確認しないモード
 			return TRUE;
 		}
@@ -883,7 +884,7 @@ BOOL CEditDoc::OnFileClose(bool bGrepNoConfirm)
 	// -- -- 保存確認 -- -- //
 	WCHAR szGrepTitle[90];
 	LPCWSTR pszTitle = m_cDocFile.GetFilePathClass().IsValidPath() ? m_cDocFile.GetFilePath() : nullptr;
-	if( CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode ){
+	if( CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode ){
 		LPCWSTR		pszGrepKey = CAppMode::getInstance()->m_szGrepKey;
 		int			nLen = (int)wcslen( pszGrepKey );
 		CNativeW	cmemDes;
@@ -985,7 +986,7 @@ void CEditDoc::RunAutoMacro( int idx, LPCWSTR pszSaveFilePath )
 		return;	// 再入り実行はしない
 
 	bRunning = true;
-	if (CEditApp::getInstance()->m_pcSMacroMgr->IsEnabled(idx) &&
+	if (CEditApp::getInstance()->GetMacroManager()->IsEnabled(idx) &&
 		!(::GetAsyncKeyState(VK_SHIFT) & 0x8000)) {	// Shift キーが押されていなければ実行
 			if( nullptr != pszSaveFilePath )
 				m_cDocFile.SetSaveFilePath(pszSaveFilePath);

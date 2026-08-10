@@ -40,6 +40,27 @@
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
       <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
     </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_editor_app_lifecycle.vcxproj">
+      <Project>{33D613E1-8A85-595E-92FB-570D9126D8F7}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_editor_document_core.vcxproj">
+      <Project>{002629E8-84A8-5F4F-B07D-3313734DF481}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_editor_frame.vcxproj">
+      <Project>{C49DC9A0-BCBE-56B2-B3CE-967CB372B7F2}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_editor_selection.vcxproj">
       <Project>{E5913DC9-5635-5EB7-ABB1-C2B3377F0BF4}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
@@ -84,6 +105,13 @@
     </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_uri.vcxproj">
       <Project>{A23ABB50-400A-5F96-A3E3-B0B98AA8E72F}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_win32_editor_frame.vcxproj">
+      <Project>{9B753E5D-886F-5DF0-A8EE-3E7EAE785F7C}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
       <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>

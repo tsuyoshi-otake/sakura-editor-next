@@ -11,6 +11,7 @@
 #include "env/CShareData_IO.h"
 #include "doc/CDocTypeSetting.h" // ColorInfo !!
 #include "CShareData.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 #include "util/string_ex2.h"
 #include "util/window.h"
 #include "view/CEditView.h" // SColorStrategyInfo
@@ -1423,7 +1424,8 @@ void CShareData_IO::ShareData_IO_Types( CDataProfile& cProfile )
 	SetValueLimit( pShare->m_nTypesCount, 1, MAX_TYPES );
 	// 注：コントロールプロセス専用
 	std::vector<STypeConfig*>& types = CShareData::getInstance()->GetTypeSettings();
-	for( i = GetDllShareData().m_nTypesCount; i < nCountOld; i++ ){
+	const auto settings = legacy::shareddata::OpenSharedDataCapabilities(*pShare).Settings().Snapshot();
+	for( i = settings.TypeCount(); i < nCountOld; i++ ){
 		delete types[i];
 		types[i] = nullptr;
 	}

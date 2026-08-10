@@ -24,6 +24,7 @@
 #include "StdAfx.h"
 #include "CViewCommander.h"
 #include "CViewCommander_inline.h"
+#include <sakura/shareddata/SharedDataCapabilities.h>
 
 #include "uiparts/CWaitCursor.h"
 #include "dlg/CDlgCancel.h"// 2002/2/8 hor
@@ -437,9 +438,10 @@ bool CViewCommander::Command_TagJumpNoMessage( bool bClose )
 
 		//	From Here Aug. 27, 2001 genta
 		//	Borland 形式のメッセージからのTAG JUMP
+		const auto searchSettings = legacy::shareddata::RequireSharedDataCapabilities().SearchSettings().Snapshot();
 		while( p < p_end ){
 			//	skip space
-			for( ; p < p_end && ( *p == L' ' || *p == L'\t' || WCODE::IsLineDelimiter(*p, GetDllShareData().m_Common.m_sEdit.m_bEnableExtEol) ); ++p )
+			for( ; p < p_end && ( *p == L' ' || *p == L'\t' || WCODE::IsLineDelimiter(*p, searchSettings.EnablesExtendedEol()) ); ++p )
 				;
 			if( p >= p_end )
 				break;
@@ -815,7 +817,7 @@ bool CViewCommander::Sub_PreProcTagJumpByTagsFile( WCHAR* szCurrentPath, int cou
 	if( ! GetDocument()->m_cDocFile.GetFilePathClass().IsValidPath() ){
 		// 2010.04.02 (無題)でもタグジャンプできるように
 		// Grep、アウトプットは行番号タグジャンプがあるので無効にする(要検討)
-		if( CEditApp::getInstance()->m_pcGrepAgent->m_bGrepMode ||
+		if( CEditApp::getInstance()->GetGrepAgent()->m_bGrepMode ||
 		    CAppMode::getInstance()->IsDebugMode() ){
 		    return false;
 		}

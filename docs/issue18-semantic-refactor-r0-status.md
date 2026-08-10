@@ -1,6 +1,6 @@
-# Issue #18 R0/R1/R2 実装状態
+# Issue #18 R0–R7 graduation 状態
 
-最終更新: 2026-08-09
+最終更新: 2026-08-10
 
 > **schema v2 baseline と PR 1B gate:** v1 baseline値は履歴資料であり、製品コードの許容負債として
 > 再承認したものではない。v2 scannerはGit index上のfirst-party regular fileだけを入力にし、
@@ -100,12 +100,25 @@ MSVC x64 Debug/ReleaseおよびCMake MSVC x64 Debug/Releaseで本体・runnerの
 `CMAKE_OBJECT_PATH_MAX` 警告が残るため、これはSelection固有の失敗ではなく、ビルドパス短縮を
 別gateで扱う。専用runnerは資源bundle、言語DLL、配布asset、全体package restoreに依存しない。
 
-## 未完了と次のgraduation gate
+## R3–R7 graduation
 
-- R0のraw pointer/public mutable field/`CEditApp` lifecycleの完全な型解析は未実施。
-- Selection/Caretのphase/mode pilotは完了したが、選択range/lock/geometryとWorking Copyは未着手。
-- R3のWin32 typed event adapter、R4のDocument Core、R5のDLLSHAREDATA capability facadeは未着手。
-- tests1の実体分割と既存global getterの減少は未完了。strict CIは`architecture-gates`で実行する。
-- Issue #15のresource/package/runtimeとControl IPC transportのgraduationも別途継続中。
+R3以降は、presentation-neutral contract、Win32/legacy adapter、既存製品経路、独立pilotの順に
+依存を固定した。新しいcomponentは`modules.json`で所有source、公開include、consumer→provider辺、
+専用runnerを宣言し、生成MSBuild/CMake projectionへ反映する。
 
-したがって、Issue #18は完了扱いにせず、今回のコミットはR0/R1基盤のgraduationとして扱う。
+| Gate | 卒業範囲 | 製品経路と終端証拠 |
+|---|---|---|
+| R3 Frame | `EditorFrameEvent` / `EditorFrameEffect` とWin32 adapter | `CEditWnd::DispatchEvent`がframe messageをtyped eventへ変換する。未対応messageは`nullopt`でfail closed、effectだけがdefault forwardingを決定する。hidden real window pilotを含む。 |
+| R4 Document | text、undo/redo、layout projection、persistence、session terminal | working-copy captureがlegacy logical linesをUTF-8化し、`DocumentSession::Replace`を通ったcore textだけをpublishする。import失敗はtyped failure、legacy document/undo/layoutへの書戻しはない。open/edit/delete/undo/redo/save/reopenとlegacy differentialを固定する。 |
+| R5 Shared data | mapping header、macro、window endpoint、type/lock counter、search/window-node snapshot | `DLLSHAREDATA`の物理配置をx64/x86 fixtureで凍結する。readerはvalue snapshot、writerは狭い操作だけを公開し、window endpointは`uintptr_t`、print lockはmutex下increment/decrementに限定する。 |
+| R6 Lifecycle | editor processのProfile→Platform→Workbench→Extension→Ready | `CEditApp::Create`がtyped phase planを開始し、`Stop`/destructorがentered phaseを必ず逆順finalizeする。cancel/timeout/failure/forced shutdown、callback内Stop、冪等Stopをobservable terminalとして検証する。owner 9件はprivate `unique_ptr`である。 |
+| R7 Removal | 上記4責務の旧並列経路 | frame raw switchの対象case、working-copyのcore非経由publish、対象shared-data field groupの直接read/write、`CEditApp`のraw owner/new/delete/catch-allを卒業対象とし、検索とstrict gateで再導入を拒否する。 |
+
+R7の「旧経路ゼロ」は、今回抽出した責務の旧並列経路を意味する。repository全体に残る
+`GetDllShareData`やWin32型を、このIssueで一括削除したという意味ではない。それらはbaseline debtとして
+finding単位で固定され、新規追加と、触れたファイルでの純減不足を`inventory semantic --strict`が拒否する。
+今回の最終indexではstrict比較が`ok=true`、`new_findings=0`、`missing_touched_reductions=0`で、
+finding総数は12,118、`GetDllShareData`は709、`GetEditWnd`は257へ減少した。
+
+Issue #15のresource/package/runtimeおよびControl IPC transportは別の所有範囲であり、Issue #18の
+Editor Core semantic graduationには含めない。

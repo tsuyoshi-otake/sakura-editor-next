@@ -16,6 +16,8 @@
 #include "uiparts/CImageListMgr.h"
 #include "types/CType.h"
 
+#include <sakura/editor/lifecycle/EditorAppLifecycle.h>
+
 #include <filesystem>
 #include <memory>
 
@@ -77,14 +79,36 @@ public:
 	//! Restore is invoked after the native layout/group exists and startup policy is known.
 	[[nodiscard]] workbench::editor::persistence::EditorWorkingCopyLifecycleResult RestoreWorkingCopies(
 		const workbench::editor::persistence::EditorWorkingCopyRestorePolicy& policy);
+	//! Idempotently releases process-local editor ownership. Each startup phase
+	//! declares its own reverse finalizer through m_editorLifecycle.
+	[[nodiscard]] editor::lifecycle::EditorAppLifecycleResult Stop() noexcept;
 
 	//モジュール情報
 	HINSTANCE GetAppInstance() const{ return m_hInst; }	//!< インスタンスハンドル取得
 
 	//ウィンドウ情報
-	CEditWnd* GetEditWindow(){ return m_pcEditWnd; }		//!< ウィンドウ取得
+	CEditWnd* GetEditWindow(){ return m_pcEditWnd.get(); }		//!< ウィンドウ取得
 
-	CEditDoc*		GetDocument(){ return m_pcEditDoc; }
+	CEditDoc*		GetDocument(){ return m_pcEditDoc.get(); }
+	CLoadAgent*		GetLoadAgent(){ return m_pcLoadAgent.get(); }
+	CSaveAgent*		GetSaveAgent(){ return m_pcSaveAgent.get(); }
+	CVisualProgress*	GetVisualProgress(){ return m_pcVisualProgress.get(); }
+	CMruListener*		GetMruListener(){ return m_pcMruListener.get(); }
+	CSMacroMgr*		GetMacroManager(){ return m_pcSMacroMgr.get(); }
+	CPropertyManager*	GetPropertyManager(){ return m_pcPropertyManager.get(); }
+	CGrepAgent*		GetGrepAgent(){ return m_pcGrepAgent.get(); }
+	// Test fixtures transfer ownership explicitly, then retain only borrowed
+	// pointers through the accessors above.
+	void SetAppInstanceForTesting(HINSTANCE hInst) noexcept;
+	[[nodiscard]] CEditDoc* AdoptDocumentForTesting(std::unique_ptr<CEditDoc> document) noexcept;
+	[[nodiscard]] CEditWnd* AdoptEditWindowForTesting(std::unique_ptr<CEditWnd> editWindow) noexcept;
+	[[nodiscard]] CLoadAgent* AdoptLoadAgentForTesting(std::unique_ptr<CLoadAgent> loadAgent) noexcept;
+	[[nodiscard]] CSaveAgent* AdoptSaveAgentForTesting(std::unique_ptr<CSaveAgent> saveAgent) noexcept;
+	[[nodiscard]] CVisualProgress* AdoptVisualProgressForTesting(std::unique_ptr<CVisualProgress> visualProgress) noexcept;
+	[[nodiscard]] CMruListener* AdoptMruListenerForTesting(std::unique_ptr<CMruListener> mruListener) noexcept;
+	[[nodiscard]] CSMacroMgr* AdoptMacroManagerForTesting(std::unique_ptr<CSMacroMgr> macroManager) noexcept;
+	[[nodiscard]] CPropertyManager* AdoptPropertyManagerForTesting(std::unique_ptr<CPropertyManager> propertyManager) noexcept;
+	[[nodiscard]] CGrepAgent* AdoptGrepAgentForTesting(std::unique_ptr<CGrepAgent> grepAgent) noexcept;
 	CImageListMgr&	GetIcons(){ return m_cIcons; }
 	[[nodiscard]] workbench::editor::EditorCoreService* GetEditorCoreService() noexcept;
 	[[nodiscard]] const workbench::editor::EditorCoreService* GetEditorCoreService() const noexcept;
@@ -92,33 +116,28 @@ public:
 	bool OpenPropertySheet( int nPageNum );
 	bool OpenPropertySheetTypes( int nPageNum, CTypeConfig nSettingType );
 
-public:
-	HINSTANCE			m_hInst = nullptr;
-
-	//ドキュメント
-	CEditDoc*			m_pcEditDoc = nullptr;
-
-	//ウィンドウ
-	CEditWnd*			m_pcEditWnd = nullptr;
-
-	//IO管理
-	CLoadAgent*			m_pcLoadAgent = nullptr;
-	CSaveAgent*			m_pcSaveAgent = nullptr;
-	CVisualProgress*	m_pcVisualProgress = nullptr;
-
-	//その他ヘルパ
-	CMruListener*		m_pcMruListener = nullptr;		//!< MRU管理
-	CSMacroMgr*			m_pcSMacroMgr = nullptr;		//!< マクロ管理
-
-	CPropertyManager*	m_pcPropertyManager = nullptr;	//!< プロパティ管理
-
-	CGrepAgent*			m_pcGrepAgent = nullptr;		//!< GREPモード
+	// The legacy presentation members remain public only while their value-type
+	// APIs are used directly. Process-owned resources stay private below.
 	CSoundSet			m_cSoundSet;					//!< サウンド管理
 
 	//GUIオブジェクト
 	CImageListMgr		m_cIcons;					//!< Image List
 
 private:
+	HINSTANCE			m_hInst = nullptr;
+
+	// Process-owned legacy resources. Other subsystems borrow them solely
+	// through the accessors above; lifecycle finalizers retain exclusive ownership.
+	std::unique_ptr<CEditDoc>	m_pcEditDoc;
+	std::unique_ptr<CEditWnd>	m_pcEditWnd;
+	std::unique_ptr<CLoadAgent>		m_pcLoadAgent;
+	std::unique_ptr<CSaveAgent>		m_pcSaveAgent;
+	std::unique_ptr<CVisualProgress>	m_pcVisualProgress;
+	std::unique_ptr<CMruListener>	m_pcMruListener;
+	std::unique_ptr<CSMacroMgr>	m_pcSMacroMgr;
+	std::unique_ptr<CPropertyManager>	m_pcPropertyManager;
+	std::unique_ptr<CGrepAgent>		m_pcGrepAgent;
+
 	// The authoritative process-local editor model. CEditDoc may remain allocated
 	// while this service legitimately contains zero open inputs.
 	std::unique_ptr<workbench::editor::EditorCoreService> m_editorCoreService;
@@ -142,6 +161,12 @@ private:
 	// Owns profile/configuration/workspace truth for this editor window. The
 	// native window borrows it and is destroyed before this runtime is stopped.
 	std::unique_ptr<workbench::CWorkbenchRuntime> m_workbenchRuntime;
+	//! The composition owner. It is destroyed before the resources declared above,
+	//! so its callbacks can finalize each owner while all members are still valid.
+	std::unique_ptr<editor::lifecycle::EditorAppLifecycle> m_editorLifecycle;
+
+	[[nodiscard]] bool FinalizeWorkbenchResources();
+	[[nodiscard]] bool FinalizePlatformServices();
 };
 
 //WM_QUIT検出例外

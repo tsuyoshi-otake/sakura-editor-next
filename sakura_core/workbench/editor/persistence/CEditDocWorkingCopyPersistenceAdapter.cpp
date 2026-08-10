@@ -13,6 +13,7 @@
 
 #include "doc/CEditDoc.h"
 #include "doc/logic/CDocLine.h"
+#include <sakura/editor/document/DocumentSession.h>
 #include <sakura/uri/UriIdentity.h>
 #include "workbench/editor/persistence/WorkingCopyPersistenceCodec.h"
 
@@ -128,7 +129,7 @@ struct NativeTextMetadata final {
 	try {
 		output.resize(static_cast<std::size_t>(required));
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return false;
 	}
 	return ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value.data(),
@@ -151,14 +152,22 @@ struct NativeTextMetadata final {
 	try {
 		output.resize(static_cast<std::size_t>(required));
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return false;
 	}
 	return ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
 		static_cast<int>(value.size()), output.data(), required) == required;
 }
 
-[[nodiscard]] bool CaptureNativeText(const CEditDoc& document, std::string& content) noexcept
+//! Projects legacy logical text into the Editor Core document aggregate for the
+//! working-copy capture read path.  This is intentionally one-way: the legacy
+//! line model remains the only mutable owner until an edit transaction can
+//! preserve its layout, selection, and native undo invariants.
+//!
+//! A failed core import maps to Capture()'s established Failed terminal; the
+//! caller therefore publishes no partial snapshot and leaves CEditDoc untouched.
+[[nodiscard]] bool CaptureNativeText(const CEditDoc& document,
+	::editor::document::DocumentSession& session) noexcept
 {
 	try {
 		std::wstring text;
@@ -174,9 +183,14 @@ struct NativeTextMetadata final {
 			}
 			text.append(line->GetPtr(), static_cast<std::size_t>(lineLength));
 		}
-		return EncodeUtf8(text, content);
+		std::string content;
+		if (!EncodeUtf8(text, content)) return false;
+
+		const auto imported = session.Replace({ 0, 0 }, content);
+		return imported.Terminal() == ::editor::document::EDocumentSessionTerminal::Succeeded
+			|| imported.Terminal() == ::editor::document::EDocumentSessionTerminal::NoChange;
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return false;
 	}
 }
@@ -199,7 +213,7 @@ struct NativeTextMetadata final {
 		return ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, text.data(),
 			static_cast<int>(text.size()), encoded.data(), required, nullptr, nullptr) == required;
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return false;
 	}
 }
@@ -240,7 +254,7 @@ struct NativeTextMetadata final {
 		}
 		return std::move(*canonical.value);
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return std::nullopt;
 	}
 }
@@ -365,8 +379,8 @@ EditorWorkingCopySnapshotResult CEditDocWorkingCopyPersistenceAdapter::Capture()
 			return { .status = EEditorWorkingCopySnapshotStatus::Failed };
 		}
 
-		std::string content;
-		if (!CaptureNativeText(m_document, content)) {
+		::editor::document::DocumentSession coreDocument;
+		if (!CaptureNativeText(m_document, coreDocument)) {
 			return { .status = EEditorWorkingCopySnapshotStatus::Failed };
 		}
 		EditorWorkingCopyPersistenceSnapshot snapshot{
@@ -377,7 +391,7 @@ EditorWorkingCopySnapshotResult CEditDocWorkingCopyPersistenceAdapter::Capture()
 			.dirty = m_document.m_cDocEditor.IsModified(),
 			.encoding = *encoding,
 			.eol = *eol,
-			.content = std::move(content),
+			.content = coreDocument.Document().Text(),
 		};
 		if (!snapshot.IsValid()) {
 			return { .status = EEditorWorkingCopySnapshotStatus::Failed };
@@ -387,7 +401,7 @@ EditorWorkingCopySnapshotResult CEditDocWorkingCopyPersistenceAdapter::Capture()
 			.snapshot = std::move(snapshot),
 		};
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return { .status = EEditorWorkingCopySnapshotStatus::Failed };
 	}
 }
@@ -455,7 +469,7 @@ EditorWorkingCopyRecoveryPrepareResult CEditDocWorkingCopyPersistenceAdapter::Pr
 			.coreIdentity = std::move(resultIdentity),
 		};
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		m_prepared.reset();
 		return { .status = EEditorWorkingCopyRecoveryStatus::Failed };
 	}
