@@ -724,11 +724,13 @@ set_source_files_properties(${ONIGMO_SOURCES}
 )
 
 # GCC 14 and later diagnose the vendored Onigmo version's K&R-compatible
-# ANYARGS callback declarations as errors. Keep the compatibility downgrade
-# local to Onigmo's C translation units; do not weaken diagnostics for Sakura.
+# ANYARGS callback declarations as errors, and GCC 15 defaults to C23 where an
+# empty parameter list means no arguments. Compile this legacy boundary as GNU
+# C17 and keep the diagnostic downgrade local to Onigmo's C translation units;
+# do not weaken diagnostics for Sakura.
 if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
   set_property(SOURCE ${ONIGMO_SOURCES} APPEND PROPERTY
-    COMPILE_OPTIONS -Wno-error=incompatible-pointer-types
+    COMPILE_OPTIONS -std=gnu17 -Wno-error=incompatible-pointer-types
   )
 endif()
 
