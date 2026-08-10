@@ -723,6 +723,15 @@ set_source_files_properties(${ONIGMO_SOURCES}
     INCLUDE_DIRECTORIES "${ONIGMO_ROOT};${ONIGMO_ROOT}/win32;${ONIGMO_ROOT}/enc/unicode"
 )
 
+# GCC 14 and later diagnose the vendored Onigmo version's K&R-compatible
+# ANYARGS callback declarations as errors. Keep the compatibility downgrade
+# local to Onigmo's C translation units; do not weaken diagnostics for Sakura.
+if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+  set_property(SOURCE ${ONIGMO_SOURCES} APPEND PROPERTY
+    COMPILE_OPTIONS -Wno-error=incompatible-pointer-types
+  )
+endif()
+
 # Keep higher-ISA code in isolated translation units.  The baseline executable
 # remains AVX-compatible, while the process-wide dispatch table calls these
 # implementations only after CPUID and XGETBV validation.
