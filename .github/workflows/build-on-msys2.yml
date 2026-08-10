@@ -44,10 +44,11 @@ jobs:
     env:
       BuildPlatform: MinGW
       Configuration: ${{ matrix.configuration }}
-      CMAKE_C_COMPILER_LAUNCHER: sccache
-      CMAKE_CXX_COMPILER_LAUNCHER: sccache
-      SCCACHE_DIR: ${{ github.workspace }}\.sccache
-      SCCACHE_CACHE_SIZE: 2G
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}\.ccache
+      CCACHE_MAXSIZE: 2G
+      CCACHE_SLOPPINESS: pch_defines,time_macros
 
     defaults:
       run:
@@ -80,7 +81,7 @@ jobs:
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-make
             mingw-w64-x86_64-python
-            mingw-w64-x86_64-sccache
+            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-uv
             mingw-w64-x86_64-7zip
             mingw-w64-x86_64-gdb
@@ -94,13 +95,13 @@ jobs:
         id: restore_mingw_compiler_cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: .sccache
-          key: mingw-sccache-v1-${{ runner.os }}-${{ matrix.configuration }}-${{ hashFiles('.github/workflows/build-on-msys2.yml') }}
+          path: .ccache
+          key: mingw-ccache-v1-${{ runner.os }}-${{ matrix.configuration }}-${{ hashFiles('.github/workflows/build-on-msys2.yml') }}
           restore-keys: |
-            mingw-sccache-v1-${{ runner.os }}-${{ matrix.configuration }}-
+            mingw-ccache-v1-${{ runner.os }}-${{ matrix.configuration }}-
 
       - name: Reset compiler cache statistics
-        run: sccache --zero-stats
+        run: ccache --zero-stats
 
       - run: uv venv
 
@@ -172,11 +173,11 @@ jobs:
 
       - name: Report compiler cache statistics
         if: ${{ always() }}
-        run: sccache --show-stats
+        run: ccache --show-stats
 
       - name: Save trusted MinGW compiler cache
         if: ${{ success() && github.event_name == 'push' && (github.ref_name == 'develop' || github.ref_name == 'main') && steps.restore_mingw_compiler_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
-          path: .sccache
-          key: mingw-sccache-v1-${{ runner.os }}-${{ matrix.configuration }}-${{ hashFiles('.github/workflows/build-on-msys2.yml') }}
+          path: .ccache
+          key: mingw-ccache-v1-${{ runner.os }}-${{ matrix.configuration }}-${{ hashFiles('.github/workflows/build-on-msys2.yml') }}
