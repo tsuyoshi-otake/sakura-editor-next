@@ -25,7 +25,7 @@ proofs separate. Passing a lower layer is not evidence for a higher layer.
 
 The 2026-07-31 pure backend cohort
 `LaunchConfigurationCatalog.*:DapProtocolCodec.*:DapSession.*:
-DebugConsoleModel.*` passes 44/44. The DAP session uses a fake byte transport
+DebugConsoleModel.*` passes 45/45. The DAP session uses a fake byte transport
 and the Debug Console is a pure model; this does not claim a production adapter
 process/pipe, initialize/launch handshake, debug-state controller, evaluation
 adapter, or native Debug Console.

@@ -40,13 +40,14 @@ console.
 
 ## Verified Checkpoint
 
-`DapProtocolCodec.*` passes 10/10 and `DapSession.*` passes 16/16. The session
+`DapProtocolCodec.*` passes 10/10 and `DapSession.*` passes 17/17. The session
 checkpoint proves monotonic client sequence allocation, bounded pending and
 completed request state, exact response correlation, one-response tombstones
 for cancelled/expired requests, server request/event delivery, caller-driven
 cancel/expiry, transport/codec terminal failure, listener fault containment,
-serialized physical sends, sequence exhaustion, callback-draining Stop, and
-once-only transport close through an injected fake transport.
+serialized physical sends, sequence exhaustion, callback-draining Stop,
+destructor finalization without borrowed-listener dispatch, and once-only
+transport close through an injected fake transport.
 
 The production adapter process/pipe transport, initialize/launch sequencing,
 server-request replies, breakpoint/stack/variable models, evaluation adapter,

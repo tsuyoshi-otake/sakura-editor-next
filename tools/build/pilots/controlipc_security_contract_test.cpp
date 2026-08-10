@@ -84,8 +84,9 @@ private:
 bool CanonicalProfileIdentityIsStableAndOpaque()
 {
 	const auto first = ComputeCanonicalProfileHash(L"C:\\Profiles\\Contract\\.");
+	const auto trailingSeparator = ComputeCanonicalProfileHash(L"C:\\Profiles\\Contract\\");
 	const auto second = ComputeCanonicalProfileHash(L"c:\\profiles\\contract");
-	return first.size() == 64 && first == second && first.find(L"profile") == std::wstring::npos
+	return first.size() == 64 && first == second && first == trailingSeparator && first.find(L"profile") == std::wstring::npos
 		&& std::all_of(first.begin(), first.end(), [](wchar_t character) {
 			return (character >= L'0' && character <= L'9') || (character >= L'a' && character <= L'f');
 		}) && ComputeCanonicalProfileHash({}).empty();
