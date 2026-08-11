@@ -9,6 +9,7 @@
 #include "debug/dap/DapSession.h"
 
 #include <algorithm>
+#include <exception>
 #include <limits>
 #include <utility>
 
@@ -29,6 +30,13 @@ CDapSession::CDapSession(IDapByteTransport& transport, DapSessionLimits limits)
 
 CDapSession::~CDapSession()
 {
+	// Destruction is a finalization fallback, not a lifecycle notification. An
+	// explicit Stop owns terminal listener delivery while its callback targets
+	// are still alive; a destructor must never resurrect borrowed callbacks.
+	{
+		std::lock_guard lock(m_mutex);
+		m_listeners.clear();
+	}
 	(void)Stop();
 }
 
@@ -57,7 +65,7 @@ void CDapSession::EnqueueLocked(DapSessionNotification notification) noexcept
 			SaturatingIncrement(m_droppedNotificationCount);
 		}
 		m_notifications.emplace_back(std::move(notification));
-	} catch (...) {
+	} catch (const std::exception&) {
 		// Terminal transitions, including destruction, must not terminate because a
 		// best-effort observer record could not be allocated.
 		SaturatingIncrement(m_droppedNotificationCount);

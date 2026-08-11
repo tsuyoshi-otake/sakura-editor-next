@@ -13,10 +13,13 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <exception>
+#include <functional>
 #include <future>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
+#include <utility>
 
 namespace {
 
@@ -49,7 +52,7 @@ public:
 			m_changed.notify_all();
 			m_changed.wait(lock, [this] { return m_releaseSend; });
 			return true;
-		} catch (...) {
+		} catch (const std::exception&) {
 			return false;
 		}
 	}
@@ -93,6 +96,43 @@ std::string Frame(const std::string_view body)
 	return "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + std::string(body);
 }
 
+// Test listeners borrow the captured state.  Keep each subscription in a
+// narrow RAII scope so it is detached before that state and its session end.
+class ScopedDapSessionListener final {
+public:
+	explicit ScopedDapSessionListener(CDapSession& session) noexcept
+		: m_session(session)
+	{
+	}
+
+	ScopedDapSessionListener(const ScopedDapSessionListener&) = delete;
+	ScopedDapSessionListener& operator=(const ScopedDapSessionListener&) = delete;
+
+	~ScopedDapSessionListener()
+	{
+		if (m_subscriptionId) m_session.Unsubscribe(*m_subscriptionId);
+	}
+
+	[[nodiscard]] bool Attach(DapSessionListener listener)
+	{
+		if (m_subscriptionId) return false;
+		const auto subscribe = &CDapSession::Subscribe;
+		m_subscriptionId = std::invoke(subscribe, m_session, std::move(listener));
+		return m_subscriptionId.has_value();
+	}
+
+	// Use only when the captured state deliberately outlives session teardown.
+	// This lets a regression test observe the destructor's callback policy.
+	void KeepAttachedForSessionFinalization() noexcept
+	{
+		m_subscriptionId.reset();
+	}
+
+private:
+	CDapSession& m_session;
+	std::optional<DapSessionSubscriptionId> m_subscriptionId;
+};
+
 TEST(DapSession, StartsOnlyOnceAndRejectsWorkBeforeStart)
 {
 	FakeTransport transport;
@@ -116,13 +156,29 @@ TEST(DapSession, SendsMonotonicRequestsAndCorrelatesResponses)
 	EXPECT_EQ(2U, *second.requestSequence);
 	ASSERT_EQ(2U, transport.sent.size());
 	std::vector<DapSessionNotification> seen;
-	ASSERT_TRUE(session.Subscribe([&seen](const auto& change) { seen.push_back(change); }));
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&seen](const auto& change) { seen.push_back(change); }));
 	EXPECT_EQ(EDapSessionStatus::Received, session.Feed(Frame(R"json({"seq":20,"type":"response","request_seq":1,"success":true,"command":"initialize"})json")).status);
 	const auto snapshot = session.Snapshot();
 	ASSERT_EQ(1U, snapshot.pendingRequests.size());
 	EXPECT_EQ(2U, snapshot.pendingRequests[0].sequence);
 	ASSERT_FALSE(seen.empty());
 	EXPECT_EQ(EDapSessionNotificationKind::ResponseReceived, seen.back().kind);
+}
+
+TEST(DapSession, DestructorFinalizesWithoutDispatchingBorrowedListeners)
+{
+	FakeTransport transport;
+	std::size_t notifications{};
+	{
+		CDapSession session(transport);
+		ASSERT_EQ(EDapSessionStatus::Started, session.Start().status);
+		ScopedDapSessionListener listener(session);
+		ASSERT_TRUE(listener.Attach([&notifications](const auto&) { ++notifications; }));
+		listener.KeepAttachedForSessionFinalization();
+	}
+	EXPECT_EQ(0U, notifications);
+	EXPECT_EQ(1U, transport.closeCount);
 }
 
 TEST(DapSession, DeliversServerRequestsAndEventsAndRetainsOnlyBoundedEvents)
@@ -133,7 +189,8 @@ TEST(DapSession, DeliversServerRequestsAndEventsAndRetainsOnlyBoundedEvents)
 	CDapSession session(transport, limits);
 	ASSERT_EQ(EDapSessionStatus::Started, session.Start().status);
 	std::vector<EDapSessionNotificationKind> kinds;
-	ASSERT_TRUE(session.Subscribe([&kinds](const auto& change) { kinds.push_back(change.kind); }));
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&kinds](const auto& change) { kinds.push_back(change.kind); }));
 	EXPECT_EQ(EDapSessionStatus::Received, session.Feed(Frame(R"json({"seq":3,"type":"request","command":"runInTerminal"})json")
 		+ Frame(R"json({"seq":4,"type":"event","event":"initialized"})json")
 		+ Frame(R"json({"seq":5,"type":"event","event":"stopped"})json")).status);
@@ -194,7 +251,8 @@ TEST(DapSession, LateCancelledAndTimedOutResponsesAreSafelyIgnoredButUnknownDupl
 	ASSERT_EQ(EDapSessionStatus::Cancelled, session.Cancel(*cancelled.requestSequence).status);
 	ASSERT_EQ(1U, session.Expire(5));
 	std::vector<EDapSessionNotificationKind> kinds;
-	ASSERT_TRUE(session.Subscribe([&](const auto& change) { kinds.push_back(change.kind); }));
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&](const auto& change) { kinds.push_back(change.kind); }));
 	EXPECT_EQ(EDapSessionStatus::Received, session.Feed(Frame(R"json({"seq":7,"type":"response","request_seq":1,"success":true,"command":"cancelled"})json")).status);
 	EXPECT_EQ(EDapSessionStatus::Received, session.Feed(Frame(R"json({"seq":8,"type":"response","request_seq":2,"success":true,"command":"timed"})json")).status);
 	EXPECT_EQ(EDapSessionState::Running, session.Snapshot().state);
@@ -243,7 +301,8 @@ TEST(DapSession, AcceptsFragmentedInputAndContainsListenerReentrancyAndException
 	ASSERT_EQ(EDapSessionStatus::Started, session.Start().status);
 	const auto request = session.SendRequest({ .command = "threads" });
 	std::size_t calls{};
-	ASSERT_TRUE(session.Subscribe([&](const auto&) {
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&](const auto&) {
 		++calls;
 		(void)session.Snapshot();
 		if (calls == 1) (void)session.Cancel(*request.requestSequence);
@@ -333,7 +392,8 @@ TEST(DapSession, ExternalStopWaitsForAStartedNotificationCallbackToFinish)
 	std::condition_variable callbackChanged;
 	bool callbackEntered{};
 	bool releaseCallback{};
-	ASSERT_TRUE(session.Subscribe([&](const DapSessionNotification& notification) {
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&](const DapSessionNotification& notification) {
 		if (notification.kind != EDapSessionNotificationKind::RequestSent) return;
 		std::unique_lock lock(callbackMutex);
 		callbackEntered = true;
@@ -395,7 +455,8 @@ TEST(DapSession, ReentrantNotificationTerminalCallsReportDeferredCallbackDrain)
 		CDapSession session(transport);
 		ASSERT_EQ(EDapSessionStatus::Started, session.Start().status);
 		std::optional<DapSessionResult> terminal;
-		ASSERT_TRUE(session.Subscribe([&](const DapSessionNotification& notification) {
+		ScopedDapSessionListener listener(session);
+		ASSERT_TRUE(listener.Attach([&](const DapSessionNotification& notification) {
 			if (notification.kind != EDapSessionNotificationKind::RequestSent || terminal) return;
 			terminal = operation == 0 ? session.Close() : session.Stop();
 		}));
@@ -429,11 +490,13 @@ TEST(DapSession, StopDeliversCommittedTerminalNotificationsThenDropsSubscription
 	ASSERT_EQ(EDapSessionStatus::Started, session.Start().status);
 	ASSERT_EQ(EDapSessionStatus::Sent, session.SendRequest({ .command = "disconnect" }).status);
 	std::vector<EDapSessionNotificationKind> observed;
-	ASSERT_TRUE(session.Subscribe([&observed](const auto& change) { observed.push_back(change.kind); }));
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&observed](const auto& change) { observed.push_back(change.kind); }));
 	EXPECT_EQ(EDapSessionStatus::Stopped, session.Stop().status);
 	EXPECT_NE(observed.end(), std::find(observed.begin(), observed.end(), EDapSessionNotificationKind::RequestRejected));
 	EXPECT_NE(observed.end(), std::find(observed.begin(), observed.end(), EDapSessionNotificationKind::Stopped));
-	EXPECT_EQ(std::nullopt, session.Subscribe([](const auto&) {}));
+	ScopedDapSessionListener rejectedListener(session);
+	EXPECT_FALSE(rejectedListener.Attach([](const auto&) {}));
 }
 
 TEST(DapSession, CompletedHistoryRemainsObservableWhenNotificationQueueOverflows)
@@ -445,7 +508,8 @@ TEST(DapSession, CompletedHistoryRemainsObservableWhenNotificationQueueOverflows
 	CDapSession session(transport, limits);
 	ASSERT_EQ(EDapSessionStatus::Started, session.Start().status);
 	bool expanded{};
-	ASSERT_TRUE(session.Subscribe([&](const auto& change) {
+	ScopedDapSessionListener listener(session);
+	ASSERT_TRUE(listener.Attach([&](const auto& change) {
 		if (expanded || change.kind != EDapSessionNotificationKind::RequestSent) return;
 		expanded = true;
 		const auto two = session.SendRequest({ .command = "two" });

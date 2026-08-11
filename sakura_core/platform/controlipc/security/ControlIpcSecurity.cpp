@@ -141,7 +141,14 @@ std::wstring ComputeCanonicalProfileHash(const std::filesystem::path& profileDir
 	if (!error) {
 		canonical = resolved;
 	}
-	std::wstring identity = canonical.lexically_normal().wstring();
+	canonical = canonical.lexically_normal();
+	// A non-root directory may retain a terminal separator after lexical normalization
+	// (notably when weakly_canonical falls back for a directory that does not exist).
+	// Endpoint identity must not depend on that spelling detail.
+	if (canonical.has_relative_path() && canonical.filename().empty()) {
+		canonical = canonical.parent_path();
+	}
+	std::wstring identity = canonical.wstring();
 	if (identity.empty() || identity.find(L'\0') != std::wstring::npos ||
 		identity.size() > (std::numeric_limits<ULONG>::max)() / sizeof(wchar_t) ||
 		identity.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
