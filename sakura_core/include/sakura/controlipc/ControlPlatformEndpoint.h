@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief Control-process platform endpoint の共有メタデータ
 */
 /*
