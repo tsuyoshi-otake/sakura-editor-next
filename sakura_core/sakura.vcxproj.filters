@@ -1474,9 +1474,6 @@
     <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultTypes.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -3317,9 +3314,6 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\secrets\SecretVaultTypes.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlIpcNamedPipeTransport.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp">

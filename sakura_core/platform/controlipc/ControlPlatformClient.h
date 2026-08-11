@@ -8,7 +8,8 @@
 */
 #pragma once
 
-#include "platform/controlipc/ControlIpcNamedPipeTransport.h"
+#include <sakura/controlipc/ControlIpcTransport.h>
+#include "platform/controlipc/ControlPlatformEndpoint.h"
 #include "platform/controlipc/ControlProfileRpc.h"
 #include "platform/controlipc/ControlStorageRpc.h"
 #include <sakura/storage/StorageSnapshotCache.h>

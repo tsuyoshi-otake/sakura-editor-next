@@ -4,8 +4,7 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-#include "platform/controlipc/ControlIpcNamedPipeTransport.h"
+#include <sakura/controlipc/ControlIpcTransport.h>
 
 #include <sakura/controlipc/ControlIpcSecurity.h>
 #include <sakura/security/CurrentUserSecurityAttributes.h>
@@ -535,7 +534,8 @@ CControlIpcNamedPipeClient::~CControlIpcNamedPipeClient() { Close(); }
 ControlIpcTransportResult CControlIpcNamedPipeClient::Connect(std::wstring pipeName, std::uint32_t expectedServerProcessId,
 	std::chrono::milliseconds deadline)
 {
-	if (!IsSafeControlPipeName(pipeName) || expectedServerProcessId == 0 || deadline <= std::chrono::milliseconds::zero() || deadline > kMaximumCallerTimeout) return { false, EControlIpcTransportDisconnectReason::ConnectFailed, ERROR_INVALID_PARAMETER, L"Control pipe endpoint or deadline is invalid" };
+	if (deadline <= std::chrono::milliseconds::zero() || deadline > kMaximumCallerTimeout) return { false, EControlIpcTransportDisconnectReason::DeadlineExceeded, ERROR_SEM_TIMEOUT, L"Connect deadline is invalid" };
+	if (!IsSafeControlPipeName(pipeName) || expectedServerProcessId == 0) return { false, EControlIpcTransportDisconnectReason::ConnectFailed, ERROR_INVALID_PARAMETER, L"Control pipe endpoint is invalid" };
 	Close();
 	const auto end = std::chrono::steady_clock::now() + deadline;
 	HANDLE rawPipe = INVALID_HANDLE_VALUE;
@@ -566,13 +566,6 @@ ControlIpcTransportResult CControlIpcNamedPipeClient::Connect(std::wstring pipeN
 	m_impl->decoder.Reset();
 	m_impl->connected.store(true, std::memory_order_release);
 	return { true, EControlIpcTransportDisconnectReason::None, ERROR_SUCCESS, {} };
-}
-
-ControlIpcTransportResult CControlIpcNamedPipeClient::Connect(const ControlPlatformEndpointSnapshot& endpoint,
-	std::chrono::milliseconds deadline)
-{
-	if (endpoint.lifecycle != ControlPlatformEndpointLifecycle::Accepting) return { false, EControlIpcTransportDisconnectReason::ConnectFailed, ERROR_INVALID_STATE, L"Control endpoint is not accepting connections" };
-	return Connect(endpoint.pipeName, endpoint.controlProcessId, deadline);
 }
 
 ControlIpcTransportResult CControlIpcNamedPipeClient::Send(const ControlIpcFrame& frame, std::chrono::milliseconds deadline)

@@ -8,7 +8,7 @@
 */
 #pragma once
 
-#include "platform/controlipc/ControlIpcNamedPipeTransport.h"
+#include <sakura/controlipc/ControlIpcTransport.h>
 #include "platform/controlipc/ControlPlatformEndpoint.h"
 
 #include <cstdint>

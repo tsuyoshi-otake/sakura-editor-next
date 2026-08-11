@@ -64,7 +64,11 @@ void CEditorSecretVaultEndpointReaderAdapter::Close() noexcept
 ControlIpcTransportResult CEditorSecretVaultNamedPipeChannel::Connect(const ControlPlatformEndpointSnapshot& endpoint,
 	std::chrono::milliseconds deadline)
 {
-	return m_client.Connect(endpoint, deadline);
+	if (endpoint.lifecycle != ControlPlatformEndpointLifecycle::Accepting) {
+		return { false, EControlIpcTransportDisconnectReason::ConnectFailed, ERROR_INVALID_STATE,
+			L"Control endpoint is not accepting connections" };
+	}
+	return m_client.Connect(endpoint.pipeName, endpoint.controlProcessId, deadline);
 }
 
 ControlIpcTransportResult CEditorSecretVaultNamedPipeChannel::Exchange(const ControlIpcFrame& request,

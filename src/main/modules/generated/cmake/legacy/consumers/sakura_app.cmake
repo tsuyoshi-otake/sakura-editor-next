@@ -9,6 +9,7 @@ if(NOT TARGET "${SAKURA_LEGACY_CONSUMER_COMPILE_TARGET}" OR
 endif()
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_protocol)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_security)
+target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_transport)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_editor_app_lifecycle)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_editor_document_core)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_editor_frame)
