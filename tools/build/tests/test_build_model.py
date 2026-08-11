@@ -222,6 +222,64 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(["consumer.vcxproj"], intent["backend_targets"]["msbuild"])
             self.assertEqual(["consumer", "provider"], intent["closure_by_phase"]["compile"])
 
+    def test_context_and_build_intent_project_active_artifact_sets(self):
+        with RepositoryFixture() as (root, manifest):
+            value = manifest_data()
+            value["artifacts"] = [
+                {
+                    "id": "consumer-package-set",
+                    "owner": "consumer",
+                    "artifact_kind": "package_set",
+                    "inputs": ["tests/contract.cpp"],
+                    "outputs": ["package:fixture"],
+                    "tool_id": None,
+                    "condition": True,
+                },
+                {
+                    "id": "consumer-generated-output",
+                    "owner": "consumer",
+                    "artifact_kind": "generated",
+                    "inputs": ["tests/contract.cpp"],
+                    "outputs": ["generated/fixture.h"],
+                    "tool_id": "sakura-module-generator",
+                    "condition": {"eq": {"field": "toolchain", "value": "msvc"}},
+                },
+                {
+                    "id": "consumer-staging-set",
+                    "owner": "consumer",
+                    "artifact_kind": "staging_set",
+                    "inputs": ["tests/contract.cpp"],
+                    "outputs": ["stage/fixture"],
+                    "tool_id": "copy",
+                    "condition": {"eq": {"field": "configuration", "value": "Release"}},
+                },
+            ]
+            value["edges"].append({
+                "id": "consumer-to-package-set",
+                "from": "consumer",
+                "to": "consumer-package-set",
+                "kind": "package",
+                "phases": ["compile", "link"],
+                "visibility": "private",
+                "propagation": "none",
+                "contract_profile": None,
+                "condition": True,
+                "required": True,
+                "witnesses": [{"context": "ctx", "probe": "tests/contract.cpp"}],
+            })
+            manifest.write_text(json.dumps(value), encoding="utf-8")
+
+            graph = load_semantic_graph(root, manifest)
+            projection = graph.project("ctx")
+            self.assertEqual(["consumer-package-set"], projection["package_sets"])
+            self.assertEqual(["consumer-generated-output"], projection["generated_artifacts"])
+            self.assertEqual([], projection["staging_sets"])
+
+            intent = graph.build_intent(("consumer",), "ctx", ("compile", "link"))
+            self.assertEqual(["consumer-package-set"], intent["package_sets"])
+            self.assertEqual([], intent["generated_artifacts"])
+            self.assertEqual([], intent["staging_sets"])
+
     def test_contract_profile_belongs_to_edge_not_component(self):
         with RepositoryFixture() as (root, manifest):
             value = manifest_data()
