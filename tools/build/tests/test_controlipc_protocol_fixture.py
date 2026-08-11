@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import struct
 import unittest
 from pathlib import Path
@@ -8,6 +9,12 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_PATH = REPO_ROOT / "tools" / "build" / "fixtures" / "controlipc" / "protocol-v1.json"
+VECTOR_HEADER_PATH = REPO_ROOT / "tools" / "build" / "pilots" / "controlipc_protocol_fixture_vectors.h"
+
+VECTOR_NAMES = {
+    "hello-request-v1": "kHelloRequestV1Frame",
+    "cancel-terminal-response-v1": "kCancelTerminalResponseV1Frame",
+}
 
 
 class ControlIpcProtocolFixtureTests(unittest.TestCase):
@@ -48,6 +55,29 @@ class ControlIpcProtocolFixtureTests(unittest.TestCase):
                 self.assertNotIn("Response", frame["flags"], frame["id"])
             if "Terminal" in frame["flags"]:
                 self.assertIn("Response", frame["flags"], frame["id"])
+
+    def test_cpp_pilot_vectors_match_v1_fixture(self) -> None:
+        fixture = json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+        source = VECTOR_HEADER_PATH.read_text(encoding="utf-8")
+
+        vectors: dict[str, bytes] = {}
+        for name in VECTOR_NAMES.values():
+            match = re.search(
+                rf"{re.escape(name)}\s*\{{(?P<body>.*?)\}};",
+                source,
+                flags=re.DOTALL,
+            )
+            self.assertIsNotNone(match, name)
+            assert match is not None
+            byte_values = re.findall(r"0x([0-9a-fA-F]{2})", match.group("body"))
+            self.assertEqual(32, len(byte_values), name)
+            vectors[name] = bytes.fromhex("".join(byte_values))
+
+        for frame in fixture["frames"]:
+            vector_name = VECTOR_NAMES.get(frame["id"])
+            self.assertIsNotNone(vector_name, frame["id"])
+            assert vector_name is not None
+            self.assertEqual(frame["frame_hex"], vectors[vector_name].hex(), frame["id"])
 
 
 if __name__ == "__main__":
