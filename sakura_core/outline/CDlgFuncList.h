@@ -43,6 +43,8 @@ class CFuncInfo;
 class CFuncInfoArr; // 2002/2/10 aroka
 class CDataProfile;
 class CEditView;
+class CEditWnd;
+class CLoadAgent;
 
 namespace workbench::outline {
 
@@ -169,8 +171,10 @@ protected:
 public:
 	int				m_nDocType;			//! ドキュメントの種類 */
 	int				m_nOutlineType;		/* アウトライン解析の種別 */
-	bool			m_bEditWndReady;	/* エディタ画面の準備完了 */
 protected:
+	friend class CEditWnd;
+	friend class CLoadAgent;
+	bool			m_bEditWndReady;	/* エディタ画面の準備完了 */
 	BOOL OnInitDialog(HWND hwndDlg, WPARAM wParam, LPARAM lParam) override;
 	BOOL OnBnClicked(int wID) override;
 	BOOL OnNotify(NMHDR* pNMHDR) override;
@@ -236,9 +240,55 @@ protected:
 	bool TagJumpTimer(const WCHAR*, CMyPoint, bool);
 
 private:
+	enum class WorkbenchApplyStage : std::uint8_t {
+		MaterializeModel,
+		PrepareControls,
+		CollectTree,
+		ClearList,
+		ClearTree,
+		InsertTree,
+		ExpandTree,
+		ApplyLineMarks,
+		Finalize,
+	};
+
+	class WorkbenchApplyState final {
+		friend class CDlgFuncList;
+		std::uint64_t generation = 0;
+		workbench::outline::OutlineDocumentVersion documentVersion{};
+		workbench::outline::OutlineParseResult parse;
+		std::unique_ptr<CFuncInfoArr> model;
+		std::vector<HTREEITEM> nodeItems;
+		std::vector<HTREEITEM> clearTreeItems;
+		std::vector<HTREEITEM> treeScanPending;
+		std::size_t symbolIndex = 0;
+		std::size_t clearListRemaining = 0;
+		std::size_t clearTreeIndex = 0;
+		std::size_t treeIndex = 0;
+		std::size_t expandIndex = 0;
+		std::size_t lineIndex = 0;
+		bool lineMarksReset = false;
+		CDocLine* lineMarkResetCursor = nullptr;
+		WorkbenchApplyStage stage = WorkbenchApplyStage::MaterializeModel;
+		std::uint64_t startUs = 0;
+		std::uint64_t layoutBeginUs = 0;
+		std::uint64_t treeBeginUs = 0;
+		std::uint64_t expansionBeginUs = 0;
+		std::uint64_t lineMarksBeginUs = 0;
+		HTREEITEM insertAfter = TVI_LAST;
+		int previousOutlineType = OUTLINE_DEFAULT;
+		int previousListType = OUTLINE_DEFAULT;
+	};
+
+	static constexpr UINT kWorkbenchApplyMessage = WM_APP + 0x573;
 	[[nodiscard]] bool UsesCompactPanelLayout() const noexcept { return m_bWorkbenchMode || IsDocking(); }
 	void ApplyWorkbenchAppearance() noexcept;
 	void DisarmWorkbenchRefreshTimer() noexcept;
+	void BeginWorkbenchApply( std::unique_ptr<workbench::outline::OutlineWorkerResult> result ) noexcept;
+	void HandleWorkbenchApplyStep() noexcept;
+	void CancelWorkbenchApply() noexcept;
+	[[nodiscard]] bool IsWorkbenchApplyCurrent() const noexcept;
+	[[nodiscard]] bool PostWorkbenchApplyStep() noexcept;
 	void ObserveWorkbenchDocument( CEditView* view ) noexcept;
 	void CommitWorkbenchModel() noexcept;
 	[[nodiscard]] std::shared_ptr<const workbench::outline::OutlineDocumentSnapshot>
@@ -297,10 +347,23 @@ private:
 	workbench::outline::OutlinePhaseTimings m_workbenchLastTimings{};
 	std::unique_ptr<CFuncInfoArr> m_workbenchCommittedModel;
 	std::unique_ptr<workbench::outline::OutlineParserWorker> m_workbenchParser;
+	std::unique_ptr<WorkbenchApplyState> m_workbenchApply;
 	std::vector<HTREEITEM> m_workbenchTreeItems;
-	struct WorkbenchTreeLabel final {
-		std::wstring text;
-		int depth = 0;
+	class WorkbenchTreeLabel final {
+	public:
+		WorkbenchTreeLabel() = default;
+		WorkbenchTreeLabel( std::wstring text, int depth )
+			: m_text(std::move(text))
+			, m_depth(depth)
+		{
+		}
+
+		[[nodiscard]] const std::wstring& Text() const noexcept { return m_text; }
+		[[nodiscard]] int Depth() const noexcept { return m_depth; }
+
+	private:
+		std::wstring m_text;
+		int m_depth = 0;
 	};
 	std::map<HTREEITEM, WorkbenchTreeLabel> m_workbenchTreeLabels;
 	bool m_workbenchClipboardUsesGenericTree = false;
