@@ -24,7 +24,6 @@
 #include "cxx/ResourceHolder.hpp"
 #include "apiwrap/DarkMode.h"
 
-#pragma comment(lib, "htmlhelp.lib") 
 
 BOOL SelectDir(HWND hWnd, const std::wstring& title, const std::filesystem::path& initialDirectory, WCHAR* strFolderName, size_t nMaxCount)
 {

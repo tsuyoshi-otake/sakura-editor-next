@@ -26,7 +26,8 @@
       "private_include_roots": ["."],
       "state_owner": "legacy application and process state",
       "backend_targets": {"msbuild": ["sakura_core/sakura.vcxproj"], "cmake": ["sakura"]},
-      "compile_profile": null
+      "compile_profile": null,
+      "system_libraries": ["advapi32", "bcrypt", "comctl32", "crypt32", "d2d1", "dbghelp", "dwmapi", "dwrite", "htmlhelp", "imm32", "mpr", "msimg32", "ole32", "oleacc", "oleaut32", "shlwapi", "uiautomationcore", "uuid", "uxtheme", "version", "windowscodecs", "winhttp", "winmm", "winspool"]
     },
     {
       "id": "tests1",
@@ -44,7 +45,8 @@
       "private_include_roots": ["."],
       "state_owner": "legacy test process state",
       "backend_targets": {"msbuild": ["sakura_core/tests1.vcxproj"], "cmake": ["tests1"]},
-      "compile_profile": null
+      "compile_profile": null,
+      "system_libraries": ["advapi32", "bcrypt", "comctl32", "crypt32", "d2d1", "dbghelp", "dwmapi", "dwrite", "gdiplus", "htmlhelp", "imagehlp", "imm32", "mpr", "msimg32", "ole32", "oleacc", "oleaut32", "psapi", "shlwapi", "uiautomationcore", "uuid", "uxtheme", "version", "windowscodecs", "winhttp", "winmm", "winspool"]
     },
     {
       "id": "sakura_uri",

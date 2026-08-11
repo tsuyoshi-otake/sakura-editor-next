@@ -24,7 +24,6 @@
 // DIB section in this codebase (see CMarkdownPreviewWnd.cpp); linking it here
 // keeps the icon-paint dependency self-contained instead of touching the
 // project's AdditionalDependencies.
-#pragma comment(lib, "Msimg32.lib")
 
 namespace {
 constexpr wchar_t kWindowClass[] = L"SakuraWorkbenchExtensionDetailSurface";

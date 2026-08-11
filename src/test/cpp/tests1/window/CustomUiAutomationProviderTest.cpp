@@ -13,7 +13,6 @@
 
 #include "accessibility/CustomUiAutomationProvider.h"
 
-#pragma comment(lib, "oleacc.lib")
 
 namespace {
 

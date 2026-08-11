@@ -837,26 +837,18 @@ target_link_libraries(sakura_core
     mpr
     msimg32
     ole32
+    oleacc
     oleaut32
     shlwapi
     uuid
+    uiautomationcore
     uxtheme
+    version
     windowscodecs
     winhttp
     winmm
     winspool
 )
-
-# GCC does not consume MSVC's #pragma comment(lib) directives. Keep the
-# equivalent Windows SDK import libraries explicit for the MinGW link.
-if(MINGW)
-  target_link_libraries(sakura_core
-    PUBLIC
-      oleacc
-      uiautomationcore
-      version
-  )
-endif()
 
 # Add dependencies for sakura_core
 add_dependencies(sakura_core

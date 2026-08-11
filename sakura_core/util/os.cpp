@@ -10,7 +10,6 @@
 #include "basis/CMyString.h"
 #include "_os/CClipboard.h"
 
-#pragma comment(lib, "UxTheme.lib")
 
 /*!	Comctl32.dll のバージョン番号を取得
 

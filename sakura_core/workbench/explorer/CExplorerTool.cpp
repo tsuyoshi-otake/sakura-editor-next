@@ -28,7 +28,6 @@
 #include <unordered_map>
 #include <utility>
 
-#pragma comment(lib, "windowscodecs.lib")
 
 namespace workbench::explorer {
 namespace {

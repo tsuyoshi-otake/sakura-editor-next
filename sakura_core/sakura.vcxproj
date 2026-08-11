@@ -72,7 +72,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>

@@ -26,7 +26,6 @@
 #include "sakura_rc.h"
 
 // AlphaBlend for premultiplied-alpha row icons, same as CExtensionDetailSurface's icon path.
-#pragma comment(lib, "Msimg32.lib")
 
 namespace {
 
