@@ -22,6 +22,7 @@ target_compile_definitions(sakura_controlipc_protocol PRIVATE _WIN32_WINNT=0x0A0
 
 add_executable(sakura_controlipc_protocol_tests
   "${SAKURA_REPO_ROOT}/tools/build/pilots/controlipc_protocol_contract_test.cpp"
+  "${SAKURA_REPO_ROOT}/tools/build/pilots/controlipc_protocol_fixture_vectors.h"
 )
 target_include_directories(sakura_controlipc_protocol_tests PRIVATE "${SAKURA_REPO_ROOT}/sakura_core/include")
 target_compile_features(sakura_controlipc_protocol_tests PRIVATE cxx_std_20)

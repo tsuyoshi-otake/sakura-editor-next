@@ -295,7 +295,7 @@
       "owner": "tools/build/pilots",
       "sources": ["tools/build/pilots/controlipc_protocol_contract_test.cpp"],
       "public_headers": [],
-      "private_headers": [],
+      "private_headers": ["tools/build/pilots/controlipc_protocol_fixture_vectors.h"],
       "ownership_exclusions": [],
       "public_include_roots": [],
       "private_include_roots": [],

@@ -112,6 +112,9 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="$(SakuraRepoRoot)\tools\build\pilots\controlipc_protocol_fixture_vectors.h" />
+  </ItemGroup>
+  <ItemGroup>
     <ClCompile Include="$(SakuraRepoRoot)\tools\build\pilots\controlipc_protocol_contract_test.cpp" />
   </ItemGroup>
   <ItemGroup>
