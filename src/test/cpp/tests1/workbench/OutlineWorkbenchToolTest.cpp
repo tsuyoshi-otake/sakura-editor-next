@@ -51,9 +51,20 @@ void AlignTemplateDword( std::vector<std::byte>& data )
 	}
 }
 
-struct TemplateItemOffsets {
-	size_t style;
-	size_t exStyle;
+class TemplateItemOffsets final {
+public:
+	TemplateItemOffsets( size_t style, size_t exStyle )
+		: m_style(style)
+		, m_exStyle(exStyle)
+	{
+	}
+
+	[[nodiscard]] size_t Style() const noexcept { return m_style; }
+	[[nodiscard]] size_t ExStyle() const noexcept { return m_exStyle; }
+
+private:
+	size_t m_style;
+	size_t m_exStyle;
 };
 
 TemplateItemOffsets AppendStandardTemplateItem(
@@ -68,7 +79,7 @@ TemplateItemOffsets AppendStandardTemplateItem(
 	AppendTemplateValue<WORD>(data, 0x0080);
 	AppendTemplateString(data, L"");
 	AppendTemplateValue<WORD>(data, 0);
-	return { styleOffset, exStyleOffset };
+	return TemplateItemOffsets(styleOffset, exStyleOffset);
 }
 
 template <class T>
@@ -486,13 +497,13 @@ TEST(OutlineWorkbenchTool, NativeOutlineControlsAreBornWithoutNonClientBorders)
 		dialog, IDC_LIST_FL, WS_CHILD | WS_BORDER | LVS_REPORT, edgeStyles );
 
 	ASSERT_TRUE( NormalizeWorkbenchOutlineDialogTemplate(dialog.data(), dialog.size()) );
-	const DWORD treeStyle = ReadTemplateValue<DWORD>(dialog, tree.style);
+	const DWORD treeStyle = ReadTemplateValue<DWORD>(dialog, tree.Style());
 	EXPECT_EQ(0u, treeStyle & (WS_BORDER | TVS_HASLINES | TVS_SHOWSELALWAYS));
 	EXPECT_EQ(static_cast<DWORD>(TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT),
 		treeStyle & (TVS_HASBUTTONS | TVS_LINESATROOT | TVS_FULLROWSELECT));
-	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, tree.exStyle) & edgeStyles);
-	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, list.style) & WS_BORDER);
-	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, list.exStyle) & edgeStyles);
+	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, tree.ExStyle()) & edgeStyles);
+	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, list.Style()) & WS_BORDER);
+	EXPECT_EQ(0u, ReadTemplateValue<DWORD>(dialog, list.ExStyle()) & edgeStyles);
 }
 
 TEST(OutlineWorkbenchTool, MalformedDialogTemplateFailsClosed)
@@ -750,7 +761,28 @@ TEST(OutlineParserWorker, SnapshotParserReturnsLogicalPositionsWithoutLayoutFenc
 	EXPECT_EQ(FL_OBJ_FUNCTION, cppResult.symbols[1].info);
 	EXPECT_EQ(0, cppResult.symbols[1].depth);
 	EXPECT_EQ(L" class", cppResult.appendText.at(FL_OBJ_CLASS));
+		ASSERT_EQ(2u, cppResult.TreeNodes().size());
+		EXPECT_FALSE(cppResult.TreeNodes()[0].IsDummy());
+		EXPECT_EQ(0, cppResult.TreeNodes()[0].SymbolIndex());
+		EXPECT_EQ(-1, cppResult.TreeNodes()[0].ParentNodeIndex());
+		EXPECT_EQ(L"Sample class", cppResult.TreeNodes()[0].Label());
+		EXPECT_EQ(1, cppResult.TreeNodes()[1].SymbolIndex());
+		EXPECT_EQ(0, cppResult.TreeNodes()[1].ParentNodeIndex());
+		EXPECT_EQ(L"Method", cppResult.TreeNodes()[1].Label());
 	EXPECT_EQ(0u, cppResult.timings.nativeCommitUs);
+	{
+		std::vector<bool> symbolSeen(cppResult.symbols.size(), false);
+		for( std::size_t nodeIndex = 0; nodeIndex < cppResult.TreeNodes().size(); ++nodeIndex ) {
+			const auto& node = cppResult.TreeNodes()[nodeIndex];
+			EXPECT_TRUE(node.ParentNodeIndex() < static_cast<int>(nodeIndex));
+			if( node.SymbolIndex() >= 0 ) {
+				ASSERT_LT(static_cast<std::size_t>(node.SymbolIndex()), symbolSeen.size());
+				EXPECT_FALSE(symbolSeen[static_cast<std::size_t>(node.SymbolIndex())]);
+				symbolSeen[static_cast<std::size_t>(node.SymbolIndex())] = true;
+			}
+		}
+		for( const bool seen : symbolSeen ) EXPECT_TRUE(seen);
+	}
 
 	OutlineDocumentSnapshot javaSnapshot;
 	javaSnapshot.documentVersion = { 75, 1 };
@@ -776,6 +808,18 @@ TEST(OutlineParserWorker, SnapshotParserReturnsLogicalPositionsWithoutLayoutFenc
 	EXPECT_EQ(FL_OBJ_FUNCTION, javaResult.symbols[1].info);
 	EXPECT_EQ(0, javaResult.symbols[1].depth);
 	EXPECT_EQ(L" function", javaResult.appendText.at(FL_OBJ_FUNCTION));
+		ASSERT_EQ(3u, javaResult.TreeNodes().size());
+		EXPECT_TRUE(javaResult.TreeNodes()[0].IsDummy());
+		EXPECT_EQ(L"Sample", javaResult.TreeNodes()[0].Label());
+		EXPECT_EQ(0, javaResult.TreeNodes()[1].SymbolIndex());
+		EXPECT_EQ(0, javaResult.TreeNodes()[1].ParentNodeIndex());
+		EXPECT_EQ(L"<definition>", javaResult.TreeNodes()[1].Label());
+		EXPECT_EQ(1, javaResult.TreeNodes()[2].SymbolIndex());
+		EXPECT_EQ(0, javaResult.TreeNodes()[2].ParentNodeIndex());
+		EXPECT_EQ(L"Method function", javaResult.TreeNodes()[2].Label());
+		for( std::size_t nodeIndex = 0; nodeIndex < javaResult.TreeNodes().size(); ++nodeIndex ) {
+			EXPECT_TRUE(javaResult.TreeNodes()[nodeIndex].ParentNodeIndex() < static_cast<int>(nodeIndex));
+	}
 }
 
 TEST(OutlineDocumentSnapshot, RejectsMalformedRangesAndPreservesEmptyLineBoundaries)

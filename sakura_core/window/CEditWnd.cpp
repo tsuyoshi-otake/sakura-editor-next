@@ -6820,6 +6820,12 @@ bool CEditWnd::SetWorkbenchPanelVisible(workbench::WorkbenchEdge edge, bool visi
 			// This is the legacy Outline nested inside the left Sidebar. It is not
 			// the physical VS Code Auxiliary Bar hosted on the right.
 			if (m_viewContainerPages == nullptr || m_leftWorkbenchPanel == nullptr) return false;
+			// A reload request reaches this path while the Outline view is already
+			// visible. Re-projecting an unchanged visibility state synchronously
+			// walks the native workbench tree and turns a cheap parser request into
+			// a document-size UI stall. Activation still needs the full projection;
+			// a non-activating no-op does not.
+			if (!activate && IsOutlineViewExpanded() == visible) return true;
 			const bool committed = visible && activate
 				? ActivateBuiltinWorkbenchView(workbench::layout::ids::view::Outline, true)
 				: (!visible || SetBuiltinPartVisibility(workbench::layout::ids::part::Sidebar, true))
