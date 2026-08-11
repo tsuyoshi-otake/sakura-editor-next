@@ -85398,8 +85398,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "3e1c8aa172449732dd9895f77be3c3ca39b5a525",
-  "source_fingerprint": "sha256:9e39cc1c8127b9fcfa1b3a62a7fbf750b45dd4eb5295c79f852229d53600f151",
+  "source_commit": "b87648c2c3f33faea0b23cbd62216b153391f25e",
+  "source_fingerprint": "sha256:f403a7bf823143effbc64b23e3610a583a14954e2262b3e65c32f665f94d4b15",
   "tracked_source_paths": [
     ".github/dependabot.yml",
     ".github/workflows/architecture-gates.yml",
