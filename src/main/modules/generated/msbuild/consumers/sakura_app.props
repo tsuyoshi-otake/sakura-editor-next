@@ -33,6 +33,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_endpoint.vcxproj">
+      <Project>{6658B1B5-C626-53DF-B0BA-AD2A4918EE84}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_protocol.vcxproj">
       <Project>{AA83324E-945C-5DA6-AB97-F78AB60AB3F6}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>

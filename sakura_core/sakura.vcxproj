@@ -569,7 +569,6 @@
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpc.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.h" />
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpoint.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRuntime.h" />
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformServiceHost.h" />
@@ -1256,7 +1255,6 @@
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpc.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.cpp" />
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpoint.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRuntime.cpp" />
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformServiceHost.cpp" />

@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief Control-process platform endpoint の共有メタデータ
 */
 /*
@@ -10,14 +10,13 @@
 #define SAKURA_CONTROLPLATFORMENDPOINT_1A9FDDB0_B4D6_4413_A97B_51D16C9936C6_H_
 #pragma once
 
-#include <Windows.h>
-
 #include <cstdint>
 #include <filesystem>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
 #include <string>
+#include <string_view>
 
 namespace platform::controlipc {
 
@@ -119,7 +118,8 @@ public:
 private:
 	struct SharedBlock;
 
-	HANDLE m_mapping = nullptr;
+	//! Opaque native mapping handle. The public contract does not expose Win32 types.
+	void* m_mapping = nullptr;
 	SharedBlock* m_block = nullptr;
 	bool m_writer = false;
 	std::wstring m_mappingName;

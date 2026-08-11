@@ -1489,9 +1489,6 @@
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpoint.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -3329,9 +3326,6 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpcServerAdapter.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpoint.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformEndpointDiscoveryReader.cpp">
