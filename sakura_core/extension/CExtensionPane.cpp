@@ -1,4 +1,4 @@
-/*!	@file
+﻿/*!	@file
 	@brief 拡張（Open VSX）の検索と導入を行うサイドバー
 
 */
