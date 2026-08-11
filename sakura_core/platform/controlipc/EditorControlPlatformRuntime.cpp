@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 #include "platform/profiles/ProfileAuthorityIdentity.h"
 
 #include <algorithm>

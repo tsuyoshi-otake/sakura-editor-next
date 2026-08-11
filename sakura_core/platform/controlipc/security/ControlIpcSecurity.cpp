@@ -4,16 +4,17 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
 
 #include <Aclapi.h>
 #include <bcrypt.h>
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace platform::controlipc {
 namespace {
@@ -140,7 +141,14 @@ std::wstring ComputeCanonicalProfileHash(const std::filesystem::path& profileDir
 	if (!error) {
 		canonical = resolved;
 	}
-	std::wstring identity = canonical.lexically_normal().wstring();
+	canonical = canonical.lexically_normal();
+	// A non-root directory may retain a terminal separator after lexical normalization
+	// (notably when weakly_canonical falls back for a directory that does not exist).
+	// Endpoint identity must not depend on that spelling detail.
+	if (canonical.has_relative_path() && canonical.filename().empty()) {
+		canonical = canonical.parent_path();
+	}
+	std::wstring identity = canonical.wstring();
 	if (identity.empty() || identity.find(L'\0') != std::wstring::npos ||
 		identity.size() > (std::numeric_limits<ULONG>::max)() / sizeof(wchar_t) ||
 		identity.size() > static_cast<std::size_t>((std::numeric_limits<int>::max)())) {
@@ -230,9 +238,12 @@ bool VerifyCurrentUserOnlyDacl(HANDLE object, std::wstring& diagnostic)
 	const DWORD result = ::GetSecurityInfo(
 		object, SE_KERNEL_OBJECT, DACL_SECURITY_INFORMATION,
 		nullptr, nullptr, &dacl, nullptr, &descriptor);
-	struct DescriptorGuard final {
-		PSECURITY_DESCRIPTOR value = nullptr;
-		~DescriptorGuard() { if (value) ::LocalFree(value); }
+	class DescriptorGuard final {
+	public:
+		explicit DescriptorGuard(PSECURITY_DESCRIPTOR value) noexcept : m_value(value) {}
+		~DescriptorGuard() { if (m_value) ::LocalFree(m_value); }
+	private:
+		PSECURITY_DESCRIPTOR m_value;
 	} descriptorGuard{ descriptor };
 	if (result != ERROR_SUCCESS || !dacl || !::IsValidAcl(dacl)) {
 		diagnostic = FormatError(L"Read endpoint DACL", result);

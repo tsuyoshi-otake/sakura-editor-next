@@ -27,36 +27,45 @@ constexpr bool HasExtensionHostSessionMember = requires(T value) {
 
 class FakeProcess final : public IExtensionHostProcess {
 public:
+	void QueueStartResult(SExtensionHostProcessStartResult result)
+	{
+		m_startResults.push_back(std::move(result));
+	}
+	const std::vector<SExtensionHostLaunchOptions>& StartRequests() const noexcept { return m_starts; }
+	std::uint32_t ProcessId() const noexcept { return m_processId; }
+	void SetExitCode(std::uint32_t value) noexcept { m_exitCode = value; }
+
 	SExtensionHostProcessStartResult Start(const SExtensionHostLaunchOptions& options) override
 	{
-		starts.push_back(options);
-		if (!startResults.empty()) {
-			auto result = std::move(startResults.front());
-			startResults.pop_front();
+		m_starts.push_back(options);
+		if (!m_startResults.empty()) {
+			auto result = std::move(m_startResults.front());
+			m_startResults.pop_front();
 			if (result.success) {
-				processId = result.processId;
+				m_processId = result.processId;
 			}
 			return result;
 		}
-		processId = nextProcessId++;
-		return { true, processId, 0, {} };
+		m_processId = m_nextProcessId++;
+		return { true, m_processId, 0, {} };
 	}
-	std::optional<std::uint32_t> PollExitCode() const noexcept override { return exitCode; }
-	bool WaitForExit(std::chrono::milliseconds) noexcept override { return exitCode.has_value(); }
+	std::optional<std::uint32_t> PollExitCode() const noexcept override { return m_exitCode; }
+	bool WaitForExit(std::chrono::milliseconds) noexcept override { return m_exitCode.has_value(); }
 	void Terminate(std::uint32_t code) noexcept override
 	{
-		terminations.push_back(code);
-		processId = 0;
-		exitCode.reset();
+		m_terminations.push_back(code);
+		m_processId = 0;
+		m_exitCode.reset();
 	}
-	std::uint32_t GetProcessId() const noexcept override { return processId; }
+	std::uint32_t GetProcessId() const noexcept override { return m_processId; }
 
-	std::deque<SExtensionHostProcessStartResult> startResults;
-	std::vector<SExtensionHostLaunchOptions> starts;
-	std::vector<std::uint32_t> terminations;
-	mutable std::optional<std::uint32_t> exitCode;
-	std::uint32_t processId = 0;
-	std::uint32_t nextProcessId = 7001;
+private:
+	std::deque<SExtensionHostProcessStartResult> m_startResults;
+	std::vector<SExtensionHostLaunchOptions> m_starts;
+	std::vector<std::uint32_t> m_terminations;
+	std::optional<std::uint32_t> m_exitCode;
+	std::uint32_t m_processId = 0;
+	std::uint32_t m_nextProcessId = 7001;
 };
 
 class RecordingObserver final : public IExtensionHostBrokerObserver {
@@ -74,6 +83,7 @@ public:
 			return action.kind == kind;
 		}));
 	}
+private:
 	std::vector<SExtensionHostLifecycleAction> actions;
 	std::vector<SExtensionHostBrokerSnapshot> snapshots;
 };
@@ -108,8 +118,8 @@ TEST(CExtensionHostBroker, LeaseStartsOneGenerationWithBoundIdentity)
 
 	broker.AcquireLease(101, start);
 	broker.AcquireLease(202, start);
-	ASSERT_EQ(1u, processView->starts.size());
-	const auto& launch = processView->starts.front();
+	ASSERT_EQ(1u, processView->StartRequests().size());
+	const auto& launch = processView->StartRequests().front();
 	EXPECT_EQ(1u, launch.generation);
 	EXPECT_EQ(6001u, launch.brokerProcessId);
 	EXPECT_EQ(L"0123456789abcdef0123456789abcdef", launch.bootId);
@@ -138,7 +148,7 @@ TEST(CExtensionHostBroker, HandshakeRequiresCurrentGenerationBootIdAndActualServ
 	CExtensionHostBroker broker(TestConfig(), std::move(process), &observer);
 	const TimePoint start{};
 	broker.AcquireLease(101, start);
-	const auto pid = processView->processId;
+	const auto pid = processView->ProcessId();
 
 	EXPECT_FALSE(broker.AcceptHandshake(99, pid, broker.GetSnapshot().bootId, start));
 	EXPECT_EQ(EExtensionHostState::Starting, broker.GetSnapshot().state);
@@ -152,20 +162,20 @@ TEST(CExtensionHostBroker, StartFailureRetriesWithANewGenerationAtDeadline)
 {
 	auto process = std::make_unique<FakeProcess>();
 	auto* processView = process.get();
-	process->startResults.push_back({ false, 0, ERROR_FILE_NOT_FOUND, L"node missing" });
-	process->startResults.push_back({ true, 7100, 0, {} });
+	process->QueueStartResult({ false, 0, ERROR_FILE_NOT_FOUND, L"node missing" });
+	process->QueueStartResult({ true, 7100, 0, {} });
 	RecordingObserver observer;
 	CExtensionHostBroker broker(TestConfig(), std::move(process), &observer);
 	const TimePoint start{};
 
 	broker.AcquireLease(101, start, 0.5);
 	EXPECT_EQ(EExtensionHostState::Failed, broker.GetSnapshot().state);
-	EXPECT_EQ(1u, processView->starts.size());
+	EXPECT_EQ(1u, processView->StartRequests().size());
 	broker.Tick(start + 99ms, 0.5);
-	EXPECT_EQ(1u, processView->starts.size());
+	EXPECT_EQ(1u, processView->StartRequests().size());
 	broker.Tick(start + 100ms, 0.5);
-	ASSERT_EQ(2u, processView->starts.size());
-	EXPECT_EQ(2u, processView->starts.back().generation);
+	ASSERT_EQ(2u, processView->StartRequests().size());
+	EXPECT_EQ(2u, processView->StartRequests().back().generation);
 	EXPECT_EQ(EExtensionHostState::Starting, broker.GetSnapshot().state);
 }
 
@@ -184,14 +194,14 @@ TEST(CExtensionHostBroker, RetryRotatesNativeSessionWithoutExposingItToHostLaunc
 	ASSERT_EQ(32u, firstSession.size());
 	broker.NotifyHostLost(1, EExtensionHostLossKind::HostCrash, "test crash", start, 0.5);
 	broker.Tick(start + 100ms, 0.5);
-	ASSERT_EQ(2u, processView->starts.size());
-	EXPECT_NE(processView->starts[0].bootId, processView->starts[1].bootId);
-	EXPECT_NE(processView->starts[0].pipeName, processView->starts[1].pipeName);
+	ASSERT_EQ(2u, processView->StartRequests().size());
+	EXPECT_NE(processView->StartRequests()[0].bootId, processView->StartRequests()[1].bootId);
+	EXPECT_NE(processView->StartRequests()[0].pipeName, processView->StartRequests()[1].pipeName);
 	EXPECT_NE(firstSession, broker.GetSnapshot().extensionHostSessionId);
-	EXPECT_EQ(std::wstring::npos, processView->starts[1].profileHash.find(firstSession));
-	EXPECT_EQ(std::wstring::npos, processView->starts[1].bootId.find(firstSession));
-	EXPECT_EQ(std::wstring::npos, processView->starts[1].pipeName.find(firstSession));
-	EXPECT_EQ(processView->starts[1].bootId, broker.GetSnapshot().bootId);
+	EXPECT_EQ(std::wstring::npos, processView->StartRequests()[1].profileHash.find(firstSession));
+	EXPECT_EQ(std::wstring::npos, processView->StartRequests()[1].bootId.find(firstSession));
+	EXPECT_EQ(std::wstring::npos, processView->StartRequests()[1].pipeName.find(firstSession));
+	EXPECT_EQ(processView->StartRequests()[1].bootId, broker.GetSnapshot().bootId);
 }
 
 TEST(CExtensionHostBroker, CrashRejectsPendingAndRestartsAfterBoundedBackoff)
@@ -202,15 +212,15 @@ TEST(CExtensionHostBroker, CrashRejectsPendingAndRestartsAfterBoundedBackoff)
 	CExtensionHostBroker broker(TestConfig(), std::move(process), &observer);
 	const TimePoint start{};
 	broker.AcquireLease(101, start);
-	ASSERT_TRUE(broker.AcceptHandshake(1, processView->processId, broker.GetSnapshot().bootId, start));
+	ASSERT_TRUE(broker.AcceptHandshake(1, processView->ProcessId(), broker.GetSnapshot().bootId, start));
 
-	processView->exitCode = 9;
+	processView->SetExitCode(9);
 	broker.Tick(start + 1s, 0.5);
 	EXPECT_EQ(EExtensionHostState::Failed, broker.GetSnapshot().state);
 	EXPECT_EQ(1u, observer.Count(EExtensionHostLifecycleActionKind::RejectPendingHostLost));
 	broker.Tick(start + 1100ms, 0.5);
-	ASSERT_EQ(2u, processView->starts.size());
-	EXPECT_EQ(2u, processView->starts.back().generation);
+	ASSERT_EQ(2u, processView->StartRequests().size());
+	EXPECT_EQ(2u, processView->StartRequests().back().generation);
 }
 
 TEST(CExtensionHostBroker, KeepAliveExitCompletesQuiesceWithoutCrashRetry)
@@ -221,13 +231,13 @@ TEST(CExtensionHostBroker, KeepAliveExitCompletesQuiesceWithoutCrashRetry)
 	CExtensionHostBroker broker(TestConfig(), std::move(process), &observer);
 	const TimePoint start{};
 	broker.AcquireLease(101, start);
-	ASSERT_TRUE(broker.AcceptHandshake(1, processView->processId, broker.GetSnapshot().bootId, start));
+	ASSERT_TRUE(broker.AcceptHandshake(1, processView->ProcessId(), broker.GetSnapshot().bootId, start));
 	broker.ReleaseLease(101, start);
 
 	broker.Tick(start + 60s);
 	EXPECT_EQ(EExtensionHostState::Quiescing, broker.GetSnapshot().state);
 	EXPECT_EQ(1u, observer.Count(EExtensionHostLifecycleActionKind::BeginQuiesce));
-	processView->exitCode = 0;
+	processView->SetExitCode(0);
 	broker.Tick(start + 61s);
 	EXPECT_EQ(EExtensionHostState::Stopped, broker.GetSnapshot().state);
 	EXPECT_EQ(0u, observer.Count(EExtensionHostLifecycleActionKind::ScheduleRetry));
@@ -241,7 +251,7 @@ TEST(CExtensionHostBroker, ShutdownOwnsTerminalStateAndRejectsLaterLease)
 	CExtensionHostBroker broker(TestConfig(), std::move(process), &observer);
 	const TimePoint start{};
 	broker.AcquireLease(101, start);
-	ASSERT_TRUE(broker.AcceptHandshake(1, processView->processId, broker.GetSnapshot().bootId, start));
+	ASSERT_TRUE(broker.AcceptHandshake(1, processView->ProcessId(), broker.GetSnapshot().bootId, start));
 
 	broker.Shutdown(start);
 	EXPECT_EQ(EExtensionHostState::Quiescing, broker.GetSnapshot().state);
@@ -257,7 +267,9 @@ TEST(CExtensionHostBroker, ProfileHashAndRandomBootIdArePipeSafe)
 {
 	const auto hashA = CExtensionHostBroker::ComputeProfileHash(L"C:\\profiles\\unit");
 	const auto hashB = CExtensionHostBroker::ComputeProfileHash(L"c:\\PROFILES\\unit\\.");
+	const auto hashWithTrailingSeparator = CExtensionHostBroker::ComputeProfileHash(L"C:\\profiles\\unit\\");
 	EXPECT_EQ(hashA, hashB);
+	EXPECT_EQ(hashA, hashWithTrailingSeparator);
 	EXPECT_EQ(32u, hashA.size());
 	const auto bootA = CExtensionHostBroker::GenerateBootId();
 	const auto bootB = CExtensionHostBroker::GenerateBootId();

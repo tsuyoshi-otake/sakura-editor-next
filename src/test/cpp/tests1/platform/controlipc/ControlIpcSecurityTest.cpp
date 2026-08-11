@@ -6,7 +6,8 @@
 */
 #include "pch.h"
 
-#include "platform/controlipc/ControlIpcSecurity.h"
+#include <sakura/controlipc/ControlIpcSecurity.h>
+#include <sakura/security/CurrentUserSecurityAttributes.h>
 
 #include <array>
 #include <cstdint>
@@ -15,6 +16,8 @@
 
 namespace platform::controlipc {
 namespace {
+
+using ::platform::security::CurrentUserSecurityAttributes;
 
 class Handle final {
 public:
@@ -39,10 +42,12 @@ std::wstring UniquePipeName()
 TEST(ControlIpcSecurity, CanonicalProfileHashIsStableAndDoesNotExposePath)
 {
 	const auto first = ComputeCanonicalProfileHash(L"C:\\Profiles\\Unit\\.");
+	const auto trailingSeparator = ComputeCanonicalProfileHash(L"C:\\Profiles\\Unit\\");
 	const auto second = ComputeCanonicalProfileHash(L"c:\\profiles\\unit");
 
 	ASSERT_EQ(64u, first.size());
 	EXPECT_EQ(first, second);
+	EXPECT_EQ(first, trailingSeparator);
 	EXPECT_EQ(std::wstring::npos, first.find(L"profile"));
 	EXPECT_TRUE(std::all_of(first.begin(), first.end(), [](wchar_t character) {
 		return (character >= L'0' && character <= L'9') || (character >= L'a' && character <= L'f');
