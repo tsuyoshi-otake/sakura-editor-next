@@ -7,7 +7,7 @@
 #include "pch.h"
 
 #include <sakura/controlipc/ControlIpcSecurity.h>
-#include "platform/controlipc/ControlPlatformEndpoint.h"
+#include <sakura/controlipc/ControlPlatformEndpoint.h>
 
 #include <filesystem>
 #include <limits>

@@ -7,6 +7,7 @@ if(NOT TARGET "${SAKURA_LEGACY_CONSUMER_COMPILE_TARGET}" OR
    NOT TARGET "${SAKURA_LEGACY_CONSUMER_LINK_TARGET}")
   message(FATAL_ERROR "Legacy component integration targets do not exist for sakura_app")
 endif()
+target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_endpoint)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_protocol)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_security)
 target_link_libraries("${SAKURA_LEGACY_CONSUMER_LINK_TARGET}" PRIVATE sakura_controlipc_transport)

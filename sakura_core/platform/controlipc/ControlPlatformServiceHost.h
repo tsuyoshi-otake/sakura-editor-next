@@ -9,7 +9,7 @@
 #pragma once
 
 #include <sakura/controlipc/ControlIpcTransport.h>
-#include "platform/controlipc/ControlPlatformEndpoint.h"
+#include <sakura/controlipc/ControlPlatformEndpoint.h>
 
 #include <cstdint>
 #include <filesystem>

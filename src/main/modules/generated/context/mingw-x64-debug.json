@@ -5,6 +5,8 @@
   ],
   "active_components": [
     "sakura_app",
+    "sakura_controlipc_endpoint",
+    "sakura_controlipc_endpoint_tests",
     "sakura_controlipc_protocol",
     "sakura_controlipc_protocol_tests",
     "sakura_controlipc_security",
@@ -71,6 +73,11 @@
     "sakura-app-to-sakura-controlipc-transport",
     "tests1-to-sakura-controlipc-transport",
     "sakura-controlipc-transport-tests-to-sakura-controlipc-transport",
+    "sakura-controlipc-endpoint-to-sakura-controlipc-security",
+    "sakura-controlipc-endpoint-to-sakura-security",
+    "sakura-app-to-sakura-controlipc-endpoint",
+    "tests1-to-sakura-controlipc-endpoint",
+    "sakura-controlipc-endpoint-tests-to-sakura-controlipc-endpoint",
     "sakura-app-to-sakura-controlipc-security",
     "tests1-to-sakura-controlipc-security",
     "sakura-controlipc-security-tests-to-sakura-controlipc-security",
@@ -110,6 +117,6 @@
   "generator_version": "0.3.6",
   "package_sets": [],
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:6fd684d988460ec82ec08329587f6c7ffdf2c0becfa2dcc374a2803413336a87",
+  "semantic_graph_hash": "sha256:5dc7188c4595dddf217f736166a8e37c3fc685685a18cbb48483ca8a0e00cb0a",
   "staging_sets": []
 }
