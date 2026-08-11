@@ -9,7 +9,6 @@
 #pragma once
 
 #include <sakura/controlipc/ControlIpcProtocol.h>
-#include "platform/controlipc/ControlPlatformEndpoint.h"
 
 #include <chrono>
 #include <cstddef>
@@ -116,9 +115,6 @@ public:
 	//! Connects once (with a bounded wait only while the exact pipe is busy), then verifies DACL and PID.
 	[[nodiscard]] ControlIpcTransportResult Connect(std::wstring pipeName,
 		std::uint32_t expectedServerProcessId, std::chrono::milliseconds deadline);
-	//! Convenience overload for an already validated endpoint snapshot in Accepting state.
-	[[nodiscard]] ControlIpcTransportResult Connect(const ControlPlatformEndpointSnapshot& endpoint,
-		std::chrono::milliseconds deadline);
 	[[nodiscard]] ControlIpcTransportResult Send(const ControlIpcFrame& frame,
 		std::chrono::milliseconds deadline);
 	//! Returns all frames completed by one bounded read. Calls are serialized with Send/Close.
