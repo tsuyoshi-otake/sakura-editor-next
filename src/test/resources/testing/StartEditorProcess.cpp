@@ -20,7 +20,6 @@
 #include <DbgHelp.h>
 
 // Windows SDKのデバッグヘルパーとリンクする
-#pragma comment(lib, "dbghelp.lib")
 
 #if defined(_M_AMD64)
 	constexpr auto machineType = IMAGE_FILE_MACHINE_AMD64;

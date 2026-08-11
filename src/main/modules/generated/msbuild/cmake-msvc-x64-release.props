@@ -4,7 +4,7 @@
   <PropertyGroup>
     <SakuraModulesSchemaVersion>3</SakuraModulesSchemaVersion>
     <SakuraModulesGeneratorVersion>0.3.6</SakuraModulesGeneratorVersion>
-    <SakuraSemanticGraphHash>sha256:6be1e92a277052ea40e7eb10b8bdc83500597145e4c6e52eaba11b541d10c854</SakuraSemanticGraphHash>
+    <SakuraSemanticGraphHash>sha256:410da67f3e5812f6e06494ac5aee1b02322d48949bf757c40bd62253b10d7b5e</SakuraSemanticGraphHash>
     <SakuraBuildContextId>cmake-msvc-x64-release</SakuraBuildContextId>
   </PropertyGroup>
 </Project>

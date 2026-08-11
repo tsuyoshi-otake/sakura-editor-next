@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -21,8 +21,6 @@
 #include <limits>
 #include <utility>
 
-#pragma comment(lib, "Msimg32.lib")
-#pragma comment(lib, "windowscodecs.lib")
 
 namespace markdown {
 namespace {

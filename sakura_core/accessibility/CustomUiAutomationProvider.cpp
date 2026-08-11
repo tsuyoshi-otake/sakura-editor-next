@@ -15,9 +15,6 @@
 #include <new>
 #include <optional>
 
-#pragma comment(lib, "uiautomationcore.lib")
-#pragma comment(lib, "oleaut32.lib")
-#pragma comment(lib, "oleacc.lib")
 
 namespace accessibility {
 namespace {

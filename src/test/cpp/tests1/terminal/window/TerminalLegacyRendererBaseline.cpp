@@ -35,10 +35,6 @@
 #include <string_view>
 #include <utility>
 
-#pragma comment(lib, "d2d1.lib")
-#pragma comment(lib, "dwrite.lib")
-#pragma comment(lib, "gdiplus.lib")
-#pragma comment(lib, "psapi.lib")
 
 namespace terminal {
 namespace {

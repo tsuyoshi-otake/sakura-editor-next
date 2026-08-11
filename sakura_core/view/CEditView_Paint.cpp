@@ -9,7 +9,6 @@
 #include "StdAfx.h"
 #include <vector>
 #include <limits.h>
-#pragma comment(lib, "Msimg32.lib")
 #include "view/CEditView_Paint.h"
 #include "view/CEditView.h"
 #include "view/MiniMapOverview.h"

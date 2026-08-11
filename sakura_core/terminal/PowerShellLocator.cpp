@@ -13,7 +13,6 @@
 
 #include "platform/Windows11Platform.h"
 
-#pragma comment(lib, "Version.lib")
 
 namespace terminal {
 namespace {
