@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <map>
 #include <stdexcept>
 #include <utility>
 
@@ -40,6 +41,118 @@ using SteadyClock = std::chrono::steady_clock;
 {
 	const wchar_t* const text = value.GetStringPtr();
 	return text != nullptr ? std::wstring(text) : std::wstring();
+}
+
+[[nodiscard]] std::vector<std::wstring> SplitQualifiedName( std::wstring_view name )
+{
+	std::vector<std::wstring> parts;
+	std::size_t start = 0;
+	int templateDepth = 0;
+	for( std::size_t index = 0; index < name.size(); ++index ) {
+		switch( name[index] ) {
+		case L'<':
+			++templateDepth;
+			break;
+		case L'>':
+			if( templateDepth > 0 ) --templateDepth;
+			break;
+		case L':':
+			if( templateDepth == 0 && index + 1 < name.size() && name[index + 1] == L':' ) {
+				parts.emplace_back(name.substr(start, index - start));
+				start = index + 2;
+				++index;
+			}
+			break;
+		default:
+			break;
+		}
+	}
+	parts.emplace_back(name.substr(start));
+	return parts;
+}
+
+[[nodiscard]] std::wstring AppendOutlineLabel(
+	const OutlineParseResult& result,
+	std::wstring label,
+	int info )
+{
+	if( info != FL_OBJ_DEFINITION && info != FL_OBJ_NAMESPACE && info != FL_OBJ_GLOBAL ) {
+		if( const auto found = result.appendText.find(info); found != result.appendText.end() ) {
+			label += found->second;
+		}
+	}
+	return label;
+}
+
+void BuildTreePlan( OutlineParseResult& result, const OutlineParserWorker::CancelToken& cancelToken )
+{
+	result.TreeNodes().clear();
+	result.TreeNodes().reserve(result.symbols.size() + result.symbols.size() / 2);
+	std::map<std::wstring, int> classNodes;
+	int globalNode = -1;
+
+	for( std::size_t symbolIndex = 0; symbolIndex < result.symbols.size(); ++symbolIndex ) {
+		if( IsCancelled(cancelToken) ) {
+			result.TreeNodes().clear();
+			return;
+		}
+		const auto& symbol = result.symbols[symbolIndex];
+		const auto parts = SplitQualifiedName(symbol.name);
+		int parentNode = -1;
+		if( parts.size() > 1 ) {
+			std::wstring path;
+			for( std::size_t partIndex = 0; partIndex + 1 < parts.size(); ++partIndex ) {
+				path.append(parts[partIndex]);
+				path.push_back(L'\0');
+				const auto found = classNodes.find(path);
+				if( found != classNodes.end() ) {
+					parentNode = found->second;
+					continue;
+				}
+				const int classInfo = symbol.info == FL_OBJ_NAMESPACE ? FL_OBJ_NAMESPACE : FL_OBJ_CLASS;
+				const std::wstring label = AppendOutlineLabel(
+					result,
+					parts[partIndex],
+					classInfo);
+				const int nodeIndex = static_cast<int>(result.TreeNodes().size());
+				result.TreeNodes().emplace_back(
+					-1,
+					parentNode,
+					classInfo,
+					static_cast<int>(partIndex),
+					true,
+					label);
+				classNodes.emplace(path, nodeIndex);
+				parentNode = nodeIndex;
+			}
+		}else if( symbol.info < FL_OBJ_CLASS || symbol.info > FL_OBJ_ELEMENT_MAX ) {
+			if( globalNode < 0 ) {
+				globalNode = static_cast<int>(result.TreeNodes().size());
+				std::wstring label;
+				if( const auto found = result.appendText.find(FL_OBJ_GLOBAL); found != result.appendText.end() ) {
+					label = found->second;
+				}
+				result.TreeNodes().emplace_back(-1, -1, FL_OBJ_GLOBAL, 0, true, std::move(label));
+			}
+			parentNode = globalNode;
+		}
+
+		const std::wstring label = AppendOutlineLabel(
+			result,
+			parts.empty() ? symbol.name : parts.back(),
+			symbol.info);
+		const int symbolNodeIndex = static_cast<int>(result.TreeNodes().size());
+		result.TreeNodes().emplace_back(
+			static_cast<int>(symbolIndex),
+			parentNode,
+			symbol.info,
+			static_cast<int>(parts.size() > 0 ? parts.size() - 1 : 0),
+			false,
+			label);
+		if( parts.size() == 1 && symbol.info >= FL_OBJ_CLASS && symbol.info <= FL_OBJ_ELEMENT_MAX ) {
+			classNodes.emplace(parts[0] + std::wstring(1, L'\0'), symbolNodeIndex);
+		}
+	}
 }
 
 } // namespace
@@ -111,6 +224,7 @@ OutlineParseResult OutlineParserWorker::ParseSnapshot(
 		std::wstring append = parsed.GetAppendText(info);
 		if( !append.empty() ) result.appendText[info] = std::move(append);
 	}
+	BuildTreePlan(result, cancelToken);
 	result.timings.dtoConstructionUs = NowUs() - dtoBegin;
 	result.timings.totalUs = NowUs() - parserBegin;
 	return result;

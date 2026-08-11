@@ -11,6 +11,7 @@
 #include <Windows.h>
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -19,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace workbench::outline {
@@ -53,15 +55,59 @@ struct OutlineSymbolDto final {
 	int depth = 0;
 };
 
+//! Value-owned presentation plan.  Parent indices always refer to an earlier
+//! node, so the native tree can be materialized in bounded UI chunks.
+class OutlineTreeNodeDto final {
+public:
+	OutlineTreeNodeDto(
+		int symbolIndex,
+		int parentNodeIndex,
+		int info,
+		int depth,
+		bool dummy,
+		std::wstring label )
+		: m_symbolIndex(symbolIndex)
+		, m_parentNodeIndex(parentNodeIndex)
+		, m_info(info)
+		, m_depth(depth)
+		, m_dummy(dummy)
+		, m_label(std::move(label))
+	{
+	}
+
+	[[nodiscard]] int SymbolIndex() const noexcept { return m_symbolIndex; }
+	[[nodiscard]] int ParentNodeIndex() const noexcept { return m_parentNodeIndex; }
+	[[nodiscard]] int Info() const noexcept { return m_info; }
+	[[nodiscard]] int Depth() const noexcept { return m_depth; }
+	[[nodiscard]] bool IsDummy() const noexcept { return m_dummy; }
+	[[nodiscard]] const std::wstring& Label() const noexcept { return m_label; }
+
+private:
+	int m_symbolIndex = -1;
+	int m_parentNodeIndex = -1;
+	int m_info = 0;
+	int m_depth = 0;
+	bool m_dummy = false;
+	std::wstring m_label;
+};
+
 struct OutlineParseResult final {
 	OutlineDocumentVersion documentVersion{};
 	int outlineType = 0;
 	int listType = 0;
 	std::wstring filePath;
-	std::wstring titleOverride;
 	std::vector<OutlineSymbolDto> symbols;
 	std::map<int, std::wstring> appendText;
 	OutlinePhaseTimings timings{};
+
+	[[nodiscard]] const std::vector<OutlineTreeNodeDto>& TreeNodes() const noexcept { return m_treeNodes; }
+	[[nodiscard]] std::vector<OutlineTreeNodeDto>& TreeNodes() noexcept { return m_treeNodes; }
+	[[nodiscard]] const std::wstring& TitleOverride() const noexcept { return m_titleOverride; }
+	void SetTitleOverride( std::wstring value ) { m_titleOverride = std::move(value); }
+
+private:
+	std::vector<OutlineTreeNodeDto> m_treeNodes;
+	std::wstring m_titleOverride;
 };
 
 enum class OutlineWorkerTerminal : std::uint8_t {

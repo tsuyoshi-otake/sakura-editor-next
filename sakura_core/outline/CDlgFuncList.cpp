@@ -76,6 +76,8 @@ namespace {
 
 constexpr UINT_PTR kWorkbenchRefreshTimerIdBase = 0x10000;
 constexpr UINT kWorkbenchRefreshDebounceMs = 75;
+constexpr std::size_t kWorkbenchApplyChunkItems = 96;
+constexpr std::uint64_t kWorkbenchApplyBudgetUs = 4000;
 
 [[nodiscard]] constexpr UINT_PTR WorkbenchRefreshTimerId( std::uint64_t token ) noexcept
 {
@@ -95,6 +97,18 @@ constexpr UINT kWorkbenchRefreshDebounceMs = 75;
 {
 	return static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
 		std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+//! Seed an iterative native-tree walk.  The walk itself is budgeted by the
+//! apply state machine so discovering a large retired hierarchy cannot block
+//! the editor thread before incremental deletion starts.
+void SeedWorkbenchTreeScan(
+	decltype(::GetActiveWindow()) hwndTree, std::vector<HTREEITEM>& pending )
+{
+	if( hwndTree == nullptr ) return;
+	if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) {
+		pending.push_back(root);
+	}
 }
 
 class DialogTemplateCursor final {
@@ -631,6 +645,7 @@ bool CDlgFuncList::RequestWorkbenchOutline( int outlineType, bool forceRefresh )
 
 void CDlgFuncList::StopWorkbenchOutlineWorker() noexcept
 {
+	CancelWorkbenchApply();
 	m_workbenchRefreshScheduler.Stop([this](std::uint64_t token) {
 		const UINT_PTR timerId = WorkbenchRefreshTimerId(token);
 		if( GetHwnd() != nullptr && timerId != 0 ) ::KillTimer(GetHwnd(), timerId);
@@ -653,6 +668,387 @@ void CDlgFuncList::StopWorkbenchOutlineWorker() noexcept
 	m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Closed;
 	m_workbenchLastTimings = {};
 	m_bFuncInfoArrIsUpToDate = false;
+}
+
+bool CDlgFuncList::IsWorkbenchApplyCurrent() const noexcept
+{
+	return m_workbenchApply != nullptr
+		&& m_bWorkbenchMode
+		&& GetHwnd() != nullptr
+		&& m_workbenchApply->generation != 0
+		&& m_workbenchApply->generation == m_workbenchRequestedGeneration
+		&& m_workbenchApply->documentVersion == m_workbenchDocumentVersion;
+}
+
+bool CDlgFuncList::PostWorkbenchApplyStep() noexcept
+{
+	return IsWorkbenchApplyCurrent()
+		&& ::PostMessageW(GetHwnd(), kWorkbenchApplyMessage, 0, 0) != FALSE;
+}
+
+void CDlgFuncList::CancelWorkbenchApply() noexcept
+{
+	if( m_workbenchApply == nullptr ) return;
+	const bool controlsTouched = m_workbenchApply->stage != WorkbenchApplyStage::MaterializeModel;
+	if( controlsTouched && GetHwnd() != nullptr ) {
+		const auto hwndTree = GetItemHwnd(IDC_TREE_FL);
+		const auto hwndList = GetItemHwnd(IDC_LIST_FL);
+		if( hwndTree != nullptr ) {
+			// Do not synchronously tear down a partial hierarchy here.  This
+			// method runs on the edit/close notification path, where a full
+			// TreeView_DeleteAllItems would reintroduce the exact UI stall the
+			// staged apply is meant to remove.  The next apply owns incremental
+			// deletion; closing the dialog destroys the native control anyway.
+			::ShowWindow(hwndTree, SW_HIDE);
+			::SendMessageW(hwndTree, WM_SETREDRAW, TRUE, 0);
+			::EnableWindow(hwndTree, TRUE);
+		}
+		if( hwndList != nullptr ) ::SendMessageW(hwndList, WM_SETREDRAW, TRUE, 0);
+	}
+	m_pcFuncInfoArr = m_workbenchCommittedModel.get();
+	m_nOutlineType = m_workbenchApply->previousOutlineType;
+	m_nListType = m_workbenchApply->previousListType;
+	m_bDummyLParamMode = false;
+	m_vecDummylParams.clear();
+	m_workbenchTreeItems.clear();
+	m_workbenchTreeLabels.clear();
+	m_workbenchTreeContentDirty = true;
+	m_workbenchAppearanceDirty = true;
+	m_workbenchApply.reset();
+	m_bFuncInfoArrIsUpToDate = false;
+}
+
+void CDlgFuncList::BeginWorkbenchApply(
+	std::unique_ptr<workbench::outline::OutlineWorkerResult> result ) noexcept
+{
+	if( result == nullptr || !IsWorkbenchMode() || GetHwnd() == nullptr ) return;
+	try {
+		// A new current result owns the projection slot.  Normally document
+		// invalidation cancels the old slot before this point, but keeping the
+		// hand-off defensive prevents a late replacement from leaving partially
+		// materialized native controls behind.
+		if( m_workbenchApply != nullptr ) CancelWorkbenchApply();
+		auto state = std::make_unique<WorkbenchApplyState>();
+		state->generation = result->generation;
+		state->documentVersion = result->parse.documentVersion;
+		state->parse = std::move(result->parse);
+		state->previousOutlineType = m_nOutlineType;
+		state->previousListType = m_nListType;
+		state->startUs = WorkbenchNowUs();
+		state->layoutBeginUs = state->startUs;
+		state->model = std::make_unique<CFuncInfoArr>();
+		state->model->m_szFilePath = state->parse.filePath.c_str();
+		m_workbenchApply = std::move(state);
+		m_bFuncInfoArrIsUpToDate = false;
+		if( const auto hwndTree = GetItemHwnd(IDC_TREE_FL); hwndTree != nullptr ) {
+			// Keep the committed tree visible while its replacement is built.  Redraw
+			// is disabled and the control is disabled below, so the user continues to
+			// see the old model until the final swap without paying a hide/show layout
+			// pass for a large common-control tree.
+			::SendMessageW(hwndTree, WM_SETREDRAW, FALSE, 0);
+			::EnableWindow(hwndTree, FALSE);
+		}
+		m_workbenchLastTimings = m_workbenchApply->parse.timings;
+		if( !PostWorkbenchApplyStep() ) {
+			CancelWorkbenchApply();
+			m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+			m_workbenchRequestedVersion = {};
+			m_workbenchRequestedGeneration = 0;
+			m_workbenchRequestStartUs = 0;
+		}
+	}catch( const std::exception& ) {
+		CancelWorkbenchApply();
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+		m_workbenchLastTimings = {};
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+	}
+}
+
+void CDlgFuncList::HandleWorkbenchApplyStep() noexcept
+{
+	if( !IsWorkbenchApplyCurrent() ) {
+		CancelWorkbenchApply();
+		return;
+	}
+
+	auto fail = [this]() noexcept {
+		CancelWorkbenchApply();
+		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Failed;
+		m_workbenchLastTimings = {};
+		m_workbenchRequestedVersion = {};
+		m_workbenchRequestedGeneration = 0;
+		m_workbenchRequestStartUs = 0;
+		m_bFuncInfoArrIsUpToDate = false;
+	};
+	auto yield = [this, &fail]() noexcept {
+		if( !PostWorkbenchApplyStep() ) fail();
+	};
+
+	try {
+		auto& state = *m_workbenchApply;
+		const std::uint64_t sliceBeginUs = WorkbenchNowUs();
+		std::size_t processed = 0;
+		const auto shouldYield = [&]() noexcept {
+			return processed >= kWorkbenchApplyChunkItems
+				|| WorkbenchNowUs() - sliceBeginUs >= kWorkbenchApplyBudgetUs;
+		};
+
+		switch( state.stage ) {
+		case WorkbenchApplyStage::MaterializeModel: {
+			CEditView* const view = reinterpret_cast<CEditView*>(m_lParam);
+			CEditDoc* const document = view != nullptr ? view->GetDocument() : nullptr;
+			if( document == nullptr ) { fail(); return; }
+			while( state.symbolIndex < state.parse.symbols.size() && !shouldYield() ) {
+				const auto& symbol = state.parse.symbols[state.symbolIndex++];
+				const CLogicInt logicalLine = CLogicInt(std::max(0, symbol.logicalLine));
+				const CLogicInt logicalColumn = CLogicInt(std::max(0, symbol.logicalColumn));
+				CLayoutPoint layout(0, 0);
+				document->m_cLayoutMgr.LogicToLayout(
+					CLogicPoint(logicalColumn > 0 ? logicalColumn - CLogicInt(1) : CLogicInt(0),
+						logicalLine > 0 ? logicalLine - CLogicInt(1) : CLogicInt(0)),
+					&layout);
+				const wchar_t* const fileName = symbol.fileName.empty() ? nullptr : symbol.fileName.c_str();
+				state.model->AppendData(
+					logicalLine,
+					logicalColumn,
+					layout.GetY2() + CLayoutInt(1),
+					layout.GetX2() + CLayoutInt(1),
+					symbol.name.c_str(),
+					fileName,
+					symbol.info,
+					symbol.depth);
+				++processed;
+			}
+			if( state.symbolIndex != state.parse.symbols.size() ) { yield(); return; }
+			for( const auto& [info, text] : state.parse.appendText ) state.model->SetAppendText(info, text, true);
+			state.parse.timings.layoutProjectionUs = WorkbenchNowUs() - state.layoutBeginUs;
+			state.stage = WorkbenchApplyStage::PrepareControls;
+			break;
+		}
+
+		case WorkbenchApplyStage::PrepareControls: {
+			const auto hwndTree = GetItemHwnd(IDC_TREE_FL);
+			const auto hwndList = GetItemHwnd(IDC_LIST_FL);
+			if( hwndTree == nullptr || hwndList == nullptr ) { fail(); return; }
+			::SendMessageW(hwndList, WM_SETREDRAW, FALSE, 0);
+			::SendMessageW(hwndTree, WM_SETREDRAW, FALSE, 0);
+			::ShowWindow(GetItemHwnd(IDC_BUTTON_SETTING), SW_HIDE);
+			::ShowWindow(hwndList, SW_HIDE);
+			::EnableWindow(hwndTree, FALSE);
+			state.clearListRemaining = static_cast<std::size_t>(
+				(std::max)(0, ListView_GetItemCount(hwndList)));
+			state.clearTreeItems.clear();
+			if( const int itemCount = TreeView_GetCount(hwndTree); itemCount > 0 ) {
+				state.clearTreeItems.reserve(static_cast<std::size_t>(itemCount));
+			}
+			state.clearTreeIndex = 0;
+			state.treeScanPending.clear();
+			SeedWorkbenchTreeScan(hwndTree, state.treeScanPending);
+			m_bDummyLParamMode = false;
+			m_vecDummylParams.clear();
+			m_workbenchTreeItems.assign(state.parse.symbols.size(), nullptr);
+			m_workbenchTreeLabels.clear();
+			m_workbenchClipboardUsesGenericTree = false;
+			m_workbenchClipboardTagJump = false;
+			m_workbenchClipboardNoLabel = false;
+			m_cmemClipText.SetString(L"");
+			m_pcFuncInfoArr = state.model.get();
+			m_nOutlineType = state.parse.outlineType;
+			m_nListType = state.parse.listType;
+			m_nViewType = VIEWTYPE_TREE;
+			m_bFuncInfoArrIsUpToDate = false;
+			state.nodeItems.clear();
+			state.nodeItems.reserve(state.parse.TreeNodes().size());
+			state.insertAfter = m_nSortType == SORTTYPE_DEFAULT_DESC ? TVI_FIRST : TVI_LAST;
+			if( m_nListType == OUTLINE_JAVA ) {
+				::SetWindowText(GetHwnd(), LS(STR_DLGFNCLST_TITLE_JAVA));
+			}else{
+				::SetWindowText(GetHwnd(), LS(STR_DLGFNCLST_TITLE_CPP));
+			}
+			state.stage = WorkbenchApplyStage::CollectTree;
+			break;
+		}
+
+		case WorkbenchApplyStage::CollectTree: {
+			const auto hwndTree = GetItemHwnd(IDC_TREE_FL);
+			if( hwndTree == nullptr ) { fail(); return; }
+			while( !state.treeScanPending.empty() && !shouldYield() ) {
+				const HTREEITEM item = state.treeScanPending.back();
+				state.treeScanPending.pop_back();
+				state.clearTreeItems.push_back(item);
+				// Push the sibling first and the child second so the stack walks
+				// depth-first while retaining parent-before-child discovery order.
+				if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, item);
+					sibling != nullptr ) state.treeScanPending.push_back(sibling);
+				if( const HTREEITEM child = TreeView_GetChild(hwndTree, item);
+					child != nullptr ) state.treeScanPending.push_back(child);
+				++processed;
+			}
+			if( !state.treeScanPending.empty() ) { yield(); return; }
+			std::reverse(state.clearTreeItems.begin(), state.clearTreeItems.end());
+			state.stage = WorkbenchApplyStage::ClearList;
+			break;
+		}
+
+		case WorkbenchApplyStage::ClearList: {
+			const auto hwndList = GetItemHwnd(IDC_LIST_FL);
+			if( hwndList == nullptr ) { fail(); return; }
+			while( state.clearListRemaining != 0 && !shouldYield() ) {
+				if( !ListView_DeleteItem(hwndList, 0) ) { fail(); return; }
+				--state.clearListRemaining;
+				++processed;
+			}
+			if( state.clearListRemaining != 0 ) { yield(); return; }
+			state.stage = WorkbenchApplyStage::ClearTree;
+			break;
+		}
+
+		case WorkbenchApplyStage::ClearTree: {
+			const auto hwndTree = GetItemHwnd(IDC_TREE_FL);
+			if( hwndTree == nullptr ) { fail(); return; }
+			while( state.clearTreeIndex < state.clearTreeItems.size() && !shouldYield() ) {
+				if( !TreeView_DeleteItem(hwndTree, state.clearTreeItems[state.clearTreeIndex]) ) {
+					fail();
+					return;
+				}
+				++state.clearTreeIndex;
+				++processed;
+			}
+			if( state.clearTreeIndex != state.clearTreeItems.size() ) { yield(); return; }
+			state.clearTreeItems.clear();
+			state.treeBeginUs = WorkbenchNowUs();
+			state.stage = WorkbenchApplyStage::InsertTree;
+			break;
+		}
+
+		case WorkbenchApplyStage::InsertTree: {
+			const auto hwndTree = GetItemHwnd(IDC_TREE_FL);
+			if( hwndTree == nullptr ) { fail(); return; }
+			while( state.treeIndex < state.parse.TreeNodes().size() && !shouldYield() ) {
+				const auto& node = state.parse.TreeNodes()[state.treeIndex];
+				if( node.ParentNodeIndex() >= static_cast<int>(state.nodeItems.size()) ) { fail(); return; }
+				TV_INSERTSTRUCTW insert{};
+				insert.hParent = node.ParentNodeIndex() >= 0
+					? state.nodeItems[static_cast<std::size_t>(node.ParentNodeIndex())] : TVI_ROOT;
+				insert.hInsertAfter = state.insertAfter;
+				insert.item.mask = TVIF_TEXT | TVIF_PARAM | TVIF_IMAGE | TVIF_SELECTEDIMAGE;
+				insert.item.pszText = const_cast<wchar_t*>(node.Label().c_str());
+				insert.item.lParam = node.SymbolIndex() >= 0 ? node.SymbolIndex() : -1;
+				insert.item.iImage = node.SymbolIndex() >= 0 ? WorkbenchSymbolImageIndex(node.Info()) : 0;
+				insert.item.iSelectedImage = insert.item.iImage;
+				const HTREEITEM item = TreeView_InsertItem(hwndTree, &insert);
+				if( item == nullptr ) { fail(); return; }
+				state.nodeItems.push_back(item);
+				if( node.SymbolIndex() >= 0
+					&& static_cast<std::size_t>(node.SymbolIndex()) < m_workbenchTreeItems.size() ) {
+					m_workbenchTreeItems[static_cast<std::size_t>(node.SymbolIndex())] = item;
+				}
+				m_workbenchTreeLabels.emplace(item, WorkbenchTreeLabel{node.Label(), node.Depth()});
+				++state.treeIndex;
+				++processed;
+			}
+			if( state.treeIndex != state.parse.TreeNodes().size() ) { yield(); return; }
+			state.parse.timings.nativeTreeBuildUs = WorkbenchNowUs() - state.treeBeginUs;
+			m_workbenchLastTimings.nativeTreeBuildUs = state.parse.timings.nativeTreeBuildUs;
+			state.expansionBeginUs = WorkbenchNowUs();
+			state.stage = WorkbenchApplyStage::ExpandTree;
+			break;
+		}
+
+		case WorkbenchApplyStage::ExpandTree: {
+			// Do not expand every node during a result commit.  Common-controls
+			// perform layout and notification work for each expansion, which turns
+			// an otherwise bounded apply into another O(tree-size) UI stall.  Roots
+			// remain visible, while users can expand children on demand; selection
+			// continues to choose the nearest already-visible ancestor.
+			state.parse.timings.expansionUs = WorkbenchNowUs() - state.expansionBeginUs;
+			state.lineMarksBeginUs = WorkbenchNowUs();
+			state.stage = WorkbenchApplyStage::ApplyLineMarks;
+			break;
+		}
+
+		case WorkbenchApplyStage::ApplyLineMarks: {
+			CEditView* const view = reinterpret_cast<CEditView*>(m_lParam);
+			CEditDoc* const document = view != nullptr ? view->GetDocument() : nullptr;
+			if( document == nullptr ) { fail(); return; }
+			if( !state.lineMarksReset ) {
+				if( state.lineMarkResetCursor == nullptr ) {
+					state.lineMarkResetCursor = document->m_cDocLineMgr.GetDocLineTop();
+				}
+				while( state.lineMarkResetCursor != nullptr && !shouldYield() ) {
+					CDocLine* const line = state.lineMarkResetCursor;
+					state.lineMarkResetCursor = line->GetNextLine();
+					CFuncListManager().SetLineFuncList(line, false);
+					++processed;
+				}
+				if( state.lineMarkResetCursor != nullptr ) { yield(); return; }
+				state.lineMarksReset = true;
+			}
+			while( state.lineIndex < state.model->GetNum() && !shouldYield() ) {
+				const CFuncInfo* const info = state.model->GetAt(state.lineIndex++);
+				if( info != nullptr && info->m_nFuncLineCRLF > 0 ) {
+					if( CDocLine* const line = document->m_cDocLineMgr.GetLine(info->m_nFuncLineCRLF - 1) ) {
+						CFuncListManager().SetLineFuncList(line, true);
+					}
+				}
+				++processed;
+			}
+			if( state.lineIndex != static_cast<std::size_t>(state.model->GetNum()) ) { yield(); return; }
+			state.parse.timings.lineMarkProjectionUs = WorkbenchNowUs() - state.lineMarksBeginUs;
+			state.stage = WorkbenchApplyStage::Finalize;
+			break;
+		}
+
+		case WorkbenchApplyStage::Finalize: {
+			const auto selectionBegin = WorkbenchNowUs();
+			m_workbenchCommittedModel = std::move(state.model);
+			m_pcFuncInfoArr = m_workbenchCommittedModel.get();
+			m_bFuncInfoArrIsUpToDate = true;
+			CommitWorkbenchModel();
+			CEditView* const view = reinterpret_cast<CEditView*>(m_lParam);
+			if( view != nullptr ) {
+				m_nCurLine = view->GetCaret().GetCaretLayoutPos().GetY2() + CLayoutInt(1);
+				m_nCurCol = view->GetCaret().GetCaretLayoutPos().GetX2() + CLayoutInt(1);
+				int selection = -1;
+				if( GetFuncInfoIndex(m_nCurLine, m_nCurCol, &selection) ) SetItemSelection(selection, false);
+			}
+			state.parse.timings.selectionUs = WorkbenchNowUs() - selectionBegin;
+			::ShowWindow(GetItemHwnd(IDC_BUTTON_SETTING), SW_HIDE);
+			::ShowWindow(GetItemHwnd(IDC_LIST_FL), SW_HIDE);
+			::SendMessageW(GetItemHwnd(IDC_TREE_FL), WM_SETREDRAW, TRUE, 0);
+			::SendMessageW(GetItemHwnd(IDC_LIST_FL), WM_SETREDRAW, TRUE, 0);
+			::EnableWindow(GetItemHwnd(IDC_TREE_FL), TRUE);
+			// InsertTree already supplied the complete value-owned labels and icon
+			// indices.  Do not synchronously walk every visible root here to measure
+			// and shorten text: a document with thousands of top-level classes makes
+			// that otherwise "visible-only" pass a single long UI stall.  The native
+			// TreeView clips the complete labels, while later explicit appearance or
+			// resize requests can still perform the optional compacting pass.
+			m_workbenchTreeContentDirty = false;
+			m_workbenchAppearanceDirty = false;
+			::RedrawWindow(GetHwnd(), nullptr, nullptr,
+				RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_NOINTERNALPAINT);
+			state.parse.timings.appearanceUs = 0;
+			state.parse.timings.nativeCommitUs = WorkbenchNowUs() - state.startUs;
+			state.parse.timings.totalUs = m_workbenchRequestStartUs != 0
+				? WorkbenchNowUs() - m_workbenchRequestStartUs : WorkbenchNowUs() - state.startUs;
+			m_workbenchLastTimings = state.parse.timings;
+			m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Parsed;
+			m_workbenchRequestedVersion = {};
+			m_workbenchRequestedGeneration = 0;
+			m_workbenchRequestStartUs = 0;
+			m_workbenchApply.reset();
+			return;
+		}
+		}
+
+		if( m_workbenchApply != nullptr && IsWorkbenchApplyCurrent() ) yield();
+	}catch( const std::exception& ) {
+		fail();
+	}
 }
 
 workbench::outline::OutlineWorkerStateSnapshot CDlgFuncList::GetWorkbenchWorkerState() const noexcept
@@ -753,112 +1149,7 @@ void CDlgFuncList::CommitWorkbenchParseResult(
 		return;
 	}
 
-	std::unique_ptr<CFuncInfoArr> rollbackModel;
-	int rollbackOutlineType = m_nOutlineType;
-	int rollbackListType = m_nListType;
-	try {
-		auto nextModel = std::make_unique<CFuncInfoArr>();
-		nextModel->m_szFilePath = result->parse.filePath.c_str();
-		const auto layoutBegin = std::chrono::steady_clock::now();
-		for( const auto& symbol : result->parse.symbols ) {
-			const CLogicInt logicalLine = CLogicInt(std::max(0, symbol.logicalLine));
-			const CLogicInt logicalColumn = CLogicInt(std::max(0, symbol.logicalColumn));
-			CLayoutPoint layout(0, 0);
-			document->m_cLayoutMgr.LogicToLayout(
-				CLogicPoint(logicalColumn > 0 ? logicalColumn - CLogicInt(1) : CLogicInt(0),
-					logicalLine > 0 ? logicalLine - CLogicInt(1) : CLogicInt(0)),
-				&layout);
-			const wchar_t* const fileName = symbol.fileName.empty() ? nullptr : symbol.fileName.c_str();
-			nextModel->AppendData(
-				logicalLine,
-				logicalColumn,
-				layout.GetY2() + CLayoutInt(1),
-				layout.GetX2() + CLayoutInt(1),
-				symbol.name.c_str(),
-				fileName,
-				symbol.info,
-				symbol.depth);
-		}
-		result->parse.timings.layoutProjectionUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-			std::chrono::steady_clock::now() - layoutBegin).count());
-		for( const auto& [info, text] : result->parse.appendText ) {
-			nextModel->SetAppendText(info, text, true);
-		}
-		if( GetWorkbenchDocumentVersion() != result->parse.documentVersion ) {
-			finishSuperseded();
-			return;
-		}
-
-		rollbackOutlineType = m_nOutlineType;
-		rollbackListType = m_nListType;
-		rollbackModel = std::move(m_workbenchCommittedModel);
-		CFuncInfoArr* const oldModel = rollbackModel.get();
-		m_pcFuncInfoArr = nextModel.get();
-		m_nOutlineType = result->parse.outlineType;
-		m_nListType = result->parse.listType;
-		m_bFuncInfoArrIsUpToDate = false;
-
-		m_workbenchLastTimings = {};
-		const auto commitBegin = std::chrono::steady_clock::now();
-		SetData();
-		result->parse.timings.nativeCommitUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-			std::chrono::steady_clock::now() - commitBegin).count());
-		result->parse.timings.lineMarkProjectionUs = m_workbenchLastTimings.lineMarkProjectionUs;
-		result->parse.timings.nativeTreeBuildUs = m_workbenchLastTimings.nativeTreeBuildUs;
-		result->parse.timings.appearanceUs = m_workbenchLastTimings.appearanceUs;
-		result->parse.timings.expansionUs = m_workbenchLastTimings.expansionUs;
-
-		if( GetWorkbenchDocumentVersion() != result->parse.documentVersion ) {
-			// Rebuild the old projection before returning so a re-entrant document
-			// change cannot leave a stale tree paired with the old model.
-			m_pcFuncInfoArr = oldModel;
-			m_workbenchCommittedModel = std::move(rollbackModel);
-			m_nOutlineType = rollbackOutlineType;
-			m_nListType = rollbackListType;
-			m_bFuncInfoArrIsUpToDate = false;
-			try { SetData(); } catch( ... ) {}
-			finishSuperseded();
-			return;
-		}
-
-		m_workbenchCommittedModel = std::move(nextModel);
-		m_pcFuncInfoArr = m_workbenchCommittedModel.get();
-		rollbackModel.reset();
-		m_bFuncInfoArrIsUpToDate = true;
-		CommitWorkbenchModel();
-
-		const auto selectionBegin = std::chrono::steady_clock::now();
-		m_nCurLine = view->GetCaret().GetCaretLayoutPos().GetY2() + CLayoutInt(1);
-		m_nCurCol = view->GetCaret().GetCaretLayoutPos().GetX2() + CLayoutInt(1);
-		int selection = -1;
-		if( GetFuncInfoIndex(m_nCurLine, m_nCurCol, &selection) ) SetItemSelection(selection, false);
-		result->parse.timings.selectionUs = static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
-			std::chrono::steady_clock::now() - selectionBegin).count());
-		result->parse.timings.totalUs = m_workbenchRequestStartUs != 0
-			? WorkbenchNowUs() - m_workbenchRequestStartUs
-			: result->parse.timings.snapshotCaptureUs + result->parse.timings.queueWaitUs
-				+ result->parse.timings.parserUs + result->parse.timings.dtoConstructionUs
-				+ result->parse.timings.layoutProjectionUs + result->parse.timings.nativeCommitUs
-				+ result->parse.timings.selectionUs;
-		m_workbenchLastTimings = result->parse.timings;
-		m_workbenchLastTerminal = workbench::outline::OutlineWorkerTerminal::Parsed;
-		m_workbenchRequestedVersion = {};
-		m_workbenchRequestedGeneration = 0;
-		m_workbenchRequestStartUs = 0;
-	}catch( ... ) {
-		// SetData is run against the temporary model.  On any allocation/native
-		// failure, keep the old owner and expose one Failed terminal; no retry is
-		// scheduled implicitly.
-		if( rollbackModel != nullptr ) {
-			m_workbenchCommittedModel = std::move(rollbackModel);
-			m_pcFuncInfoArr = m_workbenchCommittedModel.get();
-			m_nOutlineType = rollbackOutlineType;
-			m_nListType = rollbackListType;
-			m_bFuncInfoArrIsUpToDate = false;
-			try { SetData(); } catch( ... ) {}
-		}
-		finishFailure();
-	}
+	BeginWorkbenchApply(std::move(result));
 }
 
 int CDlgFuncList::WorkbenchSymbolImageIndex( int info ) noexcept
@@ -1024,7 +1315,14 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 				}
 			}
 			std::vector<HTREEITEM> pending;
-			if( const HTREEITEM root = TreeView_GetRoot(hwndTree); root != nullptr ) pending.push_back(root);
+			// Large workbench trees are populated incrementally.  Updating every
+			// off-screen label here would recreate the same UI-thread stall that the
+			// staged insertion avoids, so defer those rows until they become visible.
+			for( HTREEITEM visible = TreeView_GetFirstVisible(hwndTree);
+				visible != nullptr;
+				visible = TreeView_GetNextVisible(hwndTree, visible) ) {
+				pending.push_back(visible);
+			}
 			while( !pending.empty() ){
 				const HTREEITEM itemHandle = pending.back();
 				pending.pop_back();
@@ -1047,7 +1345,7 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 				const auto label = m_workbenchTreeLabels.find(itemHandle);
 				if( label != m_workbenchTreeLabels.end() ) {
 					compactText = CompactWorkbenchTreeText(
-						metrics, label->second.text.c_str(), label->second.depth );
+						metrics, label->second.Text().c_str(), label->second.Depth() );
 				}
 				TVITEMW item{};
 				item.mask = TVIF_IMAGE | TVIF_SELECTEDIMAGE;
@@ -1060,8 +1358,6 @@ void CDlgFuncList::ApplyWorkbenchAppearance() noexcept
 					item.pszText = compactText.data();
 				}
 				(void)TreeView_SetItem( hwndTree, &item );
-				if( const HTREEITEM sibling = TreeView_GetNextSibling(hwndTree, itemHandle); sibling != nullptr ) pending.push_back(sibling);
-				if( const HTREEITEM child = TreeView_GetChild(hwndTree, itemHandle); child != nullptr ) pending.push_back(child);
 			}
 		}
 		if( frameChanged ){
@@ -1107,6 +1403,10 @@ INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM
 {
 	if( wMsg == workbench::outline::OutlineParserWorker::kWorkerResultMessage ) {
 		HandleWorkbenchWorkerResult(lParam);
+		return 0;
+	}
+	if( wMsg == kWorkbenchApplyMessage ) {
+		HandleWorkbenchApplyStep();
 		return 0;
 	}
 	INT_PTR result;
@@ -1368,6 +1668,7 @@ void CDlgFuncList::ChangeView( LPARAM pcEditView )
 /*! ダイアログデータの設定 */
 void CDlgFuncList::SetData()
 {
+	if( IsWorkbenchMode() && m_workbenchApply != nullptr ) return;
 	if( IsWorkbenchMode() ) {
 		m_workbenchTreeContentDirty = true;
 		// These are commit-scoped scratch measurements.  Retained timings are
@@ -5182,6 +5483,7 @@ void CDlgFuncList::NotifyDocModification()
 	// もう最新ではなくなりました
 	m_bFuncInfoArrIsUpToDate = false;
 	ObserveWorkbenchDocument( reinterpret_cast<CEditView*>(m_lParam) );
+	CancelWorkbenchApply();
 	if( m_workbenchDocumentVersion.IsValid() ){
 		if( m_workbenchDocumentVersion.version != std::numeric_limits<std::uint64_t>::max() ){
 			++m_workbenchDocumentVersion.version;
