@@ -60,6 +60,8 @@ def _run_child(
 ) -> ChildResult:
     started = time.perf_counter()
     creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
+    environment = os.environ.copy()
+    environment["SAKURA_NATIVE_ALIAS_OWNER_PARENT_PROCESS"] = "1"
     process = subprocess.Popen(
         list(command),
         cwd=cwd,
@@ -69,6 +71,7 @@ def _run_child(
         encoding="utf-8",
         errors="replace",
         creationflags=creationflags,
+        env=environment,
     )
     try:
         stdout, stderr = process.communicate(timeout=timeout_seconds)

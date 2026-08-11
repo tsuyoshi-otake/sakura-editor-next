@@ -145,7 +145,13 @@ def native_execution_root(
             )
         aliases = (requested,)
     else:
-        aliases = tuple(candidate / ".snp" / f"{os.getpid():x}-{uuid.uuid4().hex[:8]}" for candidate in candidates)
+        owner_pid = os.getpid()
+        if os.environ.get("SAKURA_NATIVE_ALIAS_OWNER_PARENT_PROCESS") == "1":
+            # Windows virtual-environment launchers can replace the Popen process
+            # with a second interpreter.  The parent process is the stable owner
+            # identifier used by timeout cleanup in that execution path.
+            owner_pid = os.getppid()
+        aliases = tuple(candidate / ".snp" / f"{owner_pid:x}-{uuid.uuid4().hex[:8]}" for candidate in candidates)
 
     errors: list[str] = []
     alias: Path | None = None
