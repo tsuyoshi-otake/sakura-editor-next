@@ -403,7 +403,7 @@ private:
 	try {
 		converted.resize(static_cast<std::size_t>(required));
 	}
-	catch (...) {
+	catch (const std::exception&) {
 		return false;
 	}
 	return ::WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, value,
