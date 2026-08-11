@@ -626,6 +626,42 @@
       "state_owner": null,
       "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_shareddata_contract_tests.vcxproj"], "cmake": ["sakura_shareddata_contract_tests"]},
       "compile_profile": null
+    },
+    {
+      "id": "sakura_language_en_us_resources",
+      "family": "legacy-language-resources",
+      "kind": "implementation",
+      "maturity": "candidate",
+      "build_definition": "legacy",
+      "supported_contexts": ["msvc-x64-debug", "msvc-x64-release"],
+      "owner": "sakura_lang",
+      "sources": ["sakura_lang/sakura_rc_en-US.rc", "sakura_lang/sakura_rc_en-US.rc2"],
+      "public_headers": [],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": [],
+      "private_include_roots": [],
+      "state_owner": null,
+      "backend_targets": {"msbuild": ["sakura_lang/sakura_lang_en_US.vcxproj"]},
+      "compile_profile": null
+    },
+    {
+      "id": "sakura_language_zh_cn_resources",
+      "family": "legacy-language-resources",
+      "kind": "implementation",
+      "maturity": "candidate",
+      "build_definition": "legacy",
+      "supported_contexts": ["msvc-x64-debug", "msvc-x64-release"],
+      "owner": "sakura_lang",
+      "sources": ["sakura_lang/sakura_rc_zh-CN.rc", "sakura_lang/sakura_rc_zh-CN.rc2"],
+      "public_headers": [],
+      "private_headers": [],
+      "ownership_exclusions": [],
+      "public_include_roots": [],
+      "private_include_roots": [],
+      "state_owner": null,
+      "backend_targets": {"msbuild": ["sakura_lang/sakura_lang_zh_CN.vcxproj"]},
+      "compile_profile": null
     }
   ],
   "contracts": [
@@ -696,9 +732,56 @@
       "outputs": [],
       "tool_id": null,
       "condition": true
+    },
+    {
+      "id": "sakura-language-en-us-resource",
+      "owner": "sakura_language_en_us_resources",
+      "artifact_kind": "resource",
+      "inputs": ["sakura_lang/sakura_rc_en-US.rc", "sakura_lang/sakura_rc_en-US.rc2"],
+      "outputs": ["x64/Debug/sakura_lang_en_US.dll", "x64/Release/sakura_lang_en_US.dll"],
+      "tool_id": "rc",
+      "condition": {"eq": {"field": "toolchain", "value": "msvc"}}
+    },
+    {
+      "id": "sakura-language-zh-cn-resource",
+      "owner": "sakura_language_zh_cn_resources",
+      "artifact_kind": "resource",
+      "inputs": ["sakura_lang/sakura_rc_zh-CN.rc", "sakura_lang/sakura_rc_zh-CN.rc2"],
+      "outputs": ["x64/Debug/sakura_lang_zh_CN.dll", "x64/Release/sakura_lang_zh_CN.dll"],
+      "tool_id": "rc",
+      "condition": {"eq": {"field": "toolchain", "value": "msvc"}}
+    },
+    {
+      "id": "root-vcpkg-package-set",
+      "owner": "sakura_app",
+      "artifact_kind": "package_set",
+      "inputs": ["vcpkg.json"],
+      "outputs": ["vcpkg:bregonig", "vcpkg:cmigemo", "vcpkg:darkmodelib", "vcpkg:dll-plugin1", "vcpkg:fmt", "vcpkg:gtest", "vcpkg:ms-gsl", "vcpkg:ppa-stub", "vcpkg:wil"],
+      "tool_id": null,
+      "condition": true
     }
   ],
   "edges": [
+    {
+      "id": "sakura-app-to-root-vcpkg-package-set",
+      "from": "sakura_app",
+      "to": "root-vcpkg-package-set",
+      "kind": "package",
+      "phases": ["compile", "link", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "vcpkg.json"},
+        {"context": "cmake-msvc-x64-debug", "probe": "vcpkg.json"},
+        {"context": "msvc-x64-release", "probe": "vcpkg.json"},
+        {"context": "cmake-msvc-x64-release", "probe": "vcpkg.json"},
+        {"context": "mingw-x64-debug", "probe": "vcpkg.json"},
+        {"context": "mingw-x64-release", "probe": "vcpkg.json"}
+      ]
+    },
     {
       "id": "tests1-to-sakura-app",
       "from": "tests1",
