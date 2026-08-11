@@ -56,7 +56,13 @@ std::wstring NormalizeProfileIdentity(const std::filesystem::path& profileDirect
 	if (!error) {
 		identity = canonical;
 	}
-	std::wstring normalized = identity.lexically_normal().wstring();
+	identity = identity.lexically_normal();
+	// A non-existent dotted path can retain a terminal separator on MinGW.
+	// That spelling must not create a distinct extension-host identity.
+	if (identity.has_relative_path() && identity.filename().empty()) {
+		identity = identity.parent_path();
+	}
+	std::wstring normalized = identity.wstring();
 	std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](wchar_t character) {
 		return static_cast<wchar_t>(std::towlower(character));
 	});
