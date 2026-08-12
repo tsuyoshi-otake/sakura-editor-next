@@ -18,8 +18,10 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
+import sys
 import time
 import uuid
 from contextlib import contextmanager
@@ -67,6 +69,33 @@ _VCPKG_DIAGNOSTIC_MARKERS = (
 )
 _VCPKG_DIAGNOSTIC_LINES = 12
 _VCPKG_TAIL_LINES = 80
+# A restore fails for two unrelated reasons, and only one of them is worth
+# repeating.  A port that does not compile fails the same way every time, so a
+# retry only multiplies a long job.  A distfile that cannot be fetched fails
+# because something outside this repository was briefly unavailable; vcpkg does
+# retry that itself, but its three attempts land inside roughly five seconds,
+# which is shorter than an ordinary CDN degradation.  Classify from vcpkg's own
+# wording, and repeat only the fetch-shaped failures.
+_VCPKG_TRANSIENT_HTTP_STATUS = re.compile(r"curl operation failed with response code\s+(5\d\d)")
+_VCPKG_CURL_ERROR_CODE = re.compile(r"curl operation failed with error code\s+(\d+)")
+# curl transport codes meaning "the peer, or the path to it, misbehaved".  A 4xx
+# response, a checksum mismatch, and a malformed URL are permanent and must keep
+# failing on the first attempt.
+_VCPKG_TRANSIENT_CURL_CODES = frozenset({6, 7, 16, 18, 28, 35, 52, 55, 56, 92})
+_VCPKG_TRANSIENT_MARKERS = ("WinHttpReceiveResponse got error",)
+_RESTORE_DOWNLOAD_ATTEMPTS = 4
+# The horizon, not the attempt count, is what has to match the outage.  The
+# 2026-08-12 github.com degradation was measured three independent ways in the
+# same hour, and every short-horizon retry lost: vcpkg's own three attempts land
+# inside roughly five seconds, ``msys2/setup-msys2`` spends about thirty, and
+# this action's first revision spent twenty-five (attempts at 21:24:25, 21:24:30
+# and 21:24:51 all failed).  The same runner then fetched the whole closure
+# successfully from 21:27:04 to 21:29:03, so the path recovered roughly two and
+# a quarter minutes after the last of those attempts.  Four attempts across
+# 15 + 45 + 90 seconds cover that observed recovery; the wait is bounded, drawn
+# from the caller's existing budget, and cheap next to re-running a build leg
+# that is measured in tens of minutes.
+_RESTORE_DOWNLOAD_BACKOFF_SECONDS = (15.0, 45.0, 90.0)
 
 
 def _canonical_json(value: object) -> str:
@@ -517,13 +546,33 @@ def _summarize_vcpkg_failure(stdout: str, stderr: str, returncode: int | None) -
     return "\n\n".join(sections)
 
 
-def _run_vcpkg(
+def _transient_download_reason(stdout: str, stderr: str) -> str | None:
+    """Name the fetch failure worth repeating, or return None for a real defect."""
+
+    text = stdout + "\n" + stderr
+    status = _VCPKG_TRANSIENT_HTTP_STATUS.search(text)
+    if status is not None:
+        return f"HTTP {status.group(1)} while downloading a declared distfile"
+    for match in _VCPKG_CURL_ERROR_CODE.finditer(text):
+        code = int(match.group(1))
+        if code in _VCPKG_TRANSIENT_CURL_CODES:
+            return f"curl transport error {code} while downloading a declared distfile"
+    for marker in _VCPKG_TRANSIENT_MARKERS:
+        if marker in text:
+            return f"{marker} while downloading a declared distfile"
+    return None
+
+
+def _spawn_vcpkg(
     argv: Sequence[str],
     *,
     repo_root: Path,
     environment: Mapping[str, str],
-    timeout_seconds: int,
-) -> tuple[str, str]:
+    timeout_seconds: float,
+    budget_seconds: int,
+) -> tuple[str, str, int]:
+    """Run vcpkg once and return its raw streams with the exit status."""
+
     try:
         process = subprocess.Popen(
             list(argv),
@@ -548,13 +597,70 @@ def _run_vcpkg(
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.communicate()
-            raise BuildError("PACKAGE_RESTORE_TIMEOUT", f"vcpkg restore exceeded {timeout_seconds}s", 8) from error
-        if process.returncode:
-            raise BuildError("PACKAGE_RESTORE_FAILED", _summarize_vcpkg_failure(stdout, stderr, process.returncode), 6)
-        return stdout, stderr
+            raise BuildError("PACKAGE_RESTORE_TIMEOUT", f"vcpkg restore exceeded {budget_seconds}s", 8) from error
+        return stdout, stderr, int(process.returncode or 0)
     finally:
         if process.poll() is None:
             _terminate_process_tree(process)
+
+
+def _run_vcpkg(
+    argv: Sequence[str],
+    *,
+    repo_root: Path,
+    environment: Mapping[str, str],
+    timeout_seconds: int,
+    events: EventWriter | None = None,
+) -> tuple[str, str]:
+    """Restore the declared closure, repeating only fetch-shaped failures.
+
+    Every attempt and every backoff is drawn from the caller's single timeout
+    budget, so adding the retry cannot extend the worst case beyond the wait a
+    caller already accepted.  A repeated attempt is cheap because the installed
+    root, the buildtrees, and the downloads cache all survive it: vcpkg resumes
+    at the port that could not fetch instead of rebuilding the closure.
+    """
+
+    deadline = time.monotonic() + timeout_seconds
+    for attempt in range(1, _RESTORE_DOWNLOAD_ATTEMPTS + 1):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BuildError("PACKAGE_RESTORE_TIMEOUT", f"vcpkg restore exceeded {timeout_seconds}s", 8)
+        stdout, stderr, returncode = _spawn_vcpkg(
+            argv,
+            repo_root=repo_root,
+            environment=environment,
+            timeout_seconds=remaining,
+            budget_seconds=timeout_seconds,
+        )
+        if not returncode:
+            return stdout, stderr
+        summary = _summarize_vcpkg_failure(stdout, stderr, returncode)
+        reason = _transient_download_reason(stdout, stderr)
+        if reason is None or attempt == _RESTORE_DOWNLOAD_ATTEMPTS:
+            raise BuildError("PACKAGE_RESTORE_FAILED", summary, 6)
+        backoff = _RESTORE_DOWNLOAD_BACKOFF_SECONDS[attempt - 1]
+        if time.monotonic() + backoff >= deadline:
+            raise BuildError("PACKAGE_RESTORE_FAILED", summary, 6)
+        # The build log, not the event stream, is where a human triages this:
+        # an unattended EventWriter has no stream and drops everything.
+        print(
+            f"PACKAGE_RESTORE_RETRY: attempt {attempt} of {_RESTORE_DOWNLOAD_ATTEMPTS} failed"
+            f" ({reason}); retrying in {backoff:g}s",
+            file=sys.stderr,
+            flush=True,
+        )
+        if events is not None:
+            events.emit(
+                "package_restore_download_retry",
+                status="retrying",
+                attempt=attempt,
+                attempts_allowed=_RESTORE_DOWNLOAD_ATTEMPTS,
+                backoff_seconds=backoff,
+                reason=reason,
+            )
+        time.sleep(backoff)
+    raise BuildError("PACKAGE_RESTORE_FAILED", f"vcpkg restore exhausted {_RESTORE_DOWNLOAD_ATTEMPTS} attempts", 6)
 
 
 def _restore_temp_root(plan: Mapping[str, object]) -> Path:
@@ -564,7 +670,13 @@ def _restore_temp_root(plan: Mapping[str, object]) -> Path:
     return parent / f".r-{uuid.uuid4().hex[:12]}"
 
 
-def _run_restore(plan: Mapping[str, object], *, timeout_seconds: int, environment: Mapping[str, str] | None) -> dict[str, object]:
+def _run_restore(
+    plan: Mapping[str, object],
+    *,
+    timeout_seconds: int,
+    environment: Mapping[str, str] | None,
+    events: EventWriter | None = None,
+) -> dict[str, object]:
     repo_root = Path(plan["repo_root"])
     temporary = _restore_temp_root(plan)
     temporary.mkdir(parents=True, exist_ok=False)
@@ -588,7 +700,7 @@ def _run_restore(plan: Mapping[str, object], *, timeout_seconds: int, environmen
             env.update(environment)
         env["VCPKG_ROOT"] = str(plan["vcpkg_root"])
         env.pop("VCPKG_DEFAULT_TRIPLET", None)
-        _run_vcpkg(command, repo_root=repo_root, environment=env, timeout_seconds=timeout_seconds)
+        _run_vcpkg(command, repo_root=repo_root, environment=env, timeout_seconds=timeout_seconds, events=events)
         candidate_plan = dict(plan)
         candidate_plan["entry_root"] = temporary
         candidate_plan["installed_root"] = installed_root
@@ -680,7 +792,7 @@ def restore_package_closure(
                 _record_cache_use(plan)
                 result = _result_from_plan(plan, status="reused", metadata=metadata, valid=True)
             else:
-                metadata = _run_restore(plan, timeout_seconds=timeout_seconds, environment=environment)
+                metadata = _run_restore(plan, timeout_seconds=timeout_seconds, environment=environment, events=events)
                 valid, checked_metadata, failures = _entry_valid(plan)
                 if not valid or checked_metadata is None:
                     raise BuildError("PACKAGE_RESTORE_PUBLISH_INCOMPLETE", "; ".join(failures), 6)

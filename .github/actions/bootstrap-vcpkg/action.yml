@@ -1,0 +1,61 @@
+name: Bootstrap vcpkg
+description: >
+  Bootstrap the vcpkg tool, repeating a failed fetch instead of discarding the
+  job on a single bad response.
+
+inputs:
+  vcpkg-root:
+    description: Directory that holds bootstrap-vcpkg.bat.
+    required: true
+  attempts:
+    description: Total attempts, including the first.
+    required: false
+    default: "4"
+
+runs:
+  using: composite
+  steps:
+    # Bootstrap downloads one fixed tool; it compiles nothing and finishes in
+    # about ten seconds. That makes a blanket retry safe here in a way it would
+    # never be for a port build: repeating a genuinely broken bootstrap costs
+    # seconds, while not repeating a transient one discards a 35-minute job.
+    # What has to match the outage is the horizon, not the attempt count. The
+    # 2026-08-12 github.com delivery degradation (issue #138) defeated every
+    # short-horizon retry in the same hour: vcpkg's own three attempts inside
+    # roughly five seconds, msys2/setup-msys2's three across about thirty, and
+    # this action's first revision at 5 + 20 (attempts at 21:24:25, 21:24:30 and
+    # 21:24:51 all failed). The same runner then fetched the whole package
+    # closure from 21:27:04 to 21:29:03, so the path recovered about two and a
+    # quarter minutes later. 15 + 45 + 90 covers that measured recovery and
+    # still bounds the step at well under three minutes of waiting.
+    - name: Bootstrap vcpkg
+      shell: pwsh
+      working-directory: ${{ inputs.vcpkg-root }}
+      env:
+        BOOTSTRAP_VCPKG_ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        if (-not (Test-Path '.\bootstrap-vcpkg.bat' -PathType Leaf)) {
+            throw '.\bootstrap-vcpkg.bat not found.'
+        }
+
+        $attempts = [int]$env:BOOTSTRAP_VCPKG_ATTEMPTS
+        if ($attempts -lt 1) {
+            throw "attempts must be at least 1 (got $attempts)."
+        }
+        $backoff = @(15, 45, 90)
+
+        for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            & .\bootstrap-vcpkg.bat -disableMetrics
+            $code = $LASTEXITCODE
+            if ($code -eq 0) {
+                exit 0
+            }
+            if ($attempt -eq $attempts) {
+                throw "Failed to bootstrap vcpkg after $attempts attempt(s) (exit code: $code)."
+            }
+            $wait = $backoff[[Math]::Min($attempt - 1, $backoff.Length - 1)]
+            Write-Host "::warning::Bootstrap vcpkg attempt $attempt of $attempts failed (exit code: $code); retrying in ${wait}s."
+            Start-Sleep -Seconds $wait
+        }
