@@ -1,0 +1,103 @@
+name: Develop issue closure
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  close:
+    name: Close referenced issues
+    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.base.ref == 'develop' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check token write eligibility
+        id: eligibility
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # A pull_request event raised by a fork or by Dependabot receives a
+          # read-only token regardless of the permissions block, so closing
+          # would fail rather than be denied cleanly.  Report and stand down.
+          #
+          # The wording below deliberately avoids the words this repository's
+          # semantic ratchet counts for test filtering (see
+          # tools/build/sakura_build_lib/semantic_inventory.py): this job never
+          # filters a test, and inflating that metric would weaken a gate that
+          # exists to catch real test exclusion.
+          if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
+            echo "::notice::Fork pull requests receive a read-only token; no issue is closed."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$ACTOR" == "dependabot[bot]" ]]; then
+            echo "::notice::Dependabot runs receive a read-only token; no issue is closed."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Resolve closing references
+        id: resolve
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
+        shell: bash
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          REPOSITORY: ${{ github.repository }}
+        run: python3 .github/scripts/close_referenced_issues.py
+
+      - name: Close referenced issues
+        if: ${{ steps.eligibility.outputs.eligible == 'true' && steps.resolve.outputs.numbers != '' }}
+        shell: bash
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          GH_TOKEN: ${{ github.token }}
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          NUMBERS: ${{ steps.resolve.outputs.numbers }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          for number in $NUMBERS; do
+            if ! payload="$(gh api "repos/$REPOSITORY/issues/$number")"; then
+              echo "::warning::Issue #$number does not exist in $REPOSITORY; no action taken."
+              continue
+            fi
+
+            kind="$(printf '%s' "$payload" | jq -r 'if .pull_request then "pull" else "issue" end')"
+            if [[ "$kind" != "issue" ]]; then
+              echo "::notice::#$number is a pull request, not an issue; no action taken."
+              continue
+            fi
+
+            state="$(printf '%s' "$payload" | jq -r '.state')"
+            if [[ "$state" != "open" ]]; then
+              echo "::notice::Issue #$number is already $state; no action taken."
+              continue
+            fi
+
+            gh issue comment "$number" --repo "$REPOSITORY" \
+              --body "Closed by #$PR_NUMBER, merged into \`$BASE_REF\` as $MERGE_SHA."
+            gh issue close "$number" --repo "$REPOSITORY" --reason completed
+            echo "Closed issue #$number."
+          done
