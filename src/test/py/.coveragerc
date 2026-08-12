@@ -1,3 +1,21 @@
 [run]
+# Declare the measured scope explicitly.
+#
+# Without `source`, coverage measures whatever the session happened to import,
+# so the `--cov-fail-under=80` denominator is decided by the import statements
+# of unrelated tests.  #112 hit exactly that: a workflow-contract test imported
+# tools/build/sakura_build_lib/coverage_map.py to assert on the classifier, and
+# the total fell from 89% to 49% with all 149 tests passing.
+#
+# The paths below are the code this pytest target actually exercises.  The
+# remaining tests in src/test/py/ assert on workflow YAML text and contribute
+# no module statements at all.
+#
+# tools/build/ is deliberately absent.  pytest's default `norecursedirs` skips
+# any directory named `build`, so tools/build/tests/ is never collected here
+# and those modules can only ever be measured incidentally.
+source =
+    .github/scripts
+    src/main/py
 omit =
     */test_*.py

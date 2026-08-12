@@ -446,6 +446,23 @@ jobs:
       # zipArtifacts.bat copies every *.dll. Pin the provider instead of
       # letting it depend on whether the runner image ships diff on PATH.
       SAKURA_DIFFUTILS_SOURCE: none
+      # Which pull requests may narrow the headless suite (#112 Phase 3).
+      # This was `feature/*` only; the branch name never made the selection
+      # sound. What makes it sound is coverage_map.py's classifier, which
+      # returns a full-suite decision for a deletion or rename, a test or
+      # externals/ change, a build/test topology change, an unrecognized path,
+      # an unmapped production path, a module with no coverage, or a selection
+      # at or above the threshold -- and the selection step falls back to the
+      # full filter on any error at all.
+      #
+      # Promotion and back-merge pull requests stay excluded: a `main` or
+      # `develop` head is the integration state itself, the last place to
+      # accept reduced coverage, and its diff is not the work of one change.
+      # Forks stay excluded because they cannot read the map cache.
+      #
+      # Job-level so the restore, selection, and evidence-upload steps cannot
+      # drift apart; unset or `false` always means the full headless suite.
+      SAKURA_TEST_SELECTION_ELIGIBLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'develop' }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -511,19 +528,20 @@ jobs:
         echo "GITHUB_PR_HEAD_COMMIT=${{ github.event.pull_request.head.sha }}" >> $env:GITHUB_ENV
         echo "GITHUB_PR_HEAD_SHORT_COMMIT=$('${{ github.event.pull_request.head.sha }}'.SubString(0, 8))" >> $env:GITHUB_ENV
 
-    # Only same-repository feature branches targeting develop consume a map.
-    # Forks, fix/hotfix/dependabot PRs, develop/main promotion PRs, and every
-    # missing or invalid map retain the regular full headless suite.
+    # Eligibility is decided once in the job's env block above.  Forks,
+    # develop/main promotion pull requests, every event that is not a
+    # develop-targeted pull request, and every missing or invalid map retain
+    # the regular full headless suite.
     - name: Restore develop coverage map
       id: restore-coverage-map
-      if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       uses: actions/cache/restore@v4
       with:
         path: .coverage-map-cache
         key: tia-map-windows-x64-${{ github.event.pull_request.base.sha }}-${{ env.COVERAGE_MAP_SCHEMA_VERSION }}
 
     - name: Select feature PR tests
-      if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       env:
         COVERAGE_MAP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         COVERAGE_MAP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -805,7 +823,7 @@ jobs:
       run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
     - name: Upload feature test-selection evidence
-      if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      if: ${{ always() && env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       uses: actions/upload-artifact@v7
       with:
         name: test-selection-${{ matrix.platform }}-${{ matrix.config }}
