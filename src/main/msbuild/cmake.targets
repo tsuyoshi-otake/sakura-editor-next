@@ -11,7 +11,7 @@
       32-bit host. Disable FileTracker and node reuse only for these generated
       children; the Sakura projects retain normal dependency tracking.
     -->
-    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;chcp 65001 &gt; NUL; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' -A $(Platform) -B '$(CMakeToolsPath)' -S '$([MSBuild]::NormalizePath('$(CMakeToolsSourceDir)', '.'))' -DCMAKE_CONFIGURATION_TYPES='Debug;Release' -DCMAKE_SYSTEM_VERSION='10.0.22621.0' -DCMAKE_TOOLCHAIN_FILE='$(VcpkgRoot)scripts/buildsystems/vcpkg.cmake' -DVCPKG_TARGET_TRIPLET=$(VcpkgTriplet)&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" StdErrEncoding="UTF-8" ConsoleToMSBuild="true" />
+    <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;chcp 65001 &gt; NUL; [Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' -A $(Platform) -B '$(CMakeToolsPath)' -S '$([MSBuild]::NormalizePath('$(CMakeToolsSourceDir)', '.'))' -DCMAKE_CONFIGURATION_TYPES='Debug;Release' -DCMAKE_SYSTEM_VERSION='10.0.22621.0' -DCMAKE_TOOLCHAIN_FILE='$(SakuraVcpkgToolchainFile)' -DSAKURA_PACKAGE_CONFIG='$(SakuraPackageActiveRoot)$(VcpkgTriplet).cmake' -DVCPKG_TARGET_TRIPLET=$(VcpkgTriplet)&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" StdErrEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
   <!--
     version.h embeds the commit hash and the build revision derived from a

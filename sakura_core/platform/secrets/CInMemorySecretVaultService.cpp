@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 
 #include "platform/secrets/CInMemorySecretVaultService.h"
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <algorithm>
 #include <atomic>

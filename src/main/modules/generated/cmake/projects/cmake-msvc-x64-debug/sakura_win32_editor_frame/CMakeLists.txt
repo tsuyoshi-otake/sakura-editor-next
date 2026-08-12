@@ -13,17 +13,6 @@ set(CMAKE_OBJECT_PATH_MAX 220)
 set(CMAKE_CXX_STANDARD_LIBRARIES "")
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")
 
-add_library(sakura_editor_frame STATIC
-  "${SAKURA_REPO_ROOT}/sakura_core/workbench/editor/frame/EditorFrameEvents.cpp"
-  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/editor/EditorFrameEvents.h"
-)
-target_include_directories(sakura_editor_frame PUBLIC "${SAKURA_REPO_ROOT}/sakura_core/include")
-target_compile_features(sakura_editor_frame PRIVATE cxx_std_20)
-set_property(TARGET sakura_editor_frame PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDebug")
-set_target_properties(sakura_editor_frame PROPERTIES COMPILE_PDB_NAME "sakura_editor_frame.compile" COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb" PDB_NAME "sakura_editor_frame" PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")
-target_compile_options(sakura_editor_frame PRIVATE /source-charset:utf-8 /execution-charset:utf-8 /Zp8 /Zc:wchar_t "/FI${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_editor_frame.h")
-target_compile_definitions(sakura_editor_frame PRIVATE _ITERATOR_DEBUG_LEVEL=2 _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
-
 add_library(sakura_win32_editor_frame STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/window/Win32EditorFrameAdapter.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h"
@@ -34,4 +23,4 @@ set_property(TARGET sakura_win32_editor_frame PROPERTY MSVC_RUNTIME_LIBRARY "Mul
 set_target_properties(sakura_win32_editor_frame PROPERTIES COMPILE_PDB_NAME "sakura_win32_editor_frame.compile" COMPILE_PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb" PDB_NAME "sakura_win32_editor_frame" PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")
 target_compile_options(sakura_win32_editor_frame PRIVATE /source-charset:utf-8 /execution-charset:utf-8 /Zp8 /Zc:wchar_t "/FI${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_win32_editor_frame.h")
 target_compile_definitions(sakura_win32_editor_frame PRIVATE _ITERATOR_DEBUG_LEVEL=2 _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
-target_link_libraries(sakura_win32_editor_frame PRIVATE sakura_editor_frame)
+target_link_libraries(sakura_win32_editor_frame PUBLIC user32)

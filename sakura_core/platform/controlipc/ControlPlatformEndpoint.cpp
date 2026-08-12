@@ -4,12 +4,13 @@
 
 	SPDX-License-Identifier: Zlib
 */
-#include "StdAfx.h"
-#include "platform/controlipc/ControlPlatformEndpoint.h"
+#include <sakura/controlipc/ControlPlatformEndpoint.h>
 
 #include <sakura/controlipc/ControlIpcSecurity.h>
 #include <sakura/security/CurrentUserSecurityAttributes.h>
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
+
+#include <Windows.h>
 
 #include <algorithm>
 #include <array>

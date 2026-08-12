@@ -172,6 +172,7 @@ add_executable(tests1
   ${TESTS1_HEADERS}
   ${TESTS1_SOURCES}
   ${TESTS1_RESOURCE_SCRIPTS}
+  ${SAKURA_LEGACY_RESOURCE_SCRIPTS}
 )
 
 # Enable precompiled headers
@@ -206,7 +207,7 @@ target_include_directories(tests1
 # link libraries
 target_link_libraries(tests1
   PRIVATE
-    sakura_core
+    sakura_legacy_test_support
     GTest::gtest
     GTest::gmock
 )

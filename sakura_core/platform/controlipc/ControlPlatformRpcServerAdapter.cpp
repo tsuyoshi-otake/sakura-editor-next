@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 #include "platform/controlipc/ControlPlatformRpcServerAdapter.h"
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <mutex>
 #include <shared_mutex>

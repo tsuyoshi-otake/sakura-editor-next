@@ -15,8 +15,8 @@ file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/pdb")
 
 add_library(sakura_shareddata_contract INTERFACE)
 target_sources(sakura_shareddata_contract INTERFACE
+  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/shareddata/SharedDataAbiContract.h"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/shareddata/SharedDataCapabilities.h"
-  "${SAKURA_REPO_ROOT}/sakura_core/env/DLLSHAREDATA_Abi.h"
 )
 target_include_directories(sakura_shareddata_contract INTERFACE "${SAKURA_REPO_ROOT}/sakura_core/include")
 target_include_directories(sakura_shareddata_contract INTERFACE "${SAKURA_REPO_ROOT}/sakura_core")

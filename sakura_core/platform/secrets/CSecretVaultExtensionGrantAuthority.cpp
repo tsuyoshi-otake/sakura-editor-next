@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 #include "platform/secrets/CSecretVaultExtensionGrantAuthority.h"
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <algorithm>
 #include <limits>

@@ -26,12 +26,14 @@ set(project_name ppa_stub)
 # define a project name
 project (${project_name} LANGUAGES CXX C)
 
-# define variables by file GLOB
-file(GLOB_RECURSE SOURCES *.cpp)
-file(GLOB_RECURSE DEF_FILES *.def)
-
 # define sources files of an executable
-add_library(${project_name} MODULE ${SOURCES} ${DEF_FILES})
+add_library(${project_name} MODULE
+  ppa.cpp
+  ppa.h
+  ppa_stub.cpp
+  ppa_stub.def
+  ppa_stub.h
+)
 
 # Set C++ standard for project
 target_compile_features(${project_name} PUBLIC cxx_std_20)

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 
-GENERATOR_VERSION = "0.3.6"
+GENERATOR_VERSION = "0.3.7"
 
 PROJECT_PROFILE_FIELDS = frozenset({
     "abi_family",
@@ -44,7 +44,16 @@ CONDITION_OPERATORS = {"all", "any", "not", "eq", "in", "has_feature"}
 COMPONENT_KINDS = {"implementation", "contract", "composition", "executable", "test", "aggregate"}
 INTERFACE_COMPONENT_KINDS = {"contract", "aggregate"}
 CONTRACT_KINDS = {"inbound_api", "outbound_port", "wire_protocol", "abi_contract"}
-ARTIFACT_KINDS = {"generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product"}
+ARTIFACT_KINDS = {
+    "generated",
+    "resource",
+    "asset",
+    "package_set",
+    "staging_set",
+    "test_fixture",
+    "product",
+    "source_set",
+}
 RUNTIME_ARTIFACT_KINDS = {"asset", "product", "staging_set"}
 TOOL_IDS = {"sakura-module-generator", "header-make", "cmake", "msbuild", "rc", "copy"}
 MATURITY_LEVELS = {"legacy", "candidate", "transitional", "independent"}
@@ -522,10 +531,36 @@ class SemanticGraph:
         """
         return self._closure(roots, context_id, ("link",), include_private_link=True)
 
+    def _artifact_sets(
+        self,
+        context_id: str,
+        node_ids: Iterable[str] | None = None,
+    ) -> dict[str, list[str]]:
+        """Project active artifact IDs by kind for a context or build closure.
+
+        The manifest keeps artifacts in the same semantic graph as components,
+        but consumers need stable kind-specific views when planning package,
+        generation, or staging work.  Keep the projection ID-only and sorted so
+        it remains deterministic across backends and checkout ordering.
+        """
+        context = self.context(context_id).as_mapping()
+        allowed = set(node_ids) if node_ids is not None else None
+        result = {kind: [] for kind in ("package_set", "generated", "staging_set")}
+        for artifact in self.artifacts.values():
+            if allowed is not None and artifact.id not in allowed:
+                continue
+            if not evaluate_condition(artifact.condition, context):
+                continue
+            values = result.get(artifact.artifact_kind)
+            if values is not None:
+                values.append(artifact.id)
+        return {kind: sorted(values) for kind, values in result.items()}
+
     def project(self, context_id: str) -> dict[str, Any]:
         context = self.context(context_id)
         active_edges = self.active_edges(context_id)
         active_nodes = sorted(component.id for component in self.components.values() if context_id in component.supported_contexts)
+        artifact_sets = self._artifact_sets(context_id)
         return {
             "projection_schema": 1,
             "semantic_graph_hash": self.semantic_graph_hash,
@@ -544,9 +579,9 @@ class SemanticGraph:
                 self.compile_profiles.context_profiles[context_id]["project_profile"],
                 self.compile_profiles.context_profiles[context_id]["link_profile"],
             ],
-            "package_sets": [],
-            "generated_artifacts": [],
-            "staging_sets": [],
+            "package_sets": artifact_sets["package_set"],
+            "generated_artifacts": artifact_sets["generated"],
+            "staging_sets": artifact_sets["staging_set"],
         }
 
     def build_intent(self, roots: Iterable[str], context_id: str, phases: Iterable[str]) -> dict[str, Any]:
@@ -557,6 +592,7 @@ class SemanticGraph:
         closures = {phase: list(self.closure(root_list, context_id, (phase,))) for phase in phase_list}
         final_link_closure = list(self.final_link_closure(root_list, context_id)) if "link" in phase_list else []
         complete_closure = sorted({node for values in closures.values() for node in values})
+        artifact_sets = self._artifact_sets(context_id, (*complete_closure, *final_link_closure))
         backend_targets: dict[str, list[str]] = {}
         selected_backend = self.context(context_id).backend
         # Native build systems schedule the semantic closure through their own
@@ -579,9 +615,9 @@ class SemanticGraph:
             "closure_by_phase": closures,
             "final_link_closure": final_link_closure,
             "backend_targets": {key: sorted(set(value)) for key, value in sorted(backend_targets.items())},
-            "package_sets": [],
-            "generated_artifacts": [],
-            "staging_sets": [],
+            "package_sets": artifact_sets["package_set"],
+            "generated_artifacts": artifact_sets["generated"],
+            "staging_sets": artifact_sets["staging_set"],
         }
 
     def strongly_connected_components(self, context_id: str, phase: str) -> list[tuple[str, ...]]:

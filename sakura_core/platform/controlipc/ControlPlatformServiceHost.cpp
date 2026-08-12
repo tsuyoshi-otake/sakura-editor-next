@@ -9,7 +9,7 @@
 
 #include <sakura/controlipc/ControlIpcSecurity.h>
 #include "platform/controlipc/ControlPlatformRpcServerAdapter.h"
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <Windows.h>
 

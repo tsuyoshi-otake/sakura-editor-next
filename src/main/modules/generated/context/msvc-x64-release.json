@@ -1,14 +1,27 @@
 {
   "active_artifacts": [
     "controlipc-protocol-v1-golden-fixture",
-    "dllsharedata-layout-v1-golden-fixture"
+    "dllsharedata-layout-v1-golden-fixture",
+    "root-vcpkg-package-set",
+    "sakura-abi-projection-fixture-sources",
+    "sakura-editor-msvc-x64-release-product",
+    "sakura-editor-msvc-x64-release-runtime-stage",
+    "sakura-language-en-us-resource",
+    "sakura-language-zh-cn-resource",
+    "sakura-module-generated-projections",
+    "sakura-resource-id-contract",
+    "sakura-vendored-third-party-source-set"
   ],
   "active_components": [
     "sakura_app",
+    "sakura_controlipc_endpoint",
+    "sakura_controlipc_endpoint_tests",
     "sakura_controlipc_protocol",
     "sakura_controlipc_protocol_tests",
     "sakura_controlipc_security",
     "sakura_controlipc_security_tests",
+    "sakura_controlipc_transport",
+    "sakura_controlipc_transport_tests",
     "sakura_editor_app_lifecycle",
     "sakura_editor_app_lifecycle_tests",
     "sakura_editor_document_core",
@@ -19,6 +32,8 @@
     "sakura_editor_selection_tests",
     "sakura_filesystem",
     "sakura_filesystem_tests",
+    "sakura_language_en_us_resources",
+    "sakura_language_zh_cn_resources",
     "sakura_request",
     "sakura_request_tests",
     "sakura_security",
@@ -44,6 +59,11 @@
     "sakura-shareddata-capability-contract"
   ],
   "active_edges": [
+    "sakura-app-to-root-vcpkg-package-set",
+    "sakura-app-to-msvc-x64-release-runtime-stage",
+    "msvc-x64-release-runtime-stage-to-product",
+    "msvc-x64-release-runtime-stage-to-en-us-resource",
+    "msvc-x64-release-runtime-stage-to-zh-cn-resource",
     "tests1-to-sakura-app",
     "sakura-app-to-sakura-uri",
     "tests1-to-sakura-uri",
@@ -65,6 +85,17 @@
     "sakura-app-to-sakura-request",
     "tests1-to-sakura-request",
     "sakura-request-tests-to-sakura-request",
+    "sakura-controlipc-transport-to-sakura-controlipc-security",
+    "sakura-controlipc-transport-to-sakura-security",
+    "sakura-controlipc-transport-to-sakura-controlipc-protocol",
+    "sakura-app-to-sakura-controlipc-transport",
+    "tests1-to-sakura-controlipc-transport",
+    "sakura-controlipc-transport-tests-to-sakura-controlipc-transport",
+    "sakura-controlipc-endpoint-to-sakura-controlipc-security",
+    "sakura-controlipc-endpoint-to-sakura-security",
+    "sakura-app-to-sakura-controlipc-endpoint",
+    "tests1-to-sakura-controlipc-endpoint",
+    "sakura-controlipc-endpoint-tests-to-sakura-controlipc-endpoint",
     "sakura-app-to-sakura-controlipc-security",
     "tests1-to-sakura-controlipc-security",
     "sakura-controlipc-security-tests-to-sakura-controlipc-security",
@@ -72,6 +103,8 @@
     "tests1-to-sakura-controlipc-protocol",
     "sakura-controlipc-protocol-tests-to-sakura-controlipc-protocol",
     "sakura-controlipc-protocol-tests-to-golden-fixture",
+    "sakura-shareddata-contract-tests-to-golden-fixture",
+    "tests1-to-abi-projection-fixture-sources",
     "sakura-app-to-sakura-editor-selection",
     "tests1-to-sakura-editor-selection",
     "sakura-editor-selection-tests-to-sakura-editor-selection",
@@ -85,6 +118,19 @@
     "sakura-app-to-shareddata-contract",
     "sakura-editor-document-core-tests-to-core",
     "sakura-editor-app-lifecycle-tests-to-lifecycle",
+    "sakura-app-to-module-generated-projections",
+    "sakura-app-to-resource-id-contract",
+    "sakura-language-en-us-resources-to-resource-id-contract",
+    "sakura-language-zh-cn-resources-to-resource-id-contract",
+    "sakura-app-to-vendored-third-party-source-set",
+    "tests1-to-vendored-third-party-source-set",
+    "tests1-to-root-vcpkg-package-set",
+    "sakura-controlipc-endpoint-tests-to-security",
+    "sakura-controlipc-transport-tests-to-security",
+    "sakura-filesystem-tests-to-sakura-uri",
+    "tests1-to-editor-document-core",
+    "tests1-to-shareddata-contract",
+    "tests1-to-resource-id-contract",
     "sakura-shareddata-contract-tests-to-contract"
   ],
   "compile_profiles": [
@@ -104,10 +150,16 @@
     "toolchain": "msvc"
   },
   "context_id": "msvc-x64-release",
-  "generated_artifacts": [],
-  "generator_version": "0.3.6",
-  "package_sets": [],
+  "generated_artifacts": [
+    "sakura-module-generated-projections"
+  ],
+  "generator_version": "0.3.7",
+  "package_sets": [
+    "root-vcpkg-package-set"
+  ],
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:a6c61f7e6acf41222ce9e3811c5911f9727ce4a467257846b7bafd8e28c1d122",
-  "staging_sets": []
+  "semantic_graph_hash": "sha256:dbefe0c5f4ba61aad066fd79997694baf7b6134029b24652322571ffc534c91f",
+  "staging_sets": [
+    "sakura-editor-msvc-x64-release-runtime-stage"
+  ]
 }

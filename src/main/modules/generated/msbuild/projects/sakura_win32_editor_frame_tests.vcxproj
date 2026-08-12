@@ -68,7 +68,7 @@
       <WarningLevel>Level4</WarningLevel>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
@@ -102,7 +102,7 @@
       <WarningLevel>Level4</WarningLevel>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <ProgramDatabaseFile>$(OutDir)$(TargetName).pdb</ProgramDatabaseFile>
@@ -115,13 +115,6 @@
     <ClCompile Include="$(SakuraRepoRoot)\tools\build\pilots\win32_editor_frame_contract_test.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="sakura_editor_frame.vcxproj">
-      <Project>{C49DC9A0-BCBE-56B2-B3CE-967CB372B7F2}</Project>
-      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
-      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
-      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
-      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
-    </ProjectReference>
     <ProjectReference Include="sakura_win32_editor_frame.vcxproj">
       <Project>{9B753E5D-886F-5DF0-A8EE-3E7EAE785F7C}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>

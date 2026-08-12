@@ -20,11 +20,12 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from .model import SemanticGraph
+from .model import SemanticGraph, evaluate_condition
+from .package_restore import validate_package_restore
 from .runner import BuildError, EventWriter, msbuild_command
 
 
-EVIDENCE_SCHEMA_VERSION = 3
+EVIDENCE_SCHEMA_VERSION = 4
 _OUTPUT_ROOTS = frozenset({"build", "x64", "win32", "mingw"})
 _PATH_INPUT_SUFFIXES = frozenset({".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx", ".inl", ".inc", ".rc", ".rc2", ".obj", ".res", ".lib", ".natvis", ".manifest"})
 _HEADER_SUFFIXES = frozenset({".h", ".hh", ".hpp", ".hxx", ".inl", ".inc"})
@@ -40,6 +41,32 @@ _TARGET_START_RE = re.compile(
     re.IGNORECASE,
 )
 _EXEC_TASK_START_RE = re.compile(r'(?:task|タスク)\s+"Exec"\s+\(TaskId:', re.IGNORECASE)
+
+
+_PACKAGE_DEPENDENCY_PHASES = ("generate", "compile", "link", "stage", "test", "runtime", "lifecycle")
+
+
+def _declared_package_set_ids(graph: SemanticGraph, product_id: str, context_id: str) -> tuple[str, ...]:
+    """Find package artifacts from the product dependency closure.
+
+    Product-evidence fixtures intentionally omit compile-profile projections
+    because they exercise native log parsing only. Deriving this narrow fact
+    from graph edges keeps the evidence collector independent of the unrelated
+    scheduler projection.
+    """
+
+    context = graph.context(context_id).as_mapping()
+    nodes = set(graph.closure((product_id,), context_id, _PACKAGE_DEPENDENCY_PHASES))
+    nodes.update(graph.final_link_closure((product_id,), context_id))
+    return tuple(
+        sorted(
+            artifact.id
+            for artifact in graph.artifacts.values()
+            if artifact.id in nodes
+            and artifact.artifact_kind == "package_set"
+            and evaluate_condition(artifact.condition, context)
+        )
+    )
 
 
 def _diagnostic_path_value(
@@ -609,6 +636,7 @@ def collect_product_native_evidence(
     build_observed: bool,
     build_target: str = "Build",
     diagnostic_log_path: Path | None = None,
+    package_restore: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     tlog_root, project_relative = _tlog_root(graph, product_id, context_id)
     project_dir = (graph.repo_root / project_relative).parent
@@ -750,9 +778,11 @@ def collect_product_native_evidence(
             ),
         },
         "link": link,
-        "package_restore": {
+        "package_restore": dict(package_restore) if package_restore is not None else {
+            "required": bool(_declared_package_set_ids(graph, product_id, context_id)),
             "native_restore_execution_observed": False,
-            "reason": "tracker input presence is not proof that restore executed during this observation",
+            "package_closure_validated": False,
+            "reason": "no explicit package restore result was supplied for this native observation",
         },
         "freshness": freshness,
     }
@@ -797,6 +827,7 @@ def observe_product_native_evidence(
     events: EventWriter,
     *,
     build_target: str = "Build",
+    package_restore: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
     if timeout_seconds < 1:
         raise BuildError("TIMEOUT_INVALID", "--timeout-seconds must be at least 1", 2)
@@ -905,6 +936,7 @@ def observe_product_native_evidence(
             build_observed=True,
             build_target=build_target,
             diagnostic_log_path=diagnostic_log,
+            package_restore=package_restore,
         )
     finally:
         diagnostic_log.unlink(missing_ok=True)
@@ -1005,6 +1037,31 @@ def validate_product_native_evidence(
     resource = evidence.get("resource_compiler") if isinstance(evidence.get("resource_compiler"), dict) else {}
     generator = evidence.get("generator_observation") if isinstance(evidence.get("generator_observation"), dict) else {}
     link = evidence.get("link") if isinstance(evidence.get("link"), dict) else {}
+    package = evidence.get("package_restore") if isinstance(evidence.get("package_restore"), dict) else {}
+    package_required = bool(_declared_package_set_ids(graph, product_id, context_id))
+    if bool(package.get("required")) != package_required:
+        failures.append({
+            "code": "NATIVE_PRODUCT_EVIDENCE_PACKAGE_REQUIREMENT_MISMATCH",
+            "expected": package_required,
+            "actual": package.get("required"),
+        })
+    if package_required:
+        try:
+            current_package = validate_package_restore(graph, (product_id,), context_id)
+        except BuildError as error:
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PACKAGE_VALIDATE_FAILED", "detail": str(error)})
+            current_package = {"valid": False}
+        if not current_package.get("valid"):
+            failures.append({
+                "code": "NATIVE_PRODUCT_EVIDENCE_PACKAGE_CACHE_INVALID",
+                "failures": current_package.get("failures", []),
+            })
+        elif package.get("plan_hash") != current_package.get("plan_hash"):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PACKAGE_PLAN_MISMATCH"})
+        elif not package.get("package_closure_validated"):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PACKAGE_CLOSURE_UNVALIDATED"})
+        elif not package.get("native_restore_execution_observed"):
+            failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_PACKAGE_RESTORE_UNOBSERVED"})
     if evidence.get("build_target") not in {"Build", "Rebuild"}:
         failures.append({"code": "NATIVE_PRODUCT_EVIDENCE_BUILD_TARGET_INVALID"})
     product_relative = link.get("output")
@@ -1063,6 +1120,8 @@ def validate_product_native_evidence(
             "resource_table_observed": valid and bool(resource.get("resource_table_observed")),
             "link_input_set_observed": valid and bool(link.get("input_set_observed")),
             "selected_archive_members_observed": valid and bool(link.get("selected_archive_members_observed")),
+            "package_restore_execution_observed": valid and bool(package.get("native_restore_execution_observed")),
+            "package_closure_validated": valid and bool(package.get("package_closure_validated")),
         },
         "counts": {
             "translation_units": int(compiler.get("translation_unit_count", 0)),

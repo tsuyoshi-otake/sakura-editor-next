@@ -7,11 +7,14 @@
 
 #include <sakura/controlipc/ControlIpcProtocol.h>
 
+#include "controlipc_protocol_fixture_vectors.h"
+
 #if __has_include("platform/controlipc/ControlIpcProtocol.h") || __has_include("ControlIpcProtocol.h")
 #error "sakura_controlipc_protocol_tests consumer can reach the provider private protocol header"
 #endif
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <iostream>
 #include <span>
@@ -37,22 +40,14 @@ ControlIpcFrame CancelAckFrame()
 
 std::vector<std::uint8_t> ExpectedHelloBytes()
 {
-	return {
-		0x1c, 0x00, 0x00, 0x00, 0x53, 0x43, 0x49, 0x50,
-		0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-		0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	};
+	return { controlipc_protocol_fixture::kHelloRequestV1Frame.begin(),
+		controlipc_protocol_fixture::kHelloRequestV1Frame.end() };
 }
 
 std::vector<std::uint8_t> ExpectedCancelAckBytes()
 {
-	return {
-		0x1c, 0x00, 0x00, 0x00, 0x53, 0x43, 0x49, 0x50,
-		0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x06, 0x00,
-		0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-		0x07, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-	};
+	return { controlipc_protocol_fixture::kCancelTerminalResponseV1Frame.begin(),
+		controlipc_protocol_fixture::kCancelTerminalResponseV1Frame.end() };
 }
 
 std::vector<std::uint8_t> Encode(const ControlIpcFrame& frame)
@@ -122,17 +117,20 @@ bool StickyFailureHasExplicitResetTerminal()
 	return decoded.outcome == EControlIpcDecodeOutcome::Decoded && decoded.frames.size() == 1 && !decoder.IsFailed();
 }
 
-struct TestCase {
-	std::string_view name;
-	bool (*run)();
+constexpr std::array kTestNames{
+	std::string_view{ "CanonicalFixtureFramesMatch" },
+	std::string_view{ "FragmentedAndCoalescedDecodePreservesFrames" },
+	std::string_view{ "MinorVersionAndUtf8FieldsRemainCompatible" },
+	std::string_view{ "InvalidDirectionIsRejectedBeforeTransport" },
+	std::string_view{ "StickyFailureHasExplicitResetTerminal" },
 };
 
-constexpr std::array kTests{
-	TestCase{ "CanonicalFixtureFramesMatch", CanonicalFixtureFramesMatch },
-	TestCase{ "FragmentedAndCoalescedDecodePreservesFrames", FragmentedAndCoalescedDecodePreservesFrames },
-	TestCase{ "MinorVersionAndUtf8FieldsRemainCompatible", MinorVersionAndUtf8FieldsRemainCompatible },
-	TestCase{ "InvalidDirectionIsRejectedBeforeTransport", InvalidDirectionIsRejectedBeforeTransport },
-	TestCase{ "StickyFailureHasExplicitResetTerminal", StickyFailureHasExplicitResetTerminal },
+constexpr std::array<bool (*)(), 5> kTestRunners{
+	CanonicalFixtureFramesMatch,
+	FragmentedAndCoalescedDecodePreservesFrames,
+	MinorVersionAndUtf8FieldsRemainCompatible,
+	InvalidDirectionIsRejectedBeforeTransport,
+	StickyFailureHasExplicitResetTerminal,
 };
 
 bool Matches(std::string_view fullName, std::string_view filter)
@@ -155,7 +153,7 @@ int main(int argc, char** argv)
 		const std::string_view argument = argv[index];
 		if (argument == "--gtest_list_tests") {
 			std::cout << "ControlIpcProtocol.\n";
-			for (const auto& test : kTests) std::cout << "  " << test.name << '\n';
+			for (const auto name : kTestNames) std::cout << "  " << name << '\n';
 			return 0;
 		}
 		constexpr std::string_view prefix = "--gtest_filter=";
@@ -164,11 +162,11 @@ int main(int argc, char** argv)
 
 	int selected = 0;
 	int failed = 0;
-	for (const auto& test : kTests) {
-		const std::string fullName = "ControlIpcProtocol." + std::string(test.name);
+	for (std::size_t index = 0; index < kTestNames.size(); ++index) {
+		const std::string fullName = "ControlIpcProtocol." + std::string(kTestNames[index]);
 		if (!Matches(fullName, filter)) continue;
 		++selected;
-		const bool passed = test.run();
+		const bool passed = kTestRunners[index]();
 		std::cout << (passed ? "[       OK ] " : "[  FAILED  ] ") << fullName << '\n';
 		if (!passed) ++failed;
 	}

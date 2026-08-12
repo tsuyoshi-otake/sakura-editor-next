@@ -60,7 +60,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\env\DLLSHAREDATA_Abi.h" />
+    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\shareddata\SharedDataAbiContract.h" />
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\shareddata\SharedDataCapabilities.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

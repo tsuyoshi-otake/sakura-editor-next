@@ -6,7 +6,6 @@
 *.vcxproj.user
 **/packages
 **/TestResults
-.sonarqube
 /*.patch
 /.vs
 /cppcheck-*.xml
@@ -91,8 +90,6 @@ pnpm-debug.log*
 *.lastbuildstate
 
 Backup
-build-wrapper-win-x86*
-bw-output
 doxygen*.log
 html
 iss-*-*.log
@@ -109,22 +106,10 @@ UpgradeLog.htm
 .coverage
 pytest-coverage.xml
 
-# SonarScanローカル実行用(解析ツールをダウンロードするフォルダ)
-.sonar
-
-# SonarScanローカル実行用(SonarScannerのワークフォルダ)
-.scannerwork
-
-# SonarScanローカル実行用SONAR_TOKEN
-SONAR_TOKEN
-
-# SonarScanローカル実行用したときに生成されるテスト結果ファイル
+# テスト実行(ctest/OpenCppCoverage)で生成される結果ファイル
 tests*-googletest.xml
 tests*-coverage.xml
 LastCoverageResults.log
-
-# SonarScanローカル実行の失敗再現用アーカイブ
-sonar-cfamily-reproducer.tar.xz
 
 # 旧resource格納フォルダ、bmptoolの出力フォルダになってるので除外する
 /resource

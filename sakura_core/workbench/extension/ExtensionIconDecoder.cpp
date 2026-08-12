@@ -17,8 +17,6 @@
 #include <cstdint>
 #include <limits>
 
-#pragma comment(lib, "windowscodecs.lib")
-#pragma comment(lib, "shlwapi.lib")
 
 namespace workbench::extension {
 namespace {

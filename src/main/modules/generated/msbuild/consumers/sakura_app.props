@@ -15,7 +15,7 @@
       <ForcedIncludeFiles>$(MSBuildProjectDirectory)\..\src\main\modules\generated\abi\msvc-x64-debug\sakura_app.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>advapi32.lib;bcrypt.lib;winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;bcrypt.lib;comctl32.lib;crypt32.lib;d2d1.lib;dbghelp.lib;dwmapi.lib;dwrite.lib;htmlhelp.lib;imm32.lib;mpr.lib;msimg32.lib;ole32.lib;oleacc.lib;oleaut32.lib;shlwapi.lib;uiautomationcore.lib;user32.lib;uuid.lib;uxtheme.lib;version.lib;windowscodecs.lib;winhttp.lib;winmm.lib;winspool.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -24,7 +24,7 @@
       <ForcedIncludeFiles>$(MSBuildProjectDirectory)\..\src\main\modules\generated\abi\msvc-x64-release\sakura_app.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>advapi32.lib;bcrypt.lib;winhttp.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;bcrypt.lib;comctl32.lib;crypt32.lib;d2d1.lib;dbghelp.lib;dwmapi.lib;dwrite.lib;htmlhelp.lib;imm32.lib;mpr.lib;msimg32.lib;ole32.lib;oleacc.lib;oleaut32.lib;shlwapi.lib;uiautomationcore.lib;user32.lib;uuid.lib;uxtheme.lib;version.lib;windowscodecs.lib;winhttp.lib;winmm.lib;winspool.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(SakuraNativeProductMapEvidence)'=='true'">
@@ -33,6 +33,13 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_endpoint.vcxproj">
+      <Project>{6658B1B5-C626-53DF-B0BA-AD2A4918EE84}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_protocol.vcxproj">
       <Project>{AA83324E-945C-5DA6-AB97-F78AB60AB3F6}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
@@ -42,6 +49,13 @@
     </ProjectReference>
     <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_security.vcxproj">
       <Project>{2EE23FD2-C180-5048-8369-8D95559AB798}</Project>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
+      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
+      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
+    </ProjectReference>
+    <ProjectReference Include="$(MSBuildProjectDirectory)\..\src\main\modules\generated\msbuild\projects\sakura_controlipc_transport.vcxproj">
+      <Project>{830B14E4-72E5-5817-8B3F-8944AB2ED019}</Project>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
       <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
       <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>

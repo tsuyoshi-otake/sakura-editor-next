@@ -108,7 +108,7 @@
       "properties": {
         "id": {"$ref": "#/$defs/nonEmptyString"},
         "owner": {"$ref": "#/$defs/nonEmptyString"},
-        "artifact_kind": {"enum": ["generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product"]},
+        "artifact_kind": {"enum": ["generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product", "source_set"]},
         "inputs": {"$ref": "#/$defs/stringArray"},
         "outputs": {"$ref": "#/$defs/stringArray"},
         "tool_id": {"anyOf": [{"type": "null"}, {"enum": ["sakura-module-generator", "header-make", "cmake", "msbuild", "rc", "copy"]}]},

@@ -105,14 +105,5 @@
   <ItemGroup>
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\window\Win32EditorFrameAdapter.cpp" />
   </ItemGroup>
-  <ItemGroup>
-    <ProjectReference Include="sakura_editor_frame.vcxproj">
-      <Project>{C49DC9A0-BCBE-56B2-B3CE-967CB372B7F2}</Project>
-      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Configuration=Debug</SetConfiguration>
-      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Platform=x64</SetPlatform>
-      <SetConfiguration Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Configuration=Release</SetConfiguration>
-      <SetPlatform Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Platform=x64</SetPlatform>
-    </ProjectReference>
-  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>

@@ -6,7 +6,7 @@
 */
 #include "pch.h"
 
-#include "platform/controlipc/ControlIpcNamedPipeTransport.h"
+#include <sakura/controlipc/ControlIpcTransport.h>
 #include <sakura/controlipc/ControlIpcSecurity.h>
 
 #include <Windows.h>

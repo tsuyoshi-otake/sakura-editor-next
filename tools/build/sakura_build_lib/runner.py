@@ -6,6 +6,7 @@ remain the execution engines and own their native task schedulers.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -34,6 +35,23 @@ COMPONENT_ISOLATED_ENVIRONMENT = (
 _CMAKE_DISCOVERY_ENVIRONMENT_VARIABLES = frozenset(COMPONENT_ISOLATED_ENVIRONMENT)
 NATIVE_PATH_IDENTITY_FILE = ".sakura-native-path.json"
 MSVC_SHOWINCLUDES_PREFIX = "Note: including file:"
+
+
+def cmake_component_build_dir(repo_root: Path, component_id: str, context_id: str) -> Path:
+    """Return a stable, short CMake build directory for one component closure.
+
+    Generated component roots intentionally live below a descriptive source
+    directory, but reproducing that full context/component spelling in the
+    native build directory pushes MSVC object and PDB paths past MAX_PATH for
+    otherwise valid contract runners.  The generated source path and every
+    command record retain the human-readable identity; the disposable native
+    cache uses a collision-resistant token solely to keep its path budget
+    bounded on normal checkouts as well as cloned rebuild workspaces.
+    """
+
+    identity = f"{context_id}\0{component_id}".encode("utf-8")
+    token = hashlib.sha256(identity).hexdigest()[:16]
+    return repo_root / "build/components/cmake" / token
 
 
 class BuildError(RuntimeError):
@@ -484,23 +502,31 @@ def msbuild_file_logger_arguments(log_file: Path) -> list[str]:
     return ["/fileLogger", f"/fileLoggerParameters:LogFile={log_file};Verbosity=normal;Encoding=UTF-8"]
 
 
-def cmake_commands(repo_root: Path, configuration: str, jobs: int, *, run_tests: bool) -> list[list[str]]:
+def cmake_commands(
+    repo_root: Path,
+    configuration: str,
+    jobs: int,
+    *,
+    run_tests: bool,
+    package_cmake_config: Path | None = None,
+) -> list[list[str]]:
     allocate_parallelism(jobs)
-    vcpkg_root = os.environ.get("VCPKG_ROOT")
-    candidates = [Path(vcpkg_root)] if vcpkg_root else []
-    candidates.extend([repo_root.parent / "vcpkg", repo_root / "tools/vcpkg"])
-    root = next((path.resolve() for path in candidates if (path / "scripts/buildsystems/vcpkg.cmake").is_file()), None)
-    if root is None:
-        raise BuildError("TOOL_VCPKG_NOT_FOUND", "vcpkg was not found; set VCPKG_ROOT", 3)
     build_dir = repo_root / "build/MinGW"
     triplet = os.environ.get("VCPKG_TARGET_TRIPLET", "x64-mingw-static")
-    toolchain = (root / "scripts/buildsystems/vcpkg.cmake").as_posix()
+    toolchain = repo_root / "src/main/cmake/sakura-vcpkg-toolchain.cmake"
+    if not toolchain.is_file():
+        raise BuildError("PACKAGE_CMAKE_TOOLCHAIN_MISSING", f"explicit package toolchain is missing: {toolchain}", 4)
+    active_config = package_cmake_config or (repo_root / "build/pkg/v/a" / f"{triplet}.cmake")
+    if not active_config.is_absolute():
+        active_config = repo_root / active_config
     cmake = find_cmake_tool("cmake")
     commands = [
         [
             cmake, "-S", str(repo_root), "-B", str(build_dir),
             f"-DCMAKE_BUILD_TYPE={configuration}", "-DBUILD_PLATFORM=MinGW",
-            f"-DCMAKE_TOOLCHAIN_FILE={toolchain}", f"-DVCPKG_TARGET_TRIPLET={triplet}",
+            f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}",
+            f"-DSAKURA_PACKAGE_CONFIG={active_config.as_posix()}",
+            f"-DVCPKG_TARGET_TRIPLET={triplet}",
         ],
         [cmake, "--build", str(build_dir), "--config", configuration, "--target", "sakura", "--parallel", str(jobs)],
         [cmake, "--build", str(build_dir), "--config", configuration, "--target", "sakura_lang_en_US", "--parallel", str(jobs)],
@@ -532,7 +558,7 @@ def cmake_component_commands(
     source_dir = repo_root / f"src/main/modules/generated/cmake/projects/{context_id}/{component_id}"
     if not (source_dir / "CMakeLists.txt").is_file():
         raise BuildError("COMPONENT_CMAKE_PROJECT_MISSING", f"generated CMake project is missing: {source_dir}", 4)
-    build_dir = repo_root / f"build/components/{context_id}/{component_id}/cmake-ninja-isolated"
+    build_dir = cmake_component_build_dir(repo_root, component_id, context_id)
     component_build_root = (repo_root / "build/components").resolve()
     resolved_build_dir = build_dir.resolve()
     try:
@@ -636,7 +662,7 @@ def cmake_component_test_commands(
     jobs: int,
 ) -> list[list[str]]:
     allocate_parallelism(jobs)
-    build_dir = repo_root / f"build/components/{context_id}/{component_id}/cmake-ninja-isolated"
+    build_dir = cmake_component_build_dir(repo_root, component_id, context_id)
     return [[
         find_cmake_tool("ctest"),
         "--test-dir",
