@@ -85,7 +85,7 @@ When an agent needs a fixed CI-aligned build/test setup, use this preset derived
    - Install OpenCppCoverage using winget
    - If winget fails, install via official installer with SHA256 verification, then add `C:\Program Files\OpenCppCoverage` to `PATH`
 4. Build:
-   - Use Build Wrapper + MSBuild for x64/Debug (as in workflow), or `build-sln.bat x64 Debug` when Build Wrapper is not required.
+   - `build-sln.bat x64 Debug` (CI builds both configurations this way)
 5. Test:
    - `ctest --test-dir build/x64/CMakeTools -C Debug --output-on-failure`
 

@@ -470,35 +470,6 @@ jobs:
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@v3
 
-    # SonarQubeのBuild Wrapperをインストールする
-    - name: Install Build Wrapper
-      if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
-      uses: SonarSource/sonarqube-scan-action/install-build-wrapper@22918119ff8e1ca75a623e15c8296b6ea4fbe28f # v8.2.1
-
-    # OpenCppCoverageをハッシュ検証済みのインストーラーから導入する。
-    - name: Install OpenCppCoverage
-      if: ${{ matrix.config == 'Debug' }}
-      working-directory: ${{ runner.temp }}
-      run: |
-        $installer = '.\OpenCppCoverageSetup.exe'
-        Invoke-WebRequest `
-          -Uri "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/OpenCppCoverageSetup-x64-0.9.9.0.exe" `
-          -OutFile $installer
-        $expectedSha256 = '2295a733da39412c61e4f478677519dd0bb1893d88313ce56b468c9e50517888'
-        $actualSha256 = (Get-FileHash $installer -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($actualSha256 -ne $expectedSha256.ToLowerInvariant()) {
-          throw "SHA256 mismatch: expected=$expectedSha256 actual=$actualSha256"
-        }
-        $process = Start-Process `
-          -FilePath $installer `
-          -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" `
-          -Wait `
-          -PassThru
-        if ($process.ExitCode -ne 0) {
-          throw "OpenCppCoverage installer failed with exit code $($process.ExitCode)."
-        }
-        echo "C:\Program Files\OpenCppCoverage" >> $env:GITHUB_PATH
-
     - name: Install Ctags (Chocolatey)
       run: choco install universal-ctags --version=2022.6.5 --yes --no-progress
 
@@ -517,23 +488,11 @@ jobs:
 
     - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
 
+    # The copied trigger event rides the test-results artifact so the
+    # workflow_run consumer can attribute the check to the original event.
     - name: Copy github-event.json
       run: |
         Copy-Item "$env:GITHUB_EVENT_PATH" github-event.json
-
-    - name: Generate sonar metadata
-      if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
-      env:
-        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
-        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
-      run: |
-        [ordered]@{
-          event_name  = '${{ github.event_name }}'
-          ref_name    = '${{ github.ref_name }}'
-          pr_number   = '${{ github.event.pull_request.number }}'
-          pr_head_ref = $env:PR_HEAD_REF
-          pr_base_ref = $env:PR_BASE_REF
-        } | ConvertTo-Json | Set-Content sonar-metadata.json
 
     - name: Setup PR environment variables
       if: github.event_name == 'pull_request'
@@ -699,23 +658,19 @@ jobs:
           throw "Declared Sakura package restore failed for context $context (exit code $LASTEXITCODE)."
         }
 
-    - name: Build with Build-Wrapper
-      if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
-      run: build-wrapper-win-x86-64.exe --out-dir bw-output MsBuild.exe /p:Platform=${{ matrix.platform }} /p:Configuration=${{ matrix.config }}
-
     # Historic tag sources predate SAKURA_BUILD_SOURCE_SHA and read the
     # runner's GITHUB_SHA directly in version.cmake. Do not attempt to change
     # the protected job environment; shadow it only in the cmd child that
     # builds the immutable checkout.
     - name: MSBuild release promotion
-      if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && inputs.release_promotion }}
+      if: ${{ inputs.release_promotion }}
       run: |
         set "GITHUB_SHA=${{ env.RELEASE_SOURCE_SHA }}"
         call build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
     - name: MSBuild
-      if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && !inputs.release_promotion }}
+      if: ${{ !inputs.release_promotion }}
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
@@ -811,18 +766,17 @@ jobs:
         retention-days: 1
         compression-level: 0
 
-    - name: Upload sonar-input artifact
-      if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
+    # The googletest XML plus the copied trigger event feed test-results.yml,
+    # the workflow_run consumer that publishes the "Test Results" check.
+    - name: Upload test-results artifact
       uses: actions/upload-artifact@v7
       with:
-        name: sonar-input
+        name: test-results-${{ matrix.platform }}-${{ matrix.config }}
         path: |
-          bw-output/
-          tests*-coverage.xml
           tests*-googletest.xml
-          pytest-coverage.xml
-          sonar-metadata.json
           github-event.json
+        if-no-files-found: error
+        retention-days: 14
 
     - name: Build installer with Inno Setup
       if: ${{ github.event_name != 'pull_request' }}

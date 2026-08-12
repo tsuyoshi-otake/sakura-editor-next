@@ -4,7 +4,7 @@ name: listings A/B benchmark
 # `build-sln.bat x64 Release` invocation with SAKURA_GENERATE_ASSEMBLY_LISTINGS
 # either on or off, using the SAKURA_MSBUILD_BINLOG / SAKURA_MSBUILD_PERFORMANCE_SUMMARY
 # diagnostics added in PR #45. It intentionally does not run tests, the installer,
-# ZIP packaging, CHM, BmpTools, Sonar, coverage, Cppcheck, or Doxygen: the goal is
+# ZIP packaging, CHM, BmpTools, coverage, Cppcheck, or Doxygen: the goal is
 # to isolate the MSBuild invocation itself, not to reproduce the full CI matrix.
 #
 # The MSBuild binary log is written to a runner-local temporary path and is not
