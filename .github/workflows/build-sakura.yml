@@ -441,6 +441,11 @@ jobs:
     # MSBuild step used.
     env:
       SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' && '1' || '0' }}
+      # No released artifact carries diff.exe, and the archive provider would
+      # stage libintl3.dll/libiconv2.dll into the output directory where
+      # zipArtifacts.bat copies every *.dll. Pin the provider instead of
+      # letting it depend on whether the runner image ships diff on PATH.
+      SAKURA_DIFFUTILS_SOURCE: none
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -475,15 +480,11 @@ jobs:
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@v3
 
-    # community.chocolatey.org answered 503 during #114 and failed this required
-    # job in under a minute. The helper bounds the retry and reports every
-    # attempt, so a package that has genuinely stopped resolving still fails.
-    - name: Install Ctags (Chocolatey)
-      run: .\.github\scripts\Install-ChocolateyPackage.ps1 -PackageId universal-ctags -Version 2022.6.5
-
-    - name: Install DiffUtils (Chocolatey)
-      run: .\.github\scripts\Install-ChocolateyPackage.ps1 -PackageId diffutils -Version 2.8.7
-
+    # ctags.exe now comes from the committed, version-pinned archive that
+    # already supplies the shipped license and documentation; diff.exe is not
+    # staged at all here. community.chocolatey.org answered 503 during #114 and
+    # 504 during #123, failing this required job on an outage it had no reason
+    # to depend on.
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
