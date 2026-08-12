@@ -31,7 +31,12 @@ from .model import Artifact, SemanticGraph
 from .runner import BuildError, EventWriter
 
 
-PACKAGE_RESTORE_SCHEMA_VERSION = 1
+# The active receipt describes an immutable package closure.  Version 2 keys
+# that closure by tracked vcpkg source metadata rather than by the bootstrapped
+# vcpkg.exe bytes.  Bootstrap output is host-local and may be replaced without
+# changing the declared package tool source, which must not make a completed
+# closure look stale while MSBuild is starting.
+PACKAGE_RESTORE_SCHEMA_VERSION = 2
 _PACKAGE_PHASES = (
     "generate",
     "compile",
@@ -191,26 +196,6 @@ def _triplet_file(vcpkg_root: Path, triplet: str) -> Path:
     raise BuildError("PACKAGE_TRIPLET_MISSING", f"vcpkg triplet is missing: {triplet}", 3)
 
 
-def _vcpkg_version(executable: Path, repo_root: Path) -> str:
-    try:
-        completed = subprocess.run(
-            [str(executable), "version"],
-            cwd=repo_root,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-            timeout=30,
-        )
-    except (OSError, subprocess.TimeoutExpired) as error:
-        raise BuildError("TOOL_VCPKG_VERSION", f"could not query {executable}: {error}", 3) from error
-    if completed.returncode:
-        detail = (completed.stderr or completed.stdout).strip()
-        raise BuildError("TOOL_VCPKG_VERSION", f"vcpkg version failed ({completed.returncode}): {detail}", 3)
-    return "\n".join(line.rstrip() for line in completed.stdout.splitlines() if line.strip())
-
-
 def plan_package_restore(
     graph: SemanticGraph,
     roots: Iterable[str],
@@ -262,6 +247,7 @@ def plan_package_restore(
         candidate = _triplet_file(vcpkg_root, triplet)
         triplet_hashes[triplet] = _sha256_file(candidate, "PACKAGE_TRIPLET_HASH")
     toolchain = vcpkg_root / "scripts/buildsystems/vcpkg.cmake"
+    tool_metadata = vcpkg_root / "scripts/vcpkg-tool-metadata.txt"
     payload = {
         "schema_version": PACKAGE_RESTORE_SCHEMA_VERSION,
         "semantic_graph_hash": graph.semantic_graph_hash,
@@ -271,8 +257,7 @@ def plan_package_restore(
         "target_triplet": target_triplet,
         "host_triplet": host_triplet,
         "vcpkg": {
-            "executable_hash": _sha256_file(executable, "TOOL_VCPKG_HASH"),
-            "version": _vcpkg_version(executable, graph.repo_root),
+            "tool_metadata_hash": _sha256_file(tool_metadata, "TOOL_VCPKG_METADATA_HASH"),
             "toolchain_hash": _sha256_file(toolchain, "TOOL_VCPKG_TOOLCHAIN_HASH"),
             "triplet_hashes": dict(sorted(triplet_hashes.items())),
         },

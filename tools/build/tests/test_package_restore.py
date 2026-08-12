@@ -57,6 +57,7 @@ def _package_graph(root: Path):
     )
     vcpkg = root / "tools/vcpkg"
     _write(vcpkg / "vcpkg.exe", "test executable\n")
+    _write(vcpkg / "scripts/vcpkg-tool-metadata.txt", "VCPKG_TOOL_RELEASE_TAG=test\n")
     _write(vcpkg / "scripts/buildsystems/vcpkg.cmake", "# test toolchain\n")
     _write(vcpkg / "triplets/x64-windows-static.cmake", "# target\n")
     _write(vcpkg / "triplets/x64-windows.cmake", "# host\n")
@@ -109,9 +110,7 @@ class PackageRestoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             graph = _package_graph(root)
-            with patch("sakura_build_lib.package_restore._vcpkg_version", return_value="test-vcpkg"), patch(
-                "sakura_build_lib.package_restore._run_vcpkg", side_effect=_complete_fake_install
-            ) as run_vcpkg:
+            with patch("sakura_build_lib.package_restore._run_vcpkg", side_effect=_complete_fake_install) as run_vcpkg:
                 plan = plan_package_restore(graph, ("product",), "msvc-x64-debug")
                 self.assertTrue(plan["required"])
                 self.assertEqual("build/pkg/v/a/x64-windows-static.cmake", plan["active_cmake_relative"])
@@ -126,6 +125,14 @@ class PackageRestoreTests(unittest.TestCase):
                 validated = validate_package_restore(graph, ("product",), "msvc-x64-debug")
                 self.assertTrue(validated["valid"])
                 self.assertEqual("validated", validated["status"])
+
+                # bootstrap-vcpkg may replace this host-local executable after a
+                # completed package receipt was published. The tracked vcpkg
+                # tool metadata, toolchain, and triplets still identify the
+                # same package tool source, so the active closure remains valid.
+                _write(root / "tools/vcpkg/vcpkg.exe", "replacement bootstrap executable\n")
+                after_bootstrap = validate_package_restore(graph, ("product",), "msvc-x64-debug")
+                self.assertTrue(after_bootstrap["valid"])
 
                 reused = restore_package_closure(graph, ("product",), "msvc-x64-debug")
                 self.assertEqual("reused", reused["status"])
@@ -151,10 +158,25 @@ class PackageRestoreTests(unittest.TestCase):
             root = Path(temporary)
             graph = _package_graph(root)
             _write(root / "vcpkg.json", json.dumps({"dependencies": ["fmt", "gtest"]}) + "\n")
-            with patch("sakura_build_lib.package_restore._vcpkg_version", return_value="test-vcpkg"):
-                with self.assertRaises(BuildError) as raised:
-                    plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            with self.assertRaises(BuildError) as raised:
+                plan_package_restore(graph, ("product",), "msvc-x64-debug")
             self.assertEqual("PACKAGE_CLOSURE_MISMATCH", raised.exception.code)
+
+    def test_tracked_vcpkg_metadata_invalidates_a_completed_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            graph = _package_graph(root)
+            with patch("sakura_build_lib.package_restore._run_vcpkg", side_effect=_complete_fake_install):
+                restored = restore_package_closure(graph, ("product",), "msvc-x64-debug")
+                self.assertEqual("restored", restored["status"])
+
+                _write(
+                    root / "tools/vcpkg/scripts/vcpkg-tool-metadata.txt",
+                    "VCPKG_TOOL_RELEASE_TAG=changed\n",
+                )
+                stale = validate_package_restore(graph, ("product",), "msvc-x64-debug")
+                self.assertFalse(stale["valid"])
+                self.assertEqual("stale_or_missing", stale["status"])
 
     def test_gc_uses_external_lru_metadata_and_enforces_capacity_when_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

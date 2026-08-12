@@ -131,7 +131,7 @@ py -3 tools/build/sakura_build.py package gc --keep 3 --max-bytes 8589934592
 py -3 tools/build/sakura_build.py package gc --keep 3 --max-bytes 8589934592 --apply
 ```
 
-package input、vcpkg toolchain/triplet、host/target triplet、graph closure が同じなら、二度目の
+package input、追跡済みのvcpkg tool metadata/toolchain/triplet、host/target triplet、graph closure が同じなら、二度目の
 `restore` は immutable cache entry を `reused` として再利用します。cache は
 `build/pkg/v/e/<content-hash>`、active projection は `build/pkg/v/a/`、LRU 利用記録は
 `build/pkg/v/u/`、restore lock は `build/pkg/v/l/` に分離します。GC は active/lock中のentryを
