@@ -45,6 +45,13 @@ class SonarRemovalTests(unittest.TestCase):
                 self.assertIsNone(sonar.search(text))
                 self.assertIsNone(wrapper.search(text))
 
+    def test_the_local_scanner_config_and_tooling_are_gone(self) -> None:
+        # Retired with the pipeline: the scanner's project config and the
+        # local helper scripts under tools/ would otherwise imply the
+        # analysis still exists somewhere.
+        self.assertFalse((REPO_ROOT / "sonar-project.properties").exists())
+        self.assertFalse((REPO_ROOT / "tools/SonarQube").exists())
+
     def test_both_matrix_configurations_build_with_build_sln(self) -> None:
         text = BUILD_WORKFLOW.read_text(encoding="utf-8-sig")
         self.assertIn("      if: ${{ inputs.release_promotion }}\n", text)
