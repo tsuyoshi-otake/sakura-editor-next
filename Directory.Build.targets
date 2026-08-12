@@ -33,6 +33,23 @@
     <Touch Files="$(SakuraModulesCheckMarker)" AlwaysCreate="true" />
   </Target>
 
+  <!--
+    Do not let vcpkg's imported targets turn a normal compile into a manifest
+    restore.  The canonical driver owns restore and publishes a strict active
+    root first; this target performs the cheap, read-only validation before any
+    native scheduler starts.
+  -->
+  <Target Name="SakuraValidateExplicitPackageRestore"
+          BeforeTargets="PrepareForBuild"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SakuraSkipPackageRestoreValidation)' != 'true'">
+    <Error Condition="'$(SakuraModulesContextId)' == ''"
+           Text="No Sakura package context exists for Platform=$(Platform), Configuration=$(Configuration)." />
+    <Error Condition="!Exists('$(SakuraPackageActiveProps)')"
+           Text="Explicit Sakura package restore is missing: $(SakuraPackageActiveProps). Run: py -3 tools/build/sakura_build.py package restore sakura_app --context $(SakuraModulesContextId)" />
+    <Exec Command="py -3 &quot;$(SakuraRepositoryRoot)tools\build\sakura_build.py&quot; package validate sakura_app --context $(SakuraModulesContextId)"
+          WorkingDirectory="$(SakuraRepositoryRoot)" />
+  </Target>
+
   <Target Name="SakuraValidateGeneratedModelForDesignTime"
           BeforeTargets="ClCompile"
           Condition="'$(DesignTimeBuild)' == 'true' and '$(SakuraSkipModulesCheck)' != 'true'">

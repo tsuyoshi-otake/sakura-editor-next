@@ -687,8 +687,13 @@ if(MINGW)
   convert_rc_files_to_utf8(RESOURCE_SCRIPTS "ja-JP" ${CMAKE_BINARY_DIR})
 endif(MINGW)
 
-# Create sakura_core object library
-add_library(sakura_core OBJECT ${PCH_HEADER} ${SOURCES} ${RESOURCE_SCRIPTS} ${HEADERS})
+# Keep the product resource scripts as a named source contract.  They are
+# compiled by each executable that needs the product resource table rather
+# than being smuggled through the legacy core object's link closure.
+set(SAKURA_LEGACY_RESOURCE_SCRIPTS ${RESOURCE_SCRIPTS})
+
+# Create sakura_core object library.
+add_library(sakura_core OBJECT ${PCH_HEADER} ${SOURCES} ${HEADERS})
 
 # Enable precompiled headers for sakura_core
 target_precompile_headers(sakura_core PRIVATE ${PCH_HEADER})
@@ -918,3 +923,11 @@ if(MINGW)
     VERBATIM
   )
 endif(MINGW)
+
+# tests1 consumes the legacy implementation through a real archive.  Linking
+# the object-library target here gives the archive the exact legacy source
+# closure and its public usage requirements without exposing raw object files
+# to the test target.  Product resource scripts stay executable-owned above.
+add_library(sakura_legacy_test_support STATIC)
+set_target_properties(sakura_legacy_test_support PROPERTIES OUTPUT_NAME "sakura-test-support")
+target_link_libraries(sakura_legacy_test_support PUBLIC sakura_core)

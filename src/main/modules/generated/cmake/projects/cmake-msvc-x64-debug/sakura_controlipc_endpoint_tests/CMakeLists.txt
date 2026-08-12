@@ -40,6 +40,7 @@ target_link_libraries(sakura_security PUBLIC advapi32)
 add_library(sakura_controlipc_endpoint STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/controlipc/ControlPlatformEndpoint.h"
+  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/controlipc/ProfileAuthorityIdentity.h"
 )
 target_include_directories(sakura_controlipc_endpoint PUBLIC "${SAKURA_REPO_ROOT}/sakura_core/include")
 target_include_directories(sakura_controlipc_endpoint PRIVATE "${SAKURA_REPO_ROOT}/sakura_core")

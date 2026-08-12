@@ -8,7 +8,7 @@
 #include "StdAfx.h"
 
 #include "platform/profiles/ProfileAuthorityStore.h"
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #if defined(_WIN32)
 #include <sakura/security/CurrentUserSecurityAttributes.h>

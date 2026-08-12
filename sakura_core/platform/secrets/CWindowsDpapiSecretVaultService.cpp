@@ -8,7 +8,7 @@
 
 #include "platform/secrets/CWindowsDpapiSecretVaultService.h"
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 #include <sakura/security/CurrentUserSecurityAttributes.h>
 
 #include <Aclapi.h>

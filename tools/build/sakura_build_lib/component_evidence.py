@@ -11,7 +11,13 @@ from pathlib import Path
 from typing import Iterable
 
 from .model import SemanticGraph
-from .runner import BuildError, NATIVE_PATH_IDENTITY_FILE, find_cmake_tool, native_execution_root
+from .runner import (
+    BuildError,
+    NATIVE_PATH_IDENTITY_FILE,
+    cmake_component_build_dir,
+    find_cmake_tool,
+    native_execution_root,
+)
 
 
 class ComponentEvidenceError(RuntimeError):
@@ -52,14 +58,32 @@ def _relative_to_repo(repo_root: Path, value: Path) -> str | None:
         return None
 
 
-def _declared_inputs(graph: SemanticGraph, component_ids: Iterable[str], context_id: str) -> set[str]:
+def _declared_inputs(
+    graph: SemanticGraph,
+    component_ids: Iterable[str],
+    context_id: str,
+    *,
+    compiled_component_ids: Iterable[str] | None = None,
+) -> set[str]:
+    """Return the repository inputs a native leaf is expected to consume.
+
+    A compile-only dependency exports its public headers to the consumer but is
+    not a native target in that consumer's build.  Its implementation sources
+    and generated ABI force-include therefore must not be treated as observed
+    inputs.  Components in the final link closure do compile, so they retain
+    the full source/header/ABI input contract.
+    """
+
+    compiled = set(component_ids if compiled_component_ids is None else compiled_component_ids)
     result: set[str] = set()
     for component_id in component_ids:
         component = graph.components.get(component_id)
         if component is None:
             continue
-        result.update(component.sources)
         result.update(component.public_headers)
+        if component_id not in compiled:
+            continue
+        result.update(component.sources)
         result.update(component.private_headers)
         if component.build_definition == "generated" and component.sources:
             result.add(f"src/main/modules/generated/abi/{context_id}/{component.id}.h")
@@ -163,12 +187,26 @@ def _declared_system_libraries(graph: SemanticGraph, component_ids: Iterable[str
     return result
 
 
-def _msbuild_evidence(graph: SemanticGraph, component_id: str, context_id: str, closure: tuple[str, ...]) -> dict[str, object]:
+def _msbuild_evidence(
+    graph: SemanticGraph,
+    component_id: str,
+    context_id: str,
+    compiled_component_ids: tuple[str, ...],
+) -> dict[str, object]:
+    """Collect MSBuild evidence from the projects this invocation actually built.
+
+    Compile-only edges export public headers but do not cause their provider's
+    generated MSBuild project to run.  Looking through an old provider tlog in
+    that case makes prior, unrelated builds appear as inputs to the current
+    leaf.  The final link closure is the set of projects that do produce native
+    compilation/link evidence for this invocation.
+    """
+
     repo = graph.repo_root
     observed_repo_inputs: set[str] = set()
     external_input_count = 0
     command_parts: list[str] = []
-    for current_id in closure:
+    for current_id in compiled_component_ids:
         component = graph.components.get(current_id)
         if component is None or component.build_definition != "generated":
             continue
@@ -230,7 +268,7 @@ def _ninja_output(build_dir: Path, arguments: list[str]) -> str:
 
 def _cmake_evidence(graph: SemanticGraph, component_id: str, context_id: str, declared_inputs: set[str]) -> dict[str, object]:
     repo = graph.repo_root
-    relative_build_dir = Path(f"build/components/{context_id}/{component_id}/cmake-ninja-isolated")
+    relative_build_dir = cmake_component_build_dir(repo, component_id, context_id).relative_to(repo)
     identity_path = repo / relative_build_dir / NATIVE_PATH_IDENTITY_FILE
     try:
         identity = json.loads(_read_text(identity_path))
@@ -286,7 +324,7 @@ def _cmake_evidence(graph: SemanticGraph, component_id: str, context_id: str, de
         "observed_repo_inputs": sorted(observed_repo_inputs),
         "external_input_count": external_input_count,
         "link_command": commands,
-        "map_path": f"build/components/{context_id}/{component_id}/cmake-ninja-isolated/{component_id}.map",
+        "map_path": (relative_build_dir / f"{component_id}.map").as_posix(),
         "map_text": map_text,
         "build_command_text": commands + "\n" + cache_text,
         "root_build_imports_suppressed": all(value == "<Project />\n" for value in sentinel_texts),
@@ -302,9 +340,14 @@ def collect_component_evidence(graph: SemanticGraph, component_id: str, context_
     closure = graph.closure((component_id,), context_id, ("compile", "link", "test"))
     final_link_closure = graph.final_link_closure((component_id,), context_id)
     build_closure = tuple(sorted(set(closure) | set(final_link_closure)))
-    declared_inputs = _declared_inputs(graph, build_closure, context_id)
+    declared_inputs = _declared_inputs(
+        graph,
+        build_closure,
+        context_id,
+        compiled_component_ids=final_link_closure,
+    )
     if context.backend == "msbuild":
-        raw = _msbuild_evidence(graph, component_id, context_id, build_closure)
+        raw = _msbuild_evidence(graph, component_id, context_id, final_link_closure)
     elif context.backend == "cmake":
         raw = _cmake_evidence(graph, component_id, context_id, declared_inputs)
     else:

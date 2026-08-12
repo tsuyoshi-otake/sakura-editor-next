@@ -44,7 +44,16 @@ CONDITION_OPERATORS = {"all", "any", "not", "eq", "in", "has_feature"}
 COMPONENT_KINDS = {"implementation", "contract", "composition", "executable", "test", "aggregate"}
 INTERFACE_COMPONENT_KINDS = {"contract", "aggregate"}
 CONTRACT_KINDS = {"inbound_api", "outbound_port", "wire_protocol", "abi_contract"}
-ARTIFACT_KINDS = {"generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product"}
+ARTIFACT_KINDS = {
+    "generated",
+    "resource",
+    "asset",
+    "package_set",
+    "staging_set",
+    "test_fixture",
+    "product",
+    "source_set",
+}
 RUNTIME_ARTIFACT_KINDS = {"asset", "product", "staging_set"}
 TOOL_IDS = {"sakura-module-generator", "header-make", "cmake", "msbuild", "rc", "copy"}
 MATURITY_LEVELS = {"legacy", "candidate", "transitional", "independent"}

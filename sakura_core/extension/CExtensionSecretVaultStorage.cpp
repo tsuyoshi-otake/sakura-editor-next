@@ -8,7 +8,7 @@
 #include "extension/CExtensionSecretVaultStorage.h"
 
 #include "platform/controlipc/ControlPlatformEndpointDiscoveryReader.h"
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <array>
 #include <limits>

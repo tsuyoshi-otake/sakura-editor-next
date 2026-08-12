@@ -11,15 +11,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_OBJECT_PATH_MAX 220)
 
-add_library(sakura_editor_frame STATIC
-  "${SAKURA_REPO_ROOT}/sakura_core/workbench/editor/frame/EditorFrameEvents.cpp"
-  "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/editor/EditorFrameEvents.h"
-)
-target_include_directories(sakura_editor_frame PUBLIC "${SAKURA_REPO_ROOT}/sakura_core/include")
-target_compile_features(sakura_editor_frame PRIVATE cxx_std_20)
-target_compile_options(sakura_editor_frame PRIVATE -fpack-struct=8 -include "${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/mingw-x64-release/sakura_editor_frame.h")
-target_compile_definitions(sakura_editor_frame PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
-
 add_library(sakura_win32_editor_frame STATIC
   "${SAKURA_REPO_ROOT}/sakura_core/window/Win32EditorFrameAdapter.cpp"
   "${SAKURA_REPO_ROOT}/sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h"
@@ -28,4 +19,4 @@ target_include_directories(sakura_win32_editor_frame PUBLIC "${SAKURA_REPO_ROOT}
 target_compile_features(sakura_win32_editor_frame PRIVATE cxx_std_20)
 target_compile_options(sakura_win32_editor_frame PRIVATE -fpack-struct=8 -include "${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/mingw-x64-release/sakura_win32_editor_frame.h")
 target_compile_definitions(sakura_win32_editor_frame PRIVATE _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
-target_link_libraries(sakura_win32_editor_frame PRIVATE sakura_editor_frame)
+target_link_libraries(sakura_win32_editor_frame PUBLIC user32)

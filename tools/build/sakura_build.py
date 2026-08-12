@@ -30,6 +30,12 @@ from sakura_build_lib.coverage_map import (
 )
 from sakura_build_lib.model import ManifestError, PHASES, load_semantic_graph
 from sakura_build_lib.path_matrix import run_basic_path_matrix
+from sakura_build_lib.package_restore import (
+    package_gc,
+    plan_package_restore,
+    restore_package_closure,
+    validate_package_restore,
+)
 from sakura_build_lib.product_native_evidence import (
     observe_product_native_evidence,
     write_product_native_evidence,
@@ -44,10 +50,15 @@ from sakura_build_lib.resource_id_compatibility import (
     require_resource_id_baseline_version_advance,
     write_resource_id_baseline,
 )
+from sakura_build_lib.runtime_stage import stage_runtime_artifacts
 from sakura_build_lib.repository_inventory import (
     collect_repository_inventory,
     repository_inventory_summary,
     write_repository_inventory,
+)
+from sakura_build_lib.repository_graduation_evidence import (
+    collect_repository_graduation_evidence,
+    write_repository_graduation_evidence,
 )
 from sakura_build_lib.semantic_inventory import (
     accept_semantic_inventory,
@@ -59,6 +70,7 @@ from sakura_build_lib.semantic_inventory import (
 from sakura_build_lib.runner import (
     BuildError,
     EventWriter,
+    cmake_component_build_dir,
     cmake_component_commands,
     cmake_component_test_commands,
     cmake_commands,
@@ -168,6 +180,12 @@ def output(value: object, output_format: str) -> None:
 def add_execution_options(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--jobs", type=int, default=os.environ.get("SAKURA_BUILD_JOBS", "1"), help="global native scheduler budget (default: SAKURA_BUILD_JOBS or 1)")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument(
+        "--package-timeout-seconds",
+        type=int,
+        default=1800,
+        help="maximum time owned by an explicit package restore (default: 1800)",
+    )
 
 
 def parser() -> argparse.ArgumentParser:
@@ -215,6 +233,7 @@ def parser() -> argparse.ArgumentParser:
     inventory_repository.add_argument("--output", type=Path, default=Path("build/evidence/r0/repository-inventory.json"))
     inventory_repository.add_argument("--native-evidence", type=Path, help="merge a separately collected native product observation")
     inventory_repository.add_argument("--resource-evidence", type=Path, help="merge a separately collected native PE resource-table observation")
+    inventory_repository.add_argument("--graduation-evidence", type=Path, help="merge validated runtime/fixture/state/protocol graduation evidence")
     inventory_semantic = inventory_commands.add_parser(
         "semantic",
         help="collect the Editor Core semantic-debt baseline and enforce its ratchet",
@@ -268,6 +287,7 @@ def parser() -> argparse.ArgumentParser:
     inventory_observe_product.add_argument("--product", default="sakura_app")
     inventory_observe_product.add_argument("--jobs", type=int, default=os.environ.get("SAKURA_BUILD_JOBS", "1"))
     inventory_observe_product.add_argument("--timeout-seconds", type=int, default=900)
+    inventory_observe_product.add_argument("--package-timeout-seconds", type=int, default=1800)
     inventory_observe_product.add_argument(
         "--rebuild",
         action="store_true",
@@ -287,6 +307,16 @@ def parser() -> argparse.ArgumentParser:
         help="additional resource-only image for numeric-ID compatibility (repeatable)",
     )
     inventory_observe_resources.add_argument("--output", type=Path, default=Path("build/evidence/r0/native-resource-table.json"))
+    inventory_observe_graduation = inventory_commands.add_parser("observe-graduation")
+    inventory_observe_graduation.add_argument("--context", default="msvc-x64-debug")
+    inventory_observe_graduation.add_argument("--product", default="sakura_app")
+    inventory_observe_graduation.add_argument("--native-evidence", type=Path, required=True)
+    inventory_observe_graduation.add_argument("--resource-evidence", type=Path, required=True)
+    inventory_observe_graduation.add_argument("--test-inventory", type=Path, default=Path("src/test/test-inventory.json"))
+    inventory_observe_graduation.add_argument("--semantic-baseline", type=Path, default=Path("tools/build/baselines/editor-core-semantic.json"))
+    inventory_observe_graduation.add_argument("--runner", action="append", required=True, help="runner-id=executable (repeat for every stable inventory runner)")
+    inventory_observe_graduation.add_argument("--timeout-seconds", type=int, default=60)
+    inventory_observe_graduation.add_argument("--output", type=Path, default=Path("build/evidence/r0/repository-graduation.json"))
     inventory_snapshot_resource_ids = inventory_commands.add_parser("snapshot-resource-ids")
     inventory_snapshot_resource_ids.add_argument(
         "--header",
@@ -312,6 +342,22 @@ def parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("tools/build/baselines/sakura_resource_ids.json"),
     )
+
+    package = commands.add_parser(
+        "package",
+        help="plan, restore, validate, or collect only the graph-declared package closure",
+    )
+    package_commands = package.add_subparsers(dest="package_command", required=True)
+    for name in ("plan", "restore", "validate"):
+        item = package_commands.add_parser(name)
+        item.add_argument("component", nargs="?", default="sakura_app")
+        item.add_argument("--context", default="msvc-x64-debug")
+        if name == "restore":
+            item.add_argument("--timeout-seconds", type=int, default=1800)
+    package_gc_parser = package_commands.add_parser("gc")
+    package_gc_parser.add_argument("--keep", type=int, default=3)
+    package_gc_parser.add_argument("--max-bytes", type=int, default=8 * 1024 * 1024 * 1024)
+    package_gc_parser.add_argument("--apply", action="store_true", help="remove the reported inactive cache entries")
 
     verify = commands.add_parser("verify")
     verify_commands = verify.add_subparsers(dest="verify_command", required=True)
@@ -354,6 +400,13 @@ def parser() -> argparse.ArgumentParser:
     build_fixture.add_argument("fixture", choices=ABI_FIXTURES)
     build_fixture.add_argument("--context", default="msvc-x64-debug")
     build_fixture.add_argument("--timeout-seconds", type=int, default=60)
+
+    stage = commands.add_parser("stage")
+    stage_commands = stage.add_subparsers(dest="stage_command", required=True)
+    stage_runtime = stage_commands.add_parser("runtime")
+    stage_runtime.add_argument("--context", required=True)
+    stage_runtime.add_argument("--product", default="sakura_app")
+    stage_runtime.add_argument("--timeout-seconds", type=int, default=60)
 
     test = commands.add_parser("test")
     test_commands = test.add_subparsers(dest="test_command", required=True)
@@ -480,6 +533,57 @@ def _event_writer(path: Path | None):
     return stream, EventWriter(stream)
 
 
+def _package_result_for_output(result: dict[str, object]) -> dict[str, object]:
+    """Render package plans without leaking Path objects into JSON output."""
+
+    rendered: dict[str, object] = {}
+    for key, value in result.items():
+        if isinstance(value, Path):
+            rendered[key] = str(value)
+        elif isinstance(value, dict):
+            rendered[key] = _package_result_for_output(dict(value))
+        elif isinstance(value, list):
+            rendered[key] = [str(item) if isinstance(item, Path) else item for item in value]
+        else:
+            rendered[key] = value
+    return rendered
+
+
+def _ensure_package_closure(
+    graph,
+    roots: tuple[str, ...],
+    context_id_value: str,
+    *,
+    dry_run: bool,
+    timeout_seconds: int,
+    events: EventWriter,
+) -> dict[str, object]:
+    """Make package restoration an explicit predecessor of a native build.
+
+    A dry run intentionally reports the semantic closure only.  It never
+    creates an installed root, preserving the contract that dry-run has no
+    restore side effect.
+    """
+
+    if dry_run:
+        result = plan_package_restore(graph, roots, context_id_value)
+        events.emit(
+            "package_restore_planned",
+            context_id=context_id_value,
+            status="planned",
+            plan_hash=result.get("plan_hash"),
+            required=bool(result.get("required")),
+        )
+        return result
+    return restore_package_closure(
+        graph,
+        roots,
+        context_id_value,
+        timeout_seconds=timeout_seconds,
+        events=events,
+    )
+
+
 def _run_build(args, graph, events: EventWriter) -> int:
     repo = graph.repo_root
     command = args.build_command
@@ -489,6 +593,15 @@ def _run_build(args, graph, events: EventWriter) -> int:
         return 0 if result["ok"] else EXIT_BUILD
     if command in {"dev", "solution", "distribution"}:
         validate_legacy_pair(args.platform, args.configuration, "x64")
+        package_roots = ("sakura_app", "tests1") if command == "solution" else ("sakura_app",)
+        _ensure_package_closure(
+            graph,
+            package_roots,
+            context_id(args.platform, args.configuration),
+            dry_run=args.dry_run,
+            timeout_seconds=args.package_timeout_seconds,
+            events=events,
+        )
         if command == "dev":
             target = repo / "sakura_core/sakura.vcxproj"
             target_name = os.environ.get("SAKURA_DEV_BUILD_TARGET", "Build")
@@ -507,7 +620,16 @@ def _run_build(args, graph, events: EventWriter) -> int:
         else:
             commands = distribution_commands(repo, args.platform, args.configuration, args.jobs)
         env = {"SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1"} if command == "distribution" else {}
-        return run_commands(commands, repo, dry_run=args.dry_run, events=events, environment=env)
+        result = run_commands(commands, repo, dry_run=args.dry_run, events=events, environment=env)
+        if result or args.dry_run:
+            return result
+        stage_runtime_artifacts(
+            graph,
+            "sakura_app",
+            context_id(args.platform, args.configuration),
+            events=events,
+        )
+        return 0
 
     stale = stale_component_outputs(graph, args.component, args.context)
     if stale:
@@ -517,6 +639,14 @@ def _run_build(args, graph, events: EventWriter) -> int:
             EXIT_STALE,
         )
     intent = graph.build_intent((args.component,), args.context, ("generate", "compile", "link"))
+    _ensure_package_closure(
+        graph,
+        (args.component,),
+        args.context,
+        dry_run=args.dry_run,
+        timeout_seconds=args.package_timeout_seconds,
+        events=events,
+    )
     backend = graph.context(args.context).backend
     targets = intent["backend_targets"].get(backend, [])
     if len(targets) != 1:
@@ -543,7 +673,7 @@ def _run_build(args, graph, events: EventWriter) -> int:
         )
         if result:
             return result
-        build_dir = execution_root / f"build/components/{args.context}/{args.component}/cmake-ninja-isolated"
+        build_dir = cmake_component_build_dir(execution_root, args.component, args.context)
         write_native_path_identity(build_dir, repo, execution_root)
         return 0
 
@@ -562,6 +692,14 @@ def _run_test_component(args, graph, events: EventWriter) -> int:
             EXIT_STALE,
         )
     intent = graph.build_intent((args.component,), args.context, ("generate", "compile", "link", "test"))
+    _ensure_package_closure(
+        graph,
+        (args.component,),
+        args.context,
+        dry_run=args.dry_run,
+        timeout_seconds=args.package_timeout_seconds,
+        events=events,
+    )
     context = graph.context(args.context)
     targets = intent["backend_targets"].get(context.backend, [])
     if len(targets) != 1:
@@ -592,7 +730,7 @@ def _run_test_component(args, graph, events: EventWriter) -> int:
         result = run_commands(build_commands, execution_root, dry_run=False, events=events, environment=environment, failure_exit_code=EXIT_BUILD, isolate_cmake_environment=True)
         if result:
             return result
-        build_dir = execution_root / f"build/components/{args.context}/{args.component}/cmake-ninja-isolated"
+        build_dir = cmake_component_build_dir(execution_root, args.component, args.context)
         write_native_path_identity(build_dir, graph.repo_root, execution_root)
         return run_commands(test_commands, execution_root, dry_run=False, events=events, environment=environment, failure_exit_code=EXIT_TEST, isolate_cmake_environment=True)
 
@@ -609,8 +747,37 @@ def _run_compat(args, graph, events: EventWriter) -> int:
     if args.entrypoint == "build-gnu":
         validate_legacy_pair(platform, configuration, "MinGW")
         run_tests = len(values) < 3 or not values[2]
-        return run_commands(cmake_commands(graph.repo_root, configuration, compat_jobs, run_tests=run_tests), graph.repo_root, dry_run=False, events=events, environment=mingw_environment())
+        package_result = _ensure_package_closure(
+            graph,
+            ("sakura_app", "tests1"),
+            context_id(platform, configuration),
+            dry_run=False,
+            timeout_seconds=1800,
+            events=events,
+        )
+        return run_commands(
+            cmake_commands(
+                graph.repo_root,
+                configuration,
+                compat_jobs,
+                run_tests=run_tests,
+                package_cmake_config=Path(str(package_result["active_cmake_relative"])),
+            ),
+            graph.repo_root,
+            dry_run=False,
+            events=events,
+            environment=mingw_environment(),
+        )
     validate_legacy_pair(platform, configuration, "x64")
+    package_roots = ("sakura_app", "tests1") if args.entrypoint == "build-sln" else ("sakura_app",)
+    _ensure_package_closure(
+        graph,
+        package_roots,
+        context_id(platform, configuration),
+        dry_run=False,
+        timeout_seconds=1800,
+        events=events,
+    )
     if args.entrypoint == "build-dev":
         commands = [msbuild_command(graph.repo_root, graph.repo_root / "sakura_core/sakura.vcxproj", platform, configuration, compat_jobs, build_target=os.environ.get("SAKURA_DEV_BUILD_TARGET", "Build"))]
         env = {}
@@ -955,6 +1122,27 @@ def main(argv: list[str] | None = None) -> int:
             result = graph_check(graph, contexts)
             output(result, args.format)
             return 0 if result["ok"] else EXIT_GRAPH
+        if args.command == "package":
+            if args.package_command == "gc":
+                output(package_gc(repo, keep=args.keep, max_bytes=args.max_bytes, apply=args.apply), args.format)
+                return 0
+            if args.package_command == "plan":
+                result = plan_package_restore(graph, (args.component,), args.context)
+                output(_package_result_for_output(result), args.format)
+                return 0
+            if args.package_command == "restore":
+                result = restore_package_closure(
+                    graph,
+                    (args.component,),
+                    args.context,
+                    timeout_seconds=args.timeout_seconds,
+                    events=events,
+                )
+                output(_package_result_for_output(result), args.format)
+                return 0
+            result = validate_package_restore(graph, (args.component,), args.context)
+            output(_package_result_for_output(result), args.format)
+            return 0 if result["valid"] else EXIT_GRAPH
         if args.command == "inventory":
             destination = args.output if args.output.is_absolute() else repo / args.output
             try:
@@ -1064,7 +1252,49 @@ def main(argv: list[str] | None = None) -> int:
                 report["baseline_changed"] = baseline_changed
                 output(report, args.format)
                 return 0 if comparison is None or not args.strict or comparison["ok"] else EXIT_RATCHET
+            if args.inventory_command == "observe-graduation":
+                native_evidence = _repository_path(repo, args.native_evidence, "--native-evidence")
+                resource_evidence = _repository_path(repo, args.resource_evidence, "--resource-evidence")
+                test_inventory_path = _repository_path(repo, args.test_inventory, "--test-inventory")
+                semantic_baseline_path = _repository_path(repo, args.semantic_baseline, "--semantic-baseline")
+                destination = _repository_path(repo, args.output, "--output")
+                runners = _role_paths(repo, args.runner, "--runner")
+                result = collect_repository_graduation_evidence(
+                    graph,
+                    product_id=args.product,
+                    context_id=args.context,
+                    native_evidence_path=native_evidence,
+                    resource_evidence_path=resource_evidence,
+                    test_inventory_path=test_inventory_path,
+                    runners=runners,
+                    semantic_baseline_path=semantic_baseline_path,
+                    timeout_seconds=args.timeout_seconds,
+                )
+                write_repository_graduation_evidence(destination, result)
+                output(
+                    {
+                        "collection_ok": result["collection_ok"],
+                        "semantic_graph_hash": result["semantic_graph_hash"],
+                        "hard_evidence_hash": result["hard_evidence_hash"],
+                        "coverage": result["coverage"],
+                        "runtime_stage_status": result["runtime_asset"]["status"],
+                        "fixture_count": len(result["test_fixture"]["fixtures"]),
+                        "test_inventory_count": result["test_inventory"]["test_count"],
+                        "protocol_contract_count": len(result["protocol"]["contracts"]),
+                        "output": str(destination),
+                    },
+                    args.format,
+                )
+                return 0
             if args.inventory_command == "observe-product":
+                package_result = _ensure_package_closure(
+                    graph,
+                    (args.product,),
+                    args.context,
+                    dry_run=False,
+                    timeout_seconds=args.package_timeout_seconds,
+                    events=events,
+                )
                 result = observe_product_native_evidence(
                     graph,
                     args.product,
@@ -1073,6 +1303,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.timeout_seconds,
                     events,
                     build_target="Rebuild" if args.rebuild else "Build",
+                    package_restore=package_result,
                 )
                 write_product_native_evidence(destination, result)
                 compiler = result["compiler"]
@@ -1098,6 +1329,8 @@ def main(argv: list[str] | None = None) -> int:
                         "generator_target_scheduling_observed": generator_observation["target_scheduling_observed"],
                         "generator_execution_observed": generator_observation["correlated_execution_observed"],
                         "generated_producer_consumer_correlation_count": len(generator_observation["producer_consumer_correlations"]),
+                        "package_restore_status": package_result["status"],
+                        "package_restore_execution_observed": package_result["native_restore_execution_observed"],
                         "output": str(destination),
                     },
                     args.format,
@@ -1156,6 +1389,13 @@ def main(argv: list[str] | None = None) -> int:
                     resource_evidence.resolve().relative_to(repo)
                 except ValueError as error:
                     raise BuildError("EVIDENCE_PATH_ESCAPE", f"resource evidence must be inside the repository: {resource_evidence}", EXIT_USAGE) from error
+            graduation_evidence = None
+            if args.graduation_evidence is not None:
+                graduation_evidence = args.graduation_evidence if args.graduation_evidence.is_absolute() else repo / args.graduation_evidence
+                try:
+                    graduation_evidence.resolve().relative_to(repo)
+                except ValueError as error:
+                    raise BuildError("EVIDENCE_PATH_ESCAPE", f"graduation evidence must be inside the repository: {graduation_evidence}", EXIT_USAGE) from error
             result = collect_repository_inventory(
                 graph,
                 product_id=args.product,
@@ -1163,6 +1403,7 @@ def main(argv: list[str] | None = None) -> int:
                 context_id=args.context,
                 native_evidence_path=native_evidence,
                 resource_evidence_path=resource_evidence,
+                graduation_evidence_path=graduation_evidence,
             )
             write_repository_inventory(destination, result)
             rendered = repository_inventory_summary(result, output_path=destination)
@@ -1214,6 +1455,16 @@ def main(argv: list[str] | None = None) -> int:
             phases = tuple(item for item in args.phases.split(",") if item)
             output(graph.build_intent((args.component,), args.context, phases), args.format)
             return 0
+        if args.command == "stage":
+            result = stage_runtime_artifacts(
+                graph,
+                args.product,
+                args.context,
+                timeout_seconds=args.timeout_seconds,
+                events=events,
+            )
+            output(result, args.format)
+            return 0
         if args.command == "build":
             return _run_build(args, graph, events)
         if args.command == "test":
@@ -1224,7 +1475,29 @@ def main(argv: list[str] | None = None) -> int:
             if args.test_command == "component":
                 return _run_test_component(args, graph, events)
             validate_legacy_pair(args.platform, args.configuration, "MinGW")
-            return run_commands(cmake_commands(repo, args.configuration, args.jobs, run_tests=True), repo, dry_run=args.dry_run, events=events, environment=mingw_environment(), failure_exit_code=EXIT_TEST)
+            package_result = _ensure_package_closure(
+                graph,
+                ("sakura_app", "tests1"),
+                context_id(args.platform, args.configuration),
+                dry_run=args.dry_run,
+                timeout_seconds=args.package_timeout_seconds,
+                events=events,
+            )
+            package_config = Path(str(package_result["active_cmake_relative"])) if package_result.get("required") else None
+            return run_commands(
+                cmake_commands(
+                    repo,
+                    args.configuration,
+                    args.jobs,
+                    run_tests=True,
+                    package_cmake_config=package_config,
+                ),
+                repo,
+                dry_run=args.dry_run,
+                events=events,
+                environment=mingw_environment(),
+                failure_exit_code=EXIT_TEST,
+            )
         if args.command == "path-matrix":
             contexts = tuple(value for value in args.contexts.split(",") if value)
             if not contexts:

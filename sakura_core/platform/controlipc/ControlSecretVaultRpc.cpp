@@ -6,7 +6,7 @@
 */
 #include "StdAfx.h"
 #include "platform/controlipc/ControlSecretVaultRpc.h"
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <algorithm>
 #include <array>

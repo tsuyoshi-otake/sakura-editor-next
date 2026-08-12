@@ -115,6 +115,43 @@ component graph の唯一の定義は `src/main/modules/modules.json` です。m
 `sakura-build.bat generate --check` により生成物のstalenessを検査します。通常ビルドが
 生成済みproject fragmentを暗黙に書き換えることはありません。
 
+### 明示 package restore と runtime staging
+
+canonical driver は native build の前に、選択component/contextの宣言済み package closure だけを
+計画して restore します。MSBuild/CMake の project evaluation が manifest を発見して restore する経路は
+無効であり、active root が無い/現在の closure と一致しない場合は compile 前に失敗します。
+
+```cmd
+py -3 tools/build/sakura_build.py package plan sakura_app --context msvc-x64-debug
+py -3 tools/build/sakura_build.py package restore sakura_app --context msvc-x64-debug
+py -3 tools/build/sakura_build.py package validate sakura_app --context msvc-x64-debug
+
+rem まず削除候補だけを表示し、確認後に明示適用する
+py -3 tools/build/sakura_build.py package gc --keep 3 --max-bytes 8589934592
+py -3 tools/build/sakura_build.py package gc --keep 3 --max-bytes 8589934592 --apply
+```
+
+package input、vcpkg toolchain/triplet、host/target triplet、graph closure が同じなら、二度目の
+`restore` は immutable cache entry を `reused` として再利用します。cache は
+`build/pkg/v/e/<content-hash>`、active projection は `build/pkg/v/a/`、LRU 利用記録は
+`build/pkg/v/u/`、restore lock は `build/pkg/v/l/` に分離します。GC は active/lock中のentryを
+削除せず、LRU・保持数・容量の順で inactive entry のみを対象にします。cache root や active projection を
+手で編集せず、不要な entry は必ずこの command で回収してください。
+
+通常の `build dev`、`build solution`、`build distribution` は native build 成功後に、manifestで宣言した
+runtime closure を空の configuration別 staging root へ配置します。stagingを単独で再検査/再作成する場合は次を
+使用します。未申告の DLL、ZIP、辞書、他runner output は配置しません。
+
+```cmd
+py -3 tools/build/sakura_build.py stage runtime --context msvc-x64-debug --product sakura_app
+```
+
+`build/staging/<context>/sakura-editor/.sakura-runtime-stage.json` は staged source/destination/sha256 を持つ
+deterministic receipt です。runtime asset の証跡は source が残っていることだけではなく、このreceiptと staged
+content が現在の graph/output に一致することを確認します。
+manifest の runtime edge witness はこの静的 stage 設定を指し、まだ link されていない product output を
+`generate --check` 時に要求しません。output の存在・内容は `stage runtime` と receipt 検証で fail-closed に確認します。
+
 R0の製品実行証跡は、静的なrepository台帳とは別に収集してから明示的にmergeします。
 
 ```cmd
@@ -141,10 +178,25 @@ sakura-build.bat inventory observe-resources ^
   --compat-image zh-CN=x64/Debug/sakura_lang_zh_CN.dll ^
   --output build/evidence/r0/native-resource-table.json
 
+rem runtime、fixture、semantic state、wire protocol、stable test inventory を一つの証跡へ固定する
+sakura-build.bat inventory observe-graduation ^
+  --context msvc-x64-debug --product sakura_app ^
+  --native-evidence build/evidence/r0/native-msbuild-product.json ^
+  --resource-evidence build/evidence/r0/native-resource-table.json ^
+  --runner tests1=x64/Debug/tests1.exe ^
+  --runner sakura_filesystem_tests=build/components/msvc-x64-debug/sakura_filesystem_tests/bin/sakura_filesystem_tests.exe ^
+  --runner sakura_request_tests=build/components/msvc-x64-debug/sakura_request_tests/bin/sakura_request_tests.exe ^
+  --runner sakura_security_tests=build/components/msvc-x64-debug/sakura_security_tests/bin/sakura_security_tests.exe ^
+  --runner sakura_serialization_tests=build/components/msvc-x64-debug/sakura_serialization_tests/bin/sakura_serialization_tests.exe ^
+  --runner sakura_storage_tests=build/components/msvc-x64-debug/sakura_storage_tests/bin/sakura_storage_tests.exe ^
+  --runner sakura_uri_tests=build/components/msvc-x64-debug/sakura_uri_tests/bin/sakura_uri_tests.exe ^
+  --output build/evidence/r0/repository-graduation.json
+
 sakura-build.bat inventory repository ^
   --context msvc-x64-debug --product sakura_app --provider sakura_uri ^
   --native-evidence build/evidence/r0/native-msbuild-product.json ^
   --resource-evidence build/evidence/r0/native-resource-table.json ^
+  --graduation-evidence build/evidence/r0/repository-graduation.json ^
   --output build/evidence/r0/repository-inventory.json --strict
 ```
 
@@ -378,7 +430,7 @@ py -3 tools/build/sakura_build.py verify rebuild-closure sakura_uri_tests --cont
 `build/evidence/r0/repository-inventory.json`へ保存します。baseline modeは収集に成功すればexit 0ですが、
 それはL4独立性の合格を意味しません。`--strict`は未所有file、未申告include、未解決quoted include、
 source内link directive、製品へのprovider source埋込み、CMake source glob、未分類package、global restore、
-testからの製品object取り込み、共有resource ID header、partial/not-observed classが一つでも残ればexit 5です。
+testからの製品object取り込み、共有resource ID header、stale graduation evidence、partial/not-observed classが一つでも残ればexit 5です。
 台帳はMSBuild/CMakeの生成出力・入力・tool witness、RC/RC2 include、AdditionalDependencies/ProjectReference、
 vcpkg manifest install triggerも構造化します。ただし、build定義の静的観測はnative compiler/linker/resource compiler/
 package restoreの実行観測を代替しません。全witnessはevidence fileに保持し、端末出力は件数とhashの有界な要約にします。

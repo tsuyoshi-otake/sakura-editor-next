@@ -7,9 +7,14 @@
 
 #include <sakura/controlipc/ControlIpcSecurity.h>
 #include <sakura/controlipc/ControlPlatformEndpoint.h>
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #if __has_include("platform/controlipc/ControlPlatformEndpoint.h")
 #error "sakura_controlipc_endpoint_tests can reach the removed private endpoint contract"
+#endif
+
+#if __has_include("platform/profiles/ProfileAuthorityIdentity.h")
+#error "sakura_controlipc_endpoint_tests can reach the removed private profile identity contract"
 #endif
 
 #include <Windows.h>
@@ -103,6 +108,14 @@ bool CloseIsTerminalAndIdempotent()
 	return endpoint.ReadDetailed().disposition == EControlPlatformEndpointDiscoveryDisposition::Closed;
 }
 
+bool ValidatesCanonicalProfileAuthorityIdentity()
+{
+	using platform::profiles::IsCanonicalProfileAuthorityId;
+	return IsCanonicalProfileAuthorityId(kProfileId) && !IsCanonicalProfileAuthorityId("0123456789ABCDEF0123456789ABCDEF") &&
+		!IsCanonicalProfileAuthorityId("0123456789abcdef0123456789abcde") &&
+		IsCanonicalProfileAuthorityId(L"0123456789abcdef0123456789abcdef");
+}
+
 class TestCase final {
 public:
 	constexpr TestCase(std::string_view name, bool (*run)()) noexcept : m_name(name), m_run(run) {}
@@ -118,6 +131,7 @@ constexpr std::array kTests{
 	TestCase{ "PublishesAndDiscoversTheTypedEndpoint", PublishesAndDiscoversTheTypedEndpoint },
 	TestCase{ "RejectsMutatedIdentityAndStaleGenerations", RejectsMutatedIdentityAndStaleGenerations },
 	TestCase{ "CloseIsTerminalAndIdempotent", CloseIsTerminalAndIdempotent },
+	TestCase{ "ValidatesCanonicalProfileAuthorityIdentity", ValidatesCanonicalProfileAuthorityIdentity },
 };
 
 bool Matches(std::string_view fullName, std::string_view filter)

@@ -8,15 +8,22 @@
     <!-- トリプレット -->
     <VcpkgTriplet Condition="'$(Platform)'=='x64'">x64-windows-static</VcpkgTriplet>
 
-    <!-- マニフェストモード有効 -->
-    <VcpkgEnableManifest>true</VcpkgEnableManifest>
-
-    <!-- マニフェスト(vcpkg.json)の場所 -->
-    <VcpkgManifestRoot>$(MSBuildThisFileDirectory)</VcpkgManifestRoot>
-
-    <!-- vcpkg_installの場所 -->
-    <VcpkgInstalledDir>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '.\build\$(Platform)\CMakeTools\vcpkg_installed\'))</VcpkgInstalledDir>
+    <!--
+      Package restoration is owned by sakura-build.  Native project evaluation
+      consumes only the active, content-addressed package root and never scans
+      this checkout for vcpkg.json or starts an install as a ClCompile side
+      effect.  The active projection is written atomically after restore.
+    -->
+    <SakuraPackageActiveRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '.\build\pkg\v\a\'))</SakuraPackageActiveRoot>
+    <SakuraPackageActiveProps>$(SakuraPackageActiveRoot)$(VcpkgTriplet).props</SakuraPackageActiveProps>
+    <SakuraVcpkgToolchainFile>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '.\src\main\cmake\sakura-vcpkg-toolchain.cmake'))</SakuraVcpkgToolchainFile>
+    <VcpkgEnableManifest>false</VcpkgEnableManifest>
+    <VcpkgManifestInstall>false</VcpkgManifestInstall>
+    <VcpkgAutoBootstrap>false</VcpkgAutoBootstrap>
+    <VcpkgEnableClassic>true</VcpkgEnableClassic>
+    <VcpkgManifestRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '.\build\packages\vcpkg\manifest-disabled\'))</VcpkgManifestRoot>
   </PropertyGroup>
+  <Import Project="$(SakuraPackageActiveProps)" Condition="Exists('$(SakuraPackageActiveProps)')" />
   <ItemDefinitionGroup>
     <ResourceCompile>
       <AdditionalIncludeDirectories>$(VcpkgInstalledDir)$(VcpkgTriplet)\share\cmigemo;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
