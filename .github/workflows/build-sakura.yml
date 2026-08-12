@@ -684,6 +684,19 @@ jobs:
             throw "Failed to add the GitHub Packages NuGet source."
         }
 
+    # Each hosted build job has its own workspace.  The vcpkg warm-up job
+    # publishes binary-cache entries, but cannot provide this job's manifest
+    # hashed active package root.  Restore that declared closure explicitly
+    # before MSBuild so normal project evaluation never falls back to an
+    # implicit/global restore.
+    - name: Restore declared Sakura packages
+      run: |
+        $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
+        & python tools/build/sakura_build.py package restore sakura_app --context $context --timeout-seconds 1800
+        if ($LASTEXITCODE -ne 0) {
+          throw "Declared Sakura package restore failed for context $context (exit code $LASTEXITCODE)."
+        }
+
     - name: Build with Build-Wrapper
       if: ${{ matrix.platform == 'x64' && matrix.config == 'Debug' }}
       run: build-wrapper-win-x86-64.exe --out-dir bw-output MsBuild.exe /p:Platform=${{ matrix.platform }} /p:Configuration=${{ matrix.config }}
