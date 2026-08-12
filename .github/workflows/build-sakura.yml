@@ -115,6 +115,7 @@ jobs:
     timeout-minutes: 10
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      id: checkout
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
@@ -148,8 +149,11 @@ jobs:
       run: npm --prefix src/exthost test -- --test-timeout=60000
 
     # テストコマンドが返ったことは、テストプロセスが終わったことの証明にならない。
+    # checkout が成功したときだけ動かす。リポジトリが無い状態でこのステップが動くと
+    # 「スクリプトが見つからない」という二次エラーだけがログに残り、本当に落ちた
+    # ステップが埋もれる。
     - name: Clean up test process survivors
-      if: ${{ always() }}
+      if: ${{ always() && steps.checkout.outcome == 'success' }}
       run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
   build-vcpkg-msvc:
@@ -455,6 +459,7 @@ jobs:
 
     ## see https://github.com/actions/checkout
     - uses: actions/checkout@v7
+      id: checkout
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 0
@@ -730,8 +735,12 @@ jobs:
           Invoke-Ctest $commonArguments
         }
 
+    # このジョブは checkout の前に「Validate build prerequisites」を走らせる。
+    # そこで失敗するとリポジトリが無いまま always() のこのステップが動き、
+    # 「スクリプトが見つからない」という二次エラーだけがログに残って、本当に
+    # 落ちたステップが埋もれる。checkout が成功したときだけ動かす。
     - name: Clean up test process survivors
-      if: ${{ always() }}
+      if: ${{ always() && steps.checkout.outcome == 'success' }}
       run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
     - name: Upload feature test-selection evidence
