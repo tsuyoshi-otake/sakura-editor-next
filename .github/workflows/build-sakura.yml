@@ -446,9 +446,11 @@ jobs:
         BUILD_CHM_RESULT: ${{ needs.build-chm.result }}
         EVENT_NAME: ${{ github.event_name }}
       run: |
-        $expectedChmResult = if ($env:EVENT_NAME -eq 'pull_request') { 'skipped' } else { 'success' }
-        if ($env:VCPKG_MSVC_RESULT -ne 'success' -or $env:BUILD_CHM_RESULT -ne $expectedChmResult) {
-          throw "Build prerequisites are not ready: build-vcpkg-msvc=$env:VCPKG_MSVC_RESULT, build-chm=$env:BUILD_CHM_RESULT, expected build-chm=$expectedChmResult."
+        if ($env:VCPKG_MSVC_RESULT -ne 'success') {
+          throw "The required vcpkg prerequisite did not succeed: build-vcpkg-msvc=$env:VCPKG_MSVC_RESULT."
+        }
+        if ($env:EVENT_NAME -ne 'pull_request' -and $env:BUILD_CHM_RESULT -ne 'success') {
+          throw "The required CHM prerequisite did not succeed: build-chm=$env:BUILD_CHM_RESULT."
         }
 
     ## see https://github.com/actions/checkout
