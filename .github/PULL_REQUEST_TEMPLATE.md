@@ -48,6 +48,9 @@
 <!-- #xxx と書くと チケット xxx に対して自動的にリンクが張られます。 -->
 <!-- 参考: https://help.github.com/en/articles/closing-issues-using-keywords-->
 <!-- issue, PR の URL をそのまま貼り付けても OK -->
+<!-- この PR が develop にマージされると develop-issue-closure ワークフローがキーワードを解決し、 -->
+<!-- 対象 issue にマージコミットをコメントしてクローズします。 -->
+<!-- クローズ対象はこのリポジトリの issue のみです。他リポジトリへの参照は記録されるだけで閉じません。 -->
 
 
 ## <!-- なければ省略可 --> 参考資料
