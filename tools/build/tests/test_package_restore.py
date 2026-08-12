@@ -24,6 +24,7 @@ from sakura_build_lib.model import (  # noqa: E402
 )
 from sakura_build_lib.package_restore import (  # noqa: E402
     _RESTORE_DOWNLOAD_ATTEMPTS,
+    _RESTORE_DOWNLOAD_BACKOFF_SECONDS,
     _run_vcpkg,
     _transient_download_reason,
     package_gc,
@@ -296,10 +297,10 @@ class PackageRestoreDownloadRetryTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(("installed\n", ""), result)
         self.assertEqual(2, spawn.call_count)
-        sleep.assert_called_once_with(5.0)
+        sleep.assert_called_once_with(_RESTORE_DOWNLOAD_BACKOFF_SECONDS[0])
         # An unattended EventWriter has no stream, so the build log is the only
         # place a human can see that an attempt was repeated.
-        self.assertIn("PACKAGE_RESTORE_RETRY: attempt 1 of 3", stderr)
+        self.assertIn(f"PACKAGE_RESTORE_RETRY: attempt 1 of {_RESTORE_DOWNLOAD_ATTEMPTS}", stderr)
         self.assertIn("HTTP 503", stderr)
 
     def test_curl_transport_failure_is_retried(self) -> None:
@@ -307,7 +308,7 @@ class PackageRestoreDownloadRetryTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(2, spawn.call_count)
         self.assertIn("curl transport error 56", stderr)
-        sleep.assert_called_once_with(5.0)
+        sleep.assert_called_once_with(_RESTORE_DOWNLOAD_BACKOFF_SECONDS[0])
 
     def test_exhausted_attempts_report_the_original_cause(self) -> None:
         _result, error, spawn, sleep, _stderr = self._run([(_TRANSIENT_503, "", 1)] * _RESTORE_DOWNLOAD_ATTEMPTS)
@@ -333,12 +334,21 @@ class PackageRestoreDownloadRetryTests(unittest.TestCase):
                 sleep.assert_not_called()
 
     def test_retry_never_extends_the_caller_timeout_budget(self) -> None:
-        # One second of budget cannot absorb a five-second backoff, so the
-        # failure must surface instead of overrunning the wait the caller chose.
+        # One second of budget cannot absorb the first backoff, so the failure
+        # must surface instead of overrunning the wait the caller chose.
         _result, error, spawn, sleep, _stderr = self._run([(_TRANSIENT_503, "", 1)], timeout_seconds=1)
         self.assertEqual("PACKAGE_RESTORE_FAILED", error.code)
         self.assertEqual(1, spawn.call_count)
         sleep.assert_not_called()
+
+    def test_the_retry_horizon_covers_a_minutes_long_outage(self) -> None:
+        # The attempt count is not the property that matters; the horizon is.
+        # On 2026-08-12 three independent retries lost to the same github.com
+        # degradation because each gave up inside half a minute, while the path
+        # recovered about two and a quarter minutes later.  Pin the horizon so a
+        # future tidy-up cannot quietly shrink it back to a second-scale retry.
+        self.assertGreaterEqual(len(_RESTORE_DOWNLOAD_BACKOFF_SECONDS), _RESTORE_DOWNLOAD_ATTEMPTS - 1)
+        self.assertGreaterEqual(sum(_RESTORE_DOWNLOAD_BACKOFF_SECONDS[: _RESTORE_DOWNLOAD_ATTEMPTS - 1]), 135.0)
 
     def test_classifier_names_the_failure_shape(self) -> None:
         self.assertIn("HTTP 503", _transient_download_reason(_TRANSIENT_503, ""))

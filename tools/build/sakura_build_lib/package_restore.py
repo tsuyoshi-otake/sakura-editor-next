@@ -83,10 +83,19 @@ _VCPKG_CURL_ERROR_CODE = re.compile(r"curl operation failed with error code\s+(\
 # failing on the first attempt.
 _VCPKG_TRANSIENT_CURL_CODES = frozenset({6, 7, 16, 18, 28, 35, 52, 55, 56, 92})
 _VCPKG_TRANSIENT_MARKERS = ("WinHttpReceiveResponse got error",)
-_RESTORE_DOWNLOAD_ATTEMPTS = 3
-# Backoff is measured in tens of seconds because the observed outages were, and
-# vcpkg's own second-scale backoff is exactly what failed to absorb them.
-_RESTORE_DOWNLOAD_BACKOFF_SECONDS = (5.0, 20.0)
+_RESTORE_DOWNLOAD_ATTEMPTS = 4
+# The horizon, not the attempt count, is what has to match the outage.  The
+# 2026-08-12 github.com degradation was measured three independent ways in the
+# same hour, and every short-horizon retry lost: vcpkg's own three attempts land
+# inside roughly five seconds, ``msys2/setup-msys2`` spends about thirty, and
+# this action's first revision spent twenty-five (attempts at 21:24:25, 21:24:30
+# and 21:24:51 all failed).  The same runner then fetched the whole closure
+# successfully from 21:27:04 to 21:29:03, so the path recovered roughly two and
+# a quarter minutes after the last of those attempts.  Four attempts across
+# 15 + 45 + 90 seconds cover that observed recovery; the wait is bounded, drawn
+# from the caller's existing budget, and cheap next to re-running a build leg
+# that is measured in tens of minutes.
+_RESTORE_DOWNLOAD_BACKOFF_SECONDS = (15.0, 45.0, 90.0)
 
 
 def _canonical_json(value: object) -> str:
