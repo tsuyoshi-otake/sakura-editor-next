@@ -1,0 +1,49 @@
+name: test results
+
+# Publishes the "Test Results" check (#112).  build-sakura.yml uploads the
+# googletest XML and the copied trigger event as per-configuration
+# test-results-* artifacts; publication happens here, in the base repository,
+# so the build workflow itself never needs checks/pull-requests write access.
+on:
+  workflow_run:
+    workflows: ['build sakura']
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  publish:
+    name: Publish test results
+    # A workflow_run job executes with this repository's secrets regardless of
+    # where the triggering run came from.  Publish only successful
+    # same-repository runs so a fork run's artifact content never reaches a
+    # check-writing step.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.head_repository.full_name == github.repository }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      checks: write
+      pull-requests: write
+    steps:
+      # The Release leg runs the full headless suite in every mode, promotion
+      # included, so its XML is the canonical result set; publishing one
+      # configuration also keeps each test counted exactly once.
+      - name: Download test-results artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: test-results-x64-Release
+          path: test-results
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+
+      - name: Publish test result
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          check_name: Test Results
+          commit: ${{ github.event.workflow_run.head_sha }}
+          event_file: test-results/github-event.json
+          event_name: ${{ github.event.workflow_run.event }}
+          files: |
+            test-results/*-googletest.xml

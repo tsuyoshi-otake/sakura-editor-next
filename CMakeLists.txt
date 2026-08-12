@@ -134,6 +134,12 @@ file(TO_NATIVE_PATH "${OUTPUT_DIRECTORY}" OUTPUT_DIRECTORY_NATIVE)
 # Include tests1 definition
 include(${CMAKE_SOURCE_DIR}/src/test/cmake/tests1.cmake)
 
+# tests1 runs exactly once per configuration.  With OpenCppCoverage present
+# (a local install, or the develop-push coverage-map runners that install it
+# themselves), Debug runs instrumented as CoverageTest and UnitTest stays
+# Release-only.  Without it - which includes the hosted build jobs since the
+# SonarCloud pipeline was retired (#112) - UnitTest covers both
+# configurations uninstrumented.
 if(OpenCppCoverage_EXECUTABLE)
   add_test(NAME CoverageTest
     COMMAND ${OpenCppCoverage_EXECUTABLE}
@@ -148,13 +154,16 @@ if(OpenCppCoverage_EXECUTABLE)
       --gtest_output=xml:${CMAKE_SOURCE_DIR}/tests1-googletest.xml
     CONFIGURATIONS Debug
   )
+  set(SAKURA_UNIT_TEST_CONFIGURATIONS Release)
+else()
+  set(SAKURA_UNIT_TEST_CONFIGURATIONS Debug Release)
 endif()
 
 add_test(NAME UnitTest
   COMMAND $<TARGET_FILE:tests1>
     --gtest_output=xml:${CMAKE_SOURCE_DIR}/tests1-googletest.xml
   WORKING_DIRECTORY ${OUTPUT_DIRECTORY}
-  CONFIGURATIONS Release
+  CONFIGURATIONS ${SAKURA_UNIT_TEST_CONFIGURATIONS}
 )
 
 add_test(NAME pytest

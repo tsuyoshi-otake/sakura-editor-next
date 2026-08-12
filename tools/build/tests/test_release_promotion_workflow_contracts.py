@@ -17,16 +17,10 @@ class ReleasePromotionWorkflowContractTests(unittest.TestCase):
         promotion = text[promotion_start:ordinary_start]
         ordinary = text[ordinary_start:]
 
-        self.assertIn(
-            "if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && inputs.release_promotion }}",
-            promotion,
-        )
+        self.assertIn("if: ${{ inputs.release_promotion }}", promotion)
         self.assertIn('set "GITHUB_SHA=${{ env.RELEASE_SOURCE_SHA }}"', promotion)
         self.assertIn("call build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}", promotion)
-        self.assertIn(
-            "if: ${{ !(matrix.platform == 'x64' && matrix.config == 'Debug') && !inputs.release_promotion }}",
-            ordinary,
-        )
+        self.assertIn("if: ${{ !inputs.release_promotion }}", ordinary)
 
     def test_distribution_smoke_uses_a_runner_compatible_with_the_installer(self) -> None:
         text = RELEASE_PROMOTION_WORKFLOW.read_text(encoding="utf-8-sig")
