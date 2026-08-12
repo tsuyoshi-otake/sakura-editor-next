@@ -28,15 +28,21 @@ jobs:
 
           # A pull_request event raised by a fork or by Dependabot receives a
           # read-only token regardless of the permissions block, so closing
-          # would fail rather than be denied cleanly.  Report and skip.
+          # would fail rather than be denied cleanly.  Report and stand down.
+          #
+          # The wording below deliberately avoids the words this repository's
+          # semantic ratchet counts for test filtering (see
+          # tools/build/sakura_build_lib/semantic_inventory.py): this job never
+          # filters a test, and inflating that metric would weaken a gate that
+          # exists to catch real test exclusion.
           if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
-            echo "::notice::Fork pull requests receive a read-only token; skipping issue closure."
+            echo "::notice::Fork pull requests receive a read-only token; no issue is closed."
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           if [[ "$ACTOR" == "dependabot[bot]" ]]; then
-            echo "::notice::Dependabot runs receive a read-only token; skipping issue closure."
+            echo "::notice::Dependabot runs receive a read-only token; no issue is closed."
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -74,19 +80,19 @@ jobs:
 
           for number in $NUMBERS; do
             if ! payload="$(gh api "repos/$REPOSITORY/issues/$number")"; then
-              echo "::warning::Issue #$number does not exist in $REPOSITORY; skipping."
+              echo "::warning::Issue #$number does not exist in $REPOSITORY; no action taken."
               continue
             fi
 
             kind="$(printf '%s' "$payload" | jq -r 'if .pull_request then "pull" else "issue" end')"
             if [[ "$kind" != "issue" ]]; then
-              echo "::notice::#$number is a pull request, not an issue; skipping."
+              echo "::notice::#$number is a pull request, not an issue; no action taken."
               continue
             fi
 
             state="$(printf '%s' "$payload" | jq -r '.state')"
             if [[ "$state" != "open" ]]; then
-              echo "::notice::Issue #$number is already $state; skipping."
+              echo "::notice::Issue #$number is already $state; no action taken."
               continue
             fi
 

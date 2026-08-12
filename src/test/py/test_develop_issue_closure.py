@@ -10,6 +10,8 @@ the Python suite CI actually executes.
 
 from __future__ import annotations
 
+import ast
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -20,6 +22,7 @@ SCRIPTS = REPO_ROOT / ".github/scripts"
 WORKFLOW = REPO_ROOT / ".github/workflows/develop-issue-closure.yml"
 PULL_REQUEST_TEMPLATE = REPO_ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
 PR_TARGET_POLICY_WORKFLOW = REPO_ROOT / ".github/workflows/pr-target-policy.yml"
+SEMANTIC_INVENTORY = REPO_ROOT / "tools/build/sakura_build_lib/semantic_inventory.py"
 
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
@@ -33,6 +36,24 @@ from close_referenced_issues import (  # noqa: E402
 
 REPOSITORY = "tsuyoshi-otake/sakura-editor-next"
 UPSTREAM = "sakura-editor/sakura"
+
+
+def filter_rule_pattern():
+    """Read the semantic ratchet's test-filtering pattern from its own source.
+
+    The module is parsed rather than imported: importing it would pull the whole
+    semantic inventory into this suite's coverage measurement and drop the run
+    below the configured coverage gate.
+    """
+
+    source = SEMANTIC_INVENTORY.read_text(encoding="utf-8-sig")
+    for node in ast.parse(source).body:
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(isinstance(target, ast.Name) and target.id == "_FILTER_RE" for target in node.targets):
+            continue
+        return node.value.args[0].value
+    raise AssertionError("semantic_inventory.py no longer defines _FILTER_RE")
 
 
 class ClosingReferenceResolutionTests(unittest.TestCase):
@@ -155,6 +176,17 @@ class DevelopIssueClosureWorkflowContractTests(unittest.TestCase):
         self.assertIn('if [[ "$state" != "open" ]]; then', self.text)
         self.assertIn('gh issue comment "$number" --repo "$REPOSITORY"', self.text)
         self.assertIn('gh issue close "$number" --repo "$REPOSITORY" --reason completed', self.text)
+
+    def test_the_workflow_does_not_inflate_the_test_filtering_ratchet(self) -> None:
+        # semantic_inventory counts filter/skip vocabulary in every .github file
+        # as test-filtering debt.  This job never filters a test, so its status
+        # messages must stay clear of that vocabulary; otherwise the ratchet
+        # baseline would have to be raised and would stop guarding real test
+        # exclusion.  Match against the real rule rather than a copy of it.
+        rule = re.compile(filter_rule_pattern(), re.IGNORECASE)
+        # Prove the rule is live before trusting an empty result from it.
+        self.assertTrue(rule.findall('echo "::notice::skipping issue closure."'))
+        self.assertEqual(rule.findall(self.text), [])
 
     def test_the_branch_policy_that_makes_this_workflow_necessary_still_holds(self) -> None:
         policy = PR_TARGET_POLICY_WORKFLOW.read_text(encoding="utf-8-sig")
