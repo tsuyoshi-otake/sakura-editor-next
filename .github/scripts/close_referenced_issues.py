@@ -146,7 +146,21 @@ def main(argv=None):
         print("::notice::Ignored a closing reference outside " + repository + ": " + reference)
 
     rendered = " ".join(str(number) for number in references.numbers)
-    print("Resolved closing references: " + (rendered or "(none)"))
+    if rendered:
+        print("Resolved closing references: " + rendered)
+    else:
+        # Resolving nothing is the one failure mode of this workflow that is
+        # silent by construction: the job still succeeds, and the caller cannot
+        # tell "the pull request closed no issue on purpose" from "the closing
+        # keyword was never written down".  PR #134 carried ``Fixes #137`` in a
+        # commit message while its body opened with ``Refs #112``, so the run
+        # was green and #137 stayed open until someone closed it by hand.
+        # Only the title and the body are read, deliberately, so say so here
+        # rather than leaving a bare "(none)" in the log body.
+        print(
+            "::notice::No closing keyword was resolved from the pull request title or body,"
+            " so no issue was closed. Commit messages are not read."
+        )
 
     output_path = os.environ.get("GITHUB_OUTPUT")
     if output_path:
