@@ -7,6 +7,21 @@
     <SakuraModulesContextId Condition="'$(Platform)' == 'x64' and '$(Configuration)' == 'Debug'">msvc-x64-debug</SakuraModulesContextId>
     <SakuraModulesContextId Condition="'$(Platform)' == 'x64' and '$(Configuration)' == 'Release'">msvc-x64-release</SakuraModulesContextId>
     <SakuraModulesGeneratedProps Condition="'$(SakuraModulesContextId)' != ''">$(SakuraRepositoryRoot)src\main\modules\generated\msbuild\$(SakuraModulesContextId).props</SakuraModulesGeneratedProps>
+    <!--
+      This file is imported by every project MSBuild evaluates beneath the
+      repository root, which is a wider set than the projects that consume a
+      package context.  Managed helper projects build at Platform=AnyCPU and
+      link nothing from the active package root, and CMake writes throwaway
+      probe projects (VCTargetsPath, compiler identification) under build\ that
+      run in jobs which deliberately never restore.  Package and projection
+      validation therefore applies to this repository's own native projects.
+    -->
+    <SakuraGeneratedBuildRoot>$([MSBuild]::NormalizeDirectory('$(SakuraRepositoryRoot)', 'build'))</SakuraGeneratedBuildRoot>
+    <SakuraGeneratedBuildRootUpper>$(SakuraGeneratedBuildRoot.ToUpperInvariant())</SakuraGeneratedBuildRootUpper>
+    <SakuraProjectDirectoryNormalized>$([MSBuild]::NormalizeDirectory('$(MSBuildProjectDirectory)'))</SakuraProjectDirectoryNormalized>
+    <SakuraProjectDirectoryUpper>$(SakuraProjectDirectoryNormalized.ToUpperInvariant())</SakuraProjectDirectoryUpper>
+    <SakuraOwnedNativeProject>false</SakuraOwnedNativeProject>
+    <SakuraOwnedNativeProject Condition="'$(MSBuildProjectExtension)' == '.vcxproj' and !$(SakuraProjectDirectoryUpper.StartsWith('$(SakuraGeneratedBuildRootUpper)'))">true</SakuraOwnedNativeProject>
   </PropertyGroup>
   <!-- DesignTimeBuild reads only the committed projection. It must not launch
        Python, restore, code generation, staging, nested builds, or probes. -->
@@ -41,7 +56,7 @@
   -->
   <Target Name="SakuraValidateExplicitPackageRestore"
           BeforeTargets="PrepareForBuild"
-          Condition="'$(DesignTimeBuild)' != 'true' and '$(SakuraSkipPackageRestoreValidation)' != 'true'">
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(SakuraSkipPackageRestoreValidation)' != 'true' and '$(SakuraOwnedNativeProject)' == 'true'">
     <Error Condition="'$(SakuraModulesContextId)' == ''"
            Text="No Sakura package context exists for Platform=$(Platform), Configuration=$(Configuration)." />
     <Error Condition="!Exists('$(SakuraPackageActiveProps)')"
@@ -52,7 +67,7 @@
 
   <Target Name="SakuraValidateGeneratedModelForDesignTime"
           BeforeTargets="ClCompile"
-          Condition="'$(DesignTimeBuild)' == 'true' and '$(SakuraSkipModulesCheck)' != 'true'">
+          Condition="'$(DesignTimeBuild)' == 'true' and '$(SakuraSkipModulesCheck)' != 'true' and '$(SakuraOwnedNativeProject)' == 'true'">
     <Error Condition="'$(SakuraModulesContextId)' == ''"
            Text="No committed Sakura component projection exists for Platform=$(Platform), Configuration=$(Configuration)." />
     <Error Condition="!Exists('$(SakuraModulesGeneratedProps)')"
