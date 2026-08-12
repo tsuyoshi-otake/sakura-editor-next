@@ -23,7 +23,7 @@ jobs:
       Configuration: ${{ matrix.Configuration }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v7.0.1
 
       - name: Set up MSYS2
         uses: msys2/setup-msys2@v2
