@@ -37,9 +37,49 @@ jobs:
         run: set
         shell: cmd
 
+      # The analyzer-information cache is keyed by the exact cppcheck build, so
+      # a toolchain upgrade can never resurrect results produced by a different
+      # analyzer. cppcheck lives inside MSYS2, but the version reaches the key
+      # through a workspace file rather than $GITHUB_OUTPUT: the MSYS2 shell
+      # would have to append to a Windows path, and this check is required.
+      - name: Report cppcheck version
+        run: cppcheck --version > cppcheck-installed-version.txt
+        shell: msys2 {0}
+
+      - name: Resolve cppcheck cache key component
+        id: cppcheck-version
+        run: |
+          $version = (Get-Content -Raw cppcheck-installed-version.txt).Trim()
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            throw "cppcheck --version produced no output; refusing to build a cache key."
+          }
+          Remove-Item cppcheck-installed-version.txt -Force
+          $component = ($version -replace '[^A-Za-z0-9._]', '-')
+          Write-Host "cppcheck version: $version (cache key component: $component)"
+          "value=$component" >> $env:GITHUB_OUTPUT
+
+      # Restore on every event, save only on trusted pushes. A pull request
+      # restores the default branch's entry and re-analyzes just the
+      # translation units it changed; saving per pull-request ref would add one
+      # cache entry per run without any other run being able to read it.
+      - name: Restore cppcheck analyzer information
+        uses: actions/cache/restore@v4
+        with:
+          path: .cppcheck-build-${{ env.BuildPlatform }}-${{ env.Configuration }}
+          key: cppcheck-analyzer-${{ env.BuildPlatform }}-${{ env.Configuration }}-${{ steps.cppcheck-version.outputs.value }}-${{ github.sha }}
+          restore-keys: |
+            cppcheck-analyzer-${{ env.BuildPlatform }}-${{ env.Configuration }}-${{ steps.cppcheck-version.outputs.value }}-
+
       - name: Run cppcheck
         run: ./run-cppcheck.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
         shell: msys2 {0}
+
+      - name: Save cppcheck analyzer information
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/cache/save@v4
+        with:
+          path: .cppcheck-build-${{ env.BuildPlatform }}-${{ env.Configuration }}
+          key: cppcheck-analyzer-${{ env.BuildPlatform }}-${{ env.Configuration }}-${{ steps.cppcheck-version.outputs.value }}-${{ github.sha }}
 
       - name: Upload cppcheck log artifact
         uses: actions/upload-artifact@v7
