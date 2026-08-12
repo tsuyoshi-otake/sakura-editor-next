@@ -11,14 +11,20 @@ the Python suite CI actually executes.
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
+import os
 import re
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPTS = REPO_ROOT / ".github/scripts"
+CLOSING_SCRIPT = SCRIPTS / "close_referenced_issues.py"
 WORKFLOW = REPO_ROOT / ".github/workflows/develop-issue-closure.yml"
 PULL_REQUEST_TEMPLATE = REPO_ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
 PR_TARGET_POLICY_WORKFLOW = REPO_ROOT / ".github/workflows/pr-target-policy.yml"
@@ -29,6 +35,7 @@ if str(SCRIPTS) not in sys.path:
 
 from close_referenced_issues import (  # noqa: E402
     CLOSING_KEYWORDS,
+    main,
     resolve_closing_references,
     strip_ignored_regions,
 )
@@ -129,6 +136,68 @@ class ClosingReferenceResolutionTests(unittest.TestCase):
         references = resolve_closing_references(template, REPOSITORY)
         self.assertEqual(references.numbers, ())
         self.assertEqual(references.foreign, ())
+
+
+class ClosingReferenceReportingTests(unittest.TestCase):
+    """Closing nothing must leave a trace, not a green run and a bare "(none)".
+
+    This is the workflow's only failure mode that is silent by construction:
+    the job succeeds either way, so a reader cannot tell a pull request that
+    deliberately closed no issue from one whose closing keyword was never
+    written down.  PR #134 carried ``Fixes #137`` in a commit message while its
+    body opened with ``Refs #112``; the run was green and #137 stayed open.
+    """
+
+    def invoke(self, title, body):
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "step-output.txt"
+            environment = {
+                "REPOSITORY": REPOSITORY,
+                "PR_TITLE": title,
+                "PR_BODY": body,
+                "GITHUB_OUTPUT": str(output),
+            }
+            # ``clear=True`` because a real GITHUB_OUTPUT in the ambient
+            # environment would otherwise make this test append to the running
+            # job's own step output.
+            stream = io.StringIO()
+            with mock.patch.dict(os.environ, environment, clear=True):
+                with contextlib.redirect_stdout(stream):
+                    status = main()
+            return status, stream.getvalue(), output.read_text(encoding="utf-8")
+
+    def test_resolving_nothing_reports_a_notice_naming_what_is_read(self) -> None:
+        status, printed, emitted = self.invoke("Speed up the develop gate", "Refs #112")
+        self.assertEqual(status, 0)
+        self.assertIn("::notice::", printed)
+        self.assertIn("no issue was closed", printed)
+        # The trap is specifically that a commit message does not count, so the
+        # notice has to say which text was actually read.
+        self.assertIn("title or body", printed)
+        self.assertIn("Commit messages are not read", printed)
+        self.assertEqual(emitted, "numbers=\n")
+
+    def test_resolving_a_reference_reports_the_numbers_without_the_notice(self) -> None:
+        status, printed, emitted = self.invoke("Fix the restore path", "Fixes #137")
+        self.assertEqual(status, 0)
+        self.assertIn("Resolved closing references: 137", printed)
+        self.assertNotIn("::notice::No closing keyword", printed)
+        self.assertEqual(emitted, "numbers=137\n")
+
+    def test_a_reference_outside_this_repository_still_closes_nothing(self) -> None:
+        status, printed, emitted = self.invoke("Sync", "Fixes " + UPSTREAM + "#1")
+        self.assertEqual(status, 0)
+        self.assertIn("::notice::Ignored a closing reference outside", printed)
+        self.assertIn("::notice::", printed)
+        self.assertIn("no issue was closed", printed)
+        self.assertEqual(emitted, "numbers=\n")
+
+    def test_the_report_does_not_inflate_the_test_filtering_ratchet(self) -> None:
+        # The script is a .github file too, so its own wording is counted by the
+        # same ratchet the workflow's messages are held to.
+        rule = re.compile(filter_rule_pattern(), re.IGNORECASE)
+        self.assertTrue(rule.findall('print("::notice::skipping issue closure.")'))
+        self.assertEqual(rule.findall(CLOSING_SCRIPT.read_text(encoding="utf-8-sig")), [])
 
 
 class DevelopIssueClosureWorkflowContractTests(unittest.TestCase):
