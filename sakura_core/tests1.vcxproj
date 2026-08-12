@@ -97,7 +97,11 @@
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
     </ClCompile>
     <Link>
-      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <!-- EXPERIMENT (#129): see the note in sakura.vcxproj.  tests1 has no
+           /GL of its own; its link-time code generation comes from the
+           sakura_core objects it links, so the switch has to reach here too. -->
+      <LinkTimeCodeGeneration Condition="'$(SAKURA_DISABLE_LTCG)'!='1' And '$(SAKURA_DISABLE_LTCG)'!='true'">UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration Condition="'$(SAKURA_DISABLE_LTCG)'=='1' Or '$(SAKURA_DISABLE_LTCG)'=='true'">Default</LinkTimeCodeGeneration>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
     </Link>

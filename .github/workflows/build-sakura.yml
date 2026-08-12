@@ -425,6 +425,9 @@ jobs:
     if: ${{ !cancelled() }}
 
     strategy:
+      # EXPERIMENT (#129): if one arm fails to build, the other still has to
+      # finish, or the pair is lost.
+      fail-fast: false
       matrix:
         # A release promotion already validates the source's Debug/Release
         # main gate. It re-runs only the Release package/test path at a fixed
@@ -432,6 +435,20 @@ jobs:
         config: ${{ inputs.release_promotion && fromJSON('["Release"]') || fromJSON('["Debug", "Release"]') }}
         platform:
           - x64
+        # EXPERIMENT (#129).  A sequential A/B cannot resolve the effect: the
+        # MSBuild step on recent successful pull-request runs measured
+        # 888/893/731/959/914/928s, so runner-to-runner spread (228s) is the
+        # same size as the LTCG codegen time being measured (222s).  Running
+        # both arms as siblings of one run puts them on same-generation
+        # runners at the same moment, which is the only way the pair is
+        # comparable.  Debug has no whole-program optimization, so it only
+        # needs the `on` arm.
+        ltcg:
+          - "on"
+          - "off"
+        exclude:
+          - config: Debug
+            ltcg: "off"
 
     # SAKURA_GENERATE_ASSEMBLY_LISTINGS also serializes LTCG codegen
     # (/CGTHREADS:1). pull_request Release builds never publish the Asm
@@ -446,6 +463,8 @@ jobs:
       # zipArtifacts.bat copies every *.dll. Pin the provider instead of
       # letting it depend on whether the runner image ships diff on PATH.
       SAKURA_DIFFUTILS_SOURCE: none
+      # EXPERIMENT (#129): read by sakura.vcxproj and tests1.vcxproj.
+      SAKURA_DISABLE_LTCG: ${{ matrix.ltcg == 'off' && '1' || '0' }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -784,7 +803,7 @@ jobs:
     - name: Upload test-results artifact
       uses: actions/upload-artifact@v7
       with:
-        name: test-results-${{ matrix.platform }}-${{ matrix.config }}
+        name: test-results-${{ matrix.platform }}-${{ matrix.config }}-ltcg-${{ matrix.ltcg }}
         path: |
           tests*-googletest.xml
           github-event.json

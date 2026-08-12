@@ -22,8 +22,14 @@
     <UseOfMfc>false</UseOfMfc>
     <CharacterSet>Unicode</CharacterSet>
   </PropertyGroup>
+  <!--
+    EXPERIMENT (#129): SAKURA_DISABLE_LTCG drops /GL and /LTCG so the A/B run
+    can measure what link-time code generation actually costs the PR gate.
+    This branch exists to produce that number and is not meant to be merged.
+  -->
   <PropertyGroup Condition="'$(Configuration)'=='Release'" Label="Configuration">
-    <WholeProgramOptimization>true</WholeProgramOptimization>
+    <WholeProgramOptimization Condition="'$(SAKURA_DISABLE_LTCG)'!='1' And '$(SAKURA_DISABLE_LTCG)'!='true'">true</WholeProgramOptimization>
+    <WholeProgramOptimization Condition="'$(SAKURA_DISABLE_LTCG)'=='1' Or '$(SAKURA_DISABLE_LTCG)'=='true'">false</WholeProgramOptimization>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <ImportGroup Label="ExtensionSettings">
@@ -130,7 +136,8 @@
       <PreprocessorDefinitions>NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ResourceCompile>
     <Link>
-      <LinkTimeCodeGeneration>UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration Condition="'$(SAKURA_DISABLE_LTCG)'!='1' And '$(SAKURA_DISABLE_LTCG)'!='true'">UseFastLinkTimeCodeGeneration</LinkTimeCodeGeneration>
+      <LinkTimeCodeGeneration Condition="'$(SAKURA_DISABLE_LTCG)'=='1' Or '$(SAKURA_DISABLE_LTCG)'=='true'">Default</LinkTimeCodeGeneration>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <GenerateMapFile>true</GenerateMapFile>
