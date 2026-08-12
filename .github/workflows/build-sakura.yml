@@ -519,7 +519,7 @@ jobs:
     - name: Restore develop coverage map
       id: restore-coverage-map
       if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: .coverage-map-cache
         key: tia-map-windows-x64-${{ github.event.pull_request.base.sha }}-${{ env.COVERAGE_MAP_SCHEMA_VERSION }}
@@ -685,7 +685,7 @@ jobs:
     - name: Restore cached package closure
       id: package-cache
       if: ${{ steps.package-plan.outputs.hash != '' }}
-      uses: actions/cache/restore@v4
+      uses: actions/cache/restore@v6
       with:
         path: ${{ steps.package-plan.outputs.path }}
         key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
@@ -713,7 +713,7 @@ jobs:
 
     - name: Save cached package closure
       if: ${{ github.event_name != 'pull_request' && steps.package-plan.outputs.hash != '' && steps.package-cache.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: ${{ steps.package-plan.outputs.path }}
         key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}

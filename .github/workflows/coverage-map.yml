@@ -332,7 +332,7 @@ jobs:
         ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
     - name: Save develop coverage map cache
-      uses: actions/cache/save@v4
+      uses: actions/cache/save@v6
       with:
         path: .coverage-map-cache
         key: ${{ steps.map.outputs.cache_key }}

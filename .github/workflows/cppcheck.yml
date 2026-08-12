@@ -63,7 +63,7 @@ jobs:
       # translation units it changed; saving per pull-request ref would add one
       # cache entry per run without any other run being able to read it.
       - name: Restore cppcheck analyzer information
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: .cppcheck-build-${{ env.BuildPlatform }}-${{ env.Configuration }}
           key: cppcheck-analyzer-${{ env.BuildPlatform }}-${{ env.Configuration }}-${{ steps.cppcheck-version.outputs.value }}-${{ github.sha }}
@@ -76,7 +76,7 @@ jobs:
 
       - name: Save cppcheck analyzer information
         if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: .cppcheck-build-${{ env.BuildPlatform }}-${{ env.Configuration }}
           key: cppcheck-analyzer-${{ env.BuildPlatform }}-${{ env.Configuration }}-${{ steps.cppcheck-version.outputs.value }}-${{ github.sha }}
