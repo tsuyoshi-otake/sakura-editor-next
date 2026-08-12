@@ -52,6 +52,21 @@ _PACKAGE_PHASES = (
 _PACKAGE_ROOT_RELATIVE = Path("build/pkg/v")
 _LOCK_POLL_SECONDS = 0.1
 _DEFAULT_CACHE_MAX_BYTES = 8 * 1024 * 1024 * 1024
+# When a port build fails, vcpkg appends a ready-to-paste GitHub issue report.
+# Its trailing section is only the manifest this module already knows, and it is
+# longer than any fixed tail window, so a plain tail slice keeps the boilerplate
+# and drops the cause. Cut the section, and lift the diagnostic lines out of the
+# whole stream so a cause above the window survives regardless of length.
+_VCPKG_REPORT_TAIL_MARKER = "**Additional context**"
+_VCPKG_DIAGNOSTIC_MARKERS = (
+    "error:",
+    "CMake Error",
+    "fatal error",
+    "failed with:",
+    "See logs for more information",
+)
+_VCPKG_DIAGNOSTIC_LINES = 12
+_VCPKG_TAIL_LINES = 80
 
 
 def _canonical_json(value: object) -> str:
@@ -469,6 +484,39 @@ def _terminate_process_tree(process: subprocess.Popen[str]) -> None:
         process.kill()
 
 
+def _summarize_vcpkg_failure(stdout: str, stderr: str, returncode: int | None) -> str:
+    """Build a failure message that keeps the cause instead of vcpkg's boilerplate."""
+    lines = (stdout + "\n" + stderr).strip().splitlines()
+    marker = next(
+        (index for index, line in enumerate(lines) if line.strip().startswith(_VCPKG_REPORT_TAIL_MARKER)),
+        None,
+    )
+    body = lines if marker is None else lines[:marker]
+
+    diagnostics: list[str] = []
+    for line in lines:
+        if not any(needle in line for needle in _VCPKG_DIAGNOSTIC_MARKERS):
+            continue
+        stripped = line.strip()
+        if stripped and stripped not in diagnostics:
+            diagnostics.append(stripped)
+
+    sections = [f"vcpkg exited with {returncode}"]
+    if diagnostics:
+        omitted = len(diagnostics) - _VCPKG_DIAGNOSTIC_LINES
+        kept = diagnostics[:_VCPKG_DIAGNOSTIC_LINES]
+        if omitted > 0:
+            kept.append(f"... {omitted} further diagnostic line(s) omitted")
+        sections.append("\n".join(kept))
+
+    tail = body[-_VCPKG_TAIL_LINES:]
+    if tail:
+        heading = f"--- vcpkg output, last {len(tail)} of {len(body)} line(s)"
+        heading += "; issue-report template removed ---" if marker is not None else " ---"
+        sections.append(heading + "\n" + "\n".join(tail))
+    return "\n\n".join(sections)
+
+
 def _run_vcpkg(
     argv: Sequence[str],
     *,
@@ -502,8 +550,7 @@ def _run_vcpkg(
                 process.communicate()
             raise BuildError("PACKAGE_RESTORE_TIMEOUT", f"vcpkg restore exceeded {timeout_seconds}s", 8) from error
         if process.returncode:
-            lines = (stdout + "\n" + stderr).strip().splitlines()
-            raise BuildError("PACKAGE_RESTORE_FAILED", "\n".join(lines[-30:]) or f"vcpkg failed with {process.returncode}", 6)
+            raise BuildError("PACKAGE_RESTORE_FAILED", _summarize_vcpkg_failure(stdout, stderr, process.returncode), 6)
         return stdout, stderr
     finally:
         if process.poll() is None:

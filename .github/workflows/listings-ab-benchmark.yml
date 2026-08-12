@@ -49,6 +49,10 @@ jobs:
     name: MSBuild (Listings ${{ inputs.assembly_listings }})
     runs-on: windows-2022 # VS 2022 + Windows SDK 10.0.22621.0, matches build-sakura.yml
 
+    # Match build-sakura.yml so the measured MSBuild work is the same work.
+    env:
+      SAKURA_DIFFUTILS_SOURCE: none
+
     steps:
     - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       with:
@@ -58,20 +62,11 @@ jobs:
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
 
-    # Keeps ctags.cmake/diffutils.cmake on the fast "copy the system binary" path
-    # instead of falling back to building ctags from source or extracting the
-    # archived diffutils zip. That fallback path has its own, unrelated build
-    # time that would otherwise leak into the MSBuild timing this workflow exists
-    # to measure.
-    # A 503 from community.chocolatey.org would push this workflow onto exactly
-    # the source-build fallback described above and corrupt the measurement, so
-    # the install retries within a bound rather than failing on one bad answer.
-    - name: Install Ctags (Chocolatey)
-      run: .\.github\scripts\Install-ChocolateyPackage.ps1 -PackageId universal-ctags -Version 2022.6.5
-
-    - name: Install DiffUtils (Chocolatey)
-      run: .\.github\scripts\Install-ChocolateyPackage.ps1 -PackageId diffutils -Version 2.8.7
-
+    # ctags.cmake stages the committed archive and diff.exe is not staged at
+    # all, so no package feed can vary the work being timed. This previously
+    # installed both tools from community.chocolatey.org to keep the build off
+    # the ctags source-build path, which made a feed outage corrupt the
+    # measurement rather than fail the job.
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:

@@ -441,6 +441,28 @@ jobs:
     # MSBuild step used.
     env:
       SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' && '1' || '0' }}
+      # No released artifact carries diff.exe, and the archive provider would
+      # stage libintl3.dll/libiconv2.dll into the output directory where
+      # zipArtifacts.bat copies every *.dll. Pin the provider instead of
+      # letting it depend on whether the runner image ships diff on PATH.
+      SAKURA_DIFFUTILS_SOURCE: none
+      # Which pull requests may narrow the headless suite (#112 Phase 3).
+      # This was `feature/*` only; the branch name never made the selection
+      # sound. What makes it sound is coverage_map.py's classifier, which
+      # returns a full-suite decision for a deletion or rename, a test or
+      # externals/ change, a build/test topology change, an unrecognized path,
+      # an unmapped production path, a module with no coverage, or a selection
+      # at or above the threshold -- and the selection step falls back to the
+      # full filter on any error at all.
+      #
+      # Promotion and back-merge pull requests stay excluded: a `main` or
+      # `develop` head is the integration state itself, the last place to
+      # accept reduced coverage, and its diff is not the work of one change.
+      # Forks stay excluded because they cannot read the map cache.
+      #
+      # Job-level so the restore, selection, and evidence-upload steps cannot
+      # drift apart; unset or `false` always means the full headless suite.
+      SAKURA_TEST_SELECTION_ELIGIBLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'develop' }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -475,15 +497,11 @@ jobs:
     - name: Add msbuild to PATH
       uses: microsoft/setup-msbuild@v3
 
-    # community.chocolatey.org answered 503 during #114 and failed this required
-    # job in under a minute. The helper bounds the retry and reports every
-    # attempt, so a package that has genuinely stopped resolving still fails.
-    - name: Install Ctags (Chocolatey)
-      run: .\.github\scripts\Install-ChocolateyPackage.ps1 -PackageId universal-ctags -Version 2022.6.5
-
-    - name: Install DiffUtils (Chocolatey)
-      run: .\.github\scripts\Install-ChocolateyPackage.ps1 -PackageId diffutils -Version 2.8.7
-
+    # ctags.exe now comes from the committed, version-pinned archive that
+    # already supplies the shipped license and documentation; diff.exe is not
+    # staged at all here. community.chocolatey.org answered 503 during #114 and
+    # 504 during #123, failing this required job on an outage it had no reason
+    # to depend on.
     - name: Set up Python
       uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
@@ -510,19 +528,20 @@ jobs:
         echo "GITHUB_PR_HEAD_COMMIT=${{ github.event.pull_request.head.sha }}" >> $env:GITHUB_ENV
         echo "GITHUB_PR_HEAD_SHORT_COMMIT=$('${{ github.event.pull_request.head.sha }}'.SubString(0, 8))" >> $env:GITHUB_ENV
 
-    # Only same-repository feature branches targeting develop consume a map.
-    # Forks, fix/hotfix/dependabot PRs, develop/main promotion PRs, and every
-    # missing or invalid map retain the regular full headless suite.
+    # Eligibility is decided once in the job's env block above.  Forks,
+    # develop/main promotion pull requests, every event that is not a
+    # develop-targeted pull request, and every missing or invalid map retain
+    # the regular full headless suite.
     - name: Restore develop coverage map
       id: restore-coverage-map
-      if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       uses: actions/cache/restore@v4
       with:
         path: .coverage-map-cache
         key: tia-map-windows-x64-${{ github.event.pull_request.base.sha }}-${{ env.COVERAGE_MAP_SCHEMA_VERSION }}
 
     - name: Select feature PR tests
-      if: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       env:
         COVERAGE_MAP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
         COVERAGE_MAP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -653,11 +672,61 @@ jobs:
             throw "Failed to add the GitHub Packages NuGet source."
         }
 
+    # `package plan` is the same planning pass the restore itself performs
+    # first, and it takes under a second.  Running it separately turns the plan
+    # hash -- which already covers the declared package set, every declared
+    # input digest, both triplets, and the vcpkg tool/toolchain hashes -- into a
+    # cache key, so the key changes exactly when the restored closure would.
+    - name: Plan the declared package restore
+      id: package-plan
+      run: |
+        $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
+        $plan = & py -3 tools/build/sakura_build.py --format json package plan sakura_app --context $context | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) {
+          throw "Declared Sakura package planning failed for context $context (exit code $LASTEXITCODE)."
+        }
+
+        # A missing or malformed hash must not fail the build: the restore step
+        # below still produces a correct closure, just without the cache.
+        $hash = ($plan.plan_hash -replace '^sha256:', '')
+        if ($hash -notmatch '^[0-9a-f]{64}$') {
+          Write-Output "::warning::package plan returned no usable plan hash; restoring without a cache."
+          "hash=" >> $env:GITHUB_OUTPUT
+          return
+        }
+
+        Write-Host "Declared package plan hash: $hash"
+        "hash=$hash" >> $env:GITHUB_OUTPUT
+        "path=build/pkg/v/e/$hash" >> $env:GITHUB_OUTPUT
+
+    # Restore on every event, save only on trusted pushes -- the same rule
+    # cppcheck.yml uses.  A pull-request-scoped entry is readable only by runs
+    # on that same `refs/pull/N/merge` ref, so saving one per pull request adds
+    # a ~115 MiB entry that nothing else can ever read; 82 such msys2 entries
+    # had taken 7.17 GiB of the repository's 10 GiB quota by #123.  Debug and
+    # Release resolve to the same plan hash, so one pushed entry serves both
+    # matrix jobs and every later pull request that did not change the closure.
+    - name: Restore cached package closure
+      id: package-cache
+      if: ${{ steps.package-plan.outputs.hash != '' }}
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.package-plan.outputs.path }}
+        key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
+
     # Each hosted build job has its own workspace.  The vcpkg warm-up job
     # publishes binary-cache entries, but cannot provide this job's manifest
     # hashed active package root.  Restore that declared closure explicitly
     # before MSBuild so normal project evaluation never falls back to an
     # implicit/global restore.
+    #
+    # This step is deliberately unconditional.  A cache hit turns it into the
+    # `reused` path, which still validates the restored tree structurally
+    # (`complete.json` schema and plan hash, plus `installed/<triplet>/share/`
+    # for every declared package) and still reports
+    # `native_restore_execution_observed`, so a corrupt or partial entry falls
+    # back to a real restore and the explicit-restore evidence contract from
+    # #116/#118 holds either way.
     - name: Restore declared Sakura packages
       run: |
         $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
@@ -665,6 +734,13 @@ jobs:
         if ($LASTEXITCODE -ne 0) {
           throw "Declared Sakura package restore failed for context $context (exit code $LASTEXITCODE)."
         }
+
+    - name: Save cached package closure
+      if: ${{ github.event_name != 'pull_request' && steps.package-plan.outputs.hash != '' && steps.package-cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.package-plan.outputs.path }}
+        key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
 
     # Historic tag sources predate SAKURA_BUILD_SOURCE_SHA and read the
     # runner's GITHUB_SHA directly in version.cmake. Do not attempt to change
@@ -747,7 +823,7 @@ jobs:
       run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
     - name: Upload feature test-selection evidence
-      if: ${{ always() && github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && startsWith(github.event.pull_request.head.ref, 'feature/') && github.event.pull_request.head.repo.full_name == github.repository }}
+      if: ${{ always() && env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       uses: actions/upload-artifact@v7
       with:
         name: test-selection-${{ matrix.platform }}-${{ matrix.config }}
