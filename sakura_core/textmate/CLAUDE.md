@@ -65,7 +65,7 @@ already in `sakura.cmake`'s `target_include_directories` (line 685) — so
 `Onigmo/onigmo.h` already finds `externals/Onigmo/onigmo.h` in both build
 systems. **The only missing piece is compiling Onigmo's own `.c` sources and
 linking the result into `sakura_core` (and, through `tests1.vcxproj`'s existing
-`ProjectReference` + `CollectSakuraObjectsForTests1` object-collection target,
+`BuildSakuraTestSupportLibrary` archive target,
 into `tests1` automatically — `tests1.vcxproj` does not recompile
 `sakura_core` sources itself, so it needs no separate Onigmo entries.)**
 
@@ -318,8 +318,8 @@ Solution Explorer tree.
 - **`sakura_core/tests1.vcxproj`(+`.filters`)** — the five
   `..\src\test\cpp\tests1\textmate\*Test.cpp` files under `Test Files\textmate`.
   `tests1` does not recompile `sakura_core` sources; it picks Onigmo up through
-  the existing `ProjectReference` + `CollectSakuraObjectsForTests1` object
-  collection, so it needs no Onigmo entries of its own.
+  the product-owned `BuildSakuraTestSupportLibrary` archive, so it needs no
+  Onigmo entries of its own.
 - **`src/main/cmake/sakura.cmake`** — `ONIGMO_SOURCES` appended to `SOURCES`,
   with the include directories and per-source defines applied there. The
   `textmate\*.cpp` files need no CMake entry: that glob is recursive within

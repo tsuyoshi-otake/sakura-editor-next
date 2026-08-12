@@ -446,9 +446,11 @@ jobs:
         BUILD_CHM_RESULT: ${{ needs.build-chm.result }}
         EVENT_NAME: ${{ github.event_name }}
       run: |
-        $expectedChmResult = if ($env:EVENT_NAME -eq 'pull_request') { 'skipped' } else { 'success' }
-        if ($env:VCPKG_MSVC_RESULT -ne 'success' -or $env:BUILD_CHM_RESULT -ne $expectedChmResult) {
-          throw "Build prerequisites are not ready: build-vcpkg-msvc=$env:VCPKG_MSVC_RESULT, build-chm=$env:BUILD_CHM_RESULT, expected build-chm=$expectedChmResult."
+        if ($env:VCPKG_MSVC_RESULT -ne 'success') {
+          throw "The required vcpkg prerequisite did not succeed: build-vcpkg-msvc=$env:VCPKG_MSVC_RESULT."
+        }
+        if ($env:EVENT_NAME -ne 'pull_request' -and $env:BUILD_CHM_RESULT -ne 'success') {
+          throw "The required CHM prerequisite did not succeed: build-chm=$env:BUILD_CHM_RESULT."
         }
 
     ## see https://github.com/actions/checkout
@@ -682,6 +684,19 @@ jobs:
 
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to add the GitHub Packages NuGet source."
+        }
+
+    # Each hosted build job has its own workspace.  The vcpkg warm-up job
+    # publishes binary-cache entries, but cannot provide this job's manifest
+    # hashed active package root.  Restore that declared closure explicitly
+    # before MSBuild so normal project evaluation never falls back to an
+    # implicit/global restore.
+    - name: Restore declared Sakura packages
+      run: |
+        $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
+        & py -3 tools/build/sakura_build.py package restore sakura_app --context $context --timeout-seconds 1800
+        if ($LASTEXITCODE -ne 0) {
+          throw "Declared Sakura package restore failed for context $context (exit code $LASTEXITCODE)."
         }
 
     - name: Build with Build-Wrapper

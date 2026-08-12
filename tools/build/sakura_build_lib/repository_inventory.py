@@ -19,6 +19,7 @@ from typing import Mapping
 
 from .model import SemanticGraph
 from .product_native_evidence import validate_product_native_evidence
+from .repository_graduation_evidence import validate_repository_graduation_evidence
 from .resource_native_evidence import validate_resource_native_evidence
 from .runner import BuildError
 
@@ -59,20 +60,82 @@ def _is_below(relative: str, root: str) -> bool:
 
 
 def _component_owner(graph: SemanticGraph, relative: str) -> str | None:
-    explicit: list[tuple[int, str]] = []
-    directory: list[tuple[int, str]] = []
+    """Return the declared component owner for one repository input.
+
+    ``owner`` identifies the human/system owner of a component.  It is not an
+    ownership glob for a generated leaf: several independently-built leaves
+    can legitimately live below the same organizational directory.  Treating
+    that directory as an implicit source root made one leaf claim its siblings
+    and legacy callers, hiding precisely the dependencies this inventory is
+    meant to expose.
+
+    Explicit source/header paths are ownership roots for every component.  The
+    broad ``owner`` fallback is retained only for legacy aggregates, whose
+    inventory is intentionally not yet source-by-source.  This keeps the
+    legacy application and test roots observable while requiring generated
+    components to declare their own files or directories.
+    """
+
+    exact_files: list[tuple[int, str]] = []
+    declared_directories: list[tuple[int, str]] = []
+    legacy_directories: list[tuple[int, str]] = []
     for component in graph.components.values():
         owned_files = set(component.sources) | set(component.public_headers) | set(component.private_headers)
-        if relative in owned_files:
-            explicit.append((len(relative), component.id))
-        owner = component.owner.rstrip("/")
-        if _is_below(relative, owner) and not any(_is_below(relative, item) for item in component.ownership_exclusions):
-            directory.append((len(owner), component.id))
-    candidates = explicit or directory
+        exclusions = component.ownership_exclusions
+        if any(_is_below(relative, item) for item in exclusions):
+            continue
+
+        for owned in owned_files:
+            owner_path = graph.repo_root / owned
+            if owner_path.is_dir():
+                if _is_below(relative, owned):
+                    declared_directories.append((len(owned.rstrip("/")), component.id))
+            elif relative == owned:
+                exact_files.append((len(relative), component.id))
+
+        if component.build_definition == "legacy":
+            owner = component.owner.rstrip("/")
+            if _is_below(relative, owner):
+                legacy_directories.append((len(owner), component.id))
+
+    candidates = exact_files or declared_directories or legacy_directories
     if not candidates:
         return None
     candidates.sort(key=lambda item: (-item[0], item[1]))
     return candidates[0][1]
+
+
+def _artifact_owner(graph: SemanticGraph, relative: str) -> str | None:
+    """Return the graph artifact that owns a declared input or output path.
+
+    Artifacts are first-class graph nodes.  Generated headers, resource-ID
+    tables, vendored source sets, and fixture sources must not be treated as
+    anonymous repository files merely because no C++ component implements
+    them.  Exact paths beat declared directory roots, matching component
+    ownership semantics.
+    """
+
+    exact_files: list[tuple[int, str]] = []
+    declared_directories: list[tuple[int, str]] = []
+    for artifact in graph.artifacts.values():
+        for owned in (*artifact.inputs, *artifact.outputs):
+            owner_path = graph.repo_root / owned
+            if owner_path.is_dir():
+                if _is_below(relative, owned):
+                    declared_directories.append((len(owned.rstrip("/")), artifact.id))
+            elif relative == owned:
+                exact_files.append((len(relative), artifact.id))
+    candidates = exact_files or declared_directories
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: (-item[0], item[1]))
+    return candidates[0][1]
+
+
+def _source_owner(graph: SemanticGraph, relative: str) -> str | None:
+    """Prefer a component implementation owner over an artifact declaration."""
+
+    return _component_owner(graph, relative) or _artifact_owner(graph, relative)
 
 
 def _walk_repository_files(graph: SemanticGraph) -> tuple[Path, ...]:
@@ -159,10 +222,16 @@ def _source_inventory(graph: SemanticGraph) -> dict[str, object]:
         if relative is None:
             continue
         repo_files[relative.lower()] = relative
-        owner = _component_owner(graph, relative)
+        component_owner = _component_owner(graph, relative)
+        owner = component_owner or _artifact_owner(graph, relative)
         if owner is None and _requires_component_owner(relative):
             unowned_repo_files.append(relative)
-        if owner is not None:
+        # Artifact inputs are provenance nodes, not implicit translation-unit
+        # consumers.  Scanning vendored/package fixture implementation files as
+        # if they were Sakura component code would turn their own upstream
+        # pragmas and private includes into false product dependencies.  Their
+        # paths remain owned and can still be providers to real components.
+        if component_owner is not None:
             files.append(path)
         parts = relative.split("/")
         for index in range(len(parts)):
@@ -186,7 +255,7 @@ def _source_inventory(graph: SemanticGraph) -> dict[str, object]:
             resource_files.append(relative)
             continue
         scanned_cpp += 1
-        owner = _component_owner(graph, relative)
+        owner = _source_owner(graph, relative)
         text = _read_text(path, relative, "INVENTORY_SOURCE_READ")
         for line_number, line in enumerate(text.splitlines(), 1):
             include = _INCLUDE_RE.match(line)
@@ -195,7 +264,7 @@ def _source_inventory(graph: SemanticGraph) -> dict[str, object]:
                 delimiter, include_name = include.groups()
                 target = _include_target(graph, relative, include_name, repo_files, suffix_index)
                 if target is not None:
-                    provider = _component_owner(graph, target)
+                    provider = _source_owner(graph, target)
                     if owner is not None and provider is not None and owner != provider:
                         observed[(owner, provider)].append({
                             "source": relative,
@@ -304,6 +373,45 @@ def _split_msbuild_list(value: str | None) -> list[str]:
     if not value:
         return []
     return [item.strip() for item in value.split(";") if item.strip()]
+
+
+_MSBUILD_PROPERTY_REFERENCE = re.compile(r"^\$\(([A-Za-z_][A-Za-z0-9_.-]*)\)$")
+
+
+def _literal_msbuild_project_properties(root: ET.Element) -> dict[str, tuple[str, ...]]:
+    """Return local project properties whose values are literal MSBuild values.
+
+    This deliberately does not try to evaluate MSBuild conditions or imports.
+    A link dependency can be classified only when every local definition is a
+    literal ``.lib`` archive.  That makes Debug/Release selection observable
+    without treating an arbitrary property expression as resolved.
+    """
+
+    properties: dict[str, set[str]] = defaultdict(set)
+    for group in root.findall(".//{*}PropertyGroup"):
+        for property_element in group:
+            if list(property_element):
+                continue
+            value = (property_element.text or "").strip()
+            if not value or any(marker in value for marker in ("$", "%", "@")):
+                continue
+            name = property_element.tag.rsplit("}", 1)[-1]
+            properties[name].add(value)
+    return {name: tuple(sorted(values)) for name, values in properties.items()}
+
+
+def _resolve_local_link_expression(
+    token: str, properties: Mapping[str, tuple[str, ...]],
+) -> tuple[str, ...] | None:
+    """Resolve one property reference only when it is a local library choice."""
+
+    reference = _MSBUILD_PROPERTY_REFERENCE.fullmatch(token)
+    if reference is None:
+        return None
+    values = properties.get(reference.group(1))
+    if not values or not all(value.lower().endswith(".lib") for value in values):
+        return None
+    return values
 
 
 def _output_basename(value: str) -> str:
@@ -519,6 +627,21 @@ def _generated_provenance(graph: SemanticGraph, source: Mapping[str, object]) ->
                     **({"target": command["target"]} if "target" in command else {}),
                 })
 
+    package_include_prefixes: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for artifact in graph.artifacts.values():
+        if artifact.artifact_kind != "package_set":
+            continue
+        for output in artifact.outputs:
+            normalized = output.casefold()
+            if not normalized.startswith("vcpkg:"):
+                continue
+            package_name = normalized.split(":", 1)[1]
+            package_include_prefixes[package_name].append({
+                "artifact": artifact.id,
+                "backend": "manifest-package-set",
+                "output": output,
+            })
+
     generated_includes: list[dict[str, object]] = []
     unclassified: list[dict[str, object]] = []
     for include in source["unresolved_quoted_includes"]:
@@ -526,6 +649,12 @@ def _generated_provenance(graph: SemanticGraph, source: Mapping[str, object]) ->
             declared_outputs.get(_output_basename(str(include["include"])), []),
             key=lambda item: (str(item["backend"]), str(item["source"]), str(item["output"])),
         )
+        if not matches:
+            include_prefix = str(include["include"]).replace("\\", "/").split("/", 1)[0].casefold()
+            matches = sorted(
+                package_include_prefixes.get(include_prefix, []),
+                key=lambda item: (str(item["backend"]), str(item["artifact"]), str(item["output"])),
+            )
         record = {**include, "declared_outputs": matches}
         if matches:
             generated_includes.append(record)
@@ -623,11 +752,11 @@ def _resource_provenance(graph: SemanticGraph, generated: Mapping[str, object]) 
             target = _include_target(graph, relative, include_name, repo_files, suffix_index)
             record = {
                 "consumer_resource": relative,
-                "consumer_owner": _component_owner(graph, relative),
+                "consumer_owner": _source_owner(graph, relative),
                 "line": line_number,
                 "include": include_name,
                 "provider": target,
-                "provider_owner": _component_owner(graph, target) if target else None,
+                "provider_owner": _source_owner(graph, target) if target else None,
             }
             if target is not None:
                 includes.append(record)
@@ -645,6 +774,28 @@ def _resource_provenance(graph: SemanticGraph, generated: Mapping[str, object]) 
     for component_id, project in _component_msbuild_projects(graph):
         for item in _msbuild_item_records(graph.repo_root, project, "ResourceCompile"):
             compile_items.append({"consumer": component_id, **item})
+    canonical_header = "src/main/resources/sakura_rc.h"
+    resource_id_contracts = sorted(
+        artifact.id
+        for artifact in graph.artifacts.values()
+        if artifact.artifact_kind == "resource" and canonical_header in artifact.inputs
+    )
+    declared_compile_edges = {
+        (edge.source, edge.target)
+        for edge in graph.edges
+        if "compile" in edge.phases
+    }
+    canonical_consumers = [
+        record
+        for record in includes
+        if str(record["provider"]) == canonical_header
+    ]
+    canonical_contract_edges_missing = sorted({
+        str(record["consumer_owner"])
+        for record in canonical_consumers
+        if record["consumer_owner"] is not None
+        and not any((str(record["consumer_owner"]), contract) in declared_compile_edges for contract in resource_id_contracts)
+    })
     return {
         "repository_resource_files": sorted(_relative(graph.repo_root, path) for path in resource_paths if _relative(graph.repo_root, path) is not None),
         "unowned_resource_files": sorted(
@@ -652,7 +803,7 @@ def _resource_provenance(graph: SemanticGraph, generated: Mapping[str, object]) 
             for path in resource_paths
             if (relative := _relative(graph.repo_root, path)) is not None
             and _requires_component_owner(relative)
-            and _component_owner(graph, relative) is None
+            and _source_owner(graph, relative) is None
         ),
         "vendored_resource_files": sorted(
             relative
@@ -665,6 +816,8 @@ def _resource_provenance(graph: SemanticGraph, generated: Mapping[str, object]) 
         "unresolved_resource_includes": sorted(unresolved, key=lambda item: (str(item["consumer_resource"]), int(item["line"]))),
         "vendored_unresolved_resource_includes": sorted(vendored_unresolved, key=lambda item: (str(item["consumer_resource"]), int(item["line"]))),
         "canonical_sakura_rc_header_consumers": sorted(shared_resource_header_consumers),
+        "canonical_sakura_rc_header_contracts": resource_id_contracts,
+        "canonical_sakura_rc_header_contract_edges_missing": canonical_contract_edges_missing,
         "semantic_resource_artifacts": sorted(artifact.id for artifact in graph.artifacts.values() if artifact.artifact_kind == "resource"),
         "native_resource_table_observed": False,
         "native_resource_id_compatibility_observed": False,
@@ -678,17 +831,32 @@ def _product_link_provenance(graph: SemanticGraph) -> dict[str, object]:
     object_aggregation: list[dict[str, object]] = []
     for component_id, project in _component_msbuild_projects(graph):
         root = _parse_msbuild(graph.repo_root, project)
+        local_properties = _literal_msbuild_project_properties(root)
         for link in root.findall(".//{*}Link"):
             for dependencies in link.findall("{*}AdditionalDependencies"):
                 raw = dependencies.text or ""
                 tokens = _split_msbuild_list(raw)
+                expressions = sorted(token for token in tokens if any(marker in token for marker in ("$", "%", "@")))
+                resolved_expressions: dict[str, tuple[str, ...]] = {}
+                unresolved_expressions: list[str] = []
+                for token in expressions:
+                    if token == "%(AdditionalDependencies)":
+                        continue
+                    resolved = _resolve_local_link_expression(token, local_properties)
+                    if resolved is None:
+                        unresolved_expressions.append(token)
+                    else:
+                        resolved_expressions[token] = resolved
                 link_dependencies.append({
                     "consumer": component_id,
                     "project": project,
                     "condition": link.get("Condition"),
                     "raw": raw,
                     "literal_libraries": sorted(token for token in tokens if token.lower().endswith(".lib") and not any(marker in token for marker in ("$", "%", "@"))),
-                    "expression_tokens": sorted(token for token in tokens if any(marker in token for marker in ("$", "%", "@"))),
+                    "resolved_expression_libraries": {
+                        token: list(values) for token, values in sorted(resolved_expressions.items())
+                    },
+                    "unresolved_expression_tokens": unresolved_expressions,
                 })
         for source in (project, *_literal_msbuild_imports(graph.repo_root, project)):
             if not (graph.repo_root / source).is_file():
@@ -958,6 +1126,20 @@ def _package_provenance(graph: SemanticGraph) -> dict[str, object]:
     }
 
 
+def _include_dependency_observed(
+    source: Mapping[str, object],
+    generated: Mapping[str, object],
+    native_coverage: Mapping[str, object],
+) -> bool:
+    """Return whether non-local quoted includes have declared provenance."""
+
+    return (
+        not source["unowned_repo_includes"]
+        and not generated["unclassified_unresolved_quoted_includes"]
+        and bool(native_coverage.get("compiler_dependency_observed"))
+    )
+
+
 def collect_repository_inventory(
     graph: SemanticGraph,
     *,
@@ -966,6 +1148,7 @@ def collect_repository_inventory(
     context_id: str = "msvc-x64-debug",
     native_evidence_path: Path | None = None,
     resource_evidence_path: Path | None = None,
+    graduation_evidence_path: Path | None = None,
 ) -> dict[str, object]:
     source = _source_inventory(graph)
     reachability = _product_reachability(graph, source, product_id, provider_id, context_id)
@@ -985,6 +1168,12 @@ def collect_repository_inventory(
         native_evidence_path,
         product_id,
         context_id,
+    )
+    graduation_observation = validate_repository_graduation_evidence(
+        graph,
+        graduation_evidence_path,
+        product_id=product_id,
+        context_id=context_id,
     )
     linked_objects = set(native_observation.get("link", {}).get("object_inputs", []))
     observed_native_edges: dict[str, list[dict[str, object]]] = defaultdict(list)
@@ -1050,6 +1239,8 @@ def collect_repository_inventory(
     resources["native_resource_table"] = resource_observation.get("resource_table", {})
     product_link["native_input_set_observed"] = bool(native_coverage.get("link_input_set_observed"))
     product_link["native_selected_archive_members_observed"] = bool(native_coverage.get("selected_archive_members_observed"))
+    packages["native_restore_observed"] = bool(native_coverage.get("package_restore_execution_observed"))
+    packages["native_closure_validated"] = bool(native_coverage.get("package_closure_validated"))
     product_link["native_consumer_provider_edges"] = native_observation["consumer_provider_edges"]
     declared_native_providers = {
         edge.target
@@ -1070,25 +1261,69 @@ def collect_repository_inventory(
     )
     artifacts_by_kind = {
         kind: sorted(artifact.id for artifact in graph.artifacts.values() if artifact.artifact_kind == kind)
-        for kind in ("generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product")
+        for kind in ("generated", "resource", "asset", "package_set", "staging_set", "test_fixture", "product", "source_set")
     }
+    source_ownership_observed = (
+        not source["unowned_repo_files"]
+        and not source["undeclared_cross_component_edges"]
+        and bool(reachability["cmake"]["source_ownership_verified"])
+    )
+    # A quoted include that is absent from the repository source tree is not
+    # automatically an unresolved dependency.  The generated/package
+    # provenance pass classifies those includes against declared generator
+    # outputs and package-set outputs.  Counting the complete source list here
+    # would make a correctly declared ``version.h`` or vendored package header
+    # fail the independent include gate a second time.
+    include_observed = source_ownership_observed and _include_dependency_observed(
+        source,
+        generated,
+        native_coverage,
+    )
+    generated_observed = (
+        not generated["unclassified_unresolved_quoted_includes"]
+        and not generated["declared_input_gaps"]
+        and bool(generated["native_input_consumption_observed"])
+        and bool(generated["native_scheduling_observed"])
+        and bool(generated["native_execution_observed"])
+        and bool(generated["native_producer_consumer_correlations"])
+    )
+    resource_observed = (
+        not resources["unowned_resource_files"]
+        and not resources["unresolved_resource_includes"]
+        and not resources["canonical_sakura_rc_header_contract_edges_missing"]
+        and bool(resources["native_compiler_inputs_observed"])
+        and bool(resources["native_resource_table_observed"])
+        and bool(resources["native_resource_id_compatibility_observed"])
+    )
+    graduation_coverage = graduation_observation.get("coverage", {})
     coverage = [
-        {"class": "include", "status": "partial", "evidence": "owned C/C++ lexical scan plus native compiler/PCH trace when valid evidence is supplied; public/private and all-context closure pending"},
-        {"class": "native_source_ownership", "status": "partial", "evidence": "MSBuild exact; CMake GLOB_RECURSE diagnostic"},
-        {"class": "link", "status": "partial", "evidence": "MSBuild definitions plus native product link input set and selected archive members from a fresh link map when valid evidence is supplied; all-context closure pending"},
-        {"class": "generated", "status": "partial", "evidence": "declared outputs/tools plus native generated-input consumption, target terminal outcomes, and exact producer correlations when valid evidence is supplied; declared-input gaps and all-context closure pending"},
-        {"class": "resource", "status": "partial", "evidence": "repository definitions plus native RC input trace, top-level PE resource table, and canonical/nested numeric resource-ID compatibility when valid evidence is supplied; component ownership and all-context closure pending"},
-        {"class": "package", "status": "partial", "evidence": "root vcpkg manifest and global MSBuild restore definition observed; per-component restore closure and native restore trace pending"},
-        {"class": "runtime_asset", "status": "not_observed", "evidence": "staging/runtime file access inventory pending"},
-        {"class": "test_fixture", "status": "partial", "evidence": "stable test inventory exists; fixture/asset edges pending"},
-        {"class": "state", "status": "not_observed", "evidence": "environment/registry/shared state runtime inventory pending"},
-        {"class": "protocol", "status": "not_observed", "evidence": "IPC/RPC/persistence golden inventory pending"},
+        {"class": "include", "status": "observed" if include_observed else "partial", "evidence": "owned lexical include graph and a fresh MSBuild compiler dependency trace"},
+        {"class": "native_source_ownership", "status": "observed" if source_ownership_observed else "partial", "evidence": "source ownership inventory plus MSBuild/CMake product source projection"},
+        {"class": "link", "status": "observed" if product_link["native_product_link_closure_observed"] else "partial", "evidence": "fresh native link input set, selected archive members, and declared provider witnesses"},
+        {"class": "generated", "status": "observed" if generated_observed else "partial", "evidence": "declared generator inputs plus fresh consumption, scheduling, execution, and producer/consumer correlation"},
+        {"class": "resource", "status": "observed" if resource_observed else "partial", "evidence": "owned RC graph plus compiler input trace, PE table, and numeric-ID compatibility"},
+        {
+            "class": "package",
+            "status": "observed" if (
+                packages["component_package_isolation_verified"]
+                and packages["root_manifest_classified"]
+                and packages["native_closure_validated"]
+                and packages["native_restore_observed"]
+            ) else "partial",
+            "evidence": "declared graph closure, content-addressed explicit restore, strict active root, and native restore execution",
+        },
+        {"class": "runtime_asset", "status": "observed" if graduation_coverage.get("runtime_asset") else "not_observed", "evidence": "declared staging set, content-equal staged product/resource closure, and deterministic receipt"},
+        {"class": "test_fixture", "status": "observed" if graduation_coverage.get("test_fixture") else "partial", "evidence": "fixture content snapshots, explicit test-owner edges, and stable runtime test inventory discovery"},
+        {"class": "state", "status": "observed" if graduation_coverage.get("state") else "not_observed", "evidence": "declared state-owner inventory bound to the semantic strict ratchet"},
+        {"class": "protocol", "status": "observed" if graduation_coverage.get("protocol") else "not_observed", "evidence": "wire-contract fixture snapshot and successful generated contract-runner execution"},
     ]
 
     findings: list[dict[str, object]] = []
     for failure in native_observation["failures"]:
         findings.append({"severity": "blocker", **failure})
     for failure in resource_observation["failures"]:
+        findings.append({"severity": "blocker", **failure})
+    for failure in graduation_observation.get("failures", []):
         findings.append({"severity": "blocker", **failure})
     for edge in source["undeclared_cross_component_edges"]:
         findings.append({
@@ -1110,11 +1345,11 @@ def collect_repository_inventory(
             "severity": "blocker",
             "file_count": len(source["unowned_repo_files"]),
         })
-    if source["unresolved_quoted_includes"]:
+    if generated["unclassified_unresolved_quoted_includes"]:
         findings.append({
             "code": "UNRESOLVED_QUOTED_INCLUDE_SET",
             "severity": "blocker",
-            "witness_count": len(source["unresolved_quoted_includes"]),
+            "witness_count": len(generated["unclassified_unresolved_quoted_includes"]),
         })
     for directive in source["source_link_directives"]:
         findings.append({"code": "SOURCE_LINK_DIRECTIVE", "severity": "blocker", **directive})
@@ -1161,12 +1396,18 @@ def collect_repository_inventory(
             "severity": "blocker",
             "witness_count": len(resources["unresolved_resource_includes"]),
         })
-    if len(resources["canonical_sakura_rc_header_consumers"]) > 1:
+    if len(resources["canonical_sakura_rc_header_consumers"]) > 1 and not resources["canonical_sakura_rc_header_contracts"]:
         findings.append({
             "code": "SHARED_RESOURCE_ID_HEADER_COUPLING",
             "severity": "blocker",
             "consumer_count": len(resources["canonical_sakura_rc_header_consumers"]),
             "consumers": resources["canonical_sakura_rc_header_consumers"],
+        })
+    if resources["canonical_sakura_rc_header_contract_edges_missing"]:
+        findings.append({
+            "code": "RESOURCE_ID_CONTRACT_EDGE_MISSING",
+            "severity": "blocker",
+            "consumers": resources["canonical_sakura_rc_header_contract_edges_missing"],
         })
     if not resources["native_resource_table_observed"]:
         findings.append({"code": "NATIVE_RESOURCE_TABLE_UNOBSERVED", "severity": "blocker"})
@@ -1175,8 +1416,7 @@ def collect_repository_inventory(
     expression_tokens = sorted({
         str(token)
         for record in product_link["msbuild_additional_dependencies"]
-        for token in record["expression_tokens"]
-        if str(token) != "%(AdditionalDependencies)"
+        for token in record["unresolved_expression_tokens"]
     })
     if expression_tokens:
         findings.append({
@@ -1216,6 +1456,7 @@ def collect_repository_inventory(
         "package_provenance": packages,
         "native_product_observation": native_observation,
         "native_resource_observation": resource_observation,
+        "graduation_observation": graduation_observation,
         "artifacts_by_kind": artifacts_by_kind,
         "coverage": coverage,
         "findings": findings,
@@ -1260,6 +1501,7 @@ def repository_inventory_summary(
     packages = inventory["package_provenance"]
     native = inventory["native_product_observation"]
     native_resource = inventory["native_resource_observation"]
+    graduation = inventory["graduation_observation"]
     findings_by_code: dict[str, int] = defaultdict(int)
     for finding in inventory["findings"]:
         findings_by_code[str(finding["code"])] += 1
@@ -1327,6 +1569,12 @@ def repository_inventory_summary(
             "hard_evidence_hash": native_resource.get("hard_evidence_hash"),
             "coverage": native_resource.get("coverage", {}),
             "resource_table_entry_count": int(native_resource.get("resource_table", {}).get("entry_count", 0)),
+        },
+        "graduation_observation": {
+            "status": graduation.get("status"),
+            "valid": graduation.get("valid"),
+            "hard_evidence_hash": graduation.get("hard_evidence_hash"),
+            "coverage": graduation.get("coverage", {}),
         },
         "finding_count": len(inventory["findings"]),
         "findings_by_code": dict(sorted(findings_by_code.items())),

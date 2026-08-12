@@ -1,6 +1,6 @@
 {
   "schema_version": 3,
-  "minimum_generator_version": "0.3.6",
+  "minimum_generator_version": "0.3.7",
   "contexts": [
     {"id": "msvc-x64-debug", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "msbuild", "role": "development", "features": []},
     {"id": "cmake-msvc-x64-debug", "platform": "x64", "arch": "x64", "configuration": "Debug", "toolchain": "msvc", "backend": "cmake", "role": "component-pilot", "features": []},
@@ -18,10 +18,10 @@
       "build_definition": "legacy",
       "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
       "owner": "sakura_core",
-      "sources": ["sakura_core"],
+      "sources": ["sakura_core", "src/main/cpp/cxx"],
       "public_headers": [],
       "private_headers": [],
-      "ownership_exclusions": ["sakura_core/platform/uri", "sakura_core/include/sakura/uri", "sakura_core/platform/serialization", "sakura_core/include/sakura/serialization", "sakura_core/platform/filesystem", "sakura_core/include/sakura/filesystem", "sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/include/sakura/security", "sakura_core/platform/storage/CAtomicFileStorageService.cpp", "sakura_core/platform/storage/CAtomicFileStorageService.h", "sakura_core/platform/storage/StorageTypes.cpp", "sakura_core/platform/storage/StorageSnapshotCache.cpp", "sakura_core/include/sakura/storage", "sakura_core/platform/request", "sakura_core/include/sakura/request", "sakura_core/platform/controlipc/ControlIpcProtocol.cpp", "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp", "sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp", "sakura_core/platform/controlipc/security", "sakura_core/include/sakura/controlipc", "sakura_core/workbench/editor/selection/SelectionSession.cpp", "sakura_core/include/sakura/editor/SelectionSession.h", "sakura_core/workbench/editor/frame/EditorFrameEvents.cpp", "sakura_core/window/Win32EditorFrameAdapter.cpp", "sakura_core/include/sakura/editor/EditorFrameEvents.h", "sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h", "sakura_core/workbench/editor/document/DocumentSession.cpp", "sakura_core/include/sakura/editor/document", "sakura_core/_main/editor_lifecycle/EditorAppLifecycle.cpp", "sakura_core/include/sakura/editor/lifecycle", "sakura_core/include/sakura/shareddata", "sakura_core/env/DLLSHAREDATA_Abi.h"],
+      "ownership_exclusions": ["sakura_core/platform/uri", "sakura_core/include/sakura/uri", "sakura_core/platform/serialization", "sakura_core/include/sakura/serialization", "sakura_core/platform/filesystem", "sakura_core/include/sakura/filesystem", "sakura_core/platform/security/CurrentUserSecurityAttributes.cpp", "sakura_core/include/sakura/security", "sakura_core/platform/storage/CAtomicFileStorageService.cpp", "sakura_core/platform/storage/CAtomicFileStorageService.h", "sakura_core/platform/storage/StorageTypes.cpp", "sakura_core/platform/storage/StorageSnapshotCache.cpp", "sakura_core/include/sakura/storage", "sakura_core/platform/request", "sakura_core/include/sakura/request", "sakura_core/platform/controlipc/ControlIpcProtocol.cpp", "sakura_core/platform/controlipc/ControlIpcNamedPipeTransport.cpp", "sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp", "sakura_core/platform/controlipc/security", "sakura_core/include/sakura/controlipc", "sakura_core/workbench/editor/selection/SelectionSession.cpp", "sakura_core/include/sakura/editor/SelectionSession.h", "sakura_core/workbench/editor/frame/EditorFrameEvents.cpp", "sakura_core/window/Win32EditorFrameAdapter.cpp", "sakura_core/include/sakura/editor/EditorFrameEvents.h", "sakura_core/include/sakura/editor/win32/Win32EditorFrameAdapter.h", "sakura_core/workbench/editor/document/DocumentSession.cpp", "sakura_core/include/sakura/editor/document", "sakura_core/_main/editor_lifecycle/EditorAppLifecycle.cpp", "sakura_core/include/sakura/editor/lifecycle", "sakura_core/include/sakura/shareddata"],
       "public_include_roots": [],
       "private_include_roots": ["."],
       "state_owner": "legacy application and process state",
@@ -386,7 +386,7 @@
       "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release", "mingw-x64-debug", "mingw-x64-release"],
       "owner": "sakura_core/platform/controlipc",
       "sources": ["sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp"],
-      "public_headers": ["sakura_core/include/sakura/controlipc/ControlPlatformEndpoint.h"],
+      "public_headers": ["sakura_core/include/sakura/controlipc/ControlPlatformEndpoint.h", "sakura_core/include/sakura/controlipc/ProfileAuthorityIdentity.h"],
       "private_headers": [],
       "ownership_exclusions": [],
       "public_include_roots": ["sakura_core/include"],
@@ -501,7 +501,8 @@
       "private_include_roots": [],
       "state_owner": null,
       "backend_targets": {"msbuild": ["src/main/modules/generated/msbuild/projects/sakura_win32_editor_frame.vcxproj"], "cmake": ["sakura_win32_editor_frame"]},
-      "compile_profile": null
+      "compile_profile": null,
+      "system_libraries": ["user32"]
     },
     {
       "id": "sakura_win32_editor_frame_tests",
@@ -602,8 +603,8 @@
       "supported_contexts": ["msvc-x64-debug", "cmake-msvc-x64-debug", "msvc-x64-release", "cmake-msvc-x64-release"],
       "owner": "sakura_core/include/sakura/shareddata",
       "sources": [],
-      "public_headers": ["sakura_core/include/sakura/shareddata/SharedDataCapabilities.h"],
-      "private_headers": ["sakura_core/env/DLLSHAREDATA_Abi.h"],
+      "public_headers": ["sakura_core/include/sakura/shareddata/SharedDataAbiContract.h", "sakura_core/include/sakura/shareddata/SharedDataCapabilities.h"],
+      "private_headers": [],
       "ownership_exclusions": [],
       "public_include_roots": ["sakura_core/include"],
       "private_include_roots": ["sakura_core"],
@@ -754,11 +755,95 @@
       "condition": {"eq": {"field": "toolchain", "value": "msvc"}}
     },
     {
+      "id": "sakura-editor-msvc-x64-debug-product",
+      "owner": "sakura_app",
+      "artifact_kind": "product",
+      "inputs": ["sakura_core/sakura.vcxproj", "src/main/cmake/sakura.cmake", "src/main/runtime/sakura-editor-runtime-stage.json"],
+      "outputs": ["x64/Debug/sakura.exe"],
+      "tool_id": "msbuild",
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Debug"}}]}
+    },
+    {
+      "id": "sakura-editor-msvc-x64-release-product",
+      "owner": "sakura_app",
+      "artifact_kind": "product",
+      "inputs": ["sakura_core/sakura.vcxproj", "src/main/cmake/sakura.cmake", "src/main/runtime/sakura-editor-runtime-stage.json"],
+      "outputs": ["x64/Release/sakura.exe"],
+      "tool_id": "msbuild",
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Release"}}]}
+    },
+    {
+      "id": "sakura-editor-msvc-x64-debug-runtime-stage",
+      "owner": "sakura_app",
+      "artifact_kind": "staging_set",
+      "inputs": ["src/main/runtime/sakura-editor-runtime-stage.json"],
+      "outputs": ["build/staging/msvc-x64-debug/sakura-editor/sakura.exe", "build/staging/msvc-x64-debug/sakura-editor/sakura_lang_en_US.dll", "build/staging/msvc-x64-debug/sakura-editor/sakura_lang_zh_CN.dll", "build/staging/msvc-x64-debug/sakura-editor/.sakura-runtime-stage.json"],
+      "tool_id": "copy",
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Debug"}}]}
+    },
+    {
+      "id": "sakura-editor-msvc-x64-release-runtime-stage",
+      "owner": "sakura_app",
+      "artifact_kind": "staging_set",
+      "inputs": ["src/main/runtime/sakura-editor-runtime-stage.json"],
+      "outputs": ["build/staging/msvc-x64-release/sakura-editor/sakura.exe", "build/staging/msvc-x64-release/sakura-editor/sakura_lang_en_US.dll", "build/staging/msvc-x64-release/sakura-editor/sakura_lang_zh_CN.dll", "build/staging/msvc-x64-release/sakura-editor/.sakura-runtime-stage.json"],
+      "tool_id": "copy",
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Release"}}]}
+    },
+    {
       "id": "root-vcpkg-package-set",
       "owner": "sakura_app",
       "artifact_kind": "package_set",
-      "inputs": ["vcpkg.json"],
+      "inputs": [
+        "vcpkg.json",
+        "vcpkg-configuration.json",
+        "tools/vcpkg-local-registry",
+        "tools/dll_plugin1/CMakeLists.txt",
+        "tools/dll_plugin1/dll_plugin1.cpp",
+        "tools/ppa_stub/CMakeLists.txt",
+        "tools/ppa_stub/ppa.cpp",
+        "tools/ppa_stub/ppa.h",
+        "tools/ppa_stub/ppa_stub.cpp",
+        "tools/ppa_stub/ppa_stub.def",
+        "tools/ppa_stub/ppa_stub.h"
+      ],
       "outputs": ["vcpkg:bregonig", "vcpkg:cmigemo", "vcpkg:darkmodelib", "vcpkg:dll-plugin1", "vcpkg:fmt", "vcpkg:gtest", "vcpkg:ms-gsl", "vcpkg:ppa-stub", "vcpkg:wil"],
+      "tool_id": null,
+      "condition": true
+    },
+    {
+      "id": "sakura-module-generated-projections",
+      "owner": "sakura_app",
+      "artifact_kind": "generated",
+      "inputs": ["src/main/modules/modules.json", "src/main/modules/schema-v3.json", "tools/build/sakura_build.py", "tools/build/sakura_build_lib"],
+      "outputs": ["src/main/modules/generated"],
+      "tool_id": "sakura-module-generator",
+      "condition": true
+    },
+    {
+      "id": "sakura-resource-id-contract",
+      "owner": "sakura_app",
+      "artifact_kind": "resource",
+      "inputs": ["src/main/resources/sakura_rc.h", "src/main/resources/sakura.hh"],
+      "outputs": [],
+      "tool_id": null,
+      "condition": true
+    },
+    {
+      "id": "sakura-vendored-third-party-source-set",
+      "owner": "sakura_app",
+      "artifact_kind": "source_set",
+      "inputs": ["externals"],
+      "outputs": [],
+      "tool_id": null,
+      "condition": true
+    },
+    {
+      "id": "sakura-abi-projection-fixture-sources",
+      "owner": "tests1",
+      "artifact_kind": "test_fixture",
+      "inputs": ["tools/build/fixtures/abi"],
+      "outputs": [],
       "tool_id": null,
       "condition": true
     }
@@ -782,6 +867,126 @@
         {"context": "cmake-msvc-x64-release", "probe": "vcpkg.json"},
         {"context": "mingw-x64-debug", "probe": "vcpkg.json"},
         {"context": "mingw-x64-release", "probe": "vcpkg.json"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-msvc-x64-debug-runtime-stage",
+      "from": "sakura_app",
+      "to": "sakura-editor-msvc-x64-debug-runtime-stage",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Debug"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-msvc-x64-release-runtime-stage",
+      "from": "sakura_app",
+      "to": "sakura-editor-msvc-x64-release-runtime-stage",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Release"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-release", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "msvc-x64-debug-runtime-stage-to-product",
+      "from": "sakura-editor-msvc-x64-debug-runtime-stage",
+      "to": "sakura-editor-msvc-x64-debug-product",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Debug"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "msvc-x64-debug-runtime-stage-to-en-us-resource",
+      "from": "sakura-editor-msvc-x64-debug-runtime-stage",
+      "to": "sakura-language-en-us-resource",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Debug"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "msvc-x64-debug-runtime-stage-to-zh-cn-resource",
+      "from": "sakura-editor-msvc-x64-debug-runtime-stage",
+      "to": "sakura-language-zh-cn-resource",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Debug"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "msvc-x64-release-runtime-stage-to-product",
+      "from": "sakura-editor-msvc-x64-release-runtime-stage",
+      "to": "sakura-editor-msvc-x64-release-product",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Release"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-release", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "msvc-x64-release-runtime-stage-to-en-us-resource",
+      "from": "sakura-editor-msvc-x64-release-runtime-stage",
+      "to": "sakura-language-en-us-resource",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Release"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-release", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
+      ]
+    },
+    {
+      "id": "msvc-x64-release-runtime-stage-to-zh-cn-resource",
+      "from": "sakura-editor-msvc-x64-release-runtime-stage",
+      "to": "sakura-language-zh-cn-resource",
+      "kind": "asset",
+      "phases": ["stage", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"all": [{"eq": {"field": "toolchain", "value": "msvc"}}, {"eq": {"field": "backend", "value": "msbuild"}}, {"eq": {"field": "configuration", "value": "Release"}}]},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-release", "probe": "src/main/runtime/sakura-editor-runtime-stage.json"}
       ]
     },
     {
@@ -1558,6 +1763,44 @@
       ]
     },
     {
+      "id": "sakura-shareddata-contract-tests-to-golden-fixture",
+      "from": "sakura_shareddata_contract_tests",
+      "to": "dllsharedata-layout-v1-golden-fixture",
+      "kind": "test",
+      "phases": ["test", "runtime"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"eq": {"field": "toolchain", "value": "msvc"}},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/fixtures/shareddata/dllsharedata-layout-v1.json"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/fixtures/shareddata/dllsharedata-layout-v1.json"},
+        {"context": "msvc-x64-release", "probe": "tools/build/fixtures/shareddata/dllsharedata-layout-v1.json"},
+        {"context": "cmake-msvc-x64-release", "probe": "tools/build/fixtures/shareddata/dllsharedata-layout-v1.json"}
+      ]
+    },
+    {
+      "id": "tests1-to-abi-projection-fixture-sources",
+      "from": "tests1",
+      "to": "sakura-abi-projection-fixture-sources",
+      "kind": "test",
+      "phases": ["test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/fixtures/abi/provider.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/fixtures/abi/provider.cpp"},
+        {"context": "msvc-x64-release", "probe": "tools/build/fixtures/abi/provider.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "tools/build/fixtures/abi/provider.cpp"},
+        {"context": "mingw-x64-debug", "probe": "tools/build/fixtures/abi/provider.cpp"},
+        {"context": "mingw-x64-release", "probe": "tools/build/fixtures/abi/provider.cpp"}
+      ]
+    },
+    {
       "id": "sakura-app-to-sakura-editor-selection",
       "from": "sakura_app",
       "to": "sakura_editor_selection",
@@ -1662,8 +1905,8 @@
       "from": "sakura_win32_editor_frame",
       "to": "sakura_editor_frame",
       "kind": "implementation",
-      "phases": ["compile", "link"],
-      "visibility": "private",
+      "phases": ["compile"],
+      "visibility": "public",
       "propagation": "none",
       "contract_profile": "internal-cpp-value",
       "condition": true,
@@ -1813,6 +2056,256 @@
         {"context": "cmake-msvc-x64-release", "probe": "tools/build/pilots/editor_app_lifecycle_contract_test.cpp"},
         {"context": "mingw-x64-debug", "probe": "tools/build/pilots/editor_app_lifecycle_contract_test.cpp"},
         {"context": "mingw-x64-release", "probe": "tools/build/pilots/editor_app_lifecycle_contract_test.cpp"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-module-generated-projections",
+      "from": "sakura_app",
+      "to": "sakura-module-generated-projections",
+      "kind": "tool",
+      "phases": ["generate", "compile"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/main/modules/modules.json"},
+        {"context": "cmake-msvc-x64-debug", "probe": "src/main/modules/modules.json"},
+        {"context": "msvc-x64-release", "probe": "src/main/modules/modules.json"},
+        {"context": "cmake-msvc-x64-release", "probe": "src/main/modules/modules.json"},
+        {"context": "mingw-x64-debug", "probe": "src/main/modules/modules.json"},
+        {"context": "mingw-x64-release", "probe": "src/main/modules/modules.json"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-resource-id-contract",
+      "from": "sakura_app",
+      "to": "sakura-resource-id-contract",
+      "kind": "asset",
+      "phases": ["compile"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "sakura_core/CSelectLang.h"},
+        {"context": "cmake-msvc-x64-debug", "probe": "sakura_core/CSelectLang.h"},
+        {"context": "msvc-x64-release", "probe": "sakura_core/CSelectLang.h"},
+        {"context": "cmake-msvc-x64-release", "probe": "sakura_core/CSelectLang.h"},
+        {"context": "mingw-x64-debug", "probe": "sakura_core/CSelectLang.h"},
+        {"context": "mingw-x64-release", "probe": "sakura_core/CSelectLang.h"}
+      ]
+    },
+    {
+      "id": "sakura-language-en-us-resources-to-resource-id-contract",
+      "from": "sakura_language_en_us_resources",
+      "to": "sakura-resource-id-contract",
+      "kind": "asset",
+      "phases": ["compile"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"eq": {"field": "toolchain", "value": "msvc"}},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "sakura_lang/sakura_rc_en-US.rc"},
+        {"context": "msvc-x64-release", "probe": "sakura_lang/sakura_rc_en-US.rc"}
+      ]
+    },
+    {
+      "id": "sakura-language-zh-cn-resources-to-resource-id-contract",
+      "from": "sakura_language_zh_cn_resources",
+      "to": "sakura-resource-id-contract",
+      "kind": "asset",
+      "phases": ["compile"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": {"eq": {"field": "toolchain", "value": "msvc"}},
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "sakura_lang/sakura_rc_zh-CN.rc"},
+        {"context": "msvc-x64-release", "probe": "sakura_lang/sakura_rc_zh-CN.rc"}
+      ]
+    },
+    {
+      "id": "sakura-app-to-vendored-third-party-source-set",
+      "from": "sakura_app",
+      "to": "sakura-vendored-third-party-source-set",
+      "kind": "asset",
+      "phases": ["compile"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "sakura_core/StdAfx.h"},
+        {"context": "cmake-msvc-x64-debug", "probe": "sakura_core/StdAfx.h"},
+        {"context": "msvc-x64-release", "probe": "sakura_core/StdAfx.h"},
+        {"context": "cmake-msvc-x64-release", "probe": "sakura_core/StdAfx.h"},
+        {"context": "mingw-x64-debug", "probe": "sakura_core/StdAfx.h"},
+        {"context": "mingw-x64-release", "probe": "sakura_core/StdAfx.h"}
+      ]
+    },
+    {
+      "id": "tests1-to-vendored-third-party-source-set",
+      "from": "tests1",
+      "to": "sakura-vendored-third-party-source-set",
+      "kind": "asset",
+      "phases": ["compile", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "msvc-x64-release", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "mingw-x64-debug", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "mingw-x64-release", "probe": "src/test/cpp/tests1/test-window.cpp"}
+      ]
+    },
+    {
+      "id": "tests1-to-root-vcpkg-package-set",
+      "from": "tests1",
+      "to": "root-vcpkg-package-set",
+      "kind": "package",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "vcpkg.json"},
+        {"context": "cmake-msvc-x64-debug", "probe": "vcpkg.json"},
+        {"context": "msvc-x64-release", "probe": "vcpkg.json"},
+        {"context": "cmake-msvc-x64-release", "probe": "vcpkg.json"},
+        {"context": "mingw-x64-debug", "probe": "vcpkg.json"},
+        {"context": "mingw-x64-release", "probe": "vcpkg.json"}
+      ]
+    },
+    {
+      "id": "sakura-controlipc-endpoint-tests-to-security",
+      "from": "sakura_controlipc_endpoint_tests",
+      "to": "sakura_controlipc_security",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/pilots/controlipc_endpoint_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/pilots/controlipc_endpoint_contract_test.cpp"},
+        {"context": "msvc-x64-release", "probe": "tools/build/pilots/controlipc_endpoint_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "tools/build/pilots/controlipc_endpoint_contract_test.cpp"},
+        {"context": "mingw-x64-debug", "probe": "tools/build/pilots/controlipc_endpoint_contract_test.cpp"},
+        {"context": "mingw-x64-release", "probe": "tools/build/pilots/controlipc_endpoint_contract_test.cpp"}
+      ]
+    },
+    {
+      "id": "sakura-controlipc-transport-tests-to-security",
+      "from": "sakura_controlipc_transport_tests",
+      "to": "sakura_controlipc_security",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/pilots/controlipc_transport_test.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/pilots/controlipc_transport_test.cpp"},
+        {"context": "msvc-x64-release", "probe": "tools/build/pilots/controlipc_transport_test.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "tools/build/pilots/controlipc_transport_test.cpp"},
+        {"context": "mingw-x64-debug", "probe": "tools/build/pilots/controlipc_transport_test.cpp"},
+        {"context": "mingw-x64-release", "probe": "tools/build/pilots/controlipc_transport_test.cpp"}
+      ]
+    },
+    {
+      "id": "sakura-filesystem-tests-to-sakura-uri",
+      "from": "sakura_filesystem_tests",
+      "to": "sakura_uri",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "tools/build/pilots/filesystem_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "tools/build/pilots/filesystem_contract_test.cpp"},
+        {"context": "msvc-x64-release", "probe": "tools/build/pilots/filesystem_contract_test.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "tools/build/pilots/filesystem_contract_test.cpp"},
+        {"context": "mingw-x64-debug", "probe": "tools/build/pilots/filesystem_contract_test.cpp"},
+        {"context": "mingw-x64-release", "probe": "tools/build/pilots/filesystem_contract_test.cpp"}
+      ]
+    },
+    {
+      "id": "tests1-to-editor-document-core",
+      "from": "tests1",
+      "to": "sakura_editor_document_core",
+      "kind": "test",
+      "phases": ["compile", "link", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp"},
+        {"context": "msvc-x64-release", "probe": "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp"},
+        {"context": "mingw-x64-debug", "probe": "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp"},
+        {"context": "mingw-x64-release", "probe": "src/test/cpp/tests1/workbench/CEditDocWorkingCopyPersistenceAdapterTest.cpp"}
+      ]
+    },
+    {
+      "id": "tests1-to-shareddata-contract",
+      "from": "tests1",
+      "to": "sakura_shareddata_contract",
+      "kind": "test",
+      "phases": ["compile", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": "internal-cpp-value",
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "msvc-x64-release", "probe": "src/test/cpp/tests1/test-window.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "src/test/cpp/tests1/test-window.cpp"}
+      ]
+    },
+    {
+      "id": "tests1-to-resource-id-contract",
+      "from": "tests1",
+      "to": "sakura-resource-id-contract",
+      "kind": "asset",
+      "phases": ["compile", "test"],
+      "visibility": "private",
+      "propagation": "none",
+      "contract_profile": null,
+      "condition": true,
+      "required": true,
+      "witnesses": [
+        {"context": "msvc-x64-debug", "probe": "src/test/cpp/tests1/test-StdControl.cpp"},
+        {"context": "cmake-msvc-x64-debug", "probe": "src/test/cpp/tests1/test-StdControl.cpp"},
+        {"context": "msvc-x64-release", "probe": "src/test/cpp/tests1/test-StdControl.cpp"},
+        {"context": "cmake-msvc-x64-release", "probe": "src/test/cpp/tests1/test-StdControl.cpp"},
+        {"context": "mingw-x64-debug", "probe": "src/test/cpp/tests1/test-StdControl.cpp"},
+        {"context": "mingw-x64-release", "probe": "src/test/cpp/tests1/test-StdControl.cpp"}
       ]
     },
     {

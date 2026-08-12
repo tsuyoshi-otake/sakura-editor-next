@@ -8,7 +8,7 @@
 */
 #pragma once
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 #include "platform/profiles/UserDataProfileRegistry.h"
 #include <sakura/uri/UriIdentity.h>
 

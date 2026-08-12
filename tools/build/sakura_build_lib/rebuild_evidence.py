@@ -22,6 +22,7 @@ from .runner import (
     COMPONENT_ISOLATED_ENVIRONMENT,
     BuildError,
     EventWriter,
+    cmake_component_build_dir,
     cmake_component_commands,
     msbuild_command,
     msvc_environment,
@@ -352,7 +353,7 @@ def _discover_artifacts(graph: SemanticGraph, root_id: str, context_id: str) -> 
         ))
         return artifacts
 
-    build_dir = graph.repo_root / f"build/components/{context_id}/{root_id}/cmake-ninja-isolated"
+    build_dir = cmake_component_build_dir(graph.repo_root, root_id, context_id)
     object_paths = tuple(build_dir.rglob("*.obj"))
     for component_id in closure:
         component = graph.components.get(component_id)
@@ -497,7 +498,7 @@ def _run_test_executable(graph: SemanticGraph, root_id: str, context_id: str, en
     if context.backend == "msbuild":
         executable = graph.repo_root / f"build/components/{context_id}/{root_id}/bin/{root_id}.exe"
     else:
-        executable = graph.repo_root / f"build/components/{context_id}/{root_id}/cmake-ninja-isolated/{root_id}.exe"
+        executable = cmake_component_build_dir(graph.repo_root, root_id, context_id) / f"{root_id}.exe"
     return _run([str(executable)], graph.repo_root, environment, timeout_seconds, events).returncode
 
 

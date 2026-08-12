@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "staging_sets": [
+    {
+      "id": "sakura-editor-msvc-x64-debug-runtime-stage",
+      "context_id": "msvc-x64-debug",
+      "entries": [
+        {
+          "artifact_id": "sakura-editor-msvc-x64-debug-product",
+          "destination": "build/staging/msvc-x64-debug/sakura-editor/sakura.exe",
+          "role": "editor",
+          "source": "x64/Debug/sakura.exe"
+        },
+        {
+          "artifact_id": "sakura-language-en-us-resource",
+          "destination": "build/staging/msvc-x64-debug/sakura-editor/sakura_lang_en_US.dll",
+          "role": "language-en-us",
+          "source": "x64/Debug/sakura_lang_en_US.dll"
+        },
+        {
+          "artifact_id": "sakura-language-zh-cn-resource",
+          "destination": "build/staging/msvc-x64-debug/sakura-editor/sakura_lang_zh_CN.dll",
+          "role": "language-zh-cn",
+          "source": "x64/Debug/sakura_lang_zh_CN.dll"
+        }
+      ]
+    },
+    {
+      "id": "sakura-editor-msvc-x64-release-runtime-stage",
+      "context_id": "msvc-x64-release",
+      "entries": [
+        {
+          "artifact_id": "sakura-editor-msvc-x64-release-product",
+          "destination": "build/staging/msvc-x64-release/sakura-editor/sakura.exe",
+          "role": "editor",
+          "source": "x64/Release/sakura.exe"
+        },
+        {
+          "artifact_id": "sakura-language-en-us-resource",
+          "destination": "build/staging/msvc-x64-release/sakura-editor/sakura_lang_en_US.dll",
+          "role": "language-en-us",
+          "source": "x64/Release/sakura_lang_en_US.dll"
+        },
+        {
+          "artifact_id": "sakura-language-zh-cn-resource",
+          "destination": "build/staging/msvc-x64-release/sakura-editor/sakura_lang_zh_CN.dll",
+          "role": "language-zh-cn",
+          "source": "x64/Release/sakura_lang_zh_CN.dll"
+        }
+      ]
+    }
+  ]
+}

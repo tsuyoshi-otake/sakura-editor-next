@@ -8,7 +8,7 @@
 
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
 #include <sakura/controlipc/ControlIpcSecurity.h>
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <algorithm>
 #include <utility>

@@ -80,6 +80,7 @@ include(${CMAKE_SOURCE_DIR}/src/main/cmake/sakura.cmake)
 
 # Create main executable
 add_executable(${PROJECT_NAME} WIN32 ${CMAKE_SOURCE_DIR}/sakura_core/StdAfx.cpp)
+target_sources(${PROJECT_NAME} PRIVATE ${SAKURA_LEGACY_RESOURCE_SCRIPTS})
 
 # link libraries
 target_link_libraries(${PROJECT_NAME}

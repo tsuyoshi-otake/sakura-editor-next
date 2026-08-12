@@ -25,6 +25,7 @@ from sakura_build_lib.runner import (
     BuildError,
     EventWriter,
     allocate_parallelism,
+    cmake_component_build_dir,
     cmake_component_commands,
     distribution_commands,
     msbuild_command,
@@ -279,6 +280,31 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(["consumer-package-set"], intent["package_sets"])
             self.assertEqual([], intent["generated_artifacts"])
             self.assertEqual([], intent["staging_sets"])
+
+    def test_required_runtime_stage_edges_use_static_configuration_witnesses(self):
+        """A native build must not need its own not-yet-linked stage inputs to validate the graph."""
+        repository_root = TOOLS_BUILD.parents[1]
+        graph = load_semantic_graph(repository_root, repository_root / "src/main/modules/modules.json")
+        staging_sets = {
+            artifact_id
+            for artifact_id, artifact in graph.artifacts.items()
+            if artifact.artifact_kind == "staging_set"
+        }
+        stage_edges = [
+            edge
+            for edge in graph.edges
+            if edge.source in staging_sets
+            and edge.required
+            and {"stage", "runtime"}.issubset(edge.phases)
+        ]
+
+        self.assertTrue(stage_edges)
+        for edge in stage_edges:
+            self.assertTrue(edge.witnesses)
+            self.assertEqual(
+                {"src/main/runtime/sakura-editor-runtime-stage.json"},
+                {witness["probe"] for witness in edge.witnesses},
+            )
 
     def test_contract_profile_belongs_to_edge_not_component(self):
         with RepositoryFixture() as (root, manifest):
@@ -1019,7 +1045,7 @@ class RunnerTests(unittest.TestCase):
             source = root / "src/main/modules/generated/cmake/projects/ctx/leaf"
             source.mkdir(parents=True)
             (source / "CMakeLists.txt").write_text("cmake_minimum_required(VERSION 3.24)\n", encoding="utf-8")
-            build = root / "build/components/ctx/leaf/cmake-ninja-isolated"
+            build = cmake_component_build_dir(root, "leaf", "ctx")
 
             with patch("sakura_build_lib.runner.find_cmake_tool", side_effect=lambda name: name):
                 first = cmake_component_commands(root, "leaf", "ctx", "Debug", "msvc", 1)
@@ -1071,6 +1097,20 @@ class RunnerTests(unittest.TestCase):
                 )
                 moved_tree = cmake_component_commands(root, "leaf", "ctx", "Debug", "msvc", 1)
                 self.assertEqual(2, len(moved_tree))
+
+    def test_component_cmake_build_directory_is_stable_compact_and_context_specific(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            component = "sakura_editor_document_core_tests"
+            first = cmake_component_build_dir(root, component, "cmake-msvc-x64-debug")
+            repeated = cmake_component_build_dir(root, component, "cmake-msvc-x64-debug")
+            release = cmake_component_build_dir(root, component, "cmake-msvc-x64-release")
+            legacy = root / "build/components/cmake-msvc-x64-debug" / component / "cmake-ninja-isolated"
+
+            self.assertEqual(first, repeated)
+            self.assertNotEqual(first, release)
+            self.assertEqual(root / "build/components/cmake", first.parent)
+            self.assertLess(len(str(first)), len(str(legacy)))
 
     def test_component_cmake_environment_removes_discovery_poison_after_toolchain_overlay_case_insensitively(self):
         with tempfile.TemporaryDirectory() as temporary:

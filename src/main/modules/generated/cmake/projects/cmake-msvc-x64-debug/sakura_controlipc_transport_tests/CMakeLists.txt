@@ -73,8 +73,8 @@ set_target_properties(sakura_controlipc_transport_tests PROPERTIES COMPILE_PDB_N
 target_compile_options(sakura_controlipc_transport_tests PRIVATE /source-charset:utf-8 /execution-charset:utf-8 /Zp8 /Zc:wchar_t "/FI${SAKURA_REPO_ROOT}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_controlipc_transport_tests.h")
 target_compile_definitions(sakura_controlipc_transport_tests PRIVATE _ITERATOR_DEBUG_LEVEL=2 _WIN32_WINNT=0x0A00 NOMINMAX UNICODE _UNICODE)
 target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlipc_transport)
-target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlipc_protocol)
 target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlipc_security)
+target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_controlipc_protocol)
 target_link_libraries(sakura_controlipc_transport_tests PRIVATE sakura_security)
 target_link_options(sakura_controlipc_transport_tests PRIVATE /INCREMENTAL:NO "/MAP:${CMAKE_BINARY_DIR}/sakura_controlipc_transport_tests.map")
 

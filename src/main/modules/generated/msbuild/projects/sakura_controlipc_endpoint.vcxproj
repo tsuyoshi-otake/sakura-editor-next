@@ -101,6 +101,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\controlipc\ControlPlatformEndpoint.h" />
+    <ClInclude Include="$(SakuraRepoRoot)\sakura_core\include\sakura\controlipc\ProfileAuthorityIdentity.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="$(SakuraRepoRoot)\sakura_core\platform\controlipc\ControlPlatformEndpoint.cpp" />

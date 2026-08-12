@@ -7,7 +7,7 @@
 #include "StdAfx.h"
 #include "extension/CExtensionHostSecretVaultGrantRuntimeAdapter.h"
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 #include "platform/secrets/SecretVaultTypes.h"
 
 #include <algorithm>

@@ -26,6 +26,7 @@ if(NOT TARGET sakura_controlipc_endpoint)
   add_library(sakura_controlipc_endpoint STATIC
     "${CMAKE_SOURCE_DIR}/sakura_core/platform/controlipc/ControlPlatformEndpoint.cpp"
     "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/controlipc/ControlPlatformEndpoint.h"
+    "${CMAKE_SOURCE_DIR}/sakura_core/include/sakura/controlipc/ProfileAuthorityIdentity.h"
   )
   target_include_directories(sakura_controlipc_endpoint PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core/include")
   target_include_directories(sakura_controlipc_endpoint PRIVATE "${CMAKE_SOURCE_DIR}/sakura_core")
@@ -298,6 +299,7 @@ if(NOT TARGET sakura_win32_editor_frame)
   )
   target_include_directories(sakura_win32_editor_frame PUBLIC "${CMAKE_SOURCE_DIR}/sakura_core/include")
   target_compile_features(sakura_win32_editor_frame PRIVATE cxx_std_20)
+  target_link_libraries(sakura_win32_editor_frame PUBLIC user32)
   if(MSVC)
     set_property(TARGET sakura_win32_editor_frame PROPERTY MSVC_RUNTIME_LIBRARY "$<$<CONFIG:Debug>:MultiThreadedDebug>$<$<CONFIG:Release>:MultiThreaded>")
     target_compile_options(sakura_win32_editor_frame PRIVATE "$<$<CONFIG:Debug>:/source-charset:utf-8>" "$<$<CONFIG:Debug>:/execution-charset:utf-8>" "$<$<CONFIG:Debug>:/Zp8>" "$<$<CONFIG:Debug>:/Zc:wchar_t>" "$<$<CONFIG:Debug>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-debug/sakura_win32_editor_frame.h>" "$<$<CONFIG:Release>:/source-charset:utf-8>" "$<$<CONFIG:Release>:/execution-charset:utf-8>" "$<$<CONFIG:Release>:/Zp8>" "$<$<CONFIG:Release>:/Zc:wchar_t>" "$<$<CONFIG:Release>:/FI${CMAKE_SOURCE_DIR}/src/main/modules/generated/abi/cmake-msvc-x64-release/sakura_win32_editor_frame.h>")

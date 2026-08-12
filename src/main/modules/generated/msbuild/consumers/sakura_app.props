@@ -15,7 +15,7 @@
       <ForcedIncludeFiles>$(MSBuildProjectDirectory)\..\src\main\modules\generated\abi\msvc-x64-debug\sakura_app.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>advapi32.lib;bcrypt.lib;comctl32.lib;crypt32.lib;d2d1.lib;dbghelp.lib;dwmapi.lib;dwrite.lib;htmlhelp.lib;imm32.lib;mpr.lib;msimg32.lib;ole32.lib;oleacc.lib;oleaut32.lib;shlwapi.lib;uiautomationcore.lib;uuid.lib;uxtheme.lib;version.lib;windowscodecs.lib;winhttp.lib;winmm.lib;winspool.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;bcrypt.lib;comctl32.lib;crypt32.lib;d2d1.lib;dbghelp.lib;dwmapi.lib;dwrite.lib;htmlhelp.lib;imm32.lib;mpr.lib;msimg32.lib;ole32.lib;oleacc.lib;oleaut32.lib;shlwapi.lib;uiautomationcore.lib;user32.lib;uuid.lib;uxtheme.lib;version.lib;windowscodecs.lib;winhttp.lib;winmm.lib;winspool.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -24,7 +24,7 @@
       <ForcedIncludeFiles>$(MSBuildProjectDirectory)\..\src\main\modules\generated\abi\msvc-x64-release\sakura_app.h;%(ForcedIncludeFiles)</ForcedIncludeFiles>
     </ClCompile>
     <Link>
-      <AdditionalDependencies>advapi32.lib;bcrypt.lib;comctl32.lib;crypt32.lib;d2d1.lib;dbghelp.lib;dwmapi.lib;dwrite.lib;htmlhelp.lib;imm32.lib;mpr.lib;msimg32.lib;ole32.lib;oleacc.lib;oleaut32.lib;shlwapi.lib;uiautomationcore.lib;uuid.lib;uxtheme.lib;version.lib;windowscodecs.lib;winhttp.lib;winmm.lib;winspool.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>advapi32.lib;bcrypt.lib;comctl32.lib;crypt32.lib;d2d1.lib;dbghelp.lib;dwmapi.lib;dwrite.lib;htmlhelp.lib;imm32.lib;mpr.lib;msimg32.lib;ole32.lib;oleacc.lib;oleaut32.lib;shlwapi.lib;uiautomationcore.lib;user32.lib;uuid.lib;uxtheme.lib;version.lib;windowscodecs.lib;winhttp.lib;winmm.lib;winspool.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(SakuraNativeProductMapEvidence)'=='true'">

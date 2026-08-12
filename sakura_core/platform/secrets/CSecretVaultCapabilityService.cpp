@@ -8,7 +8,7 @@
 
 #include "platform/secrets/CSecretVaultCapabilityService.h"
 
-#include "platform/profiles/ProfileAuthorityIdentity.h"
+#include <sakura/controlipc/ProfileAuthorityIdentity.h>
 
 #include <algorithm>
 #include <bcrypt.h>

@@ -6,6 +6,7 @@
  */
 
 #include <sakura/shareddata/SharedDataAbiContract.h>
+#include <sakura/shareddata/SharedDataCapabilities.h>
 
 #include <array>
 #include <iostream>
@@ -16,8 +17,22 @@ namespace {
 using legacy::shareddata::abi::FrozenSharedDataAbiLayout;
 
 constexpr auto kObserved = FrozenSharedDataAbiLayout();
+constexpr legacy::shareddata::SharedDataHeaderSnapshot kHeaderSnapshot(7U, 8192U);
+constexpr legacy::shareddata::SharedDataMacroSnapshot kMacroSnapshot(true, false, 0x1234U);
+constexpr legacy::shareddata::SharedDataWindowEndpointSnapshot kWindowSnapshot(0x10U, 0x20U);
+constexpr legacy::shareddata::SharedDataSettingsSnapshot kSettingsSnapshot(3, 4);
+constexpr legacy::shareddata::SharedDataSearchSettingsSnapshot kSearchSettingsSnapshot(true, false, true, false);
+constexpr legacy::shareddata::SharedDataWindowNodesSnapshot kWindowNodesSnapshot(2);
 
 static_assert(kObserved.StructureVersion() == 0);
+static_assert(kHeaderSnapshot.StructureVersion() == 7U && kHeaderSnapshot.MappingSize() == 8192U);
+static_assert(kMacroSnapshot.IsEditWindowChanging() && !kMacroSnapshot.IsRecording()
+	&& kMacroSnapshot.RecordingWindow() == 0x1234U);
+static_assert(kWindowSnapshot.TrayWindow() == 0x10U && kWindowSnapshot.DebugWindow() == 0x20U);
+static_assert(kSettingsSnapshot.TypeCount() == 3 && kSettingsSnapshot.LockCount() == 4);
+static_assert(kSearchSettingsSnapshot.UsesCaretKeyword() && !kSearchSettingsSnapshot.TagJumpOnDoubleClick()
+	&& kSearchSettingsSnapshot.TagJumpOnReturn() && !kSearchSettingsSnapshot.EnablesExtendedEol());
+static_assert(kWindowNodesSnapshot.EditWindowCount() == 2);
 static_assert(kObserved.MappingSize() == sizeof(unsigned int));
 static_assert(kObserved.Version() < kObserved.WorkBuffer());
 static_assert(kObserved.WorkBuffer() < kObserved.Flags());

@@ -18,9 +18,13 @@ from sakura_build_lib.model import (  # noqa: E402
     Component,
     Context,
     Edge,
+    Artifact,
     SemanticGraph,
 )
 from sakura_build_lib.repository_inventory import (  # noqa: E402
+    _component_owner,
+    _include_dependency_observed,
+    _source_owner,
     collect_repository_inventory,
     repository_inventory_summary,
     write_repository_inventory,
@@ -172,6 +176,222 @@ def _fixture(root: Path) -> SemanticGraph:
 
 
 class RepositoryInventoryTests(unittest.TestCase):
+    def test_generated_leaf_does_not_claim_its_owner_directory(self) -> None:
+        """Generated leaves own declared inputs, not every sibling below owner."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(graph.repo_root / "provider/legacy.cpp", "int legacy_provider = 0;\n")
+
+            self.assertEqual("provider", _component_owner(graph, "provider/provider.cpp"))
+            self.assertEqual("provider", _component_owner(graph, "provider/provider.h"))
+            self.assertIsNone(_component_owner(graph, "provider/legacy.cpp"))
+
+    def test_declared_artifact_paths_are_owned_without_becoming_components(self) -> None:
+        """Generated/tool inputs remain graph-owned but never impersonate code leaves."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(graph.repo_root / "generated/abi/provider.h", "#pragma once\n")
+            graph = replace(
+                graph,
+                artifacts={
+                    "generated-abi": Artifact(
+                        "generated-abi",
+                        "product",
+                        "generated",
+                        ("src/main/modules/modules.json",),
+                        ("generated/abi",),
+                        "sakura-module-generator",
+                        True,
+                    ),
+                },
+            )
+
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+            )
+
+            self.assertEqual("generated-abi", _source_owner(graph, "generated/abi/provider.h"))
+            self.assertNotIn("generated/abi/provider.h", inventory["source"]["unowned_repo_files"])
+
+    def test_resource_id_contract_requires_declared_compile_edges(self) -> None:
+        """A shared resource ID table is valid only through its declared artifact."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(graph.repo_root / "src/main/resources/sakura_rc.h", "#define IDS_APP 100\n")
+            _write(graph.repo_root / "app/app.rc", '#include "../src/main/resources/sakura_rc.h"\nSTRINGTABLE BEGIN IDS_APP "app" END\n')
+            _write(graph.repo_root / "tests/tests.rc", '#include "../src/main/resources/sakura_rc.h"\n')
+            graph = replace(
+                graph,
+                artifacts={
+                    "resource-id-contract": Artifact(
+                        "resource-id-contract",
+                        "product",
+                        "resource",
+                        ("src/main/resources/sakura_rc.h",),
+                        (),
+                        None,
+                        True,
+                    ),
+                },
+                edges=(
+                    Edge(
+                        "product-to-resource-id-contract",
+                        "product",
+                        "resource-id-contract",
+                        "asset",
+                        ("compile",),
+                        "private",
+                        "none",
+                        None,
+                        True,
+                        True,
+                        (),
+                    ),
+                    Edge(
+                        "tests-to-resource-id-contract",
+                        "tests",
+                        "resource-id-contract",
+                        "asset",
+                        ("compile",),
+                        "private",
+                        "none",
+                        None,
+                        True,
+                        True,
+                        (),
+                    ),
+                ),
+            )
+
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+            )
+
+        resources = inventory["resource_provenance"]
+        codes = {finding["code"] for finding in inventory["findings"]}
+        self.assertEqual(["resource-id-contract"], resources["canonical_sakura_rc_header_contracts"])
+        self.assertEqual([], resources["canonical_sakura_rc_header_contract_edges_missing"])
+        self.assertNotIn("SHARED_RESOURCE_ID_HEADER_COUPLING", codes)
+        self.assertNotIn("RESOURCE_ID_CONTRACT_EDGE_MISSING", codes)
+
+    def test_local_literal_library_property_is_not_an_unresolved_link_expression(self) -> None:
+        """Debug/Release archive names remain observable without a fake property parser."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(
+                graph.repo_root / "app.vcxproj",
+                '<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">\n'
+                '  <PropertyGroup Condition="\'$(Configuration)\' == \'Debug\'"><FmtLibrary>fmtd.lib</FmtLibrary></PropertyGroup>\n'
+                '  <PropertyGroup Condition="\'$(Configuration)\' == \'Release\'"><FmtLibrary>fmt.lib</FmtLibrary></PropertyGroup>\n'
+                '  <ItemDefinitionGroup><Link><AdditionalDependencies>$(FmtLibrary);kernel32.lib;%(AdditionalDependencies)</AdditionalDependencies></Link></ItemDefinitionGroup>\n'
+                '</Project>\n',
+            )
+
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+            )
+
+        link_record = inventory["product_link_provenance"]["msbuild_additional_dependencies"][0]
+        codes = {finding["code"] for finding in inventory["findings"]}
+        self.assertEqual({"$(FmtLibrary)": ["fmt.lib", "fmtd.lib"]}, link_record["resolved_expression_libraries"])
+        self.assertEqual([], link_record["unresolved_expression_tokens"])
+        self.assertNotIn("LINK_DEPENDENCY_EXPRESSION_UNRESOLVED", codes)
+
+    def test_declared_vcpkg_package_prefix_classifies_external_include(self) -> None:
+        """Only an explicit package-set output may classify a missing vendor include."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(graph.repo_root / "app/main.cpp", '#include "cmigemo/migemo.h"\n')
+            graph = replace(
+                graph,
+                artifacts={
+                    "vcpkg-root-package-set": Artifact(
+                        "vcpkg-root-package-set",
+                        "product",
+                        "package_set",
+                        ("vcpkg.json",),
+                        ("vcpkg:cmigemo",),
+                        "vcpkg",
+                        True,
+                    ),
+                },
+            )
+
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+            )
+
+        generated = inventory["generated_provenance"]
+        classified = generated["classified_unresolved_generated_includes"]
+        self.assertEqual("cmigemo/migemo.h", classified[0]["include"])
+        self.assertEqual("vcpkg-root-package-set", classified[0]["declared_outputs"][0]["artifact"])
+        self.assertEqual([], generated["unclassified_unresolved_quoted_includes"])
+
+    def test_declared_generated_include_does_not_leave_include_coverage_partial(self) -> None:
+        """Declared generated headers belong to provenance, not unresolved include debt."""
+
+        with tempfile.TemporaryDirectory() as temporary:
+            graph = _fixture(Path(temporary))
+            _write(graph.repo_root / "app/main.cpp", '#include "version.h"\n')
+            graph = replace(
+                graph,
+                artifacts={
+                    "generated-version": Artifact(
+                        "generated-version",
+                        "product",
+                        "generated",
+                        ("version.h.in",),
+                        ("version.h",),
+                        "generator",
+                        True,
+                    ),
+                },
+            )
+            inventory = collect_repository_inventory(
+                graph,
+                product_id="product",
+                provider_id="provider",
+                context_id="msvc-x64-debug",
+            )
+
+        generated = inventory["generated_provenance"]
+        self.assertEqual([], generated["unclassified_unresolved_quoted_includes"])
+        self.assertTrue(
+            _include_dependency_observed(
+                {
+                    "unowned_repo_includes": [],
+                    "unresolved_quoted_includes": inventory["source"]["unresolved_quoted_includes"],
+                },
+                generated,
+                {"compiler_dependency_observed": True},
+            )
+        )
+        self.assertFalse(
+            _include_dependency_observed(
+                {"unowned_repo_includes": [], "unresolved_quoted_includes": []},
+                {"unclassified_unresolved_quoted_includes": [{"include": "missing.h"}]},
+                {"compiler_dependency_observed": True},
+            )
+        )
+        self.assertEqual("version.h", generated["classified_unresolved_generated_includes"][0]["include"])
+
     def test_adversarial_inventory_exposes_embedded_and_hidden_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             graph = _fixture(Path(temporary))

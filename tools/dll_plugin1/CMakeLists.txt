@@ -24,9 +24,7 @@ set(project_name dll_plugin1)
 
 project(${project_name} LANGUAGES CXX C)
 
-file(GLOB_RECURSE SOURCES *.cpp)
-
-add_library(${project_name} MODULE ${SOURCES})
+add_library(${project_name} MODULE dll_plugin1.cpp)
 
 target_compile_features(${project_name} PUBLIC cxx_std_20)
 
