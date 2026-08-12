@@ -34,7 +34,7 @@ def _write(path: Path, text: str) -> None:
     path.write_text(text, encoding="utf-8", newline="\n")
 
 
-def _package_graph(root: Path):
+def _package_graph(root: Path, *, package_inputs: tuple[str, ...] = ("vcpkg.json",)):
     _write(root / "vcpkg.json", json.dumps({"dependencies": ["fmt"]}) + "\n")
     context = Context("msvc-x64-debug", "x64", "x64", "Debug", "msvc", "msbuild", "development", ())
     product = Component(
@@ -65,7 +65,7 @@ def _package_graph(root: Path):
         "vcpkg-root-package-set",
         "product",
         "package_set",
-        ("vcpkg.json",),
+        package_inputs,
         ("vcpkg:fmt",),
         "vcpkg",
         True,
@@ -177,6 +177,40 @@ class PackageRestoreTests(unittest.TestCase):
                 stale = validate_package_restore(graph, ("product",), "msvc-x64-debug")
                 self.assertFalse(stale["valid"])
                 self.assertEqual("stale_or_missing", stale["status"])
+
+    def test_run_local_output_beside_explicit_package_sources_does_not_stale_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _write(root / "package-source/CMakeLists.txt", "add_library(helper MODULE helper.cpp)\n")
+            _write(root / "package-source/helper.cpp", "int helper() { return 1; }\n")
+            graph = _package_graph(
+                root,
+                package_inputs=(
+                    "vcpkg.json",
+                    "package-source/CMakeLists.txt",
+                    "package-source/helper.cpp",
+                ),
+            )
+
+            def complete_with_run_local_output(argv: list[str], **kwargs) -> tuple[str, str]:
+                result = _complete_fake_install(argv, **kwargs)
+                _write(root / "package-source/out/Release/helper.pdb", "host-local build output\n")
+                return result
+
+            with patch(
+                "sakura_build_lib.package_restore._run_vcpkg",
+                side_effect=complete_with_run_local_output,
+            ):
+                restored = restore_package_closure(graph, ("product",), "msvc-x64-debug")
+                self.assertEqual("restored", restored["status"])
+                after_output = validate_package_restore(graph, ("product",), "msvc-x64-debug")
+                self.assertTrue(after_output["valid"])
+                self.assertEqual(restored["plan_hash"], after_output["plan_hash"])
+
+                _write(root / "package-source/helper.cpp", "int helper() { return 2; }\n")
+                after_source_change = validate_package_restore(graph, ("product",), "msvc-x64-debug")
+                self.assertFalse(after_source_change["valid"])
+                self.assertNotEqual(restored["plan_hash"], after_source_change["plan_hash"])
 
     def test_gc_uses_external_lru_metadata_and_enforces_capacity_when_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

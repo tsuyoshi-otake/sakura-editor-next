@@ -794,7 +794,19 @@
       "id": "root-vcpkg-package-set",
       "owner": "sakura_app",
       "artifact_kind": "package_set",
-      "inputs": ["vcpkg.json", "vcpkg-configuration.json", "tools/vcpkg-local-registry", "tools/dll_plugin1", "tools/ppa_stub"],
+      "inputs": [
+        "vcpkg.json",
+        "vcpkg-configuration.json",
+        "tools/vcpkg-local-registry",
+        "tools/dll_plugin1/CMakeLists.txt",
+        "tools/dll_plugin1/dll_plugin1.cpp",
+        "tools/ppa_stub/CMakeLists.txt",
+        "tools/ppa_stub/ppa.cpp",
+        "tools/ppa_stub/ppa.h",
+        "tools/ppa_stub/ppa_stub.cpp",
+        "tools/ppa_stub/ppa_stub.def",
+        "tools/ppa_stub/ppa_stub.h"
+      ],
       "outputs": ["vcpkg:bregonig", "vcpkg:cmigemo", "vcpkg:darkmodelib", "vcpkg:dll-plugin1", "vcpkg:fmt", "vcpkg:gtest", "vcpkg:ms-gsl", "vcpkg:ppa-stub", "vcpkg:wil"],
       "tool_id": null,
       "condition": true

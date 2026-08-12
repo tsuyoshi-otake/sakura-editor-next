@@ -14,6 +14,8 @@ set(VCPKG_POLICY_MISMATCHED_NUMBER_OF_BINARIES enabled)
 
 vcpkg_cmake_configure(
   SOURCE_PATH "${DLL_PLUGIN1_SOURCE_DIR}"
+  OPTIONS
+    "-DCMAKE_RUNTIME_OUTPUT_DIRECTORY=${CURRENT_BUILDTREES_DIR}/sakura-runtime"
 )
 
 vcpkg_cmake_install()
