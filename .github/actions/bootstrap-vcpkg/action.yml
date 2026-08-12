@@ -1,7 +1,7 @@
 name: Bootstrap vcpkg
 description: >
-  Bootstrap the vcpkg tool, repeating a failed fetch instead of discarding the
-  job on a single bad response.
+  Make the pinned vcpkg tool available, preferring a cached copy and repeating a
+  failed fetch instead of discarding the job on a single bad response.
 
 inputs:
   vcpkg-root:
@@ -15,28 +15,98 @@ inputs:
 runs:
   using: composite
   steps:
-    # Bootstrap downloads one fixed tool; it compiles nothing and finishes in
-    # about ten seconds. That makes a blanket retry safe here in a way it would
-    # never be for a port build: repeating a genuinely broken bootstrap costs
-    # seconds, while not repeating a transient one discards a 35-minute job.
-    # What has to match the outage is the horizon, not the attempt count. The
-    # 2026-08-12 github.com delivery degradation (issue #138) defeated every
-    # short-horizon retry in the same hour: vcpkg's own three attempts inside
-    # roughly five seconds, msys2/setup-msys2's three across about thirty, and
-    # this action's first revision at 5 + 20 (attempts at 21:24:25, 21:24:30 and
-    # 21:24:51 all failed). The same runner then fetched the whole package
-    # closure from 21:27:04 to 21:29:03, so the path recovered about two and a
-    # quarter minutes later. 15 + 45 + 90 covers that measured recovery and
-    # still bounds the step at well under three minutes of waiting.
+    # The tool this action installs is fully determined by the checkout: the
+    # vcpkg submodule is pinned, and scripts/vcpkg-tool-metadata.txt names one
+    # release tag that bootstrap.ps1 turns into one download URL. The same
+    # commit therefore always fetches the same bytes, which is why those bytes
+    # do not need to live on the network at all (issue #142).
+    - name: Resolve the pinned vcpkg tool release
+      id: pin
+      shell: pwsh
+      working-directory: ${{ inputs.vcpkg-root }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        $metadata = Join-Path (Get-Location) 'scripts/vcpkg-tool-metadata.txt'
+        if (-not (Test-Path -LiteralPath $metadata -PathType Leaf)) {
+            throw "vcpkg tool metadata not found at $metadata."
+        }
+
+        $config = ConvertFrom-StringData (Get-Content -LiteralPath $metadata -Raw)
+        $tag = $config.VCPKG_TOOL_RELEASE_TAG
+        if ([string]::IsNullOrWhiteSpace($tag)) {
+            throw "VCPKG_TOOL_RELEASE_TAG is missing from $metadata."
+        }
+
+        # bootstrap.ps1 selects a different binary on ARM64, so the key has to
+        # say which one it stands for.
+        $architecture = 'x64'
+        if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_IDENTIFIER -match 'ARMv[8,9] \(64-bit\)') {
+            $architecture = 'arm64'
+        }
+
+        # The tag alone already fixes the URL. Hashing the file as well means a
+        # metadata change that the tag does not express still misses the cache.
+        $digest = (Get-FileHash -LiteralPath $metadata -Algorithm SHA256).Hash.Substring(0, 16).ToLowerInvariant()
+
+        "release-tag=$tag" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+        "cache-key=vcpkg-tool-$env:RUNNER_OS-$architecture-$tag-$digest" | Add-Content -LiteralPath $env:GITHUB_OUTPUT
+
+    # Restore on every event, save only on a trusted push: this repository's
+    # cache rule, for the reason recorded in .github/CLAUDE.md. A pull request's
+    # entry is scoped to its own ref, is readable by no other run, and still
+    # consumes the shared 10 GiB quota.
+    - name: Restore cached vcpkg tool
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ inputs.vcpkg-root }}\vcpkg.exe
+        key: ${{ steps.pin.outputs.cache-key }}
+
     - name: Bootstrap vcpkg
       shell: pwsh
       working-directory: ${{ inputs.vcpkg-root }}
       env:
         BOOTSTRAP_VCPKG_ATTEMPTS: ${{ inputs.attempts }}
+        BOOTSTRAP_VCPKG_RELEASE_TAG: ${{ steps.pin.outputs.release-tag }}
       run: |
         $ErrorActionPreference = 'Stop'
 
-        if (-not (Test-Path '.\bootstrap-vcpkg.bat' -PathType Leaf)) {
+        $expected = $env:BOOTSTRAP_VCPKG_RELEASE_TAG
+
+        # Ask the binary what it is rather than trusting the cache key, so a
+        # truncated, stale, or hand-placed vcpkg.exe falls through to a real
+        # bootstrap instead of poisoning every later step. This mirrors the
+        # package closure cache, which also validates what it restored and
+        # falls back to a real restore rather than gating on the hit.
+        if (Test-Path -LiteralPath '.\vcpkg.exe' -PathType Leaf) {
+            $reported = ''
+            $code = 1
+            $previous = $ErrorActionPreference
+            try {
+                # A native tool writing to stderr is not an error here; only its
+                # exit code decides whether the answer can be believed.
+                $ErrorActionPreference = 'Continue'
+                $reported = (& '.\vcpkg.exe' version --disable-metrics 2>&1 | Out-String)
+                $code = $LASTEXITCODE
+            } catch {
+                $code = 1
+            } finally {
+                $ErrorActionPreference = $previous
+            }
+
+            if ($code -eq 0 -and $reported -match [regex]::Escape($expected)) {
+                # bootstrap-vcpkg.bat -disableMetrics writes this marker, so the
+                # skip path owes the same opt-out.
+                Set-Content -Value '' -Path '.\vcpkg.disable-metrics' -Force
+                Write-Host "Reusing the pinned vcpkg tool ($expected); no download needed."
+                exit 0
+            }
+
+            Write-Host "::warning::The vcpkg.exe present is not the pinned $expected release; bootstrapping instead."
+        }
+
+        if (-not (Test-Path -LiteralPath '.\bootstrap-vcpkg.bat' -PathType Leaf)) {
             throw '.\bootstrap-vcpkg.bat not found.'
         }
 
@@ -44,6 +114,14 @@ runs:
         if ($attempts -lt 1) {
             throw "attempts must be at least 1 (got $attempts)."
         }
+        # What has to match the outage is the horizon, not the attempt count.
+        # The 2026-08-12 github.com delivery degradation (issue #138) defeated
+        # every short-horizon retry in the same hour: vcpkg's own three attempts
+        # inside roughly five seconds, msys2/setup-msys2's three across about
+        # thirty, and this action's first revision at 5 + 20 (attempts at
+        # 21:24:25, 21:24:30 and 21:24:51 all failed). The same runner then
+        # fetched the whole package closure from 21:27:04 to 21:29:03, so the
+        # path recovered about two and a quarter minutes later.
         $backoff = @(15, 45, 90)
 
         for ($attempt = 1; $attempt -le $attempts; $attempt++) {
@@ -59,3 +137,10 @@ runs:
             Write-Host "::warning::Bootstrap vcpkg attempt $attempt of $attempts failed (exit code: $code); retrying in ${wait}s."
             Start-Sleep -Seconds $wait
         }
+
+    - name: Save cached vcpkg tool
+      if: ${{ github.event_name != 'pull_request' && steps.restore.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ inputs.vcpkg-root }}\vcpkg.exe
+        key: ${{ steps.pin.outputs.cache-key }}
