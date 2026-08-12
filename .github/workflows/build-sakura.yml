@@ -193,17 +193,9 @@ jobs:
     - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
 
     - name: Bootstrap vcpkg
-      run: |
-        if (-not (Test-Path ".\bootstrap-vcpkg.bat" -PathType Leaf)) {
-            throw ".\bootstrap-vcpkg.bat not found."
-        }
-
-        & .\bootstrap-vcpkg.bat -disableMetrics
-
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to bootstrap vcpkg (exit code: $LASTEXITCODE)."
-        }
-      working-directory: ${{ env.VCPKG_ROOT }}
+      uses: ./.github/actions/bootstrap-vcpkg
+      with:
+        vcpkg-root: ${{ env.VCPKG_ROOT }}
 
     - name: Configure GitHub Packages for vcpkg
       env:
@@ -286,17 +278,9 @@ jobs:
       shell: msys2 {0}
 
     - name: Bootstrap vcpkg
-      run: |
-        if (-not (Test-Path ".\bootstrap-vcpkg.bat" -PathType Leaf)) {
-          throw ".\bootstrap-vcpkg.bat not found."
-        }
-
-        & .\bootstrap-vcpkg.bat -disableMetrics
-
-        if ($LASTEXITCODE -ne 0) {
-          throw "Failed to bootstrap vcpkg (exit code: $LASTEXITCODE)."
-        }
-      working-directory: ${{ env.VCPKG_ROOT }}
+      uses: ./.github/actions/bootstrap-vcpkg
+      with:
+        vcpkg-root: ${{ env.VCPKG_ROOT }}
 
     - name: Configure GitHub Packages for vcpkg
       env:
@@ -408,9 +392,9 @@ jobs:
       uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57 # v3
 
     - name: Bootstrap vcpkg
-      run: .\bootstrap-vcpkg.bat -disableMetrics
-      working-directory: ${{ env.VCPKG_ROOT }}
-      shell: cmd
+      uses: ./.github/actions/bootstrap-vcpkg
+      with:
+        vcpkg-root: ${{ env.VCPKG_ROOT }}
 
     # Toolbar Bitmap Split/Mux
     - name: Build Bitmap Split/Mux
@@ -633,17 +617,9 @@ jobs:
         ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
     - name: Bootstrap vcpkg
-      run: |
-        if (-not (Test-Path ".\bootstrap-vcpkg.bat" -PathType Leaf)) {
-            throw ".\bootstrap-vcpkg.bat not found."
-        }
-
-        & .\bootstrap-vcpkg.bat -disableMetrics
-
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to bootstrap vcpkg (exit code: $LASTEXITCODE)."
-        }
-      working-directory: ${{ env.VCPKG_ROOT }}
+      uses: ./.github/actions/bootstrap-vcpkg
+      with:
+        vcpkg-root: ${{ env.VCPKG_ROOT }}
 
     - name: Configure GitHub Packages for vcpkg
       env:

@@ -80,17 +80,9 @@ jobs:
     - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
 
     - name: Bootstrap vcpkg
-      run: |
-        if (-not (Test-Path ".\bootstrap-vcpkg.bat" -PathType Leaf)) {
-            throw ".\bootstrap-vcpkg.bat not found."
-        }
-
-        & .\bootstrap-vcpkg.bat -disableMetrics
-
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to bootstrap vcpkg (exit code: $LASTEXITCODE)."
-        }
-      working-directory: ${{ env.VCPKG_ROOT }}
+      uses: ./.github/actions/bootstrap-vcpkg
+      with:
+        vcpkg-root: ${{ env.VCPKG_ROOT }}
 
     - name: Configure GitHub Packages for vcpkg
       env:
