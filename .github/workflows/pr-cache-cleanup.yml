@@ -1,0 +1,122 @@
+name: PR cache cleanup
+
+# A cache saved by a pull-request run is scoped to that run's
+# `refs/pull/<number>/merge` ref, and only runs on the same ref can read it.
+# Once the pull request closes, nothing can ever read those entries again, but
+# they keep counting against the repository's 10 GiB Actions cache quota until
+# GitHub evicts them for age.
+#
+# That is not hypothetical here. By #123 the repository held 133 entries using
+# 9.88 GiB, of which 82 pull-request-scoped `msys2-pkgs-*` entries -- saved by
+# `msys2/setup-msys2` in build-on-msys2.yml, which caches unconditionally --
+# accounted for 7.17 GiB. Every one of them belonged to an already merged pull
+# request. At that fill level any newly saved entry is evicted almost
+# immediately, which silently turns every cache in the repository into a miss.
+#
+# Workflows this repository owns save on trusted pushes only (see
+# cppcheck.yml and the package closure cache in build-sakura.yml), so they do
+# not create this class of entry. This job exists for the ones created by
+# third-party actions, which cannot be told not to.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: Delete caches scoped to the closed pull request
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+      - name: Check token write eligibility
+        id: eligibility
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          # A pull_request event raised by a fork or by Dependabot receives a
+          # read-only token regardless of the permissions block, so the delete
+          # would fail rather than be denied cleanly.  Report and stand down.
+          if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
+            echo "::notice::Fork pull requests receive a read-only token; no cache is deleted."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [[ "$ACTOR" == "dependabot[bot]" ]]; then
+            echo "::notice::Dependabot runs receive a read-only token; no cache is deleted."
+            echo "eligible=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "eligible=true" >> "$GITHUB_OUTPUT"
+
+      - name: Delete caches for the pull request ref
+        if: ${{ steps.eligibility.outputs.eligible == 'true' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          ref="refs/pull/${PR_NUMBER}/merge"
+
+          # Deleting from a paginated listing shifts the remaining pages, so
+          # collect every id first and delete afterwards.
+          ids=()
+          sizes=()
+          page=1
+          while :; do
+            payload="$(gh api \
+              "repos/$REPOSITORY/actions/caches?ref=$ref&per_page=100&page=$page")"
+            count="$(printf '%s' "$payload" | jq '.actions_caches | length')"
+            if [[ "$count" -eq 0 ]]; then
+              break
+            fi
+            while IFS=$'\t' read -r id size key; do
+              ids+=("$id")
+              sizes+=("$size")
+              printf '  %10s bytes  %s\n' "$size" "$key"
+            done < <(printf '%s' "$payload" \
+              | jq -r '.actions_caches[] | [.id, .size_in_bytes, .key] | @tsv')
+            page=$((page + 1))
+          done
+
+          if [[ "${#ids[@]}" -eq 0 ]]; then
+            echo "No caches are scoped to $ref."
+            exit 0
+          fi
+
+          total=0
+          for size in "${sizes[@]}"; do
+            total=$((total + size))
+          done
+
+          # A cache can also disappear on its own between the listing and the
+          # delete (eviction, or a concurrent run of this job).  Report that
+          # and keep going rather than failing the job over a race.
+          deleted=0
+          for id in "${ids[@]}"; do
+            if gh api --method DELETE "repos/$REPOSITORY/actions/caches/$id" >/dev/null; then
+              deleted=$((deleted + 1))
+            else
+              echo "::warning::Cache $id could not be deleted; it may already be gone."
+            fi
+          done
+
+          printf 'Deleted %d of %d caches scoped to %s, reclaiming up to %d MiB.\n' \
+            "$deleted" "${#ids[@]}" "$ref" "$((total / 1048576))"
+          printf 'Deleted %d of %d caches scoped to `%s`, reclaiming up to %d MiB.\n' \
+            "$deleted" "${#ids[@]}" "$ref" "$((total / 1048576))" >> "$GITHUB_STEP_SUMMARY"

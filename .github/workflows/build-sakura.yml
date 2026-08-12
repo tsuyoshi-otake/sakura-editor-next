@@ -654,11 +654,61 @@ jobs:
             throw "Failed to add the GitHub Packages NuGet source."
         }
 
+    # `package plan` is the same planning pass the restore itself performs
+    # first, and it takes under a second.  Running it separately turns the plan
+    # hash -- which already covers the declared package set, every declared
+    # input digest, both triplets, and the vcpkg tool/toolchain hashes -- into a
+    # cache key, so the key changes exactly when the restored closure would.
+    - name: Plan the declared package restore
+      id: package-plan
+      run: |
+        $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
+        $plan = & py -3 tools/build/sakura_build.py --format json package plan sakura_app --context $context | ConvertFrom-Json
+        if ($LASTEXITCODE -ne 0) {
+          throw "Declared Sakura package planning failed for context $context (exit code $LASTEXITCODE)."
+        }
+
+        # A missing or malformed hash must not fail the build: the restore step
+        # below still produces a correct closure, just without the cache.
+        $hash = ($plan.plan_hash -replace '^sha256:', '')
+        if ($hash -notmatch '^[0-9a-f]{64}$') {
+          Write-Output "::warning::package plan returned no usable plan hash; restoring without a cache."
+          "hash=" >> $env:GITHUB_OUTPUT
+          return
+        }
+
+        Write-Host "Declared package plan hash: $hash"
+        "hash=$hash" >> $env:GITHUB_OUTPUT
+        "path=build/pkg/v/e/$hash" >> $env:GITHUB_OUTPUT
+
+    # Restore on every event, save only on trusted pushes -- the same rule
+    # cppcheck.yml uses.  A pull-request-scoped entry is readable only by runs
+    # on that same `refs/pull/N/merge` ref, so saving one per pull request adds
+    # a ~115 MiB entry that nothing else can ever read; 82 such msys2 entries
+    # had taken 7.17 GiB of the repository's 10 GiB quota by #123.  Debug and
+    # Release resolve to the same plan hash, so one pushed entry serves both
+    # matrix jobs and every later pull request that did not change the closure.
+    - name: Restore cached package closure
+      id: package-cache
+      if: ${{ steps.package-plan.outputs.hash != '' }}
+      uses: actions/cache/restore@v4
+      with:
+        path: ${{ steps.package-plan.outputs.path }}
+        key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
+
     # Each hosted build job has its own workspace.  The vcpkg warm-up job
     # publishes binary-cache entries, but cannot provide this job's manifest
     # hashed active package root.  Restore that declared closure explicitly
     # before MSBuild so normal project evaluation never falls back to an
     # implicit/global restore.
+    #
+    # This step is deliberately unconditional.  A cache hit turns it into the
+    # `reused` path, which still validates the restored tree structurally
+    # (`complete.json` schema and plan hash, plus `installed/<triplet>/share/`
+    # for every declared package) and still reports
+    # `native_restore_execution_observed`, so a corrupt or partial entry falls
+    # back to a real restore and the explicit-restore evidence contract from
+    # #116/#118 holds either way.
     - name: Restore declared Sakura packages
       run: |
         $context = "msvc-${{ matrix.platform }}-${{ matrix.config }}".ToLowerInvariant()
@@ -666,6 +716,13 @@ jobs:
         if ($LASTEXITCODE -ne 0) {
           throw "Declared Sakura package restore failed for context $context (exit code $LASTEXITCODE)."
         }
+
+    - name: Save cached package closure
+      if: ${{ github.event_name != 'pull_request' && steps.package-plan.outputs.hash != '' && steps.package-cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v4
+      with:
+        path: ${{ steps.package-plan.outputs.path }}
+        key: sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}
 
     # Historic tag sources predate SAKURA_BUILD_SOURCE_SHA and read the
     # runner's GITHUB_SHA directly in version.cmake. Do not attempt to change
