@@ -8,6 +8,7 @@
 **/TestResults
 /*.patch
 /.vs
+/.cppcheck-build-*/
 /cppcheck-*.xml
 /build
 /MinGW

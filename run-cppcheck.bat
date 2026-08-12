@@ -35,6 +35,15 @@ set CPPCHECK_LOG=cppcheck-%platform%-%configuration%.log
 
 set CPPCHECK_PLATFORM=win64
 
+@rem Analyzer-information cache. This is not a compiler cache: cppcheck
+@rem stores one analysis result per translation unit and re-emits the
+@rem cached findings, so a hit reports exactly what a miss would. It also
+@rem restores the whole-program checks that -j otherwise disables.
+set CPPCHECK_BUILD_DIR=%~dp0.cppcheck-build-%platform%-%configuration%
+if not exist "%CPPCHECK_BUILD_DIR%" (
+	mkdir "%CPPCHECK_BUILD_DIR%"
+)
+
 if exist "%CPPCHECK_OUT%" (
 	del %CPPCHECK_OUT%
 )
@@ -51,6 +60,7 @@ set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% --output-file=%CPPCHECK_OUT%
 set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% -j %NUMBER_OF_PROCESSORS%
 set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% --project=sakura_core\sakura.vcxproj
 set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% "--project-configuration=%configuration%|%platform%"
+set CPPCHECK_PARAMS=%CPPCHECK_PARAMS% "--cppcheck-build-dir=%CPPCHECK_BUILD_DIR%"
 
 set ERROR_RESULT=0
 if exist "%CMD_CPPCHECK%" (
