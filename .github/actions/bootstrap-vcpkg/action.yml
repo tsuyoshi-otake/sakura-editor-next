@@ -1,0 +1,55 @@
+name: Bootstrap vcpkg
+description: >
+  Bootstrap the vcpkg tool, repeating a failed fetch instead of discarding the
+  job on a single bad response.
+
+inputs:
+  vcpkg-root:
+    description: Directory that holds bootstrap-vcpkg.bat.
+    required: true
+  attempts:
+    description: Total attempts, including the first.
+    required: false
+    default: "3"
+
+runs:
+  using: composite
+  steps:
+    # Bootstrap downloads one fixed tool; it compiles nothing and finishes in
+    # about ten seconds. That makes a blanket retry safe here in a way it would
+    # never be for a port build: repeating a genuinely broken bootstrap costs
+    # seconds, while not repeating a transient one discards a 35-minute job.
+    # The backoff is measured in tens of seconds because vcpkg's own retry is
+    # three attempts inside roughly five seconds, which is exactly what failed
+    # to absorb the 2026-08-12 github.com delivery degradation (issue #138).
+    - name: Bootstrap vcpkg
+      shell: pwsh
+      working-directory: ${{ inputs.vcpkg-root }}
+      env:
+        BOOTSTRAP_VCPKG_ATTEMPTS: ${{ inputs.attempts }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        if (-not (Test-Path '.\bootstrap-vcpkg.bat' -PathType Leaf)) {
+            throw '.\bootstrap-vcpkg.bat not found.'
+        }
+
+        $attempts = [int]$env:BOOTSTRAP_VCPKG_ATTEMPTS
+        if ($attempts -lt 1) {
+            throw "attempts must be at least 1 (got $attempts)."
+        }
+        $backoff = @(5, 20)
+
+        for ($attempt = 1; $attempt -le $attempts; $attempt++) {
+            & .\bootstrap-vcpkg.bat -disableMetrics
+            $code = $LASTEXITCODE
+            if ($code -eq 0) {
+                exit 0
+            }
+            if ($attempt -eq $attempts) {
+                throw "Failed to bootstrap vcpkg after $attempts attempt(s) (exit code: $code)."
+            }
+            $wait = $backoff[[Math]::Min($attempt - 1, $backoff.Length - 1)]
+            Write-Host "::warning::Bootstrap vcpkg attempt $attempt of $attempts failed (exit code: $code); retrying in ${wait}s."
+            Start-Sleep -Seconds $wait
+        }
