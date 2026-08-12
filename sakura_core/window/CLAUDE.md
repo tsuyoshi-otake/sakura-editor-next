@@ -974,3 +974,36 @@ observable proof that the two Restricted Mode signals are independent.
   existing per-item invalidation path) driving a rotating `HDC` world
   transform each tick; that is separate follow-up work and is not implemented
   here.
+
+## Closing the last tab closes in place, not by process replacement (2026-08-13, #145)
+
+- Legacy behavior: with the default merged-tab settings (`m_bDispTabWnd` on,
+  `m_bDispTabWndMultiWin` off, `m_bTab_RetainEmptyWin` on), closing the last
+  window of a tab group via `MYWM_CLOSE` (tab ×, middle click, `Ctrl+F4`,
+  `F_WINCLOSE`) launched a **replacement editor process** through
+  `CControlTray::OpenNewEditor` and then destroyed its own window. The user
+  saw "close a file → the process restarts": the editor PID changed on every
+  last-tab close, all process-local state died with it, and VS Code has no
+  such behavior — `workbench.action.closeActiveEditor` keeps the window and
+  process alive in the empty-editor state.
+- Current behavior: when the working-copy coordinator exists, that branch of
+  the `MYWM_CLOSE` handler closes **in place** instead. It routes to
+  `ExecuteActiveWorkingCopyCommand(CloseActiveEditor, suppress, /*disposeWindow=*/false)`,
+  whose `CommitClose` → `CDocFileOperation::CommitFileClose(true)` fires
+  `PP_DOCUMENT_CLOSE` once and reinitializes the empty document
+  (InitDoc/InitAllView/caption/no-name number/auto macro). No new process is
+  spawned and the window's PID is stable across the gesture.
+- An already-empty window is a no-op returning `TRUE` — there is nothing to
+  close, and the window is retained, which is exactly what the legacy
+  respawn was simulating at the cost of a process. A cancelled or failed
+  close returns `FALSE`, preserving the `MYWM_CLOSE` contract that
+  `CAppNodeManager`'s close-all loop aborts on a veto.
+- The legacy spawn-and-die path is retained, unchanged, for every case the
+  in-place branch does not claim: `PM_CLOSE_EXIT` requests, multi-window tab
+  groups (group window count > 1), non-merged tab modes, windows without a
+  working-copy coordinator, and workspace replacement (which travels through
+  `WM_CLOSE` with the one-shot
+  `m_workspaceReplacementClosePreflightAccepted` token, and is additionally
+  guarded out of the in-place branch explicitly).
+- This is a removal of a divergence, not a new one: the in-place close is the
+  VS Code-compatible behavior, and the process restart was the defect.
