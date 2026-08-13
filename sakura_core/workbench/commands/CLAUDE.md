@@ -81,6 +81,11 @@ file-operation commands (`explorer.newFile`, `explorer.newFolder`,
 - **`moveFileToTrash` and `deleteFile` are two commands.** Upstream registers
   trash deletion and permanent deletion as separate command IDs, so this
   registry does too — never one executor reading a "permanent" flag.
+- `ExplorerCommandIds.h` carries the eight IDs as shared `constexpr` constants
+  for surfaces that name these commands (the Explorer context-menu model is the
+  first). `RegisterExplorerCommands` still registers its own literals; the
+  menu-model test resolves every emitted ID against the registered batch, which
+  is the drift guard until the registration site adopts the constants.
 - `ExplorerCommandArguments.h/.cpp` owns the wire payload: a one-element JSON
   array carrying the resource URI. Upstream's multi-select second argument is
   deliberately not part of the contract, and the parser rejects it rather than

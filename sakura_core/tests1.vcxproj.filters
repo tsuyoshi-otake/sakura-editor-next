@@ -277,6 +277,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerCommandRegistryTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerContextMenuModelTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WebviewUnsupportedTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>

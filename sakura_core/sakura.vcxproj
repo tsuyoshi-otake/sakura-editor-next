@@ -645,6 +645,7 @@
 	<ClInclude Include="..\sakura_core\workbench\commands\CommandArgumentsJson.h" />
 	<ClInclude Include="..\sakura_core\workbench\commands\ApiCommandArguments.h" />
 	<ClInclude Include="..\sakura_core\workbench\commands\ExplorerCommandArguments.h" />
+	<ClInclude Include="..\sakura_core\workbench\commands\ExplorerCommandIds.h" />
 	<ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceConfigurationDocumentParser.h" />
 	<ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentService.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\FolderTaskCatalogRegistry.h" />
@@ -677,6 +678,7 @@
 	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerContextMenuModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
