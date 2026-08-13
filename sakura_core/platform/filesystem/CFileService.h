@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -52,6 +52,14 @@ public:
 	[[nodiscard]] FileResult<std::unique_ptr<IFileWatch>> Watch(
 		const platform::uri::Uri& resource,
 		const FileWatchOptions& options = {}) override;
+	[[nodiscard]] FileResult<void> MakeDirectory(const platform::uri::Uri& directory) override;
+	[[nodiscard]] FileResult<void> Rename(
+		const platform::uri::Uri& source,
+		const platform::uri::Uri& target,
+		const FileRenameOptions& options = {}) override;
+	[[nodiscard]] FileResult<void> Delete(
+		const platform::uri::Uri& resource,
+		const FileDeleteOptions& options = {}) override;
 
 	//! Uri::Parse / FromComponents などの失敗を明示的な InvalidUri に変換する便利 API。
 	[[nodiscard]] FileResult<FileStat> Stat(const platform::uri::UriParseResult& resource);
@@ -69,6 +77,14 @@ public:
 	[[nodiscard]] FileResult<std::unique_ptr<IFileWatch>> Watch(
 		const platform::uri::UriParseResult& resource,
 		const FileWatchOptions& options = {});
+	[[nodiscard]] FileResult<void> MakeDirectory(const platform::uri::UriParseResult& directory);
+	[[nodiscard]] FileResult<void> Rename(
+		const platform::uri::UriParseResult& source,
+		const platform::uri::UriParseResult& target,
+		const FileRenameOptions& options = {});
+	[[nodiscard]] FileResult<void> Delete(
+		const platform::uri::UriParseResult& resource,
+		const FileDeleteOptions& options = {});
 
 	[[nodiscard]] const CFileSystemProviderRegistry& Providers() const noexcept { return m_providers; }
 

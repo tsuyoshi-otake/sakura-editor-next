@@ -22725,1288 +22725,1302 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 534,
+      "line": 540,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 558,
+      "line": 564,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 579,
+      "line": 585,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 597,
+      "line": 603,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 695,
+      "line": 701,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 697,
+      "line": 703,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 698,
+      "line": 704,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 757,
+      "line": 763,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 42,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 769,
+      "line": 775,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 63,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 769,
+      "line": 775,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 78,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 769,
+      "line": 775,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 938,
+      "line": 944,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1257,
+      "line": 1263,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1260,
+      "line": 1266,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1430,
+      "line": 1436,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1431,
+      "line": 1437,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1432,
+      "line": 1438,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1433,
+      "line": 1439,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1434,
+      "line": 1440,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1435,
+      "line": 1441,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1462,
+      "line": 1468,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1474,
+      "line": 1480,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1497,
+      "line": 1503,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1507,
+      "line": 1513,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1565,
+      "line": 1571,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1683,
+      "line": 1689,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1685,
+      "line": 1691,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1708,
+      "line": 1714,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1721,
+      "line": 1727,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1768,
+      "line": 1774,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1801,
+      "line": 1807,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1960,
+      "line": 1966,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2913,
+      "line": 2974,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 2938,
-      "path": "sakura_core/window/CEditWnd.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 8,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 4969,
-      "path": "sakura_core/window/CEditWnd.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 8,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 5663,
-      "path": "sakura_core/window/CEditWnd.cpp",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 45,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 5973,
+      "line": 2999,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 7236,
+      "line": 3915,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 33,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 3945,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 7461,
+      "line": 5324,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 6018,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 6328,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 7591,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 8,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 7816,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8002,
+      "line": 8357,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 12,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8065,
+      "line": 8420,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8178,
+      "line": 8533,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8179,
+      "line": 8534,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8673,
+      "line": 9028,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8707,
+      "line": 9062,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8729,
+      "line": 9084,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8854,
+      "line": 9209,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8884,
+      "line": 9239,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 8929,
+      "line": 9284,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 9008,
+      "line": 9363,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 9122,
+      "line": 9477,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 9399,
+      "line": 9754,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 9461,
+      "line": 9816,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 9463,
+      "line": 9818,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 9464,
+      "line": 9819,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 85,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 9865,
+      "line": 10220,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 47,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 9901,
+      "line": 10256,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 9988,
+      "line": 10343,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 10066,
+      "line": 10421,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 70,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 10376,
+      "line": 10731,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 85,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 10376,
+      "line": 10731,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 10398,
+      "line": 10753,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 10598,
+      "line": 10953,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 10660,
+      "line": 11015,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 56,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 10688,
+      "line": 11043,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 51,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 11280,
+      "line": 11635,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 11395,
+      "line": 11750,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 11472,
+      "line": 11827,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 60,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 11472,
+      "line": 11827,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 73,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 11493,
+      "line": 11848,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 106,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 11493,
+      "line": 11848,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 11566,
+      "line": 11921,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 11680,
+      "line": 12035,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 65,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 11700,
+      "line": 12055,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 11750,
+      "line": 12105,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 42,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 11750,
+      "line": 12105,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 11755,
+      "line": 12110,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 43,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 11755,
+      "line": 12110,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 11771,
+      "line": 12126,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 11772,
+      "line": 12127,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 11778,
+      "line": 12133,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 12115,
+      "line": 12470,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12117,
+      "line": 12472,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12118,
+      "line": 12473,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12162,
+      "line": 12517,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12162,
+      "line": 12517,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12173,
+      "line": 12528,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12173,
+      "line": 12528,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 51,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12183,
+      "line": 12538,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 66,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12183,
+      "line": 12538,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 49,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12209,
+      "line": 12564,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 81,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12209,
+      "line": 12564,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12264,
+      "line": 12619,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 47,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12264,
+      "line": 12619,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 48,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12329,
+      "line": 12684,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 63,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12329,
+      "line": 12684,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12344,
+      "line": 12699,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 12346,
+      "line": 12701,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12400,
+      "line": 12755,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 48,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12400,
+      "line": 12755,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12412,
+      "line": 12767,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12412,
+      "line": 12767,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 12424,
+      "line": 12779,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12536,
+      "line": 12891,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12537,
+      "line": 12892,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12562,
+      "line": 12917,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12563,
+      "line": 12918,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12574,
+      "line": 12929,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 46,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12574,
+      "line": 12929,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12589,
+      "line": 12944,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 44,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12589,
+      "line": 12944,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12611,
+      "line": 12966,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 46,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12611,
+      "line": 12966,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 12632,
+      "line": 12987,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 75,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12729,
+      "line": 13084,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 12969,
+      "line": 13324,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 12970,
+      "line": 13325,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 12993,
+      "line": 13348,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 13009,
+      "line": 13364,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 42,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 13089,
+      "line": 13444,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 55,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 13089,
+      "line": 13444,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 13220,
+      "line": 13575,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 60,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 13220,
+      "line": 13575,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 75,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 13220,
+      "line": 13575,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 13255,
+      "line": 13610,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 13352,
+      "line": 13707,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 13356,
+      "line": 13711,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 13360,
+      "line": 13715,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 13364,
+      "line": 13719,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 13505,
+      "line": 13860,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 189,
+      "line": 192,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 389,
+      "line": 392,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 396,
+      "line": 399,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 24,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 449,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 45,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 449,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 60,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 449,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 29,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
       "line": 452,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
-      "column": 33,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 453,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 54,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 453,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 69,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 453,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 18,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 457,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 39,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 457,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 54,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 457,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 17,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 458,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 32,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 458,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 18,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 459,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 33,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 459,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 22,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 460,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 37,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 460,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 24,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 461,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 39,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 461,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 22,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 462,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 37,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 462,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 22,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 463,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 37,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 463,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 27,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 464,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 23,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 465,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 38,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 465,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 21,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 466,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 36,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 466,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 20,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 467,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 35,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 467,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 20,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 468,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 35,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 468,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 14,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 469,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 18,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 472,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 33,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 472,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
       "column": 45,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 476,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 26,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 477,
+      "line": 452,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
-      "column": 37,
+      "column": 60,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 477,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 24,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 478,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 35,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 478,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 26,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 479,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 37,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 479,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 30,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 585,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 51,
-      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 585,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 66,
-      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 585,
-      "path": "sakura_core/window/CEditWnd.h",
-      "rule_id": "boundary.win32_type"
-    },
-    {
-      "column": 2,
-      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 609,
+      "line": 452,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 658,
+      "line": 455,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 33,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 456,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 54,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 456,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 69,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 456,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 18,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 460,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 460,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 54,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 460,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 17,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 461,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 461,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 18,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 462,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 33,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 462,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 463,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 463,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 464,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 39,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 464,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 465,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 465,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 22,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 466,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 466,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 27,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 467,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 468,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 38,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 468,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 469,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 36,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 469,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 20,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 470,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 470,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 20,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 471,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 471,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 14,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 472,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 18,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 475,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 33,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 475,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 479,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 480,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 480,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 481,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 481,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 26,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 482,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 482,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 30,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 588,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 51,
+      "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
+      "line": 588,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 66,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 588,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 2,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 612,
+      "path": "sakura_core/window/CEditWnd.h",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 29,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 661,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 666,
+      "line": 669,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1145,
+      "line": 1184,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1255,
+      "line": 1298,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1256,
+      "line": 1299,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1267,
+      "line": 1310,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "boundary.win32_type"
     },
@@ -27891,182 +27905,224 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 139,
+      "line": 145,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 78,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 181,
+      "line": 187,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 76,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 191,
+      "line": 197,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 354,
+      "line": 360,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 355,
+      "line": 361,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 356,
+      "line": 362,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 26,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 603,
+      "line": 630,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 55,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 628,
+      "line": 655,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 43,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 633,
+      "line": 660,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 68,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 633,
+      "line": 660,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 83,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 633,
+      "line": 660,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 46,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 697,
+      "line": 738,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 71,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 697,
+      "line": 738,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 86,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 697,
+      "line": 738,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 788,
+      "line": 829,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 895,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 9,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 985,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 3,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 994,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 74,
+      "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
+      "line": 997,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 984,
+      "line": 1268,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1192,
+      "line": 1476,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 9,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 1550,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1329,
+      "line": 1656,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 44,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1364,
+      "line": 1691,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 71,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1364,
+      "line": 1691,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 86,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1364,
+      "line": 1691,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "boundary.win32_type"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
+      "line": 1732,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 111,
+      "line": 125,
       "path": "sakura_core/workbench/explorer/CExplorerTool.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 129,
+      "line": 157,
       "path": "sakura_core/workbench/explorer/CExplorerTool.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 37,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 140,
+      "line": 168,
       "path": "sakura_core/workbench/explorer/CExplorerTool.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 64,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 140,
+      "line": 168,
       "path": "sakura_core/workbench/explorer/CExplorerTool.h",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 79,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 140,
+      "line": 168,
       "path": "sakura_core/workbench/explorer/CExplorerTool.h",
       "rule_id": "boundary.win32_type"
     },
@@ -33113,7 +33169,7 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 405,
+      "line": 409,
       "path": "sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp",
       "rule_id": "error.catch_all"
     },
@@ -33715,210 +33771,210 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 949,
+      "line": 955,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 2804,
+      "line": 2865,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 2866,
+      "line": 2927,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 2922,
+      "line": 2983,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 3294,
+      "line": 3355,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 3331,
+      "line": 3392,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 5188,
+      "line": 5543,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 5241,
+      "line": 5596,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 5331,
+      "line": 5686,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 5604,
+      "line": 5959,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 5694,
+      "line": 6049,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 5857,
+      "line": 6212,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6161,
+      "line": 6516,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6188,
+      "line": 6543,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6211,
+      "line": 6566,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6305,
+      "line": 6660,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6384,
+      "line": 6739,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6428,
+      "line": 6783,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6453,
+      "line": 6808,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6477,
+      "line": 6832,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6688,
+      "line": 7043,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6703,
+      "line": 7058,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6719,
+      "line": 7074,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6735,
+      "line": 7090,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6754,
+      "line": 7109,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 6797,
+      "line": 7152,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 7305,
+      "line": 7660,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 7337,
+      "line": 7692,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 8532,
+      "line": 8887,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 8539,
+      "line": 8894,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "error.catch_all"
     },
@@ -34086,7 +34142,7 @@
     {
       "column": 4,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 997,
+      "line": 1091,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.cpp",
       "rule_id": "error.catch_all"
     },
@@ -34513,14 +34569,14 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 118,
+      "line": 124,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 913,
+      "line": 1197,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "error.catch_all"
     },
@@ -38951,56 +39007,56 @@
     {
       "column": 8,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 1309,
+      "line": 1315,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 1315,
+      "line": 1321,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 18,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 6615,
+      "line": 6970,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 8588,
+      "line": 8943,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 10,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 9827,
+      "line": 10182,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 10078,
+      "line": 10433,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 11917,
+      "line": 12272,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_dll_share_data"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:6461ff05d5ea836fc75037f596252139e5e2d5a22ee4bdc3165f4d042852ba6e",
-      "line": 1104,
+      "line": 1143,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "global.get_dll_share_data"
     },
@@ -39896,21 +39952,21 @@
     {
       "column": 28,
       "evidence_sha256": "sha256:ea582a5cd3d5368a6ca1785293a08703dda91e1af6462e8266fbc30ff6ee9399",
-      "line": 727,
+      "line": 733,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_edit_doc"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:ea582a5cd3d5368a6ca1785293a08703dda91e1af6462e8266fbc30ff6ee9399",
-      "line": 728,
+      "line": 734,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_edit_doc"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:ea582a5cd3d5368a6ca1785293a08703dda91e1af6462e8266fbc30ff6ee9399",
-      "line": 1107,
+      "line": 1146,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "global.get_edit_doc"
     },
@@ -41674,28 +41730,28 @@
     {
       "column": 29,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 602,
+      "line": 608,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_edit_wnd"
     },
     {
       "column": 11,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 677,
+      "line": 683,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_edit_wnd"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 688,
+      "line": 694,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "global.get_edit_wnd"
     },
     {
       "column": 11,
       "evidence_sha256": "sha256:c47617e18fcdf8b7a3cb36354df69c35daa0548760b2d376bcf3dd8ea1b11e42",
-      "line": 1346,
+      "line": 1389,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "global.get_edit_wnd"
     },
@@ -43074,119 +43130,126 @@
     {
       "column": 7,
       "evidence_sha256": "sha256:d46747e1f4c54f009924fc759262e9695a5b554088b71fb85837a4510cf465d3",
-      "line": 634,
+      "line": 640,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:d46747e1f4c54f009924fc759262e9695a5b554088b71fb85837a4510cf465d3",
-      "line": 646,
+      "line": 652,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:a2f8fe47df2d06e6ee856525808ac4dd10745a5f59773e82a38d7ab682cc5181",
-      "line": 802,
+      "line": 808,
+      "path": "sakura_core/window/CEditWnd.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 5,
+      "evidence_sha256": "sha256:31528a55286a536cbdec3625f54243d765e1eadc3ba094efa7773293533a6918",
+      "line": 2769,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:0c96b3410f911cc68455d574953b0d913814d6dcbef8b359358c60d4e190c234",
-      "line": 9168,
+      "line": 9523,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:19b99671cc94b1cd462eda881daa16bc37da07a72908fd78e13d9ee26b409bba",
-      "line": 9661,
+      "line": 10016,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 5,
       "evidence_sha256": "sha256:1ed8cd9400825f1421e8071ba44766c20c5f86249ae6fb977875e6b3a764fe58",
-      "line": 9663,
+      "line": 10018,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:bb3f378685b2d74bc48fe4c0a07dc6978f39f18b926032ea6aa316a376c0e712",
-      "line": 10190,
+      "line": 10545,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:bb3f378685b2d74bc48fe4c0a07dc6978f39f18b926032ea6aa316a376c0e712",
-      "line": 10200,
+      "line": 10555,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:a2f8fe47df2d06e6ee856525808ac4dd10745a5f59773e82a38d7ab682cc5181",
-      "line": 10479,
+      "line": 10834,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 11,
       "evidence_sha256": "sha256:f59311fbd1c6c183915ff2499b6bb9e3e8497addeff171369454107157257601",
-      "line": 10677,
+      "line": 11032,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:0c96b3410f911cc68455d574953b0d913814d6dcbef8b359358c60d4e190c234",
-      "line": 11136,
+      "line": 11491,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:4b5beb04ad0e7e64abdf9376b1f46bce821cc2fad3f9bdd862956bab5479bd68",
-      "line": 12485,
+      "line": 12840,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:ff29692cbb563fa36e25a8999ae0b0e1eed0a44345a81262cba8ef36604a1d4a",
-      "line": 12532,
+      "line": 12887,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:0c96b3410f911cc68455d574953b0d913814d6dcbef8b359358c60d4e190c234",
-      "line": 13087,
+      "line": 13442,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:19b99671cc94b1cd462eda881daa16bc37da07a72908fd78e13d9ee26b409bba",
-      "line": 13157,
+      "line": 13512,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 3,
       "evidence_sha256": "sha256:1ed8cd9400825f1421e8071ba44766c20c5f86249ae6fb977875e6b3a764fe58",
-      "line": 13159,
+      "line": 13514,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:30d564fbb0be7546bcf55f86c8e7fcfa21935a90b3a4c844c449a00b9c2a0eb6",
-      "line": 13675,
+      "line": 14030,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_delete"
     },
@@ -43251,6 +43314,20 @@
       "evidence_sha256": "sha256:23415a947c3bd906578bc2ffedd498f5b5a613f4c4408061c338f5ebec432b20",
       "line": 3338,
       "path": "sakura_core/window/CTabWnd.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 28,
+      "evidence_sha256": "sha256:31528a55286a536cbdec3625f54243d765e1eadc3ba094efa7773293533a6918",
+      "line": 868,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:31528a55286a536cbdec3625f54243d765e1eadc3ba094efa7773293533a6918",
+      "line": 251,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "memory.raw_delete"
     },
     {
@@ -43912,30 +43989,65 @@
       "rule_id": "memory.raw_delete"
     },
     {
+      "column": 5,
+      "evidence_sha256": "sha256:98c04fc4392735939204db48a80b904649bdc0a856a2332b568f16326233ea9d",
+      "line": 189,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 6,
+      "evidence_sha256": "sha256:98c04fc4392735939204db48a80b904649bdc0a856a2332b568f16326233ea9d",
+      "line": 202,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 32,
+      "evidence_sha256": "sha256:98c04fc4392735939204db48a80b904649bdc0a856a2332b568f16326233ea9d",
+      "line": 439,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:98c04fc4392735939204db48a80b904649bdc0a856a2332b568f16326233ea9d",
+      "line": 454,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
+      "column": 24,
+      "evidence_sha256": "sha256:98c04fc4392735939204db48a80b904649bdc0a856a2332b568f16326233ea9d",
+      "line": 485,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "memory.raw_delete"
+    },
+    {
       "column": 7,
       "evidence_sha256": "sha256:842f883d9440cb3f4a1e5526d9e508e0b0705ef62ec5922c35ff5db1fcd899aa",
-      "line": 571,
+      "line": 725,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:842f883d9440cb3f4a1e5526d9e508e0b0705ef62ec5922c35ff5db1fcd899aa",
-      "line": 572,
+      "line": 726,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:842f883d9440cb3f4a1e5526d9e508e0b0705ef62ec5922c35ff5db1fcd899aa",
-      "line": 572,
+      "line": 726,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "memory.raw_delete"
     },
     {
       "column": 41,
       "evidence_sha256": "sha256:842f883d9440cb3f4a1e5526d9e508e0b0705ef62ec5922c35ff5db1fcd899aa",
-      "line": 573,
+      "line": 727,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "memory.raw_delete"
     },
@@ -45461,28 +45573,28 @@
     {
       "column": 15,
       "evidence_sha256": "sha256:9cdf6d388a5ee42873e22f4c2a6ecddfdf4349419380bdaf3438c97545c031c5",
-      "line": 4892,
+      "line": 5247,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_new"
     },
     {
       "column": 23,
       "evidence_sha256": "sha256:dac69022013af4fd2ba6f1164975eb7db2ce8fdfc67c8d4dc23cdb2bb208cad5",
-      "line": 10480,
+      "line": 10835,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_new"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:9c927f1f353df630944805d87c54b21f3dd1857e0f62fe71beeb0c7f2dc51928",
-      "line": 12528,
+      "line": 12883,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_new"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:5e459b9c8859470c690f13994705d9f12f1e2d70ca6c43a60deb1b0492b01ab4",
-      "line": 13562,
+      "line": 13917,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "memory.raw_new"
     },
@@ -45874,7 +45986,7 @@
     {
       "column": 15,
       "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
-      "line": 399,
+      "line": 403,
       "path": "sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -46140,91 +46252,91 @@
     {
       "column": 60,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 2796,
+      "line": 2857,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 66,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 2915,
+      "line": 2976,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 54,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 2939,
+      "line": 3000,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 3085,
+      "line": 3146,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 52,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 5575,
+      "line": 5930,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 52,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 5590,
+      "line": 5945,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 59,
       "evidence_sha256": "sha256:5b5c691ef86aff7e300dd80d02202c3425db050330d22ba91c0992da4bc065a8",
-      "line": 5682,
+      "line": 6037,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 6524,
+      "line": 6879,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 8891,
+      "line": 9246,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 9035,
+      "line": 9390,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 10482,
+      "line": 10837,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 4,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 12249,
+      "line": 12604,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 13032,
+      "line": 13387,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -46315,14 +46427,14 @@
     {
       "column": 36,
       "evidence_sha256": "sha256:098f63ea1f79029b04e2f60dc47727e4d38a44f4c5618ac1950972a4bb1c02e6",
-      "line": 776,
+      "line": 817,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
     {
       "column": 75,
       "evidence_sha256": "sha256:aad4420d46e0cd902e2e462fb531cfbda6e2a12615bd31773910ce5bac016941",
-      "line": 1399,
+      "line": 1741,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "resource.stop_required_acquisition"
     },
@@ -47533,7 +47645,7 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 623,
+      "line": 627,
       "path": "sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp",
       "rule_id": "state.mutable_member"
     },
@@ -47785,7 +47897,7 @@
     {
       "column": 2,
       "evidence_sha256": "sha256:0a06a841e82a3f7809b4ae59af5eda45e7e805c40e8d967bb1abef61fe1efb49",
-      "line": 373,
+      "line": 422,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.mutable_member"
     },
@@ -57403,168 +57515,189 @@
     {
       "column": 20,
       "evidence_sha256": "sha256:30ca4fd3332612f5fef5d0b0d59d93b944284a93dd26cffb9e0482ea6f057bff",
-      "line": 40,
+      "line": 42,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 24,
       "evidence_sha256": "sha256:4203982ca34bcbd5d62c54a8c69fef0d08ccd074233c2ade5fb52b77da2a9d26",
-      "line": 41,
+      "line": 43,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:43782170ef9a7d36ede76ab1e6fc521d9443d381cf016296c51dbb8633f34652",
-      "line": 42,
+      "line": 44,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 20,
       "evidence_sha256": "sha256:30ca4fd3332612f5fef5d0b0d59d93b944284a93dd26cffb9e0482ea6f057bff",
-      "line": 61,
+      "line": 63,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:43782170ef9a7d36ede76ab1e6fc521d9443d381cf016296c51dbb8633f34652",
-      "line": 62,
+      "line": 64,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:3352c319b2c9237e59186618ccaa0a90217b0680d2d7fc5d801d56eba33a74ec",
-      "line": 118,
+      "line": 120,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 17,
       "evidence_sha256": "sha256:8f4030c06ae1755a4903e625a30a13daf9b5f0f5ecf023a005bb199158a8bf4b",
-      "line": 119,
+      "line": 121,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:decdb72bc2c03d075f1cd4130adf0fc7479a166c60d9928e0c1aa7f294058106",
-      "line": 120,
+      "line": 122,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:3352c319b2c9237e59186618ccaa0a90217b0680d2d7fc5d801d56eba33a74ec",
-      "line": 125,
+      "line": 127,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582",
-      "line": 126,
+      "line": 128,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 11,
       "evidence_sha256": "sha256:bdeae9840df4ebdc09deeb99f649b1e660b84d3af9ab1a9390bc2b86be58db64",
-      "line": 127,
+      "line": 129,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:1738d571f9e7c42efb0511fee831aef16632e4144dc125c24a255839e7e61558",
-      "line": 132,
+      "line": 134,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 31,
       "evidence_sha256": "sha256:8f704df3fcc83a7a778bd328d71a43cf1d06fa676188b557e5d0322e61689e0b",
-      "line": 144,
+      "line": 146,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 12,
       "evidence_sha256": "sha256:5df6d4948ee804a99602a281d248683dba0b61a423caf3a611adb55eecd30e46",
-      "line": 177,
+      "line": 179,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:72f49af76ab0392d992c5dc551c2d22c01254dfb0033c7d211260e66724be20f",
-      "line": 178,
+      "line": 180,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 37,
       "evidence_sha256": "sha256:bdf91daa3ce6baad98eecd9381a7d5b8f9d9cc754214f84f407993f7a759f6ad",
-      "line": 189,
+      "line": 191,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:2977cf844f5c59e0812e4b752840dc82ce083d077497f830cc529652f43302c7",
-      "line": 191,
+      "line": 193,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:39b2dfc3eacace0c51ee3e3e4ddf008ff96d10648517c9a4b6776718db419577",
-      "line": 213,
+      "line": 215,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:c818cadecd532fecd5328b09f4eb4f4a5b813538a617bca4f4ec7efa6b2fd161",
-      "line": 215,
+      "line": 217,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:43782170ef9a7d36ede76ab1e6fc521d9443d381cf016296c51dbb8633f34652",
-      "line": 216,
+      "line": 218,
+      "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:394349c536c9bfcd6215afe9f92e19b284abbdbf2b57f00c4a34b5e6ecb499a6",
+      "line": 255,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:581457a425e3466a41032fa160e4168933254422e1426b3fb919c3dfdccd6374",
-      "line": 252,
+      "line": 263,
+      "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:357929a5b9bbabb7254621f2c6633bcdbc44816a59bb4ce7e1db7e39250cfb1a",
+      "line": 264,
+      "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:581457a425e3466a41032fa160e4168933254422e1426b3fb919c3dfdccd6374",
+      "line": 268,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 22,
       "evidence_sha256": "sha256:e582e2fc87979e576a40d8b702f0705255ea170903eb47d5374ffc30e5746326",
-      "line": 267,
+      "line": 283,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 21,
       "evidence_sha256": "sha256:3352c319b2c9237e59186618ccaa0a90217b0680d2d7fc5d801d56eba33a74ec",
-      "line": 269,
+      "line": 285,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:cce1feea5ac1b196ab4f02fbd906962cdb76873113640a39b439257fe520d710",
-      "line": 271,
+      "line": 287,
       "path": "sakura_core/include/sakura/filesystem/IFileSystemProvider.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -61295,21 +61428,21 @@
     {
       "column": 19,
       "evidence_sha256": "sha256:72f49af76ab0392d992c5dc551c2d22c01254dfb0033c7d211260e66724be20f",
-      "line": 170,
+      "line": 174,
       "path": "sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:decdb72bc2c03d075f1cd4130adf0fc7479a166c60d9928e0c1aa7f294058106",
-      "line": 171,
+      "line": 175,
       "path": "sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 8,
       "evidence_sha256": "sha256:fbbaf7faf7648a0c15e859ed46e49996cbfe75135814de94d620ad18112fe8ac",
-      "line": 172,
+      "line": 176,
       "path": "sakura_core/platform/filesystem/CWin32FileSystemProvider.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -67686,63 +67819,63 @@
     {
       "column": 16,
       "evidence_sha256": "sha256:a67a9d9c5b37a7838f3bdd8e94754715ae804228ea4e88efc54a636a6ed9aeb5",
-      "line": 275,
+      "line": 281,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 533,
+      "line": 539,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 557,
+      "line": 563,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 578,
+      "line": 584,
       "path": "sakura_core/window/CEditWnd.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:240b863bb14cec47891cf4ff37ffbafb4233046c12a649dbebf792df734f5512",
-      "line": 189,
+      "line": 192,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 18,
       "evidence_sha256": "sha256:f3706eb4c4bbd2ea3ee1d9d784f189c373ebe86bfae6b612472702858fc1b0cd",
-      "line": 190,
+      "line": 193,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:bbcd3407d5afe8c60f4067b6c2af43903a8f58416385375b0fde9cda55741b9d",
-      "line": 232,
+      "line": 235,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 7,
       "evidence_sha256": "sha256:5b72e9fb400139f4ac89e829a5d4c57bf9843ae585726cd08048d5efed5dc9d3",
-      "line": 233,
+      "line": 236,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 69,
       "evidence_sha256": "sha256:6e051fc9dab185a0b232dc6c9a883712e49c352d22c9a384c5d5238fdbc4a893",
-      "line": 234,
+      "line": 237,
       "path": "sakura_core/window/CEditWnd.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -69056,6 +69189,20 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 15,
+      "evidence_sha256": "sha256:bad6be332b6b9d0acd08be15d21e3e226ea72d3f4d4e89c91c0b3f2647b03565",
+      "line": 43,
+      "path": "sakura_core/workbench/commands/ExplorerCommandArguments.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:8d4c87b3f006af49041b0581dbe09a0d6db8e836f5b75dcd6d56e9c8b091db93",
+      "line": 45,
+      "path": "sakura_core/workbench/commands/ExplorerCommandArguments.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 27,
       "evidence_sha256": "sha256:adeaa21f2c607ff80c161996dd0ba2695483a767e1e48970ff5524c04bdf3d3f",
       "line": 162,
@@ -69245,107 +69392,170 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 35,
+      "evidence_sha256": "sha256:8a4df13b8513cdbd9ec6f4605e3d752071ea2f81cf7c5c623b3dbb55ba1fc09e",
+      "line": 241,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:e17d8df45c87484fc1f448379bb189d2ee06ef9afc899b06631b36aed308cec5",
+      "line": 242,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:19709f5f3fde27dbcb071ba0d98e9870000f87f605fbf3ef5bdbef1ce5cfacb2",
+      "line": 246,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:b9aaa1a2eaeb32c81381f6e396d33e4492e1041fc7f9910a1a45430d68140021",
+      "line": 250,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:9537a3505be7e83358365402d39df87020398a8844ce973687f859fe944cd6e4",
+      "line": 251,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:005712e65a6b570c156575614e6fe41a91db40e87d436f72e8c8e5523d9c094c",
+      "line": 252,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:4171f627528470f9ad6b6b52541a353132abfa46c26697f2f1ec5c758179f13f",
+      "line": 253,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:f0c99753d49a049d4ba3e53ba15938b80783b0c2a683715527a65c5b47385c5e",
+      "line": 256,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 27,
       "evidence_sha256": "sha256:904843696b7aba131607e55dd9e9583563193d86b3a0b1f19283462dcb0f360b",
-      "line": 240,
+      "line": 279,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:35adbc94a432e9e028c379683382f08b05ddd1e2f740bb81e0be9651ca073c07",
-      "line": 241,
+      "line": 280,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:a39846b4d5bba789337bca5cfcec6c144cfaab7968c7bbc6b08936121ea05f5c",
-      "line": 242,
+      "line": 281,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:226c9c3e08dc0ddd6236e58ef99997986b03d93a1e642a91294e7e8ec515c5ed",
-      "line": 243,
+      "line": 282,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 27,
       "evidence_sha256": "sha256:8f6f0f9869070a92bc511797203bf02237510502098da6011a6537e5435b3b58",
-      "line": 244,
+      "line": 283,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 38,
       "evidence_sha256": "sha256:c098ff8f86c756447499e2181f19d15f772d551cd092b96b6ed4f14bff682083",
-      "line": 280,
+      "line": 319,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:8452a0cb7c30741c8890d5bcc5312cb4be3522465c47d2c1a1d92a2c5c1ec6c2",
-      "line": 286,
+      "line": 325,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 33,
       "evidence_sha256": "sha256:a1744d5d2ada14e7e2f5cbfac67fbbcf7c2ddf44db7eda2255723e0fed7ab41c",
-      "line": 287,
+      "line": 326,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 67,
       "evidence_sha256": "sha256:7061968b0ba1706ecb42ef4e68a16837d0b30f5dee57d9b43c29a09a117fd0c9",
-      "line": 303,
+      "line": 342,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:b0bacb2b14dede3e02678d82e3179804e9149053dcde9c0f1e48a40d148c91f0",
-      "line": 311,
+      "line": 350,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 32,
       "evidence_sha256": "sha256:20903bfbf0384e7445dab3a15c5c14f7770a3cd76d82317e06312e3df884468a",
-      "line": 325,
+      "line": 364,
+      "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 37,
+      "evidence_sha256": "sha256:e1b600556a28c3794079645f1e93f5f0dbe48f195a8169efd340119e0ab00c10",
+      "line": 374,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 35,
       "evidence_sha256": "sha256:8c0e8b85d4c2ae20bf6cfb455419042bcf2161cc35d9284e5597a4905317ada8",
-      "line": 331,
+      "line": 380,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 30,
       "evidence_sha256": "sha256:d8f249c9010fc7be5a8fbd718bee33f424f3adab5e2990585bfd86367a8d794c",
-      "line": 363,
+      "line": 412,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 28,
       "evidence_sha256": "sha256:d258b6cc3d76b15363d60c28260872902ca6ba28929723c849fedd6dca36ba13",
-      "line": 364,
+      "line": 413,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:deb62defa087c97f6b500647262cf453ad588afd98a395d5aab81a68b01ec8e5",
-      "line": 367,
+      "line": 416,
       "path": "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
       "rule_id": "state.public_mutable_field"
     },
@@ -71361,168 +71571,210 @@
     {
       "column": 15,
       "evidence_sha256": "sha256:7be8dc2554821501d81b85023ce269973ae83075c901879d3e078b441d6f5702",
-      "line": 127,
+      "line": 133,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:a9f4c27bfaee867c6d042dafa7f0d0919a82de66e7a75bd00d31073541c7447d",
-      "line": 134,
+      "line": 140,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 138,
+      "line": 144,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:874d4f1c95174f90fab9eb454719167a3fc16a70d09264c7ce03f20f30c8e366",
-      "line": 141,
+      "line": 147,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:7f15d31a724558c2e34e35fc096c1326948ce8cda70c58a91f7d3b3bbf4c1862",
-      "line": 145,
+      "line": 151,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 18,
       "evidence_sha256": "sha256:e1096204dea2499ac78e484086c7d26ceb6e7fd166a284e73fd9726360ee220b",
-      "line": 146,
+      "line": 152,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:4ea342bfa150350e384f5494554517754b3d9aee2d3a6f55fbd9e121f2c4f09d",
-      "line": 147,
+      "line": 153,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 36,
       "evidence_sha256": "sha256:8f0f481562a5817ff49cc41cb6e7bae32fed0a6a165d3976034d35e3eec70ed1",
-      "line": 150,
+      "line": 156,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:f2efeb4d66398e3c6ef7d5552a1dc1a1afa3b82e4a8fcb297a277268ae722540",
-      "line": 151,
+      "line": 157,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:22756df00a8e3f9c303dde61d5236538af2ff1e27dafb38feadee2c2fee1d106",
-      "line": 152,
+      "line": 158,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:94a765aea66b162ec2b085f420eed15d59ce27ec430bebf13ce53cd17736a582",
-      "line": 343,
+      "line": 349,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:7be8dc2554821501d81b85023ce269973ae83075c901879d3e078b441d6f5702",
-      "line": 344,
+      "line": 350,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 37,
       "evidence_sha256": "sha256:271a3a9a30d16db402e59939200a3e19452fcc8281216ebd3d7caad2261aa70b",
-      "line": 352,
+      "line": 358,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 14,
       "evidence_sha256": "sha256:723ef996220efa141074c52928804f5ef9e9b4f9b38e1cb5b3c23f972440eb97",
-      "line": 353,
+      "line": 359,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 54,
       "evidence_sha256": "sha256:cb15160dd8bb4557f26d69822363e2e427b89d8d13e649ef8fcb9267dc443dfc",
-      "line": 360,
-      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 43,
-      "evidence_sha256": "sha256:3e5026c64cd2d8fdaae60e6c4d3ea8abc8a6fdc4c438bf9a5fb994848d4c1486",
-      "line": 363,
-      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 25,
-      "evidence_sha256": "sha256:0cea5e07009a29cfaf219580a3bca2697aeafe9b656f591205641bca3cd09d68",
-      "line": 364,
-      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 15,
-      "evidence_sha256": "sha256:4ea342bfa150350e384f5494554517754b3d9aee2d3a6f55fbd9e121f2c4f09d",
-      "line": 365,
-      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
-      "column": 42,
-      "evidence_sha256": "sha256:fc3bb5b5125b271386b4174d76421ec954727edb764938109bf94a823ac85be0",
       "line": 366,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 43,
-      "evidence_sha256": "sha256:45596c6c82a4b40bf45fb76a3a33b4854a49f097a23fb74c2b2e5ec7b0d5ceb3",
+      "evidence_sha256": "sha256:3e5026c64cd2d8fdaae60e6c4d3ea8abc8a6fdc4c438bf9a5fb994848d4c1486",
+      "line": 369,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 25,
+      "evidence_sha256": "sha256:0cea5e07009a29cfaf219580a3bca2697aeafe9b656f591205641bca3cd09d68",
       "line": 370,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:4ea342bfa150350e384f5494554517754b3d9aee2d3a6f55fbd9e121f2c4f09d",
+      "line": 371,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 42,
+      "evidence_sha256": "sha256:fc3bb5b5125b271386b4174d76421ec954727edb764938109bf94a823ac85be0",
+      "line": 372,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 43,
+      "evidence_sha256": "sha256:45596c6c82a4b40bf45fb76a3a33b4854a49f097a23fb74c2b2e5ec7b0d5ceb3",
+      "line": 376,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:753c0f0131f5cb14e5910d7b03fb05fb40d2fe5023b7a0a3138f8b1a1e94a357",
-      "line": 371,
+      "line": 377,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:1bf7876a41b27cbbebf3195e99afaa52b800316abf7b23e184dbaaa006f46f75",
-      "line": 372,
+      "line": 378,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:954da9c5ca7f24db7361666f2707ad24efd8894a2e9f8c4f25dc696fb83c3e2f",
-      "line": 373,
+      "line": 379,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 15,
       "evidence_sha256": "sha256:fe48dcff08de8262b087c2260f64ec52fa876bc7a1c5a3e578f12a5bc55fec5e",
-      "line": 386,
+      "line": 392,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 18,
+      "evidence_sha256": "sha256:af40786f0074191adbea5298ae834e95d6bd7a84cd6c620d1a18b9658a56e064",
+      "line": 395,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 20,
+      "evidence_sha256": "sha256:32c47e97fbe204f0b81778000a493ac56de2b01ee7862d146d696356aafc75a0",
+      "line": 396,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:d9b7ed2a7984e81823cafea0deff0b1a4b88964ecb136ba2b53c61b89a3476f7",
+      "line": 397,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 23,
+      "evidence_sha256": "sha256:1462f57082e32afdae1711729f07704c1e4a9f5f62133238a16685c3c8147f75",
+      "line": 398,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:c5396a6bb62b17878b7943366f09f339a009d3f81c9e261e400a607736285efc",
+      "line": 410,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 45,
+      "evidence_sha256": "sha256:a944361fa037ae5cca041556f921a09f3bef4be45f688713ecff47b43fc0bec7",
+      "line": 415,
       "path": "sakura_core/workbench/explorer/CExplorerTool.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -71618,10 +71870,59 @@
       "rule_id": "state.public_mutable_field"
     },
     {
+      "column": 8,
+      "evidence_sha256": "sha256:e3c8288efe663ec9a26c674e0933c69d997519ff71ce66219b6a08e4d4047639",
+      "line": 112,
+      "path": "sakura_core/workbench/explorer/CExplorerTool.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
       "column": 31,
       "evidence_sha256": "sha256:d4244a97819790a51a0e88ecb720e1bc5d8b60e733e8636f93953681edc578d6",
-      "line": 126,
+      "line": 154,
       "path": "sakura_core/workbench/explorer/CExplorerTool.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:5dc4f48d104341c4bd231812f97e0a81d5f380fa37a8deeb1f7d897830f3e876",
+      "line": 52,
+      "path": "sakura_core/workbench/explorer/ExplorerContextMenuModel.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:41be36e377eef302fe5f5c40886dec1e4c5802122405571869cb5ad000751460",
+      "line": 22,
+      "path": "sakura_core/workbench/explorer/ExplorerDeleteConfirmation.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:57053a1b30542055014167b233e54dc2f6a635e6a74f0fb8ab03e6152efd17bf",
+      "line": 23,
+      "path": "sakura_core/workbench/explorer/ExplorerDeleteConfirmation.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 15,
+      "evidence_sha256": "sha256:e20c9fe11939a4a694dfbc5f043224176ac2bf26e7313a1af2d503b2ffbb2db7",
+      "line": 25,
+      "path": "sakura_core/workbench/explorer/ExplorerDeleteConfirmation.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 7,
+      "evidence_sha256": "sha256:d09cce3693d994621234e7644f8b4c878151a46c2d3a484badbfd165442fe8d8",
+      "line": 28,
+      "path": "sakura_core/workbench/explorer/ExplorerDeleteConfirmation.h",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 21,
+      "evidence_sha256": "sha256:e0d63cb6f92a9a6f1fa40b1c7aacf33332237b75ae3d64dbfc5c32ec6e471f4b",
+      "line": 30,
+      "path": "sakura_core/workbench/explorer/ExplorerDeleteConfirmation.h",
       "rule_id": "state.public_mutable_field"
     },
     {
@@ -83889,79 +84190,107 @@
       "rule_id": "state.public_mutable_field"
     },
     {
-      "column": 19,
-      "evidence_sha256": "sha256:9dde6089082ef62295e7cc25d053a887b5ba55ef0745b60c3945a7dab1cab73c",
-      "line": 126,
-      "path": "tools/build/pilots/controlipc_protocol_contract_test.cpp",
-      "rule_id": "state.public_mutable_field"
-    },
-    {
       "column": 6,
       "evidence_sha256": "sha256:ca7083674336e8f8bb9d4763686ec1e109d1430b988fa6819deca3a0ffefddcf",
-      "line": 166,
+      "line": 194,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:7bf2b1095a6b5eec977def2d43a78739ca3f405ac9716c510810068cfb5ec45c",
-      "line": 167,
+      "line": 195,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:bbdf7c763e55f07bb04728d6eb12a9cf3f9702d313612e3c567fd0f7c3c2ebc6",
-      "line": 168,
+      "line": 196,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:b01a1067e7c8cc69e582350a4816266094a26afe210aaf6d27d788f8cec97253",
-      "line": 169,
+      "line": 197,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:4caec69653e250cfc4e582ce4c6845af79a715df82395da54d16c26f24f2310f",
-      "line": 170,
+      "line": 198,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 6,
       "evidence_sha256": "sha256:cfffb658ce58ae7feda617d0dc7dd957ee4e72befc5c98247d95016e916e17f5",
-      "line": 171,
+      "line": 199,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 6,
+      "evidence_sha256": "sha256:8e62a377ab1dc4e72314aac7d7fffa36d5c772b8b131a80819ac22f4bb8adebb",
+      "line": 200,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 6,
+      "evidence_sha256": "sha256:dbc87578fa0211db10367a2c8f11d91c240c31165fafe3b03c4e07196bb63fab",
+      "line": 201,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 6,
+      "evidence_sha256": "sha256:5fb8568d3836e57a28432a8607c03e9000d3066915cf5129f4f6434946596932",
+      "line": 202,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 12,
       "evidence_sha256": "sha256:9e117b4e3212180f70ecd9e2523236e21efdebad669245e394379d9df10994cb",
-      "line": 172,
+      "line": 203,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 47,
       "evidence_sha256": "sha256:82bce9becc11944cddcf41eb8c86ee6750fc2e0a7ee17c6f3509a0bb7c4f6de1",
-      "line": 173,
+      "line": 204,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:8e6389b5caf23342fcfeefe0e3d9e83bbfb60780a9ba99d0f61ac83923fe7885",
+      "line": 205,
+      "path": "tools/build/pilots/filesystem_contract_test.cpp",
+      "rule_id": "state.public_mutable_field"
+    },
+    {
+      "column": 35,
+      "evidence_sha256": "sha256:c95c936c0cbb6707e3aa82deedac85dd15db1829b2641e7128419ae6f99f409c",
+      "line": 206,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:d8f869d84a4753ad194697b8e7bcd19e13ea1e4de7a34f1d4be8fbc484a17d8a",
-      "line": 585,
+      "line": 869,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:9dde6089082ef62295e7cc25d053a887b5ba55ef0745b60c3945a7dab1cab73c",
-      "line": 586,
+      "line": 870,
       "path": "tools/build/pilots/filesystem_contract_test.cpp",
       "rule_id": "state.public_mutable_field"
     },
@@ -84288,100 +84617,93 @@
       "rule_id": "test.filtered_or_skipped"
     },
     {
-      "column": 73,
-      "evidence_sha256": "sha256:3ddedea1be56ec7cf881df37b43836529859ab877eb0fd19a87c6c5a7c2ed031",
-      "line": 449,
-      "path": ".github/workflows/build-sakura.yml",
-      "rule_id": "test.filtered_or_skipped"
-    },
-    {
       "column": 14,
       "evidence_sha256": "sha256:45c62cb3920e6b60259bf7bec332efb9b2e9b8516c432b9ec37caaddabc65a90",
-      "line": 465,
+      "line": 478,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 48,
       "evidence_sha256": "sha256:88680c9ace990360aebb3ca66ac0af21b512eab068755bb6cca36ef713b951f3",
-      "line": 465,
+      "line": 478,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:88680c9ace990360aebb3ca66ac0af21b512eab068755bb6cca36ef713b951f3",
-      "line": 562,
+      "line": 534,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:5114665fa40ac0a0b34f2bf16c6420826013c5ba7c18f281e2a037ac88dafdeb",
-      "line": 575,
+      "line": 547,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 39,
       "evidence_sha256": "sha256:72037de2aae316ef967a6f331bbd2d569a99eec5e17583b47951ee540d0c0f78",
-      "line": 613,
+      "line": 585,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 13,
       "evidence_sha256": "sha256:72037de2aae316ef967a6f331bbd2d569a99eec5e17583b47951ee540d0c0f78",
-      "line": 625,
+      "line": 597,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 10,
       "evidence_sha256": "sha256:45c62cb3920e6b60259bf7bec332efb9b2e9b8516c432b9ec37caaddabc65a90",
-      "line": 635,
+      "line": 607,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 34,
       "evidence_sha256": "sha256:45c62cb3920e6b60259bf7bec332efb9b2e9b8516c432b9ec37caaddabc65a90",
-      "line": 751,
+      "line": 781,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 18,
       "evidence_sha256": "sha256:45c62cb3920e6b60259bf7bec332efb9b2e9b8516c432b9ec37caaddabc65a90",
-      "line": 753,
+      "line": 783,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 55,
       "evidence_sha256": "sha256:88680c9ace990360aebb3ca66ac0af21b512eab068755bb6cca36ef713b951f3",
-      "line": 753,
+      "line": 783,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 51,
       "evidence_sha256": "sha256:5114665fa40ac0a0b34f2bf16c6420826013c5ba7c18f281e2a037ac88dafdeb",
-      "line": 754,
+      "line": 784,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 18,
       "evidence_sha256": "sha256:45c62cb3920e6b60259bf7bec332efb9b2e9b8516c432b9ec37caaddabc65a90",
-      "line": 756,
+      "line": 786,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
     {
       "column": 16,
       "evidence_sha256": "sha256:5114665fa40ac0a0b34f2bf16c6420826013c5ba7c18f281e2a037ac88dafdeb",
-      "line": 899,
+      "line": 932,
       "path": ".github/workflows/build-sakura.yml",
       "rule_id": "test.filtered_or_skipped"
     },
@@ -84468,90 +84790,6 @@
       "line": 219,
       "path": ".github/workflows/coverage-map.yml",
       "rule_id": "test.filtered_or_skipped"
-    },
-    {
-      "column": 6,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 38,
-      "path": "sakura_core/sakura.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 80,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 38,
-      "path": "sakura_core/sakura.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 22,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1758,
-      "path": "sakura_core/sakura.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 31,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1770,
-      "path": "sakura_core/sakura.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 93,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1791,
-      "path": "sakura_core/sakura.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 25,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 1813,
-      "path": "sakura_core/sakura.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 6,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 33,
-      "path": "sakura_core/tests1.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 121,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 33,
-      "path": "sakura_core/tests1.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 17,
-      "evidence_sha256": "sha256:8634e5c32776e156ea4978d977a5fd982debd2fd01654f8842d6e96763626c0d",
-      "line": 392,
-      "path": "sakura_core/tests1.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 34,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 398,
-      "path": "sakura_core/tests1.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 32,
-      "evidence_sha256": "sha256:ab302f7f05c54daf3a506cc750d8c78a11f864a8f130afccdcc7a8255361b2ad",
-      "line": 401,
-      "path": "sakura_core/tests1.vcxproj",
-      "rule_id": "test.monolith_link"
-    },
-    {
-      "column": 86,
-      "evidence_sha256": "sha256:8634e5c32776e156ea4978d977a5fd982debd2fd01654f8842d6e96763626c0d",
-      "line": 447,
-      "path": "sakura_core/tests1.vcxproj",
-      "rule_id": "test.monolith_link"
     }
   ],
   "hotspots": {
@@ -84742,16 +84980,16 @@
     "sakura_core/window/CEditWnd.cpp": {
       "catch_all_count": 30,
       "getter_call_count": 12,
-      "include_count": 126,
-      "line_count": 13802,
-      "raw_delete_expression_count": 17,
+      "include_count": 132,
+      "line_count": 14157,
+      "raw_delete_expression_count": 18,
       "raw_new_expression_count": 4
     },
     "sakura_core/window/CEditWnd.h": {
       "catch_all_count": 0,
       "getter_call_count": 3,
       "include_count": 43,
-      "line_count": 1348,
+      "line_count": 1391,
       "raw_delete_expression_count": 0,
       "raw_new_expression_count": 0
     }
@@ -85217,33 +85455,32 @@
         "GetDllShareData": 1
       }
     },
-    "filtered_test_hint_count": 28,
-    "finding_count": 12079,
+    "filtered_test_hint_count": 27,
+    "finding_count": 12113,
     "finding_count_by_rule": {
       "boundary.private_include": 45,
-      "boundary.win32_type": 4481,
+      "boundary.win32_type": 4489,
       "error.catch_all": 466,
       "global.get_dll_share_data": 705,
       "global.get_edit_doc": 7,
       "global.get_edit_wnd": 257,
-      "memory.raw_delete": 316,
+      "memory.raw_delete": 324,
       "memory.raw_new": 239,
       "resource.stop_required_acquisition": 221,
       "state.mutable_member": 131,
-      "state.public_mutable_field": 5141,
+      "state.public_mutable_field": 5172,
       "state.raw_pointer_member": 30,
-      "test.filtered_or_skipped": 28,
-      "test.monolith_link": 12
+      "test.filtered_or_skipped": 27
     },
-    "include_directive_count": 9951,
-    "monolith_link_hint_count": 12,
+    "include_directive_count": 10002,
+    "monolith_link_hint_count": 0,
     "private_include_mention_count": 45,
-    "raw_delete_expression_count": 316,
+    "raw_delete_expression_count": 324,
     "raw_new_expression_count": 239,
-    "source_file_count": 1584,
-    "source_line_count": 462395,
-    "tracked_file_count": 1626,
-    "win32_parameter_mention_count": 4481
+    "source_file_count": 1595,
+    "source_line_count": 465099,
+    "tracked_file_count": 1641,
+    "win32_parameter_mention_count": 4489
   },
   "rule_catalog": [
     {
@@ -85398,9 +85635,10 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "b87648c2c3f33faea0b23cbd62216b153391f25e",
-  "source_fingerprint": "sha256:f403a7bf823143effbc64b23e3610a583a14954e2262b3e65c32f665f94d4b15",
+  "source_commit": "87cf29748bae8db81e5dac7e015c0317f801272b",
+  "source_fingerprint": "sha256:d2c22553c4fb6d6e3938c5d1a5dcc123eb9706981ba42e788fbe14310536e8fd",
   "tracked_source_paths": [
+    ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
     ".github/workflows/architecture-gates.yml",
     ".github/workflows/build-on-msys2.yml",
@@ -85408,11 +85646,13 @@
     ".github/workflows/copilot-setup-steps.yml",
     ".github/workflows/coverage-map.yml",
     ".github/workflows/cppcheck.yml",
+    ".github/workflows/develop-issue-closure.yml",
     ".github/workflows/doxygen.yml",
     ".github/workflows/listings-ab-benchmark.yml",
+    ".github/workflows/pr-cache-cleanup.yml",
     ".github/workflows/pr-target-policy.yml",
     ".github/workflows/release-promotion.yml",
-    ".github/workflows/sonarscan.yml",
+    ".github/workflows/test-results.yml",
     "sakura_core/CEditApp.cpp",
     "sakura_core/CEditApp.h",
     "sakura_core/CSelectLang.cpp",
@@ -85927,6 +86167,7 @@
     "sakura_core/include/sakura/controlipc/ControlIpcSecurity.h",
     "sakura_core/include/sakura/controlipc/ControlIpcTransport.h",
     "sakura_core/include/sakura/controlipc/ControlPlatformEndpoint.h",
+    "sakura_core/include/sakura/controlipc/ProfileAuthorityIdentity.h",
     "sakura_core/include/sakura/editor/EditorFrameEvents.h",
     "sakura_core/include/sakura/editor/SelectionSession.h",
     "sakura_core/include/sakura/editor/document/DocumentPersistence.h",
@@ -86071,7 +86312,6 @@
     "sakura_core/platform/profiles/ControlUserDataProfileRegistry.h",
     "sakura_core/platform/profiles/DurableUserDataProfileRegistryService.cpp",
     "sakura_core/platform/profiles/DurableUserDataProfileRegistryService.h",
-    "sakura_core/platform/profiles/ProfileAuthorityIdentity.h",
     "sakura_core/platform/profiles/ProfileAuthorityStore.cpp",
     "sakura_core/platform/profiles/ProfileAuthorityStore.h",
     "sakura_core/platform/profiles/ProfileBootstrapSnapshot.cpp",
@@ -86535,6 +86775,9 @@
     "sakura_core/workbench/commands/ApiCommandArguments.h",
     "sakura_core/workbench/commands/CommandArgumentsJson.cpp",
     "sakura_core/workbench/commands/CommandArgumentsJson.h",
+    "sakura_core/workbench/commands/ExplorerCommandArguments.cpp",
+    "sakura_core/workbench/commands/ExplorerCommandArguments.h",
+    "sakura_core/workbench/commands/ExplorerCommandIds.h",
     "sakura_core/workbench/commands/WorkbenchCommandRegistry.cpp",
     "sakura_core/workbench/commands/WorkbenchCommandRegistry.h",
     "sakura_core/workbench/commands/WorkbenchContextKeyService.cpp",
@@ -86590,6 +86833,9 @@
     "sakura_core/workbench/editor/selection/SelectionSession.cpp",
     "sakura_core/workbench/explorer/CExplorerTool.cpp",
     "sakura_core/workbench/explorer/CExplorerTool.h",
+    "sakura_core/workbench/explorer/ExplorerContextMenuModel.h",
+    "sakura_core/workbench/explorer/ExplorerDeleteConfirmation.h",
+    "sakura_core/workbench/explorer/ExplorerResourcePath.h",
     "sakura_core/workbench/extension/CExtensionBottomPanelTool.cpp",
     "sakura_core/workbench/extension/CExtensionBottomPanelTool.h",
     "sakura_core/workbench/extension/CExtensionSidebarTool.cpp",
@@ -86728,6 +86974,7 @@
     "src/main/cmake/gitlink_state.cmake",
     "src/main/cmake/manifest.cmake",
     "src/main/cmake/manifest_resource.cmake",
+    "src/main/cmake/sakura-vcpkg-toolchain.cmake",
     "src/main/cmake/sakura.cmake",
     "src/main/cmake/version.cmake",
     "src/main/cpp/cxx/ResourceHolder.hpp",
@@ -86945,6 +87192,10 @@
     "src/test/cpp/tests1/workbench/EditorWorkingCopyLifecycleBridgeTest.cpp",
     "src/test/cpp/tests1/workbench/EditorWorkingCopyLifecycleTest.cpp",
     "src/test/cpp/tests1/workbench/EmptyEditorSurfaceModelTest.cpp",
+    "src/test/cpp/tests1/workbench/ExplorerCommandRegistryTest.cpp",
+    "src/test/cpp/tests1/workbench/ExplorerContextMenuModelTest.cpp",
+    "src/test/cpp/tests1/workbench/ExplorerDeleteConfirmationTest.cpp",
+    "src/test/cpp/tests1/workbench/ExplorerResourcePathTest.cpp",
     "src/test/cpp/tests1/workbench/ExplorerToolTest.cpp",
     "src/test/cpp/tests1/workbench/ExtensionKeybindingMapTest.cpp",
     "src/test/cpp/tests1/workbench/ExtensionsViewIconDecoderTest.cpp",
@@ -87004,6 +87255,7 @@
     "tools/build/fixtures/abi/provider.cpp",
     "tools/build/pilots/controlipc_endpoint_contract_test.cpp",
     "tools/build/pilots/controlipc_protocol_contract_test.cpp",
+    "tools/build/pilots/controlipc_protocol_fixture_vectors.h",
     "tools/build/pilots/controlipc_security_contract_test.cpp",
     "tools/build/pilots/controlipc_transport_test.cpp",
     "tools/build/pilots/editor_app_lifecycle_contract_test.cpp",
@@ -87028,5 +87280,5 @@
     "tools/ppa_stub/ppa_stub.h",
     "tools/vcx-props/vcxcompat.props"
   ],
-  "tracked_source_set_sha256": "sha256:9fdef23e6aefbe5a2dd80d6abfe079ff5504a47545819970bf455e73b6470143"
+  "tracked_source_set_sha256": "sha256:348eccf72d11752bd6cde8a45f02d8603bf003a38be36a7d8745ab99b891966b"
 }

@@ -102,6 +102,20 @@ class CExplorerTool final : public IWorkbenchTool {
 public:
 	using FileActivationCallback = std::function<void(
 		std::wstring_view path, ExplorerFileActivationKind kind)>;
+	//! Dispatches one stable command with its serialized argument list.  The
+	//! return value reports whether a registered executor handled the command.
+	using CommandCallback = std::function<bool(
+		std::string_view commandId, std::string_view argumentsJson)>;
+	//! Resolves a command ID to the registry's title for menu rendering.  An
+	//! empty result means the command is not registered; the context menu then
+	//! fails closed instead of rendering a partial menu.
+	using MenuTitleResolver = std::function<std::wstring(std::string_view commandId)>;
+	//! Commits an inline rename: the entry at `path` takes the entered name.
+	using RenameCommitCallback = std::function<void(
+		std::wstring_view path, std::wstring_view newName)>;
+	//! Commits an inline create of a file or folder under `parentDirectory`.
+	using CreateCommitCallback = std::function<void(
+		std::wstring_view parentDirectory, std::wstring_view name, bool directory)>;
 
 	CExplorerTool();
 	~CExplorerTool() override;
@@ -119,6 +133,20 @@ public:
 	void SetRoot(std::wstring root);
 	[[nodiscard]] const std::wstring& GetRoot() const noexcept;
 	void SetFileActivationCallback(FileActivationCallback callback);
+	void SetCommandCallback(CommandCallback callback);
+	void SetMenuTitleResolver(MenuTitleResolver resolver);
+	void SetRenameCommitCallback(RenameCommitCallback callback);
+	void SetCreateCommitCallback(CreateCommitCallback callback);
+	//! Starts an inline label edit on the entry at `path`, as VS Code's
+	//! `renameFile` does.  The workspace root is not renameable.  The eventual
+	//! commit arrives through the rename-commit callback; the tree itself never
+	//! applies the label optimistically.
+	bool BeginRenameEntry(std::wstring_view path);
+	//! Starts an inline create under `parentDirectory` with a temporary row, as
+	//! VS Code's `explorer.newFile`/`explorer.newFolder` do.  The commit arrives
+	//! through the create-commit callback; the temporary row is removed and the
+	//! filesystem watcher renders the real outcome.
+	bool BeginCreateEntry(std::wstring_view parentDirectory, bool directory);
 	void SetPalette(ExplorerPalette palette);
 	//! Applies a parsed VS Code file icon theme. A null theme disables contributed icons.
 	void SetFileIconTheme(

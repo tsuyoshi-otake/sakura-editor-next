@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -32,6 +32,8 @@ enum class EFileResultStatus : std::uint8_t {
 	InvalidUri,
 	Cancelled,
 	Failed,
+	//! 作成・rename の対象が既に存在する。上書きの黙認はしない。
+	AlreadyExists,
 };
 
 //! 値を返すファイル操作の型付き結果。
@@ -248,6 +250,20 @@ struct FileConditionalReplaceResult {
 	}
 };
 
+//! rename の明示的なオプション。overwrite=false は既存 target を AlreadyExists で拒否する。
+struct FileRenameOptions {
+	bool overwrite = false;
+};
+
+//! delete の明示的なオプション。
+//!
+//! useTrash の既定 true は VS Code の files.enableTrash 既定と一致させる。
+//! recursive=false は空でないディレクトリを削除しない。
+struct FileDeleteOptions {
+	bool recursive = false;
+	bool useTrash = true;
+};
+
 struct FileWatchOptions {
 	bool recursive = false;
 };
@@ -285,8 +301,9 @@ public:
 
 //! URI scheme ごとの非同期化可能なファイルシステム実装。
 //!
-//! stat / enumerate / read / watch と version-aware conditional publish の契約。
-//! その他の write 系 capability は将来の操作との互換性を先に確保する宣言である。
+//! stat / enumerate / read / watch、version-aware conditional publish、および
+//! directory 作成 / rename / delete の契約。Copy capability は将来の操作との
+//! 互換性を先に確保する宣言である。
 class IFileSystemProvider {
 public:
 	virtual ~IFileSystemProvider() = default;
@@ -317,6 +334,30 @@ public:
 	[[nodiscard]] virtual FileResult<std::unique_ptr<IFileWatch>> Watch(
 		const platform::uri::Uri& resource,
 		const FileWatchOptions& options) = 0;
+	//! 新規ディレクトリの作成。Write capability に属する。既存は AlreadyExists。
+	//! Win32 の CreateDirectory マクロと衝突しない名前を用いる。
+	[[nodiscard]] virtual FileResult<void> MakeDirectory(const platform::uri::Uri&)
+	{
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"filesystem provider does not support directory creation");
+	}
+	//! 同一 provider 内の rename/move。Rename capability に属する。
+	[[nodiscard]] virtual FileResult<void> Rename(
+		const platform::uri::Uri& /*source*/,
+		const platform::uri::Uri& /*target*/,
+		const FileRenameOptions&)
+	{
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"filesystem provider does not support rename");
+	}
+	//! 削除。Delete capability に属し、useTrash はネイティブのごみ箱へ移す。
+	[[nodiscard]] virtual FileResult<void> Delete(
+		const platform::uri::Uri&,
+		const FileDeleteOptions&)
+	{
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"filesystem provider does not support delete");
+	}
 };
 
 } // namespace platform::filesystem

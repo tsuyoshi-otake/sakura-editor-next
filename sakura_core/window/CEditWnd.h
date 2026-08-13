@@ -93,6 +93,9 @@ struct SExtensionDocumentSnapshot;
 struct SExtensionDocumentEdit;
 struct SExtensionApplyEditResult;
 struct DLLSHAREDATA;
+namespace platform::filesystem {
+class IFileService;
+}
 namespace terminal {
 class CTerminalTool;
 }
@@ -934,6 +937,42 @@ private:
 	//! carries no post-clone "open it?" decision, so this window does not offer
 	//! one either - a recorded divergence in `workbench/scm/CLAUDE.md`.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCloneCommand();
+	//! Runs `explorer.newFile`/`explorer.newFolder`: starts the Explorer's inline
+	//! create row under the resource the payload names. The filesystem write
+	//! happens later, in `CommitExplorerCreate`, when the user commits the name.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteExplorerNewEntry(
+		std::string_view argumentsJson, bool directory);
+	//! Runs `renameFile`: starts the Explorer's inline label edit on the resource
+	//! the payload names. The rename itself happens in `CommitExplorerRename`.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteExplorerRenameFile(
+		std::string_view argumentsJson);
+	//! Runs `moveFileToTrash` and `deleteFile`. They are two registered commands,
+	//! never one reading a flag, but their confirmation/delete/error flow is one
+	//! shape, so both executors bind here with the trash decision already made.
+	//! A declined confirmation is `Succeeded`, as upstream's cancelled dialog
+	//! resolves the command without error; a trash failure offers upstream's
+	//! permanent-delete fallback prompt before reporting failure.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteExplorerDelete(
+		std::string_view argumentsJson, bool useTrash);
+	//! Runs `copyFilePath` / `copyRelativeFilePath`: puts the resource's absolute
+	//! path, or its label relative to the workspace root, on the clipboard.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteExplorerCopyPath(
+		std::string_view argumentsJson, bool relative);
+	//! Runs `revealFileInOS` ("Reveal in File Explorer" on Windows): opens a File
+	//! Explorer window with the resource selected.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteExplorerRevealInOS(
+		std::string_view argumentsJson);
+	//! Lazily creates the window-owned Win32 file service the Explorer executors
+	//! write through. Returns null when creation fails; every caller fails closed.
+	[[nodiscard]] platform::filesystem::IFileService* EnsureExplorerFileService();
+	//! Terminal for the Explorer's inline rename: validates nothing further (the
+	//! tree already applied `IsValidExplorerEntryName`) and renames through the
+	//! filesystem boundary without overwrite. Failure surfaces a modal error.
+	void CommitExplorerRename(std::wstring_view path, std::wstring_view newName);
+	//! Terminal for the Explorer's inline create: makes the directory, or creates
+	//! the file atomically-if-missing and opens it pinned, matching upstream's
+	//! post-create open. Failure surfaces a modal error.
+	void CommitExplorerCreate(std::wstring_view parentDirectory, std::wstring_view name, bool directory);
 	//! Projects one resolved comparison onto the native diff surface.
 	//!
 	//! Like the extension detail surface this is a composition-layer projection
@@ -1168,6 +1207,10 @@ private:
 	//! Window-local command/context boundary; only initialized for runtime-backed workbench windows.
 	std::unique_ptr<workbench::commands::WorkbenchContextKeyService> m_workbenchContextKeyService;
 	std::unique_ptr<workbench::commands::WorkbenchCommandRegistry> m_workbenchCommandRegistry;
+	//! Window-owned Win32 file service for the Explorer file-operation commands.
+	//! Created lazily on first use because `IWorkbenchRuntime` exposes no file
+	//! service and a window that never runs an Explorer command needs none.
+	std::unique_ptr<platform::filesystem::IFileService> m_explorerFileService;
 	//! State for the VS Code Windows File-menu keybindings, including Ctrl+K chords.
 	workbench::editor::WorkbenchKeybindingState m_workbenchKeybindingState;
 	//! Extension-contributed keybindings, parsed once per contribution change.

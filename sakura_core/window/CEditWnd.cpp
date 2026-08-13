@@ -95,6 +95,8 @@
 #include "workbench/extension/CExtensionBottomPanelTool.h"
 #include "workbench/extension/CExtensionSidebarTool.h"
 #include "workbench/explorer/CExplorerTool.h"
+#include "workbench/explorer/ExplorerDeleteConfirmation.h"
+#include "workbench/explorer/ExplorerResourcePath.h"
 #include "workbench/notification/CNotificationHost.h"
 #include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
 #include "workbench/statusbar/StatusbarViewModel.h"
@@ -102,6 +104,8 @@
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/WorkbenchZoom.h"
 #include "workbench/commands/ApiCommandArguments.h"
+#include "workbench/commands/ExplorerCommandArguments.h"
+#include "workbench/commands/ExplorerCommandIds.h"
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
@@ -127,6 +131,7 @@
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/win32/BuiltinPartProjection.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
+#include <sakura/filesystem/FileSystemFactory.h>
 #include <sakura/uri/UriIdentity.h>
 #include <sakura/editor/win32/Win32EditorFrameAdapter.h>
 
@@ -143,6 +148,7 @@
 #include "extension/CExtensionViewRegistry.h"
 #include "extension/CExtensionQuickInputDialog.h"
 #include "extension/IExtensionSecretStorage.h"
+#include "_os/CClipboard.h"
 #include "cmd/COpeBlk.h"
 #include "cmd/CViewCommander_inline.h"
 
@@ -594,12 +600,12 @@ struct CEditWnd::UpdateStateGate final {
 	}
 };
 
-static void ShowCodeBox( HWND hWnd, CEditDoc* pcEditDoc )
+static void ShowCodeBox( CEditDoc* pcEditDoc, const CEditView& cActiveView )
 {
 	// カーソル位置の文字列を取得
 	const CLayout*	pcLayout;
 	CLogicInt		nLineLen;
-	const CEditView* pcView = &GetEditWnd().GetActiveView();
+	const CEditView* pcView = &cActiveView;
 	const CCaret* pcCaret = &pcView->GetCaret();
 	const CLayoutMgr* pLayoutMgr = &pcEditDoc->m_cLayoutMgr;
 	const wchar_t*	pLine = pLayoutMgr->GetLineStr( pcCaret->GetCaretLayoutPos().GetY2(), &nLineLen, &pcLayout );
@@ -652,7 +658,7 @@ static void ShowCodeBox( HWND hWnd, CEditDoc* pcEditDoc )
 				// メッセージボックス表示
 				auto_sprintf(szMsg, LS(STR_ERR_DLGEDITWND13),
 					szChar, szCodeCP, szCode[CODE_SJIS], szCode[CODE_JIS], szCode[CODE_EUC], szCode[CODE_LATIN1], szCode[CODE_UNICODE], szCode[CODE_UTF8], szCode[CODE_CESU8]);
-				::MessageBox( hWnd, szMsg, GSTR_APPNAME, MB_OK );
+				::MessageBox( cActiveView.GetHwnd(), szMsg, GSTR_APPNAME, MB_OK );
 			}
 		}
 	}
@@ -2071,6 +2077,44 @@ bool CEditWnd::InitializeWorkbench()
 		workbench::explorer::ExplorerFileActivationKind kind) {
 		OpenExplorerFile(path, kind);
 	});
+	// The Explorer's context menu and keybindings dispatch the same stable
+	// command IDs through the same registry the SCM view uses; recognition is
+	// terminal exactly as it is there.
+	m_explorerTool->SetCommandCallback([this](std::string_view command, std::string_view argumentsJson) {
+		bool handled = false;
+		(void)TryExecuteWorkbenchStableCommand(command, handled, argumentsJson);
+		return handled;
+	});
+	// Menu titles are the registry's facts. A command the registry does not know
+	// resolves to the empty string and the Explorer menu fails closed rather than
+	// rendering a partial menu with an invented label.
+	m_explorerTool->SetMenuTitleResolver([this](std::string_view commandId) -> std::wstring {
+		if (!m_workbenchCommandRegistry) {
+			return {};
+		}
+		const auto descriptor = m_workbenchCommandRegistry->Find(commandId);
+		if (!descriptor || descriptor->title.empty()) {
+			return {};
+		}
+		const int required = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+			descriptor->title.data(), static_cast<int>(descriptor->title.size()), nullptr, 0);
+		if (required <= 0) {
+			return {};
+		}
+		std::wstring title(static_cast<size_t>(required), L'\0');
+		if (::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, descriptor->title.data(),
+				static_cast<int>(descriptor->title.size()), title.data(), required) != required) {
+			return {};
+		}
+		return title;
+	});
+	m_explorerTool->SetRenameCommitCallback([this](std::wstring_view path, std::wstring_view newName) {
+		CommitExplorerRename(path, newName);
+	});
+	m_explorerTool->SetCreateCommitCallback([this](std::wstring_view parentDirectory,
+		std::wstring_view name, bool directory) {
+		CommitExplorerCreate(parentDirectory, name, directory);
+	});
 	m_scmTool->SetFileActivationCallback([this](std::wstring_view path) {
 		const std::wstring ownedPath(path);
 		GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
@@ -2711,6 +2755,23 @@ bool CEditWnd::InitializeWorkbench()
 			.publish = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Publish); },
 		});
 		if (!gitRegistration.Succeeded()) {
+			CloseWorkbench();
+			return false;
+		}
+		// The Files Explorer's eight resource-scoped file-operation commands, in
+		// upstream's own IDs and surface shapes; the Explorer surface behavior and
+		// its recorded divergences live in `workbench/explorer/CLAUDE.md`.
+		const auto explorerRegistration = m_workbenchCommandRegistry->RegisterExplorerCommands({
+			.newFile = [this](std::string_view argumentsJson) { return ExecuteExplorerNewEntry(argumentsJson, false); },
+			.newFolder = [this](std::string_view argumentsJson) { return ExecuteExplorerNewEntry(argumentsJson, true); },
+			.renameFile = [this](std::string_view argumentsJson) { return ExecuteExplorerRenameFile(argumentsJson); },
+			.moveFileToTrash = [this](std::string_view argumentsJson) { return ExecuteExplorerDelete(argumentsJson, true); },
+			.deleteFile = [this](std::string_view argumentsJson) { return ExecuteExplorerDelete(argumentsJson, false); },
+			.copyFilePath = [this](std::string_view argumentsJson) { return ExecuteExplorerCopyPath(argumentsJson, false); },
+			.copyRelativeFilePath = [this](std::string_view argumentsJson) { return ExecuteExplorerCopyPath(argumentsJson, true); },
+			.revealFileInOS = [this](std::string_view argumentsJson) { return ExecuteExplorerRevealInOS(argumentsJson); },
+		});
+		if (!explorerRegistration.Succeeded()) {
 			CloseWorkbench();
 			return false;
 		}
@@ -3808,6 +3869,300 @@ EUntrustedFileLoadDecision CEditWnd::RequestUntrustedFileLoad(std::wstring_view 
 	// simply asks again if the record did not stick.
 	(void)m_workbenchRuntime->RecordUntrustedFilesAccepted();
 	return EUntrustedFileLoadDecision::Allowed;
+}
+
+namespace {
+
+//! Decodes one Explorer command payload to the Windows path it names. Every
+//! failure — malformed payload, unparseable URI, non-file scheme — collapses to
+//! `nullopt`; the executors report it as one malformed-arguments terminal.
+std::optional<std::wstring> ResolveExplorerArgumentPath(std::string_view argumentsJson)
+{
+	const auto parsed = workbench::commands::ParseExplorerResourceArguments(argumentsJson);
+	if (!parsed) {
+		return std::nullopt;
+	}
+	const auto uri = platform::uri::Uri::Parse(parsed->resourceUri);
+	if (!uri.value) {
+		return std::nullopt;
+	}
+	auto windowsPath = uri.value->ToWindowsPath();
+	if (!windowsPath.value || windowsPath.value->empty()) {
+		return std::nullopt;
+	}
+	return std::move(*windowsPath.value);
+}
+
+//! Last path segment with trailing separators trimmed; the delete confirmation
+//! names the resource the way upstream's dialog does, not by its full path.
+std::wstring ExplorerResourceDisplayName(std::wstring_view path)
+{
+	while (!path.empty() && workbench::explorer::IsExplorerPathSeparator(path.back())) {
+		path.remove_suffix(1);
+	}
+	const auto separator = path.find_last_of(L"\\/");
+	if (separator != std::wstring_view::npos) {
+		path.remove_prefix(separator + 1);
+	}
+	return std::wstring(path);
+}
+
+//! Shows one Explorer delete confirmation in the shape upstream's dialog has:
+//! instruction, detail, a single accented primary button, and Cancel. Returns
+//! true only on an explicit primary-button accept; a failed dialog and a
+//! decline take the same fail-closed path.
+bool ShowExplorerDeleteConfirmationDialog(
+	HWND owner, const workbench::explorer::ExplorerDeleteConfirmation& confirmation)
+{
+	TASKDIALOGCONFIG config{};
+	config.cbSize = sizeof(config);
+	config.hwndParent = owner;
+	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW
+		| TDF_SIZE_TO_CONTENT;
+	config.pszWindowTitle = L"Sakura Editor NEXT";
+	if (confirmation.isWarning) {
+		config.pszMainIcon = TD_WARNING_ICON;
+	}
+	config.pszMainInstruction = confirmation.instruction.c_str();
+	config.pszContent = confirmation.detail.empty() ? nullptr : confirmation.detail.c_str();
+	config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+	constexpr int kPrimaryButtonId = 1000;
+	TASKDIALOG_BUTTON button{ kPrimaryButtonId, confirmation.primaryButton.c_str() };
+	config.cButtons = 1;
+	config.pButtons = &button;
+	int selected = 0;
+	if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))
+		|| selected != kPrimaryButtonId) {
+		return false;
+	}
+	return true;
+}
+
+//! Surfaces a failed Explorer file operation. Recorded divergence in
+//! `workbench/explorer/CLAUDE.md`: upstream reports these through the
+//! notification center; this product's notification surface cannot yet carry
+//! them, so the report is a modal error dialog.
+void ShowExplorerOperationError(HWND owner, const wchar_t* instruction, const std::wstring& detail)
+{
+	TASKDIALOGCONFIG config{};
+	config.cbSize = sizeof(config);
+	config.hwndParent = owner;
+	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW
+		| TDF_SIZE_TO_CONTENT;
+	config.pszWindowTitle = L"Sakura Editor NEXT";
+	config.pszMainIcon = TD_ERROR_ICON;
+	config.pszMainInstruction = instruction;
+	config.pszContent = detail.empty() ? nullptr : detail.c_str();
+	config.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+	(void)::TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
+}
+
+} // namespace
+
+platform::filesystem::IFileService* CEditWnd::EnsureExplorerFileService()
+{
+	if (!m_explorerFileService) {
+		auto files = platform::filesystem::CreateWin32FileService();
+		if (!files.Succeeded() || !files.value) {
+			return nullptr;
+		}
+		m_explorerFileService = std::move(*files.value);
+	}
+	return m_explorerFileService.get();
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerNewEntry(
+	std::string_view argumentsJson, bool directory)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto path = ResolveExplorerArgumentPath(argumentsJson);
+	if (!path) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "explorer command arguments are malformed" };
+	}
+	if (m_explorerTool == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no explorer view exists in this window" };
+	}
+	if (!m_explorerTool->BeginCreateEntry(*path, directory)) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable,
+			"the resource cannot host a new entry" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerRenameFile(
+	std::string_view argumentsJson)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto path = ResolveExplorerArgumentPath(argumentsJson);
+	if (!path) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "explorer command arguments are malformed" };
+	}
+	if (m_explorerTool == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no explorer view exists in this window" };
+	}
+	if (!m_explorerTool->BeginRenameEntry(*path)) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the resource is not renameable" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerDelete(
+	std::string_view argumentsJson, bool useTrash)
+{
+	using platform::filesystem::EFileResultStatus;
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto path = ResolveExplorerArgumentPath(argumentsJson);
+	if (!path) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "explorer command arguments are malformed" };
+	}
+	auto* const files = EnsureExplorerFileService();
+	if (files == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the file service is unavailable" };
+	}
+	const auto stat = files->Stat(platform::uri::Uri::FromWindowsPath(*path));
+	if (!stat.Succeeded() || !stat.value) {
+		if (stat.status == EFileResultStatus::NotFound) {
+			return { EWorkbenchCommandExecutionStatus::NotApplicable, "the resource does not exist" };
+		}
+		return { EWorkbenchCommandExecutionStatus::Failed, "the resource cannot be inspected" };
+	}
+	const bool isDirectory = stat.value->type == platform::filesystem::EFileEntryType::Directory;
+
+	const auto confirmation = workbench::explorer::BuildExplorerDeleteConfirmation(
+		ExplorerResourceDisplayName(*path), isDirectory, useTrash);
+	if (!ShowExplorerDeleteConfirmationDialog(GetHwnd(), confirmation)) {
+		// Upstream resolves a declined confirmation without error; cancelling
+		// the dialog is the command completing, not the command failing.
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	}
+
+	auto deletion = files->Delete(platform::uri::Uri::FromWindowsPath(*path),
+		{ .recursive = true, .useTrash = useTrash });
+	if (!deletion.Succeeded() && useTrash) {
+		// Upstream's Recycle Bin fallback: offer the permanent deletion the
+		// trash could not perform, behind its own warning confirmation.
+		if (!ShowExplorerDeleteConfirmationDialog(GetHwnd(),
+				workbench::explorer::BuildExplorerTrashFailedConfirmation())) {
+			return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		}
+		deletion = files->Delete(platform::uri::Uri::FromWindowsPath(*path),
+			{ .recursive = true, .useTrash = false });
+	}
+	if (!deletion.Succeeded()) {
+		ShowExplorerOperationError(GetHwnd(), L"The file could not be deleted.",
+			deletion.diagnostic);
+		return { EWorkbenchCommandExecutionStatus::Failed, "the resource could not be deleted" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerCopyPath(
+	std::string_view argumentsJson, bool relative)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto path = ResolveExplorerArgumentPath(argumentsJson);
+	if (!path) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "explorer command arguments are malformed" };
+	}
+	const std::wstring text = relative
+		? workbench::explorer::BuildExplorerRelativePathLabel(GetSemanticWorkspaceRoot(), *path)
+		: *path;
+	CClipboard clipboard(GetHwnd());
+	if (!clipboard) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the clipboard could not be opened" };
+	}
+	clipboard.Empty();
+	if (!clipboard.SetText(text.c_str(), text.size(), false, false)) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the clipboard text could not be written" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerRevealInOS(
+	std::string_view argumentsJson)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto path = ResolveExplorerArgumentPath(argumentsJson);
+	if (!path) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "explorer command arguments are malformed" };
+	}
+	PIDLIST_ABSOLUTE item = ::ILCreateFromPathW(path->c_str());
+	if (item == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the resource could not be located" };
+	}
+	const HRESULT revealed = ::SHOpenFolderAndSelectItems(item, 0, nullptr, 0);
+	::ILFree(item);
+	if (FAILED(revealed)) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the resource could not be revealed" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+void CEditWnd::CommitExplorerRename(std::wstring_view path, std::wstring_view newName)
+{
+	auto* const files = EnsureExplorerFileService();
+	if (files == nullptr) {
+		ShowExplorerOperationError(GetHwnd(), L"The file could not be renamed.", {});
+		return;
+	}
+	std::wstring source(path);
+	while (!source.empty() && workbench::explorer::IsExplorerPathSeparator(source.back())) {
+		source.pop_back();
+	}
+	const auto separator = source.find_last_of(L"\\/");
+	if (separator == std::wstring::npos) {
+		ShowExplorerOperationError(GetHwnd(), L"The file could not be renamed.", {});
+		return;
+	}
+	std::wstring target = source.substr(0, separator + 1);
+	target += newName;
+	const auto renamed = files->Rename(platform::uri::Uri::FromWindowsPath(source),
+		platform::uri::Uri::FromWindowsPath(target), { .overwrite = false });
+	if (!renamed.Succeeded()) {
+		ShowExplorerOperationError(GetHwnd(), L"The file could not be renamed.",
+			renamed.diagnostic);
+	}
+}
+
+void CEditWnd::CommitExplorerCreate(
+	std::wstring_view parentDirectory, std::wstring_view name, bool directory)
+{
+	auto* const files = EnsureExplorerFileService();
+	if (files == nullptr) {
+		ShowExplorerOperationError(GetHwnd(),
+			directory ? L"The folder could not be created." : L"The file could not be created.", {});
+		return;
+	}
+	std::wstring target(parentDirectory);
+	if (!target.empty() && !workbench::explorer::IsExplorerPathSeparator(target.back())) {
+		target += L'\\';
+	}
+	target += name;
+	if (directory) {
+		const auto made = files->MakeDirectory(platform::uri::Uri::FromWindowsPath(target));
+		if (!made.Succeeded()) {
+			ShowExplorerOperationError(GetHwnd(), L"The folder could not be created.",
+				made.diagnostic);
+		}
+		return;
+	}
+	// Create-if-missing keeps an existing file's content untouched: racing an
+	// existing name is a conflict, never a truncation.
+	const auto created = files->ConditionalAtomicReplace(
+		platform::uri::Uri::FromWindowsPath(target), platform::filesystem::FileBytes{},
+		platform::filesystem::FileConditionalReplaceOptions::ForMissing());
+	if (!created.Succeeded()) {
+		ShowExplorerOperationError(GetHwnd(), L"The file could not be created.",
+			created.diagnostic);
+		return;
+	}
+	// Upstream opens a newly created file pinned; a folder only appears in the tree.
+	OpenExplorerFile(target, workbench::explorer::ExplorerFileActivationKind::Pinned);
 }
 
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitStageCommand(
@@ -9806,7 +10161,7 @@ LRESULT CEditWnd::DispatchEvent(
 					GetDocument()->HandleCommand( F_JUMP_DIALOG );
 				}
 				else if( mp->dwItemSpec == 3 ){	//	文字コード→各種コード
-					ShowCodeBox( GetHwnd(), GetDocument() );
+					ShowCodeBox( GetDocument(), GetActiveView() );
 				}
 				else if( mp->dwItemSpec == 4 ){	//	文字コードセット→文字コードセット指定
 					GetDocument()->HandleCommand( F_CHG_CHARSET );
@@ -9985,6 +10340,30 @@ LRESULT CEditWnd::DispatchEvent(
 
 	case MYWM_CLOSE:
 		/* エディタへの終了要求 */
+		// Closing the last window of a merged-tab group with the retain-empty
+		// option used to launch a replacement editor process and destroy this
+		// one.  VS Code's workbench.action.closeActiveEditor keeps the window
+		// and process alive in the empty-editor state, so when the working-copy
+		// coordinator owns the close it runs in place instead; the coordinator's
+		// CommitClose fires PP_DOCUMENT_CLOSE and reinitializes the empty
+		// document, so no plugin event or window teardown belongs here.
+		if( PM_CLOSE_EXIT != (PM_CLOSE_EXIT & wParam) &&
+			m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd &&
+			!m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin &&
+			m_pShareData->m_Common.m_sTabBar.m_bTab_RetainEmptyWin &&
+			m_workingCopyCoordinator != nullptr &&
+			!m_workspaceReplacementClosePreflightAccepted ){
+			EditNode* pEditNode = CAppNodeManager::getInstance()->GetEditNode( GetHwnd() );
+			if( pEditNode && 1 == CAppNodeGroupHandle(pEditNode->GetGroup()).GetEditorWindowsNum() ){
+				if( !HasActiveEditorInput() ){
+					return TRUE;	// 既に空。閉じる対象がないのでウィンドウを維持する
+				}
+				return ExecuteActiveWorkingCopyCommand(
+					workbench::editor::command_ids::CloseActiveEditor,
+					PM_CLOSE_GREPNOCONFIRM == (PM_CLOSE_GREPNOCONFIRM & wParam),
+					false ) ? TRUE : FALSE;
+			}
+		}
 		if( FALSE != ( nRet = OnClose( (HWND)lParam,
 				PM_CLOSE_GREPNOCONFIRM == (PM_CLOSE_GREPNOCONFIRM & wParam) )) ){	// Jan. 23, 2002 genta 警告抑制
 			//プラグイン：DocumentCloseイベント実行
