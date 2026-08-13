@@ -199,17 +199,38 @@ function Get-ExistingRelease {
         [Parameter(Mandatory)] [string] $Repo
     )
 
-    $output = & gh api "repos/$Repo/releases/tags/$Tag" 2>&1
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -eq 0) {
-        return (($output | Out-String) | ConvertFrom-Json)
+    # Do not resolve this through GET /releases/tags/<tag>. That endpoint returns
+    # published releases only, so a draft reports 404 and reads as absent. This
+    # function is asked about the draft that this same script has just created,
+    # and it is also the guard that is supposed to notice a draft left behind by
+    # an earlier attempt, so a draft that cannot be seen breaks both: the publish
+    # step failed to find the release it had created, and re-running the workflow
+    # went on to create a draft over the leftover one instead of stopping (#156).
+    # Enumerating /releases includes drafts, so match tag_name against that.
+    $page = 1
+    $maxPages = 100
+    $perPage = 100
+    while ($page -le $maxPages) {
+        $output = & gh api "repos/$Repo/releases?per_page=$perPage&page=$page" 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            $diagnostic = ($output | Out-String)
+            throw "Could not determine whether release '$Tag' already exists in ${Repo}: $diagnostic"
+        }
+        $releases = @((($output | Out-String) | ConvertFrom-Json))
+        if ($releases.Count -eq 0) {
+            return $null
+        }
+        $matched = @($releases | Where-Object { $_.tag_name -eq $Tag })
+        if ($matched.Count -gt 0) {
+            return $matched[0]
+        }
+        # A short page is the last page.
+        if ($releases.Count -lt $perPage) {
+            return $null
+        }
+        $page++
     }
-
-    $diagnostic = ($output | Out-String)
-    if ($diagnostic -match '(?i)\(HTTP 404\)') {
-        return $null
-    }
-    throw "Could not determine whether release '$Tag' already exists in ${Repo}: $diagnostic"
+    throw "Could not determine whether release '$Tag' already exists in ${Repo}: the release list exceeded $maxPages pages."
 }
 
 function Get-ReleaseJson {
