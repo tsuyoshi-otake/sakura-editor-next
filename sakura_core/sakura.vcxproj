@@ -644,6 +644,7 @@
 	<ClInclude Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.h" />
 	<ClInclude Include="..\sakura_core\workbench\commands\CommandArgumentsJson.h" />
 	<ClInclude Include="..\sakura_core\workbench\commands\ApiCommandArguments.h" />
+	<ClInclude Include="..\sakura_core\workbench\commands\ExplorerCommandArguments.h" />
 	<ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceConfigurationDocumentParser.h" />
 	<ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentService.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\FolderTaskCatalogRegistry.h" />
@@ -1336,6 +1337,7 @@
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchCommandRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\CommandArgumentsJson.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\commands\ApiCommandArguments.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\commands\ExplorerCommandArguments.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceConfigurationDocumentParser.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentService.cpp" />
 	<ClCompile Include="..\sakura_core\debug\launch\LaunchConfigurationCatalog.cpp" />

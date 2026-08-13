@@ -546,6 +546,61 @@ WorkbenchCommandDescriptor MakeGitDiffEditorDescriptor(std::string id, std::stri
 	};
 }
 
+//!
+//! @brief Which surfaces one Explorer file-operation command carries.
+//!
+//! Upstream splits these across three shapes (`fileActions.contribution.ts`):
+//! `explorer.newFile`/`explorer.newFolder` are Explorer-context-menu commands
+//! with no keybinding and no Command Palette entry; `renameFile` (F2),
+//! `moveFileToTrash` (Delete), and `deleteFile` (Shift+Delete) add a
+//! keybinding but still no palette entry, because with no Explorer selection
+//! they have no operand; `copyFilePath` (Shift+Alt+C), `copyRelativeFilePath`
+//! (Ctrl+K Ctrl+Shift+C), and `revealFileInOS` (Shift+Alt+R) also appear in
+//! the Command Palette, where upstream retitles them against the active file
+//! ("Copy Path of Active File"). This registry carries one title per command,
+//! so the palette slot reuses the context-menu title; the palette-variant
+//! retitle is a recorded simplification in `CLAUDE.md`, not an accident.
+//!
+enum class EExplorerCommandSurfaces : std::uint8_t {
+	MenuOnly,
+	MenuAndKey,
+	MenuKeyAndPalette,
+};
+
+//!
+//! @brief One of the Explorer's resource-scoped file-operation commands.
+//!
+//! Upstream gates these on Files Explorer context keys -
+//! `filesExplorerFocus && foldersViewVisible && !inputFocus`, resource
+//! writability, and root/trash-capability negations
+//! (`fileActions.contribution.ts`). None of those conjuncts are context keys
+//! this native provider publishes yet, so, exactly as
+//! `MakeGitAlwaysAvailableDescriptor` documents for `git.init`/`git.clone`,
+//! the clause carries `workbenchReady` alone rather than a fabricated
+//! conjunct.
+//!
+WorkbenchCommandDescriptor MakeExplorerResourceDescriptor(
+	std::string id, std::string title, EExplorerCommandSurfaces surfaces)
+{
+	std::vector<WorkbenchCommandSurfaceBinding> bindings;
+	bindings.push_back({ EWorkbenchCommandSurface::Menu, id + ".menu", std::nullopt });
+	if (surfaces != EExplorerCommandSurfaces::MenuOnly) {
+		bindings.push_back({ EWorkbenchCommandSurface::Keybinding, id + ".key", std::nullopt });
+	}
+	if (surfaces == EExplorerCommandSurfaces::MenuKeyAndPalette) {
+		bindings.push_back({ EWorkbenchCommandSurface::CommandPalette, id + ".palette", std::nullopt });
+	}
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		std::move(bindings),
+	};
+}
+
 //! `updateState == '<state>'`, the exact shape upstream's `when` clauses take.
 //! The state strings carry upstream's spaces; quoting is what makes
 //! `'checking for updates'` one operand rather than three tokens.
@@ -781,6 +836,45 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 		Entry{ MakeGitDescriptor("git.sync", "Git: Sync"), std::move(executors.sync), {} },
 		Entry{ MakeGitDescriptor("git.syncRebase", "Git: Sync (Rebase)"), std::move(executors.syncRebase), {} },
 		Entry{ MakeGitDescriptor("git.publish", "Git: Publish Branch..."), std::move(executors.publish), {} },
+	};
+	return RegisterAtomicBatch(std::move(commands));
+}
+
+WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCommands(
+	WorkbenchExplorerCommandExecutors executors)
+{
+	// IDs and titles are upstream's own: `explorer.newFile`/`explorer.newFolder`
+	// and the labels from `fileActions.ts` (`NEW_FILE_LABEL`, `NEW_FOLDER_LABEL`,
+	// `TRIGGER_RENAME_LABEL`, `MOVE_FILE_TO_TRASH_LABEL`), the rename/delete IDs
+	// and "Delete Permanently" from `fileActions.contribution.ts`, "Copy Path"/
+	// "Copy Relative Path" from `fileConstants.ts`'s commands, and the Windows
+	// branch of `REVEAL_IN_OS_LABEL` from the electron-browser contribution.
+	// Every entry is resource-scoped, so each binds the argument executor.
+	std::vector<Entry> commands{
+		Entry{ MakeExplorerResourceDescriptor("explorer.newFile", "New File...",
+				EExplorerCommandSurfaces::MenuOnly),
+			{}, std::move(executors.newFile) },
+		Entry{ MakeExplorerResourceDescriptor("explorer.newFolder", "New Folder...",
+				EExplorerCommandSurfaces::MenuOnly),
+			{}, std::move(executors.newFolder) },
+		Entry{ MakeExplorerResourceDescriptor("renameFile", "Rename...",
+				EExplorerCommandSurfaces::MenuAndKey),
+			{}, std::move(executors.renameFile) },
+		Entry{ MakeExplorerResourceDescriptor("moveFileToTrash", "Delete",
+				EExplorerCommandSurfaces::MenuAndKey),
+			{}, std::move(executors.moveFileToTrash) },
+		Entry{ MakeExplorerResourceDescriptor("deleteFile", "Delete Permanently",
+				EExplorerCommandSurfaces::MenuAndKey),
+			{}, std::move(executors.deleteFile) },
+		Entry{ MakeExplorerResourceDescriptor("copyFilePath", "Copy Path",
+				EExplorerCommandSurfaces::MenuKeyAndPalette),
+			{}, std::move(executors.copyFilePath) },
+		Entry{ MakeExplorerResourceDescriptor("copyRelativeFilePath", "Copy Relative Path",
+				EExplorerCommandSurfaces::MenuKeyAndPalette),
+			{}, std::move(executors.copyRelativeFilePath) },
+		Entry{ MakeExplorerResourceDescriptor("revealFileInOS", "Reveal in File Explorer",
+				EExplorerCommandSurfaces::MenuKeyAndPalette),
+			{}, std::move(executors.revealFileInOS) },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

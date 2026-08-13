@@ -218,6 +218,45 @@ struct WorkbenchGitCommandExecutors {
 };
 
 /*!
+	@brief Executors for the Explorer's file-operation commands.
+
+	Kept separate from `WorkbenchBuiltinCommandExecutors` because these belong
+	to the Files Explorer feature (`workbench/contrib/files`) rather than to the
+	workbench shell. A command left empty here still registers and still
+	resolves, but executes as `Unsupported` - the sanctioned typed boundary.
+
+	Every member is resource-scoped and therefore an argument executor: upstream
+	passes the selected Explorer resource (`explorer.newFile`'s target folder,
+	`renameFile`'s file, `copyFilePath`'s file, ...) as the command argument,
+	and without it the command has no operand. The payload is the single-URI
+	list `ExplorerCommandArguments.h` defines. Upstream additionally passes a
+	multi-select list as a second argument to `moveFileToTrash`/`deleteFile`/
+	`copyFilePath`; this native Explorer has no multi-select yet, so that second
+	argument is deliberately absent from the payload contract rather than
+	accepted and ignored.
+*/
+struct WorkbenchExplorerCommandExecutors {
+	//! `explorer.newFile` / `explorer.newFolder`. The resource is the directory
+	//! the new entry is created in.
+	WorkbenchCommandArgumentExecutor newFile;
+	WorkbenchCommandArgumentExecutor newFolder;
+	//! `renameFile` (F2). The resource is the entry being renamed; the new name
+	//! comes from the Explorer's inline input, exactly as upstream's handler
+	//! reads it from the tree's rename box rather than from the argument list.
+	WorkbenchCommandArgumentExecutor renameFile;
+	//! `moveFileToTrash` (Delete) and `deleteFile` (Shift+Delete). Two distinct
+	//! upstream commands, never one executor reading a flag: "Delete" moves to
+	//! the recycle bin and "Delete Permanently" does not.
+	WorkbenchCommandArgumentExecutor moveFileToTrash;
+	WorkbenchCommandArgumentExecutor deleteFile;
+	WorkbenchCommandArgumentExecutor copyFilePath;
+	WorkbenchCommandArgumentExecutor copyRelativeFilePath;
+	//! `revealFileInOS`, upstream's native-window command whose label is
+	//! platform-selected; on Windows it is "Reveal in File Explorer".
+	WorkbenchCommandArgumentExecutor revealFileInOS;
+};
+
+/*!
 	@brief Executors for the update surfaces.
 
 	Upstream splits the same four operations across two command families: the
@@ -323,6 +362,16 @@ public:
 	//! implementation file.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterGitCommands(
 		WorkbenchGitCommandExecutors executors = {});
+	//! Registers the Files Explorer's file-operation commands
+	//! (`explorer.newFile`, `explorer.newFolder`, `renameFile`,
+	//! `moveFileToTrash`, `deleteFile`, `copyFilePath`,
+	//! `copyRelativeFilePath`, `revealFileInOS`) as one atomic batch, using
+	//! upstream's own stable IDs and context-menu titles. Their Explorer-focus
+	//! `when` conjuncts are context keys this native provider does not publish
+	//! yet, so the clauses carry `workbenchReady` alone; see
+	//! `MakeExplorerResourceDescriptor` in the implementation file.
+	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterExplorerCommands(
+		WorkbenchExplorerCommandExecutors executors = {});
 	//! Registers the update surfaces as one atomic batch: upstream's five Command
 	//! Palette actions, its eight state-scoped `7_update` gear entries, and the
 	//! title-bar entry `workbench.actions.updateIndicator`, using upstream's own
