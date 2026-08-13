@@ -75,7 +75,10 @@ class VcpkgToolCacheContractTests(unittest.TestCase):
     def test_the_cache_is_restored_on_every_event_and_saved_only_on_a_trusted_push(self) -> None:
         restore = re.search(r"- name: Restore cached vcpkg tool\n(?:.*\n)*?\s*uses: (\S+)", self.text)
         self.assertIsNotNone(restore)
-        self.assertEqual("actions/cache/restore@v4", restore.group(1))
+        # The sub-action is the contract; its major version is dependabot's to
+        # bump, and pinning one into the assertion only turned a routine bump
+        # into a red build (#149).
+        self.assertRegex(restore.group(1), r"^actions/cache/restore@")
 
         save = re.search(
             r"- name: Save cached vcpkg tool\n\s*if: (.+)\n\s*uses: (\S+)",
@@ -83,7 +86,7 @@ class VcpkgToolCacheContractTests(unittest.TestCase):
         )
         self.assertIsNotNone(save)
         condition, uses = save.group(1), save.group(2)
-        self.assertEqual("actions/cache/save@v4", uses)
+        self.assertRegex(uses, r"^actions/cache/save@")
         self.assertIn("github.event_name != 'pull_request'", condition)
         self.assertIn("steps.restore.outputs.cache-hit != 'true'", condition)
 
