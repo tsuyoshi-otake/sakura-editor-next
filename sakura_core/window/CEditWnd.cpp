@@ -594,12 +594,12 @@ struct CEditWnd::UpdateStateGate final {
 	}
 };
 
-static void ShowCodeBox( HWND hWnd, CEditDoc* pcEditDoc )
+static void ShowCodeBox( CEditDoc* pcEditDoc, const CEditView& cActiveView )
 {
 	// カーソル位置の文字列を取得
 	const CLayout*	pcLayout;
 	CLogicInt		nLineLen;
-	const CEditView* pcView = &GetEditWnd().GetActiveView();
+	const CEditView* pcView = &cActiveView;
 	const CCaret* pcCaret = &pcView->GetCaret();
 	const CLayoutMgr* pLayoutMgr = &pcEditDoc->m_cLayoutMgr;
 	const wchar_t*	pLine = pLayoutMgr->GetLineStr( pcCaret->GetCaretLayoutPos().GetY2(), &nLineLen, &pcLayout );
@@ -652,7 +652,7 @@ static void ShowCodeBox( HWND hWnd, CEditDoc* pcEditDoc )
 				// メッセージボックス表示
 				auto_sprintf(szMsg, LS(STR_ERR_DLGEDITWND13),
 					szChar, szCodeCP, szCode[CODE_SJIS], szCode[CODE_JIS], szCode[CODE_EUC], szCode[CODE_LATIN1], szCode[CODE_UNICODE], szCode[CODE_UTF8], szCode[CODE_CESU8]);
-				::MessageBox( hWnd, szMsg, GSTR_APPNAME, MB_OK );
+				::MessageBox( cActiveView.GetHwnd(), szMsg, GSTR_APPNAME, MB_OK );
 			}
 		}
 	}
@@ -9806,7 +9806,7 @@ LRESULT CEditWnd::DispatchEvent(
 					GetDocument()->HandleCommand( F_JUMP_DIALOG );
 				}
 				else if( mp->dwItemSpec == 3 ){	//	文字コード→各種コード
-					ShowCodeBox( GetHwnd(), GetDocument() );
+					ShowCodeBox( GetDocument(), GetActiveView() );
 				}
 				else if( mp->dwItemSpec == 4 ){	//	文字コードセット→文字コードセット指定
 					GetDocument()->HandleCommand( F_CHG_CHARSET );
@@ -9985,6 +9985,30 @@ LRESULT CEditWnd::DispatchEvent(
 
 	case MYWM_CLOSE:
 		/* エディタへの終了要求 */
+		// Closing the last window of a merged-tab group with the retain-empty
+		// option used to launch a replacement editor process and destroy this
+		// one.  VS Code's workbench.action.closeActiveEditor keeps the window
+		// and process alive in the empty-editor state, so when the working-copy
+		// coordinator owns the close it runs in place instead; the coordinator's
+		// CommitClose fires PP_DOCUMENT_CLOSE and reinitializes the empty
+		// document, so no plugin event or window teardown belongs here.
+		if( PM_CLOSE_EXIT != (PM_CLOSE_EXIT & wParam) &&
+			m_pShareData->m_Common.m_sTabBar.m_bDispTabWnd &&
+			!m_pShareData->m_Common.m_sTabBar.m_bDispTabWndMultiWin &&
+			m_pShareData->m_Common.m_sTabBar.m_bTab_RetainEmptyWin &&
+			m_workingCopyCoordinator != nullptr &&
+			!m_workspaceReplacementClosePreflightAccepted ){
+			EditNode* pEditNode = CAppNodeManager::getInstance()->GetEditNode( GetHwnd() );
+			if( pEditNode && 1 == CAppNodeGroupHandle(pEditNode->GetGroup()).GetEditorWindowsNum() ){
+				if( !HasActiveEditorInput() ){
+					return TRUE;	// 既に空。閉じる対象がないのでウィンドウを維持する
+				}
+				return ExecuteActiveWorkingCopyCommand(
+					workbench::editor::command_ids::CloseActiveEditor,
+					PM_CLOSE_GREPNOCONFIRM == (PM_CLOSE_GREPNOCONFIRM & wParam),
+					false ) ? TRUE : FALSE;
+			}
+		}
 		if( FALSE != ( nRet = OnClose( (HWND)lParam,
 				PM_CLOSE_GREPNOCONFIRM == (PM_CLOSE_GREPNOCONFIRM & wParam) )) ){	// Jan. 23, 2002 genta 警告抑制
 			//プラグイン：DocumentCloseイベント実行
