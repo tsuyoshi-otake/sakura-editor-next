@@ -97,9 +97,11 @@ private:
 
 class CFakeFileSystemProvider final : public IFileSystemProvider {
 public:
-	explicit CFakeFileSystemProvider(bool supportsRead = true, bool supportsConditionalReplace = false)
+	explicit CFakeFileSystemProvider(
+		bool supportsRead = true, bool supportsConditionalReplace = false, bool supportsWriteOperations = false)
 		: m_supportsRead(supportsRead)
 		, m_supportsConditionalReplace(supportsConditionalReplace)
+		, m_supportsWriteOperations(supportsWriteOperations)
 	{
 	}
 
@@ -111,6 +113,11 @@ public:
 		if (m_supportsConditionalReplace) {
 			capabilities = capabilities | EFileSystemCapability::Write;
 			capabilities = capabilities | EFileSystemCapability::AtomicReplace;
+		}
+		if (m_supportsWriteOperations) {
+			capabilities = capabilities | EFileSystemCapability::Write;
+			capabilities = capabilities | EFileSystemCapability::Rename;
+			capabilities = capabilities | EFileSystemCapability::Delete;
 		}
 		return capabilities;
 	}
@@ -163,18 +170,90 @@ public:
 		return FileResult<std::unique_ptr<IFileWatch>>::Success(std::make_unique<CFakeWatch>(resource));
 	}
 
+	FileResult<void> MakeDirectory(const platform::uri::Uri&) override
+	{
+		++makeDirectoryCalls;
+		return FileResult<void>::Success();
+	}
+
+	FileResult<void> Rename(
+		const platform::uri::Uri&, const platform::uri::Uri&, const FileRenameOptions& options) override
+	{
+		++renameCalls;
+		lastRenameOptions = options;
+		return FileResult<void>::Success();
+	}
+
+	FileResult<void> Delete(const platform::uri::Uri&, const FileDeleteOptions& options) override
+	{
+		++deleteCalls;
+		lastDeleteOptions = options;
+		return FileResult<void>::Success();
+	}
+
 	int statCalls = 0;
 	int enumerateCalls = 0;
 	int readCalls = 0;
 	int versionedReadCalls = 0;
 	int conditionalReplaceCalls = 0;
 	int watchCalls = 0;
+	int makeDirectoryCalls = 0;
+	int renameCalls = 0;
+	int deleteCalls = 0;
 	FileBytes lastReplaceBytes;
 	std::optional<FileConditionalReplaceOptions> lastReplaceOptions;
+	std::optional<FileRenameOptions> lastRenameOptions;
+	std::optional<FileDeleteOptions> lastDeleteOptions;
 
 private:
 	bool m_supportsRead;
 	bool m_supportsConditionalReplace;
+	bool m_supportsWriteOperations;
+};
+
+//! Provider that overrides only the pure-virtual surface, so the write-operation
+//! interface defaults stay observable.
+class CDefaultOnlyProvider final : public IFileSystemProvider {
+public:
+	FileSystemCapabilities Capabilities() const noexcept override { return {}; }
+	FileResult<FileStat> Stat(const platform::uri::Uri&) override
+	{
+		return FileResult<FileStat>::Failure(EFileResultStatus::Failed);
+	}
+	FileResult<std::vector<DirectoryEntry>> Enumerate(const platform::uri::Uri&) override
+	{
+		return FileResult<std::vector<DirectoryEntry>>::Failure(EFileResultStatus::Failed);
+	}
+	FileResult<FileBytes> Read(const platform::uri::Uri&, const FileReadOptions&) override
+	{
+		return FileResult<FileBytes>::Failure(EFileResultStatus::Failed);
+	}
+	FileResult<std::unique_ptr<IFileWatch>> Watch(const platform::uri::Uri&, const FileWatchOptions&) override
+	{
+		return FileResult<std::unique_ptr<IFileWatch>>::Failure(EFileResultStatus::Failed);
+	}
+};
+
+//! Service that overrides only the pure-virtual surface, so the write-operation
+//! service defaults stay observable for existing service fakes.
+class CMinimalFileService final : public IFileService {
+public:
+	FileResult<FileStat> Stat(const platform::uri::Uri&) override
+	{
+		return FileResult<FileStat>::Failure(EFileResultStatus::Failed);
+	}
+	FileResult<std::vector<DirectoryEntry>> Enumerate(const platform::uri::Uri&) override
+	{
+		return FileResult<std::vector<DirectoryEntry>>::Failure(EFileResultStatus::Failed);
+	}
+	FileResult<FileBytes> Read(const platform::uri::Uri&, const FileReadOptions&) override
+	{
+		return FileResult<FileBytes>::Failure(EFileResultStatus::Failed);
+	}
+	FileResult<std::unique_ptr<IFileWatch>> Watch(const platform::uri::Uri&, const FileWatchOptions&) override
+	{
+		return FileResult<std::unique_ptr<IFileWatch>>::Failure(EFileResultStatus::Failed);
+	}
 };
 
 std::unique_ptr<IFileService> NewService(bool win32)
@@ -340,6 +419,81 @@ bool ReturnsInvalidUriAndProvidesAdvisoryWatchTerminalState()
 	CHECK_EQ(EFileResultStatus::Cancelled, (*watched.value)->Next().status);
 	CHECK_EQ(EFileResultStatus::Cancelled, (*watched.value)->Cancel().status);
 	CHECK_EQ(1, provider->watchCalls);
+	return true;
+}
+
+bool GatesDirectoryRenameAndDeleteDispatchOnCapabilities()
+{
+	auto resource = ParseUri(L"file:///C:/Workspace/folder");
+	auto target = ParseUri(L"file:///C:/Workspace/renamed");
+	CHECK_TRUE(resource && target);
+	auto gated = NewService(false);
+	CHECK_TRUE(gated);
+	auto readOnlyProvider = std::make_shared<CFakeFileSystemProvider>();
+	CHECK_EQ(EFileResultStatus::Succeeded, gated->RegisterProvider(L"file", readOnlyProvider).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, gated->MakeDirectory(*resource).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, gated->Rename(*resource, *target).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, gated->Delete(*resource).status);
+	CHECK_EQ(0, readOnlyProvider->makeDirectoryCalls);
+	CHECK_EQ(0, readOnlyProvider->renameCalls);
+	CHECK_EQ(0, readOnlyProvider->deleteCalls);
+	auto service = NewService(false);
+	CHECK_TRUE(service);
+	auto provider = std::make_shared<CFakeFileSystemProvider>(true, false, true);
+	auto virtualProvider = std::make_shared<CFakeFileSystemProvider>(true, false, true);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->RegisterProvider(L"file", provider).status);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->RegisterProvider(L"memfs", virtualProvider).status);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(*resource).status);
+	CHECK_EQ(1, provider->makeDirectoryCalls);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Rename(*resource, *target, { .overwrite = true }).status);
+	CHECK_EQ(1, provider->renameCalls);
+	CHECK_TRUE(provider->lastRenameOptions);
+	CHECK_TRUE(provider->lastRenameOptions->overwrite);
+	CHECK_EQ(EFileResultStatus::Succeeded,
+		service->Delete(*resource, { .recursive = true, .useTrash = false }).status);
+	CHECK_EQ(1, provider->deleteCalls);
+	CHECK_TRUE(provider->lastDeleteOptions);
+	CHECK_TRUE(provider->lastDeleteOptions->recursive);
+	CHECK_FALSE(provider->lastDeleteOptions->useTrash);
+	auto virtualTarget = ParseUri(L"memfs://session/renamed");
+	CHECK_TRUE(virtualTarget);
+	CHECK_EQ(EFileResultStatus::Unsupported, service->Rename(*resource, *virtualTarget).status);
+	auto unregisteredTarget = ParseUri(L"untitled://untitled-1");
+	CHECK_TRUE(unregisteredTarget);
+	CHECK_EQ(EFileResultStatus::Unsupported, service->Rename(*resource, *unregisteredTarget).status);
+	CHECK_EQ(1, provider->renameCalls);
+	CHECK_EQ(0, virtualProvider->renameCalls);
+	return true;
+}
+
+bool KeepsWriteDefaultsUnsupportedAndRejectsInvalidWriteUris()
+{
+	auto service = NewService(false);
+	CHECK_TRUE(service);
+	auto provider = std::make_shared<CFakeFileSystemProvider>(true, false, true);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->RegisterProvider(L"file", provider).status);
+	auto malformed = platform::uri::Uri::Parse(L"file:///C:/bad%2");
+	CHECK_FALSE(malformed);
+	auto valid = platform::uri::Uri::Parse(L"file:///C:/Workspace/ok.txt");
+	CHECK_TRUE(valid);
+	CHECK_EQ(EFileResultStatus::InvalidUri, service->MakeDirectory(malformed).status);
+	CHECK_EQ(EFileResultStatus::InvalidUri, service->Rename(malformed, valid).status);
+	CHECK_EQ(EFileResultStatus::InvalidUri, service->Rename(valid, malformed).status);
+	CHECK_EQ(EFileResultStatus::InvalidUri, service->Delete(malformed).status);
+	CHECK_EQ(0, provider->makeDirectoryCalls);
+	CHECK_EQ(0, provider->renameCalls);
+	CHECK_EQ(0, provider->deleteCalls);
+	auto resource = ParseUri(L"file:///C:/Workspace/folder");
+	auto target = ParseUri(L"file:///C:/Workspace/renamed");
+	CHECK_TRUE(resource && target);
+	CDefaultOnlyProvider defaultProvider;
+	CHECK_EQ(EFileResultStatus::Unsupported, defaultProvider.MakeDirectory(*resource).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, defaultProvider.Rename(*resource, *target, {}).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, defaultProvider.Delete(*resource, {}).status);
+	CMinimalFileService minimalService;
+	CHECK_EQ(EFileResultStatus::Unsupported, minimalService.MakeDirectory(*resource).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, minimalService.Rename(*resource, *target).status);
+	CHECK_EQ(EFileResultStatus::Unsupported, minimalService.Delete(*resource).status);
 	return true;
 }
 
@@ -581,6 +735,136 @@ bool WatchesChangesAndTerminatesWithoutAWorkerLeak()
 	return true;
 }
 
+bool CreatesDirectoriesOnlyWithinExistingParents()
+{
+	CScopedTestDirectory directory;
+	auto service = NewService(true);
+	CHECK_TRUE(service);
+	const auto created = directory.Path() / L"created";
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(created)).status);
+	const auto stat = service->Stat(UriFor(created));
+	CHECK_TRUE(stat && stat.value);
+	CHECK_EQ(EFileEntryType::Directory, stat.value->type);
+	CHECK_EQ(EFileResultStatus::AlreadyExists, service->MakeDirectory(UriFor(created)).status);
+	CHECK_EQ(EFileResultStatus::NotFound,
+		service->MakeDirectory(UriFor(directory.Path() / L"missing-parent" / L"child")).status);
+	const auto file = directory.Path() / L"occupied.txt";
+	{ std::ofstream stream(file, std::ios::binary); stream << "occupied"; }
+	CHECK_EQ(EFileResultStatus::AlreadyExists, service->MakeDirectory(UriFor(file)).status);
+	return true;
+}
+
+bool RenamesOnlyWithExplicitOverwriteWithinOneProvider()
+{
+	CScopedTestDirectory directory;
+	auto service = NewService(true);
+	CHECK_TRUE(service);
+	const auto source = directory.Path() / L"alpha.txt";
+	const auto moved = directory.Path() / L"moved.txt";
+	const auto occupied = directory.Path() / L"occupied.txt";
+	{ std::ofstream stream(source, std::ios::binary); stream << "alpha"; }
+	{ std::ofstream stream(occupied, std::ios::binary); stream << "beta"; }
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Rename(UriFor(source), UriFor(moved)).status);
+	CHECK_EQ(EFileResultStatus::NotFound, service->Stat(UriFor(source)).status);
+	const auto movedBytes = service->Read(UriFor(moved), { .maximumBytes = 64 });
+	CHECK_TRUE(movedBytes && movedBytes.value);
+	CHECK_EQ(Bytes("alpha"), *movedBytes.value);
+	CHECK_EQ(EFileResultStatus::AlreadyExists, service->Rename(UriFor(moved), UriFor(occupied)).status);
+	const auto preserved = service->Read(UriFor(occupied), { .maximumBytes = 64 });
+	CHECK_TRUE(preserved && preserved.value);
+	CHECK_EQ(Bytes("beta"), *preserved.value);
+	CHECK_EQ(EFileResultStatus::Succeeded,
+		service->Rename(UriFor(moved), UriFor(occupied), { .overwrite = true }).status);
+	CHECK_EQ(EFileResultStatus::NotFound, service->Stat(UriFor(moved)).status);
+	const auto replaced = service->Read(UriFor(occupied), { .maximumBytes = 64 });
+	CHECK_TRUE(replaced && replaced.value);
+	CHECK_EQ(Bytes("alpha"), *replaced.value);
+	CHECK_EQ(EFileResultStatus::NotFound,
+		service->Rename(UriFor(directory.Path() / L"missing.txt"), UriFor(moved)).status);
+	const auto folder = directory.Path() / L"folder";
+	const auto renamedFolder = directory.Path() / L"renamed-folder";
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(folder)).status);
+	{ std::ofstream stream(folder / L"member.txt", std::ios::binary); stream << "member"; }
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Rename(UriFor(folder), UriFor(renamedFolder)).status);
+	const auto member = service->Stat(UriFor(renamedFolder / L"member.txt"));
+	CHECK_TRUE(member && member.value);
+	auto virtualTarget = ParseUri(L"memfs://session/renamed.txt");
+	CHECK_TRUE(virtualTarget);
+	CHECK_EQ(EFileResultStatus::Unsupported, service->Rename(UriFor(occupied), *virtualTarget).status);
+	return true;
+}
+
+bool DeletesPermanentlyWithExplicitRecursionAndReadOnlyForce()
+{
+	CScopedTestDirectory directory;
+	auto service = NewService(true);
+	CHECK_TRUE(service);
+	const auto root = directory.Path() / L"root";
+	const auto sub = root / L"sub";
+	const auto inner = sub / L"inner.txt";
+	const auto top = root / L"top.txt";
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(root)).status);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(sub)).status);
+	{ std::ofstream stream(inner, std::ios::binary); stream << "inner"; }
+	{ std::ofstream stream(top, std::ios::binary); stream << "top"; }
+	CHECK_TRUE(::SetFileAttributesW(inner.c_str(), FILE_ATTRIBUTE_READONLY));
+	const FileDeleteOptions permanent{ .recursive = false, .useTrash = false };
+	const FileDeleteOptions permanentRecursive{ .recursive = true, .useTrash = false };
+	CHECK_EQ(EFileResultStatus::Failed, service->Delete(UriFor(root), permanent).status);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Delete(UriFor(top), permanent).status);
+	CHECK_EQ(EFileResultStatus::NotFound, service->Stat(UriFor(top)).status);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Delete(UriFor(root), permanentRecursive).status);
+	CHECK_EQ(EFileResultStatus::NotFound, service->Stat(UriFor(root)).status);
+	const auto emptyFolder = directory.Path() / L"empty";
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(emptyFolder)).status);
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Delete(UriFor(emptyFolder), permanent).status);
+	CHECK_EQ(EFileResultStatus::NotFound, service->Delete(UriFor(directory.Path() / L"missing"), permanent).status);
+	const auto linkTarget = directory.Path() / L"link-target";
+	const auto linkRoot = directory.Path() / L"link-root";
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(linkTarget)).status);
+	{ std::ofstream stream(linkTarget / L"kept.txt", std::ios::binary); stream << "kept"; }
+	CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(linkRoot)).status);
+	std::error_code error;
+	std::filesystem::create_directory_symlink(linkTarget, linkRoot / L"link", error);
+	if (error) return true; // Equivalent to the legacy GTest skip on restricted accounts.
+	CHECK_EQ(EFileResultStatus::Succeeded, service->Delete(UriFor(linkRoot), permanentRecursive).status);
+	CHECK_EQ(EFileResultStatus::NotFound, service->Stat(UriFor(linkRoot)).status);
+	const auto kept = service->Read(UriFor(linkTarget / L"kept.txt"), { .maximumBytes = 64 });
+	CHECK_TRUE(kept && kept.value);
+	CHECK_EQ(Bytes("kept"), *kept.value);
+	return true;
+}
+
+bool RejectsRecycleBinDeleteBeyondMaxPathWithoutFallback()
+{
+	CScopedTestDirectory directory;
+	auto service = NewService(true);
+	CHECK_TRUE(service);
+	// Grow the tree through the provider itself: the provider uses extended-length
+	// paths internally, so the test does not depend on the OS long-path policy.
+	auto deep = directory.Path();
+	const std::wstring segment(64, L'a');
+	while (deep.wstring().size() < MAX_PATH) {
+		deep /= segment;
+		CHECK_EQ(EFileResultStatus::Succeeded, service->MakeDirectory(UriFor(deep)).status);
+	}
+	const auto file = deep / L"trapped.txt";
+	CHECK_TRUE(file.wstring().size() >= MAX_PATH);
+	const auto created = service->ConditionalAtomicReplace(
+		UriFor(file), Bytes("trapped"), FileConditionalReplaceOptions::ForMissing());
+	CHECK_EQ(EFileConditionalReplaceStatus::Succeeded, created.status);
+	const auto trashed = service->Delete(UriFor(file), { .recursive = false, .useTrash = true });
+	CHECK_EQ(EFileResultStatus::Unsupported, trashed.status);
+	// The rejection must not fall back to a silent permanent delete.
+	const auto survived = service->Stat(UriFor(file));
+	CHECK_TRUE(survived && survived.value);
+	CHECK_EQ(EFileResultStatus::Succeeded,
+		service->Delete(UriFor(file), { .recursive = false, .useTrash = false }).status);
+	CHECK_EQ(EFileResultStatus::Succeeded,
+		service->Delete(UriFor(directory.Path() / segment), { .recursive = true, .useTrash = false }).status);
+	return true;
+}
+
 struct TestCase final {
 	std::string_view suite;
 	std::string_view name;
@@ -594,6 +878,8 @@ constexpr std::array kTests{
 	TestCase{ "FileService", "DispatchesConditionalAtomicReplaceOnlyWithBothCapabilities", DispatchesConditionalAtomicReplaceOnlyWithBothCapabilities },
 	TestCase{ "FileService", "BoundsOpaqueVersionTokens", BoundsOpaqueVersionTokens },
 	TestCase{ "FileService", "ReturnsInvalidUriAndProvidesAdvisoryWatchTerminalState", ReturnsInvalidUriAndProvidesAdvisoryWatchTerminalState },
+	TestCase{ "FileService", "GatesDirectoryRenameAndDeleteDispatchOnCapabilities", GatesDirectoryRenameAndDeleteDispatchOnCapabilities },
+	TestCase{ "FileService", "KeepsWriteDefaultsUnsupportedAndRejectsInvalidWriteUris", KeepsWriteDefaultsUnsupportedAndRejectsInvalidWriteUris },
 	TestCase{ "Win32FileSystemProvider", "StatsAndEnumeratesOnlyLocalFileUris", StatsAndEnumeratesOnlyLocalFileUris },
 	TestCase{ "Win32FileSystemProvider", "ReadsExactBinaryBytesWithinAnExplicitBound", ReadsExactBinaryBytesWithinAnExplicitBound },
 	TestCase{ "Win32FileSystemProvider", "ReplacesTheExpectedCurrentVersionAndReturnsCommittedVersion", ReplacesTheExpectedCurrentVersionAndReturnsCommittedVersion },
@@ -601,6 +887,10 @@ constexpr std::array kTests{
 	TestCase{ "Win32FileSystemProvider", "CreatesOnlyWhenMissingAndConflictsWhenThePathExists", CreatesOnlyWhenMissingAndConflictsWhenThePathExists },
 	TestCase{ "Win32FileSystemProvider", "ReportsReparsePointsAsSymbolicLinkWhenPermitted", ReportsReparsePointsAsSymbolicLinkWhenPermitted },
 	TestCase{ "Win32FileSystemProvider", "WatchesChangesAndTerminatesWithoutAWorkerLeak", WatchesChangesAndTerminatesWithoutAWorkerLeak },
+	TestCase{ "Win32FileSystemProvider", "CreatesDirectoriesOnlyWithinExistingParents", CreatesDirectoriesOnlyWithinExistingParents },
+	TestCase{ "Win32FileSystemProvider", "RenamesOnlyWithExplicitOverwriteWithinOneProvider", RenamesOnlyWithExplicitOverwriteWithinOneProvider },
+	TestCase{ "Win32FileSystemProvider", "DeletesPermanentlyWithExplicitRecursionAndReadOnlyForce", DeletesPermanentlyWithExplicitRecursionAndReadOnlyForce },
+	TestCase{ "Win32FileSystemProvider", "RejectsRecycleBinDeleteBeyondMaxPathWithoutFallback", RejectsRecycleBinDeleteBeyondMaxPathWithoutFallback },
 };
 
 bool Matches(std::string_view fullName, std::string_view filter)

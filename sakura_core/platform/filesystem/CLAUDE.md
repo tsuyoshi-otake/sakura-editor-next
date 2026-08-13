@@ -44,6 +44,34 @@ The current first-slice read/watch API does not yet prove atomic conditional
 write/replace support. Keep this limitation explicit until native-provider and
 failure-path tests pass; do not emulate it with an unchecked overwrite.
 
+## Write-Operation Boundary (Issue #146)
+
+`MakeDirectory` / `Rename` / `Delete` are capability-gated: the service
+dispatches them only when the provider advertises `Write` / `Rename` /
+`Delete`, and every non-capable or unregistered-scheme path terminates as
+explicit `Unsupported` with zero provider calls. Invariants verified by the
+`sakura_filesystem_tests` contract runner:
+
+- `MakeDirectory` never creates missing parents; an absent parent is a
+  terminal `NotFound`, an existing target (directory or file) is
+  `AlreadyExists`.
+- `Rename` is single-provider and same-volume only. It never uses
+  `MOVEFILE_COPY_ALLOWED`, because copy+delete is a non-atomic emulation;
+  `ERROR_NOT_SAME_DEVICE` maps to explicit `Unsupported`. Overwriting an
+  existing target requires the explicit `overwrite` option, otherwise the
+  result is `AlreadyExists` and the target is untouched. A cross-scheme
+  rename is `Unsupported` before either provider is called.
+- `Delete` requires explicit `recursive` for a non-empty directory on both
+  the trash and permanent paths. The recycle-bin path
+  (`SHFileOperationW`+`FOF_ALLOWUNDO`) cannot take extended-length paths, so
+  a native path at or beyond `MAX_PATH` (or an explicit device path) is a
+  terminal `Unsupported` — it must never silently fall back to a permanent
+  delete. Permanent deletion clears `FILE_ATTRIBUTE_READONLY` before
+  removing a file, deletes reparse-point directories as leaves without
+  traversing into their targets, and re-applies the extended-length (`\\?\`)
+  prefix on every recursion step because a child of a short parent path can
+  itself exceed `MAX_PATH`.
+
 ## Durable Working-Copy Record Boundary
 
 The filesystem layer must not reinterpret control-platform working-copy backup

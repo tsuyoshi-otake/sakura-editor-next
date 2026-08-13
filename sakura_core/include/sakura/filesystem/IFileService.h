@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -84,6 +84,32 @@ public:
 				EFileResultStatus::InvalidUri, L"filesystem URI is invalid");
 	}
 
+	[[nodiscard]] FileResult<void> MakeDirectory(const platform::uri::UriParseResult& directory)
+	{
+		return directory
+			? MakeDirectory(*directory.value)
+			: FileResult<void>::Failure(EFileResultStatus::InvalidUri, L"filesystem URI is invalid");
+	}
+
+	[[nodiscard]] FileResult<void> Rename(
+		const platform::uri::UriParseResult& source,
+		const platform::uri::UriParseResult& target,
+		const FileRenameOptions& options = {})
+	{
+		return source && target
+			? Rename(*source.value, *target.value, options)
+			: FileResult<void>::Failure(EFileResultStatus::InvalidUri, L"filesystem URI is invalid");
+	}
+
+	[[nodiscard]] FileResult<void> Delete(
+		const platform::uri::UriParseResult& resource,
+		const FileDeleteOptions& options = {})
+	{
+		return resource
+			? Delete(*resource.value, options)
+			: FileResult<void>::Failure(EFileResultStatus::InvalidUri, L"filesystem URI is invalid");
+	}
+
 	[[nodiscard]] virtual FileResult<FileStat> Stat(const platform::uri::Uri& resource) = 0;
 	[[nodiscard]] virtual FileResult<std::vector<DirectoryEntry>> Enumerate(const platform::uri::Uri& directory) = 0;
 	[[nodiscard]] virtual FileResult<FileBytes> Read(
@@ -108,6 +134,27 @@ public:
 	[[nodiscard]] virtual FileResult<std::unique_ptr<IFileWatch>> Watch(
 		const platform::uri::Uri& resource,
 		const FileWatchOptions& options = {}) = 0;
+	//! write 系操作も、既存の service fake を壊さないよう既定は Unsupported。
+	[[nodiscard]] virtual FileResult<void> MakeDirectory(const platform::uri::Uri&)
+	{
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"file service does not support directory creation");
+	}
+	[[nodiscard]] virtual FileResult<void> Rename(
+		const platform::uri::Uri& /*source*/,
+		const platform::uri::Uri& /*target*/,
+		const FileRenameOptions& = {})
+	{
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"file service does not support rename");
+	}
+	[[nodiscard]] virtual FileResult<void> Delete(
+		const platform::uri::Uri&,
+		const FileDeleteOptions& = {})
+	{
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"file service does not support delete");
+	}
 };
 
 } // namespace platform::filesystem

@@ -48,6 +48,50 @@ kind of command and must be registered as one.
   leaves it undefined otherwise, and those are different requests even where
   this product currently routes both the same way.
 
+## Explorer Resource Commands
+
+`RegisterExplorerCommands` registers upstream's eight resource-scoped Explorer
+file-operation commands (`explorer.newFile`, `explorer.newFolder`,
+`renameFile`, `moveFileToTrash`, `deleteFile`, `copyFilePath`,
+`copyRelativeFilePath`, `revealFileInOS`) as one atomic feature batch.
+
+- **Surface shapes come from upstream, not from symmetry.** Upstream gives
+  these commands three distinct shapes: `explorer.newFile`/`explorer.newFolder`
+  are context-menu-only (no default keybinding, no Command Palette entry);
+  `renameFile`/`moveFileToTrash`/`deleteFile` add a keybinding (F2, Delete,
+  Shift+Delete) but still no palette entry; `copyFilePath`/
+  `copyRelativeFilePath`/`revealFileInOS` have menu, keybinding, and palette.
+  `EExplorerCommandSurfaces` encodes exactly those three shapes so a new
+  command must pick one deliberately.
+- **Recorded simplification — palette retitle.** The registry carries one
+  title per command, so the palette slot reuses the context-menu title.
+  Upstream retitles two of them in the Command Palette: `copyFilePath` appears
+  there as "Copy Path of Active File" and `copyRelativeFilePath` as
+  "Copy Relative Path of Active File" (category File), while their menu
+  titles stay "Copy Path" / "Copy Relative Path". Until the descriptor model
+  supports per-surface titles, the menu title is the one registered here. This
+  is a known divergence, not an accident; remove it by adding per-surface
+  titles, not by renaming the menu entries.
+- **`workbenchReady` clauses.** Upstream gates these commands on Explorer
+  focus/visibility context keys (`filesExplorerFocus` etc.) that this native
+  provider does not publish. Following the `MakeGitAlwaysAvailableDescriptor`
+  precedent, the batch uses `workbenchReady` alone rather than fabricating
+  conjuncts over keys that never become true; add the real keys before adding
+  the real clauses.
+- **`moveFileToTrash` and `deleteFile` are two commands.** Upstream registers
+  trash deletion and permanent deletion as separate command IDs, so this
+  registry does too — never one executor reading a "permanent" flag.
+- `ExplorerCommandIds.h` carries the eight IDs as shared `constexpr` constants
+  for surfaces that name these commands (the Explorer context-menu model is the
+  first). `RegisterExplorerCommands` still registers its own literals; the
+  menu-model test resolves every emitted ID against the registered batch, which
+  is the drift guard until the registration site adopts the constants.
+- `ExplorerCommandArguments.h/.cpp` owns the wire payload: a one-element JSON
+  array carrying the resource URI. Upstream's multi-select second argument is
+  deliberately not part of the contract, and the parser rejects it rather than
+  accepting-and-ignoring; the Explorer surface divergence record lives with
+  the Explorer UI's own guidance.
+
 ## `isWorkspaceTrusted`
 
 `isWorkspaceTrusted` is a reserved core context key: it is projected only from

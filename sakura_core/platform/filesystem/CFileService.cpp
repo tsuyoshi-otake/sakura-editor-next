@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -184,6 +184,51 @@ FileResult<std::unique_ptr<IFileWatch>> CFileService::Watch(
 	return provider->Watch(resource, options);
 }
 
+FileResult<void> CFileService::MakeDirectory(const platform::uri::Uri& directory)
+{
+	const auto provider = m_providers.FindProvider(directory.Scheme());
+	if (!provider) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"no filesystem provider is registered for the URI scheme");
+	}
+	if (!HasCapability(provider->Capabilities(), EFileSystemCapability::Write)) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"filesystem provider does not support directory creation");
+	}
+	return provider->MakeDirectory(directory);
+}
+
+FileResult<void> CFileService::Rename(
+	const platform::uri::Uri& source,
+	const platform::uri::Uri& target,
+	const FileRenameOptions& options)
+{
+	const auto provider = m_providers.FindProvider(source.Scheme());
+	if (!provider) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"no filesystem provider is registered for the URI scheme");
+	}
+	// Rename は同一 provider 内の操作。scheme をまたぐ move はここでは提供しない。
+	if (m_providers.FindProvider(target.Scheme()) != provider) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"rename requires source and target on the same filesystem provider");
+	}
+	if (!HasCapability(provider->Capabilities(), EFileSystemCapability::Rename)) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"filesystem provider does not support rename");
+	}
+	return provider->Rename(source, target, options);
+}
+
+FileResult<void> CFileService::Delete(
+	const platform::uri::Uri& resource,
+	const FileDeleteOptions& options)
+{
+	const auto provider = m_providers.FindProvider(resource.Scheme());
+	if (!provider) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"no filesystem provider is registered for the URI scheme");
+	}
+	if (!HasCapability(provider->Capabilities(), EFileSystemCapability::Delete)) {
+		return FileResult<void>::Failure(EFileResultStatus::Unsupported, L"filesystem provider does not support delete");
+	}
+	return provider->Delete(resource, options);
+}
+
 FileResult<FileStat> CFileService::Stat(const platform::uri::UriParseResult& resource)
 {
 	return resource ? Stat(*resource.value)
@@ -229,6 +274,29 @@ FileResult<std::unique_ptr<IFileWatch>> CFileService::Watch(
 {
 	return resource ? Watch(*resource.value, options)
 		: FileResult<std::unique_ptr<IFileWatch>>::Failure(EFileResultStatus::InvalidUri, L"filesystem watch received an invalid URI");
+}
+
+FileResult<void> CFileService::MakeDirectory(const platform::uri::UriParseResult& directory)
+{
+	return directory ? MakeDirectory(*directory.value)
+		: FileResult<void>::Failure(EFileResultStatus::InvalidUri, L"filesystem directory creation received an invalid URI");
+}
+
+FileResult<void> CFileService::Rename(
+	const platform::uri::UriParseResult& source,
+	const platform::uri::UriParseResult& target,
+	const FileRenameOptions& options)
+{
+	return source && target ? Rename(*source.value, *target.value, options)
+		: FileResult<void>::Failure(EFileResultStatus::InvalidUri, L"filesystem rename received an invalid URI");
+}
+
+FileResult<void> CFileService::Delete(
+	const platform::uri::UriParseResult& resource,
+	const FileDeleteOptions& options)
+{
+	return resource ? Delete(*resource.value, options)
+		: FileResult<void>::Failure(EFileResultStatus::InvalidUri, L"filesystem delete received an invalid URI");
 }
 
 } // namespace platform::filesystem

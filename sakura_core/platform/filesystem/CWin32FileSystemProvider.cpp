@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -8,6 +8,7 @@
 #include "CWin32FileSystemProvider.h"
 
 #include <Windows.h>
+#include <shellapi.h>
 
 #include <algorithm>
 #include <array>
@@ -137,6 +138,9 @@ private:
 	case ERROR_INVALID_NAME:
 	case ERROR_BAD_PATHNAME:
 		return EFileResultStatus::InvalidUri;
+	case ERROR_FILE_EXISTS:
+	case ERROR_ALREADY_EXISTS:
+		return EFileResultStatus::AlreadyExists;
 	default:
 		return EFileResultStatus::Failed;
 	}
@@ -632,6 +636,107 @@ private:
 	EFileResultStatus m_startFailure = EFileResultStatus::Failed;
 };
 
+//! ディレクトリが "." と ".." 以外の項目を持たないことを確かめる。
+[[nodiscard]] FileResult<bool> IsDirectoryEmpty(const std::wstring& extendedPath)
+{
+	WIN32_FIND_DATAW data{};
+	const std::wstring search = AppendPath(extendedPath, L"*");
+	HANDLE find = ::FindFirstFileExW(search.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+	if (find == INVALID_HANDLE_VALUE) return FailureFromLastError<bool>(L"FindFirstFileExW for empty-directory check");
+	CFindHandleGuard guard(find);
+	do {
+		if (std::wcscmp(data.cFileName, L".") != 0 && std::wcscmp(data.cFileName, L"..") != 0) {
+			return FileResult<bool>::Success(false);
+		}
+	} while (::FindNextFileW(guard.Get(), &data));
+	const DWORD lastError = ::GetLastError();
+	if (lastError != ERROR_NO_MORE_FILES) {
+		return FileResult<bool>::Failure(MapWin32Error(lastError), L"FindNextFileW failed (Win32 error " + std::to_wstring(lastError) + L")");
+	}
+	return FileResult<bool>::Success(true);
+}
+
+//! 恒久削除は VS Code の force 削除同様、読み取り専用属性を外してから消す。
+void ClearReadOnlyAttribute(const std::wstring& extendedPath, DWORD attributes) noexcept
+{
+	if ((attributes & FILE_ATTRIBUTE_READONLY) != 0) {
+		(void)::SetFileAttributesW(extendedPath.c_str(), attributes & ~FILE_ATTRIBUTE_READONLY);
+	}
+}
+
+[[nodiscard]] FileResult<void> DeleteTreePermanently(const std::wstring& extendedPath, DWORD attributes)
+{
+	if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) {
+		ClearReadOnlyAttribute(extendedPath, attributes);
+		if (!::DeleteFileW(extendedPath.c_str())) return FailureFromLastError<void>(L"DeleteFileW");
+		return FileResult<void>::Success();
+	}
+	// Reparse point は enumerate/watch と同じく葉として扱い、リンク自体を消す。
+	// リンク先の中身へは決して降りない。
+	if ((attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0) {
+		WIN32_FIND_DATAW data{};
+		const std::wstring search = AppendPath(extendedPath, L"*");
+		HANDLE find = ::FindFirstFileExW(search.c_str(), FindExInfoBasic, &data, FindExSearchNameMatch, nullptr, 0);
+		if (find == INVALID_HANDLE_VALUE) return FailureFromLastError<void>(L"FindFirstFileExW for recursive delete");
+		std::vector<std::pair<std::wstring, DWORD>> children;
+		{
+			CFindHandleGuard guard(find);
+			do {
+				if (std::wcscmp(data.cFileName, L".") == 0 || std::wcscmp(data.cFileName, L"..") == 0) continue;
+				children.emplace_back(AppendPath(extendedPath, data.cFileName), data.dwFileAttributes);
+			} while (::FindNextFileW(guard.Get(), &data));
+			const DWORD lastError = ::GetLastError();
+			if (lastError != ERROR_NO_MORE_FILES) {
+				return FileResult<void>::Failure(MapWin32Error(lastError), L"FindNextFileW failed (Win32 error " + std::to_wstring(lastError) + L")");
+			}
+		}
+		for (auto& [childPath, childAttributes] : children) {
+			// 親が MAX_PATH 未満でも子は超え得るため、再帰ごとに拡張形式へ揃える。
+			auto removed = DeleteTreePermanently(ToExtendedPath(std::move(childPath)), childAttributes);
+			if (!removed) return removed;
+		}
+	}
+	ClearReadOnlyAttribute(extendedPath, attributes);
+	if (!::RemoveDirectoryW(extendedPath.c_str())) return FailureFromLastError<void>(L"RemoveDirectoryW");
+	return FileResult<void>::Success();
+}
+
+[[nodiscard]] FileResult<void> MoveToRecycleBin(const std::wstring& nativePath)
+{
+	// SHFileOperationW は \\?\ 接頭辞を受け付けないため、ごみ箱経路は
+	// MAX_PATH 未満のパスに限られる。超える場合は黙って恒久削除に落とさず
+	// 明示的な Unsupported を返す。
+	if (nativePath.size() >= MAX_PATH || IsDevicePath(nativePath)) {
+		return FileResult<void>::Failure(
+			EFileResultStatus::Unsupported, L"recycle-bin delete does not support extended-length paths");
+	}
+	std::wstring doubleTerminated = nativePath;
+	doubleTerminated.push_back(L'\0');	// pFrom はダブルヌル終端のリスト。
+	SHFILEOPSTRUCTW operation{};
+	operation.wFunc = FO_DELETE;
+	operation.pFrom = doubleTerminated.c_str();
+	operation.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT | FOF_NOERRORUI;
+	const int status = ::SHFileOperationW(&operation);
+	if (status == 0) {
+		if (operation.fAnyOperationsAborted) {
+			return FileResult<void>::Failure(EFileResultStatus::Cancelled, L"recycle-bin delete was aborted");
+		}
+		return FileResult<void>::Success();
+	}
+	// SHFileOperationW はシェル固有コードを返す。Win32 と同値の not-found と
+	// アクセス拒否 (DE_ACCESSDENIEDSRC) だけ対応付け、他は診断付き Failed。
+	switch (status) {
+	case ERROR_FILE_NOT_FOUND:
+	case ERROR_PATH_NOT_FOUND:
+		return FileResult<void>::Failure(EFileResultStatus::NotFound, L"recycle-bin delete target was not found");
+	case 0x78:
+		return FileResult<void>::Failure(EFileResultStatus::PermissionDenied, L"recycle-bin delete was denied access to the source");
+	default:
+		return FileResult<void>::Failure(
+			EFileResultStatus::Failed, L"SHFileOperationW failed (shell error " + std::to_wstring(status) + L")");
+	}
+}
+
 } // namespace
 
 FileSystemCapabilities CWin32FileSystemProvider::Capabilities() const noexcept
@@ -641,7 +746,9 @@ FileSystemCapabilities CWin32FileSystemProvider::Capabilities() const noexcept
 		| EFileSystemCapability::Read
 		| EFileSystemCapability::Write
 		| EFileSystemCapability::AtomicReplace
-		| EFileSystemCapability::Watch;
+		| EFileSystemCapability::Watch
+		| EFileSystemCapability::Rename
+		| EFileSystemCapability::Delete;
 }
 
 FileResult<FileStat> CWin32FileSystemProvider::Stat(const platform::uri::Uri& resource)
@@ -1078,6 +1185,71 @@ FileResult<std::unique_ptr<IFileWatch>> CWin32FileSystemProvider::Watch(
 		return FileResult<std::unique_ptr<IFileWatch>>::Failure(started.status, std::move(started.diagnostic));
 	}
 	return FileResult<std::unique_ptr<IFileWatch>>::Success(std::move(watch));
+}
+
+FileResult<void> CWin32FileSystemProvider::MakeDirectory(const platform::uri::Uri& directory)
+{
+	auto path = ToLocalPath(directory);
+	if (!path) return FileResult<void>::Failure(path.status, std::move(path.diagnostic));
+	const auto extendedPath = ToExtendedPath(std::move(*path.value));
+	// 親ディレクトリの暗黙作成はしない。存在しない親は NotFound の終端になる。
+	if (!::CreateDirectoryW(extendedPath.c_str(), nullptr)) {
+		return FailureFromLastError<void>(L"CreateDirectoryW");
+	}
+	return FileResult<void>::Success();
+}
+
+FileResult<void> CWin32FileSystemProvider::Rename(
+	const platform::uri::Uri& source,
+	const platform::uri::Uri& target,
+	const FileRenameOptions& options)
+{
+	auto sourcePath = ToLocalPath(source);
+	if (!sourcePath) return FileResult<void>::Failure(sourcePath.status, std::move(sourcePath.diagnostic));
+	auto targetPath = ToLocalPath(target);
+	if (!targetPath) return FileResult<void>::Failure(targetPath.status, std::move(targetPath.diagnostic));
+	const auto extendedSource = ToExtendedPath(std::move(*sourcePath.value));
+	const auto extendedTarget = ToExtendedPath(std::move(*targetPath.value));
+	DWORD flags = MOVEFILE_WRITE_THROUGH;
+	if (options.overwrite) flags |= MOVEFILE_REPLACE_EXISTING;
+	if (!::MoveFileExW(extendedSource.c_str(), extendedTarget.c_str(), flags)) {
+		const DWORD error = ::GetLastError();
+		if (error == ERROR_NOT_SAME_DEVICE) {
+			// MOVEFILE_COPY_ALLOWED は copy+delete の非原子的エミュレーション
+			// になるため使わない。別ボリュームへの move は明示的に Unsupported。
+			return FileResult<void>::Failure(
+				EFileResultStatus::Unsupported, L"rename across volumes is not supported by the Win32 provider");
+		}
+		return FileResult<void>::Failure(
+			MapWin32Error(error), L"MoveFileExW failed (Win32 error " + std::to_wstring(error) + L")");
+	}
+	return FileResult<void>::Success();
+}
+
+FileResult<void> CWin32FileSystemProvider::Delete(
+	const platform::uri::Uri& resource,
+	const FileDeleteOptions& options)
+{
+	auto path = ToLocalPath(resource);
+	if (!path) return FileResult<void>::Failure(path.status, std::move(path.diagnostic));
+	const std::wstring nativePath = std::move(*path.value);
+	const auto extendedPath = ToExtendedPath(nativePath);
+	const DWORD attributes = ::GetFileAttributesW(extendedPath.c_str());
+	if (attributes == INVALID_FILE_ATTRIBUTES) return FailureFromLastError<void>(L"GetFileAttributesW for delete");
+	// ごみ箱経路は空チェックを SHFileOperationW に委ねられないため、
+	// recursive でない削除は経路に依らずここで空ディレクトリを要求する。
+	const bool traversableDirectory =
+		(attributes & FILE_ATTRIBUTE_DIRECTORY) != 0 && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) == 0;
+	if (traversableDirectory && !options.recursive) {
+		auto empty = IsDirectoryEmpty(extendedPath);
+		if (!empty) return FileResult<void>::Failure(empty.status, std::move(empty.diagnostic));
+		if (!*empty.value) {
+			return FileResult<void>::Failure(
+				EFileResultStatus::Failed, L"non-recursive delete requires an empty directory");
+		}
+	}
+	if (options.useTrash) return MoveToRecycleBin(nativePath);
+	return DeleteTreePermanently(extendedPath, attributes);
 }
 
 } // namespace platform::filesystem

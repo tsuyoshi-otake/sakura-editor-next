@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -32,6 +32,14 @@ public:
 	[[nodiscard]] FileResult<std::unique_ptr<IFileWatch>> Watch(
 		const platform::uri::Uri& resource,
 		const FileWatchOptions& options) override;
+	[[nodiscard]] FileResult<void> MakeDirectory(const platform::uri::Uri& directory) override;
+	[[nodiscard]] FileResult<void> Rename(
+		const platform::uri::Uri& source,
+		const platform::uri::Uri& target,
+		const FileRenameOptions& options) override;
+	[[nodiscard]] FileResult<void> Delete(
+		const platform::uri::Uri& resource,
+		const FileDeleteOptions& options) override;
 };
 
 } // namespace platform::filesystem

@@ -12,6 +12,8 @@
   [`hover/CLAUDE.md`](hover/CLAUDE.md)
 - Stable commands, surface bindings, when clauses, and context keys:
   [`commands/CLAUDE.md`](commands/CLAUDE.md)
+- Files Explorer view and its context-menu row model:
+  [`explorer/CLAUDE.md`](explorer/CLAUDE.md)
 - Workspace artifact routing and file/watch ownership:
   [`workspace/CLAUDE.md`](workspace/CLAUDE.md)
 - Problems/markers, Output channels, and Tasks:

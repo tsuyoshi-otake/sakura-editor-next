@@ -256,6 +256,10 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchFilterTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchQueryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandRegistryTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerCommandRegistryTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerContextMenuModelTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerDeleteConfirmationTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WebviewUnsupportedTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditorServiceLegacyAdapterTest.cpp" />
