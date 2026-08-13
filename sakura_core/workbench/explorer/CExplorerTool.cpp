@@ -11,6 +11,12 @@
 #include <wincodec.h>
 
 #include "cxx/com_pointer.hpp"
+#include "workbench/commands/ExplorerCommandArguments.h"
+#include "workbench/commands/ExplorerCommandIds.h"
+#include "workbench/explorer/ExplorerContextMenuModel.h"
+#include "workbench/explorer/ExplorerResourcePath.h"
+
+#include <sakura/uri/UriIdentity.h>
 
 #include <algorithm>
 #include <atomic>
@@ -386,6 +392,27 @@ struct CExplorerTool::Impl {
 	std::wstring pendingActivationPath;
 	ExplorerFileActivationKind pendingActivationKind{ ExplorerFileActivationKind::Preview };
 	bool fileActivationPosted{};
+	CommandCallback commandCallback;
+	MenuTitleResolver menuTitleResolver;
+	RenameCommitCallback renameCommit;
+	CreateCommitCallback createCommit;
+	//! True while an inline label edit owns the tree.  Worker results are
+	//! deferred for its duration because reconciliation would destroy TreeView
+	//! items - possibly the edited one - under the live edit control.
+	bool labelEditActive{};
+	//! Set only by BeginRenameEntry/BeginCreateEntry immediately before
+	//! TreeView_EditLabel.  TVN_BEGINLABELEDIT cancels any edit this tool did
+	//! not arm, so TVS_EDITLABELS never accepts an ad-hoc label edit.
+	bool labelEditArmed{};
+	bool labelEditIsCreate{};
+	bool createEntryIsDirectory{};
+	//! Rename: the edited entry's full path.  Create: the parent directory.
+	std::wstring labelEditPath;
+	//! The temporary lParam-0 row an inline create edits.  It never becomes a
+	//! real node: the filesystem is the truth and the watcher-driven refresh
+	//! renders the committed outcome.
+	HTREEITEM createEditItem{};
+	std::vector<std::unique_ptr<WorkerResult>> deferredResults;
 
 	struct ScrollbarLayout {
 		RECT track{};
@@ -642,6 +669,20 @@ struct CExplorerTool::Impl {
 			impl->ScrollByMouseWheel(wParam);
 			return 0;
 		}
+		// During a label edit the edit control owns the keyboard; these
+		// selection-scoped keys act only on the quiescent tree, matching VS
+		// Code's F2 / Delete / Shift+Delete Explorer keybindings.
+		if (impl != nullptr && message == WM_KEYDOWN && !impl->labelEditActive) {
+			if (wParam == VK_F2) {
+				impl->DispatchSelectionKeyCommand(commands::kRenameFileCommandId);
+				return 0;
+			}
+			if (wParam == VK_DELETE) {
+				impl->DispatchSelectionKeyCommand((::GetKeyState(VK_SHIFT) & 0x8000) != 0
+					? commands::kDeleteFileCommandId : commands::kMoveFileToTrashCommandId);
+				return 0;
+			}
+		}
 		HTREEITEM releasedItem = nullptr;
 		HTREEITEM pressedItem = nullptr;
 		if (impl != nullptr) {
@@ -798,6 +839,249 @@ struct CExplorerTool::Impl {
 	{
 		const auto it = nodes.find(id);
 		return it == nodes.end() ? nullptr : &it->second;
+	}
+
+	[[nodiscard]] Node* FindNodeByPath(std::wstring_view path)
+	{
+		for (auto& [id, node] : nodes) {
+			(void)id;
+			if (::CompareStringOrdinal(node.path.c_str(), static_cast<int>(node.path.size()),
+					path.data(), static_cast<int>(path.size()), TRUE) == CSTR_EQUAL) {
+				return &node;
+			}
+		}
+		return nullptr;
+	}
+
+	//! Null for an unknown item and for the lParam-0 rows (the enumeration
+	//! placeholder and an in-progress create's temporary row).
+	[[nodiscard]] Node* FindNodeByItem(HTREEITEM item)
+	{
+		if (tree == nullptr || item == nullptr) return nullptr;
+		TVITEMW info{};
+		info.mask = TVIF_PARAM;
+		info.hItem = item;
+		if (!TreeView_GetItem(tree, &info) || info.lParam == 0) return nullptr;
+		return FindNode(static_cast<std::uint64_t>(info.lParam));
+	}
+
+	//! Serializes the resource as the one-URI wire payload and invokes the
+	//! stable command.  A path the URI boundary rejects dispatches nothing.
+	void DispatchResourceCommand(std::string_view commandId, const std::wstring& path)
+	{
+		if (closed || !commandCallback || path.empty()) return;
+		const auto uri = platform::uri::Uri::FromWindowsPath(path);
+		if (!uri) return;
+		const commands::ExplorerResourceArguments arguments{ uri.value->ToString() };
+		(void)commandCallback(commandId, commands::BuildExplorerResourceArguments(arguments));
+	}
+
+	//! F2/Delete route: acts on the selection.  The workspace root is excluded
+	//! exactly as upstream's `ExplorerRootContext.toNegated()` excludes it from
+	//! rename and both deletions.
+	void DispatchSelectionKeyCommand(std::string_view commandId)
+	{
+		if (tree == nullptr) return;
+		const auto* node = FindNodeByItem(TreeView_GetSelection(tree));
+		if (node == nullptr || node->isWorkspaceRoot) return;
+		DispatchResourceCommand(commandId, node->path);
+	}
+
+	//! WM_CONTEXTMENU route.  A keyboard menu request (lParam -1) anchors on
+	//! the selected row; a pointer request resolves the clicked row and selects
+	//! it first so the row the user sees and the row the command receives are
+	//! the same row; empty space targets the workspace root, as upstream's
+	//! empty-area Explorer menu does, without moving the selection.
+	void ShowContextMenu(LPARAM lParam)
+	{
+		if (closed || tree == nullptr || window == nullptr || labelEditActive
+			|| !commandCallback || !menuTitleResolver) {
+			return;
+		}
+		Node* node = nullptr;
+		POINT screen{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (lParam == -1) {
+			const auto selected = TreeView_GetSelection(tree);
+			node = FindNodeByItem(selected);
+			if (node == nullptr) return;
+			RECT itemRect{};
+			if (!TreeView_GetItemRect(tree, selected, &itemRect, TRUE)) return;
+			screen = POINT{ itemRect.left, itemRect.bottom };
+			if (!::ClientToScreen(tree, &screen)) return;
+		} else {
+			POINT client = screen;
+			if (!::ScreenToClient(tree, &client)) return;
+			TVHITTESTINFO hit{};
+			hit.pt = client;
+			const auto item = TreeView_HitTest(tree, &hit);
+			if (item != nullptr) {
+				node = FindNodeByItem(item);
+				if (node == nullptr) return;
+				(void)TreeView_SelectItem(tree, item);
+			} else {
+				node = FindNodeByItem(TreeView_GetRoot(tree));
+				if (node == nullptr) return;
+			}
+		}
+		const auto kind = node->isWorkspaceRoot ? EExplorerResourceKind::WorkspaceRoot
+			: node->isDirectory ? EExplorerResourceKind::Folder
+			: EExplorerResourceKind::File;
+		// Only the local Win32 filesystem is served here and every local
+		// resource can reach the Recycle Bin, so the menu carries the trash
+		// item; the permanent deletion remains reachable through Shift+Delete
+		// and the trash-failure fallback prompt.
+		const auto rows = BuildExplorerContextMenuRows(kind, true);
+		// A copy, not a reference: `TrackPopupMenu` pumps messages, so a worker
+		// result could reconcile the node map while the menu is open.
+		const std::wstring resourcePath = node->path;
+		node = nullptr;
+
+		std::vector<std::string_view> commandIds;
+		const HMENU menu = ::CreatePopupMenu();
+		if (menu == nullptr) return;
+		for (const auto& row : rows) {
+			if (row.Kind() == EExplorerContextMenuRowKind::Separator) {
+				(void)::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+				continue;
+			}
+			const std::wstring title = menuTitleResolver(row.CommandId());
+			if (title.empty()) {
+				// A command the registry cannot title means the registration
+				// this menu depends on is absent.  Fail closed rather than
+				// render a menu that promises a command that cannot run.
+				::DestroyMenu(menu);
+				return;
+			}
+			commandIds.push_back(row.CommandId());
+			(void)::AppendMenuW(menu, MF_STRING,
+				static_cast<UINT_PTR>(commandIds.size()), title.c_str());
+		}
+
+		// The owning window must be foreground or the menu never sees its own
+		// dismissal; the trailing `WM_NULL` is that requirement's second half.
+		::SetForegroundWindow(window);
+		const auto chosen = ::TrackPopupMenu(menu,
+			TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			screen.x, screen.y, 0, window, nullptr);
+		::DestroyMenu(menu);
+		(void)::PostMessageW(window, WM_NULL, 0, 0);
+		if (chosen <= 0 || static_cast<std::size_t>(chosen) > commandIds.size()) return;
+		DispatchResourceCommand(commandIds[static_cast<std::size_t>(chosen) - 1], resourcePath);
+	}
+
+	bool BeginRename(std::wstring_view path)
+	{
+		if (closed || tree == nullptr || labelEditActive) return false;
+		const auto* node = FindNodeByPath(path);
+		if (node == nullptr || node->isWorkspaceRoot) return false;
+		const auto item = node->item;
+		const std::wstring name = node->name;
+		const bool isDirectory = node->isDirectory;
+		(void)TreeView_SelectItem(tree, item);
+		::SetFocus(tree);
+		labelEditArmed = true;
+		labelEditIsCreate = false;
+		labelEditPath.assign(path);
+		const HWND edit = TreeView_EditLabel(tree, item);
+		if (edit == nullptr) {
+			labelEditArmed = false;
+			labelEditActive = false;
+			labelEditPath.clear();
+			return false;
+		}
+		// VS Code preselects a file's base name without its extension (a
+		// leading dot is not an extension separator); a folder selects fully.
+		LPARAM selectionEnd = -1;
+		if (!isDirectory) {
+			const auto dot = name.find_last_of(L'.');
+			if (dot != std::wstring::npos && dot != 0) selectionEnd = static_cast<LPARAM>(dot);
+		}
+		(void)::SendMessageW(edit, EM_SETSEL, 0, selectionEnd);
+		return true;
+	}
+
+	bool BeginCreate(std::wstring_view parentDirectory, bool directory)
+	{
+		if (closed || tree == nullptr || labelEditActive) return false;
+		const auto* parent = FindNodeByPath(parentDirectory);
+		if (parent == nullptr || !parent->isDirectory || parent->isReparsePoint) return false;
+		const auto parentItem = parent->item;
+		const std::wstring parentPath = parent->path;
+		(void)TreeView_Expand(tree, parentItem, TVE_EXPAND);
+		TVINSERTSTRUCTW insert{};
+		insert.hParent = parentItem;
+		insert.hInsertAfter = TVI_FIRST;
+		insert.item.mask = TVIF_TEXT | TVIF_PARAM;
+		insert.item.pszText = const_cast<wchar_t*>(L"");
+		insert.item.lParam = 0;
+		const auto item = TreeView_InsertItem(tree, &insert);
+		if (item == nullptr) return false;
+		createEditItem = item;
+		createEntryIsDirectory = directory;
+		labelEditIsCreate = true;
+		labelEditPath = parentPath;
+		(void)TreeView_SelectItem(tree, item);
+		::SetFocus(tree);
+		labelEditArmed = true;
+		if (TreeView_EditLabel(tree, item) == nullptr) {
+			labelEditArmed = false;
+			labelEditActive = false;
+			labelEditIsCreate = false;
+			createEntryIsDirectory = false;
+			labelEditPath.clear();
+			(void)TreeView_DeleteItem(tree, createEditItem);
+			createEditItem = nullptr;
+			return false;
+		}
+		return true;
+	}
+
+	//! TVN_ENDLABELEDIT terminal for both the rename and the create edit.  A
+	//! null `text` is a cancelled edit.  The label is never applied here: the
+	//! commit callbacks reach the filesystem boundary, and the watcher-driven
+	//! refresh renders whatever the filesystem now holds.
+	void FinishLabelEdit(const wchar_t* text)
+	{
+		if (!labelEditActive) return;
+		labelEditActive = false;
+		const bool isCreate = labelEditIsCreate;
+		labelEditIsCreate = false;
+		const bool directory = createEntryIsDirectory;
+		createEntryIsDirectory = false;
+		const std::wstring path = std::move(labelEditPath);
+		labelEditPath.clear();
+		if (createEditItem != nullptr) {
+			if (tree != nullptr) (void)TreeView_DeleteItem(tree, createEditItem);
+			createEditItem = nullptr;
+		}
+		if (closed) {
+			deferredResults.clear();
+			return;
+		}
+		DispatchDeferredResults();
+		if (text == nullptr) return;
+		const std::wstring_view entered(text);
+		// An invalid name is no commit; the divergence from upstream's inline
+		// error message is recorded in this directory's CLAUDE.md.
+		if (!IsValidExplorerEntryName(entered)) return;
+		if (isCreate) {
+			if (createCommit) createCommit(path, entered, directory);
+			return;
+		}
+		const auto separator = path.find_last_of(L"\\/");
+		const std::wstring_view previousName = separator == std::wstring::npos
+			? std::wstring_view(path) : std::wstring_view(path).substr(separator + 1);
+		// Only the exact same name is a no-op: a case-differing entry is a
+		// legitimate case-only rename on this case-preserving filesystem.
+		if (entered == previousName) return;
+		if (renameCommit) renameCommit(path, entered);
+	}
+
+	void DispatchDeferredResults()
+	{
+		auto results = std::move(deferredResults);
+		deferredResults.clear();
+		for (auto& result : results) ApplyResult(std::move(result));
 	}
 
 	void DestroyIconImages() noexcept
@@ -1202,7 +1486,8 @@ bool CExplorerTool::Create(HWND parent)
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_impl->window == nullptr) return false;
 	m_impl->tree = ::CreateWindowExW(0, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-		TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL,
+		TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL |
+		TVS_EDITLABELS,
 		0, 0, 0, 0, m_impl->window, nullptr, instance, nullptr);
 	if (m_impl->tree == nullptr) {
 		::DestroyWindow(m_impl->window);
@@ -1258,7 +1543,19 @@ void CExplorerTool::Deactivate()
 
 bool CExplorerTool::PreTranslateMessage(MSG& message)
 {
-	if (m_impl->closed || m_impl->tree == nullptr || !m_impl->active) return false;
+	if (m_impl->closed || m_impl->tree == nullptr) return false;
+	if (m_impl->labelEditActive) {
+		// Commit/cancel the inline edit deterministically before downstream
+		// accelerator translation can consume Enter or Escape.
+		const HWND edit = TreeView_GetEditControl(m_impl->tree);
+		if (edit != nullptr && message.hwnd == edit && message.message == WM_KEYDOWN
+			&& (message.wParam == VK_RETURN || message.wParam == VK_ESCAPE)) {
+			(void)TreeView_EndEditLabelNow(m_impl->tree, message.wParam == VK_ESCAPE);
+			return true;
+		}
+		return false;
+	}
+	if (!m_impl->active) return false;
 	if (message.hwnd != m_impl->tree) return false;
 	if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
 		m_impl->ActivateSelectedFile();
@@ -1299,6 +1596,36 @@ const std::wstring& CExplorerTool::GetRoot() const noexcept { return m_impl->roo
 void CExplorerTool::SetFileActivationCallback(FileActivationCallback callback)
 {
 	m_impl->activateFile = std::move(callback);
+}
+
+void CExplorerTool::SetCommandCallback(CommandCallback callback)
+{
+	m_impl->commandCallback = std::move(callback);
+}
+
+void CExplorerTool::SetMenuTitleResolver(MenuTitleResolver resolver)
+{
+	m_impl->menuTitleResolver = std::move(resolver);
+}
+
+void CExplorerTool::SetRenameCommitCallback(RenameCommitCallback callback)
+{
+	m_impl->renameCommit = std::move(callback);
+}
+
+void CExplorerTool::SetCreateCommitCallback(CreateCommitCallback callback)
+{
+	m_impl->createCommit = std::move(callback);
+}
+
+bool CExplorerTool::BeginRenameEntry(std::wstring_view path)
+{
+	return m_impl->BeginRename(path);
+}
+
+bool CExplorerTool::BeginCreateEntry(std::wstring_view parentDirectory, bool directory)
+{
+	return m_impl->BeginCreate(parentDirectory, directory);
 }
 
 void CExplorerTool::SetPalette(ExplorerPalette palette)
@@ -1389,9 +1716,24 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		}
 		return 0;
 	}
-	case kWorkerResultMessage:
-		impl.ApplyResult(impl.TakePendingResult(reinterpret_cast<WorkerResult*>(lParam)));
+	case kWorkerResultMessage: {
+		auto result = impl.TakePendingResult(reinterpret_cast<WorkerResult*>(lParam));
+		if (impl.labelEditActive) {
+			// Reconciliation destroys and inserts TreeView items; doing that
+			// under a live label edit could destroy the edited item.  Hold the
+			// result until the edit ends.
+			if (result) impl.deferredResults.emplace_back(std::move(result));
+			return 0;
+		}
+		impl.ApplyResult(std::move(result));
 		return 0;
+	}
+	case WM_CONTEXTMENU:
+		if (reinterpret_cast<HWND>(wParam) == impl.tree) {
+			impl.ShowContextMenu(lParam);
+			return 0;
+		}
+		break;
 	case kActivateFileMessage:
 		impl.DispatchQueuedFileActivation();
 		return 0;
@@ -1407,6 +1749,22 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 	case WM_NOTIFY: {
 		const auto* notification = reinterpret_cast<const NMHDR*>(lParam);
 		if (notification == nullptr || notification->hwndFrom != impl.tree) break;
+		if (notification->code == TVN_BEGINLABELEDITW) {
+			// TVS_EDITLABELS exists solely so TreeView_EditLabel works; an
+			// edit this tool did not arm (a stray click-pause edit) is
+			// cancelled by returning TRUE.
+			if (!impl.labelEditArmed) return TRUE;
+			impl.labelEditArmed = false;
+			impl.labelEditActive = true;
+			return FALSE;
+		}
+		if (notification->code == TVN_ENDLABELEDITW) {
+			impl.FinishLabelEdit(reinterpret_cast<const NMTVDISPINFOW*>(lParam)->item.pszText);
+			// FALSE: the tree never applies the entered label itself.  The
+			// filesystem is the truth and the watcher-driven refresh renders
+			// the committed outcome.
+			return FALSE;
+		}
 		if (notification->code == TVN_ITEMEXPANDINGW) {
 			const auto* expanding = reinterpret_cast<const NMTREEVIEWW*>(lParam);
 			const bool expanded = (expanding->action & TVE_EXPAND) != 0;

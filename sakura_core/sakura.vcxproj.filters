@@ -1153,6 +1153,12 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerContextMenuModel.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerDeleteConfirmation.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>

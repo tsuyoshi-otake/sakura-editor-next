@@ -679,6 +679,8 @@
 	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerContextMenuModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerDeleteConfirmation.h" />
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />

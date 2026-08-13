@@ -50,3 +50,30 @@ one means extending the model and its tests, not patching the projection.
   which registers as writable, so the model has no `writable` input yet. Add
   the input when a read-only provider exists; do not pre-invent a context key
   that can never be false.
+
+## File-Operation Executors (2026-08-13, #146)
+
+The eight commands' native executors live in `CEditWnd` (`ExecuteExplorer*` /
+`CommitExplorerRename` / `CommitExplorerCreate`), writing through a
+window-owned lazy `platform::filesystem::IFileService`. The confirmation
+wording model is `ExplorerDeleteConfirmation.h` and the relative-label/name
+validity model is `ExplorerResourcePath.h`; both are pure and header-only so
+their tests transcribe upstream wording/rules instead of a native dialog.
+
+Recorded divergences of this flow (omit, don't fake):
+
+- **Delete confirmation has no "Do not ask me again" checkbox.** Upstream's
+  checkbox writes `explorer.confirmDelete`; until that setting is read and
+  written here, every delete asks. A checkbox that remembered nothing would be
+  the faked capability.
+- **Permanent-delete file detail reads "This action is irreversible!"** instead
+  of upstream's file-only "You can restore this file using the Undo command.",
+  because this product has no file-operation Undo. The folder wording is
+  upstream's own.
+- **Operation failures surface as a modal error dialog.** Upstream reports
+  them through the notification center; this product's notification surface
+  cannot carry these yet, so the report is modal rather than silently logged.
+- **An invalid entered name is no commit.** Upstream's inline rename box shows
+  a live validation message under the input; the native TreeView label editor
+  has no message surface, so a name failing `IsValidExplorerEntryName` simply
+  does not commit and the edit ends with the entry unchanged.
