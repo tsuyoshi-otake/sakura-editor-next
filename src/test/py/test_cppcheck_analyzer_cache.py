@@ -39,6 +39,15 @@ WORKFLOW_PATH_EXPRESSION = (
     ".cppcheck-build-${{ env.BuildPlatform }}-${{ env.Configuration }}"
 )
 
+# What is pinned here is that restore and save are the *separate* sub-actions,
+# never the combined ``actions/cache@``: the combined action writes an entry
+# from its own post-step, which would put a cache write back on the
+# pull-request path this file exists to keep clear.  The major version is not
+# part of that contract -- it is dependabot's to bump -- and spelling it into
+# the assertion only turned a routine bump into a red build (#149).
+CACHE_RESTORE_RE = re.compile(r"uses:\s*actions/cache/restore@")
+CACHE_SAVE_RE = re.compile(r"uses:\s*actions/cache/save@")
+
 
 def _batch_build_dir_as_workflow_expression() -> str:
     """Render the batch file's build directory the way the workflow spells it."""
@@ -139,7 +148,7 @@ class CppcheckWorkflowCacheTests(unittest.TestCase):
 
     def test_restore_falls_back_to_an_older_entry_of_the_same_analyzer(self) -> None:
         restore = self._step("Restore cppcheck analyzer information")
-        self.assertIn("uses: actions/cache/restore@v4", restore)
+        self.assertRegex(restore, CACHE_RESTORE_RE)
         self.assertIn(
             "restore-keys: |\n"
             "            cppcheck-analyzer-${{ env.BuildPlatform }}-"
@@ -150,7 +159,7 @@ class CppcheckWorkflowCacheTests(unittest.TestCase):
 
     def test_only_non_pull_request_events_write_to_the_cache(self) -> None:
         save = self._step("Save cppcheck analyzer information")
-        self.assertIn("uses: actions/cache/save@v4", save)
+        self.assertRegex(save, CACHE_SAVE_RE)
         self.assertIn("if: ${{ github.event_name != 'pull_request' }}", save)
 
     def test_restore_precedes_the_analysis_and_save_follows_it(self) -> None:
