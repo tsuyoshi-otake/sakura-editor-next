@@ -23,19 +23,13 @@ jobs:
           set -euo pipefail
 
           if [[ "$BASE_REF" != "main" ]]; then
-            echo "PR base '$BASE_REF' is not main; the main-only direction policy does not apply."
-            exit 0
-          fi
-
-          if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
-            echo "::error::Only same-repository develop or hotfix/* branches may target main."
+            echo "::error::All pull requests must target main."
             exit 1
           fi
 
-          if [[ "$HEAD_REF" == "develop" || "$HEAD_REF" == hotfix/* ]]; then
-            echo "Accepted main target from same-repository '$HEAD_REF'."
-            exit 0
+          if [[ "$HEAD_REPOSITORY" != "$REPOSITORY" ]]; then
+            echo "::error::Only same-repository branches may target main."
+            exit 1
           fi
 
-          echo "::error::Feature, fix, and dependabot PRs must target develop; only develop or hotfix/* may target main."
-          exit 1
+          echo "Accepted main target from same-repository '$HEAD_REF'."

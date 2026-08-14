@@ -1,4 +1,4 @@
-"""Contracts for the develop pull-request test selection gate (#112 Phase 3).
+"""Contracts for the main pull-request test selection gate (#112 Phase 3).
 
 Coverage-map test selection used to be restricted to `feature/*` heads.  A
 branch name never made a selection sound -- it only made the unsound cases
@@ -12,8 +12,8 @@ of the safety argument are pinned here:
 
 * The workflow half.  All three steps read one job-level
   ``SAKURA_TEST_SELECTION_ELIGIBLE`` expression, so a fourth step or an edited
-  condition cannot silently disagree with the other three, and promotion and
-  back-merge heads stay excluded.
+  condition cannot silently disagree with the other three, and promotion heads
+  stay excluded.
 * The classifier half.  ``select_tests`` must keep returning ``full`` for each
   fail-closed reason code.  ``tools/build/tests/test_coverage_map.py`` already
   asserts some of this, but pytest's default ``norecursedirs`` skips any
@@ -50,9 +50,9 @@ from sakura_build_lib.test_inventory import guarantee_fingerprint  # noqa: E402
 ELIGIBILITY = "SAKURA_TEST_SELECTION_ELIGIBLE"
 GATE = f"env.{ELIGIBILITY} == 'true'"
 GATED_STEPS = (
-    "Restore develop coverage map",
-    "Select feature PR tests",
-    "Upload feature test-selection evidence",
+    "Restore main coverage map",
+    "Select main PR tests",
+    "Upload main test-selection evidence",
 )
 
 STEP_BOUNDARY_RE = re.compile(r"(?m)^(?=[ \t]*-[ \t]+(?:name|uses|if):)")
@@ -90,7 +90,7 @@ def _inventory() -> dict:
     ]
     return {
         "schema_version": 1,
-        "inventory_id": "develop-pr-gate-fixture",
+        "inventory_id": "main-pr-gate-fixture",
         "source_revision": BASE_SHA,
         "source_dirty": False,
         "discovery": {
@@ -141,7 +141,7 @@ class EligibilityGateTests(unittest.TestCase):
             self.text.index(f"      {ELIGIBILITY}:"), self.text.index("\n    steps:\n", job)
         )
         self.assertIn("github.event_name == 'pull_request'", expression)
-        self.assertIn("github.event.pull_request.base.ref == 'develop'", expression)
+        self.assertIn("github.event.pull_request.base.ref == 'main'", expression)
 
     def test_only_same_repository_pull_requests_are_eligible(self) -> None:
         # A fork cannot read the base branch's map cache, so a fork PR would
@@ -152,14 +152,11 @@ class EligibilityGateTests(unittest.TestCase):
             self._eligibility_expression(),
         )
 
-    def test_promotion_and_back_merge_heads_stay_excluded(self) -> None:
-        # A `main` or `develop` head is the integration state itself: the last
-        # place to accept reduced coverage, and a diff that is not the work of
-        # any single change.
+    def test_main_promotion_head_stays_excluded(self) -> None:
+        # A `main` head is the integration state itself: the last place to
+        # accept reduced coverage, and a diff that is not the work of one change.
         expression = self._eligibility_expression()
-        for head in ("main", "develop"):
-            with self.subTest(head=head):
-                self.assertIn(f"github.event.pull_request.head.ref != '{head}'", expression)
+        self.assertIn("github.event.pull_request.head.ref != 'main'", expression)
 
     def test_every_gate_reads_the_shared_flag(self) -> None:
         for name in GATED_STEPS:
@@ -184,7 +181,7 @@ class EligibilityGateTests(unittest.TestCase):
                 self.assertNotIn("head.ref", conditions[0].replace(GATE, ""))
 
     def test_the_selection_step_falls_back_to_the_full_filter_on_any_error(self) -> None:
-        step = self._step("Select feature PR tests")
+        step = self._step("Select main PR tests")
         self.assertIn('$fullFilter = "-$env:HEADLESS_GTEST_EXCLUDES"', step)
         catch = step[step.index("} catch {") :]
         self.assertIn("$filter = $fullFilter", catch)
@@ -307,7 +304,7 @@ class FailClosedClassifierTests(unittest.TestCase):
 
     def test_a_missing_or_stale_map_runs_the_full_suite(self) -> None:
         # The cache restore is best-effort, and a base SHA moves whenever
-        # develop advances under an open pull request.
+        # main advances under an open pull request.
         self.assertFullSuite(
             self.decide(ChangedFile("sakura_core/foo.cpp"), coverage_map=None),
             "coverage_map_missing",

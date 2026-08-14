@@ -1,14 +1,14 @@
 name: Coverage map
 
-# This reusable workflow runs only from build-sakura's trusted develop-push
+# This reusable workflow runs only from build-sakura's trusted main-push
 # path, after its full Debug and Release matrix has completed.  It deliberately
-# does not use workflow_run: cache writes must retain the caller's push/develop
-# scope so feature PRs can restore the exact base-SHA map read-only.
+# does not use workflow_run: cache writes must retain the caller's push/main
+# scope so main-targeted PRs can restore the exact base-SHA map read-only.
 on:
   workflow_call:
     inputs:
       source_sha:
-        description: Exact successful develop commit that owns the test bundle.
+        description: Exact successful main commit that owns the test bundle.
         required: true
         type: string
       shard_count:
@@ -42,7 +42,7 @@ jobs:
     name: Plan coverage map
     runs-on: windows-2022
     timeout-minutes: 10
-    # A failed map is not a failed develop integration.  No downstream job can
+    # A failed map is not a failed main integration. No downstream job can
     # publish a cache unless every required map stage succeeds.
     continue-on-error: true
     outputs:
@@ -331,7 +331,7 @@ jobs:
           "- cache key: ``$cacheKey``"
         ) | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
 
-    - name: Save develop coverage map cache
+    - name: Save main coverage map cache
       uses: actions/cache/save@v4
       with:
         path: .coverage-map-cache

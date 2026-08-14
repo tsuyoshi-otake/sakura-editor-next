@@ -45,8 +45,8 @@ KEY_EXPRESSION = "sakura-packages-${{ runner.os }}-${{ steps.package-plan.output
 
 # `coverage-map.yml` has no step-level pull-request exclusion because it cannot
 # be reached by a pull request at all: it is workflow_call-only and its single
-# caller is build-sakura's trusted develop-push path.  The cache write has to
-# retain that caller's scope so feature PRs can restore the map read-only,
+# caller is build-sakura's trusted main-push path.  The cache write has to
+# retain that caller's scope so main-targeted PRs can restore the map read-only,
 # which is exactly what a `workflow_run` indirection would destroy.  The test
 # below re-checks that reason instead of trusting the entry.
 CALLER_GATED_WORKFLOWS = {"coverage-map.yml"}

@@ -297,7 +297,7 @@ py -3 tools/build/sakura_build.py inventory semantic ^
 Issue番号をbaseline横のimmutable history recordへ書きます。inventory/evidenceは一時ファイルからatomic
 replaceし、同じ入力の通常収集で不要なmtime更新は発生しません。
 
-`.github/workflows/architecture-gates.yml`はPR、`main`/`develop`へのpush、手動実行で常に
+`.github/workflows/architecture-gates.yml`はPR、`main`へのpush、手動実行で常に
 `architecture-gates` jobを生成する。path filterやjob条件を置かないので、documentation-only PRでも
 required checkがpendingのままにはならない。baseline commitのancestor判定とblob比較に必要な履歴を
 checkoutするため、workflowは`fetch-depth: 0`を使う。CI起動前にも同じlintを必須実行し、jobは次の4検証をfail-closedで順に実行する。
@@ -545,17 +545,17 @@ GitHub-hosted runner は非対話セッションのため、標準 CI でも同�
 
 ### カバレッジマップによる影響テスト選択
 
-Issue #47 の feature PR 用選択器は、develop の全件テストから作った OpenCppCoverage
+Issue #47 の main 向け PR 用選択器は、main の全件テストから作った OpenCppCoverage
 Cobertura 断片をスイート単位で統合し、変更ファイルを GoogleTest selector へ変換します。
 マップのスキーマは [`tools/build/coverage-map.schema.json`](build/coverage-map.schema.json)
-です。マップには develop の `base_sha`、`tests1.exe` の SHA-256、テスト inventory の
-guarantee fingerprint を保存するため、別の develop 成果物を誤って再利用できません。
+です。マップには main の `base_sha`、`tests1.exe` の SHA-256、テスト inventory の
+guarantee fingerprint を保存するため、別の main 成果物を誤って再利用できません。
 Actions cache は `tia-map-windows-x64-<base-sha>-<schema-version>`（CLI の
 `coverage_cache_key` と同じ形式）を使い、base SHA を省略した共有キーを作ってはいけません。
 
 ```cmd
 py -3 tools/build/sakura_build.py test coverage-map merge ^
-  --base-sha <develop-sha> ^
+  --base-sha <main-sha> ^
   --test-binary x64/Debug/tests1.exe ^
   --inventory src/test/test-inventory.json ^
   --fragment FooTest.*::coverage/FooTest.xml ^
@@ -564,7 +564,7 @@ py -3 tools/build/sakura_build.py test coverage-map merge ^
 py -3 tools/build/sakura_build.py --format json test coverage-map select ^
   --map coverage/coverage-map.json ^
   --inventory src/test/test-inventory.json ^
-  --base-sha <develop-sha> ^
+  --base-sha <main-sha> ^
   --modules-json src/main/modules/modules.json ^
   --changed-file M::sakura_core/CEditView.cpp ^
   --smoke-selector RequestService.CancellationIsTerminalBeforeTransport
@@ -584,7 +584,7 @@ py -3 tools/build/sakura_build.py --format json test coverage-map plan ^
   --output coverage/plan-0.json
 
 py -3 tools/build/sakura_build.py --format json test coverage-map merge-partials ^
-  --base-sha <develop-sha> ^
+  --base-sha <main-sha> ^
   --inventory src/test/test-inventory.json ^
   --partial-map coverage/partial-0.json ^
   --partial-map coverage/partial-1.json ^
@@ -602,23 +602,23 @@ test-runner/PCH の変更・選択テストが全体の 65% 以上、または s
 inline/template の変更も同じ module の coverage suite を選べます。modules の所有範囲に
 入らない production file は安全側に全件へフォールバックします。
 
-Actions では `build-sakura.yml` が full Debug/Release 成功後の trusted `develop` push だけで
+Actions では `build-sakura.yml` が full Debug/Release 成功後の trusted `main` push だけで
 `coverage-map.yml` を呼びます。Debug の `tests1.exe` と PDB は retention 1 日の入力 artifact
 として渡し、8 shard が XML を各 runner 内で検証して compact partial map だけを集約します。
-最終 map は正確な develop SHA を含む cache key で保存されます。map 作成は required check では
+最終 map は正確な main SHA を含む cache key で保存されます。map 作成は required check では
 なく、失敗時には cache を保存しません。
 
-同一リポジトリの `feature/*` → `develop` PR はその PR の `base.sha` と完全一致する map だけを
+同一リポジトリの main 向け PR はその PR の `base.sha` と完全一致する map だけを
 restore し、selector の結果と `CNativeW.*` の smoke を `tests1` の `GTEST_FILTER` に渡します。
 coverage map は `tests1` 専用なので、別々に CTest へ登録された component test executable と
 pytest は、この選択時にも従来の full headless filter で必ず実行します。map 不在・provenance
-不一致・不明な差分・選択器の例外は、従来の full headless suite へ戻ります。fork、`fix/*`、
-`hotfix/*`、Dependabot、`develop` → `main` は常に full suite です。したがって map は高速化の
+不一致・不明な差分・選択器の例外は、従来の full headless suite へ戻ります。fork と `main` head の
+PR は常に full suite です。したがって map は高速化の
 ためのヒントであり、テスト0件の成功や cache 書き込み権限を与えるものではありません。
 
 各構成の選択決定は Actions artifact `test-selection-x64-Debug`／
 `test-selection-x64-Release` 内の `tia-test-selection.json` に保存されます。`mode` と
-`full_fallback` を確認すると、feature PR が選択実行したか、安全側の full fallback に戻ったかを
+`full_fallback` を確認すると、main 向け PR が選択実行したか、安全側の full fallback に戻ったかを
 後から判別できます。
 
 ### デバッグ方法
@@ -680,7 +680,7 @@ build-sln.bat x64 Release
 
 ### Pull RequestではCIビルドをスキップしない
 
-`main` と `develop` は required checks で保護されています。ドキュメントのみの Pull Request でも必要な Workflow が起動して成功結果を報告するため、コミットメッセージに `[ci skip]` または `[skip ci]` を含めないでください。Workflow 自体が起動しないと required check が未報告のままになり、Pull Request をマージできません。
+`main` は required checks で保護されています。ドキュメントのみの Pull Request でも必要な Workflow が起動して成功結果を報告するため、コミットメッセージに `[ci skip]` または `[skip ci]` を含めないでください。Workflow 自体が起動しないと required check が未報告のままになり、Pull Request をマージできません。
 
 ## MinGWビルド (実験的)
 

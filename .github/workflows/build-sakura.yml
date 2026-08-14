@@ -1,6 +1,6 @@
 name: build sakura
 
-# Pull requests verify changes entering develop; push builds verify main after promotion.
+# Pull requests verify changes entering main; push builds refresh main after merge.
 on:
   workflow_call:
     inputs:
@@ -45,7 +45,7 @@ env:
   VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
   VCPKG_ROOT: ${{ github.workspace }}\tools\vcpkg
   # Keep this source-of-truth exclusion list identical for ordinary full CI,
-  # feature-PR selection, and develop coverage-map collection. Hosted runners
+  # main-PR selection, and main coverage-map collection. Hosted runners
   # are non-interactive, so these UI/external suites are intentionally outside
   # all three paths.
   HEADLESS_GTEST_EXCLUDES: MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
@@ -439,14 +439,14 @@ jobs:
       # at or above the threshold -- and the selection step falls back to the
       # full filter on any error at all.
       #
-      # Promotion and back-merge pull requests stay excluded: a `main` or
-      # `develop` head is the integration state itself, the last place to
-      # accept reduced coverage, and its diff is not the work of one change.
+      # Promotion pull requests stay excluded: a `main` head is the integration
+      # state itself, the last place to accept reduced coverage, and its diff is
+      # not the work of one change.
       # Forks stay excluded because they cannot read the map cache.
       #
       # Job-level so the restore, selection, and evidence-upload steps cannot
       # drift apart; unset or `false` always means the full headless suite.
-      SAKURA_TEST_SELECTION_ELIGIBLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'develop' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref != 'main' && github.event.pull_request.head.ref != 'develop' }}
+      SAKURA_TEST_SELECTION_ELIGIBLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref != 'main' }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
@@ -472,7 +472,7 @@ jobs:
         submodules: true
 
     # Job-level env values cannot reference the workflow env context.  Export
-    # the regular headless filter for every later step; feature-map selection
+    # the regular headless filter for every later step; main-targeted map selection
     # below may replace only its positive portion.
     - name: Set default headless test filter
       run: '"GTEST_FILTER=-$env:HEADLESS_GTEST_EXCLUDES" >> $env:GITHUB_ENV'
@@ -512,11 +512,11 @@ jobs:
         echo "GITHUB_PR_HEAD_COMMIT=${{ github.event.pull_request.head.sha }}" >> $env:GITHUB_ENV
         echo "GITHUB_PR_HEAD_SHORT_COMMIT=$('${{ github.event.pull_request.head.sha }}'.SubString(0, 8))" >> $env:GITHUB_ENV
 
-    # Eligibility is decided once in the job's env block above.  Forks,
-    # develop/main promotion pull requests, every event that is not a
-    # develop-targeted pull request, and every missing or invalid map retain
+    # Eligibility is decided once in the job's env block above. Forks,
+    # main promotion pull requests, every event that is not a main-targeted
+    # pull request, and every missing or invalid map retain
     # the regular full headless suite.
-    - name: Restore develop coverage map
+    - name: Restore main coverage map
       id: restore-coverage-map
       if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       uses: actions/cache/restore@v4
@@ -524,7 +524,7 @@ jobs:
         path: .coverage-map-cache
         key: tia-map-windows-x64-${{ github.event.pull_request.base.sha }}-${{ env.COVERAGE_MAP_SCHEMA_VERSION }}
 
-    - name: Select feature PR tests
+    - name: Select main PR tests
       if: ${{ env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       env:
         COVERAGE_MAP_BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -609,7 +609,7 @@ jobs:
         "TIA_SELECTION_CACHE_HIT=$env:COVERAGE_MAP_CACHE_HIT" >> $env:GITHUB_ENV
         Copy-Item -LiteralPath $decisionPath -Destination 'tia-test-selection.json' -Force
         @(
-          '### Feature PR test selection',
+          '### Main-targeted PR test selection',
           '',
           '```json',
           ($decision | ConvertTo-Json -Depth 8 -Compress),
@@ -745,7 +745,7 @@ jobs:
     # non-interactive hosted-runner session. Keep those tests available for
     # interactive validation and run the documented headless suite in CI.
     #
-    # A coverage map names only tests1 suites.  When a feature PR has a valid
+    # A coverage map names only tests1 suites. When a main-targeted PR has a valid
     # selected/smoke decision, run that target through its narrow filter but
     # still execute every separately registered component test and pytest with
     # the normal headless filter.  A positive GTEST_FILTER applied to all of
@@ -798,7 +798,7 @@ jobs:
       if: ${{ always() && steps.checkout.outcome == 'success' }}
       run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
-    - name: Upload feature test-selection evidence
+    - name: Upload main test-selection evidence
       if: ${{ always() && env.SAKURA_TEST_SELECTION_ELIGIBLE == 'true' }}
       uses: actions/upload-artifact@v7
       with:
@@ -813,10 +813,10 @@ jobs:
       run: .\tools\verify-build-incremental.ps1 -ValidateImportedFiles
 
     # The PDB is intentionally short-lived and used only by the trusted
-    # develop-push map workflow.  Passing compact partial maps afterwards
+    # main-push map workflow. Passing compact partial maps afterwards
     # avoids transferring hundreds of verbose Cobertura XML reports.
     - name: Upload coverage-map Debug test bundle
-      if: ${{ success() && matrix.platform == 'x64' && matrix.config == 'Debug' && github.event_name == 'push' && github.ref_name == 'develop' }}
+      if: ${{ success() && matrix.platform == 'x64' && matrix.config == 'Debug' && github.event_name == 'push' && github.ref_name == 'main' }}
       uses: actions/upload-artifact@v7
       with:
         name: coverage-map-input
@@ -922,9 +922,9 @@ jobs:
     name: Build coverage map
     needs: build
     # The reusable workflow marks map-only failures non-blocking and publishes
-    # no cache in that case.  Future feature PRs therefore retain the full-suite
-    # fallback until a later successful develop push refreshes the map.
-    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_name == 'develop' && !inputs.release_promotion }}
+    # no cache in that case.  Future main-targeted PRs therefore retain the full-suite
+    # fallback until a later successful main push refreshes the map.
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref_name == 'main' && !inputs.release_promotion }}
     uses: ./.github/workflows/coverage-map.yml
     with:
       source_sha: ${{ github.sha }}

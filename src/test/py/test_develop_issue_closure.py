@@ -27,7 +27,6 @@ SCRIPTS = REPO_ROOT / ".github/scripts"
 CLOSING_SCRIPT = SCRIPTS / "close_referenced_issues.py"
 WORKFLOW = REPO_ROOT / ".github/workflows/develop-issue-closure.yml"
 PULL_REQUEST_TEMPLATE = REPO_ROOT / ".github/PULL_REQUEST_TEMPLATE.md"
-PR_TARGET_POLICY_WORKFLOW = REPO_ROOT / ".github/workflows/pr-target-policy.yml"
 SEMANTIC_INVENTORY = REPO_ROOT / "tools/build/sakura_build_lib/semantic_inventory.py"
 
 if str(SCRIPTS) not in sys.path:
@@ -256,15 +255,6 @@ class DevelopIssueClosureWorkflowContractTests(unittest.TestCase):
         # Prove the rule is live before trusting an empty result from it.
         self.assertTrue(rule.findall('echo "::notice::skipping issue closure."'))
         self.assertEqual(rule.findall(self.text), [])
-
-    def test_the_branch_policy_that_makes_this_workflow_necessary_still_holds(self) -> None:
-        policy = PR_TARGET_POLICY_WORKFLOW.read_text(encoding="utf-8-sig")
-        self.assertIn(
-            "Feature, fix, and dependabot PRs must target develop;"
-            " only develop or hotfix/* may target main.",
-            policy,
-        )
-
 
 if __name__ == "__main__":
     unittest.main()
