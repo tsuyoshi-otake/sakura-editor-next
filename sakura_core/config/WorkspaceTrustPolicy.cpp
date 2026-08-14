@@ -148,7 +148,7 @@ WorkspaceTrustResolution ResolveWorkspaceTrust(const WorkspaceTrustResolveReques
 	}
 
 	// Trust is not the union of the roots. One untrusted root leaves the whole window
-	// untrusted, because extension code runs once for all of them.
+	// untrusted, because automated workspace code can run once for all of them.
 	for (const auto& folder : request.folderUris) {
 		if (!isCovered(folder)) {
 			return { EWorkspaceTrustState::Unknown, EWorkspaceTrustReason::RootNotTrusted };

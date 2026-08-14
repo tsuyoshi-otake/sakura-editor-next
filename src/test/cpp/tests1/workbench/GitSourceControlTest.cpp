@@ -36,7 +36,7 @@ namespace {
 
 ScmOwner Owner()
 {
-	return { std::string(kGitExtensionId), 1 };
+	return { std::string(kGitProviderId), 1 };
 }
 
 GitChange Change(const wchar_t* path, const wchar_t index, const wchar_t worktree)

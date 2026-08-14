@@ -168,8 +168,7 @@ TEST(WorkspaceArtifactDocumentSourceController, ReadsWorkspaceMembersAndFolderAr
 	auto workspace = Resource(L"file:///C:/Workspace/project.code-workspace");
 	files.files.emplace(workspace.Path(), Bytes(R"json({
   "tasks": { "version": "2.0.0", "tasks": [ { "label": "workspace" } ] },
-  "launch": { "version": "0.2.0", "configurations": [ { "name": "workspace" } ] },
-  "extensions": { "recommendations": [ "workspace.extension" ] }
+  "launch": { "version": "0.2.0", "configurations": [ { "name": "workspace" } ] }
 })json"));
 	files.files.emplace(L"/C:/Workspace/.vscode/tasks.json", Bytes(R"json({ "version": "2.0.0", "tasks": [ { "label": "folder" } ] })json"));
 
@@ -183,8 +182,6 @@ TEST(WorkspaceArtifactDocumentSourceController, ReadsWorkspaceMembersAndFolderAr
 	EXPECT_EQ(L"/C:/Workspace/.vscode/tasks.json", service.Tasks(folder).document->resource.Path());
 	ASSERT_TRUE(service.Launch(folder).document.has_value());
 	EXPECT_EQ(workspace.Path(), service.Launch(folder).document->resource.Path());
-	ASSERT_TRUE(service.Extensions(folder).document.has_value());
-	EXPECT_EQ(workspace.Path(), service.Extensions(folder).document->resource.Path());
 	EXPECT_EQ(EWorkspaceArtifactDocumentSourceStatus::Stopped, controller.Stop().status);
 }
 
@@ -201,14 +198,14 @@ TEST(WorkspaceArtifactDocumentSourceController, CorruptOrInvalidBytesPreserveLas
 	files.files[tasks] = Bytes(R"json({ "tasks": [], "tasks": [] })json");
 	auto corrupt = controller.Reload();
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Reloaded, corrupt.status);
-	ASSERT_EQ(3u, corrupt.documents.size());
+	ASSERT_EQ(2u, corrupt.documents.size());
 	EXPECT_EQ(EWorkspaceArtifactDocumentStatus::DuplicateKey, corrupt.documents.front().status);
 	ASSERT_TRUE(service.Tasks(folder).document.has_value());
 	EXPECT_EQ(std::string::npos, service.Tasks(folder).document->rawJsonc.find("\"tasks\": [], \"tasks\": []"));
 	files.files[tasks] = FileResult<FileBytes>::Success({ 0xc3U, 0x28U });
 	auto invalidUtf8 = controller.Reload();
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Reloaded, invalidUtf8.status);
-	ASSERT_EQ(3u, invalidUtf8.documents.size());
+	ASSERT_EQ(2u, invalidUtf8.documents.size());
 	EXPECT_EQ(EWorkspaceArtifactDocumentStatus::InvalidUtf8, invalidUtf8.documents.front().status);
 	ASSERT_TRUE(service.Tasks(folder).document.has_value());
 	files.files[tasks] = FileResult<FileBytes>::Failure(EFileResultStatus::PermissionDenied);

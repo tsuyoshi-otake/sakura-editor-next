@@ -72,7 +72,6 @@ public:
 	[[nodiscard]] const ::platform::uri::Uri& Keybindings() const noexcept { return m_keybindings; }
 	[[nodiscard]] const ::platform::uri::Uri& Snippets() const noexcept { return m_snippets; }
 	[[nodiscard]] const ::platform::uri::Uri& Tasks() const noexcept { return m_tasks; }
-	[[nodiscard]] const ::platform::uri::Uri& ExtensionsSelection() const noexcept { return m_extensionsSelection; }
 	[[nodiscard]] const ::platform::uri::Uri& GlobalState() const noexcept { return m_globalState; }
 	[[nodiscard]] const ::platform::uri::Uri& WorkingCopies() const noexcept { return m_workingCopies; }
 	[[nodiscard]] const ::platform::uri::Uri& WorkbenchLayout() const noexcept { return m_workbenchLayout; }
@@ -84,7 +83,6 @@ private:
 		::platform::uri::Uri keybindings,
 		::platform::uri::Uri snippets,
 		::platform::uri::Uri tasks,
-		::platform::uri::Uri extensionsSelection,
 		::platform::uri::Uri globalState,
 		::platform::uri::Uri workingCopies,
 		::platform::uri::Uri workbenchLayout) noexcept;
@@ -94,7 +92,6 @@ private:
 	::platform::uri::Uri m_keybindings;
 	::platform::uri::Uri m_snippets;
 	::platform::uri::Uri m_tasks;
-	::platform::uri::Uri m_extensionsSelection;
 	::platform::uri::Uri m_globalState;
 	::platform::uri::Uri m_workingCopies;
 	::platform::uri::Uri m_workbenchLayout;

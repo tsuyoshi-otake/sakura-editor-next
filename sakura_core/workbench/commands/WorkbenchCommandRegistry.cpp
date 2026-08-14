@@ -296,21 +296,6 @@ WorkbenchCommandDescriptor MakeQuitDescriptor()
 		"workbenchReady", "workbenchReady", kLegacyQuitFunctionCode);
 }
 
-WorkbenchCommandDescriptor MakeExtensionsDescriptor()
-{
-	return {
-		"workbench.view.extensions",
-		"Extensions",
-		kBuiltinOwner,
-		"workbenchReady",
-		"workbenchReady",
-		EWorkbenchCommandExecutorTarget::Layout,
-		{
-			{ EWorkbenchCommandSurface::Menu, "workbench.manage.extensions", std::nullopt },
-		},
-	};
-}
-
 WorkbenchCommandDescriptor MakeOpenGlobalKeybindingsDescriptor()
 {
 	return {
@@ -338,22 +323,6 @@ WorkbenchCommandDescriptor MakeColorThemeDescriptor()
 		{
 			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.selectTheme.palette", std::nullopt },
 			{ EWorkbenchCommandSurface::Menu, "workbench.manage.colorTheme", std::nullopt },
-		},
-	};
-}
-
-WorkbenchCommandDescriptor MakeFileIconThemeDescriptor()
-{
-	return {
-		"workbench.action.selectIconTheme",
-		"Preferences: File Icon Theme",
-		kBuiltinOwner,
-		"workbenchReady",
-		"workbenchReady",
-		EWorkbenchCommandExecutorTarget::LegacyNative,
-		{
-			{ EWorkbenchCommandSurface::CommandPalette, "workbench.action.selectIconTheme.palette", std::nullopt },
-			{ EWorkbenchCommandSurface::Menu, "workbench.manage.fileIconTheme", std::nullopt },
 		},
 	};
 }
@@ -737,10 +706,8 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		Entry{ MakeShowCommandsDescriptor(), std::move(executors.showCommands), {} },
 		Entry{ MakeOpenSettingsDescriptor(), std::move(executors.openSettings), {} },
 		Entry{ MakeOpenFolderDescriptor(), std::move(executors.openFolder), {} },
-		Entry{ MakeExtensionsDescriptor(), std::move(executors.showExtensions), {} },
 		Entry{ MakeOpenGlobalKeybindingsDescriptor(), std::move(executors.openGlobalKeybindings), {} },
 		Entry{ MakeColorThemeDescriptor(), std::move(executors.selectTheme), {} },
-		Entry{ MakeFileIconThemeDescriptor(), std::move(executors.selectFileIconTheme), {} },
 		Entry{ MakeNewUntitledFileDescriptor(), std::move(executors.newUntitledFile), {} },
 		Entry{ MakeNewWindowDescriptor(), std::move(executors.newWindow), {} },
 		Entry{ MakeOpenFileDescriptor(), std::move(executors.openFile), {} },

@@ -1,15 +1,8 @@
-/*! @file
+﻿/*! @file
 	@brief `$(icon-id)` を描画方法へ解決する単一の窓口
 
-	実 VS Code の `ThemeIcon.fromString("$(id)")` は、拡張が `contributes.icons` で
-	寄与したアイコンも組み込み codicon も、単一のグローバルな `IconRegistry` から
-	id だけで引く。ステータスバーの `StatusBarItem.text` と、ホバーが描く
-	`MarkdownString`（supportThemeIcons）は同じ記法・同じ解決順でなければならない
-	ので、その語彙をここ 1 か所に置く。
-
-	組み込み codicon の語彙（CodiconGlyphTable.h = 同梱 codicon.ttf の全 746 名）と
-	拡張寄与の語彙（CExtensionIconFontRegistry）は別々の所有者のままにし、この
-	ヘッダーは両者を上から順に引くだけにとどめる。
+	ワークベンチのラベルで使う `$(icon-id)` 記法を、組み込み codicon と
+	フォールバックのベクターへ一貫して解決する。
 
 	このヘッダーは純粋に保つ。同梱フォントの所有者（CCodiconFont）は include せず、
 	登録済みの書体名を引数で受け取るだけにする。書体名が空なら同梱フォントは
@@ -23,7 +16,6 @@
 #pragma once
 
 #include "workbench/IconMetrics.h"
-#include "workbench/icons/CExtensionIconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 
@@ -34,21 +26,16 @@
 
 namespace workbench::icons {
 
+struct SFontIcon {
+	std::wstring faceName;
+	std::wstring glyph;
+};
+
 //! `$(icon-id)` 1 個の解決結果。3 つの描き方のいずれか 1 つだけが有効になる。
 struct SResolvedThemeIcon {
-	/*!
-		@brief フォントのグリフとして描くアイコン。真なら fontIcon を使う。
-
-		拡張の contributes.icons も、同梱 codicon.ttf の組み込みアイコンも、
-		どちらも「登録済みの書体名 + 1 文字」というこの同じ形になる。実 VS Code が
-		両者を同じ font-family/content の仕組みで描くのと同じで、描画側に 2 通りの
-		経路を持たせない。
-	*/
+	//! フォントのグリフとして描くアイコン。真なら fontIcon を使う。
 	bool font = false;
-	SExtensionContributedIcon fontIcon;
-	//! font が真のとき、そのグリフが拡張の contributes.icons 由来なら真。
-	bool contributed = false;
-	//! `$(extensions)`。同梱フォントが使えないときだけの 2x2 タイル合成アイコン。
+	SFontIcon fontIcon;
 	//! 取り込み済みベクター codicon。同梱フォントが使えないときの最後の砦。
 	codicons::Icon builtin = codicons::Icon::RecordSmall;
 };
@@ -80,7 +67,6 @@ struct SResolvedThemeIcon {
 	if (name == L"open-preview") return Icon::OpenPreview;
 	if (name == L"chevron-down") return Icon::ChevronDown;
 	if (name == L"chevron-right") return Icon::ChevronRight;
-	if (name == L"extensions") return Icon::Extensions;
 	if (name == L"warning") return Icon::Warning;
 	if (name == L"error") return Icon::Error;
 	if (name == L"info") return Icon::Info;
@@ -93,11 +79,6 @@ struct SResolvedThemeIcon {
 /*!
 	@brief `$(icon-id)` の id を描画方法へ解決する
 
-	実 VS Code の IconRegistry と同じく、寄与アイコンは拡張をまたいだ 1 つの id 空間に
-	入る。よってまず寄与アイコンを id だけで引き、無ければ組み込みへ落とす。これを
-	拡張ごとの解決へ「直して」はならない。ある拡張が別の拡張の寄与した id を使うのは
-	上流仕様どおりの正当な状態である。
-
 	@param builtinFontFaceName 登録済みの同梱 codicon.ttf の書体名
 	       （workbench::icons::CCodiconFont::Instance().FaceName()）。空を渡すと
 	       組み込みアイコンは取り込み済みベクターへ落ちる。
@@ -106,18 +87,9 @@ struct SResolvedThemeIcon {
 */
 [[nodiscard]] inline SResolvedThemeIcon ResolveThemeIcon(
 	std::wstring_view iconId,
-	const CExtensionIconFontRegistry* contributedIcons,
 	std::wstring_view builtinFontFaceName = {})
 {
 	SResolvedThemeIcon resolved;
-	if (contributedIcons != nullptr) {
-		if (auto found = contributedIcons->Find(iconId); found.has_value()) {
-			resolved.fontIcon = std::move(*found);
-			resolved.font = true;
-			resolved.contributed = true;
-			return resolved;
-		}
-	}
 	// 実 VS Code と同じく、組み込みアイコンは codicon.ttf の 1 グリフとして描く。
 	// 取り込み済みベクターの有無で名前ごとに描き方が変わってはならない。
 	if (!builtinFontFaceName.empty()) {
@@ -167,15 +139,13 @@ struct SLabelRun {
 	- 直前の `\` はエスケープで、`$(name)` をリテラル文字として出す。
 	- 名前が上の字種に合わないものはアイコンではなく、ただの文字として残る。
 	- 一致は**位置そのまま**で、前後のテキストと交互に並ぶ。先頭 1 個だけを
-	  特別扱いしてはならない。`StatusBarItem.text` は上流でも複数アイコンを
-	  取り、`$(otak-claude) 46% $(otak-openai) 100%` はその代表例である。
+	  特別扱いしてはならない。
 
 	@note modifier（`~spin` 等）はアイコン id から切り離して別に返す。id 解決には
 	      使わないが、呼び出し側がアニメーションの有無を判断できるようにする。
 */
 [[nodiscard]] inline std::vector<SLabelRun> ParseLabelWithIcons(
 	std::wstring_view label,
-	const CExtensionIconFontRegistry* contributedIcons,
 	std::wstring_view builtinFontFaceName = {})
 {
 	std::vector<SLabelRun> runs;
@@ -224,7 +194,7 @@ struct SLabelRun {
 			flushLiteral();
 			SLabelRun run;
 			run.icon = true;
-			run.resolved = ResolveThemeIcon(name, contributedIcons, builtinFontFaceName);
+			run.resolved = ResolveThemeIcon(name, builtinFontFaceName);
 			run.modifier.assign(modifier);
 			runs.push_back(std::move(run));
 		}
@@ -234,5 +204,4 @@ struct SLabelRun {
 	return runs;
 }
 
-//! `$(extensions)` の 2x2 タイル。ベクターパスを持たないので矩形 4 枚で描く。
 } // namespace workbench::icons

@@ -34,7 +34,6 @@ TEST(WorkspaceConfigurationDocumentParser, ResolvesRelativeFoldersAndRetainsType
   "settings": { "editor.tabSize": 3, },
   "tasks": { "version": "2.0.0" },
   "launch": { "configurations": [] },
-  "extensions": { "recommendations": ["sample.extension"] },
 }
 )json", ParseUri(L"file:///C:/Work/demo.code-workspace"));
 
@@ -43,10 +42,9 @@ TEST(WorkspaceConfigurationDocumentParser, ResolvesRelativeFoldersAndRetainsType
 	ASSERT_EQ(1U, result.document->folders.size());
 	EXPECT_EQ(L"file:///C:/Work/engine", result.document->folders.front().uri.ToString());
 	EXPECT_EQ(L"engine", result.document->folders.front().displayName);
-	ASSERT_EQ(3U, result.document->fileMembers.size());
+	ASSERT_EQ(2U, result.document->fileMembers.size());
 	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Tasks, result.document->fileMembers[0].member);
 	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Launch, result.document->fileMembers[1].member);
-	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Extensions, result.document->fileMembers[2].member);
 }
 
 TEST(WorkspaceConfigurationDocumentParser, RequiresExactlyOneFolderLocation)

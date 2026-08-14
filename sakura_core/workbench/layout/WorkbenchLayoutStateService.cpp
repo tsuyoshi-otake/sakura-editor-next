@@ -776,7 +776,7 @@ struct WorkbenchLayoutStateMutator {
 	bool drain = false;
 	{
 		std::scoped_lock lock(service.m_mutex);
-		if (!WorkbenchContributionRegistry::IsValidOperationId(request.operation.operationId))
+		if (!WorkbenchContributionRegistry::IsValidStableId(request.operation.operationId))
 			return service.ResultLocked(EWorkbenchLayoutOperationStatus::Invalid, EWorkbenchLayoutOperationReason::InvalidOperationId);
 		bool handled = false;
 		result = service.CheckOperationLocked(request.operation, fingerprint, handled);

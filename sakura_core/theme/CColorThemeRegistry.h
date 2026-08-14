@@ -9,7 +9,6 @@
 
 #include "theme/CThemeService.h"
 
-#include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
@@ -29,11 +28,7 @@ enum class ColorThemeKind : std::uint8_t {
 struct ColorThemeInfo final {
 	std::wstring id;
 	std::wstring label;
-	std::wstring extensionId;
-	std::filesystem::path extensionRoot;
-	std::filesystem::path themePath;
 	ColorThemeKind kind = ColorThemeKind::Dark;
-	bool isBuiltin = false;
 
 	[[nodiscard]] bool operator==(const ColorThemeInfo&) const noexcept = default;
 };
@@ -65,28 +60,20 @@ struct ColorThemeLoadResult final {
 	[[nodiscard]] bool Succeeded() const noexcept { return theme.has_value(); }
 };
 
-//! Window-local registry of VS Code `contributes.themes` entries discovered in
-//! installed extension roots. The registry does not perform network or install
-//! work; OpenVSX installation remains owned by CExtensionPane/CExtensionManager.
+//! Window-local registry for Sakura's bundled color themes.
 class CColorThemeRegistry final {
 public:
 	CColorThemeRegistry() = default;
 	CColorThemeRegistry(const CColorThemeRegistry&) = delete;
 	CColorThemeRegistry& operator=(const CColorThemeRegistry&) = delete;
 
-	//! Replaces any prior entries owned by extensionId. Returns false when the
-	//! manifest cannot be parsed or contains no valid theme contribution.
-	[[nodiscard]] bool RegisterExtension(
-		std::wstring_view extensionId, const std::filesystem::path& extensionRoot);
-	//! Registers Sakura's own defaults as VS Code JSONC theme documents. The
-	//! definitions remain selectable and load through the same projection path as
-	//! extension-contributed themes.
+	//! Registers Sakura's own defaults as JSONC theme documents.
 	[[nodiscard]] bool RegisterBuiltinThemes();
 	void Clear() noexcept;
 
 	[[nodiscard]] std::vector<ColorThemeInfo> Themes() const;
-	//! Resolves by stable manifest id first, then by the user-facing label. Label
-	//! matching is case-insensitive to match VS Code's setting behavior in practice.
+	//! Resolves by stable theme id first, then by the user-facing label.
+	//! Label matching is case-insensitive.
 	[[nodiscard]] ColorThemeLoadResult Load(std::wstring_view idOrLabel) const;
 	//! Stable IDs used when no explicit workbench.colorTheme setting exists.
 	[[nodiscard]] static constexpr std::wstring_view BuiltinThemeId(ThemeMode mode) noexcept

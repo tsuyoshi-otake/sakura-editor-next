@@ -16,7 +16,6 @@
 #include "recent/CMruListener.h"
 #include "macro/CSMacroMgr.h"
 #include "env/CPropertyManager.h"
-#include "extension/IExtensionSecretStorage.h"
 #include "agent/CGrepAgent.h"
 #include "_main/CAppMode.h"
 #include "_main/CCommandLine.h"
@@ -48,24 +47,19 @@ public:
 		workbench::WorkbenchBootstrapContext bootstrap,
 		workbench::WorkbenchRuntimeDependencies dependencies,
 		std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> workingCopyStore,
-		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope,
-		std::filesystem::path profileDirectory,
-		std::unique_ptr<IExtensionSecretSessionStorage> extensionSecretStorage)
+		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope)
 		: m_hInst(hInst)
 		, m_groupId(groupId)
 		, m_bootstrap(std::move(bootstrap))
 		, m_dependencies(std::move(dependencies))
 		, m_workingCopyStore(std::move(workingCopyStore))
 		, m_workingCopyScope(std::move(workingCopyScope))
-		, m_profileDirectory(std::move(profileDirectory))
-		, m_extensionSecretStorage(std::move(extensionSecretStorage))
 	{
 	}
 
 	[[nodiscard]] bool IsValid() const noexcept
 	{
-		return m_hInst && m_workingCopyStore && m_workingCopyScope.IsValid()
-			&& !m_profileDirectory.empty() && m_extensionSecretStorage;
+		return m_hInst && m_workingCopyStore && m_workingCopyScope.IsValid();
 	}
 	[[nodiscard]] HINSTANCE GetInstance() const noexcept { return m_hInst; }
 	[[nodiscard]] int GetGroupId() const noexcept { return m_groupId; }
@@ -79,12 +73,6 @@ public:
 	{
 		return std::move(m_workingCopyScope);
 	}
-	[[nodiscard]] std::filesystem::path TakeProfileDirectory() { return std::move(m_profileDirectory); }
-	[[nodiscard]] std::unique_ptr<IExtensionSecretSessionStorage> TakeExtensionSecretStorage()
-	{
-		return std::move(m_extensionSecretStorage);
-	}
-
 private:
 	HINSTANCE m_hInst = nullptr;
 	int m_groupId = 0;
@@ -92,8 +80,6 @@ private:
 	workbench::WorkbenchRuntimeDependencies m_dependencies;
 	std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> m_workingCopyStore;
 	workbench::editor::persistence::WorkingCopyPersistenceScope m_workingCopyScope;
-	std::filesystem::path m_profileDirectory;
-	std::unique_ptr<IExtensionSecretSessionStorage> m_extensionSecretStorage;
 };
 
 using editor::lifecycle::EEditorAppLifecycleFinalizationOutcome;
@@ -188,14 +174,12 @@ bool CEditApp::Create(
 	workbench::WorkbenchBootstrapContext bootstrap,
 	workbench::WorkbenchRuntimeDependencies dependencies,
 	std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> workingCopyStore,
-	workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope,
-	std::filesystem::path profileDirectory,
-	std::unique_ptr<IExtensionSecretSessionStorage> extensionSecretStorage)
+	workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope)
 {
 	if (m_editorLifecycle) return false;
 	auto inputs = std::make_shared<EditorAppStartupInputs>(
 		hInst, nGroupId, std::move(bootstrap), std::move(dependencies), std::move(workingCopyStore),
-		std::move(workingCopyScope), std::move(profileDirectory), std::move(extensionSecretStorage));
+		std::move(workingCopyScope));
 
 	try {
 		m_editorLifecycle = std::make_unique<editor::lifecycle::EditorAppLifecycle>(
@@ -276,8 +260,7 @@ bool CEditApp::Create(
 								inputs->TakeWorkingCopyScope(), *m_workingCopyLifecycle, *m_workingCopyContextSource);
 							m_pcEditWnd = std::make_unique<CEditWnd>(
 								*m_editorServiceLegacyAdapter, *m_legacyEditorBackend, *m_workingCopyCoordinator,
-								*m_workingCopyLifecycleBridge, *m_workbenchRuntime, inputs->TakeProfileDirectory(),
-								inputs->TakeExtensionSecretStorage());
+								*m_workingCopyLifecycleBridge, *m_workbenchRuntime);
 							return m_pcEditWnd->Create(m_pcEditDoc.get(), &m_cIcons, inputs->GetGroupId())
 								? LifecycleSucceeded() : LifecycleFailed();
 						}
@@ -287,7 +270,7 @@ bool CEditApp::Create(
 					},
 					[this] { return FinalizationResult(FinalizeWorkbenchResources()); }),
 				EditorAppLifecyclePhaseDefinition(
-					EEditorAppLifecyclePhase::ExtensionSession,
+					EEditorAppLifecyclePhase::UiServices,
 					[this] {
 						try {
 							m_pcMruListener = std::make_unique<CMruListener>();

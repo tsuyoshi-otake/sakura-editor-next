@@ -74,7 +74,7 @@ bool IsValidProtocol(const EPortProtocol value) noexcept
 
 bool IsValidSource(const EPortSource value) noexcept
 {
-	return value == EPortSource::User || value == EPortSource::Extension || value == EPortSource::AutoForward || value == EPortSource::Environment;
+	return value == EPortSource::User || value == EPortSource::Provider || value == EPortSource::AutoForward || value == EPortSource::Environment;
 }
 
 void AppendToken(std::string& target, const std::string_view value)

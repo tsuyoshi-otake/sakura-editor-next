@@ -38,7 +38,6 @@ struct UserDataProfileResourceInheritance {
 	bool keybindings = false;
 	bool tasks = false;
 	bool snippets = false;
-	bool extensions = false;
 	bool globalState = false;
 
 	constexpr bool operator==(const UserDataProfileResourceInheritance&) const = default;

@@ -5,8 +5,8 @@
 `MarkerService` is the process-local, HWND-free authority corresponding to the
 stable part of VS Code's marker service. It owns accepted diagnostic
 collections, resource identity, deterministic Problems snapshots, and change
-notifications. Extension RPC, document navigation, editor decoration, problem
-matching, and native Problems rendering are adapters outside this directory.
+notifications. Document navigation, editor decoration, problem matching, and
+native Problems rendering are adapters outside this directory.
 
 ## State and Lifecycle Rules
 

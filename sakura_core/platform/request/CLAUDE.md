@@ -4,8 +4,8 @@
 
 `platform/request/` owns the transport-neutral request contract, bounded retry
 orchestration, challenge-scoped credential seam, response cache seam, and Win32
-transport adapters. Configuration, OpenVSX, extension UI, and HWND state do not
-belong here.
+transport adapters. Configuration, workbench UI, and HWND state do not belong
+here.
 
 The public boundary is `sakura_core/include/sakura/request/`. Consumers include
 `<sakura/request/RequestService.h>` and the explicit Win32 adapter contracts under
@@ -58,20 +58,6 @@ manifest edges; they do not own the provider sources or private headers. A
   scoped to that challenge. They are transient request inputs, never settings
   or caller-injected general headers.
 
-## Phase 4 Production Checkpoint (2026-07-31)
-
-- OpenVSX search, VSIX download, and optional SHA-256 retrieval now use the
-  shared `RequestService` graph through `OpenVsxRequestServiceAdapter`.
-- `OpenVsxProductionClient` owns its WinHTTP transport, system-proxy resolver,
-  immutable configuration-backed proxy service, clock, scheduler, jitter,
-  request service, and registry adapter. A detached Extensions-pane job owns
-  the resulting client and therefore cannot outlive borrowed configuration or
-  workbench objects.
-- The production graph currently uses an explicit no-credential adapter.
-  Authentication challenges remain typed failures until the control-owned
-  Secret Vault and challenge credential adapter are composed. Do not describe
-  authenticated proxy/registry access as supported yet.
-
 ## No Proxy Is a Direct Connection (2026-08-01)
 
 - `ESystemProxyResolutionOutcome` distinguishes two facts that must never be
@@ -82,14 +68,11 @@ manifest edges; they do not own the provider sources or private headers. A
   fail-closed as `Unsupported` unless `Fallback` has a configured
   `http.proxy` to use instead.
 - VS Code precedent: Electron's `session.resolveProxy` reports this same fact
-  as the PAC literal `DIRECT` and the request simply connects. VS Code has no
-  failure state for "no proxy is configured", which is why its Extensions
-  Marketplace works out of the box on an unproxied machine. Ours must match.
+  as the PAC literal `DIRECT` and the request simply connects. A missing proxy
+  is not itself a transport failure.
 - Conflating the two was a production defect: `ResolveStaticProxy` returned
-  `Unavailable` for `EStaticProxyParse::None`, so on any machine with
-  `ProxyEnable=0` and no `AutoConfigURL` every OpenVSX request terminated in
-  about 4 ms as `EOpenVsxRequestOutcome::UnsupportedProxyPolicy`, before any
-  network I/O. The Marketplace could never load.
+  `Unavailable` for `EStaticProxyParse::None`, so a machine with
+  `ProxyEnable=0` and no `AutoConfigURL` could not make a direct request.
 - The failure of one resolution mechanism does not become a policy failure
   when the next one answers cleanly. A PAC error in
   `IsAutoProxyUnavailableError` (`AUTODETECTION_FAILED`,

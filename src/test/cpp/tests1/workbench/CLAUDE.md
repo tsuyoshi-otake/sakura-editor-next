@@ -204,16 +204,10 @@ all native command surfaces.
     proof of Task Terminal UI: production output remains unprojected until a
     shared runtime-owned terminal presentation authority is added.
 
-On 2026-07-31 the earlier integrated runtime/pure-backend cohort
-`WorkspaceArtifactDocumentSourceController.*:
-WorkspaceArtifactDocumentService.*:WorkspaceConfigurationDocumentParser.*:
-CWorkbenchRuntime.*:TaskExecutionService.*:TaskConfigurationCatalog.*:
-DapSession.*:DapProtocolCodec.*:LaunchConfigurationCatalog.*:
-DebugConsoleModel.*:PortForwardingService.*:MarkerService.*:
-OutputService.*:TerminalSession.*:ProblemsOutputPanelProjection.*:
-NativeWorkbenchToolRequest.*:CExtensionWorkbenchDispatcherTest.*` passes
-210/210. The extension-host API cohort passed 15/15. A later focused checkpoint
-adds the production Task terminal adapter, real exit-code smoke, folder-scoped
+The integrated runtime/pure-backend cohort covers workspace artifacts, runtime,
+Tasks, DAP, Debug Console, ports, markers, output, terminals, and native panel
+projection. A later focused checkpoint adds the production Task terminal
+adapter, real exit-code smoke, folder-scoped
 Task catalog composition, and runtime Task shutdown; record its current count
 in the goal-loop journal after each verification. Neither checkpoint proves
 Task Terminal presentation, production Debug/forwarding processes, problem

@@ -124,7 +124,7 @@ std::vector<icons::SLabelRun> ParseRuns(std::wstring_view label)
 	// No contributed-icon registry here: the built-in Git provider's own titles
 	// only ever name codicons, and passing a registry this tool does not own
 	// would let another extension's `$(name)` change what Git renders.
-	return icons::ParseLabelWithIcons(label, nullptr, icons::CCodiconFont::Instance().FaceName());
+	return icons::ParseLabelWithIcons(label, icons::CCodiconFont::Instance().FaceName());
 }
 
 //! Which element of the repository row a region belongs to.
@@ -244,7 +244,7 @@ GitExecutionRequest MakeStatusRequest(const std::wstring& root)
 //! lifetime and never re-registers under a new generation.
 const ScmOwner& BuiltinGitOwner()
 {
-	static const ScmOwner owner{ std::string(kGitExtensionId), 1 };
+	static const ScmOwner owner{ std::string(kGitProviderId), 1 };
 	return owner;
 }
 
@@ -761,7 +761,7 @@ struct CScmWorkbenchTool::Impl {
 				const int left = static_cast<int>(segment.rect.left);
 				const int top = static_cast<int>(segment.rect.top) + (height - side) / 2;
 				const icons::IconRect box{ left, top, left + side, top + side };
-				const auto icon = icons::ResolveThemeIcon(L"repo", nullptr, icons::CCodiconFont::Instance().FaceName());
+				const auto icon = icons::ResolveThemeIcon(L"repo", icons::CCodiconFont::Instance().FaceName());
 				const COLORREF color = palette.primaryText.ToColorRef();
 				if (icon.font) {
 					const HFONT glyphFont = icons::CreateLabelRunGlyphFont(icon.fontIcon.faceName, std::max(1, box.Height()));
@@ -1386,11 +1386,6 @@ void CScmWorkbenchTool::SetSourceControlService(SourceControlService* service)
 	if (!m_impl->closed) m_impl->PublishAndRender();
 }
 
-void CScmWorkbenchTool::RefreshExtensionProviders()
-{
-	if (m_impl->closed) return;
-	m_impl->PublishAndRender();
-}
 void CScmWorkbenchTool::SetVisible(bool visible) { if (m_impl->window) ::ShowWindow(m_impl->window, visible ? SW_SHOW : SW_HIDE); }
 void CScmWorkbenchTool::Refresh() { if (!m_impl->closed && m_impl->shared->wake) ::SetEvent(m_impl->shared->wake); }
 const GitScmState& CScmWorkbenchTool::State() const noexcept { return m_impl->state; }

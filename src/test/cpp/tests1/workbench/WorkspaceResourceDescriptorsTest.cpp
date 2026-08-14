@@ -27,12 +27,11 @@ TEST(WorkspaceResourceDescriptors, SuppliesAllFolderWorkspaceFilesAsWholeDocumen
 {
 	auto descriptors = workbench::workspace::DescribeWorkspaceFolderResources(ParseUri(L"file:///C:/Work/project"));
 	ASSERT_TRUE(descriptors.has_value());
-	ASSERT_EQ(4U, descriptors->size());
+	ASSERT_EQ(3U, descriptors->size());
 	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Settings, (*descriptors)[0].member);
 	EXPECT_EQ(L"file:///C:/Work/project/.vscode/settings.json", (*descriptors)[0].resource.ToString());
 	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Tasks, (*descriptors)[1].member);
 	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Launch, (*descriptors)[2].member);
-	EXPECT_EQ(workbench::workspace::EWorkspaceFileMember::Extensions, (*descriptors)[3].member);
 	for (const auto& descriptor : *descriptors) {
 		EXPECT_EQ(workbench::workspace::EWorkspaceResourceContentMode::WholeDocument, descriptor.contentMode);
 	}

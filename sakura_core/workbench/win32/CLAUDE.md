@@ -57,44 +57,6 @@ policy, profile state, or native control lifetime.
   surfaces are Search, RunAndDebug, Ports, DebugConsole, and an AuxiliaryBar
   placement of a Panel-only container.
 
-### An extension-contributed ViewContainer is out of vocabulary, not malformed (2026-08-07, #29)
-
-`kBuiltinViewContainerIds` lists every ViewContainer the product itself
-declares, and it is deliberately **wider** than `kNativeSurfaceMappings`. That
-width is the whole point: it separates two cases this projection used to
-conflate.
-
-- A container in that list with no native surface — Search, Run and Debug,
-  Ports, Debug Console, or a Panel-only container placed in the Auxiliary Bar —
-  is an unimplemented product capability and still fails closed with
-  `UnsupportedSurface`. Skipping it would fake a capability.
-- A container **not** in that list was contributed by an extension. It is
-  outside this projector's vocabulary entirely, so its location's surface is
-  left unset and the projection succeeds. The window layer already resolves such
-  a container's page straight from the layout state
-  (`CEditWnd::ApplyBuiltinWorkbenchSurfaces`); it never expected a built-in
-  surface for one.
-
-The same rule applies to focus: focus resting on a contributed container leaves
-`projection.focus` unset and succeeds, rather than reporting a malformed
-hierarchy.
-
-Failing on a contributed container was Issue #29's actual defect, and its blast
-radius is why this is an invariant rather than a tidy-up.
-`WorkbenchLayoutStateService` activates each location's first visible container,
-so installing one extension whose container lands in a Part made **every**
-subsequent `ProjectBuiltinWorkbench` call fail for the rest of the session —
-`ProjectBuiltinParts` is discarded whenever the surface half fails, so every
-Part toggle, Outline reveal, and focus application silently no-opped. A single
-installed extension must never be able to disable the whole layout projection.
-
-`x64\Debug\tests1.exe --gtest_filter=BuiltinPartProjection.*` passes 20/20, and
-the surrounding workbench/extension filter passes 195/195.
-- `x64\Debug\tests1.exe --gtest_filter=BuiltinPartProjection.*` passed 15/15
-  after the integration build with zero errors; the required `tests1.exe` and
-  Sakura-process survivor audit was clean. This verifies the pure projection
-  boundary only, not native-host application or command routing.
-
 ## Dependency and Completion Boundary
 
 `ProjectBuiltinWorkbench` is the composite boundary used by the Window adapter:

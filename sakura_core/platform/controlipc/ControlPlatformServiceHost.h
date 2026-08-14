@@ -22,12 +22,6 @@ namespace platform::storage {
 class IStorageAuthority;
 }
 
-namespace platform::secrets {
-class ISecretVaultService;
-class ISecretVaultCapabilityService;
-class ISecretVaultExtensionGrantAuthority;
-class ISecretVaultLegacyMigrationCoordinator;
-}
 namespace platform::profiles {
 class ControlUserDataProfileRegistry;
 }
@@ -108,26 +102,17 @@ struct ControlPlatformServiceHostDependencies {
 /*!
 	@brief Bounded control-process composition root with serialized, rollback-safe lifecycle.
 
-	The host owns the server. The server owns the shared composite frame handler;
-	the handler keeps the control-owned storage, vault, capability authority,
-	extension-grant authority, and migration coordinator alive through its last joined session. No callback or
-	session handler retains or calls this host.
+	The host owns the server. The server owns the shared composite frame handler,
+	which keeps control-owned storage and the profile registry alive through its
+	last joined session. No callback or session handler retains or calls this host.
 */
 class CControlPlatformServiceHost final {
 public:
 	CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 		std::shared_ptr<storage::IStorageAuthority> storage,
-		std::shared_ptr<secrets::ISecretVaultService> vault,
-		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
-		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
-		std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles);
 	CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 		std::shared_ptr<storage::IStorageAuthority> storage,
-		std::shared_ptr<secrets::ISecretVaultService> vault,
-		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
-		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
-		std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
 		ControlPlatformServiceHostDependencies dependencies);
 	~CControlPlatformServiceHost();
@@ -148,10 +133,6 @@ private:
 
 	const ControlPlatformServiceHostOptions m_options;
 	const std::shared_ptr<storage::IStorageAuthority> m_storage;
-	const std::shared_ptr<secrets::ISecretVaultService> m_vault;
-	const std::shared_ptr<secrets::ISecretVaultCapabilityService> m_capabilities;
-	const std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> m_grantAuthority;
-	const std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> m_migration;
 	const std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profiles;
 	const ControlPlatformServiceHostDependencies m_dependencies;
 	mutable std::mutex m_mutex;

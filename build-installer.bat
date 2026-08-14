@@ -49,7 +49,6 @@ mkdir %INSTALLER_WORK%\license\codicons\
 mkdir %INSTALLER_WORK%\license\fmt\
 mkdir %INSTALLER_WORK%\license\ms-gsl\
 mkdir %INSTALLER_WORK%\license\wil\
-mkdir %INSTALLER_WORK%\exthost\
 
 set BREGONIG_DLL=bregonig.dll
 set BRON_ZIP=installer\externals\bregonig\bron420.zip
@@ -94,17 +93,6 @@ if not exist "%WINDOWS_TERMINAL_LICENSES%\wil\LICENSE" (
 	exit /b 1
 )
 
-set EXTHOST_BUNDLE=%platform%\%configuration%\exthost\extension-host.js
-set EXTHOST_SHIM=%platform%\%configuration%\exthost\sakura_exthost_security.node
-if not exist "%EXTHOST_BUNDLE%" (
-	echo Extension host bundle was not found. Build sakura_core\extension_host_security.vcxproj first.
-	exit /b 1
-)
-if not exist "%EXTHOST_SHIM%" (
-	echo Extension host security shim was not found. Build sakura_core\extension_host_security.vcxproj first.
-	exit /b 1
-)
-
 copy /Y .\LICENSE                                           %INSTALLER_WORK%\license\ > NUL
 copy /Y %INSTALLER_RESOURCES_SINT%\sakura.exe.manifest.x    %INSTALLER_WORK%\ > NUL
 copy /Y %INSTALLER_RESOURCES_SINT%\sakura.exe.manifest.v    %INSTALLER_WORK%\ > NUL
@@ -126,9 +114,6 @@ copy /Y /B help\macro\macro.chm                             %INSTALLER_WORK%\ > 
 
 copy /Y /B %platform%\%configuration%\*.exe                 %INSTALLER_WORK%\ > NUL
 copy /Y /B %platform%\%configuration%\*.dll                 %INSTALLER_WORK%\ > NUL
-
-copy /Y /B %EXTHOST_BUNDLE%                                 %INSTALLER_WORK%\exthost\ > NUL
-copy /Y /B %EXTHOST_SHIM%                                   %INSTALLER_WORK%\exthost\ > NUL
 
 set SAKURA_ISS=installer\sakura-%platform%.iss
 @echo running "%CMD_ISCC%" %SAKURA_ISS%

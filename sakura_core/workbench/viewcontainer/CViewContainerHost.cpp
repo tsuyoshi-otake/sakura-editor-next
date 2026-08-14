@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -7,7 +7,6 @@
 #include "StdAfx.h"
 #include "workbench/viewcontainer/CViewContainerHost.h"
 
-#include "extension/CExtensionPane.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
@@ -25,27 +24,10 @@ constexpr int kOutlineHeaderHeightDip = 24;
 constexpr int kOutlinePreferredHeightDip = 180;
 constexpr int kOutlineMinimumHeightDip = 96;
 constexpr int kEmptyTextInsetDip = 20;
-constexpr int kContributedViewsPreferredHeightDip = 180;
-constexpr int kContributedViewsMinimumHeightDip = 96;
 
 //! VS Code's Secondary Side Bar empty state. Matching the upstream wording keeps the
 //! drop affordance discoverable instead of leaving a blank Part.
 constexpr wchar_t kEmptyMessage[] = L"Drag a view here to display it.";
-
-/*!
-	@brief Shown instead of a permanently empty tree for a `"type": "webview"` contributed View.
-
-	WebView2/Chromium is not used in this product, so a manifest-declared WebviewView has no
-	native content this host can render — see root `CLAUDE.md`, "Never fake a capability to
-	make a screenshot look right." Rendering nothing here would look identical to a tree
-	container whose extension has not registered any children yet, which is exactly the
-	fake-looking gap this message closes. It names the concrete reason and points at the
-	channel that already reports this per-extension, so the two surfaces stay one diagnostic
-	story instead of two.
-*/
-constexpr wchar_t kWebviewUnsupportedMessage[] =
-	L"This view needs a webview, which Sakura Editor NEXT does not render natively. "
-	L"See the \"Extension Compatibility\" output channel for details.";
 
 int ScaleDip(int dip, unsigned int dpi) noexcept
 {
@@ -179,21 +161,10 @@ void CViewContainerHost::Activate()
 		if (auto* scm = m_pages->SourceControl()) scm->Activate();
 		return;
 	}
-	if (m_page == pageIds::Extensions) {
-		// VS Code's Extensions view puts the caret in its Marketplace search box.
-		if (auto* marketplace = m_pages->Marketplace();
-			marketplace != nullptr && marketplace->GetHwnd() != nullptr) {
-			marketplace->SetFocusToSearchBox();
-			return;
-		}
-		if (auto* extensions = m_pages->Extensions()) extensions->Activate();
-		return;
-	}
 	if (m_page == pageIds::Explorer) {
 		if (auto* explorer = m_pages->Explorer()) explorer->Activate();
 		return;
 	}
-	if (auto* contributed = m_pages->ContributedViews(m_page)) contributed->Activate();
 }
 
 void CViewContainerHost::Deactivate()
@@ -203,16 +174,11 @@ void CViewContainerHost::Deactivate()
 		if (auto* scm = m_pages->SourceControl()) scm->Deactivate();
 		return;
 	}
-	if (m_page == pageIds::Extensions) {
-		if (auto* extensions = m_pages->Extensions()) extensions->Deactivate();
-		return;
-	}
 	if (m_page == pageIds::Explorer) {
 		if (auto* explorer = m_pages->Explorer()) explorer->Deactivate();
 		if (auto* outline = m_pages->Outline()) outline->Deactivate();
 		return;
 	}
-	if (auto* contributed = m_pages->ContributedViews(m_page)) contributed->Deactivate();
 }
 
 bool CViewContainerHost::PreTranslateMessage(MSG& message)
@@ -222,25 +188,7 @@ bool CViewContainerHost::PreTranslateMessage(MSG& message)
 		auto* scm = m_pages->SourceControl();
 		return scm != nullptr && scm->PreTranslateMessage(message);
 	}
-	if (m_page == pageIds::Extensions) {
-		// The Marketplace is a control container, so Tab/arrow navigation between its
-		// search box, list, and buttons needs dialog-message handling. Only messages that
-		// really belong to it are offered, so no other surface loses its own keys.
-		if (auto* marketplace = m_pages->Marketplace()) {
-			const HWND pane = marketplace->GetHwnd();
-			if (pane != nullptr && ::IsWindow(pane) && message.hwnd != nullptr
-				&& (message.hwnd == pane || ::IsChild(pane, message.hwnd) != FALSE)
-				&& ::IsDialogMessageW(pane, &message) != FALSE) {
-				return true;
-			}
-		}
-		auto* extensions = m_pages->Extensions();
-		return extensions != nullptr && extensions->PreTranslateMessage(message);
-	}
-	if (m_page != pageIds::Explorer) {
-		auto* contributed = m_pages->ContributedViews(m_page);
-		return contributed != nullptr && contributed->PreTranslateMessage(message);
-	}
+	if (m_page != pageIds::Explorer) return false;
 	auto* outline = m_pages->Outline();
 	auto* explorer = m_pages->Explorer();
 	return (m_pages->IsOutlineExpanded() && outline != nullptr && outline->PreTranslateMessage(message))
@@ -453,28 +401,7 @@ void CViewContainerHost::LayoutChildren()
 		invalidateHeaderChange();
 		return;
 	}
-	if (m_page == pageIds::Extensions) {
-		LayoutExtensionsPage(client);
-		m_pages->SetPageVisible(pageIds::Extensions, true);
-		m_outlineHeader = {};
-		invalidateHeaderChange();
-		return;
-	}
 	if (m_page != pageIds::Explorer) {
-		if (m_pages->IsWebviewOnly(m_page)) {
-			// Nothing to lay out: this container's only content is the fixed unsupported
-			// message `Paint` draws directly, matching `LayoutExtensionsPage`'s rule that an
-			// absent section reserves no space and is never given a live but empty control.
-			// The tree window stays hidden rather than shown-and-empty, so it cannot paint a
-			// blank rectangle over the message this host draws.
-			m_pages->SetPageVisible(m_page, false);
-			m_outlineHeader = {};
-			invalidateHeaderChange();
-			return;
-		}
-		// A contributed container is nothing but its views, so its tree fills the Part.
-		if (auto* contributed = m_pages->ContributedViews(m_page)) contributed->Layout(client, m_dpi);
-		m_pages->SetPageVisible(m_page, true);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;
@@ -503,41 +430,6 @@ void CViewContainerHost::LayoutChildren()
 	invalidateHeaderChange();
 }
 
-void CViewContainerHost::LayoutExtensionsPage(const RECT& client)
-{
-	// VS Code's `workbench.view.extensions` renders the Marketplace itself. A tree View
-	// contributed by an extension is an additional section under it, so with nothing
-	// contributed the Marketplace owns the whole container and reserves no empty strip.
-	auto* marketplace = m_pages->Marketplace();
-	auto* contributed = m_pages->Extensions();
-	const bool hasContributed = m_pages->HasContributedExtensionViews();
-	const HWND marketplaceWindow = marketplace != nullptr ? marketplace->GetHwnd() : nullptr;
-
-	RECT marketplaceBounds = client;
-	RECT contributedBounds{ client.left, client.bottom, client.right, client.bottom };
-	if (marketplaceWindow == nullptr) {
-		// No profile-scoped Marketplace exists in this composition, so the container has
-		// only whatever extensions contributed. This is an explicit absence, not a stand-in.
-		marketplaceBounds = { client.left, client.top, client.right, client.top };
-		contributedBounds = client;
-	} else if (hasContributed) {
-		const int available = std::max(0L, client.bottom - client.top);
-		const int minimum = ScaleDip(kContributedViewsMinimumHeightDip, m_dpi);
-		int height = std::clamp(ScaleDip(kContributedViewsPreferredHeightDip, m_dpi), minimum,
-			std::max(minimum, available / 2));
-		height = std::min(height, available);
-		marketplaceBounds.bottom = client.bottom - height;
-		contributedBounds = { client.left, marketplaceBounds.bottom, client.right, client.bottom };
-	}
-
-	if (marketplaceWindow != nullptr && ::IsWindow(marketplaceWindow)) {
-		::MoveWindow(marketplaceWindow, marketplaceBounds.left, marketplaceBounds.top,
-			std::max(0L, marketplaceBounds.right - marketplaceBounds.left),
-			std::max(0L, marketplaceBounds.bottom - marketplaceBounds.top), TRUE);
-	}
-	if (contributed != nullptr) contributed->Layout(contributedBounds, m_dpi);
-}
-
 void CViewContainerHost::Paint()
 {
 	PAINTSTRUCT paint{};
@@ -551,17 +443,6 @@ void CViewContainerHost::Paint()
 	// this Part is empty even though its owner has not applied the new selection yet.
 	if (m_page.empty() || !OwnsPage(m_page)) {
 		DrawCenteredMessage(dc, kEmptyMessage);
-		::EndPaint(m_window, &paint);
-		return;
-	}
-	// A `"type": "webview"` contributed View has no native renderer. Showing this message
-	// instead of the (permanently empty) contributed-views tree is the explicit, typed
-	// Unsupported boundary root `CLAUDE.md` requires in place of an indistinguishable blank
-	// tree; see `kWebviewUnsupportedMessage` above and `LayoutChildren`, which keeps the tree
-	// window hidden so it cannot paint over this text.
-	if (m_page != pageIds::Explorer && m_page != pageIds::SourceControl && m_page != pageIds::Extensions
-		&& m_pages->IsWebviewOnly(m_page)) {
-		DrawCenteredMessage(dc, kWebviewUnsupportedMessage);
 		::EndPaint(m_window, &paint);
 		return;
 	}

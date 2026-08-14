@@ -40,7 +40,7 @@ struct WorkbenchEditorCommandContext {
 };
 
 //! Source-control state the command surfaces gate on. Upstream's Git extension
-//! publishes `gitOpenRepositoryCount` from the extension host; our Git provider
+//! publishes `gitOpenRepositoryCount` from its runtime; our Git provider
 //! is native, so the core projection owns the key instead. Same key, same
 //! meaning, different owner - see `workbench/scm/CLAUDE.md`.
 struct WorkbenchScmCommandContext {
@@ -93,9 +93,8 @@ struct WorkbenchContextKeySnapshot {
 /*! 
 	@brief Window-local context keys with a core-owned `workbench.*` namespace.
 
-	Only SetCoreProjection can publish keys in the core namespace. Extension overlays
-	are owner-generation scoped and may only publish non-reserved keys. Every
-	mutation replaces one complete immutable map under a lock, so observers never
+	Only SetCoreProjection can publish keys. Every mutation replaces one complete
+	immutable map under a lock, so observers never
 	see a partly refreshed layout projection.
 */
 class WorkbenchContextKeyService final {
@@ -116,23 +115,14 @@ public:
 		bool recentlyOpenedAvailable = false,
 		WorkbenchScmCommandContext scm = {},
 		WorkbenchUpdateCommandContext update = {});
-	[[nodiscard]] WorkbenchContextMutationResult SetExtensionOverlay(
-		const WorkbenchCommandOwner& owner, WorkbenchContextKeyMap values);
-	[[nodiscard]] WorkbenchContextMutationResult DisposeExtensionOverlay(
-		const WorkbenchCommandOwner& owner);
 	[[nodiscard]] WorkbenchContextKeySnapshot Snapshot() const;
 	[[nodiscard]] static bool IsValidKey(std::string_view key) noexcept;
 	[[nodiscard]] static bool IsReservedCoreKey(std::string_view key) noexcept;
 
 private:
-	struct Overlay {
-		WorkbenchContextKeyMap values;
-	};
-
 	mutable std::mutex m_mutex;
 	std::uint64_t m_revision{};
 	WorkbenchContextKeyMap m_coreValues;
-	std::map<WorkbenchCommandOwner, Overlay> m_overlays;
 };
 
 //! Fail-closed subset of VS Code `when` expression semantics for the native command boundary.

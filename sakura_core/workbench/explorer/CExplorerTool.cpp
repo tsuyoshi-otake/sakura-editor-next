@@ -363,8 +363,6 @@ struct CExplorerTool::Impl {
 	RECT bounds{};
 	unsigned int dpi{ kDefaultDpi };
 	ExplorerPalette palette{};
-	std::shared_ptr<const icons::FileIconThemeSnapshot> fileIconTheme;
-	icons::FileIconThemeVariant fileIconThemeVariant{ icons::FileIconThemeVariant::Default };
 	HIMAGELIST iconImages{};
 	std::map<std::wstring, int, std::less<>> iconIndices;
 	FileActivationCallback activateFile;
@@ -1098,113 +1096,17 @@ struct CExplorerTool::Impl {
 	{
 		if (tree == nullptr) return;
 		LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
-		if (fileIconTheme != nullptr && fileIconTheme->hidesExplorerArrows) {
-			style &= ~static_cast<LONG_PTR>(TVS_HASBUTTONS);
-		} else {
-			style |= TVS_HASBUTTONS;
-		}
+		style |= TVS_HASBUTTONS;
 		::SetWindowLongPtrW(tree, GWL_STYLE, style);
 		::SetWindowPos(tree, nullptr, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
 	}
 
-	[[nodiscard]] HBITMAP CreateFontBitmap(const icons::FileIconDefinition& definition) const noexcept
-	{
-		if (!definition.HasFont()) return nullptr;
-		const int iconSize = IconSizeForDpi(dpi);
-		BITMAPINFO bitmapInfo{};
-		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		bitmapInfo.bmiHeader.biWidth = iconSize;
-		bitmapInfo.bmiHeader.biHeight = -iconSize;
-		bitmapInfo.bmiHeader.biPlanes = 1;
-		bitmapInfo.bmiHeader.biBitCount = 32;
-		bitmapInfo.bmiHeader.biCompression = BI_RGB;
-		HDC screen = ::GetDC(nullptr);
-		if (screen == nullptr) return nullptr;
-		void* bits = nullptr;
-		HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
-		::ReleaseDC(nullptr, screen);
-		if (bitmap == nullptr || bits == nullptr) {
-			if (bitmap != nullptr) ::DeleteObject(bitmap);
-			return nullptr;
-		}
-
-		const auto pixelCount = static_cast<std::size_t>(iconSize) * iconSize;
-		auto* pixels = static_cast<std::uint32_t*>(bits);
-		const auto opaqueBackground = 0xFF000000u | (static_cast<std::uint32_t>(palette.background) & 0x00FFFFFFu);
-		std::fill_n(pixels, pixelCount, opaqueBackground);
-
-		HDC dc = ::CreateCompatibleDC(nullptr);
-		if (dc == nullptr) {
-			::DeleteObject(bitmap);
-			return nullptr;
-		}
-		const HGDIOBJ previousBitmap = ::SelectObject(dc, bitmap);
-		LOGFONTW logFont{};
-		logFont.lfHeight = -static_cast<LONG>((std::max)(8, ::MulDiv(iconSize, 13, 16)));
-		logFont.lfWeight = FW_NORMAL;
-		logFont.lfCharSet = DEFAULT_CHARSET;
-		logFont.lfOutPrecision = OUT_TT_PRECIS;
-		logFont.lfQuality = CLEARTYPE_QUALITY;
-		logFont.lfPitchAndFamily = DEFAULT_PITCH | FF_DONTCARE;
-		(void)::wcsncpy_s(logFont.lfFaceName, LF_FACESIZE, definition.font->faceName.c_str(), _TRUNCATE);
-		HFONT font = ::CreateFontIndirectW(&logFont);
-		if (font != nullptr) {
-			const HGDIOBJ previousFont = ::SelectObject(dc, font);
-			::SetBkMode(dc, TRANSPARENT);
-			::SetTextColor(dc, static_cast<COLORREF>(definition.fontColor.value_or(palette.text)));
-			RECT textRect{ 0, 0, iconSize, iconSize };
-			(void)::DrawTextW(dc, definition.glyph.c_str(), static_cast<int>(definition.glyph.size()),
-				&textRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-			::SelectObject(dc, previousFont);
-			::DeleteObject(font);
-		}
-		::SelectObject(dc, previousBitmap);
-		::DeleteDC(dc);
-		// GDI text drawing may leave the alpha byte untouched. The image-list tile is
-		// intentionally opaque so the icon has the same Explorer background as
-		// the TreeView rather than becoming a black transparent rectangle.
-		for (std::size_t index = 0; index < pixelCount; ++index) pixels[index] |= 0xFF000000u;
-		return bitmap;
-	}
-
-	[[nodiscard]] std::wstring IconCacheKey(const icons::FileIconDefinition& definition) const
-	{
-		if (definition.HasImage()) return L"image:" + definition.iconPath.wstring();
-		if (!definition.HasFont()) return {};
-		std::wstring key = L"font:" + definition.font->faceName + L"\x1F" + definition.glyph;
-		if (definition.fontColor) key += L"\x1F" + std::to_wstring(*definition.fontColor);
-		return key;
-	}
-
-	[[nodiscard]] int EnsureIconIndex(const icons::FileIconDefinition& definition)
-	{
-		if (iconImages == nullptr) return -1;
-		try {
-			const auto key = IconCacheKey(definition);
-			if (key.empty()) return -1;
-			if (const auto found = iconIndices.find(key); found != iconIndices.end()) return found->second;
-			HBITMAP bitmap = definition.HasImage()
-				? LoadRasterBitmap(definition.iconPath, static_cast<unsigned int>(IconSizeForDpi(dpi)))
-				: CreateFontBitmap(definition);
-			if (bitmap == nullptr) return -1;
-			const int index = ::ImageList_Add(iconImages, bitmap, nullptr);
-			::DeleteObject(bitmap);
-			if (index < 0) return -1;
-			iconIndices.emplace(key, index);
-			return index;
-		}
-		catch (...) {
-			return -1;
-		}
-	}
-
 	[[nodiscard]] int ResolveIcon(const Node& node, bool expanded)
 	{
-		if (fileIconTheme == nullptr) return -1;
-		const auto* definition = fileIconTheme->Resolve(node.name, node.path,
-			node.isDirectory, expanded, node.isWorkspaceRoot, fileIconThemeVariant);
-		return definition == nullptr ? -1 : EnsureIconIndex(*definition);
+		(void)node;
+		(void)expanded;
+		return -1;
 	}
 
 	void UpdateNodeIcon(Node& node, bool expanded)
@@ -1232,11 +1134,6 @@ struct CExplorerTool::Impl {
 	{
 		DestroyIconImages();
 		ApplyArrowVisibility();
-		if (tree == nullptr || fileIconTheme == nullptr) return;
-		const int iconSize = IconSizeForDpi(dpi);
-		iconImages = ::ImageList_Create(iconSize, iconSize, ILC_COLOR32, 32, 16);
-		if (iconImages == nullptr) return;
-		TreeView_SetImageList(tree, iconImages, TVSIL_NORMAL);
 		UpdateAllItemIcons();
 	}
 
@@ -1638,17 +1535,6 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 	m_impl->RebuildIconImages();
 	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
 	if (m_impl->scrollbar != nullptr) ::InvalidateRect(m_impl->scrollbar, nullptr, FALSE);
-}
-
-void CExplorerTool::SetFileIconTheme(
-	std::shared_ptr<const icons::FileIconThemeSnapshot> theme,
-	icons::FileIconThemeVariant variant)
-{
-	if (m_impl->closed) return;
-	m_impl->fileIconTheme = std::move(theme);
-	m_impl->fileIconThemeVariant = variant;
-	m_impl->RebuildIconImages();
-	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
 }
 
 ExplorerPalette CExplorerTool::GetPalette() const noexcept { return m_impl->palette; }

@@ -94,18 +94,15 @@ open Phase 3 work.
   therefore upstream behaviour, not a local shortcut, and every profile-scoped
   consumer must accept it.
 - A profile-scoped service that receives the selected user-data profile id —
-  network policy, the OpenVSX client factory, or any other consumer of
-  `SelectedProfileId()` — validates with `IsOpaqueUserDataProfileId`.
+  network policy or any other consumer of `SelectedProfileId()` — validates
+  with `IsOpaqueUserDataProfileId`.
   Control-endpoint, durable-storage, and Vault adapters that consume an id
   minted by `ProfileAuthorityStore` keep `IsCanonicalProfileAuthorityId`.
   Applying the canonical-hex predicate to a selected profile id fails closed
   unconditionally (`"default"` can never be 32 hex characters); that
-  cross-space mismatch was the root cause of a production defect where
-  `CConfigurationNetworkPolicy::Snapshot` and `CreateOpenVsxProductionClient`
-  both rejected every Marketplace request. See
-  [`../../config/CLAUDE.md`](../../config/CLAUDE.md) and
-  [`../../extension/openvsx/CLAUDE.md`](../../extension/openvsx/CLAUDE.md)
-  for the two corrected call sites.
+  cross-space mismatch can make every selected-profile consumer fail closed.
+  See [`../../config/CLAUDE.md`](../../config/CLAUDE.md) for the network-policy
+  call site.
 - `UserDataProfileIdentity.h` is the single shared home for the opaque
   predicate. Do not reintroduce a private copy in a bootstrap or workbench
   file — `UserDataProfileBootstrap.cpp` and `WorkbenchBootstrapContext.cpp`

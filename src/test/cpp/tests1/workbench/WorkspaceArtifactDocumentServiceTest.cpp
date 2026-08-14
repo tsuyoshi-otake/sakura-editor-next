@@ -134,47 +134,39 @@ TEST(WorkspaceArtifactDocumentService, TasksBatchBoundsInvalidFoldersAndStoppedS
 	EXPECT_FALSE(stopped.documents.front().document);
 }
 
-TEST(WorkspaceArtifactDocumentService, KeepsTasksLaunchAndExtensionsAsSeparateTypedResources)
+TEST(WorkspaceArtifactDocumentService, KeepsTasksAndLaunchAsSeparateTypedResources)
 {
 	CWorkspaceArtifactDocumentService service;
 	const auto folder = ParseUri(L"file:///C:/Work/engine");
 	const auto tasks = ParseUri(L"file:///C:/Work/engine/.vscode/tasks.json");
 	const auto launch = ParseUri(L"file:///C:/Work/engine/.vscode/launch.json");
-	const auto extensions = ParseUri(L"file:///C:/Work/engine/.vscode/extensions.json");
 
 	EXPECT_TRUE(service.Apply(Update(EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentSource::Folder,
 		tasks, 3, 1, R"json({ "version": "2.0.0", "tasks": [] })json", folder)).Succeeded());
 	EXPECT_TRUE(service.Apply(Update(EWorkspaceArtifactDocumentKind::Launch, EWorkspaceArtifactDocumentSource::Folder,
 		launch, 3, 1, R"json({ "version": "0.2.0", "configurations": [] })json", folder)).Succeeded());
-	EXPECT_TRUE(service.Apply(Update(EWorkspaceArtifactDocumentKind::Extensions, EWorkspaceArtifactDocumentSource::Folder,
-		extensions, 3, 1, R"json({ "recommendations": ["sample.extension"] })json", folder)).Succeeded());
-
 	const auto taskDocument = service.Tasks(folder).document;
 	const auto launchDocument = service.Launch(folder).document;
-	const auto extensionsDocument = service.Extensions(folder).document;
 	ASSERT_TRUE(taskDocument);
 	ASSERT_TRUE(launchDocument);
-	ASSERT_TRUE(extensionsDocument);
 	EXPECT_EQ(EWorkspaceArtifactDocumentKind::Tasks, taskDocument->kind);
 	EXPECT_EQ(EWorkspaceArtifactDocumentKind::Launch, launchDocument->kind);
-	EXPECT_EQ(EWorkspaceArtifactDocumentKind::Extensions, extensionsDocument->kind);
 	EXPECT_EQ(tasks.ToString(), taskDocument->resource.ToString());
 	EXPECT_EQ(launch.ToString(), launchDocument->resource.ToString());
-	EXPECT_EQ(extensions.ToString(), extensionsDocument->resource.ToString());
 }
 
 TEST(WorkspaceArtifactDocumentService, InvalidDocumentsPreserveLastAcceptedSnapshotAndReturnTypedFailures)
 {
 	CWorkspaceArtifactDocumentService service;
 	const auto workspace = ParseUri(L"file:///C:/Work/demo.code-workspace");
-	EXPECT_TRUE(service.Apply(Update(EWorkspaceArtifactDocumentKind::Extensions, EWorkspaceArtifactDocumentSource::WorkspaceFile,
-		workspace, 5, 1, R"json({ "extensions": { "recommendations": ["good.extension"] } })json")).Succeeded());
+	EXPECT_TRUE(service.Apply(Update(EWorkspaceArtifactDocumentKind::Launch, EWorkspaceArtifactDocumentSource::WorkspaceFile,
+		workspace, 5, 1, R"json({ "launch": { "configurations": [] } })json")).Succeeded());
 
-	const auto invalidSchema = service.Apply(Update(EWorkspaceArtifactDocumentKind::Extensions,
+	const auto invalidSchema = service.Apply(Update(EWorkspaceArtifactDocumentKind::Launch,
 		EWorkspaceArtifactDocumentSource::WorkspaceFile, workspace, 5, 2,
-		R"json({ "extensions": { "recommendations": [1] } })json"));
+		R"json({ "launch": { "configurations": {} } })json"));
 	EXPECT_EQ(EWorkspaceArtifactDocumentStatus::InvalidSchema, invalidSchema.status);
-	const auto retained = service.Extensions().document;
+	const auto retained = service.Launch().document;
 	ASSERT_TRUE(retained);
 	EXPECT_EQ(1U, retained->revision);
 	EXPECT_EQ(std::string::npos, retained->rawJsonc.find("[1]"));
@@ -221,7 +213,7 @@ TEST(WorkspaceArtifactDocumentService, RejectsStaleGenerationAndRevisionWithoutC
 TEST(WorkspaceArtifactDocumentService, RejectsDocumentLimitWithTypedTerminalStatus)
 {
 	CWorkspaceArtifactDocumentService service;
-	for (std::size_t index = 0; index < 771U; ++index) {
+	for (std::size_t index = 0; index < 514U; ++index) {
 		const auto folder = ParseUri((L"file:///C:/Work/f" + std::to_wstring(index)).c_str());
 		const auto resource = ParseUri((L"file:///C:/Work/f" + std::to_wstring(index) + L"/.vscode/tasks.json").c_str());
 		const auto result = service.Apply(Update(EWorkspaceArtifactDocumentKind::Tasks,

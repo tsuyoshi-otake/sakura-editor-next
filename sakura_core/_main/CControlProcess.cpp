@@ -29,7 +29,6 @@
 #include "apiwrap/DarkMode.h"
 #include "platform/controlipc/ControlPlatformRuntime.h"
 #include "platform/profiles/ProfileAuthorityStore.h"
-#include "extension/CExtensionHostSecretVaultGrantRuntimeAdapter.h"
 #include "update/UpdateService.h"
 #include "update/UpdateStagingStore.h"
 #include "update/Win32UpdateLauncher.h"
@@ -199,35 +198,6 @@ bool CControlProcess::InitializeProcess()
 	if (!StartControlPlatform()) {
 		return false;
 	}
-	const auto secretVaultAuthorities = m_controlPlatformRuntime->SecretVaultAuthorities();
-	if (!secretVaultAuthorities) {
-		TopErrorMessage(nullptr,
-			L"プラットフォームサービスの初期化に失敗しました。\n"
-			L"Secret Vault の拡張ホスト権限を取得できませんでした。");
-		StopControlPlatform();
-		return false;
-	}
-
-	std::shared_ptr<IExtensionHostSecretVaultGrantLifecycle> secretVaultGrantLifecycle;
-	try {
-		secretVaultGrantLifecycle = CreateExtensionHostSecretVaultGrantRuntimeAdapter(
-			secretVaultAuthorities->grantAuthority,
-			secretVaultAuthorities->capabilities);
-	}
-	catch (...) {
-		TopErrorMessage(nullptr,
-			L"プラットフォームサービスの初期化中に予期しないエラーが発生しました。");
-		StopControlPlatform();
-		return false;
-	}
-	if (!secretVaultGrantLifecycle) {
-		TopErrorMessage(nullptr,
-			L"プラットフォームサービスの初期化に失敗しました。\n"
-			L"Secret Vault の拡張ホスト権限を作成できませんでした。");
-		StopControlPlatform();
-		return false;
-	}
-
 	/* ダークモード設定を反映する */
 	ApplyDarkModeSetting(GetDllShareData().m_Common.m_sWindow.m_bDarkMode);
 
@@ -238,7 +208,7 @@ bool CControlProcess::InitializeProcess()
 	MY_TRACETIME( cRunningTimer, L"Before new CControlTray" );
 
 	/* タスクトレイにアイコン作成 */
-	m_pcTray = new CControlTray(std::move(secretVaultGrantLifecycle));
+	m_pcTray = new CControlTray();
 
 	MY_TRACETIME( cRunningTimer, L"After new CControlTray" );
 
@@ -297,7 +267,6 @@ bool CControlProcess::MainLoop()
 */
 void CControlProcess::OnExitProcess()
 {
-	if (m_pcTray) m_pcTray->ShutdownExtensionHost();
 	StopControlPlatform();
 	GetDllShareData().m_sHandles.m_hwndTray = nullptr;
 	RunPendingUpdateInstaller();
@@ -309,7 +278,7 @@ void CControlProcess::OnExitProcess()
 	The control process is the last process of the application to exit, so this is
 	the only place where "replace the running installation" is a possible request
 	rather than a request to overwrite files that are still open. It runs after
-	the extension host and the control platform have stopped, so no storage lock
+	the editor processes and the control platform have stopped, so no storage lock
 	survives into the install, and before the destructor releases
 	`MutexSakuraEditor` — the installer waits that mutex out; see
 	`installer/sakura-common.iss`.
@@ -340,7 +309,6 @@ CControlProcess::~CControlProcess()
 {
 	// InitializeProcess failures do not reach OnExitProcess. Keep destruction as
 	// the idempotent rollback owner for every partial startup branch.
-	if (m_pcTray) m_pcTray->ShutdownExtensionHost();
 	StopControlPlatform();
 	delete m_pcTray;
 

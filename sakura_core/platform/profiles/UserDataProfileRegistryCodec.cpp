@@ -134,7 +134,7 @@ bool PutProfile(std::string& output, const UserDataProfileDescriptor& profile)
 	output.push_back(static_cast<char>(profile.kind));
 	unsigned char inheritance = (profile.resourceInheritance.settings ? 1 : 0) | (profile.resourceInheritance.keybindings ? 2 : 0)
 		| (profile.resourceInheritance.tasks ? 4 : 0) | (profile.resourceInheritance.snippets ? 8 : 0)
-		| (profile.resourceInheritance.extensions ? 16 : 0) | (profile.resourceInheritance.globalState ? 32 : 0);
+		| (profile.resourceInheritance.globalState ? 32 : 0);
 	output.push_back(static_cast<char>(inheritance));
 	if (profile.legacyAliases.size() > kMaximumAssociations) return false;
 	PutU32(output, static_cast<std::uint32_t>(profile.legacyAliases.size()));
@@ -150,7 +150,7 @@ bool GetProfile(std::string_view input, std::size_t& offset, UserDataProfileDesc
 	if (kind > static_cast<unsigned char>(UserDataProfileKind::Transient) || (inheritance & ~0x3f) != 0) return false;
 	profile.kind = static_cast<UserDataProfileKind>(kind);
 	profile.resourceInheritance = { (inheritance & 1) != 0, (inheritance & 2) != 0, (inheritance & 4) != 0,
-		(inheritance & 8) != 0, (inheritance & 16) != 0, (inheritance & 32) != 0 };
+		(inheritance & 8) != 0, (inheritance & 32) != 0 };
 	std::uint32_t aliases = 0;
 	if (!GetU32(input, offset, aliases) || aliases > kMaximumAssociations) return false;
 	profile.legacyAliases.resize(aliases);

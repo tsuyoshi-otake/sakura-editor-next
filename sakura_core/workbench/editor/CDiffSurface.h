@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -55,7 +55,7 @@ struct SDiffSurfaceContent final {
 //! only place allowed to know what a line means to git.
 //!
 //! This is a native composition-layer projection in exactly the same sense as
-//! `CExtensionDetailSurface`: it is not an `EditorInput`, it owns no document
+//! other composition-layer surfaces: it is not an `EditorInput`, it owns no document
 //! model, and `CEditWnd` may show it only while the native editor has no active
 //! document. It renders content handed to it and never reads files or runs git.
 class CDiffSurface final : public CWnd

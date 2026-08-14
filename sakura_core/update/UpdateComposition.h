@@ -60,7 +60,7 @@ struct UpdateConfigurationSnapshot final {
 
 	The configuration snapshot is taken once, here, and never re-read. Changing
 	`update.mode` therefore takes effect in the next window, which matches the
-	way `CreateOpenVsxProductionClient` freezes its own network policy.
+	way other request clients freeze their own network policy.
 */
 class UpdateComposition final {
 public:

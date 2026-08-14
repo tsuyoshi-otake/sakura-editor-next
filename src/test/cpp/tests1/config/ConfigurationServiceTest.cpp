@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -34,7 +34,6 @@ using config::ConfigurationUpdate;
 using config::ConfigurationValue;
 using config::EConfigurationOutcome;
 using config::EConfigurationScope;
-using config::RestrictedConfigurationPolicy;
 
 ConfigurationTarget Target(std::wstring profile = L"default", const wchar_t* workspace = nullptr, const wchar_t* folder = nullptr, const wchar_t* language = nullptr)
 {
@@ -127,7 +126,7 @@ TEST(ConfigurationService, ReadSnapshotRejectsUnknownKeysAndInvalidTargetsWithou
 {
 	auto service = Service();
 
-	const auto unknown = service.ReadSnapshot({ "editor.tabSize", "extension.futureSetting" }, Target());
+	const auto unknown = service.ReadSnapshot({ "editor.tabSize", "provider.futureSetting" }, Target());
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey, unknown.outcome);
 	EXPECT_FALSE(unknown.snapshot.has_value());
 
@@ -498,7 +497,7 @@ TEST(ConfigurationService, FileSourceKeepsLatentEntriesButOnlyKnownKeysParticipa
 		{
 			{ source, {
 				{ "editor.tabSize", ConfigurationValue(8) },
-				{ "extension.futureSetting", ConfigurationValue(true) },
+				{ "provider.futureSetting", ConfigurationValue(true) },
 			}, 0 },
 		},
 		"mixed-known-and-latent",
@@ -508,9 +507,9 @@ TEST(ConfigurationService, FileSourceKeepsLatentEntriesButOnlyKnownKeysParticipa
 	EXPECT_EQ(1U, applied.revisions.front().revision);
 	EXPECT_EQ(8, Integer(service, profile));
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey,
-		service.GetValue("extension.futureSetting", profile).outcome);
+		service.GetValue("provider.futureSetting", profile).outcome);
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey,
-		service.Inspect("extension.futureSetting", profile).outcome);
+		service.Inspect("provider.futureSetting", profile).outcome);
 	ASSERT_EQ(1, notificationCount);
 	ASSERT_EQ(1U, delivered.size());
 	EXPECT_EQ("editor.tabSize", delivered.front().key);
@@ -519,7 +518,7 @@ TEST(ConfigurationService, FileSourceKeepsLatentEntriesButOnlyKnownKeysParticipa
 		{
 			{ source, {
 				{ "editor.tabSize", ConfigurationValue(8) },
-				{ "extension.futureSetting", ConfigurationValue(true) },
+				{ "provider.futureSetting", ConfigurationValue(true) },
 			}, 0 },
 		},
 		"mixed-known-and-latent",
@@ -595,11 +594,11 @@ TEST(ConfigurationService, RejectsInvalidConstrainedReplacementWithoutChangingLa
 TEST(ConfigurationService, UnknownOnlyFileSourceHasDurableRevisionCasReplayAndClearSemantics)
 {
 	auto service = Service();
-	const auto source = Source(EConfigurationScope::Application, {}, "extensions-json");
+	const auto source = Source(EConfigurationScope::Application, {}, "provider-json");
 
 	ConfigurationReplaceSource initial {
 		source,
-		{ { "extension.futureSetting", ConfigurationValue(true) } },
+		{ { "provider.futureSetting", ConfigurationValue(true) } },
 		"latent-initial",
 		0,
 	};
@@ -610,7 +609,7 @@ TEST(ConfigurationService, UnknownOnlyFileSourceHasDurableRevisionCasReplayAndCl
 
 	ConfigurationReplaceSource stale {
 		source,
-		{ { "extension.futureSetting", ConfigurationValue(false) } },
+		{ { "provider.futureSetting", ConfigurationValue(false) } },
 		"latent-stale",
 		0,
 	};
@@ -623,7 +622,7 @@ TEST(ConfigurationService, UnknownOnlyFileSourceHasDurableRevisionCasReplayAndCl
 	EXPECT_EQ(2U, cleared.revision);
 	EXPECT_EQ(EConfigurationOutcome::Replayed, service.ReplaceSource(clear).outcome);
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey,
-		service.GetValue("extension.futureSetting", {}).outcome);
+		service.GetValue("provider.futureSetting", {}).outcome);
 }
 
 TEST(ConfigurationService, UnknownEntriesDoNotBypassKnownScopeValidationOrAtomicity)
@@ -641,7 +640,7 @@ TEST(ConfigurationService, UnknownEntriesDoNotBypassKnownScopeValidationOrAtomic
 		{
 			{ source, {
 				{ "editor.tabSize", ConfigurationValue(7) },
-				{ "extension.futureSetting", ConfigurationValue(true) },
+				{ "provider.futureSetting", ConfigurationValue(true) },
 				{ "workbench.applicationOnly", ConfigurationValue(true) },
 			}, 1 },
 		},
@@ -652,7 +651,7 @@ TEST(ConfigurationService, UnknownEntriesDoNotBypassKnownScopeValidationOrAtomic
 
 	const auto latentOnly = service.ReplaceSource({
 		source,
-		{ { "extension.futureSetting", ConfigurationValue(true) } },
+		{ { "provider.futureSetting", ConfigurationValue(true) } },
 		"latent-replaces-known",
 		1,
 	});
@@ -827,266 +826,6 @@ TEST(ConfigurationService, SubscriptionCleanupContainsUnsubscribeFailures)
 	EXPECT_FALSE(subscription.IsActive());
 	EXPECT_NO_THROW(subscription.Reset());
 	EXPECT_EQ(1, calls);
-}
-
-TEST(ConfigurationService, RestrictedWorkspaceAndFolderValuesAreWithheldWhileUntrusted)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	const auto folder = Target(L"default", L"file:///C:/work", L"file:///C:/work/one");
-
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Folder, folder, 7, "folder").outcome);
-	EXPECT_EQ(7, Integer(service, folder));
-
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, workspace }).outcome);
-
-	EXPECT_EQ(5, Integer(service, workspace));
-	EXPECT_EQ(5, Integer(service, folder));
-}
-
-TEST(ConfigurationService, GrantingAndRevokingTrustTogglesTheRestrictedWorkspaceValue)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, workspace }).outcome);
-	EXPECT_EQ(5, Integer(service, workspace));
-
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ true, { "editor.tabSize" }, workspace }).outcome);
-	EXPECT_EQ(6, Integer(service, workspace));
-
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, workspace }).outcome);
-	EXPECT_EQ(5, Integer(service, workspace));
-}
-
-TEST(ConfigurationService, NonRestrictedKeyIsUnaffectedByAnUntrustedRestrictedPolicy)
-{
-	auto service = Service();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.Update({ Source(EConfigurationScope::Workspace, workspace), "editor.lineHeight", ConfigurationValue(24), "workspace-line-height" }).outcome);
-
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, workspace }).outcome);
-
-	auto lineHeight = service.GetValue("editor.lineHeight", workspace);
-	ASSERT_EQ(EConfigurationOutcome::Applied, lineHeight.outcome);
-	ASSERT_TRUE(lineHeight.value.has_value());
-	EXPECT_EQ(24, std::get<std::int64_t>(lineHeight.value->Value()));
-}
-
-TEST(ConfigurationService, InspectReportsWithheldWorkspaceProvenanceWhileTheEffectiveValueFallsBack)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, workspace }).outcome);
-
-	auto inspection = service.Inspect("editor.tabSize", workspace);
-	ASSERT_EQ(EConfigurationOutcome::Applied, inspection.outcome);
-	ASSERT_TRUE(inspection.effectiveValue.has_value());
-	EXPECT_EQ(5, std::get<std::int64_t>(inspection.effectiveValue->Value()));
-
-	const auto workspaceEntry = std::find_if(inspection.provenance.begin(), inspection.provenance.end(),
-		[](const auto& entry) { return entry.scope == EConfigurationScope::Workspace; });
-	ASSERT_NE(inspection.provenance.end(), workspaceEntry);
-	EXPECT_TRUE(workspaceEntry->withheld);
-	EXPECT_EQ(6, std::get<std::int64_t>(workspaceEntry->value.Value()));
-}
-
-TEST(ConfigurationService, DefaultApplicationAndProfileContributionsAreNeverWithheld)
-{
-	auto service = Service();
-	const auto application = ConfigurationTarget{};
-	const auto profile = Target();
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Application, application, 2, "application").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, profile }).outcome);
-
-	auto inspection = service.Inspect("editor.tabSize", profile);
-	ASSERT_EQ(EConfigurationOutcome::Applied, inspection.outcome);
-	bool sawDefault = false;
-	bool sawApplication = false;
-	bool sawProfile = false;
-	for (const auto& entry : inspection.provenance) {
-		switch (entry.scope) {
-		case EConfigurationScope::Default:
-			sawDefault = true;
-			EXPECT_FALSE(entry.withheld);
-			break;
-		case EConfigurationScope::Application:
-			sawApplication = true;
-			EXPECT_FALSE(entry.withheld);
-			break;
-		case EConfigurationScope::Profile:
-			sawProfile = true;
-			EXPECT_FALSE(entry.withheld);
-			break;
-		default:
-			break;
-		}
-	}
-	EXPECT_TRUE(sawDefault);
-	EXPECT_TRUE(sawApplication);
-	EXPECT_TRUE(sawProfile);
-	EXPECT_EQ(5, Integer(service, profile));
-}
-
-TEST(ConfigurationService, ApplyingAnIdenticalRestrictedPolicyIsNoChangeAndARealChangeBumpsRevisionAndNotifies)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-
-	const RestrictedConfigurationPolicy untrusted { false, { "editor.tabSize" }, workspace };
-	const auto first = service.ApplyRestrictedConfigurations(untrusted);
-	ASSERT_EQ(EConfigurationOutcome::Applied, first.outcome);
-	const auto revisionAfterFirst = first.revision;
-
-	int callbackCount = 0;
-	std::vector<ConfigurationChange> lastChanges;
-	auto subscription = service.Subscribe([&callbackCount, &lastChanges](const auto& changes) {
-		++callbackCount;
-		lastChanges = changes;
-	});
-
-	const auto noChange = service.ApplyRestrictedConfigurations(untrusted);
-	EXPECT_EQ(EConfigurationOutcome::NoChange, noChange.outcome);
-	EXPECT_EQ(revisionAfterFirst, noChange.revision);
-	EXPECT_EQ(0, callbackCount);
-
-	// ApplyRestrictedConfigurations resolves its before/after comparison, and
-	// stamps every emitted ConfigurationChange, against the caller-supplied
-	// evaluationTarget rather than a target the service invents on its own.
-	// With evaluationTarget == workspace, granting trust genuinely flips
-	// editor.tabSize's effective value at that target from the Profile
-	// fallback (5) to the now-unwithheld Workspace contribution (6), so the
-	// listener must fire exactly once and name that key/target/values.
-	const auto trusted = service.ApplyRestrictedConfigurations({ true, { "editor.tabSize" }, workspace });
-	EXPECT_EQ(EConfigurationOutcome::Applied, trusted.outcome);
-	EXPECT_GT(trusted.revision, revisionAfterFirst);
-	EXPECT_EQ(1, callbackCount);
-	ASSERT_EQ(1U, lastChanges.size());
-	EXPECT_EQ("editor.tabSize", lastChanges.front().key);
-	EXPECT_EQ(5, std::get<std::int64_t>(lastChanges.front().previousValue.Value()));
-	EXPECT_EQ(6, std::get<std::int64_t>(lastChanges.front().effectiveValue.Value()));
-	EXPECT_EQ(6, Integer(service, workspace));
-}
-
-TEST(ConfigurationService, ApplyRestrictedConfigurationsRejectsAnInvalidEvaluationTargetAndCommitsNothing)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-
-	const auto baseline = service.ReadSnapshot({ "editor.tabSize" }, workspace);
-	ASSERT_TRUE(baseline.snapshot.has_value());
-	const auto revisionBefore = baseline.snapshot->revision;
-
-	int callbackCount = 0;
-	auto subscription = service.Subscribe([&callbackCount](const auto&) { ++callbackCount; });
-
-	// folderUri without workspaceUri fails IsContextValid, the same predicate
-	// ReadSnapshot/Inspect already reject targets with.
-	auto parsedFolderUri = platform::uri::Uri::Parse(L"file:///C:/work/one");
-	ASSERT_TRUE(parsedFolderUri);
-	ConfigurationTarget invalidTarget;
-	invalidTarget.profileId = L"default";
-	invalidTarget.folderUri = std::move(*parsedFolderUri.value);
-
-	const auto rejected = service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, invalidTarget });
-	EXPECT_EQ(EConfigurationOutcome::InvalidScope, rejected.outcome);
-	EXPECT_EQ(0, callbackCount);
-
-	const auto afterAttempt = service.ReadSnapshot({ "editor.tabSize" }, workspace);
-	ASSERT_TRUE(afterAttempt.snapshot.has_value());
-	EXPECT_EQ(revisionBefore, afterAttempt.snapshot->revision);
-	ASSERT_EQ(1U, afterAttempt.snapshot->values.size());
-	EXPECT_EQ(6, std::get<std::int64_t>(afterAttempt.snapshot->values.front().Value()));
-}
-
-TEST(ConfigurationService, NonCanonicalRestrictedKeyIsDroppedWhileACanonicalEntryInTheSameListStillApplies)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.Update({ Source(EConfigurationScope::Profile, profile), "editor.lineHeight", ConfigurationValue(22), "profile-line-height" }).outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.Update({ Source(EConfigurationScope::Workspace, workspace), "editor.lineHeight", ConfigurationValue(28), "workspace-line-height" }).outcome);
-
-	// ".editor.tabSize" fails IsCanonicalKey (leading dot); it must be dropped
-	// rather than restricting editor.tabSize by accident, while the genuinely
-	// canonical "editor.lineHeight" in the same list still takes effect.
-	const auto applied = service.ApplyRestrictedConfigurations({ false, { ".editor.tabSize", "editor.lineHeight" }, workspace });
-	ASSERT_EQ(EConfigurationOutcome::Applied, applied.outcome);
-
-	EXPECT_EQ(6, Integer(service, workspace));
-	auto lineHeight = service.GetValue("editor.lineHeight", workspace);
-	ASSERT_TRUE(lineHeight.value.has_value());
-	EXPECT_EQ(22, std::get<std::int64_t>(lineHeight.value->Value()));
-}
-
-TEST(ConfigurationService, ReadSnapshotAndGetValueAgreeWithInspectEffectiveValueUnderARestrictedUntrustedPolicy)
-{
-	auto service = Service();
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Profile, profile, 5, "profile").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, Apply(service, EConfigurationScope::Workspace, workspace, 6, "workspace").outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		service.ApplyRestrictedConfigurations({ false, { "editor.tabSize" }, workspace }).outcome);
-
-	auto inspection = service.Inspect("editor.tabSize", workspace);
-	ASSERT_TRUE(inspection.effectiveValue.has_value());
-	auto value = service.GetValue("editor.tabSize", workspace);
-	ASSERT_TRUE(value.value.has_value());
-	auto snapshot = service.ReadSnapshot({ "editor.tabSize" }, workspace);
-	ASSERT_TRUE(snapshot.snapshot.has_value());
-	ASSERT_EQ(1U, snapshot.snapshot->values.size());
-
-	EXPECT_EQ(*inspection.effectiveValue, *value.value);
-	EXPECT_EQ(*inspection.effectiveValue, snapshot.snapshot->values.front());
-	EXPECT_EQ(5, std::get<std::int64_t>(inspection.effectiveValue->Value()));
-}
-
-TEST(ConfigurationService, ExtensionsSupportUntrustedWorkspacesIsRegisteredWithAnEmptyObjectDefaultAndRejectedAtWorkspaceScope)
-{
-	CConfigurationService service(BuiltinConfigurationDescriptors());
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-
-	auto result = service.GetValue("extensions.supportUntrustedWorkspaces", profile);
-	ASSERT_EQ(EConfigurationOutcome::Applied, result.outcome);
-	ASSERT_TRUE(result.value.has_value());
-	const auto* object = std::get_if<ConfigurationValue::Object>(&result.value->Value());
-	ASSERT_NE(nullptr, object);
-	EXPECT_TRUE(object->empty());
-
-	const auto rejected = service.Update({
-		Source(EConfigurationScope::Workspace, workspace), "extensions.supportUntrustedWorkspaces",
-		ConfigurationValue(ConfigurationValue::Object{}), "reject-workspace-scope" });
-	EXPECT_EQ(EConfigurationOutcome::InvalidScope, rejected.outcome);
 }
 
 TEST(ConfigurationService, SecurityWorkspaceTrustBannerIsRegisteredWithUpstreamDefaultAndEnumAndIsProfileOnly)

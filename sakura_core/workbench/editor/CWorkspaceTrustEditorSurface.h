@@ -27,10 +27,10 @@
 //! composition root supplies the model through `ShowPrompt`, receives a grant
 //! request through `SetOnGrantRequested`, performs the grant against the
 //! runtime, and reports the terminal outcome back through `SetGrantResult` --
-//! the same request/report split `CExtensionDetailSurface` uses for
+//! the same request/report split used by other composition-layer surfaces for
 //! install/close, adapted to a policy decision that must never be taken here.
 //!
-//! Like `CExtensionDetailSurface`, this is a native composition-layer surface,
+//! This is a native composition-layer surface,
 //! not an `EditorInput` and not a second document model. `CEditWnd` may show it
 //! only while the native editor has no active document, and must hide it
 //! before projecting a document. It uses native GDI painting and native
@@ -117,7 +117,7 @@ private:
 	void LayoutChildren();
 	//! Lays out the fixed header (title + close button) and returns the y
 	//! where the body begins. A null dc measures without drawing, exactly like
-	//! CExtensionDetailSurface::PaintHeader, so the paint pass and the
+	//! the shared header painter, so the paint pass and the
 	//! child-layout pass cannot disagree about where the header ends.
 	[[nodiscard]] int PaintHeader(HDC dc, const RECT& client);
 	//! Lays out and optionally paints the body: main instruction, description,

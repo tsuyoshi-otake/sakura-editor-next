@@ -52,8 +52,6 @@ public:
 	[[nodiscard]] const ::platform::uri::Uri& Tasks() const noexcept { return m_tasks; }
 	[[nodiscard]] const ::platform::uri::Uri& Keybindings() const noexcept { return m_keybindings; }
 	[[nodiscard]] const ::platform::uri::Uri& Snippets() const noexcept { return m_snippets; }
-	[[nodiscard]] const ::platform::uri::Uri& ExtensionsManifest() const noexcept { return m_extensionsManifest; }
-	[[nodiscard]] const ::platform::uri::Uri& ExtensionsInstallHome() const noexcept { return m_extensionsInstallHome; }
 	[[nodiscard]] const ::platform::uri::Uri& GlobalStorage() const noexcept { return m_globalStorage; }
 
 private:
@@ -63,8 +61,6 @@ private:
 		::platform::uri::Uri tasks,
 		::platform::uri::Uri keybindings,
 		::platform::uri::Uri snippets,
-		::platform::uri::Uri extensionsManifest,
-		::platform::uri::Uri extensionsInstallHome,
 		::platform::uri::Uri globalStorage) noexcept;
 
 	::platform::uri::Uri m_profileHome;
@@ -72,8 +68,6 @@ private:
 	::platform::uri::Uri m_tasks;
 	::platform::uri::Uri m_keybindings;
 	::platform::uri::Uri m_snippets;
-	::platform::uri::Uri m_extensionsManifest;
-	::platform::uri::Uri m_extensionsInstallHome;
 	::platform::uri::Uri m_globalStorage;
 
 	friend class ProfileBootstrapSnapshot;

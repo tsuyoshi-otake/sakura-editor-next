@@ -161,7 +161,7 @@ TEST(WinHttpSystemProxyResolverTest, UsesCurrentUserStaticProxyAndBypassWithoutO
 
 TEST(WinHttpSystemProxyResolverTest, EmptyStaticProxyConfigurationResolvesToNoProxyRequiredAndBypassListStillSelectsDirect)
 {
-	// Regression for the OpenVSX-unreachable defect: a machine with no static
+	// Regression for a request-client reachability defect: a machine with no static
 	// proxy and no auto-detect/PAC has the system authoritatively answering
 	// "no proxy applies", so this must be NoProxyRequired rather than the old
 	// conflated Unavailable, and it must do so without ever opening WinHTTP.

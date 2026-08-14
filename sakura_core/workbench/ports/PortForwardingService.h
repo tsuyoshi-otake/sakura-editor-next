@@ -52,7 +52,7 @@ enum class EPortProtocol : std::uint8_t {
 
 enum class EPortSource : std::uint8_t {
 	User,
-	Extension,
+	Provider,
 	AutoForward,
 	Environment,
 };
@@ -93,7 +93,7 @@ struct DiscoverPortRequest final {
 	PortEndpoint remoteEndpoint;
 	EPortPrivacy privacy{ EPortPrivacy::Private };
 	EPortProtocol protocol{ EPortProtocol::Auto };
-	EPortSource source{ EPortSource::Extension };
+	EPortSource source{ EPortSource::Provider };
 	std::string sourceDescription;
 	std::optional<std::string> label;
 	std::optional<std::string> processDescription;
@@ -188,7 +188,7 @@ struct PortSnapshot final {
 	std::optional<std::string> tunnelId;
 	EPortPrivacy privacy{ EPortPrivacy::Private };
 	EPortProtocol protocol{ EPortProtocol::Auto };
-	EPortSource source{ EPortSource::Extension };
+	EPortSource source{ EPortSource::Provider };
 	std::string sourceDescription;
 	std::optional<std::string> label;
 	std::optional<std::string> processDescription;

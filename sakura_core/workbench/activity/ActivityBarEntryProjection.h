@@ -9,7 +9,6 @@
 #include "workbench/activity/ActivityBarModel.h"
 #include "workbench/layout/WorkbenchContributionRegistry.h"
 
-#include <functional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -23,7 +22,7 @@ namespace workbench::activity {
 	The layout registry is the single authority on which ViewContainers exist and where they
 	live, but it deliberately knows nothing about glyphs or about which built-in container the
 	native workbench can actually render. Both gaps are filled here by the composition, so this
-	file never has to depend on `sakura_core/extension/` or on the side bar page pool.
+	file never has to depend on the side bar page pool.
 */
 struct ActivityBarProjectionOptions {
 	/*!
@@ -34,16 +33,13 @@ struct ActivityBarProjectionOptions {
 		the Activity Bar that open nothing, so the composition passes only what it can show.
 	*/
 	std::span<const std::string_view> renderableBuiltins;
-	//! Codicon name an extension declared for its container, empty when it declared an image
-	//! or nothing at all. Never called for built-in containers.
-	std::function<std::wstring(std::string_view containerId)> extensionCodicon;
 };
 
 /*!
 	@brief Projects the Primary Side Bar's ViewContainers onto Activity Bar entries.
 
 	Order follows the registry's `order` field, then the container id, so the strip is stable
-	across restarts and across the arrival order of extension registrations. Panel and Auxiliary
+	across restarts. Panel and Auxiliary
 	Bar containers are skipped: VS Code's Activity Bar only ever shows the Primary Side Bar.
 */
 [[nodiscard]] std::vector<ActivityBarEntry> ProjectActivityBarEntries(

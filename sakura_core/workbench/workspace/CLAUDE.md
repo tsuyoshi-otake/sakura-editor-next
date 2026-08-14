@@ -3,14 +3,14 @@
 ## Ownership boundary
 
 `CWorkspaceArtifactDocumentService` is the pure, process-local router for
-`.vscode/tasks.json`, `.vscode/launch.json`, `.vscode/extensions.json`, and
-their corresponding `.code-workspace` members. It retains the whole accepted
+`.vscode/tasks.json`, `.vscode/launch.json`, and their corresponding
+`.code-workspace` members. It retains the whole accepted
 JSONC source and root object so unrelated members are not discarded.
 
 These documents are **not** `IConfigurationService` inputs. Only the existing
 workspace `settings` path may enter configuration. This service exposes separate
-Tasks, Launch, and Extensions snapshots, but it does not execute tasks, create a
-debug adapter session, or apply extension recommendations.
+Tasks and Launch snapshots, but it does not execute tasks or create a debug
+adapter session.
 
 ## Update and lifecycle rules
 
@@ -41,12 +41,12 @@ stop the adapter before disposing the service.
   `.code-workspace` resource, and at most 64 folder URIs. Advance the generation
   whenever the workspace identity or folder topology changes. The adapter assigns
   strictly increasing revisions to actual read/remove operations.
-- It reads the workspace file for `tasks`, `launch`, and `extensions` members and
-  each folder's `.vscode/tasks.json`, `launch.json`, and `extensions.json`.
+- It reads the workspace file for `tasks` and `launch` members and each folder's
+  `.vscode/tasks.json` and `launch.json`.
   `NotFound` is an explicit source removal, restoring workspace-file fallback;
   permission/read failures and corrupt bytes do not replace last-good content.
 - Watch topology mirrors the stable configuration watcher: watch each folder for
-  `.vscode` lifecycle and `.vscode` for the three named members. Events are
+  `.vscode` lifecycle and `.vscode` for the two named members. Events are
   deduplicated with a bounded debounce; overflow/rescan/disposal cancels, joins,
   rebuilds the full topology, then resnapshots.
 - `Stop` cancels every watch and joins all worker/dispatcher threads. It rejects

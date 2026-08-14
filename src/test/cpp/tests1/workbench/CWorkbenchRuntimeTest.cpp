@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -1031,7 +1031,7 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	};
 
 	EXPECT_EQ(1U, contributions.revision);
-	EXPECT_EQ(10U, contributions.viewContainers.size());
+	EXPECT_EQ(9U, contributions.viewContainers.size());
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Search));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::RunAndDebug));
 	EXPECT_NE(contributions.viewContainers.end(), findContainer(layout::ids::viewContainer::Problems));
@@ -1056,64 +1056,6 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	EXPECT_EQ(std::string(layout::ids::viewContainer::Explorer), outline->descriptor.containerId);
 }
 
-TEST(CWorkbenchRuntime, AutomaticallyReconcilesRegisteredAndDisposedContributionsIntoLayoutState)
-{
-	RuntimeFixture fixture(Bootstrap());
-	const layout::WorkbenchContributionOwner owner{ .ownerId = "sample.extension", .generation = 4 };
-	const auto registered = fixture.runtime->Contributions().Register({
-		.operation = { .operationId = "runtime.registry.register" },
-		.owner = owner,
-		.viewContainers = { { .id = "sample.extension.container", .title = "Sample", .location = layout::EViewContainerLocation::Panel } },
-		.views = { { .id = "sample.extension.view", .containerId = "sample.extension.container", .title = "Sample View" } },
-	});
-	ASSERT_EQ(layout::EWorkbenchContributionOperationStatus::Succeeded, registered.status);
-	auto state = fixture.runtime->LayoutState().Snapshot();
-	const auto container = std::find_if(state.containers.begin(), state.containers.end(), [](const auto& value) {
-		return value.containerId == "sample.extension.container";
-	});
-	ASSERT_NE(state.containers.end(), container);
-	ASSERT_TRUE(container->activeViewId);
-	EXPECT_EQ("sample.extension.view", *container->activeViewId);
-	EXPECT_NE(state.views.end(), std::find_if(state.views.begin(), state.views.end(), [](const auto& value) {
-		return value.viewId == "sample.extension.view";
-	}));
-
-	const auto reveal = fixture.runtime->LayoutState().RevealContainer({
-		.operation = { .operationId = "runtime.registry.reveal" },
-		.containerId = "sample.extension.container",
-	});
-	ASSERT_TRUE(reveal.status == layout::EWorkbenchLayoutOperationStatus::Succeeded
-		|| reveal.status == layout::EWorkbenchLayoutOperationStatus::NotApplicable);
-	ASSERT_EQ(layout::EWorkbenchLayoutOperationStatus::Succeeded, fixture.runtime->LayoutState().SetPartVisibility({
-		.operation = { .operationId = "runtime.registry.show-panel" },
-		.partId = std::string(layout::ids::part::Panel),
-		.visible = true,
-	}).status);
-	ASSERT_EQ(layout::EWorkbenchLayoutOperationStatus::Succeeded, fixture.runtime->LayoutState().ActivateContainer({
-		.operation = { .operationId = "runtime.registry.activate" },
-		.containerId = "sample.extension.container",
-	}).status);
-	ASSERT_EQ(layout::EWorkbenchLayoutOperationStatus::Succeeded, fixture.runtime->LayoutState().SetFocus({
-		.operation = { .operationId = "runtime.registry.focus" },
-		.focus = { .containerId = "sample.extension.container", .viewId = "sample.extension.view" },
-	}).status);
-	const auto disposed = fixture.runtime->Contributions().DisposeOwner({
-		.operation = { .operationId = "runtime.registry.dispose" }, .owner = owner,
-	});
-	ASSERT_EQ(layout::EWorkbenchContributionOperationStatus::Succeeded, disposed.status);
-	state = fixture.runtime->LayoutState().Snapshot();
-	EXPECT_EQ(state.containers.end(), std::find_if(state.containers.begin(), state.containers.end(), [](const auto& value) {
-		return value.containerId == "sample.extension.container";
-	}));
-	EXPECT_EQ(state.views.end(), std::find_if(state.views.begin(), state.views.end(), [](const auto& value) {
-		return value.viewId == "sample.extension.view";
-	}));
-	ASSERT_TRUE(state.focus.partId);
-	EXPECT_EQ(std::string(layout::ids::part::Editor), *state.focus.partId);
-	EXPECT_FALSE(state.focus.containerId);
-	EXPECT_FALSE(state.focus.viewId);
-	EXPECT_TRUE(fixture.runtime->Snapshot().diagnostics.empty());
-}
 
 TEST(CWorkbenchRuntime, ExplicitFolderLoadsItsVscodeSettingsWithWorkspaceAndFolderIdentity)
 {
@@ -1162,9 +1104,9 @@ TEST(CWorkbenchRuntime, ZeroBootstrapFolderWorkspaceLoadsDocumentFoldersAndKeeps
 	const auto workspaceState = fixture.runtime->WorkspaceConfiguration();
 	ASSERT_TRUE(workspaceState.document.has_value());
 	ASSERT_TRUE(workspaceState.document->settings.has_value());
-	EXPECT_EQ(3U, workspaceState.document->fileMembers.size());
+	EXPECT_EQ(2U, workspaceState.document->fileMembers.size());
 	ASSERT_EQ(2U, workspaceState.folderResources.size());
-	EXPECT_EQ(4U, workspaceState.folderResources.front().resources.size());
+	EXPECT_EQ(3U, workspaceState.folderResources.front().resources.size());
 
 	ConfigurationTarget firstTarget = ProfileTarget(fixture.runtime->Bootstrap());
 	firstTarget.workspaceUri = workspaceConfig;
@@ -1998,70 +1940,6 @@ TEST(CWorkbenchRuntime, WorkspaceTrustPromptOnAnEmptyWindowOffersNoOptions)
 	EXPECT_TRUE(model.options.empty());
 }
 
-TEST(CWorkbenchRuntime, ExtensionRestrictedConfigurationsWithholdAWorkspaceValueUntilTrustIsGrantedWithoutARepublish)
-{
-	// workbench.editor.showTabs is Profile/Workspace/Folder scoped
-	// (BuiltinConfigurationDescriptors.cpp), which is exactly the shape a
-	// restricted key needs: a Folder-scope contribution Workspace Trust can
-	// withhold, with a Default fallback ("multiple") distinct from the
-	// folder value ("none") so withholding is observable rather than assumed.
-	auto folder = Parse(L"file:///C:/Project");
-	auto store = std::make_unique<FakeTrustedFoldersStore>();
-	RuntimeFixture fixture(Bootstrap(folder), {}, {}, {}, std::move(store));
-	fixture.files->Set(Parse(L"file:///C:/Project/.vscode/settings.json"),
-		Bytes(R"json({ "workbench.editor.showTabs": "none" })json"));
-	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
-	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
-
-	ConfigurationTarget target = ProfileTarget(fixture.runtime->Bootstrap());
-	target.workspaceUri = folder;
-	target.folderUri = folder;
-	// Before anything is published as restricted, the folder value reads
-	// through untouched: Workspace Trust only withholds keys this runtime was
-	// actually told are restricted.
-	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
-
-	const auto published = fixture.runtime->SetExtensionRestrictedConfigurations({ "workbench.editor.showTabs" });
-	EXPECT_EQ(EConfigurationOutcome::Applied, published);
-	// Untrusted, so the Folder-scope "none" is withheld and a real reader
-	// observes the descriptor default ("multiple") instead.
-	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
-
-	const auto granted = fixture.runtime->GrantWorkspaceTrust(workbench::EWorkspaceTrustGrantScope::CurrentWorkspace);
-	ASSERT_EQ(workbench::EWorkspaceTrustGrantStatus::Granted, granted.status);
-	EXPECT_EQ(config::EWorkspaceTrustState::Trusted, fixture.runtime->WorkspaceContext().Snapshot().trust);
-	// No second SetExtensionRestrictedConfigurations call: GrantWorkspaceTrust's
-	// own ResolveAndApplyWorkspaceTrust -> ApplyRestrictedConfigurationPolicy
-	// call is what stops withholding this key, exactly as
-	// CWorkbenchRuntime.cpp's ResolveAndApplyWorkspaceTrust comment documents.
-	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
-}
-
-TEST(CWorkbenchRuntime, SetExtensionRestrictedConfigurationsWithAnEmptySetClearsAPreviouslyPublishedRestriction)
-{
-	auto folder = Parse(L"file:///C:/Project");
-	RuntimeFixture fixture(Bootstrap(folder));
-	fixture.files->Set(Parse(L"file:///C:/Project/.vscode/settings.json"),
-		Bytes(R"json({ "workbench.editor.showTabs": "none" })json"));
-	ASSERT_TRUE(fixture.runtime->Start().IsUsable());
-	ASSERT_EQ(config::EWorkspaceTrustState::Unknown, fixture.runtime->WorkspaceContext().Snapshot().trust);
-
-	ConfigurationTarget target = ProfileTarget(fixture.runtime->Bootstrap());
-	target.workspaceUri = folder;
-	target.folderUri = folder;
-
-	ASSERT_EQ(EConfigurationOutcome::Applied,
-		fixture.runtime->SetExtensionRestrictedConfigurations({ "workbench.editor.showTabs" }));
-	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, target));
-
-	// Publishing an empty set -- the shape a scan with no restricted
-	// declarations left behind publishes -- must clear the previous
-	// restriction rather than being treated as a no-op that leaves a stale
-	// key withheld forever.
-	const auto cleared = fixture.runtime->SetExtensionRestrictedConfigurations({});
-	EXPECT_EQ(EConfigurationOutcome::Applied, cleared);
-	EXPECT_EQ(L"none", ShowTabs(*fixture.runtime, target));
-}
 
 TEST(CWorkbenchRuntime, RestrictedModeBannerFollowsBannerPolicyWhileWorkspaceTrustIsWithheld)
 {

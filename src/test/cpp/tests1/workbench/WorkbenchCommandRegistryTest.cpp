@@ -42,19 +42,19 @@ using workbench::commands::WorkbenchWhenClauseEvaluator;
 using workbench::layout::EWorkbenchPartPosition;
 using workbench::layout::WorkbenchLayoutStateSnapshot;
 
-const WorkbenchCommandOwner kExtensionGenerationOne{ "publisher.extension", 1 };
-const WorkbenchCommandOwner kExtensionGenerationTwo{ "publisher.extension", 2 };
+const WorkbenchCommandOwner kContributorGenerationOne{ "sakura.test.contributor", 1 };
+const WorkbenchCommandOwner kContributorGenerationTwo{ "sakura.test.contributor", 2 };
 
-WorkbenchCommandDescriptor SampleDescriptor(std::string id = "publisher.extension.run")
+WorkbenchCommandDescriptor SampleDescriptor(std::string id = "sakura.test.contributor.run")
 {
 	return {
 		std::move(id),
-		"Extension Run",
-		kExtensionGenerationOne,
+		"Contributor Run",
+		kContributorGenerationOne,
 		"workbenchReady",
-		"extension.enabled",
-		EWorkbenchCommandExecutorTarget::ExtensionHost,
-		{ { EWorkbenchCommandSurface::CommandPalette, "publisher.extension.run.palette", std::nullopt } },
+		"contributor.enabled",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{ { EWorkbenchCommandSurface::CommandPalette, "sakura.test.contributor.run.palette", std::nullopt } },
 	};
 }
 
@@ -75,7 +75,7 @@ WorkbenchContextKeySnapshot EnabledContext()
 {
 	WorkbenchContextKeySnapshot context;
 	context.values.emplace("workbenchReady", true);
-	context.values.emplace("extension.enabled", true);
+	context.values.emplace("contributor.enabled", true);
 	context.values.emplace("resource.langId", std::string("cpp"));
 	return context;
 }
@@ -114,38 +114,19 @@ TEST(WorkbenchContextKeyService, ProjectsLayoutKeysAsOneCoreSnapshot)
 	EXPECT_EQ(WorkbenchContextValue(true), snapshot.values.at("workbench.explorerActive"));
 }
 
-TEST(WorkbenchContextKeyService, CoreNamespaceRejectsExtensionWritesAndRequiresExactGenerationDisposal)
+TEST(WorkbenchContextKeyService, RecognizesReservedCoreNamespace)
 {
-	WorkbenchContextKeyService service;
-	for (const auto key : {
-		std::string_view("workbench.sidebarVisible"),
-		std::string_view("workbenchState"),
-		std::string_view("workspaceFolderCount"),
-		std::string_view("editorHasActiveEditor"),
-		std::string_view("editorIsDirty"),
-	}) {
-		EXPECT_EQ(EWorkbenchContextMutationStatus::Invalid,
-			service.SetExtensionOverlay(kExtensionGenerationOne,
-				{ { std::string(key), WorkbenchContextValue(false) } }).status) << key;
-	}
-
 	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("workbenchState"));
 	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("workspaceFolderCount"));
 	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("editorHasActiveEditor"));
 	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("editorIsDirty"));
-	ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded,
-		service.SetExtensionOverlay(kExtensionGenerationOne, { { "extension.enabled", true } }).status);
-	EXPECT_EQ(EWorkbenchContextMutationStatus::NotApplicable, service.DisposeExtensionOverlay(kExtensionGenerationTwo).status);
-	EXPECT_TRUE(std::get<bool>(service.Snapshot().values.at("extension.enabled")));
-	EXPECT_EQ(EWorkbenchContextMutationStatus::Succeeded, service.DisposeExtensionOverlay(kExtensionGenerationOne).status);
-	EXPECT_FALSE(service.Snapshot().values.contains("extension.enabled"));
 }
 
 TEST(WorkbenchWhenClauseEvaluator, SupportsBoundedBooleanComparisonAndRegexSubsetFailClosed)
 {
 	const auto context = EnabledContext();
 	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate(
-		"workbenchReady && (extension.enabled || resource.langId == 'text')", context));
+		"workbenchReady && (contributor.enabled || resource.langId == 'text')", context));
 	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("resource.langId =~ '^c..$'", context));
 	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("!missing && resource.langId != 'text'", context));
 	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("resource.langId =~ '['", context));
@@ -164,18 +145,13 @@ TEST(WorkbenchWhenClauseEvaluator, ComparesIntegerContextKeysWithoutChangingBool
 	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount > -1", context));
 	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount == '2'", context));
 	EXPECT_FALSE(WorkbenchWhenClauseEvaluator::Evaluate("workspaceFolderCount < '3'", context));
-	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("extension.enabled && resource.langId == 'cpp'", context));
+	EXPECT_TRUE(WorkbenchWhenClauseEvaluator::Evaluate("contributor.enabled && resource.langId == 'cpp'", context));
 }
 
 TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommandId)
 {
 	WorkbenchCommandRegistry registry;
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
-	const auto iconTheme = registry.Find("workbench.action.selectIconTheme");
-	ASSERT_TRUE(iconTheme.has_value());
-	EXPECT_EQ("Preferences: File Icon Theme", iconTheme->title);
-	EXPECT_EQ("workbench.action.selectIconTheme.palette",
-		iconTheme->surfaceBindings.front().slotId);
 	const auto colorTheme = registry.Find("workbench.action.selectTheme");
 	ASSERT_TRUE(colorTheme.has_value());
 	EXPECT_EQ("Preferences: Color Theme", colorTheme->title);
@@ -466,14 +442,9 @@ TEST(WorkbenchContextKeyService, ProjectsIsWorkspaceTrustedFalseForUnknownAndUnt
 	}
 }
 
-TEST(WorkbenchContextKeyService, IsWorkspaceTrustedIsAReservedCoreKeyRejectedFromExtensionOverlays)
+TEST(WorkbenchContextKeyService, IsWorkspaceTrustedIsAReservedCoreKey)
 {
 	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("isWorkspaceTrusted"));
-
-	WorkbenchContextKeyService service;
-	EXPECT_EQ(EWorkbenchContextMutationStatus::Invalid,
-		service.SetExtensionOverlay(kExtensionGenerationOne,
-			{ { "isWorkspaceTrusted", WorkbenchContextValue(true) } }).status);
 }
 
 TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatchesStableIds)
@@ -529,20 +500,18 @@ TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatch
 	EXPECT_FALSE(workbench::editor::DispatchRegisteredCommandPaletteSelection(registry,
 		L"workbench.action.showCommands", [](std::string_view) {}));
 	EXPECT_FALSE(workbench::editor::DispatchRegisteredCommandPaletteSelection(registry,
-		L"publisher.extension.notRegistered", [](std::string_view) {}));
+		L"sakura.test.contributor.notRegistered", [](std::string_view) {}));
 }
 
 TEST(WorkbenchCommandRegistry, ManageMenuSurfacesResolveToTheirCanonicalVsCodeCommands)
 {
 	WorkbenchCommandRegistry registry;
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
-	const std::array<std::pair<std::string_view, std::string_view>, 6> bindings = {
+	const std::array<std::pair<std::string_view, std::string_view>, 4> bindings = {
 		std::pair{ "workbench.manage.commandPalette", "workbench.action.showCommands" },
 		std::pair{ "workbench.manage.settings", "workbench.action.openSettings" },
-		std::pair{ "workbench.manage.extensions", "workbench.view.extensions" },
 		std::pair{ "workbench.manage.keybindings", "workbench.action.openGlobalKeybindings" },
 		std::pair{ "workbench.manage.colorTheme", "workbench.action.selectTheme" },
-		std::pair{ "workbench.manage.fileIconTheme", "workbench.action.selectIconTheme" },
 	};
 	for (const auto& [slot, commandId] : bindings) {
 		const auto resolved = registry.ResolveSurface(EWorkbenchCommandSurface::Menu, slot);
@@ -672,10 +641,8 @@ TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)
 	WorkbenchCommandRegistry registry;
 	int commandPaletteCalls{};
 	int settingsCalls{};
-	int extensionsCalls{};
 	int keybindingsCalls{};
 	int colorThemeCalls{};
-	int fileIconThemeCalls{};
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
 		.showCommands = [&commandPaletteCalls] {
 			++commandPaletteCalls;
@@ -684,11 +651,6 @@ TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)
 		},
 		.openSettings = [&settingsCalls] {
 			++settingsCalls;
-			return workbench::commands::WorkbenchCommandExecutionResult{
-				EWorkbenchCommandExecutionStatus::Succeeded, {} };
-		},
-		.showExtensions = [&extensionsCalls] {
-			++extensionsCalls;
 			return workbench::commands::WorkbenchCommandExecutionResult{
 				EWorkbenchCommandExecutionStatus::Succeeded, {} };
 		},
@@ -702,30 +664,21 @@ TEST(WorkbenchCommandRegistry, ManageExecutorsReachOnlyTheirBoundStableCommands)
 			return workbench::commands::WorkbenchCommandExecutionResult{
 				EWorkbenchCommandExecutionStatus::Succeeded, {} };
 		},
-		.selectFileIconTheme = [&fileIconThemeCalls] {
-			++fileIconThemeCalls;
-			return workbench::commands::WorkbenchCommandExecutionResult{
-				EWorkbenchCommandExecutionStatus::Succeeded, {} };
-		},
 	}).status);
 
 	const auto context = EnabledContext();
 	for (const auto commandId : {
 		"workbench.action.showCommands",
 		"workbench.action.openSettings",
-		"workbench.view.extensions",
 		"workbench.action.openGlobalKeybindings",
 		"workbench.action.selectTheme",
-		"workbench.action.selectIconTheme",
 	}) {
 		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded, registry.Execute(commandId, context).status);
 	}
 	EXPECT_EQ(1, commandPaletteCalls);
 	EXPECT_EQ(1, settingsCalls);
-	EXPECT_EQ(1, extensionsCalls);
 	EXPECT_EQ(1, keybindingsCalls);
 	EXPECT_EQ(1, colorThemeCalls);
-	EXPECT_EQ(1, fileIconThemeCalls);
 }
 
 TEST(WorkbenchCommandRegistry, DuplicateAndExactOwnerGenerationDisposalAreTerminal)
@@ -733,10 +686,10 @@ TEST(WorkbenchCommandRegistry, DuplicateAndExactOwnerGenerationDisposalAreTermin
 	WorkbenchCommandRegistry registry;
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.Register(SampleDescriptor()).status);
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.Register(SampleDescriptor()).status);
-	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::NotApplicable, registry.DisposeOwner(kExtensionGenerationTwo).status);
-	ASSERT_TRUE(registry.Find("publisher.extension.run").has_value());
-	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.DisposeOwner(kExtensionGenerationOne).status);
-	EXPECT_FALSE(registry.Find("publisher.extension.run").has_value());
+	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::NotApplicable, registry.DisposeOwner(kContributorGenerationTwo).status);
+	ASSERT_TRUE(registry.Find("sakura.test.contributor.run").has_value());
+	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.DisposeOwner(kContributorGenerationOne).status);
+	EXPECT_FALSE(registry.Find("sakura.test.contributor.run").has_value());
 }
 
 TEST(WorkbenchCommandRegistry, DisabledCommandNeverInvokesExecutorAndUnknownUnsupportedAndThrownAreTyped)
@@ -750,8 +703,8 @@ TEST(WorkbenchCommandRegistry, DisabledCommandNeverInvokesExecutorAndUnknownUnsu
 		}).status);
 
 	auto disabled = EnabledContext();
-	disabled.values.insert_or_assign("extension.enabled", false);
-	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Disabled, registry.Execute("publisher.extension.run", disabled).status);
+	disabled.values.insert_or_assign("contributor.enabled", false);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Disabled, registry.Execute("sakura.test.contributor.run", disabled).status);
 	EXPECT_EQ(0, calls);
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::UnknownCommand, registry.Execute("missing.command", EnabledContext()).status);
 
@@ -779,12 +732,12 @@ TEST(WorkbenchCommandRegistry, DisabledCommandNeverInvokesExecutorAndUnknownUnsu
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Failed,
 		failedBuiltin.Execute("workbench.action.output.toggleOutput", EnabledContext()).status);
 
-	auto throwing = SampleDescriptor("publisher.extension.throwing");
-	throwing.surfaceBindings[0].slotId = "publisher.extension.throwing.palette";
+	auto throwing = SampleDescriptor("sakura.test.contributor.throwing");
+	throwing.surfaceBindings[0].slotId = "sakura.test.contributor.throwing.palette";
 	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.Register(std::move(throwing), []() -> workbench::commands::WorkbenchCommandExecutionResult {
 		throw std::runtime_error("test");
 	}).status);
-	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Failed, registry.Execute("publisher.extension.throwing", EnabledContext()).status);
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Failed, registry.Execute("sakura.test.contributor.throwing", EnabledContext()).status);
 }
 
 TEST(WorkbenchCommandRegistry, RegistersExactMarkdownCommandIdsWithTheirOwnExecutors)

@@ -37,7 +37,6 @@ struct ConfigurationNetworkPolicySnapshot final {
 	bool proxyStrictSSL = true;
 	bool systemCertificates = true;
 	platform::request::RequestLimits requestLimits;
-	std::wstring openVsxRegistry;
 };
 
 struct ConfigurationNetworkPolicyResult final {

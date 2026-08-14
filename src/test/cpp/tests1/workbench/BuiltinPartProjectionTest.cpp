@@ -299,9 +299,6 @@ TEST(BuiltinPartProjection, ProjectsEverySupportedContainerViewPair)
 		ExpectedSurface{ workbench::layout::ids::viewContainer::SourceControl,
 			workbench::layout::ids::view::SourceControl,
 			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::SourceControl },
-		ExpectedSurface{ workbench::layout::ids::viewContainer::Extensions,
-			workbench::layout::ids::view::Extensions,
-			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::Extensions },
 		ExpectedSurface{ workbench::layout::ids::viewContainer::Terminal,
 			workbench::layout::ids::view::Terminal,
 			workbench::layout::EWorkbenchViewContainerLocation::Panel, BuiltinActiveSurface::Terminal },
@@ -487,12 +484,10 @@ TEST(BuiltinPartProjection, ProjectsSideBarContainersMovedIntoTheSecondarySideBa
 	constexpr std::array movable{
 		std::pair{ workbench::layout::ids::viewContainer::Explorer, BuiltinActiveSurface::Explorer },
 		std::pair{ workbench::layout::ids::viewContainer::SourceControl, BuiltinActiveSurface::SourceControl },
-		std::pair{ workbench::layout::ids::viewContainer::Extensions, BuiltinActiveSurface::Extensions },
 	};
 	constexpr std::array views{
 		workbench::layout::ids::view::Explorer,
 		workbench::layout::ids::view::SourceControl,
-		workbench::layout::ids::view::Extensions,
 	};
 
 	for (std::size_t index = 0; index < movable.size(); ++index) {

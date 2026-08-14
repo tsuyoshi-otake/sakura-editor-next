@@ -39,7 +39,6 @@ REQUIRED_CONDITION = "${{ always() && steps.checkout.outcome == 'success' }}"
 
 GATED_CALL_SITES = {
     ("build-sakura.yml", "build"),
-    ("build-sakura.yml", "test-exthost"),
 }
 
 # Both of these run their checkout as the very first step, so the useless

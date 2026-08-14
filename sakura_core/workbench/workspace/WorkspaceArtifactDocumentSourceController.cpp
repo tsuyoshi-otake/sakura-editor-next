@@ -63,7 +63,6 @@ std::optional<Uri> ArtifactInFolder(const Uri& folder, EWorkspaceArtifactDocumen
 	switch (kind) {
 	case EWorkspaceArtifactDocumentKind::Tasks: return ChildResource(*vscode, L"tasks.json");
 	case EWorkspaceArtifactDocumentKind::Launch: return ChildResource(*vscode, L"launch.json");
-	case EWorkspaceArtifactDocumentKind::Extensions: return ChildResource(*vscode, L"extensions.json");
 	}
 	return std::nullopt;
 }
@@ -216,7 +215,7 @@ void CWorkspaceArtifactDocumentSourceController::StartWorkersLocked()
 		auto vscode = VscodeDirectory(folder);
 		if (vscode) add(folder, vscode, true);
 		if (!vscode) continue;
-		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch, EWorkspaceArtifactDocumentKind::Extensions }) {
+		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch }) {
 			if (auto artifact = ArtifactInFolder(folder, kind)) add(*vscode, std::move(artifact), false);
 		}
 	}
@@ -411,12 +410,12 @@ WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController
 		result.documents.push_back(std::move(reloaded.document));
 	};
 	if (request.workspaceConfiguration) {
-		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch, EWorkspaceArtifactDocumentKind::Extensions }) {
+		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch }) {
 			reload(kind, EWorkspaceArtifactDocumentSource::WorkspaceFile, std::nullopt, *request.workspaceConfiguration);
 		}
 	}
 	for (const auto& folder : request.workspaceFolders) {
-		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch, EWorkspaceArtifactDocumentKind::Extensions }) {
+		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch }) {
 			if (auto resource = ArtifactInFolder(folder, kind)) reload(kind, EWorkspaceArtifactDocumentSource::Folder, folder, *resource);
 		}
 	}

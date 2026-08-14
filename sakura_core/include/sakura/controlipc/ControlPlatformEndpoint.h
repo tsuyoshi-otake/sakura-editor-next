@@ -79,7 +79,7 @@ struct ControlPlatformEndpointDiscoveryResult {
 };
 
 //! A dedicated shared-memory ABI. It is intentionally unrelated to DLLSHAREDATA and
-//! extension-host endpoint state. One control process writes; editor processes read a
+//! platform-service endpoint state. One control process writes; editor processes read a
 //! bounded seqlock snapshot.
 class CControlPlatformEndpoint final {
 public:

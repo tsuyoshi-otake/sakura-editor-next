@@ -340,16 +340,6 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	if (!m_workspaceArtifactSubscription) {
 		m_initializationFailure = "workspace artifact listener registration failed";
 	}
-	m_contributionSubscription = m_contributions.Subscribe(
-		{ .ownerId = std::string(layout::ids::BuiltinOwner), .generation = 0 },
-		[gate](const layout::WorkbenchContributionChange& change) {
-			CWorkbenchRuntime::DispatchListener(gate, [&change](CWorkbenchRuntime& owner) {
-				owner.OnContributionRegistryChanged(change);
-			});
-		});
-	if (!m_contributionSubscription) {
-		m_initializationFailure = "workbench contribution listener registration failed";
-	}
 }
 
 recent::IRecentlyOpenedWorkspaceService* CWorkbenchRuntime::RecentlyOpenedWorkspaces() noexcept
@@ -1789,18 +1779,6 @@ void CWorkbenchRuntime::ResolveAndApplyWorkspaceTrust(const config::WorkspaceCon
 	const auto result = m_workspaceContext.SetTrust(setTrust);
 	if (IsWorkspaceMutationSuccess(result.outcome)) {
 		SetDiagnostic("workspace.trust", std::nullopt);
-		// Trust just moved, so every previously published restricted key's
-		// withheld/admitted state must move with it now, not only the next time
-		// CExtensionService rescans and republishes the same key set. The outcome
-		// is deliberately discarded: workspace trust is already committed above,
-		// and a failed re-apply here must not fail trust resolution or roll the
-		// commit back -- the configuration service's own revision, and whatever
-		// the next successful SetExtensionRestrictedConfigurations call applies,
-		// remain the recovery signal for a restricted-policy commit that lags.
-		(void)ApplyRestrictedConfigurationPolicy();
-		// Same reasoning as ApplyRestrictedConfigurationPolicy just above: trust
-		// moving is exactly the "commits a new trust value" case the banner must
-		// react to without waiting for a later configuration change.
 		UpdateRestrictedModeBannerVisibility();
 		return;
 	}
@@ -1815,7 +1793,6 @@ void CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility()
 {
 	if (IsStopRequested()) return;
 
-	// Only Trusted counts as trusted, exactly matching ApplyRestrictedConfigurationPolicy:
 	// ResolveWorkspaceTrust never produces Untrusted on its own (config/CLAUDE.md's
 	// Workspace Trust Resolution Checkpoint), so Unknown reaches here whenever trust
 	// has been withheld rather than explicitly granted, and the banner must treat
@@ -1890,68 +1867,6 @@ void CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility()
 		.code = EWorkbenchRuntimeDiagnosticCode::BannerVisibilityFailed,
 		.message = "restricted mode banner visibility could not be committed to the layout state",
 	});
-}
-
-EConfigurationOutcome CWorkbenchRuntime::SetExtensionRestrictedConfigurations(std::vector<std::string> keys)
-{
-	{
-		std::lock_guard lock(m_extensionRestrictedConfigurationsMutex);
-		m_extensionRestrictedConfigurations = std::move(keys);
-	}
-	return ApplyRestrictedConfigurationPolicy();
-}
-
-EConfigurationOutcome CWorkbenchRuntime::ApplyRestrictedConfigurationPolicy()
-{
-	std::vector<std::string> keys;
-	{
-		// Held only long enough to copy the set. CExtensionService's worker thread
-		// can replace it concurrently with this runtime's own thread reading it
-		// here (see the member's declaration comment), and the configuration-service
-		// call below must not run while holding this lock.
-		std::lock_guard lock(m_extensionRestrictedConfigurationsMutex);
-		keys = m_extensionRestrictedConfigurations;
-	}
-
-	config::RestrictedConfigurationPolicy policy;
-	// Only Trusted counts as trusted. ResolveWorkspaceTrust never produces
-	// Untrusted on its own (config/CLAUDE.md's Workspace Trust Resolution
-	// Checkpoint), so Unknown reaches here exactly when trust has been withheld
-	// rather than explicitly granted; treating it as trusted would admit a
-	// restricted key's workspace-scoped value before the workspace was ever
-	// actually resolved.
-	policy.workspaceTrusted = WorkspaceContext().Snapshot().trust == config::EWorkspaceTrustState::Trusted;
-	policy.restrictedKeys = std::move(keys);
-
-	// evaluationTarget deliberately carries only the selected profile, not a
-	// workspace/folder URI. Verified against LayerIdentity and its callers in
-	// CConfigurationService.cpp: a Workspace-scope source is registered only
-	// while a `.code-workspace` is open (ApplyWorkspaceSettings, this file),
-	// keyed by target.workspaceUri = that workspace's own configuration URI, and
-	// each Folder-scope source is registered once per folder, keyed by
-	// (workspaceUri, folderUri) (the per-folder settings loop, this file). A
-	// multi-root workspace can have more than one folder, so there is no single
-	// folderUri -- and, for a bare Folder workspace with no `.code-workspace`,
-	// no workspaceUri either -- that this runtime could put in one target
-	// without guessing which root the resulting notification is about.
-	//
-	// This choice does not weaken enforcement: CollectProvenanceLocked withholds
-	// a restricted key's Workspace/Folder-scope contribution against whatever
-	// target a real GetValue/ReadSnapshot/Inspect caller supplies later, which is
-	// entirely independent of evaluationTarget. evaluationTarget only decides
-	// which ConfigurationChange notifications this call itself emits for
-	// Subscribe listeners. The consequence of a profile-only target is therefore
-	// narrow: those notifications never report a Workspace/Folder-scoped
-	// restricted key's own before/after move (it always resolves the same
-	// Default/Application/Profile-scope value on both sides), even though the
-	// very next real read of that key correctly reflects the new trust decision.
-	// This mirrors the same profile-only shape
-	// CExtensionWorkbenchServiceBridge::BuildConfigurationSnapshot and
-	// WriteGlobalConfiguration already use, for the identical reason.
-	policy.evaluationTarget.profileId = m_bootstrap.UserDataProfile().SelectedProfileId();
-
-	const auto result = m_configuration.ApplyRestrictedConfigurations(policy);
-	return result.outcome;
 }
 
 std::vector<config::WorkspaceTrustEntry> CWorkbenchRuntime::BuildTrustGrantEntries(
@@ -2234,41 +2149,6 @@ void CWorkbenchRuntime::OnWorkspaceContextChanged(const config::WorkspaceContext
 	}
 }
 
-void CWorkbenchRuntime::OnContributionRegistryChanged(const layout::WorkbenchContributionChange& change) noexcept
-{
-	try {
-		{
-			std::lock_guard lock(m_stateMutex);
-			if (IsStopRequested() || m_state == EWorkbenchRuntimeState::Stopped || m_state == EWorkbenchRuntimeState::Failed) return;
-		}
-		const auto result = m_layoutState.Reconcile(m_contributions.Snapshot(), {
-			.operation = { .operationId = "runtime.contributions.reconcile/" + std::to_string(change.revision) },
-		});
-		if (result.status == layout::EWorkbenchLayoutOperationStatus::Succeeded
-			|| result.status == layout::EWorkbenchLayoutOperationStatus::NotApplicable) {
-			SetDiagnostic("layout.contributions", std::nullopt);
-			return;
-		}
-		SetDiagnostic("layout.contributions", WorkbenchRuntimeDiagnostic {
-			.source = EWorkbenchRuntimeDiagnosticSource::Layout,
-			.code = EWorkbenchRuntimeDiagnosticCode::LayoutReconcileFailed,
-			.message = "workbench contribution layout reconciliation did not reach an accepted terminal state",
-		});
-	} catch (...) {
-		try {
-			SetDiagnostic("layout.contributions", WorkbenchRuntimeDiagnostic {
-				.source = EWorkbenchRuntimeDiagnosticSource::Layout,
-				.code = EWorkbenchRuntimeDiagnosticCode::LayoutReconcileFailed,
-				.message = "workbench contribution layout reconciliation failed unexpectedly",
-			});
-		} catch (...) {
-			std::lock_guard lock(m_stateMutex);
-			m_state = EWorkbenchRuntimeState::Failed;
-			if (m_revision != std::numeric_limits<std::uint64_t>::max()) ++m_revision;
-		}
-	}
-}
-
 WorkbenchRuntimeResult CWorkbenchRuntime::Start()
 {
 	std::lock_guard lifecycleLock(m_lifecycleMutex);
@@ -2471,10 +2351,6 @@ bool CWorkbenchRuntime::CompleteStopAfterListeners() noexcept
 		m_workspaceSubscription.Reset();
 		(void)m_workspaceArtifacts.Stop();
 		if (!StopOwnedServices()) return false;
-		if (m_contributionSubscription) {
-			m_contributions.Unsubscribe(*m_contributionSubscription);
-			m_contributionSubscription.reset();
-		}
 		PersistFinalLayoutMemento();
 		{
 			std::lock_guard lock(m_stateMutex);

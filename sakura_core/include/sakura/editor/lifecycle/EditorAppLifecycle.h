@@ -27,7 +27,7 @@ enum class EEditorAppLifecyclePhase : std::uint8_t {
 	WorkspaceConfiguration,
 	WorkbenchCreation,
 	Restore,
-	ExtensionSession,
+	UiServices,
 	Ready,
 };
 

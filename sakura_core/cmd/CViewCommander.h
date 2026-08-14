@@ -302,7 +302,6 @@ public:
 	void Command_FUNCLIST_PREV( void );					// 前の関数リストマーク	2014.01.05
 
 	/* 拡張系 */
-	void Command_EXTENSION_LIST( void );				// 拡張（Open VSX）サイドバーの表示切り替え
 
 	/* モード切り替え系 */
 	void Command_CHGMOD_INS( void );	/* 挿入／上書きモード切り替え */

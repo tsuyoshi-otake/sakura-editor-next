@@ -21,7 +21,6 @@
 #include "doc/CEditDoc.h"
 #include "doc/layout/CLayout.h"
 #include "debug/StartupTrace.h"
-#include "extension/CExtensionWorkbenchUi.h"
 #include "window/CEditWnd.h"
 #include "theme/CThemeService.h"
 #include "parse/CWordParse.h"
@@ -37,17 +36,6 @@
 void _DispWrap(CGraphics& gr, DispPos* pDispPos, const CEditView* pcView, CLayoutYInt nLineNum);
 
 namespace {
-
-COLORREF DiagnosticColor(EExtensionDiagnosticSeverity severity) noexcept
-{
-	switch (severity) {
-	case EExtensionDiagnosticSeverity::Error: return RGB(224, 62, 62);
-	case EExtensionDiagnosticSeverity::Warning: return RGB(222, 151, 31);
-	case EExtensionDiagnosticSeverity::Information: return RGB(61, 139, 204);
-	case EExtensionDiagnosticSeverity::Hint: return RGB(128, 128, 128);
-	}
-	return RGB(224, 62, 62);
-}
 
 std::optional<theme::ThemeSyntaxTokenKind> SyntaxKindForColorIndex(EColorIndexType index) noexcept
 {
@@ -66,64 +54,6 @@ std::optional<theme::ThemeSyntaxTokenKind> SyntaxKindForColorIndex(EColorIndexTy
 		return theme::ThemeSyntaxTokenKind::Regexp;
 	}
 	return std::nullopt;
-}
-
-void DrawDiagnosticSquiggles(CEditView& view, CGraphics& graphics)
-{
-	const auto diagnostics = GetEditWnd().ExtensionDiagnosticsForCurrentDocument();
-	if (diagnostics.empty()) return;
-	const auto& area = view.GetTextArea();
-	const auto visibleTop = area.GetViewTopLine();
-	const auto visibleBottom = area.GetBottomLine();
-	const auto visibleLeft = area.GetViewLeftCol();
-	const auto visibleRight = area.GetRightCol();
-	const int lineHeight = view.GetTextMetrics().GetHankakuDy();
-	constexpr std::size_t maximumDiagnosticsPerPaint = 4096;
-	constexpr std::size_t maximumSegmentsPerPaint = 8192;
-	std::size_t segmentCount = 0;
-
-	for (std::size_t diagnosticIndex = 0;
-		diagnosticIndex < diagnostics.size() && diagnosticIndex < maximumDiagnosticsPerPaint;
-		++diagnosticIndex) {
-		const auto& diagnostic = diagnostics[diagnosticIndex];
-		CLayoutPoint start;
-		CLayoutPoint end;
-		view.GetDocument()->m_cLayoutMgr.LogicToLayout(
-			CLogicPoint(static_cast<int>(diagnostic.range.start.character), static_cast<int>(diagnostic.range.start.line)), &start);
-		view.GetDocument()->m_cLayoutMgr.LogicToLayout(
-			CLogicPoint(static_cast<int>(diagnostic.range.end.character), static_cast<int>(diagnostic.range.end.line)), &end);
-		if (PointCompare(end, start) < 0 || end.y < visibleTop || start.y > visibleBottom) continue;
-
-		const auto firstLine = (std::max)(start.y, visibleTop);
-		const auto lastLine = (std::min)(end.y, visibleBottom);
-		const HPEN pen = ::CreatePen(PS_SOLID, 1, DiagnosticColor(diagnostic.severity));
-		if (!pen) continue;
-		const auto oldPen = static_cast<HPEN>(::SelectObject(graphics, pen));
-		for (auto line = firstLine; line <= lastLine && segmentCount < maximumSegmentsPerPaint; ++line) {
-			if (line == end.y && end.x == 0 && end != start) break;
-			auto from = line == start.y ? start.x : visibleLeft;
-			auto to = line == end.y ? end.x : visibleRight;
-			from = (std::max)(from, visibleLeft);
-			to = (std::min)(to, visibleRight);
-			if (to < from) continue;
-			int left = area.GetAreaLeft() + view.GetTextMetrics().GetCharPxWidth(from - visibleLeft);
-			int right = area.GetAreaLeft() + view.GetTextMetrics().GetCharPxWidth(to - visibleLeft);
-			left = (std::clamp)(left, area.GetAreaLeft(), area.GetAreaRight());
-			right = (std::clamp)(right, area.GetAreaLeft(), area.GetAreaRight());
-			if (right <= left) right = (std::min)(area.GetAreaRight(), left + 4);
-			if (right <= left) continue;
-			const int baseline = area.GetAreaTop() + static_cast<int>(line - visibleTop) * lineHeight + lineHeight - 2;
-			::MoveToEx(graphics, left, baseline, nullptr);
-			for (int x = left + 2, phase = 0; x < right; x += 2, ++phase) {
-				::LineTo(graphics, x, baseline - (phase % 2 == 0 ? 2 : 0));
-			}
-			::LineTo(graphics, right, baseline);
-			++segmentCount;
-		}
-		::SelectObject(graphics, oldPen);
-		::DeleteObject(pen);
-		if (segmentCount >= maximumSegmentsPerPaint) break;
-	}
 }
 
 } // namespace
@@ -1128,7 +1058,6 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 	}
 
 	cTextType.RewindGraphicsState(gr);
-	DrawDiagnosticSquiggles(*this, gr);
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                       ルーラー描画                          //

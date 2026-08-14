@@ -22,12 +22,11 @@
 
 namespace workbench::workspace {
 
-//! These documents belong to their eventual task, debug, and extension
-//! recommendation owners. They are intentionally not configuration sources.
+//! These documents belong to their eventual task and debug owners. They are
+//! intentionally not configuration sources.
 enum class EWorkspaceArtifactDocumentKind : std::uint8_t {
 	Tasks,
 	Launch,
-	Extensions,
 };
 
 //! A workspace-file member is the fallback for a folder-specific `.vscode`
@@ -96,7 +95,6 @@ struct WorkspaceArtifactDocument final {
 
 struct TasksDocumentSnapshot final { std::optional<WorkspaceArtifactDocument> document; };
 struct LaunchDocumentSnapshot final { std::optional<WorkspaceArtifactDocument> document; };
-struct ExtensionsDocumentSnapshot final { std::optional<WorkspaceArtifactDocument> document; };
 
 struct WorkspaceArtifactDocumentServiceSnapshot final {
 	std::uint64_t generation = 0;
@@ -137,8 +135,8 @@ struct WorkspaceArtifactDocumentResult final {
 
 //! A pure, revisioned router. Folder documents have explicit higher precedence
 //! than workspace-file members for their folder only. Invalid incoming data never
-//! replaces a last accepted document. There is deliberately no Task/DAP/extension
-//! execution adapter here.
+//! replaces a last accepted document. There is deliberately no Task/DAP execution
+//! adapter here.
 class CWorkspaceArtifactDocumentService final {
 public:
 	using Listener = std::function<void(const WorkspaceArtifactDocumentServiceSnapshot&)>;
@@ -156,7 +154,6 @@ public:
 	//! API remains available for single-source consumers.
 	[[nodiscard]] TasksDocumentBatchSnapshot TasksForFolders(const std::vector<platform::uri::Uri>& folderUris) const;
 	[[nodiscard]] LaunchDocumentSnapshot Launch(const std::optional<platform::uri::Uri>& folderUri = std::nullopt) const;
-	[[nodiscard]] ExtensionsDocumentSnapshot Extensions(const std::optional<platform::uri::Uri>& folderUri = std::nullopt) const;
 	[[nodiscard]] WorkspaceArtifactDocumentServiceSnapshot Snapshot() const;
 
 	//! Listener delivery is model-only. Filesystem watchers remain external and

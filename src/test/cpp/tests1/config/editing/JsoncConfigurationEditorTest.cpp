@@ -283,7 +283,7 @@ TEST(WorkspaceEditingService, PreservesAllNonFolderBytesAndSerializesTargetRelat
 		+ "  \"settings\": { \"editor.tabSize\": 4 },\r\n"
 		+ "  \"tasks\": { \"version\": \"2.0.0\" },\r\n"
 		+ "  \"launch\": { \"configurations\": [] },\r\n"
-		+ "  \"extensions\": { \"recommendations\": [] },\r\n"
+		+ "  \"metadata\": { \"tags\": [] },\r\n"
 		+ "  \"emoji\": \"\xf0\x9f\x98\x80\",\r\n"
 		+ "  \"unknown\": [ 1, ],\r\n}\r\n";
 	files.reads.emplace(workspace.ToString(), Snapshot(source));
@@ -303,7 +303,7 @@ TEST(WorkspaceEditingService, PreservesAllNonFolderBytesAndSerializesTargetRelat
 		+ "  \"settings\": { \"editor.tabSize\": 4 },\r\n"
 		+ "  \"tasks\": { \"version\": \"2.0.0\" },\r\n"
 		+ "  \"launch\": { \"configurations\": [] },\r\n"
-		+ "  \"extensions\": { \"recommendations\": [] },\r\n"
+		+ "  \"metadata\": { \"tags\": [] },\r\n"
 		+ "  \"emoji\": \"\xf0\x9f\x98\x80\",\r\n"
 		+ "  \"unknown\": [ 1, ],\r\n}\r\n";
 	EXPECT_EQ(expected, Text(files.lastBytes));

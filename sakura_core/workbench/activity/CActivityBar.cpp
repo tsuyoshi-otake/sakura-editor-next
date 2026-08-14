@@ -103,18 +103,12 @@ constexpr int kIndicatorWidthDip = 2;
 		icons::codicons::DrawSourceControl(dc, box, color);
 		return true;
 	}
-	if (containerId == layout::ids::viewContainer::Extensions) {
-		icons::codicons::Draw(dc, box, icons::codicons::Icon::Extensions, color);
-		return true;
-	}
 	return false;
 }
 
 /*
-	Fallback for a contributed ViewContainer whose manifest supplied an image path instead of a
-	`$(codicon)` reference. Rasterizing the extension's own SVG or PNG is not implemented yet,
-	and a blank square is indistinguishable from a broken button, so the container's initial is
-	drawn the way the Marketplace list already draws its initials tile.
+	Fallback for a built-in ViewContainer without a bundled glyph. A blank square is
+	indistinguishable from a broken button, so the container's initial is drawn.
 */
 [[nodiscard]] bool PaintInitialTile(
 	HDC dc, const icons::IconRect& box, std::wstring_view label, COLORREF color, unsigned int dpi) noexcept
@@ -600,9 +594,6 @@ void CActivityBar::Paint() noexcept
 		// anti-aliasing and optical weight visibly inconsistent. The 20-DIP bounds
 		// and normal font weight stay unchanged; the vector paths remain only as
 		// the explicit fallback when the embedded font could not be registered.
-		// A contributed container names a codicon or an image; only the former can be drawn
-		// from the font, so the initial tile is what actually renders extensions like
-		// Claude Code, which ship a PNG.
 		if (!PaintFontGlyph(buffer, iconBounds, m_iconFont, CodiconGlyph(button.codicon), iconColor)
 			&& !PaintBuiltinGlyph(buffer, iconBounds, button.id, iconColor)) {
 			static_cast<void>(PaintInitialTile(buffer, iconBounds, button.label, iconColor, m_model.GetDpi()));
@@ -693,8 +684,7 @@ bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 		focusChanged = true;
 		break;
 	case VK_HOME:
-		// Home and End mean first and last rendered entry, not a particular container:
-		// which container sits at either edge now depends on what extensions contributed.
+		// Home and End mean first and last rendered entry, not a particular container.
 		static_cast<void>(m_model.FocusEdge(1));
 		focusChanged = true;
 		break;

@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief `git.stage` / `git.unstage` / `git.clean` and their "all" variants.
  */
 /*
@@ -252,7 +252,7 @@ inline constexpr std::size_t kMaximumGitStageArgumentResources = 4'096;
 //! @brief Serialize a selection into a command's `arguments` payload.
 //!
 //! Upstream passes `SourceControlResourceState` objects straight to its command
-//! handler, and serializes them across the extension host as opaque handles, so
+//! handler, and serializes them across the provider boundary as opaque handles, so
 //! there is no upstream wire form to reproduce. This shape is therefore
 //! explicitly ours:
 //! `[{"group":"workingTree","path":"src/a.cpp","untracked":false,"deleted":false}]`.

@@ -20,12 +20,11 @@ std::optional<std::vector<WorkspaceResourceDescriptor>> DescribeWorkspaceFolderR
 	std::wstring basePath = folderUri.Path();
 	if (basePath.back() != L'/') basePath.push_back(L'/');
 	std::vector<WorkspaceResourceDescriptor> result;
-	result.reserve(4);
+	result.reserve(3);
 	for (const auto [member, name] : std::array {
 		std::pair { EWorkspaceFileMember::Settings, L"settings.json" },
 		std::pair { EWorkspaceFileMember::Tasks, L"tasks.json" },
 		std::pair { EWorkspaceFileMember::Launch, L"launch.json" },
-		std::pair { EWorkspaceFileMember::Extensions, L"extensions.json" },
 	}) {
 		auto resource = platform::uri::Uri::FromComponents(
 			folderUri.Scheme(), folderUri.Authority(), basePath + L".vscode/" + name,

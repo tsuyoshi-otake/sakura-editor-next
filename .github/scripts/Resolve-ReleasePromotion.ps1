@@ -95,7 +95,6 @@ $checkRunsResponse = Invoke-RestMethod -Method Get -Uri $checkRunsUri -Headers $
 # pull-request merge ref and does not run again on the final main SHA.
 $requiredCheckNames = @(
     'check-encoding',
-    'Test extension host',
     'MSBuild (Debug, x64)',
     'MSBuild (Release, x64)',
     'cppcheck (x64, Release)',

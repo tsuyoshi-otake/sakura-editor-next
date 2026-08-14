@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief Publishes the built-in Git repository into the VS Code SCM model.
  */
 /*
@@ -21,10 +21,6 @@
 
 namespace workbench::scm {
 
-//! VS Code's built-in Git extension identity. Ours must be the same string so a
-//! consumer that already knows VS Code's SCM model finds the provider it expects
-//! instead of a parallel one we invented.
-inline constexpr std::string_view kGitExtensionId = "vscode.git";
 inline constexpr std::string_view kGitProviderId = "git";
 inline constexpr std::string_view kGitProviderLabel = "Git";
 

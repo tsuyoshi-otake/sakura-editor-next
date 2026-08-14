@@ -7,7 +7,6 @@
 #pragma once
 
 #include "workbench/IWorkbenchTool.h"
-#include "workbench/icons/CFileIconThemeRegistry.h"
 
 #include <Windows.h>
 
@@ -149,9 +148,6 @@ public:
 	bool BeginCreateEntry(std::wstring_view parentDirectory, bool directory);
 	void SetPalette(ExplorerPalette palette);
 	//! Applies a parsed VS Code file icon theme. A null theme disables contributed icons.
-	void SetFileIconTheme(
-		std::shared_ptr<const icons::FileIconThemeSnapshot> theme,
-		icons::FileIconThemeVariant variant = icons::FileIconThemeVariant::Default);
 	[[nodiscard]] ExplorerPalette GetPalette() const noexcept;
 	[[nodiscard]] ExplorerWorkerState GetWorkerState() const noexcept;
 	[[nodiscard]] HWND GetHwnd() const noexcept;

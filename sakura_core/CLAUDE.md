@@ -33,7 +33,7 @@ nearest scoped guidance; local ownership rules stay beside their subsystem.
 | `env/` | Shared data, keyword sets, types, filenames |
 | `prop/`, `typeprop/` | Common and per-type settings dialogs |
 | `types/` | Language-mode definitions |
-| `macro/`, `plugin/`, `extension/` | Automation and extension integrations |
+| `macro/`, `plugin/` | Sakura automation and plug-in integrations |
 | `agent/` | Autosave, reload, backup, grep, load/save workers |
 | `charset/`, `extmodule/`, `grep/`, `func/`, `util/` | Supporting services and utilities |
 
@@ -45,9 +45,9 @@ phase-specific rules back into this file.
 
 | Priority | Owning guidance |
 |---|---|
-| P0 Foundation | [`platform/CLAUDE.md`](platform/CLAUDE.md), [`platform/profiles/CLAUDE.md`](platform/profiles/CLAUDE.md), [`platform/controlipc/CLAUDE.md`](platform/controlipc/CLAUDE.md), [`_main/CLAUDE.md`](_main/CLAUDE.md), [`config/CLAUDE.md`](config/CLAUDE.md), [`io/CLAUDE.md`](io/CLAUDE.md), [`extension/CLAUDE.md`](extension/CLAUDE.md) |
+| P0 Foundation | [`platform/CLAUDE.md`](platform/CLAUDE.md), [`platform/profiles/CLAUDE.md`](platform/profiles/CLAUDE.md), [`platform/controlipc/CLAUDE.md`](platform/controlipc/CLAUDE.md), [`_main/CLAUDE.md`](_main/CLAUDE.md), [`config/CLAUDE.md`](config/CLAUDE.md), [`io/CLAUDE.md`](io/CLAUDE.md) |
 | P1 Editor vertical slice and layout persistence | [`doc/CLAUDE.md`](doc/CLAUDE.md), [`workbench/CLAUDE.md`](workbench/CLAUDE.md), [`workbench/editor/CLAUDE.md`](workbench/editor/CLAUDE.md), [`workbench/layout/CLAUDE.md`](workbench/layout/CLAUDE.md) |
-| P2 Workbench/Settings/Extension MVP | [`workbench/CLAUDE.md`](workbench/CLAUDE.md), [`workbench/commands/CLAUDE.md`](workbench/commands/CLAUDE.md), [`config/CLAUDE.md`](config/CLAUDE.md), [`extension/CLAUDE.md`](extension/CLAUDE.md) |
+| P2 Workbench and Settings | [`workbench/CLAUDE.md`](workbench/CLAUDE.md), [`workbench/commands/CLAUDE.md`](workbench/commands/CLAUDE.md), [`config/CLAUDE.md`](config/CLAUDE.md) |
 | P3 Process backends | [`terminal/CLAUDE.md`](terminal/CLAUDE.md), [`workbench/tasks/CLAUDE.md`](workbench/tasks/CLAUDE.md), [`workbench/problems/CLAUDE.md`](workbench/problems/CLAUDE.md), [`workbench/output/CLAUDE.md`](workbench/output/CLAUDE.md), [`debug/CLAUDE.md`](debug/CLAUDE.md), [`debug/launch/CLAUDE.md`](debug/launch/CLAUDE.md), [`debug/dap/CLAUDE.md`](debug/dap/CLAUDE.md) |
 | P4 Layout/interaction parity | [`window/CLAUDE.md`](window/CLAUDE.md), [`view/CLAUDE.md`](view/CLAUDE.md), [`theme/CLAUDE.md`](theme/CLAUDE.md), [`workbench/CLAUDE.md`](workbench/CLAUDE.md) |
 
@@ -63,15 +63,15 @@ save/close completion fencing, and close-last-to-empty lifecycle. Production
 Revert remains an explicit `Unsupported` gate until full native
 document/layout/view/caret/caption rollback can be staged atomically. Phase 3
 now separates the Control authority from the selected user-data profile and
-routes production Settings/OpenVSX through that selection; native profile
+routes production Settings through that selection; native profile
 management, stable multi-empty-window identity, and durable namespace migration
 remain open. Phase 5 has a verified Explorer/Problems/Output command spine but
-not yet complete Palette/extension/menu/keybinding compatibility. Phase 6 now
+not yet complete Palette/menu/keybinding compatibility. Phase 6 now
 has runtime-owned workspace-artifact routing plus pure Marker, Output, Task
 catalog/execution, Launch catalog, DAP codec/session, Debug Console, and Ports
 state foundations. These lower layers are lifecycle- and failure-tested, but
 production terminal/debug/forwarding adapters, runtime ownership of the
-remaining catalogs/services, extension producers, and native service-backed
+remaining catalogs/services and native service-backed
 projections remain open; do not reopen Phase 1/2 ownership in native window
 code.
 

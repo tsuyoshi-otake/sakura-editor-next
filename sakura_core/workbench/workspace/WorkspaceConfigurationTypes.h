@@ -23,11 +23,10 @@ enum class EWorkspaceFileMember : std::uint8_t {
 	Settings,
 	Tasks,
 	Launch,
-	Extensions,
 };
 
 //! Every document read for these members must retain the whole document. This
-//! prevents task/debug/extension data from entering IConfigurationService.
+//! prevents task/debug data from entering IConfigurationService.
 enum class EWorkspaceResourceContentMode : std::uint8_t {
 	WholeDocument,
 };
@@ -81,8 +80,8 @@ struct WorkspaceConfigurationDocument final {
 };
 
 //! The runtime-owned, read-only view of one accepted `.code-workspace`
-//! document.  It deliberately retains settings, task/debug, and extension
-//! members in different fields: only `document.settings` is eligible for the
+//! document. It deliberately retains settings and task/debug members in
+//! different fields: only `document.settings` is eligible for the
 //! configuration service.  Folder resource descriptors are metadata; reading
 //! one never authorizes interpreting a sibling JSON document as settings.
 struct WorkspaceFolderResourceSnapshot final {

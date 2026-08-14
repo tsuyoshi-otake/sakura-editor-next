@@ -56,7 +56,6 @@ class CMruListener;
 class CSMacroMgr;
 class CPropertyManager;
 class CGrepAgent;
-class IExtensionSecretSessionStorage;
 enum EFunctionCode;
 
 //!エディタ部分アプリケーションクラス。CNormalProcess1個につき、1個存在。
@@ -73,9 +72,7 @@ public:
 		workbench::WorkbenchBootstrapContext bootstrap,
 		workbench::WorkbenchRuntimeDependencies dependencies,
 		std::unique_ptr<workbench::editor::persistence::IWorkingCopyPersistenceStore> workingCopyStore,
-		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope,
-		std::filesystem::path profileDirectory,
-		std::unique_ptr<IExtensionSecretSessionStorage> extensionSecretStorage);
+		workbench::editor::persistence::WorkingCopyPersistenceScope workingCopyScope);
 	//! Restore is invoked after the native layout/group exists and startup policy is known.
 	[[nodiscard]] workbench::editor::persistence::EditorWorkingCopyLifecycleResult RestoreWorkingCopies(
 		const workbench::editor::persistence::EditorWorkingCopyRestorePolicy& policy);

@@ -647,8 +647,8 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	cProfile.IOProfileData( pszSecName, L"nWorkbenchRightExtent96"	, workbench.m_nRightPanelExtent96 );
 	cProfile.IOProfileData( pszSecName, L"nWorkbenchBottomExtent96", workbench.m_nBottomPanelExtent96 );
 	cProfile.IOProfileData( pszSecName, L"eWorkbenchActiveTool"	, workbench.m_eActiveTool );
-	cProfile.IOProfileData( pszSecName, L"bWorkbenchExtensionViewsVisible", workbench.m_bExtensionViewsVisible );
-	cProfile.IOProfileData( pszSecName, L"nWorkbenchExtensionViewsExtent96", workbench.m_nExtensionViewsExtent96 );
+	cProfile.IOProfileData( pszSecName, L"bWorkbenchAuxiliaryBarVisible", workbench.m_bAuxiliaryBarVisible );
+	cProfile.IOProfileData( pszSecName, L"nWorkbenchAuxiliaryBarExtent96", workbench.m_nAuxiliaryBarExtent96 );
 	const bool hasOutlineMigrationMarker = cProfile.IOProfileData(
 		pszSecName, L"bWorkbenchOutlineMigrationComplete", workbench.m_bOutlineMigrationComplete
 	);
@@ -656,9 +656,9 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 		SetValueLimit(workbench.m_nLeftPanelExtent96, 80, 2000);
 		SetValueLimit(workbench.m_nRightPanelExtent96, 80, 2000);
 		SetValueLimit(workbench.m_nBottomPanelExtent96, 80, 2000);
-		SetValueLimit(workbench.m_nExtensionViewsExtent96, 80, 2000);
+		SetValueLimit(workbench.m_nAuxiliaryBarExtent96, 80, 2000);
 		int activeTool = static_cast<int>(workbench.m_eActiveTool);
-		SetValueLimit(activeTool, static_cast<int>(WORKBENCH_TOOL_EXPLORER), static_cast<int>(WORKBENCH_TOOL_EXTENSIONS));
+		SetValueLimit(activeTool, static_cast<int>(WORKBENCH_TOOL_EXPLORER), static_cast<int>(WORKBENCH_TOOL_SCM));
 		workbench.m_eActiveTool = static_cast<EWorkbenchActiveTool>(activeTool);
 	}
 
@@ -2093,7 +2093,6 @@ constexpr std::array kMainMenuHistoricalAddInfos{
 	SMainMenuAddItemInfo{1, F_MODIFYLINE_PREV_SEL, F_MODIFYLINE_NEXT_SEL, L'\0', false, false},
 	SMainMenuAddItemInfo{2, F_DLGWINLIST, F_WIN_OUTPUT, L'D', false, false},
 	SMainMenuAddItemInfo{4, F_TOGGLE_MARKDOWN_PREVIEW, F_SHOWMINIMAP, L'M', false, false},
-	SMainMenuAddItemInfo{5, F_EXTENSION_LIST, F_SHOWMINIMAP, L'V', false, false},
 	SMainMenuAddItemInfo{7, F_OPEN_WORKSPACE_FOLDER, F_FILEOPEN, L'F', false, false},
 };
 
@@ -2184,7 +2183,7 @@ bool CShareData_IO::MigrateMainMenuV7DefaultToV8( CommonSetting_MainMenu& mainme
 	// A version number alone is not authority to rewrite a user's menu. The
 	// fixed fingerprint covers every persisted top index and every menu item;
 	// any customization, including outside File, makes this a no-op.
-	constexpr std::uint64_t kKnownV7DefaultFingerprint = UINT64_C(17115839819928857123);
+	constexpr std::uint64_t kKnownV7DefaultFingerprint = UINT64_C(812474938483209018);
 	struct ShapeItem {
 		EMainMenuType type;
 		EFunctionCode function;

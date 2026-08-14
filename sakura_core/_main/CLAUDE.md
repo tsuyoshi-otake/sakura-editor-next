@@ -101,8 +101,7 @@ the user-data profile through the pinned registry snapshot, then creates a
 
 - the Control profile used for endpoint, storage, Vault, and other
   control-owned adapter authority; and
-- the selected user-data profile used by Settings and OpenVSX resource
-  composition.
+- the selected user-data profile used by Settings resource composition.
 
 Any missing/multiple/malformed Profile RPC terminal, authority/generation
 mismatch, invalid registry bytes, invalid stable selector, or invalid resource
@@ -164,27 +163,6 @@ to `CTerminalTool`. Keep that limitation explicit: the next Terminal slice must
 introduce a runtime-owned presentation/session authority that the HWND panel
 borrows. Do not compose Task output directly into a window-local cache or claim
 VS Code-compatible Task Terminal behavior before that owner exists.
-
-## Phase 4 Extension-Host Lease Identity Checkpoint (2026-07-31)
-
-The legacy window-message edge is only an editor-to-control composition bridge;
-it is not an identity authority. Acquire and release messages carry both the
-claimed editor PID and that editor's top-level HWND. `CControlTray` forwards a
-lease only when the HWND is a live Sakura main window, is present in the
-control-owned registered-editor array, and `GetWindowThreadProcessId` confirms
-the same PID. The registered-editor count is range-checked before indexing, and
-the tray repeats the HWND/PID/registration check after the controller pins the
-process; a failed second check rolls the just-acquired lease back.
-
-After that validation, `CExtensionHostController` opens one
-`SYNCHRONIZE` process handle for the first lease from a PID and retains that
-handle until the PID's final lease, acquisition rollback, or controller
-shutdown. Health checks wait on the pinned process object rather than reopening
-the numeric PID, so a recycled PID cannot inherit the former editor's lease.
-Terminated owners are reclaimed on the bounded controller tick and release both
-broker and Secret Vault lease counts. Every handle is closed exactly once by
-the controller; editor HWNDs and PIDs remain transient transport evidence and
-never become durable profile, workspace, window, or extension identity.
 
 ## Phase 3 User Data Profile Registry Composition Checkpoint (2026-07-31)
 

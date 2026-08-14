@@ -21,12 +21,12 @@ Every workbench change must satisfy all of the following:
 - **Use VS Code's own stable identifiers.** Command IDs
   (`workbench.action.toggleAuxiliaryBar`), Part IDs
   (`workbench.parts.auxiliarybar`), ViewContainer IDs
-  (`workbench.view.extensions`), and View IDs must match upstream VS Code
+  and View IDs must match upstream VS Code
   exactly. Do not invent a parallel naming scheme for a concept VS Code already
   names.
 - **Match VS Code's placement, defaults, and keybindings.** Example: the
-  Activity Bar containers (Explorer, Search, Source Control, Run and Debug,
-  Extensions) live in the **Primary Side Bar**; the Secondary Side Bar is empty
+  supported Activity Bar containers (Explorer, Search, Source Control, and Run
+  and Debug) live in the **Primary Side Bar**; the Secondary Side Bar is empty
   by default; `Ctrl+B` toggles the Primary Side Bar, `Ctrl+J` the Panel, and
   `Ctrl+Alt+B` the Secondary Side Bar. If this repository's behavior differs
   from real VS Code, this repository is wrong.
@@ -77,7 +77,6 @@ This file contains repository-wide guidance. More specific `CLAUDE.md` files are
 | Filesystem resource/version boundary | [`sakura_core/platform/filesystem/CLAUDE.md`](sakura_core/platform/filesystem/CLAUDE.md) |
 | Self-update and the installer relaunch contract | [`sakura_core/update/CLAUDE.md`](sakura_core/update/CLAUDE.md) |
 | Terminal and debug capability boundaries | [`sakura_core/terminal/CLAUDE.md`](sakura_core/terminal/CLAUDE.md), [`sakura_core/debug/CLAUDE.md`](sakura_core/debug/CLAUDE.md) |
-| Extension integration and extension host | [`sakura_core/extension/CLAUDE.md`](sakura_core/extension/CLAUDE.md), [`src/exthost/CLAUDE.md`](src/exthost/CLAUDE.md) |
 | Build generation and shared resources | [`src/main/CLAUDE.md`](src/main/CLAUDE.md) |
 | Tests and test infrastructure | [`src/test/CLAUDE.md`](src/test/CLAUDE.md) |
 | Build helpers and build documentation | [`tools/CLAUDE.md`](tools/CLAUDE.md) |

@@ -363,7 +363,6 @@ Request は transport/proxy/retry/cancellation/cache の契約と WinHTTP adapte
 ### request slice の残余リスク / 次の gate
 
 - `sakura_request` は L4 の明示的な static-link closure として最終 `sakura.exe` に入る。L5 DLL 化は今回の範囲外である。
-- OpenVSX 本番 graph は credential adapter をまだ注入せず、401/407 は typed failure。Control-owned Secret Vault と接続するまで authenticated access を supported と記載しない。
 - 既存の WinHTTP/RequestService tests1 source は process/UI compatibility の統合証拠として残る。`tests1` を削除する前に、同等保証を別 runner へ移す必要がある。
 - 次は resource/package/runtime asset、protocol golden、hermetic staging、同一保証範囲の性能・rebuild closure を検証する。Request slice の成功を Issue #15 全体の L4 graduation と取り違えない。
 ### request rebuild-closure の追加検証（2026-08-05）
@@ -396,7 +395,6 @@ RPC、authority、process composition のL4完了を意味しない。依存矢�
 ### Control IPC protocol sliceの残余リスク / 次のgate
 
 - C++ pilotとJSON fixtureは同じwire constantsを検査するが、pilotはfixture JSONを実行時parseしない。fixtureの二重記述を解消するschema/codegenまたはgolden loaderは次のcompatibility gateで判断する。
-- transport／security／endpoint discovery／RPC／authority lifecycleの独立runner、Control restart、remote revisioned subscription、shared-memory／persistence ABI、Extension RPC、resource/package/runtime hermetic stagingは未完了である。protocol leafのgreenをControl IPC全体やIssue #15全体へ外挿しない。
 - 4-context rebuild closureはWindowsの長い一時パスでMSVC compilerがPDB/objectを生成できずC1083になるため、短いworkspace rootで再実行した。これはコード失敗ではないが、CIと開発CLIのpath-length headroomを別gateに残す。
 - MinGW toolchainはこのhostにない。MinGWを完了判定するには実際のgenerator/compilerでcomponent build、CTest、boundary、rebuild closureを再実行する。
 - 次はresource／package／runtime assetの明示閉包と、Control protocol compatibility fixtureを利用するtransport/endpoint integrationの最小縦切りを、同じ contracts-only・hermetic・terminal-state条件で進める。`tests1`削除、legacy monolith削除、全体L4 graduationはまだ開始可能な完了条件ではない。

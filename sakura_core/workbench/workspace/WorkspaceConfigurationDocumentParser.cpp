@@ -279,7 +279,7 @@ WorkspaceConfigurationParseResult CWorkspaceConfigurationDocumentParser::Parse(
 		if (!object) return Failed(EWorkspaceConfigurationDiagnosticCode::SettingsMustBeObject, "workspace settings must be an object");
 		document.settings = *object;
 	}
-	for (const auto [key, member] : { std::pair { L"tasks", EWorkspaceFileMember::Tasks }, std::pair { L"launch", EWorkspaceFileMember::Launch }, std::pair { L"extensions", EWorkspaceFileMember::Extensions } }) {
+	for (const auto [key, member] : { std::pair { L"tasks", EWorkspaceFileMember::Tasks }, std::pair { L"launch", EWorkspaceFileMember::Launch } }) {
 		if (const auto value = root->find(key); value != root->end()) document.fileMembers.push_back({ member, value->second });
 	}
 

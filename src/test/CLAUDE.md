@@ -23,16 +23,11 @@ Some third-party headers may be included by exactly one translation unit in
 add an API to the fixture when it does not cover your case.
 
 - **ZIP and zlib: use `ZipArchiveFixture.h`.** `externals/miniz-cpp/zip_file.hpp`
-  emits two different kinds of definition. `MINIZ_HEADER_FILE_ONLY` suppresses
-  the miniz C API bodies (`mz_*`) so they resolve against `CZipFile.obj`, which
-  is the only production TU that instantiates them — but it does **not**
-  suppress the non-inline `miniz_cpp::detail::*` helpers. `CZipFile.cpp` renames
-  its wrapper namespace to `sakura_czip_miniz_cpp`, so production never collides;
-  two tests including the header do. `ZipArchiveFixture.cpp` is therefore the
-  sole includer in `tests1`, and it needs the guard as well. This stayed
-  invisible while only `test-czipfile.cpp` used ZIP: adding a second ZIP test in
-  2026-08 produced `LNK2005` on both `mz_*` and `miniz_cpp::detail::*` at once.
-  `externals/` is upstream code and must not be edited to work around this.
+  emits the miniz C API bodies (`mz_*`) and non-inline
+  `miniz_cpp::detail::*` helpers. `ZipArchiveFixture.cpp` is therefore the sole
+  includer and implementation owner in `tests1`; other tests call its narrow
+  archive-reading API. `externals/` is upstream code and must not be edited to
+  work around this.
 
 ### COM-dependent tests
 
@@ -54,9 +49,7 @@ unrelated `.cpp` to that list reorders the suites and can move the leak away
 from the test that was silently consuming it.
 
 This is not hypothetical. Verified 2026-08-07: `CSakuraEnvironmentTest.ResolvePath001`
-had always depended on an ambient apartment — `test-cextensionmanager.cpp`
-calls `::OleInitialize` three times with no matching `::OleUninitialize`, so it
-leaks an initialized apartment for whatever runs after it. Adding five test
+had depended on an ambient COM apartment created by an earlier test. Adding five test
 files for #35–#38 changed the link order, and the test began failing with
 `0x800401F0 CoInitialize has not been called` on `CLSID_ShellLink`. CI is the
 harsher environment here: its headless `GTEST_FILTER` excludes the GUI suites
@@ -77,7 +70,6 @@ riding an already-initialized apartment without releasing one it does not own.
 | Priority | Additional guidance |
 |---|---|
 | P0 platform contracts | [`cpp/tests1/platform/CLAUDE.md`](cpp/tests1/platform/CLAUDE.md) |
-| P0/P2 extension registry and secret boundaries | [`cpp/tests1/extension/CLAUDE.md`](cpp/tests1/extension/CLAUDE.md) |
 | P1/P2/P4 workbench models and layout | [`cpp/tests1/workbench/CLAUDE.md`](cpp/tests1/workbench/CLAUDE.md) |
 | Cross-process and real backends | [`integration/CLAUDE.md`](integration/CLAUDE.md) |
 

@@ -336,8 +336,7 @@ bool CWorkspaceTrustEditorSurface::DrawGrantButton(const DRAWITEMSTRUCT& draw) n
 	if (found == nullptr) return false;
 
 	// Prominent action: owner-drawn with the button role colors rather than
-	// the extension surface's system-drawn Install button, per this surface's
-	// requirement that the trust grant reads as the prominent action it is.
+	// the default system button so the trust grant reads as a prominent action.
 	const bool hot = (draw.itemState & (ODS_SELECTED | ODS_HOTLIGHT)) != 0;
 	const COLORREF background = hot
 		? m_palette.buttonHoverBackground.ToColorRef()
@@ -447,8 +446,8 @@ void CWorkspaceTrustEditorSurface::PaintBody(HDC dc, const RECT& client, int top
 				  L"empty window has no resource a decision could name.";
 	} else {
 		instruction = L"Do you trust the authors of the files in this window?";
-		content = L"Until you do, this window stays in Restricted Mode: extension code that "
-				  L"declares it needs a trusted workspace does not run.";
+		content = L"Until you do, this window stays in Restricted Mode: automatic tasks and "
+				  L"debug launches that require trust do not run.";
 	}
 
 	PaintText(dc, instruction.c_str(), RECT{ padding, top, contentRight, top + ScaleDip(30) },

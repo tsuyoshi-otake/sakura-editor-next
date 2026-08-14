@@ -4,12 +4,12 @@
 
 This directory owns the stable, UI-independent contracts introduced by Issue
 #6: service registration, lifecycle, URI identity, file-system providers,
-profile descriptors, storage, request/proxy, credentials, and secrets.
+profile descriptors, storage, request/proxy, and credentials.
 
 ## Dependency Boundary
 
 - Keep foundation contracts independent of HWND, `CEditWnd`, `CEditDoc`,
-  extension transport, `CShareData`, and profile INI implementation details.
+  `CShareData`, and profile INI implementation details.
 - Dependencies point from workbench and process composition toward these
   contracts, then from contracts toward replaceable platform adapters.
 - A service ID is stable and unique. Registration is explicit, duplicate
@@ -30,8 +30,6 @@ profile descriptors, storage, request/proxy, credentials, and secrets.
 - Every state key declares scope, owner namespace, target, and schema version.
   Structured state uses a single owner or revision/CAS; implicit lost-update
   last-writer-wins is forbidden.
-- Secret values never enter settings, Memento, profile export, diagnostics, or
-  normal logs. DPAPI/credential storage is a backend, not the public contract.
 - Request contracts carry an explicit proxy-support policy, bounded timeout,
   redirect, response-header, and response-body limits. `Off` performs no proxy
   lookup; other proxy modes are resolved by the injected proxy service and can
@@ -44,13 +42,6 @@ profile descriptors, storage, request/proxy, credentials, and secrets.
   never settings or caller-owned HTTP headers. Every timeout, limit,
   authentication, proxy-policy, cancellation, and transport branch returns a
   distinct terminal `RequestResult`.
-- The Secret Vault is a separate, control-owned authority rather than a storage
-  namespace. Extension IDs are canonical, mutations use global revision/CAS and
-  exact bounded replay, and post-commit events contain addresses/revisions only.
-  General settings, Memento, diagnostics, and normal logs never contain values.
-  Production uses a DPAPI-backed control service, narrow capability-checked IPC,
-  bounded lazy migration, and explicit transient-buffer wipe. The in-memory
-  implementation remains a deterministic semantic reference for tests.
 
 ## P0 Gate
 
@@ -94,26 +85,7 @@ profile descriptors, storage, request/proxy, credentials, and secrets.
 - P0 production composition is wired through both process roles. Remaining P0
   gates are cross-process conflict/resnapshot/restart coverage and durable
   failure smoke beyond the connected startup/reverse-shutdown path.
-- Durable legacy-profile identity anchoring is implemented. OpenVSX production
-  search/install now uses the shared bounded Request/Proxy/WinHTTP graph and a
-  coherent immutable profile policy snapshot. The control-owned Secret Vault is
-  now composed through the production host/editor lifecycle. Full profile
+- Durable legacy-profile identity anchoring is implemented. Full profile
   registry/import/export/switch workflows and a challenge-scoped credential
   provider remain later slices. Do not bypass authoritative service contracts
   with direct INI, registry, legacy HTTP, or per-editor durable writes.
-
-## Phase 4 Secret Vault Checkpoint (2026-07-31)
-
-- `CControlPlatformRuntime` creates the DPAPI Vault, capability service,
-  installed-extension grant authority, legacy migration coordinator, and
-  control RPC adapter as one lifecycle aggregate. Startup failure rolls back in
-  reverse order; shutdown fences issuance and joins the service host before
-  closing durable authority.
-- Editor SecretStorage calls use fresh bounded channels, exact profile and
-  generation checks, authenticated host-session binding, operation replay/CAS,
-  value-free events, and explicit terminal outcomes. `SecretStorage.keys()` is
-  explicitly unsupported; it never produces a false-success RPC.
-- Installed extension IDs select logical namespaces inside one trusted shared
-  extension host. They are not separate OS principals. Do not claim
-  confidentiality between hostile extensions in that process; such a guarantee
-  requires per-extension authenticated process isolation.

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -20,27 +20,14 @@
 namespace workbench::layout {
 namespace {
 
-WorkbenchContributionOwner Owner(const char* id, std::uint64_t generation = 1)
-{
-	return { .ownerId = id, .generation = generation };
-}
-
 WorkbenchContributionSnapshot Contribute(WorkbenchContributionRegistry& registry)
 {
-	const auto registered = registry.Register({
-		.operation = { .operationId = "add-layout-sample" },
-		.owner = Owner("layout.sample"),
-		.viewContainers = {
-			{ .id = "sample.movable", .title = "Movable", .location = EViewContainerLocation::Sidebar, .order = 40 },
-			{ .id = "sample.fixed", .title = "Fixed", .location = EViewContainerLocation::Panel, .order = 50, .canMove = false },
-		},
-		.views = {
-			{ .id = "sample.movable.view", .containerId = "sample.movable", .title = "Movable view", .order = 20, .canToggleVisibility = true, .canMove = true },
-			{ .id = "sample.fixed.view", .containerId = "sample.fixed", .title = "Fixed view", .order = 10, .canToggleVisibility = false, .canMove = false },
-		},
-	});
-	EXPECT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registered.status);
-	return registry.Snapshot();
+	auto snapshot = registry.Snapshot();
+	snapshot.viewContainers.push_back({ { .id = "sample.movable", .title = "Movable", .location = EViewContainerLocation::Sidebar, .order = 40 } });
+	snapshot.viewContainers.push_back({ { .id = "sample.fixed", .title = "Fixed", .location = EViewContainerLocation::Panel, .order = 50, .canMove = false } });
+	snapshot.views.push_back({ { .id = "sample.movable.view", .containerId = "sample.movable", .title = "Movable view", .order = 20, .canToggleVisibility = true, .canMove = true } });
+	snapshot.views.push_back({ { .id = "sample.fixed.view", .containerId = "sample.fixed", .title = "Fixed view", .order = 10, .canToggleVisibility = false, .canMove = false } });
+	return snapshot;
 }
 
 const WorkbenchPartState& Part(const WorkbenchLayoutStateSnapshot& snapshot, std::string_view id)
@@ -169,25 +156,6 @@ TEST(WorkbenchLayoutStateService, ActiveSideBarContainerIgnoresTheNestedViewSele
 	EXPECT_EQ(std::string(ids::viewContainer::Explorer), *collapsed.activeContainers.sideBar);
 	EXPECT_EQ(std::string(ids::view::Outline),
 		*Container(collapsed, ids::viewContainer::Explorer).activeViewId);
-}
-
-TEST(WorkbenchLayoutStateService, ExtensionsIsASideBarContainerSelectableLikeExplorer)
-{
-	WorkbenchContributionRegistry registry;
-	WorkbenchLayoutStateService state(registry.Snapshot());
-
-	// `workbench.view.extensions` lives in the Primary Side Bar in VS Code, so it must become the
-	// active side-bar container exactly like Explorer and Source Control do.
-	const auto extensions = state.ActivateContainer({
-		.operation = { .operationId = "select-extensions" },
-		.containerId = std::string(ids::viewContainer::Extensions),
-	});
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, extensions.status);
-	EXPECT_EQ(EWorkbenchViewContainerLocation::SideBar,
-		Container(extensions.snapshot, ids::viewContainer::Extensions).location);
-	EXPECT_EQ(std::string(ids::viewContainer::Extensions),
-		*extensions.snapshot.activeContainers.sideBar);
-	EXPECT_FALSE(extensions.snapshot.activeContainers.auxiliaryBar.has_value());
 }
 
 TEST(WorkbenchLayoutStateService, FocusRequiresAVisibleActiveCoherentHierarchy)
@@ -344,166 +312,9 @@ TEST(WorkbenchLayoutStateService, RejectsInvalidPersistedEnumsWithoutMutation)
 	EXPECT_EQ(0U, state.Snapshot().revision);
 }
 
-TEST(WorkbenchLayoutStateService, ReconcilesDisposedViewsToTheDeterministicRemainingActiveView)
-{
-	WorkbenchContributionRegistry registry;
-	const auto owner = Owner("layout.reconcile.container");
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-reconcile" }, .owner = owner,
-		.viewContainers = { { .id = "reconcile.container", .title = "Reconcile", .location = EViewContainerLocation::Sidebar } },
-		.views = {
-			{ .id = "reconcile.a", .containerId = "reconcile.container", .title = "A", .order = 10 },
-		},
-	}).status);
-	const auto removableOwner = Owner("layout.reconcile.removable");
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-reconcile-b" }, .owner = removableOwner,
-		.views = { { .id = "reconcile.b", .containerId = "reconcile.container", .title = "B", .order = 20 } },
-	}).status);
-	WorkbenchLayoutStateService state(registry.Snapshot());
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.ActivateView({ .operation = { .operationId = "activate-b" }, .viewId = "reconcile.b" }).status);
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded,
-		registry.DisposeOwner({ .operation = { .operationId = "dispose-reconcile" }, .owner = removableOwner }).status);
-	const auto reconciled = state.Reconcile(registry.Snapshot(), { .operation = { .operationId = "reconcile" } });
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded, reconciled.status);
-	const auto snapshot = state.Snapshot();
-	EXPECT_EQ(snapshot.views.end(), std::find_if(snapshot.views.begin(), snapshot.views.end(), [](const auto& view) { return view.viewId == "reconcile.b"; }));
-	EXPECT_EQ("reconcile.a", *Container(snapshot, "reconcile.container").activeViewId);
-}
 
-TEST(WorkbenchLayoutStateService, ReconcileFallsBackAfterActiveContainerDisposalWithoutResurrection)
-{
-	WorkbenchContributionRegistry registry;
-	const auto owner = Owner("layout.active.temporary");
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-active-temporary" }, .owner = owner,
-		.viewContainers = {
-			{ .id = "active.temporary", .title = "Temporary",
-				.location = EViewContainerLocation::Sidebar, .order = -100 },
-		},
-		.views = {
-			{ .id = "active.temporary.view", .containerId = "active.temporary",
-				.title = "Temporary view" },
-		},
-	}).status);
-	WorkbenchLayoutStateService state(registry.Snapshot());
-	ASSERT_EQ("active.temporary", *state.Snapshot().activeContainers.sideBar);
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.DisposeOwner({
-		.operation = { .operationId = "dispose-active-temporary" }, .owner = owner,
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), {
-			.operation = { .operationId = "reconcile-active-temporary" },
-		}).status);
-	EXPECT_EQ(std::string(ids::viewContainer::Explorer),
-		*state.Snapshot().activeContainers.sideBar);
 
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "readd-active-temporary" },
-		.owner = Owner("layout.active.temporary", 2),
-		.viewContainers = {
-			{ .id = "active.temporary", .title = "Temporary",
-				.location = EViewContainerLocation::Sidebar, .order = 100 },
-		},
-		.views = {
-			{ .id = "active.temporary.view", .containerId = "active.temporary",
-				.title = "Temporary view" },
-		},
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), {
-			.operation = { .operationId = "reconcile-readd-active-temporary" },
-		}).status);
-	EXPECT_EQ(std::string(ids::viewContainer::Explorer),
-		*state.Snapshot().activeContainers.sideBar);
-}
 
-TEST(WorkbenchLayoutStateService, DeferredActiveContainerIntentMaterializesOnRegistration)
-{
-	WorkbenchContributionRegistry registry;
-	WorkbenchLayoutStateService state(registry.Snapshot());
-	auto persisted = state.Snapshot();
-	persisted.containers.push_back({
-		.containerId = "deferred.active.container",
-		.location = EWorkbenchViewContainerLocation::SideBar,
-		.order = -200,
-		.visible = true,
-		.activeViewId = "deferred.active.view",
-	});
-	persisted.views.push_back({
-		.viewId = "deferred.active.view",
-		.containerId = "deferred.active.container",
-		.order = 1,
-		.visible = true,
-	});
-	persisted.activeContainers.sideBar = "deferred.active.container";
-	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded,
-		state.HydrateInitialState(persisted).status);
-	EXPECT_EQ(std::string(ids::viewContainer::Explorer),
-		*state.Snapshot().activeContainers.sideBar);
-	EXPECT_EQ("deferred.active.container",
-		*state.MementoSnapshot().activeContainers.sideBar);
-
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-deferred-active" },
-		.owner = Owner("layout.deferred.active"),
-		.viewContainers = {
-			{ .id = "deferred.active.container", .title = "Deferred",
-				.location = EViewContainerLocation::Sidebar },
-		},
-		.views = {
-			{ .id = "deferred.active.view", .containerId = "deferred.active.container",
-				.title = "Deferred view" },
-		},
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), {
-			.operation = { .operationId = "reconcile-deferred-active" },
-		}).status);
-	EXPECT_EQ("deferred.active.container",
-		*state.Snapshot().activeContainers.sideBar);
-}
-
-TEST(WorkbenchLayoutStateService, RegisteredViewPlacementWaitsForAnUnknownContainer)
-{
-	WorkbenchContributionRegistry registry;
-	WorkbenchLayoutStateService state(registry.Snapshot());
-	auto persisted = state.Snapshot();
-	persisted.containers.push_back({
-		.containerId = "deferred.placement.container",
-		.location = EWorkbenchViewContainerLocation::SideBar,
-		.order = 200,
-		.visible = true,
-	});
-	auto outline = std::find_if(persisted.views.begin(), persisted.views.end(),
-		[](const auto& view) { return view.viewId == ids::view::Outline; });
-	ASSERT_NE(persisted.views.end(), outline);
-	outline->containerId = "deferred.placement.container";
-	outline->order = -50;
-	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded,
-		state.HydrateInitialState(persisted).status);
-	EXPECT_EQ(std::string(ids::viewContainer::Explorer),
-		View(state.Snapshot(), ids::view::Outline).containerId);
-	EXPECT_EQ("deferred.placement.container",
-		View(state.MementoSnapshot(), ids::view::Outline).containerId);
-
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-placement-container" },
-		.owner = Owner("layout.deferred.placement"),
-		.viewContainers = {
-			{ .id = "deferred.placement.container", .title = "Deferred placement",
-				.location = EViewContainerLocation::Sidebar },
-		},
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), {
-			.operation = { .operationId = "reconcile-placement-container" },
-		}).status);
-	EXPECT_EQ("deferred.placement.container",
-		View(state.Snapshot(), ids::view::Outline).containerId);
-	EXPECT_EQ(-50, View(state.Snapshot(), ids::view::Outline).order);
-}
 
 TEST(WorkbenchLayoutStateService, DeliversOrderedNotificationsAndIsolatesThrowingListeners)
 {
@@ -662,85 +473,7 @@ TEST(WorkbenchLayoutStateService, InvalidHydrationLeavesDefaultStateUntouched)
 	EXPECT_EQ(defaults.focus, after.focus);
 }
 
-TEST(WorkbenchLayoutStateService, DeferredMementoEntriesSurviveUnrelatedReconcileAndMaterializeOnRegistration)
-{
-	WorkbenchContributionRegistry registry;
-	WorkbenchLayoutStateService state(registry.Snapshot());
-	auto persisted = state.Snapshot();
-	persisted.parts.clear();
-	persisted.containers = { { .containerId = "deferred.container", .location = EWorkbenchViewContainerLocation::Panel,
-		.order = -7, .visible = false, .activeViewId = "deferred.view" } };
-	persisted.views = { { .viewId = "deferred.view", .containerId = "deferred.container", .order = -9, .visible = false } };
-	persisted.focus = { .containerId = "deferred.container", .viewId = "deferred.view" };
-	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded, state.HydrateInitialState(persisted).status);
 
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-unrelated" }, .owner = Owner("layout.unrelated"),
-		.viewContainers = { { .id = "unrelated.container", .title = "Unrelated", .location = EViewContainerLocation::Sidebar } },
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), { .operation = { .operationId = "reconcile-unrelated" } }).status);
-	EXPECT_TRUE(HasContainer(state.Snapshot(), "deferred.container"));
-	EXPECT_TRUE(HasView(state.Snapshot(), "deferred.view"));
-
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-deferred" }, .owner = Owner("layout.deferred"),
-		.viewContainers = { { .id = "deferred.container", .title = "Deferred", .location = EViewContainerLocation::Sidebar } },
-		.views = { { .id = "deferred.view", .containerId = "deferred.container", .title = "Deferred view", .order = 30 } },
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), { .operation = { .operationId = "reconcile-deferred" } }).status);
-	const auto snapshot = state.Snapshot();
-	EXPECT_EQ(EWorkbenchViewContainerLocation::Panel, Container(snapshot, "deferred.container").location);
-	EXPECT_EQ(-7, Container(snapshot, "deferred.container").order);
-	EXPECT_FALSE(Container(snapshot, "deferred.container").visible);
-	EXPECT_FALSE(Container(snapshot, "deferred.container").activeViewId);
-	EXPECT_EQ(-9, View(snapshot, "deferred.view").order);
-	EXPECT_FALSE(View(snapshot, "deferred.view").visible);
-	EXPECT_FALSE(snapshot.focus.viewId);
-	const auto memento = state.MementoSnapshot();
-	EXPECT_EQ("deferred.view", *Container(memento, "deferred.container").activeViewId);
-	EXPECT_EQ("deferred.view", *memento.focus.viewId);
-}
-
-TEST(WorkbenchLayoutStateService, DisposedRegisteredContributionIsRemovedAndFocusFallsBackWithoutDeferredResurrection)
-{
-	WorkbenchContributionRegistry registry;
-	const auto owner = Owner("layout.temporary");
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "add-temporary" }, .owner = owner,
-		.viewContainers = { { .id = "temporary.container", .title = "Temporary", .location = EViewContainerLocation::Panel } },
-		.views = { { .id = "temporary.view", .containerId = "temporary.container", .title = "Temporary view" } },
-	}).status);
-	WorkbenchLayoutStateService state(registry.Snapshot());
-	auto persisted = state.Snapshot();
-	auto panel = std::find_if(persisted.parts.begin(), persisted.parts.end(),
-		[](const auto& part) { return part.partId == ids::part::Panel; });
-	ASSERT_NE(persisted.parts.end(), panel);
-	panel->visible = true;
-	persisted.activeContainers.panel = "temporary.container";
-	persisted.focus = { .containerId = "temporary.container", .viewId = "temporary.view" };
-	ASSERT_EQ(EWorkbenchLayoutHydrationStatus::Succeeded, state.HydrateInitialState(persisted).status);
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.DisposeOwner({
-		.operation = { .operationId = "dispose-temporary" }, .owner = owner }).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), { .operation = { .operationId = "reconcile-dispose-temporary" } }).status);
-	const auto snapshot = state.Snapshot();
-	EXPECT_FALSE(HasContainer(snapshot, "temporary.container"));
-	EXPECT_FALSE(HasView(snapshot, "temporary.view"));
-	EXPECT_TRUE(snapshot.focus.containerId || snapshot.focus.partId);
-	EXPECT_FALSE(snapshot.focus.viewId && *snapshot.focus.viewId == "temporary.view");
-
-	ASSERT_EQ(EWorkbenchContributionOperationStatus::Succeeded, registry.Register({
-		.operation = { .operationId = "readd-temporary" }, .owner = Owner("layout.temporary", 2),
-		.viewContainers = { { .id = "temporary.container", .title = "Temporary", .location = EViewContainerLocation::Sidebar } },
-		.views = { { .id = "temporary.view", .containerId = "temporary.container", .title = "Temporary view", .order = 99 } },
-	}).status);
-	ASSERT_EQ(EWorkbenchLayoutOperationStatus::Succeeded,
-		state.Reconcile(registry.Snapshot(), { .operation = { .operationId = "reconcile-readd-temporary" } }).status);
-	EXPECT_EQ(EWorkbenchViewContainerLocation::SideBar, Container(state.Snapshot(), "temporary.container").location);
-	EXPECT_EQ(99, View(state.Snapshot(), "temporary.view").order);
-}
 
 TEST(WorkbenchLayoutStateService, RehydrateAfterSuccessfulInitialHydrationIsExplicitlyRejected)
 {

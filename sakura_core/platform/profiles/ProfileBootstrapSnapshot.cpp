@@ -74,16 +74,12 @@ ProfileBootstrapResourceUris::ProfileBootstrapResourceUris(
 	::platform::uri::Uri tasks,
 	::platform::uri::Uri keybindings,
 	::platform::uri::Uri snippets,
-	::platform::uri::Uri extensionsManifest,
-	::platform::uri::Uri extensionsInstallHome,
 	::platform::uri::Uri globalStorage) noexcept
 	: m_profileHome(std::move(profileHome))
 	, m_settings(std::move(settings))
 	, m_tasks(std::move(tasks))
 	, m_keybindings(std::move(keybindings))
 	, m_snippets(std::move(snippets))
-	, m_extensionsManifest(std::move(extensionsManifest))
-	, m_extensionsInstallHome(std::move(extensionsInstallHome))
 	, m_globalStorage(std::move(globalStorage))
 {
 }
@@ -118,18 +114,15 @@ ProfileBootstrapSnapshotResult ResolveProfileBootstrapSnapshot(
 	auto tasks = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileDirectory, L"tasks.json"));
 	auto keybindings = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileDirectory, L"keybindings.json"));
 	auto snippets = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileDirectory, L"snippets"));
-	auto extensionsManifest = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileDirectory, L"extensions.json"));
-	auto extensionsInstallHome = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileDirectory, L"extensions"));
 	auto globalStorage = ::platform::uri::Uri::FromWindowsPath(
 		JoinWindowsPath(profileDirectory, L".sakura-platform\\globalStorage"));
-	if (!profileHome || !settings || !tasks || !keybindings || !snippets || !extensionsManifest || !extensionsInstallHome || !globalStorage) {
+	if (!profileHome || !settings || !tasks || !keybindings || !snippets || !globalStorage) {
 		return Failed(ProfileBootstrapSnapshotStatus::InvalidResourceIdentity);
 	}
 
 	ProfileBootstrapResourceUris resources(
 		std::move(*profileHome.value), std::move(*settings.value), std::move(*tasks.value),
-		std::move(*keybindings.value), std::move(*snippets.value), std::move(*extensionsManifest.value),
-		std::move(*extensionsInstallHome.value), std::move(*globalStorage.value));
+		std::move(*keybindings.value), std::move(*snippets.value), std::move(*globalStorage.value));
 	return { ProfileBootstrapSnapshotStatus::Resolved,
 		ProfileBootstrapSnapshot(std::move(profileId), authorityGeneration, std::move(resources)) };
 }

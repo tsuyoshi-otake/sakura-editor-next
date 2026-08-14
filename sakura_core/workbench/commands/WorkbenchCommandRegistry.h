@@ -45,7 +45,6 @@ enum class EWorkbenchCommandExecutorTarget : std::uint8_t {
 	Editor,
 	Terminal,
 	Debug,
-	ExtensionHost,
 	LegacyNative,
 };
 
@@ -113,14 +112,12 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor closeFolder;
 	WorkbenchCommandExecutor closeWindow;
 	WorkbenchCommandExecutor quit;
-	WorkbenchCommandExecutor showExtensions;
 	WorkbenchCommandExecutor openGlobalKeybindings;
 	WorkbenchCommandExecutor toggleSidebarVisibility;
 	WorkbenchCommandExecutor showExplorer;
 	WorkbenchCommandExecutor showProblems;
 	WorkbenchCommandExecutor toggleOutput;
 	WorkbenchCommandExecutor selectTheme;
-	WorkbenchCommandExecutor selectFileIconTheme;
 	WorkbenchCommandExecutor showNotifications;
 	WorkbenchCommandExecutor hideNotifications;
 	WorkbenchCommandExecutor toggleStatusbarVisibility;

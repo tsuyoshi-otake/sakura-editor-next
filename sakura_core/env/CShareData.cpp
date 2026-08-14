@@ -579,8 +579,8 @@ bool CShareData::InitShareData()
 			sWorkbench.m_eActiveTool = WORKBENCH_TOOL_EXPLORER;
 			// A newly created profile has no legacy Outline state to import.
 			sWorkbench.m_bOutlineMigrationComplete = TRUE;
-			sWorkbench.m_bExtensionViewsVisible = FALSE;
-			sWorkbench.m_nExtensionViewsExtent96 = 320;
+			sWorkbench.m_bAuxiliaryBarVisible = FALSE;
+			sWorkbench.m_nAuxiliaryBarExtent96 = 320;
 		}
 
 		// [ファイル内容比較]タブ

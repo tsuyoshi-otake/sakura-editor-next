@@ -86,10 +86,8 @@ enum class CustomFrameManageAction : unsigned char {
 	None,
 	ShowCommandPalette,
 	OpenSettings,
-	ShowExtensions,
 	OpenKeyboardShortcuts,
 	SelectColorTheme,
-	SelectFileIconTheme,
 	//! Group `7_update`. Only the four actionable upstream entries can be chosen;
 	//! the in-progress ones are contributed with `precondition: false` and are
 	//! therefore drawn greyed and never produce an action.

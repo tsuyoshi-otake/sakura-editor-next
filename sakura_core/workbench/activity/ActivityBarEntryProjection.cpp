@@ -25,7 +25,6 @@ constexpr std::array kBuiltinCodicons{
 	std::pair{ layout::ids::viewContainer::Search, std::wstring_view(L"search") },
 	std::pair{ layout::ids::viewContainer::RunAndDebug, std::wstring_view(L"debug-alt") },
 	std::pair{ layout::ids::viewContainer::SourceControl, std::wstring_view(L"source-control") },
-	std::pair{ layout::ids::viewContainer::Extensions, std::wstring_view(L"extensions") },
 };
 
 } // namespace
@@ -46,22 +45,14 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 	rendered.reserve(snapshot.viewContainers.size());
 	for (const auto& container : snapshot.viewContainers) {
 		if (container.descriptor.location != layout::EViewContainerLocation::Sidebar) continue;
-		if (container.isBuiltin
-			&& std::ranges::find(options.renderableBuiltins, container.descriptor.id)
+		if (std::ranges::find(options.renderableBuiltins, container.descriptor.id)
 				== options.renderableBuiltins.end()) {
 			continue;
 		}
 		rendered.push_back(&container);
 	}
 
-	/*
-		VS Code places contributed containers below the built-in ones, so "built-in first" is
-		the primary key. Order alone cannot express that here: the built-ins carry explicit
-		orders (10..50) while a contributed container has no manifest order at all and keeps
-		the default 0, which would otherwise sort every extension icon above Explorer.
-	*/
 	std::ranges::sort(rendered, [](const auto* left, const auto* right) {
-		if (left->isBuiltin != right->isBuiltin) return left->isBuiltin;
 		if (left->descriptor.order != right->descriptor.order) {
 			return left->descriptor.order < right->descriptor.order;
 		}
@@ -72,19 +63,11 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 	entries.reserve(rendered.size());
 	for (const auto* container : rendered) {
 		const auto& descriptor = container->descriptor;
-		std::wstring codicon;
-		if (container->isBuiltin) {
-			codicon = BuiltinContainerCodicon(descriptor.id);
-		} else if (options.extensionCodicon) {
-			codicon = options.extensionCodicon(descriptor.id);
-		}
 		entries.push_back({
 			.id = descriptor.id,
-			// A container with no title would render as a blank tooltip and an unreadable
-			// accessible name, so fall back to the id the extension chose for itself.
+			// A missing title still needs a readable fallback.
 			.label = u8stowcs(descriptor.title.empty() ? descriptor.id : descriptor.title),
-			.codicon = std::move(codicon),
-			.builtin = container->isBuiltin,
+			.codicon = std::wstring(BuiltinContainerCodicon(descriptor.id)),
 		});
 	}
 	return entries;

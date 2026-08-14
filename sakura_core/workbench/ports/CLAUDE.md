@@ -34,12 +34,10 @@ process, poll, retry, or infer backend success from endpoint data.
 
 Adapters may own real backend handles, policy, and user-visible error mapping,
 but they must dispose those handles before asking the pure model to forget the
-owner. Native PORTS projections and extension RPC bridges remain separate Phase
-6 work.
+owner. Native PORTS projection remains separate Phase 6 work.
 
 The focused `PortForwardingService.*` suite passes 12/12. It proves bounded
 owner/tombstone lifetime, remote-to-local projection metadata, deterministic
 state transitions, saturated advisory-drop accounting, and callback-draining
-Stop behavior. No forwarding backend, runtime owner, native PORTS renderer, or
-extension RPC bridge is implied; the current PORTS contribution remains
-descriptor-only.
+Stop behavior. No forwarding backend, runtime owner, or native PORTS renderer is
+implied; the current PORTS contribution remains descriptor-only.

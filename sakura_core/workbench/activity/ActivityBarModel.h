@@ -18,19 +18,15 @@ namespace workbench::activity {
 	@brief One rendered Activity Bar entry.
 
 	Identity is the ViewContainer id owned by workbench::layout::WorkbenchContributionRegistry.
-	The Activity Bar renders containers; it deliberately does not own a second naming system for
-	them, so an extension-contributed container needs no translation to appear here.
+	The Activity Bar renders built-in containers without a second naming system.
 */
 struct ActivityBarEntry {
-	//! `workbench.view.explorer`, `claude-code`, ... Empty ids are rejected by the model.
+	//! `workbench.view.explorer`, etc. Empty ids are rejected by the model.
 	std::string id;
 	//! Tooltip and accessible name, already localized by whoever produced the entry.
 	std::wstring label;
-	//! Bundled codicon name. Empty when the contributor supplied an image instead, in which
-	//! case the view falls back to the first letter of the label, as VS Code does.
+	//! Bundled codicon name. Empty names fall back to the first letter of the label.
 	std::wstring codicon;
-	//! True for containers Sakura itself contributes. Only presentation depends on this.
-	bool builtin = false;
 	bool enabled = true;
 	//! False when the ViewContainer no longer lives in the Primary Side Bar. VS Code
 	//! removes the Activity Bar entry outright rather than greying it out.
@@ -65,7 +61,6 @@ struct ActivityBarButtonInfo {
 	std::string_view id;
 	std::wstring_view label;
 	std::wstring_view codicon;
-	bool builtin = false;
 	ActivityBarRect bounds{};
 	bool selected = false;
 	bool hovered = false;
@@ -96,8 +91,7 @@ public:
 		@brief Replaces the whole entry list.
 
 		Per-entry enabled/visible state travels inside the entries, and selection, hover, press
-		and focus survive whenever the same container id survives. An extension host reconnect
-		therefore does not silently deselect the container the user is looking at.
+		and focus survive whenever the same container id survives.
 	*/
 	void SetEntries(std::vector<ActivityBarEntry> entries);
 	[[nodiscard]] const std::vector<ActivityBarEntry>& Entries() const noexcept { return m_entries; }

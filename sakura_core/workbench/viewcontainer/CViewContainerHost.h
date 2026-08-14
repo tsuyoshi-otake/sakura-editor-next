@@ -77,16 +77,11 @@ public:
 private:
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	void LayoutChildren();
-	//! Splits the Extensions ViewContainer between its Marketplace and any contributed views.
-	void LayoutExtensionsPage(const RECT& client);
 	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
 	void ReleaseCodiconFont() noexcept;
 	void Paint();
 	//! Draws an inset, vertically-centered, word-wrapped status message over the whole
-	//! client area, in the secondary text color. Shared by the "no container shown" empty
-	//! state and the webview-unsupported state so both read as the same kind of native
-	//! placeholder text VS Code itself uses for an empty ViewContainer, instead of each
-	//! state inventing its own drawing.
+	//! client area, in the secondary text color.
 	void DrawCenteredMessage(HDC dc, std::wstring_view message) const;
 	void NotifyOutlineRevealed() noexcept;
 	[[nodiscard]] bool IsOutlineHeaderPoint(POINT point) const noexcept;

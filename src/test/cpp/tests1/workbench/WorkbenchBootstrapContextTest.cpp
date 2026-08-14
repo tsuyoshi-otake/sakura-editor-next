@@ -78,8 +78,6 @@ TEST(WorkbenchBootstrapContext, CopiesAndValidatesSeparatedProfileResources)
 	EXPECT_EQ(L"file:///C:/Profiles/Sakura/tasks.json", resources.Tasks().ToString());
 	EXPECT_EQ(L"file:///C:/Profiles/Sakura/keybindings.json", resources.Keybindings().ToString());
 	EXPECT_EQ(L"file:///C:/Profiles/Sakura/snippets", resources.Snippets().ToString());
-	EXPECT_EQ(L"file:///C:/Profiles/Sakura/extensions.json", resources.ExtensionsManifest().ToString());
-	EXPECT_EQ(L"file:///C:/Profiles/Sakura/extensions", resources.ExtensionsInstallHome().ToString());
 	EXPECT_EQ(result.context->ControlProfile().ProfileId(), result.context->UserDataProfile().ControlAuthority().authorityId);
 	EXPECT_EQ(result.context->ControlProfile().AuthorityGeneration(), result.context->UserDataProfile().ControlAuthority().generation);
 	EXPECT_EQ(L"file:///C:/Profiles/Sakura/settings.json", result.context->UserDataProfile().Resources().Settings().ToString());

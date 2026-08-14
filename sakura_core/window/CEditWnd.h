@@ -63,35 +63,24 @@
 #include "print/CPrintPreview.h"
 #include "workbench/editor/EditorWorkingCopyTypes.h"
 #include "workbench/editor/WorkbenchKeybindingState.h"
-#include "workbench/keybinding/ExtensionKeybindingMap.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 #include "config/WorkspaceContextTypes.h"
 #include "workbench/recent/RecentlyOpenedWorkspaceMenuProjection.h"
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "markdown/MarkdownPreviewCommandState.h"
-#include "extension/ExtensionMenuProjection.h"
 
 static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
 class CPlug;
 class CEditDoc;
 class CCustomFrameController;
-class CExtensionService;
-class IExtensionSecretSessionStorage;
-struct SExtensionNativeEditorOptions;
-class CExtensionViewRegistry;
-class CExtensionDetailSurface;
 class CDiffSurface;
 class CWorkspaceTrustEditorSurface;
 struct SDiffSurfaceContent;
 namespace config {
 class ConfigurationSubscription;
 }
-struct SExtensionDiagnostic;
-struct SExtensionDocumentSnapshot;
-struct SExtensionDocumentEdit;
-struct SExtensionApplyEditResult;
 struct DLLSHAREDATA;
 namespace platform::filesystem {
 class IFileService;
@@ -129,8 +118,6 @@ class IWorkbenchLayoutSubscription;
 struct WorkbenchLayoutStateSnapshot;
 }
 namespace icons {
-class CExtensionIconFontRegistry;
-class CFileIconThemeRegistry;
 }
 namespace win32 {
 struct BuiltinActiveSurfaceProjection;
@@ -154,12 +141,8 @@ class COutlineWorkbenchTool;
 namespace scm {
 class CScmWorkbenchTool;
 }
-namespace extension {
-class CExtensionBottomPanelTool;
-class CExtensionSidebarTool;
-}
-namespace notification {
-class CNotificationHost;
+namespace panel {
+class CBottomPanelTool;
 }
 namespace quickinput {
 class CCommandPaletteOverlay;
@@ -378,9 +361,7 @@ public:
 		workbench::editor::CEditDocLegacyEditorBackend& legacyEditorBackend,
 		workbench::editor::EditorWorkingCopyCoordinator& workingCopyCoordinator,
 		workbench::editor::persistence::EditorWorkingCopyLifecycleBridge& workingCopyLifecycleBridge,
-		workbench::IWorkbenchRuntime& workbenchRuntime,
-		std::filesystem::path profileDirectory,
-		std::unique_ptr<IExtensionSecretSessionStorage> extensionSecretStorage);
+		workbench::IWorkbenchRuntime& workbenchRuntime);
 	~CEditWnd() override;
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -534,8 +515,6 @@ public:
 	void NewIntegratedTerminal();
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
-	//! Show the VS Code-compatible command palette and dispatch the selected extension command.
-	[[nodiscard]] bool ShowExtensionCommandPalette();
 	[[nodiscard]] bool IsMarkdownPreviewVisible() const noexcept;
 	[[nodiscard]] bool IsMarkdownPreviewAvailable() const;
 
@@ -622,16 +601,6 @@ public:
 	const CEditView&    GetView(int n) const { return *m_pcEditViewArr[n]; }
 	CEditView&          GetView(int n)       { return *m_pcEditViewArr[n]; }
 	CMiniMapView&       GetMiniMap( void ) { return m_cMiniMapView; }
-	//! Diagnostics published for the file currently owned by this editor process.
-	[[nodiscard]] std::vector<SExtensionDiagnostic> ExtensionDiagnosticsForCurrentDocument() const;
-	//! Called after a native undo unit is finalized; schedules one bounded document snapshot.
-	void NotifyExtensionDocumentChanged();
-
-	//! Reveals `workbench.view.extensions`, matching VS Code's reveal-only `workbench.view.*`.
-	void ShowExtensionsViewContainer();
-	//! True while the Extensions ViewContainer is the active, visible container of its Part.
-	[[nodiscard]] bool IsExtensionsViewContainerActive() const;
-
 	bool                IsEnablePane(int n) const { return 0 <= n && n < m_nEditViewCount; }
 	int                 GetAllViewCount() const { return m_nEditViewCount; }
 
@@ -738,7 +707,6 @@ private:
 	[[nodiscard]] bool ShouldDeferStartupLayout() const noexcept;
 
 	bool InitializeWorkbench();
-	void EnsureNotificationHost() noexcept;
 	void RefreshStatusbarPresentation();
 	void SetStatusbarEntryHidden(std::string_view id, bool hidden);
 	void PostDeferredStartupWorkbenchIfReady();
@@ -831,33 +799,13 @@ private:
 	void DispatchEditorFunction(EFunctionCode functionCode);
 	[[nodiscard]] bool SynchronizeLegacyDocumentState(bool dirty, bool contentChanged);
 	void ClearDocumentStatus();
-	void ClosePublishedExtensionDocument();
 	[[nodiscard]] std::string NextEditorOperationId(std::string_view prefix);
 	[[nodiscard]] bool ActiveInputMatchesCurrentFile() const;
-	[[nodiscard]] SExtensionDocumentSnapshot CaptureExtensionDocumentSnapshot(std::uint64_t version) const;
-	void PublishExtensionDocumentOpen(bool forceReopen);
-	void PublishExtensionDocumentChange();
-	void PublishExtensionDocumentSave();
-	void PublishExtensionActiveEditor();
-	/*!
-		@brief 導入済み拡張の contributes.icons を読み直し、フォントを登録する
-
-		拡張の列挙は CExtensionService::WorkerInitialize() と同じ規約
-		（CExtensionManager::EnumInstalled() の各 dir/"extension" にマニフェストが
-		あるものだけ、ID は sUniqueId）で行うが、こちらは UI スレッド専用である。
-		ワーカー専用状態である m_installedRoots は決して読まない。
-	*/
-	void RefreshExtensionIconFonts();
-	//! Rebuilds the window-local registry from the profile's enabled VSIX roots.
+	//! Rebuilds the window-local registry from Sakura's bundled themes.
 	void RefreshColorThemes();
-	//! Rebuilds the file-icon-theme registry from the profile's enabled VSIX roots.
-	void RefreshFileIconThemes();
-	//! Shows the native equivalent of VS Code's Preferences: Color Theme picker.
+	//! Shows Sakura's native color theme picker.
 	[[nodiscard]] bool ShowColorThemePicker();
 	[[nodiscard]] bool PersistColorThemeSelection(std::wstring_view themeId);
-	//! Shows the native equivalent of VS Code's Preferences: File Icon Theme picker.
-	[[nodiscard]] bool ShowFileIconThemePicker();
-	[[nodiscard]] bool PersistFileIconThemeSelection(std::wstring_view themeId);
 	//! Runs one of the built-in Git provider's branch commands, presenting its
 	//! Quick Pick and input box through the same native surfaces every other
 	//! workbench picker uses.
@@ -996,29 +944,12 @@ private:
 	void PerformWorkspaceTrustGrantFromPage(workbench::EWorkspaceTrustGrantScope scope);
 	//! Re-runs one full client-area layout pass after a projection changed.
 	void RelayoutEditorProjections();
-	//! Applies the selected file icon theme to the native Explorer control.
-	void ApplyFileIconTheme();
-	SExtensionApplyEditResult ApplyExtensionEdits(
-		const std::vector<SExtensionDocumentEdit>& edits,
-		std::vector<SExtensionDocumentSnapshot>& snapshots);
-	bool ApplyExtensionEditorOptions(const SExtensionNativeEditorOptions& options);
-	//! Injects (or clears) the hover seams every CEditView exposes. The view owns the
-	//! dwell/poll gesture but never an extension-host connection, so the composition
-	//! root is what closes handlers over the live CExtensionService. Called after the
-	//! service is constructed and again whenever a split creates a new pane; passing
-	//! empty handlers when no service exists is what keeps a service-less window from
-	//! arming a dwell timer it could not honor.
-	void WireExtensionHoverHandlers();
 	[[nodiscard]] std::optional<std::string> NextWorkbenchLayoutOperationId(std::string_view action);
 	[[nodiscard]] std::optional<std::string> NextOutputPanelOperationId();
 	[[nodiscard]] bool SetBuiltinPartVisibility(std::string_view partId, bool visible);
 	[[nodiscard]] bool SetBuiltinPartExtent(std::string_view partId, int extentDip);
 	[[nodiscard]] bool SetBuiltinViewVisibility(std::string_view viewId, bool visible);
 	[[nodiscard]] bool ActivateBuiltinWorkbenchView(std::string_view viewId, bool requestFocus);
-	//! Activates a contributed ViewContainer and reveals the Part that hosts it. A built-in
-	//! container is activated through its View instead, because a built-in side-bar surface is
-	//! identified by a View; a contributed container may have no view registered yet at all.
-	[[nodiscard]] bool ActivateContributedViewContainer(std::string_view containerId, bool requestFocus);
 	[[nodiscard]] bool IsBuiltinWorkbenchViewActive(std::string_view viewId) const;
 	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
@@ -1040,49 +971,13 @@ private:
 		キー式の解釈は登録時に一度だけ行い、打鍵ごとには行わない。式が読めない項目は
 		ここで落とす。落とした事実は診断出力に残す（黙って効かないのが一番たちが悪い）。
 	*/
-	void SyncExtensionKeybindings();
-	/*!
-		@brief 1 打鍵を拡張のキーバインドへ突き合わせ、消費したなら true
-
-		この関数が true を返した打鍵はアクセラレータへ届かない。だから
-		「Sakura のキー割り当て表に既にある組み合わせは拡張に渡さない」を
-		ここで守る。VS Code の既定より保守的だが、拡張を 1 つ入れただけで
-		本文編集のキーが黙って奪われる方が壊れ方として重い。
-	*/
-	[[nodiscard]] bool TryHandleExtensionKeybinding(const MSG& message);
-	//! Sakura 自身のキー割り当て表がこの打鍵を既に使っているか。
-	[[nodiscard]] static bool IsLegacyKeyAssigned(
-		std::uint32_t virtualKey, bool control, bool shift, bool alt) noexcept;
-	/*!
-		@brief `contributes.menus["editor/title"]` を投影する
-
-		`extension::menus::ProjectMenu` の追加オーバーロードへ、`CExtensionService` が既に公開している
-		`Contributions()`／`EvaluateWhenClause()`／`SearchCommands()` だけから組んだ関数オブジェクトを渡す。
-		`CExtensionService` は内部の `CExtensionCommandPalette`／`CExtensionContextKeys` を外部へ貸し出さない
-		ため、コマンド 1 件の表示名・可否は id 完全一致検索で代替している
-		（`CExtensionWorkbenchDispatcher::DispatchExtensionRegistration` は実運用のコマンド登録で
-		`whenClause` を設定しないため、`CExtensionCommandPalette::Search` 内の `when` 絞り込みは常に
-		無条件で真になり、この代替は安全）。拡張サービスが無ければ空を返す。
-	*/
-	[[nodiscard]] std::vector<extension::menus::SProjectedMenuItem> ProjectExtensionEditorTitleMenu() const;
-	/*!
-		@brief `editor/title` の投影をネイティブのコンテキストメニューとして表示し、選択されたコマンドを実行する
-
-		VS Code 本来の配置はタブバー右上のツールバーアイコン列（`CTabWnd`/`DocumentTabActionLayout.h` が
-		所有）だが、この配信では触れられるファイルが `CEditWnd.{h,cpp}` と
-		`extension/ExtensionMenuProjection.{h,cpp}` に限られているため届かない。代わりに、この関数と
-		製品所有のコマンド `sakura.workbench.action.showEditorTitleActions`
-		（Command Palette から見つかる）が実際に描画・クリックへつながる面になる。詳しい理由は
-		`sakura_core/window/CLAUDE.md` の「editor/title projection surface」に記録する想定。
-	*/
-	[[nodiscard]] bool ShowExtensionEditorTitleMenu();
+	[[nodiscard]] bool ShowCommandPalette();
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
 	[[nodiscard]] bool ExecuteShowOutputCommand(bool requestFocus = true);
 	[[nodiscard]] bool ExecuteToggleOutputCommand();
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
-	void PersistExtensionViewsExtent(int extentDip);
 	//! Activates one Primary Side Bar ViewContainer, mirroring a VS Code Activity Bar click.
 	void ActivateSidebarPage(std::string_view containerId, bool toggleIfActive);
 	//! Applies an already-decided container selection to whichever side bar now owns it.
@@ -1186,8 +1081,7 @@ private:
 	bool			m_dispatchReady = false;
 	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
 	std::unique_ptr<workbench::editor::CEmptyEditorSurface> m_emptyEditorSurface;
-	std::unique_ptr<CExtensionDetailSurface> m_extensionDetailSurface;
-	//! Native side-by-side comparison surface. Like `m_extensionDetailSurface` this is a
+	//! Native side-by-side comparison surface. This is a
 	//! composition-layer projection rather than an `EditorInput`, so it may be visible only
 	//! while the native editor has no active document.
 	std::unique_ptr<CDiffSurface> m_diffSurface;
@@ -1213,13 +1107,6 @@ private:
 	std::unique_ptr<platform::filesystem::IFileService> m_explorerFileService;
 	//! State for the VS Code Windows File-menu keybindings, including Ctrl+K chords.
 	workbench::editor::WorkbenchKeybindingState m_workbenchKeybindingState;
-	//! Extension-contributed keybindings, parsed once per contribution change.
-	workbench::keybinding::ExtensionKeybindingMap m_extensionKeybindings;
-	//! `ShowExtensionEditorTitleMenu` の 1 回のポップアップ表示だけで有効な、
-	//! ネイティブ `TrackPopupMenu` の連番 ID (1 始まり) から拡張の commandId への対応表。
-	//! `TrackPopupMenu(TPM_RETURNCMD)` は選択結果を `WM_COMMAND` に流さず直接返すため、
-	//! この対応表は他の ID 名前空間と衝突する心配がなく、表示のたびに作り直してよい。
-	std::vector<std::wstring> m_extensionEditorTitleMenuCommandIds;
 	//! The native dynamic-command IDs are resolved against this popup/menu-open
 	//! snapshot, never against mutable legacy CMRU state.
 	std::vector<workbench::recent::RecentlyOpenedWorkspaceEntry> m_recentlyOpenedWorkspaceMenuSnapshot;
@@ -1255,28 +1142,12 @@ private:
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
-	std::filesystem::path m_extensionProfileDirectory;
-	std::unique_ptr<IExtensionSecretSessionStorage> m_extensionSecretStorage;
-	std::unique_ptr<CExtensionService> m_extensionService;
-	std::unique_ptr<workbench::notification::CNotificationHost> m_notificationHost;
 	std::unique_ptr<workbench::quickinput::CCommandPaletteOverlay> m_commandPaletteOverlay;
-	//! 導入済み拡張の contributes.icons。ステータスバーは非所有ポインタで借りるので、
-	//! ここが唯一の所有者であり、m_cStatusBar より長く生きなければならない。
-	std::unique_ptr<workbench::icons::CExtensionIconFontRegistry> m_extensionIconFonts;
-	//! Parsed contributes.themes entries from the same enabled extension set.
+	//! Built-in color themes available to this window.
 	std::unique_ptr<theme::CColorThemeRegistry> m_colorThemeRegistry;
-	//! Parsed contributes.iconThemes entries from the same enabled extension set.
-	std::unique_ptr<workbench::icons::CFileIconThemeRegistry> m_fileIconThemeRegistry;
-	std::wstring m_extensionDocumentUri;
-	std::uint64_t m_extensionDocumentVersion = 0;
-	bool m_extensionDocumentSyncTimerPending = false;
 	bool m_startupOutlineReloadPending = false;
-	bool m_startupExtensionDocumentOpenPending = false;
 	bool m_startupWorkbenchCompletionPosted = false;
 	bool m_workspaceTrustStartupPromptPosted = false;
-	std::shared_ptr<CExtensionViewRegistry> m_extensionViewRegistry;
-	workbench::extension::CExtensionSidebarTool* m_extensionSidebarTool = nullptr;
-	workbench::extension::CExtensionBottomPanelTool* m_extensionBottomPanelTool = nullptr;
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
@@ -1286,6 +1157,7 @@ private:
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
 	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
+	workbench::panel::CBottomPanelTool* m_bottomPanelTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
 	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;
 	bool m_markdownPreviewVisible = false;

@@ -36,8 +36,8 @@ extension transport. Legacy and Win32 behavior enters through adapters only.
   failed, or not-applicable and preserve the last stable state on failure.
 - `CEditDoc`/`CEditView` are backing objects behind a strangler adapter. Their
   mere existence does not expose an open or active editor.
-- Commands, context keys, focus, native menus, keys, watermark actions, and
-  extension RPC all enter through the same command IDs.
+- Commands, context keys, focus, native menus, keys, and watermark actions all
+  enter through the same command IDs.
 
 ### Editor Core Checkpoint
 
@@ -83,10 +83,8 @@ remain pending.
   `.code-workspace` nested-settings editing are still separate work.
 - `WriteSetting` is declared on `IWorkbenchRuntime`, not only on the concrete
   runtime, because a borrower that needs it must not have to name the
-  implementation. `CEditWnd` holds the runtime as `IWorkbenchRuntime*` and hands
-  that same borrow to `CExtensionService`, which is what makes
-  `workspace/configuration/update` reach a real settings document in production;
-  see [`../extension/CLAUDE.md`](../extension/CLAUDE.md). `CWorkbenchRuntime` is
+  implementation. `CEditWnd` holds the runtime as `IWorkbenchRuntime*`.
+  `CWorkbenchRuntime` is
   still the only implementer and still the only writeback authority — putting
   the method on the interface widens who may *call* it, never who may own it.
 
@@ -94,15 +92,14 @@ remain pending.
 
 Use stable part, view-container, view, menu, and command IDs. PROBLEMS and
 OUTPUT must bind to diagnostics/problem matching and output channels, not a
-visual placeholder. Settings, Explorer, Search, OpenVSX, and extension views
-must use the same services and owner-scoped disposal events as native views.
+visual placeholder. Settings, Explorer, and Search must use the same services
+and lifecycle rules as the rest of the native workbench.
 
 ### Contribution and Layout-State Checkpoint
 
-- `WorkbenchContributionRegistry` is the process-local authority for stable
-  Part, ViewContainer, and View descriptors. Registration is atomic,
-  owner-generation scoped, revisioned, and exactly replayable; disposal removes
-  only the matching owner generation. Built-in identities are protected.
+- `WorkbenchContributionRegistry` is the immutable process-local catalog for
+  built-in Part, ViewContainer, and View descriptors. Runtime contribution
+  registration is not supported.
 - Use the canonical VS Code IDs in `WorkbenchIds`. A physical Part ID is never a
   View ID: in particular `workbench.parts.auxiliarybar` and `outline` describe
   different layers and must remain independently movable and visible.
@@ -187,15 +184,14 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   runtime-backed window. They are not inputs that can overwrite the current
   layout model.
 - The bounded active-surface adapter also projects committed
-  ViewContainer/View selection for Explorer, Outline, Source Control,
-  Extensions, Terminal, Problems, and Output. It validates the complete
+  ViewContainer/View selection for Explorer, Outline, Source Control, Terminal,
+  Problems, and Output. It validates the complete
   active/focus hierarchy before native mutation and applies an explicit focus
   only after native bounds exist. Activity Bar selection, Outline expansion,
   and bottom-panel tab selection are therefore projections of model truth
   rather than an independent `m_eActiveTool` authority.
-- Every Activity Bar ViewContainer, `workbench.view.extensions` included, is
-  registered into the Primary Side Bar exactly as in VS Code, and the Auxiliary
-  Bar registers none. That is VS Code's **default**, not a capability limit: the
+- Every supported Activity Bar ViewContainer is registered into the Primary Side
+  Bar, and the Auxiliary Bar registers none. That is VS Code's **default**, not a capability limit: the
   Secondary Side Bar starts empty and gains a container only when the user moves
   one there, and its toggle remains a pure Part-visibility change that never
   changes Activity Bar selection. Do not reintroduce a placeholder auxiliary
@@ -211,8 +207,7 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   `outline`. VS Code's Activity Bar toggle compares containers, so any code
   answering "is this Activity Bar entry already active" reads
   `activeContainers.sideBar`, not the container's active view.
-- Search, Run and Debug, Ports, Debug Console, arbitrary extension-owned View
-  rendering, reorder within a bar, moving the whole Panel
+- Search, Run and Debug, Ports, Debug Console, reorder within a bar, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel position/alignment
   remain typed unsupported boundaries. A generic contribution renderer and
   unified command/context route are still required. Moving a built-in Activity
@@ -227,72 +222,18 @@ the active-surface integration, the state/memento/projection filter passed
 solution build completed with zero errors and the repository process audits
 were clean.
 
-## Activity Bar ordering: built-in first (2026-08-07, #29)
-
-`ProjectActivityBarEntries` sorts on `isBuiltin` **before** `order`. A manifest
-has no `order` for a ViewContainer, so every contributed container arrives with
-the default 0 while the built-ins carry explicit orders 10..50; sorting on
-`order` alone would put every extension icon above Explorer, which is not where
-VS Code puts them. `order` and then the container ID break ties within each
-group, so same-order contributed containers stay in a stable, declaration-order-
-independent sequence.
-
 ## ViewContainer Pool/Host Boundary (2026-08-01)
 
 - `CViewContainerPages` owns every window a page renders, not just the page's
-  primary control. The optional `MarketplaceFactory` builds the Extensions
-  page's OpenVSX Marketplace inside `Create()`, and `Close()` destroys it before
-  any other page teardown, which cancels an in-flight OpenVSX job before the
-  owning window dies. A host may render a page; it may never own one.
+  primary control. `Close()` destroys page-owned windows before host teardown.
+  A host may render a page; it may never own one.
 - A ViewContainer has exactly one location, and that location now carries every
-  window the page owns, not only its primary control. The Extensions page's
-  Marketplace and its contributed-views control move together on `Attach`,
-  exactly as the Explorer page's nested Outline View follows Explorer. A
-  container dragged to the Secondary Side Bar takes its Marketplace with it;
-  nothing may leave a stray reparented copy behind in the vacated host.
-- Presence is typed, not inferred from a cached flag.
-  `HasContributedExtensionViews()` is the one source of truth for whether the
-  contributed-views section exists at all; `SetPageVisible` and
-  `CViewContainerHost::LayoutExtensionsPage` both consult it directly instead of
-  caching a separate "is empty" bit that could drift from the registry.
-- An absent section reserves no space and is never filled with a placeholder.
-  With no contributed view, `LayoutExtensionsPage` gives the Marketplace the
-  whole container instead of leaving a blank strip; with no Marketplace (no
-  runtime, or a pane that failed to open), the contributed-views control gets
-  the whole container instead of sitting beside empty space.
-- A control's own visibility contract must not depend on how another control in
-  the same page happens to be laid out. `CExtensionSidebarTool::SetSidebarVisible`
-  reports the ViewContainer's own visibility to extensions, not the visibility
-  of whichever section currently renders the contributed views, so an
-  extension's view-lifecycle callbacks stay correct even when the Marketplace
-  claims the entire container.
+  window the page owns, not only its primary control. Nested views such as
+  Outline move with their owning Explorer container; nothing may leave a stray
+  reparented copy behind in the vacated host.
 - A host offers dialog-message translation only to the page content it actually
-  owns. `CViewContainerHost::PreTranslateMessage` calls `IsDialogMessageW` on
-  the Marketplace pane only for messages whose `hwnd` is that pane or a
-  descendant of it; a message belonging to any other surface is never offered
-  to it, so Tab/arrow navigation inside one control cannot swallow input meant
-  for another.
-
-### Webview-unsupported is about webviews, not about Markdown (2026-08-06)
-
-A `"type": "webview"` contributed View is unsupported because it renders
-arbitrary extension-authored HTML and JavaScript, which this product has no
-engine for and deliberately will not acquire. `kWebviewUnsupportedMessage` and
-`CViewContainerPages::IsWebviewOnly` scope that boundary to exactly that case.
-
-Do not widen it into a general "this product cannot render rich content" claim.
-Markdown supplied as data is a different problem with a different answer: the
-native `markdown::` pipeline renders it, and the Extensions Marketplace detail
-README now goes through that renderer. See
-[`editor/CLAUDE.md`](editor/CLAUDE.md) for that surface's own invariants. When a
-new surface needs formatted content, first ask whether the content is Markdown
-data (render it) or extension-authored active content (fail closed) — the two
-must never be answered together.
-
-See [`../window/CLAUDE.md`](../window/CLAUDE.md) for the profile-scoped factory
-composition and the retired legacy floating dock, and
-[`../extension/CLAUDE.md`](../extension/CLAUDE.md) for how `CExtensionPane`
-itself is composed as this container's content rather than a standalone dock.
+  owns. A message belonging to another surface is never offered to it, so
+  Tab/arrow navigation inside one control cannot swallow input meant for another.
 
 ## Phase 3/5 Dual-Profile and Command Checkpoint (2026-07-31)
 
@@ -300,9 +241,9 @@ itself is composed as this container's content rather than a standalone dock.
   the selected user-data profile snapshot as different values. It validates
   both, their shared authority ID/generation, the selected descriptor, and all
   URI-only profile resources before a runtime can become observable.
-- Settings source identity, Settings file loading/watching/writeback, and
-  production OpenVSX composition now use `UserDataProfile()`. Control endpoint,
-  storage, and Vault adapters continue to use `ControlProfile()` until each
+- Settings source identity and Settings file loading/watching/writeback use
+  `UserDataProfile()`. Control endpoint and storage adapters continue to use
+  `ControlProfile()` until each
   durable state key has an explicit selected-profile scope.
 - The Default profile temporarily uses the explicit legacy-control-root bridge
   so existing settings are not silently abandoned. Named/transient profiles use
@@ -310,8 +251,8 @@ itself is composed as this container's content rather than a standalone dock.
   empty-window identity store remain required before removing this bridge or
   supporting independently associated empty windows.
 - The native Explorer entry points now route through the command/context spine
-  described in `commands/CLAUDE.md`. This does not yet prove palette,
-  extension-contributed command/menu/keybinding, or arbitrary View routing.
+  described in `commands/CLAUDE.md`. This does not yet prove complete palette,
+  menu/keybinding, or arbitrary View routing.
 
 The integrated dual-profile/runtime/command/control-client cohort passes 79/79.
 The complete Phase 3 profile-management UI and the complete Phase 5 command

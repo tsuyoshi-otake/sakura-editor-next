@@ -31,13 +31,6 @@ public:
 	ConfigurationBatchResult ReplaceSources(const ConfigurationReplaceSources& request) override;
 	ConfigurationSubscription Subscribe(ConfigurationListener listener) override;
 
-	// Not part of IConfigurationService: Workspace Trust is a workbench-runtime
-	// concern, not a general configuration-consumer capability. Commits the
-	// joint (workspaceTrusted, restrictedKeys) fact that CollectProvenanceLocked
-	// consults when deciding whether a Workspace/Folder-scope contribution to a
-	// restricted key is withheld.
-	ConfigurationResult ApplyRestrictedConfigurations(const RestrictedConfigurationPolicy& policy);
-
 	// Implementation state is declared here so the translation unit can keep
 	// helpers independent of the public service API.
 	struct State;

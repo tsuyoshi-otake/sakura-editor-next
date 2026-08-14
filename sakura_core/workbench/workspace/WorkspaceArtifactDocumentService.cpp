@@ -15,7 +15,7 @@
 namespace workbench::workspace {
 namespace {
 
-constexpr std::size_t kMaximumTrackedDocuments = 3U * 257U;
+constexpr std::size_t kMaximumTrackedDocuments = 2U * 257U;
 constexpr std::size_t kMaximumBatchFolders = 64U;
 
 const wchar_t* ArtifactMemberName(EWorkspaceArtifactDocumentKind kind) noexcept
@@ -23,7 +23,6 @@ const wchar_t* ArtifactMemberName(EWorkspaceArtifactDocumentKind kind) noexcept
 	switch (kind) {
 	case EWorkspaceArtifactDocumentKind::Tasks: return L"tasks";
 	case EWorkspaceArtifactDocumentKind::Launch: return L"launch";
-	case EWorkspaceArtifactDocumentKind::Extensions: return L"extensions";
 	}
 	return L"";
 }
@@ -51,14 +50,6 @@ bool IsArray(const platform::serialization::JsoncValue& value) noexcept
 bool IsString(const platform::serialization::JsoncValue& value) noexcept
 {
 	return std::holds_alternative<std::wstring>(value.Value());
-}
-
-bool IsStringArray(const platform::serialization::JsoncValue& value) noexcept
-{
-	const auto* array = std::get_if<platform::serialization::JsoncValue::Array>(&value.Value());
-	if (!array) return false;
-	for (const auto& entry : *array) if (!IsString(entry)) return false;
-	return true;
 }
 
 } // namespace
@@ -113,12 +104,6 @@ bool CWorkspaceArtifactDocumentService::IsSchemaValid(
 		return optionalString(L"version") && optionalArray(L"tasks");
 	case EWorkspaceArtifactDocumentKind::Launch:
 		return optionalString(L"version") && optionalArray(L"configurations") && optionalArray(L"compounds");
-	case EWorkspaceArtifactDocumentKind::Extensions: {
-		const auto recommendations = artifact.find(L"recommendations");
-		const auto unwanted = artifact.find(L"unwantedRecommendations");
-		return (recommendations == artifact.end() || IsStringArray(recommendations->second))
-			&& (unwanted == artifact.end() || IsStringArray(unwanted->second));
-	}
 	}
 	return false;
 }
@@ -338,12 +323,6 @@ LaunchDocumentSnapshot CWorkspaceArtifactDocumentService::Launch(const std::opti
 {
 	std::lock_guard lock(m_mutex);
 	return { m_stopped ? std::nullopt : Resolve(EWorkspaceArtifactDocumentKind::Launch, folderUri) };
-}
-
-ExtensionsDocumentSnapshot CWorkspaceArtifactDocumentService::Extensions(const std::optional<platform::uri::Uri>& folderUri) const
-{
-	std::lock_guard lock(m_mutex);
-	return { m_stopped ? std::nullopt : Resolve(EWorkspaceArtifactDocumentKind::Extensions, folderUri) };
 }
 
 WorkspaceArtifactDocumentServiceSnapshot CWorkspaceArtifactDocumentService::SnapshotLocked() const

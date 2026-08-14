@@ -129,7 +129,7 @@ std::optional<std::vector<std::uint8_t>> EncodeControlProfileRpcRequest(const Co
 	Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(request.create.kind));
 	std::uint8_t inheritance = (request.create.resourceInheritance.settings ? 1 : 0) | (request.create.resourceInheritance.keybindings ? 2 : 0)
 		| (request.create.resourceInheritance.tasks ? 4 : 0) | (request.create.resourceInheritance.snippets ? 8 : 0)
-		| (request.create.resourceInheritance.extensions ? 16 : 0) | (request.create.resourceInheritance.globalState ? 32 : 0);
+		| (request.create.resourceInheritance.globalState ? 32 : 0);
 	Put<std::uint8_t>(bytes, inheritance);
 	if (request.create.legacyAliases.size() > 256) return std::nullopt;
 	Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(request.create.legacyAliases.size()));
@@ -151,7 +151,7 @@ std::optional<ControlProfileRpcRequest> DecodeControlProfileRpcRequest(std::span
 	if (!GetUtf8(bytes, offset, request.mutation.operationId) || !GetWide(bytes, offset, request.profileId) || !GetWide(bytes, offset, request.displayName)
 		|| !GetWide(bytes, offset, request.create.profileId) || !GetWide(bytes, offset, request.create.displayName) || !Get(bytes, offset, kind) || !IsKind(kind) || !Get(bytes, offset, inheritance) || inheritance > 63 || !Get(bytes, offset, aliases) || aliases > 256) return std::nullopt;
 	request.create.kind = static_cast<profiles::UserDataProfileKind>(kind);
-	request.create.resourceInheritance = { (inheritance & 1) != 0, (inheritance & 2) != 0, (inheritance & 4) != 0, (inheritance & 8) != 0, (inheritance & 16) != 0, (inheritance & 32) != 0 };
+	request.create.resourceInheritance = { (inheritance & 1) != 0, (inheritance & 2) != 0, (inheritance & 4) != 0, (inheritance & 8) != 0, (inheritance & 32) != 0 };
 	for (std::uint32_t index = 0; index < aliases; ++index) { std::wstring alias; if (!GetWide(bytes, offset, alias)) return std::nullopt; request.create.legacyAliases.push_back(std::move(alias)); }
 	if (flags & kHasWorkspace) { std::wstring text; auto uri = GetWide(bytes, offset, text) ? profiles::WorkspaceUri::Parse(text) : ::platform::uri::UriParseResult{}; if (!uri) return std::nullopt; request.workspaceUri = std::move(*uri.value); }
 	if (flags & kHasEmptyWindow) { profiles::EmptyWindowId id; if (!GetWide(bytes, offset, id)) return std::nullopt; request.emptyWindowId = std::move(id); }
@@ -170,7 +170,7 @@ std::optional<std::vector<std::uint8_t>> EncodeControlProfileRpcResponse(const C
 		Put<std::uint8_t>(bytes, static_cast<std::uint8_t>(profile->kind));
 		const auto inheritance = static_cast<std::uint8_t>((profile->resourceInheritance.settings ? 1 : 0)
 			| (profile->resourceInheritance.keybindings ? 2 : 0) | (profile->resourceInheritance.tasks ? 4 : 0)
-			| (profile->resourceInheritance.snippets ? 8 : 0) | (profile->resourceInheritance.extensions ? 16 : 0)
+			| (profile->resourceInheritance.snippets ? 8 : 0)
 			| (profile->resourceInheritance.globalState ? 32 : 0));
 		Put<std::uint8_t>(bytes, inheritance); Put<std::uint32_t>(bytes, static_cast<std::uint32_t>(profile->legacyAliases.size()));
 		for (const auto& alias : profile->legacyAliases) if (!PutWide(bytes, alias)) return std::nullopt;
@@ -186,7 +186,7 @@ std::optional<ControlProfileRpcResponse> DecodeControlProfileRpcResponse(std::sp
 		profiles::UserDataProfileDescriptor profile; std::uint8_t kind = 0, inheritance = 0; std::uint32_t aliases = 0;
 		if (!GetWide(bytes, offset, profile.profileId) || !GetWide(bytes, offset, profile.displayName) || !Get(bytes, offset, kind) || !IsKind(kind) || !Get(bytes, offset, inheritance) || inheritance > 63 || !Get(bytes, offset, aliases) || aliases > 256) return std::nullopt;
 		profile.kind = static_cast<profiles::UserDataProfileKind>(kind);
-		profile.resourceInheritance = { (inheritance & 1) != 0, (inheritance & 2) != 0, (inheritance & 4) != 0, (inheritance & 8) != 0, (inheritance & 16) != 0, (inheritance & 32) != 0 };
+		profile.resourceInheritance = { (inheritance & 1) != 0, (inheritance & 2) != 0, (inheritance & 4) != 0, (inheritance & 8) != 0, (inheritance & 32) != 0 };
 		for (std::uint32_t index = 0; index < aliases; ++index) { std::wstring alias; if (!GetWide(bytes, offset, alias)) return std::nullopt; profile.legacyAliases.push_back(std::move(alias)); }
 		response.result.resolved = { profiles::UserDataProfileResolveStatus::Resolved, 0, profiles::UserDataProfileResolveSource::ExplicitProfile, std::move(profile) };
 	}

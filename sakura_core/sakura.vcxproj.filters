@@ -11,9 +11,7 @@
     <Filter Include="Resource Files\images">
       <UniqueIdentifier>{7740d8e5-2c5b-43b3-8180-f2cefab85f70}</UniqueIdentifier>
     </Filter>
-    <Filter Include="C Source Files">
-      <UniqueIdentifier>{6a236fae-9c81-4376-87fc-725f282ca48a}</UniqueIdentifier>
-    </Filter>
+
     <Filter Include="Cpp Source Files">
       <UniqueIdentifier>{b6f61c8b-ac13-4987-9a99-2b7da1df0b64}</UniqueIdentifier>
     </Filter>
@@ -110,9 +108,7 @@
     <Filter Include="Cpp Source Files\textmate">
       <UniqueIdentifier>{69fe5215-dceb-4b3a-bc5d-008353d018b8}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Cpp Source Files\externals">
-      <UniqueIdentifier>{29e70cdd-355d-4954-be6c-54e8cfd725c8}</UniqueIdentifier>
-    </Filter>
+
     <Filter Include="Cpp Source Files\externals\Onigmo">
       <UniqueIdentifier>{638f3d6d-82a0-4ade-b573-bf9d4bc39c1c}</UniqueIdentifier>
     </Filter>
@@ -146,9 +142,7 @@
     <Filter Include="Cpp Source Files\cmd">
       <UniqueIdentifier>{0595cd15-40b1-4098-a613-dd41df2e4d6b}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Cpp Source Files\extension">
-      <UniqueIdentifier>{3c7a1f52-6b40-4de8-9a11-5f2c8e0d7b46}</UniqueIdentifier>
-    </Filter>
+
     <Filter Include="Cpp Source Files\extmodule">
       <UniqueIdentifier>{8f308ded-1d7f-4015-a253-647de0e447d0}</UniqueIdentifier>
     </Filter>
@@ -682,9 +676,6 @@
     <ClInclude Include="..\sakura_core\view\CEditView.h">
       <Filter>Cpp Source Files\view</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\view\CEditViewHoverPopup.h">
-      <Filter>Cpp Source Files\view</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\view\CEditView_Paint.h">
       <Filter>Cpp Source Files\view</Filter>
     </ClInclude>
@@ -1027,9 +1018,6 @@
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchBannerHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\notification\CNotificationHost.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1040,6 +1028,12 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\quickinput\CQuickInputDialog.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\quickinput\QuickInputTypes.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchRuntime.h">
@@ -1066,22 +1060,11 @@
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\icons\CExtensionIconFont.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
+
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\LabelRunPainter.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\hover\HoverMarkdown.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\hover\CHoverWidget.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.h">
@@ -1117,9 +1100,7 @@
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\keybinding\ExtensionKeybindingMap.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
+
 	<ClInclude Include="..\sakura_core\workbench\keybinding\KeybindingChord.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1141,10 +1122,8 @@
 	<ClInclude Include="..\sakura_core\workbench\activity\CActivityBar.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.h">
+
+	<ClInclude Include="..\sakura_core\workbench\panel\CBottomPanelTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h">
@@ -1186,18 +1165,10 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionIconDecoder.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionInstallButtonState.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionSearchFilter.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\extension\ExtensionSearchQuery.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
+
+
+
+
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1279,9 +1250,7 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.h">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClInclude>
+
     <ClInclude Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -1450,54 +1419,26 @@
     <ClInclude Include="..\sakura_core\include\sakura\serialization\JsoncDocument.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultCapabilityService.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultExtensionGrantAuthority.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\CSecretVaultLegacyMigrationCoordinator.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\CWindowsDpapiSecretVaultService.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultService.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultCapabilityService.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultExtensionGrantAuthority.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\ISecretVaultLegacyMigrationCoordinator.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\LegacyExtensionSecretVaultReader.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultCapabilityTypes.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultExtensionGrantAuthorityTypes.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\platform\secrets\SecretVaultTypes.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
+
+
+
+
+
+
+
+
+
+
+
+
+
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
 	<ClInclude Include="..\sakura_core\platform\controlipc\ControlProfileRpc.h">
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClInclude>
-    <ClInclude Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
+
     <ClInclude Include="..\sakura_core\platform\controlipc\ControlStorageRpc.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -1519,9 +1460,7 @@
 	<ClInclude Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.h">
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClInclude>
-    <ClInclude Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.h">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClInclude>
+
     <ClInclude Include="..\sakura_core\include\sakura\security\CurrentUserSecurityAttributes.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -1828,117 +1767,43 @@
     <ClInclude Include="..\sakura_core\cmd\CViewCommander_inline.h">
       <Filter>Cpp Source Files\cmd</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionManager.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\ExtensionUntrustedWorkspaceOverride.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionProfileState.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionPane.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionCommandPalette.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\ExtensionMenuProjection.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionContributionRegistry.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchServiceBridge.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionWorkbenchUi.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionQuickInputDialog.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionContextKeys.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionDocumentBridge.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostBroker.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostController.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantLifecycle.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantRuntimeAdapter.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostProcess.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostSharedState.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionHostStateMachine.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionPipeTransport.h">
-      <Filter>extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionNotificationCenter.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionSecretStorage.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionSecretVaultStorage.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\IExtensionSecretStorage.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionStatusBar.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionViewRegistry.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionRpcProtocol.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionService.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CExtensionClientReconnectPolicy.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CHttpClient.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\CJsonRpcFrameCodec.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\COpenVsxClient.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\openvsx\IOpenVsxRegistryClient.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\openvsx\OpenVsxProductionClient.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\openvsx\OpenVsxProtocol.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\extension\openvsx\OpenVsxRequestServiceAdapter.h">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClInclude>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     <ClInclude Include="..\sakura_core\extmodule\CBregexp.h">
       <Filter>Cpp Source Files\extmodule</Filter>
     </ClInclude>
@@ -2587,9 +2452,6 @@
     <ClCompile Include="..\sakura_core\view\CEditView.cpp">
       <Filter>Cpp Source Files\view</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\view\CEditViewHoverPopup.cpp">
-      <Filter>Cpp Source Files\view</Filter>
-    </ClCompile>
     <ClCompile Include="..\sakura_core\view\CEditView_Cmdgrep.cpp">
       <Filter>Cpp Source Files\view</Filter>
     </ClCompile>
@@ -3019,9 +2881,6 @@
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchBannerHost.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\notification\CNotificationHost.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3029,6 +2888,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\quickinput\CQuickInputDialog.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchRuntime.cpp">
@@ -3046,18 +2908,7 @@
 	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\icons\CExtensionIconFont.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\icons\CFileIconThemeRegistry.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\hover\HoverMarkdown.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\hover\CHoverWidget.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
+
 	<ClCompile Include="..\sakura_core\workbench\commands\WorkbenchContextKeyService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3085,9 +2936,7 @@
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\keybinding\ExtensionKeybindingMap.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
+
 	<ClCompile Include="..\sakura_core\workbench\keybinding\KeybindingChord.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3106,10 +2955,8 @@
 	<ClCompile Include="..\sakura_core\workbench\activity\CActivityBar.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionSidebarTool.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\extension\CExtensionBottomPanelTool.cpp">
+
+	<ClCompile Include="..\sakura_core\workbench\panel\CBottomPanelTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\explorer\CExplorerTool.cpp">
@@ -3145,18 +2992,10 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitInitCloneCommands.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionIconDecoder.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionInstallButtonState.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionSearchFilter.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\extension\ExtensionSearchQuery.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
+
+
+
+
 	<ClCompile Include="..\sakura_core\workbench\scm\GitStageCommands.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3232,9 +3071,7 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\workbench\editor\CExtensionDetailSurface.cpp">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClCompile>
+
     <ClCompile Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
@@ -3310,36 +3147,20 @@
     <ClCompile Include="..\sakura_core\platform\profiles\UserDataProfileBootstrap.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\CInMemorySecretVaultService.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultCapabilityService.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultExtensionGrantAuthority.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\CSecretVaultLegacyMigrationCoordinator.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\CWindowsDpapiSecretVaultService.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\LegacyExtensionSecretVaultReader.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\platform\secrets\SecretVaultTypes.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
+
+
+
+
+
+
+
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlPlatformRpcServerAdapter.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
 	<ClCompile Include="..\sakura_core\platform\controlipc\ControlProfileRpc.cpp">
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClCompile>
-    <ClCompile Include="..\sakura_core\platform\controlipc\ControlSecretVaultRpc.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
+
     <ClCompile Include="..\sakura_core\platform\controlipc\ControlStorageRpc.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
@@ -3361,9 +3182,7 @@
 	<ClCompile Include="..\sakura_core\platform\controlipc\EditorControlPlatformRuntime.cpp">
 	  <Filter>Cpp Source Files\platform</Filter>
 	</ClCompile>
-    <ClCompile Include="..\sakura_core\platform\controlipc\EditorSecretVaultClient.cpp">
-      <Filter>Cpp Source Files\platform</Filter>
-    </ClCompile>
+
     <ClCompile Include="..\sakura_core\platform\storage\CInMemoryStorageService.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
@@ -3793,9 +3612,7 @@
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Edit_word_line.cpp">
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\cmd\CViewCommander_Extension.cpp">
-      <Filter>Cpp Source Files\cmd</Filter>
-    </ClCompile>
+
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_File.cpp">
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
@@ -3832,105 +3649,39 @@
     <ClCompile Include="..\sakura_core\cmd\CViewCommander_Window.cpp">
       <Filter>Cpp Source Files\cmd</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionManager.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\ExtensionUntrustedWorkspaceOverride.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionProfileState.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionPane.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionCommandPalette.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\ExtensionMenuProjection.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionContributionRegistry.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchDispatcher.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchServiceBridge.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionWorkbenchUi.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionQuickInputDialog.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionContextKeys.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionDocumentBridge.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostBroker.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostController.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantLifecycle.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostSecretVaultGrantRuntimeAdapter.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostProcess.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostSharedState.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionHostStateMachine.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionPipeTransport.cpp">
-      <Filter>extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionNotificationCenter.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionSecretStorage.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionSecretVaultStorage.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionStatusBar.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionViewRegistry.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionRpcProtocol.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CExtensionService.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CHttpClient.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\CJsonRpcFrameCodec.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\COpenVsxClient.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\openvsx\OpenVsxProductionClient.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\extension\openvsx\OpenVsxProtocol.cpp">
-      <Filter>Cpp Source Files\extension</Filter>
-    </ClCompile>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
     <ClCompile Include="..\sakura_core\extmodule\CBregexp.cpp">
       <Filter>Cpp Source Files\extmodule</Filter>
     </ClCompile>

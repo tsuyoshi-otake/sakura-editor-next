@@ -3,7 +3,7 @@
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
-#include "workbench/extension/CExtensionBottomPanelTool.h"
+#include "workbench/panel/CBottomPanelTool.h"
 #include "terminal/model/TerminalModel.h"
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 
@@ -310,15 +310,15 @@ TEST(TerminalTool, QueueFullInteractiveInputIsRetriedInsteadOfSilentlyDiscarded)
 
 TEST(TerminalTool, BottomPanelLayoutNeverInvertsContentWhileShrinking)
 {
-	using workbench::extension::CalculateExtensionBottomPanelVerticalLayout;
+	using workbench::panel::CalculateBottomPanelVerticalLayout;
 
-	const auto collapsed = CalculateExtensionBottomPanelVerticalLayout(12, 34, 28);
+	const auto collapsed = CalculateBottomPanelVerticalLayout(12, 34, 28);
 	EXPECT_EQ(12, collapsed.headerHeight);
 	EXPECT_EQ(12, collapsed.contentTop);
 	EXPECT_EQ(0, collapsed.contentHeight);
 	EXPECT_EQ(0, collapsed.outputSelectorHeight);
 
-	const auto visible = CalculateExtensionBottomPanelVerticalLayout(200, 34, 28);
+	const auto visible = CalculateBottomPanelVerticalLayout(200, 34, 28);
 	EXPECT_EQ(34, visible.headerHeight);
 	EXPECT_EQ(34, visible.contentTop);
 	EXPECT_EQ(166, visible.contentHeight);

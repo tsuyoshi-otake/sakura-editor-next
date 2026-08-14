@@ -196,7 +196,7 @@ TEST(ConfigurationProxyService, RequiresSystemWhenNoManualPolicyExists)
 
 TEST(ConfigurationProxyService, FallbackAcceptsSystemNoProxyRequiredAsSelectedDirect)
 {
-	// Regression for the OpenVSX-unreachable defect: a machine with no proxy
+	// Regression for a request-client reachability defect: a machine with no proxy
 	// configured must resolve to a direct connection, not fail closed. Before
 	// the fix, NoProxyRequired did not exist and the resolver could only
 	// answer Unavailable here, which SelectProxy turned into UnsupportedPolicy.

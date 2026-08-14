@@ -549,7 +549,7 @@
 	-- バージョン1000以降を本家統合までの間、使わせてください。かなり頻繁に構成が変更されると思われるので。by kobake 2008.03.02
 
 Version 184:
-CommonSetting_Workbench に VS Code 互換 Extension Views の表示状態と幅を追加
+CommonSetting_Workbench に Auxiliary Bar の表示状態と幅を追加
 
 */
 #define N_SHAREDATA_VERSION		184
@@ -757,32 +757,12 @@ enum e_PM_SETCARETPOS_SELECTSTATE {
 //! 行数を取得
 #define MYWM_GETLINECOUNT (WM_APP+226)
 
-//! 制御プロセスが所有する共有拡張ホストの editor lease を取得・解放する
-//! wParam: editor process ID
-#define MYWM_EXTENSION_HOST_ACQUIRE (WM_APP+227)
-#define MYWM_EXTENSION_HOST_RELEASE (WM_APP+228)
-//! wParam: generation (x64), lParam: validated server process ID
-#define MYWM_EXTENSION_HOST_ACCEPT (WM_APP+229)
-//! wParam: generation (x64), lParam: connection error code
-#define MYWM_EXTENSION_HOST_LOST (WM_APP+230)
-//! wParam: EExtensionWorkbenchChange bit flags
-#define MYWM_EXTENSION_WORKBENCH_CHANGED (WM_APP+231)
-//! lParam: CExtensionService-owned synchronous notification prompt
-#define MYWM_EXTENSION_NOTIFICATION_PROMPT (WM_APP+232)
-//! UI thread で拡張 Quick Pick / Input Box を表示する
-#define MYWM_EXTENSION_QUICK_INPUT_PROMPT (WM_APP+233)
-//! UI thread で versioned workspace edit を1つのnative undo単位として適用する
-#define MYWM_EXTENSION_APPLY_EDIT_PROMPT (WM_APP+235)
 //! WAIT_ABANDONED 後に control process へ stale AppNode の同期修復を依頼する
 #define MYWM_RECOVER_APPNODE (WM_APP+236)
-//! UI thread で VS Code TextEditor.options の文書ローカル設定を適用する
-#define MYWM_EXTENSION_EDITOR_OPTIONS_PROMPT (WM_APP+237)
 //! Committed Editor Core state changed; the UI thread must re-read the current snapshot.
 #define MYWM_EDITOR_CORE_CHANGED (WM_APP+238)
 //! Committed workbench layout state changed; the UI thread must re-read the current snapshot.
 #define MYWM_WORKBENCH_LAYOUT_CHANGED (WM_APP+239)
-//! Re-enumerate the profile-scoped OpenVSX installation and replace the Secret Vault approval snapshot.
-#define MYWM_EXTENSION_HOST_REFRESH_INVENTORY (WM_APP+240)
 //! Committed Problems or Output service state changed; the UI thread must re-read copied snapshots.
 #define MYWM_WORKBENCH_SERVICE_PROJECTION_CHANGED (WM_APP+241)
 //! 初回描画と first-idle 通知の後で、起動中に保留したワークベンチ処理を完了する

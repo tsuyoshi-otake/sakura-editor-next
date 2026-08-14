@@ -64,30 +64,18 @@ ControlPlatformServiceHostDependencies ProductionDependencies()
 } // namespace
 
 CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
-	std::shared_ptr<storage::IStorageAuthority> storage, std::shared_ptr<secrets::ISecretVaultService> vault,
-	std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
-	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
-	std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
+	std::shared_ptr<storage::IStorageAuthority> storage,
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles) :
-	CControlPlatformServiceHost(std::move(options), std::move(storage), std::move(vault), std::move(capabilities),
-		std::move(grantAuthority), std::move(migration), std::move(profiles), ProductionDependencies())
+	CControlPlatformServiceHost(std::move(options), std::move(storage), std::move(profiles), ProductionDependencies())
 {
 }
 
-CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
+	CControlPlatformServiceHost::CControlPlatformServiceHost(ControlPlatformServiceHostOptions options,
 	std::shared_ptr<storage::IStorageAuthority> storage,
-	std::shared_ptr<secrets::ISecretVaultService> vault,
-	std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
-	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
-	std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
 	ControlPlatformServiceHostDependencies dependencies) :
 	m_options(std::move(options)),
 	m_storage(std::move(storage)),
-	m_vault(std::move(vault)),
-	m_capabilities(std::move(capabilities)),
-	m_grantAuthority(std::move(grantAuthority)),
-	m_migration(std::move(migration)),
 	m_profiles(std::move(profiles)),
 	m_dependencies(std::move(dependencies))
 {
@@ -109,10 +97,6 @@ bool CControlPlatformServiceHost::HasValidOptions(std::wstring& diagnostic) cons
 	else if (!profiles::IsCanonicalProfileAuthorityId(m_options.profileId)) diagnostic = L"profileId must be a canonical profile authority identifier";
 	else if (!m_storage) diagnostic = L"storage is required";
 	else if (!m_profiles) diagnostic = L"profile registry is required";
-	else if (!m_vault || !m_capabilities || !m_grantAuthority || !m_migration) diagnostic = L"secret vault authorities are required";
-	else if (m_vault->GetProfileId() != m_options.profileId || m_capabilities->GetProfileId() != m_options.profileId) diagnostic = L"secret authorities must match profileId";
-	else if (m_grantAuthority->GetProfileId() != m_options.profileId
-		|| m_grantAuthority->GetControlConnectionGeneration() != m_options.authorityGeneration) diagnostic = L"secret grant authority must match control identity";
 	else if (!m_dependencies.endpointFactory || !m_dependencies.pipeServerFactory) diagnostic = L"control IPC factories are required";
 	else if (m_options.pipeOptions.maximumSessions == 0 || m_options.pipeOptions.maximumSessions > 63) diagnostic = L"maximumSessions must be between 1 and 63";
 	else if (m_options.pipeOptions.maximumQueuedBytes == 0 ||
@@ -195,7 +179,7 @@ ControlPlatformServiceHostResult CControlPlatformServiceHost::Start()
 		try {
 			m_adapter = std::make_shared<CControlPlatformRpcServerAdapter>(
 				ControlStorageRpcSessionIdentity{ m_options.profileId, m_options.authorityGeneration },
-				m_storage, m_vault, m_capabilities, m_grantAuthority, m_migration, m_profiles);
+				m_storage, m_profiles);
 		} catch (...) {
 			RollbackStart();
 			return Result(EControlPlatformServiceHostResultCode::AdapterCreateFailed, L"control platform RPC adapter creation failed");

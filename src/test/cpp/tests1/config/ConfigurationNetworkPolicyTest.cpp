@@ -67,7 +67,6 @@ TEST(ConfigurationNetworkPolicy, ReturnsSafeDefaultsForOneProfile)
 	EXPECT_TRUE(result.snapshot->systemCertificates);
 	ASSERT_TRUE(result.snapshot->requestLimits.timeout.has_value());
 	EXPECT_EQ(std::chrono::seconds(30), *result.snapshot->requestLimits.timeout);
-	EXPECT_EQ(L"https://open-vsx.org", result.snapshot->openVsxRegistry);
 }
 
 // Regression test: the Default profile's selected user-data identity is the literal
@@ -82,7 +81,6 @@ TEST(ConfigurationNetworkPolicy, AcceptsTheDefaultUserDataProfileIdentity)
 
 	ASSERT_EQ(EConfigurationNetworkPolicyOutcome::Ready, result.outcome);
 	ASSERT_TRUE(result.snapshot.has_value());
-	EXPECT_EQ(L"https://open-vsx.org", result.snapshot->openVsxRegistry);
 }
 
 TEST(ConfigurationNetworkPolicy, UsesProfileOverridesAndNeverReadsWorkspaceSource)
@@ -97,7 +95,6 @@ TEST(ConfigurationNetworkPolicy, UsesProfileOverridesAndNeverReadsWorkspaceSourc
 		{ "http.proxyStrictSSL", ConfigurationValue(false) },
 		{ "http.systemCertificates", ConfigurationValue(false) },
 		{ "http.timeout", ConfigurationValue(45000) },
-		{ "extensions.openVsx.registry", ConfigurationValue(L"https://registry.example.test/api") },
 	}, "profile-settings", 0 }).outcome);
 	CConfigurationNetworkPolicy policy(service, std::wstring(kProfileId));
 	const auto result = policy.Snapshot();
@@ -111,7 +108,6 @@ TEST(ConfigurationNetworkPolicy, UsesProfileOverridesAndNeverReadsWorkspaceSourc
 	EXPECT_FALSE(result.snapshot->systemCertificates);
 	ASSERT_TRUE(result.snapshot->requestLimits.timeout.has_value());
 	EXPECT_EQ(std::chrono::seconds(45), *result.snapshot->requestLimits.timeout);
-	EXPECT_EQ(L"https://registry.example.test/api", result.snapshot->openVsxRegistry);
 
 	const auto workspaceUpdate = service.Update({
 		{ EConfigurationScope::Workspace, WorkspaceTarget(), "workspace-settings", 0 },
@@ -168,12 +164,6 @@ TEST(ConfigurationNetworkPolicy, RejectsUnsafeConfiguredUrlsWithoutLeakingTheirV
 	EXPECT_EQ(EConfigurationNetworkPolicyOutcome::InvalidConfiguration, proxyPathResult.outcome);
 	EXPECT_EQ(std::string::npos, proxyPathResult.diagnostic.find("private-path"));
 
-	ASSERT_EQ(EConfigurationOutcome::Applied, service.Update({ source, "http.proxy", ConfigurationValue(L""), "clear-proxy", 2 }).outcome);
-	ASSERT_EQ(EConfigurationOutcome::Applied, service.Update({ source, "extensions.openVsx.registry",
-		ConfigurationValue(L"http://registry.example.test"), "registry-downgrade", 3 }).outcome);
-	const auto registryResult = policy.Snapshot();
-	EXPECT_EQ(EConfigurationNetworkPolicyOutcome::InvalidConfiguration, registryResult.outcome);
-	EXPECT_EQ(std::string::npos, registryResult.diagnostic.find("registry.example.test"));
 }
 
 TEST(ConfigurationNetworkPolicy, RejectsAnInvalidUserDataProfileTarget)
@@ -215,10 +205,10 @@ TEST(ConfigurationNetworkPolicy, KeepsUnknownEntriesLatentAndDoesNotDefineProxyA
 	auto service = Service();
 	const auto source = ProfileSource();
 	ASSERT_EQ(EConfigurationOutcome::Applied, service.ReplaceSource({ source, {
-		{ "extension.futureNetworkSetting", ConfigurationValue(L"retained") },
+		{ "future.networkSetting", ConfigurationValue(L"retained") },
 	}, "latent", 0 }).outcome);
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey,
-		service.GetValue("extension.futureNetworkSetting", ProfileTarget()).outcome);
+		service.GetValue("future.networkSetting", ProfileTarget()).outcome);
 	EXPECT_EQ(EConfigurationOutcome::InvalidKey,
 		service.GetValue("http.proxyAuthorization", ProfileTarget()).outcome);
 

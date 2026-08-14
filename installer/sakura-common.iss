@@ -357,9 +357,10 @@ Source: "sakura\sakura.chm";           DestDir: "{app}";                  Compon
 Source: "sakura\macro.chm";            DestDir: "{app}";                  Components: help
 Source: "sakura\plugin.chm";           DestDir: "{app}";                  Components: help
 Source: "sakura\sakura.exe.ini";       DestDir: "{app}";                  Components: main; Check: isMultiUserEnabled; Flags: onlyifdoesntexist;
-Source: "sakura\exthost\*";             DestDir: "{app}\exthost";         Components: main; Flags: recursesubdirs
-
 Source: "sakura\keyword\*";             DestDir: "{app}\keyword";         Components: keyword; Flags: recursesubdirs
+
+[InstallDelete]
+Type: filesandordirs; Name: "{app}\exthost"
 
 [Registry]
 ; registry for all user (Admin only)

@@ -8,7 +8,7 @@
 
 #include <string_view>
 
-//! Stable workbench identifiers shared by native and extension contributions.
+//! Stable workbench identifiers shared by native workbench components.
 namespace workbench::layout::ids {
 
 namespace part {
@@ -28,7 +28,6 @@ inline constexpr std::string_view Explorer = "workbench.view.explorer";
 inline constexpr std::string_view Search = "workbench.view.search";
 inline constexpr std::string_view RunAndDebug = "workbench.view.debug";
 inline constexpr std::string_view SourceControl = "workbench.view.scm";
-inline constexpr std::string_view Extensions = "workbench.view.extensions";
 inline constexpr std::string_view Problems = "workbench.panel.markers";
 inline constexpr std::string_view Output = "workbench.panel.output";
 inline constexpr std::string_view Terminal = "terminal";
@@ -49,7 +48,6 @@ inline constexpr std::string_view DebugCallStack = "workbench.debug.callStackVie
 inline constexpr std::string_view DebugLoadedScripts = "workbench.debug.loadedScriptsView";
 inline constexpr std::string_view DebugBreakpoints = "workbench.debug.breakPointsView";
 inline constexpr std::string_view SourceControl = "workbench.scm";
-inline constexpr std::string_view Extensions = "workbench.views.extensions.installed";
 inline constexpr std::string_view Problems = "workbench.panel.markers.view";
 inline constexpr std::string_view Output = "workbench.panel.output";
 inline constexpr std::string_view Terminal = "terminal";

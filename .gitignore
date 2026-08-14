@@ -14,9 +14,6 @@
 /MinGW
 /Win32
 /x64
-/src/exthost/dist
-/src/exthost/node_modules
-
 # ローカルの機密情報・認証設定
 .env
 .env.*

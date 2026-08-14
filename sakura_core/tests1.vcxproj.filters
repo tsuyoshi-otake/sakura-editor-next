@@ -1,12 +1,13 @@
 ﻿<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="4.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup>
+    <ClCompile Include="..\src\test\cpp\tests1\ZipArchiveFixture.cpp">
+      <Filter>Test Files</Filter>
+    </ClCompile>
     <Filter Include="Test Files">
       <UniqueIdentifier>{690c7184-b796-460a-8fed-595dfa1930f4}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Deprecated Codes">
-      <UniqueIdentifier>{594146a8-ae7c-401b-a064-af37dac4216e}</UniqueIdentifier>
-    </Filter>
+
     <Filter Include="Other Files">
       <UniqueIdentifier>{0eefa0df-ca7f-489c-9844-9a182e1dba18}</UniqueIdentifier>
     </Filter>
@@ -127,9 +128,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\window\DocumentTabActionLayoutTest.cpp">
 	  <Filter>Test Files\window</Filter>
 	</ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\workbench\CNotificationHostTest.cpp">
-      <Filter>Test Files\workbench</Filter>
-    </ClCompile>
+
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
@@ -205,9 +204,6 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditDocWorkingCopyPersistenceAdapterTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchContributionRegistryTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchCommandRegistryTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -223,21 +219,15 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutStateServiceTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionKeybindingMapTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
+
+
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemsOutputPanelProjectionTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
+
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -250,27 +240,15 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSyncCommandsTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileIconThemeRegistryTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\NativeWorkbenchToolRequestTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
+
+
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandsTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewIconDecoderTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewInstallButtonStateTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchFilterTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchQueryTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
+
+
+
+
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandRegistryTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -286,9 +264,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\WebviewUnsupportedTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
+
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -340,24 +316,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\LegacyExtensionSecretVaultReaderTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultLegacyMigrationCoordinatorTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultCapabilityServiceTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultExtensionGrantAuthorityTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultServiceTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\WindowsDpapiSecretVaultServiceTest.cpp">
-      <Filter>Test Files\platform</Filter>
-    </ClCompile>
+
+
+
+
+
+
     <ClCompile Include="..\src\test\cpp\tests1\platform\AtomicFileStorageServiceTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
@@ -379,12 +343,8 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcSecurityTest.cpp">
       <Filter>Test Files\platform\controlipc</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRpcServerAdapterTest.cpp">
-      <Filter>Test Files\platform\controlipc</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSecretVaultRpcTest.cpp">
-      <Filter>Test Files\platform\controlipc</Filter>
-    </ClCompile>
+
+
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlStorageRpcTest.cpp">
       <Filter>Test Files\platform\controlipc</Filter>
     </ClCompile>
@@ -397,30 +357,18 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformEndpointDiscoveryReaderTest.cpp">
       <Filter>Test Files\platform\controlipc</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRuntimeTest.cpp">
-      <Filter>Test Files\platform\controlipc</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformServiceHostTest.cpp">
-      <Filter>Test Files\platform\controlipc</Filter>
-    </ClCompile>
+
+
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformClientTest.cpp">
       <Filter>Test Files\platform\controlipc</Filter>
     </ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorControlPlatformRuntimeTest.cpp">
 	  <Filter>Test Files\platform\controlipc</Filter>
 	</ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorSecretVaultClientTest.cpp">
-      <Filter>Test Files\platform\controlipc</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionHostSecretVaultGrantLifecycleTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionHostControllerTest.cpp">
-	  <Filter>Test Files</Filter>
-	</ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\SecretVaultStorageTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
+
+
+
+
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp">
       <Filter>Test Files\platform</Filter>
     </ClCompile>
@@ -637,84 +585,35 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cerrorinfo.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionclientreconnectpolicy.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiondocumentbridge.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostbroker.cpp">
-      <Filter>tests1</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostintegration.cpp">
-      <Filter>tests1</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostprocess.cpp">
-      <Filter>tests1</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostsharedstate.cpp">
-      <Filter>tests1</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhoststatemachine.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionpipetransport.cpp">
-      <Filter>tests1</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionsecretstorage.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchmodels.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchdispatcher.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchui.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-hovermarkdown.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
+
+
+
+
+
+
+
+
+
+
+
+
+
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodiconfont.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionviewregistry.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionrpcprotocol.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cjsonrpcframecodec.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionContributionRegistryTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionMenuProjectionTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxRequestServiceAdapterTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxProductionClientTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionManagerStreamedInstallTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionUntrustedWorkspaceSupportTest.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
+
+
+
+
+
+
+
+
+
+
     <ClCompile Include="..\src\test\cpp\tests1\test-ctextmetrics.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
@@ -772,15 +671,10 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-crunningtimer.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\ZipArchiveFixture.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensioniconfont.cpp">
-      <Filter>Test Files</Filter>
-    </ClCompile>
+
     <ClCompile Include="..\src\test\cpp\tests1\test-statictype.cpp">
       <Filter>Test Files</Filter>
     </ClCompile>
@@ -818,9 +712,6 @@
     </ClInclude>
     <ClInclude Include="..\src\test\resources\testing\StartEditorProcess.hpp">
       <Filter>Other Files\testing</Filter>
-    </ClInclude>
-    <ClInclude Include="..\src\test\cpp\tests1\ZipArchiveFixture.h">
-      <Filter>Other Files</Filter>
     </ClInclude>
     <ClInclude Include="..\src\test\cpp\tests1\dlg\ModalDialogCloser.hpp">
       <Filter>Other Files\dlg</Filter>

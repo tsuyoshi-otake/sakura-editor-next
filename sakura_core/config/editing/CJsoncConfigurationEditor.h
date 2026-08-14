@@ -28,7 +28,7 @@
 namespace config::editing {
 
 //! The document kind is deliberately separate from ConfigurationSource.  A UI
-//! or extension host can therefore select a concrete settings resource without
+//! or another client can therefore select a concrete settings resource without
 //! coupling this textual editor to effective-value resolution.
 enum class EConfigurationDocumentScope : std::uint8_t {
 	Profile,

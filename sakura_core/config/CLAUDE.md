@@ -10,11 +10,11 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
 - Resolve default, application, profile/user, workspace, folder, and language
   override scopes in a documented order.
 - Keep configuration values separate from Memento state, secrets, working-copy
-  backups, extension enablement, and profile association.
+  backups, and profile association.
 - P0 defines descriptors, inspection, effective-value resolution, revisioned
   change events, workspace identity/trust, and variable-resolution boundaries.
 - P2 adds JSONC-preserving edits, `.vscode/settings.json`, `tasks.json`,
-  `launch.json`, `extensions.json`, and `.code-workspace` multi-root handling.
+  `launch.json`, and `.code-workspace` multi-root handling.
 - Parse errors never cause the original configuration file to be overwritten;
   retain the last valid model and publish a diagnostic.
 - One configuration document is one transaction. Commit its base entries and
@@ -25,10 +25,10 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   service-wide committed revision; repeated `GetValue` calls are not a coherent
   policy read. Source-local revisions remain the CAS tokens for writes.
 - Network policy is profile/application scoped. Workspace files cannot inject a
-  proxy or OpenVSX registry, proxy credentials are never configuration keys, and
-  the OpenVSX endpoint must be HTTPS. `http.proxyStrictSSL=false` is represented
-  for compatibility but must terminate as unsupported at a production transport
-  composition boundary rather than disabling certificate validation silently.
+  proxy, proxy credentials are never configuration keys, and
+  `http.proxyStrictSSL=false` is represented for compatibility but must terminate
+  as unsupported at a production transport boundary rather than disabling
+  certificate validation silently.
 - `CConfigurationProxyService::SelectProxy` must keep "the system reports that
   no proxy applies" (`NoProxyRequired` -> `Direct()`) separate from "the system
   could not answer" (`Unavailable` -> `Unsupported`, unless `Fallback` has a
@@ -74,15 +74,15 @@ Sakura INI serialization remains behind an adapter under `env/` until migrated.
   only the VS Code-compatible top-level `"[languageId]"` object; a combined
   selector is not silently split because that could create overlapping source
   contributions. Missing `settings.json` creation uses expected-missing CAS.
-- `.vscode/tasks.json`, `launch.json`, and `extensions.json`, plus their
+- `.vscode/tasks.json` and `launch.json`, plus their
   `.code-workspace` members, are routed by the separate bounded
   `CWorkspaceArtifactDocumentService` and its file-source/watch controller.
   They never become effective Settings entries. Tasks execution, DAP launch
-  consumption, and extension-recommendation application remain pending backend
-  consumers of those accepted artifact snapshots.
+  consumption remains a pending backend consumer of those accepted artifact
+  snapshots.
 
-Configuration UI and extension RPC consume the same service. They may not read
-or write `CShareData_IO`, INI files, or workspace JSON directly.
+Configuration UI consumes this service and may not read or write
+`CShareData_IO`, INI files, or workspace JSON directly.
 
 ## Network Policy Identity Checkpoint (2026-08-01)
 
@@ -245,9 +245,7 @@ or write `CShareData_IO`, INI files, or workspace JSON directly.
   See [`../window/CLAUDE.md`](../window/CLAUDE.md)'s "Untrusted file load gate"
   section for the load-path wiring and its divergence from upstream's narrower
   `validateTrust` trigger.
-  (`$(shield) Restricted Mode` in the status bar and activation gating on
-  `capabilities.untrustedWorkspaces` landed in #36; `restrictedConfigurations`
-  and `extensions.supportUntrustedWorkspaces` landed in #37; the Restricted
+  (`$(shield) Restricted Mode` in the status bar landed in #36; the Restricted
   Mode **banner** Part (`workbench.parts.banner`) and
   `security.workspace.trust.banner` landed in #38, below.)
 
@@ -279,7 +277,7 @@ command-link labelling the old modal used, carried over unchanged.
 Two divergences remain, both real and neither hidden:
 
 - **This is a composition-layer projection, not a real editor input.** Like
-  `CExtensionDetailSurface` and `CDiffSurface`
+  `CDiffSurface`
   (see [`../workbench/editor/CLAUDE.md`](../workbench/editor/CLAUDE.md)), the
   page has no `EditorInput`, no tab, and no document model.
   `CEditWnd::ShowWorkspaceTrustPage` therefore refuses to show it while
@@ -387,80 +385,3 @@ or substitute for it.
   of this checkpoint's scope. Once it lands, `"untilDismissed"` should read
   that field instead of behaving like `"always"`, and the banner should gain a
   real `Dismiss` action that writes it.
-
-## Restricted Configurations Checkpoint (2026-08-07, #37)
-
-- A restricted setting is one an extension named in
-  `capabilities.untrustedWorkspaces.restrictedConfigurations`. While the window
-  is not `Trusted`, that key's **Workspace- and Folder-scoped** contributions do
-  not apply. `CollectProvenanceLocked` still collects them and marks them
-  `ConfigurationProvenance::withheld`; `SelectEffectiveValueLocked` then returns
-  the last **non-withheld** entry instead of `provenance.back()`. Both
-  `EffectiveLocked` and `Inspect` go through that one helper, so the effective
-  value and the inspection can never disagree about which contribution won.
-- **Inspection truth is deliberately unchanged.** Upstream's `inspect()` still
-  reports `workspaceValue` for a restricted setting, because the Settings UI
-  needs it to explain *why* the value is not in effect. Dropping the withheld
-  entry from the provenance vector would look tidier and would destroy exactly
-  the information that explanation is made of.
-- `CConfigurationService::ApplyRestrictedConfigurations` is the single writer of
-  that policy and takes the key set, the trust flag, and an `evaluationTarget`
-  **together**, because a key list means nothing without a trust state and a
-  trust state withholds nothing without a key list. It stays off
-  `IConfigurationService`: `CWorkbenchRuntime` holds the concrete service, and
-  every extension-facing consumer must keep reading a trust-agnostic contract
-  and simply receive the already-withheld value.
-- `evaluationTarget` is validated with the same `IsContextValid` the read paths
-  use; an invalid target returns `InvalidScope` and commits nothing. It exists
-  because the restricted policy is service-wide while "which keys actually
-  moved" is only answerable for one concrete identity — an earlier draft
-  compared before/after against a default-constructed target, which
-  `IsSourceTargetValid` can never match, so the method structurally could never
-  notify. A method that looks like it has a change contract and cannot honour it
-  is worse than one that declares no contract at all.
-- `CWorkbenchRuntime::ApplyRestrictedConfigurationPolicy` is the only caller. It
-  supplies a **profile-only** target, matching
-  `CExtensionWorkbenchServiceBridge::BuildConfigurationSnapshot` and
-  `WriteGlobalConfiguration`: a Workspace-scope source is keyed by the
-  `.code-workspace` configuration URI and each Folder-scope source by
-  `(workspaceUri, folderUri)`, so a multi-root workspace has no single folder
-  URI the runtime could name without guessing which root a notification is
-  about. The consequence is narrow and must not be mistaken for weak
-  enforcement: withholding itself is evaluated against whatever target a real
-  `GetValue`/`ReadSnapshot`/`Inspect` caller supplies later and is entirely
-  independent of `evaluationTarget`, which only decides which
-  `ConfigurationChange`s this one call emits.
-- Both inputs re-enter the same path. `SetExtensionRestrictedConfigurations`
-  calls it when the key set moves; `ResolveAndApplyWorkspaceTrust` calls it
-  after committing a new trust value, so a grant or a downgrade re-evaluates the
-  already-published set without waiting for the next extension rescan. The
-  published set is guarded by its own mutex because `CExtensionService` writes
-  it from its worker thread while the runtime reads it from its own.
-- **`LanguageOverride` is deliberately left unwithheld, and this is a recorded
-  gap, not an oversight.** A language override can originate from a workspace's
-  `.vscode/settings.json`, but this service models *scope*, not physical
-  document identity — by the time the contribution reaches
-  `CollectProvenanceLocked`, which document produced it is already gone.
-  Guessing would either withhold a legitimately profile-owned override or honour
-  one that came from an untrusted workspace. Closing it requires carrying the
-  originating document identity on the source, not a heuristic here.
-- **`ConfigurationDescriptor` deliberately has no `restricted` field yet.**
-  Upstream expresses restricted-ness as a per-property flag on the configuration
-  registry. No built-in descriptor here is both Workspace/Folder-permitted and
-  security-sensitive, so the field would have zero non-test users; the runtime
-  policy set is the authority instead. Add the field when the first built-in
-  restricted key exists.
-- **Known limit, recorded rather than papered over:** this repository has no
-  extension-contributed `ConfigurationDescriptor` yet, so an extension can only
-  restrict a key the built-in registry already declares. The mechanism is real
-  and enforced; its reach grows when extension-contributed configuration lands.
-- `extensions.supportUntrustedWorkspaces` is registered `Scope::Profile` only —
-  the same Application-to-Profile divergence already recorded for `http.*`,
-  `update.*`, and `security.workspace.trust.*`. A workspace document must never
-  be able to grant its own extensions an untrusted-workspace exemption. It is
-  the first `Kind::Object` descriptor in the repository; its semantics belong to
-  [`../extension/CLAUDE.md`](../extension/CLAUDE.md).
-- `CExtensionManager.cpp` carries its own file-local copy of the canonical-key
-  predicate rather than including this directory's, so `extension/` stays
-  independent of `config/`. **The two copies must be kept in sync**: a key this
-  service would reject must not be accepted there and then silently dropped.

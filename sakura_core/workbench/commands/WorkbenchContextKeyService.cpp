@@ -477,50 +477,12 @@ WorkbenchContextMutationResult WorkbenchContextKeyService::SetCoreProjection(
 	return { EWorkbenchContextMutationStatus::Succeeded, ++m_revision };
 }
 
-WorkbenchContextMutationResult WorkbenchContextKeyService::SetExtensionOverlay(
-	const WorkbenchCommandOwner& owner, WorkbenchContextKeyMap values)
-{
-	if (!owner.IsValid()) {
-		return { EWorkbenchContextMutationStatus::Invalid, Snapshot().revision };
-	}
-	for (const auto& [key, value] : values) {
-		if (!IsValidKey(key) || IsReservedCoreKey(key) || !IsBoundedValue(value)) {
-			return { EWorkbenchContextMutationStatus::Invalid, Snapshot().revision };
-		}
-	}
-	std::lock_guard lock(m_mutex);
-	const auto found = m_overlays.find(owner);
-	if (found != m_overlays.end() && found->second.values == values) {
-		return { EWorkbenchContextMutationStatus::NotApplicable, m_revision };
-	}
-	m_overlays.insert_or_assign(owner, Overlay{ std::move(values) });
-	return { EWorkbenchContextMutationStatus::Succeeded, ++m_revision };
-}
-
-WorkbenchContextMutationResult WorkbenchContextKeyService::DisposeExtensionOverlay(const WorkbenchCommandOwner& owner)
-{
-	if (!owner.IsValid()) {
-		return { EWorkbenchContextMutationStatus::Invalid, Snapshot().revision };
-	}
-	std::lock_guard lock(m_mutex);
-	if (m_overlays.erase(owner) == 0) {
-		return { EWorkbenchContextMutationStatus::NotApplicable, m_revision };
-	}
-	return { EWorkbenchContextMutationStatus::Succeeded, ++m_revision };
-}
-
 WorkbenchContextKeySnapshot WorkbenchContextKeyService::Snapshot() const
 {
 	std::lock_guard lock(m_mutex);
 	WorkbenchContextKeySnapshot snapshot;
 	snapshot.revision = m_revision;
 	snapshot.values = m_coreValues;
-	for (const auto& [owner, overlay] : m_overlays) {
-		(void)owner;
-		for (const auto& [key, value] : overlay.values) {
-			snapshot.values.insert_or_assign(key, value);
-		}
-	}
 	return snapshot;
 }
 

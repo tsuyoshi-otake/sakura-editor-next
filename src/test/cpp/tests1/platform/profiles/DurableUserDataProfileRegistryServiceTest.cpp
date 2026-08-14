@@ -17,7 +17,7 @@ namespace {
 
 UserDataProfileCreateRequest Profile(UserDataProfileId id, std::wstring name, UserDataProfileKind kind = UserDataProfileKind::Normal)
 {
-	return { std::move(id), std::move(name), kind, {}, { .settings = true, .extensions = true } };
+	return { std::move(id), std::move(name), kind, {}, { .settings = true, .globalState = true } };
 }
 WorkspaceUri Workspace(std::wstring_view text)
 {
@@ -49,7 +49,7 @@ TEST(DurableUserDataProfileRegistryService, RoundTripsRenameAssociationsAndInher
 	ASSERT_TRUE(restarted.FindProfile(L"opaque-a").has_value());
 	EXPECT_EQ(L"After", restarted.FindProfile(L"opaque-a")->displayName);
 	EXPECT_TRUE(restarted.FindProfile(L"opaque-a")->resourceInheritance.settings);
-	EXPECT_TRUE(restarted.FindProfile(L"opaque-a")->resourceInheritance.extensions);
+	EXPECT_TRUE(restarted.FindProfile(L"opaque-a")->resourceInheritance.globalState);
 	EXPECT_EQ(L"opaque-a", *restarted.FindProfileForWorkspace(Workspace(L"FILE://localhost/c:/work/project")));
 	EXPECT_EQ(L"opaque-a", *restarted.FindProfileForEmptyWindow(L"empty-a"));
 }

@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief Thread-safe SourceControl/SourceControlResourceGroup authority.
  */
 /*
@@ -217,29 +217,29 @@ struct SourceControlService::Impl final {
 		return true;
 	}
 
-	[[nodiscard]] bool OwnerHasLiveStateLocked(const std::string_view extensionId) const noexcept
+	[[nodiscard]] bool OwnerHasLiveStateLocked(const std::string_view ownerId) const noexcept
 	{
-		if (globalInput && globalInput->owner.extensionId == extensionId) return true;
-		return std::any_of(providers.begin(), providers.end(), [extensionId](const auto& entry) {
-			return entry.second.state.owner.extensionId == extensionId;
+		if (globalInput && globalInput->owner.ownerId == ownerId) return true;
+		return std::any_of(providers.begin(), providers.end(), [ownerId](const auto& entry) {
+			return entry.second.state.owner.ownerId == ownerId;
 		});
 	}
 
 	[[nodiscard]] EScmOperationStatus PrepareOwnerLocked(const ScmOwner& owner) noexcept
 	{
 		if (!owner.IsValid()) return EScmOperationStatus::InvalidOwner;
-		const auto found = ownerGenerations.find(owner.extensionId);
+		const auto found = ownerGenerations.find(owner.ownerId);
 		if (found == ownerGenerations.end()) {
 			if (ownerGenerations.size() >= limits.maximumOwners) return EScmOperationStatus::OwnerLimitExceeded;
 			try {
-				ownerGenerations.emplace(owner.extensionId, owner.generation);
+				ownerGenerations.emplace(owner.ownerId, owner.generation);
 			} catch (...) {
 				return EScmOperationStatus::OwnerLimitExceeded;
 			}
 			return EScmOperationStatus::Succeeded;
 		}
 		if (found->second == owner.generation) return EScmOperationStatus::Succeeded;
-		if (owner.generation < found->second || OwnerHasLiveStateLocked(owner.extensionId)) {
+		if (owner.generation < found->second || OwnerHasLiveStateLocked(owner.ownerId)) {
 			return EScmOperationStatus::OwnerGenerationConflict;
 		}
 		found->second = owner.generation;
@@ -249,7 +249,7 @@ struct SourceControlService::Impl final {
 	[[nodiscard]] EScmOperationStatus ValidateOwnerLocked(const ScmOwner& owner) const noexcept
 	{
 		if (!owner.IsValid()) return EScmOperationStatus::InvalidOwner;
-		const auto found = ownerGenerations.find(owner.extensionId);
+		const auto found = ownerGenerations.find(owner.ownerId);
 		if (found == ownerGenerations.end()) return EScmOperationStatus::InvalidOwner;
 		return found->second == owner.generation
 			? EScmOperationStatus::Succeeded : EScmOperationStatus::OwnerGenerationConflict;
@@ -309,7 +309,7 @@ bool MatchesOwner(const ProviderType& provider, const ScmOwner& owner) noexcept
 
 bool ScmOwner::IsValid() const noexcept
 {
-	return generation != 0 && SourceControlService::IsValidStableId(extensionId);
+	return generation != 0 && SourceControlService::IsValidStableId(ownerId);
 }
 
 SourceControlService::SourceControlService(SourceControlServiceLimits limits)

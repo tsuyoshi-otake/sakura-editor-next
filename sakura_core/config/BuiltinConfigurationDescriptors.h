@@ -17,7 +17,7 @@ namespace config {
 
 //! Keep this catalog deliberately small. A key belongs here only when its
 //! semantic owner exists; unknown file entries remain latent for the later
-//! extension-contributed descriptor registry instead of being rejected.
+//! a future descriptor registry instead of being rejected.
 [[nodiscard]] std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors();
 
 } // namespace config

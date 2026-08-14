@@ -1555,8 +1555,8 @@ MATCHER_P(IsInitializedCommonSetting, iniFolder, "Checks if CommonSetting is pro
 	const INT nTabPointSize = chromeFontSpec.pointSize * 10;
 
 	// CommonSettingのプロパティを検証
-	EXPECT_THAT(commonSetting.m_sWorkbench.m_bExtensionViewsVisible, IsFalse());
-	EXPECT_THAT(commonSetting.m_sWorkbench.m_nExtensionViewsExtent96, Eq(320));
+	EXPECT_THAT(commonSetting.m_sWorkbench.m_bAuxiliaryBarVisible, IsFalse());
+	EXPECT_THAT(commonSetting.m_sWorkbench.m_nAuxiliaryBarExtent96, Eq(320));
     return true
 		&& ExplainMatchResult(IsInitializedCommonSettingGeneral(), commonSetting.m_sGeneral, result_listener)
 		&& ExplainMatchResult(IsInitializedCommonSettingWindow(),  commonSetting.m_sWindow, result_listener)
@@ -2011,7 +2011,7 @@ std::unique_ptr<CommonSetting_MainMenu> MakeHistoricalDefaultForVersion(
 		Addition{ 1, F_MODIFYLINE_NEXT, false }, Addition{ 1, F_MODIFYLINE_PREV, false },
 		Addition{ 1, F_MODIFYLINE_NEXT_SEL, true }, Addition{ 1, F_MODIFYLINE_PREV_SEL, false },
 		Addition{ 2, F_DLGWINLIST, false }, Addition{ 4, F_TOGGLE_MARKDOWN_PREVIEW, false },
-		Addition{ 5, F_EXTENSION_LIST, false }, Addition{ 7, F_OPEN_WORKSPACE_FOLDER, false },
+		Addition{ 7, F_OPEN_WORKSPACE_FOLDER, false },
 	};
 	for (auto it = additions.rbegin(); it != additions.rend(); ++it) {
 		if (it->version > storedVersion) EXPECT_TRUE(RemoveHistoricalMenuItem(*menu, it->function, it->previousSeparator));
@@ -2098,7 +2098,7 @@ TEST_F(CShareDataTest, MainMenuHistoricalMigrationsBuildTheRealV7DefaultAndPrese
 		F_FILETREE, F_SHOWMINIMAP, F_FUNCLIST_NEXT, F_FUNCLIST_PREV,
 		F_MODIFYLINE_NEXT, F_MODIFYLINE_PREV, F_MODIFYLINE_NEXT_SEL,
 		F_MODIFYLINE_PREV_SEL, F_DLGWINLIST, F_TOGGLE_MARKDOWN_PREVIEW,
-		F_EXTENSION_LIST, F_OPEN_WORKSPACE_FOLDER,
+		F_OPEN_WORKSPACE_FOLDER,
 	};
 	for (const auto function : historicalFunctions) {
 		EXPECT_TRUE(MenuContainsFunction(*v7, function)) << static_cast<int>(function);
@@ -2114,7 +2114,6 @@ TEST_F(CShareDataTest, MainMenuHistoricalMigrationsBuildTheRealV7DefaultAndPrese
 		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nLevel, fresh->m_cMainMenuTbl[index].m_nLevel) << index;
 	}
 	EXPECT_TRUE(MenuContainsFunction(*fresh, F_TOGGLE_MARKDOWN_PREVIEW));
-	EXPECT_TRUE(MenuContainsFunction(*fresh, F_EXTENSION_LIST));
 
 	// A persisted v6 menu already has the v6 Open Recent merge and first reaches
 	// the canonical v7 shape before the guarded v8 replacement.
@@ -2152,7 +2151,7 @@ TEST_F(CShareDataTest, MainMenuVersion8PreservesCustomizedModelsFromEveryPriorVe
 TEST_F(CShareDataTest, MainMenuVersion7FullDefaultFingerprintIsStable)
 {
 	const auto menu = MakeKnownV7DefaultFromResource(GetDllShareData().m_Common.m_sMainMenu);
-	constexpr std::uint64_t kExpectedFingerprint = UINT64_C(17115839819928857123);
+	constexpr std::uint64_t kExpectedFingerprint = UINT64_C(812474938483209018);
 	EXPECT_EQ(kExpectedFingerprint, CShareData_IO::MainMenuModelFingerprint(*menu));
 }
 

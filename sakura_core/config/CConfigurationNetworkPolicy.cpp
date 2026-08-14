@@ -27,7 +27,6 @@ const std::vector<std::string> kNetworkPolicyKeys {
 	"http.proxyStrictSSL",
 	"http.systemCertificates",
 	"http.timeout",
-	"extensions.openVsx.registry",
 };
 
 ConfigurationNetworkPolicyResult Unsupported(std::string diagnostic)
@@ -40,12 +39,7 @@ ConfigurationNetworkPolicyResult Invalid(std::string diagnostic)
 	return { EConfigurationNetworkPolicyOutcome::InvalidConfiguration, std::nullopt, std::move(diagnostic) };
 }
 
-bool IsHttpUrl(
-	const std::wstring& value,
-	bool requireHttps,
-	bool allowApplicationPath,
-	std::wstring& normalized
-)
+bool IsProxyUrl(const std::wstring& value, std::wstring& normalized)
 {
 	if (value.empty() || value.size() > kMaximumUrlLength) {
 		return false;
@@ -60,10 +54,7 @@ bool IsHttpUrl(
 	if (scheme != L"http" && scheme != L"https") {
 		return false;
 	}
-	if (requireHttps && scheme != L"https") {
-		return false;
-	}
-	if (!allowApplicationPath && !parsed.value->Path().empty() && parsed.value->Path() != L"/") {
+	if (!parsed.value->Path().empty() && parsed.value->Path() != L"/") {
 		return false;
 	}
 	normalized = parsed.value->ToString();
@@ -118,14 +109,12 @@ ConfigurationNetworkPolicyResult CConfigurationNetworkPolicy::Snapshot() const
 	bool strictSsl = true;
 	bool systemCertificates = true;
 	std::int64_t timeoutMilliseconds = 0;
-	std::wstring registry;
 	if (!ReadExact(values[0], proxy)
 		|| !ReadExact(values[1], proxySupport)
 		|| !ReadExact(values[2], noProxy)
 		|| !ReadExact(values[3], strictSsl)
 		|| !ReadExact(values[4], systemCertificates)
-		|| !ReadExact(values[5], timeoutMilliseconds)
-		|| !ReadExact(values[6], registry)) {
+		|| !ReadExact(values[5], timeoutMilliseconds)) {
 		return Invalid("network policy has an invalid setting type or state");
 	}
 
@@ -144,7 +133,7 @@ ConfigurationNetworkPolicyResult CConfigurationNetworkPolicy::Snapshot() const
 
 	if (!proxy.empty()) {
 		std::wstring normalizedProxy;
-		if (!IsHttpUrl(proxy, false, false, normalizedProxy)) {
+		if (!IsProxyUrl(proxy, normalizedProxy)) {
 			return Invalid("network policy proxy URL is invalid");
 		}
 		snapshot.proxyUrl = std::move(normalizedProxy);
@@ -160,15 +149,9 @@ ConfigurationNetworkPolicyResult CConfigurationNetworkPolicy::Snapshot() const
 		}
 		snapshot.noProxy.push_back(*value);
 	}
-	std::wstring normalizedRegistry;
-	if (!IsHttpUrl(registry, true, true, normalizedRegistry)) {
-		return Invalid("network policy extension registry URL is invalid");
-	}
-
 	snapshot.proxyStrictSSL = strictSsl;
 	snapshot.systemCertificates = systemCertificates;
 	snapshot.requestLimits.timeout = std::chrono::milliseconds(timeoutMilliseconds);
-	snapshot.openVsxRegistry = std::move(normalizedRegistry);
 	return { EConfigurationNetworkPolicyOutcome::Ready, std::move(snapshot), {} };
 }
 

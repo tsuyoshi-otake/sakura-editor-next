@@ -166,8 +166,7 @@ repository waits on `std::chrono::steady_clock`.
 `update.mode`, `update.enableWindowsBackgroundUpdates`, and `update.titleBar`
 are read once, as one coherent `ReadSnapshot` (never repeated `GetValue` calls —
 see [`../config/CLAUDE.md`](../config/CLAUDE.md)), when the window's stack is
-composed. Changing them takes effect in the next window, matching the way
-`CreateOpenVsxProductionClient` freezes its own network policy.
+composed. Changing them takes effect in the next window.
 
 `update.showReleaseNotes` is registered with upstream's id, type, and default,
 but nothing consumes it yet: there is no release-notes editor input to show.

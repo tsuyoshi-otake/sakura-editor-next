@@ -98,7 +98,7 @@ enum class EConfigurationValueKind : std::uint8_t {
 };
 
 //! Declarative value contract attached to a descriptor.  This deliberately
-//! contains data only: configuration writes never invoke extension or UI code
+//! contains data only: configuration writes never invoke provider or UI code
 //! while the service lock is held.  The array fields describe a bounded array
 //! whose members are strings when arrayItemsMustBeStrings is set.
 struct ConfigurationValueConstraint final {
@@ -211,27 +211,6 @@ struct ConfigurationProvenance final {
 	std::uint64_t revision = 0;
 	ConfigurationValue value;
 	std::int32_t priority = 0;
-	// True when this contribution was collected and is reported by Inspect, but
-	// the effective value deliberately skips it because the key is restricted
-	// and the workspace is not trusted. A withheld contribution never wins
-	// EffectiveLocked's selection; it exists only so the Settings UI can explain
-	// why the workspace-scoped value is not in effect.
-	bool withheld = false;
-};
-
-//! The joint fact that decides whether a restricted setting's workspace-scoped
-//! contribution applies. The two members are only meaningful together: a
-//! restricted key list means nothing without a trust state, and a trust state
-//! withholds nothing without a key list.
-struct RestrictedConfigurationPolicy final {
-	bool workspaceTrusted = false;
-	std::vector<std::string> restrictedKeys;
-	//! The identity the effective-value comparison is made against, so the
-	//! change notification names values a real consumer can actually read
-	//! back. The restricted policy is service-wide, but "which keys moved"
-	//! is only answerable for a concrete target, and the owning runtime is
-	//! the one thing that knows its own profile/workspace/folder identity.
-	ConfigurationTarget evaluationTarget;
 };
 
 struct ConfigurationInspection final {

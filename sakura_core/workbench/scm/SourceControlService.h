@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief VS Code-compatible source-control provider model.
  */
 /*
@@ -25,7 +25,7 @@ namespace workbench::scm {
 
 //! A source-control provider is fenced to the extension generation that created it.
 struct ScmOwner final {
-	std::string extensionId;
+	std::string ownerId;
 	std::uint64_t generation{};
 
 	[[nodiscard]] bool IsValid() const noexcept;
@@ -244,9 +244,9 @@ struct SourceControlServiceLimits final {
 //! @brief Thread-safe SourceControl/SourceControlResourceGroup authority.
 //!
 //! This model deliberately owns no HWND, extension object, pipe, or filesystem handle.
-//! The extension host sends stable snapshots into it; native projections consume immutable
+//! Providers send stable snapshots into it; native projections consume immutable
 //! snapshots. Owner generations remain fenced for the lifetime of the service so a late
-//! callback from a disposed extension host cannot resurrect a provider.
+//! callback from a disposed provider cannot resurrect it.
 //!
 class SourceControlService final {
 public:

@@ -19,9 +19,8 @@
   command IDs as the target contract. A native function code becomes an adapter
   only after its complete parameter and terminal-result behavior is routed; an
   aspirational ID is not evidence that the legacy implementation has migrated.
-- Menus, accelerators, Activity Bar, Empty Group watermark, Command Palette,
-  and extension RPC execute the same registered command and observe the same
-  terminal result.
+- Menus, accelerators, Activity Bar, Empty Group watermark, and Command Palette
+  execute the same registered command and observe the same terminal result.
 - Enablement and visibility come from Context Keys. With no active editor,
   text-editor-only commands return `NotApplicable`; general workbench commands
   remain available when their own context permits.

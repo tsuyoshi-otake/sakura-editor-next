@@ -179,7 +179,7 @@ struct OutputService::Impl final {
 	mutable std::mutex mutex;
 	OutputServiceLimits limits;
 	std::map<std::string, Channel, std::less<>> channels;
-	// Tombstones retain the most recently disposed generation, fencing late work from an old extension host.
+	// Tombstones retain the most recently disposed generation, fencing late work from an old provider.
 	std::map<std::string, OwnerGeneration, std::less<>> activeOwnerGenerations;
 	std::optional<std::string> activeChannelId;
 	std::map<std::string, CompletedOperation, std::less<>> completedOperations;

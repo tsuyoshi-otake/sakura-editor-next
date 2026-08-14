@@ -209,11 +209,11 @@ void CWorkbenchBannerHost::RecalculateLayout()
 		// this product's own literals or a `security.workspace.trust.banner`
 		// contribution's plain text -- there is no per-extension icon
 		// namespace to resolve here, only the built-in codicon vocabulary.
-		const auto messageRuns = icons::ParseLabelWithIcons(m_message, nullptr, faceName);
+		const auto messageRuns = icons::ParseLabelWithIcons(m_message, faceName);
 		input.messageWidthPixels = icons::MeasureLabelRuns(dc, messageRuns, iconSide);
 		input.actionWidthPixels.reserve(m_actions.size());
 		for (const auto& action : m_actions) {
-			const auto actionRuns = icons::ParseLabelWithIcons(action.label, nullptr, faceName);
+			const auto actionRuns = icons::ParseLabelWithIcons(action.label, faceName);
 			input.actionWidthPixels.push_back(icons::MeasureLabelRuns(dc, actionRuns, iconSide));
 		}
 	} else {
@@ -284,7 +284,7 @@ void CWorkbenchBannerHost::Paint()
 	const COLORREF foreground = m_palette.bannerForeground.ToColorRef();
 
 	if (m_layout.message.Width() > 0 && m_layout.message.Height() > 0) {
-		const auto runs = icons::ParseLabelWithIcons(m_message, nullptr, faceName);
+		const auto runs = icons::ParseLabelWithIcons(m_message, faceName);
 		icons::DrawLabelRuns(target, runs, ToRect(m_layout.message), iconSide, foreground, glyphFonts);
 	}
 
@@ -292,7 +292,7 @@ void CWorkbenchBannerHost::Paint()
 		const WorkbenchRect& actionRect = m_layout.actions[index];
 		if (actionRect.Width() <= 0 || actionRect.Height() <= 0) continue;
 		const RECT rect = ToRect(actionRect);
-		const auto runs = icons::ParseLabelWithIcons(m_actions[index].label, nullptr, faceName);
+		const auto runs = icons::ParseLabelWithIcons(m_actions[index].label, faceName);
 		icons::DrawLabelRuns(target, runs, rect, iconSide, foreground, glyphFonts);
 
 		// VS Code's `.monaco-banner-actions .monaco-link:hover` rule adds only

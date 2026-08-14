@@ -142,7 +142,6 @@ ActivityBarButtonInfo ActivityBarModel::GetButton(std::size_t index) const noexc
 		.id = entry.id,
 		.label = entry.label,
 		.codicon = entry.codicon,
-		.builtin = entry.builtin,
 		.bounds = m_bounds[index],
 		.selected = m_selected == index,
 		.hovered = m_hovered == index,

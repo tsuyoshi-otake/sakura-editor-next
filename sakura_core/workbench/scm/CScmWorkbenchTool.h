@@ -72,7 +72,6 @@ public:
 	//! Borrow the runtime-owned SCM authority. The tool never stops or owns it.
 	void SetSourceControlService(SourceControlService* service);
 	//! Re-read the immutable provider snapshot on the next UI turn.
-	void RefreshExtensionProviders();
 	void SetVisible(bool visible);
 	void Refresh();
 	[[nodiscard]] const GitScmState& State() const noexcept;

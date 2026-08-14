@@ -177,25 +177,6 @@ enum class EControlIpcFieldTag : std::uint16_t {
 	CancelRequestId = 7,
 	StorageSnapshot = 8,
 	StorageMutation = 9,
-	//! Fixed-width 256-bit Secret Vault bearer capability.
-	Capability = 10,
-	//! Authenticated extension-host session ID for a Secret Vault request.
-	ExtensionHostSessionId = 11,
-	//! Private bounded SecretAddress record.
-	SecretAddress = 12,
-	//! A private bounded secret UTF-8 value. It is valid only in a Get response
-	//! with a Found result, or a Set request.
-	SecretValue = 13,
-	//! Private bounded SecretGetResult record.
-	SecretResult = 14,
-	//! Private bounded SecretMutationRequest/SecretMutationResult record.
-	SecretMutation = 15,
-	//! Exact canonical extension identity for a capability issuance request.
-	ExtensionId = 16,
-	//! Nonzero extension-host generation for a capability issuance request.
-	ExtensionHostGeneration = 17,
-	//! Positive bounded capability lifetime in milliseconds.
-	CapabilityLifetimeMilliseconds = 18,
 	//! Private bounded ControlProfileRpc request/response record.
 	ProfilePayload = 19,
 };

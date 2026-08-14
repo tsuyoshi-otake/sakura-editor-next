@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief 同梱した codicon.ttf をプロセス private フォントとして登録する
 
 	実 VS Code は codicon.ttf を丸ごと同梱し、`$(name)` をその 1 書体のグリフとして
@@ -23,15 +23,12 @@
 #define SAKURA_CCODICONFONT_4F7A9C21_6E58_4B0D_8C33_5A9E2D7B1F64_H_
 #pragma once
 
-#include <memory>
+#include <cstddef>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace workbench::icons {
-
-namespace detail {
-class CRegisteredMemoryFont;
-} // namespace detail
 
 /*!
 	@brief 埋め込みリソースの codicon.ttf を 1 回だけ登録して書体名を配るシングルトン
@@ -65,7 +62,8 @@ private:
 	CCodiconFont() noexcept;
 	~CCodiconFont();
 
-	std::unique_ptr<detail::CRegisteredMemoryFont> m_font;
+	std::vector<std::byte> m_fontBytes;
+	void* m_fontResourceHandle = nullptr;
 	std::wstring m_faceName;
 };
 

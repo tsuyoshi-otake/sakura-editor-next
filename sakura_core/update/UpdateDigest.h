@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -17,7 +17,7 @@
 namespace update {
 
 //! BCrypt SHA-256 over the downloaded bytes, rendered as lowercase hex — the
-//! same shape `CExtensionManager::ComputeSha256Hex` already produces for VSIX
+//! lowercase hexadecimal shape required by the update manifest
 //! payloads, so a digest from either path compares the same way.
 class UpdateDigest final : public IUpdateDigest {
 public:

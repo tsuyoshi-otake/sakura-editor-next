@@ -354,22 +354,13 @@ public:
 	[[nodiscard]] virtual const tasks::TaskExecutionService* TaskExecution() const noexcept = 0;
 	[[nodiscard]] virtual WorkbenchRuntimeSnapshot Snapshot() const = 0;
 	//! The sole production-facing Settings writeback entry point. It is on this
-	//! interface rather than only on the concrete runtime because the borrowers
-	//! that need it -- the native window and, through it, the extension service
-	//! bridge behind `workspace/configuration/update` -- must depend on the
-	//! stable workbench boundary and never on the runtime implementation.
+	//! interface rather than only on the concrete runtime because native window
+	//! borrowers must depend on the stable workbench boundary and never on the
+	//! runtime implementation.
 	//! A runtime that is not running returns a `Stopped` status instead of
 	//! performing any filesystem work, so callers have one status to branch on.
 	[[nodiscard]] virtual config::SettingsWritebackResult WriteSetting(
 		const config::SettingsWritebackRequest& request) = 0;
-	//! Publishes the set of configuration keys installed extensions declared
-	//! restricted in an untrusted workspace. Trust itself is deliberately not a
-	//! parameter: the runtime reads its own workspace context, so a caller can
-	//! never publish a key set against a trust state the runtime does not hold.
-	[[nodiscard]] virtual config::EConfigurationOutcome SetExtensionRestrictedConfigurations(std::vector<std::string>)
-	{
-		return config::EConfigurationOutcome::Unsupported;
-	}
 };
 
 } // namespace workbench

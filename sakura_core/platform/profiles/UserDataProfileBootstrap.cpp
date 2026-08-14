@@ -157,14 +157,13 @@ bool IsStableEmptyWindowIdentity(const EmptyWindowId& value) noexcept
 
 UserDataProfileResourceUris::UserDataProfileResourceUris(
 	::platform::uri::Uri profileHome, ::platform::uri::Uri settings, ::platform::uri::Uri keybindings,
-	::platform::uri::Uri snippets, ::platform::uri::Uri tasks, ::platform::uri::Uri extensionsSelection,
+	::platform::uri::Uri snippets, ::platform::uri::Uri tasks,
 	::platform::uri::Uri globalState, ::platform::uri::Uri workingCopies, ::platform::uri::Uri workbenchLayout) noexcept
 	: m_profileHome(std::move(profileHome))
 	, m_settings(std::move(settings))
 	, m_keybindings(std::move(keybindings))
 	, m_snippets(std::move(snippets))
 	, m_tasks(std::move(tasks))
-	, m_extensionsSelection(std::move(extensionsSelection))
 	, m_globalState(std::move(globalState))
 	, m_workingCopies(std::move(workingCopies))
 	, m_workbenchLayout(std::move(workbenchLayout))
@@ -239,17 +238,16 @@ UserDataProfileBootstrapResult ResolveUserDataProfileBootstrap(
 	auto keybindings = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L"keybindings.json"));
 	auto snippets = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L"snippets"));
 	auto tasks = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L"tasks.json"));
-	auto extensionsSelection = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L"extensions.json"));
 	auto globalState = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L".sakura-platform\\globalState"));
 	auto workingCopies = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L".sakura-platform\\workingCopies"));
 	auto workbenchLayout = ::platform::uri::Uri::FromWindowsPath(JoinWindowsPath(profileRoot, L".sakura-platform\\workbench\\layout.json"));
-	if (!profileHome || !settings || !keybindings || !snippets || !tasks || !extensionsSelection || !globalState || !workingCopies || !workbenchLayout) {
+	if (!profileHome || !settings || !keybindings || !snippets || !tasks || !globalState || !workingCopies || !workbenchLayout) {
 		return Failed(UserDataProfileBootstrapStatus::InvalidResourceIdentity);
 	}
 
 	UserDataProfileResourceUris resources(
 		std::move(*profileHome.value), std::move(*settings.value), std::move(*keybindings.value),
-		std::move(*snippets.value), std::move(*tasks.value), std::move(*extensionsSelection.value),
+		std::move(*snippets.value), std::move(*tasks.value),
 		std::move(*globalState.value), std::move(*workingCopies.value), std::move(*workbenchLayout.value));
 	return { UserDataProfileBootstrapStatus::Resolved,
 		UserDataProfileBootstrapSnapshot(request.controlAuthority, registrySnapshot.revision, selectionSource,

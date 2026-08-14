@@ -17,9 +17,6 @@
 #include <cmath>
 #include <cwctype>
 #include <cwchar>
-#include <fstream>
-#include <iterator>
-#include <set>
 
 namespace theme {
 namespace {
@@ -28,12 +25,8 @@ using JsoncValue = platform::serialization::JsoncValue;
 using JsoncObject = JsoncValue::Object;
 using JsoncArray = JsoncValue::Array;
 
-constexpr std::size_t kMaximumThemeFileBytes = 1024U * 1024U;
-constexpr std::size_t kMaximumIncludeDepth = 16;
-constexpr std::size_t kMaximumThemeContributions = 256;
 constexpr std::size_t kMaximumTokenColorRules = 16'384;
 constexpr std::size_t kMaximumSemanticTokenColors = 16'384;
-constexpr std::wstring_view kBuiltinThemeExtensionId = L"sakura.builtin";
 
 constexpr std::string_view kSakuraDefaultDarkThemeJson = R"json({
 	"name": "Sakura Default Dark",
@@ -161,80 +154,6 @@ std::wstring Trim(std::wstring_view value)
 	return std::wstring(value.substr(first, last - first));
 }
 
-std::filesystem::path ComparisonPath(const std::filesystem::path& path)
-{
-	std::error_code error;
-	const auto canonical = std::filesystem::weakly_canonical(path, error);
-	if (!error) return canonical.lexically_normal();
-	const auto absolute = std::filesystem::absolute(path, error);
-	return error ? path.lexically_normal() : absolute.lexically_normal();
-}
-
-std::wstring NormalizedPathText(const std::filesystem::path& path)
-{
-	std::wstring text = Lower(ComparisonPath(path).wstring());
-	std::replace(text.begin(), text.end(), L'/', L'\\');
-	while (text.size() > 3 && !text.empty() && text.back() == L'\\') text.pop_back();
-	return text;
-}
-
-bool IsWithin(const std::filesystem::path& root, const std::filesystem::path& candidate)
-{
-	const std::wstring rootText = NormalizedPathText(root);
-	const std::wstring candidateText = NormalizedPathText(candidate);
-	if (candidateText == rootText) return true;
-	return candidateText.size() > rootText.size()
-		&& candidateText.compare(0, rootText.size(), rootText) == 0
-		&& candidateText[rootText.size()] == L'\\';
-}
-
-std::optional<std::filesystem::path> SafePath(
-	const std::filesystem::path& root,
-	const std::filesystem::path& base,
-	std::wstring_view relative)
-{
-	if (relative.empty()) return std::nullopt;
-	const std::filesystem::path relativePath{ std::wstring(relative) };
-	if (relativePath.has_root_name() || relativePath.has_root_directory()) return std::nullopt;
-	const auto candidate = (base / relativePath).lexically_normal();
-	return IsWithin(root, candidate) ? std::optional(candidate) : std::nullopt;
-}
-
-std::optional<std::string> ReadUtf8File(const std::filesystem::path& path, std::wstring& diagnostic)
-{
-	std::error_code error;
-	const auto size = std::filesystem::file_size(path, error);
-	if (error || size > kMaximumThemeFileBytes) {
-		diagnostic = L"theme file is missing or exceeds the 1 MiB limit: " + path.wstring();
-		return std::nullopt;
-	}
-	std::ifstream input(path, std::ios::binary);
-	if (!input) {
-		diagnostic = L"theme file could not be opened: " + path.wstring();
-		return std::nullopt;
-	}
-	std::string content(static_cast<std::size_t>(size), '\0');
-	if (size != 0) input.read(content.data(), static_cast<std::streamsize>(size));
-	if (!input && !input.eof()) {
-		diagnostic = L"theme file could not be read: " + path.wstring();
-		return std::nullopt;
-	}
-	return content;
-}
-
-std::optional<JsoncValue> ReadJson(const std::filesystem::path& path, std::wstring& diagnostic)
-{
-	const auto content = ReadUtf8File(path, diagnostic);
-	if (!content) return std::nullopt;
-	const auto parsed = platform::serialization::CJsoncDocument::Parse(*content);
-	if (!parsed.Succeeded()) {
-		diagnostic = L"theme JSONC parse failed in " + path.wstring();
-		if (parsed.diagnostic) diagnostic += L": " + u8stowcs(parsed.diagnostic->message);
-		return std::nullopt;
-	}
-	return parsed.value;
-}
-
 ColorThemeKind KindForUiTheme(std::wstring_view value) noexcept
 {
 	const auto lower = Lower(value);
@@ -314,41 +233,11 @@ void ParseSemanticTokenColors(const JsoncObject& object, ColorThemeSnapshot& sna
 	}
 }
 
-bool LoadThemeFile(
-	const std::filesystem::path& file,
-	const std::filesystem::path& root,
-	ColorThemeSnapshot& snapshot,
-	bool rootFile,
-	bool& rootTypeWasExplicit,
-	std::set<std::wstring>& activeFiles,
-	std::size_t depth,
-	std::wstring& diagnostic);
-
-bool ParseTokenColorsFile(
-	const std::filesystem::path& file,
-	const std::filesystem::path& root,
-	std::vector<ThemeTokenColorRule>& output,
-	std::wstring& diagnostic)
-{
-	const auto document = ReadJson(file, diagnostic);
-	if (!document) return false;
-	const auto* array = AsArray(&*document);
-	if (array == nullptr) {
-		diagnostic = L"tokenColors must be an array: " + file.wstring();
-		return false;
-	}
-	ParseTokenColorArray(*array, output);
-	(void)root;
-	return true;
-}
-
 bool ApplyThemeObjectFields(
 	const JsoncObject& object,
 	ColorThemeSnapshot& snapshot,
 	bool rootFile,
 	bool& rootTypeWasExplicit,
-	const std::filesystem::path& file,
-	const std::filesystem::path& root,
 	std::wstring& diagnostic)
 {
 	if (rootFile) {
@@ -370,16 +259,9 @@ bool ApplyThemeObjectFields(
 	if (const auto* tokenColors = Member(object, L"tokenColors")) {
 		if (const auto* array = AsArray(tokenColors)) {
 			ParseTokenColorArray(*array, snapshot.tokenColors);
-		} else if (const auto* path = AsString(tokenColors)) {
-			if (file.empty() || root.empty()) {
-				diagnostic = L"embedded color theme tokenColors paths are unsupported";
-				return false;
-			}
-			const auto tokenPath = SafePath(root, file.parent_path(), *path);
-			if (!tokenPath || !std::filesystem::is_regular_file(*tokenPath)
-				|| !ParseTokenColorsFile(*tokenPath, root, snapshot.tokenColors, diagnostic)) {
-				return false;
-			}
+		} else {
+			diagnostic = L"bundled color theme tokenColors must be an array";
+			return false;
 		}
 	}
 	if (const auto* semantic = AsObject(Member(object, L"semanticTokenColors"))) {
@@ -412,64 +294,7 @@ bool LoadEmbeddedThemeDocument(
 		return false;
 	}
 	bool rootTypeWasExplicit = false;
-	return ApplyThemeObjectFields(*object, snapshot, true, rootTypeWasExplicit, {}, {}, diagnostic);
-}
-
-bool LoadThemeFile(
-	const std::filesystem::path& file,
-	const std::filesystem::path& root,
-	ColorThemeSnapshot& snapshot,
-	bool rootFile,
-	bool& rootTypeWasExplicit,
-	std::set<std::wstring>& activeFiles,
-	std::size_t depth,
-	std::wstring& diagnostic)
-{
-	if (depth > kMaximumIncludeDepth) {
-		diagnostic = L"theme include depth exceeded the safety limit";
-		return false;
-	}
-	const std::wstring identity = NormalizedPathText(file);
-	if (!activeFiles.insert(identity).second) {
-		diagnostic = L"theme include cycle detected: " + file.wstring();
-		return false;
-	}
-	const auto leave = [&activeFiles, &identity](bool success) {
-		activeFiles.erase(identity);
-		return success;
-	};
-
-	const auto document = ReadJson(file, diagnostic);
-	if (!document) return leave(false);
-	const auto* object = AsObject(&*document);
-	if (object == nullptr) {
-		diagnostic = L"theme document must be a JSON object: " + file.wstring();
-		return leave(false);
-	}
-
-	const auto loadIncludes = [&](const JsoncValue* includeValue) {
-		const auto includes = ReadStringList(includeValue);
-		if (!includes) return true;
-		for (const auto& include : *includes) {
-			const auto includePath = SafePath(root, file.parent_path(), include);
-			if (!includePath || !std::filesystem::is_regular_file(*includePath)) {
-				diagnostic = L"theme include is outside the extension or missing: " + include;
-				return false;
-			}
-			if (!LoadThemeFile(*includePath, root, snapshot, false, rootTypeWasExplicit,
-				activeFiles, depth + 1, diagnostic)) return false;
-		}
-		return true;
-	};
-	if (!loadIncludes(Member(*object, L"include"))
-		|| !loadIncludes(Member(*object, L"extends"))) {
-		return leave(false);
-	}
-
-	if (!ApplyThemeObjectFields(*object, snapshot, rootFile, rootTypeWasExplicit, file, root, diagnostic)) {
-		return leave(false);
-	}
-	return leave(true);
+	return ApplyThemeObjectFields(*object, snapshot, true, rootTypeWasExplicit, diagnostic);
 }
 
 ThemeColor Composite(ThemeColor foreground, ThemeColor background) noexcept
@@ -845,66 +670,10 @@ ThemeSyntaxPalette CColorThemeRegistry::ProjectSyntaxPalette(
 	return palette;
 }
 
-bool CColorThemeRegistry::RegisterExtension(
-	std::wstring_view extensionId, const std::filesystem::path& extensionRoot)
-{
-	try {
-		const std::wstring ownedExtensionId(extensionId);
-		m_themes.erase(std::remove_if(m_themes.begin(), m_themes.end(),
-			[&ownedExtensionId](const ColorThemeInfo& theme) { return theme.extensionId == ownedExtensionId; }), m_themes.end());
-		if (ownedExtensionId.empty()) return false;
-		std::wstring manifestDiagnostic;
-		const auto document = ReadJson(extensionRoot / L"package.json", manifestDiagnostic);
-		// The diagnostic is intentionally local to this manifest read. Theme
-		// discovery is best-effort per extension and never blocks other extensions.
-		if (!document) return false;
-		const auto* root = AsObject(&*document);
-		if (root == nullptr) return false;
-		const auto* contributes = AsObject(Member(*root, L"contributes"));
-		const auto* themes = contributes == nullptr ? nullptr : AsArray(Member(*contributes, L"themes"));
-		if (themes == nullptr) return false;
-		std::vector<ColorThemeInfo> discovered;
-		for (const auto& item : *themes) {
-			if (discovered.size() >= kMaximumThemeContributions) break;
-			const auto* object = AsObject(&item);
-			if (object == nullptr) continue;
-			const auto* label = AsString(Member(*object, L"label"));
-			const auto* path = AsString(Member(*object, L"path"));
-			if (label == nullptr || label->empty() || path == nullptr) continue;
-			const auto themePath = SafePath(extensionRoot, extensionRoot, *path);
-			if (!themePath || !std::filesystem::is_regular_file(*themePath)) continue;
-			ColorThemeInfo info;
-			info.extensionId = ownedExtensionId;
-			info.extensionRoot = extensionRoot;
-			info.label = *label;
-			if (const auto* id = AsString(Member(*object, L"id")); id != nullptr && !id->empty()) {
-				info.id = *id;
-			} else {
-				info.id = ownedExtensionId + L":" + *label;
-			}
-			info.themePath = *themePath;
-			if (const auto* uiTheme = AsString(Member(*object, L"uiTheme"))) {
-				info.kind = KindForUiTheme(*uiTheme);
-			}
-			if (std::any_of(discovered.begin(), discovered.end(), [&info](const ColorThemeInfo& existing) {
-				return existing.id == info.id;
-			})) continue;
-			discovered.push_back(std::move(info));
-		}
-		m_themes.insert(m_themes.end(), discovered.begin(), discovered.end());
-		return !discovered.empty();
-	}
-	catch (...) {
-		return false;
-	}
-}
-
 bool CColorThemeRegistry::RegisterBuiltinThemes()
 {
 	try {
-		m_themes.erase(std::remove_if(m_themes.begin(), m_themes.end(), [](const ColorThemeInfo& theme) {
-			return theme.isBuiltin;
-		}), m_themes.end());
+		m_themes.clear();
 		m_builtinThemeDocuments.clear();
 
 		const auto registerTheme = [this](std::wstring_view id, std::wstring_view label,
@@ -912,9 +681,7 @@ bool CColorThemeRegistry::RegisterBuiltinThemes()
 			ColorThemeInfo info;
 			info.id = id;
 			info.label = label;
-			info.extensionId = kBuiltinThemeExtensionId;
 			info.kind = kind;
-			info.isBuiltin = true;
 			m_builtinThemeDocuments.emplace(info.id, document);
 			m_themes.push_back(std::move(info));
 		};
@@ -925,9 +692,7 @@ bool CColorThemeRegistry::RegisterBuiltinThemes()
 		return m_builtinThemeDocuments.size() == 2U;
 	}
 	catch (...) {
-		m_themes.erase(std::remove_if(m_themes.begin(), m_themes.end(), [](const ColorThemeInfo& theme) {
-			return theme.isBuiltin;
-		}), m_themes.end());
+		m_themes.clear();
 		m_builtinThemeDocuments.clear();
 		return false;
 	}
@@ -975,22 +740,9 @@ ColorThemeLoadResult CColorThemeRegistry::Load(std::wstring_view idOrLabel) cons
 		}
 		ColorThemeSnapshot snapshot;
 		snapshot.info = *selected;
-		if (selected->isBuiltin) {
-			const auto document = m_builtinThemeDocuments.find(selected->id);
-			if (document == m_builtinThemeDocuments.end()
-				|| !LoadEmbeddedThemeDocument(document->second, snapshot, result.diagnostic)) {
-				return result;
-			}
-			snapshot.palette = ProjectPalette(snapshot.info.kind, snapshot.colors);
-			snapshot.syntaxPalette = ProjectSyntaxPalette(snapshot.tokenColors, snapshot.semanticTokenColors,
-				snapshot.semanticHighlighting);
-			result.theme = std::move(snapshot);
-			return result;
-		}
-		bool rootTypeWasExplicit = false;
-		std::set<std::wstring> activeFiles;
-		if (!LoadThemeFile(selected->themePath, selected->extensionRoot, snapshot, true,
-			rootTypeWasExplicit, activeFiles, 0, result.diagnostic)) {
+		const auto document = m_builtinThemeDocuments.find(selected->id);
+		if (document == m_builtinThemeDocuments.end()
+			|| !LoadEmbeddedThemeDocument(document->second, snapshot, result.diagnostic)) {
 			return result;
 		}
 		snapshot.palette = ProjectPalette(snapshot.info.kind, snapshot.colors);

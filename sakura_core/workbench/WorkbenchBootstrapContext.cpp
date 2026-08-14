@@ -142,8 +142,6 @@ bool IsProfileShapeValid(const platform::profiles::ProfileBootstrapSnapshot& pro
 		&& IsWorkspaceResourceUri(resources.Tasks())
 		&& IsWorkspaceResourceUri(resources.Keybindings())
 		&& IsWorkspaceResourceUri(resources.Snippets())
-		&& IsWorkspaceResourceUri(resources.ExtensionsManifest())
-		&& IsWorkspaceResourceUri(resources.ExtensionsInstallHome())
 		&& IsWorkspaceResourceUri(resources.GlobalStorage());
 }
 
@@ -171,7 +169,6 @@ bool IsUserDataResourcesShapeValid(const platform::profiles::UserDataProfileReso
 		&& IsWorkspaceResourceUri(resources.Keybindings())
 		&& IsWorkspaceResourceUri(resources.Snippets())
 		&& IsWorkspaceResourceUri(resources.Tasks())
-		&& IsWorkspaceResourceUri(resources.ExtensionsSelection())
 		&& IsWorkspaceResourceUri(resources.GlobalState())
 		&& IsWorkspaceResourceUri(resources.WorkingCopies())
 		&& IsWorkspaceResourceUri(resources.WorkbenchLayout())
@@ -180,7 +177,6 @@ bool IsUserDataResourcesShapeValid(const platform::profiles::UserDataProfileReso
 		&& HasBoundedUriEncoding(resources.Keybindings())
 		&& HasBoundedUriEncoding(resources.Snippets())
 		&& HasBoundedUriEncoding(resources.Tasks())
-		&& HasBoundedUriEncoding(resources.ExtensionsSelection())
 		&& HasBoundedUriEncoding(resources.GlobalState())
 		&& HasBoundedUriEncoding(resources.WorkingCopies())
 		&& HasBoundedUriEncoding(resources.WorkbenchLayout());

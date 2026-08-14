@@ -44,10 +44,8 @@ constexpr int kCloseNode = 1202;
 constexpr int kTitleControlNodeBase = 1300;
 constexpr UINT kManageShowCommandPalette = 0x5A01;
 constexpr UINT kManageOpenSettings = 0x5A02;
-constexpr UINT kManageShowExtensions = 0x5A03;
 constexpr UINT kManageOpenKeyboardShortcuts = 0x5A04;
 constexpr UINT kManageSelectColorTheme = 0x5A05;
-constexpr UINT kManageSelectFileIconTheme = 0x5A06;
 // Group `7_update`. Only the four actionable upstream entries need a command id;
 // the in-progress ones are contributed with `precondition: false` and are appended
 // greyed, so `TrackPopupMenu` can never return them.
@@ -114,10 +112,8 @@ CustomFrameManageAction ManageActionFromMenuCommand(UINT command) noexcept
 	switch (command) {
 	case kManageShowCommandPalette: return CustomFrameManageAction::ShowCommandPalette;
 	case kManageOpenSettings: return CustomFrameManageAction::OpenSettings;
-	case kManageShowExtensions: return CustomFrameManageAction::ShowExtensions;
 	case kManageOpenKeyboardShortcuts: return CustomFrameManageAction::OpenKeyboardShortcuts;
 	case kManageSelectColorTheme: return CustomFrameManageAction::SelectColorTheme;
-	case kManageSelectFileIconTheme: return CustomFrameManageAction::SelectFileIconTheme;
 	case kManageUpdateCheck: return CustomFrameManageAction::CheckForUpdates;
 	case kManageUpdateDownload: return CustomFrameManageAction::DownloadUpdate;
 	case kManageUpdateInstall: return CustomFrameManageAction::InstallUpdate;
@@ -852,11 +848,9 @@ void CCustomFrameController::ShowManageMenu(const RECT& anchor) noexcept
 		L"Command Palette...\tCtrl+Shift+P") != FALSE
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
 		&& ::AppendMenuW(menu, MF_STRING, kManageOpenSettings, L"Settings\tCtrl+,") != FALSE
-		&& ::AppendMenuW(menu, MF_STRING, kManageShowExtensions, L"Extensions\tCtrl+Shift+X") != FALSE
 		&& ::AppendMenuW(menu, MF_STRING, kManageOpenKeyboardShortcuts, L"Keyboard Shortcuts\tCtrl+K Ctrl+S") != FALSE
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme, L"Color Theme\tCtrl+K Ctrl+T") != FALSE
-		&& ::AppendMenuW(themes, MF_STRING, kManageSelectFileIconTheme, L"File Icon Theme") != FALSE;
+		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme, L"Color Theme\tCtrl+K Ctrl+T") != FALSE;
 	const bool themesAttached = menuItemsAppended
 		&& ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes), L"Themes") != FALSE;
 	if (!themesAttached || !AppendUpdateMenuGroup(menu, m_updateMenuEntry)) {

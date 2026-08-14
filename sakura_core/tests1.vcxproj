@@ -113,6 +113,7 @@
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="..\src\test\cpp\tests1\ZipArchiveFixture.cpp" />
     <ClCompile Include="..\src\test\resources\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
@@ -132,12 +133,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\RequestServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpRequestRuntimeTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\request\WinHttpSystemProxyResolverTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\LegacyExtensionSecretVaultReaderTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultLegacyMigrationCoordinatorTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultCapabilityServiceTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultExtensionGrantAuthorityTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\SecretVaultServiceTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\WindowsDpapiSecretVaultServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\AtomicFileStorageServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\StorageServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\profiles\ProfileAuthorityStoreTest.cpp" />
@@ -147,20 +142,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcProtocolTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcNamedPipeTransportTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlIpcSecurityTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRpcServerAdapterTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlSecretVaultRpcTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlStorageRpcTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlStorageRpcServerAdapterTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformEndpointTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformEndpointDiscoveryReaderTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformRuntimeTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformServiceHostTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\ControlPlatformClientTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorControlPlatformRuntimeTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\platform\controlipc\EditorSecretVaultClientTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionHostSecretVaultGrantLifecycleTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionHostControllerTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\SecretVaultStorageTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\platform\UserDataProfileBootstrapTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\ConfigurationServiceTest.cpp" />
@@ -205,7 +192,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMatePlistGrammarLoaderTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateScopeColorResolverTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateTokenizerTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\workbench\CNotificationHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchRuntimeWorkspaceTrustPromptTest.cpp" />
@@ -228,7 +214,6 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ControlPlatformWorkbenchLayoutMementoStoreTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ControlPlatformWorkingCopyPersistenceStoreTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditDocWorkingCopyPersistenceAdapterTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchContributionRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchCommandRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\RecentlyOpenedWorkspaceServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\StatusbarViewModelTest.cpp" />
@@ -237,8 +222,6 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemsOutputPanelProjectionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionKeybindingMapTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateVersionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateFeedTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallerCommandLineTest.cpp" />
@@ -248,19 +231,12 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitLineStagingTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSyncCommandsTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileIconThemeRegistryTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\NativeWorkbenchToolRequestTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandsTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewIconDecoderTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewInstallButtonStateTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchFilterTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExtensionsViewSearchQueryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitInitCloneCommandRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerCommandRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerContextMenuModelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerDeleteConfirmationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\WebviewUnsupportedTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditorServiceLegacyAdapterTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\EmptyEditorSurfaceModelTest.cpp" />
@@ -282,9 +258,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-crunningtimer.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-csharedata.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\ZipArchiveFixture.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensioniconfont.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-extmodules.cpp" />
     <ClCompile Include="..\src\test\resources\printEFunctionCode.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cclipboard.cpp" />
@@ -297,32 +271,8 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoctypemanager.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-ceol.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cerrorinfo.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionmanager.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionclientreconnectpolicy.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensiondocumentbridge.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostbroker.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostintegration.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostprocess.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhostsharedstate.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionhoststatemachine.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionpipetransport.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionsecretstorage.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchmodels.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchdispatcher.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionworkbenchui.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-hovermarkdown.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodiconfont.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionviewregistry.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cextensionrpcprotocol.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-cjsonrpcframecodec.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\test-copenvsxclient.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionContributionRegistryTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionMenuProjectionTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxRequestServiceAdapterTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\OpenVsxProductionClientTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\CExtensionManagerStreamedInstallTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\extension\ExtensionUntrustedWorkspaceSupportTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfileext.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfuncinfoarr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-clayoutint.cpp" />
@@ -363,7 +313,6 @@
     <ClInclude Include="..\src\test\resources\testing\CrtAllocHook.hpp" />
     <ClInclude Include="..\src\test\resources\testing\HResultEq.hpp" />
     <ClInclude Include="..\src\test\resources\testing\StartEditorProcess.hpp" />
-    <ClInclude Include="..\src\test\cpp\tests1\ZipArchiveFixture.h" />
     <ClInclude Include="..\src\test\cpp\tests1\dlg\ModalDialogCloser.hpp" />
     <ClInclude Include="..\src\test\cpp\tests1\env\ShareDataTestSuite.hpp" />
     <ClInclude Include="..\src\test\cpp\tests1\window\EditorTestSuite.hpp" />

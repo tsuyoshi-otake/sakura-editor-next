@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief `git.init` and `git.clone`, and the Source Control empty-state welcome model.
  */
 /*
@@ -217,7 +217,7 @@ using GitPathExistsPredicate = std::function<EGitPathState(std::wstring_view pat
 
 //! A plain input box, standing in for upstream's live-typed remote-source
 //! Quick Pick (`pickRemoteSource` in `extensions/git-base/src/remoteSource.ts`).
-//! `CExtensionQuickInputDialog` cannot render a Quick Pick item that updates as
+//! `CQuickInputDialog` cannot render a Quick Pick item that updates as
 //! the user types, so `git.clone` degrades to the same plain "provide a value"
 //! box the checkout/branch commands already use for text entry — see
 //! `GitBranchCommands.h`'s identically-shaped `GitInputBoxPresenter`.

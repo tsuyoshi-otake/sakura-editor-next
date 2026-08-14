@@ -46,30 +46,15 @@ bool IsStorageKind(EControlIpcKind kind) noexcept
 	}
 }
 
-bool IsSecretKind(EControlIpcKind kind) noexcept
-{
-	return kind == EControlIpcKind::SecretGetRequest || kind == EControlIpcKind::SecretApplyRequest
-		|| kind == EControlIpcKind::SecretCapabilityIssueRequest
-		|| kind == EControlIpcKind::SecretCapabilityRevokeSessionRequest;
-}
-
 bool IsProfileKind(EControlIpcKind kind) noexcept
 {
 	return kind == EControlIpcKind::ProfileRequest;
 }
 
-void ValidateIdentity(const ControlStorageRpcSessionIdentity& identity,
-	const std::shared_ptr<secrets::ISecretVaultService>& vault,
-	const std::shared_ptr<secrets::ISecretVaultCapabilityService>& capabilities,
-	const std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority>& grantAuthority,
-	const std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator>& migration)
+void ValidateIdentity(const ControlStorageRpcSessionIdentity& identity)
 {
-	if (identity.generation == 0 || !profiles::IsCanonicalProfileAuthorityId(identity.profileId)
-		|| !vault || !capabilities || vault->GetProfileId() != identity.profileId
-		|| capabilities->GetProfileId() != identity.profileId || !grantAuthority || !migration
-		|| grantAuthority->GetProfileId() != identity.profileId
-		|| grantAuthority->GetControlConnectionGeneration() != identity.generation) {
-		throw std::invalid_argument("Control platform RPC adapter requires matching canonical authorities");
+	if (identity.generation == 0 || !profiles::IsCanonicalProfileAuthorityId(identity.profileId)) {
+		throw std::invalid_argument("Control platform RPC adapter requires a canonical identity");
 	}
 }
 
@@ -84,19 +69,13 @@ class CControlPlatformRpcServerAdapter::SessionHandler final : public IControlIp
 public:
 	SessionHandler(ControlStorageRpcSessionIdentity identity, const ControlIpcSessionContext& context,
 		std::shared_ptr<storage::IStorageAuthority> storage,
-		std::shared_ptr<secrets::ISecretVaultService> vault,
-		std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
-		std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
-		std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
 		std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles,
 		std::shared_ptr<Gate> gate) :
 		m_storageSession(std::move(identity), *storage),
-		m_secretSession({ m_storageSession.GetIdentity().profileId, context.clientProcessId,
-			m_storageSession.GetIdentity().generation }, *vault, *capabilities, *grantAuthority, *migration),
-		m_storage(std::move(storage)), m_vault(std::move(vault)), m_capabilities(std::move(capabilities)),
-		m_grantAuthority(std::move(grantAuthority)), m_migration(std::move(migration)), m_profiles(std::move(profiles)),
+		m_storage(std::move(storage)), m_profiles(std::move(profiles)),
 		m_profileSession(m_storageSession.GetIdentity(), m_profiles), m_gate(std::move(gate))
 	{
+		(void)context;
 	}
 
 	ControlIpcFrameDispatchResult HandleFrame(const ControlIpcSessionContext&, const ControlIpcFrame& frame) override
@@ -114,12 +93,6 @@ public:
 			}
 			return { { std::move(response) }, EControlIpcSessionDecision::KeepOpen };
 		}
-		if (IsSecretKind(frame.header.kind)) {
-			if (!m_storageHelloCompleted) {
-				return { { ErrorResponse(frame, EControlIpcTerminalStatus::InvalidRequest, generation) }, EControlIpcSessionDecision::KeepOpen };
-			}
-			return { { m_secretSession.Process(frame) }, EControlIpcSessionDecision::KeepOpen };
-		}
 		if (IsProfileKind(frame.header.kind)) {
 			if (!m_storageHelloCompleted) {
 				return { { ErrorResponse(frame, EControlIpcTerminalStatus::InvalidRequest, generation) }, EControlIpcSessionDecision::KeepOpen };
@@ -131,29 +104,20 @@ public:
 
 private:
 	CControlStorageRpcSession m_storageSession;
-	CControlSecretVaultRpcSession m_secretSession;
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> m_profiles;
 	CControlProfileRpcSession m_profileSession;
 	bool m_storageHelloCompleted = false;
 	std::shared_ptr<storage::IStorageAuthority> m_storage;
-	std::shared_ptr<secrets::ISecretVaultService> m_vault;
-	std::shared_ptr<secrets::ISecretVaultCapabilityService> m_capabilities;
-	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> m_grantAuthority;
-	std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> m_migration;
 	std::shared_ptr<Gate> m_gate;
 };
 
 CControlPlatformRpcServerAdapter::CControlPlatformRpcServerAdapter(ControlStorageRpcSessionIdentity identity,
-	std::shared_ptr<storage::IStorageAuthority> storage, std::shared_ptr<secrets::ISecretVaultService> vault,
-	std::shared_ptr<secrets::ISecretVaultCapabilityService> capabilities,
-	std::shared_ptr<secrets::ISecretVaultExtensionGrantAuthority> grantAuthority,
-	std::shared_ptr<secrets::ISecretVaultLegacyMigrationCoordinator> migration,
+	std::shared_ptr<storage::IStorageAuthority> storage,
 	std::shared_ptr<profiles::ControlUserDataProfileRegistry> profiles) :
-	m_storage(std::move(storage)), m_vault(std::move(vault)), m_capabilities(std::move(capabilities)),
-	m_grantAuthority(std::move(grantAuthority)), m_migration(std::move(migration)), m_profiles(std::move(profiles))
+	m_storage(std::move(storage)), m_profiles(std::move(profiles))
 {
 	if (!m_storage || !m_profiles) throw std::invalid_argument("Control platform RPC adapter requires storage and profile registry");
-	ValidateIdentity(identity, m_vault, m_capabilities, m_grantAuthority, m_migration);
+	ValidateIdentity(identity);
 	m_identity = std::move(identity);
 	m_gate = std::make_shared<Gate>();
 }
@@ -195,8 +159,7 @@ std::unique_ptr<IControlIpcSessionHandler> CControlPlatformRpcServerAdapter::Cre
 {
 	std::shared_lock lock(m_gate->mutex);
 	if (m_gate->state != EControlPlatformRpcServerAdapterState::Accepting) return nullptr;
-	return std::make_unique<SessionHandler>(m_identity, session, m_storage, m_vault, m_capabilities, m_grantAuthority,
-		m_migration, m_profiles, m_gate);
+	return std::make_unique<SessionHandler>(m_identity, session, m_storage, m_profiles, m_gate);
 }
 
 } // namespace platform::controlipc

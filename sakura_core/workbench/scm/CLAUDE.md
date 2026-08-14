@@ -12,8 +12,8 @@ The tracking Issue for the current work is #19.
 ## One SCM Authority, No Second Truth
 
 `SourceControlService` is the only authority for what the Source Control view
-shows. The built-in Git repository is **not** a special case: it is published
-through the same service an extension-contributed provider uses, under VS Code's
+shows. The built-in Git repository is published through the same provider-neutral
+service boundary used by every SCM consumer, under VS Code's
 own `vscode.git` / `git` identities, so a consumer that already knows VS Code's
 SCM model finds the provider it expects.
 
@@ -309,8 +309,8 @@ is the only thing that renders it.
   `Open Changes` precedes `Open File`.
 - **The menu is selected by the row, and a row we did not publish gets none.**
   `ParseGitResourceGroupId` returns nothing for a group id no built-in Git group
-  publishes, and an extension-contributed provider's rows are therefore never
-  given Git's menu — it would offer to stage something Git does not own. A
+  publishes, and a non-Git provider's rows are therefore never given Git's menu
+  — it would offer to stage something Git does not own. A
   resource row with no operand is refused for the same reason: a menu that cannot
   say what it would act on is worse than no menu.
 - **Right-click selects the row first**, as VS Code's list does, so the row the
@@ -472,8 +472,7 @@ runs no git; `CEditWnd` is the only thing that turns its output into a surface.
 ### Diff divergences
 
 - **The surface is a projection, not an `EditorInput`.** `CDiffSurface` is a
-  native composition-layer surface in exactly the sense `CExtensionDetailSurface`
-  is, so `CEditWnd` shows it only while the native editor has no active
+  native composition-layer surface, so `CEditWnd` shows it only while the native editor has no active
   document, and a diff requested while a document is open returns
   `NotApplicable` with that reason. Upstream opens a real diff editor in the
   group. Revisit when a second editor input can be projected.
@@ -714,7 +713,7 @@ names the nine, one member each.
 - **The remote pick strips upstream's leading `$(name)` markup at the presenter
   boundary.** `BuildFetchRemotePickItems` emits `$(cloud) origin` and
   `$(cloud-download) Fetch all remotes`, which is upstream's own label text.
-  `CExtensionQuickInputDialog` does no codicon parsing at all — verified by
+  `CQuickInputDialog` does no codicon parsing at all — verified by
   reading it, not assumed — so those rows would render the literal characters
   `$(cloud) origin`. The executor removes the leading `$(…)` token and the space
   after it, the same treatment the checkout picker's separator rows already get
@@ -748,7 +747,7 @@ names the nine, one member each.
   command surfaces a force push — so the argument builder is the only place a
   force push can be produced at all. Add the probe before any command reaches it.
 - **The fetch pick has no separator row**, for the same reason the checkout
-  picker has none: `CExtensionQuickInputDialog` cannot render one, and an inert
+  picker has none: `CQuickInputDialog` cannot render one, and an inert
   selectable line would be a faked capability.
 - **No progress indicator and no operation queue.** As with the branch commands,
   each remote command runs `RunGit` synchronously on the UI thread, so the window
@@ -846,7 +845,7 @@ apply.
 - **The `git.clone` URL prompt degrades upstream's live-typed Quick Pick to a
   plain input box.** Upstream's clone Quick Pick re-queries as the user types
   (recently opened repositories, GitHub/GitLab suggestions once signed in).
-  `CExtensionQuickInputDialog` cannot render a live-updating list, so
+  `CQuickInputDialog` cannot render a live-updating list, so
   `GitCloneUrlPresenter` is a single prompt/placeholder/value input box
   instead. The URL upstream would have resolved either way reaches the same
   `git clone <url>`.
@@ -974,10 +973,9 @@ divergence is a bug.
   Upstream's getter returns its `_repositoryKind`. **Updated record:** resource
   context menus have now landed, and they still do not consume `contextValue`:
   the built-in Git menus are selected by the row's *group*, exactly as upstream's
-  `when` clauses select them by `scmResourceGroup`. `contextValue` is what an
-  extension-contributed `when` clause would match on, and there is no such
-  clause here yet. Publishing an invented value would still be worse than
-  publishing none. Revisit when extension-contributed SCM menus land.
+  `when` clauses select them by `scmResourceGroup`. There is no additional
+  consumer for `contextValue`; publishing an invented value would still be
+  worse than publishing none.
 - **`git.alwaysShowStagedChangesResourceGroup` is not read.** Its documented
   default (`false`) is hard-coded into the `index` group's `hideWhenEmpty`.
   Hard-coding the upstream default keeps the empty state identical to a stock VS
@@ -993,7 +991,7 @@ divergence is a bug.
   that swallowed unimplemented command IDs silently would be worse than none.
 - **The native Quick Pick cannot render a group separator.** Upstream's picker
   is grouped by `branches` / `remote branches` / `tags` separators.
-  `CExtensionQuickInputDialog` has no separator row, so `EGitCheckoutItemKind::
+  `CQuickInputDialog` has no separator row, so `EGitCheckoutItemKind::
   Separator` items are dropped at the presenter boundary and a `positions` vector
   maps each rendered row back to its model row. Rendering a separator as an inert
   selectable line would be a faked capability, and renumbering without the map
@@ -1019,9 +1017,8 @@ divergence is a bug.
   window that must caption itself with something, so it reuses the title upstream
   already publishes for that command rather than inventing a label.
 - **Branch-command messages go to the status bar, not to a notification.**
-  `CNotificationHost` is fed exclusively from
-  `CExtensionService::PendingNotifications()`; there is no native notification
-  producer, and adding one here would create a second notification authority.
+  There is no native notification producer, and adding one here would create a
+  second notification authority.
   The status bar is the same surface the colour-theme and file-icon-theme pickers
   already report through. Revisit when a native notification source exists.
 - **The commands run `RunGit` synchronously on the UI thread with no progress

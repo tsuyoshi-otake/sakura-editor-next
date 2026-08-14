@@ -30,8 +30,6 @@ void ExpectSnapshotFor(std::wstring_view directory, std::wstring_view expectedHo
 	EXPECT_EQ(std::wstring(expectedHome) + L"/tasks.json", snapshot.Resources().Tasks().ToString());
 	EXPECT_EQ(std::wstring(expectedHome) + L"/keybindings.json", snapshot.Resources().Keybindings().ToString());
 	EXPECT_EQ(std::wstring(expectedHome) + L"/snippets", snapshot.Resources().Snippets().ToString());
-	EXPECT_EQ(std::wstring(expectedHome) + L"/extensions.json", snapshot.Resources().ExtensionsManifest().ToString());
-	EXPECT_EQ(std::wstring(expectedHome) + L"/extensions", snapshot.Resources().ExtensionsInstallHome().ToString());
 	EXPECT_EQ(std::wstring(expectedHome) + L"/.sakura-platform/globalStorage", snapshot.Resources().GlobalStorage().ToString());
 }
 
@@ -81,8 +79,6 @@ TEST(ProfileBootstrapSnapshot, ReturnedSnapshotsAreIndependentValueCopies)
 	EXPECT_NE(&*original.snapshot, &*copied.snapshot);
 	EXPECT_NE(&original.snapshot->Resources(), &copied.snapshot->Resources());
 	EXPECT_EQ(original.snapshot->ProfileId(), copied.snapshot->ProfileId());
-	EXPECT_EQ(original.snapshot->Resources().ExtensionsManifest().ToString(), copied.snapshot->Resources().ExtensionsManifest().ToString());
-	EXPECT_EQ(original.snapshot->Resources().ExtensionsInstallHome().ToString(), copied.snapshot->Resources().ExtensionsInstallHome().ToString());
 }
 
 } // namespace platform::profiles

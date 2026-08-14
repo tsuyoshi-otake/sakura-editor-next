@@ -55,17 +55,6 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// Scope::Profile here, for the same recorded reason.
 		{ "security.workspace.trust.banner", ConfigurationValue(L"untilDismissed"), { Scope::Profile },
 			{ Kind::String, 32, { L"always", L"untilDismissed", L"never" } } },
-		// Per-extension user override that lets an untrusted workspace still
-		// activate an extension the workspace itself has not been granted an
-		// exemption for. This is profile-owned for the same reason the trust
-		// policy above is: a repository must never be able to grant its own
-		// extensions an exemption by committing a .vscode/settings.json entry
-		// here. It is also upstream's `application` scope, which is the
-		// Application-to-Profile divergence this file already records for
-		// `http.*` and `update.*`.
-		{ "extensions.supportUntrustedWorkspaces", ConfigurationValue(ConfigurationValue::Object{}),
-			{ Scope::Profile }, { Kind::Object } },
-
 		// Network policy is deliberately application/profile-only.  A repository
 		// must not be able to redirect an editor to a proxy or registry, weaken
 		// certificate handling, or make requests wait longer by committing a
@@ -83,9 +72,6 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 			{ Kind::Boolean } },
 		{ "http.timeout", ConfigurationValue(30000), { Scope::Application, Scope::Profile },
 			{ Kind::Integer, std::nullopt, {}, 1000, 120000 } },
-		{ "extensions.openVsx.registry", ConfigurationValue(L"https://open-vsx.org"),
-			{ Scope::Application, Scope::Profile }, { Kind::String, 2048 } },
-
 		// Update policy is application/profile-only for the same reason network
 		// policy is: opening a repository must never be able to change whether,
 		// how, or from where this editor updates itself. VS Code registers all

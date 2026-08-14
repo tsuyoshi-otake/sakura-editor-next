@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -9,15 +9,14 @@
 
 #include <string>
 
-// workbench::icons::ParseLabelWithIcons() は、拡張機能が StatusBarItem.text に入れた
-// ラベルを、ステータスバーがインラインに描ける断片列へ分解する純粋関数である
+// workbench::icons::ParseLabelWithIcons() は、ワークベンチのラベルを
+// インラインに描ける断片列へ分解する純粋関数である
 // （実 VS Code の vs/base/browser/ui/iconLabel/iconLabels.ts:renderLabelWithIcons 相当）。
 //
-// 既定の Runs() は寄与アイコンのレジストリも同梱フォントの書体名も渡さないので、
+// 既定の Runs() は同梱フォントの書体名を渡さないので、
 // アイコン断片は取り込み済みベクター（CodiconsActivityIcons.h）へ縮退する。ここで
 // 見たいのは「どこがアイコンで、どこがテキストか」という分解そのものであって、
-// グリフの選択ではない。寄与アイコンのグリフ選択は test-cextensioniconfont.cpp が、
-// 同梱フォントの実登録は test-ccodiconfont.cpp が担当する。
+// グリフの選択ではない。同梱フォントの実登録は test-ccodiconfont.cpp が担当する。
 //
 // 同梱 codicon.ttf が使える通常経路は FontRuns() で確かめる。GDI へ触らずに済むよう
 // 書体名はダミーで、見たいのは「名前が表に載っていればフォントのグリフになる」こと。
@@ -29,13 +28,13 @@ namespace {
 //! 同梱フォントが登録できなかった縮退状態
 [[nodiscard]] std::vector<SLabelRun> Runs(std::wstring_view label)
 {
-	return ParseLabelWithIcons(label, nullptr);
+	return ParseLabelWithIcons(label);
 }
 
 //! 同梱 codicon.ttf が登録できている通常状態
 [[nodiscard]] std::vector<SLabelRun> FontRuns(std::wstring_view label)
 {
-	return ParseLabelWithIcons(label, nullptr, L"codicon");
+	return ParseLabelWithIcons(label, L"codicon");
 }
 
 } // namespace
@@ -63,19 +62,16 @@ TEST(ThemeIconResolverLabel, LeadingIconSplitsIntoIconThenText)
 	EXPECT_EQ(L" Settings", runs[1].text);
 }
 
-// 実機で見つかった欠陥そのもの。odangoo.otak-usage の limits モードは
-// "$(otak-claude) 46% $(otak-openai) 100%" を出すが、先頭 1 個だけをアイコンとして
-// 扱う実装では 2 個目のアイコンとその後ろのテキストが丸ごと消えていた。
 TEST(ThemeIconResolverLabel, EveryIconInTheLabelSurvivesInItsOriginalPosition)
 {
-	const auto runs = Runs(L"$(otak-claude) 46% $(otak-openai) 100%");
+	const auto runs = Runs(L"$(warning) first $(info) second");
 	ASSERT_EQ(4u, runs.size());
 	EXPECT_TRUE(runs[0].icon);
 	EXPECT_FALSE(runs[1].icon);
-	EXPECT_EQ(L" 46% ", runs[1].text);
+	EXPECT_EQ(L" first ", runs[1].text);
 	EXPECT_TRUE(runs[2].icon);
 	EXPECT_FALSE(runs[3].icon);
-	EXPECT_EQ(L" 100%", runs[3].text);
+	EXPECT_EQ(L" second", runs[3].text);
 }
 
 TEST(ThemeIconResolverLabel, IconInTheMiddleKeepsTheTextOnBothSides)
@@ -165,16 +161,6 @@ TEST(ThemeIconResolverLabel, DollarWithoutAParenthesisIsOrdinaryText)
 
 // 以下 2 件は同梱フォントが登録できなかったときの縮退経路。通常経路は
 // ThemeIconResolverBundledFont が確かめる。
-TEST(ThemeIconResolverLabel, WithoutTheBundledFontExtensionsIdFallsBackToTheCanonicalVector)
-{
-	const auto runs = Runs(L"$(extensions)");
-	ASSERT_EQ(1u, runs.size());
-	ASSERT_TRUE(runs[0].icon);
-	EXPECT_FALSE(runs[0].resolved.font);
-	EXPECT_EQ(codicons::Icon::Extensions, runs[0].resolved.builtin);
-	EXPECT_FALSE(runs[0].resolved.contributed);
-}
-
 TEST(ThemeIconResolverLabel, WithoutTheBundledFontUsesCanonicalVectorsForCommonBuiltinIds)
 {
 	const auto runs = Runs(L"$(source-control)$(warning)$(error)$(info)$(chevron-right)");
@@ -194,7 +180,6 @@ TEST(ThemeIconResolverLabel, WithoutTheBundledFontANameOutsideTheVectorSubsetFal
 	ASSERT_EQ(1u, runs.size());
 	ASSERT_TRUE(runs[0].icon);
 	EXPECT_FALSE(runs[0].resolved.font);
-	EXPECT_FALSE(runs[0].resolved.contributed);
 	EXPECT_EQ(codicons::Icon::RecordSmall, runs[0].resolved.builtin);
 }
 
@@ -206,29 +191,17 @@ TEST(ThemeIconResolverBundledFont, BuiltinNameResolvesToAGlyphOfTheBundledFont)
 	ASSERT_EQ(1u, runs.size());
 	ASSERT_TRUE(runs[0].icon);
 	ASSERT_TRUE(runs[0].resolved.font);
-	// 寄与アイコンではない。由来は取り違えられてはならない。
-	EXPECT_FALSE(runs[0].resolved.contributed);
 	EXPECT_EQ(L"codicon", runs[0].resolved.fontIcon.faceName);
 	EXPECT_EQ(std::wstring(1, L'\uEB44'), runs[0].resolved.fontIcon.glyph);
 }
 
-// codicon.csv には無いが codiconsLibrary.ts にはある別名。odangoo.otak-usage の
-// ツールチップが実際に使う名前で、表の生成元を CSV にすると落ちる。
+// codicon.csv には無いが codiconsLibrary.ts にはある別名。
 TEST(ThemeIconResolverBundledFont, AliasOnlyNameZapResolves)
 {
 	const auto runs = FontRuns(L"$(zap)");
 	ASSERT_EQ(1u, runs.size());
 	ASSERT_TRUE(runs[0].resolved.font);
 	EXPECT_EQ(std::wstring(1, L'\uEA86'), runs[0].resolved.fontIcon.glyph);
-}
-
-// 同梱フォントがあれば、本物の extensions グリフを使う。
-TEST(ThemeIconResolverBundledFont, ExtensionsIdResolvesToTheRealGlyph)
-{
-	const auto runs = FontRuns(L"$(extensions)");
-	ASSERT_EQ(1u, runs.size());
-	ASSERT_TRUE(runs[0].resolved.font);
-	EXPECT_EQ(std::wstring(1, L'\uEAE6'), runs[0].resolved.fontIcon.glyph);
 }
 
 // modifier は id から切り離してから引く。`$(loading~spin)` は loading のグリフ。

@@ -50,7 +50,6 @@
 #include "_main/ControlPlatformTrustedFoldersStore.h"
 #include "_main/ControlPlatformWorkingCopyPersistenceStore.h"
 #include "_main/ControlPlatformWorkspaceTrustMementoStore.h"
-#include "extension/CExtensionSecretVaultStorage.h"
 #include "platform/controlipc/EditorControlPlatformRuntime.h"
 #include "platform/profiles/ProfileBootstrapSnapshot.h"
 #include "platform/profiles/UserDataProfileBootstrap.h"
@@ -495,19 +494,6 @@ bool CNormalProcess::InitializeProcess()
 			L"作業コピーの永続化スコープを確定できませんでした。");
 		return false;
 	}
-	auto extensionSecretStorage = CreateProductionExtensionSecretVaultStorage({
-		.profileDirectory = *profileDirectory,
-		.profileId = platformIdentity->profileId,
-		.profileHash = platformIdentity->profileHash,
-		.pinnedControlGeneration = platformIdentity->minimumGeneration,
-	});
-	if (!extensionSecretStorage) {
-		TopErrorMessage(nullptr,
-			L"ワークベンチの初期化に失敗しました。\n"
-			L"Secret Vault のクライアント境界を初期化できませんでした。");
-		return false;
-	}
-
 	// プラグイン読み込み
 	MY_TRACETIME( cRunningTimer, L"Before Init Jack" );
 	/* ジャック初期化 */
@@ -556,8 +542,7 @@ bool CNormalProcess::InitializeProcess()
 		*m_editorControlPlatformRuntime, platformIdentity->profileId);
 	if (!m_pcEditApp->Create(
 		GetProcessInstance(), nGroupId, std::move(*bootstrap.context), std::move(workbenchDependencies),
-		std::move(workingCopyStore), std::move(*workingCopyScope), *profileDirectory,
-		std::move(extensionSecretStorage))) {
+		std::move(workingCopyStore), std::move(*workingCopyScope))) {
 		TopErrorMessage(nullptr,
 			L"ワークベンチの初期化に失敗しました。\n"
 			L"設定またはワークスペースサービスを開始できませんでした。");

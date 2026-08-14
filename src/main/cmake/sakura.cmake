@@ -743,7 +743,6 @@ if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
   # boundary and retain cubic interpolation for the three WIC consumers.
   set_property(SOURCE
     ${CMAKE_SOURCE_DIR}/sakura_core/markdown/CMarkdownPreviewWnd.cpp
-    ${CMAKE_SOURCE_DIR}/sakura_core/workbench/extension/ExtensionIconDecoder.cpp
     ${CMAKE_SOURCE_DIR}/sakura_core/workbench/explorer/CExplorerTool.cpp
     APPEND PROPERTY COMPILE_DEFINITIONS
       WICBitmapInterpolationModeHighQualityCubic=WICBitmapInterpolationModeCubic
