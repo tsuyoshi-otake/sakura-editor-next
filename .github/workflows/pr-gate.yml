@@ -1,0 +1,155 @@
+name: PR Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  actions: read
+  contents: read
+  packages: write
+
+concurrency:
+  group: pr-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  ci-plan:
+    name: Plan CI
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      run-native-build: ${{ steps.plan.outputs.run-native-build }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Plan exact CI work
+        id: plan
+        env:
+          REPOSITORY: ${{ github.repository }}
+          HEAD_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name || '' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          & python3 tools/build/sakura_build.py `
+            --format json `
+            ci plan `
+            --event-name pull_request `
+            --repository $env:REPOSITORY `
+            --head-repository $env:HEAD_REPOSITORY `
+            --base-sha $env:BASE_SHA `
+            --head-sha $env:HEAD_SHA `
+            --output build/ci-plan.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "The fail-closed CI planner failed with exit code $LASTEXITCODE."
+          }
+
+          $plan = Get-Content -LiteralPath build/ci-plan.json -Raw | ConvertFrom-Json
+          $runNative = $plan.jobs.native_build.ToString().ToLowerInvariant()
+          "mode=$($plan.mode)" >> $env:GITHUB_OUTPUT
+          "run-native-build=$runNative" >> $env:GITHUB_OUTPUT
+          "## CI plan" >> $env:GITHUB_STEP_SUMMARY
+          "- Mode: ``$($plan.mode)``" >> $env:GITHUB_STEP_SUMMARY
+          "- Reasons: ``$($plan.reason_codes -join ', ')``" >> $env:GITHUB_STEP_SUMMARY
+          "- Native build: ``$runNative``" >> $env:GITHUB_STEP_SUMMARY
+          "- Base: ``$($plan.base_sha)``" >> $env:GITHUB_STEP_SUMMARY
+          "- Head: ``$($plan.head_sha)``" >> $env:GITHUB_STEP_SUMMARY
+          "- Changed files: $($plan.changed_files.Count)" >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload CI plan evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-plan
+          path: build/ci-plan.json
+          if-no-files-found: error
+
+  target-policy:
+    name: Target policy
+    uses: ./.github/workflows/pr-target-policy.yml
+
+  architecture:
+    name: Architecture
+    uses: ./.github/workflows/architecture-gates.yml
+
+  cppcheck:
+    name: Cppcheck
+    needs: ci-plan
+    if: ${{ needs.ci-plan.outputs.run-native-build == 'true' }}
+    uses: ./.github/workflows/cppcheck.yml
+
+  doxygen:
+    name: Doxygen
+    uses: ./.github/workflows/doxygen.yml
+
+  native:
+    name: Native
+    needs: ci-plan
+    uses: ./.github/workflows/build-sakura.yml
+    with:
+      ci_plan_provided: true
+      ci_mode: ${{ needs.ci-plan.outputs.mode }}
+      run_native_build: ${{ needs.ci-plan.outputs.run-native-build == 'true' }}
+      source_sha: ${{ github.sha }}
+      release_tag: pr-${{ github.event.pull_request.number }}
+      release_promotion: false
+    secrets: inherit
+
+  gate:
+    name: PR Gate
+    runs-on: ubuntu-latest
+    needs: [ci-plan, target-policy, architecture, cppcheck, doxygen, native]
+    if: ${{ always() }}
+    steps:
+      - name: Verify every selected workflow terminal
+        env:
+          PLAN_RESULT: ${{ needs.ci-plan.result }}
+          RUN_NATIVE_BUILD: ${{ needs.ci-plan.outputs.run-native-build }}
+          TARGET_RESULT: ${{ needs.target-policy.result }}
+          ARCHITECTURE_RESULT: ${{ needs.architecture.result }}
+          CPPCHECK_RESULT: ${{ needs.cppcheck.result }}
+          DOXYGEN_RESULT: ${{ needs.doxygen.result }}
+          NATIVE_RESULT: ${{ needs.native.result }}
+        run: |
+          $required = [ordered]@{
+            planner = $env:PLAN_RESULT
+            target = $env:TARGET_RESULT
+            architecture = $env:ARCHITECTURE_RESULT
+            doxygen = $env:DOXYGEN_RESULT
+            native = $env:NATIVE_RESULT
+          }
+          foreach ($entry in $required.GetEnumerator()) {
+            if ($entry.Value -ne 'success') {
+              throw "Selected workflow did not succeed: $($entry.Key)=$($entry.Value)"
+            }
+          }
+
+          if ($env:RUN_NATIVE_BUILD -eq 'true') {
+            if ($env:CPPCHECK_RESULT -ne 'success') {
+              throw "Selected Cppcheck workflow did not succeed: $env:CPPCHECK_RESULT"
+            }
+          }
+          elseif ($env:RUN_NATIVE_BUILD -eq 'false') {
+            $notSelected = -join ('s', 'kipped')
+            if ($env:CPPCHECK_RESULT -ne $notSelected) {
+              throw "Documentation-only plan unexpectedly ran Cppcheck: $env:CPPCHECK_RESULT"
+            }
+          }
+          else {
+            throw "Planner produced an unsupported native decision: $env:RUN_NATIVE_BUILD"
+          }
+
+          "## PR Gate" >> $env:GITHUB_STEP_SUMMARY
+          "- Planner: ``$env:PLAN_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Target policy: ``$env:TARGET_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Architecture: ``$env:ARCHITECTURE_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Cppcheck: ``$env:CPPCHECK_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Doxygen: ``$env:DOXYGEN_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- Native: ``$env:NATIVE_RESULT``" >> $env:GITHUB_STEP_SUMMARY

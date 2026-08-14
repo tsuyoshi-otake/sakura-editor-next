@@ -12,6 +12,12 @@ from typing import Sequence
 
 from sakura_build_lib.abi_fixture import ABI_FIXTURES, run_abi_fixture
 from sakura_build_lib.checkout_invariance import verify_checkout_invariance
+from sakura_build_lib.ci_plan import (
+    CiPlanError,
+    changed_files_between,
+    plan_ci,
+    write_ci_plan,
+)
 from sakura_build_lib.generator import generate, stale_component_outputs, stale_outputs
 from sakura_build_lib.component_evidence import ComponentEvidenceError, collect_component_evidence, write_component_evidence
 from sakura_build_lib.coverage_map import (
@@ -214,6 +220,16 @@ def parser() -> argparse.ArgumentParser:
         "checkout-invariance",
         help="verify that LF and CRLF checkouts keep architecture-gate inputs equivalent",
     )
+
+    ci = commands.add_parser("ci", help="plan fail-closed CI work for an exact event diff")
+    ci_commands = ci.add_subparsers(dest="ci_command", required=True)
+    ci_plan = ci_commands.add_parser("plan")
+    ci_plan.add_argument("--event-name", required=True)
+    ci_plan.add_argument("--repository", default="")
+    ci_plan.add_argument("--head-repository", default="")
+    ci_plan.add_argument("--base-sha")
+    ci_plan.add_argument("--head-sha")
+    ci_plan.add_argument("--output", type=Path, default=Path("build/ci-plan.json"))
 
     graph = commands.add_parser("graph")
     graph_commands = graph.add_subparsers(dest="graph_command", required=True)
@@ -1114,6 +1130,27 @@ def main(argv: list[str] | None = None) -> int:
             result = verify_checkout_invariance(repo, manifest, current_graph=graph)
             output(result, args.format)
             return 0 if result["ok"] else EXIT_LINT
+        if args.command == "ci":
+            try:
+                changed_files = (
+                    changed_files_between(repo, args.base_sha, args.head_sha)
+                    if args.event_name.strip().lower() == "pull_request"
+                    else ()
+                )
+                result = plan_ci(
+                    changed_files,
+                    event_name=args.event_name,
+                    repository=args.repository,
+                    head_repository=args.head_repository,
+                    base_sha=args.base_sha,
+                    head_sha=args.head_sha,
+                )
+                destination = _repository_path(repo, args.output, "--output")
+                write_ci_plan(destination, result)
+            except CiPlanError as error:
+                raise BuildError(error.code, str(error), EXIT_USAGE) from error
+            output({**result, "output": str(destination)}, args.format)
+            return 0
         if args.command == "graph":
             if args.graph_command == "project":
                 output(graph.project(args.context), args.format)

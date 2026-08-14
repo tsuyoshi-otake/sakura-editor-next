@@ -1,284 +1,165 @@
-"""
-Unit tests for check_encoding.py
+"""Integration tests for the dependency-free PowerShell encoding checker."""
 
-Tests cover:
-- File extension validation
-- Encoding detection (UTF-8, UTF-16, ASCII)
-- Encoding result validation
-- Git operations (mocked)
-- File processing integration
-"""
-
-import importlib.util
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
 
-def _load_module():
-    """Dynamically load checkEncoding module from repository root"""
-    repo_root = Path(__file__).resolve().parents[3]
-    module_path = repo_root / "src/main/py/check_encoding.py"
-    spec = importlib.util.spec_from_file_location("checkEncoding", module_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"Failed to load module spec: {module_path}")
-
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+REPO_ROOT = Path(__file__).resolve().parents[3]
+CHECKER = REPO_ROOT / "src/main/ps1/check-encoding.ps1"
+WORKFLOW = REPO_ROOT / ".github/workflows/build-sakura.yml"
+BATCH_WRAPPER = REPO_ROOT / "checkEncoding.bat"
 
 
-@pytest.fixture(scope="module")
-def check_encoding_module():
-    """Fixture: Load checkEncoding module once per test session"""
-    return _load_module()
+def _run(*args: str, cwd: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "pwsh",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(CHECKER),
+            *args,
+        ],
+        cwd=cwd,
+        text=True,
+        encoding="utf-8",
+        capture_output=True,
+        check=False,
+    )
 
 
-# ============================================================================
-# File Extension Validation Tests
-# ============================================================================
+def _git(repository: Path, *args: str) -> str:
+    return subprocess.check_output(
+        ["git", *args], cwd=repository, text=True, encoding="utf-8"
+    ).strip()
 
 
-def test_check_extension_accepts_cpp(check_encoding_module):
-    """Test that .cpp files are recognized as valid"""
-    assert check_encoding_module.check_extension("test.cpp") is True
+def _initialize_repository(path: Path) -> str:
+    _git(path, "init")
+    _git(path, "config", "user.email", "encoding-test@example.invalid")
+    _git(path, "config", "user.name", "Encoding Test")
+    (path / "baseline.cpp").write_bytes(b"int baseline;\r\n")
+    _git(path, "add", "baseline.cpp")
+    _git(path, "commit", "-m", "baseline")
+    return _git(path, "rev-parse", "HEAD")
 
 
-def test_check_extension_accepts_h(check_encoding_module):
-    """Test that .h files are recognized as valid"""
-    assert check_encoding_module.check_extension("test.h") is True
+def _combined_output(result: subprocess.CompletedProcess[str]) -> str:
+    return result.stdout + result.stderr
 
 
-def test_check_extension_accepts_rc(check_encoding_module):
-    """Test that .rc files are recognized as valid"""
-    assert check_encoding_module.check_extension("test.rc") is True
+def test_all_accepts_every_supported_encoding(tmp_path: Path):
+    (tmp_path / "ascii.cpp").write_bytes(b"int value;\r\n")
+    (tmp_path / "utf8.h").write_bytes(b"\xef\xbb\xbf" + "// 日本語\n".encode())
+    (tmp_path / "little.rc").write_bytes("STRINGTABLE\r\n".encode("utf-16"))
+    (tmp_path / "big.rc2").write_bytes(
+        b"\xfe\xff" + "STRINGTABLE\r\n".encode("utf-16-be")
+    )
+
+    result = _run("all", "-RepositoryRoot", str(tmp_path), cwd=tmp_path)
+
+    assert result.returncode == 0, _combined_output(result)
+    assert "Encoding check passed for 4 file(s)." in result.stdout
 
 
-def test_check_extension_accepts_rc2(check_encoding_module):
-    """Test that .rc2 files are recognized as valid"""
-    assert check_encoding_module.check_extension("test.rc2") is True
+@pytest.mark.parametrize(
+    ("name", "contents"),
+    [
+        ("no-bom.cpp", "// 日本語\n".encode()),
+        ("invalid.h", b"\xef\xbb\xbf\xff"),
+        ("no-bom.rc", "STRINGTABLE\n".encode("utf-8")),
+        ("truncated.rc2", b"\xff\xfeA"),
+    ],
+)
+def test_all_rejects_unsupported_or_malformed_encoding(
+    tmp_path: Path, name: str, contents: bytes
+):
+    (tmp_path / name).write_bytes(contents)
+
+    result = _run("all", "-RepositoryRoot", str(tmp_path), cwd=tmp_path)
+
+    assert result.returncode == 1
+    assert f"NG {tmp_path / name}" in result.stderr
+    assert "1 file(s) have an unsupported encoding." in result.stderr
 
 
-def test_check_extension_rejects_other_extensions(check_encoding_module):
-    """Test that non-target extensions are rejected"""
-    assert check_encoding_module.check_extension("test.txt") is False
-    assert check_encoding_module.check_extension("test.py") is False
-    assert check_encoding_module.check_extension("test.md") is False
-    assert check_encoding_module.check_extension("test.exe") is False
+def test_diff_checks_changed_targets_and_ignores_deleted_files(tmp_path: Path):
+    _initialize_repository(tmp_path)
+    deleted = tmp_path / "deleted.h"
+    deleted.write_bytes(b"int deleted;\n")
+    _git(tmp_path, "add", "deleted.h")
+    _git(tmp_path, "commit", "-m", "add deleted target")
+    base_sha = _git(tmp_path, "rev-parse", "HEAD")
+    deleted.unlink()
+    (tmp_path / "baseline.cpp").write_bytes(
+        b"\xef\xbb\xbf" + "// 変更\n".encode()
+    )
+    (tmp_path / "ignored.md").write_text("ignored", encoding="utf-8")
+    _git(tmp_path, "add", "baseline.cpp", "ignored.md")
+    _git(tmp_path, "commit", "-m", "change tracked files")
 
+    result = _run(
+        "diff", "-BaseSha", base_sha, "-RepositoryRoot", str(tmp_path), cwd=tmp_path
+    )
 
-# ============================================================================
-# Encoding Detection Tests (using actual file creation)
-# ============================================================================
-
-
-def test_check_encoding_detects_utf8_bom(tmp_path, check_encoding_module):
-    """Test that UTF-8 BOM files are correctly detected"""
-    file_path = tmp_path / "utf8_bom.txt"
-    # UTF-8 BOM = \xef\xbb\xbf
-    file_path.write_bytes(b"\xef\xbb\xbf" + "Hello".encode("utf-8"))
-    
-    encoding = check_encoding_module.check_encoding(str(file_path))
-    # chardet should detect as UTF-8-SIG (UTF-8 with BOM)
-    assert encoding in ("UTF-8-SIG", "UTF-8")
-
-
-def test_check_encoding_detects_utf16_le(tmp_path, check_encoding_module):
-    """Test that UTF-16 LE files are correctly detected"""
-    file_path = tmp_path / "utf16_le.txt"
-    # Write text in UTF-16 LE encoding
-    file_path.write_text("Hello", encoding="utf-16-le")
-    
-    encoding = check_encoding_module.check_encoding(str(file_path))
-    # chardet should detect UTF-16 or UTF-16-LE
-    # Some configs may return None; allow flexible detection
-    normalized = encoding.upper() if encoding is not None else None
-    assert normalized in ("UTF-16", "UTF-16LE", "UTF-16-LE", "UTF-16LE", None)
-
-
-def test_check_encoding_detects_ascii(tmp_path, check_encoding_module):
-    """Test that ASCII files are correctly detected"""
-    file_path = tmp_path / "ascii.txt"
-    file_path.write_bytes(b"Hello World")
-    
-    encoding = check_encoding_module.check_encoding(str(file_path))
-    # ASCII is subset of UTF-8; chardet may report as UTF-8 or ASCII
-    assert encoding in ("ascii", "UTF-8", "ASCII")
-
-
-def test_check_encoding_handles_nonexistent_file(check_encoding_module):
-    """Test that nonexistent file raises FileNotFoundError as expected"""
-    # check_encoding.py opens file directly, so it raises FileNotFoundError
-    with pytest.raises(FileNotFoundError):
-        check_encoding_module.check_encoding("/nonexistent/path/file.txt")
-
-
-# ============================================================================
-# Encoding Result Validation Tests
-# ============================================================================
-
-
-def test_check_encoding_result_cpp_allows_utf8_sig(check_encoding_module):
-    """Test that .cpp files accept UTF-8-SIG encoding"""
-    # check_encoding_result(file_name, encoding) should return True for valid combo
-    result = check_encoding_module.check_encoding_result("test.cpp", "UTF-8-SIG")
-    assert result is True
-
-
-def test_check_encoding_result_cpp_allows_ascii(check_encoding_module):
-    """Test that .cpp files accept ASCII encoding"""
-    result = check_encoding_module.check_encoding_result("test.cpp", "ascii")
-    assert result is True
-
-
-def test_check_encoding_result_h_allows_utf8_sig(check_encoding_module):
-    """Test that .h files accept UTF-8-SIG encoding"""
-    result = check_encoding_module.check_encoding_result("test.h", "UTF-8-SIG")
-    assert result is True
-
-
-def test_check_encoding_result_rc_requires_utf16(check_encoding_module):
-    """Test that .rc files accept UTF-16 encoding"""
-    result = check_encoding_module.check_encoding_result("test.rc", "UTF-16")
-    assert result is True
-
-
-def test_check_encoding_result_rc_rejects_utf8(check_encoding_module):
-    """Test that .rc files reject UTF-8 encoding"""
-    result = check_encoding_module.check_encoding_result("test.rc", "UTF-8")
-    assert result is False
-
-
-# ============================================================================
-# Git Operations Tests (mocked with pytest-mock)
-# ============================================================================
-
-
-# Base-SHA-driven diff and safe fallback tests
-
-
-def test_get_diff_files_uses_valid_base_sha_and_filters_extensions(mocker, check_encoding_module):
-    mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.side_effect = [b"abc123def456\n", b"src/test.cpp\0README.md\0src/style.rc\0"]
-
-    files = list(check_encoding_module.get_diff_files("abc123def456"))
-
-    assert files == ["src/test.cpp", "src/style.rc"]
-    assert mock_check_output.call_args_list[0].args[0] == [
-        "git", "rev-parse", "--verify", "--end-of-options", "abc123def456^{commit}"
-    ]
-    assert mock_check_output.call_args_list[1].args[0] == [
-        "git", "diff", "--name-only", "--diff-filter=d", "-z",
-        "abc123def456", "HEAD", "--"
-    ]
-
-
-def test_get_diff_files_excludes_deleted_and_keeps_rename_destination(mocker, check_encoding_module):
-    mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.side_effect = [b"abc123\n", b"src/renamed.cpp\0src/removed.h\0"]
-
-    files = list(check_encoding_module.get_diff_files("abc123"))
-
-    assert files == ["src/renamed.cpp", "src/removed.h"]
-    assert "--diff-filter=d" in mock_check_output.call_args_list[1].args[0]
-
-
-def test_get_diff_files_propagates_invalid_base_failure(mocker, check_encoding_module):
-    mock_check_output = mocker.patch("subprocess.check_output")
-    mock_check_output.side_effect = subprocess.CalledProcessError(128, "git")
-
-    with pytest.raises(subprocess.CalledProcessError):
-        list(check_encoding_module.get_diff_files("not-a-commit"))
+    assert result.returncode == 0, _combined_output(result)
+    assert "checking baseline.cpp" in result.stdout
+    assert "deleted.h" not in result.stdout
+    assert "ignored.md" not in result.stdout
+    assert "Encoding check passed for 1 file(s)." in result.stdout
 
 
 @pytest.mark.parametrize("base_sha", ["", "0" * 40])
-def test_empty_or_all_zero_base_is_a_branch_creation_noop(base_sha, mocker, check_encoding_module):
-	get_diff_files = mocker.patch.object(
-		check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
-	)
+def test_diff_treats_empty_or_all_zero_base_as_branch_creation_noop(
+    tmp_path: Path, base_sha: str
+):
+    _initialize_repository(tmp_path)
+    (tmp_path / "invalid.cpp").write_bytes("// 日本語\n".encode())
 
-	assert check_encoding_module._is_full_scan_base(base_sha) is True
-	assert list(check_encoding_module.get_ci_files(base_sha)) == []
-	get_diff_files.assert_not_called()
-
-
-def test_get_ci_files_uses_diff_for_valid_base(mocker, check_encoding_module):
-    get_diff_files = mocker.patch.object(
-        check_encoding_module, "get_diff_files", return_value=["src/test.cpp"]
+    result = _run(
+        "diff", "-BaseSha", base_sha, "-RepositoryRoot", str(tmp_path), cwd=tmp_path
     )
 
-    assert list(check_encoding_module.get_ci_files("abc123")) == ["src/test.cpp"]
-    get_diff_files.assert_called_once_with("abc123")
+    assert result.returncode == 0, _combined_output(result)
+    assert "branch creation has no diff" in result.stdout
+    assert "Encoding check passed for 0 file(s)." in result.stdout
 
 
-def test_check_all_generator_yields_target_extensions(mocker, check_encoding_module):
-    """Test check_all generator yields files with target extensions"""
-    # Mock os.walk to return controlled directory structure
-    mock_walk = mocker.patch("os.walk")
-    mock_walk.return_value = [
-        (".", ["subdir"], ["test.cpp", "doc.md", "style.rc"]),
-        ("./subdir", [], ["header.h", "config.txt"])
-    ]
-    
-    # Collect results from generator
-    files = list(check_encoding_module.check_all())
-    
-    # Should yield at least files with target extensions
-    assert len(files) >= 1
+def test_diff_rejects_an_invalid_base_commit(tmp_path: Path):
+    _initialize_repository(tmp_path)
+
+    result = _run(
+        "diff",
+        "-BaseSha",
+        "not-a-commit",
+        "-RepositoryRoot",
+        str(tmp_path),
+        cwd=tmp_path,
+    )
+
+    assert result.returncode != 0
+    assert "git rev-parse failed" in _combined_output(result)
 
 
-# ============================================================================
-# Integration Tests
-# ============================================================================
+def test_batch_wrapper_only_forwards_to_the_powershell_checker():
+    wrapper = BATCH_WRAPPER.read_text(encoding="utf-8")
+
+    assert "src\\main\\ps1\\check-encoding.ps1" in wrapper
+    assert "%*" in wrapper
+    assert "exit /b %ERRORLEVEL%" in wrapper
+    assert "python" not in wrapper.lower()
 
 
-def test_process_files_detects_encoding_violations(tmp_path, check_encoding_module, capsys):
-    """
-    Test process_files() integration: verify it detects encoding violations
-    
-    Setup:
-    - Create a .cpp file with UTF-8 (valid)
-    - Create a .rc file with UTF-8 (invalid, should be UTF-16)
-    - Expect process_files to detect the .rc as violation
-    """
-    # Create valid .cpp file (UTF-8)
-    cpp_file = tmp_path / "test.cpp"
-    cpp_file.write_text("int main() {}", encoding="utf-8")
-    
-    # Create invalid .rc file (UTF-8 instead of UTF-16)
-    rc_file = tmp_path / "test.rc"
-    rc_file.write_text("STRINGTABLE\nBEGIN\nEND", encoding="utf-8")
-    
-    # Process files and count violations
-    files = [str(cpp_file), str(rc_file)]
-    violation_count = check_encoding_module.process_files(files)
-    
-    # Should report at least 1 violation (the .rc file)
-    assert violation_count >= 1
+def test_encoding_job_does_not_install_python_or_uv():
+    workflow = WORKFLOW.read_text(encoding="utf-8")
+    encoding_job = workflow.split("  check-encoding:", 1)[1].split(
+        "\n  build-vcpkg-msvc:", 1
+    )[0]
 
-
-def test_process_files_accepts_valid_files(tmp_path, check_encoding_module):
-    """
-    Test process_files() with valid encodings
-    
-    Setup:
-    - Create a .cpp file with UTF-8 (valid)
-    - Create a .rc file with UTF-16 (valid)
-    - Expect process_files to return 0 violations
-    """
-    # Create valid .cpp file (UTF-8)
-    cpp_file = tmp_path / "valid.cpp"
-    cpp_file.write_text("int main() {}", encoding="utf-8")
-    
-    # Create valid .rc file (UTF-16)
-    rc_file = tmp_path / "valid.rc"
-    rc_file.write_text("STRINGTABLE\nBEGIN\nEND", encoding="utf-16")
-    
-    # Process files
-    files = [str(cpp_file), str(rc_file)]
-    violation_count = check_encoding_module.process_files(files)
-    
-    # Should report 0 violations for valid files
-    assert violation_count == 0
+    assert "checkEncoding.bat" in encoding_job
+    assert "setup-python" not in encoding_job
+    assert "setup-uv" not in encoding_job
+    assert "uv pip install" not in encoding_job

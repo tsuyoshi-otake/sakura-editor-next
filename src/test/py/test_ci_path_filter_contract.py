@@ -5,11 +5,11 @@ it drifts.
 
 A **required** workflow must carry no path filter at all.  A required status
 check that never starts is not reported as skipped -- it stays ``expected``
-forever, and the pull request can never merge.  A documentation-only pull
-request would therefore be permanently blocked by a ``paths-ignore`` added for
-its own benefit.  That is why ``build-sakura.yml``, ``cppcheck.yml``,
-``doxygen.yml``, ``architecture-gates.yml``, and ``pr-target-policy.yml`` run on
-every pull request no matter what changed.
+forever, and the pull request can never merge.  The required ``pr-gate.yml``
+therefore starts for every pull request and synchronously calls the reusable
+build, analysis, documentation, architecture, and target-policy workflows.
+Those callees also carry no event-level path filters; the parent planner makes
+the one explicit documentation-only decision inside the job graph.
 
 An **advisory** workflow is the opposite case.  Nothing waits on it, so a skip
 costs nothing, and ``build-on-msys2.yml`` is the most expensive workflow in the
@@ -38,9 +38,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github/workflows"
 
-# Every workflow that owns at least one required status check on `develop` or
-# `main`.  Adding a required check from another workflow means adding it here.
+# The one required parent and every reusable workflow whose conclusion it
+# synchronously consumes. Adding another selected workflow means adding it here.
 REQUIRED_CHECK_WORKFLOWS = (
+    "pr-gate.yml",
     "build-sakura.yml",
     "cppcheck.yml",
     "doxygen.yml",

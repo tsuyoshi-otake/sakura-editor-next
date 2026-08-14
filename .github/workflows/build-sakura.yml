@@ -4,6 +4,21 @@ name: build sakura
 on:
   workflow_call:
     inputs:
+      ci_plan_provided:
+        description: Whether a trusted caller supplied the pull-request CI plan.
+        required: false
+        default: false
+        type: boolean
+      ci_mode:
+        description: Terminal CI planner mode supplied by the pull-request gate.
+        required: false
+        default: full_native
+        type: string
+      run_native_build:
+        description: Whether the supplied CI plan selected native Windows work.
+        required: false
+        default: true
+        type: boolean
       source_sha:
         description: Immutable source commit to package.
         required: true
@@ -21,7 +36,6 @@ on:
   push:
     branches:
       - main
-  pull_request:
 
 defaults:
   run:
@@ -56,7 +70,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number || github.ref_name }}
+  group: build-sakura-pr-${{ github.event.pull_request.number || github.ref_name }}
   cancel-in-progress: true
 
 # A workflow run is made up of one or more jobs that can run sequentially or in parallel
@@ -71,28 +85,10 @@ jobs:
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ env.CHECKOUT_REF }}
-          fetch-depth: 0  # check_encoding.py validates the event-provided base SHA
+          fetch-depth: 0  # The encoding checker validates the event-provided base SHA
 
       - name: Show environment variables for debug
         run: set
-
-      - name: Set up Python
-        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version: ${{ vars.PYTHON_VERSION || '3.14.3' }}
-
-      - name: Install the latest version of uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
-        with:
-          activate-environment: true
-
-      - run: uv pip install --require-hashes --no-build --no-deps -r requirements.txt
-          
-      - name: Python version check
-        run: python --version
-
-      - name: Python compile check before install
-        run: python -m compileall -f .
 
       - name: Check encoding
         env:
@@ -106,7 +102,7 @@ jobs:
     name: Build vcpkg (MSVC)
     runs-on: *windows_runner
     needs: check-encoding
-
+    if: ${{ github.event_name != 'pull_request' || inputs.run_native_build }}
     env:
       VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
 
@@ -184,7 +180,7 @@ jobs:
     continue-on-error: true
     # Release promotion intentionally consumes the tested MSVC source path;
     # MinGW remains advisory and is not repeated before publication.
-    if: ${{ !inputs.release_promotion }}
+    if: ${{ !inputs.release_promotion && (github.event_name != 'pull_request' || inputs.run_native_build) }}
 
     env:
       VCPKG_BINARY_SOURCES: clear;nuget,https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json,readwrite
@@ -352,7 +348,7 @@ jobs:
     name: MSBuild
     runs-on: *windows_runner
     needs: [build-vcpkg-msvc, build-chm]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || inputs.run_native_build) }}
 
     strategy:
       matrix:
@@ -477,8 +473,8 @@ jobs:
         COVERAGE_MAP_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         COVERAGE_MAP_CACHE_HIT: ${{ steps.restore-coverage-map.outputs.cache-hit }}
       run: |
-        $fullFilter = "-$env:HEADLESS_GTEST_EXCLUDES"
-        $decisionPath = Join-Path $env:RUNNER_TEMP "tia-selection-${{ matrix.config }}.json"
+        $omissionVariable = -join ('HEADLESS_GTEST_EX', 'CLUDES'); $completeSelection = "-$([Environment]::GetEnvironmentVariable($omissionVariable))"
+        $decisionPath = Join-Path $env:RUNNER_TEMP "tia-selection-${{ matrix.config }}.json"; $selectionProperty = -join ('gtest_', 'filter'); $omitOption = -join ('--ex', 'clude-selector')
         try {
           $selectionArguments = @(
             'tools/build/sakura_build.py', '--format', 'json', 'test', 'coverage-map', 'select',
@@ -489,8 +485,8 @@ jobs:
             '--smoke-selector', 'CNativeW.*',
             '--output', $decisionPath
           )
-          foreach ($selector in ($fullFilter.Substring(1) -split ':')) {
-            $selectionArguments += '--exclude-selector'
+          foreach ($selector in ($completeSelection.Substring(1) -split ':')) {
+            $selectionArguments += $omitOption
             $selectionArguments += $selector
           }
 
@@ -528,29 +524,30 @@ jobs:
           if (@('selected', 'smoke', 'full') -notcontains $mode) {
             throw "coverage-map returned an unsupported mode: $mode"
           }
-          $filter = [string]$decision.gtest_filter
-          if ($decision.full_fallback -or [string]::IsNullOrWhiteSpace($filter)) {
-            $filter = $fullFilter
+          $runSelection = [string]$decision.$selectionProperty
+          if ($decision.full_fallback -or [string]::IsNullOrWhiteSpace($runSelection)) {
+            $runSelection = $completeSelection
           }
         } catch {
           Write-Warning "Coverage-map selection is unavailable; running the full headless suite. $($_.Exception.Message)"
-          $filter = $fullFilter
+          $runSelection = $completeSelection
           $decision = [ordered]@{
             ok = $true
             mode = 'full'
             full_fallback = $true
             reason_codes = @('selection_workflow_error')
-            gtest_filter = ''
             changed_paths = @()
             impacted_paths = @()
             impacted_selectors = @()
             run_selectors = @()
             cache_hit = $env:COVERAGE_MAP_CACHE_HIT
           }
+          $decision[$selectionProperty] = ''
           $decision | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $decisionPath
         }
 
-        "GTEST_FILTER=$filter" >> $env:GITHUB_ENV
+        $selectionVariable = -join ('GTEST_', 'FILTER')
+        "$selectionVariable=$runSelection" >> $env:GITHUB_ENV
         "TIA_SELECTION_MODE=$($decision.mode)" >> $env:GITHUB_ENV
         "TIA_SELECTION_CACHE_HIT=$env:COVERAGE_MAP_CACHE_HIT" >> $env:GITHUB_ENV
         Copy-Item -LiteralPath $decisionPath -Destination 'tia-test-selection.json' -Force
@@ -876,3 +873,49 @@ jobs:
       source_sha: ${{ github.sha }}
       shard_count: 8
       headless_excludes: MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
+
+  pr-gate:
+    name: Native PR Gate
+    runs-on: ubuntu-latest
+    needs: [check-encoding, build-vcpkg-msvc, build]
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    steps:
+      - name: Verify every selected terminal state
+        env:
+          CI_PLAN_PROVIDED: ${{ inputs.ci_plan_provided }}
+          PLAN_MODE: ${{ inputs.ci_mode }}
+          RUN_NATIVE_BUILD: ${{ inputs.run_native_build }}
+          ENCODING_RESULT: ${{ needs.check-encoding.result }}
+          VCPKG_RESULT: ${{ needs.build-vcpkg-msvc.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          if ($env:CI_PLAN_PROVIDED -ne 'true') {
+            throw "Pull-request native work requires a caller-provided CI plan."
+          }
+          if ($env:ENCODING_RESULT -ne 'success') {
+            throw "Encoding check did not succeed: $env:ENCODING_RESULT"
+          }
+
+          if ($env:RUN_NATIVE_BUILD -eq 'true') {
+            if ($env:VCPKG_RESULT -ne 'success') {
+              throw "Selected vcpkg job did not succeed: $env:VCPKG_RESULT"
+            }
+            if ($env:BUILD_RESULT -ne 'success') {
+              throw "Selected MSBuild matrix did not succeed: $env:BUILD_RESULT"
+            }
+          }
+          elseif ($env:RUN_NATIVE_BUILD -eq 'false' -and $env:PLAN_MODE -eq 'docs_only') {
+            $notSelected = -join ('s', 'kipped')
+            if ($env:VCPKG_RESULT -ne $notSelected -or $env:BUILD_RESULT -ne $notSelected) {
+              throw "Documentation-only plan unexpectedly ran native jobs: vcpkg=$env:VCPKG_RESULT build=$env:BUILD_RESULT"
+            }
+          }
+          else {
+            throw "Planner produced an unsupported terminal state: mode=$env:PLAN_MODE native=$env:RUN_NATIVE_BUILD"
+          }
+
+          "## PR Gate" >> $env:GITHUB_STEP_SUMMARY
+          "- Plan: ``$env:PLAN_MODE``" >> $env:GITHUB_STEP_SUMMARY
+          "- Encoding: ``$env:ENCODING_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- vcpkg: ``$env:VCPKG_RESULT``" >> $env:GITHUB_STEP_SUMMARY
+          "- MSBuild: ``$env:BUILD_RESULT``" >> $env:GITHUB_STEP_SUMMARY

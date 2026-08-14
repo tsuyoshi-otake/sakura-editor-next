@@ -76,7 +76,7 @@ class TestResultsWorkflowContractTests(unittest.TestCase):
 
     def test_the_workflow_consumes_completed_build_sakura_runs(self) -> None:
         self.assertIn(
-            "on:\n  workflow_run:\n    workflows: ['build sakura']\n    types: [completed]\n",
+            "on:\n  workflow_run:\n    workflows: ['build sakura', 'PR Gate']\n    types: [completed]\n",
             self.text,
         )
 
@@ -99,6 +99,15 @@ class TestResultsWorkflowContractTests(unittest.TestCase):
         self.assertIn("name: test-results-x64-Release", self.text)
         self.assertIn("github-token: ${{ secrets.GITHUB_TOKEN }}", self.text)
         self.assertIn("run-id: ${{ github.event.workflow_run.id }}", self.text)
+
+    def test_documentation_only_runs_do_not_require_a_release_artifact(self) -> None:
+        self.assertIn("id: artifact", self.text)
+        self.assertIn("steps.artifact.outputs.exists == 'true'", self.text)
+        self.assertIn(
+            "No Release test-results artifact was expected for a documentation-only CI plan.",
+            self.text,
+        )
+        self.assertEqual(self.text.count("if: ${{ steps.artifact.outputs.exists == 'true' }}"), 2)
 
     def test_the_check_is_published_from_the_downloaded_release_results(self) -> None:
         self.assertIn("uses: EnricoMi/publish-unit-test-result-action@v2", self.text)
