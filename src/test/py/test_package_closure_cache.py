@@ -52,7 +52,13 @@ KEY_EXPRESSION = "sakura-packages-${{ runner.os }}-${{ steps.package-plan.output
 CALLER_GATED_WORKFLOWS = {"coverage-map.yml"}
 
 STEP_BOUNDARY_RE = re.compile(r"(?m)^(?=[ \t]*-[ \t]+(?:name|uses|if):)")
+# Anything that can write an entry: the combined action writes from its own
+# post-step, so it counts too.
 CACHE_SAVE_RE = re.compile(r"uses:\s*actions/cache(?:/save)?@")
+# The save sub-action specifically.  Neither pattern spells a major version:
+# which one is current is dependabot's to bump, and pinning it into an
+# assertion only turned a routine bump into a red build (#149).
+CACHE_SAVE_ACTION_RE = re.compile(r"uses:\s*actions/cache/save@")
 
 
 def _read(path: Path) -> str:
@@ -139,7 +145,7 @@ class PackageClosureCacheTests(unittest.TestCase):
 
     def test_only_non_pull_request_events_write_to_the_cache(self) -> None:
         save = self._step("Save cached package closure")
-        self.assertIn("uses: actions/cache/save@v4", save)
+        self.assertRegex(save, CACHE_SAVE_ACTION_RE)
         self.assertIn("github.event_name != 'pull_request'", save)
         self.assertIn("steps.package-cache.outputs.cache-hit != 'true'", save)
 
