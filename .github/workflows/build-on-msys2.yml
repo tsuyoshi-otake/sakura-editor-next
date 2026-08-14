@@ -22,8 +22,6 @@ env:
   VCPKG_NUGET_FEED: https://nuget.pkg.github.com/${{ github.repository_owner }}/index.json
   VCPKG_NUGET_OWNER: ${{ github.repository_owner }}
   VCPKG_ROOT: ${{ github.workspace }}\tools\vcpkg
-  # Keep the exclusions equal to build-sakura.yml. Hosted runners cannot execute UI/external suites.
-  GTEST_FILTER: -MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:FileDialog/FileDialogTest.*:CDlgProfileMgrTest.*:TrayWndTest.*:EditWndTest.*:WinMainFuncTest.*:WinMain/WinMainTest.*
 
 permissions:
   actions: read
@@ -63,6 +61,17 @@ jobs:
         uses: actions/checkout@v7
         with:
           submodules: true
+
+      # src/test/headless-suite-selection.env is the one definition of which
+      # suites a hosted runner can actually execute; this job used to carry a
+      # hand-copied duplicate of build-sakura.yml's list with a comment asking
+      # the next editor to keep the two equal by hand (#164).  pwsh rather than
+      # the job's msys2 default shell, because appending to the Windows
+      # $GITHUB_ENV path from an MSYS2 shell is the known-bad path this
+      # repository already avoids for $GITHUB_OUTPUT.
+      - name: Apply the shared headless suite selection
+        shell: pwsh
+        run: Get-Content src/test/headless-suite-selection.env | Add-Content -Path $env:GITHUB_ENV
 
       - name: Install OpenCppCoverage (winget)
         if: ${{ env.Configuration == 'Debug' }}
