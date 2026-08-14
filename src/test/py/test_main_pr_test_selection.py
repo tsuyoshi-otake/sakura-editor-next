@@ -182,15 +182,15 @@ class EligibilityGateTests(unittest.TestCase):
 
     def test_the_selection_step_falls_back_to_the_full_filter_on_any_error(self) -> None:
         step = self._step("Select main PR tests")
-        self.assertIn('$fullFilter = "-$env:HEADLESS_GTEST_EXCLUDES"', step)
+        self.assertIn("GetEnvironmentVariable($omissionVariable)", step)
         catch = step[step.index("} catch {") :]
-        self.assertIn("$filter = $fullFilter", catch)
+        self.assertIn("$runSelection = $completeSelection", catch)
         self.assertIn("selection_workflow_error", catch)
         # An empty or full-fallback decision must reach the same filter as a
         # thrown error, or the classifier's fail-closed codes would only be
         # honoured when the tooling also happened to crash.
         self.assertIn(
-            "if ($decision.full_fallback -or [string]::IsNullOrWhiteSpace($filter)) {", step
+            "if ($decision.full_fallback -or [string]::IsNullOrWhiteSpace($runSelection)) {", step
         )
 
 

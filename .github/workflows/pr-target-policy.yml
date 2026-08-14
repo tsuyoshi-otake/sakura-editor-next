@@ -1,8 +1,7 @@
 name: PR target policy
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+  workflow_call:
 
 permissions:
   contents: read

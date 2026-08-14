@@ -6,7 +6,7 @@ name: test results
 # so the build workflow itself never needs checks/pull-requests write access.
 on:
   workflow_run:
-    workflows: ['build sakura']
+    workflows: ['build sakura', 'PR Gate']
     types: [completed]
 
 permissions: {}
@@ -27,10 +27,32 @@ jobs:
       checks: write
       pull-requests: write
     steps:
+      - name: Locate canonical Release test results
+        id: artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          count=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$RUN_ID/artifacts" \
+            --paginate \
+            --jq '[.artifacts[] | select(.name == "test-results-x64-Release" and .expired == false)] | length' \
+            | awk '{ total += $1 } END { print total + 0 }')
+          if [ "$count" -gt 1 ]; then
+            echo "::error::The triggering run published duplicate Release test-results artifacts."
+            exit 1
+          fi
+          if [ "$count" -eq 1 ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No Release test-results artifact was expected for a documentation-only CI plan." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
       # The Release leg runs the full headless suite in every mode, promotion
-      # included, so its XML is the canonical result set; publishing one
-      # configuration also keeps each test counted exactly once.
+      # that selects native work, so its XML is the canonical result set;
+      # publishing one configuration also keeps each test counted exactly once.
       - name: Download test-results artifact
+        if: ${{ steps.artifact.outputs.exists == 'true' }}
         uses: actions/download-artifact@v8
         with:
           name: test-results-x64-Release
@@ -39,6 +61,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
 
       - name: Publish test result
+        if: ${{ steps.artifact.outputs.exists == 'true' }}
         uses: EnricoMi/publish-unit-test-result-action@v2
         with:
           check_name: Test Results
