@@ -74958,8 +74958,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "12eee6960aad549d5c342139f7568c11f7689c9b",
-  "source_fingerprint": "sha256:11f489b634f322167f8b25c115041d17bdfb12649211cf855581e64c493e5057",
+  "source_commit": "78cb8b8dd43ab7a0ef1df13b0dcbc40bde82c6ce",
+  "source_fingerprint": "sha256:253a1b881092db2ac98dcdc7da1c74aeade6f1805aa07b66d81df4241381d35e",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
