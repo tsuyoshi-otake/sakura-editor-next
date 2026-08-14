@@ -6,11 +6,13 @@ on:
       - main
     paths-ignore:
       - '**/*.md'
+      - 'docs/**'
       - '.gitignore'
       - '.editorconfig'
   pull_request:
     paths-ignore:
       - '**/*.md'
+      - 'docs/**'
       - '.gitignore'
       - '.editorconfig'
   workflow_dispatch:
@@ -41,7 +43,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        configuration: [Debug, Release]
+        # A pull request builds Release only; a trusted push to main and a manual
+        # dispatch keep both configurations. MinGW is an advisory portability
+        # signal, and one configuration already reveals a construct GCC rejects
+        # -- the required MSVC matrix owns Debug/Release coverage. Running both
+        # legs on every pull request cost 38 of the roughly 74 runner-minutes a
+        # pull request spent, none of it a required status check (#164).
+        configuration: ${{ github.event_name == 'pull_request' && fromJSON('["Release"]') || fromJSON('["Debug", "Release"]') }}
     env:
       BuildPlatform: MinGW
       Configuration: ${{ matrix.configuration }}
