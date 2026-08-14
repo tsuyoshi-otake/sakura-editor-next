@@ -68,7 +68,7 @@ jobs:
         shell: cmd # このJobでは 指定しない限り cmd を使う
     steps:
       - name: Checkout repository
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ env.CHECKOUT_REF }}
           fetch-depth: 0  # check_encoding.py validates the event-provided base SHA
@@ -114,7 +114,7 @@ jobs:
     if: ${{ !inputs.release_promotion }}
     timeout-minutes: 10
     steps:
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       id: checkout
       with:
         ref: ${{ env.CHECKOUT_REF }}
@@ -170,7 +170,7 @@ jobs:
 
     steps:
     ## see https://github.com/actions/checkout
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1  # 過去の履歴は含めず取得
@@ -248,7 +248,7 @@ jobs:
       packages: write
 
     steps:
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
@@ -322,7 +322,7 @@ jobs:
     if: ${{ github.event_name != 'pull_request' }}
 
     steps:
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1
@@ -381,7 +381,7 @@ jobs:
 
     steps:
     ## see https://github.com/actions/checkout
-    - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ env.CHECKOUT_REF }}
         fetch-depth: 1  # 過去の履歴は含めず取得
@@ -464,7 +464,7 @@ jobs:
         }
 
     ## see https://github.com/actions/checkout
-    - uses: actions/checkout@v7
+    - uses: actions/checkout@v7.0.1
       id: checkout
       with:
         ref: ${{ env.CHECKOUT_REF }}
@@ -858,7 +858,7 @@ jobs:
     # a separate directory so it cannot affect the packaged source tree.
     - name: Checkout release provenance helper
       if: ${{ matrix.config == 'Release' && inputs.release_promotion }}
-      uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       with:
         ref: ${{ github.workflow_sha }}
         fetch-depth: 1
