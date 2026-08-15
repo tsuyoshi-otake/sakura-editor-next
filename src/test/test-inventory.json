@@ -2190,6 +2190,7 @@
     {"runtime":{"runner_id":"tests1","selector":"TerminalUnicode.MeasuresEmojiVariationZwjFlagsAndSkinTone"},"status":"enabled","test_id":"tests1:TerminalUnicode.MeasuresEmojiVariationZwjFlagsAndSkinTone"},
     {"runtime":{"runner_id":"tests1","selector":"TerminalUnicode.MeasuresStandaloneCombiningAndFormatCodepointsAsZeroWidth"},"status":"enabled","test_id":"tests1:TerminalUnicode.MeasuresStandaloneCombiningAndFormatCodepointsAsZeroWidth"},
     {"runtime":{"runner_id":"tests1","selector":"TerminalUnicode.StopsAtTheFirstOfMultipleGraphemes"},"status":"enabled","test_id":"tests1:TerminalUnicode.StopsAtTheFirstOfMultipleGraphemes"},
+    {"runtime":{"runner_id":"tests1","selector":"ScmViewStackLayout.ReservesANonInteractiveGraphFrameBelowChanges"},"status":"enabled","test_id":"tests1:ScmViewStackLayout.ReservesANonInteractiveGraphFrameBelowChanges"},
     {"runtime":{"runner_id":"tests1","selector":"TextMateGrammarCompilerTest.Compile_ApplyEndPatternLast_DefaultsFalse"},"status":"enabled","test_id":"tests1:TextMateGrammarCompilerTest.Compile_ApplyEndPatternLast_DefaultsFalse"},
     {"runtime":{"runner_id":"tests1","selector":"TextMateGrammarCompilerTest.Compile_BeginEndRule_WithExplicitBeginCaptures"},"status":"enabled","test_id":"tests1:TextMateGrammarCompilerTest.Compile_BeginEndRule_WithExplicitBeginCaptures"},
     {"runtime":{"runner_id":"tests1","selector":"TextMateGrammarCompilerTest.Compile_BeginWhileRule_SetsWhileSourceNotEnd"},"status":"enabled","test_id":"tests1:TextMateGrammarCompilerTest.Compile_BeginWhileRule_SetsWhileSourceNotEnd"},
