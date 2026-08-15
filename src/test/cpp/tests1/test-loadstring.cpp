@@ -12,6 +12,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -129,6 +130,19 @@ struct FileMenuLocaleExpectation {
 	const wchar_t* recentWorkspace;
 	const wchar_t* closeFolder;
 	const wchar_t* closeWorkspace;
+};
+
+struct WorkbenchScmLocaleExpectation {
+	const wchar_t* dllName;
+	std::array<const wchar_t*, 5> strings;
+};
+
+constexpr std::array<UINT, 5> kWorkbenchScmStringResourceIds = {
+	STR_WORKBENCH_GIT_EMPTY_WORKBENCH,
+	STR_WORKBENCH_SCM_REPOSITORIES_TITLE,
+	STR_WORKBENCH_SCM_CHANGES_TITLE,
+	STR_WORKBENCH_SCM_GRAPH_TITLE,
+	STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE,
 };
 
 //! This is the complete function-code surface of the File menu's v8 default,
@@ -282,6 +296,11 @@ TEST(LoadStringW, LoadStringResource101)
 	EXPECT_THAT(LS(F_EXPANDPARAMETER), StrEq(L""));
 }
 
+TEST(CSelectLang, MissingStringReturnsEmpty)
+{
+	EXPECT_TRUE(CSelectLang::LoadStringW(F_EXPANDPARAMETER).empty());
+}
+
 TEST(FileMenuLocalization, AllV8FileFunctionNamesResolveFromEachSelectedRuntimeResource)
 {
 	ScopedLanguageSelection restoreLanguage;
@@ -330,6 +349,41 @@ TEST(FileMenuLocalization, AllV8FileFunctionNamesResolveFromEachSelectedRuntimeR
 			CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind::Workspace)));
 		EXPECT_EQ(STR_CLOSE_FOLDER, CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind::Folder));
 		EXPECT_EQ(0U, CEditWnd::CloseWorkspaceMenuLabelResource(config::EWorkspaceKind::Empty));
+	}
+}
+
+TEST(WorkbenchScmLocalization, AllSelectedRuntimeResourcesContainLocalizedScmViewStrings)
+{
+	ScopedLanguageSelection restoreLanguage;
+	const auto resourceDirectory = GetCurrentProcessDirectory();
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_en_US.dll"));
+	ASSERT_TRUE(std::filesystem::is_regular_file(resourceDirectory / L"sakura_lang_zh_CN.dll"));
+
+	CSelectLang::InitializeLanguageEnvironment();
+	const std::array locales = {
+		WorkbenchScmLocaleExpectation{ L"", {
+			L"ソース管理の対象となるフォルダーを開いていません。", L"リポジトリ", L"変更", L"グラフ", L"グラフ ビューはまだ利用できません。" } },
+		WorkbenchScmLocaleExpectation{ L"sakura_lang_en_US.dll", {
+			L"Open a folder to use Source Control.", L"Repositories", L"Changes", L"Graph", L"The Graph view is not available yet." } },
+		WorkbenchScmLocaleExpectation{ L"sakura_lang_zh_CN.dll", {
+			L"打开一个文件夹以使用源代码管理。", L"存储库", L"更改", L"图形", L"图形视图尚不可用。" } },
+	};
+
+	for (const auto& locale : locales) {
+		SCOPED_TRACE(locale.dllName);
+		CSelectLang::ChangeLang(locale.dllName);
+		for (size_t index = 0; index < kWorkbenchScmStringResourceIds.size(); ++index) {
+			const UINT resourceId = kWorkbenchScmStringResourceIds[index];
+			SCOPED_TRACE(resourceId);
+			try {
+				const auto resource = cxx::load_string(
+					resourceId, std::optional<HMODULE>{ CSelectLang::getLangRsrcInstance() });
+				EXPECT_EQ(locale.strings[index], resource);
+			}
+			catch (const std::out_of_range&) {
+				ADD_FAILURE() << "selected language resource is missing Workbench SCM string " << resourceId;
+			}
+		}
 	}
 }
 

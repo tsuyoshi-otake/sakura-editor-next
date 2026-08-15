@@ -2071,6 +2071,7 @@ BEGIN
         BOTTOMMARGIN, 152
     END
 END
+#endif    // APSTUDIO_INVOKED
 
 STRINGTABLE
 BEGIN
@@ -2363,7 +2364,6 @@ BEGIN
     STR_WORKBENCH_SCM_GRAPH_TITLE "图形"
     STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE "图形视图尚不可用。"
 END
-#endif    // APSTUDIO_INVOKED
 
 
 /////////////////////////////////////////////////////////////////////////////

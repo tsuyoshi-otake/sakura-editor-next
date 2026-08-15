@@ -2098,6 +2098,7 @@ BEGIN
         BOTTOMMARGIN, 152
     END
 END
+#endif    // APSTUDIO_INVOKED
 
 STRINGTABLE
 BEGIN
@@ -2390,7 +2391,6 @@ BEGIN
     STR_WORKBENCH_SCM_GRAPH_TITLE "グラフ"
     STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE "グラフ ビューはまだ利用できません。"
 END
-#endif    // APSTUDIO_INVOKED
 
 
 /////////////////////////////////////////////////////////////////////////////

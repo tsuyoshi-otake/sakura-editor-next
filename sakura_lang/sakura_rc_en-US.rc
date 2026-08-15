@@ -2154,6 +2154,7 @@ BEGIN
         BOTTOMMARGIN, 152
     END
 END
+#endif    // APSTUDIO_INVOKED
 
 STRINGTABLE
 BEGIN
@@ -2413,14 +2414,14 @@ BEGIN
     STR_WORKBENCH_GIT_SYNC_READ_ONLY_REMOTE "the remote is read-only, so nothing was pushed"
     STR_WORKBENCH_GIT_SYNC_NOTHING_TO_PUSH "the branch is not ahead of its upstream"
     STR_WORKBENCH_GIT_DIRTY_WORK_TREE "Please clean your repository working tree before checkout."
-    STR_WORKBENCH_GIT_PUSH_REJECTED "Can't push refs to remote. Try running \"Pull\" first to integrate your changes."
-    STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED "Can't force push refs to remote. The tip of the remote-tracking branch has been updated since the last checkout. Try running \"Pull\" first to pull the latest changes from the remote branch first."
+    STR_WORKBENCH_GIT_PUSH_REJECTED "Can't push refs to remote. Try running ""Pull"" first to integrate your changes."
+    STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED "Can't force push refs to remote. The tip of the remote-tracking branch has been updated since the last checkout. Try running ""Pull"" first to pull the latest changes from the remote branch first."
     STR_WORKBENCH_GIT_CONFLICT "There are merge conflicts. Please resolve them before committing your changes."
     STR_WORKBENCH_GIT_AUTHENTICATION_FAILED "Failed to authenticate to git remote."
     STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET "Failed to authenticate to git remote:\n\n{0}"
-    STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED "Make sure you configure your \"user.name\" and \"user.email\" in git."
+    STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED "Make sure you configure your ""user.name"" and ""user.email"" in git."
     STR_WORKBENCH_GIT_FETCH_ALL_REMOTES "Fetch all remotes"
-    STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER "Pick a remote to publish the branch \"{0}\" to:"
+    STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER "Pick a remote to publish the branch ""{0}"" to:"
     STR_WORKBENCH_GIT_DIFF_TITLE_INDEX "{0} (Index)"
     STR_WORKBENCH_GIT_DIFF_TITLE_WORKING_TREE "{0} (Working Tree)"
     STR_WORKBENCH_GIT_DIFF_TITLE_DELETED "{0} (Deleted)"
@@ -2446,7 +2447,6 @@ BEGIN
     STR_WORKBENCH_SCM_GRAPH_TITLE "Graph"
     STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE "The Graph view is not available yet."
 END
-#endif    // APSTUDIO_INVOKED
 
 
 /////////////////////////////////////////////////////////////////////////////
