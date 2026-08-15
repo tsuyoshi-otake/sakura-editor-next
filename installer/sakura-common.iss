@@ -341,6 +341,7 @@ Name: startup;     Description: "{cm:residentStartup}";  GroupDescription: "{cm:
 [Files]
 Source: "sakura\sakura.exe";           DestDir: "{app}";                  Components: main; Flags: ignoreversion;
 Source: "sakura\sakura_lang_en_US.dll";DestDir: "{app}";                  Components: main; Flags: ignoreversion;
+Source: "sakura\sakura_lang_zh_CN.dll";DestDir: "{app}";                  Components: main; Flags: ignoreversion;
 Source: "sakura\license\LICENSE";      DestDir: "{app}\license";          Components: main
 Source: "sakura\bregonig.dll";         DestDir: "{app}";                  Components: main
 Source: "sakura\license\bregonig\*";   DestDir: "{app}\license\bregonig"; Components: main
