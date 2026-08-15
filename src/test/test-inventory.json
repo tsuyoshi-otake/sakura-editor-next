@@ -1,11 +1,11 @@
 {
   "disabled_count": 30,
-  "discovery": {"arguments":["--gtest_list_tests"],"executable":"runtime-set:tests1","executable_sha256":"b84a1ff9173dc1973b499f06fdd937ed5d35fea74926cc8527c01c0c02ba8e1a","framework":"googletest"},
+  "discovery": {"arguments":["--gtest_list_tests"],"executable":"runtime-set:tests1","executable_sha256":"503cf043e5b35413fbe33b8f0c6805b8d0e894892b5908d95f04dffb3ea6b572","framework":"googletest"},
   "guarantee_fingerprint": "sha256:55a5b680d7c7393810fbb98420e678e53dfab3ebafbc63c4f964585b64ac880e",
   "inventory_id": "legacy-tests1-msvc-x64-debug",
   "schema_version": 1,
-  "source_dirty": true,
-  "source_revision": "10fa6f06a8273670fe7785e132b10ec1ee9a1111",
+  "source_dirty": false,
+  "source_revision": "096d601990ebb9f0970bfdc52ad3484b5452b17c",
   "test_count": 2860,
   "tests": [
     {"runtime":{"runner_id":"tests1","selector":"ApiCommandArguments.AnOverLongStringIsRefusedRatherThanTruncated"},"status":"enabled","test_id":"tests1:ApiCommandArguments.AnOverLongStringIsRefusedRatherThanTruncated"},
