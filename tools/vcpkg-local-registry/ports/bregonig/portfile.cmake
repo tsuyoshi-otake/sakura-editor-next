@@ -74,15 +74,60 @@ file(MAKE_DIRECTORY "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}" "${BUILD_DIR}/
 # Copy headers
 file(COPY "${ONIGMO_INSTALLED}/include/onigmo.h" DESTINATION "${BUILD_DIR}/src/onigmo/")
 
+# bregonig's nmake Makefile consumes a COFF `onigmo_s.lib`. MSVC triplets
+# install that as `lib/onigmo.lib`. MinGW triplets install GNU `libonigmo.a`
+# for sakura, so this port nmake-builds a COFF copy from the same Onigmo NEXT
+# sources rather than asking LINK.EXE to consume a GNU archive.
+set(ONIGMO_REL_LIB "${ONIGMO_INSTALLED}/lib/onigmo.lib")
+set(ONIGMO_DBG_LIB "${ONIGMO_INSTALLED}/debug/lib/onigmo.lib")
+if(NOT EXISTS "${ONIGMO_REL_LIB}" OR NOT EXISTS "${ONIGMO_DBG_LIB}")
+  set(ONIGMO_SOURCE_DIR "${REPO_ROOT}/externals/onigmo-next")
+  if(NOT EXISTS "${ONIGMO_SOURCE_DIR}/build_nmake.cmd")
+    message(FATAL_ERROR "Onigmo NEXT nmake wrapper not found: ${ONIGMO_SOURCE_DIR}/build_nmake.cmd")
+  endif()
+  set(ONIGMO_NMAKE_DIR "${CURRENT_BUILDTREES_DIR}/onigmo-msvc-compat-${TARGET_TRIPLET}")
+  file(REMOVE_RECURSE "${ONIGMO_NMAKE_DIR}")
+  file(COPY "${ONIGMO_SOURCE_DIR}/" DESTINATION "${ONIGMO_NMAKE_DIR}")
+  file(WRITE "${ONIGMO_NMAKE_DIR}/build_rel.cmd"
+    "@echo off\n"
+    "call \"${VSDEVCMD_PATH}\" -host_arch=x64 -arch=${TARGET_CPU}\n"
+    "if errorlevel 1 exit /b 1\n"
+    "call build_nmake.cmd ARCH=${TARGET_CPU}\n"
+  )
+  vcpkg_execute_required_process(
+    COMMAND cmd.exe /c build_rel.cmd
+    WORKING_DIRECTORY "${ONIGMO_NMAKE_DIR}"
+    LOGNAME "onigmo-msvc-compat-${TARGET_TRIPLET}-rel"
+  )
+  file(WRITE "${ONIGMO_NMAKE_DIR}/build_dbg.cmd"
+    "@echo off\n"
+    "call \"${VSDEVCMD_PATH}\" -host_arch=x64 -arch=${TARGET_CPU}\n"
+    "if errorlevel 1 exit /b 1\n"
+    "call build_nmake.cmd ARCH=${TARGET_CPU} DEBUG=1\n"
+  )
+  vcpkg_execute_required_process(
+    COMMAND cmd.exe /c build_dbg.cmd
+    WORKING_DIRECTORY "${ONIGMO_NMAKE_DIR}"
+    LOGNAME "onigmo-msvc-compat-${TARGET_TRIPLET}-dbg"
+  )
+  set(ONIGMO_REL_LIB "${ONIGMO_NMAKE_DIR}/build_${TARGET_CPU}/onigmo_s.lib")
+  set(ONIGMO_DBG_LIB "${ONIGMO_NMAKE_DIR}/build_${TARGET_CPU}d/onigmo_s.lib")
+  if(NOT EXISTS "${ONIGMO_REL_LIB}" OR NOT EXISTS "${ONIGMO_DBG_LIB}")
+    message(FATAL_ERROR "MSVC-compat Onigmo libraries not found after nmake: ${ONIGMO_REL_LIB} / ${ONIGMO_DBG_LIB}")
+  endif()
+endif()
+
 # ---- Release build ----
-file(COPY "${ONIGMO_INSTALLED}/lib/onigmo.lib" 
+file(COPY "${ONIGMO_REL_LIB}"
   DESTINATION "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}/"
   NO_SOURCE_PERMISSIONS)
-# Rename to onigmo_s.lib as Makefile expects
-file(RENAME
-  "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}/onigmo.lib"
-  "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}/onigmo_s.lib"
-)
+get_filename_component(_ONIGMO_REL_NAME "${ONIGMO_REL_LIB}" NAME)
+if(NOT _ONIGMO_REL_NAME STREQUAL "onigmo_s.lib")
+  file(RENAME
+    "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}/${_ONIGMO_REL_NAME}"
+    "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}/onigmo_s.lib"
+  )
+endif()
 
 file(WRITE "${BUILD_DIR}/build_rel.cmd"
   "@echo off\n"
@@ -97,14 +142,16 @@ vcpkg_execute_required_process(
 )
 
 # ---- Debug build ----
-file(COPY "${ONIGMO_INSTALLED}/debug/lib/onigmo.lib"
+file(COPY "${ONIGMO_DBG_LIB}"
   DESTINATION "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}d/"
   NO_SOURCE_PERMISSIONS)
-# Rename to onigmo_s.lib as Makefile expects
-file(RENAME
-  "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}d/onigmo.lib"
-  "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}d/onigmo_s.lib"
-)
+get_filename_component(_ONIGMO_DBG_NAME "${ONIGMO_DBG_LIB}" NAME)
+if(NOT _ONIGMO_DBG_NAME STREQUAL "onigmo_s.lib")
+  file(RENAME
+    "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}d/${_ONIGMO_DBG_NAME}"
+    "${BUILD_DIR}/src/onigmo/build_${TARGET_CPU}d/onigmo_s.lib"
+  )
+endif()
 
 file(WRITE "${BUILD_DIR}/build_dbg.cmd"
   "@echo off\n"
