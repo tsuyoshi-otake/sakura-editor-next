@@ -65,6 +65,9 @@ struct ScmViewStackMeasurements final {
 	int inputHeight{};
 	int graphBodyHeight{};
 	bool repositoriesVisible{};
+	//! A sole Changes view is merged into its Source Control container upstream,
+	//! so its own pane header is not drawn or allocated.
+	bool changesHeaderVisible{ true };
 	bool inputVisible{};
 	bool graphVisible{};
 
@@ -110,7 +113,11 @@ struct ScmViewStackLayout final {
 		layout.repositoriesHeader = consume(headerHeight);
 		layout.repositoryRow = consume(repositoryRowHeight);
 	}
-	layout.changesHeader = consume(headerHeight);
+	if (measurements.changesHeaderVisible) {
+		layout.changesHeader = consume(headerHeight);
+	} else {
+		layout.changesHeader = { cursor, cursor };
+	}
 	if (measurements.inputVisible) {
 		(void)consume(inputOuterMargin);
 		layout.input = consume(inputHeight);

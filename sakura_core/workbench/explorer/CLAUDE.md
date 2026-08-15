@@ -78,7 +78,7 @@ Recorded divergences of this flow (omit, don't fake):
   has no message surface, so a name failing `IsValidExplorerEntryName` simply
   does not commit and the edit ends with the entry unchanged.
 
-## View Title and Native Row Projection (2026-08-15, #175)
+## View Title and Native Row Projection (2026-08-16, #178)
 
 - Explorer is a View in the Primary Side Bar, not a separate Part. Its native
   30-DIP header uses the workspace folder's display label with the filesystem's
@@ -101,8 +101,10 @@ Recorded divergences of this flow (omit, don't fake):
   colour.
 - With no root, the TreeView is hidden and the view projects the locally
   representable `EmptyView` variants from upstream's
-  `explorerViewlet.ts`: `NoFolder` renders `You have not yet opened a folder.`
-  plus `Open Folder` (`workbench.action.files.openFolder`);
+  `explorerViewlet.ts`: `NoFolder` has the distinct `No Folder Opened` View
+  title, then renders `You have not yet opened a folder.`, `Open Folder`
+  (`workbench.action.files.openFolder`), `You can clone a repository locally.`,
+  and `Clone Repository` (`git.clone`) in one ordered welcome model;
   `NoFolderWithEditors` adds the upstream explanation and `Add Folder`
   (`workbench.action.addRootFolder`); and an empty workspace renders
   `You have not yet added a folder to the workspace.` plus `Add Folder to
@@ -112,6 +114,13 @@ Recorded divergences of this flow (omit, don't fake):
   horizontal inset, one-em top-flow gaps, a full-width wrapped paragraph, and
   only the action buttons capped at 300 DIP and centered. The content therefore
   starts at the top of the view body instead of being vertically centered.
+- **`Open Remote Repository` is intentionally not projected.** In VS Code it
+  is contributed by a Remote Repositories provider and opens a virtual remote
+  workspace without cloning. Sakura has neither that provider contract nor a
+  remote/virtual filesystem, so presenting a button that clones locally or
+  fails after a click would fake the capability. A future implementation must
+  add the provider and virtual-workspace boundary first; only then may its
+  conditional ViewWelcome contribution appear.
 - **Multi-root Explorer remains an explicit unsupported boundary.** A saved
   workspace with one or more folders cannot be collapsed to a fabricated single
   TreeView root, so the tool shows `WorkspaceWithFoldersUnsupported` with no

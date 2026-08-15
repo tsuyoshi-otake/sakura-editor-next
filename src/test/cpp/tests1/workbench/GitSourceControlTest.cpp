@@ -160,6 +160,7 @@ TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
 		.inputHeight = 26,
 		.graphBodyHeight = 48,
 		.repositoriesVisible = true,
+		.changesHeaderVisible = true,
 		.inputVisible = true,
 		.graphVisible = true,
 	});
@@ -180,13 +181,14 @@ TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
 		.inputHeight = 26,
 		.graphBodyHeight = 48,
 		.repositoriesVisible = false,
+		.changesHeaderVisible = false,
 		.inputVisible = false,
 		.graphVisible = false,
 	});
 	EXPECT_TRUE(empty.repositoriesHeader.Empty());
 	EXPECT_TRUE(empty.repositoryRow.Empty());
-	EXPECT_EQ((ScmVerticalBounds{ 0, 30 }), empty.changesHeader);
-	EXPECT_EQ((ScmVerticalBounds{ 30, 250 }), empty.changesBody);
+	EXPECT_TRUE(empty.changesHeader.Empty());
+	EXPECT_EQ((ScmVerticalBounds{ 0, 250 }), empty.changesBody);
 	EXPECT_TRUE(empty.graphHeader.Empty());
 	EXPECT_TRUE(empty.graphBody.Empty());
 }
