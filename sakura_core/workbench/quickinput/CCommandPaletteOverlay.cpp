@@ -9,6 +9,8 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 
 #include <algorithm>
 #include <string>
@@ -20,6 +22,13 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"SakuraEditor.Next.CommandPaletteOverlay";
 
 constexpr COLORREF kFallbackPanel = RGB(37, 37, 38);
+
+[[nodiscard]] std::wstring LocalizedString(UINT resourceId, const wchar_t* fallback)
+{
+	const auto localized = CSelectLang::LoadStringW(resourceId);
+	if (!localized.empty()) return std::wstring(localized);
+	return fallback != nullptr ? std::wstring(fallback) : std::wstring();
+}
 
 void SetControlFont(HWND control, HFONT font) noexcept
 {
@@ -221,6 +230,21 @@ void CCommandPaletteOverlay::Layout() noexcept
 	Layout(width, height);
 }
 
+void CCommandPaletteOverlay::RefreshStrings() noexcept
+{
+	if (m_window == nullptr || !::IsWindow(m_window)) return;
+	if (m_empty != nullptr) {
+		const auto text = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No commands found");
+		::SetWindowTextW(m_empty, text.c_str());
+	}
+	if (m_input != nullptr) {
+		const auto placeholder = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER,
+			L"Type to search commands");
+		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
+	}
+	::InvalidateRect(m_window, nullptr, FALSE);
+}
+
 void CCommandPaletteOverlay::SetPalette(const theme::ThemePalette& palette) noexcept
 {
 	m_palette = palette;
@@ -279,8 +303,9 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_OWNERDRAWFIXED
 				| LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY,
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kListControl)), instance, nullptr);
+		const auto emptyText = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No commands found");
 		m_empty = ::CreateWindowExW(
-			0, L"STATIC", L"No commands found",
+			0, L"STATIC", emptyText.c_str(),
 			WS_CHILD | SS_CENTER | SS_CENTERIMAGE,
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kEmptyControl)), instance, nullptr);
 		m_close = ::CreateWindowExW(
@@ -292,8 +317,9 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			return -1;
 		}
 		::SendMessageW(m_input, EM_SETLIMITTEXT, 4096, 0);
-		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE,
-			reinterpret_cast<LPARAM>(L"Type to search commands"));
+		const auto placeholder = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER,
+			L"Type to search commands");
+		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
 		const HFONT font = ControlFont(m_font.Get());
 		SetControlFont(m_prompt, font);
 		SetControlFont(m_input, font);

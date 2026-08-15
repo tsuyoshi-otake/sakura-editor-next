@@ -132,11 +132,13 @@ constexpr std::string_view EmptyEditorSurfaceModel::CommandId(EmptyEditorSurface
 constexpr const wchar_t* EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction action) noexcept
 {
 	switch (action) {
-	case EmptyEditorSurfaceAction::NewFile: return L"新しいファイル";
-	case EmptyEditorSurfaceAction::OpenFile: return L"ファイルを開く...";
-	case EmptyEditorSurfaceAction::OpenFolder: return L"フォルダーを開く...";
-	case EmptyEditorSurfaceAction::ShowAllCommands: return L"すべてのコマンドの表示";
-	case EmptyEditorSurfaceAction::OpenSettings: return L"設定を開く";
+	// The model is deliberately presentation-neutral.  Localized labels are
+	// resolved by CEmptyEditorSurface at the native UI boundary.
+	case EmptyEditorSurfaceAction::NewFile: return L"New File";
+	case EmptyEditorSurfaceAction::OpenFile: return L"Open File...";
+	case EmptyEditorSurfaceAction::OpenFolder: return L"Open Folder...";
+	case EmptyEditorSurfaceAction::ShowAllCommands: return L"Show All Commands";
+	case EmptyEditorSurfaceAction::OpenSettings: return L"Open Settings";
 	case EmptyEditorSurfaceAction::Count: break;
 	}
 	return L"";

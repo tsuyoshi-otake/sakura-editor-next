@@ -31,6 +31,7 @@ from sakura_build_lib.runner import (
     msbuild_command,
     msbuild_log_path,
     run_commands,
+    solution_commands,
 )
 from sakura_build_lib.test_inventory import (
     TestInventoryError,
@@ -871,6 +872,42 @@ class RunnerTests(unittest.TestCase):
             self.assertIn("/p:MultiProcessorCompilation=true", command)
             self.assertIn("/p:CL_MPCount=1", command)
 
+    def test_explicit_listing_phase_sets_the_global_listing_property(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Release",
+                1,
+                environment={"CMD_MSBUILD": sys.executable},
+                assembly_listings=True,
+            )
+            self.assertIn("/m:1", command)
+            self.assertIn("/p:MultiProcessorCompilation=true", command)
+            self.assertIn("/p:CL_MPCount=1", command)
+            self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=true", command)
+
+    def test_explicit_listing_phase_overrides_an_ambient_listing_environment(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            target = root / "project.vcxproj"
+            target.touch()
+            command = msbuild_command(
+                root,
+                target,
+                "x64",
+                "Release",
+                1,
+                environment={"CMD_MSBUILD": sys.executable, "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1"},
+                assembly_listings=False,
+            )
+            self.assertIn("/p:MultiProcessorCompilation=true", command)
+            self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=false", command)
+
     def test_verification_rebuilds_do_not_write_the_packaged_build_log(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -1031,8 +1068,53 @@ class RunnerTests(unittest.TestCase):
                 commands = distribution_commands(root, "x64", "Release", 1)
             expected = root / "build/logs/msbuild-x64-Release.log"
             self.assertIn(f"/fileLoggerParameters:LogFile={expected};Verbosity=normal;Encoding=UTF-8", commands[0])
+            self.assertIn("/p:MultiProcessorCompilation=true", commands[0])
+            self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=false", commands[0])
+            self.assertEqual(str(root / "sakura_core" / "sakura.vcxproj"), commands[1][1])
+            self.assertIn("/m:1", commands[1])
+            self.assertIn("/p:MultiProcessorCompilation=true", commands[1])
+            self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=true", commands[1])
             packaging = [index for index, command in enumerate(commands) if any("zipArtifacts.bat" in item for item in command)]
             self.assertEqual([len(commands) - 1], packaging)
+
+    def test_listing_solution_build_finishes_tests_before_product_listings(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "sakura.sln").touch()
+            with patch("sakura_build_lib.runner.find_msbuild", return_value=sys.executable):
+                commands = solution_commands(
+                    root,
+                    "x64",
+                    "Release",
+                    8,
+                    log_file=msbuild_log_path(root, "x64", "Release"),
+                    assembly_listings=True,
+                )
+            self.assertEqual(2, len(commands))
+            self.assertEqual(str(root / "sakura.sln"), commands[0][1])
+            self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=false", commands[0])
+            self.assertEqual(str(root / "sakura_core" / "sakura.vcxproj"), commands[1][1])
+            self.assertIn("/m:1", commands[1])
+            self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=true", commands[1])
+
+    def test_release_listing_product_link_discards_only_provisional_listings(self):
+        project = Path(__file__).resolve().parents[3] / "sakura_core" / "sakura.vcxproj"
+        root = ET.parse(project).getroot()
+        namespace = root.tag.partition("}")[0] + "}"
+        target = next(
+            candidate
+            for candidate in root.findall(f"{namespace}Target")
+            if candidate.attrib.get("Name") == "RemoveSakuraAssemblyListingsBeforeLink"
+        )
+        self.assertEqual("Link", target.attrib.get("BeforeTargets"))
+        self.assertIn("$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)", target.attrib.get("Condition", ""))
+        self.assertIn("$(Configuration)'=='Release", target.attrib.get("Condition", ""))
+        listing = target.find(f"{namespace}ItemGroup/{namespace}_SakuraAssemblyListing")
+        self.assertIsNotNone(listing)
+        self.assertEqual("$(IntDir)*.asm", listing.attrib.get("Include"))
+        delete = target.find(f"{namespace}Delete")
+        self.assertIsNotNone(delete)
+        self.assertEqual("@(_SakuraAssemblyListing)", delete.attrib.get("Files"))
 
     def test_parallel_budget_is_bounded(self):
         for budget in range(1, 33):

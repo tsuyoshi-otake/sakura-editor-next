@@ -53,10 +53,10 @@ public:
 	/*!
 		@brief SCM プロバイダーが公開した statusBarCommands をそのまま描く
 
-		実 VS Code のステータスバー左端は `SourceControl.statusBarCommands` の
-		射影であって、独自に組み立てた 1 本のテキストではない。ラベルは
-		`$(git-branch) main` のように `Command.title` そのもので、アイコンも
-		クリック先コマンドもそこに含まれる。
+		実 VS Code では左端の `status.host`（Open a Remote Window）の直後に
+		`SourceControl.statusBarCommands` が並ぶ。ラベルは `$(git-branch) main`
+		のように `Command.title` そのもので、アイコンもクリック先コマンドもそこに
+		含まれる。Remote Host 項目は別の安定 ID / コマンドであり、ここに畳まない。
 	*/
 	void SetScmStatusCommands(std::vector<workbench::scm::ScmCommand> commands);
 	//! Stable workbench commands used by built-in status entries and the context menu.

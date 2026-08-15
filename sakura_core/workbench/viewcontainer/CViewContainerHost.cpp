@@ -7,6 +7,8 @@
 #include "StdAfx.h"
 #include "workbench/viewcontainer/CViewContainerHost.h"
 
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
@@ -25,13 +27,16 @@ constexpr int kOutlinePreferredHeightDip = 180;
 constexpr int kOutlineMinimumHeightDip = 96;
 constexpr int kEmptyTextInsetDip = 20;
 
-//! VS Code's Secondary Side Bar empty state. Matching the upstream wording keeps the
-//! drop affordance discoverable instead of leaving a blank Part.
-constexpr wchar_t kEmptyMessage[] = L"Drag a view here to display it.";
-
 int ScaleDip(int dip, unsigned int dpi) noexcept
 {
 	return ::MulDiv(dip, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), kDefaultDpi);
+}
+
+[[nodiscard]] std::wstring LocalizedString(UINT resourceId, const wchar_t* fallback)
+{
+	const auto localized = CSelectLang::LoadStringW(resourceId);
+	if (!localized.empty()) return std::wstring(localized);
+	return fallback != nullptr ? std::wstring(fallback) : std::wstring();
 }
 
 bool EnsureWindowClass(HINSTANCE instance)
@@ -442,7 +447,9 @@ void CViewContainerHost::Paint()
 	// A container that the other side bar has taken over is no longer rendered here, so
 	// this Part is empty even though its owner has not applied the new selection yet.
 	if (m_page.empty() || !OwnsPage(m_page)) {
-		DrawCenteredMessage(dc, kEmptyMessage);
+		const auto message = LocalizedString(STR_WORKBENCH_VIEWCONTAINER_EMPTY,
+			L"Drag a view here to display it.");
+		DrawCenteredMessage(dc, message);
 		::EndPaint(m_window, &paint);
 		return;
 	}
@@ -471,7 +478,8 @@ void CViewContainerHost::Paint()
 		}
 		RECT text = m_outlineHeader;
 		text.left += ScaleDip(22, m_dpi);
-		::DrawTextW(dc, L"OUTLINE", -1, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+		const auto outlineLabel = LocalizedString(STR_WORKBENCH_VIEWCONTAINER_OUTLINE, L"OUTLINE");
+		::DrawTextW(dc, outlineLabel.c_str(), -1, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 	}
 	::EndPaint(m_window, &paint);
 }

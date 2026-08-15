@@ -6,6 +6,8 @@
 */
 #include "StdAfx.h"
 #include "workbench/quickinput/CQuickInputDialog.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 
 #include <algorithm>
 #include <string>
@@ -150,9 +152,11 @@ LRESULT CQuickInputDialog::HandleMessage(UINT message, WPARAM wParam, LPARAM lPa
 			::SendMessageW(m_input, EM_SETLIMITTEXT, 1024 * 1024, 0);
 			::SendMessageW(m_input, EM_SETSEL, 0, -1);
 		}
-		m_ok = ::CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+		const auto okText = CSelectLang::LoadStringW(STR_WORKBENCH_QUICK_INPUT_OK);
+		const auto cancelText = CSelectLang::LoadStringW(STR_WORKBENCH_QUICK_INPUT_CANCEL);
+		m_ok = ::CreateWindowExW(0, L"BUTTON", okText.empty() ? L"OK" : okText.data(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(IDOK), instance, nullptr);
-		m_cancel = ::CreateWindowExW(0, L"BUTTON", L"Cancel", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+		m_cancel = ::CreateWindowExW(0, L"BUTTON", cancelText.empty() ? L"Cancel" : cancelText.data(), WS_CHILD | WS_VISIBLE | WS_TABSTOP,
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(IDCANCEL), instance, nullptr);
 		SetControlFont(m_prompt);
 		SetControlFont(m_input);

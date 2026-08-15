@@ -20,6 +20,53 @@
 
 namespace workbench::scm {
 
+//! Stable resource keys for SCM presentation text.  The command models remain
+//! HWND-free; the native workbench supplies a resolver backed by the Sakura
+//! language resources when presenting these values.
+enum class EScmTextKey : std::uint16_t {
+	SourceControlTitle,
+	RepositoriesTitle,
+	ChangesTitle,
+	GraphTitle,
+	GraphUnavailable,
+	GitFolderNoRepository,
+	GitEmptyWorkbench,
+	GitWorkspaceNoRepository,
+	GitEmptyWorkspace,
+	GitInitializeRepository,
+	GitCloneRepository,
+	GitAddFolderToWorkspace,
+	GitChooseFolder,
+	GitOpenFolder,
+	GitOpen,
+	GitInitHomeWarning,
+	GitInitOpenPrompt,
+	GitInitFolderPicker,
+	GitInitSuccess,
+	GitInitCancelledHome,
+	GitCloneOverwriteWarning,
+	GitOverwrite,
+	GitRepositoryUrl,
+	GitInvalidUrlFolder,
+	GitRepositoryLocation,
+	GitCloneNonEmpty,
+	GitCloneCancelled,
+	GitOpenChanges,
+	GitOpenFile,
+	GitStageChanges,
+	GitUnstageChanges,
+	GitDiscardChanges,
+	GitStageAllChanges,
+	GitUnstageAllChanges,
+	GitDiscardAllChanges,
+	GitPublishBranch,
+	GitSynchronizeChanges,
+	GitCheckoutBranchTag,
+	GitCommitMessage,
+};
+
+using ScmTextResolver = std::function<std::wstring(EScmTextKey, std::wstring_view)>;
+
 // ---------------------------------------------------------------------------
 // git.init
 // ---------------------------------------------------------------------------
@@ -68,7 +115,7 @@ using GitFolderBrowser = std::function<std::optional<std::wstring>(
 //! folder pick or the folder browser), so it cannot be closed over when the
 //! context is built. `workingDirectory` becomes `RunGit`'s `-C` argument.
 //!
-using GitCommandInvoker = std::function<GitExecutionResult(
+using GitInitCommandInvoker = std::function<GitExecutionResult(
 	std::wstring_view workingDirectory, const std::vector<std::wstring>& arguments)>;
 
 //! Shows one human-readable message: upstream's warnings and failure reasons,
@@ -128,17 +175,19 @@ struct GitInitCommandContext final {
 	//! `IsGitInitHomeDirectoryGuardTriggered`. Upstream reads `os.homedir()`.
 	std::wstring homeDirectory;
 
-	GitCommandInvoker run;
+	GitInitCommandInvoker run;
 	GitInitFolderPickPresenter folderPick;
 	GitFolderBrowser browseForFolder;
 	GitPromptPresenter confirm;
 	GitMessagePresenter message;
+	//! Optional presentation resolver. Empty keeps the model's English fallback.
+	ScmTextResolver text;
 };
 
 //! Upstream's `Choose Folder...` row is always appended after the real
 //! folders; this builds exactly that list, in exactly that order.
 [[nodiscard]] std::vector<GitInitFolderPickItem> BuildGitInitFolderPickItems(
-	const std::vector<GitInitWorkspaceFolder>& openFolders);
+	const std::vector<GitInitWorkspaceFolder>& openFolders, const ScmTextResolver& text = {});
 
 //!
 //! @brief Upstream's home-directory guard from `git.init`.
@@ -155,14 +204,15 @@ struct GitInitCommandContext final {
 //! `'This will create a Git repository in "{0}". Are you sure you want to
 //! initialize a Git repository in your home directory?'`, with the single
 //! `Initialize Repository` button upstream shows there.
-[[nodiscard]] GitPrompt BuildGitInitHomeDirectoryPrompt(std::wstring_view chosenPath);
+[[nodiscard]] GitPrompt BuildGitInitHomeDirectoryPrompt(
+	std::wstring_view chosenPath, const ScmTextResolver& text = {});
 
 //! `'Would you like to open the initialized repository?'` Upstream also
 //! offers `Open in New Window` and `Add to Workspace`; neither has a route
 //! here yet (no multi-window open, no workspace-folder mutation), so only
 //! `Open` is offered — see the recorded divergence in this directory's
 //! `CLAUDE.md`.
-[[nodiscard]] GitPrompt BuildGitInitOpenPrompt();
+[[nodiscard]] GitPrompt BuildGitInitOpenPrompt(const ScmTextResolver& text = {});
 
 //! `git init` takes no arguments beyond the working directory `RunGit`
 //! already threads through `-C`, so this returns the fixed `["init"]`
@@ -290,6 +340,7 @@ struct GitCloneCommandContext final {
 	GitPathExistsPredicate pathState;
 	GitPromptPresenter confirm;
 	GitMessagePresenter message;
+	ScmTextResolver text;
 };
 
 //! Upstream's `getRepositoryName` (`extensions/git-base/src/remoteSource.ts` /
@@ -301,7 +352,8 @@ struct GitCloneCommandContext final {
 //! you want to overwrite it?'`, upstream's own guard before cloning into an
 //! existing directory. Built and exposed for reuse, but `RunGitClonePrepare`
 //! does not currently present it — see that function's own comment for why.
-[[nodiscard]] GitPrompt BuildGitCloneOverwritePrompt(std::wstring_view folderName);
+[[nodiscard]] GitPrompt BuildGitCloneOverwritePrompt(
+	std::wstring_view folderName, const ScmTextResolver& text = {});
 
 //! `["clone", url, destinationPath]`, plus `--recurse-submodules` when
 //! `options.recurseSubmodules` is set — upstream's own conditional argument
@@ -346,22 +398,37 @@ struct GitCloneCommandContext final {
 //!
 //! @brief Which welcome content the Source Control view's empty state shows.
 //!
-//! Upstream's `view.workbench.scm.folder` and `view.workbench.scm.empty`
-//! `viewsWelcome` contributions are mutually exclusive — verified against
-//! `extensions/git/package.json` at tag 1.95.3, where the two `when` clauses
-//! both key off `workbenchState` and cannot both be true — so this is one
-//! enum, not two independent flags.
+//! The caller projects the real `workbenchState` plus its exact folder shape
+//! into this enum. Keeping the two `.code-workspace` variants distinct prevents
+//! a workspace with zero folders from accidentally offering `git.init`, and
+//! prevents a workspace with folders from looking like a completely empty
+//! window.
+enum class EGitScmWelcomeWorkspaceState : std::uint8_t {
+	//! `workbenchState == empty`.
+	Empty,
+	//! `workbenchState == folder`, which necessarily has exactly one folder.
+	Folder,
+	//! `workbenchState == workspace` and the workspace has one or more folders.
+	WorkspaceWithFolders,
+	//! `workbenchState == workspace` and `workspaceFolderCount == 0`.
+	WorkspaceWithoutFolders,
+};
 //!
-enum class EGitScmWelcomeContent : std::uint8_t {
+	enum class EGitScmWelcomeContent : std::uint8_t {
 	//! A repository is open: no welcome content at all.
 	None,
 	//! Folder workbench state, no repository open: upstream's
 	//! `view.workbench.scm.folder`, `Initialize Repository` only.
 	FolderNoRepository,
+	//! Multi-folder workspace, no repository open: upstream's
+	//! `view.workbench.scm.workspace`, `Initialize Repository` with no argument.
+	WorkspaceNoRepository,
+	//! Saved/untitled workspace containing no folders: upstream's
+	//! `view.workbench.scm.emptyWorkspace`, `Add Folder to Workspace` only.
+	EmptyWorkspace,
 	//! Empty workbench state (no folder open): upstream's
-	//! `view.workbench.scm.empty`, `Clone Repository` only. Upstream also
-	//! offers `Open Folder` there; this product's `git.init`/`git.clone`
-	//! command pair is this pass's scope, so that link is not modeled.
+	//! `view.workbench.scm.empty`, with `Open Folder` followed by
+	//! `Clone Repository`.
 	EmptyWorkbench,
 };
 
@@ -388,16 +455,14 @@ struct GitScmWelcomeModel final {
 //! @brief Decides which welcome content applies, and builds its exact text
 //! and command.
 //!
-//! `hasFolder` is `CWorkbenchRuntime`'s state being `Folder` (a single open
-//! folder — see `sakura_core/workbench/CLAUDE.md`); `hasRepository` is
-//! `SourceControlService` currently publishing a provider. Upstream's richer
-//! gates — `git.missing`, `git.parentRepositoryCount`,
-//! `git.unsafeRepositoryCount`, `git.closedRepositoryCount`, the multi-root
-//! `Workspace` state — have no backing context key here yet and are folded
-//! into `content == None`, the same "omit rather than fabricate" rule
-//! `WorkbenchCommandRegistry.cpp` already applies to this command pair's own
-//! `when` clause.
+//! `workspaceState` is the composition root's projection of the runtime's
+//! semantic workspace snapshot; `hasRepository` is `SourceControlService`
+//! currently publishing a provider. Upstream's Git availability and special
+//! repository gates (`git.missing`, `git.parentRepositoryCount`,
+//! `git.unsafeRepositoryCount`, `git.closedRepositoryCount`) still have no
+//! backing native state and remain omitted rather than fabricated.
 //!
-[[nodiscard]] GitScmWelcomeModel BuildGitScmWelcomeModel(bool hasFolder, bool hasRepository);
+[[nodiscard]] GitScmWelcomeModel BuildGitScmWelcomeModel(
+	EGitScmWelcomeWorkspaceState workspaceState, bool hasRepository, const ScmTextResolver& text = {});
 
 } // namespace workbench::scm

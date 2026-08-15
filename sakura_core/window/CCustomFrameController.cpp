@@ -80,15 +80,14 @@ RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl contro
 	return {};
 }
 
-//! Every Sakura-owned title control, in the order they are laid out left to right.
-constexpr std::array<CustomFrameControl, 7> kTitleControls = {
+//! Layout / Primary Side Bar / Panel / Secondary Side Bar / Update. Accounts and Manage
+//! live on the vertical Activity Bar's GlobalCompositeBar, not in the title bar.
+constexpr std::array<CustomFrameControl, 5> kTitleControls = {
 	CustomFrameControl::Layout,
 	CustomFrameControl::PrimarySidebar,
 	CustomFrameControl::BottomPanel,
 	CustomFrameControl::SecondarySidebar,
 	CustomFrameControl::Update,
-	CustomFrameControl::Account,
-	CustomFrameControl::Manage,
 };
 
 CustomFrameControl TitleControlFromNode(int nodeId) noexcept
@@ -192,10 +191,11 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	const int closeWidth = ScaleCustomFrameDip(48, dpi);
 	const int captionPadding = ScaleCustomFrameDip(10, dpi);
 	const int titleControlWidth = ScaleCustomFrameDip(30, dpi);
-	// Layout, Primary Side Bar, Panel, Secondary Side Bar, Account, and Manage are the
-	// fixed-width controls. The Update indicator is measured separately because its width
-	// comes from its label, and it is absent entirely unless the update state is actionable.
-	const int titleControlCount = 6;
+	// Layout, Primary Side Bar, Panel, and Secondary Side Bar are the fixed-width
+	// controls. Accounts and Manage belong on the vertical Activity Bar. The Update
+	// indicator is measured separately because its width comes from its label, and it
+	// is absent entirely unless the update state is actionable.
+	const int titleControlCount = 4;
 	const int updateWidth = std::max(0, updateButtonWidth);
 	const int buttonsWidth = buttonWidth * 2 + closeWidth;
 	const int buttonLeft = std::max(0, width - buttonsWidth);
@@ -243,8 +243,6 @@ CustomFrameLayout CalculateCustomFrameLayout(
 		// RECT is what every hit-test/paint/accessibility path treats as absent, so skip
 		// it outright rather than emitting one that starts and ends at the same x.
 		if (updateWidth > 0) layout.updateButton = nextControl(updateWidth);
-		layout.accountButton = nextControl(titleControlWidth);
-		layout.manageButton = nextControl(titleControlWidth);
 	}
 	layout.minimizeButton = MakeRect(buttonLeft, 0, std::min(width, buttonLeft + buttonWidth), titleHeight);
 	layout.maximizeButton = MakeRect(
@@ -823,20 +821,34 @@ void CCustomFrameController::ShowLayoutMenu(const RECT& anchor) noexcept
 void CCustomFrameController::ShowAccountMenu(const RECT& anchor) noexcept
 {
 	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
+	POINT point{ anchor.left, anchor.bottom };
+	::ClientToScreen(m_window, &point);
+	ShowAccountMenuAt(point);
+}
+
+void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint) noexcept
+{
+	if (m_window == nullptr) return;
 	const HMENU menu = ::CreatePopupMenu();
 	if (menu == nullptr) return;
 	// Authentication is not configured in Sakura Editor; keep this explicit rather than implying sign-in works.
 	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No account provider configured");
-	POINT point{ anchor.left, anchor.bottom };
-	::ClientToScreen(m_window, &point);
 	(void)::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
-		point.x, point.y, 0, m_window, nullptr);
+		screenPoint.x, screenPoint.y, 0, m_window, nullptr);
 	::DestroyMenu(menu);
 }
 
 void CCustomFrameController::ShowManageMenu(const RECT& anchor) noexcept
 {
 	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
+	POINT point{ anchor.right, anchor.bottom };
+	::ClientToScreen(m_window, &point);
+	ShowManageMenuAt(point, true);
+}
+
+void CCustomFrameController::ShowManageMenuAt(POINT screenPoint, bool rightAlign) noexcept
+{
+	if (m_window == nullptr) return;
 	const HMENU menu = ::CreatePopupMenu();
 	const HMENU themes = ::CreatePopupMenu();
 	if (menu == nullptr || themes == nullptr) {
@@ -860,12 +872,11 @@ void CCustomFrameController::ShowManageMenu(const RECT& anchor) noexcept
 		::DestroyMenu(menu);
 		return;
 	}
-	POINT point{ anchor.right, anchor.bottom };
-	::ClientToScreen(m_window, &point);
+	const UINT align = rightAlign ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
 	const UINT command = ::TrackPopupMenu(
 		menu,
-		TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_RETURNCMD | TPM_VERTICAL,
-		point.x, point.y, 0, m_window, nullptr
+		align | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_RETURNCMD | TPM_VERTICAL,
+		screenPoint.x, screenPoint.y, 0, m_window, nullptr
 	);
 	::DestroyMenu(menu);
 	const auto action = ManageActionFromMenuCommand(command);

@@ -638,7 +638,9 @@ set SAKURA_GENERATE_ASSEMBLY_LISTINGS=
 
 設定を切り替えた直後はコンパイラーオプションが変わるため、次のビルドで一度だけ再コンパイルが発生する場合があります。`build-all.bat` はスクリプト内だけで、配布 CI は Release の MSBuild ステップだけで、この設定を自動的に有効化します。CMake からビルドする場合は `-DSAKURA_GENERATE_ASSEMBLY_LISTINGS=ON` を指定します。
 
-一覧ファイル名はソースファイル名から決まりますが、Release の全プログラム最適化ではコード生成がリンカーへ遅延され、翻訳単位ではなく関数単位で分割されます。同じソース由来の関数が複数のコード生成スレッドに割り当てられると、同一の `.asm` を同時に開こうとして Win32 の共有チェックに失敗し、`C1083 ... Permission denied` と `LNK1257` として観測されます。そのため一覧生成が有効なときだけリンカーに `/CGTHREADS:1` を渡してコード生成を直列化しています。一覧を生成しない通常ビルドの並列度は変わりません。
+Release の全プログラム最適化では、製品オブジェクトに記録された `/Fa` 出力先が LTCG 時にも使われます。`cl.exe` が先に書く中間 listing は Link/LTCG が同じ出力先へ最終 listing を書く直前に製品プロジェクトが削除します。`tests1` はその製品 `/GL` オブジェクトを support archive 経由で再リンクするため、一覧付きの solution を一度にビルドすると tests1 の LTCG が製品用 `.asm` 出力先を再実行して `C1083 ... Permission denied` / `LNK1257` になり得ます。そこで一覧を要求した `build-sln.bat` と `build-all.bat` は、まず `SAKURA_GENERATE_ASSEMBLY_LISTINGS=false` を明示した solution build で tests1 を完了させ、次に `sakura_core\\sakura.vcxproj` だけを `true`・`/m:1` で再ビルドします。製品プロジェクトの listing branch は `<ClCompile><MultiProcessorCompilation>false</MultiProcessorCompilation>` と `/CGTHREADS:1` も設定します。生の MSBuild solution build に listing を直接指定する代わりに、必ずこの canonical entry point を使ってください。
+
+`build-sln.bat` と `build-all.bat` は、まず一覧を明示的に無効にした通常の solution ビルドで `tests1.exe` を完成させ、その後に `sakura_core\sakura.vcxproj` だけを一覧有効で再ビルドします。`tests1` は製品の `/GL` オブジェクトを再リンクするため、一覧有効なオブジェクトをそのまま与えると記録済みの製品用 `/Fa` パスへもう一度出力しようとするためです。この二段階化により、出荷する `sakura.exe` とその `.asm` は対応したまま、テストのリンクは一覧出力に触れません。一覧を生成しない通常ビルドの並列度と一段階の実行は変わりません。
 
 ### MSBuild の実行観測（バイナリログ／PerformanceSummary）
 

@@ -158,6 +158,7 @@ ActivityBarPalette ActivityBarPalette::Light() noexcept
 		.activeIcon = RGB(31, 35, 41),
 		.disabledIcon = RGB(150, 150, 150),
 		.focusBorder = RGB(0, 0, 0),
+		.border = RGB(0xCD, 0xD2, 0xDB),
 	};
 }
 
@@ -174,6 +175,7 @@ ActivityBarPalette ActivityBarPalette::HighContrast(COLORREF window, COLORREF wi
 		.activeIcon = highlightText,
 		.disabledIcon = windowText,
 		.focusBorder = highlightText,
+		.border = windowText,
 		.highContrast = true,
 	};
 }
@@ -441,7 +443,12 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 		Invalidate();
 		if (m_model.HitTest(point.x, point.y) != captured) return 0;
 		accessibility::RaiseInvoked(*this, static_cast<int>(m_model.IndexOf(captured)));
-		static_cast<void>(InvokeRequest(captured));
+		const auto index = m_model.IndexOf(captured);
+		if (index != ActivityBarModel::kNoIndex && m_model.GetButton(index).IsGlobalAction()) {
+			static_cast<void>(InvokeGlobalAction(captured));
+		} else {
+			static_cast<void>(InvokeRequest(captured));
+		}
 		return 0;
 	}
 	case WM_CAPTURECHANGED:
@@ -610,6 +617,16 @@ void CActivityBar::Paint() noexcept
 			::DeleteObject(pen);
 		}
 	}
+	// Match VS Code's `activityBar.border`: a one-DIP Part edge against the
+	// Primary Side Bar (or the editor when that Side Bar is hidden).
+	const int borderWidth = std::max(1, ScaleDip(1, m_model.GetDpi()));
+	RECT borderRect{ client.right - borderWidth, client.top, client.right, client.bottom };
+	if (borderRect.left < client.left) borderRect.left = client.left;
+	if (borderRect.right > borderRect.left) {
+		const HBRUSH borderBrush = ::CreateSolidBrush(m_palette.border);
+		::FillRect(buffer, &borderRect, borderBrush);
+		::DeleteObject(borderBrush);
+	}
 	::BitBlt(target, 0, 0, width, height, buffer, 0, 0, SRCCOPY);
 	::SelectObject(buffer, previousBitmap);
 	::DeleteObject(bitmap);
@@ -636,10 +653,29 @@ bool CActivityBar::InvokeRequest(std::string_view containerId) noexcept
 	}
 }
 
+bool CActivityBar::InvokeGlobalAction(std::string_view actionId) noexcept
+{
+	if (actionId.empty() || !m_onGlobalAction || m_window == nullptr) return false;
+	const auto index = m_model.IndexOf(actionId);
+	if (index == ActivityBarModel::kNoIndex) return false;
+	const auto bounds = m_model.GetButton(index).bounds;
+	// Open to the right of the Activity Bar icon (vertical bar), matching VS Code's
+	// GlobalCompositeBar popup alignment rather than the title-bar "below" placement.
+	POINT screen{ bounds.right, bounds.top };
+	if (::ClientToScreen(m_window, &screen) == FALSE) return false;
+	try {
+		const std::string requested(actionId);
+		m_onGlobalAction(requested, screen);
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
 bool CActivityBar::BeginDragIfPastThreshold(POINT point) noexcept
 {
 	if (m_dragging) return true;
-	if (m_captureItem.empty() || !m_onContainerDrag) return false;
+	if (m_captureItem.empty() || !m_onContainerDrag || !m_model.IsDraggable(m_captureItem)) return false;
 	const int dragX = std::max(1, ::GetSystemMetrics(SM_CXDRAG));
 	const int dragY = std::max(1, ::GetSystemMetrics(SM_CYDRAG));
 	if (std::abs(point.x - m_dragOrigin.x) < dragX && std::abs(point.y - m_dragOrigin.y) < dragY) return false;
@@ -705,7 +741,12 @@ bool CActivityBar::HandleNavigationKey(WPARAM key) noexcept
 		if (!focused.empty()) accessibility::RaiseFocusChanged(*this, static_cast<int>(m_model.IndexOf(focused)));
 	}
 	if (!invoked.empty()) accessibility::RaiseInvoked(*this, static_cast<int>(m_model.IndexOf(invoked)));
-	static_cast<void>(InvokeRequest(invoked));
+	const auto index = m_model.IndexOf(invoked);
+	if (index != ActivityBarModel::kNoIndex && m_model.GetButton(index).IsGlobalAction()) {
+		static_cast<void>(InvokeGlobalAction(invoked));
+	} else {
+		static_cast<void>(InvokeRequest(invoked));
+	}
 	return true;
 }
 

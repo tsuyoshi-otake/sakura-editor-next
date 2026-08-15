@@ -9,6 +9,7 @@
 #pragma once
 
 #include "workbench/scm/GitCommandRunner.h"
+#include "workbench/scm/GitRefModel.h"
 #include "workbench/scm/GitPrompt.h"
 #include "workbench/scm/GitScmModel.h"
 
@@ -290,6 +291,8 @@ struct GitSyncFailure final {
 //!
 [[nodiscard]] GitSyncFailure DescribeGitSyncFailure(
 	EGitSyncFailureReason reason, const GitExecutionResult& result);
+[[nodiscard]] GitSyncFailure DescribeGitSyncFailure(
+	EGitSyncFailureReason reason, const GitExecutionResult& result, const GitRefTextResolver& text);
 
 //!
 //! @brief What the sync commands need to know about the repository.
@@ -348,6 +351,8 @@ struct GitRemotePickItem final {
 //! the same reason the checkout pick drops upstream's `RefItemSeparator`.
 //!
 [[nodiscard]] std::vector<GitRemotePickItem> BuildFetchRemotePickItems(const GitSyncRepositoryState& state);
+[[nodiscard]] std::vector<GitRemotePickItem> BuildFetchRemotePickItems(
+	const GitSyncRepositoryState& state, const GitRefTextResolver& text);
 //!
 //! @brief `git.publish`'s pick: every remote, described by its push URL.
 //!
@@ -378,6 +383,8 @@ struct GitSyncCommandContext final {
 	GitPromptPresenter confirm;
 	GitSyncMessagePresenter message;
 	GitSyncConfiguration configuration;
+	//! Optional localization callback for sync prompts and messages.
+	GitRefTextResolver text;
 };
 
 enum class EGitSyncCommandStatus : std::uint8_t {
@@ -407,17 +414,18 @@ struct GitSyncCommandResult final {
 //! Upstream's second button, `OK, Don't Show Again`, writes `git.confirmSync` to
 //! Settings; there is no configuration writer here, so it is absent rather than
 //! present and inert — the same policy the commit path already documents.
-[[nodiscard]] GitPrompt BuildSyncConfirmationPrompt(std::wstring_view remote, std::wstring_view branch);
+[[nodiscard]] GitPrompt BuildSyncConfirmationPrompt(std::wstring_view remote, std::wstring_view branch,
+	const GitRefTextResolver& text = {});
 
 //! `'The branch "{0}" has no remote branch. Would you like to publish this branch?'`
 //! Upstream's `OK, Don't Ask Again` writes the `confirmBranchPublish` memento,
 //! and there is no memento store here, so it is absent for the same reason.
-[[nodiscard]] GitPrompt BuildPublishBranchPrompt(std::wstring_view branch);
+[[nodiscard]] GitPrompt BuildPublishBranchPrompt(std::wstring_view branch, const GitRefTextResolver& text = {});
 
 //! `'It looks like the current branch "{0}" might have been rebased. ...'`
 //! Upstream offers `Always Pull` / `Pull` / `Don't Pull`; `Always Pull` writes
 //! `git.ignoreRebaseWarning`, so only the latter two appear here.
-[[nodiscard]] GitPrompt BuildMaybeRebasedPrompt(std::wstring_view branch);
+[[nodiscard]] GitPrompt BuildMaybeRebasedPrompt(std::wstring_view branch, const GitRefTextResolver& text = {});
 
 //! Which fetch upstream is performing.
 enum class EGitFetchScope : std::uint8_t {

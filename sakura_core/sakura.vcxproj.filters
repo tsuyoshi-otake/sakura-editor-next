@@ -1108,6 +1108,9 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerDeleteConfirmation.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerFileIcon.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1515,12 +1518,21 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalViewportGeometry.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
@@ -3204,10 +3216,16 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp">

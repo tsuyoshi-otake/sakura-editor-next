@@ -53,8 +53,8 @@
             - cmake.exe
             - 7z.exe
 - [build-all.bat](../build-all.bat)
-    - `SAKURA_GENERATE_ASSEMBLY_LISTINGS=1` をスクリプト内で設定
-    - [build-sln.bat](../build-sln.bat)
+    - パッケージング環境では `SAKURA_GENERATE_ASSEMBLY_LISTINGS=1` を保持する
+    - 最初に一覧を明示的に無効にして solution（本体と tests1）をビルドし、続いて `sakura_core\sakura.vcxproj` だけを一覧有効・`/m:1` で再ビルドする
     - [build-chm.bat](../build-chm.bat)
         - cmake.exe
             - ChmSourceConverter.exe : ヘルプファイルの文字コードを UTF-8 から Shift_JIS に変換する

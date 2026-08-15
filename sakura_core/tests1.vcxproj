@@ -65,16 +65,17 @@
     </Link>
   </ItemDefinitionGroup>
   <!--
-    This project links the application's whole-program-optimized objects, and a
-    listing option recorded in an object still applies when the linker generates
-    that object's code.  So this link writes the same sakura_core listings that
-    sakura.vcxproj writes, and it hits the same collision: code generation is
-    partitioned by function, so two threads holding functions from one source
-    file open one .asm and the second open fails the Win32 share check, reported
-    as "C1083 ... Permission denied" plus LNK1257.  Serialize code generation
-    under the same opt-in switch that produces the listings.
+    This project links the application's whole-program-optimized objects.  A
+    listing destination recorded in one of those objects is replayed by the
+    LTCG link, so the canonical runner must complete tests1 with listings off
+    before rebuilding only sakura.vcxproj with listings on.  These settings keep
+    an explicitly listing-enabled direct tests1 build deterministic, but cannot
+    replace that two-phase build contract.
   -->
   <ItemDefinitionGroup Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='1' Or '$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='true'">
+    <ClCompile>
+      <MultiProcessorCompilation>false</MultiProcessorCompilation>
+    </ClCompile>
     <Link>
       <AdditionalOptions>/CGTHREADS:1 %(AdditionalOptions)</AdditionalOptions>
     </Link>
@@ -165,9 +166,11 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalClipboardPasteTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalFontMetricsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalHeaderLayoutTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalPaneLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalBuiltinGlyphRendererTest.cpp" />
@@ -230,6 +233,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerCommandRegistryTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerContextMenuModelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerDeleteConfirmationTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerFileIconTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditorServiceLegacyAdapterTest.cpp" />

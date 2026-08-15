@@ -337,6 +337,26 @@ TEST(GitScmPublisher, StagedAndUnstagedRowsOfOnePathDescribeDifferentComparisons
 	EXPECT_EQ("Modified", workingTree->resources[0].tooltip);
 }
 
+TEST(GitScmPublisher, SuppliedTextResolverLocalizesPublishedGroupsAndDiffTitles)
+{
+	auto state = RepositoryState();
+	state.changes = { Change(L"src/a.txt", L'M', L'.') };
+	const GitDiffTextResolver text = [](std::string_view key, std::wstring_view argument) -> std::wstring {
+		if (key == "GitScmStagedChanges") return L"Localized staged";
+		if (key == "GitDiffIndex") return std::wstring(argument) + L" [localized index]";
+		return std::wstring{};
+	};
+
+	const auto publication = BuildGitPublication(Owner(), LR"(C:\repo)", state,
+		EUntrackedChangesPolicy::Mixed, text);
+	const auto* index = FindGroup(publication.provider, "index");
+	ASSERT_NE(nullptr, index);
+	EXPECT_EQ("Localized staged", index->label);
+	ASSERT_EQ(1U, index->resources.size());
+	const auto diff = ResolveGitDiffInput(MakeGitDiffRow(state.changes[0], EGitFileStatus::IndexModified, true), text);
+	EXPECT_EQ(L"a.txt [localized index]", diff.title);
+}
+
 TEST(GitScmPublisher, EachRowsCommandOpensTheComparisonThatRowIsAbout)
 {
 	auto state = RepositoryState();

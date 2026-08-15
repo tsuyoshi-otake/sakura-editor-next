@@ -28,10 +28,13 @@ policy, profile state, or native control lifetime.
   logging, mutation, or focus-transfer dependency, and it does not change the
   independent `ProjectBuiltinParts` physical-part contract.
 - The verified active mappings are the side-bar pair `Explorer/Explorer`,
-  `Explorer/Outline`, `SourceControl/SourceControl`, and
+  `Explorer/Outline`, `SourceControl/Changes` (`workbench.scm`), and
   `Extensions/Extensions`; and Panel `Terminal/Terminal`, `Problems/Problems`,
   and `Output/Output`. `Editor` is a focus-only surface and is never an active
-  ViewContainer/View slot.
+  ViewContainer/View slot. The native Source Control host also paints the
+  non-selectable `workbench.scm.repositories` and `workbench.scm.history`
+  sections; they intentionally do not enter this mapping until the layout model
+  can express VS Code's provider-driven visibility conditions.
 - A mapping declares a **set** of locations, not one. VS Code renders the same
   composite bar in the Primary and the Secondary Side Bar and its
   `CompositeDragAndDrop.drop` moves an Activity Bar ViewContainer between them,

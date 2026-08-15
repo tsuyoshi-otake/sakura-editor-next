@@ -187,7 +187,8 @@ struct GitPublication final {
 	const ScmOwner& owner,
 	std::wstring_view repositoryRoot,
 	const GitScmState& state,
-	EUntrackedChangesPolicy policy = EUntrackedChangesPolicy::Mixed);
+	EUntrackedChangesPolicy policy = EUntrackedChangesPolicy::Mixed,
+	const GitDiffTextResolver& text = {});
 
 //!
 //! @brief Every row of the publication above, as a stage/discard command operand.
@@ -262,7 +263,8 @@ public:
 
 	//! Create or refresh the provider. `NotApplicable` when there is no service.
 	[[nodiscard]] EScmOperationStatus Publish(std::wstring_view repositoryRoot, const GitScmState& state,
-		EUntrackedChangesPolicy policy = EUntrackedChangesPolicy::Mixed);
+		EUntrackedChangesPolicy policy = EUntrackedChangesPolicy::Mixed,
+		const GitDiffTextResolver& text = {});
 
 	//! Remove the provider. Idempotent, and safe when nothing was ever published.
 	[[nodiscard]] EScmOperationStatus Retract();

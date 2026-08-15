@@ -67,8 +67,21 @@ x64 Release 版を使い、1,249,037 bytes の Markdown ファイルを各条件
 | 左パネルの表示／非表示 | <kbd>Ctrl</kbd>+<kbd>B</kbd> |
 | 下パネルの表示／非表示 | <kbd>Ctrl</kbd>+<kbd>J</kbd> |
 | Terminal の表示／フォーカス | <kbd>Ctrl</kbd>+<kbd>@</kbd>（英語配列では <kbd>Ctrl</kbd>+<kbd>&#96;</kbd>） |
+| Terminal への貼り付け | <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>（右クリックでも可） |
 
 統合 Terminal は、ユーザーが指定したプロファイルを最優先します。指定がない場合はインストール済みの安定版 PowerShell から最も新しいものを選び、PowerShell 7 がない環境では Windows PowerShell 5.1 にフォールバックします。ネットワークへの問い合わせや自動インストールは行いません。
+
+### Terminal への画像貼り付け
+
+クリップボードに画像だけがあるとき（Win+Shift+S のスクリーンショットなど）、Terminal への貼り付けは PNG を一時保存し、その絶対パスを入力します。Claude Code、Codex、Cursor CLI など、画像を**ファイルパス**として受け取るツール向けの動作です。
+
+- 保存先: `%TEMP%\sakura-editor\terminal-paste\`
+- 同じ会話で複数枚貼っても、ファイル名は都度別になります
+- 直近 32 枚だけ残し、古い PNG は自動で削除します
+- クリップボードに通常のテキストがある場合は、従来どおりテキストを優先して貼ります
+- Explorer でコピーしたファイルがある場合は、そのパスを貼ります
+
+Stock の VS Code 統合 Terminal にはない Sakura 独自の補助機能です。
 
 ## ビルド
 

@@ -410,8 +410,14 @@ def mingw_environment(environment: Mapping[str, str] | None = None) -> dict[str,
     return {"PATH": os.pathsep.join(additions + existing)}
 
 
+_ASSEMBLY_LISTINGS_TRUE = {"1", "true"}
 _MSBUILD_PERFORMANCE_SUMMARY_TRUE = {"1", "true"}
 _MSBUILD_PERFORMANCE_SUMMARY_FALSE = {"0", "false"}
+
+
+def assembly_listings_enabled(env: Mapping[str, str]) -> bool:
+    """Whether the environment requests the opt-in ``/FAsu`` listing mode."""
+    return env.get("SAKURA_GENERATE_ASSEMBLY_LISTINGS", "").strip().lower() in _ASSEMBLY_LISTINGS_TRUE
 
 
 def msbuild_binlog_arguments(env: Mapping[str, str]) -> list[str]:
@@ -462,6 +468,7 @@ def msbuild_command(
     *,
     build_target: str = "Build",
     environment: Mapping[str, str] | None = None,
+    assembly_listings: bool | None = None,
     log_file: Path | None = None,
 ) -> list[str]:
     parallel = allocate_parallelism(jobs)
@@ -475,7 +482,18 @@ def msbuild_command(
         "/nr:false",
         f"/m:{parallel.projects}",
     ]
-    command.extend(["/p:MultiProcessorCompilation=true", f"/p:CL_MPCount={parallel.compiler_processes}"])
+    command.extend(
+        [
+            "/p:MultiProcessorCompilation=true",
+            f"/p:CL_MPCount={parallel.compiler_processes}",
+        ]
+    )
+    if assembly_listings is not None:
+        # Distribution runs with this environment set so packaging can collect
+        # the final ASM archive.  Make an explicit phase override global: an
+        # environment property alone would otherwise reach every project in
+        # the solution, including tests1's product-object relink.
+        command.append(f"/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS={'true' if assembly_listings else 'false'}")
     if log_file is not None:
         command.extend(msbuild_file_logger_arguments(log_file))
     command.extend(msbuild_binlog_arguments(env))
@@ -727,17 +745,66 @@ def run_commands(
     return 0
 
 
-def distribution_commands(repo_root: Path, platform: str, configuration: str, jobs: int) -> list[list[str]]:
-    commands = [
+def solution_commands(
+    repo_root: Path,
+    platform: str,
+    configuration: str,
+    jobs: int,
+    *,
+    log_file: Path | None = None,
+    assembly_listings: bool = False,
+) -> list[list[str]]:
+    """Build a solution, isolating product listings from the tests1 relink.
+
+    The tests1 link consumes a static archive of Sakura's ``/GL`` objects.  A
+    ``/Fa`` destination recorded in a listing-enabled product object is replayed
+    by that independent LTCG link, which makes it contend for the product ASM
+    path even when solution-level parallelism is disabled.  Finish the full
+    solution with listings explicitly off, then rebuild only the shipped product
+    with listings on.  Normal solution builds retain their single MSBuild pass.
+    """
+    solution = repo_root / "sakura.sln"
+    if not assembly_listings:
+        return [
+            msbuild_command(
+                repo_root,
+                solution,
+                platform,
+                configuration,
+                jobs,
+                log_file=log_file,
+            )
+        ]
+    return [
         msbuild_command(
             repo_root,
-            repo_root / "sakura.sln",
+            solution,
             platform,
             configuration,
             jobs,
-            log_file=msbuild_log_path(repo_root, platform, configuration),
-        )
+            assembly_listings=False,
+            log_file=log_file,
+        ),
+        msbuild_command(
+            repo_root,
+            repo_root / "sakura_core" / "sakura.vcxproj",
+            platform,
+            configuration,
+            1,
+            assembly_listings=True,
+        ),
     ]
+
+
+def distribution_commands(repo_root: Path, platform: str, configuration: str, jobs: int) -> list[list[str]]:
+    commands = solution_commands(
+        repo_root,
+        platform,
+        configuration,
+        jobs,
+        log_file=msbuild_log_path(repo_root, platform, configuration),
+        assembly_listings=True,
+    )
     for script, arguments in (
         ("build-chm.bat", []),
         ("build-installer.bat", [platform, configuration]),

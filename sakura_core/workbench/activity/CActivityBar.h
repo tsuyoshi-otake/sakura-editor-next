@@ -36,6 +36,9 @@ struct ActivityBarPalette {
 	COLORREF activeIcon = RGB(232, 235, 240);
 	COLORREF disabledIcon = RGB(105, 105, 105);
 	COLORREF focusBorder = RGB(255, 255, 255);
+	//! VS Code `activityBar.border`: the Part edge against the Primary Side Bar
+	//! (or the editor when the Side Bar is hidden).
+	COLORREF border = RGB(0x45, 0x45, 0x45);
 	bool highContrast = false;
 
 	[[nodiscard]] static ActivityBarPalette Dark() noexcept;
@@ -49,6 +52,9 @@ class CActivityBar final : public accessibility::ICustomUiAutomationHost {
 public:
 	//! The argument is the ViewContainer id of the clicked entry.
 	using ToggleRequestCallback = std::function<void(std::string_view containerId)>;
+	//! GlobalCompositeBar actions (`workbench.actions.accounts` / `workbench.actions.manage`).
+	//! The point is the button's bottom-left in screen coordinates for popup anchoring.
+	using GlobalActionCallback = std::function<void(std::string_view actionId, POINT screenPoint)>;
 	//! Raised when the user drops a dragged Activity Bar entry. VS Code treats both the
 	//! Activity Bar icon and the side-bar title as composite drag handles, and the drop
 	//! target decides whether the ViewContainer changes location. The point is in screen
@@ -69,6 +75,7 @@ public:
 	void SetPalette(const ActivityBarPalette& palette) noexcept;
 	[[nodiscard]] const ActivityBarPalette& GetPalette() const noexcept { return m_palette; }
 	void SetToggleRequestCallback(ToggleRequestCallback callback) { m_onToggleRequest = std::move(callback); }
+	void SetGlobalActionCallback(GlobalActionCallback callback) { m_onGlobalAction = std::move(callback); }
 	void SetContainerDragCallback(ContainerDragCallback callback) { m_onContainerDrag = std::move(callback); }
 
 	//! Replaces the rendered ViewContainers, including any an extension contributed.
@@ -122,6 +129,7 @@ private:
 	void Paint() noexcept;
 	void Invalidate() const noexcept;
 	[[nodiscard]] bool InvokeRequest(std::string_view containerId) noexcept;
+	[[nodiscard]] bool InvokeGlobalAction(std::string_view actionId) noexcept;
 	[[nodiscard]] bool HandleNavigationKey(WPARAM key) noexcept;
 	void SetHoverFromPoint(POINT point) noexcept;
 	//! True once the pointer has left the system drag threshold while a button is held.
@@ -135,6 +143,7 @@ private:
 	ActivityBarModel m_model;
 	ActivityBarPalette m_palette = ActivityBarPalette::Dark();
 	ToggleRequestCallback m_onToggleRequest;
+	GlobalActionCallback m_onGlobalAction;
 	ContainerDragCallback m_onContainerDrag;
 	HWND m_window = nullptr;
 	HWND m_tooltip = nullptr;

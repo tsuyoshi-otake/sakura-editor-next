@@ -55,10 +55,12 @@ bool TerminalRenderPlan::Build(const TerminalRenderPlanBuildInput& input)
 	const auto effectiveCellHeight = std::max(1, input.cellHeight);
 	const auto paintTop = std::max<LONG>(0, input.paintRect.top);
 	const auto paintBottom = std::max<LONG>(0, input.paintRect.bottom);
+	const auto gridTop = std::max(0, static_cast<int>(paintTop) - input.geometry.GridOriginY());
+	const auto gridBottom = std::max(0, static_cast<int>(paintBottom) - input.geometry.GridOriginY());
 	const auto firstVisible = std::min<std::size_t>(input.viewport.visibleRows,
-		static_cast<std::size_t>(paintTop / effectiveCellHeight));
+		static_cast<std::size_t>(gridTop / effectiveCellHeight));
 	const auto lastVisible = std::min<std::size_t>(input.viewport.visibleRows,
-		static_cast<std::size_t>((paintBottom + effectiveCellHeight - 1) / effectiveCellHeight));
+		static_cast<std::size_t>((gridBottom + effectiveCellHeight - 1) / effectiveCellHeight));
 	const auto visibleRows = lastVisible >= firstVisible ? lastVisible - firstVisible : 0;
 	const auto columns = input.model->Columns();
 	if( columns != 0 && visibleRows > kMaximumVisibleCells / columns ) {
@@ -100,10 +102,10 @@ bool TerminalRenderPlan::Build(const TerminalRenderPlanBuildInput& input)
 			++m_counters.visibleCellsScanned;
 			const auto occupiedColumns = std::max<std::size_t>(1, cell.width);
 			const RECT rect{
-				PixelCoordinate(column, effectiveCellWidth),
-				PixelCoordinate(visualRow, effectiveCellHeight),
-				PixelCoordinate(column + occupiedColumns, effectiveCellWidth),
-				PixelCoordinate(visualRow + 1, effectiveCellHeight),
+				input.geometry.GridOriginX() + PixelCoordinate(column, effectiveCellWidth),
+				input.geometry.GridOriginY() + PixelCoordinate(visualRow, effectiveCellHeight),
+				input.geometry.GridOriginX() + PixelCoordinate(column + occupiedColumns, effectiveCellWidth),
+				input.geometry.GridOriginY() + PixelCoordinate(visualRow + 1, effectiveCellHeight),
 			};
 			const auto attributes = row->AttributesAt(column);
 			const bool selected = input.hasSelection && IsSelected({ globalRow, column },

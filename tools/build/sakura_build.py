@@ -76,6 +76,7 @@ from sakura_build_lib.semantic_inventory import (
 from sakura_build_lib.runner import (
     BuildError,
     EventWriter,
+    assembly_listings_enabled,
     cmake_component_build_dir,
     cmake_component_commands,
     cmake_component_test_commands,
@@ -87,6 +88,7 @@ from sakura_build_lib.runner import (
     msbuild_log_path,
     native_execution_root,
     run_commands,
+    solution_commands,
     write_native_path_identity,
 )
 from sakura_build_lib.test_inventory import (
@@ -623,16 +625,14 @@ def _run_build(args, graph, events: EventWriter) -> int:
             target_name = os.environ.get("SAKURA_DEV_BUILD_TARGET", "Build")
             commands = [msbuild_command(repo, target, args.platform, args.configuration, args.jobs, build_target=target_name)]
         elif command == "solution":
-            commands = [
-                msbuild_command(
-                    repo,
-                    repo / "sakura.sln",
-                    args.platform,
-                    args.configuration,
-                    args.jobs,
-                    log_file=msbuild_log_path(repo, args.platform, args.configuration),
-                )
-            ]
+            commands = solution_commands(
+                repo,
+                args.platform,
+                args.configuration,
+                args.jobs,
+                log_file=msbuild_log_path(repo, args.platform, args.configuration),
+                assembly_listings=assembly_listings_enabled(os.environ),
+            )
         else:
             commands = distribution_commands(repo, args.platform, args.configuration, args.jobs)
         env = {"SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1"} if command == "distribution" else {}
@@ -800,16 +800,14 @@ def _run_compat(args, graph, events: EventWriter) -> int:
     elif args.entrypoint == "build-sln":
         # CI builds the solution here and packages it with a separate
         # ``zipArtifacts.bat`` step, which requires this log.
-        commands = [
-            msbuild_command(
-                graph.repo_root,
-                graph.repo_root / "sakura.sln",
-                platform,
-                configuration,
-                compat_jobs,
-                log_file=msbuild_log_path(graph.repo_root, platform, configuration),
-            )
-        ]
+        commands = solution_commands(
+            graph.repo_root,
+            platform,
+            configuration,
+            compat_jobs,
+            log_file=msbuild_log_path(graph.repo_root, platform, configuration),
+            assembly_listings=assembly_listings_enabled(os.environ),
+        )
         env = {}
     else:
         commands = distribution_commands(graph.repo_root, platform, configuration, compat_jobs)

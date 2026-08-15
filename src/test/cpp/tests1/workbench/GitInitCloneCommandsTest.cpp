@@ -251,7 +251,7 @@ TEST(GitInitCloneCommands, BuildGitInitHomeDirectoryPromptNamesThePathAndOffersO
 
 	EXPECT_NE(std::wstring::npos, prompt.message.find(L"C:\\Users\\dev"));
 	ASSERT_EQ(1U, prompt.choices.size());
-	EXPECT_EQ(L"Initialize Repository", prompt.choices[0]);
+	EXPECT_EQ(L"\u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316", prompt.choices[0]);
 	EXPECT_TRUE(prompt.warning);
 	EXPECT_TRUE(prompt.modal);
 }
@@ -720,7 +720,8 @@ TEST(GitInitCloneCommands, RunGitCloneCompleteOnCancellationIsCancelledNotFailed
 
 TEST(GitInitCloneCommands, BuildGitScmWelcomeModelIsNoneWithARepositoryOpen)
 {
-	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(/*hasFolder=*/true, /*hasRepository=*/true);
+	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Folder, /*hasRepository=*/true);
 
 	EXPECT_EQ(EGitScmWelcomeContent::None, model.content);
 	EXPECT_TRUE(model.actions.empty());
@@ -728,41 +729,80 @@ TEST(GitInitCloneCommands, BuildGitScmWelcomeModelIsNoneWithARepositoryOpen)
 
 TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersInitWithAnOpenFolderAndNoRepository)
 {
-	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(/*hasFolder=*/true, /*hasRepository=*/false);
+	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Folder, /*hasRepository=*/false);
 
 	EXPECT_EQ(EGitScmWelcomeContent::FolderNoRepository, model.content);
 	ASSERT_EQ(1U, model.actions.size());
 	EXPECT_EQ("git.init", model.actions[0].command);
 	EXPECT_EQ("[true]", model.actions[0].argumentsJson);
-	EXPECT_EQ(L"Initialize Repository", model.actions[0].label);
+	EXPECT_EQ(L"\u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316", model.actions[0].label);
 }
 
-TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersCloneWithNoFolderOpen)
+TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersOpenFolderThenCloneWithNoFolderOpen)
 {
-	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(/*hasFolder=*/false, /*hasRepository=*/false);
+	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Empty, /*hasRepository=*/false);
 
 	EXPECT_EQ(EGitScmWelcomeContent::EmptyWorkbench, model.content);
-	ASSERT_EQ(1U, model.actions.size());
-	EXPECT_EQ("git.clone", model.actions[0].command);
+	ASSERT_EQ(2U, model.actions.size());
+	EXPECT_EQ("vscode.openFolder", model.actions[0].command);
 	EXPECT_TRUE(model.actions[0].argumentsJson.empty());
-	EXPECT_EQ(L"Clone Repository", model.actions[0].label);
+	EXPECT_EQ(L"Open Folder", model.actions[0].label);
+	EXPECT_EQ("git.cloneRecursive", model.actions[1].command);
+	EXPECT_TRUE(model.actions[1].argumentsJson.empty());
+	EXPECT_EQ(L"Clone Repository", model.actions[1].label);
+}
+
+TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersInitForWorkspaceWithFolders)
+{
+	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::WorkspaceWithFolders, /*hasRepository=*/false);
+
+	EXPECT_EQ(EGitScmWelcomeContent::WorkspaceNoRepository, model.content);
+	ASSERT_EQ(1U, model.actions.size());
+	EXPECT_EQ("git.init", model.actions[0].command);
+	EXPECT_TRUE(model.actions[0].argumentsJson.empty());
+	EXPECT_EQ(L"\u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316", model.actions[0].label);
+}
+
+TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersAddFolderForEmptyWorkspace)
+{
+	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::WorkspaceWithoutFolders, /*hasRepository=*/false);
+
+	EXPECT_EQ(EGitScmWelcomeContent::EmptyWorkspace, model.content);
+	ASSERT_EQ(1U, model.actions.size());
+	EXPECT_EQ("workbench.action.addRootFolder", model.actions[0].command);
+	EXPECT_TRUE(model.actions[0].argumentsJson.empty());
+	EXPECT_EQ(L"Add Folder to Workspace", model.actions[0].label);
 }
 
 TEST(GitInitCloneCommands, BuildGitScmWelcomeModelInitAndCloneAreMutuallyExclusive)
 {
 	// Byte-verified against `extensions/git/package.json` at tag 1.95.3:
-	// `view.workbench.scm.folder` (Init) and `view.workbench.scm.empty`
-	// (Clone) key off `workbenchState == folder` and `workbenchState == empty`
-	// respectively, so exactly one of the two content kinds ever has a
-	// non-empty action list for a given (hasFolder, hasRepository) pair.
-	const GitScmWelcomeModel folderModel = BuildGitScmWelcomeModel(true, false);
-	const GitScmWelcomeModel emptyModel = BuildGitScmWelcomeModel(false, false);
+	// The four upstream viewsWelcome contributions key off the explicit
+	// workbench state, so each state has its own content and action contract.
+	const GitScmWelcomeModel folderModel = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Folder, false);
+	const GitScmWelcomeModel workspaceModel = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::WorkspaceWithFolders, false);
+	const GitScmWelcomeModel emptyWorkspaceModel = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::WorkspaceWithoutFolders, false);
+	const GitScmWelcomeModel emptyModel = BuildGitScmWelcomeModel(
+		EGitScmWelcomeWorkspaceState::Empty, false);
 
 	EXPECT_NE(folderModel.content, emptyModel.content);
 	for (const GitScmWelcomeAction& action : folderModel.actions) {
 		EXPECT_NE("git.clone", action.command);
 	}
+	for (const GitScmWelcomeAction& action : workspaceModel.actions) EXPECT_EQ("git.init", action.command);
+	for (const GitScmWelcomeAction& action : emptyWorkspaceModel.actions) {
+		EXPECT_NE("git.init", action.command);
+		EXPECT_NE("git.cloneRecursive", action.command);
+	}
 	for (const GitScmWelcomeAction& action : emptyModel.actions) {
 		EXPECT_NE("git.init", action.command);
+		EXPECT_NE("workbench.action.addRootFolder", action.command);
 	}
 }

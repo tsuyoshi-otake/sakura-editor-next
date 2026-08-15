@@ -73,18 +73,34 @@ std::vector<std::wstring_view> SplitNul(std::wstring_view line)
 }
 
 //! `RefItemSeparator`'s label for each kind, verbatim from upstream.
-[[nodiscard]] std::wstring SeparatorLabel(EGitRefKind kind)
+[[nodiscard]] std::wstring ResolveText(const GitRefTextResolver& text, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument = {})
+{
+	std::wstring result;
+	if (text) {
+		result = text(key, argument);
+	}
+	if (result.empty()) result = fallback;
+	std::size_t position = 0;
+	while (!argument.empty() && (position = result.find(L"{0}", position)) != std::wstring::npos) {
+		result.replace(position, 3, argument);
+		position += argument.size();
+	}
+	return result;
+}
+
+[[nodiscard]] std::wstring SeparatorLabel(EGitRefKind kind, const GitRefTextResolver& text)
 {
 	switch (kind) {
-	case EGitRefKind::Head: return L"branches";
-	case EGitRefKind::RemoteHead: return L"remote branches";
-	case EGitRefKind::Tag: return L"tags";
+	case EGitRefKind::Head: return ResolveText(text, "GitRefBranches", L"branches");
+	case EGitRefKind::RemoteHead: return ResolveText(text, "GitRefRemoteBranches", L"remote branches");
+	case EGitRefKind::Tag: return ResolveText(text, "GitRefTags", L"tags");
 	}
 	return {};
 }
 
 //! `RefItem`'s label and description for each kind, verbatim from upstream.
-[[nodiscard]] GitCheckoutItem MakeRefItem(const GitRef& ref)
+[[nodiscard]] GitCheckoutItem MakeRefItem(const GitRef& ref, const GitRefTextResolver& text)
 {
 	GitCheckoutItem item;
 	item.kind = EGitCheckoutItemKind::Ref;
@@ -100,11 +116,11 @@ std::vector<std::wstring_view> SplitNul(std::wstring_view line)
 		break;
 	case EGitRefKind::RemoteHead:
 		item.label = L"$(cloud) " + ref.name;
-		item.description = L"Remote branch at " + shortCommit;
+		item.description = ResolveText(text, "GitRefRemoteBranchAt", L"Remote branch at {0}", shortCommit);
 		break;
 	case EGitRefKind::Tag:
 		item.label = L"$(tag) " + ref.name;
-		item.description = L"Tag at " + shortCommit;
+		item.description = ResolveText(text, "GitRefTagAt", L"Tag at {0}", shortCommit);
 		break;
 	}
 	return item;
@@ -113,7 +129,8 @@ std::vector<std::wstring_view> SplitNul(std::wstring_view line)
 //! Emits one upstream `RefProcessor` group: nothing at all when empty, and
 //! otherwise its separator followed by its items.
 void AppendRefGroup(
-	std::vector<GitCheckoutItem>& items, const std::vector<GitRef>& refs, EGitRefKind kind)
+	std::vector<GitCheckoutItem>& items, const std::vector<GitRef>& refs, EGitRefKind kind,
+	const GitRefTextResolver& text)
 {
 	const bool any = std::any_of(refs.begin(), refs.end(), [kind](const GitRef& ref) noexcept {
 		return ref.kind == kind && !(ref.name.empty() && ref.commit.empty());
@@ -125,23 +142,26 @@ void AppendRefGroup(
 	GitCheckoutItem separator;
 	separator.kind = EGitCheckoutItemKind::Separator;
 	separator.refKind = kind;
-	separator.label = SeparatorLabel(kind);
+	separator.label = SeparatorLabel(kind, text);
 	items.push_back(std::move(separator));
 
 	for (const auto& ref : refs) {
 		if (ref.kind != kind || (ref.name.empty() && ref.commit.empty())) {
 			continue;
 		}
-		items.push_back(MakeRefItem(ref));
+		items.push_back(MakeRefItem(ref, text));
 	}
 }
 
-[[nodiscard]] std::vector<GitCheckoutItem> MakeCheckoutCommandItems()
+[[nodiscard]] std::vector<GitCheckoutItem> MakeCheckoutCommandItems(const GitRefTextResolver& text)
 {
 	std::vector<GitCheckoutItem> commands;
-	commands.push_back({ EGitCheckoutItemKind::CreateBranch, L"$(plus) Create new branch...", {}, {}, EGitRefKind::Head, {} });
-	commands.push_back({ EGitCheckoutItemKind::CreateBranchFrom, L"$(plus) Create new branch from...", {}, {}, EGitRefKind::Head, {} });
-	commands.push_back({ EGitCheckoutItemKind::CheckoutDetached, L"$(debug-disconnect) Checkout detached...", {}, {}, EGitRefKind::Head, {} });
+	commands.push_back({ EGitCheckoutItemKind::CreateBranch,
+		L"$(plus) " + ResolveText(text, "GitCreateBranch", L"Create new branch..."), {}, {}, EGitRefKind::Head, {} });
+	commands.push_back({ EGitCheckoutItemKind::CreateBranchFrom,
+		L"$(plus) " + ResolveText(text, "GitCreateBranchFrom", L"Create new branch from..."), {}, {}, EGitRefKind::Head, {} });
+	commands.push_back({ EGitCheckoutItemKind::CheckoutDetached,
+		L"$(debug-disconnect) " + ResolveText(text, "GitCheckoutDetached", L"Checkout detached..."), {}, {}, EGitRefKind::Head, {} });
 	return commands;
 }
 
@@ -240,7 +260,7 @@ std::vector<GitRef> ParseForEachRef(std::string_view bytes)
 }
 
 std::vector<GitCheckoutItem> BuildCheckoutItems(
-	const std::vector<GitRef>& refs, bool detached, bool filterIsEmpty)
+	const std::vector<GitRef>& refs, bool detached, bool filterIsEmpty, const GitRefTextResolver& text)
 {
 	// `origin/HEAD` is a symbolic alias, so upstream hides it from the ordinary
 	// branch list and only keeps it when an explicit detached checkout is asked
@@ -258,10 +278,10 @@ std::vector<GitCheckoutItem> BuildCheckoutItems(
 	}
 
 	std::vector<GitCheckoutItem> picks;
-	AppendRefGroup(picks, selected, EGitRefKind::Head);
-	AppendRefGroup(picks, selected, EGitRefKind::RemoteHead);
+	AppendRefGroup(picks, selected, EGitRefKind::Head, text);
+	AppendRefGroup(picks, selected, EGitRefKind::RemoteHead, text);
 	if (!detached) {
-		AppendRefGroup(picks, selected, EGitRefKind::Tag);
+		AppendRefGroup(picks, selected, EGitRefKind::Tag, text);
 	}
 
 	// Detached mode offers no command rows at all.
@@ -269,7 +289,7 @@ std::vector<GitCheckoutItem> BuildCheckoutItems(
 		return picks;
 	}
 
-	auto commands = MakeCheckoutCommandItems();
+	auto commands = MakeCheckoutCommandItems(text);
 	if (picks.empty()) {
 		return commands;
 	}
@@ -290,15 +310,15 @@ std::vector<GitCheckoutItem> BuildCheckoutItems(
 	return items;
 }
 
-std::wstring CheckoutPlaceholder(bool detached)
+std::wstring CheckoutPlaceholder(bool detached, const GitRefTextResolver& text)
 {
 	return detached
-		? L"Select a branch to checkout in detached mode"
-		: L"Select a branch or tag to checkout";
+		? ResolveText(text, "GitCheckoutDetachedPlaceholder", L"Select a branch to checkout in detached mode")
+		: ResolveText(text, "GitCheckoutPlaceholder", L"Select a branch or tag to checkout");
 }
 
 std::vector<GitCheckoutItem> BuildBranchFromItems(
-	const std::vector<GitRef>& refs, std::wstring_view headCommit)
+	const std::vector<GitRef>& refs, std::wstring_view headCommit, const GitRefTextResolver& text)
 {
 	std::vector<GitCheckoutItem> items;
 
@@ -319,9 +339,9 @@ std::vector<GitCheckoutItem> BuildBranchFromItems(
 		return ref.name != L"origin/HEAD";
 	});
 
-	AppendRefGroup(items, selected, EGitRefKind::Head);
-	AppendRefGroup(items, selected, EGitRefKind::RemoteHead);
-	AppendRefGroup(items, selected, EGitRefKind::Tag);
+	AppendRefGroup(items, selected, EGitRefKind::Head, text);
+	AppendRefGroup(items, selected, EGitRefKind::RemoteHead, text);
+	AppendRefGroup(items, selected, EGitRefKind::Tag, text);
 	return items;
 }
 
@@ -354,7 +374,8 @@ std::wstring SanitizeBranchName(std::wstring_view name, wchar_t whitespaceChar)
 }
 
 GitBranchNameValidationResult ValidateBranchName(
-	std::wstring_view name, const std::vector<GitRef>& refs, wchar_t whitespaceChar)
+	std::wstring_view name, const std::vector<GitRef>& refs, wchar_t whitespaceChar,
+	const GitRefTextResolver& text)
 {
 	GitBranchNameValidationResult result;
 	result.sanitizedName = SanitizeBranchName(name, whitespaceChar);
@@ -369,13 +390,13 @@ GitBranchNameValidationResult ValidateBranchName(
 	});
 	if (existing != refs.end()) {
 		result.state = EGitBranchNameValidation::AlreadyExists;
-		result.message = L"Branch \"" + result.sanitizedName + L"\" already exists";
+		result.message = ResolveText(text, "GitBranchAlreadyExists", L"Branch \"{0}\" already exists", result.sanitizedName);
 		return result;
 	}
 
 	if (result.sanitizedName != name) {
 		result.state = EGitBranchNameValidation::Sanitized;
-		result.message = L"The new branch will be \"" + result.sanitizedName + L"\"";
+		result.message = ResolveText(text, "GitNewBranchWillBe", L"The new branch will be \"{0}\"", result.sanitizedName);
 		return result;
 	}
 

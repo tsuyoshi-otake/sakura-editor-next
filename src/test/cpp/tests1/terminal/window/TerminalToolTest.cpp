@@ -3,9 +3,12 @@
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
+#include "terminal/window/TerminalFontMetrics.h"
+#include "terminal/window/TerminalViewportGeometry.h"
 #include "workbench/panel/CBottomPanelTool.h"
 #include "terminal/model/TerminalModel.h"
 #include "terminal/input/SakuraTerminalInputAdapter.h"
+#include "theme/CThemeService.h"
 
 #include <array>
 #include <atomic>
@@ -142,6 +145,14 @@ public:
 
 	[[nodiscard]] bool Applied() const noexcept { return m_applied; }
 
+	[[nodiscard]] bool SetDown( int virtualKey ) const
+	{
+		std::array<BYTE, 256> state{};
+		if( !m_applied || ::GetKeyboardState(state.data()) == FALSE ) return false;
+		state[virtualKey] |= 0x80;
+		return ::SetKeyboardState(state.data()) != FALSE;
+	}
+
 private:
 	std::array<BYTE, 256> m_saved{};
 	bool m_restore{};
@@ -158,7 +169,6 @@ bool WaitUntil( Predicate&& predicate, std::chrono::milliseconds timeout = 500ms
 	}
 	return predicate();
 }
-
 TEST(TerminalTool, DefersFirstSessionUntilActivationAndKeepsItWhileDeactivated)
 {
 	ToolHarness harness;
@@ -228,6 +238,33 @@ TEST(TerminalTool, RendererSizeInvalidatesBeforeItReceivesFocus)
 	RECT update{};
 	EXPECT_TRUE(::GetUpdateRect(renderer.GetHwnd(), &update, FALSE));
 	EXPECT_NE(renderer.GetHwnd(), ::GetFocus());
+
+	renderer.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, RendererSizesPtyFromTheGridInsideTheApportionedPadding)
+{
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalWnd renderer;
+	ASSERT_TRUE(renderer.Create(parent, ::GetModuleHandleW(nullptr)));
+
+	terminal::TerminalSize observed{};
+	renderer.SetResizeSink([&observed](terminal::TerminalSize size) { observed = size; });
+	constexpr unsigned int dpi = 144;
+	const auto font = theme::CThemeService::FontSpec(theme::ThemeFontKind::Terminal);
+	const auto metrics = terminal::CalculateTerminalFontMetrics(font.pointSize, dpi);
+	const auto geometry = terminal::TerminalViewportGeometry::FromDpi(dpi);
+	constexpr std::uint16_t expectedColumns = 10;
+	constexpr std::uint16_t expectedRows = 4;
+	const RECT bounds{ 0, 0,
+		geometry.GridOriginX() + metrics.cellWidth * expectedColumns + geometry.padding,
+		geometry.GridOriginY() + metrics.cellHeight * expectedRows + geometry.padding };
+
+	renderer.Layout(bounds, dpi);
+	EXPECT_EQ(expectedColumns, observed.columns);
+	EXPECT_EQ(expectedRows, observed.rows);
 
 	renderer.Close();
 	::DestroyWindow(parent);
@@ -589,6 +626,9 @@ TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)
 	const auto second = tool.AddTerminal();
 	ASSERT_TRUE(second.has_value());
 	EXPECT_EQ(2u, tool.TabCount());
+	// New Terminal starts a new group; it must not implicitly split the
+	// currently visible terminal.  Splitting is reserved for Split Terminal.
+	EXPECT_FALSE(tool.HasTerminalSplit());
 	EXPECT_EQ(second, tool.ActiveTerminalId());
 	EXPECT_TRUE(tool.SelectTerminal(*first));
 	EXPECT_EQ(first, tool.ActiveTerminalId());
@@ -601,7 +641,7 @@ TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)
 	tool.Close();
 }
 
-TEST(TerminalTool, SplitsIntoIndependentLeftAndRightSessionsAndClosesRightCleanly)
+TEST(TerminalTool, SupportsArbitraryFlatSplitGroupsAndClosesTheFocusedPane)
 {
 	ToolHarness harness;
 	terminal::CTerminalTool tool(harness.Dependencies());
@@ -613,45 +653,82 @@ TEST(TerminalTool, SplitsIntoIndependentLeftAndRightSessionsAndClosesRightCleanl
 	ASSERT_TRUE(tool.SplitTerminalRight());
 	EXPECT_TRUE(tool.HasTerminalSplit());
 	EXPECT_EQ(2u, tool.TabCount());
-	EXPECT_EQ(left, tool.ActiveTerminalId());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Horizontal, tool.ActivePaneOrientation());
+	EXPECT_NE(left, tool.ActiveTerminalId());
 	ASSERT_EQ(2u, harness.backends.size());
 	EXPECT_EQ(L"C:\\split workspace", harness.backends[1]->workingDirectory);
-	EXPECT_FALSE(tool.SplitTerminalRight());
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+	EXPECT_EQ(3u, tool.TabCount());
+	ASSERT_EQ(3u, harness.backends.size());
+	EXPECT_EQ(L"C:\\split workspace", harness.backends[2]->workingDirectory);
+	ASSERT_TRUE(tool.SplitTerminalDown());
+	EXPECT_EQ(4u, tool.TabCount());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, tool.ActivePaneOrientation());
+	ASSERT_EQ(4u, harness.backends.size());
 
+	EXPECT_TRUE(tool.CloseTerminalSplit());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+	EXPECT_EQ(3u, tool.TabCount());
+	EXPECT_EQ(1, harness.backends[3]->closeCalls.load());
+	EXPECT_TRUE(tool.CloseTerminalSplit());
+	EXPECT_TRUE(tool.HasTerminalSplit());
+	EXPECT_EQ(2u, tool.TabCount());
+	EXPECT_EQ(1, harness.backends[2]->closeCalls.load());
 	EXPECT_TRUE(tool.CloseTerminalSplit());
 	EXPECT_FALSE(tool.HasTerminalSplit());
 	EXPECT_EQ(1u, tool.TabCount());
-	EXPECT_EQ(1, harness.backends[1]->closeCalls.load());
-	EXPECT_FALSE(tool.CloseTerminalSplit());
 	tool.Close();
 	EXPECT_EQ(1, harness.backends[0]->closeCalls.load());
 }
 
-TEST(TerminalTool, SplitCreatesTwoNativeViewportsAndDividerResizesThem)
+TEST(TerminalTool, SplitCreatesThreeNativeViewportsAndRightTerminalList)
 {
 	ToolHarness harness;
 	const HWND parent = CreateHiddenParentWindow();
 	ASSERT_NE(nullptr, parent);
 	terminal::CTerminalTool tool(harness.Dependencies());
 	ASSERT_TRUE(tool.Create(parent));
-	const RECT visible{ 0, 0, 640, 320 };
+	const RECT visible{ 0, 0, 900, 320 };
 	tool.Layout(visible, 96);
 	tool.Activate();
 	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	EXPECT_EQ(3u, tool.VisiblePaneCount());
+	EXPECT_TRUE(tool.HasTerminalTabsList());
 
 	const HWND first = ::FindWindowExW(tool.GetHwnd(), nullptr, L"SakuraNativeTerminalWindow", nullptr);
 	ASSERT_NE(nullptr, first);
 	const HWND second = ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr);
 	ASSERT_NE(nullptr, second);
-	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), second, L"SakuraNativeTerminalWindow", nullptr));
+	const HWND third = ::FindWindowExW(tool.GetHwnd(), second, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, third);
+	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), third, L"SakuraNativeTerminalWindow", nullptr));
 	RECT firstBefore{};
 	RECT secondBefore{};
+	RECT thirdBefore{};
 	ASSERT_TRUE(::GetWindowRect(first, &firstBefore));
 	ASSERT_TRUE(::GetWindowRect(second, &secondBefore));
+	ASSERT_TRUE(::GetWindowRect(third, &thirdBefore));
 	EXPECT_LT(firstBefore.left, secondBefore.left);
+	EXPECT_LT(secondBefore.left, thirdBefore.left);
 	EXPECT_LE(firstBefore.right, secondBefore.left);
+	EXPECT_LE(secondBefore.right, thirdBefore.left);
 	EXPECT_GT(firstBefore.right - firstBefore.left, 200);
 	EXPECT_GT(secondBefore.right - secondBefore.left, 200);
+	EXPECT_GT(thirdBefore.right - thirdBefore.left, 200);
+	const RECT tabs = tool.TerminalTabsBounds();
+	EXPECT_LT(tabs.left, tabs.right);
+	EXPECT_EQ(120, tabs.right - tabs.left);
+	POINT tabsOrigin{ tabs.left, tabs.top };
+	::ClientToScreen(tool.GetHwnd(), &tabsOrigin);
+	EXPECT_LE(thirdBefore.right, tabsOrigin.x);
+
+	const auto snapshots = tool.Tabs();
+	ASSERT_EQ(3u, snapshots.size());
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON,
+		MAKELPARAM(tabs.left + 4, tabs.top + 8));
+	EXPECT_EQ(snapshots.front().id, tool.ActiveTerminalId());
 
 	POINT divider{ firstBefore.right, firstBefore.top + 20 };
 	::ScreenToClient(tool.GetHwnd(), &divider);
@@ -662,29 +739,127 @@ TEST(TerminalTool, SplitCreatesTwoNativeViewportsAndDividerResizesThem)
 	ASSERT_TRUE(::GetWindowRect(first, &firstAfter));
 	EXPECT_GT(firstAfter.right - firstAfter.left, firstBefore.right - firstBefore.left);
 
-	// A ratio selected on a wide panel must be clamped again when the frame is
-	// narrowed; otherwise the right ConPTY can collapse to only a few columns.
-	const RECT wide{ 0, 0, 1200, 320 };
-	tool.Layout(wide, 96);
-	ASSERT_TRUE(::GetWindowRect(first, &firstAfter));
-	divider = { firstAfter.right, firstAfter.top + 20 };
-	::ScreenToClient(tool.GetHwnd(), &divider);
-	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(divider.x + 1, divider.y));
-	::SendMessageW(tool.GetHwnd(), WM_MOUSEMOVE, MK_LBUTTON, MAKELPARAM(1110, divider.y));
-	::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(1110, divider.y));
-	tool.Layout(visible, 96);
+	// A narrow panel still gives every pane the VS Code 80 px minimum while the
+	// right list remains at its 120 px default when it fits.
+	const RECT narrow{ 0, 0, 420, 320 };
+	tool.Layout(narrow, 96);
 	RECT firstNarrow{};
 	RECT secondNarrow{};
+	RECT thirdNarrow{};
 	ASSERT_TRUE(::GetWindowRect(first, &firstNarrow));
 	ASSERT_TRUE(::GetWindowRect(second, &secondNarrow));
+	ASSERT_TRUE(::GetWindowRect(third, &thirdNarrow));
 	EXPECT_GE(firstNarrow.right - firstNarrow.left, 80);
 	EXPECT_GE(secondNarrow.right - secondNarrow.left, 80);
+	EXPECT_GE(thirdNarrow.right - thirdNarrow.left, 80);
 	EXPECT_EQ(4, secondNarrow.left - firstNarrow.right);
+	EXPECT_EQ(4, thirdNarrow.left - secondNarrow.right);
 	EXPECT_EQ(0L, ::GetWindowLongPtrW(first, GWL_STYLE) & WS_VSCROLL);
 	EXPECT_EQ(0L, ::GetWindowLongPtrW(second, GWL_STYLE) & WS_VSCROLL);
+	EXPECT_EQ(0L, ::GetWindowLongPtrW(third, GWL_STYLE) & WS_VSCROLL);
 
 	EXPECT_TRUE(tool.CloseTerminalSplit());
-	EXPECT_EQ(nullptr, ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr));
+	EXPECT_EQ(2u, tool.VisiblePaneCount());
+	EXPECT_TRUE(tool.HasTerminalTabsList());
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, SplitDownStacksNativeViewportsVertically)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 900, 420 }, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.SplitTerminalDown());
+	ASSERT_TRUE(tool.SplitTerminalDown());
+	EXPECT_EQ(3u, tool.VisiblePaneCount());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, tool.ActivePaneOrientation());
+
+	const HWND first = ::FindWindowExW(tool.GetHwnd(), nullptr, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, first);
+	const HWND second = ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, second);
+	const HWND third = ::FindWindowExW(tool.GetHwnd(), second, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, third);
+	RECT firstRect{};
+	RECT secondRect{};
+	RECT thirdRect{};
+	ASSERT_TRUE(::GetWindowRect(first, &firstRect));
+	ASSERT_TRUE(::GetWindowRect(second, &secondRect));
+	ASSERT_TRUE(::GetWindowRect(third, &thirdRect));
+	EXPECT_LT(firstRect.top, secondRect.top);
+	EXPECT_LT(secondRect.top, thirdRect.top);
+	EXPECT_LE(firstRect.bottom, secondRect.top);
+	EXPECT_LE(secondRect.bottom, thirdRect.top);
+	EXPECT_EQ(firstRect.left, secondRect.left);
+	EXPECT_EQ(secondRect.left, thirdRect.left);
+	EXPECT_GE(firstRect.bottom - firstRect.top, 80);
+	EXPECT_GE(secondRect.bottom - secondRect.top, 80);
+	EXPECT_GE(thirdRect.bottom - thirdRect.top, 80);
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, TerminalListFocusKeepsVsCodeSplitKeybindingInTheTerminalUi)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_TRUE(tool.HasTerminalTabsList());
+
+	// A single click places focus on the terminal list's host HWND. The VS Code
+	// terminal commands must still apply there, not only to a native pane child.
+	const RECT tabs = tool.TerminalTabsBounds();
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON,
+		MAKELPARAM(tabs.left + 4, tabs.top + 8));
+	ScopedNeutralKeyboardState keyboardState;
+	ASSERT_TRUE(keyboardState.Applied());
+	ASSERT_TRUE(keyboardState.SetDown(VK_CONTROL));
+	ASSERT_TRUE(keyboardState.SetDown(VK_SHIFT));
+	MSG split{ tool.GetHwnd(), WM_KEYDOWN, static_cast<WPARAM>('5'), 0 };
+	EXPECT_TRUE(tool.PreTranslateMessage(split));
+	EXPECT_EQ(3u, tool.VisiblePaneCount());
+	EXPECT_EQ(3u, tool.TabCount());
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, TerminalListScrollsWhenArbitraryGroupsExceedItsHeight)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	// The terminal content has only enough height for a few list rows.
+	tool.Layout({ 0, 0, 900, 100 }, 96);
+	tool.Activate();
+	for( int count = 0; count < 4; ++count ) ASSERT_TRUE(tool.SplitTerminalRight());
+	const auto snapshots = tool.Tabs();
+	ASSERT_EQ(5u, snapshots.size());
+	const RECT tabs = tool.TerminalTabsBounds();
+	ASSERT_LT(tabs.top, tabs.bottom);
+
+	POINT listPoint{ tabs.left + 4, tabs.top + 8 };
+	::ClientToScreen(tool.GetHwnd(), &listPoint);
+	::SendMessageW(tool.GetHwnd(), WM_MOUSEWHEEL,
+		MAKEWPARAM(0, static_cast<WORD>(-3 * WHEEL_DELTA)), MAKELPARAM(listPoint.x, listPoint.y));
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON,
+		MAKELPARAM(tabs.left + 4, tabs.top + 8));
+	// With 70 px of content height and 24-DIP rows only two rows fit. The first
+	// visible row advanced to the fourth session, which was initially clipped.
+	EXPECT_EQ(snapshots[3].id, tool.ActiveTerminalId());
+
 	tool.Close();
 	::DestroyWindow(parent);
 }

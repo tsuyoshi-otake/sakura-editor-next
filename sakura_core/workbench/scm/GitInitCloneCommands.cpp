@@ -22,23 +22,38 @@ using commands::json::SkipWhitespace;
 namespace {
 
 //! Upstream's own strings, read verbatim from `extensions/git/package.nls.json`
-//! at tag 1.95.3 (`view.workbench.scm.folder`, `view.workbench.scm.empty`).
+//! at tag 1.95.3 (`view.workbench.scm.empty`, `.folder`, `.workspace`, and
+//! `.emptyWorkspace`).
 //! The markdown link syntax and the "read our docs" trailer are not carried
 //! here: this model exposes the same command each link names as a distinct,
 //! typed `GitScmWelcomeAction` instead of embedded markdown, matching how the
 //! repository band already separates its own commands from its label text.
 constexpr std::wstring_view kFolderNoRepositoryMessage =
-	L"The folder currently open doesn't have a Git repository. You can "
-	L"initialize a repository which will enable source control features "
-	L"powered by Git.";
+	L"The currently open folder does not contain a Git repository. Initialize a repository "
+	L"to enable source control features powered by Git.";
 constexpr std::wstring_view kEmptyWorkbenchMessage =
-	L"In order to use Git features, you can open a folder containing a Git "
-	L"repository or clone from a URL.";
+	L"To use Git features, open a folder containing a Git repository or clone from a URL.";
+constexpr std::wstring_view kWorkspaceNoRepositoryMessage =
+	L"The currently open workspace does not contain a folder with a Git repository. "
+	L"Initialize a repository in a folder to enable source control features powered by Git.";
+constexpr std::wstring_view kEmptyWorkspaceMessage =
+	L"The currently open workspace does not contain a folder with a Git repository.";
 
 constexpr std::wstring_view kInitializeRepositoryLabel = L"Initialize Repository";
 constexpr std::wstring_view kCloneRepositoryLabel = L"Clone Repository";
+constexpr std::wstring_view kAddFolderToWorkspaceLabel = L"Add Folder to Workspace";
 constexpr std::wstring_view kChooseFolderLabel = L"Choose Folder...";
+constexpr std::wstring_view kOpenFolderLabel = L"Open Folder";
 constexpr std::wstring_view kOpenLabel = L"Open";
+
+std::wstring Text(const ScmTextResolver& resolver, EScmTextKey key,
+	std::wstring_view fallback, std::wstring_view argument = {})
+{
+	if (resolver) {
+		if (std::wstring value = resolver(key, argument); !value.empty()) return value;
+	}
+	return std::wstring(fallback);
+}
 
 //! `!result.Succeeded() || result.exitCode != 0`: the compound condition every
 //! call site in this directory uses, because a process that ran and refused
@@ -105,7 +120,8 @@ constexpr std::wstring_view kOpenLabel = L"Open";
 // git.init
 // ---------------------------------------------------------------------------
 
-std::vector<GitInitFolderPickItem> BuildGitInitFolderPickItems(const std::vector<GitInitWorkspaceFolder>& openFolders)
+std::vector<GitInitFolderPickItem> BuildGitInitFolderPickItems(
+	const std::vector<GitInitWorkspaceFolder>& openFolders, const ScmTextResolver& text)
 {
 	std::vector<GitInitFolderPickItem> items;
 	items.reserve(openFolders.size() + 1);
@@ -115,7 +131,7 @@ std::vector<GitInitFolderPickItem> BuildGitInitFolderPickItems(const std::vector
 	// Upstream always appends this row after the real folders; an empty
 	// `path` is what the caller uses to recognize it and fall through to the
 	// folder browser.
-	items.push_back(GitInitFolderPickItem{ std::wstring(kChooseFolderLabel), std::wstring{}, std::wstring{} });
+	items.push_back(GitInitFolderPickItem{ Text(text, EScmTextKey::GitChooseFolder, kChooseFolderLabel), {}, {} });
 	return items;
 }
 
@@ -127,21 +143,41 @@ bool IsGitInitHomeDirectoryGuardTriggered(std::wstring_view homeDirectory, std::
 	return chosenPath.substr(0, homeDirectory.size()) == homeDirectory;
 }
 
-GitPrompt BuildGitInitHomeDirectoryPrompt(std::wstring_view chosenPath)
+GitPrompt BuildGitInitHomeDirectoryPrompt(std::wstring_view chosenPath, const ScmTextResolver& text)
 {
 	GitPrompt prompt;
-	prompt.message = L"This will create a Git repository in \"" + std::wstring(chosenPath) +
-		L"\". Are you sure you want to initialize a Git repository in your home directory?";
+	if (text) {
+		prompt.message = Text(text, EScmTextKey::GitInitHomeWarning,
+			L"This will create a Git repository in \"{0}\". Are you sure you want to initialize a Git repository in your home directory?", chosenPath);
+		const std::wstring marker = L"{0}";
+		if (const std::size_t at = prompt.message.find(marker); at != std::wstring::npos) {
+			prompt.message.replace(at, marker.size(), chosenPath);
+		}
+		prompt.choices = { Text(text, EScmTextKey::GitInitializeRepository, kInitializeRepositoryLabel) };
+		prompt.warning = true;
+		prompt.modal = true;
+		return prompt;
+	}
+	prompt.message = L"\u300c" + std::wstring(chosenPath) +
+		L"\u300d\u306b Git \u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u4f5c\u6210\u3057\u307e\u3059\u3002\u30db\u30fc\u30e0\u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u306b Git \u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316\u3057\u3066\u3082\u3088\u308d\u3057\u3044\u3067\u3059\u304b\uff1f";
 	prompt.choices = { std::wstring(kInitializeRepositoryLabel) };
 	prompt.warning = true;
 	prompt.modal = true;
 	return prompt;
 }
 
-GitPrompt BuildGitInitOpenPrompt()
+GitPrompt BuildGitInitOpenPrompt(const ScmTextResolver& text)
 {
 	GitPrompt prompt;
-	prompt.message = L"Would you like to open the initialized repository?";
+	if (text) {
+		prompt.message = Text(text, EScmTextKey::GitInitOpenPrompt,
+			L"Would you like to open the initialized repository?");
+		prompt.choices = { Text(text, EScmTextKey::GitOpen, kOpenLabel) };
+		prompt.warning = false;
+		prompt.modal = false;
+		return prompt;
+	}
+	prompt.message = L"\u521d\u671f\u5316\u3057\u305f\u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u958b\u304d\u307e\u3059\u304b\uff1f";
 	prompt.choices = { std::wstring(kOpenLabel) };
 	prompt.warning = false;
 	prompt.modal = false;
@@ -195,12 +231,12 @@ GitInitCommandResult RunGitInit(const GitInitCommandContext& context, bool skipF
 		postAction = EGitInitPostAction::AlreadyOpen;
 	} else {
 		if (!context.folderPick) {
-			return MakeInitFailed(L"No folder picker is available to choose where to initialize the repository.");
+			return MakeInitFailed(L"\u30ea\u30dd\u30b8\u30c8\u30ea\u306e\u521d\u671f\u5316\u5148\u3092\u9078\u629e\u3059\u308b\u30d5\u30a9\u30eb\u30c0\u30fc\u30d4\u30c3\u30ab\u30fc\u3092\u5229\u7528\u3067\u304d\u307e\u305b\u3093\u3002");
 		}
 
-		const std::vector<GitInitFolderPickItem> items = BuildGitInitFolderPickItems(context.openFolders);
+		const std::vector<GitInitFolderPickItem> items = BuildGitInitFolderPickItems(context.openFolders, context.text);
 		const std::optional<std::size_t> picked =
-			context.folderPick(items, L"Pick workspace folder to initialize git repo on");
+			context.folderPick(items, L"Git \u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316\u3059\u308b\u30ef\u30fc\u30af\u30b9\u30da\u30fc\u30b9\u30d5\u30a9\u30eb\u30c0\u30fc\u3092\u9078\u629e");
 		if (!picked.has_value() || *picked >= items.size()) {
 			return MakeInitCancelled();
 		}
@@ -211,10 +247,10 @@ GitInitCommandResult RunGitInit(const GitInitCommandContext& context, bool skipF
 			postAction = EGitInitPostAction::AlreadyOpen;
 		} else {
 			if (!context.browseForFolder) {
-				return MakeInitFailed(L"No folder browser is available to choose where to initialize the repository.");
+				return MakeInitFailed(L"\u30ea\u30dd\u30b8\u30c8\u30ea\u306e\u521d\u671f\u5316\u5148\u3092\u9078\u629e\u3059\u308b\u30d5\u30a9\u30eb\u30c0\u30fc\u30d6\u30e9\u30a6\u30b6\u30fc\u3092\u5229\u7528\u3067\u304d\u307e\u305b\u3093\u3002");
 			}
 			const std::optional<std::wstring> browsed =
-				context.browseForFolder(kInitializeRepositoryLabel, context.homeDirectory);
+				context.browseForFolder(Text(context.text, EScmTextKey::GitInitializeRepository, kInitializeRepositoryLabel), context.homeDirectory);
 			if (!browsed.has_value() || browsed->empty()) {
 				return MakeInitCancelled();
 			}
@@ -227,16 +263,17 @@ GitInitCommandResult RunGitInit(const GitInitCommandContext& context, bool skipF
 	if (applyHomeGuard && IsGitInitHomeDirectoryGuardTriggered(context.homeDirectory, chosenPath)) {
 		if (!context.confirm) {
 			return MakeInitFailed(
-				L"No confirmation presenter is available to guard initializing a repository in the home directory.");
+				L"\u30db\u30fc\u30e0\u30c7\u30a3\u30ec\u30af\u30c8\u30ea\u3078\u306e\u30ea\u30dd\u30b8\u30c8\u30ea\u521d\u671f\u5316\u3092\u78ba\u8a8d\u3059\u308b\u30c0\u30a4\u30a2\u30ed\u30b0\u3092\u5229\u7528\u3067\u304d\u307e\u305b\u3093\u3002");
 		}
-		const std::optional<std::size_t> choice = context.confirm(BuildGitInitHomeDirectoryPrompt(chosenPath));
+		const std::optional<std::size_t> choice = context.confirm(BuildGitInitHomeDirectoryPrompt(chosenPath, context.text));
 		if (!choice.has_value() || *choice != 0) {
-			return MakeInitCancelled(L"Initializing a Git repository in the home directory was declined.");
+			return MakeInitCancelled(Text(context.text, EScmTextKey::GitInitCancelledHome,
+				L"Initializing a Git repository in the home directory was cancelled"));
 		}
 	}
 
 	if (!context.run) {
-		return MakeInitFailed(L"No git invoker is available to run git init.");
+		return MakeInitFailed(L"git init \u3092\u5b9f\u884c\u3059\u308b Git \u547c\u3073\u51fa\u3057\u6a5f\u80fd\u3092\u5229\u7528\u3067\u304d\u307e\u305b\u3093\u3002");
 	}
 
 	const GitExecutionResult result = context.run(chosenPath, BuildGitInitArguments());
@@ -249,7 +286,13 @@ GitInitCommandResult RunGitInit(const GitInitCommandContext& context, bool skipF
 	}
 
 	if (context.message) {
-		context.message(L"Initialized repository in \"" + chosenPath + L"\".");
+		std::wstring message = Text(context.text, EScmTextKey::GitInitSuccess,
+			L"Initialized a repository in \"{0}\"", chosenPath);
+		const std::wstring marker = L"{0}";
+		if (const std::size_t at = message.find(marker); at != std::wstring::npos) {
+			message.replace(at, marker.size(), chosenPath);
+		}
+		context.message(message);
 	}
 
 	return MakeInitSucceeded(chosenPath, postAction);
@@ -281,12 +324,24 @@ std::wstring DeriveGitCloneFolderName(std::wstring_view url)
 	return name;
 }
 
-GitPrompt BuildGitCloneOverwritePrompt(std::wstring_view folderName)
+GitPrompt BuildGitCloneOverwritePrompt(std::wstring_view folderName, const ScmTextResolver& text)
 {
 	GitPrompt prompt;
-	prompt.message = L"A folder for the repository \"" + std::wstring(folderName) +
-		L"\" already exists and is not empty. Do you want to overwrite it?";
-	prompt.choices = { std::wstring(L"Overwrite") };
+	if (text) {
+		prompt.message = Text(text, EScmTextKey::GitCloneOverwriteWarning,
+			L"A folder for the repository \"{0}\" already exists and is not empty. Do you want to overwrite it?", folderName);
+		const std::wstring marker = L"{0}";
+		if (const std::size_t at = prompt.message.find(marker); at != std::wstring::npos) {
+			prompt.message.replace(at, marker.size(), folderName);
+		}
+		prompt.choices = { Text(text, EScmTextKey::GitOverwrite, L"Overwrite") };
+		prompt.warning = true;
+		prompt.modal = true;
+		return prompt;
+	}
+	prompt.message = L"\u30ea\u30dd\u30b8\u30c8\u30ea\u7528\u306e\u30d5\u30a9\u30eb\u30c0\u30fc\u300c" + std::wstring(folderName) +
+		L"\u300d\u306f\u3059\u3067\u306b\u5b58\u5728\u3057\u3001\u7a7a\u3067\u306f\u3042\u308a\u307e\u305b\u3093\u3002\u4e0a\u66f8\u304d\u3057\u307e\u3059\u304b\uff1f";
+	prompt.choices = { std::wstring(L"\u4e0a\u66f8\u304d") };
 	prompt.warning = true;
 	prompt.modal = true;
 	return prompt;
@@ -307,7 +362,8 @@ std::optional<GitCloneRequest> RunGitClonePrepare(const GitCloneCommandContext& 
 	if (!context.promptForUrl) {
 		return std::nullopt;
 	}
-	const std::optional<std::wstring> url = context.promptForUrl(L"Repository URL", L"Repository URL", L"");
+	const std::wstring repositoryUrl = Text(context.text, EScmTextKey::GitRepositoryUrl, L"Repository URL");
+	const std::optional<std::wstring> url = context.promptForUrl(repositoryUrl, repositoryUrl, L"");
 	if (!url.has_value() || url->empty()) {
 		return std::nullopt;
 	}
@@ -315,7 +371,8 @@ std::optional<GitCloneRequest> RunGitClonePrepare(const GitCloneCommandContext& 
 	const std::wstring folderName = DeriveGitCloneFolderName(*url);
 	if (folderName.empty()) {
 		if (context.message) {
-			context.message(L"The repository URL did not resolve to a folder name.");
+			context.message(Text(context.text, EScmTextKey::GitInvalidUrlFolder,
+				L"Could not derive a repository folder name from the URL"));
 		}
 		return std::nullopt;
 	}
@@ -323,8 +380,9 @@ std::optional<GitCloneRequest> RunGitClonePrepare(const GitCloneCommandContext& 
 	if (!context.browseForParentDirectory) {
 		return std::nullopt;
 	}
-	const std::optional<std::wstring> parentDirectory =
-		context.browseForParentDirectory(L"Select Repository Location", context.homeDirectory);
+		const std::optional<std::wstring> parentDirectory =
+			context.browseForParentDirectory(Text(context.text, EScmTextKey::GitRepositoryLocation,
+				L"Repository location"), context.homeDirectory);
 	if (!parentDirectory.has_value() || parentDirectory->empty()) {
 		return std::nullopt;
 	}
@@ -343,8 +401,8 @@ std::optional<GitCloneRequest> RunGitClonePrepare(const GitCloneCommandContext& 
 			// rather than presenting `BuildGitCloneOverwritePrompt` and being
 			// unable to honor a "yes" — see this directory's CLAUDE.md.
 			if (context.message) {
-				context.message(
-					L"A folder for the repository \"" + folderName + L"\" already exists and is not empty.");
+				context.message(Text(context.text, EScmTextKey::GitCloneNonEmpty,
+					L"The repository folder \"{0}\" already exists and is not empty", folderName));
 			}
 			return std::nullopt;
 		}
@@ -367,7 +425,7 @@ GitExecutionResult RunGitCloneExecute(
 GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request, const GitExecutionResult& result)
 {
 	if (result.status == EGitExecutionStatus::Cancelled) {
-		return MakeCloneCancelled(L"Cloning was cancelled.");
+		return MakeCloneCancelled(L"\u30af\u30ed\u30fc\u30f3\u306f\u30ad\u30e3\u30f3\u30bb\u30eb\u3055\u308c\u307e\u3057\u305f\u3002");
 	}
 	if (GitCommandFailed(result)) {
 		return MakeCloneFailed(DescribeGitFailure(result));
@@ -379,7 +437,8 @@ GitCloneCommandResult RunGitCloneComplete(const GitCloneRequest& request, const 
 // Source Control empty-state welcome content
 // ---------------------------------------------------------------------------
 
-GitScmWelcomeModel BuildGitScmWelcomeModel(bool hasFolder, bool hasRepository)
+GitScmWelcomeModel BuildGitScmWelcomeModel(
+	EGitScmWelcomeWorkspaceState workspaceState, bool hasRepository, const ScmTextResolver& text)
 {
 	GitScmWelcomeModel model;
 
@@ -388,21 +447,39 @@ GitScmWelcomeModel BuildGitScmWelcomeModel(bool hasFolder, bool hasRepository)
 		return model;
 	}
 
-	if (hasFolder) {
+	switch (workspaceState) {
+	case EGitScmWelcomeWorkspaceState::Folder:
 		model.content = EGitScmWelcomeContent::FolderNoRepository;
-		model.message = std::wstring(kFolderNoRepositoryMessage);
+		model.message = Text(text, EScmTextKey::GitFolderNoRepository, kFolderNoRepositoryMessage);
 		// `git.init?[true]`: upstream's `skipFolderPrompt` argument, decoded
 		// from its `%5Btrue%5D`-encoded link target.
-		model.actions.push_back(GitScmWelcomeAction{ std::wstring(kInitializeRepositoryLabel), "git.init", "[true]" });
+		model.actions.push_back(GitScmWelcomeAction{ Text(text, EScmTextKey::GitInitializeRepository, kInitializeRepositoryLabel), "git.init", "[true]" });
 		return model;
+	case EGitScmWelcomeWorkspaceState::WorkspaceWithFolders:
+		model.content = EGitScmWelcomeContent::WorkspaceNoRepository;
+		model.message = Text(text, EScmTextKey::GitWorkspaceNoRepository, kWorkspaceNoRepositoryMessage);
+		// Unlike the single-folder welcome link, the user must choose one of the
+		// workspace folders, so upstream passes no `skipFolderPrompt` argument.
+		model.actions.push_back(GitScmWelcomeAction{ Text(text, EScmTextKey::GitInitializeRepository, kInitializeRepositoryLabel), "git.init", "" });
+		return model;
+	case EGitScmWelcomeWorkspaceState::WorkspaceWithoutFolders:
+		model.content = EGitScmWelcomeContent::EmptyWorkspace;
+		model.message = Text(text, EScmTextKey::GitEmptyWorkspace, kEmptyWorkspaceMessage);
+		model.actions.push_back(GitScmWelcomeAction{
+			Text(text, EScmTextKey::GitAddFolderToWorkspace, kAddFolderToWorkspaceLabel), "workbench.action.addRootFolder", "" });
+		return model;
+	case EGitScmWelcomeWorkspaceState::Empty:
+		break;
 	}
 
 	model.content = EGitScmWelcomeContent::EmptyWorkbench;
-	model.message = std::wstring(kEmptyWorkbenchMessage);
-	// Upstream also links `Open Folder` (`command:vscode.openFolder`) here;
-	// that command has no route in this product yet and is out of this
-	// pass's scope, so only `Clone Repository` is modeled.
-	model.actions.push_back(GitScmWelcomeAction{ std::wstring(kCloneRepositoryLabel), "git.clone", "" });
+	model.message = Text(text, EScmTextKey::GitEmptyWorkbench, kEmptyWorkbenchMessage);
+	// Keep the source order from the Git extension's viewsWelcome contribution.
+	// These are API command ids, not local aliases: the command registry owns
+	// their runtime routing.
+	model.actions.push_back(GitScmWelcomeAction{
+		Text(text, EScmTextKey::GitOpenFolder, kOpenFolderLabel), "vscode.openFolder", "" });
+	model.actions.push_back(GitScmWelcomeAction{ Text(text, EScmTextKey::GitCloneRepository, kCloneRepositoryLabel), "git.cloneRecursive", "" });
 	return model;
 }
 

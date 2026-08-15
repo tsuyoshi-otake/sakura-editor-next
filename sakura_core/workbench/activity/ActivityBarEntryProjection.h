@@ -10,11 +10,15 @@
 #include "workbench/layout/WorkbenchContributionRegistry.h"
 
 #include <span>
+#include <functional>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace workbench::activity {
+
+[[nodiscard]] std::uint32_t ResolveBuiltinActivityTitleResourceId(std::string_view containerId) noexcept;
 
 /*!
 	@brief What the projection needs beyond the layout registry itself.
@@ -33,6 +37,8 @@ struct ActivityBarProjectionOptions {
 		the Activity Bar that open nothing, so the composition passes only what it can show.
 	*/
 	std::span<const std::string_view> renderableBuiltins;
+	//! Resolves a container's display title at presentation time. Empty means registry fallback.
+	std::function<std::wstring(std::string_view containerId, std::wstring_view fallback)> titleResolver;
 };
 
 /*!
@@ -48,5 +54,13 @@ struct ActivityBarProjectionOptions {
 
 //! The bundled codicon Sakura renders for one of its own containers, empty when it has none.
 [[nodiscard]] std::wstring_view BuiltinContainerCodicon(std::string_view containerId) noexcept;
+
+/*!
+	@brief Appends VS Code's GlobalCompositeBar actions (Accounts, then Manage).
+
+	These are not ViewContainers. They pin to the bottom of a vertical Activity Bar and
+	open menus rather than activating a Side Bar page.
+*/
+void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries);
 
 } // namespace workbench::activity
