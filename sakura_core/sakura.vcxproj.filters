@@ -1141,6 +1141,9 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\ScmViewStackLayout.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 
 
 

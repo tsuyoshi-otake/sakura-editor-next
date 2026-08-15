@@ -1035,8 +1035,8 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	EXPECT_EQ("Changes", changes->descriptor.title);
 	EXPECT_EQ(std::string(layout::ids::viewContainer::SourceControl), changes->descriptor.containerId);
 	EXPECT_EQ(10, changes->descriptor.order);
-	EXPECT_EQ("workbench.scm.repositories", layout::ids::view::SourceControlRepositories);
-	EXPECT_EQ("workbench.scm.history", layout::ids::view::SourceControlGraph);
+	EXPECT_EQ(std::string_view("workbench.scm.repositories"), layout::ids::view::SourceControlRepositories);
+	EXPECT_EQ(std::string_view("workbench.scm.history"), layout::ids::view::SourceControlGraph);
 	EXPECT_EQ(contributions.views.end(), findView(layout::ids::view::SourceControlRepositories));
 	EXPECT_EQ(contributions.views.end(), findView(layout::ids::view::SourceControlGraph));
 }

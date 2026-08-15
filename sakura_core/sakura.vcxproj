@@ -630,6 +630,7 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitPrompt.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitSyncCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\ScmViewStackLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitStageCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h" />

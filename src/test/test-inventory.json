@@ -1,12 +1,12 @@
 {
   "disabled_count": 30,
   "discovery": {"arguments":["--gtest_list_tests"],"executable":"runtime-set:tests1","executable_sha256":"503cf043e5b35413fbe33b8f0c6805b8d0e894892b5908d95f04dffb3ea6b572","framework":"googletest"},
-  "guarantee_fingerprint": "sha256:55a5b680d7c7393810fbb98420e678e53dfab3ebafbc63c4f964585b64ac880e",
+  "guarantee_fingerprint": "sha256:fbdeb5ffeb2341b21f93df88efcc2b8696fa79ac1b27828a1da2fb2db1ab4da2",
   "inventory_id": "legacy-tests1-msvc-x64-debug",
   "schema_version": 1,
   "source_dirty": false,
   "source_revision": "096d601990ebb9f0970bfdc52ad3484b5452b17c",
-  "test_count": 2860,
+  "test_count": 2861,
   "tests": [
     {"runtime":{"runner_id":"tests1","selector":"ApiCommandArguments.AnOverLongStringIsRefusedRatherThanTruncated"},"status":"enabled","test_id":"tests1:ApiCommandArguments.AnOverLongStringIsRefusedRatherThanTruncated"},
     {"runtime":{"runner_id":"tests1","selector":"ApiCommandArguments.DiffAcceptsAnAbsentTitleButNeverOneSide"},"status":"enabled","test_id":"tests1:ApiCommandArguments.DiffAcceptsAnAbsentTitleButNeverOneSide"},
