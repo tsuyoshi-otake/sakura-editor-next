@@ -27,6 +27,7 @@
 #include "workbench/scm/GitScmModel.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/GitStageCommands.h"
+#include "workbench/scm/ScmViewStackLayout.h"
 #include "workbench/scm/SourceControlService.h"
 
 using namespace std::string_literals;
@@ -140,6 +141,54 @@ TEST(GitCommandRunner, QuotesOnlyArgumentsThatNeedIt)
 	// follows it, so a trailing run must be doubled or it would escape the
 	// closing quote and swallow the next argument.
 	EXPECT_EQ(L"\"C:\\dir with space\\\\\"", QuoteGitArgument(L"C:\\dir with space\\"));
+}
+
+TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
+{
+	const ScmGraphPresentation graph;
+	EXPECT_EQ(EScmGraphPresentationStatus::Unsupported, graph.status);
+	EXPECT_FALSE(graph.IsInteractive());
+	EXPECT_FALSE(graph.ShouldRenderFrameForProvider(false));
+	EXPECT_TRUE(graph.ShouldRenderFrameForProvider(true));
+
+	const auto layout = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.inputVisible = true,
+		.graphVisible = true,
+	});
+	EXPECT_EQ((ScmVerticalBounds{ 0, 30 }), layout.repositoriesHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 30, 52 }), layout.repositoryRow);
+	EXPECT_EQ((ScmVerticalBounds{ 52, 82 }), layout.changesHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 87, 113 }), layout.input);
+	EXPECT_EQ((ScmVerticalBounds{ 118, 422 }), layout.changesBody);
+	EXPECT_EQ((ScmVerticalBounds{ 422, 452 }), layout.graphHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 452, 500 }), layout.graphBody);
+
+	const auto empty = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 250,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = false,
+		.inputVisible = false,
+		.graphVisible = false,
+	});
+	EXPECT_TRUE(empty.repositoriesHeader.Empty());
+	EXPECT_TRUE(empty.repositoryRow.Empty());
+	EXPECT_EQ((ScmVerticalBounds{ 0, 30 }), empty.changesHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 30, 250 }), empty.changesBody);
+	EXPECT_TRUE(empty.graphHeader.Empty());
+	EXPECT_TRUE(empty.graphBody.Empty());
 }
 
 TEST(GitCommandRunner, BuildsCommandLineAndPrependsRepositoryDirectory)
