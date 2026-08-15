@@ -62,8 +62,12 @@ CP932 would break bregonig.
 
 Headers for sakura still resolve via `externals/` (`..\externals` /
 `${CMAKE_SOURCE_DIR}/externals`). The vcpkg install layout is a flat
-`include/onigmo.h`, which `bregonig`'s portfile copies and renames the
-archive to `onigmo_s.lib` as that Makefile expects.
+`include/onigmo.h`. On MSVC triplets the archive is `lib/onigmo.lib`,
+which `bregonig`'s portfile copies and renames to `onigmo_s.lib` as that
+Makefile expects. On MinGW triplets CMake installs GNU `libonigmo.a`
+instead; bregonig's nmake path still needs a COFF library, so the port
+builds one with `build_nmake.cmd` from the same submodule and only then
+renames it to `onigmo_s.lib`. Do not point LINK.EXE at `libonigmo.a`.
 
 Fork-side CMake lives in the submodule (`CMakeLists.txt`,
 `cmake/OnigmoConfig.cmake.in`, optional `ONIGMO_BUILD_TESTS` →
