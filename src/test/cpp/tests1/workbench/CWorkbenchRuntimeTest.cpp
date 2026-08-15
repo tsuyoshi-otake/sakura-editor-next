@@ -993,6 +993,11 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 			return value.descriptor.id == id;
 		});
 	};
+	const auto findView = [&contributions](std::string_view id) {
+		return std::find_if(contributions.views.begin(), contributions.views.end(), [id](const auto& value) {
+			return value.descriptor.id == id;
+		});
+	};
 	const auto findPart = [&layoutSnapshot](std::string_view id) {
 		return std::find_if(layoutSnapshot.parts.begin(), layoutSnapshot.parts.end(), [id](const auto& value) { return value.partId == id; });
 	};
@@ -1021,6 +1026,19 @@ TEST(CWorkbenchRuntime, OwnsCanonicalContributionsAndAnIndependentAuxiliaryBarLa
 	});
 	ASSERT_NE(contributions.views.end(), outline);
 	EXPECT_EQ(std::string(layout::ids::viewContainer::Explorer), outline->descriptor.containerId);
+
+	// VS Code's current `workbench.scm` View is Changes. The native SCM host
+	// renders the two sibling frames, but they remain unregistered until the
+	// layout model can express their hide-by-default / provider conditions.
+	const auto changes = findView(layout::ids::view::SourceControl);
+	ASSERT_NE(contributions.views.end(), changes);
+	EXPECT_EQ("Changes", changes->descriptor.title);
+	EXPECT_EQ(std::string(layout::ids::viewContainer::SourceControl), changes->descriptor.containerId);
+	EXPECT_EQ(10, changes->descriptor.order);
+	EXPECT_EQ("workbench.scm.repositories", layout::ids::view::SourceControlRepositories);
+	EXPECT_EQ("workbench.scm.history", layout::ids::view::SourceControlGraph);
+	EXPECT_EQ(contributions.views.end(), findView(layout::ids::view::SourceControlRepositories));
+	EXPECT_EQ(contributions.views.end(), findView(layout::ids::view::SourceControlGraph));
 }
 
 
