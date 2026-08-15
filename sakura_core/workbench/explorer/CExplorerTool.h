@@ -82,6 +82,49 @@ enum class ExplorerWelcomeState : unsigned char {
 	WorkspaceWithFoldersUnsupported,
 };
 
+//! Ordered ViewWelcome contributions. Keeping paragraphs and actions in one
+//! sequence makes layout, painting, hit-testing, and command dispatch share
+//! the same source of truth.
+enum class ExplorerWelcomeBlockKind : unsigned char { Paragraph, Action };
+enum class ExplorerWelcomeParagraph : unsigned char {
+	NoFolder,
+	NoFolderWithEditors,
+	EmptyWorkspace,
+	CloneRepositoryDescription,
+	MultiRootUnavailable,
+};
+enum class ExplorerWelcomeAction : unsigned char { OpenFolder, AddFolder, CloneRepository };
+
+struct ExplorerWelcomeBlock final {
+	ExplorerWelcomeBlockKind kind{};
+	ExplorerWelcomeParagraph paragraph{};
+	ExplorerWelcomeAction action{};
+};
+
+[[nodiscard]] inline std::vector<ExplorerWelcomeBlock> BuildExplorerWelcomeBlocks(
+	ExplorerWelcomeState state)
+{
+	using Block = ExplorerWelcomeBlock;
+	using Kind = ExplorerWelcomeBlockKind;
+	switch (state) {
+	case ExplorerWelcomeState::NoFolder:
+		return {{Kind::Paragraph, ExplorerWelcomeParagraph::NoFolder, {}},
+			{Kind::Action, {}, ExplorerWelcomeAction::OpenFolder},
+			{Kind::Paragraph, ExplorerWelcomeParagraph::CloneRepositoryDescription, {}},
+			{Kind::Action, {}, ExplorerWelcomeAction::CloneRepository}};
+	case ExplorerWelcomeState::NoFolderWithEditors:
+		return {{Kind::Paragraph, ExplorerWelcomeParagraph::NoFolderWithEditors, {}},
+			{Kind::Action, {}, ExplorerWelcomeAction::OpenFolder},
+			{Kind::Action, {}, ExplorerWelcomeAction::AddFolder}};
+	case ExplorerWelcomeState::EmptyWorkspace:
+		return {{Kind::Paragraph, ExplorerWelcomeParagraph::EmptyWorkspace, {}},
+			{Kind::Action, {}, ExplorerWelcomeAction::AddFolder}};
+	case ExplorerWelcomeState::WorkspaceWithFoldersUnsupported:
+		return {{Kind::Paragraph, ExplorerWelcomeParagraph::MultiRootUnavailable, {}}};
+	}
+	return {};
+}
+
 struct ExplorerEditorActivationPlan final {
 	ExplorerEditorActivationAction action = ExplorerEditorActivationAction::OpenNewEditor;
 	bool nextEditorIsPreview = false;

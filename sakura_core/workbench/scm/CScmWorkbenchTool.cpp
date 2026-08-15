@@ -544,6 +544,13 @@ struct CScmWorkbenchTool::Impl {
 	{
 		return band.visible ? icons::ScaleDip(kRepositoryRowHeightDip, dpi) : 0;
 	}
+	//! VS Code merges a sole Changes view into the Source Control container. The
+	//! Git welcome variants appear only with no provider, so the container title
+	//! is the only header in that state.
+	[[nodiscard]] bool ChangesHeaderVisible() const noexcept
+	{
+		return welcomeModel.content == EGitScmWelcomeContent::None;
+	}
 	[[nodiscard]] bool GraphFrameVisible() const noexcept
 	{
 		return graphPresentation.ShouldRenderFrameForProvider(band.visible);
@@ -568,6 +575,7 @@ struct CScmWorkbenchTool::Impl {
 			.inputHeight = InputHeight(),
 			.graphBodyHeight = icons::ScaleDip(kGraphPlaceholderHeightDip, dpi),
 			.repositoriesVisible = band.visible,
+			.changesHeaderVisible = ChangesHeaderVisible(),
 			.inputVisible = inputModel.visible,
 			.graphVisible = GraphFrameVisible(),
 		});
@@ -992,7 +1000,7 @@ struct CScmWorkbenchTool::Impl {
 		RECT messageRect{ messageLeft, 0, messageRight, 0 };
 		if (!welcomeModel.message.empty()) {
 			::DrawTextW(dc, welcomeModel.message.c_str(), static_cast<int>(welcomeModel.message.size()),
-				&messageRect, DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+				&messageRect, DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
 		}
 		const LONG messageHeight = messageRect.bottom - messageRect.top;
 
@@ -1047,7 +1055,7 @@ struct CScmWorkbenchTool::Impl {
 			::SetTextColor(dc, palette.primaryText.ToColorRef());
 			RECT message = welcomeMessageRect;
 			::DrawTextW(dc, welcomeModel.message.c_str(), static_cast<int>(welcomeModel.message.size()),
-				&message, DT_CENTER | DT_WORDBREAK | DT_NOPREFIX);
+			&message, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 		}
 		const int radius = icons::ScaleDip(kWelcomeButtonCornerRadiusDip, dpi);
 		for (std::size_t index = 0; index < welcomeSegments.size(); ++index) {
@@ -1793,7 +1801,9 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 				EScmTextKey::RepositoriesTitle, L"Repositories");
 		}
 		impl.PaintBand(dc);
-		impl.PaintViewHeader(dc, impl.ChangesHeaderBounds(), EScmTextKey::ChangesTitle, L"Changes");
+		if (impl.ChangesHeaderVisible()) {
+			impl.PaintViewHeader(dc, impl.ChangesHeaderBounds(), EScmTextKey::ChangesTitle, L"Changes");
+		}
 		impl.PaintInputFrame(dc);
 		impl.PaintWelcome(dc);
 		impl.PaintGraph(dc);

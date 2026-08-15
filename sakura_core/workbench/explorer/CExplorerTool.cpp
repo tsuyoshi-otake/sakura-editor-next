@@ -67,25 +67,27 @@ constexpr int kHeaderActionGapDip = 1;
 // button block in the available view.
 constexpr int kWelcomeHorizontalInsetDip = 20;
 constexpr int kWelcomeMaxColumnDip = 300;
-constexpr int kWelcomeElementGapDip = 16;
 constexpr int kWelcomeButtonHeightDip = 28;
 constexpr std::string_view kOpenFolderCommandId = "workbench.action.files.openFolder";
 constexpr std::string_view kAddRootFolderCommandId = "workbench.action.addRootFolder";
+constexpr std::string_view kCloneRepositoryCommandId = "git.clone";
 
 //! The ViewWelcome contribution's text is a full-width paragraph; only its
 //! button containers have the 300px cap.  Keeping the strings in one place
 //! makes measuring and painting use the same upstream variant.
-[[nodiscard]] const wchar_t* WelcomeMessageText(ExplorerWelcomeState state) noexcept
+[[nodiscard]] const wchar_t* WelcomeParagraphText(ExplorerWelcomeParagraph paragraph) noexcept
 {
-	switch (state) {
-	case ExplorerWelcomeState::EmptyWorkspace:
+	switch (paragraph) {
+	case ExplorerWelcomeParagraph::EmptyWorkspace:
 		return LS(STR_WORKBENCH_EXPLORER_EMPTY_WORKSPACE);
-	case ExplorerWelcomeState::NoFolderWithEditors:
+	case ExplorerWelcomeParagraph::NoFolderWithEditors:
 		return LS(STR_WORKBENCH_EXPLORER_NO_FOLDER_WITH_EDITORS);
-	case ExplorerWelcomeState::WorkspaceWithFoldersUnsupported:
+	case ExplorerWelcomeParagraph::MultiRootUnavailable:
 		return LS(STR_WORKBENCH_EXPLORER_MULTIROOT_UNAVAILABLE);
-	case ExplorerWelcomeState::NoFolder:
+	case ExplorerWelcomeParagraph::NoFolder:
 		return LS(STR_WORKBENCH_EXPLORER_NO_FOLDER);
+	case ExplorerWelcomeParagraph::CloneRepositoryDescription:
+		return LS(STR_WORKBENCH_EXPLORER_CLONE_REPOSITORY_DESCRIPTION);
 	}
 	return L"";
 }
@@ -478,8 +480,10 @@ struct CExplorerTool::Impl {
 	RECT openFolderButton{};
 	RECT addFolderButton{};
 	RECT welcomeMessageRect{};
+	std::vector<ExplorerWelcomeBlock> welcomeBlocks;
+	std::vector<RECT> welcomeBlockRects;
 	ExplorerWelcomeState welcomeState = ExplorerWelcomeState::NoFolder;
-	bool openFolderHovered{};
+	std::size_t hoveredWelcomeBlock{};
 	FileActivationCallback activateFile;
 	std::wstring root;
 	std::unordered_map<std::uint64_t, Node> nodes;
@@ -603,6 +607,8 @@ struct CExplorerTool::Impl {
 		openFolderButton = RECT{};
 		addFolderButton = RECT{};
 		welcomeMessageRect = RECT{};
+		welcomeBlocks = BuildExplorerWelcomeBlocks(welcomeState);
+		welcomeBlockRects.assign(welcomeBlocks.size(), RECT{});
 		if (window == nullptr || !root.empty()) return;
 		RECT client{};
 		if (!::GetClientRect(window, &client)) return;
@@ -614,33 +620,34 @@ struct CExplorerTool::Impl {
 		const int messageLeft = static_cast<int>(client.left) + inset;
 		const int buttonLeft = messageLeft + (messageWidth - buttonWidth) / 2;
 		const int bodyTop = HeaderHeight();
-		const int gap = ScaleDip(kWelcomeElementGapDip);
 		const int buttonHeight = ScaleDip(kWelcomeButtonHeightDip);
-		int messageHeight = gap;
 		const HDC dc = ::GetDC(window);
 		if (dc != nullptr) {
 			const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
-			RECT measured{ 0, 0, messageWidth, 0 };
-			(void)::DrawTextW(dc, WelcomeMessageText(welcomeState), -1, &measured,
-				DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
-			messageHeight = std::max(0L, measured.bottom - measured.top);
+			TEXTMETRICW metrics{};
+			(void)::GetTextMetricsW(dc, &metrics);
+			const int em = std::max(1, static_cast<int>(metrics.tmHeight));
+			int cursorTop = bodyTop + em;
+			for (std::size_t index = 0; index < welcomeBlocks.size(); ++index) {
+				const auto& block = welcomeBlocks[index];
+				if (block.kind == ExplorerWelcomeBlockKind::Paragraph) {
+					RECT measured{ messageLeft, cursorTop, messageLeft + messageWidth, cursorTop };
+					(void)::DrawTextW(dc, WelcomeParagraphText(block.paragraph), -1, &measured,
+						DT_LEFT | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+					welcomeBlockRects[index] = measured;
+					cursorTop = measured.bottom + em;
+				} else {
+					welcomeBlockRects[index] = RECT{ buttonLeft, cursorTop, buttonLeft + buttonWidth, cursorTop + buttonHeight };
+					cursorTop = welcomeBlockRects[index].bottom + em;
+				}
+			}
 			if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 			::ReleaseDC(window, dc);
 		}
-		int cursorTop = bodyTop + gap;
-		welcomeMessageRect = RECT{ messageLeft, cursorTop, messageLeft + messageWidth, cursorTop + messageHeight };
-		cursorTop = welcomeMessageRect.bottom + gap;
-		auto addButton = [&](RECT& destination) {
-			destination = RECT{ buttonLeft, cursorTop, buttonLeft + buttonWidth, cursorTop + buttonHeight };
-			cursorTop = destination.bottom + gap;
-		};
-		if (welcomeState == ExplorerWelcomeState::EmptyWorkspace) {
-			addButton(addFolderButton);
-		} else if (welcomeState != ExplorerWelcomeState::WorkspaceWithFoldersUnsupported) {
-			addButton(openFolderButton);
-			if (welcomeState == ExplorerWelcomeState::NoFolderWithEditors) {
-				addButton(addFolderButton);
-			}
+		for (std::size_t index = 0; index < welcomeBlocks.size(); ++index) {
+			if (welcomeBlocks[index].kind != ExplorerWelcomeBlockKind::Action) continue;
+			if (welcomeBlocks[index].action == ExplorerWelcomeAction::OpenFolder) openFolderButton = welcomeBlockRects[index];
+			if (welcomeBlocks[index].action == ExplorerWelcomeAction::AddFolder) addFolderButton = welcomeBlockRects[index];
 		}
 	}
 
@@ -675,14 +682,25 @@ struct CExplorerTool::Impl {
 	{
 		if (!closed && commandCallback) (void)commandCallback(kAddRootFolderCommandId, "[]");
 	}
+	void InvokeCloneRepository()
+	{
+		if (!closed && commandCallback) (void)commandCallback(kCloneRepositoryCommandId, "[]");
+	}
 
 	void UpdateEmptyStateHover(POINT point)
 	{
-		const bool hovered = !root.empty() ? false
-			: (::PtInRect(&openFolderButton, point) != FALSE || ::PtInRect(&addFolderButton, point) != FALSE);
-		if (openFolderHovered == hovered) return;
-		openFolderHovered = hovered;
+		const std::size_t hovered = root.empty() ? WelcomeActionAt(point) : 0;
+		if (hoveredWelcomeBlock == hovered) return;
+		hoveredWelcomeBlock = hovered;
 		if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
+	}
+	[[nodiscard]] std::size_t WelcomeActionAt(POINT point) const noexcept
+	{
+		for (std::size_t index = 0; index < welcomeBlocks.size(); ++index) {
+			if (welcomeBlocks[index].kind == ExplorerWelcomeBlockKind::Action
+				&& ::PtInRect(&welcomeBlockRects[index], point)) return index + 1;
+		}
+		return 0;
 	}
 
 	void PaintHeader(HDC dc)
@@ -700,7 +718,7 @@ struct CExplorerTool::Impl {
 		if (!root.empty() && headerActionRects.front().right > headerActionRects.front().left) {
 			title.right = std::max(title.left, headerActionRects.front().left - ScaleDip(4));
 		}
-		const std::wstring titleText = root.empty() ? std::wstring(LS(STR_WORKBENCH_EXPLORER_TITLE)) : CExplorerTool::WorkspaceDisplayName(root);
+		const std::wstring titleText = root.empty() ? std::wstring(LS(STR_WORKBENCH_EXPLORER_NO_FOLDER_OPENED)) : CExplorerTool::WorkspaceDisplayName(root);
 		::DrawTextW(dc, titleText.c_str(), static_cast<int>(titleText.size()), &title,
 			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 		if (!root.empty()) {
@@ -733,19 +751,12 @@ struct CExplorerTool::Impl {
 	{
 		if (dc == nullptr || !root.empty()) return;
 		LayoutEmptyState();
-		if (welcomeMessageRect.right <= welcomeMessageRect.left
-			|| welcomeMessageRect.bottom <= welcomeMessageRect.top) return;
 		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
 		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
 		const COLORREF previousTextColor = ::SetTextColor(dc, palette.secondaryText);
-		RECT message = welcomeMessageRect;
-		::DrawTextW(dc, WelcomeMessageText(welcomeState), -1, &message,
-			DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
-		POINT cursor{ -1, -1 };
-		if (::GetCursorPos(&cursor)) (void)::ScreenToClient(window, &cursor);
-		auto drawButton = [&](const RECT& button, const wchar_t* label) {
+		auto drawButton = [&](const RECT& button, const wchar_t* label, std::size_t index) {
 			if (button.right <= button.left || button.bottom <= button.top) return;
-			const bool hovered = ::PtInRect(&button, cursor) != FALSE;
+			const bool hovered = hoveredWelcomeBlock == index + 1;
 			const HBRUSH fill = ::CreateSolidBrush(hovered ? palette.buttonHover : palette.button);
 			const HPEN border = ::CreatePen(PS_SOLID, 1, hovered ? palette.buttonHover : palette.button);
 			if (fill != nullptr && border != nullptr) {
@@ -761,9 +772,21 @@ struct CExplorerTool::Impl {
 			RECT labelRect = button;
 			::DrawTextW(dc, label, -1, &labelRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		};
-		drawButton(openFolderButton, LS(STR_WORKBENCH_EXPLORER_OPEN_FOLDER));
-		drawButton(addFolderButton, welcomeState == ExplorerWelcomeState::EmptyWorkspace
-		? LS(STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE) : LS(STR_WORKBENCH_EXPLORER_ADD_FOLDER));
+		for (std::size_t index = 0; index < welcomeBlocks.size(); ++index) {
+			const auto& block = welcomeBlocks[index];
+			if (block.kind == ExplorerWelcomeBlockKind::Paragraph) {
+			RECT paragraph = welcomeBlockRects[index];
+			::SetTextColor(dc, palette.secondaryText);
+			::DrawTextW(dc, WelcomeParagraphText(block.paragraph), -1, &paragraph,
+				DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
+			} else {
+				const wchar_t* label = block.action == ExplorerWelcomeAction::OpenFolder ? LS(STR_WORKBENCH_EXPLORER_OPEN_FOLDER)
+					: block.action == ExplorerWelcomeAction::AddFolder ? (welcomeState == ExplorerWelcomeState::EmptyWorkspace
+						? LS(STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE) : LS(STR_WORKBENCH_EXPLORER_ADD_FOLDER))
+					: LS(STR_WORKBENCH_GIT_CLONE_REPOSITORY);
+				drawButton(welcomeBlockRects[index], label, index);
+			}
+		}
 		::SetTextColor(dc, previousTextColor);
 		::SetBkMode(dc, previousBackgroundMode);
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
@@ -1600,7 +1623,7 @@ struct CExplorerTool::Impl {
 	{
 		if (tree == nullptr) return;
 		hoveredHeaderAction = -1;
-		openFolderHovered = false;
+		hoveredWelcomeBlock = 0;
 		TreeView_DeleteAllItems(tree);
 		nodes.clear();
 		if (root.empty()) {
@@ -2078,7 +2101,7 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		}
 		if (impl.root.empty()) {
 			impl.UpdateEmptyStateHover(point);
-			if (impl.openFolderHovered && !impl.trackingHeaderMouseLeave) {
+			if (impl.hoveredWelcomeBlock != 0 && !impl.trackingHeaderMouseLeave) {
 				TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, window, 0 };
 				impl.trackingHeaderMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
 			}
@@ -2087,9 +2110,9 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 	}
 	case WM_MOUSELEAVE:
 		impl.trackingHeaderMouseLeave = false;
-		if (impl.hoveredHeaderAction != -1 || impl.openFolderHovered) {
+		if (impl.hoveredHeaderAction != -1 || impl.hoveredWelcomeBlock != 0) {
 			impl.hoveredHeaderAction = -1;
-			impl.openFolderHovered = false;
+			impl.hoveredWelcomeBlock = 0;
 			::InvalidateRect(window, nullptr, FALSE);
 		}
 		return 0;
@@ -2099,13 +2122,17 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 			impl.InvokeHeaderAction(action);
 			return 0;
 		}
-		if (impl.root.empty() && ::PtInRect(&impl.openFolderButton, point) != FALSE) {
-			impl.InvokeOpenFolder();
-			return 0;
-		}
-		if (impl.root.empty() && ::PtInRect(&impl.addFolderButton, point) != FALSE) {
-			impl.InvokeAddFolder();
-			return 0;
+		if (impl.root.empty()) {
+			for (std::size_t index = 0; index < impl.welcomeBlocks.size(); ++index) {
+				if (impl.welcomeBlocks[index].kind != ExplorerWelcomeBlockKind::Action
+					|| !::PtInRect(&impl.welcomeBlockRects[index], point)) continue;
+				switch (impl.welcomeBlocks[index].action) {
+				case ExplorerWelcomeAction::OpenFolder: impl.InvokeOpenFolder(); break;
+				case ExplorerWelcomeAction::AddFolder: impl.InvokeAddFolder(); break;
+				case ExplorerWelcomeAction::CloneRepository: impl.InvokeCloneRepository(); break;
+				}
+				return 0;
+			}
 		}
 		break;
 	}
@@ -2113,8 +2140,7 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		POINT point{};
 		if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)
 			&& (impl.HeaderActionAt(point) >= 0
-			|| (impl.root.empty() && (::PtInRect(&impl.openFolderButton, point) != FALSE
-				|| ::PtInRect(&impl.addFolderButton, point) != FALSE)))) {
+			|| (impl.root.empty() && impl.WelcomeActionAt(point) != 0))) {
 			::SetCursor(::LoadCursor(nullptr, IDC_HAND));
 			return TRUE;
 		}

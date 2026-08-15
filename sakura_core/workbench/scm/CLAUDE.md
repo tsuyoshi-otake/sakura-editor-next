@@ -822,6 +822,13 @@ are registered under upstream's own IDs. The empty-workbench welcome uses
   `workbench.action.addRootFolder`, and `Empty` to `EmptyWorkbench` /
   `vscode.openFolder`, then `git.cloneRecursive`. An open provider collapses
   every variant to `None`.
+- **Single-view merge:** With no provider, `workbench.scm` is the only visible
+  SCM view. VS Code's `SCMViewPaneContainer` merges that sole Changes view into
+  its `Source Control` container (`mergeViewWithContainerWhenSingleView`), so
+  the inner `Changes` header is hidden and allocates no vertical space. The
+  native projection has the same explicit layout state; the left-aligned Git
+  welcome starts below the container title. Once a provider makes the normal
+  SCM stack visible, the Changes header returns.
 - **Superseded model (do not restore):** The former two-`viewsWelcome` model was mutually exclusive by upstream's own
   `when` clauses — `view.workbench.scm.folder` fires on
   `workbenchState == folder` and offers `Initialize Repository`;

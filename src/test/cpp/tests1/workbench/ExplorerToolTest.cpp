@@ -27,7 +27,10 @@ using workbench::explorer::ExplorerEditorActivationAction;
 using workbench::explorer::ExplorerEntry;
 using workbench::explorer::ExplorerFileActivationKind;
 using workbench::explorer::ExplorerPalette;
+using workbench::explorer::ExplorerWelcomeAction;
+using workbench::explorer::ExplorerWelcomeBlockKind;
 using workbench::explorer::ExplorerWelcomeState;
+using workbench::explorer::BuildExplorerWelcomeBlocks;
 using workbench::explorer::PlanExplorerEditorActivation;
 
 struct JunctionReparseData {
@@ -251,6 +254,30 @@ TEST(ExplorerTool, TracksEachUpstreamEmptyExplorerWelcomeVariant)
 	EXPECT_EQ(ExplorerWelcomeState::EmptyWorkspace, explorer.GetWelcomeState());
 	explorer.SetWelcomeState(ExplorerWelcomeState::WorkspaceWithFoldersUnsupported);
 	EXPECT_EQ(ExplorerWelcomeState::WorkspaceWithFoldersUnsupported, explorer.GetWelcomeState());
+}
+
+TEST(ExplorerTool, NoFolderWelcomeUsesOrderedParagraphsAndRealActions)
+{
+	const auto blocks = BuildExplorerWelcomeBlocks(ExplorerWelcomeState::NoFolder);
+	ASSERT_EQ(4u, blocks.size());
+	EXPECT_EQ(ExplorerWelcomeBlockKind::Paragraph, blocks[0].kind);
+	EXPECT_EQ(ExplorerWelcomeBlockKind::Action, blocks[1].kind);
+	EXPECT_EQ(ExplorerWelcomeAction::OpenFolder, blocks[1].action);
+	EXPECT_EQ(ExplorerWelcomeBlockKind::Paragraph, blocks[2].kind);
+	EXPECT_EQ(ExplorerWelcomeBlockKind::Action, blocks[3].kind);
+	EXPECT_EQ(ExplorerWelcomeAction::CloneRepository, blocks[3].action);
+}
+
+TEST(ExplorerTool, ExistingWelcomeVariantsKeepTheirActionSets)
+{
+	const auto withEditors = BuildExplorerWelcomeBlocks(ExplorerWelcomeState::NoFolderWithEditors);
+	ASSERT_EQ(3u, withEditors.size());
+	EXPECT_EQ(ExplorerWelcomeAction::OpenFolder, withEditors[1].action);
+	EXPECT_EQ(ExplorerWelcomeAction::AddFolder, withEditors[2].action);
+
+	const auto emptyWorkspace = BuildExplorerWelcomeBlocks(ExplorerWelcomeState::EmptyWorkspace);
+	ASSERT_EQ(2u, emptyWorkspace.size());
+	EXPECT_EQ(ExplorerWelcomeAction::AddFolder, emptyWorkspace[1].action);
 }
 
 TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnClose)
