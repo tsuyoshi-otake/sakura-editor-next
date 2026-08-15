@@ -1,4 +1,4 @@
-# TextMate Grammar Engine Foundation (P4)
+﻿# TextMate Grammar Engine Foundation (P4)
 
 ## Scope
 
@@ -19,167 +19,68 @@ convention, not by `#include`, to keep `theme/` free of a compile dependency on
 
 | Stage | State | Notes |
 |---|---|---|
-| 1. Onigmo usable from `sakura_core` | Built and verified (MSVC) | Option A below, applied to both `sakura.vcxproj` and `sakura.cmake` on 2026-08-06. Onigmo's `.c` sources now compile into `sakura_core`, and `TextMateTokenizerTest` links and passes against the real engine. |
+| 1. Onigmo usable from `sakura_core` | Built (MSVC) | Linked as the vcpkg static library `Onigmo::onigmo` (full encodings). TextMate runtime uses UTF-8 only; `bregonig.dll` keeps CP932 via the same lib. Direct engine coverage is `OnigmoRegexEngineTest`; tokenizer coverage is `TextMateTokenizerTest`. |
 | 2. `.tmLanguage.json` / `.tmLanguage` (plist) parsing | Implemented | `TextMateGrammarCompiler` + both loaders. See "Known gaps" for exact divergences from vscode-textmate. |
 | 3. Line tokenizer | Implemented | `TextMateTokenizer::TokenizeLine`. It calls `OnigmoPattern::Compile`/`Search`, so it could not be build-verified until stage 1 landed; it now is. |
 | 4. Scope-to-color boundary | Boundary defined, not wired to rendering | `theme::TextMateScopeColorResolver`. No production caller passes real `TextMateToken::scopes` into it yet. |
 
-## Onigmo build integration (stage 1 — applied 2026-08-06)
+## Onigmo build integration
 
-**Option A below is what shipped**, in both `sakura_core/sakura.vcxproj`
-(+`.filters`) and `src/main/cmake/sakura.cmake`. `CMakeLists.txt`'s `project()`
-call had to gain the `C` language, because until Onigmo arrived the CMake build
-compiled no C translation unit at all. Verified on 2026-08-06 with
-`build-sln.bat x64 Debug`: 0 warnings, 0 errors, a clean no-op rebuild, and
-3066 tests passing under the unattended filter (the 41 new TextMate tests
-included, up from a 3025-test baseline). Two things are still unverified: the
-MinGW/CMake path, and `externals/Onigmo/win32/config.h`'s portability to GCC.
+Onigmo NEXT (`tsuyoshi-otake/onigmo-next`) is vendored as a Git submodule at
+`externals/onigmo-next/` so `#include "onigmo-next/onigmo.h"` stays stable.
+It is our maintained fork of k-takata/Onigmo, itself a source-compatible
+fork of the Oniguruma engine vscode-oniguruma binds. Wrapper type names stay
+`OnigmoRegexEngine` / `OnigmoPattern`.
+
+The compiled library is **not** built as ~50 `.c` files inside `sakura.exe`.
+The local vcpkg port `tools/vcpkg-local-registry/ports/onigmo-next/`
+CMake-builds a static `onigmo.lib` (imported as `Onigmo::onigmo`) from that
+submodule. Both build paths consume it:
+
+- **CMake**: `find_package(Onigmo CONFIG REQUIRED)` and
+  `target_link_libraries(sakura_core PUBLIC Onigmo::onigmo)` in
+  `src/main/cmake/sakura.cmake`. Root `CMakeLists.txt` is
+  `project(sakura LANGUAGES CXX)` — the editor graph compiles no C TUs.
+- **MSBuild**: vcpkg manifest-mode auto-links `lib/onigmo.lib` (Debug:
+  `debug/lib/onigmo.lib`) for `sakura.vcxproj` and `tests1.vcxproj`. Do not
+  add Onigmo `.c` files back to either project. `tests1` still picks up
+  `OnigmoRegexEngine.obj` through `BuildSakuraTestSupportLibrary`; it needs
+  the vcpkg `.lib` at link time for the Onigmo C symbols.
+
+Root `vcpkg.json` lists `onigmo-next` as a direct dependency because sakura
+links it. `bregonig` also depends on the same port. The package-set outputs
+in `src/main/modules/modules.json` must stay in lockstep with that manifest
+(`PACKAGE_CLOSURE_MISMATCH` otherwise).
+
+The port keeps the **full encoding set**, including Shift_JIS and
+Windows-31J (`enc/windows_31j.c`, CP932). That is load-bearing for
+`bregonig.dll`, which statically links `onigmo.lib` and exposes CP932 to
+search/replace. TextMate (`OnigmoRegexEngine.cpp`) still initializes and
+compiles only `ONIG_ENCODING_UTF_8`. Do not slim the vcpkg library to
+UTF-8-only: vcpkg cannot host two variants in one triplet, and dropping
+CP932 would break bregonig.
+
+Headers for sakura still resolve via `externals/` (`..\externals` /
+`${CMAKE_SOURCE_DIR}/externals`). The vcpkg install layout is a flat
+`include/onigmo.h`, which `bregonig`'s portfile copies and renames the
+archive to `onigmo_s.lib` as that Makefile expects.
+
+Fork-side CMake lives in the submodule (`CMakeLists.txt`,
+`cmake/OnigmoConfig.cmake.in`, optional `ONIGMO_BUILD_TESTS` →
+`test_enc_utf8`). The port invokes that CMake; it no longer wraps
+`win32/build_nmake.cmd`.
 
 Two details are load-bearing and easy to undo by accident:
 
-- **`ONIG_EXTERN=extern` must hold at the C++ include site too**, not only on
-  Onigmo's own C files. `onigmo.h` otherwise defaults it to
-  `__declspec(dllimport) extern` on MSVC and the link emits nine `LNK4217`
-  warnings for locally-defined-but-imported symbols. `OnigmoRegexEngine.cpp`
-  therefore defines it itself immediately before the include, which is why the
-  per-file project definitions do not need to be duplicated onto that file in
-  two project files and CMake.
-- **The Onigmo `.c` entries carry per-item include directories and defines**
-  (`externals/Onigmo/win32`, `externals/Onigmo/enc/unicode`, `HAVE_CONFIG_H`,
-  `ONIG_EXTERN=extern`) rather than project-wide settings, so nothing leaks
-  into unrelated translation units.
-
-The original analysis follows, since it still documents why Option A was
-preferred over the dormant vcpkg port.
-
-### Original analysis
-
-Onigmo is vendored as a Git submodule at `externals/Onigmo/` and is a
-source-compatible fork of the Oniguruma engine vscode-oniguruma binds, so
-patterns written for VS Code's TextMate grammars should compile and match the
-same way through it. `OnigmoRegexEngine.cpp` already does
-`#include "Onigmo/onigmo.h"`. That resolves today with **no additional include
-path** because `..\externals` is already in `sakura.vcxproj`'s
-`AdditionalIncludeDirectories` (line 53) and `${CMAKE_SOURCE_DIR}/externals` is
-already in `sakura.cmake`'s `target_include_directories` (line 685) — so
-`Onigmo/onigmo.h` already finds `externals/Onigmo/onigmo.h` in both build
-systems. **The only missing piece is compiling Onigmo's own `.c` sources and
-linking the result into `sakura_core` (and, through `tests1.vcxproj`'s existing
-`BuildSakuraTestSupportLibrary` archive target,
-into `tests1` automatically — `tests1.vcxproj` does not recompile
-`sakura_core` sources itself, so it needs no separate Onigmo entries.)**
-
-There is a **dormant local vcpkg port** at
-`tools/vcpkg-local-registry/ports/onigmo/` already registered in the root
-`vcpkg-configuration.json` filesystem registry, but it is not consumed
-anywhere (`onigmo` is absent from root `vcpkg.json`'s `dependencies`, from
-`sakura.cmake`'s `find_package`/`target_link_libraries` calls, and from
-`sakura.vcxproj`'s `AdditionalDependencies`). Two integration paths were
-evaluated; **Option A is recommended**.
-
-### Option A (recommended): compile Onigmo's own sources directly into `sakura_core`
-
-Add Onigmo's `.c` files as ordinary `sakura_core` translation units, the same
-way any other vendored-but-uncompiled C library would be absorbed. This needs
-no vcpkg wiring at all, works uniformly for MSVC and MinGW (it is portable C,
-not a separate nmake/vswhere toolchain invocation), and matches how the header
-is already being consumed straight from `externals/Onigmo`.
-
-- **Source files** (mirrors the already-vetted, currently-dead
-  `tools/vcpkg-local-registry/ports/onigmo/CMakeLists.txt`'s `ONIGMO_SOURCES`
-  list): `regcomp.c`, `regenc.c`, `regerror.c`, `regexec.c`, `regext.c`,
-  `reggnu.c`, `regparse.c`, `regposerr.c`, `regposix.c`, `regsyntax.c`,
-  `regtrav.c`, `regversion.c`, `st.c`, plus every `enc/*.c` file: `ascii.c`,
-  `big5.c`, `euc_jp.c`, `euc_kr.c`, `euc_tw.c`, `gb18030.c`, `iso_8859_1.c`
-  through `iso_8859_11.c`, `iso_8859_13.c` through `iso_8859_16.c`,
-  `koi8_r.c`, `koi8_u.c`, `shift_jis.c`, `unicode.c`, `utf_8.c`, `utf_16be.c`,
-  `utf_16le.c`, `utf_32be.c`, `utf_32le.c`, `windows_1250.c`,
-  `windows_1251.c`, `windows_1252.c`, `windows_1253.c`, `windows_1254.c`,
-  `windows_1257.c`, `windows_31j.c`. (Do **not** add `testc.c`,
-  `test_enc_utf8.c`, or `testu.c` — those are Onigmo's own test executables.)
-- **Extra include directories**: `externals/Onigmo/win32` (Onigmo already
-  ships a Windows-targeted `config.h` there — the same one its own nmake build
-  uses — so `HAVE_CONFIG_H` + this directory avoids writing a new config
-  header) and `externals/Onigmo/enc/unicode` (holds `casefold.h` /
-  `name2ctype.h`, `#include`d unqualified from `enc/unicode.c`).
-- **Preprocessor definitions**, scoped to only these translation units (not
-  project-wide, to avoid leaking `ONIG_EXTERN` into unrelated code):
-  `HAVE_CONFIG_H` and `ONIG_EXTERN=extern`.
-- **MSBuild**: add the file list above as `<ClCompile>` entries in
-  `sakura_core/sakura.vcxproj` (mirrored in `sakura_core/sakura.vcxproj.filters`
-  under a new `Cpp Source Files\externals\Onigmo` filter, following the
-  existing nested-directory-reuses-parent-filter convention), with a
-  per-item `<AdditionalIncludeDirectories>` / `<PreprocessorDefinitions>`
-  override adding the two directories and two defines above to
-  `%(AdditionalIncludeDirectories)` / `%(PreprocessorDefinitions)`.
-  `tests1.vcxproj` needs no separate entries (see above).
-- **CMake**: `sakura.cmake`'s C++ source discovery is scoped to `sakura_core`'s
-  own tree (per `src/main/CLAUDE.md`: "CMake currently discovers C++ files
-  recursively" — but only within that tree), so `externals/Onigmo/*.c` will
-  **not** be auto-discovered. Add the same file list explicitly via
-  `target_sources(sakura_core PRIVATE ...)`, add the two include directories
-  via `target_include_directories(sakura_core PRIVATE ...)`, and scope the two
-  preprocessor definitions to just these files via
-  `set_source_files_properties(<the Onigmo .c files> PROPERTIES
-  COMPILE_DEFINITIONS "HAVE_CONFIG_H;ONIG_EXTERN=extern")` (or an `OBJECT`
-  library target, if isolating Onigmo's build settings more cleanly is
-  preferred).
-- **Caution**: none of this has been build-verified (running a build was out
-  of scope for this work). `externals/Onigmo/win32/config.h`'s portability to
-  MinGW/GCC has not been independently confirmed — the root `CLAUDE.md`
-  already documents MinGW support as experimental, so treat this as a
-  plausible-but-unverified path there specifically.
-
-### Option B: fix and adopt the dormant vcpkg port
-
-`tools/vcpkg-local-registry/ports/onigmo/portfile.cmake` is hardwired to
-MSVC-only tooling: it resolves `vswhere`/`VsDevCmd.bat` and invokes Onigmo's
-own `win32/build_nmake.cmd` via `nmake` for both Release and Debug, with **no
-MinGW/GCC branch at all** (`FATAL_ERROR` for any `VCPKG_TARGET_ARCHITECTURE`
-other than `x64`/`x86`). Every sibling local-registry port's `sakura.cmake`
-`find_package`/`target_link_libraries` call is unconditional (not gated behind
-`if(MSVC)`), so this port is the odd one out. The port's **own**
-`CMakeLists.txt` and `onigmo-config.cmake.in` are already portable and
-compiler-agnostic — they use the same `vcpkg_cmake_configure` /
-`vcpkg_cmake_install` / `vcpkg_cmake_config_fixup` pattern the working
-`darkmodelib` port uses — but `portfile.cmake` never invokes them; they are
-dead code today. There is also a target-name mismatch to fix while at it: the
-dead `CMakeLists.txt` aliases `onigmo::onigmo` (lowercase), but the real
-nmake-path `portfile.cmake` inline-writes `add_library(Onigmo::onigmo STATIC
-IMPORTED)` (capital `O`) — CMake target names are case-sensitive, so any
-consumer must use `Onigmo::onigmo`.
-
-If this path is chosen instead of Option A: rewrite `portfile.cmake` to call
-`vcpkg_cmake_configure`/`vcpkg_cmake_install`/`vcpkg_cmake_config_fixup`
-against the port's own `CMakeLists.txt` (small, surgical — the `CMakeLists.txt`
-needs no changes, only actually invoking it); add `"onigmo"` to root
-`vcpkg.json`'s `dependencies`; in `sakura.cmake` add
-`find_package(onigmo CONFIG REQUIRED)` and
-`target_link_libraries(sakura_core PUBLIC Onigmo::onigmo)` — the **static-lib**
-pattern (like `darkmodelib`/`fmt`/`Microsoft.GSL`/`WIL`), not the
-DLL-staging pattern (`bregonig`/`cmigemo`), since `OnigmoRegexEngine.cpp` links
-the C API in statically. In `sakura.vcxproj`, MSBuild's vcpkg manifest-mode
-integration is believed — **not build-verified** — to auto-link every static
-`.lib` installed under the triplet's `lib`/`debug\lib` directories without an
-explicit `AdditionalDependencies` entry (inferred from `darkmodelib` /
-`bregonig` / `cmigemo` / `ppa-stub` / `dll-plugin1` all being absent from the
-single existing `AdditionalDependencies` line at `sakura.vcxproj:75` despite
-being consumed elsewhere in the codebase); if that hypothesis is wrong, add
-`onigmo.lib;` to that line as a fallback. Even after this fix, the *installed*
-headers (a flat `include/onigmo.h`, not `include/Onigmo/onigmo.h`) would remain
-irrelevant to `sakura_core`'s own `#include "Onigmo/onigmo.h"`, which already
-resolves via `externals/Onigmo` directly — only the compiled `.lib` would
-matter. The CRT/runtime-library linkage of the nmake-built `onigmo_s.lib`
-relative to the rest of the statically-linked `x64-windows-static` vcpkg
-dependency set has not been verified either.
-
-### Recommendation
-
-Prefer **Option A**. Onigmo is a submodule-pinned vendored copy, not a
-vcpkg-versioned dependency, so there is no version-pinning benefit to routing
-it through vcpkg, and Option A avoids both the MinGW gap and the unverified
-CRT-linkage question in Option B. Whichever option is chosen, an actual build
-must confirm it — this document records analysis, not a verified outcome.
+- **`ONIG_EXTERN=extern` must hold at the C++ include site.** `onigmo.h`
+  otherwise defaults it to `__declspec(dllimport) extern` on MSVC and the
+  link emits `LNK4217`. `OnigmoRegexEngine.cpp` defines it immediately
+  before the include. The CMake target also publishes it PUBLIC; MSBuild
+  auto-link does not, so the `.cpp` define is not optional.
+- **Do not compile Onigmo `.c` into `sakura_core`.** The vcpkg static lib
+  is the only compile of those files on the editor/CI path. Re-adding them
+  to `sakura.vcxproj` / `sakura.cmake` restores the per-build cost this
+  wiring exists to remove, and will duplicate symbols against `onigmo.lib`.
 
 ## Known gaps versus vscode-textmate (stage 2/3)
 
@@ -271,9 +172,14 @@ documentation.
 ## Tests
 
 Added under `src/test/cpp/tests1/textmate/` (see `src/test/CLAUDE.md` for the
-directory's own conventions). All five files are registered in
-`tests1.vcxproj`(+`.filters`) and all 41 tests pass as of 2026-08-06:
+directory's own conventions). Six files are registered in
+`tests1.vcxproj`(+`.filters`); CMake discovers them via the recursive tests1
+glob:
 
+- `OnigmoRegexEngineTest.cpp` — direct `OnigmoPattern::Compile`/`Search`
+  coverage: a valid UTF-8 pattern, an invalid `(` (null + error text),
+  whole-match and capture UTF-16 offsets on `a(b+)c` vs `xxabbcy`, and a
+  no-match `nullopt`. This is the safety net for the vcpkg-lib link switch.
 - `TextMateGrammarCompilerTest.cpp` — `TextMateGrammarCompiler::Compile`
   directly against hand-built `TextMateGrammarValue` trees: match/begin-end/
   begin-while rule shapes, `beginCaptures`/`endCaptures`/shared `captures`
@@ -298,29 +204,24 @@ directory's own conventions). All five files are registered in
   a plain-text remainder, and a `begin`/`end` string rule whose state (open
   frame, `beginCaptures` scope) is carried across two separate `TokenizeLine`
   calls via `RuleStackHandle`, closing correctly on the second line and popping
-  back to root. This is the only test file in this directory that reaches the
-  regex engine (through `TextMateTokenizer.cpp`'s
-  `OnigmoPattern::Compile`/`Search`; the compiler/loader tests never do), so it
-  is the one that actually proves the stage 1 Onigmo wiring works rather than
-  merely compiling.
+  back to root. This also reaches the regex engine through
+  `OnigmoPattern::Compile`/`Search`.
 
-### `.vcxproj` registration (done)
+### `.vcxproj` registration
 
-All of the following are registered as of 2026-08-06. Keep both halves of each
-pair in sync — MSBuild source lists are explicit, so a file added to a
-`.vcxproj` without its `.vcxproj.filters` entry builds but disappears from the
-Solution Explorer tree.
+Keep both halves of each pair in sync — MSBuild source lists are explicit, so
+a file added to a `.vcxproj` without its `.filters` entry builds but
+disappears from the Solution Explorer tree.
 
 - **`sakura_core/sakura.vcxproj`(+`.filters`)** — every `textmate\*.cpp/.h`
   plus `theme\TextMateScopeColorResolver.{cpp,h}` under
-  `Cpp Source Files\textmate`, and the full Onigmo `.c` list under
-  `Cpp Source Files\externals\Onigmo`.
-- **`sakura_core/tests1.vcxproj`(+`.filters`)** — the five
+  `Cpp Source Files\textmate`. No Onigmo `.c` entries.
+- **`sakura_core/tests1.vcxproj`(+`.filters`)** — the six
   `..\src\test\cpp\tests1\textmate\*Test.cpp` files under `Test Files\textmate`.
-  `tests1` does not recompile `sakura_core` sources; it picks Onigmo up through
-  the product-owned `BuildSakuraTestSupportLibrary` archive, so it needs no
-  Onigmo entries of its own.
-- **`src/main/cmake/sakura.cmake`** — `ONIGMO_SOURCES` appended to `SOURCES`,
-  with the include directories and per-source defines applied there. The
+  `tests1` does not recompile `sakura_core` sources; it archives
+  `OnigmoRegexEngine.obj` via `BuildSakuraTestSupportLibrary` and links
+  `onigmo.lib` through vcpkg auto-link.
+- **`src/main/cmake/sakura.cmake`** — `find_package(Onigmo CONFIG REQUIRED)`
+  and `target_link_libraries(sakura_core PUBLIC Onigmo::onigmo)`. The
   `textmate\*.cpp` files need no CMake entry: that glob is recursive within
-  `sakura_core`. `externals/` is outside it, which is why only Onigmo is listed.
+  `sakura_core`.

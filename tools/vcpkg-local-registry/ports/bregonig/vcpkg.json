@@ -7,7 +7,7 @@
   "homepage": "https://github.com/k-takata/bregonig",
   "dependencies": [
     {
-      "name": "onigmo"
+      "name": "onigmo-next"
     }
   ]
 }

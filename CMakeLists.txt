@@ -42,11 +42,9 @@ if(NOT SAKURA_SKIP_MODULES_CHECK)
 endif()
 
 # Define primary project
-# C is required in addition to CXX because sakura_core compiles the vendored
-# Onigmo regex engine (externals/Onigmo/*.c) as plain C translation units
-# directly into the sakura_core object library (see
-# sakura_core/textmate/CLAUDE.md, "Onigmo build integration", Option A).
-project(sakura LANGUAGES CXX C)
+# C is no longer required here: Onigmo NEXT is linked as a vcpkg static
+# library (see sakura_core/textmate/CLAUDE.md).
+project(sakura LANGUAGES CXX)
 
 # Sakura Editor NEXT's CMake build is supported only for 64-bit x86 targets.
 # This also permits the experimental MinGW64 configuration, where the
