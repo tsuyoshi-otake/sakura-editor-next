@@ -180,9 +180,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBannerLayoutTest.cpp">
-      <Filter>Test Files\workbench</Filter>
-    </ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -190,9 +187,6 @@
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp">
-	  <Filter>Test Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchRuntimeWorkspaceTrustPromptTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ControlPlatformWorkbenchLayoutMementoStoreTest.cpp">
@@ -400,24 +394,6 @@
       <Filter>Test Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceContextServiceTest.cpp">
-      <Filter>Test Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustPolicyTest.cpp">
-      <Filter>Test Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustPromptPolicyTest.cpp">
-      <Filter>Test Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\config\TrustedFoldersCodecTest.cpp">
-      <Filter>Test Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\config\ControlPlatformTrustedFoldersStoreTest.cpp">
-      <Filter>Test Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustMementoCodecTest.cpp">
-      <Filter>Test Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\src\test\cpp\tests1\config\ControlPlatformWorkspaceTrustMementoStoreTest.cpp">
       <Filter>Test Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp">

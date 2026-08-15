@@ -39,13 +39,6 @@ struct WorkbenchLayoutRequest {
 	//! -1 selects the standard DIP token; non-negative values are physical pixels.
 	int titleBarHeightPixels = -1;
 	int topAccessoryHeightPixels = 0;
-	//! The Restricted Mode banner has no standard DIP token in this model: its
-	//! height is decided by the native control that measures its own text, not
-	//! by a fixed design value.  It therefore belongs with the accessory bands:
-	//! 0 means absent and any non-negative value is already physical pixels.
-	//! Do not "fix" this into a -1 DIP-token sentinel; there is no standard size
-	//! to select.
-	int bannerHeightPixels = 0;
 	int documentTabsHeightPixels = -1;
 	int bottomAccessoryHeightPixels = 0;
 	int statusBarHeightPixels = -1;
@@ -68,9 +61,6 @@ struct WorkbenchLayoutRequest {
 //! Result rectangles never contain a negative coordinate or inverted edge.
 struct WorkbenchLayout {
 	WorkbenchRect titleBar;
-	//! Directly below the title bar and above everything else, spanning the
-	//! full client width, matching VS Code's banner stacking order.
-	WorkbenchRect banner;
 	WorkbenchRect topAccessory;
 	WorkbenchRect activityBar;
 	WorkbenchRect documentTabs;

@@ -141,21 +141,6 @@ ECallbackResult CLoadAgent::OnCheckLoad(SLoadInfo* pLoadInfo)
 		return CALLBACK_INTERRUPT;
 	}
 
-	// Workspace Trust: gate a file entering this window from outside its trusted
-	// roots before it can reach the document. Placed immediately before `next`,
-	// which the reload path (`bRequestReload`) jumps to directly, so a resource
-	// already inside the document is never re-prompted just because it reloaded.
-	// This is deliberately broader than upstream's own `validateTrust`-gated path
-	// (window/CLAUDE.md documents the divergence): every load through this agent
-	// is gated, not only files that arrived from the OS or the command line.
-	if (CEditWnd::getInstance() != nullptr) {
-		const auto decision =
-			CEditWnd::getInstance()->RequestUntrustedFileLoad(std::wstring_view(pLoadInfo->cFilePath.c_str()));
-		if (decision == EUntrustedFileLoadDecision::Refused) {
-			return CALLBACK_INTERRUPT;
-		}
-	}
-
 next:
 	// オプション：開こうとしたファイルが存在しないとき警告する
 	if( GetDllShareData().m_Common.m_sFile.GetAlertIfFileNotExist() ){

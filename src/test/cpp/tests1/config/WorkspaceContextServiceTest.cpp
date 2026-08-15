@@ -18,9 +18,7 @@ namespace {
 using config::CWorkspaceContextService;
 using config::EWorkspaceContextOutcome;
 using config::EWorkspaceKind;
-using config::EWorkspaceTrustState;
 using config::SetFolderRequest;
-using config::SetTrustRequest;
 using config::SetWorkspaceRequest;
 using config::WorkspaceContextOperation;
 using config::WorkspaceContextSnapshot;
@@ -55,7 +53,6 @@ void ExpectStable(const WorkspaceContextSnapshot& expected, const WorkspaceConte
 	EXPECT_EQ(expected.generation, actual.generation);
 	EXPECT_EQ(expected.revision, actual.revision);
 	EXPECT_EQ(expected.kind, actual.kind);
-	EXPECT_EQ(expected.trust, actual.trust);
 	EXPECT_EQ(expected.workspaceIdentityKey, actual.workspaceIdentityKey);
 	EXPECT_EQ(expected.workspaceConfigUri.has_value(), actual.workspaceConfigUri.has_value());
 	EXPECT_EQ(expected.folders.size(), actual.folders.size());
@@ -71,11 +68,10 @@ TEST(WorkspaceContextService, InitialEmptySnapshotUsesOnlyTheSuppliedEmptyWindow
 	EXPECT_EQ(EWorkspaceKind::Empty, snapshot.kind);
 	EXPECT_FALSE(snapshot.workspaceConfigUri);
 	EXPECT_TRUE(snapshot.folders.empty());
-	EXPECT_EQ(EWorkspaceTrustState::Unknown, snapshot.trust);
 	EXPECT_EQ(L"empty:12:window-alpha", snapshot.workspaceIdentityKey);
 }
 
-TEST(WorkspaceContextService, FolderAliasesHaveOneIdentityAndContextChangesResetTrust)
+TEST(WorkspaceContextService, FolderAliasesHaveOneIdentityAndContextChangesResetIdentity)
 {
 	CWorkspaceContextService service(L"window-alpha");
 	auto first = service.SetFolder(Folder("folder", L"file:///C:/Repo", L"Repo"));
@@ -83,22 +79,17 @@ TEST(WorkspaceContextService, FolderAliasesHaveOneIdentityAndContextChangesReset
 	const auto identity = first.snapshot.workspaceIdentityKey;
 	ASSERT_EQ(1U, first.snapshot.folders.size());
 	EXPECT_EQ(L"/C:/Repo", first.snapshot.folders.front().uri.Path());
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded,
-		service.SetTrust({ Operation("trust"), EWorkspaceTrustState::Trusted }).outcome);
-
-	auto alias = service.SetFolder(Folder("folder-alias", L"file://localhost/c:/repo", L"Repo", 2));
+	auto alias = service.SetFolder(Folder("folder-alias", L"file://localhost/c:/repo", L"Repo", 1));
 	EXPECT_EQ(EWorkspaceContextOutcome::NotApplicable, alias.outcome);
-	EXPECT_EQ(2U, alias.revision);
+	EXPECT_EQ(1U, alias.revision);
 	EXPECT_EQ(identity, alias.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Trusted, alias.snapshot.trust);
 	ASSERT_EQ(1U, alias.snapshot.folders.size());
 	EXPECT_EQ(L"/C:/Repo", alias.snapshot.folders.front().uri.Path());
 
-	auto changed = service.SetFolder(Folder("changed", L"file:///C:/Other", L"Other", 2));
+	auto changed = service.SetFolder(Folder("changed", L"file:///C:/Other", L"Other", 1));
 	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, changed.outcome);
-	EXPECT_EQ(3U, changed.revision);
+	EXPECT_EQ(2U, changed.revision);
 	EXPECT_NE(identity, changed.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Unknown, changed.snapshot.trust);
 }
 
 TEST(WorkspaceContextService, ValidatesWorkspaceShapeAndKeepsTheLastStableSnapshot)
@@ -150,29 +141,23 @@ TEST(WorkspaceContextService, WorkspaceIdentityFollowsConfigUriRatherThanFolderM
 	auto first = service.SetWorkspace(initial);
 	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, first.outcome);
 	const auto identity = first.snapshot.workspaceIdentityKey;
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded,
-		service.SetTrust({ Operation("trusted", 1), EWorkspaceTrustState::Trusted }).outcome);
-
-	SetWorkspaceRequest reordered { Operation("reordered", 2), ParseUri(L"file://localhost/c:/work/project.code-workspace"),
+	SetWorkspaceRequest reordered { Operation("reordered", 1), ParseUri(L"file://localhost/c:/work/project.code-workspace"),
 		{ WorkspaceFolder(L"file:///C:/work/two", L"two"), WorkspaceFolder(L"file:///C:/work/one", L"one") } };
 	auto changedFolders = service.SetWorkspace(reordered);
 	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, changedFolders.outcome);
-	EXPECT_EQ(3U, changedFolders.revision);
+	EXPECT_EQ(2U, changedFolders.revision);
 	EXPECT_EQ(identity, changedFolders.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Trusted, changedFolders.snapshot.trust);
 
-	SetWorkspaceRequest noFolders { Operation("no-folders", 3), ParseUri(L"file:///C:/work/project.code-workspace"), {} };
+	SetWorkspaceRequest noFolders { Operation("no-folders", 2), ParseUri(L"file:///C:/work/project.code-workspace"), {} };
 	auto settingsOnly = service.SetWorkspace(noFolders);
 	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, settingsOnly.outcome);
-	EXPECT_EQ(4U, settingsOnly.revision);
+	EXPECT_EQ(3U, settingsOnly.revision);
 	EXPECT_EQ(identity, settingsOnly.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Trusted, settingsOnly.snapshot.trust);
 
-	SetWorkspaceRequest differentConfig { Operation("different-config", 4), ParseUri(L"file:///C:/other/project.code-workspace"), {} };
+	SetWorkspaceRequest differentConfig { Operation("different-config", 3), ParseUri(L"file:///C:/other/project.code-workspace"), {} };
 	auto changedConfig = service.SetWorkspace(differentConfig);
 	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, changedConfig.outcome);
 	EXPECT_NE(identity, changedConfig.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Unknown, changedConfig.snapshot.trust);
 }
 
 TEST(WorkspaceContextService, InvalidPreparationDoesNotReserveAnOperationId)
@@ -196,35 +181,13 @@ TEST(WorkspaceContextService, BuildsMultiRootIdentityAndSetEmptyNeverFabricatesA
 	EXPECT_EQ(EWorkspaceKind::Workspace, selected.snapshot.kind);
 	EXPECT_EQ(2U, selected.snapshot.folders.size());
 	EXPECT_TRUE(selected.snapshot.workspaceConfigUri.has_value());
-	EXPECT_EQ(EWorkspaceTrustState::Unknown, selected.snapshot.trust);
-
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded,
-		service.SetTrust({ Operation("untrusted"), EWorkspaceTrustState::Untrusted }).outcome);
-	auto empty = service.SetEmpty(Operation("empty", 2));
+	auto empty = service.SetEmpty(Operation("empty", 1));
 	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, empty.outcome);
+	EXPECT_EQ(2U, empty.revision);
 	EXPECT_EQ(EWorkspaceKind::Empty, empty.snapshot.kind);
 	EXPECT_FALSE(empty.snapshot.workspaceConfigUri);
 	EXPECT_TRUE(empty.snapshot.folders.empty());
 	EXPECT_EQ(L"empty:18:explicit-window-id", empty.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Unknown, empty.snapshot.trust);
-}
-
-TEST(WorkspaceContextService, TrustIsExplicitAndPreservesTheCurrentWorkspaceIdentity)
-{
-	CWorkspaceContextService service(L"window-alpha");
-	ASSERT_EQ(EWorkspaceContextOutcome::Succeeded, service.SetFolder(Folder("folder", L"file:///C:/Repo", L"Repo")).outcome);
-	const auto identity = service.Snapshot().workspaceIdentityKey;
-
-	auto trusted = service.SetTrust({ Operation("trusted", 1), EWorkspaceTrustState::Trusted });
-	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, trusted.outcome);
-	EXPECT_EQ(identity, trusted.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Trusted, trusted.snapshot.trust);
-
-	auto unknown = service.SetTrust({ Operation("unknown", 2), EWorkspaceTrustState::Unknown });
-	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, unknown.outcome);
-	EXPECT_EQ(identity, unknown.snapshot.workspaceIdentityKey);
-	EXPECT_EQ(EWorkspaceTrustState::Unknown, unknown.snapshot.trust);
-	EXPECT_NE(EWorkspaceTrustState::Unknown, EWorkspaceTrustState::Untrusted);
 }
 
 TEST(WorkspaceContextService, EnforcesRevisionAndOperationReplayWithoutExtraNotifications)
@@ -243,13 +206,6 @@ TEST(WorkspaceContextService, EnforcesRevisionAndOperationReplayWithoutExtraNoti
 	EXPECT_TRUE(replay.replayed);
 	EXPECT_EQ(1U, replay.revision);
 	EXPECT_FALSE(replay.change);
-	EXPECT_EQ(1, notifications);
-
-	auto stale = service.SetTrust({ Operation("stale", 0), EWorkspaceTrustState::Trusted });
-	EXPECT_EQ(EWorkspaceContextOutcome::Conflict, stale.outcome);
-	EXPECT_EQ(1U, stale.revision);
-	EXPECT_EQ(1, notifications);
-	EXPECT_TRUE(service.SetTrust({ Operation("stale", 0), EWorkspaceTrustState::Trusted }).replayed);
 	EXPECT_EQ(1, notifications);
 
 	auto collision = service.SetFolder(Folder("operation", L"file:///C:/Other", L"Other", 1));
@@ -272,10 +228,6 @@ TEST(WorkspaceContextService, DeliversInOrderAfterCommitAndIsolatesThrowingReent
 		firstRevisions.push_back(change.revision);
 		++reentrantCalls;
 		removed.Reset();
-		if (change.current.kind == EWorkspaceKind::Folder && change.current.trust == EWorkspaceTrustState::Unknown) {
-			EXPECT_EQ(EWorkspaceContextOutcome::Succeeded,
-				service.SetTrust({ Operation("nested"), EWorkspaceTrustState::Trusted }).outcome);
-		}
 	});
 	removed = service.Subscribe([&](const auto&) { ordered.push_back(2); });
 	auto throwing = service.Subscribe([&](const auto&) {
@@ -289,11 +241,10 @@ TEST(WorkspaceContextService, DeliversInOrderAfterCommitAndIsolatesThrowingReent
 
 	auto result = service.SetFolder(Folder("outer", L"file:///C:/Repo", L"Repo"));
 	EXPECT_EQ(EWorkspaceContextOutcome::Succeeded, result.outcome);
-	EXPECT_EQ(EWorkspaceTrustState::Trusted, service.Snapshot().trust);
-	EXPECT_EQ(2, reentrantCalls);
-	EXPECT_EQ((std::vector<int> { 1, 3, 4, 1, 3, 4 }), ordered);
-	EXPECT_EQ((std::vector<std::uint64_t> { 1, 2 }), firstRevisions);
-	EXPECT_EQ((std::vector<std::uint64_t> { 1, 2 }), lastRevisions);
+	EXPECT_EQ(1, reentrantCalls);
+	EXPECT_EQ((std::vector<int> { 1, 3, 4 }), ordered);
+	EXPECT_EQ((std::vector<std::uint64_t> { 1 }), firstRevisions);
+	EXPECT_EQ((std::vector<std::uint64_t> { 1 }), lastRevisions);
 	EXPECT_FALSE(removed.IsActive());
 }
 

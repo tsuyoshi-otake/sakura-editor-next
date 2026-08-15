@@ -25,13 +25,6 @@ enum class EWorkspaceKind : std::uint8_t {
 	Workspace,
 };
 
-//! Trust is deliberately a three-state value: Unknown is not Untrusted.
-enum class EWorkspaceTrustState : std::uint8_t {
-	Unknown,
-	Trusted,
-	Untrusted,
-};
-
 //! Every context operation reaches one of these terminal outcomes.
 enum class EWorkspaceContextOutcome : std::uint8_t {
 	Succeeded,
@@ -55,7 +48,6 @@ struct WorkspaceContextSnapshot final {
 	EWorkspaceKind kind = EWorkspaceKind::Empty;
 	std::optional<platform::uri::Uri> workspaceConfigUri;
 	std::vector<WorkspaceFolderDescriptor> folders;
-	EWorkspaceTrustState trust = EWorkspaceTrustState::Unknown;
 	std::wstring workspaceIdentityKey;
 };
 
@@ -75,11 +67,6 @@ struct SetWorkspaceRequest final {
 	WorkspaceContextOperation operation;
 	std::optional<platform::uri::Uri> workspaceConfigUri;
 	std::vector<WorkspaceFolderDescriptor> folders;
-};
-
-struct SetTrustRequest final {
-	WorkspaceContextOperation operation;
-	EWorkspaceTrustState trust = EWorkspaceTrustState::Unknown;
 };
 
 //! One successful state transition, delivered after the service lock is released.

@@ -9,7 +9,6 @@
 #define SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_
 #pragma once
 
-#include "config/WorkspaceContextTypes.h"
 #include "doc/CDocListener.h"
 #include "theme/CThemeService.h"
 #include "workbench/scm/SourceControlService.h"
@@ -65,16 +64,6 @@ public:
 	void SetStatusbarVisibilityCallback(std::function<void(std::string_view, bool)> callback);
 	void SetStatusbarViewSnapshot(workbench::statusbar::StatusbarViewSnapshot snapshot);
 	void SetNotificationState(std::size_t pendingCount, std::size_t unreadCount, bool centerVisible);
-	/*!
-		@brief 現在のワークスペース信頼状態を投影する
-
-		VS Code の `status.workspaceTrust`（far-left の `$(shield) Restricted
-		Mode`）を塗るための純粋な射影。`Unknown` と `Untrusted` はどちらも
-		「制限モード」を意味するので、bool へ早期に潰さず三値のまま保持する。
-		`SetScmStatusCommands` / `SetNotificationState` と同じくコールバックを
-		一切呼ばない ── コマンド実行や所有者への通知はここではしない。
-	*/
-	void SetWorkspaceTrustState(config::EWorkspaceTrustState state) noexcept;
 	[[nodiscard]] bool IsStatusbarEntryVisible(std::string_view id, bool providerVisible = true) const noexcept;
 	[[nodiscard]] int ReservedRightWidth() const noexcept;
 	[[nodiscard]] static std::string_view LegacyEntryIdForPart(int part) noexcept;
@@ -119,10 +108,6 @@ private:
 	std::size_t m_notificationPendingCount = 0;
 	std::size_t m_notificationUnreadCount = 0;
 	bool m_notificationCenterVisible = false;
-	//! Unknown until CEditWnd's first workbench-context refresh pushes the real
-	//! value; Unknown paints as restricted, so an un-refreshed window never
-	//! shows a false "trusted" state.
-	config::EWorkspaceTrustState m_workspaceTrustState = config::EWorkspaceTrustState::Unknown;
 	std::function<void(std::string_view)> m_workbenchCommandCallback;
 	std::function<void(std::string_view, bool)> m_statusbarVisibilityCallback;
 	mutable std::vector<IconFont> m_iconFontCache;

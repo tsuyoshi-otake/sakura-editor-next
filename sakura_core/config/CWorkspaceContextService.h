@@ -28,7 +28,6 @@ public:
 	WorkspaceContextResult SetEmpty(const WorkspaceContextOperation& operation) override;
 	WorkspaceContextResult SetFolder(const SetFolderRequest& request) override;
 	WorkspaceContextResult SetWorkspace(const SetWorkspaceRequest& request) override;
-	WorkspaceContextResult SetTrust(const SetTrustRequest& request) override;
 	WorkspaceContextSubscription Subscribe(WorkspaceContextListener listener) override;
 
 	struct State;

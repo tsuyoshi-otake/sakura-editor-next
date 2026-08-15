@@ -157,12 +157,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\config\JsoncConfigurationSourceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\editing\JsoncConfigurationEditorTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceContextServiceTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\config\TrustedFoldersCodecTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\config\ControlPlatformTrustedFoldersStoreTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustPolicyTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustPromptPolicyTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\config\WorkspaceTrustMementoCodecTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\config\ControlPlatformWorkspaceTrustMementoStoreTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\agent\LoadFinalizationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\PowerShellLocatorTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalModelTest.cpp" />
@@ -195,7 +189,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\OnigmoRegexEngineTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
-	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchRuntimeWorkspaceTrustPromptTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceWindowTransitionServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceArtifactDocumentServiceTest.cpp" />
@@ -250,7 +243,6 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkingCopyPersistenceCodecTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBootstrapContextTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp" />
-    <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBannerLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdocline.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoclinemgr.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-codechecker.cpp" />

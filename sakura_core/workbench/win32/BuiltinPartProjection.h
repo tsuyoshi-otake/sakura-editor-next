@@ -20,33 +20,11 @@ struct BuiltinPartProjectionState {
 	[[nodiscard]] constexpr bool operator==(const BuiltinPartProjectionState&) const noexcept = default;
 };
 
-//! HWND-free state for the Banner Part (`workbench.parts.banner`).
-//!
-//! Unlike Left/Bottom/Right, VS Code sizes the banner from its own content
-//! rather than a user-draggable sash, so it has no committed extent to carry.
-//! Reusing `BuiltinPartProjectionState` here would silently promise a
-//! sash-driven extent this Part does not have; a narrower type keeps that
-//! honest.
-struct BuiltinBannerProjectionState {
-	bool visible = true;
-	[[nodiscard]] constexpr bool operator==(const BuiltinBannerProjectionState&) const noexcept = default;
-};
-
 //! The built-in physical surfaces supported by the current native shell.
 struct BuiltinPartProjection {
 	BuiltinPartProjectionState left;
 	BuiltinPartProjectionState bottom;
 	BuiltinPartProjectionState right;
-	//! Left/Bottom/Right are required because the native shell's editor-rectangle
-	//! math cannot be computed without them. The Banner is a separate, optional
-	//! member of this projection: `std::nullopt` means the current contribution
-	//! registry snapshot has no `workbench.parts.banner` registration at all
-	//! (a malformed/degraded model the native host must treat as "no banner
-	//! capability"), while an engaged optional with `visible == false` means the
-	//! banner is registered and present but currently hidden. Collapsing those
-	//! two states into one would let a host reserve zero height for a banner it
-	//! actually has, or silently treat a malformed model as merely quiet.
-	std::optional<BuiltinBannerProjectionState> banner;
 	[[nodiscard]] constexpr bool operator==(const BuiltinPartProjection&) const noexcept = default;
 };
 
@@ -58,10 +36,6 @@ enum class EBuiltinPartProjectionStatus : std::uint8_t {
 	DuplicateRequiredPart,
 	UnsupportedPosition,
 	InvalidExtent,
-	//! The optional Banner Part was present more than once. Its absence is a
-	//! valid projection (see `BuiltinPartProjection::banner`), but a duplicate
-	//! registration is malformed data the same way a duplicate Sidebar is.
-	DuplicateOptionalPart,
 };
 
 //! A failed result never exposes a partial native projection.
@@ -154,13 +128,9 @@ struct BuiltinWorkbenchProjectionResult {
 	@brief Projects only the built-in physical parts from one model snapshot.
 
 	The current native mapping is Sidebar -> Left, Panel -> Bottom, and
-	Auxiliarybar -> Right; these three are required, exactly as before. The
-	Banner Part (`workbench.parts.banner`) is projected independently and is
-	optional: an unregistered banner succeeds with `projection->banner ==
-	std::nullopt`, while a malformed banner (duplicate registration, or a
-	position other than Top) still fails the whole projection. Unknown
-	unrelated parts are intentionally ignored so later contributions do not
-	become an accidental native-shell contract.
+	Auxiliarybar -> Right; these three are required. Unknown unrelated parts
+	are intentionally ignored so later contributions do not become an
+	accidental native-shell contract.
 */
 [[nodiscard]] BuiltinPartProjectionResult ProjectBuiltinParts(
 	const layout::WorkbenchLayoutStateSnapshot& snapshot);

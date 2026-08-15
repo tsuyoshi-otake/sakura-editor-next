@@ -262,7 +262,6 @@ WorkbenchBootstrapResult ResolveWorkbenchBootstrapContext(WorkbenchBootstrapRequ
 	config::WorkspaceContextSnapshot workspace;
 	workspace.generation = 1;
 	workspace.revision = 0;
-	workspace.trust = config::EWorkspaceTrustState::Unknown;
 	if (folder) {
 		const auto key = platform::uri::UriIdentityService::MakeComparisonKey(*folder);
 		const auto displayName = DeriveFolderDisplayName(*folder);

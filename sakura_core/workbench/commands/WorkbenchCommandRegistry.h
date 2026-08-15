@@ -121,10 +121,6 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor showNotifications;
 	WorkbenchCommandExecutor hideNotifications;
 	WorkbenchCommandExecutor toggleStatusbarVisibility;
-	//! `workbench.trust.manage`. Left empty this registers and resolves but
-	//! executes as `Unsupported`, which is the honest answer for a shell with no
-	//! trust surface -- never a silent grant.
-	WorkbenchCommandExecutor manageWorkspaceTrust;
 	WorkbenchCommandExecutor markdownShowPreview;
 	WorkbenchCommandExecutor markdownShowPreviewToSide;
 	WorkbenchCommandExecutor markdownShowLockedPreviewToSide;
