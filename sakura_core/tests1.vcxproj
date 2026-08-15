@@ -189,6 +189,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMatePlistGrammarLoaderTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateScopeColorResolverTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateTokenizerTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\textmate\OnigmoRegexEngineTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchRuntimeTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\WorkspaceConfigurationDocumentParserTest.cpp" />

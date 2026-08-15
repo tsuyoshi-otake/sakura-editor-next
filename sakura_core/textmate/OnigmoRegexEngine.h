@@ -17,9 +17,9 @@
 #include "textmate/TextMateUtf8.h"
 
 // Forward-declared rather than included here: `OnigRegexType` is defined by
-// <Onigmo/onigmo.h>, which is intentionally kept out of this public header so
-// that nothing outside `sakura_core/textmate` needs Onigmo on its include
-// path. `OnigmoRegexEngine.cpp` includes the real header.
+// <onigmo-next/onigmo.h>, which is intentionally kept out of this public
+// header so that nothing outside `sakura_core/textmate` needs Onigmo NEXT on
+// its include path. `OnigmoRegexEngine.cpp` includes the real header.
 //
 // `onigmo.h` defines this type as `typedef struct re_pattern_buffer { ... }
 // OnigRegexType;` — the struct's tag is `re_pattern_buffer`, and

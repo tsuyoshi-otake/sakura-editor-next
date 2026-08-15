@@ -5,16 +5,11 @@
  * SPDX-License-Identifier: Zlib
  */
 
-// NOTE: unlike the other tests in this directory, these tests exercise the
-// real Onigmo regex engine through OnigmoPattern::Compile()/Search() (see
-// TextMateTokenizer.cpp), not just the JSON/plist-to-Grammar compilation
-// boundary. As of this writing, Onigmo is not yet wired into either the
-// MSBuild (sakura.vcxproj) or CMake (sakura.cmake) build of sakura_core --
-// see textmate/CLAUDE.md for the exact build-configuration changes this
-// still requires. This file is therefore expected to fail to LINK (not just
-// "fail to pass") until that wiring lands; it has been traced by hand
-// against TextMateTokenizer.cpp's actual control flow, but has not been
-// compiled or run.
+// These tests exercise the real Onigmo regex engine through
+// OnigmoPattern::Compile()/Search() (see TextMateTokenizer.cpp), not just
+// the JSON/plist-to-Grammar compilation boundary. Direct engine coverage
+// lives in OnigmoRegexEngineTest.cpp; this file covers tokenizer state
+// that happens to reach the engine.
 
 #include "pch.h"
 

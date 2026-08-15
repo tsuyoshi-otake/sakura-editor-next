@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -11,17 +11,17 @@
 #include <algorithm>
 #include <mutex>
 
-// Onigmo is compiled straight into this binary, never linked as a DLL. On MSVC
-// `onigmo.h` otherwise defaults `ONIG_EXTERN` to `__declspec(dllimport) extern`,
-// so every call here would go through an import thunk to a symbol that is in
-// fact local, which the linker reports as LNK4217. The Onigmo `.c` files already
-// get this define from the build, but the define has to be true at *this*
-// include site too, and putting it here rather than in a project file keeps
-// MSBuild and CMake from drifting apart on it.
+// Onigmo is linked as the vcpkg static library Onigmo::onigmo, never as a DLL.
+// On MSVC `onigmo.h` otherwise defaults `ONIG_EXTERN` to
+// `__declspec(dllimport) extern`, so every call here would go through an
+// import thunk to a symbol that is in fact local, which the linker reports
+// as LNK4217. The CMake target publishes `ONIG_EXTERN=extern` PUBLIC, but
+// MSBuild auto-links the `.lib` without that compile definition, so the
+// define has to be true at *this* include site too.
 #ifndef ONIG_EXTERN
 #define ONIG_EXTERN extern
 #endif
-#include "Onigmo/onigmo.h"
+#include "onigmo-next/onigmo.h"
 
 namespace textmate {
 
