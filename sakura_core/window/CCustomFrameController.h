@@ -187,6 +187,10 @@ public:
 	void InvalidateTitle() const noexcept;
 	//! Reasserts the input-only edge overlays after sibling HWND layout.
 	void LayoutResizeOverlays() noexcept;
+	//! Activity Bar GlobalCompositeBar popup anchors (screen coordinates).
+	void ShowAccountMenuAt(POINT screenPoint) noexcept;
+	//! `rightAlign` matches a former title-bar Manage popup; Activity Bar uses left-align.
+	void ShowManageMenuAt(POINT screenPoint, bool rightAlign = false) noexcept;
 	static LRESULT CALLBACK ResizeOverlayWindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 
 private:

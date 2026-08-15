@@ -9,6 +9,7 @@
 #pragma once
 
 #include "workbench/scm/GitCommandRunner.h"
+#include "workbench/scm/GitRefModel.h"
 
 #include <cstdint>
 #include <functional>
@@ -127,6 +128,8 @@ struct GitStageCommandContext final {
 	GitDiscardConfirmationPresenter confirm;
 	GitStageMessagePresenter message;
 	GitTrashDeleter trash;
+	//! Optional localization callback for discard prompts and stage messages.
+	GitRefTextResolver text;
 };
 
 enum class EGitStageCommandStatus : std::uint8_t {
@@ -221,10 +224,12 @@ struct GitPathChunkLimits final {
 //! files really are permanently deleted.
 //!
 [[nodiscard]] GitDiscardPrompt BuildDiscardPrompt(
-	const std::vector<GitStageResource>& resources, bool untrackedToTrash);
+	const std::vector<GitStageResource>& resources, bool untrackedToTrash,
+	const GitRefTextResolver& text = {});
 
 //! The confirmation upstream shows when the Recycle Bin refused the delete.
-[[nodiscard]] GitDiscardPrompt BuildTrashFallbackPrompt(const std::vector<GitStageResource>& resources);
+[[nodiscard]] GitDiscardPrompt BuildTrashFallbackPrompt(const std::vector<GitStageResource>& resources,
+	const GitRefTextResolver& text = {});
 
 //! Join a repository-relative path onto the repository root.
 [[nodiscard]] std::wstring JoinRepositoryPath(std::wstring_view repositoryRoot, std::wstring_view relativePath);

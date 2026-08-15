@@ -55,7 +55,7 @@ public:
 private:
 	[[nodiscard]] HWND AccessibilityWindow() const noexcept override { return m_window; }
 	[[nodiscard]] std::shared_ptr<accessibility::CustomUiAutomationLifetime> AccessibilityLifetime() const noexcept override { return m_accessibilityLifetime; }
-	[[nodiscard]] std::wstring AccessibilityName() const override { return L"Sakura Editor NEXT の開始"; }
+	[[nodiscard]] std::wstring AccessibilityName() const override { return L"Sakura Editor NEXT"; }
 	[[nodiscard]] std::wstring AccessibilityAutomationId() const override { return L"Sakura.EmptyEditorSurface"; }
 	[[nodiscard]] CONTROLTYPEID AccessibilityControlType() const noexcept override { return UIA_PaneControlTypeId; }
 	[[nodiscard]] int AccessibilityChildCount(int parentId) const noexcept override;

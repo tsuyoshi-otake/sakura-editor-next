@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "workbench/panel/CBottomPanelTool.h"
+#include "CSelectLang.h"
 
 #include <CommCtrl.h>
 #include <Richedit.h>
@@ -82,12 +83,30 @@ bool EnsureClass(HINSTANCE instance)
 const wchar_t* SeverityText(const win32::EProblemsPanelSeverity severity) noexcept
 {
 	switch (severity) {
-	case win32::EProblemsPanelSeverity::Error: return L"Error";
-	case win32::EProblemsPanelSeverity::Warning: return L"Warning";
-	case win32::EProblemsPanelSeverity::Information: return L"Info";
-	case win32::EProblemsPanelSeverity::Hint: return L"Hint";
+	case win32::EProblemsPanelSeverity::Error: return LS(STR_WORKBENCH_PANEL_SEVERITY_ERROR);
+	case win32::EProblemsPanelSeverity::Warning: return LS(STR_WORKBENCH_PANEL_SEVERITY_WARNING);
+	case win32::EProblemsPanelSeverity::Information: return LS(STR_WORKBENCH_PANEL_SEVERITY_INFO);
+	case win32::EProblemsPanelSeverity::Hint: return LS(STR_WORKBENCH_PANEL_SEVERITY_HINT);
 	}
 	return L"";
+}
+
+constexpr std::array<UINT, 4> kProblemsColumnTextIds{
+	STR_WORKBENCH_PANEL_COLUMN_SEVERITY,
+	STR_WORKBENCH_PANEL_COLUMN_MESSAGE,
+	STR_WORKBENCH_PANEL_COLUMN_FILE,
+	STR_WORKBENCH_PANEL_COLUMN_SOURCE,
+};
+
+void RefreshProblemsColumnTitles(HWND list) noexcept
+{
+	if (list == nullptr) return;
+	for (int index = 0; index < static_cast<int>(kProblemsColumnTextIds.size()); ++index) {
+		LVCOLUMNW column{};
+		column.mask = LVCF_TEXT;
+		column.pszText = const_cast<wchar_t*>(LS(kProblemsColumnTextIds[static_cast<std::size_t>(index)]));
+		(void)ListView_SetColumn(list, index, &column);
+	}
 }
 
 } // namespace
@@ -366,7 +385,7 @@ struct CBottomPanelTool::Impl {
 			ListView_SetItemText(problemsList, static_cast<int>(index), 3,
 				const_cast<wchar_t*>(problem.source.c_str()));
 		}
-		std::wstring label = L"PROBLEMS";
+		std::wstring label = LS(STR_WORKBENCH_PANEL_PROBLEMS);
 		if (!problems.entries.empty()) label += L" (" + std::to_wstring(problems.entries.size()) + L")";
 		::SetWindowTextW(problemsButton, label.c_str());
 	}
@@ -596,6 +615,17 @@ void CBottomPanelTool::SetPanelActions(PanelActions actions)
 }
 
 void CBottomPanelTool::Refresh() { if (m_impl) m_impl->Refresh(); }
+void CBottomPanelTool::RefreshStrings()
+{
+	if (!m_impl || m_impl->closed) return;
+	if (m_impl->terminalButton) ::SetWindowTextW(m_impl->terminalButton, LS(STR_WORKBENCH_PANEL_TERMINAL));
+	if (m_impl->outputButton) ::SetWindowTextW(m_impl->outputButton, LS(STR_WORKBENCH_PANEL_OUTPUT));
+	if (m_impl->portsButton) ::SetWindowTextW(m_impl->portsButton, LS(STR_WORKBENCH_PANEL_PORTS));
+	if (m_impl->debugConsoleButton) ::SetWindowTextW(m_impl->debugConsoleButton, LS(STR_WORKBENCH_PANEL_DEBUG_CONSOLE));
+	RefreshProblemsColumnTitles(m_impl->problemsList);
+	m_impl->RefreshProblems();
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+}
 void CBottomPanelTool::SetActiveTab(BottomPanelTab tab)
 {
 	if (m_impl) m_impl->ApplyActiveTab(tab);
@@ -663,15 +693,15 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		const auto instance = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(window, GWLP_HINSTANCE));
 		impl.RecreateBrushes();
 		const DWORD tabStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW;
-		impl.terminalButton = ::CreateWindowExW(0, L"BUTTON", L"TERMINAL", tabStyle,
+		impl.terminalButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_TERMINAL), tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kTerminalButton), instance, nullptr);
-		impl.problemsButton = ::CreateWindowExW(0, L"BUTTON", L"PROBLEMS", tabStyle,
+		impl.problemsButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_PROBLEMS), tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kProblemsButton), instance, nullptr);
-		impl.outputButton = ::CreateWindowExW(0, L"BUTTON", L"OUTPUT", tabStyle,
+		impl.outputButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_OUTPUT), tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputButton), instance, nullptr);
-		impl.portsButton = ::CreateWindowExW(0, L"BUTTON", L"PORTS", tabStyle | WS_DISABLED,
+		impl.portsButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_PORTS), tabStyle | WS_DISABLED,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kPortsButton), instance, nullptr);
-		impl.debugConsoleButton = ::CreateWindowExW(0, L"BUTTON", L"DEBUG CONSOLE", tabStyle | WS_DISABLED,
+		impl.debugConsoleButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_DEBUG_CONSOLE), tabStyle | WS_DISABLED,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kDebugConsoleButton), instance, nullptr);
 		const DWORD actionStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW;
 		impl.maximizeButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
@@ -682,14 +712,17 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 			WS_CHILD | WS_TABSTOP | LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kProblemsList), instance, nullptr);
 		ListView_SetExtendedListViewStyle(impl.problemsList, LVS_EX_FULLROWSELECT | LVS_EX_DOUBLEBUFFER | LVS_EX_LABELTIP);
-		const std::pair<const wchar_t*, int> columns[] = {
-			{ L"Severity", 90 }, { L"Message", 360 }, { L"File", 320 }, { L"Source", 120 },
+		const std::array<std::pair<UINT, int>, 4> columns{
+			std::pair{ STR_WORKBENCH_PANEL_COLUMN_SEVERITY, 90 },
+			std::pair{ STR_WORKBENCH_PANEL_COLUMN_MESSAGE, 360 },
+			std::pair{ STR_WORKBENCH_PANEL_COLUMN_FILE, 320 },
+			std::pair{ STR_WORKBENCH_PANEL_COLUMN_SOURCE, 120 },
 		};
 		for (int index = 0; index < static_cast<int>(std::size(columns)); ++index) {
 			LVCOLUMNW column{};
 			column.mask = LVCF_TEXT | LVCF_WIDTH;
-			column.pszText = const_cast<wchar_t*>(columns[index].first);
-			column.cx = columns[index].second;
+			column.pszText = const_cast<wchar_t*>(LS(columns[static_cast<std::size_t>(index)].first));
+			column.cx = columns[static_cast<std::size_t>(index)].second;
 			ListView_InsertColumn(impl.problemsList, index, &column);
 		}
 		impl.outputSelector = ::CreateWindowExW(0, L"COMBOBOX", L"",

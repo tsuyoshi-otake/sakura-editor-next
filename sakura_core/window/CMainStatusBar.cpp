@@ -32,9 +32,12 @@ namespace {
 constexpr UINT_PTR kSakuraStatusBarSubclassId = 1;
 
 constexpr std::string_view kNotificationStatusId = "status.notifications";
+constexpr std::string_view kRemoteHostStatusId = "status.host";
+constexpr std::string_view kRemoteShowMenuCommand = "workbench.action.remote.showMenu";
 constexpr std::string_view kShowNotificationsCommand = "notifications.showList";
 constexpr std::string_view kHideNotificationsCommand = "notifications.hideList";
 constexpr std::string_view kToggleStatusbarCommand = "workbench.action.toggleStatusbarVisibility";
+constexpr wchar_t kRemoteHostLabel[] = L"$(remote)";
 
 constexpr std::array<std::string_view, 8> kLegacyStatusbarIds{
 	"", "status.editor.selection", "status.editor.eol", "sakura.status.editor.characterCode",
@@ -402,11 +405,27 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		workbench::icons::DrawLabelRuns(target, runs, content, iconSide, iconColor, glyphFonts);
 	};
 
-	// 実 VS Code のステータスバー左端は SCM プロバイダーが公開した
-	// statusBarCommands の並びそのもの。git なら `$(git-branch) main` と
-	// `$(sync) 0↓ 1↑` の 2 項目で、それぞれ別のコマンドを実行する。1 本の
-	// テキストに畳むと、押した位置とコマンドの対応が失われる。
-	int scmWidth = 0;
+	// VS Code's leftmost status entry is the remote host indicator (`status.host`),
+	// then the SCM provider's published `statusBarCommands`. Do not fold the remote
+	// glyph into the branch item: they are separate hit targets and commands.
+	int leftCursor = 0;
+	if (IsStatusbarEntryVisible(kRemoteHostStatusId)) {
+		const int remoteIconSide = InlineStatusIconSide(height, dpi);
+		const auto runs = workbench::icons::ParseLabelWithIcons(
+			kRemoteHostLabel, workbench::icons::CCodiconFont::Instance().FaceName());
+		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
+			measureLabelRuns(runs, remoteIconSide), dpi);
+		const int right = std::min(width, leftCursor + itemWidth);
+		if (right > leftCursor) {
+			const RECT itemRect{ leftCursor, 0, right, height };
+			drawLabelRuns(runs, itemRect, remoteIconSide);
+			m_statusbarHitTargets.push_back({
+				std::string(kRemoteHostStatusId), itemRect, std::string(kRemoteShowMenuCommand) });
+			leftCursor = right;
+		}
+	}
+
+	int scmWidth = leftCursor;
 	if (IsStatusbarEntryVisible("status.scm")) {
 		const int scmIconSide = InlineStatusIconSide(height, dpi);
 		for (const auto& command : m_scmCommands) {

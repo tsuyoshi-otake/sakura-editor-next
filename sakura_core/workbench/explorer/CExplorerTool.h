@@ -35,14 +35,21 @@ enum class ExplorerWorkerState : unsigned char {
 	Stopped,
 };
 
-//! A small, injectable palette until the workbench theme service owns these values.
-//! The construction background is only a bootstrap fallback; production injection
-//! uses the VS Code Side Bar semantic role.
+//! Theme tokens consumed by the native Explorer projection. The construction
+//! values are bootstrap fallbacks; production injection maps each field from a
+//! VS Code Side Bar semantic role in CViewContainerPages.
 struct ExplorerPalette {
 	COLORREF background = RGB(0x20, 0x23, 0x2A);
 	COLORREF text = RGB(0xE8, 0xEB, 0xF0);
+	COLORREF secondaryText = RGB(0xA8, 0xAE, 0xB8);
 	COLORREF border = RGB(0x38, 0x3E, 0x49);
 	COLORREF focus = RGB(0xEB, 0x6A, 0x9A);
+	COLORREF inactiveSelection = RGB(0x38, 0x3E, 0x49);
+	COLORREF hover = RGB(0x2A, 0x2E, 0x36);
+	COLORREF selectionText = RGB(0xFF, 0xFF, 0xFF);
+	COLORREF button = RGB(0xEB, 0x6A, 0x9A);
+	COLORREF buttonHover = RGB(0xF2, 0x83, 0xAD);
+	COLORREF buttonText = RGB(0xFF, 0xFF, 0xFF);
 	COLORREF scrollbarThumb = RGB(0x38, 0x3E, 0x49);
 	COLORREF scrollbarThumbHover = RGB(0x8B, 0x91, 0x9B);
 	COLORREF scrollbarTrackHover = RGB(0x2A, 0x2E, 0x36);
@@ -62,6 +69,17 @@ enum class ExplorerEditorActivationAction : unsigned char {
 	ActivateCurrent,
 	ReplaceCurrentPreview,
 	OpenNewEditor,
+};
+
+//! The empty Explorer welcome variants exposed by VS Code's ViewWelcome.
+enum class ExplorerWelcomeState : unsigned char {
+	NoFolder,
+	NoFolderWithEditors,
+	EmptyWorkspace,
+	//! A workspace has real folders, but this native projection has no multi-root
+	//! tree model. Keep the unsupported boundary explicit rather than claiming no
+	//! folder is open.
+	WorkspaceWithFoldersUnsupported,
 };
 
 struct ExplorerEditorActivationPlan final {
@@ -131,6 +149,10 @@ public:
 	//! Replaces the sole, window-local root. The same path is a no-op; an empty value clears the tree.
 	void SetRoot(std::wstring root);
 	[[nodiscard]] const std::wstring& GetRoot() const noexcept;
+	//! Selects the VS Code-compatible empty-state message and action set.
+	//! The state is only visible while no filesystem root is projected.
+	void SetWelcomeState(ExplorerWelcomeState state);
+	[[nodiscard]] ExplorerWelcomeState GetWelcomeState() const noexcept;
 	void SetFileActivationCallback(FileActivationCallback callback);
 	void SetCommandCallback(CommandCallback callback);
 	void SetMenuTitleResolver(MenuTitleResolver resolver);
@@ -146,8 +168,18 @@ public:
 	//! through the create-commit callback; the temporary row is removed and the
 	//! filesystem watcher renders the real outcome.
 	bool BeginCreateEntry(std::wstring_view parentDirectory, bool directory);
+	//! Starts a create operation in the selected directory, or in the selected
+	//! file's parent. This is the operand resolution used by VS Code's Explorer
+	//! ViewTitle New File/New Folder actions.
+	bool CreateEntryFromSelection(bool directory);
+	//! Re-enumerates every expanded directory without changing the current root
+	//! or replacing live TreeView items.
+	void Refresh();
+	void RefreshStrings();
+	//! Collapses the Explorer's root and descendants and clears the persisted
+	//! expansion set used by watcher-driven reconciliation.
+	void CollapseAllFolders();
 	void SetPalette(ExplorerPalette palette);
-	//! Applies a parsed VS Code file icon theme. A null theme disables contributed icons.
 	[[nodiscard]] ExplorerPalette GetPalette() const noexcept;
 	[[nodiscard]] ExplorerWorkerState GetWorkerState() const noexcept;
 	[[nodiscard]] HWND GetHwnd() const noexcept;

@@ -14,25 +14,43 @@
 
 namespace workbench::activity {
 
+//! VS Code's Activity Bar has ViewContainers on top and a separate GlobalCompositeBar
+//! (Accounts / Manage) pinned to the bottom. Those are not ViewContainers.
+enum class ActivityBarEntryKind : unsigned char {
+	ViewContainer,
+	GlobalAction,
+};
+
+//! Upstream `ACCOUNTS_ACTIVITY_ID` / `GLOBAL_ACTIVITY_ID` from `workbench/common/activity.ts`.
+inline constexpr std::string_view kAccountsActivityId = "workbench.actions.accounts";
+inline constexpr std::string_view kManageActivityId = "workbench.actions.manage";
+
 /*!
 	@brief One rendered Activity Bar entry.
 
-	Identity is the ViewContainer id owned by workbench::layout::WorkbenchContributionRegistry.
-	The Activity Bar renders built-in containers without a second naming system.
+	For ViewContainers, identity is the ViewContainer id owned by
+	workbench::layout::WorkbenchContributionRegistry. Global actions use the
+	upstream activity ids (`workbench.actions.accounts` /
+	`workbench.actions.manage`) and must not be treated as Side Bar containers.
 */
 struct ActivityBarEntry {
-	//! `workbench.view.explorer`, etc. Empty ids are rejected by the model.
+	//! `workbench.view.explorer`, `workbench.actions.accounts`, etc. Empty ids are rejected.
 	std::string id;
 	//! Tooltip and accessible name, already localized by whoever produced the entry.
 	std::wstring label;
 	//! Bundled codicon name. Empty names fall back to the first letter of the label.
 	std::wstring codicon;
+	ActivityBarEntryKind kind = ActivityBarEntryKind::ViewContainer;
 	bool enabled = true;
 	//! False when the ViewContainer no longer lives in the Primary Side Bar. VS Code
 	//! removes the Activity Bar entry outright rather than greying it out.
 	bool visible = true;
 
 	[[nodiscard]] bool operator==(const ActivityBarEntry&) const = default;
+	[[nodiscard]] constexpr bool IsGlobalAction() const noexcept
+	{
+		return kind == ActivityBarEntryKind::GlobalAction;
+	}
 };
 
 //! A physical-pixel rectangle with no dependency on Win32 types.
@@ -62,6 +80,7 @@ struct ActivityBarButtonInfo {
 	std::wstring_view label;
 	std::wstring_view codicon;
 	ActivityBarRect bounds{};
+	ActivityBarEntryKind kind = ActivityBarEntryKind::ViewContainer;
 	bool selected = false;
 	bool hovered = false;
 	bool pressed = false;
@@ -69,6 +88,10 @@ struct ActivityBarButtonInfo {
 	bool enabled = true;
 	bool visible = true;
 
+	[[nodiscard]] constexpr bool IsGlobalAction() const noexcept
+	{
+		return kind == ActivityBarEntryKind::GlobalAction;
+	}
 	[[nodiscard]] constexpr bool operator==(const ActivityBarButtonInfo&) const noexcept = default;
 };
 
@@ -99,8 +122,11 @@ public:
 	//! Sets physical client dimensions and reflows the vertical button strip.
 	void SetViewport(int widthPixels, int heightPixels, unsigned int dpi = 96) noexcept;
 	//! Lets the owner reflect the currently visible workbench tool. An empty id means none.
+	//! Global actions are never selected: they open menus, they do not own a ViewContainer.
 	void SetSelectedItem(std::string_view id) noexcept;
 	[[nodiscard]] std::string_view GetSelectedItem() const noexcept { return IdAt(m_selected); }
+	//! ViewContainers are composite drag handles; GlobalCompositeBar actions are not.
+	[[nodiscard]] bool IsDraggable(std::string_view id) const noexcept;
 
 	void SetEnabled(std::string_view id, bool enabled) noexcept;
 	//! Semantic name used by UI hosts and tests; retained alongside SetEnabled for low-level callers.

@@ -323,5 +323,44 @@ TEST(TerminalRenderPlan, UsesAbsoluteCellGeometryForNonzeroPaintOrigin)
 	EXPECT_EQ(8, plan.GdiRuns()[0].rect.left);
 }
 
+TEST(TerminalRenderPlan, StartsGridCommandsAtTheDpiScaledPadding)
+{
+	TerminalModel model(2, 1);
+	model.Print(U'A');
+	model.Print(U'B');
+	RecordingClassifier classifier;
+	TerminalRenderPlan plan;
+	auto input = Input(model, classifier, 1, { 0, 0, 64, 16 }, 8, 16);
+	input.geometry = TerminalViewportGeometry::FromDpi(144);
+
+	ASSERT_TRUE(plan.Build(input));
+	ASSERT_EQ(1u, plan.GdiRuns().size());
+	EXPECT_EQ(8, plan.GdiRuns()[0].rect.left);
+	EXPECT_EQ(24, plan.GdiRuns()[0].rect.right);
+	EXPECT_EQ(8, plan.GdiRuns()[0].rect.top);
+	EXPECT_EQ(24, plan.GdiRuns()[0].rect.bottom);
+}
+
+TEST(TerminalRenderPlan, OffsetsVerticalCoordinatesByTheTopPadding)
+{
+	TerminalModel model(2, 2);
+	model.Print(U'A');
+	model.ExecuteControl(L'\r');
+	model.ExecuteControl(L'\n');
+	model.Print(U'B');
+	RecordingClassifier classifier;
+	TerminalRenderPlan plan;
+	// At 192 DPI the top padding is 10, so visual row 1 occupies [26, 42).
+	auto input = Input(model, classifier, 2, { 3, 26, 64, 42 }, 8, 16);
+	input.geometry = TerminalViewportGeometry::FromDpi(192);
+
+	ASSERT_TRUE(plan.Build(input));
+	ASSERT_EQ(1u, plan.GdiRuns().size());
+	EXPECT_EQ(10, plan.GdiRuns()[0].rect.left);
+	EXPECT_EQ(18, plan.GdiRuns()[0].rect.right);
+	EXPECT_EQ(26, plan.GdiRuns()[0].rect.top);
+	EXPECT_EQ(42, plan.GdiRuns()[0].rect.bottom);
+}
+
 } // namespace
 } // namespace terminal

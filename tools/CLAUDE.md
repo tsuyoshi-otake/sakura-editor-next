@@ -13,7 +13,7 @@ The public entry scripts live at the repository root; run them from there.
 
 - Keep platform validation limited to the values each script documents and propagate the exact child exit code.
 - Quote tool and repository paths, use `setlocal` for script-local state, and keep MSBuild node reuse disabled with `/nr:false` for command-line wrapper builds.
-- `build-all.bat` enables assembly listings inside its local environment. Distribution CI enables them on its Release MSBuild step; ordinary `build-dev` and `build-sln` calls leave them off.
+- `build-all.bat` keeps assembly listings enabled for package collection. A listing-enabled `build-sln` or `build-all` first finishes solution/tests with listings explicitly off, then rebuilds only the product with listings on and `/m:1`; ordinary calls without the opt-in leave listings off.
 
 ## Environment Variables
 

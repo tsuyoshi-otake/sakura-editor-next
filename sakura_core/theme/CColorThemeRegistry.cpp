@@ -49,6 +49,7 @@ constexpr std::string_view kSakuraDefaultDarkThemeJson = R"json({
 		"button.foreground": "#FFFFFF",
 		"titleBar.activeBackground": "#3C3C3C",
 		"activityBar.background": "#333333",
+		"activityBar.border": "#454545",
 		"errorForeground": "#C42B1C",
 		"notificationsWarningIcon.foreground": "#CCA700"
 	},
@@ -89,6 +90,7 @@ constexpr std::string_view kSakuraDefaultLightThemeJson = R"json({
 		"button.foreground": "#FFFFFF",
 		"titleBar.activeBackground": "#F3F3F3",
 		"activityBar.background": "#F3F3F3",
+		"activityBar.border": "#CDD2DB",
 		"errorForeground": "#C42B1C",
 		"notificationsWarningIcon.foreground": "#BF8800"
 	},
@@ -477,8 +479,10 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		palette.terminalBackground = first(palette.bottomPanel, { L"terminal.background" });
 		palette.raised = first(palette.raised, { L"sideBarSectionHeader.background", L"list.hoverBackground",
 			L"editorWidget.background", L"quickInput.background" });
-		palette.border = first(palette.border, { L"sideBar.border", L"panel.border", L"contrastBorder",
-			L"editorGroup.border", L"editorWidget.border" });
+		// `activityBar.border` is a fallback when a theme omits `sideBar.border`;
+		// the Activity Bar paints this shared Part-edge color on its right edge.
+		palette.border = first(palette.border, { L"sideBar.border", L"activityBar.border", L"panel.border",
+			L"contrastBorder", L"editorGroup.border", L"editorWidget.border" });
 		palette.primaryText = first(palette.primaryText, { L"foreground", L"editor.foreground", L"sideBar.foreground",
 			L"panel.foreground" });
 		palette.secondaryText = first(palette.secondaryText, { L"sideBar.foreground", L"panelTitle.inactiveForeground",

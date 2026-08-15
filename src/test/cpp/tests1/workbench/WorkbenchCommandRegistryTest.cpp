@@ -435,6 +435,17 @@ TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatch
 		});
 	ASSERT_NE(allItems.end(), outputItem);
 	EXPECT_EQ(L"Toggle Output", outputItem->label);
+	const auto localized = workbench::editor::SearchRegisteredCommandPalette(registry, L"",
+		[](const WorkbenchCommandDescriptor& descriptor) {
+			if (descriptor.id == "workbench.action.output.toggleOutput") return std::wstring(L"出力の表示を切り替える");
+			return std::wstring{};
+		});
+	const auto localizedOutput = std::find_if(localized.begin(), localized.end(),
+		[](const workbench::editor::WorkbenchCommandPaletteItem& item) {
+			return item.id == "workbench.action.output.toggleOutput";
+		});
+	ASSERT_NE(localized.end(), localizedOutput);
+	EXPECT_EQ(L"出力の表示を切り替える", localizedOutput->label);
 
 	const auto filtered = workbench::editor::SearchRegisteredCommandPalette(registry, L"native palette");
 	ASSERT_EQ(1U, filtered.size());
@@ -892,6 +903,32 @@ TEST(WorkbenchCommandRegistry, GitStagingCommandsCarryUpstreamTitlesAndPaletteSl
 	}
 }
 
+TEST(WorkbenchCommandRegistry, GitCloneRecursiveIsAnAlwaysAvailableRepositoryCreationCommand)
+{
+	WorkbenchCommandRegistry registry;
+	int calls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.cloneRecursive = [&calls] { ++calls; return Succeeded(); },
+	}).status);
+
+	const auto descriptor = registry.Find("git.cloneRecursive");
+	ASSERT_TRUE(descriptor.has_value());
+	// `command.cloneRecursive` in the Git extension is `Clone (Recursive)`;
+	// it is the distinct command linked by the SCM empty-workbench welcome view.
+	EXPECT_EQ("Git: Clone (Recursive)", descriptor->title);
+	EXPECT_EQ("workbenchReady", descriptor->whenClause);
+	const auto slot = registry.ResolveSurface(
+		EWorkbenchCommandSurface::CommandPalette, "git.cloneRecursive.palette");
+	ASSERT_TRUE(slot.has_value());
+	EXPECT_EQ("git.cloneRecursive", slot->commandId);
+
+	// Its job is to create a repository, so it must not inherit the regular
+	// Git command's `gitOpenRepositoryCount != 0` gate.
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("git.cloneRecursive", EnabledContext()).status);
+	EXPECT_EQ(1, calls);
+}
+
 TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfaceOfTheirOwn)
 {
 	WorkbenchCommandRegistry registry;
@@ -901,6 +938,8 @@ TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfa
 			received.emplace("vscode.diff", arguments); return Succeeded(); },
 		.vscodeOpen = [&received](std::string_view arguments) {
 			received.emplace("vscode.open", arguments); return Succeeded(); },
+		.vscodeOpenFolder = [&received](std::string_view arguments) {
+			received.emplace("vscode.openFolder", arguments); return Succeeded(); },
 	}).status);
 
 	// Upstream registers these in `workbench/api/common/apiCommands.ts` through
@@ -910,6 +949,14 @@ TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfa
 	const std::map<std::string, std::string> titles{
 		{ "vscode.diff", "Opens the provided resources in the diff editor to compare their contents." },
 		{ "vscode.open", "Opens the provided resource in the editor." },
+		{ "vscode.openFolder", "Opens a folder as a workspace." },
+	};
+	const std::map<std::string, std::string_view> payloads{
+		{ "vscode.diff", R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])" },
+		{ "vscode.open", R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])" },
+		// The SCM ViewWelcome invokes `vscode.openFolder` without an operand, so
+		// the native handler opens its folder picker rather than inventing a URI.
+		{ "vscode.openFolder", "" },
 	};
 	const auto context = EnabledContext();
 	for (const auto& [commandId, title] : titles) {
@@ -922,7 +969,7 @@ TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfa
 		// extension can issue one in a window with no repository open.
 		EXPECT_EQ("workbenchReady", descriptor->whenClause) << commandId;
 
-		constexpr std::string_view payload = R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])";
+		const std::string_view payload = payloads.at(commandId);
 		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 			registry.Execute(commandId, context, payload).status) << commandId;
 		ASSERT_TRUE(received.contains(commandId)) << commandId;

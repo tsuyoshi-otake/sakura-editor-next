@@ -27,6 +27,7 @@ using workbench::explorer::ExplorerEditorActivationAction;
 using workbench::explorer::ExplorerEntry;
 using workbench::explorer::ExplorerFileActivationKind;
 using workbench::explorer::ExplorerPalette;
+using workbench::explorer::ExplorerWelcomeState;
 using workbench::explorer::PlanExplorerEditorActivation;
 
 struct JunctionReparseData {
@@ -197,11 +198,11 @@ TEST(ExplorerTool, SortsDirectoriesFirstThenNamesCaseInsensitively)
 	EXPECT_EQ(L"zebra.txt", sorted[3].name);
 }
 
-TEST(ExplorerTool, UsesUppercaseWorkspaceFolderNameInsteadOfCanonicalPath)
+TEST(ExplorerTool, PreservesWorkspaceFolderDisplayCasingInsteadOfCanonicalPath)
 {
-	EXPECT_EQ(L"SAKURACODE", CExplorerTool::WorkspaceDisplayName(L"C:\\Codes\\tsuyoshi-otake\\sakuracode"));
-	EXPECT_EQ(L"SAKURACODE", CExplorerTool::WorkspaceDisplayName(L"C:/Codes/tsuyoshi-otake/sakuracode/"));
-	EXPECT_EQ(L"SHARE", CExplorerTool::WorkspaceDisplayName(L"\\\\server\\share\\"));
+	EXPECT_EQ(L"sakuracode", CExplorerTool::WorkspaceDisplayName(L"C:\\Codes\\tsuyoshi-otake\\sakuracode"));
+	EXPECT_EQ(L"sakuraCode", CExplorerTool::WorkspaceDisplayName(L"C:/Codes/tsuyoshi-otake/sakuraCode/"));
+	EXPECT_EQ(L"share", CExplorerTool::WorkspaceDisplayName(L"\\\\server\\share\\"));
 }
 
 TEST(ExplorerTool, TreatsReparseDirectoriesAsLeaves)
@@ -237,6 +238,19 @@ TEST(ExplorerTool, ExposesThePlannedPaletteAndKeepsRootWindowLocal)
 	EXPECT_EQ(RGB(0xE8, 0xEB, 0xF0), palette.text);
 	EXPECT_EQ(RGB(0x38, 0x3E, 0x49), palette.border);
 	EXPECT_EQ(RGB(0xEB, 0x6A, 0x9A), palette.focus);
+}
+
+TEST(ExplorerTool, TracksEachUpstreamEmptyExplorerWelcomeVariant)
+{
+	CExplorerTool explorer;
+
+	EXPECT_EQ(ExplorerWelcomeState::NoFolder, explorer.GetWelcomeState());
+	explorer.SetWelcomeState(ExplorerWelcomeState::NoFolderWithEditors);
+	EXPECT_EQ(ExplorerWelcomeState::NoFolderWithEditors, explorer.GetWelcomeState());
+	explorer.SetWelcomeState(ExplorerWelcomeState::EmptyWorkspace);
+	EXPECT_EQ(ExplorerWelcomeState::EmptyWorkspace, explorer.GetWelcomeState());
+	explorer.SetWelcomeState(ExplorerWelcomeState::WorkspaceWithFoldersUnsupported);
+	EXPECT_EQ(ExplorerWelcomeState::WorkspaceWithFoldersUnsupported, explorer.GetWelcomeState());
 }
 
 TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnClose)
@@ -275,6 +289,12 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 	EXPECT_TRUE(PumpMessagesUntil([&] {
 		return FindDirectChild(tree, childItem, L"nested.txt") != nullptr;
 	}, std::chrono::seconds(2)));
+	EXPECT_TRUE(IsExpanded(tree, rootItem));
+	EXPECT_TRUE(IsExpanded(tree, childItem));
+
+	tool.CollapseAllFolders();
+	EXPECT_FALSE(IsExpanded(tree, rootItem));
+	EXPECT_FALSE(IsExpanded(tree, childItem));
 
 	tool.Close();
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());

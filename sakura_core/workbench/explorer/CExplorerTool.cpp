@@ -6,19 +6,28 @@
 */
 #include "StdAfx.h"
 #include "workbench/explorer/CExplorerTool.h"
+#include "CSelectLang.h"
 
 #include <CommCtrl.h>
 #include <wincodec.h>
 
 #include "cxx/com_pointer.hpp"
+#include "theme/CThemeService.h"
+#include "workbench/IconMetrics.h"
 #include "workbench/commands/ExplorerCommandArguments.h"
 #include "workbench/commands/ExplorerCommandIds.h"
 #include "workbench/explorer/ExplorerContextMenuModel.h"
+#include "workbench/explorer/ExplorerFileIcon.h"
 #include "workbench/explorer/ExplorerResourcePath.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/LabelRunPainter.h"
+#include "workbench/icons/ThemeIconResolver.h"
 
 #include <sakura/uri/UriIdentity.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <condition_variable>
@@ -45,10 +54,107 @@ constexpr UINT kDirectoryChangedMessage = WM_APP + 0x572;
 constexpr UINT kActivateFileMessage = WM_APP + 0x573;
 constexpr UINT_PTR kRefreshTimer = 1;
 constexpr unsigned int kDefaultDpi = 96;
+//! Explorer and Source Control are Views in the same Primary Side Bar. Keep
+//! their ViewPane headers at the same VS Code-like 30 DIP density.
+constexpr int kPaneHeaderHeightDip = 30;
+constexpr int kTreeRowHeightDip = 22;
+constexpr int kHeaderInsetDip = 10;
+constexpr int kHeaderActionSideDip = 22;
+constexpr int kHeaderActionGapDip = 1;
+// ViewWelcome lays its content out as a top-flow column: 20px lateral
+// padding, a 300px maximum column, and one em between direct children. Keep
+// the native projection on the same geometry instead of centering a compact
+// button block in the available view.
+constexpr int kWelcomeHorizontalInsetDip = 20;
+constexpr int kWelcomeMaxColumnDip = 300;
+constexpr int kWelcomeElementGapDip = 16;
+constexpr int kWelcomeButtonHeightDip = 28;
+constexpr std::string_view kOpenFolderCommandId = "workbench.action.files.openFolder";
+constexpr std::string_view kAddRootFolderCommandId = "workbench.action.addRootFolder";
+
+//! The ViewWelcome contribution's text is a full-width paragraph; only its
+//! button containers have the 300px cap.  Keeping the strings in one place
+//! makes measuring and painting use the same upstream variant.
+[[nodiscard]] const wchar_t* WelcomeMessageText(ExplorerWelcomeState state) noexcept
+{
+	switch (state) {
+	case ExplorerWelcomeState::EmptyWorkspace:
+		return LS(STR_WORKBENCH_EXPLORER_EMPTY_WORKSPACE);
+	case ExplorerWelcomeState::NoFolderWithEditors:
+		return LS(STR_WORKBENCH_EXPLORER_NO_FOLDER_WITH_EDITORS);
+	case ExplorerWelcomeState::WorkspaceWithFoldersUnsupported:
+		return LS(STR_WORKBENCH_EXPLORER_MULTIROOT_UNAVAILABLE);
+	case ExplorerWelcomeState::NoFolder:
+		return LS(STR_WORKBENCH_EXPLORER_NO_FOLDER);
+	}
+	return L"";
+}
+
+struct HeaderActionSpec final {
+	std::string_view commandId;
+	std::wstring_view iconId;
+};
+
+constexpr std::array<HeaderActionSpec, 4> kHeaderActions{
+	HeaderActionSpec{ commands::kCreateFileFromExplorerCommandId, L"new-file" },
+	HeaderActionSpec{ commands::kCreateFolderFromExplorerCommandId, L"new-folder" },
+	HeaderActionSpec{ commands::kRefreshFilesExplorerCommandId, L"refresh" },
+	HeaderActionSpec{ commands::kCollapseExplorerFoldersCommandId, L"collapse-all" },
+};
 
 [[nodiscard]] int IconSizeForDpi(unsigned int dpi) noexcept
 {
 	return std::max(12, ::MulDiv(16, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), 96));
+}
+
+void DrawExplorerIcon(HDC dc, const RECT& bounds, std::wstring_view iconId, COLORREF color) noexcept
+{
+	if (dc == nullptr || bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+	const auto icon = icons::ResolveThemeIcon(iconId, icons::CCodiconFont::Instance().FaceName());
+	if (!icon.font) {
+		icons::codicons::Draw(dc, icons::IconRect{ bounds.left, bounds.top, bounds.right, bounds.bottom }, icon.builtin, color);
+		return;
+	}
+	const int side = std::max(1, std::min(static_cast<int>(bounds.right - bounds.left),
+		static_cast<int>(bounds.bottom - bounds.top)));
+	const HFONT glyphFont = icons::CreateLabelRunGlyphFont(icon.fontIcon.faceName, side);
+	if (glyphFont == nullptr || icon.fontIcon.glyph.empty()) {
+		if (glyphFont != nullptr) ::DeleteObject(glyphFont);
+		return;
+	}
+	const HGDIOBJ previousFont = ::SelectObject(dc, glyphFont);
+	const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
+	const COLORREF previousTextColor = ::SetTextColor(dc, color);
+	RECT glyph = bounds;
+	::DrawTextW(dc, icon.fontIcon.glyph.c_str(), static_cast<int>(icon.fontIcon.glyph.size()), &glyph,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::SetTextColor(dc, previousTextColor);
+	::SetBkMode(dc, previousBackgroundMode);
+	::SelectObject(dc, previousFont);
+	::DeleteObject(glyphFont);
+}
+
+[[nodiscard]] HBITMAP CreateTransparentBitmap(int side) noexcept
+{
+	if (side <= 0) return nullptr;
+	BITMAPINFO info{};
+	info.bmiHeader.biSize = sizeof(info.bmiHeader);
+	info.bmiHeader.biWidth = side;
+	info.bmiHeader.biHeight = -side;
+	info.bmiHeader.biPlanes = 1;
+	info.bmiHeader.biBitCount = 32;
+	info.bmiHeader.biCompression = BI_RGB;
+	HDC screen = ::GetDC(nullptr);
+	if (screen == nullptr) return nullptr;
+	void* bits = nullptr;
+	const HBITMAP bitmap = ::CreateDIBSection(screen, &info, DIB_RGB_COLORS, &bits, nullptr, 0);
+	::ReleaseDC(nullptr, screen);
+	if (bitmap == nullptr || bits == nullptr) {
+		if (bitmap != nullptr) ::DeleteObject(bitmap);
+		return nullptr;
+	}
+	std::memset(bits, 0, static_cast<std::size_t>(side) * side * sizeof(std::uint32_t));
+	return bitmap;
 }
 
 //! Loads a raster icon into a transparent, square 32-bit DIB for the TreeView image list.
@@ -363,8 +469,17 @@ struct CExplorerTool::Impl {
 	RECT bounds{};
 	unsigned int dpi{ kDefaultDpi };
 	ExplorerPalette palette{};
+	theme::CThemeFont font;
 	HIMAGELIST iconImages{};
 	std::map<std::wstring, int, std::less<>> iconIndices;
+	std::array<RECT, kHeaderActions.size()> headerActionRects{};
+	int hoveredHeaderAction{ -1 };
+	bool trackingHeaderMouseLeave{};
+	RECT openFolderButton{};
+	RECT addFolderButton{};
+	RECT welcomeMessageRect{};
+	ExplorerWelcomeState welcomeState = ExplorerWelcomeState::NoFolder;
+	bool openFolderHovered{};
 	FileActivationCallback activateFile;
 	std::wstring root;
 	std::unordered_map<std::uint64_t, Node> nodes;
@@ -380,6 +495,7 @@ struct CExplorerTool::Impl {
 	bool scrollbarHover{};
 	bool scrollbarDragging{};
 	bool trackingScrollbarMouseLeave{};
+	bool trackingTreeMouseLeave{};
 	int scrollbarThumbGrabOffset{};
 	int wheelDeltaRemainder{};
 	HTREEITEM pointerDownItem{};
@@ -425,6 +541,232 @@ struct CExplorerTool::Impl {
 	[[nodiscard]] int ScaleDip(int value) const noexcept
 	{
 		return std::max(1, ::MulDiv(value, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), 96));
+	}
+
+	[[nodiscard]] int HeaderHeight() const noexcept { return ScaleDip(kPaneHeaderHeightDip); }
+
+	void ApplyTreeFontAndMetrics()
+	{
+		if (tree == nullptr) return;
+		if (font.Dpi() != dpi) (void)font.Recreate(theme::ThemeFontKind::Chrome, dpi);
+		if (font.Get() != nullptr) (void)::SendMessageW(tree, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), TRUE);
+		TreeView_SetItemHeight(tree, ScaleDip(kTreeRowHeightDip));
+		TreeView_SetIndent(tree, ScaleDip(12));
+	}
+
+	void UpdateHeaderActionRects()
+	{
+		for (auto& actionBounds : headerActionRects) actionBounds = RECT{};
+		if (window == nullptr || root.empty()) return;
+		RECT client{};
+		if (!::GetClientRect(window, &client)) return;
+		const int side = ScaleDip(kHeaderActionSideDip);
+		const int gap = ScaleDip(kHeaderActionGapDip);
+		int right = static_cast<int>(client.right) - ScaleDip(kHeaderInsetDip);
+		const int top = std::max(0, (HeaderHeight() - side) / 2);
+		for (std::size_t position = headerActionRects.size(); position != 0; --position) {
+			const std::size_t index = position - 1;
+			const int left = std::max(0, right - side);
+			headerActionRects[index] = RECT{ left, top, right, top + side };
+			right = left - gap;
+		}
+	}
+
+	[[nodiscard]] int HeaderActionAt(POINT point) const noexcept
+	{
+		if (root.empty()) return -1;
+		for (std::size_t index = 0; index < headerActionRects.size(); ++index) {
+			const auto& actionBounds = headerActionRects[index];
+			if (point.x >= actionBounds.left && point.x < actionBounds.right
+				&& point.y >= actionBounds.top && point.y < actionBounds.bottom) {
+				return static_cast<int>(index);
+			}
+		}
+		return -1;
+	}
+
+	void UpdateHeaderHover(POINT point)
+	{
+		const int hovered = HeaderActionAt(point);
+		if (hoveredHeaderAction != hovered) {
+			hoveredHeaderAction = hovered;
+			if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
+		}
+		if (hovered >= 0 && !trackingHeaderMouseLeave && window != nullptr) {
+			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, window, 0 };
+			trackingHeaderMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+		}
+	}
+
+	void LayoutEmptyState()
+	{
+		openFolderButton = RECT{};
+		addFolderButton = RECT{};
+		welcomeMessageRect = RECT{};
+		if (window == nullptr || !root.empty()) return;
+		RECT client{};
+		if (!::GetClientRect(window, &client)) return;
+		const int clientWidth = std::max(0L, client.right - client.left);
+		const int inset = ScaleDip(kWelcomeHorizontalInsetDip);
+		const int messageWidth = std::max(0, clientWidth - inset * 2);
+		if (messageWidth <= 0) return;
+		const int buttonWidth = std::min(messageWidth, ScaleDip(kWelcomeMaxColumnDip));
+		const int messageLeft = static_cast<int>(client.left) + inset;
+		const int buttonLeft = messageLeft + (messageWidth - buttonWidth) / 2;
+		const int bodyTop = HeaderHeight();
+		const int gap = ScaleDip(kWelcomeElementGapDip);
+		const int buttonHeight = ScaleDip(kWelcomeButtonHeightDip);
+		int messageHeight = gap;
+		const HDC dc = ::GetDC(window);
+		if (dc != nullptr) {
+			const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
+			RECT measured{ 0, 0, messageWidth, 0 };
+			(void)::DrawTextW(dc, WelcomeMessageText(welcomeState), -1, &measured,
+				DT_CENTER | DT_WORDBREAK | DT_CALCRECT | DT_NOPREFIX);
+			messageHeight = std::max(0L, measured.bottom - measured.top);
+			if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+			::ReleaseDC(window, dc);
+		}
+		int cursorTop = bodyTop + gap;
+		welcomeMessageRect = RECT{ messageLeft, cursorTop, messageLeft + messageWidth, cursorTop + messageHeight };
+		cursorTop = welcomeMessageRect.bottom + gap;
+		auto addButton = [&](RECT& destination) {
+			destination = RECT{ buttonLeft, cursorTop, buttonLeft + buttonWidth, cursorTop + buttonHeight };
+			cursorTop = destination.bottom + gap;
+		};
+		if (welcomeState == ExplorerWelcomeState::EmptyWorkspace) {
+			addButton(addFolderButton);
+		} else if (welcomeState != ExplorerWelcomeState::WorkspaceWithFoldersUnsupported) {
+			addButton(openFolderButton);
+			if (welcomeState == ExplorerWelcomeState::NoFolderWithEditors) {
+				addButton(addFolderButton);
+			}
+		}
+	}
+
+	void LayoutChildren()
+	{
+		if (window == nullptr) return;
+		RECT client{};
+		if (!::GetClientRect(window, &client)) return;
+		UpdateHeaderActionRects();
+		LayoutEmptyState();
+		if (tree != nullptr) {
+			const int top = HeaderHeight();
+			::MoveWindow(tree, client.left, top, std::max(0L, client.right - client.left),
+				std::max(0L, client.bottom - top), TRUE);
+		}
+		UpdateOverlayScrollbar();
+	}
+
+	void InvokeHeaderAction(int index)
+	{
+		if (closed || !commandCallback || index < 0
+			|| static_cast<std::size_t>(index) >= kHeaderActions.size()) return;
+		(void)commandCallback(kHeaderActions[static_cast<std::size_t>(index)].commandId, "[]");
+	}
+
+	void InvokeOpenFolder()
+	{
+		if (!closed && commandCallback) (void)commandCallback(kOpenFolderCommandId, "[]");
+	}
+
+	void InvokeAddFolder()
+	{
+		if (!closed && commandCallback) (void)commandCallback(kAddRootFolderCommandId, "[]");
+	}
+
+	void UpdateEmptyStateHover(POINT point)
+	{
+		const bool hovered = !root.empty() ? false
+			: (::PtInRect(&openFolderButton, point) != FALSE || ::PtInRect(&addFolderButton, point) != FALSE);
+		if (openFolderHovered == hovered) return;
+		openFolderHovered = hovered;
+		if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
+	}
+
+	void PaintHeader(HDC dc)
+	{
+		if (dc == nullptr || window == nullptr) return;
+		RECT header{};
+		if (!::GetClientRect(window, &header)) return;
+		header.bottom = std::min<LONG>(header.bottom, HeaderHeight());
+		if (header.bottom <= header.top) return;
+		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
+		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
+		const COLORREF previousTextColor = ::SetTextColor(dc, palette.text);
+		RECT title{ header.left + ScaleDip(kHeaderInsetDip), header.top,
+			header.right - ScaleDip(kHeaderInsetDip), header.bottom };
+		if (!root.empty() && headerActionRects.front().right > headerActionRects.front().left) {
+			title.right = std::max(title.left, headerActionRects.front().left - ScaleDip(4));
+		}
+		const std::wstring titleText = root.empty() ? std::wstring(LS(STR_WORKBENCH_EXPLORER_TITLE)) : CExplorerTool::WorkspaceDisplayName(root);
+		::DrawTextW(dc, titleText.c_str(), static_cast<int>(titleText.size()), &title,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		if (!root.empty()) {
+			for (std::size_t index = 0; index < headerActionRects.size(); ++index) {
+				const RECT& action = headerActionRects[index];
+				if (action.right <= action.left || action.bottom <= action.top) continue;
+				if (hoveredHeaderAction == static_cast<int>(index)) {
+					const HBRUSH brush = ::CreateSolidBrush(palette.hover);
+					if (brush != nullptr) {
+						::FillRect(dc, &action, brush);
+						::DeleteObject(brush);
+					}
+				}
+				const int side = std::min(IconSizeForDpi(dpi), std::min(
+					static_cast<int>(action.right - action.left), static_cast<int>(action.bottom - action.top)));
+				const int left = static_cast<int>(action.left) +
+					(static_cast<int>(action.right - action.left) - side) / 2;
+				const int top = static_cast<int>(action.top) +
+					(static_cast<int>(action.bottom - action.top) - side) / 2;
+				DrawExplorerIcon(dc, RECT{ left, top, left + side, top + side },
+					kHeaderActions[index].iconId, palette.secondaryText);
+			}
+		}
+		::SetTextColor(dc, previousTextColor);
+		::SetBkMode(dc, previousBackgroundMode);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+	}
+
+	void PaintEmptyState(HDC dc)
+	{
+		if (dc == nullptr || !root.empty()) return;
+		LayoutEmptyState();
+		if (welcomeMessageRect.right <= welcomeMessageRect.left
+			|| welcomeMessageRect.bottom <= welcomeMessageRect.top) return;
+		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
+		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
+		const COLORREF previousTextColor = ::SetTextColor(dc, palette.secondaryText);
+		RECT message = welcomeMessageRect;
+		::DrawTextW(dc, WelcomeMessageText(welcomeState), -1, &message,
+			DT_CENTER | DT_WORDBREAK | DT_END_ELLIPSIS | DT_NOPREFIX);
+		POINT cursor{ -1, -1 };
+		if (::GetCursorPos(&cursor)) (void)::ScreenToClient(window, &cursor);
+		auto drawButton = [&](const RECT& button, const wchar_t* label) {
+			if (button.right <= button.left || button.bottom <= button.top) return;
+			const bool hovered = ::PtInRect(&button, cursor) != FALSE;
+			const HBRUSH fill = ::CreateSolidBrush(hovered ? palette.buttonHover : palette.button);
+			const HPEN border = ::CreatePen(PS_SOLID, 1, hovered ? palette.buttonHover : palette.button);
+			if (fill != nullptr && border != nullptr) {
+				const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
+				const HGDIOBJ previousPen = ::SelectObject(dc, border);
+				::RoundRect(dc, button.left, button.top, button.right, button.bottom, ScaleDip(4), ScaleDip(4));
+				::SelectObject(dc, previousPen);
+				::SelectObject(dc, previousBrush);
+			}
+			if (border != nullptr) ::DeleteObject(border);
+			if (fill != nullptr) ::DeleteObject(fill);
+			::SetTextColor(dc, palette.buttonText);
+			RECT labelRect = button;
+			::DrawTextW(dc, label, -1, &labelRect, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+		};
+		drawButton(openFolderButton, LS(STR_WORKBENCH_EXPLORER_OPEN_FOLDER));
+		drawButton(addFolderButton, welcomeState == ExplorerWelcomeState::EmptyWorkspace
+		? LS(STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE) : LS(STR_WORKBENCH_EXPLORER_ADD_FOLDER));
+		::SetTextColor(dc, previousTextColor);
+		::SetBkMode(dc, previousBackgroundMode);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 	}
 
 	[[nodiscard]] ScrollbarLayout GetScrollbarLayout() const noexcept
@@ -532,8 +874,17 @@ struct CExplorerTool::Impl {
 		if (tree == nullptr || scrollbar == nullptr || window == nullptr) return;
 		const LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
 		if ((style & (WS_HSCROLL | WS_VSCROLL)) != 0) (void)::ShowScrollBar(tree, SB_BOTH, FALSE);
+		// The workbench may lay out a page while its parent ViewContainer is
+		// hidden.  Keep the child control's own visibility state as the source
+		// of truth: IsWindowVisible would include the hidden parent and suppress
+		// the overlay until an unrelated layout pass.
+		if ((::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE) == 0) {
+			::ShowWindow(scrollbar, SW_HIDE);
+			return;
+		}
 		RECT client{};
-		if (!::GetClientRect(window, &client)) return;
+		if (!::GetClientRect(tree, &client)) return;
+		(void)::MapWindowPoints(tree, window, reinterpret_cast<LPPOINT>(&client), 2);
 		const int width = ScaleDip(10);
 		const int clientWidth = std::max(0, static_cast<int>(client.right - client.left));
 		const int clientHeight = std::max(0, static_cast<int>(client.bottom - client.top));
@@ -685,8 +1036,16 @@ struct CExplorerTool::Impl {
 		HTREEITEM pressedItem = nullptr;
 		if (impl != nullptr) {
 			if (message == WM_MOUSEMOVE) {
-				impl->pointerHoverItem = impl->HitTestFileActivationItem(
+				const auto hovered = impl->HitTestFileActivationItem(
 					POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
+				if (impl->pointerHoverItem != hovered) {
+					impl->pointerHoverItem = hovered;
+					::InvalidateRect(hwnd, nullptr, FALSE);
+				}
+				if (!impl->trackingTreeMouseLeave) {
+					TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, hwnd, 0 };
+					impl->trackingTreeMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+				}
 			} else if (message == WM_LBUTTONDOWN || message == WM_LBUTTONDBLCLK) {
 				impl->pointerDownItem = impl->HitTestFileActivationItem(
 					POINT{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) });
@@ -711,6 +1070,12 @@ struct CExplorerTool::Impl {
 				impl->pointerDownItem = nullptr;
 				impl->clickNotificationItem = nullptr;
 				impl->clickNotificationItemReady = false;
+			} else if (message == WM_MOUSELEAVE) {
+				impl->trackingTreeMouseLeave = false;
+				if (impl->pointerHoverItem != nullptr) {
+					impl->pointerHoverItem = nullptr;
+					::InvalidateRect(hwnd, nullptr, FALSE);
+				}
 			}
 		}
 		const LRESULT result = ::DefSubclassProc(hwnd, message, wParam, lParam);
@@ -727,8 +1092,9 @@ struct CExplorerTool::Impl {
 		}
 		if (impl != nullptr && (message == WM_VSCROLL || message == WM_KEYDOWN
 			|| message == TVM_SELECTITEM || message == TVM_EXPAND || message == TVM_DELETEITEM
-			|| message == TVM_INSERTITEMW)) {
+			|| message == TVM_INSERTITEMW || message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
 			impl->UpdateOverlayScrollbar();
+			if (message == WM_SETFOCUS || message == WM_KILLFOCUS) ::InvalidateRect(hwnd, nullptr, FALSE);
 		}
 		return result;
 	}
@@ -1034,6 +1400,18 @@ struct CExplorerTool::Impl {
 		return true;
 	}
 
+	bool BeginCreateFromSelection(bool directory)
+	{
+		if (closed || tree == nullptr || root.empty()) return false;
+		const HTREEITEM selected = TreeView_GetSelection(tree);
+		const Node* node = FindNodeByItem(selected != nullptr ? selected : TreeView_GetRoot(tree));
+		if (node == nullptr) return false;
+		if (node->isDirectory) return BeginCreate(node->path, directory);
+		const auto separator = node->path.find_last_of(L"\\/");
+		if (separator == std::wstring::npos) return false;
+		return BeginCreate(std::wstring_view(node->path).substr(0, separator), directory);
+	}
+
 	//! TVN_ENDLABELEDIT terminal for both the rename and the create edit.  A
 	//! null `text` is a cancelled edit.  The label is never applied here: the
 	//! commit callbacks reach the filesystem boundary, and the watcher-driven
@@ -1097,6 +1475,9 @@ struct CExplorerTool::Impl {
 		if (tree == nullptr) return;
 		LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
 		style |= TVS_HASBUTTONS;
+		// VS Code's Explorer uses disclosure chevrons, not the legacy dotted
+		// connector network exposed by the default Win32 TreeView style.
+		style &= ~(TVS_HASLINES | TVS_LINESATROOT);
 		::SetWindowLongPtrW(tree, GWL_STYLE, style);
 		::SetWindowPos(tree, nullptr, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
@@ -1106,7 +1487,10 @@ struct CExplorerTool::Impl {
 	{
 		(void)node;
 		(void)expanded;
-		return -1;
+		// A transparent image reserves the native TreeView's icon slot. The real
+		// codicon is painted in NM_CUSTOMDRAW so it stays theme-aware without
+		// importing a second file-icon theme parser.
+		return iconImages == nullptr ? -1 : 0;
 	}
 
 	void UpdateNodeIcon(Node& node, bool expanded)
@@ -1134,7 +1518,37 @@ struct CExplorerTool::Impl {
 	{
 		DestroyIconImages();
 		ApplyArrowVisibility();
+		if (tree == nullptr) return;
+		const int side = IconSizeForDpi(dpi);
+		iconImages = ::ImageList_Create(side, side, ILC_COLOR32 | ILC_MASK, 1, 1);
+		if (iconImages != nullptr) {
+			const HBITMAP transparent = CreateTransparentBitmap(side);
+			if (transparent == nullptr || ::ImageList_Add(iconImages, transparent, nullptr) == -1) {
+				if (transparent != nullptr) ::DeleteObject(transparent);
+				::ImageList_Destroy(iconImages);
+				iconImages = nullptr;
+			} else {
+				::DeleteObject(transparent);
+				TreeView_SetImageList(tree, iconImages, TVSIL_NORMAL);
+			}
+		}
 		UpdateAllItemIcons();
+	}
+
+	void PaintNodeIcon(HDC dc, const Node& node) const
+	{
+		if (dc == nullptr || tree == nullptr || node.item == nullptr) return;
+		RECT label{};
+		if (!TreeView_GetItemRect(tree, node.item, &label, TRUE)) return;
+		const int side = IconSizeForDpi(dpi);
+		const int top = static_cast<int>(label.top) +
+			std::max(0, (static_cast<int>(label.bottom - label.top) - side) / 2);
+		const RECT box{ std::max(0, static_cast<int>(label.left) - side - ScaleDip(2)), top,
+			std::max(0, static_cast<int>(label.left) - ScaleDip(2)), top + side };
+		const bool expanded = (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
+		const std::wstring_view iconId = ResolveExplorerFileIconCodicon(
+			node.name, node.isDirectory, expanded, node.isWorkspaceRoot);
+		DrawExplorerIcon(dc, box, iconId, palette.text);
 	}
 
 	void InsertPlaceholder(HTREEITEM parent)
@@ -1185,19 +1599,25 @@ struct CExplorerTool::Impl {
 	void PopulateRoot()
 	{
 		if (tree == nullptr) return;
+		hoveredHeaderAction = -1;
+		openFolderHovered = false;
 		TreeView_DeleteAllItems(tree);
 		nodes.clear();
 		if (root.empty()) {
-			UpdateOverlayScrollbar();
+			::ShowWindow(tree, SW_HIDE);
+			LayoutChildren();
+			if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
 			return;
 		}
+		::ShowWindow(tree, SW_SHOWNOACTIVATE);
 		ExplorerEntry entry;
 		entry.name = CExplorerTool::WorkspaceDisplayName(root);
 		entry.path = root;
 		entry.isDirectory = true;
 		const auto item = InsertNode(TVI_ROOT, std::move(entry));
 		if (item != nullptr) (void)TreeView_Expand(tree, item, TVE_EXPAND);
-		UpdateOverlayScrollbar();
+		LayoutChildren();
+		if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
 	}
 
 	void QueueEnumeration(Node& node, bool refresh)
@@ -1224,9 +1644,27 @@ struct CExplorerTool::Impl {
 
 	void QueueExpandedNodes()
 	{
+		if (tree == nullptr || labelEditActive) return;
 		for (auto& [id, node] : nodes) {
 			if (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) QueueEnumeration(node, true);
 		}
+	}
+
+	void CollapseTreeItem(HTREEITEM item)
+	{
+		if (tree == nullptr || item == nullptr) return;
+		for (auto child = TreeView_GetChild(tree, item); child != nullptr; child = TreeView_GetNextSibling(tree, child)) {
+			CollapseTreeItem(child);
+		}
+		(void)TreeView_Expand(tree, item, TVE_COLLAPSE);
+	}
+
+	void CollapseAll()
+	{
+		if (closed || tree == nullptr) return;
+		expandedPaths.clear();
+		CollapseTreeItem(TreeView_GetRoot(tree));
+		UpdateOverlayScrollbar();
 	}
 
 	void DeleteChildNodes(HTREEITEM parent)
@@ -1382,8 +1820,9 @@ bool CExplorerTool::Create(HWND parent)
 	m_impl->window = ::CreateWindowExW(0, kExplorerWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (m_impl->window == nullptr) return false;
+	m_impl->dpi = std::max(1u, ::GetDpiForWindow(m_impl->window));
 	m_impl->tree = ::CreateWindowExW(0, WC_TREEVIEWW, L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP |
-		TVS_HASBUTTONS | TVS_HASLINES | TVS_LINESATROOT | TVS_SHOWSELALWAYS | TVS_NOHSCROLL |
+		TVS_HASBUTTONS | TVS_SHOWSELALWAYS | TVS_NOHSCROLL |
 		TVS_EDITLABELS,
 		0, 0, 0, 0, m_impl->window, nullptr, instance, nullptr);
 	if (m_impl->tree == nullptr) {
@@ -1404,6 +1843,7 @@ bool CExplorerTool::Create(HWND parent)
 	::SendMessageW(m_impl->tree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
 	TreeView_SetBkColor(m_impl->tree, m_impl->palette.background);
 	TreeView_SetTextColor(m_impl->tree, m_impl->palette.text);
+	m_impl->ApplyTreeFontAndMetrics();
 	m_impl->RebuildIconImages();
 	m_impl->SetNotificationWindow(m_impl->window, true);
 	m_impl->StartWorker();
@@ -1419,10 +1859,14 @@ void CExplorerTool::Layout(const RECT& contentRect, unsigned int dpi)
 	const unsigned int nextDpi = dpi == 0 ? kDefaultDpi : dpi;
 	const bool dpiChanged = m_impl->dpi != nextDpi;
 	m_impl->dpi = nextDpi;
-	if (dpiChanged) m_impl->RebuildIconImages();
+	if (dpiChanged) {
+		m_impl->ApplyTreeFontAndMetrics();
+		m_impl->RebuildIconImages();
+	}
 	if (m_impl->window != nullptr) {
 		::SetWindowPos(m_impl->window, nullptr, contentRect.left, contentRect.top,
 			std::max(0L, contentRect.right - contentRect.left), std::max(0L, contentRect.bottom - contentRect.top), SWP_NOACTIVATE | SWP_NOZORDER);
+		m_impl->LayoutChildren();
 	}
 }
 
@@ -1490,6 +1934,21 @@ void CExplorerTool::SetRoot(std::wstring root)
 
 const std::wstring& CExplorerTool::GetRoot() const noexcept { return m_impl->root; }
 
+void CExplorerTool::SetWelcomeState(ExplorerWelcomeState state)
+{
+	if (m_impl->welcomeState == state) return;
+	m_impl->welcomeState = state;
+	if (m_impl->window != nullptr) {
+		m_impl->LayoutChildren();
+		::InvalidateRect(m_impl->window, nullptr, FALSE);
+	}
+}
+
+ExplorerWelcomeState CExplorerTool::GetWelcomeState() const noexcept
+{
+	return m_impl->welcomeState;
+}
+
 void CExplorerTool::SetFileActivationCallback(FileActivationCallback callback)
 {
 	m_impl->activateFile = std::move(callback);
@@ -1523,6 +1982,28 @@ bool CExplorerTool::BeginRenameEntry(std::wstring_view path)
 bool CExplorerTool::BeginCreateEntry(std::wstring_view parentDirectory, bool directory)
 {
 	return m_impl->BeginCreate(parentDirectory, directory);
+}
+
+bool CExplorerTool::CreateEntryFromSelection(bool directory)
+{
+	return m_impl->BeginCreateFromSelection(directory);
+}
+
+void CExplorerTool::Refresh()
+{
+	if (!m_impl->closed) m_impl->QueueExpandedNodes();
+}
+
+void CExplorerTool::RefreshStrings()
+{
+	if (m_impl->closed) return;
+	m_impl->LayoutChildren();
+	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+}
+
+void CExplorerTool::CollapseAllFolders()
+{
+	if (!m_impl->closed) m_impl->CollapseAll();
 }
 
 void CExplorerTool::SetPalette(ExplorerPalette palette)
@@ -1559,11 +2040,10 @@ std::wstring CExplorerTool::WorkspaceDisplayName(std::wstring_view root)
 	if (end == 0) return {};
 	const size_t separator = root.find_last_of(L"\\/", end - 1);
 	const size_t start = separator == std::wstring_view::npos ? 0 : separator + 1;
-	std::wstring displayName(root.substr(start, end - start));
-	if (!displayName.empty()) {
-		(void)::CharUpperBuffW(displayName.data(), static_cast<DWORD>(displayName.size()));
-	}
-	return displayName;
+	// VS Code's Explorer header uses the workspace folder's display label; it
+	// must preserve the filesystem's casing rather than turn a local path into
+	// an unrelated all-caps surrogate.
+	return std::wstring(root.substr(start, end - start));
 }
 
 bool CExplorerTool::IsCurrentGeneration(std::uint64_t current, std::uint64_t candidate) noexcept
@@ -1586,9 +2066,60 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 	auto& impl = *tool->m_impl;
 	switch (message) {
 	case WM_SIZE:
-		if (impl.tree != nullptr) ::MoveWindow(impl.tree, 0, 0, LOWORD(lParam), HIWORD(lParam), TRUE);
-		impl.UpdateOverlayScrollbar();
+		impl.LayoutChildren();
 		return 0;
+	case WM_MOUSEMOVE: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (point.y < impl.HeaderHeight()) {
+			impl.UpdateHeaderHover(point);
+		} else if (impl.hoveredHeaderAction != -1) {
+			impl.hoveredHeaderAction = -1;
+			::InvalidateRect(window, nullptr, FALSE);
+		}
+		if (impl.root.empty()) {
+			impl.UpdateEmptyStateHover(point);
+			if (impl.openFolderHovered && !impl.trackingHeaderMouseLeave) {
+				TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, window, 0 };
+				impl.trackingHeaderMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
+			}
+		}
+		return 0;
+	}
+	case WM_MOUSELEAVE:
+		impl.trackingHeaderMouseLeave = false;
+		if (impl.hoveredHeaderAction != -1 || impl.openFolderHovered) {
+			impl.hoveredHeaderAction = -1;
+			impl.openFolderHovered = false;
+			::InvalidateRect(window, nullptr, FALSE);
+		}
+		return 0;
+	case WM_LBUTTONUP: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (const int action = impl.HeaderActionAt(point); action >= 0) {
+			impl.InvokeHeaderAction(action);
+			return 0;
+		}
+		if (impl.root.empty() && ::PtInRect(&impl.openFolderButton, point) != FALSE) {
+			impl.InvokeOpenFolder();
+			return 0;
+		}
+		if (impl.root.empty() && ::PtInRect(&impl.addFolderButton, point) != FALSE) {
+			impl.InvokeAddFolder();
+			return 0;
+		}
+		break;
+	}
+	case WM_SETCURSOR: {
+		POINT point{};
+		if (::GetCursorPos(&point) && ::ScreenToClient(window, &point)
+			&& (impl.HeaderActionAt(point) >= 0
+			|| (impl.root.empty() && (::PtInRect(&impl.openFolderButton, point) != FALSE
+				|| ::PtInRect(&impl.addFolderButton, point) != FALSE)))) {
+			::SetCursor(::LoadCursor(nullptr, IDC_HAND));
+			return TRUE;
+		}
+		break;
+	}
 	case WM_ERASEBKGND:
 		return 1;
 	case WM_PAINT: {
@@ -1596,10 +2127,14 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		const HDC dc = ::BeginPaint(window, &paint);
 		if (dc != nullptr) {
 			const HBRUSH brush = ::CreateSolidBrush(impl.palette.background);
-			::FillRect(dc, &paint.rcPaint, brush);
-			::DeleteObject(brush);
-			::EndPaint(window, &paint);
+			if (brush != nullptr) {
+				::FillRect(dc, &paint.rcPaint, brush);
+				::DeleteObject(brush);
+			}
+			impl.PaintHeader(dc);
+			impl.PaintEmptyState(dc);
 		}
+		::EndPaint(window, &paint);
 		return 0;
 	}
 	case kWorkerResultMessage: {
@@ -1688,10 +2223,23 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		if (notification->code == NM_CUSTOMDRAW) {
 			auto* draw = reinterpret_cast<NMTVCUSTOMDRAW*>(lParam);
 			if (draw->nmcd.dwDrawStage == CDDS_PREPAINT) return CDRF_NOTIFYITEMDRAW;
-			if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT && (draw->nmcd.uItemState & (CDIS_SELECTED | CDIS_FOCUS)) != 0) {
-				draw->clrText = impl.palette.text;
-				draw->clrTextBk = impl.palette.focus;
-				return CDRF_NEWFONT;
+			if (draw->nmcd.dwDrawStage == CDDS_ITEMPREPAINT) {
+				const auto item = reinterpret_cast<HTREEITEM>(draw->nmcd.dwItemSpec);
+				const bool selected = (draw->nmcd.uItemState & CDIS_SELECTED) != 0;
+				const bool hovered = !selected && impl.pointerHoverItem == item;
+				if (selected) {
+					draw->clrText = ::GetFocus() == impl.tree ? impl.palette.selectionText : impl.palette.text;
+					draw->clrTextBk = ::GetFocus() == impl.tree ? impl.palette.focus : impl.palette.inactiveSelection;
+				} else if (hovered) {
+					draw->clrText = impl.palette.text;
+					draw->clrTextBk = impl.palette.hover;
+				}
+				return CDRF_NOTIFYPOSTPAINT | (selected || hovered ? CDRF_NEWFONT : 0);
+			}
+			if (draw->nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT) {
+				const auto item = reinterpret_cast<HTREEITEM>(draw->nmcd.dwItemSpec);
+				if (auto* node = impl.FindNodeByItem(item); node != nullptr) impl.PaintNodeIcon(draw->nmcd.hdc, *node);
+				return CDRF_DODEFAULT;
 			}
 		}
 		break;

@@ -174,30 +174,31 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   fail closed at this adapter boundary. They remain explicit Phase 5/6 gates and
   must not be approximated with legacy active-tool state.
 
-## Title-bar Account and Manage actions (2026-08-02)
+## Activity Bar Accounts and Manage (GlobalCompositeBar)
 
 - In VS Code's default vertical Activity Bar, Accounts and Manage are lower
-  **global actions**, not ViewContainers. They move to the title bar only when
-  the Activity Bar itself is moved to the top or bottom.
-- **Documented divergence:** this native adapter has no Activity Bar position
-  setting or typed lower-global-action section yet. It therefore retains Account
-  and Manage in the title bar rather than adding them as `ActivityBarItem`s and
-  falsely treating them as draggable Primary Side Bar ViewContainers. Account
-  remains an explicit "No account provider configured" boundary; Manage contains
-  only workbench commands with real native executors.
-- When Activity Bar placement is implemented, add a typed global-action group
-  and place Account/Manage at the bottom only for the vertical position, or in
-  the title bar only for top/bottom positions. Do not duplicate those actions or
-  add placeholder Search/Run and Debug containers in the meantime.
+  **global actions** (`workbench.actions.accounts` /
+  `workbench.actions.manage`), not ViewContainers. They live in
+  `GlobalCompositeBar` and move to the title bar only when the Activity Bar
+  itself is top or bottom.
+- Sakura paints them at the bottom of the vertical Activity Bar with those
+  upstream ids. They are typed as `ActivityBarEntryKind::GlobalAction`: they are
+  not selected as Side Bar containers, are not composite drag handles, and open
+  the existing Accounts / Manage menus. Account remains an explicit
+  "No account provider configured" boundary; Manage contains only workbench
+  commands with real native executors.
+- The title bar no longer hosts Account / Manage while the Activity Bar is
+  vertical (the only supported position today). When Activity Bar placement is
+  implemented, keep a single placement: bottom of the bar for vertical, title
+  bar for top/bottom — never both.
 
 ## Title-bar Update indicator (2026-08-06)
 
 - The button is VS Code's `workbench.actions.updateIndicator`, title `"Update"`,
   contributed to `MenuId.TitleBarUpdate` at order 0
   (`contrib/update/browser/updateTitleBarEntry.ts`). Placing it in the title bar
-  is upstream's own placement, not a divergence — unlike Account and Manage
-  above, which are here because this adapter has no Activity Bar position
-  setting yet.
+  is upstream's own placement, not a divergence — Account and Manage sit on the
+  Activity Bar for the default vertical position.
 - It is visible **only** for the three actionable states
   (`available for download`, `downloaded`, `ready`) and only while
   `update.titleBar` is true. `CCustomFrameController::SetUpdateIndicatorVisible`
@@ -342,9 +343,15 @@ wiring.
   under `workbench.statusbar.hidden`; an extension item uses
   `<extensionId>.<itemId>` and its contributed `name` is the menu label.
 - Use upstream stable IDs when VS Code owns the concept, including
-  `status.scm`, `status.editor.selection`,
+  `status.host`, `status.scm`, `status.editor.selection`,
   `status.editor.eol`, `status.editor.encoding`, `status.editor.inputMode`,
   `status.editor.zoom`, and `status.notifications`.
+- The leftmost entry is VS Code's remote host indicator (`status.host`,
+  `$(remote)`, command `workbench.action.remote.showMenu`). Sakura paints that
+  affordance for layout parity, but Remote Development is not a supported
+  authority here: activating it fails closed with an explicit status message
+  rather than simulating SSH/WSL/container windows. SCM `statusBarCommands`
+  remain the next left-aligned items.
 - The native status bar must not use `SBARS_SIZEGRIP`. VS Code anchors its
   rightmost item directly to the status-bar client edge; reserving a legacy
   resize-grip width leaves the notifications icon visibly too far left.

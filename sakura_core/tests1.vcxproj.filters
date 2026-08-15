@@ -255,6 +255,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerDeleteConfirmationTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerFileIconTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -417,6 +420,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalClipboardPasteTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
@@ -424,6 +430,9 @@
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalHeaderLayoutTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalPaneLayoutTest.cpp">
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp">

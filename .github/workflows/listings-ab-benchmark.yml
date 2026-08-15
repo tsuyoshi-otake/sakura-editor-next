@@ -3,9 +3,11 @@ name: listings A/B benchmark
 # Manual-only diagnostic workflow for Issue #43 Phase 2b. It measures a single
 # `build-sln.bat x64 Release` invocation with SAKURA_GENERATE_ASSEMBLY_LISTINGS
 # either on or off, using the SAKURA_MSBUILD_BINLOG / SAKURA_MSBUILD_PERFORMANCE_SUMMARY
-# diagnostics added in PR #45. It intentionally does not run tests, the installer,
-# ZIP packaging, CHM, BmpTools, coverage, Cppcheck, or Doxygen: the goal is
-# to isolate the MSBuild invocation itself, not to reproduce the full CI matrix.
+# diagnostics added in PR #45. The on arm first completes solution/tests with
+# listings forced off and then performs a product-only listing build; the off
+# arm retains one normal solution build. It intentionally does not run tests,
+# the installer, ZIP packaging, CHM, BmpTools, coverage, Cppcheck, or Doxygen:
+# the goal is to isolate the build-command cost, not to reproduce the full CI matrix.
 #
 # The MSBuild binary log is written to a runner-local temporary path and is not
 # uploaded as a workflow artifact, since this is a public repository and a raw
@@ -13,10 +15,11 @@ name: listings A/B benchmark
 # Actions step duration and the /clp:PerformanceSummary console output are enough
 # for the first A/B pass.
 #
-# SAKURA_GENERATE_ASSEMBLY_LISTINGS does more than write .asm files: it also
-# adds /CGTHREADS:1 to the linker, serializing LTCG code generation. Release
-# already builds with Fast LTCG. Treat the "on" vs "off" result as the combined
-# cost of listing generation plus that LTCG serialization, not as an isolated
+# SAKURA_GENERATE_ASSEMBLY_LISTINGS does more than write .asm files: the
+# product-only second phase runs at /m:1, while its project listing branch
+# disables /MP and adds /CGTHREADS:1 to the linker. Release already builds
+# with Fast LTCG. Treat the "on" vs "off" result as the combined cost of the
+# product rebuild, listing generation, and serialization, not as an isolated
 # measurement of asm output alone.
 #
 # Run both arms from the same tagged commit (workflow_dispatch's `ref` only

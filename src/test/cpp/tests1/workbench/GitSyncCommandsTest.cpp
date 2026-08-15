@@ -428,6 +428,18 @@ TEST(GitSyncCommands, DescribeGitSyncFailureUsesUpstreamsOwnSentences)
 			.message);
 }
 
+TEST(GitSyncCommands, SuppliedTextResolverLocalizesFailureMessages)
+{
+	const GitRefTextResolver text = [](std::string_view key, std::wstring_view) -> std::wstring {
+		if (key == "GitPushRejected") return L"Localized push rejection";
+		return std::wstring{};
+	};
+
+	const auto failure = DescribeGitSyncFailure(
+		EGitSyncFailureReason::PushRejected, Failure("error: failed to push some refs to x"), text);
+	EXPECT_EQ(L"Localized push rejection", failure.message);
+}
+
 TEST(GitSyncCommands, DescribeGitSyncFailureFallsBackToTheFirstStderrHintLine)
 {
 	const auto failure = DescribeGitSyncFailure(
@@ -543,6 +555,20 @@ TEST(GitSyncCommands, BuildFetchRemotePickItemsMovesTheUpstreamRemoteToTheFront)
 	EXPECT_EQ(L"$(cloud) origin", items[1].label);
 	EXPECT_EQ(EGitRemotePickKind::AllRemotes, items[2].kind);
 	EXPECT_EQ(L"$(cloud-download) Fetch all remotes", items[2].label);
+}
+
+TEST(GitSyncCommands, SuppliedTextResolverLocalizesFetchAllRemoteLabel)
+{
+	GitSyncRepositoryState state;
+	state.remotes.push_back(Remote(L"origin", L"o-fetch", L"o-push"));
+	const GitRefTextResolver text = [](std::string_view key, std::wstring_view) -> std::wstring {
+		if (key == "GitFetchAllRemotes") return L"Localized fetch all";
+		return std::wstring{};
+	};
+
+	const auto items = BuildFetchRemotePickItems(state, text);
+	ASSERT_EQ(2U, items.size());
+	EXPECT_EQ(L"$(cloud-download) Localized fetch all", items.back().label);
 }
 
 TEST(GitSyncCommands, BuildPublishRemotePickItemsOffersEveryRemoteIncludingAReadOnlyOne)

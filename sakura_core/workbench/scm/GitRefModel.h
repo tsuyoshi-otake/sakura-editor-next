@@ -8,9 +8,16 @@
 
 #include <string>
 #include <string_view>
+#include <functional>
 #include <vector>
 
 namespace workbench::scm {
+
+//! Resolves user-visible ref picker text.  The key is a stable workbench text
+//! identifier, while the argument carries branch-specific data such as a
+//! commit hash.  Keeping this callback optional preserves the model's English
+//! fallback for headless callers and tests.
+using GitRefTextResolver = std::function<std::wstring(std::string_view key, std::wstring_view argument)>;
 
 //! Upstream `RefType`. These are the three `refs/` namespaces `git.checkout`
 //! offers, and the declaration order is the order VS Code emits their groups.
@@ -85,14 +92,16 @@ inline constexpr int kGitCommitShortHashLength = 7;
 //! filter the command rows come first, otherwise the refs come first and the
 //! commands move below a blank separator.
 [[nodiscard]] std::vector<GitCheckoutItem> BuildCheckoutItems(
-	const std::vector<GitRef>& refs, bool detached, bool filterIsEmpty = true);
+	const std::vector<GitRef>& refs, bool detached, bool filterIsEmpty = true,
+	const GitRefTextResolver& text = {});
 
-[[nodiscard]] std::wstring CheckoutPlaceholder(bool detached);
+[[nodiscard]] std::wstring CheckoutPlaceholder(bool detached, const GitRefTextResolver& text = {});
 
 //! Builds the ref picker `git.branchFrom` shows before asking for a name. It
 //! leads with upstream's `HEADItem` and then lists all three groups.
 [[nodiscard]] std::vector<GitCheckoutItem> BuildBranchFromItems(
-	const std::vector<GitRef>& refs, std::wstring_view headCommit);
+	const std::vector<GitRef>& refs, std::wstring_view headCommit,
+	const GitRefTextResolver& text = {});
 
 //! Upstream's `git.branchWhitespaceChar` default.
 inline constexpr wchar_t kGitBranchWhitespaceChar = L'-';
@@ -126,7 +135,7 @@ struct GitBranchNameValidationResult {
 //! order: existing-name collision first, then the sanitization notice.
 [[nodiscard]] GitBranchNameValidationResult ValidateBranchName(
 	std::wstring_view name, const std::vector<GitRef>& refs,
-	wchar_t whitespaceChar = kGitBranchWhitespaceChar);
+	wchar_t whitespaceChar = kGitBranchWhitespaceChar, const GitRefTextResolver& text = {});
 
 //! `git checkout <name>` / `git checkout --detach <name>`.
 [[nodiscard]] std::vector<std::wstring> BuildCheckoutArguments(std::wstring_view refName, bool detached);

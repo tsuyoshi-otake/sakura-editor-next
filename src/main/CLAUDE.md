@@ -43,7 +43,7 @@ Keep the hand-written MSBuild path and the CMake/MinGW path behaviorally aligned
 
 ## Compiler and Generator Compatibility
 
-- `SAKURA_GENERATE_ASSEMBLY_LISTINGS` defaults to `OFF`. Keep `/Fa` directory paths terminated so parallel translation units receive distinct listing files.
+- `SAKURA_GENERATE_ASSEMBLY_LISTINGS` defaults to `OFF`. Keep `/Fa` directory paths terminated so listings use source-derived names. Its opt-in Release product MSBuild branch deletes `cl.exe`'s provisional listings immediately before Link, then disables `/MP` and uses `/CGTHREADS:1` while LTCG writes the final listings. Because tests1 relinks the product `/GL` archive and replays its `/Fa` destination during LTCG, the canonical listing build completes the solution/tests with listings explicitly off before a product-only `/m:1` listing pass.
 - Preserve configuration-aware paths: Debug libraries can live below a `Debug` subdirectory while Release libraries live at the base install path.
 - CMake currently discovers C++ files recursively, whereas `.vcxproj` files enumerate them explicitly. Adding a source still requires the MSBuild project/filter updates described in `sakura_core/CLAUDE.md`.
 

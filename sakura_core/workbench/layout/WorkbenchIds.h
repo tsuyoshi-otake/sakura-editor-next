@@ -46,7 +46,12 @@ inline constexpr std::string_view DebugWatch = "workbench.debug.watchExpressions
 inline constexpr std::string_view DebugCallStack = "workbench.debug.callStackView";
 inline constexpr std::string_view DebugLoadedScripts = "workbench.debug.loadedScriptsView";
 inline constexpr std::string_view DebugBreakpoints = "workbench.debug.breakPointsView";
+//! Current VS Code's sibling SCM Views. The native SCM HWND renders their
+//! sections, while Graph remains unregistered until the provider model exposes
+//! an actual history capability.
+inline constexpr std::string_view SourceControlRepositories = "workbench.scm.repositories";
 inline constexpr std::string_view SourceControl = "workbench.scm";
+inline constexpr std::string_view SourceControlGraph = "workbench.scm.history";
 inline constexpr std::string_view Problems = "workbench.panel.markers.view";
 inline constexpr std::string_view Output = "workbench.panel.output";
 inline constexpr std::string_view Terminal = "terminal";

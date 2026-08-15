@@ -17,6 +17,29 @@ namespace workbench::scm {
 
 namespace {
 
+[[nodiscard]] std::wstring ResolveText(const GitRefTextResolver& text, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument0 = {}, std::wstring_view argument1 = {})
+{
+	std::wstring result = text ? text(key, argument0) : std::wstring{};
+	if (result.empty()) result = fallback;
+	const auto replace = [&result](std::wstring_view marker, std::wstring_view value) {
+		std::size_t position = 0;
+		while (!value.empty() && (position = result.find(marker, position)) != std::wstring::npos) {
+			result.replace(position, marker.size(), value);
+			position += value.size();
+		}
+	};
+	replace(L"{0}", argument0);
+	replace(L"{1}", argument1);
+	return result;
+}
+
+[[nodiscard]] std::wstring ResolveText(const GitCommitCommandContext& context, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument0 = {}, std::wstring_view argument1 = {})
+{
+	return ResolveText(context.text, key, fallback, argument0, argument1);
+}
+
 [[nodiscard]] GitCommitCommandResult Succeeded(std::optional<std::wstring> inputBoxValue = std::nullopt)
 {
 	return { EGitCommitCommandStatus::Succeeded, {}, std::move(inputBoxValue) };
@@ -298,51 +321,50 @@ GitCommitRepositoryState BuildGitCommitRepositoryState(std::wstring_view reposit
 	return state;
 }
 
-GitCommitPrompt BuildUnsavedDocumentsPrompt(const std::vector<std::wstring>& documents)
+GitCommitPrompt BuildUnsavedDocumentsPrompt(const std::vector<std::wstring>& documents,
+	const GitRefTextResolver& text)
 {
 	GitCommitPrompt prompt;
 	prompt.message = documents.size() == 1
-		? L"The following file has unsaved changes which won't be included in the commit if you proceed: "
-			+ BaseName(documents.front()) + L".\n\nWould you like to save it before committing?"
-		: L"There are " + std::to_wstring(documents.size())
-			+ L" unsaved files.\n\nWould you like to save them before committing?";
-	prompt.choices = { L"Save All & Commit Changes", L"Commit Changes" };
+		? ResolveText(text, "GitUnsavedOne", L"The following file has unsaved changes which won't be included in the commit if you proceed: {0}.\n\nWould you like to save it before committing?", BaseName(documents.front()))
+		: ResolveText(text, "GitUnsavedMany", L"There are {0} unsaved files.\n\nWould you like to save them before committing?", std::to_wstring(documents.size()));
+	prompt.choices = {
+		ResolveText(text, "GitSaveAllCommitChanges", L"Save All & Commit Changes"),
+		ResolveText(text, "GitCommitChanges", L"Commit Changes") };
 	return prompt;
 }
 
-GitCommitPrompt BuildNoStagedChangesPrompt()
+GitCommitPrompt BuildNoStagedChangesPrompt(const GitRefTextResolver& text)
 {
 	GitCommitPrompt prompt;
-	prompt.message = L"There are no staged changes to commit.\n\n"
-		L"Would you like to stage all your changes and commit them directly?";
-	prompt.choices = { L"Yes" };
+	prompt.message = ResolveText(text, "GitNoStagedChanges", L"There are no staged changes to commit.\n\nWould you like to stage all your changes and commit them directly?");
+	prompt.choices = { ResolveText(text, "GitYes", L"Yes") };
 	return prompt;
 }
 
-GitCommitPrompt BuildNoChangesPrompt()
+GitCommitPrompt BuildNoChangesPrompt(const GitRefTextResolver& text)
 {
 	GitCommitPrompt prompt;
-	prompt.message = L"There are no changes to commit.";
-	prompt.choices = { L"Create Empty Commit" };
+	prompt.message = ResolveText(text, "GitNoChanges", L"There are no changes to commit.");
+	prompt.choices = { ResolveText(text, "GitCreateEmptyCommit", L"Create Empty Commit") };
 	prompt.warning = false;
 	prompt.modal = false;
 	return prompt;
 }
 
-GitCommitPrompt BuildNoVerifyCommitPrompt()
+GitCommitPrompt BuildNoVerifyCommitPrompt(const GitRefTextResolver& text)
 {
 	GitCommitPrompt prompt;
-	prompt.message = L"You are about to commit your changes without verification, "
-		L"this skips pre-commit hooks and can be undesirable.\n\nAre you sure to continue?";
-	prompt.choices = { L"OK" };
+	prompt.message = ResolveText(text, "GitNoVerifyWarning", L"You are about to commit your changes without verification, this skips pre-commit hooks and can be undesirable.\n\nAre you sure to continue?");
+	prompt.choices = { ResolveText(text, "GitOk", L"OK") };
 	return prompt;
 }
 
-GitCommitPrompt BuildUndoMergeCommitPrompt()
+GitCommitPrompt BuildUndoMergeCommitPrompt(const GitRefTextResolver& text)
 {
 	GitCommitPrompt prompt;
-	prompt.message = L"The last commit was a merge commit. Are you sure you want to undo it?";
-	prompt.choices = { L"Undo merge commit" };
+	prompt.message = ResolveText(text, "GitUndoMergeWarning", L"The last commit was a merge commit. Are you sure you want to undo it?");
+	prompt.choices = { ResolveText(text, "GitUndoMergeCommit", L"Undo merge commit") };
 	return prompt;
 }
 
@@ -350,7 +372,7 @@ GitCommitCommandResult RunGitCommit(const GitCommitCommandContext& context,
 	const GitCommitRepositoryState& state, std::wstring_view inputBoxValue, GitCommitOptions options)
 {
 	if (!context.run) {
-		return Failed(L"The commit command has no git invoker.");
+		return Failed(ResolveText(context, "GitCommitNoInvoker", L"The commit command has no git invoker."));
 	}
 	const auto& config = context.configuration;
 	options.requireUserConfig = config.requireUserConfig;
@@ -360,9 +382,8 @@ GitCommitCommandResult RunGitCommit(const GitCommitCommandContext& context,
 	// is not walked through a confirmation for something that cannot happen.
 	const auto inProgress = ReadInProgressState(context);
 	if (inProgress.rebase) {
-		auto message = std::wstring(
-			L"A rebase is in progress. Continuing a rebase is not supported here; "
-			L"use git on the command line to finish or abort it.");
+		auto message = ResolveText(context, "GitRebaseUnsupported",
+			L"A rebase is in progress. Continuing a rebase is not supported here; use git on the command line to finish or abort it.");
 		Notify(context, message);
 		return { EGitCommitCommandStatus::UnsupportedRebaseInProgress, std::move(message), std::nullopt };
 	}
@@ -381,13 +402,13 @@ GitCommitCommandResult RunGitCommit(const GitCommitCommandContext& context,
 			}
 			if (!documents.empty()) {
 				if (!context.confirm) {
-					return Failed(L"The commit command has no confirmation presenter.");
+					return Failed(ResolveText(context, "GitCommitNoConfirmation", L"The commit command has no confirmation presenter."));
 				}
-				const auto pick = context.confirm(BuildUnsavedDocumentsPrompt(documents));
+				const auto pick = context.confirm(BuildUnsavedDocumentsPrompt(documents, context.text));
 				if (!pick) return Cancelled();
 				if (*pick == 0) {
 					if (!context.saveDocuments || !context.saveDocuments()) {
-						auto message = std::wstring(L"The unsaved files could not be saved before committing.");
+						auto message = ResolveText(context, "GitUnsavedSaveFailed", L"The unsaved files could not be saved before committing.");
 						Notify(context, message);
 						return Failed(std::move(message));
 					}
@@ -417,9 +438,9 @@ GitCommitCommandResult RunGitCommit(const GitCommitCommandContext& context,
 			&& options.all == EGitCommitAll::None && !options.amend) {
 			if (!config.suggestSmartCommit) return NotApplicable();
 			if (!context.confirm) {
-				return Failed(L"The commit command has no confirmation presenter.");
+				return Failed(ResolveText(context, "GitCommitNoConfirmation", L"The commit command has no confirmation presenter."));
 			}
-			const auto pick = context.confirm(BuildNoStagedChangesPrompt());
+			const auto pick = context.confirm(BuildNoStagedChangesPrompt(context.text));
 			if (!pick) return Cancelled();
 			enableSmartCommit = true;
 		}
@@ -441,25 +462,25 @@ GitCommitCommandResult RunGitCommit(const GitCommitCommandContext& context,
 			|| (noStagedChanges && config.smartCommitChangesTrackedOnly && state.workingTreeAllUntracked))
 		&& !options.amend && !options.empty && !inProgress.merge) {
 		if (!context.confirm) {
-			return Failed(L"The commit command has no confirmation presenter.");
+			return Failed(ResolveText(context, "GitCommitNoConfirmation", L"The commit command has no confirmation presenter."));
 		}
-		const auto pick = context.confirm(BuildNoChangesPrompt());
+		const auto pick = context.confirm(BuildNoChangesPrompt(context.text));
 		if (!pick) return NotApplicable();
 		options.empty = true;
 	}
 
 	if (options.noVerify) {
 		if (!config.allowNoVerifyCommit) {
-			auto message = std::wstring(L"Commits without verification are not allowed, "
-				L"please enable them with the \"git.allowNoVerifyCommit\" setting.");
+			auto message = ResolveText(context, "GitNoVerifyDisabled",
+			L"Commits without verification are not allowed, please enable them with the \"git.allowNoVerifyCommit\" setting.");
 			Notify(context, message);
 			return Failed(std::move(message));
 		}
 		if (config.confirmNoVerifyCommit) {
 			if (!context.confirm) {
-				return Failed(L"The commit command has no confirmation presenter.");
+				return Failed(ResolveText(context, "GitCommitNoConfirmation", L"The commit command has no confirmation presenter."));
 			}
-			const auto pick = context.confirm(BuildNoVerifyCommitPrompt());
+			const auto pick = context.confirm(BuildNoVerifyCommitPrompt(context.text));
 			if (!pick) return Cancelled();
 		}
 	}
@@ -470,12 +491,13 @@ GitCommitCommandResult RunGitCommit(const GitCommitCommandContext& context,
 	std::wstring message(inputBoxValue);
 	if (message.empty() && !config.useEditorAsCommitInput && !(options.amend && state.headHasCommit)) {
 		if (!context.promptForMessage) {
-			return Failed(L"The commit command has no commit-message prompt.");
+			return Failed(ResolveText(context, "GitCommitNoMessagePrompt", L"The commit command has no commit-message prompt."));
 		}
 		const auto placeholder = state.headShortName.empty()
-			? std::wstring(L"Commit message")
-			: L"Message (commit on \"" + state.headShortName + L"\")";
-		const auto typed = context.promptForMessage(placeholder, L"Please provide a commit message");
+			? ResolveText(context, "GitCommitMessage", L"Commit message")
+			: ResolveText(context, "GitCommitMessageOnBranch", L"Message (commit on \"{0}\")", state.headShortName);
+		const auto typed = context.promptForMessage(placeholder,
+			ResolveText(context, "GitCommitMessagePrompt", L"Please provide a commit message"));
 		if (!typed) return Cancelled();
 		message = *typed;
 	}
@@ -513,7 +535,7 @@ GitCommitCommandResult RunGitUndoCommit(
 	const GitCommitCommandContext& context, const GitCommitRepositoryState& state)
 {
 	if (!context.run) {
-		return Failed(L"The undo command has no git invoker.");
+		return Failed(ResolveText(context, "GitUndoNoInvoker", L"The undo command has no git invoker."));
 	}
 	if (!state.headHasCommit) {
 		auto message = std::wstring(L"Can't undo because HEAD doesn't point to any commit.");
@@ -535,7 +557,7 @@ GitCommitCommandResult RunGitUndoCommit(
 		if (!context.confirm) {
 			return Failed(L"The undo command has no confirmation presenter.");
 		}
-		const auto pick = context.confirm(BuildUndoMergeCommitPrompt());
+		const auto pick = context.confirm(BuildUndoMergeCommitPrompt(context.text));
 		if (!pick) return Cancelled();
 	}
 

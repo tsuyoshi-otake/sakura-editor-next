@@ -722,6 +722,8 @@ private:
 	[[nodiscard]] std::wstring BuildExplorerLaunchOptions(bool preview) const;
 	void RefreshEditorCorePresentation();
 	void ApplyEditorCoreSnapshot(const workbench::editor::EditorCoreSnapshot& snapshot, bool restoreFocus = true);
+	//! Projects authoritative workspace/editor state into Explorer and SCM welcome variants.
+	void UpdateWorkbenchWelcomeState();
 	[[nodiscard]] bool AdoptLoadedLegacyFile();
 	[[nodiscard]] bool FinalizeSuccessfulLegacyLoad();
 	[[nodiscard]] bool CreateUntitledEditorInput();
@@ -772,6 +774,7 @@ private:
 	//! workbench picker uses.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitBranchCommand(
 		EGitBranchCommand command);
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteOpenWorkspaceFolderCommand();
 	//! Runs one update operation. Returns `Unsupported` when this window has no
 	//! update stack at all, which is the honest answer for an installation that
 	//! cannot update itself rather than a silently successful no-op.
@@ -833,7 +836,7 @@ private:
 	//! zero-parameter handler. Unlike `git.init`, the pure `GitCloneCommandResult`
 	//! carries no post-clone "open it?" decision, so this window does not offer
 	//! one either - a recorded divergence in `workbench/scm/CLAUDE.md`.
-	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCloneCommand();
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCloneCommand(bool recurseSubmodules);
 	//! Runs `explorer.newFile`/`explorer.newFolder`: starts the Explorer's inline
 	//! create row under the resource the payload names. The filesystem write
 	//! happens later, in `CommitExplorerCreate`, when the user commits the name.
@@ -925,6 +928,8 @@ private:
 	void ApplyAuxiliaryBarPage(std::string_view containerId);
 	//! Refreshes both side-bar titles from the containers they currently render.
 	void RefreshSidebarTitles();
+	//! Re-resolves Workbench text after the process-wide language resource changes.
+	void RefreshLocalizedWorkbenchText();
 	//! The side-bar host that currently renders `containerId`, or nullptr when neither does.
 	[[nodiscard]] workbench::viewcontainer::CViewContainerHost* HostShowingPage(
 		std::string_view containerId) const noexcept;

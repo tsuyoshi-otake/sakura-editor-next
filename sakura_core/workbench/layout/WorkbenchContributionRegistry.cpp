@@ -105,7 +105,10 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	addView(ids::view::DebugCallStack, ids::viewContainer::RunAndDebug, "Call Stack", 30);
 	addView(ids::view::DebugLoadedScripts, ids::viewContainer::RunAndDebug, "Loaded Scripts", 40);
 	addView(ids::view::DebugBreakpoints, ids::viewContainer::RunAndDebug, "Breakpoints", 50);
-	addView(ids::view::SourceControl, ids::viewContainer::SourceControl, "Source Control", 10);
+	// `workbench.scm` is the current VS Code Changes View. Repositories and Graph
+	// are rendered as non-selectable native siblings until the layout registry can
+	// model VS Code's provider-driven visibility conditions.
+	addView(ids::view::SourceControl, ids::viewContainer::SourceControl, "Changes", 10);
 	addView(ids::view::Problems, ids::viewContainer::Problems, "Problems", 10);
 	addView(ids::view::Output, ids::viewContainer::Output, "Output", 10);
 	addView(ids::view::Terminal, ids::viewContainer::Terminal, "Terminal", 10);

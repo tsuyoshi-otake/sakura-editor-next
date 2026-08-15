@@ -32,6 +32,9 @@ public:
 	// losing a key, paste, mouse report, or IME commit.
 	using InputSink = std::function<TerminalQueueInputResult(std::span<const std::uint8_t> bytes)>;
 	using ResizeSink = std::function<void(TerminalSize size)>;
+	//! Called after this native viewport becomes the focused terminal pane.
+	//! The workbench owns session selection; the renderer only reports focus.
+	using FocusSink = std::function<void()>;
 	using ImeResultReader = std::function<bool(HWND window, std::wstring& result)>;
 
 	CTerminalWnd();
@@ -46,6 +49,7 @@ public:
 	void SetInputAdapter( SakuraTerminalInputAdapter* inputAdapter );
 	void SetInputSink( InputSink sink );
 	void SetResizeSink( ResizeSink sink );
+	void SetFocusSink( FocusSink sink );
 	//! Drops input and IME state owned by the previously bound session. This must
 	//! be called before a renderer is rebound across a workspace/session boundary.
 	void ResetSessionInputState() noexcept;
