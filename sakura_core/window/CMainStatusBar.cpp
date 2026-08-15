@@ -219,13 +219,6 @@ void CMainStatusBar::SetNotificationState(
 	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
 }
 
-void CMainStatusBar::SetWorkspaceTrustState(config::EWorkspaceTrustState state) noexcept
-{
-	if (m_workspaceTrustState == state) return;
-	m_workspaceTrustState = state;
-	if (m_hwndStatusBar != nullptr) ::InvalidateRect(m_hwndStatusBar, nullptr, FALSE);
-}
-
 bool CMainStatusBar::IsStatusbarEntryVisible(std::string_view id, bool providerVisible) const noexcept
 {
 	if (!providerVisible || !workbench::statusbar::StatusbarViewModel::IsValidId(id)) return false;
@@ -385,7 +378,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	// 実 VS Code は StatusBarItem.text も SourceControl.statusBarCommands の
 	// Command.title も同じ renderLabelWithIcons で描く。
 	// 測る側も描く側も `workbench/icons/LabelRunPainter.h` が唯一の規則。ここに 3 つ目
-	// の写しを置くと、同じ `$(name)` がステータスバーと SCM ビューと banner で別の絵・
+	// の写しを置くと、同じ `$(name)` がステータスバーと SCM ビューと他のワークベンチ面で別の絵・
 	// 別の幅になり得る。`itemInset` の扱いだけはこの呼び出し側の都合なので、内側余白を
 	// 差し引いた矩形を渡す（矩形の解釈を 2 通りにしない）。
 	const auto measureLabelRuns = [&](const std::vector<workbench::icons::SLabelRun>& runs, int iconSide) {
@@ -409,37 +402,11 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 		workbench::icons::DrawLabelRuns(target, runs, content, iconSide, iconColor, glyphFonts);
 	};
 
-	// VS Code の `status.workspaceTrust`（far-left の `$(shield) Restricted Mode`）
-	// は SCM ブロックよりさらに左、ワークスペースが信頼されていない間だけ現れる。
-	// `Unknown` も `Untrusted` も「制限モード」を意味するので、`Trusted` の否定で
-	// 判定する。ステータスバー全体は 1 枚塗り（上の FillSolidRect）だけで済むが、
-	// この項目だけは VS Code の `statusBarItem.prominentBackground` を自分の矩形に
-	// 上塗りしてから描く、唯一の例外。
-	int workspaceTrustWidth = 0;
-	if (IsStatusbarEntryVisible("status.workspaceTrust")
-		&& m_workspaceTrustState != config::EWorkspaceTrustState::Trusted) {
-		const int trustIconSide = InlineStatusIconSide(height, dpi);
-		const auto runs = workbench::icons::ParseLabelWithIcons(
-			L"$(shield) Restricted Mode",
-			workbench::icons::CCodiconFont::Instance().FaceName());
-		const int itemWidth = workbench::icons::StatusItemPartWidthPixels(
-			measureLabelRuns(runs, trustIconSide), dpi);
-		const int right = std::min(width, itemWidth);
-		if (right > 0) {
-			const RECT itemRect{ 0, 0, right, height };
-			FillSolidRect(target, itemRect, m_palette.statusBarProminentBackground.ToColorRef());
-			drawLabelRuns(runs, itemRect, trustIconSide);
-			m_statusbarHitTargets.push_back({ "status.workspaceTrust", itemRect, "workbench.trust.manage" });
-			workspaceTrustWidth = right;
-		}
-	}
-
 	// 実 VS Code のステータスバー左端は SCM プロバイダーが公開した
 	// statusBarCommands の並びそのもの。git なら `$(git-branch) main` と
 	// `$(sync) 0↓ 1↑` の 2 項目で、それぞれ別のコマンドを実行する。1 本の
-	// テキストに畳むと、押した位置とコマンドの対応が失われる。Restricted Mode
-	// 項目が描かれていれば、その幅ぶん右へずれた位置から始まる。
-	int scmWidth = workspaceTrustWidth;
+	// テキストに畳むと、押した位置とコマンドの対応が失われる。
+	int scmWidth = 0;
 	if (IsStatusbarEntryVisible("status.scm")) {
 		const int scmIconSide = InlineStatusIconSide(height, dpi);
 		for (const auto& command : m_scmCommands) {

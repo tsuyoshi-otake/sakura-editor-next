@@ -70,7 +70,7 @@ void AppendOperation(std::string& output, const WorkbenchLayoutOperationMetadata
 
 [[nodiscard]] EWorkbenchPartPosition DefaultPartPosition(std::string_view id) noexcept
 {
-	if (id == ids::part::Titlebar || id == ids::part::Banner) return EWorkbenchPartPosition::Top;
+	if (id == ids::part::Titlebar) return EWorkbenchPartPosition::Top;
 	if (id == ids::part::Activitybar || id == ids::part::Sidebar) return EWorkbenchPartPosition::Left;
 	if (id == ids::part::Panel || id == ids::part::Statusbar) return EWorkbenchPartPosition::Bottom;
 	if (id == ids::part::Auxiliarybar) return EWorkbenchPartPosition::Right;
@@ -82,10 +82,7 @@ void AppendOperation(std::string& output, const WorkbenchLayoutOperationMetadata
 	// Match VS Code's fresh-workspace visibility: the primary side bar is shown,
 	// while the bottom panel and secondary side bar open only on demand. Extension
 	// parts remain visible by default unless their owner contributes another policy.
-	// The Restricted Mode banner is the same "starts closed" shape: VS Code never
-	// shows it until a live trust computation says the window is restricted, so a
-	// fresh layout with no computed answer yet must start it hidden, not visible.
-	return id != ids::part::Panel && id != ids::part::Auxiliarybar && id != ids::part::Banner;
+	return id != ids::part::Panel && id != ids::part::Auxiliarybar;
 }
 
 [[nodiscard]] bool IsValidFocus(const WorkbenchFocusState& focus) noexcept
@@ -444,16 +441,6 @@ WorkbenchLayoutStateSnapshot WorkbenchLayoutStateService::MementoSnapshot() cons
 		if (const auto deferred = m_deferredActiveViews.find(container.containerId);
 			deferred != m_deferredActiveViews.end()) container.activeViewId = deferred->second;
 	}
-	// The Restricted Mode banner is derived, not chosen: its visibility comes from
-	// the workspace trust answer and security.workspace.trust.banner, both of which
-	// are recomputed from scratch on every startup. Persisting it would store a
-	// value that the next launch immediately overwrites, and restoring it would
-	// briefly assert a trust verdict this process has not computed yet. VS Code
-	// likewise persists no banner visibility. Keep it in the live snapshot -- the
-	// native projection needs it there -- and out of the durable one.
-	std::erase_if(snapshot.parts, [](const WorkbenchPartState& part) {
-		return part.partId == ids::part::Banner;
-	});
 	return snapshot;
 }
 

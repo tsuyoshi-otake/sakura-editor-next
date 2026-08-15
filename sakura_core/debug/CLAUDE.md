@@ -8,7 +8,7 @@ evaluation, cancellation, and teardown. DEBUG CONSOLE is a view over the
 session REPL and does not own the adapter. Every request and session transition
 has one terminal result; stale session generations cannot update a newer
 session. Launch configuration comes through the configuration/workspace
-service, including trust and variable resolution.
+service, including variable resolution.
 
 ## Scoped Phase 6 Guidance
 

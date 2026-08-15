@@ -79,7 +79,6 @@ WorkbenchContributionRegistry::WorkbenchContributionRegistry()
 	};
 
 	addPart(ids::part::Titlebar, "Title Bar");
-	addPart(ids::part::Banner, "Banner");
 	addPart(ids::part::Activitybar, "Activity Bar");
 	addPart(ids::part::Sidebar, "Side Bar");
 	addPart(ids::part::Panel, "Panel");

@@ -13,7 +13,6 @@ namespace workbench::layout::ids {
 
 namespace part {
 inline constexpr std::string_view Titlebar = "workbench.parts.titlebar";
-inline constexpr std::string_view Banner = "workbench.parts.banner";
 inline constexpr std::string_view Activitybar = "workbench.parts.activitybar";
 inline constexpr std::string_view Sidebar = "workbench.parts.sidebar";
 inline constexpr std::string_view Panel = "workbench.parts.panel";
