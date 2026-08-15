@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -43,6 +43,16 @@ using Arguments = std::vector<std::wstring>;
 	result.standardOutput.assign(standardOutput.begin(), standardOutput.end());
 	result.standardError.assign(standardError);
 	return result;
+}
+
+[[nodiscard]] ScmTextResolver JapaneseScmText()
+{
+	return [](EScmTextKey key, std::wstring_view) -> std::wstring {
+		if (key == EScmTextKey::GitInitializeRepository) {
+			return L"\u30ea\u30dd\u30b8\u30c8\u30ea\u3092\u521d\u671f\u5316";
+		}
+		return {};
+	};
 }
 
 [[nodiscard]] GitExecutionResult CancelledExecution()
@@ -247,7 +257,11 @@ TEST(GitInitCloneCommands, BuildGitInitArgumentsIsExactlyInit)
 
 TEST(GitInitCloneCommands, BuildGitInitHomeDirectoryPromptNamesThePathAndOffersOneChoice)
 {
-	const GitPrompt prompt = BuildGitInitHomeDirectoryPrompt(L"C:\\Users\\dev");
+	const GitPrompt fallback = BuildGitInitHomeDirectoryPrompt(L"C:\\Users\\dev");
+	ASSERT_EQ(1U, fallback.choices.size());
+	EXPECT_EQ(L"Initialize Repository", fallback.choices[0]);
+
+	const GitPrompt prompt = BuildGitInitHomeDirectoryPrompt(L"C:\\Users\\dev", JapaneseScmText());
 
 	EXPECT_NE(std::wstring::npos, prompt.message.find(L"C:\\Users\\dev"));
 	ASSERT_EQ(1U, prompt.choices.size());
@@ -730,7 +744,7 @@ TEST(GitInitCloneCommands, BuildGitScmWelcomeModelIsNoneWithARepositoryOpen)
 TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersInitWithAnOpenFolderAndNoRepository)
 {
 	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
-		EGitScmWelcomeWorkspaceState::Folder, /*hasRepository=*/false);
+		EGitScmWelcomeWorkspaceState::Folder, /*hasRepository=*/false, JapaneseScmText());
 
 	EXPECT_EQ(EGitScmWelcomeContent::FolderNoRepository, model.content);
 	ASSERT_EQ(1U, model.actions.size());
@@ -757,7 +771,7 @@ TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersOpenFolderThenCloneWithN
 TEST(GitInitCloneCommands, BuildGitScmWelcomeModelOffersInitForWorkspaceWithFolders)
 {
 	const GitScmWelcomeModel model = BuildGitScmWelcomeModel(
-		EGitScmWelcomeWorkspaceState::WorkspaceWithFolders, /*hasRepository=*/false);
+		EGitScmWelcomeWorkspaceState::WorkspaceWithFolders, /*hasRepository=*/false, JapaneseScmText());
 
 	EXPECT_EQ(EGitScmWelcomeContent::WorkspaceNoRepository, model.content);
 	ASSERT_EQ(1U, model.actions.size());
