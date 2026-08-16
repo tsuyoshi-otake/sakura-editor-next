@@ -51,6 +51,14 @@ ScmResourceGroupState MakeGroup(const ScmOwner& owner, std::string_view handle, 
 	return group;
 }
 
+std::string LocalizedLabel(const GitDiffTextResolver& text, std::string_view key,
+	std::string_view fallback)
+{
+	if (!text) return std::string(fallback);
+	const auto value = text(key, {});
+	return value.empty() ? std::string(fallback) : ToUtf8(value);
+}
+
 //!
 //! @brief Upstream's `CommandResolver.resolveChangeCommand`.
 //!
@@ -63,11 +71,12 @@ ScmResourceGroupState MakeGroup(const ScmOwner& owner, std::string_view handle, 
 //! This is `git.openDiffOnClick`'s default half. The former `git.openFile`
 //! publication was a stand-in for a diff editor that did not exist; it does now.
 //!
-std::optional<ScmCommand> MakeChangeCommand(const GitDiffRow& row, std::wstring_view repositoryRoot)
+std::optional<ScmCommand> MakeChangeCommand(const GitDiffRow& row, std::wstring_view repositoryRoot,
+	const GitDiffTextResolver& text)
 {
-	const auto input = ResolveGitDiffInput(row);
+	const auto input = ResolveGitDiffInput(row, text);
 	ScmCommand command;
-	command.title = "Open";
+	command.title = LocalizedLabel(text, "GitScmOpen", "Open");
 	switch (input.kind) {
 	case EGitDiffCommandKind::Diff: {
 		commands::ApiDiffArguments arguments;
@@ -310,7 +319,7 @@ ScmCommand BuildSyncStatusBarCommand(const GitScmState& state)
 }
 
 GitPublication BuildGitPublication(const ScmOwner& owner, std::wstring_view repositoryRoot,
-	const GitScmState& state, EUntrackedChangesPolicy policy)
+	const GitScmState& state, EUntrackedChangesPolicy policy, const GitDiffTextResolver& text)
 {
 	GitPublication publication;
 	auto& provider = publication.provider;
@@ -344,15 +353,19 @@ GitPublication BuildGitPublication(const ScmOwner& owner, std::wstring_view repo
 	provider.statusBarCommands = { BuildCheckoutStatusBarCommand(state, policy), BuildSyncStatusBarCommand(state) };
 
 	// Upstream declaration order; the SCM view renders groups in this order.
-	auto merge = MakeGroup(owner, provider.handle, kGitMergeGroupId, kGitMergeGroupLabel, true);
+	auto merge = MakeGroup(owner, provider.handle, kGitMergeGroupId,
+		LocalizedLabel(text, "GitScmMergeChanges", kGitMergeGroupLabel), true);
 	// Upstream drives this one from `git.alwaysShowStagedChangesResourceGroup`,
 	// whose default is false, so Staged Changes hides itself while empty. The
 	// setting is not readable here yet; hard-coding its default is what keeps the
 	// empty state identical to a stock VS Code instead of inventing a third
 	// behaviour.
-	auto index = MakeGroup(owner, provider.handle, kGitIndexGroupId, kGitIndexGroupLabel, true);
-	auto workingTree = MakeGroup(owner, provider.handle, kGitWorkingTreeGroupId, kGitWorkingTreeGroupLabel, false);
-	auto untracked = MakeGroup(owner, provider.handle, kGitUntrackedGroupId, kGitUntrackedGroupLabel, true);
+	auto index = MakeGroup(owner, provider.handle, kGitIndexGroupId,
+		LocalizedLabel(text, "GitScmStagedChanges", kGitIndexGroupLabel), true);
+	auto workingTree = MakeGroup(owner, provider.handle, kGitWorkingTreeGroupId,
+		LocalizedLabel(text, "GitScmChanges", kGitWorkingTreeGroupLabel), false);
+	auto untracked = MakeGroup(owner, provider.handle, kGitUntrackedGroupId,
+		LocalizedLabel(text, "GitScmUntrackedChanges", kGitUntrackedGroupLabel), true);
 
 	std::vector<GitStageResource> operandScratch;
 	for (const auto& change : state.changes) {
@@ -383,7 +396,7 @@ GitPublication BuildGitPublication(const ScmOwner& owner, std::wstring_view repo
 			if (!target) return;
 			ScmResourceState resource{ *uri.value };
 			resource.command = MakeChangeCommand(
-				MakeGitDiffRow(change, status, stagedInIndex), repositoryRoot);
+				MakeGitDiffRow(change, status, stagedInIndex), repositoryRoot, text);
 			resource.tooltip = std::string(GitFileStatusText(status));
 			resource.strikeThrough = IsGitFileStatusStruckThrough(status);
 			target->resources.push_back(std::move(resource));
@@ -452,11 +465,15 @@ GitScmPublisher::~GitScmPublisher()
 }
 
 EScmOperationStatus GitScmPublisher::Publish(std::wstring_view repositoryRoot, const GitScmState& state,
-	EUntrackedChangesPolicy policy)
+	EUntrackedChangesPolicy policy, const GitDiffTextResolver& text)
 {
 	if (m_service == nullptr || !m_owner.IsValid()) return EScmOperationStatus::NotApplicable;
 	if (repositoryRoot.empty() || !state.repository) return Retract();
-	if (m_created && policy == m_lastPolicy && m_lastRoot == repositoryRoot && m_lastState == state) {
+	// A supplied resolver may have changed its language between calls while the
+	// repository state stayed identical. Replaying the old provider in that case
+	// would leave stale group labels and diff titles visible, so only the
+	// resolver-free path uses the cheap state cache.
+	if (!text && m_created && policy == m_lastPolicy && m_lastRoot == repositoryRoot && m_lastState == state) {
 		return EScmOperationStatus::Replayed;
 	}
 
@@ -465,7 +482,7 @@ EScmOperationStatus GitScmPublisher::Publish(std::wstring_view repositoryRoot, c
 	// followed by four ReplaceResources calls is what keeps a refresh from being
 	// observable in a half-applied state, where the branch has already changed
 	// but the file list still belongs to the previous one.
-	auto publication = BuildGitPublication(m_owner, repositoryRoot, state, policy);
+	auto publication = BuildGitPublication(m_owner, repositoryRoot, state, policy, text);
 	// The build is pure and always yields an empty box; the typed message belongs
 	// to the publisher, not to the repository state, so a refresh triggered by an
 	// unrelated file change cannot discard it.

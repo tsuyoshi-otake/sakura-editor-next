@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief VS Code互換のCommand Palette用Quick Inputオーバーレイ
 */
 /*
@@ -51,6 +51,8 @@ public:
 	//! Gives the editor message loop first chance to handle palette keyboard input.
 	[[nodiscard]] bool PreTranslateMessage(MSG& message) noexcept;
 	void Layout() noexcept;
+	//! Refreshes language-dependent control text without replacing the current query/results.
+	void RefreshStrings() noexcept;
 
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
 	void SetSearchCallback(SearchCallback callback);

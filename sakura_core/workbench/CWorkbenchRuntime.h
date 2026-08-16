@@ -11,9 +11,7 @@
 
 #include "config/CConfigurationService.h"
 #include "config/CWorkspaceContextService.h"
-#include "config/ITrustedFoldersStore.h"
 #include "config/JsoncConfigurationSource.h"
-#include "config/WorkspaceTrustPolicy.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include <sakura/filesystem/IFileService.h>
 #include "workbench/IWorkbenchRuntime.h"
@@ -71,16 +69,6 @@ struct WorkbenchRuntimeDependencies final {
 	//! Profile/User persistence stays behind a control-process adapter. The
 	//! runtime owns the UI-independent service, never the durable backend.
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceStore> recentlyOpenedWorkspaceStore;
-	//! The durable Trusted Folders and Workspaces list. Null is a real state: the
-	//! runtime then resolves trust against an empty entry list, which is honest --
-	//! no folder has been granted trust -- rather than a degraded mode. It must
-	//! never fall back to trusting anything.
-	std::unique_ptr<config::ITrustedFoldersStore> trustedFoldersStore;
-	//! The durable per-workspace record of what this workspace has already been
-	//! asked. Null is a real state, and so is a composed store that reports
-	//! NoWorkspaceScope for an empty window: both mean the record is unreadable,
-	//! which makes `once` prompt again rather than silently skip.
-	std::unique_ptr<config::IWorkspaceTrustMementoStore> workspaceTrustMementoStore;
 };
 
 class CWorkbenchRuntime final : public IWorkbenchRuntime {
@@ -109,13 +97,6 @@ public:
 	[[nodiscard]] config::IWorkspaceContextService& WorkspaceContext() noexcept override { return m_workspaceContext; }
 	[[nodiscard]] config::WorkspaceContextResult SwitchToFolderWorkspace(
 		platform::uri::Uri folderUri, std::wstring displayName) override;
-	[[nodiscard]] WorkspaceTrustPromptModel WorkspaceTrustPrompt() override;
-	[[nodiscard]] WorkspaceTrustGrantResult GrantWorkspaceTrust(EWorkspaceTrustGrantScope scope) override;
-	[[nodiscard]] WorkspaceTrustStartupPromptModel WorkspaceTrustStartupPrompt() override;
-	[[nodiscard]] config::EWorkspaceTrustMementoSaveStatus RecordWorkspaceTrustStartupPromptShown() override;
-	[[nodiscard]] WorkspaceTrustUntrustedFilesModel WorkspaceTrustUntrustedFiles(bool allResourcesTrusted) override;
-	[[nodiscard]] config::EWorkspaceTrustMementoSaveStatus RecordUntrustedFilesAccepted() override;
-	[[nodiscard]] bool WorkspaceTrustCoversResource(const platform::uri::Uri& resource) noexcept override;
 	[[nodiscard]] workspace::IWorkspaceEditingService* WorkspaceEditing() noexcept override { return m_workspaceEditing.get(); }
 	[[nodiscard]] workspace::WorkspaceEditingResult ReplaceCurrentWorkspaceFolders(
 		const workspace::WorkspaceFoldersEditRequest& request) override;
@@ -142,15 +123,6 @@ public:
 	[[nodiscard]] WorkbenchRuntimeSnapshot Snapshot() const override;
 
 private:
-	//! The `security.workspace.trust.*` values only the prompt policies consume.
-	//! Kept apart from config::WorkspaceTrustSettings because the trust *resolver*
-	//! must not be able to see them: neither key may ever change whether a
-	//! workspace is trusted, only whether the user is asked about it.
-	struct WorkspaceTrustPromptSettings final {
-		config::EWorkspaceTrustStartupPrompt startupPrompt = config::EWorkspaceTrustStartupPrompt::Never;
-		config::EWorkspaceTrustUntrustedFiles untrustedFiles = config::EWorkspaceTrustUntrustedFiles::Prompt;
-	};
-
 	struct ListenerGate final {
 		std::mutex mutex;
 		std::condition_variable drained;
@@ -170,18 +142,6 @@ private:
 	void OnConfigurationFileWatchChange(config::EConfigurationFileWatchChange change) noexcept;
 	void RestoreInitialLayoutMemento();
 	void RestoreStatusbarVisibilityMemento();
-	//! Reads the durable Trusted Folders and Workspaces list once, before the first
-	//! trust resolution. It must run after the profile settings load and before
-	//! ResolveAndApplyWorkspaceTrust, because the resolver reads the list it produces.
-	void RestoreTrustedFolders();
-	//! Reads the durable per-workspace trust memento once, beside RestoreTrustedFolders.
-	//! An unreadable record is not a failure of trust resolution -- it only makes the
-	//! `once` startup prompt ask again, which is the safe direction.
-	void RestoreWorkspaceTrustMemento();
-	//! Commits one field of the memento. Both callers pass the already-mutated copy,
-	//! so the store's NotDirty short-circuit stays the single "nothing changed" answer.
-	[[nodiscard]] config::EWorkspaceTrustMementoSaveStatus SaveWorkspaceTrustMemento(
-		const config::WorkspaceTrustMemento& memento);
 	void PersistFinalLayoutMemento() noexcept;
 	void ReloadWorkspaceSettings(const config::WorkspaceContextSnapshot& snapshot);
 	void ReloadWorkspaceSettingsNow(const config::WorkspaceContextSnapshot& snapshot,
@@ -216,31 +176,6 @@ private:
 		const std::optional<platform::serialization::JsoncValue::Object>& settings);
 	void ClearWorkspaceSettings();
 	void SetWorkspaceConfigurationSnapshot(workspace::WorkspaceConfigurationRuntimeSnapshot snapshot);
-	[[nodiscard]] config::WorkspaceTrustSettings ReadWorkspaceTrustSettings() const;
-	//! Read live rather than cached at Start, because editing either key must take
-	//! effect without a restart -- the same reason UpdateRestrictedModeBannerVisibility
-	//! re-reads the banner key.
-	[[nodiscard]] WorkspaceTrustPromptSettings ReadWorkspaceTrustPromptSettings() const;
-	//! Resolves trust from the workspace shape and the profile trust settings, and
-	//! commits it. This is the only production caller of SetTrust.
-	void ResolveAndApplyWorkspaceTrust(const config::WorkspaceContextSnapshot& workspace);
-	//! Computes whether the Restricted Mode banner Part should be visible and
-	//! pushes that single answer through WorkbenchLayoutStateService::SetPartVisibility.
-	//! This is the only production writer of the banner Part's visibility: a native
-	//! host reads WorkbenchLayoutStateService, it never re-derives the answer from
-	//! trust state and configuration itself (see this method's definition for why).
-	//! Called after ResolveAndApplyWorkspaceTrust settles a trust decision, after a
-	//! profile settings reload, and after a successful WriteSetting -- every place
-	//! this runtime already reacts to a configuration or trust change -- so editing
-	//! security.workspace.trust.banner or granting trust takes effect without a
-	//! restart.
-	void UpdateRestrictedModeBannerVisibility();
-	//! The entries one grant scope would add for one workspace shape. Pure: it reads
-	//! only the snapshot, so the prompt and the grant cannot disagree about what a
-	//! choice means.
-	[[nodiscard]] static std::vector<config::WorkspaceTrustEntry> BuildTrustGrantEntries(
-		const config::WorkspaceContextSnapshot& workspace,
-		EWorkspaceTrustGrantScope scope);
 	void OnWorkspaceContextChanged(const config::WorkspaceContextChange& change) noexcept;
 	void RecordFileSourceResult(
 		std::string diagnosticKey,
@@ -262,51 +197,8 @@ private:
 	statusbar::StatusbarViewModel m_statusbarState;
 	std::unique_ptr<statusbar::IStatusbarVisibilityMementoStore> m_statusbarVisibilityMementoStore;
 	bool m_statusbarPersistenceReady = false;
-	/*!
-		The layout revision the durable memento already records. Atomic because a
-		derived, non-durable Part change can advance it from a settings-writeback or
-		trust-resolution thread, while orderly shutdown reads it to decide whether a
-		write is needed at all.
-	*/
 	std::atomic<std::uint64_t> m_layoutBaselineRevision { 0 };
 	bool m_layoutPersistenceReady = false;
-	std::unique_ptr<config::ITrustedFoldersStore> m_trustedFoldersStore;
-	//! The durable list, read once at Start and thereafter the runtime's working
-	//! copy. Re-reading it on every workspace change would let a concurrent write
-	//! from another window silently change this window's trust mid-session; VS
-	//! Code's own trust list is likewise session-stable until this window edits it.
-	config::TrustedFoldersSnapshot m_trustedFolders;
-	/*!
-		Whether the durable list is usable for granting. False after a load that
-		returned InvalidStoredList or a transport failure. Trust still resolves in
-		that state -- against the empty in-memory list, so nothing is trusted -- but a
-		grant must be refused rather than written, because writing would overwrite
-		durable bytes this runtime failed to understand.
-	 */
-	bool m_trustedFoldersPersistenceReady = false;
-	std::unique_ptr<config::IWorkspaceTrustMementoStore> m_workspaceTrustMementoStore;
-	//! The durable per-workspace record, read once at Start and thereafter this
-	//! runtime's working copy, for the same reason m_trustedFolders is.
-	config::WorkspaceTrustMemento m_workspaceTrustMemento;
-	/*!
-		Whether that record was actually readable. False for a runtime with no store,
-		for an empty window (which has no workspace identity to key a record on), and
-		after an unreadable or invalid stored payload. It is deliberately *not* a
-		reason to skip a prompt: the policies treat an unreadable record as "ask
-		again", because honouring a record nobody could read would be a silent skip.
-	 */
-	bool m_workspaceTrustMementoReadable = false;
-	/*!
-		Session-only fallback for an empty window's untrusted-files acceptance. The
-		durable memento store returns NoWorkspaceScope for an empty window (it has no
-		workspace identity to key a record by), so an empty window's acceptance can
-		never persist across a relaunch. Upstream's own `acceptsOutOfWorkspaceFiles`
-		memento for an empty window lives in that window's empty-workspace storage,
-		whose lifetime is the window itself; holding this in memory for the runtime's
-		lifetime matches that lifetime rather than fabricating durability neither
-		upstream nor this runtime actually has.
-	 */
-	bool m_untrustedFilesAcceptedInSession = false;
 	std::unique_ptr<platform::filesystem::IFileService> m_fileService;
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceService> m_recentlyOpenedWorkspaces;
@@ -337,14 +229,6 @@ private:
 	std::mutex m_sourceMutex;
 	std::shared_ptr<ListenerGate> m_listenerGate;
 	config::WorkspaceContextSubscription m_workspaceSubscription;
-	//! Each trust resolution needs its own durable operation identifier: the context
-	//! service treats a repeated identifier carrying a different value as a conflict,
-	//! not as a new request.
-	std::atomic<std::uint64_t> m_trustResolutionCount { 0 };
-	//! Each banner visibility push needs its own operation identifier for the same
-	//! reason m_trustResolutionCount does: WorkbenchLayoutStateService treats a
-	//! repeated identifier carrying a different visible value as a conflict.
-	std::atomic<std::uint64_t> m_bannerVisibilityUpdateCount { 0 };
 	std::map<std::wstring, std::string, std::less<>> m_activeWorkspaceDocuments;
 	std::set<std::string, std::less<>> m_workspaceDiagnosticKeys;
 	//! Owner identity is independent from folder order. It determines whether an

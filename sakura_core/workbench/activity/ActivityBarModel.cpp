@@ -75,7 +75,18 @@ std::size_t ActivityBarModel::ResolveInteractive(std::string_view id) const noex
 
 void ActivityBarModel::SetSelectedItem(std::string_view id) noexcept
 {
-	m_selected = ResolveInteractive(id);
+	const auto index = ResolveInteractive(id);
+	if (index != kNoIndex && m_entries[index].IsGlobalAction()) {
+		m_selected = kNoIndex;
+		return;
+	}
+	m_selected = index;
+}
+
+bool ActivityBarModel::IsDraggable(std::string_view id) const noexcept
+{
+	const auto index = IndexOf(id);
+	return IsInteractive(index) && !m_entries[index].IsGlobalAction();
 }
 
 void ActivityBarModel::SetEnabled(std::string_view id, bool enabled) noexcept
@@ -143,6 +154,7 @@ ActivityBarButtonInfo ActivityBarModel::GetButton(std::size_t index) const noexc
 		.label = entry.label,
 		.codicon = entry.codicon,
 		.bounds = m_bounds[index],
+		.kind = entry.kind,
 		.selected = m_selected == index,
 		.hovered = m_hovered == index,
 		.pressed = m_pressed == index,
@@ -232,18 +244,36 @@ void ActivityBarModel::Reflow() noexcept
 {
 	const int slot = ScaleDip(kButtonExtentDip, m_dpi);
 	const int right = std::min(m_widthPixels, GetPreferredWidthPixels());
-	// Only present entries occupy a slot, so a container moved out of the Primary Side
-	// Bar leaves no gap behind, exactly as VS Code's composite bar reflows.
-	std::size_t slotIndex = 0;
+	// ViewContainers stack from the top; GlobalCompositeBar actions pin to the bottom
+	// (Accounts above Manage), matching VS Code's Activity Bar layout.
+	std::size_t globalVisible = 0;
+	for (const auto& entry : m_entries) {
+		if (entry.visible && entry.IsGlobalAction()) ++globalVisible;
+	}
+	const auto globalHeight64 = static_cast<std::int64_t>(slot) * globalVisible;
+	const int containerAreaHeight = static_cast<int>(std::max<std::int64_t>(
+		0, static_cast<std::int64_t>(m_heightPixels) - globalHeight64));
+
+	std::size_t containerSlot = 0;
+	std::size_t globalSlot = 0;
 	for (std::size_t index = 0; index < m_entries.size(); ++index) {
 		if (!m_entries[index].visible) {
 			m_bounds[index] = {};
 			continue;
 		}
-		const auto top64 = static_cast<std::int64_t>(slot) * slotIndex;
-		++slotIndex;
-		const int top = static_cast<int>(std::min<std::int64_t>(top64, m_heightPixels));
-		const int bottom = std::min(m_heightPixels, static_cast<int>(std::min<std::int64_t>(
+		if (m_entries[index].IsGlobalAction()) {
+			const auto fromBottom = static_cast<std::int64_t>(globalVisible - globalSlot) * slot;
+			++globalSlot;
+			const int top = static_cast<int>(std::max<std::int64_t>(
+				0, static_cast<std::int64_t>(m_heightPixels) - fromBottom));
+			const int bottom = std::min(m_heightPixels, top + slot);
+			m_bounds[index] = { 0, top, right, std::max(top, bottom) };
+			continue;
+		}
+		const auto top64 = static_cast<std::int64_t>(slot) * containerSlot;
+		++containerSlot;
+		const int top = static_cast<int>(std::min<std::int64_t>(top64, containerAreaHeight));
+		const int bottom = std::min(containerAreaHeight, static_cast<int>(std::min<std::int64_t>(
 			top64 + slot, std::numeric_limits<int>::max())));
 		m_bounds[index] = { 0, top, right, std::max(top, bottom) };
 	}

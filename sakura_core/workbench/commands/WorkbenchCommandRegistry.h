@@ -6,6 +6,7 @@
 */
 #pragma once
 
+#include "sakura_rc.h"
 #include "workbench/commands/WorkbenchContextKeyService.h"
 
 #include <cstddef>
@@ -24,11 +25,17 @@ namespace workbench::commands {
 inline constexpr std::size_t kMaxWorkbenchCommandIdLength = 160;
 inline constexpr std::size_t kMaxWorkbenchCommandExpressionLength = 1'024;
 
+//! Built-in presentation metadata refers to the shared resource identifiers
+//! declared in `sakura_rc.h`; the registry never loads language resources.
+[[nodiscard]] std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view commandId) noexcept;
+
 enum class EWorkbenchCommandSurface : std::uint8_t {
 	CommandPalette,
 	Menu,
 	ActivityBar,
 	Keybinding,
+	//! Actions contributed to a View's title toolbar (VS Code's MenuId.ViewTitle).
+	ViewTitle,
 };
 
 //! `legacyFunctionCode` is an integer compatibility alias, never an EFunctionCode dependency.
@@ -56,6 +63,9 @@ struct WorkbenchCommandDescriptor {
 	std::string enablementClause;
 	EWorkbenchCommandExecutorTarget executorTarget = EWorkbenchCommandExecutorTarget::None;
 	std::vector<WorkbenchCommandSurfaceBinding> surfaceBindings;
+	//! Resource identifier owned by the presentation layer; zero means no built-in resource.
+	//! The registry never loads this resource, which keeps it independent of UI language state.
+	std::uint32_t titleResourceId = 0;
 };
 
 enum class EWorkbenchCommandExecutionStatus : std::uint8_t {
@@ -121,10 +131,6 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor showNotifications;
 	WorkbenchCommandExecutor hideNotifications;
 	WorkbenchCommandExecutor toggleStatusbarVisibility;
-	//! `workbench.trust.manage`. Left empty this registers and resolves but
-	//! executes as `Unsupported`, which is the honest answer for a shell with no
-	//! trust surface -- never a silent grant.
-	WorkbenchCommandExecutor manageWorkspaceTrust;
 	WorkbenchCommandExecutor markdownShowPreview;
 	WorkbenchCommandExecutor markdownShowPreviewToSide;
 	WorkbenchCommandExecutor markdownShowLockedPreviewToSide;
@@ -137,13 +143,16 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor markdownTogglePreview;
 	//! VS Code's own **API commands** (`workbench/api/common/apiCommands.ts`).
 	//! They exist so that any contributor - the built-in Git provider included -
-	//! can open a comparison or a resource without knowing which editor will
-	//! serve it. Upstream registers them through `CommandsRegistry` with no
+	//! can open a comparison, a resource, or the native folder picker without
+	//! knowing which workbench service will serve it. Upstream registers them through `CommandsRegistry` with no
 	//! `MenuRegistry` contribution, so they carry no surface binding here either:
-	//! they are callable, never listed. Both take arguments, because a comparison
-	//! with no operands is not a comparison.
+	//! they are callable, never listed. The comparison and resource commands take
+	//! arguments. `vscode.openFolder` accepts the empty invocation contributed by
+	//! the SCM ViewWelcome and lets the native handler reject unsupported URI
+	//! payloads explicitly.
 	WorkbenchCommandArgumentExecutor vscodeDiff;
 	WorkbenchCommandArgumentExecutor vscodeOpen;
+	WorkbenchCommandArgumentExecutor vscodeOpenFolder;
 };
 
 /*!
@@ -161,14 +170,15 @@ struct WorkbenchGitCommandExecutors {
 	WorkbenchCommandExecutor branch;
 	WorkbenchCommandExecutor branchFrom;
 	//! Repository-creation-scoped: unlike every other member of this struct,
-	//! `git.init` and `git.clone` are the two commands upstream still offers
+	//! `git.init`, `git.clone`, and `git.cloneRecursive` are the commands upstream still offers
 	//! when **no** repository is open at all - their entire purpose is to
 	//! create the state every other Git command requires. `git.init` carries
 	//! the `skipFolderPrompt` boolean the built-in provider's `viewsWelcome`
-	//! button passes (`git.init true`) as its argument payload; `git.clone`
-	//! takes no argument, exactly like upstream's own zero-parameter handler.
+	//! button passes (`git.init true`) as its argument payload; both clone
+	//! commands take no argument, exactly like their upstream zero-parameter handlers.
 	WorkbenchCommandArgumentExecutor init;
 	WorkbenchCommandExecutor clone;
+	WorkbenchCommandExecutor cloneRecursive;
 	//! Resource-scoped: upstream declares these on `scm/resourceState/context`
 	//! and passes the selected `SourceControlResourceState` values as arguments.
 	//! Which rows, and which group each row came from, is the whole operand.
@@ -233,6 +243,12 @@ struct WorkbenchGitCommandExecutors {
 	accepted and ignored.
 */
 struct WorkbenchExplorerCommandExecutors {
+	//! View-title actions use the current Explorer selection/root and carry no
+	//! serialized resource payload.  The native Explorer resolves that operand.
+	WorkbenchCommandExecutor createFileFromExplorer;
+	WorkbenchCommandExecutor createFolderFromExplorer;
+	WorkbenchCommandExecutor refreshFilesExplorer;
+	WorkbenchCommandExecutor collapseExplorerFolders;
 	//! `explorer.newFile` / `explorer.newFolder`. The resource is the directory
 	//! the new entry is created in.
 	WorkbenchCommandArgumentExecutor newFile;
@@ -346,7 +362,7 @@ public:
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterBuiltinCommands(
 		WorkbenchBuiltinCommandExecutors executors = {});
 	//! Registers the built-in Git provider's repository-creation commands
-	//! (`git.init`, `git.clone`) and its branch commands (`git.checkout`,
+	//! (`git.init`, `git.clone`, `git.cloneRecursive`) and its branch commands (`git.checkout`,
 	//! `git.checkoutDetached`, `git.branch`, `git.branchFrom`) and its working-
 	//! tree commands (`git.stage`, `git.stageAll`, `git.unstage`,
 	//! `git.unstageAll`, `git.clean`, `git.cleanAll`) and its commit commands
@@ -354,7 +370,7 @@ public:
 	//! commands (`git.fetch`, `git.fetchPrune`, `git.fetchAll`, `git.pull`,
 	//! `git.pullRebase`, `git.push`, `git.sync`, `git.syncRebase`,
 	//! `git.publish`) as one atomic batch, using upstream's own stable IDs,
-	//! titles, and `when` clause. `git.init`/`git.clone` use a distinct
+	//! titles, and `when` clause. The repository-creation commands use a distinct
 	//! always-available clause; see `MakeGitAlwaysAvailableDescriptor` in the
 	//! implementation file.
 	[[nodiscard]] WorkbenchCommandRegistrationResult RegisterGitCommands(

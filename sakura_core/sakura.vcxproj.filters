@@ -388,24 +388,6 @@
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\IWorkspaceTrustMementoStore.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustMementoCodec.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\config\maxdata.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
@@ -1000,9 +982,6 @@
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\workbench\WorkbenchBannerLayout.h">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1010,9 +989,6 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\CWorkbenchBannerHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h">
@@ -1132,6 +1108,9 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerDeleteConfirmation.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerFileIcon.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1160,6 +1139,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\ScmViewStackLayout.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 
@@ -1248,9 +1230,6 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
 
-    <ClInclude Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.h">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -1542,12 +1521,21 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalViewportGeometry.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
@@ -1669,12 +1657,6 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
@@ -2869,13 +2851,7 @@
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\workbench\WorkbenchBannerLayout.cpp">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\CWorkbenchBannerHost.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp">
@@ -3069,9 +3045,6 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
 
-    <ClCompile Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.cpp">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
@@ -3246,10 +3219,16 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp">
@@ -3352,12 +3331,6 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
@@ -3644,18 +3617,6 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustMementoCodec.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\recent\CRecentExcludeFile.cpp">

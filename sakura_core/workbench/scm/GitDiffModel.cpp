@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -180,32 +180,42 @@ GitDiffRow MakeGitDiffRow(const GitChange& change, EGitFileStatus status, bool s
 	return row;
 }
 
-std::wstring BuildGitDiffTitle(EGitFileStatus status, std::wstring_view path)
+std::wstring BuildGitDiffTitle(EGitFileStatus status, std::wstring_view path, const GitDiffTextResolver& text)
 {
 	const std::wstring basename(BaseName(path));
+	const auto localized = [&text, &basename](std::string_view key, std::wstring_view fallback) {
+		std::wstring result = text ? text(key, basename) : std::wstring{};
+		if (result.empty()) result.assign(fallback);
+		std::size_t position = 0;
+		while ((position = result.find(L"{0}", position)) != std::wstring::npos) {
+			result.replace(position, 3, basename);
+			position += basename.size();
+		}
+		return result;
+	};
 	switch (status) {
 	case EGitFileStatus::IndexModified:
 	case EGitFileStatus::IndexRenamed:
 	case EGitFileStatus::IndexAdded:
-		return basename + L" (Index)";
+		return localized("GitDiffIndex", L"{0} (Index)");
 	case EGitFileStatus::Modified:
 	case EGitFileStatus::BothAdded:
 	case EGitFileStatus::BothModified:
-		return basename + L" (Working Tree)";
+		return localized("GitDiffWorkingTree", L"{0} (Working Tree)");
 	case EGitFileStatus::IndexDeleted:
 	case EGitFileStatus::Deleted:
-		return basename + L" (Deleted)";
+		return localized("GitDiffDeleted", L"{0} (Deleted)");
 	case EGitFileStatus::DeletedByUs:
-		return basename + L" (Theirs)";
+		return localized("GitDiffTheirs", L"{0} (Theirs)");
 	case EGitFileStatus::DeletedByThem:
-		return basename + L" (Ours)";
+		return localized("GitDiffOurs", L"{0} (Ours)");
 	case EGitFileStatus::Untracked:
-		return basename + L" (Untracked)";
+		return localized("GitDiffUntracked", L"{0} (Untracked)");
 	case EGitFileStatus::IntentToAdd:
 	case EGitFileStatus::IntentToRename:
-		return basename + L" (Intent to add)";
+		return localized("GitDiffIntentToAdd", L"{0} (Intent to add)");
 	case EGitFileStatus::TypeChanged:
-		return basename + L" (Type changed)";
+		return localized("GitDiffTypeChanged", L"{0} (Type changed)");
 	default:
 		// `INDEX_COPIED` and the remaining conflicts land here, exactly as they
 		// land in upstream's `default` arm. An empty title is upstream's own
@@ -214,12 +224,12 @@ std::wstring BuildGitDiffTitle(EGitFileStatus status, std::wstring_view path)
 	}
 }
 
-GitDiffInput ResolveGitDiffInput(const GitDiffRow& row)
+GitDiffInput ResolveGitDiffInput(const GitDiffRow& row, const GitDiffTextResolver& text)
 {
 	GitDiffInput input;
 	input.original = ResolveOriginal(row);
 	input.modified = ResolveModified(row);
-	input.title = BuildGitDiffTitle(row.status, row.path);
+	input.title = BuildGitDiffTitle(row.status, row.path, text);
 	if (input.original) {
 		input.kind = EGitDiffCommandKind::Diff;
 	} else if (input.modified) {

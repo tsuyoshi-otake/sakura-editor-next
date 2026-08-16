@@ -8,6 +8,8 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/scm/GitDiffModel.h"
+#include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitScmModel.h"
 #include "workbench/scm/SourceControlService.h"
 
@@ -42,6 +44,10 @@ public:
 		exists to register it against.
 	*/
 	using CommandCallback = std::function<bool(std::string_view, std::string_view)>;
+	using TextResolver = ScmTextResolver;
+	//! Resolves presentation strings serialized into the published Git provider.
+	//! Unlike `TextResolver`, this covers publication-only labels and diff titles.
+	using PublicationTextResolver = GitDiffTextResolver;
 
 	CScmWorkbenchTool();
 	~CScmWorkbenchTool() override;
@@ -56,19 +62,18 @@ public:
 	void Close() override;
 
 	void SetRoot(std::wstring root);
-	//! Whether the current window has a single open workspace folder, i.e.
-	//! `CWorkbenchRuntime`'s state is `Folder` (see that class's own state
-	//! enum). This decides which of upstream's two mutually exclusive
-	//! `viewsWelcome` empty states the Source Control view shows when no
-	//! repository is open: `Initialize Repository` with a folder open,
-	//! `Clone Repository` with none. Defaults to `false` until the composition
-	//! root calls this; see `GitInitCloneCommands.h`'s `BuildGitScmWelcomeModel`
-	//! and this directory's CLAUDE.md for the exact split.
-	void SetHasOpenFolder(bool hasOpenFolder);
+	//! Projects the runtime's explicit workspace kind into the Source Control
+	//! view. The distinction is observable in upstream's four Git welcome
+	//! variants, so a boolean "has folder" is insufficient here.
+	void SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState workspaceState);
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetFileActivationCallback(FileActivationCallback callback);
 	void SetStatusBarCommandsCallback(StatusBarCommandsCallback callback);
 	void SetCommandCallback(CommandCallback callback);
+	void SetTextResolver(TextResolver resolver);
+	void SetPublicationTextResolver(PublicationTextResolver resolver);
+	//! Re-resolves visible SCM presentation text after a runtime language change.
+	void RefreshStrings();
 	//! Borrow the runtime-owned SCM authority. The tool never stops or owns it.
 	void SetSourceControlService(SourceControlService* service);
 	//! Re-read the immutable provider snapshot on the next UI turn.
@@ -96,6 +101,8 @@ private:
 	//! that message is documented for single-line edit controls only, and
 	//! upstream's box grows to `scm.inputMaxLineCount` lines.
 	static LRESULT CALLBACK InputSubclassProc(HWND window, UINT message, WPARAM wParam,
+		LPARAM lParam, UINT_PTR id, DWORD_PTR data);
+	static LRESULT CALLBACK ListSubclassProc(HWND window, UINT message, WPARAM wParam,
 		LPARAM lParam, UINT_PTR id, DWORD_PTR data);
 
 	struct Impl;

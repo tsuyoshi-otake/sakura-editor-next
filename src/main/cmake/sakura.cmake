@@ -644,7 +644,7 @@ set_source_files_properties(${WINDOWS_TERMINAL_VENDOR_SOURCES}
   PROPERTIES SKIP_PRECOMPILE_HEADERS ON
 )
 
-if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
+if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   # MinGW's wincodec.h does not yet expose the Windows SDK's high-quality
   # cubic enumerator. Keep that SDK spelling difference at the MinGW build
   # boundary and retain cubic interpolation for the three WIC consumers.

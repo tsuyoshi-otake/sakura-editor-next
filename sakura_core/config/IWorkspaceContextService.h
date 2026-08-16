@@ -11,7 +11,7 @@
 
 namespace config {
 
-//! Pure in-memory workspace context and explicit trust contract.
+//! Pure in-memory workspace context contract.
 class IWorkspaceContextService {
 public:
 	virtual ~IWorkspaceContextService() = default;
@@ -20,7 +20,6 @@ public:
 	virtual WorkspaceContextResult SetEmpty(const WorkspaceContextOperation& operation) = 0;
 	virtual WorkspaceContextResult SetFolder(const SetFolderRequest& request) = 0;
 	virtual WorkspaceContextResult SetWorkspace(const SetWorkspaceRequest& request) = 0;
-	virtual WorkspaceContextResult SetTrust(const SetTrustRequest& request) = 0;
 	virtual WorkspaceContextSubscription Subscribe(WorkspaceContextListener listener) = 0;
 };
 

@@ -76,7 +76,6 @@ class CPlug;
 class CEditDoc;
 class CCustomFrameController;
 class CDiffSurface;
-class CWorkspaceTrustEditorSurface;
 struct SDiffSurfaceContent;
 namespace config {
 class ConfigurationSubscription;
@@ -104,15 +103,9 @@ using UpdateServiceSubscriptionId = std::uint64_t;
 namespace workbench {
 class CActivityBar;
 class IWorkbenchRuntime;
-class CWorkbenchBannerHost;
 class CWorkbenchPanelHost;
 class CWorkspaceContext;
 enum class WorkbenchEdge : std::uint8_t;
-//! Declared here rather than by including `workbench/IWorkbenchRuntime.h`: this
-//! header only names the scope in a member declaration, and the runtime
-//! interface is already forward-declared above for the same reason. The fixed
-//! underlying type must stay identical to the definition's.
-enum class EWorkspaceTrustGrantScope : std::uint8_t;
 namespace layout {
 class IWorkbenchLayoutSubscription;
 struct WorkbenchLayoutStateSnapshot;
@@ -316,16 +309,6 @@ enum class EWorkspaceWindowTransitionResult : std::uint8_t {
 	Succeeded,
 	Cancelled,
 	Failed,
-};
-
-//! The load path's answer to "may this resource actually enter the window?" --
-//! `security.workspace.trust.untrustedFiles` applied to one file. `Refused` covers
-//! every typed reason the resolved decision was not `Open`: an explicit `Prompt`
-//! the user declined, and the `Unsupported`/`OpenInNewWindow` decisions this shell
-//! cannot honour. It is never degraded into `Allowed`.
-enum class EUntrustedFileLoadDecision : std::uint8_t {
-	Allowed,
-	Refused,
 };
 
 //! 編集ウィンドウ（外枠）管理クラス
@@ -679,15 +662,6 @@ public:
 
 	void ClearViewCaretPosInfo();
 
-	//! VS Code's `requestOpenFilesTrust`: `security.workspace.trust.untrustedFiles`
-	//! applied to one file about to enter this window from outside its trusted
-	//! roots. `CLoadAgent::OnCheckLoad` gates every load through this before the
-	//! resource reaches the document; @p path may be empty for an untitled buffer,
-	//! which is always `Allowed`. This is deliberately broader than upstream's own
-	//! gate, which only runs for `validateTrust` (OS/command-line entry); see
-	//! `window/CLAUDE.md` for that documented divergence. Public: called from
-	//! `CLoadAgent`, which is not a member or friend of this class.
-	[[nodiscard]] EUntrustedFileLoadDecision RequestUntrustedFileLoad(std::wstring_view path);
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                        メンバ変数                           //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -711,11 +685,6 @@ private:
 	void SetStatusbarEntryHidden(std::string_view id, bool hidden);
 	void PostDeferredStartupWorkbenchIfReady();
 	void CompleteDeferredStartupWorkbench();
-	//! Asks this window, at most once, to run the startup trust prompt after the
-	//! startup draw transaction has reached a terminal state. It only posts:
-	//! running a modal inside the draw commit would hold a nested message loop
-	//! across the very frame the user is waiting for.
-	void PostWorkspaceTrustStartupPromptOnce() noexcept;
 	void CloseWorkbench() noexcept;
 	void ApplyWorkbenchTheme();
 	void ApplyWorkbenchSettingsFromSharedData(bool finalizeProjection = true);
@@ -747,20 +716,14 @@ private:
 	void BroadcastWorkbenchSettings();
 	[[nodiscard]] std::wstring GetSemanticWorkspaceRoot() const;
 	void ApplySemanticWorkspaceContext();
-	/*!
-		@brief `workbench.parts.banner` の Restricted Mode 用内容を作り直す
-
-		内容だけを決める。表示するかどうかは決して決めない ── 可視性は
-		`CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility` がレイアウト
-		モデルへ書き、`ApplyCurrentWorkbenchLayoutState` がそれを射影する。
-	*/
-	void RefreshRestrictedModeBannerContent();
 	void UpdateWorkspaceFromDocument();
 	void OpenExplorerFile(std::wstring_view path,
 		workbench::explorer::ExplorerFileActivationKind kind);
 	[[nodiscard]] std::wstring BuildExplorerLaunchOptions(bool preview) const;
 	void RefreshEditorCorePresentation();
 	void ApplyEditorCoreSnapshot(const workbench::editor::EditorCoreSnapshot& snapshot, bool restoreFocus = true);
+	//! Projects authoritative workspace/editor state into Explorer and SCM welcome variants.
+	void UpdateWorkbenchWelcomeState();
 	[[nodiscard]] bool AdoptLoadedLegacyFile();
 	[[nodiscard]] bool FinalizeSuccessfulLegacyLoad();
 	[[nodiscard]] bool CreateUntitledEditorInput();
@@ -811,6 +774,7 @@ private:
 	//! workbench picker uses.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitBranchCommand(
 		EGitBranchCommand command);
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteOpenWorkspaceFolderCommand();
 	//! Runs one update operation. Returns `Unsupported` when this window has no
 	//! update stack at all, which is the honest answer for an installation that
 	//! cannot update itself rather than a silently successful no-op.
@@ -820,18 +784,6 @@ private:
 	//! ordinary quit. Separate because the quit can destroy this window before it
 	//! returns, and that constraint is worth stating in one place.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteUpdateQuitAndInstall();
-	//! Runs `workbench.trust.manage`. It shows what the runtime says is grantable
-	//! and grants exactly the choice the user picked, so the modal decides
-	//! nothing: it neither computes a scope nor treats a dismissal as consent.
-	//! **This is a workspace-level decision and must never be framed, titled, or
-	//! triggered as a per-extension activation gate.**
-	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteManageWorkspaceTrust();
-	//! VS Code's separate startup trust request (`requestWorkspaceTrust`), gated by
-	//! `security.workspace.trust.startupPrompt`. This is a modal dialog, not the
-	//! `workbench.trust.manage` editor page above; the two are different upstream
-	//! concepts and neither may stand in for the other. The runtime owns the
-	//! decision to prompt; this window renders it and records that it was shown.
-	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ShowWorkspaceTrustStartupPrompt();
 	//! Runs one of the built-in Git provider's working-tree commands.
 	//! `argumentsJson` is the payload `BuildGitStageArguments` produces; it is
 	//! empty for the `*All` members and for a Command Palette invocation.
@@ -884,7 +836,7 @@ private:
 	//! zero-parameter handler. Unlike `git.init`, the pure `GitCloneCommandResult`
 	//! carries no post-clone "open it?" decision, so this window does not offer
 	//! one either - a recorded divergence in `workbench/scm/CLAUDE.md`.
-	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCloneCommand();
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCloneCommand(bool recurseSubmodules);
 	//! Runs `explorer.newFile`/`explorer.newFolder`: starts the Explorer's inline
 	//! create row under the resource the payload names. The filesystem write
 	//! happens later, in `CommitExplorerCreate`, when the user commits the name.
@@ -931,17 +883,6 @@ private:
 	[[nodiscard]] bool ShowDiffSurface(SDiffSurfaceContent content);
 	//! Retracts the diff surface and restores whichever projection ranks next.
 	void ClearDiffSurface();
-	//! Projects the already-resolved trust model onto the native Workspace Trust
-	//! page -- VS Code's `workbench.trust.manage` target. Like the two surfaces
-	//! above it is a composition-layer projection rather than an `EditorInput`,
-	//! so it is refused while a document input is active. Showing it retracts the
-	//! diff and extension detail surfaces, because a group shows one thing.
-	[[nodiscard]] bool ShowWorkspaceTrustPage();
-	//! Retracts the trust page and restores whichever projection ranks next.
-	void ClearWorkspaceTrustPage();
-	//! Performs a grant the trust page requested and reports the terminal outcome
-	//! back to it. The page never calls the runtime itself.
-	void PerformWorkspaceTrustGrantFromPage(workbench::EWorkspaceTrustGrantScope scope);
 	//! Re-runs one full client-area layout pass after a projection changed.
 	void RelayoutEditorProjections();
 	[[nodiscard]] std::optional<std::string> NextWorkbenchLayoutOperationId(std::string_view action);
@@ -987,6 +928,8 @@ private:
 	void ApplyAuxiliaryBarPage(std::string_view containerId);
 	//! Refreshes both side-bar titles from the containers they currently render.
 	void RefreshSidebarTitles();
+	//! Re-resolves Workbench text after the process-wide language resource changes.
+	void RefreshLocalizedWorkbenchText();
 	//! The side-bar host that currently renders `containerId`, or nullptr when neither does.
 	[[nodiscard]] workbench::viewcontainer::CViewContainerHost* HostShowingPage(
 		std::string_view containerId) const noexcept;
@@ -1085,10 +1028,6 @@ private:
 	//! composition-layer projection rather than an `EditorInput`, so it may be visible only
 	//! while the native editor has no active document.
 	std::unique_ptr<CDiffSurface> m_diffSurface;
-	//! Native Workspace Trust page. Same composition-layer projection rule as the
-	//! two surfaces above: visible only while the native editor has no active
-	//! document input, and hidden before a document is projected.
-	std::unique_ptr<CWorkspaceTrustEditorSurface> m_workspaceTrustSurface;
 	//! Where the comparison on the diff surface came from, retained so a selection
 	//! can be staged. Only the three strings are kept: the text itself lives in the
 	//! surface, and a second copy could describe a comparison the screen replaced.
@@ -1135,10 +1074,6 @@ private:
 	std::uint64_t m_workbenchLayoutOperationSequence = 0;
 	std::uint64_t m_outputPanelOperationSequence = 0;
 	std::unique_ptr<workbench::CActivityBar> m_activityBar;
-	//! `workbench.parts.banner`. Unlike the three panel hosts this Part has no sash
-	//! and no persisted extent: its height is content-driven, so nothing here may
-	//! store or expose a user-adjustable size for it.
-	std::unique_ptr<workbench::CWorkbenchBannerHost> m_workbenchBanner;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
@@ -1147,7 +1082,6 @@ private:
 	std::unique_ptr<theme::CColorThemeRegistry> m_colorThemeRegistry;
 	bool m_startupOutlineReloadPending = false;
 	bool m_startupWorkbenchCompletionPosted = false;
-	bool m_workspaceTrustStartupPromptPosted = false;
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;

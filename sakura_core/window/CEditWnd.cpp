@@ -41,6 +41,7 @@
 #include "charset/CCodeFactory.h"
 #include "charset/CCodeBase.h"
 #include "charset/charset.h"
+#include "CSelectLang.h"
 #include "CEditApp.h"
 #include "prop/CPropCommon.h"
 #include "recent/CMRUFile.h"
@@ -80,7 +81,6 @@
 #include "config/ConfigurationTypes.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include "config/editing/CJsoncConfigurationEditor.h"
-#include "workbench/CWorkbenchBannerHost.h"
 #include "workbench/CWorkbenchPanelHost.h"
 #include "workbench/CWorkspaceContext.h"
 #include "workbench/IWorkbenchRuntime.h"
@@ -111,7 +111,6 @@
 #include "workbench/editor/CEditorServiceLegacyAdapter.h"
 #include "workbench/editor/CDiffSurface.h"
 #include "workbench/editor/CEmptyEditorSurface.h"
-#include "workbench/editor/CWorkspaceTrustEditorSurface.h"
 #include "workbench/editor/EditorCommandIds.h"
 #include "workbench/editor/WorkbenchCommandPaletteModel.h"
 #include "workbench/editor/EditorWorkingCopyCoordinator.h"
@@ -121,6 +120,7 @@
 #include "workbench/scm/GitCommitCommands.h"
 #include "workbench/scm/GitDiffModel.h"
 #include "workbench/scm/GitFailureText.h"
+#include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitLineStaging.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/GitStageCommands.h"
@@ -315,6 +315,30 @@ constexpr int kSideBarDropEdgeDip = 48;
 	return pageIds::Explorer;
 }
 
+//! Projects the runtime workspace kind into the SCM provider's welcome-state
+//! vocabulary.  SCM distinguishes an empty workbench, a folder, and a
+//! multi-folder workspace even when the native Explorer currently exposes only
+//! one semantic root.
+[[nodiscard]] workbench::scm::EGitScmWelcomeWorkspaceState ScmWelcomeWorkspaceState(
+	const config::WorkspaceContextSnapshot& snapshot) noexcept
+{
+	switch (snapshot.kind) {
+	case config::EWorkspaceKind::Folder:
+		return snapshot.folders.size() == 1
+			? workbench::scm::EGitScmWelcomeWorkspaceState::Folder
+			: (snapshot.folders.empty()
+				? workbench::scm::EGitScmWelcomeWorkspaceState::Empty
+				: workbench::scm::EGitScmWelcomeWorkspaceState::WorkspaceWithFolders);
+	case config::EWorkspaceKind::Workspace:
+		return snapshot.folders.empty()
+			? workbench::scm::EGitScmWelcomeWorkspaceState::WorkspaceWithoutFolders
+			: workbench::scm::EGitScmWelcomeWorkspaceState::WorkspaceWithFolders;
+	case config::EWorkspaceKind::Empty:
+	default:
+		return workbench::scm::EGitScmWelcomeWorkspaceState::Empty;
+	}
+}
+
 /*!
 	@brief The built-in ViewContainers the native side bar can actually open.
 
@@ -326,6 +350,261 @@ constexpr std::array kRenderableBuiltinContainers{
 	std::string_view(workbench::layout::ids::viewContainer::Explorer),
 	std::string_view(workbench::layout::ids::viewContainer::SourceControl),
 };
+
+[[nodiscard]] std::wstring LocalizedWorkbenchString(UINT resourceId)
+{
+	if (resourceId == 0) return {};
+	return std::wstring(CSelectLang::LoadStringW(resourceId));
+}
+
+[[nodiscard]] std::wstring LocalizedWorkbenchCommandTitle(
+	std::string_view commandId, std::wstring_view fallback)
+{
+	const auto resourceId = workbench::commands::ResolveBuiltinWorkbenchCommandTitleResourceId(commandId);
+	if (const auto localized = LocalizedWorkbenchString(resourceId); !localized.empty()) return localized;
+	return std::wstring(fallback);
+}
+
+[[nodiscard]] std::wstring ResolveLocalizedWorkbenchCommandTitle(
+	const workbench::commands::WorkbenchCommandDescriptor& descriptor)
+{
+	return LocalizedWorkbenchCommandTitle(descriptor.id, u8stowcs(descriptor.title));
+}
+
+void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
+{
+	constexpr std::wstring_view kPlaceholder = L"{0}";
+	for (std::size_t position = 0;;) {
+		position = text.find(kPlaceholder, position);
+		if (position == std::wstring::npos) return;
+		text.replace(position, kPlaceholder.size(), argument);
+		position += argument.size();
+	}
+}
+
+[[nodiscard]] std::wstring ResolveLocalizedScmText(
+	workbench::scm::EScmTextKey key, std::wstring_view argument)
+{
+	UINT resourceId = 0;
+	switch (key) {
+	case workbench::scm::EScmTextKey::SourceControlTitle:
+		resourceId = STR_WORKBENCH_SOURCE_CONTROL_TITLE; break;
+	case workbench::scm::EScmTextKey::RepositoriesTitle:
+		resourceId = STR_WORKBENCH_SCM_REPOSITORIES_TITLE; break;
+	case workbench::scm::EScmTextKey::ChangesTitle:
+		resourceId = STR_WORKBENCH_SCM_CHANGES_TITLE; break;
+	case workbench::scm::EScmTextKey::GraphTitle:
+		resourceId = STR_WORKBENCH_SCM_GRAPH_TITLE; break;
+	case workbench::scm::EScmTextKey::GraphUnavailable:
+		resourceId = STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE; break;
+	case workbench::scm::EScmTextKey::GitFolderNoRepository:
+		resourceId = STR_WORKBENCH_GIT_FOLDER_NO_REPOSITORY; break;
+	case workbench::scm::EScmTextKey::GitEmptyWorkbench:
+		resourceId = STR_WORKBENCH_GIT_EMPTY_WORKBENCH; break;
+	case workbench::scm::EScmTextKey::GitWorkspaceNoRepository:
+		resourceId = STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY; break;
+	case workbench::scm::EScmTextKey::GitEmptyWorkspace:
+		resourceId = STR_WORKBENCH_GIT_EMPTY_WORKSPACE; break;
+	case workbench::scm::EScmTextKey::GitInitializeRepository:
+		resourceId = STR_WORKBENCH_GIT_INITIALIZE_REPOSITORY; break;
+	case workbench::scm::EScmTextKey::GitCloneRepository:
+		resourceId = STR_WORKBENCH_GIT_CLONE_REPOSITORY; break;
+	case workbench::scm::EScmTextKey::GitAddFolderToWorkspace:
+		resourceId = STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE; break;
+	case workbench::scm::EScmTextKey::GitChooseFolder:
+		resourceId = STR_WORKBENCH_GIT_CHOOSE_FOLDER; break;
+	case workbench::scm::EScmTextKey::GitOpenFolder:
+		resourceId = STR_WORKBENCH_EXPLORER_OPEN_FOLDER; break;
+	case workbench::scm::EScmTextKey::GitOpen:
+		resourceId = STR_WORKBENCH_GIT_OPEN; break;
+	case workbench::scm::EScmTextKey::GitInitHomeWarning:
+		resourceId = STR_WORKBENCH_GIT_INIT_HOME_WARNING; break;
+	case workbench::scm::EScmTextKey::GitInitOpenPrompt:
+		resourceId = STR_WORKBENCH_GIT_INIT_OPEN_PROMPT; break;
+	case workbench::scm::EScmTextKey::GitInitFolderPicker:
+		resourceId = STR_WORKBENCH_GIT_INIT_FOLDER_PICKER; break;
+	case workbench::scm::EScmTextKey::GitInitSuccess:
+		resourceId = STR_WORKBENCH_GIT_INIT_SUCCESS; break;
+	case workbench::scm::EScmTextKey::GitInitCancelledHome:
+		resourceId = STR_WORKBENCH_GIT_INIT_CANCELLED_HOME; break;
+	case workbench::scm::EScmTextKey::GitCloneOverwriteWarning:
+		resourceId = STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING; break;
+	case workbench::scm::EScmTextKey::GitOverwrite:
+		resourceId = STR_WORKBENCH_GIT_OVERWRITE; break;
+	case workbench::scm::EScmTextKey::GitRepositoryUrl:
+		resourceId = STR_WORKBENCH_GIT_REPOSITORY_URL; break;
+	case workbench::scm::EScmTextKey::GitInvalidUrlFolder:
+		resourceId = STR_WORKBENCH_GIT_INVALID_URL_FOLDER; break;
+	case workbench::scm::EScmTextKey::GitRepositoryLocation:
+		resourceId = STR_WORKBENCH_GIT_REPOSITORY_LOCATION; break;
+	case workbench::scm::EScmTextKey::GitCloneNonEmpty:
+		resourceId = STR_WORKBENCH_GIT_CLONE_NONEMPTY; break;
+	case workbench::scm::EScmTextKey::GitCloneCancelled:
+		resourceId = STR_WORKBENCH_GIT_CLONE_CANCELLED; break;
+	case workbench::scm::EScmTextKey::GitOpenChanges:
+		resourceId = STR_WORKBENCH_GIT_OPEN_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitOpenFile:
+		resourceId = STR_WORKBENCH_GIT_OPEN_FILE; break;
+	case workbench::scm::EScmTextKey::GitStageChanges:
+		resourceId = STR_WORKBENCH_GIT_STAGE_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitUnstageChanges:
+		resourceId = STR_WORKBENCH_GIT_UNSTAGE_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitDiscardChanges:
+		resourceId = STR_WORKBENCH_GIT_DISCARD_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitStageAllChanges:
+		resourceId = STR_WORKBENCH_GIT_STAGE_ALL_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitUnstageAllChanges:
+		resourceId = STR_WORKBENCH_GIT_UNSTAGE_ALL_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitDiscardAllChanges:
+		resourceId = STR_WORKBENCH_GIT_DISCARD_ALL_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitPublishBranch:
+		resourceId = STR_WORKBENCH_GIT_PUBLISH_BRANCH; break;
+	case workbench::scm::EScmTextKey::GitSynchronizeChanges:
+		resourceId = STR_WORKBENCH_GIT_SYNCHRONIZE_CHANGES; break;
+	case workbench::scm::EScmTextKey::GitCheckoutBranchTag:
+		resourceId = STR_WORKBENCH_GIT_CHECKOUT_BRANCH_TAG; break;
+	case workbench::scm::EScmTextKey::GitCommitMessage:
+		resourceId = STR_WORKBENCH_GIT_COMMIT_MESSAGE; break;
+	}
+	std::wstring localized = LocalizedWorkbenchString(resourceId);
+	if (!localized.empty() && !argument.empty()) ReplaceLocalizedArgument(localized, argument);
+	return localized;
+}
+
+//! The SCM orchestration models intentionally remain HWND- and resource-free.
+//! Their stable text keys are resolved only at this composition boundary, where
+//! Sakura's selected language DLL is available.  That keeps headless tests on
+//! their English fallback while the live workbench follows language changes.
+[[nodiscard]] std::wstring ResolveLocalizedScmTextKey(
+	std::string_view key, std::wstring_view argument)
+{
+	struct TextEntry {
+		std::string_view key;
+		UINT resourceId;
+	};
+	constexpr std::array<TextEntry, 105> kEntries{{
+		{ "GitRefBranches", STR_WORKBENCH_GIT_REF_BRANCHES },
+		{ "GitRefRemoteBranches", STR_WORKBENCH_GIT_REF_REMOTE_BRANCHES },
+		{ "GitRefTags", STR_WORKBENCH_GIT_REF_TAGS },
+		{ "GitRefRemoteBranchAt", STR_WORKBENCH_GIT_REF_REMOTE_BRANCH_AT },
+		{ "GitRefTagAt", STR_WORKBENCH_GIT_REF_TAG_AT },
+		{ "GitCreateBranch", STR_WORKBENCH_GIT_CREATE_BRANCH },
+		{ "GitCreateBranchFrom", STR_WORKBENCH_GIT_CREATE_BRANCH_FROM },
+		{ "GitCheckoutDetached", STR_WORKBENCH_GIT_CHECKOUT_DETACHED },
+		{ "GitCheckoutPlaceholder", STR_WORKBENCH_GIT_CHECKOUT_PLACEHOLDER },
+		{ "GitCheckoutDetachedPlaceholder", STR_WORKBENCH_GIT_CHECKOUT_DETACHED_PLACEHOLDER },
+		{ "GitBranchAlreadyExists", STR_WORKBENCH_GIT_BRANCH_ALREADY_EXISTS },
+		{ "GitNewBranchWillBe", STR_WORKBENCH_GIT_NEW_BRANCH_WILL_BE },
+		{ "GitBranchNamePrompt", STR_WORKBENCH_GIT_BRANCH_NAME_PROMPT },
+		{ "GitBranchNamePlaceholder", STR_WORKBENCH_GIT_BRANCH_NAME_PLACEHOLDER },
+		{ "GitBranchFromPlaceholder", STR_WORKBENCH_GIT_BRANCH_FROM_PLACEHOLDER },
+		{ "GitCheckoutNoPresenter", STR_WORKBENCH_GIT_CHECKOUT_NO_PRESENTER },
+		{ "GitBranchNoPresenter", STR_WORKBENCH_GIT_BRANCH_NO_PRESENTER },
+		{ "GitUnsavedOne", STR_WORKBENCH_GIT_UNSAVED_ONE },
+		{ "GitUnsavedMany", STR_WORKBENCH_GIT_UNSAVED_MANY },
+		{ "GitSaveAllCommitChanges", STR_WORKBENCH_GIT_SAVE_ALL_COMMIT_CHANGES },
+		{ "GitCommitChanges", STR_WORKBENCH_GIT_COMMIT_CHANGES },
+		{ "GitNoStagedChanges", STR_WORKBENCH_GIT_NO_STAGED_CHANGES },
+		{ "GitYes", STR_WORKBENCH_GIT_YES },
+		{ "GitNoChanges", STR_WORKBENCH_GIT_NO_CHANGES },
+		{ "GitCreateEmptyCommit", STR_WORKBENCH_GIT_CREATE_EMPTY_COMMIT },
+		{ "GitNoVerifyWarning", STR_WORKBENCH_GIT_NO_VERIFY_WARNING },
+		{ "GitOk", STR_WORKBENCH_GIT_OK },
+		{ "GitUndoMergeWarning", STR_WORKBENCH_GIT_UNDO_MERGE_WARNING },
+		{ "GitUndoMergeCommit", STR_WORKBENCH_GIT_UNDO_MERGE_COMMIT },
+		{ "GitRebaseUnsupported", STR_WORKBENCH_GIT_REBASE_UNSUPPORTED },
+		{ "GitNoVerifyDisabled", STR_WORKBENCH_GIT_NO_VERIFY_DISABLED },
+		{ "GitCommitMessage", STR_WORKBENCH_GIT_COMMIT_MESSAGE },
+		{ "GitCommitMessageOnBranch", STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH },
+		{ "GitCommitMessagePrompt", STR_WORKBENCH_GIT_COMMIT_MESSAGE_PROMPT },
+		{ "GitCommitNoInvoker", STR_WORKBENCH_GIT_COMMIT_NO_INVOKER },
+		{ "GitCommitNoConfirmation", STR_WORKBENCH_GIT_COMMIT_NO_CONFIRMATION },
+		{ "GitUnsavedSaveFailed", STR_WORKBENCH_GIT_UNSAVED_SAVE_FAILED },
+		{ "GitCommitNoMessagePrompt", STR_WORKBENCH_GIT_COMMIT_NO_MESSAGE_PROMPT },
+		{ "GitUndoNoInvoker", STR_WORKBENCH_GIT_UNDO_NO_INVOKER },
+		{ "GitIrreversibleOne", STR_WORKBENCH_GIT_IRREVERSIBLE_ONE },
+		{ "GitIrreversibleMany", STR_WORKBENCH_GIT_IRREVERSIBLE_MANY },
+		{ "GitDeleteUntrackedOne", STR_WORKBENCH_GIT_DELETE_UNTRACKED_ONE },
+		{ "GitDeleteUntrackedMany", STR_WORKBENCH_GIT_DELETE_UNTRACKED_MANY },
+		{ "GitRestoreOneRecycleBin", STR_WORKBENCH_GIT_RESTORE_ONE_RECYCLE_BIN },
+		{ "GitRestoreManyRecycleBin", STR_WORKBENCH_GIT_RESTORE_MANY_RECYCLE_BIN },
+		{ "GitMoveToRecycleBin", STR_WORKBENCH_GIT_MOVE_TO_RECYCLE_BIN },
+		{ "GitDeleteFile", STR_WORKBENCH_GIT_DELETE_FILE },
+		{ "GitDeleteAllFiles", STR_WORKBENCH_GIT_DELETE_ALL_FILES },
+		{ "GitRestoreOne", STR_WORKBENCH_GIT_RESTORE_ONE },
+		{ "GitRestoreMany", STR_WORKBENCH_GIT_RESTORE_MANY },
+		{ "GitRestoreFile", STR_WORKBENCH_GIT_RESTORE_FILE },
+		{ "GitRestoreAllFiles", STR_WORKBENCH_GIT_RESTORE_ALL_FILES },
+		{ "GitDiscardOne", STR_WORKBENCH_GIT_DISCARD_ONE },
+		{ "GitDiscardMany", STR_WORKBENCH_GIT_DISCARD_MANY },
+		{ "GitDiscardFile", STR_WORKBENCH_GIT_DISCARD_FILE },
+		{ "GitDiscardAllFiles", STR_WORKBENCH_GIT_DISCARD_ALL_FILES },
+		{ "GitDiscardTrackedOne", STR_WORKBENCH_GIT_DISCARD_TRACKED_ONE },
+		{ "GitDiscardTrackedMany", STR_WORKBENCH_GIT_DISCARD_TRACKED_MANY },
+		{ "GitDiscardTrackedFile", STR_WORKBENCH_GIT_DISCARD_TRACKED_FILE },
+		{ "GitDiscardAllTrackedFiles", STR_WORKBENCH_GIT_DISCARD_ALL_TRACKED_FILES },
+		{ "GitRecycleBinFailed", STR_WORKBENCH_GIT_RECYCLE_BIN_FAILED },
+		{ "GitStageNoInvoker", STR_WORKBENCH_GIT_STAGE_NO_INVOKER },
+		{ "GitStageMergeUnsupported", STR_WORKBENCH_GIT_STAGE_MERGE_UNSUPPORTED },
+		{ "GitUnstageNoInvoker", STR_WORKBENCH_GIT_UNSTAGE_NO_INVOKER },
+		{ "GitDiscardNoInvoker", STR_WORKBENCH_GIT_DISCARD_NO_INVOKER },
+		{ "GitDiscardNoConfirmation", STR_WORKBENCH_GIT_DISCARD_NO_CONFIRMATION },
+		{ "GitSyncConfirmation", STR_WORKBENCH_GIT_SYNC_CONFIRMATION },
+		{ "GitPublishBranchPrompt", STR_WORKBENCH_GIT_PUBLISH_BRANCH_PROMPT },
+		{ "GitMaybeRebasedNoName", STR_WORKBENCH_GIT_MAYBE_REBASED_NO_NAME },
+		{ "GitMaybeRebased", STR_WORKBENCH_GIT_MAYBE_REBASED },
+		{ "GitPull", STR_WORKBENCH_GIT_PULL },
+		{ "GitDontPull", STR_WORKBENCH_GIT_DONT_PULL },
+		{ "GitFetchPlaceholder", STR_WORKBENCH_GIT_FETCH_PLACEHOLDER },
+		{ "GitSyncNoPresenter", STR_WORKBENCH_GIT_SYNC_NO_PRESENTER },
+		{ "GitNoFetchRemotes", STR_WORKBENCH_GIT_NO_FETCH_REMOTES },
+		{ "GitNoPullRemotes", STR_WORKBENCH_GIT_NO_PULL_REMOTES },
+		{ "GitNoPushRemotes", STR_WORKBENCH_GIT_NO_PUSH_REMOTES },
+		{ "GitNoBranchToPush", STR_WORKBENCH_GIT_NO_BRANCH_TO_PUSH },
+		{ "GitNoPublishRemotes", STR_WORKBENCH_GIT_NO_PUBLISH_REMOTES },
+		{ "GitSyncDismissed", STR_WORKBENCH_GIT_SYNC_DISMISSED },
+		{ "GitSyncNoHead", STR_WORKBENCH_GIT_SYNC_NO_HEAD },
+		{ "GitSyncReadOnlyRemote", STR_WORKBENCH_GIT_SYNC_READ_ONLY_REMOTE },
+		{ "GitSyncNothingToPush", STR_WORKBENCH_GIT_SYNC_NOTHING_TO_PUSH },
+		{ "GitDirtyWorkTree", STR_WORKBENCH_GIT_DIRTY_WORK_TREE },
+		{ "GitPushRejected", STR_WORKBENCH_GIT_PUSH_REJECTED },
+		{ "GitForcePushRejected", STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED },
+		{ "GitConflict", STR_WORKBENCH_GIT_CONFLICT },
+		{ "GitAuthenticationFailed", STR_WORKBENCH_GIT_AUTHENTICATION_FAILED },
+		{ "GitAuthenticationFailedTarget", STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET },
+		{ "GitNoUserNameConfigured", STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED },
+		{ "GitFetchAllRemotes", STR_WORKBENCH_GIT_FETCH_ALL_REMOTES },
+		{ "GitPublishRemotePicker", STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER },
+		{ "GitDiffIndex", STR_WORKBENCH_GIT_DIFF_TITLE_INDEX },
+		{ "GitDiffWorkingTree", STR_WORKBENCH_GIT_DIFF_TITLE_WORKING_TREE },
+		{ "GitDiffDeleted", STR_WORKBENCH_GIT_DIFF_TITLE_DELETED },
+		{ "GitDiffTheirs", STR_WORKBENCH_GIT_DIFF_TITLE_THEIRS },
+		{ "GitDiffOurs", STR_WORKBENCH_GIT_DIFF_TITLE_OURS },
+		{ "GitDiffUntracked", STR_WORKBENCH_GIT_DIFF_TITLE_UNTRACKED },
+		{ "GitDiffIntentToAdd", STR_WORKBENCH_GIT_DIFF_TITLE_INTENT_TO_ADD },
+		{ "GitDiffTypeChanged", STR_WORKBENCH_GIT_DIFF_TITLE_TYPE_CHANGED },
+		{ "GitScmMergeChanges", STR_WORKBENCH_GIT_SCM_MERGE_CHANGES },
+		{ "GitScmStagedChanges", STR_WORKBENCH_GIT_SCM_STAGED_CHANGES },
+		{ "GitScmChanges", STR_WORKBENCH_GIT_SCM_CHANGES },
+		{ "GitScmUntrackedChanges", STR_WORKBENCH_GIT_SCM_UNTRACKED_CHANGES },
+		{ "GitScmOpen", STR_WORKBENCH_GIT_OPEN },
+	}};
+	for (const auto& entry : kEntries) {
+		if (entry.key != key) continue;
+		auto localized = LocalizedWorkbenchString(entry.resourceId);
+		if (!localized.empty() && !argument.empty()) ReplaceLocalizedArgument(localized, argument);
+		return localized;
+	}
+	return {};
+}
+
+[[nodiscard]] std::wstring ResolveLocalizedActivityBarTitle(
+	std::string_view containerId, std::wstring_view fallback)
+{
+	const auto resourceId = workbench::activity::ResolveBuiltinActivityTitleResourceId(containerId);
+	if (const auto localized = LocalizedWorkbenchString(resourceId); !localized.empty()) return localized;
+	return std::wstring(fallback);
+}
 
 class ScopedWorkingCopyBackendEffect final {
 public:
@@ -1370,28 +1649,20 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 		|| m_hasActiveEditorInput != hasActiveInput;
 	m_hasActiveEditorInput = hasActiveInput;
 	m_editorCorePresentationInitialized = true;
+	UpdateWorkbenchWelcomeState();
 	if (!presentationChanged) return;
 
 	const HWND splitter = m_cSplitterWnd.GetHwnd();
 	const HWND emptySurface = m_emptyEditorSurface ? m_emptyEditorSurface->GetHwnd() : nullptr;
 	const HWND diffSurface = m_diffSurface ? m_diffSurface->GetHwnd() : nullptr;
-	const HWND trustSurface = m_workspaceTrustSurface ? m_workspaceTrustSurface->GetHwnd() : nullptr;
 	const HWND focused = ::GetFocus();
 	const bool editorOwnedFocus = focused != nullptr
 		&& ((splitter != nullptr && (focused == splitter || ::IsChild(splitter, focused)))
 			|| (emptySurface != nullptr && (focused == emptySurface || ::IsChild(emptySurface, focused)))
-			|| (trustSurface != nullptr && (focused == trustSurface || ::IsChild(trustSurface, focused)))
 			|| (diffSurface != nullptr && (focused == diffSurface || ::IsChild(diffSurface, focused))));
 
 	if (hasActiveInput) {
 		if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
-		// Same reasoning as the comparison below: a document input outranks the
-		// trust page, and a page left staged would reappear the next time the
-		// group emptied, showing a prompt the user never asked for again.
-		if (m_workspaceTrustSurface) {
-			m_workspaceTrustSurface->ClearPrompt();
-			m_workspaceTrustSurface->Hide();
-		}
 		// A document input outranks every composition-layer projection, so the
 		// comparison is retracted outright rather than merely hidden: it would
 		// otherwise reappear the next time the group became empty, showing a diff
@@ -1415,10 +1686,8 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 		if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
 			::ShowWindow(minimap, SW_HIDE);
 		}
-		// Exactly one projection is visible: trust, comparison, or watermark.
-		if (m_workspaceTrustSurface && m_workspaceTrustSurface->HasPrompt() && !m_pPrintPreview) {
-			m_workspaceTrustSurface->Show();
-		} else if (m_diffSurface && m_diffSurface->HasDiff() && !m_pPrintPreview) {
+		// Exactly one projection is visible: comparison or watermark.
+		if (m_diffSurface && m_diffSurface->HasDiff() && !m_pPrintPreview) {
 			m_diffSurface->Show();
 		} else if (m_emptyEditorSurface && !m_pPrintPreview) {
 			m_emptyEditorSurface->Show();
@@ -1440,8 +1709,6 @@ void CEditWnd::ApplyEditorCoreSnapshot(
 	if (!restoreFocus || !editorOwnedFocus || m_pPrintPreview) return;
 	if (hasActiveInput) {
 		if (const HWND view = GetActiveView().GetHwnd(); ::IsWindowVisible(view)) ::SetFocus(view);
-	} else if (m_workspaceTrustSurface && m_workspaceTrustSurface->HasPrompt()) {
-		m_workspaceTrustSurface->Focus();
 	} else if (m_diffSurface && m_diffSurface->HasDiff()) {
 		m_diffSurface->Focus();
 	} else if (m_emptyEditorSurface) {
@@ -1699,33 +1966,6 @@ void CEditWnd::CommitStartupDrawTransaction()
 	FinishStartupTabSwap();
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawCommitEnd, redrawResult ? 1 : 0);
 	PostDeferredStartupWorkbenchIfReady();
-	PostWorkspaceTrustStartupPromptOnce();
-}
-
-void CEditWnd::PostWorkspaceTrustStartupPromptOnce() noexcept
-{
-	// VS Code asks for workspace trust once per window, after the workbench is on
-	// screen -- never before it, because the prompt describes the window the user
-	// is looking at.  This is deliberately not folded into
-	// PostDeferredStartupWorkbenchIfReady: that helper only runs when a deferred
-	// document-dependent job is actually pending, while the trust question is owed
-	// on every startup, including the empty-window case where nothing is deferred.
-	if (m_workspaceTrustStartupPromptPosted || m_workbenchRuntime == nullptr) {
-		return;
-	}
-	const HWND hwnd = GetHwnd();
-	if (!::IsWindow(hwnd)) {
-		return;
-	}
-
-	m_workspaceTrustStartupPromptPosted = true;
-	if (!::PostMessageW(hwnd, MYWM_WORKSPACE_TRUST_STARTUP_PROMPT, 0, 0)) {
-		// The queue refused the message.  Leave the prompt unshown rather than
-		// running the modal synchronously from inside the startup draw commit: the
-		// runtime has recorded nothing, so the next launch asks again, which is the
-		// same fail-open direction the "record that it was shown" policy chooses.
-		m_workspaceTrustStartupPromptPosted = false;
-	}
 }
 
 void CEditWnd::RecordFirstStartupContentPaint() noexcept
@@ -1865,11 +2105,13 @@ bool CEditWnd::InitializeWorkbench()
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
 	m_scmTool->SetRoot(workspaceRoot);
-	// upstream の viewsWelcome は「フォルダーが開いている＝Initialize Repository」
-	// 「開いていない＝Clone Repository」の排他 2 状態。GetSemanticWorkspaceRoot() が
-	// 非空になるのは runtime の状態が単一フォルダーの Folder のときだけなので、
-	// SCM のルートと welcome の分岐は同じ 1 つの事実から導かれ、食い違えない。
-	m_scmTool->SetHasOpenFolder(!workspaceRoot.empty());
+	m_scmTool->SetTextResolver([](workbench::scm::EScmTextKey key, std::wstring_view argument) {
+		return ResolveLocalizedScmText(key, argument);
+	});
+	m_scmTool->SetPublicationTextResolver([](std::string_view key, std::wstring_view argument) {
+		return ResolveLocalizedScmTextKey(key, argument);
+	});
+	UpdateWorkbenchWelcomeState();
 	m_explorerTool->SetFileActivationCallback([this](std::wstring_view path,
 		workbench::explorer::ExplorerFileActivationKind kind) {
 		OpenExplorerFile(path, kind);
@@ -1890,20 +2132,10 @@ bool CEditWnd::InitializeWorkbench()
 			return {};
 		}
 		const auto descriptor = m_workbenchCommandRegistry->Find(commandId);
-		if (!descriptor || descriptor->title.empty()) {
+		if (!descriptor) {
 			return {};
 		}
-		const int required = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
-			descriptor->title.data(), static_cast<int>(descriptor->title.size()), nullptr, 0);
-		if (required <= 0) {
-			return {};
-		}
-		std::wstring title(static_cast<size_t>(required), L'\0');
-		if (::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, descriptor->title.data(),
-				static_cast<int>(descriptor->title.size()), title.data(), required) != required) {
-			return {};
-		}
-		return title;
+		return ResolveLocalizedWorkbenchCommandTitle(*descriptor);
 	});
 	m_explorerTool->SetRenameCommitCallback([this](std::wstring_view path, std::wstring_view newName) {
 		CommitExplorerRename(path, newName);
@@ -1982,7 +2214,7 @@ bool CEditWnd::InitializeWorkbench()
 	// is the very same composite host, so it renders a borrowed page once one arrives.
 	m_rightWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
 		workbench::WorkbenchEdge::Right, settings.m_nAuxiliaryBarExtent96, commitExtent);
-	m_rightWorkbenchPanel->SetTitle(L"SECONDARY SIDE BAR");
+	m_rightWorkbenchPanel->SetTitle(LocalizedWorkbenchString(STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE));
 	auto auxiliaryHost = std::make_unique<workbench::viewcontainer::CViewContainerHost>(
 		m_viewContainerPages, requestOutlineExpanded, refreshOutlineAfterReveal);
 	m_auxiliaryBarHost = auxiliaryHost.get();
@@ -2050,19 +2282,6 @@ bool CEditWnd::InitializeWorkbench()
 		m_bottomWorkbenchPanel.reset();
 	}
 
-	// `workbench.parts.banner`. VS Code's Restricted Mode banner is the second, independent
-	// signal beside the `status.workspaceTrust` entry, and its actions run ordinary commands,
-	// so the host is wired to the same single dispatch every other workbench surface uses.
-	m_workbenchBanner = std::make_unique<workbench::CWorkbenchBannerHost>();
-	m_workbenchBanner->SetExecuteCommandCallback([this](std::string_view commandId) {
-		bool handled = false;
-		(void)TryExecuteWorkbenchStableCommand(commandId, handled);
-	});
-	// Deliberately no SetDismissCallback: see RefreshRestrictedModeBannerContent.
-	if (!m_workbenchBanner->Create(GetHwnd(), G_AppInstance())) {
-		m_workbenchBanner.reset();
-	}
-
 	m_activityBar = std::make_unique<workbench::CActivityBar>([this](std::string_view containerId) {
 		// A container the page pool cannot render would toggle a side bar that then shows
 		// nothing, so the click is ignored rather than producing an empty Part.
@@ -2084,6 +2303,14 @@ bool CEditWnd::InitializeWorkbench()
 			}
 		}
 		ActivateSidebarPage(containerId, true);
+	});
+	m_activityBar->SetGlobalActionCallback([this](std::string_view actionId, POINT screenPoint) {
+		if (m_customFrame == nullptr) return;
+		if (actionId == workbench::activity::kAccountsActivityId) {
+			m_customFrame->ShowAccountMenuAt(screenPoint);
+		} else if (actionId == workbench::activity::kManageActivityId) {
+			m_customFrame->ShowManageMenuAt(screenPoint);
+		}
 	});
 	// VS Code's Activity Bar icon is a composite drag handle: dropping it on another side
 	// bar runs the same `moveViewContainerToLocation` the Command Palette move uses.
@@ -2126,18 +2353,6 @@ bool CEditWnd::InitializeWorkbench()
 			m_diffSurface->Hide();
 			m_diffSurface->SetOnCloseRequested([this]() { ClearDiffSurface(); });
 		}
-		m_workspaceTrustSurface = std::make_unique<CWorkspaceTrustEditorSurface>();
-		if (m_workspaceTrustSurface->Open(G_AppInstance(), GetHwnd()) == nullptr) {
-			m_workspaceTrustSurface.reset();
-		} else {
-			m_workspaceTrustSurface->Hide();
-			// The page requests; this window decides and performs. Keeping the grant
-			// out of the surface is what stops a second trust authority appearing.
-			m_workspaceTrustSurface->SetOnGrantRequested([this](workbench::EWorkspaceTrustGrantScope scope) {
-				PerformWorkspaceTrustGrantFromPage(scope);
-			});
-			m_workspaceTrustSurface->SetOnCloseRequested([this]() { ClearWorkspaceTrustPage(); });
-		}
 	}
 
 	const bool initialized = m_leftWorkbenchPanel != nullptr
@@ -2145,8 +2360,7 @@ bool CEditWnd::InitializeWorkbench()
 		&& m_bottomWorkbenchPanel != nullptr
 		&& m_activityBar != nullptr
 		&& (!editorBridgeEnabled
-			|| (m_emptyEditorSurface != nullptr && m_diffSurface != nullptr
-				&& m_workspaceTrustSurface != nullptr));
+			|| (m_emptyEditorSurface != nullptr && m_diffSurface != nullptr));
 	if (!initialized) {
 		// Workbench initialization is all-or-nothing. Do not leave an editor in
 		// an unobservable partial state where a configured tool has no HWND.
@@ -2172,31 +2386,7 @@ bool CEditWnd::InitializeWorkbench()
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "settings dialog could not be opened" };
 			},
 			.openFolder = [this]() {
-				switch (OpenWorkspaceFolder()) {
-				case EOpenWorkspaceFolderResult::Succeeded:
-					return workbench::commands::WorkbenchCommandExecutionResult{
-						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
-				case EOpenWorkspaceFolderResult::Cancelled:
-				case EOpenWorkspaceFolderResult::InvalidSelection:
-					return workbench::commands::WorkbenchCommandExecutionResult{
-						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable,
-						"folder selection was cancelled or invalid" };
-				case EOpenWorkspaceFolderResult::PickerFailed:
-					return workbench::commands::WorkbenchCommandExecutionResult{
-						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
-						"folder picker failed" };
-				case EOpenWorkspaceFolderResult::WorkspaceContextFailed:
-					return workbench::commands::WorkbenchCommandExecutionResult{
-						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
-						"workspace context could not accept the selected folder" };
-				case EOpenWorkspaceFolderResult::ExplorerProjectionFailed:
-					return workbench::commands::WorkbenchCommandExecutionResult{
-						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
-						"selected folder could not be projected into the Explorer Part" };
-			}
-			return workbench::commands::WorkbenchCommandExecutionResult{
-				workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
-				"folder command returned an invalid terminal status" };
+				return ExecuteOpenWorkspaceFolderCommand();
 			},
 			.newUntitledFile = [this]() {
 				return ExecuteWorkbenchEditorCommand(workbench::editor::command_ids::NewUntitledFile)
@@ -2409,7 +2599,6 @@ bool CEditWnd::InitializeWorkbench()
 				return workbench::commands::WorkbenchCommandExecutionResult{
 					workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
 			},
-			.manageWorkspaceTrust = [this]() { return ExecuteManageWorkspaceTrust(); },
 			.markdownShowPreview = [this]() {
 				return ExecuteMarkdownPreviewCommand(markdown::MarkdownPreviewCommand::ShowPreview);
 			},
@@ -2450,6 +2639,14 @@ bool CEditWnd::InitializeWorkbench()
 			.vscodeOpen = [this](std::string_view argumentsJson) {
 				return ExecuteVsCodeOpenCommand(argumentsJson);
 			},
+			.vscodeOpenFolder = [this](std::string_view argumentsJson) {
+				if (!argumentsJson.empty() && argumentsJson != "[]") {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Unsupported,
+						"URI-based vscode.openFolder is not supported" };
+				}
+				return ExecuteOpenWorkspaceFolderCommand();
+			},
 		});
 		if (!registration.Succeeded()) {
 			CloseWorkbench();
@@ -2466,6 +2663,11 @@ bool CEditWnd::InitializeWorkbench()
 			.checkoutDetached = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::CheckoutDetached); },
 			.branch = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::Branch); },
 			.branchFrom = [this]() { return ExecuteGitBranchCommand(EGitBranchCommand::BranchFrom); },
+			.init = [this](std::string_view argumentsJson) {
+				return ExecuteGitInitCommand(argumentsJson);
+			},
+			.clone = [this]() { return ExecuteGitCloneCommand(false); },
+			.cloneRecursive = [this]() { return ExecuteGitCloneCommand(true); },
 			.stage = [this](std::string_view argumentsJson) {
 				return ExecuteGitStageCommand(EGitStageCommand::Stage, argumentsJson);
 			},
@@ -2504,6 +2706,50 @@ bool CEditWnd::InitializeWorkbench()
 		// upstream's own IDs and surface shapes; the Explorer surface behavior and
 		// its recorded divergences live in `workbench/explorer/CLAUDE.md`.
 		const auto explorerRegistration = m_workbenchCommandRegistry->RegisterExplorerCommands({
+			.createFileFromExplorer = [this]() -> workbench::commands::WorkbenchCommandExecutionResult {
+				using workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_explorerTool == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						EWorkbenchCommandExecutionStatus::NotApplicable,
+						"no explorer view exists in this window" };
+				}
+				return { m_explorerTool->CreateEntryFromSelection(false)
+					? EWorkbenchCommandExecutionStatus::Succeeded
+					: EWorkbenchCommandExecutionStatus::NotApplicable, {} };
+			},
+			.createFolderFromExplorer = [this]() -> workbench::commands::WorkbenchCommandExecutionResult {
+				using workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_explorerTool == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						EWorkbenchCommandExecutionStatus::NotApplicable,
+						"no explorer view exists in this window" };
+				}
+				return { m_explorerTool->CreateEntryFromSelection(true)
+					? EWorkbenchCommandExecutionStatus::Succeeded
+					: EWorkbenchCommandExecutionStatus::NotApplicable, {} };
+			},
+			.refreshFilesExplorer = [this]() {
+				using workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_explorerTool == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						EWorkbenchCommandExecutionStatus::NotApplicable,
+						"no explorer view exists in this window" };
+				}
+				m_explorerTool->Refresh();
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.collapseExplorerFolders = [this]() {
+				using workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_explorerTool == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						EWorkbenchCommandExecutionStatus::NotApplicable,
+						"no explorer view exists in this window" };
+				}
+				m_explorerTool->CollapseAllFolders();
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
 			.newFile = [this](std::string_view argumentsJson) { return ExecuteExplorerNewEntry(argumentsJson, false); },
 			.newFolder = [this](std::string_view argumentsJson) { return ExecuteExplorerNewEntry(argumentsJson, true); },
 			.renameFile = [this](std::string_view argumentsJson) { return ExecuteExplorerRenameFile(argumentsJson); },
@@ -2601,6 +2847,15 @@ bool CEditWnd::InitializeWorkbench()
 		}
 	});
 	m_cStatusBar.SetWorkbenchCommandCallback([this](std::string_view command) {
+		// Remote Development is not a supported authority in this product. Keep the
+		// VS Code `status.host` affordance visible, but fail closed instead of
+	// approximating SSH/WSL/container windows with local state.
+	if (command == "workbench.action.remote.showMenu") {
+		const auto unsupportedMessage = LocalizedWorkbenchString(STR_WORKBENCH_REMOTE_UNSUPPORTED);
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS,
+			unsupportedMessage.c_str());
+		return;
+	}
 		bool handled = false;
 		(void)TryExecuteWorkbenchStableCommand(command, handled);
 	});
@@ -2608,10 +2863,6 @@ bool CEditWnd::InitializeWorkbench()
 		SetStatusbarEntryHidden(id, hidden);
 	});
 	RefreshStatusbarPresentation();
-	// The command registry now exists, so the banner can finally decide whether its
-	// `Manage` action is performable at all. Composing it earlier would have withheld
-	// the action permanently.
-	RefreshRestrictedModeBannerContent();
 
 	if (m_workbenchRuntime != nullptr) {
 		const HWND editorWindow = GetHwnd();
@@ -2740,11 +2991,13 @@ bool CEditWnd::PersistColorThemeSelection(std::wstring_view themeId)
 		};
 		const auto result = m_workbenchRuntime->WriteSetting(request);
 		if (result.Succeeded()) return true;
-		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"カラーテーマの設定を保存できませんでした");
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS,
+			LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_SAVE_FAILED).c_str());
 		return false;
 	}
 	catch (...) {
-		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"カラーテーマの設定に失敗しました");
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS,
+			LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_APPLY_FAILED).c_str());
 		return false;
 	}
 }
@@ -2754,13 +3007,14 @@ bool CEditWnd::ShowColorThemePicker()
 	if (!m_colorThemeRegistry || !GetHwnd()) return false;
 	const auto themes = m_colorThemeRegistry->Themes();
 	if (themes.empty()) {
-		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できるカラーテーマはありません");
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS,
+			LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_NONE).c_str());
 		return false;
 	}
 	SQuickInputRequest request;
 	request.kind = EQuickInputKind::QuickPick;
-	request.title = L"Color Theme";
-	request.placeholder = L"適用するカラーテーマを選択してください";
+	request.title = LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME);
+	request.placeholder = LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER);
 	request.items.reserve(themes.size());
 	for (std::size_t index = 0; index < themes.size(); ++index) {
 		request.items.push_back({
@@ -2780,6 +3034,25 @@ bool CEditWnd::ShowColorThemePicker()
 	return PersistColorThemeSelection(themes[selected].label);
 }
 
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteOpenWorkspaceFolderCommand()
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+	switch (OpenWorkspaceFolder()) {
+	case EOpenWorkspaceFolderResult::Succeeded:
+		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+	case EOpenWorkspaceFolderResult::Cancelled:
+	case EOpenWorkspaceFolderResult::InvalidSelection:
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "folder selection was cancelled or invalid" };
+	case EOpenWorkspaceFolderResult::PickerFailed:
+		return { EWorkbenchCommandExecutionStatus::Failed, "folder picker failed" };
+	case EOpenWorkspaceFolderResult::WorkspaceContextFailed:
+		return { EWorkbenchCommandExecutionStatus::Failed, "workspace context could not accept the selected folder" };
+	case EOpenWorkspaceFolderResult::ExplorerProjectionFailed:
+		return { EWorkbenchCommandExecutionStatus::Failed, "selected folder could not be projected into the Explorer Part" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Failed, "folder command returned an invalid terminal status" };
+}
+
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchCommand(EGitBranchCommand command)
 {
 	using workbench::commands::EWorkbenchCommandExecutionStatus;
@@ -2794,17 +3067,25 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchC
 	// command title. Real VS Code's quick input has no title bar at all; this
 	// dialog is a framed window and must caption itself with something, so it
 	// reuses the string upstream already publishes for the command.
-	const wchar_t* caption = L"Checkout to...";
+	std::string_view commandId = "git.checkout";
+	std::wstring_view fallback = L"Checkout to...";
 	switch (command) {
-	case EGitBranchCommand::CheckoutDetached: caption = L"Checkout to (Detached)..."; break;
-	case EGitBranchCommand::Branch: caption = L"Create Branch..."; break;
-	case EGitBranchCommand::BranchFrom: caption = L"Create Branch From..."; break;
+	case EGitBranchCommand::CheckoutDetached:
+		commandId = "git.checkoutDetached"; fallback = L"Checkout to (Detached)..."; break;
+	case EGitBranchCommand::Branch:
+		commandId = "git.branch"; fallback = L"Create Branch..."; break;
+	case EGitBranchCommand::BranchFrom:
+		commandId = "git.branchFrom"; fallback = L"Create Branch From..."; break;
 	case EGitBranchCommand::Checkout:
 	default:
 		break;
 	}
+	const std::wstring caption = LocalizedWorkbenchCommandTitle(commandId, fallback);
 
 	workbench::scm::GitBranchCommandContext context;
+	context.text = [](std::string_view key, std::wstring_view argument) {
+		return ResolveLocalizedScmTextKey(key, argument);
+	};
 	context.run = [&root](const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
@@ -2895,291 +3176,147 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchC
 	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
 }
 
-workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteManageWorkspaceTrust()
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitInitCommand(
+	std::string_view argumentsJson)
 {
 	using workbench::commands::EWorkbenchCommandExecutionStatus;
 	using workbench::commands::WorkbenchCommandExecutionResult;
+	if (GetHwnd() == nullptr) return { EWorkbenchCommandExecutionStatus::NotApplicable, "window is unavailable" };
 
-	if (m_workbenchRuntime == nullptr || GetHwnd() == nullptr) {
-		return { EWorkbenchCommandExecutionStatus::Unsupported,
-			"this window has no workbench runtime to own workspace trust" };
+	workbench::scm::GitInitCommandContext context;
+	context.text = [](workbench::scm::EScmTextKey key, std::wstring_view argument) {
+		return ResolveLocalizedScmText(key, argument);
+	};
+	if (m_workbenchRuntime != nullptr) {
+		const auto snapshot = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		for (const auto& folder : snapshot.folders) {
+			const auto path = folder.uri.ToWindowsPath();
+			if (!path.value || path.value->empty()) continue;
+			context.openFolders.push_back({ folder.displayName, *path.value });
+		}
 	}
-	// In VS Code `workbench.trust.manage` opens the Workspace Trust *editor*, not
-	// a dialog. The native page below is that concept; the modal in
-	// ShowWorkspaceTrustStartupPrompt is upstream's separate startup prompt and
-	// must never answer this command in its place.
-	if (m_workspaceTrustSurface == nullptr) {
-		return { EWorkbenchCommandExecutionStatus::Unsupported,
-			"this window has no Workspace Trust page to show" };
+	context.homeDirectory = [] {
+		std::array<wchar_t, MAX_PATH> value{};
+		const DWORD length = ::GetEnvironmentVariableW(L"USERPROFILE", value.data(), static_cast<DWORD>(value.size()));
+		return length == 0 || length >= value.size() ? std::wstring{} : std::wstring(value.data(), length);
+	}();
+	context.run = [](std::wstring_view workingDirectory, const std::vector<std::wstring>& arguments) {
+		workbench::scm::GitExecutionRequest request;
+		request.workingDirectory = std::wstring(workingDirectory);
+		request.arguments = arguments;
+		return workbench::scm::RunGit(request, nullptr);
+	};
+	context.folderPick = [this](const auto& items, std::wstring_view placeholder) -> std::optional<std::size_t> {
+		SQuickInputRequest request;
+		request.kind = EQuickInputKind::QuickPick;
+		request.title = LocalizedWorkbenchString(STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE);
+		request.placeholder = placeholder;
+		for (std::size_t i = 0; i < items.size(); ++i) {
+			request.items.push_back({ i, items[i].label, items[i].description, items[i].path });
+		}
+		CQuickInputDialog dialog(request);
+		const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EQuickInputState::Accepted || completion.selectedIndices.size() != 1) return std::nullopt;
+		return completion.selectedIndices.front();
+	};
+	context.browseForFolder = [this](std::wstring_view label, std::wstring_view initial) -> std::optional<std::wstring> {
+		std::array<WCHAR, 32768> selected{};
+		const auto result = SelectDirWithResult(GetHwnd(), std::wstring(label), std::filesystem::path(initial), selected);
+		if (result != ESelectDirResult::Succeeded) return std::nullopt;
+		const auto absolute = MakeAbsolutePath(selected.data());
+		if (absolute.empty()) return std::nullopt;
+		const DWORD attributes = ::GetFileAttributesW(absolute.c_str());
+		if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return std::nullopt;
+		return absolute;
+	};
+	context.confirm = [this](const workbench::scm::GitPrompt& prompt) -> std::optional<std::size_t> {
+		TASKDIALOGCONFIG config{};
+		config.cbSize = sizeof(config); config.hwndParent = GetHwnd();
+		config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW | TDF_SIZE_TO_CONTENT;
+		config.pszWindowTitle = L"Sakura Editor NEXT";
+		config.pszMainIcon = prompt.warning ? TD_WARNING_ICON : TD_INFORMATION_ICON;
+		config.pszMainInstruction = prompt.message.c_str();
+		config.pszContent = prompt.detail.empty() ? nullptr : prompt.detail.c_str();
+		config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+		std::vector<TASKDIALOG_BUTTON> buttons;
+		for (std::size_t i = 0; i < prompt.choices.size(); ++i) buttons.push_back({ static_cast<int>(1000 + i), prompt.choices[i].c_str() });
+		config.cButtons = static_cast<UINT>(buttons.size()); config.pButtons = buttons.data();
+		int selected = 0;
+		if (buttons.empty() || FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) return std::nullopt;
+		if (selected < 1000 || static_cast<std::size_t>(selected - 1000) >= prompt.choices.size()) return std::nullopt;
+		return static_cast<std::size_t>(selected - 1000);
+	};
+	context.message = [this](std::wstring_view message) { m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str()); };
+
+	const auto result = workbench::scm::RunGitInit(
+		context, workbench::scm::ParseGitInitSkipFolderPromptArgument(argumentsJson));
+	if (result.status == workbench::scm::EGitInitCommandStatus::Cancelled)
+		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the user dismissed repository initialization" };
+	if (!result.Succeeded()) return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+	if (result.postAction == workbench::scm::EGitInitPostAction::OfferToOpen && context.confirm) {
+		const auto choice = context.confirm(workbench::scm::BuildGitInitOpenPrompt(context.text));
+		if (choice && *choice == 0) {
+			if (ApplyFolderWorkspace(result.repositoryPath, true) != EOpenWorkspaceFolderResult::Succeeded)
+				return { EWorkbenchCommandExecutionStatus::Failed, "initialized repository could not be opened" };
+		}
 	}
-	if (!ShowWorkspaceTrustPage()) {
-		return { EWorkbenchCommandExecutionStatus::NotApplicable,
-			"the Workspace Trust page cannot replace the document open in this window" };
-	}
+	if (m_scmTool != nullptr) m_scmTool->Refresh();
 	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
 }
 
-bool CEditWnd::ShowWorkspaceTrustPage()
-{
-	if (!m_workspaceTrustSurface || m_workbenchRuntime == nullptr) return false;
-	// Same composition-layer rule as the diff surface: this
-	// page has no document model and no tab, so showing it over an open document
-	// would hide a document the user could no longer reach. Refusing is the honest
-	// boundary until a real Workspace Trust `EditorInput` exists.
-	if (HasActiveEditorInput()) return false;
-
-	m_workspaceTrustSurface->ShowPrompt(m_workbenchRuntime->WorkspaceTrustPrompt());
-	// Opening the page replaces whatever the group was showing, exactly as opening
-	// an editor does in VS Code.
-	if (m_diffSurface) {
-		m_diffSurface->ClearDiff();
-		m_diffSurface->Hide();
-	}
-	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
-	if (!m_pPrintPreview) m_workspaceTrustSurface->Show();
-	RelayoutEditorProjections();
-	if (!m_pPrintPreview) m_workspaceTrustSurface->Focus();
-	return true;
-}
-
-void CEditWnd::ClearWorkspaceTrustPage()
-{
-	if (!m_workspaceTrustSurface) return;
-	m_workspaceTrustSurface->ClearPrompt();
-	m_workspaceTrustSurface->Hide();
-	if (m_emptyEditorSurface && !HasActiveEditorInput() && !m_pPrintPreview) {
-		m_emptyEditorSurface->Show();
-	}
-	RelayoutEditorProjections();
-}
-
-void CEditWnd::PerformWorkspaceTrustGrantFromPage(workbench::EWorkspaceTrustGrantScope scope)
-{
-	if (!m_workspaceTrustSurface) return;
-	if (m_workbenchRuntime == nullptr) {
-		m_workspaceTrustSurface->SetGrantResult({ workbench::EWorkspaceTrustGrantStatus::NotApplicable,
-			"this window has no workbench runtime to own workspace trust" });
-		return;
-	}
-
-	const auto granted = m_workbenchRuntime->GrantWorkspaceTrust(scope);
-	if (!granted.Succeeded()) {
-		// The page reports what actually happened. A refused grant is never drawn
-		// as a success, and nothing else in the window moves.
-		m_workspaceTrustSurface->SetGrantResult(granted);
-		return;
-	}
-	// Trust changed what `when` clauses resolve to, so the command context has to
-	// be re-read rather than left holding the pre-grant projection. The result is
-	// deliberately discarded: the durable grant is already committed, so a stale
-	// projection cannot un-grant it and must not be reported as a failed grant.
-	(void)RefreshWorkbenchCommandContext();
-	// Re-project the now-resolved model so the page stops offering a grant it has
-	// already performed. ShowPrompt clears any prior outcome, so the result is
-	// reported after it rather than before.
-	m_workspaceTrustSurface->ShowPrompt(m_workbenchRuntime->WorkspaceTrustPrompt());
-	m_workspaceTrustSurface->SetGrantResult(granted);
-	RelayoutEditorProjections();
-}
-
-workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ShowWorkspaceTrustStartupPrompt()
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCloneCommand(bool recurseSubmodules)
 {
 	using workbench::commands::EWorkbenchCommandExecutionStatus;
 	using workbench::commands::WorkbenchCommandExecutionResult;
-
-	if (m_workbenchRuntime == nullptr || GetHwnd() == nullptr) {
-		return { EWorkbenchCommandExecutionStatus::Unsupported,
-			"this window has no workbench runtime to own workspace trust" };
-	}
-
-	// This is upstream's `requestWorkspaceTrust` modal, gated by
-	// `security.workspace.trust.startupPrompt`. The runtime owns the decision;
-	// this window only renders the answer and reports that it was asked.
-	const auto startup = m_workbenchRuntime->WorkspaceTrustStartupPrompt();
-	if (!startup.ShouldShow()) {
-		// Declining to prompt is a completed command that committed nothing. The
-		// specific reason stays in the typed decision rather than being flattened
-		// into a failure the caller would have to guess at.
-		return { EWorkbenchCommandExecutionStatus::NotApplicable, {} };
-	}
-
-	const auto& model = startup.prompt;
-	// Every branch below reports a real state. None of them fabricates a
-	// grantable choice to keep the dialog from looking empty.
-	const bool alreadyTrusted = model.state == config::EWorkspaceTrustState::Trusted;
-
-	std::wstring instruction;
-	std::wstring content;
-	if (alreadyTrusted) {
-		instruction = L"You trust the authors of the files in this window.";
-	} else if (!model.persistenceReady) {
-		instruction = L"Workspace trust cannot be granted right now.";
-		content = L"The Trusted Folders and Workspaces list could not be read, so a grant "
-				  L"would not survive this session. No trust decision was recorded.";
-	} else if (model.options.empty()) {
-		instruction = L"There is nothing in this window to trust.";
-		content = L"Open a folder or a workspace first. Trust applies to files on disk, so an "
-				  L"empty window has no resource a decision could name.";
-	} else {
-		instruction = L"Do you trust the authors of the files in this window?";
-		content = L"Until you do, this window stays in Restricted Mode: automatic tasks and "
-				  L"debug launches that require trust do not run.";
-	}
-
-	// Only an untrusted window with a writable list gets buttons; every other
-	// state is informational, and a dismissal there decides nothing either.
-	const bool offersGrant = !alreadyTrusted && model.persistenceReady && !model.options.empty();
-	std::vector<std::wstring> labels;
-	std::vector<TASKDIALOG_BUTTON> buttons;
-	if (offersGrant) {
-		labels.reserve(model.options.size());
-		buttons.reserve(model.options.size());
-		for (const auto& option : model.options) {
-			// The label names the exact resource the grant will write, because the
-			// user is consenting to that resource and not to a category.
-			std::wstring label = option.scope == workbench::EWorkspaceTrustGrantScope::ParentFolder
-				? L"Trust the authors of all files in the parent folder\n"
-				: (option.resourceCount > 1
-						  ? L"Yes, I trust the authors of every folder in this workspace\n"
-						  : L"Yes, I trust the authors\n");
-			label += option.displayUri;
-			labels.push_back(std::move(label));
-		}
-		for (std::size_t index = 0; index < labels.size(); ++index) {
-			buttons.push_back({ 1000 + static_cast<int>(index), labels[index].c_str() });
-		}
-	}
-
-	TASKDIALOGCONFIG config{};
-	config.cbSize = sizeof(config);
-	config.hwndParent = GetHwnd();
-	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW
-		| TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS;
-	// Cancel, never a default "yes": dismissing the dialog must leave trust exactly
-	// where it was. `TDCBF_CLOSE_BUTTON` is the honest verb when nothing is offered.
-	config.dwCommonButtons = offersGrant ? TDCBF_CANCEL_BUTTON : TDCBF_CLOSE_BUTTON;
-	config.pszWindowTitle = L"Workspace Trust";
-	config.pszMainIcon = alreadyTrusted ? TD_INFORMATION_ICON : TD_SHIELD_ICON;
-	config.pszMainInstruction = instruction.c_str();
-	config.pszContent = content.empty() ? nullptr : content.c_str();
-	config.cButtons = static_cast<UINT>(buttons.size());
-	config.pButtons = buttons.empty() ? nullptr : buttons.data();
-
-	int selected = 0;
-	if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr))) {
-		return { EWorkbenchCommandExecutionStatus::Failed, "the workspace trust dialog could not be shown" };
-	}
-	// The prompt was actually put on screen, so `once` has now been spent -- record
-	// that before acting on the answer, because a dismissal is just as much "this
-	// workspace was asked" as a grant is. A record that does not stick leaves the
-	// workspace unasked, which makes the next launch prompt again; that is the
-	// fail-open direction the policy deliberately chooses over silently skipping.
-	(void)m_workbenchRuntime->RecordWorkspaceTrustStartupPromptShown();
-	if (!offersGrant || selected < 1000) {
-		// Showing the current state, or being dismissed, is a completed command.
-		// It simply committed nothing.
-		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
-	}
-	const auto index = static_cast<std::size_t>(selected - 1000);
-	if (index >= model.options.size()) {
-		return { EWorkbenchCommandExecutionStatus::Failed, "the selected trust choice no longer exists" };
-	}
-
-	const auto granted = m_workbenchRuntime->GrantWorkspaceTrust(model.options[index].scope);
-	if (granted.Succeeded()) {
-		// Trust changed what `when` clauses resolve to, so the command context has
-		// to be re-read rather than left holding the pre-grant projection. The
-		// result is deliberately discarded: the durable grant is already committed,
-		// so a stale projection cannot un-grant it and must not be reported as a
-		// failed grant.
-		(void)RefreshWorkbenchCommandContext();
-		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
-	}
-	switch (granted.status) {
-	case workbench::EWorkspaceTrustGrantStatus::NotApplicable:
-	case workbench::EWorkspaceTrustGrantStatus::Stopped:
-		return { EWorkbenchCommandExecutionStatus::NotApplicable, granted.diagnostic };
-	case workbench::EWorkspaceTrustGrantStatus::PersistenceUnavailable:
-		return { EWorkbenchCommandExecutionStatus::Unsupported, granted.diagnostic };
-	default:
-		break;
-	}
-	return { EWorkbenchCommandExecutionStatus::Failed, granted.diagnostic };
+	if (GetHwnd() == nullptr) return { EWorkbenchCommandExecutionStatus::NotApplicable, "window is unavailable" };
+	workbench::scm::GitCloneCommandContext context;
+	context.text = [](workbench::scm::EScmTextKey key, std::wstring_view argument) {
+		return ResolveLocalizedScmText(key, argument);
+	};
+	context.homeDirectory = [] {
+		std::array<wchar_t, MAX_PATH> value{};
+		const DWORD length = ::GetEnvironmentVariableW(L"USERPROFILE", value.data(), static_cast<DWORD>(value.size()));
+		return length == 0 || length >= value.size() ? std::wstring{} : std::wstring(value.data(), length);
+	}();
+	context.promptForUrl = [this](std::wstring_view prompt, std::wstring_view placeholder, std::wstring_view value) -> std::optional<std::wstring> {
+		SQuickInputRequest request; request.kind = EQuickInputKind::InputBox; request.title = std::wstring(prompt); request.placeholder = placeholder; request.value = value;
+		CQuickInputDialog dialog(request); const auto completion = dialog.DoModal(GetHwnd());
+		if (completion.state != EQuickInputState::Accepted) return std::nullopt;
+		return completion.value.value_or(std::wstring{});
+	};
+	context.browseForParentDirectory = [this](std::wstring_view label, std::wstring_view initial) -> std::optional<std::wstring> {
+		std::array<WCHAR, 32768> selected{};
+		if (SelectDirWithResult(GetHwnd(), std::wstring(label), std::filesystem::path(initial), selected) != ESelectDirResult::Succeeded) return std::nullopt;
+		return MakeAbsolutePath(selected.data());
+	};
+	context.pathState = [](std::wstring_view path) {
+		const DWORD attributes = ::GetFileAttributesW(std::wstring(path).c_str());
+		if (attributes == INVALID_FILE_ATTRIBUTES) return workbench::scm::EGitPathState::Absent;
+		if ((attributes & FILE_ATTRIBUTE_DIRECTORY) == 0) return workbench::scm::EGitPathState::NonEmpty;
+		WIN32_FIND_DATAW data{}; const auto pattern = std::filesystem::path(path) / L"*";
+		const HANDLE find = ::FindFirstFileW(pattern.c_str(), &data);
+		if (find == INVALID_HANDLE_VALUE) return workbench::scm::EGitPathState::EmptyDirectory;
+		bool empty = true;
+		do { if (wcscmp(data.cFileName, L".") != 0 && wcscmp(data.cFileName, L"..") != 0) { empty = false; break; } } while (::FindNextFileW(find, &data));
+		::FindClose(find); return empty ? workbench::scm::EGitPathState::EmptyDirectory : workbench::scm::EGitPathState::NonEmpty;
+	};
+	context.message = [this](std::wstring_view message) { m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str()); };
+	const auto request = workbench::scm::RunGitClonePrepare(context);
+	if (!request) return { EWorkbenchCommandExecutionStatus::NotApplicable, "clone was cancelled or the destination is unavailable" };
+	const auto cloneWorkingDirectory = std::filesystem::path(request->destinationPath).parent_path().wstring();
+	const auto raw = workbench::scm::RunGitCloneExecute(*request, { recurseSubmodules },
+		[cloneWorkingDirectory](const std::vector<std::wstring>& arguments, HANDLE stop) {
+			workbench::scm::GitExecutionRequest r;
+			r.workingDirectory = cloneWorkingDirectory;
+			r.arguments = arguments;
+			return workbench::scm::RunGit(r, stop);
+		}, nullptr);
+	const auto result = workbench::scm::RunGitCloneComplete(*request, raw);
+	if (!result.Succeeded()) return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+	context.message(LocalizedWorkbenchString(STR_WORKBENCH_GIT_CLONE_SUCCESS));
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
 }
 
-EUntrustedFileLoadDecision CEditWnd::RequestUntrustedFileLoad(std::wstring_view path)
-{
-	// No runtime means no trust policy to enforce; a narrow test window must not
-	// block loads it has no service to gate. An untitled buffer never named a file
-	// on disk, so it is trivially "already covered" and is always allowed through.
-	if (m_workbenchRuntime == nullptr || path.empty()) {
-		return EUntrustedFileLoadDecision::Allowed;
-	}
-
-	const auto parsed = platform::uri::Uri::FromWindowsPath(std::wstring(path));
-	// A path this shell cannot even name as a URI is treated as not covered by the
-	// trusted list -- fail closed -- rather than silently let it bypass the gate.
-	const bool covered = parsed.value && m_workbenchRuntime->WorkspaceTrustCoversResource(*parsed.value);
-
-	const auto model = m_workbenchRuntime->WorkspaceTrustUntrustedFiles(covered);
-	switch (model.decision) {
-	case config::EWorkspaceTrustUntrustedFilesDecision::Open:
-		return EUntrustedFileLoadDecision::Allowed;
-	case config::EWorkspaceTrustUntrustedFilesDecision::OpenInNewWindow:
-	case config::EWorkspaceTrustUntrustedFilesDecision::Unsupported:
-		// `newWindow` exists precisely to keep the file out of this trusted window,
-		// and this shell cannot open a genuinely separate Restricted Mode window
-		// (workbench/CLAUDE.md). Both decisions therefore refuse rather than being
-		// silently downgraded to `Open`.
-		return EUntrustedFileLoadDecision::Refused;
-	case config::EWorkspaceTrustUntrustedFilesDecision::Prompt:
-	default:
-		break;
-	}
-
-	// The path may not have parsed into a displayable URI; show the raw path text
-	// in that case rather than an empty field.
-	std::wstring display = parsed.value ? parsed.value->ToWindowsPath().value.value_or(std::wstring(path))
-										 : std::wstring(path);
-
-	std::wstring content = L"This file is outside the folders you trust in this window:\n" + display
-		+ L"\n\nOpening it does not run untrusted code by itself. Automatic tasks and debug "
-		  L"launches that require trust remain disabled.";
-
-	TASKDIALOGCONFIG config{};
-	config.cbSize = sizeof(config);
-	config.hwndParent = GetHwnd();
-	config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW
-		| TDF_SIZE_TO_CONTENT | TDF_USE_COMMAND_LINKS;
-	// Cancel is the default and the only common button: this shell offers no
-	// "Open in Restricted Mode" or "Remember my decision for all workspaces"
-	// choice (window/CLAUDE.md documents both omissions), so declining must leave
-	// the file unopened rather than silently falling back to some other answer.
-	config.dwCommonButtons = TDCBF_CANCEL_BUTTON;
-	config.pszWindowTitle = L"Workspace Trust";
-	config.pszMainIcon = TD_SHIELD_ICON;
-	config.pszMainInstruction = L"Do you want to open this file?";
-	config.pszContent = content.c_str();
-
-	constexpr int kOpenButtonId = 1000;
-	const std::wstring openLabel = L"Open";
-	TASKDIALOG_BUTTON button{ kOpenButtonId, openLabel.c_str() };
-	config.cButtons = 1;
-	config.pButtons = &button;
-
-	int selected = 0;
-	if (FAILED(::TaskDialogIndirect(&config, &selected, nullptr, nullptr)) || selected != kOpenButtonId) {
-		// A failed dialog and an explicit decline take the same fail-closed path:
-		// the file must not enter the window on anything but an affirmative Open.
-		return EUntrustedFileLoadDecision::Refused;
-	}
-	// The save status is deliberately not gating the decision: the user just
-	// consented to open this file, and a durable-persistence failure must not
-	// silently refuse an already-granted, already-shown request. The next load
-	// simply asks again if the record did not stick.
-	(void)m_workbenchRuntime->RecordUntrustedFilesAccepted();
-	return EUntrustedFileLoadDecision::Allowed;
-}
 
 namespace {
 
@@ -3252,7 +3389,7 @@ bool ShowExplorerDeleteConfirmationDialog(
 //! `workbench/explorer/CLAUDE.md`: upstream reports these through the
 //! notification center; this product's notification surface cannot yet carry
 //! them, so the report is a modal error dialog.
-void ShowExplorerOperationError(HWND owner, const wchar_t* instruction, const std::wstring& detail)
+void ShowExplorerOperationError(HWND owner, std::wstring instruction, const std::wstring& detail)
 {
 	TASKDIALOGCONFIG config{};
 	config.cbSize = sizeof(config);
@@ -3261,7 +3398,7 @@ void ShowExplorerOperationError(HWND owner, const wchar_t* instruction, const st
 		| TDF_SIZE_TO_CONTENT;
 	config.pszWindowTitle = L"Sakura Editor NEXT";
 	config.pszMainIcon = TD_ERROR_ICON;
-	config.pszMainInstruction = instruction;
+	config.pszMainInstruction = instruction.c_str();
 	config.pszContent = detail.empty() ? nullptr : detail.c_str();
 	config.dwCommonButtons = TDCBF_CLOSE_BUTTON;
 	(void)::TaskDialogIndirect(&config, nullptr, nullptr, nullptr);
@@ -3362,7 +3499,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerDe
 			{ .recursive = true, .useTrash = false });
 	}
 	if (!deletion.Succeeded()) {
-		ShowExplorerOperationError(GetHwnd(), L"The file could not be deleted.",
+		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_DELETE_FAILED),
 			deletion.diagnostic);
 		return { EWorkbenchCommandExecutionStatus::Failed, "the resource could not be deleted" };
 	}
@@ -3417,7 +3554,7 @@ void CEditWnd::CommitExplorerRename(std::wstring_view path, std::wstring_view ne
 {
 	auto* const files = EnsureExplorerFileService();
 	if (files == nullptr) {
-		ShowExplorerOperationError(GetHwnd(), L"The file could not be renamed.", {});
+		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_RENAME_FAILED), {});
 		return;
 	}
 	std::wstring source(path);
@@ -3426,7 +3563,7 @@ void CEditWnd::CommitExplorerRename(std::wstring_view path, std::wstring_view ne
 	}
 	const auto separator = source.find_last_of(L"\\/");
 	if (separator == std::wstring::npos) {
-		ShowExplorerOperationError(GetHwnd(), L"The file could not be renamed.", {});
+		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_RENAME_FAILED), {});
 		return;
 	}
 	std::wstring target = source.substr(0, separator + 1);
@@ -3434,7 +3571,7 @@ void CEditWnd::CommitExplorerRename(std::wstring_view path, std::wstring_view ne
 	const auto renamed = files->Rename(platform::uri::Uri::FromWindowsPath(source),
 		platform::uri::Uri::FromWindowsPath(target), { .overwrite = false });
 	if (!renamed.Succeeded()) {
-		ShowExplorerOperationError(GetHwnd(), L"The file could not be renamed.",
+		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_RENAME_FAILED),
 			renamed.diagnostic);
 	}
 }
@@ -3444,8 +3581,9 @@ void CEditWnd::CommitExplorerCreate(
 {
 	auto* const files = EnsureExplorerFileService();
 	if (files == nullptr) {
-		ShowExplorerOperationError(GetHwnd(),
-			directory ? L"The folder could not be created." : L"The file could not be created.", {});
+		ShowExplorerOperationError(GetHwnd(), directory
+			? LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_CREATE_FOLDER_FAILED)
+			: LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_CREATE_FILE_FAILED), {});
 		return;
 	}
 	std::wstring target(parentDirectory);
@@ -3456,7 +3594,7 @@ void CEditWnd::CommitExplorerCreate(
 	if (directory) {
 		const auto made = files->MakeDirectory(platform::uri::Uri::FromWindowsPath(target));
 		if (!made.Succeeded()) {
-			ShowExplorerOperationError(GetHwnd(), L"The folder could not be created.",
+			ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_CREATE_FOLDER_FAILED),
 				made.diagnostic);
 		}
 		return;
@@ -3467,7 +3605,7 @@ void CEditWnd::CommitExplorerCreate(
 		platform::uri::Uri::FromWindowsPath(target), platform::filesystem::FileBytes{},
 		platform::filesystem::FileConditionalReplaceOptions::ForMissing());
 	if (!created.Succeeded()) {
-		ShowExplorerOperationError(GetHwnd(), L"The file could not be created.",
+		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_CREATE_FILE_FAILED),
 			created.diagnostic);
 		return;
 	}
@@ -3487,6 +3625,9 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitStageCo
 	}
 
 	workbench::scm::GitStageCommandContext context;
+	context.text = [](std::string_view key, std::wstring_view argument) {
+		return ResolveLocalizedScmTextKey(key, argument);
+	};
 	context.repositoryRoot = root;
 	context.run = [&root](const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
@@ -3642,9 +3783,11 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 //!
 [[nodiscard]] std::wstring DiffEndpointLabel(const workbench::scm::GitDiffEndpoint& endpoint)
 {
-	if (endpoint.source == workbench::scm::EGitDiffSource::WorkingTree) return L"Working Tree";
+	if (endpoint.source == workbench::scm::EGitDiffSource::WorkingTree) {
+		return LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_WORKING_TREE);
+	}
 	// An empty ref is the index, not an absent one: `git show :path`.
-	return endpoint.ref.empty() ? std::wstring(L"Index") : endpoint.ref;
+	return endpoint.ref.empty() ? LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_INDEX) : endpoint.ref;
 }
 
 //! Read one side's raw bytes. `failure` carries a sentence only when this fails.
@@ -3672,7 +3815,7 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 	// about the edit that has not been staged yet.
 	const auto absolute = workbench::scm::JoinRepositoryPath(repositoryRoot, endpoint.path);
 	if (absolute.empty()) {
-		failure = L"The compared path could not be resolved.";
+		failure = LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_PATH_UNRESOLVED);
 		return false;
 	}
 	const HANDLE file = ::CreateFileW(absolute.c_str(), GENERIC_READ,
@@ -3682,18 +3825,18 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 		// A refresh is periodic, so the file can legitimately vanish between the
 		// row being rendered and the row being clicked. Reporting that is honest;
 		// substituting an empty side would render the whole file as deleted.
-		failure = L"The file could not be opened.";
+		failure = LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_FILE_OPEN_FAILED);
 		return false;
 	}
 	LARGE_INTEGER size{};
 	if (!::GetFileSizeEx(file, &size) || size.QuadPart < 0) {
 		::CloseHandle(file);
-		failure = L"The file could not be read.";
+		failure = LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_FILE_READ_FAILED);
 		return false;
 	}
 	if (static_cast<unsigned long long>(size.QuadPart) > kMaximumDiffSideBytes) {
 		::CloseHandle(file);
-		failure = L"The file is too large to compare.";
+		failure = LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_FILE_TOO_LARGE);
 		return false;
 	}
 	bytes.resize(static_cast<std::size_t>(size.QuadPart));
@@ -3704,7 +3847,7 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 		DWORD read = 0;
 		if (!::ReadFile(file, bytes.data() + offset, wanted, &read, nullptr) || read == 0) {
 			::CloseHandle(file);
-			failure = L"The file could not be read.";
+			failure = LocalizedWorkbenchString(STR_WORKBENCH_GIT_DIFF_FILE_READ_FAILED);
 			return false;
 		}
 		offset += read;
@@ -3875,7 +4018,10 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitOpenCha
 			return { EWorkbenchCommandExecutionStatus::NotApplicable,
 				"that row is no longer in the Source Control view" };
 		}
-		const auto input = workbench::scm::ResolveGitDiffInput(*found);
+		const auto input = workbench::scm::ResolveGitDiffInput(*found,
+			[](std::string_view key, std::wstring_view argument) {
+				return ResolveLocalizedScmTextKey(key, argument);
+			});
 		switch (input.kind) {
 		case workbench::scm::EGitDiffCommandKind::Diff: {
 			workbench::commands::ApiDiffArguments arguments;
@@ -4158,6 +4304,9 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitC
 	}
 
 	workbench::scm::GitCommitCommandContext context;
+	context.text = [](std::string_view key, std::wstring_view argument) {
+		return ResolveLocalizedScmTextKey(key, argument);
+	};
 	context.repositoryRoot = root;
 	context.run = [&root](const std::vector<std::wstring>& arguments, std::string_view standardInput) {
 		workbench::scm::GitExecutionRequest request;
@@ -4305,22 +4454,27 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCom
 	// for it, for the same reason the branch commands do: a framed dialog must
 	// caption itself with something, and upstream's own string is not an
 	// invented label.
-	const wchar_t* caption = L"Fetch";
+	std::string_view commandId = "git.fetch";
+	std::wstring_view fallback = L"Fetch";
 	switch (command) {
-	case EGitSyncCommand::FetchPrune: caption = L"Fetch (Prune)"; break;
-	case EGitSyncCommand::FetchAll: caption = L"Fetch From All Remotes"; break;
-	case EGitSyncCommand::Pull: caption = L"Pull"; break;
-	case EGitSyncCommand::PullRebase: caption = L"Pull (Rebase)"; break;
-	case EGitSyncCommand::Push: caption = L"Push"; break;
-	case EGitSyncCommand::Sync: caption = L"Sync"; break;
-	case EGitSyncCommand::SyncRebase: caption = L"Sync (Rebase)"; break;
-	case EGitSyncCommand::Publish: caption = L"Publish Branch..."; break;
+	case EGitSyncCommand::FetchPrune: commandId = "git.fetchPrune"; fallback = L"Fetch (Prune)"; break;
+	case EGitSyncCommand::FetchAll: commandId = "git.fetchAll"; fallback = L"Fetch From All Remotes"; break;
+	case EGitSyncCommand::Pull: commandId = "git.pull"; fallback = L"Pull"; break;
+	case EGitSyncCommand::PullRebase: commandId = "git.pullRebase"; fallback = L"Pull (Rebase)"; break;
+	case EGitSyncCommand::Push: commandId = "git.push"; fallback = L"Push"; break;
+	case EGitSyncCommand::Sync: commandId = "git.sync"; fallback = L"Sync"; break;
+	case EGitSyncCommand::SyncRebase: commandId = "git.syncRebase"; fallback = L"Sync (Rebase)"; break;
+	case EGitSyncCommand::Publish: commandId = "git.publish"; fallback = L"Publish Branch..."; break;
 	case EGitSyncCommand::Fetch:
 	default:
 		break;
 	}
+	const std::wstring caption = LocalizedWorkbenchCommandTitle(commandId, fallback);
 
 	workbench::scm::GitSyncCommandContext context;
+	context.text = [](std::string_view key, std::wstring_view argument) {
+		return ResolveLocalizedScmTextKey(key, argument);
+	};
 	context.run = [&root](const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
@@ -4482,10 +4636,6 @@ bool CEditWnd::ShowDiffSurface(SDiffSurfaceContent content)
 	m_diffSurface->ShowDiff(std::move(content));
 	// Opening a comparison replaces whatever the group was showing, exactly as it
 	// does in VS Code.
-	if (m_workspaceTrustSurface) {
-		m_workspaceTrustSurface->ClearPrompt();
-		m_workspaceTrustSurface->Hide();
-	}
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 	if (!m_pPrintPreview) m_diffSurface->Show();
 	RelayoutEditorProjections();
@@ -4513,15 +4663,15 @@ void CEditWnd::RefreshStatusbarPresentation()
 	using workbench::statusbar::EStatusbarEntryAlignment;
 	using workbench::statusbar::StatusbarEntry;
 	std::vector<StatusbarEntry> entries{
-		{ "status.workspaceTrust", L"制限モード", EStatusbarEntryAlignment::Left, true },
-		{ "status.scm", L"ソース管理", EStatusbarEntryAlignment::Left, true },
-		{ "status.editor.selection", L"選択範囲", EStatusbarEntryAlignment::Right, true },
-		{ "status.editor.eol", L"改行コード", EStatusbarEntryAlignment::Right, true },
-		{ "sakura.status.editor.characterCode", L"文字コード値", EStatusbarEntryAlignment::Right, true },
-		{ "status.editor.encoding", L"エンコード", EStatusbarEntryAlignment::Right, true },
-		{ "sakura.status.macroRecording", L"キーマクロ記録", EStatusbarEntryAlignment::Right, true },
-		{ "status.editor.inputMode", L"入力モード", EStatusbarEntryAlignment::Right, true },
-		{ "status.editor.zoom", L"ズーム", EStatusbarEntryAlignment::Right, true },
+		{ "status.host", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_REMOTE_HOST), EStatusbarEntryAlignment::Left, true },
+		{ "status.scm", LocalizedWorkbenchString(STR_WORKBENCH_SOURCE_CONTROL_TITLE), EStatusbarEntryAlignment::Left, true },
+		{ "status.editor.selection", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_SELECTION), EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.eol", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_LINE_ENDING), EStatusbarEntryAlignment::Right, true },
+		{ "sakura.status.editor.characterCode", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_CHARACTER_CODE), EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.encoding", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_ENCODING), EStatusbarEntryAlignment::Right, true },
+		{ "sakura.status.macroRecording", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_MACRO_RECORDING), EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.inputMode", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_INPUT_MODE), EStatusbarEntryAlignment::Right, true },
+		{ "status.editor.zoom", LocalizedWorkbenchString(STR_WORKBENCH_STATUS_ZOOM), EStatusbarEntryAlignment::Right, true },
 	};
 	if (!m_workbenchRuntime->StatusbarState().SetEntries(std::move(entries))) return;
 	m_cStatusBar.SetStatusbarViewSnapshot(m_workbenchRuntime->StatusbarState().Snapshot());
@@ -4572,13 +4722,6 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_workbenchContextKeyService.reset();
 	if (m_editorCoreSubscription) m_editorCoreSubscription->Unsubscribe();
 	m_editorCoreSubscription.reset();
-	if (m_workspaceTrustSurface) {
-		m_workspaceTrustSurface->SetOnGrantRequested({});
-		m_workspaceTrustSurface->SetOnCloseRequested({});
-		m_workspaceTrustSurface->ClearPrompt();
-		m_workspaceTrustSurface->Destroy();
-	}
-	m_workspaceTrustSurface.reset();
 	if (m_diffSurface) {
 		m_diffSurface->SetOnCloseRequested({});
 		m_diffSurface->ClearDiff();
@@ -4605,12 +4748,10 @@ void CEditWnd::CloseWorkbench() noexcept
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Close();
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Close();
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Close();
-	if (m_workbenchBanner) m_workbenchBanner->Close();
 	m_activityBar.reset();
 	m_leftWorkbenchPanel.reset();
 	m_rightWorkbenchPanel.reset();
 	m_bottomWorkbenchPanel.reset();
-	m_workbenchBanner.reset();
 	m_sidebarHost = nullptr;
 	m_auxiliaryBarHost = nullptr;
 	m_viewContainerPages.reset();
@@ -4684,13 +4825,11 @@ void CEditWnd::ApplyWorkbenchTheme()
 	if (m_sidebarHost) m_sidebarHost->SetPalette(palette);
 	if (m_auxiliaryBarHost) m_auxiliaryBarHost->SetPalette(palette);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->SetPalette(palette);
-	if (m_workbenchBanner) m_workbenchBanner->SetPalette(palette);
 	if (m_bottomPanelTool) m_bottomPanelTool->SetPalette(palette);
 	if (m_terminalTool) m_terminalTool->SetPalette(palette);
 	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
 	if (m_emptyEditorSurface) m_emptyEditorSurface->SetPalette(palette);
 	if (m_diffSurface) m_diffSurface->SetPalette(palette);
-	if (m_workspaceTrustSurface) m_workspaceTrustSurface->SetPalette(palette);
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -4702,6 +4841,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 		activityPalette.activeIcon = palette.primaryText.ToColorRef();
 		activityPalette.disabledIcon = palette.secondaryText.ToColorRef();
 		activityPalette.focusBorder = palette.accent.ToColorRef();
+		activityPalette.border = palette.border.ToColorRef();
 		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
 		m_activityBar->SetPalette(activityPalette);
 	}
@@ -4782,18 +4922,6 @@ bool CEditWnd::ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
 	applyPart(*m_bottomWorkbenchPanel, projection.parts.bottom);
 	applyPart(*m_rightWorkbenchPanel, projection.parts.right);
 	if (!projection.parts.bottom.visible) m_bottomWorkbenchMaximized = false;
-	if (m_workbenchBanner) {
-		// The three Parts above always exist; `workbench.parts.banner` is optional, so its
-		// projection is engaged only when the Part is actually registered. Disengaged means
-		// this model has no banner capability at all, while engaged-and-not-visible means a
-		// registered banner the runtime is deliberately keeping quiet. Both hide the window
-		// here, but they are not the same fact and must not be collapsed into one: a future
-		// caller that needs to know whether a banner could ever appear reads the optional,
-		// not the boolean.
-		const bool bannerVisible = projection.parts.banner && projection.parts.banner->visible;
-		if (bannerVisible) m_workbenchBanner->Show(); else m_workbenchBanner->Hide();
-	}
-
 	auto& settings = m_pShareData->m_Common.m_sWorkbench;
 	bool changed = false;
 	const auto updateVisible = [&changed](BOOL& destination, bool visible) {
@@ -5419,6 +5547,42 @@ void CEditWnd::BroadcastWorkbenchSettings()
 		MYWM_CHANGESETTING, 0, PM_CHANGESETTING_WORKBENCH, GetHwnd());
 }
 
+void CEditWnd::UpdateWorkbenchWelcomeState()
+{
+	if (m_explorerTool == nullptr && m_scmTool == nullptr) return;
+
+	const auto explorerState = [&]() {
+		if (m_workbenchRuntime == nullptr) {
+			return m_hasActiveEditorInput
+				? workbench::explorer::ExplorerWelcomeState::NoFolderWithEditors
+				: workbench::explorer::ExplorerWelcomeState::NoFolder;
+		}
+		const auto snapshot = m_workbenchRuntime->WorkspaceContext().Snapshot();
+		if (snapshot.kind == config::EWorkspaceKind::Workspace && snapshot.folders.empty()) {
+			return workbench::explorer::ExplorerWelcomeState::EmptyWorkspace;
+		}
+		if (snapshot.kind == config::EWorkspaceKind::Workspace && !snapshot.folders.empty()) {
+			return workbench::explorer::ExplorerWelcomeState::WorkspaceWithFoldersUnsupported;
+		}
+		if (snapshot.kind == config::EWorkspaceKind::Empty) {
+			return m_hasActiveEditorInput
+				? workbench::explorer::ExplorerWelcomeState::NoFolderWithEditors
+				: workbench::explorer::ExplorerWelcomeState::NoFolder;
+		}
+		return workbench::explorer::ExplorerWelcomeState::NoFolder;
+	}();
+	if (m_explorerTool != nullptr) m_explorerTool->SetWelcomeState(explorerState);
+
+	if (m_scmTool != nullptr) {
+		const auto scmState = m_workbenchRuntime == nullptr
+			? (GetSemanticWorkspaceRoot().empty()
+				? workbench::scm::EGitScmWelcomeWorkspaceState::Empty
+				: workbench::scm::EGitScmWelcomeWorkspaceState::Folder)
+			: ScmWelcomeWorkspaceState(m_workbenchRuntime->WorkspaceContext().Snapshot());
+		m_scmTool->SetWelcomeWorkspaceState(scmState);
+	}
+}
+
 std::wstring CEditWnd::GetSemanticWorkspaceRoot() const
 {
 	if (m_workbenchRuntime == nullptr) {
@@ -5445,67 +5609,11 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 	if (m_explorerTool) m_explorerTool->SetRoot(root);
 	if (m_scmTool) {
 		m_scmTool->SetRoot(root);
-		// フォルダーを開いた／閉じた瞬間に welcome の分岐も追随させる。
-		// SetHasOpenFolder は値が変わったときだけ再構築するので、ここで毎回
-		// 呼んでも余分な再レイアウトにはならない。
-		m_scmTool->SetHasOpenFolder(!root.empty());
 	}
+	UpdateWorkbenchWelcomeState();
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
-	// The banner's message names the thing the user would be trusting, so it follows the
-	// workspace shape exactly as VS Code's does.
-	RefreshRestrictedModeBannerContent();
 }
 
-void CEditWnd::RefreshRestrictedModeBannerContent()
-{
-	if (!m_workbenchBanner) return;
-
-	// VS Code's `WorkspaceTrustUXHandler.getBannerItem` picks its message from the
-	// workbench state, so "trust this window/folder/workspace" names what the grant
-	// would actually cover. `$(shield)` is the banner item's own `shieldIcon`.
-	auto kind = config::EWorkspaceKind::Empty;
-	if (m_workbenchRuntime != nullptr) kind = m_workbenchRuntime->WorkspaceContext().Snapshot().kind;
-	std::wstring message = L"$(shield) Restricted Mode is intended for safe code browsing. ";
-	switch (kind) {
-	case config::EWorkspaceKind::Folder:
-		message += L"Trust this folder to enable all features.";
-		break;
-	case config::EWorkspaceKind::Workspace:
-		message += L"Trust this workspace to enable all features.";
-		break;
-	case config::EWorkspaceKind::Empty:
-	default:
-		message += L"Trust this window to enable all features.";
-		break;
-	}
-
-	// Upstream's banner carries `Manage` and `Learn More`, and a close button whose
-	// `onClose` writes the `untilDismissed` memento.
-	//
-	// `Manage` is offered only while `workbench.trust.manage` is actually registered:
-	// the host draws exactly the actions it is handed, so an action nothing could
-	// perform has to be withheld here rather than drawn dead.
-	//
-	// `Learn More` is absent because it is an `href` to an external documentation URL
-	// and this product has no `env.openExternal` equivalent yet.
-	//
-	// The close/dismiss affordance is absent because there is no durable per-workspace
-	// dismissal store; that is the same gap that makes
-	// `CWorkbenchRuntime::UpdateRestrictedModeBannerVisibility` treat the
-	// `security.workspace.trust.banner` value `untilDismissed` as `always`. A
-	// session-only dismissal would hide the only banner-side Restricted Mode signal
-	// while claiming to have remembered a choice it did not persist.
-	std::vector<workbench::WorkbenchBannerAction> actions;
-	if (m_workbenchCommandRegistry != nullptr
-		&& m_workbenchCommandRegistry->Find("workbench.trust.manage")) {
-		actions.push_back({
-			.label = L"Manage",
-			.kind = workbench::EWorkbenchBannerActionKind::Command,
-			.commandId = "workbench.trust.manage",
-		});
-	}
-	m_workbenchBanner->SetContent(std::move(message), std::move(actions));
-}
 
 void CEditWnd::UpdateWorkspaceFromDocument()
 {
@@ -5801,12 +5909,6 @@ bool CEditWnd::RefreshWorkbenchCommandContext()
 	try {
 		const bool recentlyOpenedAvailable = HasRecentlyOpenedItems();
 		const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
-		// The status bar's Restricted Mode entry is a plain projection of the same
-		// workspace-context trust this function already reads for the core context
-		// keys; pushing it here keeps the two from ever disagreeing about what
-		// "trusted" means, rather than adding a second workspace-context
-		// subscription just for painting.
-		m_cStatusBar.SetWorkspaceTrustState(workspace.trust);
 		const auto result = m_workbenchContextKeyService->SetCoreProjection(
 			m_workbenchRuntime->LayoutState().Snapshot(), workspace,
 			BuildWorkbenchEditorCommandContext(), recentlyOpenedAvailable, BuildWorkbenchScmCommandContext(),
@@ -6286,7 +6388,32 @@ void CEditWnd::RefreshSidebarTitles()
 	}
 	if (m_rightWorkbenchPanel && m_auxiliaryBarHost != nullptr) {
 		const auto page = m_auxiliaryBarHost->ActivePage();
-		m_rightWorkbenchPanel->SetTitle(page.empty() ? L"SECONDARY SIDE BAR" : titleOf(page));
+		m_rightWorkbenchPanel->SetTitle(page.empty()
+			? LocalizedWorkbenchString(STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE)
+			: titleOf(page));
+	}
+}
+
+void CEditWnd::RefreshLocalizedWorkbenchText()
+{
+	if (m_commandPaletteOverlay) m_commandPaletteOverlay->RefreshStrings();
+	if (m_viewContainerPages) m_viewContainerPages->RefreshStrings();
+	if (m_bottomPanelTool) m_bottomPanelTool->RefreshStrings();
+	RefreshSidebarTitles();
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+			SyncViewContainers(&snapshot);
+		}
+		catch (...) {
+			SyncViewContainers(nullptr);
+		}
+	} else {
+		SyncViewContainers(nullptr);
+	}
+	RefreshStatusbarPresentation();
+	if (GetHwnd() != nullptr) {
+		::RedrawWindow(GetHwnd(), nullptr, nullptr, RDW_INVALIDATE | RDW_ALLCHILDREN);
 	}
 }
 
@@ -6338,6 +6465,7 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 	if (!m_activityBar && !m_viewContainerPages) return;
 	const workbench::activity::ActivityBarProjectionOptions options{
 		.renderableBuiltins = kRenderableBuiltinContainers,
+		.titleResolver = ResolveLocalizedActivityBarTitle,
 	};
 	static const workbench::layout::WorkbenchContributionSnapshot builtinsOnly =
 		workbench::layout::WorkbenchContributionRegistry{}.Snapshot();
@@ -6350,12 +6478,15 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 	// placeholder would be a fake capability, so the entry is hidden instead.
 	if (layoutState != nullptr) {
 		for (auto& entry : entries) {
+			if (entry.IsGlobalAction()) continue;
 			const auto container = std::ranges::find(layoutState->containers, entry.id,
 				&workbench::layout::WorkbenchViewContainerState::containerId);
 			entry.visible = container == layoutState->containers.end()
 				|| container->location == workbench::layout::EWorkbenchViewContainerLocation::SideBar;
 		}
 	}
+	// GlobalCompositeBar: Accounts then Manage, pinned to the bottom by ActivityBarModel.
+	workbench::activity::AppendGlobalActivityActions(entries);
 	if (m_activityBar) m_activityBar->SetEntries(std::move(entries));
 }
 
@@ -6807,7 +6938,9 @@ EOpenWorkspaceFolderResult CEditWnd::ApplyFolderWorkspace(
 	if (m_workbenchRuntime != nullptr) {
 		auto displayName = std::filesystem::path(absoluteRoot).filename().wstring();
 		if (displayName.empty()) displayName = std::filesystem::path(absoluteRoot).root_name().wstring();
-		if (displayName.empty() || displayName.size() > 256) displayName = L"Folder";
+		if (displayName.empty() || displayName.size() > 256) {
+			displayName = LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_FOLDER);
+		}
 		const auto accepted = m_workbenchRuntime->SwitchToFolderWorkspace(
 			std::move(*folderUri.value), std::move(displayName));
 		if (accepted.outcome != config::EWorkspaceContextOutcome::Succeeded
@@ -7132,28 +7265,20 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			::ShowWindow(splitter, SW_HIDE);
 		}
 		if (m_markdownPreview) m_markdownPreview->Show(false);
-		// Same precedence as `ApplyEditorCoreSnapshot`: trust page, comparison,
-		// extension metadata, then the watermark. Only the winner is laid out, so
+		// Same precedence as `ApplyEditorCoreSnapshot`: comparison, extension
+		// metadata, then the watermark. Only the winner is laid out, so
 		// a hidden projection never claims the editor rectangle.
-		if (m_workspaceTrustSurface && m_workspaceTrustSurface->HasPrompt()) {
-			m_workspaceTrustSurface->Layout({ left, top, right, bottom }, dpi);
-			if (!m_pPrintPreview) m_workspaceTrustSurface->Show();
-			if (m_diffSurface) m_diffSurface->Hide();
-			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
-		} else if (m_diffSurface && m_diffSurface->HasDiff()) {
+		if (m_diffSurface && m_diffSurface->HasDiff()) {
 			m_diffSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_diffSurface->Show();
-			if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 			if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 		} else if (m_emptyEditorSurface) {
 			m_emptyEditorSurface->Layout({ left, top, right, bottom }, dpi);
 			if (!m_pPrintPreview) m_emptyEditorSurface->Show();
-			if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 			if (m_diffSurface) m_diffSurface->Hide();
 		}
 		return;
 	}
-	if (m_workspaceTrustSurface) m_workspaceTrustSurface->Hide();
 	if (m_diffSurface) m_diffSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
 	const bool showPreview = m_markdownPreviewVisible && m_markdownPreview != nullptr && !m_pPrintPreview;
@@ -7354,10 +7479,14 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 bool CEditWnd::ShowCommandPalette()
 {
 	if (!GetHwnd() || !m_workbenchCommandRegistry) return false;
+	const auto titleResolver = [](const workbench::commands::WorkbenchCommandDescriptor& descriptor) {
+		return ResolveLocalizedWorkbenchCommandTitle(descriptor);
+	};
 	const auto registeredCommands =
-		workbench::editor::SearchRegisteredCommandPalette(*m_workbenchCommandRegistry, L"");
+		workbench::editor::SearchRegisteredCommandPalette(*m_workbenchCommandRegistry, L"", titleResolver);
 	if (registeredCommands.empty()) {
-		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, L"利用できるコマンドはありません");
+		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS,
+			LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS).c_str());
 		return false;
 	}
 	const auto convertItems = [](const auto& source) {
@@ -7381,12 +7510,12 @@ bool CEditWnd::ShowCommandPalette()
 		}
 		m_commandPaletteOverlay->SetPalette(theme::CThemeService::EffectivePalette(
 			m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
-		m_commandPaletteOverlay->SetSearchCallback([this, convertItems](std::wstring_view query) {
+		m_commandPaletteOverlay->SetSearchCallback([this, convertItems, titleResolver](std::wstring_view query) {
 			if (!m_workbenchCommandRegistry) {
 				return std::vector<workbench::quickinput::CommandPaletteItem>{};
 			}
 			return convertItems(workbench::editor::SearchRegisteredCommandPalette(
-				*m_workbenchCommandRegistry, query));
+				*m_workbenchCommandRegistry, query, titleResolver));
 		});
 		m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring commandId) {
 			if (!m_workbenchCommandRegistry) return;
@@ -7959,7 +8088,8 @@ HWND CEditWnd::Create(
 		workbenchInitialized = InitializeWorkbench();
 	}
 	if (!workbenchInitialized) {
-		TopErrorMessage(GetHwnd(), L"ワークベンチの初期化に失敗しました。\nFailed to initialize the workbench.");
+		const auto message = LocalizedWorkbenchString(STR_WORKBENCH_INITIALIZE_FAILED);
+		TopErrorMessage(GetHwnd(), message.c_str());
 		AbortStartupDrawTransaction();
 		::DestroyWindow(GetHwnd());
 		m_hWnd = hWnd = nullptr;
@@ -8510,12 +8640,6 @@ LRESULT CEditWnd::DispatchEvent(
 			CompleteDeferredStartupWorkbench();
 		}
 		return 0;
-	case MYWM_WORKSPACE_TRUST_STARTUP_PROMPT:
-		// The runtime owns the decision; ShowWorkspaceTrustStartupPrompt resolves
-		// NotApplicable when `security.workspace.trust.startupPrompt` or the already
-		// recorded per-workspace memento says this window must not ask.
-		(void)ShowWorkspaceTrustStartupPrompt();
-		return 0;
 	case WM_LBUTTONDOWN:
 		return OnLButtonDown( wParam, lParam );
 	case WM_MOUSEMOVE:
@@ -9020,6 +9144,7 @@ LRESULT CEditWnd::DispatchEvent(
 			/* 言語を選択する */
 			CSelectLang::ChangeLang( GetDllShareData().m_Common.m_sWindow.m_szLanguageDll );
 			CShareData::getInstance()->RefreshString();
+			RefreshLocalizedWorkbenchText();
 
 			// 2015.08.20 プリントプレビューのとき設定を延期する(戻るとき適用)
 			if (!m_pPrintPreview) {
@@ -10768,9 +10893,6 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		::SendMessage( hwndToolBar, WM_SIZE, wParam, lParam );
 		::GetWindowRect( hwndToolBar, &rc );
 		nToolBarHeight = rc.bottom - rc.top;
-		// Placement is deferred to the chrome layout below.  `workbench.parts.banner`
-		// sits between the title bar and this accessory band, so the toolbar's top is
-		// no longer `nCustomTitleHeight`; only the layout model knows where it goes.
 	}
 	nFuncKeyWndHeight = 0;
 	if( nullptr != m_cFuncKeyWnd.GetHwnd() ){
@@ -10818,11 +10940,6 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.clientHeight = cy;
 	layoutRequest.dpi = workbench::ScaleDpi(physicalDpi, m_workbenchZoomPercent);
 	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
-	// The banner measures its own text, so its height is asked for rather than
-	// looked up, and only while the Part is actually visible: a hidden banner
-	// must reserve nothing, exactly as a hidden Panel reserves nothing.
-	layoutRequest.bannerHeightPixels = (m_workbenchBanner && m_workbenchBanner->IsVisible())
-		? m_workbenchBanner->PreferredHeightPixels(layoutRequest.dpi) : 0;
 	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
 		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);
 	layoutRequest.documentTabsHeightPixels = 0;
@@ -10846,16 +10963,13 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		? m_bottomWorkbenchPanel->GetPendingExtentDip() : m_pShareData->m_Common.m_sWorkbench.m_nBottomPanelExtent96;
 	layoutRequest.minimapWidthDip = GetDllShareData().m_Common.m_sWindow.m_nMiniMapWidth;
 
-	// The chrome bands — title bar, banner, top accessory — and the central
+	// The chrome bands — title bar and top accessory — and the central
 	// column's horizontal extent are all decided above the document tabs, so this
 	// early evaluation produces the same rectangles for them as the final one
 	// below.  Everything that has to be positioned before the tab height is known
 	// reads it, so no code here re-derives a sibling's coordinates by adding
 	// heights together, which `window/CLAUDE.md` forbids in this function.
 	const auto chromeLayout = workbench::CalculateWorkbenchLayout(layoutRequest);
-	if (m_workbenchBanner) {
-		m_workbenchBanner->Layout(ToWinRect(chromeLayout.banner), layoutRequest.dpi);
-	}
 	if( nullptr != hwndToolBar ){
 		::MoveWindow(hwndToolBar, chromeLayout.topAccessory.left, chromeLayout.topAccessory.top,
 			chromeLayout.topAccessory.Width(), nToolBarHeight, TRUE);
@@ -10941,8 +11055,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		{	/* ファンクションキー表示位置／0:上 1:下 */
 			// The top accessory band holds the toolbar and this bar in that order, so
 			// this bar starts where the band starts plus the toolbar's own height.
-			// `nCustomTitleHeight + nToolBarHeight` would be a peer-coordinate
-			// inference and would additionally be wrong the moment the banner exists.
+			// `nCustomTitleHeight + nToolBarHeight` would be peer-coordinate
+			// inference; use the committed chrome layout instead.
 			::MoveWindow(
 				m_cFuncKeyWnd.GetHwnd(),
 				chromeLayout.topAccessory.left,

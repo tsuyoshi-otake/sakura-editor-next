@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief What a Source Control row compares, and the line diff between the two sides.
  */
 /*
@@ -11,12 +11,16 @@
 #include "workbench/scm/GitScmModel.h"
 
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
 
 namespace workbench::scm {
+
+//! Resolves a localized SCM label. The argument is the basename for diff titles.
+using GitDiffTextResolver = std::function<std::wstring(std::string_view key, std::wstring_view argument)>;
 
 //!
 //! @brief Where one side of a comparison reads its text from.
@@ -110,10 +114,12 @@ struct GitDiffRow final {
 [[nodiscard]] GitDiffRow MakeGitDiffRow(const GitChange& change, EGitFileStatus status, bool stagedInIndex);
 
 //! Upstream's `Resource.getTitle()`, unlocalized.
-[[nodiscard]] std::wstring BuildGitDiffTitle(EGitFileStatus status, std::wstring_view path);
+[[nodiscard]] std::wstring BuildGitDiffTitle(
+	EGitFileStatus status, std::wstring_view path, const GitDiffTextResolver& text = {});
 
 //! Upstream's `getLeftResource` / `getRightResource` / `getResources`, collapsed.
-[[nodiscard]] GitDiffInput ResolveGitDiffInput(const GitDiffRow& row);
+[[nodiscard]] GitDiffInput ResolveGitDiffInput(
+	const GitDiffRow& row, const GitDiffTextResolver& text = {});
 
 //! Upstream's `Repository.buffer`: `show --textconv <ref>:<path>`. Empty for a
 //! working-tree endpoint, which is read from disk and never from git.

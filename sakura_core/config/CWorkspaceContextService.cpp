@@ -213,7 +213,7 @@ PreparedContext PrepareEmpty(const WorkspaceContextOperation& operation, std::ui
 		prepared.failureReason = "immutable empty-window identity is invalid";
 		return prepared;
 	}
-	prepared.snapshot = { generation, 0, EWorkspaceKind::Empty, std::nullopt, {}, EWorkspaceTrustState::Unknown, *identity };
+	prepared.snapshot = { generation, 0, EWorkspaceKind::Empty, std::nullopt, {}, *identity };
 	prepared.valid = true;
 	return prepared;
 }
@@ -240,7 +240,7 @@ PreparedContext PrepareFolder(const SetFolderRequest& request, std::uint64_t gen
 		return prepared;
 	}
 	prepared.snapshot = { generation, 0, EWorkspaceKind::Folder, std::nullopt,
-		{ { std::move(canonicalFolder->uri), request.displayName } }, EWorkspaceTrustState::Unknown, *identity };
+		{ { std::move(canonicalFolder->uri), request.displayName } }, *identity };
 	prepared.valid = true;
 	return prepared;
 }
@@ -302,8 +302,7 @@ PreparedContext PrepareWorkspace(const SetWorkspaceRequest& request, std::uint64
 		prepared.failureReason = "workspace identity exceeds the supported bounds";
 		return prepared;
 	}
-	prepared.snapshot = { generation, 0, EWorkspaceKind::Workspace, std::move(configUri->uri), std::move(descriptors),
-		EWorkspaceTrustState::Unknown, *identity };
+	prepared.snapshot = { generation, 0, EWorkspaceKind::Workspace, std::move(configUri->uri), std::move(descriptors), *identity };
 	prepared.valid = true;
 	return prepared;
 }
@@ -468,8 +467,6 @@ WorkspaceContextResult ApplyContext(
 
 		auto previous = state->snapshot;
 		prepared.snapshot.revision = previous.revision + 1;
-		prepared.snapshot.trust = previous.workspaceIdentityKey == prepared.snapshot.workspaceIdentityKey
-			? previous.trust : EWorkspaceTrustState::Unknown;
 		state->snapshot = prepared.snapshot;
 		change = WorkspaceContextChange { state->snapshot.revision, std::move(previous), state->snapshot };
 		result = CurrentResultLocked(*state, EWorkspaceContextOutcome::Succeeded, {});
@@ -580,55 +577,6 @@ WorkspaceContextResult CWorkspaceContextService::SetWorkspace(const SetWorkspace
 		emptyWindowIdentity = m_state->emptyWindowIdentity;
 	}
 	return ApplyContext(m_state, request.operation, PrepareWorkspace(request, generation, emptyWindowIdentity));
-}
-
-WorkspaceContextResult CWorkspaceContextService::SetTrust(const SetTrustRequest& request)
-{
-	if (!IsBoundedOperationId(request.operation.operationId)) {
-		std::lock_guard lock(m_state->mutex);
-		return CurrentResultLocked(*m_state, EWorkspaceContextOutcome::Failed, "operationId must be a bounded printable ASCII identifier");
-	}
-	const auto fingerprint = OperationFingerprintPrefix(L"trust", request.operation) + L"|value:" + std::to_wstring(static_cast<unsigned int>(request.trust));
-
-	std::optional<WorkspaceContextChange> change;
-	bool shouldDrain = false;
-	WorkspaceContextResult result;
-	{
-		std::unique_lock lock(m_state->mutex);
-		if (const auto replay = ReplayOrConflictLocked(*m_state, request.operation.operationId, fingerprint)) {
-			return *replay;
-		}
-		if (request.trust != EWorkspaceTrustState::Unknown && request.trust != EWorkspaceTrustState::Trusted && request.trust != EWorkspaceTrustState::Untrusted) {
-			return CurrentResultLocked(*m_state, EWorkspaceContextOutcome::Failed, "trust state is invalid");
-		}
-		if (request.operation.expectedRevision && *request.operation.expectedRevision != m_state->snapshot.revision) {
-			result = CurrentResultLocked(*m_state, EWorkspaceContextOutcome::Conflict, "expectedRevision does not match the current context revision");
-			RememberCompletedOperationLocked(*m_state, request.operation.operationId, fingerprint, result);
-			return result;
-		}
-		if (m_state->snapshot.trust == request.trust) {
-			result = CurrentResultLocked(*m_state, EWorkspaceContextOutcome::NotApplicable, "trust already has the requested explicit value");
-			RememberCompletedOperationLocked(*m_state, request.operation.operationId, fingerprint, result);
-			return result;
-		}
-		if (m_state->snapshot.revision == std::numeric_limits<std::uint64_t>::max()) {
-			result = CurrentResultLocked(*m_state, EWorkspaceContextOutcome::Failed, "context revision cannot advance without losing monotonicity");
-			RememberCompletedOperationLocked(*m_state, request.operation.operationId, fingerprint, result);
-			return result;
-		}
-		auto previous = m_state->snapshot;
-		++m_state->snapshot.revision;
-		m_state->snapshot.trust = request.trust;
-		change = WorkspaceContextChange { m_state->snapshot.revision, std::move(previous), m_state->snapshot };
-		result = CurrentResultLocked(*m_state, EWorkspaceContextOutcome::Succeeded, {});
-		result.change = change;
-		RememberCompletedOperationLocked(*m_state, request.operation.operationId, fingerprint, result);
-		shouldDrain = EnqueueNotificationLocked(*m_state, *change);
-	}
-	if (shouldDrain) {
-		DrainNotifications(m_state);
-	}
-	return result;
 }
 
 WorkspaceContextSubscription CWorkspaceContextService::Subscribe(WorkspaceContextListener listener)

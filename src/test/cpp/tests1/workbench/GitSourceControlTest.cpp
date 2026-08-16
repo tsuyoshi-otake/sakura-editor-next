@@ -27,6 +27,7 @@
 #include "workbench/scm/GitScmModel.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/GitStageCommands.h"
+#include "workbench/scm/ScmViewStackLayout.h"
 #include "workbench/scm/SourceControlService.h"
 
 using namespace std::string_literals;
@@ -140,6 +141,56 @@ TEST(GitCommandRunner, QuotesOnlyArgumentsThatNeedIt)
 	// follows it, so a trailing run must be doubled or it would escape the
 	// closing quote and swallow the next argument.
 	EXPECT_EQ(L"\"C:\\dir with space\\\\\"", QuoteGitArgument(L"C:\\dir with space\\"));
+}
+
+TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
+{
+	const ScmGraphPresentation graph;
+	EXPECT_EQ(EScmGraphPresentationStatus::Unsupported, graph.status);
+	EXPECT_FALSE(graph.IsInteractive());
+	EXPECT_FALSE(graph.ShouldRenderFrameForProvider(false));
+	EXPECT_TRUE(graph.ShouldRenderFrameForProvider(true));
+
+	const auto layout = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.graphVisible = true,
+	});
+	EXPECT_EQ((ScmVerticalBounds{ 0, 30 }), layout.repositoriesHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 30, 52 }), layout.repositoryRow);
+	EXPECT_EQ((ScmVerticalBounds{ 52, 82 }), layout.changesHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 87, 113 }), layout.input);
+	EXPECT_EQ((ScmVerticalBounds{ 118, 422 }), layout.changesBody);
+	EXPECT_EQ((ScmVerticalBounds{ 422, 452 }), layout.graphHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 452, 500 }), layout.graphBody);
+
+	const auto empty = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 250,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = false,
+		.changesHeaderVisible = false,
+		.inputVisible = false,
+		.graphVisible = false,
+	});
+	EXPECT_TRUE(empty.repositoriesHeader.Empty());
+	EXPECT_TRUE(empty.repositoryRow.Empty());
+	EXPECT_TRUE(empty.changesHeader.Empty());
+	EXPECT_EQ((ScmVerticalBounds{ 0, 250 }), empty.changesBody);
+	EXPECT_TRUE(empty.graphHeader.Empty());
+	EXPECT_TRUE(empty.graphBody.Empty());
 }
 
 TEST(GitCommandRunner, BuildsCommandLineAndPrependsRepositoryDirectory)
@@ -335,6 +386,26 @@ TEST(GitScmPublisher, StagedAndUnstagedRowsOfOnePathDescribeDifferentComparisons
 	EXPECT_EQ(index->resources[0].resourceUri.ToString(), workingTree->resources[0].resourceUri.ToString());
 	EXPECT_EQ("Index Added", index->resources[0].tooltip);
 	EXPECT_EQ("Modified", workingTree->resources[0].tooltip);
+}
+
+TEST(GitScmPublisher, SuppliedTextResolverLocalizesPublishedGroupsAndDiffTitles)
+{
+	auto state = RepositoryState();
+	state.changes = { Change(L"src/a.txt", L'M', L'.') };
+	const GitDiffTextResolver text = [](std::string_view key, std::wstring_view argument) -> std::wstring {
+		if (key == "GitScmStagedChanges") return L"Localized staged";
+		if (key == "GitDiffIndex") return std::wstring(argument) + L" [localized index]";
+		return std::wstring{};
+	};
+
+	const auto publication = BuildGitPublication(Owner(), LR"(C:\repo)", state,
+		EUntrackedChangesPolicy::Mixed, text);
+	const auto* index = FindGroup(publication.provider, "index");
+	ASSERT_NE(nullptr, index);
+	EXPECT_EQ("Localized staged", index->label);
+	ASSERT_EQ(1U, index->resources.size());
+	const auto diff = ResolveGitDiffInput(MakeGitDiffRow(state.changes[0], EGitFileStatus::IndexModified, true), text);
+	EXPECT_EQ(L"a.txt [localized index]", diff.title);
 }
 
 TEST(GitScmPublisher, EachRowsCommandOpensTheComparisonThatRowIsAbout)

@@ -58,7 +58,7 @@ TEST(CustomFrame, ScalesFixedTitleMetricsPerDpi)
 	const auto layout = CalculateCustomFrameLayout(1200, 144, 430);
 	EXPECT_EQ(51, layout.title.bottom);
 	EXPECT_EQ(45, layout.layoutButton.right - layout.layoutButton.left);
-	EXPECT_EQ(layout.minimizeButton.left, layout.manageButton.right);
+	EXPECT_EQ(layout.minimizeButton.left, layout.secondarySidebarButton.right);
 }
 
 TEST(CustomFrame, CentersCaptionInAWindowSymmetricSafeRectangleAcrossDpi)
@@ -158,12 +158,12 @@ TEST(CustomFrame, PlacesAllCompactTitleControlsImmediatelyBeforeNativeCaptionBut
 {
 	const auto layout = CalculateCustomFrameLayout(1200, 96, 430);
 	EXPECT_FALSE(::IsRectEmpty(&layout.layoutButton));
-	EXPECT_EQ(layout.minimizeButton.left, layout.manageButton.right);
-	EXPECT_EQ(layout.manageButton.left, layout.accountButton.right);
-	EXPECT_EQ(layout.accountButton.left, layout.secondarySidebarButton.right);
+	EXPECT_EQ(layout.minimizeButton.left, layout.secondarySidebarButton.right);
 	EXPECT_EQ(layout.secondarySidebarButton.left, layout.bottomPanelButton.right);
 	EXPECT_EQ(layout.bottomPanelButton.left, layout.primarySidebarButton.right);
 	EXPECT_EQ(layout.primarySidebarButton.left, layout.layoutButton.right);
+	EXPECT_TRUE(::IsRectEmpty(&layout.accountButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.manageButton));
 	EXPECT_LE(layout.menu.right, layout.captionText.left);
 	EXPECT_LE(layout.captionText.right, layout.layoutButton.left);
 }
@@ -172,7 +172,7 @@ TEST(CustomFrame, CollapsesTitleControlsTogetherOnNarrowWidthsWithoutCreatingCap
 {
 	const auto layout = CalculateCustomFrameLayout(350, 96, 300);
 	EXPECT_TRUE(::IsRectEmpty(&layout.layoutButton));
-	EXPECT_TRUE(::IsRectEmpty(&layout.manageButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.secondarySidebarButton));
 	const POINT captionPoint{
 		(layout.captionText.left + layout.captionText.right) / 2,
 		(layout.captionText.top + layout.captionText.bottom) / 2,
@@ -190,10 +190,10 @@ TEST(CustomFrame, CompactTitleControlHitTestingUsesHalfOpenBoundsAndClientHits)
 	EXPECT_EQ(CustomFrameControl::PrimarySidebar, HitTestCustomFrameControl(layout, center(layout.primarySidebarButton)));
 	EXPECT_EQ(CustomFrameControl::BottomPanel, HitTestCustomFrameControl(layout, center(layout.bottomPanelButton)));
 	EXPECT_EQ(CustomFrameControl::SecondarySidebar, HitTestCustomFrameControl(layout, center(layout.secondarySidebarButton)));
-	EXPECT_EQ(CustomFrameControl::Account, HitTestCustomFrameControl(layout, center(layout.accountButton)));
-	EXPECT_EQ(CustomFrameControl::Manage, HitTestCustomFrameControl(layout, center(layout.manageButton)));
-	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { layout.manageButton.right, 16 }));
-	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.manageButton), 1200, 700, 8, false));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, center(layout.accountButton)));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, center(layout.manageButton)));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { layout.secondarySidebarButton.right, 16 }));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.secondarySidebarButton), 1200, 700, 8, false));
 }
 
 TEST(CustomFrame, CompactTitleControlInvokeMappingsUseExistingEditorCommands)
@@ -209,21 +209,21 @@ TEST(CustomFrame, CompactTitleControlInvokeMappingsUseExistingEditorCommands)
 TEST(CustomFrame, CompactTitleControlsExposeAccessibleButtonsWithInvokeMetadata)
 {
 	const auto layout = CalculateCustomFrameLayout(1200, 96, 300);
-	const auto manage = CustomFrameControlAccessibilityNode(CustomFrameControl::Manage, layout, true);
-	EXPECT_EQ(L"Manage", manage.name);
-	EXPECT_EQ(L"Sakura.TitleBar.Manage", manage.automationId);
-	EXPECT_EQ(UIA_ButtonControlTypeId, manage.controlType);
-	EXPECT_EQ(layout.manageButton.left, manage.bounds.left);
-	EXPECT_EQ(layout.manageButton.right, manage.bounds.right);
-	EXPECT_TRUE(manage.enabled);
-	EXPECT_TRUE(manage.focused);
-	EXPECT_TRUE(manage.invoke);
+	const auto secondary = CustomFrameControlAccessibilityNode(CustomFrameControl::SecondarySidebar, layout, true);
+	EXPECT_EQ(L"Toggle Secondary Side Bar", secondary.name);
+	EXPECT_EQ(L"Sakura.TitleBar.SecondarySidebar", secondary.automationId);
+	EXPECT_EQ(UIA_ButtonControlTypeId, secondary.controlType);
+	EXPECT_EQ(layout.secondarySidebarButton.left, secondary.bounds.left);
+	EXPECT_EQ(layout.secondarySidebarButton.right, secondary.bounds.right);
+	EXPECT_TRUE(secondary.enabled);
+	EXPECT_TRUE(secondary.focused);
+	EXPECT_TRUE(secondary.invoke);
 
-	const auto account = CustomFrameControlAccessibilityNode(CustomFrameControl::Account, layout, false);
-	EXPECT_EQ(L"Account", account.name);
-	EXPECT_EQ(L"Sakura.TitleBar.Account", account.automationId);
-	EXPECT_TRUE(account.enabled);
-	EXPECT_TRUE(account.invoke);
+	const auto primary = CustomFrameControlAccessibilityNode(CustomFrameControl::PrimarySidebar, layout, false);
+	EXPECT_EQ(L"Toggle Primary Side Bar", primary.name);
+	EXPECT_EQ(L"Sakura.TitleBar.PrimarySidebar", primary.automationId);
+	EXPECT_TRUE(primary.enabled);
+	EXPECT_TRUE(primary.invoke);
 }
 
 namespace {
@@ -277,7 +277,7 @@ TEST(CustomFrameUpdateControl, LeavesEveryOtherRectangleUntouchedWhileTheStateIs
 	}
 }
 
-TEST(CustomFrameUpdateControl, InsertsTheLabelledIndicatorBetweenSecondarySideBarAndAccount)
+TEST(CustomFrameUpdateControl, InsertsTheLabelledIndicatorBetweenSecondarySideBarAndCaptionButtons)
 {
 	constexpr int kIndicatorWidth = 56;
 	const auto hidden = CalculateCustomFrameLayout(1200, 96, 430, 0);
@@ -287,15 +287,13 @@ TEST(CustomFrameUpdateControl, InsertsTheLabelledIndicatorBetweenSecondarySideBa
 	EXPECT_EQ(kIndicatorWidth, shown.updateButton.right - shown.updateButton.left);
 	EXPECT_EQ(shown.title.bottom, shown.updateButton.bottom);
 	EXPECT_EQ(shown.secondarySidebarButton.right, shown.updateButton.left);
-	EXPECT_EQ(shown.updateButton.right, shown.accountButton.left);
-	EXPECT_EQ(shown.accountButton.right, shown.manageButton.left);
-	EXPECT_EQ(shown.manageButton.right, shown.minimizeButton.left);
+	EXPECT_EQ(shown.updateButton.right, shown.minimizeButton.left);
+	EXPECT_TRUE(::IsRectEmpty(&shown.accountButton));
+	EXPECT_TRUE(::IsRectEmpty(&shown.manageButton));
 
-	// The run is right-aligned against the native caption buttons and the indicator is
-	// inserted before Account, so Account and Manage do not move at all and the four
-	// glyph controls to its left move left by exactly the measured width.
-	EXPECT_EQ(hidden.accountButton.left, shown.accountButton.left);
-	EXPECT_EQ(hidden.manageButton.left, shown.manageButton.left);
+	// The run is right-aligned against the native caption buttons. Inserting the
+	// indicator shifts the four glyph controls left by exactly the measured width;
+	// the caption buttons themselves do not move.
 	EXPECT_EQ(hidden.minimizeButton.left, shown.minimizeButton.left);
 	EXPECT_EQ(hidden.layoutButton.left - kIndicatorWidth, shown.layoutButton.left);
 	EXPECT_EQ(hidden.primarySidebarButton.left - kIndicatorWidth, shown.primarySidebarButton.left);
@@ -303,28 +301,26 @@ TEST(CustomFrameUpdateControl, InsertsTheLabelledIndicatorBetweenSecondarySideBa
 	EXPECT_EQ(hidden.secondarySidebarButton.left - kIndicatorWidth, shown.secondarySidebarButton.left);
 	// The indicator takes its width from its label; the glyph controls keep the fixed one.
 	EXPECT_EQ(ScaleCustomFrameDip(30, 96), shown.layoutButton.right - shown.layoutButton.left);
-	EXPECT_EQ(ScaleCustomFrameDip(30, 96), shown.accountButton.right - shown.accountButton.left);
 	EXPECT_LE(shown.captionText.right, shown.layoutButton.left);
 }
 
 TEST(CustomFrameUpdateControl, CollapsesTheWholeRunWhenTheIndicatorNoLongerFits)
 {
-	// 380px shows all six glyph controls, but not once the indicator claims 56 more.
+	// 320px shows the four glyph controls, but not once the indicator claims 56 more.
 	// Partially drawing the run, or letting it overlap the system menu, is not an option.
-	const auto hidden = CalculateCustomFrameLayout(380, 96, 300, 0);
+	const auto hidden = CalculateCustomFrameLayout(320, 96, 300, 0);
 	EXPECT_FALSE(::IsRectEmpty(&hidden.layoutButton));
-	EXPECT_FALSE(::IsRectEmpty(&hidden.manageButton));
+	EXPECT_FALSE(::IsRectEmpty(&hidden.secondarySidebarButton));
 
-	const auto shown = CalculateCustomFrameLayout(380, 96, 300, 56);
+	const auto shown = CalculateCustomFrameLayout(320, 96, 300, 56);
 	EXPECT_TRUE(::IsRectEmpty(&shown.updateButton));
 	EXPECT_TRUE(::IsRectEmpty(&shown.layoutButton));
 	EXPECT_TRUE(::IsRectEmpty(&shown.secondarySidebarButton));
-	EXPECT_TRUE(::IsRectEmpty(&shown.accountButton));
-	EXPECT_TRUE(::IsRectEmpty(&shown.manageButton));
 	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(shown, { 300, 16 }));
 
-	// 418px is the first width that fits the indicator as well.
-	const auto fits = CalculateCustomFrameLayout(418, 96, 300, 56);
+	// First width that fits the four glyph controls plus a 56px indicator:
+	// system(42) + controls(4*30+56) + captionButtons(46*2+48) = 42+176+140 = 358.
+	const auto fits = CalculateCustomFrameLayout(358, 96, 300, 56);
 	EXPECT_FALSE(::IsRectEmpty(&fits.updateButton));
 	EXPECT_EQ(ScaleCustomFrameDip(42, 96), fits.layoutButton.left);
 }
@@ -339,7 +335,7 @@ TEST(CustomFrameUpdateControl, HitTestsTheIndicatorWithTheSameHalfOpenBoundsAsEv
 	EXPECT_EQ(CustomFrameControl::Update, HitTestCustomFrameControl(layout, { layout.updateButton.left, 16 }));
 	EXPECT_EQ(CustomFrameControl::SecondarySidebar,
 		HitTestCustomFrameControl(layout, { layout.updateButton.left - 1, 16 }));
-	EXPECT_EQ(CustomFrameControl::Account, HitTestCustomFrameControl(layout, { layout.updateButton.right, 16 }));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { layout.updateButton.right, 16 }));
 	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, center(layout.updateButton), 1200, 700, 8, false));
 
 	// While the indicator is hidden its empty rectangle can never contain a point, so no

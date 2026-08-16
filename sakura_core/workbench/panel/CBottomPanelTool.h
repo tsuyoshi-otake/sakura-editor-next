@@ -93,6 +93,8 @@ public:
 	//! user input; committed visibility/extent state still arrives through the model.
 	void SetPanelActions(PanelActions actions);
 	void Refresh();
+	//! Refreshes localized panel chrome without replacing committed snapshots.
+	void RefreshStrings();
 	//! Applies already-committed model state. This never calls the selection callback.
 	void SetActiveTab(BottomPanelTab tab);
 	//! Sends a user request to the owner. With a callback installed, native state is

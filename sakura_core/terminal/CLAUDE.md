@@ -172,6 +172,36 @@ glyphs (notably Japanese) until a later click, move, or full repaint. Preserve
 the pixel regression that draws Japanese below row zero and immediately copies
 only that damaged row.
 
+## VS Code terminal padding (Issue #173)
+
+Upstream VS Code reserves a fixed 20 CSS-pixel left gutter on `.terminal.xterm`
+for command decorations; top, right, and bottom stay flush with the client.
+Sakura keeps that same 20 DIP budget but apportions it across all four sides
+(`TerminalViewportGeometry::kPaddingDip = 5`), so the character grid is inset
+uniformly. This is an intentional divergence: Sakura does not yet own a
+decoration gutter, and uniform inset matches the requested native padding
+behavior. Scale the per-side padding with the window DPI (5/8/10 physical
+pixels at 96/144/192 DPI) and use the same shared geometry for PTY column and
+row sizing, render-plan rectangles, caret placement, native IME composition
+placement, pointer/selection/mouse-report coordinates, and dirty-row
+invalidation. A pointer in the padding clamps to the nearest grid edge.
+
+Keep the full client rectangle filled with the terminal default background and
+bound to DirectWrite; only the terminal grid starts inside the padding. The
+overlay scrollbar remains pinned to the full client's right edge. A client
+narrower or shorter than twice the padding can have a zero-extent grid, but the
+existing terminal size contract still reports at least one row and one column.
+Do not introduce a separate coordinate calculation at one of these consumers, or
+a resize/input path will diverge from what was painted.
+
+Verified on 2026-08-15 with x64 Debug and a throwaway `-PROF=` profile against
+the earlier left-only gutter: opening `F_NEW_TERMINAL` produced its first prompt
+pixel at x=20 on a 96-DPI terminal; the first 20 pixels were background-only.
+Two unoccluded captures each compared `Graphics.CopyFromScreen` against
+`PrintWindow(PW_RENDERFULLCONTENT)` with zero different pixels, and the profile
+plus every run-owned Sakura process was gone afterward. Re-verify the
+apportioned four-side inset the same way after this change.
+
 Interactive terminal output uses leading-edge delivery with a trailing frame
 gate. Drain the first output notification immediately so a key echo or short
 command response is never held behind low-priority `WM_TIMER` dispatch. Output
@@ -183,12 +213,72 @@ own expiry work, not as a prerequisite for the first response frame. Sakura's
 trailing gate remains necessary while parsing and invalidation are UI-thread
 owned rather than render-thread owned.
 
+## VS Code terminal groups and terminal list (Issue #174)
+
+`TerminalTabManager` owns the independent terminal sessions. `CTerminalTool`
+owns the selected terminal group as an ordered, flat vector of tab IDs and
+positive size weights; it creates one native `CTerminalWnd` per tab in that
+group. Do not reintroduce a primary/secondary terminal model or a pane-count
+cap. Splitting inserts a new session immediately after the focused pane, and
+closing a focused split removes only that pane until its final pane is gone.
+`Alt+Left` / `Alt+Right` (and `Alt+Up` / `Alt+Down`) move focus between adjacent
+panes; `Ctrl+PageUp` and `Ctrl+PageDown` move between terminal groups.
+
+The active group is a flat, single-axis Panel layout. Upstream VS Code keeps
+bottom-Panel splits on one axis (side-by-side). Sakura extends that with an
+explicit vertical orientation so panes can also stack top-to-bottom:
+
+- `workbench.action.terminal.split` / `Ctrl+Shift+5` / the Split header action
+  add a horizontal (side-by-side) pane.
+- `SplitTerminalDown` / `Ctrl+Alt+5` / Alt+Split header action / the context
+  menu "Split Terminal Down" entry add a vertical (stacked) pane.
+- A group remains single-axis: requesting the orthogonal split reorients the
+  whole group rather than nesting a 2D tree.
+
+`TerminalPaneLayout` is the one geometry authority: it uses a 4-DIP inter-pane
+divider, honors the 80-DIP minimum along the group's primary axis when the
+available extent permits it, and distributes any remaining extent from the
+group's positive weights. The right-side terminal list stays on the right for
+both orientations. When a group must be rebuilt, suppress parent-focus handling
+until every child has been detached. Closing a focused native child
+synchronously transfers focus and may otherwise re-enter layout against a pane
+that is being destroyed.
+
+The terminal list is a right-side projection of all `TerminalTabManager`
+sessions. It is hidden for zero or one session and, for two or more sessions,
+uses the VS Code normal-list policy of 120 DIP preferred width, 80 DIP minimum
+width, and a 1-DIP separator. A list row is selected by single click and focused
+by double click (`Ctrl+Shift+\\` focuses the list). When the list has more rows
+than its height can display, it scrolls by mouse wheel and keeps the selected
+row visible. It must never be modeled as
+another terminal group or as the authority for process lifetime.
+
+Sakura currently implements those VS Code default policies directly; it does
+not yet expose `terminal.integrated.tabs.enabled`, `hideCondition`, or
+`location` as user settings, and it does not yet offer nested/grid terminal
+arrangements. Keep that divergence explicit. Add a typed settings and layout
+model before exposing configuration rather than adding visual-only toggles or
+silently treating a list preference as a session operation.
+
 ## Clipboard and Selection Interaction
 
 On Windows, the native terminal follows the VS Code/Windows Terminal host
 selection convention: with terminal mouse reporting disabled, right-click copies
 and clears a non-empty selection, while right-click with no selection pastes
-Unicode clipboard text through the existing bracketed-paste encoder. When a TUI
+through the existing bracketed-paste encoder. Paste preference is:
+
+1. Non-empty Unicode text (unchanged VS Code/Windows Terminal behaviour)
+2. `CF_HDROP` file paths from Explorer (quoted when needed)
+3. Clipboard image (`PNG` / `CF_DIB` / `CF_DIBV5`) saved as a temp PNG under
+   `%TEMP%\sakura-editor\terminal-paste\` with the absolute path pasted. After
+   each successful save the folder keeps only the newest
+   `kMaxRetainedTerminalPasteImages` (32) PNGs so a long session cannot fill
+   Temp unbounded. Files still live long enough for multi-image Claude Code /
+   Codex turns within that window.
+
+Step 3 is a Sakura-native helper for Claude Code, Codex, Cursor CLI, and similar
+tools that accept image *paths* rather than raw bitmaps. Stock VS Code does not
+do this without an extension; do not claim upstream parity for it. When a TUI
 has enabled mouse reporting, preserve the application's right-click event;
 `Shift` explicitly opts into host selection/clipboard handling. Selection ranges
 are stored as half-open cell intervals, but mouse endpoints must be normalized to

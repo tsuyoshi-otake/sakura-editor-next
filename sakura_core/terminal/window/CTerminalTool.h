@@ -9,6 +9,7 @@
 #include "terminal/window/TerminalTabManager.h"
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
+#include "terminal/window/TerminalPaneLayout.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -47,7 +48,8 @@ struct TerminalWorkspaceResetResult {
 	std::uint32_t errorCode{};
 };
 
-//! Bottom-panel terminal tool with up to two viewports and multiple session tabs.
+//! Bottom-panel terminal tool with flat split groups (horizontal or vertical)
+//! and a right-side terminal instance list. Pane count is unbounded.
 class CTerminalTool final : public workbench::IWorkbenchTool {
 public:
 	explicit CTerminalTool( TerminalTabManagerDependencies dependencies = {} );
@@ -87,11 +89,19 @@ public:
 	[[nodiscard]] bool RestartTerminal( std::uint64_t tabId );
 	[[nodiscard]] bool DeleteTerminal( std::uint64_t tabId );
 	[[nodiscard]] bool SplitTerminalRight();
+	[[nodiscard]] bool SplitTerminalDown();
 	[[nodiscard]] bool CloseTerminalSplit();
 	[[nodiscard]] bool HasTerminalSplit() const noexcept;
+	[[nodiscard]] TerminalPaneOrientation ActivePaneOrientation() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTerminalId() const noexcept;
 	[[nodiscard]] std::size_t TabCount() const noexcept;
+	//! Number of native terminal viewports in the selected terminal group.
+	[[nodiscard]] std::size_t VisiblePaneCount() const noexcept;
+	//! The default VS Code singleTerminal policy hides this list for one instance.
+	[[nodiscard]] bool HasTerminalTabsList() const noexcept;
+	//! Empty when the tabs list is hidden or cannot fit beside an 80 DIP terminal.
+	[[nodiscard]] RECT TerminalTabsBounds() const noexcept;
 	[[nodiscard]] bool HasStartedAnySession() const noexcept;
 	//! True after the native renderer HWND has been created.  Kept observable so
 	//! the hidden-panel startup contract can be unit-tested without a desktop.

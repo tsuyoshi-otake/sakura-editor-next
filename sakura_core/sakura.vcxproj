@@ -81,18 +81,16 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='1' Or '$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='true'">
     <ClCompile>
+      <MultiProcessorCompilation>false</MultiProcessorCompilation>
       <AdditionalOptions>/FAsu /Fa$(IntDir) %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <!--
-      A listing file is named after its originating source file, but whole-program
-      optimization defers code generation to the linker, which partitions the
-      program by function rather than by translation unit.  Two code-generation
-      threads that each hold functions from one source file then open the same
-      .asm listing, and the second open fails the Win32 share check.  The build
-      observes that as "C1083 ... Permission denied" on an arbitrary listing plus
-      LNK1257, with the diagnostic attributed to whichever source the reporting
-      thread was on.  Serialize code generation while listings are enabled;
-      listings are opt-in, so the regular parallel build path is unaffected.
+      Whole-program-optimized product objects retain this /Fa destination.  The
+      tests1 support archive contains those objects, so a listing-enabled tests1
+      LTCG link would replay the same product .asm paths.  The canonical runner
+      prevents that by building solution/tests without listings before this
+      product-only listing pass.  This branch also makes the product compile and
+      LTCG code-generation settings deterministic; normal builds stay parallel.
     -->
     <Link>
       <AdditionalOptions>/CGTHREADS:1 %(AdditionalOptions)</AdditionalOptions>
@@ -233,12 +231,6 @@
     <ClInclude Include="..\sakura_core\config\editing\CJsoncConfigurationEditor.h" />
     <ClInclude Include="..\sakura_core\config\IWorkspaceContextService.h" />
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h" />
-    <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h" />
-    <ClInclude Include="..\sakura_core\config\IWorkspaceTrustMementoStore.h" />
-    <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h" />
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustMementoCodec.h" />
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h" />
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.h" />
     <ClInclude Include="..\sakura_core\config\maxdata.h" />
     <ClInclude Include="..\sakura_core\config\system_constants.h" />
     <ClInclude Include="..\sakura_core\convert\CConvert.h" />
@@ -552,9 +544,12 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalViewportGeometry.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalScrollbarLayout.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalTabManager.h" />
     <ClInclude Include="..\sakura_core\theme\CThemeService.h" />
@@ -573,7 +568,6 @@
     <ClInclude Include="..\sakura_core\textmate\TextMateTokenizer.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateUtf8.h" />
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h" />
-	<ClInclude Include="..\sakura_core\workbench\CWorkbenchBannerHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h" />
 	<ClInclude Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\statusbar\StatusbarVisibilityMementoCodec.h" />
@@ -624,6 +618,7 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\CExplorerTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerContextMenuModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerDeleteConfirmation.h" />
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerFileIcon.h" />
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerHost.h" />
 	<ClInclude Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.h" />
@@ -635,6 +630,7 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitPrompt.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitSyncCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\ScmViewStackLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitStageCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h" />
@@ -662,7 +658,6 @@
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.h" />
-    <ClInclude Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.h" />
@@ -684,7 +679,6 @@
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceTypes.h" />
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h" />
-	<ClInclude Include="..\sakura_core\workbench\WorkbenchBannerLayout.h" />
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h" />
@@ -710,8 +704,6 @@
     <ClInclude Include="..\sakura_core\_main\FailedEditorProcessShutdown.h" />
     <ClInclude Include="..\sakura_core\_main\CMutex.h" />
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h" />
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h" />
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.h" />
     <ClInclude Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.h" />
@@ -828,10 +820,6 @@
     <ClCompile Include="..\sakura_core\config\SettingsWritebackCoordinator.cpp" />
     <ClCompile Include="..\sakura_core\config\ConfigurationTypes.cpp" />
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp" />
-    <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp" />
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustMementoCodec.cpp" />
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp" />
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeAutoToSjis.cpp" />
     <ClCompile Include="..\sakura_core\convert\CConvert_CodeFromSjis.cpp" />
@@ -1203,7 +1191,9 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalColorResolver.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalDWriteRenderer.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
@@ -1220,7 +1210,6 @@
     <ClCompile Include="..\sakura_core\textmate\TextMateTokenizer.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateUtf8.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp" />
-	<ClCompile Include="..\sakura_core\workbench\CWorkbenchBannerHost.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarVisibilityMementoCodec.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\quickinput\CCommandPaletteOverlay.cpp" />
@@ -1295,7 +1284,6 @@
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocLegacyEditorBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditDocWorkingCopyBackend.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEmptyEditorSurface.cpp" />
-    <ClCompile Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\CEditorServiceLegacyAdapter.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\EmptyEditorSurfaceModel.cpp" />
@@ -1309,7 +1297,6 @@
     <ClCompile Include="..\sakura_core\workbench\editor\persistence\EditorWorkingCopyLifecycleBridge.cpp" />
     <ClCompile Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.cpp" />
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
-	<ClCompile Include="..\sakura_core\workbench\WorkbenchBannerLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />
@@ -1330,8 +1317,6 @@
     <ClCompile Include="..\sakura_core\_main\CControlProcess.cpp" />
     <ClCompile Include="..\sakura_core\_main\CControlTray.cpp" />
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp" />
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp" />
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformRecentlyOpenedWorkspaceStore.cpp" />
     <ClCompile Include="..\sakura_core\_main\ControlPlatformStatusbarVisibilityMementoStore.cpp" />
@@ -1404,6 +1389,22 @@
   <Target Name="GenerateMigemo" Condition="!Exists('$(SakuraSharedOutDir)migemo.dll')" BeforeTargets="ClCompile">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_cmigemo -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" />
   </Target>
+  <!--
+    /GL retains /Fa in every object.  cl.exe first writes a provisional listing
+    while compiling that object, then Link/LTCG writes the final listing to the
+    same path.  Link does not reliably replace the existing file, even with one
+    code-generation thread, so remove just those provisional listings after
+    ClCompile and before the product Link.  The Link output remains the shipped
+    assembly-listing artifact.
+  -->
+  <Target Name="RemoveSakuraAssemblyListingsBeforeLink"
+          Condition="('$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='1' Or '$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='true') And '$(Configuration)'=='Release'"
+          BeforeTargets="Link">
+    <ItemGroup>
+      <_SakuraAssemblyListing Include="$(IntDir)*.asm" />
+    </ItemGroup>
+    <Delete Files="@(_SakuraAssemblyListing)" />
+  </Target>
   <Target Name="GenerateCTags" Condition="!Exists('$(SakuraSharedOutDir)ctags.exe')" AfterTargets="Link">
     <Exec Command="pwsh -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -Command &quot;[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); &amp; '$(CMakeExe)' --build '$(CMakeToolsPath)' --config $(Configuration) --target generate_ctags -- /nologo /nr:false /p:TrackFileAccess=false&quot;" EnvironmentVariables="$(CMakeBuildEnvironmentVariables)" StdOutEncoding="UTF-8" ConsoleToMSBuild="true" WorkingDirectory="..\" />
   </Target>
@@ -1434,6 +1435,7 @@
     <ItemGroup>
       <Clean Include="$(SakuraTestSupportLibrary)" />
       <Clean Include="$(SakuraTestSupportResponseFile)" />
+      <Clean Include="$(IntDir)*.asm" />
     </ItemGroup>
   </Target>
   <Target Name="ValidateX64Platform" Condition="'$(DesignTimeBuild)' != 'true' and '$(Platform)' != 'x64'">

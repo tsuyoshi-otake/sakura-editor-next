@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief `git.commit`, `git.commitAmend`, and `git.undoCommit`.
  */
 /*
@@ -10,6 +10,7 @@
 
 #include "workbench/scm/GitCommandRunner.h"
 #include "workbench/scm/GitPrompt.h"
+#include "workbench/scm/GitRefModel.h"
 #include "workbench/scm/GitStageCommands.h"
 
 #include <cstdint>
@@ -211,6 +212,8 @@ struct GitCommitCommandContext final {
 	GitCommitDirtyDocumentEnumerator dirtyDocuments;
 	GitCommitDocumentSaver saveDocuments;
 	GitCommitConfiguration configuration;
+	//! Optional localization callback for commit prompts and status messages.
+	GitRefTextResolver text;
 };
 
 enum class EGitCommitCommandStatus : std::uint8_t {
@@ -248,7 +251,8 @@ struct GitCommitCommandResult final {
 };
 
 //! `'The following file has unsaved changes ...'` / `'There are {0} unsaved files.'`
-[[nodiscard]] GitCommitPrompt BuildUnsavedDocumentsPrompt(const std::vector<std::wstring>& documents);
+[[nodiscard]] GitCommitPrompt BuildUnsavedDocumentsPrompt(const std::vector<std::wstring>& documents,
+	const GitRefTextResolver& text = {});
 
 //!
 //! @brief `'There are no staged changes to commit.'`
@@ -259,11 +263,11 @@ struct GitCommitCommandResult final {
 //! absent rather than present and inert — the same policy the SCM menus use for
 //! an unroutable entry.
 //!
-[[nodiscard]] GitCommitPrompt BuildNoStagedChangesPrompt();
+[[nodiscard]] GitCommitPrompt BuildNoStagedChangesPrompt(const GitRefTextResolver& text = {});
 
 //! `'There are no changes to commit.'` with `Create Empty Commit`. Informational
 //! and non-modal upstream, which is why both flags are carried on the prompt.
-[[nodiscard]] GitCommitPrompt BuildNoChangesPrompt();
+[[nodiscard]] GitCommitPrompt BuildNoChangesPrompt(const GitRefTextResolver& text = {});
 
 //!
 //! @brief `'You are about to commit your changes without verification...'`
@@ -272,10 +276,10 @@ struct GitCommitCommandResult final {
 //! `git.confirmNoVerifyCommit` to Settings, so it is absent here for the same
 //! reason `Always` / `Never` are absent above.
 //!
-[[nodiscard]] GitCommitPrompt BuildNoVerifyCommitPrompt();
+[[nodiscard]] GitCommitPrompt BuildNoVerifyCommitPrompt(const GitRefTextResolver& text = {});
 
 //! `'The last commit was a merge commit. ...'`, shown by `git.undoCommit`.
-[[nodiscard]] GitCommitPrompt BuildUndoMergeCommitPrompt();
+[[nodiscard]] GitCommitPrompt BuildUndoMergeCommitPrompt(const GitRefTextResolver& text = {});
 
 //!
 //! @brief `git.commit` and `git.commitAmend`.

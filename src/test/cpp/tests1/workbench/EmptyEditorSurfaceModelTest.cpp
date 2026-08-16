@@ -15,7 +15,7 @@
 namespace workbench::editor {
 namespace {
 
-TEST(EmptyEditorSurfaceModel, ExposesStableVsCodeCommandsAndJapaneseActions)
+TEST(EmptyEditorSurfaceModel, ExposesStableVsCodeCommandsAndPresentationNeutralFallbackLabels)
 {
 	EmptyEditorSurfaceModel model;
 	EXPECT_EQ(5U, model.GetActionCount());
@@ -24,8 +24,8 @@ TEST(EmptyEditorSurfaceModel, ExposesStableVsCodeCommandsAndJapaneseActions)
 	EXPECT_EQ("workbench.action.files.openFolder", EmptyEditorSurfaceModel::CommandId(EmptyEditorSurfaceAction::OpenFolder));
 	EXPECT_EQ("workbench.action.showCommands", EmptyEditorSurfaceModel::CommandId(EmptyEditorSurfaceAction::ShowAllCommands));
 	EXPECT_EQ("workbench.action.openSettings", EmptyEditorSurfaceModel::CommandId(EmptyEditorSurfaceAction::OpenSettings));
-	EXPECT_STREQ(L"新しいファイル", EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction::NewFile));
-	EXPECT_STREQ(L"フォルダーを開く...", EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction::OpenFolder));
+	EXPECT_STREQ(L"New File", EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction::NewFile));
+	EXPECT_STREQ(L"Open Folder...", EmptyEditorSurfaceModel::Label(EmptyEditorSurfaceAction::OpenFolder));
 	EXPECT_STREQ(L"Ctrl+Shift+P", EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAction::ShowAllCommands));
 	EXPECT_STREQ(L"Ctrl+K Ctrl+O", EmptyEditorSurfaceModel::Shortcut(EmptyEditorSurfaceAction::OpenFolder));
 }
