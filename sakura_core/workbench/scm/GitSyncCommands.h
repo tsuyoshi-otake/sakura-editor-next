@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief `git.fetch`, `git.pull`, `git.push`, `git.sync`, and `git.publish`.
  */
 /*

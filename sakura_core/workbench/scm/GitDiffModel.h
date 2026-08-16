@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief What a Source Control row compares, and the line diff between the two sides.
  */
 /*

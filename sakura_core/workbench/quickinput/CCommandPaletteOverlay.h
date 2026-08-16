@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
 	@brief VS Code互換のCommand Palette用Quick Inputオーバーレイ
 */
 /*

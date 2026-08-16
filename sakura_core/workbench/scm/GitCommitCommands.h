@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief `git.commit`, `git.commitAmend`, and `git.undoCommit`.
  */
 /*
