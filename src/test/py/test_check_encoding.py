@@ -112,6 +112,19 @@ def test_diff_checks_changed_targets_and_ignores_deleted_files(tmp_path: Path):
     assert "Encoding check passed for 1 file(s)." in result.stdout
 
 
+def test_all_skips_owned_snapshot_sources(tmp_path: Path):
+    owned = tmp_path / "third_party" / "owned" / "vendor"
+    owned.mkdir(parents=True)
+    (owned / "legacy.cpp").write_bytes("// 日本語\n".encode("cp932"))
+    (tmp_path / "product.cpp").write_bytes(b"int ok;\r\n")
+
+    result = _run("all", "-RepositoryRoot", str(tmp_path), cwd=tmp_path)
+
+    assert result.returncode == 0, _combined_output(result)
+    assert "Encoding check passed for 1 file(s)." in result.stdout
+    assert "legacy.cpp" not in result.stdout
+
+
 @pytest.mark.parametrize("base_sha", ["", "0" * 40])
 def test_diff_treats_empty_or_all_zero_base_as_branch_creation_noop(
     tmp_path: Path, base_sha: str

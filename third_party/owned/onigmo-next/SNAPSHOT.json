@@ -2,7 +2,7 @@
   "id": "onigmo-next",
   "canonicalRepository": "tsuyoshi-otake/onigmo-next",
   "commit": "e96f322d0486f49d913abd21703e7eec6e572412",
-  "sourceTreeSha256": "38ab336477b60c23389dbdd07704a8098231ea3da0ea4d57d738c3d8607b2b65",
+  "sourceTreeSha256": "c0db52b761e4d75a81d62d61f068818aa321631886c2136548ff9c1ed89a16d4",
   "version": "6.2.0",
   "license": [
     "BSD-2-Clause"
