@@ -1487,24 +1487,18 @@ struct CTerminalTool::Impl {
 	{
 		const auto tabs = manager->Snapshot();
 		if( std::none_of(tabs.begin(), tabs.end(), [tabId](const TerminalTabSnapshot& tab) { return tab.id == tabId; }) ) return false;
-		const auto sourceGroup = FindGroup(tabId);
-		std::optional<std::uint64_t> successor;
-		if( sourceGroup ) {
-			const auto& group = paneGroups[*sourceGroup];
-			const auto found = std::find(group.tabIds.begin(), group.tabIds.end(), tabId);
-			if( found != group.tabIds.end() && group.tabIds.size() > 1 ) {
-				const auto index = static_cast<std::size_t>(found - group.tabIds.begin());
-				successor = group.tabIds[(index + 1) % group.tabIds.size()];
-			}
-		}
 		DestroyPaneRenderers();
 		if( !manager->DeleteTab(tabId) ) {
 			if( window ) static_cast<void>(RebuildPaneRenderers());
 			return false;
 		}
 		RemoveTabFromGroups(tabId);
-		if( successor && manager->SelectTab(*successor) ) activePaneGroup = FindGroup(*successor);
-		else if( const auto activeId = manager->ActiveTabId() ) activePaneGroup = FindGroup(*activeId);
+		// Preserve the tab manager's deterministic successor: it selects the next
+		// tab in tab order, or the preceding tab when the deleted terminal was last.
+		// Re-selecting a wrapped pane within this split group makes repeated Close
+		// Terminal Split jump back to the first pane instead of closing the focused
+		// neighbor.
+		if( const auto activeId = manager->ActiveTabId() ) activePaneGroup = FindGroup(*activeId);
 		if( window ) {
 			static_cast<void>(RebuildPaneRenderers());
 			LayoutChildren();

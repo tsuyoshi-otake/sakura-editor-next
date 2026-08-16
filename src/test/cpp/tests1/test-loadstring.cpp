@@ -362,11 +362,11 @@ TEST(WorkbenchScmLocalization, AllSelectedRuntimeResourcesContainLocalizedScmVie
 	CSelectLang::InitializeLanguageEnvironment();
 	const std::array locales = {
 		WorkbenchScmLocaleExpectation{ L"", {
-			L"ソース管理の対象となるフォルダーを開いていません。", L"リポジトリ", L"変更", L"グラフ", L"グラフ ビューはまだ利用できません。" } },
+			L"Git の機能を使用するには、Git リポジトリを含むフォルダーを開くか、URL から複製してください。", L"リポジトリ", L"変更", L"グラフ", L"グラフ ビューはまだ利用できません。" } },
 		WorkbenchScmLocaleExpectation{ L"sakura_lang_en_US.dll", {
-			L"Open a folder to use Source Control.", L"Repositories", L"Changes", L"Graph", L"The Graph view is not available yet." } },
+			L"In order to use Git features, you can open a folder containing a Git repository or clone from a URL.", L"Repositories", L"Changes", L"Graph", L"The Graph view is not available yet." } },
 		WorkbenchScmLocaleExpectation{ L"sakura_lang_zh_CN.dll", {
-			L"打开一个文件夹以使用源代码管理。", L"存储库", L"更改", L"图形", L"图形视图尚不可用。" } },
+			L"若要使用 Git 功能，可以打开包含 Git 存储库的文件夹或从 URL 克隆。", L"存储库", L"更改", L"图形", L"图形视图尚不可用。" } },
 	};
 
 	for (const auto& locale : locales) {

@@ -900,7 +900,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCom
 				std::string(kRefreshFilesExplorerCommandId), "Refresh Explorer"),
 			std::move(executors.refreshFilesExplorer), {} },
 		Entry{ MakeExplorerViewTitleDescriptor(
-				std::string(kCollapseExplorerFoldersCommandId), "Collapse Explorer Folders"),
+				std::string(kCollapseExplorerFoldersCommandId), "Collapse Folders in Explorer"),
 			std::move(executors.collapseExplorerFolders), {} },
 		Entry{ MakeExplorerResourceDescriptor("explorer.newFile", "New File...",
 				EExplorerCommandSurfaces::MenuOnly),
@@ -911,7 +911,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCom
 		Entry{ MakeExplorerResourceDescriptor("renameFile", "Rename...",
 				EExplorerCommandSurfaces::MenuAndKey),
 			{}, std::move(executors.renameFile) },
-		Entry{ MakeExplorerResourceDescriptor("moveFileToTrash", "Move to Trash",
+		Entry{ MakeExplorerResourceDescriptor("moveFileToTrash", "Delete",
 				EExplorerCommandSurfaces::MenuAndKey),
 			{}, std::move(executors.moveFileToTrash) },
 		Entry{ MakeExplorerResourceDescriptor("deleteFile", "Delete Permanently",

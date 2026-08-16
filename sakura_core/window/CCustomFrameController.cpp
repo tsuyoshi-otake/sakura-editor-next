@@ -201,11 +201,32 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	const int buttonLeft = std::max(0, width - buttonsWidth);
 	const int menuLeft = std::min(width, systemWidth);
 	const int titleControlsWidth = titleControlWidth * titleControlCount + updateWidth;
-	// Never partially draw a title control or let it overlap the system menu. On a
-	// narrow window they all collapse together, preserving caption drag and native buttons.
-	const bool showTitleControls = buttonLeft >= systemWidth + titleControlsWidth;
+	// Never partially draw a title control or let it overlap the system menu. When
+	// an ordinary four-control run would crowd out a readable centred caption, reclaim
+	// the run as a whole. Extremely narrow widths cannot provide that caption even after
+	// reclaiming the controls, so retain every physically fitting control in that case.
+	// An actionable update indicator keeps its own visibility contract: its complete
+	// run appears whenever it fits physically.
+	const int titleControlsCaptionClearance = ScaleCustomFrameDip(80, dpi);
+	const bool titleControlsFit = buttonLeft >= systemWidth + titleControlsWidth;
+	const auto centeredCaptionWidthWithControlsAt = [&](int controlsLeft) noexcept {
+		const int prospectiveMaximumMenuRight = std::max(menuLeft, controlsLeft - titleControlsCaptionClearance);
+		const int prospectiveMenuRight = std::min(
+			prospectiveMaximumMenuRight, menuLeft + std::max(0, preferredMenuWidth));
+		const int prospectiveCaptionSafeLeft = std::clamp(prospectiveMenuRight + captionPadding, 0, width);
+		const int prospectiveCaptionSafeRight = std::clamp(controlsLeft - captionPadding, 0, width);
+		const int prospectiveCenteredLeft = std::max(prospectiveCaptionSafeLeft, width - prospectiveCaptionSafeRight);
+		const int prospectiveCenteredRight = std::min(prospectiveCaptionSafeRight, width - prospectiveCaptionSafeLeft);
+		return std::max(0, prospectiveCenteredRight - prospectiveCenteredLeft);
+	};
+	const int minimumCenteredCaptionWidth = titleControlWidth + captionPadding * 2;
+	const bool reclaimControlsForCaption = updateWidth == 0
+		&& titleControlsFit
+		&& buttonLeft < systemWidth + titleControlsWidth + titleControlsCaptionClearance
+		&& centeredCaptionWidthWithControlsAt(buttonLeft) >= minimumCenteredCaptionWidth;
+	const bool showTitleControls = titleControlsFit && !reclaimControlsForCaption;
 	const int titleControlsLeft = showTitleControls ? buttonLeft - titleControlsWidth : buttonLeft;
-	const int maximumMenuRight = std::max(menuLeft, titleControlsLeft - ScaleCustomFrameDip(80, dpi));
+	const int maximumMenuRight = std::max(menuLeft, titleControlsLeft - titleControlsCaptionClearance);
 	const int menuRight = std::min(maximumMenuRight, menuLeft + std::max(0, preferredMenuWidth));
 	const int captionSafeLeft = std::clamp(menuRight + captionPadding, 0, width);
 	const int captionSafeRight = std::clamp(titleControlsLeft - captionPadding, 0, width);
