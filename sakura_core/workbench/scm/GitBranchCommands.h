@@ -45,6 +45,8 @@ struct GitBranchCommandContext {
 	GitQuickPickPresenter quickPick;
 	GitInputBoxPresenter inputBox;
 	GitMessagePresenter message;
+	//! Optional localization callback for Quick Pick labels and prompts.
+	GitRefTextResolver text;
 };
 
 enum class EGitBranchCommandStatus {

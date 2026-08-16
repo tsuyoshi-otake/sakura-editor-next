@@ -29,32 +29,6 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// Explorer presentation with no contributed file icons.
 		{ "workbench.iconTheme", ConfigurationValue(L""),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 512 } },
-		// Application-scoped trust policy is profile-owned in Sakura. It is never
-		// accepted from a workspace/folder document.
-		{ "security.workspace.trust.enabled", ConfigurationValue(true), { Scope::Profile } },
-		{ "security.workspace.trust.emptyWindow", ConfigurationValue(true), { Scope::Profile } },
-		// Verified against upstream's workspaceTrust contribution
-		// (src/vs/workbench/contrib/workspace/browser/workspace.contribution.ts):
-		// default "prompt", enum ["prompt", "open", "newWindow"],
-		// ConfigurationScope.APPLICATION. The enum was previously unconstrained
-		// here, which let an unknown value through to a consumer that then had
-		// to guess; enforcement fails closed on "prompt" instead.
-		{ "security.workspace.trust.untrustedFiles", ConfigurationValue(L"prompt"), { Scope::Profile },
-			{ Kind::String, 32, { L"prompt", L"open", L"newWindow" } } },
-		// Verified against the same upstream contribution: default "never",
-		// enum ["always", "once", "never"], ConfigurationScope.APPLICATION.
-		// "never" is upstream's default and is the fail-closed value here too --
-		// not prompting withholds trust, it never grants it.
-		{ "security.workspace.trust.startupPrompt", ConfigurationValue(L"never"), { Scope::Profile },
-			{ Kind::String, 32, { L"always", L"once", L"never" } } },
-		// Verified against upstream's workspaceTrust contribution
-		// (src/vs/workbench/contrib/workspace/browser/workspace.contribution.ts):
-		// default "untilDismissed", enum ["always", "untilDismissed", "never"],
-		// ConfigurationScope.APPLICATION -- the same scope every other
-		// security.workspace.trust.* setting above already registers as
-		// Scope::Profile here, for the same recorded reason.
-		{ "security.workspace.trust.banner", ConfigurationValue(L"untilDismissed"), { Scope::Profile },
-			{ Kind::String, 32, { L"always", L"untilDismissed", L"never" } } },
 		// Network policy is deliberately application/profile-only.  A repository
 		// must not be able to redirect an editor to a proxy or registry, weaken
 		// certificate handling, or make requests wait longer by committing a

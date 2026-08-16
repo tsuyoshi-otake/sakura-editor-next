@@ -92,19 +92,6 @@ file-operation commands (`explorer.newFile`, `explorer.newFolder`,
   accepting-and-ignoring; the Explorer surface divergence record lives with
   the Explorer UI's own guidance.
 
-## `isWorkspaceTrusted`
-
-`isWorkspaceTrusted` is a reserved core context key: it is projected only from
-`config::WorkspaceContextSnapshot::trust`, and `IsReservedCoreKey` rejects any
-extension overlay that tries to write it. A `when` clause gated on trust must
-not be forgeable by the very code the gate exists to restrain.
-
-Upstream's key is a plain boolean while this product's trust is three-state, so
-the projection collapses — and it collapses toward **withholding** trust.
-`Unknown` means trust was never granted and `Untrusted` means it was denied;
-both project `false`, because "we do not know" is not permission. Only
-`EWorkspaceTrustState::Trusted` projects `true`.
-
 ## Stateful Operations
 
 - Registration is atomic, revisioned, bounded, and conflict checked across

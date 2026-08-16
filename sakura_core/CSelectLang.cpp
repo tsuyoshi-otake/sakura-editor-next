@@ -262,7 +262,20 @@ void CSelectLang::SSelLangInfo::Unload() noexcept
 /* static */ std::wstring_view CSelectLang::LoadStringW(UINT id)
 {
 	const auto optModule = gm_Selected ? std::optional<HMODULE>(HMODULE(gm_Langs[gm_Selected]->m_Module)) : std::nullopt;
-	return cxx::load_string(id, optModule);
+	try {
+		return cxx::load_string(id, optModule);
+	}
+	catch (const std::out_of_range&) {
+		if (!gm_Selected) {
+			return {};
+		}
+		try {
+			return cxx::load_string(id);
+		}
+		catch (const std::out_of_range&) {
+			return {};
+		}
+	}
 }
 
 /*!

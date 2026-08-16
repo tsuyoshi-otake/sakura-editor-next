@@ -6,10 +6,13 @@
 */
 #include "StdAfx.h"
 #include "terminal/window/CTerminalWnd.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 
 #include "terminal/input/SakuraTerminalInputAdapter.h"
 #include "terminal/model/TerminalModel.h"
 #include "terminal/window/TerminalBuiltinGlyphRenderer.h"
+#include "terminal/window/TerminalClipboardPaste.h"
 #include "terminal/window/TerminalColorResolver.h"
 #include "terminal/window/TerminalDWriteRenderer.h"
 #include "terminal/window/TerminalFontMetrics.h"
@@ -162,6 +165,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	SakuraTerminalInputAdapter* inputAdapter{};
 	InputSink inputSink;
 	ResizeSink resizeSink;
+	FocusSink focusSink;
 	CTerminalWnd::ImeResultReader imeResultReader;
 	HFONT font{};
 	HFONT boldFont{};
@@ -325,6 +329,11 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	TerminalViewport Viewport() const noexcept
 	{
 		return model ? CalculateTerminalViewport(*model, visibleRows, scrollOffset) : TerminalViewport{};
+	}
+
+	[[nodiscard]] TerminalViewportGeometry Geometry() const noexcept
+	{
+		return TerminalViewportGeometry::FromDpi(dpi);
 	}
 
 	static void DestroyBackBuffer(HDC dc, HBITMAP bitmap, HGDIOBJ originalBitmap) noexcept
@@ -624,7 +633,9 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			return;
 		}
 		const auto row = std::min(model->CursorRow(), visibleRows == 0 ? 0 : visibleRows - 1);
-		::SetCaretPos(static_cast<int>(model->CursorColumn()) * cellWidth, static_cast<int>(row) * cellHeight);
+		const auto geometry = Geometry();
+		::SetCaretPos(geometry.GridOriginX() + static_cast<int>(model->CursorColumn()) * cellWidth,
+			geometry.GridOriginY() + static_cast<int>(row) * cellHeight);
 		if( !caretShown ) {
 			::ShowCaret(window);
 			caretShown = true;
@@ -638,8 +649,11 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		::GetClientRect(window, &client);
 		const int clientWidth = static_cast<int>(client.right - client.left);
 		const int clientHeight = static_cast<int>(client.bottom - client.top);
-		const auto columns = static_cast<std::uint16_t>(std::clamp(clientWidth / std::max(1, cellWidth), 1, 65535));
-		const auto rows = static_cast<std::uint16_t>(std::clamp(clientHeight / std::max(1, cellHeight), 1, 65535));
+		const auto geometry = Geometry();
+		const auto columns = static_cast<std::uint16_t>(std::clamp(
+			geometry.GridWidth(clientWidth) / std::max(1, cellWidth), 1, 65535));
+		const auto rows = static_cast<std::uint16_t>(std::clamp(
+			geometry.GridHeight(clientHeight) / std::max(1, cellHeight), 1, 65535));
 		visibleRows = rows;
 		const TerminalSize next{ columns, rows };
 		if( next.columns != terminalSize.columns || next.rows != terminalSize.rows ) {
@@ -767,7 +781,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 
 	TerminalSelectionPoint PointToCell( int x, int y ) const noexcept
 	{
-		return TerminalCellFromPoint(Viewport(), x, y, cellWidth, cellHeight, model ? model->Columns() : 0);
+		return TerminalCellFromPoint(Viewport(), x, y, cellWidth, cellHeight, model ? model->Columns() : 0, Geometry());
 	}
 
 	void UpdateSelection( TerminalSelectionPoint point ) noexcept
@@ -968,6 +982,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			&Impl::ResolvePlanStyle,
 			this,
 			true,
+			Geometry(),
 		};
 		const bool hasRenderPlan = renderPlan.Build(planInput);
 		classifierDc = nullptr;
@@ -997,11 +1012,13 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 		if( previousFont ) ::SelectObject(memory, previousFont);
 		if( inputBackpressured || inputRejected ) {
-			RECT warning{ 0, std::max<LONG>(0, height - cellHeight), width, height };
+			const auto geometry = Geometry();
+			const auto grid = geometry.GridRect(dwriteTargetRect);
+			RECT warning{ grid.left, std::max(grid.top, grid.bottom - cellHeight), grid.right, grid.bottom };
 			::SetBkColor(memory, inputRejected ? RGB(128, 40, 40) : palette.raised.ToColorRef());
 			::SetTextColor(memory, palette.primaryText.ToColorRef());
-			const wchar_t* message = inputRejected ? L"Terminal input was rejected; restart the session to continue."
-				: L"Terminal input is waiting for the process to catch up.";
+			const wchar_t* message = inputRejected ? LS(STR_TERMINAL_INPUT_REJECTED)
+				: LS(STR_TERMINAL_INPUT_BACKPRESSURE);
 			::ExtTextOutW(memory, warning.left + 4, warning.top, ETO_OPAQUE | ETO_CLIPPED, &warning, message,
 				static_cast<UINT>(wcslen(message)), nullptr);
 		}
@@ -1093,6 +1110,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_SETFOCUS:
 			RecreateCaret();
+			if( focusSink ) focusSink();
 			if( inputAdapter ) {
 				if( const auto encoded = inputAdapter->EncodeFocus(true) ) Send(*encoded);
 			}
@@ -1117,7 +1135,9 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			if( context ) {
 				COMPOSITIONFORM form{};
 				form.dwStyle = CFS_POINT;
-				form.ptCurrentPos = { static_cast<LONG>(model ? model->CursorColumn() * cellWidth : 0), static_cast<LONG>(model ? (model->CursorRow() + 1) * cellHeight : cellHeight) };
+				const auto geometry = Geometry();
+				form.ptCurrentPos = { static_cast<LONG>(geometry.GridOriginX() + (model ? model->CursorColumn() * cellWidth : 0)),
+					static_cast<LONG>(geometry.GridOriginY() + (model ? (model->CursorRow() + 1) * cellHeight : cellHeight)) };
 				::ImmSetCompositionWindow(context, &form);
 				::ImmReleaseContext(window, context);
 			}
@@ -1284,20 +1304,52 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 
 	bool PasteFromClipboard()
 	{
-		if( !model || !::OpenClipboard(window) ) return false;
-		bool pasted = false;
-		const HANDLE data = ::GetClipboardData(CF_UNICODETEXT);
-		if( data ) {
-			const auto* text = static_cast<const wchar_t*>(::GlobalLock(data));
-			if( text ) {
-				const auto capacity = ::GlobalSize(data) / sizeof(wchar_t);
-				const auto length = wcsnlen_s(text, capacity);
-				pasted = Send(EncodeTerminalPaste(std::wstring_view(text, length), model->Modes().bracketedPaste));
-				::GlobalUnlock(data);
+		if( !model ) return false;
+
+		// Prefer Unicode text when the clipboard carries a real string. Screenshots
+		// typically leave CF_UNICODETEXT empty, so image / file-drop paths follow.
+		if( ::OpenClipboard(window) ) {
+			bool pasted = false;
+			if( const HANDLE data = ::GetClipboardData(CF_UNICODETEXT) ) {
+				if( const auto* text = static_cast<const wchar_t*>(::GlobalLock(data)) ) {
+					const auto capacity = ::GlobalSize(data) / sizeof(wchar_t);
+					const auto length = wcsnlen_s(text, capacity);
+					std::wstring_view view(text, length);
+					while( !view.empty() && (view.back() == L'\0' || view.back() == L' '
+						|| view.back() == L'\t' || view.back() == L'\r' || view.back() == L'\n') ) {
+						view.remove_suffix(1);
+					}
+					if( !view.empty() ) {
+						pasted = Send(EncodeTerminalPaste(view, model->Modes().bracketedPaste));
+					}
+					::GlobalUnlock(data);
+				}
+			}
+			::CloseClipboard();
+			if( pasted ) return true;
+		}
+
+		const auto dropped = ReadClipboardFileDropPaths(window);
+		if( !dropped.empty() ) {
+			std::wstring payload;
+			for( const auto& path : dropped ) {
+				if( path.empty() ) continue;
+				if( !payload.empty() ) payload.push_back(L' ');
+				payload += FormatTerminalPastePath(path);
+			}
+			if( !payload.empty() ) {
+				return Send(EncodeTerminalPaste(payload, model->Modes().bracketedPaste));
 			}
 		}
-		::CloseClipboard();
-		return pasted;
+
+		// Claude Code / Codex / Cursor CLI read image *files*. Persist the clipboard
+		// bitmap as a temp PNG and paste the absolute path rather than inventing a
+		// proprietary image OSC the shell tools would ignore.
+		if( const auto imagePath = SaveClipboardImageAsPng(window) ) {
+			return Send(EncodeTerminalPaste(FormatTerminalPastePath(*imagePath),
+				model->Modes().bracketedPaste));
+		}
+		return false;
 	}
 };
 
@@ -1382,6 +1434,11 @@ void CTerminalWnd::SetResizeSink( ResizeSink sink )
 	if( m_impl->resizeSink ) m_impl->resizeSink(m_impl->terminalSize);
 }
 
+void CTerminalWnd::SetFocusSink( FocusSink sink )
+{
+	m_impl->focusSink = std::move(sink);
+}
+
 void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
@@ -1407,12 +1464,14 @@ void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScr
 	const auto visible = MapDirtyRowsToViewport(*m_impl->model, viewport, dirtyScreenRows);
 	RECT client{};
 	::GetClientRect(m_impl->window, &client);
+	const auto geometry = m_impl->Geometry();
 	for( std::size_t index = 0; index < visible.size(); ) {
 		const auto first = visible[index];
 		auto last = first;
 		while( ++index < visible.size() && visible[index] == last + 1 ) last = visible[index];
-		RECT rectangle{ 0, static_cast<LONG>(first * m_impl->cellHeight), client.right,
-			static_cast<LONG>((last + 1) * m_impl->cellHeight) };
+		RECT rectangle{ geometry.GridOriginX(),
+			static_cast<LONG>(geometry.GridOriginY() + first * m_impl->cellHeight), client.right,
+			static_cast<LONG>(geometry.GridOriginY() + (last + 1) * m_impl->cellHeight) };
 		::InvalidateRect(m_impl->window, &rectangle, FALSE);
 	}
 	m_impl->UpdateCaret();

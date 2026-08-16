@@ -17,6 +17,29 @@ namespace workbench::scm {
 
 namespace {
 
+[[nodiscard]] std::wstring ResolveText(const GitRefTextResolver& text, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument0 = {}, std::wstring_view argument1 = {})
+{
+	std::wstring result = text ? text(key, argument0) : std::wstring{};
+	if (result.empty()) result = fallback;
+	const auto replace = [&result](std::wstring_view marker, std::wstring_view value) {
+		std::size_t position = 0;
+		while (!value.empty() && (position = result.find(marker, position)) != std::wstring::npos) {
+			result.replace(position, marker.size(), value);
+			position += value.size();
+		}
+	};
+	replace(L"{0}", argument0);
+	replace(L"{1}", argument1);
+	return result;
+}
+
+[[nodiscard]] std::wstring ResolveText(const GitSyncCommandContext& context, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument0 = {}, std::wstring_view argument1 = {})
+{
+	return ResolveText(context.text, key, fallback, argument0, argument1);
+}
+
 //! Upstream's own warnings, from `CommandCenter`. Each command family has its
 //! own wording — "fetch from", "pull from", "push to", "publish to" — so they
 //! are not collapsed into one shared sentence.
@@ -308,7 +331,7 @@ using GitFailureClassifier = EGitSyncFailureReason (*)(const GitExecutionResult&
 	if (result.Succeeded() && result.exitCode == 0) {
 		return true;
 	}
-	auto described = DescribeGitSyncFailure(classify(result), result);
+	auto described = DescribeGitSyncFailure(classify(result), result, context.text);
 	Notify(context, described.message);
 	failure = Failed(std::move(described));
 	return false;
@@ -336,7 +359,7 @@ using GitFailureClassifier = EGitSyncFailureReason (*)(const GitExecutionResult&
 	if (!context.confirm) {
 		return true;
 	}
-	const auto prompt = BuildMaybeRebasedPrompt(state.headName);
+	const auto prompt = BuildMaybeRebasedPrompt(state.headName, context.text);
 	const auto pick = context.confirm(prompt);
 	if (pick.has_value() && *pick == 0) {
 		return true;
@@ -655,6 +678,12 @@ EGitSyncRecovery RecoveryForGitSyncFailure(EGitSyncFailureReason reason) noexcep
 
 GitSyncFailure DescribeGitSyncFailure(EGitSyncFailureReason reason, const GitExecutionResult& result)
 {
+	return DescribeGitSyncFailure(reason, result, {});
+}
+
+GitSyncFailure DescribeGitSyncFailure(
+	EGitSyncFailureReason reason, const GitExecutionResult& result, const GitRefTextResolver& text)
+{
 	GitSyncFailure failure{ reason, RecoveryForGitSyncFailure(reason), {} };
 	if (reason == EGitSyncFailureReason::None) {
 		return failure;
@@ -673,32 +702,38 @@ GitSyncFailure DescribeGitSyncFailure(EGitSyncFailureReason reason, const GitExe
 
 	switch (reason) {
 	case EGitSyncFailureReason::DirtyWorkTree:
-		failure.message = L"Please clean your repository working tree before checkout.";
+		failure.message = ResolveText(text, "GitDirtyWorkTree",
+			L"Please clean your repository working tree before checkout.");
 		break;
 	case EGitSyncFailureReason::PushRejected:
-		failure.message = L"Can't push refs to remote. Try running \"Pull\" first to integrate your changes.";
+		failure.message = ResolveText(text, "GitPushRejected",
+			L"Can't push refs to remote. Try running \"Pull\" first to integrate your changes.");
 		break;
 	case EGitSyncFailureReason::ForcePushWithLeaseRejected:
 	case EGitSyncFailureReason::ForcePushWithLeaseIfIncludesRejected:
-		failure.message
-			= L"Can't force push refs to remote. The tip of the remote-tracking branch has been updated "
-			  L"since the last checkout. Try running \"Pull\" first to pull the latest changes from the "
-			  L"remote branch first.";
+		failure.message = ResolveText(text, "GitForcePushRejected",
+			L"Can't force push refs to remote. The tip of the remote-tracking branch has been updated "
+			L"since the last checkout. Try running \"Pull\" first to pull the latest changes from the "
+			L"remote branch first.");
 		break;
 	case EGitSyncFailureReason::Conflict:
-		failure.message = L"There are merge conflicts. Please resolve them before committing your changes.";
+		failure.message = ResolveText(text, "GitConflict",
+			L"There are merge conflicts. Please resolve them before committing your changes.");
 		break;
 	case EGitSyncFailureReason::AuthenticationFailed: {
 		const auto target = ExtractAuthenticationTarget(DecodeStandardError(result));
-		failure.message = target.empty() ? std::wstring(L"Failed to authenticate to git remote.")
-										 : L"Failed to authenticate to git remote:\n\n" + target;
+		failure.message = target.empty()
+			? ResolveText(text, "GitAuthenticationFailed", L"Failed to authenticate to git remote.")
+			: ResolveText(text, "GitAuthenticationFailedTarget",
+				L"Failed to authenticate to git remote:\n\n{0}", target);
 		break;
 	}
 	case EGitSyncFailureReason::NoUserNameConfigured:
 		// Upstream also offers a `Learn More` action opening
 		// https://aka.ms/vscode-setup-git. There is no notification-action
 		// surface on this path, so the sentence stands alone.
-		failure.message = L"Make sure you configure your \"user.name\" and \"user.email\" in git.";
+		failure.message = ResolveText(text, "GitNoUserNameConfigured",
+			L"Make sure you configure your \"user.name\" and \"user.email\" in git.");
 		break;
 	default:
 		failure.message = BuildHintMessage(result);
@@ -737,6 +772,12 @@ GitSyncRepositoryState BuildGitSyncRepositoryState(const GitScmState& state, std
 
 std::vector<GitRemotePickItem> BuildFetchRemotePickItems(const GitSyncRepositoryState& state)
 {
+	return BuildFetchRemotePickItems(state, {});
+}
+
+std::vector<GitRemotePickItem> BuildFetchRemotePickItems(
+	const GitSyncRepositoryState& state, const GitRefTextResolver& text)
+{
 	std::vector<GitRemotePickItem> items;
 	items.reserve(state.remotes.size() + 1);
 	for (std::size_t index = 0; index < state.remotes.size(); ++index) {
@@ -752,7 +793,8 @@ std::vector<GitRemotePickItem> BuildFetchRemotePickItems(const GitSyncRepository
 			std::rotate(items.begin(), found, std::next(found));
 		}
 	}
-	items.push_back({ EGitRemotePickKind::AllRemotes, L"$(cloud-download) Fetch all remotes", {}, 0 });
+	items.push_back({ EGitRemotePickKind::AllRemotes,
+		L"$(cloud-download) " + ResolveText(text, "GitFetchAllRemotes", L"Fetch all remotes"), {}, 0 });
 	return items;
 }
 
@@ -767,38 +809,37 @@ std::vector<GitRemotePickItem> BuildPublishRemotePickItems(const GitSyncReposito
 	return items;
 }
 
-GitPrompt BuildSyncConfirmationPrompt(std::wstring_view remote, std::wstring_view branch)
+GitPrompt BuildSyncConfirmationPrompt(std::wstring_view remote, std::wstring_view branch,
+	const GitRefTextResolver& text)
 {
 	GitPrompt prompt;
-	prompt.message = L"This action will pull and push commits from and to \"" + std::wstring(remote) + L"/"
-		+ std::wstring(branch) + L"\".";
-	prompt.choices.emplace_back(kOkChoice);
+	prompt.message = ResolveText(text, "GitSyncConfirmation",
+		L"This action will pull and push commits from and to \"{0}/{1}\".", remote, branch);
+	prompt.choices.emplace_back(ResolveText(text, "GitOk", kOkChoice));
 	prompt.warning = true;
 	prompt.modal = true;
 	return prompt;
 }
 
-GitPrompt BuildPublishBranchPrompt(std::wstring_view branch)
+GitPrompt BuildPublishBranchPrompt(std::wstring_view branch, const GitRefTextResolver& text)
 {
 	GitPrompt prompt;
-	prompt.message = L"The branch \"" + std::wstring(branch)
-		+ L"\" has no remote branch. Would you like to publish this branch?";
-	prompt.choices.emplace_back(kOkChoice);
+	prompt.message = ResolveText(text, "GitPublishBranchPrompt",
+		L"The branch \"{0}\" has no remote branch. Would you like to publish this branch?", branch);
+	prompt.choices.emplace_back(ResolveText(text, "GitOk", kOkChoice));
 	prompt.warning = true;
 	prompt.modal = true;
 	return prompt;
 }
 
-GitPrompt BuildMaybeRebasedPrompt(std::wstring_view branch)
+GitPrompt BuildMaybeRebasedPrompt(std::wstring_view branch, const GitRefTextResolver& text)
 {
 	GitPrompt prompt;
 	prompt.message = branch.empty()
-		? std::wstring(L"It looks like the current branch might have been rebased. Are you sure you still "
-					   L"want to pull into it?")
-		: L"It looks like the current branch \"" + std::wstring(branch)
-			+ L"\" might have been rebased. Are you sure you still want to pull into it?";
-	prompt.choices.emplace_back(kPullChoice);
-	prompt.choices.emplace_back(kDontPullChoice);
+		? ResolveText(text, "GitMaybeRebasedNoName", L"It looks like the current branch might have been rebased. Are you sure you still want to pull into it?")
+		: ResolveText(text, "GitMaybeRebased", L"It looks like the current branch \"{0}\" might have been rebased. Are you sure you still want to pull into it?", branch);
+	prompt.choices.emplace_back(ResolveText(text, "GitPull", kPullChoice));
+	prompt.choices.emplace_back(ResolveText(text, "GitDontPull", kDontPullChoice));
 	prompt.warning = true;
 	prompt.modal = false;
 	return prompt;
@@ -808,11 +849,12 @@ GitSyncCommandResult RunGitFetch(
 	const GitSyncCommandContext& context, const GitSyncRepositoryState& state, EGitFetchScope scope)
 {
 	if (!context.run) {
-		return FailedLocally(kNoPresenter);
+		return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 	}
 	if (state.remotes.empty()) {
-		Notify(context, kNoFetchRemotes);
-		return NotApplicable(kNoFetchRemotes);
+		const auto message = ResolveText(context, "GitNoFetchRemotes", kNoFetchRemotes);
+		Notify(context, message);
+		return NotApplicable(message);
 	}
 
 	GitFetchOptions options;
@@ -823,12 +865,12 @@ GitSyncCommandResult RunGitFetch(
 	// `git.fetchAll` never do, because their scope is already unambiguous.
 	if (scope == EGitFetchScope::Default && state.remotes.size() > 1) {
 		if (!context.pickRemote) {
-			return FailedLocally(kNoPresenter);
+			return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 		}
-		const auto items = BuildFetchRemotePickItems(state);
-		const auto chosen = context.pickRemote(items, kFetchPlaceholder);
+		const auto items = BuildFetchRemotePickItems(state, context.text);
+		const auto chosen = context.pickRemote(items, ResolveText(context, "GitFetchPlaceholder", kFetchPlaceholder));
 		if (!chosen.has_value() || *chosen >= items.size()) {
-			return Cancelled(kDismissed);
+			return Cancelled(ResolveText(context, "GitSyncDismissed", kDismissed));
 		}
 		const auto& item = items[*chosen];
 		if (item.kind == EGitRemotePickKind::AllRemotes) {
@@ -854,11 +896,12 @@ GitSyncCommandResult RunGitPull(
 	const GitSyncCommandContext& context, const GitSyncRepositoryState& state, bool rebase)
 {
 	if (!context.run) {
-		return FailedLocally(kNoPresenter);
+		return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 	}
 	if (state.remotes.empty()) {
-		Notify(context, kNoPullRemotes);
-		return NotApplicable(kNoPullRemotes);
+		const auto message = ResolveText(context, "GitNoPullRemotes", kNoPullRemotes);
+		Notify(context, message);
+		return NotApplicable(message);
 	}
 
 	if (context.configuration.fetchOnPull) {
@@ -872,7 +915,7 @@ GitSyncCommandResult RunGitPull(
 
 	bool cancelled = false;
 	if (!ConfirmNotRebased(context, state, cancelled)) {
-		return cancelled ? Cancelled(kDismissed) : Succeeded();
+		return cancelled ? Cancelled(ResolveText(context, "GitSyncDismissed", kDismissed)) : Succeeded();
 	}
 
 	GitPullOptions options;
@@ -897,18 +940,20 @@ GitSyncCommandResult RunGitPull(
 GitSyncCommandResult RunGitPush(const GitSyncCommandContext& context, const GitSyncRepositoryState& state)
 {
 	if (!context.run) {
-		return FailedLocally(kNoPresenter);
+		return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 	}
 	if (state.remotes.empty()) {
 		// Upstream offers `Add Remote` here; `git.addRemote` is not registered,
 		// so the warning stands alone rather than offering a route that is not
 		// implemented.
-		Notify(context, kNoPushRemotes);
-		return NotApplicable(kNoPushRemotes);
+		const auto message = ResolveText(context, "GitNoPushRemotes", kNoPushRemotes);
+		Notify(context, message);
+		return NotApplicable(message);
 	}
 	if (state.headName.empty()) {
-		Notify(context, kNoBranchToPush);
-		return NotApplicable(kNoBranchToPush);
+		const auto message = ResolveText(context, "GitNoBranchToPush", kNoBranchToPush);
+		Notify(context, message);
+		return NotApplicable(message);
 	}
 
 	GitPushOptions options;
@@ -922,7 +967,8 @@ GitSyncCommandResult RunGitPush(const GitSyncCommandContext& context, const GitS
 		return Succeeded();
 	}
 
-	auto failure = DescribeGitSyncFailure(ClassifyGitPushFailure(result, options.forcePushMode), result);
+	auto failure = DescribeGitSyncFailure(
+		ClassifyGitPushFailure(result, options.forcePushMode), result, context.text);
 	if (failure.reason != EGitSyncFailureReason::NoUpstreamBranch) {
 		Notify(context, failure.message);
 		return Failed(std::move(failure));
@@ -935,9 +981,9 @@ GitSyncCommandResult RunGitPush(const GitSyncCommandContext& context, const GitS
 		Notify(context, failure.message);
 		return Failed(std::move(failure));
 	}
-	const auto pick = context.confirm(BuildPublishBranchPrompt(state.headName));
+	const auto pick = context.confirm(BuildPublishBranchPrompt(state.headName, context.text));
 	if (!pick.has_value() || *pick != 0) {
-		return Cancelled(kDismissed);
+		return Cancelled(ResolveText(context, "GitSyncDismissed", kDismissed));
 	}
 	return RunGitPublish(context, state);
 }
@@ -946,10 +992,10 @@ GitSyncCommandResult RunGitSync(
 	const GitSyncCommandContext& context, const GitSyncRepositoryState& state, bool rebase)
 {
 	if (!context.run) {
-		return FailedLocally(kNoPresenter);
+		return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 	}
 	if (state.headName.empty()) {
-		return NotApplicable(kNoHead);
+		return NotApplicable(ResolveText(context, "GitSyncNoHead", kNoHead));
 	}
 	if (!state.HasUpstream()) {
 		// Upstream's `_sync` degrades to a push, which then offers to publish.
@@ -961,12 +1007,12 @@ GitSyncCommandResult RunGitSync(
 
 	if (!readOnly && context.configuration.confirmSync) {
 		if (!context.confirm) {
-			return FailedLocally(kNoPresenter);
+			return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 		}
-		const auto prompt = BuildSyncConfirmationPrompt(state.upstreamRemote, state.upstreamName);
+		const auto prompt = BuildSyncConfirmationPrompt(state.upstreamRemote, state.upstreamName, context.text);
 		const auto pick = context.confirm(prompt);
 		if (!pick.has_value() || *pick != 0) {
-			return Cancelled(kDismissed);
+			return Cancelled(ResolveText(context, "GitSyncDismissed", kDismissed));
 		}
 	}
 
@@ -982,7 +1028,7 @@ GitSyncCommandResult RunGitSync(
 		// Declining the rebase warning skips the pull, and upstream then falls
 		// straight through to the push half rather than abandoning the sync.
 		if (cancelled) {
-			return Cancelled(kDismissed);
+			return Cancelled(ResolveText(context, "GitSyncDismissed", kDismissed));
 		}
 	} else {
 		GitPullOptions pullOptions;
@@ -999,10 +1045,10 @@ GitSyncCommandResult RunGitSync(
 	}
 
 	if (readOnly) {
-		return NotApplicable(kReadOnlyRemote);
+		return NotApplicable(ResolveText(context, "GitSyncReadOnlyRemote", kReadOnlyRemote));
 	}
 	if (state.ahead <= 0) {
-		return NotApplicable(kNothingToPush);
+		return NotApplicable(ResolveText(context, "GitSyncNothingToPush", kNothingToPush));
 	}
 
 	GitPushOptions pushOptions;
@@ -1016,14 +1062,15 @@ GitSyncCommandResult RunGitSync(
 GitSyncCommandResult RunGitPublish(const GitSyncCommandContext& context, const GitSyncRepositoryState& state)
 {
 	if (!context.run) {
-		return FailedLocally(kNoPresenter);
+		return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 	}
 	if (state.remotes.empty()) {
 		// With no remote and no `RemoteSourcePublisher`, upstream shows exactly
 		// this warning and stops. There is no publisher registry here, so this
 		// is the only branch that can be taken — not an approximation of one.
-		Notify(context, kNoPublishRemotes);
-		return NotApplicable(kNoPublishRemotes);
+		const auto message = ResolveText(context, "GitNoPublishRemotes", kNoPublishRemotes);
+		Notify(context, message);
+		return NotApplicable(message);
 	}
 
 	GitPushOptions options;
@@ -1036,14 +1083,14 @@ GitSyncCommandResult RunGitPublish(const GitSyncCommandContext& context, const G
 	}
 
 	if (!context.pickRemote) {
-		return FailedLocally(kNoPresenter);
+		return FailedLocally(ResolveText(context, "GitSyncNoPresenter", kNoPresenter));
 	}
 	const auto items = BuildPublishRemotePickItems(state);
-	const std::wstring placeholder
-		= L"Pick a remote to publish the branch \"" + state.headName + L"\" to:";
+	const std::wstring placeholder = ResolveText(context, "GitPublishRemotePicker",
+		L"Pick a remote to publish the branch \"{0}\" to:", state.headName);
 	const auto chosen = context.pickRemote(items, placeholder);
 	if (!chosen.has_value() || *chosen >= items.size()) {
-		return Cancelled(kDismissed);
+		return Cancelled(ResolveText(context, "GitSyncDismissed", kDismissed));
 	}
 	options.remote = state.remotes[items[*chosen].remoteIndex].name;
 	return PushWith(context, options);

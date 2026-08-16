@@ -407,46 +407,6 @@ TEST(WorkbenchContextKeyService, ProjectsWorkspaceAndEditorStateInTheSameImmutab
 	EXPECT_EQ(WorkbenchContextValue(true), snapshot.values.at("editorIsDirty"));
 }
 
-TEST(WorkbenchContextKeyService, ProjectsIsWorkspaceTrustedTrueOnlyForExplicitTrust)
-{
-	WorkbenchLayoutStateSnapshot layout;
-	config::WorkspaceContextSnapshot workspace;
-	workspace.kind = config::EWorkspaceKind::Folder;
-	workspace.trust = config::EWorkspaceTrustState::Trusted;
-
-	WorkbenchContextKeyService service;
-	const auto mutation = service.SetCoreProjection(layout, workspace);
-
-	ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded, mutation.status);
-	EXPECT_EQ(WorkbenchContextValue(true), service.Snapshot().values.at("isWorkspaceTrusted"));
-}
-
-//! Upstream's context key is a plain boolean, so the three-state trust model
-//! has to collapse toward withholding trust: Unknown means never granted and
-//! Untrusted means denied, and a `when` clause must not treat either as
-//! permission.
-TEST(WorkbenchContextKeyService, ProjectsIsWorkspaceTrustedFalseForUnknownAndUntrustedTrust)
-{
-	WorkbenchLayoutStateSnapshot layout;
-	for (const auto trust : { config::EWorkspaceTrustState::Unknown, config::EWorkspaceTrustState::Untrusted }) {
-		config::WorkspaceContextSnapshot workspace;
-		workspace.kind = config::EWorkspaceKind::Folder;
-		workspace.trust = trust;
-
-		WorkbenchContextKeyService service;
-		const auto mutation = service.SetCoreProjection(layout, workspace);
-
-		ASSERT_EQ(EWorkbenchContextMutationStatus::Succeeded, mutation.status);
-		EXPECT_EQ(WorkbenchContextValue(false), service.Snapshot().values.at("isWorkspaceTrusted"))
-			<< static_cast<int>(trust);
-	}
-}
-
-TEST(WorkbenchContextKeyService, IsWorkspaceTrustedIsAReservedCoreKey)
-{
-	EXPECT_TRUE(WorkbenchContextKeyService::IsReservedCoreKey("isWorkspaceTrusted"));
-}
-
 TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatchesStableIds)
 {
 	WorkbenchCommandRegistry registry;
@@ -475,6 +435,17 @@ TEST(WorkbenchCommandPalette, EnumeratesEveryRegisteredPaletteBindingAndDispatch
 		});
 	ASSERT_NE(allItems.end(), outputItem);
 	EXPECT_EQ(L"Toggle Output", outputItem->label);
+	const auto localized = workbench::editor::SearchRegisteredCommandPalette(registry, L"",
+		[](const WorkbenchCommandDescriptor& descriptor) {
+			if (descriptor.id == "workbench.action.output.toggleOutput") return std::wstring(L"出力の表示を切り替える");
+			return std::wstring{};
+		});
+	const auto localizedOutput = std::find_if(localized.begin(), localized.end(),
+		[](const workbench::editor::WorkbenchCommandPaletteItem& item) {
+			return item.id == "workbench.action.output.toggleOutput";
+		});
+	ASSERT_NE(localized.end(), localizedOutput);
+	EXPECT_EQ(L"出力の表示を切り替える", localizedOutput->label);
 
 	const auto filtered = workbench::editor::SearchRegisteredCommandPalette(registry, L"native palette");
 	ASSERT_EQ(1U, filtered.size());
@@ -932,39 +903,30 @@ TEST(WorkbenchCommandRegistry, GitStagingCommandsCarryUpstreamTitlesAndPaletteSl
 	}
 }
 
-TEST(WorkbenchCommandRegistry, ManageWorkspaceTrustIsUpstreamsCommandWithAPaletteEntry)
+TEST(WorkbenchCommandRegistry, GitCloneRecursiveIsAnAlwaysAvailableRepositoryCreationCommand)
 {
 	WorkbenchCommandRegistry registry;
-	bool invoked = false;
-	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands({
-		.manageWorkspaceTrust = [&invoked]() { invoked = true; return Succeeded(); },
+	int calls{};
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.cloneRecursive = [&calls] { ++calls; return Succeeded(); },
 	}).status);
 
-	// `workbench/contrib/workspace/browser/workspace.contribution.ts` registers
-	// `workbench.trust.manage` with `f1: true` under the `Workspaces` category,
-	// so the palette is the surface it is actually reachable from.
-	const auto descriptor = registry.Find("workbench.trust.manage");
+	const auto descriptor = registry.Find("git.cloneRecursive");
 	ASSERT_TRUE(descriptor.has_value());
-	EXPECT_EQ("Workspaces: Manage Workspace Trust", descriptor->title);
+	// `command.cloneRecursive` in the Git extension is `Clone (Recursive)`;
+	// it is the distinct command linked by the SCM empty-workbench welcome view.
+	EXPECT_EQ("Git: Clone (Recursive)", descriptor->title);
+	EXPECT_EQ("workbenchReady", descriptor->whenClause);
 	const auto slot = registry.ResolveSurface(
-		EWorkbenchCommandSurface::CommandPalette, "workbench.trust.manage.palette");
+		EWorkbenchCommandSurface::CommandPalette, "git.cloneRecursive.palette");
 	ASSERT_TRUE(slot.has_value());
-	EXPECT_EQ("workbench.trust.manage", slot->commandId);
+	EXPECT_EQ("git.cloneRecursive", slot->commandId);
 
+	// Its job is to create a repository, so it must not inherit the regular
+	// Git command's `gitOpenRepositoryCount != 0` gate.
 	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
-		registry.Execute("workbench.trust.manage", EnabledContext()).status);
-	EXPECT_TRUE(invoked);
-}
-
-TEST(WorkbenchCommandRegistry, UnboundManageWorkspaceTrustIsUnsupportedRatherThanASilentGrant)
-{
-	WorkbenchCommandRegistry registry;
-	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterBuiltinCommands().status);
-
-	// A shell with no trust surface must say so. Reporting success here would
-	// claim a trust decision was taken when nothing was shown and nothing written.
-	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Unsupported,
-		registry.Execute("workbench.trust.manage", EnabledContext()).status);
+		registry.Execute("git.cloneRecursive", EnabledContext()).status);
+	EXPECT_EQ(1, calls);
 }
 
 TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfaceOfTheirOwn)
@@ -976,6 +938,8 @@ TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfa
 			received.emplace("vscode.diff", arguments); return Succeeded(); },
 		.vscodeOpen = [&received](std::string_view arguments) {
 			received.emplace("vscode.open", arguments); return Succeeded(); },
+		.vscodeOpenFolder = [&received](std::string_view arguments) {
+			received.emplace("vscode.openFolder", arguments); return Succeeded(); },
 	}).status);
 
 	// Upstream registers these in `workbench/api/common/apiCommands.ts` through
@@ -985,6 +949,14 @@ TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfa
 	const std::map<std::string, std::string> titles{
 		{ "vscode.diff", "Opens the provided resources in the diff editor to compare their contents." },
 		{ "vscode.open", "Opens the provided resource in the editor." },
+		{ "vscode.openFolder", "Opens a folder as a workspace." },
+	};
+	const std::map<std::string, std::string_view> payloads{
+		{ "vscode.diff", R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])" },
+		{ "vscode.open", R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])" },
+		// The SCM ViewWelcome invokes `vscode.openFolder` without an operand, so
+		// the native handler opens its folder picker rather than inventing a URI.
+		{ "vscode.openFolder", "" },
 	};
 	const auto context = EnabledContext();
 	for (const auto& [commandId, title] : titles) {
@@ -997,7 +969,7 @@ TEST(WorkbenchCommandRegistry, ApiCommandsAreRegisteredByTheWorkbenchWithNoSurfa
 		// extension can issue one in a window with no repository open.
 		EXPECT_EQ("workbenchReady", descriptor->whenClause) << commandId;
 
-		constexpr std::string_view payload = R"(["git:/C:/repo/a.cpp?%7B%22ref%22%3A%22HEAD%22%7D","file:///C:/repo/a.cpp"])";
+		const std::string_view payload = payloads.at(commandId);
 		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
 			registry.Execute(commandId, context, payload).status) << commandId;
 		ASSERT_TRUE(received.contains(commandId)) << commandId;

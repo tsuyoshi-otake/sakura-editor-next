@@ -4,8 +4,8 @@
 
 `CLaunchConfigurationCatalog` is a pure, bounded semantic catalog over one
 resolved Launch artifact. It retains opaque adapter-specific fields but does
-not interpret them as DAP messages, spawn an adapter, resolve variables, check
-workspace trust, or own a debug session.
+not interpret them as DAP messages, spawn an adapter, resolve variables, or own
+a debug session.
 
 - Copy and validate the entire configuration/compound set before commit.
   Duplicate names, invalid compounds/references, bad schema, and capacity
@@ -22,5 +22,5 @@ workspace trust, or own a debug session.
 ## Verified Checkpoint
 
 `LaunchConfigurationCatalog.*` passes 5/5. Adapter discovery, variable
-substitution, trust checks, DAP process/session ownership, Run and Debug UI, and
-compound execution are not implied by this catalog.
+substitution, DAP process/session ownership, Run and Debug UI, and compound
+execution are not implied by this catalog.

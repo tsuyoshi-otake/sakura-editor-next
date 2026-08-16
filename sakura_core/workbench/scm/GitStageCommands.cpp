@@ -17,6 +17,29 @@ namespace workbench::scm {
 
 namespace {
 
+[[nodiscard]] std::wstring ResolveText(const GitRefTextResolver& text, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument0 = {}, std::wstring_view argument1 = {})
+{
+	std::wstring result = text ? text(key, argument0) : std::wstring{};
+	if (result.empty()) result = fallback;
+	const auto replace = [&result](std::wstring_view marker, std::wstring_view value) {
+		std::size_t position = 0;
+		while (!value.empty() && (position = result.find(marker, position)) != std::wstring::npos) {
+			result.replace(position, marker.size(), value);
+			position += value.size();
+		}
+	};
+	replace(L"{0}", argument0);
+	replace(L"{1}", argument1);
+	return result;
+}
+
+[[nodiscard]] std::wstring ResolveText(const GitStageCommandContext& context, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument0 = {}, std::wstring_view argument1 = {})
+{
+	return ResolveText(context.text, key, fallback, argument0, argument1);
+}
+
 //! A quoted `git.exe` path becomes argv[0] ahead of everything this file builds.
 constexpr std::size_t kProgramNameAllowance = 512;
 
@@ -84,7 +107,7 @@ struct UntrackedDialogDetails final {
 };
 
 [[nodiscard]] UntrackedDialogDetails BuildUntrackedDialogDetails(
-	const std::vector<GitStageResource>& resources, bool toTrash)
+	const std::vector<GitStageResource>& resources, bool toTrash, const GitRefTextResolver& text)
 {
 	const auto count = resources.size();
 	// Only the permanent path carries the warning; the Recycle Bin path is
@@ -92,27 +115,26 @@ struct UntrackedDialogDetails final {
 	std::wstring warning;
 	if (!toTrash) {
 		warning = count == 1
-			? std::wstring(L"\n\nThis is IRREVERSIBLE!\nThis file will be FOREVER LOST if you proceed.")
-			: std::wstring(L"\n\nThis is IRREVERSIBLE!\nThese files will be FOREVER LOST if you proceed.");
+			? ResolveText(text, "GitIrreversibleOne", L"\n\nThis is IRREVERSIBLE!\nThis file will be FOREVER LOST if you proceed.")
+			: ResolveText(text, "GitIrreversibleMany", L"\n\nThis is IRREVERSIBLE!\nThese files will be FOREVER LOST if you proceed.");
 	}
 
 	UntrackedDialogDetails details;
 	details.message = count == 1
-		? L"Are you sure you want to DELETE the following untracked file: '"
-			+ BaseName(resources.front().path) + L"'?" + warning
-		: L"Are you sure you want to DELETE the " + Count(count) + L" untracked files?" + warning;
+		? ResolveText(text, "GitDeleteUntrackedOne", L"Are you sure you want to DELETE the following untracked file: '{0}'?", BaseName(resources.front().path)) + warning
+		: ResolveText(text, "GitDeleteUntrackedMany", L"Are you sure you want to DELETE the {0} untracked files?", Count(count)) + warning;
 	if (toTrash) {
 		// This build is Windows-only, so upstream's `isWindows` branch is the
 		// only reachable one and the Trash wording never applies.
 		details.detail = count == 1
-			? std::wstring(L"You can restore this file from the Recycle Bin.")
-			: std::wstring(L"You can restore these files from the Recycle Bin.");
-		details.primaryAction = L"Move to Recycle Bin";
+			? ResolveText(text, "GitRestoreOneRecycleBin", L"You can restore this file from the Recycle Bin.")
+			: ResolveText(text, "GitRestoreManyRecycleBin", L"You can restore these files from the Recycle Bin.");
+		details.primaryAction = ResolveText(text, "GitMoveToRecycleBin", L"Move to Recycle Bin");
 	}
 	else {
 		details.primaryAction = count == 1
-			? std::wstring(L"Delete File")
-			: L"Delete All " + Count(count) + L" Files";
+			? ResolveText(text, "GitDeleteFile", L"Delete File")
+			: ResolveText(text, "GitDeleteAllFiles", L"Delete All {0} Files", Count(count));
 	}
 	return details;
 }
@@ -188,7 +210,7 @@ struct UntrackedDialogDetails final {
 		return Succeeded();
 	}
 
-	const auto prompt = BuildTrashFallbackPrompt(remaining);
+	const auto prompt = BuildTrashFallbackPrompt(remaining, context.text);
 	const auto chosen = context.confirm(prompt);
 	if (!chosen.has_value() || *chosen >= prompt.choices.size()) {
 		return Cancelled();
@@ -299,7 +321,8 @@ bool HasMergeResource(const std::vector<GitStageResource>& resources) noexcept
 		[](const GitStageResource& resource) { return resource.group == EGitResourceGroup::Merge; });
 }
 
-GitDiscardPrompt BuildDiscardPrompt(const std::vector<GitStageResource>& resources, bool untrackedToTrash)
+GitDiscardPrompt BuildDiscardPrompt(const std::vector<GitStageResource>& resources, bool untrackedToTrash,
+	const GitRefTextResolver& text)
 {
 	std::vector<GitStageResource> tracked;
 	std::vector<GitStageResource> untracked;
@@ -320,27 +343,26 @@ GitDiscardPrompt BuildDiscardPrompt(const std::vector<GitStageResource>& resourc
 				[](const GitStageResource& resource) { return resource.deleted; });
 		if (allDeleted) {
 			prompt.message = count == 1
-				? L"Are you sure you want to restore '" + BaseName(resources.front().path) + L"'?"
-				: L"Are you sure you want to restore ALL " + Count(count) + L" files?";
+				? ResolveText(text, "GitRestoreOne", L"Are you sure you want to restore '{0}'?", BaseName(resources.front().path))
+				: ResolveText(text, "GitRestoreMany", L"Are you sure you want to restore ALL {0} files?", Count(count));
 			prompt.choices.push_back({ count == 1
-					? std::wstring(L"Restore File")
-					: L"Restore All " + Count(count) + L" Files",
+					? ResolveText(text, "GitRestoreFile", L"Restore File")
+					: ResolveText(text, "GitRestoreAllFiles", L"Restore All {0} Files", Count(count)),
 				resources });
 		}
 		else {
 			prompt.message = count == 1
-				? L"Are you sure you want to discard changes in '" + BaseName(resources.front().path) + L"'?"
-				: L"Are you sure you want to discard ALL changes in " + Count(count)
-					+ L" files?\n\nThis is IRREVERSIBLE!\nYour current working set will be FOREVER LOST if you proceed.";
+				? ResolveText(text, "GitDiscardOne", L"Are you sure you want to discard changes in '{0}'?", BaseName(resources.front().path))
+				: ResolveText(text, "GitDiscardMany", L"Are you sure you want to discard ALL changes in {0} files?\n\nThis is IRREVERSIBLE!\nYour current working set will be FOREVER LOST if you proceed.", Count(count));
 			prompt.choices.push_back({ count == 1
-					? std::wstring(L"Discard File")
-					: L"Discard All " + Count(count) + L" Files",
+					? ResolveText(text, "GitDiscardFile", L"Discard File")
+					: ResolveText(text, "GitDiscardAllFiles", L"Discard All {0} Files", Count(count)),
 				resources });
 		}
 		return prompt;
 	}
 
-	const auto details = BuildUntrackedDialogDetails(untracked, untrackedToTrash);
+	const auto details = BuildUntrackedDialogDetails(untracked, untrackedToTrash, text);
 	if (tracked.empty()) {
 		// `_cleanUntrackedChanges`, which is the one case that passes a detail.
 		prompt.message = details.message;
@@ -354,25 +376,26 @@ GitDiscardPrompt BuildDiscardPrompt(const std::vector<GitStageResource>& resourc
 	// the index while the untracked ones are not, so collapsing them into one
 	// "yes" would hide the only irreversible half of the operation.
 	const auto trackedMessage = tracked.size() == 1
-		? L"\n\nAre you sure you want to discard changes in '" + BaseName(tracked.front().path) + L"'?"
-		: L"\n\nAre you sure you want to discard ALL changes in " + Count(tracked.size()) + L" files?";
+		? ResolveText(text, "GitDiscardTrackedOne", L"\n\nAre you sure you want to discard changes in '{0}'?", BaseName(tracked.front().path))
+		: ResolveText(text, "GitDiscardTrackedMany", L"\n\nAre you sure you want to discard ALL changes in {0} files?", Count(tracked.size()));
 	prompt.message = details.message + L" " + details.detail + trackedMessage
 		+ L"\n\nThis is IRREVERSIBLE!\nYour current working set will be FOREVER LOST if you proceed.";
 	prompt.choices.push_back({ tracked.size() == 1
-			? std::wstring(L"Discard 1 Tracked File")
-			: L"Discard All " + Count(tracked.size()) + L" Tracked Files",
+			? ResolveText(text, "GitDiscardTrackedFile", L"Discard 1 Tracked File")
+			: ResolveText(text, "GitDiscardAllTrackedFiles", L"Discard All {0} Tracked Files", Count(tracked.size())),
 		tracked });
-	prompt.choices.push_back({ L"Discard All " + Count(count) + L" Files", resources });
+	prompt.choices.push_back({ ResolveText(text, "GitDiscardAllFiles", L"Discard All {0} Files", Count(count)), resources });
 	return prompt;
 }
 
-GitDiscardPrompt BuildTrashFallbackPrompt(const std::vector<GitStageResource>& resources)
+GitDiscardPrompt BuildTrashFallbackPrompt(const std::vector<GitStageResource>& resources,
+	const GitRefTextResolver& text)
 {
 	GitDiscardPrompt prompt;
-	prompt.message = L"Failed to delete using the Recycle Bin. Do you want to permanently delete instead?";
+	prompt.message = ResolveText(text, "GitRecycleBinFailed", L"Failed to delete using the Recycle Bin. Do you want to permanently delete instead?");
 	prompt.choices.push_back({ resources.size() == 1
-			? std::wstring(L"Delete File")
-			: L"Delete All " + Count(resources.size()) + L" Files",
+			? ResolveText(text, "GitDeleteFile", L"Delete File")
+			: ResolveText(text, "GitDeleteAllFiles", L"Delete All {0} Files", Count(resources.size())),
 		resources });
 	return prompt;
 }
@@ -404,7 +427,7 @@ GitStageCommandResult RunGitStage(
 	const GitStageCommandContext& context, const std::vector<GitStageResource>& resources, bool updateOnly)
 {
 	if (!context.run) {
-		return Failed(L"The stage command has no git invoker.");
+		return Failed(ResolveText(context, "GitStageNoInvoker", L"The stage command has no git invoker."));
 	}
 	if (HasMergeResource(resources)) {
 		// Upstream categorizes a merge row into resolved, unresolved, and
@@ -413,7 +436,7 @@ GitStageCommandResult RunGitStage(
 		// this fails closed rather than staging a file that may still hold
 		// `<<<<<<<` markers.
 		std::wstring message =
-			L"Staging a file with merge conflicts is not available yet. Resolve the conflict first.";
+			ResolveText(context, "GitStageMergeUnsupported", L"Staging a file with merge conflicts is not available yet. Resolve the conflict first.");
 		Notify(context, message);
 		return { EGitStageCommandStatus::UnsupportedMergeConflict, std::move(message) };
 	}
@@ -428,7 +451,7 @@ GitStageCommandResult RunGitUnstage(
 	const GitStageCommandContext& context, const std::vector<GitStageResource>& resources)
 {
 	if (!context.run) {
-		return Failed(L"The unstage command has no git invoker.");
+		return Failed(ResolveText(context, "GitUnstageNoInvoker", L"The unstage command has no git invoker."));
 	}
 	const auto selected = SelectUnstageableResources(resources);
 	if (selected.empty()) {
@@ -440,7 +463,7 @@ GitStageCommandResult RunGitUnstage(
 GitStageCommandResult RunGitUnstageAll(const GitStageCommandContext& context)
 {
 	if (!context.run) {
-		return Failed(L"The unstage command has no git invoker.");
+		return Failed(ResolveText(context, "GitUnstageNoInvoker", L"The unstage command has no git invoker."));
 	}
 	// Upstream's `revert([])`: one whole-index reset, not a listing of every
 	// staged path. The distinction matters for an index holding more paths than
@@ -452,12 +475,12 @@ GitStageCommandResult RunGitDiscard(
 	const GitStageCommandContext& context, const std::vector<GitStageResource>& resources)
 {
 	if (!context.run) {
-		return Failed(L"The discard command has no git invoker.");
+		return Failed(ResolveText(context, "GitDiscardNoInvoker", L"The discard command has no git invoker."));
 	}
 	if (!context.confirm) {
 		// Never silently discard. A missing confirmation presenter is a
 		// composition defect, and the safe reading of it is "do nothing".
-		return Failed(L"The discard command has no confirmation presenter.");
+		return Failed(ResolveText(context, "GitDiscardNoConfirmation", L"The discard command has no confirmation presenter."));
 	}
 	const auto selected = SelectDiscardableResources(resources);
 	if (selected.empty()) {
@@ -465,7 +488,7 @@ GitStageCommandResult RunGitDiscard(
 	}
 
 	const bool toTrash = static_cast<bool>(context.trash);
-	const auto prompt = BuildDiscardPrompt(selected, toTrash);
+	const auto prompt = BuildDiscardPrompt(selected, toTrash, context.text);
 	const auto chosen = context.confirm(prompt);
 	if (!chosen.has_value() || *chosen >= prompt.choices.size()) {
 		return Cancelled();

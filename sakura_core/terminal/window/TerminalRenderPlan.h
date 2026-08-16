@@ -97,6 +97,9 @@ struct TerminalRenderPlanBuildInput {
 	// The target paint rectangle has already been cleared to the terminal's
 	// semantic default background.  This is an opt-in elision contract.
 	bool surfaceClearedToDefaultBackground{};
+	// Physical viewport geometry.  The default preserves the historical
+	// zero-origin behavior for callers that do not own a native viewport.
+	TerminalViewportGeometry geometry{};
 };
 
 struct TerminalRenderPlanCounters {

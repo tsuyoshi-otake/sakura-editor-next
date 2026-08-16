@@ -9,6 +9,7 @@
 #include "workbench/editor/CEmptyEditorSurface.h"
 
 #include "config/system_constants.h"
+#include "CSelectLang.h"
 #include "sakura_rc.h"
 
 #include <windowsx.h>
@@ -61,6 +62,24 @@ constexpr int kFocusInsetDip = 2;
 	case EmptyEditorSurfaceAction::Count: break;
 	}
 	return L"";
+}
+
+[[nodiscard]] std::wstring LocalizedActionLabel(EmptyEditorSurfaceAction action, const wchar_t* fallback)
+{
+	UINT resourceId = 0;
+	switch (action) {
+	case EmptyEditorSurfaceAction::NewFile: resourceId = STR_WORKBENCH_COMMAND_NEW_FILE; break;
+	case EmptyEditorSurfaceAction::OpenFile: resourceId = STR_WORKBENCH_COMMAND_OPEN_FILE; break;
+	case EmptyEditorSurfaceAction::OpenFolder: resourceId = STR_WORKBENCH_COMMAND_OPEN_FOLDER; break;
+	case EmptyEditorSurfaceAction::ShowAllCommands: resourceId = STR_WORKBENCH_COMMAND_SHOW_COMMANDS; break;
+	case EmptyEditorSurfaceAction::OpenSettings: resourceId = STR_WORKBENCH_COMMAND_OPEN_SETTINGS; break;
+	case EmptyEditorSurfaceAction::Count: break;
+	}
+	if (resourceId != 0) {
+		const auto localized = CSelectLang::LoadStringW(resourceId);
+		if (!localized.empty()) return std::wstring(localized);
+	}
+	return fallback != nullptr ? std::wstring(fallback) : std::wstring();
 }
 
 } // namespace
@@ -399,7 +418,8 @@ void CEmptyEditorSurface::PaintContent(HDC target) noexcept
 		::SetTextColor(target, textColor.ToColorRef());
 		const int padding = ScaleDip(8, m_model.GetDpi());
 		RECT label{ bounds.left + padding, bounds.top, std::max(bounds.left + padding, bounds.right - padding), bounds.bottom };
-		::DrawTextW(target, action.label, -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+		const auto localizedLabel = LocalizedActionLabel(action.action, action.label);
+		::DrawTextW(target, localizedLabel.c_str(), -1, &label, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 		::DrawTextW(target, action.shortcut, -1, &label, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 		if (action.focused) {
 			RECT focus = bounds;
@@ -483,9 +503,10 @@ accessibility::CustomUiAutomationNode CEmptyEditorSurface::AccessibilityNode(int
 {
 	if (nodeId < 0 || nodeId >= static_cast<int>(m_model.GetActionCount())) return {};
 	const auto action = m_model.GetAction(static_cast<std::size_t>(nodeId));
+	const auto localizedLabel = LocalizedActionLabel(action.action, action.label);
 	return {
 		nodeId,
-		std::wstring(action.label),
+		localizedLabel,
 		std::wstring(L"Sakura.EmptyEditorSurface.") + AutomationActionName(action.action),
 		UIA_ButtonControlTypeId,
 		{ action.bounds.left, action.bounds.top, action.bounds.right, action.bounds.bottom },

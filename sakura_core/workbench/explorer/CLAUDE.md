@@ -77,3 +77,63 @@ Recorded divergences of this flow (omit, don't fake):
   a live validation message under the input; the native TreeView label editor
   has no message surface, so a name failing `IsValidExplorerEntryName` simply
   does not commit and the edit ends with the entry unchanged.
+
+## View Title and Native Row Projection (2026-08-16, #178)
+
+- Explorer is a View in the Primary Side Bar, not a separate Part. Its native
+  30-DIP header uses the workspace folder's display label with the filesystem's
+  original casing; it never uppercases a local path.
+- The four header controls route through upstream's real `MenuId.ViewTitle`
+  command IDs: `workbench.files.action.createFileFromExplorer`,
+  `workbench.files.action.createFolderFromExplorer`,
+  `workbench.files.action.refreshFilesExplorer`, and
+  `workbench.files.action.collapseExplorerFolders`. They resolve the active
+  TreeView selection/root in `CExplorerTool`; the command registry remains the
+  execution authority.
+- Tree rows are 22 DIP and use native disclosure buttons without the legacy
+  dotted TreeView connector lines. A transparent native image slot preserves
+  the TreeView geometry while bundled codicons paint each row. Folders use the
+  generic folder / root-folder glyphs; files use the built-in name and
+  extension associations in `ExplorerFileIcon.h` (for example `markdown`,
+  `json`, `python`, `file-code`, `file-media`) so common types are visually
+  distinct without restoring the retired extension icon-theme host. Unknown
+  types fall back to `file`, and glyphs stay monochrome with the Explorer text
+  colour.
+- With no root, the TreeView is hidden and the view projects the locally
+  representable `EmptyView` variants from upstream's
+  `explorerViewlet.ts`: `NoFolder` has the distinct `No Folder Opened` View
+  title, then renders `You have not yet opened a folder.`, `Open Folder`
+  (`workbench.action.files.openFolder`), `You can clone a repository locally.`,
+  and `Clone Repository` (`git.clone`) in one ordered welcome model;
+  `NoFolderWithEditors` adds the upstream explanation and `Add Folder`
+  (`workbench.action.addRootFolder`); and an empty workspace renders
+  `You have not yet added a folder to the workspace.` plus `Add Folder to
+  Workspace` (`workbench.action.addRootFolder`). These are real registered
+  commands, never disabled placeholders.
+- The native `ViewWelcome` flow uses upstream's `views.css` geometry: 20-DIP
+  horizontal inset, one-em top-flow gaps, a full-width wrapped paragraph, and
+  only the action buttons capped at 300 DIP and centered. The content therefore
+  starts at the top of the view body instead of being vertically centered.
+- **`Open Remote Repository` is intentionally not projected.** In VS Code it
+  is contributed by a Remote Repositories provider and opens a virtual remote
+  workspace without cloning. Sakura has neither that provider contract nor a
+  remote/virtual filesystem, so presenting a button that clones locally or
+  fails after a click would fake the capability. A future implementation must
+  add the provider and virtual-workspace boundary first; only then may its
+  conditional ViewWelcome contribution appear.
+- **Multi-root Explorer remains an explicit unsupported boundary.** A saved
+  workspace with one or more folders cannot be collapsed to a fabricated single
+  TreeView root, so the tool shows `WorkspaceWithFoldersUnsupported` with no
+  action instead of falsely saying that no folder is open. A future real
+  multi-root tree model must replace this state; it must not map it to the
+  no-folder welcome content.
+
+### Recorded icon divergence
+
+VS Code's default file icons come from the contributed `vs-seti` icon theme
+(coloured Seti glyphs, full association tables, optional light/HC variants).
+Extension icon themes were retired with the extension host, so this native
+projection uses a first-party Codicon association table instead of parsing Seti
+or third-party themes. The table is intentionally incomplete relative to Seti;
+missing types keep the generic `file` glyph rather than inventing colours or
+loading unrelated shell icons.

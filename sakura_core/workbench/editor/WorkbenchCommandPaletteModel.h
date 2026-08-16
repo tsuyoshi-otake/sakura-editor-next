@@ -9,12 +9,16 @@
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 
 #include <cwctype>
+#include <functional>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace workbench::editor {
+
+using WorkbenchCommandTitleResolver =
+	std::function<std::wstring(const commands::WorkbenchCommandDescriptor&)>;
 
 //! Presentation data for commands contributed by the native workbench palette.
 struct WorkbenchCommandPaletteItem {
@@ -69,7 +73,8 @@ inline bool IsStableCommandId(std::wstring_view candidate, std::string_view stab
 
 //! Returns every registered native command bound to CommandPalette that matches the query.
 inline std::vector<WorkbenchCommandPaletteItem> SearchRegisteredCommandPalette(
-	const commands::WorkbenchCommandRegistry& registry, std::wstring_view query)
+	const commands::WorkbenchCommandRegistry& registry, std::wstring_view query,
+	const WorkbenchCommandTitleResolver& titleResolver = {})
 {
 	const auto descriptors = registry.EnumerateSurface(commands::EWorkbenchCommandSurface::CommandPalette);
 	std::vector<WorkbenchCommandPaletteItem> result;
@@ -77,9 +82,10 @@ inline std::vector<WorkbenchCommandPaletteItem> SearchRegisteredCommandPalette(
 	for (const auto& descriptor : descriptors) {
 		WorkbenchCommandPaletteItem item{
 			.id = descriptor.id,
-			.label = detail::WidenCommandText(descriptor.title),
+			.label = titleResolver ? titleResolver(descriptor) : detail::WidenCommandText(descriptor.title),
 			.detail = L"Sakura Editor",
 		};
+		if (item.label.empty()) item.label = detail::WidenCommandText(descriptor.title);
 		if (detail::MatchesCommandPaletteQuery(item, query)) {
 			result.push_back(std::move(item));
 		}

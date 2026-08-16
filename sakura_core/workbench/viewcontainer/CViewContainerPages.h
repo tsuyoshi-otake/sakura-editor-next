@@ -43,6 +43,8 @@ public:
 	[[nodiscard]] bool Contains(std::string_view containerId) const noexcept;
 	[[nodiscard]] std::vector<std::string> PageIds() const;
 	void SetPalette(const theme::ThemePalette& palette);
+	//! Refreshes localized page chrome and child projections without reloading state.
+	void RefreshStrings();
 
 	void SetOutlineExpanded(bool expanded) noexcept { m_outlineExpanded = expanded; }
 	[[nodiscard]] bool IsOutlineExpanded() const noexcept { return m_outlineExpanded; }
@@ -55,7 +57,7 @@ public:
 private:
 	struct Page {
 		std::string id;
-		std::wstring title;
+		UINT titleResourceId = 0;
 		HWND attached = nullptr;
 	};
 

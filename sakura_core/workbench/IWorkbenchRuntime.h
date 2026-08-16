@@ -11,9 +11,7 @@
 
 #include "config/IConfigurationService.h"
 #include "config/IWorkspaceContextService.h"
-#include "config/IWorkspaceTrustMementoStore.h"
 #include "config/SettingsWritebackCoordinator.h"
-#include "config/WorkspaceTrustPromptPolicy.h"
 #include "workbench/WorkbenchBootstrapContext.h"
 #include "workbench/tasks/FolderTaskCatalogRegistry.h"
 #include "workbench/tasks/TaskExecutionService.h"
@@ -85,10 +83,6 @@ enum class EWorkbenchRuntimeDiagnosticSource : std::uint8_t {
 	WorkspaceContext,
 	WorkspaceArtifacts,
 	Layout,
-	//! The durable Trusted Folders and Workspaces list. Separate from
-	//! WorkspaceContext because a failure here is a persistence failure, not a
-	//! failure of the semantic workspace state that trust is applied to.
-	WorkspaceTrust,
 };
 
 enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
@@ -102,112 +96,8 @@ enum class EWorkbenchRuntimeDiagnosticCode : std::uint8_t {
 	LayoutPersistenceUnavailable,
 	LayoutPersistenceConflict,
 	LayoutPersistFailed,
-	//! The stored trusted-folders list could not be read or decoded. Trust still
-	//! resolves -- against an empty list, so nothing is trusted -- but the durable
-	//! bytes are left untouched, so a grant must be refused rather than written.
-	TrustRestoreFailed,
-	TrustPersistenceUnavailable,
-	TrustPersistenceConflict,
-	TrustPersistFailed,
-	//! The Restricted Mode banner Part's computed visibility could not be
-	//! committed to WorkbenchLayoutStateService. The layout model's own part
-	//! visibility remains the single source of truth; this diagnostic only
-	//! reports that the runtime's most recent attempt to push a fresh answer
-	//! into it did not land.
-	BannerVisibilityFailed,
 	WorkspaceFolderDuplicate,
 	InternalFailure,
-};
-
-//! The choices VS Code's trust prompt actually offers that change the durable
-//! Trusted Folders and Workspaces list. Declining is not one of them: it commits
-//! nothing, so it has no scope here and no code path that writes.
-enum class EWorkspaceTrustGrantScope : std::uint8_t {
-	//! Trust exactly what this window has open -- the `.code-workspace` file for a
-	//! Workspace, or every folder root for a Folder.
-	CurrentWorkspace,
-	//! Upstream's "Trust the authors of all files in the parent folder". Offered
-	//! only for a single folder root that actually has a parent.
-	ParentFolder,
-};
-
-enum class EWorkspaceTrustGrantStatus : std::uint8_t {
-	Granted,
-	//! The list already covers the requested resource with at least the same
-	//! reach, so nothing was appended and nothing was written.
-	AlreadyTrusted,
-	//! Nothing about this window can be trusted through the requested scope: an
-	//! empty window, or a root with no parent folder.
-	NotApplicable,
-	//! The durable list could not be read or is not writable. The grant is
-	//! refused rather than applied in memory, because a session-only grant would
-	//! report trust this window cannot keep.
-	PersistenceUnavailable,
-	Conflict,
-	Stopped,
-	Failed,
-};
-
-struct WorkspaceTrustGrantResult final {
-	EWorkspaceTrustGrantStatus status = EWorkspaceTrustGrantStatus::Failed;
-	std::string diagnostic;
-
-	[[nodiscard]] bool Succeeded() const noexcept
-	{
-		return status == EWorkspaceTrustGrantStatus::Granted
-			|| status == EWorkspaceTrustGrantStatus::AlreadyTrusted;
-	}
-};
-
-//! One offerable choice, already resolved to the resource it would trust. The
-//! display text is the canonical URI the runtime would actually write; a prompt
-//! shows it and never re-parses it to decide anything.
-struct WorkspaceTrustGrantOption final {
-	EWorkspaceTrustGrantScope scope = EWorkspaceTrustGrantScope::CurrentWorkspace;
-	std::wstring displayUri;
-	std::size_t resourceCount = 0;
-};
-
-//! Everything a native trust prompt needs, with no policy left for it to decide.
-//! An empty option list means there is nothing to grant, which is a real state
-//! and must be shown as such rather than filled with a disabled placeholder.
-struct WorkspaceTrustPromptModel final {
-	config::EWorkspaceTrustState state = config::EWorkspaceTrustState::Unknown;
-	//! False when the durable list is missing or was preserved as invalid. A
-	//! prompt must not offer a grant it already knows will be refused.
-	bool persistenceReady = false;
-	std::vector<WorkspaceTrustGrantOption> options;
-};
-
-//! Whether the startup trust prompt is shown for the workspace this window just
-//! opened, together with the model that prompt would need. The runtime resolves
-//! the decision from the trust settings, the already-resolved trust state, the
-//! grantable options, and the durable per-workspace record; a window projects
-//! the answer and never re-derives it.
-struct WorkspaceTrustStartupPromptModel final {
-	config::EWorkspaceTrustStartupPromptDecision decision =
-		config::EWorkspaceTrustStartupPromptDecision::SkipNothingToGrant;
-	//! Meaningful only when the decision shows the prompt. Left empty otherwise so
-	//! a caller cannot accidentally render a prompt the policy declined.
-	WorkspaceTrustPromptModel prompt;
-
-	[[nodiscard]] bool ShouldShow() const noexcept
-	{
-		return decision == config::EWorkspaceTrustStartupPromptDecision::Show
-			|| decision == config::EWorkspaceTrustStartupPromptDecision::ShowRecordUnreadable;
-	}
-};
-
-//! What a window must do with loose files opened into it, already decided. The
-//! `Unsupported` answer stays typed all the way to the caller: it must never be
-//! degraded into `Open`, because `newWindow` exists precisely to keep the file
-//! out of the trusted window.
-struct WorkspaceTrustUntrustedFilesModel final {
-	config::EWorkspaceTrustUntrustedFilesDecision decision =
-		config::EWorkspaceTrustUntrustedFilesDecision::Prompt;
-	//! Meaningful only when the decision prompts. A window shows the resolved
-	//! trust state alongside the question rather than re-reading it.
-	config::EWorkspaceTrustState state = config::EWorkspaceTrustState::Unknown;
 };
 
 //! Diagnostics intentionally omit profile IDs and resource paths. Consumers
@@ -256,54 +146,6 @@ public:
 			.reason = "runtime does not support an in-process folder transition",
 			.snapshot = WorkspaceContext().Snapshot(),
 		};
-	}
-	//! What a native Workspace Trust prompt may offer for the current workspace.
-	//! A narrow test runtime has no durable list, so the fail-closed default
-	//! offers nothing rather than pretending a grant would stick.
-	[[nodiscard]] virtual WorkspaceTrustPromptModel WorkspaceTrustPrompt() { return {}; }
-	//! Grant workspace trust and persist it. The durable write happens first: a
-	//! runtime that cannot commit the bytes refuses instead of trusting for this
-	//! session only, so trust never outlives, or falls short of, the record.
-	[[nodiscard]] virtual WorkspaceTrustGrantResult GrantWorkspaceTrust(EWorkspaceTrustGrantScope)
-	{
-		return {
-			.status = EWorkspaceTrustGrantStatus::PersistenceUnavailable,
-			.diagnostic = "runtime does not own a durable trusted folders list",
-		};
-	}
-	//! Whether to show the startup trust prompt for this window. The default
-	//! mirrors the fail-closed WorkspaceTrustPrompt() above: a runtime with no
-	//! durable list has nothing to grant, so it has nothing to ask for either.
-	[[nodiscard]] virtual WorkspaceTrustStartupPromptModel WorkspaceTrustStartupPrompt() { return {}; }
-	//! Record that this workspace has now been asked, so `once` stays once. A
-	//! caller must treat a non-Persisted, non-NotDirty status as "the record did
-	//! not stick" and must not report the prompt as remembered.
-	[[nodiscard]] virtual config::EWorkspaceTrustMementoSaveStatus RecordWorkspaceTrustStartupPromptShown()
-	{
-		return config::EWorkspaceTrustMementoSaveStatus::Unavailable;
-	}
-	//! How loose files opened into this window are handled. `allResourcesTrusted`
-	//! is the caller's fact about the resources it is about to open; the runtime
-	//! owns every other input. The default prompts, because prompting is the only
-	//! answer that is safe without knowing the setting.
-	[[nodiscard]] virtual WorkspaceTrustUntrustedFilesModel WorkspaceTrustUntrustedFiles(bool /*allResourcesTrusted*/)
-	{
-		return {};
-	}
-	//! Record that the user accepted opening untrusted files into this window.
-	[[nodiscard]] virtual config::EWorkspaceTrustMementoSaveStatus RecordUntrustedFilesAccepted()
-	{
-		return config::EWorkspaceTrustMementoSaveStatus::Unavailable;
-	}
-	//! Does the durable Trusted Folders and Workspaces list cover @p resource? This is
-	//! the `allResourcesTrusted` input a caller must compute before calling
-	//! WorkspaceTrustUntrustedFiles() -- upstream's `doGetUriTrustInfo`, which consults
-	//! only the durable trusted-URI list and never the current workspace's folders. A
-	//! narrow test runtime has no durable list, so the fail-closed default answers
-	//! "not covered" rather than pretending an unknown list happens to include it.
-	[[nodiscard]] virtual bool WorkspaceTrustCoversResource(const platform::uri::Uri& /*resource*/) noexcept
-	{
-		return false;
 	}
 	//! Runtime-owned editor for .code-workspace documents. It is the only window-facing
 	//! write path and keeps the process-local file provider private.

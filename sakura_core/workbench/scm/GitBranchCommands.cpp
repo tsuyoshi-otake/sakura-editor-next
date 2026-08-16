@@ -22,6 +22,22 @@ constexpr std::wstring_view kBranchNamePlaceholder = L"Branch name";
 //! Upstream's `git.branchFrom` ref picker placeholder.
 constexpr std::wstring_view kBranchFromPlaceholder = L"Select a ref to create the branch from";
 
+[[nodiscard]] std::wstring ResolveText(const GitBranchCommandContext& context, std::string_view key,
+	std::wstring_view fallback, std::wstring_view argument = {})
+{
+	std::wstring result;
+	if (context.text) {
+		result = context.text(key, argument);
+	}
+	if (result.empty()) result = fallback;
+	std::size_t position = 0;
+	while (!argument.empty() && (position = result.find(L"{0}", position)) != std::wstring::npos) {
+		result.replace(position, 3, argument);
+		position += argument.size();
+	}
+	return result;
+}
+
 [[nodiscard]] GitBranchCommandResult Cancelled()
 {
 	return { EGitBranchCommandStatus::Cancelled, {} };
@@ -129,13 +145,14 @@ void Notify(const GitBranchCommandContext& context, std::wstring_view message)
 	const GitBranchCommandContext& context, const std::vector<GitRef>& refs, std::wstring& branchName)
 {
 	std::wstring value;
-	std::wstring prompt(kBranchNamePrompt);
+	std::wstring prompt = ResolveText(context, "GitBranchNamePrompt", kBranchNamePrompt);
 	while (true) {
-		auto typed = context.inputBox(prompt, kBranchNamePlaceholder, value);
+		auto typed = context.inputBox(prompt,
+			ResolveText(context, "GitBranchNamePlaceholder", kBranchNamePlaceholder), value);
 		if (!typed.has_value()) {
 			return false;
 		}
-		const auto validation = ValidateBranchName(*typed, refs);
+		const auto validation = ValidateBranchName(*typed, refs, kGitBranchWhitespaceChar, context.text);
 		switch (validation.state) {
 		case EGitBranchNameValidation::Empty:
 			// Upstream's OK button is simply disabled for an empty name, so an
@@ -169,8 +186,9 @@ void Notify(const GitBranchCommandContext& context, std::wstring_view message)
 {
 	std::wstring target = L"HEAD";
 	if (from) {
-		const auto items = BuildBranchFromItems(refs, ReadHeadCommit(context));
-		const auto chosen = context.quickPick(items, kBranchFromPlaceholder);
+		const auto items = BuildBranchFromItems(refs, ReadHeadCommit(context), context.text);
+		const auto chosen = context.quickPick(items,
+			ResolveText(context, "GitBranchFromPlaceholder", kBranchFromPlaceholder));
 		if (!chosen.has_value() || *chosen >= items.size()) {
 			return Cancelled();
 		}
@@ -234,7 +252,7 @@ std::vector<std::wstring> ParseTrackingBranches(std::string_view bytes, std::wst
 GitBranchCommandResult RunGitCheckout(const GitBranchCommandContext& context, bool detached)
 {
 	if (!HasPresenters(context)) {
-		return Failed(L"The checkout command has no presenter.");
+		return Failed(ResolveText(context, "GitCheckoutNoPresenter", L"The checkout command has no presenter."));
 	}
 	std::vector<GitRef> refs;
 	GitBranchCommandResult failure;
@@ -245,8 +263,8 @@ GitBranchCommandResult RunGitCheckout(const GitBranchCommandContext& context, bo
 
 	// The native Quick Pick has no filter box, so the filter is always empty and
 	// upstream's command-rows-first ordering is the one that applies.
-	const auto items = BuildCheckoutItems(refs, detached);
-	const auto chosen = context.quickPick(items, CheckoutPlaceholder(detached));
+	const auto items = BuildCheckoutItems(refs, detached, true, context.text);
+	const auto chosen = context.quickPick(items, CheckoutPlaceholder(detached, context.text));
 	if (!chosen.has_value() || *chosen >= items.size()) {
 		return Cancelled();
 	}
@@ -278,7 +296,7 @@ GitBranchCommandResult RunGitCheckout(const GitBranchCommandContext& context, bo
 GitBranchCommandResult RunGitCreateBranch(const GitBranchCommandContext& context, bool from)
 {
 	if (!HasPresenters(context)) {
-		return Failed(L"The branch command has no presenter.");
+		return Failed(ResolveText(context, "GitBranchNoPresenter", L"The branch command has no presenter."));
 	}
 	std::vector<GitRef> refs;
 	GitBranchCommandResult failure;

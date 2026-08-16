@@ -332,12 +332,20 @@ bool CEditApp::FinalizeWorkbenchResources()
 		}
 		m_workingCopyLifecycleBridge->WillShutdown();
 	}
+	if (m_pcEditWnd) {
+		CEditWnd* const window = m_pcEditWnd.get();
+		const HWND hwnd = window->GetHwnd();
+		if (hwnd != nullptr && ::IsWindow(hwnd)
+			&& reinterpret_cast<CEditWnd*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA)) == window) {
+			::DestroyWindow(hwnd);
+		}
+		m_pcEditWnd.reset();
+	}
 	m_pcSMacroMgr.reset();
 	m_pcGrepAgent.reset();
 	m_pcVisualProgress.reset();
 	m_pcSaveAgent.reset();
 	m_pcLoadAgent.reset();
-	m_pcEditWnd.reset();
 	if (m_workingCopyLifecycleBridge) m_workingCopyLifecycleBridge->Stop();
 	m_workingCopyLifecycleBridge.reset();
 	m_workingCopyLifecycle.reset();

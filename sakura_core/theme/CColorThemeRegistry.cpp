@@ -49,6 +49,7 @@ constexpr std::string_view kSakuraDefaultDarkThemeJson = R"json({
 		"button.foreground": "#FFFFFF",
 		"titleBar.activeBackground": "#3C3C3C",
 		"activityBar.background": "#333333",
+		"activityBar.border": "#454545",
 		"errorForeground": "#C42B1C",
 		"notificationsWarningIcon.foreground": "#CCA700"
 	},
@@ -89,6 +90,7 @@ constexpr std::string_view kSakuraDefaultLightThemeJson = R"json({
 		"button.foreground": "#FFFFFF",
 		"titleBar.activeBackground": "#F3F3F3",
 		"activityBar.background": "#F3F3F3",
+		"activityBar.border": "#CDD2DB",
 		"errorForeground": "#C42B1C",
 		"notificationsWarningIcon.foreground": "#BF8800"
 	},
@@ -477,8 +479,10 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		palette.terminalBackground = first(palette.bottomPanel, { L"terminal.background" });
 		palette.raised = first(palette.raised, { L"sideBarSectionHeader.background", L"list.hoverBackground",
 			L"editorWidget.background", L"quickInput.background" });
-		palette.border = first(palette.border, { L"sideBar.border", L"panel.border", L"contrastBorder",
-			L"editorGroup.border", L"editorWidget.border" });
+		// `activityBar.border` is a fallback when a theme omits `sideBar.border`;
+		// the Activity Bar paints this shared Part-edge color on its right edge.
+		palette.border = first(palette.border, { L"sideBar.border", L"activityBar.border", L"panel.border",
+			L"contrastBorder", L"editorGroup.border", L"editorWidget.border" });
 		palette.primaryText = first(palette.primaryText, { L"foreground", L"editor.foreground", L"sideBar.foreground",
 			L"panel.foreground" });
 		palette.secondaryText = first(palette.secondaryText, { L"sideBar.foreground", L"panelTitle.inactiveForeground",
@@ -509,27 +513,6 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			AdjustLightness(palette.buttonBackground,
 				ModeForKind(kind) == ThemeMode::Dark ? 0.2 : -0.2),
 			{ L"button.hoverBackground" });
-		// `statusBarItem.prominentBackground` is the one status-bar item that paints its
-		// own fill instead of relying on the bar's single flat background (see
-		// `CMainStatusBar`'s Restricted Mode entry), so it composites over the resolved
-		// `accent` (the status bar's own background) rather than over `canvas` like the
-		// translucent tokens above. Upstream registers a single non-per-theme default,
-		// `Color.black.transparent(0.5)`, for dark/light/hcDark/hcLight alike.
-		palette.statusBarProminentBackground = firstOverWithFallback(palette.accent,
-			Composite({ 0, 0, 0, 0x80 }, palette.accent), { L"statusBarItem.prominentBackground" });
-		// `banner.background`/`banner.foreground`/`banner.iconForeground` are each registered
-		// upstream as a bare alias of another color (`list.activeSelectionBackground`,
-		// `list.activeSelectionForeground`, `editorInfo.foreground` respectively), not an
-		// independent per-kind object. A theme that sets the aliased key but not the banner
-		// key directly still reaches VS Code's own default resolution, so the alias key is
-		// offered as a second fallback source before the compiled literal, the same shape
-		// `accent`'s multi-candidate chain already uses above.
-		palette.bannerBackground = first(palette.bannerBackground,
-			{ L"banner.background", L"list.activeSelectionBackground" });
-		palette.bannerForeground = first(palette.bannerForeground,
-			{ L"banner.foreground", L"list.activeSelectionForeground" });
-		palette.bannerIconForeground = first(palette.bannerIconForeground,
-			{ L"banner.iconForeground", L"editorInfo.foreground" });
 	}
 	catch (...) {
 		// A malformed/oversized map cannot make the native workbench lose its

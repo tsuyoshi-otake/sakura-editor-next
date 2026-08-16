@@ -55,12 +55,13 @@ const TerminalRow* GetTerminalRow( const TerminalModel& model, std::size_t globa
 	return screenRow < model.Rows().size() ? &model.Rows()[screenRow] : nullptr;
 }
 
-TerminalSelectionPoint TerminalCellFromPoint( const TerminalViewport& viewport, int x, int y, int cellWidth, int cellHeight, std::size_t columns ) noexcept
+TerminalSelectionPoint TerminalCellFromPoint( const TerminalViewport& viewport, int x, int y,
+	int cellWidth, int cellHeight, std::size_t columns, TerminalViewportGeometry geometry ) noexcept
 {
 	const auto safeWidth = std::max(1, cellWidth);
 	const auto safeHeight = std::max(1, cellHeight);
-	const auto viewportRow = static_cast<std::size_t>(std::max(0, y) / safeHeight);
-	const auto column = static_cast<std::size_t>(std::max(0, x) / safeWidth);
+	const auto viewportRow = static_cast<std::size_t>(geometry.TranslateToGridY(y) / safeHeight);
+	const auto column = static_cast<std::size_t>(geometry.TranslateToGridX(x) / safeWidth);
 	const auto lastRow = viewport.totalRows == 0 ? 0 : viewport.totalRows - 1;
 	return {
 		std::min(viewport.topRow + viewportRow, lastRow),

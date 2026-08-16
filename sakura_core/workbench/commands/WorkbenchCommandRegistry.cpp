@@ -7,6 +7,7 @@
 #include "StdAfx.h"
 
 #include "workbench/commands/WorkbenchCommandRegistry.h"
+#include "workbench/commands/ExplorerCommandIds.h"
 
 #include <algorithm>
 #include <array>
@@ -273,7 +274,7 @@ WorkbenchCommandDescriptor MakeSaveAllDescriptor()
 
 WorkbenchCommandDescriptor MakeCloseActiveEditorDescriptor()
 {
-	return MakeFileCommandDescriptor("workbench.action.closeActiveEditor", "Close Editor",
+	return MakeFileCommandDescriptor("workbench.action.closeActiveEditor", "Close Active Editor",
 		"workbenchReady", "editorHasActiveEditor", kLegacyCloseActiveEditorFunctionCode);
 }
 
@@ -292,7 +293,7 @@ WorkbenchCommandDescriptor MakeCloseWindowDescriptor()
 
 WorkbenchCommandDescriptor MakeQuitDescriptor()
 {
-	return MakeFileCommandDescriptor("workbench.action.quit", "Exit",
+	return MakeFileCommandDescriptor("workbench.action.quit", "Quit",
 		"workbenchReady", "workbenchReady", kLegacyQuitFunctionCode);
 }
 
@@ -352,33 +353,6 @@ WorkbenchCommandDescriptor MakeToggleStatusbarDescriptor()
 			{ EWorkbenchCommandSurface::CommandPalette,
 				"workbench.action.toggleStatusbarVisibility.palette", std::nullopt },
 		}
-	};
-}
-
-/*!
-	@brief `workbench.trust.manage`, upstream's Workspace Trust entry point.
-
-	Upstream's precondition is `IsWorkspaceTrustEnabledContext &&
-	config.security.workspace.trust.enabled`. This registry has no `config.`
-	context-key namespace, so the clause is `workbenchReady` and the runtime
-	decides instead: with the feature disabled every workspace already resolves
-	Trusted, so the surface it opens reports that rather than offering a grant.
-	The divergence is that the palette entry stays listed where upstream would
-	hide it; it can never grant trust the settings did not allow.
- */
-WorkbenchCommandDescriptor MakeManageWorkspaceTrustDescriptor()
-{
-	return {
-		"workbench.trust.manage",
-		// Upstream's own title and `WORKSPACE_TRUST_CATEGORY`, verbatim.
-		"Workspaces: Manage Workspace Trust",
-		kBuiltinOwner,
-		"workbenchReady",
-		"workbenchReady",
-		EWorkbenchCommandExecutorTarget::Editor,
-		{
-			{ EWorkbenchCommandSurface::CommandPalette, "workbench.trust.manage.palette", std::nullopt },
-		},
 	};
 }
 
@@ -570,6 +544,26 @@ WorkbenchCommandDescriptor MakeExplorerResourceDescriptor(
 	};
 }
 
+//! One of the four commands contributed to the Files Explorer ViewTitle.
+//! Unlike resource commands, these actions have no operand in their command
+//! payload; the view resolves its current selection/root when invoked.
+WorkbenchCommandDescriptor MakeExplorerViewTitleDescriptor(
+	std::string id, std::string title)
+{
+	const auto slot = id + ".viewTitle";
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Editor,
+		{
+			{ EWorkbenchCommandSurface::ViewTitle, slot, std::nullopt },
+		},
+	};
+}
+
 //! `updateState == '<state>'`, the exact shape upstream's `when` clauses take.
 //! The state strings carry upstream's spaces; quoting is what makes
 //! `'checking for updates'` one operand rather than three tokens.
@@ -634,6 +628,77 @@ WorkbenchCommandDescriptor MakeUpdateMenuDescriptor(
 }
 
 } // namespace
+
+std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view commandId) noexcept
+{
+	// This is presentation metadata only: the registry never loads language resources,
+	// so model-only callers still observe stable identifiers and fallback titles.
+	static constexpr std::pair<std::string_view, std::uint32_t> kTitles[] = {
+		{"workbench.action.toggleSidebarVisibility", STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR},
+		{"workbench.view.explorer", STR_WORKBENCH_COMMAND_EXPLORER},
+		{"workbench.actions.view.problems", STR_WORKBENCH_COMMAND_PROBLEMS},
+		{"workbench.action.output.toggleOutput", STR_WORKBENCH_COMMAND_OUTPUT},
+		{"workbench.action.showCommands", STR_WORKBENCH_COMMAND_SHOW_COMMANDS},
+		{"workbench.action.openSettings", STR_WORKBENCH_COMMAND_OPEN_SETTINGS},
+		{"workbench.action.files.openFolder", STR_WORKBENCH_COMMAND_OPEN_FOLDER},
+		{"workbench.action.openGlobalKeybindings", STR_WORKBENCH_COMMAND_OPEN_GLOBAL_KEYBINDINGS},
+		{"workbench.action.selectTheme", STR_WORKBENCH_COMMAND_COLOR_THEME},
+		{"workbench.action.files.newUntitledFile", STR_WORKBENCH_COMMAND_NEW_FILE},
+		{"workbench.action.newWindow", STR_WORKBENCH_COMMAND_NEW_WINDOW},
+		{"workbench.action.files.openFile", STR_WORKBENCH_COMMAND_OPEN_FILE},
+		{"workbench.action.openWorkspace", STR_WORKBENCH_COMMAND_OPEN_WORKSPACE},
+		{"workbench.action.openRecent", STR_WORKBENCH_COMMAND_OPEN_RECENT},
+		{"workbench.action.addRootFolder", STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER},
+		{"workbench.action.saveWorkspaceAs", STR_WORKBENCH_COMMAND_SAVE_WORKSPACE_AS},
+		{"workbench.action.duplicateWorkspaceInNewWindow", STR_WORKBENCH_COMMAND_DUPLICATE_WORKSPACE},
+		{"workbench.action.files.save", STR_WORKBENCH_COMMAND_SAVE},
+		{"workbench.action.files.saveAs", STR_WORKBENCH_COMMAND_SAVE_AS},
+		{"workbench.action.files.saveAll", STR_WORKBENCH_COMMAND_SAVE_ALL},
+		{"workbench.action.closeActiveEditor", STR_WORKBENCH_COMMAND_CLOSE_EDITOR},
+		{"workbench.action.closeFolder", STR_WORKBENCH_COMMAND_CLOSE_FOLDER},
+		{"workbench.action.closeWindow", STR_WORKBENCH_COMMAND_CLOSE_WINDOW},
+		{"workbench.action.quit", STR_WORKBENCH_COMMAND_QUIT},
+		{"notifications.showList", STR_WORKBENCH_COMMAND_SHOW_NOTIFICATIONS},
+		{"notifications.hideList", STR_WORKBENCH_COMMAND_HIDE_NOTIFICATIONS},
+		{"workbench.action.toggleStatusbarVisibility", STR_WORKBENCH_COMMAND_TOGGLE_STATUSBAR},
+		{"markdown.showPreview", STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW},
+		{"markdown.showPreviewToSide", STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW_SIDE},
+		{"markdown.showLockedPreviewToSide", STR_WORKBENCH_COMMAND_MARKDOWN_LOCKED_SIDE},
+		{"markdown.showSource", STR_WORKBENCH_COMMAND_MARKDOWN_SOURCE},
+		{"markdown.showPreviewSecuritySelector", STR_WORKBENCH_COMMAND_MARKDOWN_SECURITY},
+		{"markdown.preview.refresh", STR_WORKBENCH_COMMAND_MARKDOWN_REFRESH},
+		{"markdown.preview.toggleLock", STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE_LOCK},
+		{"markdown.reopenAsPreview", STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_PREVIEW},
+		{"markdown.reopenAsSource", STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_SOURCE},
+		{"markdown.togglePreview", STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE},
+		{"git.init", STR_WORKBENCH_COMMAND_GIT_INIT}, {"git.clone", STR_WORKBENCH_COMMAND_GIT_CLONE},
+		{"git.cloneRecursive", STR_WORKBENCH_COMMAND_GIT_CLONE_RECURSIVE}, {"git.checkout", STR_WORKBENCH_COMMAND_GIT_CHECKOUT},
+		{"git.checkoutDetached", STR_WORKBENCH_COMMAND_GIT_CHECKOUT_DETACHED}, {"git.branch", STR_WORKBENCH_COMMAND_GIT_BRANCH},
+		{"git.branchFrom", STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM}, {"git.openChange", STR_WORKBENCH_COMMAND_GIT_OPEN_CHANGE},
+		{"git.stage", STR_WORKBENCH_COMMAND_GIT_STAGE}, {"git.stageAll", STR_WORKBENCH_COMMAND_GIT_STAGE_ALL},
+		{"git.unstage", STR_WORKBENCH_COMMAND_GIT_UNSTAGE}, {"git.unstageAll", STR_WORKBENCH_COMMAND_GIT_UNSTAGE_ALL},
+		{"git.clean", STR_WORKBENCH_COMMAND_GIT_CLEAN}, {"git.cleanAll", STR_WORKBENCH_COMMAND_GIT_CLEAN_ALL},
+		{"git.commit", STR_WORKBENCH_COMMAND_GIT_COMMIT}, {"git.commitAmend", STR_WORKBENCH_COMMAND_GIT_COMMIT_AMEND},
+		{"git.undoCommit", STR_WORKBENCH_COMMAND_GIT_UNDO_COMMIT}, {"git.stageSelectedRanges", STR_WORKBENCH_COMMAND_GIT_STAGE_RANGES},
+		{"git.unstageSelectedRanges", STR_WORKBENCH_COMMAND_GIT_UNSTAGE_RANGES}, {"git.fetch", STR_WORKBENCH_COMMAND_GIT_FETCH},
+		{"git.fetchPrune", STR_WORKBENCH_COMMAND_GIT_FETCH_PRUNE}, {"git.fetchAll", STR_WORKBENCH_COMMAND_GIT_FETCH_ALL},
+		{"git.pull", STR_WORKBENCH_COMMAND_GIT_PULL}, {"git.pullRebase", STR_WORKBENCH_COMMAND_GIT_PULL_REBASE},
+		{"git.push", STR_WORKBENCH_COMMAND_GIT_PUSH}, {"git.sync", STR_WORKBENCH_COMMAND_GIT_SYNC},
+		{"git.syncRebase", STR_WORKBENCH_COMMAND_GIT_SYNC_REBASE}, {"git.publish", STR_WORKBENCH_COMMAND_GIT_PUBLISH},
+		{"explorer.newFile", STR_WORKBENCH_COMMAND_EXPLORER_NEW_FILE}, {"explorer.newFolder", STR_WORKBENCH_COMMAND_EXPLORER_NEW_FOLDER},
+		{"explorer.refresh", STR_WORKBENCH_COMMAND_EXPLORER_REFRESH}, {"explorer.collapseFolders", STR_WORKBENCH_COMMAND_EXPLORER_COLLAPSE},
+		{"renameFile", STR_WORKBENCH_COMMAND_EXPLORER_RENAME}, {"moveFileToTrash", STR_WORKBENCH_COMMAND_EXPLORER_TRASH},
+		{"deleteFile", STR_WORKBENCH_COMMAND_EXPLORER_DELETE}, {"copyFilePath", STR_WORKBENCH_COMMAND_EXPLORER_COPY_PATH},
+		{"copyRelativeFilePath", STR_WORKBENCH_COMMAND_EXPLORER_COPY_RELATIVE}, {"revealFileInOS", STR_WORKBENCH_COMMAND_EXPLORER_REVEAL},
+		{"update.checkForUpdate", STR_WORKBENCH_COMMAND_UPDATE_CHECK}, {"update.downloadUpdate", STR_WORKBENCH_COMMAND_UPDATE_DOWNLOAD},
+		{"update.installUpdate", STR_WORKBENCH_COMMAND_UPDATE_INSTALL}, {"update.restartToUpdate", STR_WORKBENCH_COMMAND_UPDATE_RESTART},
+		{"update.showUpdateInfo", STR_WORKBENCH_COMMAND_UPDATE_INFO}, {"update.checking", STR_WORKBENCH_COMMAND_UPDATE_CHECKING},
+		{"update.downloading", STR_WORKBENCH_COMMAND_UPDATE_DOWNLOADING}, {"update.updating", STR_WORKBENCH_COMMAND_UPDATE_UPDATING},
+		{"update.cancelling", STR_WORKBENCH_COMMAND_UPDATE_CANCELLING}, {"update", STR_WORKBENCH_COMMAND_UPDATE_INDICATOR},
+	};
+	for (const auto& [id, resourceId] : kTitles) if (id == commandId) return resourceId;
+	return 0;
+}
 
 std::optional<std::string> ResolveUpdateIndicatorCommand(const WorkbenchContextKeySnapshot& context)
 {
@@ -726,7 +791,6 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		Entry{ MakeShowNotificationsDescriptor(), std::move(executors.showNotifications), {} },
 		Entry{ MakeHideNotificationsDescriptor(), std::move(executors.hideNotifications), {} },
 		Entry{ MakeToggleStatusbarDescriptor(), std::move(executors.toggleStatusbarVisibility), {} },
-		Entry{ MakeManageWorkspaceTrustDescriptor(), std::move(executors.manageWorkspaceTrust), {} },
 		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreview", "Markdown: Open Preview", false),
 			std::move(executors.markdownShowPreview), {} },
 		Entry{ MakeMarkdownPreviewDescriptor("markdown.showPreviewToSide", "Markdown: Open Preview to the Side", true),
@@ -739,11 +803,11 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 			std::move(executors.markdownShowPreviewSecuritySelector), {} },
 		Entry{ MakeMarkdownPreviewDescriptor("markdown.preview.refresh", "Markdown: Refresh Preview", false),
 			std::move(executors.markdownPreviewRefresh), {} },
-		Entry{ MakeMarkdownPreviewDescriptor("markdown.preview.toggleLock", "Markdown: Toggle Preview Locking", false),
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.preview.toggleLock", "Markdown: Toggle Locked Preview", false),
 			std::move(executors.markdownPreviewToggleLock), {} },
-		Entry{ MakeMarkdownPreviewDescriptor("markdown.reopenAsPreview", "Markdown: Reopen Editor With Preview", false),
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.reopenAsPreview", "Markdown: Reopen with Preview", false),
 			std::move(executors.markdownReopenAsPreview), {} },
-		Entry{ MakeMarkdownPreviewDescriptor("markdown.reopenAsSource", "Markdown: Reopen Editor With Text Editor", false),
+		Entry{ MakeMarkdownPreviewDescriptor("markdown.reopenAsSource", "Markdown: Reopen with Text Editor", false),
 			std::move(executors.markdownReopenAsSource), {} },
 		Entry{ MakeMarkdownPreviewDescriptor("markdown.togglePreview", "Markdown: Toggle Preview", true),
 			std::move(executors.markdownTogglePreview), {} },
@@ -753,6 +817,8 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 			{}, std::move(executors.vscodeDiff) },
 		Entry{ MakeApiCommandDescriptor("vscode.open", "Opens the provided resource in the editor."),
 			{}, std::move(executors.vscodeOpen) },
+		Entry{ MakeApiCommandDescriptor("vscode.openFolder", "Opens a folder as a workspace."),
+			{}, std::move(executors.vscodeOpenFolder) },
 	};
 	return RegisterAtomicBatch(std::move(builtins));
 }
@@ -760,8 +826,10 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands(
 	WorkbenchGitCommandExecutors executors)
 {
-	// Titles are upstream's own, from `extensions/git/package.nls.json`
-	// (`command.init`, `command.clone`, `command.checkout`,
+	// Command IDs, contribution shapes, and enablement follow upstream. The
+	// descriptor keeps its English fallback while the composition root resolves
+	// the registered title resource through the selected language DLL.
+	// (`command.init`, `command.clone`, `command.cloneRecursive`, `command.checkout`,
 	// `command.checkoutDetached`, `command.branch`,
 	// `command.branchFrom`, `command.openChange`, `command.stage`, `command.stageAll`,
 	// `command.unstage`, `command.unstageAll`, `command.clean`,
@@ -775,6 +843,8 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 		Entry{ MakeGitAlwaysAvailableDescriptor("git.init", "Git: Initialize Repository"),
 			{}, std::move(executors.init) },
 		Entry{ MakeGitAlwaysAvailableDescriptor("git.clone", "Git: Clone"), std::move(executors.clone), {} },
+		Entry{ MakeGitAlwaysAvailableDescriptor("git.cloneRecursive", "Git: Clone (Recursive)"),
+			std::move(executors.cloneRecursive), {} },
 		Entry{ MakeGitDescriptor("git.checkout", "Git: Checkout to..."), std::move(executors.checkout), {} },
 		Entry{ MakeGitDescriptor("git.checkoutDetached", "Git: Checkout to (Detached)..."),
 			std::move(executors.checkoutDetached), {} },
@@ -788,7 +858,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 		Entry{ MakeGitDescriptor("git.clean", "Git: Discard Changes"), {}, std::move(executors.clean) },
 		Entry{ MakeGitDescriptor("git.cleanAll", "Git: Discard All Changes"), std::move(executors.cleanAll), {} },
 		Entry{ MakeGitDescriptor("git.commit", "Git: Commit"), std::move(executors.commit), {} },
-		Entry{ MakeGitDescriptor("git.commitAmend", "Git: Commit (Amend)"), std::move(executors.commitAmend), {} },
+		Entry{ MakeGitDescriptor("git.commitAmend", "Git: Amend Commit"), std::move(executors.commitAmend), {} },
 		Entry{ MakeGitDescriptor("git.undoCommit", "Git: Undo Last Commit"), std::move(executors.undoCommit), {} },
 		Entry{ MakeGitDiffEditorDescriptor("git.stageSelectedRanges", "Git: Stage Selected Ranges"),
 			std::move(executors.stageSelectedRanges), {} },
@@ -796,7 +866,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 			std::move(executors.unstageSelectedRanges), {} },
 		Entry{ MakeGitDescriptor("git.fetch", "Git: Fetch"), std::move(executors.fetch), {} },
 		Entry{ MakeGitDescriptor("git.fetchPrune", "Git: Fetch (Prune)"), std::move(executors.fetchPrune), {} },
-		Entry{ MakeGitDescriptor("git.fetchAll", "Git: Fetch From All Remotes"), std::move(executors.fetchAll), {} },
+		Entry{ MakeGitDescriptor("git.fetchAll", "Git: Fetch from All Remotes"), std::move(executors.fetchAll), {} },
 		Entry{ MakeGitDescriptor("git.pull", "Git: Pull"), std::move(executors.pull), {} },
 		Entry{ MakeGitDescriptor("git.pullRebase", "Git: Pull (Rebase)"), std::move(executors.pullRebase), {} },
 		Entry{ MakeGitDescriptor("git.push", "Git: Push"), std::move(executors.push), {} },
@@ -810,7 +880,9 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCommands(
 	WorkbenchExplorerCommandExecutors executors)
 {
-	// IDs and titles are upstream's own: `explorer.newFile`/`explorer.newFolder`
+	// IDs, contribution shapes, and command semantics follow upstream. The native
+	// composition resolves each registered title through Sakura's selected language
+	// DLL, retaining the descriptor's English text only as a headless fallback.
 	// and the labels from `fileActions.ts` (`NEW_FILE_LABEL`, `NEW_FOLDER_LABEL`,
 	// `TRIGGER_RENAME_LABEL`, `MOVE_FILE_TO_TRASH_LABEL`), the rename/delete IDs
 	// and "Delete Permanently" from `fileActions.contribution.ts`, "Copy Path"/
@@ -818,6 +890,18 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCom
 	// branch of `REVEAL_IN_OS_LABEL` from the electron-browser contribution.
 	// Every entry is resource-scoped, so each binds the argument executor.
 	std::vector<Entry> commands{
+		Entry{ MakeExplorerViewTitleDescriptor(
+				std::string(kCreateFileFromExplorerCommandId), "New File..."),
+			std::move(executors.createFileFromExplorer), {} },
+		Entry{ MakeExplorerViewTitleDescriptor(
+				std::string(kCreateFolderFromExplorerCommandId), "New Folder..."),
+			std::move(executors.createFolderFromExplorer), {} },
+		Entry{ MakeExplorerViewTitleDescriptor(
+				std::string(kRefreshFilesExplorerCommandId), "Refresh Explorer"),
+			std::move(executors.refreshFilesExplorer), {} },
+		Entry{ MakeExplorerViewTitleDescriptor(
+				std::string(kCollapseExplorerFoldersCommandId), "Collapse Explorer Folders"),
+			std::move(executors.collapseExplorerFolders), {} },
 		Entry{ MakeExplorerResourceDescriptor("explorer.newFile", "New File...",
 				EExplorerCommandSurfaces::MenuOnly),
 			{}, std::move(executors.newFile) },
@@ -827,7 +911,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCom
 		Entry{ MakeExplorerResourceDescriptor("renameFile", "Rename...",
 				EExplorerCommandSurfaces::MenuAndKey),
 			{}, std::move(executors.renameFile) },
-		Entry{ MakeExplorerResourceDescriptor("moveFileToTrash", "Delete",
+		Entry{ MakeExplorerResourceDescriptor("moveFileToTrash", "Move to Trash",
 				EExplorerCommandSurfaces::MenuAndKey),
 			{}, std::move(executors.moveFileToTrash) },
 		Entry{ MakeExplorerResourceDescriptor("deleteFile", "Delete Permanently",
@@ -849,8 +933,8 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterExplorerCom
 WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterUpdateCommands(
 	WorkbenchUpdateCommandExecutors executors)
 {
-	// Titles are upstream's own, from `update.contribution.ts` (the palette
-	// actions) and `update.ts` (the `7_update` gear group). The trailing `(1)` on
+	// Command IDs, state gates, and menu shape follow upstream. User-facing titles
+	// are selected at render time from the language resource. The trailing `(1)` on
 	// three gear entries is upstream's literal text, not a placeholder: it is the
 	// badge count VS Code shows beside the gear, spelled out in the menu label.
 	std::vector<Entry> commands{
@@ -901,6 +985,16 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterUpdateComma
 
 WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterAtomicBatch(std::vector<Entry> builtins)
 {
+	// Resource identifiers are presentation metadata for bundled commands. Assign
+	// them at this common registration boundary so every built-in family (core,
+	// Git, Explorer, and update) participates without making extension commands
+	// or the registry itself depend on the currently selected language.
+	for (auto& entry : builtins) {
+		if (entry.descriptor.titleResourceId == 0) {
+			entry.descriptor.titleResourceId =
+				ResolveBuiltinWorkbenchCommandTitleResourceId(entry.descriptor.id);
+		}
+	}
 	std::lock_guard lock(m_mutex);
 	const auto conflicts = [&](const WorkbenchCommandDescriptor& requested) {
 		for (const auto& [id, entry] : m_entries) {

@@ -102,9 +102,43 @@ Verified against `microsoft/vscode` sources, not inferred from screenshots.
   Provider `count` counts resources and the decoration table counts files, so
   the two numbers legitimately differ and must not be conflated.
 
+## SCM View Stack
+
+`workbench.view.scm` remains the `Source Control` ViewContainer.  Current VS
+Code places three sibling Views in that container, rather than putting a single
+`Source Control` title inside the change list:
+
+| View | Stable ID | Native presentation |
+| --- | --- | --- |
+| Repositories | `workbench.scm.repositories` | Header plus the published repository row |
+| Changes | `workbench.scm` | Header, input box, resource groups, or welcome content |
+| Graph | `workbench.scm.history` | Header plus an explicitly unsupported frame |
+
+`CViewContainerPages` owns one physical `CScmWorkbenchTool` HWND for the
+container, so the tool projects those Views into a vertical stack.  It does not
+create an Activity Bar item, a second side-bar Part, or a separate window for
+Graph.  The container title is still `Source Control`; the content headers are
+`REPOSITORIES`, `CHANGES`, and `GRAPH` (localized through the Sakura resources).
+
+The current layout registry deliberately registers only `workbench.scm` as the
+selectable Changes View.  Upstream's Repositories View is hidden by default and
+Graph is conditional on `scm.historyProviderCount != 0`; this registry currently
+has neither `hideByDefault` nor a provider-driven `when` condition.  Registering
+the two IDs now would incorrectly make a history-less Graph active and
+selectable.  Their exact IDs are reserved in `WorkbenchIds.h`, and the native
+stack is the presentation boundary until that capability model exists.
+
+Graph is `ScmGraphPresentation{ Unsupported }`: it owns no history rows, does
+not run `git log`, has no hit target or command, and paints a resource-owned
+"not available yet" message.  It is shown only while a repository provider is
+published, so empty/folder welcome states remain a normal Changes-only view.
+When a real history-provider snapshot is added, it must change this typed state
+and only then register/project `workbench.scm.history` as a selectable View.
+
 ## The Repository Row
 
-The band between the pane header and the resource list is upstream's
+The band below the Repositories View header and above the Changes View header is
+upstream's
 `RepositoryRenderer` (`vs/workbench/contrib/scm/browser/scmRepositoryRenderer.ts`),
 read verbatim rather than inferred from a screenshot.
 
@@ -134,22 +168,20 @@ read verbatim rather than inferred from a screenshot.
 
 - **`scm.alwaysShowRepositories` is hard-coded to `true`.** Upstream renders the
   repository row only when `visibleRepositories.length > 1 ||
-  scm.alwaysShowRepositories === true`, and `SCMViewPane` has no title override,
-  so its pane header is unconditionally `Source Control`. With one repository and
-  the default setting, upstream shows no repository name, no path, and no branch
-  inside the view at all. That is precisely the operational-safety gap this work
+  scm.alwaysShowRepositories === true`. With one repository and the default
+  setting, upstream shows no repository name, no path, and no branch inside the
+  view at all. That is precisely the operational-safety gap this work
   exists to close — "which repository, which branch" must be visible before a
   commit — so the row is always rendered here. This is a deliberate divergence
   from a **default**, not from a capability: the concept, its identifiers, its
   contents, and its ordering are upstream's, and the setting's other value is
   what upstream users already see. Revisit when `scm.*` settings are readable
   from configuration.
-- **The band is painted by the tool, not by the list.** The view body is a plain
-  `LISTBOX`, which can render neither a codicon nor a per-row toolbar. The band
-  is therefore drawn in `CScmWorkbenchTool`'s own `WM_PAINT` and hit-tested in
-  its window proc, between the 30-DIP pane header and the list, at 22 DIP. Its
-  segments are recomputed on every re-layout, and `WM_LBUTTONUP` invokes the
-  segment under the cursor. This mirrors `CMainStatusBar`'s existing
+- **The band is painted by the tool, not by the resource list.** The provider
+  band is drawn in `CScmWorkbenchTool`'s own `WM_PAINT` and hit-tested in its
+  window proc, between the 30-DIP Repositories header and the Changes header.
+  Its segments are recomputed on every re-layout, and `WM_LBUTTONUP` invokes
+  the segment under the cursor. This mirrors `CMainStatusBar`'s existing
   `m_statusbarHitTargets` design rather than inventing a second interaction
   model.
 - **`scm.providerCountBadge` is hard-coded to its documented default, `hidden`,
@@ -164,13 +196,20 @@ read verbatim rather than inferred from a screenshot.
   computed exactly as upstream computes it
   (`provider.count ?? getRepositoryResourceCount(provider)`), so `auto` and
   `visible` need only the setting to be readable.
-- **Unresolved: the pane header's trailing `(N)`.** `SOURCE CONTROL  (N)`
-  predates this work. `SCMViewPane` has no `renderHeaderTitle` override, and no
-  `CountBadge` was found in `scmViewPane.ts`, but that file was read through a
-  fetch that may truncate, so its absence is not proven and `ViewPane`'s own
-  header-badge mechanism was not checked. Do not treat the `(N)` as verified
-  either way; resolve it against the real header before relying on it. It is
-  independent of the row's badge above, which is settled.
+- **`Source Control` is the ViewContainer title, not an in-content SCM header.**
+  Current VS Code's content View titles are `Repositories`, `Changes`, and
+  `Graph`. The native host renders those same sibling headers with no trailing
+  count; repository/resource counts remain in their own rows. The former
+  `SOURCE CONTROL  (N)` text is not a valid substitute for either a ViewContainer
+  title or a Repositories header.
+- **Graph is a visible scaffold, not an emulated history feature.** VS Code hides
+  it unless a provider contributes `historyProvider`. The user-requested native
+  frame is limited to a published repository, carries the typed `Unsupported`
+  state above, and reserves a fixed lower body before the Changes list/welcome
+  layout. It must stay non-interactive until `SourceControlService` has a
+  provider-owned history capability. This is an intentional presentation
+  divergence made explicit here; it must not be extended with local `git log`
+  calls or fake graph rows.
 - **The band's tooltips are Win32 tooltips, not hovers.** The name segment shows
   the row title and each action segment shows its command tooltip, delivered
   through `LPSTR_TEXTCALLBACKW` / `TTN_GETDISPINFOW` because the strings change
@@ -288,9 +327,11 @@ is the only thing that renders it.
   the `git.*` settings.
 - **Upstream's `inline` actions are not rendered.** The contributions place
   `git.stage` / `git.clean` / `git.unstage` at `inline@2`, which VS Code draws as
-  hover buttons on the row. The view body is a plain `LISTBOX` with no per-row
-  toolbar, so those actions are reachable only through the context menu for now.
-  The same commands, with the same operand, run either way. **Corrected record:**
+  hover buttons on the row. The native owner-drawn list now supplies the tree
+  affordances (chevrons, resource icon, right-aligned status decoration, and
+  hover/selection states), but it does not claim an inline toolbar it cannot
+  fully model. Those actions remain reachable through the context menu. The
+  same commands, with the same operand, run either way. **Corrected record:**
   an earlier version of this entry called the `inline@1` slot "an open-diff
   action" and elsewhere called it `git.openChange`. Upstream contributes *both*,
   under complementary `when` clauses: `git.openFile2` when
@@ -763,26 +804,39 @@ names the nine, one member each.
 
 `GitInitCloneCommands.h/.cpp` is a pure model of the built-in Git extension's
 `init` and `clone` commands (`Repository`-less operations: there is no
-repository yet when either one runs) and of `viewsWelcome`'s two Source
-Control empty states, read from `microsoft/vscode` tag `1.95.3`'s
+repository yet when either one runs) and of `viewsWelcome`'s four Source
+Control empty states, read from `microsoft/vscode`'s current
 `extensions/git/package.json` and `package.nls.json` rather than from memory.
 It takes its folder pick, folder browse, URL prompt, path-existence probe,
 confirmation presenter, git invoker, and message sink as injected callables
 and has **no HWND**, so every flow is asserted without a window
-(`GitInitCloneCommands.*`). `git.init` and `git.clone` are registered under
-upstream's own IDs; see "Wiring `git.init` and `git.clone` into the Command
-Registry" below for the exact `when` clauses this pass determined but did not
-apply.
+(`GitInitCloneCommands.*`). `git.init`, `git.clone`, and `git.cloneRecursive`
+are registered under upstream's own IDs. The empty-workbench welcome uses
+`git.cloneRecursive`; repository initialization uses `git.init`.
 
-- The two `viewsWelcome` entries are mutually exclusive by upstream's own
+- **Current welcome-state contract:** `BuildGitScmWelcomeModel` receives the
+  explicit `EGitScmWelcomeWorkspaceState`, not an ambiguous `hasFolder` bool.
+  It maps `Folder` to `FolderNoRepository` / `git.init?[true]`,
+  `WorkspaceWithFolders` to `WorkspaceNoRepository` / `git.init`,
+  `WorkspaceWithoutFolders` to `EmptyWorkspace` /
+  `workbench.action.addRootFolder`, and `Empty` to `EmptyWorkbench` /
+  `vscode.openFolder`, then `git.cloneRecursive`. An open provider collapses
+  every variant to `None`.
+- **Single-view merge:** With no provider, `workbench.scm` is the only visible
+  SCM view. VS Code's `SCMViewPaneContainer` merges that sole Changes view into
+  its `Source Control` container (`mergeViewWithContainerWhenSingleView`), so
+  the inner `Changes` header is hidden and allocates no vertical space. The
+  native projection has the same explicit layout state; the left-aligned Git
+  welcome starts below the container title. Once a provider makes the normal
+  SCM stack visible, the Changes header returns.
+- **Superseded model (do not restore):** The former two-`viewsWelcome` model was mutually exclusive by upstream's own
   `when` clauses — `view.workbench.scm.folder` fires on
   `workbenchState == folder` and offers `Initialize Repository`;
   `view.workbench.scm.empty` fires on `workbenchState == empty` and offers
-  `Open Folder` and `Clone Repository`. `BuildGitScmWelcomeModel(hasFolder,
-  hasRepository)` reproduces that split as `EGitScmWelcomeContent::
-  FolderNoRepository` versus `EmptyWorkbench`, and `hasRepository` collapses
-  both to `None` because a repository already open needs no welcome content
-  at all.
+  `Open Folder` and `Clone Repository`. This historical two-state description
+  is superseded by the explicit `EGitScmWelcomeWorkspaceState` model documented
+  above. Do not reintroduce the ambiguous `hasFolder` boolean; repository
+  presence still collapses all welcome variants to `None`.
 - `git.init`'s command argument is upstream's own: the Command Palette entry
   and the `viewsWelcome` link both invoke it, but the link passes
   `[true]` (`command:git.init?%5Btrue%5D`, URL-decoded), which is
@@ -849,20 +903,18 @@ apply.
   `GitCloneUrlPresenter` is a single prompt/placeholder/value input box
   instead. The URL upstream would have resolved either way reaches the same
   `git clone <url>`.
-- **`view.workbench.scm.empty`'s `Open Folder` link is not modeled.** That
-  view offers two actions; `BuildGitScmWelcomeModel`'s `EmptyWorkbench` branch
-  publishes only `Clone Repository` (`git.clone`), matching this Issue's
-  scope. `vscode.openFolder` already exists as a separate workbench concept
-  outside this directory's ownership; wiring the empty-state's other link to
-  it is future work, not a divergence in the sense of an abandoned upstream
-  behavior — it is simply not yet connected to this welcome model.
+- **The welcome actions are native button rectangles rather than inline
+  Markdown links.** The empty workbench keeps upstream's action order and IDs:
+  `vscode.openFolder`, then `git.cloneRecursive`. The command registry owns the
+  runtime routing; this SCM model only publishes the stable action contract.
 - **The upstream `git.missing`, `git.parentRepositoryCount`,
   `git.unsafeRepositoryCount`, and `git.closedRepositoryCount` context keys are
-  not read.** `BuildGitScmWelcomeModel` takes only `hasFolder` and
-  `hasRepository`, which map to `CWorkbenchRuntime`'s Folder/Workspace state
-  and `SourceControlService`'s provider presence. The richer upstream gates
-  fold into `EGitScmWelcomeContent::None` (no welcome content) rather than
-  being approximated by a partial read of keys this product does not publish.
+  not read.** `BuildGitScmWelcomeModel` takes the explicit
+  `EGitScmWelcomeWorkspaceState` (`Empty`, `Folder`, `WorkspaceWithFolders`, or
+  `WorkspaceWithoutFolders`) plus repository presence. The richer upstream
+  gates fold into `EGitScmWelcomeContent::None` when a provider is present,
+  rather than being approximated by a partial read of keys this product does
+  not publish.
 - **No progress indicator, and `git clone` still runs to completion or
   cancellation without a queue.** This mirrors the remote-commands and
   branch-commands divergences below: there is no operation queue and no
@@ -877,8 +929,8 @@ apply.
 - **The welcome content's `<a href="command:...">` Markdown links become plain
   hit-testable button rectangles.** Upstream's `viewsWelcome` body is rendered
   Markdown, and the action is an inline link styled as a monaco button by CSS.
-  `CScmWorkbenchTool`'s view body is a plain `LISTBOX`-hosting window with no
-  Markdown or HTML renderer, so `LayoutWelcome`/`PaintWelcome` draw the same two
+  `CScmWorkbenchTool`'s native owner-drawn list host has no Markdown or HTML
+  renderer, so `LayoutWelcome`/`PaintWelcome` draw the same two
   facts — a message and a set of labeled, clickable actions — as GDI `RoundRect`
   buttons instead, hit-tested and dispatched by `WelcomeSegmentIndexAt` /
   `InvokeWelcomeSegmentAt`. This mirrors the repository band's own
@@ -892,15 +944,13 @@ apply.
   upstream's own string from `BuildGitScmWelcomeModel`; only its typographic
   styling is simplified, the same trade-off the commit-message prompt's caption
   substitution above already makes for a different upstream surface.
-- **The message-and-buttons block is centered as one unit inside the view body
-  rather than following upstream's own flow layout.** Upstream's welcome
-  content lays out top-down inside a scrollable pane with CSS-driven spacing;
-  there is no exact GDI equivalent to reproduce, and the empty state has no
-  scrollable content to justify keeping it pinned to the top. `LayoutWelcome`
-  computes the message and button block's total height and vertically centers
-  it within `[ListTop(), client.bottom]`, which is a presentation choice for a
-  concept (the welcome content) that is otherwise upstream's own, not a
-  divergence in what is shown or in the order top-to-bottom.
+- **The welcome content uses a native GDI implementation of ViewWelcome's
+  flow.** `LayoutWelcome` starts one `em` below the view body, gives each
+  direct child a one-`em` block-start margin, centers the content column, caps
+  it at 300 DIP, and makes each action button span that column. Markdown is
+  still flattened to plain text and owner-drawn buttons (see the preceding
+  divergence), but the top-flow geometry no longer vertically centers the
+  block.
 - **Corrected record — `SetHasOpenFolder` now has a production caller, so both
   welcome states are reachable.** An earlier version of this entry recorded that
   `CScmWorkbenchTool::Impl::hasOpenFolder` stayed `false` forever, pinning the
@@ -914,6 +964,15 @@ apply.
   same expression is the point: the root the view lists files under and the
   welcome branch it shows when there is no repository cannot disagree, and a
   multi-root workspace correctly reports neither a root nor an open folder.
+
+**Current contract superseding that historical record:** the production API is
+`SetWelcomeWorkspaceState`, not `SetHasOpenFolder`. It projects the explicit
+`Empty`, `Folder`, `WorkspaceWithFolders`, and `WorkspaceWithoutFolders` states;
+the paragraph uses the full body width with 20 DIP side insets, while only the
+centered action-control column is capped at 300 DIP. The empty-workbench
+actions are `vscode.openFolder` followed by `git.cloneRecursive`; the folder
+variant uses `git.init?[true]`, and workspace-without-folders uses
+`workbench.action.addRootFolder`.
 
 ### Wiring `git.init` and `git.clone` into the Command Registry
 

@@ -7,6 +7,7 @@
 #include "pch.h"
 
 #include "workbench/commands/ExplorerCommandArguments.h"
+#include "workbench/commands/ExplorerCommandIds.h"
 #include "workbench/commands/WorkbenchCommandRegistry.h"
 
 #include <string>
@@ -32,6 +33,10 @@ using workbench::commands::EWorkbenchCommandRegistrationStatus;
 using workbench::commands::EWorkbenchCommandSurface;
 using workbench::commands::ExplorerResourceArguments;
 using workbench::commands::kMaximumExplorerCommandStringLength;
+using workbench::commands::kCollapseExplorerFoldersCommandId;
+using workbench::commands::kCreateFileFromExplorerCommandId;
+using workbench::commands::kCreateFolderFromExplorerCommandId;
+using workbench::commands::kRefreshFilesExplorerCommandId;
 using workbench::commands::ParseExplorerResourceArguments;
 using workbench::commands::WorkbenchCommandExecutionResult;
 using workbench::commands::WorkbenchCommandRegistry;
@@ -93,6 +98,31 @@ TEST(ExplorerCommandRegistry, AllEightCommandsCarryUpstreamIdsTitlesAndTheWorkbe
 		// alone - the `MakeGitAlwaysAvailableDescriptor` precedent.
 		EXPECT_EQ("workbenchReady", descriptor->whenClause) << commandId;
 		EXPECT_EQ("workbenchReady", descriptor->enablementClause) << commandId;
+	}
+}
+
+TEST(ExplorerCommandRegistry, ExplorerViewTitleActionsUseUpstreamIdsAndViewTitleSurface)
+{
+	WorkbenchCommandRegistry registry;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterExplorerCommands({}).status);
+	const std::pair<std::string_view, std::string_view> expectations[] = {
+		{ kCreateFileFromExplorerCommandId, "New File..." },
+		{ kCreateFolderFromExplorerCommandId, "New Folder..." },
+		{ kRefreshFilesExplorerCommandId, "Refresh Explorer" },
+		{ kCollapseExplorerFoldersCommandId, "Collapse Folders in Explorer" },
+	};
+	for (const auto& [commandId, title] : expectations) {
+		const auto descriptor = registry.Find(commandId);
+		ASSERT_TRUE(descriptor.has_value()) << commandId;
+		EXPECT_EQ(title, descriptor->title) << commandId;
+		EXPECT_EQ("workbenchReady", descriptor->whenClause) << commandId;
+		EXPECT_EQ("workbenchReady", descriptor->enablementClause) << commandId;
+		const auto viewTitle = registry.ResolveSurface(
+			EWorkbenchCommandSurface::ViewTitle, std::string(commandId) + ".viewTitle");
+		ASSERT_TRUE(viewTitle.has_value()) << commandId;
+		EXPECT_EQ(commandId, viewTitle->commandId) << commandId;
+		EXPECT_FALSE(registry.ResolveSurface(
+			EWorkbenchCommandSurface::Menu, std::string(commandId) + ".menu").has_value());
 	}
 }
 

@@ -54,7 +54,6 @@ ConfigurationTarget Target(std::wstring profile = L"default", const wchar_t* wor
 	}
 	return target;
 }
-
 ConfigurationSource Source(EConfigurationScope scope, const ConfigurationTarget& target = {}, std::string id = "test", std::int32_t priority = 0)
 {
 	return { scope, target, std::move(id), priority };
@@ -826,45 +825,4 @@ TEST(ConfigurationService, SubscriptionCleanupContainsUnsubscribeFailures)
 	EXPECT_FALSE(subscription.IsActive());
 	EXPECT_NO_THROW(subscription.Reset());
 	EXPECT_EQ(1, calls);
-}
-
-TEST(ConfigurationService, SecurityWorkspaceTrustBannerIsRegisteredWithUpstreamDefaultAndEnumAndIsProfileOnly)
-{
-	CConfigurationService service(BuiltinConfigurationDescriptors());
-	const auto profile = Target();
-	const auto workspace = Target(L"default", L"file:///C:/work");
-
-	// Verified against upstream's workspace.contribution.ts: default
-	// "untilDismissed", scoped like every other security.workspace.trust.*
-	// setting this file already registers.
-	auto result = service.GetValue("security.workspace.trust.banner", profile);
-	ASSERT_EQ(EConfigurationOutcome::Applied, result.outcome);
-	ASSERT_TRUE(result.value.has_value());
-	EXPECT_EQ(L"untilDismissed", std::get<std::wstring>(result.value->Value()));
-
-	const auto rejectedScope = service.Update({
-		Source(EConfigurationScope::Workspace, workspace), "security.workspace.trust.banner",
-		ConfigurationValue(std::wstring(L"always")), "reject-workspace-scope" });
-	EXPECT_EQ(EConfigurationOutcome::InvalidScope, rejectedScope.outcome);
-
-	const auto rejectedValue = service.Update({
-		Source(EConfigurationScope::Profile, profile), "security.workspace.trust.banner",
-		ConfigurationValue(std::wstring(L"sometimes")), "reject-unknown-enum-value" });
-	EXPECT_EQ(EConfigurationOutcome::InvalidValue, rejectedValue.outcome);
-
-	int operationIndex = 0;
-	for (const auto* value : { L"always", L"untilDismissed", L"never" }) {
-		// Each iteration needs its own operation ID: a reused ID carrying a
-		// different value is reported as EConfigurationOutcome::OperationIdConflict
-		// rather than accepted as a new request (the same discipline CWorkbenchRuntime
-		// relies on for its own operation IDs).
-		const auto accepted = service.Update({
-			Source(EConfigurationScope::Profile, profile), "security.workspace.trust.banner",
-			ConfigurationValue(std::wstring(value)),
-			"accept-profile-scope." + std::to_string(operationIndex++) });
-		EXPECT_EQ(EConfigurationOutcome::Applied, accepted.outcome);
-		auto read = service.GetValue("security.workspace.trust.banner", profile);
-		ASSERT_TRUE(read.value.has_value());
-		EXPECT_EQ(std::wstring(value), std::get<std::wstring>(read.value->Value()));
-	}
 }

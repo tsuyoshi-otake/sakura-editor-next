@@ -1,6 +1,6 @@
-[submodule "externals/Onigmo"]
-	path = externals/Onigmo
-	url = https://github.com/k-takata/Onigmo.git
+[submodule "externals/onigmo-next"]
+	path = externals/onigmo-next
+	url = https://github.com/tsuyoshi-otake/onigmo-next.git
 [submodule "externals/bregonig"]
 	path = externals/bregonig
 	url = https://github.com/k-takata/bregonig.git

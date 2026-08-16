@@ -7,6 +7,8 @@
 #include "StdAfx.h"
 
 #include "workbench/editor/CDiffSurface.h"
+#include "CSelectLang.h"
+#include "sakura_rc.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
@@ -56,6 +58,13 @@ void FillSolid(HDC dc, const RECT& bounds, COLORREF color) noexcept
 		::FillRect(dc, &bounds, brush);
 		::DeleteObject(brush);
 	}
+}
+
+[[nodiscard]] std::wstring LocalizedString(UINT resourceId, const wchar_t* fallback)
+{
+	const auto localized = CSelectLang::LoadStringW(resourceId);
+	if (!localized.empty()) return std::wstring(localized);
+	return fallback != nullptr ? std::wstring(fallback) : std::wstring();
 }
 } // namespace
 
@@ -517,12 +526,15 @@ void CDiffSurface::Paint()
 
 	const RECT header{ 0, 0, client.right, headerHeight };
 	FillSolid(dc, header, m_palette.raised.ToColorRef());
-	const std::wstring title = m_content.title.empty() ? std::wstring(L"Diff") : m_content.title;
+	const std::wstring title = m_content.title.empty()
+		? LocalizedString(STR_WORKBENCH_DIFF_TITLE, L"Diff") : m_content.title;
 	int titleRight = (std::max<int>)(padding, static_cast<int>(client.right) - padding * 2 - closeSide);
 	if (m_content.truncated) {
 		const int noteWidth = ScaleDip(200);
 		RECT note{ (std::max)(padding, titleRight - noteWidth), 0, titleRight, headerHeight };
-		PaintText(dc, L"Comparison truncated", note, m_palette.warning.ToColorRef(),
+		const auto truncatedLabel = LocalizedString(STR_WORKBENCH_DIFF_COMPARISON_TRUNCATED,
+			L"Comparison truncated");
+		PaintText(dc, truncatedLabel.c_str(), note, m_palette.warning.ToColorRef(),
 			DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 		titleRight = (std::max)(padding, static_cast<int>(note.left) - ScaleDip(8));
 	}
@@ -538,10 +550,10 @@ void CDiffSurface::Paint()
 		m_palette.descriptionText.ToColorRef(), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
 	if (!m_hasContent || m_content.rows.empty()) {
-		const wchar_t* message = m_hasContent
-			? L"The two sides are identical."
-			: L"No comparison is open.";
-		PaintText(dc, message, RECT{ padding, contentTop + ScaleDip(16), (std::max<int>)(padding, static_cast<int>(client.right) - padding), client.bottom },
+		const auto message = m_hasContent
+			? LocalizedString(STR_WORKBENCH_DIFF_IDENTICAL, L"The two sides are identical.")
+			: LocalizedString(STR_WORKBENCH_DIFF_NO_COMPARISON, L"No comparison is open.");
+		PaintText(dc, message.c_str(), RECT{ padding, contentTop + ScaleDip(16), (std::max<int>)(padding, static_cast<int>(client.right) - padding), client.bottom },
 			m_palette.disabledText.ToColorRef(), DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
 		::EndPaint(GetHwnd(), &ps);
 		return;

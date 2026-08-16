@@ -1,8 +1,8 @@
 {
-  "baseline_hash": "sha256:9b546dbb42414037278296b736f09b19e1fdcf45f65b265d9cbfd2a39daf4219",
-  "compatibility_version": 1,
+  "baseline_hash": "sha256:b5a502e79b1d3786e7d12e371df743150090f580ab61594b06a79f84f2c7f388",
+  "compatibility_version": 2,
   "header": {
-    "definition_count": 1874,
+    "definition_count": 2162,
     "definitions": {
       "F_BOOKMARK_SUBMENU": 34047,
       "F_CHGMOD_EOL_SUBMENU": 34044,
@@ -1467,25 +1467,6 @@
       "STR_EXCLU_DENY_WRITE": 34325,
       "STR_EXCLU_NO_EXCLUSIVE": 34774,
       "STR_EXCLU_UNDEFINED": 34326,
-      "STR_EXTENSION_COL_NAME": 35060,
-      "STR_EXTENSION_COL_STATE": 35062,
-      "STR_EXTENSION_COL_VERSION": 35061,
-      "STR_EXTENSION_CONFIRM_REMOVE": 35075,
-      "STR_EXTENSION_INSTALL": 35058,
-      "STR_EXTENSION_NOTE_NOTRUN": 35074,
-      "STR_EXTENSION_REMOVE": 35059,
-      "STR_EXTENSION_SEARCH": 35057,
-      "STR_EXTENSION_STATE_INSTALLED": 35063,
-      "STR_EXTENSION_STATE_NOTINSTALLED": 35064,
-      "STR_EXTENSION_STATUS_BUSY": 35072,
-      "STR_EXTENSION_STATUS_FAILED": 35071,
-      "STR_EXTENSION_STATUS_FOUND": 35068,
-      "STR_EXTENSION_STATUS_INSTALLED": 35069,
-      "STR_EXTENSION_STATUS_INSTALLED_COUNT": 35073,
-      "STR_EXTENSION_STATUS_INSTALLING": 35066,
-      "STR_EXTENSION_STATUS_REMOVED": 35070,
-      "STR_EXTENSION_STATUS_REMOVING": 35067,
-      "STR_EXTENSION_STATUS_SEARCHING": 35065,
       "STR_FILEDIALOG_CODE": 35038,
       "STR_FILEDIALOG_EOL": 35039,
       "STR_FILEDIALOG_MRU": 35040,
@@ -1833,6 +1814,23 @@
       "STR_TAGJUMP_1": 34987,
       "STR_TAGJUMP_2": 34988,
       "STR_TAGJUMP_3": 34989,
+      "STR_TERMINAL_CLOSE": 35063,
+      "STR_TERMINAL_CLOSE_SPLIT": 35065,
+      "STR_TERMINAL_FALLBACK_LABEL": 35058,
+      "STR_TERMINAL_INPUT_BACKPRESSURE": 35070,
+      "STR_TERMINAL_INPUT_REJECTED": 35069,
+      "STR_TERMINAL_NEW": 35061,
+      "STR_TERMINAL_NO_POWERSHELL_PROFILE": 35066,
+      "STR_TERMINAL_NO_SESSIONS": 35059,
+      "STR_TERMINAL_POWERSHELL_PROFILE": 35068,
+      "STR_TERMINAL_PROFILE_LEGACY": 35072,
+      "STR_TERMINAL_PROFILE_PREVIEW": 35071,
+      "STR_TERMINAL_REDETECT_POWERSHELL": 35067,
+      "STR_TERMINAL_RESTART": 35062,
+      "STR_TERMINAL_SESSIONS": 35060,
+      "STR_TERMINAL_SPLIT": 35064,
+      "STR_TERMINAL_SPLIT_DOWN": 35285,
+      "STR_TERMINAL_TITLE": 35057,
       "STR_TIME_FORMAT": 34882,
       "STR_TITLE_GREP": 34872,
       "STR_TRANSNAME_APPDATA": 34889,
@@ -1864,6 +1862,296 @@
       "STR_VIEW_MOUSE_MENU_OPEN": 34431,
       "STR_VIEW_MOUSE_MENU_PATH": 34429,
       "STR_VIEW_TIMER": 34336,
+      "STR_WORKBENCH_ACTIVITY_EXPLORER": 35158,
+      "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 35159,
+      "STR_WORKBENCH_COLOR_THEME": 35089,
+      "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 35100,
+      "STR_WORKBENCH_COLOR_THEME_NONE": 35101,
+      "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 35102,
+      "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 35099,
+      "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 35214,
+      "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 35220,
+      "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 35221,
+      "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 35222,
+      "STR_WORKBENCH_COMMAND_COLOR_THEME": 35208,
+      "STR_WORKBENCH_COMMAND_DUPLICATE_WORKSPACE": 35216,
+      "STR_WORKBENCH_COMMAND_EXPLORER": 35201,
+      "STR_WORKBENCH_COMMAND_EXPLORER_COLLAPSE": 35268,
+      "STR_WORKBENCH_COMMAND_EXPLORER_COPY_PATH": 35272,
+      "STR_WORKBENCH_COMMAND_EXPLORER_COPY_RELATIVE": 35273,
+      "STR_WORKBENCH_COMMAND_EXPLORER_DELETE": 35271,
+      "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FILE": 35265,
+      "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FOLDER": 35266,
+      "STR_WORKBENCH_COMMAND_EXPLORER_REFRESH": 35267,
+      "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 35269,
+      "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 35274,
+      "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 35270,
+      "STR_WORKBENCH_COMMAND_GIT_BRANCH": 35242,
+      "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 35243,
+      "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 35240,
+      "STR_WORKBENCH_COMMAND_GIT_CHECKOUT_DETACHED": 35241,
+      "STR_WORKBENCH_COMMAND_GIT_CLEAN": 35249,
+      "STR_WORKBENCH_COMMAND_GIT_CLEAN_ALL": 35250,
+      "STR_WORKBENCH_COMMAND_GIT_CLONE": 35238,
+      "STR_WORKBENCH_COMMAND_GIT_CLONE_RECURSIVE": 35239,
+      "STR_WORKBENCH_COMMAND_GIT_COMMIT": 35251,
+      "STR_WORKBENCH_COMMAND_GIT_COMMIT_AMEND": 35252,
+      "STR_WORKBENCH_COMMAND_GIT_FETCH": 35256,
+      "STR_WORKBENCH_COMMAND_GIT_FETCH_ALL": 35258,
+      "STR_WORKBENCH_COMMAND_GIT_FETCH_PRUNE": 35257,
+      "STR_WORKBENCH_COMMAND_GIT_INIT": 35237,
+      "STR_WORKBENCH_COMMAND_GIT_OPEN_CHANGE": 35244,
+      "STR_WORKBENCH_COMMAND_GIT_PUBLISH": 35264,
+      "STR_WORKBENCH_COMMAND_GIT_PULL": 35259,
+      "STR_WORKBENCH_COMMAND_GIT_PULL_REBASE": 35260,
+      "STR_WORKBENCH_COMMAND_GIT_PUSH": 35261,
+      "STR_WORKBENCH_COMMAND_GIT_STAGE": 35245,
+      "STR_WORKBENCH_COMMAND_GIT_STAGE_ALL": 35246,
+      "STR_WORKBENCH_COMMAND_GIT_STAGE_RANGES": 35254,
+      "STR_WORKBENCH_COMMAND_GIT_SYNC": 35262,
+      "STR_WORKBENCH_COMMAND_GIT_SYNC_REBASE": 35263,
+      "STR_WORKBENCH_COMMAND_GIT_UNDO_COMMIT": 35253,
+      "STR_WORKBENCH_COMMAND_GIT_UNSTAGE": 35247,
+      "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_ALL": 35248,
+      "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_RANGES": 35255,
+      "STR_WORKBENCH_COMMAND_HIDE_NOTIFICATIONS": 35225,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_LOCKED_SIDE": 35229,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW": 35227,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW_SIDE": 35228,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_REFRESH": 35232,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_PREVIEW": 35234,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_SOURCE": 35235,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_SECURITY": 35231,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_SOURCE": 35230,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE": 35236,
+      "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE_LOCK": 35233,
+      "STR_WORKBENCH_COMMAND_NEW_FILE": 35209,
+      "STR_WORKBENCH_COMMAND_NEW_WINDOW": 35210,
+      "STR_WORKBENCH_COMMAND_OPEN_FILE": 35211,
+      "STR_WORKBENCH_COMMAND_OPEN_FOLDER": 35206,
+      "STR_WORKBENCH_COMMAND_OPEN_GLOBAL_KEYBINDINGS": 35207,
+      "STR_WORKBENCH_COMMAND_OPEN_RECENT": 35213,
+      "STR_WORKBENCH_COMMAND_OPEN_SETTINGS": 35205,
+      "STR_WORKBENCH_COMMAND_OPEN_WORKSPACE": 35212,
+      "STR_WORKBENCH_COMMAND_OUTPUT": 35203,
+      "STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS": 35083,
+      "STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER": 35177,
+      "STR_WORKBENCH_COMMAND_PROBLEMS": 35202,
+      "STR_WORKBENCH_COMMAND_QUIT": 35223,
+      "STR_WORKBENCH_COMMAND_SAVE": 35217,
+      "STR_WORKBENCH_COMMAND_SAVE_ALL": 35219,
+      "STR_WORKBENCH_COMMAND_SAVE_AS": 35218,
+      "STR_WORKBENCH_COMMAND_SAVE_WORKSPACE_AS": 35215,
+      "STR_WORKBENCH_COMMAND_SHOW_COMMANDS": 35204,
+      "STR_WORKBENCH_COMMAND_SHOW_NOTIFICATIONS": 35224,
+      "STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR": 35200,
+      "STR_WORKBENCH_COMMAND_TOGGLE_STATUSBAR": 35226,
+      "STR_WORKBENCH_COMMAND_UPDATE_CANCELLING": 35283,
+      "STR_WORKBENCH_COMMAND_UPDATE_CHECK": 35275,
+      "STR_WORKBENCH_COMMAND_UPDATE_CHECKING": 35280,
+      "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOAD": 35276,
+      "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOADING": 35281,
+      "STR_WORKBENCH_COMMAND_UPDATE_INDICATOR": 35284,
+      "STR_WORKBENCH_COMMAND_UPDATE_INFO": 35279,
+      "STR_WORKBENCH_COMMAND_UPDATE_INSTALL": 35277,
+      "STR_WORKBENCH_COMMAND_UPDATE_RESTART": 35278,
+      "STR_WORKBENCH_COMMAND_UPDATE_UPDATING": 35282,
+      "STR_WORKBENCH_DIFF_COMPARISON_TRUNCATED": 35183,
+      "STR_WORKBENCH_DIFF_IDENTICAL": 35184,
+      "STR_WORKBENCH_DIFF_NO_COMPARISON": 35185,
+      "STR_WORKBENCH_DIFF_TITLE": 35182,
+      "STR_WORKBENCH_EXPLORER_ADD_FOLDER": 35079,
+      "STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE": 35080,
+      "STR_WORKBENCH_EXPLORER_CLONE_REPOSITORY_DESCRIPTION": 35401,
+      "STR_WORKBENCH_EXPLORER_CREATE_FILE_FAILED": 35088,
+      "STR_WORKBENCH_EXPLORER_CREATE_FOLDER_FAILED": 35087,
+      "STR_WORKBENCH_EXPLORER_DELETE_FAILED": 35085,
+      "STR_WORKBENCH_EXPLORER_EMPTY_WORKSPACE": 35076,
+      "STR_WORKBENCH_EXPLORER_FOLDER": 35389,
+      "STR_WORKBENCH_EXPLORER_MULTIROOT_UNAVAILABLE": 35077,
+      "STR_WORKBENCH_EXPLORER_NO_FOLDER": 35074,
+      "STR_WORKBENCH_EXPLORER_NO_FOLDER_OPENED": 35400,
+      "STR_WORKBENCH_EXPLORER_NO_FOLDER_WITH_EDITORS": 35075,
+      "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 35078,
+      "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 35086,
+      "STR_WORKBENCH_EXPLORER_TITLE": 35073,
+      "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 35126,
+      "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 35370,
+      "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 35371,
+      "STR_WORKBENCH_GIT_BRANCH_ALREADY_EXISTS": 35170,
+      "STR_WORKBENCH_GIT_BRANCH_FROM_PLACEHOLDER": 35174,
+      "STR_WORKBENCH_GIT_BRANCH_NAME_PLACEHOLDER": 35173,
+      "STR_WORKBENCH_GIT_BRANCH_NAME_PROMPT": 35172,
+      "STR_WORKBENCH_GIT_BRANCH_NO_PRESENTER": 35176,
+      "STR_WORKBENCH_GIT_CHECKOUT_BRANCH_TAG": 35151,
+      "STR_WORKBENCH_GIT_CHECKOUT_DETACHED": 35167,
+      "STR_WORKBENCH_GIT_CHECKOUT_DETACHED_PLACEHOLDER": 35169,
+      "STR_WORKBENCH_GIT_CHECKOUT_NO_PRESENTER": 35175,
+      "STR_WORKBENCH_GIT_CHECKOUT_PLACEHOLDER": 35168,
+      "STR_WORKBENCH_GIT_CHOOSE_FOLDER": 35127,
+      "STR_WORKBENCH_GIT_CLONE_CANCELLED": 35140,
+      "STR_WORKBENCH_GIT_CLONE_NONEMPTY": 35139,
+      "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 35134,
+      "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 35125,
+      "STR_WORKBENCH_GIT_CLONE_SUCCESS": 35153,
+      "STR_WORKBENCH_GIT_COMMIT_CHANGES": 35303,
+      "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 35152,
+      "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 35315,
+      "STR_WORKBENCH_GIT_COMMIT_MESSAGE_PROMPT": 35316,
+      "STR_WORKBENCH_GIT_COMMIT_NO_CONFIRMATION": 35318,
+      "STR_WORKBENCH_GIT_COMMIT_NO_INVOKER": 35317,
+      "STR_WORKBENCH_GIT_COMMIT_NO_MESSAGE_PROMPT": 35320,
+      "STR_WORKBENCH_GIT_CONFLICT": 35369,
+      "STR_WORKBENCH_GIT_CREATE_BRANCH": 35165,
+      "STR_WORKBENCH_GIT_CREATE_BRANCH_FROM": 35166,
+      "STR_WORKBENCH_GIT_CREATE_EMPTY_COMMIT": 35307,
+      "STR_WORKBENCH_GIT_DELETE_ALL_FILES": 35330,
+      "STR_WORKBENCH_GIT_DELETE_FILE": 35329,
+      "STR_WORKBENCH_GIT_DELETE_UNTRACKED_MANY": 35325,
+      "STR_WORKBENCH_GIT_DELETE_UNTRACKED_ONE": 35324,
+      "STR_WORKBENCH_GIT_DIFF_FILE_OPEN_FAILED": 35386,
+      "STR_WORKBENCH_GIT_DIFF_FILE_READ_FAILED": 35387,
+      "STR_WORKBENCH_GIT_DIFF_FILE_TOO_LARGE": 35388,
+      "STR_WORKBENCH_GIT_DIFF_INDEX": 35384,
+      "STR_WORKBENCH_GIT_DIFF_PATH_UNRESOLVED": 35385,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_DELETED": 35377,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_INDEX": 35375,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_INTENT_TO_ADD": 35381,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_OURS": 35379,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_THEIRS": 35378,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_TYPE_CHANGED": 35382,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_UNTRACKED": 35380,
+      "STR_WORKBENCH_GIT_DIFF_TITLE_WORKING_TREE": 35376,
+      "STR_WORKBENCH_GIT_DIFF_WORKING_TREE": 35383,
+      "STR_WORKBENCH_GIT_DIRTY_WORK_TREE": 35366,
+      "STR_WORKBENCH_GIT_DISCARD_ALL_CHANGES": 35148,
+      "STR_WORKBENCH_GIT_DISCARD_ALL_FILES": 35338,
+      "STR_WORKBENCH_GIT_DISCARD_ALL_TRACKED_FILES": 35342,
+      "STR_WORKBENCH_GIT_DISCARD_CHANGES": 35145,
+      "STR_WORKBENCH_GIT_DISCARD_FILE": 35337,
+      "STR_WORKBENCH_GIT_DISCARD_MANY": 35336,
+      "STR_WORKBENCH_GIT_DISCARD_NO_CONFIRMATION": 35348,
+      "STR_WORKBENCH_GIT_DISCARD_NO_INVOKER": 35347,
+      "STR_WORKBENCH_GIT_DISCARD_ONE": 35335,
+      "STR_WORKBENCH_GIT_DISCARD_TRACKED_FILE": 35341,
+      "STR_WORKBENCH_GIT_DISCARD_TRACKED_MANY": 35340,
+      "STR_WORKBENCH_GIT_DISCARD_TRACKED_ONE": 35339,
+      "STR_WORKBENCH_GIT_DONT_PULL": 35354,
+      "STR_WORKBENCH_GIT_EMPTY_WORKBENCH": 35121,
+      "STR_WORKBENCH_GIT_EMPTY_WORKSPACE": 35123,
+      "STR_WORKBENCH_GIT_FETCH_ALL_REMOTES": 35373,
+      "STR_WORKBENCH_GIT_FETCH_PLACEHOLDER": 35355,
+      "STR_WORKBENCH_GIT_FOLDER_NO_REPOSITORY": 35120,
+      "STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED": 35368,
+      "STR_WORKBENCH_GIT_INITIALIZE_REPOSITORY": 35124,
+      "STR_WORKBENCH_GIT_INIT_CANCELLED_HOME": 35133,
+      "STR_WORKBENCH_GIT_INIT_FOLDER_PICKER": 35131,
+      "STR_WORKBENCH_GIT_INIT_HOME_WARNING": 35129,
+      "STR_WORKBENCH_GIT_INIT_OPEN_PROMPT": 35130,
+      "STR_WORKBENCH_GIT_INIT_SUCCESS": 35132,
+      "STR_WORKBENCH_GIT_INVALID_URL_FOLDER": 35137,
+      "STR_WORKBENCH_GIT_IRREVERSIBLE_MANY": 35323,
+      "STR_WORKBENCH_GIT_IRREVERSIBLE_ONE": 35322,
+      "STR_WORKBENCH_GIT_MAYBE_REBASED": 35352,
+      "STR_WORKBENCH_GIT_MAYBE_REBASED_NO_NAME": 35351,
+      "STR_WORKBENCH_GIT_MOVE_TO_RECYCLE_BIN": 35328,
+      "STR_WORKBENCH_GIT_NEW_BRANCH_WILL_BE": 35171,
+      "STR_WORKBENCH_GIT_NO_BRANCH_TO_PUSH": 35360,
+      "STR_WORKBENCH_GIT_NO_CHANGES": 35306,
+      "STR_WORKBENCH_GIT_NO_FETCH_REMOTES": 35357,
+      "STR_WORKBENCH_GIT_NO_PUBLISH_REMOTES": 35361,
+      "STR_WORKBENCH_GIT_NO_PULL_REMOTES": 35358,
+      "STR_WORKBENCH_GIT_NO_PUSH_REMOTES": 35359,
+      "STR_WORKBENCH_GIT_NO_STAGED_CHANGES": 35304,
+      "STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED": 35372,
+      "STR_WORKBENCH_GIT_NO_VERIFY_DISABLED": 35313,
+      "STR_WORKBENCH_GIT_NO_VERIFY_WARNING": 35308,
+      "STR_WORKBENCH_GIT_OK": 35309,
+      "STR_WORKBENCH_GIT_OPEN": 35128,
+      "STR_WORKBENCH_GIT_OPEN_CHANGES": 35141,
+      "STR_WORKBENCH_GIT_OPEN_FILE": 35142,
+      "STR_WORKBENCH_GIT_OVERWRITE": 35135,
+      "STR_WORKBENCH_GIT_PUBLISH_BRANCH": 35149,
+      "STR_WORKBENCH_GIT_PUBLISH_BRANCH_PROMPT": 35350,
+      "STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER": 35374,
+      "STR_WORKBENCH_GIT_PULL": 35353,
+      "STR_WORKBENCH_GIT_PUSH_REJECTED": 35367,
+      "STR_WORKBENCH_GIT_REBASE_UNSUPPORTED": 35312,
+      "STR_WORKBENCH_GIT_RECYCLE_BIN_FAILED": 35343,
+      "STR_WORKBENCH_GIT_REF_BRANCHES": 35160,
+      "STR_WORKBENCH_GIT_REF_REMOTE_BRANCHES": 35161,
+      "STR_WORKBENCH_GIT_REF_REMOTE_BRANCH_AT": 35163,
+      "STR_WORKBENCH_GIT_REF_TAGS": 35162,
+      "STR_WORKBENCH_GIT_REF_TAG_AT": 35164,
+      "STR_WORKBENCH_GIT_REPOSITORY_LOCATION": 35138,
+      "STR_WORKBENCH_GIT_REPOSITORY_URL": 35136,
+      "STR_WORKBENCH_GIT_RESTORE_ALL_FILES": 35334,
+      "STR_WORKBENCH_GIT_RESTORE_FILE": 35333,
+      "STR_WORKBENCH_GIT_RESTORE_MANY": 35332,
+      "STR_WORKBENCH_GIT_RESTORE_MANY_RECYCLE_BIN": 35327,
+      "STR_WORKBENCH_GIT_RESTORE_ONE": 35331,
+      "STR_WORKBENCH_GIT_RESTORE_ONE_RECYCLE_BIN": 35326,
+      "STR_WORKBENCH_GIT_SAVE_ALL_COMMIT_CHANGES": 35302,
+      "STR_WORKBENCH_GIT_SCM_CHANGES": 35392,
+      "STR_WORKBENCH_GIT_SCM_MERGE_CHANGES": 35390,
+      "STR_WORKBENCH_GIT_SCM_STAGED_CHANGES": 35391,
+      "STR_WORKBENCH_GIT_SCM_UNTRACKED_CHANGES": 35393,
+      "STR_WORKBENCH_GIT_STAGE_ALL_CHANGES": 35146,
+      "STR_WORKBENCH_GIT_STAGE_CHANGES": 35143,
+      "STR_WORKBENCH_GIT_STAGE_MERGE_UNSUPPORTED": 35345,
+      "STR_WORKBENCH_GIT_STAGE_NO_INVOKER": 35344,
+      "STR_WORKBENCH_GIT_SYNCHRONIZE_CHANGES": 35150,
+      "STR_WORKBENCH_GIT_SYNC_CONFIRMATION": 35349,
+      "STR_WORKBENCH_GIT_SYNC_DISMISSED": 35362,
+      "STR_WORKBENCH_GIT_SYNC_NOTHING_TO_PUSH": 35365,
+      "STR_WORKBENCH_GIT_SYNC_NO_HEAD": 35363,
+      "STR_WORKBENCH_GIT_SYNC_NO_PRESENTER": 35356,
+      "STR_WORKBENCH_GIT_SYNC_READ_ONLY_REMOTE": 35364,
+      "STR_WORKBENCH_GIT_UNDO_MERGE_COMMIT": 35311,
+      "STR_WORKBENCH_GIT_UNDO_MERGE_WARNING": 35310,
+      "STR_WORKBENCH_GIT_UNDO_NO_INVOKER": 35321,
+      "STR_WORKBENCH_GIT_UNSAVED_MANY": 35301,
+      "STR_WORKBENCH_GIT_UNSAVED_ONE": 35300,
+      "STR_WORKBENCH_GIT_UNSAVED_SAVE_FAILED": 35319,
+      "STR_WORKBENCH_GIT_UNSTAGE_ALL_CHANGES": 35147,
+      "STR_WORKBENCH_GIT_UNSTAGE_CHANGES": 35144,
+      "STR_WORKBENCH_GIT_UNSTAGE_NO_INVOKER": 35346,
+      "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 35122,
+      "STR_WORKBENCH_GIT_YES": 35305,
+      "STR_WORKBENCH_INITIALIZE_FAILED": 35193,
+      "STR_WORKBENCH_PANEL_COLUMN_FILE": 35105,
+      "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 35104,
+      "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 35103,
+      "STR_WORKBENCH_PANEL_COLUMN_SOURCE": 35106,
+      "STR_WORKBENCH_PANEL_DEBUG_CONSOLE": 35097,
+      "STR_WORKBENCH_PANEL_OUTPUT": 35095,
+      "STR_WORKBENCH_PANEL_PORTS": 35098,
+      "STR_WORKBENCH_PANEL_PROBLEMS": 35094,
+      "STR_WORKBENCH_PANEL_SEVERITY_ERROR": 35090,
+      "STR_WORKBENCH_PANEL_SEVERITY_HINT": 35093,
+      "STR_WORKBENCH_PANEL_SEVERITY_INFO": 35092,
+      "STR_WORKBENCH_PANEL_SEVERITY_WARNING": 35091,
+      "STR_WORKBENCH_PANEL_TERMINAL": 35096,
+      "STR_WORKBENCH_QUICK_INPUT_CANCEL": 35179,
+      "STR_WORKBENCH_QUICK_INPUT_OK": 35178,
+      "STR_WORKBENCH_REMOTE_UNSUPPORTED": 35394,
+      "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 35084,
+      "STR_WORKBENCH_SCM_CHANGES_TITLE": 35396,
+      "STR_WORKBENCH_SCM_GRAPH_TITLE": 35397,
+      "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 35398,
+      "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 35395,
+      "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 35082,
+      "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 35081,
+      "STR_WORKBENCH_STATUS_CHARACTER_CODE": 35188,
+      "STR_WORKBENCH_STATUS_ENCODING": 35189,
+      "STR_WORKBENCH_STATUS_INPUT_MODE": 35191,
+      "STR_WORKBENCH_STATUS_LINE_ENDING": 35187,
+      "STR_WORKBENCH_STATUS_MACRO_RECORDING": 35190,
+      "STR_WORKBENCH_STATUS_REMOTE_HOST": 35286,
+      "STR_WORKBENCH_STATUS_SELECTION": 35186,
+      "STR_WORKBENCH_STATUS_ZOOM": 35192,
+      "STR_WORKBENCH_VIEWCONTAINER_EMPTY": 35180,
+      "STR_WORKBENCH_VIEWCONTAINER_OUTLINE": 35181,
       "STR_WRAP_INDENT_BOL": 34614,
       "STR_WRAP_INDENT_NONE": 34612,
       "STR_WRAP_INDENT_TX2X": 34613,
@@ -1876,17 +2164,17 @@
       "STR_WSHPLUG_LOADMACRO": 34948,
       "_APS_NEXT_COMMAND_VALUE": 101,
       "_APS_NEXT_CONTROL_VALUE": 1741,
-      "_APS_NEXT_RESOURCE_VALUE": 35076,
+      "_APS_NEXT_RESOURCE_VALUE": 35399,
       "_APS_NEXT_SYMED_VALUE": 10000
     },
-    "mapping_hash": "sha256:d49856022c0bf5766933e3441531c6bd40182f32b7f1ce05656a06c01e22f4a4",
+    "mapping_hash": "sha256:9a76cc4fcd7192eb70a64b72ebf1d136a01cce9bd776688695a08ef57d9ab9f2",
     "path": "src/main/resources/sakura_rc.h"
   },
   "images": [
     {
       "contract": {
         "accelerators": [],
-        "contract_hash": "sha256:6da9336ea42bd8c0d4d0c1576cc641aa2142b77a7b7e27c6ea9afa42528c9608",
+        "contract_hash": "sha256:6465cc2b076006b9cf1d631be0f391d28c43636ab5e8089c683b31b531e39dde",
         "counts": {
           "accelerator_commands": 0,
           "accelerators": 0,
@@ -1896,9 +2184,9 @@
           "menu_commands": 0,
           "menu_items": 0,
           "menus": 0,
-          "string_blocks": 134,
-          "strings": 1364,
-          "top_level": 257
+          "string_blocks": 155,
+          "strings": 1671,
+          "top_level": 278
         },
         "dialogs": [
           {
@@ -6857,7 +7145,587 @@
               "value": 2192
             },
             "string_ids": [
-              35056
+              35056,
+              35057,
+              35058,
+              35059,
+              35060,
+              35061,
+              35062,
+              35063,
+              35064,
+              35065,
+              35066,
+              35067,
+              35068,
+              35069,
+              35070,
+              35071
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2193
+            },
+            "string_ids": [
+              35072,
+              35073,
+              35074,
+              35075,
+              35076,
+              35077,
+              35078,
+              35079,
+              35080,
+              35081,
+              35082,
+              35083,
+              35084,
+              35085,
+              35086,
+              35087
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2194
+            },
+            "string_ids": [
+              35088,
+              35089,
+              35090,
+              35091,
+              35092,
+              35093,
+              35094,
+              35095,
+              35096,
+              35097,
+              35098,
+              35099,
+              35100,
+              35101,
+              35102,
+              35103
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2195
+            },
+            "string_ids": [
+              35104,
+              35105,
+              35106
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2196
+            },
+            "string_ids": [
+              35120,
+              35121,
+              35122,
+              35123,
+              35124,
+              35125,
+              35126,
+              35127,
+              35128,
+              35129,
+              35130,
+              35131,
+              35132,
+              35133,
+              35134,
+              35135
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2197
+            },
+            "string_ids": [
+              35136,
+              35137,
+              35138,
+              35139,
+              35140,
+              35141,
+              35142,
+              35143,
+              35144,
+              35145,
+              35146,
+              35147,
+              35148,
+              35149,
+              35150,
+              35151
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2198
+            },
+            "string_ids": [
+              35152,
+              35153,
+              35158,
+              35159,
+              35160,
+              35161,
+              35162,
+              35163,
+              35164,
+              35165,
+              35166,
+              35167
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2199
+            },
+            "string_ids": [
+              35168,
+              35169,
+              35170,
+              35171,
+              35172,
+              35173,
+              35174,
+              35175,
+              35176,
+              35177,
+              35178,
+              35179,
+              35180,
+              35181,
+              35182,
+              35183
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2200
+            },
+            "string_ids": [
+              35184,
+              35185,
+              35186,
+              35187,
+              35188,
+              35189,
+              35190,
+              35191,
+              35192,
+              35193
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2201
+            },
+            "string_ids": [
+              35200,
+              35201,
+              35202,
+              35203,
+              35204,
+              35205,
+              35206,
+              35207,
+              35208,
+              35209,
+              35210,
+              35211,
+              35212,
+              35213,
+              35214,
+              35215
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2202
+            },
+            "string_ids": [
+              35216,
+              35217,
+              35218,
+              35219,
+              35220,
+              35221,
+              35222,
+              35223,
+              35224,
+              35225,
+              35226,
+              35227,
+              35228,
+              35229,
+              35230,
+              35231
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2203
+            },
+            "string_ids": [
+              35232,
+              35233,
+              35234,
+              35235,
+              35236,
+              35237,
+              35238,
+              35239,
+              35240,
+              35241,
+              35242,
+              35243,
+              35244,
+              35245,
+              35246,
+              35247
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2204
+            },
+            "string_ids": [
+              35248,
+              35249,
+              35250,
+              35251,
+              35252,
+              35253,
+              35254,
+              35255,
+              35256,
+              35257,
+              35258,
+              35259,
+              35260,
+              35261,
+              35262,
+              35263
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2205
+            },
+            "string_ids": [
+              35264,
+              35265,
+              35266,
+              35267,
+              35268,
+              35269,
+              35270,
+              35271,
+              35272,
+              35273,
+              35274,
+              35275,
+              35276,
+              35277,
+              35278,
+              35279
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2206
+            },
+            "string_ids": [
+              35280,
+              35281,
+              35282,
+              35283,
+              35284,
+              35285,
+              35286
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2207
+            },
+            "string_ids": [
+              35300,
+              35301,
+              35302,
+              35303,
+              35304,
+              35305,
+              35306,
+              35307,
+              35308,
+              35309,
+              35310,
+              35311
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2208
+            },
+            "string_ids": [
+              35312,
+              35313,
+              35315,
+              35316,
+              35317,
+              35318,
+              35319,
+              35320,
+              35321,
+              35322,
+              35323,
+              35324,
+              35325,
+              35326,
+              35327
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2209
+            },
+            "string_ids": [
+              35328,
+              35329,
+              35330,
+              35331,
+              35332,
+              35333,
+              35334,
+              35335,
+              35336,
+              35337,
+              35338,
+              35339,
+              35340,
+              35341,
+              35342,
+              35343
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2210
+            },
+            "string_ids": [
+              35344,
+              35345,
+              35346,
+              35347,
+              35348,
+              35349,
+              35350,
+              35351,
+              35352,
+              35353,
+              35354,
+              35355,
+              35356,
+              35357,
+              35358,
+              35359
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2211
+            },
+            "string_ids": [
+              35360,
+              35361,
+              35362,
+              35363,
+              35364,
+              35365,
+              35366,
+              35367,
+              35368,
+              35369,
+              35370,
+              35371,
+              35372,
+              35373,
+              35374,
+              35375
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2212
+            },
+            "string_ids": [
+              35376,
+              35377,
+              35378,
+              35379,
+              35380,
+              35381,
+              35382,
+              35383,
+              35384,
+              35385,
+              35386,
+              35387,
+              35388,
+              35389,
+              35390,
+              35391
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2213
+            },
+            "string_ids": [
+              35392,
+              35393,
+              35394,
+              35395,
+              35396,
+              35397,
+              35398,
+              35400,
+              35401
             ],
             "type": {
               "kind": "id",
@@ -9411,6 +10279,237 @@
             "language_id": 1033,
             "name": {
               "kind": "id",
+              "value": 2193
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2194
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2195
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2196
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2197
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2198
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2199
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2200
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2201
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2202
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2203
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2204
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2205
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2206
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2207
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2208
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2209
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2210
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2211
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2212
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
+              "value": 2213
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1033,
+            "name": {
+              "kind": "id",
               "value": 220
             },
             "type": {
@@ -9700,7 +10799,7 @@
     {
       "contract": {
         "accelerators": [],
-        "contract_hash": "sha256:b5ff18ef75af16b18a126a3ca51a77f7d34aeb9f89b7cc6fee69fe321ea7009b",
+        "contract_hash": "sha256:fb57dc83faf239aff43b84dfc685c19d5eb8ac2730dac208410b71cee1400c48",
         "counts": {
           "accelerator_commands": 0,
           "accelerators": 0,
@@ -9710,9 +10809,9 @@
           "menu_commands": 0,
           "menu_items": 0,
           "menus": 0,
-          "string_blocks": 136,
-          "strings": 1390,
-          "top_level": 260
+          "string_blocks": 156,
+          "strings": 1677,
+          "top_level": 280
         },
         "dialogs": [
           {
@@ -12403,7 +13502,6 @@
               30996,
               30997,
               30998,
-              30999,
               31001,
               31002,
               31003,
@@ -14724,7 +15822,555 @@
               35072,
               35073,
               35074,
-              35075
+              35075,
+              35076,
+              35077,
+              35078,
+              35079,
+              35080,
+              35081,
+              35082,
+              35083,
+              35084,
+              35085,
+              35086,
+              35087
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2194
+            },
+            "string_ids": [
+              35088,
+              35089,
+              35090,
+              35091,
+              35092,
+              35093,
+              35094,
+              35095,
+              35096,
+              35097,
+              35098,
+              35099,
+              35100,
+              35101,
+              35102,
+              35103
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2195
+            },
+            "string_ids": [
+              35104,
+              35105,
+              35106
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2196
+            },
+            "string_ids": [
+              35120,
+              35121,
+              35122,
+              35123,
+              35124,
+              35125,
+              35126,
+              35127,
+              35128,
+              35129,
+              35130,
+              35131,
+              35132,
+              35133,
+              35134,
+              35135
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2197
+            },
+            "string_ids": [
+              35136,
+              35137,
+              35138,
+              35139,
+              35140,
+              35141,
+              35142,
+              35143,
+              35144,
+              35145,
+              35146,
+              35147,
+              35148,
+              35149,
+              35150,
+              35151
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2198
+            },
+            "string_ids": [
+              35152,
+              35153,
+              35158,
+              35159,
+              35160,
+              35161,
+              35162,
+              35163,
+              35164,
+              35165,
+              35166,
+              35167
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2199
+            },
+            "string_ids": [
+              35168,
+              35169,
+              35170,
+              35171,
+              35172,
+              35173,
+              35174,
+              35175,
+              35176,
+              35177,
+              35178,
+              35179,
+              35180,
+              35181,
+              35182,
+              35183
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2200
+            },
+            "string_ids": [
+              35184,
+              35185,
+              35186,
+              35187,
+              35188,
+              35189,
+              35190,
+              35191,
+              35192,
+              35193
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2201
+            },
+            "string_ids": [
+              35200,
+              35201,
+              35202,
+              35203,
+              35204,
+              35205,
+              35206,
+              35207,
+              35208,
+              35209,
+              35210,
+              35211,
+              35212,
+              35213,
+              35214,
+              35215
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2202
+            },
+            "string_ids": [
+              35216,
+              35217,
+              35218,
+              35219,
+              35220,
+              35221,
+              35222,
+              35223,
+              35224,
+              35225,
+              35226,
+              35227,
+              35228,
+              35229,
+              35230,
+              35231
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2203
+            },
+            "string_ids": [
+              35232,
+              35233,
+              35234,
+              35235,
+              35236,
+              35237,
+              35238,
+              35239,
+              35240,
+              35241,
+              35242,
+              35243,
+              35244,
+              35245,
+              35246,
+              35247
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2204
+            },
+            "string_ids": [
+              35248,
+              35249,
+              35250,
+              35251,
+              35252,
+              35253,
+              35254,
+              35255,
+              35256,
+              35257,
+              35258,
+              35259,
+              35260,
+              35261,
+              35262,
+              35263
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2205
+            },
+            "string_ids": [
+              35264,
+              35265,
+              35266,
+              35267,
+              35268,
+              35269,
+              35270,
+              35271,
+              35272,
+              35273,
+              35274,
+              35275,
+              35276,
+              35277,
+              35278,
+              35279
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2206
+            },
+            "string_ids": [
+              35280,
+              35281,
+              35282,
+              35283,
+              35284,
+              35285,
+              35286
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2207
+            },
+            "string_ids": [
+              35300,
+              35301,
+              35302,
+              35303,
+              35304,
+              35305,
+              35306,
+              35307,
+              35308,
+              35309,
+              35310,
+              35311
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2208
+            },
+            "string_ids": [
+              35312,
+              35313,
+              35315,
+              35316,
+              35317,
+              35318,
+              35319,
+              35320,
+              35321,
+              35322,
+              35323,
+              35324,
+              35325,
+              35326,
+              35327
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2209
+            },
+            "string_ids": [
+              35328,
+              35329,
+              35330,
+              35331,
+              35332,
+              35333,
+              35334,
+              35335,
+              35336,
+              35337,
+              35338,
+              35339,
+              35340,
+              35341,
+              35342,
+              35343
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2210
+            },
+            "string_ids": [
+              35344,
+              35345,
+              35346,
+              35347,
+              35348,
+              35349,
+              35350,
+              35351,
+              35352,
+              35353,
+              35354,
+              35355,
+              35356,
+              35357,
+              35358,
+              35359
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2211
+            },
+            "string_ids": [
+              35360,
+              35361,
+              35362,
+              35363,
+              35364,
+              35365,
+              35366,
+              35367,
+              35368,
+              35369,
+              35370,
+              35371,
+              35372,
+              35373,
+              35374,
+              35375
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2212
+            },
+            "string_ids": [
+              35376,
+              35377,
+              35378,
+              35379,
+              35380,
+              35381,
+              35382,
+              35383,
+              35384,
+              35385,
+              35386,
+              35387,
+              35388,
+              35389,
+              35390,
+              35391
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2213
+            },
+            "string_ids": [
+              35392,
+              35393,
+              35394,
+              35395,
+              35396,
+              35397,
+              35398,
+              35400,
+              35401
             ],
             "type": {
               "kind": "id",
@@ -17299,6 +18945,226 @@
           {
             "language_id": 1041,
             "name": {
+              "kind": "id",
+              "value": 2194
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2195
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2196
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2197
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2198
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2199
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2200
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2201
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2202
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2203
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2204
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2205
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2206
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2207
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2208
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2209
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2210
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2211
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2212
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
+              "kind": "id",
+              "value": 2213
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 1041,
+            "name": {
               "kind": "name",
               "value": "CODICONFONT"
             },
@@ -17600,7 +19466,7 @@
     {
       "contract": {
         "accelerators": [],
-        "contract_hash": "sha256:a375ba1f547c780c1adcb2339a12a5705cb1a9921805351f90d859543c5405d7",
+        "contract_hash": "sha256:9d8d7f86228335fb63d4ec8de3df0656096da886e8347f3f3d0e1666bdda1c48",
         "counts": {
           "accelerator_commands": 0,
           "accelerators": 0,
@@ -17610,9 +19476,9 @@
           "menu_commands": 0,
           "menu_items": 0,
           "menus": 0,
-          "string_blocks": 134,
-          "strings": 1364,
-          "top_level": 257
+          "string_blocks": 155,
+          "strings": 1671,
+          "top_level": 278
         },
         "dialogs": [
           {
@@ -22569,7 +24435,587 @@
               "value": 2192
             },
             "string_ids": [
-              35056
+              35056,
+              35057,
+              35058,
+              35059,
+              35060,
+              35061,
+              35062,
+              35063,
+              35064,
+              35065,
+              35066,
+              35067,
+              35068,
+              35069,
+              35070,
+              35071
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2193
+            },
+            "string_ids": [
+              35072,
+              35073,
+              35074,
+              35075,
+              35076,
+              35077,
+              35078,
+              35079,
+              35080,
+              35081,
+              35082,
+              35083,
+              35084,
+              35085,
+              35086,
+              35087
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2194
+            },
+            "string_ids": [
+              35088,
+              35089,
+              35090,
+              35091,
+              35092,
+              35093,
+              35094,
+              35095,
+              35096,
+              35097,
+              35098,
+              35099,
+              35100,
+              35101,
+              35102,
+              35103
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2195
+            },
+            "string_ids": [
+              35104,
+              35105,
+              35106
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2196
+            },
+            "string_ids": [
+              35120,
+              35121,
+              35122,
+              35123,
+              35124,
+              35125,
+              35126,
+              35127,
+              35128,
+              35129,
+              35130,
+              35131,
+              35132,
+              35133,
+              35134,
+              35135
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2197
+            },
+            "string_ids": [
+              35136,
+              35137,
+              35138,
+              35139,
+              35140,
+              35141,
+              35142,
+              35143,
+              35144,
+              35145,
+              35146,
+              35147,
+              35148,
+              35149,
+              35150,
+              35151
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2198
+            },
+            "string_ids": [
+              35152,
+              35153,
+              35158,
+              35159,
+              35160,
+              35161,
+              35162,
+              35163,
+              35164,
+              35165,
+              35166,
+              35167
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2199
+            },
+            "string_ids": [
+              35168,
+              35169,
+              35170,
+              35171,
+              35172,
+              35173,
+              35174,
+              35175,
+              35176,
+              35177,
+              35178,
+              35179,
+              35180,
+              35181,
+              35182,
+              35183
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2200
+            },
+            "string_ids": [
+              35184,
+              35185,
+              35186,
+              35187,
+              35188,
+              35189,
+              35190,
+              35191,
+              35192,
+              35193
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2201
+            },
+            "string_ids": [
+              35200,
+              35201,
+              35202,
+              35203,
+              35204,
+              35205,
+              35206,
+              35207,
+              35208,
+              35209,
+              35210,
+              35211,
+              35212,
+              35213,
+              35214,
+              35215
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2202
+            },
+            "string_ids": [
+              35216,
+              35217,
+              35218,
+              35219,
+              35220,
+              35221,
+              35222,
+              35223,
+              35224,
+              35225,
+              35226,
+              35227,
+              35228,
+              35229,
+              35230,
+              35231
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2203
+            },
+            "string_ids": [
+              35232,
+              35233,
+              35234,
+              35235,
+              35236,
+              35237,
+              35238,
+              35239,
+              35240,
+              35241,
+              35242,
+              35243,
+              35244,
+              35245,
+              35246,
+              35247
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2204
+            },
+            "string_ids": [
+              35248,
+              35249,
+              35250,
+              35251,
+              35252,
+              35253,
+              35254,
+              35255,
+              35256,
+              35257,
+              35258,
+              35259,
+              35260,
+              35261,
+              35262,
+              35263
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2205
+            },
+            "string_ids": [
+              35264,
+              35265,
+              35266,
+              35267,
+              35268,
+              35269,
+              35270,
+              35271,
+              35272,
+              35273,
+              35274,
+              35275,
+              35276,
+              35277,
+              35278,
+              35279
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2206
+            },
+            "string_ids": [
+              35280,
+              35281,
+              35282,
+              35283,
+              35284,
+              35285,
+              35286
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2207
+            },
+            "string_ids": [
+              35300,
+              35301,
+              35302,
+              35303,
+              35304,
+              35305,
+              35306,
+              35307,
+              35308,
+              35309,
+              35310,
+              35311
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2208
+            },
+            "string_ids": [
+              35312,
+              35313,
+              35315,
+              35316,
+              35317,
+              35318,
+              35319,
+              35320,
+              35321,
+              35322,
+              35323,
+              35324,
+              35325,
+              35326,
+              35327
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2209
+            },
+            "string_ids": [
+              35328,
+              35329,
+              35330,
+              35331,
+              35332,
+              35333,
+              35334,
+              35335,
+              35336,
+              35337,
+              35338,
+              35339,
+              35340,
+              35341,
+              35342,
+              35343
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2210
+            },
+            "string_ids": [
+              35344,
+              35345,
+              35346,
+              35347,
+              35348,
+              35349,
+              35350,
+              35351,
+              35352,
+              35353,
+              35354,
+              35355,
+              35356,
+              35357,
+              35358,
+              35359
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2211
+            },
+            "string_ids": [
+              35360,
+              35361,
+              35362,
+              35363,
+              35364,
+              35365,
+              35366,
+              35367,
+              35368,
+              35369,
+              35370,
+              35371,
+              35372,
+              35373,
+              35374,
+              35375
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2212
+            },
+            "string_ids": [
+              35376,
+              35377,
+              35378,
+              35379,
+              35380,
+              35381,
+              35382,
+              35383,
+              35384,
+              35385,
+              35386,
+              35387,
+              35388,
+              35389,
+              35390,
+              35391
+            ],
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2213
+            },
+            "string_ids": [
+              35392,
+              35393,
+              35394,
+              35395,
+              35396,
+              35397,
+              35398,
+              35400,
+              35401
             ],
             "type": {
               "kind": "id",
@@ -25123,6 +27569,237 @@
             "language_id": 2052,
             "name": {
               "kind": "id",
+              "value": 2193
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2194
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2195
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2196
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2197
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2198
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2199
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2200
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2201
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2202
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2203
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2204
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2205
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2206
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2207
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2208
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2209
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2210
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2211
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2212
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
+              "value": 2213
+            },
+            "type": {
+              "kind": "id",
+              "value": 6
+            }
+          },
+          {
+            "language_id": 2052,
+            "name": {
+              "kind": "id",
               "value": 220
             },
             "type": {
@@ -25413,14 +28090,14 @@
   "schema_version": 1,
   "sources": [
     {
-      "contract_hash": "sha256:1cf3cb1168bd4aff8b395287963ac67b190ba3f9e30c9b4c5ffd21baa5e51827",
-      "occurrence_count": 2280,
+      "contract_hash": "sha256:c4a0e84ff367b6ab44d7d348b5e39e7ce621270840b6975d2a10de15ee8d171b",
+      "occurrence_count": 2587,
       "paths": [
         "sakura_lang/sakura_rc_en-US.rc",
         "sakura_lang/sakura_rc_en-US.rc2"
       ],
       "role": "en-US",
-      "symbol_count": 1834,
+      "symbol_count": 2141,
       "symbols": {
         "F_BOOKMARK_SUBMENU": 1,
         "F_CHGMOD_EOL_SUBMENU": 1,
@@ -27215,6 +29892,23 @@
         "STR_TAGJUMP_1": 1,
         "STR_TAGJUMP_2": 1,
         "STR_TAGJUMP_3": 1,
+        "STR_TERMINAL_CLOSE": 1,
+        "STR_TERMINAL_CLOSE_SPLIT": 1,
+        "STR_TERMINAL_FALLBACK_LABEL": 1,
+        "STR_TERMINAL_INPUT_BACKPRESSURE": 1,
+        "STR_TERMINAL_INPUT_REJECTED": 1,
+        "STR_TERMINAL_NEW": 1,
+        "STR_TERMINAL_NO_POWERSHELL_PROFILE": 1,
+        "STR_TERMINAL_NO_SESSIONS": 1,
+        "STR_TERMINAL_POWERSHELL_PROFILE": 1,
+        "STR_TERMINAL_PROFILE_LEGACY": 1,
+        "STR_TERMINAL_PROFILE_PREVIEW": 1,
+        "STR_TERMINAL_REDETECT_POWERSHELL": 1,
+        "STR_TERMINAL_RESTART": 1,
+        "STR_TERMINAL_SESSIONS": 1,
+        "STR_TERMINAL_SPLIT": 1,
+        "STR_TERMINAL_SPLIT_DOWN": 1,
+        "STR_TERMINAL_TITLE": 1,
         "STR_TIME_FORMAT": 1,
         "STR_TITLE_GREP": 1,
         "STR_TRANSNAME_APPDATA": 1,
@@ -27246,6 +29940,296 @@
         "STR_VIEW_MOUSE_MENU_OPEN": 1,
         "STR_VIEW_MOUSE_MENU_PATH": 1,
         "STR_VIEW_TIMER": 1,
+        "STR_WORKBENCH_ACTIVITY_EXPLORER": 1,
+        "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 1,
+        "STR_WORKBENCH_COLOR_THEME": 1,
+        "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 1,
+        "STR_WORKBENCH_COLOR_THEME_NONE": 1,
+        "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 1,
+        "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 1,
+        "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 1,
+        "STR_WORKBENCH_COMMAND_COLOR_THEME": 1,
+        "STR_WORKBENCH_COMMAND_DUPLICATE_WORKSPACE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COLLAPSE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COPY_PATH": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COPY_RELATIVE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_DELETE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FILE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_REFRESH": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_BRANCH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CHECKOUT_DETACHED": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLEAN": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLEAN_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLONE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLONE_RECURSIVE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_COMMIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_COMMIT_AMEND": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH_PRUNE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_INIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_OPEN_CHANGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PUBLISH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PULL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PULL_REBASE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PUSH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE_RANGES": 1,
+        "STR_WORKBENCH_COMMAND_GIT_SYNC": 1,
+        "STR_WORKBENCH_COMMAND_GIT_SYNC_REBASE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNDO_COMMIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_RANGES": 1,
+        "STR_WORKBENCH_COMMAND_HIDE_NOTIFICATIONS": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_LOCKED_SIDE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW_SIDE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REFRESH": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_PREVIEW": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_SOURCE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_SECURITY": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_SOURCE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE_LOCK": 1,
+        "STR_WORKBENCH_COMMAND_NEW_FILE": 1,
+        "STR_WORKBENCH_COMMAND_NEW_WINDOW": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_FILE": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_GLOBAL_KEYBINDINGS": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_RECENT": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_SETTINGS": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_WORKSPACE": 1,
+        "STR_WORKBENCH_COMMAND_OUTPUT": 1,
+        "STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS": 1,
+        "STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_COMMAND_PROBLEMS": 1,
+        "STR_WORKBENCH_COMMAND_QUIT": 1,
+        "STR_WORKBENCH_COMMAND_SAVE": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_AS": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_WORKSPACE_AS": 1,
+        "STR_WORKBENCH_COMMAND_SHOW_COMMANDS": 1,
+        "STR_WORKBENCH_COMMAND_SHOW_NOTIFICATIONS": 1,
+        "STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR": 1,
+        "STR_WORKBENCH_COMMAND_TOGGLE_STATUSBAR": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CANCELLING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CHECK": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CHECKING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOAD": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOADING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INDICATOR": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INFO": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INSTALL": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_RESTART": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_UPDATING": 1,
+        "STR_WORKBENCH_DIFF_COMPARISON_TRUNCATED": 1,
+        "STR_WORKBENCH_DIFF_IDENTICAL": 1,
+        "STR_WORKBENCH_DIFF_NO_COMPARISON": 1,
+        "STR_WORKBENCH_DIFF_TITLE": 1,
+        "STR_WORKBENCH_EXPLORER_ADD_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE": 1,
+        "STR_WORKBENCH_EXPLORER_CLONE_REPOSITORY_DESCRIPTION": 1,
+        "STR_WORKBENCH_EXPLORER_CREATE_FILE_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_CREATE_FOLDER_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_DELETE_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_EMPTY_WORKSPACE": 1,
+        "STR_WORKBENCH_EXPLORER_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_MULTIROOT_UNAVAILABLE": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER_OPENED": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER_WITH_EDITORS": 1,
+        "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_TITLE": 1,
+        "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 1,
+        "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 1,
+        "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 1,
+        "STR_WORKBENCH_GIT_BRANCH_ALREADY_EXISTS": 1,
+        "STR_WORKBENCH_GIT_BRANCH_FROM_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NAME_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NAME_PROMPT": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_BRANCH_TAG": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_DETACHED": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_DETACHED_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_CHOOSE_FOLDER": 1,
+        "STR_WORKBENCH_GIT_CLONE_CANCELLED": 1,
+        "STR_WORKBENCH_GIT_CLONE_NONEMPTY": 1,
+        "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 1,
+        "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_CLONE_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_COMMIT_CHANGES": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE_PROMPT": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_MESSAGE_PROMPT": 1,
+        "STR_WORKBENCH_GIT_CONFLICT": 1,
+        "STR_WORKBENCH_GIT_CREATE_BRANCH": 1,
+        "STR_WORKBENCH_GIT_CREATE_BRANCH_FROM": 1,
+        "STR_WORKBENCH_GIT_CREATE_EMPTY_COMMIT": 1,
+        "STR_WORKBENCH_GIT_DELETE_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_DELETE_FILE": 1,
+        "STR_WORKBENCH_GIT_DELETE_UNTRACKED_MANY": 1,
+        "STR_WORKBENCH_GIT_DELETE_UNTRACKED_ONE": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_OPEN_FAILED": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_READ_FAILED": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_TOO_LARGE": 1,
+        "STR_WORKBENCH_GIT_DIFF_INDEX": 1,
+        "STR_WORKBENCH_GIT_DIFF_PATH_UNRESOLVED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_DELETED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_INDEX": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_INTENT_TO_ADD": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_OURS": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_THEIRS": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_TYPE_CHANGED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_UNTRACKED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_WORKING_TREE": 1,
+        "STR_WORKBENCH_GIT_DIFF_WORKING_TREE": 1,
+        "STR_WORKBENCH_GIT_DIRTY_WORK_TREE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_TRACKED_FILES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_CHANGES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_FILE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_MANY": 1,
+        "STR_WORKBENCH_GIT_DISCARD_NO_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_DISCARD_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ONE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_FILE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_MANY": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_ONE": 1,
+        "STR_WORKBENCH_GIT_DONT_PULL": 1,
+        "STR_WORKBENCH_GIT_EMPTY_WORKBENCH": 1,
+        "STR_WORKBENCH_GIT_EMPTY_WORKSPACE": 1,
+        "STR_WORKBENCH_GIT_FETCH_ALL_REMOTES": 1,
+        "STR_WORKBENCH_GIT_FETCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_FOLDER_NO_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED": 1,
+        "STR_WORKBENCH_GIT_INITIALIZE_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_INIT_CANCELLED_HOME": 1,
+        "STR_WORKBENCH_GIT_INIT_FOLDER_PICKER": 1,
+        "STR_WORKBENCH_GIT_INIT_HOME_WARNING": 1,
+        "STR_WORKBENCH_GIT_INIT_OPEN_PROMPT": 1,
+        "STR_WORKBENCH_GIT_INIT_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_INVALID_URL_FOLDER": 1,
+        "STR_WORKBENCH_GIT_IRREVERSIBLE_MANY": 1,
+        "STR_WORKBENCH_GIT_IRREVERSIBLE_ONE": 1,
+        "STR_WORKBENCH_GIT_MAYBE_REBASED": 1,
+        "STR_WORKBENCH_GIT_MAYBE_REBASED_NO_NAME": 1,
+        "STR_WORKBENCH_GIT_MOVE_TO_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_NEW_BRANCH_WILL_BE": 1,
+        "STR_WORKBENCH_GIT_NO_BRANCH_TO_PUSH": 1,
+        "STR_WORKBENCH_GIT_NO_CHANGES": 1,
+        "STR_WORKBENCH_GIT_NO_FETCH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PUBLISH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PULL_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PUSH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_STAGED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED": 1,
+        "STR_WORKBENCH_GIT_NO_VERIFY_DISABLED": 1,
+        "STR_WORKBENCH_GIT_NO_VERIFY_WARNING": 1,
+        "STR_WORKBENCH_GIT_OK": 1,
+        "STR_WORKBENCH_GIT_OPEN": 1,
+        "STR_WORKBENCH_GIT_OPEN_CHANGES": 1,
+        "STR_WORKBENCH_GIT_OPEN_FILE": 1,
+        "STR_WORKBENCH_GIT_OVERWRITE": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_BRANCH": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_BRANCH_PROMPT": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER": 1,
+        "STR_WORKBENCH_GIT_PULL": 1,
+        "STR_WORKBENCH_GIT_PUSH_REJECTED": 1,
+        "STR_WORKBENCH_GIT_REBASE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_GIT_RECYCLE_BIN_FAILED": 1,
+        "STR_WORKBENCH_GIT_REF_BRANCHES": 1,
+        "STR_WORKBENCH_GIT_REF_REMOTE_BRANCHES": 1,
+        "STR_WORKBENCH_GIT_REF_REMOTE_BRANCH_AT": 1,
+        "STR_WORKBENCH_GIT_REF_TAGS": 1,
+        "STR_WORKBENCH_GIT_REF_TAG_AT": 1,
+        "STR_WORKBENCH_GIT_REPOSITORY_LOCATION": 1,
+        "STR_WORKBENCH_GIT_REPOSITORY_URL": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_RESTORE_FILE": 1,
+        "STR_WORKBENCH_GIT_RESTORE_MANY": 1,
+        "STR_WORKBENCH_GIT_RESTORE_MANY_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ONE": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ONE_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_SAVE_ALL_COMMIT_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_MERGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_STAGED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_UNTRACKED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_MERGE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_GIT_STAGE_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_SYNCHRONIZE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SYNC_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_SYNC_DISMISSED": 1,
+        "STR_WORKBENCH_GIT_SYNC_NOTHING_TO_PUSH": 1,
+        "STR_WORKBENCH_GIT_SYNC_NO_HEAD": 1,
+        "STR_WORKBENCH_GIT_SYNC_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_SYNC_READ_ONLY_REMOTE": 1,
+        "STR_WORKBENCH_GIT_UNDO_MERGE_COMMIT": 1,
+        "STR_WORKBENCH_GIT_UNDO_MERGE_WARNING": 1,
+        "STR_WORKBENCH_GIT_UNDO_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_MANY": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_ONE": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_SAVE_FAILED": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_YES": 1,
+        "STR_WORKBENCH_INITIALIZE_FAILED": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_FILE": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_SOURCE": 1,
+        "STR_WORKBENCH_PANEL_DEBUG_CONSOLE": 1,
+        "STR_WORKBENCH_PANEL_OUTPUT": 1,
+        "STR_WORKBENCH_PANEL_PORTS": 1,
+        "STR_WORKBENCH_PANEL_PROBLEMS": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_ERROR": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_HINT": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_INFO": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_WARNING": 1,
+        "STR_WORKBENCH_PANEL_TERMINAL": 1,
+        "STR_WORKBENCH_QUICK_INPUT_CANCEL": 1,
+        "STR_WORKBENCH_QUICK_INPUT_OK": 1,
+        "STR_WORKBENCH_REMOTE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 1,
+        "STR_WORKBENCH_SCM_CHANGES_TITLE": 1,
+        "STR_WORKBENCH_SCM_GRAPH_TITLE": 1,
+        "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 1,
+        "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 1,
+        "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 1,
+        "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 1,
+        "STR_WORKBENCH_STATUS_CHARACTER_CODE": 1,
+        "STR_WORKBENCH_STATUS_ENCODING": 1,
+        "STR_WORKBENCH_STATUS_INPUT_MODE": 1,
+        "STR_WORKBENCH_STATUS_LINE_ENDING": 1,
+        "STR_WORKBENCH_STATUS_MACRO_RECORDING": 1,
+        "STR_WORKBENCH_STATUS_REMOTE_HOST": 1,
+        "STR_WORKBENCH_STATUS_SELECTION": 1,
+        "STR_WORKBENCH_STATUS_ZOOM": 1,
+        "STR_WORKBENCH_VIEWCONTAINER_EMPTY": 1,
+        "STR_WORKBENCH_VIEWCONTAINER_OUTLINE": 1,
         "STR_WRAP_INDENT_BOL": 1,
         "STR_WRAP_INDENT_NONE": 1,
         "STR_WRAP_INDENT_TX2X": 1,
@@ -27259,14 +30243,14 @@
       }
     },
     {
-      "contract_hash": "sha256:c3bed8cc543d5228c5a49d18203e016af1a6e2c80563ffe90ca91dcdc6e5da1b",
-      "occurrence_count": 2300,
+      "contract_hash": "sha256:f6395a159c367bbb86f02d574a7786262193ea4e4386efe4e651e5d149ca0469",
+      "occurrence_count": 2588,
       "paths": [
         "sakura_core/sakura_rc.rc",
         "sakura_core/sakura_rc.rc2"
       ],
       "role": "ja-JP",
-      "symbol_count": 1857,
+      "symbol_count": 2145,
       "symbols": {
         "F_BOOKMARK_SUBMENU": 1,
         "F_CHGMOD_EOL_SUBMENU": 1,
@@ -28719,25 +31703,6 @@
         "STR_EXCLU_DENY_WRITE": 1,
         "STR_EXCLU_NO_EXCLUSIVE": 1,
         "STR_EXCLU_UNDEFINED": 1,
-        "STR_EXTENSION_COL_NAME": 1,
-        "STR_EXTENSION_COL_STATE": 1,
-        "STR_EXTENSION_COL_VERSION": 1,
-        "STR_EXTENSION_CONFIRM_REMOVE": 1,
-        "STR_EXTENSION_INSTALL": 1,
-        "STR_EXTENSION_NOTE_NOTRUN": 1,
-        "STR_EXTENSION_REMOVE": 1,
-        "STR_EXTENSION_SEARCH": 1,
-        "STR_EXTENSION_STATE_INSTALLED": 1,
-        "STR_EXTENSION_STATE_NOTINSTALLED": 1,
-        "STR_EXTENSION_STATUS_BUSY": 1,
-        "STR_EXTENSION_STATUS_FAILED": 1,
-        "STR_EXTENSION_STATUS_FOUND": 1,
-        "STR_EXTENSION_STATUS_INSTALLED": 1,
-        "STR_EXTENSION_STATUS_INSTALLED_COUNT": 1,
-        "STR_EXTENSION_STATUS_INSTALLING": 1,
-        "STR_EXTENSION_STATUS_REMOVED": 1,
-        "STR_EXTENSION_STATUS_REMOVING": 1,
-        "STR_EXTENSION_STATUS_SEARCHING": 1,
         "STR_FILEDIALOG_CODE": 1,
         "STR_FILEDIALOG_EOL": 1,
         "STR_FILEDIALOG_MRU": 1,
@@ -29084,6 +32049,23 @@
         "STR_TAGJUMP_1": 1,
         "STR_TAGJUMP_2": 1,
         "STR_TAGJUMP_3": 1,
+        "STR_TERMINAL_CLOSE": 1,
+        "STR_TERMINAL_CLOSE_SPLIT": 1,
+        "STR_TERMINAL_FALLBACK_LABEL": 1,
+        "STR_TERMINAL_INPUT_BACKPRESSURE": 1,
+        "STR_TERMINAL_INPUT_REJECTED": 1,
+        "STR_TERMINAL_NEW": 1,
+        "STR_TERMINAL_NO_POWERSHELL_PROFILE": 1,
+        "STR_TERMINAL_NO_SESSIONS": 1,
+        "STR_TERMINAL_POWERSHELL_PROFILE": 1,
+        "STR_TERMINAL_PROFILE_LEGACY": 1,
+        "STR_TERMINAL_PROFILE_PREVIEW": 1,
+        "STR_TERMINAL_REDETECT_POWERSHELL": 1,
+        "STR_TERMINAL_RESTART": 1,
+        "STR_TERMINAL_SESSIONS": 1,
+        "STR_TERMINAL_SPLIT": 1,
+        "STR_TERMINAL_SPLIT_DOWN": 1,
+        "STR_TERMINAL_TITLE": 1,
         "STR_TIME_FORMAT": 1,
         "STR_TITLE_GREP": 1,
         "STR_TRANSNAME_APPDATA": 1,
@@ -29115,6 +32097,296 @@
         "STR_VIEW_MOUSE_MENU_OPEN": 1,
         "STR_VIEW_MOUSE_MENU_PATH": 1,
         "STR_VIEW_TIMER": 1,
+        "STR_WORKBENCH_ACTIVITY_EXPLORER": 1,
+        "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 1,
+        "STR_WORKBENCH_COLOR_THEME": 1,
+        "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 1,
+        "STR_WORKBENCH_COLOR_THEME_NONE": 1,
+        "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 1,
+        "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 1,
+        "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 1,
+        "STR_WORKBENCH_COMMAND_COLOR_THEME": 1,
+        "STR_WORKBENCH_COMMAND_DUPLICATE_WORKSPACE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COLLAPSE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COPY_PATH": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COPY_RELATIVE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_DELETE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FILE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_REFRESH": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_BRANCH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CHECKOUT_DETACHED": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLEAN": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLEAN_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLONE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLONE_RECURSIVE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_COMMIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_COMMIT_AMEND": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH_PRUNE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_INIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_OPEN_CHANGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PUBLISH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PULL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PULL_REBASE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PUSH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE_RANGES": 1,
+        "STR_WORKBENCH_COMMAND_GIT_SYNC": 1,
+        "STR_WORKBENCH_COMMAND_GIT_SYNC_REBASE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNDO_COMMIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_RANGES": 1,
+        "STR_WORKBENCH_COMMAND_HIDE_NOTIFICATIONS": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_LOCKED_SIDE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW_SIDE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REFRESH": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_PREVIEW": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_SOURCE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_SECURITY": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_SOURCE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE_LOCK": 1,
+        "STR_WORKBENCH_COMMAND_NEW_FILE": 1,
+        "STR_WORKBENCH_COMMAND_NEW_WINDOW": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_FILE": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_GLOBAL_KEYBINDINGS": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_RECENT": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_SETTINGS": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_WORKSPACE": 1,
+        "STR_WORKBENCH_COMMAND_OUTPUT": 1,
+        "STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS": 1,
+        "STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_COMMAND_PROBLEMS": 1,
+        "STR_WORKBENCH_COMMAND_QUIT": 1,
+        "STR_WORKBENCH_COMMAND_SAVE": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_AS": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_WORKSPACE_AS": 1,
+        "STR_WORKBENCH_COMMAND_SHOW_COMMANDS": 1,
+        "STR_WORKBENCH_COMMAND_SHOW_NOTIFICATIONS": 1,
+        "STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR": 1,
+        "STR_WORKBENCH_COMMAND_TOGGLE_STATUSBAR": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CANCELLING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CHECK": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CHECKING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOAD": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOADING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INDICATOR": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INFO": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INSTALL": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_RESTART": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_UPDATING": 1,
+        "STR_WORKBENCH_DIFF_COMPARISON_TRUNCATED": 1,
+        "STR_WORKBENCH_DIFF_IDENTICAL": 1,
+        "STR_WORKBENCH_DIFF_NO_COMPARISON": 1,
+        "STR_WORKBENCH_DIFF_TITLE": 1,
+        "STR_WORKBENCH_EXPLORER_ADD_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE": 1,
+        "STR_WORKBENCH_EXPLORER_CLONE_REPOSITORY_DESCRIPTION": 1,
+        "STR_WORKBENCH_EXPLORER_CREATE_FILE_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_CREATE_FOLDER_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_DELETE_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_EMPTY_WORKSPACE": 1,
+        "STR_WORKBENCH_EXPLORER_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_MULTIROOT_UNAVAILABLE": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER_OPENED": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER_WITH_EDITORS": 1,
+        "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_TITLE": 1,
+        "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 1,
+        "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 1,
+        "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 1,
+        "STR_WORKBENCH_GIT_BRANCH_ALREADY_EXISTS": 1,
+        "STR_WORKBENCH_GIT_BRANCH_FROM_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NAME_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NAME_PROMPT": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_BRANCH_TAG": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_DETACHED": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_DETACHED_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_CHOOSE_FOLDER": 1,
+        "STR_WORKBENCH_GIT_CLONE_CANCELLED": 1,
+        "STR_WORKBENCH_GIT_CLONE_NONEMPTY": 1,
+        "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 1,
+        "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_CLONE_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_COMMIT_CHANGES": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE_PROMPT": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_MESSAGE_PROMPT": 1,
+        "STR_WORKBENCH_GIT_CONFLICT": 1,
+        "STR_WORKBENCH_GIT_CREATE_BRANCH": 1,
+        "STR_WORKBENCH_GIT_CREATE_BRANCH_FROM": 1,
+        "STR_WORKBENCH_GIT_CREATE_EMPTY_COMMIT": 1,
+        "STR_WORKBENCH_GIT_DELETE_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_DELETE_FILE": 1,
+        "STR_WORKBENCH_GIT_DELETE_UNTRACKED_MANY": 1,
+        "STR_WORKBENCH_GIT_DELETE_UNTRACKED_ONE": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_OPEN_FAILED": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_READ_FAILED": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_TOO_LARGE": 1,
+        "STR_WORKBENCH_GIT_DIFF_INDEX": 1,
+        "STR_WORKBENCH_GIT_DIFF_PATH_UNRESOLVED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_DELETED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_INDEX": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_INTENT_TO_ADD": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_OURS": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_THEIRS": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_TYPE_CHANGED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_UNTRACKED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_WORKING_TREE": 1,
+        "STR_WORKBENCH_GIT_DIFF_WORKING_TREE": 1,
+        "STR_WORKBENCH_GIT_DIRTY_WORK_TREE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_TRACKED_FILES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_CHANGES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_FILE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_MANY": 1,
+        "STR_WORKBENCH_GIT_DISCARD_NO_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_DISCARD_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ONE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_FILE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_MANY": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_ONE": 1,
+        "STR_WORKBENCH_GIT_DONT_PULL": 1,
+        "STR_WORKBENCH_GIT_EMPTY_WORKBENCH": 1,
+        "STR_WORKBENCH_GIT_EMPTY_WORKSPACE": 1,
+        "STR_WORKBENCH_GIT_FETCH_ALL_REMOTES": 1,
+        "STR_WORKBENCH_GIT_FETCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_FOLDER_NO_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED": 1,
+        "STR_WORKBENCH_GIT_INITIALIZE_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_INIT_CANCELLED_HOME": 1,
+        "STR_WORKBENCH_GIT_INIT_FOLDER_PICKER": 1,
+        "STR_WORKBENCH_GIT_INIT_HOME_WARNING": 1,
+        "STR_WORKBENCH_GIT_INIT_OPEN_PROMPT": 1,
+        "STR_WORKBENCH_GIT_INIT_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_INVALID_URL_FOLDER": 1,
+        "STR_WORKBENCH_GIT_IRREVERSIBLE_MANY": 1,
+        "STR_WORKBENCH_GIT_IRREVERSIBLE_ONE": 1,
+        "STR_WORKBENCH_GIT_MAYBE_REBASED": 1,
+        "STR_WORKBENCH_GIT_MAYBE_REBASED_NO_NAME": 1,
+        "STR_WORKBENCH_GIT_MOVE_TO_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_NEW_BRANCH_WILL_BE": 1,
+        "STR_WORKBENCH_GIT_NO_BRANCH_TO_PUSH": 1,
+        "STR_WORKBENCH_GIT_NO_CHANGES": 1,
+        "STR_WORKBENCH_GIT_NO_FETCH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PUBLISH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PULL_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PUSH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_STAGED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED": 1,
+        "STR_WORKBENCH_GIT_NO_VERIFY_DISABLED": 1,
+        "STR_WORKBENCH_GIT_NO_VERIFY_WARNING": 1,
+        "STR_WORKBENCH_GIT_OK": 1,
+        "STR_WORKBENCH_GIT_OPEN": 1,
+        "STR_WORKBENCH_GIT_OPEN_CHANGES": 1,
+        "STR_WORKBENCH_GIT_OPEN_FILE": 1,
+        "STR_WORKBENCH_GIT_OVERWRITE": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_BRANCH": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_BRANCH_PROMPT": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER": 1,
+        "STR_WORKBENCH_GIT_PULL": 1,
+        "STR_WORKBENCH_GIT_PUSH_REJECTED": 1,
+        "STR_WORKBENCH_GIT_REBASE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_GIT_RECYCLE_BIN_FAILED": 1,
+        "STR_WORKBENCH_GIT_REF_BRANCHES": 1,
+        "STR_WORKBENCH_GIT_REF_REMOTE_BRANCHES": 1,
+        "STR_WORKBENCH_GIT_REF_REMOTE_BRANCH_AT": 1,
+        "STR_WORKBENCH_GIT_REF_TAGS": 1,
+        "STR_WORKBENCH_GIT_REF_TAG_AT": 1,
+        "STR_WORKBENCH_GIT_REPOSITORY_LOCATION": 1,
+        "STR_WORKBENCH_GIT_REPOSITORY_URL": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_RESTORE_FILE": 1,
+        "STR_WORKBENCH_GIT_RESTORE_MANY": 1,
+        "STR_WORKBENCH_GIT_RESTORE_MANY_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ONE": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ONE_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_SAVE_ALL_COMMIT_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_MERGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_STAGED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_UNTRACKED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_MERGE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_GIT_STAGE_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_SYNCHRONIZE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SYNC_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_SYNC_DISMISSED": 1,
+        "STR_WORKBENCH_GIT_SYNC_NOTHING_TO_PUSH": 1,
+        "STR_WORKBENCH_GIT_SYNC_NO_HEAD": 1,
+        "STR_WORKBENCH_GIT_SYNC_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_SYNC_READ_ONLY_REMOTE": 1,
+        "STR_WORKBENCH_GIT_UNDO_MERGE_COMMIT": 1,
+        "STR_WORKBENCH_GIT_UNDO_MERGE_WARNING": 1,
+        "STR_WORKBENCH_GIT_UNDO_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_MANY": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_ONE": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_SAVE_FAILED": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_YES": 1,
+        "STR_WORKBENCH_INITIALIZE_FAILED": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_FILE": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_SOURCE": 1,
+        "STR_WORKBENCH_PANEL_DEBUG_CONSOLE": 1,
+        "STR_WORKBENCH_PANEL_OUTPUT": 1,
+        "STR_WORKBENCH_PANEL_PORTS": 1,
+        "STR_WORKBENCH_PANEL_PROBLEMS": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_ERROR": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_HINT": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_INFO": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_WARNING": 1,
+        "STR_WORKBENCH_PANEL_TERMINAL": 1,
+        "STR_WORKBENCH_QUICK_INPUT_CANCEL": 1,
+        "STR_WORKBENCH_QUICK_INPUT_OK": 1,
+        "STR_WORKBENCH_REMOTE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 1,
+        "STR_WORKBENCH_SCM_CHANGES_TITLE": 1,
+        "STR_WORKBENCH_SCM_GRAPH_TITLE": 1,
+        "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 1,
+        "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 1,
+        "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 1,
+        "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 1,
+        "STR_WORKBENCH_STATUS_CHARACTER_CODE": 1,
+        "STR_WORKBENCH_STATUS_ENCODING": 1,
+        "STR_WORKBENCH_STATUS_INPUT_MODE": 1,
+        "STR_WORKBENCH_STATUS_LINE_ENDING": 1,
+        "STR_WORKBENCH_STATUS_MACRO_RECORDING": 1,
+        "STR_WORKBENCH_STATUS_REMOTE_HOST": 1,
+        "STR_WORKBENCH_STATUS_SELECTION": 1,
+        "STR_WORKBENCH_STATUS_ZOOM": 1,
+        "STR_WORKBENCH_VIEWCONTAINER_EMPTY": 1,
+        "STR_WORKBENCH_VIEWCONTAINER_OUTLINE": 1,
         "STR_WRAP_INDENT_BOL": 1,
         "STR_WRAP_INDENT_NONE": 1,
         "STR_WRAP_INDENT_TX2X": 1,
@@ -29128,14 +32400,14 @@
       }
     },
     {
-      "contract_hash": "sha256:91366f4b7a186fa1e6ea3367951e8c77531574917aa57b61c395c206fd3e6a50",
-      "occurrence_count": 2280,
+      "contract_hash": "sha256:58a2ccbeaa9ad02d4947ac1e45055083a196c08050f47fc49ebee65882848c19",
+      "occurrence_count": 2587,
       "paths": [
         "sakura_lang/sakura_rc_zh-CN.rc",
         "sakura_lang/sakura_rc_zh-CN.rc2"
       ],
       "role": "zh-CN",
-      "symbol_count": 1834,
+      "symbol_count": 2141,
       "symbols": {
         "F_BOOKMARK_SUBMENU": 1,
         "F_CHGMOD_EOL_SUBMENU": 1,
@@ -30930,6 +34202,23 @@
         "STR_TAGJUMP_1": 1,
         "STR_TAGJUMP_2": 1,
         "STR_TAGJUMP_3": 1,
+        "STR_TERMINAL_CLOSE": 1,
+        "STR_TERMINAL_CLOSE_SPLIT": 1,
+        "STR_TERMINAL_FALLBACK_LABEL": 1,
+        "STR_TERMINAL_INPUT_BACKPRESSURE": 1,
+        "STR_TERMINAL_INPUT_REJECTED": 1,
+        "STR_TERMINAL_NEW": 1,
+        "STR_TERMINAL_NO_POWERSHELL_PROFILE": 1,
+        "STR_TERMINAL_NO_SESSIONS": 1,
+        "STR_TERMINAL_POWERSHELL_PROFILE": 1,
+        "STR_TERMINAL_PROFILE_LEGACY": 1,
+        "STR_TERMINAL_PROFILE_PREVIEW": 1,
+        "STR_TERMINAL_REDETECT_POWERSHELL": 1,
+        "STR_TERMINAL_RESTART": 1,
+        "STR_TERMINAL_SESSIONS": 1,
+        "STR_TERMINAL_SPLIT": 1,
+        "STR_TERMINAL_SPLIT_DOWN": 1,
+        "STR_TERMINAL_TITLE": 1,
         "STR_TIME_FORMAT": 1,
         "STR_TITLE_GREP": 1,
         "STR_TRANSNAME_APPDATA": 1,
@@ -30961,6 +34250,296 @@
         "STR_VIEW_MOUSE_MENU_OPEN": 1,
         "STR_VIEW_MOUSE_MENU_PATH": 1,
         "STR_VIEW_TIMER": 1,
+        "STR_WORKBENCH_ACTIVITY_EXPLORER": 1,
+        "STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL": 1,
+        "STR_WORKBENCH_COLOR_THEME": 1,
+        "STR_WORKBENCH_COLOR_THEME_APPLY_FAILED": 1,
+        "STR_WORKBENCH_COLOR_THEME_NONE": 1,
+        "STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER": 1,
+        "STR_WORKBENCH_COLOR_THEME_SAVE_FAILED": 1,
+        "STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_EDITOR": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_CLOSE_WINDOW": 1,
+        "STR_WORKBENCH_COMMAND_COLOR_THEME": 1,
+        "STR_WORKBENCH_COMMAND_DUPLICATE_WORKSPACE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COLLAPSE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COPY_PATH": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_COPY_RELATIVE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_DELETE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FILE": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_NEW_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_REFRESH": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_RENAME": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_REVEAL": 1,
+        "STR_WORKBENCH_COMMAND_EXPLORER_TRASH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_BRANCH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_BRANCH_FROM": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CHECKOUT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CHECKOUT_DETACHED": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLEAN": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLEAN_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLONE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_CLONE_RECURSIVE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_COMMIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_COMMIT_AMEND": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_FETCH_PRUNE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_INIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_OPEN_CHANGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PUBLISH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PULL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PULL_REBASE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_PUSH": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_STAGE_RANGES": 1,
+        "STR_WORKBENCH_COMMAND_GIT_SYNC": 1,
+        "STR_WORKBENCH_COMMAND_GIT_SYNC_REBASE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNDO_COMMIT": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_GIT_UNSTAGE_RANGES": 1,
+        "STR_WORKBENCH_COMMAND_HIDE_NOTIFICATIONS": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_LOCKED_SIDE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_PREVIEW_SIDE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REFRESH": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_PREVIEW": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_REOPEN_SOURCE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_SECURITY": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_SOURCE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE": 1,
+        "STR_WORKBENCH_COMMAND_MARKDOWN_TOGGLE_LOCK": 1,
+        "STR_WORKBENCH_COMMAND_NEW_FILE": 1,
+        "STR_WORKBENCH_COMMAND_NEW_WINDOW": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_FILE": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_FOLDER": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_GLOBAL_KEYBINDINGS": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_RECENT": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_SETTINGS": 1,
+        "STR_WORKBENCH_COMMAND_OPEN_WORKSPACE": 1,
+        "STR_WORKBENCH_COMMAND_OUTPUT": 1,
+        "STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS": 1,
+        "STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_COMMAND_PROBLEMS": 1,
+        "STR_WORKBENCH_COMMAND_QUIT": 1,
+        "STR_WORKBENCH_COMMAND_SAVE": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_ALL": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_AS": 1,
+        "STR_WORKBENCH_COMMAND_SAVE_WORKSPACE_AS": 1,
+        "STR_WORKBENCH_COMMAND_SHOW_COMMANDS": 1,
+        "STR_WORKBENCH_COMMAND_SHOW_NOTIFICATIONS": 1,
+        "STR_WORKBENCH_COMMAND_TOGGLE_SIDEBAR": 1,
+        "STR_WORKBENCH_COMMAND_TOGGLE_STATUSBAR": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CANCELLING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CHECK": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_CHECKING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOAD": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_DOWNLOADING": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INDICATOR": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INFO": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_INSTALL": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_RESTART": 1,
+        "STR_WORKBENCH_COMMAND_UPDATE_UPDATING": 1,
+        "STR_WORKBENCH_DIFF_COMPARISON_TRUNCATED": 1,
+        "STR_WORKBENCH_DIFF_IDENTICAL": 1,
+        "STR_WORKBENCH_DIFF_NO_COMPARISON": 1,
+        "STR_WORKBENCH_DIFF_TITLE": 1,
+        "STR_WORKBENCH_EXPLORER_ADD_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_ADD_FOLDER_TO_WORKSPACE": 1,
+        "STR_WORKBENCH_EXPLORER_CLONE_REPOSITORY_DESCRIPTION": 1,
+        "STR_WORKBENCH_EXPLORER_CREATE_FILE_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_CREATE_FOLDER_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_DELETE_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_EMPTY_WORKSPACE": 1,
+        "STR_WORKBENCH_EXPLORER_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_MULTIROOT_UNAVAILABLE": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER_OPENED": 1,
+        "STR_WORKBENCH_EXPLORER_NO_FOLDER_WITH_EDITORS": 1,
+        "STR_WORKBENCH_EXPLORER_OPEN_FOLDER": 1,
+        "STR_WORKBENCH_EXPLORER_RENAME_FAILED": 1,
+        "STR_WORKBENCH_EXPLORER_TITLE": 1,
+        "STR_WORKBENCH_GIT_ADD_FOLDER_TO_WORKSPACE": 1,
+        "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED": 1,
+        "STR_WORKBENCH_GIT_AUTHENTICATION_FAILED_TARGET": 1,
+        "STR_WORKBENCH_GIT_BRANCH_ALREADY_EXISTS": 1,
+        "STR_WORKBENCH_GIT_BRANCH_FROM_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NAME_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NAME_PROMPT": 1,
+        "STR_WORKBENCH_GIT_BRANCH_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_BRANCH_TAG": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_DETACHED": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_DETACHED_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_CHECKOUT_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_CHOOSE_FOLDER": 1,
+        "STR_WORKBENCH_GIT_CLONE_CANCELLED": 1,
+        "STR_WORKBENCH_GIT_CLONE_NONEMPTY": 1,
+        "STR_WORKBENCH_GIT_CLONE_OVERWRITE_WARNING": 1,
+        "STR_WORKBENCH_GIT_CLONE_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_CLONE_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_COMMIT_CHANGES": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE_ON_BRANCH": 1,
+        "STR_WORKBENCH_GIT_COMMIT_MESSAGE_PROMPT": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_COMMIT_NO_MESSAGE_PROMPT": 1,
+        "STR_WORKBENCH_GIT_CONFLICT": 1,
+        "STR_WORKBENCH_GIT_CREATE_BRANCH": 1,
+        "STR_WORKBENCH_GIT_CREATE_BRANCH_FROM": 1,
+        "STR_WORKBENCH_GIT_CREATE_EMPTY_COMMIT": 1,
+        "STR_WORKBENCH_GIT_DELETE_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_DELETE_FILE": 1,
+        "STR_WORKBENCH_GIT_DELETE_UNTRACKED_MANY": 1,
+        "STR_WORKBENCH_GIT_DELETE_UNTRACKED_ONE": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_OPEN_FAILED": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_READ_FAILED": 1,
+        "STR_WORKBENCH_GIT_DIFF_FILE_TOO_LARGE": 1,
+        "STR_WORKBENCH_GIT_DIFF_INDEX": 1,
+        "STR_WORKBENCH_GIT_DIFF_PATH_UNRESOLVED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_DELETED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_INDEX": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_INTENT_TO_ADD": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_OURS": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_THEIRS": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_TYPE_CHANGED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_UNTRACKED": 1,
+        "STR_WORKBENCH_GIT_DIFF_TITLE_WORKING_TREE": 1,
+        "STR_WORKBENCH_GIT_DIFF_WORKING_TREE": 1,
+        "STR_WORKBENCH_GIT_DIRTY_WORK_TREE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ALL_TRACKED_FILES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_CHANGES": 1,
+        "STR_WORKBENCH_GIT_DISCARD_FILE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_MANY": 1,
+        "STR_WORKBENCH_GIT_DISCARD_NO_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_DISCARD_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_DISCARD_ONE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_FILE": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_MANY": 1,
+        "STR_WORKBENCH_GIT_DISCARD_TRACKED_ONE": 1,
+        "STR_WORKBENCH_GIT_DONT_PULL": 1,
+        "STR_WORKBENCH_GIT_EMPTY_WORKBENCH": 1,
+        "STR_WORKBENCH_GIT_EMPTY_WORKSPACE": 1,
+        "STR_WORKBENCH_GIT_FETCH_ALL_REMOTES": 1,
+        "STR_WORKBENCH_GIT_FETCH_PLACEHOLDER": 1,
+        "STR_WORKBENCH_GIT_FOLDER_NO_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_FORCE_PUSH_REJECTED": 1,
+        "STR_WORKBENCH_GIT_INITIALIZE_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_INIT_CANCELLED_HOME": 1,
+        "STR_WORKBENCH_GIT_INIT_FOLDER_PICKER": 1,
+        "STR_WORKBENCH_GIT_INIT_HOME_WARNING": 1,
+        "STR_WORKBENCH_GIT_INIT_OPEN_PROMPT": 1,
+        "STR_WORKBENCH_GIT_INIT_SUCCESS": 1,
+        "STR_WORKBENCH_GIT_INVALID_URL_FOLDER": 1,
+        "STR_WORKBENCH_GIT_IRREVERSIBLE_MANY": 1,
+        "STR_WORKBENCH_GIT_IRREVERSIBLE_ONE": 1,
+        "STR_WORKBENCH_GIT_MAYBE_REBASED": 1,
+        "STR_WORKBENCH_GIT_MAYBE_REBASED_NO_NAME": 1,
+        "STR_WORKBENCH_GIT_MOVE_TO_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_NEW_BRANCH_WILL_BE": 1,
+        "STR_WORKBENCH_GIT_NO_BRANCH_TO_PUSH": 1,
+        "STR_WORKBENCH_GIT_NO_CHANGES": 1,
+        "STR_WORKBENCH_GIT_NO_FETCH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PUBLISH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PULL_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_PUSH_REMOTES": 1,
+        "STR_WORKBENCH_GIT_NO_STAGED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_NO_USER_NAME_CONFIGURED": 1,
+        "STR_WORKBENCH_GIT_NO_VERIFY_DISABLED": 1,
+        "STR_WORKBENCH_GIT_NO_VERIFY_WARNING": 1,
+        "STR_WORKBENCH_GIT_OK": 1,
+        "STR_WORKBENCH_GIT_OPEN": 1,
+        "STR_WORKBENCH_GIT_OPEN_CHANGES": 1,
+        "STR_WORKBENCH_GIT_OPEN_FILE": 1,
+        "STR_WORKBENCH_GIT_OVERWRITE": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_BRANCH": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_BRANCH_PROMPT": 1,
+        "STR_WORKBENCH_GIT_PUBLISH_REMOTE_PICKER": 1,
+        "STR_WORKBENCH_GIT_PULL": 1,
+        "STR_WORKBENCH_GIT_PUSH_REJECTED": 1,
+        "STR_WORKBENCH_GIT_REBASE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_GIT_RECYCLE_BIN_FAILED": 1,
+        "STR_WORKBENCH_GIT_REF_BRANCHES": 1,
+        "STR_WORKBENCH_GIT_REF_REMOTE_BRANCHES": 1,
+        "STR_WORKBENCH_GIT_REF_REMOTE_BRANCH_AT": 1,
+        "STR_WORKBENCH_GIT_REF_TAGS": 1,
+        "STR_WORKBENCH_GIT_REF_TAG_AT": 1,
+        "STR_WORKBENCH_GIT_REPOSITORY_LOCATION": 1,
+        "STR_WORKBENCH_GIT_REPOSITORY_URL": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ALL_FILES": 1,
+        "STR_WORKBENCH_GIT_RESTORE_FILE": 1,
+        "STR_WORKBENCH_GIT_RESTORE_MANY": 1,
+        "STR_WORKBENCH_GIT_RESTORE_MANY_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ONE": 1,
+        "STR_WORKBENCH_GIT_RESTORE_ONE_RECYCLE_BIN": 1,
+        "STR_WORKBENCH_GIT_SAVE_ALL_COMMIT_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_MERGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_STAGED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SCM_UNTRACKED_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_STAGE_MERGE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_GIT_STAGE_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_SYNCHRONIZE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_SYNC_CONFIRMATION": 1,
+        "STR_WORKBENCH_GIT_SYNC_DISMISSED": 1,
+        "STR_WORKBENCH_GIT_SYNC_NOTHING_TO_PUSH": 1,
+        "STR_WORKBENCH_GIT_SYNC_NO_HEAD": 1,
+        "STR_WORKBENCH_GIT_SYNC_NO_PRESENTER": 1,
+        "STR_WORKBENCH_GIT_SYNC_READ_ONLY_REMOTE": 1,
+        "STR_WORKBENCH_GIT_UNDO_MERGE_COMMIT": 1,
+        "STR_WORKBENCH_GIT_UNDO_MERGE_WARNING": 1,
+        "STR_WORKBENCH_GIT_UNDO_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_MANY": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_ONE": 1,
+        "STR_WORKBENCH_GIT_UNSAVED_SAVE_FAILED": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_ALL_CHANGES": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_CHANGES": 1,
+        "STR_WORKBENCH_GIT_UNSTAGE_NO_INVOKER": 1,
+        "STR_WORKBENCH_GIT_WORKSPACE_NO_REPOSITORY": 1,
+        "STR_WORKBENCH_GIT_YES": 1,
+        "STR_WORKBENCH_INITIALIZE_FAILED": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_FILE": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_MESSAGE": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_SEVERITY": 1,
+        "STR_WORKBENCH_PANEL_COLUMN_SOURCE": 1,
+        "STR_WORKBENCH_PANEL_DEBUG_CONSOLE": 1,
+        "STR_WORKBENCH_PANEL_OUTPUT": 1,
+        "STR_WORKBENCH_PANEL_PORTS": 1,
+        "STR_WORKBENCH_PANEL_PROBLEMS": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_ERROR": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_HINT": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_INFO": 1,
+        "STR_WORKBENCH_PANEL_SEVERITY_WARNING": 1,
+        "STR_WORKBENCH_PANEL_TERMINAL": 1,
+        "STR_WORKBENCH_QUICK_INPUT_CANCEL": 1,
+        "STR_WORKBENCH_QUICK_INPUT_OK": 1,
+        "STR_WORKBENCH_REMOTE_UNSUPPORTED": 1,
+        "STR_WORKBENCH_REPOSITORY_INIT_QUICK_PICK_TITLE": 1,
+        "STR_WORKBENCH_SCM_CHANGES_TITLE": 1,
+        "STR_WORKBENCH_SCM_GRAPH_TITLE": 1,
+        "STR_WORKBENCH_SCM_GRAPH_UNAVAILABLE": 1,
+        "STR_WORKBENCH_SCM_REPOSITORIES_TITLE": 1,
+        "STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE": 1,
+        "STR_WORKBENCH_SOURCE_CONTROL_TITLE": 1,
+        "STR_WORKBENCH_STATUS_CHARACTER_CODE": 1,
+        "STR_WORKBENCH_STATUS_ENCODING": 1,
+        "STR_WORKBENCH_STATUS_INPUT_MODE": 1,
+        "STR_WORKBENCH_STATUS_LINE_ENDING": 1,
+        "STR_WORKBENCH_STATUS_MACRO_RECORDING": 1,
+        "STR_WORKBENCH_STATUS_REMOTE_HOST": 1,
+        "STR_WORKBENCH_STATUS_SELECTION": 1,
+        "STR_WORKBENCH_STATUS_ZOOM": 1,
+        "STR_WORKBENCH_VIEWCONTAINER_EMPTY": 1,
+        "STR_WORKBENCH_VIEWCONTAINER_OUTLINE": 1,
         "STR_WRAP_INDENT_BOL": 1,
         "STR_WRAP_INDENT_NONE": 1,
         "STR_WRAP_INDENT_TX2X": 1,

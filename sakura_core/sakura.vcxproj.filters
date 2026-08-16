@@ -109,9 +109,6 @@
       <UniqueIdentifier>{69fe5215-dceb-4b3a-bc5d-008353d018b8}</UniqueIdentifier>
     </Filter>
 
-    <Filter Include="Cpp Source Files\externals\Onigmo">
-      <UniqueIdentifier>{638f3d6d-82a0-4ade-b573-bf9d4bc39c1c}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Cpp Source Files\workbench">
       <UniqueIdentifier>{0ca91f97-48a4-492d-86da-028cc85ae124}</UniqueIdentifier>
     </Filter>
@@ -389,24 +386,6 @@
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\config\WorkspaceContextTypes.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\ITrustedFoldersStore.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\IWorkspaceTrustMementoStore.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\TrustedFoldersCodec.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustMementoCodec.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPolicy.h">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.h">
       <Filter>Cpp Source Files\config</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\config\maxdata.h">
@@ -1003,9 +982,6 @@
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
-    <ClInclude Include="..\sakura_core\workbench\WorkbenchBannerLayout.h">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1013,9 +989,6 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\CWorkbenchPanelHost.h">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClInclude>
-	<ClInclude Include="..\sakura_core\workbench\CWorkbenchBannerHost.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\statusbar\IStatusbarVisibilityMementoStore.h">
@@ -1135,6 +1108,9 @@
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerDeleteConfirmation.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerFileIcon.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\explorer\ExplorerResourcePath.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1163,6 +1139,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitInitCloneCommands.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\ScmViewStackLayout.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 
@@ -1251,9 +1230,6 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
 
-    <ClInclude Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.h">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\editor\CDiffSurface.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
@@ -1545,12 +1521,21 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalViewportGeometry.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalRenderMapping.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
@@ -1672,12 +1657,6 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\CNormalProcess.h">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.h">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClInclude>
-    <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.h">
       <Filter>Cpp Source Files\_main</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.h">
@@ -2872,13 +2851,7 @@
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
-    <ClCompile Include="..\sakura_core\workbench\WorkbenchBannerLayout.cpp">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\CWorkbenchPanelHost.cpp">
-	  <Filter>Cpp Source Files\workbench</Filter>
-	</ClCompile>
-	<ClCompile Include="..\sakura_core\workbench\CWorkbenchBannerHost.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\statusbar\StatusbarViewModel.cpp">
@@ -3072,9 +3045,6 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
 
-    <ClCompile Include="..\sakura_core\workbench\editor\CWorkspaceTrustEditorSurface.cpp">
-      <Filter>Cpp Source Files\workbench</Filter>
-    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\editor\CDiffSurface.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
@@ -3249,10 +3219,16 @@
     <ClCompile Include="..\sakura_core\terminal\window\TerminalKeyboardInput.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp">
+	  <Filter>Cpp Source Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp">
 	  <Filter>Cpp Source Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp">
@@ -3296,156 +3272,6 @@
     </ClCompile>
     <ClCompile Include="..\sakura_core\textmate\TextMateUtf8.cpp">
       <Filter>Cpp Source Files\textmate</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regcomp.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regenc.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regerror.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regexec.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regext.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\reggnu.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regparse.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regposerr.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regposix.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regsyntax.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regtrav.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\regversion.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\st.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\ascii.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\big5.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\euc_jp.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\euc_kr.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\euc_tw.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\gb18030.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_1.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_2.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_3.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_4.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_5.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_6.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_7.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_8.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_9.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_10.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_11.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_13.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_14.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_15.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\iso_8859_16.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\koi8_r.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\koi8_u.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\shift_jis.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\unicode.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\utf_8.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\utf_16be.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\utf_16le.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\utf_32be.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\utf_32le.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_1250.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_1251.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_1252.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_1253.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_1254.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_1257.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
-    </ClCompile>
-    <ClCompile Include="..\externals\Onigmo\enc\windows_31j.c">
-      <Filter>Cpp Source Files\externals\Onigmo</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\window\CMainStatusBar.cpp">
       <Filter>Cpp Source Files\window</Filter>
@@ -3505,12 +3331,6 @@
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\CNormalProcess.cpp">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformTrustedFoldersStore.cpp">
-      <Filter>Cpp Source Files\_main</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkspaceTrustMementoStore.cpp">
       <Filter>Cpp Source Files\_main</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\_main\ControlPlatformWorkbenchLayoutMementoStore.cpp">
@@ -3797,18 +3617,6 @@
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\config\JsoncConfigurationSource.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\TrustedFoldersCodec.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustMementoCodec.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPolicy.cpp">
-      <Filter>Cpp Source Files\config</Filter>
-    </ClCompile>
-    <ClCompile Include="..\sakura_core\config\WorkspaceTrustPromptPolicy.cpp">
       <Filter>Cpp Source Files\config</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\recent\CRecentExcludeFile.cpp">

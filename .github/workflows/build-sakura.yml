@@ -359,12 +359,14 @@ jobs:
         platform:
           - x64
 
-    # SAKURA_GENERATE_ASSEMBLY_LISTINGS also serializes LTCG codegen
-    # (/CGTHREADS:1). pull_request Release builds never publish the Asm
+    # SAKURA_GENERATE_ASSEMBLY_LISTINGS makes the product listing branch use
+    # /MP off and /CGTHREADS:1. The canonical runner first completes the
+    # solution/tests with listings forced off, then rebuilds only the product
+    # with listings on. pull_request Release builds never publish the Asm
     # artifact, so leave it off there; push/workflow_dispatch Release builds
     # keep it on for the published Asm zip. Job-level (not step-level) so
-    # zipArtifacts.bat and the Upload Asm step below see the same value the
-    # MSBuild step used.
+    # zipArtifacts.bat and the Upload Asm step below retain the value needed
+    # after the two MSBuild phases complete.
     env:
       SAKURA_GENERATE_ASSEMBLY_LISTINGS: ${{ matrix.config == 'Release' && github.event_name != 'pull_request' && '1' || '0' }}
       # No released artifact carries diff.exe, and the archive provider would

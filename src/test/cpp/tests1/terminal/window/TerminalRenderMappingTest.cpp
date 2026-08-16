@@ -2,6 +2,10 @@
 #include "pch.h"
 #include "terminal/window/TerminalRenderMapping.h"
 #include "terminal/window/TerminalScrollbarLayout.h"
+#include "terminal/window/TerminalViewportGeometry.h"
+
+#include <array>
+#include <utility>
 
 namespace {
 
@@ -77,6 +81,52 @@ TEST(TerminalRenderMapping, MapsPixelsToClampedGlobalCells)
 	EXPECT_EQ((terminal::TerminalSelectionPoint{ viewport.topRow + 1, 2 }),
 		terminal::TerminalCellFromPoint(viewport, 19, 18, 8, 16, model.Columns()));
 	EXPECT_EQ(model.Columns(), terminal::TerminalCellFromPoint(viewport, 9999, 0, 8, 16, model.Columns()).column);
+}
+
+TEST(TerminalRenderMapping, UsesApportionedPaddingAtEachSupportedDpi)
+{
+	constexpr std::array cases{
+		std::pair{ 96u, 5 },
+		std::pair{ 144u, 8 },
+		std::pair{ 192u, 10 },
+	};
+	for( const auto [dpi, padding] : cases ) {
+		const auto geometry = terminal::TerminalViewportGeometry::FromDpi(dpi);
+		EXPECT_EQ(padding, geometry.padding) << dpi;
+		EXPECT_EQ(padding, geometry.GridOriginX()) << dpi;
+		EXPECT_EQ(padding, geometry.GridOriginY()) << dpi;
+		EXPECT_EQ(100 - padding * 2, geometry.GridWidth(100)) << dpi;
+		EXPECT_EQ(100 - padding * 2, geometry.GridHeight(100)) << dpi;
+		const auto grid = geometry.GridRect({ 0, 7, 100, 27 });
+		EXPECT_EQ(padding, grid.left) << dpi;
+		EXPECT_EQ(7 + padding, grid.top) << dpi;
+		EXPECT_EQ(100 - padding, grid.right) << dpi;
+		EXPECT_EQ(27 - padding, grid.bottom) << dpi;
+	}
+	const auto clipped = terminal::TerminalViewportGeometry::FromDpi(192).GridRect({ 0, 0, 16, 12 });
+	EXPECT_EQ(10, clipped.left);
+	EXPECT_EQ(10, clipped.top);
+	EXPECT_EQ(10, clipped.right);
+	EXPECT_EQ(10, clipped.bottom);
+	EXPECT_EQ(0, terminal::TerminalViewportGeometry::FromDpi(192).GridWidth(16));
+	EXPECT_EQ(0, terminal::TerminalViewportGeometry::FromDpi(192).GridHeight(12));
+}
+
+TEST(TerminalRenderMapping, ClampsHitTestingInsideAndBeforeThePadding)
+{
+	const terminal::TerminalViewport viewport{ 4, 2, 1 };
+	const auto geometry = terminal::TerminalViewportGeometry::FromDpi(144);
+
+	EXPECT_EQ((terminal::TerminalSelectionPoint{ 1, 0 }),
+		terminal::TerminalCellFromPoint(viewport, 0, 0, 8, 16, 10, geometry));
+	EXPECT_EQ((terminal::TerminalSelectionPoint{ 1, 0 }),
+		terminal::TerminalCellFromPoint(viewport, geometry.padding, geometry.padding, 8, 16, 10, geometry));
+	EXPECT_EQ((terminal::TerminalSelectionPoint{ 1, 1 }),
+		terminal::TerminalCellFromPoint(viewport, geometry.padding + 8, geometry.padding, 8, 16, 10, geometry));
+	EXPECT_EQ((terminal::TerminalSelectionPoint{ 2, 0 }),
+		terminal::TerminalCellFromPoint(viewport, geometry.padding, geometry.padding + 16, 8, 16, 10, geometry));
+	EXPECT_EQ((terminal::TerminalSelectionPoint{ 3, 10 }),
+		terminal::TerminalCellFromPoint(viewport, 9999, 9999, 8, 16, 10, geometry));
 }
 
 TEST(TerminalRenderMapping, NormalizesSelectionToIncludeBothEndpointsAndWideCells)

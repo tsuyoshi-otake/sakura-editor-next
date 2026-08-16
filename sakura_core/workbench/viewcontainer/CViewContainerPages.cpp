@@ -6,18 +6,43 @@
 */
 #include "StdAfx.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
+#include "CSelectLang.h"
 
 #include <algorithm>
 
 namespace workbench::viewcontainer {
+
+namespace {
+
+void ShowPageWindow(HWND window, bool visible)
+{
+	if (window == nullptr || !::IsWindow(window)) return;
+	::ShowWindow(window, visible ? SW_SHOW : SW_HIDE);
+	if (!visible) return;
+	// A page can refresh while another ViewContainer is active.  Showing that
+	// already-updated child must paint its whole subtree before the workbench
+	// presents it, otherwise stale rows or a stale scrollbar can survive until a
+	// later unrelated paint message.
+	::RedrawWindow(window, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+void RedrawVisiblePage(HWND window)
+{
+	if (window == nullptr || !::IsWindow(window) || !::IsWindowVisible(window)) return;
+	::RedrawWindow(window, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+} // namespace
 
 CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 	: m_explorer(std::make_unique<explorer::CExplorerTool>())
 	, m_outline(std::make_unique<outline::COutlineWorkbenchTool>(dialog))
 	, m_scm(std::make_unique<scm::CScmWorkbenchTool>())
 {
-	m_pages.push_back({ std::string(pageIds::Explorer), L"EXPLORER" });
-	m_pages.push_back({ std::string(pageIds::SourceControl), L"SOURCE CONTROL" });
+	m_pages.push_back({ std::string(pageIds::Explorer), STR_WORKBENCH_EXPLORER_TITLE });
+	m_pages.push_back({ std::string(pageIds::SourceControl), STR_WORKBENCH_SOURCE_CONTROL_TITLE });
 }
 
 CViewContainerPages::~CViewContainerPages()
@@ -94,12 +119,11 @@ void CViewContainerPages::SetPageVisible(std::string_view containerId, bool visi
 	const Page* page = Find(containerId);
 	if (page == nullptr) return;
 	if (page->id == pageIds::Explorer) {
-		if (const HWND window = PageWindow(*page); window != nullptr && ::IsWindow(window)) {
-			::ShowWindow(window, visible ? SW_SHOW : SW_HIDE);
-		}
+		ShowPageWindow(PageWindow(*page), visible);
 		if (m_outline) m_outline->SetVisible(visible && m_outlineExpanded);
 	} else if (page->id == pageIds::SourceControl && m_scm) {
 		m_scm->SetVisible(visible);
+		if (visible) RedrawVisiblePage(PageWindow(*page));
 	}
 }
 
@@ -125,9 +149,22 @@ HWND CViewContainerPages::AttachedHost(std::string_view containerId) const noexc
 void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 {
 	if (m_explorer) {
-		m_explorer->SetPalette({ palette.sideBar.ToColorRef(), palette.primaryText.ToColorRef(),
-			palette.border.ToColorRef(), palette.accent.ToColorRef(), palette.border.ToColorRef(),
-			palette.secondaryText.ToColorRef(), palette.raised.ToColorRef() });
+		explorer::ExplorerPalette explorerPalette;
+		explorerPalette.background = palette.sideBar.ToColorRef();
+		explorerPalette.text = palette.primaryText.ToColorRef();
+		explorerPalette.secondaryText = palette.secondaryText.ToColorRef();
+		explorerPalette.border = palette.border.ToColorRef();
+		explorerPalette.focus = palette.accent.ToColorRef();
+		explorerPalette.inactiveSelection = palette.raised.ToColorRef();
+		explorerPalette.hover = palette.raised.ToColorRef();
+		explorerPalette.selectionText = palette.highlightText.ToColorRef();
+		explorerPalette.button = palette.buttonBackground.ToColorRef();
+		explorerPalette.buttonHover = palette.buttonHoverBackground.ToColorRef();
+		explorerPalette.buttonText = palette.buttonForeground.ToColorRef();
+		explorerPalette.scrollbarThumb = palette.border.ToColorRef();
+		explorerPalette.scrollbarThumbHover = palette.secondaryText.ToColorRef();
+		explorerPalette.scrollbarTrackHover = palette.raised.ToColorRef();
+		m_explorer->SetPalette(explorerPalette);
 	}
 	if (m_outline) m_outline->SetPalette(palette);
 	if (m_scm) m_scm->SetPalette(palette);
@@ -136,7 +173,16 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 std::wstring CViewContainerPages::PageTitle(std::string_view containerId) const
 {
 	const Page* page = Find(containerId);
-	return page == nullptr ? std::wstring{} : page->title;
+	return page == nullptr ? std::wstring{} : std::wstring(LS(page->titleResourceId));
+}
+
+void CViewContainerPages::RefreshStrings()
+{
+	if (m_explorer) m_explorer->RefreshStrings();
+	if (m_scm) m_scm->RefreshStrings();
+	for (const auto& page : m_pages) {
+		if (page.attached != nullptr) RedrawVisiblePage(PageWindow(page));
+	}
 }
 
 } // namespace workbench::viewcontainer

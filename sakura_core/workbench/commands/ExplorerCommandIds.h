@@ -26,4 +26,16 @@ inline constexpr std::string_view kCopyFilePathCommandId = "copyFilePath";
 inline constexpr std::string_view kCopyRelativeFilePathCommandId = "copyRelativeFilePath";
 inline constexpr std::string_view kRevealFileInOSCommandId = "revealFileInOS";
 
+//! VS Code's Explorer ViewTitle actions. These are distinct from the
+//! resource-scoped context-menu commands above: the title actions resolve the
+//! current Explorer selection/root inside the view and carry no payload.
+inline constexpr std::string_view kCreateFileFromExplorerCommandId =
+	"workbench.files.action.createFileFromExplorer";
+inline constexpr std::string_view kCreateFolderFromExplorerCommandId =
+	"workbench.files.action.createFolderFromExplorer";
+inline constexpr std::string_view kRefreshFilesExplorerCommandId =
+	"workbench.files.action.refreshFilesExplorer";
+inline constexpr std::string_view kCollapseExplorerFoldersCommandId =
+	"workbench.files.action.collapseExplorerFolders";
+
 } // namespace workbench::commands
