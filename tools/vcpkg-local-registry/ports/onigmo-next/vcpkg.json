@@ -1,7 +1,7 @@
 {
   "name": "onigmo-next",
   "version": "6.2.0",
-  "port-version": 2,
+  "port-version": 3,
   "license": "BSD-2-Clause",
   "description": "Onigmo NEXT regular expression library (Onigmo-compatible)",
   "homepage": "https://github.com/tsuyoshi-otake/onigmo-next",

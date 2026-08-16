@@ -1,5 +1,5 @@
 ﻿get_filename_component(REPO_ROOT "${CURRENT_PORT_DIR}/../../../.." ABSOLUTE)
-set(ONIGMO_SOURCE_DIR "${REPO_ROOT}/externals/onigmo-next")
+set(ONIGMO_SOURCE_DIR "${REPO_ROOT}/third_party/owned/onigmo-next")
 
 if(NOT EXISTS "${ONIGMO_SOURCE_DIR}/CMakeLists.txt")
   message(FATAL_ERROR "Onigmo NEXT CMakeLists.txt not found: ${ONIGMO_SOURCE_DIR}")

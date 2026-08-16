@@ -217,7 +217,7 @@ if not exist "%platform%\%configuration%\migemo.dll" (
 	echo Error: %platform%\%configuration%\migemo.dll was not staged by the product build.
 	exit /b 1
 )
-set BREGONIG_LICENSE_DIR=%~dp0externals\bregonig
+set BREGONIG_LICENSE_DIR=%~dp0third_party\owned\bregonig-next
 call :copyRequired "%BREGONIG_LICENSE_DIR%\bsd_license.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig bsd license"
 if errorlevel 1 exit /b 1
 call :copyRequired "%BREGONIG_LICENSE_DIR%\perl_license.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig perl license"

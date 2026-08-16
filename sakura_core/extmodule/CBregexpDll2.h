@@ -10,20 +10,24 @@
 #pragma once
 
 #include "CDllHandler.h"
+#include <bregexp.h>
 
-typedef struct bregexp {
-	const WCHAR *outp;		/* result string start ptr  */
-	const WCHAR *outendp;	/* result string end ptr    */
-	const int   splitctr;	/* split result counter     */
-	const WCHAR **splitp;	/* split result pointer ptr     */
-	int rsv1;					/* reserved for external use    */
-	WCHAR *parap;				/* parameter start ptr ie. "s/xxxxx/yy/gi"  */
-	WCHAR *paraendp;			/* parameter end ptr     */
-	WCHAR *transtblp;			/* translate table ptr   */
-	WCHAR **startp;				/* match string start ptr   */
-	WCHAR **endp;				/* match string end ptr     */
-	int nparens;				/* number of parentheses */
-} BREGEXP_W;
+// Provider header maps bare names to *W under UNICODE. Sakura keeps its own
+// method names and GetProcAddress strings, so drop those aliases here.
+#ifdef UNICODE
+#undef BMatch
+#undef BSubst
+#undef BMatchEx
+#undef BSubstEx
+#undef BTrans
+#undef BSplit
+#undef BRegfree
+#undef BRegexpVersion
+#undef BoMatch
+#undef BoSubst
+#endif
+
+using BREGEXP_W = BREGEXP;
 
 //!BREGONIG.DLLをラップしたもの。
 //2007.09.13 kobake 作成

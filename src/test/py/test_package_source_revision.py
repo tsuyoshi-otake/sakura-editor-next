@@ -80,10 +80,10 @@ class PackageSourceRevisionContractTests(unittest.TestCase):
     def test_local_port_source_trees_are_declared_explicitly(self) -> None:
         inputs = set(_package_set_inputs())
         for path in (
-            "externals/bregonig",
+            "third_party/owned/bregonig-next",
             "externals/cmigemo",
             "externals/cmigemo-dict",
-            "externals/onigmo-next",
+            "third_party/owned/onigmo-next",
             "externals/darkmodelib",
         ):
             with self.subTest(path=path):

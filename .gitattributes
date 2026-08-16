@@ -27,3 +27,9 @@ tools/startup-benchmark-sample.md text eol=lf
 *.otf binary
 *.woff binary
 tools/innounp/*.exe binary
+
+# Owned snapshots keep upstream bytes. Sakura *.rc UTF-16 rules must not rewrite them.
+third_party/owned/** -text
+third_party/owned/**/*.rc -text !working-tree-encoding
+third_party/owned/**/*.rc2 -text !working-tree-encoding
+third_party/owned/**/*.ps1 -text !working-tree-encoding

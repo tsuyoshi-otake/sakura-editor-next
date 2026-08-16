@@ -35,6 +35,7 @@ LOCAL_PORTS = REPO_ROOT / "tools/vcpkg-local-registry/ports"
 MODULES = REPO_ROOT / "src/main/modules/modules.json"
 SAKURA_CORE = REPO_ROOT / "sakura_core"
 ORACLE_PATH = REPO_ROOT / "installer/externals/bregonig/ORACLE.json"
+BRON_ZIP_PATH = REPO_ROOT / "installer/externals/bregonig/bron420.zip"
 INNOUNP_PIN = REPO_ROOT / "tools/innounp/PIN.json"
 
 KIND = frozenset({"library", "tool", "process", "data", "fixture"})
@@ -293,6 +294,8 @@ def check_coverage(document: dict[str, Any]) -> None:
         revision = entry.get("sourceRevision")
         if git_path is None or revision is None:
             continue
+        if entry.get("snapshot"):
+            continue
         actual = _git_ls_tree_commit(git_path)
         if actual != revision:
             errors.append(
@@ -333,16 +336,13 @@ def check_artifacts(document: dict[str, Any]) -> None:
     for required in ("bregonig.dll", "migemo.dll"):
         if required not in providers:
             errors.append(f"runtime artifact {required} has no product provider")
-    oracle = _read_json(ORACLE_PATH)
-    bron = next(
-        artifact
-        for entry in document["dependencies"] if entry["id"] == "bron420-zip"
-        for artifact in entry["artifacts"]
-    )
-    if oracle.get("productProvider") is not False:
-        errors.append("ORACLE.json must set productProvider to false")
-    if oracle.get("sha256") != bron["sha256"]:
-        errors.append("ORACLE.json sha256 does not match the bron420-zip ledger row")
+    bron = next(entry for entry in document["dependencies"] if entry["id"] == "bron420-zip")
+    if bron.get("status") != "removed":
+        errors.append("bron420-zip must stay a removed tombstone after the differential goldens landed")
+    if BRON_ZIP_PATH.is_file():
+        errors.append("bron420.zip must be deleted after the oracle is materialized")
+    if ORACLE_PATH.is_file():
+        errors.append("ORACLE.json must be deleted with bron420.zip")
     pin = _read_json(INNOUNP_PIN)
     innounp = next(
         artifact
@@ -370,11 +370,17 @@ def check_owned_snapshots(document: dict[str, Any]) -> None:
             continue
         declared[relative] = entry
         try:
-            owned_snapshot.verify_snapshot(REPO_ROOT / relative)
+            manifest = owned_snapshot.verify_snapshot(REPO_ROOT / relative)
         except ValueError as exc:
             errors.append(str(exc))
+            continue
         if entry.get("localModificationAllowed") is not False:
             errors.append(f"{entry['id']} forbids in-place snapshot edits")
+        revision = entry.get("sourceRevision")
+        if revision and str(manifest.get("commit")) != revision:
+            errors.append(
+                f"{entry['id']} sourceRevision {revision} does not match SNAPSHOT.json commit {manifest.get('commit')}"
+            )
     if OWNED_ROOT.is_dir():
         for child in sorted(path for path in OWNED_ROOT.iterdir() if path.is_dir()):
             relative = child.relative_to(REPO_ROOT).as_posix()

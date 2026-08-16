@@ -12,17 +12,11 @@
   "packages": [
     {
       "SPDXID": "SPDXRef-bregonig-next",
-      "downloadLocation": "https://github.com/k-takata/bregonig.git",
+      "downloadLocation": "https://github.com/tsuyoshi-otake/bregonig-next.git",
       "licenseDeclared": "GPL-1.0-or-later OR Artistic-1.0-Perl",
       "name": "bregonig-next",
-      "sourceInfo": "git:670b229063a33910e717a9f220d89ce8ab46d790",
+      "sourceInfo": "git:0b1a77c58b47ebd7872d5b9537194c833ef63b7d",
       "versionInfo": "4.20.0"
-    },
-    {
-      "SPDXID": "SPDXRef-bron420-zip",
-      "downloadLocation": "NOASSERTION",
-      "licenseDeclared": "GPL-1.0-or-later OR Artistic-1.0-Perl",
-      "name": "bron420-zip"
     },
     {
       "SPDXID": "SPDXRef-cmigemo-dict",

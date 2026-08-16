@@ -63,7 +63,7 @@
                     - hhc.exe (Visual Studio に同梱) : compiled HTML をビルドするコンパイラ。かなり古いツールであり、日本語 HTML をビルドするためには Windows のシステムロケールを日本語に変更する必要がある。
     - [build-installer.bat](../build-installer.bat)
         - ISCC.exe : [InnoSetup](https://www.jrsoftware.org/isinfo.php) でインストーラをビルドする
-        - innounp.exe : リポジトリ同梱の `tools/innounp/innounp.exe` で生成インストーラから payload を展開し、ステージ済み `bregonig.dll` / `migemo.dll` の SHA-256 と照合する。7-Zip は Inno Setup 6 の exe を開けない。`bron420.zip` から DLL を展開しない
+        - innounp.exe : リポジトリ同梱の `tools/innounp/innounp.exe` で生成インストーラから payload を展開し、ステージ済み `bregonig.dll` / `migemo.dll` の SHA-256 と照合する。7-Zip は Inno Setup 6 の exe を開けない。`bron420.zip` は #185 で削除済み。
     - [zipArtifacts.bat](../zipArtifacts.bat)
         - [tools\githash.bat](./githash.bat)
             - git.exe
