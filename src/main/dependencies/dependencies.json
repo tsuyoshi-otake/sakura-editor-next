@@ -1,0 +1,438 @@
+{
+  "schemaVersion": 1,
+  "created": "2026-08-16T00:00:00Z",
+  "policy": "Own Sakura Editor NEXT critical runtime sources so product behavior is not gated on an external project's maintenance, release cadence, or build system.",
+  "dependencies": [
+    {
+      "id": "onigmo-next",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["restore", "build", "runtime"],
+      "owner": "search",
+      "plannedEndState": "owned-snapshot",
+      "plannedIssue": 185,
+      "canonicalRepository": "https://github.com/tsuyoshi-otake/onigmo-next.git",
+      "source": "externals/onigmo-next",
+      "sourceRevision": "e96f322d0486f49d913abd21703e7eec6e572412",
+      "maintainerCheckout": "externals/onigmo-next",
+      "vcpkg": "onigmo-next",
+      "license": "BSD-2-Clause",
+      "version": "6.2.0",
+      "updatePolicy": "import-owned-snapshot-then-stop-using-the-submodule",
+      "localModificationAllowed": false,
+      "productBuildUsesSubmodule": true,
+      "includePatterns": [
+        {
+          "pattern": "onigmo-next/onigmo.h",
+          "roots": ["sakura_core"]
+        }
+      ]
+    },
+    {
+      "id": "bregonig-next",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["restore", "build", "runtime", "distribution"],
+      "owner": "search",
+      "plannedEndState": "owned-snapshot",
+      "plannedIssue": 185,
+      "canonicalRepository": "https://github.com/k-takata/bregonig.git",
+      "source": "externals/bregonig",
+      "sourceRevision": "670b229063a33910e717a9f220d89ce8ab46d790",
+      "maintainerCheckout": "externals/bregonig",
+      "vcpkg": "bregonig",
+      "license": "GPL-1.0-or-later OR Artistic-1.0-Perl",
+      "version": "4.20.0",
+      "updatePolicy": "import-owned-snapshot-then-stop-using-the-submodule",
+      "runtimeIsolation": "LoadLibrary bregonig.dll; native static retirement is #190",
+      "localModificationAllowed": false,
+      "productBuildUsesSubmodule": true,
+      "runtimeArtifacts": [
+        {
+          "name": "bregonig.dll",
+          "provider": "vcpkg-imported-target",
+          "productProvider": true
+        }
+      ]
+    },
+    {
+      "id": "cmigemo-next",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["restore", "build", "runtime", "distribution"],
+      "owner": "search",
+      "plannedEndState": "owned-snapshot",
+      "plannedIssue": 186,
+      "canonicalRepository": "https://github.com/koron/cmigemo.git",
+      "source": "externals/cmigemo",
+      "sourceRevision": "e0f6145f61e0b7058c3006f344e58571d9fdd83a",
+      "maintainerCheckout": "externals/cmigemo",
+      "vcpkg": "cmigemo",
+      "license": "MIT",
+      "version": "1.3e",
+      "updatePolicy": "goldenize-1.3e-then-migrate-cmigemo-next-to-v1.6.1",
+      "runtimeIsolation": "LoadLibrary migemo.dll; native static retirement is #190",
+      "localModificationAllowed": false,
+      "productBuildUsesSubmodule": true,
+      "includePatterns": [
+        {
+          "pattern": "cmigemo/migemo.h",
+          "roots": ["sakura_core"]
+        }
+      ],
+      "runtimeArtifacts": [
+        {
+          "name": "migemo.dll",
+          "provider": "vcpkg-imported-target",
+          "productProvider": true
+        }
+      ]
+    },
+    {
+      "id": "cmigemo-dict",
+      "kind": "data",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["restore", "runtime", "distribution"],
+      "owner": "search",
+      "plannedIssue": 186,
+      "canonicalRepository": "https://github.com/koron/cmigemo",
+      "source": "externals/cmigemo-dict",
+      "license": "GPL-2.0-or-later",
+      "updatePolicy": "hash-pinned-dictionary-zips-separate-from-cmigemo-code",
+      "notes": "GPL dictionary zips are a separate artifact from the MIT C/Migemo code.",
+      "artifacts": [
+        {
+          "path": "externals/cmigemo-dict/cmigemo-dict-cp932.zip",
+          "sha256": "1aa0e7eb388e68a4b0abea213a74291f17c605a69dac4f51b46f8463f0f7f39b",
+          "bytes": 1504142,
+          "productProvider": false
+        },
+        {
+          "path": "externals/cmigemo-dict/cmigemo-dict-utf-8.zip",
+          "sha256": "969515a4043043c25b8ce5d86642880c5902180039e8c9a7a538787da1a30c6c",
+          "bytes": 1689055,
+          "productProvider": false
+        }
+      ]
+    },
+    {
+      "id": "darkmodelib",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["restore", "build", "runtime"],
+      "owner": "theme",
+      "plannedEndState": "owned-implementation",
+      "plannedIssue": 188,
+      "canonicalRepository": "https://github.com/ozone10/darkmodelib.git",
+      "source": "externals/darkmodelib",
+      "sourceRevision": "f7847b514a67f3bf051beda58bcf7d05b3ace564",
+      "maintainerCheckout": "externals/darkmodelib",
+      "vcpkg": "darkmodelib",
+      "license": "MPL-2.0 AND MIT",
+      "version": "0.48.0",
+      "updatePolicy": "bind-then-replace-Win32-surfaces-before-deleting-the-library",
+      "localModificationAllowed": false,
+      "productBuildUsesSubmodule": true,
+      "notes": "Do not copy MPL code into Sakura-owned files. Theme replacement is #188.",
+      "includePatterns": [
+        {
+          "pattern": "DarkModeSubclass.h",
+          "roots": ["sakura_core"]
+        }
+      ]
+    },
+    {
+      "id": "picojson",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["build", "runtime"],
+      "owner": "serialization",
+      "plannedEndState": "owned-implementation",
+      "plannedIssue": 187,
+      "canonicalRepository": "https://github.com/kazuho/picojson.git",
+      "source": "externals/picojson",
+      "sourceRevision": "111c9be5188f7350c2eac9ddaedd8cca3d7bf394",
+      "maintainerCheckout": "externals/picojson",
+      "license": "BSD-2-Clause",
+      "updatePolicy": "replace-with-bounded-Sakura-JSON-then-delete-the-submodule",
+      "localModificationAllowed": false,
+      "productBuildUsesSubmodule": true,
+      "includePatterns": [
+        {
+          "pattern": "picojson/picojson.h",
+          "roots": ["sakura_core"]
+        }
+      ]
+    },
+    {
+      "id": "fmt",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "remove",
+      "status": "present",
+      "scope": ["restore", "build", "runtime"],
+      "owner": "terminal",
+      "plannedIssue": 189,
+      "vcpkg": "fmt",
+      "license": "MIT",
+      "updatePolicy": "Windows-Terminal-vendor-only-then-drop-from-vcpkg.json",
+      "notes": "Product code uses std::format. fmt remains only for sakura_core/terminal/vendor/.",
+      "includePatterns": [
+        {
+          "pattern": "fmt/",
+          "roots": ["sakura_core/terminal/vendor/"]
+        }
+      ]
+    },
+    {
+      "id": "ms-gsl",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "remove",
+      "status": "present",
+      "scope": ["restore", "build", "runtime"],
+      "owner": "terminal",
+      "plannedIssue": 189,
+      "vcpkg": "ms-gsl",
+      "license": "MIT",
+      "updatePolicy": "Windows-Terminal-vendor-only-then-drop-from-vcpkg.json",
+      "notes": "Product code uses std::span. ms-gsl remains only for sakura_core/terminal/vendor/.",
+      "includePatterns": [
+        {
+          "pattern": "gsl/",
+          "roots": ["sakura_core/terminal/vendor/"]
+        }
+      ]
+    },
+    {
+      "id": "wil",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "remove",
+      "status": "present",
+      "scope": ["restore", "build", "runtime"],
+      "owner": "terminal",
+      "plannedIssue": 189,
+      "vcpkg": "wil",
+      "license": "MIT",
+      "updatePolicy": "Windows-Terminal-vendor-only-then-drop-from-vcpkg.json",
+      "notes": "Do not fork WIL. It remains only for sakura_core/terminal/vendor/.",
+      "includePatterns": [
+        {
+          "pattern": "wil/",
+          "roots": ["sakura_core/terminal/vendor/"]
+        }
+      ]
+    },
+    {
+      "id": "windows-terminal-vendor",
+      "kind": "library",
+      "ownership": "owned-snapshot",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["build", "runtime"],
+      "owner": "terminal",
+      "plannedIssue": 189,
+      "source": "sakura_core/terminal/vendor/windows_terminal",
+      "license": "MIT",
+      "updatePolicy": "keep-needed-Windows-Terminal-pieces-until-the-terminal-capability-is-owned",
+      "localModificationAllowed": true,
+      "notes": "In-tree selected snapshot, not third_party/owned. fmt, GSL, and WIL currently exist for this tree."
+    },
+    {
+      "id": "bron420-zip",
+      "kind": "data",
+      "ownership": "external",
+      "lifecycle": "temporary-migration",
+      "status": "present",
+      "scope": ["test"],
+      "owner": "search",
+      "plannedIssue": 185,
+      "source": "installer/externals/bregonig/bron420.zip",
+      "license": "GPL-1.0-or-later OR Artistic-1.0-Perl",
+      "updatePolicy": "hash-pinned-test-only-oracle-deleted-after-bregonig-differential-golden",
+      "notes": "Not a runtime provider. Packaging must not extract this archive into the product output.",
+      "artifacts": [
+        {
+          "path": "installer/externals/bregonig/bron420.zip",
+          "sha256": "15f58dd292aa6fc8fd592fa97a75d58b5680ddf7aa66ba10a2dd5c9f0ee159c1",
+          "bytes": 537749,
+          "productProvider": false
+        }
+      ]
+    },
+    {
+      "id": "gtest",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["restore", "test"],
+      "owner": "test",
+      "vcpkg": "gtest",
+      "license": "BSD-3-Clause",
+      "updatePolicy": "vcpkg-test-only-never-a-product-submodule",
+      "notes": "GoogleTest stays external and test-only. The externals/googletest submodule was removed in #183."
+    },
+    {
+      "id": "googletest-submodule",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "remove",
+      "status": "removed",
+      "scope": ["test"],
+      "owner": "test",
+      "source": "externals/googletest",
+      "replacedBy": "gtest",
+      "notes": "Tombstone. externals/googletest was deleted in #183. Do not restore it."
+    },
+    {
+      "id": "dll-plugin1",
+      "kind": "fixture",
+      "ownership": "owned-implementation",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["restore", "test"],
+      "owner": "test",
+      "source": "tools/dll_plugin1",
+      "vcpkg": "dll-plugin1",
+      "license": "Zlib",
+      "version": "1.0.0",
+      "updatePolicy": "in-repo-test-helper"
+    },
+    {
+      "id": "ppa-stub",
+      "kind": "fixture",
+      "ownership": "owned-implementation",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["restore", "test"],
+      "owner": "test",
+      "source": "tools/ppa_stub",
+      "vcpkg": "ppa-stub",
+      "license": "MIT",
+      "version": "1.0.0",
+      "updatePolicy": "in-repo-test-helper"
+    },
+    {
+      "id": "miniz-cpp",
+      "kind": "fixture",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["test"],
+      "owner": "test",
+      "canonicalRepository": "https://github.com/tfussell/miniz-cpp.git",
+      "source": "externals/miniz-cpp",
+      "sourceRevision": "052335e4f7773368df07b26d2baedb0e6d4dbd38",
+      "maintainerCheckout": "externals/miniz-cpp",
+      "license": "MIT",
+      "updatePolicy": "tests1-only-generate_miniz-must-not-join-the-product-ALL-graph",
+      "productBuildUsesSubmodule": true,
+      "notes": "ZipArchiveFixture.cpp is the sole includer in tests1."
+    },
+    {
+      "id": "ctags",
+      "kind": "process",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["build", "distribution"],
+      "owner": "packaging",
+      "relatedIssues": [125, 132],
+      "canonicalRepository": "https://github.com/universal-ctags/ctags.git",
+      "source": "installer/externals/universal-ctags",
+      "maintainerCheckout": "externals/ctags",
+      "sourceRevision": "5437fa6249e95ec55a5f4944dac28f4f6e46c195",
+      "license": "GPL-2.0-only",
+      "version": "v6.1.0",
+      "updatePolicy": "committed-archive-is-the-default-provider-editor-starts-without-ctags",
+      "notes": "One-provider archive after #125. zipArtifacts.bat architecture handling is #132. The editor must run without ctags.",
+      "runtimeArtifacts": [
+        {
+          "name": "ctags.exe",
+          "provider": "committed-archive",
+          "productProvider": true,
+          "optional": true
+        }
+      ],
+      "artifacts": [
+        {
+          "path": "installer/externals/universal-ctags/ctags-v6.1.0-x64.zip",
+          "sha256": "ed1bdabe977980db2f5bd8f0a0fa11963f14604b5af92f31db26875bf342efd8",
+          "bytes": 2872879,
+          "productProvider": true
+        },
+        {
+          "path": "installer/externals/universal-ctags/ctags-v6.1.0-x86.zip",
+          "sha256": "3d95b1fe689be7c414d506bb95400dd9d0e10fef7975ded01c92036c361db974",
+          "bytes": 2919513,
+          "productProvider": true
+        }
+      ]
+    },
+    {
+      "id": "diffutils",
+      "kind": "process",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["build"],
+      "owner": "packaging",
+      "relatedIssues": [125, 132],
+      "license": "GPL-3.0-or-later",
+      "updatePolicy": "CI-pins-SAKURA_DIFFUTILS_SOURCE-none-not-shipped",
+      "notes": "Not staged in CI and not copied by the installer or ZIP. An archive provider would inject GPL DLLs into the release ZIP. See #125 and #132."
+    },
+    {
+      "id": "vcpkg",
+      "kind": "tool",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["configure", "restore", "build"],
+      "owner": "build",
+      "canonicalRepository": "https://github.com/Microsoft/vcpkg.git",
+      "source": "tools/vcpkg",
+      "sourceRevision": "a0b1c8d3a477c1cb4813d8e127a56961707ca42b",
+      "maintainerCheckout": "tools/vcpkg",
+      "license": "MIT",
+      "updatePolicy": "pinned-submodule-plus-declared-baseline",
+      "productBuildUsesSubmodule": true
+    },
+    {
+      "id": "innounp",
+      "kind": "tool",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["test"],
+      "owner": "packaging",
+      "source": "tools/innounp/innounp.exe",
+      "license": "BSD-3-Clause",
+      "version": "2.70.1",
+      "updatePolicy": "committed-binary-pin-not-a-package-feed",
+      "notes": "Unpacks Inno Setup 6 installers so packaging can prove SHA-256 identity. Not shipped with the product.",
+      "artifacts": [
+        {
+          "path": "tools/innounp/innounp.exe",
+          "sha256": "6ac216da1f7af80a5825e9ce32810fb0115e461884d27125e1f4488e094bc0ee",
+          "bytes": 1790976,
+          "productProvider": false
+        }
+      ]
+    }
+  ]
+}

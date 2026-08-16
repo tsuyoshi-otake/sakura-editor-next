@@ -35,7 +35,8 @@ class ArchitectureGatesWorkflowContractTests(unittest.TestCase):
         trigger = text[text.index("on:\n"):text.index("\npermissions:")]
         job = self._job_text()
 
-        self.assertIn("  pull_request:\n", trigger)
+        self.assertIn("  workflow_call:\n", trigger)
+        self.assertNotIn("  pull_request:\n", trigger)
         self.assertNotIn("paths:", trigger)
         self.assertNotIn("paths-ignore:", trigger)
         self.assertNotIn("\n    if:", job)
@@ -61,6 +62,7 @@ class ArchitectureGatesWorkflowContractTests(unittest.TestCase):
         )
         self.assertIn("python3 tools/build/sakura_build.py generate --check", job)
         self.assertIn("python3 tools/build/sakura_build.py graph check --all-contexts", job)
+        self.assertIn("python3 tools/dependency_ledger.py check", job)
 
     def test_ruleset_snapshot_appends_only_architecture_gates_requirement(self) -> None:
         before = self._read_json(RULESET_BEFORE)

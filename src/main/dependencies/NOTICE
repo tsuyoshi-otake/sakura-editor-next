@@ -1,0 +1,142 @@
+Sakura Editor NEXT third-party notices
+======================================
+
+This file is generated from src/main/dependencies/dependencies.json.
+Do not edit it by hand. Run: python tools/dependency_ledger.py generate
+
+bregonig-next
+  kind=library ownership=external lifecycle=temporary-migration status=present
+  license: GPL-1.0-or-later OR Artistic-1.0-Perl
+  version: 4.20.0
+  canonical: https://github.com/k-takata/bregonig.git
+  source: externals/bregonig
+  revision: 670b229063a33910e717a9f220d89ce8ab46d790
+  vcpkg: bregonig
+
+bron420-zip
+  kind=data ownership=external lifecycle=temporary-migration status=present
+  license: GPL-1.0-or-later OR Artistic-1.0-Perl
+  source: installer/externals/bregonig/bron420.zip
+  notes: Not a runtime provider. Packaging must not extract this archive into the product output.
+
+cmigemo-dict
+  kind=data ownership=external lifecycle=keep status=present
+  license: GPL-2.0-or-later
+  canonical: https://github.com/koron/cmigemo
+  source: externals/cmigemo-dict
+  notes: GPL dictionary zips are a separate artifact from the MIT C/Migemo code.
+
+cmigemo-next
+  kind=library ownership=external lifecycle=temporary-migration status=present
+  license: MIT
+  version: 1.3e
+  canonical: https://github.com/koron/cmigemo.git
+  source: externals/cmigemo
+  revision: e0f6145f61e0b7058c3006f344e58571d9fdd83a
+  vcpkg: cmigemo
+
+ctags
+  kind=process ownership=external lifecycle=keep status=present
+  license: GPL-2.0-only
+  version: v6.1.0
+  canonical: https://github.com/universal-ctags/ctags.git
+  source: installer/externals/universal-ctags
+  revision: 5437fa6249e95ec55a5f4944dac28f4f6e46c195
+  notes: One-provider archive after #125. zipArtifacts.bat architecture handling is #132. The editor must run without ctags.
+
+darkmodelib
+  kind=library ownership=external lifecycle=temporary-migration status=present
+  license: MPL-2.0 AND MIT
+  version: 0.48.0
+  canonical: https://github.com/ozone10/darkmodelib.git
+  source: externals/darkmodelib
+  revision: f7847b514a67f3bf051beda58bcf7d05b3ace564
+  vcpkg: darkmodelib
+  notes: Do not copy MPL code into Sakura-owned files. Theme replacement is #188.
+
+diffutils
+  kind=process ownership=external lifecycle=keep status=present
+  license: GPL-3.0-or-later
+  notes: Not staged in CI and not copied by the installer or ZIP. An archive provider would inject GPL DLLs into the release ZIP. See #125 and #132.
+
+dll-plugin1
+  kind=fixture ownership=owned-implementation lifecycle=keep status=present
+  license: Zlib
+  version: 1.0.0
+  source: tools/dll_plugin1
+  vcpkg: dll-plugin1
+
+fmt
+  kind=library ownership=external lifecycle=remove status=present
+  license: MIT
+  vcpkg: fmt
+  notes: Product code uses std::format. fmt remains only for sakura_core/terminal/vendor/.
+
+gtest
+  kind=library ownership=external lifecycle=keep status=present
+  license: BSD-3-Clause
+  vcpkg: gtest
+  notes: GoogleTest stays external and test-only. The externals/googletest submodule was removed in #183.
+
+innounp
+  kind=tool ownership=external lifecycle=keep status=present
+  license: BSD-3-Clause
+  version: 2.70.1
+  source: tools/innounp/innounp.exe
+  notes: Unpacks Inno Setup 6 installers so packaging can prove SHA-256 identity. Not shipped with the product.
+
+miniz-cpp
+  kind=fixture ownership=external lifecycle=keep status=present
+  license: MIT
+  canonical: https://github.com/tfussell/miniz-cpp.git
+  source: externals/miniz-cpp
+  revision: 052335e4f7773368df07b26d2baedb0e6d4dbd38
+  notes: ZipArchiveFixture.cpp is the sole includer in tests1.
+
+ms-gsl
+  kind=library ownership=external lifecycle=remove status=present
+  license: MIT
+  vcpkg: ms-gsl
+  notes: Product code uses std::span. ms-gsl remains only for sakura_core/terminal/vendor/.
+
+onigmo-next
+  kind=library ownership=external lifecycle=temporary-migration status=present
+  license: BSD-2-Clause
+  version: 6.2.0
+  canonical: https://github.com/tsuyoshi-otake/onigmo-next.git
+  source: externals/onigmo-next
+  revision: e96f322d0486f49d913abd21703e7eec6e572412
+  vcpkg: onigmo-next
+
+picojson
+  kind=library ownership=external lifecycle=temporary-migration status=present
+  license: BSD-2-Clause
+  canonical: https://github.com/kazuho/picojson.git
+  source: externals/picojson
+  revision: 111c9be5188f7350c2eac9ddaedd8cca3d7bf394
+
+ppa-stub
+  kind=fixture ownership=owned-implementation lifecycle=keep status=present
+  license: MIT
+  version: 1.0.0
+  source: tools/ppa_stub
+  vcpkg: ppa-stub
+
+vcpkg
+  kind=tool ownership=external lifecycle=keep status=present
+  license: MIT
+  canonical: https://github.com/Microsoft/vcpkg.git
+  source: tools/vcpkg
+  revision: a0b1c8d3a477c1cb4813d8e127a56961707ca42b
+
+wil
+  kind=library ownership=external lifecycle=remove status=present
+  license: MIT
+  vcpkg: wil
+  notes: Do not fork WIL. It remains only for sakura_core/terminal/vendor/.
+
+windows-terminal-vendor
+  kind=library ownership=owned-snapshot lifecycle=temporary-migration status=present
+  license: MIT
+  source: sakura_core/terminal/vendor/windows_terminal
+  notes: In-tree selected snapshot, not third_party/owned. fmt, GSL, and WIL currently exist for this tree.

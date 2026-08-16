@@ -1,0 +1,145 @@
+{
+  "SPDXID": "SPDXRef-DOCUMENT",
+  "creationInfo": {
+    "created": "2026-08-16T00:00:00Z",
+    "creators": [
+      "Tool: sakura-dependency-ledger-1"
+    ]
+  },
+  "dataLicense": "CC0-1.0",
+  "documentNamespace": "https://github.com/tsuyoshi-otake/sakura-editor-next/src/main/dependencies/sbom.spdx.json",
+  "name": "sakura-editor-next-dependencies",
+  "packages": [
+    {
+      "SPDXID": "SPDXRef-bregonig-next",
+      "downloadLocation": "https://github.com/k-takata/bregonig.git",
+      "licenseDeclared": "GPL-1.0-or-later OR Artistic-1.0-Perl",
+      "name": "bregonig-next",
+      "sourceInfo": "git:670b229063a33910e717a9f220d89ce8ab46d790",
+      "versionInfo": "4.20.0"
+    },
+    {
+      "SPDXID": "SPDXRef-bron420-zip",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "GPL-1.0-or-later OR Artistic-1.0-Perl",
+      "name": "bron420-zip"
+    },
+    {
+      "SPDXID": "SPDXRef-cmigemo-dict",
+      "downloadLocation": "https://github.com/koron/cmigemo",
+      "licenseDeclared": "GPL-2.0-or-later",
+      "name": "cmigemo-dict"
+    },
+    {
+      "SPDXID": "SPDXRef-cmigemo-next",
+      "downloadLocation": "https://github.com/koron/cmigemo.git",
+      "licenseDeclared": "MIT",
+      "name": "cmigemo-next",
+      "sourceInfo": "git:e0f6145f61e0b7058c3006f344e58571d9fdd83a",
+      "versionInfo": "1.3e"
+    },
+    {
+      "SPDXID": "SPDXRef-ctags",
+      "downloadLocation": "https://github.com/universal-ctags/ctags.git",
+      "licenseDeclared": "GPL-2.0-only",
+      "name": "ctags",
+      "sourceInfo": "git:5437fa6249e95ec55a5f4944dac28f4f6e46c195",
+      "versionInfo": "v6.1.0"
+    },
+    {
+      "SPDXID": "SPDXRef-darkmodelib",
+      "downloadLocation": "https://github.com/ozone10/darkmodelib.git",
+      "licenseDeclared": "MPL-2.0 AND MIT",
+      "name": "darkmodelib",
+      "sourceInfo": "git:f7847b514a67f3bf051beda58bcf7d05b3ace564",
+      "versionInfo": "0.48.0"
+    },
+    {
+      "SPDXID": "SPDXRef-diffutils",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "GPL-3.0-or-later",
+      "name": "diffutils"
+    },
+    {
+      "SPDXID": "SPDXRef-dll-plugin1",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "Zlib",
+      "name": "dll-plugin1",
+      "versionInfo": "1.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-fmt",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "fmt"
+    },
+    {
+      "SPDXID": "SPDXRef-gtest",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "gtest"
+    },
+    {
+      "SPDXID": "SPDXRef-innounp",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "BSD-3-Clause",
+      "name": "innounp",
+      "versionInfo": "2.70.1"
+    },
+    {
+      "SPDXID": "SPDXRef-miniz-cpp",
+      "downloadLocation": "https://github.com/tfussell/miniz-cpp.git",
+      "licenseDeclared": "MIT",
+      "name": "miniz-cpp",
+      "sourceInfo": "git:052335e4f7773368df07b26d2baedb0e6d4dbd38"
+    },
+    {
+      "SPDXID": "SPDXRef-ms-gsl",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "ms-gsl"
+    },
+    {
+      "SPDXID": "SPDXRef-onigmo-next",
+      "downloadLocation": "https://github.com/tsuyoshi-otake/onigmo-next.git",
+      "licenseDeclared": "BSD-2-Clause",
+      "name": "onigmo-next",
+      "sourceInfo": "git:e96f322d0486f49d913abd21703e7eec6e572412",
+      "versionInfo": "6.2.0"
+    },
+    {
+      "SPDXID": "SPDXRef-picojson",
+      "downloadLocation": "https://github.com/kazuho/picojson.git",
+      "licenseDeclared": "BSD-2-Clause",
+      "name": "picojson",
+      "sourceInfo": "git:111c9be5188f7350c2eac9ddaedd8cca3d7bf394"
+    },
+    {
+      "SPDXID": "SPDXRef-ppa-stub",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "ppa-stub",
+      "versionInfo": "1.0.0"
+    },
+    {
+      "SPDXID": "SPDXRef-vcpkg",
+      "downloadLocation": "https://github.com/Microsoft/vcpkg.git",
+      "licenseDeclared": "MIT",
+      "name": "vcpkg",
+      "sourceInfo": "git:a0b1c8d3a477c1cb4813d8e127a56961707ca42b"
+    },
+    {
+      "SPDXID": "SPDXRef-wil",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "wil"
+    },
+    {
+      "SPDXID": "SPDXRef-windows-terminal-vendor",
+      "downloadLocation": "NOASSERTION",
+      "licenseDeclared": "MIT",
+      "name": "windows-terminal-vendor"
+    }
+  ],
+  "spdxVersion": "SPDX-2.3"
+}

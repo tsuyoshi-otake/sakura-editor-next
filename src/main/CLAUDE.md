@@ -29,6 +29,16 @@ Keep the hand-written MSBuild path and the CMake/MinGW path behaviorally aligned
 - `GenerateCTags`/`GenerateDiff` in `sakura_core/sakura.vcxproj` are gated on `!Exists('$(SakuraSharedOutDir)ctags.exe')`/`diff.exe`, so a stale binary already sitting in a local output directory is never replaced. Delete it once after changing a provider, or the old bytes survive the change.
 - **`bregonig.dll` and `migemo.dll` have one provider: the vcpkg-built imported target.** `sakura.cmake` stages `$<TARGET_FILE:...>` so Debug copies `debug/bin` and Release copies `bin`. `build-installer.bat` and `zipArtifacts.bat` must consume that staged DLL and the license files under `externals/bregonig`. They must not extract `installer/externals/bregonig/bron420.zip` into the output directory. `src/test/py/test_runtime_artifact_providers.py` fails if a second provider reappears. Packaging scripts record SHA-256 of the staged DLLs against the installer payload and the executable ZIP.
 
+## Dependency ledger
+
+`src/main/dependencies/dependencies.json` is the source of truth for third-party
+kind, ownership, lifecycle, status, and scope. Do not add a flat `class` field.
+`NOTICE` and `sbom.spdx.json` are generated; after editing the ledger run
+`py -3 tools/dependency_ledger.py generate` and `py -3 tools/dependency_ledger.py check`.
+Architecture-gates runs that check offline. Owned snapshots under
+`third_party/owned/` are verified when a row declares them; they are not imported
+by this guardrail.
+
 ## Incremental and Nested-Build Rules
 
 - Every expensive generator or child build must declare the real source/configuration inputs and stable outputs that invalidate it. A no-op parent build must skip unchanged generated headers, package staging, PPA, and nested build work.

@@ -37,6 +37,7 @@ The public entry scripts live at the repository root; run them from there.
 ## CI Preflight
 
 - Before starting CI for any change, run `py -3 tools/build/sakura_build.py --format json lint checkout-invariance` from the repository root and require exit code 0. This is mandatory, not an optional diagnostic.
+- After editing `src/main/dependencies/dependencies.json`, run `py -3 tools/dependency_ledger.py generate` then `py -3 tools/dependency_ledger.py check`. Architecture-gates runs the same check.
 - The lint simulates LF and CRLF inputs for the semantic-graph schema and semantic-inventory scanner, and verifies that committed generated projections remain equivalent. Do not substitute `generate --check` for this preflight; run both checks.
 
 ## Documentation Contract
