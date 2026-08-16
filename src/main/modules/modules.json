@@ -797,6 +797,11 @@
       "inputs": [
         "vcpkg.json",
         "vcpkg-configuration.json",
+        "externals/bregonig",
+        "externals/cmigemo",
+        "externals/cmigemo-dict",
+        "externals/onigmo-next",
+        "externals/darkmodelib",
         "tools/vcpkg-local-registry",
         "tools/dll_plugin1/CMakeLists.txt",
         "tools/dll_plugin1/dll_plugin1.cpp",

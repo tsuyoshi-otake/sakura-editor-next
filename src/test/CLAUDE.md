@@ -4,7 +4,7 @@
 
 - `cpp/tests1/` contains GoogleTest sources and test fixtures.
 - `resources/` contains the test resource script, generated-code checks, and embedded test data.
-- `cmake/` defines `tests1`, Miniz, test resource ZIPs, and related dependencies; GoogleTest is resolved from the vcpkg toolchain.
+- `cmake/` defines `tests1`, Miniz, test resource ZIPs, and related dependencies; GoogleTest is resolved from the vcpkg toolchain. `generate_miniz` is a `tests1` dependency only — it must not be an `ALL` target.
 - `sakura_core/tests1.vcxproj` imports the shared MSBuild/CMake orchestration used to stage generated test inputs.
 
 `build-dev.bat` deliberately does not evaluate or build this subtree. Use `build-sln.bat <Platform> <Configuration>` before running MSVC tests.

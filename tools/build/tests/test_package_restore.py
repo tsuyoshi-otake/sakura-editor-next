@@ -3,6 +3,8 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -217,6 +219,89 @@ class PackageRestoreTests(unittest.TestCase):
                 after_source_change = validate_package_restore(graph, ("product",), "msvc-x64-debug")
                 self.assertFalse(after_source_change["valid"])
                 self.assertNotEqual(restored["plan_hash"], after_source_change["plan_hash"])
+
+    def test_source_revision_is_read_from_gitdir_without_invoking_git(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "package-source"
+            git_dir = root / "git-dir"
+            (git_dir / "refs/heads").mkdir(parents=True)
+            _write(source / "helper.cpp", "int helper() { return 1; }\n")
+            _write(source / ".git", "gitdir: ../git-dir\n")
+            _write(git_dir / "HEAD", "ref: refs/heads/main\n")
+            first_head = "0123456789abcdef0123456789abcdef01234567"
+            _write(git_dir / "refs/heads/main", first_head + "\n")
+            graph = _package_graph(root, package_inputs=("vcpkg.json", "package-source"))
+            first = plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            source_digest = next(
+                item for item in first["plan"]["declared_inputs"] if item["path"] == "package-source"
+            )
+            self.assertEqual(first_head, source_digest["git_head"])
+            _write(
+                git_dir / "refs/heads/main",
+                "89abcdef0123456789abcdef0123456789abcdef\n",
+            )
+            second = plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            self.assertNotEqual(first["plan_hash"], second["plan_hash"])
+
+    @unittest.skipUnless(shutil.which("git"), "git is required")
+    def test_source_revision_change_changes_plan_hash_without_tree_bytes_changing(self) -> None:
+        git = shutil.which("git")
+        assert git is not None
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "package-source"
+            source.mkdir(parents=True)
+            _write(source / "helper.cpp", "int helper() { return 1; }\n")
+            self._git(git, source, "init")
+            self._git(git, source, "add", "helper.cpp")
+            self._git(
+                git,
+                source,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "-m",
+                "source",
+            )
+            graph = _package_graph(root, package_inputs=("vcpkg.json", "package-source"))
+            first = plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            self._git(
+                git,
+                source,
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--allow-empty",
+                "-m",
+                "revision only",
+            )
+            second = plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            self.assertNotEqual(
+                first["plan_hash"],
+                second["plan_hash"],
+                "an empty source-revision bump must change plan_hash even when "
+                "the walked tree bytes are unchanged",
+            )
+
+    def _git(self, git: str, cwd: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+        result = subprocess.run(
+            [git, *arguments],
+            cwd=cwd,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(0, result.returncode, result.stdout + result.stderr)
+        return result
 
     def test_gc_uses_external_lru_metadata_and_enforces_capacity_when_safe(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

@@ -34,8 +34,8 @@ set INSTALLER_WORK=installer\sakura
 set INSTALLER_OUTPUT=installer\Output-%platform%
 
 set INSTALLER_RESOURCES_SINT=installer\sinst_src
-set INSTALLER_RESOURCES_BRON=installer\temp\bron
 set INSTALLER_RESOURCES_CTAGS=installer\temp\ctags
+set BREGONIG_LICENSE_DIR=externals\bregonig
 
 if exist "%INSTALLER_WORK%"      rmdir /s /q "%INSTALLER_WORK%"
 if exist "%INSTALLER_OUTPUT%"    rmdir /s /q "%INSTALLER_OUTPUT%"
@@ -51,9 +51,20 @@ mkdir %INSTALLER_WORK%\license\ms-gsl\
 mkdir %INSTALLER_WORK%\license\wil\
 
 set BREGONIG_DLL=bregonig.dll
-set BRON_ZIP=installer\externals\bregonig\bron420.zip
-"%CMD_7Z%" e "%BRON_ZIP%" -o"%INSTALLER_RESOURCES_BRON%" -y *.txt || (echo error extracting bregonig license files && exit /b 1)
-"%CMD_7Z%" e "%BRON_ZIP%" -o"%platform%\%configuration%" -y x64/%BREGONIG_DLL% || (echo error extracting %BREGONIG_DLL% && exit /b 1)
+set MIGEMO_DLL=migemo.dll
+if not exist "%platform%\%configuration%\%BREGONIG_DLL%" (
+	echo error: %platform%\%configuration%\%BREGONIG_DLL% was not staged by the product build.
+	echo The installer must ship that DLL. It must not extract installer\externals\bregonig\bron420.zip.
+	exit /b 1
+)
+if not exist "%platform%\%configuration%\%MIGEMO_DLL%" (
+	echo error: %platform%\%configuration%\%MIGEMO_DLL% was not staged by the product build.
+	exit /b 1
+)
+if not exist "%BREGONIG_LICENSE_DIR%\bsd_license.txt" (
+	echo error: bregonig license files were not found under %BREGONIG_LICENSE_DIR%.
+	exit /b 1
+)
 
 set CTAGS_EXE=ctags.exe
 set CTAGS_PREFIX=x64
@@ -98,7 +109,9 @@ copy /Y %INSTALLER_RESOURCES_SINT%\sakura.exe.manifest.x    %INSTALLER_WORK%\ > 
 copy /Y %INSTALLER_RESOURCES_SINT%\sakura.exe.manifest.v    %INSTALLER_WORK%\ > NUL
 copy /Y %INSTALLER_RESOURCES_SINT%\sakura.exe.ini           %INSTALLER_WORK%\ > NUL
 copy /Y %INSTALLER_RESOURCES_SINT%\keyword\*.*              %INSTALLER_WORK%\keyword\ > NUL
-copy /Y %INSTALLER_RESOURCES_BRON%\*.txt                    %INSTALLER_WORK%\license\bregonig\ > NUL
+copy /Y /B %BREGONIG_LICENSE_DIR%\bsd_license.txt           %INSTALLER_WORK%\license\bregonig\ > NUL || (echo error copying bregonig bsd license && exit /b 1)
+copy /Y /B %BREGONIG_LICENSE_DIR%\perl_license.txt          %INSTALLER_WORK%\license\bregonig\ > NUL || (echo error copying bregonig perl license && exit /b 1)
+copy /Y /B %BREGONIG_LICENSE_DIR%\perl_license_jp.txt       %INSTALLER_WORK%\license\bregonig\ > NUL || (echo error copying bregonig perl license ja && exit /b 1)
 copy /Y %INSTALLER_RESOURCES_CTAGS%\license\*.*             %INSTALLER_WORK%\license\ctags\ > NUL
 copy /Y %WINDOWS_TERMINAL_VENDOR%\LICENSE                   %INSTALLER_WORK%\license\windows-terminal\ > NUL || (echo error copying Windows Terminal license && exit /b 1)
 copy /Y %WINDOWS_TERMINAL_VENDOR%\UPSTREAM.md               %INSTALLER_WORK%\license\windows-terminal\ > NUL || (echo error copying Windows Terminal provenance && exit /b 1)
@@ -115,6 +128,9 @@ copy /Y /B help\macro\macro.chm                             %INSTALLER_WORK%\ > 
 copy /Y /B %platform%\%configuration%\*.exe                 %INSTALLER_WORK%\ > NUL
 copy /Y /B %platform%\%configuration%\*.dll                 %INSTALLER_WORK%\ > NUL
 
+if not exist "build\logs" mkdir build\logs
+py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-work "%INSTALLER_WORK%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-work" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer-work.json" || (echo error: staged DLLs do not match the installer work directory && exit /b 1)
+
 set SAKURA_ISS=installer\sakura-%platform%.iss
 @echo running "%CMD_ISCC%" %SAKURA_ISS%
 if "%configuration%" == "Release" (
@@ -122,6 +138,14 @@ if "%configuration%" == "Release" (
 ) else (
 	"%CMD_ISCC%" %SAKURA_ISS% > %ISS_LOG_FILE% || (echo error && exit /b 1)
 )
+
+set INSTALLER_EXE=
+for %%I in ("%INSTALLER_OUTPUT%\*.exe") do set INSTALLER_EXE=%%~fI
+if not defined INSTALLER_EXE (
+	echo error: Inno Setup did not produce an installer exe under %INSTALLER_OUTPUT%.
+	exit /b 1
+)
+py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --installer-exe "%INSTALLER_EXE%" --seven-zip "%CMD_7Z%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-exe" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-installer.json" || (echo error: staged DLLs do not match the installer payload && exit /b 1)
 exit /b 0
 
 @rem ------------------------------------------------------------------------------

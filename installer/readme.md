@@ -90,8 +90,7 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。Saku
     - sakura/
         - sakura.exe
         - sakura_lang_en_US.dll
-        - bregonig.dll
-        - bsd_license.txt
+        - bregonig.dll （製品ビルドがステージした DLL。`bron420.zip` からは展開しない）
         - sakura.exe.manifest.x
         - sakura.exe.manifest.v
         - sakura.chm
@@ -99,6 +98,10 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。Saku
         - plugin.chm
         - sakura.exe.ini
         - license/
+            - bregonig/
+                - bsd_license.txt
+                - perl_license.txt
+                - perl_license_jp.txt
             - windows-terminal/
                 - LICENSE
                 - UPSTREAM.md

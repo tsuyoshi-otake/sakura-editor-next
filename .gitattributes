@@ -26,3 +26,4 @@ tools/startup-benchmark-sample.md text eol=lf
 *.ttf binary
 *.otf binary
 *.woff binary
+tools/innounp/*.exe binary

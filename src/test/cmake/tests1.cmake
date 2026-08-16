@@ -65,7 +65,7 @@ add_custom_command(
   COMMENT "Copying miniz-cpp/zip_file.hpp to include directory"
 )
 
-add_custom_target(generate_miniz ALL
+add_custom_target(generate_miniz
   DEPENDS
     "${MINIZ_INCLUDE_DIR}/zip_file.hpp"
 )

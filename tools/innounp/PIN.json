@@ -1,0 +1,10 @@
+{
+  "id": "innounp",
+  "version": "2.70.1",
+  "date": "2026-07-21",
+  "path": "tools/innounp/innounp.exe",
+  "sha256": "6ac216da1f7af80a5825e9ce32810fb0115e461884d27125e1f4488e094bc0ee",
+  "bytes": 1790976,
+  "productProvider": false,
+  "purpose": "Extract Inno Setup 6 installer payloads so packaging can prove SHA-256 identity. 7-Zip cannot open those executables as archives."
+}
