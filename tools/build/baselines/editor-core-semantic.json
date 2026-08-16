@@ -16887,63 +16887,63 @@
     {
       "column": 10,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1689,
+      "line": 1683,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1733,
+      "line": 1727,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 41,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1847,
+      "line": 1841,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 61,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1865,
+      "line": 1859,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 76,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1865,
+      "line": 1859,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 1,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1979,
+      "line": 1973,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 45,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 1984,
+      "line": 1978,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 72,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 1984,
+      "line": 1978,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 87,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 1984,
+      "line": 1978,
       "path": "sakura_core/terminal/window/CTerminalTool.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -21528,77 +21528,77 @@
     {
       "column": 37,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 401,
+      "line": 422,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 9,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 563,
+      "line": 584,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:ce2641517bdd031289f5aa92b173676720d1b3f777c569a17c17b0613c351c5f",
-      "line": 597,
+      "line": 618,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 599,
+      "line": 620,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 600,
+      "line": 621,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 19,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 721,
+      "line": 742,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 722,
+      "line": 743,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:2d135021e436936d9115593f96bff150805a6cb1a4bd807aeb1b55ff9c47a8fa",
-      "line": 904,
+      "line": 925,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 905,
+      "line": 926,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 29,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 916,
+      "line": 937,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
     {
       "column": 79,
       "evidence_sha256": "sha256:e3e828bf07791d2c6695bbbdab6468660e40350e717c7ee6cec8c6ac0966532c",
-      "line": 916,
+      "line": 937,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "boundary.win32_type"
     },
@@ -31510,14 +31510,14 @@
     {
       "column": 5,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 787,
+      "line": 808,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "error.catch_all"
     },
     {
       "column": 2,
       "evidence_sha256": "sha256:1957334f59230a060e4f265404a0aed78f0653384b8085c92c1f44dd3b7c34f1",
-      "line": 887,
+      "line": 908,
       "path": "sakura_core/window/CCustomFrameController.cpp",
       "rule_id": "error.catch_all"
     },
@@ -74360,7 +74360,7 @@
     "raw_delete_expression_count": 313,
     "raw_new_expression_count": 237,
     "source_file_count": 1410,
-    "source_line_count": 403833,
+    "source_line_count": 403848,
     "tracked_file_count": 1455,
     "win32_parameter_mention_count": 4267
   },
@@ -74517,8 +74517,8 @@
     ]
   },
   "scope_definition_sha256": "sha256:62345a3f950105726a10c4836e942fccdfbf4cdeda16db25b2ca8d8e1ab58596",
-  "source_commit": "af289d186a6d34716988749eb38676a4491ad71d",
-  "source_fingerprint": "sha256:e2f962f434d07719b6385f2a9ffbe8caa586b42b86c6ede2ca858dbd13c340f6",
+  "source_commit": "cb13993bf5c80648567b6ae41106f16e43734814",
+  "source_fingerprint": "sha256:5423101b09b0cccec04c130688f1b8dce7ae02e3f0ed31dfda67c6ccdb40cf7a",
   "tracked_source_paths": [
     ".github/actions/bootstrap-vcpkg/action.yml",
     ".github/dependabot.yml",
