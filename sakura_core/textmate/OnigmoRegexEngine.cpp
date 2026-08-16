@@ -21,7 +21,7 @@
 #ifndef ONIG_EXTERN
 #define ONIG_EXTERN extern
 #endif
-#include "Onigmo/onigmo.h"
+#include "onigmo-next/onigmo.h"
 
 namespace textmate {
 

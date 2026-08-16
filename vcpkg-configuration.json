@@ -13,7 +13,7 @@
         "cmigemo",
         "darkmodelib",
         "dll-plugin1",
-        "onigmo",
+        "onigmo-next",
         "ppa-stub"
       ],
       "path": "tools/vcpkg-local-registry"

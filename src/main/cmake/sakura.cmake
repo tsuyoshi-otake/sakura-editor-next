@@ -300,6 +300,7 @@ find_package(darkmodelib CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(WIL CONFIG REQUIRED)
+find_package(Onigmo CONFIG REQUIRED)
 
 # Resolve bregonig from vcpkg local registry
 find_package(bregonig CONFIG REQUIRED)
@@ -596,71 +597,9 @@ list(FILTER SOURCES EXCLUDE REGEX
 )
 list(APPEND SOURCES ${WINDOWS_TERMINAL_VENDOR_SOURCES})
 
-# Onigmo is vendored as a submodule under externals/Onigmo/, outside the
-# sakura_core/src-main-cpp trees the globs above cover, so it is never
-# auto-discovered. Compile its own .c sources as ordinary translation units
-# straight into sakura_core (Option A in sakura_core/textmate/CLAUDE.md,
-# "Onigmo build integration") instead of adding a vcpkg/find_package
-# dependency: the vendored copy is submodule-pinned, not vcpkg-versioned, and
-# this matches how OnigmoRegexEngine.cpp already resolves
-# "Onigmo/onigmo.h" straight from externals/Onigmo. This file list mirrors
-# the vetted-but-dormant tools/vcpkg-local-registry/ports/onigmo/CMakeLists.txt
-# ONIGMO_SOURCES list; do not add testc.c, test_enc_utf8.c, or testu.c, which
-# are Onigmo's own test executables.
-set(ONIGMO_ROOT ${CMAKE_SOURCE_DIR}/externals/Onigmo)
-set(ONIGMO_SOURCES
-  ${ONIGMO_ROOT}/regcomp.c
-  ${ONIGMO_ROOT}/regenc.c
-  ${ONIGMO_ROOT}/regerror.c
-  ${ONIGMO_ROOT}/regexec.c
-  ${ONIGMO_ROOT}/regext.c
-  ${ONIGMO_ROOT}/reggnu.c
-  ${ONIGMO_ROOT}/regparse.c
-  ${ONIGMO_ROOT}/regposerr.c
-  ${ONIGMO_ROOT}/regposix.c
-  ${ONIGMO_ROOT}/regsyntax.c
-  ${ONIGMO_ROOT}/regtrav.c
-  ${ONIGMO_ROOT}/regversion.c
-  ${ONIGMO_ROOT}/st.c
-  ${ONIGMO_ROOT}/enc/ascii.c
-  ${ONIGMO_ROOT}/enc/big5.c
-  ${ONIGMO_ROOT}/enc/euc_jp.c
-  ${ONIGMO_ROOT}/enc/euc_kr.c
-  ${ONIGMO_ROOT}/enc/euc_tw.c
-  ${ONIGMO_ROOT}/enc/gb18030.c
-  ${ONIGMO_ROOT}/enc/iso_8859_1.c
-  ${ONIGMO_ROOT}/enc/iso_8859_2.c
-  ${ONIGMO_ROOT}/enc/iso_8859_3.c
-  ${ONIGMO_ROOT}/enc/iso_8859_4.c
-  ${ONIGMO_ROOT}/enc/iso_8859_5.c
-  ${ONIGMO_ROOT}/enc/iso_8859_6.c
-  ${ONIGMO_ROOT}/enc/iso_8859_7.c
-  ${ONIGMO_ROOT}/enc/iso_8859_8.c
-  ${ONIGMO_ROOT}/enc/iso_8859_9.c
-  ${ONIGMO_ROOT}/enc/iso_8859_10.c
-  ${ONIGMO_ROOT}/enc/iso_8859_11.c
-  ${ONIGMO_ROOT}/enc/iso_8859_13.c
-  ${ONIGMO_ROOT}/enc/iso_8859_14.c
-  ${ONIGMO_ROOT}/enc/iso_8859_15.c
-  ${ONIGMO_ROOT}/enc/iso_8859_16.c
-  ${ONIGMO_ROOT}/enc/koi8_r.c
-  ${ONIGMO_ROOT}/enc/koi8_u.c
-  ${ONIGMO_ROOT}/enc/shift_jis.c
-  ${ONIGMO_ROOT}/enc/unicode.c
-  ${ONIGMO_ROOT}/enc/utf_8.c
-  ${ONIGMO_ROOT}/enc/utf_16be.c
-  ${ONIGMO_ROOT}/enc/utf_16le.c
-  ${ONIGMO_ROOT}/enc/utf_32be.c
-  ${ONIGMO_ROOT}/enc/utf_32le.c
-  ${ONIGMO_ROOT}/enc/windows_1250.c
-  ${ONIGMO_ROOT}/enc/windows_1251.c
-  ${ONIGMO_ROOT}/enc/windows_1252.c
-  ${ONIGMO_ROOT}/enc/windows_1253.c
-  ${ONIGMO_ROOT}/enc/windows_1254.c
-  ${ONIGMO_ROOT}/enc/windows_1257.c
-  ${ONIGMO_ROOT}/enc/windows_31j.c
-)
-list(APPEND SOURCES ${ONIGMO_SOURCES})
+# Onigmo NEXT is linked as the vcpkg static library Onigmo::onigmo
+# (tools/vcpkg-local-registry/ports/onigmo-next). Headers still resolve as
+# "onigmo-next/onigmo.h" via the externals/ include directory.
 
 # A committed generated projection removes extracted provider sources from the
 # legacy glob and defines their standalone native targets.  The OPTIONAL hook
@@ -705,39 +644,7 @@ set_source_files_properties(${WINDOWS_TERMINAL_VENDOR_SOURCES}
   PROPERTIES SKIP_PRECOMPILE_HEADERS ON
 )
 
-# Onigmo is plain C compiled with Sakura's own C++ StdAfx PCH disabled (a C
-# translation unit cannot consume a C++ precompiled header), its own
-# Windows-targeted config.h under win32/ (the same header its own nmake build
-# uses, so HAVE_CONFIG_H needs no newly written config header), and its own
-# enc/unicode/ headers (casefold.h, name2ctype.h) included unqualified from
-# enc/unicode.c. ONIG_EXTERN=extern matches how Onigmo is consumed as a
-# statically linked, not exported/imported, translation unit. These
-# definitions and include directories are scoped to only the Onigmo sources so
-# they do not leak into the rest of sakura_core, matching the MSBuild
-# per-file overrides in sakura_core/sakura.vcxproj.
-# Onigmo's own internal headers (regenc.h, regint.h, regparse.h, st.h,
-# onigmo.h, onigmoposix.h) live at ${ONIGMO_ROOT} itself, not only under
-# win32/ or enc/unicode/; several enc/*.c files #include "regenc.h" /
-# "regint.h" unqualified, and euc_jp.c / enc/shift_jis.h #include the
-# relatively pathed "enc/jis/props.h", which only resolves once ${ONIGMO_ROOT}
-# itself is on the include path (as ${ONIGMO_ROOT}/enc/jis/props.h).
-set_source_files_properties(${ONIGMO_SOURCES}
-  PROPERTIES
-    SKIP_PRECOMPILE_HEADERS ON
-    COMPILE_DEFINITIONS "HAVE_CONFIG_H;ONIG_EXTERN=extern"
-    INCLUDE_DIRECTORIES "${ONIGMO_ROOT};${ONIGMO_ROOT}/win32;${ONIGMO_ROOT}/enc/unicode"
-)
-
-# GCC 14 and later diagnose the vendored Onigmo version's K&R-compatible
-# ANYARGS callback declarations as errors, and GCC 15 defaults to C23 where an
-# empty parameter list means no arguments. Compile this legacy boundary as GNU
-# C17 and keep the diagnostic downgrade local to Onigmo's C translation units;
-# do not weaken diagnostics for Sakura.
 if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
-  set_property(SOURCE ${ONIGMO_SOURCES} APPEND PROPERTY
-    COMPILE_OPTIONS -std=gnu17 -Wno-error=incompatible-pointer-types
-  )
-
   # MinGW's wincodec.h does not yet expose the Windows SDK's high-quality
   # cubic enumerator. Keep that SDK spelling difference at the MinGW build
   # boundary and retain cubic interpolation for the three WIC consumers.
@@ -828,6 +735,7 @@ target_link_libraries(sakura_core
     fmt::fmt
     Microsoft.GSL::GSL
     WIL::WIL
+    Onigmo::onigmo
     advapi32
     bcrypt
     comctl32
