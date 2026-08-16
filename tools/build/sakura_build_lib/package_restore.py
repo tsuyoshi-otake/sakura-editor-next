@@ -208,28 +208,72 @@ def _digest_declared_input(repo_root: Path, relative: str) -> dict[str, object]:
     return digest
 
 
+def _resolve_git_dir(git_path: Path) -> Path | None:
+    if git_path.is_dir():
+        return git_path
+    if not git_path.is_file():
+        return None
+    text = git_path.read_text(encoding="ascii", errors="replace").strip()
+    if not text.lower().startswith("gitdir:"):
+        return None
+    gitdir = text.split(":", 1)[1].strip()
+    resolved = (git_path.parent / gitdir).resolve()
+    return resolved if resolved.is_dir() else None
+
+
+def _lookup_packed_ref(git_dir: Path, ref: str) -> str | None:
+    packed = git_dir / "packed-refs"
+    if not packed.is_file():
+        return None
+    for line in packed.read_text(encoding="ascii", errors="replace").splitlines():
+        if not line or line.startswith("#") or line.startswith("^"):
+            continue
+        parts = line.split()
+        if len(parts) >= 2 and parts[1] == ref:
+            return parts[0]
+    return None
+
+
 def _git_source_revision(path: Path) -> str | None:
     """Record HEAD when a declared package input is itself a git checkout.
 
     Local ports build from submodule working trees. File bytes are already in
     the directory digest; HEAD makes a source-revision change fail closed even
     when the tree walk would otherwise look identical.
+
+    Read the gitdir and HEAD files directly. MinGW CI runs Windows Python under
+    MSYS2, where ``git`` is not on the PATH that ``CreateProcess`` searches.
     """
 
-    if not (path / ".git").exists():
+    git_dir = _resolve_git_dir(path / ".git")
+    if git_dir is None:
         return None
-    result = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "HEAD"],
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    head = (result.stdout or "").strip()
-    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", head):
-        detail = (result.stderr or result.stdout or "git rev-parse failed").strip()
+    head_file = git_dir / "HEAD"
+    if not head_file.is_file():
         raise BuildError(
             "PACKAGE_INPUT_GIT",
-            f"could not read git HEAD for package input {path}: {detail}",
+            f"could not read git HEAD for package input {path}: missing {head_file}",
+            5,
+        )
+    head = head_file.read_text(encoding="ascii", errors="replace").strip()
+    if head.startswith("ref:"):
+        ref = head.split(":", 1)[1].strip()
+        ref_file = git_dir / ref
+        if ref_file.is_file():
+            head = ref_file.read_text(encoding="ascii", errors="replace").strip()
+        else:
+            packed = _lookup_packed_ref(git_dir, ref)
+            if packed is None:
+                raise BuildError(
+                    "PACKAGE_INPUT_GIT",
+                    f"could not read git HEAD for package input {path}: unresolved {ref}",
+                    5,
+                )
+            head = packed
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        raise BuildError(
+            "PACKAGE_INPUT_GIT",
+            f"could not read git HEAD for package input {path}: {head!r}",
             5,
         )
     return head

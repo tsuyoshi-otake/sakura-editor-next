@@ -220,6 +220,30 @@ class PackageRestoreTests(unittest.TestCase):
                 self.assertFalse(after_source_change["valid"])
                 self.assertNotEqual(restored["plan_hash"], after_source_change["plan_hash"])
 
+    def test_source_revision_is_read_from_gitdir_without_invoking_git(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "package-source"
+            git_dir = root / "git-dir"
+            (git_dir / "refs/heads").mkdir(parents=True)
+            _write(source / "helper.cpp", "int helper() { return 1; }\n")
+            _write(source / ".git", "gitdir: ../git-dir\n")
+            _write(git_dir / "HEAD", "ref: refs/heads/main\n")
+            first_head = "0123456789abcdef0123456789abcdef01234567"
+            _write(git_dir / "refs/heads/main", first_head + "\n")
+            graph = _package_graph(root, package_inputs=("vcpkg.json", "package-source"))
+            first = plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            source_digest = next(
+                item for item in first["plan"]["declared_inputs"] if item["path"] == "package-source"
+            )
+            self.assertEqual(first_head, source_digest["git_head"])
+            _write(
+                git_dir / "refs/heads/main",
+                "89abcdef0123456789abcdef0123456789abcdef\n",
+            )
+            second = plan_package_restore(graph, ("product",), "msvc-x64-debug")
+            self.assertNotEqual(first["plan_hash"], second["plan_hash"])
+
     @unittest.skipUnless(shutil.which("git"), "git is required")
     def test_source_revision_change_changes_plan_hash_without_tree_bytes_changing(self) -> None:
         git = shutil.which("git")
