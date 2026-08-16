@@ -304,8 +304,9 @@ find_package(Onigmo CONFIG REQUIRED)
 
 # Resolve bregonig from vcpkg local registry
 find_package(bregonig CONFIG REQUIRED)
-set(BREGONIG_RUNTIME
-  "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/bregonig.dll")
+# IMPORTED_LOCATION_* already splits Debug to debug/bin and Release to bin.
+# Do not hard-code bin/; a Debug editor must not stage the Release DLL.
+set(BREGONIG_RUNTIME "$<TARGET_FILE:bregonig::bregonig>")
 set(COPY_RUNTIME_ASSET_SCRIPT
   "${CMAKE_SOURCE_DIR}/src/main/cmake/copy_runtime_asset.cmake")
 
@@ -324,8 +325,7 @@ add_custom_target(generate_bregonig
 
 # Resolve cmigemo from vcpkg local registry
 find_package(cmigemo CONFIG REQUIRED)
-set(CMIGEMO_RUNTIME
-  "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin/migemo.dll")
+set(CMIGEMO_RUNTIME "$<TARGET_FILE:cmigemo::cmigemo>")
 
 add_custom_target(generate_cmigemo
   COMMAND ${CMAKE_COMMAND}
@@ -644,7 +644,7 @@ set_source_files_properties(${WINDOWS_TERMINAL_VENDOR_SOURCES}
   PROPERTIES SKIP_PRECOMPILE_HEADERS ON
 )
 
-if(MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+if(MINGW AND CMAKE_C_COMPILER_ID STREQUAL "GNU")
   # MinGW's wincodec.h does not yet expose the Windows SDK's high-quality
   # cubic enumerator. Keep that SDK spelling difference at the MinGW build
   # boundary and retain cubic interpolation for the three WIC consumers.

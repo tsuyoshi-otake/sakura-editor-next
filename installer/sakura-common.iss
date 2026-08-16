@@ -344,6 +344,7 @@ Source: "sakura\sakura_lang_en_US.dll";DestDir: "{app}";                  Compon
 Source: "sakura\sakura_lang_zh_CN.dll";DestDir: "{app}";                  Components: main; Flags: ignoreversion;
 Source: "sakura\license\LICENSE";      DestDir: "{app}\license";          Components: main
 Source: "sakura\bregonig.dll";         DestDir: "{app}";                  Components: main
+Source: "sakura\migemo.dll";           DestDir: "{app}";                  Components: main
 Source: "sakura\license\bregonig\*";   DestDir: "{app}\license\bregonig"; Components: main
 Source: "sakura\ctags.exe";            DestDir: "{app}";                  Components: main
 Source: "sakura\license\ctags\*";      DestDir: "{app}\license\ctags";    Components: main

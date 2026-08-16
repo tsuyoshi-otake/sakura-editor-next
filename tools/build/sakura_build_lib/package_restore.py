@@ -9,8 +9,8 @@ completed root only after vcpkg and the declared package directories validate.
 
 The cache is deliberately repository-local.  It makes a pull with unchanged
 package inputs a reuse operation instead of another package build, while a
-changed manifest, registry, overlay, triplet, or vcpkg tool gets a distinct
-immutable entry.
+changed manifest, registry, overlay, local-port source tree, source revision,
+triplet, or vcpkg tool gets a distinct immutable entry.
 """
 
 from __future__ import annotations
@@ -180,12 +180,14 @@ def _digest_declared_input(repo_root: Path, relative: str) -> dict[str, object]:
     for current_root, directories, files in os.walk(path, topdown=True, followlinks=False):
         directories[:] = sorted(
             directory for directory in directories
-            if not (Path(current_root) / directory).is_symlink()
+            if directory != ".git" and not (Path(current_root) / directory).is_symlink()
         )
         current = Path(current_root)
         directory_relative = current.relative_to(path).as_posix()
         entries.append({"kind": "directory", "path": directory_relative})
         for filename in sorted(files):
+            if filename == ".git":
+                continue
             candidate = current / filename
             if candidate.is_symlink():
                 raise BuildError("PACKAGE_INPUT_SYMLINK", f"package input must not contain a symlink: {candidate}", 5)
@@ -194,12 +196,43 @@ def _digest_declared_input(repo_root: Path, relative: str) -> dict[str, object]:
                 "path": candidate.relative_to(path).as_posix(),
                 "sha256": _sha256_file(candidate, "PACKAGE_INPUT_HASH"),
             })
-    return {
+    digest: dict[str, object] = {
         "path": relative.replace("\\", "/"),
         "kind": "directory",
         "entry_count": len(entries),
         "sha256": _sha256_bytes(_canonical_json(entries).encode("utf-8")),
     }
+    git_head = _git_source_revision(path)
+    if git_head is not None:
+        digest["git_head"] = git_head
+    return digest
+
+
+def _git_source_revision(path: Path) -> str | None:
+    """Record HEAD when a declared package input is itself a git checkout.
+
+    Local ports build from submodule working trees. File bytes are already in
+    the directory digest; HEAD makes a source-revision change fail closed even
+    when the tree walk would otherwise look identical.
+    """
+
+    if not (path / ".git").exists():
+        return None
+    result = subprocess.run(
+        ["git", "-C", str(path), "rev-parse", "HEAD"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    head = (result.stdout or "").strip()
+    if result.returncode != 0 or not re.fullmatch(r"[0-9a-f]{40}", head):
+        detail = (result.stderr or result.stdout or "git rev-parse failed").strip()
+        raise BuildError(
+            "PACKAGE_INPUT_GIT",
+            f"could not read git HEAD for package input {path}: {detail}",
+            5,
+        )
+    return head
 
 
 def _vcpkg_root(repo_root: Path, environment: Mapping[str, str] | None = None) -> Path:

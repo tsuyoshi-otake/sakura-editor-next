@@ -20,16 +20,17 @@ file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/include")
 
 file(REMOVE_RECURSE "${CURRENT_PACKAGES_DIR}/debug/share")
 
-if(EXISTS "${DARKMODELIB_ROOT}/LICENSE.md")
-  file(INSTALL
-    "${DARKMODELIB_ROOT}/LICENSE.md"
-    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
-    RENAME copyright
-  )
-elseif(EXISTS "${DARKMODELIB_ROOT}/LICENSE-MIT.md")
-  file(INSTALL
-    "${DARKMODELIB_ROOT}/LICENSE-MIT.md"
-    DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
-    RENAME copyright
-  )
-endif()
+# Upstream is MPL-2.0 for the library proper, with MIT for selected files and
+# bundled snippets. Keep every license text that ships with the source tree.
+file(INSTALL
+  "${DARKMODELIB_ROOT}/LICENSE.md"
+  DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
+  RENAME copyright
+)
+file(INSTALL
+  "${DARKMODELIB_ROOT}/LICENSE-MIT.md"
+  "${DARKMODELIB_ROOT}/docs/LICENSE-win32-darkmode.md"
+  "${DARKMODELIB_ROOT}/docs/LICENSE-UAHMenuBar.md"
+  "${DARKMODELIB_ROOT}/docs/LICENSE-PolyHook_2_0.md"
+  DESTINATION "${CURRENT_PACKAGES_DIR}/share/${PORT}"
+)

@@ -209,8 +209,20 @@ call :copyRequired ".\LICENSE" "%WORKDIR_EXE%\license\" "Sakura license"
 if errorlevel 1 exit /b 1
 
 : bregonig
-set INSTALLER_RESOURCES_BRON=%~dp0installer\temp\bron
-call :copyRequired "%INSTALLER_RESOURCES_BRON%\*.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig licenses"
+if not exist "%platform%\%configuration%\bregonig.dll" (
+	echo Error: %platform%\%configuration%\bregonig.dll was not staged by the product build.
+	exit /b 1
+)
+if not exist "%platform%\%configuration%\migemo.dll" (
+	echo Error: %platform%\%configuration%\migemo.dll was not staged by the product build.
+	exit /b 1
+)
+set BREGONIG_LICENSE_DIR=%~dp0externals\bregonig
+call :copyRequired "%BREGONIG_LICENSE_DIR%\bsd_license.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig bsd license"
+if errorlevel 1 exit /b 1
+call :copyRequired "%BREGONIG_LICENSE_DIR%\perl_license.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig perl license"
+if errorlevel 1 exit /b 1
+call :copyRequired "%BREGONIG_LICENSE_DIR%\perl_license_jp.txt" "%WORKDIR_EXE%\license\bregonig\" "bregonig perl license ja"
 if errorlevel 1 exit /b 1
 
 : ctags.exe
@@ -360,6 +372,18 @@ call :archiveRequired "%WORKDIR_EXE%" "%OUTFILE_EXE%" "executable"
 if errorlevel 1 exit /b 1
 call :archiveRequired "%WORKDIR_DEV%" "%OUTFILE_DEV%" "development"
 if errorlevel 1 exit /b 1
+
+if not exist "build\logs" mkdir build\logs
+if not defined CMD_7Z call %~dp0tools\find-tools.bat > NUL
+if not defined CMD_7Z (
+	echo Error: 7z.exe was not found; it is required to prove installer SHA-256 identity.
+	exit /b 1
+)
+py -3 "%~dp0tools\verify_runtime_artifact_identity.py" --staged "%platform%\%configuration%" --zip "%OUTFILE_EXE%" --installer-zip "%OUTFILE_INST%" --seven-zip "%CMD_7Z%" --clean-extract "installer\temp\runtime-identity-%platform%-%configuration%-zip" --report "build\logs\runtime-artifact-identity-%platform%-%configuration%-zip.json"
+if errorlevel 1 (
+	echo Error: staged DLLs do not match the installer or executable ZIP payload.
+	exit /b 1
+)
 
 @rem SAKURA_GENERATE_ASSEMBLY_LISTINGS=0 (or unset) means MSBuild produced no
 @rem .asm files. copyRequired would abort the whole packaging run on missing
