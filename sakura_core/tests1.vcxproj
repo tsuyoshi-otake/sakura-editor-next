@@ -257,6 +257,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\env\WorkbenchSettingsTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-czipfile.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-extmodules.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\extmodule\BregexpProviderContractTest.cpp" />
     <ClCompile Include="..\src\test\resources\printEFunctionCode.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cclipboard.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodebase.cpp" />

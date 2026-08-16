@@ -1,8 +1,8 @@
 {
   "2026-07-11": {
     "bregonig": {
-      "baseline": "4.20.0",
-      "port-version": 1
+        "baseline": "4.20.0",
+        "port-version": 5
     },
     "cmigemo": {
       "baseline": "1.3e",
@@ -18,7 +18,7 @@
     },
     "onigmo-next": {
       "baseline": "6.2.0",
-      "port-version": 2
+      "port-version": 3
     },
     "ppa-stub": {
       "baseline": "1.0.0",

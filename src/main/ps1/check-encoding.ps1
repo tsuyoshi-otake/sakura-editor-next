@@ -125,13 +125,23 @@ function Test-ResourceEncoding {
 	return Test-StrictDecode $encoding $Bytes 2
 }
 
+function Test-OwnedSnapshotPath {
+	param([string]$Path)
+
+	$normalized = $Path.Replace('\', '/').ToLowerInvariant()
+	return $normalized.StartsWith('third_party/owned/') -or
+		$normalized.Contains('/third_party/owned/')
+}
+
 $files = if ($Mode -eq 'all') {
 	Get-AllFiles
 }
 else {
 	Get-DiffFiles $BaseSha
 }
-
+$files = @(
+	$files | Where-Object { -not (Test-OwnedSnapshotPath $_) }
+)
 $failureCount = 0
 foreach ($file in $files) {
 	$fullPath = if ([IO.Path]::IsPathRooted($file)) { $file } else { Join-Path $RepositoryRoot $file }

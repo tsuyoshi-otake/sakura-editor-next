@@ -1,0 +1,13 @@
+{
+  "oracle": "bron420.zip x64/bregonig.dll, captured before archive deletion",
+  "behavior": "Product BMatchW/BSubstW/BMatchExW/BSubstExW results must match oracle-corpus.json.",
+  "pe": {
+    "exports": "Exact name set from oracle-pe.json. Calling convention is cdecl, proven by the corpus.",
+    "dllCharacteristics": "Product must keep DYNAMICBASE and NX_COMPAT. HIGHENTROPYVA is an allowed extra hardening bit.",
+    "imports": "KERNEL32.dll is required. VCRUNTIME*/ucrtbase*/api-ms-win-crt-* are allowed because the product CRT is the vcpkg dynamic CRT; the historical oracle linked CRT statically. onigmo.dll is forbidden because Onigmo is statically linked."
+  },
+  "match-unicode-hiragana": "The historical DLL does not treat \\\\uHHHH inside a class as a Unicode code point. Frozen as a miss.",
+  "match-crlf": "A bare /a$/m does not match CR before LF on the historical DLL. Frozen as a miss.",
+  "subst-empty-result": "outp is null when substitution produces an empty string (bregonig Issue #1). Frozen.",
+  "timeout": "The public API has no bounded-timeout entry. Pathological cases must complete on small inputs without crashing."
+}

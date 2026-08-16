@@ -1,0 +1,18 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  windows-msvc:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DONIGMO_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --config Release
+      - name: UTF-8 encoding smoke
+        run: .\build\Release\test_enc_utf8.exe

@@ -1,0 +1,81 @@
+name: ci
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  msvc:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [Win32, x64]
+        config: [Debug, Release]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tsuyoshi-otake/onigmo-next
+          ref: e96f322d0486f49d913abd21703e7eec6e572412
+          path: _deps/onigmo-next
+      - name: Configure
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A ${{ matrix.arch }} -DONIGMO_SOURCE_DIR=${{ github.workspace }}/_deps/onigmo-next -DBREGONIG_BUILD_TESTS=ON
+      - name: Build
+        run: cmake --build build --config ${{ matrix.config }}
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.arch == 'Win32' && 'x86' || 'amd64' }}
+      - name: Test
+        run: ctest --test-dir build -C ${{ matrix.config }} --output-on-failure
+      - name: Inspect PE
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Recurse build -Filter bregonig.dll | Where-Object { $_.FullName -match [regex]::Escape('${{ matrix.config }}') } | Select-Object -First 1
+          if (-not $dll) { throw 'bregonig.dll was not produced' }
+          dumpbin /EXPORTS /DEPENDENTS /HEADERS $dll.FullName
+          Get-FileHash $dll.FullName -Algorithm SHA256 | Format-List
+      - name: Upload DLL
+        uses: actions/upload-artifact@v4
+        with:
+          name: bregonig-${{ matrix.arch }}-${{ matrix.config }}
+          path: |
+            build/**/bregonig.dll
+            build/**/bregonig.lib
+            build/**/bregonig.pdb
+
+  asan:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tsuyoshi-otake/onigmo-next
+          ref: e96f322d0486f49d913abd21703e7eec6e572412
+          path: _deps/onigmo-next
+      - name: Configure AddressSanitizer
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DONIGMO_SOURCE_DIR=${{ github.workspace }}/_deps/onigmo-next -DBREGONIG_BUILD_TESTS=ON -DCMAKE_CXX_FLAGS=/fsanitize=address -DCMAKE_C_FLAGS=/fsanitize=address
+      - name: Build
+        run: cmake --build build --config RelWithDebInfo
+      - name: Test
+        run: ctest --test-dir build -C RelWithDebInfo --output-on-failure
+
+  fuzz:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: tsuyoshi-otake/onigmo-next
+          ref: e96f322d0486f49d913abd21703e7eec6e572412
+          path: _deps/onigmo-next
+      - name: Install LLVM and Ninja
+        run: choco install llvm ninja --no-progress -y
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Configure libFuzzer
+        run: cmake -S . -B build -G Ninja -DCMAKE_C_COMPILER=clang-cl -DCMAKE_CXX_COMPILER=clang-cl -DONIGMO_SOURCE_DIR=${{ github.workspace }}/_deps/onigmo-next -DBREGONIG_BUILD_TESTS=OFF -DBREGONIG_BUILD_FUZZ=ON
+      - name: Build fuzzer
+        run: cmake --build build
+      - name: Smoke fuzz
+        run: .\build\bregonig_fuzzer.exe -runs=200 -max_len=128

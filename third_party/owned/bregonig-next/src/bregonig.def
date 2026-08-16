@@ -1,0 +1,22 @@
+LIBRARY bregonig
+EXPORTS
+	BMatch
+	BMatchEx
+	BMatchExW
+	BMatchW
+	BRegexpVersion
+	BRegexpVersionW
+	BRegfree
+	BRegfreeW
+	BSplit
+	BSplitW
+	BSubst
+	BSubstEx
+	BSubstExW
+	BSubstW
+	BTrans
+	BTransW
+	BoMatch
+	BoMatchW
+	BoSubst
+	BoSubstW

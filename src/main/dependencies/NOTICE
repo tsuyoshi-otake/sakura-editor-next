@@ -5,19 +5,13 @@ This file is generated from src/main/dependencies/dependencies.json.
 Do not edit it by hand. Run: python tools/dependency_ledger.py generate
 
 bregonig-next
-  kind=library ownership=external lifecycle=temporary-migration status=present
+  kind=library ownership=owned-snapshot lifecycle=keep status=present
   license: GPL-1.0-or-later OR Artistic-1.0-Perl
   version: 4.20.0
-  canonical: https://github.com/k-takata/bregonig.git
-  source: externals/bregonig
-  revision: 670b229063a33910e717a9f220d89ce8ab46d790
+  canonical: https://github.com/tsuyoshi-otake/bregonig-next.git
+  source: third_party/owned/bregonig-next
+  revision: 0b1a77c58b47ebd7872d5b9537194c833ef63b7d
   vcpkg: bregonig
-
-bron420-zip
-  kind=data ownership=external lifecycle=temporary-migration status=present
-  license: GPL-1.0-or-later OR Artistic-1.0-Perl
-  source: installer/externals/bregonig/bron420.zip
-  notes: Not a runtime provider. Packaging must not extract this archive into the product output.
 
 cmigemo-dict
   kind=data ownership=external lifecycle=keep status=present
@@ -100,11 +94,11 @@ ms-gsl
   notes: Product code uses std::span. ms-gsl remains only for sakura_core/terminal/vendor/.
 
 onigmo-next
-  kind=library ownership=external lifecycle=temporary-migration status=present
+  kind=library ownership=owned-snapshot lifecycle=keep status=present
   license: BSD-2-Clause
   version: 6.2.0
   canonical: https://github.com/tsuyoshi-otake/onigmo-next.git
-  source: externals/onigmo-next
+  source: third_party/owned/onigmo-next
   revision: e96f322d0486f49d913abd21703e7eec6e572412
   vcpkg: onigmo-next
 

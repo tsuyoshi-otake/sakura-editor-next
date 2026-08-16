@@ -6,15 +6,15 @@
     {
       "id": "onigmo-next",
       "kind": "library",
-      "ownership": "external",
-      "lifecycle": "temporary-migration",
+      "ownership": "owned-snapshot",
+      "lifecycle": "keep",
       "status": "present",
       "scope": ["restore", "build", "runtime"],
       "owner": "search",
-      "plannedEndState": "owned-snapshot",
       "plannedIssue": 185,
       "canonicalRepository": "https://github.com/tsuyoshi-otake/onigmo-next.git",
-      "source": "externals/onigmo-next",
+      "source": "third_party/owned/onigmo-next",
+      "snapshot": "third_party/owned/onigmo-next",
       "sourceRevision": "e96f322d0486f49d913abd21703e7eec6e572412",
       "maintainerCheckout": "externals/onigmo-next",
       "vcpkg": "onigmo-next",
@@ -22,7 +22,7 @@
       "version": "6.2.0",
       "updatePolicy": "import-owned-snapshot-then-stop-using-the-submodule",
       "localModificationAllowed": false,
-      "productBuildUsesSubmodule": true,
+      "productBuildUsesSubmodule": false,
       "includePatterns": [
         {
           "pattern": "onigmo-next/onigmo.h",
@@ -33,16 +33,16 @@
     {
       "id": "bregonig-next",
       "kind": "library",
-      "ownership": "external",
-      "lifecycle": "temporary-migration",
+      "ownership": "owned-snapshot",
+      "lifecycle": "keep",
       "status": "present",
       "scope": ["restore", "build", "runtime", "distribution"],
       "owner": "search",
-      "plannedEndState": "owned-snapshot",
       "plannedIssue": 185,
-      "canonicalRepository": "https://github.com/k-takata/bregonig.git",
-      "source": "externals/bregonig",
-      "sourceRevision": "670b229063a33910e717a9f220d89ce8ab46d790",
+      "canonicalRepository": "https://github.com/tsuyoshi-otake/bregonig-next.git",
+      "source": "third_party/owned/bregonig-next",
+      "snapshot": "third_party/owned/bregonig-next",
+      "sourceRevision": "0b1a77c58b47ebd7872d5b9537194c833ef63b7d",
       "maintainerCheckout": "externals/bregonig",
       "vcpkg": "bregonig",
       "license": "GPL-1.0-or-later OR Artistic-1.0-Perl",
@@ -50,7 +50,7 @@
       "updatePolicy": "import-owned-snapshot-then-stop-using-the-submodule",
       "runtimeIsolation": "LoadLibrary bregonig.dll; native static retirement is #190",
       "localModificationAllowed": false,
-      "productBuildUsesSubmodule": true,
+      "productBuildUsesSubmodule": false,
       "runtimeArtifacts": [
         {
           "name": "bregonig.dll",
@@ -255,23 +255,13 @@
       "id": "bron420-zip",
       "kind": "data",
       "ownership": "external",
-      "lifecycle": "temporary-migration",
-      "status": "present",
+      "lifecycle": "remove",
+      "status": "removed",
       "scope": ["test"],
       "owner": "search",
       "plannedIssue": 185,
       "source": "installer/externals/bregonig/bron420.zip",
-      "license": "GPL-1.0-or-later OR Artistic-1.0-Perl",
-      "updatePolicy": "hash-pinned-test-only-oracle-deleted-after-bregonig-differential-golden",
-      "notes": "Not a runtime provider. Packaging must not extract this archive into the product output.",
-      "artifacts": [
-        {
-          "path": "installer/externals/bregonig/bron420.zip",
-          "sha256": "15f58dd292aa6fc8fd592fa97a75d58b5680ddf7aa66ba10a2dd5c9f0ee159c1",
-          "bytes": 537749,
-          "productProvider": false
-        }
-      ]
+      "notes": "Tombstone. The hash-pinned archive was deleted after differential goldens were committed under src/test/resources/tests1/bregonig/."
     },
     {
       "id": "gtest",

@@ -1,0 +1,32 @@
+{
+  "machine": 34404,
+  "characteristics": 8226,
+  "dllCharacteristics": 320,
+  "pe32Plus": true,
+  "exports": [
+    "BMatch",
+    "BMatchEx",
+    "BMatchExW",
+    "BMatchW",
+    "BRegexpVersion",
+    "BRegexpVersionW",
+    "BRegfree",
+    "BRegfreeW",
+    "BSplit",
+    "BSplitW",
+    "BSubst",
+    "BSubstEx",
+    "BSubstExW",
+    "BSubstW",
+    "BTrans",
+    "BTransW",
+    "BoMatch",
+    "BoMatchW",
+    "BoSubst",
+    "BoSubstW"
+  ],
+  "imports": [
+    "KERNEL32.dll"
+  ],
+  "bytes": 646144
+}

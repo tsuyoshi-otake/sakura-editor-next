@@ -1,0 +1,11 @@
+{
+  "id": "bregonig-next",
+  "canonicalRepository": "tsuyoshi-otake/bregonig-next",
+  "commit": "0b1a77c58b47ebd7872d5b9537194c833ef63b7d",
+  "sourceTreeSha256": "cc912567b9154820a0607b8f5840b0a33cce74fd9147846bc3a2aa14d2df06da",
+  "version": "4.20.0",
+  "license": [
+    "GPL-1.0-or-later OR Artistic-1.0-Perl"
+  ],
+  "localModificationAllowed": false
+}

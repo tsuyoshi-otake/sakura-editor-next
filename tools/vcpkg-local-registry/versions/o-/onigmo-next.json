@@ -2,7 +2,7 @@
     "versions": [
         {
           "version": "6.2.0",
-          "port-version": 2,
+          "port-version": 3,
           "path": "$/ports/onigmo-next"
         }
     ]

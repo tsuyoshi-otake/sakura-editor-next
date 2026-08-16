@@ -35,7 +35,7 @@ set INSTALLER_OUTPUT=installer\Output-%platform%
 
 set INSTALLER_RESOURCES_SINT=installer\sinst_src
 set INSTALLER_RESOURCES_CTAGS=installer\temp\ctags
-set BREGONIG_LICENSE_DIR=externals\bregonig
+set BREGONIG_LICENSE_DIR=third_party\owned\bregonig-next
 
 if exist "%INSTALLER_WORK%"      rmdir /s /q "%INSTALLER_WORK%"
 if exist "%INSTALLER_OUTPUT%"    rmdir /s /q "%INSTALLER_OUTPUT%"

@@ -1,0 +1,6 @@
+{
+  "name": "bregonig",
+  "version": "@PROJECT_VERSION@",
+  "gitCommit": "@BREGONIG_GIT_COMMIT@",
+  "onigmo": "Onigmo NEXT linked as a CMake target, not a reconstructed nmake tree"
+}

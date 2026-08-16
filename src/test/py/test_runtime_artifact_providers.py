@@ -1,14 +1,15 @@
 """Contracts that each shipped runtime artifact has exactly one provider.
 
 Issue #182 Phase 0: installer generation used to extract ``bregonig.dll`` from
-``installer/externals/bregonig/bron420.zip`` into the MSBuild output directory
-after CMake had already staged the vcpkg-built DLL. Tests therefore exercised
-one binary and the installer shipped another.
+``bron420.zip`` into the MSBuild output directory after CMake had already staged
+the vcpkg-built DLL. Tests therefore exercised one binary and the installer
+shipped another.
 
 The invariants pinned here are:
 
 * packaging scripts consume the staged product DLL and source-tree licenses;
 * they never extract ``bron420.zip`` into an output directory;
+* the archive itself is gone after #185 materialized differential goldens;
 * CMake stages Debug from ``debug/bin`` and Release from ``bin`` via the
   imported target's ``TARGET_FILE``;
 * ``generate_miniz`` is a ``tests1`` dependency, not an ``ALL`` product target;
@@ -34,9 +35,9 @@ ZIP_ARTIFACTS = REPO_ROOT / "zipArtifacts.bat"
 SAKURA_CMAKE = REPO_ROOT / "src/main/cmake/sakura.cmake"
 TESTS1_CMAKE = REPO_ROOT / "src/test/cmake/tests1.cmake"
 GITMODULES = REPO_ROOT / ".gitmodules"
-BREGONIG_LICENSE_DIR = REPO_ROOT / "externals/bregonig"
-BREGONIG_ORACLE = REPO_ROOT / "installer/externals/bregonig/ORACLE.json"
+BREGONIG_LICENSE_DIR = REPO_ROOT / "third_party/owned/bregonig-next"
 BRON_ZIP = REPO_ROOT / "installer/externals/bregonig/bron420.zip"
+ORACLE = REPO_ROOT / "installer/externals/bregonig/ORACLE.json"
 SAKURA_ISS = REPO_ROOT / "installer/sakura-common.iss"
 IDENTITY_TOOL = REPO_ROOT / "tools/verify_runtime_artifact_identity.py"
 INNOUNP_EXE = REPO_ROOT / "tools/innounp/innounp.exe"
@@ -86,16 +87,16 @@ class BregonigProviderTests(unittest.TestCase):
             with self.subTest(license=name):
                 self.assertTrue(
                     (BREGONIG_LICENSE_DIR / name).is_file(),
-                    f"{name} is missing from externals/bregonig",
+                    f"{name} is missing from third_party/owned/bregonig-next",
                 )
         for script in (BUILD_INSTALLER, ZIP_ARTIFACTS):
             with self.subTest(script=script.name):
                 text = _read(script)
                 self.assertIn(
-                    r"externals\bregonig",
+                    r"third_party\owned\bregonig-next",
                     text,
                     f"{script.name} must copy bregonig licenses from the "
-                    f"source tree, not from a binary archive",
+                    f"owned snapshot, not from a binary archive",
                 )
                 for name in ("bsd_license.txt", "perl_license.txt", "perl_license_jp.txt"):
                     self.assertIn(name, text)
@@ -117,15 +118,9 @@ class BregonigProviderTests(unittest.TestCase):
 
 
 class BronOracleTests(unittest.TestCase):
-    def test_oracle_records_the_frozen_archive_hash(self) -> None:
-        oracle = json.loads(_read(BREGONIG_ORACLE))
-        self.assertFalse(oracle["productProvider"])
-        self.assertEqual(185, oracle["removedByIssue"])
-        self.assertEqual(
-            hashlib.sha256(BRON_ZIP.read_bytes()).hexdigest(),
-            oracle["sha256"],
-            "bron420.zip changed without updating ORACLE.json",
-        )
+    def test_bron420_archive_was_deleted_after_goldens(self) -> None:
+        self.assertFalse(BRON_ZIP.is_file(), "bron420.zip must not remain after #185")
+        self.assertFalse(ORACLE.is_file(), "ORACLE.json must not remain after #185")
 
     def test_committed_innounp_matches_its_pin(self) -> None:
         pin = json.loads(_read(INNOUNP_PIN))

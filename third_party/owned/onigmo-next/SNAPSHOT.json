@@ -1,0 +1,11 @@
+{
+  "id": "onigmo-next",
+  "canonicalRepository": "tsuyoshi-otake/onigmo-next",
+  "commit": "e96f322d0486f49d913abd21703e7eec6e572412",
+  "sourceTreeSha256": "c0db52b761e4d75a81d62d61f068818aa321631886c2136548ff9c1ed89a16d4",
+  "version": "6.2.0",
+  "license": [
+    "BSD-2-Clause"
+  ],
+  "localModificationAllowed": false
+}

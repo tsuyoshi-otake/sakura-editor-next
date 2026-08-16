@@ -1,13 +1,21 @@
 {
   "name": "bregonig",
   "version": "4.20.0",
-  "port-version": 1,
+  "port-version": 5,
   "license": "GPL-1.0-or-later OR Artistic-1.0-Perl",
   "description": "bregonig regular expression compatibility DLL",
-  "homepage": "https://github.com/k-takata/bregonig",
+  "homepage": "https://github.com/tsuyoshi-otake/bregonig-next",
   "dependencies": [
     {
       "name": "onigmo-next"
+    },
+    {
+      "name": "vcpkg-cmake",
+      "host": true
+    },
+    {
+      "name": "vcpkg-cmake-config",
+      "host": true
     }
   ]
 }
