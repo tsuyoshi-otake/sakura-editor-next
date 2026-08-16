@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/tsuyoshi-otake/sakura-editor-next/src/main/dependencies/schema.json",
+  "title": "Sakura Editor NEXT dependency ledger",
+  "description": "Version 1 orthogonal ledger. Do not add a flat class field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "created", "policy", "dependencies"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "created": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "policy": { "type": "string", "minLength": 1 },
+    "dependencies": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/dependency" }
+    }
+  },
+  "$defs": {
+    "kind": { "enum": ["library", "tool", "process", "data", "fixture"] },
+    "ownership": { "enum": ["owned-fork", "owned-implementation", "owned-snapshot", "external"] },
+    "lifecycle": { "enum": ["keep", "temporary-migration", "remove"] },
+    "status": { "enum": ["present", "removed"] },
+    "scope": { "enum": ["configure", "restore", "build", "test", "runtime", "distribution"] },
+    "dependency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "ownership", "lifecycle", "status", "scope"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "$ref": "#/$defs/kind" },
+        "ownership": { "$ref": "#/$defs/ownership" },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "status": { "$ref": "#/$defs/status" },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/scope" }
+        },
+        "owner": { "type": "string" },
+        "plannedEndState": { "$ref": "#/$defs/ownership" },
+        "plannedIssue": { "type": "integer", "minimum": 1 },
+        "relatedIssues": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 }
+        },
+        "canonicalRepository": { "type": "string" },
+        "source": { "type": "string" },
+        "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "maintainerCheckout": { "type": "string" },
+        "snapshot": { "type": "string" },
+        "vcpkg": { "type": "string" },
+        "license": { "type": "string" },
+        "version": { "type": "string" },
+        "updatePolicy": { "type": "string" },
+        "runtimeIsolation": { "type": "string" },
+        "localModificationAllowed": { "type": "boolean" },
+        "productBuildUsesSubmodule": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "replacedBy": { "type": "string" },
+        "includePatterns": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/includePattern" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "runtimeArtifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/runtimeArtifact" }
+        }
+      }
+    },
+    "includePattern": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pattern", "roots"],
+      "properties": {
+        "pattern": { "type": "string", "minLength": 1 },
+        "roots": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "productProvider": { "type": "boolean" }
+      }
+    },
+    "runtimeArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "provider", "productProvider"],
+      "properties": {
+        "name": { "type": "string" },
+        "provider": { "type": "string" },
+        "productProvider": { "type": "boolean" },
+        "optional": { "type": "boolean" }
+      }
+    }
+  }
+}

@@ -35,3 +35,6 @@ jobs:
 
       - name: Verify component dependency graph
         run: python3 tools/build/sakura_build.py graph check --all-contexts
+
+      - name: Verify dependency ledger
+        run: python3 tools/dependency_ledger.py check
