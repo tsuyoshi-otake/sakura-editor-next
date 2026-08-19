@@ -44,6 +44,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 
 namespace workbench::explorer {
@@ -175,6 +176,8 @@ void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noe
 	::DeleteObject(glyphFont);
 }
 
+//! The colour plane of the TreeView's icon-slot spacer. Its pixels never reach the
+//! screen; CreateSpacerMaskBitmap supplies the mask that keeps them off it.
 [[nodiscard]] HBITMAP CreateTransparentBitmap(int side) noexcept
 {
 	if (side <= 0) return nullptr;
@@ -196,6 +199,26 @@ void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noe
 	}
 	std::memset(bits, 0, static_cast<std::size_t>(side) * side * sizeof(std::uint32_t));
 	return bitmap;
+}
+
+/*!
+	@brief Builds the spacer's mask: every bit set, so the spacer is transparent everywhere
+
+	The image list exists only to reserve the native TreeView's icon slot, and the row's
+	real glyph is painted afterwards in NM_CUSTOMDRAW. An ILC_MASK image list added with
+	a null mask does not mean "no mask"; it means an all-zero mask, which is opaque, so
+	the spacer's zeroed colour plane paints as a solid black square behind every row.
+	A monochrome mask whose bits are all 1 is what makes the slot actually empty. The
+	32-bit colour plane's zero alpha cannot do it: the list carries ILC_MASK, so the
+	mask decides transparency and the alpha channel is ignored.
+*/
+[[nodiscard]] HBITMAP CreateSpacerMaskBitmap(int side) noexcept
+{
+	if (side <= 0) return nullptr;
+	// CreateBitmap wants each monochrome scanline padded to a WORD boundary.
+	const std::size_t stride = ((static_cast<std::size_t>(side) + 15u) / 16u) * 2u;
+	const std::vector<std::uint8_t> bits(stride * static_cast<std::size_t>(side), 0xFFu);
+	return ::CreateBitmap(side, side, 1, 1, bits.data());
 }
 
 //! Loads a raster icon into a transparent, square 32-bit DIB for the TreeView image list.
@@ -1550,8 +1573,14 @@ struct CExplorerTool::Impl {
 		(void)node;
 		(void)expanded;
 		// A transparent image reserves the native TreeView's icon slot. The real
-		// codicon is painted in NM_CUSTOMDRAW so it stays theme-aware without
+		// glyph is painted in NM_CUSTOMDRAW so it stays theme-aware without
 		// importing a second file-icon theme parser.
+		//
+		// Every row gets the slot, including a folder row the Seti theme does not
+		// decorate. That is a known divergence from VS Code with a platform cause:
+		// a native TreeView reserves the image width for every item as long as it
+		// has an image list, and I_IMAGENONE does not opt one item out. Dropping
+		// the slot per row needs the row drawn by hand; see explorer/CLAUDE.md.
 		return iconImages == nullptr ? -1 : 0;
 	}
 
@@ -1585,14 +1614,16 @@ struct CExplorerTool::Impl {
 		iconImages = ::ImageList_Create(side, side, ILC_COLOR32 | ILC_MASK, 1, 1);
 		if (iconImages != nullptr) {
 			const HBITMAP transparent = CreateTransparentBitmap(side);
-			if (transparent == nullptr || ::ImageList_Add(iconImages, transparent, nullptr) == -1) {
-				if (transparent != nullptr) ::DeleteObject(transparent);
+			const HBITMAP mask = CreateSpacerMaskBitmap(side);
+			if (transparent == nullptr || mask == nullptr
+				|| ::ImageList_Add(iconImages, transparent, mask) == -1) {
 				::ImageList_Destroy(iconImages);
 				iconImages = nullptr;
 			} else {
-				::DeleteObject(transparent);
 				TreeView_SetImageList(tree, iconImages, TVSIL_NORMAL);
 			}
+			if (transparent != nullptr) ::DeleteObject(transparent);
+			if (mask != nullptr) ::DeleteObject(mask);
 		}
 		UpdateAllItemIcons();
 	}
