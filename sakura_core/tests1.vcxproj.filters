@@ -113,6 +113,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\update\UpdateFeedTest.cpp">
       <Filter>Test Files\update</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallLocationTest.cpp">
+      <Filter>Test Files\update</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallerCommandLineTest.cpp">
       <Filter>Test Files\update</Filter>
     </ClCompile>

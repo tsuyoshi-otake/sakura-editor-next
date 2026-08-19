@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -86,16 +86,18 @@ public:
 //! Whether this installation can update itself, and where to.
 struct UpdateInstallTarget final {
 	EUpdateType type = EUpdateType::Archive;
-	//! `InstallLocation` from the uninstall key. Empty for `Archive`.
+	//! Where Setup has to install: the running copy's own directory when it is
+	//! itself an installation, otherwise the `InstallLocation` recorded in the
+	//! uninstall key. Empty for `Archive`.
 	std::wstring installDirectory;
 
 	[[nodiscard]] bool operator==(const UpdateInstallTarget&) const = default;
 };
 
-//! Resolves the Inno Setup uninstall entry for AppId `sakura editor` and checks
-//! that the running executable really lives under it. A developer build, or a
-//! copy someone unzipped elsewhere, resolves to `Archive` and is never offered a
-//! self-install that would overwrite an unrelated installation.
+//! Decides whether an update can be installed and where. `Setup` when the
+//! running copy is an Inno installation, and also when it is not but a real
+//! installation is recorded on this computer. `Archive` only when no install
+//! directory can be determined at all.
 class IUpdateInstallLocation {
 public:
 	virtual ~IUpdateInstallLocation() = default;
@@ -111,8 +113,8 @@ public:
 	[[nodiscard]] virtual bool LaunchInstaller(const InstallerInvocation& invocation) = 0;
 
 	//! Opens the release page in the user's browser. This is the whole of the
-	//! `Archive` download path: an installation that cannot replace itself is
-	//! sent to the release, not given a fake in-app install.
+	//! `Archive` download path: with no installation anywhere to write to, the
+	//! user is sent to the release rather than given a fake in-app install.
 	[[nodiscard]] virtual bool OpenReleasePage(std::wstring_view url) = 0;
 };
 

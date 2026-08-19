@@ -52,30 +52,19 @@ std::optional<std::wstring> ReadStringValue(HKEY root, std::wstring_view subKey,
 	return value;
 }
 
-std::filesystem::path Normalize(const std::filesystem::path& path)
+//! Inno always installs its own uninstaller beside the program.
+constexpr std::wstring_view kUninstallerFileName = L"unins000.exe";
+
+bool RealFileExists(const std::filesystem::path& path)
 {
 	std::error_code error;
-	// `weakly_canonical` resolves `..`, links, and short names; falling back to
-	// the lexical form keeps a non-existent directory comparable instead of
-	// collapsing it to an empty path that would match everything.
-	auto canonical = std::filesystem::weakly_canonical(path, error);
-	if (error || canonical.empty()) return path.lexically_normal();
-	return canonical;
+	return std::filesystem::is_regular_file(path, error);
 }
 
-//! Inno writes `InstallLocation` with a trailing backslash. Left in place it
-//! becomes an empty final path component, which would silently consume the
-//! executable's file name during the component-wise comparison below.
-std::wstring StripTrailingSeparators(std::wstring_view value)
+bool RealDirectoryExists(const std::filesystem::path& path)
 {
-	std::wstring stripped(value);
-	while (stripped.size() > 1 && (stripped.back() == L'\\' || stripped.back() == L'/')) {
-		// Keep a root's own separator: `C:\` and `\\server\share\` are not the
-		// same locations as `C:` and `\\server\share`.
-		if (stripped.size() == 3 && stripped[1] == L':') break;
-		stripped.pop_back();
-	}
-	return stripped;
+	std::error_code error;
+	return std::filesystem::is_directory(path, error);
 }
 
 } // namespace
@@ -88,32 +77,46 @@ std::optional<std::wstring> ReadInstalledLocation()
 	return ReadStringValue(HKEY_LOCAL_MACHINE, kUninstallSubKey, kInstallLocationValue);
 }
 
-bool IsExecutableWithinInstallDirectory(
-	const std::filesystem::path& executablePath, std::wstring_view installDirectory)
+bool IsInnoSetupInstall(
+	const std::filesystem::path& executablePath, const UpdateFileExistsPredicate& fileExists)
 {
-	if (executablePath.empty() || installDirectory.empty()) return false;
+	if (executablePath.empty() || !fileExists) return false;
+	const std::filesystem::path directory = executablePath.parent_path();
+	if (directory.empty()) return false;
+	return fileExists(directory / kUninstallerFileName);
+}
 
-	const auto directory = Normalize(std::filesystem::path(StripTrailingSeparators(installDirectory)));
-	const auto executable = Normalize(executablePath);
-	if (directory.empty() || executable.empty()) return false;
+UpdateInstallTarget ResolveInstallTarget(
+	const std::filesystem::path& executablePath,
+	const std::optional<std::wstring>& installedLocation,
+	const UpdateFileExistsPredicate& fileExists,
+	const UpdateFileExistsPredicate& directoryExists)
+{
+	UpdateInstallTarget target;
+	target.type = EUpdateType::Archive;
 
-	auto directoryPart = directory.begin();
-	auto executablePart = executable.begin();
-	for (; directoryPart != directory.end(); ++directoryPart, ++executablePart) {
-		if (executablePart == executable.end()) return false;
-		// Windows paths are case-insensitive, and the registry value and the
-		// module path routinely disagree on case.
-		const std::wstring left = directoryPart->wstring();
-		const std::wstring right = executablePart->wstring();
-		if (::CompareStringOrdinal(
-				left.c_str(), static_cast<int>(left.size()),
-				right.c_str(), static_cast<int>(right.size()), TRUE) != CSTR_EQUAL) {
-			return false;
-		}
+	// The running copy is itself an installation, so it is the one to update,
+	// and its own directory is where Setup has to write. Asking the executable
+	// rather than the registry is what keeps a correctly installed copy
+	// updatable when the uninstall key is missing or unreadable.
+	if (IsInnoSetupInstall(executablePath, fileExists)) {
+		target.type = EUpdateType::Setup;
+		target.installDirectory = executablePath.parent_path().wstring();
+		return target;
 	}
-	// Every component of the directory matched, and the executable still has its
-	// own file name left over.
-	return executablePart != executable.end();
+
+	// This copy was not installed, but a real installation is recorded and
+	// still on disk. It is updated rather than handed to a browser, because
+	// every release of this fork ships an Inno installer; there is no
+	// archive-only payload the application would be unable to apply. The
+	// reason for diverging from upstream here is written down in
+	// `sakura_core/update/CLAUDE.md`.
+	if (installedLocation && !installedLocation->empty() && directoryExists
+		&& directoryExists(std::filesystem::path(*installedLocation))) {
+		target.type = EUpdateType::Setup;
+		target.installDirectory = *installedLocation;
+	}
+	return target;
 }
 
 UpdateInstallLocation::UpdateInstallLocation(std::filesystem::path executablePath)
@@ -135,16 +138,8 @@ std::filesystem::path UpdateInstallLocation::CurrentExecutablePath()
 
 UpdateInstallTarget UpdateInstallLocation::Resolve()
 {
-	UpdateInstallTarget target;
-	target.type = EUpdateType::Archive;
-
-	const auto installDirectory = ReadInstalledLocation();
-	if (!installDirectory) return target;
-	if (!IsExecutableWithinInstallDirectory(m_executablePath, *installDirectory)) return target;
-
-	target.type = EUpdateType::Setup;
-	target.installDirectory = *installDirectory;
-	return target;
+	return ResolveInstallTarget(
+		m_executablePath, ReadInstalledLocation(), RealFileExists, RealDirectoryExists);
 }
 
 } // namespace update

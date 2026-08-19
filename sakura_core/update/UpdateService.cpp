@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -296,12 +296,12 @@ void UpdateService::Impl::RunCheck()
 	next.updateType = installTarget.type;
 	next.update = feed.update;
 	if (installTarget.type == EUpdateType::Archive) {
-		next.reason = L"This installation was not installed by the Sakura Editor NEXT installer, "
-			L"so the update must be downloaded from the release page.";
+		next.reason = L"No installed copy of Sakura Editor NEXT could be found on this computer, "
+			L"so the update has to be downloaded from the release page.";
 	}
 	Publish(std::move(next));
 
-	// An installation that cannot replace itself never walks itself forward: the
+	// With no installation to write to there is nothing to walk forward into: the
 	// user has to go to the release page, which is upstream's archive behaviour.
 	if (installTarget.type != EUpdateType::Setup) return;
 	if (!options.enableWindowsBackgroundUpdates) return;
@@ -592,8 +592,8 @@ void UpdateService::DownloadUpdate()
 	}
 	if (!candidate) return;
 
-	// An archive build's "download" is the release page, exactly as upstream. It
-	// deliberately leaves the state alone: nothing was downloaded.
+	// With nowhere to install, "download" is the release page, exactly as upstream.
+	// It deliberately leaves the state alone: nothing was downloaded.
 	if (m_impl->installTarget.type == EUpdateType::Archive) {
 		(void)m_impl->dependencies.launcher->OpenReleasePage(candidate->releaseUrl);
 		return;
