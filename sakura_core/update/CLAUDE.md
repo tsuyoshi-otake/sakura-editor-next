@@ -57,10 +57,12 @@ fork checks its own releases and a build with no recorded origin checks nothing.
 `releases/latest` **is** the stable-only decision: GitHub excludes drafts and
 pre-releases from that endpoint, and the array parser applies the same
 `draft == false && prerelease == false` filter, so the rule holds on either
-shape. **Consequence, stated because it looks like a defect: every release
-published in this repository so far is a Pre-release, so the Update indicator
-will not appear until a stable release exists.** That is the intended
-fail-closed behavior, not a broken check.
+shape. **Consequence, stated because it looks like a defect: while every
+release is published as a Pre-release the Update indicator never appears at
+all.** That is the intended fail-closed behavior, not a broken check. Verified
+2026-08-19: `v3.1.0-build.7397` is published as a stable release and carries
+`sakura_install3-1-0-7397-x64.exe` with a `sha256:` digest, so the feed side of
+the flow does resolve today.
 
 An asset that does not match this build's architecture, a release with no
 matching asset, a size mismatch, a digest mismatch, and a release that publishes
@@ -178,17 +180,41 @@ because the behavior it names exists.
 WinHTTP transport has no TLS-validation escape hatch, so honoring that setting
 would mean downloading an installer over an unvalidated connection.
 
-### A non-installed build is `Archive`, and is never given a fake install
+### How this build decides that it can install an update, and where
 
-`IUpdateInstallLocation` resolves Inno's uninstall entry for AppId
-`sakura editor` (`installer/sakura-common.iss`) and requires the running
-executable to actually live under the recorded `InstallLocation`. A developer
-build, or a copy unzipped somewhere else, resolves to `Archive`: the state
-machine stops at `available for download` and `update.downloadNow` opens the
-release page. This matches upstream's own archive behavior and satisfies the
-repository rule against faking a capability — an installation that cannot
-replace itself is sent to the release, not shown a self-install that would
-overwrite an unrelated directory.
+The primary signal is the one real VS Code uses. `isInnoSetupInstall` in
+`src/vs/platform/update/electron-main/win32UpdateType.ts` tests for
+`unins000.exe` beside the running executable and nothing else, so the question
+is answered locally: a correctly installed copy stays updatable even when the
+uninstall key is missing, was written by an elevated install this process cannot
+read, or records a directory the user has since moved. When the uninstaller is
+there, the target is `Setup` and the install directory is the executable's own
+directory.
+
+**Documented divergence.** When there is no `unins000.exe` beside the running
+executable but the uninstall key still records an `InstallLocation` that exists
+on disk, this build resolves `Setup` and installs into that recorded directory.
+Upstream would open the download page here. The reason is that upstream's
+`Archive` means *the payload is a zip the application cannot apply*, while every
+release of this fork ships a real Inno installer and nothing else: there is no
+payload this editor is unable to apply, so opening a browser would be handing
+back work it can finish. Consequence, stated because it is surprising: pressing
+Update from a build in the output tree updates the *installed* copy and
+relaunches that one, not the build that was running.
+
+`Archive` survives for the single case where no install directory can be
+determined at all -- no uninstaller beside the executable, and no recorded
+installation that still exists. Then the state machine stops at
+`available for download` and `update.downloadNow` opens the release page, which
+is upstream's behavior and keeps the rule against faking a capability intact: a
+stale uninstall key pointing at a directory that is gone is not an install
+target, and reinstalling over an unrelated directory because a registry value
+happened to survive is exactly the "close enough" behavior this must not have.
+
+The decision itself is `ResolveInstallTarget` in `UpdateInstallLocation.h`, a
+pure function that takes the registry read and both filesystem probes as
+parameters, so it is covered by `UpdateInstallLocationTest.cpp` without a
+registry or a filesystem. `UpdateInstallLocation::Resolve` is only the wiring.
 
 ### The restart contract, and the two Inno switches that were dropped
 

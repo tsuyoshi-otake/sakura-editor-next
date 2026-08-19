@@ -50,8 +50,15 @@ struct CustomFrameLayout {
 	int preferredMenuWidth,
 	int updateButtonWidth = 0
 ) noexcept;
-//! Physical width the Update indicator needs for its label, including its padding.
+//! Physical width the Update indicator needs for its label, including its padding and
+//! the margin that separates the painted pill from its neighbours.
 [[nodiscard]] int MeasureCustomFrameUpdateButtonWidth(HDC dc, UINT dpi) noexcept;
+//! The filled pill painted inside the Update indicator's action rectangle. VS Code paints
+//! the actionable indicator as a button inset in the title bar rather than as a full-height
+//! caption cell, so the fill, the hover feedback, and the focus ring all belong to this
+//! rectangle instead of to the whole action area. Returns an empty rectangle when the
+//! action rectangle is empty or too small to hold a pill.
+[[nodiscard]] RECT CustomFrameUpdateIndicatorPillRect(const RECT& actionRect, UINT dpi) noexcept;
 [[nodiscard]] LRESULT HitTestCustomFrame(
 	const CustomFrameLayout& layout,
 	POINT clientPoint,

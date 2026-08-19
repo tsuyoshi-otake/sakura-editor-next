@@ -211,6 +211,14 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   control width. A hidden indicator passes width zero, and zero must leave every
   other title control's rectangle exactly where it would be without the
   indicator — that invariant is what `CustomFrameUpdateControlTest` pins.
+- It is a button **sitting on** the title bar, not a caption cell that happens to be
+  coloured. `CustomFrameLayout::updateButton` stays full caption height because that is
+  the action's hit-test and accessibility rectangle, but the fill, the hover/press
+  feedback, and the focus ring are confined to `CustomFrameUpdateIndicatorPillRect`:
+  inset by 4 DIP horizontally, drawn at the 22 DIP button height rather than the 34 DIP
+  caption height, and rounded by 4 DIP. `MeasureCustomFrameUpdateButtonWidth` reserves
+  that same horizontal margin, so the pill can never touch the Secondary Side Bar control
+  or the minimize button no matter what the caption font measures.
 - Prominence uses the `button.*` palette roles, not `activityBarBadge.*`; see
   [`../theme/CLAUDE.md`](../theme/CLAUDE.md) for why those are a separate role
   from `accent`.

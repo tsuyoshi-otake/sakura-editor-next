@@ -221,6 +221,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateVersionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateFeedTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallLocationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallerCommandLineTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\WorkbenchUpdateCommandsTest.cpp" />

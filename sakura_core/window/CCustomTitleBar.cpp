@@ -200,25 +200,47 @@ void PaintTitleControlGlyph(
 //! It is a labelled action rather than a codicon, so it never goes through
 //! `PaintTitleControlGlyph`, and it is drawn with the caption font because
 //! `MeasureCustomFrameUpdateButtonWidth` measured its width with that same font.
+//! Upstream renders it as a rounded button inset in the title bar rather than as a
+//! full-height caption cell, so the fill is confined to
+//! `CustomFrameUpdateIndicatorPillRect` and its corners are rounded by 4 DIP. `RoundRect`
+//! takes the corner ellipse extent rather than a radius, hence the doubling.
 void PaintUpdateIndicator(
 	HDC dc,
 	const RECT& rect,
 	bool highlighted,
 	const theme::ThemePalette& palette,
-	HFONT font
+	HFONT font,
+	UINT dpi
 ) noexcept
 {
-	Fill(dc, rect, (highlighted ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef());
-	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
+	const RECT pill = CustomFrameUpdateIndicatorPillRect(rect, dpi);
+	if (::IsRectEmpty(&pill)) return;
+	const COLORREF fill =
+		(highlighted ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef();
 	const int saved = ::SaveDC(dc);
 	if (saved == 0) return;
+	// `RoundRect` strokes its outline with the current pen, so the pen has to carry the
+	// fill color; the stock pen would edge the button in black.
+	const HBRUSH brush = ::CreateSolidBrush(fill);
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, fill);
+	if (brush != nullptr && pen != nullptr) {
+		(void)::SelectObject(dc, brush);
+		(void)::SelectObject(dc, pen);
+		const int radius = ScaleCustomFrameDip(4, dpi) * 2;
+		::RoundRect(dc, pill.left, pill.top, pill.right, pill.bottom, radius, radius);
+	} else {
+		Fill(dc, pill, fill);
+	}
+	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
 	if (font != nullptr) (void)::SelectObject(dc, font);
 	::SetBkMode(dc, TRANSPARENT);
 	::SetTextColor(dc, palette.buttonForeground.ToColorRef());
-	RECT textRect = rect;
+	RECT textRect = pill;
 	::DrawTextW(dc, label, static_cast<int>(::wcslen(label)), &textRect,
 		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 	::RestoreDC(dc, saved);
+	if (pen != nullptr) ::DeleteObject(pen);
+	if (brush != nullptr) ::DeleteObject(brush);
 }
 
 void PaintTitleControlFocus(HDC dc, const RECT& rect, COLORREF color) noexcept
@@ -367,11 +389,15 @@ void CCustomTitleBar::Paint(
 		if (::IsRectEmpty(&rect)) continue;
 		if (control == CustomFrameControl::Update) {
 			PaintUpdateIndicator(
-				dc, rect, control == hotControl || control == pressedControl, palette, font);
+				dc, rect, control == hotControl || control == pressedControl, palette, font, dpi);
 			// The focus ring is drawn in the label color, not in `accent`: the indicator is
-			// already a filled accent-like pill, and an accent ring on it would vanish.
+			// already a filled accent-like pill, and an accent ring on it would vanish. It
+			// follows the pill rather than the action rectangle so it stays on the button.
 			if (control == focusedControl) {
-				PaintTitleControlFocus(dc, rect, palette.buttonForeground.ToColorRef());
+				const RECT pill = CustomFrameUpdateIndicatorPillRect(rect, dpi);
+				if (!::IsRectEmpty(&pill)) {
+					PaintTitleControlFocus(dc, pill, palette.buttonForeground.ToColorRef());
+				}
 			}
 			continue;
 		}

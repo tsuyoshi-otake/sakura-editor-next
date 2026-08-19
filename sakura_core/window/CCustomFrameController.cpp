@@ -54,6 +54,13 @@ constexpr UINT kManageUpdateDownload = 0x5A08;
 constexpr UINT kManageUpdateInstall = 0x5A09;
 constexpr UINT kManageUpdateRestart = 0x5A0A;
 
+// The Update indicator is a button drawn on the title bar, not a title-bar cell: it keeps
+// a margin on each side and stands at the button height instead of the full caption
+// height. Both the measured action width and the painted pill derive from these, so they
+// can never describe two different buttons.
+constexpr int kUpdateIndicatorMarginDip = 4;
+constexpr int kUpdateIndicatorHeightDip = 22;
+
 bool Contains(const RECT& rect, POINT point) noexcept
 {
 	return point.x >= rect.left && point.x < rect.right
@@ -278,17 +285,41 @@ CustomFrameLayout CalculateCustomFrameLayout(
 
 int MeasureCustomFrameUpdateButtonWidth(HDC dc, UINT dpi) noexcept
 {
-	// The label plus VS Code's horizontal action padding on each side. A minimum keeps
-	// the button a button when the caption font cannot be measured at all.
+	// The label plus VS Code's horizontal action padding on each side, plus the margin
+	// that keeps the painted pill clear of the neighbouring compact controls. A minimum
+	// keeps the button a button when the caption font cannot be measured at all.
 	const int padding = ScaleCustomFrameDip(8, dpi);
-	const int minimumWidth = ScaleCustomFrameDip(56, dpi);
+	const int margins = ScaleCustomFrameDip(kUpdateIndicatorMarginDip, dpi) * 2;
+	const int minimumWidth = ScaleCustomFrameDip(56, dpi) + margins;
 	const wchar_t* const label = CustomFrameControlName(CustomFrameControl::Update);
 	SIZE extent{};
 	if (dc == nullptr
 		|| ::GetTextExtentPoint32W(dc, label, static_cast<int>(::wcslen(label)), &extent) == FALSE) {
 		return minimumWidth;
 	}
-	return std::max(minimumWidth, static_cast<int>(extent.cx) + padding * 2);
+	return std::max(minimumWidth, static_cast<int>(extent.cx) + padding * 2 + margins);
+}
+
+RECT CustomFrameUpdateIndicatorPillRect(const RECT& actionRect, UINT dpi) noexcept
+{
+	const int width = actionRect.right - actionRect.left;
+	const int height = actionRect.bottom - actionRect.top;
+	if (width <= 0 || height <= 0) return {};
+	// Inset horizontally by the margin `MeasureCustomFrameUpdateButtonWidth` reserved, and
+	// vertically to the button height so the indicator reads as a button sitting on the
+	// title bar. A title bar shorter than the button keeps the full height rather than
+	// collapsing the pill to nothing.
+	const int horizontalMargin = std::min(
+		ScaleCustomFrameDip(kUpdateIndicatorMarginDip, dpi), width / 2);
+	const int pillHeight = std::min(height, ScaleCustomFrameDip(kUpdateIndicatorHeightDip, dpi));
+	const int verticalMargin = (height - pillHeight) / 2;
+	const RECT pill = MakeRect(
+		actionRect.left + horizontalMargin,
+		actionRect.top + verticalMargin,
+		actionRect.right - horizontalMargin,
+		actionRect.top + verticalMargin + pillHeight
+	);
+	return pill.right > pill.left && pill.bottom > pill.top ? pill : RECT{};
 }
 
 CustomFrameControl HitTestCustomFrameControl(const CustomFrameLayout& layout, POINT point) noexcept

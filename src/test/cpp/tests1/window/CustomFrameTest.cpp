@@ -9,6 +9,8 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdlib>
+
 #include "window/CCustomFrameController.h"
 #include "window/CClientMenuBar.h"
 #include "workbench/IconMetrics.h"
@@ -382,10 +384,55 @@ TEST(CustomFrameUpdateControl, ExposesUpstreamsUpdateTitleAsItsAccessibleNameAnd
 TEST(CustomFrameUpdateControl, FallsBackToAMinimumButtonWidthWhenTheCaptionFontCannotBeMeasured)
 {
 	// A zero width here would mean "hidden", which is a different fact from "unmeasurable".
+	// The fallback covers the button itself plus the 4 DIP margin on each side that keeps
+	// the painted pill clear of the Secondary Side Bar control and the caption buttons.
 	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
-		EXPECT_EQ(ScaleCustomFrameDip(56, dpi), MeasureCustomFrameUpdateButtonWidth(nullptr, dpi));
+		const int expected = ScaleCustomFrameDip(56, dpi) + ScaleCustomFrameDip(4, dpi) * 2;
+		EXPECT_EQ(expected, MeasureCustomFrameUpdateButtonWidth(nullptr, dpi));
 		EXPECT_GT(MeasureCustomFrameUpdateButtonWidth(nullptr, dpi), ScaleCustomFrameDip(30, dpi));
 	}
+}
+
+TEST(CustomFrameUpdateControl, PaintsAnInsetButtonRatherThanAFullHeightCaptionCell)
+{
+	// VS Code draws the actionable indicator as a button sitting on the title bar. The
+	// action rectangle still spans the full caption height for hit-testing, so the painted
+	// pill has to be strictly inside it on every edge.
+	for (const UINT dpi : { 96u, 120u, 144u, 192u }) {
+		const auto layout = CalculateCustomFrameLayout(
+			1200, dpi, 430, MeasureCustomFrameUpdateButtonWidth(nullptr, dpi));
+		ASSERT_FALSE(::IsRectEmpty(&layout.updateButton));
+		const RECT pill = CustomFrameUpdateIndicatorPillRect(layout.updateButton, dpi);
+		ASSERT_FALSE(::IsRectEmpty(&pill));
+
+		const int margin = ScaleCustomFrameDip(4, dpi);
+		EXPECT_EQ(layout.updateButton.left + margin, pill.left);
+		EXPECT_EQ(layout.updateButton.right - margin, pill.right);
+		EXPECT_EQ(ScaleCustomFrameDip(22, dpi), pill.bottom - pill.top);
+		EXPECT_GT(pill.top, layout.updateButton.top);
+		EXPECT_LT(pill.bottom, layout.updateButton.bottom);
+		// Centred vertically: the space above and below the pill differs by at most the
+		// odd pixel an integral title height cannot split.
+		const int above = pill.top - layout.updateButton.top;
+		const int below = layout.updateButton.bottom - pill.bottom;
+		EXPECT_LE(std::abs(above - below), 1);
+	}
+}
+
+TEST(CustomFrameUpdateControl, HasNoPillWithoutAnActionRectangle)
+{
+	// The hidden state must not produce a paintable pill out of an empty rectangle, and a
+	// title bar too short for the button keeps its full height instead of collapsing.
+	const RECT hidden = CustomFrameUpdateIndicatorPillRect(RECT{}, 96);
+	const RECT degenerate = CustomFrameUpdateIndicatorPillRect(RECT{ 40, 0, 40, 34 }, 96);
+	EXPECT_TRUE(::IsRectEmpty(&hidden));
+	EXPECT_TRUE(::IsRectEmpty(&degenerate));
+
+	const RECT shortBar = CustomFrameUpdateIndicatorPillRect(RECT{ 100, 0, 164, 12 }, 96);
+	EXPECT_EQ(0, shortBar.top);
+	EXPECT_EQ(12, shortBar.bottom);
+	EXPECT_EQ(104, shortBar.left);
+	EXPECT_EQ(160, shortBar.right);
 }
 
 TEST(CustomFrame, ReturnsSnapCompatibleCaptionButtonHits)
