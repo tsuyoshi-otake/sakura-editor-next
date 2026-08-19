@@ -234,6 +234,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerContextMenuModelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerDeleteConfirmationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerFileIconTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\SetiFileIconTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CEditorServiceLegacyAdapterTest.cpp" />
@@ -270,6 +271,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-ceol.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cerrorinfo.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-ccodiconfont.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\test-csetifont.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-themeiconresolver.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfileext.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cfuncinfoarr.cpp" />

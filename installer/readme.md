@@ -108,6 +108,9 @@ Inno Setup の設定ファイルは拡張子が iss のファイルです。Saku
                 - IMPORTED_FILES.md
             - codicons/
                 - CODICONS-ATTRIBUTION.md
+            - seti/
+                - SETI-ATTRIBUTION.md
+                - SETI-LICENSE
             - fmt/
                 - LICENSE
             - ms-gsl/

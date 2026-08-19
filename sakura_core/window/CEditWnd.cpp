@@ -479,8 +479,8 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 	std::string_view key, std::wstring_view argument)
 {
 	struct TextEntry {
-		std::string_view key;
-		UINT resourceId;
+		const std::string_view key{};
+		const UINT resourceId{};
 	};
 	constexpr std::array<TextEntry, 105> kEntries{{
 		{ "GitRefBranches", STR_WORKBENCH_GIT_REF_BRANCHES },
@@ -4769,6 +4769,12 @@ void CEditWnd::ApplyWorkbenchTheme()
 	auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 		? theme::ThemeMode::Dark
 		: theme::ThemeMode::Light;
+	// The Explorer's file icon theme needs the ColorThemeKind, not the Dark/Light
+	// mode: VS Code emits an icon theme's `light` section under the `.vs` body class
+	// alone, so High Contrast Light keeps the base section even though its mode is
+	// Light.  Until a color theme is actually loaded below, the saved mode is the
+	// only evidence available.
+	bool lightColorTheme = mode == theme::ThemeMode::Light;
 	// The persisted VS Code setting is resolved through the same profile,
 	// workspace, and single-folder target used by the configuration service.
 	// An empty/invalid setting first resolves to Sakura's built-in theme for the
@@ -4789,7 +4795,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 					selectedTheme = *selected;
 				}
 			}
-			const auto applyTheme = [this, &mode](std::wstring_view idOrLabel) {
+			const auto applyTheme = [this, &mode, &lightColorTheme](std::wstring_view idOrLabel) {
 				const auto loaded = m_colorThemeRegistry->Load(idOrLabel);
 				if (!loaded.Succeeded()) return false;
 				theme::CThemeService::SetActiveColorThemePalette(loaded.theme->palette);
@@ -4799,6 +4805,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 					theme::CThemeService::SetActiveColorThemeSyntaxPalette(loaded.theme->syntaxPalette);
 				}
 				mode = theme::CColorThemeRegistry::ModeForKind(loaded.theme->info.kind);
+				lightColorTheme = loaded.theme->info.kind == theme::ColorThemeKind::Light;
 				return true;
 			};
 			if (!selectedTheme.empty() && applyTheme(selectedTheme)) {
@@ -4814,6 +4821,11 @@ void CEditWnd::ApplyWorkbenchTheme()
 			theme::CThemeService::ClearActiveColorThemePalette();
 		}
 	}
+	// Published as process-local active-theme state beside the palette and syntax
+	// overlays above. The Explorer reads it on its paint path to select the file
+	// icon theme's `light` section, the way VS Code's `.vs` body class does, so no
+	// part host in between has to carry an icon-theme argument it never reads.
+	theme::CThemeService::SetActiveColorThemeLightKind(lightColorTheme);
 	if (m_customFrame) m_customFrame->SetThemeMode(mode);
 	const auto palette = theme::CThemeService::EffectivePalette(mode);
 	m_cStatusBar.SetPalette(palette);

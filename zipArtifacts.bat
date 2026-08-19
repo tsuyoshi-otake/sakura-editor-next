@@ -191,6 +191,7 @@ mkdir %WORKDIR_EXE%\license\bregonig\
 mkdir %WORKDIR_EXE%\license\ctags\
 mkdir %WORKDIR_EXE%\license\windows-terminal\
 mkdir %WORKDIR_EXE%\license\codicons\
+mkdir %WORKDIR_EXE%\license\seti\
 mkdir %WORKDIR_EXE%\license\fmt\
 mkdir %WORKDIR_EXE%\license\ms-gsl\
 mkdir %WORKDIR_EXE%\license\wil\
@@ -271,6 +272,21 @@ if not exist "%CODICONS_VENDOR%\CODICONS-ATTRIBUTION.md" (
 	exit /b 1
 )
 call :copyRequired "%CODICONS_VENDOR%\CODICONS-ATTRIBUTION.md" "%WORKDIR_EXE%\license\codicons\" "Codicons attribution"
+if errorlevel 1 exit /b 1
+
+: Seti file icon theme, bundled as the default Explorer icon theme
+set SETI_VENDOR=%~dp0sakura_core\workbench\icons
+if not exist "%SETI_VENDOR%\SETI-ATTRIBUTION.md" (
+	echo Seti attribution payload was not found.
+	exit /b 1
+)
+if not exist "%SETI_VENDOR%\SETI-LICENSE" (
+	echo Seti license payload was not found.
+	exit /b 1
+)
+call :copyRequired "%SETI_VENDOR%\SETI-ATTRIBUTION.md" "%WORKDIR_EXE%\license\seti\" "Seti attribution"
+if errorlevel 1 exit /b 1
+call :copyRequired "%SETI_VENDOR%\SETI-LICENSE" "%WORKDIR_EXE%\license\seti\" "Seti license"
 if errorlevel 1 exit /b 1
 
 : Windows Terminal compatibility dependencies

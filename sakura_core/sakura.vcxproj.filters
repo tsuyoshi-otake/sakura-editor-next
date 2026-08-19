@@ -1033,6 +1033,18 @@
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\CSetiFont.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\SetiFileIcon.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\SetiIconThemeTable.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\EmbeddedFontResource.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
@@ -2879,6 +2891,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\icons\CSetiFont.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 

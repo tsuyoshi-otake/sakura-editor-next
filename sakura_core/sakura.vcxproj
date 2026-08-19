@@ -682,6 +682,10 @@
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\CSetiFont.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\SetiFileIcon.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\SetiIconThemeTable.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\EmbeddedFontResource.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\LabelRunPainter.h" />
     <ClInclude Include="..\sakura_core\window\CAutoScrollWnd.h" />
@@ -1299,6 +1303,7 @@
     <ClCompile Include="..\sakura_core\workbench\WorkbenchLayout.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\WorkbenchBootstrapContext.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\icons\CCodiconFont.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\icons\CSetiFont.cpp" />
     <ClCompile Include="..\sakura_core\window\CAutoScrollWnd.cpp" />
     <ClCompile Include="..\sakura_core\accessibility\CustomUiAutomationProvider.cpp" />
     <ClCompile Include="..\sakura_core\window\CClientMenuBar.cpp" />

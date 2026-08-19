@@ -20,8 +20,10 @@
 #include "workbench/explorer/ExplorerFileIcon.h"
 #include "workbench/explorer/ExplorerResourcePath.h"
 #include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CSetiFont.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/LabelRunPainter.h"
+#include "workbench/icons/SetiFileIcon.h"
 #include "workbench/icons/ThemeIconResolver.h"
 
 #include <sakura/uri/UriIdentity.h>
@@ -93,8 +95,8 @@ constexpr std::string_view kCloneRepositoryCommandId = "git.clone";
 }
 
 struct HeaderActionSpec final {
-	std::string_view commandId;
-	std::wstring_view iconId;
+	const std::string_view commandId{};
+	const std::wstring_view iconId{};
 };
 
 constexpr std::array<HeaderActionSpec, 4> kHeaderActions{
@@ -130,6 +132,43 @@ void DrawExplorerIcon(HDC dc, const RECT& bounds, std::wstring_view iconId, COLO
 	RECT glyph = bounds;
 	::DrawTextW(dc, icon.fontIcon.glyph.c_str(), static_cast<int>(icon.fontIcon.glyph.size()), &glyph,
 		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::SetTextColor(dc, previousTextColor);
+	::SetBkMode(dc, previousBackgroundMode);
+	::SelectObject(dc, previousFont);
+	::DeleteObject(glyphFont);
+}
+
+//! The generated Seti table stores upstream's `#rrggbb` fontColor as 0x00RRGGBB.
+[[nodiscard]] constexpr COLORREF ColorRefFromThemeRgb(std::uint32_t rgb) noexcept
+{
+	return RGB((rgb >> 16) & 0xFFu, (rgb >> 8) & 0xFFu, rgb & 0xFFu);
+}
+
+/*!
+	@brief Draws one glyph of the bundled Seti file icon theme
+
+	Unlike a Codicon, a Seti glyph does not fill its em box -- it inks about 0.56 em.
+	Upstream compensates in the theme document itself (`fonts[0].size` is `150%`), so
+	the em box here is larger than the icon slot; icons/SetiFileIcon.h derives the
+	ratio. Drawing it at the slot size instead would render every file icon visibly
+	smaller than VS Code does.
+*/
+void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noexcept
+{
+	if (dc == nullptr || glyph == L'\0') return;
+	const int side = std::min(static_cast<int>(bounds.right - bounds.left),
+		static_cast<int>(bounds.bottom - bounds.top));
+	if (side <= 0) return;
+	const int em = std::max(1, ::MulDiv(side,
+		icons::seti::kEmToIconSlotNumerator, icons::seti::kEmToIconSlotDenominator));
+	const HFONT glyphFont = icons::CreateLabelRunGlyphFont(icons::seti::kFontFamily, em);
+	if (glyphFont == nullptr) return;
+	const HGDIOBJ previousFont = ::SelectObject(dc, glyphFont);
+	const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
+	const COLORREF previousTextColor = ::SetTextColor(dc, color);
+	const wchar_t text[] = { glyph, L'\0' };
+	RECT box = bounds;
+	::DrawTextW(dc, text, 1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
 	::SetTextColor(dc, previousTextColor);
 	::SetBkMode(dc, previousBackgroundMode);
 	::SelectObject(dc, previousFont);
@@ -1568,6 +1607,27 @@ struct CExplorerTool::Impl {
 			std::max(0, (static_cast<int>(label.bottom - label.top) - side) / 2);
 		const RECT box{ std::max(0, static_cast<int>(label.left) - side - ScaleDip(2)), top,
 			std::max(0, static_cast<int>(label.left) - ScaleDip(2)), top + side };
+		if (icons::CSetiFont::Instance().IsAvailable()) {
+			// The bundled `vs-seti` theme, which is what VS Code selects by default.
+			// It contributes no folder association at all, so a directory row draws
+			// its twistie and its name and no glyph, exactly as upstream does.
+			// The `light` section belongs to ColorThemeKind.Light alone, which is a
+			// property of the active color theme rather than of this palette, so it
+			// is read from the theme service the way the syntax overlay is.
+			const auto icon = icons::seti::ResolveSetiFileIcon(node.name, node.isDirectory,
+				theme::CThemeService::IsActiveColorThemeLightKind()
+					? icons::seti::EIconVariant::Light
+					: icons::seti::EIconVariant::Dark);
+			if (!icon) return;
+			DrawSetiIcon(dc, box, icon->character,
+				icon->color == icons::seti::kInheritColor
+					? palette.text
+					: ColorRefFromThemeRgb(icon->color));
+			return;
+		}
+		// seti.ttf could not be registered. Its code points mean nothing in another
+		// face, so fall back to the first-party Codicon table instead of drawing
+		// unrelated glyphs.
 		const bool expanded = (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
 		const std::wstring_view iconId = ResolveExplorerFileIconCodicon(
 			node.name, node.isDirectory, expanded, node.isWorkspaceRoot);

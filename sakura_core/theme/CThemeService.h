@@ -177,11 +177,11 @@ enum class ThemeFontKind : std::uint8_t {
 
 //! The first family is tried before the fallback.  Point size is in typographic points.
 struct ThemeFontSpec {
-	const wchar_t* preferredFamily = L"";
-	const wchar_t* fallbackFamily = L"";
-	int pointSize = 9;
-	int weight = FW_NORMAL;
-	bool fixedPitch = false;
+	const wchar_t* const preferredFamily{ L"" };
+	const wchar_t* const fallbackFamily{ L"" };
+	const int pointSize{ 9 };
+	const int weight{ FW_NORMAL };
+	const bool fixedPitch{ false };
 };
 
 //! An owning HFONT.  Recreate is explicit so every DPI transition has a single owner.
@@ -245,6 +245,20 @@ public:
 	[[nodiscard]] static constexpr ThemeFontSpec FontSpec(ThemeFontKind kind) noexcept;
 	//! Resolves the preferred family when installed, otherwise returns the fallback family.
 	[[nodiscard]] static const wchar_t* ResolveFontFamily(ThemeFontKind kind) noexcept;
+	//! The active color theme's ColorThemeKind is Light.  VS Code emits a file icon
+	//! theme's `light` section under the `.vs` body class alone, so this predicate --
+	//! not "the background is bright" -- is what selects it, and High Contrast Light
+	//! keeps the base section.  The composition root evaluates the kind while it
+	//! applies the theme and publishes the answer here, because CColorThemeRegistry.h
+	//! declares ColorThemeKind and already includes this header.
+	static void SetActiveColorThemeLightKind(bool lightKind) noexcept { s_activeColorThemeLightKind = lightKind; }
+	[[nodiscard]] static bool IsActiveColorThemeLightKind() noexcept { return s_activeColorThemeLightKind; }
+
+private:
+	//! One writer, CEditWnd::ApplyWorkbenchTheme, which assigns it on every path,
+	//! and readers on paint paths.  A single predicate stays beside its accessors
+	//! instead of joining the two optional palette overlays in the .cpp.
+	inline static bool s_activeColorThemeLightKind = false;
 };
 
 constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
