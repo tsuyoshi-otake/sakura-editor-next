@@ -32,6 +32,12 @@ constexpr UINT_PTR kOutputText = 107;
 constexpr UINT_PTR kPanelMaximizeButton = 108;
 constexpr UINT_PTR kPanelCloseButton = 109;
 constexpr unsigned int kDefaultDpi = 96;
+//! Panel header metrics in DIP. Layout and paint must read the same values:
+//! the header rule is the header row's last device rows, so a painter that
+//! derives the row from its own copy of the metric can miss the row entirely.
+constexpr int kPanelHeaderHeightDip = 34;
+constexpr int kOutputSelectorHeightDip = 28;
+constexpr int kHeaderRuleThicknessDip = 1;
 
 bool IsPanelTabId(UINT_PTR id) noexcept
 {
@@ -47,6 +53,30 @@ bool IsPanelActionId(UINT_PTR id) noexcept
 int Scale(int value, unsigned int dpi) noexcept
 {
 	return ::MulDiv(value, static_cast<int>(dpi ? dpi : kDefaultDpi), kDefaultDpi);
+}
+
+//! Fills the header's bottom rule across one cell of the header row.
+//!
+//! VS Code paints that edge as part of the title row and lets
+//! `panelTitle.activeBorder` replace it under the active tab. The Panel host is
+//! a WS_CLIPCHILDREN window and every tab and action button is one of its
+//! children, so a rule filled once across the parent's client area is clipped
+//! out of every child rectangle and survives only in the gaps between them.
+//! Each painter therefore fills its own span, and all of them derive the row
+//! from the same clamped header height so the spans meet exactly.
+void FillHeaderRule(HDC dc, const RECT& cell, int headerHeight, unsigned int dpi, COLORREF color)
+{
+	if (dc == nullptr || cell.right <= cell.left) return;
+	const int thickness = std::min(std::max(0, headerHeight),
+		std::max(1, Scale(kHeaderRuleThicknessDip, dpi)));
+	if (thickness <= 0) return;
+	RECT rule{ cell.left, cell.bottom - thickness, cell.right, cell.bottom };
+	rule.top = std::max(rule.top, cell.top);
+	if (rule.top >= rule.bottom) return;
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	if (brush == nullptr) return;
+	::FillRect(dc, &rule, brush);
+	::DeleteObject(brush);
 }
 
 bool IsSupportedTab(BottomPanelTab tab) noexcept
@@ -199,6 +229,10 @@ struct CBottomPanelTool::Impl {
 		const bool pressed = (item.itemState & ODS_SELECTED) != 0;
 		const HBRUSH background = (activeTab || pressed) ? raisedBrush : panelBrush;
 		if (background) ::FillRect(item.hDC, &item.rcItem, background);
+		// The button's own height is the header height: LayoutChildren places
+		// every header cell at the top of the row with the row's full height.
+		FillHeaderRule(item.hDC, item.rcItem, item.rcItem.bottom - item.rcItem.top, dpi,
+			palette.border.ToColorRef());
 
 		if (action) {
 			const int centerX = (item.rcItem.left + item.rcItem.right) / 2;
@@ -302,7 +336,7 @@ struct CBottomPanelTool::Impl {
 		const int width = std::max(0L, bounds.right - bounds.left);
 		const int height = std::max(0L, bounds.bottom - bounds.top);
 		const auto vertical = CalculateBottomPanelVerticalLayout(
-			height, Scale(34, dpi), Scale(28, dpi));
+			height, Scale(kPanelHeaderHeightDip, dpi), Scale(kOutputSelectorHeightDip, dpi));
 		const int headerHeight = vertical.headerHeight;
 		const int actionWidth = Scale(30, dpi);
 		::MoveWindow(window, bounds.left, bounds.top, width, height, TRUE);
@@ -334,12 +368,9 @@ struct CBottomPanelTool::Impl {
 		terminalHeaderBounds = toolbarWidth > 0 && headerHeight > 0
 			? RECT{ toolbarLeft, 0, commonActionLeft, headerHeight } : RECT{};
 
-		constexpr std::array tabButtons{
-			std::pair{ BottomPanelTab::Problems, kProblemsButton },
-			std::pair{ BottomPanelTab::Output, kOutputButton },
-			std::pair{ BottomPanelTab::Terminal, kTerminalButton },
-			std::pair{ BottomPanelTab::Ports, kPortsButton },
-			std::pair{ BottomPanelTab::DebugConsole, kDebugConsoleButton },
+		// VS Code's Panel view-container order, matching desiredTabWidthsDip.
+		const std::array tabButtons{
+			problemsButton, outputButton, terminalButton, portsButton, debugConsoleButton,
 		};
 		const int compactTabArea = std::min(toolbarLeft, Scale(desiredTabWidthDipTotal, dpi));
 		int remainingWidth = compactTabArea;
@@ -350,11 +381,7 @@ struct CBottomPanelTool::Impl {
 			const int tabWidth = toolbarLeft >= Scale(desiredTabWidthDipTotal, dpi)
 				? desired
 				: remainingTabs > 0 ? remainingWidth / remainingTabs : 0;
-			const HWND button = index == 0 ? problemsButton
-				: index == 1 ? outputButton
-				: index == 2 ? terminalButton
-				: index == 3 ? portsButton : debugConsoleButton;
-			::MoveWindow(button, tabLeft, 0, std::max(0, tabWidth), headerHeight, TRUE);
+			::MoveWindow(tabButtons[index], tabLeft, 0, std::max(0, tabWidth), headerHeight, TRUE);
 			tabLeft += tabWidth;
 			remainingWidth = std::max(0, remainingWidth - tabWidth);
 			--remainingTabs;
@@ -815,17 +842,19 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		const HBRUSH brush = ::CreateSolidBrush(impl.palette.bottomPanel.ToColorRef());
 		::FillRect(dc, &client, brush);
 		::DeleteObject(brush);
-		const int tabBottom = Scale(34, impl.dpi);
+		// Clamp with the same layout the children were placed with. The preferred
+		// metric alone would draw the rule into the content area while the Panel
+		// is shorter than its header during a live resize.
+		const int headerHeight = CalculateBottomPanelVerticalLayout(client.bottom - client.top,
+			Scale(kPanelHeaderHeightDip, impl.dpi),
+			Scale(kOutputSelectorHeightDip, impl.dpi)).headerHeight;
 		if (impl.terminalHeaderBounds.right > impl.terminalHeaderBounds.left) {
 			impl.terminal->PaintPanelHeader(dc, impl.terminalHeaderBounds, impl.dpi);
 		}
-		RECT separator{ client.left, std::max<LONG>(client.top, static_cast<LONG>(tabBottom - 1)),
-			client.right, static_cast<LONG>(tabBottom) };
-		const HBRUSH separatorBrush = ::CreateSolidBrush(impl.palette.border.ToColorRef());
-		if (separatorBrush) {
-			::FillRect(dc, &separator, separatorBrush);
-			::DeleteObject(separatorBrush);
-		}
+		// The host only reaches the gaps between children; each child fills the
+		// rest of the rule from its own owner-draw pass.
+		const RECT headerRow{ client.left, client.top, client.right, client.top + headerHeight };
+		FillHeaderRule(dc, headerRow, headerHeight, impl.dpi, impl.palette.border.ToColorRef());
 		::EndPaint(window, &paint);
 		return 0;
 	}
