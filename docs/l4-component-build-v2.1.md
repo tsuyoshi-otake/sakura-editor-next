@@ -17,7 +17,7 @@
 | B-05 | 修正採用 | manifest policy、生成定数、C++ typed state machine、trace を採用する。汎用 lifecycle execution IR は作らない。 |
 | B-06 | 分割採用 | C++ ABI、wire、永続形式、resource/message ID ごとの compatibility matrix を持つ。 |
 | B-07 | 分割採用 | package-set root と restore 回数は hard gate。path-to-package 推定は diagnostic。 |
-| B-08 | 修正採用 | `/m:P`、`/MP:C`、`--parallel J` を明示し `P*C<=J` とする。独自 weighted jobserver は作らない。 |
+| B-08 | 修正採用 | `/m:P`、`/MP:C`、`--parallel J` を明示する。独自 weighted jobserver は作らない。ここで採用した `P*C<=J` の MSBuild 側は 2026-08-19 の実測で Issue #201 により置き換えた。`tests1` が `sakura` を `ProjectReference` するため支配的な局面では project 並列が効かず、`P*C<=J` は 16 論理 CPU を 4 並列に落としていた。現在は `P=C=J` とし、CMake 側の `--parallel J` はそのまま。 |
 | B-09 | 修正採用 | migration seam を contract、adapter、legacy façade の三種に限定する。全依存を port 化しない。 |
 | B-10 | 修正採用 | stable `test_id` と runtime selector を分離する。既存全テストへの手動 semantic ID は要求しない。 |
 | B-11 | 分割採用 | `S -> ContextProjection/ProjectModel`、CLI は BuildIntent、実行は native backend scheduler とする。第二の build system は作らない。 |

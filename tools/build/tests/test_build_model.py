@@ -1116,10 +1116,21 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNotNone(delete)
         self.assertEqual("@(_SakuraAssemblyListing)", delete.attrib.get("Files"))
 
-    def test_parallel_budget_is_bounded(self):
+    def test_parallel_budget_reaches_the_compiler_undivided(self):
+        # Splitting the budget between nodes and compilers starved the compile
+        # phase, because tests1 depends on sakura and the two large projects
+        # never compile at the same time.  See issue #201 for the measurements.
         for budget in range(1, 33):
             allocation = allocate_parallelism(budget)
-            self.assertLessEqual(allocation.projects * allocation.compiler_processes, budget)
+            self.assertEqual(budget, allocation.budget)
+            self.assertEqual(budget, allocation.projects)
+            self.assertEqual(budget, allocation.compiler_processes)
+
+    def test_parallel_budget_rejects_a_nonpositive_job_count(self):
+        for budget in (0, -1):
+            with self.assertRaises(BuildError) as raised:
+                allocate_parallelism(budget)
+            self.assertEqual("JOBS_INVALID", raised.exception.code)
 
     def test_component_cmake_configures_only_when_native_tree_is_not_reusable(self):
         with tempfile.TemporaryDirectory() as temporary:

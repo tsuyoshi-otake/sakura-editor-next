@@ -97,8 +97,14 @@ sakura-build.bat graph check --all-contexts
 sakura-build.bat build dev x64 Debug --jobs 8
 ```
 
-`--jobs` は MSBuild/CMake へ渡す全体予算です。MSBuild では `/m:P` と `/MP:C` を
-`P*C <= jobs` となるよう設定し、`--jobs 1` では `/m:1` と `/MP1` を明示します。
+`--jobs` は MSBuild/CMake へ渡す全体予算です。これは「飽和させてよい論理 CPU 数」
+であり、node 数と compiler 数へ分割する積ではありません。MSBuild には `/m:jobs` と
+`/p:CL_MPCount=jobs` をそのまま渡し、`--jobs 1` では `/m:1` と `/MP1` を明示します。
+`tests1` は `sakura` を `ProjectReference` するため大きい 2 つの project は同時にコンパイルされず、
+`/MP` は残りのファイル数を超えて子プロセスを作らないので、積は到達しない天井です。
+x64 Debug の `sakura.sln` 完全再ビルド実測では `/m:16 /p:CL_MPCount=16` の `cl.exe` 同時数は
+最大 17、常駐メモリは最大 2.3 GiB で、所要時間は 90.6 s から 60.8 s へ短縮しました。
+詳細は Issue #201 を参照してください。
 既存 batch shim の既定予算は論理 CPU 数で、`SAKURA_BUILD_JOBS` で上書きできます。
 低レベルの task scheduling は MSBuild/CMake が担当し、CLI は独自 jobserver を実装しません。
 
