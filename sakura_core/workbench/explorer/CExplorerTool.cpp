@@ -44,6 +44,7 @@
 #include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 
 namespace workbench::explorer {
@@ -175,6 +176,8 @@ void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noe
 	::DeleteObject(glyphFont);
 }
 
+//! The colour plane of the TreeView's icon-slot spacer. Its pixels never reach the
+//! screen; CreateSpacerMaskBitmap supplies the mask that keeps them off it.
 [[nodiscard]] HBITMAP CreateTransparentBitmap(int side) noexcept
 {
 	if (side <= 0) return nullptr;
@@ -198,79 +201,95 @@ void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noe
 	return bitmap;
 }
 
+/*!
+	@brief Builds the spacer's mask: every bit set, so the spacer is transparent everywhere
+
+	The image list exists only to reserve the native TreeView's icon slot, and the row's
+	real glyph is painted afterwards in NM_CUSTOMDRAW. An ILC_MASK image list added with
+	a null mask does not mean "no mask"; it means an all-zero mask, which is opaque, so
+	the spacer's zeroed colour plane paints as a solid black square behind every row.
+	A monochrome mask whose bits are all 1 is what makes the slot actually empty. The
+	32-bit colour plane's zero alpha cannot do it: the list carries ILC_MASK, so the
+	mask decides transparency and the alpha channel is ignored.
+*/
+[[nodiscard]] HBITMAP CreateSpacerMaskBitmap(int side) noexcept
+{
+	if (side <= 0) return nullptr;
+	// CreateBitmap wants each monochrome scanline padded to a WORD boundary.
+	const std::size_t stride = ((static_cast<std::size_t>(side) + 15u) / 16u) * 2u;
+	const std::vector<std::uint8_t> bits(stride * static_cast<std::size_t>(side), 0xFFu);
+	return ::CreateBitmap(side, side, 1, 1, bits.data());
+}
+
 //! Loads a raster icon into a transparent, square 32-bit DIB for the TreeView image list.
 //! WIC intentionally fails closed for formats such as SVG that have no native decoder here.
 [[nodiscard]] HBITMAP LoadRasterBitmap(const std::filesystem::path& path, unsigned int iconSize) noexcept
 {
-	try {
-		cxx::com_pointer<IWICImagingFactory> factory;
-		if (FAILED(factory.CreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER))) return nullptr;
-		cxx::com_pointer<IWICBitmapDecoder> decoder;
-		if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-			WICDecodeMetadataCacheOnLoad, &decoder))) return nullptr;
-		cxx::com_pointer<IWICBitmapFrameDecode> frame;
-		if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
-		UINT width = 0;
-		UINT height = 0;
-		if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
-			|| width > 4096 || height > 4096) return nullptr;
+	cxx::com_pointer<IWICImagingFactory> factory;
+	if (FAILED(factory.CreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER))) return nullptr;
+	cxx::com_pointer<IWICBitmapDecoder> decoder;
+	if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+		WICDecodeMetadataCacheOnLoad, &decoder))) return nullptr;
+	cxx::com_pointer<IWICBitmapFrameDecode> frame;
+	if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
+	UINT width = 0;
+	UINT height = 0;
+	if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
+		|| width > 4096 || height > 4096) return nullptr;
 
-		UINT scaledWidth = iconSize;
-		UINT scaledHeight = iconSize;
-		if (width > height) {
-			scaledHeight = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(height) * iconSize) / width));
-		} else if (height > width) {
-			scaledWidth = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(width) * iconSize) / height));
-		}
-
-		cxx::com_pointer<IWICBitmapScaler> scaler;
-		IWICBitmapSource* source = frame;
-		if (scaledWidth != width || scaledHeight != height) {
-			if (FAILED(factory->CreateBitmapScaler(&scaler))
-				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
-			source = scaler;
-		}
-		cxx::com_pointer<IWICFormatConverter> converter;
-		if (FAILED(factory->CreateFormatConverter(&converter))
-			|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
-				WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return nullptr;
-
-		const UINT stride = scaledWidth * 4;
-		std::vector<BYTE> pixels(static_cast<std::size_t>(stride) * scaledHeight);
-		if (FAILED(converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data()))) return nullptr;
-
-		BITMAPINFO bitmapInfo{};
-		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(iconSize);
-		bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(iconSize);
-		bitmapInfo.bmiHeader.biPlanes = 1;
-		bitmapInfo.bmiHeader.biBitCount = 32;
-		bitmapInfo.bmiHeader.biCompression = BI_RGB;
-		HDC screen = ::GetDC(nullptr);
-		if (screen == nullptr) return nullptr;
-		void* bits = nullptr;
-		HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
-		::ReleaseDC(nullptr, screen);
-		if (bitmap == nullptr || bits == nullptr) {
-			if (bitmap != nullptr) ::DeleteObject(bitmap);
-			return nullptr;
-		}
-		const auto destinationBytes = static_cast<std::size_t>(iconSize) * iconSize * 4;
-		std::memset(bits, 0, destinationBytes);
-		const UINT left = (iconSize - scaledWidth) / 2;
-		const UINT top = (iconSize - scaledHeight) / 2;
-		auto* destination = static_cast<BYTE*>(bits);
-		for (UINT row = 0; row < scaledHeight; ++row) {
-			const auto* sourceRow = pixels.data() + static_cast<std::size_t>(row) * stride;
-			std::memcpy(destination + (static_cast<std::size_t>(top + row) * iconSize + left) * 4,
-				sourceRow, stride);
-		}
-		return bitmap;
+	UINT scaledWidth = iconSize;
+	UINT scaledHeight = iconSize;
+	if (width > height) {
+		scaledHeight = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(height) * iconSize) / width));
+	} else if (height > width) {
+		scaledWidth = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(width) * iconSize) / height));
 	}
-	catch (...) {
+
+	cxx::com_pointer<IWICBitmapScaler> scaler;
+	IWICBitmapSource* source = frame;
+	if (scaledWidth != width || scaledHeight != height) {
+		if (FAILED(factory->CreateBitmapScaler(&scaler))
+			|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
+				WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
+		source = scaler;
+	}
+	cxx::com_pointer<IWICFormatConverter> converter;
+	if (FAILED(factory->CreateFormatConverter(&converter))
+		|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
+			WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return nullptr;
+
+	BITMAPINFO bitmapInfo{};
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(iconSize);
+	bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(iconSize);
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	HDC screen = ::GetDC(nullptr);
+	if (screen == nullptr) return nullptr;
+	void* bits = nullptr;
+	HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+	::ReleaseDC(nullptr, screen);
+	if (bitmap == nullptr || bits == nullptr) {
+		if (bitmap != nullptr) ::DeleteObject(bitmap);
 		return nullptr;
 	}
+
+	// Decode straight into the centred region of the DIB. CopyPixels writes only each row's
+	// own bytes at the given stride, so the zeroed padding around the image survives, and the
+	// destination buffer removes the last allocation this function performed.
+	const std::size_t destinationBytes = static_cast<std::size_t>(iconSize) * iconSize * 4;
+	std::memset(bits, 0, destinationBytes);
+	const UINT left = (iconSize - scaledWidth) / 2;
+	const UINT top = (iconSize - scaledHeight) / 2;
+	const std::size_t offset = (static_cast<std::size_t>(top) * iconSize + left) * 4;
+	const UINT destinationStride = iconSize * 4;
+	if (FAILED(converter->CopyPixels(nullptr, destinationStride,
+		static_cast<UINT>(destinationBytes - offset), static_cast<BYTE*>(bits) + offset))) {
+		::DeleteObject(bitmap);
+		return nullptr;
+	}
+	return bitmap;
 }
 
 struct Job {
@@ -1550,8 +1569,14 @@ struct CExplorerTool::Impl {
 		(void)node;
 		(void)expanded;
 		// A transparent image reserves the native TreeView's icon slot. The real
-		// codicon is painted in NM_CUSTOMDRAW so it stays theme-aware without
+		// glyph is painted in NM_CUSTOMDRAW so it stays theme-aware without
 		// importing a second file-icon theme parser.
+		//
+		// Every row gets the slot, including a folder row the Seti theme does not
+		// decorate. That is a known divergence from VS Code with a platform cause:
+		// a native TreeView reserves the image width for every item as long as it
+		// has an image list, and I_IMAGENONE does not opt one item out. Dropping
+		// the slot per row needs the row drawn by hand; see explorer/CLAUDE.md.
 		return iconImages == nullptr ? -1 : 0;
 	}
 
@@ -1585,14 +1610,16 @@ struct CExplorerTool::Impl {
 		iconImages = ::ImageList_Create(side, side, ILC_COLOR32 | ILC_MASK, 1, 1);
 		if (iconImages != nullptr) {
 			const HBITMAP transparent = CreateTransparentBitmap(side);
-			if (transparent == nullptr || ::ImageList_Add(iconImages, transparent, nullptr) == -1) {
-				if (transparent != nullptr) ::DeleteObject(transparent);
+			const HBITMAP mask = CreateSpacerMaskBitmap(side);
+			if (transparent == nullptr || mask == nullptr
+				|| ::ImageList_Add(iconImages, transparent, mask) == -1) {
 				::ImageList_Destroy(iconImages);
 				iconImages = nullptr;
 			} else {
-				::DeleteObject(transparent);
 				TreeView_SetImageList(tree, iconImages, TVSIL_NORMAL);
 			}
+			if (transparent != nullptr) ::DeleteObject(transparent);
+			if (mask != nullptr) ::DeleteObject(mask);
 		}
 		UpdateAllItemIcons();
 	}

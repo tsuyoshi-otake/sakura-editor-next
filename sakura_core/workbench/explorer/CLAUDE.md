@@ -94,6 +94,27 @@ Recorded divergences of this flow (omit, don't fake):
   dotted TreeView connector lines. A transparent native image slot preserves
   the TreeView geometry while the bundled icon theme paints each row. File rows
   draw Seti, VS Code's own default file icon theme; see the icon section below.
+- **The icon-slot spacer needs a real mask, not a null one.** The image list is
+  created with `ILC_COLOR32 | ILC_MASK`, and `ImageList_Add` with a `nullptr`
+  mask on such a list does not mean "no mask": the entry keeps an all-zero,
+  fully opaque mask, so the spacer's zeroed colour plane paints as a solid black
+  square in every row's icon slot and the theme glyph lands on top of it. The
+  spacer therefore ships a monochrome mask whose bits are all 1. Its 32-bit
+  colour plane's zero alpha cannot stand in for that mask, because a masked
+  image list resolves transparency from the mask and ignores the alpha channel.
+  Verified 2026-08-19 on x64 Debug: 6,644 pure-black pixels in the icon column
+  before the mask, 0 after.
+- **Divergence: every row reserves the icon slot, including folder rows.** VS Code
+  reserves none for a row its icon theme does not decorate, so with `vs-seti` a
+  folder label sits against its twistie and folder names start one icon width left
+  of file names. This product cannot reproduce that with a native TreeView: the
+  control reserves the image width for every item as soon as it has an image list,
+  and setting `I_IMAGENONE` on the item does not opt that item out. Verified
+  2026-08-19 on x64 Debug, both when the value is applied at insertion time and
+  when it is applied afterwards through `TVM_SETITEM`: folder and file labels stay
+  aligned. Closing the gap requires drawing the row -- twistie, icon, and label --
+  by hand under `CDRF_SKIPDEFAULT`, which is tracked separately; do not "fix" it by
+  shifting the label in post-paint over text the control already drew.
 - With no root, the TreeView is hidden and the view projects the locally
   representable `EmptyView` variants from upstream's
   `explorerViewlet.ts`: `NoFolder` has the distinct `No Folder Opened` View
