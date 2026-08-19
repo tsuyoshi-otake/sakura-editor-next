@@ -97,8 +97,14 @@ sakura-build.bat graph check --all-contexts
 sakura-build.bat build dev x64 Debug --jobs 8
 ```
 
-`--jobs` は MSBuild/CMake へ渡す全体予算です。MSBuild では `/m:P` と `/MP:C` を
-`P*C <= jobs` となるよう設定し、`--jobs 1` では `/m:1` と `/MP1` を明示します。
+`--jobs` は MSBuild/CMake へ渡す全体予算です。これは「飽和させてよい論理 CPU 数」
+であり、node 数と compiler 数へ分割する積ではありません。MSBuild には `/m:jobs` と
+`/p:CL_MPCount=jobs` をそのまま渡し、`--jobs 1` では `/m:1` と `/MP1` を明示します。
+`tests1` は `sakura` を `ProjectReference` するため大きい 2 つの project は同時にコンパイルされず、
+`/MP` は残りのファイル数を超えて子プロセスを作らないので、積は到達しない天井です。
+x64 Debug の `sakura.sln` 完全再ビルド実測では `/m:16 /p:CL_MPCount=16` の `cl.exe` 同時数は
+最大 17、常駐メモリは最大 2.3 GiB で、所要時間は 90.6 s から 60.8 s へ短縮しました。
+詳細は Issue #201 を参照してください。
 既存 batch shim の既定予算は論理 CPU 数で、`SAKURA_BUILD_JOBS` で上書きできます。
 低レベルの task scheduling は MSBuild/CMake が担当し、CLI は独自 jobserver を実装しません。
 
@@ -638,7 +644,7 @@ set SAKURA_GENERATE_ASSEMBLY_LISTINGS=
 
 設定を切り替えた直後はコンパイラーオプションが変わるため、次のビルドで一度だけ再コンパイルが発生する場合があります。`build-all.bat` はスクリプト内だけで、配布 CI は Release の MSBuild ステップだけで、この設定を自動的に有効化します。CMake からビルドする場合は `-DSAKURA_GENERATE_ASSEMBLY_LISTINGS=ON` を指定します。
 
-Release の全プログラム最適化では、製品オブジェクトに記録された `/Fa` 出力先が LTCG 時にも使われます。`cl.exe` が先に書く中間 listing は Link/LTCG が同じ出力先へ最終 listing を書く直前に製品プロジェクトが削除します。`tests1` はその製品 `/GL` オブジェクトを support archive 経由で再リンクするため、一覧付きの solution を一度にビルドすると tests1 の LTCG が製品用 `.asm` 出力先を再実行して `C1083 ... Permission denied` / `LNK1257` になり得ます。そこで一覧を要求した `build-sln.bat` と `build-all.bat` は、まず `SAKURA_GENERATE_ASSEMBLY_LISTINGS=false` を明示した solution build で tests1 を完了させ、次に `sakura_core\\sakura.vcxproj` だけを `true`・`/m:1` で再ビルドします。製品プロジェクトの listing branch は `<ClCompile><MultiProcessorCompilation>false</MultiProcessorCompilation>` と `/CGTHREADS:1` も設定します。生の MSBuild solution build に listing を直接指定する代わりに、必ずこの canonical entry point を使ってください。
+Release の全プログラム最適化では、製品オブジェクトに記録された `/Fa` 出力先が LTCG 時にも使われます。`cl.exe` が先に書く中間 listing は Link/LTCG が同じ出力先へ最終 listing を書く直前に製品プロジェクトが削除します。`tests1` はその製品 `/GL` オブジェクトを support archive 経由で再リンクするため、一覧付きの solution を一度にビルドすると tests1 の LTCG が製品用 `.asm` 出力先を再実行して `C1083 ... Permission denied` / `LNK1257` になり得ます。そこで一覧を要求した `build-sln.bat` と `build-all.bat` は、まず `SAKURA_GENERATE_ASSEMBLY_LISTINGS=false` を明示した solution build で tests1 を完了させ、次に `sakura_core\\sakura.vcxproj` だけを `true`・`/m:1` で再ビルドします。この第二段階の `/m:1` は tests1 の再リンクから製品 pass を隔離するためのもので、`/p:CL_MPCount` には通常どおり全予算が渡ります。出荷される listing を書くのは LTCG のコード生成段で、そこは製品プロジェクトの listing branch が `/CGTHREADS:1` で直列化します。コンパイル段まで直列化しても出力は変わらず（539 個の `.asm` が SHA-256 で完全一致）、332.78 秒中 103.75 秒を失うだけだったため、`MultiProcessorCompilation` の無効化は削除しました（Issue #203）。生の MSBuild solution build に listing を直接指定する代わりに、必ずこの canonical entry point を使ってください。
 
 `build-sln.bat` と `build-all.bat` は、まず一覧を明示的に無効にした通常の solution ビルドで `tests1.exe` を完成させ、その後に `sakura_core\sakura.vcxproj` だけを一覧有効で再ビルドします。`tests1` は製品の `/GL` オブジェクトを再リンクするため、一覧有効なオブジェクトをそのまま与えると記録済みの製品用 `/Fa` パスへもう一度出力しようとするためです。この二段階化により、出荷する `sakura.exe` とその `.asm` は対応したまま、テストのリンクは一覧出力に触れません。一覧を生成しない通常ビルドの並列度と一段階の実行は変わりません。
 

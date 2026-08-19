@@ -152,6 +152,17 @@ CODICONFONT             RCDATA       "workbench/icons/codicon.ttf"
 
 /////////////////////////////////////////////////////////////////////////////
 //
+// Seti icon font
+//
+
+// VS Code の既定 File Icon Theme `vs-seti` のグリフを描くフォント。実 VS Code は
+// theme-seti 拡張の seti.woff を使うが、GDI は WOFF を読めないのでコンテナを外した
+// seti.ttf を同梱する（tools/generate-seti-icon-theme.py が変換と検証を行う）。
+// 読み出しは workbench/icons/CSetiFont.cpp。
+SETIFONT                RCDATA       "workbench/icons/seti.ttf"
+
+/////////////////////////////////////////////////////////////////////////////
+//
 // String Table
 //
 

@@ -58,6 +58,24 @@ default deliberately keeps Explorer at `#293134` and the right/Outline/Panel
 surfaces at `#252526`; keep those roles separate when adding a Workbench
 consumer.
 
+## Active color theme kind
+
+`CThemeService` holds the process-local active-theme projection: the palette
+overlay, the syntax overlay, and `IsActiveColorThemeLightKind()`. That last one
+is a published fact about the loaded theme, not a colour and not the saved
+`ThemeMode`. VS Code emits a file icon theme's `light` section under the `.vs`
+body class alone, which is exactly `ColorThemeKind.Light`; High Contrast and
+High Contrast Light keep the base section even though `ModeForKind` maps the
+latter to `ThemeMode::Light`. `CEditWnd::ApplyWorkbenchTheme` is the single
+writer and assigns it on every path, including the fallback and catch paths, so
+no reader can observe a value left over from a previously selected theme.
+
+Consumers pull it the way `CEditView_Paint` pulls the syntax overlay. Do not
+thread it through Part hosts or add it to a palette struct: a host that renders
+a borrowed page must not carry theme facts the page alone reads, and inferring
+the kind from background brightness would silently give High Contrast Light the
+wrong icon colours.
+
 `tokenColors`, `semanticTokenColors`, and `semanticHighlighting` are parsed and
 projected into the editor's typed native categories (comment, string, number,
 keyword, type, function, variable, constant, regexp, tag, attribute, and

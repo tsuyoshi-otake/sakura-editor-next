@@ -1094,8 +1094,40 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(str(root / "sakura.sln"), commands[0][1])
             self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=false", commands[0])
             self.assertEqual(str(root / "sakura_core" / "sakura.vcxproj"), commands[1][1])
-            self.assertIn("/m:1", commands[1])
             self.assertIn("/p:SAKURA_GENERATE_ASSEMBLY_LISTINGS=true", commands[1])
+            # One project at a time keeps this phase away from the tests1
+            # relink, which is the reason the phase exists.  Compiling that one
+            # project's files one at a time is a separate thing and buys
+            # nothing: the shipped listings come from the LTCG pass, which the
+            # project serializes with /CGTHREADS:1.  See issue #203.
+            self.assertIn("/m:1", commands[1])
+            self.assertIn("/p:CL_MPCount=8", commands[1])
+
+    def test_a_phase_may_serialize_projects_without_serializing_the_compiler(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            with patch("sakura_build_lib.runner.find_msbuild", return_value=sys.executable):
+                command = msbuild_command(
+                    root,
+                    root / "sakura_core" / "sakura.vcxproj",
+                    "x64",
+                    "Release",
+                    12,
+                    project_parallelism=1,
+                )
+            self.assertIn("/m:1", command)
+            self.assertIn("/p:CL_MPCount=12", command)
+            with patch("sakura_build_lib.runner.find_msbuild", return_value=sys.executable):
+                with self.assertRaises(BuildError) as raised:
+                    msbuild_command(
+                        root,
+                        root / "sakura_core" / "sakura.vcxproj",
+                        "x64",
+                        "Release",
+                        12,
+                        project_parallelism=0,
+                    )
+            self.assertEqual("JOBS_INVALID", raised.exception.code)
 
     def test_release_listing_product_link_discards_only_provisional_listings(self):
         project = Path(__file__).resolve().parents[3] / "sakura_core" / "sakura.vcxproj"
@@ -1116,10 +1148,21 @@ class RunnerTests(unittest.TestCase):
         self.assertIsNotNone(delete)
         self.assertEqual("@(_SakuraAssemblyListing)", delete.attrib.get("Files"))
 
-    def test_parallel_budget_is_bounded(self):
+    def test_parallel_budget_reaches_the_compiler_undivided(self):
+        # Splitting the budget between nodes and compilers starved the compile
+        # phase, because tests1 depends on sakura and the two large projects
+        # never compile at the same time.  See issue #201 for the measurements.
         for budget in range(1, 33):
             allocation = allocate_parallelism(budget)
-            self.assertLessEqual(allocation.projects * allocation.compiler_processes, budget)
+            self.assertEqual(budget, allocation.budget)
+            self.assertEqual(budget, allocation.projects)
+            self.assertEqual(budget, allocation.compiler_processes)
+
+    def test_parallel_budget_rejects_a_nonpositive_job_count(self):
+        for budget in (0, -1):
+            with self.assertRaises(BuildError) as raised:
+                allocate_parallelism(budget)
+            self.assertEqual("JOBS_INVALID", raised.exception.code)
 
     def test_component_cmake_configures_only_when_native_tree_is_not_reusable(self):
         with tempfile.TemporaryDirectory() as temporary:
