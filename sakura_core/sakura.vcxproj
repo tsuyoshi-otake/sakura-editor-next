@@ -81,7 +81,6 @@
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='1' Or '$(SAKURA_GENERATE_ASSEMBLY_LISTINGS)'=='true'">
     <ClCompile>
-      <MultiProcessorCompilation>false</MultiProcessorCompilation>
       <AdditionalOptions>/FAsu /Fa$(IntDir) %(AdditionalOptions)</AdditionalOptions>
     </ClCompile>
     <!--
@@ -89,8 +88,14 @@
       tests1 support archive contains those objects, so a listing-enabled tests1
       LTCG link would replay the same product .asm paths.  The canonical runner
       prevents that by building solution/tests without listings before this
-      product-only listing pass.  This branch also makes the product compile and
-      LTCG code-generation settings deterministic; normal builds stay parallel.
+      product-only listing pass.
+
+      The listings that ship are written by the LTCG code-generation pass, which
+      /CGTHREADS:1 below keeps deterministic.  cl.exe's per-object listings are
+      provisional: RemoveSakuraAssemblyListingsBeforeLink deletes them so LTCG
+      can write the final ones to the same paths.  Serializing the compile step
+      as well bought nothing; see issue #203, where a /p:CL_MPCount=16 listing
+      build produced all 539 .asm files byte for byte and ran 31% faster.
     -->
     <Link>
       <AdditionalOptions>/CGTHREADS:1 %(AdditionalOptions)</AdditionalOptions>

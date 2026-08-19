@@ -481,9 +481,20 @@ def msbuild_command(
     build_target: str = "Build",
     environment: Mapping[str, str] | None = None,
     assembly_listings: bool | None = None,
+    project_parallelism: int | None = None,
     log_file: Path | None = None,
 ) -> list[str]:
+    """Build the MSBuild argument vector for one phase.
+
+    ``project_parallelism`` overrides ``/m:`` alone, leaving ``CL_MPCount`` at
+    the full budget.  A phase that must build one project at a time still has
+    no reason to compile that project's files one at a time; the two are
+    separate MSBuild concerns and only the listing phase needs them to differ.
+    """
     parallel = allocate_parallelism(jobs)
+    projects = parallel.projects if project_parallelism is None else project_parallelism
+    if projects < 1:
+        raise BuildError("JOBS_INVALID", "project_parallelism must be at least 1", 2)
     env = dict(environment or os.environ)
     command = [
         find_msbuild(repo_root, env),
@@ -492,7 +503,7 @@ def msbuild_command(
         f"/p:Configuration={configuration}",
         f"/t:{build_target}",
         "/nr:false",
-        f"/m:{parallel.projects}",
+        f"/m:{projects}",
     ]
     command.extend(
         [
@@ -774,6 +785,14 @@ def solution_commands(
     path even when solution-level parallelism is disabled.  Finish the full
     solution with listings explicitly off, then rebuild only the shipped product
     with listings on.  Normal solution builds retain their single MSBuild pass.
+
+    The listing phase keeps ``/m:1`` because separating it from the tests1
+    relink is the whole point, but it compiles at the full budget.  The
+    listings that ship come from the LTCG code-generation pass, which the
+    project serializes with ``/CGTHREADS:1``; cl.exe's per-object listings are
+    provisional and deleted before Link.  Serializing the compile as well cost
+    103.75 s of a 332.78 s pass and changed no output byte -- all 539 .asm
+    files matched by SHA-256.  See issue #203.
     """
     solution = repo_root / "sakura.sln"
     if not assembly_listings:
@@ -802,8 +821,9 @@ def solution_commands(
             repo_root / "sakura_core" / "sakura.vcxproj",
             platform,
             configuration,
-            1,
+            jobs,
             assembly_listings=True,
+            project_parallelism=1,
         ),
     ]
 
