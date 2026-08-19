@@ -275,11 +275,27 @@ window survived, which can only mean the user cancelled; only that path calls
 
 ### Verified scope
 
-**Applying an update on real hardware has not been verified.** The agreed
-verification for this feature is unit tests only: the feed parser, the version
-order, every state transition, and the installer command-line string are tested,
-and nothing in the test suite touches the network, the registry, or a real
-installer. What is *not* verified is the end-to-end run — a published stable
-release, a real download, Setup replacing a live installation, and the relaunch
-coming back. Do not describe that path as working; describe it as implemented
-and untested until someone runs it.
+**One real end-to-end run has now been observed; the branches it did not take
+have not.** The unit tests remain the bulk of the verification — the feed
+parser, the version order, every state transition, and the installer
+command-line string are tested, and nothing in the test suite touches the
+network, the registry, or a real installer.
+
+On 2026-08-19 the full path was exercised on real hardware against this
+repository's own GitHub Releases feed, with `CurrentBuildVersion` temporarily
+lowered so that the published stable `v3.1.0-build.7397` resolved as newer. The
+indicator appeared, the installer downloaded and verified against the feed's
+`sha256:` digest, and `install.log` under the staging directory recorded
+`Installation process succeeded.` followed by the `[Run]` relaunch of
+`%LOCALAPPDATA%\Programs\Sakura Editor NEXT\sakura.exe`. The installed
+executable's FileVersion afterwards read `3.1.0.7397`.
+
+That run covered exactly one configuration: an existing per-user Inno
+installation with `unins000.exe` beside the executable, i.e. the primary
+`isInnoSetupInstall` signal. Still unverified on real hardware are the
+documented divergence that resolves `Setup` from the uninstall key's
+`InstallLocation` when no uninstaller sits beside the executable, the `Archive`
+fallback when no install directory can be determined at all, and any
+all-users/elevated installation. Describe those three as implemented and
+untested; describe the per-user Inno path as verified once, on one machine,
+rather than as guaranteed.
