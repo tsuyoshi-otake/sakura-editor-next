@@ -225,75 +225,71 @@ void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noe
 //! WIC intentionally fails closed for formats such as SVG that have no native decoder here.
 [[nodiscard]] HBITMAP LoadRasterBitmap(const std::filesystem::path& path, unsigned int iconSize) noexcept
 {
-	try {
-		cxx::com_pointer<IWICImagingFactory> factory;
-		if (FAILED(factory.CreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER))) return nullptr;
-		cxx::com_pointer<IWICBitmapDecoder> decoder;
-		if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
-			WICDecodeMetadataCacheOnLoad, &decoder))) return nullptr;
-		cxx::com_pointer<IWICBitmapFrameDecode> frame;
-		if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
-		UINT width = 0;
-		UINT height = 0;
-		if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
-			|| width > 4096 || height > 4096) return nullptr;
+	cxx::com_pointer<IWICImagingFactory> factory;
+	if (FAILED(factory.CreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER))) return nullptr;
+	cxx::com_pointer<IWICBitmapDecoder> decoder;
+	if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+		WICDecodeMetadataCacheOnLoad, &decoder))) return nullptr;
+	cxx::com_pointer<IWICBitmapFrameDecode> frame;
+	if (FAILED(decoder->GetFrame(0, &frame))) return nullptr;
+	UINT width = 0;
+	UINT height = 0;
+	if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
+		|| width > 4096 || height > 4096) return nullptr;
 
-		UINT scaledWidth = iconSize;
-		UINT scaledHeight = iconSize;
-		if (width > height) {
-			scaledHeight = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(height) * iconSize) / width));
-		} else if (height > width) {
-			scaledWidth = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(width) * iconSize) / height));
-		}
-
-		cxx::com_pointer<IWICBitmapScaler> scaler;
-		IWICBitmapSource* source = frame;
-		if (scaledWidth != width || scaledHeight != height) {
-			if (FAILED(factory->CreateBitmapScaler(&scaler))
-				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
-			source = scaler;
-		}
-		cxx::com_pointer<IWICFormatConverter> converter;
-		if (FAILED(factory->CreateFormatConverter(&converter))
-			|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
-				WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return nullptr;
-
-		const UINT stride = scaledWidth * 4;
-		std::vector<BYTE> pixels(static_cast<std::size_t>(stride) * scaledHeight);
-		if (FAILED(converter->CopyPixels(nullptr, stride, static_cast<UINT>(pixels.size()), pixels.data()))) return nullptr;
-
-		BITMAPINFO bitmapInfo{};
-		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(iconSize);
-		bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(iconSize);
-		bitmapInfo.bmiHeader.biPlanes = 1;
-		bitmapInfo.bmiHeader.biBitCount = 32;
-		bitmapInfo.bmiHeader.biCompression = BI_RGB;
-		HDC screen = ::GetDC(nullptr);
-		if (screen == nullptr) return nullptr;
-		void* bits = nullptr;
-		HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
-		::ReleaseDC(nullptr, screen);
-		if (bitmap == nullptr || bits == nullptr) {
-			if (bitmap != nullptr) ::DeleteObject(bitmap);
-			return nullptr;
-		}
-		const auto destinationBytes = static_cast<std::size_t>(iconSize) * iconSize * 4;
-		std::memset(bits, 0, destinationBytes);
-		const UINT left = (iconSize - scaledWidth) / 2;
-		const UINT top = (iconSize - scaledHeight) / 2;
-		auto* destination = static_cast<BYTE*>(bits);
-		for (UINT row = 0; row < scaledHeight; ++row) {
-			const auto* sourceRow = pixels.data() + static_cast<std::size_t>(row) * stride;
-			std::memcpy(destination + (static_cast<std::size_t>(top + row) * iconSize + left) * 4,
-				sourceRow, stride);
-		}
-		return bitmap;
+	UINT scaledWidth = iconSize;
+	UINT scaledHeight = iconSize;
+	if (width > height) {
+		scaledHeight = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(height) * iconSize) / width));
+	} else if (height > width) {
+		scaledWidth = (std::max)(1u, static_cast<UINT>((static_cast<std::uint64_t>(width) * iconSize) / height));
 	}
-	catch (...) {
+
+	cxx::com_pointer<IWICBitmapScaler> scaler;
+	IWICBitmapSource* source = frame;
+	if (scaledWidth != width || scaledHeight != height) {
+		if (FAILED(factory->CreateBitmapScaler(&scaler))
+			|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
+				WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
+		source = scaler;
+	}
+	cxx::com_pointer<IWICFormatConverter> converter;
+	if (FAILED(factory->CreateFormatConverter(&converter))
+		|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
+			WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return nullptr;
+
+	BITMAPINFO bitmapInfo{};
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(iconSize);
+	bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(iconSize);
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	HDC screen = ::GetDC(nullptr);
+	if (screen == nullptr) return nullptr;
+	void* bits = nullptr;
+	HBITMAP bitmap = ::CreateDIBSection(screen, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+	::ReleaseDC(nullptr, screen);
+	if (bitmap == nullptr || bits == nullptr) {
+		if (bitmap != nullptr) ::DeleteObject(bitmap);
 		return nullptr;
 	}
+
+	// Decode straight into the centred region of the DIB. CopyPixels writes only each row's
+	// own bytes at the given stride, so the zeroed padding around the image survives, and the
+	// destination buffer removes the last allocation this function performed.
+	const std::size_t destinationBytes = static_cast<std::size_t>(iconSize) * iconSize * 4;
+	std::memset(bits, 0, destinationBytes);
+	const UINT left = (iconSize - scaledWidth) / 2;
+	const UINT top = (iconSize - scaledHeight) / 2;
+	const std::size_t offset = (static_cast<std::size_t>(top) * iconSize + left) * 4;
+	const UINT destinationStride = iconSize * 4;
+	if (FAILED(converter->CopyPixels(nullptr, destinationStride,
+		static_cast<UINT>(destinationBytes - offset), static_cast<BYTE*>(bits) + offset))) {
+		::DeleteObject(bitmap);
+		return nullptr;
+	}
+	return bitmap;
 }
 
 struct Job {
