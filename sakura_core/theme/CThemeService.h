@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -96,6 +96,34 @@ struct ThemePalette {
 	//! VS Code `button.hoverBackground`, registered upstream as
 	//! `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
 	ThemeColor buttonHoverBackground = { 0x3F, 0xA1, 0xE3 };
+	//! VS Code `activityBarBadge.background`. The badge is its own role: it is not
+	//! `accent` (which answers "what does focus look like") and not `button.*`
+	//! (which answers "what does an actionable control look like"). `accent` may
+	//! already have consumed this key as its fourth fallback candidate, which is a
+	//! different question from this one. Upstream's dark default is `#007ACC`.
+	ThemeColor activityBarBadgeBackground = { 0x00, 0x7A, 0xCC };
+	//! VS Code `activityBarBadge.foreground`, whose registered default is `#FFFFFF`
+	//! for every theme kind.
+	ThemeColor activityBarBadgeForeground = { 0xFF, 0xFF, 0xFF };
+	/*!
+		@brief The Git extension's `gitDecoration.*` roles, in its own declared order.
+
+		These are contributed by the built-in Git extension rather than registered by
+		the workbench, so their defaults are that extension's `contributes.colors`
+		values verbatim rather than a Sakura brand color. A theme overriding one of
+		them is overriding a Git key, not a workbench key, which is why they are named
+		after the provider and not after the surface that paints them.
+	*/
+	ThemeColor gitAddedResourceForeground = { 0x81, 0xB8, 0x8B };
+	ThemeColor gitModifiedResourceForeground = { 0xE2, 0xC0, 0x8D };
+	ThemeColor gitDeletedResourceForeground = { 0xC7, 0x4E, 0x39 };
+	ThemeColor gitRenamedResourceForeground = { 0x73, 0xC9, 0x91 };
+	ThemeColor gitStageModifiedResourceForeground = { 0xE2, 0xC0, 0x8D };
+	ThemeColor gitStageDeletedResourceForeground = { 0xC7, 0x4E, 0x39 };
+	ThemeColor gitUntrackedResourceForeground = { 0x73, 0xC9, 0x91 };
+	ThemeColor gitIgnoredResourceForeground = { 0x8C, 0x8C, 0x8C };
+	ThemeColor gitConflictingResourceForeground = { 0xE4, 0x67, 0x6B };
+	ThemeColor gitSubmoduleResourceForeground = { 0x8D, 0xB9, 0xE2 };
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
 
@@ -291,6 +319,19 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xB8, 0x32, 0x68 }, // button.background: the Sakura light accent, not VS Code's #007ACC
 			{ 0xFF, 0xFF, 0xFF }, // button.foreground
 			{ 0x93, 0x28, 0x53 }, // button.hoverBackground: darken(button.background, 0.2) as upstream registers it for light
+			{ 0x00, 0x7A, 0xCC }, // activityBarBadge.background
+			{ 0xFF, 0xFF, 0xFF }, // activityBarBadge.foreground
+			// The Git extension's registered `light` defaults, verbatim.
+			{ 0x58, 0x7C, 0x0C }, // gitDecoration.addedResourceForeground
+			{ 0x89, 0x55, 0x03 }, // gitDecoration.modifiedResourceForeground
+			{ 0xAD, 0x07, 0x07 }, // gitDecoration.deletedResourceForeground
+			{ 0x00, 0x71, 0x00 }, // gitDecoration.renamedResourceForeground
+			{ 0x89, 0x55, 0x03 }, // gitDecoration.stageModifiedResourceForeground
+			{ 0xAD, 0x07, 0x07 }, // gitDecoration.stageDeletedResourceForeground
+			{ 0x00, 0x71, 0x00 }, // gitDecoration.untrackedResourceForeground
+			{ 0x8E, 0x8E, 0x90 }, // gitDecoration.ignoredResourceForeground
+			{ 0xAD, 0x07, 0x07 }, // gitDecoration.conflictingResourceForeground
+			{ 0x12, 0x58, 0xA7 }, // gitDecoration.submoduleResourceForeground
 		};
 	}
 	return {
@@ -320,6 +361,19 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x1F, 0x8A, 0xD2 }, // button.background: the Sakura dark accent, not VS Code's #0E639C
 		{ 0xFF, 0xFF, 0xFF }, // button.foreground
 		{ 0x3F, 0xA1, 0xE3 }, // button.hoverBackground: lighten(button.background, 0.2) as upstream registers it for dark
+		{ 0x00, 0x7A, 0xCC }, // activityBarBadge.background
+		{ 0xFF, 0xFF, 0xFF }, // activityBarBadge.foreground
+		// The Git extension's registered `dark` defaults, verbatim.
+		{ 0x81, 0xB8, 0x8B }, // gitDecoration.addedResourceForeground
+		{ 0xE2, 0xC0, 0x8D }, // gitDecoration.modifiedResourceForeground
+		{ 0xC7, 0x4E, 0x39 }, // gitDecoration.deletedResourceForeground
+		{ 0x73, 0xC9, 0x91 }, // gitDecoration.renamedResourceForeground
+		{ 0xE2, 0xC0, 0x8D }, // gitDecoration.stageModifiedResourceForeground
+		{ 0xC7, 0x4E, 0x39 }, // gitDecoration.stageDeletedResourceForeground
+		{ 0x73, 0xC9, 0x91 }, // gitDecoration.untrackedResourceForeground
+		{ 0x8C, 0x8C, 0x8C }, // gitDecoration.ignoredResourceForeground
+		{ 0xE4, 0x67, 0x6B }, // gitDecoration.conflictingResourceForeground
+		{ 0x8D, 0xB9, 0xE2 }, // gitDecoration.submoduleResourceForeground
 	};
 }
 

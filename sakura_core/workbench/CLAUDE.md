@@ -165,6 +165,21 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
 - Explorer never exposes a horizontal scrollbar. Its TreeView keeps
   `TVS_NOHSCROLL`, native scrollbars are suppressed, and the owned vertical
   scrollbar overlays the content instead of reserving a permanent gutter.
+- The overlay scrollbar is one shared control, `workbench/controls/COverlayScrollbar`.
+  Every workbench list that scrolls uses it -- the Explorer TreeView and the
+  Source Control list today -- so no view can drift back to the platform
+  scrollbar while its neighbours draw the VS Code one. The control reads the
+  target's own `SB_VERT` `SCROLLINFO` and asks it to scroll through one
+  callback, which is the only view-specific part (a TreeView walks visible
+  items; a LISTBOX takes `LB_SETTOPINDEX`).
+- The same control now also serves the Markdown preview pane and the editor
+  text body, and it has a horizontal orientation
+  (`OverlayScrollbarOrientation::Horizontal`) for the editor's horizontal bar.
+  The editor owns real `WC_SCROLLBAR` children; they stay alive as the scroll
+  model (`OverlayScrollbarSource::ScrollbarControl`), are hidden, and the
+  overlay is given their rectangle through `SetBounds`. Do not re-show those
+  controls: `ShowScrollBar(..., TRUE)` would put the platform bar back on top of
+  the overlay.
 - The overlay scrollbar uses TreeView scroll metadata for ordinary layout and
   paint work. Walking visible items is confined to an explicit thumb drag or
   track click, so refresh, resize, and hover do not add an O(N) tree traversal.
@@ -207,6 +222,19 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   `outline`. VS Code's Activity Bar toggle compares containers, so any code
   answering "is this Activity Bar entry already active" reads
   `activeContainers.sideBar`, not the container's active view.
+- Recorded divergence (omit, don't fake): the bottom Panel header renders only
+  Problems, Output, and Terminal. VS Code also contributes Ports
+  (`~remote.forwardedPortsContainer`) and Debug Console (`workbench.panel.repl`)
+  to this Part, and both stay in the contribution catalog, but neither gets a tab.
+  Ports forwards through a Remote Development authority this fork already refuses,
+  and a Debug Console reads a DAP adapter process and transport that do not exist
+  here, so a tab for either could never resolve to a view. Both previously shipped
+  as `WS_DISABLED` buttons; a permanently inert tab is chrome that promises a
+  surface, so the container is omitted from the header instead. `PortForwardingService`,
+  `DebugConsoleModel`, `DapSession`, `DapProtocolCodec`, and
+  `LaunchConfigurationCatalog` are untouched and still pass their suites; only the
+  header buttons and their `BottomPanelTab` selection paths were removed. Restoring
+  a tab means implementing its view projection, not re-adding the button.
 - Search, Run and Debug, Ports, Debug Console, reorder within a bar, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel position/alignment
   remain typed unsupported boundaries. A generic contribution renderer and

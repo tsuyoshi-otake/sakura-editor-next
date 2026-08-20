@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -68,12 +68,8 @@ private:
 
 	[[nodiscard]] LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	void UpdateClientLayout(unsigned int dpi) noexcept;
-	//! Loads the product logo at exactly `side` pixels, reusing the previous icon when unchanged.
-	//! Returns null when no module instance is known or the resource cannot be realized.
-	[[nodiscard]] HICON EnsureLetterpress(int side) noexcept;
-	void ReleaseLetterpress() noexcept;
 	void Paint() noexcept;
-	//! Draws the letterpress logo and action rows into an already cleared device context.
+	//! Draws the action rows into an already cleared device context.
 	void PaintContent(HDC target) noexcept;
 	void Invalidate() const noexcept;
 	[[nodiscard]] bool InvokeRequest(std::optional<EmptyEditorSurfaceAction> action) noexcept;
@@ -85,11 +81,8 @@ private:
 	theme::CThemeFont m_font;
 	CommandCallback m_onCommand;
 	HWND m_window = nullptr;
-	//! Module that owns the logo resource, captured at Create so painting needs no global state.
+	//! Module the window class and window were created from.
 	HINSTANCE m_instance = nullptr;
-	HICON m_letterpress = nullptr;
-	//! Side length in pixels the cached icon was realized at; zero when no icon is cached.
-	int m_letterpressSide = 0;
 	std::optional<EmptyEditorSurfaceAction> m_captureAction;
 	bool m_trackingMouseLeave = false;
 	bool m_destroyed = false;

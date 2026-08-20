@@ -1553,9 +1553,12 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 			? theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark).secondaryText.ToColorRef()
 			: ::GetSysColor(COLOR_BTNTEXT);
 		if (!content.icon.IsEmpty()) {
-			workbench::icons::codicons::Draw(hdc,
-				{ content.icon.left, content.icon.top, content.icon.right, content.icon.bottom },
-				workbench::icons::codicons::Icon::File, glyphColor);
+			const workbench::icons::IconRect fileBox{
+				content.icon.left, content.icon.top, content.icon.right, content.icon.bottom };
+			if (!workbench::icons::PaintCodiconByName(hdc, fileBox, L"file", glyphColor, m_cCodiconGlyphFont)) {
+				workbench::icons::codicons::Draw(hdc, fileBox,
+					workbench::icons::codicons::Icon::File, glyphColor);
+			}
 		}
 
 		// テキスト描画
@@ -2759,16 +2762,23 @@ void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
 	}
 
 	const bool active = IsMarkdownPreviewActionActive();
-	const COLORREF iconColor = active ? palette.accent.ToColorRef()
-		: (m_bMarkdownPreviewBtnHilighted ? palette.primaryText : palette.secondaryText).ToColorRef();
+	// The glyph keeps its normal foreground in every state. VS Code shows a checked
+	// action through its background and indicator, never by recoloring the icon,
+	// and an accent-colored glyph reads as a status rather than a toggle.
+	const COLORREF iconColor =
+		(m_bMarkdownPreviewBtnHilighted ? palette.primaryText : palette.secondaryText).ToColorRef();
 	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
 	const int lineWidth = (std::max)(1, tabbar::ScaleDocumentTabDip(1, dpi));
 	const int insetX = tabbar::ScaleDocumentTabDip(2, dpi);
 	const auto iconBox = tabbar::CalculateDocumentTabActionGlyphBounds(
 		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom }, dpi);
-	workbench::icons::codicons::Draw(gr,
-		{ iconBox.left, iconBox.top, iconBox.right, iconBox.bottom },
-		workbench::icons::codicons::Icon::OpenPreview, iconColor);
+	const workbench::icons::IconRect previewBox{
+		iconBox.left, iconBox.top, iconBox.right, iconBox.bottom };
+	if (!workbench::icons::PaintCodiconByName(gr, previewBox,
+			tabbar::kMarkdownPreviewCodiconId, iconColor, m_cCodiconGlyphFont)) {
+		workbench::icons::codicons::Draw(gr, previewBox,
+			workbench::icons::codicons::Icon::OpenPreview, iconColor);
+	}
 	if (active) {
 		RECT indicator = rcBtn;
 		indicator.left += insetX;
@@ -2794,8 +2804,11 @@ void CTabWnd::DrawListBtn( CGraphics& gr, const LPRECT lprcClient )
 	const auto iconBox = workbench::icons::CenteredIconBounds(
 		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
 		workbench::icons::kStatusIconDip, dpi);
-	workbench::icons::codicons::Draw(gr, iconBox,
-		workbench::icons::codicons::Icon::ChevronDown, GetBtnTextColor(m_bListBtnHilighted));
+	const auto listColor = GetBtnTextColor(m_bListBtnHilighted);
+	if (!workbench::icons::PaintCodiconByName(gr, iconBox, L"chevron-down", listColor, m_cCodiconGlyphFont)) {
+		workbench::icons::codicons::Draw(gr, iconBox,
+			workbench::icons::codicons::Icon::ChevronDown, listColor);
+	}
 }
 
 /*! 閉じるマーク描画処理 */
@@ -2805,8 +2818,10 @@ void CTabWnd::DrawCloseFigure( CGraphics& gr, const RECT& rcBtn, COLORREF color 
 	const auto iconBox = workbench::icons::CenteredIconBounds(
 		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
 		workbench::icons::kStatusIconDip, dpi);
-	workbench::icons::codicons::Draw(gr, iconBox,
-		workbench::icons::codicons::Icon::Close, color);
+	if (!workbench::icons::PaintCodiconByName(gr, iconBox, L"close", color, m_cCodiconGlyphFont)) {
+		workbench::icons::codicons::Draw(gr, iconBox,
+			workbench::icons::codicons::Icon::Close, color);
+	}
 }
 
 /*! 閉じるボタン描画処理
@@ -2831,8 +2846,11 @@ void CTabWnd::DrawCloseBtn( CGraphics& gr, const LPRECT lprcClient )
 	const auto iconBox = workbench::icons::CenteredIconBounds(
 		{ rcBtn.left, rcBtn.top, rcBtn.right, rcBtn.bottom },
 		workbench::icons::kStatusIconDip, dpi);
-	workbench::icons::codicons::Draw(gr, iconBox,
-		workbench::icons::codicons::Icon::CloseAll, GetBtnTextColor(m_bCloseBtnHilighted));
+	const auto closeColor = GetBtnTextColor(m_bCloseBtnHilighted);
+	if (!workbench::icons::PaintCodiconByName(gr, iconBox, L"close-all", closeColor, m_cCodiconGlyphFont)) {
+		workbench::icons::codicons::Draw(gr, iconBox,
+			workbench::icons::codicons::Icon::CloseAll, closeColor);
+	}
 }
 
 /*! タブを閉じるボタン描画処理

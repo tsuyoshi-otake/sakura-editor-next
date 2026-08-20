@@ -14,6 +14,7 @@
 #include "theme/CThemeService.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -39,7 +40,58 @@ constexpr std::size_t kMaximumDecodedImagePixels = 16ULL * 1024ULL * 1024ULL;
 constexpr UINT kMaximumDecodedImageEdge = 1600;
 constexpr UINT kCommitPreviewWorkMessage = WM_APP + 1;
 
-[[nodiscard]] HFONT CreatePreviewFont(const LOGFONT& base, int percentage, bool bold,
+/*!
+	@name VS Code preview typography
+
+	Taken from `extensions/markdown-language-features/media/markdown.css` at the
+	commit pinned in `upstream-parity-manifest.json`, and from the defaults of
+	`markdown.preview.fontSize` (14) and `markdown.preview.lineHeight` (1.6).
+	The values are CSS pixels, which are device-independent pixels, so they scale
+	through ScaleDip() exactly as the rest of the layout does.
+
+	The prose face is the Windows end of upstream's font stack: the stack starts
+	with the Apple faces, then "Segoe WPC" and "Segoe UI". "Segoe UI Variable" is
+	a different, Windows 11-only face that upstream never selects.
+*/
+///@{
+constexpr wchar_t kPreviewProseFace[] = L"Segoe UI";
+constexpr wchar_t kPreviewCodeFallbackFace[] = L"Consolas";
+constexpr int kPreviewFontSizePx = 14;
+constexpr int kPreviewLineHeightPx = 22;      //!< 14px * 1.6, matching the CSS fallback
+constexpr int kPreviewCodeLineHeightPx = 19;  //!< 1.357em of 14px
+constexpr int kPreviewHeadingLineHeightPermille = 1250;
+constexpr int kPreviewHeadingWeight = FW_SEMIBOLD;  //!< CSS font-weight: 600
+//! h1..h6 font sizes as `em` per-mille.
+constexpr int kPreviewHeadingPermille[] = { 2000, 1500, 1250, 1000, 875, 850 };
+//! Block separation: the browser default `p { margin-bottom: 1em }` upstream keeps.
+constexpr int kPreviewBlockGapPx = 14;
+//! markdown.css: h1..h6 { margin-top: 24px; margin-bottom: 16px }
+/*!
+	@name GFM table geometry
+
+	`markdown.css` gives `td`/`th` `padding: 6px 13px` and a `1px solid` border on
+	every cell, and shades every second body row. The values are CSS pixels, so
+	they scale through ScaleDip() like the rest of the layout.
+*/
+///@{
+constexpr int kPreviewTableCellPadXPx = 13;
+constexpr int kPreviewTableCellPadYPx = 6;
+constexpr int kPreviewTableBorderPx = 1;
+//! A column is never squeezed below this, so a narrow pane still shows structure.
+constexpr int kPreviewTableMinimumColumnPx = 32;
+///@}
+constexpr int kPreviewHeadingMarginTopPx = 24;
+constexpr int kPreviewHeadingMarginBottomPx = 16;
+///@}
+
+/*!
+	@brief Creates one preview face at `permille` of the base size
+
+	VS Code's markdown.css sizes headings in `em` (2, 1.5, 1.25, 1, 0.875, 0.85).
+	Per-mille rather than per-cent keeps 0.875em exact instead of rounding it to
+	88%, which at 14px is a visible half-pixel of leading across a document.
+*/
+[[nodiscard]] HFONT CreatePreviewFont(const LOGFONT& base, int permille, bool bold,
 	bool italic, bool underline, bool strikethrough) noexcept
 {
 	LOGFONT font = base;
@@ -48,8 +100,8 @@ constexpr UINT kCommitPreviewWorkMessage = WM_APP + 1;
 	}
 	const auto sign = font.lfHeight < 0 ? -1 : 1;
 	const LONG absoluteHeight = std::max<LONG>(1, font.lfHeight * sign);
-	font.lfHeight = sign * std::max<LONG>(1, ::MulDiv(absoluteHeight, percentage, 100));
-	font.lfWeight = bold ? FW_BOLD : (font.lfWeight == 0 ? FW_NORMAL : font.lfWeight);
+	font.lfHeight = sign * std::max<LONG>(1, ::MulDiv(absoluteHeight, permille, 1000));
+	font.lfWeight = bold ? kPreviewHeadingWeight : (font.lfWeight == 0 ? FW_NORMAL : font.lfWeight);
 	font.lfItalic = italic ? TRUE : FALSE;
 	font.lfUnderline = underline ? TRUE : FALSE;
 	font.lfStrikeOut = strikethrough ? TRUE : FALSE;
@@ -187,9 +239,18 @@ struct DecodedBitmap {
 		cxx::com_pointer<IWICBitmapScaler> scaler;
 		IWICBitmapSource* source = frame;
 		if (scaledWidth != width || scaledHeight != height) {
+			// MinGW-w64's wincodec.h still stops at WICBitmapInterpolationModeFant;
+			// the high-quality cubic mode was added to the Windows SDK in
+			// Windows 8. The experimental MinGW build therefore scales with Fant,
+			// which is a quality difference in that build only.
+#if defined(_MSC_VER)
+			constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeHighQualityCubic;
+#else
+			constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeFant;
+#endif
 			if (FAILED(factory->CreateBitmapScaler(&scaler))
 				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					WICBitmapInterpolationModeHighQualityCubic))) return result;
+					kScalerMode))) return result;
 			source = scaler;
 		}
 		cxx::com_pointer<IWICFormatConverter> converter;
@@ -266,6 +327,11 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 	if (m_hWnd == nullptr) {
 		return false;
 	}
+	// The window keeps its SB_VERT scroll model; the overlay hides the platform
+	// bar and paints the same VS Code bar the Explorer tree uses.
+	(void)m_overlayScrollbar.Create(parent, m_hWnd,
+		[this](int position) { ScrollTo(position, true); },
+		workbench::controls::OverlayScrollbarSource::TargetWindowBar);
 	RebuildFonts();
 	RebuildPaintResources();
 	RebuildLayout();
@@ -283,6 +349,7 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 void CMarkdownPreviewWnd::Close() noexcept
 {
 	m_sourceLineCallback = {};
+	m_overlayScrollbar.Detach();
 	StopWorker();
 	if (m_hWnd != nullptr) {
 		::DestroyWindow(m_hWnd);
@@ -421,6 +488,11 @@ void CMarkdownPreviewWnd::SetPalette(const theme::ThemePalette& palette)
 	m_colors.primaryText = palette.primaryText.ToColorRef();
 	m_colors.secondaryText = palette.secondaryText.ToColorRef();
 	m_colors.link = palette.accent.ToColorRef();
+	m_overlayColors.background = m_colors.background;
+	m_overlayColors.trackHover = palette.raised.ToColorRef();
+	m_overlayColors.thumb = palette.border.ToColorRef();
+	m_overlayColors.thumbHover = palette.secondaryText.ToColorRef();
+	UpdateOverlayScrollbar();
 	RebuildPaintResources();
 	if (m_hWnd != nullptr) {
 		::InvalidateRect(m_hWnd, nullptr, FALSE);
@@ -450,13 +522,16 @@ void CMarkdownPreviewWnd::Layout(const RECT& bounds, unsigned int dpi)
 	if (m_hWnd != nullptr) {
 		::MoveWindow(m_hWnd, bounds.left, bounds.top,
 			std::max(0L, bounds.right - bounds.left), std::max(0L, bounds.bottom - bounds.top), TRUE);
+		UpdateScrollBar();
 	}
 }
 
-void CMarkdownPreviewWnd::Show(bool visible) const noexcept
+void CMarkdownPreviewWnd::Show(bool visible) noexcept
 {
 	if (m_hWnd != nullptr) {
 		::ShowWindow(m_hWnd, visible ? SW_SHOWNA : SW_HIDE);
+		// The overlay is a sibling window, so it does not inherit the hide.
+		UpdateOverlayScrollbar();
 	}
 }
 
@@ -571,39 +646,43 @@ LRESULT CMarkdownPreviewWnd::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 void CMarkdownPreviewWnd::RebuildFonts()
 {
 	DeleteFonts();
-	LOGFONT font = m_editorFont;
-	if (!m_hasEditorFont) {
-		font.lfHeight = -16;
-		font.lfWeight = FW_NORMAL;
-	}
-	const auto sourceDpi = m_editorFontDpi == 0 ? kDefaultDpi : m_editorFontDpi;
-	if (font.lfHeight != 0 && sourceDpi != m_dpi) {
-		font.lfHeight = ::MulDiv(font.lfHeight, static_cast<int>(m_dpi), static_cast<int>(sourceDpi));
-	}
-	// Preview prose deliberately follows Windows' proportional UI typography;
-	// source code remains monospace even if the editor's document font differs.
-	LOGFONT proseFont = font;
-	proseFont.lfWeight = FW_NORMAL;
-	proseFont.lfQuality = CLEARTYPE_QUALITY;
-	(void)wcscpy_s(proseFont.lfFaceName, LF_FACESIZE, L"Segoe UI Variable");
-	LOGFONT codeFont = font;
-	codeFont.lfWeight = FW_NORMAL;
-	codeFont.lfQuality = CLEARTYPE_QUALITY;
-	(void)wcscpy_s(codeFont.lfFaceName, LF_FACESIZE, L"Cascadia Mono");
+	// The preview's own size comes from markdown.preview.fontSize, not from the
+	// editor's document font. Upstream applies the editor font family to code
+	// spans only (--vscode-editor-font-family), so that is all m_editorFont is
+	// consulted for here.
+	LOGFONT font{};
+	font.lfHeight = -ScaleDip(kPreviewFontSizePx);
+	font.lfWeight = FW_NORMAL;
+	font.lfCharSet = DEFAULT_CHARSET;
+	// VS Code renders through DirectWrite with subpixel antialiasing. CLEARTYPE
+	// is GDI's equivalent, and must be set on every face the preview creates:
+	// a face left at DEFAULT_QUALITY falls back to greyscale antialiasing and
+	// reads as a visibly different weight beside the editor.
+	font.lfQuality = CLEARTYPE_QUALITY;
 
-	constexpr int headingPercentages[] = { 170, 150, 135, 120, 110, 100 };
+	LOGFONT proseFont = font;
+	(void)wcscpy_s(proseFont.lfFaceName, LF_FACESIZE, kPreviewProseFace);
+	LOGFONT codeFont = font;
+	codeFont.lfPitchAndFamily = FIXED_PITCH | FF_MODERN;
+	if (m_hasEditorFont && m_editorFont.lfFaceName[0] != L'\0') {
+		(void)wcscpy_s(codeFont.lfFaceName, LF_FACESIZE, m_editorFont.lfFaceName);
+	} else {
+		(void)wcscpy_s(codeFont.lfFaceName, LF_FACESIZE, kPreviewCodeFallbackFace);
+	}
+
+	const auto* const headingPercentages = kPreviewHeadingPermille;
 	for (std::size_t style = 0; style < m_bodyFonts.size(); ++style) {
 		const auto styleValue = static_cast<unsigned int>(style);
 		const bool strong = (styleValue & kStyleStrong) != 0;
 		const bool emphasis = (styleValue & kStyleEmphasis) != 0;
 		const bool link = (styleValue & kStyleLink) != 0;
 		const bool strikethrough = (styleValue & kStyleStrikethrough) != 0;
-		m_bodyFonts[style] = CreatePreviewFont(proseFont, 100, strong, emphasis, link, strikethrough);
-		m_codeFonts[style] = CreatePreviewFont(codeFont, 100, strong, emphasis, link, strikethrough);
+		m_bodyFonts[style] = CreatePreviewFont(proseFont, 1000, strong, emphasis, link, strikethrough);
+		m_codeFonts[style] = CreatePreviewFont(codeFont, 1000, strong, emphasis, link, strikethrough);
 		if (m_codeFonts[style] == nullptr) {
 			LOGFONT fallback = codeFont;
-			(void)wcscpy_s(fallback.lfFaceName, LF_FACESIZE, L"Consolas");
-			m_codeFonts[style] = CreatePreviewFont(fallback, 100, strong, emphasis, link, strikethrough);
+			(void)wcscpy_s(fallback.lfFaceName, LF_FACESIZE, kPreviewCodeFallbackFace);
+			m_codeFonts[style] = CreatePreviewFont(fallback, 1000, strong, emphasis, link, strikethrough);
 		}
 		for (std::size_t heading = 0; heading < m_headingFonts.size(); ++heading) {
 			m_headingFonts[heading][style] = CreatePreviewFont(proseFont, headingPercentages[heading],
@@ -646,7 +725,12 @@ void CMarkdownPreviewWnd::RebuildPaintResources()
 	m_codeBackgroundBrush = ::CreateSolidBrush(m_colors.codeBackground);
 	m_quoteBrush = ::CreateSolidBrush(m_colors.border);
 	m_noticeBrush = ::CreateSolidBrush(m_colors.codeBackground);
+	m_borderBrush = ::CreateSolidBrush(m_colors.border);
 	m_rulePen = ::CreatePen(PS_SOLID, std::max(1, ScaleDip(1)), m_colors.border);
+	m_diagramPen = ::CreatePen(PS_SOLID, std::max(1, ScaleDip(1)), m_colors.secondaryText);
+	m_diagramDottedPen = ::CreatePen(PS_DOT, 1, m_colors.secondaryText);
+	m_diagramThickPen = ::CreatePen(PS_SOLID, std::max(2, ScaleDip(2)), m_colors.secondaryText);
+	m_diagramArrowBrush = ::CreateSolidBrush(m_colors.secondaryText);
 }
 
 void CMarkdownPreviewWnd::DeletePaintResources() noexcept
@@ -661,7 +745,12 @@ void CMarkdownPreviewWnd::DeletePaintResources() noexcept
 	deleteObject(m_codeBackgroundBrush);
 	deleteObject(m_quoteBrush);
 	deleteObject(m_noticeBrush);
+	deleteObject(m_borderBrush);
 	deleteObject(m_rulePen);
+	deleteObject(m_diagramPen);
+	deleteObject(m_diagramDottedPen);
+	deleteObject(m_diagramThickPen);
+	deleteObject(m_diagramArrowBrush);
 }
 
 void CMarkdownPreviewWnd::DeleteImages() noexcept
@@ -710,14 +799,16 @@ void CMarkdownPreviewWnd::RebuildLayout()
 	RECT client{};
 	::GetClientRect(m_hWnd, &client);
 	m_lines.clear();
-	int top = ScaleDip(12);
-	const int leftPadding = ScaleDip(14);
-	const int rightPadding = ScaleDip(14);
+	m_diagrams.clear();
+	// markdown.css: body { padding: 0 26px; padding-top: 1em; }
+	int top = ScaleDip(kPreviewFontSizePx);
+	const int leftPadding = ScaleDip(26);
+	const int rightPadding = ScaleDip(26);
 	const int clientWidth = std::max(0L, client.right - client.left);
 
 	const auto dc = ::GetDC(m_hWnd);
 	if (dc != nullptr) {
-		const auto lineGap = ScaleDip(6);
+		const auto lineGap = ScaleDip(kPreviewBlockGapPx);
 		const auto appendLiteralBlock = [&](const Block& literalBlock,
 			const CodeHighlightResult* codeHighlight) {
 			std::size_t start = 0;
@@ -746,9 +837,14 @@ void CMarkdownPreviewWnd::RebuildLayout()
 			case BlockKind::Heading: {
 				const auto level = std::clamp(block.level, 1, 6);
 				const auto font = static_cast<FontKind>(static_cast<int>(FontKind::Heading1) + level - 1);
+				// CSS margins collapse, so the heading's 24px top margin replaces the
+				// previous block's gap rather than adding to it. h1 has margin-top 0.
+				if (blockIndex != 0 && level != 1) {
+					top += std::max(0, ScaleDip(kPreviewHeadingMarginTopPx) - lineGap);
+				}
 				AppendWrappedText(dc, block, font, LineKind::Text, leftPadding,
 					std::max(1, clientWidth - leftPadding - rightPadding), &top);
-				top += lineGap;
+				top += ScaleDip(kPreviewHeadingMarginBottomPx);
 				break;
 			}
 			case BlockKind::Paragraph:
@@ -839,29 +935,8 @@ void CMarkdownPreviewWnd::RebuildLayout()
 			}
 
 			case BlockKind::Table: {
-				for (const auto& row : block.tableRows) {
-					Block renderedRow;
-					renderedRow.kind = BlockKind::Paragraph;
-					renderedRow.sourceLine = block.sourceLine;
-					renderedRow.text.append(L"\x2502 ");
-					for (const auto& cell : row.cells) {
-						const auto cellStart = renderedRow.text.size();
-						renderedRow.text.append(cell.text);
-						for (const auto& span : cell.inlineSpans) {
-							auto adjusted = span;
-							adjusted.start += cellStart;
-							renderedRow.inlineSpans.push_back(std::move(adjusted));
-						}
-						renderedRow.text.append(L" \x2502 ");
-					}
-					if (row.header && !renderedRow.text.empty()) {
-						renderedRow.inlineSpans.push_back({ InlineKind::Strong, 0,
-							renderedRow.text.size(), std::nullopt });
-					}
-					AppendWrappedText(dc, renderedRow, FontKind::Body,
-						row.header ? LineKind::TableHeader : LineKind::Table, leftPadding,
-						std::max(1, clientWidth - leftPadding - rightPadding), &top);
-				}
+				AppendTable(dc, block, leftPadding,
+					std::max(1, clientWidth - leftPadding - rightPadding), &top);
 				top += lineGap;
 				break;
 			}
@@ -897,6 +972,12 @@ void CMarkdownPreviewWnd::RebuildLayout()
 
 			case BlockKind::Math:
 			case BlockKind::MermaidDiagram: {
+				if (block.kind == BlockKind::MermaidDiagram
+					&& AppendMermaidDiagram(dc, block, leftPadding,
+						std::max(1, clientWidth - leftPadding - rightPadding), &top)) {
+					top += lineGap;
+					break;
+				}
 				Block notice;
 				notice.kind = BlockKind::Paragraph;
 				notice.sourceLine = block.sourceLine;
@@ -968,8 +1049,15 @@ void CMarkdownPreviewWnd::UpdateScrollBar()
 	info.nMax = std::max(0, m_contentHeight - 1);
 	info.nPage = static_cast<UINT>(page);
 	info.nPos = m_scrollY;
-	::SetScrollInfo(m_hWnd, SB_VERT, &info, TRUE);
-	::ShowScrollBar(m_hWnd, SB_VERT, m_maxScroll > 0 ? TRUE : FALSE);
+	::SetScrollInfo(m_hWnd, SB_VERT, &info, FALSE);
+	UpdateOverlayScrollbar();
+}
+
+void CMarkdownPreviewWnd::UpdateOverlayScrollbar()
+{
+	m_overlayScrollbar.SetDpi(m_dpi);
+	m_overlayScrollbar.SetColors(m_overlayColors);
+	m_overlayScrollbar.Update();
 }
 
 void CMarkdownPreviewWnd::ScrollTo(int position, bool notifySource)
@@ -983,7 +1071,8 @@ void CMarkdownPreviewWnd::ScrollTo(int position, bool notifySource)
 	info.cbSize = sizeof(info);
 	info.fMask = SIF_POS;
 	info.nPos = m_scrollY;
-	::SetScrollInfo(m_hWnd, SB_VERT, &info, TRUE);
+	::SetScrollInfo(m_hWnd, SB_VERT, &info, FALSE);
+	UpdateOverlayScrollbar();
 	::InvalidateRect(m_hWnd, nullptr, FALSE);
 	if (notifySource) NotifySourceLineForScroll();
 }
@@ -1051,6 +1140,174 @@ void CMarkdownPreviewWnd::Paint(HDC dc, const RECT& paintRect) const
 	}
 }
 
+bool CMarkdownPreviewWnd::AppendMermaidDiagram(HDC dc, const Block& block, int left,
+	int availableWidth, int* top)
+{
+	const auto font = GetFont(FontKind::Body, 0, false);
+	const auto oldFont = ::SelectObject(dc, font);
+	TEXTMETRICW metrics{};
+	::GetTextMetricsW(dc, &metrics);
+	mermaid::LayoutMetrics layout;
+	layout.lineHeight = std::max<int>(metrics.tmHeight, ScaleDip(16));
+	layout.nodePaddingX = ScaleDip(12);
+	layout.nodePaddingY = ScaleDip(7);
+	layout.rankSeparation = ScaleDip(40);
+	layout.nodeSeparation = ScaleDip(24);
+	layout.minimumNodeWidth = ScaleDip(44);
+	layout.edgeLabelPadding = ScaleDip(4);
+	mermaid::Diagram diagram;
+	const auto outcome = mermaid::BuildFlowchart(block.text, layout, mermaid::BuildLimits{},
+		[dc](std::wstring_view label) {
+			SIZE size{};
+			::GetTextExtentPoint32W(dc, label.data(), static_cast<int>(label.size()), &size);
+			return static_cast<int>(size.cx);
+		}, &diagram);
+	::SelectObject(dc, oldFont);
+	if (outcome != mermaid::BuildOutcome::Supported) {
+		return false;
+	}
+
+	// A diagram wider than the pane would be silently cut off, and this preview
+	// has no horizontal scrolling, so centre what fits and let the caller keep
+	// the literal source when it does not.
+	if (diagram.width > availableWidth) {
+		return false;
+	}
+	const auto margin = ScaleDip(8);
+	m_diagrams.push_back(std::move(diagram));
+	RenderLine line;
+	line.kind = LineKind::Diagram;
+	line.font = FontKind::Body;
+	line.left = left + std::max(0, (availableWidth - m_diagrams.back().width) / 2);
+	line.top = *top + margin;
+	line.width = m_diagrams.back().width;
+	line.height = m_diagrams.back().height;
+	line.sourceLine = block.sourceLine;
+	line.diagramIndex = m_diagrams.size() - 1;
+	m_lines.push_back(std::move(line));
+	*top += m_diagrams.back().height + margin * 2;
+	return true;
+}
+
+void CMarkdownPreviewWnd::DrawDiagram(HDC dc, const mermaid::Diagram& diagram, int left, int top) const
+{
+	const auto fallbackPen = static_cast<HPEN>(::GetStockObject(BLACK_PEN));
+	const auto borderPen = m_rulePen != nullptr ? m_rulePen : fallbackPen;
+	const auto fillBrush = m_codeBackgroundBrush != nullptr ? m_codeBackgroundBrush
+		: static_cast<HBRUSH>(::GetStockObject(LTGRAY_BRUSH));
+	// The head has to be the stroke's colour, not the border's, or an arrow
+	// reads as a separate outlined shape sitting at the end of the line.
+	const auto edgeBrush = m_diagramArrowBrush != nullptr ? m_diagramArrowBrush
+		: static_cast<HBRUSH>(::GetStockObject(GRAY_BRUSH));
+
+	// Edges first, so a node's fill covers the stub that ends underneath it.
+	for (const auto& edge : diagram.edges) {
+		if (edge.points.size() < 2) continue;
+		HPEN pen = borderPen;
+		switch (edge.style) {
+		case mermaid::EdgeStyle::Solid: pen = m_diagramPen != nullptr ? m_diagramPen : fallbackPen; break;
+		case mermaid::EdgeStyle::Dotted: pen = m_diagramDottedPen != nullptr ? m_diagramDottedPen : fallbackPen; break;
+		case mermaid::EdgeStyle::Thick: pen = m_diagramThickPen != nullptr ? m_diagramThickPen : fallbackPen; break;
+		}
+		const auto oldPen = static_cast<HPEN>(::SelectObject(dc, pen));
+		::MoveToEx(dc, left + edge.points.front().x, top + edge.points.front().y, nullptr);
+		for (std::size_t index = 1; index < edge.points.size(); ++index) {
+			::LineTo(dc, left + edge.points[index].x, top + edge.points[index].y);
+		}
+		if (edge.arrow) {
+			const auto& tip = edge.points.back();
+			const auto& previous = edge.points[edge.points.size() - 2];
+			const double dx = static_cast<double>(tip.x - previous.x);
+			const double dy = static_cast<double>(tip.y - previous.y);
+			const auto length = std::max(1.0, std::sqrt(dx * dx + dy * dy));
+			const auto ux = dx / length;
+			const auto uy = dy / length;
+			const auto size = static_cast<double>(std::max(6, ScaleDip(7)));
+			const auto baseX = tip.x - ux * size;
+			const auto baseY = tip.y - uy * size;
+			const auto spread = size * 0.45;
+			POINT head[3] = {
+				{ left + tip.x, top + tip.y },
+				{ left + static_cast<int>(baseX - uy * spread), top + static_cast<int>(baseY + ux * spread) },
+				{ left + static_cast<int>(baseX + uy * spread), top + static_cast<int>(baseY - ux * spread) },
+			};
+			const auto oldBrush = static_cast<HBRUSH>(::SelectObject(dc, edgeBrush));
+			(void)::Polygon(dc, head, 3);
+			::SelectObject(dc, oldBrush);
+		}
+		::SelectObject(dc, oldPen);
+	}
+
+	const auto font = GetFont(FontKind::Body, 0, false);
+	const auto oldFont = ::SelectObject(dc, font);
+	::SetBkMode(dc, TRANSPARENT);
+
+	// Edge labels sit on top of their line, on the page background, so the
+	// stroke does not read through the text.
+	for (const auto& edge : diagram.edges) {
+		if (edge.label.empty()) continue;
+		SIZE size{};
+		::GetTextExtentPoint32W(dc, edge.label.c_str(), static_cast<int>(edge.label.size()), &size);
+		const auto pad = std::max(2, ScaleDip(3));
+		RECT labelRect{
+			left + edge.labelCenter.x - size.cx / 2 - pad,
+			top + edge.labelCenter.y - size.cy / 2,
+			left + edge.labelCenter.x - size.cx / 2 + size.cx + pad,
+			top + edge.labelCenter.y - size.cy / 2 + size.cy,
+		};
+		::FillRect(dc, &labelRect, m_backgroundBrush != nullptr ? m_backgroundBrush
+			: static_cast<HBRUSH>(::GetStockObject(WHITE_BRUSH)));
+		::SetTextColor(dc, m_colors.secondaryText);
+		::TextOutW(dc, labelRect.left + pad, labelRect.top,
+			edge.label.c_str(), static_cast<int>(edge.label.size()));
+	}
+
+	for (const auto& node : diagram.nodes) {
+		const auto x = left + node.x;
+		const auto y = top + node.y;
+		const auto right = x + node.width;
+		const auto bottom = y + node.height;
+		const auto oldPen = static_cast<HPEN>(::SelectObject(dc, borderPen));
+		const auto oldBrush = static_cast<HBRUSH>(::SelectObject(dc, fillBrush));
+		switch (node.shape) {
+		case mermaid::NodeShape::Rectangle:
+			(void)::Rectangle(dc, x, y, right, bottom);
+			break;
+		case mermaid::NodeShape::Rounded:
+			(void)::RoundRect(dc, x, y, right, bottom, ScaleDip(8), ScaleDip(8));
+			break;
+		case mermaid::NodeShape::Stadium:
+			(void)::RoundRect(dc, x, y, right, bottom, node.height, node.height);
+			break;
+		case mermaid::NodeShape::Circle:
+			(void)::Ellipse(dc, x, y, right, bottom);
+			break;
+		case mermaid::NodeShape::Rhombus: {
+			POINT points[4] = { { x + node.width / 2, y }, { right, y + node.height / 2 },
+				{ x + node.width / 2, bottom }, { x, y + node.height / 2 } };
+			(void)::Polygon(dc, points, 4);
+			break;
+		}
+		case mermaid::NodeShape::Hexagon: {
+			const auto notch = std::min(node.width / 4, node.height / 2);
+			POINT points[6] = { { x + notch, y }, { right - notch, y }, { right, y + node.height / 2 },
+				{ right - notch, bottom }, { x + notch, bottom }, { x, y + node.height / 2 } };
+			(void)::Polygon(dc, points, 6);
+			break;
+		}
+		}
+		::SelectObject(dc, oldBrush);
+		::SelectObject(dc, oldPen);
+
+		SIZE size{};
+		::GetTextExtentPoint32W(dc, node.label.c_str(), static_cast<int>(node.label.size()), &size);
+		::SetTextColor(dc, m_colors.primaryText);
+		::TextOutW(dc, x + (node.width - size.cx) / 2, y + (node.height - size.cy) / 2,
+			node.label.c_str(), static_cast<int>(node.label.size()));
+	}
+	::SelectObject(dc, oldFont);
+}
+
 void CMarkdownPreviewWnd::DrawLine(HDC dc, const RenderLine& line, int top) const
 {
 	RECT client{};
@@ -1078,6 +1335,12 @@ void CMarkdownPreviewWnd::DrawLine(HDC dc, const RenderLine& line, int top) cons
 		}
 		return;
 	}
+	if (line.kind == LineKind::Diagram) {
+		if (line.diagramIndex < m_diagrams.size()) {
+			DrawDiagram(dc, m_diagrams[line.diagramIndex], line.left, top);
+		}
+		return;
+	}
 	if (line.kind == LineKind::Code) {
 		RECT codeRect{ ScaleDip(6), top, std::max<LONG>(ScaleDip(6), client.right - ScaleDip(6)), top + line.height };
 		::FillRect(dc, &codeRect, m_codeBackgroundBrush != nullptr ? m_codeBackgroundBrush
@@ -1090,10 +1353,20 @@ void CMarkdownPreviewWnd::DrawLine(HDC dc, const RenderLine& line, int top) cons
 		RECT noticeRect{ ScaleDip(8), top, std::max<LONG>(ScaleDip(8), client.right - ScaleDip(8)), top + line.height };
 		::FillRect(dc, &noticeRect, m_noticeBrush != nullptr ? m_noticeBrush
 			: static_cast<HBRUSH>(::GetStockObject(LTGRAY_BRUSH)));
-	} else if (line.kind == LineKind::TableHeader) {
-		RECT headerRect{ ScaleDip(8), top, std::max<LONG>(ScaleDip(8), client.right - ScaleDip(8)), top + line.height };
-		::FillRect(dc, &headerRect, m_codeBackgroundBrush != nullptr ? m_codeBackgroundBrush
+	} else if (line.kind == LineKind::TableFill) {
+		// Sized by the table, not by the pane: a GFM table is only as wide as its
+		// columns, so shading the full client width would be wrong.
+		RECT fillRect{ line.left, top, line.left + line.width, top + line.height };
+		::FillRect(dc, &fillRect, m_codeBackgroundBrush != nullptr ? m_codeBackgroundBrush
 			: static_cast<HBRUSH>(::GetStockObject(LTGRAY_BRUSH)));
+		return;
+	} else if (line.kind == LineKind::TableBorderH || line.kind == LineKind::TableBorderV) {
+		RECT ruleRect = line.kind == LineKind::TableBorderH
+			? RECT{ line.left, top, line.left + line.width, top + std::max(1, line.height) }
+			: RECT{ line.left, top, line.left + std::max(1, line.width), top + line.height };
+		::FillRect(dc, &ruleRect, m_borderBrush != nullptr ? m_borderBrush
+			: static_cast<HBRUSH>(::GetStockObject(GRAY_BRUSH)));
+		return;
 	}
 
 	::SetBkMode(dc, TRANSPARENT);
@@ -1175,6 +1448,206 @@ void CMarkdownPreviewWnd::DrawLine(HDC dc, const RenderLine& line, int top) cons
 	}
 }
 
+int CMarkdownPreviewWnd::MeasureRenderLine(HDC dc, const RenderLine& line) const
+{
+	int width = 0;
+	const auto measureRun = [&](std::wstring_view text, unsigned int style, bool inlineCode) {
+		if (text.empty()) return;
+		const auto oldFont = ::SelectObject(dc, GetFont(line.font, style, inlineCode));
+		SIZE extent{};
+		(void)::GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &extent);
+		::SelectObject(dc, oldFont);
+		width += extent.cx;
+	};
+	if (line.styleRuns.empty()) {
+		measureRun(line.text, 0, false);
+		return width;
+	}
+	for (const auto& run : line.styleRuns) {
+		unsigned int style = 0;
+		if (run.Has(InlineStyleFlag::Strong)) style |= kStyleStrong;
+		if (run.Has(InlineStyleFlag::Emphasis)) style |= kStyleEmphasis;
+		if (run.Has(InlineStyleFlag::Link)) style |= kStyleLink;
+		if (run.Has(InlineStyleFlag::Strikethrough)) style |= kStyleStrikethrough;
+		measureRun(std::wstring_view(line.text).substr(run.start, run.length), style,
+			run.Has(InlineStyleFlag::Code));
+	}
+	return width;
+}
+
+void CMarkdownPreviewWnd::AppendTable(HDC dc, const Block& block, int left, int availableWidth, int* top)
+{
+	if (block.tableRows.empty()) return;
+
+	std::size_t columnCount = 0;
+	for (const auto& row : block.tableRows) {
+		columnCount = std::max(columnCount, row.cells.size());
+	}
+	if (columnCount == 0) return;
+
+	const auto cellPadX = ScaleDip(kPreviewTableCellPadXPx);
+	const auto cellPadY = ScaleDip(kPreviewTableCellPadYPx);
+	const auto border = std::max(1, ScaleDip(kPreviewTableBorderPx));
+	const auto minimumContent = std::max(1, ScaleDip(kPreviewTableMinimumColumnPx) - 2 * cellPadX);
+
+	// One temporary block per cell keeps the existing wrapping and inline-style
+	// machinery: a cell is just a very narrow paragraph.
+	const auto makeCellBlock = [&block](const TableCell& cell, bool header) {
+		Block cellBlock;
+		cellBlock.kind = BlockKind::Paragraph;
+		cellBlock.sourceLine = block.sourceLine;
+		cellBlock.text = cell.text;
+		cellBlock.inlineSpans = cell.inlineSpans;
+		if (header && !cellBlock.text.empty()) {
+			// GFM header cells are `th`, which markdown.css sets to weight 600.
+			cellBlock.inlineSpans.push_back(
+				{ InlineKind::Strong, 0, cellBlock.text.size(), std::nullopt });
+		}
+		return cellBlock;
+	};
+
+	// Natural content width per column, measured with the face each cell will use.
+	std::vector<int> content(columnCount, 0);
+	for (const auto& row : block.tableRows) {
+		for (std::size_t column = 0; column < row.cells.size(); ++column) {
+			RenderLine probe;
+			probe.font = FontKind::Body;
+			const auto cellBlock = makeCellBlock(row.cells[column], row.header);
+			probe.text = cellBlock.text;
+			probe.styleRuns = BuildInlineStyleRuns(probe.text.size(), cellBlock.inlineSpans).runs;
+			content[column] = std::max(content[column], MeasureRenderLine(dc, probe));
+		}
+	}
+
+	// comfy-table's dynamic arrangement: columns that already fit keep their
+	// natural width, and only the ones still too wide share what is left. The
+	// narrowest column is settled first, so a single wide column cannot starve
+	// the others.
+	const auto chromeWidth = static_cast<int>(columnCount + 1) * border
+		+ static_cast<int>(columnCount) * 2 * cellPadX;
+	int budget = std::max(static_cast<int>(columnCount) * minimumContent, availableWidth - chromeWidth);
+	std::vector<std::size_t> order(columnCount);
+	for (std::size_t column = 0; column < columnCount; ++column) order[column] = column;
+	std::stable_sort(order.begin(), order.end(),
+		[&content](std::size_t a, std::size_t b) { return content[a] < content[b]; });
+	std::vector<int> columnWidth(columnCount, 0);
+	auto unsettled = static_cast<int>(columnCount);
+	for (const auto column : order) {
+		const auto share = std::max(minimumContent, budget / std::max(1, unsettled));
+		columnWidth[column] = std::max(minimumContent, std::min(content[column], share));
+		budget -= columnWidth[column];
+		--unsettled;
+	}
+
+	std::vector<int> columnLeft(columnCount + 1, 0);
+	columnLeft[0] = left;
+	for (std::size_t column = 0; column < columnCount; ++column) {
+		columnLeft[column + 1] = columnLeft[column] + border + cellPadX
+			+ columnWidth[column] + cellPadX;
+	}
+	const auto tableRight = columnLeft[columnCount] + border;
+	const auto tableWidth = tableRight - left;
+
+	const auto appendHorizontalRule = [&](int ruleTop) {
+		RenderLine rule;
+		rule.kind = LineKind::TableBorderH;
+		rule.left = left;
+		rule.width = tableWidth;
+		rule.top = ruleTop;
+		rule.height = border;
+		rule.sourceLine = block.sourceLine;
+		m_lines.push_back(std::move(rule));
+	};
+
+	appendHorizontalRule(*top);
+	*top += border;
+
+	const auto lineHeight = GetLineHeight(dc, FontKind::Body);
+	std::size_t bodyRowIndex = 0;
+	for (const auto& row : block.tableRows) {
+		const auto rowTop = *top;
+		const auto rowLineKind = row.header ? LineKind::TableHeader : LineKind::Table;
+		const auto rowStart = m_lines.size();
+
+		// The shading is emitted first and in line-height slices so that the row
+		// stays sorted by bottom edge, which is what the paint loop binary-searches
+		// on, and so that it never paints over the text that follows it.
+		const bool shaded = !row.header && (bodyRowIndex % 2) == 1;
+		if (!row.header) ++bodyRowIndex;
+
+		int rowBottom = rowTop + cellPadY;
+		std::vector<std::pair<std::size_t, std::size_t>> cellRanges;
+		cellRanges.reserve(columnCount);
+		const auto shadeStart = m_lines.size();
+		for (std::size_t column = 0; column < columnCount; ++column) {
+			const auto cellStart = m_lines.size();
+			int cellTop = rowTop + cellPadY;
+			if (column < row.cells.size()) {
+				const auto cellBlock = makeCellBlock(row.cells[column], row.header);
+				if (!cellBlock.text.empty()) {
+					AppendWrappedText(dc, cellBlock, FontKind::Body, rowLineKind,
+						columnLeft[column] + border + cellPadX, columnWidth[column], &cellTop);
+				}
+			}
+			cellRanges.emplace_back(cellStart, m_lines.size());
+			rowBottom = std::max(rowBottom, cellTop);
+		}
+		const auto rowHeight = std::max(lineHeight + 2 * cellPadY,
+			rowBottom - rowTop + cellPadY);
+
+		// Alignment is applied after wrapping, because it needs the measured
+		// width of each produced line rather than the column's width.
+		for (std::size_t column = 0; column < columnCount; ++column) {
+			const auto alignment = column < block.tableAlignments.size()
+				? block.tableAlignments[column] : TableAlignment::Default;
+			if (alignment == TableAlignment::Default || alignment == TableAlignment::Left) continue;
+			for (auto index = cellRanges[column].first; index < cellRanges[column].second; ++index) {
+				const auto measured = MeasureRenderLine(dc, m_lines[index]);
+				const auto slack = std::max(0, columnWidth[column] - measured);
+				m_lines[index].left += alignment == TableAlignment::Center ? slack / 2 : slack;
+			}
+		}
+
+		if (row.header || shaded) {
+			std::vector<RenderLine> shading;
+			for (int offset = 0; offset < rowHeight; offset += lineHeight) {
+				RenderLine fill;
+				fill.kind = LineKind::TableFill;
+				fill.left = left;
+				fill.width = tableWidth;
+				fill.top = rowTop + offset;
+				fill.height = std::min(lineHeight, rowHeight - offset);
+				fill.sourceLine = block.sourceLine;
+				shading.push_back(std::move(fill));
+			}
+			m_lines.insert(m_lines.begin() + static_cast<std::ptrdiff_t>(shadeStart),
+				shading.begin(), shading.end());
+		}
+
+		for (std::size_t column = 0; column <= columnCount; ++column) {
+			RenderLine rule;
+			rule.kind = LineKind::TableBorderV;
+			rule.left = columnLeft[column];
+			rule.width = border;
+			rule.top = rowTop;
+			rule.height = rowHeight;
+			rule.sourceLine = block.sourceLine;
+			m_lines.push_back(std::move(rule));
+		}
+
+		// Cells were laid out independently, so the row's lines are interleaved by
+		// column. The paint loop requires the whole list sorted by bottom edge.
+		std::stable_sort(m_lines.begin() + static_cast<std::ptrdiff_t>(rowStart), m_lines.end(),
+			[](const RenderLine& a, const RenderLine& b) {
+				return a.top + a.height < b.top + b.height;
+			});
+
+		*top = rowTop + rowHeight;
+		appendHorizontalRule(*top);
+		*top += border;
+	}
+}
+
 void CMarkdownPreviewWnd::AppendWrappedText(HDC dc, const Block& block, FontKind font, LineKind kind,
 	int left, int availableWidth, int* top, int continuationLeft, int continuationWidth,
 	const CodeHighlightResult* codeHighlight, std::size_t codeSourceOffset)
@@ -1212,6 +1685,12 @@ void CMarkdownPreviewWnd::AppendWrappedText(HDC dc, const Block& block, FontKind
 				}
 			}
 		}
+		// A newline inside a block's text is a GFM hard line break, which ends the
+		// line box wherever it falls rather than wrapping at the measured fit.
+		const auto forcedBreak = text.find(L'\n', start);
+		if (forcedBreak != std::wstring::npos && forcedBreak < start + length) {
+			length = forcedBreak - start;
+		}
 		while (length > 0 && IsWrapSpace(text[start + length - 1])) {
 			--length;
 		}
@@ -1234,7 +1713,7 @@ void CMarkdownPreviewWnd::AppendWrappedText(HDC dc, const Block& block, FontKind
 			break;
 		}
 		start += std::max<std::size_t>(1, length);
-		while (start < text.size() && IsWrapSpace(text[start])) {
+		while (start < text.size() && (IsWrapSpace(text[start]) || text[start] == L'\n')) {
 			++start;
 		}
 		if (continuationLeft >= 0) {
@@ -1262,13 +1741,32 @@ HFONT CMarkdownPreviewWnd::GetFont(FontKind kind, unsigned int style, bool inlin
 	return font != nullptr ? font : static_cast<HFONT>(::GetStockObject(DEFAULT_GUI_FONT));
 }
 
+/*!
+	@brief The line box height for one font kind
+
+	VS Code sets line-height in CSS rather than deriving it from the face: 22px
+	for prose, 1.357em for code, and 1.25em for headings. The measured text
+	height is still the floor, so a face with unusually tall metrics cannot be
+	clipped by a smaller CSS box.
+*/
 int CMarkdownPreviewWnd::GetLineHeight(HDC dc, FontKind kind) const
 {
 	const auto oldFont = ::SelectObject(dc, GetFont(kind));
 	TEXTMETRICW metrics{};
 	::GetTextMetricsW(dc, &metrics);
 	::SelectObject(dc, oldFont);
-	return std::max<LONG>(1, metrics.tmHeight + ScaleDip(3));
+
+	int cssHeight = ScaleDip(kPreviewLineHeightPx);
+	if (kind == FontKind::Code) {
+		cssHeight = ScaleDip(kPreviewCodeLineHeightPx);
+	} else if (kind != FontKind::Body) {
+		const auto heading = static_cast<std::size_t>(
+			static_cast<int>(kind) - static_cast<int>(FontKind::Heading1));
+		const auto headingSize = ::MulDiv(ScaleDip(kPreviewFontSizePx),
+			kPreviewHeadingPermille[heading], 1000);
+		cssHeight = ::MulDiv(headingSize, kPreviewHeadingLineHeightPermille, 1000);
+	}
+	return std::max<LONG>(1, std::max<LONG>(metrics.tmHeight, cssHeight));
 }
 
 int CMarkdownPreviewWnd::ScaleDip(int dip) const noexcept

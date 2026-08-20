@@ -197,36 +197,27 @@ TEST(EmptyEditorSurfaceModel, CentersActionRectsAndHitTestsOnlyEnabledActions)
 	EXPECT_FALSE(model.Invoke(EmptyEditorSurfaceAction::NewFile));
 }
 
-TEST(EmptyEditorSurfaceModel, CentersASquareLetterpressAboveTheActionListLikeVsCode)
+TEST(EmptyEditorSurfaceModel, CentersTheActionListAloneWithNoLetterpressColumn)
 {
 	EmptyEditorSurfaceModel model;
 	model.SetViewport(800, 600, 96);
-	const auto letterpress = model.GetLetterpressBounds();
 	const auto first = model.GetAction(0);
 	const auto last = model.GetAction(model.GetActionCount() - 1);
 
-	// VS Code's `.letterpress` is a centered square capped at 256px with a 24px gap below it.
-	EXPECT_EQ(256, letterpress.Width());
-	EXPECT_EQ(letterpress.Width(), letterpress.Height());
-	EXPECT_EQ(800 - letterpress.right, letterpress.left);
-	EXPECT_EQ(24, first.bounds.top - letterpress.bottom);
-	// The logo and the list form one vertically centered column, so the space above the logo
-	// matches the space below the last action row.
-	EXPECT_EQ(600 - last.bounds.bottom, letterpress.top);
-	EXPECT_FALSE(model.HitTest(letterpress.left, letterpress.top));
+	// This fork does not draw upstream's `.letterpress`, so the action list is the whole
+	// centered column: the space above it matches the space below it.
+	EXPECT_EQ(600 - last.bounds.bottom, first.bounds.top);
+	// Five 28 DIP rows separated by 4 DIP gaps center at (600 - 156) / 2.
+	EXPECT_EQ(222, first.bounds.top);
+	EXPECT_EQ(28, first.bounds.Height());
 }
 
-TEST(EmptyEditorSurfaceModel, DropsTheLetterpressBeforeTheActionListWhenSpaceRunsOut)
+TEST(EmptyEditorSurfaceModel, KeepsTheActionListCenteredInAShortViewport)
 {
 	EmptyEditorSurfaceModel model;
-	// 288 DIP of action rows leave under the 48 DIP logo minimum, so only the list survives.
 	model.SetViewport(800, 200, 96);
-	EXPECT_EQ(EmptyEditorSurfaceRect{}, model.GetLetterpressBounds());
 	EXPECT_EQ(22, model.GetAction(0).bounds.top);
 	EXPECT_EQ(28, model.GetAction(0).bounds.Height());
-
-	model.SetViewport(0, 0, 0);
-	EXPECT_EQ(EmptyEditorSurfaceRect{}, model.GetLetterpressBounds());
 }
 
 TEST(EmptyEditorSurfaceModel, HandlesNarrowAndZeroClientsWithoutNegativeGeometry)

@@ -10,12 +10,15 @@
 #include "sakura_rc.h"
 
 #include "terminal/PowerShellLocator.h"
+#include "terminal/input/TerminalShortcutPreset.h"
 #include "terminal/window/TerminalHeaderLayout.h"
 #include "terminal/window/TerminalPaneLayout.h"
+#include "terminal/window/TerminalTabPresentation.h"
 #include "terminal/window/CTerminalWnd.h"
 #include "workbench/IconMetrics.h"
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <mutex>
 #include <span>
@@ -47,6 +50,24 @@ constexpr UINT kCommandCloseSplit = 6;
 constexpr UINT kCommandSplitTerminalDown = 7;
 constexpr UINT kCommandProfileFirst = 1000;
 constexpr UINT kCommandTabFirst = 2000;
+constexpr UINT kCommandShortcutPresetFirst = 3000;
+
+//! Menu order of the multiplexer keybinding presets.
+constexpr std::array<TerminalShortcutPreset, 3> kShortcutPresets{
+	TerminalShortcutPreset::None,
+	TerminalShortcutPreset::Tmux,
+	TerminalShortcutPreset::Screen,
+};
+
+int ShortcutPresetLabelId( TerminalShortcutPreset preset ) noexcept
+{
+	switch( preset ) {
+	case TerminalShortcutPreset::Tmux: return STR_TERMINAL_SHORTCUT_PRESET_TMUX;
+	case TerminalShortcutPreset::Screen: return STR_TERMINAL_SHORTCUT_PRESET_SCREEN;
+	case TerminalShortcutPreset::None: break;
+	}
+	return STR_TERMINAL_SHORTCUT_PRESET_NONE;
+}
 
 int ScaleDip( int value, unsigned int dpi ) noexcept
 {
@@ -317,6 +338,9 @@ struct CTerminalTool::Impl {
 	std::optional<std::size_t> draggingPaneDivider;
 	bool terminalTabsFocused{};
 	std::size_t terminalTabsFirstVisible{};
+	//! terminal.integrated.tabs.* presentation contract. Defaults match VS Code;
+	//! PR 1B pushes the configured snapshot in from CBottomPanelTool.
+	TerminalTabPresentationSettings tabPresentationSettings;
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont chromeFont;
 	TerminalPanelActions panelActions;
@@ -325,6 +349,12 @@ struct CTerminalTool::Impl {
 	bool trackingMouseLeave{};
 	std::vector<std::wstring> profileCommandPaths;
 	std::vector<std::uint64_t> tabCommandIds;
+	//! Multiplexer keybinding preset. GNU Screen is the owner-chosen default and
+	//! matches the registered default of `sakura.terminal.shortcutPreset`, so a
+	//! window with no configuration service behaves like one that read it.
+	TerminalShortcutPreset shortcutPreset{ TerminalShortcutPreset::Screen };
+	bool shortcutPrefixArmed{};
+	std::function<void(TerminalShortcutPreset)> shortcutPresetSink;
 
 	void EnsureDefaultResolver()
 	{
@@ -583,6 +613,26 @@ struct CTerminalTool::Impl {
 		if( const auto activeId = manager->ActiveTabId(); activeId && FindGroup(*activeId) == activePaneGroup ) return activeId;
 		if( const auto* group = ActiveGroup(); group && !group->tabIds.empty() ) return group->tabIds.front();
 		return manager->ActiveTabId();
+	}
+
+	//! Resolved presentation for one tab. PR 1B replaces the default-constructed
+	//! settings with the terminal.integrated.tabs.* snapshot pushed from the
+	//! configuration service; the resolver itself does not change.
+	ResolvedTerminalTabPresentation TabPresentation( const TerminalTabSnapshot& tab ) const
+	{
+		TerminalTabPresentationContext context;
+		context.processName = tab.processName.empty() ? tab.profileLabel : tab.processName;
+		context.sequenceTitle = tab.sequenceTitle;
+		if( !tab.initialWorkingDirectory.empty() ) context.initialCwd = tab.initialWorkingDirectory;
+		context.recognizedAgentCli = IsRecognizedAgentCliTitle(tab.sequenceTitle);
+		return ResolveTerminalTabPresentation(tabPresentationSettings, context);
+	}
+
+	std::wstring TabTitle( const TerminalTabSnapshot& tab ) const
+	{
+		auto title = TabPresentation(tab).title;
+		if( title.empty() ) title = tab.profileLabel;
+		return title;
 	}
 
 	std::wstring HeaderProfileLabel()
@@ -899,7 +949,7 @@ struct CTerminalTool::Impl {
 			RECT label = row;
 			label.left += horizontalPadding;
 			label.right -= horizontalPadding;
-			std::wstring text = tab.label.empty() ? tab.profileLabel : tab.label;
+			std::wstring text = TabTitle(tab);
 			if( text.empty() ) text = LS(STR_TERMINAL_FALLBACK_LABEL);
 			if( split ) text = L"  " + text;
 			::SetTextColor(dc, tab.state == TerminalSessionState::Failed
@@ -959,7 +1009,7 @@ struct CTerminalTool::Impl {
 		const auto result = manager->DrainOutput(tabId);
 		if( !result.found ) return;
 		if( result.protocolInputPending ) ScheduleProtocolInputRetry();
-		if( result.titleChanged ) {
+		if( result.sequenceChanged ) {
 			InvalidateTabs();
 			InvalidateTerminalTabs();
 		}
@@ -1031,7 +1081,8 @@ struct CTerminalTool::Impl {
 				const UINT command = kCommandTabFirst + static_cast<UINT>(tabCommandIds.size());
 				UINT flags = MF_STRING;
 				if( focusedId && tab.id == *focusedId ) flags |= MF_CHECKED;
-				std::wstring label = tab.label.empty() ? tab.profileLabel : tab.label;
+				std::wstring label = TabTitle(tab);
+				if( label.empty() ) label = LS(STR_TERMINAL_FALLBACK_LABEL);
 				::AppendMenuW(sessionsMenu, flags, command, label.c_str());
 				tabCommandIds.push_back(tab.id);
 			}
@@ -1048,6 +1099,17 @@ struct CTerminalTool::Impl {
 		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandSplitTerminal, LS(STR_TERMINAL_SPLIT));
 		::AppendMenuW(menu, MF_STRING | (focusedId ? 0 : MF_GRAYED), kCommandSplitTerminalDown, LS(STR_TERMINAL_SPLIT_DOWN));
 		::AppendMenuW(menu, MF_STRING | (HasTerminalSplit() ? 0 : MF_GRAYED), kCommandCloseSplit, LS(STR_TERMINAL_CLOSE_SPLIT));
+		if( const HMENU shortcutsMenu = ::CreatePopupMenu() ) {
+			for( std::size_t index = 0; index < kShortcutPresets.size(); ++index ) {
+				const auto preset = kShortcutPresets[index];
+				const UINT flags = MF_STRING | (preset == shortcutPreset ? MF_CHECKED : 0);
+				::AppendMenuW(shortcutsMenu, flags,
+					kCommandShortcutPresetFirst + static_cast<UINT>(index),
+					LS(ShortcutPresetLabelId(preset)));
+			}
+			::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+			::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(shortcutsMenu), LS(STR_TERMINAL_SHORTCUTS));
+		}
 		if( defaultResolver ) {
 			const HMENU profilesMenu = ::CreatePopupMenu();
 			if( profilesMenu ) {
@@ -1355,6 +1417,13 @@ struct CTerminalTool::Impl {
 					const auto index = static_cast<std::size_t>(command - kCommandProfileFirst);
 					(void)defaultResolver->SelectProfile(profileCommandPaths[index]);
 				}
+				return 0;
+			}
+			if( const UINT command = LOWORD(wParam);
+				command >= kCommandShortcutPresetFirst
+				&& command < kCommandShortcutPresetFirst + kShortcutPresets.size() ) {
+				const auto index = static_cast<std::size_t>(command - kCommandShortcutPresetFirst);
+				ApplyShortcutPreset(kShortcutPresets[index], true);
 				return 0;
 			}
 			if( const UINT command = LOWORD(wParam);
@@ -1668,6 +1737,71 @@ struct CTerminalTool::Impl {
 		return !group.tabIds.empty() && SelectTerminal(group.tabIds.front(), true);
 	}
 
+	//! tmux windows and Screen windows are terminal groups here, not panes, so a
+	//! digit chord selects the group's first pane exactly as its list order shows.
+	bool SelectTerminalGroup( std::size_t index )
+	{
+		if( index >= paneGroups.size() ) return false;
+		const auto& group = paneGroups[index];
+		return !group.tabIds.empty() && SelectTerminal(group.tabIds.front(), true);
+	}
+
+	void ApplyShortcutPreset( TerminalShortcutPreset preset, bool persist )
+	{
+		if( preset == shortcutPreset ) return;
+		shortcutPreset = preset;
+		shortcutPrefixArmed = false;
+		if( persist && shortcutPresetSink ) shortcutPresetSink(preset);
+	}
+
+	bool RunShortcutPresetAction( const TerminalPresetResolution& resolution )
+	{
+		switch( resolution.action ) {
+		case TerminalPresetAction::NewTerminal: return AddTerminal().has_value();
+		case TerminalPresetAction::SplitRight: return SplitTerminalRight();
+		case TerminalPresetAction::SplitDown: return SplitTerminalDown();
+		case TerminalPresetAction::ClosePane: return CloseTerminalSplit();
+		case TerminalPresetAction::CloseTerminal: {
+			const auto id = FocusedTabId();
+			return id && DeleteTerminal(*id);
+		}
+		case TerminalPresetAction::NextPane: return FocusRelativePane(1);
+		case TerminalPresetAction::PreviousPane: return FocusRelativePane(-1);
+		case TerminalPresetAction::NextTerminal: return FocusRelativeGroup(1);
+		case TerminalPresetAction::PreviousTerminal: return FocusRelativeGroup(-1);
+		case TerminalPresetAction::SelectTerminal: return SelectTerminalGroup(resolution.terminalIndex);
+		case TerminalPresetAction::FocusTerminalList: return FocusTerminalTabs();
+		case TerminalPresetAction::None: break;
+		}
+		return false;
+	}
+
+	//! Returns true when the preset owns the key. The key is then never forwarded
+	//! to the shell, even if the resolved action could not run: swallowing a
+	//! chord is the multiplexer behaviour, while leaking `%` into the shell is not.
+	bool DispatchShortcutPresetKey( const TerminalPresetKey& key )
+	{
+		if( shortcutPreset == TerminalShortcutPreset::None ) return false;
+		const auto resolution = ResolveTerminalPresetKey(shortcutPreset, shortcutPrefixArmed, key);
+		shortcutPrefixArmed = resolution.prefixArmed;
+		if( !resolution.consumed ) return false;
+		static_cast<void>(RunShortcutPresetAction(resolution));
+		return true;
+	}
+
+	bool HandleShortcutPresetKey( const MSG& message )
+	{
+		if( shortcutPreset == TerminalShortcutPreset::None ) return false;
+		if( message.message != WM_KEYDOWN && message.message != WM_SYSKEYDOWN ) return false;
+		if( !IsTerminalUiMessage(message) ) return false;
+		TerminalPresetKey key;
+		key.virtualKey = static_cast<std::uint32_t>(message.wParam);
+		key.shift = (::GetKeyState(VK_SHIFT) & 0x8000) != 0;
+		key.control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
+		key.alt = (static_cast<ULONG_PTR>(message.lParam) & (1ULL << 29)) != 0;
+		return DispatchShortcutPresetKey(key);
+	}
+
 	bool FocusTerminalTabs()
 	{
 		if( IsEmptyRect(paneLayout.tabsBounds) || !window ) return false;
@@ -1777,6 +1911,9 @@ void CTerminalTool::Deactivate()
 bool CTerminalTool::PreTranslateMessage( MSG& message )
 {
 	if( m_impl->closed ) return false;
+	// The preset prefix runs first. Once it is armed the second key belongs to the
+	// preset, not to a workbench keybinding that happens to use the same key.
+	if( m_impl->HandleShortcutPresetKey(message) ) return true;
 	if( m_impl->HandleWorkbenchTerminalKeybinding(message) ) return true;
 	for( auto& pane : m_impl->panes ) {
 		if( pane.window && pane.window->PreTranslateMessage(message) ) return true;
@@ -1878,6 +2015,27 @@ bool CTerminalTool::EnsureSessionStarted()
 std::optional<std::uint64_t> CTerminalTool::AddTerminal()
 {
 	return m_impl->closed ? std::nullopt : m_impl->AddTerminal();
+}
+
+void CTerminalTool::SetShortcutPreset( TerminalShortcutPreset preset )
+{
+	m_impl->ApplyShortcutPreset(preset, false);
+}
+
+TerminalShortcutPreset CTerminalTool::ShortcutPreset() const noexcept
+{
+	return m_impl->shortcutPreset;
+}
+
+void CTerminalTool::SetShortcutPresetSink( std::function<void(TerminalShortcutPreset)> sink )
+{
+	m_impl->shortcutPresetSink = std::move(sink);
+}
+
+bool CTerminalTool::DispatchShortcutPresetKey( const TerminalPresetKey& key )
+{
+	if( m_impl->closed ) return false;
+	return m_impl->DispatchShortcutPresetKey(key);
 }
 
 void CTerminalTool::RedetectPowerShell()

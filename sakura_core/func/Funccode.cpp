@@ -115,6 +115,7 @@ const EFunctionCode pnFuncList_File[] = {	//Oct. 16, 2000 JEPRO 変数名変更(
 	F_DUPLICATE_WORKSPACE		,	//ワークスペースを新しいウィンドウで複製
 	F_CLOSE_WORKSPACE		,	//ワークスペースを閉じる
 	F_CLOSE_ACTIVE_EDITOR		,	//アクティブなエディターを閉じる
+	F_CLEAR_RECENT_WORKSPACES	,	//最近開いた項目を消去
 	F_EXITALLEDITORS	,	//編集の全終了	// 2007.02.13 ryoji F_WIN_CLOSEALL→F_EXITALLEDITORS
 	F_EXITALL				//サクラエディタの全終了	//Dec. 27, 2000 JEPRO 追加
 };
@@ -617,7 +618,8 @@ int FuncID_To_HelpContextID( EFunctionCode nFuncID )
 	case F_SAVE_WORKSPACE_AS:
 	case F_DUPLICATE_WORKSPACE:
 	case F_CLOSE_WORKSPACE:
-	case F_CLOSE_ACTIVE_EDITOR:			return HLP000373;	//ワークスペース操作
+	case F_CLOSE_ACTIVE_EDITOR:
+	case F_CLEAR_RECENT_WORKSPACES:		return HLP000373;	//ワークスペース操作
 	case F_OPEN_COMMAND_PROMPT:			return HLP000376;	//コマンドプロンプトを開く
 	case F_OPEN_COMMAND_PROMPT_AS_ADMIN:	return HLP000377;	//管理者としてコマンドプロンプトを開く
 	case F_OPEN_POWERSHELL:				return HLP000378;	//PowerShellを開く

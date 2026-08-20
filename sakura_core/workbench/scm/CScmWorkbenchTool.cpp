@@ -8,17 +8,24 @@
 #include "workbench/scm/CScmWorkbenchTool.h"
 
 #include "workbench/scm/GitCommandRunner.h"
+#include "workbench/scm/GitHistoryModel.h"
 #include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitScmMenus.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/ScmViewStackLayout.h"
 
+#include "theme/CThemeService.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/ViewsWelcomeMetrics.h"
 #include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CSetiFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/LabelRunPainter.h"
+#include "workbench/icons/SetiFileIcon.h"
+#include "workbench/icons/SetiIconPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
+#include "workbench/controls/COverlayScrollbar.h"
 
 #include <CommCtrl.h>
 #include <algorithm>
@@ -56,37 +63,95 @@ constexpr int kRepositoryIconDip = 16;
 constexpr int kRepositoryIconGapDip = 6;
 //! Padding inside one toolbar button, on each side of its rendered label.
 constexpr int kActionInsetDip = 6;
-//! `scm.inputMinLineCount` and `scm.inputMaxLineCount` at their documented
-//! defaults: the commit box starts at one rendered line and auto-grows to ten.
-//! See this directory's CLAUDE.md for why `scm.*` settings are hard-coded to
-//! upstream's defaults rather than given a third behavior.
-constexpr int kScmInputMinLineCount = 1;
-constexpr int kScmInputMaxLineCount = 10;
+//! `scm.inputMinLineCount` and `scm.inputMaxLineCount` at upstream's registered
+//! defaults and upstream's registered bounds. The effective values arrive from
+//! the configuration service through `SetInputLineCountRange`; these are what a
+//! window with no runtime to read settings from falls back to.
+constexpr int kScmInputMinLineCountDefault = 1;
+constexpr int kScmInputMaxLineCountDefault = 10;
+constexpr int kScmInputLineCountLowerBound = 1;
+constexpr int kScmInputLineCountUpperBound = 50;
 //! Upstream's `InputRenderer.getHeight` is the widget's content height plus ten
 //! pixels, which is this margin above the box and the same margin below it.
 constexpr int kInputOuterMarginDip = 5;
+
+//! Scrolls an owner-drawn list box by one wheel notch worth of rows. The list
+//! boxes here keep WS_VSCROLL for their SCROLLINFO but hide the platform bar
+//! behind the themed overlay, and a list box whose scroll bar is hidden ignores
+//! WM_MOUSEWHEEL entirely, so the rows have to be moved by hand.
+void ScrollListBoxByWheel(HWND list, WPARAM wParam)
+{
+	if (list == nullptr) return;
+	const int count = static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0));
+	if (count <= 0) return;
+	UINT linesPerNotch = 3;
+	if (::SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &linesPerNotch, 0) == FALSE) {
+		linesPerNotch = 3;
+	}
+	// WHEEL_PAGESCROLL asks for a page; the visible row count is the page here.
+	int rows = 0;
+	const int delta = GET_WHEEL_DELTA_WPARAM(wParam);
+	if (linesPerNotch == WHEEL_PAGESCROLL) {
+		RECT client{};
+		::GetClientRect(list, &client);
+		const int rowHeight = static_cast<int>(::SendMessageW(list, LB_GETITEMHEIGHT, 0, 0));
+		const int page = rowHeight > 0
+			? std::max(1, static_cast<int>(client.bottom - client.top) / rowHeight) : 1;
+		rows = delta > 0 ? -page : page;
+	} else {
+		rows = -(delta * static_cast<int>(linesPerNotch)) / WHEEL_DELTA;
+	}
+	if (rows == 0) return;
+	const int top = static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0));
+	const int next = std::clamp(top + rows, 0, std::max(0, count - 1));
+	if (next == top) return;
+	(void)::SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(next), 0);
+}
 //! The box's own text padding. One line plus both paddings is upstream's
 //! `InputRenderer.DEFAULT_HEIGHT` of 26 at the default font size.
 constexpr int kInputPaddingDip = 4;
+//! The gap between the Commit button's label and the dropdown half, and the
+//! dropdown half's own width. Upstream's `.monaco-button-dropdown` is a 1px
+//! separator plus a `$(chevron-down)` box; this is that box at 100%.
+constexpr int kActionButtonDropdownDip = 22;
 //! The commit box's child-control id. The list predates it and keeps 1.
 constexpr int kInputControlId = 2;
-//! The empty-state welcome content's own left/right inset. ViewWelcome uses
-//! `padding: 0 20px 1em` for its content column.
-constexpr int kWelcomeInsetDip = 20;
-//! ViewWelcome constrains its button containers, but not its paragraphs, to
-//! 300px. The native view measures the message across the full inset body and
-//! centers only the action column.
-constexpr int kWelcomeColumnMaxDip = 300;
-//! Horizontal/vertical padding inside one welcome action button. The width is
-//! the full column; this only determines the button's content height.
-constexpr int kWelcomeButtonPaddingYDip = 6;
-//! The welcome button's corner radius, matching `monaco-button`'s small
-//! rounding rather than SCM's otherwise-rectangular rows.
-constexpr int kWelcomeButtonCornerRadiusDip = 4;
+//! The empty-state welcome content is upstream's `viewsWelcome`, the same
+//! contribution the Explorer renders, so its inset, its 300-DIP action column
+//! and its button box all come from workbench/ViewsWelcomeMetrics.h. Measuring
+//! the button height from the running font here is what let these two Views
+//! disagree about how tall the same upstream button is.
 //! The deliberately non-interactive Graph body reserved under its View header.
 //! It is large enough to communicate the unsupported boundary without stealing
 //! the change-list's normal scrolling area.
 constexpr int kGraphPlaceholderHeightDip = 48;
+//! The Graph body's own starting height, and the smallest either section may be
+//! squeezed to by a sash drag.  Upstream's pane sashes have the same two facts.
+constexpr int kGraphDefaultBodyHeightDip = 180;
+constexpr int kGraphMinimumBodyHeightDip = 44;
+constexpr int kChangesMinimumBodyHeightDip = 66;
+//! `.monaco-sash` is 4px, centred on the boundary it drags.
+constexpr int kSashHeightDip = 4;
+//! One history row, upstream's `HistoryItemRenderer` height.
+constexpr int kGraphRowHeightDip = 22;
+//! Horizontal distance between two swimlanes, and the commit circle's radius.
+constexpr int kGraphLaneWidthDip = 11;
+constexpr int kGraphCircleRadiusDip = 4;
+//! How many commits the Graph reads.  Upstream pages its history; this reads one
+//! bounded page, because an unbounded `git log` on the refresh timer is not.
+constexpr std::size_t kGraphHistoryCount = 50;
+constexpr int kGraphControlId = 2;
+//!
+//! @brief The five swimlane colours, in `BuildScmHistoryGraph`'s own index order.
+//!
+//! These are the registered defaults of upstream's `scmGraph.foreground1`..`5`.
+//! They are literals here because the theme palette publishes no graph tokens
+//! yet; when it does, they must come from it rather than being re-tuned here.
+//!
+constexpr COLORREF kGraphLaneColors[kScmGraphColorCount] = {
+	RGB(0xFF, 0xB0, 0x00), RGB(0xDC, 0x26, 0x7F), RGB(0x99, 0x4F, 0x00),
+	RGB(0x40, 0xC8, 0xAE), RGB(0x69, 0x29, 0xC4),
+};
 
 //!
 //! @brief `scm.providerCountBadge`'s documented default, `hidden`.
@@ -152,6 +217,35 @@ void DrawScmIcon(HDC dc, std::wstring_view name, const RECT& rect, COLORREF colo
 	} else {
 		icons::codicons::Draw(dc, icons::IconRect{ rect.left, rect.top, rect.right, rect.bottom }, icon.builtin, color);
 	}
+}
+
+/*!
+	@brief Draws a resource row's file icon the way the Explorer draws one
+
+	A Source Control resource row carries the same file icon as the same file in
+	the Explorer, because upstream resolves both through the active file icon
+	theme rather than per view. The bundled `vs-seti` theme is what VS Code
+	selects by default; when seti.ttf failed to register, its code points mean
+	nothing in another face, so the row falls back to the plain `file` codicon.
+*/
+void DrawScmFileIcon(HDC dc, std::wstring_view path, const RECT& rect, COLORREF fallbackColor)
+{
+	const std::size_t separator = path.find_last_of(L"\\/");
+	const std::wstring_view fileName =
+		separator == std::wstring_view::npos ? path : path.substr(separator + 1);
+	if (icons::CSetiFont::Instance().IsAvailable()) {
+		const auto icon = icons::seti::ResolveSetiFileIcon(fileName, false,
+			theme::CThemeService::IsActiveColorThemeLightKind()
+				? icons::seti::EIconVariant::Light
+				: icons::seti::EIconVariant::Dark);
+		if (!icon) return;
+		icons::seti::DrawSetiIcon(dc, rect, icon->character,
+			icon->color == icons::seti::kInheritColor
+				? fallbackColor
+				: icons::seti::ColorRefFromThemeRgb(icon->color));
+		return;
+	}
+	DrawScmIcon(dc, L"file", rect, fallbackColor);
 }
 
 //! Which element of the repository row a region belongs to.
@@ -225,6 +319,11 @@ struct WorkerResult {
 	//! git's own failure text, kept so a later surface can show a reason instead
 	//! of an empty list. UTF-8, already bounded by the runner.
 	std::string failureReason;
+	//! The Graph's own page of history.  `historyRead` separates "this repository
+	//! has no commits" from "the history could not be read", exactly as `execution`
+	//! separates a clean worktree from an unknown one.
+	std::vector<GitHistoryItem> history;
+	bool historyRead{};
 };
 struct Gate {
 	std::mutex mutex;
@@ -260,6 +359,18 @@ GitExecutionRequest MakeStatusRequest(const std::wstring& root)
 	GitExecutionRequest request;
 	request.workingDirectory = root;
 	request.arguments = { L"status", L"--porcelain=v2", L"--branch", L"-z", L"--untracked-files=normal" };
+	request.timeoutMilliseconds = 3000;
+	request.maximumOutputBytes = kMaximumStatusBytes;
+	return request;
+}
+
+//! The Graph's own query.  It is a second invocation rather than part of the
+//! status refresh because `git status` cannot report commits at all.
+GitExecutionRequest MakeHistoryRequest(const std::wstring& root)
+{
+	GitExecutionRequest request;
+	request.workingDirectory = root;
+	request.arguments = MakeGitHistoryArguments(kGraphHistoryCount);
 	request.timeoutMilliseconds = 3000;
 	request.maximumOutputBytes = kMaximumStatusBytes;
 	return request;
@@ -348,6 +459,18 @@ void WorkerMain(std::shared_ptr<SharedState> shared)
 			result->state = ParsePorcelainV2({ reinterpret_cast<const char*>(execution.standardOutput.data()),
 				execution.standardOutput.size() });
 		}
+		// Only a repository has a history to read, and a repository with no commit
+		// at all makes `git log` fail; that failure is reported as "unavailable"
+		// rather than as an empty history.
+		if (execution.Succeeded() && result->state.repository) {
+			const auto history = RunGit(MakeHistoryRequest(root), shared->stop);
+			if (history.status == EGitExecutionStatus::Cancelled) return;
+			if (history.Succeeded()) {
+				result->historyRead = true;
+				result->history = ParseGitHistory({ reinterpret_cast<const char*>(history.standardOutput.data()),
+					history.standardOutput.size() });
+			}
+		}
 		PostResult(shared, std::move(result));
 	}
 }
@@ -401,13 +524,20 @@ struct CScmWorkbenchTool::Impl {
 	std::thread worker;
 	HWND window{};
 	HWND list{};
+	//! The VS Code-style overlay scrollbar shared with the Explorer view. The
+	//! list keeps its WS_VSCROLL scroll state; the overlay hides the platform bar
+	//! and draws the themed one over the same rows.
+	controls::COverlayScrollbar listScrollbar;
 	//! The commit message box. Upstream renders the SCM input directly under the
 	//! repository row and above the resource groups, and so does this.
 	HWND input{};
 	InputModel inputModel;
 	//! Rendered lines the box is currently sized for, already clamped to
 	//! `scm.inputMinLineCount` / `scm.inputMaxLineCount`.
-	int inputLineCount{ kScmInputMinLineCount };
+	int inputLineCount{ kScmInputMinLineCountDefault };
+	//! Effective `scm.inputMinLineCount` / `scm.inputMaxLineCount`.
+	int inputMinLineCount{ kScmInputMinLineCountDefault };
+	int inputMaxLineCount{ kScmInputMaxLineCountDefault };
 	//! One rendered line's height at the current font and DPI.
 	int inputLineHeight{};
 	//! Set while the tool itself writes the box, so the resulting `EN_CHANGE` is
@@ -424,6 +554,9 @@ struct CScmWorkbenchTool::Impl {
 	theme::CThemeFont font;
 	FileActivationCallback activateFile;
 	StatusBarCommandsCallback statusBarCommands;
+	FileDecorationsCallback fileDecorations;
+	//! The decorations of the last render, kept so a late consumer sees them too.
+	std::vector<GitResourceDecoration> publishedDecorations;
 	CommandCallback runCommand;
 	TextResolver text;
 	PublicationTextResolver publicationText;
@@ -453,6 +586,26 @@ struct CScmWorkbenchTool::Impl {
 	//! makes the visible Graph frame an explicit unsupported boundary, not a
 	//! partial Git-history implementation.
 	ScmGraphPresentation graphPresentation;
+	//! The Graph's own owner-drawn list and overlay scrollbar. It is a separate
+	//! control from the change list because the two are separate upstream Views
+	//! with separate scroll positions.
+	HWND graphList{};
+	controls::COverlayScrollbar graphScrollbar;
+	std::vector<GitHistoryItem> history;
+	//! `toISCMHistoryItemViewModelArray`'s output, one entry per `history` entry.
+	std::vector<ScmGraphRow> graphRows;
+	//! The Graph body's height in DIP, so a sash drag survives a DPI change. The
+	//! layout model clamps it against the Changes body's own minimum.
+	int graphBodyDip{ kGraphDefaultBodyHeightDip };
+	//! Upstream's collapsible panes. A collapsed section keeps its header.
+	bool repositoriesCollapsed{};
+	bool changesCollapsed{};
+	bool graphCollapsed{};
+	bool draggingSash{};
+	//! Where the drag started, and the height it started from, so the drag is
+	//! absolute against its own origin rather than accumulating rounding error.
+	int sashDragOriginY{};
+	int sashDragOriginDip{};
 	std::vector<BandSegment> bandSegments;
 	RECT bandCountRect{};
 	HWND tooltip{};
@@ -474,6 +627,14 @@ struct CScmWorkbenchTool::Impl {
 	//! `PublishAndRender()`, never read directly from `GitScmState` — the same
 	//! "derive, don't duplicate" rule `band` and `inputModel` already follow.
 	GitScmWelcomeModel welcomeModel;
+	//! `ISCMProvider.actionButton`: the Commit split button upstream renders
+	//! directly under the commit box. Nothing when the provider contributes none,
+	//! which is upstream's own "no button" state rather than a disabled one.
+	std::optional<GitActionButton> actionButton;
+	RECT actionButtonPrimaryRect{};
+	RECT actionButtonDropdownRect{};
+	//! 0 none, 1 the primary half, 2 the dropdown half.
+	int hoveredActionButtonPart{};
 	std::vector<WelcomeSegment> welcomeSegments;
 	RECT welcomeMessageRect{};
 	//! `welcomeSegments` index plus one, or zero when the pointer is over none.
@@ -498,6 +659,17 @@ struct CScmWorkbenchTool::Impl {
 	//! Apply the current Git state to the service, then re-render from what the
 	//! service holds. Publishing and rendering are one step so the list can never
 	//! show a generation the service has already replaced.
+	/*!
+		@brief Hands the last published badges to the decorations consumer.
+
+		The projection runs here rather than in the consumer so the URI-to-path
+		conversion stays beside the URIs that were published, and so a resource whose
+		URI has no native path is dropped once instead of by every consumer.
+	*/
+	void PublishFileDecorations() const {
+		if (!fileDecorations) return;
+		fileDecorations(BuildGitFileDecorationEntries(publishedDecorations));
+	}
 	void PublishAndRender() {
 		const auto selected = CaptureListSelection();
 		std::vector<ScmProviderState> providers;
@@ -537,8 +709,11 @@ struct CScmWorkbenchTool::Impl {
 		RebuildRows(providers, decorations, operands);
 		RebuildBand(providers);
 		RebuildInput(providers);
+		RebuildActionButton(providers);
 		Populate(selected);
 		PublishStatusBarCommands(providers);
+		publishedDecorations = std::move(decorations);
+		PublishFileDecorations();
 	}
 	[[nodiscard]] int BandHeight() const noexcept
 	{
@@ -555,11 +730,17 @@ struct CScmWorkbenchTool::Impl {
 	{
 		return graphPresentation.ShouldRenderFrameForProvider(band.visible);
 	}
+	//! The body the user last dragged the sash to, scaled for the current DPI and
+	//! never smaller than one usable row.
+	[[nodiscard]] int GraphBodyHeight() const noexcept
+	{
+		return icons::ScaleDip(std::max(kGraphMinimumBodyHeightDip, graphBodyDip), dpi);
+	}
 	//! The box's own height, auto-grown between upstream's two line-count bounds.
 	[[nodiscard]] int InputHeight() const noexcept
 	{
 		if (!inputModel.visible) return 0;
-		const int lines = std::clamp(inputLineCount, kScmInputMinLineCount, kScmInputMaxLineCount);
+		const int lines = std::clamp(inputLineCount, inputMinLineCount, inputMaxLineCount);
 		return lines * std::max(1, inputLineHeight) + 2 * icons::ScaleDip(kInputPaddingDip, dpi);
 	}
 	[[nodiscard]] ScmViewStackLayout ViewStack() const
@@ -573,10 +754,17 @@ struct CScmWorkbenchTool::Impl {
 			.repositoryRowHeight = BandHeight(),
 			.inputOuterMargin = icons::ScaleDip(kInputOuterMarginDip, dpi),
 			.inputHeight = InputHeight(),
-			.graphBodyHeight = icons::ScaleDip(kGraphPlaceholderHeightDip, dpi),
+			.actionButtonHeight = ActionButtonHeight(),
+			.graphBodyHeight = GraphBodyHeight(),
+			.sashHeight = icons::ScaleDip(kSashHeightDip, dpi),
+			.minimumBodyHeight = icons::ScaleDip(kChangesMinimumBodyHeightDip, dpi),
 			.repositoriesVisible = band.visible,
+			.repositoriesCollapsed = repositoriesCollapsed,
+			.changesCollapsed = changesCollapsed,
+			.graphCollapsed = graphCollapsed,
 			.changesHeaderVisible = ChangesHeaderVisible(),
 			.inputVisible = inputModel.visible,
+			.actionButtonVisible = actionButton.has_value(),
 			.graphVisible = GraphFrameVisible(),
 		});
 	}
@@ -652,10 +840,11 @@ struct CScmWorkbenchTool::Impl {
 		// A wrapping multiline edit counts wrapped lines here, which is the same
 		// content height upstream's word-wrapped editor reports.
 		const auto lines = static_cast<int>(::SendMessageW(input, EM_GETLINECOUNT, 0, 0));
-		const int clamped = std::clamp(std::max(1, lines), kScmInputMinLineCount, kScmInputMaxLineCount);
+		const int clamped = std::clamp(std::max(1, lines), inputMinLineCount, inputMaxLineCount);
 		if (clamped == inputLineCount) return;
 		inputLineCount = clamped;
 		LayoutInput();
+		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
 		if (window) ::InvalidateRect(window, nullptr, TRUE);
@@ -724,9 +913,206 @@ struct CScmWorkbenchTool::Impl {
 			UpdateInputHeight();
 		}
 		LayoutInput();
+		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
 		if (window) ::InvalidateRect(window, nullptr, TRUE);
+	}
+	//! The button's own box, which is `.monaco-text-button` exactly as the
+	//! ViewWelcome buttons are, so the two cannot disagree about its height.
+	[[nodiscard]] int ActionButtonHeight() const noexcept
+	{
+		return actionButton ? views::WelcomeButtonHeight(dpi) : 0;
+	}
+	//! Full width between the same insets the commit box uses, because upstream's
+	//! button is a block element inside the same `.scm-editor` container.
+	[[nodiscard]] RECT ActionButtonBounds() const
+	{
+		RECT client{};
+		if (window) ::GetClientRect(window, &client);
+		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
+		const auto layout = ViewStack();
+		const LONG left = client.left + inset;
+		return RECT{ left, layout.actionButton.top, std::max(left, client.right - inset),
+			layout.actionButton.bottom };
+	}
+	//! Split the box into upstream's two halves once, so a hit test never depends
+	//! on a paint having happened.
+	void LayoutActionButton()
+	{
+		actionButtonPrimaryRect = RECT{};
+		actionButtonDropdownRect = RECT{};
+		if (!window || !actionButton) return;
+		const RECT bounds = ActionButtonBounds();
+		if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+		// With no secondary command there is no dropdown half at all, exactly as
+		// upstream renders a plain `Button` instead of a `ButtonWithDropdown`.
+		const LONG dropdown = actionButton->secondaryCommands.empty()
+			? 0 : icons::ScaleDip(kActionButtonDropdownDip, dpi);
+		const LONG split = std::max(bounds.left, bounds.right - dropdown);
+		actionButtonPrimaryRect = RECT{ bounds.left, bounds.top, split, bounds.bottom };
+		if (dropdown > 0) {
+			actionButtonDropdownRect = RECT{ split, bounds.top, bounds.right, bounds.bottom };
+		}
+	}
+	//! Recompute the button from the same published providers the commit box and
+	//! the repository row read, so the three can never describe different state.
+	void RebuildActionButton(const std::vector<ScmProviderState>& providers)
+	{
+		const auto previous = actionButton;
+		std::optional<GitActionButton> next;
+		if (!providers.empty()) {
+			std::size_t resources = 0;
+			for (const auto& group : providers.front().groups) resources += group.resources.size();
+			next = BuildGitCommitActionButton(resources != 0, inputModel.enabled);
+			LocalizeActionButton(next);
+		}
+		if (next == previous) return;
+		actionButton = std::move(next);
+		hoveredActionButtonPart = 0;
+		LayoutActionButton();
+		// The button occupies its own band in the View stack, so appearing or
+		// disappearing moves the list and the welcome content with it.
+		LayoutList();
+		LayoutWelcome();
+		if (window) ::InvalidateRect(window, nullptr, TRUE);
+	}
+	//! Replace the model's upstream English with the running language's own
+	//! strings. The model stays the authority on which rows exist and in what
+	//! order; only the rendered titles are resolved here, exactly as the resource
+	//! context menu does it.
+	void LocalizeActionButton(std::optional<GitActionButton>& button) const
+	{
+		if (!button || !text) return;
+		const auto resolve = [this](EScmTextKey key, std::wstring& title) {
+			if (std::wstring localized = text(key, {}); !localized.empty()) title = std::move(localized);
+		};
+		// The icon prefix is `renderLabelWithIcons` syntax, not text: it survives
+		// translation and only the label after it is replaced.
+		std::wstring label = L"Commit";
+		resolve(EScmTextKey::GitCommitAction, label);
+		button->title = L"$(check) " + label;
+		for (auto& item : button->secondaryCommands) {
+			if (item.commandId == "git.commit") resolve(EScmTextKey::GitCommitAction, item.title);
+			else if (item.commandId == "git.commitAmend") resolve(EScmTextKey::GitCommitAmendAction, item.title);
+		}
+	}
+	void PaintActionButton(HDC dc)
+	{
+		if (!actionButton) return;
+		if (actionButtonPrimaryRect.right <= actionButtonPrimaryRect.left) return;
+		const int radius = views::WelcomeButtonCornerRadius(dpi);
+		const int iconSide = icons::ScaleDip(kRepositoryIconDip, dpi);
+		const RECT bounds{ actionButtonPrimaryRect.left, actionButtonPrimaryRect.top,
+			actionButtonDropdownRect.right > actionButtonDropdownRect.left
+				? actionButtonDropdownRect.right : actionButtonPrimaryRect.right,
+			actionButtonPrimaryRect.bottom };
+		// A disabled button keeps upstream's own dimmed look by staying on the base
+		// background and dropping to the description colour; it is never hidden,
+		// because upstream still shows what the command would be.
+		const bool enabled = actionButton->enabled;
+		const COLORREF background =
+			(enabled && hoveredActionButtonPart != 0 ? palette.buttonHoverBackground
+				: palette.buttonBackground).ToColorRef();
+		const HBRUSH brush = ::CreateSolidBrush(background);
+		const HPEN border = ::CreatePen(PS_SOLID, 1, background);
+		if (brush != nullptr && border != nullptr) {
+			const HGDIOBJ previousBrush = ::SelectObject(dc, brush);
+			const HGDIOBJ previousPen = ::SelectObject(dc, border);
+			::RoundRect(dc, bounds.left, bounds.top, bounds.right, bounds.bottom, radius, radius);
+			::SelectObject(dc, previousPen);
+			::SelectObject(dc, previousBrush);
+		}
+		if (border != nullptr) ::DeleteObject(border);
+		if (brush != nullptr) ::DeleteObject(brush);
+
+		const COLORREF foreground =
+			(enabled ? palette.buttonForeground : palette.descriptionText).ToColorRef();
+		auto runs = ParseRuns(actionButton->title);
+		const int width = icons::MeasureLabelRuns(dc, runs, iconSide);
+		const LONG centre = (actionButtonPrimaryRect.left + actionButtonPrimaryRect.right) / 2;
+		RECT label{ std::max(actionButtonPrimaryRect.left, centre - width / 2), actionButtonPrimaryRect.top,
+			actionButtonPrimaryRect.right, actionButtonPrimaryRect.bottom };
+		::SetTextColor(dc, foreground);
+		icons::DrawLabelRuns(dc, runs, label, iconSide, foreground, GlyphFonts());
+		if (actionButtonDropdownRect.right <= actionButtonDropdownRect.left) return;
+		// `.monaco-button-dropdown-separator`: a hairline in the button's own
+		// foreground, inset from both ends.
+		const LONG inset = icons::ScaleDip(4, dpi);
+		const HPEN separator = ::CreatePen(PS_SOLID, 1, foreground);
+		if (separator != nullptr) {
+			const HGDIOBJ previousPen = ::SelectObject(dc, separator);
+			::MoveToEx(dc, actionButtonDropdownRect.left, actionButtonDropdownRect.top + inset, nullptr);
+			::LineTo(dc, actionButtonDropdownRect.left, actionButtonDropdownRect.bottom - inset);
+			::SelectObject(dc, previousPen);
+			::DeleteObject(separator);
+		}
+		auto chevron = ParseRuns(L"$(chevron-down)");
+		const int chevronWidth = icons::MeasureLabelRuns(dc, chevron, iconSide);
+		const LONG chevronCentre = (actionButtonDropdownRect.left + actionButtonDropdownRect.right) / 2;
+		RECT chevronRect{ std::max(actionButtonDropdownRect.left, chevronCentre - chevronWidth / 2),
+			actionButtonDropdownRect.top, actionButtonDropdownRect.right, actionButtonDropdownRect.bottom };
+		icons::DrawLabelRuns(dc, chevron, chevronRect, iconSide, foreground, GlyphFonts());
+	}
+	[[nodiscard]] int ActionButtonPartAt(POINT point) const
+	{
+		if (!actionButton) return 0;
+		if (::PtInRect(&actionButtonPrimaryRect, point)) return 1;
+		if (::PtInRect(&actionButtonDropdownRect, point)) return 2;
+		return 0;
+	}
+	void SetHoveredActionButtonPart(int part)
+	{
+		if (hoveredActionButtonPart == part) return;
+		hoveredActionButtonPart = part;
+		if (!window) return;
+		RECT bounds = ActionButtonBounds();
+		::InvalidateRect(window, &bounds, TRUE);
+	}
+	//! The dropdown half's menu: upstream's `secondaryCommands`, run through the
+	//! same command route the primary half uses.
+	void ShowActionButtonMenu()
+	{
+		if (!window || !actionButton || actionButton->secondaryCommands.empty()) return;
+		// A copy, because `TrackPopupMenu` pumps messages and a refresh landing
+		// while the menu is open can replace the button under it.
+		const auto items = actionButton->secondaryCommands;
+		const HMENU menu = ::CreatePopupMenu();
+		if (menu == nullptr) return;
+		for (std::size_t position = 0; position < items.size(); ++position) {
+			if (items[position].separator) {
+				::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+				continue;
+			}
+			::AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(position + 1),
+				items[position].title.c_str());
+		}
+		// Upstream drops the menu from the button's lower edge, right-aligned with
+		// the dropdown half it belongs to.
+		POINT anchor{ actionButtonDropdownRect.right, actionButtonDropdownRect.bottom };
+		::ClientToScreen(window, &anchor);
+		::SetForegroundWindow(window);
+		const auto chosen = ::TrackPopupMenu(menu,
+			TPM_RETURNCMD | TPM_NONOTIFY | TPM_RIGHTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON,
+			anchor.x, anchor.y, 0, window, nullptr);
+		::DestroyMenu(menu);
+		::PostMessageW(window, WM_NULL, 0, 0);
+		if (chosen <= 0 || static_cast<std::size_t>(chosen) > items.size()) return;
+		const auto& item = items[static_cast<std::size_t>(chosen) - 1];
+		if (item.commandId.empty() || !runCommand) return;
+		(void)runCommand(item.commandId, {});
+	}
+	bool InvokeActionButtonAt(POINT point)
+	{
+		const int part = ActionButtonPartAt(point);
+		if (part == 0) return false;
+		// A disabled button consumes the click without running anything, which is
+		// what upstream's disabled button does too.
+		if (!actionButton->enabled) return true;
+		if (part == 2) { ShowActionButtonMenu(); return true; }
+		if (actionButton->commandId.empty() || !runCommand) return true;
+		(void)runCommand(actionButton->commandId, {});
+		return true;
 	}
 	//! The box's themed border. The control itself has no `WS_BORDER`, because a
 	//! non-client frame is drawn in system colors and would ignore the theme.
@@ -748,8 +1134,53 @@ struct CScmWorkbenchTool::Impl {
 	{
 		if (!window || !list) return;
 		const RECT bounds = ViewBounds(ViewStack().changesBody);
-		::MoveWindow(list, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
-			std::max(0L, bounds.bottom - bounds.top), TRUE);
+		// A collapsed section owns no body at all, so the control is hidden rather
+		// than moved to a zero-height rectangle it would still paint a border into.
+		const bool visible = !changesCollapsed && bounds.bottom > bounds.top
+			&& welcomeModel.content == EGitScmWelcomeContent::None;
+		::ShowWindow(list, visible ? SW_SHOW : SW_HIDE);
+		if (visible) {
+			::MoveWindow(list, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
+				std::max(0L, bounds.bottom - bounds.top), TRUE);
+		}
+		UpdateListScrollbar();
+		LayoutGraphList();
+	}
+	void LayoutGraphList()
+	{
+		if (!window || !graphList) return;
+		const RECT bounds = GraphBodyBounds();
+		const bool visible = GraphFrameVisible() && !graphCollapsed
+			&& graphPresentation.status == EScmGraphPresentationStatus::Available
+			&& bounds.bottom > bounds.top;
+		::ShowWindow(graphList, visible ? SW_SHOW : SW_HIDE);
+		if (visible) {
+			::MoveWindow(graphList, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
+				std::max(0L, bounds.bottom - bounds.top), TRUE);
+		}
+		UpdateGraphScrollbar();
+	}
+	void UpdateGraphScrollbar()
+	{
+		graphScrollbar.SetDpi(dpi);
+		graphScrollbar.SetColors(controls::OverlayScrollbarColors{
+			palette.sideBar.ToColorRef(),
+			palette.raised.ToColorRef(),
+			palette.border.ToColorRef(),
+			palette.secondaryText.ToColorRef() });
+		graphScrollbar.Update();
+	}
+	//! Feeds the overlay the current DPI and the Side Bar tokens the Explorer maps
+	//! its own overlay from, then lets it reposition itself over the list.
+	void UpdateListScrollbar()
+	{
+		listScrollbar.SetDpi(dpi);
+		listScrollbar.SetColors(controls::OverlayScrollbarColors{
+			palette.sideBar.ToColorRef(),
+			palette.raised.ToColorRef(),
+			palette.border.ToColorRef(),
+			palette.secondaryText.ToColorRef() });
+		listScrollbar.Update();
 	}
 	//! Upstream's `RepositoryRenderer.renderElement`, reading the same fields.
 	void RebuildBand(const std::vector<ScmProviderState>& providers)
@@ -784,6 +1215,7 @@ struct CScmWorkbenchTool::Impl {
 		// The provider changes both sibling View headers and may reserve/release the
 		// Graph frame.  Reposition every dependent child as one atomic layout pass.
 		LayoutInput();
+		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
 		if (window) ::InvalidateRect(window, nullptr, TRUE);
@@ -911,10 +1343,21 @@ struct CScmWorkbenchTool::Impl {
 		}
 		return std::wstring(fallback);
 	}
-	void PaintViewHeader(HDC dc, RECT bounds, EScmTextKey key, std::wstring_view fallback)
+	//! Upstream's pane header: a twistie, then the title. The chevron is the same
+	//! pair the resource-group headers already use, so one gesture reads the same
+	//! way everywhere in this view.
+	void PaintViewHeader(HDC dc, RECT bounds, EScmTextKey key, std::wstring_view fallback,
+		bool collapsed)
 	{
 		if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
-		bounds.left += icons::ScaleDip(kRowInsetDip, dpi);
+		const int headerInset = icons::ScaleDip(kRowInsetDip, dpi);
+		const int twistieSide = icons::ScaleDip(16, dpi);
+		const LONG twistieTop = bounds.top + (bounds.bottom - bounds.top - twistieSide) / 2;
+		const RECT twistie{ bounds.left + headerInset, twistieTop,
+			bounds.left + headerInset + twistieSide, twistieTop + twistieSide };
+		DrawScmIcon(dc, collapsed ? L"chevron-right" : L"chevron-down", twistie,
+			palette.secondaryText.ToColorRef());
+		bounds.left = twistie.right + icons::ScaleDip(4, dpi);
 		if (bounds.right <= bounds.left) return;
 		const std::wstring title = ResolveViewTitle(key, fallback);
 		::SetTextColor(dc, palette.primaryText.ToColorRef());
@@ -924,21 +1367,16 @@ struct CScmWorkbenchTool::Impl {
 	void PaintGraph(HDC dc)
 	{
 		if (!GraphFrameVisible()) return;
-		PaintViewHeader(dc, GraphHeaderBounds(), EScmTextKey::GraphTitle, L"Graph");
+		PaintViewHeader(dc, GraphHeaderBounds(), EScmTextKey::GraphTitle, L"Graph", graphCollapsed);
+		if (graphCollapsed) return;
 		RECT body = GraphBodyBounds();
 		if (body.right <= body.left || body.bottom <= body.top) return;
-		const HBRUSH border = ::CreateSolidBrush(palette.border.ToColorRef());
-		if (border != nullptr) {
-			::FrameRect(dc, &body, border);
-			::DeleteObject(border);
-		}
-
-		std::wstring message;
-		switch (graphPresentation.status) {
-		case EScmGraphPresentationStatus::Unsupported:
-			message = ResolveViewTitle(EScmTextKey::GraphUnavailable, L"Graph view is not available yet.");
-			break;
-		}
+		// With a history to show the body belongs to the graph list, which paints
+		// its own rows; a frame here would give this section a border the change
+		// list above it does not have.
+		if (graphPresentation.status == EScmGraphPresentationStatus::Available) return;
+		const std::wstring message =
+			ResolveViewTitle(EScmTextKey::GraphUnavailable, L"Graph view is not available yet.");
 		if (message.empty()) return;
 		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
 		::InflateRect(&body, -inset, -1);
@@ -946,6 +1384,259 @@ struct CScmWorkbenchTool::Impl {
 		::SetTextColor(dc, palette.descriptionText.ToColorRef());
 		::DrawTextW(dc, message.c_str(), static_cast<int>(message.size()), &body,
 			DT_CENTER | DT_VCENTER | DT_WORDBREAK | DT_NOPREFIX);
+	}
+	//! Take the worker's history page and rebuild the swimlane model from it. The
+	//! rows are derived here and nowhere else, so what the list draws and what the
+	//! model computed cannot drift.
+	void ApplyHistory(std::vector<GitHistoryItem> items, bool read)
+	{
+		if (!read) {
+			if (history.empty() && graphPresentation.status == EScmGraphPresentationStatus::Unavailable) return;
+			history.clear();
+			graphRows.clear();
+			graphPresentation.status = EScmGraphPresentationStatus::Unavailable;
+		} else {
+			if (items == history && graphPresentation.status == EScmGraphPresentationStatus::Available) return;
+			history = std::move(items);
+			graphRows = BuildScmHistoryGraph(history);
+			graphPresentation.status = EScmGraphPresentationStatus::Available;
+		}
+		PopulateGraph();
+		LayoutGraphList();
+		if (window) ::InvalidateRect(window, nullptr, TRUE);
+	}
+	void PopulateGraph()
+	{
+		if (!graphList) return;
+		::SendMessageW(graphList, WM_SETREDRAW, FALSE, 0);
+		::SendMessageW(graphList, LB_RESETCONTENT, 0, 0);
+		for (const auto& item : history) {
+			::SendMessageW(graphList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.subject.c_str()));
+		}
+		::SendMessageW(graphList, LB_SETITEMHEIGHT, 0, icons::ScaleDip(kGraphRowHeightDip, dpi));
+		::SendMessageW(graphList, WM_SETREDRAW, TRUE, 0);
+		// The same stale-row rule the change list follows: complete the child
+		// redraw at the transition that replaced its items.
+		::RedrawWindow(graphList, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+		UpdateGraphScrollbar();
+	}
+	//! `%at` is seconds since the epoch, rendered here in local time.
+	[[nodiscard]] static std::wstring FormatHistoryDate(std::int64_t timestamp)
+	{
+		if (timestamp <= 0) return {};
+		const auto value = static_cast<__time64_t>(timestamp);
+		tm parts{};
+		if (::_localtime64_s(&parts, &value) != 0) return {};
+		wchar_t buffer[32]{};
+		const int written = ::swprintf(buffer, _countof(buffer), L"%04d/%02d/%02d",
+			parts.tm_year + 1900, parts.tm_mon + 1, parts.tm_mday);
+		if (written <= 0) return {};
+		return std::wstring(buffer, static_cast<std::size_t>(written));
+	}
+	[[nodiscard]] static COLORREF LaneColor(std::size_t index) noexcept
+	{
+		return kGraphLaneColors[index % kScmGraphColorCount];
+	}
+	//! One history row: the swimlanes, this commit's circle, its ref badges, its
+	//! subject, and a right-aligned author and date.
+	void PaintGraphRow(HDC dc, int index, const RECT& bounds, UINT itemState)
+	{
+		if (index < 0 || static_cast<std::size_t>(index) >= history.size()) return;
+		if (static_cast<std::size_t>(index) >= graphRows.size()) return;
+		const auto& item = history[static_cast<std::size_t>(index)];
+		const auto& row = graphRows[static_cast<std::size_t>(index)];
+		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
+		const bool focused = (::GetFocus() == graphList);
+		const bool selected = (itemState & ODS_SELECTED) != 0;
+		COLORREF background = palette.sideBar.ToColorRef();
+		if (selected) background = (focused ? palette.accent : palette.raised).ToColorRef();
+		const HBRUSH brush = ::CreateSolidBrush(background);
+		if (brush != nullptr) { ::FillRect(dc, &bounds, brush); ::DeleteObject(brush); }
+
+		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
+		const int lane = icons::ScaleDip(kGraphLaneWidthDip, dpi);
+		const int radius = icons::ScaleDip(kGraphCircleRadiusDip, dpi);
+		const LONG middle = (bounds.top + bounds.bottom) / 2;
+		const auto laneX = [&](std::size_t position) {
+			return static_cast<LONG>(bounds.left + inset + lane / 2 + static_cast<LONG>(position) * lane);
+		};
+		// A lane entering this row is drawn to its middle and a lane leaving it
+		// from the middle down, so a lane that appears or disappears here draws
+		// only half a segment: that is what makes a branch look like it starts,
+		// and a merge look like it ends.
+		const auto stroke = [&](std::size_t position, std::size_t color, LONG top, LONG bottom) {
+			const HPEN pen = ::CreatePen(PS_SOLID, std::max(1, icons::ScaleDip(1, dpi)), LaneColor(color));
+			if (pen == nullptr) return;
+			const HGDIOBJ previousPen = ::SelectObject(dc, pen);
+			::MoveToEx(dc, laneX(position), top, nullptr);
+			::LineTo(dc, laneX(position), bottom);
+			::SelectObject(dc, previousPen);
+			::DeleteObject(pen);
+		};
+		for (std::size_t position = 0; position < row.inputSwimlanes.size(); ++position) {
+			stroke(position, row.inputSwimlanes[position].colorIndex, bounds.top, middle);
+		}
+		for (std::size_t position = 0; position < row.outputSwimlanes.size(); ++position) {
+			stroke(position, row.outputSwimlanes[position].colorIndex, middle, bounds.bottom);
+		}
+		const COLORREF circleColor = LaneColor(row.circleColorIndex);
+		const HBRUSH circle = ::CreateSolidBrush(circleColor);
+		const HPEN circlePen = ::CreatePen(PS_SOLID, 1, circleColor);
+		if (circle != nullptr && circlePen != nullptr) {
+			const HGDIOBJ previousBrush = ::SelectObject(dc, circle);
+			const HGDIOBJ previousPen = ::SelectObject(dc, circlePen);
+			const LONG x = laneX(row.circleLane);
+			::Ellipse(dc, x - radius, middle - radius, x + radius, middle + radius);
+			::SelectObject(dc, previousPen);
+			::SelectObject(dc, previousBrush);
+		}
+		if (circlePen != nullptr) ::DeleteObject(circlePen);
+		if (circle != nullptr) ::DeleteObject(circle);
+
+		const std::size_t lanes = std::max<std::size_t>(1,
+			std::max(row.inputSwimlanes.size(), row.outputSwimlanes.size()));
+		LONG cursor = laneX(lanes) + icons::ScaleDip(4, dpi);
+		const COLORREF textColor = selected && focused ? palette.highlightText.ToColorRef()
+			: palette.primaryText.ToColorRef();
+
+		// The author/date column is reserved before the subject is laid out, so a
+		// long subject is ellipsized rather than drawn through it.
+		std::wstring trailing = item.authorName;
+		if (const std::wstring date = FormatHistoryDate(item.authorTimestamp); !date.empty()) {
+			trailing = trailing.empty() ? date : trailing + L", " + date;
+		}
+		LONG subjectRight = bounds.right - inset;
+		if (!trailing.empty()) {
+			SIZE extent{};
+			(void)::GetTextExtentPoint32W(dc, trailing.c_str(), static_cast<int>(trailing.size()), &extent);
+			RECT trailingRect{ std::max<LONG>(cursor, bounds.right - inset - extent.cx), bounds.top,
+				bounds.right - inset, bounds.bottom };
+			::SetTextColor(dc, selected && focused ? palette.highlightText.ToColorRef()
+				: palette.descriptionText.ToColorRef());
+			::DrawTextW(dc, trailing.c_str(), static_cast<int>(trailing.size()), &trailingRect,
+				DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			subjectRight = trailingRect.left - icons::ScaleDip(6, dpi);
+		}
+
+		// Upstream badges each decoration beside the subject. The badge takes this
+		// commit's own lane colour, so a branch tip stays attached to its line.
+		for (const auto& ref : item.refs) {
+			if (ref.name.empty() || cursor >= subjectRight) break;
+			SIZE extent{};
+			(void)::GetTextExtentPoint32W(dc, ref.name.c_str(), static_cast<int>(ref.name.size()), &extent);
+			const LONG padding = icons::ScaleDip(4, dpi);
+			const LONG right = std::min<LONG>(subjectRight, cursor + extent.cx + 2 * padding);
+			RECT badge{ cursor, bounds.top + icons::ScaleDip(3, dpi), right,
+				bounds.bottom - icons::ScaleDip(3, dpi) };
+			if (badge.right <= badge.left) break;
+			const HBRUSH fill = ::CreateSolidBrush(circleColor);
+			const HPEN pen = ::CreatePen(PS_SOLID, 1, circleColor);
+			if (fill != nullptr && pen != nullptr) {
+				const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
+				const HGDIOBJ previousPen = ::SelectObject(dc, pen);
+				const int corner = views::WelcomeButtonCornerRadius(dpi);
+				::RoundRect(dc, badge.left, badge.top, badge.right, badge.bottom, corner, corner);
+				::SelectObject(dc, previousPen);
+				::SelectObject(dc, previousBrush);
+			}
+			if (pen != nullptr) ::DeleteObject(pen);
+			if (fill != nullptr) ::DeleteObject(fill);
+			RECT label{ badge.left + padding, bounds.top, badge.right, bounds.bottom };
+			::SetTextColor(dc, palette.buttonForeground.ToColorRef());
+			::DrawTextW(dc, ref.name.c_str(), static_cast<int>(ref.name.size()), &label,
+				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			cursor = right + icons::ScaleDip(4, dpi);
+		}
+
+		if (cursor < subjectRight) {
+			RECT subject{ cursor, bounds.top, subjectRight, bounds.bottom };
+			::SetTextColor(dc, textColor);
+			::DrawTextW(dc, item.subject.c_str(), static_cast<int>(item.subject.size()), &subject,
+				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+		}
+		::SetBkMode(dc, previousBackgroundMode);
+	}
+	//! Which section header the pointer is over: 1 Repositories, 2 Changes,
+	//! 3 Graph, 0 none. A header that is not rendered is never hit.
+	[[nodiscard]] int SectionHeaderAt(POINT point) const
+	{
+		if (band.visible) {
+			RECT bounds = RepositoriesHeaderBounds();
+			if (::PtInRect(&bounds, point)) return 1;
+		}
+		if (ChangesHeaderVisible()) {
+			RECT bounds = ChangesHeaderBounds();
+			if (::PtInRect(&bounds, point)) return 2;
+		}
+		if (GraphFrameVisible()) {
+			RECT bounds = GraphHeaderBounds();
+			if (::PtInRect(&bounds, point)) return 3;
+		}
+		return 0;
+	}
+	bool ToggleSectionAt(POINT point)
+	{
+		switch (SectionHeaderAt(point)) {
+		case 1: repositoriesCollapsed = !repositoriesCollapsed; break;
+		case 2: changesCollapsed = !changesCollapsed; break;
+		case 3: graphCollapsed = !graphCollapsed; break;
+		default: return false;
+		}
+		RelayoutStack();
+		return true;
+	}
+	//! Every band moved, so every band is laid out again. Collapsing one section
+	//! moves the input, the button, both lists, and the welcome content.
+	void RelayoutStack()
+	{
+		LayoutBand();
+		LayoutInput();
+		LayoutActionButton();
+		LayoutList();
+		LayoutWelcome();
+		if (window) ::InvalidateRect(window, nullptr, TRUE);
+	}
+	//! The Changes/Graph boundary's drag handle. It is an overlay band, exactly as
+	//! upstream's `.monaco-sash` is, so it consumes no layout space.
+	[[nodiscard]] RECT SashBounds() const
+	{
+		return ViewBounds(ViewStack().sash);
+	}
+	[[nodiscard]] bool PointInSash(POINT point) const
+	{
+		RECT bounds = SashBounds();
+		if (bounds.bottom <= bounds.top) return false;
+		return ::PtInRect(&bounds, point) != FALSE;
+	}
+	bool BeginSashDrag(POINT point)
+	{
+		if (!window || !PointInSash(point)) return false;
+		draggingSash = true;
+		sashDragOriginY = point.y;
+		sashDragOriginDip = std::max(kGraphMinimumBodyHeightDip, graphBodyDip);
+		::SetCapture(window);
+		return true;
+	}
+	void UpdateSashDrag(POINT point)
+	{
+		if (!draggingSash) return;
+		// Dragging upwards grows the Graph, because the boundary is its top edge.
+		// The delta is measured against the drag's own origin rather than the
+		// previous message, so repeated rounding cannot accumulate.
+		const int deltaPixels = sashDragOriginY - point.y;
+		const int scale = static_cast<int>(dpi == 0 ? 96 : dpi);
+		const int next = std::max(kGraphMinimumBodyHeightDip,
+			sashDragOriginDip + ::MulDiv(deltaPixels, 96, scale));
+		if (next == graphBodyDip) return;
+		graphBodyDip = next;
+		RelayoutStack();
+	}
+	void EndSashDrag()
+	{
+		if (!draggingSash) return;
+		draggingSash = false;
+		::ReleaseCapture();
 	}
 	[[nodiscard]] RECT WelcomeBounds() const
 	{
@@ -979,11 +1670,11 @@ struct CScmWorkbenchTool::Impl {
 		welcomeMessageRect = RECT{};
 		if (!window || welcomeModel.content == EGitScmWelcomeContent::None) return;
 		const RECT body = WelcomeBounds();
-		const int inset = icons::ScaleDip(kWelcomeInsetDip, dpi);
+		const int inset = views::WelcomeHorizontalInset(dpi);
 		const LONG availableWidth = std::max<LONG>(0, body.right - body.left - 2 * inset);
 		const LONG messageLeft = body.left + inset;
 		const LONG messageRight = body.right - inset;
-		const LONG buttonWidth = std::min<LONG>(availableWidth, icons::ScaleDip(kWelcomeColumnMaxDip, dpi));
+		const LONG buttonWidth = views::WelcomeButtonColumnWidth(static_cast<int>(availableWidth), dpi);
 		const LONG buttonLeft = messageLeft + (availableWidth - buttonWidth) / 2;
 		const LONG buttonRight = buttonLeft + buttonWidth;
 		const LONG top = body.top;
@@ -1004,27 +1695,19 @@ struct CScmWorkbenchTool::Impl {
 		}
 		const LONG messageHeight = messageRect.bottom - messageRect.top;
 
-		const int buttonPaddingY = icons::ScaleDip(kWelcomeButtonPaddingYDip, dpi);
+		// `.monaco-text-button` fixes its own font-size and line-height, so the
+		// box does not grow with the label's font.
+		const LONG buttonHeight = views::WelcomeButtonHeight(dpi);
 
-		struct MeasuredButton {
+		struct WelcomeButton {
 			std::wstring label;
 			std::string command;
 			std::string argumentsJson;
-			LONG width{};
-			LONG height{};
 		};
-		std::vector<MeasuredButton> buttons;
+		std::vector<WelcomeButton> buttons;
 		for (const auto& action : welcomeModel.actions) {
 			if (action.label.empty() || action.command.empty()) continue;
-			SIZE extent{};
-			(void)::GetTextExtentPoint32W(dc, action.label.c_str(), static_cast<int>(action.label.size()), &extent);
-			MeasuredButton button;
-			button.label = action.label;
-			button.command = action.command;
-			button.argumentsJson = action.argumentsJson;
-			button.width = buttonRight - buttonLeft;
-			button.height = extent.cy + 2 * buttonPaddingY;
-			buttons.push_back(std::move(button));
+			buttons.push_back(WelcomeButton{ action.label, action.command, action.argumentsJson });
 		}
 
 		LONG cursorTop = top + em;
@@ -1035,14 +1718,14 @@ struct CScmWorkbenchTool::Impl {
 			cursorTop = messageRect.bottom;
 		}
 		if (!buttons.empty()) cursorTop += em;
-		for (const auto& button : buttons) {
+		for (auto& button : buttons) {
 			WelcomeSegment segment;
-			segment.rect = RECT{ buttonLeft, cursorTop, buttonRight, cursorTop + button.height };
-			segment.label = button.label;
-			segment.command = button.command;
-			segment.argumentsJson = button.argumentsJson;
+			segment.rect = RECT{ buttonLeft, cursorTop, buttonRight, cursorTop + buttonHeight };
+			segment.label = std::move(button.label);
+			segment.command = std::move(button.command);
+			segment.argumentsJson = std::move(button.argumentsJson);
 			welcomeSegments.push_back(std::move(segment));
-			cursorTop += button.height + em;
+			cursorTop += buttonHeight + em;
 		}
 
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
@@ -1057,22 +1740,28 @@ struct CScmWorkbenchTool::Impl {
 			::DrawTextW(dc, welcomeModel.message.c_str(), static_cast<int>(welcomeModel.message.size()),
 			&message, DT_LEFT | DT_WORDBREAK | DT_NOPREFIX);
 		}
-		const int radius = icons::ScaleDip(kWelcomeButtonCornerRadiusDip, dpi);
+		const int radius = views::WelcomeButtonCornerRadius(dpi);
 		for (std::size_t index = 0; index < welcomeSegments.size(); ++index) {
 			const auto& segment = welcomeSegments[index];
 			if (segment.rect.right <= segment.rect.left) continue;
 			const bool hovered = hoveredWelcomeSegment == index + 1;
-			const HBRUSH brush = ::CreateSolidBrush(
-				(hovered ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef());
-			if (brush != nullptr) {
+			const COLORREF background =
+				(hovered ? palette.buttonHoverBackground : palette.buttonBackground).ToColorRef();
+			const HBRUSH brush = ::CreateSolidBrush(background);
+			// `background-color` fills the whole border box. A NULL_PEN RoundRect
+			// would stop one pixel short of the laid-out rectangle, which is enough
+			// to make this button a different size from the Explorer's.
+			const HPEN border = ::CreatePen(PS_SOLID, 1, background);
+			if (brush != nullptr && border != nullptr) {
 				const HGDIOBJ previousBrush = ::SelectObject(dc, brush);
-				const HGDIOBJ previousPen = ::SelectObject(dc, ::GetStockObject(NULL_PEN));
+				const HGDIOBJ previousPen = ::SelectObject(dc, border);
 				::RoundRect(dc, segment.rect.left, segment.rect.top, segment.rect.right, segment.rect.bottom,
 					radius, radius);
 				::SelectObject(dc, previousPen);
 				::SelectObject(dc, previousBrush);
-				::DeleteObject(brush);
 			}
+			if (border != nullptr) ::DeleteObject(border);
+			if (brush != nullptr) ::DeleteObject(brush);
 			::SetTextColor(dc, palette.buttonForeground.ToColorRef());
 			RECT labelRect = segment.rect;
 			::DrawTextW(dc, segment.label.c_str(), static_cast<int>(segment.label.size()), &labelRect,
@@ -1142,7 +1831,7 @@ struct CScmWorkbenchTool::Impl {
 		} else {
 			iconRect.left += inset;
 			iconRect.right += inset;
-			DrawScmIcon(dc, L"file", iconRect, palette.secondaryText.ToColorRef());
+			DrawScmFileIcon(dc, row.label, iconRect, palette.secondaryText.ToColorRef());
 			RECT label{ iconRect.right + icons::ScaleDip(4, dpi), bounds.top,
 				bounds.right - inset - icons::ScaleDip(22, dpi), bounds.bottom };
 			::SetTextColor(dc, textColor);
@@ -1371,6 +2060,7 @@ struct CScmWorkbenchTool::Impl {
 		// Complete this child redraw at the same state transition that replaces its
 		// items so the screen and the model cannot temporarily disagree.
 		::RedrawWindow(list, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+		UpdateListScrollbar();
 		::InvalidateRect(window, nullptr, TRUE);
 	}
 	void ActivateRow(const ScmRow& row) {
@@ -1523,7 +2213,11 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 		::RemoveWindowSubclass(window, &CScmWorkbenchTool::ListSubclassProc, id);
 		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
-	if (impl != nullptr) {
+	// Both lists share this subclass. Row hover, group toggling, and the change
+	// list's own hit tests belong to the change list alone; the graph list only
+	// needs the focus and scroll handling below.
+	const bool isChangeList = impl != nullptr && window == impl->list;
+	if (isChangeList) {
 		if (message == WM_MOUSEMOVE) {
 			const auto hit = ::SendMessageW(window, LB_ITEMFROMPOINT, 0,
 				MAKELPARAM(static_cast<WORD>(GET_X_LPARAM(lParam)), static_cast<WORD>(GET_Y_LPARAM(lParam))));
@@ -1554,9 +2248,27 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 			impl->listPointerDownIndex = -1;
 		}
 	}
+	if (impl != nullptr && message == WM_MOUSEWHEEL) {
+		// The overlay scrollbar hides the platform bar, and a list box with no
+		// visible scroll bar drops WM_MOUSEWHEEL on the floor -- the wheel scrolls
+		// nothing even though WS_VSCROLL is set and the SCROLLINFO is authoritative.
+		// Scroll explicitly instead, exactly as the Explorer tree does.
+		ScrollListBoxByWheel(window, wParam);
+		if (window == impl->list) impl->UpdateListScrollbar();
+		else if (window == impl->graphList) impl->UpdateGraphScrollbar();
+		return 0;
+	}
 	const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
 	if (impl != nullptr && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
 		::InvalidateRect(window, nullptr, FALSE);
+	}
+	// Every path that can move or resize the list's own scroll state: the control
+	// updates its SCROLLINFO inside DefSubclassProc, so the overlay is refreshed
+	// after it rather than before.
+	if (impl != nullptr && (message == WM_VSCROLL || message == WM_MOUSEWHEEL
+		|| message == WM_KEYDOWN || message == WM_SIZE)) {
+		if (window == impl->list) impl->UpdateListScrollbar();
+		else if (window == impl->graphList) impl->UpdateGraphScrollbar();
 	}
 	return result;
 }
@@ -1579,6 +2291,27 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	if (!m_impl->list) { Close(); return false; }
 	(void)::SetWindowSubclass(m_impl->list, &CScmWorkbenchTool::ListSubclassProc, 1,
 		reinterpret_cast<DWORD_PTR>(m_impl.get()));
+	// The list keeps WS_VSCROLL so its SCROLLINFO stays authoritative; the overlay
+	// hides the platform bar and draws the same themed one the Explorer draws.
+	Impl* const impl = m_impl.get();
+	(void)m_impl->listScrollbar.Create(m_impl->window, m_impl->list, [impl](int topRow) {
+		if (impl->list != nullptr) (void)::SendMessageW(impl->list, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
+	});
+	// The Graph is a second owner-drawn list rather than a hand-scrolled canvas,
+	// so it inherits the same keyboard, wheel, and overlay-scrollbar behaviour the
+	// change list already has.
+	m_impl->graphList = ::CreateWindowExW(0, L"LISTBOX", L"",
+		WS_CHILD | WS_VSCROLL | LBS_NOINTEGRALHEIGHT | LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+		0, 0, 0, 0, m_impl->window,
+		reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kGraphControlId)), instance, nullptr);
+	if (!m_impl->graphList) { Close(); return false; }
+	(void)::SetWindowSubclass(m_impl->graphList, &CScmWorkbenchTool::ListSubclassProc,
+		static_cast<UINT_PTR>(kGraphControlId), reinterpret_cast<DWORD_PTR>(m_impl.get()));
+	(void)m_impl->graphScrollbar.Create(m_impl->window, m_impl->graphList, [impl](int topRow) {
+		if (impl->graphList != nullptr) {
+			(void)::SendMessageW(impl->graphList, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
+		}
+	});
 	// Multiline and wrapping, because upstream's SCM input is a real multi-line
 	// editor: a commit body is not one line. `ES_WANTRETURN` keeps Enter
 	// inserting a newline, which is what leaves Ctrl+Enter free to mean commit.
@@ -1608,6 +2341,9 @@ void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 	m_impl->dpi = dpi == 0 ? 96 : dpi;
 	if (m_impl->font.Dpi() != m_impl->dpi) (void)m_impl->font.Recreate(theme::ThemeFontKind::Chrome, m_impl->dpi);
 	::SendMessageW(m_impl->list, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
+	if (m_impl->graphList) {
+		::SendMessageW(m_impl->graphList, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
+	}
 	if (m_impl->input) {
 		::SendMessageW(m_impl->input, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
 	}
@@ -1616,6 +2352,7 @@ void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 	// The box is laid out before the Changes list; the list's body begins below
 	// the current input height and ends above the reserved Graph frame.
 	m_impl->LayoutInput();
+	m_impl->LayoutActionButton();
 	m_impl->LayoutList();
 	m_impl->LayoutWelcome();
 }
@@ -1681,9 +2418,14 @@ void CScmWorkbenchTool::Close()
 	m_impl->tooltipToolCount = 0;
 	if (m_impl->tooltip && ::IsWindow(m_impl->tooltip)) ::DestroyWindow(m_impl->tooltip);
 	m_impl->tooltip = nullptr;
+	m_impl->listScrollbar.Destroy();
+	m_impl->graphScrollbar.Destroy();
+	m_impl->history.clear();
+	m_impl->graphRows.clear();
 	if (m_impl->window && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->list = nullptr;
+	m_impl->graphList = nullptr;
 	m_impl->input = nullptr;
 	if (m_impl->shared->stop) { ::CloseHandle(m_impl->shared->stop); m_impl->shared->stop = nullptr; }
 	if (m_impl->shared->wake) { ::CloseHandle(m_impl->shared->wake); m_impl->shared->wake = nullptr; }
@@ -1710,13 +2452,44 @@ void CScmWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
 	m_impl->palette = palette;
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
 	if (m_impl->list) ::InvalidateRect(m_impl->list, nullptr, TRUE);
+	if (m_impl->graphList) ::InvalidateRect(m_impl->graphList, nullptr, TRUE);
+	m_impl->UpdateListScrollbar();
+	m_impl->UpdateGraphScrollbar();
 	// The box paints its own background through `WM_CTLCOLOREDIT`, so it needs
 	// its own invalidation: the parent's does not reach a child's client area.
 	if (m_impl->input) ::InvalidateRect(m_impl->input, nullptr, TRUE);
 }
+void CScmWorkbenchTool::SetInputLineCountRange(int minLineCount, int maxLineCount)
+{
+	const int lower = std::clamp(minLineCount, kScmInputLineCountLowerBound, kScmInputLineCountUpperBound);
+	// Upstream bounds each key independently and does not reject the pair, so a
+	// maximum below the minimum resolves to the minimum instead of failing.
+	const int upper = std::max(lower,
+		std::clamp(maxLineCount, kScmInputLineCountLowerBound, kScmInputLineCountUpperBound));
+	if (lower == m_impl->inputMinLineCount && upper == m_impl->inputMaxLineCount) return;
+	m_impl->inputMinLineCount = lower;
+	m_impl->inputMaxLineCount = upper;
+	m_impl->inputLineCount = std::clamp(m_impl->inputLineCount, lower, upper);
+	// The box may already be laid out at the previous minimum, so re-measure from
+	// the control's own line count rather than trusting the cached value.
+	m_impl->UpdateInputHeight();
+	m_impl->LayoutInput();
+	m_impl->LayoutActionButton();
+	m_impl->LayoutList();
+	m_impl->LayoutWelcome();
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+}
 void CScmWorkbenchTool::SetFileActivationCallback(FileActivationCallback callback) { m_impl->activateFile = std::move(callback); }
 void CScmWorkbenchTool::SetStatusBarCommandsCallback(StatusBarCommandsCallback callback) { m_impl->statusBarCommands = std::move(callback); }
 void CScmWorkbenchTool::SetCommandCallback(CommandCallback callback) { m_impl->runCommand = std::move(callback); }
+void CScmWorkbenchTool::SetFileDecorationsCallback(FileDecorationsCallback callback)
+{
+	m_impl->fileDecorations = std::move(callback);
+	// A consumer that arrives after the first refresh must not wait for the next
+	// one to see a decorated tree, so it is handed what has already been published.
+	if (m_impl->fileDecorations) m_impl->PublishFileDecorations();
+}
+void CScmWorkbenchTool::RepublishFileDecorations() { m_impl->PublishFileDecorations(); }
 void CScmWorkbenchTool::SetTextResolver(TextResolver resolver)
 {
 	m_impl->text = std::move(resolver);
@@ -1783,6 +2556,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	case WM_SIZE: {
 		impl.LayoutBand();
 		impl.LayoutInput();
+		impl.LayoutActionButton();
 		impl.LayoutList();
 		impl.LayoutWelcome();
 		return 0;
@@ -1798,30 +2572,58 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		::SetBkMode(dc, TRANSPARENT);
 		if (impl.band.visible) {
 			impl.PaintViewHeader(dc, impl.RepositoriesHeaderBounds(),
-				EScmTextKey::RepositoriesTitle, L"Repositories");
+				EScmTextKey::RepositoriesTitle, L"Repositories", impl.repositoriesCollapsed);
 		}
 		impl.PaintBand(dc);
 		if (impl.ChangesHeaderVisible()) {
-			impl.PaintViewHeader(dc, impl.ChangesHeaderBounds(), EScmTextKey::ChangesTitle, L"Changes");
+			impl.PaintViewHeader(dc, impl.ChangesHeaderBounds(), EScmTextKey::ChangesTitle, L"Changes",
+				impl.changesCollapsed);
 		}
 		impl.PaintInputFrame(dc);
+		impl.PaintActionButton(dc);
 		impl.PaintWelcome(dc);
 		impl.PaintGraph(dc);
 		::EndPaint(window, &paint);
 		return 0;
 	}
+	case WM_LBUTTONDOWN: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (impl.BeginSashDrag(point)) return 0;
+		break;
+	}
 	case WM_LBUTTONUP: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (impl.draggingSash) { impl.EndSashDrag(); return 0; }
+		if (impl.ToggleSectionAt(point)) return 0;
 		if (impl.InvokeSegmentAt(point)) return 0;
+		if (impl.InvokeActionButtonAt(point)) return 0;
 		if (impl.InvokeWelcomeSegmentAt(point)) return 0;
 		break;
 	}
+	case WM_CAPTURECHANGED:
+		// Capture can be taken away, so the drag ends here as well as on the button
+		// up: a drag that believed it was still running would move the boundary on
+		// the next unrelated mouse move.
+		if (impl.draggingSash) { impl.draggingSash = false; }
+		return 0;
 	case WM_SETCURSOR: {
 		if (reinterpret_cast<HWND>(wParam) != window) break;
 		POINT point{};
 		if (!::GetCursorPos(&point) || !::ScreenToClient(window, &point)) break;
+		if (impl.draggingSash || impl.PointInSash(point)) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_SIZENS));
+			return TRUE;
+		}
+		if (impl.SectionHeaderAt(point) != 0) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
+			return TRUE;
+		}
 		const auto index = impl.SegmentIndexAt(point);
 		if (index != 0 && !impl.bandSegments[index - 1].command.empty()) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
+			return TRUE;
+		}
+		if (impl.ActionButtonPartAt(point) != 0) {
 			::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
 			return TRUE;
 		}
@@ -1833,10 +2635,12 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	}
 	case WM_MOUSEMOVE: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (impl.draggingSash) { impl.UpdateSashDrag(point); return 0; }
 		const auto index = impl.SegmentIndexAt(point);
 		// Only an action highlights: the name segment carries a title but runs
 		// nothing, and highlighting it would advertise a click that does nothing.
 		impl.SetHoveredSegment(index != 0 && impl.bandSegments[index - 1].kind == EBandSegment::Action ? index : 0);
+		impl.SetHoveredActionButtonPart(impl.ActionButtonPartAt(point));
 		impl.SetHoveredWelcomeSegment(impl.WelcomeSegmentIndexAt(point));
 		if (!impl.trackingMouse) {
 			TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 };
@@ -1847,6 +2651,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	case WM_MOUSELEAVE:
 		impl.trackingMouse = false;
 		impl.SetHoveredSegment(0);
+		impl.SetHoveredActionButtonPart(0);
 		impl.SetHoveredWelcomeSegment(0);
 		return 0;
 	case WM_NOTIFY: {
@@ -1880,6 +2685,11 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 			impl.PaintRow(draw->hDC, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
 			return TRUE;
 		}
+		if (draw != nullptr && draw->CtlID == kGraphControlId && draw->hwndItem == impl.graphList
+			&& draw->itemID != static_cast<UINT>(-1)) {
+			impl.PaintGraphRow(draw->hDC, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			return TRUE;
+		}
 		break;
 	}
 	case WM_CTLCOLOREDIT: {
@@ -1908,6 +2718,9 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 			impl.execution = result->execution;
 			impl.failureReason = std::move(result->failureReason);
 			impl.PublishAndRender();
+			// After the render, because the graph's own layout depends on the
+			// bands the change list and welcome content just settled into.
+			impl.ApplyHistory(std::move(result->history), result->historyRead);
 		}
 		return 0;
 	}

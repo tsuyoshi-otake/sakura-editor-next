@@ -16,8 +16,6 @@ namespace markdown {
 namespace {
 
 constexpr int kDefaultDpi = 96;
-constexpr int kMinimumEditorWidthDip = 160;
-constexpr int kMinimumPreviewWidthDip = 180;
 constexpr int kPreferredPreviewWidthDip = 540;
 
 [[nodiscard]] int ScaleDip(int dip, unsigned int dpi) noexcept
@@ -27,7 +25,20 @@ constexpr int kPreferredPreviewWidthDip = 540;
 	return static_cast<int>(std::min<std::int64_t>(scaled, std::numeric_limits<int>::max()));
 }
 
+[[nodiscard]] int DipFromScaled(int pixels, unsigned int dpi) noexcept
+{
+	const auto effectiveDpi = dpi == 0 ? kDefaultDpi : dpi;
+	const auto dip = (static_cast<std::int64_t>(pixels) * kDefaultDpi
+		+ static_cast<std::int64_t>(effectiveDpi) / 2) / effectiveDpi;
+	return static_cast<int>(std::min<std::int64_t>(dip, std::numeric_limits<int>::max()));
+}
+
 } // namespace
+
+int RequestedPreviewWidthDipFromPointer(int right, int pointerX, unsigned int dpi) noexcept
+{
+	return std::max(1, DipFromScaled(std::max(0, right - pointerX), dpi));
+}
 
 PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned int dpi, bool previewVisible) noexcept
 {
@@ -36,6 +47,12 @@ PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned i
 }
 
 PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned int dpi, PreviewPaneMode mode) noexcept
+{
+	return CalculateMarkdownPreviewLayout(left, right, dpi, mode, kPreviewDefaultWidthRequestDip);
+}
+
+PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned int dpi,
+	PreviewPaneMode mode, int requestedPreviewWidthDip) noexcept
 {
 	left = std::max(0, left);
 	right = std::max(left, right);
@@ -56,8 +73,16 @@ PreviewPaneLayout CalculateMarkdownPreviewLayout(int left, int right, unsigned i
 		const auto minimumPreview = ScaleDip(kMinimumPreviewWidthDip, dpi);
 		const auto preferredPreview = ScaleDip(kPreferredPreviewWidthDip, dpi);
 		if (contentWidth >= minimumEditor + minimumPreview) {
-			previewWidth = std::clamp(std::max(minimumPreview, contentWidth / 2),
+			// A dragged width is honored up to both minimums; only the untouched
+			// default is additionally capped at the preferred width, so the user
+			// can make the preview wider than the default but never wide enough
+			// to squeeze the editor below its minimum.
+			const auto defaultPreview = std::clamp(std::max(minimumPreview, contentWidth / 2),
 				minimumPreview, std::min(preferredPreview, contentWidth - minimumEditor));
+			previewWidth = requestedPreviewWidthDip <= kPreviewDefaultWidthRequestDip
+				? defaultPreview
+				: std::clamp(ScaleDip(requestedPreviewWidthDip, dpi),
+					minimumPreview, contentWidth - minimumEditor);
 		} else {
 			previewWidth = std::max(1, contentWidth / 2);
 		}

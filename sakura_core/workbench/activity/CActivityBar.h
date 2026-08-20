@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -13,6 +13,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -39,6 +40,9 @@ struct ActivityBarPalette {
 	//! VS Code `activityBar.border`: the Part edge against the Primary Side Bar
 	//! (or the editor when the Side Bar is hidden).
 	COLORREF border = RGB(0x45, 0x45, 0x45);
+	//! VS Code `activityBarBadge.background` / `activityBarBadge.foreground`.
+	COLORREF badgeBackground = RGB(0x00, 0x7A, 0xCC);
+	COLORREF badgeForeground = RGB(0xFF, 0xFF, 0xFF);
 	bool highContrast = false;
 
 	[[nodiscard]] static ActivityBarPalette Dark() noexcept;
@@ -83,6 +87,17 @@ public:
 	void SetEntries(std::vector<ActivityBarEntry> entries);
 	[[nodiscard]] const std::vector<ActivityBarEntry>& GetEntries() const noexcept { return m_model.Entries(); }
 
+	/*!
+		@brief Upstream `IActivityService.showViewContainerActivity` / its disposal.
+
+		`std::nullopt` -- and equally any count at or below zero, which upstream
+		hides rather than drawing as "0" -- removes the badge. The badge lives
+		beside the entry list rather than inside it because its producer has its
+		own lifetime: re-projecting the ViewContainers must not silently drop a
+		badge nobody asked to clear.
+	*/
+	void SetViewContainerBadge(std::string_view containerId, std::optional<int> count);
+
 	void SetSelectedItem(std::string_view containerId) noexcept;
 	void SetSelected(std::string_view containerId) noexcept { SetSelectedItem(containerId); }
 	void SetPressed(std::string_view containerId) noexcept;
@@ -126,6 +141,8 @@ private:
 	void UpdateClientLayout(unsigned int dpi) noexcept;
 	void UpdateTooltipRects() noexcept;
 	void EnsureIconFont() noexcept;
+	//! Draws a ViewContainer's activity indicator over its glyph.
+	void PaintBadge(HDC dc, const RECT& bounds, int number) noexcept;
 	void Paint() noexcept;
 	void Invalidate() const noexcept;
 	[[nodiscard]] bool InvokeRequest(std::string_view containerId) noexcept;

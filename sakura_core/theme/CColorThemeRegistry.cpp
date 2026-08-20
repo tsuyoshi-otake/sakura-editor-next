@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -509,6 +509,35 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		// resolved background rather than the compiled default, so the two colors can
 		// never come from different themes. Upstream registers exactly this derivation:
 		// `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
+		// The Activity Bar badge is a third distinct role alongside `accent` and the
+		// button roles; see the note on ThemePalette::activityBarBadgeBackground.
+		palette.activityBarBadgeBackground = first(palette.activityBarBadgeBackground,
+			{ L"activityBarBadge.background" });
+		palette.activityBarBadgeForeground = first(palette.activityBarBadgeForeground,
+			{ L"activityBarBadge.foreground" });
+		// The `gitDecoration.*` keys are contributed by the Git extension, so a theme
+		// that names one is overriding that extension's own default rather than a
+		// workbench role, and there is no second key to fall back to.
+		palette.gitAddedResourceForeground = first(palette.gitAddedResourceForeground,
+			{ L"gitDecoration.addedResourceForeground" });
+		palette.gitModifiedResourceForeground = first(palette.gitModifiedResourceForeground,
+			{ L"gitDecoration.modifiedResourceForeground" });
+		palette.gitDeletedResourceForeground = first(palette.gitDeletedResourceForeground,
+			{ L"gitDecoration.deletedResourceForeground" });
+		palette.gitRenamedResourceForeground = first(palette.gitRenamedResourceForeground,
+			{ L"gitDecoration.renamedResourceForeground" });
+		palette.gitStageModifiedResourceForeground = first(palette.gitStageModifiedResourceForeground,
+			{ L"gitDecoration.stageModifiedResourceForeground" });
+		palette.gitStageDeletedResourceForeground = first(palette.gitStageDeletedResourceForeground,
+			{ L"gitDecoration.stageDeletedResourceForeground" });
+		palette.gitUntrackedResourceForeground = first(palette.gitUntrackedResourceForeground,
+			{ L"gitDecoration.untrackedResourceForeground" });
+		palette.gitIgnoredResourceForeground = first(palette.gitIgnoredResourceForeground,
+			{ L"gitDecoration.ignoredResourceForeground" });
+		palette.gitConflictingResourceForeground = first(palette.gitConflictingResourceForeground,
+			{ L"gitDecoration.conflictingResourceForeground" });
+		palette.gitSubmoduleResourceForeground = first(palette.gitSubmoduleResourceForeground,
+			{ L"gitDecoration.submoduleResourceForeground" });
 		palette.buttonHoverBackground = firstOverWithFallback(palette.canvas,
 			AdjustLightness(palette.buttonBackground,
 				ModeForKind(kind) == ThemeMode::Dark ? 0.2 : -0.2),

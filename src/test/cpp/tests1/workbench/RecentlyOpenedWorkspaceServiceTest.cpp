@@ -209,23 +209,105 @@ TEST(RecentlyOpenedWorkspaceService, RemovesOnlyOnExplicitConfirmedNotFoundAndNo
 		{ ERecentlyOpenedWorkspaceKind::Folder, *nonFile.value, std::nullopt }).has_value());
 }
 
+TEST(RecentlyOpenedWorkspaceService, ClearEmptiesTheWholeHistoryAndRetriesOneConflictWithoutMerging)
+{
+	auto store = std::make_unique<ScriptedRecentStore>();
+	auto* script = store.get();
+	CRecentlyOpenedWorkspaceService service(std::move(store));
+	ASSERT_EQ(ERecentlyOpenedWorkspaceOutcome::Succeeded,
+		service.RecordSuccessfulOpen(RecentFolderEntry(L"c:\\one")).outcome);
+	ASSERT_EQ(ERecentlyOpenedWorkspaceOutcome::Succeeded,
+		service.RecordSuccessfulOpen(Workspace(L"c:\\two.code-workspace")).outcome);
+	ASSERT_EQ(2U, service.Snapshot().size());
+
+	// A conflict only moves the store revision forward.  Clearing stays the
+	// requested outcome, so the reloaded concurrent history is discarded rather
+	// than merged back in the way RecordSuccessfulOpen merges it.
+	script->load = { ERecentlyOpenedWorkspaceStoreLoadStatus::Succeeded,
+		R"({"version":1,"entries":[{"kind":"folder","uri":"file:///D:/concurrent"}]})", {} };
+	script->saves.push_back({ ERecentlyOpenedWorkspaceStoreSaveStatus::Conflict, "resnapshot required" });
+	script->saves.push_back({ ERecentlyOpenedWorkspaceStoreSaveStatus::Succeeded, {} });
+
+	EXPECT_EQ(ERecentlyOpenedWorkspaceOutcome::Succeeded, service.Clear().outcome);
+	EXPECT_TRUE(service.Snapshot().empty());
+	EXPECT_NE(std::string::npos, script->savedPayloads.back().find("\"entries\":[]"));
+	EXPECT_EQ(std::string::npos, script->savedPayloads.back().find("concurrent"));
+
+	// Clearing an already-empty history is a diagnosed success that writes
+	// nothing, and the user has already confirmed by the time Clear is reached.
+	const auto writes = script->savedPayloads.size();
+	const auto again = service.Clear();
+	EXPECT_EQ(ERecentlyOpenedWorkspaceOutcome::Succeeded, again.outcome);
+	EXPECT_FALSE(again.diagnostic.empty());
+	EXPECT_EQ(writes, script->savedPayloads.size());
+}
+
+TEST(RecentlyOpenedWorkspaceService, ClearFailsWithoutEmptyingTheInMemoryHistoryWhenTheStoreRejectsIt)
+{
+	auto store = std::make_unique<ScriptedRecentStore>();
+	auto* script = store.get();
+	CRecentlyOpenedWorkspaceService service(std::move(store));
+	ASSERT_EQ(ERecentlyOpenedWorkspaceOutcome::Succeeded,
+		service.RecordSuccessfulOpen(RecentFolderEntry(L"c:\\kept")).outcome);
+
+	script->saves.push_back({ ERecentlyOpenedWorkspaceStoreSaveStatus::Unavailable, "temporary transport loss" });
+	const auto failed = service.Clear();
+	EXPECT_EQ(ERecentlyOpenedWorkspaceOutcome::Failed, failed.outcome);
+	EXPECT_FALSE(failed.diagnostic.empty());
+	ASSERT_EQ(1U, service.Snapshot().size());
+	EXPECT_EQ(L"file:///C:/kept", service.Snapshot()[0].uri.ToString());
+
+	// A second conflict after the one bounded retry is terminal, not an
+	// unbounded replay loop.
+	script->saves.push_back({ ERecentlyOpenedWorkspaceStoreSaveStatus::Conflict, "resnapshot required" });
+	script->saves.push_back({ ERecentlyOpenedWorkspaceStoreSaveStatus::Conflict, "resnapshot required" });
+	script->load = { ERecentlyOpenedWorkspaceStoreLoadStatus::Succeeded,
+		R"({"version":1,"entries":[{"kind":"folder","uri":"file:///D:/concurrent"}]})", {} };
+	EXPECT_EQ(ERecentlyOpenedWorkspaceOutcome::Failed, service.Clear().outcome);
+	EXPECT_FALSE(service.Snapshot().empty());
+}
+
+TEST(RecentlyOpenedWorkspaceMenuProjection, BuildTrailingAlwaysContributesClearRecentlyOpened)
+{
+	// Upstream contributes `Clear Recently Opened...` statically, so it exists
+	// even when no history row precedes it -- and then without a separator,
+	// because a menu never opens with a rule.
+	const auto empty = CRecentlyOpenedWorkspaceMenuProjection::BuildTrailing(false, 31008, L"Clear Recently Opened...");
+	ASSERT_EQ(1U, empty.size());
+	EXPECT_EQ(ERecentlyOpenedWorkspaceMenuRowKind::ClearRecentlyOpened, empty[0].kind);
+	EXPECT_EQ(31008, empty[0].commandId);
+	EXPECT_EQ(L"Clear Recently Opened...", empty[0].label);
+
+	const auto trailing = CRecentlyOpenedWorkspaceMenuProjection::BuildTrailing(true, 31008, L"Clear Recently Opened...");
+	ASSERT_EQ(2U, trailing.size());
+	EXPECT_EQ(ERecentlyOpenedWorkspaceMenuRowKind::Separator, trailing[0].kind);
+	EXPECT_EQ(ERecentlyOpenedWorkspaceMenuRowKind::ClearRecentlyOpened, trailing[1].kind);
+
+	// The trailing row is a static contribution owned by the menu, so its
+	// command id must stay outside the dynamic history range that Resolve owns.
+	const std::vector<RecentlyOpenedWorkspaceEntry> entries{ RecentFolderEntry(L"c:\\repo") };
+	EXPECT_FALSE(CRecentlyOpenedWorkspaceMenuProjection::Resolve(trailing[1].commandId, entries).has_value());
+}
+
 TEST(RecentlyOpenedWorkspaceMenuProjection, GroupsTypedRowsBeforeFilesWithOneBoundedSnapshotRange)
 {
 	std::vector<RecentlyOpenedWorkspaceEntry> entries {
 		Workspace(L"c:\\repo\\team.code-workspace", L"Team"), RecentFolderEntry(L"d:\\folder") };
-	const auto withFiles = CRecentlyOpenedWorkspaceMenuProjection::Build(entries, true);
+	const auto withFiles = CRecentlyOpenedWorkspaceMenuProjection::Build(entries, true, L"{0} (Workspace)");
 	ASSERT_EQ(3U, withFiles.size());
 	EXPECT_EQ(ERecentlyOpenedWorkspaceMenuRowKind::Entry, withFiles[0].kind);
 	EXPECT_EQ(13000, withFiles[0].commandId);
+	EXPECT_EQ(L"Team", withFiles[0].label);
 	EXPECT_EQ(ERecentlyOpenedWorkspaceMenuRowKind::Separator, withFiles[2].kind);
 	EXPECT_EQ(13001, withFiles[1].commandId);
+	EXPECT_EQ(L"D:\\folder", withFiles[1].label);
 	EXPECT_EQ(1U, *CRecentlyOpenedWorkspaceMenuProjection::Resolve(13001, entries));
 	EXPECT_FALSE(CRecentlyOpenedWorkspaceMenuProjection::Resolve(13002, entries).has_value());
 	EXPECT_FALSE(CRecentlyOpenedWorkspaceMenuProjection::Resolve(12999, entries).has_value());
 	EXPECT_FALSE(CRecentlyOpenedWorkspaceMenuProjection::Resolve(13064, entries).has_value());
 	EXPECT_EQ(13063, workbench::recent::kRecentlyOpenedWorkspaceDynamicLast);
 
-	const auto typedOnly = CRecentlyOpenedWorkspaceMenuProjection::Build(entries, false);
+	const auto typedOnly = CRecentlyOpenedWorkspaceMenuProjection::Build(entries, false, L"{0} (Workspace)");
 	ASSERT_EQ(2U, typedOnly.size());
 	EXPECT_EQ(ERecentlyOpenedWorkspaceMenuRowKind::Entry, typedOnly.back().kind);
 
@@ -236,8 +318,57 @@ TEST(RecentlyOpenedWorkspaceMenuProjection, GroupsTypedRowsBeforeFilesWithOneBou
 	EXPECT_TRUE(CRecentlyOpenedWorkspaceMenuProjection::HasItems(entries, false));
 	EXPECT_TRUE(CRecentlyOpenedWorkspaceMenuProjection::HasItems(noTypedEntries, true));
 	EXPECT_FALSE(CRecentlyOpenedWorkspaceMenuProjection::HasItems(noTypedEntries, false));
-	EXPECT_TRUE(CRecentlyOpenedWorkspaceMenuProjection::Build(noTypedEntries, true).empty());
-	EXPECT_TRUE(CRecentlyOpenedWorkspaceMenuProjection::Build(noTypedEntries, false).empty());
+	EXPECT_TRUE(CRecentlyOpenedWorkspaceMenuProjection::Build(noTypedEntries, true, L"{0} (Workspace)").empty());
+	EXPECT_TRUE(CRecentlyOpenedWorkspaceMenuProjection::Build(noTypedEntries, false, L"{0} (Workspace)").empty());
+}
+
+TEST(RecentlyOpenedWorkspaceMenuProjection, FormatsEntryLabelsLikeVSCodeOpenRecent)
+{
+	constexpr std::wstring_view kFormat = L"{0} (Workspace)";
+
+	// A folder file URI renders as the native Windows path with an uppercase
+	// drive letter, not as its file:/// URI form.
+	EXPECT_EQ(L"C:\\Codes\\sakura-editor-next",
+		CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+			RecentFolderEntry(L"c:\\Codes\\sakura-editor-next"), kFormat));
+
+	// Percent-encoded URI characters come back as their real path characters.
+	EXPECT_EQ(L"C:\\Users\\dev\\Sakura Editor NEXT",
+		CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+			RecentFolderEntry(L"C:\\Users\\dev\\Sakura Editor NEXT"), kFormat));
+
+	// A UNC folder renders in \\server\share form.
+	EXPECT_EQ(L"\\\\server\\share\\project",
+		CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+			RecentFolderEntry(L"\\\\server\\share\\project"), kFormat));
+
+	// A saved workspace drops ".code-workspace" and gains the localized
+	// verbose workspace suffix.
+	EXPECT_EQ(L"C:\\repo\\team (Workspace)",
+		CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+			Workspace(L"C:\\repo\\team.code-workspace"), kFormat));
+
+	// VS Code's extension strip is case-sensitive; an uppercase extension
+	// stays visible inside the formatted label.
+	EXPECT_EQ(L"C:\\repo\\team.CODE-WORKSPACE (Workspace)",
+		CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+			Workspace(L"C:\\repo\\team.CODE-WORKSPACE"), kFormat));
+
+	// An explicit label always wins over path formatting.
+	EXPECT_EQ(L"Team", CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+		Workspace(L"C:\\repo\\team.code-workspace", L"Team"), kFormat));
+
+	// A URI with no Windows path form keeps its canonical URI string.
+	auto remote = Uri::Parse(L"vscode-remote://ssh-remote/home/me");
+	ASSERT_TRUE(remote.value.has_value());
+	EXPECT_EQ(L"vscode-remote://ssh-remote/home/me",
+		CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+			{ ERecentlyOpenedWorkspaceKind::Folder, *remote.value, std::nullopt }, kFormat));
+
+	// A localized format missing its "{0}" placeholder degrades to the bare
+	// path instead of hiding the entry's identity.
+	EXPECT_EQ(L"C:\\repo\\team", CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel(
+		Workspace(L"C:\\repo\\team.code-workspace"), L"broken format"));
 }
 
 TEST(ControlPlatformRecentlyOpenedWorkspaceStore, UsesProfileUserAddressAndRevisionedControlApply)

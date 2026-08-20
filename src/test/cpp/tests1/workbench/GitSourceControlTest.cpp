@@ -22,6 +22,7 @@
 #include "workbench/scm/GitCommandRunner.h"
 #include "workbench/scm/GitCommitCommands.h"
 #include "workbench/scm/GitDiffModel.h"
+#include "workbench/scm/GitHistoryModel.h"
 #include "workbench/scm/GitRefModel.h"
 #include "workbench/scm/GitScmMenus.h"
 #include "workbench/scm/GitScmModel.h"
@@ -146,7 +147,7 @@ TEST(GitCommandRunner, QuotesOnlyArgumentsThatNeedIt)
 TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
 {
 	const ScmGraphPresentation graph;
-	EXPECT_EQ(EScmGraphPresentationStatus::Unsupported, graph.status);
+	EXPECT_EQ(EScmGraphPresentationStatus::Unavailable, graph.status);
 	EXPECT_FALSE(graph.IsInteractive());
 	EXPECT_FALSE(graph.ShouldRenderFrameForProvider(false));
 	EXPECT_TRUE(graph.ShouldRenderFrameForProvider(true));
@@ -191,6 +192,75 @@ TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
 	EXPECT_EQ((ScmVerticalBounds{ 0, 250 }), empty.changesBody);
 	EXPECT_TRUE(empty.graphHeader.Empty());
 	EXPECT_TRUE(empty.graphBody.Empty());
+}
+
+TEST(ScmViewStackLayout, ReservesTheCommitActionButtonUnderTheInput)
+{
+	// The input's own trailing margin is the button's top margin, and the button
+	// carries one more below it, so the list starts a full margin lower than it
+	// does with no button.
+	const auto layout = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.actionButtonHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.actionButtonVisible = true,
+		.graphVisible = true,
+	});
+	EXPECT_EQ((ScmVerticalBounds{ 87, 113 }), layout.input);
+	EXPECT_EQ((ScmVerticalBounds{ 118, 144 }), layout.actionButton);
+	EXPECT_EQ((ScmVerticalBounds{ 149, 422 }), layout.changesBody);
+
+	// No button is no band: the list keeps the position it had before the button
+	// existed, so a repository with nothing to commit loses no room.
+	const auto without = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.actionButtonHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.actionButtonVisible = false,
+		.graphVisible = true,
+	});
+	EXPECT_TRUE(without.actionButton.Empty());
+	EXPECT_EQ((ScmVerticalBounds{ 118, 422 }), without.changesBody);
+}
+
+TEST(GitScmMenus, ContributesTheCommitActionButtonOnlyWhileThereAreChanges)
+{
+	// Upstream contributes no action button for a repository with nothing to
+	// commit; it does not contribute a disabled one.
+	EXPECT_FALSE(BuildGitCommitActionButton(false, true).has_value());
+
+	const auto button = BuildGitCommitActionButton(true, true);
+	ASSERT_TRUE(button.has_value());
+	EXPECT_EQ(L"$(check) Commit", button->title);
+	EXPECT_EQ("git.commit", button->commandId);
+	EXPECT_TRUE(button->enabled);
+	ASSERT_EQ(2u, button->secondaryCommands.size());
+	EXPECT_EQ("git.commit", button->secondaryCommands[0].commandId);
+	EXPECT_EQ(L"Commit", button->secondaryCommands[0].title);
+	EXPECT_EQ("git.commitAmend", button->secondaryCommands[1].commandId);
+	EXPECT_EQ(L"Commit (Amend)", button->secondaryCommands[1].title);
+
+	// A disabled input box disables the button, exactly as a running repository
+	// operation disables both upstream.
+	const auto disabled = BuildGitCommitActionButton(true, false);
+	ASSERT_TRUE(disabled.has_value());
+	EXPECT_FALSE(disabled->enabled);
 }
 
 TEST(GitCommandRunner, BuildsCommandLineAndPrependsRepositoryDirectory)
@@ -3665,6 +3735,163 @@ TEST(GitDiffModel, AGitUriWithNoQueryNamesNothing)
 	// An absent query is not an index reference with an empty ref.
 	EXPECT_FALSE(ResolveGitDiffEndpointUri(L"git:///C:/repo/src/a.cpp", LR"(C:\repo)").has_value());
 	EXPECT_FALSE(ResolveGitDiffEndpointUri(L"not a uri", LR"(C:\repo)").has_value());
+}
+
+TEST(GitHistoryModel, AsksGitForOneRecordPerCommitWithSeparatorsThatCannotAppearInAField)
+{
+	const auto arguments = MakeGitHistoryArguments(50);
+	ASSERT_EQ(4u, arguments.size());
+	EXPECT_EQ(L"log", arguments[0]);
+	// Topological order is what makes a parent appear below its child, which is
+	// the only order the swimlane walk can be built from.
+	EXPECT_EQ(L"--topo-order", arguments[1]);
+	EXPECT_EQ(L"--max-count=50", arguments[2]);
+	EXPECT_EQ(MakeGitHistoryFormat(), arguments[3]);
+	// A zero page would return the whole history, so it is clamped rather than
+	// passed through as "no limit".
+	EXPECT_EQ(L"--max-count=1", MakeGitHistoryArguments(0)[2]);
+}
+
+TEST(GitHistoryModel, ParsesEveryFieldAndKeepsASubjectThatContainsSpaces)
+{
+	// Each separator ends its own string literal: `\x1f` followed by a hex digit
+	// would otherwise be read as one longer hexadecimal escape.
+	const std::string output =
+		"a1\x1f" "b2 c3\x1f" "HEAD -> main, origin/main, tag: v1.0\x1f" "Ada\x1f"
+		"ada@example.com\x1f" "1700000000\x1f" "Fix: the thing, twice\x1e"
+		"b2\x1f\x1f\x1f" "Ada\x1f" "ada@example.com\x1f" "1699000000\x1f" "Root\x1e";
+	const auto items = ParseGitHistory(output);
+	ASSERT_EQ(2u, items.size());
+	EXPECT_EQ(L"a1", items[0].id);
+	ASSERT_EQ(2u, items[0].parentIds.size());
+	EXPECT_EQ(L"b2", items[0].parentIds[0]);
+	EXPECT_EQ(L"c3", items[0].parentIds[1]);
+	EXPECT_EQ(L"Ada", items[0].authorName);
+	EXPECT_EQ(1700000000, items[0].authorTimestamp);
+	EXPECT_EQ(L"Fix: the thing, twice", items[0].subject);
+	// The root commit has no parents and no decorations; both are empty fields,
+	// not missing ones.
+	EXPECT_TRUE(items[1].parentIds.empty());
+	EXPECT_TRUE(items[1].refs.empty());
+}
+
+TEST(GitHistoryModel, ClassifiesDecorationsTheWayGitSpellsThem)
+{
+	const auto refs = ParseGitHistoryRefs(L"HEAD -> main, origin/main, tag: v1.0, feature");
+	ASSERT_EQ(4u, refs.size());
+	// `HEAD -> main` names the checked-out branch, so the arrow carries the
+	// distinction and the branch name survives the prefix.
+	EXPECT_EQ(EGitHistoryRefKind::Head, refs[0].kind);
+	EXPECT_EQ(L"main", refs[0].name);
+	EXPECT_EQ(EGitHistoryRefKind::RemoteBranch, refs[1].kind);
+	EXPECT_EQ(EGitHistoryRefKind::Tag, refs[2].kind);
+	EXPECT_EQ(L"v1.0", refs[2].name);
+	EXPECT_EQ(EGitHistoryRefKind::LocalBranch, refs[3].kind);
+
+	const auto detached = ParseGitHistoryRefs(L"HEAD");
+	ASSERT_EQ(1u, detached.size());
+	EXPECT_EQ(EGitHistoryRefKind::Head, detached[0].kind);
+	EXPECT_EQ(L"HEAD", detached[0].name);
+}
+
+TEST(GitHistoryModel, GivesAMergeTwoOutputLanesAndRejoinsThemAtTheSharedParent)
+{
+	//   m  -- merge of a and b
+	//   |\
+	//   a |
+	//   | b
+	//   r  -- both sides descend from the root
+	const std::vector<GitHistoryItem> items{
+		{ .id = L"m", .parentIds = { L"a", L"b" } },
+		{ .id = L"a", .parentIds = { L"r" } },
+		{ .id = L"b", .parentIds = { L"r" } },
+		{ .id = L"r" },
+	};
+	const auto rows = BuildScmHistoryGraph(items);
+	ASSERT_EQ(4u, rows.size());
+	// The merge starts the drawing, so nothing enters its row and two lanes leave
+	// it: one per parent.
+	EXPECT_TRUE(rows[0].inputSwimlanes.empty());
+	EXPECT_EQ(0u, rows[0].circleLane);
+	ASSERT_EQ(2u, rows[0].outputSwimlanes.size());
+	EXPECT_EQ(L"a", rows[0].outputSwimlanes[0].id);
+	EXPECT_EQ(L"b", rows[0].outputSwimlanes[1].id);
+	// `a` sits on the lane that was waiting for it, and the second lane keeps its
+	// own position so `b`'s line does not jump sideways.
+	EXPECT_EQ(0u, rows[1].circleLane);
+	ASSERT_EQ(2u, rows[1].outputSwimlanes.size());
+	EXPECT_EQ(L"r", rows[1].outputSwimlanes[0].id);
+	EXPECT_EQ(L"b", rows[1].outputSwimlanes[1].id);
+	// `b`'s parent is already awaited on lane 0, so the second lane ends here
+	// instead of drawing a duplicate line down to the same commit.
+	EXPECT_EQ(1u, rows[2].circleLane);
+	ASSERT_EQ(1u, rows[2].outputSwimlanes.size());
+	EXPECT_EQ(L"r", rows[2].outputSwimlanes[0].id);
+	// The root has no parent, so its lane stops at its own circle.
+	EXPECT_EQ(0u, rows[3].circleLane);
+	EXPECT_TRUE(rows[3].outputSwimlanes.empty());
+}
+
+TEST(ScmViewStackLayout, ACollapsedSectionKeepsItsHeaderAndGivesUpItsBody)
+{
+	const auto layout = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 100,
+		.sashHeight = 4,
+		.minimumBodyHeight = 66,
+		.repositoriesVisible = true,
+		.repositoriesCollapsed = true,
+		.changesCollapsed = true,
+		.graphCollapsed = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.graphVisible = true,
+	});
+	// Every header survives, because a section with no header could not be
+	// reopened.
+	EXPECT_EQ((ScmVerticalBounds{ 0, 30 }), layout.repositoriesHeader);
+	EXPECT_TRUE(layout.repositoryRow.Empty());
+	EXPECT_EQ((ScmVerticalBounds{ 30, 60 }), layout.changesHeader);
+	// The commit box belongs to the Changes section, so it collapses with it.
+	EXPECT_TRUE(layout.input.Empty());
+	EXPECT_EQ((ScmVerticalBounds{ 470, 500 }), layout.graphHeader);
+	EXPECT_TRUE(layout.graphBody.Empty());
+	// A collapsed Graph has no height to drag, so it offers no sash.
+	EXPECT_TRUE(layout.sash.Empty());
+}
+
+TEST(ScmViewStackLayout, TheSashStraddlesTheBoundaryAndTheGraphCannotStarveTheChangeList)
+{
+	const auto measurements = ScmViewStackMeasurements{
+		.clientTop = 0,
+		.clientBottom = 300,
+		.viewHeaderHeight = 30,
+		.graphBodyHeight = 100,
+		.sashHeight = 4,
+		.minimumBodyHeight = 66,
+		.changesHeaderVisible = true,
+		.graphVisible = true,
+	};
+	const auto layout = BuildScmViewStackLayout(measurements);
+	EXPECT_EQ((ScmVerticalBounds{ 30, 170 }), layout.changesBody);
+	EXPECT_EQ((ScmVerticalBounds{ 170, 200 }), layout.graphHeader);
+	EXPECT_EQ((ScmVerticalBounds{ 200, 300 }), layout.graphBody);
+	// The sash is an overlay across the boundary, so it consumes no layout space
+	// and the two bands still meet exactly at 170.
+	EXPECT_EQ((ScmVerticalBounds{ 168, 172 }), layout.sash);
+
+	// A drag past the change list's floor is clamped: the list keeps its minimum
+	// rather than the Graph taking the whole view.
+	auto greedy = measurements;
+	greedy.graphBodyHeight = 1000;
+	const auto clamped = BuildScmViewStackLayout(greedy);
+	EXPECT_EQ((ScmVerticalBounds{ 30, 96 }), clamped.changesBody);
+	EXPECT_EQ(66, clamped.changesBody.bottom - clamped.changesBody.top);
 }
 
 } // namespace workbench::scm

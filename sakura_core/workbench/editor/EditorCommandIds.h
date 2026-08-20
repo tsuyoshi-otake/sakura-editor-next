@@ -17,6 +17,7 @@ inline constexpr std::string_view OpenFile = "workbench.action.files.openFile";
 inline constexpr std::string_view OpenFolder = "workbench.action.files.openFolder";
 inline constexpr std::string_view OpenWorkspace = "workbench.action.openWorkspace";
 inline constexpr std::string_view OpenRecent = "workbench.action.openRecent";
+inline constexpr std::string_view ClearRecentFiles = "workbench.action.clearRecentFiles";
 inline constexpr std::string_view AddRootFolder = "workbench.action.addRootFolder";
 inline constexpr std::string_view SaveWorkspaceAs = "workbench.action.saveWorkspaceAs";
 inline constexpr std::string_view DuplicateWorkspaceInNewWindow = "workbench.action.duplicateWorkspaceInNewWindow";

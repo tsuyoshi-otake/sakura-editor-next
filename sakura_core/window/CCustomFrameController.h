@@ -120,14 +120,29 @@ enum class CustomFrameUpdateMenuEntry : unsigned char {
 	Restart,     //!< `update.restart`     "Restart to Update (1)"
 };
 
-//! Physical edge covered by an input-only child overlay. The custom client
-//! fills the whole top-level window, so child controls would otherwise consume
-//! the initial press before the frame can return an HT* resize result.
+//! Client rectangle the custom frame answers `WM_NCCALCSIZE` with, given the
+//! rectangle the system frame produced and the window rectangle's original top.
+//! VS Code (Chromium) and Windows Terminal keep the system frame on the left,
+//! right, and bottom edges and extend the client over the caption only. DWM paints
+//! the 1px window border and applies the Windows 11 rounded-corner clip inside the
+//! frame it is left, so a client that swallows the whole window rectangle loses
+//! both. `resizeHandleHeight` is added back while maximized, where the window is
+//! sized one resize handle larger than the work area on every edge.
+[[nodiscard]] RECT CalculateCustomFrameClientRect(
+	const RECT& systemFrameClient,
+	LONG windowTop,
+	bool maximized,
+	int resizeHandleHeight
+) noexcept;
+
+//! Physical edge covered by an input-only child overlay. Only the top edge needs
+//! one: `WM_NCCALCSIZE` extends the client over the caption alone, so the top
+//! resize band is the only one inside the client, where a child control would
+//! otherwise consume the initial press before the frame can answer with an HT*
+//! resize result. The left, right, and bottom bands stay in the surviving system
+//! frame outside the client, which no child can reach.
 enum class CustomFrameResizeEdge : unsigned char {
 	Top,
-	Bottom,
-	Left,
-	Right,
 	Count,
 };
 
@@ -215,6 +230,11 @@ private:
 	void AccessibilitySetFocus(int nodeId) noexcept override;
 
 	void RefreshMetrics() noexcept;
+	//! Reapplies the DWM attributes that decide how the surviving non-client frame is
+	//! painted: dark mode and the border color. The corner preference is deliberately
+	//! left alone so the window rounds exactly as the system does. A system theme or
+	//! setting change resets these attributes, so this runs again on those messages.
+	void ApplyDwmFrameAppearance() noexcept;
 	void RefreshLayout() noexcept;
 	//! Zero while the indicator is hidden; the caption-font measurement otherwise.
 	[[nodiscard]] int MeasureUpdateIndicatorWidth() const noexcept;
@@ -224,6 +244,8 @@ private:
 	void CreateResizeOverlays() noexcept;
 	void DestroyResizeOverlays() noexcept;
 	[[nodiscard]] int ResizeBorder() const noexcept;
+	//! Vertical counterpart of ResizeBorder, used by the maximized client rectangle.
+	[[nodiscard]] int ResizeBorderHeight() const noexcept;
 	[[nodiscard]] LRESULT HitTestScreenPoint(POINT screenPoint) noexcept;
 	void SetHotHit(LRESULT hit) noexcept;
 	void SetPressedHit(LRESULT hit) noexcept;

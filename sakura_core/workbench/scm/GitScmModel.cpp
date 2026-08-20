@@ -221,6 +221,38 @@ wchar_t GitFileStatusLetter(EGitFileStatus status) noexcept
 	}
 }
 
+decorations::EFileDecorationColor GitFileStatusDecorationColor(EGitFileStatus status) noexcept
+{
+	switch (status) {
+	case EGitFileStatus::IndexModified:
+		return decorations::EFileDecorationColor::GitStageModified;
+	case EGitFileStatus::Modified:
+	case EGitFileStatus::TypeChanged:
+		return decorations::EFileDecorationColor::GitModified;
+	case EGitFileStatus::IndexDeleted:
+		return decorations::EFileDecorationColor::GitStageDeleted;
+	case EGitFileStatus::Deleted:
+		return decorations::EFileDecorationColor::GitDeleted;
+	case EGitFileStatus::IndexAdded:
+	case EGitFileStatus::IntentToAdd:
+		return decorations::EFileDecorationColor::GitAdded;
+	case EGitFileStatus::IndexCopied:
+	case EGitFileStatus::IndexRenamed:
+	case EGitFileStatus::IntentToRename:
+		return decorations::EFileDecorationColor::GitRenamed;
+	case EGitFileStatus::Untracked:
+		return decorations::EFileDecorationColor::GitUntracked;
+	default:
+		// Every conflict shares one color, the way every conflict shares `!`.
+		return decorations::EFileDecorationColor::GitConflicting;
+	}
+}
+
+bool DoesGitFileStatusPropagate(EGitFileStatus status) noexcept
+{
+	return status != EGitFileStatus::Deleted && status != EGitFileStatus::IndexDeleted;
+}
+
 bool IsGitFileStatusStruckThrough(EGitFileStatus status) noexcept
 {
 	switch (status) {

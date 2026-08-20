@@ -69,6 +69,7 @@
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "markdown/MarkdownPreviewCommandState.h"
+#include "markdown/MarkdownPreviewLayout.h"
 
 static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
@@ -79,6 +80,7 @@ class CDiffSurface;
 struct SDiffSurfaceContent;
 namespace config {
 class ConfigurationSubscription;
+struct ConfigurationTarget;
 }
 struct DLLSHAREDATA;
 namespace platform::filesystem {
@@ -86,6 +88,7 @@ class IFileService;
 }
 namespace terminal {
 class CTerminalTool;
+enum class TerminalShortcutPreset : std::uint8_t;
 }
 namespace theme {
 class CColorThemeRegistry;
@@ -429,6 +432,7 @@ public:
 	LRESULT OnMouseMove(WPARAM wParam, LPARAM lParam);
 	LRESULT OnSetCursor(WPARAM wParam, LPARAM lParam);
 	LRESULT OnCaptureChanged(LPARAM lParam);
+	HWND HoveredScrollTarget(LPARAM lParam) const noexcept;
 	LRESULT OnMouseWheel(WPARAM wParam, LPARAM lParam);
 	BOOL DoMouseWheel( WPARAM wParam, LPARAM lParam );	// マウスホイール処理	// 2007.10.16 ryoji
 	LRESULT OnHScroll(WPARAM wParam, LPARAM lParam);
@@ -499,6 +503,9 @@ public:
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
 	[[nodiscard]] bool IsMarkdownPreviewVisible() const noexcept;
+	//! VS Code の Markdown scroll sync: エディタ側の表示先頭行にプレビューを追従させる。
+	//! ミニマップ操作も実ビューの ScrollAtV を経由するのでここに集約している。
+	void SyncMarkdownPreviewToEditorScroll(const CEditView& view);
 	[[nodiscard]] bool IsMarkdownPreviewAvailable() const;
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -743,6 +750,12 @@ private:
 	void RecordRecentlyOpenedWorkspaceAfterReady(
 		workbench::recent::ERecentlyOpenedWorkspaceKind kind, const platform::uri::Uri& uri);
 	[[nodiscard]] bool AppendRecentlyOpenedWorkspaceMenu(HMENU hMenu, bool hasRecentFiles);
+	void AppendRecentlyOpenedWorkspaceMenuRows(HMENU hMenu,
+		const std::vector<workbench::recent::RecentlyOpenedWorkspaceMenuRow>& rows);
+	//! Upstream's static Open Recent tail. It belongs to the menu-bar submenu
+	//! only; the Ctrl+R history list carries no clear action.
+	void AppendClearRecentlyOpenedMenuItem(HMENU hMenu, bool hasPrecedingRows);
+	[[nodiscard]] EWorkspaceWindowTransitionResult ClearRecentlyOpenedHistory();
 	[[nodiscard]] bool TryExecuteRecentlyOpenedWorkspaceMenuCommand(std::int32_t commandId);
 	[[nodiscard]] bool HasRecentlyOpenedItems() const;
 	[[nodiscard]] EWorkspaceWindowTransitionResult LaunchWorkspaceTarget(
@@ -955,6 +968,41 @@ private:
 		projected container is treated as living where its declaration put it: the Primary Side Bar.
 	*/
 	void SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState);
+	/*!
+		@brief Publishes the Source Control ViewContainer's number badge.
+
+		Upstream's `scm.contribution.ts` sums `provider.count ?? <resources in the
+		provider's groups>` over every published repository and shows that through
+		`IActivityService.showViewContainerActivity`. `scm.countBadge` gates it:
+		`off` publishes nothing at all, and `focused` is answered as `all` here
+		because this fork publishes a single repository, where the two agree by
+		construction. The source is the published provider snapshot, never the
+		view's own parse, so the badge cannot describe a publication the Source
+		Control view has not rendered.
+	*/
+	void SyncScmActivityBadge();
+	//! `scm.countBadge` resolved through the same profile/workspace/folder target
+	//! the other settings reads use. Returns the registered default when unset.
+	//! The profile/workspace/folder target every workbench settings read uses.
+	//! A Folder workspace names its own folder as the workspace identity; the
+	//! configuration service rejects a folder target that has no workspace.
+	[[nodiscard]] config::ConfigurationTarget BuildWorkbenchConfigurationTarget() const;
+	[[nodiscard]] std::wstring ReadScmCountBadgeSetting() const;
+	//! Resolves `scm.inputMinLineCount` / `scm.inputMaxLineCount` through the same
+	//! profile/workspace/folder target and hands them to the Source Control view.
+	void ApplyScmInputLineCountSetting();
+	//! Resolves `sakura.terminal.shortcutPreset` and hands it to the terminal panel.
+	//! A fork extension, not an upstream key; see terminal/CLAUDE.md.
+	void ApplyTerminalShortcutPresetSetting();
+	//! Writes the terminal keybinding preset the user picked from the terminal menu
+	//! into the profile settings document.
+	bool PersistTerminalShortcutPresetSelection(terminal::TerminalShortcutPreset preset);
+	//! Resolves `git.decorations.enabled` and the two `explorer.decorations.*` keys
+	//! and applies them to the File Explorer's decoration rendering.
+	void ApplyExplorerDecorationSettings();
+	//! `git.decorations.enabled`. False means the provider publishes nothing at all,
+	//! which is upstream's own distinction from rendering a decoration without color.
+	bool m_gitDecorationsEnabled = true;
 	//! Which physical side bar the pointer is over, if any. VS Code's composite drag and
 	//! drop is resolved by the drop target, not by the handle that started the gesture.
 	[[nodiscard]] std::optional<workbench::WorkbenchEdge> HitTestSideBarEdge(POINT screenPoint) const;
@@ -971,7 +1019,23 @@ private:
 	void RefreshMarkdownPreview();
 	void UpdateMarkdownPreviewIfNeeded();
 	[[nodiscard]] std::wstring GetMarkdownPreviewSource(bool* truncated = nullptr);
-	void LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi);
+	/*!
+		@brief Splits the central region between the editor view and the preview
+
+		`minimapWidth` is the minimap's column, which is part of the editor, not a
+		frame-level band: VS Code draws the minimap inside the editor group, so a
+		side-by-side preview must push it left with the editor rather than leave it
+		stranded against the frame. The region passed in therefore includes that
+		column, and the placed minimap rectangle is returned for the caller to
+		apply.
+	*/
+	[[nodiscard]] RECT LayoutMarkdownPreview(int left, int top, int right, int bottom,
+		unsigned int dpi, int minimapWidth);
+	//! True when the point is on the Markdown preview divider, with VS Code's sash hit slop.
+	[[nodiscard]] bool HitTestMarkdownPreviewDivider(POINT point) const noexcept;
+	void CancelMarkdownPreviewResize();
+	//! Re-runs the frame layout while the divider is being dragged.
+	void RelayoutForMarkdownPreviewDivider();
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteMarkdownPreviewCommand(
 		markdown::MarkdownPreviewCommand command);
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ApplyMarkdownPreviewCommandResult(
@@ -1095,10 +1159,19 @@ private:
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
 	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;
 	bool m_markdownPreviewVisible = false;
+	//! Reentrancy guard shared by both directions of the Markdown scroll sync.
+	bool m_markdownPreviewScrollSyncing = false;
+	//! Last source line pushed to the preview, so an unchanged scroll costs nothing.
+	int m_markdownPreviewSyncedSourceLine = -1;
 	bool m_markdownPreviewDirty = false;
 	int m_markdownPreviewRevision = -1;
 	std::uint64_t m_markdownPreviewGeneration = 0;
 	RECT m_markdownPreviewDivider{};
+	//! The user's dragged preview width; kPreviewDefaultWidthRequestDip until dragged.
+	int m_markdownPreviewWidthDip = markdown::kPreviewDefaultWidthRequestDip;
+	//! The region the divider splits, kept for the drag arithmetic and its repaint.
+	RECT m_markdownPreviewRegion{};
+	bool m_resizingMarkdownPreview = false;
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;
 	WPARAM m_pendingLayoutWParam = SIZE_RESTORED;
@@ -1126,6 +1199,13 @@ private:
 	int m_workbenchZoomBasePointSize = 0;
 
 public:
+	/*!
+		@brief The opened root folder's display name, empty when no folder is open
+
+		This is VS Code's `${rootName}` caption variable: the folder's own name,
+		never its full path.
+	*/
+	[[nodiscard]] std::wstring GetWorkspaceRootName() const;
 	//子ウィンドウ
 	CMainToolBar	m_cToolbar{ this };			//!< ツールバー
 	CTabWnd			m_cTabWnd;			//!< タブウインドウ	//@@@ 2003.05.31 MIK

@@ -24,8 +24,6 @@ constexpr wchar_t kWindowClass[] = L"SakuraBottomPanel";
 constexpr UINT_PTR kTerminalButton = 100;
 constexpr UINT_PTR kProblemsButton = 101;
 constexpr UINT_PTR kOutputButton = 102;
-constexpr UINT_PTR kPortsButton = 103;
-constexpr UINT_PTR kDebugConsoleButton = 104;
 constexpr UINT_PTR kProblemsList = 105;
 constexpr UINT_PTR kOutputSelector = 106;
 constexpr UINT_PTR kOutputText = 107;
@@ -41,8 +39,7 @@ constexpr int kHeaderRuleThicknessDip = 1;
 
 bool IsPanelTabId(UINT_PTR id) noexcept
 {
-	return id == kTerminalButton || id == kProblemsButton || id == kOutputButton
-		|| id == kPortsButton || id == kDebugConsoleButton;
+	return id == kTerminalButton || id == kProblemsButton || id == kOutputButton;
 }
 
 bool IsPanelActionId(UINT_PTR id) noexcept
@@ -79,21 +76,12 @@ void FillHeaderRule(HDC dc, const RECT& cell, int headerHeight, unsigned int dpi
 	::DeleteObject(brush);
 }
 
-bool IsSupportedTab(BottomPanelTab tab) noexcept
-{
-	return tab == BottomPanelTab::Terminal
-		|| tab == BottomPanelTab::Problems
-		|| tab == BottomPanelTab::Output;
-}
-
 BottomPanelTab TabForButtonId(UINT_PTR id) noexcept
 {
 	switch (id) {
 	case kProblemsButton: return BottomPanelTab::Problems;
 	case kOutputButton: return BottomPanelTab::Output;
 	case kTerminalButton: return BottomPanelTab::Terminal;
-	case kPortsButton: return BottomPanelTab::Ports;
-	case kDebugConsoleButton: return BottomPanelTab::DebugConsole;
 	default: return BottomPanelTab::Terminal;
 	}
 }
@@ -147,8 +135,6 @@ struct CBottomPanelTool::Impl {
 	HWND terminalButton = nullptr;
 	HWND problemsButton = nullptr;
 	HWND outputButton = nullptr;
-	HWND portsButton = nullptr;
-	HWND debugConsoleButton = nullptr;
 	HWND problemsList = nullptr;
 	HWND outputSelector = nullptr;
 	HWND outputText = nullptr;
@@ -223,9 +209,8 @@ struct CBottomPanelTool::Impl {
 		const bool action = IsPanelActionId(id);
 		const bool tab = IsPanelTabId(id);
 		const BottomPanelTab buttonTab = TabForButtonId(id);
-		const bool supportedTab = !tab || IsSupportedTab(buttonTab);
-		const bool disabled = (item.itemState & ODS_DISABLED) != 0 || !supportedTab;
-		const bool activeTab = tab && supportedTab && active == buttonTab;
+		const bool disabled = (item.itemState & ODS_DISABLED) != 0;
+		const bool activeTab = tab && active == buttonTab;
 		const bool pressed = (item.itemState & ODS_SELECTED) != 0;
 		const HBRUSH background = (activeTab || pressed) ? raisedBrush : panelBrush;
 		if (background) ::FillRect(item.hDC, &item.rcItem, background);
@@ -313,7 +298,7 @@ struct CBottomPanelTool::Impl {
 
 	void ApplyActiveTab(BottomPanelTab tab)
 	{
-		if (closed || !IsSupportedTab(tab)) return;
+		if (closed) return;
 		active = tab;
 		const bool showTerminal = tab == BottomPanelTab::Terminal;
 		::ShowWindow(terminal->GetHwnd(), showTerminal ? SW_SHOW : SW_HIDE);
@@ -323,8 +308,6 @@ struct CBottomPanelTool::Impl {
 		::SendMessageW(terminalButton, BM_SETSTATE, showTerminal, 0);
 		::SendMessageW(problemsButton, BM_SETSTATE, tab == BottomPanelTab::Problems, 0);
 		::SendMessageW(outputButton, BM_SETSTATE, tab == BottomPanelTab::Output, 0);
-		::SendMessageW(portsButton, BM_SETSTATE, FALSE, 0);
-		::SendMessageW(debugConsoleButton, BM_SETSTATE, FALSE, 0);
 		if (!showTerminal) terminal->Deactivate();
 		LayoutChildren();
 		if (window) ::InvalidateRect(window, nullptr, FALSE);
@@ -358,8 +341,8 @@ struct CBottomPanelTool::Impl {
 		// Keep the terminal actions in the same physical row as the view-container
 		// tabs. The toolbar gets a bounded trailing region; the tabs retain a compact
 		// intrinsic width and leave the middle as intentional breathing room.
-		constexpr std::array desiredTabWidthsDip{ 82, 70, 78, 58, 118 };
-		constexpr int desiredTabWidthDipTotal = 406;
+		constexpr std::array desiredTabWidthsDip{ 82, 70, 78 };
+		constexpr int desiredTabWidthDipTotal = 230;
 		const int minimumTabArea = std::min(commonActionLeft, Scale(250, dpi));
 		const int desiredToolbarWidth = Scale(260, dpi);
 		const int toolbarWidth = std::min(desiredToolbarWidth,
@@ -370,7 +353,7 @@ struct CBottomPanelTool::Impl {
 
 		// VS Code's Panel view-container order, matching desiredTabWidthsDip.
 		const std::array tabButtons{
-			problemsButton, outputButton, terminalButton, portsButton, debugConsoleButton,
+			problemsButton, outputButton, terminalButton,
 		};
 		const int compactTabArea = std::min(toolbarLeft, Scale(desiredTabWidthDipTotal, dpi));
 		int remainingWidth = compactTabArea;
@@ -539,8 +522,6 @@ void CBottomPanelTool::Layout(const RECT& contentRect, unsigned int dpi)
 		m_impl->ApplyFont(m_impl->terminalButton);
 		m_impl->ApplyFont(m_impl->problemsButton);
 		m_impl->ApplyFont(m_impl->outputButton);
-		m_impl->ApplyFont(m_impl->portsButton);
-		m_impl->ApplyFont(m_impl->debugConsoleButton);
 		m_impl->ApplyFont(m_impl->problemsList);
 		m_impl->ApplyFont(m_impl->outputSelector);
 		m_impl->ApplyFont(m_impl->outputText);
@@ -647,8 +628,6 @@ void CBottomPanelTool::RefreshStrings()
 	if (!m_impl || m_impl->closed) return;
 	if (m_impl->terminalButton) ::SetWindowTextW(m_impl->terminalButton, LS(STR_WORKBENCH_PANEL_TERMINAL));
 	if (m_impl->outputButton) ::SetWindowTextW(m_impl->outputButton, LS(STR_WORKBENCH_PANEL_OUTPUT));
-	if (m_impl->portsButton) ::SetWindowTextW(m_impl->portsButton, LS(STR_WORKBENCH_PANEL_PORTS));
-	if (m_impl->debugConsoleButton) ::SetWindowTextW(m_impl->debugConsoleButton, LS(STR_WORKBENCH_PANEL_DEBUG_CONSOLE));
 	RefreshProblemsColumnTitles(m_impl->problemsList);
 	m_impl->RefreshProblems();
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
@@ -660,7 +639,7 @@ void CBottomPanelTool::SetActiveTab(BottomPanelTab tab)
 
 bool CBottomPanelTool::RequestTabSelection(BottomPanelTab tab) noexcept
 {
-	if (!m_impl || m_impl->closed || !IsSupportedTab(tab)) return false;
+	if (!m_impl || m_impl->closed) return false;
 	if (m_impl->active == tab) return true;
 	if (m_impl->tabSelection) {
 		try {
@@ -726,10 +705,6 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kProblemsButton), instance, nullptr);
 		impl.outputButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_OUTPUT), tabStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputButton), instance, nullptr);
-		impl.portsButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_PORTS), tabStyle | WS_DISABLED,
-			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kPortsButton), instance, nullptr);
-		impl.debugConsoleButton = ::CreateWindowExW(0, L"BUTTON", LS(STR_WORKBENCH_PANEL_DEBUG_CONSOLE), tabStyle | WS_DISABLED,
-			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kDebugConsoleButton), instance, nullptr);
 		const DWORD actionStyle = WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW;
 		impl.maximizeButton = ::CreateWindowExW(0, L"BUTTON", L"", actionStyle,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kPanelMaximizeButton), instance, nullptr);
@@ -768,8 +743,6 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		case kTerminalButton: (void)self->RequestTabSelection(BottomPanelTab::Terminal); return 0;
 		case kProblemsButton: (void)self->RequestTabSelection(BottomPanelTab::Problems); return 0;
 		case kOutputButton: (void)self->RequestTabSelection(BottomPanelTab::Output); return 0;
-		case kPortsButton: (void)self->RequestTabSelection(BottomPanelTab::Ports); return 0;
-		case kDebugConsoleButton: (void)self->RequestTabSelection(BottomPanelTab::DebugConsole); return 0;
 		case kPanelMaximizeButton:
 			if (HIWORD(wParam) == BN_CLICKED && impl.panelActions.toggleMaximize) {
 				impl.panelActions.toggleMaximize();

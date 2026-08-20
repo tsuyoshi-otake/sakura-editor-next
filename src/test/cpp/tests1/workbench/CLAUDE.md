@@ -203,6 +203,17 @@ all native command surfaces.
     Stop must own final `Stopped` publication. These lifecycle tests are not
     proof of Task Terminal UI: production output remains unprojected until a
     shared runtime-owned terminal presentation authority is added.
+11. `ProblemMatcherEngine` tests cover the `$msCompile`/`$gcc`/`$tsc` builtin
+    lookup, single-line and multiline (chained and `loop`) pattern matching,
+    resource grouping/ordering, `Absolute`/`Relative` file-location resolution
+    against a supplied workspace root, and every typed failure: empty/oversized
+    pattern lists, an invalid regexp, an out-of-range capture-group index, a
+    definition missing a required `file`/`line`/`message` capture anywhere in
+    its chain, a missing workspace root for `Relative`, an unresolvable file
+    capture, a non-numeric or zero line/column, an unrecognized severity word,
+    malformed UTF-8 input, and each of the line-count/line-length/marker-count
+    limits. These are pure-model tests only; they do not prove that Task
+    execution calls this engine.
 
 The integrated runtime/pure-backend cohort covers workspace artifacts, runtime,
 Tasks, DAP, Debug Console, ports, markers, output, terminals, and native panel
@@ -210,6 +221,7 @@ projection. A later focused checkpoint adds the production Task terminal
 adapter, real exit-code smoke, folder-scoped
 Task catalog composition, and runtime Task shutdown; record its current count
 in the goal-loop journal after each verification. Neither checkpoint proves
-Task Terminal presentation, production Debug/forwarding processes, problem
-matching, exact Problems range navigation, or complete Debug Console/Ports/Run
+Task Terminal presentation, production Debug/forwarding processes, the
+`ProblemMatcherEngine` -> `TaskExecutionService` -> `MarkerService` composition,
+exact Problems range navigation, or complete Debug Console/Ports/Run
 and Debug projection.

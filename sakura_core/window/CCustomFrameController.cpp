@@ -7,16 +7,24 @@
 
 #include "StdAfx.h"
 #include "window/CCustomFrameController.h"
+#include "CSelectLang.h"
 #include "func/Funccode.h"
 #include "workbench/WorkbenchZoom.h"
 
 #include <algorithm>
 
 #include <dwmapi.h>
+#include <stdio.h>
 
 namespace {
 
 constexpr wchar_t kResizeOverlayClass[] = L"SakuraCustomFrameResizeOverlay";
+
+// DWM window attributes. The SDK this project builds against does not declare the
+// Windows 11 members of DWMWINDOWATTRIBUTE, so their documented values are used
+// directly; DwmSetWindowAttribute simply fails on an older system.
+constexpr DWORD kDwmUseImmersiveDarkMode = 20; // DWMWA_USE_IMMERSIVE_DARK_MODE
+constexpr DWORD kDwmBorderColor = 34;          // DWMWA_BORDER_COLOR
 
 [[nodiscard]] bool EnsureResizeOverlayWindowClass(HINSTANCE instance) noexcept
 {
@@ -128,33 +136,60 @@ CustomFrameManageAction ManageActionFromMenuCommand(UINT command) noexcept
 	}
 }
 
-//! Appends VS Code's `MenuId.GlobalActivity` group `7_update` with its labels verbatim
+//! A popup menu item text composed from a localized label and, optionally, VS Code's
+//! keybinding hint. The hint is a key sequence rather than prose, so it stays in code
+//! while only the label comes from the message resource. The buffer is owned by the
+//! caller because `LS` hands back a rotating static buffer that the next `LS` call
+//! overwrites; copying here is what makes several labels safe to build in one menu.
+struct MenuItemText
+{
+	wchar_t text[192]{};
+
+	[[nodiscard]] const wchar_t* c_str() const noexcept { return text; }
+};
+
+[[nodiscard]] MenuItemText MakeMenuItemText(int stringId, const wchar_t* accelerator = nullptr) noexcept
+{
+	MenuItemText item{};
+	const wchar_t* const label = LS(stringId);
+	if (accelerator == nullptr || accelerator[0] == L'\0') {
+		(void)::_snwprintf_s(item.text, _TRUNCATE, L"%s", label);
+	} else {
+		(void)::_snwprintf_s(item.text, _TRUNCATE, L"%s\t%s", label, accelerator);
+	}
+	return item;
+}
+
+//! Appends VS Code's `MenuId.GlobalActivity` group `7_update`
 //! (`contrib/update/browser/update.ts`). Upstream registers eight items there, each
 //! gated on `CONTEXT_UPDATE_STATE == '<state>'`, so at most one is visible at a time;
 //! `None` is the `disabled`/`uninitialized` case where upstream contributes nothing and
-//! the menu must therefore not grow a stray separator either.
+//! the menu must therefore not grow a stray separator either. Upstream localizes these
+//! titles through its language packs, so the labels come from the message resource here
+//! rather than staying as English literals.
 bool AppendUpdateMenuGroup(HMENU menu, CustomFrameUpdateMenuEntry entry) noexcept
 {
 	UINT command = 0;
-	const wchar_t* label = nullptr;
+	int labelId = 0;
 	switch (entry) {
 	case CustomFrameUpdateMenuEntry::None: return true;
 	case CustomFrameUpdateMenuEntry::Check:
-		command = kManageUpdateCheck; label = L"Check for Updates..."; break;
-	case CustomFrameUpdateMenuEntry::Checking: label = L"Checking for Updates..."; break;
+		command = kManageUpdateCheck; labelId = STR_WORKBENCH_MANAGE_UPDATE_CHECK; break;
+	case CustomFrameUpdateMenuEntry::Checking: labelId = STR_WORKBENCH_MANAGE_UPDATE_CHECKING; break;
 	case CustomFrameUpdateMenuEntry::DownloadNow:
-		command = kManageUpdateDownload; label = L"Download Update (1)"; break;
-	case CustomFrameUpdateMenuEntry::Downloading: label = L"Downloading Update..."; break;
+		command = kManageUpdateDownload; labelId = STR_WORKBENCH_MANAGE_UPDATE_DOWNLOAD; break;
+	case CustomFrameUpdateMenuEntry::Downloading: labelId = STR_WORKBENCH_MANAGE_UPDATE_DOWNLOADING; break;
 	case CustomFrameUpdateMenuEntry::Install:
-		command = kManageUpdateInstall; label = L"Install Update... (1)"; break;
-	case CustomFrameUpdateMenuEntry::Updating: label = L"Installing Update..."; break;
-	case CustomFrameUpdateMenuEntry::Cancelling: label = L"Cancelling Update..."; break;
+		command = kManageUpdateInstall; labelId = STR_WORKBENCH_MANAGE_UPDATE_INSTALL; break;
+	case CustomFrameUpdateMenuEntry::Updating: labelId = STR_WORKBENCH_MANAGE_UPDATE_UPDATING; break;
+	case CustomFrameUpdateMenuEntry::Cancelling: labelId = STR_WORKBENCH_MANAGE_UPDATE_CANCELLING; break;
 	case CustomFrameUpdateMenuEntry::Restart:
-		command = kManageUpdateRestart; label = L"Restart to Update (1)"; break;
+		command = kManageUpdateRestart; labelId = STR_WORKBENCH_MANAGE_UPDATE_RESTART; break;
 	}
-	if (label == nullptr) return true;
+	if (labelId == 0) return true;
+	const MenuItemText label = MakeMenuItemText(labelId);
 	return ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(menu, command == 0 ? MF_STRING | MF_GRAYED : MF_STRING, command, label) != FALSE;
+		&& ::AppendMenuW(menu, command == 0 ? MF_STRING | MF_GRAYED : MF_STRING, command, label.c_str()) != FALSE;
 }
 
 } // namespace
@@ -162,6 +197,25 @@ bool AppendUpdateMenuGroup(HMENU menu, CustomFrameUpdateMenuEntry entry) noexcep
 int ScaleCustomFrameDip(int value, UINT dpi) noexcept
 {
 	return ::MulDiv(value, static_cast<int>(dpi == 0 ? 96 : dpi), 96);
+}
+
+RECT CalculateCustomFrameClientRect(
+	const RECT& systemFrameClient,
+	LONG windowTop,
+	bool maximized,
+	int resizeHandleHeight
+) noexcept
+{
+	RECT client = systemFrameClient;
+	client.top = windowTop;
+	if (maximized) {
+		// A maximized window's rectangle is one resize handle larger than the work
+		// area on every edge, so the restored top must give that handle back. Without
+		// it the title bar would be laid out above the top of the monitor.
+		client.top += std::max(0, resizeHandleHeight);
+	}
+	client.top = std::min(client.top, client.bottom);
+	return client;
 }
 
 std::array<RECT, static_cast<size_t>(CustomFrameResizeEdge::Count)>
@@ -178,13 +232,12 @@ CalculateCustomFrameResizeOverlayBounds(
 	const int height = std::max(0, clientHeight);
 	const int border = std::clamp(resizeBorder, 0, std::min(width, height));
 	if (border == 0) return bounds;
-	const auto index = [](CustomFrameResizeEdge edge) noexcept { return static_cast<size_t>(edge); };
-	// Top and bottom own the corner squares. The vertical strips deliberately
-	// exclude them so exactly one overlay receives each initial press.
-	bounds[index(CustomFrameResizeEdge::Top)] = MakeRect(0, 0, width, border);
-	bounds[index(CustomFrameResizeEdge::Bottom)] = MakeRect(0, height - border, width, height);
-	bounds[index(CustomFrameResizeEdge::Left)] = MakeRect(0, border, border, height - border);
-	bounds[index(CustomFrameResizeEdge::Right)] = MakeRect(width - border, border, width, height - border);
+	// Only the top edge lies inside the client after WM_NCCALCSIZE, so it is the only
+	// edge whose initial press a child control can take away from the frame. It owns
+	// the whole strip including both corner squares. The left, right, and bottom
+	// targets live in the system frame outside the client, where the top-level window
+	// already receives WM_NCHITTEST first and no child exists to intercept anything.
+	bounds[static_cast<size_t>(CustomFrameResizeEdge::Top)] = MakeRect(0, 0, width, border);
 	return bounds;
 }
 
@@ -385,22 +438,30 @@ LRESULT HitTestCustomFrame(
 	const int height = std::max(0, clientHeight);
 	const int border = std::max(0, resizeBorder);
 	if (!maximized && border > 0) {
-		// WM_NCCALCSIZE extends the client over the old frame, but Windows can still
-		// send WM_NCHITTEST for the invisible resize border just outside that client.
-		// Accept both halves of the system-sized target, as VS Code does, instead of
-		// leaving the status-bar size grip as the only reachable resize surface.
-		const bool left = point.x >= -border && point.x < border;
-		const bool right = point.x < width + border && point.x >= width - border;
+		// The system frame survives WM_NCCALCSIZE on the left, right, and bottom, so
+		// those resize targets lie entirely outside the client and arrive here as
+		// negative or past-the-edge coordinates. Only the top edge is client-owned,
+		// which is why it is the one edge whose band reaches inside. Claiming an inner
+		// band on the other three as well would take the outermost pixels of the
+		// Activity Bar, the editor, and the status bar, which VS Code leaves fully
+		// clickable.
+		const bool outerLeft = point.x < 0 && point.x >= -border;
+		const bool outerRight = point.x >= width && point.x < width + border;
+		const bool outerBottom = point.y >= height && point.y < height + border;
 		const bool top = point.y >= -border && point.y < border;
-		const bool bottom = point.y < height + border && point.y >= height - border;
-		if (top && left) return HTTOPLEFT;
-		if (top && right) return HTTOPRIGHT;
-		if (bottom && left) return HTBOTTOMLEFT;
-		if (bottom && right) return HTBOTTOMRIGHT;
-		if (left) return HTLEFT;
-		if (right) return HTRIGHT;
+		// A corner target may reach inside horizontally: at the top the caption owns
+		// those pixels anyway, and at the bottom the point is already past the client
+		// edge.
+		const bool cornerLeft = point.x < border && point.x >= -border;
+		const bool cornerRight = point.x >= width - border && point.x < width + border;
+		if (top && cornerLeft) return HTTOPLEFT;
+		if (top && cornerRight) return HTTOPRIGHT;
+		if (outerBottom && cornerLeft) return HTBOTTOMLEFT;
+		if (outerBottom && cornerRight) return HTBOTTOMRIGHT;
+		if (outerLeft) return HTLEFT;
+		if (outerRight) return HTRIGHT;
 		if (top) return HTTOP;
-		if (bottom) return HTBOTTOM;
+		if (outerBottom) return HTBOTTOM;
 	}
 	if (Contains(layout.closeButton, point)) return HTCLOSE;
 	if (Contains(layout.maximizeButton, point)) return HTMAXBUTTON;
@@ -455,24 +516,14 @@ void CCustomFrameController::Attach(HWND window, theme::ThemeMode savedMode) noe
 	DestroyResizeOverlays();
 	if (!m_accessibilityLifetime->IsAlive()) m_accessibilityLifetime = std::make_shared<accessibility::CustomUiAutomationLifetime>();
 	m_window = window;
-	const std::array<CustomFrameResizeEdge, static_cast<size_t>(CustomFrameResizeEdge::Count)> edges{
-		CustomFrameResizeEdge::Top,
-		CustomFrameResizeEdge::Bottom,
-		CustomFrameResizeEdge::Left,
-		CustomFrameResizeEdge::Right,
-	};
-	for (size_t i = 0; i < edges.size(); ++i) {
-		m_resizeOverlays[i].owner = this;
-		m_resizeOverlays[i].edge = edges[i];
+	for (auto& slot : m_resizeOverlays) {
+		slot.owner = this;
+		slot.edge = CustomFrameResizeEdge::Top;
 	}
 	m_savedMode = savedMode;
 	m_active = window == nullptr || ::GetActiveWindow() == window;
 	RefreshMetrics();
-	if (m_window != nullptr) {
-		const BOOL dark = m_savedMode == theme::ThemeMode::Dark;
-		constexpr DWORD kUseImmersiveDarkMode = 20;
-		::DwmSetWindowAttribute(m_window, kUseImmersiveDarkMode, &dark, sizeof(dark));
-	}
+	ApplyDwmFrameAppearance();
 }
 
 void CCustomFrameController::Detach() noexcept
@@ -505,12 +556,21 @@ void CCustomFrameController::SetThemeMode(theme::ThemeMode savedMode) noexcept
 {
 	m_savedMode = savedMode;
 	m_palette = theme::CThemeService::EffectivePalette(savedMode);
-	if (m_window != nullptr) {
-		const BOOL dark = savedMode == theme::ThemeMode::Dark;
-		constexpr DWORD kUseImmersiveDarkMode = 20;
-		::DwmSetWindowAttribute(m_window, kUseImmersiveDarkMode, &dark, sizeof(dark));
-	}
+	ApplyDwmFrameAppearance();
 	InvalidateTitle();
+}
+
+void CCustomFrameController::ApplyDwmFrameAppearance() noexcept
+{
+	if (m_window == nullptr) return;
+	const BOOL dark = m_savedMode == theme::ThemeMode::Dark;
+	::DwmSetWindowAttribute(m_window, kDwmUseImmersiveDarkMode, &dark, sizeof(dark));
+	// DWM paints the window border itself, inside the non-client frame that survives
+	// WM_NCCALCSIZE. Left alone it uses the system border, which reads brighter than
+	// the workbench chrome; the theme's own border color keeps the outline subdued and
+	// consistent with every seam the window draws for itself.
+	const COLORREF border = m_palette.border.ToColorRef();
+	::DwmSetWindowAttribute(m_window, kDwmBorderColor, &border, sizeof(border));
 }
 
 void CCustomFrameController::SetUiScalePercent(int percent) noexcept
@@ -642,6 +702,15 @@ int CCustomFrameController::ResizeBorder() const noexcept
 		return 0;
 	}
 	return ::GetSystemMetricsForDpi(SM_CXFRAME, m_physicalDpi)
+		+ ::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, m_physicalDpi);
+}
+
+int CCustomFrameController::ResizeBorderHeight() const noexcept
+{
+	if (m_window == nullptr) {
+		return 0;
+	}
+	return ::GetSystemMetricsForDpi(SM_CYFRAME, m_physicalDpi)
 		+ ::GetSystemMetricsForDpi(SM_CXPADDEDBORDER, m_physicalDpi);
 }
 
@@ -856,9 +925,12 @@ void CCustomFrameController::ShowLayoutMenu(const RECT& anchor) noexcept
 	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
 	const HMENU menu = ::CreatePopupMenu();
 	if (menu == nullptr) return;
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_LEFT_EXPLORER, L"Toggle Primary Side Bar");
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_BOTTOM_PANEL, L"Toggle Bottom Panel");
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_SECONDARY_SIDEBAR, L"Toggle Secondary Side Bar");
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_LEFT_EXPLORER,
+		MakeMenuItemText(STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR).c_str());
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_BOTTOM_PANEL,
+		MakeMenuItemText(STR_WORKBENCH_LAYOUT_TOGGLE_PANEL).c_str());
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_SECONDARY_SIDEBAR,
+		MakeMenuItemText(STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR).c_str());
 	POINT point{ anchor.left, anchor.bottom };
 	::ClientToScreen(m_window, &point);
 	const UINT command = ::TrackPopupMenu(
@@ -884,7 +956,8 @@ void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint) noexcept
 	const HMENU menu = ::CreatePopupMenu();
 	if (menu == nullptr) return;
 	// Authentication is not configured in Sakura Editor; keep this explicit rather than implying sign-in works.
-	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No account provider configured");
+	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
+		MakeMenuItemText(STR_WORKBENCH_ACCOUNT_NO_PROVIDER).c_str());
 	(void)::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
 		screenPoint.x, screenPoint.y, 0, m_window, nullptr);
 	::DestroyMenu(menu);
@@ -908,15 +981,21 @@ void CCustomFrameController::ShowManageMenuAt(POINT screenPoint, bool rightAlign
 		if (menu != nullptr) ::DestroyMenu(menu);
 		return;
 	}
+	// Each label is copied into its own `MenuItemText` before the next one is built,
+	// because `LS` returns a rotating static buffer that a later call would overwrite.
 	const bool menuItemsAppended = ::AppendMenuW(menu, MF_STRING, kManageShowCommandPalette,
-		L"Command Palette...\tCtrl+Shift+P") != FALSE
+		MakeMenuItemText(STR_WORKBENCH_MANAGE_COMMAND_PALETTE, L"Ctrl+Shift+P").c_str()) != FALSE
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(menu, MF_STRING, kManageOpenSettings, L"Settings\tCtrl+,") != FALSE
-		&& ::AppendMenuW(menu, MF_STRING, kManageOpenKeyboardShortcuts, L"Keyboard Shortcuts\tCtrl+K Ctrl+S") != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageOpenSettings,
+			MakeMenuItemText(STR_WORKBENCH_MANAGE_SETTINGS, L"Ctrl+,").c_str()) != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageOpenKeyboardShortcuts,
+			MakeMenuItemText(STR_WORKBENCH_MANAGE_KEYBOARD_SHORTCUTS, L"Ctrl+K Ctrl+S").c_str()) != FALSE
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme, L"Color Theme\tCtrl+K Ctrl+T") != FALSE;
+		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme,
+			MakeMenuItemText(STR_WORKBENCH_COLOR_THEME, L"Ctrl+K Ctrl+T").c_str()) != FALSE;
 	const bool themesAttached = menuItemsAppended
-		&& ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes), L"Themes") != FALSE;
+		&& ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes),
+			MakeMenuItemText(STR_WORKBENCH_MANAGE_THEMES).c_str()) != FALSE;
 	if (!themesAttached || !AppendUpdateMenuGroup(menu, m_updateMenuEntry)) {
 		// An attached submenu is owned by its parent, so destroying it again after
 		// `DestroyMenu(menu)` would be a double free. Only an unattached one is ours.
@@ -970,21 +1049,31 @@ bool CCustomFrameController::HandleWindowMessage(
 			return true;
 		}
 		return false;
-	case WM_NCCALCSIZE:
-		if (wParam != FALSE && lParam != 0) {
-			auto* parameters = reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam);
-			if (::IsZoomed(m_window)) {
-				MONITORINFO monitor{ sizeof(monitor) };
-				if (::GetMonitorInfoW(::MonitorFromWindow(m_window, MONITOR_DEFAULTTONEAREST), &monitor)) {
-					parameters->rgrc[0].left = std::max(parameters->rgrc[0].left, monitor.rcWork.left);
-					parameters->rgrc[0].top = std::max(parameters->rgrc[0].top, monitor.rcWork.top);
-					parameters->rgrc[0].right = std::min(parameters->rgrc[0].right, monitor.rcWork.right);
-					parameters->rgrc[0].bottom = std::min(parameters->rgrc[0].bottom, monitor.rcWork.bottom);
-				}
-			}
+	case WM_NCCALCSIZE: {
+		// The client is extended over the caption only. Everything else stays with the
+		// system frame, because DWM paints the window border and rounds the corners
+		// inside the frame region that survives here; a client sized to the whole
+		// window rectangle leaves no frame and therefore neither border nor corners.
+		if (lParam == 0) {
+			result = 0;
+			return true;
 		}
+		RECT* const client = wParam != FALSE
+			? &reinterpret_cast<NCCALCSIZE_PARAMS*>(lParam)->rgrc[0]
+			: reinterpret_cast<RECT*>(lParam);
+		const LONG windowTop = client->top;
+		const LRESULT systemResult = ::DefWindowProcW(m_window, message, wParam, lParam);
+		if (systemResult != 0) {
+			// A non-zero result carries client-preservation flags the system owns; the
+			// rectangles it produced then belong to it, not to this extension.
+			result = systemResult;
+			return true;
+		}
+		*client = CalculateCustomFrameClientRect(
+			*client, windowTop, ::IsZoomed(m_window) != FALSE, ResizeBorderHeight());
 		result = 0;
 		return true;
+	}
 	case WM_NCHITTEST: {
 		// DWM must retain ownership of a processed non-client target (notably
 		// HTMAXBUTTON, which enables Windows 11 Snap Layouts). DWM returns
@@ -1090,6 +1179,11 @@ bool CCustomFrameController::HandleWindowMessage(
 		LayoutResizeOverlays();
 		InvalidateTitle();
 		return false;
+	case WM_SHOWWINDOW:
+		// The border color does not survive the window's first appearance when it is
+		// only asked for at WM_CREATE time, so ask again as the window is shown.
+		if (wParam != FALSE) ApplyDwmFrameAppearance();
+		return false;
 	case WM_NCACTIVATE:
 	case WM_ACTIVATE:
 		m_active = message == WM_NCACTIVATE ? wParam != FALSE : LOWORD(wParam) != WA_INACTIVE;
@@ -1106,6 +1200,9 @@ bool CCustomFrameController::HandleWindowMessage(
 	case WM_THEMECHANGED:
 	case WM_SETTINGCHANGE:
 		m_palette = theme::CThemeService::EffectivePalette(m_savedMode);
+		// A system theme change resets the DWM attributes to their defaults, so dark
+		// mode and the border color have to be asked for again.
+		ApplyDwmFrameAppearance();
 		InvalidateTitle();
 		return false;
 	case WM_NCDESTROY:

@@ -112,7 +112,7 @@ Code places three sibling Views in that container, rather than putting a single
 | --- | --- | --- |
 | Repositories | `workbench.scm.repositories` | Header plus the published repository row |
 | Changes | `workbench.scm` | Header, input box, resource groups, or welcome content |
-| Graph | `workbench.scm.history` | Header plus an explicitly unsupported frame |
+| Graph | `workbench.scm.history` | Header plus the owner-drawn history list |
 
 `CViewContainerPages` owns one physical `CScmWorkbenchTool` HWND for the
 container, so the tool projects those Views into a vertical stack.  It does not
@@ -128,12 +128,76 @@ the two IDs now would incorrectly make a history-less Graph active and
 selectable.  Their exact IDs are reserved in `WorkbenchIds.h`, and the native
 stack is the presentation boundary until that capability model exists.
 
-Graph is `ScmGraphPresentation{ Unsupported }`: it owns no history rows, does
-not run `git log`, has no hit target or command, and paints a resource-owned
-"not available yet" message.  It is shown only while a repository provider is
-published, so empty/folder welcome states remain a normal Changes-only view.
-When a real history-provider snapshot is added, it must change this typed state
-and only then register/project `workbench.scm.history` as a selectable View.
+**Superseded record (do not restore):** Graph was
+`ScmGraphPresentation{ Unsupported }` -- no history rows, no `git log`, no hit
+target, and a resource-owned "not available yet" message.  That state no longer
+exists.  See "The Graph View" below for what replaced it.
+
+## The Graph View (2026-08-20)
+
+`workbench.scm.history` now renders a real history.  `GitHistoryModel.h`/`.cpp`
+is the pure half -- it has no HWND, runs no git, and reads no file -- and
+`CScmWorkbenchTool` is the only thing that turns its rows into pixels.
+
+- One `git log --topo-order --max-count=50` with a `%x1f`-separated,
+  `%x1e`-terminated format.  Topological order is what puts a parent below its
+  child, which is the only order a swimlane walk can be built from, and the two
+  ASCII separators are chosen because neither can appear inside a field a commit
+  supplies.  The query runs in the same background worker as the status refresh
+  and only after the status reported a repository, so an idle tick still costs
+  one refresh rather than two.
+- `BuildScmHistoryGraph` is upstream's `toISCMHistoryItemViewModelArray`
+  swimlane walk: a lane waiting for this commit becomes its circle and continues
+  into its **first** parent, further lanes waiting for the same commit are
+  merges that end here, and every additional parent opens a new lane unless one
+  is already awaiting it.  A commit nothing was waiting for starts its own lane
+  at the right-hand end.
+- `EScmGraphPresentationStatus` is now `Unavailable` / `Available`.
+  `Unavailable` still means "no history has been read, or reading it failed",
+  and still paints the message rather than an empty list, because an empty list
+  would be a claim that the repository has no commits.
+- The rows live in a second owner-drawn LISTBOX with its own shared
+  `controls::COverlayScrollbar`, rather than a hand-scrolled canvas, so the
+  Graph inherits the keyboard, wheel, and scrollbar behaviour the change list
+  and the Explorer already have.
+
+### Graph divergences
+
+- **The lane colours are literals, not theme tokens.**  Upstream registers
+  `scmGraph.foreground1` .. `foreground5` and reads them from the colour theme.
+  `theme::ThemePalette` publishes no such tokens, so `kGraphLaneColors` carries
+  the registered upstream **defaults**.  Replace them with palette reads when
+  the tokens are published; do not add a sixth colour of our own.
+- **A row has no hover actions, no context menu, and no click command.**
+  Upstream's `HistoryItemRenderer` opens a commit's changes and contributes a
+  menu.  There is no commit-detail input here, so the rows are presentation
+  only rather than offering an action that could not resolve.
+- **The page is a fixed 50 commits with no incremental loading.**  Upstream
+  pages as the user scrolls.  A bounded page keeps the refresh cost fixed; the
+  bound is not hidden, because the list simply ends.
+- **Only `%D` decorations are badged.**  Upstream also renders history-item
+  labels a provider contributes.  Our provider contributes none.
+
+## Collapsing and Resizing the Sections
+
+The three sections behave like upstream's panes: each header carries a
+`chevron-down` / `chevron-right` twistie that collapses its body, and the
+Changes/Graph boundary carries a `.monaco-sash` drag handle.
+
+- A collapsed section keeps its header and gives up its whole body, because a
+  section with no header could not be reopened.  The commit box and the Commit
+  button collapse **with** the Changes section, since upstream's `.scm-editor`
+  lives inside that pane rather than above it.
+- The sash is a 4-DIP overlay straddling the boundary, exactly as upstream's is:
+  it consumes no layout space, so collapsing or hiding the Graph simply removes
+  it rather than leaving a gap.
+- The dragged size is stored in DIP (`graphBodyDip`), not pixels, so a DPI
+  change rescales it, and the delta is measured against the drag's own origin so
+  repeated rounding cannot accumulate.  `BuildScmViewStackLayout` clamps it
+  against `minimumBodyHeight`, so the Graph can never starve the change list.
+- Recorded divergence: the sizes are **not persisted**.  Upstream stores pane
+  size and collapsed state in its view-state memento.  There is no memento key
+  for this view yet, so both reset to their defaults with the window.
 
 ## The Repository Row
 
@@ -202,14 +266,6 @@ read verbatim rather than inferred from a screenshot.
   count; repository/resource counts remain in their own rows. The former
   `SOURCE CONTROL  (N)` text is not a valid substitute for either a ViewContainer
   title or a Repositories header.
-- **Graph is a visible scaffold, not an emulated history feature.** VS Code hides
-  it unless a provider contributes `historyProvider`. The user-requested native
-  frame is limited to a published repository, carries the typed `Unsupported`
-  state above, and reserves a fixed lower body before the Changes list/welcome
-  layout. It must stay non-interactive until `SourceControlService` has a
-  provider-owned history capability. This is an intentional presentation
-  divergence made explicit here; it must not be extended with local `git log`
-  calls or fake graph rows.
 - **The band's tooltips are Win32 tooltips, not hovers.** The name segment shows
   the row title and each action segment shows its command tooltip, delivered
   through `LPSTR_TEXTCALLBACKW` / `TTN_GETDISPINFOW` because the strings change
@@ -466,9 +522,22 @@ and working-tree commands.
 - **The placeholder is painted by the tool, not by the control.**
   `EM_SETCUEBANNER` works only on a single-line edit, and the commit box is
   multi-line, so the placeholder is drawn in the tool's own paint path.
-- **`scm.inputMinLineCount`, `scm.inputMaxLineCount`, and `scm.inputFontSize`
-  are hard-coded to their documented defaults.** Hard-coding the upstream default
-  keeps the box identical to a stock VS Code; inventing a third size would not.
+- **`scm.inputMinLineCount` and `scm.inputMaxLineCount` are real settings.**
+  Both are registered in `config/BuiltinConfigurationDescriptors.cpp` under
+  upstream's own ids, with upstream's defaults (1 and 10), upstream's 1..50
+  bounds, and Profile/Workspace/Folder scope. The view does not read settings
+  itself: `CEditWnd::ApplyScmInputLineCountSetting` resolves them through the
+  configuration service and hands them over with
+  `CScmWorkbenchTool::SetInputLineCountRange`, so the box opens at the minimum
+  and auto-grows to the maximum exactly as upstream's `InputRenderer` sizes it.
+  Documented divergence: upstream bounds each key independently, and so does the
+  registration here; a `scm.inputMaxLineCount` below the effective minimum is
+  resolved to that minimum rather than rejected, because a commit box shorter
+  than its own minimum has no rendering.
+- **`scm.inputFontSize` is still hard-coded to its documented default.** Hard-coding
+  the upstream default keeps the box identical to a stock VS Code; inventing a
+  third size would not. It becomes a real setting when the tool gains a font
+  scale of its own.
 
 ## Opening a Change
 
@@ -951,6 +1020,20 @@ are registered under upstream's own IDs. The empty-workbench welcome uses
   still flattened to plain text and owner-drawn buttons (see the preceding
   divergence), but the top-flow geometry no longer vertically centers the
   block.
+- **The numbers behind that flow are owned by `workbench/ViewsWelcomeMetrics.h`
+  (2026-08-20, #218).** This view and the Explorer render the same upstream
+  `viewsWelcome` contribution, and each used to own its own copy of the
+  geometry, so the two drew visibly different buttons. Two defects were on this
+  side: the box height came from the label font (`textHeight + 2 * 6`), which
+  both disagreed with the Explorer and moved with the UI font, and
+  `PaintWelcome` filled the `RoundRect` through a `NULL_PEN`, which fills one
+  pixel short of the laid-out rectangle. Upstream's `.monaco-text-button` is
+  `box-sizing: border-box` with `line-height: 16px`, `padding: 4px 8px`, and a
+  `1px` border -- a font-independent 26 DIP -- and its `background-color`
+  covers the whole border box, so the fill now uses a pen of the fill colour.
+  `LayoutWelcome`/`PaintWelcome` read `views::WelcomeButtonHeight`,
+  `WelcomeButtonCornerRadius`, `WelcomeHorizontalInset`, and
+  `WelcomeButtonColumnWidth`; do not restore a local `kWelcome*` constant here.
 - **Corrected record — `SetHasOpenFolder` now has a production caller, so both
   welcome states are reachable.** An earlier version of this entry recorded that
   `CScmWorkbenchTool::Impl::hasOpenFolder` stayed `false` forever, pinning the
@@ -1140,6 +1223,64 @@ cancellable, and its terminal state is typed.
   backslash-run rule. Branch names, paths, and commit messages all reach git
   through it.
 
+## Git Output Channel
+
+`GitOutputChannel.h`/`.cpp` (Issue #221) is an adapter, not a new authority: it
+mirrors `RunGit` invocations into `workbench::output::OutputService` as the
+"Git" Log channel, exactly as upstream's built-in Git extension mirrors its own
+`_exec` calls into its own "Git" Output channel. `OutputService` itself remains
+the sole owner of channel content; nothing here retains its own copy.
+
+- **Format verified against `microsoft/vscode` source, not guessed.** The
+  built-in Git extension creates its channel with
+  `window.createOutputChannel('Git', { log: true })` in
+  `extensions/git/src/main.ts` (a `LogOutputChannel`, i.e. this codebase's
+  `EOutputChannelKind::Log`, not `Output`). `extensions/git/src/git.ts`'s
+  `_exec` always logs `` > git ${args.join(' ')} [${elapsed}ms] `` and logs
+  stderr only when it is non-empty; it never logs stdout or an exit-code line.
+  `main.ts`'s log listener splits each logged string on `\r?\n`, drops trailing
+  blank lines, and rejoins the remainder with `\n` before one
+  `LogOutputChannel.appendLine` call, which itself resolves to Info level
+  (`ExtHostLogOutputChannel.appendLine` delegates to `info()`). `kGitOutputChannelId`
+  reuses `GitScmPublisher::kGitProviderId` ("git") because `createOutputChannel`
+  itself carries no separate stable channel ID upstream publishes; `kGitOutputChannelLabel`
+  is upstream's own display string, "Git", verbatim.
+- **Two deliberate, documented divergences**, both in `GitOutputChannel.h`'s
+  `BuildGitOutputLogEntries` doc comment: the logged command line uses this
+  runner's own *effective* arguments (`BuildEffectiveGitArguments`, which
+  includes the leading `-C <workingDirectory>`) rather than upstream's raw
+  `args.join(' ')`, since this runner's repository resolution is `-C`-based and
+  upstream passes `cwd` out of band; and stdout is never logged, which is not a
+  divergence in outcome — upstream's own `git.commandsToLog` default is `[]`, so
+  a stock VS Code never logs stdout either, and this adapter has no settings
+  reader for that list yet.
+- **`EnsureGitOutputChannel` is Snapshot-based, not replay-cache-based.**
+  `OutputService::CreateChannel` called twice for an already-created channel
+  with two *different* `operationId`s is a `Conflict`/`InvalidChannelId` by
+  design (see `ValidateOwnedChannel`/`CreateChannel` in `OutputService.cpp`),
+  and the remembered-operation replay cache is bounded
+  (`maximumRememberedOperations`, default 512) and can evict the original
+  create operation over a long-lived owner generation. `EnsureGitOutputChannel`
+  therefore checks `OutputService::Snapshot()` for an existing channel with the
+  same `channelId`/owner/kind first, and only calls `CreateChannel` when none is
+  found.
+- **`RunGitLogged` never changes `RunGit`'s own result.** Output-channel
+  mirroring is strictly best-effort: a null `OutputService*` in `GitOutputSink`,
+  an exhausted `nextAppendOperationId` callable, or any non-`Conflict` failure
+  from `EnsureGitOutputChannel` all skip logging silently and still return
+  `RunGit`'s result unchanged.
+- **Thread safety matches `RunGit`'s own.** `RunGitLogged` carries no shared
+  mutable state beyond the `OutputService` (already documented thread-safe) and
+  the caller-supplied `HANDLE stop`/callables, so it is safe to call from the UI
+  thread (as `CEditWnd.cpp`'s existing `RunGit` call sites already do) or from a
+  background worker thread (as `CScmWorkbenchTool.cpp`'s periodic status-refresh
+  thread already does), provided each call supplies its own `stop` handle and
+  its own `nextAppendOperationId` sequence.
+- **Not yet wired into any production call site.** `CScmWorkbenchTool.cpp` and
+  `CEditWnd.cpp`'s existing `RunGit(...)` calls are unchanged; replacing them
+  with `RunGitLogged(...)` and threading a `GitOutputSink` through is future
+  work, out of scope for this adapter-only change.
+
 ## Verification
 
 - `build-sln.bat x64 Debug`, then the focused filter
@@ -1182,3 +1323,113 @@ cancellable, and its terminal state is typed.
 - `sakura.vcxproj` deletes `x64\Debug\sakura.exe` before linking, so a running
   editor fails the build with `MSB3073` even when every translation unit
   compiled. Close the running editor rather than assuming a compile error.
+- The changed-file list draws its own VS Code-style overlay scrollbar through the
+  shared `workbench/controls/COverlayScrollbar`, the same control the Explorer
+  tree uses, so the two views cannot drift apart visually. The LISTBOX keeps
+  `WS_VSCROLL` because the overlay reads the target's `SB_VERT` `SCROLLINFO` as
+  the authoritative scroll state; the native bars are only hidden. Scrolling goes
+  back through one callback that sends `LB_SETTOPINDEX`. Refresh the overlay
+  (`UpdateListScrollbar`) after anything that changes item count, size, or top
+  index -- `Populate`, `LayoutList`, `SetPalette`, and the list subclass's
+  `WM_VSCROLL`/`WM_MOUSEWHEEL`/`WM_KEYDOWN`/`WM_SIZE` handling all do.
+- Row icons resolve through the bundled `vs-seti` theme with
+  `icons::seti::ResolveSetiFileIcon`, painted by the shared
+  `icons/SetiIconPainter.h` that the Explorer also uses, so a file shows the same
+  glyph in both views. The light/dark variant comes from
+  `theme::CThemeService::IsActiveColorThemeLightKind()`, and `kInheritColor`
+  means the row's own text color. Only when the Seti font is unavailable does the
+  row fall back to the generic `file` codicon; group header rows keep the chevron.
+
+## The Commit Action Button (2026-08-20)
+
+`ISCMProvider.actionButton` is what upstream's `SCMViewPane` renders as a split
+button directly under the commit box, and the built-in Git extension is what
+contributes it. The model is `BuildGitCommitActionButton` in `GitScmMenus`; the
+native half is `CScmWorkbenchTool`'s `ActionButton*` members, and the band it
+occupies is `ScmViewStackLayout::actionButton`.
+
+- The button exists only while the repository has at least one resource in some
+  group, because that is upstream's own gate. With nothing to commit upstream
+  contributes **no** button, so this shows none rather than a disabled one. Its
+  band collapses with it, so the change list keeps the room it had before.
+- `enabled` follows the commit box. Upstream disables the whole button while a
+  repository operation runs, which is the same condition that disables the box,
+  so reading a second authority here could only make the two disagree.
+- The box is `.monaco-text-button`, so its height and corner radius come from
+  `workbench/ViewsWelcomeMetrics.h` -- the same header the ViewWelcome buttons
+  read. A local constant here would let the two disagree about one upstream
+  control, which is exactly the defect #218 fixed for the Explorer.
+- The primary half runs `git.commit`; the dropdown half opens
+  `secondaryCommands` and runs the chosen id through the same `runCommand`
+  route. The title is kept in `renderLabelWithIcons` syntax (`$(check) Commit`)
+  so the native renderer draws upstream's own Codicon.
+
+Recorded divergences (omit, don't fake):
+
+- **`Commit & Push` and `Commit & Sync` are absent.** They are upstream's
+  `git.postCommitCommand` variants: git commits and *then* runs push or sync as
+  one action. This product has no post-commit-command contract --
+  `GitCommitCommands` ends at the commit -- so the dropdown offers only the
+  variants that are actually routable. Rendering them as plain commits would be
+  the faked capability. Implementing them means giving the commit executor a
+  post-commit stage, not adding two menu rows.
+- **`Commit (Signed Off)` is absent** for the same reason: `git.commitSignedOff`
+  is not registered here.
+- **The button is always the commit button.** Upstream's action button is a
+  state machine that also becomes `Publish Branch` or `Sync Changes` when there
+  is nothing to commit but something to publish or sync. Those states need the
+  branch's publish/ahead-behind conditions wired into the button model; until
+  they are, no button appears in that state rather than a commit button that
+  would commit nothing.
+
+## The lists scroll the wheel themselves (2026-08-20, #227)
+
+Both list boxes keep `WS_VSCROLL` so their `SCROLLINFO` stays authoritative for
+the themed overlay scrollbar, but the overlay hides the platform bar — and a
+list box whose scroll bar is hidden drops `WM_MOUSEWHEEL` on the floor. Verified
+2026-08-20: `LB_SETTOPINDEX` moved both lists, while a `WM_MOUSEWHEEL` sent
+straight to either list box left `LB_GETTOPINDEX` at 0.
+
+`ListSubclassProc` therefore scrolls explicitly through `ScrollListBoxByWheel`
+before `DefSubclassProc`, exactly as the Explorer tree already did, and then
+republishes the overlay's extent. It honours `SPI_GETWHEELSCROLLLINES`,
+including `WHEEL_PAGESCROLL`, so the wheel moves what the system says a notch
+moves rather than a hard-coded row count.
+
+This is only half of the path: the wheel still has to reach the list. See
+`window/CLAUDE.md`, "The wheel follows the pointer, not the focus", for the
+frame-side routing that delivers it to the hovered control instead of the
+focused one.
+
+## Git file decorations feed the Explorer, not the SCM view (2026-08-20, #229)
+
+VS Code separates the SCM service from `IDecorationsService`: the File Explorer
+paints `FileDecoration` values published by a provider, and it never sees a
+`SourceControlResourceState`. This product keeps that boundary.
+
+- `workbench/decorations/FileDecorationModel.h` is the provider-neutral model.
+  It carries a badge, a tooltip, a theme-color *role* (`EFileDecorationColor`),
+  and upstream's `propagate` flag. A provider never resolves a COLORREF and a
+  consumer never learns which provider decorated a path.
+- `GitFileStatusDecorationColor` reproduces the Git extension's own
+  `Resource.getStatusColor` mapping, and `DoesGitFileStatusPropagate` its
+  `resourceDecoration.propagate = type !== DELETED && type !== INDEX_DELETED`.
+  Both take `EGitFileStatus`, which is why `GitResourceDecoration` carries the
+  status rather than a resolved color: the SCM row and the Explorer row derive
+  the same facts from the same value.
+- `BuildGitFileDecorationEntries` is the projection onto native paths. A
+  resource whose URI is not a file URI is dropped, not guessed at.
+- `CScmWorkbenchTool` publishes the whole table on every render, the way
+  upstream's `onDidChangeFileDecorations` carries a set rather than a delta.
+  `RepublishFileDecorations` republishes the last built set without re-running
+  git, which is what a settings change needs.
+
+Recorded omissions (omit, don't fake):
+
+- **`gitDecoration.ignoredResourceForeground` is registered but never
+  published.** Upstream's `GitIgnoreDecorationProvider` runs `git check-ignore`
+  over the resources the Explorer asks about; that query does not exist here, so
+  no path is decorated as ignored. The role stays in the model and the theme so
+  that adding the provider is the only remaining work.
+- **Submodule decorations are not published** for the same reason: the repository
+  model does not enumerate submodules, so nothing can produce the `S` badge.

@@ -374,6 +374,7 @@ F_SAVE_WORKSPACE_AS		= 31004,	//ワークスペースに名前を付けて保存
 F_DUPLICATE_WORKSPACE		= 31005,	//ワークスペースを新しいウィンドウで複製	なし
 F_CLOSE_WORKSPACE		= 31006,	//ワークスペースを閉じる			なし
 F_CLOSE_ACTIVE_EDITOR		= 31007,	//アクティブなエディターを閉じる		なし
+F_CLEAR_RECENT_WORKSPACES	= 31008,	//最近開いた項目を消去					なし
 F_CHG_CHARSET		= 31010,	//文字コードセット指定					
 F_CHGMOD_EOL_CRLF	= 31081,	//入力改行コード指定(CRLF)				なし
 F_CHGMOD_EOL_LF		= 31082,	//入力改行コード指定(LF)				なし

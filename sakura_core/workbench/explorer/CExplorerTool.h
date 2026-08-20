@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -7,11 +7,13 @@
 #pragma once
 
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/decorations/FileDecorationModel.h"
 
 #include <Windows.h>
 
-#include <functional>
+#include <array>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -53,6 +55,45 @@ struct ExplorerPalette {
 	COLORREF scrollbarThumb = RGB(0x38, 0x3E, 0x49);
 	COLORREF scrollbarThumbHover = RGB(0x8B, 0x91, 0x9B);
 	COLORREF scrollbarTrackHover = RGB(0x2A, 0x2E, 0x36);
+	/*!
+		@brief The resolved `gitDecoration.*` colors, indexed by decoration role.
+
+		A decoration provider names a `ThemeColor` role and never a color, so the
+		role has to be resolved somewhere that knows the loaded theme. That is this
+		palette, for the same reason every other color here is: the view is handed
+		resolved colors and does not read the theme service to paint a row.
+		`EFileDecorationColor::None` occupies index 0 and is never drawn.
+	*/
+	std::array<COLORREF, 11> decorationColors{
+		RGB(0xCC, 0xCC, 0xCC), // None, never used
+		RGB(0x81, 0xB8, 0x8B), // added
+		RGB(0xE2, 0xC0, 0x8D), // modified
+		RGB(0xC7, 0x4E, 0x39), // deleted
+		RGB(0x73, 0xC9, 0x91), // renamed
+		RGB(0xE2, 0xC0, 0x8D), // stage modified
+		RGB(0xC7, 0x4E, 0x39), // stage deleted
+		RGB(0x73, 0xC9, 0x91), // untracked
+		RGB(0x8C, 0x8C, 0x8C), // ignored
+		RGB(0xE4, 0x67, 0x6B), // conflicting
+		RGB(0x8D, 0xB9, 0xE2), // submodule
+	};
+};
+
+/*!
+	@brief `git.decorations.enabled` and the two `explorer.decorations.*` settings.
+
+	Upstream splits the question in two: the Git extension decides whether it
+	registers a decoration provider at all, and the workbench decides which parts
+	of a decoration the File Explorer renders. Both halves are kept here so a view
+	that is handed a table still honors a user who asked for colors without badges.
+*/
+struct ExplorerDecorationOptions final {
+	//! `explorer.decorations.colors`, default true.
+	bool colors{ true };
+	//! `explorer.decorations.badges`, default true.
+	bool badges{ true };
+
+	[[nodiscard]] bool operator==(const ExplorerDecorationOptions&) const noexcept = default;
 };
 
 //! Matches VS Code's editor-opening intent: a selection previews, while an
@@ -224,6 +265,18 @@ public:
 	void CollapseAllFolders();
 	void SetPalette(ExplorerPalette palette);
 	[[nodiscard]] ExplorerPalette GetPalette() const noexcept;
+
+	/*!
+		@brief Publishes the decoration table this view paints its rows from.
+
+		This is the consumer half of upstream's `IDecorationsService`: the whole set
+		is replaced, never patched, because `onDidChangeFileDecorations` carries a
+		set too. The table is provider-neutral, so the view stays unaware that Git
+		is what filled it.
+	*/
+	void SetFileDecorations(decorations::FileDecorationTable decorations);
+	void SetDecorationOptions(ExplorerDecorationOptions options);
+	[[nodiscard]] ExplorerDecorationOptions GetDecorationOptions() const noexcept;
 	[[nodiscard]] ExplorerWorkerState GetWorkerState() const noexcept;
 	[[nodiscard]] HWND GetHwnd() const noexcept;
 

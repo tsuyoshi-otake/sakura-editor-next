@@ -530,6 +530,7 @@
     <ClInclude Include="..\sakura_core\accessibility\CustomUiAutomationProvider.h" />
     <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h" />
     <ClInclude Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.h" />
+    <ClInclude Include="..\sakura_core\terminal\input\TerminalShortcutPreset.h" />
     <ClInclude Include="..\sakura_core\terminal\model\TerminalModel.h" />
     <ClInclude Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.h" />
     <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\inc\CodepointWidthDetector.hpp" />
@@ -550,6 +551,7 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalTabPresentation.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h" />
@@ -564,6 +566,7 @@
 	<ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
+	<ClInclude Include="..\sakura_core\markdown\MermaidDiagram.h" />
     <ClInclude Include="..\sakura_core\textmate\OnigmoRegexEngine.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateGrammarCompiler.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateGrammarModel.h" />
@@ -596,8 +599,10 @@
 	<ClInclude Include="..\sakura_core\workbench\workspace\WorkspaceArtifactDocumentService.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\FolderTaskCatalogRegistry.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.h" />
+	<ClInclude Include="..\sakura_core\workbench\tasks\ProblemMatcherEngine.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskExecutionService.h" />
 	<ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h" />
+	<ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h" />
 	<ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h" />
 	<ClInclude Include="..\sakura_core\workbench\output\OutputService.h" />
 	<ClInclude Include="..\sakura_core\workbench\ports\PortForwardingService.h" />
@@ -616,6 +621,7 @@
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateTypes.h" />
 	<ClInclude Include="..\sakura_core\workbench\keybinding\KeybindingChord.h" />
 	<ClInclude Include="..\sakura_core\workbench\win32\BuiltinPartProjection.h" />
+	<ClInclude Include="..\sakura_core\workbench\controls\COverlayScrollbar.h" />
 	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.h" />
 	<ClInclude Include="..\sakura_core\workbench\activity\ActivityBarModel.h" />
@@ -630,6 +636,7 @@
 	<ClInclude Include="..\sakura_core\workbench\panel\CBottomPanelTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommandRunner.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\GitOutputChannel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitBranchCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitFailureText.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitPrompt.h" />
@@ -639,10 +646,12 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitStageCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\decorations\FileDecorationModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitDiffModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitLineStaging.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmPublisher.h" />
+	<ClInclude Include="..\sakura_core\workbench\scm\GitHistoryModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmMenus.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h" />
@@ -684,11 +693,14 @@
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceCodec.h" />
     <ClInclude Include="..\sakura_core\workbench\editor\persistence\WorkingCopyPersistenceTypes.h" />
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h" />
+    <ClInclude Include="..\sakura_core\workbench\ViewsWelcomeMetrics.h" />
 	<ClInclude Include="..\sakura_core\workbench\WorkbenchBootstrapContext.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphPainter.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\CSetiFont.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\SetiFileIcon.h" />
+	<ClInclude Include="..\sakura_core\workbench\icons\SetiIconPainter.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\SetiIconThemeTable.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\EmbeddedFontResource.h" />
 	<ClInclude Include="..\sakura_core\workbench\icons\ThemeIconResolver.h" />
@@ -1162,6 +1174,7 @@
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp" />
     <ClCompile Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\input\TerminalShortcutPreset.cpp" />
     <ClCompile Include="..\sakura_core\terminal\model\TerminalModel.cpp" />
     <ClCompile Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.cpp" />
     <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\CodepointWidthDetector.cpp">
@@ -1203,6 +1216,7 @@
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalTabPresentation.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
@@ -1212,6 +1226,7 @@
 	<ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\MermaidDiagram.cpp" />
     <ClCompile Include="..\sakura_core\textmate\OnigmoRegexEngine.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateGrammarCompiler.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.cpp" />
@@ -1238,8 +1253,10 @@
 	<ClCompile Include="..\sakura_core\workbench\workspace\WorkspaceResourceDescriptors.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\FolderTaskCatalogRegistry.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\tasks\ProblemMatcherEngine.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\TaskExecutionService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\output\OutputService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\ports\PortForwardingService.cpp" />
@@ -1252,6 +1269,7 @@
 	<ClCompile Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\keybinding\KeybindingChord.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\controls\COverlayScrollbar.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarEntryProjection.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\activity\ActivityBarModel.cpp" />
@@ -1264,6 +1282,7 @@
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineParserWorker.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\outline\OutlineSnapshotParser.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommandRunner.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\GitOutputChannel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitBranchCommands.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommitCommands.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitSyncCommands.cpp" />
@@ -1274,6 +1293,7 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitDiffModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitLineStaging.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmPublisher.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\scm\GitHistoryModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmMenus.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp" />

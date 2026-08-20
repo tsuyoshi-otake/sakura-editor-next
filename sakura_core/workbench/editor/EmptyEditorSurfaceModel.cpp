@@ -17,12 +17,6 @@ constexpr unsigned int kDefaultDpi = 96;
 constexpr int kActionWidthDip = 288;
 constexpr int kActionHeightDip = 28;
 constexpr int kActionGapDip = 4;
-//! VS Code's `.letterpress` is `max-width: 256px` with `aspect-ratio: 1 / 1`.
-constexpr int kLetterpressMaxDip = 256;
-//! `.watermark-container` separates the letterpress from the shortcut list with `gap: 24px`.
-constexpr int kLetterpressGapDip = 24;
-//! Below this the square would be unreadable, so the surface shows the action list alone.
-constexpr int kLetterpressMinDip = 48;
 
 } // namespace
 
@@ -128,24 +122,11 @@ void EmptyEditorSurfaceModel::Reflow() noexcept
 	const int left = std::max(0, (m_widthPixels - width) / 2);
 	const int availableWidth = std::max(0, std::min(width, m_widthPixels));
 
-	// The letterpress square and the action list form one vertically centered column. The square
-	// shrinks to whatever the viewport can still spare and disappears before the list ever does.
-	const int letterpressGap = ScaleDip(kLetterpressGapDip, m_dpi);
-	const int letterpressLimit = std::min({ ScaleDip(kLetterpressMaxDip, m_dpi), availableWidth,
-		m_heightPixels - totalHeight - letterpressGap });
-	const int letterpressSide = letterpressLimit >= ScaleDip(kLetterpressMinDip, m_dpi) ? letterpressLimit : 0;
-	const int letterpressBlock = letterpressSide > 0 ? letterpressSide + letterpressGap : 0;
-	const int top = std::max(0, (m_heightPixels - totalHeight - letterpressBlock) / 2);
-	if (letterpressSide > 0) {
-		const int letterpressLeft = std::max(0, (m_widthPixels - letterpressSide) / 2);
-		m_letterpress = { letterpressLeft, top, letterpressLeft + letterpressSide, top + letterpressSide };
-	} else {
-		m_letterpress = {};
-	}
-
-	const int actionsTop = top + letterpressBlock;
+	// The action list alone is the centered column. See this subsystem's CLAUDE.md for why the
+	// `.letterpress` half of upstream's `.watermark-container` is not drawn here.
+	const int top = std::max(0, (m_heightPixels - totalHeight) / 2);
 	for (std::size_t index = 0; index < kActionCount; ++index) {
-		const int actionTop = std::min(m_heightPixels, actionsTop + static_cast<int>(index) * (height + gap));
+		const int actionTop = std::min(m_heightPixels, top + static_cast<int>(index) * (height + gap));
 		m_bounds[index] = { left, actionTop, left + availableWidth,
 			std::min(m_heightPixels, actionTop + height) };
 	}

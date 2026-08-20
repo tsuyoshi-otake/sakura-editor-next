@@ -15,10 +15,13 @@ download.
 | Links and images | Typed URI disposition; unsafe schemes fail closed | Partial: activation remains gated |
 | Raw HTML | Harmless semantic wrappers only; active content and attributes never execute | Safe subset |
 | Live update | Persistent worker; one in flight plus latest pending; stale generations discarded | Implemented |
-| Scroll synchronization | Editor line maps to preview block and preview position scrolls source without moving the caret | Implemented |
+| Scroll synchronization: editor to preview | `scrollPreviewWithEditor`. The editor's top layout line maps to the first rendered row at or after it | Implemented and measured |
+| Scroll synchronization: preview to editor | `scrollEditorWithPreview`. The preview's top row scrolls the source view without moving the caret | Implemented and measured |
 | Preview lock | Dynamic follows active Markdown; locked retains source identity | Implemented state boundary |
-| Commands/keybindings | Exact VS Code IDs and default Markdown preview bindings | Implemented |
-| Math and diagrams | Inert literal source with an explicit native-fallback notice; never executed | Safe fallback |
+| Commands/keybindings | Exact VS Code IDs and default Markdown preview bindings, compared against a pinned upstream manifest | Implemented; to-side commands are typed unsupported |
+| Typography | Font family, sizes, weights, line heights and body padding taken from upstream `media/markdown.css`; ClearType on every face | Implemented; per-element block margins and the h1/h2 rule are not drawn |
+| Math | Inert literal source with an explicit native-fallback notice; never executed | Deliberate divergence: `mathTypesetting` stays `Unsupported` |
+| Mermaid | The flowchart subset is parsed and drawn natively; every other family, and every flowchart feature outside the subset, stays inert literal source with a notice | `mermaidFlowchartRendering` is `Supported`; `mermaidNonFlowchartRendering` stays `Unsupported` |
 
 Unsupported syntax must remain visible as literal text or a typed unsupported
 state. It must not be approximated with unrelated editor state merely to resemble
@@ -48,19 +51,113 @@ return a typed unsupported result. They never alias to Sakura's legacy sibling
 preview pane. Current-group show/reopen/toggle owns replacement layout; the
 legacy function-code path alone owns `NativeSiblingPane` placement.
 
+The document tab's preview button is therefore **not** a `markdown.*` command. It
+toggles the Sakura-owned sibling pane, so its declared action id is
+`sakura.toggleMarkdownSiblingPreview` (`tabbar::kMarkdownPreviewCommandId`),
+dispatched as `F_TOGGLE_MARKDOWN_PREVIEW` into
+`MarkdownPreviewCommandState::ToggleNativeSibling`. It becomes
+`markdown.showPreviewToSide` only when a real second EditorGroup exists; naming
+it that today would declare a capability this shell does not have.
+
+## Declared capabilities
+
+`markdown::PreviewCapabilities` is the machine-readable form of this table. Scroll
+synchronization is declared per direction, named after the upstream settings that
+gate it, because one combined flag cannot state that one direction works and the
+other does not:
+
+| Capability | Value | Upstream setting |
+|---|---|---|
+| `localImageProjection` | Supported | - |
+| `linkActivation` | Unsupported | - |
+| `scrollPreviewWithEditor` | Supported | `markdown.preview.scrollPreviewWithEditor` |
+| `scrollEditorWithPreview` | Supported | `markdown.preview.scrollEditorWithPreview` |
+| `rawHtmlExecution` | Unsupported | - |
+| `mathTypesetting` | Unsupported | - |
+| `mermaidFlowchartRendering` | Supported | - |
+| `mermaidNonFlowchartRendering` | Unsupported | - |
+
+The `Unsupported` rows are deliberate divergences, not gaps awaiting a patch.
+They must stay fail-closed and covered by tests that assert the boundary.
+
+## Upstream comparison point
+
+`upstream-parity-manifest.json` pins the VS Code commit this contract was
+compared against, together with the 13 preview settings, the 10 preview commands,
+and the 2 default keybindings extracted from it. Regenerate and diff that file to
+detect upstream drift instead of maintaining a hand-written list. Sakura does not
+yet honor the preview settings; the manifest records what upstream declares, not
+what this shell implements.
+
 ## Verification checklist
 
-1. Command registry: every ID resolves to a distinct executor outcome.
-   Verify: focused command tests. Expect: exact IDs and keybindings.
-2. Preview state: show/toggle/reopen/lock/refresh and document-switch branches
-   terminate explicitly. Verify: pure state-model tests. Expect: no accidental
-   terminal intermediate state.
-3. Renderer: safe representative Markdown and malicious HTML/URI samples.
-   Verify: parser/window model tests. Expect: supported structures render and
-   active content remains blocked.
-4. Update/scroll UX: repeated revisions coalesce and source mappings clamp.
-   Verify: pure update/mapping tests. Expect: latest revision renders once and
-   both mapping directions remain within document bounds.
-5. Dependency boundary: source/project/package search.
+Each item names the test that actually runs it. An item with no executable check
+is not verified, however obviously correct the code looks.
+
+1. Command registry: every ID resolves to a distinct executor outcome, and no
+   command opens a preview for a non-Markdown or unnamed source.
+   Verify: `MarkdownPreviewCommandStateTest.cpp`. Expect: the to-side commands
+   stay `UnsupportedSideEditorGroup` and never report `NativeSiblingPane`.
+2. Document tab button: the declared action id names the concept it dispatches.
+   Verify: `MarkdownPreviewCommandStateTest.TheDocumentTabButtonDispatchesTheSakuraSiblingToggle`.
+   Expect: `sakura.toggleMarkdownSiblingPreview` toggling the native sibling pane.
+3. Preview state: show/toggle/reopen/lock/refresh and document-switch branches
+   terminate explicitly. Verify: `MarkdownPreviewCommandStateTest.cpp`. Expect: no
+   accidental terminal intermediate state.
+4. Async update: one in flight plus one latest pending, stale results never
+   publish, `Closed` is terminal, and a failed delivery never revives a
+   generation. Verify: `MarkdownPreviewAsyncStateTest.cpp`, which replays every
+   sequence of six transitions over the full alphabet rather than a hand-picked
+   scenario list. Expect: the invariants hold after every transition.
+5. Scroll mapping: both directions clamp inside the document and round-trip
+   without drift. Verify: `MarkdownPreviewScrollMapTest.cpp`. Expect: an empty
+   layout maps neither direction, and an out-of-range position clamps.
+6. Scroll synchronization, end to end: verified empirically on the running
+   editor, because a pure mapping test cannot prove the two panes are wired.
+   Verify: drive `F_GOFILETOP` / `F_GOFILEEND` and `WM_VSCROLL` on the
+   `SakuraMarkdownPreview` window under a throwaway profile and read both
+   `SCROLLINFO` positions. Expect: both positions move.
+   Measured 2026-08-20, x64 Debug, 120-section document, profile `mdscrollsync`:
+   editor 0 -> 446 moved the preview 12 -> 7431; preview 12 -> 1812 moved the
+   editor 0 -> 106. Process and profile cleanup verified.
+7. Renderer: safe representative Markdown and malicious HTML/URI samples.
+   Verify: `MarkdownParserTest.cpp`, `MarkdownPreviewLayoutTest.cpp`. Expect:
+   supported structures render and active content remains blocked.
+8. Declared capabilities: the typed boundary matches this table.
+   Verify: `MarkdownParserTest.ExposesUnsupportedNativeCapabilitiesAsTypedBoundaries`.
+   Expect: math and Mermaid stay `Unsupported`.
+9. Dependency boundary: source/project/package search.
    Verify: search for embedded-browser and script-runtime dependencies. Expect:
    no production dependency or bundled script asset.
+
+Not yet verified, and therefore not claimed anywhere above: the preview settings
+in `upstream-parity-manifest.json` are not read, and there is no differential
+conformance check against a pinned markdown-it oracle.
+
+## Typography
+
+The preview reproduces VS Code's preview text rendering rather than the editor's
+own document typography. The values are copied from
+`extensions/markdown-language-features/media/markdown.css` at the commit pinned
+in `upstream-parity-manifest.json`, together with the defaults of
+`markdown.preview.fontSize` (14) and `markdown.preview.lineHeight` (1.6).
+
+| Property | Upstream | Native preview |
+|---|---|---|
+| Prose face | `-apple-system, BlinkMacSystemFont, "Segoe WPC", "Segoe UI", system-ui, ...` | `Segoe UI` (the Windows end of the stack) |
+| Code face | `var(--vscode-editor-font-family)` | The editor's document font, falling back to Consolas |
+| Base size | 14px | 14 DIP |
+| Body line height | 22px (14 * 1.6) | 22 DIP, with the measured text height as a floor |
+| Code line height | 1.357em | 19 DIP |
+| Heading sizes | 2 / 1.5 / 1.25 / 1 / 0.875 / 0.85 em | The same ladder, in per-mille |
+| Heading weight | 600 | `FW_SEMIBOLD` |
+| Heading line height | 1.25 | 1.25 of the heading size |
+| Heading margins | 24px top, 16px bottom, h1 top 0 | The same, with CSS margin collapsing |
+| Body padding | `0 26px`, `padding-top: 1em` | 26 DIP sides, 14 DIP top |
+| Antialiasing | DirectWrite subpixel | `CLEARTYPE_QUALITY` on every created face |
+
+Not reproduced, and therefore not claimed: per-element block margins other than
+headings (paragraphs, lists, block quotes and tables share one 1em gap), the
+h1/h2 bottom border with `padding-bottom: 0.3em`, and `th/td { padding: 5px 10px }`.
+`markdown.preview.fontFamily`, `fontSize` and `lineHeight` are not read from
+settings yet; the defaults are compiled in.

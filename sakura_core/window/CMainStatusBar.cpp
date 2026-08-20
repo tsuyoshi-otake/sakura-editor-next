@@ -101,8 +101,16 @@ void CMainStatusBar::CreateStatusBar()
 	if( m_hwndStatusBar )return;
 
 	/* ステータスバー */
+	// WS_EX_COMPOSITED must not be set here.  This control paints entirely
+	// through our own WM_PAINT handler (PaintStatusBar), which already renders
+	// into a compatible-DC back buffer, so the extended style buys nothing --
+	// and on this control it never stops re-invalidating: the client region is
+	// dirty again the moment EndPaint returns, so GetMessage synthesises another
+	// WM_PAINT forever and starves every other window's pending update region.
+	// That is what produced the missing SCM / Activity Bar / terminal content
+	// right after startup.  See window/CLAUDE.md.
 	m_hwndStatusBar = ::CreateWindowEx(
-		WS_EX_RIGHT | WS_EX_COMPOSITED,
+		WS_EX_RIGHT,
 		STATUSCLASSNAME,
 		nullptr,
 		// VS Code's status bar has no legacy resize grip.  Keeping SBARS_SIZEGRIP

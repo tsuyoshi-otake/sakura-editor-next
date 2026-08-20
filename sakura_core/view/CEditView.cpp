@@ -897,10 +897,12 @@ void CEditView::OnSize( int cx, int cy )
 	/* 垂直スクロールバー */
 	if( nullptr != m_hwndVScrollBar ){
 		::MoveWindow( m_hwndVScrollBar, cx - nCxVScroll , 0 + nVSplitHeight, nCxVScroll, cy - nCyVScroll - nVSplitHeight, TRUE );
+		UpdateOverlayVScrollBar();
 	}
 	/* 水平スクロールバー */
 	if( nullptr != m_hwndHScrollBar ){
 		::MoveWindow( m_hwndHScrollBar, 0 + nHSplitWidth, cy - nCyHScroll, cx - nCxVScroll - nHSplitWidth, nCyHScroll, TRUE );
+		UpdateOverlayHScrollBar();
 	}
 
 	/* サイズボックス */

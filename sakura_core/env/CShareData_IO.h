@@ -52,6 +52,12 @@ public:
 	[[nodiscard]] static bool MigrateKnownMainMenuDefaultToV8(
 		CommonSetting_MainMenu& mainmenu, int storedVersion ) noexcept;
 
+	//! Version 9 migration.  Removes the legacy recent-folder File submenu that
+	//! the version 8 Open Recent consolidation left behind.  It fires only where
+	//! that node is provably redundant, never on the version number alone.
+	[[nodiscard]] static bool RemoveMainMenuRedundantRecentFolderSubmenu(
+		CommonSetting_MainMenu& mainmenu ) noexcept;
+
 	//! Canonical fingerprint for the persisted menu model. This intentionally
 	//! includes the complete model rather than only the File-menu run so a
 	//! customization anywhere prevents a destructive schema migration.

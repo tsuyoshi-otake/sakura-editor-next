@@ -63,6 +63,10 @@ enum class EScmTextKey : std::uint16_t {
 	GitSynchronizeChanges,
 	GitCheckoutBranchTag,
 	GitCommitMessage,
+	//! The Source Control action button and its dropdown. These are the bare
+	//! titles the button renders, not the `Git: ...` Command Palette titles.
+	GitCommitAction,
+	GitCommitAmendAction,
 };
 
 using ScmTextResolver = std::function<std::wstring(EScmTextKey, std::wstring_view)>;

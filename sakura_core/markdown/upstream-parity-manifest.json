@@ -1,0 +1,104 @@
+{
+  "$comment": "Generated from microsoft/vscode extensions/markdown-language-features/package.json at the pinned SHA below. Regenerate and diff to detect upstream drift. This file records what upstream declares; it does not claim Sakura implements it. Sakura's own contract is sakura_core/markdown/PARITY.md.",
+  "upstream": {
+    "repository": "microsoft/vscode",
+    "branch": "main",
+    "commit": "a7b5e07da348478bafdd14eb38bfbbe170a5415d",
+    "commitDate": "2026-08-20",
+    "path": "extensions/markdown-language-features/package.json",
+    "pathLastModifiedCommit": "d6abb4265468b3ed693dc1f408b8de6ace27bfc2"
+  },
+  "previewSettings": {
+    "markdown.preview.breaks": {
+      "type": "boolean",
+      "default": false
+    },
+    "markdown.preview.doubleClickToSwitchToEditor": {
+      "type": "boolean",
+      "default": false
+    },
+    "markdown.preview.fontFamily": {
+      "type": "string",
+      "default": "-apple-system, BlinkMacSystemFont, 'Segoe WPC', 'Segoe UI', system-ui, 'Ubuntu', 'Droid Sans', sans-serif"
+    },
+    "markdown.preview.fontSize": {
+      "type": "number",
+      "default": 14
+    },
+    "markdown.preview.frontMatter": {
+      "type": "string",
+      "default": "table",
+      "enum": [
+        "hide",
+        "codeBlock",
+        "table"
+      ]
+    },
+    "markdown.preview.lineHeight": {
+      "type": "number",
+      "default": 1.6
+    },
+    "markdown.preview.linkify": {
+      "type": "boolean",
+      "default": true
+    },
+    "markdown.preview.markEditorSelection": {
+      "type": "boolean",
+      "default": false
+    },
+    "markdown.preview.openMarkdownLinks": {
+      "type": "string",
+      "default": "inPreview",
+      "enum": [
+        "inPreview",
+        "inEditor"
+      ]
+    },
+    "markdown.preview.scrollEditorWithPreview": {
+      "type": "boolean",
+      "default": true
+    },
+    "markdown.preview.scrollPreviewWithEditor": {
+      "type": "boolean",
+      "default": true
+    },
+    "markdown.preview.typographer": {
+      "type": "boolean",
+      "default": false
+    },
+    "markdown.styles": {
+      "type": "array",
+      "default": []
+    }
+  },
+  "previewCommands": [
+    "markdown.showPreview",
+    "markdown.showPreviewToSide",
+    "markdown.showLockedPreviewToSide",
+    "markdown.showSource",
+    "markdown.showPreviewSecuritySelector",
+    "markdown.preview.refresh",
+    "markdown.preview.toggleLock",
+    "markdown.reopenAsPreview",
+    "markdown.reopenAsSource",
+    "markdown.togglePreview"
+  ],
+  "previewKeybindings": [
+    {
+      "command": "markdown.showPreviewToSide",
+      "key": "ctrl+k v",
+      "when": "editorFocus && editorLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ && !notebookEditorFocused"
+    },
+    {
+      "command": "markdown.togglePreview",
+      "key": "shift+ctrl+v",
+      "when": "!terminalFocus && ((editorFocus && resourceLangId =~ /^(markdown|prompt|instructions|chatagent|skill)$/ && !notebookEditorFocused) || activeCustomEditorId == 'vscode.markdown.preview.editor')"
+    }
+  ],
+  "outOfScope": {
+    "markdown.editor.*": "Upstream's custom Markdown editor surface. Sakura's editor is the legacy native view; these commands are not part of the preview contract.",
+    "_markdown.*": "Upstream-internal context-menu commands, not public API.",
+    "markdown.findAllFileReferences": "Language-server feature, not the preview.",
+    "markdown.editor.insertLinkFromWorkspace, markdown.editor.insertImageFromWorkspace": "Authoring commands, not the preview."
+  }
+}

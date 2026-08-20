@@ -133,6 +133,11 @@ std::wstring ItemText(HWND tree, HTREEITEM item)
 	return TreeView_GetItem(tree, &value) ? std::wstring(text) : std::wstring{};
 }
 
+// The open folder has no row of its own: VS Code draws a root row only in a
+// multi-root workspace, so with one folder the tree's top level *is* that
+// folder's contents. Passing nullptr as the parent addresses that level.
+constexpr HTREEITEM kWorkspaceLevel = nullptr;
+
 HTREEITEM FindDirectChild(HWND tree, HTREEITEM parent, std::wstring_view text)
 {
 	for (auto item = TreeView_GetChild(tree, parent); item != nullptr; item = TreeView_GetNextSibling(tree, item)) {
@@ -300,27 +305,21 @@ TEST(ExplorerTool, ProductionWorkerEnumeratesOnlyExpandedDirectoriesAndStopsOnCl
 		(WS_EX_CLIENTEDGE | WS_EX_STATICEDGE | WS_EX_WINDOWEDGE));
 	EXPECT_NE(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & TVS_NOHSCROLL);
 	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & WS_HSCROLL);
-	const auto rootItem = TreeView_GetRoot(tree);
-	ASSERT_NE(nullptr, rootItem);
-	EXPECT_EQ(CExplorerTool::WorkspaceDisplayName(root.Path().wstring()), ItemText(tree, rootItem));
-
 	ASSERT_TRUE(PumpMessagesUntil([&] {
-		return FindDirectChild(tree, rootItem, L"child") != nullptr &&
-			FindDirectChild(tree, rootItem, L"root.txt") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"child") != nullptr &&
+			FindDirectChild(tree, kWorkspaceLevel, L"root.txt") != nullptr;
 	}, std::chrono::seconds(2)));
 
-	const auto childItem = FindDirectChild(tree, rootItem, L"child");
+	const auto childItem = FindDirectChild(tree, kWorkspaceLevel, L"child");
 	ASSERT_NE(nullptr, childItem);
 	EXPECT_EQ(nullptr, FindDirectChild(tree, childItem, L"nested.txt"));
 	ASSERT_TRUE(TreeView_Expand(tree, childItem, TVE_EXPAND));
 	EXPECT_TRUE(PumpMessagesUntil([&] {
 		return FindDirectChild(tree, childItem, L"nested.txt") != nullptr;
 	}, std::chrono::seconds(2)));
-	EXPECT_TRUE(IsExpanded(tree, rootItem));
 	EXPECT_TRUE(IsExpanded(tree, childItem));
 
 	tool.CollapseAllFolders();
-	EXPECT_FALSE(IsExpanded(tree, rootItem));
 	EXPECT_FALSE(IsExpanded(tree, childItem));
 
 	tool.Close();
@@ -366,9 +365,9 @@ TEST(ExplorerTool, UsesOverlayVerticalScrollbarWithoutHorizontalScrollbar)
 	tool.Layout(RECT{ 0, 0, 180, 100 }, 96);
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
-	ASSERT_TRUE(PumpMessagesUntil([&] { return TreeView_GetCount(tree) >= 41; }, std::chrono::seconds(2)));
+	ASSERT_TRUE(PumpMessagesUntil([&] { return TreeView_GetCount(tree) >= 40; }, std::chrono::seconds(2)));
 	const HWND overlay = ::FindWindowExW(
-		tool.GetHwnd(), nullptr, L"SakuraExplorerOverlayScrollbar", nullptr);
+		tool.GetHwnd(), nullptr, L"SakuraWorkbenchOverlayScrollbar", nullptr);
 	ASSERT_NE(nullptr, overlay);
 	EXPECT_NE(0, ::GetWindowLongPtrW(overlay, GWL_STYLE) & WS_VISIBLE);
 	EXPECT_EQ(0, ::GetWindowLongPtrW(tree, GWL_STYLE) & (WS_HSCROLL | WS_VSCROLL));
@@ -404,19 +403,21 @@ TEST(ExplorerTool, SingleClickActivatesHitFileFromNativeClickNotification)
 	::UpdateWindow(parent);
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
-	const auto rootItem = TreeView_GetRoot(tree);
-	ASSERT_NE(nullptr, rootItem);
 	ASSERT_TRUE(PumpMessagesUntil([&] {
-		return FindDirectChild(tree, rootItem, L"child") != nullptr &&
-			FindDirectChild(tree, rootItem, L"first.txt") != nullptr &&
-			FindDirectChild(tree, rootItem, L"second.txt") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"child") != nullptr &&
+			FindDirectChild(tree, kWorkspaceLevel, L"first.txt") != nullptr &&
+			FindDirectChild(tree, kWorkspaceLevel, L"second.txt") != nullptr;
 	}, std::chrono::seconds(2)));
 
-	const auto firstFileItem = FindDirectChild(tree, rootItem, L"first.txt");
+	// Activating a file must not rebuild the tree, so the first top-level row
+	// has to stay the same item afterwards.
+	const auto firstTopLevelItem = TreeView_GetRoot(tree);
+	ASSERT_NE(nullptr, firstTopLevelItem);
+	const auto firstFileItem = FindDirectChild(tree, kWorkspaceLevel, L"first.txt");
 	ASSERT_NE(nullptr, firstFileItem);
-	const auto secondFileItem = FindDirectChild(tree, rootItem, L"second.txt");
+	const auto secondFileItem = FindDirectChild(tree, kWorkspaceLevel, L"second.txt");
 	ASSERT_NE(nullptr, secondFileItem);
-	const auto childItem = FindDirectChild(tree, rootItem, L"child");
+	const auto childItem = FindDirectChild(tree, kWorkspaceLevel, L"child");
 	ASSERT_NE(nullptr, childItem);
 	ASSERT_TRUE(TreeView_SelectItem(tree, childItem));
 	SendTreeMouseClick(tree, firstFileItem);
@@ -424,16 +425,16 @@ TEST(ExplorerTool, SingleClickActivatesHitFileFromNativeClickNotification)
 	EXPECT_EQ(firstFilePath.wstring(), activatedPath);
 	EXPECT_EQ(ExplorerFileActivationKind::Preview, activatedKind);
 	EXPECT_EQ(root.Path().wstring(), tool.GetRoot());
-	EXPECT_EQ(rootItem, TreeView_GetRoot(tree));
+	EXPECT_EQ(firstTopLevelItem, TreeView_GetRoot(tree));
 
 	SendTreeMouseClick(tree, secondFileItem);
 	ASSERT_TRUE(PumpMessagesUntil([&] { return activationCount == 2; }, std::chrono::seconds(1)));
 	EXPECT_EQ(secondFilePath.wstring(), activatedPath);
 	EXPECT_EQ(ExplorerFileActivationKind::Preview, activatedKind);
 	EXPECT_EQ(root.Path().wstring(), tool.GetRoot());
-	EXPECT_EQ(rootItem, TreeView_GetRoot(tree));
-	EXPECT_NE(nullptr, FindDirectChild(tree, rootItem, L"first.txt"));
-	EXPECT_NE(nullptr, FindDirectChild(tree, rootItem, L"second.txt"));
+	EXPECT_EQ(firstTopLevelItem, TreeView_GetRoot(tree));
+	EXPECT_NE(nullptr, FindDirectChild(tree, kWorkspaceLevel, L"first.txt"));
+	EXPECT_NE(nullptr, FindDirectChild(tree, kWorkspaceLevel, L"second.txt"));
 
 	SendTreeMouseDoubleClick(tree, secondFileItem);
 	ASSERT_TRUE(PumpMessagesUntil([&] { return activationCount == 3; }, std::chrono::seconds(1)));
@@ -471,7 +472,7 @@ TEST(ExplorerTool, MouseWheelScrollsTheTreeWithHiddenNativeScrollbars)
 	::UpdateWindow(parent);
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
-	ASSERT_TRUE(PumpMessagesUntil([&] { return TreeView_GetCount(tree) >= 41; }, std::chrono::seconds(2)));
+	ASSERT_TRUE(PumpMessagesUntil([&] { return TreeView_GetCount(tree) >= 40; }, std::chrono::seconds(2)));
 	const auto firstBefore = TreeView_GetFirstVisible(tree);
 	ASSERT_NE(nullptr, firstBefore);
 
@@ -501,13 +502,11 @@ TEST(ExplorerTool, RefreshRestoresExpandedDescendantsByFilesystemPath)
 	ASSERT_TRUE(tool.Create(parent));
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
-	const auto rootItem = TreeView_GetRoot(tree);
-	ASSERT_NE(nullptr, rootItem);
 	ASSERT_TRUE(PumpMessagesUntil([&] {
-		return FindDirectChild(tree, rootItem, L"child") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"child") != nullptr;
 	}, std::chrono::seconds(2)));
 
-	auto childItem = FindDirectChild(tree, rootItem, L"child");
+	auto childItem = FindDirectChild(tree, kWorkspaceLevel, L"child");
 	ASSERT_NE(nullptr, childItem);
 	ASSERT_TRUE(TreeView_Expand(tree, childItem, TVE_EXPAND));
 	ASSERT_TRUE(PumpMessagesUntil([&] {
@@ -528,12 +527,12 @@ TEST(ExplorerTool, RefreshRestoresExpandedDescendantsByFilesystemPath)
 	std::this_thread::sleep_for(std::chrono::milliseconds(30));
 	CreateEmptyFile(root.Path() / L"later.txt");
 	ASSERT_TRUE(PumpMessagesUntil([&] {
-		childItem = FindDirectChild(tree, rootItem, L"child");
+		childItem = FindDirectChild(tree, kWorkspaceLevel, L"child");
 		if (!IsExpanded(tree, childItem)) return false;
 		grandchildItem = FindDirectChild(tree, childItem, L"grandchild");
 		return IsExpanded(tree, grandchildItem) &&
 			FindDirectChild(tree, grandchildItem, L"nested.txt") != nullptr &&
-			FindDirectChild(tree, rootItem, L"later.txt") != nullptr;
+			FindDirectChild(tree, kWorkspaceLevel, L"later.txt") != nullptr;
 	}, std::chrono::seconds(3)));
 	EXPECT_EQ(originalChildItem, childItem);
 	EXPECT_EQ(originalGrandchildItem, grandchildItem);
@@ -583,13 +582,11 @@ TEST(ExplorerTool, ProductionWorkerDisplaysJunctionsAsLeaves)
 	ASSERT_TRUE(tool.Create(parent));
 	const HWND tree = ::FindWindowExW(tool.GetHwnd(), nullptr, WC_TREEVIEWW, nullptr);
 	ASSERT_NE(nullptr, tree);
-	const auto rootItem = TreeView_GetRoot(tree);
-	ASSERT_NE(nullptr, rootItem);
 	ASSERT_TRUE(PumpMessagesUntil([&] {
-		return FindDirectChild(tree, rootItem, L"junction") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"junction") != nullptr;
 	}, std::chrono::seconds(2)));
 
-	const auto junctionItem = FindDirectChild(tree, rootItem, L"junction");
+	const auto junctionItem = FindDirectChild(tree, kWorkspaceLevel, L"junction");
 	ASSERT_NE(nullptr, junctionItem);
 	EXPECT_EQ(nullptr, TreeView_GetChild(tree, junctionItem));
 
@@ -615,12 +612,9 @@ TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)
 	tool.SetRoot(secondRoot.Path().wstring());
 
 	ASSERT_TRUE(PumpMessagesUntil([&] {
-		const auto rootItem = TreeView_GetRoot(tree);
-		return rootItem != nullptr && FindDirectChild(tree, rootItem, L"current.txt") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"current.txt") != nullptr;
 	}, std::chrono::seconds(2)));
-	const auto rootItem = TreeView_GetRoot(tree);
-	ASSERT_NE(nullptr, rootItem);
-	EXPECT_EQ(nullptr, FindDirectChild(tree, rootItem, L"old.txt"));
+	EXPECT_EQ(nullptr, FindDirectChild(tree, kWorkspaceLevel, L"old.txt"));
 
 	// Let the production ReadDirectoryChangesW watcher arm, then verify its
 	// 150-ms timer coalesces the refresh instead of applying it immediately.
@@ -630,10 +624,10 @@ TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)
 	std::this_thread::sleep_for(std::chrono::milliseconds(30));
 	CreateEmptyFile(secondRoot.Path() / L"later.txt");
 	EXPECT_FALSE(PumpMessagesUntil([&] {
-		return FindDirectChild(tree, rootItem, L"later.txt") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"later.txt") != nullptr;
 	}, std::chrono::milliseconds(75)));
 	EXPECT_TRUE(PumpMessagesUntil([&] {
-		return FindDirectChild(tree, rootItem, L"later.txt") != nullptr;
+		return FindDirectChild(tree, kWorkspaceLevel, L"later.txt") != nullptr;
 	}, std::chrono::seconds(2)));
 
 	tool.Close();

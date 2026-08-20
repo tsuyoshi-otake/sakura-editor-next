@@ -156,7 +156,16 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskTerminalSessionFactoryTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerPositionAdapterTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemMatcherEngineTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\GitOutputChannelTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp">
@@ -228,6 +237,9 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -259,6 +271,9 @@
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerFileIconTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ViewsWelcomeMetricsTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\SetiFileIconTest.cpp">
@@ -423,6 +438,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalShortcutPresetTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
@@ -439,6 +457,9 @@
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalPaneLayoutTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalTabPresentationTest.cpp">
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp">
@@ -472,6 +493,18 @@
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewAsyncStateTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewCommandStateTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewScrollMapTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MermaidDiagramTest.cpp">
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp">

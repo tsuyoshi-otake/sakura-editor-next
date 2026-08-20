@@ -44,6 +44,17 @@ public:
 		exists to register it against.
 	*/
 	using CommandCallback = std::function<bool(std::string_view, std::string_view)>;
+	/*!
+		@brief Publishes the Git decorations for every resource this view rendered.
+
+		Upstream's Git extension registers a `FileDecorationProvider` beside its
+		source-control provider, and the File Explorer reads the decorations service
+		rather than the SCM service. This callback is that separation: the payload is
+		the provider-neutral decoration model, so nothing downstream learns that Git
+		produced it. An empty table means "no decorated resource", which is what a
+		clean tree and a non-repository root both publish.
+	*/
+	using FileDecorationsCallback = std::function<void(std::vector<decorations::FileDecorationEntry>)>;
 	using TextResolver = ScmTextResolver;
 	//! Resolves presentation strings serialized into the published Git provider.
 	//! Unlike `TextResolver`, this covers publication-only labels and diff titles.
@@ -67,9 +78,18 @@ public:
 	//! variants, so a boolean "has folder" is insufficient here.
 	void SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState workspaceState);
 	void SetPalette(const theme::ThemePalette& palette);
+	//! Effective `scm.inputMinLineCount` / `scm.inputMaxLineCount`. The commit box
+	//! opens at the minimum and auto-grows to the maximum, exactly as upstream's
+	//! `InputRenderer` sizes it; the composition root resolves both through the
+	//! configuration service rather than the view reading settings itself.
+	void SetInputLineCountRange(int minLineCount, int maxLineCount);
 	void SetFileActivationCallback(FileActivationCallback callback);
 	void SetStatusBarCommandsCallback(StatusBarCommandsCallback callback);
 	void SetCommandCallback(CommandCallback callback);
+	void SetFileDecorationsCallback(FileDecorationsCallback callback);
+	//! Re-publishes the last decorations without re-running git, for a consumer whose
+	//! own settings changed rather than the repository.
+	void RepublishFileDecorations();
 	void SetTextResolver(TextResolver resolver);
 	void SetPublicationTextResolver(PublicationTextResolver resolver);
 	//! Re-resolves visible SCM presentation text after a runtime language change.

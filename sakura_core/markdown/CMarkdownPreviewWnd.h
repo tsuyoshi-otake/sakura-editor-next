@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -24,6 +24,8 @@
 #include "MarkdownInlineStyleRuns.h"
 #include "MarkdownPreviewAsyncState.h"
 #include "MarkdownPreviewScrollMap.h"
+#include "MermaidDiagram.h"
+#include "workbench/controls/COverlayScrollbar.h"
 
 namespace theme {
 struct ThemePalette;
@@ -54,7 +56,7 @@ public:
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetEditorFont(const LOGFONT& font, unsigned int dpi);
 	void Layout(const RECT& bounds, unsigned int dpi);
-	void Show(bool visible) const noexcept;
+	void Show(bool visible) noexcept;
 	void RevealSourceLine(std::size_t sourceLine);
 	void SetSourceLineCallback(std::function<void(std::size_t)> callback);
 
@@ -79,6 +81,14 @@ private:
 		Code,
 		Table,
 		TableHeader,
+		//! Row shading behind a table row, sized by `left`/`width`.
+		TableFill,
+		//! One horizontal grid rule, sized by `left`/`width`.
+		TableBorderH,
+		//! One vertical grid rule at `left`, as tall as the line.
+		TableBorderV,
+		//! A laid-out Mermaid flowchart, sized by `width`/`height`.
+		Diagram,
 		Image,
 		Notice,
 		Rule,
@@ -102,6 +112,7 @@ private:
 		FontKind font = FontKind::Body;
 		LineKind kind = LineKind::Text;
 		std::size_t imageIndex = std::numeric_limits<std::size_t>::max();
+		std::size_t diagramIndex = std::numeric_limits<std::size_t>::max();
 		int width = 0;
 		std::size_t sourceLine = 0;
 		std::vector<CodeHighlightToken> codeTokens;
@@ -137,6 +148,7 @@ private:
 	void DeleteFonts() noexcept;
 	void RebuildLayout();
 	void UpdateScrollBar();
+	void UpdateOverlayScrollbar();
 	void ScrollTo(int position, bool notifySource = false);
 	void ScrollBy(int delta, bool notifySource = true);
 	void NotifySourceLineForScroll();
@@ -146,6 +158,27 @@ private:
 		int left, int availableWidth, int* top, int continuationLeft = -1,
 		int continuationWidth = 0, const CodeHighlightResult* codeHighlight = nullptr,
 		std::size_t codeSourceOffset = 0);
+	/*!
+		@brief Lays a GFM table out as a real grid
+
+		Cells are measured, columns are given widths, cell text wraps inside its
+		own column, and the grid rules and row shading are emitted as their own
+		render lines. The column-width policy follows comfy-table's dynamic
+		arrangement: every column that fits its content keeps its natural width,
+		and only the columns too wide for the remaining space share what is left.
+	*/
+	void AppendTable(HDC dc, const Block& block, int left, int availableWidth, int* top);
+	/*!
+		@brief Lays out a Mermaid block natively
+
+		@retval false	The block is outside the supported flowchart subset, so
+						the caller must keep its notice-plus-literal-source path
+	*/
+	[[nodiscard]] bool AppendMermaidDiagram(HDC dc, const Block& block, int left,
+		int availableWidth, int* top);
+	void DrawDiagram(HDC dc, const mermaid::Diagram& diagram, int left, int top) const;
+	//! Measured width of one already-laid-out line, honouring its style runs.
+	[[nodiscard]] int MeasureRenderLine(HDC dc, const RenderLine& line) const;
 	void RebuildPaintResources();
 	void DeletePaintResources() noexcept;
 	void DeleteImages() noexcept;
@@ -174,9 +207,18 @@ private:
 	HBRUSH m_codeBackgroundBrush = nullptr;
 	HBRUSH m_quoteBrush = nullptr;
 	HBRUSH m_noticeBrush = nullptr;
+	//! Grid rules for GFM tables, in the theme's border colour.
+	HBRUSH m_borderBrush = nullptr;
 	HPEN m_rulePen = nullptr;
+	//! Diagram strokes, one per Mermaid link style.
+	HPEN m_diagramPen = nullptr;
+	HPEN m_diagramDottedPen = nullptr;
+	HPEN m_diagramThickPen = nullptr;
+	HBRUSH m_diagramArrowBrush = nullptr;
 	std::vector<RenderLine> m_lines;
 	std::vector<CachedImage> m_images;
+	//! Placed geometry for every natively rendered Mermaid block in this layout.
+	std::vector<mermaid::Diagram> m_diagrams;
 	std::size_t m_decodedImagePixels = 0;
 	int m_contentHeight = 0;
 	int m_scrollY = 0;
@@ -191,6 +233,9 @@ private:
 	std::optional<PreviewWorkCompletion> m_completedWork;
 	std::jthread m_worker;
 	std::vector<std::optional<CodeHighlightResult>> m_codeHighlights;
+	//! The shared VS Code-style overlay bar; the window keeps SB_VERT as its model.
+	workbench::controls::COverlayScrollbar m_overlayScrollbar;
+	workbench::controls::OverlayScrollbarColors m_overlayColors;
 };
 
 } // namespace markdown

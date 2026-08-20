@@ -140,9 +140,19 @@ TEST(DocumentTabActionLayout, CurrentDocumentCloseDoesNotDuplicatePerTabClose)
 		HitTestDocumentTabAction(layout, 990, layout.list.top));
 }
 
-TEST(DocumentTabActionLayout, UsesOfficialMarkdownPreviewIdentifiers)
+/*!
+	@brief The button's declared action names the concept it actually dispatches
+
+	The icon is upstream's, because the button looks like and sits where VS Code's
+	preview button does. The command id is deliberately not
+	markdown.showPreviewToSide: that command opens a second editor group, and this
+	button toggles the Sakura-owned sibling preview pane. See
+	sakura_core/markdown/PARITY.md.
+*/
+TEST(DocumentTabActionLayout, DeclaresTheSakuraSiblingToggleWithTheUpstreamCodicon)
 {
-	EXPECT_STREQ(L"markdown.showPreviewToSide", kMarkdownPreviewCommandId);
+	EXPECT_STREQ(L"sakura.toggleMarkdownSiblingPreview", kMarkdownPreviewCommandId);
+	EXPECT_STRNE(L"markdown.showPreviewToSide", kMarkdownPreviewCommandId);
 	EXPECT_STREQ(L"open-preview", kMarkdownPreviewCodiconId);
 }
 

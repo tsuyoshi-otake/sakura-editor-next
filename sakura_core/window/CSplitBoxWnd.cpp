@@ -19,6 +19,7 @@
 #include "apiwrap/StdApi.h"
 #include "apiwrap/DarkMode.h"
 #include "config/system_constants.h"
+#include "theme/CThemeService.h"
 
 CSplitBoxWnd::CSplitBoxWnd()
 : CWnd(L"::CSplitBoxWnd")
@@ -108,62 +109,35 @@ void CSplitBoxWnd::FillSolidRect( HDC hdc, int x, int y, int cx, int cy, COLORRE
 }
 
 // WM_PAINT
+/*!
+	分割ボックスは VS Code に対応物が無い Sakura 固有のウィジェットなので、
+	レガシーな 3D エッジではなくワークベンチのテーマ色で平坦に描き、
+	中央にサッシと同じ 1px のグリップ線だけを置く。
+*/
 LRESULT CSplitBoxWnd::OnPaint( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]] WPARAM wParam, [[maybe_unused]] LPARAM lParam )
 {
 	PAINTSTRUCT	ps;
 	const auto hdc = ::BeginPaint(hwnd, &ps);
 
-	const auto cxBorder  = ::GetSystemMetrics(SM_CXBORDER);
-	const auto cyBorder  = ::GetSystemMetrics(SM_CYBORDER);
-	const auto cxEdge    = ::GetSystemMetrics(SM_CXEDGE);
-	const auto cyEdge    = ::GetSystemMetrics(SM_CYEDGE);
-	const auto cyHScroll = ::GetSystemMetrics(SM_CYHSCROLL);
-	const auto cxVScroll = ::GetSystemMetrics(SM_CXVSCROLL);
-	const auto cxHSplit  = cxEdge * 2 + cxBorder * 3;	/* 水平分割ボックスの幅 */
-	const auto cyVSplit  = cyEdge * 2 + cyBorder * 3;	/* 垂直分割ボックスの高さ */
+	const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette( mode );
+	const COLORREF cBack = palette.canvas.ToColorRef();
+	const COLORREF cGrip = palette.border.ToColorRef();
 
-	COLORREF cBTN = ::GetSysColor(COLOR_BTNFACE);
-	COLORREF cBR0 = ::GetSysColor(COLOR_3DSHADOW);
-	COLORREF cBR1 = ::GetSysColor(COLOR_BTNSHADOW);
-
-	if (IsDarkModeActive()) {
-		cBTN = DarkMode::getCtrlBackgroundColor();
-		cBR0 = DarkMode::getTextColor();
-		cBR1 = DarkMode::getHotEdgeColor();
-	}
+	RECT rcClient{};
+	::GetClientRect(hwnd, &rcClient);
+	::MyFillRect(hdc, rcClient, cBack);
 
 	RECT rc{};
-
 	if (m_bVertical) {
-		/* 垂直分割ボックスの描画 */
-		::SetRect(&rc, cxEdge, cyEdge, cxVScroll - cxEdge, cyVSplit - cyEdge);
-		::MyFillRect(hdc, rc, cBTN);
-
-		::SetRect(&rc, cxEdge, cyVSplit - cyEdge, cxVScroll - cxEdge, cyVSplit);
-		::MyFillRect(hdc, rc, cBR0);
-		::SetRect(&rc, cxVScroll - cxEdge, cyEdge, cxVScroll, cyVSplit);
-		::MyFillRect(hdc, rc, cBR1);
-
-		::SetRect(&rc, cxEdge, 0, cxVScroll - cxEdge, cyEdge);
-		::MyFillRect(hdc, rc, cBR0);
-		::SetRect(&rc, 0, 0, cxEdge, cyVSplit - cyEdge);
-		::MyFillRect(hdc, rc, cBR1);
-
+		const auto y = rcClient.top + (rcClient.bottom - rcClient.top) / 2;
+		::SetRect(&rc, rcClient.left + 2, y, rcClient.right - 2, y + 1);
 	}else{
-		/* 水平分割ボックスの描画 */
-		::SetRect(&rc, cxEdge, cyEdge, cxHSplit - cxEdge, cyHScroll - cyEdge);
-		::MyFillRect(hdc, rc, cBTN);
-
-		::SetRect(&rc, cxHSplit - cxEdge, cyEdge, cxHSplit, cyHScroll);
-		::MyFillRect(hdc, rc, cBR0);
-		::SetRect(&rc, 0, cyHScroll - cyEdge, cxHSplit - cxEdge, cyHScroll);
-		::MyFillRect(hdc, rc, cBR1);
-
-		::SetRect(&rc, 0, 0, cxEdge, cyHScroll - cyEdge);
-		::MyFillRect(hdc, rc, cBR0);
-		::SetRect(&rc, cxEdge, 0, cxHSplit, cyEdge);
-		::MyFillRect(hdc, rc, cBR1);
+		const auto x = rcClient.left + (rcClient.right - rcClient.left) / 2;
+		::SetRect(&rc, x, rcClient.top + 2, x + 1, rcClient.bottom - 2);
 	}
+	::MyFillRect(hdc, rc, cGrip);
 
 	::EndPaint(hwnd, &ps);
 	return 0L;

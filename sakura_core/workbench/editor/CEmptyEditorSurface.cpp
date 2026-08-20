@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -120,32 +120,9 @@ void CEmptyEditorSurface::Destroy() noexcept
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 	m_window = nullptr;
 	m_font.Reset();
-	ReleaseLetterpress();
 	m_instance = nullptr;
 	m_destroyed = true;
 	m_destroying = false;
-}
-
-HICON CEmptyEditorSurface::EnsureLetterpress(int side) noexcept
-{
-	if (m_instance == nullptr || side <= 0) return nullptr;
-	if (m_letterpress != nullptr && m_letterpressSide == side) return m_letterpress;
-	// LoadImageW realizes the closest stored frame at the requested size, so the logo stays
-	// crisp across DPI changes instead of being stretched from one cached bitmap.
-	const auto realized = static_cast<HICON>(::LoadImageW(m_instance, MAKEINTRESOURCEW(ICON_DEFAULT_APP),
-		IMAGE_ICON, side, side, LR_DEFAULTCOLOR));
-	if (realized == nullptr) return m_letterpress;
-	ReleaseLetterpress();
-	m_letterpress = realized;
-	m_letterpressSide = side;
-	return m_letterpress;
-}
-
-void CEmptyEditorSurface::ReleaseLetterpress() noexcept
-{
-	if (m_letterpress != nullptr) ::DestroyIcon(m_letterpress);
-	m_letterpress = nullptr;
-	m_letterpressSide = 0;
 }
 
 void CEmptyEditorSurface::Layout(const RECT& bounds, unsigned int dpi)
@@ -389,18 +366,9 @@ void CEmptyEditorSurface::PaintContent(HDC target) noexcept
 	const HGDIOBJ previousFont = m_font.Get() != nullptr ? ::SelectObject(target, m_font.Get()) : nullptr;
 	::SetBkMode(target, TRANSPARENT);
 
-	// VS Code's watermark is the product letterpress alone; the caption text lives in the
-	// accessible name instead of being painted, so the surface stays a single centered column.
-	const auto letterpress = m_model.GetLetterpressBounds();
-	const int letterpressSide = std::min(letterpress.Width(), letterpress.Height());
-	if (letterpressSide > 0) {
-		if (const HICON logo = EnsureLetterpress(letterpressSide); logo != nullptr) {
-			(void)::DrawIconEx(target, letterpress.left, letterpress.top, logo,
-				letterpressSide, letterpressSide, 0, nullptr, DI_NORMAL);
-		}
-	} else {
-		ReleaseLetterpress();
-	}
+	// The caption text lives in the accessible name instead of being painted, so the surface is
+	// a single centered column of actions. See this subsystem's CLAUDE.md for why upstream's
+	// `.letterpress` half of the watermark is not drawn.
 
 	for (std::size_t index = 0; index < m_model.GetActionCount(); ++index) {
 		const auto action = m_model.GetAction(index);

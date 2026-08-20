@@ -97,6 +97,66 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
 `terminal/window/TerminalDWriteRenderer.cpp` binds Direct2D through
 `CreateDCRenderTarget` + `BindDC`, which rasterizes on the CPU into a GDI DC.
 
+## The window keeps a system frame on three edges (2026-08-20, #217)
+
+- `WM_NCCALCSIZE` calls `DefWindowProc` first and then restores only
+  `rgrc[0].top` to the window rectangle's original top, which is what Chromium
+  (and therefore VS Code) and Windows Terminal do. The client is extended over
+  the caption; the system frame survives on the left, right, and bottom.
+- That surviving frame is not decoration we could skip. **DWM paints the 1px
+  window border and applies the Windows 11 rounded-corner clip inside whatever
+  non-client region is left after `WM_NCCALCSIZE`.** A handler that answers with
+  the whole window rectangle — as this one did until #217 — leaves no such
+  region, so the window has square corners and no border, and sits against a
+  dark background as an edgeless dark rectangle. That was the reported defect.
+- Diagnose this class of problem with `DWMWA_EXTENDED_FRAME_BOUNDS` (attribute
+  9) against `GetWindowRect`, not by eye. When they are equal there is no frame
+  and there can be no border; VS Code's extended bounds are inset by one resize
+  handle on the left, right, and bottom. Measured on 2026-08-20 at 96 DPI:
+  VS Code's border is a 1px `#69797E` ring with an antialiased corner arc, and
+  Sakura now measures the same inset and ring.
+- **A maximized window is sized one resize handle larger than the work area on
+  every edge**, so the restored top must add `SM_CYFRAME + SM_CXPADDEDBORDER`
+  back or the title bar is laid out above the top of the monitor. With that
+  term, the maximized client comes out exactly equal to the monitor work area,
+  which is why the previous manual clamp of `rgrc[0]` to `rcWork` is gone rather
+  than merely unused.
+- A non-zero `DefWindowProc` result carries client-preservation flags the system
+  owns; return it untouched instead of rewriting rectangles it produced.
+- `CalculateCustomFrameClientRect` is the pure form of all of this and is unit
+  tested. Verify a change to it on screen as well: the geometry can be right in
+  the model while the composited window still shows no border.
+- `ApplyDwmFrameAppearance` owns every DWM attribute that decides how that frame
+  is painted: dark mode and `DWMWA_BORDER_COLOR` (34). Keep them together — a
+  system theme or setting change resets both, so `WM_THEMECHANGED` /
+  `WM_SETTINGCHANGE` reapply the set rather than one member of it. The
+  Windows 11 attribute value is written out because this SDK does not declare
+  that `DWMWINDOWATTRIBUTE` member; on an older system the call simply fails and
+  the window keeps the system default. **The corner preference is deliberately
+  not set**: the Windows 11 rounded corners are what VS Code gets, and asking for
+  square corners would be a divergence with nothing to gain.
+- **A border color asked for at `WM_CREATE` time does not survive the window's
+  first appearance.** Measured 2026-08-20: with the call only in `Attach`, the
+  shown window still painted the system `#69797E`, while the identical call made
+  from another process against the same HWND took effect immediately. The
+  handler therefore reapplies on `WM_SHOWWINDOW`. Do not "simplify" that call
+  away; verify on screen if you change this path, because nothing in the window's
+  own state reports the attribute back (`DwmGetWindowAttribute` answers
+  `E_INVALIDARG` for `DWMWA_BORDER_COLOR`).
+- **Documented divergence (product decision, 2026-08-20, #217): the window border
+  is the active theme's own `border` color, not the system border.** VS Code sets
+  no border color, so it takes the system one, which follows the "show accent
+  color on title bars and window borders" setting and measured `#69797E` here —
+  a brighter, blue-tinted line than anything the workbench paints. The owner
+  asked for a darker, untinted outline, so the frame passes `m_palette.border`,
+  which the color-theme registry resolves from `sideBar.border` (measured
+  `#2F2F2F` under the shipped dark theme). That is the same seam color the
+  Activity Bar and side bars already draw, so the window's outline and its
+  internal edges agree. This is a chosen appearance, not a faked capability: the
+  frame region is exactly the one VS Code keeps, and deleting the one
+  `DwmSetWindowAttribute` call restores upstream's border without touching any
+  geometry.
+
 ## Recovery and load projection
 
 - Native recovery content is not selection authority. After lifecycle commit,
@@ -248,6 +308,29 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   safe; that reasoning lives in
   [`../update/CLAUDE.md`](../update/CLAUDE.md) and is not repeated here.
 
+## Custom-frame popup menus are localized (2026-08-20, #223)
+
+- The Manage (gear), Layout, and Account popup menus built in
+  `CCustomFrameController` take every label from the message resource through
+  `LS(STR_WORKBENCH_MANAGE_*)`, `LS(STR_WORKBENCH_LAYOUT_*)`, and
+  `LS(STR_WORKBENCH_ACCOUNT_NO_PROVIDER)`. `AppendUpdateMenuGroup` does the same
+  for the `7_update` group. Matching upstream ids does **not** mean shipping
+  upstream's English strings: VS Code localizes these same titles through its
+  language packs, so an English literal here is a divergence, not fidelity. Every
+  new item must be added to all three resources — `sakura_core/sakura_rc.rc`
+  (ja), `sakura_lang/sakura_rc_en-US.rc`, and `sakura_lang/sakura_rc_zh-CN.rc`.
+- Only the **label** is translated. The keybinding hint (`Ctrl+Shift+P`,
+  `Ctrl+K Ctrl+S`) is a key sequence, not prose, so it stays in code and
+  `MakeMenuItemText` joins the two with the `\t` that `AppendMenuW` right-aligns.
+- `MakeMenuItemText` copies into a caller-owned buffer on purpose. `LS` returns
+  one of four rotating static buffers, so a menu that held several `LS` pointers
+  at once would paint the wrong labels; copying at the call site is what makes
+  building a whole menu safe.
+- Still English by design: `CustomFrameControlName` in `CCustomTitleBar.cpp`.
+  Those strings are accessible names, and the `Update` one is also the painted
+  label that `MeasureCustomFrameUpdateButtonWidth` measures, so translating them
+  is a separate change that has to keep measurement and painting in agreement.
+
 ## Moving a ViewContainer between the side bars (2026-08-01)
 
 - The gesture reproduces VS Code's `CompositeDragAndDrop`: an Activity Bar icon
@@ -284,16 +367,71 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   rewriting the exact legacy four-entry run in place. The entry count never
   changes, so `m_nMainMenuNum` and `m_nMenuTopIdx` stay valid, and any menu that
   does not match that exact shape is left untouched rather than repaired.
+- **The version-8 File run reintroduced the node version 6 had just merged
+  away.** `MigrateMainMenuV7DefaultToV8`'s replacement shape and
+  `src/main/resources/MainMenu.ini` both still carried
+  `F_FILE_RCNTFLDR_SUBMENU` + `F_FOLDER_USED_RECENTLY` after the combined
+  `Open Recent` node, so the File menu offered the recent-folder list twice —
+  once inside Open Recent's first group and again as a sibling submenu below it.
+  Both are fixed at the source (2026-08-20); the File run is 46 items and Edit's
+  top index is 46.
+- `RemoveMainMenuRedundantRecentFolderSubmenu` is the version-9 migration for
+  profiles that already persisted the v8 shape. **It gates on redundancy, not on
+  the version number**: it fires only where the same model also carries an
+  `F_FILE_OPENRECENT_SUBMENU` node whose child is the combined
+  `F_RECENT_WORKSPACE_LIST` projection — the surface that already renders the
+  folder list — and only where the legacy node is unrenamed and has that single
+  projection as its only child. Unlike the v8 replacement it deliberately does
+  *not* gate on `MainMenuModelFingerprint`, because a whole-model fingerprint
+  would leave the duplicate in place forever for anyone who had customized an
+  unrelated menu. It runs after the v8 path, since a customized menu keeps its
+  persisted shape there and still needs the duplicate removed.
 - A menu never renders a separator for an empty group.
   `RemoveRedundantMenuSeparators` drops leading, trailing, and consecutive
   separators after the model is projected, so an empty MRU list cannot leave a
   dangling rule. A submenu that becomes empty is then greyed out by
   `CheckFreeSubMenu`, exactly as before.
-- **Documented divergence:** VS Code's Open Recent also carries
-  `Reopen Closed Editor`, `More...` (`Ctrl+R` quick pick), and
-  `Clear Recently Opened`. None of them has a Sakura equivalent yet, so they are
-  absent rather than faked, and an Open Recent with no history is disabled
-  instead of showing an always-enabled but inert menu.
+- Folder/workspace rows render VS Code's `labelService.getWorkspaceLabel(uri,
+  { verbose: Verbosity.LONG })` labels, never raw URIs (2026-08-20): an
+  explicit stored label wins; a file URI becomes the native Windows path with
+  an uppercase drive letter, UNC as `\\server\share`, and percent-encoding
+  decoded; a saved workspace drops its case-sensitively matched
+  `.code-workspace` extension before the localized
+  `STR_WORKBENCH_RECENT_WORKSPACE_LABEL` (`{0} (Workspace)`) format wraps it;
+  a non-file URI keeps its canonical URI form. The formatting lives in
+  `CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel`, and `CEditWnd`
+  passes the localized format string in so the projection stays HWND- and
+  resource-free.
+- `Clear Recently Opened...` (`workbench.action.clearRecentFiles`,
+  `F_CLEAR_RECENT_WORKSPACES`) closes the submenu as a **static** contribution,
+  exactly as upstream (2026-08-20): `BuildTrailing` emits it below every dynamic
+  group, preceded by a separator only when something precedes it. The row
+  therefore exists even with an empty history, so the submenu is never empty and
+  `CheckFreeSubMenu` never greys it — matching VS Code, where the entry is always
+  present and reachable. The command confirms through
+  `STR_WORKBENCH_RECENT_CLEAR_CONFIRM` before clearing both the typed
+  `workbench::recent` store and the legacy `CMRUFile`/`CMRUFolder` lists;
+  `RecentlyOpenedWorkspaceService::Clear` treats an already-empty history as a
+  success that performs no durable write.
+- **Documented divergence:** `Reopen Closed Editor` (`Ctrl+Shift+T`) is absent.
+  It needs a per-window stack of closed editors with their restorable state, and
+  this fork has no such history — only the file MRU, which is a different concept
+  (it survives across sessions, carries no view state, and never distinguishes a
+  closed editor from a merely opened file). Approximating it with the MRU would
+  be faking the capability, so the entry stays out until that stack exists.
+- **Documented divergence:** `More...` (`Ctrl+R`) is absent. Upstream needs it
+  because `MenubarRecentMenu` truncates to a handful of rows and the quick pick
+  is the only way to reach the rest, with type-to-filter over the full history.
+  Here the submenu already renders the entire history — `kMaximumRecentlyOpenedWorkspaces`
+  is 64 and nothing truncates it — and `CQuickInputDialog` is a plain `LISTBOX`
+  with no filtering, so the entry would re-present the same rows in a worse
+  surface. Add it when the quick pick gains real filtering, not before.
+- **Documented divergence:** the recent-file rows below the separator keep the
+  legacy `CMRUFile` presentation (numbered mnemonic prefix plus encoding
+  suffix such as `[UTF-8]`) instead of VS Code's plain-path labels. Keeping
+  the Sakura-native file MRU behavior there is an explicit product decision
+  for this fork, and those rows still come from the legacy MRU projection,
+  not from `workbench::recent`.
 
 ## Phase 5 Native Command Route Checkpoint (2026-07-31)
 
@@ -364,14 +502,18 @@ wiring.
   rightmost item directly to the status-bar client edge; reserving a legacy
   resize-grip width leaves the notifications icon visibly too far left.
 - Resizing belongs to the custom frame, not the removed status-bar grip.
-  `WM_NCHITTEST` must expose every edge and corner, including the invisible
-  outer half of the DWM resize border after custom `WM_NCCALCSIZE`; maximized
-  windows continue to suppress resize hits. Because custom `WM_NCCALCSIZE`
-  makes the entire frame client-owned, topmost input-only child overlays must
-  cover all four inside edge strips and forward their initial press to the
-  top-level non-client resize path. Pure `WM_NCHITTEST` geometry is not enough:
-  Activity Bar, editor, panel, and status child HWNDs otherwise receive the
-  press first and leave only the legacy bottom-right grip reachable.
+  `WM_NCHITTEST` must expose every edge and corner; maximized windows continue
+  to suppress resize hits. Since #217 the client is extended over the caption
+  only (see "The window keeps a system frame on three edges" above), so the
+  left, right, and bottom targets sit in the surviving system frame outside the
+  client and reach
+  the top-level window as negative or past-the-edge coordinates. The top band is
+  the only one inside the client, and therefore the only one a child control
+  could take the initial press away from: exactly one topmost input-only child
+  overlay covers it and forwards its press to the non-client resize path. Do not
+  reintroduce inner bands on the other three edges — they would eat the
+  outermost pixels of the Activity Bar, the editor, and the status bar, which
+  VS Code leaves clickable.
   **Documented divergence:** Sakura's character-code display and macro-recording
   indicator have no VS Code counterparts. Their IDs are therefore explicitly
   product-owned as `sakura.status.editor.characterCode` and
@@ -411,3 +553,151 @@ wiring.
   guarded out of the in-place branch explicitly).
 - This is a removal of a divergence, not a new one: the in-place close is the
   VS Code-compatible behavior, and the process restart was the defect.
+
+## Split boxes are Sakura-only, so they follow the theme (2026-08-20, #225)
+
+`CSplitBoxWnd` (the vertical box above the editor's vertical scrollbar and the
+horizontal box left of the horizontal one) has no VS Code counterpart: VS Code
+splits an editor group through a command, not through a draggable box beside a
+scrollbar. **Documented divergence:** the control is kept, because removing it
+would remove a Sakura capability, but it no longer paints legacy 3D edges from
+`COLOR_3DFACE`/`COLOR_3DSHADOW`. `OnPaint` fills the client with the active
+theme's `canvas` and draws one centred 1px `border` grip, which is the same seam
+colour the workbench sashes use. Its drag behaviour is unchanged.
+
+## The status bar must not be WS_EX_COMPOSITED (2026-08-20, #226)
+
+Reported symptom: right after startup the Source Control view drew its
+"no Git repository / Initialize Repository" welcome content *above* a fully
+populated 76-item Changes list, and the graph section, the terminal body, and
+the status bar's SCM items never appeared at all. Nothing was wrong with the
+model — every one of those surfaces had already computed the correct content.
+
+Root cause: `CMainStatusBar::CreateStatusBar` created the `msctls_statusbar32`
+control with `WS_EX_COMPOSITED`. That control is painted entirely by our own
+`StatusBarSubclassProc` `WM_PAINT` handler, which calls `PaintStatusBar` — and
+with the extended style set, its client region was dirty again the instant
+`EndPaint` returned. `WM_PAINT` is *synthesised* by `GetMessage` whenever a
+window has a non-empty update region, so one perpetually re-invalidated window
+generates `WM_PAINT` forever and **starves every other window's pending update
+region indefinitely**. The other parts were invalidated and simply never got a
+paint message.
+
+The style bought nothing anyway: `PaintStatusBar` already renders into its own
+`CreateCompatibleDC` back buffer and blits once.
+
+How this was pinned down, in order — repeat this method rather than reasoning
+about it, because each step eliminated a plausible wrong answer:
+
+- Tally messages by target window class in `CEditWnd::MessageLoop`. 11,931 of
+  12,000 messages were `WM_PAINT` to `msctls_statusbar32`.
+- Instrument `GetUpdateRect` around `BeginPaint` / `EndPaint`. Note that between
+  `BeginPaint` and `EndPaint` the update region is empty *by definition*, so a
+  reading of 0 there proves nothing about the paint body — only the reading
+  after `EndPaint` is evidence.
+- Rule out each candidate invalidator by counting it, not by inspection:
+  `SetPalette`, `SetStatusbarViewSnapshot`, `RedrawWorkbenchFrameForCommittedLayout`,
+  and `CCaret::ShowCaretPosInfo` all counted **zero** hits in the spin window.
+- Bisect the paint body: skipping the `PaintStatusBar` call stopped the storm,
+  which is what pointed at the control's own composited redirection rather than
+  at any of our invalidation calls.
+
+Two earlier conclusions were wrong and are recorded so they are not retried:
+darkmodelib's status-bar subclass is innocent (disabling
+`DarkMode::setDarkWndNotifySafeEx` entirely left the storm unchanged), and
+suppressing the control's own `WM_NCPAINT` by returning 0 without chaining to
+`DefSubclassProc` does **not** fix it — it merely leaves the non-client region
+permanently invalid, which sustains the same paint synthesis.
+
+Verification (x64 Debug, 2026-08-20): idle CPU over 5 s with the repository
+folder open fell from 4,265 ms to 31.25 ms. `EnumChildWindows` + `GetUpdateRect`
+6 s after launch reports `update=none` for every child, where twelve windows
+previously held a permanent update region. Five fresh-process screen-versus-
+`PrintWindow` trials (three unoccluded) measured 2.174% / 2.089% / 2.099%; the
+diff heat map shows that residue is only the DWM-painted window border, which
+`PrintWindow` does not render, and one blinking caret in the commit-message box.
+The window interior is pixel-identical.
+
+## The wheel follows the pointer, not the focus (2026-08-20, #227)
+
+VS Code scrolls whatever the pointer is over. Win32 delivers `WM_MOUSEWHEEL` to
+the **focus** window, and `SPI_GETMOUSEWHEELROUTING`'s hybrid default only
+redirects to a hovered *other application* — inside one frame, a hovered Source
+Control or Explorer list never sees the wheel while the editor pane holds focus.
+Measured: with a repository open and the caret in the editor,
+`GetGUIThreadInfo().hwndFocus` is the `SakuraView*` pane, so the wheel arrived
+there no matter where the pointer sat.
+
+`CEditWnd::HoveredScrollTarget` resolves the hovered descendant and
+`WM_MOUSEWHEEL` forwards to it, so each control keeps its own scroll authority:
+
+- Input-only overlays (`WS_EX_TRANSPARENT` sashes, the frame resize band) sit
+  above the content they cover, so the walk climbs to their parent rather than
+  swallowing the wheel at an overlay.
+- Foreign-thread and foreign-root windows are rejected; a hovered window that is
+  not part of this frame is not this frame's business.
+- **The editor panes keep the historical path.** `OnMouseWheel` owns zoom, the
+  caret, and the split-pane dispatch that a bare `WM_MOUSEWHEEL` forward cannot
+  reproduce, so a hovered `CEditView` returns `nullptr` and falls through.
+- Print preview keeps the historical path for the same reason.
+
+Verified 2026-08-20 (x64 Debug, folder = this repository): with the caret in the
+editor, three real `mouse_event(MOUSEEVENTF_WHEEL)` notches over the Source
+Control change list moved `LB_GETTOPINDEX` 0 -> 9, the same gesture over the
+Graph list moved it 9 -> 18, and five notches over the editor pane changed
+12.830% of the pane's sampled pixels. Before the change every list stayed at 0.
+
+## A folder target with no workspace makes every settings read fail (2026-08-20, #227)
+
+`CConfigurationService::IsContextValid` rejects a target that names a
+`folderUri` while leaving `workspaceUri` empty. A **Folder** workspace has no
+`.code-workspace` file, so `WorkspaceContextSnapshot::workspaceConfigUri` is
+empty there — a target built as "workspaceConfigUri, plus the folder when there
+is exactly one" is therefore invalid for every single-folder window, which is
+the normal case.
+
+The failure is silent by construction: `GetValue` answers
+`InvalidScope` with no value, and each caller falls back to its own default. It
+looks exactly like an unset setting. Verified 2026-08-20 by logging the outcome:
+`scm.countBadge`, `workbench.colorTheme`, and `http.timeout` all returned
+`out=6 diag=target has an invalid URI/profile/language combination` with a
+`-FOLDER=` window open, so **no** workbench setting was being read at all.
+
+`CEditWnd::BuildWorkbenchConfigurationTarget` is now the single builder for every
+workbench settings read. It follows `CWorkbenchRuntime`'s own rule: a Folder
+workspace names its own folder as the workspace identity, and only a real
+`Workspace` uses `workspaceConfigUri`. Do not hand-roll a target beside it —
+prove a settings read works by changing the value and observing the window, never
+by reading the code path.
+
+## The caption is VS Code's `window.title`, and the minimap belongs to the editor (2026-08-20)
+
+Two frame-level defects had the same root cause: a control was positioned or
+composed against the frame rather than against the concept that owns it.
+
+- **Caption.** The shipped default used `$N`, the abbreviated *full path*. VS
+  Code's default `window.title` is
+  `${dirty}${activeEditorShort}${separator}${rootName}${separator}${appName}`,
+  which is the file's own name and the opened folder's own name — never a path.
+  The defaults in `CShareData.cpp` now read
+  `${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} - $A...`, and
+  `CSakuraEnvironment` gained `$W` (the root folder's name) with a matching
+  `${W?...$}` condition so the separator disappears when no folder is open.
+  `$W` resolves through `CEditWnd::GetWorkspaceRootName()`, which reads the
+  **workspace model** (`GetSemanticWorkspaceRoot`), not the Explorer View: the
+  caption must be right even when that View was never created.
+  A profile still holding the previous shipped default is migrated in
+  `CShareData_IO.cpp`; a caption the user edited is left alone.
+  Verified 2026-08-20 on throwaway profiles: without `-FOLDER`,
+  `CLAUDE.md - Sakura Editor NEXT`; with it,
+  `CLAUDE.md - sakura-editor-next - Sakura Editor NEXT`.
+
+- **Minimap.** `layout.minimap` is a frame-level band to the right of
+  `layout.editor`, so a side-by-side Markdown preview left the minimap stranded
+  against the frame, on the far side of the preview. In VS Code the minimap is
+  drawn *inside* the editor group. `LayoutMarkdownPreview` therefore now
+  receives the editor rectangle **plus** the minimap's column, reserves that
+  column at the right of the editor half, and returns the resulting rectangle
+  for `OnSize2` to apply. When no preview is open the split returns the original
+  edge, so nothing moves. Verified 2026-08-20 with the preview open: editor view
+  323..1263, minimap 1263..1363, preview 1364..1904.

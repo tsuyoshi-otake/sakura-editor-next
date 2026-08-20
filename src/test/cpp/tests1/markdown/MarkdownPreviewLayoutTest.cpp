@@ -297,5 +297,80 @@ TEST(MarkdownPreviewScrollMap, MapsBothDirectionsWithoutMovingAnEditorCaret)
 	EXPECT_EQ(9u, *SourceLineForPreviewScroll(lines, 1000));
 }
 
+
+/*!
+	@brief A dragged width is honored, so the divider can actually be moved
+
+	Without a width request the split is a fixed proportion, which is what made
+	the divider look decorative: it was painted, but nothing could change it.
+*/
+TEST(MarkdownPreviewLayout, HonorsAUserDraggedPreviewWidth)
+{
+	const auto narrow = CalculateMarkdownPreviewLayout(0, 1200, 96, PreviewPaneMode::NativeSibling, 300);
+	EXPECT_EQ(300, narrow.PreviewWidth());
+	const auto wide = CalculateMarkdownPreviewLayout(0, 1200, 96, PreviewPaneMode::NativeSibling, 800);
+	EXPECT_EQ(800, wide.PreviewWidth());
+	EXPECT_EQ(1200, wide.previewRight);
+	EXPECT_EQ(wide.dividerRight, wide.previewLeft);
+	// A width request wider than the default proportion is allowed; only the
+	// untouched default is capped at the preferred width.
+	const auto byDefault = CalculateMarkdownPreviewLayout(0, 1200, 96, PreviewPaneMode::NativeSibling);
+	EXPECT_GT(wide.PreviewWidth(), byDefault.PreviewWidth());
+}
+
+//! Zero means "default", so the caller cannot accidentally request a zero-width preview.
+TEST(MarkdownPreviewLayout, TreatsAZeroWidthRequestAsTheDefaultProportion)
+{
+	const auto requested = CalculateMarkdownPreviewLayout(0, 1200, 96,
+		PreviewPaneMode::NativeSibling, kPreviewDefaultWidthRequestDip);
+	const auto byDefault = CalculateMarkdownPreviewLayout(0, 1200, 96, PreviewPaneMode::NativeSibling);
+	EXPECT_EQ(byDefault.PreviewWidth(), requested.PreviewWidth());
+	EXPECT_EQ(byDefault.editorRight, requested.editorRight);
+}
+
+//! An over-dragged pointer parks the divider at the limit instead of being ignored.
+TEST(MarkdownPreviewLayout, ClampsADraggedWidthAgainstBothMinimums)
+{
+	for (const unsigned int dpi : { 96U, 144U, 192U }) {
+		const int right = ::MulDiv(1400, static_cast<int>(dpi), 96);
+		const int minimumEditor = ::MulDiv(kMinimumEditorWidthDip, static_cast<int>(dpi), 96);
+		const int minimumPreview = ::MulDiv(kMinimumPreviewWidthDip, static_cast<int>(dpi), 96);
+		const auto collapsed = CalculateMarkdownPreviewLayout(0, right, dpi,
+			PreviewPaneMode::NativeSibling, 1);
+		EXPECT_GE(collapsed.PreviewWidth(), minimumPreview);
+		const auto engulfed = CalculateMarkdownPreviewLayout(0, right, dpi,
+			PreviewPaneMode::NativeSibling, 100000);
+		EXPECT_GE(engulfed.EditorWidth(), minimumEditor);
+		EXPECT_GT(engulfed.PreviewWidth(), 0);
+	}
+}
+
+/*!
+	@brief The pointer holds the divider, so the preview keeps what is to its right
+
+	The result is expressed in device-independent pixels so the dragged width
+	survives a move to a display with a different scale factor.
+*/
+TEST(MarkdownPreviewLayout, DerivesAWidthRequestFromThePointerPosition)
+{
+	EXPECT_EQ(400, RequestedPreviewWidthDipFromPointer(1200, 800, 96));
+	EXPECT_EQ(400, RequestedPreviewWidthDipFromPointer(2400, 1600, 192));
+	// Never zero: zero would silently mean "restore the default".
+	EXPECT_EQ(1, RequestedPreviewWidthDipFromPointer(1200, 1200, 96));
+	EXPECT_EQ(1, RequestedPreviewWidthDipFromPointer(1200, 4000, 96));
+}
+
+//! A dragged width must not resurrect a preview in a mode that has none.
+TEST(MarkdownPreviewLayout, IgnoresADraggedWidthWhenThePreviewIsNotASibling)
+{
+	const auto hidden = CalculateMarkdownPreviewLayout(0, 1200, 96, PreviewPaneMode::Hidden, 800);
+	EXPECT_EQ(0, hidden.PreviewWidth());
+	EXPECT_EQ(1200, hidden.EditorWidth());
+	const auto replacement = CalculateMarkdownPreviewLayout(0, 1200, 96,
+		PreviewPaneMode::Replacement, 800);
+	EXPECT_EQ(0, replacement.EditorWidth());
+	EXPECT_EQ(1200, replacement.PreviewWidth());
+}
+
 } // namespace
 } // namespace markdown

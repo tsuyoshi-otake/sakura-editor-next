@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -407,7 +407,8 @@ GitPublication BuildGitPublication(const ScmOwner& owner, std::wstring_view repo
 		// published no row gets none, rather than a badge for a row that is not
 		// on screen.
 		if (const auto decoration = GitDecorationStatus(change, groups)) {
-			publication.decorations.push_back({ uri.value->ToString(), GitFileStatusLetter(*decoration) });
+			publication.decorations.push_back(
+				{ uri.value->ToString(), GitFileStatusLetter(*decoration), *decoration });
 		}
 		// The rows this change contributes, in the same order they were pushed
 		// into the groups above, so each operand names exactly one rendered row.
@@ -450,6 +451,30 @@ std::vector<GitDiffRowEntry> CollectGitDiffRows(const GitScmState& state, EUntra
 		});
 	}
 	return rows;
+}
+
+std::vector<decorations::FileDecorationEntry> BuildGitFileDecorationEntries(
+	const std::vector<GitResourceDecoration>& decorations)
+{
+	std::vector<decorations::FileDecorationEntry> entries;
+	entries.reserve(decorations.size());
+	for (const auto& decoration : decorations) {
+		const auto parsed = platform::uri::Uri::Parse(decoration.resourceUri);
+		if (!parsed) continue;
+		const auto path = parsed.value->ToWindowsPath();
+		if (!path) continue;
+		decorations::FileDecorationEntry entry;
+		entry.path = *path.value;
+		entry.decoration.badge.assign(1, decoration.letter);
+		// `GitFileStatusText` is upstream's unlocalized status text, which is ASCII,
+		// so widening it needs no encoding conversion.
+		const std::string_view tooltip = GitFileStatusText(decoration.status);
+		entry.decoration.tooltip.assign(tooltip.begin(), tooltip.end());
+		entry.decoration.color = GitFileStatusDecorationColor(decoration.status);
+		entry.decoration.propagate = DoesGitFileStatusPropagate(decoration.status);
+		entries.push_back(std::move(entry));
+	}
+	return entries;
 }
 
 GitScmPublisher::GitScmPublisher(SourceControlService* service, ScmOwner owner)

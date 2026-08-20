@@ -77,12 +77,21 @@ whether an editor input is open or active.
   line read alone is not sufficient rollback safety.
 - Commands use the stable IDs in `EditorCommandIds.h`. Native menus/keys,
   watermark actions, and command palette converge on the same coordinator.
-- The empty-editor watermark mirrors VS Code's `.editor-group-watermark`: one
-  vertically centered column holding a square product letterpress capped at
-  256 DIP, a 24 DIP gap, and the shortcut list. `EmptyEditorSurfaceModel` owns
-  that geometry; `CEmptyEditorSurface` only paints it. The square shrinks with
-  the viewport and is dropped entirely before the action list loses space, so
-  an empty letterpress rectangle is a normal state rather than a failure.
+- The empty-editor watermark mirrors VS Code's `.editor-group-watermark` minus
+  its `.letterpress` half: one vertically centered column holding the shortcut
+  list alone. `EmptyEditorSurfaceModel` owns that geometry; `CEmptyEditorSurface`
+  only paints it.
+- **Recorded divergence (2026-08-20): the product letterpress is never drawn.**
+  Upstream's `.watermark-container` always contains a `.letterpress` element, and
+  `workbench.tips.enabled` clears only `.shortcuts` in `EditorGroupWatermark.render`,
+  so VS Code offers no setting that hides it. Upstream's asset is nevertheless a
+  monochrome line-art glyph at `opacity: 0.3` (`letterpress-dark.svg` is
+  `<svg width="260" height="260" opacity="0.3">`), whereas this fork drew the
+  full-colour application icon at full opacity — a saturated 256 DIP logo that
+  upstream never shows. Rather than ship a second, differently-wrong letterpress,
+  the element is omitted entirely (omit, don't fake). Restoring it means producing
+  a theme-aware monochrome glyph at upstream's opacity, not re-adding an `HICON`
+  draw of `ICON_DEFAULT_APP`.
 - VS Code paints no text wordmark there, so the product name lives in the
   accessible name instead of the canvas. Both the label and its keybinding use
   the `descriptionText` token; do not reintroduce `secondaryText` or the removed

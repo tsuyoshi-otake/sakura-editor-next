@@ -26,6 +26,13 @@ TEST(CThemeService, DarkPaletteMatchesWorkbenchTokensExactly)
 		// These equal the ThemePalette member initializers, so omitting them would still pass
 		// while asserting nothing about what the registry actually produces.
 		{ 0x1F, 0x8A, 0xD2 }, { 0xFF, 0xFF, 0xFF }, { 0x3F, 0xA1, 0xE3 },
+		{ 0x00, 0x7A, 0xCC }, { 0xFF, 0xFF, 0xFF },
+		// The Git extension's registered `dark` gitDecoration defaults, verbatim and in
+		// EFileDecorationColor order: added, modified, deleted, renamed, stageModified,
+		// stageDeleted, untracked, ignored, conflicting, submodule.
+		{ 0x81, 0xB8, 0x8B }, { 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 },
+		{ 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 }, { 0x8C, 0x8C, 0x8C },
+		{ 0xE4, 0x67, 0x6B }, { 0x8D, 0xB9, 0xE2 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Dark));
 	EXPECT_EQ(ThemeMode::Dark, CThemeService::DefaultMode());
@@ -54,6 +61,13 @@ TEST(CThemeService, LightPaletteMatchesWorkbenchTokensExactly)
 		// it for light themes. Spelled out rather than left to the ThemePalette member
 		// initializers, which hold the dark values and would make this assertion vacuous.
 		{ 0xB8, 0x32, 0x68 }, { 0xFF, 0xFF, 0xFF }, { 0x93, 0x28, 0x53 },
+		{ 0x00, 0x7A, 0xCC }, { 0xFF, 0xFF, 0xFF },
+		// The Git extension's registered `light` gitDecoration defaults, verbatim and in
+		// EFileDecorationColor order. Spelled out because the ThemePalette member
+		// initializers hold the dark values, which would make this assertion vacuous.
+		{ 0x58, 0x7C, 0x0C }, { 0x89, 0x55, 0x03 }, { 0xAD, 0x07, 0x07 }, { 0x00, 0x71, 0x00 },
+		{ 0x89, 0x55, 0x03 }, { 0xAD, 0x07, 0x07 }, { 0x00, 0x71, 0x00 }, { 0x8E, 0x8E, 0x90 },
+		{ 0xAD, 0x07, 0x07 }, { 0x12, 0x58, 0xA7 },
 	};
 	EXPECT_EQ(expected, CThemeService::PaletteFor(ThemeMode::Light));
 }

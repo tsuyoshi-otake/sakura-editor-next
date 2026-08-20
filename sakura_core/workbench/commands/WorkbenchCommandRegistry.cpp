@@ -37,6 +37,7 @@ constexpr std::int32_t kLegacySaveWorkspaceAsFunctionCode = 31004;
 constexpr std::int32_t kLegacyDuplicateWorkspaceFunctionCode = 31005;
 constexpr std::int32_t kLegacyCloseFolderFunctionCode = 31006;
 constexpr std::int32_t kLegacyCloseActiveEditorFunctionCode = 31007;
+constexpr std::int32_t kLegacyClearRecentFilesFunctionCode = 31008;
 
 bool IsValidBinding(const WorkbenchCommandSurfaceBinding& binding) noexcept
 {
@@ -233,6 +234,15 @@ WorkbenchCommandDescriptor MakeOpenRecentDescriptor()
 	// keyboard and menu execution reach that terminal.
 	return MakeFileCommandDescriptor("workbench.action.openRecent", "Open Recent",
 		"workbenchReady", "workbenchReady", kLegacyOpenRecentFunctionCode);
+}
+
+WorkbenchCommandDescriptor MakeClearRecentFilesDescriptor()
+{
+	// Upstream contributes this as a static Open Recent entry that stays
+	// enabled on an empty history, where it is a no-op success rather than a
+	// disabled command.
+	return MakeFileCommandDescriptor("workbench.action.clearRecentFiles", "Clear Recently Opened...",
+		"workbenchReady", "workbenchReady", kLegacyClearRecentFilesFunctionCode);
 }
 
 WorkbenchCommandDescriptor MakeAddRootFolderDescriptor()
@@ -648,6 +658,7 @@ std::uint32_t ResolveBuiltinWorkbenchCommandTitleResourceId(std::string_view com
 		{"workbench.action.files.openFile", STR_WORKBENCH_COMMAND_OPEN_FILE},
 		{"workbench.action.openWorkspace", STR_WORKBENCH_COMMAND_OPEN_WORKSPACE},
 		{"workbench.action.openRecent", STR_WORKBENCH_COMMAND_OPEN_RECENT},
+		{"workbench.action.clearRecentFiles", STR_WORKBENCH_COMMAND_CLEAR_RECENT},
 		{"workbench.action.addRootFolder", STR_WORKBENCH_COMMAND_ADD_ROOT_FOLDER},
 		{"workbench.action.saveWorkspaceAs", STR_WORKBENCH_COMMAND_SAVE_WORKSPACE_AS},
 		{"workbench.action.duplicateWorkspaceInNewWindow", STR_WORKBENCH_COMMAND_DUPLICATE_WORKSPACE},
@@ -778,6 +789,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 		Entry{ MakeOpenFileDescriptor(), std::move(executors.openFile), {} },
 		Entry{ MakeOpenWorkspaceDescriptor(), std::move(executors.openWorkspace), {} },
 		Entry{ MakeOpenRecentDescriptor(), std::move(executors.openRecent), {} },
+		Entry{ MakeClearRecentFilesDescriptor(), std::move(executors.clearRecentFiles), {} },
 		Entry{ MakeAddRootFolderDescriptor(), std::move(executors.addRootFolder), {} },
 		Entry{ MakeSaveWorkspaceAsDescriptor(), std::move(executors.saveWorkspaceAs), {} },
 		Entry{ MakeDuplicateWorkspaceDescriptor(), std::move(executors.duplicateWorkspaceInNewWindow), {} },

@@ -24,6 +24,36 @@ constexpr int kDefaultDpi = 96;
 
 } // namespace
 
+std::wstring FormatActivityBarBadge(int number)
+{
+	if (number <= 0) return {};
+	if (number > 999) return std::to_wstring(number / 1000) + L"K+";
+	if (number > 99) return L"99+";
+	return std::to_wstring(number);
+}
+
+void ActivityBarModel::SetViewContainerBadge(std::string_view id, std::optional<ActivityBarNumberBadge> badge)
+{
+	if (id.empty()) return;
+	// Upstream hides a badge at zero or below rather than drawing "0", so a
+	// non-positive count is stored as no badge at all.
+	if (!badge || badge->number <= 0) {
+		if (const auto it = m_badges.find(id); it != m_badges.end()) m_badges.erase(it);
+		return;
+	}
+	if (const auto it = m_badges.find(id); it != m_badges.end()) {
+		it->second = *badge;
+		return;
+	}
+	m_badges.emplace(std::string(id), *badge);
+}
+
+std::optional<ActivityBarNumberBadge> ActivityBarModel::GetViewContainerBadge(std::string_view id) const
+{
+	const auto it = m_badges.find(id);
+	return it == m_badges.end() ? std::nullopt : std::optional(it->second);
+}
+
 void ActivityBarModel::SetEntries(std::vector<ActivityBarEntry> entries)
 {
 	// Identity, not position, decides what survives: an extension that reconnects re-sends the
@@ -154,6 +184,8 @@ ActivityBarButtonInfo ActivityBarModel::GetButton(std::size_t index) const noexc
 		.label = entry.label,
 		.codicon = entry.codicon,
 		.bounds = m_bounds[index],
+		// Accounts and Manage are not ViewContainers, so they never carry one.
+		.badge = entry.IsGlobalAction() ? std::nullopt : GetViewContainerBadge(entry.id),
 		.kind = entry.kind,
 		.selected = m_selected == index,
 		.hovered = m_hovered == index,

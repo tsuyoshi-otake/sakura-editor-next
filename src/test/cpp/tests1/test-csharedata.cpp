@@ -416,9 +416,16 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	EXPECT_THAT(sWindow.m_bUseCompatibleBMP, IsTrue());
 	EXPECT_THAT(sWindow.m_bMenuIcon, IsFalse());
 
-	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA17を更新して使うべき。
+	// The VS Code-shaped default: the file's own name, then the opened
+	// folder's own name, and never a path. Active and inactive are the same
+	// string, so this asserts one literal twice rather than two variants.
+	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(
+		L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+		L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}"));
 
-	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA18を更新して使うべき。
+	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(
+		L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+		L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}"));
 
 	return true;
 }
@@ -1169,8 +1176,6 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 		SMenuItem{ 1, 30152, 'U' },
 		SMenuItem{ 1, 30190, 'T' },
 		SMenuItem{ 1, 30180, 'B' },
-		SMenuItem{ 1, 34007, 'R' },
-		SMenuItem{ 2, 29003 },
 		SMenuItem{ 1, 31380, 'G' },
 		SMenuItem{ 1, 30194, 'Q' },
 		SMenuItem{ 0, 34053, 'E' },
@@ -1491,13 +1496,13 @@ MATCHER(IsInitializedCommonSettingMainMenu, "Checks if CommonSetting_MainMenu is
 
 	constexpr std::array mainMenuTopIdxs = {
 		0,
-		48,
-		176,
-		207,
-		247,
-		266,
-		295,
-		335,
+		46,
+		174,
+		205,
+		245,
+		264,
+		293,
+		333,
 	};
 
 	for (size_t i = 0; i < std::size(mainMenuTopIdxs); ++i) {
@@ -1897,14 +1902,14 @@ bool MenuContainsFunction(const CommonSetting_MainMenu& menu, EFunctionCode func
 	return false;
 }
 
-std::unique_ptr<CommonSetting_MainMenu> MakePreV6DefaultFromResource(const CommonSetting_MainMenu& v8)
+std::unique_ptr<CommonSetting_MainMenu> MakePreV6DefaultFromResource(const CommonSetting_MainMenu& resource)
 {
-	constexpr int kV8FileItemCount = 48;
+	constexpr int kResourceFileItemCount = 46;
 	constexpr int kPreV6FileItemCount = static_cast<int>(kPreV6FileMenu.size());
-	static_assert(kV8FileItemCount - kPreV6FileItemCount == 8);
-	auto menu = std::make_unique<CommonSetting_MainMenu>(v8);
-	for (int index = kV8FileItemCount; index < menu->m_nMainMenuNum; ++index) {
-		menu->m_cMainMenuTbl[index - (kV8FileItemCount - kPreV6FileItemCount)] = menu->m_cMainMenuTbl[index];
+	static_assert(kResourceFileItemCount - kPreV6FileItemCount == 6);
+	auto menu = std::make_unique<CommonSetting_MainMenu>(resource);
+	for (int index = kResourceFileItemCount; index < menu->m_nMainMenuNum; ++index) {
+		menu->m_cMainMenuTbl[index - (kResourceFileItemCount - kPreV6FileItemCount)] = menu->m_cMainMenuTbl[index];
 	}
 	for (int index = 0; index < kPreV6FileItemCount; ++index) {
 		const auto& source = kPreV6FileMenu[static_cast<std::size_t>(index)];
@@ -1916,18 +1921,18 @@ std::unique_ptr<CommonSetting_MainMenu> MakePreV6DefaultFromResource(const Commo
 		target.m_sKey[1] = L'\0';
 		target.m_sName[0] = L'\0';
 	}
-	menu->m_nMainMenuNum -= kV8FileItemCount - kPreV6FileItemCount;
+	menu->m_nMainMenuNum -= kResourceFileItemCount - kPreV6FileItemCount;
 	for (int top = 0; top < MAX_MAINMENU_TOP; ++top) {
-		if (menu->m_nMenuTopIdx[top] >= kV8FileItemCount) {
-			menu->m_nMenuTopIdx[top] -= kV8FileItemCount - kPreV6FileItemCount;
+		if (menu->m_nMenuTopIdx[top] >= kResourceFileItemCount) {
+			menu->m_nMenuTopIdx[top] -= kResourceFileItemCount - kPreV6FileItemCount;
 		}
 	}
 	return menu;
 }
 
-std::unique_ptr<CommonSetting_MainMenu> MakeKnownV7DefaultFromResource(const CommonSetting_MainMenu& v8)
+std::unique_ptr<CommonSetting_MainMenu> MakeKnownV7DefaultFromResource(const CommonSetting_MainMenu& resource)
 {
-	auto menu = MakePreV6DefaultFromResource(v8);
+	auto menu = MakePreV6DefaultFromResource(resource);
 	CShareData_IO::ApplyMainMenuHistoricalAdditions(*menu, 0);
 	return menu;
 }
@@ -2104,11 +2109,11 @@ TEST_F(CShareDataTest, MainMenuHistoricalMigrationsBuildTheRealV7DefaultAndPrese
 		EXPECT_TRUE(MenuContainsFunction(*v7, function)) << static_cast<int>(function);
 	}
 
-	// Missing version zero begins from the current v8 resource, retains that
+	// Missing version zero begins from the current resource, retains that
 	// File shape, and still gains historical non-File additions.
 	auto fresh = std::make_unique<CommonSetting_MainMenu>(resource);
 	CShareData_IO::ApplyMainMenuHistoricalAdditions(*fresh, 0);
-	for (int index = 0; index < 48; ++index) {
+	for (int index = 0; index < 46; ++index) {
 		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nType, fresh->m_cMainMenuTbl[index].m_nType) << index;
 		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nFunc, fresh->m_cMainMenuTbl[index].m_nFunc) << index;
 		EXPECT_EQ(resource.m_cMainMenuTbl[index].m_nLevel, fresh->m_cMainMenuTbl[index].m_nLevel) << index;
@@ -2172,9 +2177,11 @@ TEST_F(CShareDataTest, MainMenuVersion8RewritesOnlyTheCompleteKnownV7DefaultAndI
 	EXPECT_EQ(EFunctionCode(F_CLOSE_ACTIVE_EDITOR), menu->m_cMainMenuTbl[18].m_nFunc);
 	EXPECT_EQ(EFunctionCode(F_CLOSE_WORKSPACE), menu->m_cMainMenuTbl[19].m_nFunc);
 	EXPECT_EQ(EFunctionCode(F_EXITALL), menu->m_cMainMenuTbl[22].m_nFunc);
-	EXPECT_EQ(EFunctionCode(F_FILE_RCNTFLDR_SUBMENU), menu->m_cMainMenuTbl[44].m_nFunc);
-	EXPECT_EQ(EFunctionCode(34053), menu->m_cMainMenuTbl[48].m_nFunc);
-	EXPECT_EQ(48, menu->m_nMenuTopIdx[1]);
+	// The File run no longer carries a second recent-folder surface; Open Recent
+	// at index 7 is the only one, so the next top-level menu starts at 46.
+	EXPECT_FALSE(MenuContainsFunction(*menu, EFunctionCode(F_FILE_RCNTFLDR_SUBMENU)));
+	EXPECT_EQ(EFunctionCode(34053), menu->m_cMainMenuTbl[46].m_nFunc);
+	EXPECT_EQ(46, menu->m_nMenuTopIdx[1]);
 	ExpectSameMenuModel(*expectedV8, *menu);
 	const int count = menu->m_nMainMenuNum;
 	EXPECT_FALSE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
@@ -2221,6 +2228,109 @@ TEST_F(CShareDataTest, MainMenuVersion8FreshResourceIsNotRewritten)
 	const auto before = GetDllShareData().m_Common.m_sMainMenu;
 	auto menu = std::make_unique<CommonSetting_MainMenu>(before);
 	EXPECT_FALSE(CShareData_IO::MigrateMainMenuV7DefaultToV8(*menu));
+	ExpectSameMenuModel(before, *menu);
+}
+
+namespace {
+
+//! The File run version 8 actually shipped: one combined Open Recent submenu
+//! plus the legacy recent-folder node that duplicated its first group.
+std::unique_ptr<CommonSetting_MainMenu> MakeV8FileMenuWithRedundantRecentFolder()
+{
+	auto menu = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 30102, 'O' },
+		SMenuItem{ 1, 34061, 'R' },	// Open Recent
+		SMenuItem{ 2, 29007 },		// its combined projection
+		SMenuItem{ 1, 30180, 'B' },
+		SMenuItem{ 1, 34007, 'R' },	// legacy 最近使ったフォルダー
+		SMenuItem{ 2, 29003 },		// its only child
+		SMenuItem{ 1, 31380, 'G' },
+		SMenuItem{ 0, 34053, 'E' },
+		SMenuItem{ 1, 30210, 'U' },
+	});
+	menu->m_nMenuTopIdx[0] = 0;
+	menu->m_nMenuTopIdx[1] = 8;
+	return menu;
+}
+
+}
+
+TEST(CShareDataProfile, MainMenuVersion9DropsTheRecentFolderSubmenuOpenRecentAlreadyProjects)
+{
+	auto menu = MakeV8FileMenuWithRedundantRecentFolder();
+
+	ASSERT_TRUE(CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu(*menu));
+	EXPECT_EQ(8, menu->m_nMainMenuNum);
+	EXPECT_FALSE(MenuContainsFunction(*menu, EFunctionCode(F_FILE_RCNTFLDR_SUBMENU)));
+	EXPECT_FALSE(MenuContainsFunction(*menu, F_FOLDER_USED_RECENTLY));
+
+	// The surviving Open Recent node and its projection keep their positions, the
+	// items after the removed pair close the gap, and Edit's top index follows.
+	EXPECT_EQ(EFunctionCode(F_FILE_OPENRECENT_SUBMENU), menu->m_cMainMenuTbl[2].m_nFunc);
+	EXPECT_EQ(F_RECENT_WORKSPACE_LIST, menu->m_cMainMenuTbl[3].m_nFunc);
+	EXPECT_EQ(EFunctionCode(30180), menu->m_cMainMenuTbl[4].m_nFunc);
+	EXPECT_EQ(EFunctionCode(31380), menu->m_cMainMenuTbl[5].m_nFunc);
+	EXPECT_EQ(0, menu->m_nMenuTopIdx[0]);
+	EXPECT_EQ(6, menu->m_nMenuTopIdx[1]);
+
+	const auto after = *menu;
+	EXPECT_FALSE(CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu(*menu));
+	ExpectSameMenuModel(after, *menu);
+}
+
+TEST(CShareDataProfile, MainMenuVersion9KeepsARecentFolderSubmenuThatIsNotRedundant)
+{
+	// A pre-v8 menu whose Open Recent still projects the folder list itself has
+	// no combined projection to make the sibling node redundant.
+	auto menu = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 34061, 'R' },
+		SMenuItem{ 2, 29003 },
+		SMenuItem{ 2, 1 },
+		SMenuItem{ 2, 29002 },
+		SMenuItem{ 1, 34007, 'R' },
+		SMenuItem{ 2, 29003 },
+	});
+	const auto before = *menu;
+	EXPECT_FALSE(CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu(*menu));
+	ExpectSameMenuModel(before, *menu);
+}
+
+TEST(CShareDataProfile, MainMenuVersion9KeepsARenamedRecentFolderSubmenu)
+{
+	// A user-supplied caption is a customization; removing the node would discard it.
+	auto menu = MakeV8FileMenuWithRedundantRecentFolder();
+	menu->m_cMainMenuTbl[5].m_sName[0] = L'X';
+	menu->m_cMainMenuTbl[5].m_sName[1] = L'\0';
+	const auto before = *menu;
+	EXPECT_FALSE(CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu(*menu));
+	ExpectSameMenuModel(before, *menu);
+}
+
+TEST(CShareDataProfile, MainMenuVersion9KeepsARecentFolderSubmenuHoldingExtraItems)
+{
+	// Only the bare node/projection pair is redundant.  Anything else the user put
+	// inside it must survive, because Open Recent does not reproduce it.
+	auto menu = MakeMainMenu({
+		SMenuItem{ 0, 34052, 'F' },
+		SMenuItem{ 1, 34061, 'R' },
+		SMenuItem{ 2, 29007 },
+		SMenuItem{ 1, 34007, 'R' },
+		SMenuItem{ 2, 29003 },
+		SMenuItem{ 2, 30102, 'O' },
+	});
+	const auto before = *menu;
+	EXPECT_FALSE(CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu(*menu));
+	ExpectSameMenuModel(before, *menu);
+}
+
+TEST_F(CShareDataTest, MainMenuVersion9FreshResourceHasNoRedundantRecentFolderSubmenu)
+{
+	const auto before = GetDllShareData().m_Common.m_sMainMenu;
+	EXPECT_FALSE(MenuContainsFunction(before, EFunctionCode(F_FILE_RCNTFLDR_SUBMENU)));
+	auto menu = std::make_unique<CommonSetting_MainMenu>(before);
+	EXPECT_FALSE(CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu(*menu));
 	ExpectSameMenuModel(before, *menu);
 }
 

@@ -1,10 +1,12 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
 	SPDX-License-Identifier: Zlib
 */
 #pragma once
+
+#include "workbench/decorations/FileDecorationModel.h"
 
 #include <cstdint>
 #include <optional>
@@ -110,5 +112,18 @@ enum class EGitFileStatus : std::uint8_t {
 
 //! Upstream's `Resource.strikeThrough`: every flavour of deleted.
 [[nodiscard]] bool IsGitFileStatusStruckThrough(EGitFileStatus status) noexcept;
+
+//! Upstream's `Resource.getStatusColor`, as a theme-color role rather than a color.
+[[nodiscard]] decorations::EFileDecorationColor GitFileStatusDecorationColor(
+	EGitFileStatus status) noexcept;
+
+/*!
+	@brief Upstream's `Resource.resourceDecoration`: `propagate` for this status.
+
+	Upstream sets `propagate` for every status except the two deleted ones, so a
+	folder is never colored by a file it no longer contains. `IGNORED` is not a
+	case here because this product never asks git for it; see `EGitFileStatus`.
+*/
+[[nodiscard]] bool DoesGitFileStatusPropagate(EGitFileStatus status) noexcept;
 
 } // namespace workbench::scm

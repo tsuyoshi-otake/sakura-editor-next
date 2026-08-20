@@ -284,3 +284,93 @@ has enabled mouse reporting, preserve the application's right-click event;
 are stored as half-open cell intervals, but mouse endpoints must be normalized to
 include both drag endpoints and the complete continuation cells of wide graphemes
 before painting or extracting clipboard text.
+
+## Multiplexer Keybinding Presets (fork extension, documented divergence)
+
+The terminal menu offers a `ショートカット` submenu with `なし` / `tmux (Ctrl+B)` /
+`GNU Screen (Ctrl+A)`. Stock VS Code has no such feature and no such setting, so
+this is an explicit fork extension, not upstream parity. Never present it as a
+VS Code capability.
+
+- **`screen` is the default (owner decision, 2026-08-20).** The registered
+  default of `sakura.terminal.shortcutPreset` is `screen`, and
+  `CTerminalTool`'s own initial value and `CEditWnd`'s read fallbacks all say
+  `Screen` so a window with no readable setting behaves like one that read the
+  default. The three sites must stay in agreement.
+  Consequences the user accepted: `Ctrl+A` is claimed by the panel, so readline's
+  beginning-of-line no longer reaches the shell on a bare press — `Ctrl+A`
+  `Ctrl+A` sends the literal byte — and a real `screen` running inside the shell
+  needs that doubled prefix too. `なし` in the submenu restores an unclaimed
+  `Ctrl+A`, and the selection persists to the profile's `settings.json`.
+- The chord table lives in `terminal/input/TerminalShortcutPreset.{h,cpp}` as
+  pure logic with no Win32 windowing: `ResolveTerminalPresetKey` maps
+  `(preset, prefix-armed, key)` onto a `TerminalPresetAction`. It is unit-tested
+  in `src/test/cpp/tests1/terminal/TerminalShortcutPresetTest.cpp`.
+- Every action maps onto a capability the panel already owns (new terminal,
+  split right/down, close pane, close terminal, focus pane/group, select group,
+  focus the terminal list). A preset must never invent a capability, and must
+  never approximate a missing one with unrelated state.
+- Pressing the prefix twice is deliberately reported as *not consumed*, so the
+  ordinary encoder delivers the literal control byte. That is tmux's
+  `send-prefix` and Screen's `C-a a`, and it is what a nested multiplexer needs.
+- An armed prefix followed by an unbound key is swallowed rather than forwarded.
+  Leaking `%` or `"` into the shell after a prefix is worse than doing nothing.
+- Digit chords select terminal *groups*, because a tmux/Screen window is a group
+  here rather than a pane, and both are treated as 0-based.
+- Punctuation chords accept the US and JIS spellings of the same character
+  (`"` is `Shift+VK_OEM_7` or `Shift+2`), and letter chords ignore Shift, so a
+  layout or Caps Lock state cannot silently drop a binding.
+- The selection persists as `sakura.terminal.shortcutPreset`
+  (`none` / `tmux` / `screen`). The key is deliberately outside the
+  `terminal.integrated.*` namespace: those identifiers must keep upstream
+  semantics, and this concept has no upstream identifier to reuse.
+- The panel never persists the value itself. `CEditWnd` reads the effective
+  setting through `ApplyTerminalShortcutPresetSetting()` and writes a menu
+  selection back through `PersistTerminalShortcutPresetSelection()`, the same
+  split the color theme selection already uses.
+
+## Tab presentation is resolved, not stored (Issue #232, PR 1A)
+
+The tab list used to render whatever the process put in its OSC 0/2 title:
+`DrainOutput()` overwrote `Tab::label` with `TerminalModel::Title()` and the
+painter drew that field. pwsh reports its working directory that way, so every
+row read `C:\Program Files\...`. VS Code's default is
+`terminal.integrated.tabs.title` = `${process}`.
+
+The manager now stores only raw data — `processName`, `profileLabel`,
+`sequenceTitle`, `initialWorkingDirectory` — and `TerminalDrainResult` reports
+`sequenceChanged`, not `titleChanged`, because an OSC title change no longer
+implies the displayed title changed. `TerminalTabPresentation` is the pure
+resolver that turns settings plus a context into a title and a description; the
+tab list and the session dropdown must both go through it, and nothing below
+`CTerminalTool` may hold a display string.
+
+Rules for that resolver:
+
+- It tokenizes into Text / Value / Separator. `${separator}` is conditional, so
+  a chain of `wstring::replace` calls cannot implement it: an empty variable
+  between two separators has to collapse the pair into one, and a separator at
+  either end has to disappear.
+- A **known but unavailable** variable resolves to empty and collapses. An
+  **unknown** variable stays literal, the way VS Code leaves unrecognized text
+  alone.
+- Never fabricate a value from a neighbouring one. `${cwdFolder}`,
+  `${task}`, `${shellCommand}`, `${shellPromptInput}`, and `${progress}` stay
+  empty until the subsystem that really owns them exists; guessing them from the
+  OSC title becomes a compatibility break once shell integration lands.
+- Titles and templates are attacker-influenced (the process writes the OSC title,
+  the user writes the template), so both resolved fields strip C0 controls and
+  are bounded by `kMaximumTerminalTabTextLength`.
+
+`terminal.integrated.tabs.allowAgentCliTitle` (default `true`) is why the
+existing `Claude Code` contract survives the change: for a recognized Agent CLI
+the title template is replaced by `${sequence}` exactly once, before expansion,
+so a configured title can never be half-merged with the sequence title. The
+recognition list is deliberately tiny and rejects any path-shaped title, which
+is what keeps pwsh's directory title out. Widening it needs evidence that the CLI
+in question really announces itself that way.
+
+Settings are not read here yet. The defaults live in
+`TerminalTabPresentationSettings`, and PR 1B pushes the configured snapshot in
+through `CTerminalTool` as plain data — `TerminalTabManagerDependencies` owns
+session lifetime and must not gain a configuration dependency.

@@ -450,35 +450,83 @@ TEST(CustomFrame, ReturnsSnapCompatibleCaptionButtonHits)
 TEST(CustomFrame, PreservesCornerAndEdgeResizeHits)
 {
 	const auto layout = CalculateCustomFrameLayout(1000, 96, 300);
+	// The top band is inside the client, because the client was extended over the
+	// caption. Both top corners reach inside with it.
 	EXPECT_EQ(HTTOPLEFT, HitTestCustomFrame(layout, { 1, 1 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTTOPRIGHT, HitTestCustomFrame(layout, { 998, 1 }, 1000, 700, 8, false));
-	EXPECT_EQ(HTBOTTOMLEFT, HitTestCustomFrame(layout, { 1, 698 }, 1000, 700, 8, false));
-	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 998, 698 }, 1000, 700, 8, false));
-	EXPECT_EQ(HTRIGHT, HitTestCustomFrame(layout, { 998, 300 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTTOP, HitTestCustomFrame(layout, { 500, 1 }, 1000, 700, 8, false));
+	// The left, right, and bottom bands live in the surviving system frame, which is
+	// outside the client and therefore arrives as negative or past-the-edge points.
 	EXPECT_EQ(HTLEFT, HitTestCustomFrame(layout, { -1, 300 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTRIGHT, HitTestCustomFrame(layout, { 1001, 300 }, 1000, 700, 8, false));
-	EXPECT_EQ(HTTOP, HitTestCustomFrame(layout, { 500, -1 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTBOTTOM, HitTestCustomFrame(layout, { 500, 701 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTTOP, HitTestCustomFrame(layout, { 500, -1 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTTOPLEFT, HitTestCustomFrame(layout, { -1, -1 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTBOTTOMLEFT, HitTestCustomFrame(layout, { 1, 701 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 998, 701 }, 1000, 700, 8, false));
 	EXPECT_EQ(HTBOTTOMRIGHT, HitTestCustomFrame(layout, { 1001, 701 }, 1000, 700, 8, false));
 }
 
-TEST(CustomFrame, CoversEveryClientEdgeWithNonOverlappingResizeOverlays)
+TEST(CustomFrame, LeavesTheOutermostClientPixelsOfTheSystemFrameEdgesClickable)
 {
+	// VS Code resizes from the frame outside its visible border, not from a band eaten
+	// out of the Activity Bar, the editor, or the status bar. Every point here is
+	// inside the client and must stay client, however close to the edge it sits.
+	const auto layout = CalculateCustomFrameLayout(1000, 96, 300);
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, { 0, 300 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, { 999, 300 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, { 500, 699 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, { 0, 699 }, 1000, 700, 8, false));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(layout, { 999, 699 }, 1000, 700, 8, false));
+}
+
+TEST(CustomFrame, ExtendsTheClientOverTheCaptionAndKeepsTheSystemFrame)
+{
+	// Window rectangle 100,100,1100,900 with the system frame applied: 8px of frame on
+	// the left, right, and bottom, and the caption removed from the top.
+	const RECT systemFrameClient{ 108, 140, 1092, 892 };
+	const RECT client = CalculateCustomFrameClientRect(systemFrameClient, 100, false, 8);
+	EXPECT_EQ(100, client.top);
+	// The remaining edges must stay with the system frame; DWM paints the window
+	// border and rounds the corners inside exactly that region.
+	EXPECT_EQ(108, client.left);
+	EXPECT_EQ(1092, client.right);
+	EXPECT_EQ(892, client.bottom);
+}
+
+TEST(CustomFrame, GivesTheResizeHandleBackToTheMaximizedClientTop)
+{
+	// A maximized window sits one resize handle outside the work area on every edge.
+	const RECT systemFrameClient{ 0, 40, 2560, 1032 };
+	const RECT client = CalculateCustomFrameClientRect(systemFrameClient, -8, true, 8);
+	EXPECT_EQ(0, client.top);
+	EXPECT_EQ(0, client.left);
+	EXPECT_EQ(2560, client.right);
+	EXPECT_EQ(1032, client.bottom);
+}
+
+TEST(CustomFrame, NeverExtendsTheClientTopPastItsBottom)
+{
+	// A window shorter than its own resize handle: the maximized adjustment would
+	// otherwise push the extended top below the client's bottom edge.
+	const RECT systemFrameClient{ 0, 20, 100, 22 };
+	const RECT client = CalculateCustomFrameClientRect(systemFrameClient, 18, true, 8);
+	EXPECT_EQ(22, client.top);
+	EXPECT_EQ(22, client.bottom);
+}
+
+TEST(CustomFrame, OverlaysOnlyTheOneResizeEdgeThatLiesInsideTheClient)
+{
+	// The client is extended over the caption alone, so the top band is the only one a
+	// child control could take the initial press away from. The other three bands are
+	// in the system frame outside the client, where no child window exists.
 	const auto bounds = CalculateCustomFrameResizeOverlayBounds(1000, 700, 8, false);
-	const auto at = [&](CustomFrameResizeEdge edge) -> const RECT& {
-		return bounds[static_cast<size_t>(edge)];
-	};
-	const auto expectRect = [](const RECT& rect, LONG left, LONG top, LONG right, LONG bottom) {
-		EXPECT_EQ(left, rect.left);
-		EXPECT_EQ(top, rect.top);
-		EXPECT_EQ(right, rect.right);
-		EXPECT_EQ(bottom, rect.bottom);
-	};
-	expectRect(at(CustomFrameResizeEdge::Top), 0, 0, 1000, 8);
-	expectRect(at(CustomFrameResizeEdge::Bottom), 0, 692, 1000, 700);
-	expectRect(at(CustomFrameResizeEdge::Left), 0, 8, 8, 692);
-	expectRect(at(CustomFrameResizeEdge::Right), 992, 8, 1000, 692);
+	const RECT& top = bounds[static_cast<size_t>(CustomFrameResizeEdge::Top)];
+	EXPECT_EQ(0, top.left);
+	EXPECT_EQ(0, top.top);
+	EXPECT_EQ(1000, top.right);
+	EXPECT_EQ(8, top.bottom);
+	EXPECT_EQ(static_cast<size_t>(1), bounds.size());
 
 	const auto maximized = CalculateCustomFrameResizeOverlayBounds(1000, 700, 8, true);
 	for (const RECT& rect : maximized) EXPECT_TRUE(::IsRectEmpty(&rect));
@@ -487,19 +535,11 @@ TEST(CustomFrame, CoversEveryClientEdgeWithNonOverlappingResizeOverlays)
 TEST(CustomFrame, ClampsResizeOverlaysForTinyWindows)
 {
 	const auto bounds = CalculateCustomFrameResizeOverlayBounds(6, 4, 8, false);
-	const auto at = [&](CustomFrameResizeEdge edge) -> const RECT& {
-		return bounds[static_cast<size_t>(edge)];
-	};
-	EXPECT_EQ(0, at(CustomFrameResizeEdge::Top).left);
-	EXPECT_EQ(0, at(CustomFrameResizeEdge::Top).top);
-	EXPECT_EQ(6, at(CustomFrameResizeEdge::Top).right);
-	EXPECT_EQ(4, at(CustomFrameResizeEdge::Top).bottom);
-	EXPECT_EQ(0, at(CustomFrameResizeEdge::Bottom).left);
-	EXPECT_EQ(0, at(CustomFrameResizeEdge::Bottom).top);
-	EXPECT_EQ(6, at(CustomFrameResizeEdge::Bottom).right);
-	EXPECT_EQ(4, at(CustomFrameResizeEdge::Bottom).bottom);
-	EXPECT_TRUE(::IsRectEmpty(&at(CustomFrameResizeEdge::Left)));
-	EXPECT_TRUE(::IsRectEmpty(&at(CustomFrameResizeEdge::Right)));
+	const RECT& top = bounds[static_cast<size_t>(CustomFrameResizeEdge::Top)];
+	EXPECT_EQ(0, top.left);
+	EXPECT_EQ(0, top.top);
+	EXPECT_EQ(6, top.right);
+	EXPECT_EQ(4, top.bottom);
 }
 
 TEST(CustomFrame, MaximizedWindowDisablesResizeBorderButKeepsSnapButton)
