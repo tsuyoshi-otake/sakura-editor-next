@@ -97,6 +97,66 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
 `terminal/window/TerminalDWriteRenderer.cpp` binds Direct2D through
 `CreateDCRenderTarget` + `BindDC`, which rasterizes on the CPU into a GDI DC.
 
+## The window keeps a system frame on three edges (2026-08-20, #217)
+
+- `WM_NCCALCSIZE` calls `DefWindowProc` first and then restores only
+  `rgrc[0].top` to the window rectangle's original top, which is what Chromium
+  (and therefore VS Code) and Windows Terminal do. The client is extended over
+  the caption; the system frame survives on the left, right, and bottom.
+- That surviving frame is not decoration we could skip. **DWM paints the 1px
+  window border and applies the Windows 11 rounded-corner clip inside whatever
+  non-client region is left after `WM_NCCALCSIZE`.** A handler that answers with
+  the whole window rectangle — as this one did until #217 — leaves no such
+  region, so the window has square corners and no border, and sits against a
+  dark background as an edgeless dark rectangle. That was the reported defect.
+- Diagnose this class of problem with `DWMWA_EXTENDED_FRAME_BOUNDS` (attribute
+  9) against `GetWindowRect`, not by eye. When they are equal there is no frame
+  and there can be no border; VS Code's extended bounds are inset by one resize
+  handle on the left, right, and bottom. Measured on 2026-08-20 at 96 DPI:
+  VS Code's border is a 1px `#69797E` ring with an antialiased corner arc, and
+  Sakura now measures the same inset and ring.
+- **A maximized window is sized one resize handle larger than the work area on
+  every edge**, so the restored top must add `SM_CYFRAME + SM_CXPADDEDBORDER`
+  back or the title bar is laid out above the top of the monitor. With that
+  term, the maximized client comes out exactly equal to the monitor work area,
+  which is why the previous manual clamp of `rgrc[0]` to `rcWork` is gone rather
+  than merely unused.
+- A non-zero `DefWindowProc` result carries client-preservation flags the system
+  owns; return it untouched instead of rewriting rectangles it produced.
+- `CalculateCustomFrameClientRect` is the pure form of all of this and is unit
+  tested. Verify a change to it on screen as well: the geometry can be right in
+  the model while the composited window still shows no border.
+- `ApplyDwmFrameAppearance` owns every DWM attribute that decides how that frame
+  is painted: dark mode and `DWMWA_BORDER_COLOR` (34). Keep them together — a
+  system theme or setting change resets both, so `WM_THEMECHANGED` /
+  `WM_SETTINGCHANGE` reapply the set rather than one member of it. The
+  Windows 11 attribute value is written out because this SDK does not declare
+  that `DWMWINDOWATTRIBUTE` member; on an older system the call simply fails and
+  the window keeps the system default. **The corner preference is deliberately
+  not set**: the Windows 11 rounded corners are what VS Code gets, and asking for
+  square corners would be a divergence with nothing to gain.
+- **A border color asked for at `WM_CREATE` time does not survive the window's
+  first appearance.** Measured 2026-08-20: with the call only in `Attach`, the
+  shown window still painted the system `#69797E`, while the identical call made
+  from another process against the same HWND took effect immediately. The
+  handler therefore reapplies on `WM_SHOWWINDOW`. Do not "simplify" that call
+  away; verify on screen if you change this path, because nothing in the window's
+  own state reports the attribute back (`DwmGetWindowAttribute` answers
+  `E_INVALIDARG` for `DWMWA_BORDER_COLOR`).
+- **Documented divergence (product decision, 2026-08-20, #217): the window border
+  is the active theme's own `border` color, not the system border.** VS Code sets
+  no border color, so it takes the system one, which follows the "show accent
+  color on title bars and window borders" setting and measured `#69797E` here —
+  a brighter, blue-tinted line than anything the workbench paints. The owner
+  asked for a darker, untinted outline, so the frame passes `m_palette.border`,
+  which the color-theme registry resolves from `sideBar.border` (measured
+  `#2F2F2F` under the shipped dark theme). That is the same seam color the
+  Activity Bar and side bars already draw, so the window's outline and its
+  internal edges agree. This is a chosen appearance, not a faked capability: the
+  frame region is exactly the one VS Code keeps, and deleting the one
+  `DwmSetWindowAttribute` call restores upstream's border without touching any
+  geometry.
+
 ## Recovery and load projection
 
 - Native recovery content is not selection authority. After lifecycle commit,
@@ -364,14 +424,18 @@ wiring.
   rightmost item directly to the status-bar client edge; reserving a legacy
   resize-grip width leaves the notifications icon visibly too far left.
 - Resizing belongs to the custom frame, not the removed status-bar grip.
-  `WM_NCHITTEST` must expose every edge and corner, including the invisible
-  outer half of the DWM resize border after custom `WM_NCCALCSIZE`; maximized
-  windows continue to suppress resize hits. Because custom `WM_NCCALCSIZE`
-  makes the entire frame client-owned, topmost input-only child overlays must
-  cover all four inside edge strips and forward their initial press to the
-  top-level non-client resize path. Pure `WM_NCHITTEST` geometry is not enough:
-  Activity Bar, editor, panel, and status child HWNDs otherwise receive the
-  press first and leave only the legacy bottom-right grip reachable.
+  `WM_NCHITTEST` must expose every edge and corner; maximized windows continue
+  to suppress resize hits. Since #217 the client is extended over the caption
+  only (see "The window keeps a system frame on three edges" above), so the
+  left, right, and bottom targets sit in the surviving system frame outside the
+  client and reach
+  the top-level window as negative or past-the-edge coordinates. The top band is
+  the only one inside the client, and therefore the only one a child control
+  could take the initial press away from: exactly one topmost input-only child
+  overlay covers it and forwards its press to the non-client resize path. Do not
+  reintroduce inner bands on the other three edges — they would eat the
+  outermost pixels of the Activity Bar, the editor, and the status bar, which
+  VS Code leaves clickable.
   **Documented divergence:** Sakura's character-code display and macro-recording
   indicator have no VS Code counterparts. Their IDs are therefore explicitly
   product-owned as `sakura.status.editor.characterCode` and
