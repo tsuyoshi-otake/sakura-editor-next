@@ -442,16 +442,6 @@ void WorkerMain(std::shared_ptr<SharedWorkerState> shared)
 	for (;;) {
 		if (::WaitForSingleObject(shared->stopEvent, 0) == WAIT_OBJECT_0) break;
 		const auto currentGeneration = shared->rootGeneration.load(std::memory_order_acquire);
-		if (currentGeneration != watchedGeneration) {
-			closeWatch();
-			std::wstring root;
-			{
-				const std::lock_guard lock(shared->mutex);
-				root = shared->root;
-			}
-			watch = OpenWatchDirectory(root);
-			watchedGeneration = currentGeneration;
-		}
 
 		Job job;
 		bool hasJob = false;
@@ -479,6 +469,22 @@ void WorkerMain(std::shared_ptr<SharedWorkerState> shared)
 		}
 
 		shared->state.store(ExplorerWorkerState::Idle, std::memory_order_release);
+		// Re-arm the watch only once every queued enumeration has been served.
+		// Opening the directory handle is a synchronous filesystem call, and a
+		// root change queues its enumeration at the same moment it bumps the
+		// generation.  Doing this at the top of the loop would put that call
+		// ahead of the work the user is waiting to see, so a cold or busy
+		// volume delays the first contents of the folder they just opened.
+		if (currentGeneration != watchedGeneration) {
+			closeWatch();
+			std::wstring root;
+			{
+				const std::lock_guard lock(shared->mutex);
+				root = shared->root;
+			}
+			watch = OpenWatchDirectory(root);
+			watchedGeneration = currentGeneration;
+		}
 		if (watch != INVALID_HANDLE_VALUE && !readPending) {
 			DWORD ignored{};
 			::ResetEvent(watchEvent);

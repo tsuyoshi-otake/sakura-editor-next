@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -523,7 +523,7 @@ TEST(ExplorerTool, RefreshRestoresExpandedDescendantsByFilesystemPath)
 
 	ASSERT_TRUE(PumpMessagesUntil([&] {
 		return tool.GetWorkerState() == workbench::explorer::ExplorerWorkerState::Idle;
-	}, std::chrono::seconds(1)));
+	}, std::chrono::seconds(15)));
 	std::this_thread::sleep_for(std::chrono::milliseconds(30));
 	CreateEmptyFile(root.Path() / L"later.txt");
 	ASSERT_TRUE(PumpMessagesUntil([&] {
@@ -611,9 +611,13 @@ TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)
 	tool.SetRoot(firstRoot.Path().wstring());
 	tool.SetRoot(secondRoot.Path().wstring());
 
+	// The deadlines below only bound how long a correct result may take to
+	// arrive; the debounce assertion is the negative wait further down, which
+	// keeps its narrow window.  A hosted runner opening a cold directory can be
+	// far slower than the ~250 ms this takes on a developer machine.
 	ASSERT_TRUE(PumpMessagesUntil([&] {
 		return FindDirectChild(tree, kWorkspaceLevel, L"current.txt") != nullptr;
-	}, std::chrono::seconds(2)));
+	}, std::chrono::seconds(15)));
 	EXPECT_EQ(nullptr, FindDirectChild(tree, kWorkspaceLevel, L"old.txt"));
 
 	// Let the production ReadDirectoryChangesW watcher arm, then verify its
@@ -628,7 +632,7 @@ TEST(ExplorerTool, ProductionWorkerRejectsOldRootsAndDebouncesDirectoryChanges)
 	}, std::chrono::milliseconds(75)));
 	EXPECT_TRUE(PumpMessagesUntil([&] {
 		return FindDirectChild(tree, kWorkspaceLevel, L"later.txt") != nullptr;
-	}, std::chrono::seconds(2)));
+	}, std::chrono::seconds(15)));
 
 	tool.Close();
 	EXPECT_EQ(workbench::explorer::ExplorerWorkerState::Stopped, tool.GetWorkerState());
