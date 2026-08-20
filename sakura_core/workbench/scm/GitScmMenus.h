@@ -1,4 +1,4 @@
-/*! @file
+﻿/*! @file
  * @brief The Source Control view's context menus, as VS Code contributes them.
  */
 /*
