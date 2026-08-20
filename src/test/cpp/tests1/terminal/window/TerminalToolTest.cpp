@@ -102,12 +102,12 @@ struct ToolHarness {
 		terminal::TerminalTabManagerDependencies dependencies;
 		dependencies.createSession = [this](terminal::TerminalSessionCallbacks callbacks) {
 			auto state = std::make_shared<BackendState>();
+		state->failStart = failStart;
+		state->blockWrites.store(blockWrites);
+		{
+			const std::lock_guard lock(mutex);
 			state->scriptedOutput = scriptedOutput;
-			state->failStart = failStart;
-			state->blockWrites.store(blockWrites);
-			{
-				const std::lock_guard lock(mutex);
-				backends.push_back(state);
+			backends.push_back(state);
 			}
 			return std::make_unique<terminal::CTerminalSession>(std::make_unique<ToolFakeBackend>(state), std::move(callbacks));
 		};
@@ -658,6 +658,40 @@ TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)
 	tool.Close();
 }
 
+TEST(TerminalTool, RestartClearsOldSequenceState)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "\x1b]0;Old process title\x07";
+	std::atomic<int> outputNotifications{};
+	auto dependencies = harness.Dependencies();
+	auto createSession = std::move(dependencies.createSession);
+	std::atomic<std::size_t> sessionIndex{};
+	dependencies.createSession = [&harness, createSession = std::move(createSession), &sessionIndex](
+		terminal::TerminalSessionCallbacks callbacks) {
+		if( sessionIndex.fetch_add(1) == 1 ) {
+			const std::lock_guard lock(harness.mutex);
+			harness.scriptedOutput.clear();
+		}
+		return createSession(std::move(callbacks));
+	};
+	terminal::TerminalTabManager manager(std::move(dependencies), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
+	const auto id = manager.Activate({ 80, 24 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
+	const auto drained = manager.DrainOutput(*id);
+	ASSERT_TRUE(drained.sequenceChanged);
+	ASSERT_EQ(L"Old process title", manager.Snapshot().front().sequenceTitle);
+
+	ASSERT_TRUE(manager.RestartTab(*id, { 80, 24 }, L"C:\\workspace"));
+	const auto restarted = manager.Snapshot();
+	ASSERT_EQ(1u, restarted.size());
+	EXPECT_EQ(L"", restarted.front().sequenceTitle);
+	EXPECT_EQ(2u, harness.backends.size());
+	manager.Close();
+}
+
 TEST(TerminalTool, SupportsArbitraryFlatSplitGroupsAndClosesTheFocusedPane)
 {
 	ToolHarness harness;
@@ -817,6 +851,40 @@ TEST(TerminalTool, SplitDownStacksNativeViewportsVertically)
 	EXPECT_GE(firstRect.bottom - firstRect.top, 80);
 	EXPECT_GE(secondRect.bottom - secondRect.top, 80);
 	EXPECT_GE(thirdRect.bottom - thirdRect.top, 80);
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, TabPresentationSettingsUseGroupVisibilityAndMoveListLeftWithoutRestart)
+{
+	ToolHarness harness;
+	const auto parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 900, 320 }, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_TRUE(tool.HasTerminalTabsList());
+	const auto startsBefore = harness.backends.size();
+
+	terminal::TerminalTabPresentationSettings settings;
+	settings.hideCondition = terminal::TerminalTabsHideCondition::SingleGroup;
+	settings.location = terminal::TerminalTabsLocation::Left;
+	tool.SetTabPresentationSettings(settings);
+	EXPECT_FALSE(tool.HasTerminalTabsList());
+	EXPECT_EQ(startsBefore, harness.backends.size());
+
+	// New Terminal creates a second group. singleGroup must use group count,
+	// not the three terminal instances now owned by the manager.
+	ASSERT_TRUE(tool.AddTerminal().has_value());
+	EXPECT_TRUE(tool.HasTerminalTabsList());
+	const RECT tabs = tool.TerminalTabsBounds();
+	EXPECT_EQ(0, tabs.left);
+	EXPECT_EQ(120, tabs.right - tabs.left);
+	EXPECT_GE(tabs.right, 0);
+	EXPECT_EQ(startsBefore + 1, harness.backends.size());
+
 	tool.Close();
 	::DestroyWindow(parent);
 }

@@ -88,6 +88,7 @@ class IFileService;
 }
 namespace terminal {
 class CTerminalTool;
+struct TerminalTabPresentationSettings;
 enum class TerminalShortcutPreset : std::uint8_t;
 }
 namespace theme {
@@ -994,6 +995,10 @@ private:
 	//! Resolves `sakura.terminal.shortcutPreset` and hands it to the terminal panel.
 	//! A fork extension, not an upstream key; see terminal/CLAUDE.md.
 	void ApplyTerminalShortcutPresetSetting();
+	//! Reads the terminal.integrated.tabs.* presentation policy once from one
+	//! coherent configuration snapshot and pushes plain data to CTerminalTool.
+	//! Configuration never reaches TerminalTabManager or the paint path.
+	void ApplyTerminalTabPresentationSettings();
 	//! Writes the terminal keybinding preset the user picked from the terminal menu
 	//! into the profile settings document.
 	bool PersistTerminalShortcutPresetSelection(terminal::TerminalShortcutPreset preset);

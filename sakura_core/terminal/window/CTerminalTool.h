@@ -7,6 +7,7 @@
 #pragma once
 
 #include "terminal/window/TerminalTabManager.h"
+#include "TerminalTabPresentation.h"
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
 #include "terminal/window/TerminalPaneLayout.h"
@@ -90,6 +91,9 @@ public:
 	//! the window applies the effective setting.
 	void SetShortcutPreset( TerminalShortcutPreset preset );
 	[[nodiscard]] TerminalShortcutPreset ShortcutPreset() const noexcept;
+	//! Applies one coherent terminal.integrated.tabs.* projection. This is plain
+	//! presentation data; it never reaches TerminalTabManager or restarts PTYs.
+	void SetTabPresentationSettings( TerminalTabPresentationSettings settings );
 	//! Called when the user picks a preset from the terminal menu, so the window
 	//! can persist the selection. Never called by SetShortcutPreset.
 	void SetShortcutPresetSink( std::function<void(TerminalShortcutPreset)> sink );

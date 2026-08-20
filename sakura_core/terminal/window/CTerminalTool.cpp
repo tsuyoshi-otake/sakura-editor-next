@@ -16,6 +16,9 @@
 #include "terminal/window/TerminalTabPresentation.h"
 #include "terminal/window/CTerminalWnd.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/LabelRunPainter.h"
+#include "workbench/icons/ThemeIconResolver.h"
 
 #include <algorithm>
 #include <array>
@@ -164,6 +167,40 @@ void FillSolidRect( HDC dc, const RECT& rect, COLORREF color )
 		::FillRect(dc, &rect, brush);
 		::DeleteObject(brush);
 	}
+}
+
+//! The default terminal icon is a real VS Code codicon projection. The
+//! resolver supplies the embedded codicon glyph when available and its
+//! existing vector fallback otherwise; the terminal row never fabricates a
+//! text marker in the icon slot.
+void DrawTerminalTabIcon( HDC dc, const RECT& bounds, COLORREF color )
+{
+	if( IsEmptyRect(bounds) ) return;
+	const auto icon = workbench::icons::ResolveThemeIcon(
+		L"terminal", workbench::icons::CCodiconFont::Instance().FaceName());
+	if( !icon.font ) {
+		workbench::icons::codicons::Draw(dc,
+			workbench::icons::IconRect{ bounds.left, bounds.top, bounds.right, bounds.bottom },
+			icon.builtin, color);
+		return;
+	}
+	const int side = std::max(1, std::min(static_cast<int>(bounds.right - bounds.left),
+		static_cast<int>(bounds.bottom - bounds.top)));
+	const HFONT glyphFont = workbench::icons::CreateLabelRunGlyphFont(icon.fontIcon.faceName, side);
+	if( glyphFont == nullptr || icon.fontIcon.glyph.empty() ) {
+		if( glyphFont != nullptr ) ::DeleteObject(glyphFont);
+		return;
+	}
+	const HGDIOBJ oldFont = ::SelectObject(dc, glyphFont);
+	const int oldBkMode = ::SetBkMode(dc, TRANSPARENT);
+	const COLORREF oldColor = ::SetTextColor(dc, color);
+	RECT glyph = bounds;
+	::DrawTextW(dc, icon.fontIcon.glyph.c_str(), static_cast<int>(icon.fontIcon.glyph.size()), &glyph,
+		DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+	::SetTextColor(dc, oldColor);
+	::SetBkMode(dc, oldBkMode);
+	::SelectObject(dc, oldFont);
+	::DeleteObject(glyphFont);
 }
 
 void DrawHeaderIcon( HDC dc, const RECT& bounds, TerminalHeaderTarget target, bool maximized,
@@ -478,6 +515,16 @@ struct CTerminalTool::Impl {
 		if( !IsEmptyRect(content) ) ::InvalidateRect(window, &content, FALSE);
 	}
 
+	void SetTabPresentationSettings( TerminalTabPresentationSettings settings )
+	{
+		tabPresentationSettings = std::move(settings);
+		// This is a presentation-only projection. The manager, sessions, models,
+		// and PTY lifetimes are intentionally untouched.
+		LayoutChildren();
+		InvalidateTabs();
+		InvalidateTerminalTabs();
+	}
+
 	void OnPaneFocused( std::uint64_t tabId )
 	{
 		terminalTabsFocused = false;
@@ -615,28 +662,40 @@ struct CTerminalTool::Impl {
 		return manager->ActiveTabId();
 	}
 
-	//! Resolved presentation for one tab. PR 1B replaces the default-constructed
-	//! settings with the terminal.integrated.tabs.* snapshot pushed from the
-	//! configuration service; the resolver itself does not change.
+	bool IsTerminalTabsNarrow() const noexcept
+	{
+		if( IsEmptyRect(paneLayout.tabsBounds) ) return false;
+		return paneLayout.tabsBounds.right - paneLayout.tabsBounds.left <= ScaleDip(80, dpi);
+	}
+
+	TerminalTabPresentationSnapshot PresentationSnapshot( const TerminalTabSnapshot& tab ) const
+	{
+		return TerminalTabPresentationSnapshot(
+			tab.processName,
+			tab.profileLabel,
+			tab.sequenceTitle,
+			tab.initialWorkingDirectory);
+	}
+
+	//! Both native consumers project the same raw snapshot through the typed
+	//! presentation seam; only the final surface operation differs.
 	ResolvedTerminalTabPresentation TabPresentation( const TerminalTabSnapshot& tab ) const
 	{
-		TerminalTabPresentationContext context;
-		context.processName = tab.processName.empty() ? tab.profileLabel : tab.processName;
-		context.sequenceTitle = tab.sequenceTitle;
-		if( !tab.initialWorkingDirectory.empty() ) context.initialCwd = tab.initialWorkingDirectory;
-		context.recognizedAgentCli = IsRecognizedAgentCliTitle(tab.sequenceTitle);
-		return ResolveTerminalTabPresentation(tabPresentationSettings, context);
+		return ResolveTerminalTabListPresentation(tabPresentationSettings, PresentationSnapshot(tab));
 	}
 
 	std::wstring TabTitle( const TerminalTabSnapshot& tab ) const
 	{
-		auto title = TabPresentation(tab).title;
+		auto title = ResolveTerminalTabDropdownPresentation(
+			tabPresentationSettings, PresentationSnapshot(tab)).title;
 		if( title.empty() ) title = tab.profileLabel;
 		return title;
 	}
 
 	std::wstring HeaderProfileLabel()
 	{
+		if( !ShouldShowTerminalTabPolicy(tabPresentationSettings.showActiveTerminal,
+			manager->TabCount(), IsTerminalTabsNarrow()) ) return {};
 		const auto tabs = manager->Snapshot();
 		const auto focused = FocusedTabId();
 		const auto found = std::find_if(tabs.begin(), tabs.end(), [focused](const auto& tab) {
@@ -654,6 +713,12 @@ struct CTerminalTool::Impl {
 
 	bool IsHeaderTargetEnabled( TerminalHeaderTarget target ) const noexcept
 	{
+		if( target == TerminalHeaderTarget::Split
+			|| target == TerminalHeaderTarget::Kill
+			|| target == TerminalHeaderTarget::More ) {
+			if( !ShouldShowTerminalTabPolicy(tabPresentationSettings.showActions,
+				manager->TabCount(), IsTerminalTabsNarrow()) ) return false;
+		}
 		switch( target ) {
 		case TerminalHeaderTarget::Kill:
 			return FocusedTabId().has_value();
@@ -728,8 +793,11 @@ struct CTerminalTool::Impl {
 		}
 		if( panes.empty() ) return;
 		NormalizeWeights(*group);
+		const bool showTabs = ShouldShowTerminalTabs(tabPresentationSettings,
+			manager->TabCount(), paneGroups.size());
 		paneLayout = CalculateTerminalPaneLayout({ content, dpi, group->tabIds.size(),
-			std::span<const int>(group->weights), manager->TabCount() > 1, group->orientation });
+			std::span<const int>(group->weights), showTabs, group->orientation,
+			tabPresentationSettings.location });
 		ClampTerminalTabsFirstVisible();
 		const auto count = std::min(panes.size(), paneLayout.panes.size());
 		for( std::size_t index = 0; index < count; ++index ) {
@@ -941,22 +1009,50 @@ struct CTerminalTool::Impl {
 			if( selected ) FillSolidRect(dc, row, palette.raised.ToColorRef());
 
 			RECT marker = row;
-			marker.right = marker.left + markerWidth;
+			marker.right = std::min<LONG>(row.right, marker.left + markerWidth);
 			const auto group = FindGroup(tab.id);
 			const bool split = group && paneGroups[*group].tabIds.size() > 1;
 			FillSolidRect(dc, marker, (selected ? palette.accent : (split ? palette.secondaryText : palette.border)).ToColorRef());
 
 			RECT label = row;
-			label.left += horizontalPadding;
-			label.right -= horizontalPadding;
-			std::wstring text = TabTitle(tab);
-			if( text.empty() ) text = LS(STR_TERMINAL_FALLBACK_LABEL);
-			if( split ) text = L"  " + text;
-			::SetTextColor(dc, tab.state == TerminalSessionState::Failed
-				? palette.danger.ToColorRef()
-				: (selected ? palette.primaryText : palette.secondaryText).ToColorRef());
-			::DrawTextW(dc, text.c_str(), -1, &label,
-				DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+			label.left = std::min<LONG>(label.right, label.left + horizontalPadding);
+			label.right = std::max<LONG>(label.left, label.right - horizontalPadding);
+			const auto presentation = TabPresentation(tab);
+			std::wstring title = presentation.title;
+			if( title.empty() ) title = tab.profileLabel;
+			if( title.empty() ) title = LS(STR_TERMINAL_FALLBACK_LABEL);
+			const TerminalTabRowLayoutInput geometryInput {
+				{ static_cast<int>(label.left), static_cast<int>(label.top),
+					static_cast<int>(label.right), static_cast<int>(label.bottom) }, dpi, split, true,
+				!presentation.description.empty(), tab.state == TerminalSessionState::Failed };
+			const auto geometry = CalculateTerminalTabRowLayout(geometryInput);
+			const auto toNativeRect = [](const TerminalTabPresentationRect& rect) {
+				return RECT { rect.left, rect.top, rect.right, rect.bottom };
+			};
+			if( geometry.Icon().Width() > 0 ) {
+				DrawTerminalTabIcon(dc, toNativeRect(geometry.Icon()),
+					(selected ? palette.primaryText : palette.secondaryText).ToColorRef());
+			}
+			if( geometry.Title().Width() > 0 ) {
+				RECT titleRect = toNativeRect(geometry.Title());
+				::SetTextColor(dc, tab.state == TerminalSessionState::Failed
+					? palette.danger.ToColorRef()
+					: (selected ? palette.primaryText : palette.secondaryText).ToColorRef());
+				::DrawTextW(dc, title.c_str(), -1, &titleRect,
+					DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+			}
+			if( geometry.Description().Width() > 0 && !presentation.description.empty() ) {
+				RECT descriptionRect = toNativeRect(geometry.Description());
+				::SetTextColor(dc, palette.descriptionText.ToColorRef());
+				::DrawTextW(dc, presentation.description.c_str(), -1, &descriptionRect,
+					DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
+			}
+			if( geometry.Status().Width() > 0 && tab.state == TerminalSessionState::Failed ) {
+				RECT statusRect = toNativeRect(geometry.Status());
+				::SetTextColor(dc, palette.danger.ToColorRef());
+				::DrawTextW(dc, L"!", 1, &statusRect,
+					DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
+			}
 		}
 		if( previousFont ) ::SelectObject(dc, previousFont);
 	}
@@ -2020,6 +2116,12 @@ std::optional<std::uint64_t> CTerminalTool::AddTerminal()
 void CTerminalTool::SetShortcutPreset( TerminalShortcutPreset preset )
 {
 	m_impl->ApplyShortcutPreset(preset, false);
+}
+
+void CTerminalTool::SetTabPresentationSettings( TerminalTabPresentationSettings settings )
+{
+	if( m_impl->closed ) return;
+	m_impl->SetTabPresentationSettings(std::move(settings));
 }
 
 TerminalShortcutPreset CTerminalTool::ShortcutPreset() const noexcept

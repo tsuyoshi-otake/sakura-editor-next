@@ -835,7 +835,16 @@ struct CEditWnd::ThemeConfigurationGate final {
 			// Activity Bar paints, and VS Code applies it the moment it changes
 			// rather than at the next Source Control publication.
 			return change.key == "workbench.colorTheme" || change.key == "workbench.iconTheme"
-				|| change.key == "scm.countBadge";
+				|| change.key == "scm.countBadge"
+				|| change.key == "terminal.integrated.tabs.title"
+				|| change.key == "terminal.integrated.tabs.description"
+				|| change.key == "terminal.integrated.tabs.separator"
+				|| change.key == "terminal.integrated.tabs.allowAgentCliTitle"
+				|| change.key == "terminal.integrated.tabs.enabled"
+				|| change.key == "terminal.integrated.tabs.hideCondition"
+				|| change.key == "terminal.integrated.tabs.showActiveTerminal"
+				|| change.key == "terminal.integrated.tabs.showActions"
+				|| change.key == "terminal.integrated.tabs.location";
 		});
 		if (!relevant) return;
 		std::lock_guard lock(gate->mutex);
@@ -2328,6 +2337,7 @@ bool CEditWnd::InitializeWorkbench()
 		(void)PersistTerminalShortcutPresetSelection(preset);
 	});
 	ApplyTerminalShortcutPresetSetting();
+	ApplyTerminalTabPresentationSettings();
 		m_terminalTool->SetPanelActions({
 			.renderPanelActions = false,
 			.renderHeader = false,
@@ -6749,6 +6759,72 @@ void CEditWnd::ApplyTerminalShortcutPresetSetting()
 	m_terminalTool->SetShortcutPreset(preset);
 }
 
+void CEditWnd::ApplyTerminalTabPresentationSettings()
+{
+	if (m_terminalTool == nullptr) return;
+	terminal::TerminalTabPresentationSettings settings;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			// Keep these keys in one request: a title/description/separator policy
+			// must never be assembled from different configuration revisions.
+			const std::vector<std::string> keys {
+				"terminal.integrated.tabs.title",
+				"terminal.integrated.tabs.description",
+				"terminal.integrated.tabs.separator",
+				"terminal.integrated.tabs.allowAgentCliTitle",
+				"terminal.integrated.tabs.enabled",
+				"terminal.integrated.tabs.hideCondition",
+				"terminal.integrated.tabs.showActiveTerminal",
+				"terminal.integrated.tabs.showActions",
+				"terminal.integrated.tabs.location",
+			};
+			const auto read = m_workbenchRuntime->Configuration().ReadSnapshot(
+				keys, BuildWorkbenchConfigurationTarget());
+			if (read.snapshot && read.snapshot->values.size() == keys.size()) {
+				const auto& values = read.snapshot->values;
+				const auto stringValue = [&values](std::size_t index, const std::wstring& fallback) {
+					if (index < values.size()) {
+						if (const auto* value = std::get_if<std::wstring>(&values[index].Value());
+							value != nullptr) return *value;
+					}
+					return fallback;
+				};
+				const auto boolValue = [&values](std::size_t index, bool fallback) {
+					if (index < values.size()) {
+						if (const auto* value = std::get_if<bool>(&values[index].Value());
+							value != nullptr) return *value;
+					}
+					return fallback;
+				};
+				settings.titleTemplate = stringValue(0, settings.titleTemplate);
+				settings.descriptionTemplate = stringValue(1, settings.descriptionTemplate);
+				settings.separator = stringValue(2, settings.separator);
+				settings.allowAgentCliTitle = boolValue(3, settings.allowAgentCliTitle);
+				settings.tabsEnabled = boolValue(4, settings.tabsEnabled);
+				if (const auto parsed = terminal::ParseTerminalTabsHideCondition(stringValue(5, L"singleTerminal"))) {
+					settings.hideCondition = *parsed;
+				}
+				if (const auto parsed = terminal::ParseTerminalTabsShowCondition(
+					stringValue(6, L"singleTerminalOrNarrow"))) {
+					settings.showActiveTerminal = *parsed;
+				}
+				if (const auto parsed = terminal::ParseTerminalTabsShowCondition(
+					stringValue(7, L"singleTerminalOrNarrow"))) {
+					settings.showActions = *parsed;
+				}
+				if (const auto parsed = terminal::ParseTerminalTabsLocation(stringValue(8, L"right"))) {
+					settings.location = *parsed;
+				}
+			}
+		}
+		catch (const std::exception&) {
+			// Presentation projection fails closed to the registered defaults. It
+			// never tears down or restarts a running PTY.
+		}
+	}
+	m_terminalTool->SetTabPresentationSettings(std::move(settings));
+}
+
 bool CEditWnd::PersistTerminalShortcutPresetSelection(terminal::TerminalShortcutPreset preset)
 {
 	if (m_workbenchRuntime == nullptr) return false;
@@ -9147,6 +9223,7 @@ LRESULT CEditWnd::DispatchEvent(
 		// The commit box is sized from configuration too, and this is the same
 		// notification that tells the window its effective settings moved.
 		ApplyScmInputLineCountSetting();
+		ApplyTerminalTabPresentationSettings();
 		return 0;
 	case MYWM_COMPLETE_STARTUP_WORKBENCH:
 		m_startupWorkbenchCompletionPosted = false;
