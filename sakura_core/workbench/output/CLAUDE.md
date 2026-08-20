@@ -47,3 +47,13 @@ toggle, while extension `OutputChannel.show` is a non-toggle reveal. Every
 extension-host mutation carries one bounded session-scoped operation ID and
 reuses it for transport replay. The integrated native cohort passes 210/210 and
 the extension-host API cohort passes 15/15.
+
+`sakura_core/workbench/scm/GitOutputChannel.h`/`.cpp` (Issue #221) is this
+service's first real production content producer: an HWND-free adapter that
+mirrors `workbench::scm::RunGit` invocations into a "Git" `Log` channel,
+reproducing upstream VS Code's own built-in Git extension Output channel
+format. It is documented in `sakura_core/workbench/scm/CLAUDE.md`'s "Git Output
+Channel" section rather than here, since its format contract and divergences
+are SCM-specific; this file records only that the producer exists and that it
+adds no new `OutputService` invariant. It is not yet wired into any production
+`RunGit` call site (`CEditWnd.cpp`, `CScmWorkbenchTool.cpp`).

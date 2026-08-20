@@ -156,7 +156,16 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\TaskTerminalSessionFactoryTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerPositionAdapterTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerServiceTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemMatcherEngineTest.cpp">
+      <Filter>Test Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\workbench\GitOutputChannelTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp">
@@ -259,6 +268,9 @@
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerFileIconTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ViewsWelcomeMetricsTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\SetiFileIconTest.cpp">

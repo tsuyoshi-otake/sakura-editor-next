@@ -21,10 +21,15 @@
 
 namespace workbench::panel {
 
-//! Panel view containers follow VS Code's left-to-right order. Ports and Debug
-//! Console are visible as explicit, disabled boundaries until their native view
-//! projections are implemented; they never select a fake placeholder surface.
-enum class BottomPanelTab { Problems, Output, Terminal, Ports, DebugConsole };
+//! Panel view containers follow VS Code's left-to-right order. VS Code also
+//! contributes Ports and Debug Console to this Part; both are omitted here.
+//! Neither has a native view projection, and neither the Remote Development
+//! authority that Ports forwards through nor the DAP adapter transport that a
+//! Debug Console reads exists in this fork. A tab that can never be selected is
+//! chrome that promises a surface, so the container is omitted rather than
+//! rendered inert. The divergence and its reason are recorded in
+//! workbench/CLAUDE.md; the pure Ports and Debug Console models are untouched.
+enum class BottomPanelTab { Problems, Output, Terminal };
 
 struct BottomPanelVerticalLayout final {
 	int headerHeight = 0;

@@ -509,6 +509,12 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		// resolved background rather than the compiled default, so the two colors can
 		// never come from different themes. Upstream registers exactly this derivation:
 		// `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
+		// The Activity Bar badge is a third distinct role alongside `accent` and the
+		// button roles; see the note on ThemePalette::activityBarBadgeBackground.
+		palette.activityBarBadgeBackground = first(palette.activityBarBadgeBackground,
+			{ L"activityBarBadge.background" });
+		palette.activityBarBadgeForeground = first(palette.activityBarBadgeForeground,
+			{ L"activityBarBadge.foreground" });
 		palette.buttonHoverBackground = firstOverWithFallback(palette.canvas,
 			AdjustLightness(palette.buttonBackground,
 				ModeForKind(kind) == ThemeMode::Dark ? 0.2 : -0.2),

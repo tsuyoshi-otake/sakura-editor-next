@@ -88,6 +88,9 @@ public:
 	//! Call only after the opener has established NotFound.  Access-denied, timeout,
 	//! cancellation, and all other failures deliberately retain the entry.
 	virtual RecentlyOpenedWorkspaceResult RemoveConfirmedNotFound(const platform::uri::Uri& uri) = 0;
+	//! `workbench.action.clearRecentFiles`.  The user has already confirmed; an
+	//! already-empty history is a success that performs no durable write.
+	virtual RecentlyOpenedWorkspaceResult Clear() = 0;
 };
 
 /*! Bounded, success-only MRU service.  Mutations are transactional: a failed
@@ -100,6 +103,7 @@ public:
 	[[nodiscard]] std::vector<RecentlyOpenedWorkspaceEntry> Snapshot() const override;
 	RecentlyOpenedWorkspaceResult RecordSuccessfulOpen(RecentlyOpenedWorkspaceEntry entry) override;
 	RecentlyOpenedWorkspaceResult RemoveConfirmedNotFound(const platform::uri::Uri& uri) override;
+	RecentlyOpenedWorkspaceResult Clear() override;
 
 	[[nodiscard]] static std::optional<RecentlyOpenedWorkspaceEntry> Normalize(RecentlyOpenedWorkspaceEntry entry);
 

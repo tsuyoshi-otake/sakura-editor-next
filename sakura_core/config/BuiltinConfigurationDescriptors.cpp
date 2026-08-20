@@ -29,6 +29,25 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// Explorer presentation with no contributed file icons.
 		{ "workbench.iconTheme", ConfigurationValue(L""),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 512 } },
+		// VS Code's `scm.countBadge`, which gates the Source Control ViewContainer's
+		// Activity Bar badge. Upstream's values and default are `all` / `focused` /
+		// `off` with `all` registered. Documented divergence: `focused` is answered
+		// as `all` here, because this fork publishes a single repository and the two
+		// then count the same resources by construction; it is not silently ignored
+		// for a multi-repository workspace, which does not exist yet.
+		{ "scm.countBadge", ConfigurationValue(L"all"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 16, { L"all", L"focused", L"off" } } },
+		// VS Code's `scm.inputMinLineCount` / `scm.inputMaxLineCount`, which bound
+		// the Source Control commit box: it opens at the minimum and auto-grows to
+		// the maximum as the message wraps. Upstream registers 1 and 10 with the
+		// same 1..50 bounds, so both are honoured here rather than hard-coded.
+		{ "scm.inputMinLineCount", ConfigurationValue(1),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::Integer, std::nullopt, {}, 1, 50 } },
+		{ "scm.inputMaxLineCount", ConfigurationValue(10),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::Integer, std::nullopt, {}, 1, 50 } },
 		// Network policy is deliberately application/profile-only.  A repository
 		// must not be able to redirect an editor to a proxy or registry, weaken
 		// certificate handling, or make requests wait longer by committing a

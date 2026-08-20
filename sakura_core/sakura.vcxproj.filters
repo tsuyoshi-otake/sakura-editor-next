@@ -982,6 +982,9 @@
     <ClInclude Include="..\sakura_core\workbench\WorkbenchLayout.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\ViewsWelcomeMetrics.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\IWorkbenchTool.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1030,6 +1033,9 @@
 	<ClInclude Include="..\sakura_core\workbench\icons\CCodiconFont.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphPainter.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\CodiconGlyphTable.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1037,6 +1043,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\SetiFileIcon.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\icons\SetiIconPainter.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\icons\SetiIconThemeTable.h">
@@ -1095,6 +1104,9 @@
 	<ClInclude Include="..\sakura_core\workbench\win32\BuiltinPartProjection.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\controls\COverlayScrollbar.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1138,6 +1150,9 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommandRunner.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitOutputChannel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitBranchCommands.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
@@ -1179,6 +1194,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmPublisher.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\GitHistoryModel.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmMenus.h">
@@ -1314,10 +1332,16 @@
     <ClInclude Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\tasks\ProblemMatcherEngine.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\tasks\TaskExecutionService.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.h">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.h">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\workbench\problems\MarkerService.h">
@@ -2931,6 +2955,9 @@
 	<ClCompile Include="..\sakura_core\workbench\win32\BuiltinPartProjection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\controls\COverlayScrollbar.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\win32\ProblemsOutputPanelProjection.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -2968,6 +2995,9 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitCommandRunner.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitOutputChannel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitBranchCommands.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3000,6 +3030,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmPublisher.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\GitHistoryModel.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmMenus.cpp">
@@ -3604,10 +3637,16 @@
     <ClCompile Include="..\sakura_core\workbench\tasks\TaskConfigurationCatalog.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\tasks\ProblemMatcherEngine.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\tasks\TaskExecutionService.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\tasks\TaskTerminalSessionFactory.cpp">
+      <Filter>Cpp Source Files\workbench</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\workbench\problems\MarkerPositionAdapter.cpp">
       <Filter>Cpp Source Files\workbench</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\workbench\problems\MarkerService.cpp">

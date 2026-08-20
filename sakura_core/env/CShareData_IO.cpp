@@ -2278,8 +2278,6 @@ bool CShareData_IO::MigrateMainMenuV7DefaultToV8( CommonSetting_MainMenu& mainme
 		ShapeItem{ T_LEAF, F_PRINT_PAGESETUP, 1, L'U' },
 		ShapeItem{ T_LEAF, F_PROPERTY_FILE, 1, L'T' },
 		ShapeItem{ T_LEAF, F_BROWSE, 1, L'B' },
-		ShapeItem{ T_NODE, EFunctionCode(F_FILE_RCNTFLDR_SUBMENU), 1, L'R' },
-		ShapeItem{ T_SPECIAL, F_FOLDER_USED_RECENTLY, 2, L'\0' },
 		ShapeItem{ T_LEAF, F_GROUPCLOSE, 1, L'G' },
 		ShapeItem{ T_LEAF, F_EXITALLEDITORS, 1, L'Q' },
 	};
@@ -2317,6 +2315,62 @@ bool CShareData_IO::MigrateMainMenuV7DefaultToV8( CommonSetting_MainMenu& mainme
 		}
 	}
 	return true;
+}
+
+bool CShareData_IO::RemoveMainMenuRedundantRecentFolderSubmenu( CommonSetting_MainMenu& mainmenu ) noexcept
+{
+	// Version 8 consolidated the File menu onto one Open Recent submenu but left
+	// the legacy 最近使ったフォルダー node behind it, so the File menu offered the
+	// recent-folder list twice. VS Code has exactly one Open Recent surface.
+	//
+	// A version number alone is not authority to rewrite a user's menu, so unlike
+	// the v7 replacement this does not gate on a whole-model fingerprint — that
+	// would leave the duplicate in place forever for anyone who had customized an
+	// unrelated menu. It gates on redundancy instead: the node is removed only
+	// where the same model also carries an Open Recent node whose child is the
+	// combined F_RECENT_WORKSPACE_LIST projection, which already renders the
+	// CMRUFolder list as its first group. A model without that surface, including
+	// every pre-v8 menu, keeps its recent-folder submenu untouched.
+	CMainMenu* const pcMenuTbl = mainmenu.m_cMainMenuTbl;
+	const int nCapacity = int(std::size(mainmenu.m_cMainMenuTbl));
+	if( mainmenu.m_nMainMenuNum < 0 || mainmenu.m_nMainMenuNum > nCapacity ) return false;
+	const int nNum = mainmenu.m_nMainMenuNum;
+
+	bool bHasCombinedOpenRecent = false;
+	for( int i = 0; i + 1 < nNum; i++ ){
+		if( pcMenuTbl[i].m_nType != T_NODE
+		 || pcMenuTbl[i].m_nFunc != EFunctionCode(F_FILE_OPENRECENT_SUBMENU) ) continue;
+		if( pcMenuTbl[i+1].m_nType != T_SPECIAL
+		 || pcMenuTbl[i+1].m_nFunc != F_RECENT_WORKSPACE_LIST
+		 || pcMenuTbl[i+1].m_nLevel != pcMenuTbl[i].m_nLevel + 1 ) continue;
+		bHasCombinedOpenRecent = true;
+		break;
+	}
+	if( !bHasCombinedOpenRecent ) return false;
+
+	for( int i = 0; i + 1 < nNum; i++ ){
+		const int nLevel = pcMenuTbl[i].m_nLevel;
+		if( pcMenuTbl[i].m_nType != T_NODE
+		 || pcMenuTbl[i].m_nFunc != EFunctionCode(F_FILE_RCNTFLDR_SUBMENU)
+		 || pcMenuTbl[i].m_sName[0] != L'\0' ) continue;
+		if( pcMenuTbl[i+1].m_nType != T_SPECIAL
+		 || pcMenuTbl[i+1].m_nFunc != F_FOLDER_USED_RECENTLY
+		 || pcMenuTbl[i+1].m_nLevel != nLevel + 1
+		 || pcMenuTbl[i+1].m_sName[0] != L'\0' ) continue;
+		// The list must be the node's only child; anything else the user put in
+		// there would be destroyed rather than migrated.
+		if( i + 2 < nNum && pcMenuTbl[i+2].m_nLevel > nLevel ) continue;
+
+		for( int nSource = i + 2; nSource < nNum; nSource++ ){
+			pcMenuTbl[nSource - 2] = pcMenuTbl[nSource];
+		}
+		mainmenu.m_nMainMenuNum -= 2;
+		for( int nTop = 0; nTop < MAX_MAINMENU_TOP; nTop++ ){
+			if( mainmenu.m_nMenuTopIdx[nTop] > i ) mainmenu.m_nMenuTopIdx[nTop] -= 2;
+		}
+		return true;
+	}
+	return false;
 }
 
 bool CShareData_IO::MigrateKnownMainMenuDefaultToV8(
@@ -2411,7 +2465,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 	const WCHAR*	pszSecName = L"MainMenu";
 	int& nVersion = GetDllShareData().m_Common.m_sMainMenu.m_nVersion;
 	// ※メニュー定義を追加したらnCurrentVerを修正
-	const int nCurrentVer = 8;
+	const int nCurrentVer = 9;
 	nVersion = nCurrentVer;
 	const bool hasStoredVersion = cProfile.IOProfileData(pszSecName, L"nMainMenuVer", nVersion);
 	nVersion = ResolveMainMenuReadVersion(cProfile.IsReadingMode(), hasStoredVersion, nVersion, nCurrentVer);
@@ -2419,7 +2473,7 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 		CommonSetting_MainMenu& mainmenu = GetDllShareData().m_Common.m_sMainMenu;
 		const int storedVersion = nVersion;
 		if (!hasStoredVersion) {
-			// A fresh profile starts from the current v8 resource rather than a
+			// A fresh profile starts from the current resource rather than a
 			// persisted legacy model. Fill its duplicate-guarded resource omissions.
 			ApplyMainMenuHistoricalAdditions(mainmenu, 0);
 		} else {
@@ -2427,6 +2481,9 @@ void CShareData_IO::ShareData_IO_MainMenu( CDataProfile& cProfile )
 			// committed; custom menus are not partially upgraded on the way to v8.
 			(void)MigrateKnownMainMenuDefaultToV8(mainmenu, storedVersion);
 		}
+		// v9 runs after the v8 path because a customized menu keeps its persisted
+		// shape there, and the duplicate recent-folder node has to go from those too.
+		(void)RemoveMainMenuRedundantRecentFolderSubmenu(mainmenu);
 	}
 	// Schema metadata follows this reader; no old/custom structure is changed
 	// unless it matched the complete known version-7 default above.

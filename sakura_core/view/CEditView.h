@@ -57,6 +57,7 @@
 #include "util/container.h"		// vector_ex
 #include "util/design_template.h"
 #include "_os/CClipboard.h"
+#include "workbench/controls/COverlayScrollbar.h"
 
 class CDropTarget; /// 2002/2/3 aroka ヘッダー軽量化
 class COpeBlk;///
@@ -282,6 +283,8 @@ public:
 	void AdjustScrollBars( BOOL bRedraw = TRUE );						/* スクロールバーの状態を更新する */
 	BOOL CreateScrollBar();												/* スクロールバー作成 */	// 2006.12.19 ryoji
 	void DestroyScrollBar();											/* スクロールバー破棄 */	// 2006.12.19 ryoji
+	void UpdateOverlayVScrollBar();										/* オーバーレイ縦スクロールバーの色・DPI・位置を更新する */
+	void UpdateOverlayHScrollBar();										/* オーバーレイ横スクロールバーの色・DPI・位置を更新する */
 	CLayoutInt GetWrapOverhang( void ) const;							/* 折り返し桁以後のぶら下げ余白計算 */	// 2008.06.08 ryoji
 	CKetaXInt ViewColNumToWrapColNum( CLayoutXInt nViewColNum ) const;	/* 「右端で折り返す」用にビューの桁数から折り返し桁数を計算する */	// 2008.06.08 ryoji
 	CLayoutInt GetRightEdgeForScrollBar( void );								/* スクロールバー制御用に右端座標を取得する */		// 2009.08.28 nasukoji
@@ -649,6 +652,11 @@ public:
 	//ウィンドウ
 	HWND			m_hwndParent;		/* 親ウィンドウハンドル */
 	HWND			m_hwndVScrollBar = nullptr;	/* 垂直スクロールバーウィンドウハンドル */
+	//! VS Code 風オーバーレイ縦スクロールバー。実体のスクロールバーコントロールは
+	//! スクロールモデルとして残したまま非表示にし、同じ矩形に重ねて描画する。
+	workbench::controls::COverlayScrollbar	m_cOverlayVScrollBar;
+	//! 同じくオーバーレイ横スクロールバー。Sakura 由来の 3D バーを置き換える。
+	workbench::controls::COverlayScrollbar	m_cOverlayHScrollBar;
 	int				m_nVScrollRate;		/* 垂直スクロールバーの縮尺 */
 	HWND			m_hwndHScrollBar = nullptr;	/* 水平スクロールバーウィンドウハンドル */
 	HWND			m_hwndSizeBox;		/* サイズボックスウィンドウハンドル */

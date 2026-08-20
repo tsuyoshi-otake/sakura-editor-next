@@ -13,23 +13,25 @@
 
 namespace workbench::scm {
 
-//! The native SCM host has no history provider yet.  Keeping this a typed state
-//! prevents the Graph scaffold from being mistaken for a functional Git graph.
+//! Whether the Graph view has a history snapshot to render.  Keeping this a
+//! typed state prevents "the history could not be read" from being rendered as
+//! "this repository has no commits".
 enum class EScmGraphPresentationStatus : std::uint8_t {
-	Unsupported,
+	//! No history has been read yet, or reading it failed.  The frame shows a
+	//! message instead of an empty list, because an empty list would be a claim.
+	Unavailable,
+	Available,
 };
 
 //! Presentation contract for the `workbench.scm.history` frame.
-//!
-//! A future history-provider snapshot may add a supported state here.  Until it
-//! does, the frame owns neither graph rows nor commands and is never interactive.
 struct ScmGraphPresentation final {
-	EScmGraphPresentationStatus status{ EScmGraphPresentationStatus::Unsupported };
+	EScmGraphPresentationStatus status{ EScmGraphPresentationStatus::Unavailable };
 
 	[[nodiscard]] constexpr bool IsInteractive() const noexcept
 	{
 		switch (status) {
-		case EScmGraphPresentationStatus::Unsupported: return false;
+		case EScmGraphPresentationStatus::Unavailable: return false;
+		case EScmGraphPresentationStatus::Available: return true;
 		}
 		return false;
 	}
@@ -63,12 +65,26 @@ struct ScmViewStackMeasurements final {
 	int repositoryRowHeight{};
 	int inputOuterMargin{};
 	int inputHeight{};
+	//! `.scm-editor > .scm-editor-action-button`: the Commit button rendered
+	//! directly under the input, or zero when the provider contributes none.
+	int actionButtonHeight{};
 	int graphBodyHeight{};
+	//! The sash's own hit height, split evenly across the boundary it straddles.
+	int sashHeight{};
+	//! The smallest Changes body the Graph is allowed to squeeze it to while it
+	//! grows, so a drag can never leave the change list with no rows at all.
+	int minimumBodyHeight{};
 	bool repositoriesVisible{};
+	//! A collapsed section keeps its header and gives up its whole body, which is
+	//! upstream's own collapsed pane: the twistie is still there to reopen it.
+	bool repositoriesCollapsed{};
+	bool changesCollapsed{};
+	bool graphCollapsed{};
 	//! A sole Changes view is merged into its Source Control container upstream,
 	//! so its own pane header is not drawn or allocated.
 	bool changesHeaderVisible{ true };
 	bool inputVisible{};
+	bool actionButtonVisible{};
 	bool graphVisible{};
 
 	[[nodiscard]] constexpr bool operator==(const ScmViewStackMeasurements&) const = default;
@@ -80,9 +96,14 @@ struct ScmViewStackLayout final {
 	ScmVerticalBounds repositoryRow;
 	ScmVerticalBounds changesHeader;
 	ScmVerticalBounds input;
+	ScmVerticalBounds actionButton;
 	ScmVerticalBounds changesBody;
 	ScmVerticalBounds graphHeader;
 	ScmVerticalBounds graphBody;
+	//! The drag handle between the Changes body and the Graph section. It is an
+	//! overlay, exactly as upstream's 4px `.monaco-sash` is: it consumes no space
+	//! and sits across the boundary rather than beside it.
+	ScmVerticalBounds sash;
 
 	[[nodiscard]] constexpr bool operator==(const ScmViewStackLayout&) const = default;
 };
@@ -99,6 +120,7 @@ struct ScmViewStackLayout final {
 	const int repositoryRowHeight = std::max(0, measurements.repositoryRowHeight);
 	const int inputOuterMargin = std::max(0, measurements.inputOuterMargin);
 	const int inputHeight = std::max(0, measurements.inputHeight);
+	const int actionButtonHeight = std::max(0, measurements.actionButtonHeight);
 	const int graphBodyHeight = std::max(0, measurements.graphBodyHeight);
 
 	int cursor = clientTop;
@@ -111,29 +133,62 @@ struct ScmViewStackLayout final {
 	ScmViewStackLayout layout;
 	if (measurements.repositoriesVisible) {
 		layout.repositoriesHeader = consume(headerHeight);
-		layout.repositoryRow = consume(repositoryRowHeight);
+		if (!measurements.repositoriesCollapsed) layout.repositoryRow = consume(repositoryRowHeight);
+		else layout.repositoryRow = { cursor, cursor };
 	}
 	if (measurements.changesHeaderVisible) {
 		layout.changesHeader = consume(headerHeight);
 	} else {
 		layout.changesHeader = { cursor, cursor };
 	}
-	if (measurements.inputVisible) {
+	// The commit box and its button belong to the Changes section, so a collapsed
+	// section takes them with it rather than leaving an input above nothing.
+	const bool changesOpen = !measurements.changesCollapsed;
+	if (changesOpen && measurements.inputVisible) {
 		(void)consume(inputOuterMargin);
 		layout.input = consume(inputHeight);
 		(void)consume(inputOuterMargin);
 	} else {
 		layout.input = { cursor, cursor };
 	}
+	if (changesOpen && measurements.actionButtonVisible) {
+		layout.actionButton = consume(actionButtonHeight);
+		(void)consume(inputOuterMargin);
+	} else {
+		layout.actionButton = { cursor, cursor };
+	}
 
-	const int graphReserve = measurements.graphVisible
-		? std::min(std::max(0, clientBottom - cursor), headerHeight + graphBodyHeight)
-		: 0;
+	const int available = std::max(0, clientBottom - cursor);
+	int graphReserve = 0;
+	if (measurements.graphVisible) {
+		if (measurements.graphCollapsed) {
+			graphReserve = std::min(available, headerHeight);
+		} else if (!changesOpen) {
+			// With the Changes section closed there is no body to protect, so the
+			// Graph takes what is left instead of holding a gap open below itself.
+			graphReserve = available;
+		} else {
+			const int minimumBody = std::max(0, measurements.minimumBodyHeight);
+			const int largest = std::max(0, available - minimumBody);
+			graphReserve = std::min(largest, headerHeight + graphBodyHeight);
+			// The header alone still fits even where the body would not, because a
+			// section with no header cannot be reopened.
+			graphReserve = std::max(graphReserve, std::min(available, headerHeight));
+		}
+	}
 	const int graphTop = clientBottom - graphReserve;
 	layout.changesBody = { cursor, graphTop };
 	if (measurements.graphVisible) {
 		layout.graphHeader = { graphTop, std::min(clientBottom, graphTop + headerHeight) };
-		layout.graphBody = { layout.graphHeader.bottom, clientBottom };
+		layout.graphBody = measurements.graphCollapsed
+			? ScmVerticalBounds{ layout.graphHeader.bottom, layout.graphHeader.bottom }
+			: ScmVerticalBounds{ layout.graphHeader.bottom, clientBottom };
+		// A collapsed Graph has no height to drag, and a hidden one has no
+		// boundary at all, so neither offers a sash.
+		if (!measurements.graphCollapsed && changesOpen) {
+			const int sashHeight = std::max(0, measurements.sashHeight);
+			layout.sash = { graphTop - sashHeight / 2, graphTop + (sashHeight - sashHeight / 2) };
+		}
 	}
 	return layout;
 }

@@ -112,4 +112,22 @@ std::optional<EGitResourceGroup> ParseGitResourceGroupId(std::string_view groupI
 	return std::nullopt;
 }
 
+std::optional<GitActionButton> BuildGitCommitActionButton(bool hasChanges, bool enabled)
+{
+	if (!hasChanges) return std::nullopt;
+	GitActionButton button;
+	button.title = L"$(check) Commit";
+	button.commandId = "git.commit";
+	button.enabled = enabled;
+	// Upstream's two secondary groups are the commit variants and the
+	// post-commit-command variants. Only the first group is routable here; the
+	// omission of Commit & Push / Commit & Sync is recorded in this directory's
+	// CLAUDE.md rather than approximated with a plain commit.
+	button.secondaryCommands = {
+		Item("git.commit", L"Commit"),
+		Item("git.commitAmend", L"Commit (Amend)"),
+	};
+	return button;
+}
+
 } // namespace workbench::scm

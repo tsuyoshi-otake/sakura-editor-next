@@ -7,12 +7,14 @@
 
 #include "StdAfx.h"
 #include "window/CCustomFrameController.h"
+#include "CSelectLang.h"
 #include "func/Funccode.h"
 #include "workbench/WorkbenchZoom.h"
 
 #include <algorithm>
 
 #include <dwmapi.h>
+#include <stdio.h>
 
 namespace {
 
@@ -134,33 +136,60 @@ CustomFrameManageAction ManageActionFromMenuCommand(UINT command) noexcept
 	}
 }
 
-//! Appends VS Code's `MenuId.GlobalActivity` group `7_update` with its labels verbatim
+//! A popup menu item text composed from a localized label and, optionally, VS Code's
+//! keybinding hint. The hint is a key sequence rather than prose, so it stays in code
+//! while only the label comes from the message resource. The buffer is owned by the
+//! caller because `LS` hands back a rotating static buffer that the next `LS` call
+//! overwrites; copying here is what makes several labels safe to build in one menu.
+struct MenuItemText
+{
+	wchar_t text[192]{};
+
+	[[nodiscard]] const wchar_t* c_str() const noexcept { return text; }
+};
+
+[[nodiscard]] MenuItemText MakeMenuItemText(int stringId, const wchar_t* accelerator = nullptr) noexcept
+{
+	MenuItemText item{};
+	const wchar_t* const label = LS(stringId);
+	if (accelerator == nullptr || accelerator[0] == L'\0') {
+		(void)::_snwprintf_s(item.text, _TRUNCATE, L"%s", label);
+	} else {
+		(void)::_snwprintf_s(item.text, _TRUNCATE, L"%s\t%s", label, accelerator);
+	}
+	return item;
+}
+
+//! Appends VS Code's `MenuId.GlobalActivity` group `7_update`
 //! (`contrib/update/browser/update.ts`). Upstream registers eight items there, each
 //! gated on `CONTEXT_UPDATE_STATE == '<state>'`, so at most one is visible at a time;
 //! `None` is the `disabled`/`uninitialized` case where upstream contributes nothing and
-//! the menu must therefore not grow a stray separator either.
+//! the menu must therefore not grow a stray separator either. Upstream localizes these
+//! titles through its language packs, so the labels come from the message resource here
+//! rather than staying as English literals.
 bool AppendUpdateMenuGroup(HMENU menu, CustomFrameUpdateMenuEntry entry) noexcept
 {
 	UINT command = 0;
-	const wchar_t* label = nullptr;
+	int labelId = 0;
 	switch (entry) {
 	case CustomFrameUpdateMenuEntry::None: return true;
 	case CustomFrameUpdateMenuEntry::Check:
-		command = kManageUpdateCheck; label = L"Check for Updates..."; break;
-	case CustomFrameUpdateMenuEntry::Checking: label = L"Checking for Updates..."; break;
+		command = kManageUpdateCheck; labelId = STR_WORKBENCH_MANAGE_UPDATE_CHECK; break;
+	case CustomFrameUpdateMenuEntry::Checking: labelId = STR_WORKBENCH_MANAGE_UPDATE_CHECKING; break;
 	case CustomFrameUpdateMenuEntry::DownloadNow:
-		command = kManageUpdateDownload; label = L"Download Update (1)"; break;
-	case CustomFrameUpdateMenuEntry::Downloading: label = L"Downloading Update..."; break;
+		command = kManageUpdateDownload; labelId = STR_WORKBENCH_MANAGE_UPDATE_DOWNLOAD; break;
+	case CustomFrameUpdateMenuEntry::Downloading: labelId = STR_WORKBENCH_MANAGE_UPDATE_DOWNLOADING; break;
 	case CustomFrameUpdateMenuEntry::Install:
-		command = kManageUpdateInstall; label = L"Install Update... (1)"; break;
-	case CustomFrameUpdateMenuEntry::Updating: label = L"Installing Update..."; break;
-	case CustomFrameUpdateMenuEntry::Cancelling: label = L"Cancelling Update..."; break;
+		command = kManageUpdateInstall; labelId = STR_WORKBENCH_MANAGE_UPDATE_INSTALL; break;
+	case CustomFrameUpdateMenuEntry::Updating: labelId = STR_WORKBENCH_MANAGE_UPDATE_UPDATING; break;
+	case CustomFrameUpdateMenuEntry::Cancelling: labelId = STR_WORKBENCH_MANAGE_UPDATE_CANCELLING; break;
 	case CustomFrameUpdateMenuEntry::Restart:
-		command = kManageUpdateRestart; label = L"Restart to Update (1)"; break;
+		command = kManageUpdateRestart; labelId = STR_WORKBENCH_MANAGE_UPDATE_RESTART; break;
 	}
-	if (label == nullptr) return true;
+	if (labelId == 0) return true;
+	const MenuItemText label = MakeMenuItemText(labelId);
 	return ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(menu, command == 0 ? MF_STRING | MF_GRAYED : MF_STRING, command, label) != FALSE;
+		&& ::AppendMenuW(menu, command == 0 ? MF_STRING | MF_GRAYED : MF_STRING, command, label.c_str()) != FALSE;
 }
 
 } // namespace
@@ -896,9 +925,12 @@ void CCustomFrameController::ShowLayoutMenu(const RECT& anchor) noexcept
 	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
 	const HMENU menu = ::CreatePopupMenu();
 	if (menu == nullptr) return;
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_LEFT_EXPLORER, L"Toggle Primary Side Bar");
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_BOTTOM_PANEL, L"Toggle Bottom Panel");
-	::AppendMenuW(menu, MF_STRING, F_TOGGLE_SECONDARY_SIDEBAR, L"Toggle Secondary Side Bar");
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_LEFT_EXPLORER,
+		MakeMenuItemText(STR_WORKBENCH_LAYOUT_TOGGLE_PRIMARY_SIDEBAR).c_str());
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_BOTTOM_PANEL,
+		MakeMenuItemText(STR_WORKBENCH_LAYOUT_TOGGLE_PANEL).c_str());
+	::AppendMenuW(menu, MF_STRING, F_TOGGLE_SECONDARY_SIDEBAR,
+		MakeMenuItemText(STR_WORKBENCH_LAYOUT_TOGGLE_SECONDARY_SIDEBAR).c_str());
 	POINT point{ anchor.left, anchor.bottom };
 	::ClientToScreen(m_window, &point);
 	const UINT command = ::TrackPopupMenu(
@@ -924,7 +956,8 @@ void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint) noexcept
 	const HMENU menu = ::CreatePopupMenu();
 	if (menu == nullptr) return;
 	// Authentication is not configured in Sakura Editor; keep this explicit rather than implying sign-in works.
-	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"No account provider configured");
+	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
+		MakeMenuItemText(STR_WORKBENCH_ACCOUNT_NO_PROVIDER).c_str());
 	(void)::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
 		screenPoint.x, screenPoint.y, 0, m_window, nullptr);
 	::DestroyMenu(menu);
@@ -948,15 +981,21 @@ void CCustomFrameController::ShowManageMenuAt(POINT screenPoint, bool rightAlign
 		if (menu != nullptr) ::DestroyMenu(menu);
 		return;
 	}
+	// Each label is copied into its own `MenuItemText` before the next one is built,
+	// because `LS` returns a rotating static buffer that a later call would overwrite.
 	const bool menuItemsAppended = ::AppendMenuW(menu, MF_STRING, kManageShowCommandPalette,
-		L"Command Palette...\tCtrl+Shift+P") != FALSE
+		MakeMenuItemText(STR_WORKBENCH_MANAGE_COMMAND_PALETTE, L"Ctrl+Shift+P").c_str()) != FALSE
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(menu, MF_STRING, kManageOpenSettings, L"Settings\tCtrl+,") != FALSE
-		&& ::AppendMenuW(menu, MF_STRING, kManageOpenKeyboardShortcuts, L"Keyboard Shortcuts\tCtrl+K Ctrl+S") != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageOpenSettings,
+			MakeMenuItemText(STR_WORKBENCH_MANAGE_SETTINGS, L"Ctrl+,").c_str()) != FALSE
+		&& ::AppendMenuW(menu, MF_STRING, kManageOpenKeyboardShortcuts,
+			MakeMenuItemText(STR_WORKBENCH_MANAGE_KEYBOARD_SHORTCUTS, L"Ctrl+K Ctrl+S").c_str()) != FALSE
 		&& ::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr) != FALSE
-		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme, L"Color Theme\tCtrl+K Ctrl+T") != FALSE;
+		&& ::AppendMenuW(themes, MF_STRING, kManageSelectColorTheme,
+			MakeMenuItemText(STR_WORKBENCH_COLOR_THEME, L"Ctrl+K Ctrl+T").c_str()) != FALSE;
 	const bool themesAttached = menuItemsAppended
-		&& ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes), L"Themes") != FALSE;
+		&& ::AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(themes),
+			MakeMenuItemText(STR_WORKBENCH_MANAGE_THEMES).c_str()) != FALSE;
 	if (!themesAttached || !AppendUpdateMenuGroup(menu, m_updateMenuEntry)) {
 		// An attached submenu is owned by its parent, so destroying it again after
 		// `DestroyMenu(menu)` would be a double free. Only an unattached one is ours.

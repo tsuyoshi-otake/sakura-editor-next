@@ -112,6 +112,7 @@ struct WorkbenchBuiltinCommandExecutors {
 	WorkbenchCommandExecutor openFile;
 	WorkbenchCommandExecutor openWorkspace;
 	WorkbenchCommandExecutor openRecent;
+	WorkbenchCommandExecutor clearRecentFiles;
 	WorkbenchCommandExecutor addRootFolder;
 	WorkbenchCommandExecutor saveWorkspaceAs;
 	WorkbenchCommandExecutor duplicateWorkspaceInNewWindow;

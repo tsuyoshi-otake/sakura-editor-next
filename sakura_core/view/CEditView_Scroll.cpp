@@ -30,8 +30,11 @@
 #include "window/CEditWnd.h"
 #include "types/CTypeSupport.h"
 #include <limits.h>
+#include <algorithm>
 #include "config/app_constants.h"
 #include "apiwrap/DarkMode.h"
+#include "apiwrap/StdApi.h"
+#include "theme/CThemeService.h"
 
 /*! スクロールバー作成
 	@date 2006.12.19 ryoji 新規作成（CEditView::Createから分離）
@@ -65,7 +68,16 @@ BOOL CEditView::CreateScrollBar()
 	si.nPos  = 0;
 	si.nTrackPos = 1;
 		::SetScrollInfo( m_hwndVScrollBar, SB_CTL, &si, TRUE );
-		::ShowScrollBar( m_hwndVScrollBar, SB_CTL, TRUE );
+		// 実体のコントロールはスクロールモデルとして残し、描画は Explorer と同じ
+		// VS Code 風オーバーレイに任せる。
+		(void)m_cOverlayVScrollBar.Create( GetHwnd(), m_hwndVScrollBar,
+			[this]( int position ){
+				const auto scrolled = OnVScroll( SB_THUMBPOSITION, position * m_nVScrollRate );
+				if( !ApiWrap::GetKeyState_Shift() ){
+					SyncScrollV( scrolled );
+				}
+			},
+			workbench::controls::OverlayScrollbarSource::ScrollbarControl );
 	}
 
 	/* スクロールバーの作成 */
@@ -93,7 +105,13 @@ BOOL CEditView::CreateScrollBar()
 		si.nPos  = 0;
 		si.nTrackPos = 1;
 		::SetScrollInfo( m_hwndHScrollBar, SB_CTL, &si, TRUE );
-		::ShowScrollBar( m_hwndHScrollBar, SB_CTL, TRUE );
+		// 縦と同じく、実体は残したまま VS Code 風オーバーレイに描かせる。
+		(void)m_cOverlayHScrollBar.Create( GetHwnd(), m_hwndHScrollBar,
+			[this]( int position ){
+				SyncScrollH( ScrollAtH( CLayoutInt( position ) ) );
+			},
+			workbench::controls::OverlayScrollbarSource::ScrollbarControl,
+			workbench::controls::OverlayScrollbarOrientation::Horizontal );
 	}
 
 	/* サイズボックス */
@@ -115,6 +133,8 @@ BOOL CEditView::CreateScrollBar()
 */
 void CEditView::DestroyScrollBar()
 {
+	m_cOverlayVScrollBar.Detach();
+	m_cOverlayHScrollBar.Detach();
 	if( m_hwndVScrollBar )
 	{
 		::DestroyWindow( m_hwndVScrollBar );
@@ -341,6 +361,7 @@ void CEditView::AdjustScrollBars( BOOL bRedraw )
 		if( !bEnable ){
 			ScrollAtV( CLayoutInt(0) );
 		}
+		UpdateOverlayVScrollBar();
 	}
 	if( nullptr != m_hwndHScrollBar ){
 		/* 水平スクロールバー */
@@ -356,10 +377,16 @@ void CEditView::AdjustScrollBars( BOOL bRedraw )
 		if( bEnable != (::IsWindowEnabled( m_hwndHScrollBar ) != 0) ){
 			::EnableWindow( m_hwndHScrollBar, bEnable? TRUE: FALSE );	// SIF_DISABLENOSCROLL 誤動作時の強制切替
 		}
+		UpdateOverlayHScrollBar();
 		if( !bEnable ){
 			ScrollAtH( CLayoutInt(0) );
 		}
 	}
+	// VS Code の Markdown scroll sync: 表示先頭行が変わったらプレビューを追従させる。
+	// キャレット移動によるスクロール（ミニマップのドラッグを含む）は ScrollAtV を
+	// 通らず、ここが両方の経路が必ず通る合流点になる。
+	GetEditWnd().SyncMarkdownPreviewToEditorScroll( *this );
+
 }
 
 /*! 指定上端行位置へスクロール
@@ -772,4 +799,51 @@ CLayoutInt CEditView::GetRightEdgeForScrollBar( void )
 	}
 
 	return nWidth;
+}
+
+/*! オーバーレイ縦スクロールバーの見た目と位置を現在のテーマ・DPI に合わせる */
+void CEditView::UpdateOverlayVScrollBar()
+{
+	if( nullptr == m_hwndVScrollBar ){
+		return;
+	}
+	const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette( mode );
+	workbench::controls::OverlayScrollbarColors colors;
+	colors.background = palette.canvas.ToColorRef();
+	colors.trackHover = palette.raised.ToColorRef();
+	colors.thumb = palette.border.ToColorRef();
+	colors.thumbHover = palette.secondaryText.ToColorRef();
+	m_cOverlayVScrollBar.SetColors( colors );
+	m_cOverlayVScrollBar.SetDpi( std::max( 1u, ::GetDpiForWindow( GetHwnd() ) ) );
+	// 実体のコントロールは非表示なので、置き場所は明示的に与える。
+	RECT rcBar{};
+	::GetWindowRect( m_hwndVScrollBar, &rcBar );
+	::MapWindowPoints( nullptr, GetHwnd(), reinterpret_cast<LPPOINT>( &rcBar ), 2 );
+	m_cOverlayVScrollBar.SetBounds( rcBar );
+	m_cOverlayVScrollBar.Update();
+}
+
+/*! オーバーレイ横スクロールバーの見た目と位置を現在のテーマ・DPI に合わせる */
+void CEditView::UpdateOverlayHScrollBar()
+{
+	if( nullptr == m_hwndHScrollBar ){
+		return;
+	}
+	const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	const auto palette = theme::CThemeService::EffectivePalette( mode );
+	workbench::controls::OverlayScrollbarColors colors;
+	colors.background = palette.canvas.ToColorRef();
+	colors.trackHover = palette.raised.ToColorRef();
+	colors.thumb = palette.border.ToColorRef();
+	colors.thumbHover = palette.secondaryText.ToColorRef();
+	m_cOverlayHScrollBar.SetColors( colors );
+	m_cOverlayHScrollBar.SetDpi( std::max( 1u, ::GetDpiForWindow( GetHwnd() ) ) );
+	RECT rcBar{};
+	::GetWindowRect( m_hwndHScrollBar, &rcBar );
+	::MapWindowPoints( nullptr, GetHwnd(), reinterpret_cast<LPPOINT>( &rcBar ), 2 );
+	m_cOverlayHScrollBar.SetBounds( rcBar );
+	m_cOverlayHScrollBar.Update();
 }

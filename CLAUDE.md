@@ -61,6 +61,22 @@ reference material only unless the user explicitly authorizes work against them.
   Never omit an explicit `--repo`/repository target when using a hosted-repo
   CLI, and never assume a remote name identifies the intended repository.
 
+## Working Branch: Commit Directly on `main`
+
+This fork has a single developer, so there is no branch/review flow to protect.
+Work on `main` and commit there directly. This overrides the default habit of
+branching before committing when the current branch is the default branch.
+
+- Do not create a `work/issue-<N>-<slug>` branch, and do not open a fork-side
+  Pull Request, unless the user asks for one in that turn.
+- Commit only when the user asks, and push only when the user asks. Committing
+  on `main` is not permission to push `main`.
+- The commit message rules are unchanged: English, describing the change in
+  reasonable detail rather than one line, and referencing the tracking Issue
+  (for example `Refs #217`). Keep creating or reusing that tracking Issue.
+- Everything in **Repository Boundary: Fork-Only by Default** still applies.
+  `main` here means this fork's `main`; it is never an upstream branch.
+
 ## Scope
 
 This file contains repository-wide guidance. More specific `CLAUDE.md` files are loaded when Claude works in their subtrees; follow the nearest file and keep local details out of this root file.

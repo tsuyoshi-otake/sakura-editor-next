@@ -308,6 +308,29 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   safe; that reasoning lives in
   [`../update/CLAUDE.md`](../update/CLAUDE.md) and is not repeated here.
 
+## Custom-frame popup menus are localized (2026-08-20, #223)
+
+- The Manage (gear), Layout, and Account popup menus built in
+  `CCustomFrameController` take every label from the message resource through
+  `LS(STR_WORKBENCH_MANAGE_*)`, `LS(STR_WORKBENCH_LAYOUT_*)`, and
+  `LS(STR_WORKBENCH_ACCOUNT_NO_PROVIDER)`. `AppendUpdateMenuGroup` does the same
+  for the `7_update` group. Matching upstream ids does **not** mean shipping
+  upstream's English strings: VS Code localizes these same titles through its
+  language packs, so an English literal here is a divergence, not fidelity. Every
+  new item must be added to all three resources — `sakura_core/sakura_rc.rc`
+  (ja), `sakura_lang/sakura_rc_en-US.rc`, and `sakura_lang/sakura_rc_zh-CN.rc`.
+- Only the **label** is translated. The keybinding hint (`Ctrl+Shift+P`,
+  `Ctrl+K Ctrl+S`) is a key sequence, not prose, so it stays in code and
+  `MakeMenuItemText` joins the two with the `\t` that `AppendMenuW` right-aligns.
+- `MakeMenuItemText` copies into a caller-owned buffer on purpose. `LS` returns
+  one of four rotating static buffers, so a menu that held several `LS` pointers
+  at once would paint the wrong labels; copying at the call site is what makes
+  building a whole menu safe.
+- Still English by design: `CustomFrameControlName` in `CCustomTitleBar.cpp`.
+  Those strings are accessible names, and the `Update` one is also the painted
+  label that `MeasureCustomFrameUpdateButtonWidth` measures, so translating them
+  is a separate change that has to keep measurement and painting in agreement.
+
 ## Moving a ViewContainer between the side bars (2026-08-01)
 
 - The gesture reproduces VS Code's `CompositeDragAndDrop`: an Activity Bar icon
@@ -344,16 +367,71 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   rewriting the exact legacy four-entry run in place. The entry count never
   changes, so `m_nMainMenuNum` and `m_nMenuTopIdx` stay valid, and any menu that
   does not match that exact shape is left untouched rather than repaired.
+- **The version-8 File run reintroduced the node version 6 had just merged
+  away.** `MigrateMainMenuV7DefaultToV8`'s replacement shape and
+  `src/main/resources/MainMenu.ini` both still carried
+  `F_FILE_RCNTFLDR_SUBMENU` + `F_FOLDER_USED_RECENTLY` after the combined
+  `Open Recent` node, so the File menu offered the recent-folder list twice —
+  once inside Open Recent's first group and again as a sibling submenu below it.
+  Both are fixed at the source (2026-08-20); the File run is 46 items and Edit's
+  top index is 46.
+- `RemoveMainMenuRedundantRecentFolderSubmenu` is the version-9 migration for
+  profiles that already persisted the v8 shape. **It gates on redundancy, not on
+  the version number**: it fires only where the same model also carries an
+  `F_FILE_OPENRECENT_SUBMENU` node whose child is the combined
+  `F_RECENT_WORKSPACE_LIST` projection — the surface that already renders the
+  folder list — and only where the legacy node is unrenamed and has that single
+  projection as its only child. Unlike the v8 replacement it deliberately does
+  *not* gate on `MainMenuModelFingerprint`, because a whole-model fingerprint
+  would leave the duplicate in place forever for anyone who had customized an
+  unrelated menu. It runs after the v8 path, since a customized menu keeps its
+  persisted shape there and still needs the duplicate removed.
 - A menu never renders a separator for an empty group.
   `RemoveRedundantMenuSeparators` drops leading, trailing, and consecutive
   separators after the model is projected, so an empty MRU list cannot leave a
   dangling rule. A submenu that becomes empty is then greyed out by
   `CheckFreeSubMenu`, exactly as before.
-- **Documented divergence:** VS Code's Open Recent also carries
-  `Reopen Closed Editor`, `More...` (`Ctrl+R` quick pick), and
-  `Clear Recently Opened`. None of them has a Sakura equivalent yet, so they are
-  absent rather than faked, and an Open Recent with no history is disabled
-  instead of showing an always-enabled but inert menu.
+- Folder/workspace rows render VS Code's `labelService.getWorkspaceLabel(uri,
+  { verbose: Verbosity.LONG })` labels, never raw URIs (2026-08-20): an
+  explicit stored label wins; a file URI becomes the native Windows path with
+  an uppercase drive letter, UNC as `\\server\share`, and percent-encoding
+  decoded; a saved workspace drops its case-sensitively matched
+  `.code-workspace` extension before the localized
+  `STR_WORKBENCH_RECENT_WORKSPACE_LABEL` (`{0} (Workspace)`) format wraps it;
+  a non-file URI keeps its canonical URI form. The formatting lives in
+  `CRecentlyOpenedWorkspaceMenuProjection::FormatEntryLabel`, and `CEditWnd`
+  passes the localized format string in so the projection stays HWND- and
+  resource-free.
+- `Clear Recently Opened...` (`workbench.action.clearRecentFiles`,
+  `F_CLEAR_RECENT_WORKSPACES`) closes the submenu as a **static** contribution,
+  exactly as upstream (2026-08-20): `BuildTrailing` emits it below every dynamic
+  group, preceded by a separator only when something precedes it. The row
+  therefore exists even with an empty history, so the submenu is never empty and
+  `CheckFreeSubMenu` never greys it — matching VS Code, where the entry is always
+  present and reachable. The command confirms through
+  `STR_WORKBENCH_RECENT_CLEAR_CONFIRM` before clearing both the typed
+  `workbench::recent` store and the legacy `CMRUFile`/`CMRUFolder` lists;
+  `RecentlyOpenedWorkspaceService::Clear` treats an already-empty history as a
+  success that performs no durable write.
+- **Documented divergence:** `Reopen Closed Editor` (`Ctrl+Shift+T`) is absent.
+  It needs a per-window stack of closed editors with their restorable state, and
+  this fork has no such history — only the file MRU, which is a different concept
+  (it survives across sessions, carries no view state, and never distinguishes a
+  closed editor from a merely opened file). Approximating it with the MRU would
+  be faking the capability, so the entry stays out until that stack exists.
+- **Documented divergence:** `More...` (`Ctrl+R`) is absent. Upstream needs it
+  because `MenubarRecentMenu` truncates to a handful of rows and the quick pick
+  is the only way to reach the rest, with type-to-filter over the full history.
+  Here the submenu already renders the entire history — `kMaximumRecentlyOpenedWorkspaces`
+  is 64 and nothing truncates it — and `CQuickInputDialog` is a plain `LISTBOX`
+  with no filtering, so the entry would re-present the same rows in a worse
+  surface. Add it when the quick pick gains real filtering, not before.
+- **Documented divergence:** the recent-file rows below the separator keep the
+  legacy `CMRUFile` presentation (numbered mnemonic prefix plus encoding
+  suffix such as `[UTF-8]`) instead of VS Code's plain-path labels. Keeping
+  the Sakura-native file MRU behavior there is an explicit product decision
+  for this fork, and those rows still come from the legacy MRU projection,
+  not from `workbench::recent`.
 
 ## Phase 5 Native Command Route Checkpoint (2026-07-31)
 
@@ -475,3 +553,119 @@ wiring.
   guarded out of the in-place branch explicitly).
 - This is a removal of a divergence, not a new one: the in-place close is the
   VS Code-compatible behavior, and the process restart was the defect.
+
+## Split boxes are Sakura-only, so they follow the theme (2026-08-20, #225)
+
+`CSplitBoxWnd` (the vertical box above the editor's vertical scrollbar and the
+horizontal box left of the horizontal one) has no VS Code counterpart: VS Code
+splits an editor group through a command, not through a draggable box beside a
+scrollbar. **Documented divergence:** the control is kept, because removing it
+would remove a Sakura capability, but it no longer paints legacy 3D edges from
+`COLOR_3DFACE`/`COLOR_3DSHADOW`. `OnPaint` fills the client with the active
+theme's `canvas` and draws one centred 1px `border` grip, which is the same seam
+colour the workbench sashes use. Its drag behaviour is unchanged.
+
+## The status bar must not be WS_EX_COMPOSITED (2026-08-20, #226)
+
+Reported symptom: right after startup the Source Control view drew its
+"no Git repository / Initialize Repository" welcome content *above* a fully
+populated 76-item Changes list, and the graph section, the terminal body, and
+the status bar's SCM items never appeared at all. Nothing was wrong with the
+model — every one of those surfaces had already computed the correct content.
+
+Root cause: `CMainStatusBar::CreateStatusBar` created the `msctls_statusbar32`
+control with `WS_EX_COMPOSITED`. That control is painted entirely by our own
+`StatusBarSubclassProc` `WM_PAINT` handler, which calls `PaintStatusBar` — and
+with the extended style set, its client region was dirty again the instant
+`EndPaint` returned. `WM_PAINT` is *synthesised* by `GetMessage` whenever a
+window has a non-empty update region, so one perpetually re-invalidated window
+generates `WM_PAINT` forever and **starves every other window's pending update
+region indefinitely**. The other parts were invalidated and simply never got a
+paint message.
+
+The style bought nothing anyway: `PaintStatusBar` already renders into its own
+`CreateCompatibleDC` back buffer and blits once.
+
+How this was pinned down, in order — repeat this method rather than reasoning
+about it, because each step eliminated a plausible wrong answer:
+
+- Tally messages by target window class in `CEditWnd::MessageLoop`. 11,931 of
+  12,000 messages were `WM_PAINT` to `msctls_statusbar32`.
+- Instrument `GetUpdateRect` around `BeginPaint` / `EndPaint`. Note that between
+  `BeginPaint` and `EndPaint` the update region is empty *by definition*, so a
+  reading of 0 there proves nothing about the paint body — only the reading
+  after `EndPaint` is evidence.
+- Rule out each candidate invalidator by counting it, not by inspection:
+  `SetPalette`, `SetStatusbarViewSnapshot`, `RedrawWorkbenchFrameForCommittedLayout`,
+  and `CCaret::ShowCaretPosInfo` all counted **zero** hits in the spin window.
+- Bisect the paint body: skipping the `PaintStatusBar` call stopped the storm,
+  which is what pointed at the control's own composited redirection rather than
+  at any of our invalidation calls.
+
+Two earlier conclusions were wrong and are recorded so they are not retried:
+darkmodelib's status-bar subclass is innocent (disabling
+`DarkMode::setDarkWndNotifySafeEx` entirely left the storm unchanged), and
+suppressing the control's own `WM_NCPAINT` by returning 0 without chaining to
+`DefSubclassProc` does **not** fix it — it merely leaves the non-client region
+permanently invalid, which sustains the same paint synthesis.
+
+Verification (x64 Debug, 2026-08-20): idle CPU over 5 s with the repository
+folder open fell from 4,265 ms to 31.25 ms. `EnumChildWindows` + `GetUpdateRect`
+6 s after launch reports `update=none` for every child, where twelve windows
+previously held a permanent update region. Five fresh-process screen-versus-
+`PrintWindow` trials (three unoccluded) measured 2.174% / 2.089% / 2.099%; the
+diff heat map shows that residue is only the DWM-painted window border, which
+`PrintWindow` does not render, and one blinking caret in the commit-message box.
+The window interior is pixel-identical.
+
+## The wheel follows the pointer, not the focus (2026-08-20, #227)
+
+VS Code scrolls whatever the pointer is over. Win32 delivers `WM_MOUSEWHEEL` to
+the **focus** window, and `SPI_GETMOUSEWHEELROUTING`'s hybrid default only
+redirects to a hovered *other application* — inside one frame, a hovered Source
+Control or Explorer list never sees the wheel while the editor pane holds focus.
+Measured: with a repository open and the caret in the editor,
+`GetGUIThreadInfo().hwndFocus` is the `SakuraView*` pane, so the wheel arrived
+there no matter where the pointer sat.
+
+`CEditWnd::HoveredScrollTarget` resolves the hovered descendant and
+`WM_MOUSEWHEEL` forwards to it, so each control keeps its own scroll authority:
+
+- Input-only overlays (`WS_EX_TRANSPARENT` sashes, the frame resize band) sit
+  above the content they cover, so the walk climbs to their parent rather than
+  swallowing the wheel at an overlay.
+- Foreign-thread and foreign-root windows are rejected; a hovered window that is
+  not part of this frame is not this frame's business.
+- **The editor panes keep the historical path.** `OnMouseWheel` owns zoom, the
+  caret, and the split-pane dispatch that a bare `WM_MOUSEWHEEL` forward cannot
+  reproduce, so a hovered `CEditView` returns `nullptr` and falls through.
+- Print preview keeps the historical path for the same reason.
+
+Verified 2026-08-20 (x64 Debug, folder = this repository): with the caret in the
+editor, three real `mouse_event(MOUSEEVENTF_WHEEL)` notches over the Source
+Control change list moved `LB_GETTOPINDEX` 0 -> 9, the same gesture over the
+Graph list moved it 9 -> 18, and five notches over the editor pane changed
+12.830% of the pane's sampled pixels. Before the change every list stayed at 0.
+
+## A folder target with no workspace makes every settings read fail (2026-08-20, #227)
+
+`CConfigurationService::IsContextValid` rejects a target that names a
+`folderUri` while leaving `workspaceUri` empty. A **Folder** workspace has no
+`.code-workspace` file, so `WorkspaceContextSnapshot::workspaceConfigUri` is
+empty there — a target built as "workspaceConfigUri, plus the folder when there
+is exactly one" is therefore invalid for every single-folder window, which is
+the normal case.
+
+The failure is silent by construction: `GetValue` answers
+`InvalidScope` with no value, and each caller falls back to its own default. It
+looks exactly like an unset setting. Verified 2026-08-20 by logging the outcome:
+`scm.countBadge`, `workbench.colorTheme`, and `http.timeout` all returned
+`out=6 diag=target has an invalid URI/profile/language combination` with a
+`-FOLDER=` window open, so **no** workbench setting was being read at all.
+
+`CEditWnd::BuildWorkbenchConfigurationTarget` is now the single builder for every
+workbench settings read. It follows `CWorkbenchRuntime`'s own rule: a Folder
+workspace names its own folder as the workspace identity, and only a real
+`Workspace` uses `workspaceConfigUri`. Do not hand-roll a target beside it —
+prove a settings read works by changing the value and observing the window, never
+by reading the code path.

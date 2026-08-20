@@ -67,6 +67,11 @@ public:
 	//! variants, so a boolean "has folder" is insufficient here.
 	void SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState workspaceState);
 	void SetPalette(const theme::ThemePalette& palette);
+	//! Effective `scm.inputMinLineCount` / `scm.inputMaxLineCount`. The commit box
+	//! opens at the minimum and auto-grows to the maximum, exactly as upstream's
+	//! `InputRenderer` sizes it; the composition root resolves both through the
+	//! configuration service rather than the view reading settings itself.
+	void SetInputLineCountRange(int minLineCount, int maxLineCount);
 	void SetFileActivationCallback(FileActivationCallback callback);
 	void SetStatusBarCommandsCallback(StatusBarCommandsCallback callback);
 	void SetCommandCallback(CommandCallback callback);

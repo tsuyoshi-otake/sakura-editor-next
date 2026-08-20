@@ -266,6 +266,11 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 	if (m_hWnd == nullptr) {
 		return false;
 	}
+	// The window keeps its SB_VERT scroll model; the overlay hides the platform
+	// bar and paints the same VS Code bar the Explorer tree uses.
+	(void)m_overlayScrollbar.Create(parent, m_hWnd,
+		[this](int position) { ScrollTo(position, true); },
+		workbench::controls::OverlayScrollbarSource::TargetWindowBar);
 	RebuildFonts();
 	RebuildPaintResources();
 	RebuildLayout();
@@ -283,6 +288,7 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 void CMarkdownPreviewWnd::Close() noexcept
 {
 	m_sourceLineCallback = {};
+	m_overlayScrollbar.Detach();
 	StopWorker();
 	if (m_hWnd != nullptr) {
 		::DestroyWindow(m_hWnd);
@@ -421,6 +427,11 @@ void CMarkdownPreviewWnd::SetPalette(const theme::ThemePalette& palette)
 	m_colors.primaryText = palette.primaryText.ToColorRef();
 	m_colors.secondaryText = palette.secondaryText.ToColorRef();
 	m_colors.link = palette.accent.ToColorRef();
+	m_overlayColors.background = m_colors.background;
+	m_overlayColors.trackHover = palette.raised.ToColorRef();
+	m_overlayColors.thumb = palette.border.ToColorRef();
+	m_overlayColors.thumbHover = palette.secondaryText.ToColorRef();
+	UpdateOverlayScrollbar();
 	RebuildPaintResources();
 	if (m_hWnd != nullptr) {
 		::InvalidateRect(m_hWnd, nullptr, FALSE);
@@ -450,13 +461,16 @@ void CMarkdownPreviewWnd::Layout(const RECT& bounds, unsigned int dpi)
 	if (m_hWnd != nullptr) {
 		::MoveWindow(m_hWnd, bounds.left, bounds.top,
 			std::max(0L, bounds.right - bounds.left), std::max(0L, bounds.bottom - bounds.top), TRUE);
+		UpdateScrollBar();
 	}
 }
 
-void CMarkdownPreviewWnd::Show(bool visible) const noexcept
+void CMarkdownPreviewWnd::Show(bool visible) noexcept
 {
 	if (m_hWnd != nullptr) {
 		::ShowWindow(m_hWnd, visible ? SW_SHOWNA : SW_HIDE);
+		// The overlay is a sibling window, so it does not inherit the hide.
+		UpdateOverlayScrollbar();
 	}
 }
 
@@ -968,8 +982,15 @@ void CMarkdownPreviewWnd::UpdateScrollBar()
 	info.nMax = std::max(0, m_contentHeight - 1);
 	info.nPage = static_cast<UINT>(page);
 	info.nPos = m_scrollY;
-	::SetScrollInfo(m_hWnd, SB_VERT, &info, TRUE);
-	::ShowScrollBar(m_hWnd, SB_VERT, m_maxScroll > 0 ? TRUE : FALSE);
+	::SetScrollInfo(m_hWnd, SB_VERT, &info, FALSE);
+	UpdateOverlayScrollbar();
+}
+
+void CMarkdownPreviewWnd::UpdateOverlayScrollbar()
+{
+	m_overlayScrollbar.SetDpi(m_dpi);
+	m_overlayScrollbar.SetColors(m_overlayColors);
+	m_overlayScrollbar.Update();
 }
 
 void CMarkdownPreviewWnd::ScrollTo(int position, bool notifySource)
@@ -983,7 +1004,8 @@ void CMarkdownPreviewWnd::ScrollTo(int position, bool notifySource)
 	info.cbSize = sizeof(info);
 	info.fMask = SIF_POS;
 	info.nPos = m_scrollY;
-	::SetScrollInfo(m_hWnd, SB_VERT, &info, TRUE);
+	::SetScrollInfo(m_hWnd, SB_VERT, &info, FALSE);
+	UpdateOverlayScrollbar();
 	::InvalidateRect(m_hWnd, nullptr, FALSE);
 	if (notifySource) NotifySourceLineForScroll();
 }

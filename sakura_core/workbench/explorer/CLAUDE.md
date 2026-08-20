@@ -104,17 +104,64 @@ Recorded divergences of this flow (omit, don't fake):
   image list resolves transparency from the mask and ignores the alpha channel.
   Verified 2026-08-19 on x64 Debug: 6,644 pure-black pixels in the icon column
   before the mask, 0 after.
-- **Divergence: every row reserves the icon slot, including folder rows.** VS Code
-  reserves none for a row its icon theme does not decorate, so with `vs-seti` a
-  folder label sits against its twistie and folder names start one icon width left
-  of file names. This product cannot reproduce that with a native TreeView: the
-  control reserves the image width for every item as soon as it has an image list,
-  and setting `I_IMAGENONE` on the item does not opt that item out. Verified
-  2026-08-19 on x64 Debug, both when the value is applied at insertion time and
-  when it is applied afterwards through `TVM_SETITEM`: folder and file labels stay
-  aligned. Closing the gap requires drawing the row -- twistie, icon, and label --
-  by hand under `CDRF_SKIPDEFAULT`, which is tracked separately; do not "fix" it by
-  shifting the label in post-paint over text the control already drew.
+- **A folder row draws itself so it does not reserve the icon slot (2026-08-20).**
+  VS Code reserves no icon slot for a row its icon theme does not decorate, so with
+  `vs-seti` a folder label sits against its twistie and folder names start one icon
+  width left of file names. The item model cannot express that here: the control
+  reserves the image width for every item as soon as it has an image list, and
+  `I_IMAGENONE` does not opt one item out. Verified 2026-08-19 on x64 Debug, both
+  when the value is applied at insertion time and when it is applied afterwards
+  through `TVM_SETITEM`: folder and file labels stayed aligned. `PaintDirectoryRow`
+  therefore draws the folder row -- background, twistie, and label -- under
+  `CDRF_SKIPDEFAULT`, which is the only correct way to place the label. Do not
+  "fix" this by shifting the label in post-paint over text the control already
+  drew, and do not extend the hand-drawn path to file rows: a file label already
+  sits one icon width right of its twistie, which is where upstream puts it too.
+  - The label's left edge is the reserved slot's left edge (`text.left - side`),
+    so a folder name lines up with the column a sibling file's icon starts in,
+    exactly as upstream does.
+  - The twistie is a `chevron-right`/`chevron-down` Codicon set back from the
+    label by 4 DIP. Upstream's `.monaco-tl-twistie` is a 16-DIP box holding a
+    chevron that inks about two thirds of it; without that setback the glyph
+    touches the name it discloses. Measured against real VS Code on 2026-08-20,
+    upstream leaves about 6 px between the chevron ink and the label and this
+    leaves about 5 px.
+  - `CDRF_SKIPDEFAULT` suppresses the control's button *glyph*, not its button
+    *hit region*, so expansion still runs through the control's own input
+    handling and `TVN_ITEMEXPANDING`. The selection fill keeps the control's own
+    width at the new left edge, so a selected folder and a selected file match.
+  - A file row is a leaf and carries no twistie, so this hand-drawn chevron is
+    the only disclosure glyph in the view; no row is left without one.
+- **The tree's top level is the open folder's children, not the folder itself
+  (2026-08-20).** VS Code renders a root row only for a multi-root workspace, one
+  row per root folder; with a single open folder the file view's pane header names
+  it and the tree below lists its contents. This fork's multi-root boundary is the
+  explicit `WorkspaceWithFoldersUnsupported` gate, so no case where a root row
+  would be correct exists today. `PopulateRoot` therefore synthesizes the workspace
+  root as a `Node` with a null `item` and enumerates it straight into `TVI_ROOT`.
+  - A null `item` is that node and only that node. Every path that reads
+    `TreeView_GetItemState` skips it, `ApplyResult` maps it to `TVI_ROOT` and reads
+    its children through `TreeView_GetRoot`, and `InsertNode` no longer infers
+    root-ness from `TVI_ROOT` -- every inserted row is a descendant.
+  - Callers that address the root as a resource -- the empty-area context menu and
+    create-from-selection with nothing selected -- resolve `workspaceRootNodeId`
+    rather than the tree's first row, which is now an unrelated child.
+  - `TVS_LINESATROOT` is on. It is what gives a *top-level* row its disclosure
+    column, and carries no lines while `TVS_HASLINES` is off; without it the tree's
+    new top level would have no room for a twistie. Verified 2026-08-20 on x64
+    Debug: a top-level folder expands from a chevron click and enumerates lazily.
+- **The pane header is a real disclosure control (2026-08-20).** `PaintHeader`
+  draws a `chevron-down`/`chevron-right` twistie at the header's left edge, using
+  the same 6/12/22 DIP geometry as the Outline header `CViewContainerHost` draws
+  directly below this pane, and a click anywhere in the header that an action
+  button did not claim collapses the pane to its header alone. The collapse is
+  real: `LayoutChildren` hides the tree, the overlay scrollbar follows the tree's
+  own `WS_VISIBLE`, and the welcome content is suppressed too, so the twistie is
+  never a glyph that promises something it does not do.
+  - **Divergence:** the collapsed state is session-scoped. VS Code persists a
+    pane's collapsed state per workspace; that would need this fork's Outline-style
+    expansion callback and memento plumbing extended to the files pane, which is
+    not built. In-session behavior matches upstream; the state resets on restart.
 - With no root, the TreeView is hidden and the view projects the locally
   representable `EmptyView` variants from upstream's
   `explorerViewlet.ts`: `NoFolder` has the distinct `No Folder Opened` View
@@ -130,6 +177,19 @@ Recorded divergences of this flow (omit, don't fake):
   horizontal inset, one-em top-flow gaps, a full-width wrapped paragraph, and
   only the action buttons capped at 300 DIP and centered. The content therefore
   starts at the top of the view body instead of being vertically centered.
+- **That geometry is owned by `workbench/ViewsWelcomeMetrics.h`, not by this
+  view (2026-08-20, #218).** Explorer and Source Control are two Views
+  rendering one upstream `viewsWelcome` contribution, so they must produce
+  identical boxes. They did not: this view hard-coded a 28-DIP button box while
+  Source Control derived one from the label font. Both now read
+  `views::WelcomeButtonHeight`, `WelcomeButtonCornerRadius`,
+  `WelcomeHorizontalInset`, and `WelcomeButtonColumnWidth` from the shared
+  header, whose values come from upstream's own CSS: `.monaco-text-button` is
+  `box-sizing: border-box` with `line-height: 16px`, `padding: 4px 8px`, and a
+  `1px` border, so the box is a font-independent 26 DIP. Do not reintroduce a
+  local constant, and do not size the button from a measured text height --
+  upstream's button fixes its own `font-size` and `line-height`, so its box
+  does not grow with the label's font.
 - **`Open Remote Repository` is intentionally not projected.** In VS Code it
   is contributed by a Remote Repositories provider and opens a virtual remote
   workspace without cloning. Sakura has neither that provider contract nor a

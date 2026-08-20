@@ -218,6 +218,29 @@ RecentlyOpenedWorkspaceResult CRecentlyOpenedWorkspaceService::RemoveConfirmedNo
 	return { ERecentlyOpenedWorkspaceOutcome::Failed, "recent workspace conflict retry was exhausted" };
 }
 
+RecentlyOpenedWorkspaceResult CRecentlyOpenedWorkspaceService::Clear()
+{
+	if (m_entries.empty()) return { ERecentlyOpenedWorkspaceOutcome::Succeeded, "recent workspace history was already empty" };
+	for (int attempt = 0; attempt < 2; ++attempt) {
+		const auto saved = SaveEntries({});
+		if (saved.status == ERecentlyOpenedWorkspaceStoreSaveStatus::Succeeded) {
+			m_entries.clear();
+			return { ERecentlyOpenedWorkspaceOutcome::Succeeded, {} };
+		}
+		if (saved.status != ERecentlyOpenedWorkspaceStoreSaveStatus::Conflict || attempt != 0) {
+			return { ERecentlyOpenedWorkspaceOutcome::Failed,
+				saved.diagnostic.empty() ? "recent workspace store write failed" : saved.diagnostic };
+		}
+		// A conflicting write only moves the store revision forward; clearing
+		// stays the requested outcome, so reload for the current revision and
+		// replay the same empty payload once.
+		const auto reloaded = Load();
+		if (reloaded.outcome != ERecentlyOpenedWorkspaceOutcome::Succeeded) return reloaded;
+		if (m_entries.empty()) return { ERecentlyOpenedWorkspaceOutcome::Succeeded, "recent workspace history was already empty" };
+	}
+	return { ERecentlyOpenedWorkspaceOutcome::Failed, "recent workspace conflict retry was exhausted" };
+}
+
 std::optional<RecentlyOpenedWorkspaceEntry> CRecentlyOpenedWorkspaceService::Normalize(RecentlyOpenedWorkspaceEntry entry)
 {
 	if (!IsValidLabel(entry.label)) return std::nullopt;

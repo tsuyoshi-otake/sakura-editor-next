@@ -69,6 +69,34 @@ struct GitMenuItem final {
 [[nodiscard]] std::vector<GitMenuItem> BuildGitResourceGroupContextMenu(
 	EGitResourceGroup group, EUntrackedChangesPolicy untrackedChanges);
 
+//!
+//! @brief `ISCMProvider.actionButton`, as the built-in Git extension builds it.
+//!
+//! Upstream's `ActionButtonCommand` publishes one primary command plus grouped
+//! secondary commands, which `SCMViewPane` renders as a split button under the
+//! commit box. `hasChanges` is upstream's gate for the commit button: with no
+//! resource in any group there is nothing to commit and the button is absent.
+//!
+//! `enabled` follows the input box, because upstream disables the whole button
+//! while a repository operation is running and that is the same condition that
+//! disables the box.
+//!
+struct GitActionButton final {
+	//! Upstream's `$(check) Commit`, kept in `renderLabelWithIcons` syntax so the
+	//! native renderer draws the same Codicon it does.
+	std::wstring title;
+	std::string commandId;
+	bool enabled{ true };
+	//! Upstream's `secondaryCommands`, already flattened with separators between
+	//! its groups, so a renderer appends rows without knowing the grouping.
+	std::vector<GitMenuItem> secondaryCommands;
+
+	[[nodiscard]] bool operator==(const GitActionButton&) const = default;
+};
+
+//! Nothing when upstream contributes no button for this state.
+[[nodiscard]] std::optional<GitActionButton> BuildGitCommitActionButton(bool hasChanges, bool enabled);
+
 //! Map a published group id (`merge`, `index`, `workingTree`, `untracked`) back
 //! to its group. Nothing for an id no built-in Git group publishes.
 [[nodiscard]] std::optional<EGitResourceGroup> ParseGitResourceGroupId(std::string_view groupId) noexcept;

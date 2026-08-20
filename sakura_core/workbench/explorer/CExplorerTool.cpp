@@ -14,6 +14,7 @@
 #include "cxx/com_pointer.hpp"
 #include "theme/CThemeService.h"
 #include "workbench/IconMetrics.h"
+#include "workbench/ViewsWelcomeMetrics.h"
 #include "workbench/commands/ExplorerCommandArguments.h"
 #include "workbench/commands/ExplorerCommandIds.h"
 #include "workbench/explorer/ExplorerContextMenuModel.h"
@@ -24,7 +25,9 @@
 #include "workbench/icons/CodiconsActivityIcons.h"
 #include "workbench/icons/LabelRunPainter.h"
 #include "workbench/icons/SetiFileIcon.h"
+#include "workbench/icons/SetiIconPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
+#include "workbench/controls/COverlayScrollbar.h"
 
 #include <sakura/uri/UriIdentity.h>
 
@@ -51,7 +54,6 @@ namespace workbench::explorer {
 namespace {
 
 constexpr wchar_t kExplorerWindowClass[] = L"SakuraNativeExplorerTool";
-constexpr wchar_t kExplorerScrollbarClass[] = L"SakuraExplorerOverlayScrollbar";
 constexpr UINT kWorkerResultMessage = WM_APP + 0x571;
 constexpr UINT kDirectoryChangedMessage = WM_APP + 0x572;
 constexpr UINT kActivateFileMessage = WM_APP + 0x573;
@@ -62,15 +64,19 @@ constexpr unsigned int kDefaultDpi = 96;
 constexpr int kPaneHeaderHeightDip = 30;
 constexpr int kTreeRowHeightDip = 22;
 constexpr int kHeaderInsetDip = 10;
+// The pane header's disclosure twistie and the title inset it produces, matching
+// the Outline header CViewContainerHost draws directly above this pane.
+constexpr int kHeaderTwistieInsetDip = 6;
+constexpr int kHeaderTwistieSideDip = 12;
+constexpr int kHeaderTitleInsetDip = 22;
 constexpr int kHeaderActionSideDip = 22;
 constexpr int kHeaderActionGapDip = 1;
 // ViewWelcome lays its content out as a top-flow column: 20px lateral
 // padding, a 300px maximum column, and one em between direct children. Keep
 // the native projection on the same geometry instead of centering a compact
-// button block in the available view.
-constexpr int kWelcomeHorizontalInsetDip = 20;
-constexpr int kWelcomeMaxColumnDip = 300;
-constexpr int kWelcomeButtonHeightDip = 28;
+// button block in the available view. The numbers themselves live in
+// workbench/ViewsWelcomeMetrics.h, because Source Control renders the same
+// upstream contribution and its buttons have to come out the same size.
 constexpr std::string_view kOpenFolderCommandId = "workbench.action.files.openFolder";
 constexpr std::string_view kAddRootFolderCommandId = "workbench.action.addRootFolder";
 constexpr std::string_view kCloneRepositoryCommandId = "git.clone";
@@ -139,42 +145,10 @@ void DrawExplorerIcon(HDC dc, const RECT& bounds, std::wstring_view iconId, COLO
 	::DeleteObject(glyphFont);
 }
 
-//! The generated Seti table stores upstream's `#rrggbb` fontColor as 0x00RRGGBB.
-[[nodiscard]] constexpr COLORREF ColorRefFromThemeRgb(std::uint32_t rgb) noexcept
-{
-	return RGB((rgb >> 16) & 0xFFu, (rgb >> 8) & 0xFFu, rgb & 0xFFu);
-}
-
-/*!
-	@brief Draws one glyph of the bundled Seti file icon theme
-
-	Unlike a Codicon, a Seti glyph does not fill its em box -- it inks about 0.56 em.
-	Upstream compensates in the theme document itself (`fonts[0].size` is `150%`), so
-	the em box here is larger than the icon slot; icons/SetiFileIcon.h derives the
-	ratio. Drawing it at the slot size instead would render every file icon visibly
-	smaller than VS Code does.
-*/
-void DrawSetiIcon(HDC dc, const RECT& bounds, wchar_t glyph, COLORREF color) noexcept
-{
-	if (dc == nullptr || glyph == L'\0') return;
-	const int side = std::min(static_cast<int>(bounds.right - bounds.left),
-		static_cast<int>(bounds.bottom - bounds.top));
-	if (side <= 0) return;
-	const int em = std::max(1, ::MulDiv(side,
-		icons::seti::kEmToIconSlotNumerator, icons::seti::kEmToIconSlotDenominator));
-	const HFONT glyphFont = icons::CreateLabelRunGlyphFont(icons::seti::kFontFamily, em);
-	if (glyphFont == nullptr) return;
-	const HGDIOBJ previousFont = ::SelectObject(dc, glyphFont);
-	const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
-	const COLORREF previousTextColor = ::SetTextColor(dc, color);
-	const wchar_t text[] = { glyph, L'\0' };
-	RECT box = bounds;
-	::DrawTextW(dc, text, 1, &box, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
-	::SetTextColor(dc, previousTextColor);
-	::SetBkMode(dc, previousBackgroundMode);
-	::SelectObject(dc, previousFont);
-	::DeleteObject(glyphFont);
-}
+//! The Seti painter is shared with the Source Control view; see
+//! icons/SetiIconPainter.h. These keep the unqualified call sites below.
+using icons::seti::ColorRefFromThemeRgb;
+using icons::seti::DrawSetiIcon;
 
 //! The colour plane of the TreeView's icon-slot spacer. Its pixels never reach the
 //! screen; CreateSpacerMaskBitmap supplies the mask that keeps them off it.
@@ -525,7 +499,8 @@ struct CExplorerTool::Impl {
 	std::thread worker;
 	HWND window{};
 	HWND tree{};
-	HWND scrollbar{};
+	//! The VS Code-style overlay scrollbar, shared with the Source Control view.
+	controls::COverlayScrollbar scrollbar;
 	RECT bounds{};
 	unsigned int dpi{ kDefaultDpi };
 	ExplorerPalette palette{};
@@ -541,6 +516,10 @@ struct CExplorerTool::Impl {
 	std::vector<ExplorerWelcomeBlock> welcomeBlocks;
 	std::vector<RECT> welcomeBlockRects;
 	ExplorerWelcomeState welcomeState = ExplorerWelcomeState::NoFolder;
+	// The file view's pane header is a disclosure control in VS Code: its twistie
+	// collapses the pane to its header alone.  Collapsing is real here -- the body
+	// is hidden, not merely re-drawn -- so the twistie is not a painted decoration.
+	bool filesPaneExpanded{ true };
 	std::size_t hoveredWelcomeBlock{};
 	FileActivationCallback activateFile;
 	std::wstring root;
@@ -550,15 +529,16 @@ struct CExplorerTool::Impl {
 	// metrics do not oscillate while filesystem watcher results arrive.
 	std::set<std::wstring, ExplorerPathLess> expandedPaths;
 	std::uint64_t nextNodeId = 1;
+	// The workspace root is a node without a TreeView item: VS Code renders a root
+	// row only for a multi-root workspace, and this fork's multi-root boundary is
+	// explicitly unsupported.  The node still exists because enumeration, refresh,
+	// and the empty-area context menu all address the root folder as a resource.
+	std::uint64_t workspaceRootNodeId{};
 	std::uint64_t nextRequestGeneration = 1;
 	std::uint64_t currentRootGeneration = 1;
 	bool active{};
 	bool closed{};
-	bool scrollbarHover{};
-	bool scrollbarDragging{};
-	bool trackingScrollbarMouseLeave{};
 	bool trackingTreeMouseLeave{};
-	int scrollbarThumbGrabOffset{};
 	int wheelDeltaRemainder{};
 	HTREEITEM pointerDownItem{};
 	HTREEITEM pointerHoverItem{};
@@ -589,16 +569,6 @@ struct CExplorerTool::Impl {
 	//! renders the committed outcome.
 	HTREEITEM createEditItem{};
 	std::vector<std::unique_ptr<WorkerResult>> deferredResults;
-
-	struct ScrollbarLayout {
-		RECT track{};
-		RECT thumb{};
-		int totalRows{};
-		int visibleRows{};
-		int topRow{};
-		int maximumTop{};
-		bool scrollable{};
-	};
 
 	[[nodiscard]] int ScaleDip(int value) const noexcept
 	{
@@ -671,14 +641,14 @@ struct CExplorerTool::Impl {
 		RECT client{};
 		if (!::GetClientRect(window, &client)) return;
 		const int clientWidth = std::max(0L, client.right - client.left);
-		const int inset = ScaleDip(kWelcomeHorizontalInsetDip);
+		const int inset = views::WelcomeHorizontalInset(dpi);
 		const int messageWidth = std::max(0, clientWidth - inset * 2);
 		if (messageWidth <= 0) return;
-		const int buttonWidth = std::min(messageWidth, ScaleDip(kWelcomeMaxColumnDip));
+		const int buttonWidth = views::WelcomeButtonColumnWidth(messageWidth, dpi);
 		const int messageLeft = static_cast<int>(client.left) + inset;
 		const int buttonLeft = messageLeft + (messageWidth - buttonWidth) / 2;
 		const int bodyTop = HeaderHeight();
-		const int buttonHeight = ScaleDip(kWelcomeButtonHeightDip);
+		const int buttonHeight = views::WelcomeButtonHeight(dpi);
 		const HDC dc = ::GetDC(window);
 		if (dc != nullptr) {
 			const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
@@ -720,8 +690,21 @@ struct CExplorerTool::Impl {
 			const int top = HeaderHeight();
 			::MoveWindow(tree, client.left, top, std::max(0L, client.right - client.left),
 				std::max(0L, client.bottom - top), TRUE);
+			::ShowWindow(tree, !root.empty() && filesPaneExpanded ? SW_SHOWNOACTIVATE : SW_HIDE);
 		}
+		// UpdateOverlayScrollbar keys the overlay off the tree's own WS_VISIBLE, so
+		// hiding the tree above already withdraws the scrollbar.
 		UpdateOverlayScrollbar();
+	}
+
+	//! The whole pane header is the twistie's click target, as it is in VS Code;
+	//! the action buttons claim their own rectangles before this runs.
+	void ToggleFilesPane()
+	{
+		if (closed || window == nullptr) return;
+		filesPaneExpanded = !filesPaneExpanded;
+		LayoutChildren();
+		::InvalidateRect(window, nullptr, TRUE);
 	}
 
 	void InvokeHeaderAction(int index)
@@ -771,7 +754,14 @@ struct CExplorerTool::Impl {
 		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
 		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
 		const COLORREF previousTextColor = ::SetTextColor(dc, palette.text);
-		RECT title{ header.left + ScaleDip(kHeaderInsetDip), header.top,
+		// VS Code's pane header opens with a twistie that discloses the pane body.
+		const int twistieSide = ScaleDip(kHeaderTwistieSideDip);
+		const RECT twistie{ header.left + ScaleDip(kHeaderTwistieInsetDip),
+			header.top + std::max(0L, (header.bottom - header.top - twistieSide) / 2),
+			header.left + ScaleDip(kHeaderTwistieInsetDip) + twistieSide,
+			header.top + std::max(0L, (header.bottom - header.top - twistieSide) / 2) + twistieSide };
+		DrawExplorerIcon(dc, twistie, filesPaneExpanded ? L"chevron-down" : L"chevron-right", palette.text);
+		RECT title{ header.left + ScaleDip(kHeaderTitleInsetDip), header.top,
 			header.right - ScaleDip(kHeaderInsetDip), header.bottom };
 		if (!root.empty() && headerActionRects.front().right > headerActionRects.front().left) {
 			title.right = std::max(title.left, headerActionRects.front().left - ScaleDip(4));
@@ -807,7 +797,7 @@ struct CExplorerTool::Impl {
 
 	void PaintEmptyState(HDC dc)
 	{
-		if (dc == nullptr || !root.empty()) return;
+		if (dc == nullptr || !root.empty() || !filesPaneExpanded) return;
 		LayoutEmptyState();
 		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
 		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
@@ -820,7 +810,8 @@ struct CExplorerTool::Impl {
 			if (fill != nullptr && border != nullptr) {
 				const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
 				const HGDIOBJ previousPen = ::SelectObject(dc, border);
-				::RoundRect(dc, button.left, button.top, button.right, button.bottom, ScaleDip(4), ScaleDip(4));
+				const int radius = views::WelcomeButtonCornerRadius(dpi);
+				::RoundRect(dc, button.left, button.top, button.right, button.bottom, radius, radius);
 				::SelectObject(dc, previousPen);
 				::SelectObject(dc, previousBrush);
 			}
@@ -850,137 +841,29 @@ struct CExplorerTool::Impl {
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 	}
 
-	[[nodiscard]] ScrollbarLayout GetScrollbarLayout() const noexcept
-	{
-		ScrollbarLayout layout;
-		if (tree == nullptr || scrollbar == nullptr) return layout;
-		SCROLLINFO info{ sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS };
-		if (!::GetScrollInfo(tree, SB_VERT, &info)) return layout;
-		layout.totalRows = std::max(0, info.nMax - info.nMin + 1);
-		layout.visibleRows = std::max(1, static_cast<int>(info.nPage));
-		layout.maximumTop = std::max(0, layout.totalRows - layout.visibleRows);
-		layout.topRow = std::clamp(info.nPos - info.nMin, 0, layout.maximumTop);
-		if (layout.maximumTop == 0) return layout;
+	/*!
+		@brief Scrolls the tree so that `target` is its first visible row
 
-		RECT client{};
-		if (!::GetClientRect(scrollbar, &client) || client.bottom <= client.top) return layout;
-		layout.track = client;
-		const int height = client.bottom - client.top;
-		const int minimumThumb = std::min(height, ScaleDip(20));
-		const int proportionalThumb = static_cast<int>(
-			(static_cast<long long>(height) * layout.visibleRows) / std::max(1, layout.totalRows));
-		const int thumbHeight = std::clamp(std::max(minimumThumb, proportionalThumb), 1, height);
-		const int travel = height - thumbHeight;
-		const int offset = layout.maximumTop == 0 ? 0 : static_cast<int>(
-			(static_cast<long long>(travel) * layout.topRow) / layout.maximumTop);
-		layout.thumb = RECT{ client.left, client.top + offset, client.right, client.top + offset + thumbHeight };
-		layout.scrollable = true;
-		return layout;
-	}
-
-	void EndScrollbarDrag(bool releaseCapture) noexcept
-	{
-		const bool wasInteractive = scrollbarDragging;
-		scrollbarDragging = false;
-		scrollbarThumbGrabOffset = 0;
-		if (releaseCapture && scrollbar != nullptr && ::GetCapture() == scrollbar) ::ReleaseCapture();
-		if (wasInteractive && scrollbar != nullptr) ::InvalidateRect(scrollbar, nullptr, FALSE);
-	}
-
+		This is the overlay's one way back into the tree. A TreeView has no
+		"set top row" message, so the row is reached by walking the visible items.
+	*/
 	void SetFirstVisibleRow(int target)
 	{
 		if (tree == nullptr) return;
-		const auto layout = GetScrollbarLayout();
-		target = std::clamp(target, 0, layout.maximumTop);
 		auto item = TreeView_GetRoot(tree);
-		for (int index = 0; item != nullptr && index < target; ++index) item = TreeView_GetNextVisible(tree, item);
+		for (int index = 0; item != nullptr && index < std::max(0, target); ++index) {
+			item = TreeView_GetNextVisible(tree, item);
+		}
 		if (item != nullptr) (void)TreeView_SelectSetFirstVisible(tree, item);
-		UpdateOverlayScrollbar();
 	}
 
-	void DragScrollbarTo(int pointerY)
-	{
-		if (!scrollbarDragging) return;
-		const auto layout = GetScrollbarLayout();
-		if (!layout.scrollable) {
-			EndScrollbarDrag(true);
-			return;
-		}
-		const int thumbHeight = layout.thumb.bottom - layout.thumb.top;
-		const int travel = (layout.track.bottom - layout.track.top) - thumbHeight;
-		if (travel <= 0) return;
-		const int position = std::clamp(
-			pointerY - scrollbarThumbGrabOffset - static_cast<int>(layout.track.top), 0, travel);
-		const int target = static_cast<int>((static_cast<long long>(layout.maximumTop) * position) / travel);
-		SetFirstVisibleRow(target);
-	}
-
-	void PaintScrollbar(HDC dc) const
-	{
-		const auto layout = GetScrollbarLayout();
-		if (dc == nullptr || !layout.scrollable) return;
-		const HBRUSH background = ::CreateSolidBrush(scrollbarHover || scrollbarDragging
-			? palette.scrollbarTrackHover : palette.background);
-		if (background != nullptr) {
-			::FillRect(dc, &layout.track, background);
-			::DeleteObject(background);
-		}
-		RECT thumb = layout.thumb;
-		thumb.left = std::max(thumb.left, thumb.right - ScaleDip(6));
-		const HBRUSH thumbBrush = ::CreateSolidBrush(scrollbarHover || scrollbarDragging
-			? palette.scrollbarThumbHover : palette.scrollbarThumb);
-		if (thumbBrush != nullptr) {
-			::FillRect(dc, &thumb, thumbBrush);
-			::DeleteObject(thumbBrush);
-		}
-	}
-
-	void UpdateScrollbarHover(POINT point)
-	{
-		const auto layout = GetScrollbarLayout();
-		const bool hover = layout.scrollable && point.x >= layout.track.left && point.x < layout.track.right
-			&& point.y >= layout.track.top && point.y < layout.track.bottom;
-		if (scrollbarHover != hover) {
-			scrollbarHover = hover;
-			if (scrollbar != nullptr) ::InvalidateRect(scrollbar, nullptr, FALSE);
-		}
-		if (hover && !trackingScrollbarMouseLeave && scrollbar != nullptr) {
-			TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, scrollbar, 0 };
-			trackingScrollbarMouseLeave = ::TrackMouseEvent(&tracking) != FALSE;
-		}
-	}
-
+	//! Feeds the overlay the current DPI and palette, then lets it place itself.
 	void UpdateOverlayScrollbar()
 	{
-		if (tree == nullptr || scrollbar == nullptr || window == nullptr) return;
-		const LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
-		if ((style & (WS_HSCROLL | WS_VSCROLL)) != 0) (void)::ShowScrollBar(tree, SB_BOTH, FALSE);
-		// The workbench may lay out a page while its parent ViewContainer is
-		// hidden.  Keep the child control's own visibility state as the source
-		// of truth: IsWindowVisible would include the hidden parent and suppress
-		// the overlay until an unrelated layout pass.
-		if ((::GetWindowLongPtrW(tree, GWL_STYLE) & WS_VISIBLE) == 0) {
-			::ShowWindow(scrollbar, SW_HIDE);
-			return;
-		}
-		RECT client{};
-		if (!::GetClientRect(tree, &client)) return;
-		(void)::MapWindowPoints(tree, window, reinterpret_cast<LPPOINT>(&client), 2);
-		const int width = ScaleDip(10);
-		const int clientWidth = std::max(0, static_cast<int>(client.right - client.left));
-		const int clientHeight = std::max(0, static_cast<int>(client.bottom - client.top));
-		const int overlayWidth = std::min(width, clientWidth);
-		::SetWindowPos(scrollbar, HWND_TOP, static_cast<int>(client.right) - overlayWidth,
-			static_cast<int>(client.top), overlayWidth, clientHeight,
-			SWP_NOACTIVATE);
-		const bool show = GetScrollbarLayout().scrollable;
-		::ShowWindow(scrollbar, show ? SW_SHOWNOACTIVATE : SW_HIDE);
-		if (!show) {
-			scrollbarHover = false;
-			trackingScrollbarMouseLeave = false;
-			EndScrollbarDrag(true);
-		}
-		if (show) ::InvalidateRect(scrollbar, nullptr, FALSE);
+		scrollbar.SetDpi(dpi == 0 ? kDefaultDpi : dpi);
+		scrollbar.SetColors(controls::OverlayScrollbarColors{ palette.background,
+			palette.scrollbarTrackHover, palette.scrollbarThumb, palette.scrollbarThumbHover });
+		scrollbar.Update();
 	}
 
 	[[nodiscard]] HTREEITEM HitTestFileActivationItem(POINT point) const noexcept
@@ -1180,83 +1063,6 @@ struct CExplorerTool::Impl {
 		return result;
 	}
 
-	static LRESULT CALLBACK ScrollbarWindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam)
-	{
-		if (message == WM_NCCREATE) {
-			const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
-			::SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(create->lpCreateParams));
-		}
-		auto* impl = reinterpret_cast<Impl*>(::GetWindowLongPtrW(hwnd, GWLP_USERDATA));
-		if (impl == nullptr) return ::DefWindowProcW(hwnd, message, wParam, lParam);
-		switch (message) {
-		case WM_ERASEBKGND:
-			return 1;
-		case WM_PAINT: {
-			PAINTSTRUCT paint{};
-			const HDC dc = ::BeginPaint(hwnd, &paint);
-			impl->PaintScrollbar(dc);
-			::EndPaint(hwnd, &paint);
-			return 0;
-		}
-		case WM_MOUSEMOVE: {
-			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-			impl->UpdateScrollbarHover(point);
-			impl->DragScrollbarTo(point.y);
-			return 0;
-		}
-		case WM_MOUSELEAVE:
-			impl->trackingScrollbarMouseLeave = false;
-			if (!impl->scrollbarDragging && impl->scrollbarHover) {
-				impl->scrollbarHover = false;
-				::InvalidateRect(hwnd, nullptr, FALSE);
-			}
-			return 0;
-		case WM_LBUTTONDOWN: {
-			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
-			const auto layout = impl->GetScrollbarLayout();
-			if (!layout.scrollable) return 0;
-			::SetFocus(impl->tree);
-			if (point.y >= layout.thumb.top && point.y < layout.thumb.bottom) {
-				impl->scrollbarDragging = true;
-				impl->scrollbarThumbGrabOffset = point.y - layout.thumb.top;
-				::SetCapture(hwnd);
-			} else {
-				impl->SetFirstVisibleRow(layout.topRow + (point.y < layout.thumb.top
-					? -layout.visibleRows : layout.visibleRows));
-			}
-			impl->UpdateScrollbarHover(point);
-			::InvalidateRect(hwnd, nullptr, FALSE);
-			return 0;
-		}
-		case WM_LBUTTONUP:
-			impl->EndScrollbarDrag(true);
-			return 0;
-		case WM_MOUSEWHEEL:
-			if (impl->tree != nullptr) (void)::SendMessageW(impl->tree, message, wParam, lParam);
-			impl->UpdateOverlayScrollbar();
-			return 0;
-		case WM_NCDESTROY:
-			impl->EndScrollbarDrag(true);
-			impl->scrollbar = nullptr;
-			::SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
-			break;
-		default:
-			break;
-		}
-		return ::DefWindowProcW(hwnd, message, wParam, lParam);
-	}
-
-	static bool EnsureScrollbarClass(HINSTANCE instance)
-	{
-		WNDCLASSEXW windowClass{};
-		windowClass.cbSize = sizeof(windowClass);
-		windowClass.lpfnWndProc = ScrollbarWindowProc;
-		windowClass.hInstance = instance;
-		windowClass.hCursor = ::LoadCursor(nullptr, IDC_ARROW);
-		windowClass.lpszClassName = kExplorerScrollbarClass;
-		return ::RegisterClassExW(&windowClass) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
-	}
-
 	void StartWorker()
 	{
 		if (!worker.joinable()) worker = std::thread(WorkerMain, shared);
@@ -1364,7 +1170,8 @@ struct CExplorerTool::Impl {
 				if (node == nullptr) return;
 				(void)TreeView_SelectItem(tree, item);
 			} else {
-				node = FindNodeByItem(TreeView_GetRoot(tree));
+				// Empty space targets the workspace root, which no longer owns a row.
+				node = FindNode(workspaceRootNodeId);
 				if (node == nullptr) return;
 			}
 		}
@@ -1485,7 +1292,8 @@ struct CExplorerTool::Impl {
 	{
 		if (closed || tree == nullptr || root.empty()) return false;
 		const HTREEITEM selected = TreeView_GetSelection(tree);
-		const Node* node = FindNodeByItem(selected != nullptr ? selected : TreeView_GetRoot(tree));
+		const Node* node = selected != nullptr ? FindNodeByItem(selected) : FindNode(workspaceRootNodeId);
+		if (node == nullptr) node = FindNode(workspaceRootNodeId);
 		if (node == nullptr) return false;
 		if (node->isDirectory) return BeginCreate(node->path, directory);
 		const auto separator = node->path.find_last_of(L"\\/");
@@ -1555,10 +1363,14 @@ struct CExplorerTool::Impl {
 	{
 		if (tree == nullptr) return;
 		LONG_PTR style = ::GetWindowLongPtrW(tree, GWL_STYLE);
-		style |= TVS_HASBUTTONS;
+		// TVS_LINESATROOT is what gives a top-level row its disclosure column; it
+		// carries no lines of its own while TVS_HASLINES is off.  The tree's top
+		// level is the open folder's children, so top-level folders need that column
+		// exactly as nested ones do.
+		style |= TVS_HASBUTTONS | TVS_LINESATROOT;
 		// VS Code's Explorer uses disclosure chevrons, not the legacy dotted
 		// connector network exposed by the default Win32 TreeView style.
-		style &= ~(TVS_HASLINES | TVS_LINESATROOT);
+		style &= ~TVS_HASLINES;
 		::SetWindowLongPtrW(tree, GWL_STYLE, style);
 		::SetWindowPos(tree, nullptr, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
@@ -1595,6 +1407,7 @@ struct CExplorerTool::Impl {
 	{
 		for (auto& [id, node] : nodes) {
 			(void)id;
+			if (node.item == nullptr) continue;
 			const bool expanded = tree != nullptr
 				&& (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
 			UpdateNodeIcon(node, expanded);
@@ -1661,6 +1474,74 @@ struct CExplorerTool::Impl {
 		DrawExplorerIcon(dc, box, iconId, palette.text);
 	}
 
+	/*!
+		@brief Draws a folder row without the icon slot the control reserves for it
+
+		VS Code's default `vs-seti` icon theme contributes no folder association, so
+		upstream leaves `hasFolderIcons` false and a folder row is its twistie and its
+		name with nothing in between. A native TreeView cannot express that through the
+		item model: it reserves the image-list width for every item, and `I_IMAGENONE`
+		does not opt one item out. Reclaiming the slot therefore requires drawing the
+		row by hand under `CDRF_SKIPDEFAULT`, which is what this does.
+
+		Only folder rows take this path. A file row's label already sits exactly one
+		icon width right of its twistie, which is where upstream puts it too, so it
+		keeps the control's own drawing. A file row also has no twistie, so the chevron
+		drawn here is the only disclosure glyph in the view and no row is left without
+		one; `CDRF_SKIPDEFAULT` suppresses the control's button glyph, not its
+		button hit region, so expanding by clicking the chevron is unaffected.
+
+		The label is placed at the reserved slot's left edge rather than being nudged
+		in post-paint over text the control already drew, and the highlight keeps the
+		control's own width so a selected folder and a selected file still match.
+	*/
+	[[nodiscard]] bool PaintDirectoryRow(HDC dc, const Node& node, bool selected, bool hovered) const
+	{
+		if (dc == nullptr || tree == nullptr || node.item == nullptr) return false;
+		RECT text{};
+		RECT row{};
+		if (!TreeView_GetItemRect(tree, node.item, &text, TRUE)) return false;
+		if (!TreeView_GetItemRect(tree, node.item, &row, FALSE)) return false;
+		const int side = IconSizeForDpi(dpi);
+		const int labelLeft = std::max(0, static_cast<int>(text.left) - side);
+		const bool focused = ::GetFocus() == tree;
+		const COLORREF background = selected
+			? (focused ? palette.focus : palette.inactiveSelection)
+			: (hovered ? palette.hover : palette.background);
+		const COLORREF foreground = selected && focused ? palette.selectionText : palette.text;
+		if (const HBRUSH brush = ::CreateSolidBrush(palette.background); brush != nullptr) {
+			::FillRect(dc, &row, brush);
+			::DeleteObject(brush);
+		}
+		if (background != palette.background) {
+			const RECT fill{ labelLeft, row.top,
+				labelLeft + static_cast<int>(text.right - text.left), row.bottom };
+			if (const HBRUSH brush = ::CreateSolidBrush(background); brush != nullptr) {
+				::FillRect(dc, &fill, brush);
+				::DeleteObject(brush);
+			}
+		}
+		const bool expanded = (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) != 0;
+		const int chevron = ScaleDip(12);
+		const int chevronTop = static_cast<int>(row.top)
+			+ std::max(0, static_cast<int>(row.bottom - row.top) - chevron) / 2;
+		// The glyph sits back from the label by upstream's own twistie whitespace:
+		// `.monaco-tl-twistie` is a 16-DIP box holding a chevron that inks about
+		// two thirds of it, so the name never touches the glyph that discloses it.
+		const int gap = ScaleDip(4);
+		const RECT twistie{ std::max(0, labelLeft - chevron - gap), chevronTop,
+			std::max(0, labelLeft - gap), chevronTop + chevron };
+		DrawExplorerIcon(dc, twistie, expanded ? L"chevron-down" : L"chevron-right", foreground);
+		RECT label{ labelLeft, row.top, std::max(labelLeft, static_cast<int>(row.right)), row.bottom };
+		const int previousBackgroundMode = ::SetBkMode(dc, TRANSPARENT);
+		const COLORREF previousTextColor = ::SetTextColor(dc, foreground);
+		::DrawTextW(dc, node.name.c_str(), static_cast<int>(node.name.size()), &label,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+		::SetTextColor(dc, previousTextColor);
+		::SetBkMode(dc, previousBackgroundMode);
+		return true;
+	}
+
 	void InsertPlaceholder(HTREEITEM parent)
 	{
 		TVINSERTSTRUCTW insert{};
@@ -1680,7 +1561,9 @@ struct CExplorerTool::Impl {
 		node.path = std::move(entry.path);
 		node.isDirectory = entry.isDirectory;
 		node.isReparsePoint = entry.isReparsePoint;
-		node.isWorkspaceRoot = parent == TVI_ROOT;
+		// Every inserted row is a descendant of the workspace root; the root itself
+		// is the item-less node PopulateRoot synthesizes.
+		node.isWorkspaceRoot = false;
 		TVINSERTSTRUCTW insert{};
 		insert.hParent = parent;
 		insert.hInsertAfter = insertAfter;
@@ -1713,6 +1596,7 @@ struct CExplorerTool::Impl {
 		hoveredWelcomeBlock = 0;
 		TreeView_DeleteAllItems(tree);
 		nodes.clear();
+		workspaceRootNodeId = 0;
 		if (root.empty()) {
 			::ShowWindow(tree, SW_HIDE);
 			LayoutChildren();
@@ -1720,12 +1604,20 @@ struct CExplorerTool::Impl {
 			return;
 		}
 		::ShowWindow(tree, SW_SHOWNOACTIVATE);
-		ExplorerEntry entry;
-		entry.name = CExplorerTool::WorkspaceDisplayName(root);
-		entry.path = root;
-		entry.isDirectory = true;
-		const auto item = InsertNode(TVI_ROOT, std::move(entry));
-		if (item != nullptr) (void)TreeView_Expand(tree, item, TVE_EXPAND);
+		// The tree starts at the root folder's children.  In VS Code the file view's
+		// pane header names the open folder and the tree below it lists that folder's
+		// contents; a row for the folder itself appears only in a multi-root
+		// workspace, one row per root.  So the root here is a node with no item, and
+		// its enumeration inserts directly under TVI_ROOT.
+		Node rootNode;
+		rootNode.id = nextNodeId++;
+		rootNode.name = CExplorerTool::WorkspaceDisplayName(root);
+		rootNode.path = root;
+		rootNode.isDirectory = true;
+		rootNode.isWorkspaceRoot = true;
+		workspaceRootNodeId = rootNode.id;
+		const auto [it, inserted] = nodes.emplace(rootNode.id, std::move(rootNode));
+		if (inserted) QueueEnumeration(it->second, false);
 		LayoutChildren();
 		if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
 	}
@@ -1756,6 +1648,13 @@ struct CExplorerTool::Impl {
 	{
 		if (tree == nullptr || labelEditActive) return;
 		for (auto& [id, node] : nodes) {
+			(void)id;
+			// The item-less workspace root is always disclosed: its children are the
+			// tree's top level, so it refreshes unconditionally.
+			if (node.item == nullptr) {
+				if (node.isWorkspaceRoot) QueueEnumeration(node, true);
+				continue;
+			}
 			if (TreeView_GetItemState(tree, node.item, TVIS_EXPANDED) & TVIS_EXPANDED) QueueEnumeration(node, true);
 		}
 	}
@@ -1773,7 +1672,10 @@ struct CExplorerTool::Impl {
 	{
 		if (closed || tree == nullptr) return;
 		expandedPaths.clear();
-		CollapseTreeItem(TreeView_GetRoot(tree));
+		// Every top-level row is a root-folder child now, so all of them collapse.
+		for (auto item = TreeView_GetRoot(tree); item != nullptr; item = TreeView_GetNextSibling(tree, item)) {
+			CollapseTreeItem(item);
+		}
 		UpdateOverlayScrollbar();
 	}
 
@@ -1808,7 +1710,9 @@ struct CExplorerTool::Impl {
 		node->queued = false;
 		const bool refreshAgain = node->refreshAfterQueued;
 		node->refreshAfterQueued = false;
+		// A null item is the workspace root, whose children are the tree's top level.
 		const auto parentItem = node->item;
+		const auto insertParent = parentItem == nullptr ? TVI_ROOT : parentItem;
 		const auto parentNodeId = node->id;
 		struct ExistingChild {
 			HTREEITEM item{};
@@ -1816,7 +1720,8 @@ struct CExplorerTool::Impl {
 		};
 		std::map<std::wstring, ExistingChild, ExplorerPathLess> existing;
 		std::vector<HTREEITEM> placeholders;
-		for (auto child = TreeView_GetChild(tree, parentItem); child != nullptr; child = TreeView_GetNextSibling(tree, child)) {
+		for (auto child = parentItem == nullptr ? TreeView_GetRoot(tree) : TreeView_GetChild(tree, parentItem);
+			child != nullptr; child = TreeView_GetNextSibling(tree, child)) {
 			TVITEMW info{};
 			info.mask = TVIF_PARAM;
 			info.hItem = child;
@@ -1852,7 +1757,7 @@ struct CExplorerTool::Impl {
 				insertAfter = childNode->item;
 				continue;
 			}
-			const auto inserted = InsertNode(parentItem, std::move(entry), insertAfter);
+			const auto inserted = InsertNode(insertParent, std::move(entry), insertAfter);
 			if (inserted != nullptr) insertAfter = inserted;
 			changed = true;
 		}
@@ -1922,7 +1827,7 @@ bool CExplorerTool::Create(HWND parent)
 {
 	if (m_impl->closed || m_impl->window != nullptr || parent == nullptr) return false;
 	const HINSTANCE instance = ::GetModuleHandleW(nullptr);
-	if (!EnsureExplorerClass(instance) || !Impl::EnsureScrollbarClass(instance)) return false;
+	if (!EnsureExplorerClass(instance)) return false;
 	INITCOMMONCONTROLSEX common{};
 	common.dwSize = sizeof(common);
 	common.dwICC = ICC_TREEVIEW_CLASSES;
@@ -1940,14 +1845,15 @@ bool CExplorerTool::Create(HWND parent)
 		m_impl->window = nullptr;
 		return false;
 	}
-	m_impl->scrollbar = ::CreateWindowExW(0, kExplorerScrollbarClass, L"", WS_CHILD | WS_CLIPSIBLINGS,
-		0, 0, 0, 0, m_impl->window, nullptr, instance, m_impl.get());
-	if (m_impl->scrollbar == nullptr || !::SetWindowSubclass(m_impl->tree, Impl::TreeSubclassProc, 1,
-		reinterpret_cast<DWORD_PTR>(m_impl.get()))) {
+	Impl* const impl = m_impl.get();
+	if (!m_impl->scrollbar.Create(m_impl->window, m_impl->tree,
+			[impl](int topRow) { impl->SetFirstVisibleRow(topRow); })
+		|| !::SetWindowSubclass(m_impl->tree, Impl::TreeSubclassProc, 1,
+			reinterpret_cast<DWORD_PTR>(m_impl.get()))) {
+		m_impl->scrollbar.Destroy();
 		::DestroyWindow(m_impl->window);
 		m_impl->window = nullptr;
 		m_impl->tree = nullptr;
-		m_impl->scrollbar = nullptr;
 		return false;
 	}
 	::SendMessageW(m_impl->tree, TVM_SETEXTENDEDSTYLE, TVS_EX_DOUBLEBUFFER, TVS_EX_DOUBLEBUFFER);
@@ -2023,10 +1929,10 @@ void CExplorerTool::Close()
 	m_impl->SetNotificationWindow(nullptr, false);
 	m_impl->StopWorker();
 	m_impl->DestroyIconImages();
+	m_impl->scrollbar.Destroy();
 	if (m_impl->window != nullptr && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->tree = nullptr;
-	m_impl->scrollbar = nullptr;
 	if (m_impl->shared->stopEvent != nullptr) { ::CloseHandle(m_impl->shared->stopEvent); m_impl->shared->stopEvent = nullptr; }
 	if (m_impl->shared->wakeEvent != nullptr) { ::CloseHandle(m_impl->shared->wakeEvent); m_impl->shared->wakeEvent = nullptr; }
 }
@@ -2125,7 +2031,7 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 	}
 	m_impl->RebuildIconImages();
 	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
-	if (m_impl->scrollbar != nullptr) ::InvalidateRect(m_impl->scrollbar, nullptr, FALSE);
+	m_impl->UpdateOverlayScrollbar();
 }
 
 ExplorerPalette CExplorerTool::GetPalette() const noexcept { return m_impl->palette; }
@@ -2186,7 +2092,7 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 			impl.hoveredHeaderAction = -1;
 			::InvalidateRect(window, nullptr, FALSE);
 		}
-		if (impl.root.empty()) {
+		if (impl.root.empty() && impl.filesPaneExpanded) {
 			impl.UpdateEmptyStateHover(point);
 			if (impl.hoveredWelcomeBlock != 0 && !impl.trackingHeaderMouseLeave) {
 				TRACKMOUSEEVENT tracking{ sizeof(tracking), TME_LEAVE, window, 0 };
@@ -2209,7 +2115,11 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 			impl.InvokeHeaderAction(action);
 			return 0;
 		}
-		if (impl.root.empty()) {
+		if (point.y < impl.HeaderHeight()) {
+			impl.ToggleFilesPane();
+			return 0;
+		}
+		if (impl.root.empty() && impl.filesPaneExpanded) {
 			for (std::size_t index = 0; index < impl.welcomeBlocks.size(); ++index) {
 				if (impl.welcomeBlocks[index].kind != ExplorerWelcomeBlockKind::Action
 					|| !::PtInRect(&impl.welcomeBlockRects[index], point)) continue;
@@ -2340,6 +2250,13 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 				const auto item = reinterpret_cast<HTREEITEM>(draw->nmcd.dwItemSpec);
 				const bool selected = (draw->nmcd.uItemState & CDIS_SELECTED) != 0;
 				const bool hovered = !selected && impl.pointerHoverItem == item;
+				// A folder row draws itself so its label can reclaim the icon slot the
+				// control reserves but the Seti theme never fills; see PaintDirectoryRow.
+				if (auto* directory = impl.FindNodeByItem(item);
+					directory != nullptr && directory->isDirectory
+					&& impl.PaintDirectoryRow(draw->nmcd.hdc, *directory, selected, hovered)) {
+					return CDRF_SKIPDEFAULT;
+				}
 				if (selected) {
 					draw->clrText = ::GetFocus() == impl.tree ? impl.palette.selectionText : impl.palette.text;
 					draw->clrTextBk = ::GetFocus() == impl.tree ? impl.palette.focus : impl.palette.inactiveSelection;
@@ -2361,7 +2278,8 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		impl.SetNotificationWindow(nullptr, false);
 		impl.window = nullptr;
 		impl.tree = nullptr;
-		impl.scrollbar = nullptr;
+		// The overlay is this window's child: it is already gone by now.
+		impl.scrollbar.Detach();
 		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
 		break;
 	default:

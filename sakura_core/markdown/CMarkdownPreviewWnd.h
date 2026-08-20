@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -24,6 +24,7 @@
 #include "MarkdownInlineStyleRuns.h"
 #include "MarkdownPreviewAsyncState.h"
 #include "MarkdownPreviewScrollMap.h"
+#include "workbench/controls/COverlayScrollbar.h"
 
 namespace theme {
 struct ThemePalette;
@@ -54,7 +55,7 @@ public:
 	void SetPalette(const theme::ThemePalette& palette);
 	void SetEditorFont(const LOGFONT& font, unsigned int dpi);
 	void Layout(const RECT& bounds, unsigned int dpi);
-	void Show(bool visible) const noexcept;
+	void Show(bool visible) noexcept;
 	void RevealSourceLine(std::size_t sourceLine);
 	void SetSourceLineCallback(std::function<void(std::size_t)> callback);
 
@@ -137,6 +138,7 @@ private:
 	void DeleteFonts() noexcept;
 	void RebuildLayout();
 	void UpdateScrollBar();
+	void UpdateOverlayScrollbar();
 	void ScrollTo(int position, bool notifySource = false);
 	void ScrollBy(int delta, bool notifySource = true);
 	void NotifySourceLineForScroll();
@@ -191,6 +193,9 @@ private:
 	std::optional<PreviewWorkCompletion> m_completedWork;
 	std::jthread m_worker;
 	std::vector<std::optional<CodeHighlightResult>> m_codeHighlights;
+	//! The shared VS Code-style overlay bar; the window keeps SB_VERT as its model.
+	workbench::controls::COverlayScrollbar m_overlayScrollbar;
+	workbench::controls::OverlayScrollbarColors m_overlayColors;
 };
 
 } // namespace markdown

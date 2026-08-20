@@ -122,9 +122,11 @@
 #include "workbench/scm/GitFailureText.h"
 #include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitLineStaging.h"
+#include "workbench/scm/GitOutputChannel.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/GitStageCommands.h"
 #include "workbench/scm/GitSyncCommands.h"
+#include "workbench/problems/MarkerPositionAdapter.h"
 #include "workbench/layout/WorkbenchLayoutStateService.h"
 #include "workbench/win32/BuiltinPartProjection.h"
 #include "workbench/win32/ProblemsOutputPanelProjection.h"
@@ -465,6 +467,10 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		resourceId = STR_WORKBENCH_GIT_CHECKOUT_BRANCH_TAG; break;
 	case workbench::scm::EScmTextKey::GitCommitMessage:
 		resourceId = STR_WORKBENCH_GIT_COMMIT_MESSAGE; break;
+	case workbench::scm::EScmTextKey::GitCommitAction:
+		resourceId = STR_WORKBENCH_GIT_COMMIT_ACTION; break;
+	case workbench::scm::EScmTextKey::GitCommitAmendAction:
+		resourceId = STR_WORKBENCH_GIT_COMMIT_AMEND_ACTION; break;
 	}
 	std::wstring localized = LocalizedWorkbenchString(resourceId);
 	if (!localized.empty() && !argument.empty()) ReplaceLocalizedArgument(localized, argument);
@@ -761,6 +767,34 @@ private:
 	return ::MulDiv(pixels, 96, dpi == 0 ? 96 : static_cast<int>(dpi));
 }
 
+//! The Git Output channel sink for this window. VS Code's Git extension
+//! logs every command it runs into a "Git" log channel, so each native git
+//! invocation below mirrors its header and stderr there. Logging is
+//! best-effort: a null service or an exhausted operation-id sequence skips
+//! the mirror and never changes the command's own result.
+[[nodiscard]] workbench::scm::GitOutputSink MakeGitOutputSink(
+	workbench::output::OutputService* service)
+{
+	workbench::scm::GitOutputSink sink;
+	sink.service = service;
+	sink.owner = { .ownerId = "workbench.scm.git", .generation = 1 };
+	sink.createOperationId = "sakura.scm.git.output/create";
+	sink.nextAppendOperationId = []() -> std::optional<std::string> {
+		// Process-local and thread-safe: these commands run on the UI thread,
+		// but the OutputService itself is shared with other producers.
+		static std::atomic<std::uint64_t> sequence{ 0 };
+		const auto next = ++sequence;
+		if (next == (std::numeric_limits<std::uint64_t>::max)()) return std::nullopt;
+		std::string operationId = "sakura.scm.git.output/";
+		operationId += std::to_string(static_cast<unsigned long long>(::GetCurrentProcessId()));
+		operationId += '/';
+		operationId += std::to_string(static_cast<unsigned long long>(next));
+		if (!workbench::output::OutputService::IsValidOperationId(operationId)) return std::nullopt;
+		return operationId;
+	};
+	return sink;
+}
+
 } // namespace
 
 struct CEditWnd::WorkbenchServiceProjectionGate final {
@@ -797,7 +831,11 @@ struct CEditWnd::ThemeConfigurationGate final {
 		const std::vector<config::ConfigurationChange>& changes) noexcept
 	{
 		const bool relevant = std::ranges::any_of(changes, [](const config::ConfigurationChange& change) {
-			return change.key == "workbench.colorTheme" || change.key == "workbench.iconTheme";
+			// `scm.countBadge` joins the two theme keys because it decides what the
+			// Activity Bar paints, and VS Code applies it the moment it changes
+			// rather than at the next Source Control publication.
+			return change.key == "workbench.colorTheme" || change.key == "workbench.iconTheme"
+				|| change.key == "scm.countBadge";
 		});
 		if (!relevant) return;
 		std::lock_guard lock(gate->mutex);
@@ -1576,6 +1614,7 @@ void CEditWnd::DispatchEditorFunction(EFunctionCode functionCode)
 		case F_OPEN_WORKSPACE_FOLDER: commandId = command_ids::OpenFolder; break;
 		case F_OPEN_WORKSPACE: commandId = command_ids::OpenWorkspace; break;
 		case F_RECENT_WORKSPACE_LIST: commandId = command_ids::OpenRecent; break;
+		case F_CLEAR_RECENT_WORKSPACES: commandId = command_ids::ClearRecentFiles; break;
 		case F_ADD_FOLDER_TO_WORKSPACE: commandId = command_ids::AddRootFolder; break;
 		case F_SAVE_WORKSPACE_AS: commandId = command_ids::SaveWorkspaceAs; break;
 		case F_DUPLICATE_WORKSPACE: commandId = command_ids::DuplicateWorkspaceInNewWindow; break;
@@ -2154,6 +2193,9 @@ bool CEditWnd::InitializeWorkbench()
 	// shown in the status bar would then be able to disagree.
 	m_scmTool->SetStatusBarCommandsCallback([this](const std::vector<workbench::scm::ScmCommand>& commands) {
 		m_cStatusBar.SetScmStatusCommands(commands);
+		// The same publication the status bar renders is what the Activity Bar
+		// badge counts, so both follow one notification instead of two.
+		SyncScmActivityBadge();
 	});
 	// The repository row's own toolbar runs the same published commands the status
 	// bar does, through the same registry, so the branch item and the row cannot
@@ -2173,6 +2215,7 @@ bool CEditWnd::InitializeWorkbench()
 	// instead of a private Git model beside the service. A window with no runtime
 	// has no service to borrow and keeps rendering its own publication locally.
 	m_scmTool->SetSourceControlService(m_workbenchRuntime != nullptr ? m_workbenchRuntime->Scm() : nullptr);
+	ApplyScmInputLineCountSetting();
 
 	const auto requestOutlineExpanded = [this](bool expanded) {
 		if (m_workbenchRuntime != nullptr) {
@@ -2244,9 +2287,6 @@ bool CEditWnd::InitializeWorkbench()
 				break;
 			case workbench::panel::BottomPanelTab::Output:
 				break;
-			case workbench::panel::BottomPanelTab::Ports:
-			case workbench::panel::BottomPanelTab::DebugConsole:
-				return false;
 			default:
 				return false;
 			}
@@ -2438,6 +2478,21 @@ bool CEditWnd::InitializeWorkbench()
 				}
 				return workbench::commands::WorkbenchCommandExecutionResult{
 					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "recent workspace command returned an invalid terminal status" };
+			},
+			.clearRecentFiles = [this]() {
+				switch (ClearRecentlyOpenedHistory()) {
+				case EWorkspaceWindowTransitionResult::Succeeded:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} };
+				case EWorkspaceWindowTransitionResult::Cancelled:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::NotApplicable, "clearing recently opened items was cancelled" };
+				case EWorkspaceWindowTransitionResult::Failed:
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "recent workspace history could not be cleared" };
+				}
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "clear recently opened returned an invalid terminal status" };
 			},
 			.addRootFolder = [this]() {
 				switch (AddFolderToWorkspace()) {
@@ -2817,8 +2872,45 @@ bool CEditWnd::InitializeWorkbench()
 			const auto path = uri.value->ToWindowsPath();
 			if (!path.value) return;
 			GetActiveView().GetCommander().Command_FILEOPEN(path.value->c_str());
-			// TODO: add an explicit UTF-16-to-Sakura position adapter before applying
-			// problem.range. The service range is deliberately not a legacy column.
+			// The open has placed the file in exactly one frame, which is this one
+			// only when the file was not already open elsewhere. Ask which, the way
+			// the tag jump does, instead of assuming the active view now holds it.
+			HWND owner = nullptr;
+			if (!CShareData::getInstance()->IsPathOpened(path.value->c_str(), &owner)
+				|| owner == nullptr) {
+				return;
+			}
+			CLogicPoint caret;
+			if (owner == GetHwnd()) {
+				// The document is ours to read, so the marker's UTF-16 half-open
+				// start can be converted against the real line contents: that is
+				// what corrects a column landing inside a surrogate pair and what
+				// clamps a diagnostic computed against an older revision.
+				const CDocLineMgr& lines = GetDocument()->m_cDocLineMgr;
+				const auto lineCount = static_cast<std::uint32_t>(
+					(std::max)(CLogicInt(0), lines.GetLineCount()));
+				const auto converted = workbench::problems::ConvertMarkerPositionToLogicPoint(
+					problem.range.startLine, problem.range.startColumn, lineCount,
+					[&lines](std::uint32_t zeroBasedLine) -> std::wstring_view {
+						const CDocLine* line = lines.GetLine(
+							CLogicInt(static_cast<int>(zeroBasedLine)));
+						if (line == nullptr) return {};
+						const auto length = (std::max)(CLogicInt(0), line->GetLengthWithoutEOL());
+						return { line->GetPtr(), static_cast<std::size_t>(length) };
+					});
+				caret = converted.position;
+			}
+			else {
+				// Another frame owns the document, and its line contents are not
+				// readable from here. Send the marker's own position unconverted,
+				// exactly as the tag jump does across frames; the receiving frame's
+				// MYWM_SETCARETPOS handler still keeps the caret off an EOL.
+				caret.Set(CLogicInt(static_cast<int>(problem.range.startColumn)),
+					CLogicInt(static_cast<int>(problem.range.startLine)));
+			}
+			GetDllShareData().m_sWorkBuffer.m_LogicPoint = caret;
+			::SendMessageAny(owner, MYWM_SETCARETPOS, 0, 0);
+			ActivateFrameWindow(owner);
 		});
 	m_bottomPanelTool->SetOutputChannelSelectionCallback([this](const std::string& channelId) {
 		if (m_outputService == nullptr) return false;
@@ -3086,11 +3178,12 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchC
 	context.text = [](std::string_view key, std::wstring_view argument) {
 		return ResolveLocalizedScmTextKey(key, argument);
 	};
-	context.run = [&root](const std::vector<std::wstring>& arguments) {
+	context.run = [&root, sink = MakeGitOutputSink(m_outputService)]
+		(const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
 		request.arguments = arguments;
-		return workbench::scm::RunGit(request, nullptr);
+		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
 	context.quickPick = [this, caption](const std::vector<workbench::scm::GitCheckoutItem>& items,
 		std::wstring_view placeholder) -> std::optional<std::size_t> {
@@ -3200,11 +3293,12 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitInitCom
 		const DWORD length = ::GetEnvironmentVariableW(L"USERPROFILE", value.data(), static_cast<DWORD>(value.size()));
 		return length == 0 || length >= value.size() ? std::wstring{} : std::wstring(value.data(), length);
 	}();
-	context.run = [](std::wstring_view workingDirectory, const std::vector<std::wstring>& arguments) {
+	context.run = [sink = MakeGitOutputSink(m_outputService)]
+		(std::wstring_view workingDirectory, const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = std::wstring(workingDirectory);
 		request.arguments = arguments;
-		return workbench::scm::RunGit(request, nullptr);
+		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
 	context.folderPick = [this](const auto& items, std::wstring_view placeholder) -> std::optional<std::size_t> {
 		SQuickInputRequest request;
@@ -3305,11 +3399,12 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCloneCo
 	if (!request) return { EWorkbenchCommandExecutionStatus::NotApplicable, "clone was cancelled or the destination is unavailable" };
 	const auto cloneWorkingDirectory = std::filesystem::path(request->destinationPath).parent_path().wstring();
 	const auto raw = workbench::scm::RunGitCloneExecute(*request, { recurseSubmodules },
-		[cloneWorkingDirectory](const std::vector<std::wstring>& arguments, HANDLE stop) {
+		[cloneWorkingDirectory, sink = MakeGitOutputSink(m_outputService)]
+			(const std::vector<std::wstring>& arguments, HANDLE stop) {
 			workbench::scm::GitExecutionRequest r;
 			r.workingDirectory = cloneWorkingDirectory;
 			r.arguments = arguments;
-			return workbench::scm::RunGit(r, stop);
+			return workbench::scm::RunGitLogged(r, stop, sink);
 		}, nullptr);
 	const auto result = workbench::scm::RunGitCloneComplete(*request, raw);
 	if (!result.Succeeded()) return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
@@ -3629,11 +3724,12 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitStageCo
 		return ResolveLocalizedScmTextKey(key, argument);
 	};
 	context.repositoryRoot = root;
-	context.run = [&root](const std::vector<std::wstring>& arguments) {
+	context.run = [&root, sink = MakeGitOutputSink(m_outputService)]
+		(const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
 		request.arguments = arguments;
-		return workbench::scm::RunGit(request, nullptr);
+		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
 	context.message = [this](std::wstring_view message) {
 		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
@@ -3793,7 +3889,8 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 //! Read one side's raw bytes. `failure` carries a sentence only when this fails.
 [[nodiscard]] bool ReadDiffEndpointBytes(
 	const workbench::scm::GitDiffEndpoint& endpoint, std::wstring_view repositoryRoot,
-	std::vector<std::uint8_t>& bytes, std::wstring& failure)
+	std::vector<std::uint8_t>& bytes, std::wstring& failure,
+	const workbench::scm::GitOutputSink& sink)
 {
 	bytes.clear();
 	if (endpoint.source == workbench::scm::EGitDiffSource::Repository) {
@@ -3801,7 +3898,7 @@ constexpr std::size_t kMaximumDiffSideBytes = 4u * 1024u * 1024u;
 		request.workingDirectory = std::wstring(repositoryRoot);
 		request.arguments = workbench::scm::BuildGitShowArguments(endpoint);
 		request.maximumOutputBytes = kMaximumDiffSideBytes;
-		auto result = workbench::scm::RunGit(request, nullptr);
+		auto result = workbench::scm::RunGitLogged(request, nullptr, sink);
 		if (!result.Succeeded()) {
 			failure = workbench::scm::DescribeGitFailure(result);
 			return false;
@@ -3892,8 +3989,9 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteVsCodeDiff
 	std::vector<std::uint8_t> originalBytes;
 	std::vector<std::uint8_t> modifiedBytes;
 	std::wstring failure;
-	if (!ReadDiffEndpointBytes(*original, root, originalBytes, failure)
-		|| !ReadDiffEndpointBytes(*modified, root, modifiedBytes, failure)) {
+	const auto gitOutputSink = MakeGitOutputSink(m_outputService);
+	if (!ReadDiffEndpointBytes(*original, root, originalBytes, failure, gitOutputSink)
+		|| !ReadDiffEndpointBytes(*modified, root, modifiedBytes, failure, gitOutputSink)) {
 		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(failure) };
 	}
 
@@ -4156,8 +4254,9 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSelecte
 	std::vector<std::uint8_t> originalBytes;
 	std::vector<std::uint8_t> modifiedBytes;
 	std::wstring failure;
-	if (!ReadDiffEndpointBytes(*original, root, originalBytes, failure)
-		|| !ReadDiffEndpointBytes(*modified, root, modifiedBytes, failure)) {
+	const auto gitOutputSink = MakeGitOutputSink(m_outputService);
+	if (!ReadDiffEndpointBytes(*original, root, originalBytes, failure, gitOutputSink)
+		|| !ReadDiffEndpointBytes(*modified, root, modifiedBytes, failure, gitOutputSink)) {
 		return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(failure) };
 	}
 	const auto originalText = DecodeDiffSide(originalBytes);
@@ -4228,12 +4327,13 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSelecte
 			"the selected text cannot be written back in the encoding it was read with" };
 	}
 
-	const auto runGit = [&root](const std::vector<std::wstring>& arguments, std::string standardInput) {
+	const auto runGit = [&root, sink = MakeGitOutputSink(m_outputService)]
+		(const std::vector<std::wstring>& arguments, std::string standardInput) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
 		request.arguments = arguments;
 		request.standardInput = std::move(standardInput);
-		return workbench::scm::RunGit(request, nullptr);
+		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
 
 	const auto& path = modified->path;
@@ -4308,7 +4408,8 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitC
 		return ResolveLocalizedScmTextKey(key, argument);
 	};
 	context.repositoryRoot = root;
-	context.run = [&root](const std::vector<std::wstring>& arguments, std::string_view standardInput) {
+	context.run = [&root, sink = MakeGitOutputSink(m_outputService)]
+		(const std::vector<std::wstring>& arguments, std::string_view standardInput) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
 		request.arguments = arguments;
@@ -4316,7 +4417,7 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitC
 		// runner's stdin thread. An argument would be length-bounded and could be
 		// reread as an option.
 		request.standardInput = std::string(standardInput);
-		return workbench::scm::RunGit(request, nullptr);
+		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
 	context.message = [this](std::wstring_view message) {
 		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
@@ -4475,11 +4576,12 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCom
 	context.text = [](std::string_view key, std::wstring_view argument) {
 		return ResolveLocalizedScmTextKey(key, argument);
 	};
-	context.run = [&root](const std::vector<std::wstring>& arguments) {
+	context.run = [&root, sink = MakeGitOutputSink(m_outputService)]
+		(const std::vector<std::wstring>& arguments) {
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
 		request.arguments = arguments;
-		return workbench::scm::RunGit(request, nullptr);
+		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
 	context.message = [this](std::wstring_view message) {
 		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
@@ -4782,11 +4884,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 	theme::CThemeService::ClearActiveColorThemePalette();
 	if (m_colorThemeRegistry != nullptr && m_workbenchRuntime != nullptr) {
 		try {
-			config::ConfigurationTarget target;
-			target.profileId = m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId();
-			const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
-			target.workspaceUri = workspace.workspaceConfigUri;
-			if (workspace.folders.size() == 1) target.folderUri = workspace.folders.front().uri;
+			const auto target = BuildWorkbenchConfigurationTarget();
 			const auto lookup = m_workbenchRuntime->Configuration().GetValue("workbench.colorTheme", target);
 			std::wstring selectedTheme;
 			if (lookup.value) {
@@ -4854,6 +4952,10 @@ void CEditWnd::ApplyWorkbenchTheme()
 		activityPalette.disabledIcon = palette.secondaryText.ToColorRef();
 		activityPalette.focusBorder = palette.accent.ToColorRef();
 		activityPalette.border = palette.border.ToColorRef();
+		// The badge is its own theme role; see theme/CLAUDE.md for why it is
+		// neither `accent` nor one of the `button.*` roles.
+		activityPalette.badgeBackground = palette.activityBarBadgeBackground.ToColorRef();
+		activityPalette.badgeForeground = palette.activityBarBadgeForeground.ToColorRef();
 		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
 		m_activityBar->SetPalette(activityPalette);
 	}
@@ -6500,6 +6602,121 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 	// GlobalCompositeBar: Accounts then Manage, pinned to the bottom by ActivityBarModel.
 	workbench::activity::AppendGlobalActivityActions(entries);
 	if (m_activityBar) m_activityBar->SetEntries(std::move(entries));
+	// The badge is published beside the entry list, so re-projecting the
+	// containers has to republish it; SetEntries never carries it.
+	SyncScmActivityBadge();
+}
+
+void CEditWnd::SyncScmActivityBadge()
+{
+	// Both the badge and the commit box are sized from Source Control settings,
+	// and this runs on every occasion that can have moved them: startup once the
+	// configuration files are loaded, a theme/settings change, and each Activity
+	// Bar reprojection. Re-applying is idempotent when nothing moved.
+	ApplyScmInputLineCountSetting();
+	if (!m_activityBar) return;
+	const auto publish = [this](std::optional<int> count) {
+		m_activityBar->SetViewContainerBadge(
+			workbench::layout::ids::viewContainer::SourceControl, count);
+	};
+	auto* const service = m_workbenchRuntime != nullptr ? m_workbenchRuntime->Scm() : nullptr;
+	if (service == nullptr) {
+		publish(std::nullopt);
+		return;
+	}
+	// `off` is upstream's own way of turning the badge off entirely, so it clears
+	// rather than merely skipping the update.
+	if (ReadScmCountBadgeSetting() == L"off") {
+		publish(std::nullopt);
+		return;
+	}
+	const auto snapshot = service->Snapshot();
+	std::int64_t total = 0;
+	for (const auto& provider : snapshot.providers) {
+		if (provider.count) {
+			total += *provider.count;
+			continue;
+		}
+		// Upstream's `getRepositoryResourceCount`: resources, not files, so one
+		// path that is both staged and edited again counts twice.
+		for (const auto& group : provider.groups) {
+			total += static_cast<std::int64_t>(group.resources.size());
+		}
+	}
+	if (total <= 0) {
+		publish(std::nullopt);
+		return;
+	}
+	publish(static_cast<int>(std::min<std::int64_t>(total, std::numeric_limits<int>::max())));
+}
+
+config::ConfigurationTarget CEditWnd::BuildWorkbenchConfigurationTarget() const
+{
+	config::ConfigurationTarget target;
+	if (m_workbenchRuntime == nullptr) return target;
+	target.profileId = m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId();
+	const auto workspace = m_workbenchRuntime->WorkspaceContext().Snapshot();
+	if (workspace.folders.size() == 1) {
+		// A Folder workspace has no .code-workspace file, so its folder identity is
+		// also its workspace identity. Leaving `workspaceUri` empty while naming a
+		// folder is not a narrower target -- the configuration service rejects that
+		// combination outright, and every lookup made with it silently answers with
+		// the caller's own fallback instead of the effective setting.
+		target.workspaceUri = workspace.kind == config::EWorkspaceKind::Workspace
+			? workspace.workspaceConfigUri
+			: std::optional<platform::uri::Uri>(workspace.folders.front().uri);
+		target.folderUri = workspace.folders.front().uri;
+	} else {
+		target.workspaceUri = workspace.workspaceConfigUri;
+	}
+	return target;
+}
+
+void CEditWnd::ApplyScmInputLineCountSetting()
+{
+	if (m_scmTool == nullptr) return;
+	int minLines = 1;
+	int maxLines = 10;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto target = BuildWorkbenchConfigurationTarget();
+			const auto read = [&](const char* key, int fallback) {
+				const auto lookup = m_workbenchRuntime->Configuration().GetValue(key, target);
+				if (lookup.value) {
+					if (const auto* value = std::get_if<std::int64_t>(&lookup.value->Value());
+						value != nullptr) {
+						return static_cast<int>(std::clamp<std::int64_t>(*value, 1, 50));
+					}
+				}
+				return fallback;
+			};
+			minLines = read("scm.inputMinLineCount", minLines);
+			maxLines = read("scm.inputMaxLineCount", maxLines);
+		} catch (...) {
+			// Commit-box sizing is presentation, so an unreadable setting takes the
+			// registered default rather than failing the view that asked for it.
+		}
+	}
+	m_scmTool->SetInputLineCountRange(minLines, maxLines);
+}
+
+std::wstring CEditWnd::ReadScmCountBadgeSetting() const
+{
+	if (m_workbenchRuntime == nullptr) return L"all";
+	try {
+		const auto target = BuildWorkbenchConfigurationTarget();
+		const auto lookup = m_workbenchRuntime->Configuration().GetValue("scm.countBadge", target);
+		if (lookup.value) {
+			if (const auto* selected = std::get_if<std::wstring>(&lookup.value->Value());
+				selected != nullptr && !selected->empty()) {
+				return *selected;
+			}
+		}
+	} catch (...) {
+		// The badge is presentation, so an unreadable setting takes the registered
+		// default rather than failing the projection that asked for it.
+	}
+	return L"all";
 }
 
 std::optional<workbench::WorkbenchEdge> CEditWnd::HitTestSideBarEdge(POINT screenPoint) const
@@ -6888,7 +7105,15 @@ bool CEditWnd::AppendRecentlyOpenedWorkspaceMenu(HMENU hMenu, bool hasRecentFile
 	if (recent == nullptr) return false;
 	m_recentlyOpenedWorkspaceMenuSnapshot = recent->Snapshot();
 	const auto rows = workbench::recent::CRecentlyOpenedWorkspaceMenuProjection::Build(
-		m_recentlyOpenedWorkspaceMenuSnapshot, hasRecentFiles);
+		m_recentlyOpenedWorkspaceMenuSnapshot, hasRecentFiles,
+		LocalizedWorkbenchString(STR_WORKBENCH_RECENT_WORKSPACE_LABEL));
+	AppendRecentlyOpenedWorkspaceMenuRows(hMenu, rows);
+	return !m_recentlyOpenedWorkspaceMenuSnapshot.empty();
+}
+
+void CEditWnd::AppendRecentlyOpenedWorkspaceMenuRows(HMENU hMenu,
+	const std::vector<workbench::recent::RecentlyOpenedWorkspaceMenuRow>& rows)
+{
 	for (const auto& row : rows) {
 		if (row.kind == workbench::recent::ERecentlyOpenedWorkspaceMenuRowKind::Separator) {
 			(void)::AppendMenuW(hMenu, MF_SEPARATOR, 0, nullptr);
@@ -6903,7 +7128,39 @@ bool CEditWnd::AppendRecentlyOpenedWorkspaceMenu(HMENU hMenu, bool hasRecentFile
 		m_cMenuDrawer.MyAppendMenu(hMenu, MF_BYPOSITION | MF_STRING,
 			static_cast<UINT_PTR>(row.commandId), label.c_str(), L"");
 	}
-	return !m_recentlyOpenedWorkspaceMenuSnapshot.empty();
+}
+
+void CEditWnd::AppendClearRecentlyOpenedMenuItem(HMENU hMenu, bool hasPrecedingRows)
+{
+	if (hMenu == nullptr) return;
+	AppendRecentlyOpenedWorkspaceMenuRows(hMenu,
+		workbench::recent::CRecentlyOpenedWorkspaceMenuProjection::BuildTrailing(
+			hasPrecedingRows, F_CLEAR_RECENT_WORKSPACES, LS(F_CLEAR_RECENT_WORKSPACES)));
+}
+
+EWorkspaceWindowTransitionResult CEditWnd::ClearRecentlyOpenedHistory()
+{
+	// VS Code confirms once for the whole history. Declining is an explicit
+	// cancellation that must leave every history untouched.
+	if (IDYES != ::MYMESSAGEBOX(GetHwnd(), MB_YESNO | MB_APPLMODAL | MB_ICONQUESTION,
+			GSTR_APPNAME, LocalizedWorkbenchString(STR_WORKBENCH_RECENT_CLEAR_CONFIRM).c_str())) {
+		return EWorkspaceWindowTransitionResult::Cancelled;
+	}
+
+	// The typed Folder/Workspace history and the Sakura-native file and folder
+	// MRUs are separate authorities; upstream clears the whole Open Recent
+	// surface, so all three are cleared and only a typed store failure is fatal.
+	bool succeeded = true;
+	if (m_workbenchRuntime != nullptr) {
+		if (const auto recent = m_workbenchRuntime->RecentlyOpenedWorkspaces(); recent != nullptr) {
+			succeeded = recent->Clear().outcome == workbench::recent::ERecentlyOpenedWorkspaceOutcome::Succeeded;
+		}
+	}
+	CMRUFile().ClearAll();
+	CMRUFolder().ClearAll();
+	m_recentlyOpenedWorkspaceMenuSnapshot.clear();
+	(void)RefreshWorkbenchCommandContext();
+	return succeeded ? EWorkspaceWindowTransitionResult::Succeeded : EWorkspaceWindowTransitionResult::Failed;
 }
 
 void CEditWnd::RecordRecentlyOpenedWorkspaceAfterReady(
@@ -7143,10 +7400,36 @@ bool CEditWnd::EnsureMarkdownPreview()
 		GetDocument()->m_cLayoutMgr.LogicToLayout(
 			CLogicPoint(CLogicInt(0), CLogicInt(boundedLine)), &layoutPosition);
 		auto& activeView = GetActiveView();
+		m_markdownPreviewScrollSyncing = true;
 		const auto delta = activeView.ScrollAtV(layoutPosition.y);
 		activeView.SyncScrollV(delta);
+		m_markdownPreviewScrollSyncing = false;
 	});
 	return true;
+}
+
+void CEditWnd::SyncMarkdownPreviewToEditorScroll(const CEditView& view)
+{
+	if (!m_markdownPreviewVisible || !m_markdownPreview) return;
+	// The minimap mirrors the real view; letting it drive would double-apply the scroll.
+	if (view.m_bMiniMap) return;
+	if (&view != &GetActiveView()) return;
+	// The preview is already driving the editor through its own callback.
+	if (m_markdownPreviewScrollSyncing) return;
+	if (!HasActiveEditorInput()) return;
+	if (m_markdownPreviewCommandState.SourceIdentity()
+		!= GetDocument()->m_cDocFile.GetFilePath()) return;
+	CLogicPoint logicPosition;
+	GetDocument()->m_cLayoutMgr.LayoutToLogic(
+		CLayoutPoint(CLayoutInt(0), view.GetTextArea().GetViewTopLine()), &logicPosition);
+	const auto sourceLine = static_cast<Int>(logicPosition.y);
+	if (sourceLine < 0) return;
+	// AdjustScrollBars runs for layout changes too; only a real change moves the preview.
+	if (m_markdownPreviewSyncedSourceLine == sourceLine) return;
+	m_markdownPreviewSyncedSourceLine = sourceLine;
+	m_markdownPreviewScrollSyncing = true;
+	m_markdownPreview->RevealSourceLine(static_cast<std::size_t>(sourceLine));
+	m_markdownPreviewScrollSyncing = false;
 }
 
 void CEditWnd::CloseMarkdownPreview() noexcept
@@ -8312,7 +8595,9 @@ void CEditWnd::LayoutMainMenu()
 				}
 				break;
 			case F_RECENT_WORKSPACE_LIST:
-				nCount = HasRecentlyOpenedItems() ? 1 : 0;
+				// Open Recent always contributes Clear Recently Opened, so the
+				// submenu stays enabled exactly as it does in VS Code.
+				nCount = 1;
 				break;
 			case F_FOLDER_USED_RECENTLY:	// 最近使ったフォルダー
 				{
@@ -8643,6 +8928,12 @@ LRESULT CEditWnd::DispatchEvent(
 			m_themeConfigurationGate->messageQueued = false;
 		}
 		ApplyWorkbenchTheme();
+		// Re-read `scm.countBadge`; the count itself has not moved, but whether it
+		// is shown at all may have.
+		SyncScmActivityBadge();
+		// The commit box is sized from configuration too, and this is the same
+		// notification that tells the window its effective settings moved.
+		ApplyScmInputLineCountSetting();
 		return 0;
 	case MYWM_COMPLETE_STARTUP_WORKBENCH:
 		m_startupWorkbenchCompletionPosted = false;
@@ -8666,6 +8957,16 @@ LRESULT CEditWnd::DispatchEvent(
 		CancelWorkbenchResize();
 		return 0;
 	case WM_MOUSEWHEEL:
+		// VS Code scrolls whatever the pointer is over, not whatever holds the
+		// keyboard focus.  Win32 delivers WM_MOUSEWHEEL to the focus window, and
+		// SPI_GETMOUSEWHEELROUTING's hybrid default only redirects to a hovered
+		// *other* application, so inside this frame a hovered Source Control /
+		// Explorer list would never see the wheel while the editor has focus.
+		// Forward to the hovered descendant instead; it keeps its own scroll
+		// authority and answers with its own handler.
+		if (const HWND hovered = HoveredScrollTarget(lParam); hovered != nullptr) {
+			return ::SendMessageW(hovered, WM_MOUSEWHEEL, wParam, lParam);
+		}
 		if (!HasActiveEditorInput() && !m_pPrintPreview) return 0;
 		return OnMouseWheel( wParam, lParam );
 	case WM_HSCROLL:
@@ -10223,14 +10524,17 @@ bool CEditWnd::InitMenu_Special(HMENU hMenu, EFunctionCode eFunc)
 	case F_RECENT_WORKSPACE_LIST:
 		// The stable Open Recent submenu is one combined projection.  Typed
 		// workspace/folder rows own 13000..13063; legacy recent files retain
-		// their established IDs below them.
+		// their established IDs below them.  Upstream closes the submenu with a
+		// static Clear Recently Opened entry, so this surface is never empty.
 		{
 			const CMRUFile cMRU;
-			bInList = AppendRecentlyOpenedWorkspaceMenu(hMenu, cMRU.MenuLength() > 0);
+			bool hasRows = AppendRecentlyOpenedWorkspaceMenu(hMenu, cMRU.MenuLength() > 0);
 			if (cMRU.MenuLength() > 0) {
 				cMRU.CreateMenu(hMenu, &m_cMenuDrawer);
-				bInList = true;
+				hasRows = true;
 			}
+			AppendClearRecentlyOpenedMenuItem(hMenu, hasRows);
+			bInList = true;
 		}
 		break;
 	case F_FOLDER_USED_RECENTLY:	// 最近使ったフォルダー
@@ -11451,6 +11755,29 @@ void CEditWnd::PaintWorkbenchSplitters(HDC dc) const
 		if (rect.right > rect.left && rect.bottom > rect.top) ::FillRect(dc, &rect, brush);
 	}
 	::DeleteObject(brush);
+}
+
+HWND CEditWnd::HoveredScrollTarget( LPARAM lParam ) const noexcept
+{
+	if (m_pPrintPreview) return nullptr;
+	const POINT screen{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+	HWND hovered = ::WindowFromPoint(screen);
+	// Input-only overlays (the sash targets, the frame resize band) sit above the
+	// content they cover, so ask their parent instead of swallowing the wheel.
+	while (hovered != nullptr && hovered != GetHwnd()
+		&& (::GetWindowLongW(hovered, GWL_STYLE) & WS_CHILD) != 0
+		&& (::GetWindowLongW(hovered, GWL_EXSTYLE) & WS_EX_TRANSPARENT) != 0) {
+		hovered = ::GetParent(hovered);
+	}
+	if (hovered == nullptr || hovered == GetHwnd()) return nullptr;
+	if (::GetWindowThreadProcessId(hovered, nullptr) != ::GetCurrentThreadId()) return nullptr;
+	if (::GetAncestor(hovered, GA_ROOT) != GetHwnd()) return nullptr;
+	// The editor panes keep the historical path, which owns zoom, the caret, and
+	// the split-pane dispatch that a bare WM_MOUSEWHEEL forward cannot reproduce.
+	for (const auto& view : m_pcEditViewArr) {
+		if (view != nullptr && view->GetHwnd() == hovered) return nullptr;
+	}
+	return hovered;
 }
 
 LRESULT CEditWnd::OnMouseWheel( WPARAM wParam, LPARAM lParam )

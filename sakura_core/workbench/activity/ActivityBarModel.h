@@ -8,6 +8,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <map>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -53,6 +55,34 @@ struct ActivityBarEntry {
 	}
 };
 
+/*!
+	@brief A ViewContainer's number badge, upstream's `NumberBadge`.
+
+	VS Code registers a badge through `IActivityService.showViewContainerActivity`,
+	which is a different producer with a different lifetime from the container list
+	itself: the SCM extension publishes a change count without knowing when the
+	workbench last re-projected its ViewContainers. The model stores badges
+	separately for that reason -- replacing the entries must not silently drop one.
+
+	Only `NumberBadge` is representable here. Upstream also has `IconBadge`,
+	`TextBadge`, and `ProgressBadge`; a producer that needs one of those must add
+	the kind explicitly rather than approximating it with a number.
+*/
+struct ActivityBarNumberBadge {
+	//! Upstream hides the badge entirely at zero or below, so a count of 0 is not
+	//! a badge reading "0" -- callers publish `std::nullopt` for "nothing to show".
+	int number = 0;
+	[[nodiscard]] constexpr bool operator==(const ActivityBarNumberBadge&) const noexcept = default;
+};
+
+/*!
+	@brief Upstream's badge text rule from `compositeBarActions.ts`.
+
+	Over 999 collapses to `<n/1000>K+`, over 99 to `99+`, and anything at or below
+	zero renders nothing at all.
+*/
+[[nodiscard]] std::wstring FormatActivityBarBadge(int number);
+
 //! A physical-pixel rectangle with no dependency on Win32 types.
 struct ActivityBarRect {
 	int left = 0;
@@ -80,6 +110,8 @@ struct ActivityBarButtonInfo {
 	std::wstring_view label;
 	std::wstring_view codicon;
 	ActivityBarRect bounds{};
+	//! Absent unless a producer published one through SetViewContainerBadge.
+	std::optional<ActivityBarNumberBadge> badge;
 	ActivityBarEntryKind kind = ActivityBarEntryKind::ViewContainer;
 	bool selected = false;
 	bool hovered = false;
@@ -140,6 +172,19 @@ public:
 	//! True while the model knows this container at all.
 	[[nodiscard]] bool Contains(std::string_view id) const noexcept { return IndexOf(id) != kNoIndex; }
 
+	/*!
+		@brief Upstream `IActivityService.showViewContainerActivity` / its disposal.
+
+		`std::nullopt` clears the badge, as disposing the activity does upstream. A
+		badge may be published for a container the model does not know yet and
+		survives SetEntries, because the producer's lifetime is independent of when
+		the workbench last re-projected its ViewContainers. Global actions never
+		carry one: upstream badges activities, and Accounts/Manage are not
+		ViewContainers.
+	*/
+	void SetViewContainerBadge(std::string_view id, std::optional<ActivityBarNumberBadge> badge);
+	[[nodiscard]] std::optional<ActivityBarNumberBadge> GetViewContainerBadge(std::string_view id) const;
+
 	void SetHoveredItem(std::string_view id) noexcept;
 	void SetPressedItem(std::string_view id) noexcept;
 	void SetFocusedItem(std::string_view id) noexcept;
@@ -178,6 +223,8 @@ private:
 
 	std::vector<ActivityBarEntry> m_entries;
 	std::vector<ActivityBarRect> m_bounds;
+	//! Keyed by ViewContainer id so a badge outlives any particular entry list.
+	std::map<std::string, ActivityBarNumberBadge, std::less<>> m_badges;
 	int m_widthPixels = kWidthDip;
 	int m_heightPixels = 0;
 	unsigned int m_dpi = 96;

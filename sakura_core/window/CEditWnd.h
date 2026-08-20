@@ -79,6 +79,7 @@ class CDiffSurface;
 struct SDiffSurfaceContent;
 namespace config {
 class ConfigurationSubscription;
+struct ConfigurationTarget;
 }
 struct DLLSHAREDATA;
 namespace platform::filesystem {
@@ -429,6 +430,7 @@ public:
 	LRESULT OnMouseMove(WPARAM wParam, LPARAM lParam);
 	LRESULT OnSetCursor(WPARAM wParam, LPARAM lParam);
 	LRESULT OnCaptureChanged(LPARAM lParam);
+	HWND HoveredScrollTarget(LPARAM lParam) const noexcept;
 	LRESULT OnMouseWheel(WPARAM wParam, LPARAM lParam);
 	BOOL DoMouseWheel( WPARAM wParam, LPARAM lParam );	// マウスホイール処理	// 2007.10.16 ryoji
 	LRESULT OnHScroll(WPARAM wParam, LPARAM lParam);
@@ -499,6 +501,9 @@ public:
 	void RedetectPowerShell();
 	void ToggleMarkdownPreview();
 	[[nodiscard]] bool IsMarkdownPreviewVisible() const noexcept;
+	//! VS Code の Markdown scroll sync: エディタ側の表示先頭行にプレビューを追従させる。
+	//! ミニマップ操作も実ビューの ScrollAtV を経由するのでここに集約している。
+	void SyncMarkdownPreviewToEditorScroll(const CEditView& view);
 	[[nodiscard]] bool IsMarkdownPreviewAvailable() const;
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -743,6 +748,12 @@ private:
 	void RecordRecentlyOpenedWorkspaceAfterReady(
 		workbench::recent::ERecentlyOpenedWorkspaceKind kind, const platform::uri::Uri& uri);
 	[[nodiscard]] bool AppendRecentlyOpenedWorkspaceMenu(HMENU hMenu, bool hasRecentFiles);
+	void AppendRecentlyOpenedWorkspaceMenuRows(HMENU hMenu,
+		const std::vector<workbench::recent::RecentlyOpenedWorkspaceMenuRow>& rows);
+	//! Upstream's static Open Recent tail. It belongs to the menu-bar submenu
+	//! only; the Ctrl+R history list carries no clear action.
+	void AppendClearRecentlyOpenedMenuItem(HMENU hMenu, bool hasPrecedingRows);
+	[[nodiscard]] EWorkspaceWindowTransitionResult ClearRecentlyOpenedHistory();
 	[[nodiscard]] bool TryExecuteRecentlyOpenedWorkspaceMenuCommand(std::int32_t commandId);
 	[[nodiscard]] bool HasRecentlyOpenedItems() const;
 	[[nodiscard]] EWorkspaceWindowTransitionResult LaunchWorkspaceTarget(
@@ -955,6 +966,29 @@ private:
 		projected container is treated as living where its declaration put it: the Primary Side Bar.
 	*/
 	void SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState);
+	/*!
+		@brief Publishes the Source Control ViewContainer's number badge.
+
+		Upstream's `scm.contribution.ts` sums `provider.count ?? <resources in the
+		provider's groups>` over every published repository and shows that through
+		`IActivityService.showViewContainerActivity`. `scm.countBadge` gates it:
+		`off` publishes nothing at all, and `focused` is answered as `all` here
+		because this fork publishes a single repository, where the two agree by
+		construction. The source is the published provider snapshot, never the
+		view's own parse, so the badge cannot describe a publication the Source
+		Control view has not rendered.
+	*/
+	void SyncScmActivityBadge();
+	//! `scm.countBadge` resolved through the same profile/workspace/folder target
+	//! the other settings reads use. Returns the registered default when unset.
+	//! The profile/workspace/folder target every workbench settings read uses.
+	//! A Folder workspace names its own folder as the workspace identity; the
+	//! configuration service rejects a folder target that has no workspace.
+	[[nodiscard]] config::ConfigurationTarget BuildWorkbenchConfigurationTarget() const;
+	[[nodiscard]] std::wstring ReadScmCountBadgeSetting() const;
+	//! Resolves `scm.inputMinLineCount` / `scm.inputMaxLineCount` through the same
+	//! profile/workspace/folder target and hands them to the Source Control view.
+	void ApplyScmInputLineCountSetting();
 	//! Which physical side bar the pointer is over, if any. VS Code's composite drag and
 	//! drop is resolved by the drop target, not by the handle that started the gesture.
 	[[nodiscard]] std::optional<workbench::WorkbenchEdge> HitTestSideBarEdge(POINT screenPoint) const;
@@ -1095,6 +1129,10 @@ private:
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;
 	markdown::MarkdownPreviewCommandState m_markdownPreviewCommandState;
 	bool m_markdownPreviewVisible = false;
+	//! Reentrancy guard shared by both directions of the Markdown scroll sync.
+	bool m_markdownPreviewScrollSyncing = false;
+	//! Last source line pushed to the preview, so an unchanged scroll costs nothing.
+	int m_markdownPreviewSyncedSourceLine = -1;
 	bool m_markdownPreviewDirty = false;
 	int m_markdownPreviewRevision = -1;
 	std::uint64_t m_markdownPreviewGeneration = 0;

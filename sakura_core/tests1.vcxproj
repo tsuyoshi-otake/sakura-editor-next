@@ -201,7 +201,10 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskConfigurationCatalogTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskExecutionServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\TaskTerminalSessionFactoryTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerPositionAdapterTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\MarkerServiceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemMatcherEngineTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitOutputChannelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutputServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\PortForwardingServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\debug\DapProtocolCodecTest.cpp" />
@@ -235,6 +238,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerContextMenuModelTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerDeleteConfirmationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerFileIconTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ViewsWelcomeMetricsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\SetiFileIconTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerResourcePathTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\OutlineWorkbenchToolTest.cpp" />

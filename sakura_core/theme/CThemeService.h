@@ -96,6 +96,15 @@ struct ThemePalette {
 	//! VS Code `button.hoverBackground`, registered upstream as
 	//! `lighten(button.background, 0.2)` for dark and `darken(..., 0.2)` for light.
 	ThemeColor buttonHoverBackground = { 0x3F, 0xA1, 0xE3 };
+	//! VS Code `activityBarBadge.background`. The badge is its own role: it is not
+	//! `accent` (which answers "what does focus look like") and not `button.*`
+	//! (which answers "what does an actionable control look like"). `accent` may
+	//! already have consumed this key as its fourth fallback candidate, which is a
+	//! different question from this one. Upstream's dark default is `#007ACC`.
+	ThemeColor activityBarBadgeBackground = { 0x00, 0x7A, 0xCC };
+	//! VS Code `activityBarBadge.foreground`, whose registered default is `#FFFFFF`
+	//! for every theme kind.
+	ThemeColor activityBarBadgeForeground = { 0xFF, 0xFF, 0xFF };
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
 

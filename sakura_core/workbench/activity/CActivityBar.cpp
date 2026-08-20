@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -29,6 +29,13 @@ namespace {
 constexpr wchar_t kActivityBarClass[] = L"SakuraWorkbenchActivityBar";
 constexpr int kDefaultDpi = 96;
 constexpr int kIndicatorWidthDip = 2;
+// The activity indicator dot. Its diameter and insets place it on the glyph's
+// bottom-right corner; the 24-DIP glyph is centred in the 48-DIP button, so its
+// corner sits 12 DIP in from the button's right edge and 36 DIP down from its
+// top. See PaintBadge for why this is a dot and not upstream's number pill.
+constexpr int kBadgeDotDiameterDip = 8;
+constexpr int kBadgeDotRightInsetDip = 10;
+constexpr int kBadgeDotTopInsetDip = 28;
 
 [[nodiscard]] int ScaleDip(int dip, unsigned int dpi) noexcept
 {
@@ -300,6 +307,16 @@ void CActivityBar::SetItemVisible(std::string_view containerId, bool visible) no
 	Invalidate();
 }
 
+void CActivityBar::SetViewContainerBadge(std::string_view containerId, std::optional<int> count)
+{
+	const auto previous = m_model.GetViewContainerBadge(containerId);
+	std::optional<activity::ActivityBarNumberBadge> badge;
+	if (count && *count > 0) badge = activity::ActivityBarNumberBadge{ .number = *count };
+	if (previous == badge) return;
+	m_model.SetViewContainerBadge(containerId, badge);
+	Invalidate();
+}
+
 bool CActivityBar::Invoke(std::string_view containerId) noexcept
 {
 	const auto requested = m_model.Invoke(containerId);
@@ -541,6 +558,42 @@ void CActivityBar::EnsureIconFont() noexcept
 	m_iconFont = ::CreateFontIndirectW(&font);
 }
 
+/*!
+	@brief Draws one ViewContainer's activity indicator.
+
+	Documented divergence (owner request, 2026-08-20): upstream's
+	`compositeBarActions.css` renders a `NumberBadge` as a pill carrying the count,
+	and this paints a plain dot at the glyph's bottom-right corner instead. The
+	count still decides *whether* the indicator appears -- upstream's own
+	"hide at zero or below" rule -- so nothing is faked here; only the count's
+	digits are dropped from the presentation. The dot uses the same
+	`activityBarBadge.background` role the pill would have used.
+*/
+void CActivityBar::PaintBadge(HDC dc, const RECT& bounds, int number) noexcept
+{
+	if (dc == nullptr || number <= 0) return;
+	const unsigned int dpi = m_model.GetDpi();
+	const int diameter = std::max(2, ScaleDip(kBadgeDotDiameterDip, dpi));
+	RECT dot{ bounds.right - ScaleDip(kBadgeDotRightInsetDip, dpi) - diameter,
+		bounds.top + ScaleDip(kBadgeDotTopInsetDip, dpi), 0, 0 };
+	dot.right = dot.left + diameter;
+	dot.bottom = dot.top + diameter;
+	if (dot.left < bounds.left) dot.left = bounds.left;
+	const HBRUSH fill = ::CreateSolidBrush(m_palette.badgeBackground);
+	const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.badgeBackground);
+	if (fill != nullptr && pen != nullptr) {
+		const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
+		const HGDIOBJ previousPen = ::SelectObject(dc, pen);
+		// `Ellipse` excludes the right/bottom edge, so ask for one past the dot to
+		// get the requested diameter rather than one pixel less.
+		::Ellipse(dc, dot.left, dot.top, dot.right + 1, dot.bottom + 1);
+		::SelectObject(dc, previousPen);
+		::SelectObject(dc, previousBrush);
+	}
+	if (pen != nullptr) ::DeleteObject(pen);
+	if (fill != nullptr) ::DeleteObject(fill);
+}
+
 void CActivityBar::Paint() noexcept
 {
 	PAINTSTRUCT paint{};
@@ -605,6 +658,9 @@ void CActivityBar::Paint() noexcept
 			&& !PaintBuiltinGlyph(buffer, iconBounds, button.id, iconColor)) {
 			static_cast<void>(PaintInitialTile(buffer, iconBounds, button.label, iconColor, m_model.GetDpi()));
 		}
+		// The badge sits over the glyph, as upstream's absolutely-positioned
+		// `.badge-content` does, and under the focus ring drawn next.
+		if (button.badge) PaintBadge(buffer, bounds, button.badge->number);
 		if (button.focused) {
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.focusBorder);
 			const HGDIOBJ previousPen = ::SelectObject(buffer, pen);

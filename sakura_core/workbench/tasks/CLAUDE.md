@@ -39,6 +39,44 @@ enter `MarkerService` through its own generation/revision adapter, and task
 output must enter the terminal or `OutputService` owner rather than a view-local
 buffer.
 
+## Problem Matcher Translation
+
+`ProblemMatcherEngine` (`ProblemMatcherEngine.h/.cpp`) is the pure VS Code
+`problemMatcher`-shaped translator from captured task output lines to
+`workbench::problems::ReplaceMarkersRequest` values. It is a stateless
+function-only class, not a service: it owns no file reads, process, HWND,
+timer, or thread, and every unsupported matcher shape (an unresolvable
+`$name`, `fileLocation: autoDetect`/`search`, an out-of-range capture group, a
+non-numeric line/column, an unrecognized severity spelling, malformed UTF-8
+output) is a typed terminal `EProblemMatchStatus` rather than a guessed
+default or a silently dropped line.
+
+- `BuiltinProblemMatchers::Resolve` covers `$msCompile`, `$gcc`, and `$tsc` by
+  exact `$name`. There is no fuzzy or partial-name resolution.
+- Multi-pattern (VS Code "multiline") matchers are a small state machine over
+  the pattern chain: a completed non-`loop` chain resets to pattern 0; a
+  `loop` last pattern keeps its accumulated fields (notably `file`) and keeps
+  matching itself, so repeated detail lines under one unchanged header each
+  produce a marker; a line that breaks the chain before its last pattern
+  resets state and retries that same line against pattern 0 rather than
+  silently discarding it.
+  `Relative` resolution requires a caller-supplied workspace-root URI and does
+  no filesystem access; `Absolute` requires the captured text to already be a
+  well-formed absolute Windows/UNC path. Both go through
+  `platform::uri::Uri::FromWindowsPath`, never a manual string-to-URI shortcut.
+- Recorded divergence: VS Code extends a bare `endColumn` to the end of the
+  matched source line by consulting the live document. This adapter has no
+  document access, so a pattern that supplies `column` but not `endColumn`
+  produces a minimal one-character range (`endColumn = column + 1`) instead.
+- This class only translates already-captured text into requests it hands
+  back to the caller; it does not call `MarkerService` itself, does not read
+  `TaskConfigurationCatalog::problemMatchers` names, and is not yet wired to
+  `TaskExecutionService`'s output path. Resolving a task's configured
+  `problemMatchers` string(s) into a `ProblemMatcherDefinition` (built-in
+  lookup vs. a workspace-defined matcher) and feeding live task output through
+  this engine into the runtime-owned `MarkerService` remain the composition
+  adapter's job, not this pure class's.
+
 ## Verified Checkpoint
 
 `CFolderTaskCatalogRegistry` owns one explicit slot per canonical workspace
@@ -69,9 +107,12 @@ real ConPTY integration, runtime catalog/lifecycle integration, and Terminal
 session lifecycle. Keep its exact current count in the goal-loop journal rather
 than copying a stale number here.
 
-Variable/environment resolution, dependency/background scheduling, problem
-matching, provider/custom executions, presentation policies, and extension Task
-RPC remain incomplete. Production currently constructs the adapter without a
+Variable/environment resolution, dependency/background scheduling, provider/
+custom executions, presentation policies, and extension Task RPC remain
+incomplete. `ProblemMatcherEngine` gives problem-matcher text translation a
+pure, tested home, but it is not yet composed into the production Task
+adapter, so a running task's output does not yet reach `MarkerService`.
+Production currently constructs the adapter without a
 Task-output presentation sink; bytes are bounded and drained but not visible in
 the native Terminal panel. The future projection must share a runtime-owned
 terminal model/session authority with the panel rather than treating

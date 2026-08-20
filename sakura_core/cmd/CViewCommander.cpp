@@ -521,6 +521,7 @@ BOOL CViewCommander::HandleCommand(
 	case F_DUPLICATE_WORKSPACE:
 	case F_CLOSE_WORKSPACE:
 	case F_CLOSE_ACTIVE_EDITOR:
+	case F_CLEAR_RECENT_WORKSPACES:
 		GetEditWindow()->ExecuteWorkbenchFileFunction(nCommand);break;
 	case F_TYPE_LIST:		Command_TYPE_LIST();break;		/* タイプ別設定一覧 */
 	case F_CHANGETYPE:		Command_CHANGETYPE((int)lparam1);break;		// タイプ別設定一時適用
