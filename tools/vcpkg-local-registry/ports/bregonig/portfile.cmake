@@ -19,7 +19,7 @@ endif()
 # followed by a re-imported snapshot.
 #
 # Until then the MinGW build configures from a private copy in the build
-# tree with the redundant `::` removed from those definitions. The copy is
+# tree with the MSVC-only assumptions patched out of it. The copy is
 # throwaway, the verified snapshot is never written to, and the transform
 # fails loudly if it stops matching, so a future snapshot cannot silently
 # build unpatched.
@@ -42,6 +42,25 @@ if(VCPKG_TARGET_IS_MINGW)
   string(REGEX REPLACE "(\n[A-Za-z_][A-Za-z0-9_]*[ \t]+[*]?)::" "\\1" BREGONIG_MINGW_TEXT "${BREGONIG_MINGW_TEXT}")
   file(WRITE "${BREGONIG_MINGW_MAIN}" "${BREGONIG_MINGW_TEXT}")
   message(STATUS "bregonig: removed ${BREGONIG_QUALIFIED_COUNT} global qualifications for the MinGW build")
+
+
+  # `mem_vc6.h` guards its Visual C++ 6 fallback with a bare
+  # `#if _MSC_VER < 1300`. Under GCC the macro is undefined, evaluates to 0,
+  # and the VC6 branch is taken, so the build ends up calling the MSVC-only
+  # `_set_new_handler` and fails to link with an undefined reference. The
+  # guard has to test that the macro is defined at all.
+  set(BREGONIG_MINGW_MEM "${BREGONIG_MINGW_SOURCE}/src/mem_vc6.h")
+  file(READ "${BREGONIG_MINGW_MEM}" BREGONIG_MEM_TEXT)
+  string(FIND "${BREGONIG_MEM_TEXT}" "#if _MSC_VER < 1300" BREGONIG_MEM_FOUND)
+  if(BREGONIG_MEM_FOUND EQUAL -1)
+    message(FATAL_ERROR
+      "mem_vc6.h no longer guards its VC6 fallback with a bare _MSC_VER "
+      "test; remove this MinGW workaround.")
+  endif()
+  string(REPLACE "#if _MSC_VER < 1300" "#if defined(_MSC_VER) && _MSC_VER < 1300"
+    BREGONIG_MEM_TEXT "${BREGONIG_MEM_TEXT}")
+  file(WRITE "${BREGONIG_MINGW_MEM}" "${BREGONIG_MEM_TEXT}")
+  message(STATUS "bregonig: fixed the mem_vc6.h _MSC_VER guard for the MinGW build")
 
   set(BREGONIG_CONFIGURE_SOURCE "${BREGONIG_MINGW_SOURCE}")
 endif()
