@@ -38,8 +38,8 @@ TEST(MarkerPositionAdapter, PassesThroughAnOrdinaryAsciiPosition)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(1, 4, 3, doc);
 
-	EXPECT_EQ(4, converted.position.GetX2().GetValue());
-	EXPECT_EQ(1, converted.position.GetY2().GetValue());
+	EXPECT_EQ(4, static_cast<int>(converted.position.GetX2()));
+	EXPECT_EQ(1, static_cast<int>(converted.position.GetY2()));
 	EXPECT_FALSE(converted.clamp.Any());
 }
 
@@ -49,8 +49,8 @@ TEST(MarkerPositionAdapter, ColumnZeroOnAnEmptyLineIsExact)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(0, 0, 2, doc);
 
-	EXPECT_EQ(0, converted.position.GetX2().GetValue());
-	EXPECT_EQ(0, converted.position.GetY2().GetValue());
+	EXPECT_EQ(0, static_cast<int>(converted.position.GetX2()));
+	EXPECT_EQ(0, static_cast<int>(converted.position.GetY2()));
 	EXPECT_FALSE(converted.clamp.Any());
 }
 
@@ -60,8 +60,8 @@ TEST(MarkerPositionAdapter, ColumnPastLineEndClampsToLineLength)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(0, 99, 1, doc);
 
-	EXPECT_EQ(3, converted.position.GetX2().GetValue());
-	EXPECT_EQ(0, converted.position.GetY2().GetValue());
+	EXPECT_EQ(3, static_cast<int>(converted.position.GetX2()));
+	EXPECT_EQ(0, static_cast<int>(converted.position.GetY2()));
 	EXPECT_FALSE(converted.clamp.line);
 	EXPECT_TRUE(converted.clamp.column);
 }
@@ -75,7 +75,7 @@ TEST(MarkerPositionAdapter, ColumnExactlyAtLineEndIsNotClamped)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(0, 3, 1, doc);
 
-	EXPECT_EQ(3, converted.position.GetX2().GetValue());
+	EXPECT_EQ(3, static_cast<int>(converted.position.GetX2()));
 	EXPECT_FALSE(converted.clamp.Any());
 }
 
@@ -85,7 +85,7 @@ TEST(MarkerPositionAdapter, LinePastDocumentEndClampsToLastLine)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(50, 0, 2, doc);
 
-	EXPECT_EQ(1, converted.position.GetY2().GetValue());
+	EXPECT_EQ(1, static_cast<int>(converted.position.GetY2()));
 	EXPECT_TRUE(converted.clamp.line);
 }
 
@@ -93,8 +93,8 @@ TEST(MarkerPositionAdapter, EmptyDocumentClampsToOriginRegardlessOfRequestedPosi
 {
 	const auto converted = ConvertMarkerPositionToLogicPoint(7, 12, 0, LogicLineContentLookup{});
 
-	EXPECT_EQ(0, converted.position.GetX2().GetValue());
-	EXPECT_EQ(0, converted.position.GetY2().GetValue());
+	EXPECT_EQ(0, static_cast<int>(converted.position.GetX2()));
+	EXPECT_EQ(0, static_cast<int>(converted.position.GetY2()));
 	EXPECT_TRUE(converted.clamp.line);
 	// Column 12 was requested and column 0 was produced, so the column axis
 	// did move. `MarkerPositionClamp` reports the move on both axes here;
@@ -119,7 +119,7 @@ TEST(MarkerPositionAdapter, SurrogatePairSplitColumnMovesBeforeThePair)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(0, 2, 1, doc);
 
-	EXPECT_EQ(1, converted.position.GetX2().GetValue());
+	EXPECT_EQ(1, static_cast<int>(converted.position.GetX2()));
 	EXPECT_TRUE(converted.clamp.column);
 }
 
@@ -129,11 +129,11 @@ TEST(MarkerPositionAdapter, ColumnBeforeOrAfterASurrogatePairIsUnaffected)
 	const auto doc = FakeDocument({ line });
 
 	const auto before = ConvertMarkerPositionToLogicPoint(0, 1, 1, doc);
-	EXPECT_EQ(1, before.position.GetX2().GetValue());
+	EXPECT_EQ(1, static_cast<int>(before.position.GetX2()));
 	EXPECT_FALSE(before.clamp.column);
 
 	const auto after = ConvertMarkerPositionToLogicPoint(0, 3, 1, doc);
-	EXPECT_EQ(3, after.position.GetX2().GetValue());
+	EXPECT_EQ(3, static_cast<int>(after.position.GetX2()));
 	EXPECT_FALSE(after.clamp.column);
 }
 
@@ -147,7 +147,7 @@ TEST(MarkerPositionAdapter, TabsAreOrdinaryLogicColumnsNotExpanded)
 
 	const auto converted = ConvertMarkerPositionToLogicPoint(0, 1, 1, doc);
 
-	EXPECT_EQ(1, converted.position.GetX2().GetValue());
+	EXPECT_EQ(1, static_cast<int>(converted.position.GetX2()));
 	EXPECT_FALSE(converted.clamp.Any());
 }
 
@@ -158,8 +158,8 @@ TEST(MarkerPositionAdapter, RangeStartHelperUsesOnlyTheStartPosition)
 
 	const auto converted = ConvertMarkerRangeStartToLogicPoint(range, 2, doc);
 
-	EXPECT_EQ(3, converted.position.GetX2().GetValue());
-	EXPECT_EQ(1, converted.position.GetY2().GetValue());
+	EXPECT_EQ(3, static_cast<int>(converted.position.GetX2()));
+	EXPECT_EQ(1, static_cast<int>(converted.position.GetY2()));
 }
 
 TEST(MarkerPositionAdapter, FullRangeConvertsBothEndpointsIndependently)
@@ -169,12 +169,12 @@ TEST(MarkerPositionAdapter, FullRangeConvertsBothEndpointsIndependently)
 
 	const auto converted = ConvertMarkerRangeToLogicRange(range, 2, doc);
 
-	EXPECT_EQ(2, converted.start.position.GetX2().GetValue());
-	EXPECT_EQ(0, converted.start.position.GetY2().GetValue());
+	EXPECT_EQ(2, static_cast<int>(converted.start.position.GetX2()));
+	EXPECT_EQ(0, static_cast<int>(converted.start.position.GetY2()));
 	EXPECT_FALSE(converted.start.clamp.Any());
 
-	EXPECT_EQ(11, converted.end.position.GetX2().GetValue());
-	EXPECT_EQ(1, converted.end.position.GetY2().GetValue());
+	EXPECT_EQ(11, static_cast<int>(converted.end.position.GetX2()));
+	EXPECT_EQ(1, static_cast<int>(converted.end.position.GetY2()));
 	EXPECT_TRUE(converted.end.clamp.column);
 }
 
