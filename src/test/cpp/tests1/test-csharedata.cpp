@@ -416,9 +416,16 @@ MATCHER(IsInitializedCommonSettingWindow, "Checks if CommonSetting_Window is pro
 	EXPECT_THAT(sWindow.m_bUseCompatibleBMP, IsTrue());
 	EXPECT_THAT(sWindow.m_bMenuIcon, IsFalse());
 
-	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA17を更新して使うべき。
+	// The VS Code-shaped default: the file's own name, then the opened
+	// folder's own name, and never a path. Active and inactive are the same
+	// string, so this asserts one literal twice rather than two variants.
+	EXPECT_THAT(sWindow.m_szWindowCaptionActive, StrEq(
+		L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+		L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}"));
 
-	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} - $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}"));	// 👈バグ。 STR_ERR_CSHAREDATA18を更新して使うべき。
+	EXPECT_THAT(sWindow.m_szWindowCaptionInactive, StrEq(
+		L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+		L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}"));
 
 	return true;
 }

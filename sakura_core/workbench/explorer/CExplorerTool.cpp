@@ -234,9 +234,18 @@ using icons::seti::DrawSetiIcon;
 	cxx::com_pointer<IWICBitmapScaler> scaler;
 	IWICBitmapSource* source = frame;
 	if (scaledWidth != width || scaledHeight != height) {
+		// MinGW-w64's wincodec.h still stops at WICBitmapInterpolationModeFant;
+		// the high-quality cubic mode was added to the Windows SDK in Windows 8.
+		// The experimental MinGW build therefore scales with Fant, which is a
+		// quality difference in that build only.
+#if defined(_MSC_VER)
+		constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeHighQualityCubic;
+#else
+		constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeFant;
+#endif
 		if (FAILED(factory->CreateBitmapScaler(&scaler))
 			|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-				WICBitmapInterpolationModeHighQualityCubic))) return nullptr;
+				kScalerMode))) return nullptr;
 		source = scaler;
 	}
 	cxx::com_pointer<IWICFormatConverter> converter;
