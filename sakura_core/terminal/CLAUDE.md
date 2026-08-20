@@ -238,11 +238,12 @@ explicit vertical orientation so panes can also stack top-to-bottom:
 `TerminalPaneLayout` is the one geometry authority: it uses a 4-DIP inter-pane
 divider, honors the 80-DIP minimum along the group's primary axis when the
 available extent permits it, and distributes any remaining extent from the
-group's positive weights. The right-side terminal list stays on the right for
-both orientations. When a group must be rebuilt, suppress parent-focus handling
-until every child has been detached. Closing a focused native child
-synchronously transfers focus and may otherwise re-enter layout against a pane
-that is being destroyed.
+group's positive weights. The typed `terminal.integrated.tabs.location` policy
+selects the left or right list boundary; the resulting pane/list rectangles
+still come only from `TerminalPaneLayout`. When a group must be rebuilt, suppress
+parent-focus handling until every child has been detached. Closing a focused
+native child synchronously transfers focus and may otherwise re-enter layout
+against a pane that is being destroyed.
 
 The terminal list is a right-side projection of all `TerminalTabManager`
 sessions. It is hidden for zero or one session and, for two or more sessions,
@@ -253,12 +254,22 @@ than its height can display, it scrolls by mouse wheel and keeps the selected
 row visible. It must never be modeled as
 another terminal group or as the authority for process lifetime.
 
-Sakura currently implements those VS Code default policies directly; it does
-not yet expose `terminal.integrated.tabs.enabled`, `hideCondition`, or
-`location` as user settings, and it does not yet offer nested/grid terminal
-arrangements. Keep that divergence explicit. Add a typed settings and layout
-model before exposing configuration rather than adding visual-only toggles or
-silently treating a list preference as a session operation.
+The typed visibility predicate implements VS Code's `tabs.enabled` and
+`tabs.hideCondition` values (`never`, `singleTerminal`, `singleGroup`); its
+`singleGroup` branch uses the number of terminal groups, never the number of
+terminal sessions in one split group. The pure `ShouldShowTerminalTabPolicy`
+helper applies `showActiveTerminal` to the active-terminal header summary and
+`showActions` to the split/kill/more terminal chrome actions using the resolved
+single-terminal-or-narrow condition. The row projection now resolves the
+default `terminal` codicon through the existing ThemeIcon/Codicon infrastructure
+and paints it in the geometry-owned icon slot; `defaultIcon`/`defaultColor`
+customization remains deferred because Sakura has no terminal-profile icon/color
+source yet.
+All nine tab policy keys are read in one coherent configuration snapshot by
+`CEditWnd` and pushed as plain data through `CTerminalTool`. Configuration
+notifications marshal to the UI thread and invalidate layout/paint without
+restarting a PTY or entering `TerminalTabManager`. Nested/grid terminal
+arrangements remain outside this contract.
 
 ## Clipboard and Selection Interaction
 
@@ -352,8 +363,9 @@ Rules for that resolver:
   between two separators has to collapse the pair into one, and a separator at
   either end has to disappear.
 - A **known but unavailable** variable resolves to empty and collapses. An
-  **unknown** variable stays literal, the way VS Code leaves unrecognized text
-  alone.
+  **unknown** variable is omitted, matching VS Code's `labels.template`
+  tokenizer; an all-unknown title therefore reaches the normal process-name
+  fallback.
 - Never fabricate a value from a neighbouring one. `${cwdFolder}`,
   `${task}`, `${shellCommand}`, `${shellPromptInput}`, and `${progress}` stay
   empty until the subsystem that really owns them exists; guessing them from the
@@ -370,7 +382,8 @@ recognition list is deliberately tiny and rejects any path-shaped title, which
 is what keeps pwsh's directory title out. Widening it needs evidence that the CLI
 in question really announces itself that way.
 
-Settings are not read here yet. The defaults live in
-`TerminalTabPresentationSettings`, and PR 1B pushes the configured snapshot in
-through `CTerminalTool` as plain data — `TerminalTabManagerDependencies` owns
-session lifetime and must not gain a configuration dependency.
+The defaults live in `TerminalTabPresentationSettings`. `CEditWnd` owns the
+configuration service boundary and pushes a coherent snapshot through
+`CTerminalTool` as plain data — `TerminalTabManagerDependencies` owns session
+lifetime and must not gain a configuration dependency. Paint reads only the
+already-projected settings; it never calls the configuration service.

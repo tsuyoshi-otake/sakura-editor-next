@@ -95,6 +95,36 @@ TEST(ConfigurationService, ReturnsDescriptorDefaultAndDetailedInspection)
 	EXPECT_EQ("descriptor", inspected.provenance.front().sourceId);
 }
 
+TEST(ConfigurationService, BuiltinTerminalTabSettingsReadAsOneCoherentSnapshot)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const std::vector<std::string> keys {
+		"terminal.integrated.tabs.title",
+		"terminal.integrated.tabs.description",
+		"terminal.integrated.tabs.separator",
+		"terminal.integrated.tabs.allowAgentCliTitle",
+		"terminal.integrated.tabs.enabled",
+		"terminal.integrated.tabs.hideCondition",
+		"terminal.integrated.tabs.showActiveTerminal",
+		"terminal.integrated.tabs.showActions",
+		"terminal.integrated.tabs.location",
+	};
+	const auto read = service.ReadSnapshot(keys, Target());
+	ASSERT_EQ(EConfigurationOutcome::Applied, read.outcome);
+	ASSERT_TRUE(read.snapshot.has_value());
+	ASSERT_EQ(keys.size(), read.snapshot->values.size());
+	EXPECT_EQ(L"${process}", std::get<std::wstring>(read.snapshot->values[0].Value()));
+	EXPECT_EQ(L"${task}${separator}${local}${separator}${cwdFolder}",
+		std::get<std::wstring>(read.snapshot->values[1].Value()));
+	EXPECT_EQ(L" - ", std::get<std::wstring>(read.snapshot->values[2].Value()));
+	EXPECT_TRUE(std::get<bool>(read.snapshot->values[3].Value()));
+	EXPECT_TRUE(std::get<bool>(read.snapshot->values[4].Value()));
+	EXPECT_EQ(L"singleTerminal", std::get<std::wstring>(read.snapshot->values[5].Value()));
+	EXPECT_EQ(L"singleTerminalOrNarrow", std::get<std::wstring>(read.snapshot->values[6].Value()));
+	EXPECT_EQ(L"singleTerminalOrNarrow", std::get<std::wstring>(read.snapshot->values[7].Value()));
+	EXPECT_EQ(L"right", std::get<std::wstring>(read.snapshot->values[8].Value()));
+}
+
 TEST(ConfigurationService, ReadSnapshotPreservesRequestOrderAndUsesEffectivePrecedence)
 {
 	auto service = Service();

@@ -6,9 +6,16 @@
 namespace {
 
 using terminal::IsRecognizedAgentCliTitle;
+using terminal::ResolveTerminalTabDropdownPresentation;
+using terminal::ResolveTerminalTabListPresentation;
 using terminal::ResolveTerminalTabPresentation;
+using terminal::ShouldShowTerminalTabs;
 using terminal::TerminalTabPresentationContext;
 using terminal::TerminalTabPresentationSettings;
+using terminal::TerminalTabPresentationSnapshot;
+using terminal::TerminalTabsHideCondition;
+using terminal::TerminalTabsLocation;
+using terminal::TerminalTabsShowCondition;
 
 //! A pwsh-shaped context: the process announces its working directory through
 //! OSC 0, which is what made every tab render as a path before this resolver.
@@ -64,6 +71,118 @@ TEST(TerminalTabPresentation, PathLikeOscTitleIsNotAnAgentCli)
 	EXPECT_FALSE(IsRecognizedAgentCliTitle(L"/home/user/src"));
 	EXPECT_FALSE(IsRecognizedAgentCliTitle(L""));
 	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"  claude code  "));
+	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"Claude Code: project"));
+	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"Gemini: repo"));
+}
+
+TEST(TerminalTabPresentation, AgentCliRecognitionMatchesUpstreamTitlePatterns)
+{
+	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"ClaudeCode"));
+	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"command   code"));
+	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"GitHub Copilot"));
+	EXPECT_TRUE(IsRecognizedAgentCliTitle(L"Gemini CLI"));
+	EXPECT_FALSE(IsRecognizedAgentCliTitle(L"Codex"));
+	EXPECT_FALSE(IsRecognizedAgentCliTitle(L"notcopilotbinary"));
+}
+
+TEST(TerminalTabPresentation, DropdownAndTabListUseSameResolvedTitle)
+{
+	TerminalTabPresentationSettings settings;
+	settings.titleTemplate = L"${process}";
+	settings.descriptionTemplate = L"${process}";
+	const TerminalTabPresentationSnapshot snapshot {
+		L"pwsh", L"PowerShell", L"", L"C:\\workspace" };
+
+	// CTerminalTool's list painter and session dropdown call distinct surface
+	// wrappers over the same snapshot projection. A mutant that changes one
+	// wrapper's source or fallback therefore changes this observable comparison.
+	const auto listPresentation = ResolveTerminalTabListPresentation(settings, snapshot);
+	const auto dropdownPresentation = ResolveTerminalTabDropdownPresentation(settings, snapshot);
+	EXPECT_EQ(listPresentation, dropdownPresentation);
+	EXPECT_EQ(L"pwsh", listPresentation.title);
+	EXPECT_EQ(L"pwsh", dropdownPresentation.description);
+}
+
+TEST(TerminalTabPresentation, TemplateControlCharactersAreRemoved)
+{
+	TerminalTabPresentationSettings settings;
+	settings.titleTemplate = L"left\r${process}${separator}\nright\t";
+	settings.separator = L"\r - \n";
+	auto context = PwshContext();
+	context.cwdFolder = L"repo";
+	EXPECT_EQ(L"leftpwsh - right", ResolveTerminalTabPresentation(settings, context).title);
+}
+
+TEST(TerminalTabPresentation, TypedTabVisibilityUsesTheRequestedCount)
+{
+	TerminalTabPresentationSettings settings;
+	settings.hideCondition = TerminalTabsHideCondition::SingleTerminal;
+	EXPECT_FALSE(ShouldShowTerminalTabs(settings, 0, 0));
+	EXPECT_FALSE(ShouldShowTerminalTabs(settings, 1, 1));
+	EXPECT_TRUE(ShouldShowTerminalTabs(settings, 2, 1));
+
+	settings.hideCondition = TerminalTabsHideCondition::SingleGroup;
+	EXPECT_FALSE(ShouldShowTerminalTabs(settings, 3, 1));
+	EXPECT_TRUE(ShouldShowTerminalTabs(settings, 2, 2));
+
+	settings.hideCondition = TerminalTabsHideCondition::Never;
+	EXPECT_TRUE(ShouldShowTerminalTabs(settings, 0, 0));
+	settings.tabsEnabled = false;
+	EXPECT_FALSE(ShouldShowTerminalTabs(settings, 10, 10));
+}
+
+TEST(TerminalTabPresentation, TypedConfigurationParsingRejectsUnknownValues)
+{
+	EXPECT_EQ(TerminalTabsHideCondition::SingleGroup,
+		terminal::ParseTerminalTabsHideCondition(L"singleGroup"));
+	EXPECT_EQ(TerminalTabsLocation::Left, terminal::ParseTerminalTabsLocation(L"left"));
+	EXPECT_EQ(TerminalTabsShowCondition::SingleTerminalOrNarrow,
+		terminal::ParseTerminalTabsShowCondition(L"singleTerminalOrNarrow"));
+	EXPECT_FALSE(terminal::ParseTerminalTabsHideCondition(L"groups"));
+	EXPECT_FALSE(terminal::ParseTerminalTabsLocation(L"middle"));
+	EXPECT_FALSE(terminal::ParseTerminalTabsShowCondition(L"compact"));
+}
+
+TEST(TerminalTabPresentation, ShowActiveAndActionsUseUpstreamConditions)
+{
+	EXPECT_TRUE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::Always, 4, false));
+	EXPECT_TRUE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::SingleTerminal, 1, false));
+	EXPECT_FALSE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::SingleTerminal, 2, true));
+	EXPECT_TRUE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::SingleTerminalOrNarrow, 2, true));
+	EXPECT_FALSE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::Never, 1, true));
+}
+
+TEST(TerminalTabPresentation, RowGeometryStaysBoundedAndDropsDescriptionFirst)
+{
+	for( int rowWidth = 1; rowWidth <= 240; ++rowWidth ) {
+		const terminal::TerminalTabRowLayoutInput input {
+			{ 10, 20, 10 + rowWidth, 48 }, 144, true, true, true, true };
+		const auto layout = terminal::CalculateTerminalTabRowLayout(input);
+		const auto inside = [row = input.Row()](const terminal::TerminalTabPresentationRect& rect) {
+			if( rect.Width() == 0 || rect.Height() == 0 ) return true;
+			return rect.left >= row.left && rect.top >= row.top
+				&& rect.right <= row.right && rect.bottom <= row.bottom
+				&& rect.left <= rect.right && rect.top <= rect.bottom;
+		};
+		EXPECT_TRUE(inside(layout.SplitIndent()));
+		EXPECT_TRUE(inside(layout.Icon()));
+		EXPECT_TRUE(inside(layout.Title()));
+		EXPECT_TRUE(inside(layout.Description()));
+		EXPECT_TRUE(inside(layout.Status()));
+		if( layout.Title().Width() > 0 && layout.Description().Width() > 0 ) {
+			EXPECT_LE(layout.Title().right, layout.Description().left);
+		}
+	}
+	const terminal::TerminalTabRowLayoutInput narrow {
+		{ 0, 0, 40, 24 }, 96, false, true, true, true };
+	const auto narrowLayout = terminal::CalculateTerminalTabRowLayout(narrow);
+	EXPECT_GT(narrowLayout.Title().Width(), 0);
+	EXPECT_EQ(0, narrowLayout.Status().Width());
 }
 
 TEST(TerminalTabPresentation, EmptyVariablesDoNotLeaveSeparators)
@@ -127,11 +246,11 @@ TEST(TerminalTabPresentation, OutputIsBounded)
 		ResolveTerminalTabPresentation(settings, context).title.size());
 }
 
-TEST(TerminalTabPresentation, UnknownVariablesStayLiteral)
+TEST(TerminalTabPresentation, UnknownVariablesAreOmittedAndTitleFallsBack)
 {
 	TerminalTabPresentationSettings settings;
 	settings.titleTemplate = L"${notAVariable}";
-	EXPECT_EQ(L"${notAVariable}", ResolveTerminalTabPresentation(settings, PwshContext()).title);
+	EXPECT_EQ(L"pwsh", ResolveTerminalTabPresentation(settings, PwshContext()).title);
 }
 
 TEST(TerminalTabPresentation, CwdFallsBackToTheInitialWorkingDirectory)

@@ -50,22 +50,34 @@ TerminalPaneLayoutResult CalculateTerminalPaneLayout( const TerminalPaneLayoutIn
 	const auto preferredList = Dip(120, input.dpi);
 	const auto dividerDefault = Dip(4, input.dpi);
 
-	std::int64_t paneWidth = width;
+	std::int64_t paneLeft = input.content.left;
+	std::int64_t paneRight = input.content.right;
 	const auto tabsDividerWidth = std::max(1, Dip(1, input.dpi));
 	if( input.showTabs && width >= static_cast<std::int64_t>(terminalMinimum) + listMinimum + tabsDividerWidth ) {
 		const auto listWidth = std::min<std::int64_t>(preferredList, width - terminalMinimum - tabsDividerWidth);
-		const auto listLeft = static_cast<std::int64_t>(input.content.right) - listWidth;
-		result.tabsBounds = { static_cast<LONG>(listLeft), input.content.top, input.content.right, input.content.bottom };
 		const auto dividerWidth = std::min<std::int64_t>(tabsDividerWidth, listWidth);
-		result.tabsDivider = { static_cast<LONG>(listLeft - dividerWidth), input.content.top,
-			static_cast<LONG>(listLeft), input.content.bottom };
-		paneWidth = listLeft - dividerWidth - input.content.left;
+		if( input.tabsLocation == TerminalTabsLocation::Left ) {
+			const auto listRight = static_cast<std::int64_t>(input.content.left) + listWidth;
+			result.tabsBounds = { input.content.left, input.content.top,
+				static_cast<LONG>(listRight), input.content.bottom };
+			result.tabsDivider = { static_cast<LONG>(listRight), input.content.top,
+				static_cast<LONG>(listRight + dividerWidth), input.content.bottom };
+			paneLeft = listRight + dividerWidth;
+		} else {
+			const auto listLeft = static_cast<std::int64_t>(input.content.right) - listWidth;
+			result.tabsBounds = { static_cast<LONG>(listLeft), input.content.top, input.content.right, input.content.bottom };
+			result.tabsDivider = { static_cast<LONG>(listLeft - dividerWidth), input.content.top,
+				static_cast<LONG>(listLeft), input.content.bottom };
+			paneRight = listLeft - dividerWidth;
+		}
 	}
-	result.panesBounds = { input.content.left, input.content.top, static_cast<LONG>(input.content.left + paneWidth), input.content.bottom };
+	result.panesBounds = { static_cast<LONG>(paneLeft), input.content.top,
+		static_cast<LONG>(paneRight), input.content.bottom };
 
 	const auto paneCount = input.paneCount;
 	const auto dividerCount = paneCount > 1 ? paneCount - 1 : 0;
 	const bool vertical = input.orientation == TerminalPaneOrientation::Vertical;
+	const auto paneWidth = paneRight - paneLeft;
 	const auto primaryExtent = vertical ? height : paneWidth;
 	const auto totalDivider = std::min<std::int64_t>(primaryExtent, static_cast<std::int64_t>(dividerCount) * dividerDefault);
 	const auto baseDivider = dividerCount == 0 ? 0 : totalDivider / static_cast<std::int64_t>(dividerCount);
@@ -92,7 +104,7 @@ TerminalPaneLayoutResult CalculateTerminalPaneLayout( const TerminalPaneLayoutIn
 		&& paneCount <= static_cast<std::size_t>(available / minimumPane);
 	const auto basePane = canHonorMinimum ? minimumPane : 0;
 	const auto distributable = available - basePane * static_cast<std::int64_t>(paneCount);
-	std::int64_t cursor = vertical ? input.content.top : input.content.left;
+	std::int64_t cursor = vertical ? input.content.top : paneLeft;
 	std::int64_t allocated = 0;
 	std::int64_t allocatedWeight = 0;
 	for( std::size_t i = 0; i < paneCount; ++i ) {

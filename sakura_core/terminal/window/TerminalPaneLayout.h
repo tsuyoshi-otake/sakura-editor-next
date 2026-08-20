@@ -1,6 +1,8 @@
 /*! @file */
 #pragma once
 
+#include "TerminalTabPresentation.h"
+
 #include <Windows.h>
 
 #include <cstddef>
@@ -25,6 +27,9 @@ struct TerminalPaneLayoutInput {
 	std::span<const int> paneWeights{};
 	bool showTabs{};
 	TerminalPaneOrientation orientation{ TerminalPaneOrientation::Horizontal };
+	//! The terminal list location is a presentation policy; this layout remains
+	//! the sole authority for the resulting pane/list rectangles.
+	TerminalTabsLocation tabsLocation{ TerminalTabsLocation::Right };
 };
 
 struct TerminalPaneLayoutResult {

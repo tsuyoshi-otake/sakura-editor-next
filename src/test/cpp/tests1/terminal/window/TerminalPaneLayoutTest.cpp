@@ -69,6 +69,24 @@ TEST(TerminalPaneLayout, PlacesTerminalListOnTheRight)
 	EXPECT_EQ(1010, result.tabsBounds.right);
 }
 
+TEST(TerminalPaneLayout, PlacesTerminalListOnTheLeftWithoutOverlap)
+{
+	const auto result = terminal::CalculateTerminalPaneLayout({
+		{ 10, 20, 1010, 420 }, 96, 2, {}, true,
+		terminal::TerminalPaneOrientation::Horizontal, terminal::TerminalTabsLocation::Left });
+	EXPECT_EQ(10, result.tabsBounds.left);
+	EXPECT_EQ(130, result.tabsBounds.right);
+	EXPECT_EQ(130, result.tabsDivider.left);
+	EXPECT_EQ(131, result.tabsDivider.right);
+	EXPECT_EQ(131, result.panesBounds.left);
+	EXPECT_EQ(1010, result.panesBounds.right);
+	ASSERT_EQ(2u, result.panes.size());
+	for (const auto& pane : result.panes) {
+		EXPECT_GE(pane.left, result.panesBounds.left);
+		EXPECT_LE(pane.right, result.panesBounds.right);
+	}
+}
+
 TEST(TerminalPaneLayout, ScalesPolicyDimensionsByDpi)
 {
 	const auto result = terminal::CalculateTerminalPaneLayout({ { 0, 0, 1200, 300 }, 192, 1, {}, true });

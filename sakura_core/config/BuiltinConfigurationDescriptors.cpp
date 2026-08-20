@@ -29,6 +29,32 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// Explorer presentation with no contributed file icons.
 		{ "workbench.iconTheme", ConfigurationValue(L""),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 512 } },
+		// VS Code's terminal tab presentation contract. These are window-scoped
+		// settings, so profile/workspace/folder layers participate in one effective
+		// snapshot. The resolver applies sanitization and bounded output after the
+		// snapshot is projected to the terminal tool.
+		{ "terminal.integrated.tabs.title", ConfigurationValue(L"${process}"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 256 } },
+		{ "terminal.integrated.tabs.description", ConfigurationValue(L"${task}${separator}${local}${separator}${cwdFolder}"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 256 } },
+		{ "terminal.integrated.tabs.separator", ConfigurationValue(L" - "),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 256 } },
+		{ "terminal.integrated.tabs.allowAgentCliTitle", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		{ "terminal.integrated.tabs.enabled", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		{ "terminal.integrated.tabs.hideCondition", ConfigurationValue(L"singleTerminal"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 32, { L"never", L"singleTerminal", L"singleGroup" } } },
+		{ "terminal.integrated.tabs.showActiveTerminal", ConfigurationValue(L"singleTerminalOrNarrow"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 32, { L"always", L"singleTerminal", L"singleTerminalOrNarrow", L"never" } } },
+		{ "terminal.integrated.tabs.showActions", ConfigurationValue(L"singleTerminalOrNarrow"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 32, { L"always", L"singleTerminal", L"singleTerminalOrNarrow", L"never" } } },
+		{ "terminal.integrated.tabs.location", ConfigurationValue(L"right"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 8, { L"left", L"right" } } },
 		// VS Code's `scm.countBadge`, which gates the Source Control ViewContainer's
 		// Activity Bar badge. Upstream's values and default are `all` / `focused` /
 		// `off` with `all` registered. Documented divergence: `focused` is answered
