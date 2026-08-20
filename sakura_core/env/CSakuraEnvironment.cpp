@@ -221,6 +221,18 @@ void CSakuraEnvironment::ExpandParameter(const wchar_t* pszSource, wchar_t* pszB
 			}
 			++p;
 			break;
+		case L'W':	// 開いているルートフォルダーの名前 (VS Code の ${rootName})
+			{
+				//	VS Code shows the opened folder's own name, never its path, and
+				//	shows nothing at all when no folder is open.
+				const std::wstring rootName = GetMainWindow() != nullptr
+					? GetMainWindow()->GetWorkspaceRootName() : std::wstring();
+				if( !rootName.empty() ){
+					q = wcs_pushW( q, q_max - q, rootName.c_str() );
+				}
+				++p;
+			}
+			break;
 		case L'E':	// 開いているファイルのあるフォルダーの名前(簡易表示)	2012/12/2 Uchi
 			if( !pcDoc->m_cDocFile.GetFilePathClass().IsValidPath() ){
 				q = wcs_pushW( q, q_max - q, NO_TITLE.c_str(), NO_TITLE_LEN );
@@ -658,6 +670,14 @@ int CSakuraEnvironment::_ExParam_Evaluate( const wchar_t* pCond )
 			return 0;
 		}
 		else {
+			return 1;
+		}
+	case L'W': // $W ルートフォルダーが開かれているか
+		{
+			const CEditWnd* pcWnd = GetMainWindow();
+			if( pcWnd != nullptr && !pcWnd->GetWorkspaceRootName().empty() ){
+				return 0;
+			}
 			return 1;
 		}
 	case L'I': // $I アイコン化されているか

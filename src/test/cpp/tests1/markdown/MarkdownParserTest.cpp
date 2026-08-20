@@ -1,9 +1,10 @@
-/*! @file */
+﻿/*! @file */
 #include "pch.h"
 
 #include "markdown/MarkdownParser.h"
 
 #include <algorithm>
+#include <cstdio>
 
 namespace markdown {
 namespace {
@@ -403,10 +404,12 @@ TEST(MarkdownParser, ExposesUnsupportedNativeCapabilitiesAsTypedBoundaries)
 	const auto document = ParseMarkdown(L"text");
 	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.localImageProjection);
 	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.linkActivation);
-	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.editorPreviewScrollSync);
+	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.scrollPreviewWithEditor);
+	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.scrollEditorWithPreview);
 	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.rawHtmlExecution);
 	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.mathTypesetting);
-	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.mermaidDiagramRendering);
+	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.mermaidFlowchartRendering);
+	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.mermaidNonFlowchartRendering);
 }
 
 TEST(MarkdownParser, LiveUpdateWaitsForAStableRevisionAndEveryBranchTerminates)
@@ -430,6 +433,102 @@ TEST(MarkdownParser, LiveUpdateWaitsForAStableRevisionAndEveryBranchTerminates)
 	model.Reset();
 	EXPECT_EQ(-1, model.RenderedRevision());
 	EXPECT_FALSE(model.HasPendingUpdate());
+}
+
+} // namespace
+} // namespace markdown
+
+namespace markdown {
+namespace {
+
+//! The concatenated text of the first block, which is what the preview draws.
+[[nodiscard]] std::wstring FirstText(std::wstring_view source)
+{
+	const auto document = ParseMarkdown(source);
+	return document.blocks.empty() ? std::wstring{} : document.blocks.front().text;
+}
+
+TEST(MarkdownParserGfm, PairsEmphasisWithTheCommonMarkDelimiterStack)
+{
+	// Forward pairing cannot resolve these: the closing run of `***all***` has
+	// to be split between the strong and the emphasis span.
+	const auto document = ParseMarkdown(L"***all*** and **a *b* c** and _**x**_");
+	ASSERT_EQ(1u, document.blocks.size());
+	const auto& block = document.blocks.front();
+	EXPECT_EQ(L"all and a b c and x", block.text);
+	EXPECT_EQ(3u, CountInline(block, InlineKind::Strong));
+	EXPECT_EQ(3u, CountInline(block, InlineKind::Emphasis));
+}
+
+TEST(MarkdownParserGfm, LeavesIntrawordUnderscoresAlone)
+{
+	EXPECT_EQ(L"a_b_c", FirstText(L"a_b_c"));
+	const auto document = ParseMarkdown(L"snake_case_name and _real_");
+	ASSERT_EQ(1u, document.blocks.size());
+	EXPECT_EQ(L"snake_case_name and real", document.blocks.front().text);
+	EXPECT_EQ(1u, CountInline(document.blocks.front(), InlineKind::Emphasis));
+}
+
+TEST(MarkdownParserGfm, KeepsStrikethroughToOneOrTwoTildes)
+{
+	const auto document = ParseMarkdown(L"~~gone~~ but ~~~kept~~~");
+	ASSERT_EQ(1u, document.blocks.size());
+	EXPECT_EQ(1u, CountInline(document.blocks.front(), InlineKind::Strikethrough));
+	EXPECT_NE(std::wstring::npos, document.blocks.front().text.find(L"~~~kept~~~"));
+}
+
+TEST(MarkdownParserGfm, DecodesNamedAndNumericEntities)
+{
+	EXPECT_EQ(L"\u00a9 \u2014 \u2026 \u00a0 \u00a9 \u2014",
+		FirstText(L"&copy; &mdash; &hellip; &nbsp; &#169; &#x2014;"));
+	// An unknown name stays literal rather than becoming a replacement character.
+	EXPECT_EQ(L"&notanentity;", FirstText(L"&notanentity;"));
+}
+
+TEST(MarkdownParserGfm, ReplacesEmojiShortcodes)
+{
+	EXPECT_EQ(L"Ship it \U0001f680 \U0001f44d", FirstText(L"Ship it :rocket: :+1:"));
+	// A shortcode inside a code span is verbatim, as on GitHub.
+	const auto document = ParseMarkdown(L"`:rocket:` stays");
+	ASSERT_EQ(1u, document.blocks.size());
+	EXPECT_EQ(L":rocket: stays", document.blocks.front().text);
+	EXPECT_EQ(1u, CountInline(document.blocks.front(), InlineKind::Code));
+	EXPECT_EQ(L"a :notanemoji: b", FirstText(L"a :notanemoji: b"));
+}
+
+TEST(MarkdownParserGfm, ReadsIndentedCodeBlocks)
+{
+	const auto document = ParseMarkdown(L"paragraph\n\n    int x = 1;\n    int y = 2;\n");
+	ASSERT_EQ(2u, document.blocks.size());
+	EXPECT_EQ(BlockKind::Paragraph, document.blocks[0].kind);
+	EXPECT_EQ(BlockKind::CodeBlock, document.blocks[1].kind);
+	EXPECT_EQ(L"int x = 1;\nint y = 2;", document.blocks[1].text);
+}
+
+TEST(MarkdownParserGfm, DoesNotLetAnIndentedCodeBlockInterruptAParagraph)
+{
+	const auto document = ParseMarkdown(L"paragraph\n    still the paragraph\n");
+	ASSERT_EQ(1u, document.blocks.size());
+	EXPECT_EQ(BlockKind::Paragraph, document.blocks[0].kind);
+}
+
+TEST(MarkdownParserGfm, KeepsHardLineBreaks)
+{
+	// Two trailing spaces and a trailing backslash are both GFM hard breaks;
+	// a plain line ending is not.
+	EXPECT_EQ(L"one\ntwo\nthree", FirstText(L"one  \ntwo" + std::wstring(1, L'\\') + L"\nthree"));
+	EXPECT_EQ(L"one two", FirstText(L"one\ntwo"));
+}
+
+TEST(MarkdownParserGfm, AcceptsShortTableDelimiterCells)
+{
+	// GFM needs only one dash per column, so `|:-|-:|` is a valid delimiter row.
+	const auto document = ParseMarkdown(L"| a | b |\n|:-|-:|\n| 1 | 2 |\n");
+	ASSERT_EQ(1u, document.blocks.size());
+	EXPECT_EQ(BlockKind::Table, document.blocks.front().kind);
+	ASSERT_EQ(2u, document.blocks.front().tableAlignments.size());
+	EXPECT_EQ(TableAlignment::Left, document.blocks.front().tableAlignments[0]);
+	EXPECT_EQ(TableAlignment::Right, document.blocks.front().tableAlignments[1]);
 }
 
 } // namespace

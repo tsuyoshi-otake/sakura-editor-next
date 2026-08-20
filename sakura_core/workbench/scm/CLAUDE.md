@@ -1400,3 +1400,36 @@ This is only half of the path: the wheel still has to reach the list. See
 `window/CLAUDE.md`, "The wheel follows the pointer, not the focus", for the
 frame-side routing that delivers it to the hovered control instead of the
 focused one.
+
+## Git file decorations feed the Explorer, not the SCM view (2026-08-20, #229)
+
+VS Code separates the SCM service from `IDecorationsService`: the File Explorer
+paints `FileDecoration` values published by a provider, and it never sees a
+`SourceControlResourceState`. This product keeps that boundary.
+
+- `workbench/decorations/FileDecorationModel.h` is the provider-neutral model.
+  It carries a badge, a tooltip, a theme-color *role* (`EFileDecorationColor`),
+  and upstream's `propagate` flag. A provider never resolves a COLORREF and a
+  consumer never learns which provider decorated a path.
+- `GitFileStatusDecorationColor` reproduces the Git extension's own
+  `Resource.getStatusColor` mapping, and `DoesGitFileStatusPropagate` its
+  `resourceDecoration.propagate = type !== DELETED && type !== INDEX_DELETED`.
+  Both take `EGitFileStatus`, which is why `GitResourceDecoration` carries the
+  status rather than a resolved color: the SCM row and the Explorer row derive
+  the same facts from the same value.
+- `BuildGitFileDecorationEntries` is the projection onto native paths. A
+  resource whose URI is not a file URI is dropped, not guessed at.
+- `CScmWorkbenchTool` publishes the whole table on every render, the way
+  upstream's `onDidChangeFileDecorations` carries a set rather than a delta.
+  `RepublishFileDecorations` republishes the last built set without re-running
+  git, which is what a settings change needs.
+
+Recorded omissions (omit, don't fake):
+
+- **`gitDecoration.ignoredResourceForeground` is registered but never
+  published.** Upstream's `GitIgnoreDecorationProvider` runs `git check-ignore`
+  over the resources the Explorer asks about; that query does not exist here, so
+  no path is decorated as ignored. The role stays in the model and the theme so
+  that adding the provider is the only remaining work.
+- **Submodule decorations are not published** for the same reason: the repository
+  model does not enumerate submodules, so nothing can produce the `S` badge.

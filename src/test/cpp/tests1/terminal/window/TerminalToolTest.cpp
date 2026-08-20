@@ -1,6 +1,7 @@
 ﻿/*! @file */
 #include "pch.h"
 #include "terminal/window/TerminalHeaderLayout.h"
+#include "terminal/window/TerminalTabPresentation.h"
 #include "terminal/window/CTerminalTool.h"
 #include "terminal/window/CTerminalWnd.h"
 #include "terminal/window/TerminalFontMetrics.h"
@@ -528,7 +529,9 @@ TEST(TerminalTool, FirstOutputDrainDoesNotWaitForFrameTimer)
 		::DispatchMessageW(&message);
 	}
 	ASSERT_EQ(1u, tool.Tabs().size());
-	EXPECT_EQ(L"Immediate response", tool.Tabs().front().label);
+	// This test owns drain latency, not display policy: the raw OSC title is what
+	// proves the leading drain ran, and the tab title is resolved elsewhere.
+	EXPECT_EQ(L"Immediate response", tool.Tabs().front().sequenceTitle);
 
 	tool.Close();
 	::DestroyWindow(parent);
@@ -571,6 +574,9 @@ TEST(TerminalTool, DrainReportsCompletedSynchronizedFrameEvenWhenNextFrameIsOpen
 	manager.Close();
 }
 
+//! The OSC title is stored raw. A recognized Agent CLI still reaches the tab
+//! title through terminal.integrated.tabs.allowAgentCliTitle, while the stable
+//! process/profile name it would otherwise overwrite stays intact.
 TEST(TerminalTool, OscTitleDoesNotReplaceStableHeaderProfileName)
 {
 	ToolHarness harness;
@@ -584,11 +590,22 @@ TEST(TerminalTool, OscTitleDoesNotReplaceStableHeaderProfileName)
 	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
 
 	const auto drained = manager.DrainOutput(*id);
-	EXPECT_TRUE(drained.titleChanged);
+	EXPECT_TRUE(drained.sequenceChanged);
 	const auto tabs = manager.Snapshot();
 	ASSERT_EQ(1u, tabs.size());
-	EXPECT_EQ(L"Claude Code", tabs.front().label);
+	EXPECT_EQ(L"Claude Code", tabs.front().sequenceTitle);
+	EXPECT_EQ(L"pwsh", tabs.front().processName);
 	EXPECT_EQ(L"pwsh", tabs.front().profileLabel);
+
+	terminal::TerminalTabPresentationContext context;
+	context.processName = tabs.front().processName;
+	context.sequenceTitle = tabs.front().sequenceTitle;
+	context.recognizedAgentCli = terminal::IsRecognizedAgentCliTitle(tabs.front().sequenceTitle);
+	EXPECT_EQ(L"Claude Code", terminal::ResolveTerminalTabPresentation({}, context).title);
+
+	terminal::TerminalTabPresentationSettings disallowed;
+	disallowed.allowAgentCliTitle = false;
+	EXPECT_EQ(L"pwsh", terminal::ResolveTerminalTabPresentation(disallowed, context).title);
 	manager.Close();
 }
 

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -156,10 +156,27 @@ enum class CapabilityStatus {
 struct PreviewCapabilities {
 	CapabilityStatus localImageProjection = CapabilityStatus::Supported;
 	CapabilityStatus linkActivation = CapabilityStatus::Unsupported;
-	CapabilityStatus editorPreviewScrollSync = CapabilityStatus::Unsupported;
+	//! Scroll sync is two independent directions upstream, named after the
+	//! settings that gate them: markdown.preview.scrollPreviewWithEditor moves
+	//! the preview when the editor scrolls, and
+	//! markdown.preview.scrollEditorWithPreview moves the editor when the
+	//! preview scrolls. One combined flag could not state that one direction
+	//! works while the other does not, so the boundary is declared per axis.
+	CapabilityStatus scrollPreviewWithEditor = CapabilityStatus::Supported;
+	CapabilityStatus scrollEditorWithPreview = CapabilityStatus::Supported;
 	CapabilityStatus rawHtmlExecution = CapabilityStatus::Unsupported;
 	CapabilityStatus mathTypesetting = CapabilityStatus::Unsupported;
-	CapabilityStatus mermaidDiagramRendering = CapabilityStatus::Unsupported;
+	/*!
+		@brief Native flowchart drawing
+
+		Split from the other diagram families because they have genuinely
+		different outcomes: a `graph`/`flowchart` block inside the supported
+		subset is laid out and drawn, while every other family stays literal. A
+		single flag could not say that.
+	*/
+	CapabilityStatus mermaidFlowchartRendering = CapabilityStatus::Supported;
+	//! `sequenceDiagram`, `classDiagram`, `stateDiagram`, `gantt`, and the rest.
+	CapabilityStatus mermaidNonFlowchartRendering = CapabilityStatus::Unsupported;
 };
 
 enum class ParseCompletion {

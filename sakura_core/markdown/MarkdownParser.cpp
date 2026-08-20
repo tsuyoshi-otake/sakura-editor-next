@@ -10,6 +10,7 @@
 #include "util/CpuDispatch.h"
 
 #include <algorithm>
+#include <array>
 #include <climits>
 #include <cwctype>
 #include <filesystem>
@@ -252,21 +253,334 @@ void AppendCodePoint(std::wstring& output, unsigned int value)
 #endif
 }
 
+/*!
+	@brief The named HTML entities the preview decodes
+
+	GitHub decodes the full HTML5 named-character-reference list (about 2,200
+	names). Shipping that table for a preview pane is not worth its size, so this
+	is the practical subset: every named reference in HTML 4, plus the Greek,
+	arrow, and typographic names that appear in real documents. A name outside
+	the table stays literal, exactly as an unknown reference does upstream, so
+	the boundary fails closed and is visible in the rendered text.
+
+	Kept sorted by name for the binary search below.
+*/
+constexpr struct { const wchar_t* name; unsigned int value; } kNamedEntities[] = {
+	{ L"AElig", 0x00c6U },
+	{ L"Aacute", 0x00c1U },
+	{ L"Acirc", 0x00c2U },
+	{ L"Agrave", 0x00c0U },
+	{ L"Aring", 0x00c5U },
+	{ L"Atilde", 0x00c3U },
+	{ L"Auml", 0x00c4U },
+	{ L"Ccedil", 0x00c7U },
+	{ L"ETH", 0x00d0U },
+	{ L"Eacute", 0x00c9U },
+	{ L"Ecirc", 0x00caU },
+	{ L"Egrave", 0x00c8U },
+	{ L"Euml", 0x00cbU },
+	{ L"Iacute", 0x00cdU },
+	{ L"Icirc", 0x00ceU },
+	{ L"Igrave", 0x00ccU },
+	{ L"Iuml", 0x00cfU },
+	{ L"Ntilde", 0x00d1U },
+	{ L"Oacute", 0x00d3U },
+	{ L"Ocirc", 0x00d4U },
+	{ L"Ograve", 0x00d2U },
+	{ L"Oslash", 0x00d8U },
+	{ L"Otilde", 0x00d5U },
+	{ L"Ouml", 0x00d6U },
+	{ L"Uacute", 0x00daU },
+	{ L"Ucirc", 0x00dbU },
+	{ L"Ugrave", 0x00d9U },
+	{ L"Uuml", 0x00dcU },
+	{ L"Yacute", 0x00ddU },
+	{ L"aacute", 0x00e1U },
+	{ L"acirc", 0x00e2U },
+	{ L"acute", 0x00b4U },
+	{ L"aelig", 0x00e6U },
+	{ L"agrave", 0x00e0U },
+	{ L"alpha", 0x03b1U },
+	{ L"amp", 0x0026U },
+	{ L"and", 0x2227U },
+	{ L"ang", 0x2220U },
+	{ L"apos", 0x0027U },
+	{ L"aring", 0x00e5U },
+	{ L"asymp", 0x2248U },
+	{ L"atilde", 0x00e3U },
+	{ L"auml", 0x00e4U },
+	{ L"beta", 0x03b2U },
+	{ L"brvbar", 0x00a6U },
+	{ L"bull", 0x2022U },
+	{ L"cap", 0x2229U },
+	{ L"ccedil", 0x00e7U },
+	{ L"cedil", 0x00b8U },
+	{ L"cent", 0x00a2U },
+	{ L"check", 0x2713U },
+	{ L"chi", 0x03c7U },
+	{ L"circ", 0x02c6U },
+	{ L"clubs", 0x2663U },
+	{ L"cong", 0x2245U },
+	{ L"copy", 0x00a9U },
+	{ L"cup", 0x222aU },
+	{ L"curren", 0x00a4U },
+	{ L"dagger", 0x2020U },
+	{ L"darr", 0x2193U },
+	{ L"deg", 0x00b0U },
+	{ L"delta", 0x03b4U },
+	{ L"diams", 0x2666U },
+	{ L"divide", 0x00f7U },
+	{ L"eacute", 0x00e9U },
+	{ L"ecirc", 0x00eaU },
+	{ L"egrave", 0x00e8U },
+	{ L"empty", 0x2205U },
+	{ L"emsp", 0x2003U },
+	{ L"ensp", 0x2002U },
+	{ L"epsilon", 0x03b5U },
+	{ L"equiv", 0x2261U },
+	{ L"eta", 0x03b7U },
+	{ L"eth", 0x00f0U },
+	{ L"euml", 0x00ebU },
+	{ L"euro", 0x20acU },
+	{ L"exist", 0x2203U },
+	{ L"forall", 0x2200U },
+	{ L"frac12", 0x00bdU },
+	{ L"frac14", 0x00bcU },
+	{ L"frac34", 0x00beU },
+	{ L"gamma", 0x03b3U },
+	{ L"ge", 0x2265U },
+	{ L"gt", 0x003eU },
+	{ L"harr", 0x2194U },
+	{ L"hearts", 0x2665U },
+	{ L"hellip", 0x2026U },
+	{ L"iacute", 0x00edU },
+	{ L"icirc", 0x00eeU },
+	{ L"iexcl", 0x00a1U },
+	{ L"igrave", 0x00ecU },
+	{ L"infin", 0x221eU },
+	{ L"int", 0x222bU },
+	{ L"iota", 0x03b9U },
+	{ L"iquest", 0x00bfU },
+	{ L"isin", 0x2208U },
+	{ L"iuml", 0x00efU },
+	{ L"kappa", 0x03baU },
+	{ L"lambda", 0x03bbU },
+	{ L"laquo", 0x00abU },
+	{ L"larr", 0x2190U },
+	{ L"ldquo", 0x201cU },
+	{ L"le", 0x2264U },
+	{ L"lsaquo", 0x2039U },
+	{ L"lsquo", 0x2018U },
+	{ L"lt", 0x003cU },
+	{ L"macr", 0x00afU },
+	{ L"mdash", 0x2014U },
+	{ L"micro", 0x00b5U },
+	{ L"middot", 0x00b7U },
+	{ L"minus", 0x2212U },
+	{ L"mu", 0x03bcU },
+	{ L"nabla", 0x2207U },
+	{ L"nbsp", 0x00a0U },
+	{ L"ndash", 0x2013U },
+	{ L"ne", 0x2260U },
+	{ L"ni", 0x220bU },
+	{ L"not", 0x00acU },
+	{ L"notin", 0x2209U },
+	{ L"nsub", 0x2284U },
+	{ L"ntilde", 0x00f1U },
+	{ L"nu", 0x03bdU },
+	{ L"oacute", 0x00f3U },
+	{ L"ocirc", 0x00f4U },
+	{ L"ograve", 0x00f2U },
+	{ L"oline", 0x203eU },
+	{ L"omega", 0x03c9U },
+	{ L"omicron", 0x03bfU },
+	{ L"oplus", 0x2295U },
+	{ L"or", 0x2228U },
+	{ L"ordf", 0x00aaU },
+	{ L"ordm", 0x00baU },
+	{ L"oslash", 0x00f8U },
+	{ L"otilde", 0x00f5U },
+	{ L"otimes", 0x2297U },
+	{ L"ouml", 0x00f6U },
+	{ L"para", 0x00b6U },
+	{ L"part", 0x2202U },
+	{ L"permil", 0x2030U },
+	{ L"perp", 0x22a5U },
+	{ L"phi", 0x03c6U },
+	{ L"pi", 0x03c0U },
+	{ L"piv", 0x03d6U },
+	{ L"plusmn", 0x00b1U },
+	{ L"pound", 0x00a3U },
+	{ L"prime", 0x2032U },
+	{ L"prod", 0x220fU },
+	{ L"prop", 0x221dU },
+	{ L"psi", 0x03c8U },
+	{ L"quot", 0x0022U },
+	{ L"radic", 0x221aU },
+	{ L"raquo", 0x00bbU },
+	{ L"rarr", 0x2192U },
+	{ L"rdquo", 0x201dU },
+	{ L"reg", 0x00aeU },
+	{ L"rho", 0x03c1U },
+	{ L"rsaquo", 0x203aU },
+	{ L"rsquo", 0x2019U },
+	{ L"sbquo", 0x201aU },
+	{ L"sdot", 0x22c5U },
+	{ L"sect", 0x00a7U },
+	{ L"shy", 0x00adU },
+	{ L"sigma", 0x03c3U },
+	{ L"sigmaf", 0x03c2U },
+	{ L"sim", 0x223cU },
+	{ L"spades", 0x2660U },
+	{ L"sub", 0x2282U },
+	{ L"sube", 0x2286U },
+	{ L"sum", 0x2211U },
+	{ L"sup", 0x2283U },
+	{ L"sup1", 0x00b9U },
+	{ L"sup2", 0x00b2U },
+	{ L"sup3", 0x00b3U },
+	{ L"supe", 0x2287U },
+	{ L"szlig", 0x00dfU },
+	{ L"tau", 0x03c4U },
+	{ L"there4", 0x2234U },
+	{ L"theta", 0x03b8U },
+	{ L"thinsp", 0x2009U },
+	{ L"thorn", 0x00feU },
+	{ L"tilde", 0x02dcU },
+	{ L"times", 0x00d7U },
+	{ L"trade", 0x2122U },
+	{ L"uacute", 0x00faU },
+	{ L"uarr", 0x2191U },
+	{ L"ucirc", 0x00fbU },
+	{ L"ugrave", 0x00f9U },
+	{ L"uml", 0x00a8U },
+	{ L"upsilon", 0x03c5U },
+	{ L"uuml", 0x00fcU },
+	{ L"weierp", 0x2118U },
+	{ L"xi", 0x03beU },
+	{ L"yacute", 0x00fdU },
+	{ L"yen", 0x00a5U },
+	{ L"yuml", 0x00ffU },
+	{ L"zeta", 0x03b6U },
+};
+
+[[nodiscard]] bool LookupNamedEntity(std::wstring_view name, unsigned int* value) noexcept
+{
+	std::size_t low = 0;
+	std::size_t high = std::size(kNamedEntities);
+	while (low < high) {
+		const auto middle = low + (high - low) / 2;
+		const auto order = name.compare(kNamedEntities[middle].name);
+		if (order == 0) {
+			*value = kNamedEntities[middle].value;
+			return true;
+		}
+		if (order < 0) high = middle; else low = middle + 1;
+	}
+	return false;
+}
+
+/*!
+	@brief The emoji shortcodes the preview understands
+
+	GitHub accepts about 1,800 `:name:` shortcodes. A preview pane does not
+	justify shipping that list, so this is the subset that actually appears in
+	README and changelog prose. An unlisted shortcode stays literal, which is
+	what GitHub itself does for a name it does not know, so the boundary is
+	visible rather than silently swallowed.
+
+	Kept sorted by name for the binary search below.
+*/
+constexpr struct { const wchar_t* name; unsigned int value; } kEmojiShortcodes[] = {
+	{ L"+1", 0x1f44dU },
+	{ L"-1", 0x1f44eU },
+	{ L"100", 0x1f4afU },
+	{ L"art", 0x1f3a8U },
+	{ L"beetle", 0x1f41eU },
+	{ L"bell", 0x1f514U },
+	{ L"blue_book", 0x1f4d8U },
+	{ L"book", 0x1f4d6U },
+	{ L"bookmark", 0x1f516U },
+	{ L"boom", 0x1f4a5U },
+	{ L"bug", 0x1f41bU },
+	{ L"bulb", 0x1f4a1U },
+	{ L"calendar", 0x1f4c5U },
+	{ L"check", 0x02714U },
+	{ L"checkered_flag", 0x1f3c1U },
+	{ L"clap", 0x1f44fU },
+	{ L"computer", 0x1f4bbU },
+	{ L"construction", 0x1f6a7U },
+	{ L"dart", 0x1f3afU },
+	{ L"exclamation", 0x02757U },
+	{ L"eyes", 0x1f440U },
+	{ L"fire", 0x1f525U },
+	{ L"gear", 0x02699U },
+	{ L"gem", 0x1f48eU },
+	{ L"gift", 0x1f381U },
+	{ L"green_book", 0x1f4d7U },
+	{ L"hammer", 0x1f528U },
+	{ L"heart", 0x02764U },
+	{ L"heavy_check_mark", 0x02714U },
+	{ L"hourglass", 0x0231bU },
+	{ L"information_source", 0x02139U },
+	{ L"key", 0x1f511U },
+	{ L"lock", 0x1f512U },
+	{ L"loud_sound", 0x1f50aU },
+	{ L"mag", 0x1f50dU },
+	{ L"memo", 0x1f4ddU },
+	{ L"package", 0x1f4e6U },
+	{ L"page_facing_up", 0x1f4c4U },
+	{ L"pencil", 0x1f4ddU },
+	{ L"pushpin", 0x1f4ccU },
+	{ L"question", 0x02753U },
+	{ L"recycle", 0x0267bU },
+	{ L"rocket", 0x1f680U },
+	{ L"scroll", 0x1f4dcU },
+	{ L"shipit", 0x1f41fU },
+	{ L"smile", 0x1f604U },
+	{ L"sparkles", 0x02728U },
+	{ L"star", 0x02b50U },
+	{ L"tada", 0x1f389U },
+	{ L"thumbsdown", 0x1f44eU },
+	{ L"thumbsup", 0x1f44dU },
+	{ L"triangular_flag_on_post", 0x1f6a9U },
+	{ L"warning", 0x026a0U },
+	{ L"wrench", 0x1f527U },
+	{ L"x", 0x0274cU },
+	{ L"zap", 0x026a1U },
+};
+
+[[nodiscard]] bool LookupEmojiShortcode(std::wstring_view name, unsigned int* value) noexcept
+{
+	std::size_t low = 0;
+	std::size_t high = std::size(kEmojiShortcodes);
+	while (low < high) {
+		const auto middle = low + (high - low) / 2;
+		const auto order = name.compare(kEmojiShortcodes[middle].name);
+		if (order == 0) {
+			*value = kEmojiShortcodes[middle].value;
+			return true;
+		}
+		if (order < 0) high = middle; else low = middle + 1;
+	}
+	return false;
+}
+
 [[nodiscard]] bool DecodeEntityAt(std::wstring_view source, std::size_t index,
 	std::wstring& output, std::size_t* consumed)
 {
 	if (index >= source.size() || source[index] != L'&') return false;
+	// The longest name in the table is eight characters; the numeric form needs
+	// room for a full code point, so the window stays wide enough for both.
 	const auto searchLength = std::min<std::size_t>(16, source.size() - index - 1);
 	const auto relativeEnd = source.substr(index + 1, searchLength).find(L';');
 	if (relativeEnd == std::wstring_view::npos) return false;
 	const auto end = index + 1 + relativeEnd;
 	const auto name = source.substr(index + 1, end - index - 1);
-	if (name == L"amp") output.push_back(L'&');
-	else if (name == L"lt") output.push_back(L'<');
-	else if (name == L"gt") output.push_back(L'>');
-	else if (name == L"quot") output.push_back(L'\"');
-	else if (name == L"apos") output.push_back(L'\'');
-	else if (name == L"nbsp") output.push_back(L' ');
+	unsigned int named = 0;
+	if (LookupNamedEntity(name, &named)) {
+		AppendCodePoint(output, named);
+	}
 	else if (name.size() >= 2 && name.front() == L'#') {
 		const bool hexadecimal = name.size() >= 3 && (name[1] == L'x' || name[1] == L'X');
 		const auto digits = name.substr(hexadecimal ? 2 : 1);
@@ -1023,11 +1337,244 @@ void AppendNestedText(ParsedText& result, ParsedText nested, std::size_t start)
 	return true;
 }
 
+/*!
+	@name CommonMark emphasis, resolved with a delimiter stack
+
+	Emphasis cannot be paired by scanning forward for the next matching run:
+	`**a *b* c**` pairs the inner run with the run before `b`, which a forward
+	search from the outer `**` never sees, and `***x***` needs one run to supply
+	both a strong and an emphasis delimiter. CommonMark specifies a delimiter
+	stack processed closer-by-closer, looking *backwards* for the nearest opener,
+	and GitHub renders exactly that. The runs are appended to the text as literal
+	characters while scanning and the consumed ones are cut out afterwards, so
+	spans recorded by other inline rules are remapped once at the end.
+*/
+///@{
+struct InlineDelimiter {
+	std::size_t textPos = 0;   //!< Offset of the run's first character in the text
+	std::size_t count = 0;     //!< Characters still unconsumed
+	std::size_t original = 0;  //!< Run length before any pairing, for the rule of three
+	wchar_t marker = L'*';
+	bool canOpen = false;
+	bool canClose = false;
+	bool active = true;
+};
+
+[[nodiscard]] bool IsUnicodeWhitespace(wchar_t value) noexcept
+{
+	return value == L' ' || value == L'\t' || value == L'\n' || value == L'\r'
+		|| value == L'\f' || value == L'\v';
+}
+
+[[nodiscard]] bool IsUnicodePunctuation(wchar_t value) noexcept
+{
+	return std::iswpunct(value) != 0;
+}
+
+//! Classifies one delimiter run per CommonMark's left/right-flanking definitions.
+void ClassifyDelimiterRun(std::wstring_view source, std::size_t runStart, std::size_t runLength,
+	wchar_t marker, bool* canOpen, bool* canClose) noexcept
+{
+	const wchar_t before = runStart == 0 ? L'\n' : source[runStart - 1];
+	const wchar_t after = runStart + runLength >= source.size() ? L'\n' : source[runStart + runLength];
+	const bool whitespaceBefore = IsUnicodeWhitespace(before);
+	const bool whitespaceAfter = IsUnicodeWhitespace(after);
+	const bool punctuationBefore = IsUnicodePunctuation(before);
+	const bool punctuationAfter = IsUnicodePunctuation(after);
+	const bool leftFlanking = !whitespaceAfter
+		&& (!punctuationAfter || whitespaceBefore || punctuationBefore);
+	const bool rightFlanking = !whitespaceBefore
+		&& (!punctuationBefore || whitespaceAfter || punctuationAfter);
+	if (marker == L'_') {
+		// Intraword underscores stay literal, which is why snake_case_names survive.
+		*canOpen = leftFlanking && (!rightFlanking || punctuationBefore);
+		*canClose = rightFlanking && (!leftFlanking || punctuationAfter);
+	} else {
+		*canOpen = leftFlanking;
+		*canClose = rightFlanking;
+	}
+}
+
+//! Pairs the collected runs, recording the resulting spans and the cut ranges.
+void ResolveInlineDelimiters(std::vector<InlineDelimiter>& delimiters,
+	std::vector<InlineSpan>& spans, std::vector<std::pair<std::size_t, std::size_t>>& removals)
+{
+	for (std::size_t closerIndex = 0; closerIndex < delimiters.size(); ++closerIndex) {
+		while (delimiters[closerIndex].active && delimiters[closerIndex].canClose
+			&& delimiters[closerIndex].count != 0) {
+			std::size_t openerIndex = closerIndex;
+			bool found = false;
+			while (openerIndex != 0) {
+				--openerIndex;
+				const auto& candidate = delimiters[openerIndex];
+				if (!candidate.active || candidate.count == 0) continue;
+				if (candidate.marker != delimiters[closerIndex].marker) continue;
+				if (!candidate.canOpen) continue;
+				// CommonMark's rule of three: a run that can both open and close
+				// may not pair when the original lengths sum to a multiple of
+				// three, unless both lengths already are.
+				if ((delimiters[closerIndex].canOpen || candidate.canClose)
+					&& (candidate.original + delimiters[closerIndex].original) % 3 == 0
+					&& (candidate.original % 3 != 0 || delimiters[closerIndex].original % 3 != 0)) {
+					continue;
+				}
+				found = true;
+				break;
+			}
+			if (!found) break;
+			auto& opener = delimiters[openerIndex];
+			auto& closer = delimiters[closerIndex];
+			const std::size_t use = closer.marker == L'~'
+				? std::min<std::size_t>(std::min(opener.count, closer.count), 2u)
+				: (opener.count >= 2 && closer.count >= 2 ? 2u : 1u);
+			const std::size_t openerCut = opener.textPos + opener.count - use;
+			const std::size_t closerCut = closer.textPos;
+			const InlineKind kind = closer.marker == L'~'
+				? InlineKind::Strikethrough
+				: (use == 2 ? InlineKind::Strong : InlineKind::Emphasis);
+			spans.push_back({ kind, openerCut + use, closerCut - openerCut - use, std::nullopt });
+			removals.emplace_back(openerCut, use);
+			removals.emplace_back(closerCut, use);
+			opener.count -= use;
+			closer.count -= use;
+			closer.textPos += use;
+			if (opener.count == 0) opener.active = false;
+			if (closer.count == 0) closer.active = false;
+			// Everything between the pair can no longer match anything.
+			for (std::size_t between = openerIndex + 1; between < closerIndex; ++between) {
+				delimiters[between].active = false;
+			}
+		}
+	}
+}
+
+//! Cuts the consumed delimiter characters out and remaps every recorded span.
+void ApplyInlineDelimiterRemovals(ParsedText& result,
+	std::vector<std::pair<std::size_t, std::size_t>> removals)
+{
+	if (removals.empty()) return;
+	std::sort(removals.begin(), removals.end());
+	std::wstring text;
+	text.reserve(result.text.size());
+	std::vector<std::size_t> cutStart;
+	std::vector<std::size_t> cutEnd;
+	cutStart.reserve(removals.size());
+	cutEnd.reserve(removals.size());
+	std::size_t copied = 0;
+	for (const auto& removal : removals) {
+		if (removal.first < copied) continue;
+		text.append(result.text, copied, removal.first - copied);
+		cutStart.push_back(removal.first);
+		cutEnd.push_back(removal.first + removal.second);
+		copied = removal.first + removal.second;
+	}
+	if (copied < result.text.size()) text.append(result.text, copied, result.text.size() - copied);
+	const auto map = [&cutStart, &cutEnd](std::size_t offset) noexcept {
+		std::size_t removed = 0;
+		for (std::size_t i = 0; i < cutStart.size(); ++i) {
+			if (cutEnd[i] <= offset) {
+				removed += cutEnd[i] - cutStart[i];
+			} else if (cutStart[i] < offset) {
+				// Inside a cut: those characters are gone, so collapse to its start.
+				removed += offset - cutStart[i];
+			} else {
+				break;
+			}
+		}
+		return offset - removed;
+	};
+	for (auto& span : result.spans) {
+		const auto start = map(span.start);
+		const auto end = map(span.start + span.length);
+		span.start = start;
+		span.length = end > start ? end - start : 0;
+	}
+	result.text = std::move(text);
+	result.spans.erase(
+		std::remove_if(result.spans.begin(), result.spans.end(),
+			[](const InlineSpan& span) {
+				return span.length == 0 && span.kind != InlineKind::Image;
+			}),
+		result.spans.end());
+}
+///@}
+
+/*!
+	@brief Replaces `:name:` shortcodes in already-parsed text
+
+	This runs after inline parsing rather than inside it because ':' is not one
+	of the characters the vectorized special-character scan stops on, and adding
+	it would cost every document a slower scan for a rare construct. Code and
+	math spans are skipped, matching GitHub, which leaves a shortcode inside
+	backticks alone.
+*/
+void ApplyEmojiShortcodes(ParsedText& result)
+{
+	if (result.text.find(L':') == std::wstring::npos) return;
+	const auto isVerbatim = [&result](std::size_t offset) {
+		for (const auto& span : result.spans) {
+			if ((span.kind == InlineKind::Code || span.kind == InlineKind::Math)
+				&& offset >= span.start && offset < span.start + span.length) {
+				return true;
+			}
+		}
+		return false;
+	};
+	std::wstring text;
+	text.reserve(result.text.size());
+	// Each edit is (offset in the original text, replaced length, produced length).
+	std::vector<std::array<std::size_t, 3>> edits;
+	std::size_t index = 0;
+	while (index < result.text.size()) {
+		if (result.text[index] != L':' || isVerbatim(index)) {
+			text.push_back(result.text[index++]);
+			continue;
+		}
+		const auto closing = result.text.find(L':', index + 1);
+		unsigned int codePoint = 0;
+		const std::wstring_view name = closing == std::wstring::npos
+			? std::wstring_view{}
+			: std::wstring_view{ result.text }.substr(index + 1, closing - index - 1);
+		if (name.empty() || name.find_first_of(L" \t\n") != std::wstring_view::npos
+			|| !LookupEmojiShortcode(name, &codePoint)) {
+			text.push_back(result.text[index++]);
+			continue;
+		}
+		const auto before = text.size();
+		AppendCodePoint(text, codePoint);
+		edits.push_back({ index, closing + 1 - index, text.size() - before });
+		index = closing + 1;
+	}
+	if (edits.empty()) return;
+	const auto map = [&edits](std::size_t offset) noexcept {
+		std::ptrdiff_t shift = 0;
+		for (const auto& edit : edits) {
+			if (edit[0] + edit[1] <= offset) {
+				shift += static_cast<std::ptrdiff_t>(edit[2]) - static_cast<std::ptrdiff_t>(edit[1]);
+			} else if (edit[0] < offset) {
+				// Inside a replaced shortcode: collapse to where it now starts.
+				shift += static_cast<std::ptrdiff_t>(edit[0]) - static_cast<std::ptrdiff_t>(offset);
+			} else {
+				break;
+			}
+		}
+		return static_cast<std::size_t>(static_cast<std::ptrdiff_t>(offset) + shift);
+	};
+	for (auto& span : result.spans) {
+		const auto start = map(span.start);
+		const auto end = map(span.start + span.length);
+		span.start = start;
+		span.length = end > start ? end - start : 0;
+	}
+	result.text = std::move(text);
+}
+
 [[nodiscard]] ParsedText ParseInlineInternal(std::wstring_view source, ParseContext& context,
 	std::size_t depth, InlineWorkBudget& budget)
 {
 	ParsedText result;
 	result.text.reserve(source.size());
+	std::vector<InlineDelimiter> delimiters;
 	for (std::size_t index = 0; index < source.size();) {
 		if (budget.exceeded) {
 			result.text.append(source.substr(index));
@@ -1113,26 +1660,27 @@ void AppendNestedText(ParsedText& result, ParsedText nested, std::size_t start)
 				}
 			}
 		}
-		if ((source[index] == L'~' || source[index] == L'*' || source[index] == L'_')
-			&& !CanDescendInline(context, depth)) result.limitExceeded = true;
-		if (source[index] == L'~' && (index == 0 || source[index - 1] != L'~')
-			&& CanDescendInline(context, depth)) {
-			std::size_t count = 1;
-			while (index + count < source.size() && source[index + count] == L'~') ++count;
-			if (count <= 2) {
-				const auto close = FindMarkerRun(source, L'~', count, index + count, budget, true);
-				if (close != std::wstring_view::npos && close > index + count
-					&& !IsSpace(source[index + count]) && !IsSpace(source[close - 1])) {
-					const auto start = result.text.size();
-					auto content = ParseInlineInternal(source.substr(index + count, close - index - count),
-						context, depth + 1, budget);
-					AppendNestedText(result, std::move(content), start);
-					result.spans.push_back({ InlineKind::Strikethrough,
-						start, result.text.size() - start, std::nullopt });
-					index = close + count;
-					continue;
-				}
+		if (source[index] == L'~' || source[index] == L'*' || source[index] == L'_') {
+			std::size_t runLength = 1;
+			while (index + runLength < source.size() && source[index + runLength] == source[index]) {
+				++runLength;
 			}
+			if (!CanDescendInline(context, depth)) {
+				// The configured depth limit keeps the run literal rather than
+				// rendering it anyway, so the boundary stays visible.
+				result.limitExceeded = true;
+			} else if (source[index] != L'~' || runLength <= 2) {
+				// GFM strikethrough is one or two tildes; longer runs are literal.
+				bool canOpen = false;
+				bool canClose = false;
+				ClassifyDelimiterRun(source, index, runLength, source[index], &canOpen, &canClose);
+				delimiters.push_back({ result.text.size(), runLength, runLength,
+					source[index], canOpen, canClose, true });
+			}
+			(void)budget.Consume(runLength);
+			result.text.append(source.substr(index, runLength));
+			index += runLength;
+			continue;
 		}
 		if (source[index] == L'$') {
 			const std::size_t count = index + 1 < source.size() && source[index + 1] == L'$' ? 2 : 1;
@@ -1147,21 +1695,6 @@ void AppendNestedText(ParsedText& result, ParsedText nested, std::size_t start)
 				continue;
 			}
 		}
-		if ((source[index] == L'*' || source[index] == L'_') && CanDescendInline(context, depth)) {
-			const auto marker = source[index];
-			const std::size_t count = index + 1 < source.size() && source[index + 1] == marker ? 2 : 1;
-			const auto close = FindMarkerRun(source, marker, count, index + count, budget);
-			if (close != std::wstring_view::npos && close > index + count) {
-				const auto start = result.text.size();
-				auto content = ParseInlineInternal(source.substr(index + count, close - index - count),
-					context, depth + 1, budget);
-				AppendNestedText(result, std::move(content), start);
-				result.spans.push_back({ count == 2 ? InlineKind::Strong : InlineKind::Emphasis,
-					start, result.text.size() - start, std::nullopt });
-				index = close + count;
-				continue;
-			}
-		}
 		std::size_t consumed = 0;
 		if (DecodeEntityAt(source, index, result.text, &consumed)) {
 			(void)budget.Consume(consumed);
@@ -1171,6 +1704,10 @@ void AppendNestedText(ParsedText& result, ParsedText nested, std::size_t start)
 			result.text.push_back(source[index++]);
 		}
 	}
+	std::vector<std::pair<std::size_t, std::size_t>> removals;
+	ResolveInlineDelimiters(delimiters, result.spans, removals);
+	ApplyInlineDelimiterRemovals(result, std::move(removals));
+	ApplyEmojiShortcodes(result);
 	result.limitExceeded = result.limitExceeded || budget.exceeded;
 	return result;
 }
@@ -1540,7 +2077,8 @@ void ParseTaskListMarker(ListMatch* match) noexcept
 		if (left) cell.remove_prefix(1);
 		if (right && !cell.empty()) cell.remove_suffix(1);
 		cell = Trim(cell);
-		if (cell.size() < 3 || cell.find_first_not_of(L'-') != std::wstring_view::npos) return false;
+		// GFM requires at least one dash per column, so `|:-|-:|` is a valid header.
+		if (cell.empty() || cell.find_first_not_of(L'-') != std::wstring_view::npos) return false;
 		parsed.push_back(left && right ? TableAlignment::Center
 			: (right ? TableAlignment::Right : (left ? TableAlignment::Left : TableAlignment::Default)));
 	}
@@ -1898,6 +2436,33 @@ Document ParseMarkdown(std::wstring_view source, const ParseOptions& options)
 			++index;
 			continue;
 		}
+		// A four-space indent after a blank line is CommonMark's indented code
+		// block. It is checked after the list rules because a nested list item
+		// is also indented, and it requires the blank line because an indented
+		// code block may not interrupt a paragraph.
+		if (CountIndent(line) >= 4 && (index == 0 || Trim(lines[index - 1]).empty())) {
+			const auto sourceLine = sourceLineOffset + index;
+			std::wstring code;
+			bool firstLine = true;
+			std::size_t lastContentLine = index;
+			for (std::size_t scan = index; scan < lines.size(); ++scan) {
+				const auto blank = Trim(lines[scan]).empty();
+				if (!blank && CountIndent(lines[scan]) < 4) break;
+				if (!firstLine) code.push_back(L'\n');
+				code.append(blank ? std::wstring_view{} : lines[scan].substr(4));
+				firstLine = false;
+				if (!blank) lastContentLine = scan;
+			}
+			// Trailing blank lines belong to the document, not to the code.
+			while (!code.empty() && code.back() == L'\n') code.pop_back();
+			index = lastContentLine + 1;
+			Block block;
+			block.kind = BlockKind::CodeBlock;
+			block.text = std::move(code);
+			block.sourceLine = sourceLine;
+			document.blocks.push_back(std::move(block));
+			continue;
+		}
 		ListMatch list;
 		if (ParseListItem(line, &list)) {
 			auto block = MakeTextBlock(list.kind, list.text, context,
@@ -1914,8 +2479,24 @@ Document ParseMarkdown(std::wstring_view source, const ParseOptions& options)
 				std::vector<TableAlignment> ignored;
 				if (ParseSetextLevel(lines[index + 1]) != 0 || ParseTableDelimiter(lines[index + 1], &ignored)) break;
 			}
-			if (!paragraph.empty()) paragraph.push_back(L' ');
-			paragraph.append(Trim(lines[index]));
+			if (!paragraph.empty() && paragraph.back() != L'\n') {
+				paragraph.push_back(L' ');
+			}
+			// GFM hard break: two or more trailing spaces, or a trailing backslash.
+			// The break is carried into the text as a newline, which the renderer
+			// turns into a forced line box.
+			auto content = lines[index];
+			bool hardBreak = false;
+			if (content.size() >= 2 && content.substr(content.size() - 2) == L"  ") {
+				hardBreak = true;
+			} else if (!content.empty() && content.back() == L'\\') {
+				hardBreak = true;
+				content.remove_suffix(1);
+			}
+			paragraph.append(Trim(content));
+			if (hardBreak && index + 1 < lines.size() && !Trim(lines[index + 1]).empty()) {
+				paragraph.push_back(L'\n');
+			}
 			++index;
 		}
 		if (!paragraph.empty()) {

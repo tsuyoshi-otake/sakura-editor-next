@@ -140,7 +140,28 @@ struct GitResourceDecoration final {
 	//! `Uri::ToString()` of the resource, which is the join key.
 	std::wstring resourceUri;
 	wchar_t letter{ L'M' };
+	/*!
+		@brief The status the badge was derived from.
+
+		Upstream's `FileDecoration` carries a color and a `propagate` flag beside
+		the letter, and both are functions of this status. Keeping the status here
+		rather than a resolved color is what lets the File Explorer paint the same
+		decoration the SCM view badges without either surface resolving a theme
+		color for the other.
+	*/
+	EGitFileStatus status{ EGitFileStatus::Modified };
 };
+
+/*!
+	@brief Projects published Git badges onto the provider-neutral decoration model.
+
+	This is the boundary upstream draws between the SCM service and the decorations
+	service: the File Explorer consumes `IDecorationsService`, never a Git resource.
+	A resource whose URI is not a file URI contributes no entry, because a native
+	tree row is addressed by path and there is no path to key it by.
+*/
+[[nodiscard]] std::vector<decorations::FileDecorationEntry> BuildGitFileDecorationEntries(
+	const std::vector<GitResourceDecoration>& decorations);
 
 //!
 //! @brief One published row as a stage/discard command operand.

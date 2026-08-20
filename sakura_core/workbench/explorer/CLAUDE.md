@@ -253,3 +253,44 @@ Recorded divergence of this flow (omit, don't fake):
   association table in `ExplorerFileIcon.h` instead of drawing Seti code points
   in whatever face GDI substitutes. That path is a degraded picture, not the
   intended one; do not extend the Codicon table to close a gap in Seti.
+
+## Git file decorations on a row (2026-08-20, #229)
+
+The Explorer is a decorations *consumer*. It holds a
+`decorations::FileDecorationTable` published to it by the composition root and
+knows nothing about Git; see [`../scm/CLAUDE.md`](../scm/CLAUDE.md) for the
+provider half.
+
+- A file row asks `Resolve(path, false)`; a folder row asks with
+  `includeChildren = true`, which is upstream's `getDecoration(uri, true)`. A
+  folder therefore takes the bubble `\uEA71` (`circle-filled`) with the
+  "Contains emphasized items" tooltip instead of a descendant's letter, and its
+  own decoration still wins the color.
+- The letter badge uses upstream `iconlabel.css` geometry: right inset 16 DIP,
+  5 DIP gap from the label, `opacity: .75`, `font-size: 90%`, `font-weight: 600`.
+  The bubble is 14 DIP at `opacity: .4` with a 14 DIP right inset. GDI has no
+  alpha, so both opacities are composited against the row's actual fill by
+  `BlendColor`; do not substitute a hand-picked dimmer color.
+- A selected row in a focused list keeps the selection foreground, never the
+  decoration color. That is upstream's
+  `.monaco-list:focus .selected .monaco-icon-label { color: inherit !important }`,
+  not a legibility workaround, so it must survive any repaint change here.
+- `git.decorations.enabled`, `explorer.decorations.colors`, and
+  `explorer.decorations.badges` are read by `CEditWnd`. Disabling colors or
+  badges suppresses that half only; disabling the feature clears the table so no
+  stale decoration survives.
+
+Recorded divergences (omit, don't fake):
+
+- **The badge can overlap a very long label.** Upstream shrinks the label
+  element so the badge always has room; the native TreeView owns its own label
+  width and will not yield it. The badge is drawn last, over the row, rather
+  than the label being silently truncated by this view.
+- **High Contrast uses the `highContrast` (hcDark) gitDecoration values in both
+  contrast themes.** This product has one High Contrast palette and no
+  hcDark/hcLight kind, and the Git extension registers no `highContrastLight`
+  section for these colors anyway.
+- **A folder's color comes from its lexicographically first propagating
+  descendant**, because the table is a sorted path list rather than upstream's
+  per-provider `TernarySearchTree` walk. With one provider the color set is the
+  same; the choice among several differently-colored descendants can differ.

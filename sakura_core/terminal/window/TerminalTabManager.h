@@ -37,10 +37,18 @@ struct TerminalTabEvent {
 
 struct TerminalTabSnapshot {
 	std::uint64_t id{};
-	std::wstring label;
-	//! Stable executable/profile name used by the terminal panel chrome.
-	//! OSC title changes intentionally update label without replacing this value.
+	//! ${process} source: the launch executable stem. Never overwritten by the
+	//! process, so it stays a stable name the presentation layer can fall back to.
+	std::wstring processName;
+	//! Stable executable/profile name used by the terminal panel chrome. Kept
+	//! separate from processName so the two can diverge once real terminal
+	//! profiles exist.
 	std::wstring profileLabel;
+	//! ${sequence} source: the raw OSC 0/2 title. This is not a display title;
+	//! TerminalTabPresentation decides whether any of it reaches the tab.
+	std::wstring sequenceTitle;
+	//! ${cwd} fallback while no shell-integration CWD detection exists.
+	std::wstring initialWorkingDirectory;
 	TerminalSessionState state{ TerminalSessionState::Idle };
 	std::uint32_t errorCode{};
 	bool active{};
@@ -49,7 +57,9 @@ struct TerminalTabSnapshot {
 struct TerminalDrainResult {
 	bool found{};
 	bool active{};
-	bool titleChanged{};
+	//! The process changed its OSC title. The displayed title only changes with
+	//! it when the resolved presentation template actually consumes ${sequence}.
+	bool sequenceChanged{};
 	bool synchronizedOutputCommitted{};
 	bool protocolInputPending{};
 	bool protocolInputRejected{};

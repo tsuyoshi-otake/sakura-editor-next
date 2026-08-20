@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -160,9 +160,18 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// color is exactly that absence, not a chosen highlight color.
 	// The three button roles take the system highlight pair rather than a chosen brand color:
 	// a High Contrast theme guarantees that pairing's contrast, and an accent we picked does not.
+	// The Git extension registers a separate `highContrast` set, and unlike the
+	// three diff roles it is not `null`: a High Contrast theme still colors Git
+	// decorations, so taking the system window text here would erase a distinction
+	// upstream deliberately keeps. This product resolves one High Contrast palette
+	// from system colors and has no hcDark/hcLight kind to select between, so the
+	// `highContrast` (dark) set is used for both; see theme/CLAUDE.md.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
 		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
-		window, window, window, highlight, highlightText, highlight };
+		window, window, window, highlight, highlightText, highlight, highlight, highlightText,
+		{ 0xA1, 0xE3, 0xAD }, { 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 },
+		{ 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 }, { 0xA7, 0xA8, 0xA9 },
+		{ 0xC7, 0x4E, 0x39 }, { 0x8D, 0xB9, 0xE2 } };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept

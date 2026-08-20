@@ -69,12 +69,6 @@ public:
 	[[nodiscard]] int GetWidthPixels() const noexcept { return m_widthPixels; }
 	[[nodiscard]] int GetHeightPixels() const noexcept { return m_heightPixels; }
 
-	//! Square logo box above the action list, mirroring VS Code's `.letterpress` watermark.
-	//!
-	//! An empty rectangle means the viewport is too short to show the logo; the action list
-	//! then owns the whole centered block exactly as it did before the logo existed.
-	[[nodiscard]] EmptyEditorSurfaceRect GetLetterpressBounds() const noexcept { return m_letterpress; }
-
 	[[nodiscard]] std::size_t GetActionCount() const noexcept { return kActionCount; }
 	[[nodiscard]] EmptyEditorSurfaceActionInfo GetAction(std::size_t index) const noexcept;
 	[[nodiscard]] std::optional<EmptyEditorSurfaceAction> HitTest(int x, int y) const noexcept;
@@ -108,7 +102,6 @@ private:
 	int m_widthPixels = 0;
 	int m_heightPixels = 0;
 	unsigned int m_dpi = 96;
-	EmptyEditorSurfaceRect m_letterpress{};
 	std::array<EmptyEditorSurfaceRect, kActionCount> m_bounds{};
 	std::array<bool, kActionCount> m_enabled{ true, true, true, true, true };
 	std::optional<EmptyEditorSurfaceAction> m_hovered;

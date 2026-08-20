@@ -132,3 +132,21 @@ hover color from one theme sitting on a background from another.
 The built-in defaults keep Sakura's own accent (`#1F8AD2` dark, `#B83268` light)
 instead of importing VS Code's `#0E639C`/`#007ACC`, consistent with the rest of
  the compiled fallback palette.
+
+## `gitDecoration.*` colors (2026-08-20, #229)
+
+`ThemePalette` carries the ten `gitDecoration.*` roles the Git extension
+registers, and `CColorThemeRegistry` resolves each from the loaded theme by its
+upstream key. The built-in dark/light/High Contrast values are the extension's
+own registered defaults, copied verbatim from its `contributes.colors`; do not
+hand-tune them to match a screenshot.
+
+**Divergence:** the High Contrast palette uses the extension's `highContrast`
+(hcDark) values for both contrast themes. This product exposes one High Contrast
+palette rather than VS Code's separate hcDark and hcLight kinds, and these
+colors register no `highContrastLight` section upstream anyway.
+
+The Explorer never reads these members directly. `CViewContainerPages` copies
+them into `ExplorerPalette::decorationColors` indexed by `EFileDecorationColor`,
+so the view resolves a role rather than a theme key. See
+[`../workbench/explorer/CLAUDE.md`](../workbench/explorer/CLAUDE.md).

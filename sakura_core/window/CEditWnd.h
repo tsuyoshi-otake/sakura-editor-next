@@ -69,6 +69,7 @@
 #include "workbench/output/OutputService.h"
 #include "workbench/problems/MarkerService.h"
 #include "markdown/MarkdownPreviewCommandState.h"
+#include "markdown/MarkdownPreviewLayout.h"
 
 static const int MENUBAR_MESSAGE_MAX_LEN = 30;
 
@@ -87,6 +88,7 @@ class IFileService;
 }
 namespace terminal {
 class CTerminalTool;
+enum class TerminalShortcutPreset : std::uint8_t;
 }
 namespace theme {
 class CColorThemeRegistry;
@@ -989,6 +991,18 @@ private:
 	//! Resolves `scm.inputMinLineCount` / `scm.inputMaxLineCount` through the same
 	//! profile/workspace/folder target and hands them to the Source Control view.
 	void ApplyScmInputLineCountSetting();
+	//! Resolves `sakura.terminal.shortcutPreset` and hands it to the terminal panel.
+	//! A fork extension, not an upstream key; see terminal/CLAUDE.md.
+	void ApplyTerminalShortcutPresetSetting();
+	//! Writes the terminal keybinding preset the user picked from the terminal menu
+	//! into the profile settings document.
+	bool PersistTerminalShortcutPresetSelection(terminal::TerminalShortcutPreset preset);
+	//! Resolves `git.decorations.enabled` and the two `explorer.decorations.*` keys
+	//! and applies them to the File Explorer's decoration rendering.
+	void ApplyExplorerDecorationSettings();
+	//! `git.decorations.enabled`. False means the provider publishes nothing at all,
+	//! which is upstream's own distinction from rendering a decoration without color.
+	bool m_gitDecorationsEnabled = true;
 	//! Which physical side bar the pointer is over, if any. VS Code's composite drag and
 	//! drop is resolved by the drop target, not by the handle that started the gesture.
 	[[nodiscard]] std::optional<workbench::WorkbenchEdge> HitTestSideBarEdge(POINT screenPoint) const;
@@ -1005,7 +1019,23 @@ private:
 	void RefreshMarkdownPreview();
 	void UpdateMarkdownPreviewIfNeeded();
 	[[nodiscard]] std::wstring GetMarkdownPreviewSource(bool* truncated = nullptr);
-	void LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi);
+	/*!
+		@brief Splits the central region between the editor view and the preview
+
+		`minimapWidth` is the minimap's column, which is part of the editor, not a
+		frame-level band: VS Code draws the minimap inside the editor group, so a
+		side-by-side preview must push it left with the editor rather than leave it
+		stranded against the frame. The region passed in therefore includes that
+		column, and the placed minimap rectangle is returned for the caller to
+		apply.
+	*/
+	[[nodiscard]] RECT LayoutMarkdownPreview(int left, int top, int right, int bottom,
+		unsigned int dpi, int minimapWidth);
+	//! True when the point is on the Markdown preview divider, with VS Code's sash hit slop.
+	[[nodiscard]] bool HitTestMarkdownPreviewDivider(POINT point) const noexcept;
+	void CancelMarkdownPreviewResize();
+	//! Re-runs the frame layout while the divider is being dragged.
+	void RelayoutForMarkdownPreviewDivider();
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteMarkdownPreviewCommand(
 		markdown::MarkdownPreviewCommand command);
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ApplyMarkdownPreviewCommandResult(
@@ -1137,6 +1167,11 @@ private:
 	int m_markdownPreviewRevision = -1;
 	std::uint64_t m_markdownPreviewGeneration = 0;
 	RECT m_markdownPreviewDivider{};
+	//! The user's dragged preview width; kPreviewDefaultWidthRequestDip until dragged.
+	int m_markdownPreviewWidthDip = markdown::kPreviewDefaultWidthRequestDip;
+	//! The region the divider splits, kept for the drag arithmetic and its repaint.
+	RECT m_markdownPreviewRegion{};
+	bool m_resizingMarkdownPreview = false;
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;
 	WPARAM m_pendingLayoutWParam = SIZE_RESTORED;
@@ -1164,6 +1199,13 @@ private:
 	int m_workbenchZoomBasePointSize = 0;
 
 public:
+	/*!
+		@brief The opened root folder's display name, empty when no folder is open
+
+		This is VS Code's `${rootName}` caption variable: the folder's own name,
+		never its full path.
+	*/
+	[[nodiscard]] std::wstring GetWorkspaceRootName() const;
 	//子ウィンドウ
 	CMainToolBar	m_cToolbar{ this };			//!< ツールバー
 	CTabWnd			m_cTabWnd;			//!< タブウインドウ	//@@@ 2003.05.31 MIK

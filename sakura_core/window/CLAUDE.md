@@ -669,3 +669,35 @@ workspace names its own folder as the workspace identity, and only a real
 `Workspace` uses `workspaceConfigUri`. Do not hand-roll a target beside it —
 prove a settings read works by changing the value and observing the window, never
 by reading the code path.
+
+## The caption is VS Code's `window.title`, and the minimap belongs to the editor (2026-08-20)
+
+Two frame-level defects had the same root cause: a control was positioned or
+composed against the frame rather than against the concept that owns it.
+
+- **Caption.** The shipped default used `$N`, the abbreviated *full path*. VS
+  Code's default `window.title` is
+  `${dirty}${activeEditorShort}${separator}${rootName}${separator}${appName}`,
+  which is the file's own name and the opened folder's own name — never a path.
+  The defaults in `CShareData.cpp` now read
+  `${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} - $A...`, and
+  `CSakuraEnvironment` gained `$W` (the root folder's name) with a matching
+  `${W?...$}` condition so the separator disappears when no folder is open.
+  `$W` resolves through `CEditWnd::GetWorkspaceRootName()`, which reads the
+  **workspace model** (`GetSemanticWorkspaceRoot`), not the Explorer View: the
+  caption must be right even when that View was never created.
+  A profile still holding the previous shipped default is migrated in
+  `CShareData_IO.cpp`; a caption the user edited is left alone.
+  Verified 2026-08-20 on throwaway profiles: without `-FOLDER`,
+  `CLAUDE.md - Sakura Editor NEXT`; with it,
+  `CLAUDE.md - sakura-editor-next - Sakura Editor NEXT`.
+
+- **Minimap.** `layout.minimap` is a frame-level band to the right of
+  `layout.editor`, so a side-by-side Markdown preview left the minimap stranded
+  against the frame, on the far side of the preview. In VS Code the minimap is
+  drawn *inside* the editor group. `LayoutMarkdownPreview` therefore now
+  receives the editor rectangle **plus** the minimap's column, reserves that
+  column at the right of the editor half, and returns the resulting rectangle
+  for `OnSize2` to apply. When no preview is open the split returns the original
+  edge, so nothing moves. Verified 2026-08-20 with the preview open: editor view
+  323..1263, minimap 1263..1363, preview 1364..1904.

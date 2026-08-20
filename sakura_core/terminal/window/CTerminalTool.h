@@ -10,6 +10,7 @@
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
 #include "terminal/window/TerminalPaneLayout.h"
+#include "terminal/input/TerminalShortcutPreset.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -85,6 +86,17 @@ public:
 	[[nodiscard]] bool EnsureSessionStarted();
 	[[nodiscard]] std::optional<std::uint64_t> AddTerminal();
 	void RedetectPowerShell();
+	//! Selects the multiplexer keybinding preset without persisting it. Used when
+	//! the window applies the effective setting.
+	void SetShortcutPreset( TerminalShortcutPreset preset );
+	[[nodiscard]] TerminalShortcutPreset ShortcutPreset() const noexcept;
+	//! Called when the user picks a preset from the terminal menu, so the window
+	//! can persist the selection. Never called by SetShortcutPreset.
+	void SetShortcutPresetSink( std::function<void(TerminalShortcutPreset)> sink );
+	//! Runs one key through the active preset. Returns true when the preset owns
+	//! the key, meaning it must not reach the shell. PreTranslateMessage uses this
+	//! after reading the physical modifier state.
+	[[nodiscard]] bool DispatchShortcutPresetKey( const TerminalPresetKey& key );
 	[[nodiscard]] bool SelectTerminal( std::uint64_t tabId );
 	[[nodiscard]] bool RestartTerminal( std::uint64_t tabId );
 	[[nodiscard]] bool DeleteTerminal( std::uint64_t tabId );

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -71,6 +71,18 @@ constexpr int kHeaderTwistieSideDip = 12;
 constexpr int kHeaderTitleInsetDip = 22;
 constexpr int kHeaderActionSideDip = 22;
 constexpr int kHeaderActionGapDip = 1;
+// `iconlabel.css` sets `.monaco-icon-label::after { margin: auto 16px 0 5px; }`, so a
+// decoration badge is inset from the row's right edge and never touches the label.
+constexpr int kDecorationBadgeRightInsetDip = 16;
+constexpr int kDecorationBadgeLeftGapDip = 5;
+// The bubble a folder row draws instead of its children's letters is a 14px codicon
+// at `opacity: 0.4` with `margin-right: 14px`; the letters are drawn at `opacity: 0.75`.
+constexpr int kDecorationBubbleSideDip = 14;
+constexpr int kDecorationBubbleRightInsetDip = 14;
+constexpr double kDecorationBadgeOpacity = 0.75;
+constexpr double kDecorationBubbleOpacity = 0.4;
+//! `font-size: 90%` of the row font, as a permille so the scaling is integral.
+constexpr int kDecorationBadgeFontPermille = 900;
 // ViewWelcome lays its content out as a top-flow column: 20px lateral
 // padding, a 300px maximum column, and one em between direct children. Keep
 // the native projection on the same geometry instead of centering a compact
@@ -310,6 +322,24 @@ struct ExplorerPathLess {
 	}
 };
 
+/*!
+	@brief Composites a translucent foreground over an opaque background.
+
+	The decoration badge and the folder bubble are drawn at CSS `opacity` values,
+	and GDI text has no alpha channel, so the blend has to happen here. The
+	background is the row's own fill rather than the view's, or a badge on a
+	selected row would be composited over a color that row does not show.
+*/
+[[nodiscard]] COLORREF BlendColor(COLORREF foreground, COLORREF background, double opacity) noexcept
+{
+	const auto mix = [opacity](int front, int back) {
+		return static_cast<int>(front * opacity + back * (1.0 - opacity) + 0.5);
+	};
+	return RGB(mix(GetRValue(foreground), GetRValue(background)),
+		mix(GetGValue(foreground), GetGValue(background)),
+		mix(GetBValue(foreground), GetBValue(background)));
+}
+
 [[nodiscard]] std::wstring JoinPath(const std::wstring& directory, const wchar_t* child)
 {
 	if (directory.empty()) return child;
@@ -505,6 +535,10 @@ struct CExplorerTool::Impl {
 	unsigned int dpi{ kDefaultDpi };
 	ExplorerPalette palette{};
 	theme::CThemeFont font;
+	//! The published decoration table. Empty until a provider publishes one, which
+	//! is also the state a workspace with no repository must stay in.
+	decorations::FileDecorationTable fileDecorations;
+	ExplorerDecorationOptions decorationOptions;
 	HIMAGELIST iconImages{};
 	std::map<std::wstring, int, std::less<>> iconIndices;
 	std::array<RECT, kHeaderActions.size()> headerActionRects{};
@@ -1437,6 +1471,104 @@ struct CExplorerTool::Impl {
 		UpdateAllItemIcons();
 	}
 
+	/*!
+		@brief Upstream's `getDecoration(uri, includeChildren)` for one row.
+
+		Only a folder collects its descendants, because only a folder has any. The
+		workspace-root node is never rendered, so it is not asked.
+	*/
+	[[nodiscard]] std::optional<decorations::ResolvedFileDecoration> DecorationFor(const Node& node) const
+	{
+		if (fileDecorations.Empty() || node.path.empty()) return std::nullopt;
+		if (!decorationOptions.colors && !decorationOptions.badges) return std::nullopt;
+		return fileDecorations.Resolve(node.path, node.isDirectory);
+	}
+
+	//! The decoration's label color, or nothing when the row must keep the view's.
+	[[nodiscard]] std::optional<COLORREF> DecorationTextColor(
+		const std::optional<decorations::ResolvedFileDecoration>& decoration) const
+	{
+		if (!decoration || !decorationOptions.colors) return std::nullopt;
+		if (decoration->color == decorations::EFileDecorationColor::None) return std::nullopt;
+		return palette.decorationColors[static_cast<std::size_t>(decoration->color)];
+	}
+
+	/*!
+		@brief Draws the decoration badge at the row's right edge.
+
+		A row whose decoration came from its descendants draws upstream's bubble
+		codicon instead of a letter, because the letters describe resources this row
+		is not. Both are composited over the row's own fill, since `iconlabel.css`
+		draws them at an opacity GDI cannot carry in a text color.
+	*/
+	void PaintNodeBadge(HDC dc, const Node& node,
+		const decorations::ResolvedFileDecoration& decoration, COLORREF rowBackground) const
+	{
+		if (dc == nullptr || tree == nullptr || node.item == nullptr) return;
+		if (!decorationOptions.badges) return;
+		const COLORREF base = decorationOptions.colors
+				&& decoration.color != decorations::EFileDecorationColor::None
+			? palette.decorationColors[static_cast<std::size_t>(decoration.color)]
+			: palette.text;
+		RECT row{};
+		if (!TreeView_GetItemRect(tree, node.item, &row, FALSE)) return;
+		RECT label{};
+		if (!TreeView_GetItemRect(tree, node.item, &label, TRUE)) return;
+		if (decoration.containsChildren) {
+			const int side = ScaleDip(kDecorationBubbleSideDip);
+			const int right = static_cast<int>(row.right) - ScaleDip(kDecorationBubbleRightInsetDip);
+			const int top = static_cast<int>(row.top)
+				+ std::max(0, (static_cast<int>(row.bottom - row.top) - side) / 2);
+			if (right - side <= label.right) return;
+			const RECT bubble{ right - side, top, right, top + side };
+			DrawExplorerIcon(dc, bubble, L"circle-filled",
+				BlendColor(base, rowBackground, kDecorationBubbleOpacity));
+			return;
+		}
+		if (decoration.badge.empty()) return;
+		const HFONT badgeFont = CreateBadgeFont();
+		const HFONT previousFont = badgeFont == nullptr
+			? nullptr : static_cast<HFONT>(::SelectObject(dc, badgeFont));
+		RECT box{ std::max(static_cast<int>(label.right) + ScaleDip(kDecorationBadgeLeftGapDip),
+				static_cast<int>(row.left)),
+			row.top, std::max(static_cast<int>(row.left),
+				static_cast<int>(row.right) - ScaleDip(kDecorationBadgeRightInsetDip)),
+			row.bottom };
+		if (box.right > box.left) {
+			const int previousMode = ::SetBkMode(dc, TRANSPARENT);
+			const COLORREF previousColor = ::SetTextColor(dc,
+				BlendColor(base, rowBackground, kDecorationBadgeOpacity));
+			::DrawTextW(dc, decoration.badge.c_str(), static_cast<int>(decoration.badge.size()), &box,
+				DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			::SetTextColor(dc, previousColor);
+			::SetBkMode(dc, previousMode);
+		}
+		if (badgeFont != nullptr) {
+			(void)::SelectObject(dc, previousFont);
+			::DeleteObject(badgeFont);
+		}
+	}
+
+	//! `font-size: 90%; font-weight: 600` applied to the row font.
+	[[nodiscard]] HFONT CreateBadgeFont() const
+	{
+		LOGFONTW description{};
+		const HFONT source = font.Get();
+		if (source == nullptr || ::GetObjectW(source, sizeof(description), &description) == 0) {
+			return nullptr;
+		}
+		description.lfHeight = ::MulDiv(description.lfHeight, kDecorationBadgeFontPermille, 1000);
+		description.lfWeight = FW_SEMIBOLD;
+		return ::CreateFontIndirectW(&description);
+	}
+
+	//! The fill the row actually shows, which is what a translucent badge sits on.
+	[[nodiscard]] COLORREF RowBackground(bool selected, bool hovered) const noexcept
+	{
+		if (selected) return ::GetFocus() == tree ? palette.focus : palette.inactiveSelection;
+		return hovered ? palette.hover : palette.background;
+	}
+
 	void PaintNodeIcon(HDC dc, const Node& node) const
 	{
 		if (dc == nullptr || tree == nullptr || node.item == nullptr) return;
@@ -1508,7 +1640,14 @@ struct CExplorerTool::Impl {
 		const COLORREF background = selected
 			? (focused ? palette.focus : palette.inactiveSelection)
 			: (hovered ? palette.hover : palette.background);
-		const COLORREF foreground = selected && focused ? palette.selectionText : palette.text;
+		// `iconlabel.css` gives a focused list's selected row `color: inherit
+		// !important`, so a decoration never repaints the label there; everywhere
+		// else the decoration's color wins over the view's text color.
+		const auto decoration = DecorationFor(node);
+		const auto decorated = DecorationTextColor(decoration);
+		const COLORREF foreground = selected && focused
+			? palette.selectionText
+			: (decorated ? *decorated : palette.text);
 		if (const HBRUSH brush = ::CreateSolidBrush(palette.background); brush != nullptr) {
 			::FillRect(dc, &row, brush);
 			::DeleteObject(brush);
@@ -1539,6 +1678,7 @@ struct CExplorerTool::Impl {
 			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
 		::SetTextColor(dc, previousTextColor);
 		::SetBkMode(dc, previousBackgroundMode);
+		if (decoration) PaintNodeBadge(dc, node, *decoration, background);
 		return true;
 	}
 
@@ -2035,6 +2175,26 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 }
 
 ExplorerPalette CExplorerTool::GetPalette() const noexcept { return m_impl->palette; }
+
+void CExplorerTool::SetFileDecorations(decorations::FileDecorationTable decorations)
+{
+	m_impl->fileDecorations = std::move(decorations);
+	// Every row can change at once, because the whole table was replaced. The tree
+	// keeps its items; only what they paint differs.
+	if (m_impl->tree != nullptr) ::InvalidateRect(m_impl->tree, nullptr, FALSE);
+}
+
+void CExplorerTool::SetDecorationOptions(ExplorerDecorationOptions options)
+{
+	if (m_impl->decorationOptions == options) return;
+	m_impl->decorationOptions = options;
+	if (m_impl->tree != nullptr) ::InvalidateRect(m_impl->tree, nullptr, FALSE);
+}
+
+ExplorerDecorationOptions CExplorerTool::GetDecorationOptions() const noexcept
+{
+	return m_impl->decorationOptions;
+}
 ExplorerWorkerState CExplorerTool::GetWorkerState() const noexcept { return m_impl->shared->state.load(std::memory_order_acquire); }
 HWND CExplorerTool::GetHwnd() const noexcept { return m_impl->window; }
 
@@ -2257,18 +2417,36 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 					&& impl.PaintDirectoryRow(draw->nmcd.hdc, *directory, selected, hovered)) {
 					return CDRF_SKIPDEFAULT;
 				}
+				auto* const node = impl.FindNodeByItem(item);
+				const auto decoration = node == nullptr
+					? std::nullopt : impl.DecorationFor(*node);
+				const auto decorated = impl.DecorationTextColor(decoration);
+				const bool focused = ::GetFocus() == impl.tree;
 				if (selected) {
-					draw->clrText = ::GetFocus() == impl.tree ? impl.palette.selectionText : impl.palette.text;
-					draw->clrTextBk = ::GetFocus() == impl.tree ? impl.palette.focus : impl.palette.inactiveSelection;
+					draw->clrText = focused ? impl.palette.selectionText : impl.palette.text;
+					draw->clrTextBk = focused ? impl.palette.focus : impl.palette.inactiveSelection;
 				} else if (hovered) {
 					draw->clrText = impl.palette.text;
 					draw->clrTextBk = impl.palette.hover;
 				}
-				return CDRF_NOTIFYPOSTPAINT | (selected || hovered ? CDRF_NEWFONT : 0);
+				// A focused list's selected row keeps `color: inherit !important`;
+				// every other row takes the decoration's color.
+				if (decorated && !(selected && focused)) draw->clrText = *decorated;
+				return CDRF_NOTIFYPOSTPAINT
+					| (selected || hovered || decorated ? CDRF_NEWFONT : 0);
 			}
 			if (draw->nmcd.dwDrawStage == CDDS_ITEMPOSTPAINT) {
 				const auto item = reinterpret_cast<HTREEITEM>(draw->nmcd.dwItemSpec);
-				if (auto* node = impl.FindNodeByItem(item); node != nullptr) impl.PaintNodeIcon(draw->nmcd.hdc, *node);
+				if (auto* node = impl.FindNodeByItem(item); node != nullptr) {
+					impl.PaintNodeIcon(draw->nmcd.hdc, *node);
+					// The control drew this row, so the badge follows it rather than
+					// being drawn into a fill the control is about to overwrite.
+					if (const auto decoration = impl.DecorationFor(*node); decoration) {
+						const bool selected = (draw->nmcd.uItemState & CDIS_SELECTED) != 0;
+						impl.PaintNodeBadge(draw->nmcd.hdc, *node, *decoration,
+							impl.RowBackground(selected, !selected && impl.pointerHoverItem == item));
+					}
+				}
 				return CDRF_DODEFAULT;
 			}
 		}

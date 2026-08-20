@@ -52,8 +52,11 @@ struct TerminalTabManager::Impl {
 		}
 
 		std::uint64_t id{};
-		std::wstring label{ kDefaultTabLabel };
+		std::wstring processName{ kDefaultTabLabel };
 		std::wstring profileLabel{ kDefaultTabLabel };
+		//! Raw OSC 0/2 title. Empty until the process sets one; never a display title.
+		std::wstring sequenceTitle;
+		std::wstring initialWorkingDirectory;
 		std::unique_ptr<SakuraTerminalInputAdapter> input;
 		std::unique_ptr<TerminalModel> model;
 		std::unique_ptr<TerminalParser> parser;
@@ -159,8 +162,10 @@ struct TerminalTabManager::Impl {
 		}
 		launch->initialSize = size;
 		if( launch->workingDirectory.empty() ) launch->workingDirectory.assign(workingDirectory);
-		tab.profileLabel = InitialTabLabel(*launch);
-		tab.label = tab.profileLabel;
+		tab.processName = InitialTabLabel(*launch);
+		tab.profileLabel = tab.processName;
+		tab.sequenceTitle.clear();
+		tab.initialWorkingDirectory = launch->workingDirectory;
 		const auto callback = eventCallback;
 		const auto id = tab.id;
 		TerminalSessionCallbacks callbacks;
@@ -235,8 +240,11 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 	if( tab == nullptr ) return false;
 	if( tab->session ) tab->session->Close();
 	tab->session.reset();
-	tab->label = kDefaultTabLabel;
+	tab->processName = kDefaultTabLabel;
 	tab->profileLabel = kDefaultTabLabel;
+	// A restart must not let the previous process's OSC title describe the new one.
+	tab->sequenceTitle.clear();
+	tab->initialWorkingDirectory.clear();
 	return m_impl->Start(*tab, size, workingDirectory);
 }
 
@@ -338,8 +346,8 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 	result.synchronizedOutputCommitted =
 		tab->model->SynchronizedOutputCommitGeneration() != beforeSynchronizedCommit;
 	if( tab->model->Title() != beforeTitle ) {
-		tab->label = tab->model->Title().empty() ? std::wstring(kDefaultTabLabel) : tab->model->Title();
-		result.titleChanged = true;
+		tab->sequenceTitle = tab->model->Title();
+		result.sequenceChanged = true;
 	}
 	result.dirtyRows = tab->model->ConsumeDirtyRows();
 	return result;
@@ -433,7 +441,8 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 	for( const auto& tab : m_impl->tabs ) {
 		const auto state = tab->session ? tab->session->GetState() : tab->state;
 		const auto error = tab->errorCode != 0 ? tab->errorCode : tab->session ? tab->session->GetLastError() : 0;
-		result.push_back({ tab->id, tab->label, tab->profileLabel, state, error, m_impl->activeTabId == tab->id });
+		result.push_back({ tab->id, tab->processName, tab->profileLabel, tab->sequenceTitle,
+			tab->initialWorkingDirectory, state, error, m_impl->activeTabId == tab->id });
 	}
 	return result;
 }

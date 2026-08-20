@@ -530,6 +530,7 @@
     <ClInclude Include="..\sakura_core\accessibility\CustomUiAutomationProvider.h" />
     <ClInclude Include="..\sakura_core\terminal\PowerShellLocator.h" />
     <ClInclude Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.h" />
+    <ClInclude Include="..\sakura_core\terminal\input\TerminalShortcutPreset.h" />
     <ClInclude Include="..\sakura_core\terminal\model\TerminalModel.h" />
     <ClInclude Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.h" />
     <ClInclude Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\inc\CodepointWidthDetector.hpp" />
@@ -550,6 +551,7 @@
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalFontMetrics.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalHeaderLayout.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalPaneLayout.h" />
+	<ClInclude Include="..\sakura_core\terminal\window\TerminalTabPresentation.h" />
     <ClInclude Include="..\sakura_core\terminal\window\TerminalInput.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalClipboardPaste.h" />
 	<ClInclude Include="..\sakura_core\terminal\window\TerminalRenderPlan.h" />
@@ -564,6 +566,7 @@
 	<ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
+	<ClInclude Include="..\sakura_core\markdown\MermaidDiagram.h" />
     <ClInclude Include="..\sakura_core\textmate\OnigmoRegexEngine.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateGrammarCompiler.h" />
     <ClInclude Include="..\sakura_core\textmate\TextMateGrammarModel.h" />
@@ -643,6 +646,7 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitCommitCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitStageCommands.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitRefModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\decorations\FileDecorationModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitDiffModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitLineStaging.h" />
@@ -1170,6 +1174,7 @@
     </ClCompile>
     <ClCompile Include="..\sakura_core\terminal\PowerShellLocator.cpp" />
     <ClCompile Include="..\sakura_core\terminal\input\SakuraTerminalInputAdapter.cpp" />
+    <ClCompile Include="..\sakura_core\terminal\input\TerminalShortcutPreset.cpp" />
     <ClCompile Include="..\sakura_core\terminal\model\TerminalModel.cpp" />
     <ClCompile Include="..\sakura_core\terminal\unicode\TerminalGraphemeWidth.cpp" />
     <ClCompile Include="..\sakura_core\terminal\vendor\windows_terminal\src\types\CodepointWidthDetector.cpp">
@@ -1211,6 +1216,7 @@
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalClipboardPaste.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalRenderMapping.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalPaneLayout.cpp" />
+	<ClCompile Include="..\sakura_core\terminal\window\TerminalTabPresentation.cpp" />
 	<ClCompile Include="..\sakura_core\terminal\window\TerminalRenderPlan.cpp" />
     <ClCompile Include="..\sakura_core\terminal\window\TerminalTabManager.cpp" />
     <ClCompile Include="..\sakura_core\theme\CThemeService.cpp" />
@@ -1220,6 +1226,7 @@
 	<ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\MermaidDiagram.cpp" />
     <ClCompile Include="..\sakura_core\textmate\OnigmoRegexEngine.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateGrammarCompiler.cpp" />
     <ClCompile Include="..\sakura_core\textmate\TextMateJsonGrammarLoader.cpp" />

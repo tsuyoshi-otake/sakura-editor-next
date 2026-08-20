@@ -554,6 +554,9 @@ struct CScmWorkbenchTool::Impl {
 	theme::CThemeFont font;
 	FileActivationCallback activateFile;
 	StatusBarCommandsCallback statusBarCommands;
+	FileDecorationsCallback fileDecorations;
+	//! The decorations of the last render, kept so a late consumer sees them too.
+	std::vector<GitResourceDecoration> publishedDecorations;
 	CommandCallback runCommand;
 	TextResolver text;
 	PublicationTextResolver publicationText;
@@ -656,6 +659,17 @@ struct CScmWorkbenchTool::Impl {
 	//! Apply the current Git state to the service, then re-render from what the
 	//! service holds. Publishing and rendering are one step so the list can never
 	//! show a generation the service has already replaced.
+	/*!
+		@brief Hands the last published badges to the decorations consumer.
+
+		The projection runs here rather than in the consumer so the URI-to-path
+		conversion stays beside the URIs that were published, and so a resource whose
+		URI has no native path is dropped once instead of by every consumer.
+	*/
+	void PublishFileDecorations() const {
+		if (!fileDecorations) return;
+		fileDecorations(BuildGitFileDecorationEntries(publishedDecorations));
+	}
 	void PublishAndRender() {
 		const auto selected = CaptureListSelection();
 		std::vector<ScmProviderState> providers;
@@ -698,6 +712,8 @@ struct CScmWorkbenchTool::Impl {
 		RebuildActionButton(providers);
 		Populate(selected);
 		PublishStatusBarCommands(providers);
+		publishedDecorations = std::move(decorations);
+		PublishFileDecorations();
 	}
 	[[nodiscard]] int BandHeight() const noexcept
 	{
@@ -2466,6 +2482,14 @@ void CScmWorkbenchTool::SetInputLineCountRange(int minLineCount, int maxLineCoun
 void CScmWorkbenchTool::SetFileActivationCallback(FileActivationCallback callback) { m_impl->activateFile = std::move(callback); }
 void CScmWorkbenchTool::SetStatusBarCommandsCallback(StatusBarCommandsCallback callback) { m_impl->statusBarCommands = std::move(callback); }
 void CScmWorkbenchTool::SetCommandCallback(CommandCallback callback) { m_impl->runCommand = std::move(callback); }
+void CScmWorkbenchTool::SetFileDecorationsCallback(FileDecorationsCallback callback)
+{
+	m_impl->fileDecorations = std::move(callback);
+	// A consumer that arrives after the first refresh must not wait for the next
+	// one to see a decorated tree, so it is handed what has already been published.
+	if (m_impl->fileDecorations) m_impl->PublishFileDecorations();
+}
+void CScmWorkbenchTool::RepublishFileDecorations() { m_impl->PublishFileDecorations(); }
 void CScmWorkbenchTool::SetTextResolver(TextResolver resolver)
 {
 	m_impl->text = std::move(resolver);

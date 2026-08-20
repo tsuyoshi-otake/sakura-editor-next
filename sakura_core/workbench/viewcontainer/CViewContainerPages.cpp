@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -164,6 +164,22 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 		explorerPalette.scrollbarThumb = palette.border.ToColorRef();
 		explorerPalette.scrollbarThumbHover = palette.secondaryText.ToColorRef();
 		explorerPalette.scrollbarTrackHover = palette.raised.ToColorRef();
+		// Indexed by `decorations::EFileDecorationColor`; index 0 is `None` and is
+		// never drawn, so it is filled with the row's own text color rather than a
+		// color that would silently become visible if it ever were.
+		explorerPalette.decorationColors = {
+			palette.primaryText.ToColorRef(),
+			palette.gitAddedResourceForeground.ToColorRef(),
+			palette.gitModifiedResourceForeground.ToColorRef(),
+			palette.gitDeletedResourceForeground.ToColorRef(),
+			palette.gitRenamedResourceForeground.ToColorRef(),
+			palette.gitStageModifiedResourceForeground.ToColorRef(),
+			palette.gitStageDeletedResourceForeground.ToColorRef(),
+			palette.gitUntrackedResourceForeground.ToColorRef(),
+			palette.gitIgnoredResourceForeground.ToColorRef(),
+			palette.gitConflictingResourceForeground.ToColorRef(),
+			palette.gitSubmoduleResourceForeground.ToColorRef(),
+		};
 		m_explorer->SetPalette(explorerPalette);
 	}
 	if (m_outline) m_outline->SetPalette(palette);

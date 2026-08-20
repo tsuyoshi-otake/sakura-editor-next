@@ -165,12 +165,14 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalParserTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalShortcutPresetTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalClipboardPasteTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalColorResolverTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalFontMetricsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalHeaderLayoutTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalPaneLayoutTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalTabPresentationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalBuiltinGlyphRendererTest.cpp" />
@@ -182,6 +184,10 @@
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownCodeHighlighterTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewAsyncStateTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewCommandStateTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewScrollMapTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MermaidDiagramTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\textmate\TextMateGrammarCompilerTest.cpp" />
@@ -229,6 +235,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\WorkbenchUpdateCommandsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitLineStagingTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSyncCommandsTest.cpp" />

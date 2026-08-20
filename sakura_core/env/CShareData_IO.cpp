@@ -776,6 +776,27 @@ void CShareData_IO::ShareData_IO_Common( CDataProfile& cProfile )
 	//	Apr. 05, 2003 genta ウィンドウキャプションのカスタマイズ
 	cProfile.IOProfileData(pszSecName, L"szWinCaptionActive", StringBufferW(common.m_sWindow.m_szWindowCaptionActive));
 	cProfile.IOProfileData(pszSecName, L"szWinCaptionInactive", StringBufferW(common.m_sWindow.m_szWindowCaptionInactive));
+	if( cProfile.IsReadingMode() ){
+		//	The caption format moved to VS Code's window.title layout, which shows the
+		//	file name and the opened folder's name rather than $N's abbreviated full
+		//	path. Only a profile still holding the previous shipped default is
+		//	upgraded; a caption the user edited is theirs and is left alone.
+		constexpr const wchar_t* legacyActive =
+			L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} -"
+			L" $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}";
+		constexpr const wchar_t* legacyInactive =
+			L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} -"
+			L" $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}";
+		constexpr const wchar_t* currentCaption =
+			L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+			L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}";
+		if( 0 == wcscmp( common.m_sWindow.m_szWindowCaptionActive, legacyActive ) ){
+			wcscpy_s( common.m_sWindow.m_szWindowCaptionActive, currentCaption );
+		}
+		if( 0 == wcscmp( common.m_sWindow.m_szWindowCaptionInactive, legacyInactive ) ){
+			wcscpy_s( common.m_sWindow.m_szWindowCaptionInactive, currentCaption );
+		}
+	}
 	
 	// アウトライン/トピックリスト の位置とサイズを記憶  20060201 aroka
 	cProfile.IOProfileData( pszSecName, L"bRememberOutlineWindowPos", common.m_sOutline.m_bRememberOutlineWindowPos);

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -48,6 +48,27 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		{ "scm.inputMaxLineCount", ConfigurationValue(10),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder },
 			{ Kind::Integer, std::nullopt, {}, 1, 50 } },
+		// VS Code 1.18's Git status in the File Explorer. `git.decorations.enabled`
+		// belongs to the Git extension and decides whether decorations are provided
+		// at all; the two `explorer.decorations.*` keys belong to the workbench and
+		// decide which half of a provided decoration the Explorer renders. All three
+		// are registered `true` upstream and are folder-scoped, because which files
+		// a repository decorates is a property of the folder being viewed.
+		{ "git.decorations.enabled", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		{ "explorer.decorations.colors", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		{ "explorer.decorations.badges", ConfigurationValue(true),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::Boolean } },
+		// The terminal panel's multiplexer keybinding preset. VS Code has no
+		// equivalent setting, so this cannot reuse an upstream identifier; it is
+		// deliberately kept out of the `terminal.integrated.*` namespace, whose keys
+		// must keep upstream semantics, and recorded as a fork extension in
+		// terminal/CLAUDE.md. Window-scoped like the rest of the workbench chrome.
+		// The owner-chosen default is `screen`; `none` restores an unclaimed Ctrl+A.
+		{ "sakura.terminal.shortcutPreset", ConfigurationValue(L"screen"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 16, { L"none", L"tmux", L"screen" } } },
 		// Network policy is deliberately application/profile-only.  A repository
 		// must not be able to redirect an editor to a proxy or registry, weaken
 		// certificate handling, or make requests wait longer by committing a

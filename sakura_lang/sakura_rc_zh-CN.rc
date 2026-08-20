@@ -4405,6 +4405,10 @@ BEGIN
     STR_TERMINAL_PROFILE_PREVIEW "预览"
     STR_TERMINAL_PROFILE_LEGACY "Windows PowerShell"
     STR_TERMINAL_SPLIT_DOWN "向下拆分终端"
+    STR_TERMINAL_SHORTCUTS "快捷键"
+    STR_TERMINAL_SHORTCUT_PRESET_NONE "无"
+    STR_TERMINAL_SHORTCUT_PRESET_TMUX "tmux (Ctrl+B)"
+    STR_TERMINAL_SHORTCUT_PRESET_SCREEN "GNU Screen (Ctrl+A)"
 END
 #endif    // 中国語 (簡体字、中国) resources
 /////////////////////////////////////////////////////////////////////////////

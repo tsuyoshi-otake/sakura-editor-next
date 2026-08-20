@@ -2215,6 +2215,18 @@ bool CEditWnd::InitializeWorkbench()
 	// instead of a private Git model beside the service. A window with no runtime
 	// has no service to borrow and keeps rendering its own publication locally.
 	m_scmTool->SetSourceControlService(m_workbenchRuntime != nullptr ? m_workbenchRuntime->Scm() : nullptr);
+	// VS Code 1.18's Git status in the File Explorer: the Git extension publishes
+	// file decorations and the Explorer renders them. The two views never talk to
+	// each other upstream either -- a decorations service sits between them -- so
+	// the composition root is what joins the provider to its consumer here.
+	m_scmTool->SetFileDecorationsCallback(
+		[this](std::vector<workbench::decorations::FileDecorationEntry> entries) {
+			if (m_explorerTool == nullptr) return;
+			workbench::decorations::FileDecorationTable table;
+			if (m_gitDecorationsEnabled) table.Replace(std::move(entries));
+			m_explorerTool->SetFileDecorations(std::move(table));
+		});
+	ApplyExplorerDecorationSettings();
 	ApplyScmInputLineCountSetting();
 
 	const auto requestOutlineExpanded = [this](bool expanded) {
@@ -2312,6 +2324,10 @@ bool CEditWnd::InitializeWorkbench()
 		},
 	});
 	m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
+	m_terminalTool->SetShortcutPresetSink([this](terminal::TerminalShortcutPreset preset) {
+		(void)PersistTerminalShortcutPresetSelection(preset);
+	});
+	ApplyTerminalShortcutPresetSetting();
 		m_terminalTool->SetPanelActions({
 			.renderPanelActions = false,
 			.renderHeader = false,
@@ -5725,6 +5741,8 @@ void CEditWnd::ApplySemanticWorkspaceContext()
 		m_scmTool->SetRoot(root);
 	}
 	UpdateWorkbenchWelcomeState();
+	// The caption carries the folder's name, so opening or closing one changes it.
+	UpdateCaption();
 	if (m_terminalTool) m_terminalTool->SetWorkingDirectory(m_workspaceContext->GetNewTerminalWorkingDirectory());
 }
 
@@ -6614,6 +6632,11 @@ void CEditWnd::SyncScmActivityBadge()
 	// configuration files are loaded, a theme/settings change, and each Activity
 	// Bar reprojection. Re-applying is idempotent when nothing moved.
 	ApplyScmInputLineCountSetting();
+	// The Explorer's Git decorations are read from the same settings on the same
+	// occasions, so a settings change reaches the tree without its own hook.
+	ApplyExplorerDecorationSettings();
+	// The terminal keybinding preset is read from the same document too.
+	ApplyTerminalShortcutPresetSetting();
 	if (!m_activityBar) return;
 	const auto publish = [this](std::optional<int> count) {
 		m_activityBar->SetViewContainerBadge(
@@ -6698,6 +6721,104 @@ void CEditWnd::ApplyScmInputLineCountSetting()
 		}
 	}
 	m_scmTool->SetInputLineCountRange(minLines, maxLines);
+}
+
+void CEditWnd::ApplyTerminalShortcutPresetSetting()
+{
+	if (m_terminalTool == nullptr) return;
+	// Mirrors the registered default of `sakura.terminal.shortcutPreset`.
+	auto preset = terminal::TerminalShortcutPreset::Screen;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue(
+				"sakura.terminal.shortcutPreset", BuildWorkbenchConfigurationTarget());
+			if (lookup.value) {
+				if (const auto* value = std::get_if<std::wstring>(&lookup.value->Value());
+					value != nullptr) {
+					preset = terminal::ParseTerminalShortcutPreset(*value)
+						.value_or(terminal::TerminalShortcutPreset::Screen);
+				}
+			}
+		}
+		catch (...) {
+			// An unreadable setting takes the registered default rather than
+			// whatever this window happened to hold.
+			preset = terminal::TerminalShortcutPreset::Screen;
+		}
+	}
+	m_terminalTool->SetShortcutPreset(preset);
+}
+
+bool CEditWnd::PersistTerminalShortcutPresetSelection(terminal::TerminalShortcutPreset preset)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		config::ConfigurationTarget sourceTarget;
+		sourceTarget.profileId = profile.SelectedProfileId();
+		const config::ConfigurationSource source {
+			config::EConfigurationScope::Profile,
+			sourceTarget,
+			"profile.settings",
+			0,
+		};
+		config::editing::ConfigurationDocumentEditTarget editTarget;
+		editTarget.scope = config::editing::EConfigurationDocumentScope::Profile;
+		editTarget.target = sourceTarget;
+		editTarget.resource = profile.Resources().Settings();
+		const config::SettingsWritebackRequest request {
+			.edit = {
+				.target = std::move(editTarget),
+				.key = "sakura.terminal.shortcutPreset",
+				.value = config::ConfigurationValue(
+					std::wstring(terminal::TerminalShortcutPresetId(preset))),
+			},
+			.documentKey = "profile.settings",
+			.source = source,
+		};
+		return m_workbenchRuntime->WriteSetting(request).Succeeded();
+	}
+	catch (...) {
+		// The in-memory selection already took effect; only its persistence failed.
+		return false;
+	}
+}
+
+void CEditWnd::ApplyExplorerDecorationSettings()
+{
+	bool enabled = true;
+	workbench::explorer::ExplorerDecorationOptions options;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto target = BuildWorkbenchConfigurationTarget();
+			const auto read = [&](const char* key, bool fallback) {
+				const auto lookup = m_workbenchRuntime->Configuration().GetValue(key, target);
+				if (lookup.value) {
+					if (const auto* value = std::get_if<bool>(&lookup.value->Value()); value != nullptr) {
+						return *value;
+					}
+				}
+				return fallback;
+			};
+			enabled = read("git.decorations.enabled", enabled);
+			options.colors = read("explorer.decorations.colors", options.colors);
+			options.badges = read("explorer.decorations.badges", options.badges);
+		} catch (...) {
+			// Decoration rendering is presentation, so an unreadable setting takes
+			// the registered default rather than failing the view that asked for it.
+		}
+	}
+	m_gitDecorationsEnabled = enabled;
+	if (m_explorerTool != nullptr) m_explorerTool->SetDecorationOptions(options);
+	// Turning the provider off has to retract what it already published; upstream's
+	// provider disposal fires a change for every URI it had decorated.
+	if (!enabled && m_explorerTool != nullptr) {
+		m_explorerTool->SetFileDecorations({});
+	} else if (enabled && m_scmTool != nullptr) {
+		// Re-publish what git already reported instead of re-running it: the
+		// repository did not change, only what this window renders from it.
+		m_scmTool->RepublishFileDecorations();
+	}
 }
 
 std::wstring CEditWnd::ReadScmCountBadgeSetting() const
@@ -7375,6 +7496,33 @@ bool CEditWnd::IsMarkdownPreviewAvailable() const
 		|| CheckEXT(filePath, L"mdown") || CheckEXT(filePath, L"mkd");
 }
 
+/*!
+	@brief The opened root folder's display name, empty when no folder is open
+
+	This is VS Code's `${rootName}` caption variable. VS Code shows the folder's
+	own name there, never its path, and shows nothing when the window has no
+	folder open, so a trailing separator is the caller's problem rather than this
+	function's.
+*/
+std::wstring CEditWnd::GetWorkspaceRootName() const
+{
+	// The workspace model owns the opened folder; the Explorer View merely shows
+	// it. Reading the model keeps the caption correct even when that View has
+	// never been created.
+	const std::wstring root = GetSemanticWorkspaceRoot();
+	if (root.empty()) return {};
+	std::wstring_view name{ root };
+	while (!name.empty() && (name.back() == L'\\' || name.back() == L'/')) {
+		name.remove_suffix(1);
+	}
+	const auto separator = name.find_last_of(L"\\/");
+	if (separator != std::wstring_view::npos) {
+		name.remove_prefix(separator + 1);
+	}
+	// A drive root such as "C:" has no leaf, so its own text is the best name.
+	return name.empty() ? root : std::wstring{ name };
+}
+
 bool CEditWnd::EnsureMarkdownPreview()
 {
 	if (m_markdownPreview && m_markdownPreview->IsCreated()) {
@@ -7550,9 +7698,12 @@ void CEditWnd::UpdateMarkdownPreviewIfNeeded()
 	}
 }
 
-void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi)
+RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi,
+	int minimapWidth)
 {
 	const RECT previousDivider = m_markdownPreviewDivider;
+	// Where the minimap ends up unless a sibling preview claims the right side.
+	RECT minimapBounds{ right - minimapWidth, top, right, bottom };
 	if (!HasActiveEditorInput()) {
 		m_markdownPreviewDivider = {};
 		if (GetHwnd() != nullptr) ::InvalidateRect(GetHwnd(), &previousDivider, FALSE);
@@ -7572,7 +7723,7 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			if (!m_pPrintPreview) m_emptyEditorSurface->Show();
 			if (m_diffSurface) m_diffSurface->Hide();
 		}
-		return;
+		return minimapBounds;
 	}
 	if (m_diffSurface) m_diffSurface->Hide();
 	if (m_emptyEditorSurface) m_emptyEditorSurface->Hide();
@@ -7593,8 +7744,15 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			break;
 		}
 	}
-	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, paneMode);
+	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, paneMode,
+		m_markdownPreviewWidthDip);
+	m_markdownPreviewRegion = { left, top, right, bottom };
 	m_markdownPreviewDivider = { layout.dividerLeft, top, layout.dividerRight, bottom };
+	// The minimap travels with the editor half, so the view keeps the region left
+	// of it. The split was calculated over the region including the minimap's
+	// column, which is why no width is lost when the preview is hidden.
+	minimapBounds = { layout.editorRight - minimapWidth, top, layout.editorRight, bottom };
+	const int editorViewRight = std::max(layout.editorLeft, layout.editorRight - minimapWidth);
 	if (paneMode != markdown::PreviewPaneMode::NativeSibling || layout.PreviewWidth() == 0) {
 		m_markdownPreviewDivider = {};
 	}
@@ -7604,17 +7762,66 @@ void CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 	}
 	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
 		::MoveWindow(splitter, layout.editorLeft, top,
-			layout.EditorWidth(), std::max(0, bottom - top), TRUE);
+			std::max(0, editorViewRight - layout.editorLeft), std::max(0, bottom - top), TRUE);
 		::ShowWindow(splitter, paneMode == markdown::PreviewPaneMode::Replacement || m_pPrintPreview
 			? SW_HIDE : SW_SHOWNA);
 	}
 	if (!m_markdownPreview) {
-		return;
+		return minimapBounds;
 	}
 	const RECT previewBounds{ layout.previewLeft, top, layout.previewRight, bottom };
 	m_markdownPreview->SetEditorFont(GetLogfont(), dpi);
 	m_markdownPreview->Layout(previewBounds, dpi);
 	m_markdownPreview->Show(showPreview && layout.PreviewWidth() > 0);
+	return minimapBounds;
+}
+
+/*!
+	@brief True when the point is on the preview divider
+
+	The painted divider is one device-independent pixel, which is far too thin to
+	grab. VS Code widens its sash's hit area beyond the drawn line for the same
+	reason, so the same slop the workbench splitters use is applied here.
+*/
+bool CEditWnd::HitTestMarkdownPreviewDivider(POINT point) const noexcept
+{
+	RECT rect = m_markdownPreviewDivider;
+	if (rect.right <= rect.left || rect.bottom <= rect.top) return false;
+	const int hitSize = std::max(1, ::MulDiv(4, static_cast<int>(::GetDpiForWindow(GetHwnd())), 96));
+	const int extra = std::max(0, hitSize - static_cast<int>(rect.right - rect.left));
+	rect.left -= extra / 2;
+	rect.right += extra - extra / 2;
+	return ContainsPoint(rect, point);
+}
+
+void CEditWnd::RelayoutForMarkdownPreviewDivider()
+{
+	RECT client{};
+	::GetClientRect(GetHwnd(), &client);
+	(void)OnSize2(m_nWinSizeType,
+		MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	// The editor view, the preview, and the divider are separate windows that
+	// would otherwise repaint on different message-loop turns, so a drag could
+	// expose two different divider positions at once. Commit one complete frame
+	// per drag sample while the pointer is captured.
+	//
+	// The commit is bounded to the split region and does not ask for an erase.
+	// A whole-window RDW_ERASE would repaint the activity bar, side bars, tabs
+	// and status bar on every mouse sample even though the drag cannot move
+	// them, and those Parts flashing against their own erased background is what
+	// a divider drag looked like before this rectangle was passed.
+	const RECT region = m_markdownPreviewRegion;
+	const bool haveRegion = region.right > region.left && region.bottom > region.top;
+	::RedrawWindow(GetHwnd(), haveRegion ? &region : nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+}
+
+void CEditWnd::CancelMarkdownPreviewResize()
+{
+	if (!m_resizingMarkdownPreview) return;
+	m_resizingMarkdownPreview = false;
+	if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
+	RelayoutForMarkdownPreviewDivider();
 }
 
 void CEditWnd::ToggleMarkdownPreview()
@@ -7760,6 +7967,12 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 			SetWorkbenchZoomPercent(workbench::AdjustZoomPercent(m_workbenchZoomPercent, direction));
 			return true;
 		}
+	}
+	if (m_resizingMarkdownPreview && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
+		// Escape abandons the drag at wherever the divider currently sits; there is
+		// no committed-elsewhere state to roll back to, unlike a workbench resize.
+		CancelMarkdownPreviewResize();
+		return true;
 	}
 	if (m_resizingWorkbenchPanel != nullptr && message.message == WM_KEYDOWN && message.wParam == VK_ESCAPE) {
 		CancelWorkbenchResize();
@@ -11423,22 +11636,28 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		m_cTabWnd.OnSize();
 	}
 
+	auto editorBounds = layout.editor;
+
+	// The minimap belongs to the editor group, so the split is calculated over the
+	// editor rectangle plus the minimap's own column and the minimap is placed
+	// where that split leaves it. Positioning it from `layout.minimap` here would
+	// pin it to the frame's right edge, on the far side of a sibling preview.
+	const int minimapWidth = layout.minimap.Width();
+	const RECT minimapBounds = LayoutMarkdownPreview(editorBounds.left, editorBounds.top,
+		editorBounds.right + minimapWidth, editorBounds.bottom, physicalDpi, minimapWidth);
+
 	if( m_cMiniMapView.GetHwnd() ){
 		::ShowWindow(m_cMiniMapView.GetHwnd(),
 			layoutRequest.showMinimap && !m_pPrintPreview ? SW_SHOWNA : SW_HIDE);
-		::MoveWindow(m_cMiniMapView.GetHwnd(), layout.minimap.left, layout.minimap.top,
-			layout.minimap.Width(), layout.minimap.Height(), TRUE);
+		::MoveWindow(m_cMiniMapView.GetHwnd(), minimapBounds.left, minimapBounds.top,
+			std::max(0L, minimapBounds.right - minimapBounds.left),
+			std::max(0L, minimapBounds.bottom - minimapBounds.top), TRUE);
 		if (layoutRequest.rightPane != workbench::WorkbenchPanelState::Hidden
 			|| layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden) {
 			bMiniMapSizeBox = false;
 		}
 		m_cMiniMapView.SplitBoxOnOff(FALSE, FALSE, bMiniMapSizeBox);
 	}
-
-	auto editorBounds = layout.editor;
-
-	LayoutMarkdownPreview(editorBounds.left, editorBounds.top, editorBounds.right, editorBounds.bottom,
-		physicalDpi);
 	// The visible Part boundary is one DIP, while VS Code exposes a four-DIP sash
 	// hit target. These sibling overlays sit above adjacent child controls so all
 	// four pixels receive the initial press instead of only the parent-owned line.
@@ -11554,6 +11773,13 @@ LRESULT CEditWnd::OnLButtonDown( [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 		return 0;
 	}
 
+	if (HitTestMarkdownPreviewDivider(point)) {
+		m_resizingMarkdownPreview = true;
+		::SetCapture(GetHwnd());
+		::SetCursor(::LoadCursor(nullptr, IDC_SIZEWE));
+		return 0;
+	}
+
 	//by 鬼(2) キャプチャして押されたら非クライアントでもこっちに来る
 	if(m_IconClicked != icNone)
 		return 0;
@@ -11596,6 +11822,13 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 		// complete frame unconditionally; SetWindowPos alone leaves the vacated
 		// sibling areas valid and stale.
 		RedrawWorkbenchFrameForCommittedLayout(true);
+		return 0;
+	}
+
+	if (m_resizingMarkdownPreview) {
+		m_resizingMarkdownPreview = false;
+		if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
+		RelayoutForMarkdownPreviewDivider();
 		return 0;
 	}
 
@@ -11652,6 +11885,17 @@ LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 		return 0;
 	}
 
+	if (m_resizingMarkdownPreview) {
+		const POINT point{ static_cast<short>(LOWORD(lParam)), static_cast<short>(HIWORD(lParam)) };
+		// The requested width is clamped inside the pure layout calculator, so an
+		// over-dragged pointer parks the divider at the limit rather than being
+		// ignored, and the stored request stays whatever the pointer asked for.
+		m_markdownPreviewWidthDip = markdown::RequestedPreviewWidthDipFromPointer(
+			m_markdownPreviewRegion.right, point.x, ::GetDpiForWindow(GetHwnd()));
+		RelayoutForMarkdownPreviewDivider();
+		return 0;
+	}
+
 	//by 鬼
 	if(m_IconClicked != icNone)
 	{
@@ -11693,6 +11937,10 @@ LRESULT CEditWnd::OnSetCursor([[maybe_unused]] WPARAM wParam, LPARAM lParam)
 	if (!::GetCursorPos(&point) || !::ScreenToClient(GetHwnd(), &point)) {
 		return ::DefWindowProc(GetHwnd(), WM_SETCURSOR, wParam, lParam);
 	}
+	if (m_resizingMarkdownPreview || HitTestMarkdownPreviewDivider(point)) {
+		::SetCursor(::LoadCursor(nullptr, IDC_SIZEWE));
+		return TRUE;
+	}
 	auto* host = m_resizingWorkbenchPanel != nullptr
 		? m_resizingWorkbenchPanel : HitTestWorkbenchSplitter(point);
 	if (host == nullptr) return ::DefWindowProc(GetHwnd(), WM_SETCURSOR, wParam, lParam);
@@ -11703,7 +11951,10 @@ LRESULT CEditWnd::OnSetCursor([[maybe_unused]] WPARAM wParam, LPARAM lParam)
 
 LRESULT CEditWnd::OnCaptureChanged(LPARAM lParam)
 {
-	if (reinterpret_cast<HWND>(lParam) != GetHwnd()) CancelWorkbenchResize();
+	if (reinterpret_cast<HWND>(lParam) != GetHwnd()) {
+		CancelWorkbenchResize();
+		CancelMarkdownPreviewResize();
+	}
 	return 0;
 }
 

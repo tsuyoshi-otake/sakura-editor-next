@@ -4508,6 +4508,10 @@ BEGIN
     STR_TERMINAL_PROFILE_PREVIEW "Preview"
     STR_TERMINAL_PROFILE_LEGACY "Windows PowerShell"
     STR_TERMINAL_SPLIT_DOWN "Split Terminal Down"
+    STR_TERMINAL_SHORTCUTS "Shortcuts"
+    STR_TERMINAL_SHORTCUT_PRESET_NONE "None"
+    STR_TERMINAL_SHORTCUT_PRESET_TMUX "tmux (Ctrl+B)"
+    STR_TERMINAL_SHORTCUT_PRESET_SCREEN "GNU Screen (Ctrl+A)"
 END
 #endif    // 英語 (米国) resources
 /////////////////////////////////////////////////////////////////////////////

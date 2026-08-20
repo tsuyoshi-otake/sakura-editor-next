@@ -67,7 +67,17 @@ enum class DocumentTabActionVisualState {
 	Pressed,
 };
 
-inline constexpr wchar_t kMarkdownPreviewCommandId[] = L"markdown.showPreviewToSide";
+/*!
+	@brief The action the document tab's preview button actually invokes
+
+	This is deliberately not markdown.showPreviewToSide. That upstream command
+	opens the preview in a side editor group, and this shell has no second
+	EditorGroup: the button toggles the Sakura-owned sibling preview pane
+	(F_TOGGLE_MARKDOWN_PREVIEW / MarkdownPreviewCommandState::ToggleNativeSibling).
+	Declaring the VS Code id here would alias a different concept, so the action
+	carries a sakura.* id until real multiple editor groups exist.
+*/
+inline constexpr wchar_t kMarkdownPreviewCommandId[] = L"sakura.toggleMarkdownSiblingPreview";
 inline constexpr wchar_t kMarkdownPreviewCodiconId[] = L"open-preview";
 
 [[nodiscard]] constexpr int ScaleDocumentTabDip(int dip, unsigned int dpi) noexcept

@@ -320,12 +320,18 @@ bool CShareData::InitShareData()
 
 			//	Apr. 05, 2003 genta ウィンドウキャプションの初期値
 			//	Aug. 16, 2003 genta $N(ファイル名省略表示)をデフォルトに変更
+			//	VS Code's default window.title is
+			//	"${dirty}${activeEditorShort}${separator}${rootName}${separator}${appName}",
+			//	so the caption carries the file's own name and the opened folder's
+			//	own name. Neither is a full path: $f is the file name and $W is the
+			//	folder name, where the legacy default used $N, the abbreviated full
+			//	path.
 			wcscpy( sWindow.m_szWindowCaptionActive, 
-				L"${w?$h$:アウトプット$:${I?$f$n$:$N$n$}$}${U?(更新)$} -"
-				L" $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}" );
+				L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+				L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}" );
 			wcscpy( sWindow.m_szWindowCaptionInactive, 
-				L"${w?$h$:アウトプット$:$f$n$}${U?(更新)$} -"
-				L" $A $V ${R?(ビューモード)$:(上書き禁止)$}${M?  【キーマクロの記録中】$}" );
+				L"${U?● $}${w?$h$:アウトプット$:$f$n$}${W? - $W$} -"
+				L" $A${R?  (ビューモード)$:  (上書き禁止)$}${M?  【キーマクロの記録中】$}" );
 		}
 
 		// [タブバー]タブ

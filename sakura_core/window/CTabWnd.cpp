@@ -2762,8 +2762,11 @@ void CTabWnd::DrawMarkdownPreviewBtn( CGraphics& gr, const LPRECT lprcClient )
 	}
 
 	const bool active = IsMarkdownPreviewActionActive();
-	const COLORREF iconColor = active ? palette.accent.ToColorRef()
-		: (m_bMarkdownPreviewBtnHilighted ? palette.primaryText : palette.secondaryText).ToColorRef();
+	// The glyph keeps its normal foreground in every state. VS Code shows a checked
+	// action through its background and indicator, never by recoloring the icon,
+	// and an accent-colored glyph reads as a status rather than a toggle.
+	const COLORREF iconColor =
+		(m_bMarkdownPreviewBtnHilighted ? palette.primaryText : palette.secondaryText).ToColorRef();
 	const UINT dpi = GetHwnd() == nullptr ? 96U : ::GetDpiForWindow(GetHwnd());
 	const int lineWidth = (std::max)(1, tabbar::ScaleDocumentTabDip(1, dpi));
 	const int insetX = tabbar::ScaleDocumentTabDip(2, dpi);
