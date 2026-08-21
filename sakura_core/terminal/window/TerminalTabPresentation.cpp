@@ -350,21 +350,31 @@ bool ShouldShowTerminalTabs(
 
 bool ShouldShowTerminalTabPolicy(
 	TerminalTabsShowCondition condition,
-	std::size_t terminalCount,
+	std::size_t groupCount,
 	bool tabsNarrow ) noexcept
 {
 	switch( condition ) {
 	case TerminalTabsShowCondition::Always:
 		return true;
 	case TerminalTabsShowCondition::SingleTerminal:
-		return terminalCount == 1;
+		return groupCount == 1;
 	case TerminalTabsShowCondition::SingleTerminalOrNarrow:
-		return terminalCount == 1 || tabsNarrow;
+		return groupCount == 1 || tabsNarrow;
 	case TerminalTabsShowCondition::Never:
 		return false;
 	default:
 		return false;
 	}
+}
+
+bool ShouldShowActiveTerminalHeader(
+	TerminalTabsShowCondition condition,
+	std::size_t groupCount,
+	bool tabsNarrow,
+	bool activeGroupSplit ) noexcept
+{
+	if( condition == TerminalTabsShowCondition::SingleTerminalOrNarrow && activeGroupSplit ) return true;
+	return ShouldShowTerminalTabPolicy(condition, groupCount, tabsNarrow);
 }
 
 TerminalTabRowLayout CalculateTerminalTabRowLayout(

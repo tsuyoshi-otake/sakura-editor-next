@@ -622,6 +622,29 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		}
 	}
 
+	void UpdateImeWindowPosition()
+	{
+		if( window == nullptr || !imeComposing ) return;
+		const HIMC context = ::ImmGetContext(window);
+		if( context == nullptr ) return;
+		const auto row = std::min(model ? model->CursorRow() : 0u, visibleRows == 0 ? 0u : visibleRows - 1);
+		const auto position = Geometry().ImeWindowPosition(
+			model ? model->CursorColumn() : 0u, row, cellWidth, cellHeight);
+
+		COMPOSITIONFORM composition{};
+		composition.dwStyle = CFS_POINT;
+		composition.ptCurrentPos = position.composition;
+		::ImmSetCompositionWindow(context, &composition);
+
+		CANDIDATEFORM candidate{};
+		candidate.dwIndex = 0;
+		candidate.dwStyle = CFS_EXCLUDE;
+		candidate.ptCurrentPos = position.caret;
+		candidate.rcArea = position.candidateArea;
+		::ImmSetCandidateWindow(context, &candidate);
+		::ImmReleaseContext(window, context);
+	}
+
 	void UpdateCaret()
 	{
 		if( window == nullptr || ::GetFocus() != window ) return;
@@ -636,6 +659,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		const auto geometry = Geometry();
 		::SetCaretPos(geometry.GridOriginX() + static_cast<int>(model->CursorColumn()) * cellWidth,
 			geometry.GridOriginY() + static_cast<int>(row) * cellHeight);
+		UpdateImeWindowPosition();
 		if( !caretShown ) {
 			::ShowCaret(window);
 			caretShown = true;
@@ -1131,27 +1155,32 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			return 0;
 		case WM_IME_STARTCOMPOSITION: {
 			imeComposing = true;
-			const HIMC context = ::ImmGetContext(window);
-			if( context ) {
-				COMPOSITIONFORM form{};
-				form.dwStyle = CFS_POINT;
-				const auto geometry = Geometry();
-				form.ptCurrentPos = { static_cast<LONG>(geometry.GridOriginX() + (model ? model->CursorColumn() * cellWidth : 0)),
-					static_cast<LONG>(geometry.GridOriginY() + (model ? (model->CursorRow() + 1) * cellHeight : cellHeight)) };
-				::ImmSetCompositionWindow(context, &form);
-				::ImmReleaseContext(window, context);
-			}
-			return ::DefWindowProcW(window, message, wParam, lParam);
+			const auto result = ::DefWindowProcW(window, message, wParam, lParam);
+			UpdateImeWindowPosition();
+			return result;
 		}
 		case WM_IME_COMPOSITION:
 			// Some IMEs deliver committed text only through GCS_RESULTSTR. Relying
 			// on DefWindowProc to synthesize WM_CHAR makes input depend on the IME
 			// and on whether the child is hosting a full-screen terminal program.
 			if( (lParam & GCS_RESULTSTR) != 0 && HandleImeResult() ) return 0;
-			return ::DefWindowProcW(window, message, wParam, lParam);
+			{
+				const auto result = ::DefWindowProcW(window, message, wParam, lParam);
+				UpdateImeWindowPosition();
+				return result;
+			}
+		case WM_IME_NOTIFY:
+		{
+			const auto result = ::DefWindowProcW(window, message, wParam, lParam);
+			if( wParam == IMN_OPENCANDIDATE || wParam == IMN_CHANGECANDIDATE ) UpdateImeWindowPosition();
+			return result;
+		}
 		case WM_IME_ENDCOMPOSITION:
+		{
+			const auto result = ::DefWindowProcW(window, message, wParam, lParam);
 			imeComposing = false;
-			return ::DefWindowProcW(window, message, wParam, lParam);
+			return result;
+		}
 		case WM_IME_CHAR:
 			// Own the fallback path too instead of asking DefWindowProc to post a
 			// second message whose behavior varies between Unicode IMEs.

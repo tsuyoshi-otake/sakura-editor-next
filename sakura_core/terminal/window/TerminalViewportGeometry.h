@@ -9,10 +9,21 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
 namespace terminal {
+
+//! Client-space locations shared by the native caret and the Windows IME.
+//! The composition string is placed immediately below the active cell, while
+//! the candidate form excludes the active cell so the IME can choose a safe
+//! side when the list would otherwise run beyond the client or screen edge.
+struct TerminalImeWindowPosition final {
+	POINT caret{};
+	POINT composition{};
+	RECT candidateArea{};
+};
 
 //! Shared terminal content inset used by PTY sizing, painting, hit testing, and
 //! caret/IME placement.
@@ -78,6 +89,21 @@ struct TerminalViewportGeometry final {
 		const auto right = std::clamp(client.right - insetX, left, client.right);
 		const auto bottom = std::clamp(client.bottom - insetY, top, client.bottom);
 		return { left, top, right, bottom };
+	}
+
+	[[nodiscard]] constexpr TerminalImeWindowPosition ImeWindowPosition(
+		std::size_t column, std::size_t row, int cellWidth, int cellHeight ) const noexcept
+	{
+		const auto width = std::max(1, cellWidth);
+		const auto height = std::max(1, cellHeight);
+		const auto x = GridOriginX() + static_cast<LONG>(column * static_cast<std::size_t>(width));
+		const auto top = GridOriginY() + static_cast<LONG>(row * static_cast<std::size_t>(height));
+		const auto bottom = top + height;
+		return {
+			{ x, top },
+			{ x, bottom },
+			{ x, top, x + width, bottom },
+		};
 	}
 };
 

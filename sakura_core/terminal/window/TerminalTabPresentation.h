@@ -232,12 +232,22 @@ inline constexpr std::size_t kMaximumTerminalTabTextLength = 256;
 
 //! Pure policy for the active-terminal summary and terminal chrome actions.
 //! `tabsNarrow` is the resolved view state, not a configuration lookup. The
-//! count is deliberately passed by the caller so this policy remains usable by
-//! both the header and a future list action-bar projection.
+//! group count is deliberately passed by the caller so this policy remains
+//! usable by both the header and a future list action-bar projection.
 [[nodiscard]] bool ShouldShowTerminalTabPolicy(
 	TerminalTabsShowCondition condition,
-	std::size_t terminalCount,
+	std::size_t groupCount,
 	bool tabsNarrow ) noexcept;
+
+//! Header-specific projection of terminal.integrated.tabs.showActiveTerminal.
+//! A split group keeps the focused pane's identity visible under the default
+//! singleTerminalOrNarrow condition; explicit always, singleTerminal, and
+//! never settings remain authoritative.
+[[nodiscard]] bool ShouldShowActiveTerminalHeader(
+	TerminalTabsShowCondition condition,
+	std::size_t groupCount,
+	bool tabsNarrow,
+	bool activeGroupSplit ) noexcept;
 
 //! Pure bounded row geometry. Lower-priority description space is dropped
 //! before the title, and every returned rectangle is non-inverted and contained

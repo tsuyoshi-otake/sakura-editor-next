@@ -129,6 +129,21 @@ TEST(TerminalRenderMapping, ClampsHitTestingInsideAndBeforeThePadding)
 		terminal::TerminalCellFromPoint(viewport, 9999, 9999, 8, 16, 10, geometry));
 }
 
+TEST(TerminalRenderMapping, ImeWindowPositionUsesTheSameGridCellAsTheCaret)
+{
+	const auto geometry = terminal::TerminalViewportGeometry::FromDpi(144);
+	const auto position = geometry.ImeWindowPosition(10, 3, 8, 16);
+
+	EXPECT_EQ(88, position.caret.x);
+	EXPECT_EQ(56, position.caret.y);
+	EXPECT_EQ(88, position.composition.x);
+	EXPECT_EQ(72, position.composition.y);
+	EXPECT_EQ(88, position.candidateArea.left);
+	EXPECT_EQ(56, position.candidateArea.top);
+	EXPECT_EQ(96, position.candidateArea.right);
+	EXPECT_EQ(72, position.candidateArea.bottom);
+}
+
 TEST(TerminalRenderMapping, NormalizesSelectionToIncludeBothEndpointsAndWideCells)
 {
 	terminal::TerminalModel model(8, 1);

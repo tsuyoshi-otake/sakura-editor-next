@@ -824,8 +824,8 @@ struct CTerminalTool::Impl {
 
 	std::wstring HeaderProfileLabel()
 	{
-		if( !ShouldShowTerminalTabPolicy(tabPresentationSettings.showActiveTerminal,
-			manager->TabCount(), IsTerminalTabsNarrow()) ) return {};
+		if( !ShouldShowActiveTerminalHeader(tabPresentationSettings.showActiveTerminal,
+			paneGroups.size(), IsTerminalTabsNarrow(), HasTerminalSplit()) ) return {};
 		const auto tabs = manager->Snapshot();
 		const auto focused = FocusedTabId();
 		const auto found = std::find_if(tabs.begin(), tabs.end(), [focused](const auto& tab) {
@@ -852,8 +852,11 @@ struct CTerminalTool::Impl {
 		if( target == TerminalHeaderTarget::Split
 			|| target == TerminalHeaderTarget::Kill
 			|| target == TerminalHeaderTarget::More ) {
+			// VS Code resolves these actions against terminalGroupCount. A split
+			// pane adds another terminal instance but remains in the same group,
+			// so the actions stay available while the group is being split.
 			if( !ShouldShowTerminalTabPolicy(tabPresentationSettings.showActions,
-				manager->TabCount(), IsTerminalTabsNarrow()) ) return false;
+				paneGroups.size(), IsTerminalTabsNarrow()) ) return false;
 		}
 		switch( target ) {
 		case TerminalHeaderTarget::Kill:

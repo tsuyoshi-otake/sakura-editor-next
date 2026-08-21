@@ -1075,6 +1075,36 @@ TEST(TerminalTool, HeaderMaximizeAndCloseButtonsInvokeFrameOwnedActionsOnRelease
 	::DestroyWindow(parent);
 }
 
+TEST(TerminalTool, HeaderActionsStayEnabledForMultipleSplitPanes)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 640, 320 }, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_EQ(2u, tool.TabCount());
+	ASSERT_TRUE(tool.HasTerminalSplit());
+
+	const auto layout = terminal::CalculateTerminalHeaderLayout({ 0, 0, 640, 320 }, 96);
+	const auto split = layout.RectFor(terminal::TerminalHeaderTarget::Split);
+	ASSERT_LT(split.left, split.right);
+	const int x = split.left + (split.right - split.left) / 2;
+	const int y = split.top + (split.bottom - split.top) / 2;
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONDOWN, MK_LBUTTON, MAKELPARAM(x, y));
+	::SendMessageW(tool.GetHwnd(), WM_LBUTTONUP, 0, MAKELPARAM(x, y));
+
+	// Two panes are still one terminal group, matching VS Code's action
+	// visibility condition. If the header were disabled, the second click
+	// would leave the count at two.
+	EXPECT_EQ(3u, tool.TabCount());
+
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
 TEST(TerminalTool, NewSessionsUseNewWorkspaceButExistingSessionsKeepOriginalCwd)
 {
 	ToolHarness harness;

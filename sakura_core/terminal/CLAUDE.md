@@ -262,9 +262,16 @@ The typed visibility predicate implements VS Code's `tabs.enabled` and
 `tabs.hideCondition` values (`never`, `singleTerminal`, `singleGroup`); its
 `singleGroup` branch uses the number of terminal groups, never the number of
 terminal sessions in one split group. The pure `ShouldShowTerminalTabPolicy`
-helper applies `showActiveTerminal` to the active-terminal header summary and
-`showActions` to the split/kill/more terminal chrome actions using the resolved
-single-terminal-or-narrow condition. The row projection now resolves the
+helper applies `showActions` to the split/kill/more terminal chrome actions
+using the resolved single-terminal-or-narrow condition and the current number
+of terminal groups, not the number of split panes. The header uses the
+separate `ShouldShowActiveTerminalHeader` projection: when the active group is
+split, the focused pane's identity remains visible under
+`singleTerminalOrNarrow`, as in the observed VS Code split-terminal chrome.
+Explicit `always`, `singleTerminal`, and `never` settings remain authoritative.
+This is an intentional fork-side presentation choice because the split panes
+otherwise lose their compact active-pane identity while the terminal list is
+present. The row projection now resolves the
 default `terminal` codicon through the existing ThemeIcon/Codicon infrastructure
 and paints it in the geometry-owned icon slot; `defaultIcon`/`defaultColor`
 customization remains deferred because Sakura has no terminal-profile icon/color

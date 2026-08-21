@@ -143,7 +143,7 @@ TEST(TerminalTabPresentation, TypedConfigurationParsingRejectsUnknownValues)
 	EXPECT_FALSE(terminal::ParseTerminalTabsShowCondition(L"compact"));
 }
 
-TEST(TerminalTabPresentation, ShowActiveAndActionsUseUpstreamConditions)
+TEST(TerminalTabPresentation, ShowActiveAndActionsUseUpstreamGroupConditions)
 {
 	EXPECT_TRUE(terminal::ShouldShowTerminalTabPolicy(
 		TerminalTabsShowCondition::Always, 4, false));
@@ -155,6 +155,29 @@ TEST(TerminalTabPresentation, ShowActiveAndActionsUseUpstreamConditions)
 		TerminalTabsShowCondition::SingleTerminalOrNarrow, 2, true));
 	EXPECT_FALSE(terminal::ShouldShowTerminalTabPolicy(
 		TerminalTabsShowCondition::Never, 1, true));
+
+	// Split panes are multiple terminal instances in one terminal group, so
+	// the header actions remain visible for the default policy.
+	EXPECT_TRUE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::SingleTerminalOrNarrow, 1, false));
+	EXPECT_FALSE(terminal::ShouldShowTerminalTabPolicy(
+		TerminalTabsShowCondition::SingleTerminalOrNarrow, 2, false));
+}
+
+TEST(TerminalTabPresentation, SplitGroupKeepsActiveHeaderIdentityVisible)
+{
+	EXPECT_TRUE(terminal::ShouldShowActiveTerminalHeader(
+		TerminalTabsShowCondition::SingleTerminalOrNarrow, 2, false, true));
+	EXPECT_FALSE(terminal::ShouldShowActiveTerminalHeader(
+		TerminalTabsShowCondition::SingleTerminalOrNarrow, 2, false, false));
+
+	// An explicit policy is not overridden by the split-group projection.
+	EXPECT_FALSE(terminal::ShouldShowActiveTerminalHeader(
+		TerminalTabsShowCondition::SingleTerminal, 2, false, true));
+	EXPECT_FALSE(terminal::ShouldShowActiveTerminalHeader(
+		TerminalTabsShowCondition::Never, 2, false, true));
+	EXPECT_TRUE(terminal::ShouldShowActiveTerminalHeader(
+		TerminalTabsShowCondition::Always, 2, false, true));
 }
 
 TEST(TerminalTabPresentation, RowGeometryStaysBoundedAndDropsDescriptionFirst)
