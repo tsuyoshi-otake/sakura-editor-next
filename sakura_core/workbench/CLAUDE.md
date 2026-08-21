@@ -235,7 +235,7 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   `LaunchConfigurationCatalog` are untouched and still pass their suites; only the
   header buttons and their `BottomPanelTab` selection paths were removed. Restoring
   a tab means implementing its view projection, not re-adding the button.
-- Search, Run and Debug, Ports, Debug Console, reorder within a bar, moving the whole Panel
+- Run and Debug, Ports, Debug Console, reorder within a bar, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel position/alignment
   remain typed unsupported boundaries. A generic contribution renderer and
   unified command/context route are still required. Moving a built-in Activity

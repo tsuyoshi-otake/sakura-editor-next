@@ -138,6 +138,9 @@ class COutlineWorkbenchTool;
 namespace scm {
 class CScmWorkbenchTool;
 }
+namespace search {
+class CSearchWorkbenchTool;
+}
 namespace panel {
 class CBottomPanelTool;
 }
@@ -727,6 +730,14 @@ private:
 	void UpdateWorkspaceFromDocument();
 	void OpenExplorerFile(std::wstring_view path,
 		workbench::explorer::ExplorerFileActivationKind kind);
+	//! Opens one Search result. `line` and `column` are 1-based UTF-16 positions.
+	void OpenSearchMatch(std::wstring_view path, std::int64_t line, int column);
+	//! Opens `path` and places the caret at one zero-based UTF-16 position.
+	//! Shared by the Problems panel and the Search view.
+	void OpenDocumentAtMarkerPosition(std::wstring_view path,
+		std::uint32_t zeroBasedLine, std::uint32_t zeroBasedColumn);
+	//! Reloads this frame's document when a replace pass rewrote it underneath.
+	void ReloadReplacedFiles(const std::vector<std::wstring>& paths);
 	[[nodiscard]] std::wstring BuildExplorerLaunchOptions(bool preview) const;
 	void RefreshEditorCorePresentation();
 	void ApplyEditorCoreSnapshot(const workbench::editor::EditorCoreSnapshot& snapshot, bool restoreFocus = true);
@@ -780,7 +791,7 @@ private:
 	[[nodiscard]] bool ActiveInputMatchesCurrentFile() const;
 	//! Rebuilds the window-local registry from Sakura's bundled themes.
 	void RefreshColorThemes();
-	//! Shows Sakura's native color theme picker.
+	//! Shows Sakura's color themes through the shared VS Code-compatible Quick Pick.
 	[[nodiscard]] bool ShowColorThemePicker();
 	[[nodiscard]] bool PersistColorThemeSelection(std::wstring_view themeId);
 	//! Runs one of the built-in Git provider's branch commands, presenting its
@@ -870,6 +881,11 @@ private:
 		std::string_view argumentsJson, bool useTrash);
 	//! Runs `copyFilePath` / `copyRelativeFilePath`: puts the resource's absolute
 	//! path, or its label relative to the workspace root, on the clipboard.
+	//! `git.copyCommitId` / `git.copyCommitMessage`. `message` selects which of
+	//! the commit's two texts is copied; both name the commit by the id in the
+	//! payload and read the text from the Graph's own history.
+	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCopyCommitCommand(
+		std::string_view argumentsJson, bool message);
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteExplorerCopyPath(
 		std::string_view argumentsJson, bool relative);
 	//! Runs `revealFileInOS` ("Reveal in File Explorer" on Windows): opens a File
@@ -926,6 +942,7 @@ private:
 		キー式の解釈は登録時に一度だけ行い、打鍵ごとには行わない。式が読めない項目は
 		ここで落とす。落とした事実は診断出力に残す（黙って効かないのが一番たちが悪い）。
 	*/
+	[[nodiscard]] bool EnsureQuickInputOverlay();
 	[[nodiscard]] bool ShowCommandPalette();
 	[[nodiscard]] bool ExecuteToggleSidebarVisibilityCommand();
 	[[nodiscard]] bool ExecuteShowExplorerCommand();
@@ -1159,6 +1176,7 @@ private:
 	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
 	workbench::outline::COutlineWorkbenchTool* m_outlineWorkbenchTool = nullptr;
 	workbench::scm::CScmWorkbenchTool* m_scmTool = nullptr;
+	workbench::search::CSearchWorkbenchTool* m_searchTool = nullptr;
 	terminal::CTerminalTool* m_terminalTool = nullptr;
 	workbench::panel::CBottomPanelTool* m_bottomPanelTool = nullptr;
 	std::unique_ptr<markdown::CMarkdownPreviewWnd> m_markdownPreview;

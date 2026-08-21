@@ -1,0 +1,1278 @@
+﻿/*! @file */
+/*
+	Copyright (C) 2026, Sakura Editor Organization
+
+	SPDX-License-Identifier: Zlib
+*/
+#include "StdAfx.h"
+
+#include "workbench/search/CSearchWorkbenchTool.h"
+
+#include "theme/CThemeService.h"
+#include "workbench/controls/COverlayScrollbar.h"
+#include "workbench/icons/CCodiconFont.h"
+#include "workbench/icons/CSetiFont.h"
+#include "workbench/IconMetrics.h"
+#include "workbench/icons/CodiconGlyphTable.h"
+#include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/LabelRunPainter.h"
+#include "workbench/icons/SetiFileIcon.h"
+#include "workbench/icons/SetiIconPainter.h"
+#include "workbench/icons/ThemeIconResolver.h"
+#include "workbench/search/WorkspaceSearchEngine.h"
+
+#include <CommCtrl.h>
+#include <windowsx.h>
+#include <algorithm>
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <thread>
+#include <unordered_set>
+#include <vector>
+
+namespace workbench::search {
+namespace {
+
+constexpr wchar_t kWindowClass[] = L"SakuraNativeSearchTool";
+//! One completed search snapshot, handed to the window thread.
+constexpr UINT kResultMessage = WM_APP + 0x5e1;
+//! `search.searchOnType` is on by default upstream, with `searchOnTypeDebouncePeriod`
+//! at 300ms. The timer is that debounce.
+constexpr UINT_PTR kTypeTimer = 0x5e2;
+constexpr UINT kTypeDebounceMilliseconds = 300;
+
+constexpr int kQueryControlId = 1;
+constexpr int kReplaceControlId = 2;
+constexpr int kListControlId = 3;
+
+//! The widget's own inset inside the view, and the gap between its two boxes.
+constexpr int kWidgetInsetDip = 8;
+constexpr int kWidgetGapDip = 4;
+//! `.monaco-inputbox` height at the default font size.
+constexpr int kInputHeightDip = 26;
+//! The chevron column left of both boxes, which is upstream's replace toggle.
+constexpr int kToggleColumnDip = 20;
+//! One inline toggle button inside a box, and the box's own text padding.
+constexpr int kInlineButtonDip = 20;
+constexpr int kInputPaddingDip = 4;
+//! The Replace All button that sits right of the replace box.
+constexpr int kReplaceAllButtonDip = 24;
+//! The message line under the widget ("N results in M files").
+constexpr int kMessageHeightDip = 22;
+//! One result row, upstream's `SearchDelegate.getHeight`.
+constexpr int kRowHeightDip = 22;
+constexpr int kRowIndentDip = 8;
+constexpr int kMatchIndentDip = 22;
+constexpr int kIconDip = 16;
+constexpr int kIconGapDip = 6;
+//! One hover action button on a row.
+constexpr int kRowActionDip = 22;
+//! The count badge on a file row.
+constexpr int kBadgeMinimumWidthDip = 18;
+constexpr int kBadgeHeightDip = 16;
+
+[[nodiscard]] int Scale(int dip, unsigned int dpi) noexcept
+{
+	return ::MulDiv(dip, static_cast<int>(dpi == 0 ? 96u : dpi), 96);
+}
+
+void DrawSearchIcon(HDC dc, std::wstring_view name, const RECT& rect, COLORREF color)
+{
+	if (dc == nullptr || rect.right <= rect.left || rect.bottom <= rect.top) return;
+	const auto icon = icons::ResolveThemeIcon(name, icons::CCodiconFont::Instance().FaceName());
+	if (icon.font && !icon.fontIcon.glyph.empty()) {
+		const HFONT glyphFont = icons::CreateLabelRunGlyphFont(icon.fontIcon.faceName,
+			std::max(1, static_cast<int>(rect.bottom - rect.top)));
+		if (glyphFont != nullptr) {
+			const HGDIOBJ previous = ::SelectObject(dc, glyphFont);
+			const int previousMode = ::SetBkMode(dc, TRANSPARENT);
+			const COLORREF previousColor = ::SetTextColor(dc, color);
+			RECT glyph = rect;
+			::DrawTextW(dc, icon.fontIcon.glyph.c_str(), static_cast<int>(icon.fontIcon.glyph.size()),
+				&glyph, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOCLIP | DT_NOPREFIX);
+			::SetTextColor(dc, previousColor);
+			::SetBkMode(dc, previousMode);
+			::SelectObject(dc, previous);
+			::DeleteObject(glyphFont);
+		}
+		return;
+	}
+	icons::codicons::Draw(dc, icons::IconRect{ rect.left, rect.top, rect.right, rect.bottom },
+		icon.builtin, color);
+}
+
+//! The same file icon the Explorer draws, for the same reason the SCM view draws it.
+void DrawResultFileIcon(HDC dc, std::wstring_view fileName, const RECT& rect, COLORREF fallback)
+{
+	if (icons::CSetiFont::Instance().IsAvailable()) {
+		const auto icon = icons::seti::ResolveSetiFileIcon(fileName, false,
+			theme::CThemeService::IsActiveColorThemeLightKind()
+				? icons::seti::EIconVariant::Light
+				: icons::seti::EIconVariant::Dark);
+		if (!icon) return;
+		icons::seti::DrawSetiIcon(dc, rect, icon->character,
+			icon->color == icons::seti::kInheritColor
+				? fallback
+				: icons::seti::ColorRefFromThemeRgb(icon->color));
+		return;
+	}
+	DrawSearchIcon(dc, L"file", rect, fallback);
+}
+
+void FillRectangle(HDC dc, const RECT& rect, COLORREF color)
+{
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	::FillRect(dc, &rect, brush);
+	::DeleteObject(brush);
+}
+
+void FrameRectangle(HDC dc, const RECT& rect, COLORREF color)
+{
+	const HBRUSH brush = ::CreateSolidBrush(color);
+	::FrameRect(dc, &rect, brush);
+	::DeleteObject(brush);
+}
+
+//! Replaces `{0}` and `{1}` in a localized message.
+[[nodiscard]] std::wstring FormatMessage(std::wstring text, std::wstring_view first,
+	std::wstring_view second)
+{
+	const auto replace = [&text](std::wstring_view token, std::wstring_view value) {
+		const std::size_t position = text.find(token);
+		if (position != std::wstring::npos) text.replace(position, token.size(), value);
+	};
+	replace(L"{0}", first);
+	replace(L"{1}", second);
+	return text;
+}
+
+//! One rendered row. Upstream's Search tree has exactly these two levels.
+struct Row final {
+	bool isFile = false;
+	std::size_t fileIndex = 0;
+	std::size_t matchIndex = 0;
+};
+
+//! Which hover action of a row a point belongs to.
+enum class ERowAction : std::uint8_t { None, Replace, Dismiss };
+
+//! One inline toggle of the search or replace box.
+enum class EToggle : std::uint8_t { None, MatchCase, WholeWord, UseRegex, PreserveCase, ReplaceAll, ToggleReplace };
+
+//! The worker's request. A generation makes a superseded search abandon itself.
+struct WorkerRequest final {
+	std::wstring root;
+	SearchQuery query;
+	std::uint64_t generation = 0;
+};
+
+//! Everything shared between the window thread and the search worker.
+struct SharedState final {
+	std::mutex mutex;
+	WorkerRequest pending;
+	bool hasPending = false;
+	std::atomic<std::uint64_t> generation{ 0 };
+	std::atomic<bool> stopping{ false };
+	HANDLE wake{};
+	HANDLE stop{};
+	//! The window is cleared before the tool closes, so a late post is dropped
+	//! rather than delivered to a destroyed HWND.
+	std::mutex windowMutex;
+	HWND window{};
+};
+
+//! One completed search, owned by the message until the window takes it.
+struct WorkerResult final {
+	SearchResults results;
+	std::uint64_t generation = 0;
+};
+
+bool EnsureClass(HINSTANCE instance);
+
+} // namespace
+
+struct CSearchWorkbenchTool::Impl {
+	HWND window{};
+	HWND query{};
+	HWND replace{};
+	HWND list{};
+	controls::COverlayScrollbar scrollbar;
+	unsigned int dpi{ 96 };
+	theme::CThemeFont font;
+	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+	SearchViewTexts texts;
+	std::wstring root;
+	SearchQuery model;
+	//! True once the replace box is revealed, which is upstream's `toggleReplace`.
+	bool replaceVisible{};
+	bool active{};
+	bool closed{};
+	bool searching{};
+	SearchResults results;
+	std::unordered_set<std::wstring> collapsedFiles;
+	std::vector<Row> rows;
+	int hoverRow{ -1 };
+	ERowAction hoverAction{ ERowAction::None };
+	EToggle hoverToggle{ EToggle::None };
+	bool trackingMouse{};
+	//! Set while the tool itself writes a box, so the resulting `EN_CHANGE` is not
+	//! mistaken for the user typing.
+	bool updatingText{};
+	std::wstring statusText;
+	MatchActivationCallback activateMatch;
+	FilesChangedCallback filesChanged;
+	std::shared_ptr<SharedState> shared = std::make_shared<SharedState>();
+	std::thread worker;
+
+	// --- geometry -------------------------------------------------------------
+
+	[[nodiscard]] int Dip(int value) const noexcept { return Scale(value, dpi); }
+
+	[[nodiscard]] RECT ClientRect() const noexcept
+	{
+		RECT client{};
+		if (window != nullptr) ::GetClientRect(window, &client);
+		return client;
+	}
+
+	[[nodiscard]] RECT QueryBoxRect() const noexcept
+	{
+		const RECT client = ClientRect();
+		RECT box{};
+		box.left = client.left + Dip(kToggleColumnDip);
+		box.right = std::max(box.left, client.right - Dip(kWidgetInsetDip));
+		box.top = client.top + Dip(kWidgetGapDip);
+		box.bottom = box.top + Dip(kInputHeightDip);
+		return box;
+	}
+
+	[[nodiscard]] RECT ReplaceBoxRect() const noexcept
+	{
+		const RECT query = QueryBoxRect();
+		const RECT client = ClientRect();
+		RECT box{};
+		box.left = query.left;
+		box.right = std::max(box.left, client.right - Dip(kWidgetInsetDip)
+			- Dip(kReplaceAllButtonDip) - Dip(kWidgetGapDip));
+		box.top = query.bottom + Dip(kWidgetGapDip);
+		box.bottom = box.top + Dip(kInputHeightDip);
+		return box;
+	}
+
+	[[nodiscard]] RECT ReplaceAllRect() const noexcept
+	{
+		const RECT box = ReplaceBoxRect();
+		const RECT client = ClientRect();
+		RECT button{};
+		button.right = client.right - Dip(kWidgetInsetDip);
+		button.left = button.right - Dip(kReplaceAllButtonDip);
+		button.top = box.top + (Dip(kInputHeightDip) - Dip(kReplaceAllButtonDip)) / 2;
+		button.bottom = button.top + Dip(kReplaceAllButtonDip);
+		return button;
+	}
+
+	[[nodiscard]] RECT ToggleReplaceRect() const noexcept
+	{
+		const RECT queryBox = QueryBoxRect();
+		RECT chevron{};
+		chevron.left = Dip(kWidgetGapDip) / 2;
+		chevron.right = chevron.left + Dip(kToggleColumnDip) - Dip(kWidgetGapDip) / 2;
+		chevron.top = queryBox.top;
+		chevron.bottom = replaceVisible ? ReplaceBoxRect().bottom : queryBox.bottom;
+		return chevron;
+	}
+
+	//! The nth inline toggle inside `box`, counted from its right edge.
+	[[nodiscard]] RECT InlineToggleRect(const RECT& box, int indexFromRight) const noexcept
+	{
+		const int size = Dip(kInlineButtonDip);
+		RECT toggle{};
+		toggle.right = box.right - Dip(kInputPaddingDip) / 2 - indexFromRight * size;
+		toggle.left = toggle.right - size;
+		toggle.top = box.top + ((box.bottom - box.top) - size) / 2;
+		toggle.bottom = toggle.top + size;
+		return toggle;
+	}
+
+	[[nodiscard]] RECT MessageRect() const noexcept
+	{
+		const RECT client = ClientRect();
+		RECT message{};
+		message.left = client.left + Dip(kWidgetInsetDip);
+		message.right = client.right - Dip(kWidgetInsetDip);
+		message.top = (replaceVisible ? ReplaceBoxRect().bottom : QueryBoxRect().bottom)
+			+ Dip(kWidgetGapDip);
+		message.bottom = message.top + Dip(kMessageHeightDip);
+		return message;
+	}
+
+	[[nodiscard]] RECT ListRect() const noexcept
+	{
+		const RECT client = ClientRect();
+		RECT bounds{};
+		bounds.left = client.left;
+		bounds.right = client.right;
+		bounds.top = MessageRect().bottom;
+		bounds.bottom = std::max<LONG>(bounds.top, client.bottom);
+		return bounds;
+	}
+
+	// --- model ----------------------------------------------------------------
+
+	[[nodiscard]] std::wstring TextOf(HWND edit) const
+	{
+		if (edit == nullptr) return {};
+		const int length = ::GetWindowTextLengthW(edit);
+		if (length <= 0) return {};
+		std::wstring text(static_cast<std::size_t>(length), L'\0');
+		::GetWindowTextW(edit, text.data(), length + 1);
+		return text;
+	}
+
+	void ReadBoxes()
+	{
+		model.text = TextOf(query);
+		model.replaceText = TextOf(replace);
+	}
+
+	void RebuildRows()
+	{
+		rows.clear();
+		for (std::size_t fileIndex = 0; fileIndex < results.files.size(); ++fileIndex) {
+			const auto& file = results.files[fileIndex];
+			rows.push_back(Row{ true, fileIndex, 0 });
+			if (collapsedFiles.contains(file.fullPath)) continue;
+			for (std::size_t matchIndex = 0; matchIndex < file.matches.size(); ++matchIndex) {
+				rows.push_back(Row{ false, fileIndex, matchIndex });
+			}
+		}
+		if (list == nullptr) return;
+		const int previousTop = static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0));
+		::SendMessageW(list, WM_SETREDRAW, FALSE, 0);
+		::SendMessageW(list, LB_RESETCONTENT, 0, 0);
+		for (std::size_t index = 0; index < rows.size(); ++index) {
+			::SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L""));
+		}
+		if (previousTop > 0 && previousTop < static_cast<int>(rows.size())) {
+			::SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(previousTop), 0);
+		}
+		::SendMessageW(list, WM_SETREDRAW, TRUE, 0);
+		::InvalidateRect(list, nullptr, TRUE);
+		scrollbar.Update();
+	}
+
+	void UpdateStatusText()
+	{
+		if (searching) { statusText = texts.searching; return; }
+		switch (results.completion) {
+		case ESearchCompletion::NoWorkspace: statusText = texts.noWorkspace; return;
+		case ESearchCompletion::RegexUnavailable: statusText = texts.regexUnavailable; return;
+		case ESearchCompletion::InvalidPattern:
+			statusText = results.failureText.empty() ? texts.invalidPattern : results.failureText;
+			return;
+		default: break;
+		}
+		if (model.text.empty()) { statusText.clear(); return; }
+		if (results.files.empty()) { statusText = texts.noResults; return; }
+		statusText = FormatMessage(texts.resultSummary, std::to_wstring(results.matchCount),
+			std::to_wstring(results.files.size()));
+		if (results.completion == ESearchCompletion::LimitHit) {
+			statusText += L" - ";
+			statusText += texts.limitHit;
+		}
+	}
+
+	void Repaint()
+	{
+		if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
+	}
+
+	void StartSearch()
+	{
+		if (closed || shared->wake == nullptr) return;
+		ReadBoxes();
+		if (model.text.empty()) {
+			results = {};
+			searching = false;
+			RebuildRows();
+			UpdateStatusText();
+			Repaint();
+			return;
+		}
+		const std::uint64_t generation = shared->generation.fetch_add(1, std::memory_order_acq_rel) + 1;
+		{
+			std::lock_guard<std::mutex> guard(shared->mutex);
+			shared->pending = WorkerRequest{ root, model, generation };
+			shared->hasPending = true;
+		}
+		searching = true;
+		UpdateStatusText();
+		Repaint();
+		::SetEvent(shared->wake);
+	}
+
+	void ScheduleSearch()
+	{
+		if (window == nullptr) return;
+		::SetTimer(window, kTypeTimer, kTypeDebounceMilliseconds, nullptr);
+	}
+
+	// --- painting -------------------------------------------------------------
+
+	void PaintBox(HDC dc, const RECT& box, HWND edit, std::wstring_view placeholder) const
+	{
+		FillRectangle(dc, box, palette.raised.ToColorRef());
+		const bool focused = edit != nullptr && ::GetFocus() == edit;
+		FrameRectangle(dc, box, focused ? palette.accent.ToColorRef() : palette.border.ToColorRef());
+		if (edit == nullptr || ::GetWindowTextLengthW(edit) > 0 || placeholder.empty()) return;
+		RECT text = box;
+		text.left += Dip(kInputPaddingDip) + 2;
+		::SetTextColor(dc, palette.disabledText.ToColorRef());
+		::DrawTextW(dc, placeholder.data(), static_cast<int>(placeholder.size()), &text,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+	}
+
+	void PaintToggle(HDC dc, const RECT& rect, std::wstring_view icon, bool checked,
+		bool hovered) const
+	{
+		if (checked) FillRectangle(dc, rect, palette.raised.ToColorRef());
+		if (checked) FrameRectangle(dc, rect, palette.accent.ToColorRef());
+		else if (hovered) FillRectangle(dc, rect, palette.panel.ToColorRef());
+		RECT glyph = rect;
+		::InflateRect(&glyph, -Dip(2), -Dip(2));
+		DrawSearchIcon(dc, icon, glyph, palette.primaryText.ToColorRef());
+	}
+
+	void PaintWidget(HDC dc)
+	{
+		const RECT queryBox = QueryBoxRect();
+		PaintBox(dc, queryBox, query, texts.searchPlaceholder);
+		PaintToggle(dc, InlineToggleRect(queryBox, 1), L"regex", model.useRegex,
+			hoverToggle == EToggle::UseRegex);
+		PaintToggle(dc, InlineToggleRect(queryBox, 2), L"whole-word", model.wholeWord,
+			hoverToggle == EToggle::WholeWord);
+		PaintToggle(dc, InlineToggleRect(queryBox, 3), L"case-sensitive", model.matchCase,
+			hoverToggle == EToggle::MatchCase);
+
+		const RECT chevron = ToggleReplaceRect();
+		if (hoverToggle == EToggle::ToggleReplace) FillRectangle(dc, chevron, palette.panel.ToColorRef());
+		RECT chevronGlyph = chevron;
+		chevronGlyph.bottom = chevronGlyph.top + Dip(kInputHeightDip);
+		::InflateRect(&chevronGlyph, -Dip(3), -Dip(5));
+		DrawSearchIcon(dc, replaceVisible ? L"chevron-down" : L"chevron-right", chevronGlyph,
+			palette.primaryText.ToColorRef());
+
+		if (replaceVisible) {
+			const RECT replaceBox = ReplaceBoxRect();
+			PaintBox(dc, replaceBox, replace, texts.replacePlaceholder);
+			PaintToggle(dc, InlineToggleRect(replaceBox, 1), L"preserve-case", model.preserveCase,
+				hoverToggle == EToggle::PreserveCase);
+			const RECT replaceAll = ReplaceAllRect();
+			if (hoverToggle == EToggle::ReplaceAll) FillRectangle(dc, replaceAll, palette.panel.ToColorRef());
+			RECT glyph = replaceAll;
+			::InflateRect(&glyph, -Dip(3), -Dip(3));
+			DrawSearchIcon(dc, L"replace-all", glyph, palette.primaryText.ToColorRef());
+		}
+
+		if (statusText.empty()) return;
+		RECT message = MessageRect();
+		::SetTextColor(dc, results.completion == ESearchCompletion::InvalidPattern
+				|| results.completion == ESearchCompletion::RegexUnavailable
+			? palette.danger.ToColorRef()
+			: palette.secondaryText.ToColorRef());
+		::DrawTextW(dc, statusText.c_str(), static_cast<int>(statusText.size()), &message,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
+	}
+
+	//! Draws one text run and advances `x`.
+	void DrawRun(HDC dc, int& x, int top, int bottom, int right, std::wstring_view text,
+		COLORREF color, COLORREF background, bool hasBackground) const
+	{
+		if (text.empty() || x >= right) return;
+		SIZE size{};
+		::GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &size);
+		RECT run{ x, top, std::min<LONG>(right, x + size.cx), bottom };
+		if (hasBackground) FillRectangle(dc, run, background);
+		::SetTextColor(dc, color);
+		RECT clip = run;
+		::DrawTextW(dc, text.data(), static_cast<int>(text.size()), &clip,
+			DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX | DT_NOCLIP);
+		x += size.cx;
+	}
+
+	[[nodiscard]] RECT RowActionRect(const RECT& row, int indexFromRight) const noexcept
+	{
+		const int size = Dip(kRowActionDip);
+		RECT action{};
+		action.right = row.right - Dip(kWidgetGapDip) - indexFromRight * size;
+		action.left = action.right - size;
+		action.top = row.top;
+		action.bottom = row.bottom;
+		return action;
+	}
+
+	void PaintRow(HDC dc, int index, const RECT& rect, UINT state)
+	{
+		if (index < 0 || index >= static_cast<int>(rows.size())) return;
+		const Row& row = rows[static_cast<std::size_t>(index)];
+		const auto& file = results.files[row.fileIndex];
+		const bool selected = (state & ODS_SELECTED) != 0;
+		const bool hovered = hoverRow == index;
+		const COLORREF background = selected
+			? palette.accent.ToColorRef()
+			: (hovered ? palette.raised.ToColorRef() : palette.sideBar.ToColorRef());
+		FillRectangle(dc, rect, background);
+		const COLORREF text = selected ? palette.highlightText.ToColorRef()
+			: palette.primaryText.ToColorRef();
+		const COLORREF secondary = selected ? palette.highlightText.ToColorRef()
+			: palette.secondaryText.ToColorRef();
+		if (font.Get()) ::SelectObject(dc, font.Get());
+		::SetBkMode(dc, TRANSPARENT);
+
+		// Hover actions are laid out first: every other run is clipped against them,
+		// so a long path can never draw underneath a button the user can click.
+		int right = rect.right - Dip(kWidgetGapDip);
+		if (hovered) {
+			const RECT dismiss = RowActionRect(rect, 0);
+			RECT glyph = dismiss;
+			::InflateRect(&glyph, -Dip(4), -Dip(4));
+			DrawSearchIcon(dc, L"close", glyph,
+				hoverAction == ERowAction::Dismiss ? palette.accent.ToColorRef() : text);
+			right = dismiss.left;
+			if (replaceVisible) {
+				const RECT replaceAction = RowActionRect(rect, 1);
+				RECT replaceGlyph = replaceAction;
+				::InflateRect(&replaceGlyph, -Dip(4), -Dip(4));
+				DrawSearchIcon(dc, row.isFile ? L"replace-all" : L"replace", replaceGlyph,
+					hoverAction == ERowAction::Replace ? palette.accent.ToColorRef() : text);
+				right = replaceAction.left;
+			}
+		}
+
+		if (row.isFile) {
+			int x = rect.left + Dip(kRowIndentDip);
+			RECT chevron{ x, rect.top, x + Dip(kIconDip), rect.bottom };
+			DrawSearchIcon(dc, collapsedFiles.contains(file.fullPath) ? L"chevron-right" : L"chevron-down",
+				chevron, text);
+			x = chevron.right + Dip(2);
+			RECT icon{ x, rect.top + (rect.bottom - rect.top - Dip(kIconDip)) / 2,
+				x + Dip(kIconDip), 0 };
+			icon.bottom = icon.top + Dip(kIconDip);
+			DrawResultFileIcon(dc, file.fileName, icon, text);
+			x = icon.right + Dip(kIconGapDip);
+			// The badge is reserved before the description so the count never
+			// scrolls out from under a long folder path.
+			SIZE badgeText{};
+			const std::wstring count = std::to_wstring(file.matches.size());
+			::GetTextExtentPoint32W(dc, count.c_str(), static_cast<int>(count.size()), &badgeText);
+			const LONG badgeWidth = std::max<LONG>(Dip(kBadgeMinimumWidthDip), badgeText.cx + Dip(8));
+			RECT badge{ right - badgeWidth, rect.top + (rect.bottom - rect.top - Dip(kBadgeHeightDip)) / 2,
+				right, 0 };
+			badge.bottom = badge.top + Dip(kBadgeHeightDip);
+			DrawRun(dc, x, rect.top, rect.bottom, badge.left - Dip(kIconGapDip), file.fileName, text, 0, false);
+			if (!file.folderLabel.empty()) {
+				x += Dip(kIconGapDip);
+				DrawRun(dc, x, rect.top, rect.bottom, badge.left - Dip(kIconGapDip), file.folderLabel,
+					secondary, 0, false);
+			}
+			FillRectangle(dc, badge, palette.activityBarBadgeBackground.ToColorRef());
+			::SetTextColor(dc, palette.activityBarBadgeForeground.ToColorRef());
+			::DrawTextW(dc, count.c_str(), static_cast<int>(count.size()), &badge,
+				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+			return;
+		}
+
+		const auto& match = file.matches[row.matchIndex];
+		int x = rect.left + Dip(kMatchIndentDip);
+		const std::wstring_view preview = match.preview;
+		const int offset = std::clamp(match.previewOffset, 0, static_cast<int>(preview.size()));
+		const int length = std::clamp(match.previewLength, 0, static_cast<int>(preview.size()) - offset);
+		DrawRun(dc, x, rect.top, rect.bottom, right, preview.substr(0, static_cast<std::size_t>(offset)),
+			text, 0, false);
+		if (model.replaceText.empty() || !replaceVisible) {
+			DrawRun(dc, x, rect.top, rect.bottom, right,
+				preview.substr(static_cast<std::size_t>(offset), static_cast<std::size_t>(length)),
+				text, palette.searchMatchHighlightBackground.ToColorRef(), true);
+		} else {
+			// Upstream previews a replacement by striking the matched text through
+			// and showing the replacement immediately after it.
+			const HFONT strike = CreateStrikeoutFont();
+			const HGDIOBJ previous = strike != nullptr ? ::SelectObject(dc, strike) : nullptr;
+			DrawRun(dc, x, rect.top, rect.bottom, right,
+				preview.substr(static_cast<std::size_t>(offset), static_cast<std::size_t>(length)),
+				secondary, palette.searchMatchHighlightBackground.ToColorRef(), true);
+			if (strike != nullptr) {
+				::SelectObject(dc, previous);
+				::DeleteObject(strike);
+			}
+			DrawRun(dc, x, rect.top, rect.bottom, right, ReplacementPreview(match), text,
+				palette.diffInsertedLineBackground.ToColorRef(), true);
+		}
+		DrawRun(dc, x, rect.top, rect.bottom, right,
+			preview.substr(static_cast<std::size_t>(offset + length)), text, 0, false);
+	}
+
+	[[nodiscard]] std::wstring ReplacementPreview(const SearchMatch& match) const
+	{
+		if (model.useRegex) return model.replaceText;
+		const int offset = std::clamp(match.previewOffset, 0, static_cast<int>(match.preview.size()));
+		const int length = std::clamp(match.previewLength, 0,
+			static_cast<int>(match.preview.size()) - offset);
+		const std::wstring_view matched(match.preview.data() + offset,
+			static_cast<std::size_t>(length));
+		return model.preserveCase ? ApplyPreserveCase(model.replaceText, matched) : model.replaceText;
+	}
+
+	[[nodiscard]] HFONT CreateStrikeoutFont() const
+	{
+		if (font.Get() == nullptr) return nullptr;
+		LOGFONTW logFont{};
+		if (::GetObjectW(font.Get(), sizeof(logFont), &logFont) == 0) return nullptr;
+		logFont.lfStrikeOut = TRUE;
+		return ::CreateFontIndirectW(&logFont);
+	}
+
+	// --- interaction ----------------------------------------------------------
+
+	[[nodiscard]] EToggle ToggleAt(POINT point) const
+	{
+		const auto contains = [&point](const RECT& rect) { return ::PtInRect(&rect, point) != FALSE; };
+		const RECT queryBox = QueryBoxRect();
+		if (contains(InlineToggleRect(queryBox, 1))) return EToggle::UseRegex;
+		if (contains(InlineToggleRect(queryBox, 2))) return EToggle::WholeWord;
+		if (contains(InlineToggleRect(queryBox, 3))) return EToggle::MatchCase;
+		if (replaceVisible) {
+			const RECT replaceBox = ReplaceBoxRect();
+			if (contains(InlineToggleRect(replaceBox, 1))) return EToggle::PreserveCase;
+			if (contains(ReplaceAllRect())) return EToggle::ReplaceAll;
+		}
+		if (contains(ToggleReplaceRect())) return EToggle::ToggleReplace;
+		return EToggle::None;
+	}
+
+	void SetHoverToggle(EToggle toggle)
+	{
+		if (hoverToggle == toggle) return;
+		hoverToggle = toggle;
+		Repaint();
+	}
+
+	void InvokeToggle(EToggle toggle)
+	{
+		switch (toggle) {
+		case EToggle::MatchCase: model.matchCase = !model.matchCase; StartSearch(); break;
+		case EToggle::WholeWord: model.wholeWord = !model.wholeWord; StartSearch(); break;
+		case EToggle::UseRegex: model.useRegex = !model.useRegex; StartSearch(); break;
+		case EToggle::PreserveCase: model.preserveCase = !model.preserveCase; Repaint(); break;
+		case EToggle::ReplaceAll: ReplaceAll(); break;
+		case EToggle::ToggleReplace: SetReplaceVisible(!replaceVisible); break;
+		case EToggle::None: break;
+		}
+		Repaint();
+	}
+
+	void SetReplaceVisible(bool visible)
+	{
+		if (replaceVisible == visible) return;
+		replaceVisible = visible;
+		if (replace != nullptr) ::ShowWindow(replace, visible ? SW_SHOW : SW_HIDE);
+		LayoutChildren();
+		Repaint();
+	}
+
+	[[nodiscard]] ERowAction RowActionAt(int index, POINT point) const
+	{
+		if (index < 0 || index >= static_cast<int>(rows.size()) || list == nullptr) {
+			return ERowAction::None;
+		}
+		RECT row{};
+		if (::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(index),
+				reinterpret_cast<LPARAM>(&row)) == LB_ERR) {
+			return ERowAction::None;
+		}
+		const RECT dismiss = RowActionRect(row, 0);
+		if (::PtInRect(&dismiss, point)) return ERowAction::Dismiss;
+		const RECT replace = RowActionRect(row, 1);
+		if (replaceVisible && ::PtInRect(&replace, point)) return ERowAction::Replace;
+		return ERowAction::None;
+	}
+
+	void ActivateRow(int index)
+	{
+		if (index < 0 || index >= static_cast<int>(rows.size())) return;
+		const Row& row = rows[static_cast<std::size_t>(index)];
+		const auto& file = results.files[row.fileIndex];
+		if (row.isFile) {
+			if (collapsedFiles.contains(file.fullPath)) collapsedFiles.erase(file.fullPath);
+			else collapsedFiles.insert(file.fullPath);
+			RebuildRows();
+			return;
+		}
+		const auto& match = file.matches[row.matchIndex];
+		if (activateMatch) activateMatch(file.fullPath, match.line, match.column, match.length);
+	}
+
+	void DismissRow(int index)
+	{
+		if (index < 0 || index >= static_cast<int>(rows.size())) return;
+		const Row row = rows[static_cast<std::size_t>(index)];
+		auto& file = results.files[row.fileIndex];
+		if (row.isFile) {
+			results.matchCount -= file.matches.size();
+			results.files.erase(results.files.begin() + static_cast<std::ptrdiff_t>(row.fileIndex));
+		} else {
+			file.matches.erase(file.matches.begin() + static_cast<std::ptrdiff_t>(row.matchIndex));
+			--results.matchCount;
+			if (file.matches.empty()) {
+				results.files.erase(results.files.begin() + static_cast<std::ptrdiff_t>(row.fileIndex));
+			}
+		}
+		RebuildRows();
+		UpdateStatusText();
+		Repaint();
+	}
+
+	//! The slice of the model one replace gesture acts on.
+	void ReplaceRow(int index)
+	{
+		if (index < 0 || index >= static_cast<int>(rows.size())) return;
+		const Row row = rows[static_cast<std::size_t>(index)];
+		const auto& file = results.files[row.fileIndex];
+		std::vector<SearchFileResult> slice;
+		if (row.isFile) {
+			slice.push_back(file);
+		} else {
+			SearchFileResult single = file;
+			single.matches = { file.matches[row.matchIndex] };
+			slice.push_back(std::move(single));
+		}
+		RunReplace(slice);
+	}
+
+	void ReplaceAll() { RunReplace(results.files); }
+
+	void RunReplace(const std::vector<SearchFileResult>& slice)
+	{
+		if (slice.empty() || model.text.empty()) return;
+		ReadBoxes();
+		const auto outcome = ReplaceMatches(slice, model, {});
+		if (filesChanged && outcome.replacedFiles != 0) {
+			std::vector<std::wstring> changed;
+			changed.reserve(slice.size());
+			for (const auto& file : slice) {
+				if (std::ranges::find(outcome.failedFiles, file.fullPath) == outcome.failedFiles.end()) {
+					changed.push_back(file.fullPath);
+				}
+			}
+			filesChanged(changed);
+		}
+		if (!outcome.failedFiles.empty()) {
+			statusText = FormatMessage(texts.replaceFailed,
+				std::to_wstring(outcome.failedFiles.size()), {});
+			Repaint();
+		}
+		// Re-running the query is how the view learns what the files now contain;
+		// keeping the pre-replace positions would leave stale rows behind.
+		StartSearch();
+	}
+
+	// --- layout ---------------------------------------------------------------
+
+	void LayoutChildren()
+	{
+		if (window == nullptr) return;
+		const RECT queryBox = QueryBoxRect();
+		if (query != nullptr) {
+			RECT inner = queryBox;
+			::InflateRect(&inner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
+			inner.right = InlineToggleRect(queryBox, 3).left - Dip(2);
+			::SetWindowPos(query, nullptr, inner.left, inner.top,
+				std::max(0L, inner.right - inner.left), std::max(0L, inner.bottom - inner.top),
+				SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		if (replace != nullptr) {
+			const RECT replaceBox = ReplaceBoxRect();
+			RECT inner = replaceBox;
+			::InflateRect(&inner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
+			inner.right = InlineToggleRect(replaceBox, 1).left - Dip(2);
+			::SetWindowPos(replace, nullptr, inner.left, inner.top,
+				std::max(0L, inner.right - inner.left), std::max(0L, inner.bottom - inner.top),
+				SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		if (list != nullptr) {
+			const RECT listRect = ListRect();
+			::SendMessageW(list, LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(Dip(kRowHeightDip)));
+			::SetWindowPos(list, nullptr, listRect.left, listRect.top,
+				std::max(0L, listRect.right - listRect.left),
+				std::max(0L, listRect.bottom - listRect.top), SWP_NOZORDER | SWP_NOACTIVATE);
+		}
+		scrollbar.SetDpi(dpi);
+		scrollbar.Update();
+	}
+
+	void ApplyScrollbarColors()
+	{
+		controls::OverlayScrollbarColors colors;
+		colors.background = palette.sideBar.ToColorRef();
+		colors.trackHover = palette.raised.ToColorRef();
+		colors.thumb = palette.border.ToColorRef();
+		colors.thumbHover = palette.secondaryText.ToColorRef();
+		scrollbar.SetColors(colors);
+	}
+
+	// --- worker ---------------------------------------------------------------
+
+	void Start()
+	{
+		shared->wake = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+		shared->stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+		auto state = shared;
+		worker = std::thread([state]() {
+			const HANDLE handles[2] = { state->stop, state->wake };
+			for (;;) {
+				const DWORD wait = ::WaitForMultipleObjects(2, handles, FALSE, INFINITE);
+				if (wait == WAIT_OBJECT_0 || state->stopping.load(std::memory_order_acquire)) return;
+				WorkerRequest request;
+				{
+					std::lock_guard<std::mutex> guard(state->mutex);
+					if (!state->hasPending) continue;
+					request = state->pending;
+					state->hasPending = false;
+				}
+				auto result = std::make_unique<WorkerResult>();
+				result->generation = request.generation;
+				result->results = RunWorkspaceSearch(request.root, request.query, [state, &request]() {
+					return state->stopping.load(std::memory_order_acquire)
+						|| state->generation.load(std::memory_order_acquire) != request.generation;
+				});
+				std::lock_guard<std::mutex> guard(state->windowMutex);
+				if (state->window == nullptr
+					|| state->generation.load(std::memory_order_acquire) != request.generation) {
+					continue;
+				}
+				if (::PostMessageW(state->window, kResultMessage, 0,
+						reinterpret_cast<LPARAM>(result.get())) != FALSE) {
+					(void)result.release();
+				}
+			}
+		});
+	}
+
+	void SetWorkerWindow(HWND value)
+	{
+		std::lock_guard<std::mutex> guard(shared->windowMutex);
+		shared->window = value;
+	}
+};
+
+namespace {
+
+bool EnsureClass(HINSTANCE instance)
+{
+	WNDCLASSEXW wc{};
+	wc.cbSize = sizeof(wc);
+	wc.lpfnWndProc = &CSearchWorkbenchTool::WindowProc;
+	wc.hInstance = instance;
+	wc.hCursor = ::LoadCursorW(nullptr, IDC_ARROW);
+	wc.lpszClassName = kWindowClass;
+	return ::RegisterClassExW(&wc) != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS;
+}
+
+} // namespace
+
+CSearchWorkbenchTool::CSearchWorkbenchTool() : m_impl(std::make_unique<Impl>()) {}
+CSearchWorkbenchTool::~CSearchWorkbenchTool() { Close(); }
+
+bool CSearchWorkbenchTool::Create(HWND parent)
+{
+	if (m_impl->closed || m_impl->window != nullptr || parent == nullptr) return false;
+	auto instance = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(parent, GWLP_HINSTANCE));
+	if (instance == nullptr) instance = ::GetModuleHandleW(nullptr);
+	if (!EnsureClass(instance)) return false;
+	m_impl->window = ::CreateWindowExW(0, kWindowClass, L"", WS_CHILD | WS_CLIPCHILDREN,
+		0, 0, 0, 0, parent, nullptr, instance, this);
+	if (m_impl->window == nullptr) return false;
+	m_impl->query = ::CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
+		0, 0, 0, 0, m_impl->window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kQueryControlId)), instance, nullptr);
+	m_impl->replace = ::CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL,
+		0, 0, 0, 0, m_impl->window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kReplaceControlId)), instance, nullptr);
+	m_impl->list = ::CreateWindowExW(0, L"LISTBOX", L"",
+		WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
+			| LBS_OWNERDRAWFIXED | LBS_HASSTRINGS,
+		0, 0, 0, 0, m_impl->window, reinterpret_cast<HMENU>(static_cast<UINT_PTR>(kListControlId)), instance, nullptr);
+	if (m_impl->query == nullptr || m_impl->replace == nullptr || m_impl->list == nullptr) {
+		Close();
+		return false;
+	}
+	(void)::SetWindowSubclass(m_impl->query, &CSearchWorkbenchTool::EditSubclassProc,
+		kQueryControlId, reinterpret_cast<DWORD_PTR>(m_impl.get()));
+	(void)::SetWindowSubclass(m_impl->replace, &CSearchWorkbenchTool::EditSubclassProc,
+		kReplaceControlId, reinterpret_cast<DWORD_PTR>(m_impl.get()));
+	(void)::SetWindowSubclass(m_impl->list, &CSearchWorkbenchTool::ListSubclassProc,
+		kListControlId, reinterpret_cast<DWORD_PTR>(m_impl.get()));
+	Impl* const impl = m_impl.get();
+	(void)m_impl->scrollbar.Create(m_impl->window, m_impl->list, [impl](int topRow) {
+		if (impl->list != nullptr) {
+			(void)::SendMessageW(impl->list, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
+		}
+	});
+	m_impl->ApplyScrollbarColors();
+	m_impl->SetWorkerWindow(m_impl->window);
+	m_impl->Start();
+	return true;
+}
+
+void CSearchWorkbenchTool::Layout(const RECT& contentRect, unsigned int dpi)
+{
+	if (m_impl->closed || m_impl->window == nullptr) return;
+	m_impl->dpi = dpi == 0 ? 96 : dpi;
+	if (m_impl->font.Dpi() != m_impl->dpi) {
+		(void)m_impl->font.Recreate(theme::ThemeFontKind::Chrome, m_impl->dpi);
+	}
+	for (HWND child : { m_impl->query, m_impl->replace, m_impl->list }) {
+		if (child != nullptr) {
+			::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
+		}
+	}
+	::SetWindowPos(m_impl->window, nullptr, contentRect.left, contentRect.top,
+		contentRect.right - contentRect.left, contentRect.bottom - contentRect.top,
+		SWP_NOZORDER | SWP_NOACTIVATE);
+	m_impl->LayoutChildren();
+}
+
+void CSearchWorkbenchTool::Activate()
+{
+	m_impl->active = true;
+	FocusQuery();
+}
+
+void CSearchWorkbenchTool::Deactivate() { m_impl->active = false; }
+
+bool CSearchWorkbenchTool::PreTranslateMessage(MSG& message)
+{
+	if (!m_impl->active) return false;
+	if (message.hwnd == m_impl->query || message.hwnd == m_impl->replace) {
+		if (message.message == WM_KEYDOWN && message.wParam == VK_RETURN) {
+			if (message.hwnd == m_impl->replace && (::GetKeyState(VK_CONTROL) & 0x8000) != 0
+				&& (::GetKeyState(VK_MENU) & 0x8000) != 0) {
+				// `Ctrl+Alt+Enter` is upstream's Replace All accelerator.
+				m_impl->ReplaceAll();
+				return true;
+			}
+			m_impl->StartSearch();
+			return true;
+		}
+		// The frame consults its legacy accelerator table after this hook and would
+		// otherwise claim ordinary editing keys before the box ever saw them.
+		::TranslateMessage(&message);
+		::DispatchMessageW(&message);
+		return true;
+	}
+	if (message.hwnd != m_impl->list || message.message != WM_KEYDOWN) return false;
+	if (message.wParam == VK_RETURN) {
+		m_impl->ActivateRow(static_cast<int>(::SendMessageW(m_impl->list, LB_GETCURSEL, 0, 0)));
+		return true;
+	}
+	if (message.wParam == VK_DELETE) {
+		m_impl->DismissRow(static_cast<int>(::SendMessageW(m_impl->list, LB_GETCURSEL, 0, 0)));
+		return true;
+	}
+	return false;
+}
+
+void CSearchWorkbenchTool::Close()
+{
+	if (!m_impl || m_impl->closed) return;
+	m_impl->closed = true;
+	m_impl->SetWorkerWindow(nullptr);
+	m_impl->shared->stopping.store(true, std::memory_order_release);
+	if (m_impl->shared->stop != nullptr) ::SetEvent(m_impl->shared->stop);
+	if (m_impl->shared->wake != nullptr) ::SetEvent(m_impl->shared->wake);
+	if (m_impl->worker.joinable()) m_impl->worker.join();
+	if (m_impl->shared->stop != nullptr) { ::CloseHandle(m_impl->shared->stop); m_impl->shared->stop = nullptr; }
+	if (m_impl->shared->wake != nullptr) { ::CloseHandle(m_impl->shared->wake); m_impl->shared->wake = nullptr; }
+	m_impl->scrollbar.Destroy();
+	m_impl->rows.clear();
+	m_impl->results = {};
+	if (m_impl->window != nullptr && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
+	m_impl->window = nullptr;
+	m_impl->query = nullptr;
+	m_impl->replace = nullptr;
+	m_impl->list = nullptr;
+}
+
+void CSearchWorkbenchTool::SetRoot(std::wstring root)
+{
+	if (m_impl->root == root) return;
+	m_impl->root = std::move(root);
+	if (!m_impl->model.text.empty()) m_impl->StartSearch();
+}
+
+void CSearchWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
+{
+	m_impl->palette = palette;
+	m_impl->ApplyScrollbarColors();
+	m_impl->Repaint();
+	if (m_impl->list != nullptr) ::InvalidateRect(m_impl->list, nullptr, TRUE);
+}
+
+void CSearchWorkbenchTool::SetTexts(SearchViewTexts texts)
+{
+	m_impl->texts = std::move(texts);
+	m_impl->UpdateStatusText();
+	m_impl->Repaint();
+}
+
+void CSearchWorkbenchTool::SetMatchActivationCallback(MatchActivationCallback callback)
+{
+	m_impl->activateMatch = std::move(callback);
+}
+
+void CSearchWorkbenchTool::SetFilesChangedCallback(FilesChangedCallback callback)
+{
+	m_impl->filesChanged = std::move(callback);
+}
+
+void CSearchWorkbenchTool::SetVisible(bool visible)
+{
+	if (m_impl->window != nullptr) ::ShowWindow(m_impl->window, visible ? SW_SHOW : SW_HIDE);
+}
+
+void CSearchWorkbenchTool::Refresh()
+{
+	if (!m_impl->closed) m_impl->StartSearch();
+}
+
+void CSearchWorkbenchTool::FocusQuery()
+{
+	if (m_impl->query == nullptr) return;
+	::SetFocus(m_impl->query);
+	::SendMessageW(m_impl->query, EM_SETSEL, 0, -1);
+}
+
+void CSearchWorkbenchTool::FocusReplace()
+{
+	m_impl->SetReplaceVisible(true);
+	if (m_impl->replace == nullptr) return;
+	::SetFocus(m_impl->replace);
+	::SendMessageW(m_impl->replace, EM_SETSEL, 0, -1);
+}
+
+void CSearchWorkbenchTool::SetQueryText(std::wstring text)
+{
+	if (m_impl->query == nullptr) return;
+	m_impl->updatingText = true;
+	::SetWindowTextW(m_impl->query, text.c_str());
+	m_impl->updatingText = false;
+	m_impl->StartSearch();
+}
+
+HWND CSearchWorkbenchTool::GetHwnd() const noexcept { return m_impl->window; }
+
+LRESULT CALLBACK CSearchWorkbenchTool::EditSubclassProc(HWND window, UINT message, WPARAM wParam,
+	LPARAM lParam, UINT_PTR id, DWORD_PTR data)
+{
+	if (message == WM_NCDESTROY) {
+		::RemoveWindowSubclass(window, &CSearchWorkbenchTool::EditSubclassProc, id);
+	}
+	auto* const impl = reinterpret_cast<Impl*>(data);
+	if (impl != nullptr && (message == WM_SETFOCUS || message == WM_KILLFOCUS)) {
+		// The focus ring is painted by the parent around the box, so the parent has
+		// to repaint when focus moves between the two boxes.
+		impl->Repaint();
+	}
+	return ::DefSubclassProc(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK CSearchWorkbenchTool::ListSubclassProc(HWND window, UINT message, WPARAM wParam,
+	LPARAM lParam, UINT_PTR id, DWORD_PTR data)
+{
+	if (message == WM_NCDESTROY) {
+		::RemoveWindowSubclass(window, &CSearchWorkbenchTool::ListSubclassProc, id);
+	}
+	auto* const impl = reinterpret_cast<Impl*>(data);
+	if (impl != nullptr) {
+		switch (message) {
+		case WM_MOUSEMOVE: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			const int index = static_cast<int>(::SendMessageW(window, LB_ITEMFROMPOINT, 0,
+				MAKELPARAM(point.x, point.y)));
+			const bool outside = HIWORD(index) != 0;
+			const int row = outside ? -1 : LOWORD(index);
+			const ERowAction action = impl->RowActionAt(row, point);
+			if (row != impl->hoverRow || action != impl->hoverAction) {
+				impl->hoverRow = row;
+				impl->hoverAction = action;
+				::InvalidateRect(window, nullptr, FALSE);
+			}
+			if (!impl->trackingMouse) {
+				TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 };
+				impl->trackingMouse = ::TrackMouseEvent(&track) != FALSE;
+			}
+			break;
+		}
+		case WM_MOUSELEAVE:
+			impl->trackingMouse = false;
+			impl->hoverRow = -1;
+			impl->hoverAction = ERowAction::None;
+			::InvalidateRect(window, nullptr, FALSE);
+			break;
+		case WM_LBUTTONUP: {
+			const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			const int index = static_cast<int>(::SendMessageW(window, LB_ITEMFROMPOINT, 0,
+				MAKELPARAM(point.x, point.y)));
+			if (HIWORD(index) == 0) {
+				const int row = LOWORD(index);
+				switch (impl->RowActionAt(row, point)) {
+				case ERowAction::Dismiss: impl->DismissRow(row); return 0;
+				case ERowAction::Replace: impl->ReplaceRow(row); return 0;
+				case ERowAction::None: break;
+				}
+				// A file row toggles on a single click, exactly as a tree twistie does;
+				// a match row needs a double click, which arrives as LBN_DBLCLK.
+				if (row >= 0 && row < static_cast<int>(impl->rows.size())
+					&& impl->rows[static_cast<std::size_t>(row)].isFile) {
+					const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+					impl->ActivateRow(row);
+					return result;
+				}
+			}
+			break;
+		}
+		case WM_VSCROLL:
+		case WM_MOUSEWHEEL:
+		case WM_KEYDOWN:
+		case WM_SIZE: {
+			const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+			impl->scrollbar.Update();
+			return result;
+		}
+		default:
+			break;
+		}
+	}
+	return ::DefSubclassProc(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM wParam,
+	LPARAM lParam)
+{
+	if (message == WM_NCCREATE) {
+		auto* self = static_cast<CSearchWorkbenchTool*>(
+			reinterpret_cast<CREATESTRUCTW*>(lParam)->lpCreateParams);
+		::SetWindowLongPtrW(window, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+	}
+	auto* self = reinterpret_cast<CSearchWorkbenchTool*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
+	if (self == nullptr || !self->m_impl) return ::DefWindowProcW(window, message, wParam, lParam);
+	auto& impl = *self->m_impl;
+	switch (message) {
+	case WM_SIZE:
+		impl.LayoutChildren();
+		return 0;
+	case WM_ERASEBKGND:
+		return 1;
+	case WM_PAINT: {
+		PAINTSTRUCT paint{};
+		const HDC dc = ::BeginPaint(window, &paint);
+		FillRectangle(dc, paint.rcPaint, impl.palette.sideBar.ToColorRef());
+		if (impl.font.Get() != nullptr) ::SelectObject(dc, impl.font.Get());
+		::SetBkMode(dc, TRANSPARENT);
+		impl.PaintWidget(dc);
+		::EndPaint(window, &paint);
+		return 0;
+	}
+	case WM_SETCURSOR: {
+		if (reinterpret_cast<HWND>(wParam) != window) break;
+		POINT point{};
+		if (::GetCursorPos(&point) == FALSE || ::ScreenToClient(window, &point) == FALSE) break;
+		if (impl.ToggleAt(point) != EToggle::None) {
+			::SetCursor(::LoadCursorW(nullptr, IDC_HAND));
+			return TRUE;
+		}
+		break;
+	}
+	case WM_MOUSEMOVE: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		impl.SetHoverToggle(impl.ToggleAt(point));
+		return 0;
+	}
+	case WM_MOUSELEAVE:
+		impl.SetHoverToggle(EToggle::None);
+		return 0;
+	case WM_LBUTTONUP: {
+		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		const EToggle toggle = impl.ToggleAt(point);
+		if (toggle != EToggle::None) { impl.InvokeToggle(toggle); return 0; }
+		break;
+	}
+	case WM_TIMER:
+		if (wParam == kTypeTimer) {
+			::KillTimer(window, kTypeTimer);
+			impl.StartSearch();
+			return 0;
+		}
+		break;
+	case WM_COMMAND:
+		if (HIWORD(wParam) == EN_CHANGE && !impl.updatingText) {
+			if (LOWORD(wParam) == kQueryControlId) {
+				impl.ScheduleSearch();
+				impl.Repaint();
+				return 0;
+			}
+			if (LOWORD(wParam) == kReplaceControlId) {
+				impl.ReadBoxes();
+				impl.Repaint();
+				if (impl.list != nullptr) ::InvalidateRect(impl.list, nullptr, FALSE);
+				return 0;
+			}
+		}
+		if (LOWORD(wParam) == kListControlId && HIWORD(wParam) == LBN_DBLCLK) {
+			impl.ActivateRow(static_cast<int>(::SendMessageW(impl.list, LB_GETCURSEL, 0, 0)));
+			return 0;
+		}
+		break;
+	case WM_DRAWITEM: {
+		auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
+		if (draw != nullptr && draw->CtlID == kListControlId && draw->hwndItem == impl.list
+			&& draw->itemID != static_cast<UINT>(-1)) {
+			impl.PaintRow(draw->hDC, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			return TRUE;
+		}
+		break;
+	}
+	case WM_CTLCOLOREDIT: {
+		const HDC dc = reinterpret_cast<HDC>(wParam);
+		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
+		::SetBkColor(dc, impl.palette.raised.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.raised.ToColorRef());
+		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
+	}
+	case WM_CTLCOLORLISTBOX: {
+		const HDC dc = reinterpret_cast<HDC>(wParam);
+		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
+		::SetBkColor(dc, impl.palette.sideBar.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.sideBar.ToColorRef());
+		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
+	}
+	case kResultMessage: {
+		std::unique_ptr<WorkerResult> result(reinterpret_cast<WorkerResult*>(lParam));
+		if (result && result->generation == impl.shared->generation.load(std::memory_order_acquire)) {
+			impl.results = std::move(result->results);
+			impl.collapsedFiles.clear();
+			impl.searching = false;
+			impl.RebuildRows();
+			impl.UpdateStatusText();
+			impl.Repaint();
+		}
+		return 0;
+	}
+	default:
+		break;
+	}
+	return ::DefWindowProcW(window, message, wParam, lParam);
+}
+
+} // namespace workbench::search

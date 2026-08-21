@@ -8,6 +8,7 @@
 
 #include "MarkdownParser.h"
 #include "util/CpuDispatch.h"
+#include "util/Utf16BenchmarkTelemetry.h"
 
 #include <algorithm>
 #include <array>
@@ -145,26 +146,46 @@ enum class AngleAutolinkKind {
 	std::size_t vectorMinimumLength) noexcept
 {
 	const auto remaining = source.size() - start;
+	std::size_t offset = remaining;
+	std::string_view implementationPath = "scalar";
 	if (remaining >= vectorMinimumLength) {
-		return start + vectorScan(source.data() + start, remaining);
+		offset = vectorScan(source.data() + start, remaining);
+		implementationPath = "simd";
+	} else {
+		for (std::size_t index = 0; index < remaining; ++index) {
+			if (IsMarkdownInlineSpecial(source[start + index])) {
+				offset = index;
+				break;
+			}
+		}
 	}
-	for (std::size_t index = start; index < source.size(); ++index) {
-		if (IsMarkdownInlineSpecial(source[index])) return index;
-	}
-	return source.size();
+	SAKURA_UTF16_BENCHMARK_RECORD(
+		"markdown", remaining, offset, source.data() + start,
+		CpuDispatch::Get().isa, implementationPath);
+	return start + offset;
 }
 
 [[nodiscard]] std::size_t FindCrOrLf(std::wstring_view source, std::size_t start,
 	CpuDispatch::FindUtf16Function vectorScan, std::size_t vectorMinimumLength) noexcept
 {
 	const auto remaining = source.size() - start;
+	std::size_t offset = remaining;
+	std::string_view implementationPath = "scalar";
 	if (remaining >= vectorMinimumLength) {
-		return start + vectorScan(source.data() + start, remaining);
+		offset = vectorScan(source.data() + start, remaining);
+		implementationPath = "simd";
+	} else {
+		for (std::size_t index = 0; index < remaining; ++index) {
+			if (source[start + index] == L'\r' || source[start + index] == L'\n') {
+				offset = index;
+				break;
+			}
+		}
 	}
-	for (std::size_t index = start; index < source.size(); ++index) {
-		if (source[index] == L'\r' || source[index] == L'\n') return index;
-	}
-	return source.size();
+	SAKURA_UTF16_BENCHMARK_RECORD(
+		"crlf", remaining, offset, source.data() + start,
+		CpuDispatch::Get().isa, implementationPath);
+	return start + offset;
 }
 
 [[nodiscard]] std::wstring_view TrimLeft(std::wstring_view value) noexcept

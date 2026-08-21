@@ -248,15 +248,19 @@ struct CBottomPanelTool::Impl {
 			return;
 		}
 
-		wchar_t label[128]{};
-		::GetWindowTextW(item.hwndItem, label, static_cast<int>(std::size(label)));
+		// The terminal button is the stable Panel tab label. The active session
+		// title belongs to the terminal's own tab/list presentation, not to the
+		// physical Panel Part label.
+		wchar_t fallback[128]{};
+		::GetWindowTextW(item.hwndItem, fallback, static_cast<int>(std::size(fallback)));
+		const std::wstring label = fallback;
 		::SetBkMode(item.hDC, TRANSPARENT);
 		::SetTextColor(item.hDC, disabled ? palette.disabledText.ToColorRef()
 			: activeTab ? palette.primaryText.ToColorRef() : palette.secondaryText.ToColorRef());
 		RECT text = item.rcItem;
 		text.left += Scale(12, dpi);
 		text.right -= Scale(8, dpi);
-		::DrawTextW(item.hDC, label, -1, &text, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+		::DrawTextW(item.hDC, label.c_str(), -1, &text, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
 		if (activeTab) {
 			RECT underline = item.rcItem;
 			underline.left += Scale(8, dpi);

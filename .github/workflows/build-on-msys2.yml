@@ -51,6 +51,9 @@ jobs:
     env:
       BuildPlatform: MinGW
       Configuration: ${{ matrix.configuration }}
+      # MinGW is intentionally C++-only; never inherit a Rust backend from the
+      # caller or runner environment.
+      SAKURA_UTF16_BACKEND: cpp
 
     defaults:
       run:

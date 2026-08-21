@@ -29,6 +29,7 @@
 
 #include <CommCtrl.h>
 #include <algorithm>
+#include <ranges>
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -137,6 +138,9 @@ constexpr int kGraphRowHeightDip = 22;
 //! Horizontal distance between two swimlanes, and the commit circle's radius.
 constexpr int kGraphLaneWidthDip = 11;
 constexpr int kGraphCircleRadiusDip = 4;
+//! Upstream's `CIRCLE_STROKE_WIDTH`, which is also the radius of the hole it
+//! punches in the HEAD node.
+constexpr int kGraphCircleStrokeWidthDip = 2;
 //! How many commits the Graph reads.  Upstream pages its history; this reads one
 //! bounded page, because an unbounded `git log` on the refresh timer is not.
 constexpr std::size_t kGraphHistoryCount = 50;
@@ -150,7 +154,7 @@ constexpr int kGraphControlId = 2;
 //!
 constexpr COLORREF kGraphLaneColors[kScmGraphColorCount] = {
 	RGB(0xFF, 0xB0, 0x00), RGB(0xDC, 0x26, 0x7F), RGB(0x99, 0x4F, 0x00),
-	RGB(0x40, 0xC8, 0xAE), RGB(0x69, 0x29, 0xC4),
+	RGB(0x40, 0xB0, 0xA6), RGB(0xB6, 0x6D, 0xFF),
 };
 
 //!
@@ -187,12 +191,36 @@ const icons::SLabelRunFontProvider& GlyphFonts()
 	return provider;
 }
 
+//! The Codicon the built-in Git extension gives a history-item ref: a branch
+//! and the HEAD it points at are `$(git-branch)`, a remote-tracking branch is
+//! `$(cloud)`, and a tag is `$(tag)`.
+[[nodiscard]] std::wstring GraphRefIcon(EGitHistoryRefKind kind)
+{
+	switch (kind) {
+	case EGitHistoryRefKind::RemoteBranch: return L"$(cloud)";
+	case EGitHistoryRefKind::Tag: return L"$(tag)";
+	case EGitHistoryRefKind::Head:
+	case EGitHistoryRefKind::LocalBranch:
+	default: return L"$(git-branch)";
+	}
+}
+
 std::vector<icons::SLabelRun> ParseRuns(std::wstring_view label)
 {
 	// No contributed-icon registry here: the built-in Git provider's own titles
 	// only ever name codicons, and passing a registry this tool does not own
 	// would let another extension's `$(name)` change what Git renders.
 	return icons::ParseLabelWithIcons(label, icons::CCodiconFont::Instance().FaceName());
+}
+
+//! `$(discard)` -> `discard`. A contribution declares its icon in the `$(name)`
+//! form, while `DrawScmIcon` names the codicon directly.
+std::wstring StripCodiconWrapper(std::wstring_view icon)
+{
+	if (icon.starts_with(L"$(") && icon.ends_with(L")")) {
+		return std::wstring(icon.substr(2, icon.size() - 3));
+	}
+	return std::wstring(icon);
 }
 
 void DrawScmIcon(HDC dc, std::wstring_view name, const RECT& rect, COLORREF color)
@@ -254,6 +282,8 @@ enum class EBandSegment : std::uint8_t {
 	Name,
 	//! One `StatusBarAction` of the row's toolbar.
 	Action,
+	//! The toolbar's `...`, which opens `scm/title`'s secondary actions.
+	Overflow,
 };
 
 //! One hoverable region of the repository row.
@@ -500,6 +530,17 @@ struct ScmRow final {
 	std::optional<GitStageResource> operand;
 };
 
+//! One inline action drawn on a group header row: upstream's
+//! `scm/resourceGroup/context` `inline` group, which it renders as an
+//! always-visible action bar rather than as context-menu-only entries.
+struct GroupRowAction final {
+	RECT rect{};
+	//! The bare codicon name, with `$(` and `)` already stripped.
+	std::wstring icon;
+	std::string command;
+	std::wstring tooltip;
+};
+
 //! The one list selection that can survive a provider refresh. It names a row
 //! by provider group and URI, rather than its transient list index.
 struct ScmRowSelection final {
@@ -570,6 +611,10 @@ struct CScmWorkbenchTool::Impl {
 	std::vector<ScmRow> rows;
 	std::unordered_set<std::string> collapsedGroups;
 	int listHoverIndex{ -1 };
+	//! Where the pointer last was inside the change list, in its client
+	//! coordinates. A group row's inline action highlights from this rather than
+	//! from a second hit-test pass during paint.
+	POINT listPointer{};
 	int listPointerDownIndex{ -1 };
 	bool trackingListMouse{};
 	//! Resources published by every provider, group headers included.
@@ -615,6 +660,8 @@ struct CScmWorkbenchTool::Impl {
 	std::size_t tooltipToolCount{};
 	//! `bandSegments` index plus one, or zero when the pointer is over none.
 	std::size_t hoveredSegment{};
+	//! Left edge of the Graph header's toolbar, or zero when it has none.
+	LONG graphHeaderActionsLeft{};
 	bool trackingMouse{};
 	bool active{};
 	bool closed{};
@@ -1226,10 +1273,23 @@ struct CScmWorkbenchTool::Impl {
 	{
 		bandSegments.clear();
 		bandCountRect = RECT{};
-		if (!window || !band.visible) { SyncTooltips(); return; }
+		graphHeaderActionsLeft = 0;
+		if (!window) { SyncTooltips(); return; }
 		const HDC dc = ::GetDC(window);
 		if (dc == nullptr) return;
 		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
+		if (band.visible) LayoutBandRow(dc);
+		LayoutGraphHeaderActions(dc);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		::ReleaseDC(window, dc);
+		SyncTooltips();
+	}
+	//! The repository row proper. Split out of `LayoutBand` so the Graph header's
+	//! own toolbar can share `bandSegments` -- and with it one hover model, one
+	//! tooltip model, and one dispatch path -- without depending on whether a
+	//! repository row is rendered at all.
+	void LayoutBandRow(HDC dc)
+	{
 		const RECT bounds = BandBounds();
 		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
 		const int gap = icons::ScaleDip(kRepositoryIconGapDip, dpi);
@@ -1259,6 +1319,30 @@ struct CScmWorkbenchTool::Impl {
 			actionsWidth += width;
 			actions.push_back(std::move(segment));
 		}
+		// Upstream's `RepositoryRenderer` appends `scm/title`'s `navigation` group
+		// after the provider's `statusBarCommands`, then the `...` that opens the
+		// rest of that menu. The order here is that order.
+		for (const auto& action : BuildGitScmTitleToolbarActions()) {
+			BandSegment segment;
+			segment.kind = EBandSegment::Action;
+			segment.runs = ParseRuns(action.icon);
+			segment.command = action.commandId;
+			segment.tooltip = action.tooltip;
+			const int width = icons::MeasureLabelRuns(dc, segment.runs, iconSide) + 2 * actionInset;
+			segment.rect = RECT{ 0, bounds.top, width, bounds.bottom };
+			actionsWidth += width;
+			actions.push_back(std::move(segment));
+		}
+		{
+			BandSegment overflow;
+			overflow.kind = EBandSegment::Overflow;
+			overflow.runs = ParseRuns(L"$(ellipsis)");
+			overflow.tooltip = L"More Actions...";
+			const int width = icons::MeasureLabelRuns(dc, overflow.runs, iconSide) + 2 * actionInset;
+			overflow.rect = RECT{ 0, bounds.top, width, bounds.bottom };
+			actionsWidth += width;
+			actions.push_back(std::move(overflow));
+		}
 		LONG cursor = std::max(bounds.left, right - actionsWidth);
 		const LONG actionsLeft = cursor;
 		for (auto& segment : actions) {
@@ -1276,14 +1360,46 @@ struct CScmWorkbenchTool::Impl {
 		name.tooltip = band.title;
 		bandSegments.push_back(std::move(name));
 		for (auto& segment : actions) bandSegments.push_back(std::move(segment));
-
-		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
-		::ReleaseDC(window, dc);
-		SyncTooltips();
+	}
+	//! `MenuId.SCMHistoryTitle`'s `navigation` group, right-aligned in the Graph
+	//! pane header exactly as upstream right-aligns a view title's action bar. A
+	//! collapsed pane has no toolbar, because upstream hides the whole title menu
+	//! along with the view's body.
+	void LayoutGraphHeaderActions(HDC dc)
+	{
+		if (!GraphFrameVisible() || graphCollapsed) return;
+		const RECT bounds = GraphHeaderBounds();
+		if (bounds.right <= bounds.left) return;
+		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
+		const int actionInset = icons::ScaleDip(kActionInsetDip, dpi);
+		const int iconSide = icons::ScaleDip(kRepositoryIconDip, dpi);
+		std::vector<BandSegment> actions;
+		int width = 0;
+		for (const auto& action : BuildGitScmHistoryTitleToolbarActions()) {
+			BandSegment segment;
+			segment.kind = EBandSegment::Action;
+			segment.runs = ParseRuns(action.icon);
+			segment.command = action.commandId;
+			segment.tooltip = action.tooltip;
+			const int extent = icons::MeasureLabelRuns(dc, segment.runs, iconSide) + 2 * actionInset;
+			segment.rect = RECT{ 0, bounds.top, extent, bounds.bottom };
+			width += extent;
+			actions.push_back(std::move(segment));
+		}
+		if (actions.empty()) return;
+		const LONG right = std::max(bounds.left, bounds.right - inset);
+		LONG cursor = std::max(bounds.left, right - width);
+		graphHeaderActionsLeft = cursor;
+		for (auto& segment : actions) {
+			const LONG extent = segment.rect.right;
+			segment.rect = RECT{ cursor, bounds.top, std::min(right, cursor + extent), bounds.bottom };
+			cursor = std::min(right, cursor + extent);
+			bandSegments.push_back(std::move(segment));
+		}
 	}
 	void PaintBand(HDC dc)
 	{
-		if (!band.visible || bandSegments.empty()) return;
+		if (bandSegments.empty()) return;
 		const int iconSide = icons::ScaleDip(kRepositoryIconDip, dpi);
 		const int gap = icons::ScaleDip(kRepositoryIconGapDip, dpi);
 		const int actionInset = icons::ScaleDip(kActionInsetDip, dpi);
@@ -1291,6 +1407,7 @@ struct CScmWorkbenchTool::Impl {
 			const auto& segment = bandSegments[index];
 			if (segment.rect.right <= segment.rect.left) continue;
 			if (segment.kind == EBandSegment::Name) {
+				if (!band.visible) continue;
 				const int height = static_cast<int>(segment.rect.bottom - segment.rect.top);
 				const int side = std::min<int>(iconSide, static_cast<int>(segment.rect.right - segment.rect.left));
 				const int left = static_cast<int>(segment.rect.left);
@@ -1350,6 +1467,20 @@ struct CScmWorkbenchTool::Impl {
 		bool collapsed)
 	{
 		if (bounds.right <= bounds.left || bounds.bottom <= bounds.top) return;
+		// Every pane header but the first draws the side bar's section separator,
+		// the same one the Outline header draws in the Explorer container.  The
+		// topmost pane has the view container's own title above it, so a line
+		// there would double that boundary.
+		RECT client{};
+		if (window) ::GetClientRect(window, &client);
+		if (bounds.top > client.top) {
+			const HPEN separator = ::CreatePen(PS_SOLID, 1, palette.border.ToColorRef());
+			const HGDIOBJ previousPen = ::SelectObject(dc, separator);
+			::MoveToEx(dc, bounds.left, bounds.top, nullptr);
+			::LineTo(dc, bounds.right, bounds.top);
+			::SelectObject(dc, previousPen);
+			::DeleteObject(separator);
+		}
 		const int headerInset = icons::ScaleDip(kRowInsetDip, dpi);
 		const int twistieSide = icons::ScaleDip(16, dpi);
 		const LONG twistieTop = bounds.top + (bounds.bottom - bounds.top - twistieSide) / 2;
@@ -1367,7 +1498,14 @@ struct CScmWorkbenchTool::Impl {
 	void PaintGraph(HDC dc)
 	{
 		if (!GraphFrameVisible()) return;
-		PaintViewHeader(dc, GraphHeaderBounds(), EScmTextKey::GraphTitle, L"Graph", graphCollapsed);
+		RECT graphHeader = GraphHeaderBounds();
+		// Upstream's view title shrinks for its action bar rather than drawing under
+		// it, so a long title ellipsizes instead of colliding with the toolbar.
+		if (graphHeaderActionsLeft > graphHeader.left) {
+			graphHeader.right = std::max(graphHeader.left,
+				graphHeaderActionsLeft - icons::ScaleDip(4, dpi));
+		}
+		PaintViewHeader(dc, graphHeader, EScmTextKey::GraphTitle, L"Graph", graphCollapsed);
 		if (graphCollapsed) return;
 		RECT body = GraphBodyBounds();
 		if (body.right <= body.left || body.bottom <= body.top) return;
@@ -1456,104 +1594,252 @@ struct CScmWorkbenchTool::Impl {
 
 		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
 		const int lane = icons::ScaleDip(kGraphLaneWidthDip, dpi);
-		const int radius = icons::ScaleDip(kGraphCircleRadiusDip, dpi);
 		const LONG middle = (bounds.top + bounds.bottom) / 2;
+		// Upstream's `drawCircle` puts lane `n` at `SWIMLANE_WIDTH * (n + 1)`, so the
+		// first lane sits one whole swimlane in from the graph's left edge rather than
+		// half of one.
 		const auto laneX = [&](std::size_t position) {
-			return static_cast<LONG>(bounds.left + inset + lane / 2 + static_cast<LONG>(position) * lane);
+			return static_cast<LONG>(bounds.left + inset + static_cast<LONG>(position + 1) * lane);
 		};
-		// A lane entering this row is drawn to its middle and a lane leaving it
-		// from the middle down, so a lane that appears or disappears here draws
-		// only half a segment: that is what makes a branch look like it starts,
-		// and a merge look like it ends.
-		const auto stroke = [&](std::size_t position, std::size_t color, LONG top, LONG bottom) {
+		// Upstream's `renderSCMHistoryItemGraph` draws SVG paths, not bare vertical
+		// lines: a lane that changes position curves into its new one, and every parent
+		// after the first gets an explicit connector out of the commit's circle. Without
+		// those two a merge is invisible -- the rows read as unrelated columns.
+		// `gx(k)` is upstream's `SWIMLANE_WIDTH * k`, so lane `n` is centred on `gx(n + 1)`.
+		const LONG curve = icons::ScaleDip(5, dpi); // upstream `SWIMLANE_CURVE_RADIUS`
+		const auto gx = [&](std::size_t k) {
+			return static_cast<LONG>(bounds.left + inset + static_cast<LONG>(k) * lane);
+		};
+		LONG penX = 0;
+		LONG penY = 0;
+		const auto moveTo = [&](LONG x, LONG y) { penX = x; penY = y; ::MoveToEx(dc, x, y, nullptr); };
+		const auto lineTo = [&](LONG x, LONG y) { penX = x; penY = y; (void)::LineTo(dc, x, y); };
+		// One `A r r 0 0 s` quarter turn. Both of its tangents are axis-aligned, so the
+		// arc is the cubic Bezier whose control points sit 0.5523 of the way from each
+		// end towards the corner those tangents meet at -- the standard quarter-circle
+		// approximation, which GDI can draw directly and `Arc` cannot express as
+		// conveniently from a current position.
+		const auto arcTo = [&](LONG x, LONG y, LONG cornerX, LONG cornerY) {
+			const auto toward = [](LONG from, LONG to) {
+				return static_cast<LONG>(from + (to - from) * 5523 / 10000);
+			};
+			const POINT points[3]{
+				{ toward(penX, cornerX), toward(penY, cornerY) },
+				{ toward(x, cornerX), toward(y, cornerY) },
+				{ x, y },
+			};
+			(void)::PolyBezierTo(dc, points, 3);
+			penX = x;
+			penY = y;
+		};
+		const auto stroke = [&](std::size_t color, const auto& path) {
 			const HPEN pen = ::CreatePen(PS_SOLID, std::max(1, icons::ScaleDip(1, dpi)), LaneColor(color));
 			if (pen == nullptr) return;
 			const HGDIOBJ previousPen = ::SelectObject(dc, pen);
-			::MoveToEx(dc, laneX(position), top, nullptr);
-			::LineTo(dc, laneX(position), bottom);
+			path();
 			::SelectObject(dc, previousPen);
 			::DeleteObject(pen);
 		};
-		for (std::size_t position = 0; position < row.inputSwimlanes.size(); ++position) {
-			stroke(position, row.inputSwimlanes[position].colorIndex, bounds.top, middle);
+
+		const auto& input = row.inputSwimlanes;
+		const auto& output = row.outputSwimlanes;
+		constexpr std::size_t kNoLane = static_cast<std::size_t>(-1);
+		std::size_t inputIndex = kNoLane;
+		for (std::size_t index = 0; index < input.size(); ++index) {
+			if (input[index].id == item.id) {
+				inputIndex = index;
+				break;
+			}
 		}
-		for (std::size_t position = 0; position < row.outputSwimlanes.size(); ++position) {
-			stroke(position, row.outputSwimlanes[position].colorIndex, middle, bounds.bottom);
+		// Upstream: the commit sits on whichever lane was waiting for it, or on a new
+		// lane just past the right-hand end when nothing was.
+		const std::size_t circleIndex = inputIndex != kNoLane ? inputIndex : input.size();
+		const std::size_t circleColorIndex =
+			circleIndex < output.size()  ? output[circleIndex].colorIndex
+			: circleIndex < input.size() ? input[circleIndex].colorIndex
+			                             : row.circleColorIndex;
+
+		std::size_t outputIndex = 0;
+		for (std::size_t index = 0; index < input.size(); ++index) {
+			const std::size_t color = input[index].colorIndex;
+			if (input[index].id == item.id) {
+				// A second lane arriving at this same commit: it turns into the circle
+				// instead of continuing down. This is a merge's incoming side, `/` then `-`.
+				if (index != circleIndex) {
+					stroke(color, [&] {
+						moveTo(gx(index + 1), bounds.top);
+						arcTo(gx(index), middle, gx(index + 1), middle);
+						lineTo(gx(circleIndex + 1), middle);
+					});
+				} else {
+					++outputIndex;
+				}
+				continue;
+			}
+			if (outputIndex >= output.size() || input[index].id != output[outputIndex].id) continue;
+			if (index == outputIndex) {
+				stroke(color, [&] {
+					moveTo(gx(index + 1), bounds.top);
+					lineTo(gx(index + 1), bounds.bottom);
+				});
+			} else {
+				// The lane shifted left because a lane to its left ended here. Upstream
+				// draws `|` down to y=6, a curve, the horizontal run, a second curve, `|`.
+				stroke(color, [&] {
+					moveTo(gx(index + 1), bounds.top);
+					lineTo(gx(index + 1), bounds.top + icons::ScaleDip(6, dpi));
+					arcTo(gx(index + 1) - curve, middle, gx(index + 1), middle);
+					lineTo(gx(outputIndex + 1) + curve, middle);
+					arcTo(gx(outputIndex + 1), middle + curve, gx(outputIndex + 1), middle);
+					lineTo(gx(outputIndex + 1), bounds.bottom);
+				});
+			}
+			++outputIndex;
 		}
-		const COLORREF circleColor = LaneColor(row.circleColorIndex);
-		const HBRUSH circle = ::CreateSolidBrush(circleColor);
-		const HPEN circlePen = ::CreatePen(PS_SOLID, 1, circleColor);
-		if (circle != nullptr && circlePen != nullptr) {
-			const HGDIOBJ previousBrush = ::SelectObject(dc, circle);
-			const HGDIOBJ previousPen = ::SelectObject(dc, circlePen);
-			const LONG x = laneX(row.circleLane);
-			::Ellipse(dc, x - radius, middle - radius, x + radius, middle + radius);
-			::SelectObject(dc, previousPen);
-			::SelectObject(dc, previousBrush);
+
+		// Every parent after the first: the `-` out of the circle and the `\` that turns
+		// down into that parent's own lane, drawn in the parent's colour. This is the
+		// stroke that makes a merge readable, and the one this row had no equivalent of.
+		for (std::size_t parent = 1; parent < item.parentIds.size(); ++parent) {
+			std::size_t parentLane = kNoLane;
+			for (std::size_t index = output.size(); index-- > 0;) {
+				if (output[index].id == item.parentIds[parent]) {
+					parentLane = index;
+					break;
+				}
+			}
+			if (parentLane == kNoLane) continue;
+			stroke(output[parentLane].colorIndex, [&] {
+				moveTo(gx(parentLane), middle);
+				arcTo(gx(parentLane + 1), bounds.bottom, gx(parentLane + 1), middle);
+				moveTo(gx(parentLane), middle);
+				lineTo(gx(circleIndex + 1), middle);
+			});
 		}
-		if (circlePen != nullptr) ::DeleteObject(circlePen);
-		if (circle != nullptr) ::DeleteObject(circle);
+
+		// `|` into the circle and `|` out of it, each in its own end's colour.
+		if (inputIndex != kNoLane) {
+			stroke(input[inputIndex].colorIndex, [&] {
+				moveTo(gx(circleIndex + 1), bounds.top);
+				lineTo(gx(circleIndex + 1), middle);
+			});
+		}
+		if (!item.parentIds.empty()) {
+			stroke(circleColorIndex, [&] {
+				moveTo(gx(circleIndex + 1), middle);
+				lineTo(gx(circleIndex + 1), bounds.bottom);
+			});
+		}
+
+		// The three node shapes are upstream's own: HEAD is `CIRCLE_RADIUS + 3` with a
+		// `CIRCLE_STROKE_WIDTH` hole, a multi-parent commit is `CIRCLE_RADIUS + 2`, and
+		// every other commit is `CIRCLE_RADIUS + 1`.
+		const COLORREF circleColor = LaneColor(circleColorIndex);
+		const LONG circleX = gx(circleIndex + 1);
+		const auto disc = [&](int radiusDip, COLORREF color) {
+			const int radius = icons::ScaleDip(radiusDip, dpi);
+			const HBRUSH fill = ::CreateSolidBrush(color);
+			const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
+			if (fill != nullptr && pen != nullptr) {
+				const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
+				const HGDIOBJ previousPen = ::SelectObject(dc, pen);
+				::Ellipse(dc, circleX - radius, middle - radius, circleX + radius, middle + radius);
+				::SelectObject(dc, previousPen);
+				::SelectObject(dc, previousBrush);
+			}
+			if (pen != nullptr) ::DeleteObject(pen);
+			if (fill != nullptr) ::DeleteObject(fill);
+		};
+		const bool isHead = std::ranges::any_of(item.refs, [](const GitHistoryRef& ref) {
+			return ref.kind == EGitHistoryRefKind::Head;
+		});
+		const bool isMerge = item.parentIds.size() > 1;
+		disc(isHead      ? kGraphCircleRadiusDip + 3
+			 : isMerge ? kGraphCircleRadiusDip + 2
+			           : kGraphCircleRadiusDip + 1,
+			 circleColor);
+		if (isHead) disc(kGraphCircleStrokeWidthDip, background);
 
 		const std::size_t lanes = std::max<std::size_t>(1,
 			std::max(row.inputSwimlanes.size(), row.outputSwimlanes.size()));
 		LONG cursor = laneX(lanes) + icons::ScaleDip(4, dpi);
+		const LONG contentRight = bounds.right - inset;
 		const COLORREF textColor = selected && focused ? palette.highlightText.ToColorRef()
 			: palette.primaryText.ToColorRef();
+		const COLORREF mutedColor = selected && focused ? palette.highlightText.ToColorRef()
+			: palette.descriptionText.ToColorRef();
+		const int iconSide = icons::ScaleDip(kRepositoryIconDip, dpi);
 
-		// The author/date column is reserved before the subject is laid out, so a
-		// long subject is ellipsized rather than drawn through it.
-		std::wstring trailing = item.authorName;
-		if (const std::wstring date = FormatHistoryDate(item.authorTimestamp); !date.empty()) {
-			trailing = trailing.empty() ? date : trailing + L", " + date;
-		}
-		LONG subjectRight = bounds.right - inset;
-		if (!trailing.empty()) {
-			SIZE extent{};
-			(void)::GetTextExtentPoint32W(dc, trailing.c_str(), static_cast<int>(trailing.size()), &extent);
-			RECT trailingRect{ std::max<LONG>(cursor, bounds.right - inset - extent.cx), bounds.top,
-				bounds.right - inset, bounds.bottom };
-			::SetTextColor(dc, selected && focused ? palette.highlightText.ToColorRef()
-				: palette.descriptionText.ToColorRef());
-			::DrawTextW(dc, trailing.c_str(), static_cast<int>(trailing.size()), &trailingRect,
-				DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
-			subjectRight = trailingRect.left - icons::ScaleDip(6, dpi);
-		}
-
-		// Upstream badges each decoration beside the subject. The badge takes this
-		// commit's own lane colour, so a branch tip stays attached to its line.
+		// Upstream's row is the graph, then one `IconLabel` whose label is the subject
+		// and whose description is the author, then the badge container -- so a ref
+		// badge trails the text rather than preceding it. The badges are measured
+		// first so the subject ellipsizes into whatever they leave, exactly as that
+		// flex row does.
+		struct GraphBadge final {
+			std::vector<icons::SLabelRun> runs;
+			int width{};
+		};
+		std::vector<GraphBadge> badges;
+		const LONG badgePadding = icons::ScaleDip(4, dpi);
+		const LONG badgeGap = icons::ScaleDip(4, dpi);
+		LONG badgesWidth = 0;
+		// Upstream's badge container sits in a flex row beside the label, so a long
+		// ref name shrinks rather than pushing the subject out of the row entirely.
+		// Half of the remaining width is the share a badge may take here.
+		const LONG badgeWidthLimit = std::max<LONG>(0, (contentRight - cursor) / 2);
+		bool named = true;
 		for (const auto& ref : item.refs) {
-			if (ref.name.empty() || cursor >= subjectRight) break;
+			if (ref.name.empty()) continue;
+			std::wstring label = GraphRefIcon(ref.kind);
+			if (named) label += L" " + ref.name;
+			GraphBadge badge;
+			badge.runs = ParseRuns(label);
+			badge.width = icons::MeasureLabelRuns(dc, badge.runs, iconSide) + 2 * static_cast<int>(badgePadding);
+			badge.width = static_cast<int>(std::min<LONG>(badge.width, badgeWidthLimit));
+			badgesWidth += badge.width + badgeGap;
+			badges.push_back(std::move(badge));
+			named = false;
+		}
+		const LONG textRight = std::max<LONG>(cursor, contentRight - badgesWidth);
+
+		const auto drawRun = [&](std::wstring_view text, COLORREF color) {
+			if (text.empty() || cursor >= textRight) return;
 			SIZE extent{};
-			(void)::GetTextExtentPoint32W(dc, ref.name.c_str(), static_cast<int>(ref.name.size()), &extent);
-			const LONG padding = icons::ScaleDip(4, dpi);
-			const LONG right = std::min<LONG>(subjectRight, cursor + extent.cx + 2 * padding);
-			RECT badge{ cursor, bounds.top + icons::ScaleDip(3, dpi), right,
+			(void)::GetTextExtentPoint32W(dc, text.data(), static_cast<int>(text.size()), &extent);
+			RECT area{ cursor, bounds.top, textRight, bounds.bottom };
+			::SetTextColor(dc, color);
+			::DrawTextW(dc, text.data(), static_cast<int>(text.size()), &area,
+				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			cursor = std::min<LONG>(textRight, cursor + extent.cx);
+		};
+		drawRun(item.subject, textColor);
+		if (!item.authorName.empty()) {
+			cursor += icons::ScaleDip(6, dpi);
+			drawRun(item.authorName, mutedColor);
+		}
+
+		cursor += badgeGap;
+		for (const auto& badge : badges) {
+			const LONG right = std::min<LONG>(contentRight, cursor + badge.width);
+			if (right <= cursor) break;
+			RECT box{ cursor, bounds.top + icons::ScaleDip(3, dpi), right,
 				bounds.bottom - icons::ScaleDip(3, dpi) };
-			if (badge.right <= badge.left) break;
 			const HBRUSH fill = ::CreateSolidBrush(circleColor);
 			const HPEN pen = ::CreatePen(PS_SOLID, 1, circleColor);
 			if (fill != nullptr && pen != nullptr) {
 				const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
 				const HGDIOBJ previousPen = ::SelectObject(dc, pen);
 				const int corner = views::WelcomeButtonCornerRadius(dpi);
-				::RoundRect(dc, badge.left, badge.top, badge.right, badge.bottom, corner, corner);
+				::RoundRect(dc, box.left, box.top, box.right, box.bottom, corner, corner);
 				::SelectObject(dc, previousPen);
 				::SelectObject(dc, previousBrush);
 			}
 			if (pen != nullptr) ::DeleteObject(pen);
 			if (fill != nullptr) ::DeleteObject(fill);
-			RECT label{ badge.left + padding, bounds.top, badge.right, bounds.bottom };
-			::SetTextColor(dc, palette.buttonForeground.ToColorRef());
-			::DrawTextW(dc, ref.name.c_str(), static_cast<int>(ref.name.size()), &label,
-				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
-			cursor = right + icons::ScaleDip(4, dpi);
-		}
-
-		if (cursor < subjectRight) {
-			RECT subject{ cursor, bounds.top, subjectRight, bounds.bottom };
-			::SetTextColor(dc, textColor);
-			::DrawTextW(dc, item.subject.c_str(), static_cast<int>(item.subject.size()), &subject,
-				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+			RECT label{ box.left + badgePadding, bounds.top, right - badgePadding, bounds.bottom };
+			icons::DrawLabelRuns(dc, badge.runs, label, iconSide,
+				palette.buttonForeground.ToColorRef(), GlyphFonts());
+			cursor = right + badgeGap;
 		}
 		::SetBkMode(dc, previousBackgroundMode);
 	}
@@ -1577,6 +1863,9 @@ struct CScmWorkbenchTool::Impl {
 	}
 	bool ToggleSectionAt(POINT point)
 	{
+		// A header action lies inside the header rectangle, so it has to be tried
+		// first: otherwise pressing Refresh would collapse the pane instead.
+		if (SegmentIndexAt(point) != 0) return false;
 		switch (SectionHeaderAt(point)) {
 		case 1: repositoriesCollapsed = !repositoriesCollapsed; break;
 		case 2: changesCollapsed = !changesCollapsed; break;
@@ -1768,6 +2057,67 @@ struct CScmWorkbenchTool::Impl {
 				DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
 		}
 	}
+	//! `scm/resourceGroup/context`'s `inline` group, laid out right to left from
+	//! the count the row already draws. One function serves both the paint and the
+	//! hit test so a button can never be drawn where a press does not land.
+	[[nodiscard]] std::vector<GroupRowAction> GroupRowActions(HDC dc, const ScmRow& row,
+		const RECT& bounds) const
+	{
+		std::vector<GroupRowAction> actions;
+		if (!row.header || !row.group) return actions;
+		// `mixed` is the `git.untrackedChanges` value this product publishes, and
+		// it is the same value the row's context menu is built with.
+		const auto built = BuildGitResourceGroupInlineActions(*row.group, EUntrackedChangesPolicy::Mixed);
+		if (built.empty()) return actions;
+		const int inset = icons::ScaleDip(kRowInsetDip, dpi);
+		const int iconSide = icons::ScaleDip(16, dpi);
+		const int actionInset = icons::ScaleDip(kActionInsetDip, dpi);
+		const int width = iconSide + 2 * actionInset;
+		const std::wstring count = std::to_wstring(row.resourceCount);
+		SIZE extent{};
+		(void)::GetTextExtentPoint32W(dc, count.c_str(), static_cast<int>(count.size()), &extent);
+		LONG right = bounds.right - inset - extent.cx - icons::ScaleDip(5, dpi);
+		for (auto entry = built.rbegin(); entry != built.rend(); ++entry) {
+			const LONG left = right - width;
+			if (left <= bounds.left) break;
+			GroupRowAction action;
+			action.rect = RECT{ left, bounds.top, right, bounds.bottom };
+			action.icon = StripCodiconWrapper(entry->icon);
+			action.command = entry->commandId;
+			action.tooltip = entry->tooltip;
+			actions.push_back(std::move(action));
+			right = left;
+		}
+		std::ranges::reverse(actions);
+		return actions;
+	}
+	//! Run a group row's inline action. Returns false when the press was not on
+	//! one, which leaves the row's own collapse gesture in charge.
+	bool InvokeGroupRowActionAt(int index, POINT point)
+	{
+		if (index < 0 || static_cast<std::size_t>(index) >= rows.size()) return false;
+		const auto& row = rows[static_cast<std::size_t>(index)];
+		if (!row.header) return false;
+		RECT bounds{};
+		if (::SendMessageW(list, LB_GETITEMRECT, index, reinterpret_cast<LPARAM>(&bounds)) == LB_ERR) {
+			return false;
+		}
+		const HDC dc = ::GetDC(list);
+		if (dc == nullptr) return false;
+		const HGDIOBJ previousFont = font.Get() == nullptr ? nullptr : ::SelectObject(dc, font.Get());
+		const auto actions = GroupRowActions(dc, row, bounds);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		::ReleaseDC(list, dc);
+		for (const auto& action : actions) {
+			if (!::PtInRect(&action.rect, point)) continue;
+			if (action.command.empty() || !runCommand) return false;
+			// Upstream's group-scoped commands take the group itself, which the
+			// executor resolves; the row's own context menu dispatches the same way.
+			(void)runCommand(action.command, {});
+			return true;
+		}
+		return false;
+	}
 	void ToggleGroupAt(int index)
 	{
 		if (index < 0 || static_cast<std::size_t>(index) >= rows.size() || !rows[index].header) return;
@@ -1820,8 +2170,27 @@ struct CScmWorkbenchTool::Impl {
 			SIZE countExtent{};
 			(void)::GetTextExtentPoint32W(dc, count.c_str(), static_cast<int>(count.size()), &countExtent);
 			RECT countRect{ bounds.right - inset - countExtent.cx, bounds.top, bounds.right - inset, bounds.bottom };
+			const auto actions = GroupRowActions(dc, row, bounds);
+			LONG labelRight = countRect.left - icons::ScaleDip(5, dpi);
+			for (const auto& action : actions) {
+				const bool actionHovered = hovered && ::PtInRect(&action.rect, listPointer);
+				if (actionHovered) {
+					const HBRUSH actionBrush = ::CreateSolidBrush(palette.raised.ToColorRef());
+					if (actionBrush != nullptr) {
+						RECT fill = action.rect;
+						::FillRect(dc, &fill, actionBrush);
+						::DeleteObject(actionBrush);
+					}
+				}
+				const int side = icons::ScaleDip(16, dpi);
+				const LONG left = action.rect.left + (action.rect.right - action.rect.left - side) / 2;
+				const LONG top = action.rect.top + (action.rect.bottom - action.rect.top - side) / 2;
+				const RECT glyph{ left, top, left + side, top + side };
+				DrawScmIcon(dc, action.icon, glyph, textColor);
+				labelRight = std::min(labelRight, action.rect.left - icons::ScaleDip(2, dpi));
+			}
 			RECT label{ iconRect.right + icons::ScaleDip(4, dpi), bounds.top,
-				std::max<LONG>(iconRect.right + icons::ScaleDip(4, dpi), countRect.left - icons::ScaleDip(5, dpi)), bounds.bottom };
+				std::max<LONG>(iconRect.right + icons::ScaleDip(4, dpi), labelRight), bounds.bottom };
 			::SetTextColor(dc, textColor);
 			::DrawTextW(dc, row.label.c_str(), static_cast<int>(row.label.size()), &label,
 				DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
@@ -1936,8 +2305,12 @@ struct CScmWorkbenchTool::Impl {
 		if (hoveredSegment == segment) return;
 		hoveredSegment = segment;
 		if (window) {
-			const RECT bounds = BandBounds();
+			RECT bounds = BandBounds();
 			::InvalidateRect(window, &bounds, TRUE);
+			if (GraphFrameVisible()) {
+				bounds = GraphHeaderBounds();
+				::InvalidateRect(window, &bounds, TRUE);
+			}
 		}
 	}
 	//! Run the row's toolbar action, which is upstream's `StatusBarAction.run`.
@@ -1946,6 +2319,12 @@ struct CScmWorkbenchTool::Impl {
 		const auto index = SegmentIndexAt(point);
 		if (index == 0) return false;
 		const auto& segment = bandSegments[index - 1];
+		if (segment.kind == EBandSegment::Overflow) {
+			POINT anchor{ segment.rect.left, segment.rect.bottom };
+			if (window) ::ClientToScreen(window, &anchor);
+			ShowTitleOverflowMenu(anchor);
+			return true;
+		}
 		if (segment.command.empty() || !runCommand) return false;
 		(void)runCommand(segment.command, segment.argumentsJson);
 		// The press belonged to this row either way: an unrecognized command has
@@ -2090,6 +2469,88 @@ struct CScmWorkbenchTool::Impl {
 		if (runCommand) (void)runCommand(item.commandId, arguments);
 	}
 	//!
+	//! @brief Track one of upstream's menu models and return the chosen entry.
+	//!
+	//! Every popup this view shows goes through here, so a resource menu, a
+	//! group menu, and the row toolbar's overflow all dismiss, anchor, and
+	//! report the same way. Nothing for a dismissal or an empty model: an empty
+	//! popup would claim the surface has actions that merely happen to be
+	//! unavailable.
+	//!
+	[[nodiscard]] std::optional<GitMenuItem> TrackMenu(const std::vector<GitMenuItem>& items, POINT screen)
+	{
+		if (items.empty() || !window) return std::nullopt;
+		const HMENU menu = ::CreatePopupMenu();
+		if (menu == nullptr) return std::nullopt;
+		for (std::size_t position = 0; position < items.size(); ++position) {
+			if (items[position].separator) {
+				::AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+				continue;
+			}
+			::AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(position + 1),
+				items[position].title.c_str());
+		}
+		// The owning window must be foreground or the menu never sees its own
+		// dismissal; the trailing `WM_NULL` is that requirement's documented half.
+		::SetForegroundWindow(window);
+		const auto chosen = ::TrackPopupMenu(menu,
+			TPM_RETURNCMD | TPM_NONOTIFY | TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON,
+			screen.x, screen.y, 0, window, nullptr);
+		::DestroyMenu(menu);
+		::PostMessageW(window, WM_NULL, 0, 0);
+		if (chosen <= 0 || static_cast<std::size_t>(chosen) > items.size()) return std::nullopt;
+		return items[static_cast<std::size_t>(chosen) - 1];
+	}
+	//!
+	//! @brief `scm/historyItem/context` for the clicked commit in the Graph.
+	//!
+	//! Anchors and selects exactly as the resource list's menu does, so the row
+	//! the user sees and the row the command receives are the same row. A gesture
+	//! that names no commit shows nothing rather than acting on the selection it
+	//! happens to find.
+	//!
+	void ShowHistoryItemContextMenu(POINT screen, bool fromKeyboard)
+	{
+		if (!graphList || !window) return;
+		int index = -1;
+		if (fromKeyboard) {
+			index = static_cast<int>(::SendMessageW(graphList, LB_GETCURSEL, 0, 0));
+			if (index < 0) return;
+			RECT item{};
+			if (::SendMessageW(graphList, LB_GETITEMRECT, static_cast<WPARAM>(index),
+					reinterpret_cast<LPARAM>(&item)) == LB_ERR) {
+				return;
+			}
+			POINT anchor{ item.left, item.bottom };
+			::ClientToScreen(graphList, &anchor);
+			screen = anchor;
+		} else {
+			POINT client = screen;
+			::ScreenToClient(graphList, &client);
+			const auto hit = ::SendMessageW(graphList, LB_ITEMFROMPOINT, 0,
+				MAKELPARAM(static_cast<WORD>(client.x), static_cast<WORD>(client.y)));
+			if (HIWORD(hit) != 0) return;
+			index = static_cast<int>(LOWORD(hit));
+			::SendMessageW(graphList, LB_SETCURSEL, static_cast<WPARAM>(index), 0);
+		}
+		if (index < 0 || static_cast<std::size_t>(index) >= history.size()) return;
+		// A copy of the id, not a reference into `history`: `TrackPopupMenu` pumps
+		// messages, so a refresh can replace the page while the menu is open.
+		const std::wstring historyItemId = history[static_cast<std::size_t>(index)].id;
+		const auto chosen = TrackMenu(BuildGitHistoryItemContextMenu(), screen);
+		if (!chosen || chosen->commandId.empty() || !runCommand) return;
+		(void)runCommand(chosen->commandId, BuildGitHistoryItemArguments(historyItemId));
+	}
+	//! The repository row toolbar's `...`: `scm/title`'s secondary actions.
+	void ShowTitleOverflowMenu(POINT screen)
+	{
+		const auto chosen = TrackMenu(BuildGitScmTitleOverflowMenu(), screen);
+		if (!chosen || chosen->commandId.empty() || !runCommand) return;
+		// Every `scm/title` command is repository-scoped upstream and takes no
+		// operand, so none of them carries arguments here either.
+		(void)runCommand(chosen->commandId, {});
+	}
+	//!
 	//! @brief `scm/resourceState/context` and `scm/resourceGroup/context`, tracked.
 	//!
 	//! `screen` is where the popup goes. `fromKeyboard` marks the menu-key path,
@@ -2222,7 +2683,13 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 			const auto hit = ::SendMessageW(window, LB_ITEMFROMPOINT, 0,
 				MAKELPARAM(static_cast<WORD>(GET_X_LPARAM(lParam)), static_cast<WORD>(GET_Y_LPARAM(lParam))));
 			const int index = HIWORD(hit) == 0 ? static_cast<int>(LOWORD(hit)) : -1;
-			if (impl->listHoverIndex != index) { impl->listHoverIndex = index; ::InvalidateRect(window, nullptr, FALSE); }
+			const POINT pointer{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+			const bool moved = impl->listPointer.x != pointer.x || impl->listPointer.y != pointer.y;
+			impl->listPointer = pointer;
+			if (impl->listHoverIndex != index || moved) {
+				impl->listHoverIndex = index;
+				::InvalidateRect(window, nullptr, FALSE);
+			}
 			if (!impl->trackingListMouse) {
 				TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 };
 				impl->trackingListMouse = ::TrackMouseEvent(&track) != FALSE;
@@ -2241,6 +2708,11 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 			const int index = HIWORD(hit) == 0 ? static_cast<int>(LOWORD(hit)) : -1;
 			if (index >= 0 && index == impl->listPointerDownIndex && index < static_cast<int>(impl->rows.size())
 				&& impl->rows[static_cast<std::size_t>(index)].header) {
+				const POINT pointer{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+				if (impl->InvokeGroupRowActionAt(index, pointer)) {
+					impl->listPointerDownIndex = -1;
+					return 0;
+				}
 				impl->ToggleGroupAt(index);
 				impl->listPointerDownIndex = -1;
 				return 0;
@@ -2529,6 +3001,13 @@ void CScmWorkbenchTool::SetVisible(bool visible) { if (m_impl->window) ::ShowWin
 void CScmWorkbenchTool::Refresh() { if (!m_impl->closed && m_impl->shared->wake) ::SetEvent(m_impl->shared->wake); }
 const GitScmState& CScmWorkbenchTool::State() const noexcept { return m_impl->state; }
 std::size_t CScmWorkbenchTool::OpenRepositoryCount() const noexcept { return m_impl->openRepositoryCount; }
+std::optional<GitHistoryItem> CScmWorkbenchTool::HistoryItem(std::wstring_view id) const
+{
+	const auto found = std::ranges::find(m_impl->history, id, &GitHistoryItem::id);
+	if (found == m_impl->history.end()) return std::nullopt;
+	return *found;
+}
+
 std::wstring CScmWorkbenchTool::CommitMessage() const { return m_impl->inputModel.value; }
 
 void CScmWorkbenchTool::SetCommitMessage(std::wstring value)
@@ -2574,7 +3053,6 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 			impl.PaintViewHeader(dc, impl.RepositoriesHeaderBounds(),
 				EScmTextKey::RepositoriesTitle, L"Repositories", impl.repositoriesCollapsed);
 		}
-		impl.PaintBand(dc);
 		if (impl.ChangesHeaderVisible()) {
 			impl.PaintViewHeader(dc, impl.ChangesHeaderBounds(), EScmTextKey::ChangesTitle, L"Changes",
 				impl.changesCollapsed);
@@ -2583,6 +3061,7 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		impl.PaintActionButton(dc);
 		impl.PaintWelcome(dc);
 		impl.PaintGraph(dc);
+		impl.PaintBand(dc);
 		::EndPaint(window, &paint);
 		return 0;
 	}
@@ -2669,13 +3148,15 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	case WM_CONTEXTMENU: {
 		// The list is a child window, so its own `DefWindowProc` forwards the
 		// message here while `wParam` still names where the gesture landed.
-		if (reinterpret_cast<HWND>(wParam) != impl.list) break;
+		const HWND source = reinterpret_cast<HWND>(wParam);
+		if (source != impl.list && source != impl.graphList) break;
 		const bool fromKeyboard = lParam == static_cast<LPARAM>(-1);
 		const POINT screen{
 			static_cast<LONG>(static_cast<short>(LOWORD(lParam))),
 			static_cast<LONG>(static_cast<short>(HIWORD(lParam))),
 		};
-		impl.ShowContextMenu(screen, fromKeyboard);
+		if (source == impl.graphList) impl.ShowHistoryItemContextMenu(screen, fromKeyboard);
+		else impl.ShowContextMenu(screen, fromKeyboard);
 		return 0;
 	}
 	case WM_DRAWITEM: {

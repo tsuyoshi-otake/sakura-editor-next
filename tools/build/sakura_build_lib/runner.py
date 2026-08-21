@@ -419,7 +419,12 @@ def mingw_environment(environment: Mapping[str, str] | None = None) -> dict[str,
     existing = env.get("PATH", "").split(os.pathsep)
     normalized = {os.path.normcase(os.path.normpath(item)) for item in existing if item}
     additions = [str(path) for path in prefixes if path.is_dir() and os.path.normcase(str(path)) not in normalized]
-    return {"PATH": os.pathsep.join(additions + existing)}
+    return {
+        "PATH": os.pathsep.join(additions + existing),
+        # MinGW retains the explicit legacy C++ compatibility backend. Do not
+        # allow an ambient developer/CI Rust selection to change this path.
+        "SAKURA_UTF16_BACKEND": "cpp",
+    }
 
 
 _ASSEMBLY_LISTINGS_TRUE = {"1", "true"}
@@ -565,6 +570,7 @@ def cmake_commands(
         [
             cmake, "-S", str(repo_root), "-B", str(build_dir),
             f"-DCMAKE_BUILD_TYPE={configuration}", "-DBUILD_PLATFORM=MinGW",
+            "-DSAKURA_UTF16_BACKEND=cpp",
             f"-DCMAKE_TOOLCHAIN_FILE={toolchain.as_posix()}",
             f"-DSAKURA_PACKAGE_CONFIG={active_config.as_posix()}",
             f"-DVCPKG_TARGET_TRIPLET={triplet}",

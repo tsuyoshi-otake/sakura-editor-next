@@ -55,13 +55,22 @@ if(CMAKE_GENERATOR MATCHES "^Visual Studio")
 
 else()
   # CMakeが持ってる値を整形する
-  if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+  set(_sakura_build_target_processor "${CMAKE_SYSTEM_PROCESSOR}")
+  if(NOT _sakura_build_target_processor)
+    set(_sakura_build_target_processor "${CMAKE_CXX_COMPILER_ARCHITECTURE_ID}")
+  endif()
+  if(NOT _sakura_build_target_processor)
+    set(_sakura_build_target_processor "${MSVC_CXX_ARCHITECTURE_ID}")
+  endif()
+  string(TOLOWER "${_sakura_build_target_processor}" _sakura_build_target_processor)
+  if(_sakura_build_target_processor MATCHES "^(amd64|x64|x86_64)$")
     set(ARCH "x64")
-  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "ARM64|aarch64")
+  elseif(_sakura_build_target_processor MATCHES "^(arm64|aarch64)$")
     set(ARCH "arm64")
-  elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86|i686")
+  elseif(_sakura_build_target_processor MATCHES "^(x86|i686)$")
     set(ARCH "x86")
   endif()
+  unset(_sakura_build_target_processor)
 
   # CMakeジェネレーターに渡すパラメータを作る
   set(GENERATOR_ARGS "-DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE}")
@@ -696,6 +705,73 @@ elseif(MINGW)
   )
 endif()
 
+if(MINGW)
+  if(NOT SAKURA_UTF16_BACKEND STREQUAL "cpp")
+    message(FATAL_ERROR
+      "MinGW currently retains only the legacy C++ UTF-16 compatibility backend")
+  endif()
+elseif(NOT SAKURA_UTF16_BACKEND STREQUAL "rust")
+  message(FATAL_ERROR
+    "MSVC currently requires the Rust UTF-16 backend")
+endif()
+
+if(SAKURA_UTF16_BACKEND STREQUAL "rust")
+  set(SAKURA_RUST_CORE_ROOT ${CMAKE_SOURCE_DIR}/rust)
+  set(SAKURA_RUST_CORE_MANIFEST ${SAKURA_RUST_CORE_ROOT}/Cargo.toml)
+  set(SAKURA_RUST_CORE_LOCK ${SAKURA_RUST_CORE_ROOT}/Cargo.lock)
+  set(SAKURA_RUST_CORE_TOOLCHAIN ${SAKURA_RUST_CORE_ROOT}/rust-toolchain.toml)
+  set(SAKURA_RUST_CORE_MEMBER_MANIFEST ${SAKURA_RUST_CORE_ROOT}/sakura_rust_core/Cargo.toml)
+  set(SAKURA_RUST_CORE_SOURCE_DIR ${SAKURA_RUST_CORE_ROOT}/sakura_rust_core/src)
+  file(GLOB_RECURSE SAKURA_RUST_CORE_RUST_SOURCES CONFIGURE_DEPENDS
+    ${SAKURA_RUST_CORE_ROOT}/*.rs)
+  set(SAKURA_RUST_CORE_SOURCE
+    ${SAKURA_RUST_CORE_MANIFEST}
+    ${SAKURA_RUST_CORE_MEMBER_MANIFEST}
+    ${SAKURA_RUST_CORE_LOCK}
+    ${SAKURA_RUST_CORE_TOOLCHAIN}
+    ${SAKURA_RUST_CORE_RUST_SOURCES})
+  set(SAKURA_RUST_CORE_BUILD_SCRIPT
+    ${CMAKE_SOURCE_DIR}/src/main/cmake/build-rust-sakura-core.cmake)
+  set(SAKURA_RUST_CORE_TARGET_DIR ${CMAKE_BINARY_DIR}/rust/sakura_rust_core)
+  if(NOT MSVC)
+    message(FATAL_ERROR "Rust UTF-16 integration currently requires the MSVC target")
+  endif()
+  set(SAKURA_RUST_CORE_TARGET x86_64-pc-windows-msvc)
+  set(SAKURA_RUST_CORE_LIBRARY_NAME sakura_rust_core.lib)
+  set(SAKURA_RUST_CORE_DEBUG_LIBRARY
+    ${SAKURA_RUST_CORE_TARGET_DIR}/${SAKURA_RUST_CORE_TARGET}/debug/${SAKURA_RUST_CORE_LIBRARY_NAME})
+  set(SAKURA_RUST_CORE_RELEASE_LIBRARY
+    ${SAKURA_RUST_CORE_TARGET_DIR}/${SAKURA_RUST_CORE_TARGET}/release/${SAKURA_RUST_CORE_LIBRARY_NAME})
+
+  add_custom_target(sakura_rust_core_build
+    COMMAND ${CMAKE_COMMAND}
+      -DSAKURA_RUST_CORE_CARGO=${SAKURA_CARGO_EXECUTABLE}
+      -DSAKURA_RUST_CORE_MANIFEST=${SAKURA_RUST_CORE_MANIFEST}
+      -DSAKURA_RUST_CORE_MEMBER_MANIFEST=${SAKURA_RUST_CORE_MEMBER_MANIFEST}
+      -DSAKURA_RUST_CORE_LOCK=${SAKURA_RUST_CORE_LOCK}
+      -DSAKURA_RUST_CORE_TOOLCHAIN=${SAKURA_RUST_CORE_TOOLCHAIN}
+      -DSAKURA_RUST_CORE_SOURCE_DIR=${SAKURA_RUST_CORE_SOURCE_DIR}
+      -DSAKURA_RUST_CORE_TARGET=${SAKURA_RUST_CORE_TARGET}
+      -DSAKURA_RUST_CORE_TARGET_DIR=${SAKURA_RUST_CORE_TARGET_DIR}
+      -DSAKURA_RUST_CORE_WORKING_DIR=${SAKURA_RUST_CORE_ROOT}
+      -DSAKURA_RUST_CORE_PROFILE=$<$<CONFIG:Debug>:dev>$<$<CONFIG:Release>:release>
+      -DSAKURA_RUST_CORE_OUTPUT=$<$<CONFIG:Debug>:${SAKURA_RUST_CORE_DEBUG_LIBRARY}>$<$<CONFIG:Release>:${SAKURA_RUST_CORE_RELEASE_LIBRARY}>
+      -P ${SAKURA_RUST_CORE_BUILD_SCRIPT}
+    BYPRODUCTS
+      ${SAKURA_RUST_CORE_DEBUG_LIBRARY}
+      ${SAKURA_RUST_CORE_RELEASE_LIBRARY}
+    DEPENDS ${SAKURA_RUST_CORE_SOURCE} ${SAKURA_RUST_CORE_BUILD_SCRIPT}
+    VERBATIM
+    COMMENT "Checking sakura_rust_core static library")
+  add_library(sakura_rust_core STATIC IMPORTED GLOBAL)
+  set_target_properties(sakura_rust_core PROPERTIES
+    IMPORTED_CONFIGURATIONS "Debug;Release"
+    IMPORTED_LOCATION_DEBUG ${SAKURA_RUST_CORE_DEBUG_LIBRARY}
+    IMPORTED_LOCATION_RELEASE ${SAKURA_RUST_CORE_RELEASE_LIBRARY}
+  )
+  add_dependencies(sakura_rust_core sakura_rust_core_build)
+endif()
+
 # Set C++ standard for sakura_core
 target_compile_features(sakura_core PUBLIC cxx_std_20)
 
@@ -761,6 +837,15 @@ target_link_libraries(sakura_core
     winmm
     winspool
 )
+
+if(SAKURA_UTF16_BACKEND STREQUAL "rust")
+  target_compile_definitions(sakura_core PUBLIC SAKURA_UTF16_BACKEND_RUST)
+  target_link_libraries(sakura_core PUBLIC sakura_rust_core)
+endif()
+
+if(SAKURA_UTF16_BENCHMARK_TELEMETRY)
+  target_compile_definitions(sakura_core PRIVATE SAKURA_UTF16_BENCHMARK_TELEMETRY)
+endif()
 
 # Add dependencies for sakura_core
 add_dependencies(sakura_core

@@ -84,6 +84,11 @@ struct ThemePalette {
 	//! VS Code `diffEditor.diagonalFill` (`#cccccc33` dark, `#22222233` light):
 	//! the hatch drawn where one side of a side-by-side diff has no line at all.
 	ThemeColor diffDiagonalFill = { 0x41, 0x41, 0x41 };
+	//! VS Code `editor.findMatchHighlightBackground`, which the Search view's result
+	//! rows use to highlight the matched span. Its registered dark default is
+	//! `#EA5C0055`; GDI has no alpha channel, so the token is composited over
+	//! `sideBar` at design time exactly as the diff line tokens are.
+	ThemeColor searchMatchHighlightBackground = { 0x66, 0x37, 0x19 };
 	//! VS Code `button.background`. `media/updateTitleBarEntry.css` paints the
 	//! actionable ("prominent") title-bar Update button with
 	//! `--vscode-button-background` / `--vscode-button-foreground` and hovers it
@@ -316,6 +321,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0xE2, 0xE9, 0xD7 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the light canvas
 			{ 0xF6, 0xC4, 0xC6 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the light canvas
 			{ 0xCA, 0xCB, 0xCC }, // diffEditor.diagonalFill: #22222233 over the light canvas
+			{ 0xF8, 0xC9, 0xAA }, // editor.findMatchHighlightBackground: #EA5C0055 over the light sideBar
 			{ 0xB8, 0x32, 0x68 }, // button.background: the Sakura light accent, not VS Code's #007ACC
 			{ 0xFF, 0xFF, 0xFF }, // button.foreground
 			{ 0x93, 0x28, 0x53 }, // button.hoverBackground: darken(button.background, 0.2) as upstream registers it for light
@@ -358,6 +364,7 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x37, 0x3D, 0x29 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the dark canvas
 		{ 0x4B, 0x18, 0x18 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the dark canvas
 		{ 0x41, 0x41, 0x41 }, // diffEditor.diagonalFill: #cccccc33 over the dark canvas
+		{ 0x66, 0x37, 0x19 }, // editor.findMatchHighlightBackground: #EA5C0055 over the dark sideBar
 		{ 0x1F, 0x8A, 0xD2 }, // button.background: the Sakura dark accent, not VS Code's #0E639C
 		{ 0xFF, 0xFF, 0xFF }, // button.foreground
 		{ 0x3F, 0xA1, 0xE3 }, // button.hoverBackground: lighten(button.background, 0.2) as upstream registers it for dark

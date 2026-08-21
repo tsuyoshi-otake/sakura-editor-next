@@ -139,6 +139,7 @@ void CCommandPaletteOverlay::Destroy() noexcept
 	m_empty = nullptr;
 	m_previousFocus = nullptr;
 	m_items.clear();
+	m_stringsCallback = {};
 	ResetBrushes();
 	m_font.Reset();
 	ReleaseCodiconFont();
@@ -151,9 +152,10 @@ bool CCommandPaletteOverlay::Show(std::vector<CommandPaletteItem> items)
 	if (!IsVisible()) {
 		m_previousFocus = ::GetFocus();
 		if (IsPaletteTarget(m_window, m_previousFocus)) m_previousFocus = m_parent;
-		if (m_input != nullptr) ::SetWindowTextW(m_input, L"");
 	}
+	if (m_input != nullptr) ::SetWindowTextW(m_input, L"");
 	m_items = std::move(items);
+	RefreshStrings();
 	PopulateList();
 	Layout();
 	::SetWindowPos(m_window, HWND_TOP, 0, 0, 0, 0,
@@ -233,14 +235,26 @@ void CCommandPaletteOverlay::Layout() noexcept
 void CCommandPaletteOverlay::RefreshStrings() noexcept
 {
 	if (m_window == nullptr || !::IsWindow(m_window)) return;
+	QuickInputStrings strings {
+		LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER, L"Type to search commands"),
+		LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No matching commands"),
+	};
+	if (m_stringsCallback) {
+		try {
+			const auto localized = m_stringsCallback();
+			if (!localized.placeholder.empty()) strings.placeholder = localized.placeholder;
+			if (!localized.noResults.empty()) strings.noResults = localized.noResults;
+		}
+		catch (...) {
+			// Keep the command-palette defaults when a caller cannot resolve text.
+		}
+	}
 	if (m_empty != nullptr) {
-		const auto text = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No commands found");
-		::SetWindowTextW(m_empty, text.c_str());
+		::SetWindowTextW(m_empty, strings.noResults.c_str());
 	}
 	if (m_input != nullptr) {
-		const auto placeholder = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER,
-			L"Type to search commands");
-		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
+		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE,
+			reinterpret_cast<LPARAM>(strings.placeholder.c_str()));
 	}
 	::InvalidateRect(m_window, nullptr, FALSE);
 }
@@ -254,6 +268,12 @@ void CCommandPaletteOverlay::SetPalette(const theme::ThemePalette& palette) noex
 		if (m_input != nullptr) ::InvalidateRect(m_input, nullptr, TRUE);
 		if (m_list != nullptr) ::InvalidateRect(m_list, nullptr, TRUE);
 	}
+}
+
+void CCommandPaletteOverlay::SetStringsCallback(StringsCallback callback)
+{
+	m_stringsCallback = std::move(callback);
+	RefreshStrings();
 }
 
 void CCommandPaletteOverlay::SetSearchCallback(SearchCallback callback)
@@ -303,7 +323,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_OWNERDRAWFIXED
 				| LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY,
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kListControl)), instance, nullptr);
-		const auto emptyText = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No commands found");
+		const auto emptyText = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No matching commands");
 		m_empty = ::CreateWindowExW(
 			0, L"STATIC", emptyText.c_str(),
 			WS_CHILD | SS_CENTER | SS_CENTERIMAGE,
@@ -317,15 +337,13 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			return -1;
 		}
 		::SendMessageW(m_input, EM_SETLIMITTEXT, 4096, 0);
-		const auto placeholder = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER,
-			L"Type to search commands");
-		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE, reinterpret_cast<LPARAM>(placeholder.c_str()));
 		const HFONT font = ControlFont(m_font.Get());
 		SetControlFont(m_prompt, font);
 		SetControlFont(m_input, font);
 		SetControlFont(m_list, font);
 		SetControlFont(m_empty, font);
 		SetControlFont(m_close, font);
+		RefreshStrings();
 		RECT client{};
 		::GetClientRect(m_window, &client);
 		Layout(client.right, client.bottom);

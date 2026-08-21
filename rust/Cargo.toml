@@ -1,0 +1,11 @@
+[workspace]
+members = ["sakura_rust_core"]
+resolver = "2"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+panic = "abort"

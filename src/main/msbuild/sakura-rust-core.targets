@@ -1,0 +1,77 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup Label="SakuraRustCore">
+    <SAKURA_UTF16_PRODUCTION_PACKAGE Condition="'$(SAKURA_UTF16_PRODUCTION_PACKAGE)'==''">false</SAKURA_UTF16_PRODUCTION_PACKAGE>
+    <SakuraUtf16ProductionPackageUpper>$(SAKURA_UTF16_PRODUCTION_PACKAGE.ToUpperInvariant())</SakuraUtf16ProductionPackageUpper>
+    <SAKURA_UTF16_BACKEND Condition="'$(SAKURA_UTF16_BACKEND)'==''">rust</SAKURA_UTF16_BACKEND>
+    <SAKURA_UTF16_BENCHMARK_TELEMETRY Condition="'$(SAKURA_UTF16_BENCHMARK_TELEMETRY)'==''">false</SAKURA_UTF16_BENCHMARK_TELEMETRY>
+    <SakuraUtf16BenchmarkTelemetryUpper>$(SAKURA_UTF16_BENCHMARK_TELEMETRY.ToUpperInvariant())</SakuraUtf16BenchmarkTelemetryUpper>
+    <SakuraRustCoreRepoRoot>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..\..\..\'))</SakuraRustCoreRepoRoot>
+    <SakuraRustCoreWorkspace>$([MSBuild]::NormalizePath('$(SakuraRustCoreRepoRoot)', 'rust'))</SakuraRustCoreWorkspace>
+    <SakuraRustCoreManifest>$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'Cargo.toml'))</SakuraRustCoreManifest>
+    <SakuraRustCoreMemberManifest>$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'sakura_rust_core\Cargo.toml'))</SakuraRustCoreMemberManifest>
+    <SakuraRustCoreCargo Condition="'$(SakuraRustCoreCargo)'==''">cargo</SakuraRustCoreCargo>
+    <SakuraRustCoreTargetDir>$([MSBuild]::NormalizePath('$(SakuraRustCoreRepoRoot)', 'build\$(Platform)\$(Configuration)\rust\sakura_rust_core'))</SakuraRustCoreTargetDir>
+    <SakuraRustCoreCargoProfile Condition="'$(Configuration)'=='Debug'">dev</SakuraRustCoreCargoProfile>
+    <SakuraRustCoreProfileDirectory Condition="'$(Configuration)'=='Debug'">debug</SakuraRustCoreProfileDirectory>
+    <SakuraRustCoreCargoProfile Condition="'$(Configuration)'=='Release'">release</SakuraRustCoreCargoProfile>
+    <SakuraRustCoreProfileDirectory Condition="'$(Configuration)'=='Release'">release</SakuraRustCoreProfileDirectory>
+    <SakuraRustCoreLibrary>$([MSBuild]::NormalizePath('$(SakuraRustCoreTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraRustCoreProfileDirectory)\sakura_rust_core.lib'))</SakuraRustCoreLibrary>
+    <SakuraRustCoreStamp>$([MSBuild]::NormalizePath('$(SakuraRustCoreTargetDir)', 'x86_64-pc-windows-msvc\$(SakuraRustCoreProfileDirectory)\sakura_rust_core.msbuild.stamp'))</SakuraRustCoreStamp>
+  </PropertyGroup>
+
+  <Target Name="ValidateSakuraRustCoreBackend" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(SAKURA_UTF16_BACKEND)'!='rust'"
+           Text="MSBuild requires SAKURA_UTF16_BACKEND=rust; the C++ fallback and both mode were removed from the MSVC path." />
+    <Error Condition="('$(SakuraUtf16BenchmarkTelemetryUpper)'=='TRUE' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='1' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='ON' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='YES') And ('$(SakuraUtf16ProductionPackageUpper)'=='TRUE' Or '$(SakuraUtf16ProductionPackageUpper)'=='1' Or '$(SakuraUtf16ProductionPackageUpper)'=='ON' Or '$(SakuraUtf16ProductionPackageUpper)'=='YES')"
+           Text="SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production." />
+    <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; --version"
+          WorkingDirectory="$(SakuraRustCoreWorkspace)"
+          StdOutEncoding="UTF-8"
+          ConsoleToMSBuild="true" />
+  </Target>
+
+  <ItemGroup>
+    <SakuraRustCoreSource Include="$(MSBuildThisFileFullPath)" />
+    <SakuraRustCoreSource Include="$(SakuraRustCoreManifest)" />
+    <SakuraRustCoreSource Include="$(SakuraRustCoreMemberManifest)" />
+    <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'Cargo.lock'))" />
+    <SakuraRustCoreSource Include="$([MSBuild]::NormalizePath('$(SakuraRustCoreWorkspace)', 'rust-toolchain.toml'))" />
+    <SakuraRustCoreSource Include="$(SakuraRustCoreWorkspace)\sakura_rust_core\src\**\*.rs" />
+  </ItemGroup>
+
+  <ItemDefinitionGroup>
+    <ClCompile>
+      <PreprocessorDefinitions>SAKURA_UTF16_BACKEND_RUST;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+    <Link>
+      <AdditionalDependencies>$(SakuraRustCoreLibrary);%(AdditionalDependencies)</AdditionalDependencies>
+    </Link>
+  </ItemDefinitionGroup>
+
+  <ItemDefinitionGroup Condition="'$(SakuraUtf16BenchmarkTelemetryUpper)'=='TRUE' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='1' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='ON' Or '$(SakuraUtf16BenchmarkTelemetryUpper)'=='YES'">
+    <ClCompile>
+      <PreprocessorDefinitions>SAKURA_UTF16_BENCHMARK_TELEMETRY;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+    </ClCompile>
+  </ItemDefinitionGroup>
+
+  <Target Name="PrepareSakuraRustCoreIncrementalState"
+          DependsOnTargets="ValidateSakuraRustCoreBackend">
+    <!-- A stamp cannot represent a usable Cargo result after its library is removed. -->
+    <Delete Files="$(SakuraRustCoreStamp)"
+            Condition="Exists('$(SakuraRustCoreStamp)') And !Exists('$(SakuraRustCoreLibrary)')" />
+  </Target>
+
+  <Target Name="BuildSakuraRustCore"
+          DependsOnTargets="PrepareSakuraRustCoreIncrementalState"
+          Inputs="@(SakuraRustCoreSource)"
+          Outputs="$(SakuraRustCoreStamp)"
+          BeforeTargets="Link">
+    <Exec Command="&quot;$(SakuraRustCoreCargo)&quot; build --manifest-path &quot;$(SakuraRustCoreManifest)&quot; --workspace --package sakura-rust-core --locked --target x86_64-pc-windows-msvc --target-dir &quot;$(SakuraRustCoreTargetDir)&quot; --profile $(SakuraRustCoreCargoProfile)"
+          WorkingDirectory="$(SakuraRustCoreWorkspace)"
+          StdOutEncoding="UTF-8"
+          ConsoleToMSBuild="true" />
+    <Error Condition="!Exists('$(SakuraRustCoreLibrary)')"
+           Text="Cargo completed without producing the required sakura_rust_core static library: $(SakuraRustCoreLibrary)" />
+    <Touch Files="$(SakuraRustCoreStamp)" AlwaysCreate="true" />
+  </Target>
+</Project>

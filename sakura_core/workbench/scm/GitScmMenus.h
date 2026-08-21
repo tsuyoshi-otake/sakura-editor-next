@@ -94,6 +94,101 @@ struct GitActionButton final {
 	[[nodiscard]] bool operator==(const GitActionButton&) const = default;
 };
 
+//!
+//! @brief One primary (always-visible) action of the repository row's toolbar.
+//!
+//! Upstream's `RepositoryRenderer` builds that toolbar from the provider's
+//! `statusBarCommands` followed by `scm/title`'s `navigation` group, and every
+//! `navigation` entry renders icon-only with its title as the hover text. The
+//! icon is kept in `renderLabelWithIcons` syntax, exactly as the action button's
+//! title is, so the same native renderer draws the same Codicon.
+//!
+struct GitToolbarAction final {
+	//! `$(check)`, `$(refresh)`, ... Never empty: a toolbar action upstream draws
+	//! as an icon must not fall back to a text button here.
+	std::wstring icon;
+	//! Upstream's bare title, which is the tooltip on an icon-only action.
+	std::wstring tooltip;
+	std::string commandId;
+
+	[[nodiscard]] bool operator==(const GitToolbarAction&) const = default;
+};
+
+//!
+//! @brief `scm/title`'s `navigation` group: the repository row's primary actions.
+//!
+//! Ordered as upstream contributes it - `git.commit`, then `git.refresh` - since
+//! neither entry carries an explicit order and `MenuInfo._compareMenuItems`
+//! keeps contribution order within one group at the same order value.
+//!
+//! These follow, never replace, the provider's `statusBarCommands`, which the
+//! row already renders.
+//!
+[[nodiscard]] std::vector<GitToolbarAction> BuildGitScmTitleToolbarActions();
+
+//!
+//! @brief `scm/title`'s remaining groups: what the row's `...` overflow shows.
+//!
+//! Upstream's secondary actions in group order: `1_header` (Pull, Push, Clone,
+//! Checkout to..., Fetch) by explicit order, then `2_main`'s submenus, then
+//! `3_footer` (Show Git Output). The `2_main` submenus have no route here and
+//! are absent rather than rendered as dead rows; the omission is recorded in
+//! this directory's CLAUDE.md.
+//!
+[[nodiscard]] std::vector<GitMenuItem> BuildGitScmTitleOverflowMenu();
+//!
+//! @brief `scm/resourceGroup/context`'s `inline` group for one group header row.
+//!
+//! Upstream renders this group as an always-visible action bar on the group's
+//! own row, which is why the `Changes` row carries a discard and a stage button
+//! rather than only a context menu. The order is upstream's: `inline@1` first,
+//! then `inline@2` in contribution order.
+//!
+//! `git.viewChanges` / `git.viewStagedChanges` / `git.viewUntrackedChanges`
+//! (`inline@1`) are **absent**: they open a multi-file diff editor that has no
+//! route here. `git.stageAllMerge` is absent for the same reason, which leaves
+//! the merge group with no inline action at all. The omissions are recorded in
+//! this directory's CLAUDE.md; nothing is approximated with a different command.
+//!
+[[nodiscard]] std::vector<GitToolbarAction> BuildGitResourceGroupInlineActions(
+	EGitResourceGroup group, EUntrackedChangesPolicy untrackedChanges);
+
+//!
+//! @brief `MenuId.SCMHistoryTitle`'s `navigation` group: the Graph header's toolbar.
+//!
+//! Upstream's own order, by the contributed `order` values: the repository and
+//! history-item-reference pickers (0, 1), `Go to Current History Item` (2),
+//! `git.fetchAll` (900), `git.pullRef` (901), `git.pushRef` / `git.publish`
+//! (902 / 903), and the view's own `Refresh` (1000).
+//!
+//! What ships here is `git.fetchAll`, pull, push, and refresh. The two pickers,
+//! `Go to Current History Item`, the `pushRef`/`publish` switch, and the `...`
+//! overflow's `View as List` / `View as Tree` are absent rather than drawn
+//! inert, because each needs view state this Graph does not keep. The reasons
+//! are recorded in this directory's CLAUDE.md.
+//!
+[[nodiscard]] std::vector<GitToolbarAction> BuildGitScmHistoryTitleToolbarActions();
+
+
+//!
+//! @brief `scm/historyItem/context` for one commit in the Graph view.
+//!
+//! Upstream's groups in order: `1_checkout` (Checkout, Checkout (Detached)),
+//! `2_branch` (Create Branch..., Delete Branch), `3_tag` (Create Tag...,
+//! Delete Tag), `4_modify` (Cherry Pick), `5_compare` (Compare with Remote,
+//! Compare with Merge Base, Compare with...), and `9_copy` (Copy Commit Hash,
+//! Copy Commit Message).
+//!
+//! Only `9_copy` has a route here. Every `git.graph.*` command operates on the
+//! clicked commit, and this product registers no command that does - its
+//! `git.checkout` is the Quick Pick "Checkout to...", which would check out
+//! something other than the row the user right-clicked. Offering it here would
+//! be a different command wearing upstream's label, so those entries are absent
+//! rather than approximated, and the omission is recorded in this directory's
+//! CLAUDE.md.
+//!
+[[nodiscard]] std::vector<GitMenuItem> BuildGitHistoryItemContextMenu();
+
 //! Nothing when upstream contributes no button for this state.
 [[nodiscard]] std::optional<GitActionButton> BuildGitCommitActionButton(bool hasChanges, bool enabled);
 

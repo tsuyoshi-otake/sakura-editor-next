@@ -161,22 +161,237 @@ is the pure half -- it has no HWND, runs no git, and reads no file -- and
   Graph inherits the keyboard, wheel, and scrollbar behaviour the change list
   and the Explorer already have.
 
+## The Graph row's geometry, badges, and menu (2026-08-21, #238)
+
+Read from `vs/workbench/contrib/scm/browser/scmHistory.ts` and
+`scmHistoryViewPane.ts`, not from a screenshot.
+
+- **Lane `n` is at `SWIMLANE_WIDTH * (n + 1)`.** `drawCircle` offsets by a whole
+  swimlane, not half of one, so the first lane sits 11 DIP in from the graph's
+  left edge. `laneX` reproduces that.
+- **Three node shapes, not one.** `renderSCMHistoryItemGraph` draws HEAD as a
+  `CIRCLE_RADIUS + 3` disc with a `CIRCLE_STROKE_WIDTH` hole, a multi-parent
+  commit as `CIRCLE_RADIUS + 2`, and every other commit as `CIRCLE_RADIUS + 1`.
+  `PaintGraphRow` draws exactly those, and the hole takes the row's own
+  background so the current commit reads as a ring the way upstream's does.
+  `kGraphCircleStrokeWidthDip` is upstream's `CIRCLE_STROKE_WIDTH`.
+- **The badges trail the text.** `HistoryItemRenderer.renderTemplate` appends
+  the graph, then one `IconLabel` whose label is the subject and whose
+  description is the author, then the badge container. The row therefore reads
+  subject, author, badges -- the previous order, which put the badges between
+  the graph and the subject, was a divergence. The badges are measured before
+  the text is drawn so the subject ellipsizes into what they leave, which is
+  what the flex row does.
+- **Only the first ref shows its name.** Upstream renders the first *coloured*
+  reference with its description and every later group as icon plus count. Ours
+  names the first ref and gives the rest their kind's Codicon alone
+  (`GraphRefIcon`: `$(git-branch)`, `$(cloud)`, `$(tag)`).
+
+Recorded divergences for that row:
+
+- **A badge takes the commit's own lane colour, not the ref's.** Upstream colours
+  each badge from `ISCMHistoryItemRef.color` -- `chartsBlue` for a branch,
+  `chartsPurple` for a remote, `#EA5C00` for the base ref -- and hides uncoloured
+  refs (tags) under the default `scm.graph.badges: filter`. Those colours are not
+  published by `theme::ThemePalette` either, so every badge here uses the lane
+  colour the commit's circle already uses, and a tag is rendered rather than
+  filtered. Revisit with the lane-colour token work below.
+- **The author date is no longer drawn.** Upstream's row carries the subject and
+  the author; the date lives in the hover. Right-aligning `author, date` was a
+  divergence, and it is removed rather than kept.
+- **A badge group carries no count.** Upstream collapses same-colour, same-icon
+  refs into one badge with a count. Ours renders one badge per ref.
+
+## The Graph row's context menu (2026-08-21, #238)
+
+Right-clicking a Graph row opens upstream's `scm/historyItem/context` menu,
+built by `BuildGitHistoryItemContextMenu` and tracked by
+`ShowHistoryItemContextMenu`. It follows the same rules the resource menus
+follow: the row is selected first, the commit id is copied before
+`TrackPopupMenu` pumps messages, and a row the Graph no longer holds fails
+closed (`CScmWorkbenchTool::HistoryItem` answers nothing).
+
+- Only the `9_copy` group ships: `git.copyCommitId` (`Copy Commit Hash`) and
+  `git.copyCommitMessage` (`Copy Commit Message`), both registered with real
+  executors in `RegisterGitCommands`.
+- **Every `git.graph.*` entry is absent, not disabled**:
+  `git.graph.checkoutDetached`, `git.graph.cherryPick`,
+  `git.graph.compareWithRemote`, `git.graph.compareWithMergeBase`,
+  `git.graph.compareRef`, and the whole `scm/historyItemRef/context` menu
+  (`git.graph.checkout`, `git.graph.deleteBranch`, `git.graph.deleteTag`). None
+  has a route here, and `git.branch` / `git.createTag` would act on HEAD rather
+  than on the clicked commit, so offering them would name the wrong operand.
+- `git.copyCommitMessage` copies the commit's **full** message. `GitHistoryItem`
+  gained `message` (`%B`) for exactly that: copying the subject would be a
+  different text wearing the same label.
+
+## The Repositories row's toolbar (2026-08-21, #238)
+
+`RepositoryRenderer` sets the row's toolbar to
+`[...statusBarCommands, ...scm/title navigation]` with the remaining `scm/title`
+groups in the overflow `...`. `LayoutBand` now appends
+`BuildGitScmTitleToolbarActions` (`git.commit` / `$(check)`, `git.refresh` /
+`$(refresh)`) after the published `statusBarCommands`, then an
+`EBandSegment::Overflow` segment that opens `BuildGitScmTitleOverflowMenu`
+(`git.pull`, `git.push`, `git.clone`, `git.checkout`, `git.fetch`, a separator,
+`git.showOutput`).
+
+- `git.refresh` and `git.showOutput` are new registry entries with real
+  executors: `CScmWorkbenchTool::Refresh()` and revealing the Output panel
+  through `CBottomPanelTool::ShowOutput()`.
+- **Upstream's eight `2_main` submenus are absent** (`git.commit`,
+  `git.changes`, `git.pullpush`, `git.branch`, `git.remotes`, `git.stash`,
+  `git.tags`, `git.worktrees`). They are submenus of commands this fork mostly
+  does not have, and the ones it does have are already reachable from the flat
+  overflow above.
+- **The new toolbar tooltips and menu labels ship in English.** The
+  `STR_WORKBENCH_COMMAND_GIT_*` ids exist but no `.rc` string table defines
+  them, so every Git command title here already falls back to its English
+  literal. Localizing them is one change across all three resources, not a
+  per-entry decision.
+
+## The Graph header's toolbar (2026-08-21, #238)
+
+The Graph pane header carries `MenuId.SCMHistoryTitle`'s `navigation` group,
+which `SCMHistoryViewPane` registers with `titleMenuId: MenuId.SCMHistoryTitle`.
+`BuildGitScmHistoryTitleToolbarActions` builds it and `LayoutGraphHeaderActions`
+right-aligns it in the header, shrinking the title so a long one ellipsizes
+rather than drawing under the buttons.
+
+The toolbar shares `bandSegments` with the repository row.  That is deliberate:
+one hover model, one tooltip model, and one dispatch path serve both, so a
+header button cannot drift out of sync with a row button.  `LayoutBand` now runs
+even when no repository row is rendered, and `ToggleSectionAt` tries the
+segments before the collapse twistie -- otherwise pressing Refresh would
+collapse the pane.
+
+What ships: `git.fetchAll` (`$(git-fetch)`), Pull (`$(repo-pull)`), Push
+(`$(repo-push)`), Refresh (`$(refresh)`).
+
+Recorded divergences:
+
+- **Pull and Push route to `git.pull` / `git.push`, not to upstream's
+  `git.pullRef` / `git.pushRef`.**  The ref-scoped pair operates on the history
+  item reference the Graph's filter names.  With no reference filter here, that
+  reference is always HEAD, so the two commands are the same operation; the
+  icons stay upstream's.
+- **Refresh routes to `git.refresh`, not `workbench.scm.action.graph.refresh`.**
+  There is no view-scoped refresh here; `git.refresh` refreshes this Graph along
+  with the rest of the view, which is a superset of what the view action does.
+- **The repository picker and the history-item reference picker are absent.**
+  The first is upstream-gated on more than one provider, and there is only ever
+  one here.  The second (the `自動` / `Auto` button) opens a quick pick that
+  rewrites the Graph's reference filter -- state this Graph does not keep, and
+  a button that could not change anything would be a fake capability.
+- **`Go to Current History Item` (`$(target)`) is absent.**  Upstream gates it
+  on `SCMCurrentHistoryItemRefInFilter`, which is the same missing filter state.
+- **The `...` overflow is absent.**  Its only entries are `View as List` and
+  `View as Tree`; this Graph has one presentation, so a toggle there would
+  change nothing.
+- **`git.pushRef` never becomes `git.publish`.**  Upstream swaps the two on
+  `scmCurrentHistoryItemRefHasRemote`.  The repository row already publishes
+  `git.publish` through `statusBarCommands` when it applies, so the Graph header
+  shows Push unconditionally rather than duplicating that switch here.
+
+## The Changes row's inline actions (2026-08-21, #238)
+
+`scm/resourceGroup/context`'s `inline` group is an always-visible action bar on
+the group header row, not a context-menu-only contribution.  Its absence was why
+the `Changes` row had a count and nothing else.
+`BuildGitResourceGroupInlineActions` builds it and `GroupRowActions` lays it out
+right to left from the row's count.
+
+- `Changes` (`workingTree`, `git.untrackedChanges` `mixed`): `git.cleanAll`
+  (`$(discard)`) then `git.stageAll` (`$(add)`), which is the contributed order
+  within `inline@2`.
+- `Staged Changes` (`index`): `git.unstageAll` (`$(remove)`).
+- `Merge Changes` and `Untracked Changes`: nothing.
+
+`GroupRowActions` is called by both the row's paint and its hit test, so a
+button can never be drawn where a press does not land.  A press on an action is
+consumed before the row's collapse gesture.
+
+Recorded divergences:
+
+- **`inline@1` is absent for every group**: `git.viewChanges`,
+  `git.viewStagedChanges`, and `git.viewUntrackedChanges` open a multi-file diff
+  editor, which has no route here.
+- **The merge group has no inline action.**  Its only contribution is
+  `git.stageAllMerge`, which is not registered; the row is left bare rather than
+  given `git.stageAll`, which would stage a different set.
+- **`config.git.untrackedChanges != mixed` yields no actions.**  The
+  `*Tracked` / `*Untracked` variants upstream substitutes there are not
+  registered.  This product publishes `mixed`, so the branch is unreachable in
+  practice and fails closed if that ever changes.
+
+## The Graph row's path geometry (2026-08-21, #238)
+
+`PaintGraphRow` reproduces upstream's `renderSCMHistoryItemGraph`
+(`vs/workbench/contrib/scm/browser/scmHistory.ts`) path for path, not just its
+lane colours and node shapes.  Drawing only vertical lane segments was the
+earlier state, and it made a merge unreadable: nothing on screen showed where
+two lanes joined.
+
+- **`gx(k)` is upstream's `SWIMLANE_WIDTH * k`.**  Lane `n` is centred on
+  `gx(n + 1)`, the row's vertical middle is upstream's `SWIMLANE_HEIGHT / 2`,
+  and `SWIMLANE_CURVE_RADIUS` is 5 DIP.  Every constant is scaled through
+  `icons::ScaleDip`, so the geometry is identical at any DPI.
+- **The five paths are upstream's own**, walked with a separate
+  `outputSwimlaneIndex` cursor exactly as upstream walks it:
+  1. a second lane reaching this same commit draws `/` then `-` into the circle
+     (`index != circleIndex`) -- a merge's incoming side;
+  2. a lane that kept its position draws one full-height `|`;
+  3. a lane that shifted left draws `|`, a curve, the horizontal run, a second
+     curve, `|`;
+  4. **every parent after the first draws `-` out of the circle and `\` down
+     into that parent's own lane, in that parent's colour** -- this is the
+     stroke that makes a merge legible, and the one this row previously lacked
+     entirely;
+  5. `|` into the circle in the arriving lane's colour and `|` out of it in the
+     circle's colour, so the two halves of the row can differ.
+- **`circleIndex` and `circleColor` follow upstream's rules**, not the model's
+  convenience: the commit sits on the input lane that was waiting for it, or on
+  a new lane just past the right-hand end, and the colour is read from the
+  output lane at that index first, the input lane second, the row's own
+  assignment last.
+- **SVG quarter arcs are drawn as cubic Beziers.**  `A r r 0 0 s` between two
+  points whose tangents are axis-aligned is approximated by control points
+  0.5523 of the way from each end toward the corner those tangents meet at.
+  GDI's `PolyBezierTo` continues from the current position, which `Arc` cannot
+  do; the divergence is the approximation itself, and it is under half a pixel
+  at these radii.
+
 ### Graph divergences
+
 
 - **The lane colours are literals, not theme tokens.**  Upstream registers
   `scmGraph.foreground1` .. `foreground5` and reads them from the colour theme.
   `theme::ThemePalette` publishes no such tokens, so `kGraphLaneColors` carries
-  the registered upstream **defaults**.  Replace them with palette reads when
-  the tokens are published; do not add a sixth colour of our own.
-- **A row has no hover actions, no context menu, and no click command.**
-  Upstream's `HistoryItemRenderer` opens a commit's changes and contributes a
-  menu.  There is no commit-detail input here, so the rows are presentation
-  only rather than offering an action that could not resolve.
+  the registered upstream **defaults**: `#FFB000`, `#DC267F`, `#994F00`,
+  `#40B0A6`, `#B66DFF`.  The last two were wrong until 2026-08-21 -- they had
+  been copied from a different palette -- so re-read them from upstream rather
+  than trusting the values here.  Replace the whole array with palette reads
+  when the tokens are published; do not add a sixth colour of our own.
+- **Superseded: "a row has no hover actions, no context menu, and no click
+  command."**  A row now has upstream's `scm/historyItem/context` menu; see
+  "The Graph row's context menu" above for what it contains and what it omits.
+  A row still has no hover action bar and no click command, because opening a
+  commit's changes needs a commit-detail input that does not exist here.
 - **The page is a fixed 50 commits with no incremental loading.**  Upstream
   pages as the user scrolls.  A bounded page keeps the refresh cost fixed; the
   bound is not hidden, because the list simply ends.
 - **Only `%D` decorations are badged.**  Upstream also renders history-item
   labels a provider contributes.  Our provider contributes none.
+
+## Pane headers draw the side bar's section separator (2026-08-21, #238)
+
+Every pane header except the topmost draws the same 1px `border` line the
+Explorer's Outline header draws, because in VS Code each pane in a view
+container is separated from the one above it. The topmost header is the
+exception: the container's own title already sits above it, and a line there
+would double that boundary. `PaintViewHeader` decides that by comparing the
+header's top against the client top, which is the same origin `ViewStack()`
+lays the first header out at.
 
 ## Collapsing and Resizing the Sections
 

@@ -53,6 +53,7 @@ C++20をサポートするC++コンパイラーが必要です。
 |HTML Help Workshop|hhc.exe|Visual Studio同梱のもの|
 |CMake|cmake.exe|Visual Studio同梱のもので可|
 |PowerShell Core|pwsh.exe|Microsoft Storeなどからインストール|
+|Rust toolchain|cargo.exe / rustc.exe|Rustを選択する通常ビルド、またはRust既定の配布ビルド・インストーラ・ZIPで必要です。`rust/rust-toolchain.toml`がRust toolchain 1.96.0を固定するため、stableを別途選択しません。|
 |[7-Zip](https://7-zip.opensource.jp/)|7z.exe|外部依存ファイルの解凍に使用します。|
 |Locale Emulator|LEProc.exe|日本語環境以外でHTMLヘルプをビルドする場合に利用します。|
 |Auto HotKey|AutoHotKey.exe|日本語環境以外でHTMLヘルプをビルドする場合にソースに腹持ちしたLocale Emulatorを展開する際に利用します。|
@@ -70,6 +71,22 @@ choco install InnoSetup -y
 ```
 
 詳細は [インストーラビルドの仕組み](../installer/readme.md) を参照してください。
+
+UTF-16走査バックエンドは`SAKURA_UTF16_BACKEND`で明示します。MSVCではRust実装を
+常に使用し、通常ビルド・テスト・配布ビルドのすべてでCargoと固定toolchainを必要と
+します。`rust`はCargoで`rust/sakura_rust_core`の依存関係なしstaticlibをビルドして
+Rust実装を選択します。C++ UTF-16カーネルは実験的MinGW互換経路だけに残し、MSVCの
+コンパイル対象・製品ディスパッチから除外しています。
+
+MSBuildでは`/p:SAKURA_UTF16_BACKEND=rust`、MSVCのCMakeでは
+`-DSAKURA_UTF16_BACKEND=rust`を指定します。MinGWは`-DSAKURA_UTF16_BACKEND=cpp`を
+明示します。`both`、`auto`、空でない未知の値はハードエラーです。Rustワークスペースは
+`rust/rust-toolchain.toml`の固定toolchainを選ぶため、Cargoは必ず`rust`ディレクトリを
+作業ディレクトリにして実行されます。
+
+配布ビルド・インストーラ・ZIPは`SAKURA_UTF16_PRODUCTION_PACKAGE=true`を設定し、
+`SAKURA_UTF16_BACKEND=rust`だけを受け付けます。C++バックエンドやテスト用の別モードを
+指定したパッケージ処理は、Cargo・コンパイル・パッケージ処理の前に拒否します。
 
 ## ビルド手順
 
@@ -407,7 +424,10 @@ build-all.bat x64 Release
 x64 Release は、最小要件を AVX とする単一の `x64\Release\sakura.exe` を生成します。
 AVX2 および AVX-512F/BW を使う処理はソース単位で分離してコンパイルし、プロセス起動時に
 CPUID と XGETBV で CPU・OS の保存状態を一度だけ確認して、利用可能な最上位実装へ
-関数ポインターを固定します。追加の ISA 別バイナリは生成しません。
+関数ポインターを固定します。グローバルな AVX-512 ティアは、C++ バイトスキャナの
+末尾処理が AVX2 実装へ委譲するため、AVX-512F/BW と OS 状態に加えて AVX2 も必要です。
+Rust UTF-16 AVX-512 エントリポイントもこのプロセス全体の契約に従います。追加の ISA 別
+バイナリは生成しません。
 
 ### R1 candidate component pilot (URI)
 

@@ -11,6 +11,7 @@
 /.cppcheck-build-*/
 /cppcheck-*.xml
 /build
+/rust/**/target/
 /MinGW
 /Win32
 /x64

@@ -15,6 +15,7 @@ namespace CpuDispatch::Internal
 {
 namespace
 {
+#if !defined(SAKURA_UTF16_BACKEND_RUST)
 // One 128-bit vector holds 8 UTF-16 units; below that only the scalar loop
 // can run. Callers consult Utf16ScanPolicy before delegating this short.
 constexpr std::size_t kUtf16VectorThreshold = 8;
@@ -79,6 +80,7 @@ std::size_t FindUtf16Scalar(const wchar_t* data, std::size_t length) noexcept
 	matches = _mm_or_si128(matches, _mm_cmpeq_epi16(units, _mm_set1_epi16(L'&')));
 	return _mm_or_si128(matches, _mm_cmpeq_epi16(units, _mm_set1_epi16(L'$')));
 }
+#endif
 }
 
 std::size_t FindCrOrLfAvx(const char* data, std::size_t length) noexcept
@@ -193,6 +195,7 @@ std::size_t FindCrOrLfAvx(const char* data, std::size_t length) noexcept
 	return offset;
 }
 
+#if !defined(SAKURA_UTF16_BACKEND_RUST)
 std::size_t FindCrOrLfUtf16Avx(const wchar_t* data, std::size_t length) noexcept
 {
 	static_assert(sizeof(wchar_t) == 2, "The UTF-16 scanner requires 16-bit wchar_t");
@@ -239,6 +242,7 @@ std::size_t FindMarkdownInlineSpecialUtf16Avx(
 	}
 	return offset + FindUtf16Scalar<true>(data + offset, length - offset);
 }
+#endif
 
 std::size_t WidenAsciiToUtf16Avx(
 	const char* source, std::size_t length, wchar_t* destination) noexcept
@@ -273,6 +277,7 @@ std::size_t WidenAsciiToUtf16Avx(
 	return offset;
 }
 
+#if !defined(SAKURA_UTF16_BACKEND_RUST)
 std::size_t FindUtf16CharAvx(
 	const wchar_t* data, std::size_t length, wchar_t target) noexcept
 {
@@ -296,4 +301,5 @@ std::size_t FindUtf16CharAvx(
 	}
 	return offset;
 }
+#endif
 }

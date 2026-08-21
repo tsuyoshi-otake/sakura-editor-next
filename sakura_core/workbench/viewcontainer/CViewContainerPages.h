@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -11,6 +11,7 @@
 #include "workbench/layout/WorkbenchIds.h"
 #include "workbench/outline/COutlineWorkbenchTool.h"
 #include "workbench/scm/CScmWorkbenchTool.h"
+#include "workbench/search/CSearchWorkbenchTool.h"
 
 #include <memory>
 #include <string>
@@ -24,6 +25,7 @@ namespace workbench::viewcontainer {
 namespace pageIds {
 inline constexpr std::string_view Explorer = layout::ids::viewContainer::Explorer;
 inline constexpr std::string_view SourceControl = layout::ids::viewContainer::SourceControl;
+inline constexpr std::string_view Search = layout::ids::viewContainer::Search;
 } // namespace pageIds
 
 class CViewContainerPages final {
@@ -51,6 +53,7 @@ public:
 	[[nodiscard]] explorer::CExplorerTool* Explorer() const noexcept { return m_explorer.get(); }
 	[[nodiscard]] outline::COutlineWorkbenchTool* Outline() const noexcept { return m_outline.get(); }
 	[[nodiscard]] scm::CScmWorkbenchTool* SourceControl() const noexcept { return m_scm.get(); }
+	[[nodiscard]] search::CSearchWorkbenchTool* Search() const noexcept { return m_search.get(); }
 	[[nodiscard]] bool IsWebviewOnly(std::string_view) const noexcept { return false; }
 	[[nodiscard]] std::wstring PageTitle(std::string_view containerId) const;
 
@@ -64,10 +67,12 @@ private:
 	[[nodiscard]] Page* Find(std::string_view containerId) noexcept;
 	[[nodiscard]] const Page* Find(std::string_view containerId) const noexcept;
 	[[nodiscard]] HWND PageWindow(const Page& page) const noexcept;
+	void ApplySearchTexts();
 
 	std::unique_ptr<explorer::CExplorerTool> m_explorer;
 	std::unique_ptr<outline::COutlineWorkbenchTool> m_outline;
 	std::unique_ptr<scm::CScmWorkbenchTool> m_scm;
+	std::unique_ptr<search::CSearchWorkbenchTool> m_search;
 	std::vector<Page> m_pages;
 	HWND m_owner = nullptr;
 	bool m_outlineExpanded = true;

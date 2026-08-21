@@ -2,6 +2,8 @@
 #include "terminal/window/TerminalPaneLayout.h"
 
 #include <array>
+#include <span>
+#include <vector>
 
 namespace {
 
@@ -112,6 +114,32 @@ TEST(TerminalPaneLayout, FallsBackToUniformForMissingOrMalformedWeights)
 	ASSERT_EQ(2u, result.panes.size());
 	EXPECT_EQ(198, result.panes[0].right);
 	EXPECT_EQ(400, result.panes[1].right);
+}
+
+TEST(TerminalPaneLayout, SupportsNestedOrthogonalSplits)
+{
+	std::vector<terminal::TerminalPaneLayoutTreeNode> nodes(5);
+	nodes[0].children = { 1, 2 };
+	nodes[0].weights = { 1, 1 };
+	nodes[0].orientation = terminal::TerminalPaneOrientation::Horizontal;
+	nodes[1].leafId = 1;
+	nodes[2].children = { 3, 4 };
+	nodes[2].weights = { 1, 1 };
+	nodes[2].orientation = terminal::TerminalPaneOrientation::Vertical;
+	nodes[3].leafId = 2;
+	nodes[4].leafId = 3;
+
+	const auto result = terminal::CalculateTerminalPaneTreeLayout({
+		{ 0, 0, 900, 400 }, 96, std::span<const terminal::TerminalPaneLayoutTreeNode>(nodes), 0, false });
+	ASSERT_EQ(3u, result.panes.size());
+	ASSERT_EQ(2u, result.paneDividers.size());
+	EXPECT_EQ(448, result.panes[0].right - result.panes[0].left);
+	EXPECT_EQ(result.panes[0].right, result.panes[1].left - 4);
+	EXPECT_EQ(result.panes[1].left, result.panes[2].left);
+	EXPECT_EQ(result.panes[1].right, result.panes[2].right);
+	EXPECT_EQ(198, result.panes[1].bottom - result.panes[1].top);
+	EXPECT_EQ(result.panes[1].bottom, result.panes[2].top - 4);
+	EXPECT_EQ(result.panes[2].bottom, result.panesBounds.bottom);
 }
 
 } // namespace

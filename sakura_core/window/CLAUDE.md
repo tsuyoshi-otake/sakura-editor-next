@@ -228,7 +228,7 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   Primary Side Bar, so a nested View selection such as Outline inside Explorer
   must not change the answer. Reserve `IsBuiltinWorkbenchViewActive` for
   questions about the active View itself.
-- Search, Run and Debug, Ports, Debug Console, arbitrary extension-owned views,
+- Run and Debug, Ports, Debug Console, arbitrary extension-owned views,
   reorder within a bar, moving the whole Panel
   (`workbench.action.movePanelToSecondarySideBar`), and panel alignment still
   fail closed at this adapter boundary. They remain explicit Phase 5/6 gates and

@@ -16,6 +16,7 @@
 #include "dlg/CDlgCancel.h"
 #include "util/string_ex.h"
 #include "util/CpuDispatch.h"
+#include "util/Utf16BenchmarkTelemetry.h"
 #include <algorithm>
 #include "sakura_rc.h"
 #include "CEditApp.h"
@@ -198,11 +199,15 @@ const wchar_t* CSearchAgent::SearchString(
 			std::size_t nFound;
 			if( nSpan >= nMinimumScan ){
 				nFound = cpuDispatch.findUtf16Char( &pLine[nPos], nSpan, wcFirst );
+				SAKURA_UTF16_BENCHMARK_RECORD(
+					"find_char", nSpan, nFound, &pLine[nPos], cpuDispatch.isa, "simd");
 			}else{
 				nFound = 0;
 				while( nFound < nSpan && pLine[nPos + nFound] != wcFirst ){
 					++nFound;
 				}
+				SAKURA_UTF16_BENCHMARK_RECORD(
+					"find_char", nSpan, nFound, &pLine[nPos], cpuDispatch.isa, "scalar");
 			}
 			if( nFound >= nSpan ){
 				return nullptr;

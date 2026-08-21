@@ -99,6 +99,7 @@
 #include "workbench/statusbar/IStatusbarVisibilityMementoStore.h"
 #include "workbench/statusbar/StatusbarViewModel.h"
 #include "workbench/viewcontainer/CViewContainerHost.h"
+#include "workbench/search/CSearchWorkbenchTool.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 #include "workbench/WorkbenchZoom.h"
 #include "workbench/commands/ApiCommandArguments.h"
@@ -122,6 +123,7 @@
 #include "workbench/scm/GitFailureText.h"
 #include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitLineStaging.h"
+#include "workbench/scm/GitHistoryModel.h"
 #include "workbench/scm/GitOutputChannel.h"
 #include "workbench/scm/GitScmPublisher.h"
 #include "workbench/scm/GitStageCommands.h"
@@ -350,6 +352,7 @@ constexpr int kSideBarDropEdgeDip = 48;
 */
 constexpr std::array kRenderableBuiltinContainers{
 	std::string_view(workbench::layout::ids::viewContainer::Explorer),
+	std::string_view(workbench::layout::ids::viewContainer::Search),
 	std::string_view(workbench::layout::ids::viewContainer::SourceControl),
 };
 
@@ -2066,6 +2069,78 @@ std::wstring CEditWnd::BuildExplorerLaunchOptions(bool preview) const
 	return options;
 }
 
+//! Opens one file at one UTF-16 marker position.  The open places the file in
+//! exactly one frame, which is this one only when the file was not already open
+//! elsewhere, so the owner is asked the way the tag jump does rather than
+//! assumed.  Where this frame owns the document the position is converted
+//! against the real line contents -- that is what corrects a column landing
+//! inside a surrogate pair and what clamps a position computed against an older
+//! revision.  Another frame's line contents are not readable from here, so the
+//! position crosses unconverted, exactly as the tag jump sends it; the receiving
+//! frame's MYWM_SETCARETPOS handler still keeps the caret off an EOL.
+//!
+//! Both the Problems panel and the Search view activate a result through this
+//! one path, so a marker and a search match can never land differently.
+void CEditWnd::OpenDocumentAtMarkerPosition(std::wstring_view path,
+	std::uint32_t zeroBasedLine, std::uint32_t zeroBasedColumn)
+{
+	if (path.empty()) return;
+	const std::wstring ownedPath(path);
+	GetActiveView().GetCommander().Command_FILEOPEN(ownedPath.c_str());
+	HWND owner = nullptr;
+	if (!CShareData::getInstance()->IsPathOpened(ownedPath.c_str(), &owner) || owner == nullptr) {
+		return;
+	}
+	CLogicPoint caret;
+	if (owner == GetHwnd()) {
+		const CDocLineMgr& lines = GetDocument()->m_cDocLineMgr;
+		const auto lineCount = static_cast<std::uint32_t>(
+			(std::max)(CLogicInt(0), lines.GetLineCount()));
+		const auto converted = workbench::problems::ConvertMarkerPositionToLogicPoint(
+			zeroBasedLine, zeroBasedColumn, lineCount,
+			[&lines](std::uint32_t index) -> std::wstring_view {
+				const CDocLine* docLine = lines.GetLine(CLogicInt(static_cast<int>(index)));
+				if (docLine == nullptr) return {};
+				const auto length = (std::max)(CLogicInt(0), docLine->GetLengthWithoutEOL());
+				return { docLine->GetPtr(), static_cast<std::size_t>(length) };
+			});
+		caret = converted.position;
+	} else {
+		caret.Set(CLogicInt(static_cast<int>(zeroBasedColumn)),
+			CLogicInt(static_cast<int>(zeroBasedLine)));
+	}
+	GetDllShareData().m_sWorkBuffer.m_LogicPoint = caret;
+	::SendMessageAny(owner, MYWM_SETCARETPOS, 0, 0);
+	ActivateFrameWindow(owner);
+}
+
+//! Opens one Search result.  `line` and `column` are 1-based UTF-16 positions,
+//! which is how `SearchMatch` records them.
+void CEditWnd::OpenSearchMatch(std::wstring_view path, std::int64_t line, int column)
+{
+	if (line <= 0) return;
+	OpenDocumentAtMarkerPosition(path, static_cast<std::uint32_t>(line - 1),
+		static_cast<std::uint32_t>((std::max)(0, column - 1)));
+}
+
+//! A replace pass rewrites files on disk. This frame reloads its own document
+//! when the pass changed it and nothing local would be lost; a modified
+//! document and every other frame keep the existing external-change detection,
+//! which is the same prompt any outside editor would trigger.
+void CEditWnd::ReloadReplacedFiles(const std::vector<std::wstring>& paths)
+{
+	if (paths.empty()) return;
+	CEditDoc* document = GetDocument();
+	if (document == nullptr || document->m_cDocEditor.IsModified()) return;
+	const std::wstring current = document->m_cDocFile.GetFilePath();
+	if (current.empty()) return;
+	const bool touched = std::ranges::any_of(paths, [&current](const std::wstring& path) {
+		return ::_wcsicmp(path.c_str(), current.c_str()) == 0;
+	});
+	if (!touched) return;
+	document->m_cDocFileOperation.ReloadCurrentFile(document->m_cDocFile.GetCodeSet());
+}
+
 void CEditWnd::OpenExplorerFile(std::wstring_view path,
 	workbench::explorer::ExplorerFileActivationKind kind)
 {
@@ -2150,9 +2225,16 @@ bool CEditWnd::InitializeWorkbench()
 	m_explorerTool = m_viewContainerPages->Explorer();
 	m_outlineWorkbenchTool = m_viewContainerPages->Outline();
 	m_scmTool = m_viewContainerPages->SourceControl();
+	m_searchTool = m_viewContainerPages->Search();
 	const auto workspaceRoot = GetSemanticWorkspaceRoot();
 	m_explorerTool->SetRoot(workspaceRoot);
 	m_scmTool->SetRoot(workspaceRoot);
+	m_searchTool->SetRoot(workspaceRoot);
+	m_searchTool->SetMatchActivationCallback([this](std::wstring_view path, std::int64_t line,
+		int column, int) { OpenSearchMatch(path, line, column); });
+	m_searchTool->SetFilesChangedCallback([this](const std::vector<std::wstring>& paths) {
+		ReloadReplacedFiles(paths);
+	});
 	m_scmTool->SetTextResolver([](workbench::scm::EScmTextKey key, std::wstring_view argument) {
 		return ResolveLocalizedScmText(key, argument);
 	});
@@ -2778,6 +2860,40 @@ bool CEditWnd::InitializeWorkbench()
 			.sync = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Sync); },
 			.syncRebase = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::SyncRebase); },
 			.publish = [this]() { return ExecuteGitSyncCommand(EGitSyncCommand::Publish); },
+			.refresh = [this]() {
+				using workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_scmTool == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						EWorkbenchCommandExecutionStatus::NotApplicable,
+						"no source control view exists in this window" };
+				}
+				m_scmTool->Refresh();
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.showOutput = [this]() {
+				using workbench::commands::EWorkbenchCommandExecutionStatus;
+				if (m_bottomPanelTool == nullptr) {
+					return workbench::commands::WorkbenchCommandExecutionResult{
+						EWorkbenchCommandExecutionStatus::NotApplicable,
+						"no panel exists in this window" };
+				}
+				// Upstream reveals the Git extension's own output channel. This
+				// product publishes Git's output into the shared Output view, so
+				// revealing that view is the same destination, not an approximation.
+				if (!IsWorkbenchPanelVisible(workbench::WorkbenchEdge::Bottom)) {
+					ToggleWorkbenchPanel(workbench::WorkbenchEdge::Bottom, true);
+				}
+				m_bottomPanelTool->ShowOutput();
+				return workbench::commands::WorkbenchCommandExecutionResult{
+					EWorkbenchCommandExecutionStatus::Succeeded, {} };
+			},
+			.copyCommitId = [this](std::string_view argumentsJson) {
+				return ExecuteGitCopyCommitCommand(argumentsJson, false);
+			},
+			.copyCommitMessage = [this](std::string_view argumentsJson) {
+				return ExecuteGitCopyCommitCommand(argumentsJson, true);
+			},
 		});
 		if (!gitRegistration.Succeeded()) {
 			CloseWorkbench();
@@ -2897,46 +3013,10 @@ bool CEditWnd::InitializeWorkbench()
 			if (!uri.value) return;
 			const auto path = uri.value->ToWindowsPath();
 			if (!path.value) return;
-			GetActiveView().GetCommander().Command_FILEOPEN(path.value->c_str());
-			// The open has placed the file in exactly one frame, which is this one
-			// only when the file was not already open elsewhere. Ask which, the way
-			// the tag jump does, instead of assuming the active view now holds it.
-			HWND owner = nullptr;
-			if (!CShareData::getInstance()->IsPathOpened(path.value->c_str(), &owner)
-				|| owner == nullptr) {
-				return;
-			}
-			CLogicPoint caret;
-			if (owner == GetHwnd()) {
-				// The document is ours to read, so the marker's UTF-16 half-open
-				// start can be converted against the real line contents: that is
-				// what corrects a column landing inside a surrogate pair and what
-				// clamps a diagnostic computed against an older revision.
-				const CDocLineMgr& lines = GetDocument()->m_cDocLineMgr;
-				const auto lineCount = static_cast<std::uint32_t>(
-					(std::max)(CLogicInt(0), lines.GetLineCount()));
-				const auto converted = workbench::problems::ConvertMarkerPositionToLogicPoint(
-					problem.range.startLine, problem.range.startColumn, lineCount,
-					[&lines](std::uint32_t zeroBasedLine) -> std::wstring_view {
-						const CDocLine* line = lines.GetLine(
-							CLogicInt(static_cast<int>(zeroBasedLine)));
-						if (line == nullptr) return {};
-						const auto length = (std::max)(CLogicInt(0), line->GetLengthWithoutEOL());
-						return { line->GetPtr(), static_cast<std::size_t>(length) };
-					});
-				caret = converted.position;
-			}
-			else {
-				// Another frame owns the document, and its line contents are not
-				// readable from here. Send the marker's own position unconverted,
-				// exactly as the tag jump does across frames; the receiving frame's
-				// MYWM_SETCARETPOS handler still keeps the caret off an EOL.
-				caret.Set(CLogicInt(static_cast<int>(problem.range.startColumn)),
-					CLogicInt(static_cast<int>(problem.range.startLine)));
-			}
-			GetDllShareData().m_sWorkBuffer.m_LogicPoint = caret;
-			::SendMessageAny(owner, MYWM_SETCARETPOS, 0, 0);
-			ActivateFrameWindow(owner);
+			// The marker's range start is already a zero-based UTF-16 position,
+			// which is what the shared activation path takes.
+			OpenDocumentAtMarkerPosition(*path.value, problem.range.startLine,
+				problem.range.startColumn);
 		});
 	m_bottomPanelTool->SetOutputChannelSelectionCallback([this](const std::string& channelId) {
 		if (m_outputService == nullptr) return false;
@@ -3129,27 +3209,54 @@ bool CEditWnd::ShowColorThemePicker()
 			LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_NONE).c_str());
 		return false;
 	}
-	SQuickInputRequest request;
-	request.kind = EQuickInputKind::QuickPick;
-	request.title = LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME);
-	request.placeholder = LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER);
-	request.items.reserve(themes.size());
-	for (std::size_t index = 0; index < themes.size(); ++index) {
-		request.items.push_back({
-			.sourceIndex = index,
-			.label = themes[index].label,
-			.description = L"Sakura Editor NEXT",
-			.detail = themes[index].id,
-		});
-	}
-	CQuickInputDialog dialog(request);
-	const auto completion = dialog.DoModal(GetHwnd());
-	if (completion.state != EQuickInputState::Accepted || completion.selectedIndices.size() != 1) return true;
-	const auto selected = completion.selectedIndices.front();
-	if (selected >= themes.size()) return true;
-	// VS Code persists the display label for workbench.colorTheme. The registry
-	// also accepts the stable id, so settings authored by either ecosystem work.
-	return PersistColorThemeSelection(themes[selected].label);
+	if (!EnsureQuickInputOverlay()) return false;
+
+	const auto makeItems = [](const std::vector<theme::ColorThemeInfo>& source) {
+		std::vector<workbench::quickinput::CommandPaletteItem> items;
+		items.reserve(source.size());
+		for (const auto& colorTheme : source) {
+			items.push_back({
+				.id = colorTheme.label,
+				.label = colorTheme.label,
+				.detail = L"Sakura Editor NEXT",
+				.enabled = true,
+			});
+		}
+		return items;
+	};
+	const auto lowercase = [](std::wstring_view value) {
+		std::wstring result(value);
+		for (auto& character : result) {
+			character = static_cast<wchar_t>(std::towlower(character));
+		}
+		return result;
+	};
+	m_commandPaletteOverlay->SetStringsCallback([] {
+		return workbench::quickinput::QuickInputStrings {
+			.placeholder = LocalizedWorkbenchString(STR_WORKBENCH_COLOR_THEME_PICKER_PLACEHOLDER),
+			.noResults = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS),
+		};
+	});
+	m_commandPaletteOverlay->SetSearchCallback([themes, makeItems, lowercase](std::wstring_view query) {
+		if (query.empty()) return makeItems(themes);
+		const auto loweredQuery = lowercase(query);
+		std::vector<theme::ColorThemeInfo> filtered;
+		filtered.reserve(themes.size());
+		for (const auto& colorTheme : themes) {
+			if (lowercase(colorTheme.label).find(loweredQuery) != std::wstring::npos
+				|| lowercase(colorTheme.id).find(loweredQuery) != std::wstring::npos) {
+				filtered.push_back(colorTheme);
+			}
+		}
+		return makeItems(filtered);
+	});
+	m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring themeLabel) {
+		// VS Code persists the display label for workbench.colorTheme. The registry
+		// also accepts the stable id, so settings authored by either ecosystem work.
+		(void)PersistColorThemeSelection(themeLabel);
+	});
+	m_commandPaletteOverlay->SetCancelCallback({});
+	return m_commandPaletteOverlay->Show(makeItems(themes));
 }
 
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteOpenWorkspaceFolderCommand()
@@ -3623,6 +3730,39 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteExplorerDe
 		ShowExplorerOperationError(GetHwnd(), LocalizedWorkbenchString(STR_WORKBENCH_EXPLORER_DELETE_FAILED),
 			deletion.diagnostic);
 		return { EWorkbenchCommandExecutionStatus::Failed, "the resource could not be deleted" };
+	}
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+}
+
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCopyCommitCommand(
+	std::string_view argumentsJson, bool message)
+{
+	using workbench::commands::EWorkbenchCommandExecutionStatus;
+
+	const auto id = workbench::scm::ParseGitHistoryItemArguments(argumentsJson);
+	if (!id) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "git history item arguments are malformed" };
+	}
+	if (m_scmTool == nullptr) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable,
+			"no source control view exists in this window" };
+	}
+	// A commit the Graph no longer holds cannot have its text copied from a
+	// history that no longer describes it; refreshing behind an open menu is
+	// exactly how that happens.
+	const auto item = m_scmTool->HistoryItem(*id);
+	if (!item) {
+		return { EWorkbenchCommandExecutionStatus::NotApplicable,
+			"the graph no longer holds that commit" };
+	}
+	const std::wstring& text = message ? item->message : item->id;
+	CClipboard clipboard(GetHwnd());
+	if (!clipboard) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the clipboard could not be opened" };
+	}
+	clipboard.Empty();
+	if (!clipboard.SetText(text.c_str(), text.size(), false, false)) {
+		return { EWorkbenchCommandExecutionStatus::Failed, "the clipboard text could not be written" };
 	}
 	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
 }
@@ -4834,6 +4974,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	// The Quick Input surface owns callbacks into this composition root. Detach and
 	// destroy it before the command registry/service it queries can disappear.
 	if (m_commandPaletteOverlay) {
+		m_commandPaletteOverlay->SetStringsCallback({});
 		m_commandPaletteOverlay->SetSearchCallback({});
 		m_commandPaletteOverlay->SetAcceptCallback({});
 		m_commandPaletteOverlay->SetCancelCallback({});
@@ -5189,6 +5330,8 @@ std::string_view CEditWnd::SidebarPageForActiveSurface(
 	case workbench::win32::BuiltinActiveSurface::Explorer:
 	case workbench::win32::BuiltinActiveSurface::Outline:
 		return pageIds::Explorer;
+	case workbench::win32::BuiltinActiveSurface::Search:
+		return pageIds::Search;
 	case workbench::win32::BuiltinActiveSurface::SourceControl:
 		return pageIds::SourceControl;
 	default:
@@ -5887,6 +6030,7 @@ bool CEditWnd::ActivateBuiltinWorkbenchView(std::string_view viewId, bool reques
 	if (m_workbenchRuntime == nullptr) return false;
 	const bool supported = viewId == workbench::layout::ids::view::Explorer
 		|| viewId == workbench::layout::ids::view::Outline
+		|| viewId == workbench::layout::ids::view::Search
 		|| viewId == workbench::layout::ids::view::SourceControl
 		|| viewId == workbench::layout::ids::view::Terminal
 		|| viewId == workbench::layout::ids::view::Problems
@@ -6436,6 +6580,12 @@ void CEditWnd::ActivateSidebarPage(const std::string_view containerId, bool togg
 	auto legacyTool = WORKBENCH_TOOL_EXPLORER;
 	if (containerId == pageIds::Explorer) {
 		requestedView = workbench::layout::ids::view::Explorer;
+	} else if (containerId == pageIds::Search) {
+		requestedView = workbench::layout::ids::view::Search;
+		// The legacy `m_eActiveTool` mirror has no Search value. Reusing another
+		// tool's value would make a runtime-less window claim a surface it cannot
+		// show, so the legacy path declines instead.
+		if (m_workbenchRuntime == nullptr) return;
 	} else if (containerId == pageIds::SourceControl) {
 		requestedView = workbench::layout::ids::view::SourceControl;
 		legacyTool = WORKBENCH_TOOL_SCM;
@@ -6984,6 +7134,7 @@ void CEditWnd::MoveViewContainerToEdge(const std::string_view containerId,
 		namespace pageIds = workbench::viewcontainer::pageIds;
 		std::string_view viewId;
 		if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
+		else if (containerId == pageIds::Search) viewId = workbench::layout::ids::view::Search;
 		else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
 		if (viewId.empty()) return;
 		const bool activated = ActivateBuiltinWorkbenchView(viewId, true);
@@ -8060,6 +8211,20 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 	return m_rightWorkbenchPanel && m_rightWorkbenchPanel->PreTranslateMessage(message);
 }
 
+bool CEditWnd::EnsureQuickInputOverlay()
+{
+	if (m_commandPaletteOverlay) return true;
+	if (!GetHwnd()) return false;
+	m_commandPaletteOverlay = std::make_unique<workbench::quickinput::CCommandPaletteOverlay>();
+	if (!m_commandPaletteOverlay->Create(GetHwnd())) {
+		m_commandPaletteOverlay.reset();
+		return false;
+	}
+	m_commandPaletteOverlay->SetPalette(theme::CThemeService::EffectivePalette(
+		m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
+	return true;
+}
+
 bool CEditWnd::ShowCommandPalette()
 {
 	if (!GetHwnd() || !m_workbenchCommandRegistry) return false;
@@ -8086,30 +8251,29 @@ bool CEditWnd::ShowCommandPalette()
 		}
 		return items;
 	};
-	if (!m_commandPaletteOverlay) {
-		m_commandPaletteOverlay = std::make_unique<workbench::quickinput::CCommandPaletteOverlay>();
-		if (!m_commandPaletteOverlay->Create(GetHwnd())) {
-			m_commandPaletteOverlay.reset();
-			return false;
+	if (!EnsureQuickInputOverlay()) return false;
+	m_commandPaletteOverlay->SetStringsCallback([] {
+		return workbench::quickinput::QuickInputStrings {
+			.placeholder = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_SEARCH_PLACEHOLDER),
+			.noResults = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS),
+		};
+	});
+	m_commandPaletteOverlay->SetSearchCallback([this, convertItems, titleResolver](std::wstring_view query) {
+		if (!m_workbenchCommandRegistry) {
+			return std::vector<workbench::quickinput::CommandPaletteItem>{};
 		}
-		m_commandPaletteOverlay->SetPalette(theme::CThemeService::EffectivePalette(
-			m_pShareData->m_Common.m_sWindow.m_bDarkMode ? theme::ThemeMode::Dark : theme::ThemeMode::Light));
-		m_commandPaletteOverlay->SetSearchCallback([this, convertItems, titleResolver](std::wstring_view query) {
-			if (!m_workbenchCommandRegistry) {
-				return std::vector<workbench::quickinput::CommandPaletteItem>{};
-			}
-			return convertItems(workbench::editor::SearchRegisteredCommandPalette(
-				*m_workbenchCommandRegistry, query, titleResolver));
-		});
-		m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring commandId) {
-			if (!m_workbenchCommandRegistry) return;
-			(void)workbench::editor::DispatchRegisteredCommandPaletteSelection(
-				*m_workbenchCommandRegistry, commandId, [this](std::string_view stableCommandId) {
-					bool handled = false;
-					(void)TryExecuteWorkbenchStableCommand(stableCommandId, handled);
-				});
-		});
-	}
+		return convertItems(workbench::editor::SearchRegisteredCommandPalette(
+			*m_workbenchCommandRegistry, query, titleResolver));
+	});
+	m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring commandId) {
+		if (!m_workbenchCommandRegistry) return;
+		(void)workbench::editor::DispatchRegisteredCommandPaletteSelection(
+			*m_workbenchCommandRegistry, commandId, [this](std::string_view stableCommandId) {
+				bool handled = false;
+				(void)TryExecuteWorkbenchStableCommand(stableCommandId, handled);
+			});
+	});
+	m_commandPaletteOverlay->SetCancelCallback({});
 	return m_commandPaletteOverlay->Show(convertItems(registeredCommands));
 }
 

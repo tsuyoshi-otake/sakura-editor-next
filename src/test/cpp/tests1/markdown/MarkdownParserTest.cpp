@@ -399,6 +399,95 @@ TEST(MarkdownParser, BoundsAdversarialInlineSearchAndKeepsLongUtf16ScanSemantics
 	EXPECT_EQ(NativeFallbackKind::None, longDocument.blocks[0].fallbackKind);
 }
 
+TEST(MarkdownParser, Utf16DispatchCallerPreservesMixedLineModel)
+{
+	// The CR is code unit 63 and the LF is code unit 64, so the pair crosses
+	// every currently supported UTF-16 vector width (8, 16, and 32 units).
+	std::wstring boundaryHeading = L"# ";
+	boundaryHeading.append(61, L'x');
+	ASSERT_EQ(63u, boundaryHeading.size());
+
+	std::wstring surrogateHeading = L"# ";
+	surrogateHeading.push_back(static_cast<wchar_t>(0xd83d));
+	surrogateHeading.push_back(static_cast<wchar_t>(0xde80));
+	surrogateHeading.append(L" lone ");
+	surrogateHeading.push_back(static_cast<wchar_t>(0xd800));
+
+	std::wstring source = boundaryHeading;
+	source.append(L"\r\n");
+	source.append(L"\n");
+	source.append(L"# 日本語\r");
+	source.append(surrogateHeading);
+	source.append(L"\r\n");
+	source.append(L"\r");
+	source.append(L"# last\n");
+
+	const auto document = ParseMarkdown(source);
+	ASSERT_EQ(4u, document.blocks.size());
+	for (const auto& block : document.blocks) {
+		EXPECT_EQ(BlockKind::Heading, block.kind);
+	}
+	EXPECT_EQ(std::wstring(61, L'x'), document.blocks[0].text);
+	EXPECT_EQ(L"日本語", document.blocks[1].text);
+
+	std::wstring expectedSurrogateText;
+	expectedSurrogateText.push_back(static_cast<wchar_t>(0xd83d));
+	expectedSurrogateText.push_back(static_cast<wchar_t>(0xde80));
+	expectedSurrogateText.append(L" lone ");
+	expectedSurrogateText.push_back(static_cast<wchar_t>(0xd800));
+	EXPECT_EQ(expectedSurrogateText, document.blocks[2].text);
+	EXPECT_EQ(L"last", document.blocks[3].text);
+
+	EXPECT_EQ(0u, document.blocks[0].sourceLine);
+	EXPECT_EQ(2u, document.blocks[1].sourceLine);
+	EXPECT_EQ(3u, document.blocks[2].sourceLine);
+	EXPECT_EQ(5u, document.blocks[3].sourceLine);
+	EXPECT_TRUE(ParseMarkdown(L"").blocks.empty());
+}
+
+TEST(MarkdownParser, Utf16DispatchCallerCoversSpecialPositionsAndLargeCorpora)
+{
+	// One literal paragraph begins with a special, ends with a special, and
+	// contains all ten scanner kinds. None is paired into Markdown syntax, so
+	// the exact external model remains the source text.
+	const std::wstring everySpecial = L"\\ ` ! [ * _ ~ < & $";
+	const auto specialDocument = ParseMarkdown(everySpecial);
+	ASSERT_EQ(1u, specialDocument.blocks.size());
+	EXPECT_EQ(everySpecial, specialDocument.blocks[0].text);
+	EXPECT_TRUE(specialDocument.blocks[0].inlineSpans.empty());
+
+	const std::wstring noSpecial(160, L'x');
+	const auto noSpecialDocument = ParseMarkdown(noSpecial);
+	ASSERT_EQ(1u, noSpecialDocument.blocks.size());
+	EXPECT_EQ(noSpecial, noSpecialDocument.blocks[0].text);
+
+	std::wstring lastSpecial(160, L'x');
+	lastSpecial.push_back(L'$');
+	const auto lastSpecialDocument = ParseMarkdown(lastSpecial);
+	ASSERT_EQ(1u, lastSpecialDocument.blocks.size());
+	EXPECT_EQ(lastSpecial, lastSpecialDocument.blocks[0].text);
+
+	constexpr std::size_t longLength = 3U * 1024U * 1024U;
+	const std::wstring longLine(longLength, L'x');
+	const auto longDocument = ParseMarkdown(longLine);
+	ASSERT_EQ(1u, longDocument.blocks.size());
+	EXPECT_EQ(ParseCompletion::Complete, longDocument.completion);
+	EXPECT_EQ(longLine, longDocument.blocks[0].text);
+
+	constexpr std::size_t shortLineCount = 4096;
+	std::wstring shortLines;
+	shortLines.reserve(shortLineCount * 4);
+	for (std::size_t line = 0; line < shortLineCount; ++line) {
+		shortLines.append(L"# x\n");
+	}
+	const auto manyLinesDocument = ParseMarkdown(shortLines);
+	ASSERT_EQ(shortLineCount, manyLinesDocument.blocks.size());
+	EXPECT_EQ(L"x", manyLinesDocument.blocks.front().text);
+	EXPECT_EQ(L"x", manyLinesDocument.blocks.back().text);
+	EXPECT_EQ(0u, manyLinesDocument.blocks.front().sourceLine);
+	EXPECT_EQ(shortLineCount - 1, manyLinesDocument.blocks.back().sourceLine);
+}
+
 TEST(MarkdownParser, ExposesUnsupportedNativeCapabilitiesAsTypedBoundaries)
 {
 	const auto document = ParseMarkdown(L"text");

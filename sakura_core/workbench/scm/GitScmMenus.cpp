@@ -112,6 +112,90 @@ std::optional<EGitResourceGroup> ParseGitResourceGroupId(std::string_view groupI
 	return std::nullopt;
 }
 
+std::vector<GitToolbarAction> BuildGitScmTitleToolbarActions()
+{
+	// `git.commit`'s `$(check)` and `git.refresh`'s `$(refresh)` are the icons the
+	// contribution itself declares, so the row shows the same two glyphs upstream
+	// shows rather than a locally chosen pair.
+	return {
+		GitToolbarAction{ L"$(check)", L"Commit", "git.commit" },
+		GitToolbarAction{ L"$(refresh)", L"Refresh", "git.refresh" },
+	};
+}
+
+std::vector<GitMenuItem> BuildGitScmTitleOverflowMenu()
+{
+	// `1_header`, in its contributed order. `git.clone` and `git.checkout` are
+	// upstream's `Clone` and `Checkout to...`, which this product also registers,
+	// so the whole group is routable.
+	std::vector<GitMenuItem> items{
+		Item("git.pull", L"Pull"),
+		Item("git.push", L"Push"),
+		Item("git.clone", L"Clone"),
+		Item("git.checkout", L"Checkout to..."),
+		Item("git.fetch", L"Fetch"),
+	};
+	// `2_main`'s eight submenus are skipped entirely: a submenu whose every entry
+	// is unroutable would be an empty popup claiming actions exist.
+	items.push_back(Separator());
+	items.push_back(Item("git.showOutput", L"Show Git Output"));
+	return items;
+}
+
+std::vector<GitToolbarAction> BuildGitResourceGroupInlineActions(
+	EGitResourceGroup group, EUntrackedChangesPolicy untrackedChanges)
+{
+	// The icons are the ones the contribution itself declares, so the row shows
+	// upstream's own glyphs rather than a locally chosen pair.
+	switch (group) {
+	case EGitResourceGroup::Merge:
+		// `git.stageAllMerge` alone, and it has no route here.
+		return {};
+	case EGitResourceGroup::Index:
+		return { GitToolbarAction{ L"$(remove)", std::wstring{ kUnstageAllTitle }, "git.unstageAll" } };
+	case EGitResourceGroup::WorkingTree:
+		if (untrackedChanges == EUntrackedChangesPolicy::Mixed) {
+			return {
+				GitToolbarAction{ L"$(discard)", std::wstring{ kDiscardAllTitle }, "git.cleanAll" },
+				GitToolbarAction{ L"$(add)", std::wstring{ kStageAllTitle }, "git.stageAll" },
+			};
+		}
+		// `git.cleanAllTracked` / `git.stageAllTracked` are not registered.
+		return {};
+	case EGitResourceGroup::Untracked:
+		// `git.cleanAllUntracked` / `git.stageAllUntracked` are not registered.
+		return {};
+	}
+	return {};
+}
+
+std::vector<GitToolbarAction> BuildGitScmHistoryTitleToolbarActions()
+{
+	// `git.fetchAll` is upstream's own id and is registered here with a real
+	// executor. Pull and Push keep upstream's `$(repo-pull)` / `$(repo-push)`
+	// icons but route to `git.pull` / `git.push` rather than to upstream's
+	// ref-scoped `git.pullRef` / `git.pushRef`: with no history-item reference
+	// filter, the Graph's current reference is always HEAD, so the ref-scoped
+	// command and the plain one are the same operation. Refresh routes to
+	// `git.refresh`, which refreshes this Graph along with the rest of the view.
+	return {
+		GitToolbarAction{ L"$(git-fetch)", L"Fetch From All Remotes", "git.fetchAll" },
+		GitToolbarAction{ L"$(repo-pull)", L"Pull", "git.pull" },
+		GitToolbarAction{ L"$(repo-push)", L"Push", "git.push" },
+		GitToolbarAction{ L"$(refresh)", L"Refresh", "git.refresh" },
+	};
+}
+
+std::vector<GitMenuItem> BuildGitHistoryItemContextMenu()
+{
+	// `9_copy`, in its contributed order. Upstream's `!listMultiSelection` guard
+	// is satisfied by construction: this Graph selects one row at a time.
+	return {
+		Item("git.copyCommitId", L"Copy Commit Hash"),
+		Item("git.copyCommitMessage", L"Copy Commit Message"),
+	};
+}
+
 std::optional<GitActionButton> BuildGitCommitActionButton(bool hasChanges, bool enabled)
 {
 	if (!hasChanges) return std::nullopt;

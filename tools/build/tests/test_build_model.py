@@ -15,6 +15,7 @@ TOOLS_BUILD = Path(__file__).resolve().parents[1]
 if str(TOOLS_BUILD) not in sys.path:
     sys.path.insert(0, str(TOOLS_BUILD))
 
+import sakura_build
 from sakura_build_lib import generator as build_generator
 from sakura_build_lib.checkout_invariance import verify_checkout_invariance
 from sakura_build_lib import test_inventory as test_inventory_module
@@ -25,11 +26,13 @@ from sakura_build_lib.runner import (
     BuildError,
     EventWriter,
     allocate_parallelism,
+    cmake_commands,
     cmake_component_build_dir,
     cmake_component_commands,
     distribution_commands,
     msbuild_command,
     msbuild_log_path,
+    mingw_environment,
     run_commands,
     solution_commands,
 )
@@ -847,6 +850,80 @@ class ManifestTests(unittest.TestCase):
             graph = load_semantic_graph(nested, manifest)
             self.assertTrue(generate(graph))
             self.assertEqual([], stale_outputs(graph))
+
+
+class Utf16PackagingContractTests(unittest.TestCase):
+    def test_distribution_environment_sets_the_production_contract(self):
+        self.assertEqual(
+            {
+                "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
+                "SAKURA_UTF16_BACKEND": "rust",
+                "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+            },
+            sakura_build.production_package_environment({}),
+        )
+
+    def test_production_environment_requires_rust_backend(self):
+        for backend in ("rust",):
+            with self.subTest(backend=backend):
+                self.assertEqual(
+                    {
+                        "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
+                        "SAKURA_UTF16_BACKEND": backend,
+                        "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+                    },
+                    sakura_build.production_package_environment(
+                        {"SAKURA_UTF16_BACKEND": backend}
+                    ),
+                )
+
+        for backend in ("cpp", "both", " cpp ", "CPP", "unknown"):
+            with self.subTest(backend=backend):
+                environment = {"SAKURA_UTF16_BACKEND": backend}
+                with self.assertRaisesRegex(
+                    BuildError,
+                    "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
+                    "SAKURA_UTF16_BACKEND=rust;",
+                ):
+                    sakura_build.production_package_environment(environment)
+                self.assertEqual(backend, environment["SAKURA_UTF16_BACKEND"])
+
+    def test_batch_packagers_scope_and_reject_both_backend(self):
+        repository = TOOLS_BUILD.parents[1]
+        for name in ("build-installer.bat", "zipArtifacts.bat"):
+            body = (repository / name).read_text(encoding="utf-8")
+            body_lower = body.lower()
+            setlocal = body_lower.find("setlocal")
+            production_flag = body.find('set "SAKURA_UTF16_PRODUCTION_PACKAGE=true"')
+            self.assertGreaterEqual(setlocal, 0, name)
+            self.assertGreaterEqual(production_flag, 0, name)
+            self.assertLess(setlocal, production_flag, name)
+            self.assertIn(
+                'if not defined SAKURA_UTF16_BACKEND set "SAKURA_UTF16_BACKEND=rust"',
+                body,
+                name,
+            )
+            self.assertNotIn('if "%SAKURA_UTF16_BACKEND%" == "both"', body, name)
+            self.assertIn(
+                "Production packaging requires SAKURA_UTF16_BACKEND=rust;",
+                body,
+                name,
+            )
+            self.assertIn("exit /b 1", body, name)
+
+    def test_mingw_environment_and_cmake_command_force_cpp_backend(self):
+        environment = mingw_environment({"PATH": "sentinel", "SAKURA_UTF16_BACKEND": "rust"})
+        self.assertEqual("cpp", environment["SAKURA_UTF16_BACKEND"])
+        with patch("sakura_build_lib.runner.find_cmake_tool", side_effect=lambda name: name):
+            with patch("sakura_build_lib.runner.Path.is_file", return_value=True):
+                generated = cmake_commands(
+                    TOOLS_BUILD.parents[1],
+                    "Debug",
+                    1,
+                    run_tests=False,
+                    package_cmake_config=Path("build/pkg/v/a/x64-mingw-static.cmake"),
+                )
+        self.assertIn("-DSAKURA_UTF16_BACKEND=cpp", generated[0])
 
 
 class RunnerTests(unittest.TestCase):

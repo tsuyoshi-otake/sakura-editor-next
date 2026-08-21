@@ -96,6 +96,7 @@ TEST(TerminalShortcutPreset, ScreenUsesItsOwnPrefixAndRegionChords)
 		{ 'X', true, TerminalPresetAction::ClosePane },
 		{ 'K', false, TerminalPresetAction::CloseTerminal },
 		{ VK_TAB, false, TerminalPresetAction::NextPane },
+		{ VK_SPACE, false, TerminalPresetAction::NextTerminal },
 		{ VK_OEM_7, true, TerminalPresetAction::FocusTerminalList },
 	};
 	for( const auto& testCase : cases ) {

@@ -330,8 +330,10 @@ Name: help;        Description: "{cm:ComponentsHelp}";    Types: all TypesEditor
 Name: keyword;     Description: "{cm:ComponentsKeyword}"; Types: all
 
 [Tasks]
-Name: startmenu;   Description: "{cm:startmenu}";        GroupDescription: "{cm:TasksShortcuts}";           Components: main; Flags: checkedonce
-Name: desktopicon; Description: "{cm:CreateDesktopIcon}";GroupDescription: "{cm:TasksShortcuts}";           Components: main; Flags: unchecked
+; The standard shortcuts are enabled by default; Windows integration and
+; resident-startup tasks below remain opt-in.
+Name: startmenu;   Description: "{cm:startmenu}";        GroupDescription: "{cm:TasksShortcuts}";           Components: main
+Name: desktopicon; Description: "{cm:CreateDesktopIcon}";GroupDescription: "{cm:TasksShortcuts}";           Components: main
 Name: proglist;    Description: "{cm:proglist}";         GroupDescription: "{cm:TasksWindowsIntegration}";  Components: main; Flags: checkedonce
 Name: fileassoc;   Description: "{cm:fileassoc}";        GroupDescription: "{cm:TasksWindowsIntegration}";  Components: main; Flags: unchecked
 Name: sendto;      Description: "{cm:sendto}";           GroupDescription: "{cm:TasksWindowsIntegration}";  Components: main; Flags: unchecked

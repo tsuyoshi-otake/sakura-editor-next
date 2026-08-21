@@ -9,6 +9,7 @@
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
 #include "workbench/scm/GitDiffModel.h"
+#include "workbench/scm/GitHistoryModel.h"
 #include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitScmModel.h"
 #include "workbench/scm/SourceControlService.h"
@@ -16,6 +17,7 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -108,6 +110,10 @@ public:
 	//! here rather than from `SourceControlService::Snapshot`, which deep-copies
 	//! every provider and must not run on a command path.
 	[[nodiscard]] std::wstring CommitMessage() const;
+	//! The Graph's copy of one commit, by id. Nothing when the Graph holds no
+	//! such commit, which is what makes a stale menu selection fail closed
+	//! rather than copy the wrong row.
+	[[nodiscard]] std::optional<GitHistoryItem> HistoryItem(std::wstring_view id) const;
 	//! Replace the commit message, control and published input-box state
 	//! together. Upstream clears it after a successful commit
 	//! (`repository.inputBox.value = ''`), which is the only caller here.

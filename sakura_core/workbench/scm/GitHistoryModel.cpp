@@ -67,7 +67,7 @@ std::int64_t ParseTimestamp(std::wstring_view value)
 
 std::wstring MakeGitHistoryFormat()
 {
-	std::wstring format = L"--format=%H%x1f%P%x1f%D%x1f%an%x1f%ae%x1f%at%x1f%s%x1e";
+	std::wstring format = L"--format=%H%x1f%P%x1f%D%x1f%an%x1f%ae%x1f%at%x1f%s%x1f%B%x1e";
 	return format;
 }
 
@@ -129,10 +129,10 @@ std::vector<GitHistoryItem> ParseGitHistory(std::string_view bytes)
 		record = Trim(record);
 		if (record.empty()) continue;
 		const auto fields = Split(record, kGitHistoryFieldSeparator);
-		// Seven fields, in the order `MakeGitHistoryFormat` asks for them. A record
+		// Eight fields, in the order `MakeGitHistoryFormat` asks for them. A record
 		// with fewer is not a commit we can describe, and guessing which field is
 		// missing would attach a subject to the wrong commit.
-		if (fields.size() < 7) continue;
+		if (fields.size() < 8) continue;
 		GitHistoryItem item;
 		item.id = std::wstring(Trim(fields[0]));
 		if (item.id.empty()) continue;
@@ -148,9 +148,51 @@ std::vector<GitHistoryItem> ParseGitHistory(std::string_view bytes)
 		// separator was removed, so a subject containing a space or a colon
 		// survives unchanged.
 		item.subject = std::wstring(fields[6]);
+		// `%B` keeps git's trailing newline; the clipboard payload upstream copies
+		// does not, and `Trim` is what removes it without touching the blank lines
+		// inside the body.
+		item.message = std::wstring(Trim(fields[7]));
 		items.push_back(std::move(item));
 	}
 	return items;
+}
+
+std::string BuildGitHistoryItemArguments(std::wstring_view historyItemId)
+{
+	std::string json;
+	json += '"';
+	// A commit id is hexadecimal, so nothing in it needs escaping; anything that
+	// is not hexadecimal is not a commit id and is dropped rather than encoded.
+	for (const wchar_t character : historyItemId) {
+		if ((character >= L'0' && character <= L'9') || (character >= L'a' && character <= L'f')
+			|| (character >= L'A' && character <= L'F')) {
+			json += static_cast<char>(character);
+		}
+	}
+	json += '"';
+	return json;
+}
+
+std::optional<std::wstring> ParseGitHistoryItemArguments(std::string_view argumentsJson)
+{
+	std::size_t begin = 0;
+	while (begin < argumentsJson.size() && (argumentsJson[begin] == ' ' || argumentsJson[begin] == '\t'
+		|| argumentsJson[begin] == '\r' || argumentsJson[begin] == '\n')) {
+		++begin;
+	}
+	std::size_t end = argumentsJson.size();
+	while (end > begin && (argumentsJson[end - 1] == ' ' || argumentsJson[end - 1] == '\t'
+		|| argumentsJson[end - 1] == '\r' || argumentsJson[end - 1] == '\n')) {
+		--end;
+	}
+	if (end - begin < 3 || argumentsJson[begin] != '"' || argumentsJson[end - 1] != '"') return std::nullopt;
+	const std::string_view id = argumentsJson.substr(begin + 1, end - begin - 2);
+	const auto hexadecimal = [](char character) {
+		return (character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')
+			|| (character >= 'A' && character <= 'F');
+	};
+	if (!std::all_of(id.begin(), id.end(), hexadecimal)) return std::nullopt;
+	return ToWide(id);
 }
 
 std::vector<ScmGraphRow> BuildScmHistoryGraph(const std::vector<GitHistoryItem>& items)

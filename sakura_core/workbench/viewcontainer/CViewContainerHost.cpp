@@ -166,6 +166,10 @@ void CViewContainerHost::Activate()
 		if (auto* scm = m_pages->SourceControl()) scm->Activate();
 		return;
 	}
+	if (m_page == pageIds::Search) {
+		if (auto* view = m_pages->Search()) view->Activate();
+		return;
+	}
 	if (m_page == pageIds::Explorer) {
 		if (auto* explorer = m_pages->Explorer()) explorer->Activate();
 		return;
@@ -177,6 +181,10 @@ void CViewContainerHost::Deactivate()
 	if (!m_pages || !m_pages->IsUsable() || m_page.empty() || !OwnsPage(m_page)) return;
 	if (m_page == pageIds::SourceControl) {
 		if (auto* scm = m_pages->SourceControl()) scm->Deactivate();
+		return;
+	}
+	if (m_page == pageIds::Search) {
+		if (auto* view = m_pages->Search()) view->Deactivate();
 		return;
 	}
 	if (m_page == pageIds::Explorer) {
@@ -192,6 +200,10 @@ bool CViewContainerHost::PreTranslateMessage(MSG& message)
 	if (m_page == pageIds::SourceControl) {
 		auto* scm = m_pages->SourceControl();
 		return scm != nullptr && scm->PreTranslateMessage(message);
+	}
+	if (m_page == pageIds::Search) {
+		auto* view = m_pages->Search();
+		return view != nullptr && view->PreTranslateMessage(message);
 	}
 	if (m_page != pageIds::Explorer) return false;
 	auto* outline = m_pages->Outline();
@@ -402,6 +414,13 @@ void CViewContainerHost::LayoutChildren()
 	if (m_page == pageIds::SourceControl) {
 		if (auto* scm = m_pages->SourceControl()) scm->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::SourceControl, true);
+		m_outlineHeader = {};
+		invalidateHeaderChange();
+		return;
+	}
+	if (m_page == pageIds::Search) {
+		if (auto* view = m_pages->Search()) view->Layout(client, m_dpi);
+		m_pages->SetPageVisible(pageIds::Search, true);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;

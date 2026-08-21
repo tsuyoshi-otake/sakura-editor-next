@@ -153,6 +153,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <Import Project="..\src\main\msbuild\cmake.props" />
+  <Import Project="..\src\main\msbuild\sakura-rust-core.targets" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
@@ -442,6 +443,8 @@
     <ClInclude Include="..\sakura_core\util\container.h" />
     <ClInclude Include="..\sakura_core\util\CpuDispatch.h" />
     <ClInclude Include="..\sakura_core\util\CpuDispatchInternal.h" />
+    <ClInclude Include="..\sakura_core\util\RustUtf16Scan.h" />
+    <ClInclude Include="..\sakura_core\util\Utf16BenchmarkTelemetry.h" />
     <ClInclude Include="..\sakura_core\util\design_template.h" />
     <ClInclude Include="..\sakura_core\util\file.h" />
     <ClInclude Include="..\sakura_core\util\format.h" />
@@ -654,6 +657,9 @@
 	<ClInclude Include="..\sakura_core\workbench\scm\GitHistoryModel.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\GitScmMenus.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\search\CSearchWorkbenchTool.h" />
+	<ClInclude Include="..\sakura_core\workbench\search\SearchModel.h" />
+	<ClInclude Include="..\sakura_core\workbench\search\WorkspaceSearchEngine.h" />
 	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h" />
     <ClInclude Include="..\sakura_core\update\UpdateTypes.h" />
     <ClInclude Include="..\sakura_core\update\UpdateVersion.h" />
@@ -1075,6 +1081,7 @@
     <ClCompile Include="..\sakura_core\uiparts\CWaitCursor.cpp" />
     <ClCompile Include="..\sakura_core\util\file.cpp" />
     <ClCompile Include="..\sakura_core\util\CpuDispatch.cpp" />
+    <ClCompile Include="..\sakura_core\util\CpuDispatchRust.cpp" />
     <ClCompile Include="..\sakura_core\util\CpuDispatchAvx.cpp">
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <WholeProgramOptimization>false</WholeProgramOptimization>
@@ -1296,6 +1303,8 @@
 	<ClCompile Include="..\sakura_core\workbench\scm\GitHistoryModel.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\GitScmMenus.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\search\CSearchWorkbenchTool.cpp" />
+	<ClCompile Include="..\sakura_core\workbench\search\WorkspaceSearchEngine.cpp" />
 	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp" />
     <ClCompile Include="..\sakura_core\update\UpdateTypes.cpp" />
     <ClCompile Include="..\sakura_core\update\UpdateVersion.cpp" />

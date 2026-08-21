@@ -515,6 +515,10 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			{ L"activityBarBadge.background" });
 		palette.activityBarBadgeForeground = first(palette.activityBarBadgeForeground,
 			{ L"activityBarBadge.foreground" });
+		// The Search view's match highlight is the editor's own find-match role, which
+		// is what upstream's `searchResult` rendering reuses.
+		palette.searchMatchHighlightBackground = firstOverWithFallback(palette.sideBar,
+			palette.searchMatchHighlightBackground, { L"editor.findMatchHighlightBackground" });
 		// The `gitDecoration.*` keys are contributed by the Git extension, so a theme
 		// that names one is overriding that extension's own default rather than a
 		// workbench role, and there is no second key to fall back to.

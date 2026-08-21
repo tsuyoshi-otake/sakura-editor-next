@@ -109,6 +109,7 @@
     </ClCompile>
   </ItemDefinitionGroup>
   <Import Project="..\src\main\msbuild\cmake.props" />
+  <Import Project="..\src\main\msbuild\sakura-rust-core.targets" />
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -299,6 +300,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\test-editinfo.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-file.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-charcode.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\Utf16Phase8Benchmark.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cpudispatch.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-format.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-grepinfo.cpp" />
@@ -322,6 +324,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\src\test\resources\pch.h" />
+    <ClInclude Include="..\src\test\cpp\tests1\Utf16Phase8Benchmark.h" />
     <ClInclude Include="..\src\test\resources\testing\CrtAllocHook.hpp" />
     <ClInclude Include="..\src\test\resources\testing\HResultEq.hpp" />
     <ClInclude Include="..\src\test\resources\testing\StartEditorProcess.hpp" />

@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -34,6 +34,7 @@ constexpr std::array kBuiltinCodicons{
 std::uint32_t ResolveBuiltinActivityTitleResourceId(std::string_view containerId) noexcept
 {
 	if (containerId == layout::ids::viewContainer::Explorer) return STR_WORKBENCH_ACTIVITY_EXPLORER;
+	if (containerId == layout::ids::viewContainer::Search) return STR_WORKBENCH_ACTIVITY_SEARCH;
 	if (containerId == layout::ids::viewContainer::SourceControl) return STR_WORKBENCH_ACTIVITY_SOURCE_CONTROL;
 	return 0;
 }

@@ -572,6 +572,42 @@ TEST(CSearchAgent, SearchStringReturnsNullWhenAbsent)
 	}
 }
 
+TEST(CSearchAgent, Utf16DispatchCallerFindsFirstLastNulSurrogateAndMultipleMatches)
+{
+	constexpr std::size_t lineLength = 3U * 1024U * 1024U;
+	std::wstring line(lineLength, L'x');
+	line.front() = L'^';
+	line[31] = L'\0';
+	line[64] = static_cast<wchar_t>(0xd800);
+	line[100] = L'm';
+	line[lineLength / 2] = L'm';
+	line[lineLength - 2] = L'm';
+	line.back() = L'$';
+	const int nLineLen = static_cast<int>(line.size());
+	SSearchOption option(false, true, false);
+
+	const auto findOffset = [&](std::wstring_view value, int start) {
+		CSearchStringPattern pattern;
+		EXPECT_TRUE(pattern.SetPattern(nullptr, value.data(), value.size(), option, nullptr));
+		const wchar_t* const found = CSearchAgent::SearchString(
+			line.data(), nLineLen, start, pattern);
+		return found == nullptr ? -1 : static_cast<int>(found - line.data());
+	};
+
+	EXPECT_EQ(0, findOffset(std::wstring_view(L"^", 1), 0));
+	EXPECT_EQ(nLineLen - 1, findOffset(std::wstring_view(L"$", 1), 0));
+	const wchar_t nul = L'\0';
+	EXPECT_EQ(31, findOffset(std::wstring_view(&nul, 1), 0));
+	const wchar_t loneSurrogate = static_cast<wchar_t>(0xd800);
+	EXPECT_EQ(64, findOffset(std::wstring_view(&loneSurrogate, 1), 0));
+	EXPECT_EQ(100, findOffset(std::wstring_view(L"m", 1), 0));
+	EXPECT_EQ(static_cast<int>(lineLength / 2),
+		findOffset(std::wstring_view(L"m", 1), 101));
+	EXPECT_EQ(nLineLen - 2,
+		findOffset(std::wstring_view(L"m", 1), static_cast<int>(lineLength / 2 + 1)));
+	EXPECT_EQ(-1, findOffset(std::wstring_view(L"z", 1), 0));
+}
+
 namespace {
 
 //! CSearchAgent.cpp 内で inline 定義されている GetMapIndex はこの TU から

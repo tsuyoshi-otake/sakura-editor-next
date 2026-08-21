@@ -68,6 +68,8 @@ constexpr std::array kNativeSurfaceMappings{
 		kSideBarLocations, BuiltinActiveSurface::Explorer },
 	NativeSurfaceMapping{ layout::ids::viewContainer::Explorer, layout::ids::view::Outline,
 		kSideBarLocations, BuiltinActiveSurface::Outline },
+	NativeSurfaceMapping{ layout::ids::viewContainer::Search, layout::ids::view::Search,
+		kSideBarLocations, BuiltinActiveSurface::Search },
 	NativeSurfaceMapping{ layout::ids::viewContainer::SourceControl, layout::ids::view::SourceControl,
 		kSideBarLocations, BuiltinActiveSurface::SourceControl },
 	NativeSurfaceMapping{ layout::ids::viewContainer::Terminal, layout::ids::view::Terminal,
@@ -106,8 +108,8 @@ template<typename T>
 
 //! Every ViewContainer VS Code itself declares, whether or not this shell can render it.
 //!
-//! Membership is deliberately wider than `kNativeSurfaceMappings`: Search, Run and Debug,
-//! Ports, and Debug Console are real VS Code containers with no native surface here, and they
+//! Membership is deliberately wider than `kNativeSurfaceMappings`: Run and Debug, Ports,
+//! and Debug Console are real VS Code containers with no native surface here, and they
 //! must keep failing closed as `UnsupportedSurface` rather than being silently skipped.
 constexpr std::array kBuiltinViewContainerIds{
 	layout::ids::viewContainer::Explorer,

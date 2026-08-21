@@ -885,6 +885,13 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 		Entry{ MakeGitDescriptor("git.sync", "Git: Sync"), std::move(executors.sync), {} },
 		Entry{ MakeGitDescriptor("git.syncRebase", "Git: Sync (Rebase)"), std::move(executors.syncRebase), {} },
 		Entry{ MakeGitDescriptor("git.publish", "Git: Publish Branch..."), std::move(executors.publish), {} },
+		Entry{ MakeGitDescriptor("git.refresh", "Git: Refresh"), std::move(executors.refresh), {} },
+		Entry{ MakeGitAlwaysAvailableDescriptor("git.showOutput", "Git: Show Git Output"),
+			std::move(executors.showOutput), {} },
+		Entry{ MakeGitDescriptor("git.copyCommitId", "Git: Copy Commit Hash"), {},
+			std::move(executors.copyCommitId) },
+		Entry{ MakeGitDescriptor("git.copyCommitMessage", "Git: Copy Commit Message"), {},
+			std::move(executors.copyCommitMessage) },
 	};
 	return RegisterAtomicBatch(std::move(commands));
 }

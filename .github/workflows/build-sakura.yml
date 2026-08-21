@@ -669,6 +669,9 @@ jobs:
     # builds the immutable checkout.
     - name: MSBuild release promotion
       if: ${{ inputs.release_promotion }}
+      env:
+        SAKURA_UTF16_BACKEND: rust
+        SAKURA_UTF16_PRODUCTION_PACKAGE: true
       run: |
         set "GITHUB_SHA=${{ env.RELEASE_SOURCE_SHA }}"
         call build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
@@ -676,6 +679,10 @@ jobs:
 
     - name: MSBuild
       if: ${{ !inputs.release_promotion }}
+      env:
+        # The solution build uses the production/default Rust backend.
+        SAKURA_UTF16_BACKEND: rust
+        SAKURA_UTF16_PRODUCTION_PACKAGE: true
       run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
       shell: cmd
 
@@ -862,6 +869,208 @@ jobs:
       with:
         name: Dev ${{ matrix.platform }} ${{ matrix.config }}
         path: 'sakura-*-Dev.zip'
+
+    - name: Prepare pinned Rust toolchain
+      if: ${{ !inputs.release_promotion }}
+      working-directory: rust
+      shell: pwsh
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $toolchainDocument = Get-Content -LiteralPath 'rust-toolchain.toml' -Raw
+        $channelMatches = [regex]::Matches(
+          $toolchainDocument,
+          '(?m)^\s*channel\s*=\s*"([^"]+)"\s*$'
+        )
+        if ($channelMatches.Count -ne 1) {
+          throw 'rust-toolchain.toml must declare exactly one channel.'
+        }
+        $pin = $channelMatches[0].Groups[1].Value
+        if ($pin -notmatch '^[0-9]+\.[0-9]+\.[0-9]+$') {
+          throw "rust-toolchain.toml channel must be an exact numeric release, not a moving alias: $pin"
+        }
+        "RUST_TOOLCHAIN_PIN=$pin" >> $env:GITHUB_ENV
+        $toolchainArgument = "+$pin"
+
+        rustup toolchain install $pin --profile minimal --target x86_64-pc-windows-msvc --no-self-update
+        if ($LASTEXITCODE -ne 0) {
+          throw "Pinned Rust toolchain installation failed with exit code $LASTEXITCODE."
+        }
+        rustup component add rustfmt clippy --toolchain $pin
+        if ($LASTEXITCODE -ne 0) {
+          throw "Pinned Rust rustfmt/clippy installation failed with exit code $LASTEXITCODE."
+        }
+        $activeToolchain = (rustup show active-toolchain).Trim()
+        if (-not $activeToolchain.StartsWith(
+          "$pin-",
+          [StringComparison]::Ordinal
+        )) {
+          throw "rust-toolchain.toml did not select $pin: $activeToolchain"
+        }
+        rustc $toolchainArgument -Vv
+        if ($LASTEXITCODE -ne 0) {
+          throw "Pinned rustc diagnostics failed with exit code $LASTEXITCODE."
+        }
+
+    # One matrix cell owns static Rust analysis; the Debug/Release cells below
+    # still run their own locked tests and product staticlib builds.
+    - name: Rust static checks (Debug matrix cell)
+      if: ${{ !inputs.release_promotion && matrix.config == 'Debug' }}
+      working-directory: rust
+      shell: pwsh
+      timeout-minutes: 15
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $toolchainArgument = "+$env:RUST_TOOLCHAIN_PIN"
+        cargo $toolchainArgument fmt --all -- --check
+        if ($LASTEXITCODE -ne 0) {
+          throw "cargo fmt failed with exit code $LASTEXITCODE."
+        }
+        $metadataJson = cargo $toolchainArgument metadata --locked --no-deps --format-version 1
+        if ($LASTEXITCODE -ne 0) {
+          throw "cargo metadata failed with exit code $LASTEXITCODE."
+        }
+        $metadata = $metadataJson | ConvertFrom-Json
+        $packages = @($metadata.packages)
+        if ($packages.Count -ne 1 -or @($metadata.workspace_members).Count -ne 1) {
+          throw "Rust workspace must contain exactly one package/member; packages=$($packages.Count) members=$(@($metadata.workspace_members).Count)."
+        }
+        $package = $packages[0]
+        if ($package.name -ne 'sakura-rust-core' -or @($package.dependencies).Count -ne 0) {
+          throw "sakura-rust-core must be the sole dependency-free workspace package."
+        }
+        $targets = @($package.targets)
+        if (
+          $targets.Count -ne 1 -or
+          ($targets[0].kind -join ',') -ne 'staticlib' -or
+          ($targets[0].crate_types -join ',') -ne 'staticlib'
+        ) {
+          throw "sakura-rust-core must expose exactly one staticlib target and no build script."
+        }
+        cargo $toolchainArgument clippy --workspace --all-targets --all-features --locked -- -D warnings
+        if ($LASTEXITCODE -ne 0) {
+          throw "cargo clippy failed with exit code $LASTEXITCODE."
+        }
+
+    - name: Rust tests and product staticlib (${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      working-directory: rust
+      shell: pwsh
+      timeout-minutes: 15
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $toolchainArgument = "+$env:RUST_TOOLCHAIN_PIN"
+        if ('${{ matrix.config }}' -eq 'Release') {
+          cargo $toolchainArgument test --workspace --locked --release --no-fail-fast -- --nocapture
+        } else {
+          cargo $toolchainArgument test --workspace --locked --no-fail-fast -- --nocapture
+        }
+        if ($LASTEXITCODE -ne 0) {
+          throw "cargo test (${{ matrix.config }}) failed with exit code $LASTEXITCODE."
+        }
+        $profile = if ('${{ matrix.config }}' -eq 'Release') { 'release' } else { 'dev' }
+        cargo $toolchainArgument build --workspace --package sakura-rust-core --locked --target x86_64-pc-windows-msvc --profile $profile
+        if ($LASTEXITCODE -ne 0) {
+          throw "Rust product staticlib ($profile) failed with exit code $LASTEXITCODE."
+        }
+
+    - name: MSBuild Rust integration (rust, ${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      env:
+        SAKURA_UTF16_BACKEND: rust
+        SAKURA_UTF16_PRODUCTION_PACKAGE: false
+        SAKURA_GENERATE_ASSEMBLY_LISTINGS: '0'
+      shell: cmd
+      timeout-minutes: 20
+      run: build-sln.bat ${{ matrix.platform }} ${{ matrix.config }}
+
+    - name: Rust integration initialization (rust, ${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      shell: pwsh
+      timeout-minutes: 5
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $test = Join-Path $env:GITHUB_WORKSPACE 'x64\${{ matrix.config }}\tests1.exe'
+        $testOutput = & $test '--gtest_filter=CpuDispatchTest.ConcurrentInitializationAndDiagnosticsAreStable' '--gtest_color=no' 2>&1
+        $testExitCode = $LASTEXITCODE
+        $testOutput | ForEach-Object { Write-Host $_ }
+        if ($testExitCode -ne 0) {
+          throw "rust initialization diagnostics failed with exit code $testExitCode."
+        }
+        $summary = $testOutput -join "`n"
+        if ($summary -notmatch '\[\s+PASSED\s+\]\s+1\s+test\.') {
+          throw 'rust initialization diagnostics did not execute exactly one test.'
+        }
+
+    - name: Rust integration focused tests (rust, ${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      shell: pwsh
+      timeout-minutes: 10
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $test = Join-Path $env:GITHUB_WORKSPACE 'x64\${{ matrix.config }}\tests1.exe'
+        $requiredTests = @(
+          'CpuDispatchTest.ProcessDispatchIsStable',
+          'CpuDispatchTest.DispatchDiagnosticsExposePerOperationBackendAndThresholds',
+          'CpuDispatchTest.Utf16ScannersHandleMixedMatchesAndEarliestResult',
+          'CpuDispatchTest.RustUtf16ScannersMatchReferenceAtEveryBoundary',
+          'CpuDispatchTest.RustUtf16ScannersRejectInvalidFfiSpans',
+          'CpuDispatchTest.RustUtf16ScannersMatchEveryLegalAlignment',
+          'CpuDispatchTest.RustUtf16ScannersTouchBothGuardPagesAtEveryShortLength',
+          'CpuDispatchTest.FindUtf16CharMatchesReferenceAtLengthsAndPositions'
+        )
+        $listedTests = & $test '--gtest_list_tests' '--gtest_color=no'
+        if ($LASTEXITCODE -ne 0) {
+          throw "rust gtest inventory failed with exit code $LASTEXITCODE."
+        }
+        $availableTests = [System.Collections.Generic.HashSet[string]]::new(
+          [System.StringComparer]::Ordinal
+        )
+        $suitePrefix = $null
+        foreach ($line in $listedTests) {
+          if ($line -match '^(\S.*\.)\s*(?:#.*)?$') {
+            $suitePrefix = $Matches[1]
+          } elseif ($null -ne $suitePrefix -and $line -match '^\s{2}([^\s#]+)') {
+            [void]$availableTests.Add("$suitePrefix$($Matches[1])")
+          }
+        }
+        $missingTests = @(
+          $requiredTests | Where-Object { -not $availableTests.Contains($_) }
+        )
+        if ($missingTests.Count -ne 0) {
+          throw "rust focused gtest filter contains missing tests: $($missingTests -join ', ')"
+        }
+        $filter = $requiredTests -join ':'
+        $testOutput = & $test "--gtest_filter=$filter" '--gtest_color=no' 2>&1
+        $testExitCode = $LASTEXITCODE
+        $testOutput | ForEach-Object { Write-Host $_ }
+        if ($testExitCode -ne 0) {
+          throw "rust Rust/FFI/dispatch tests failed with exit code $testExitCode."
+        }
+        $summary = $testOutput -join "`n"
+        if ($summary -notmatch "\[\s+PASSED\s+\]\s+$($requiredTests.Count)\s+tests?\.") {
+          throw "rust focused gtest run did not report all $($requiredTests.Count) required tests."
+        }
+
+    - name: MSBuild Rust backend full headless gate (${{ matrix.config }})
+      if: ${{ !inputs.release_promotion }}
+      shell: pwsh
+      timeout-minutes: 15
+      run: |
+        $ErrorActionPreference = 'Stop'
+        $env:GTEST_FILTER = "-$env:HEADLESS_GTEST_EXCLUDES"
+        & ctest `
+          '--test-dir' 'build/${{ matrix.platform }}/CMakeTools' `
+          '-C' '${{ matrix.config }}' `
+          '--output-on-failure' `
+          '--timeout' '600' `
+          '-V'
+        if ($LASTEXITCODE -ne 0) {
+          throw "Rust backend full headless tests failed with exit code $LASTEXITCODE."
+        }
+
+    - name: Clean up Rust integration test process survivors
+      if: ${{ always() && steps.checkout.outcome == 'success' }}
+      run: .\tools\Cleanup-TestProcessSurvivors.ps1
 
   coverage-map:
     name: Build coverage map

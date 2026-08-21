@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -223,6 +223,18 @@ struct WorkbenchGitCommandExecutors {
 	WorkbenchCommandExecutor sync;
 	WorkbenchCommandExecutor syncRebase;
 	WorkbenchCommandExecutor publish;
+	//! Repository-scoped, and the two `scm/title` actions that are not about a
+	//! resource at all: `git.refresh` re-reads the repository's status, and
+	//! `git.showOutput` reveals the Git output channel. Upstream's handlers take
+	//! the repository and nothing else, so neither carries a payload.
+	WorkbenchCommandExecutor refresh;
+	WorkbenchCommandExecutor showOutput;
+	//! History-item-scoped: upstream's `scm/historyItem/context` copy commands
+	//! receive the clicked commit. The payload is that commit's id, built by
+	//! `BuildGitHistoryItemArguments`; the message itself is looked up in the
+	//! history the view already holds rather than carried across the boundary.
+	WorkbenchCommandArgumentExecutor copyCommitId;
+	WorkbenchCommandArgumentExecutor copyCommitMessage;
 };
 
 /*!

@@ -184,6 +184,9 @@ target_compile_definitions(tests1
     _CONSOLE
     _SILENCE_TR1_NAMESPACE_DEPRECATION_WARNING
 )
+if(SAKURA_UTF16_BENCHMARK_TELEMETRY)
+  target_compile_definitions(tests1 PRIVATE SAKURA_UTF16_BENCHMARK_TELEMETRY)
+endif()
 
 # add include directories for project
 target_include_directories(tests1

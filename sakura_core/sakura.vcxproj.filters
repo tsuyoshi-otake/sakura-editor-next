@@ -538,6 +538,12 @@
     <ClInclude Include="..\sakura_core\util\CpuDispatchInternal.h">
       <Filter>Cpp Source Files\util</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\util\RustUtf16Scan.h">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\util\Utf16BenchmarkTelemetry.h">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\util\design_template.h">
       <Filter>Cpp Source Files\util</Filter>
     </ClInclude>
@@ -1206,6 +1212,15 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\search\CSearchWorkbenchTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\search\SearchModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\search\WorkspaceSearchEngine.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\SourceControlService.h">
@@ -2290,6 +2305,9 @@
     <ClCompile Include="..\sakura_core\util\CpuDispatch.cpp">
       <Filter>Cpp Source Files\util</Filter>
     </ClCompile>
+    <ClCompile Include="..\sakura_core\util\CpuDispatchRust.cpp">
+      <Filter>Cpp Source Files\util</Filter>
+    </ClCompile>
     <ClCompile Include="..\sakura_core\util\CpuDispatchAvx.cpp">
       <Filter>Cpp Source Files\util</Filter>
     </ClCompile>
@@ -3051,6 +3069,12 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\search\CSearchWorkbenchTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\search\WorkspaceSearchEngine.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\SourceControlService.cpp">

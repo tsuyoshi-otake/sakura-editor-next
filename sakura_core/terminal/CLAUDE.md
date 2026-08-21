@@ -216,34 +216,38 @@ owned rather than render-thread owned.
 ## VS Code terminal groups and terminal list (Issue #174)
 
 `TerminalTabManager` owns the independent terminal sessions. `CTerminalTool`
-owns the selected terminal group as an ordered, flat vector of tab IDs and
-positive size weights; it creates one native `CTerminalWnd` per tab in that
-group. Do not reintroduce a primary/secondary terminal model or a pane-count
-cap. Splitting inserts a new session immediately after the focused pane, and
-closing a focused split removes only that pane until its final pane is gone.
+owns the selected terminal group as an ordered leaf projection of a recursive
+split tree and creates one native `CTerminalWnd` per leaf in that group. Do not
+reintroduce a primary/secondary terminal model or a pane-count cap. Splitting
+inserts a new session immediately after the focused pane, and closing a
+focused split removes only that pane until its final pane is gone.
 `Alt+Left` / `Alt+Right` (and `Alt+Up` / `Alt+Down`) move focus between adjacent
 panes; `Ctrl+PageUp` and `Ctrl+PageDown` move between terminal groups.
 
-The active group is a flat, single-axis Panel layout. Upstream VS Code keeps
-bottom-Panel splits on one axis (side-by-side). Sakura extends that with an
-explicit vertical orientation so panes can also stack top-to-bottom:
+The active group is a recursive split layout. Upstream VS Code keeps bottom-
+Panel splits on one axis (side-by-side); nested panes and vertical splits are
+an explicit Sakura multiplexer extension. A split on the same axis as the
+focused pane's immediate parent joins that sibling row/column and equalizes
+the whole row/column. An orthogonal split replaces only the focused leaf with
+a two-child local split, so a left full-height pane can sit beside two stacked
+panes on the right:
 
 - `workbench.action.terminal.split` / `Ctrl+Shift+5` / the Split header action
   add a horizontal (side-by-side) pane.
 - `SplitTerminalDown` / `Ctrl+Alt+5` / Alt+Split header action / the context
   menu "Split Terminal Down" entry add a vertical (stacked) pane.
-- A group remains single-axis: requesting the orthogonal split reorients the
-  whole group rather than nesting a 2D tree.
 
 `TerminalPaneLayout` is the one geometry authority: it uses a 4-DIP inter-pane
-divider, honors the 80-DIP minimum along the group's primary axis when the
-available extent permits it, and distributes any remaining extent from the
-group's positive weights. The typed `terminal.integrated.tabs.location` policy
-selects the left or right list boundary; the resulting pane/list rectangles
-still come only from `TerminalPaneLayout`. When a group must be rebuilt, suppress
-parent-focus handling until every child has been detached. Closing a focused
-native child synchronously transfers focus and may otherwise re-enter layout
-against a pane that is being destroyed.
+divider, honors the 80-DIP minimum along each split axis when the available
+extent permits it, and distributes any remaining extent from each internal
+node's positive weights. Newly-created same-axis siblings start with equal
+weights; divider dragging changes only the local split node. The typed
+`terminal.integrated.tabs.location` policy selects the left or right list
+boundary; the resulting pane/list rectangles still come only from
+`TerminalPaneLayout`. When a group must be rebuilt, suppress parent-focus
+handling until every child has been detached. Closing a focused native child
+synchronously transfers focus and may otherwise re-enter layout against a
+pane that is being destroyed.
 
 The terminal list is a right-side projection of all `TerminalTabManager`
 sessions. It is hidden for zero or one session and, for two or more sessions,
@@ -269,7 +273,9 @@ All nine tab policy keys are read in one coherent configuration snapshot by
 `CEditWnd` and pushed as plain data through `CTerminalTool`. Configuration
 notifications marshal to the UI thread and invalidate layout/paint without
 restarting a PTY or entering `TerminalTabManager`. Nested/grid terminal
-arrangements remain outside this contract.
+arrangements are part of the recursive terminal-group contract above; they
+remain a fork extension rather than a claim of upstream VS Code bottom-Panel
+parity.
 
 ## Clipboard and Selection Interaction
 
@@ -353,8 +359,10 @@ The manager now stores only raw data — `processName`, `profileLabel`,
 `sequenceChanged`, not `titleChanged`, because an OSC title change no longer
 implies the displayed title changed. `TerminalTabPresentation` is the pure
 resolver that turns settings plus a context into a title and a description; the
-tab list and the session dropdown must both go through it, and nothing below
-`CTerminalTool` may hold a display string.
+tab list, the session dropdown, and the compact active-terminal label in the
+panel header must all go through it, and nothing below `CTerminalTool` may hold
+a display string. This keeps a recognized Agent CLI title visible even when the
+single-terminal policy hides the tab list.
 
 Rules for that resolver:
 

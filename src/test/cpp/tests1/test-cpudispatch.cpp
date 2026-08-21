@@ -5,7 +5,9 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "pch.h"
+#include "Utf16Phase8Benchmark.h"
 #include "util/CpuDispatch.h"
+#include "util/RustUtf16Scan.h"
 #include "charset/CUtf8.h"
 #include "charset/codechecker.h"
 
@@ -15,6 +17,9 @@
 #include <memory>
 #include <random>
 #include <string>
+#include <string_view>
+#include <thread>
+#include <utility>
 #include <vector>
 
 namespace
@@ -166,12 +171,34 @@ TEST(CpuDispatchTest, SelectsHighestSafeIsa)
 {
 	using CpuDispatch::Capabilities;
 	using CpuDispatch::Isa;
-	EXPECT_EQ(Isa::Avx, CpuDispatch::SelectBestIsa(Capabilities{}));
-	EXPECT_EQ(Isa::Avx, CpuDispatch::SelectBestIsa(Capabilities{true, false, false}));
-	EXPECT_EQ(Isa::Avx2, CpuDispatch::SelectBestIsa(Capabilities{true, true, false}));
-	EXPECT_EQ(Isa::Avx512, CpuDispatch::SelectBestIsa(Capabilities{true, true, true}));
-	EXPECT_EQ(Isa::Avx, CpuDispatch::SelectBestIsa(Capabilities{false, true, true}));
+	const std::array<std::pair<Capabilities, Isa>, 8> cases{{
+		{{false, false, false}, Isa::Avx},
+		{{false, false, true}, Isa::Avx},
+		{{false, true, false}, Isa::Avx},
+		{{false, true, true}, Isa::Avx},
+		{{true, false, false}, Isa::Avx},
+		{{true, false, true}, Isa::Avx},
+		{{true, true, false}, Isa::Avx2},
+		{{true, true, true}, Isa::Avx512},
+	}};
+	for (const auto& [capabilities, expected] : cases) {
+		EXPECT_EQ(expected, CpuDispatch::SelectBestIsa(capabilities))
+			<< "avx=" << capabilities.avx
+			<< " avx2=" << capabilities.avx2
+			<< " avx512=" << capabilities.avx512;
+	}
+}
+
+TEST(CpuDispatchTest, Avx512TierRequiresAvx2Capability)
+{
+	using CpuDispatch::Capabilities;
+	using CpuDispatch::Isa;
+
+	// `avx512=true` represents AVX-512F/BW plus the required OS state, but the
+	// global tier must still fall back when AVX2 is absent because the C++ byte
+	// scanner's AVX-512 tail calls its AVX2 implementation.
 	EXPECT_EQ(Isa::Avx, CpuDispatch::SelectBestIsa(Capabilities{true, false, true}));
+	EXPECT_EQ(Isa::Avx512, CpuDispatch::SelectBestIsa(Capabilities{true, true, true}));
 }
 
 TEST(CpuDispatchTest, SupportedScannersMatchReferenceAtEveryBoundary)
@@ -481,6 +508,454 @@ TEST(CpuDispatchTest, ProcessDispatchIsStable)
 	EXPECT_EQ(L'a', widened[0]);
 	EXPECT_EQ(L'c', widened[2]);
 }
+
+TEST(CpuDispatchTest, Utf16ScannersHandleMixedMatchesAndEarliestResult)
+{
+	std::wstring data(96, L'x');
+	for (const auto isa : kImplementations) {
+		const auto crOrLf = CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(isa);
+		const auto markdownSpecial =
+			CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(isa);
+		if (crOrLf == nullptr || markdownSpecial == nullptr) {
+			continue;
+		}
+		const std::size_t vectorWidth = isa == CpuDispatch::Isa::Avx
+			? 8
+			: isa == CpuDispatch::Isa::Avx2 ? 16 : 32;
+
+		// The pair straddles the vector boundary; the first of the two values
+		// must win even though the second value is in the next vector.
+		std::fill(data.begin(), data.end(), L'x');
+		data[vectorWidth - 1] = L'\r';
+		data[vectorWidth] = L'\n';
+		EXPECT_EQ(vectorWidth - 1, crOrLf(data.data(), data.size()))
+			<< "isa=" << CpuDispatch::GetIsaName(isa);
+
+		// This pair is wholly inside one vector.
+		std::fill(data.begin(), data.end(), L'x');
+		data[vectorWidth / 2] = L'\r';
+		data[vectorWidth / 2 + 1] = L'\n';
+		EXPECT_EQ(vectorWidth / 2, crOrLf(data.data(), data.size()))
+			<< "isa=" << CpuDispatch::GetIsaName(isa);
+
+		// One bounded input contains every Markdown special kind. The first
+		// one is the result regardless of later matches.
+		std::fill(data.begin(), data.end(), L'x');
+		constexpr std::size_t firstSpecial = 8;
+		for (std::size_t index = 0; index < kMarkdownInlineSpecials.size(); ++index) {
+			data[firstSpecial + index] = kMarkdownInlineSpecials[index];
+		}
+		EXPECT_EQ(firstSpecial, markdownSpecial(data.data(), data.size()))
+			<< "isa=" << CpuDispatch::GetIsaName(isa);
+	}
+}
+
+TEST(CpuDispatchTest, DispatchDiagnosticsExposePerOperationBackendAndThresholds)
+{
+	const auto& dispatch = CpuDispatch::Get();
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+	EXPECT_STREQ("rust", dispatch.utf16Backend);
+	EXPECT_STREQ("rust", dispatch.utf16BuildMode);
+#else
+	EXPECT_STREQ("cpp", dispatch.utf16Backend);
+	EXPECT_STREQ("cpp", dispatch.utf16BuildMode);
+#endif
+	const auto expectImplementation = [&](const char* implementation) {
+		ASSERT_NE(nullptr, implementation);
+		const std::string value{implementation};
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+		EXPECT_EQ(std::size_t{0}, value.find("rust-"));
+#else
+		EXPECT_EQ(std::size_t{0}, value.find("cpp-"));
+#endif
+		EXPECT_NE(std::string::npos, value.find(CpuDispatch::GetIsaName(dispatch.isa)));
+	};
+	expectImplementation(dispatch.utf16CrOrLfImplementation);
+	expectImplementation(dispatch.utf16MarkdownImplementation);
+	expectImplementation(dispatch.utf16FindCharImplementation);
+	EXPECT_EQ(1U, dispatch.utf16AbiVersion);
+	EXPECT_STREQ(CpuDispatch::GetIsaName(dispatch.isa),
+		dispatch.isa == CpuDispatch::Isa::Avx
+			? "avx128"
+			: dispatch.isa == CpuDispatch::Isa::Avx2 ? "avx2" : "avx512bw");
+	const auto policy = CpuDispatch::GetUtf16ScanPolicy(dispatch.isa);
+	EXPECT_EQ(policy.crOrLfMinimumLength, dispatch.utf16ScanPolicy.crOrLfMinimumLength);
+	EXPECT_EQ(policy.markdownInlineSpecialMinimumLength,
+		dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength);
+	EXPECT_EQ(policy.findCharMinimumLength, dispatch.utf16ScanPolicy.findCharMinimumLength);
+	std::printf(
+		"UTF16_DISPATCH build_mode=%s backend=%s isa=%s crlf=%s markdown=%s "
+		"find_char=%s thresholds=%zu,%zu,%zu abi=%u\n",
+		dispatch.utf16BuildMode,
+		dispatch.utf16Backend,
+		CpuDispatch::GetIsaName(dispatch.isa),
+		dispatch.utf16CrOrLfImplementation,
+		dispatch.utf16MarkdownImplementation,
+		dispatch.utf16FindCharImplementation,
+		dispatch.utf16ScanPolicy.crOrLfMinimumLength,
+		dispatch.utf16ScanPolicy.markdownInlineSpecialMinimumLength,
+		dispatch.utf16ScanPolicy.findCharMinimumLength,
+		dispatch.utf16AbiVersion);
+	// These accessors resolve to the selected production backend.
+	EXPECT_EQ(dispatch.findCrOrLfUtf16,
+		CpuDispatch::Testing::GetSupportedFindCrOrLfUtf16(dispatch.isa));
+	EXPECT_EQ(dispatch.findMarkdownInlineSpecialUtf16,
+		CpuDispatch::Testing::GetSupportedFindMarkdownInlineSpecialUtf16(dispatch.isa));
+	EXPECT_EQ(dispatch.findUtf16Char,
+		CpuDispatch::Testing::GetSupportedFindUtf16Char(dispatch.isa));
+}
+
+// This test must run in a fresh tests1 process before any other CpuDispatch
+// test that calls Get(); function-local static initialization cannot be reset
+// after the process has initialized the dispatch table.
+TEST(CpuDispatchTest, ConcurrentInitializationAndDiagnosticsAreStable)
+{
+	constexpr std::size_t threadCount = 64;
+	std::array<const CpuDispatch::Dispatch*, threadCount> dispatches{};
+	std::vector<std::thread> workers;
+	workers.reserve(threadCount);
+	for (std::size_t index = 0; index < threadCount; ++index) {
+		workers.emplace_back([&dispatches, index] {
+			dispatches[index] = &CpuDispatch::Get();
+		});
+	}
+	for (auto& worker : workers) {
+		worker.join();
+	}
+	for (const auto* dispatch : dispatches) {
+		ASSERT_EQ(&CpuDispatch::Get(), dispatch);
+		EXPECT_STREQ(dispatches[0]->utf16Backend, dispatch->utf16Backend);
+		EXPECT_STREQ(dispatches[0]->utf16BuildMode, dispatch->utf16BuildMode);
+		EXPECT_STREQ(dispatches[0]->utf16CrOrLfImplementation,
+			dispatch->utf16CrOrLfImplementation);
+		EXPECT_EQ(dispatches[0]->utf16AbiVersion, dispatch->utf16AbiVersion);
+	}
+	std::printf("UTF16_FRESH_INIT threads=%zu build_mode=%s backend=%s isa=%s abi=%u\n",
+		threadCount,
+		dispatches[0]->utf16BuildMode,
+		dispatches[0]->utf16Backend,
+		CpuDispatch::GetIsaName(dispatches[0]->isa),
+		dispatches[0]->utf16AbiVersion);
+}
+
+#if defined(SAKURA_UTF16_BACKEND_RUST)
+namespace
+{
+using RustUtf16ScanFunction = std::size_t (*)(
+	const std::uint16_t*, std::size_t) noexcept;
+using RustUtf16FindCharFunction = std::size_t (*)(
+	const std::uint16_t*, std::size_t, std::uint16_t) noexcept;
+
+struct RustUtf16Implementation {
+	const char* name;
+	RustUtf16ScanFunction crOrLf;
+	RustUtf16ScanFunction markdownSpecial;
+	RustUtf16FindCharFunction findChar;
+};
+
+std::array<RustUtf16Implementation, 3> GetRustUtf16Implementations()
+{
+	const auto& dispatch = CpuDispatch::Get();
+	return {
+		RustUtf16Implementation{
+			"avx128",
+			dispatch.capabilities.avx ? sakura_utf16_find_cr_or_lf_avx128_v1 : nullptr,
+			dispatch.capabilities.avx
+				? sakura_utf16_find_markdown_special_avx128_v1 : nullptr,
+			dispatch.capabilities.avx ? sakura_utf16_find_char_avx128_v1 : nullptr,
+		},
+		RustUtf16Implementation{
+			"avx2",
+			dispatch.capabilities.avx2 ? sakura_utf16_find_cr_or_lf_avx2_v1 : nullptr,
+			dispatch.capabilities.avx2
+				? sakura_utf16_find_markdown_special_avx2_v1 : nullptr,
+			dispatch.capabilities.avx2 ? sakura_utf16_find_char_avx2_v1 : nullptr,
+		},
+		RustUtf16Implementation{
+			"avx512bw",
+			dispatch.capabilities.avx512 ? sakura_utf16_find_cr_or_lf_avx512bw_v1 : nullptr,
+			dispatch.capabilities.avx512
+				? sakura_utf16_find_markdown_special_avx512bw_v1 : nullptr,
+			dispatch.capabilities.avx512 ? sakura_utf16_find_char_avx512bw_v1 : nullptr,
+		},
+	};
+}
+
+std::size_t GetRustUtf16VectorWidth(const RustUtf16Implementation& implementation)
+{
+	return std::string_view{implementation.name} == "avx128"
+		? 8
+		: std::string_view{implementation.name} == "avx2" ? 16 : 32;
+}
+}
+
+TEST(CpuDispatchTest, RustUtf16ScannersMatchReferenceAtEveryBoundary)
+{
+	const auto implementations = GetRustUtf16Implementations();
+	for (const auto& implementation : implementations) {
+		std::printf("RUST_ISA_EXECUTION %s=%s\n", implementation.name,
+			implementation.crOrLf == nullptr ? "skipped" : "executed");
+	}
+
+	std::vector<std::uint16_t> data(193, static_cast<std::uint16_t>('x'));
+	for (const auto& implementation : implementations) {
+		if (implementation.crOrLf == nullptr) {
+			continue;
+		}
+		for (std::size_t length = 0; length <= data.size(); ++length) {
+			for (std::size_t position = 0; position <= length; ++position) {
+				std::fill(data.begin(), data.end(), static_cast<std::uint16_t>('x'));
+				if (position < length) {
+					data[position] = static_cast<std::uint16_t>('\n');
+				}
+				EXPECT_EQ(position, implementation.crOrLf(data.data(), length))
+					<< "isa=" << implementation.name << " length=" << length
+					<< " position=" << position;
+
+				std::fill(data.begin(), data.end(), static_cast<std::uint16_t>('x'));
+				if (position < length) {
+					data[position] = static_cast<std::uint16_t>('$');
+				}
+				EXPECT_EQ(position, implementation.markdownSpecial(data.data(), length))
+					<< "isa=" << implementation.name << " length=" << length
+					<< " position=" << position;
+			}
+		}
+
+		const std::size_t vectorWidth = GetRustUtf16VectorWidth(implementation);
+		std::fill(data.begin(), data.end(), static_cast<std::uint16_t>('x'));
+		data[vectorWidth - 1] = static_cast<std::uint16_t>('\r');
+		data[vectorWidth] = static_cast<std::uint16_t>('\n');
+		EXPECT_EQ(vectorWidth - 1, implementation.crOrLf(data.data(), data.size()))
+			<< "isa=" << implementation.name;
+
+		std::fill(data.begin(), data.end(), static_cast<std::uint16_t>('x'));
+		data[vectorWidth / 2] = static_cast<std::uint16_t>('\r');
+		data[vectorWidth / 2 + 1] = static_cast<std::uint16_t>('\n');
+		EXPECT_EQ(vectorWidth / 2, implementation.crOrLf(data.data(), data.size()))
+			<< "isa=" << implementation.name;
+
+		std::fill(data.begin(), data.end(), static_cast<std::uint16_t>('x'));
+		constexpr std::size_t firstSpecial = 8;
+		for (std::size_t index = 0; index < kMarkdownInlineSpecials.size(); ++index) {
+			data[firstSpecial + index] = static_cast<std::uint16_t>(kMarkdownInlineSpecials[index]);
+		}
+		EXPECT_EQ(firstSpecial, implementation.markdownSpecial(data.data(), data.size()))
+			<< "isa=" << implementation.name;
+
+		std::fill(data.begin(), data.end(), static_cast<std::uint16_t>('x'));
+		data[17] = static_cast<std::uint16_t>(0xd83d);
+		data[18] = static_cast<std::uint16_t>(0xde00);
+		EXPECT_EQ(17U, implementation.findChar(data.data(), data.size(), 0xd83d))
+			<< "isa=" << implementation.name;
+		EXPECT_EQ(data.size(), implementation.findChar(data.data(), data.size(), 0x2603))
+			<< "isa=" << implementation.name;
+	}
+
+	std::uint64_t state = 0x2395'16f1ULL;
+	for (std::size_t caseIndex = 0; caseIndex < 50'000; ++caseIndex) {
+		state = state * 6'364'136'223'846'793'005ULL + 1;
+		const std::size_t length = static_cast<std::size_t>(state % 4098);
+		data.resize(length);
+		for (auto& value : data) {
+			state = (state << 17) | (state >> 47);
+			state += 0x9e37'79b9'7f4a'7c15ULL;
+			value = static_cast<std::uint16_t>(state);
+		}
+		state = (state << 23) | (state >> 41);
+		const auto target = static_cast<std::uint16_t>(state);
+		const auto wideData = reinterpret_cast<const wchar_t*>(data.data());
+		const auto expectedCr = FindCrOrLfUtf16Reference(wideData, length);
+		const auto expectedMarkdown = FindMarkdownInlineSpecialUtf16Reference(wideData, length);
+		const auto expectedChar = FindUtf16CharReference(
+			wideData, length, static_cast<wchar_t>(target));
+		for (const auto& implementation : implementations) {
+			if (implementation.crOrLf == nullptr) {
+				continue;
+			}
+			EXPECT_EQ(expectedCr, implementation.crOrLf(data.data(), length));
+			EXPECT_EQ(expectedMarkdown, implementation.markdownSpecial(data.data(), length));
+			EXPECT_EQ(expectedChar, implementation.findChar(data.data(), length, target));
+		}
+	}
+}
+
+TEST(CpuDispatchTest, RustUtf16ScannersRejectInvalidFfiSpans)
+{
+	const auto implementations = GetRustUtf16Implementations();
+
+	for (const auto& implementation : implementations) {
+		if (implementation.crOrLf == nullptr) {
+			continue;
+		}
+		alignas(std::uint16_t) std::array<std::uint16_t, 2> alignedStorage{};
+		const auto* const misaligned = reinterpret_cast<const std::uint16_t*>(
+			reinterpret_cast<const unsigned char*>(alignedStorage.data()) + 1);
+		const std::array<std::uint16_t, 1> alignedDummy{};
+		const auto oversized = (SIZE_MAX / sizeof(std::uint16_t)) + 1;
+
+		for (const auto scan : {implementation.crOrLf, implementation.markdownSpecial}) {
+			EXPECT_EQ(0U, scan(nullptr, 0));
+			EXPECT_EQ(7U, scan(nullptr, 7));
+			EXPECT_EQ(1U, scan(misaligned, 1));
+			EXPECT_EQ(1U, scan(reinterpret_cast<const std::uint16_t*>(SIZE_MAX), 1));
+			EXPECT_EQ(2U, scan(reinterpret_cast<const std::uint16_t*>(SIZE_MAX - 1), 2));
+			EXPECT_EQ(SIZE_MAX, scan(nullptr, SIZE_MAX));
+			EXPECT_EQ(SIZE_MAX, scan(alignedDummy.data(), SIZE_MAX));
+			EXPECT_EQ(oversized, scan(alignedDummy.data(), oversized));
+			EXPECT_EQ(0U, scan(reinterpret_cast<const std::uint16_t*>(2), 0));
+		}
+		for (const auto target : {wchar_t{0}, wchar_t{0xd800}}) {
+			EXPECT_EQ(0U, implementation.findChar(nullptr, 0, target));
+			EXPECT_EQ(7U, implementation.findChar(nullptr, 7, target));
+			EXPECT_EQ(1U, implementation.findChar(misaligned, 1, target));
+			EXPECT_EQ(1U, implementation.findChar(
+				reinterpret_cast<const std::uint16_t*>(SIZE_MAX), 1, target));
+			EXPECT_EQ(2U, implementation.findChar(
+				reinterpret_cast<const std::uint16_t*>(SIZE_MAX - 1), 2, target));
+			EXPECT_EQ(SIZE_MAX, implementation.findChar(nullptr, SIZE_MAX, target));
+			EXPECT_EQ(SIZE_MAX, implementation.findChar(alignedDummy.data(), SIZE_MAX, target));
+			EXPECT_EQ(oversized, implementation.findChar(alignedDummy.data(), oversized, target));
+			EXPECT_EQ(0U, implementation.findChar(reinterpret_cast<const std::uint16_t*>(2), 0, target));
+		}
+	}
+}
+
+TEST(CpuDispatchTest, RustUtf16ScannersMatchEveryLegalAlignment)
+{
+	const auto implementations = GetRustUtf16Implementations();
+	constexpr std::array<std::size_t, 13> lengths{
+		1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65,
+	};
+	constexpr std::size_t maxLength = 65;
+	std::array<std::uint16_t, maxLength + 32> storage{};
+
+	for (const auto& implementation : implementations) {
+		if (implementation.crOrLf == nullptr) {
+			std::printf("RUST_ALIGNMENT_EXECUTION %s=skipped\n", implementation.name);
+			continue;
+		}
+		std::printf("RUST_ALIGNMENT_EXECUTION %s=executed\n", implementation.name);
+		for (std::size_t byteOffset = 0; byteOffset < 64; byteOffset += 2) {
+			auto* const data = reinterpret_cast<std::uint16_t*>(
+				reinterpret_cast<unsigned char*>(storage.data()) + byteOffset);
+			for (const auto length : lengths) {
+				std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+				EXPECT_EQ(length, implementation.crOrLf(data, length));
+				EXPECT_EQ(length, implementation.markdownSpecial(data, length));
+				EXPECT_EQ(length, implementation.findChar(data, length, 0x2603));
+
+				for (const auto position : {std::size_t{0}, length - 1}) {
+					std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+					data[position] = static_cast<std::uint16_t>('\n');
+					EXPECT_EQ(position, implementation.crOrLf(data, length))
+						<< "isa=" << implementation.name
+						<< " byteOffset=" << byteOffset << " length=" << length;
+
+					std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+					data[position] = static_cast<std::uint16_t>('$');
+					EXPECT_EQ(position, implementation.markdownSpecial(data, length))
+						<< "isa=" << implementation.name
+						<< " byteOffset=" << byteOffset << " length=" << length;
+
+					std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+					data[position] = 0x2603;
+					EXPECT_EQ(position, implementation.findChar(data, length, 0x2603))
+						<< "isa=" << implementation.name
+						<< " byteOffset=" << byteOffset << " length=" << length;
+				}
+			}
+		}
+	}
+}
+
+TEST(CpuDispatchTest, RustUtf16ScannersTouchBothGuardPagesAtEveryShortLength)
+{
+	const auto implementations = GetRustUtf16Implementations();
+	SYSTEM_INFO systemInfo{};
+	::GetSystemInfo(&systemInfo);
+	const std::size_t pageSize = systemInfo.dwPageSize;
+	std::unique_ptr<void, VirtualAllocationDeleter> allocation{
+		::VirtualAlloc(nullptr, pageSize * 3, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE)
+	};
+	ASSERT_NE(nullptr, allocation);
+	DWORD previousProtection{};
+	ASSERT_TRUE(::VirtualProtect(
+		allocation.get(), pageSize, PAGE_NOACCESS, &previousProtection));
+	ASSERT_TRUE(::VirtualProtect(
+		static_cast<char*>(allocation.get()) + pageSize * 2,
+		pageSize, PAGE_NOACCESS, &previousProtection));
+
+	std::uint16_t* const middle = reinterpret_cast<std::uint16_t*>(
+		static_cast<char*>(allocation.get()) + pageSize);
+	for (const auto& implementation : implementations) {
+		if (implementation.crOrLf == nullptr) {
+			std::printf("RUST_GUARD_EXECUTION %s=skipped\n", implementation.name);
+			continue;
+		}
+		std::printf("RUST_GUARD_EXECUTION %s=executed\n", implementation.name);
+		const std::size_t vectorWidth = GetRustUtf16VectorWidth(implementation);
+		const std::size_t middleUnits = pageSize / sizeof(std::uint16_t);
+
+		for (std::size_t length = 1; length <= 65; ++length) {
+			for (const bool rightBoundary : {false, true}) {
+				// The left span begins at the first readable code unit; the
+				// right span ends at the first code unit of the guard page.
+				std::uint16_t* const data = rightBoundary
+					? middle + middleUnits - length
+					: middle;
+				ASSERT_TRUE(::VirtualProtect(
+					middle, pageSize, PAGE_READWRITE, &previousProtection));
+				std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+				ASSERT_TRUE(::VirtualProtect(
+					middle, pageSize, PAGE_READONLY, &previousProtection));
+				EXPECT_EQ(length, implementation.crOrLf(data, length));
+				EXPECT_EQ(length, implementation.markdownSpecial(data, length));
+				EXPECT_EQ(length, implementation.findChar(data, length, 0x2603));
+
+				const auto clampPosition = [length](std::size_t position) {
+					return std::min(position, length - 1);
+				};
+				const std::array<std::size_t, 8> positions{
+					0,
+					length - 1,
+					clampPosition(vectorWidth - 1),
+					clampPosition(vectorWidth),
+					clampPosition(vectorWidth + 1),
+					clampPosition(2 * vectorWidth - 1),
+					clampPosition(2 * vectorWidth),
+					clampPosition(2 * vectorWidth + 1),
+				};
+				for (const auto position : positions) {
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READWRITE, &previousProtection));
+					std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+					data[position] = static_cast<std::uint16_t>('\n');
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READONLY, &previousProtection));
+					EXPECT_EQ(position, implementation.crOrLf(data, length));
+
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READWRITE, &previousProtection));
+					std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+					data[position] = static_cast<std::uint16_t>('$');
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READONLY, &previousProtection));
+					EXPECT_EQ(position, implementation.markdownSpecial(data, length));
+
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READWRITE, &previousProtection));
+					std::fill(data, data + length, static_cast<std::uint16_t>('x'));
+					data[position] = 0x2603;
+					ASSERT_TRUE(::VirtualProtect(
+						middle, pageSize, PAGE_READONLY, &previousProtection));
+					EXPECT_EQ(position, implementation.findChar(data, length, 0x2603));
+				}
+			}
+		}
+	}
+}
+#endif
 
 TEST(CpuDispatchTest, WidenAsciiMatchesReferenceAtLengthsAndStopPositions)
 {
@@ -814,6 +1289,8 @@ TEST(CpuDispatchTest, Utf16ScannersDoNotReadPastGuardPageForDirectShortInputs)
 //     --gtest_filter=CpuDispatchTest.DISABLED_Utf16ShortInputMicrobenchmark
 TEST(CpuDispatchTest, DISABLED_Utf16ShortInputMicrobenchmark)
 {
+	if (Utf16Phase8Benchmark::TryRunFromEnvironment()) return;
+
 	constexpr std::array<std::size_t, 10> lengths{1, 2, 4, 6, 8, 12, 16, 24, 32, 48};
 	constexpr int iterations = 2'000'000;
 	alignas(64) std::array<wchar_t, 64> buffer{};

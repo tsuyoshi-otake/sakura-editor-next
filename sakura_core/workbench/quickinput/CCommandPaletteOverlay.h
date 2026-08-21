@@ -1,5 +1,5 @@
 ﻿/*! @file
-	@brief VS Code互換のCommand Palette用Quick Inputオーバーレイ
+	@brief VS Code互換のCommand Palette/Quick Pick用Quick Inputオーバーレイ
 */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
@@ -20,7 +20,7 @@
 
 namespace workbench::quickinput {
 
-//! Presentation data for one command shown by the workbench-local palette.
+//! Presentation data for one item shown by a workbench-local Quick Input surface.
 struct CommandPaletteItem {
 	std::wstring id;
 	std::wstring label;
@@ -28,12 +28,19 @@ struct CommandPaletteItem {
 	bool enabled = true;
 };
 
-//! Borderless, non-modal Quick Input surface used by Ctrl+Shift+P.
+//! Localized strings supplied by the currently active Quick Input surface.
+struct QuickInputStrings {
+	std::wstring placeholder;
+	std::wstring noResults;
+};
+
+//! Borderless, non-modal Quick Input surface used by Ctrl+Shift+P and theme picking.
 class CCommandPaletteOverlay final {
 public:
 	using SearchCallback = std::function<std::vector<CommandPaletteItem>(std::wstring_view)>;
 	using AcceptCallback = std::function<void(std::wstring)>;
 	using CancelCallback = std::function<void()>;
+	using StringsCallback = std::function<QuickInputStrings()>;
 
 	CCommandPaletteOverlay() noexcept = default;
 	~CCommandPaletteOverlay() noexcept;
@@ -55,6 +62,7 @@ public:
 	void RefreshStrings() noexcept;
 
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
+	void SetStringsCallback(StringsCallback callback);
 	void SetSearchCallback(SearchCallback callback);
 	void SetAcceptCallback(AcceptCallback callback);
 	void SetCancelCallback(CancelCallback callback);
@@ -106,6 +114,7 @@ private:
 	int m_codiconFontHeight = 0;
 
 	std::vector<CommandPaletteItem> m_items;
+	StringsCallback m_stringsCallback;
 	SearchCallback m_searchCallback;
 	AcceptCallback m_acceptCallback;
 	CancelCallback m_cancelCallback;

@@ -40,9 +40,11 @@ CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 	: m_explorer(std::make_unique<explorer::CExplorerTool>())
 	, m_outline(std::make_unique<outline::COutlineWorkbenchTool>(dialog))
 	, m_scm(std::make_unique<scm::CScmWorkbenchTool>())
+	, m_search(std::make_unique<search::CSearchWorkbenchTool>())
 {
 	m_pages.push_back({ std::string(pageIds::Explorer), STR_WORKBENCH_EXPLORER_TITLE });
 	m_pages.push_back({ std::string(pageIds::SourceControl), STR_WORKBENCH_SOURCE_CONTROL_TITLE });
+	m_pages.push_back({ std::string(pageIds::Search), STR_WORKBENCH_SEARCH_TITLE });
 }
 
 CViewContainerPages::~CViewContainerPages()
@@ -54,12 +56,15 @@ bool CViewContainerPages::Create(HWND owner)
 {
 	if (m_closed || m_created || owner == nullptr) return false;
 	m_owner = owner;
-	if (!m_explorer->Create(owner) || !m_outline->Create(owner) || !m_scm->Create(owner)) {
+	if (!m_explorer->Create(owner) || !m_outline->Create(owner) || !m_scm->Create(owner)
+		|| !m_search->Create(owner)) {
 		Close();
 		return false;
 	}
 	m_outline->SetVisible(false);
 	m_scm->SetVisible(false);
+	m_search->SetVisible(false);
+	ApplySearchTexts();
 	if (const HWND window = m_explorer->GetHwnd()) ::ShowWindow(window, SW_HIDE);
 	m_created = true;
 	return true;
@@ -70,6 +75,7 @@ void CViewContainerPages::Close()
 	if (m_closed) return;
 	m_closed = true;
 	if (m_outline) m_outline->Close();
+	if (m_search) m_search->Close();
 	if (m_scm) m_scm->Close();
 	if (m_explorer) m_explorer->Close();
 	for (auto& page : m_pages) page.attached = nullptr;
@@ -94,6 +100,7 @@ HWND CViewContainerPages::PageWindow(const Page& page) const noexcept
 {
 	if (page.id == pageIds::Explorer) return m_explorer ? m_explorer->GetHwnd() : nullptr;
 	if (page.id == pageIds::SourceControl) return m_scm ? m_scm->GetHwnd() : nullptr;
+	if (page.id == pageIds::Search) return m_search ? m_search->GetHwnd() : nullptr;
 	return nullptr;
 }
 
@@ -123,6 +130,9 @@ void CViewContainerPages::SetPageVisible(std::string_view containerId, bool visi
 		if (m_outline) m_outline->SetVisible(visible && m_outlineExpanded);
 	} else if (page->id == pageIds::SourceControl && m_scm) {
 		m_scm->SetVisible(visible);
+		if (visible) RedrawVisiblePage(PageWindow(*page));
+	} else if (page->id == pageIds::Search && m_search) {
+		m_search->SetVisible(visible);
 		if (visible) RedrawVisiblePage(PageWindow(*page));
 	}
 }
@@ -184,6 +194,7 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 	}
 	if (m_outline) m_outline->SetPalette(palette);
 	if (m_scm) m_scm->SetPalette(palette);
+	if (m_search) m_search->SetPalette(palette);
 }
 
 std::wstring CViewContainerPages::PageTitle(std::string_view containerId) const
@@ -196,9 +207,38 @@ void CViewContainerPages::RefreshStrings()
 {
 	if (m_explorer) m_explorer->RefreshStrings();
 	if (m_scm) m_scm->RefreshStrings();
+	ApplySearchTexts();
 	for (const auto& page : m_pages) {
 		if (page.attached != nullptr) RedrawVisiblePage(PageWindow(page));
 	}
+}
+
+//! The view owns no resource ids, so the composition layer resolves every
+//! localized string and hands it over as one value.
+void CViewContainerPages::ApplySearchTexts()
+{
+	if (!m_search) return;
+	search::SearchViewTexts texts;
+	texts.searchPlaceholder = LS(STR_WORKBENCH_SEARCH_PLACEHOLDER);
+	texts.replacePlaceholder = LS(STR_WORKBENCH_SEARCH_REPLACE_PLACEHOLDER);
+	texts.toggleReplace = LS(STR_WORKBENCH_SEARCH_TOGGLE_REPLACE);
+	texts.matchCase = LS(STR_WORKBENCH_SEARCH_MATCH_CASE);
+	texts.wholeWord = LS(STR_WORKBENCH_SEARCH_WHOLE_WORD);
+	texts.useRegex = LS(STR_WORKBENCH_SEARCH_USE_REGEX);
+	texts.preserveCase = LS(STR_WORKBENCH_SEARCH_PRESERVE_CASE);
+	texts.replaceAll = LS(STR_WORKBENCH_SEARCH_REPLACE_ALL);
+	texts.replaceOne = LS(STR_WORKBENCH_SEARCH_REPLACE_ONE);
+	texts.replaceInFile = LS(STR_WORKBENCH_SEARCH_REPLACE_IN_FILE);
+	texts.dismiss = LS(STR_WORKBENCH_SEARCH_DISMISS);
+	texts.noResults = LS(STR_WORKBENCH_SEARCH_NO_RESULTS);
+	texts.resultSummary = LS(STR_WORKBENCH_SEARCH_RESULT_SUMMARY);
+	texts.searching = LS(STR_WORKBENCH_SEARCH_SEARCHING);
+	texts.limitHit = LS(STR_WORKBENCH_SEARCH_LIMIT_HIT);
+	texts.regexUnavailable = LS(STR_WORKBENCH_SEARCH_REGEX_UNAVAILABLE);
+	texts.invalidPattern = LS(STR_WORKBENCH_SEARCH_INVALID_PATTERN);
+	texts.noWorkspace = LS(STR_WORKBENCH_SEARCH_NO_WORKSPACE);
+	texts.replaceFailed = LS(STR_WORKBENCH_SEARCH_REPLACE_FAILED);
+	m_search->SetTexts(std::move(texts));
 }
 
 } // namespace workbench::viewcontainer

@@ -40,9 +40,9 @@ struct TerminalTabSnapshot {
 	//! ${process} source: the launch executable stem. Never overwritten by the
 	//! process, so it stays a stable name the presentation layer can fall back to.
 	std::wstring processName;
-	//! Stable executable/profile name used by the terminal panel chrome. Kept
+	//! Stable executable/profile identity used as the presentation fallback. Kept
 	//! separate from processName so the two can diverge once real terminal
-	//! profiles exist.
+	//! profiles exist; visible chrome may prefer a resolved OSC title.
 	std::wstring profileLabel;
 	//! ${sequence} source: the raw OSC 0/2 title. This is not a display title;
 	//! TerminalTabPresentation decides whether any of it reaches the tab.

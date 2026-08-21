@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from sakura_build_lib.abi_fixture import ABI_FIXTURES, run_abi_fixture
 from sakura_build_lib.checkout_invariance import verify_checkout_invariance
@@ -602,6 +602,34 @@ def _ensure_package_closure(
     )
 
 
+def production_package_environment(
+    environment: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Return the environment contract required by production packaging.
+
+    Production packaging always uses the Rust implementation.  The MinGW-only
+    C++ compatibility backend and the removed ``both`` mode are rejected
+    before package restore or compilation.  The selected backend is returned
+    explicitly so a stale ambient environment cannot change the package after
+    validation.
+    """
+    source = os.environ if environment is None else environment
+    backend = source.get("SAKURA_UTF16_BACKEND")
+    if backend not in (None, "", "rust"):
+        raise BuildError(
+            "UTF16_PRODUCTION_BACKEND_INVALID",
+            "SAKURA_UTF16_PRODUCTION_PACKAGE=true requires "
+            f"SAKURA_UTF16_BACKEND=rust; got {backend}",
+            EXIT_USAGE,
+        )
+    selected_backend = "rust" if backend in (None, "") else backend
+    return {
+        "SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1",
+        "SAKURA_UTF16_BACKEND": selected_backend,
+        "SAKURA_UTF16_PRODUCTION_PACKAGE": "true",
+    }
+
+
 def _run_build(args, graph, events: EventWriter) -> int:
     repo = graph.repo_root
     command = args.build_command
@@ -611,6 +639,7 @@ def _run_build(args, graph, events: EventWriter) -> int:
         return 0 if result["ok"] else EXIT_BUILD
     if command in {"dev", "solution", "distribution"}:
         validate_legacy_pair(args.platform, args.configuration, "x64")
+        env = production_package_environment() if command == "distribution" else {}
         package_roots = ("sakura_app", "tests1") if command == "solution" else ("sakura_app",)
         _ensure_package_closure(
             graph,
@@ -635,7 +664,6 @@ def _run_build(args, graph, events: EventWriter) -> int:
             )
         else:
             commands = distribution_commands(repo, args.platform, args.configuration, args.jobs)
-        env = {"SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1"} if command == "distribution" else {}
         result = run_commands(commands, repo, dry_run=args.dry_run, events=events, environment=env)
         if result or args.dry_run:
             return result
@@ -785,6 +813,11 @@ def _run_compat(args, graph, events: EventWriter) -> int:
             environment=mingw_environment(),
         )
     validate_legacy_pair(platform, configuration, "x64")
+    package_environment = (
+        production_package_environment()
+        if args.entrypoint == "build-all"
+        else {}
+    )
     package_roots = ("sakura_app", "tests1") if args.entrypoint == "build-sln" else ("sakura_app",)
     _ensure_package_closure(
         graph,
@@ -811,7 +844,7 @@ def _run_compat(args, graph, events: EventWriter) -> int:
         env = {}
     else:
         commands = distribution_commands(graph.repo_root, platform, configuration, compat_jobs)
-        env = {"SAKURA_GENERATE_ASSEMBLY_LISTINGS": "1"}
+        env = package_environment
     return run_commands(commands, graph.repo_root, dry_run=False, events=events, environment=env)
 
 

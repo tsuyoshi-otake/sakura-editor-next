@@ -15,6 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
 #include <mutex>
 #include <thread>
 
@@ -197,6 +198,49 @@ TEST(TerminalTool, DefersFirstSessionUntilActivationAndKeepsItWhileDeactivated)
 	EXPECT_EQ(terminal::TerminalSessionState::Running, tool.Tabs()[0].state);
 	tool.Close();
 	EXPECT_EQ(1, harness.backends[0]->closeCalls.load());
+}
+
+TEST(TerminalTool, ScreenPresetCreatesAndMovesBetweenTerminalGroups)
+{
+	ToolHarness harness;
+	terminal::CTerminalTool tool(harness.Dependencies());
+	tool.SetShortcutPreset(terminal::TerminalShortcutPreset::Screen);
+	tool.Activate();
+
+	ASSERT_EQ(1u, tool.TabCount());
+	const auto first = tool.ActiveTerminalId();
+	ASSERT_TRUE(first.has_value());
+
+	const terminal::TerminalPresetKey prefix{ 'A', false, true, false };
+	const terminal::TerminalPresetKey newTerminal{ 'C', false, false, false };
+	const terminal::TerminalPresetKey nextTerminalBySpace{ VK_SPACE, false, false, false };
+	const terminal::TerminalPresetKey nextTerminal{ 'N', false, false, false };
+	const terminal::TerminalPresetKey previousTerminal{ 'P', false, false, false };
+
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(newTerminal));
+	ASSERT_EQ(2u, tool.TabCount());
+	const auto second = tool.ActiveTerminalId();
+	ASSERT_TRUE(second.has_value());
+	EXPECT_NE(*first, *second);
+
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(previousTerminal));
+	EXPECT_EQ(first, tool.ActiveTerminalId());
+
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(nextTerminalBySpace));
+	EXPECT_EQ(second, tool.ActiveTerminalId());
+
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(nextTerminal));
+	EXPECT_EQ(first, tool.ActiveTerminalId());
+
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(prefix));
+	ASSERT_TRUE(tool.DispatchShortcutPresetKey(previousTerminal));
+	EXPECT_EQ(second, tool.ActiveTerminalId());
+
+	tool.Close();
 }
 
 TEST(TerminalTool, DefersRendererUntilItsFirstNonEmptyLayout)
@@ -508,7 +552,7 @@ TEST(TerminalTool, RestoredVisiblePanelStartsExactlyOneSessionWithoutTakingFocus
 TEST(TerminalTool, FirstOutputDrainDoesNotWaitForFrameTimer)
 {
 	ToolHarness harness;
-	harness.scriptedOutput = "\x1b]0;Immediate response\x07";
+	harness.scriptedOutput = "\x1b]0;Claude Code\x07";
 	const HWND parent = CreateHiddenParentWindow();
 	ASSERT_NE(nullptr, parent);
 
@@ -531,7 +575,8 @@ TEST(TerminalTool, FirstOutputDrainDoesNotWaitForFrameTimer)
 	ASSERT_EQ(1u, tool.Tabs().size());
 	// This test owns drain latency, not display policy: the raw OSC title is what
 	// proves the leading drain ran, and the tab title is resolved elsewhere.
-	EXPECT_EQ(L"Immediate response", tool.Tabs().front().sequenceTitle);
+	EXPECT_EQ(L"Claude Code", tool.Tabs().front().sequenceTitle);
+	EXPECT_EQ(L"Claude Code", tool.ActiveTerminalTitle());
 
 	tool.Close();
 	::DestroyWindow(parent);
@@ -574,9 +619,9 @@ TEST(TerminalTool, DrainReportsCompletedSynchronizedFrameEvenWhenNextFrameIsOpen
 	manager.Close();
 }
 
-//! The OSC title is stored raw. A recognized Agent CLI still reaches the tab
-//! title through terminal.integrated.tabs.allowAgentCliTitle, while the stable
-//! process/profile name it would otherwise overwrite stays intact.
+//! The OSC title is stored raw. A recognized Agent CLI reaches the visible tab
+//! presentation through terminal.integrated.tabs.allowAgentCliTitle, while the
+//! stable process/profile identity remains available as its fallback.
 TEST(TerminalTool, OscTitleDoesNotReplaceStableHeaderProfileName)
 {
 	ToolHarness harness;
@@ -768,6 +813,8 @@ TEST(TerminalTool, SplitCreatesThreeNativeViewportsAndRightTerminalList)
 	EXPECT_GT(firstBefore.right - firstBefore.left, 200);
 	EXPECT_GT(secondBefore.right - secondBefore.left, 200);
 	EXPECT_GT(thirdBefore.right - thirdBefore.left, 200);
+	EXPECT_EQ(firstBefore.right - firstBefore.left, secondBefore.right - secondBefore.left);
+	EXPECT_EQ(secondBefore.right - secondBefore.left, thirdBefore.right - thirdBefore.left);
 	const RECT tabs = tool.TerminalTabsBounds();
 	EXPECT_LT(tabs.left, tabs.right);
 	EXPECT_EQ(120, tabs.right - tabs.left);
@@ -812,6 +859,46 @@ TEST(TerminalTool, SplitCreatesThreeNativeViewportsAndRightTerminalList)
 	EXPECT_TRUE(tool.CloseTerminalSplit());
 	EXPECT_EQ(2u, tool.VisiblePaneCount());
 	EXPECT_TRUE(tool.HasTerminalTabsList());
+	tool.Close();
+	::DestroyWindow(parent);
+}
+
+TEST(TerminalTool, SplitDownOnlySplitsTheFocusedPane)
+{
+	ToolHarness harness;
+	const HWND parent = CreateHiddenParentWindow();
+	ASSERT_NE(nullptr, parent);
+	terminal::CTerminalTool tool(harness.Dependencies());
+	ASSERT_TRUE(tool.Create(parent));
+	tool.Layout({ 0, 0, 900, 420 }, 96);
+	tool.Activate();
+	ASSERT_TRUE(tool.SplitTerminalRight());
+	ASSERT_TRUE(tool.SplitTerminalDown());
+	EXPECT_EQ(terminal::TerminalPaneOrientation::Vertical, tool.ActivePaneOrientation());
+
+	const HWND first = ::FindWindowExW(tool.GetHwnd(), nullptr, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, first);
+	const HWND second = ::FindWindowExW(tool.GetHwnd(), first, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, second);
+	const HWND third = ::FindWindowExW(tool.GetHwnd(), second, L"SakuraNativeTerminalWindow", nullptr);
+	ASSERT_NE(nullptr, third);
+	RECT firstRect{};
+	RECT secondRect{};
+	RECT thirdRect{};
+	ASSERT_TRUE(::GetWindowRect(first, &firstRect));
+	ASSERT_TRUE(::GetWindowRect(second, &secondRect));
+	ASSERT_TRUE(::GetWindowRect(third, &thirdRect));
+	EXPECT_EQ(firstRect.top, secondRect.top);
+	EXPECT_EQ(firstRect.bottom, thirdRect.bottom);
+	EXPECT_LT(firstRect.right, secondRect.left);
+	EXPECT_EQ(secondRect.left, thirdRect.left);
+	EXPECT_EQ(secondRect.right, thirdRect.right);
+	// An odd client width can leave the two integer pixel rectangles one pixel
+	// apart even though the split weights are equal.
+	EXPECT_LE(std::abs((firstRect.right - firstRect.left) - (secondRect.right - secondRect.left)), 1);
+	EXPECT_LT(secondRect.bottom, thirdRect.top);
+	EXPECT_EQ(secondRect.bottom - secondRect.top, thirdRect.bottom - thirdRect.top);
+
 	tool.Close();
 	::DestroyWindow(parent);
 }

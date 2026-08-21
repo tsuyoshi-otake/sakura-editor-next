@@ -92,6 +92,7 @@ TerminalPresetResolution ResolveScreen( const TerminalPresetKey& key ) noexcept
 	if( IsLetter(key, 'X') ) return Action(TerminalPresetAction::ClosePane);
 	if( IsLetter(key, 'K') ) return Action(TerminalPresetAction::CloseTerminal);
 	if( key.virtualKey == VK_TAB ) return Action(TerminalPresetAction::NextPane);
+	if( key.virtualKey == VK_SPACE ) return Action(TerminalPresetAction::NextTerminal);
 	if( IsLetter(key, 'N') ) return Action(TerminalPresetAction::NextTerminal);
 	if( IsLetter(key, 'P') ) return Action(TerminalPresetAction::PreviousTerminal);
 	return Swallowed();

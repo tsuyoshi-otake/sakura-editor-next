@@ -9,6 +9,7 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -39,6 +40,10 @@ struct GitHistoryItem final {
 	std::wstring id;
 	std::vector<std::wstring> parentIds;
 	std::wstring subject;
+	//! The commit's full message (`%B`), which is what upstream's `Copy Commit
+	//! Message` puts on the clipboard. Kept separate from `subject` because a
+	//! one-line row and a clipboard payload are not the same text.
+	std::wstring message;
 	std::wstring authorName;
 	std::wstring authorEmail;
 	//! Author date, seconds since the epoch, as `%at` reports it.
@@ -60,7 +65,9 @@ constexpr wchar_t kGitHistoryFieldSeparator = L'\x1f';
 constexpr wchar_t kGitHistoryRecordSeparator = L'\x1e';
 
 //! `--format=` for the query above: id, parents, refs, author, email, date,
-//! subject. The order is the order `ParseGitHistory` reads.
+//! subject, full message. The order is the order `ParseGitHistory` reads, and
+//! the multi-line `%B` is last so its newlines cannot be mistaken for a field
+//! boundary.
 [[nodiscard]] std::wstring MakeGitHistoryFormat();
 
 //! `log` arguments for the newest `maximumCount` commits reachable from HEAD.
@@ -113,5 +120,20 @@ constexpr std::size_t kScmGraphColorCount = 5;
 //! are merged away, and every additional parent opens a new lane.
 //!
 [[nodiscard]] std::vector<ScmGraphRow> BuildScmHistoryGraph(const std::vector<GitHistoryItem>& items);
+
+//!
+//! @brief The command payload naming one history item.
+//!
+//! Upstream's `scm/historyItem/context` commands receive the item itself. A
+//! command here carries a serialized payload instead, and a commit is fully
+//! identified by its id, so the payload is that id as a JSON string and nothing
+//! else. The receiver looks the commit up in the history it already holds
+//! rather than trusting a caller's copy of its message.
+//!
+[[nodiscard]] std::string BuildGitHistoryItemArguments(std::wstring_view historyItemId);
+
+//! Nothing when the payload is not one JSON string holding a plausible commit
+//! id: a caller that cannot name a commit must not have one chosen for it.
+[[nodiscard]] std::optional<std::wstring> ParseGitHistoryItemArguments(std::string_view argumentsJson);
 
 } // namespace workbench::scm

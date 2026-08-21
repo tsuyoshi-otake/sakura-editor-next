@@ -1,0 +1,66 @@
+# Early UTF-16 backend contract validation.
+#
+# Rust is the only MSVC backend. The legacy C++ kernels remain only for the
+# experimental MinGW path, which still has no pinned GNU Rust target in the
+# repository toolchain contract.
+
+if(DEFINED SAKURA_UTF16_BACKEND)
+  set(_sakura_utf16_backend_value "${SAKURA_UTF16_BACKEND}")
+else()
+  set(_sakura_utf16_backend_value "$ENV{SAKURA_UTF16_BACKEND}")
+  if(_sakura_utf16_backend_value STREQUAL "")
+    # This file is included before project(), so compiler-specific variables
+    # such as MINGW are not available yet. The canonical MinGW runner passes
+    # cpp explicitly; MSVC and all other CMake paths default to Rust.
+    set(_sakura_utf16_backend_value "rust")
+  endif()
+endif()
+set(
+  SAKURA_UTF16_BACKEND
+  "${_sakura_utf16_backend_value}"
+  CACHE STRING "UTF-16 backend: rust for MSVC, cpp for experimental MinGW"
+)
+set_property(CACHE SAKURA_UTF16_BACKEND PROPERTY STRINGS cpp rust)
+if(NOT SAKURA_UTF16_BACKEND STREQUAL "cpp"
+   AND NOT SAKURA_UTF16_BACKEND STREQUAL "rust")
+  message(FATAL_ERROR
+    "SAKURA_UTF16_BACKEND must be exactly cpp or rust; "
+    "auto and unknown values are rejected")
+endif()
+string(TOUPPER
+  "$ENV{SAKURA_UTF16_PRODUCTION_PACKAGE}"
+  _sakura_utf16_production_environment_value
+)
+if(DEFINED SAKURA_UTF16_PRODUCTION_PACKAGE)
+  set(_sakura_utf16_production_value "${SAKURA_UTF16_PRODUCTION_PACKAGE}")
+elseif(_sakura_utf16_production_environment_value MATCHES "^(1|ON|TRUE|YES)$")
+  set(_sakura_utf16_production_value ON)
+else()
+  set(_sakura_utf16_production_value OFF)
+endif()
+set(SAKURA_UTF16_PRODUCTION_PACKAGE
+  "${_sakura_utf16_production_value}"
+  CACHE BOOL "Production packaging contract; MSVC always uses Rust"
+)
+if(SAKURA_UTF16_BACKEND STREQUAL "cpp" AND SAKURA_UTF16_PRODUCTION_PACKAGE)
+  message(FATAL_ERROR
+    "The C++ UTF-16 backend cannot package production")
+endif()
+
+option(
+  SAKURA_UTF16_BENCHMARK_TELEMETRY
+  "Compile the explicit test-only actual-caller histogram hooks"
+  OFF
+)
+if(SAKURA_UTF16_BENCHMARK_TELEMETRY AND SAKURA_UTF16_PRODUCTION_PACKAGE)
+  message(FATAL_ERROR
+    "SAKURA_UTF16_BENCHMARK_TELEMETRY is test-only and cannot package production")
+endif()
+
+if(SAKURA_UTF16_BACKEND STREQUAL "rust")
+  find_program(SAKURA_CARGO_EXECUTABLE cargo)
+  if(NOT SAKURA_CARGO_EXECUTABLE)
+    message(FATAL_ERROR
+      "SAKURA_UTF16_BACKEND=rust requires Cargo; no fallback is permitted")
+  endif()
+endif()

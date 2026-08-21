@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 /*
 	Copyright (C) 2026, Sakura Editor Organization
 
@@ -55,6 +55,7 @@ enum class BuiltinActiveSurface : std::uint8_t {
 	Editor,
 	Explorer,
 	Outline,
+	Search,
 	SourceControl,
 	Terminal,
 	Problems,

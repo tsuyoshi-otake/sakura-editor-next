@@ -20,6 +20,8 @@ enum class Isa : std::uint8_t {
 struct Capabilities {
 	bool avx{};
 	bool avx2{};
+	// This is the global AVX-512 tier. AVX2 remains a prerequisite because
+	// the C++ AVX-512 byte scanner delegates its tail to the AVX2 scanner.
 	bool avx512{};
 };
 
@@ -66,6 +68,12 @@ struct Dispatch {
 	FindUtf16CharFunction findUtf16Char{};
 	Utf16ScanPolicy utf16ScanPolicy{};
 	Utf8ConversionPolicy utf8ConversionPolicy{};
+	const char* utf16Backend{"rust"};
+	const char* utf16BuildMode{"rust"};
+	const char* utf16CrOrLfImplementation{"rust-avx128-v1"};
+	const char* utf16MarkdownImplementation{"rust-avx128-v1"};
+	const char* utf16FindCharImplementation{"rust-avx128-v1"};
+	std::uint32_t utf16AbiVersion{1};
 	std::int64_t initializationTicks{};
 };
 

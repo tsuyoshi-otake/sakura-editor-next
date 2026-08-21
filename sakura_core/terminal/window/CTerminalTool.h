@@ -50,8 +50,8 @@ struct TerminalWorkspaceResetResult {
 	std::uint32_t errorCode{};
 };
 
-//! Bottom-panel terminal tool with flat split groups (horizontal or vertical)
-//! and a right-side terminal instance list. Pane count is unbounded.
+//! Bottom-panel terminal tool with recursive split groups and a right-side
+//! terminal instance list. Pane count is unbounded.
 class CTerminalTool final : public workbench::IWorkbenchTool {
 public:
 	explicit CTerminalTool( TerminalTabManagerDependencies dependencies = {} );
@@ -111,6 +111,9 @@ public:
 	[[nodiscard]] TerminalPaneOrientation ActivePaneOrientation() const noexcept;
 	[[nodiscard]] std::vector<TerminalTabSnapshot> Tabs() const;
 	[[nodiscard]] std::optional<std::uint64_t> ActiveTerminalId() const noexcept;
+	//! Resolves the focused terminal's display title for shared panel chrome.
+	//! Empty means that the caller should keep its stable "Terminal" label.
+	[[nodiscard]] std::wstring ActiveTerminalTitle() const;
 	[[nodiscard]] std::size_t TabCount() const noexcept;
 	//! Number of native terminal viewports in the selected terminal group.
 	[[nodiscard]] std::size_t VisiblePaneCount() const noexcept;

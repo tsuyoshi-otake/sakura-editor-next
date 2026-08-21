@@ -3758,8 +3758,9 @@ TEST(GitHistoryModel, ParsesEveryFieldAndKeepsASubjectThatContainsSpaces)
 	// would otherwise be read as one longer hexadecimal escape.
 	const std::string output =
 		"a1\x1f" "b2 c3\x1f" "HEAD -> main, origin/main, tag: v1.0\x1f" "Ada\x1f"
-		"ada@example.com\x1f" "1700000000\x1f" "Fix: the thing, twice\x1e"
-		"b2\x1f\x1f\x1f" "Ada\x1f" "ada@example.com\x1f" "1699000000\x1f" "Root\x1e";
+		"ada@example.com\x1f" "1700000000\x1f" "Fix: the thing, twice\x1f"
+		"Fix: the thing, twice\n\nAnd say why.\n\x1e"
+		"b2\x1f\x1f\x1f" "Ada\x1f" "ada@example.com\x1f" "1699000000\x1f" "Root\x1f" "Root\n\x1e";
 	const auto items = ParseGitHistory(output);
 	ASSERT_EQ(2u, items.size());
 	EXPECT_EQ(L"a1", items[0].id);
@@ -3769,6 +3770,10 @@ TEST(GitHistoryModel, ParsesEveryFieldAndKeepsASubjectThatContainsSpaces)
 	EXPECT_EQ(L"Ada", items[0].authorName);
 	EXPECT_EQ(1700000000, items[0].authorTimestamp);
 	EXPECT_EQ(L"Fix: the thing, twice", items[0].subject);
+	// The full message keeps the body and its blank line, and loses only git's
+	// trailing newline: it is the clipboard payload, not the row's label.
+	EXPECT_EQ(L"Fix: the thing, twice\n\nAnd say why.", items[0].message);
+	EXPECT_EQ(L"Root", items[1].message);
 	// The root commit has no parents and no decorations; both are empty fields,
 	// not missing ones.
 	EXPECT_TRUE(items[1].parentIds.empty());

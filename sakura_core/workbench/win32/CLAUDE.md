@@ -57,8 +57,10 @@ policy, profile state, or native control lifetime.
   editor-only fallback focus projects to the focus-only Editor surface.
 - Unsupported active pairs and malformed active/focus hierarchies return one
   typed terminal failure with no partial logical projection. Unsupported
-  surfaces are Search, RunAndDebug, Ports, DebugConsole, and an AuxiliaryBar
-  placement of a Panel-only container.
+  surfaces are RunAndDebug, Ports, DebugConsole, and an AuxiliaryBar
+  placement of a Panel-only container. Search is supported: `viewContainer::Search`
+  / `view::Search` are mapped in `kSideBarLocations` and project into either side
+  bar exactly as Explorer and Source Control do.
 
 ## Dependency and Completion Boundary
 
