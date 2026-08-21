@@ -226,6 +226,9 @@ TEST(BuiltinPartProjection, ProjectsEverySupportedContainerViewPair)
 		ExpectedSurface{ workbench::layout::ids::viewContainer::Explorer,
 			workbench::layout::ids::view::Outline,
 			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::Outline },
+		ExpectedSurface{ workbench::layout::ids::viewContainer::Search,
+			workbench::layout::ids::view::Search,
+			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::Search },
 		ExpectedSurface{ workbench::layout::ids::viewContainer::SourceControl,
 			workbench::layout::ids::view::SourceControl,
 			workbench::layout::EWorkbenchViewContainerLocation::SideBar, BuiltinActiveSurface::SourceControl },
@@ -304,8 +307,6 @@ TEST(BuiltinPartProjection, RejectsUnsupportedActiveSurfaceWithoutAffectingPhysi
 		workbench::layout::EWorkbenchViewContainerLocation location;
 	};
 	constexpr std::array unsupported{
-		UnsupportedSurface{ workbench::layout::ids::viewContainer::Search, workbench::layout::ids::view::Search,
-			workbench::layout::EWorkbenchViewContainerLocation::SideBar },
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::RunAndDebug,
 			workbench::layout::ids::view::DebugVariables, workbench::layout::EWorkbenchViewContainerLocation::SideBar },
 		UnsupportedSurface{ workbench::layout::ids::viewContainer::Ports, workbench::layout::ids::view::Ports,
@@ -389,7 +390,6 @@ TEST(BuiltinPartProjection, LeavesFocusOnAContributedViewContainerUnprojectedIns
 TEST(BuiltinPartProjection, StillFailsClosedForBuiltinViewContainersWithNoNativeSurface)
 {
 	constexpr std::array unimplemented{
-		std::pair{ workbench::layout::ids::viewContainer::Search, workbench::layout::ids::view::Search },
 		std::pair{ workbench::layout::ids::viewContainer::RunAndDebug,
 			workbench::layout::ids::view::DebugVariables },
 	};
