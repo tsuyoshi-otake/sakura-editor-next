@@ -904,7 +904,7 @@ jobs:
           "$pin-",
           [StringComparison]::Ordinal
         )) {
-          throw "rust-toolchain.toml did not select $pin: $activeToolchain"
+          throw "rust-toolchain.toml did not select ${pin}: $activeToolchain"
         }
         rustc $toolchainArgument -Vv
         if ($LASTEXITCODE -ne 0) {
