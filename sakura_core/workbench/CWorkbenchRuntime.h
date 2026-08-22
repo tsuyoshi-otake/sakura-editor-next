@@ -109,7 +109,7 @@ public:
 	[[nodiscard]] const statusbar::StatusbarViewModel& StatusbarState() const noexcept override { return m_statusbarState; }
 	[[nodiscard]] statusbar::StatusbarMementoSaveResult PersistStatusbarVisibility() override;
 	[[nodiscard]] workspace::WorkspaceConfigurationRuntimeSnapshot WorkspaceConfiguration() const override;
-	[[nodiscard]] const workspace::CWorkspaceArtifactDocumentService& WorkspaceArtifacts() const noexcept override { return m_workspaceArtifacts; }
+	[[nodiscard]] const workspace::CWorkspaceArtifactDocumentService& WorkspaceArtifacts() const noexcept override { return *m_workspaceArtifacts; }
 	[[nodiscard]] problems::MarkerService* Markers() noexcept override;
 	[[nodiscard]] const problems::MarkerService* Markers() const noexcept override;
 	[[nodiscard]] output::OutputService* Output() noexcept override;
@@ -199,7 +199,7 @@ private:
 	bool m_statusbarPersistenceReady = false;
 	std::atomic<std::uint64_t> m_layoutBaselineRevision { 0 };
 	bool m_layoutPersistenceReady = false;
-	std::unique_ptr<platform::filesystem::IFileService> m_fileService;
+	std::shared_ptr<platform::filesystem::IFileService> m_fileService;
 	std::unique_ptr<workspace::IWorkspaceEditingService> m_workspaceEditing;
 	std::unique_ptr<recent::IRecentlyOpenedWorkspaceService> m_recentlyOpenedWorkspaces;
 	std::unique_ptr<config::CConfigurationFileSourceController> m_fileSources;
@@ -208,9 +208,9 @@ private:
 	//! only resource classes; this runtime resnapshots and applies through the
 	//! existing revisioned file-source controller.
 	std::unique_ptr<config::CConfigurationFileWatchController> m_fileWatches;
-	//! Keep the pure document service before its file-backed controller: the
-	//! controller borrows this service and must be joined before it is stopped.
-	workspace::CWorkspaceArtifactDocumentService m_workspaceArtifacts;
+	//! Keep the pure document service alive through the file-backed controller;
+	//! retired controller workers hold a shared owner until finalization.
+	std::shared_ptr<workspace::CWorkspaceArtifactDocumentService> m_workspaceArtifacts;
 	std::unique_ptr<workspace::CWorkspaceArtifactDocumentSourceController> m_workspaceArtifactSources;
 	//! Catalog selection is semantic-folder scoped and atomically derived from
 	//! the artifact service. Execution owns copied definitions, never catalogs.

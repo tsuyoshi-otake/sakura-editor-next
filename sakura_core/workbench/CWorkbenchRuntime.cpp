@@ -21,7 +21,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <condition_variable>
 #include <limits>
 #include <utility>
 
@@ -50,7 +49,7 @@ constexpr std::string_view kWorkspaceSettingsSourceId = "workspace.settings";
 class StopAwareFileService final : public platform::filesystem::IFileService {
 public:
 	StopAwareFileService(
-		std::unique_ptr<platform::filesystem::IFileService> inner,
+		std::shared_ptr<platform::filesystem::IFileService> inner,
 		std::shared_ptr<std::atomic_bool> stopRequested)
 		: m_inner(std::move(inner))
 		, m_stopRequested(std::move(stopRequested))
@@ -117,7 +116,7 @@ private:
 		return m_stopRequested && m_stopRequested->load(std::memory_order_acquire);
 	}
 
-	std::unique_ptr<platform::filesystem::IFileService> m_inner;
+	std::shared_ptr<platform::filesystem::IFileService> m_inner;
 	std::shared_ptr<std::atomic_bool> m_stopRequested;
 };
 
@@ -276,6 +275,7 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 	, m_recentlyOpenedWorkspaces(dependencies.recentlyOpenedWorkspaceStore
 		? std::make_unique<recent::CRecentlyOpenedWorkspaceService>(std::move(dependencies.recentlyOpenedWorkspaceStore))
 		: nullptr)
+	, m_workspaceArtifacts(std::make_shared<workspace::CWorkspaceArtifactDocumentService>())
 	, m_taskExecution(std::move(dependencies.taskExecutionSessionFactory))
 	, m_markers(problems::MarkerServiceLimits {
 		.maximumOwners = 128U,
@@ -309,11 +309,11 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 				? "local filesystem provider registration failed"
 				: std::string(files.diagnostic.begin(), files.diagnostic.end());
 		} else {
-			m_fileService = std::move(*files.value);
+		m_fileService = std::shared_ptr<platform::filesystem::IFileService>(std::move(*files.value));
 		}
 	}
 	if (m_fileService) {
-		m_fileService = std::make_unique<StopAwareFileService>(std::move(m_fileService), m_stopRequested);
+		m_fileService = std::make_shared<StopAwareFileService>(std::move(m_fileService), m_stopRequested);
 		m_workspaceEditing = std::make_unique<workspace::CWorkspaceEditingService>(*m_fileService);
 		m_fileSources = std::make_unique<config::CConfigurationFileSourceController>(
 			*m_fileService, m_configuration);
@@ -321,10 +321,10 @@ CWorkbenchRuntime::CWorkbenchRuntime(
 			*m_fileService, *m_fileSources);
 		m_fileWatches = std::make_unique<config::CConfigurationFileWatchController>(*m_fileService);
 		m_workspaceArtifactSources = std::make_unique<workspace::CWorkspaceArtifactDocumentSourceController>(
-			*m_fileService, m_workspaceArtifacts);
+			m_fileService, m_workspaceArtifacts);
 	}
 	const auto gate = m_listenerGate;
-	m_workspaceArtifactSubscription = m_workspaceArtifacts.Subscribe(
+	m_workspaceArtifactSubscription = m_workspaceArtifacts->Subscribe(
 		[gate](const workspace::WorkspaceArtifactDocumentServiceSnapshot& snapshot) {
 			const auto copied = snapshot;
 			CWorkbenchRuntime::DispatchListener(gate, [copied](CWorkbenchRuntime& owner) {
@@ -1443,10 +1443,15 @@ void CWorkbenchRuntime::StartWorkspaceArtifacts(const config::WorkspaceContextSn
 		? snapshot.workspaceConfigUri : std::nullopt;
 	request.workspaceFolders.reserve(snapshot.folders.size());
 	for (const auto& folder : snapshot.folders) request.workspaceFolders.push_back(folder.uri);
-	const auto started = m_workspaceArtifactSources->Start(std::move(request), [this](const auto& result) {
-		// This callback deliberately reports aggregate, path-free state only. It
-		// must never request Stop because it runs on the controller dispatcher.
-		RecordWorkspaceArtifactSourceResult(result);
+	const auto gate = m_listenerGate;
+	const auto started = m_workspaceArtifactSources->Start(std::move(request), [gate](const auto& result) {
+		// The controller may retire its dispatcher after UI teardown begins. Copy
+		// the aggregate result and pass ownership through the runtime listener gate
+		// so no raw runtime pointer is retained by a retired worker.
+		const auto copied = result;
+		CWorkbenchRuntime::DispatchListener(gate, [copied](CWorkbenchRuntime& owner) {
+			owner.RecordWorkspaceArtifactSourceResult(copied);
+		});
 	});
 	if (started.Succeeded()) m_workspaceArtifactTopology = snapshot;
 	RecordWorkspaceArtifactSourceResult(started);
@@ -1486,7 +1491,7 @@ void CWorkbenchRuntime::ReconcileTaskCatalogs(const config::WorkspaceContextSnap
 {
 	if (IsStopRequested()) return;
 	try {
-		const auto reconciled = m_taskCatalogs.Reconcile(snapshot, m_workspaceArtifacts);
+		const auto reconciled = m_taskCatalogs.Reconcile(snapshot, *m_workspaceArtifacts);
 		if (IsStopRequested()
 			|| reconciled.status == tasks::EFolderTaskCatalogRegistryStatus::Stopped) return;
 
@@ -1724,18 +1729,19 @@ bool CWorkbenchRuntime::CompleteStopAfterListeners() noexcept
 		// and lifecycle lock. First disconnect Task catalog updates, then quiesce
 		// every running Task before stopping catalog and artifact ownership.
 		if (m_workspaceArtifactSubscription) {
-			m_workspaceArtifacts.Unsubscribe(*m_workspaceArtifactSubscription);
+			m_workspaceArtifacts->Unsubscribe(*m_workspaceArtifactSubscription);
 			m_workspaceArtifactSubscription.reset();
 		}
 		const auto taskStop = m_taskExecution.Stop();
 		if (taskStop.status == tasks::ETaskExecutionOperationStatus::Deferred
 			|| !m_taskExecution.Snapshot().stopped) return false;
 		(void)m_taskCatalogs.Stop();
-		// Join the controller before stopping its borrowed document service so no
-		// post-stop Apply can race either boundary.
+		// Transfer the controller's workers before stopping its shared document
+		// service. Retired workers retain shared ownership and are fenced against
+		// post-stop Apply without making this UI path wait for completion.
 		if (m_workspaceArtifactSources) (void)m_workspaceArtifactSources->Stop();
 		m_workspaceSubscription.Reset();
-		(void)m_workspaceArtifacts.Stop();
+		(void)m_workspaceArtifacts->Stop();
 		if (!StopOwnedServices()) return false;
 		PersistFinalLayoutMemento();
 		{

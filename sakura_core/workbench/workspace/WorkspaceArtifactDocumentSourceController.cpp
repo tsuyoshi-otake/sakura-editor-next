@@ -1,4 +1,6 @@
-/*! @file */
+/*! @file
+ * @brief File-backed, cancellable source adapter for workspace artifacts.
+ */
 /*
  * Copyright (C) 2026, Sakura Editor Organization
  *
@@ -14,7 +16,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <exception>
 #include <limits>
+#include <stdexcept>
 #include <utility>
 
 namespace workbench::workspace {
@@ -67,6 +71,55 @@ std::optional<Uri> ArtifactInFolder(const Uri& folder, EWorkspaceArtifactDocumen
 	return std::nullopt;
 }
 
+struct TopologyEntry final {
+	Uri root;
+	struct Target final {
+		std::optional<Uri> member;
+		bool rebuildOnRelevantChange = false;
+	};
+	std::vector<Target> targets;
+};
+
+bool SameTarget(const TopologyEntry::Target& entry,
+	const std::optional<Uri>& member, bool rebuildOnRelevantChange) noexcept
+{
+	return entry.rebuildOnRelevantChange == rebuildOnRelevantChange
+		&& entry.member.has_value() == member.has_value()
+		&& (!entry.member || UriIdentityService::IsEqual(*entry.member, *member));
+}
+
+std::vector<TopologyEntry> BuildTopology(const WorkspaceArtifactDocumentSourceRequest& request)
+{
+	std::vector<TopologyEntry> topology;
+	auto add = [&topology](const Uri& root, std::optional<Uri> member, bool rebuildOnRelevantChange) {
+		for (auto& existing : topology) {
+			if (!UriIdentityService::IsEqual(existing.root, root)) continue;
+			const auto duplicate = std::any_of(existing.targets.begin(), existing.targets.end(),
+				[&member, rebuildOnRelevantChange](const auto& target) {
+					return SameTarget(target, member, rebuildOnRelevantChange);
+				});
+			if (!duplicate) existing.targets.push_back({ std::move(member), rebuildOnRelevantChange });
+			return;
+		}
+		topology.push_back({ root, { { std::move(member), rebuildOnRelevantChange } } });
+	};
+
+	if (request.workspaceConfiguration) {
+		if (auto parent = ParentDirectory(*request.workspaceConfiguration)) {
+			add(*parent, request.workspaceConfiguration, false);
+		}
+	}
+	for (const auto& folder : request.workspaceFolders) {
+		auto vscode = VscodeDirectory(folder);
+		if (vscode) add(folder, vscode, true);
+		if (!vscode) continue;
+		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch }) {
+			if (auto artifact = ArtifactInFolder(folder, kind)) add(*vscode, std::move(artifact), false);
+		}
+	}
+	return topology;
+}
+
 } // namespace
 
 struct CWorkspaceArtifactDocumentSourceController::WatchSlot final {
@@ -75,11 +128,45 @@ struct CWorkspaceArtifactDocumentSourceController::WatchSlot final {
 		bool rebuildOnRelevantChange = false;
 	};
 
+	struct WatchHandle final {
+		std::unique_ptr<platform::filesystem::IFileWatch> watch;
+	};
+
 	explicit WatchSlot(Uri rootValue) : root(std::move(rootValue)) {}
 	Uri root;
 	std::vector<Target> targets;
-	std::unique_ptr<platform::filesystem::IFileWatch> watch;
+	std::shared_ptr<WatchHandle> handle;
 	std::thread worker;
+	std::optional<workbench::WorkerRetirementService::Reservation> workerRetirement;
+};
+
+struct CWorkspaceArtifactDocumentSourceController::SharedState final {
+	SharedState(
+		std::shared_ptr<platform::filesystem::IFileService> fileServiceValue,
+		std::shared_ptr<CWorkspaceArtifactDocumentService> documentServiceValue)
+		: fileService(std::move(fileServiceValue))
+		, documentService(std::move(documentServiceValue))
+	{
+	}
+
+	std::shared_ptr<platform::filesystem::IFileService> fileService;
+	std::shared_ptr<CWorkspaceArtifactDocumentService> documentService;
+	mutable std::mutex mutex;
+	std::condition_variable pending;
+	std::optional<WorkspaceArtifactDocumentSourceRequest> request;
+	ReloadCallback callback;
+	std::vector<std::shared_ptr<WatchSlot>> slots;
+	std::thread dispatcher;
+	std::optional<workbench::WorkerRetirementService::Reservation> dispatcherRetirement;
+	std::uint64_t nextRevision = 1;
+	bool started = false;
+	bool stopping = false;
+	bool rebuildRequested = false;
+	bool reloadPending = false;
+	bool rebuilding = false;
+	std::size_t activeDocumentOperations = 0;
+	std::size_t liveThreads = 0;
+	bool retirementFinalized = false;
 };
 
 struct CWorkspaceArtifactDocumentSourceController::ReloadOneResult final {
@@ -88,9 +175,11 @@ struct CWorkspaceArtifactDocumentSourceController::ReloadOneResult final {
 };
 
 CWorkspaceArtifactDocumentSourceController::CWorkspaceArtifactDocumentSourceController(
-	platform::filesystem::IFileService& fileService,
-	CWorkspaceArtifactDocumentService& documentService) noexcept
-	: m_fileService(fileService), m_documentService(documentService)
+	std::shared_ptr<platform::filesystem::IFileService> fileService,
+	std::shared_ptr<CWorkspaceArtifactDocumentService> documentService) noexcept
+	: m_fileService(std::move(fileService))
+	, m_documentService(std::move(documentService))
+	, m_state(std::make_shared<SharedState>(m_fileService, m_documentService))
 {
 }
 
@@ -119,33 +208,47 @@ WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController
 	const auto validity = ValidateRequest(request);
 	if (validity != EWorkspaceArtifactDocumentSourceStatus::Started) return { validity };
 	{
-		std::lock_guard lock(m_mutex);
-		if (m_dispatcher.joinable() && m_dispatcher.get_id() == std::this_thread::get_id()) {
+		const auto state = m_state;
+		std::lock_guard lock(state->mutex);
+		if (state->dispatcher.joinable() && state->dispatcher.get_id() == std::this_thread::get_id()) {
 			return { EWorkspaceArtifactDocumentSourceStatus::ReentrantStopDenied };
 		}
 	}
 	std::lock_guard lifecycleLock(m_lifecycleMutex);
-	const auto generation = request.generation;
 	const auto stopped = StopLocked();
 	if (!stopped.Succeeded() && stopped.status != EWorkspaceArtifactDocumentSourceStatus::NotStarted) return stopped;
+
+	const auto state = std::make_shared<SharedState>(m_fileService, m_documentService);
+	m_state = state;
+	auto dispatcherRetirement = workbench::WorkerRetirementService::Instance().TryReserve();
+	if (!dispatcherRetirement) return { EWorkspaceArtifactDocumentSourceStatus::RetirementUnavailable };
+	{
+		std::lock_guard lock(state->mutex);
+		state->request = std::move(request);
+		state->callback = std::move(callback);
+		state->dispatcherRetirement.emplace(std::move(*dispatcherRetirement));
+		state->started = true;
+	}
+
 	try {
-		{
-			std::lock_guard lock(m_mutex);
-			m_request = std::move(request);
-			m_callback = std::move(callback);
-			m_stopping = false;
-			m_started = true;
+		if (!state->fileService || !state->documentService) throw std::runtime_error("workspace artifact source dependencies are unavailable");
+		const auto generation = state->request->generation;
+		const auto generationResult = state->documentService->BeginGeneration(generation);
+		if (generationResult.status == EWorkspaceArtifactDocumentStatus::Stopped) {
+			throw std::runtime_error("workspace artifact document service is stopped");
 		}
-		(void)m_documentService.BeginGeneration(generation);
-		auto initial = ReloadSnapshot();
+		auto initial = ReloadSnapshot(state);
 		{
-			std::lock_guard lock(m_mutex);
-			StartWorkersLocked();
-		}
-		std::thread dispatcher(&CWorkspaceArtifactDocumentSourceController::DispatchMain, this);
-		{
-			std::lock_guard lock(m_mutex);
-			m_dispatcher = std::move(dispatcher);
+			std::lock_guard lock(state->mutex);
+			if (!StartWorkersLocked(state)) throw std::runtime_error("workspace artifact watch worker creation failed");
+			state->retirementFinalized = false;
+			++state->liveThreads;
+			try {
+				state->dispatcher = std::thread([state] { DispatchMain(state); });
+			} catch (...) {
+				--state->liveThreads;
+				throw;
+			}
 		}
 		initial.status = EWorkspaceArtifactDocumentSourceStatus::Started;
 		return initial;
@@ -161,85 +264,109 @@ WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController
 	const auto validity = ValidateRequest(request);
 	if (validity != EWorkspaceArtifactDocumentSourceStatus::Started) return { validity };
 	std::lock_guard lifecycleLock(m_lifecycleMutex);
+	const auto state = m_state;
 	const auto generation = request.generation;
 	{
-		std::lock_guard lock(m_mutex);
-		if (!m_started || m_stopping) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
-		if (!m_request || request.generation <= m_request->generation) return { EWorkspaceArtifactDocumentSourceStatus::InvalidRequest };
-		m_request = std::move(request);
-		m_rebuildRequested = true;
-		m_reloadPending = true;
+		std::lock_guard lock(state->mutex);
+		if (!state->started || state->stopping) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
+		if (!state->request || request.generation <= state->request->generation) return { EWorkspaceArtifactDocumentSourceStatus::InvalidRequest };
+		state->request = std::move(request);
+		state->rebuildRequested = true;
+		state->reloadPending = true;
 	}
-	(void)m_documentService.BeginGeneration(generation);
+	if (!state->documentService || state->documentService->BeginGeneration(generation).status == EWorkspaceArtifactDocumentStatus::Stopped) {
+		return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
+	}
 	{
-		std::lock_guard lock(m_mutex);
-		if (!m_started || m_stopping) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
-		m_pending.notify_one();
+		std::lock_guard lock(state->mutex);
+		if (!state->started || state->stopping) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
+		state->pending.notify_one();
 	}
 	return { EWorkspaceArtifactDocumentSourceStatus::Updated };
 }
 
 WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController::Reload() noexcept
 {
-	if (!CanDispatch()) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
-	return ReloadSnapshot();
+	const auto state = m_state;
+	if (!CanDispatch(state)) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
+	return ReloadSnapshot(state);
 }
 
-void CWorkspaceArtifactDocumentSourceController::StartWorkersLocked()
+bool CWorkspaceArtifactDocumentSourceController::StartWorkersLocked(const std::shared_ptr<SharedState>& state)
 {
-	if (!m_request) return;
-	auto add = [this](const Uri& root, std::optional<Uri> member, bool rebuildOnRelevantChange) {
-		for (const auto& existing : m_slots) {
-			if (!UriIdentityService::IsEqual(existing->root, root)) continue;
-			const auto duplicate = std::any_of(existing->targets.begin(), existing->targets.end(),
-				[&member, rebuildOnRelevantChange](const WatchSlot::Target& target) {
-					return target.rebuildOnRelevantChange == rebuildOnRelevantChange
-						&& target.member.has_value() == member.has_value()
-						&& (!target.member || UriIdentityService::IsEqual(*target.member, *member));
-				});
-			if (!duplicate) existing->targets.push_back({ std::move(member), rebuildOnRelevantChange });
-			return;
+	if (!state->request || !state->fileService) return false;
+	for (const auto& entry : BuildTopology(*state->request)) {
+		const auto duplicate = std::any_of(state->slots.begin(), state->slots.end(),
+			[&entry](const auto& slot) { return UriIdentityService::IsEqual(slot->root, entry.root); });
+		if (duplicate) continue;
+		auto retirement = workbench::WorkerRetirementService::Instance().TryReserve();
+		if (!retirement) continue; // Watch support is explicitly best effort.
+		platform::filesystem::FileResult<std::unique_ptr<platform::filesystem::IFileWatch>> watched;
+		try {
+			watched = state->fileService->Watch(entry.root, FileWatchOptions { .recursive = false });
+		} catch (...) {
+			continue;
 		}
-		auto watched = m_fileService.Watch(root, FileWatchOptions { .recursive = false });
-		if (!watched.Succeeded() || !watched.value) return;
-		auto slot = std::make_unique<WatchSlot>(root);
-		slot->targets.push_back({ std::move(member), rebuildOnRelevantChange });
-		slot->watch = std::move(*watched.value);
-		m_slots.push_back(std::move(slot));
-	};
+		if (!watched.Succeeded() || !watched.value) continue;
+		auto slot = std::make_shared<WatchSlot>(entry.root);
+		for (const auto& target : entry.targets) {
+			slot->targets.push_back({ target.member, target.rebuildOnRelevantChange });
+		}
+		slot->handle = std::make_shared<WatchSlot::WatchHandle>();
+		slot->handle->watch = std::move(*watched.value);
+		slot->workerRetirement.emplace(std::move(*retirement));
+		state->slots.push_back(std::move(slot));
+	}
 
-	if (m_request->workspaceConfiguration) {
-		if (auto parent = ParentDirectory(*m_request->workspaceConfiguration)) add(*parent, m_request->workspaceConfiguration, false);
-	}
-	for (const auto& folder : m_request->workspaceFolders) {
-		auto vscode = VscodeDirectory(folder);
-		if (vscode) add(folder, vscode, true);
-		if (!vscode) continue;
-		for (const auto kind : { EWorkspaceArtifactDocumentKind::Tasks, EWorkspaceArtifactDocumentKind::Launch }) {
-			if (auto artifact = ArtifactInFolder(folder, kind)) add(*vscode, std::move(artifact), false);
+	for (const auto& slot : state->slots) {
+		if (!slot->workerRetirement || slot->worker.joinable()) continue;
+		++state->liveThreads;
+		try {
+			slot->worker = std::thread([state, slot] { WorkerMain(state, slot); });
+		} catch (...) {
+			--state->liveThreads;
+			if (slot->handle && slot->handle->watch) {
+				try { (void)slot->handle->watch->Cancel(); } catch (...) {}
+			}
+			slot->workerRetirement.reset();
+			return false;
 		}
 	}
-	for (const auto& slot : m_slots) slot->worker = std::thread(&CWorkspaceArtifactDocumentSourceController::WorkerMain, this, slot.get());
+	return true;
 }
 
-void CWorkspaceArtifactDocumentSourceController::CancelAndJoinWorkers() noexcept
+void CWorkspaceArtifactDocumentSourceController::CancelAndRetireWorkers(
+	const std::shared_ptr<SharedState>& state) noexcept
 {
-	std::vector<std::unique_ptr<WatchSlot>> slots;
+	std::vector<std::shared_ptr<WatchSlot>> slots;
 	{
-		std::lock_guard lock(m_mutex);
-		for (const auto& slot : m_slots) {
-			if (slot->watch) { try { (void)slot->watch->Cancel(); } catch (...) {} }
-		}
-		slots.swap(m_slots);
+		std::lock_guard lock(state->mutex);
+		slots.swap(state->slots);
 	}
-	for (const auto& slot : slots) if (slot->worker.joinable()) slot->worker.join();
+	for (const auto& slot : slots) {
+		if (slot->handle && slot->handle->watch) {
+			try { (void)slot->handle->watch->Cancel(); } catch (...) {}
+		}
+	}
+	for (const auto& slot : slots) {
+		if (!slot->worker.joinable()) {
+			slot->workerRetirement.reset();
+			continue;
+		}
+		if (!slot->workerRetirement) std::terminate();
+		const auto status = workbench::WorkerRetirementService::Instance().Retire(
+			std::move(slot->worker), std::move(*slot->workerRetirement), state);
+		if (status != workbench::WorkerRetirementStatus::Retired) std::terminate();
+		slot->workerRetirement.reset();
+	}
 }
 
 WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController::Stop() noexcept
 {
 	{
-		std::lock_guard lock(m_mutex);
-		if (m_dispatcher.joinable() && m_dispatcher.get_id() == std::this_thread::get_id()) {
+		const auto state = m_state;
+		std::lock_guard lock(state->mutex);
+		if (state->dispatcher.joinable() && state->dispatcher.get_id() == std::this_thread::get_id()) {
 			return { EWorkspaceArtifactDocumentSourceStatus::ReentrantStopDenied };
 		}
 	}
@@ -249,50 +376,87 @@ WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController
 
 WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController::StopLocked() noexcept
 {
+	const auto state = m_state;
+	std::thread dispatcher;
+	std::optional<workbench::WorkerRetirementService::Reservation> dispatcherRetirement;
 	{
-		std::unique_lock lock(m_mutex);
-		if (!m_started) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
-		m_stopping = true;
-		for (const auto& slot : m_slots) if (slot->watch) { try { (void)slot->watch->Cancel(); } catch (...) {} }
-		m_pending.notify_all();
-		// A read can complete after cancellation. Once m_stopping is set, no new
-		// operation may enter this fence; wait for any already-entered Apply/Remove
-		// call before reporting a terminal stopped lifecycle.
-		m_documentOperationsComplete.wait(lock, [this] { return m_activeDocumentOperations == 0; });
+		std::lock_guard lock(state->mutex);
+		if (!state->started) {
+			return { EWorkspaceArtifactDocumentSourceStatus::NotStarted, std::nullopt, {},
+				false, state->retirementFinalized };
+		}
+		state->stopping = true;
+		state->pending.notify_all();
+		dispatcher = std::move(state->dispatcher);
+		dispatcherRetirement = std::move(state->dispatcherRetirement);
+		state->started = false;
+		state->callback = {};
+		state->request.reset();
+		state->rebuildRequested = state->reloadPending = state->rebuilding = false;
 	}
-	if (m_dispatcher.joinable()) m_dispatcher.join();
-	CancelAndJoinWorkers();
-	std::lock_guard lock(m_mutex);
-	m_started = false;
-	m_callback = {};
-	m_request.reset();
-	m_rebuildRequested = m_reloadPending = m_rebuilding = false;
-	return { EWorkspaceArtifactDocumentSourceStatus::Stopped };
+
+	CancelAndRetireWorkers(state);
+	if (dispatcher.joinable()) {
+		if (!dispatcherRetirement) std::terminate();
+		const auto status = workbench::WorkerRetirementService::Instance().Retire(
+			std::move(dispatcher), std::move(*dispatcherRetirement), state);
+		if (status != workbench::WorkerRetirementStatus::Retired) std::terminate();
+		dispatcherRetirement.reset();
+	} else {
+		dispatcherRetirement.reset();
+	}
+
+	WorkspaceArtifactDocumentSourceResult result;
+	result.status = EWorkspaceArtifactDocumentSourceStatus::Stopped;
+	{
+		std::lock_guard lock(state->mutex);
+		state->retirementFinalized = state->liveThreads == 0;
+		result.retirementFinalized = state->retirementFinalized;
+		result.retirementPending = !result.retirementFinalized;
+	}
+	return result;
 }
 
-bool CWorkspaceArtifactDocumentSourceController::BeginDocumentOperation() noexcept
+bool CWorkspaceArtifactDocumentSourceController::IsRetirementFinalized() const noexcept
 {
-	std::lock_guard lock(m_mutex);
-	if (!m_started || m_stopping) return false;
-	++m_activeDocumentOperations;
+	const auto state = m_state;
+	std::lock_guard lock(state->mutex);
+	return state->retirementFinalized;
+}
+
+void CWorkspaceArtifactDocumentSourceController::MarkThreadFinished(
+	const std::shared_ptr<SharedState>& state) noexcept
+{
+	std::lock_guard lock(state->mutex);
+	if (state->liveThreads != 0) --state->liveThreads;
+	if (state->stopping && state->liveThreads == 0) state->retirementFinalized = true;
+}
+
+bool CWorkspaceArtifactDocumentSourceController::BeginDocumentOperation(
+	const std::shared_ptr<SharedState>& state) noexcept
+{
+	std::lock_guard lock(state->mutex);
+	if (!state->started || state->stopping) return false;
+	++state->activeDocumentOperations;
 	return true;
 }
 
-void CWorkspaceArtifactDocumentSourceController::EndDocumentOperation() noexcept
+void CWorkspaceArtifactDocumentSourceController::EndDocumentOperation(
+	const std::shared_ptr<SharedState>& state) noexcept
 {
-	std::lock_guard lock(m_mutex);
-	if (m_activeDocumentOperations != 0) --m_activeDocumentOperations;
-	if (m_activeDocumentOperations == 0) m_documentOperationsComplete.notify_all();
+	std::lock_guard lock(state->mutex);
+	if (state->activeDocumentOperations != 0) --state->activeDocumentOperations;
 }
 
-bool CWorkspaceArtifactDocumentSourceController::CanDispatch() const noexcept
+bool CWorkspaceArtifactDocumentSourceController::CanDispatch(
+	const std::shared_ptr<SharedState>& state) noexcept
 {
-	std::lock_guard lock(m_mutex);
-	return m_started && !m_stopping;
+	std::lock_guard lock(state->mutex);
+	return state->started && !state->stopping;
 }
 
 bool CWorkspaceArtifactDocumentSourceController::IsRelevant(
-	const WatchSlot& slot, std::size_t targetIndex, const FileWatchEvent& event) const noexcept
+	const WatchSlot& slot, std::size_t targetIndex, const FileWatchEvent& event) noexcept
 {
 	const auto& target = slot.targets[targetIndex];
 	if (!target.member) return true;
@@ -300,109 +464,276 @@ bool CWorkspaceArtifactDocumentSourceController::IsRelevant(
 		|| (event.previousUri && UriIdentityService::IsEqual(*event.previousUri, *target.member));
 }
 
-void CWorkspaceArtifactDocumentSourceController::Queue(bool rebuild) noexcept
+void CWorkspaceArtifactDocumentSourceController::Queue(
+	const std::shared_ptr<SharedState>& state, bool rebuild) noexcept
 {
-	std::lock_guard lock(m_mutex);
-	if (m_stopping || (m_rebuilding && rebuild)) return;
-	m_reloadPending = true;
-	m_rebuildRequested = m_rebuildRequested || rebuild;
-	m_pending.notify_one();
+	std::lock_guard lock(state->mutex);
+	if (state->stopping || (state->rebuilding && rebuild)) return;
+	state->reloadPending = true;
+	state->rebuildRequested = state->rebuildRequested || rebuild;
+	state->pending.notify_one();
 }
 
-void CWorkspaceArtifactDocumentSourceController::WorkerMain(WatchSlot* slot) noexcept
+void CWorkspaceArtifactDocumentSourceController::WorkerMain(
+	const std::shared_ptr<SharedState>& state,
+	const std::shared_ptr<WatchSlot>& slot) noexcept
 {
+	struct Finalizer final {
+		std::shared_ptr<SharedState> state;
+		~Finalizer() { CWorkspaceArtifactDocumentSourceController::MarkThreadFinished(state); }
+	} finalizer { state };
+
 	for (;;) {
+		std::shared_ptr<WatchSlot::WatchHandle> handle;
+		{
+			std::lock_guard lock(state->mutex);
+			if (state->stopping) return;
+			handle = slot->handle;
+		}
+		if (!handle || !handle->watch) return;
+
 		platform::filesystem::FileResult<FileWatchEvent> event;
-		try { event = slot->watch->Next(); }
-		catch (...) { Queue(true); return; }
-		if (!event.Succeeded() || !event.value) { Queue(true); return; }
+		try { event = handle->watch->Next(); }
+		catch (...) {
+			{
+				std::lock_guard lock(state->mutex);
+				if (state->stopping || slot->handle != handle) continue;
+			}
+			Queue(state, true);
+			return;
+		}
+		if (!event.Succeeded() || !event.value) {
+			{
+				std::lock_guard lock(state->mutex);
+				if (state->stopping || slot->handle != handle) continue;
+			}
+			Queue(state, true);
+			return;
+		}
 		const bool invalidTopology = event.value->type == EFileWatchEventType::Overflow
 			|| event.value->type == EFileWatchEventType::RescanRequired || event.value->type == EFileWatchEventType::Disposed;
-		if (invalidTopology) { Queue(true); return; }
-		for (std::size_t index = 0; index < slot->targets.size(); ++index) {
-			if (IsRelevant(*slot, index, *event.value)) Queue(slot->targets[index].rebuildOnRelevantChange);
+		if (invalidTopology) {
+			{
+				std::lock_guard lock(state->mutex);
+				if (state->stopping || slot->handle != handle) continue;
+			}
+			Queue(state, true);
+			return;
+		}
+
+		bool queueReload = false;
+		bool queueRebuild = false;
+		{
+			std::lock_guard lock(state->mutex);
+			if (state->stopping || slot->handle != handle) continue;
+			for (std::size_t index = 0; index < slot->targets.size(); ++index) {
+				if (!IsRelevant(*slot, index, *event.value)) continue;
+				queueReload = true;
+				queueRebuild = queueRebuild || slot->targets[index].rebuildOnRelevantChange;
+			}
+		}
+		if (queueReload) Queue(state, queueRebuild);
+	}
+}
+
+void CWorkspaceArtifactDocumentSourceController::RebuildTopology(
+	const std::shared_ptr<SharedState>& state) noexcept
+{
+	WorkspaceArtifactDocumentSourceRequest request;
+	{
+		std::lock_guard lock(state->mutex);
+		if (state->stopping || !state->request || state->rebuilding) return;
+		state->rebuilding = true;
+		request = *state->request;
+	}
+
+	const auto desired = BuildTopology(request);
+	struct Prepared final {
+		TopologyEntry entry;
+		std::shared_ptr<WatchSlot::WatchHandle> handle;
+		std::optional<workbench::WorkerRetirementService::Reservation> retirement;
+	};
+	std::vector<Prepared> prepared;
+	for (const auto& entry : desired) {
+		bool exists = false;
+		bool needsReplacement = false;
+		{
+			std::lock_guard lock(state->mutex);
+			for (const auto& slot : state->slots) {
+				if (!UriIdentityService::IsEqual(slot->root, entry.root)) continue;
+				exists = true;
+				needsReplacement = slot->targets.size() != entry.targets.size();
+				if (!needsReplacement) {
+					for (const auto& target : entry.targets) {
+						const auto targetFound = std::any_of(slot->targets.begin(), slot->targets.end(),
+							[&target](const auto& existing) {
+								return existing.rebuildOnRelevantChange == target.rebuildOnRelevantChange
+									&& existing.member.has_value() == target.member.has_value()
+									&& (!existing.member || UriIdentityService::IsEqual(*existing.member, *target.member));
+							});
+						if (!targetFound) { needsReplacement = true; break; }
+					}
+				}
+				break;
+			}
+		}
+		if (exists && !needsReplacement) continue;
+		std::optional<workbench::WorkerRetirementService::Reservation> retirement;
+		if (!exists) {
+			retirement = workbench::WorkerRetirementService::Instance().TryReserve();
+			if (!retirement) continue;
+		}
+		platform::filesystem::FileResult<std::unique_ptr<platform::filesystem::IFileWatch>> watched;
+		try {
+			watched = state->fileService->Watch(entry.root, FileWatchOptions { .recursive = false });
+		} catch (...) {
+			continue;
+		}
+		if (!watched.Succeeded() || !watched.value) continue;
+		auto handle = std::make_shared<WatchSlot::WatchHandle>();
+		handle->watch = std::move(*watched.value);
+		prepared.push_back({ entry, std::move(handle), std::move(retirement) });
+	}
+
+	std::vector<std::shared_ptr<WatchSlot>> removed;
+	std::vector<std::shared_ptr<WatchSlot::WatchHandle>> replaced;
+	std::vector<std::shared_ptr<WatchSlot::WatchHandle>> preparedToCancel;
+	{
+		std::lock_guard lock(state->mutex);
+		if (state->stopping) {
+			for (auto& item : prepared) preparedToCancel.push_back(std::move(item.handle));
+			state->rebuilding = false;
+		} else {
+			for (auto iterator = state->slots.begin(); iterator != state->slots.end();) {
+				const auto found = std::find_if(desired.begin(), desired.end(), [&iterator](const auto& entry) {
+					return UriIdentityService::IsEqual((*iterator)->root, entry.root);
+				});
+				if (found == desired.end()) {
+					removed.push_back(std::move(*iterator));
+					iterator = state->slots.erase(iterator);
+					continue;
+				}
+				++iterator;
+			}
+			for (auto& item : prepared) {
+				const auto existing = std::find_if(state->slots.begin(), state->slots.end(), [&item](const auto& slot) {
+					return UriIdentityService::IsEqual(slot->root, item.entry.root);
+				});
+				if (existing != state->slots.end()) {
+					replaced.push_back((*existing)->handle);
+					(*existing)->targets.clear();
+					for (const auto& target : item.entry.targets) {
+						(*existing)->targets.push_back({ target.member, target.rebuildOnRelevantChange });
+					}
+					(*existing)->handle = std::move(item.handle);
+					item.retirement.reset();
+					continue;
+				}
+				if (!item.retirement || !item.handle) continue;
+				auto slot = std::make_shared<WatchSlot>(item.entry.root);
+				for (const auto& target : item.entry.targets) {
+					slot->targets.push_back({ target.member, target.rebuildOnRelevantChange });
+				}
+				slot->handle = std::move(item.handle);
+				slot->workerRetirement = std::move(item.retirement);
+				++state->liveThreads;
+				try {
+					slot->worker = std::thread([state, slot] { WorkerMain(state, slot); });
+					state->slots.push_back(std::move(slot));
+				} catch (...) {
+					--state->liveThreads;
+					preparedToCancel.push_back(std::move(slot->handle));
+					slot->workerRetirement.reset();
+				}
+			}
+			state->rebuilding = false;
 		}
 	}
-}
-
-void CWorkspaceArtifactDocumentSourceController::RebuildTopology() noexcept
-{
-	{
-		std::lock_guard lock(m_mutex);
-		if (m_stopping) return;
-		m_rebuilding = true;
+	for (const auto& handle : replaced) {
+		if (handle && handle->watch) { try { (void)handle->watch->Cancel(); } catch (...) {} }
 	}
-	CancelAndJoinWorkers();
-	std::lock_guard lock(m_mutex);
-	if (!m_stopping) StartWorkersLocked();
-	m_rebuilding = false;
+	for (const auto& handle : preparedToCancel) {
+		if (handle && handle->watch) { try { (void)handle->watch->Cancel(); } catch (...) {} }
+	}
+	for (const auto& slot : removed) {
+		if (slot->handle && slot->handle->watch) { try { (void)slot->handle->watch->Cancel(); } catch (...) {} }
+	}
+	for (const auto& slot : removed) {
+		if (!slot->worker.joinable()) {
+			slot->workerRetirement.reset();
+			continue;
+		}
+		if (!slot->workerRetirement) std::terminate();
+		const auto status = workbench::WorkerRetirementService::Instance().Retire(
+			std::move(slot->worker), std::move(*slot->workerRetirement), state);
+		if (status != workbench::WorkerRetirementStatus::Retired) std::terminate();
+		slot->workerRetirement.reset();
+	}
 }
 
-std::uint64_t CWorkspaceArtifactDocumentSourceController::NextRevision() noexcept
+std::uint64_t CWorkspaceArtifactDocumentSourceController::NextRevision(
+	const std::shared_ptr<SharedState>& state) noexcept
 {
-	std::lock_guard lock(m_mutex);
-	if (m_nextRevision == (std::numeric_limits<std::uint64_t>::max)()) return 0;
-	return m_nextRevision++;
+	std::lock_guard lock(state->mutex);
+	if (state->nextRevision == (std::numeric_limits<std::uint64_t>::max)()) return 0;
+	return state->nextRevision++;
 }
 
-CWorkspaceArtifactDocumentSourceController::ReloadOneResult CWorkspaceArtifactDocumentSourceController::ReloadOne(
+CWorkspaceArtifactDocumentSourceController::ReloadOneResult
+CWorkspaceArtifactDocumentSourceController::ReloadOne(
+	const std::shared_ptr<SharedState>& state,
 	EWorkspaceArtifactDocumentKind kind, EWorkspaceArtifactDocumentSource source,
 	const std::optional<Uri>& folderUri, const Uri& resource, std::uint64_t generation) noexcept
 {
 	bool documentOperationActive = false;
 	std::optional<EFileResultStatus> failureStatus{ EFileResultStatus::Failed };
 	try {
-		const auto read = m_fileService.Read(resource,
+		const auto read = state->fileService->Read(resource,
 			FileReadOptions { .maximumBytes = platform::serialization::CJsoncDocument::kMaximumInputBytes });
-		const auto revision = NextRevision();
+		const auto revision = NextRevision(state);
 		if (!read.Succeeded()) failureStatus = read.status;
-
-		// The read may have blocked while Stop cancelled the lifecycle. Claim the
-		// operation immediately before each service mutation so Stop either waits
-		// for that mutation or prevents it from beginning.
-		if (!BeginDocumentOperation()) {
+		if (!BeginDocumentOperation(state)) {
 			return { { EWorkspaceArtifactDocumentStatus::Stopped, std::nullopt,
 				"workspace artifact source controller is stopped" }, read.status };
 		}
 		documentOperationActive = true;
 		if (read.Succeeded() && read.value) {
-			auto result = m_documentService.Apply({ kind, source, folderUri, resource, generation, revision,
+			auto result = state->documentService->Apply({ kind, source, folderUri, resource, generation, revision,
 				std::string(read.value->begin(), read.value->end()) });
-			EndDocumentOperation();
+			EndDocumentOperation(state);
 			documentOperationActive = false;
 			return { std::move(result), std::nullopt };
 		}
 		if (read.status == EFileResultStatus::NotFound) {
-			auto result = m_documentService.Remove({ kind, source, folderUri, resource, generation, revision });
-			EndDocumentOperation();
+			auto result = state->documentService->Remove({ kind, source, folderUri, resource, generation, revision });
+			EndDocumentOperation(state);
 			documentOperationActive = false;
 			return { std::move(result), read.status };
 		}
-		EndDocumentOperation();
+		EndDocumentOperation(state);
 		documentOperationActive = false;
 		return { { EWorkspaceArtifactDocumentStatus::JsoncParseFailed, std::nullopt,
 			"workspace artifact file could not be read" }, read.status };
 	} catch (...) {
-		// A provider or service fault must release the operation fence so Stop
-		// always has a terminal owner and cannot wait forever.
-		if (documentOperationActive) EndDocumentOperation();
+		if (documentOperationActive) EndDocumentOperation(state);
 		return { { EWorkspaceArtifactDocumentStatus::JsoncParseFailed, std::nullopt,
 			"workspace artifact source operation failed" }, failureStatus };
 	}
 }
 
-WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController::ReloadSnapshot() noexcept
+WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController::ReloadSnapshot(
+	const std::shared_ptr<SharedState>& state) noexcept
 {
 	WorkspaceArtifactDocumentSourceRequest request;
 	{
-		std::lock_guard lock(m_mutex);
-		if (!m_started || m_stopping || !m_request) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
-		request = *m_request;
+		std::lock_guard lock(state->mutex);
+		if (!state->started || state->stopping || !state->request) return { EWorkspaceArtifactDocumentSourceStatus::NotStarted };
+		request = *state->request;
 	}
 	WorkspaceArtifactDocumentSourceResult result { EWorkspaceArtifactDocumentSourceStatus::Reloaded };
 	auto reload = [&](EWorkspaceArtifactDocumentKind kind, EWorkspaceArtifactDocumentSource source,
 		const std::optional<Uri>& folder, const Uri& resource) {
-		auto reloaded = ReloadOne(kind, source, folder, resource, request.generation);
+		auto reloaded = ReloadOne(state, kind, source, folder, resource, request.generation);
 		if (reloaded.fileStatus && *reloaded.fileStatus != EFileResultStatus::NotFound) {
 			result.status = EWorkspaceArtifactDocumentSourceStatus::ReadFailed;
 			result.fileStatus = reloaded.fileStatus;
@@ -422,24 +753,37 @@ WorkspaceArtifactDocumentSourceResult CWorkspaceArtifactDocumentSourceController
 	return result;
 }
 
-void CWorkspaceArtifactDocumentSourceController::DispatchMain() noexcept
+void CWorkspaceArtifactDocumentSourceController::DispatchMain(
+	const std::shared_ptr<SharedState>& state) noexcept
 {
+	struct Finalizer final {
+		std::shared_ptr<SharedState> state;
+		~Finalizer() { CWorkspaceArtifactDocumentSourceController::MarkThreadFinished(state); }
+	} finalizer { state };
+
 	for (;;) {
 		bool rebuild = false;
 		ReloadCallback callback;
 		{
-			std::unique_lock lock(m_mutex);
-			m_pending.wait(lock, [this] { return m_stopping || m_rebuildRequested || m_reloadPending; });
-			if (m_stopping) return;
-			(void)m_pending.wait_for(lock, std::chrono::milliseconds(25), [this] { return m_stopping; });
-			if (m_stopping) return;
-			rebuild = m_rebuildRequested;
-			m_rebuildRequested = m_reloadPending = false;
-			callback = m_callback;
+			std::unique_lock lock(state->mutex);
+			state->pending.wait(lock, [state] { return state->stopping || state->rebuildRequested || state->reloadPending; });
+			if (state->stopping) return;
+			(void)state->pending.wait_for(lock, std::chrono::milliseconds(25), [state] { return state->stopping; });
+			if (state->stopping) return;
+			rebuild = state->rebuildRequested;
+			state->rebuildRequested = state->reloadPending = false;
+			callback = state->callback;
 		}
-		if (rebuild) RebuildTopology();
-		auto result = ReloadSnapshot();
-		if (callback && CanDispatch()) { try { callback(result); } catch (...) {} }
+		if (rebuild) RebuildTopology(state);
+		auto result = ReloadSnapshot(state);
+		bool invoke = false;
+		{
+			std::lock_guard lock(state->mutex);
+			if (state->started && !state->stopping && callback) invoke = true;
+		}
+		if (invoke) {
+			try { callback(result); } catch (...) {}
+		}
 	}
 }
 

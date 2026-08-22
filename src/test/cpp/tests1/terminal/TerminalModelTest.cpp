@@ -2,6 +2,7 @@
 #include "pch.h"
 #include "terminal/model/TerminalModel.h"
 
+#include <chrono>
 #include <unordered_set>
 
 namespace {
@@ -368,6 +369,45 @@ TEST(TerminalModel, CapsFiveThousandRowsOfOneHundredTwentyColumnAttributeStorage
 		EXPECT_EQ(columns, row.cellAttributes.size());
 		EXPECT_EQ(1u, row.attributeRuns.size());
 		EXPECT_EQ(columns, row.attributeRuns.front().length);
+	}
+}
+
+TEST(TerminalModel, ProcessesOneMillionScrollbackLinesWithBoundedResizeStorage)
+{
+	constexpr std::size_t columns = 8;
+	constexpr std::size_t rows = 4;
+	constexpr std::size_t lines = 1'000'000;
+	terminal::TerminalModel model(columns, rows, terminal::TerminalModel::kMaxScrollbackLines);
+	const auto begin = std::chrono::steady_clock::now();
+	for( std::size_t line = 0; line < lines; ++line ) {
+		model.Print(U'x');
+		model.ExecuteControl(L'\r');
+		model.ExecuteControl(L'\n');
+	}
+	const auto elapsed = std::chrono::steady_clock::now() - begin;
+
+	EXPECT_LT(elapsed, std::chrono::seconds(60));
+	ASSERT_EQ(terminal::TerminalModel::kMaxScrollbackLines, model.ScrollbackSize());
+	ASSERT_EQ(terminal::TerminalModel::kMaxScrollbackLines, model.ScrollbackLimit());
+	for( const auto& row : model.Scrollback() ) {
+		EXPECT_EQ(columns, row.cells.size());
+		EXPECT_EQ(columns, row.cellAttributes.size());
+		EXPECT_EQ(1u, row.attributeRuns.size());
+	}
+
+	// A terminal resize must update retained history as well as the visible
+	// screen.  This remains bounded by the same fixed row count and must not
+	// allocate a second million-line representation.
+	model.Resize(16, 6);
+	for( const auto& row : model.Scrollback() ) {
+		EXPECT_EQ(16u, row.cells.size());
+		EXPECT_EQ(16u, row.cellAttributes.size());
+	}
+	model.Resize(4, 2);
+	EXPECT_LE(model.ScrollbackSize(), terminal::TerminalModel::kMaxScrollbackLines);
+	for( const auto& row : model.Scrollback() ) {
+		EXPECT_EQ(4u, row.cells.size());
+		EXPECT_EQ(4u, row.cellAttributes.size());
 	}
 }
 

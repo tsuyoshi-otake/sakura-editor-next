@@ -812,6 +812,22 @@ TEST(WorkbenchCommandRegistry, DeliversTheArgumentsPayloadToGitResourceCommands)
 	}
 }
 
+TEST(WorkbenchCommandRegistry, DeliversTheOptionalPostCommitPayloadToGitCommit)
+{
+	WorkbenchCommandRegistry registry;
+	std::optional<std::string> received;
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded, registry.RegisterGitCommands({
+		.commit = [&received](std::string_view arguments) {
+			received = arguments; return Succeeded(); },
+	}).status);
+
+	constexpr std::string_view payload = "[\"git.push\"]";
+	EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+		registry.Execute("git.commit", GitRepositoryContext(), payload).status);
+	ASSERT_TRUE(received.has_value());
+	EXPECT_EQ(payload, *received);
+}
+
 TEST(WorkbenchCommandRegistry, TheArgumentLessOverloadDeliversAnEmptyPayload)
 {
 	WorkbenchCommandRegistry registry;

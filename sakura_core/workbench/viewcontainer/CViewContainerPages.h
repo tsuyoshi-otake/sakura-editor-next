@@ -12,8 +12,10 @@
 #include "workbench/outline/COutlineWorkbenchTool.h"
 #include "workbench/scm/CScmWorkbenchTool.h"
 #include "workbench/search/CSearchWorkbenchTool.h"
+#include "workbench/rendering/FrameSurfaceCommitState.h"
 
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -30,6 +32,11 @@ inline constexpr std::string_view Search = layout::ids::viewContainer::Search;
 
 class CViewContainerPages final {
 public:
+	struct FrameSurfaceProjection final {
+		rendering::FrameSurfaceAdapterSnapshot surface;
+		std::uint32_t width = 1;
+		std::uint32_t height = 1;
+	};
 	explicit CViewContainerPages(CDlgFuncList& dialog);
 	~CViewContainerPages();
 	CViewContainerPages(const CViewContainerPages&) = delete;
@@ -39,9 +46,16 @@ public:
 	void Close();
 	[[nodiscard]] bool IsUsable() const noexcept { return m_created && !m_closed; }
 
-	void Attach(std::string_view containerId, HWND host);
+	void Attach(std::string_view containerId, HWND host,
+		std::string_view logicalHostId = "workbench.window.detached");
 	[[nodiscard]] HWND AttachedHost(std::string_view containerId) const noexcept;
 	void SetPageVisible(std::string_view containerId, bool visible);
+	//! Records the completed native layout as the newest publishable frame.
+	void NotifyPageLayout(std::string_view containerId);
+	//! Commits adapter tickets only after the enclosing GDI frame reached its
+	//! flush boundary, returning the surfaces that became publishable.
+	[[nodiscard]] std::vector<FrameSurfaceProjection> CommitGdiFrame();
+	[[nodiscard]] std::vector<FrameSurfaceProjection> FrameSurfaceProjections() const;
 	[[nodiscard]] bool Contains(std::string_view containerId) const noexcept;
 	[[nodiscard]] std::vector<std::string> PageIds() const;
 	void SetPalette(const theme::ThemePalette& palette);
@@ -62,6 +76,7 @@ private:
 		std::string id;
 		UINT titleResourceId = 0;
 		HWND attached = nullptr;
+		std::unique_ptr<rendering::FrameSurfaceCommitState> frameSurface;
 	};
 
 	[[nodiscard]] Page* Find(std::string_view containerId) noexcept;

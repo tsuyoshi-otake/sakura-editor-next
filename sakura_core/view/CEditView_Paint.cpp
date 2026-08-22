@@ -83,6 +83,7 @@ void CEditView_Paint::Call_OnPaint(
 	if(nPaintFlag & PAINT_RULER)rcs.push_back(rcRuler);
 	if(nPaintFlag & PAINT_BODY)rcs.push_back(rcBody);
 	if(rcs.size()==0)return;
+	pView->MarkRenderDamage(editor::rendering::EEditViewDamage::BaseText);
 	CMyRect rc=rcs[0];
 	int nSize = (int)rcs.size();
 	for(int i=1;i<nSize;i++)
@@ -94,6 +95,7 @@ void CEditView_Paint::Call_OnPaint(
 	HDC hdc = pView->GetDC();
 	pView->OnPaint( hdc, &ps, bUseMemoryDC );
 	pView->ReleaseDC( hdc );
+	pView->CommitGdiPaintBoundary();
 }
 
 /* フォーカス移動時の再描画
@@ -107,12 +109,14 @@ void CEditView::RedrawAll()
 	}
 
 	if( GetDrawSwitch() ){
+		MarkRenderDamage(editor::rendering::EEditViewDamage::BaseText);
 		// ウィンドウ全体を再描画
 		PAINTSTRUCT	ps;
 		HDC hdc = ::GetDC( GetHwnd() );
 		::GetClientRect( GetHwnd(), &ps.rcPaint );
 		OnPaint( hdc, &ps, FALSE );
 		::ReleaseDC( GetHwnd(), hdc );
+		CommitGdiPaintBoundary();
 	}
 
 	// キャレットの表示
@@ -143,6 +147,7 @@ void CEditView::Redraw()
 
 	HDC			hdc;
 	PAINTSTRUCT	ps;
+	MarkRenderDamage(editor::rendering::EEditViewDamage::BaseText);
 
 	hdc = ::GetDC( GetHwnd() );
 
@@ -151,6 +156,7 @@ void CEditView::Redraw()
 	OnPaint( hdc, &ps, FALSE );
 
 	::ReleaseDC( GetHwnd(), hdc );
+	CommitGdiPaintBoundary();
 }
 // 2001/06/21 End
 
@@ -171,6 +177,7 @@ void CEditView::RedrawLines( CLayoutYInt top, CLayoutYInt bottom )
 	}
 	HDC			hdc;
 	PAINTSTRUCT	ps;
+	MarkRenderDamage(editor::rendering::EEditViewDamage::BaseText);
 
 	hdc = GetDC();
 
@@ -182,11 +189,21 @@ void CEditView::RedrawLines( CLayoutYInt top, CLayoutYInt bottom )
 	OnPaint( hdc, &ps, FALSE );
 
 	ReleaseDC( hdc );
+	CommitGdiPaintBoundary();
 }
 
 void MyFillRect(HDC hdc, RECT& re)
 {
 	::ExtTextOut(hdc, re.left, re.top, ETO_OPAQUE|ETO_CLIPPED, &re, L"", 0, nullptr);
+}
+
+HDC CEditView::GetBackImageDC(HDC hdc)
+{
+	if( hdc == nullptr ) return nullptr;
+	if( m_hdcBackImage == nullptr ){
+		m_hdcBackImage = ::CreateCompatibleDC(hdc);
+	}
+	return m_hdcBackImage;
 }
 
 void CEditView::DrawBackImage(HDC hdc, RECT& rcPaint, HDC hdcBgImg)
@@ -606,9 +623,12 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 
 	CTypeSupport textType(this, COLORIDX_TEXT);
 	const COLORREF background = textType.GetBackColor();
-	const HBRUSH backgroundBrush = ::CreateSolidBrush(background);
-	::FillRect(hdc, &client, backgroundBrush);
-	::DeleteObject(backgroundBrush);
+	const HBRUSH dcBrush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
+	const HBRUSH previousBrush = static_cast<HBRUSH>(::SelectObject(hdc, dcBrush));
+	const COLORREF previousBrushColor = ::SetDCBrushColor(hdc, background);
+	::FillRect(hdc, &client, dcBrush);
+	::SetDCBrushColor(hdc, previousBrushColor);
+	::SelectObject(hdc, previousBrush);
 
 	const auto lineCount = static_cast<std::int64_t>(m_pcEditDoc->m_cLayoutMgr.GetLineCount());
 	if( lineCount <= 0 ) return;
@@ -673,8 +693,9 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 	} else {
 		CStartupTrace::AccumulateStartupMiniMapCacheLookup(true);
 	}
-	const HPEN pen = ::CreatePen(PS_SOLID, 1, foreground);
-	const HGDIOBJ previousPen = ::SelectObject(hdc, pen);
+	const HPEN dcPen = static_cast<HPEN>(::GetStockObject(DC_PEN));
+	const HPEN previousPen = static_cast<HPEN>(::SelectObject(hdc, dcPen));
+	const COLORREF previousPenColor = ::SetDCPenColor(hdc, foreground);
 	for( int row = 0; row < height; ++row ) {
 		const int start = m_miniMapOverviewCache.rowStart[static_cast<std::size_t>(row)];
 		const int end = m_miniMapOverviewCache.rowEnd[static_cast<std::size_t>(row)];
@@ -682,8 +703,8 @@ void CEditView::DrawMiniMapOverview(HDC hdc)
 		::MoveToEx(hdc, start, client.top + row, nullptr);
 		::LineTo(hdc, (std::min)(end, static_cast<int>(client.right)), client.top + row);
 	}
+	::SetDCPenColor(hdc, previousPenColor);
 	::SelectObject(hdc, previousPen);
-	::DeleteObject(pen);
 }
 
 void CEditView::DrawMiniMapViewport(HDC hdc)
@@ -713,15 +734,22 @@ void CEditView::DrawMiniMapViewport(HDC hdc)
 	// across the minimap rather than as a high-contrast outline.  Blend after
 	// the map is rendered so syntax marks remain visible through the band.
 	CTypeSupport textType(this, COLORIDX_TEXT);
-	const HDC sourceDc = ::CreateCompatibleDC(hdc);
-	if( sourceDc == nullptr ) return;
-	const HBITMAP sourceBitmap = ::CreateCompatibleBitmap(hdc, 1, 1);
-	if( sourceBitmap == nullptr ){
-		::DeleteDC(sourceDc);
-		return;
+	if( m_hdcMiniMapViewport == nullptr ){
+		m_hdcMiniMapViewport = ::CreateCompatibleDC(hdc);
 	}
-	const HGDIOBJ previousBitmap = ::SelectObject(sourceDc, sourceBitmap);
-	::SetPixelV(sourceDc, 0, 0, textType.GetTextColor());
+	if( m_hdcMiniMapViewport == nullptr ) return;
+	if( m_hbmpMiniMapViewport == nullptr ){
+		m_hbmpMiniMapViewport = ::CreateCompatibleBitmap(hdc, 1, 1);
+		if( m_hbmpMiniMapViewport == nullptr ) return;
+		m_hbmpMiniMapViewportOld = static_cast<HBITMAP>(::SelectObject(m_hdcMiniMapViewport, m_hbmpMiniMapViewport));
+		if( m_hbmpMiniMapViewportOld == nullptr || m_hbmpMiniMapViewportOld == HGDI_ERROR ){
+			::DeleteObject(m_hbmpMiniMapViewport);
+			m_hbmpMiniMapViewport = nullptr;
+			m_hbmpMiniMapViewportOld = nullptr;
+			return;
+		}
+	}
+	::SetPixelV(m_hdcMiniMapViewport, 0, 0, textType.GetTextColor());
 	BLENDFUNCTION blend{ AC_SRC_OVER, 0, 18, 0 };
 	::AlphaBlend(
 		hdc,
@@ -729,16 +757,13 @@ void CEditView::DrawMiniMapViewport(HDC hdc)
 		viewport.top,
 		viewport.right - viewport.left,
 		viewport.bottom - viewport.top,
-		sourceDc,
+		m_hdcMiniMapViewport,
 		0,
 		0,
 		1,
 		1,
 		blend
 	);
-	::SelectObject(sourceDc, previousBitmap);
-	::DeleteObject(sourceBitmap);
-	::DeleteDC(sourceDc);
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -750,6 +775,7 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 	if (GetEditWnd().m_pPrintPreview) {
 		return;
 	}
+	RequestGdiFrame();
 	if( m_bMiniMap ){
 		const bool measureStartupPaint = CStartupTrace::IsEnabled()
 			&& GetEditWnd().IsStartupDrawCommitting();
@@ -764,6 +790,7 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 			::QueryPerformanceCounter(&end);
 			GetEditWnd().RecordStartupMiniMapPaint(end.QuadPart - begin.QuadPart);
 		}
+		CaptureNativeSurface(_hdc, pPs->rcPaint);
 		return;
 	}
 	bool bChangeFont = false;
@@ -775,6 +802,7 @@ void CEditView::OnPaint( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp 
 		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintBegin);
 	}
 	const bool contentPainted = OnPaint2( _hdc, pPs, bDrawFromComptibleBmp );
+	CaptureNativeSurface(_hdc, pPs->rcPaint);
 	if (traceFirstContentPaint) {
 		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintEnd, contentPainted ? 1 : 0);
 		CStartupTrace::FlushFirstContentPaintMetrics();
@@ -903,11 +931,12 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 
 	// 背景の表示
 	if( bTransText ){
-		HDC hdcBgImg = CreateCompatibleDC(gr);
-		HBITMAP hOldBmp = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
-		DrawBackImage(gr, pPs->rcPaint, hdcBgImg);
-		SelectObject(hdcBgImg, hOldBmp);
-		DeleteObject(hdcBgImg);
+		HDC hdcBgImg = GetBackImageDC(gr);
+		if( hdcBgImg != nullptr ){
+			HBITMAP hOldBmp = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
+			DrawBackImage(gr, pPs->rcPaint, hdcBgImg);
+			SelectObject(hdcBgImg, hOldBmp);
+		}
 	}
 
 	/* ルーラーとテキストの間の余白 */
@@ -962,6 +991,28 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 	CLayoutInt nLayoutLineTo = GetTextArea().GetViewTopLine()
 		+ CLayoutInt( ( pPs->rcPaint.bottom - GetTextArea().GetAreaTop() + (nLineHeight - 1) ) / nLineHeight ) - 1;	// 2007.02.17 ryoji 計算を精密化
 
+	// A paint turn owns an explicit, document-size-independent quantum.  The
+	// cursor is keyed to the complete visible viewport rather than the current
+	// invalidation rectangle: the next asynchronous paint may be narrower while
+	// it still belongs to the same retained surface.
+	std::optional<editor::rendering::EditViewPaintCursor> paintCursor;
+	if( m_pRenderState ){
+		const auto renderSnapshot = m_pRenderState->Snapshot();
+		const editor::rendering::EditViewPaintViewport viewport{
+			.contentGeneration = renderSnapshot.surface.contentGeneration,
+			.layoutEpoch = renderSnapshot.surface.layoutEpoch,
+			.layoutTop = static_cast<std::int64_t>(GetTextArea().GetViewTopLine()),
+			.layoutBottom = static_cast<std::int64_t>(GetTextArea().GetBottomLine()),
+			.viewLeftColumn = static_cast<std::int64_t>(GetTextArea().GetViewLeftCol()),
+			.viewRightColumn = static_cast<std::int64_t>(GetTextArea().GetRightCol()),
+		};
+		(void)m_pRenderState->BeginPaintQuantum(viewport);
+		paintCursor = m_pRenderState->PaintCursor();
+		if( paintCursor ){
+			nLayoutLine = CLayoutInt(paintCursor->layoutLine);
+		}
+	}
+
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                         描画座標                            //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -970,6 +1021,11 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 		GetTextArea().GetAreaLeft() - (Int)GetTextArea().GetViewLeftCol() * nCharDx,
 		GetTextArea().GetAreaTop() + (Int)( nLayoutLine - GetTextArea().GetViewTopLine() ) * nLineHeight
 	));
+	if( paintCursor && paintCursor->layoutLine == static_cast<std::int64_t>(nLayoutLine) ){
+		// Width is not reconstructed from source text.  This is essential for
+		// tabs, surrogate pairs, and custom figures whose advance is contextual.
+		sPos.ForwardDrawCol(CLayoutInt(paintCursor->drawColumn));
+	}
 	sPos.SetLayoutLineRef(nLayoutLine);
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -1016,8 +1072,22 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 		sInfo.m_collectStartupPaintMetrics = traceFirstContentWork;
 		while(sPos.GetLayoutLineRef() <= nLayoutLineTo)
 		{
-			//描画X位置リセット
-			sPos.ResetDrawCol();
+			if( m_pRenderState && m_pRenderState->HasPaintContinuation() ){
+				// A previous turn has already painted the prefix of this viewport;
+				// do not redraw it and spend the new quantum on the saved cursor.
+				if( !paintCursor || static_cast<std::int64_t>(sPos.GetLayoutLineRef())
+					!= paintCursor->layoutLine ){
+					break;
+				}
+			}
+			// Keep the saved draw column when resuming a partial logical line.
+			// Every new layout line starts at column zero as before.
+			const bool resumePaintLine = m_pRenderState
+				&& m_pRenderState->IsPaintCursorFor(
+					static_cast<std::int64_t>(sPos.GetLayoutLineRef()));
+			if( !resumePaintLine ){
+				sPos.ResetDrawCol();
+			}
 
 			//DrawLogicLineを呼ぶと値が変わるので呼ぶ前に取得
 			auto nCurrLine = sPos.GetLayoutLineRef();
@@ -1037,14 +1107,18 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 					gr.SetClipping(pPs->rcPaint);
 				}
 				if(bTransText){
-					HDC hdcBgImg = CreateCompatibleDC(gr);
-					HBITMAP hOldBmp = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
-					RECT rc2 = pPs->rcPaint;
-					rc2.top = nBackImageTop;
-					DrawBackImage(gr, rc2, hdcBgImg);
-					SelectObject(hdcBgImg, hOldBmp);
-					DeleteObject(hdcBgImg);
+					HDC hdcBgImg = GetBackImageDC(gr);
+					if( hdcBgImg != nullptr ){
+						HBITMAP hOldBmp = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
+						RECT rc2 = pPs->rcPaint;
+						rc2.top = nBackImageTop;
+						DrawBackImage(gr, rc2, hdcBgImg);
+						SelectObject(hdcBgImg, hOldBmp);
+					}
 				}
+			}
+			if( m_pRenderState && m_pRenderState->HasPaintContinuation() ){
+				break;
 			}
 			if (bDrawUnderLineWithoutDelay && nCurrLine == caretY) {
 				GetCaret().m_cUnderLine.CaretUnderLineON(true, false);
@@ -1105,6 +1179,23 @@ bool CEditView::OnPaint2( HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp
 	if (traceFirstContentWork) {
 		CStartupTrace::Mark(CStartupTrace::Event::FirstContentPaintFinishEnd);
 	}
+	if( m_pRenderState && m_pRenderState->HasPaintContinuation() ){
+		// Continue through the ordinary asynchronous paint queue.  There is no
+		// timer, wait, or nested UpdateWindow call: user input remains responsive
+		// while the saved cursor consumes one explicit quantum per paint.
+		const auto continuation = m_pRenderState->PaintCursor();
+		if( continuation ){
+			const int y = GetTextArea().GenerateYPx(
+				CLayoutInt(continuation->layoutLine));
+			RECT continuationRect{
+				GetTextArea().GetAreaLeft(),
+				y,
+				GetTextArea().GetAreaRight(),
+				y + nLineHeight,
+			};
+			::InvalidateRect(GetHwnd(), &continuationRect, FALSE);
+		}
+	}
 	return true;
 }
 
@@ -1134,6 +1225,21 @@ bool CEditView::DrawLogicLine(
 
 	//DispPosを保存しておく
 	pInfo->m_sDispPosBegin = *pInfo->m_pDispPos;
+	const auto paintCursor = m_pRenderState
+		? m_pRenderState->PaintCursor()
+		: std::optional<editor::rendering::EditViewPaintCursor>{};
+	const auto currentLayoutLine = static_cast<std::int64_t>(
+		pInfo->m_pDispPos->GetLayoutLineRef());
+	const bool resumePaintLine = paintCursor
+		&& paintCursor->layoutLine == currentLayoutLine;
+	if( m_pRenderState && m_pRenderState->PaintQuantumRemaining() == 0 ){
+		const CLayout* pcLayout = pInfo->m_pDispPos->GetLayoutRef();
+		m_pRenderState->SavePaintCursor(
+			currentLayoutLine,
+			pcLayout ? static_cast<std::int64_t>(pcLayout->GetLogicOffset()) : 0,
+			0);
+		return false;
+	}
 
 	//処理する文字位置
 	pInfo->m_nPosInLogic = CLogicInt(0); //☆開始
@@ -1157,15 +1263,32 @@ bool CEditView::DrawLogicLine(
 				pInfo->m_pStrategy->SetStrategyColorInfo(colorInfo);
 			}
 		}else{
-			CColor3Setting cColor = GetColorIndex(pcLayout, pInfo->m_pDispPos->GetLayoutLineRef(), 0, pInfo, true);
-			SetCurrentColor(pInfo->m_gr, cColor.eColorIndex, cColor.eColorIndex2, cColor.eColorIndexBg);
+		const int resumeOffset = resumePaintLine && paintCursor && pcLayout
+			? static_cast<int>(paintCursor->logicOffset
+				- static_cast<std::int64_t>(pcLayout->GetLogicOffset()))
+			: 0;
+		CColor3Setting cColor = GetColorIndex(
+			pcLayout, pInfo->m_pDispPos->GetLayoutLineRef(), resumeOffset, pInfo, true);
+		if( resumePaintLine ){
+			// GetColorIndex reconstructs syntax state from the logical-line start;
+			// restore the exact UTF-16 cursor after that scan.
+			pInfo->m_nPosInLogic = CLogicInt(paintCursor->logicOffset);
+		}
+		SetCurrentColor(pInfo->m_gr, cColor.eColorIndex, cColor.eColorIndex2, cColor.eColorIndexBg);
 		}
 	}
 
 	//開始ロジック位置を算出
 	{
 		const CLayout* pcLayout = pInfo->m_pDispPos->GetLayoutRef();
-		pInfo->m_nPosInLogic = pcLayout?pcLayout->GetLogicOffset():CLogicInt(0);
+		// GetColorIndex scans from the logical-line start to reconstruct syntax
+		// state.  A resumed paint must retain the exact UTF-16 position saved by
+		// the previous quantum instead of restarting at this layout row.
+		if( resumePaintLine && paintCursor ){
+			pInfo->m_nPosInLogic = CLogicInt(paintCursor->logicOffset);
+		}else{
+			pInfo->m_nPosInLogic = pcLayout?pcLayout->GetLogicOffset():CLogicInt(0);
+		}
 	}
 
 	for (;;) {
@@ -1180,6 +1303,11 @@ bool CEditView::DrawLogicLine(
 
 		//レイアウト行を1行描画
 		bDispEOF = DrawLayoutLine(pInfo);
+		if( m_pRenderState && m_pRenderState->HasPaintContinuation() ){
+			// DrawLayoutLine yielded at the explicit quantum.  Its cursor owns
+			// the current layout line, so advancing here would skip its remainder.
+			break;
+		}
 
 		//行を進める
 		CLogicInt nOldLogicLineNo = CLayout::GetLogicLineNo_Safe(pInfo->m_pDispPos->GetLayoutRef());
@@ -1210,6 +1338,13 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 	CTypeSupport cTextType(this,COLORIDX_TEXT);
 
 	const CLayout* pcLayout = pInfo->m_pDispPos->GetLayoutRef(); //m_pcEditDoc->m_cLayoutMgr.SearchLineByLayoutY( pInfo->pDispPos->GetLayoutLineRef() );
+	const auto paintCursor = m_pRenderState
+		? m_pRenderState->PaintCursor()
+		: std::optional<editor::rendering::EditViewPaintCursor>{};
+	const auto currentLayoutLine = static_cast<std::int64_t>(
+		pInfo->m_pDispPos->GetLayoutLineRef());
+	const bool resumePaintLine = paintCursor
+		&& paintCursor->layoutLine == currentLayoutLine;
 
 	// レイアウト情報
 	if( pcLayout ){
@@ -1275,12 +1410,14 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                       本文描画開始                          //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
-	pInfo->m_pDispPos->ResetDrawCol();
+	if( !resumePaintLine ){
+		pInfo->m_pDispPos->ResetDrawCol();
+	}
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                 行頭(インデント)背景描画                    //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
-	if(pcLayout && pcLayout->GetIndent()!=0)
+	if( pcLayout && pcLayout->GetIndent()!=0 && !resumePaintLine )
 	{
 		RECT rcClip;
 		if(!bTransText && GetTextArea().GenerateClipRect(&rcClip, *pInfo->m_pDispPos, pcLayout->GetIndent())){
@@ -1314,7 +1451,12 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 		int nPosTo = pcLayout->GetLogicOffset() + pcLayout->GetLengthWithEOL();
 		CFigureManager* pcFigureManager = CFigureManager::getInstance();
 		FigureRenderType prevRenderType = CFigure_Text::RenderType_None;
+		bool paintYielded = false;
 		while(pInfo->m_nPosInLogic < nPosTo){
+			if( m_pRenderState && !m_pRenderState->ConsumePaintWork() ){
+				paintYielded = true;
+				break;
+			}
 			int nPosInLogic = pInfo->GetPosInLogic(); // FowardChars/DrawImpで更新される
 			nPosLength = nPosInLogic - nPosBgn;
 			//1文字情報取得
@@ -1389,6 +1531,18 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 				CStartupTrace::AccumulateFirstContentTextBoundary(false, false, false, true);
 			}
 			CFigure_Text::DrawImpBlock(pInfo, nPosBgn, nPosLength);
+		}
+		if( paintYielded ){
+			// Flush the current text run before yielding.  The UTF-16 offset and
+			// measured draw column are retained, so no source unit disappears and
+			// the next paint does not repeat a figure with side effects.
+			if( m_pRenderState ){
+				m_pRenderState->SavePaintCursor(
+					currentLayoutLine,
+					static_cast<std::int64_t>(pInfo->m_nPosInLogic),
+					static_cast<std::int64_t>(pInfo->m_pDispPos->GetDrawCol()));
+			}
+			return false;
 		}
 	}
 
@@ -1487,6 +1641,9 @@ bool CEditView::DrawLayoutLine(SColorStrategyInfo* pInfo)
 					: CLayoutInt(0))
 		);
 	}
+	if( resumePaintLine && m_pRenderState ){
+		m_pRenderState->CompletePaintCursor();
+	}
 
 	return bDispEOF;
 }
@@ -1578,17 +1735,17 @@ void CEditView::DispTextSelected(
 				return;
 			}
 
-			HBRUSH hBrush    = ::CreateSolidBrush( SELECTEDAREA_RGB );
-
 			int    nROP_Old  = ::SetROP2( hdc, SELECTEDAREA_ROP2 );
-			HBRUSH hBrushOld = (HBRUSH)::SelectObject( hdc, hBrush );
+			const HBRUSH dcBrush = static_cast<HBRUSH>(::GetStockObject(DC_BRUSH));
+			const HBRUSH hBrushOld = static_cast<HBRUSH>(::SelectObject(hdc, dcBrush));
+			const COLORREF oldBrushColor = ::SetDCBrushColor(hdc, SELECTEDAREA_RGB);
 			hrgnDraw = ::CreateRectRgn( rcClip.left, rcClip.top, rcClip.right, rcClip.bottom );
 			::PaintRgn( hdc, hrgnDraw );
 			::DeleteObject( hrgnDraw );
 
-			SetROP2( hdc, nROP_Old );
-			SelectObject( hdc, hBrushOld );
-			DeleteObject( hBrush );
+			::SetDCBrushColor(hdc, oldBrushColor);
+			::SetROP2( hdc, nROP_Old );
+			::SelectObject(hdc, hBrushOld);
 		}
 //	}
 	return;

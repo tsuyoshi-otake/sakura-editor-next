@@ -29,6 +29,18 @@ std::string ToUtf8(std::wstring_view value)
 	return result;
 }
 
+std::wstring ToWide(std::string_view value)
+{
+	if (value.empty()) return {};
+	const int required = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+		value.data(), static_cast<int>(value.size()), nullptr, 0);
+	if (required <= 0) return {};
+	std::wstring result(static_cast<std::size_t>(required), L'\0');
+	::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(), static_cast<int>(value.size()),
+		result.data(), required);
+	return result;
+}
+
 //! The last path component of the repository root. Upstream's
 //! `MainThreadSCMProvider` derives the provider `name` the same way when no
 //! workspace folder matches the root, and the repository row renders that name.
@@ -56,6 +68,14 @@ std::string LocalizedLabel(const GitDiffTextResolver& text, std::string_view key
 {
 	if (!text) return std::string(fallback);
 	const auto value = text(key, {});
+	return value.empty() ? std::string(fallback) : ToUtf8(value);
+}
+
+std::string LocalizedLabel(const GitDiffTextResolver& text, std::string_view key,
+	std::wstring_view argument, std::string_view fallback)
+{
+	if (!text) return std::string(fallback);
+	const auto value = text(key, argument);
 	return value.empty() ? std::string(fallback) : ToUtf8(value);
 }
 
@@ -336,12 +356,17 @@ GitPublication BuildGitPublication(const ScmOwner& owner, std::wstring_view repo
 	}
 
 	provider.inputBox.value.clear();
-	// `updateInputBoxPlaceholder`. `{0}` is the resolved `git.commit`
-	// keybinding, and the branch is named in double quotes.
+	// `updateInputBoxPlaceholder` resolves the shortcut and branch through the
+	// same composition boundary as the rest of the SCM strings. The fallback
+	// keeps headless publishers and older callers useful without a resolver.
 	const auto headShortName = GitHeadShortName(state);
-	provider.inputBox.placeholder = headShortName.empty()
+	const auto headShortNameWide = ToWide(headShortName);
+	const std::string fallback = headShortName.empty()
 		? std::string("Message (Ctrl+Enter to commit)")
 		: "Message (Ctrl+Enter to commit on \"" + headShortName + "\")";
+	provider.inputBox.placeholder = headShortName.empty()
+		? LocalizedLabel(text, "GitCommitMessage", {}, fallback)
+		: LocalizedLabel(text, "GitCommitMessageOnBranch", headShortNameWide, fallback);
 	provider.inputBox.enabled = true;
 	provider.inputBox.visible = true;
 

@@ -20,20 +20,27 @@
 #include "terminal/window/TerminalRenderPlan.h"
 #include "terminal/window/TerminalRenderMapping.h"
 #include "terminal/window/TerminalScrollbarLayout.h"
+#include "terminal/window/TerminalNativeFrameBridge.h"
+#include "terminal/TerminalWorkerRetirementService.h"
 #include "theme/CThemeService.h"
 
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <cstddef>
 #include <cstring>
 #include <cstdint>
 #include <limits>
+#include <mutex>
 #include <new>
+#include <optional>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 #include <windowsx.h>
 #include <imm.h>
 
@@ -44,6 +51,7 @@ constexpr wchar_t kTerminalWindowClass[] = L"SakuraNativeTerminalWindow";
 constexpr unsigned int kDefaultDpi = 96;
 constexpr UINT_PTR kInputRetryTimer = 0x5345;
 constexpr UINT kInputRetryMilliseconds = 30;
+constexpr UINT kNativeFrameReadyMessage = WM_APP + 0x5346;
 constexpr std::size_t kPendingInteractiveInputLimit = CTerminalSession::kInputLimitBytes;
 constexpr std::size_t kTerminalFallbackFontCount = 5;
 constexpr WORD kMissingGlyph = 0xffff;
@@ -156,17 +164,279 @@ std::string EncodeAltPrintable( const MSG& message )
 	return result;
 }
 
+//! A UI-owned DIB capture is handed to one fixed worker slot. The worker does
+//! only CPU conversion and publishes an immutable compact dirty payload to a
+//! UI-message mailbox; only that UI message drains the runtime bridge, and the
+//! presentation owner remains the sole caller of D3D/DComp APIs.
+struct TerminalNativeSurfaceCapture final {
+	workbench::rendering::FrameSurfaceId surfaceId = 0;
+	std::uint64_t surfaceLifetimeEpoch = 0;
+	std::uint64_t deviceEpoch = 0;
+	std::uint64_t displayEpoch = 1;
+	std::uint64_t layoutEpoch = 0;
+	std::uint64_t requestId = 0;
+	std::uint32_t width = 0;
+	std::uint32_t height = 0;
+	std::uint32_t pitch = 0;
+	RECT dirtyRect{};
+	// The vector contains only dirtyRect.height rows. Its pitch is the compact
+	// source pitch (dirtyRect.width * 4), so no per-frame full-surface allocation
+	// is needed for a row or rectangle update.
+	std::shared_ptr<const std::vector<std::uint8_t>> pixels;
+};
+
+class TerminalNativeSurfacePublisher final {
+public:
+	TerminalNativeSurfacePublisher() = default;
+	~TerminalNativeSurfacePublisher() noexcept
+	{
+		Close();
+	}
+
+	TerminalNativeSurfacePublisher(const TerminalNativeSurfacePublisher&) = delete;
+	TerminalNativeSurfacePublisher& operator=(const TerminalNativeSurfacePublisher&) = delete;
+
+	[[nodiscard]] bool Start() noexcept
+	{
+		if (m_state != nullptr || m_worker.joinable()) return true;
+		try {
+			auto reservation = terminal::TerminalWorkerRetirementService::Instance().TryReserve();
+			if (!reservation) return false;
+			auto state = std::make_shared<State>();
+			m_state = state;
+			m_reservation = std::move(reservation);
+			try {
+				m_worker = std::thread([state] { WorkerMain(std::move(state)); });
+			} catch (...) {
+				m_reservation.reset();
+				m_state.reset();
+				return false;
+			}
+			return true;
+		} catch (...) {
+			return false;
+		}
+	}
+
+	[[nodiscard]] bool Started() const noexcept
+	{
+		return m_state != nullptr;
+	}
+
+	void SetNotifyWindow(HWND window) noexcept
+	{
+		if (m_state == nullptr) return;
+		std::lock_guard lock(m_state->mutex);
+		if (m_state->closed) return;
+		m_state->notifyWindow = window;
+	}
+
+	[[nodiscard]] std::shared_ptr<const workbench::rendering::FrameNativeSurfaceFrame>
+	TakeReady() noexcept
+	{
+		if (m_state == nullptr) return {};
+		std::lock_guard lock(m_state->mutex);
+		m_state->notifyPosted = false;
+		return std::exchange(m_state->ready, {});
+	}
+
+	[[nodiscard]] bool Submit(TerminalNativeSurfaceCapture capture) noexcept
+	{
+		if (m_state == nullptr || !capture.pixels) return false;
+		try {
+			std::lock_guard lock(m_state->mutex);
+			if (m_state->closed) return false;
+			// Latest-only admission keeps the worker and runtime mailbox bounded;
+			// a slow GPU owner never grows terminal-side work.
+			m_state->pending = std::move(capture);
+			m_state->wake.notify_one();
+			return true;
+		} catch (...) {
+			return false;
+		}
+	}
+
+	void Close() noexcept
+	{
+		auto state = std::exchange(m_state, {});
+		if (state == nullptr) return;
+		{
+			std::lock_guard lock(state->mutex);
+			state->closed = true;
+			state->pending.reset();
+			state->ready.reset();
+			state->notifyWindow = nullptr;
+			state->notifyPosted = false;
+		}
+		state->wake.notify_one();
+		if (!m_worker.joinable()) {
+			m_reservation.reset();
+			return;
+		}
+
+		// Never join from a terminal window destructor. Transfer ownership to the
+		// fixed reaper; if its queue is temporarily full, use the admitted task
+		// fallback rather than detaching or leaking a live std::thread.
+		auto worker = std::move(m_worker);
+		if (!m_reservation) {
+			std::terminate();
+		}
+		auto reservation = std::move(*m_reservation);
+		m_reservation.reset();
+		const auto lifetime = std::static_pointer_cast<void>(state);
+		const auto retired = terminal::TerminalWorkerRetirementService::Instance().Retire(
+			std::move(worker), std::move(reservation), lifetime);
+		if (retired == terminal::TerminalWorkerRetirementStatus::Retired) return;
+		// Retire did not consume a valid reservation or the worker handle, so the
+		// same bounded reservation can carry the join task.
+		std::shared_ptr<std::thread> workerOwner;
+		try {
+			workerOwner = std::make_shared<std::thread>(std::move(worker));
+		} catch (...) {
+			std::terminate();
+		}
+		const auto taskStatus = terminal::TerminalWorkerRetirementService::Instance().RetireTask(
+			std::move(reservation),
+			[workerOwner]() mutable {
+				if (workerOwner->joinable()) workerOwner->join();
+			}, lifetime);
+		if (taskStatus != terminal::TerminalWorkerRetirementStatus::Retired) {
+			std::terminate();
+		}
+	}
+
+private:
+	struct State final {
+		std::mutex mutex;
+		std::condition_variable wake;
+		bool closed = false;
+		std::optional<TerminalNativeSurfaceCapture> pending;
+		std::shared_ptr<const workbench::rendering::FrameNativeSurfaceFrame> ready;
+		HWND notifyWindow = nullptr;
+		bool notifyPosted = false;
+	};
+
+	static std::shared_ptr<const workbench::rendering::FrameNativeSurfaceFrame>
+	BuildFrame(const TerminalNativeSurfaceCapture& capture) noexcept
+	{
+		if (!capture.pixels || capture.width == 0 || capture.height == 0) return {};
+		try {
+			const RECT full{ 0, 0, static_cast<LONG>(capture.width),
+				static_cast<LONG>(capture.height) };
+			RECT dirty = capture.dirtyRect;
+			if (dirty.left == 0 && dirty.top == 0 && dirty.right == 0 && dirty.bottom == 0) {
+				dirty = full;
+			}
+			if (dirty.left < full.left || dirty.top < full.top
+				|| dirty.right > full.right || dirty.bottom > full.bottom
+				|| dirty.left >= dirty.right || dirty.top >= dirty.bottom) return {};
+			const auto dirtyWidth = static_cast<std::uint32_t>(dirty.right - dirty.left);
+			const auto dirtyHeight = static_cast<std::uint32_t>(dirty.bottom - dirty.top);
+			if (dirtyWidth > (std::numeric_limits<std::uint32_t>::max)() / 4u
+				|| capture.pitch == 0 || capture.pitch < dirtyWidth * 4u
+				|| dirtyHeight > (std::numeric_limits<std::size_t>::max)() / capture.pitch
+				|| static_cast<std::size_t>(capture.pitch) * dirtyHeight > capture.pixels->size()) {
+				return {};
+			}
+			auto pixels = std::make_shared<std::vector<std::uint8_t>>(
+				static_cast<std::size_t>(capture.pitch) * dirtyHeight, 0);
+			for (std::uint32_t row = 0; row < dirtyHeight; ++row) {
+				const auto* source = capture.pixels->data()
+					+ static_cast<std::size_t>(row) * capture.pitch;
+				auto* destination = pixels->data()
+					+ static_cast<std::size_t>(row) * capture.pitch;
+				for (std::uint32_t column = 0; column < dirtyWidth; ++column) {
+					// BI_RGB 32-bit DIBs are BGRX. Terminal pixels are opaque;
+					// explicitly supply alpha 255 to make the payload premultiplied.
+					destination[0] = source[0];
+					destination[1] = source[1];
+					destination[2] = source[2];
+					destination[3] = 0xff;
+					source += 4;
+					destination += 4;
+				}
+			}
+			return std::make_shared<const workbench::rendering::FrameNativeSurfaceFrame>(
+				workbench::rendering::FrameNativeSurfaceFrame{
+					.surfaceId = capture.surfaceId,
+					.surfaceLifetimeEpoch = capture.surfaceLifetimeEpoch,
+					.deviceEpoch = capture.deviceEpoch,
+					.displayEpoch = capture.displayEpoch,
+					.layoutEpoch = capture.layoutEpoch,
+					.requestId = capture.requestId,
+					.width = capture.width,
+					.height = capture.height,
+					.pitch = capture.pitch,
+					.dirtyRect = dirty,
+					.compactDirtyPayload = true,
+					.pixels = std::move(pixels),
+				});
+		} catch (...) {
+			return {};
+		}
+	}
+
+	static void WorkerMain(std::shared_ptr<State> state) noexcept
+	{
+		for (;;) {
+			std::optional<TerminalNativeSurfaceCapture> capture;
+			{
+				std::unique_lock lock(state->mutex);
+				state->wake.wait(lock, [&state] {
+					return state->closed || state->pending.has_value();
+				});
+				if (state->closed) return;
+				capture = std::move(state->pending);
+			}
+			const auto frame = capture ? BuildFrame(*capture) : nullptr;
+			if (!frame) continue;
+			HWND notifyWindow = nullptr;
+			{
+				std::lock_guard lock(state->mutex);
+				if (state->closed) return;
+				state->ready = frame;
+				if (!state->notifyPosted && state->notifyWindow != nullptr) {
+					state->notifyPosted = true;
+					notifyWindow = state->notifyWindow;
+				}
+			}
+			if (notifyWindow != nullptr
+				&& !::PostMessageW(notifyWindow, kNativeFrameReadyMessage, 0, 0)) {
+				std::lock_guard lock(state->mutex);
+				if (!state->closed) state->notifyPosted = false;
+			}
+		}
+	}
+
+	std::shared_ptr<State> m_state;
+	std::thread m_worker;
+	std::optional<terminal::TerminalWorkerRetirementService::Reservation> m_reservation;
+};
+
 } // namespace
 
 struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
+	using NativeRegistration = workbench::rendering::FrameNativeSurfaceRegistration;
+	using NativeFrame = workbench::rendering::FrameNativeSurfaceFrame;
+	using FrameSnapshot = workbench::rendering::FrameSurfaceAdapterSnapshot;
+
+	explicit Impl(const TerminalSurfaceAdapter::SurfaceId surfaceId) noexcept
+		: frameSurface(surfaceId)
+	{
+	}
+
 	HWND window{};
 	HINSTANCE instance{};
 	TerminalModel* model{};
+	TerminalSurfaceAdapter frameSurface;
 	SakuraTerminalInputAdapter* inputAdapter{};
 	InputSink inputSink;
 	ResizeSink resizeSink;
 	FocusSink focusSink;
 	CTerminalWnd::ImeResultReader imeResultReader;
+	TerminalNativeFrameBridgePtr nativeFrameBridge;
+	TerminalNativeSurfacePublisher nativeSurfacePublisher;
+	std::function<void()> nativeFrameReadySink;
 	HFONT font{};
 	HFONT boldFont{};
 	HDC backBufferDc{};
@@ -218,8 +488,145 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 	bool inputRejected{};
 	bool imeComposing{};
 	bool closed{};
+	bool nativeFullDirty{ true };
+	RECT nativeDirtyRect{};
+	// SetWindowPos normally delivers WM_SIZE synchronously. Layout resets this
+	// marker so one public layout call advances the logical epoch once even
+	// though the native message path also observes the resize.
+	bool frameLayoutMessageSeen{};
 	bool useTerminalProfileColors{ true };
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
+
+	void MarkNativeFullDirty() noexcept
+	{
+		nativeFullDirty = true;
+		nativeDirtyRect = {};
+	}
+
+	void AccumulateNativeDirtyRect(const RECT& rectangle) noexcept
+	{
+		if (nativeFullDirty || rectangle.right <= rectangle.left
+			|| rectangle.bottom <= rectangle.top) return;
+		if (nativeDirtyRect.right <= nativeDirtyRect.left
+			|| nativeDirtyRect.bottom <= nativeDirtyRect.top) {
+			nativeDirtyRect = rectangle;
+			return;
+		}
+		nativeDirtyRect.left = std::min(nativeDirtyRect.left, rectangle.left);
+		nativeDirtyRect.top = std::min(nativeDirtyRect.top, rectangle.top);
+		nativeDirtyRect.right = std::max(nativeDirtyRect.right, rectangle.right);
+		nativeDirtyRect.bottom = std::max(nativeDirtyRect.bottom, rectangle.bottom);
+	}
+
+	[[nodiscard]] std::optional<NativeRegistration>
+	NativeSurfaceRegistration() const noexcept
+	{
+		if (!window || !frameSurface.IsOpen() || !nativeFrameBridge) return std::nullopt;
+		RECT client{};
+		if (!::GetClientRect(window, &client)) return std::nullopt;
+		const auto width = std::max<LONG>(1, client.right - client.left);
+		const auto height = std::max<LONG>(1, client.bottom - client.top);
+		const auto snapshot = frameSurface.Snapshot();
+		if (snapshot.surfaceId == 0 || snapshot.surfaceLifetimeEpoch == 0
+			|| snapshot.deviceEpoch == 0 || snapshot.layoutEpoch == 0) return std::nullopt;
+		return NativeRegistration{
+			.presentation = workbench::rendering::FramePresentationSurfaceSpec{
+				.surfaceId = snapshot.surfaceId,
+				.surfaceLifetimeEpoch = snapshot.surfaceLifetimeEpoch,
+				.deviceEpoch = snapshot.deviceEpoch,
+				.layoutEpoch = snapshot.layoutEpoch,
+				.width = static_cast<std::uint32_t>(width),
+				.height = static_cast<std::uint32_t>(height),
+				.visible = snapshot.visible,
+			},
+			.targetWindow = window,
+		};
+	}
+
+	void PublishNativeSurfaceRegistration(const bool update) noexcept
+	{
+		const auto registration = NativeSurfaceRegistration();
+		if (!registration || !nativeFrameBridge) return;
+		if (update) nativeFrameBridge->Update(*registration);
+		else nativeFrameBridge->Register(*registration);
+	}
+
+	void SetNativeFrameBridge(TerminalNativeFrameBridgePtr bridge) noexcept
+	{
+		nativeFrameBridge = std::move(bridge);
+		nativeSurfacePublisher.SetNotifyWindow(window);
+		if (nativeFrameBridge) PublishNativeSurfaceRegistration(false);
+	}
+
+	void SetNativeFrameReadySink(std::function<void()> sink) noexcept
+	{
+		nativeFrameReadySink = std::move(sink);
+	}
+
+	void DrainNativeFrame() noexcept
+	{
+		if (!nativeFrameReadySink) return;
+		nativeFrameReadySink();
+	}
+
+	[[nodiscard]] std::shared_ptr<const NativeFrame> TakeNativeFrame() noexcept
+	{
+		return nativeSurfacePublisher.TakeReady();
+	}
+
+	void CaptureNativeFrame(const FrameSnapshot& committed) noexcept
+	{
+		if (!nativeSurfacePublisher.Started() || !HasUsableBackBufferState()) return;
+		RECT dirty = nativeFullDirty ? RECT{} : nativeDirtyRect;
+		if (!nativeFullDirty && (dirty.right <= dirty.left || dirty.bottom <= dirty.top)) return;
+		try {
+			const auto width = static_cast<std::uint32_t>(backBufferSize.cx);
+			const auto height = static_cast<std::uint32_t>(backBufferSize.cy);
+			if (nativeFullDirty) dirty = RECT{ 0, 0, static_cast<LONG>(width), static_cast<LONG>(height) };
+			dirty.left = std::clamp<LONG>(dirty.left, 0, static_cast<LONG>(width));
+			dirty.top = std::clamp<LONG>(dirty.top, 0, static_cast<LONG>(height));
+			dirty.right = std::clamp<LONG>(dirty.right, 0, static_cast<LONG>(width));
+			dirty.bottom = std::clamp<LONG>(dirty.bottom, 0, static_cast<LONG>(height));
+			if (dirty.right <= dirty.left || dirty.bottom <= dirty.top) return;
+			const auto dirtyWidth = static_cast<std::size_t>(dirty.right - dirty.left);
+			const auto dirtyHeight = static_cast<std::size_t>(dirty.bottom - dirty.top);
+			if (dirtyWidth > (std::numeric_limits<std::uint32_t>::max)() / 4u
+				|| dirtyWidth > (std::numeric_limits<std::size_t>::max)() / 4u) return;
+			const auto pitch = static_cast<std::uint32_t>(dirtyWidth * 4u);
+			if (dirtyHeight > (std::numeric_limits<std::size_t>::max)() / pitch) return;
+			auto raw = std::make_shared<std::vector<std::uint8_t>>(
+				dirtyHeight * pitch, 0);
+			for (LONG y = dirty.top; y < dirty.bottom; ++y) {
+				const auto* source = reinterpret_cast<const std::uint8_t*>(backBufferBits)
+					+ static_cast<std::size_t>(y) * static_cast<std::size_t>(backBufferStridePixels) * 4u
+					+ static_cast<std::size_t>(dirty.left) * 4u;
+				auto* destination = raw->data()
+					+ static_cast<std::size_t>(y - dirty.top) * pitch;
+				std::memcpy(destination, source,
+					static_cast<std::size_t>(dirty.right - dirty.left) * 4u);
+			}
+			const bool submitted = nativeSurfacePublisher.Submit(TerminalNativeSurfaceCapture{
+				.surfaceId = committed.surfaceId,
+				.surfaceLifetimeEpoch = committed.surfaceLifetimeEpoch,
+				.deviceEpoch = committed.deviceEpoch,
+				.displayEpoch = nativeFrameBridge ? nativeFrameBridge->DisplayEpoch() : 1,
+				.layoutEpoch = committed.layoutEpoch,
+				.requestId = committed.committedRequestId,
+				.width = width,
+				.height = height,
+				.pitch = pitch,
+				.dirtyRect = dirty,
+				.pixels = std::move(raw),
+			});
+			if (submitted) {
+				nativeFullDirty = false;
+				nativeDirtyRect = {};
+			}
+		} catch (...) {
+			// GDI remains authoritative until a complete native payload reaches
+			// the runtime; a capture allocation failure must not damage the paint.
+		}
+	}
 
 	void ReleaseRenderFonts() noexcept
 	{
@@ -435,10 +842,11 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		backBufferBitmap = replacementBitmap;
 		backBufferOriginalBitmap = replacementOriginalBitmap;
 		backBufferBits = static_cast<std::uint32_t*>(replacementBits);
-		backBufferStridePixels = stridePixels;
-		backBufferByteCount = byteCount;
-		backBufferSize = { width, height };
-		DestroyBackBuffer(oldDc, oldBitmap, oldOriginalBitmap);
+	backBufferStridePixels = stridePixels;
+	backBufferByteCount = byteCount;
+	backBufferSize = { width, height };
+	MarkNativeFullDirty();
+	DestroyBackBuffer(oldDc, oldBitmap, oldOriginalBitmap);
 		return true;
 	}
 
@@ -968,6 +1376,7 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		PAINTSTRUCT paint{};
 		const HDC dc = ::BeginPaint(window, &paint);
 		if( dc == nullptr ) return;
+		AccumulateNativeDirtyRect(paint.rcPaint);
 		const int width = paint.rcPaint.right - paint.rcPaint.left;
 		const int height = paint.rcPaint.bottom - paint.rcPaint.top;
 		if( width <= 0 || height <= 0 ) {
@@ -1116,7 +1525,13 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			Paint();
 			return 0;
 		case WM_SIZE:
+			MarkNativeFullDirty();
 			NotifySize();
+			if( frameSurface.IsOpen() ) {
+				static_cast<void>(frameSurface.NotifyLayout());
+				frameLayoutMessageSeen = true;
+				PublishNativeSurfaceRegistration(true);
+			}
 			// A terminal is first created at 0x0 while its panel is materialized.
 			// Resizing it into view must schedule a paint even when it has not
 			// received focus yet; otherwise the first prompt remains hidden until
@@ -1124,6 +1539,11 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 			::InvalidateRect(window, nullptr, FALSE);
 			return 0;
 		case WM_SHOWWINDOW:
+			if( frameSurface.IsOpen() ) {
+				static_cast<void>(frameSurface.SetVisible(wParam != FALSE));
+				PublishNativeSurfaceRegistration(true);
+			}
+			MarkNativeFullDirty();
 			if( wParam != FALSE ) ::InvalidateRect(window, nullptr, FALSE);
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		case WM_TIMER:
@@ -1301,8 +1721,17 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		case WM_DPICHANGED:
 			dpi = HIWORD(wParam) == 0 ? kDefaultDpi : HIWORD(wParam);
 			RecreateFont();
+			MarkNativeFullDirty();
 			NotifySize();
+			if( frameSurface.IsOpen() ) {
+				static_cast<void>(frameSurface.NotifyLayout());
+				frameLayoutMessageSeen = true;
+				PublishNativeSurfaceRegistration(true);
+			}
 			::InvalidateRect(window, nullptr, FALSE);
+			return 0;
+		case kNativeFrameReadyMessage:
+			DrainNativeFrame();
 			return 0;
 		default:
 			return ::DefWindowProcW(window, message, wParam, lParam);
@@ -1383,12 +1812,22 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 };
 
 CTerminalWnd::CTerminalWnd()
-	: CTerminalWnd(ReadNativeImeResult)
+	: CTerminalWnd(kTerminalSurfaceId, ReadNativeImeResult)
 {
 }
 
 CTerminalWnd::CTerminalWnd( ImeResultReader imeResultReader )
-	: m_impl(std::make_unique<Impl>())
+	: CTerminalWnd(kTerminalSurfaceId, std::move(imeResultReader))
+{
+}
+
+CTerminalWnd::CTerminalWnd( const FrameSurfaceId surfaceId )
+	: CTerminalWnd(surfaceId, ReadNativeImeResult)
+{
+}
+
+CTerminalWnd::CTerminalWnd( const FrameSurfaceId surfaceId, ImeResultReader imeResultReader )
+	: m_impl(std::make_unique<Impl>(surfaceId))
 {
 	m_impl->imeResultReader = std::move(imeResultReader);
 }
@@ -1405,7 +1844,18 @@ bool CTerminalWnd::Create( HWND parent, HINSTANCE instance )
 	m_impl->window = ::CreateWindowExW(0, kTerminalWindowClass, L"", WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, m_impl.get());
 	if( !m_impl->window ) return false;
-	m_impl->RecreateFont();
+		const auto opened = m_impl->frameSurface.Open(kTerminalDefaultFrameHostId, true);
+	if( !opened.Accepted() ) {
+		::DestroyWindow(m_impl->window);
+		m_impl->window = nullptr;
+		return false;
+	}
+		// A newly materialized child has no prior GDI content. Request its first
+		// projection, but leave presentation to the enclosing post-paint boundary.
+		static_cast<void>(m_impl->frameSurface.RequestCurrent());
+		(void)m_impl->nativeSurfacePublisher.Start();
+		m_impl->nativeSurfacePublisher.SetNotifyWindow(m_impl->window);
+		m_impl->RecreateFont();
 	m_impl->NotifySize();
 	return true;
 }
@@ -1424,9 +1874,15 @@ void CTerminalWnd::Layout( const RECT& bounds, unsigned int dpi )
 	}
 	const int width = std::max(0L, bounds.right - bounds.left);
 	const int height = std::max(0L, bounds.bottom - bounds.top);
+	m_impl->frameLayoutMessageSeen = false;
+	m_impl->MarkNativeFullDirty();
 	::SetWindowPos(m_impl->window, nullptr, bounds.left, bounds.top, width,
 		height, SWP_NOACTIVATE | SWP_NOZORDER | SWP_SHOWWINDOW);
 	m_impl->NotifySize();
+	if( m_impl->frameSurface.IsOpen() && !m_impl->frameLayoutMessageSeen ) {
+		static_cast<void>(m_impl->frameSurface.NotifyLayout());
+	}
+	m_impl->PublishNativeSurfaceRegistration(true);
 	if (!wasDrawable && width > 0 && height > 0) {
 		(void)::RedrawWindow(m_impl->window, nullptr, nullptr,
 			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
@@ -1437,12 +1893,17 @@ void CTerminalWnd::Layout( const RECT& bounds, unsigned int dpi )
 
 void CTerminalWnd::SetModel( TerminalModel* model )
 {
+	const bool changed = m_impl->model != model;
 	m_impl->model = model;
+	m_impl->MarkNativeFullDirty();
 	m_impl->scrollOffset = 0;
 	m_impl->selectionAnchor = {};
 	m_impl->selectionActive = {};
 	m_impl->UpdateScrollbar();
 	m_impl->UpdateCaret();
+	if( changed && model != nullptr && m_impl->frameSurface.IsOpen() ) {
+		static_cast<void>(m_impl->frameSurface.NotifyContent());
+	}
 	InvalidateAll();
 }
 
@@ -1472,11 +1933,16 @@ void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 {
 	m_impl->palette = palette;
 	m_impl->useTerminalProfileColors = !theme::CThemeService::IsHighContrastActive();
+	m_impl->MarkNativeFullDirty();
 	// Palette transitions are an explicit renderer generation boundary.  Glyph
 	// geometry is font-owned, but invalidating the bounded shaped-run cache here
 	// keeps all DirectWrite state and its foreground/background style keys in
 	// lockstep with the workbench theme.
 	m_impl->dwriteRenderer.Invalidate();
+	if( m_impl->frameSurface.IsOpen() ) {
+		static_cast<void>(m_impl->frameSurface.NotifyLayout());
+		m_impl->PublishNativeSurfaceRegistration(true);
+	}
 	if( m_impl->window ) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 
@@ -1501,6 +1967,7 @@ void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScr
 		RECT rectangle{ geometry.GridOriginX(),
 			static_cast<LONG>(geometry.GridOriginY() + first * m_impl->cellHeight), client.right,
 			static_cast<LONG>(geometry.GridOriginY() + (last + 1) * m_impl->cellHeight) };
+		m_impl->AccumulateNativeDirtyRect(rectangle);
 		::InvalidateRect(m_impl->window, &rectangle, FALSE);
 	}
 	m_impl->UpdateCaret();
@@ -1509,10 +1976,94 @@ void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScr
 void CTerminalWnd::InvalidateAll()
 {
 	if( m_impl->window ) {
+		m_impl->MarkNativeFullDirty();
 		m_impl->UpdateScrollbar();
 		m_impl->UpdateCaret();
 		::InvalidateRect(m_impl->window, nullptr, FALSE);
 	}
+}
+
+CTerminalWnd::FrameSurfaceResult CTerminalWnd::SetFrameHost(
+	const std::string_view hostId ) noexcept
+{
+	return m_impl->frameSurface.SetHost(hostId);
+}
+
+CTerminalWnd::FrameSurfaceResult CTerminalWnd::SetFrameVisible(
+	const bool visible ) noexcept
+{
+	const auto result = m_impl->frameSurface.SetVisible(visible);
+	if (result.Accepted()) m_impl->PublishNativeSurfaceRegistration(true);
+	return result;
+}
+
+CTerminalWnd::FrameSurfaceResult CTerminalWnd::NotifyFrameContent() noexcept
+{
+	return m_impl->frameSurface.NotifyContent();
+}
+
+CTerminalWnd::FrameSurfaceResult CTerminalWnd::NotifyFrameLayout() noexcept
+{
+	m_impl->MarkNativeFullDirty();
+	const auto result = m_impl->frameSurface.NotifyLayout();
+	if (result.Accepted()) m_impl->PublishNativeSurfaceRegistration(true);
+	return result;
+}
+
+CTerminalWnd::FrameSurfaceResult CTerminalWnd::NotifyFrameDeviceEpoch(
+	const std::uint64_t epoch ) noexcept
+{
+	m_impl->MarkNativeFullDirty();
+	const auto result = m_impl->frameSurface.NotifyDeviceEpoch(epoch);
+	if (result.Accepted()) m_impl->PublishNativeSurfaceRegistration(true);
+	return result;
+}
+
+std::optional<CTerminalWnd::FrameSurfaceSnapshotType> CTerminalWnd::CommitGdiFrame() noexcept
+{
+	const auto committed = m_impl->frameSurface.CommitGdiFrame();
+	if (committed) m_impl->CaptureNativeFrame(*committed);
+	return committed;
+}
+
+CTerminalWnd::FrameSurfaceSnapshotType CTerminalWnd::FrameSurfaceSnapshot() const noexcept
+{
+	return m_impl->frameSurface.Snapshot();
+}
+
+CTerminalWnd::FrameSurfaceSnapshotType CTerminalWnd::GetFrameSurfaceSnapshot() const noexcept
+{
+	return FrameSurfaceSnapshot();
+}
+
+CTerminalWnd::FrameSurfaceId CTerminalWnd::GetFrameSurfaceId() const noexcept
+{
+	return m_impl->frameSurface.StableSurfaceId();
+}
+
+CTerminalWnd::FrameSurfaceId CTerminalWnd::StableSurfaceId() const noexcept
+{
+	return GetFrameSurfaceId();
+}
+
+bool CTerminalWnd::HasPendingFrame() const noexcept
+{
+	return m_impl->frameSurface.HasPendingFrame();
+}
+
+void CTerminalWnd::SetNativeFrameBridge(TerminalNativeFrameBridgePtr bridge) noexcept
+{
+	m_impl->SetNativeFrameBridge(std::move(bridge));
+}
+
+void CTerminalWnd::SetNativeFrameReadySink(std::function<void()> sink) noexcept
+{
+	m_impl->SetNativeFrameReadySink(std::move(sink));
+}
+
+std::shared_ptr<const CTerminalWnd::NativeFrame> CTerminalWnd::TakeNativeFrame() noexcept
+{
+	return m_impl->TakeNativeFrame();
 }
 
 bool CTerminalWnd::PreTranslateMessage( MSG& message )
@@ -1584,6 +2135,16 @@ void CTerminalWnd::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
 	m_impl->closed = true;
+	m_impl->nativeFrameReadySink = {};
+	if (m_impl->nativeFrameBridge) {
+		const auto snapshot = m_impl->frameSurface.Snapshot();
+		m_impl->nativeFrameBridge->CloseSurface(
+			snapshot.surfaceId, snapshot.surfaceLifetimeEpoch);
+		m_impl->nativeFrameBridge->Close();
+	}
+	m_impl->nativeSurfacePublisher.Close();
+	m_impl->nativeFrameBridge.reset();
+	static_cast<void>(m_impl->frameSurface.Close());
 	if( m_impl->window ) ::KillTimer(m_impl->window, kInputRetryTimer);
 	if( m_impl->window ) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
@@ -1634,6 +2195,10 @@ LRESULT CALLBACK CTerminalWnd::WindowProc( HWND window, UINT message, WPARAM wPa
 	auto* impl = reinterpret_cast<Impl*>(::GetWindowLongPtrW(window, GWLP_USERDATA));
 	if( impl ) {
 		if( message == WM_NCDESTROY ) {
+			// Fence the logical lifetime even when the parent destroys the native
+			// child directly. Close() normally performs this first, but this branch
+			// is the final ownership boundary for late frame work.
+			static_cast<void>(impl->frameSurface.Close());
 			impl->window = nullptr;
 			::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
 			return ::DefWindowProcW(window, message, wParam, lParam);

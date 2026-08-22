@@ -17,6 +17,7 @@ namespace {
 void ShowPageWindow(HWND window, bool visible)
 {
 	if (window == nullptr || !::IsWindow(window)) return;
+	if (::IsWindowVisible(window) == (visible != FALSE)) return;
 	::ShowWindow(window, visible ? SW_SHOW : SW_HIDE);
 	if (!visible) return;
 	// A page can refresh while another ViewContainer is active.  Showing that
@@ -24,14 +25,14 @@ void ShowPageWindow(HWND window, bool visible)
 	// presents it, otherwise stale rows or a stale scrollbar can survive until a
 	// later unrelated paint message.
 	::RedrawWindow(window, nullptr, nullptr,
-		RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN | RDW_NOERASE);
 }
 
 void RedrawVisiblePage(HWND window)
 {
 	if (window == nullptr || !::IsWindow(window) || !::IsWindowVisible(window)) return;
 	::RedrawWindow(window, nullptr, nullptr,
-		RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		RDW_INVALIDATE | RDW_FRAME | RDW_ALLCHILDREN | RDW_NOERASE);
 }
 
 } // namespace
@@ -42,9 +43,12 @@ CViewContainerPages::CViewContainerPages(CDlgFuncList& dialog)
 	, m_scm(std::make_unique<scm::CScmWorkbenchTool>())
 	, m_search(std::make_unique<search::CSearchWorkbenchTool>())
 {
-	m_pages.push_back({ std::string(pageIds::Explorer), STR_WORKBENCH_EXPLORER_TITLE });
-	m_pages.push_back({ std::string(pageIds::SourceControl), STR_WORKBENCH_SOURCE_CONTROL_TITLE });
-	m_pages.push_back({ std::string(pageIds::Search), STR_WORKBENCH_SEARCH_TITLE });
+	m_pages.push_back({ std::string(pageIds::Explorer), STR_WORKBENCH_EXPLORER_TITLE, nullptr,
+		std::make_unique<rendering::FrameSurfaceCommitState>(1) });
+	m_pages.push_back({ std::string(pageIds::SourceControl), STR_WORKBENCH_SOURCE_CONTROL_TITLE, nullptr,
+		std::make_unique<rendering::FrameSurfaceCommitState>(2) });
+	m_pages.push_back({ std::string(pageIds::Search), STR_WORKBENCH_SEARCH_TITLE, nullptr,
+		std::make_unique<rendering::FrameSurfaceCommitState>(3) });
 }
 
 CViewContainerPages::~CViewContainerPages()
@@ -66,6 +70,11 @@ bool CViewContainerPages::Create(HWND owner)
 	m_search->SetVisible(false);
 	ApplySearchTexts();
 	if (const HWND window = m_explorer->GetHwnd()) ::ShowWindow(window, SW_HIDE);
+	for (auto& page : m_pages) {
+		if (page.frameSurface) {
+			(void)page.frameSurface->Open("workbench.window.detached", false);
+		}
+	}
 	m_created = true;
 	return true;
 }
@@ -78,7 +87,12 @@ void CViewContainerPages::Close()
 	if (m_search) m_search->Close();
 	if (m_scm) m_scm->Close();
 	if (m_explorer) m_explorer->Close();
-	for (auto& page : m_pages) page.attached = nullptr;
+	for (auto& page : m_pages) {
+		if (page.frameSurface && page.frameSurface->IsOpen()) {
+			(void)page.frameSurface->Close();
+		}
+		page.attached = nullptr;
+	}
 	m_owner = nullptr;
 }
 
@@ -104,7 +118,8 @@ HWND CViewContainerPages::PageWindow(const Page& page) const noexcept
 	return nullptr;
 }
 
-void CViewContainerPages::Attach(std::string_view containerId, HWND host)
+void CViewContainerPages::Attach(
+	std::string_view containerId, HWND host, std::string_view logicalHostId)
 {
 	if (!IsUsable()) return;
 	Page* page = Find(containerId);
@@ -118,6 +133,7 @@ void CViewContainerPages::Attach(std::string_view containerId, HWND host)
 	}
 	if (page->id == pageIds::Explorer && m_outline) (void)m_outline->Reparent(target);
 	page->attached = host;
+	if (page->frameSurface) (void)page->frameSurface->SetHost(logicalHostId);
 }
 
 void CViewContainerPages::SetPageVisible(std::string_view containerId, bool visible)
@@ -129,12 +145,64 @@ void CViewContainerPages::SetPageVisible(std::string_view containerId, bool visi
 		ShowPageWindow(PageWindow(*page), visible);
 		if (m_outline) m_outline->SetVisible(visible && m_outlineExpanded);
 	} else if (page->id == pageIds::SourceControl && m_scm) {
-		m_scm->SetVisible(visible);
-		if (visible) RedrawVisiblePage(PageWindow(*page));
+		ShowPageWindow(PageWindow(*page), visible);
 	} else if (page->id == pageIds::Search && m_search) {
-		m_search->SetVisible(visible);
-		if (visible) RedrawVisiblePage(PageWindow(*page));
+		ShowPageWindow(PageWindow(*page), visible);
 	}
+	if (page->frameSurface) (void)page->frameSurface->SetVisible(visible);
+}
+
+void CViewContainerPages::NotifyPageLayout(std::string_view containerId)
+{
+	if (!IsUsable()) return;
+	Page* page = Find(containerId);
+	if (page == nullptr || !page->frameSurface || !page->frameSurface->IsOpen()) return;
+	(void)page->frameSurface->NotifyLayout();
+}
+
+std::vector<CViewContainerPages::FrameSurfaceProjection>
+CViewContainerPages::FrameSurfaceProjections() const
+{
+	std::vector<FrameSurfaceProjection> projections;
+	projections.reserve(m_pages.size());
+	for (const auto& page : m_pages) {
+		if (!page.frameSurface || !page.frameSurface->IsOpen()) continue;
+		RECT client{ 0, 0, 1, 1 };
+		const HWND window = PageWindow(page);
+		if (window != nullptr && ::IsWindow(window)) {
+			RECT measured{};
+			if (::GetClientRect(window, &measured)) client = measured;
+		}
+		projections.push_back(FrameSurfaceProjection{
+			.surface = page.frameSurface->Snapshot(),
+			.width = static_cast<std::uint32_t>(std::max<LONG>(1, client.right - client.left)),
+			.height = static_cast<std::uint32_t>(std::max<LONG>(1, client.bottom - client.top)),
+		});
+	}
+	return projections;
+}
+
+std::vector<CViewContainerPages::FrameSurfaceProjection>
+CViewContainerPages::CommitGdiFrame()
+{
+	std::vector<FrameSurfaceProjection> committed;
+	for (auto& page : m_pages) {
+		if (!page.frameSurface) continue;
+		const auto snapshot = page.frameSurface->CommitGdiFrame();
+		if (!snapshot.has_value()) continue;
+		RECT client{ 0, 0, 1, 1 };
+		const HWND window = PageWindow(page);
+		if (window != nullptr && ::IsWindow(window)) {
+			RECT measured{};
+			if (::GetClientRect(window, &measured)) client = measured;
+		}
+		committed.push_back(FrameSurfaceProjection{
+			.surface = *snapshot,
+			.width = static_cast<std::uint32_t>(std::max<LONG>(1, client.right - client.left)),
+			.height = static_cast<std::uint32_t>(std::max<LONG>(1, client.bottom - client.top)),
+		});
+	}
+	return committed;
 }
 
 bool CViewContainerPages::Contains(std::string_view containerId) const noexcept

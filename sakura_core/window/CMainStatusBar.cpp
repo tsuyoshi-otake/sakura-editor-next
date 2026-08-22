@@ -162,6 +162,7 @@ void CMainStatusBar::DestroyStatusBar()
 	// フォントは DC へ選択したままにしていない（PaintStatusBar が毎回元へ戻す）ので、
 	// ここで破棄してよい。
 	ReleaseIconFonts();
+	m_backBuffer.Reset();
 	if (m_hwndStatusBar != nullptr) {
 		::RemoveWindowSubclass(m_hwndStatusBar, StatusBarSubclassProc, kSakuraStatusBarSubclassId);
 		::DestroyWindow(m_hwndStatusBar);
@@ -348,6 +349,7 @@ LRESULT CALLBACK CMainStatusBar::StatusBarSubclassProc(HWND window, UINT message
 	case WM_NCDESTROY:
 		::RemoveWindowSubclass(window, StatusBarSubclassProc, subclassId);
 		if (self != nullptr && self->m_hwndStatusBar == window) {
+			self->m_backBuffer.Reset();
 			self->m_hwndStatusBar = nullptr;
 		}
 		break;
@@ -367,10 +369,8 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	const int height = client.bottom - client.top;
 	if (width <= 0 || height <= 0) return;
 
-	const HDC buffer = ::CreateCompatibleDC(dc);
-	const HBITMAP bitmap = buffer == nullptr ? nullptr : ::CreateCompatibleBitmap(dc, width, height);
-	const HGDIOBJ oldBitmap = bitmap == nullptr ? nullptr : ::SelectObject(buffer, bitmap);
-	HDC target = oldBitmap == nullptr ? dc : buffer;
+	const bool buffered = m_backBuffer.Ensure(dc, width, height);
+	HDC target = buffered ? m_backBuffer.Dc() : dc;
 
 	// Match the VS Code workbench status treatment: the complete bar carries
 	// the active accent, while every label and line icon uses its paired
@@ -522,12 +522,7 @@ void CMainStatusBar::PaintStatusBar(HDC dc) const noexcept
 	}
 
 	if (oldFont != nullptr) ::SelectObject(target, oldFont);
-	if (oldBitmap != nullptr) {
-		::BitBlt(dc, 0, 0, width, height, buffer, 0, 0, SRCCOPY);
-		::SelectObject(buffer, oldBitmap);
-	}
-	if (bitmap != nullptr) ::DeleteObject(bitmap);
-	if (buffer != nullptr) ::DeleteDC(buffer);
+	if (buffered) (void)m_backBuffer.Present(dc, client);
 }
 
 bool CMainStatusBar::InvokeBuiltinItemAt(POINT point) const
@@ -716,7 +711,6 @@ void CMainStatusBar::ShowProgressBar(bool bShow) const {
 			::ShowWindow(m_hwndProgressBar, SW_HIDE);
 		}
 		// プログレスバー表示領域を再描画
-		::InvalidateRect(m_hwndStatusBar, &rcProgressArea, TRUE);
-		::UpdateWindow(m_hwndStatusBar);
+		::InvalidateRect(m_hwndStatusBar, &rcProgressArea, FALSE);
 	}
 }

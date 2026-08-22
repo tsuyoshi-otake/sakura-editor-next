@@ -8,6 +8,7 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/rendering/FrameNativeSurfacePayloadAdapter.h"
 
 #include <CommCtrl.h>
 #include <cstdint>
@@ -100,6 +101,17 @@ public:
 	[[nodiscard]] HWND GetHwnd() const noexcept { return GetDialogWindow(); }
 	[[nodiscard]] bool IsVisible() const noexcept { return m_visible; }
 
+	//! Installs the asynchronous native presentation boundary. Outline's
+	//! existing dialog supplies the paint HDC through SubmitNativeSurface.
+	void SetNativeSurfaceSink(rendering::FrameNativeSurfacePayloadSink sink) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult RegisterNativeSurface(
+		const rendering::FrameNativeSurfacePayloadTarget& target) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult UpdateNativeSurface(
+		const rendering::FrameNativeSurfacePayloadTarget& target) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult SubmitNativeSurface(
+		HDC sourceDc, const RECT& dirtyRect) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult CloseNativeSurface() noexcept;
+
 private:
 	void ApplyLayout() noexcept;
 	void ApplyAppearance() noexcept;
@@ -119,6 +131,7 @@ private:
 	bool m_hasAppliedLayout = false;
 	bool m_appearanceDirty = true;
 	bool m_visible = true;
+	rendering::FrameNativeSurfacePayloadAdapter m_nativeSurface;
 };
 
 } // namespace workbench::outline

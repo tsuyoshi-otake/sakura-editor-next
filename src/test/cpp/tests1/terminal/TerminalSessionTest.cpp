@@ -648,6 +648,43 @@ TEST(TerminalSession, OutputQueueAppliesHighLowWaterBackpressureWithoutLoss)
 	EXPECT_EQ(expected, actual);
 }
 
+TEST(TerminalSession, MillionLineOutputStaysBoundedAndLossless)
+{
+	auto backend = std::make_unique<FakeTerminalBackend>();
+	auto* fake = backend.get();
+	terminal::CTerminalSession session(std::move(backend));
+	ASSERT_TRUE(session.Start(DefaultLaunchOptions()).succeeded);
+
+	constexpr std::size_t lineCount = 1'000'000;
+	std::vector<std::uint8_t> expected;
+	expected.reserve(lineCount * 3);
+	for( std::size_t line = 0; line < lineCount; ++line ) {
+		expected.push_back(static_cast<std::uint8_t>('x'));
+		expected.push_back(static_cast<std::uint8_t>('\r'));
+		expected.push_back(static_cast<std::uint8_t>('\n'));
+	}
+	fake->PushData(expected);
+	fake->waitResults = { true };
+	fake->PushEndOfFile();
+
+	std::vector<std::uint8_t> actual;
+	actual.reserve(expected.size());
+	std::size_t maximumQueued = 0;
+	const auto deadline = std::chrono::steady_clock::now() + 30s;
+	while( std::chrono::steady_clock::now() < deadline
+		&& (session.GetState() == terminal::TerminalSessionState::Running || session.GetQueuedOutputBytes() != 0) ) {
+		maximumQueued = std::max(maximumQueued, session.GetQueuedOutputBytes());
+		auto drained = session.DrainOutput();
+		actual.insert(actual.end(), drained.begin(), drained.end());
+		if( drained.empty() ) std::this_thread::sleep_for(1ms);
+	}
+	maximumQueued = std::max(maximumQueued, session.GetQueuedOutputBytes());
+	ASSERT_LT(std::chrono::steady_clock::now(), deadline);
+	EXPECT_LE(maximumQueued, terminal::CTerminalSession::kOutputHighWaterBytes);
+	EXPECT_EQ(expected, actual);
+	EXPECT_EQ(expected.size(), fake->TotalBytesRead());
+}
+
 TEST(TerminalSession, OutputNotificationHasOnlyOneMessageInFlight)
 {
 	auto backend = std::make_unique<FakeTerminalBackend>();

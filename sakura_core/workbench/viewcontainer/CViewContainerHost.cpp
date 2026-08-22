@@ -89,8 +89,10 @@ bool EnsureWindowClass(HINSTANCE instance)
 } // namespace
 
 CViewContainerHost::CViewContainerHost(std::shared_ptr<CViewContainerPages> pages,
-	OutlineExpandedCallback outlineExpanded, OutlineRevealCallback outlineRevealed)
+	std::string logicalHostId, OutlineExpandedCallback outlineExpanded,
+	OutlineRevealCallback outlineRevealed)
 	: m_pages(std::move(pages))
+	, m_logicalHostId(std::move(logicalHostId))
 	, m_outlineExpandedCallback(std::move(outlineExpanded))
 	, m_outlineRevealCallback(std::move(outlineRevealed))
 {
@@ -121,7 +123,8 @@ void CViewContainerHost::Layout(const RECT& contentRect, unsigned int dpi)
 	if (m_font.Dpi() != m_dpi) (void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_dpi);
 	::SetWindowPos(m_window, nullptr, contentRect.left, contentRect.top,
 		std::max(0L, contentRect.right - contentRect.left),
-		std::max(0L, contentRect.bottom - contentRect.top), SWP_NOACTIVATE | SWP_NOZORDER);
+		std::max(0L, contentRect.bottom - contentRect.top),
+		SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	LayoutChildren();
 }
 
@@ -220,11 +223,14 @@ void CViewContainerHost::Close()
 	// them before this window dies keeps their HWNDs valid for the surviving host.
 	if (m_pages && m_pages->IsUsable()) {
 		for (const auto& id : m_pages->PageIds()) {
-			if (m_pages->AttachedHost(id) == m_window) m_pages->Attach(id, nullptr);
+			if (m_pages->AttachedHost(id) == m_window) {
+				m_pages->Attach(id, nullptr, "workbench.window.detached");
+			}
 		}
 	}
 	if (m_window != nullptr && ::IsWindow(m_window)) ::DestroyWindow(m_window);
 	m_window = nullptr;
+	m_backBuffer.Reset();
 	ReleaseCodiconFont();
 }
 
@@ -232,7 +238,7 @@ void CViewContainerHost::SetPalette(const theme::ThemePalette& palette)
 {
 	m_palette = palette;
 	if (m_pages) m_pages->SetPalette(palette);
-	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
+	if (m_window) ::InvalidateRect(m_window, nullptr, FALSE);
 }
 
 bool CViewContainerHost::IsOutlineExpanded() const noexcept
@@ -257,7 +263,7 @@ void CViewContainerHost::SetOutlineExpanded(bool expanded)
 	if (m_window != nullptr) {
 		::SendMessageW(m_window, WM_SETREDRAW, TRUE, 0);
 		::RedrawWindow(m_window, nullptr, nullptr,
-			RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW | RDW_NOERASE | RDW_NOINTERNALPAINT);
+			RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE | RDW_NOINTERNALPAINT);
 	}
 	if (expanded) NotifyOutlineRevealed();
 }
@@ -312,9 +318,11 @@ void CViewContainerHost::ShowPage(const std::string_view containerId)
 	// A container with no page in the pool would leave this Part claiming to render something
 	// that has no window, so it degrades to the empty state instead.
 	m_page = m_pages->Contains(containerId) ? std::string(containerId) : std::string{};
-	if (!m_page.empty() && m_pages->IsUsable()) m_pages->Attach(m_page, m_window);
+	if (!m_page.empty() && m_pages->IsUsable()) {
+		m_pages->Attach(m_page, m_window, m_logicalHostId);
+	}
 	LayoutChildren();
-	if (m_window) ::InvalidateRect(m_window, nullptr, TRUE);
+	if (m_window) ::InvalidateRect(m_window, nullptr, FALSE);
 }
 
 bool CViewContainerHost::OwnsPage(const std::string_view containerId) const noexcept
@@ -393,8 +401,8 @@ void CViewContainerHost::LayoutChildren()
 	// previous "OUTLINE" label on screen once per layout change.
 	const RECT previousHeader = m_outlineHeader;
 	const auto invalidateHeaderChange = [this, &previousHeader]() noexcept {
-		if (!::IsRectEmpty(&previousHeader)) ::InvalidateRect(m_window, &previousHeader, TRUE);
-		if (!::IsRectEmpty(&m_outlineHeader)) ::InvalidateRect(m_window, &m_outlineHeader, TRUE);
+		if (!::IsRectEmpty(&previousHeader)) ::InvalidateRect(m_window, &previousHeader, FALSE);
+		if (!::IsRectEmpty(&m_outlineHeader)) ::InvalidateRect(m_window, &m_outlineHeader, FALSE);
 	};
 
 	// Never touch a page the other side bar now renders; only pages still parented here
@@ -414,6 +422,7 @@ void CViewContainerHost::LayoutChildren()
 	if (m_page == pageIds::SourceControl) {
 		if (auto* scm = m_pages->SourceControl()) scm->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::SourceControl, true);
+		m_pages->NotifyPageLayout(pageIds::SourceControl);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;
@@ -421,6 +430,7 @@ void CViewContainerHost::LayoutChildren()
 	if (m_page == pageIds::Search) {
 		if (auto* view = m_pages->Search()) view->Layout(client, m_dpi);
 		m_pages->SetPageVisible(pageIds::Search, true);
+		m_pages->NotifyPageLayout(pageIds::Search);
 		m_outlineHeader = {};
 		invalidateHeaderChange();
 		return;
@@ -451,15 +461,22 @@ void CViewContainerHost::LayoutChildren()
 	explorer->Layout(explorerBounds, m_dpi);
 	outline->Layout(outlineBounds, m_dpi);
 	m_pages->SetPageVisible(pageIds::Explorer, true);
+	m_pages->NotifyPageLayout(pageIds::Explorer);
 	invalidateHeaderChange();
 }
 
 void CViewContainerHost::Paint()
 {
 	PAINTSTRUCT paint{};
-	const HDC dc = ::BeginPaint(m_window, &paint);
+	const HDC target = ::BeginPaint(m_window, &paint);
+	RECT client{};
+	::GetClientRect(m_window, &client);
+	const int width = std::max(0L, client.right - client.left);
+	const int height = std::max(0L, client.bottom - client.top);
+	const bool buffered = width > 0 && height > 0 && m_backBuffer.Ensure(target, width, height);
+	const HDC dc = buffered ? m_backBuffer.Dc() : target;
 	const HBRUSH background = ::CreateSolidBrush(m_palette.sideBar.ToColorRef());
-	::FillRect(dc, &paint.rcPaint, background);
+	::FillRect(dc, &client, background);
 	::DeleteObject(background);
 	if (m_font.Get()) ::SelectObject(dc, m_font.Get());
 	::SetBkMode(dc, TRANSPARENT);
@@ -469,6 +486,7 @@ void CViewContainerHost::Paint()
 		const auto message = LocalizedString(STR_WORKBENCH_VIEWCONTAINER_EMPTY,
 			L"Drag a view here to display it.");
 		DrawCenteredMessage(dc, message);
+		if (buffered) (void)m_backBuffer.Present(target, client);
 		::EndPaint(m_window, &paint);
 		return;
 	}
@@ -500,6 +518,7 @@ void CViewContainerHost::Paint()
 		const auto outlineLabel = LocalizedString(STR_WORKBENCH_VIEWCONTAINER_OUTLINE, L"OUTLINE");
 		::DrawTextW(dc, outlineLabel.c_str(), -1, &text, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 	}
+	if (buffered) (void)m_backBuffer.Present(target, client);
 	::EndPaint(m_window, &paint);
 }
 

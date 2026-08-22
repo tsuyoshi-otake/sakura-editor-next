@@ -28,6 +28,7 @@
 #include <string>
 #include <vector>
 #include "workbench/icons/CodiconGlyphPainter.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
 
 class CGraphics;
 struct EditNode;
@@ -80,6 +81,7 @@ public:
 	void UpdateStyle();
 	void UpdateTheme();		/*!< ダークモード切替時のテーマ更新 */
 	void RefreshDocumentActionState();	/*!< Markdownプレビュー操作の表示・状態更新 */
+	LRESULT PaintNativeTabFrame();
 protected:
 	/*
 	|| 実装ヘルパ系
@@ -111,7 +113,6 @@ protected:
 	LRESULT OnTimer( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) override;		/*!< WM_TIMER処理 */
 	LRESULT OnMeasureItem( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) override;	/*!< WM_MEASUREITEM処理 */
 	LRESULT OnDrawItem( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam ) override;		/*!< WM_DRAWITEM処理 */
-
 	// 2005.09.01 ryoji ドラッグアンドドロップでタブの順序変更を可能に
 	/* サブクラス化した Tab でのメッセージ処理 */
 	LRESULT OnTabLButtonDown( WPARAM wParam, LPARAM lParam );	/*!< タブ部 WM_LBUTTONDOWN 処理 */
@@ -200,6 +201,7 @@ private:
 	//! Tab-bar codicons draw through the embedded font; the vector path
 	//! renderer has no antialiasing and visibly distorts a 16 px glyph.
 	workbench::icons::CCodiconGlyphFont m_cCodiconGlyphFont;
+	workbench::rendering::CGdiBackBuffer m_tabBackBuffer;
 	BOOL		m_bListBtnHilighted = FALSE;
 	BOOL		m_bCloseBtnHilighted = FALSE;	//!< 閉じるボタンハイライト状態	// 2006.10.21 ryoji
 	CaptureSrc	m_eCaptureSrc = CAPT_NONE;			//!< キャプチャ元

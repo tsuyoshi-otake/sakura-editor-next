@@ -35,6 +35,12 @@ backend whose service owner remains active.
 - `CWorkbenchPanelHost::Layout` passes `SWP_NOCOPYBITS`, because the default
   bit-copy smears the old client content across the moved rectangle before
   `WM_PAINT` arrives.
+- During sash resize, the clamped `WorkbenchLayout` result is the geometry
+  authority. Feed its applied extent back into `CWorkbenchPanelHost` before
+  commit; never read a child HWND rectangle on button-up and persist that
+  presentation output as model state. An intermediate child layout can be a
+  valid transient projection but the wrong saved extent, producing a later
+  Side Bar jump or collapsed scrollbar (verified 2026-08-23, #242).
 - The helper compares the applied client and host rectangles and skips the
   repaint when nothing moved, so geometry-neutral projections (active-view
   switches, mirror updates) do not repaint the window. It also early-returns

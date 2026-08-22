@@ -30,12 +30,23 @@ CViewSelect::CViewSelect(CEditView* pcEditView)
 
 void CViewSelect::CopySelectStatus(CViewSelect* pSelect) const
 {
+	if( pSelect == nullptr ){
+		return;
+	}
 	pSelect->m_selectionSession		= m_selectionSession;
 
 	pSelect->m_sSelect				= m_sSelect;			//範囲選択
 	pSelect->m_sSelectOld			= m_sSelectOld;			//範囲選択
 
 	pSelect->m_ptMouseRollPosOld	= m_ptMouseRollPosOld;	// マウス範囲選択前回位置(XY座標)
+	pSelect->MarkSelectionDamage();
+}
+
+void CViewSelect::MarkSelectionDamage() noexcept
+{
+	if( m_pcEditView != nullptr ){
+		m_pcEditView->MarkRenderDamage(editor::rendering::EEditViewDamage::Selection);
+	}
 }
 
 //! 現在のカーソル位置から選択を開始する
@@ -173,6 +184,7 @@ void CViewSelect::ChangeSelectAreaByCurrentCursorTEST(
 void CViewSelect::DrawSelectArea(bool bDrawBracketCursorLine)
 {
 	CEditView* pView=GetEditView();
+	pView->MarkRenderDamage(editor::rendering::EEditViewDamage::Selection);
 
 	if( !pView->GetDrawSwitch() ){
 		return;
@@ -252,6 +264,7 @@ void CViewSelect::DrawSelectArea(bool bDrawBracketCursorLine)
 				view.OnPaint(hdc, &ps, false);
 				view.GetCaret().m_cUnderLine.UnLock();
 				view.ReleaseDC( hdc );
+				view.CommitGdiPaintBoundary();
 			}
 			// 2010.10.10 0幅選択(解除)状態での、カーソル位置ライン復帰(リージョン外)
 			if( bDrawBracketCursorLine ){
@@ -264,6 +277,7 @@ void CViewSelect::DrawSelectArea(bool bDrawBracketCursorLine)
 			pView->DrawBracketPair( false );
 			m_bDrawSelectArea = true;
 		}
+		pView->RequestGdiFrame();
 		HDC hdc = pView->GetDC();
 		DrawSelectArea2( hdc );
 		// 2011.12.02 選択解除状態での、カーソル位置ライン復帰
@@ -271,6 +285,7 @@ void CViewSelect::DrawSelectArea(bool bDrawBracketCursorLine)
 			pView->GetCaret().m_cUnderLine.CaretUnderLineON(true, false);
 		}
 		pView->ReleaseDC( hdc );
+		pView->CommitGdiPaintBoundary();
 	}
 
 	// 2011.12.02 選択解除状態になると対括弧強調ができなくなるバグ対策

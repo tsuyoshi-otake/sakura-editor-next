@@ -7,6 +7,7 @@
 #pragma once
 
 #include "terminal/model/TerminalModel.h"
+#include "terminal/TerminalSessionRetirementService.h"
 #include "terminal/session/TerminalSession.h"
 
 #include <chrono>
@@ -112,9 +113,11 @@ public:
 	[[nodiscard]] bool SelectTab( std::uint64_t tabId ) noexcept;
 	[[nodiscard]] bool RestartTab( std::uint64_t tabId, TerminalSize size, std::wstring_view workingDirectory );
 	[[nodiscard]] bool DeleteTab( std::uint64_t tabId ) noexcept;
-	//! Closes every tab without closing the manager. All sessions receive
-	//! BeginClose before any wait, then share one absolute reporting deadline.
-	//! Tab IDs remain monotonic so late notifications cannot alias replacement tabs.
+	//! Removes every tab without closing the manager. Each live session receives
+	//! BeginClose and is handed to the bounded retirement service; this method
+	//! never waits for backend or worker quiescence. Tab IDs remain monotonic so
+	//! late notifications cannot alias replacement tabs. The deadline is retained
+	//! for source/API compatibility and is not a UI-thread wait budget.
 	[[nodiscard]] TerminalTabClearResult ClearTabs( std::chrono::steady_clock::time_point deadline ) noexcept;
 	void Resize( TerminalSize size );
 	[[nodiscard]] bool ResizeTab( std::uint64_t tabId, TerminalSize size );

@@ -77,6 +77,7 @@ class CPlug;
 class CEditDoc;
 class CCustomFrameController;
 class CDiffSurface;
+struct CEditWndFrameRuntimeState;
 struct SDiffSurfaceContent;
 namespace config {
 class ConfigurationSubscription;
@@ -697,7 +698,9 @@ private:
 	void PostDeferredStartupWorkbenchIfReady();
 	void CompleteDeferredStartupWorkbench();
 	void CloseWorkbench() noexcept;
-	void ApplyWorkbenchTheme();
+	//! Applies the committed theme, or one non-persistent Quick Pick preview.
+	//! An invalid explicit preview leaves the currently painted theme untouched.
+	[[nodiscard]] bool ApplyWorkbenchTheme(std::wstring_view previewTheme = {});
 	void ApplyWorkbenchSettingsFromSharedData(bool finalizeProjection = true);
 	[[nodiscard]] bool ApplyInitialWorkbenchLayoutState();
 	[[nodiscard]] bool ApplyCurrentWorkbenchLayoutState(bool finalizeProjection,
@@ -723,6 +726,14 @@ private:
 	void FinalizeWorkbenchPanelProjection(
 		const workbench::win32::BuiltinActiveSurfaceProjection* runtimeProjection = nullptr);
 	void RedrawWorkbenchFrameForCommittedLayout(bool immediate);
+	[[nodiscard]] bool InitializeFrameRuntime() noexcept;
+	void UpdateFrameRuntimeCadence(bool invalidateSource = false) noexcept;
+	//! Rebinds the SCM retained-paint target after a committed layout/visibility
+	//! change. The source remains the SCM-owned Changes child HWND; this only
+	//! updates the borrowed target metadata and runtime epochs.
+	void UpdateFrameRuntimeNativeSurfaces() noexcept;
+	void PublishCommittedGdiFrame() noexcept;
+	void CloseFrameRuntime() noexcept;
 	void ReloadWorkbenchOutlineAndRelayout();
 	void BroadcastWorkbenchSettings();
 	[[nodiscard]] std::wstring GetSemanticWorkspaceRoot() const;
@@ -793,6 +804,7 @@ private:
 	void RefreshColorThemes();
 	//! Shows Sakura's color themes through the shared VS Code-compatible Quick Pick.
 	[[nodiscard]] bool ShowColorThemePicker();
+	[[nodiscard]] std::wstring ConfiguredColorThemeLabel() const;
 	[[nodiscard]] bool PersistColorThemeSelection(std::wstring_view themeId);
 	//! Runs one of the built-in Git provider's branch commands, presenting its
 	//! Quick Pick and input box through the same native surfaces every other
@@ -817,9 +829,10 @@ private:
 	//! Runs one of the built-in Git provider's commit commands. The message comes
 	//! from the Source Control view's own input box, exactly as upstream reads
 	//! `repository.inputBox.value`, so a window without that view has no message
-	//! to commit rather than an empty one.
+	//! to commit rather than an empty one. `argumentsJson` is the optional
+	//! post-commit payload published by the action button.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitCommitCommand(
-		EGitCommitCommand command);
+		EGitCommitCommand command, std::string_view argumentsJson = {});
 	//! Runs VS Code's `vscode.diff` API command: reads both named sides, diffs
 	//! them, and projects the result onto the native diff surface. Like upstream
 	//! it is a general command over two URIs, not a Git-specific entry point;
@@ -845,9 +858,10 @@ private:
 	//! Runs one of the built-in Git provider's remote commands. The repository's
 	//! HEAD, upstream, and ahead/behind counts come from the published SCM state,
 	//! and its remotes from `git remote --verbose`, exactly as upstream's
-	//! `getRemotes` reads them; neither is inferred from the other.
+	//! `getRemotes` reads them; neither is inferred from the other. The optional
+	//! flag accounts for a commit that just succeeded before the asynchronous refresh.
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteGitSyncCommand(
-		EGitSyncCommand command);
+		EGitSyncCommand command, bool commitJustSucceeded = false);
 	//! Runs `git.init`. `argumentsJson` is the payload a Source Control welcome-
 	//! content link or a Command Palette invocation carries; it decodes to the
 	//! `skipFolderPrompt` bool `RunGitInit` takes through
@@ -1055,7 +1069,9 @@ private:
 		unsigned int dpi, int minimapWidth);
 	//! True when the point is on the Markdown preview divider, with VS Code's sash hit slop.
 	[[nodiscard]] bool HitTestMarkdownPreviewDivider(POINT point) const noexcept;
+	void CommitMarkdownPreviewResize();
 	void CancelMarkdownPreviewResize();
+	void AbortMarkdownPreviewResize() noexcept;
 	//! Re-runs the frame layout while the divider is being dragged.
 	void RelayoutForMarkdownPreviewDivider();
 	[[nodiscard]] workbench::commands::WorkbenchCommandExecutionResult ExecuteMarkdownPreviewCommand(
@@ -1171,6 +1187,9 @@ private:
 	//! Both side bars borrow their ViewContainer controls from this shared pool, so a
 	//! container survives being moved from one physical Part to the other.
 	std::shared_ptr<workbench::viewcontainer::CViewContainerPages> m_viewContainerPages;
+	//! Opaque window-owned frame bridge. The concrete state includes the bounded
+	//! finalizer reservation and stays out of this composition header.
+	std::unique_ptr<CEditWndFrameRuntimeState> m_frameRuntimeState;
 	workbench::viewcontainer::CViewContainerHost* m_sidebarHost = nullptr;
 	workbench::viewcontainer::CViewContainerHost* m_auxiliaryBarHost = nullptr;
 	workbench::explorer::CExplorerTool* m_explorerTool = nullptr;
@@ -1192,8 +1211,12 @@ private:
 	RECT m_markdownPreviewDivider{};
 	//! The user's dragged preview width; kPreviewDefaultWidthRequestDip until dragged.
 	int m_markdownPreviewWidthDip = markdown::kPreviewDefaultWidthRequestDip;
+	//! Width used only by the active drag; committed on mouse-up and discarded on cancel.
+	int m_markdownPreviewResizeWidthDip = markdown::kPreviewDefaultWidthRequestDip;
 	//! The region the divider splits, kept for the drag arithmetic and its repaint.
 	RECT m_markdownPreviewRegion{};
+	//! The minimap column cached by the committed frame layout for preview-only drag samples.
+	int m_markdownPreviewMinimapWidth = 0;
 	bool m_resizingMarkdownPreview = false;
 	bool m_layoutInProgress = false;
 	bool m_layoutPending = false;
@@ -1211,6 +1234,9 @@ private:
 	int m_startupShowCommand = SW_SHOW;
 	HWND m_startupPreviousTabWindow = nullptr;
 	workbench::CWorkbenchPanelHost* m_resizingWorkbenchPanel = nullptr;
+	//! A layout notification observed inside a resize paint is applied at the
+	//! gesture's explicit commit/cancel terminal state, never by cancelling it.
+	bool m_workbenchLayoutProjectionDeferred = false;
 	POINT m_workbenchResizeOrigin{};
 	int m_workbenchResizeInitialExtentDip = 0;
 	RECT m_leftWorkbenchSplitter{};

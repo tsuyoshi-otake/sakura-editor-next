@@ -15,6 +15,7 @@ download.
 | Links and images | Typed URI disposition; unsafe schemes fail closed | Partial: activation remains gated |
 | Raw HTML | Harmless semantic wrappers only; active content and attributes never execute | Safe subset |
 | Live update | Persistent worker; one in flight plus latest pending; stale generations discarded | Implemented |
+| Live width resize | Transient native geometry per pointer sample; one committed Markdown reflow on mouse-up; explicit rollback on cancellation | Implemented and frame-measured |
 | Scroll synchronization: editor to preview | `scrollPreviewWithEditor`. The editor's top layout line maps to the first rendered row at or after it | Implemented and measured |
 | Scroll synchronization: preview to editor | `scrollEditorWithPreview`. The preview's top row scrolls the source view without moving the caret | Implemented and measured |
 | Preview lock | Dynamic follows active Markdown; locked retains source identity | Implemented state boundary |
@@ -114,19 +115,34 @@ is not verified, however obviously correct the code looks.
    layout maps neither direction, and an out-of-range position clamps.
 6. Scroll synchronization, end to end: verified empirically on the running
    editor, because a pure mapping test cannot prove the two panes are wired.
-   Verify: drive `F_GOFILETOP` / `F_GOFILEEND` and `WM_VSCROLL` on the
-   `SakuraMarkdownPreview` window under a throwaway profile and read both
-   `SCROLLINFO` positions. Expect: both positions move.
+   Verify: drive `F_GOFILETOP` / `F_GOFILEEND`, preview wheel/key input, and the
+   explicit overlay thumb under a throwaway profile. Read editor `SCROLLINFO`,
+   preview geometry, and the painted overlay endpoint; preview `SCROLLINFO` must
+   remain absent. Expect: both panes move once without a feedback loop.
    Measured 2026-08-20, x64 Debug, 120-section document, profile `mdscrollsync`:
    editor 0 -> 446 moved the preview 12 -> 7431; preview 12 -> 1812 moved the
-   editor 0 -> 106. Process and profile cleanup verified.
-7. Renderer: safe representative Markdown and malicious HTML/URI samples.
+   editor 0 -> 106. That historical run predated the explicit model and read the
+   preview's then-native `SCROLLINFO`; process and profile cleanup were verified.
+7. Live resize and painted-frame integrity: User32-driven alternating divider
+   samples on a throwaway profile. Verify:
+   `tools/measure-markdown-preview-resize.ps1`. Expect: preview screen-versus-
+   `PrintWindow` difference at or below its redraw noise floor, no
+   `WS_VSCROLL`, exactly one aligned overlay, cancellation restores committed
+   width, overlay destruction is complete, and no run-owned process/profile
+   remains. Measured 2026-08-22, x64 Debug, 60 samples in a 480 by 240 window:
+   `CLAUDE.md` median 1.904 ms, p95 12.832 ms, maximum 16.681 ms, committed
+   reflow 32.700 ms; the 1,249,037-byte/5,604-line synthetic startup sample
+   median 1.833 ms, p95 11.723 ms, maximum 13.222 ms, committed reflow
+   536.140 ms. Both runs had preview difference 0/60, native scrollbar leaks
+   0/60, one aligned overlay, successful cancellation/lifecycle probes, and
+   verified process/profile cleanup.
+8. Renderer: safe representative Markdown and malicious HTML/URI samples.
    Verify: `MarkdownParserTest.cpp`, `MarkdownPreviewLayoutTest.cpp`. Expect:
    supported structures render and active content remains blocked.
-8. Declared capabilities: the typed boundary matches this table.
+9. Declared capabilities: the typed boundary matches this table.
    Verify: `MarkdownParserTest.ExposesUnsupportedNativeCapabilitiesAsTypedBoundaries`.
    Expect: math and Mermaid stay `Unsupported`.
-9. Dependency boundary: source/project/package search.
+10. Dependency boundary: source/project/package search.
    Verify: search for embedded-browser and script-runtime dependencies. Expect:
    no production dependency or bundled script asset.
 

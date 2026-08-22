@@ -120,10 +120,11 @@ public:
 					m_callsChanged.notify_all();
 				}
 				std::unique_lock lock(m_mutex);
-				while( !m_release && (!m_cancellationResponsive || !cancelToken->load(std::memory_order_acquire)) ) {
-					m_callsChanged.wait_for(lock, std::chrono::milliseconds(5));
-				}
-				OutlineParseResult result;
+			while( !m_release && (!m_cancellationResponsive || !cancelToken->load(std::memory_order_acquire)) ) {
+				m_callsChanged.wait_for(lock, std::chrono::milliseconds(5));
+			}
+			lock.unlock();
+			OutlineParseResult result;
 				result.documentVersion = snapshot.documentVersion;
 				result.outlineType = outlineType;
 				result.listType = listType;
@@ -133,6 +134,11 @@ public:
 				symbol.name = snapshot.documentVersion.version == 3 ? L"latest" : L"stale";
 				symbol.info = FL_OBJ_FUNCTION;
 				result.symbols.emplace_back(std::move(symbol));
+				{
+					std::lock_guard lock(m_mutex);
+					++m_returnCount;
+				}
+				m_callsChanged.notify_all();
 				return result;
 			};
 	}
@@ -154,10 +160,19 @@ public:
 		m_callsChanged.notify_all();
 	}
 
+	bool WaitForReturns( int expected )
+	{
+		std::unique_lock lock(m_mutex);
+		return m_callsChanged.wait_for(lock, std::chrono::seconds(2), [this, expected] {
+			return m_returnCount >= expected;
+		});
+	}
+
 private:
 	std::mutex m_mutex;
 	std::condition_variable m_callsChanged;
 	int m_callCount = 0;
+	int m_returnCount = 0;
 	bool m_release = false;
 	bool m_cancellationResponsive = true;
 };
@@ -190,11 +205,12 @@ private:
 	HWND m_window = nullptr;
 };
 
-bool WaitForWorkerIdle( OutlineParserWorker& worker )
+bool WaitForWorkerIdle( OutlineParserWorker& worker, std::uint64_t expectedTerminalCount = 1 )
 {
 	for( int attempt = 0; attempt < 400; ++attempt ) {
 		const auto state = worker.GetStateSnapshot();
-		if( !state.active && !state.pending ) return true;
+		const auto terminalCount = state.completedCount + state.cancelledCount + state.failedCount;
+		if( !state.active && !state.pending && terminalCount >= expectedTerminalCount ) return true;
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 	return false;
@@ -512,14 +528,14 @@ TEST(OutlineWorkbenchTool, MalformedDialogTemplateFailsClosed)
 	EXPECT_FALSE( NormalizeWorkbenchOutlineDialogTemplate(malformed.data(), malformed.size()) );
 }
 
-TEST(OutlineParserWorker, OwnerThreadCloseJoinsNormallyAndIsIdempotent)
+TEST(OutlineParserWorker, CloseDetachesWorkerNormallyAndIsIdempotent)
 {
 	OutlineParserWorker worker;
 	worker.SetNotificationWindow(reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1)), true);
 	EXPECT_TRUE(worker.GetStateSnapshot().acceptingNotifications);
 
-	// This call must return normally. The worker id is expected to differ from
-	// the owner id; only the calling thread and self-join conditions are invalid.
+	// Close is owner-thread initiated but completion is retired by a reaper;
+	// no worker join is allowed on this call path.
 	worker.Close();
 	const auto state = worker.GetStateSnapshot();
 	EXPECT_TRUE(state.closed);
@@ -561,7 +577,7 @@ TEST(OutlineParserWorker, SameVersionDeduplicatesAndLatestPendingWins)
 	EXPECT_FALSE(queued.resultMessagePosted);
 	parser.Release();
 	ASSERT_TRUE(parser.WaitForCalls(2));
-	ASSERT_TRUE(WaitForWorkerIdle(worker));
+	ASSERT_TRUE(WaitForWorkerIdle(worker, 2));
 
 	const auto done = worker.GetStateSnapshot();
 	EXPECT_EQ(2u, done.startedCount);
@@ -585,6 +601,7 @@ TEST(OutlineParserWorker, CloseCancelsRunningAndPendingJobsBeforeReturning)
 	EXPECT_EQ(OutlineWorkerRequestStatus::Queued,
 		worker.Submit(MakeWorkerSnapshot(52, 2), OUTLINE_CPP, OUTLINE_CPP, 0).status);
 	worker.Close();
+	ASSERT_TRUE(parser.WaitForReturns(1));
 
 	const auto state = worker.GetStateSnapshot();
 	EXPECT_TRUE(state.closed);
@@ -592,6 +609,33 @@ TEST(OutlineParserWorker, CloseCancelsRunningAndPendingJobsBeforeReturning)
 	EXPECT_FALSE(state.pending);
 	EXPECT_FALSE(state.resultPending);
 	EXPECT_EQ(0u, state.completedCount);
+}
+
+TEST(OutlineParserWorker, CloseDoesNotWaitForUnresponsiveParser)
+{
+	BlockingOutlineParser parser(false);
+	OutlineParserWorker worker(parser.Function());
+	worker.SetNotificationWindow(reinterpret_cast<HWND>(static_cast<std::uintptr_t>(1)), true);
+	EXPECT_EQ(OutlineWorkerRequestStatus::Started,
+		worker.Submit(MakeWorkerSnapshot(53, 1), OUTLINE_CPP, OUTLINE_CPP, 0).status);
+	ASSERT_TRUE(parser.WaitForCalls(1));
+
+	const auto closeStarted = std::chrono::steady_clock::now();
+	worker.Close();
+	const auto closeElapsed = std::chrono::steady_clock::now() - closeStarted;
+	EXPECT_LT(closeElapsed, std::chrono::milliseconds(100));
+	EXPECT_TRUE(worker.GetStateSnapshot().closed);
+
+	// The parser is deliberately non-cooperative.  Releasing it after Close
+	// proves that the retirement service owns the eventual join and that the UI
+	// caller did not become the completion fence.
+	parser.Release();
+	ASSERT_TRUE(parser.WaitForReturns(1));
+	for (int attempt = 0; attempt < 400; ++attempt) {
+		if (worker.GetStateSnapshot().cancelledCount != 0) break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	EXPECT_EQ(1u, worker.GetStateSnapshot().cancelledCount);
 }
 
 TEST(OutlineParserWorker, EditCancelsObsoleteActiveWorkBeforeDebounceFires)

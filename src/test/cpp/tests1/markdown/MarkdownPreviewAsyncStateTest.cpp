@@ -2,10 +2,16 @@
 #include "pch.h"
 
 #include "markdown/MarkdownPreviewAsyncState.h"
+#include "markdown/MarkdownPreviewWorkerRetirement.h"
 
 #include <array>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace markdown {
@@ -261,6 +267,130 @@ TEST(MarkdownPreviewAsyncState, AFailedDeliveryDoesNotReviveTheGeneration)
 	// Delivering the same key again after the failure must do nothing.
 	state.MarkDelivered(kKeyA);
 	EXPECT_EQ(PreviewAsyncPhase::Failed, state.Phase());
+}
+
+TEST(MarkdownPreviewWorkerRetirement, RetireDoesNotWaitForAStalledWorker)
+{
+	auto reservation = MarkdownPreviewWorkerRetirement::Instance().TryReserve();
+	ASSERT_TRUE(reservation.has_value());
+	std::mutex gateMutex;
+	std::condition_variable gateChanged;
+	bool releaseWorker = false;
+	std::atomic<bool> workerEntered = false;
+	std::atomic<bool> workerExited = false;
+	std::jthread worker([&](std::stop_token) {
+		{
+			std::unique_lock lock(gateMutex);
+			workerEntered = true;
+			gateChanged.notify_all();
+			gateChanged.wait(lock, [&] { return releaseWorker; });
+		}
+		workerExited = true;
+		gateChanged.notify_all();
+	});
+
+	{
+		std::unique_lock lock(gateMutex);
+		(void)gateChanged.wait_for(lock, std::chrono::seconds(1),
+			[&] { return workerEntered.load(); });
+	}
+
+	const auto started = std::chrono::steady_clock::now();
+	const auto status = MarkdownPreviewWorkerRetirement::Instance().Retire(
+		std::move(worker), std::move(*reservation), std::make_shared<int>(1));
+	const auto retireDuration = std::chrono::steady_clock::now() - started;
+
+	// A parser that is still in flight must not make Close()/WM_NCDESTROY wait.
+	EXPECT_EQ(workbench::WorkerRetirementStatus::Retired, status);
+	EXPECT_LT(retireDuration, std::chrono::milliseconds(250));
+	{
+		std::lock_guard lock(gateMutex);
+		releaseWorker = true;
+	}
+	gateChanged.notify_all();
+
+	{
+		std::unique_lock lock(gateMutex);
+		EXPECT_TRUE(gateChanged.wait_for(lock, std::chrono::seconds(1),
+			[&] { return workerExited.load(); }));
+	}
+}
+
+TEST(MarkdownPreviewWorkerRetirement, StalledWorkerDoesNotBlockAnotherRetirementSlot)
+{
+	auto& retirement = MarkdownPreviewWorkerRetirement::Instance();
+	for (int attempt = 0; attempt < 200 && retirement.ReservedOrPendingCount() != 0; ++attempt) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	ASSERT_EQ(0u, retirement.ReservedOrPendingCount());
+	auto stalledReservation = retirement.TryReserve();
+	auto fastReservation = retirement.TryReserve();
+	ASSERT_TRUE(stalledReservation.has_value());
+	ASSERT_TRUE(fastReservation.has_value());
+
+	std::mutex gateMutex;
+	std::condition_variable gateChanged;
+	bool releaseStalled = false;
+	std::atomic<bool> stalledEntered = false;
+	std::atomic<bool> stalledExited = false;
+	std::atomic<bool> fastExited = false;
+	std::jthread stalled([&](std::stop_token) {
+		std::unique_lock lock(gateMutex);
+		stalledEntered = true;
+		gateChanged.notify_all();
+		gateChanged.wait(lock, [&] { return releaseStalled; });
+		stalledExited = true;
+		gateChanged.notify_all();
+	});
+	std::jthread fast([&](std::stop_token) { fastExited = true; });
+	{
+		std::unique_lock lock(gateMutex);
+		(void)gateChanged.wait_for(lock, std::chrono::seconds(1),
+			[&] { return stalledEntered.load(); });
+	}
+
+	EXPECT_EQ(workbench::WorkerRetirementStatus::Retired, retirement.Retire(
+		std::move(stalled), std::move(*stalledReservation), std::make_shared<int>(1)));
+	EXPECT_EQ(workbench::WorkerRetirementStatus::Retired, retirement.Retire(
+		std::move(fast), std::move(*fastReservation), std::make_shared<int>(2)));
+	for (int attempt = 0; attempt < 200
+		&& (!fastExited.load() || retirement.ReservedOrPendingCount() != 1); ++attempt) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	EXPECT_TRUE(fastExited.load());
+	EXPECT_EQ(1u, retirement.ReservedOrPendingCount());
+
+	{
+		std::lock_guard lock(gateMutex);
+		releaseStalled = true;
+	}
+	gateChanged.notify_all();
+	for (int attempt = 0; attempt < 200
+		&& (!stalledExited.load() || retirement.ReservedOrPendingCount() != 0); ++attempt) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	EXPECT_TRUE(stalledExited.load());
+	EXPECT_EQ(0u, retirement.ReservedOrPendingCount());
+}
+
+TEST(MarkdownPreviewWorkerRetirement, AdmissionIsBoundedBeforeWorkersStart)
+{
+	for (int attempt = 0; attempt < 200
+		&& MarkdownPreviewWorkerRetirement::Instance().ReservedOrPendingCount() != 0;
+		++attempt) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	ASSERT_EQ(0u, MarkdownPreviewWorkerRetirement::Instance().ReservedOrPendingCount());
+	std::array<std::optional<MarkdownPreviewWorkerRetirement::Reservation>,
+		workbench::WorkerRetirementService::kMaximumWorkers> reservations;
+	for (auto& reservation : reservations) {
+		reservation = MarkdownPreviewWorkerRetirement::Instance().TryReserve();
+		ASSERT_TRUE(reservation.has_value());
+	}
+	EXPECT_FALSE(MarkdownPreviewWorkerRetirement::Instance().TryReserve().has_value());
+	EXPECT_EQ(workbench::WorkerRetirementService::kMaximumWorkers,
+		MarkdownPreviewWorkerRetirement::Instance().ReservedOrPendingCount());
+	for (auto& reservation : reservations) reservation.reset();
 }
 
 } // namespace

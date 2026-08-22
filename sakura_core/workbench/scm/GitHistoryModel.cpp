@@ -212,13 +212,6 @@ std::vector<ScmGraphRow> BuildScmHistoryGraph(const std::vector<GitHistoryItem>&
 		row.inputSwimlanes = inputSwimlanes;
 
 		std::vector<ScmGraphSwimlane> outputSwimlanes;
-		// Two lanes may reach the same parent - both sides of a merge descending
-		// from one commit is the ordinary case. The second one ends at this row
-		// rather than drawing a duplicate line down to the same circle.
-		const auto alreadyAwaited = [&outputSwimlanes](const std::wstring& id) {
-			return std::any_of(outputSwimlanes.begin(), outputSwimlanes.end(),
-				[&id](const ScmGraphSwimlane& lane) { return lane.id == id; });
-		};
 		bool circleFound = false;
 		bool firstParentPlaced = false;
 		for (std::size_t index = 0; index < inputSwimlanes.size(); ++index) {
@@ -234,9 +227,12 @@ std::vector<ScmGraphRow> BuildScmHistoryGraph(const std::vector<GitHistoryItem>&
 			// arriving here and simply ends.
 			if (!firstParentPlaced && !item.parentIds.empty()) {
 				firstParentPlaced = true;
-				if (!alreadyAwaited(item.parentIds.front())) {
-					outputSwimlanes.push_back(ScmGraphSwimlane{ item.parentIds.front(), lane.colorIndex });
-				}
+				// Keep this lane even when the first parent is already awaited by
+				// another lane. The duplicate is intentional: VS Code uses the
+				// second copy on the next row to draw the branch's connector into
+				// the shared parent. Removing it leaves the branch line cut off at
+				// the child commit.
+				outputSwimlanes.push_back(ScmGraphSwimlane{ item.parentIds.front(), lane.colorIndex });
 			}
 		}
 		if (!circleFound) {
@@ -244,15 +240,13 @@ std::vector<ScmGraphRow> BuildScmHistoryGraph(const std::vector<GitHistoryItem>&
 			// right-hand end: a tip that no already-drawn commit descends from.
 			row.circleLane = outputSwimlanes.size();
 			row.circleColorIndex = takeColor();
-			if (!item.parentIds.empty() && !alreadyAwaited(item.parentIds.front())) {
+			if (!item.parentIds.empty()) {
 				firstParentPlaced = true;
 				outputSwimlanes.push_back(ScmGraphSwimlane{ item.parentIds.front(), row.circleColorIndex });
 			}
 		}
 		for (std::size_t parent = 1; parent < item.parentIds.size(); ++parent) {
-			const auto& id = item.parentIds[parent];
-			if (alreadyAwaited(id)) continue;
-			outputSwimlanes.push_back(ScmGraphSwimlane{ id, takeColor() });
+			outputSwimlanes.push_back(ScmGraphSwimlane{ item.parentIds[parent], takeColor() });
 		}
 
 		row.outputSwimlanes = outputSwimlanes;

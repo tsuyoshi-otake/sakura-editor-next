@@ -67,6 +67,8 @@ enum class EScmTextKey : std::uint16_t {
 	//! titles the button renders, not the `Git: ...` Command Palette titles.
 	GitCommitAction,
 	GitCommitAmendAction,
+	GitCommitAndPushAction,
+	GitCommitAndSyncAction,
 };
 
 using ScmTextResolver = std::function<std::wstring(EScmTextKey, std::wstring_view)>;

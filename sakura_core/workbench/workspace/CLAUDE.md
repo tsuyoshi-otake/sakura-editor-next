@@ -32,10 +32,10 @@ adapter session.
 ## Production filesystem composition
 
 `CWorkspaceArtifactDocumentSourceController` is the only production adapter in
-this subtree that may call `IFileService`. Construct it with the runtime-owned
-file service and a long-lived `CWorkspaceArtifactDocumentService`; the adapter
-borrows, but deliberately does not stop, that service. Runtime composition must
-stop the adapter before disposing the service.
+this subtree that may call `IFileService`. Construct it with shared ownership
+of the runtime file service and a long-lived `CWorkspaceArtifactDocumentService`;
+the adapter deliberately does not stop either shared service. Runtime
+composition must stop the adapter before stopping the document service.
 
 - Its request is a complete workspace topology: one nonzero generation, optional
   `.code-workspace` resource, and at most 64 folder URIs. Advance the generation
@@ -47,12 +47,14 @@ stop the adapter before disposing the service.
   permission/read failures and corrupt bytes do not replace last-good content.
 - Watch topology mirrors the stable configuration watcher: watch each folder for
   `.vscode` lifecycle and `.vscode` for the two named members. Events are
-  deduplicated with a bounded debounce; overflow/rescan/disposal cancels, joins,
-  rebuilds the full topology, then resnapshots.
-- `Stop` cancels every watch and joins all worker/dispatcher threads. It rejects
-  self-stop from its reload callback and guarantees no new callback begins after
-  it returns. The callback is diagnostic/observation only: the service is updated
-  before it receives the result.
+  deduplicated with a bounded debounce; overflow/rescan/disposal replaces watch
+  handles in place, preserving pre-admitted worker slots while it resnapshots.
+- `Stop` cancels every watch and transfers dispatcher/worker ownership to the
+  fixed-capacity `WorkerRetirementService`; it never waits for document
+  operations or joins on the caller (especially the UI destruction path). It
+  rejects self-stop from its reload callback and exposes pending/finalized
+  retirement state. The callback is diagnostic/observation only: the service is
+  updated before it receives the result.
 
 ## Verified Runtime Composition Checkpoint
 
@@ -62,7 +64,8 @@ and refreshes that topology after Settings-driven workspace reconciliation.
 Artifact documents never enter effective Settings. A topology change advances
 the source generation from the semantic workspace revision; unchanged topology
 is deduplicated. Stop closes the listener gate, excludes concurrent Start,
-joins the controller, and only then stops the borrowed document service.
+transfers the controller's workers to bounded retirement, and only then stops
+the shared document service.
 
 For Task catalog reconciliation, `TasksForFolders` copies the service state and
 all requested folder selections under one service mutex. It accepts at most 64

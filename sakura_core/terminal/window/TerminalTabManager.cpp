@@ -45,8 +45,8 @@ struct TerminalTabManager::Impl {
 			, model(std::make_unique<TerminalModel>(size.columns, size.rows))
 		{
 			parser = std::make_unique<TerminalParser>(*model, input.get(), [this](std::string_view response) {
-				if( !session || response.empty() ) return;
-				static_cast<void>(session->QueueInput(std::span<const std::uint8_t>(
+				if( !retirement || !retirement->Session() || response.empty() ) return;
+				static_cast<void>(retirement->Session()->QueueInput(std::span<const std::uint8_t>(
 					reinterpret_cast<const std::uint8_t*>(response.data()), response.size())));
 			});
 		}
@@ -60,11 +60,21 @@ struct TerminalTabManager::Impl {
 		std::unique_ptr<SakuraTerminalInputAdapter> input;
 		std::unique_ptr<TerminalModel> model;
 		std::unique_ptr<TerminalParser> parser;
-		std::unique_ptr<CTerminalSession> session;
+		std::unique_ptr<TerminalSessionRetirementLease> retirement;
 		TerminalSessionState state{ TerminalSessionState::Idle };
 		std::uint32_t errorCode{};
 		std::vector<std::uint8_t> pendingProtocolInput;
 		bool protocolInputRejected{};
+
+		CTerminalSession* Session() noexcept
+		{
+			return retirement ? retirement->Session() : nullptr;
+		}
+
+		const CTerminalSession* Session() const noexcept
+		{
+			return retirement ? retirement->Session() : nullptr;
+		}
 	};
 
 	TerminalTabManagerDependencies dependencies;
@@ -90,9 +100,9 @@ struct TerminalTabManager::Impl {
 	TerminalQueueInputResult QueueProtocolInput( Tab& tab, std::span<const std::uint8_t> bytes )
 	{
 		if( bytes.empty() ) return TerminalQueueInputResult::Accepted;
-		if( !tab.session ) return TerminalQueueInputResult::NotRunning;
+		if( !tab.Session() ) return TerminalQueueInputResult::NotRunning;
 		if( tab.pendingProtocolInput.empty() ) {
-			const auto result = tab.session->QueueInput(bytes);
+			const auto result = tab.Session()->QueueInput(bytes);
 			if( result != TerminalQueueInputResult::QueueFull ) return result;
 		}
 		// Parser replies run on the UI thread. Preserve their order in a bounded
@@ -111,14 +121,14 @@ struct TerminalTabManager::Impl {
 	TerminalQueueInputResult FlushPendingProtocolInput( Tab& tab )
 	{
 		if( tab.pendingProtocolInput.empty() ) return TerminalQueueInputResult::Accepted;
-		if( !tab.session ) {
+		if( !tab.Session() ) {
 			tab.pendingProtocolInput.clear();
 			tab.protocolInputRejected = true;
 			tab.errorCode = ERROR_OPERATION_ABORTED;
 			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
 			return TerminalQueueInputResult::NotRunning;
 		}
-		const auto result = tab.session->QueueInput(tab.pendingProtocolInput);
+		const auto result = tab.Session()->QueueInput(tab.pendingProtocolInput);
 		if( result == TerminalQueueInputResult::Accepted ) {
 			tab.pendingProtocolInput.clear();
 			tab.protocolInputRejected = false;
@@ -135,7 +145,11 @@ struct TerminalTabManager::Impl {
 		return result;
 	}
 
-	bool Start( Tab& tab, TerminalSize rawSize, std::wstring_view workingDirectory )
+	bool Start(
+		Tab& tab,
+		TerminalSize rawSize,
+		std::wstring_view workingDirectory,
+		std::unique_ptr<TerminalSessionRetirementLease> retirement = {} )
 	{
 		const auto size = NormalizeSize(rawSize);
 		tab.input = std::make_unique<SakuraTerminalInputAdapter>();
@@ -166,6 +180,13 @@ struct TerminalTabManager::Impl {
 		tab.profileLabel = tab.processName;
 		tab.sequenceTitle.clear();
 		tab.initialWorkingDirectory = launch->workingDirectory;
+		if( !retirement ) retirement = TerminalSessionRetirementLease::TryCreate();
+		if( !retirement ) {
+			tab.state = TerminalSessionState::Failed;
+			tab.errorCode = ERROR_NOT_ENOUGH_MEMORY;
+			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
+			return false;
+		}
 		const auto callback = eventCallback;
 		const auto id = tab.id;
 		TerminalSessionCallbacks callbacks;
@@ -175,18 +196,33 @@ struct TerminalTabManager::Impl {
 		callbacks.stateChanged = [callback, id](TerminalSessionState state, std::uint32_t errorCode) {
 			if( callback ) callback({ TerminalTabEventKind::StateChanged, id, state, errorCode });
 		};
-		tab.session = dependencies.createSession(std::move(callbacks));
-		if( !tab.session ) {
+		auto session = dependencies.createSession(std::move(callbacks));
+		if( !session ) {
 			tab.state = TerminalSessionState::Failed;
 			tab.errorCode = ERROR_NOT_ENOUGH_MEMORY;
 			if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
 			return false;
 		}
+		retirement->Adopt(std::move(session));
+		tab.retirement = std::move(retirement);
 		startedAnySession = true;
-		const auto result = tab.session->Start(*launch);
-		tab.state = tab.session->GetState();
+		TerminalStartResult result;
+		try {
+			result = tab.retirement->Session()->Start(*launch);
+		} catch( ... ) {
+			const auto retired = tab.retirement->RetireNow();
+			if( !retired.Accepted() ) std::terminate();
+			tab.retirement.reset();
+			throw;
+		}
+		tab.state = tab.retirement->Session()->GetState();
 		tab.errorCode = result.succeeded ? 0 : result.errorCode;
 		if( eventCallback ) eventCallback({ TerminalTabEventKind::StateChanged, tab.id, tab.state, tab.errorCode });
+		if( !result.succeeded ) {
+			const auto retired = tab.retirement->RetireNow();
+			if( !retired.Accepted() ) std::terminate();
+			tab.retirement.reset();
+		}
 		return result.succeeded;
 	}
 };
@@ -238,14 +274,22 @@ bool TerminalTabManager::RestartTab( std::uint64_t tabId, TerminalSize size, std
 	if( m_impl->closed ) return false;
 	auto* tab = m_impl->Find(tabId);
 	if( tab == nullptr ) return false;
-	if( tab->session ) tab->session->Close();
-	tab->session.reset();
+	// Reserve the replacement before handing off the old session.  At the
+	// admission bound a failed reservation must leave the current terminal
+	// untouched rather than losing it while waiting for a retirement slot.
+	auto replacement = TerminalSessionRetirementLease::TryCreate();
+	if( !replacement ) return false;
+	if( tab->retirement ) {
+		const auto retired = tab->retirement->RetireNow();
+		if( !retired.Accepted() ) std::terminate();
+		tab->retirement.reset();
+	}
 	tab->processName = kDefaultTabLabel;
 	tab->profileLabel = kDefaultTabLabel;
 	// A restart must not let the previous process's OSC title describe the new one.
 	tab->sequenceTitle.clear();
 	tab->initialWorkingDirectory.clear();
-	return m_impl->Start(*tab, size, workingDirectory);
+	return m_impl->Start(*tab, size, workingDirectory, std::move(replacement));
 }
 
 bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
@@ -253,7 +297,11 @@ bool TerminalTabManager::DeleteTab( std::uint64_t tabId ) noexcept
 	if( m_impl->closed ) return false;
 	const auto found = std::find_if( m_impl->tabs.begin(), m_impl->tabs.end(), [tabId](const auto& tab) { return tab->id == tabId; } );
 	if( found == m_impl->tabs.end() ) return false;
-	if( (*found)->session ) (*found)->session->Close();
+	if( (*found)->retirement ) {
+		const auto retired = (*found)->retirement->RetireNow();
+		if( !retired.Accepted() ) std::terminate();
+		(*found)->retirement.reset();
+	}
 	const auto index = static_cast<std::size_t>(found - m_impl->tabs.begin());
 	m_impl->tabs.erase(found);
 	if( m_impl->activeTabId == tabId ) {
@@ -270,21 +318,15 @@ TerminalTabClearResult TerminalTabManager::ClearTabs( std::chrono::steady_clock:
 		result.status = TerminalTabClearStatus::Unavailable;
 		return result;
 	}
+	// The old deadline was a synchronous join budget.  UI ownership now ends at
+	// the nonblocking handoff, so no reporting deadline can make this method wait.
+	static_cast<void>(deadline);
 	result.clearedTabCount = m_impl->tabs.size();
 	for( auto& tab : m_impl->tabs ) {
-		if( tab->session ) tab->session->BeginClose();
-	}
-	for( auto& tab : m_impl->tabs ) {
-		if( !tab->session ) continue;
-		const auto closed = tab->session->WaitForClose(deadline);
-		if( closed.status == TerminalSessionCloseWaitStatus::InProgress ) {
-			result.status = TerminalTabClearStatus::InProgress;
-			result.clearedTabCount = 0;
-			return result;
-		}
-		if( closed.status == TerminalSessionCloseWaitStatus::DeadlineExceeded ) {
-			result.status = TerminalTabClearStatus::DeadlineExceeded;
-		}
+		if( !tab->retirement ) continue;
+		const auto retired = tab->retirement->RetireNow();
+		if( !retired.Accepted() ) std::terminate();
+		tab->retirement.reset();
 	}
 	m_impl->tabs.clear();
 	m_impl->activeTabId.reset();
@@ -297,7 +339,7 @@ void TerminalTabManager::Resize( TerminalSize rawSize )
 	const auto size = NormalizeSize(rawSize);
 	for( auto& tab : m_impl->tabs ) {
 		tab->model->Resize(size.columns, size.rows);
-		if( tab->session ) tab->session->RequestResize(size);
+		if( tab->Session() ) tab->Session()->RequestResize(size);
 	}
 }
 
@@ -308,7 +350,7 @@ bool TerminalTabManager::ResizeTab( std::uint64_t tabId, TerminalSize rawSize )
 	if( tab == nullptr ) return false;
 	const auto size = NormalizeSize(rawSize);
 	tab->model->Resize(size.columns, size.rows);
-	if( tab->session ) tab->session->RequestResize(size);
+	if( tab->Session() ) tab->Session()->RequestResize(size);
 	return true;
 }
 
@@ -319,9 +361,6 @@ void TerminalTabManager::Close() noexcept
 		+ CTerminalSession::kGracefulCloseTimeout + CTerminalSession::kForcedCloseTimeout;
 	static_cast<void>(ClearTabs(deadline));
 	m_impl->closed = true;
-	// ClearTabs can return InProgress only when invoked by a session worker. This
-	// manager is UI-thread-owned, but retain the compatibility close as a fail-safe.
-	for( auto& tab : m_impl->tabs ) if( tab->session ) tab->session->Close();
 	m_impl->tabs.clear();
 	m_impl->activeTabId.reset();
 }
@@ -331,13 +370,13 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 	TerminalDrainResult result;
 	if( m_impl->closed ) return result;
 	auto* tab = m_impl->Find(tabId);
-	if( tab == nullptr || !tab->session ) return result;
+	if( tab == nullptr || !tab->Session() ) return result;
 	result.found = true;
 	result.active = m_impl->activeTabId == tabId;
 	const auto beforeTitle = tab->model->Title();
 	static_cast<void>(m_impl->FlushPendingProtocolInput(*tab));
 	const auto beforeSynchronizedCommit = tab->model->SynchronizedOutputCommitGeneration();
-	const auto bytes = tab->session->DrainOutput();
+	const auto bytes = tab->Session()->DrainOutput();
 	result.bytesDrained = bytes.size();
 	if( !bytes.empty() ) tab->parser->Feed(std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
 	static_cast<void>(m_impl->FlushPendingProtocolInput(*tab));
@@ -363,7 +402,7 @@ TerminalQueueInputResult TerminalTabManager::QueueInput( std::uint64_t tabId, st
 {
 	if( m_impl->closed ) return TerminalQueueInputResult::NotRunning;
 	auto* tab = m_impl->Find(tabId);
-	return tab && tab->session ? tab->session->QueueInput(bytes) : TerminalQueueInputResult::NotRunning;
+	return tab && tab->Session() ? tab->Session()->QueueInput(bytes) : TerminalQueueInputResult::NotRunning;
 }
 
 TerminalQueueInputResult TerminalTabManager::FlushPendingProtocolInput( std::uint64_t tabId )
@@ -439,8 +478,8 @@ std::vector<TerminalTabSnapshot> TerminalTabManager::Snapshot() const
 	if( m_impl->closed ) return result;
 	result.reserve(m_impl->tabs.size());
 	for( const auto& tab : m_impl->tabs ) {
-		const auto state = tab->session ? tab->session->GetState() : tab->state;
-		const auto error = tab->errorCode != 0 ? tab->errorCode : tab->session ? tab->session->GetLastError() : 0;
+		const auto state = tab->Session() ? tab->Session()->GetState() : tab->state;
+		const auto error = tab->errorCode != 0 ? tab->errorCode : tab->Session() ? tab->Session()->GetLastError() : 0;
 		result.push_back({ tab->id, tab->processName, tab->profileLabel, tab->sequenceTitle,
 			tab->initialWorkingDirectory, state, error, m_impl->activeTabId == tab->id });
 	}

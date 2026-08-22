@@ -32,6 +32,7 @@
 #include <string>
 #include <string_view>
 #include <vector>
+#include <functional>
 #include "dlg/CDialog.h"
 #include "doc/CEditDoc.h"
 #include "outline/CFuncInfoArr.h"
@@ -87,6 +88,7 @@ public:
 class CDlgFuncList final : public CDialog
 {
 public:
+	using WorkbenchNativeSurfaceSubmitter = std::function<void(HDC, const RECT&)>;
 	/*
 	||  Constructors
 	*/
@@ -98,6 +100,7 @@ public:
 	void ChangeView(LPARAM pcEditView);	/* モードレス時：検索対象となるビューの変更 */
 	void SetWorkbenchParent( HWND parent ) noexcept;
 	void SetWorkbenchMode( bool enabled ) noexcept;
+	void SetWorkbenchNativeSurfaceSubmitter( WorkbenchNativeSurfaceSubmitter submitter ) noexcept;
 	void SetWorkbenchAppearance(
 		COLORREF text,
 		COLORREF background,
@@ -369,6 +372,7 @@ private:
 	bool m_workbenchClipboardUsesGenericTree = false;
 	bool m_workbenchClipboardTagJump = false;
 	bool m_workbenchClipboardNoLabel = false;
+	WorkbenchNativeSurfaceSubmitter m_workbenchNativeSurfaceSubmitter;
 	int			m_workbenchAppearanceWidth = -1;
 	bool		m_workbenchAppearanceDirty = true;
 	bool		m_workbenchTreeContentDirty = true;

@@ -65,7 +65,6 @@ SQuickInputCompletion CQuickInputDialog::DoModal(HWND parent) noexcept
 	const BOOL parentWasEnabled = ::IsWindowEnabled(parent);
 	if (parentWasEnabled) ::EnableWindow(parent, FALSE);
 	::ShowWindow(m_window, SW_SHOW);
-	::UpdateWindow(m_window);
 	MSG message{};
 	bool sawQuit = false;
 	while (m_window && ::IsWindow(m_window)) {
@@ -200,15 +199,53 @@ void CQuickInputDialog::Layout(int width, int height) noexcept
 	const int buttonWidth = Scale(m_window, 88);
 	const int buttonHeight = Scale(m_window, 28);
 	const int gap = Scale(m_window, 8);
-	::MoveWindow(m_prompt, margin, margin, std::max(0, width - margin * 2), promptHeight, TRUE);
+	struct Placement {
+		HWND window{};
+		int left{};
+		int top{};
+		int width{};
+		int height{};
+	};
 	const int inputTop = margin + promptHeight;
 	const int inputBottom = height - margin - buttonHeight - gap;
-	::MoveWindow(m_input, margin, inputTop, std::max(0, width - margin * 2),
-		std::max(Scale(m_window, 26), inputBottom - inputTop), TRUE);
-	::MoveWindow(m_cancel, width - margin - buttonWidth, height - margin - buttonHeight,
-		buttonWidth, buttonHeight, TRUE);
-	::MoveWindow(m_ok, width - margin * 2 - buttonWidth * 2, height - margin - buttonHeight,
-		buttonWidth, buttonHeight, TRUE);
+	const Placement allPlacements[] = {
+		{ m_prompt, margin, margin, std::max(0, width - margin * 2), promptHeight },
+		{ m_input, margin, inputTop, std::max(0, width - margin * 2),
+			std::max(Scale(m_window, 26), inputBottom - inputTop) },
+		{ m_cancel, width - margin - buttonWidth, height - margin - buttonHeight,
+			buttonWidth, buttonHeight },
+		{ m_ok, width - margin * 2 - buttonWidth * 2, height - margin - buttonHeight,
+			buttonWidth, buttonHeight },
+	};
+	HDWP transaction = ::BeginDeferWindowPos(static_cast<int>(sizeof(allPlacements) / sizeof(allPlacements[0])));
+	bool positioned = transaction != nullptr;
+	if (positioned) {
+		for (const auto& placement : allPlacements) {
+			if (placement.window == nullptr) continue;
+			transaction = ::DeferWindowPos(transaction, placement.window, nullptr,
+				placement.left, placement.top, placement.width, placement.height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+			if (transaction == nullptr) {
+				positioned = false;
+				break;
+			}
+		}
+	}
+	if (positioned) {
+		positioned = ::EndDeferWindowPos(transaction) != FALSE;
+	}
+	if (!positioned) {
+		// Resource pressure can reject the HDWP transaction.  Keep the fallback
+		// redraw-suppressed so it cannot reintroduce four synchronous child paints.
+		for (const auto& placement : allPlacements) {
+			if (placement.window == nullptr) continue;
+			::SetWindowPos(placement.window, nullptr, placement.left, placement.top,
+				placement.width, placement.height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW);
+		}
+	}
+	::RedrawWindow(m_window, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 }
 
 void CQuickInputDialog::Accept() noexcept

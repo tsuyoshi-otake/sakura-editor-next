@@ -106,52 +106,6 @@ inline LRESULT CALLBACK DefTabWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPAR
 		return ::DefWindowProc( hwnd, uMsg, wParam, lParam );
 }
 
-void PaintUnusedDarkTabArea( HWND hwnd )
-{
-	RECT client{};
-	if( !::GetClientRect(hwnd, &client) ) return;
-
-	LONG usedRight = client.left;
-	LONG usedBottom = client.top;
-	LONG usedLeft = client.right;
-	const int itemCount = TabCtrl_GetItemCount(hwnd);
-	for( int index = 0; index < itemCount; ++index ) {
-		RECT item{};
-		if( TabCtrl_GetItemRect(hwnd, index, &item) ) {
-			usedLeft = std::min(usedLeft, item.left);
-			usedRight = std::max(usedRight, item.right);
-			usedBottom = std::max(usedBottom, item.bottom);
-		}
-	}
-
-	const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
-	const HBRUSH brush = ::CreateSolidBrush(palette.panel.ToColorRef());
-	if( brush == nullptr ) return;
-	const HDC dc = ::GetDC(hwnd);
-	if( dc != nullptr ) {
-		// The themed native tab control draws a light pane edge before the
-		// owner-drawn dark items.  Cover the unused leading inset as well as the
-		// trailing/bottom areas so that edge cannot appear as a white vertical bar.
-		if( client.left < usedLeft ) {
-			RECT left = client;
-			left.right = usedLeft;
-			::FillRect(dc, &left, brush);
-		}
-		if( usedRight < client.right ) {
-			RECT right = client;
-			right.left = usedRight;
-			::FillRect(dc, &right, brush);
-		}
-		if( usedBottom < client.bottom ) {
-			RECT bottom = client;
-			bottom.top = usedBottom;
-			::FillRect(dc, &bottom, brush);
-		}
-		::ReleaseDC(hwnd, dc);
-	}
-	::DeleteObject(brush);
-}
-
 /* TabWndウィンドウメッセージのコールバック関数 */
 LRESULT CALLBACK TabWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
@@ -163,20 +117,10 @@ LRESULT CALLBACK TabWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam 
 	if( pcTabWnd )
 	{
 		if( IsDarkModeActive() && uMsg == WM_ERASEBKGND ) {
-			RECT client{};
-			::GetClientRect(hwnd, &client);
-			const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
-			const HBRUSH brush = ::CreateSolidBrush(palette.panel.ToColorRef());
-			if( brush != nullptr ) {
-				::FillRect(reinterpret_cast<HDC>(wParam), &client, brush);
-				::DeleteObject(brush);
-			}
 			return 1L;
 		}
 		if( IsDarkModeActive() && uMsg == WM_PAINT ) {
-			const LRESULT result = DefTabWndProc(hwnd, uMsg, wParam, lParam);
-			PaintUnusedDarkTabArea(hwnd);
-			return result;
+			return pcTabWnd->PaintNativeTabFrame();
 		}
 		//return
 		if( 0L == pcTabWnd->TabWndDispatchEvent( hwnd, uMsg, wParam, lParam ) )
@@ -223,7 +167,7 @@ LRESULT CTabWnd::TabWndDispatchEvent( [[maybe_unused]] HWND hwnd, UINT uMsg, WPA
 		return OnTabNotify( wParam, lParam );
 
 	case WM_HSCROLL:
-		::InvalidateRect( GetHwnd(), nullptr, TRUE );	// アクティブタブの位置が変わるのでトップバンドを更新する	// 2006.03.27 ryoji
+		::InvalidateRect( GetHwnd(), nullptr, FALSE );	// アクティブタブの位置が変わるのでトップバンドを更新する	// 2006.03.27 ryoji
 		break;
 
 	case WM_THEMECHANGED:
@@ -403,10 +347,10 @@ LRESULT CTabWnd::OnTabMouseMove( WPARAM wParam, LPARAM lParam )
 				if( nTabHoverCur != nTabHoverPrev ){	// タブ外または別のタブから入った
 					if( nTabHoverPrev >= 0 ){	// 別のタブから入った
 						// 前回のタブを再描画する
-						::InvalidateRect( m_hwndTab, &rcPrev, TRUE );
+						::InvalidateRect( m_hwndTab, &rcPrev, FALSE );
 					}
 					// このタブを再描画する
-					::InvalidateRect( m_hwndTab, &rcCur, TRUE );
+					::InvalidateRect( m_hwndTab, &rcCur, FALSE );
 				}
 			}
 
@@ -416,16 +360,16 @@ LRESULT CTabWnd::OnTabMouseMove( WPARAM wParam, LPARAM lParam )
 					m_bTabCloseHover = true;
 					if( nTabHoverCur != nTabHoverPrev ){
 						// 前回のタブを再描画する
-						::InvalidateRect( m_hwndTab, &rcPrev, TRUE );
+						::InvalidateRect( m_hwndTab, &rcPrev, FALSE );
 					}
 					// このタブを再描画する
-					::InvalidateRect( m_hwndTab, &rcCur, TRUE );
+					::InvalidateRect( m_hwndTab, &rcCur, FALSE );
 				}
 			}else{
 				if( m_bTabCloseHover ){	// 閉じるボタンから出た
 					// 前回、閉じるボタンをハイライトしていたタブを再描画する
 					m_bTabCloseHover = false;
-					::InvalidateRect( m_hwndTab, &rcPrev, TRUE );
+					::InvalidateRect( m_hwndTab, &rcPrev, FALSE );
 				}
 			}
 		}else{	// カーソルがタブ外に出た
@@ -433,7 +377,7 @@ LRESULT CTabWnd::OnTabMouseMove( WPARAM wParam, LPARAM lParam )
 			if( bDispTabClose == DISPTABCLOSE_AUTO || m_bTabCloseHover ){
 				if( nTabHoverPrev >= 0 ){
 					// 前回のタブを再描画する
-					::InvalidateRect( m_hwndTab, &rcPrev, TRUE );
+					::InvalidateRect( m_hwndTab, &rcPrev, FALSE );
 				}
 			}
 			m_bTabCloseHover = false;
@@ -502,7 +446,7 @@ LRESULT CTabWnd::OnTabMouseMove( WPARAM wParam, LPARAM lParam )
 					}
 					m_nSrcTab = nDstTab;
 					m_bTabSwapped = TRUE;
-					::InvalidateRect( GetHwnd(), nullptr, TRUE );
+					::InvalidateRect( GetHwnd(), nullptr, FALSE );
 
 					// 今回の WM_MOUSEMOVE が移動後のタブ上で発生したかのように偽装してマウスオーバーハイライトも移動する
 					TabCtrl_GetItemRect(m_hwndTab, nDstTab, &rc);
@@ -930,7 +874,7 @@ HWND CTabWnd::Open( HINSTANCE hInstance, HWND hwndParent )
 		0,									// extended window style
 		pszClassName,						// Pointer to a null-terminated string or is an atom.
 		pszClassName,						// pointer to window name
-		WS_CHILD/* | WS_VISIBLE*/,			// window style	// 2007.03.08 ryoji WS_VISIBLE 除去
+		WS_CHILD | WS_CLIPCHILDREN/* | WS_VISIBLE*/,	// window style	// 2007.03.08 ryoji WS_VISIBLE 除去
 		// 2006.01.30 ryoji 初期配置見直し
 		// ※タブ非表示 -> 表示切替で編集ウィンドウにゴミが表示されることがあるので初期幅はゼロに
 		CW_USEDEFAULT,						// horizontal position of window
@@ -1064,9 +1008,9 @@ void CTabWnd::UpdateTheme()
 		DarkMode::setDarkTooltips( m_hwndToolTip, static_cast<int>(DarkMode::ToolTipsType::tooltip) );
 	}
 	// 再描画（背景・ボタン等の色を更新する）
-	::InvalidateRect( GetHwnd(), nullptr, TRUE );
+	::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	if (m_hwndTab) {
-		::InvalidateRect(m_hwndTab, nullptr, TRUE);
+		::InvalidateRect(m_hwndTab, nullptr, FALSE);
 	}
 }
 
@@ -1108,20 +1052,11 @@ LRESULT CTabWnd::OnSize( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT uMsg,
 {
 	if( nullptr == GetHwnd() || nullptr == m_hwndTab ) return 0L;
 
-	RECT rcWnd;
-	::GetWindowRect( GetHwnd(), &rcWnd );
-
-	int nSizeBoxWidth = 0;
-	if( m_hwndSizeBox ){
-		nSizeBoxWidth = ::GetSystemMetrics( SM_CXVSCROLL );
-		int nSizeBoxHeight = ::GetSystemMetrics( SM_CYHSCROLL );
-		::MoveWindow( m_hwndSizeBox,  rcWnd.right - rcWnd.left - nSizeBoxWidth,
-			rcWnd.bottom - rcWnd.top - nSizeBoxHeight, nSizeBoxWidth, nSizeBoxHeight, TRUE );
-	}
-
 	LayoutTab();	// 2006.01.28 ryoji タブのレイアウト調整処理
 
 	::InvalidateRect( GetHwnd(), nullptr, FALSE );	//	2006.02.01 ryoji
+	if( m_hwndSizeBox ) ::InvalidateRect( m_hwndSizeBox, nullptr, FALSE );
+	::InvalidateRect( m_hwndTab, nullptr, FALSE );
 
 	return 0L;
 }
@@ -1597,6 +1532,69 @@ LRESULT CTabWnd::OnDrawItem( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 	@date 2006.02.01 ryoji 新規作成
 	@date 2007.03.05 ryoji ボタンの出入りでツールチップを更新する
 */
+LRESULT CTabWnd::PaintNativeTabFrame()
+{
+	if( m_hwndTab == nullptr ) return 0L;
+
+	PAINTSTRUCT paint{};
+	const HDC target = ::BeginPaint(m_hwndTab, &paint);
+	if( target == nullptr ) return 0L;
+
+	RECT client{};
+	::GetClientRect(m_hwndTab, &client);
+	const int width = client.right - client.left;
+	const int height = client.bottom - client.top;
+	const bool buffered = width > 0 && height > 0
+		&& m_tabBackBuffer.Ensure(target, width, height);
+	const HDC dc = buffered ? m_tabBackBuffer.Dc() : target;
+
+	if( dc != nullptr ) {
+		(void)::SelectClipRgn(dc, nullptr);
+		const auto palette = theme::CThemeService::EffectivePalette(theme::ThemeMode::Dark);
+		const HBRUSH background = ::CreateSolidBrush(palette.panel.ToColorRef());
+		if( background != nullptr ) {
+			::FillRect(dc, &client, background);
+			::DeleteObject(background);
+		}
+
+		const HGDIOBJ previousFont = m_hFont == nullptr ? nullptr : ::SelectObject(dc, m_hFont);
+		const int selected = TabCtrl_GetCurSel(m_hwndTab);
+		const int count = TabCtrl_GetItemCount(m_hwndTab);
+		for( int index = 0; index < count; ++index ) {
+			RECT item{};
+			RECT visible{};
+			if( !TabCtrl_GetItemRect(m_hwndTab, index, &item)
+				|| !::IntersectRect(&visible, &client, &item) ) {
+				continue;
+			}
+
+			(void)::SelectClipRgn(dc, nullptr);
+			const COLORREF previousText = ::SetTextColor(dc,
+				index == m_nTabHover ? ::GetSysColor(COLOR_HOTLIGHT) : palette.primaryText.ToColorRef());
+			DRAWITEMSTRUCT draw{};
+			draw.CtlType = ODT_TAB;
+			draw.CtlID = static_cast<UINT>(::GetDlgCtrlID(m_hwndTab));
+			draw.itemID = static_cast<UINT>(index);
+			draw.itemAction = ODA_DRAWENTIRE;
+			draw.itemState = index == selected ? ODS_SELECTED : 0U;
+			draw.hwndItem = m_hwndTab;
+			draw.hDC = dc;
+			draw.rcItem = item;
+			(void)OnDrawItem(GetHwnd(), WM_DRAWITEM, draw.CtlID,
+				reinterpret_cast<LPARAM>(&draw));
+			(void)::SetTextColor(dc, previousText);
+		}
+		(void)::SelectClipRgn(dc, nullptr);
+		if( previousFont != nullptr && previousFont != HGDI_ERROR ) {
+			(void)::SelectObject(dc, previousFont);
+		}
+		if( buffered ) (void)m_tabBackBuffer.Present(target, client);
+	}
+
+	::EndPaint(m_hwndTab, &paint);
+	return 0L;
+}
+
 LRESULT CTabWnd::OnMouseMove( HWND hwnd, [[maybe_unused]] UINT uMsg, [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 {
 	// カーソルがウィンドウ内に入ったらタイマー起動
@@ -2242,7 +2240,11 @@ void CTabWnd::AdjustWindowPlacement( void )
 				wp.showCmd = pEditNode->m_showCmdRestore;
 			::SetWindowPos( hwnd, hwndInsertAfter, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE );
 			SetCarmWindowPlacement( hwnd, &wp );	// 位置を復元する
-			::UpdateWindow( hwnd );	// 強制描画
+			// Queue the newly visible frame as one no-erase transaction.  A
+			// synchronous UpdateWindow here blocks tab activation on the entire
+			// editor subtree and exposes a blank intermediate background.
+			::RedrawWindow(hwnd, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 		}
 	}
 }
@@ -2445,7 +2447,8 @@ void CTabWnd::LayoutTab( void )
 	const int currentTabHeight = (std::max)(1, static_cast<int>(rcTab.bottom - rcTab.top));
 	if (targetTabWidth != rcTab.right - rcTab.left) {
 		::SetWindowPos(m_hwndTab, nullptr, TAB_MARGIN_LEFT, TAB_MARGIN_TOP,
-			targetTabWidth, currentTabHeight, SWP_NOZORDER | SWP_NOACTIVATE);
+			targetTabWidth, currentTabHeight,
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
 	}
 
 	// フォントを切り替える 2011.12.01 Moca
@@ -2545,9 +2548,46 @@ void CTabWnd::LayoutTab( void )
 	}
 	m_nBreadcrumbHeight = GetBreadcrumbHeight(GetBreadcrumbSegments());
 	const int hostHeight = tabRowHeight + m_nBreadcrumbHeight;
-	::SetWindowPos( GetHwnd(), nullptr, 0, 0, rcWnd.right - rcWnd.left, hostHeight, SWP_NOMOVE | SWP_NOZORDER );
-	if( (targetTabWidth != rcTab.right - rcTab.left) || (tabRowHeight != rcTab.bottom - rcTab.top) ){
-		::MoveWindow( m_hwndTab, TAB_MARGIN_LEFT, TAB_MARGIN_TOP, targetTabWidth, tabRowHeight, TRUE );
+	::SetWindowPos( GetHwnd(), nullptr, 0, 0, rcWnd.right - rcWnd.left, hostHeight,
+		SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS );
+	const bool resizeTab = (targetTabWidth != rcTab.right - rcTab.left)
+		|| (tabRowHeight != rcTab.bottom - rcTab.top);
+	const bool resizeSizeBox = m_hwndSizeBox != nullptr;
+	const int sizeBoxWidth = resizeSizeBox ? ::GetSystemMetrics(SM_CXVSCROLL) : 0;
+	const int sizeBoxHeight = resizeSizeBox ? ::GetSystemMetrics(SM_CYHSCROLL) : 0;
+	const int childCount = static_cast<int>(resizeTab) + static_cast<int>(resizeSizeBox);
+	HDWP positions = childCount > 0 ? ::BeginDeferWindowPos(childCount) : nullptr;
+	bool positioned = childCount == 0;
+	if (positions != nullptr) {
+		if (resizeTab) {
+			positions = ::DeferWindowPos(positions, m_hwndTab, nullptr,
+				TAB_MARGIN_LEFT, TAB_MARGIN_TOP, targetTabWidth, tabRowHeight,
+				SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+			positioned = positions != nullptr;
+		}
+		if (positioned && resizeSizeBox) {
+			positions = ::DeferWindowPos(positions, m_hwndSizeBox, nullptr,
+				rcWnd.right - rcWnd.left - sizeBoxWidth,
+				rcWnd.bottom - rcWnd.top - sizeBoxHeight,
+				sizeBoxWidth, sizeBoxHeight,
+				SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+			positioned = positions != nullptr;
+		}
+		if (positioned) positioned = ::EndDeferWindowPos(positions) != FALSE;
+	}
+	if (!positioned) {
+		if (resizeTab) {
+			::SetWindowPos(m_hwndTab, nullptr, TAB_MARGIN_LEFT, TAB_MARGIN_TOP,
+				targetTabWidth, tabRowHeight,
+				SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+		}
+		if (resizeSizeBox) {
+			::SetWindowPos(m_hwndSizeBox, nullptr,
+				rcWnd.right - rcWnd.left - sizeBoxWidth,
+				rcWnd.bottom - rcWnd.top - sizeBoxHeight,
+				sizeBoxWidth, sizeBoxHeight,
+				SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
+		}
 	}
 }
 

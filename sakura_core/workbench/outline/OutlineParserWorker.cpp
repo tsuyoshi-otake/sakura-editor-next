@@ -8,6 +8,7 @@
 #include "StdAfx.h"
 
 #include "workbench/outline/OutlineParserWorker.h"
+#include "workbench/WorkerRetirementService.h"
 
 #include <chrono>
 #include <condition_variable>
@@ -74,9 +75,19 @@ OutlineParserWorker::OutlineParserWorker( ParseFunction parser )
 	: m_shared(std::make_shared<SharedState>())
 	, m_gate(std::make_shared<NotificationGate>())
 	, m_parser(RequireParser(std::move(parser)))
-	, m_ownerThread(std::this_thread::get_id())
-	, m_worker(&OutlineParserWorker::WorkerMain, this)
 {
+	auto retirement = workbench::WorkerRetirementService::Instance().TryReserve();
+	if( !retirement ) {
+		std::lock_guard lock(m_shared->mutex);
+		m_shared->closed = true;
+		m_shared->stop = true;
+		return;
+	}
+	m_worker = std::thread([shared = m_shared, gate = m_gate, parser = m_parser]() mutable {
+		OutlineParserWorker::WorkerMain(
+			std::move(shared), std::move(gate), std::move(parser));
+	});
+	m_workerRetirement.emplace(std::move(*retirement));
 }
 
 OutlineParserWorker::~OutlineParserWorker()
@@ -271,20 +282,21 @@ void OutlineParserWorker::Close() noexcept
 			m_shared->closed = true;
 			m_shared->stop = true;
 			if( m_shared->active ) m_shared->active->cancelToken->store(true, std::memory_order_release);
+			m_shared->active.reset();
 			m_shared->pending.reset();
 		}
 	}
 	m_shared->wake.notify_all();
-	if( m_worker.joinable() ) {
-		// Close is owned by the dialog/UI thread. A worker-thread close cannot
-		// join itself; terminating this invalid lifecycle is safer than detaching
-		// a thread that could outlive the owning object.
-		if( std::this_thread::get_id() != m_ownerThread || m_worker.get_id() == std::this_thread::get_id() ) std::terminate();
-		m_worker.join();
+	if( m_worker.joinable() && m_workerRetirement ) {
+		(void)workbench::WorkerRetirementService::Instance().Retire(
+			std::move(m_worker), std::move(*m_workerRetirement), m_shared);
+		m_workerRetirement.reset();
 	}
 }
 
-void OutlineParserWorker::PostResult( std::unique_ptr<OutlineWorkerResult> result ) noexcept
+void OutlineParserWorker::PostResult(
+	const std::shared_ptr<NotificationGate>& gate,
+	std::unique_ptr<OutlineWorkerResult> result ) noexcept
 {
 	if( result == nullptr ) return;
 	// Cancelled, superseded and closed outcomes are accounted for internally.
@@ -294,33 +306,36 @@ void OutlineParserWorker::PostResult( std::unique_ptr<OutlineWorkerResult> resul
 	// posted message.
 	if( result->terminal != OutlineWorkerTerminal::Parsed
 		&& result->terminal != OutlineWorkerTerminal::Failed ) return;
-	std::lock_guard lock(m_gate->mutex);
-	if( !m_gate->alive || m_gate->window == nullptr ) return;
-	if( m_gate->pendingResult != nullptr
-		&& m_gate->pendingResult->generation > result->generation ) return;
-	m_gate->pendingResult = std::move(result);
-	if( m_gate->messagePosted ) return;
-	m_gate->messagePosted = true;
-	if( !::PostMessageW(m_gate->window, kWorkerResultMessage, 0, 0) ) {
-		m_gate->pendingResult.reset();
-		m_gate->messagePosted = false;
+	std::lock_guard lock(gate->mutex);
+	if( !gate->alive || gate->window == nullptr ) return;
+	if( gate->pendingResult != nullptr
+		&& gate->pendingResult->generation > result->generation ) return;
+	gate->pendingResult = std::move(result);
+	if( gate->messagePosted ) return;
+	gate->messagePosted = true;
+	if( !::PostMessageW(gate->window, kWorkerResultMessage, 0, 0) ) {
+		gate->pendingResult.reset();
+		gate->messagePosted = false;
 	}
 }
 
-void OutlineParserWorker::WorkerMain() noexcept
+void OutlineParserWorker::WorkerMain(
+	std::shared_ptr<SharedState> shared,
+	std::shared_ptr<NotificationGate> gate,
+	ParseFunction parser ) noexcept
 {
 	for(;;) {
 		Job job;
 		{
-			std::unique_lock lock(m_shared->mutex);
-			m_shared->wake.wait(lock, [this] {
-				return m_shared->stop || (m_shared->pending.has_value() && !m_shared->promotionPaused);
+			std::unique_lock lock(shared->mutex);
+			shared->wake.wait(lock, [&shared] {
+				return shared->stop || (shared->pending.has_value() && !shared->promotionPaused);
 			});
-			if( m_shared->stop ) return;
-			job = std::move(*m_shared->pending);
-			m_shared->pending.reset();
-			m_shared->active.emplace(job);
-			++m_shared->startedCount;
+			if( shared->stop ) return;
+			job = std::move(*shared->pending);
+			shared->pending.reset();
+			shared->active.emplace(job);
+			++shared->startedCount;
 		}
 
 		auto result = std::make_unique<OutlineWorkerResult>();
@@ -328,7 +343,7 @@ void OutlineParserWorker::WorkerMain() noexcept
 		result->parse.documentVersion = job.snapshot->documentVersion;
 		const auto parseBegin = NowUs();
 		try {
-			result->parse = m_parser(*job.snapshot, job.outlineType, job.listType, job.cancelToken);
+			result->parse = parser(*job.snapshot, job.outlineType, job.listType, job.cancelToken);
 			result->parse.documentVersion = job.snapshot->documentVersion;
 			result->parse.timings.snapshotCaptureUs = job.snapshotCaptureUs;
 			result->parse.timings.queueWaitUs = parseBegin >= job.submittedAtUs
@@ -352,9 +367,9 @@ void OutlineParserWorker::WorkerMain() noexcept
 		bool closed = false;
 		const bool cancelled = IsCancelled(job.cancelToken);
 		{
-			std::lock_guard lock(m_shared->mutex);
-			closed = m_shared->closed;
-			if( m_shared->active && m_shared->active->generation == job.generation ) m_shared->active.reset();
+			std::lock_guard lock(shared->mutex);
+			closed = shared->closed;
+			if( shared->active && shared->active->generation == job.generation ) shared->active.reset();
 			if( closed ) {
 				result->terminal = OutlineWorkerTerminal::Closed;
 			}else if( cancelled ) {
@@ -364,23 +379,23 @@ void OutlineParserWorker::WorkerMain() noexcept
 			}
 			switch( result->terminal ) {
 			case OutlineWorkerTerminal::Parsed:
-				++m_shared->completedCount;
+				++shared->completedCount;
 				break;
 			case OutlineWorkerTerminal::Cancelled:
 			case OutlineWorkerTerminal::Closed:
-				++m_shared->cancelledCount;
+				++shared->cancelledCount;
 				break;
 			case OutlineWorkerTerminal::Failed:
-				++m_shared->failedCount;
+				++shared->failedCount;
 				break;
 			default:
 				break;
 			}
-			m_shared->lastGeneration = result->generation;
-			m_shared->lastTerminal = result->terminal;
-			m_shared->lastTimings = result->parse.timings;
+			shared->lastGeneration = result->generation;
+			shared->lastTerminal = result->terminal;
+			shared->lastTimings = result->parse.timings;
 		}
-		if( !closed ) PostResult(std::move(result));
+		if( !closed ) PostResult(gate, std::move(result));
 	}
 }
 

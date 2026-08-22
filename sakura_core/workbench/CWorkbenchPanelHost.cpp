@@ -128,7 +128,7 @@ void CWorkbenchPanelHost::Layout(const RECT& bounds, unsigned int dpi)
 		// ghost pixels whenever a sash commit or toggle relocates this host.
 		::SetWindowPos(m_window, nullptr, bounds.left, bounds.top,
 			std::max(0L, bounds.right - bounds.left), std::max(0L, bounds.bottom - bounds.top),
-			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS);
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	}
 	LayoutTool();
 }
@@ -172,13 +172,13 @@ void CWorkbenchPanelHost::ActivateTool()
 void CWorkbenchPanelHost::SetPalette(const theme::ThemePalette& palette)
 {
 	m_palette = palette;
-	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, TRUE);
+	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
 }
 
 void CWorkbenchPanelHost::SetTitle(std::wstring title)
 {
 	m_title = std::move(title);
-	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, TRUE);
+	if (m_window != nullptr) ::InvalidateRect(m_window, nullptr, FALSE);
 }
 
 void CWorkbenchPanelHost::ApplyExtentDip(int extentDip)
@@ -227,7 +227,7 @@ void CWorkbenchPanelHost::LayoutSash(const RECT& visibleBoundary)
 	}
 	::SetWindowPos(m_sashWindow, HWND_TOP, hit.left, hit.top,
 		hit.right - hit.left, hit.bottom - hit.top,
-		SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_NOCOPYBITS | SWP_NOREDRAW);
 }
 
 void CWorkbenchPanelHost::BeginResize()
@@ -299,6 +299,7 @@ void CWorkbenchPanelHost::Close()
 		::DestroyWindow(m_window);
 		m_window = nullptr;
 	}
+	m_backBuffer.Reset();
 	m_state = WorkbenchPanelState::Hidden;
 }
 
@@ -385,7 +386,7 @@ LRESULT CWorkbenchPanelHost::HandleMessage(UINT message, WPARAM wParam, LPARAM l
 	case WM_DPICHANGED:
 		m_dpi = HIWORD(wParam);
 		LayoutTool();
-		::InvalidateRect(m_window, nullptr, TRUE);
+		::InvalidateRect(m_window, nullptr, FALSE);
 		return 0;
 	case WM_LBUTTONDOWN: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -486,10 +487,14 @@ void CWorkbenchPanelHost::LayoutTool()
 void CWorkbenchPanelHost::Paint()
 {
 	PAINTSTRUCT paint{};
-	const HDC dc = ::BeginPaint(m_window, &paint);
-	if (dc == nullptr) return;
+	const HDC target = ::BeginPaint(m_window, &paint);
+	if (target == nullptr) return;
 	RECT client{};
 	::GetClientRect(m_window, &client);
+	const int width = std::max(0L, client.right - client.left);
+	const int height = std::max(0L, client.bottom - client.top);
+	const bool buffered = width > 0 && height > 0 && m_backBuffer.Ensure(target, width, height);
+	const HDC dc = buffered ? m_backBuffer.Dc() : target;
 	RECT header = client;
 	const int headerHeight = GetHeaderHeightPixels();
 	header.bottom = std::min(header.bottom, header.top + headerHeight);
@@ -512,6 +517,7 @@ void CWorkbenchPanelHost::Paint()
 		::DrawTextW(dc, title, -1, &header, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS | DT_NOPREFIX);
 		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
 	}
+	if (buffered) (void)m_backBuffer.Present(target, client);
 	::EndPaint(m_window, &paint);
 }
 

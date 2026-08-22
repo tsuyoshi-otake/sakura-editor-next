@@ -26,17 +26,25 @@
 #include "workbench/icons/SetiIconPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
 #include "workbench/controls/COverlayScrollbar.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
+#include "workbench/rendering/LatestOnlyMailbox.h"
+#include "workbench/WorkerRetirementService.h"
 
 #include <CommCtrl.h>
+#include <d2d1helper.h>
+#include <wrl/client.h>
 #include <algorithm>
 #include <ranges>
 #include <array>
 #include <atomic>
+#include <condition_variable>
 #include <cstdint>
+#include <deque>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -108,6 +116,25 @@ void ScrollListBoxByWheel(HWND list, WPARAM wParam)
 	if (next == top) return;
 	(void)::SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(next), 0);
 }
+
+//! Builds the overlay model directly from the list's stable row contract.
+//! Native LISTBOX SCROLLINFO can publish its new page one paint later after a
+//! resize; using it would make the overlay thumb the only late SCM surface.
+[[nodiscard]] controls::OverlayScrollbarModel ListOverlayModel(HWND list)
+{
+	if (list == nullptr) return {};
+	const int count = std::max(0,
+		static_cast<int>(::SendMessageW(list, LB_GETCOUNT, 0, 0)));
+	const int itemHeight = std::max(1,
+		static_cast<int>(::SendMessageW(list, LB_GETITEMHEIGHT, 0, 0)));
+	RECT client{};
+	::GetClientRect(list, &client);
+	const int viewport = std::max(1,
+		static_cast<int>(client.bottom - client.top) / itemHeight);
+	const int top = std::max(0,
+		static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0)));
+	return { .contentExtent = count, .viewportExtent = viewport, .offset = top };
+}
 //! The box's own text padding. One line plus both paddings is upstream's
 //! `InputRenderer.DEFAULT_HEIGHT` of 26 at the default font size.
 constexpr int kInputPaddingDip = 4;
@@ -155,6 +182,98 @@ constexpr int kGraphControlId = 2;
 constexpr COLORREF kGraphLaneColors[kScmGraphColorCount] = {
 	RGB(0xFF, 0xB0, 0x00), RGB(0xDC, 0x26, 0x7F), RGB(0x99, 0x4F, 0x00),
 	RGB(0x40, 0xB0, 0xA6), RGB(0xB6, 0x6D, 0xFF),
+};
+
+//! The history graph is painted into a GDI list box, but its node circles are
+//! vector shapes in VS Code's SVG. A DC render target gives those small shapes
+//! per-primitive antialiasing without changing the list's text or lane paths.
+//! The target is kept per SCM tool and rebound to the current row on every paint.
+class GraphNodePainter final {
+public:
+	[[nodiscard]] bool Paint(HDC dc, const RECT& clip, LONG circleX, LONG middle,
+		int outerRadius, int strokeWidth, int innerRadius, int innerMergeRadius,
+		int headInnerStrokeWidth, bool isHead, bool isMerge, COLORREF circleColor,
+		COLORREF background) noexcept
+	{
+		if (dc == nullptr || clip.right <= clip.left || clip.bottom <= clip.top) return false;
+		if (!EnsureTarget()) return false;
+		const int saved = ::SaveDC(dc);
+		if (saved == 0) return false;
+		bool drawn = false;
+		// The lane paths were issued through GDI immediately before this call.
+		// Flush them before Direct2D composites the antialiased node over them.
+		::GdiFlush();
+		if (SUCCEEDED(m_target->BindDC(dc, &clip))) {
+			m_target->SetAntialiasMode(D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+			Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> fill;
+			Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> stroke;
+			if (SUCCEEDED(m_target->CreateSolidColorBrush(ToColor(circleColor), &fill))
+				&& SUCCEEDED(m_target->CreateSolidColorBrush(ToColor(background), &stroke))) {
+				m_target->BeginDraw();
+				// BindDC makes the sub-rectangle's top-left the render target's local
+				// origin. Keep the target row-sized so EndDraw cannot copy an internal
+				// bitmap over neighbouring rows.
+				const auto center = D2D1::Point2F(
+					static_cast<float>(circleX - clip.left),
+					static_cast<float>(middle - clip.top));
+				const auto drawEllipse = [&](int radius, ID2D1Brush* brush) {
+					const auto ellipse = D2D1::Ellipse(center, static_cast<float>(radius), static_cast<float>(radius));
+					m_target->FillEllipse(ellipse, brush);
+					m_target->DrawEllipse(ellipse, stroke.Get(), static_cast<float>(strokeWidth));
+				};
+				if (isHead) {
+					drawEllipse(outerRadius, fill.Get());
+					// The HEAD node is an outlined ring. Its inner SVG circle has a
+					// background fill and a stroke as wide as the normal node radius.
+					const auto inner = D2D1::Ellipse(center, static_cast<float>(innerRadius),
+						static_cast<float>(innerRadius));
+					m_target->FillEllipse(inner, stroke.Get());
+					m_target->DrawEllipse(inner, stroke.Get(), static_cast<float>(headInnerStrokeWidth));
+				} else if (isMerge) {
+					drawEllipse(outerRadius, fill.Get());
+					// VS Code's multi-parent node has a second coloured circle inside
+					// the background outline of the outer circle.
+					const auto inner = D2D1::Ellipse(center, static_cast<float>(innerMergeRadius),
+						static_cast<float>(innerMergeRadius));
+					m_target->FillEllipse(inner, fill.Get());
+					m_target->DrawEllipse(inner, stroke.Get(), static_cast<float>(strokeWidth));
+				} else {
+					drawEllipse(outerRadius, fill.Get());
+				}
+				const HRESULT result = m_target->EndDraw();
+				if (result == D2DERR_RECREATE_TARGET) m_target.Reset();
+				drawn = SUCCEEDED(result);
+			}
+		}
+		::RestoreDC(dc, saved);
+		return drawn;
+	}
+
+private:
+	static D2D1_COLOR_F ToColor(COLORREF color) noexcept
+	{
+		return D2D1::ColorF(
+			static_cast<float>(GetRValue(color)) / 255.0F,
+			static_cast<float>(GetGValue(color)) / 255.0F,
+			static_cast<float>(GetBValue(color)) / 255.0F, 1.0F);
+	}
+
+	[[nodiscard]] bool EnsureTarget() noexcept
+	{
+		if (!m_factory) {
+			if (FAILED(::D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED,
+				m_factory.GetAddressOf()))) return false;
+		}
+		if (m_target) return true;
+		const auto properties = D2D1::RenderTargetProperties(
+			D2D1_RENDER_TARGET_TYPE_DEFAULT,
+			D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE),
+			96.0F, 96.0F);
+		return SUCCEEDED(m_factory->CreateDCRenderTarget(&properties, m_target.GetAddressOf()));
+	}
+
+	Microsoft::WRL::ComPtr<ID2D1Factory> m_factory;
+	Microsoft::WRL::ComPtr<ID2D1DCRenderTarget> m_target;
 };
 
 //!
@@ -359,15 +478,27 @@ struct Gate {
 	std::mutex mutex;
 	HWND window{};
 	bool alive{};
-	std::vector<std::unique_ptr<WorkerResult>> pending;
+	//! Depth-one result mailbox. A slow UI never makes periodic refresh results
+	//! accumulate: the worker replaces an unpublished result with the newest one.
+	workbench::rendering::LatestOnlyMailbox<std::unique_ptr<WorkerResult>> results;
+	//! Exactly one payload-free wakeup may be queued for `results`. The HWND owns
+	//! the take; no pointer crosses the Win32 message boundary.
 };
 struct SharedState {
 	std::mutex mutex;
 	std::wstring root;
-	std::atomic<std::uint64_t> generation{ 1 };
+	//! Guarded by `mutex` together with `root`, so a worker cannot observe a new
+	//! root paired with the previous generation (or the inverse).
+	std::uint64_t generation{ 1 };
 	std::shared_ptr<Gate> gate = std::make_shared<Gate>();
 	HANDLE stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	HANDLE wake = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
+
+	~SharedState()
+	{
+		if (stop != nullptr) ::CloseHandle(stop);
+		if (wake != nullptr) ::CloseHandle(wake);
+	}
 };
 
 bool EnsureClass(HINSTANCE instance)
@@ -458,12 +589,14 @@ std::wstring RelativeDisplayPath(std::wstring_view root, const std::wstring& abs
 
 void PostResult(const std::shared_ptr<SharedState>& shared, std::unique_ptr<WorkerResult> result)
 {
-	const auto raw = result.get();
 	const auto gate = shared->gate;
 	std::lock_guard lock(gate->mutex);
 	if (!gate->alive || gate->window == nullptr) return;
-	gate->pending.push_back(std::move(result));
-	if (!::PostMessageW(gate->window, kResultMessage, 0, reinterpret_cast<LPARAM>(raw))) gate->pending.pop_back();
+	const auto publication = gate->results.Publish(std::move(result));
+	if (!publication.wakeRequired) return;
+	if (!::PostMessageW(gate->window, kResultMessage, 0, 0)) {
+		gate->results.CancelWakeAndDiscard();
+	}
 }
 
 void WorkerMain(std::shared_ptr<SharedState> shared)
@@ -473,11 +606,12 @@ void WorkerMain(std::shared_ptr<SharedState> shared)
 		const DWORD wait = ::WaitForMultipleObjects(2, waits, FALSE, kRefreshMilliseconds);
 		if (wait == WAIT_OBJECT_0) return;
 		std::wstring root;
+		std::uint64_t generation = 0;
 		{
 			std::lock_guard lock(shared->mutex);
 			root = shared->root;
+			generation = shared->generation;
 		}
-		const auto generation = shared->generation.load(std::memory_order_acquire);
 		if (root.empty()) continue;
 		const auto execution = RunGit(MakeStatusRequest(root), shared->stop);
 		if (execution.status == EGitExecutionStatus::Cancelled) return;
@@ -528,6 +662,7 @@ struct ScmRow final {
 	//! What a resource-scoped command operates on. Empty on a header row, and on
 	//! a resource row published by another provider.
 	std::optional<GitStageResource> operand;
+	[[nodiscard]] bool operator==(const ScmRow&) const = default;
 };
 
 //! One inline action drawn on a group header row: upstream's
@@ -563,8 +698,18 @@ bool IsVisibleGroup(const ScmResourceGroupState& group) noexcept
 struct CScmWorkbenchTool::Impl {
 	std::shared_ptr<SharedState> shared = std::make_shared<SharedState>();
 	std::thread worker;
+	std::optional<workbench::WorkerRetirementService::Reservation> workerRetirement;
 	HWND window{};
 	HWND list{};
+	//! Persistent composition targets. Each owner-drawn surface publishes a
+	//! completed image with one blit instead of exposing background/text phases.
+	workbench::rendering::CGdiBackBuffer windowBuffer;
+	workbench::rendering::CGdiBackBuffer listBuffer;
+	workbench::rendering::CGdiBackBuffer graphBuffer;
+	workbench::rendering::CGdiBackBuffer inputBuffer;
+	//! Optional physical-Part bridge for the retained Changes list. The bridge
+	//! owns only CPU staging and an asynchronous sink; it never owns the HWND.
+	ScmNativeSurfacePayloadAdapter nativeSurface;
 	//! The VS Code-style overlay scrollbar shared with the Explorer view. The
 	//! list keeps its WS_VSCROLL scroll state; the overlay hides the platform bar
 	//! and draws the themed one over the same rows.
@@ -581,6 +726,10 @@ struct CScmWorkbenchTool::Impl {
 	int inputMaxLineCount{ kScmInputMaxLineCountDefault };
 	//! One rendered line's height at the current font and DPI.
 	int inputLineHeight{};
+	//! The authoritative EDIT formatting rectangle established by LayoutInput.
+	//! Placeholder composition must not query EM_GETRECT during WM_PAINT: the
+	//! native EDIT can publish its internal rectangle a frame after WM_SIZE.
+	RECT inputFormattingRect{};
 	//! Set while the tool itself writes the box, so the resulting `EN_CHANGE` is
 	//! not mistaken for the user typing and published back as a new value.
 	bool updatingInput{};
@@ -636,6 +785,7 @@ struct CScmWorkbenchTool::Impl {
 	//! with separate scroll positions.
 	HWND graphList{};
 	controls::COverlayScrollbar graphScrollbar;
+	GraphNodePainter graphNodePainter;
 	std::vector<GitHistoryItem> history;
 	//! `toISCMHistoryItemViewModelArray`'s output, one entry per `history` entry.
 	std::vector<ScmGraphRow> graphRows;
@@ -647,6 +797,15 @@ struct CScmWorkbenchTool::Impl {
 	bool changesCollapsed{};
 	bool graphCollapsed{};
 	bool draggingSash{};
+	//! Layout is performed as one transaction while the sash moves. Child
+	//! windows must not synchronously repaint after each MoveWindow call, or the
+	//! old and new stack geometry becomes visible as alternating blank frames.
+	bool deferChildRepaint{};
+	//! Set only when a visible list actually received WM_SETREDRAW(FALSE). A
+	//! hidden window must never receive the matching TRUE: DefWindowProc would
+	//! add WS_VISIBLE and resurrect a page its ViewContainer deliberately hid.
+	bool listRedrawDeferred{};
+	bool graphRedrawDeferred{};
 	//! Where the drag started, and the height it started from, so the drag is
 	//! absolute against its own origin rather than accumulating rounding error.
 	int sashDragOriginY{};
@@ -687,21 +846,24 @@ struct CScmWorkbenchTool::Impl {
 	//! `welcomeSegments` index plus one, or zero when the pointer is over none.
 	std::size_t hoveredWelcomeSegment{};
 
-	void Start() { if (!worker.joinable()) worker = std::thread(WorkerMain, shared); }
+	void Start() {
+		if (worker.joinable()) return;
+		auto retirement = workbench::WorkerRetirementService::Instance().TryReserve();
+		if (!retirement) return;
+		worker = std::thread(WorkerMain, shared);
+		workerRetirement.emplace(std::move(*retirement));
+	}
 	void NotifyWindow(HWND target, bool alive) {
 		std::lock_guard lock(shared->gate->mutex);
 		shared->gate->window = target;
 		shared->gate->alive = alive;
-		if (!alive) shared->gate->pending.clear();
+		if (alive) shared->gate->results.Open();
+		else shared->gate->results.Close();
 	}
-	std::unique_ptr<WorkerResult> Take(WorkerResult* raw) {
+	std::unique_ptr<WorkerResult> TakeLatest() {
 		std::lock_guard lock(shared->gate->mutex);
-		auto& values = shared->gate->pending;
-		const auto found = std::find_if(values.begin(), values.end(), [raw](const auto& item) { return item.get() == raw; });
-		if (found == values.end()) return {};
-		auto value = std::move(*found);
-		values.erase(found);
-		return value;
+		auto value = shared->gate->results.Take();
+		return value ? std::move(*value) : nullptr;
 	}
 	//! Apply the current Git state to the service, then re-render from what the
 	//! service holds. Publishing and rendering are one step so the list can never
@@ -753,14 +915,77 @@ struct CScmWorkbenchTool::Impl {
 		}
 		openRepositoryCount = providers.size();
 		RebuildWelcome();
-		RebuildRows(providers, decorations, operands);
+		const bool rowsChanged = RebuildRows(providers, decorations, operands);
 		RebuildBand(providers);
 		RebuildInput(providers);
 		RebuildActionButton(providers);
-		Populate(selected);
+		if (rowsChanged) Populate(selected);
 		PublishStatusBarCommands(providers);
 		publishedDecorations = std::move(decorations);
 		PublishFileDecorations();
+	}
+	//! Keep sibling HWNDs off the compositor while one worker result replaces the
+	//! Changes and Graph projections. This is a UI-thread presentation boundary,
+	//! not a worker lock: no thread waits for another thread and no Git work runs
+	//! inside it.
+	void BeginWorkerPresentation()
+	{
+		deferChildRepaint = true;
+		listRedrawDeferred = false;
+		graphRedrawDeferred = false;
+	}
+	void EndWorkerPresentation()
+	{
+		if (listRedrawDeferred && list != nullptr) ::SendMessageW(list, WM_SETREDRAW, TRUE, 0);
+		if (graphRedrawDeferred && graphList != nullptr) ::SendMessageW(graphList, WM_SETREDRAW, TRUE, 0);
+		listRedrawDeferred = false;
+		graphRedrawDeferred = false;
+		deferChildRepaint = false;
+		if (window != nullptr) {
+			::RedrawWindow(window, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		}
+	}
+	class WorkerPresentationScope final {
+	public:
+		explicit WorkerPresentationScope(Impl& owner) noexcept
+			: m_owner(owner), m_ownsPresentation(!owner.deferChildRepaint)
+		{
+			if (m_ownsPresentation) m_owner.BeginWorkerPresentation();
+		}
+		~WorkerPresentationScope() noexcept
+		{
+			if (m_ownsPresentation) m_owner.EndWorkerPresentation();
+		}
+		WorkerPresentationScope(const WorkerPresentationScope&) = delete;
+		WorkerPresentationScope& operator=(const WorkerPresentationScope&) = delete;
+	private:
+		Impl& m_owner;
+		bool m_ownsPresentation{};
+	};
+	//! Apply one immutable worker result as one visible SCM revision. Identical
+	//! periodic results are discarded before touching the service, controls,
+	//! decorations, status bar, or invalidation state.
+	void ApplyWorkerResult(std::unique_ptr<WorkerResult> result)
+	{
+		if (!result) return;
+		const bool stateChanged = state != result->state
+			|| execution != result->execution || failureReason != result->failureReason;
+		const bool historyChanged = result->historyRead
+			? graphPresentation.status != EScmGraphPresentationStatus::Available
+				|| history != result->history
+			: graphPresentation.status != EScmGraphPresentationStatus::Unavailable
+				|| !history.empty();
+		if (!stateChanged && !historyChanged) return;
+
+		WorkerPresentationScope presentation(*this);
+		if (stateChanged) {
+			state = std::move(result->state);
+			execution = result->execution;
+			failureReason = std::move(result->failureReason);
+			PublishAndRender();
+		}
+		if (historyChanged) ApplyHistory(std::move(result->history), result->historyRead);
 	}
 	[[nodiscard]] int BandHeight() const noexcept
 	{
@@ -873,12 +1098,14 @@ struct CScmWorkbenchTool::Impl {
 		const RECT bounds = InputBounds();
 		const LONG width = std::max(0L, bounds.right - bounds.left);
 		const LONG height = std::max(0L, bounds.bottom - bounds.top);
-		::MoveWindow(input, bounds.left, bounds.top, width, height, TRUE);
+		::SetWindowPos(input, nullptr, bounds.left, bounds.top, width, height,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 		// A multiline edit has no vertical margin message, so the padding is the
 		// formatting rectangle; without it the first line would hug the border.
 		const LONG pad = icons::ScaleDip(kInputPaddingDip, dpi);
 		RECT formatting{ pad, pad, std::max(pad, width - pad), std::max(pad, height - pad) };
 		::SendMessageW(input, EM_SETRECTNP, 0, reinterpret_cast<LPARAM>(&formatting));
+		inputFormattingRect = formatting;
 	}
 	//! Re-measure how many rendered lines the box holds and resize if it changed.
 	void UpdateInputHeight()
@@ -894,7 +1121,7 @@ struct CScmWorkbenchTool::Impl {
 		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 	[[nodiscard]] std::wstring ReadInputText() const
 	{
@@ -913,7 +1140,7 @@ struct CScmWorkbenchTool::Impl {
 		updatingInput = true;
 		::SetWindowTextW(input, value.c_str());
 		updatingInput = false;
-		::InvalidateRect(input, nullptr, TRUE);
+		::InvalidateRect(input, nullptr, FALSE);
 	}
 	void OnInputChanged()
 	{
@@ -926,7 +1153,7 @@ struct CScmWorkbenchTool::Impl {
 		if (publisher) (void)publisher->SetInputBoxValue(ToUtf8(inputModel.value));
 		// The placeholder is painted only while the box is empty, so only crossing
 		// that boundary needs a repaint.
-		if (wasEmpty != inputModel.value.empty()) ::InvalidateRect(input, nullptr, TRUE);
+		if (wasEmpty != inputModel.value.empty()) ::InvalidateRect(input, nullptr, FALSE);
 		UpdateInputHeight();
 	}
 	//! Upstream's `scm.acceptInput`: run the provider's own `acceptInputCommand`.
@@ -963,7 +1190,7 @@ struct CScmWorkbenchTool::Impl {
 		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 	//! The button's own box, which is `.monaco-text-button` exactly as the
 	//! ViewWelcome buttons are, so the two cannot disagree about its height.
@@ -1022,7 +1249,7 @@ struct CScmWorkbenchTool::Impl {
 		// disappearing moves the list and the welcome content with it.
 		LayoutList();
 		LayoutWelcome();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 	//! Replace the model's upstream English with the running language's own
 	//! strings. The model stays the authority on which rows exist and in what
@@ -1040,8 +1267,18 @@ struct CScmWorkbenchTool::Impl {
 		resolve(EScmTextKey::GitCommitAction, label);
 		button->title = L"$(check) " + label;
 		for (auto& item : button->secondaryCommands) {
-			if (item.commandId == "git.commit") resolve(EScmTextKey::GitCommitAction, item.title);
-			else if (item.commandId == "git.commitAmend") resolve(EScmTextKey::GitCommitAmendAction, item.title);
+			if (item.commandId == "git.commit" && item.argumentsJson == "[]") {
+				resolve(EScmTextKey::GitCommitAction, item.title);
+			}
+			else if (item.commandId == "git.commitAmend") {
+				resolve(EScmTextKey::GitCommitAmendAction, item.title);
+			}
+			else if (item.commandId == "git.commit" && item.argumentsJson == R"(["git.push"])") {
+				resolve(EScmTextKey::GitCommitAndPushAction, item.title);
+			}
+			else if (item.commandId == "git.commit" && item.argumentsJson == R"(["git.sync"])") {
+				resolve(EScmTextKey::GitCommitAndSyncAction, item.title);
+			}
 		}
 	}
 	void PaintActionButton(HDC dc)
@@ -1114,7 +1351,7 @@ struct CScmWorkbenchTool::Impl {
 		hoveredActionButtonPart = part;
 		if (!window) return;
 		RECT bounds = ActionButtonBounds();
-		::InvalidateRect(window, &bounds, TRUE);
+		::InvalidateRect(window, &bounds, FALSE);
 	}
 	//! The dropdown half's menu: upstream's `secondaryCommands`, run through the
 	//! same command route the primary half uses.
@@ -1147,7 +1384,7 @@ struct CScmWorkbenchTool::Impl {
 		if (chosen <= 0 || static_cast<std::size_t>(chosen) > items.size()) return;
 		const auto& item = items[static_cast<std::size_t>(chosen) - 1];
 		if (item.commandId.empty() || !runCommand) return;
-		(void)runCommand(item.commandId, {});
+		(void)runCommand(item.commandId, item.argumentsJson);
 	}
 	bool InvokeActionButtonAt(POINT point)
 	{
@@ -1187,8 +1424,10 @@ struct CScmWorkbenchTool::Impl {
 			&& welcomeModel.content == EGitScmWelcomeContent::None;
 		::ShowWindow(list, visible ? SW_SHOW : SW_HIDE);
 		if (visible) {
-			::MoveWindow(list, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
-				std::max(0L, bounds.bottom - bounds.top), TRUE);
+			::SetWindowPos(list, nullptr, bounds.left, bounds.top,
+				std::max(0L, bounds.right - bounds.left),
+				std::max(0L, bounds.bottom - bounds.top),
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 		}
 		UpdateListScrollbar();
 		LayoutGraphList();
@@ -1202,8 +1441,10 @@ struct CScmWorkbenchTool::Impl {
 			&& bounds.bottom > bounds.top;
 		::ShowWindow(graphList, visible ? SW_SHOW : SW_HIDE);
 		if (visible) {
-			::MoveWindow(graphList, bounds.left, bounds.top, std::max(0L, bounds.right - bounds.left),
-				std::max(0L, bounds.bottom - bounds.top), TRUE);
+			::SetWindowPos(graphList, nullptr, bounds.left, bounds.top,
+				std::max(0L, bounds.right - bounds.left),
+				std::max(0L, bounds.bottom - bounds.top),
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 		}
 		UpdateGraphScrollbar();
 	}
@@ -1215,6 +1456,7 @@ struct CScmWorkbenchTool::Impl {
 			palette.raised.ToColorRef(),
 			palette.border.ToColorRef(),
 			palette.secondaryText.ToColorRef() });
+		graphScrollbar.SetScrollModel(ListOverlayModel(graphList));
 		graphScrollbar.Update();
 	}
 	//! Feeds the overlay the current DPI and the Side Bar tokens the Explorer maps
@@ -1227,7 +1469,16 @@ struct CScmWorkbenchTool::Impl {
 			palette.raised.ToColorRef(),
 			palette.border.ToColorRef(),
 			palette.secondaryText.ToColorRef() });
+		listScrollbar.SetScrollModel(ListOverlayModel(list));
 		listScrollbar.Update();
+	}
+	void InvalidateListRow(int index) const
+	{
+		if (list == nullptr || index < 0) return;
+		RECT bounds{};
+		if (::SendMessageW(list, LB_GETITEMRECT, static_cast<WPARAM>(index),
+			reinterpret_cast<LPARAM>(&bounds)) == LB_ERR) return;
+		::InvalidateRect(list, &bounds, FALSE);
 	}
 	//! Upstream's `RepositoryRenderer.renderElement`, reading the same fields.
 	void RebuildBand(const std::vector<ScmProviderState>& providers)
@@ -1265,7 +1516,7 @@ struct CScmWorkbenchTool::Impl {
 		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 	//! Measure the row and store its regions. Kept separate from painting so a hit
 	//! test never depends on whether a paint has happened yet.
@@ -1541,22 +1792,25 @@ struct CScmWorkbenchTool::Impl {
 		}
 		PopulateGraph();
 		LayoutGraphList();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 	void PopulateGraph()
 	{
 		if (!graphList) return;
-		::SendMessageW(graphList, WM_SETREDRAW, FALSE, 0);
+		const bool suspendRedraw = ::IsWindowVisible(graphList) != FALSE;
+		if (suspendRedraw) ::SendMessageW(graphList, WM_SETREDRAW, FALSE, 0);
 		::SendMessageW(graphList, LB_RESETCONTENT, 0, 0);
 		for (const auto& item : history) {
 			::SendMessageW(graphList, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.subject.c_str()));
 		}
 		::SendMessageW(graphList, LB_SETITEMHEIGHT, 0, icons::ScaleDip(kGraphRowHeightDip, dpi));
-		::SendMessageW(graphList, WM_SETREDRAW, TRUE, 0);
-		// The same stale-row rule the change list follows: complete the child
-		// redraw at the transition that replaced its items.
-		::RedrawWindow(graphList, nullptr, nullptr,
-			RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+		if (!deferChildRepaint) {
+			if (suspendRedraw) ::SendMessageW(graphList, WM_SETREDRAW, TRUE, 0);
+			// Outside a multi-surface result transaction this is the complete state
+			// transition, so the Graph can be presented immediately.
+			::RedrawWindow(graphList, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		} else if (suspendRedraw) graphRedrawDeferred = true;
 		UpdateGraphScrollbar();
 	}
 	//! `%at` is seconds since the epoch, rendered here in local time.
@@ -1641,34 +1895,34 @@ struct CScmWorkbenchTool::Impl {
 			::DeleteObject(pen);
 		};
 
-		const auto& input = row.inputSwimlanes;
+		const auto& inputLanes = row.inputSwimlanes;
 		const auto& output = row.outputSwimlanes;
 		constexpr std::size_t kNoLane = static_cast<std::size_t>(-1);
 		std::size_t inputIndex = kNoLane;
-		for (std::size_t index = 0; index < input.size(); ++index) {
-			if (input[index].id == item.id) {
-				inputIndex = index;
+		for (std::size_t laneIndex = 0; laneIndex < inputLanes.size(); ++laneIndex) {
+			if (inputLanes[laneIndex].id == item.id) {
+				inputIndex = laneIndex;
 				break;
 			}
 		}
 		// Upstream: the commit sits on whichever lane was waiting for it, or on a new
 		// lane just past the right-hand end when nothing was.
-		const std::size_t circleIndex = inputIndex != kNoLane ? inputIndex : input.size();
+		const std::size_t circleIndex = inputIndex != kNoLane ? inputIndex : inputLanes.size();
 		const std::size_t circleColorIndex =
 			circleIndex < output.size()  ? output[circleIndex].colorIndex
-			: circleIndex < input.size() ? input[circleIndex].colorIndex
+			: circleIndex < inputLanes.size() ? inputLanes[circleIndex].colorIndex
 			                             : row.circleColorIndex;
 
 		std::size_t outputIndex = 0;
-		for (std::size_t index = 0; index < input.size(); ++index) {
-			const std::size_t color = input[index].colorIndex;
-			if (input[index].id == item.id) {
+		for (std::size_t laneIndex = 0; laneIndex < inputLanes.size(); ++laneIndex) {
+			const std::size_t color = inputLanes[laneIndex].colorIndex;
+			if (inputLanes[laneIndex].id == item.id) {
 				// A second lane arriving at this same commit: it turns into the circle
 				// instead of continuing down. This is a merge's incoming side, `/` then `-`.
-				if (index != circleIndex) {
+				if (laneIndex != circleIndex) {
 					stroke(color, [&] {
-						moveTo(gx(index + 1), bounds.top);
-						arcTo(gx(index), middle, gx(index + 1), middle);
+						moveTo(gx(laneIndex + 1), bounds.top);
+						arcTo(gx(laneIndex), middle, gx(laneIndex + 1), middle);
 						lineTo(gx(circleIndex + 1), middle);
 					});
 				} else {
@@ -1676,19 +1930,19 @@ struct CScmWorkbenchTool::Impl {
 				}
 				continue;
 			}
-			if (outputIndex >= output.size() || input[index].id != output[outputIndex].id) continue;
-			if (index == outputIndex) {
+			if (outputIndex >= output.size() || inputLanes[laneIndex].id != output[outputIndex].id) continue;
+			if (laneIndex == outputIndex) {
 				stroke(color, [&] {
-					moveTo(gx(index + 1), bounds.top);
-					lineTo(gx(index + 1), bounds.bottom);
+					moveTo(gx(laneIndex + 1), bounds.top);
+					lineTo(gx(laneIndex + 1), bounds.bottom);
 				});
 			} else {
 				// The lane shifted left because a lane to its left ended here. Upstream
 				// draws `|` down to y=6, a curve, the horizontal run, a second curve, `|`.
 				stroke(color, [&] {
-					moveTo(gx(index + 1), bounds.top);
-					lineTo(gx(index + 1), bounds.top + icons::ScaleDip(6, dpi));
-					arcTo(gx(index + 1) - curve, middle, gx(index + 1), middle);
+					moveTo(gx(laneIndex + 1), bounds.top);
+					lineTo(gx(laneIndex + 1), bounds.top + icons::ScaleDip(6, dpi));
+					arcTo(gx(laneIndex + 1) - curve, middle, gx(laneIndex + 1), middle);
 					lineTo(gx(outputIndex + 1) + curve, middle);
 					arcTo(gx(outputIndex + 1), middle + curve, gx(outputIndex + 1), middle);
 					lineTo(gx(outputIndex + 1), bounds.bottom);
@@ -1702,9 +1956,9 @@ struct CScmWorkbenchTool::Impl {
 		// stroke that makes a merge readable, and the one this row had no equivalent of.
 		for (std::size_t parent = 1; parent < item.parentIds.size(); ++parent) {
 			std::size_t parentLane = kNoLane;
-			for (std::size_t index = output.size(); index-- > 0;) {
-				if (output[index].id == item.parentIds[parent]) {
-					parentLane = index;
+			for (std::size_t laneIndex = output.size(); laneIndex-- > 0;) {
+				if (output[laneIndex].id == item.parentIds[parent]) {
+					parentLane = laneIndex;
 					break;
 				}
 			}
@@ -1719,7 +1973,7 @@ struct CScmWorkbenchTool::Impl {
 
 		// `|` into the circle and `|` out of it, each in its own end's colour.
 		if (inputIndex != kNoLane) {
-			stroke(input[inputIndex].colorIndex, [&] {
+			stroke(inputLanes[inputIndex].colorIndex, [&] {
 				moveTo(gx(circleIndex + 1), bounds.top);
 				lineTo(gx(circleIndex + 1), middle);
 			});
@@ -1733,32 +1987,49 @@ struct CScmWorkbenchTool::Impl {
 
 		// The three node shapes are upstream's own: HEAD is `CIRCLE_RADIUS + 3` with a
 		// `CIRCLE_STROKE_WIDTH` hole, a multi-parent commit is `CIRCLE_RADIUS + 2`, and
-		// every other commit is `CIRCLE_RADIUS + 1`.
+		// every other commit is `CIRCLE_RADIUS + 1`. Direct2D owns the circles so the
+		// small diagonal edge pixels are antialiased like the SVG renderer.
 		const COLORREF circleColor = LaneColor(circleColorIndex);
 		const LONG circleX = gx(circleIndex + 1);
-		const auto disc = [&](int radiusDip, COLORREF color) {
-			const int radius = icons::ScaleDip(radiusDip, dpi);
-			const HBRUSH fill = ::CreateSolidBrush(color);
-			const HPEN pen = ::CreatePen(PS_SOLID, 1, color);
+		const bool isHead = std::ranges::any_of(item.refs, [](const GitHistoryRef& ref) {
+			return ref.kind == EGitHistoryRefKind::Head;
+		});
+		const bool isMerge = item.parentIds.size() > 1;
+		const int outerRadius = icons::ScaleDip(
+			isHead ? kGraphCircleRadiusDip + 3
+			: isMerge ? kGraphCircleRadiusDip + 2
+			          : kGraphCircleRadiusDip + 1, dpi);
+		const int strokeWidth = icons::ScaleDip(kGraphCircleStrokeWidthDip, dpi);
+		const int innerRadius = icons::ScaleDip(kGraphCircleStrokeWidthDip, dpi);
+		const int innerMergeRadius = icons::ScaleDip(kGraphCircleRadiusDip - 1, dpi);
+		const int headInnerStrokeWidth = icons::ScaleDip(kGraphCircleRadiusDip, dpi);
+		const auto disc = [&](int radius, COLORREF fillColor, int outlineWidth) {
+			const HBRUSH fill = ::CreateSolidBrush(fillColor);
+			const HPEN pen = ::CreatePen(PS_SOLID, std::max(1, outlineWidth), background);
 			if (fill != nullptr && pen != nullptr) {
 				const HGDIOBJ previousBrush = ::SelectObject(dc, fill);
 				const HGDIOBJ previousPen = ::SelectObject(dc, pen);
-				::Ellipse(dc, circleX - radius, middle - radius, circleX + radius, middle + radius);
+				::Ellipse(dc, circleX - radius, middle - radius,
+					circleX + radius + 1, middle + radius + 1);
 				::SelectObject(dc, previousPen);
 				::SelectObject(dc, previousBrush);
 			}
 			if (pen != nullptr) ::DeleteObject(pen);
 			if (fill != nullptr) ::DeleteObject(fill);
 		};
-		const bool isHead = std::ranges::any_of(item.refs, [](const GitHistoryRef& ref) {
-			return ref.kind == EGitHistoryRefKind::Head;
-		});
-		const bool isMerge = item.parentIds.size() > 1;
-		disc(isHead      ? kGraphCircleRadiusDip + 3
-			 : isMerge ? kGraphCircleRadiusDip + 2
-			           : kGraphCircleRadiusDip + 1,
-			 circleColor);
-		if (isHead) disc(kGraphCircleStrokeWidthDip, background);
+		if (!graphNodePainter.Paint(dc, bounds, circleX, middle,
+			outerRadius, strokeWidth, innerRadius, innerMergeRadius, headInnerStrokeWidth,
+			isHead, isMerge, circleColor, background)) {
+			if (isHead) {
+				disc(outerRadius, circleColor, strokeWidth);
+				disc(innerRadius, background, headInnerStrokeWidth);
+			} else if (isMerge) {
+				disc(outerRadius, circleColor, strokeWidth);
+				disc(innerMergeRadius, circleColor, strokeWidth);
+			} else {
+				disc(outerRadius, circleColor, strokeWidth);
+			}
+		}
 
 		const std::size_t lanes = std::max<std::size_t>(1,
 			std::max(row.inputSwimlanes.size(), row.outputSwimlanes.size()));
@@ -1879,12 +2150,21 @@ struct CScmWorkbenchTool::Impl {
 	//! moves the input, the button, both lists, and the welcome content.
 	void RelayoutStack()
 	{
+		const bool previousDefer = deferChildRepaint;
+		deferChildRepaint = true;
 		LayoutBand();
 		LayoutInput();
 		LayoutActionButton();
 		LayoutList();
 		LayoutWelcome();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		deferChildRepaint = previousDefer;
+		if (window) {
+			// Invalidate the complete stack once, after all sibling HWNDs have their
+			// final rectangles. Do not erase first: every SCM surface paints its own
+			// background and an erase pass exposes a blank intermediate frame.
+			::RedrawWindow(window, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		}
 	}
 	//! The Changes/Graph boundary's drag handle. It is an overlay band, exactly as
 	//! upstream's `.monaco-sash` is, so it consumes no layout space.
@@ -1948,7 +2228,7 @@ struct CScmWorkbenchTool::Impl {
 			::ShowWindow(list, welcomeModel.content == EGitScmWelcomeContent::None ? SW_SHOW : SW_HIDE);
 		}
 		LayoutWelcome();
-		if (window) ::InvalidateRect(window, nullptr, TRUE);
+		if (window) ::InvalidateRect(window, nullptr, FALSE);
 	}
 	//! ViewWelcome is a top-flow flex column: its content starts one `em` below
 	//! the view body, each direct child gets a one-`em` block-start margin, and
@@ -2239,6 +2519,79 @@ struct CScmWorkbenchTool::Impl {
 		::SetTextColor(dc, previousTextColor);
 		::SetBkMode(dc, previousBackgroundMode);
 	}
+	//! Paint the Changes LISTBOX as one retained frame. Native fixed-owner-draw
+	//! dispatches one WM_DRAWITEM per row, so a resize can expose a valid empty
+	//! background between row callbacks even though every callback is buffered.
+	void PaintChangesListFrame(HDC target, const RECT& dirtyRect)
+	{
+		if (target == nullptr || list == nullptr) return;
+		RECT client{};
+		::GetClientRect(list, &client);
+		const int width = std::max(0L, client.right - client.left);
+		const int height = std::max(0L, client.bottom - client.top);
+		if (width == 0 || height == 0) return;
+		const bool buffered = listBuffer.Ensure(target, width, height);
+		const HDC dc = buffered ? listBuffer.Dc() : target;
+		(void)::SelectClipRgn(dc, nullptr);
+		const HBRUSH background = ::CreateSolidBrush(palette.sideBar.ToColorRef());
+		if (background != nullptr) {
+			::FillRect(dc, &client, background);
+			::DeleteObject(background);
+		}
+		const HGDIOBJ previousFont = font.Get() != nullptr ? ::SelectObject(dc, font.Get()) : nullptr;
+		const int selected = static_cast<int>(::SendMessageW(list, LB_GETCURSEL, 0, 0));
+		const int top = std::max(0, static_cast<int>(::SendMessageW(list, LB_GETTOPINDEX, 0, 0)));
+		const int itemHeight = std::max(1,
+			static_cast<int>(::SendMessageW(list, LB_GETITEMHEIGHT, 0, 0)));
+		for (int index = top; static_cast<std::size_t>(index) < rows.size(); ++index) {
+			const LONG itemTop = static_cast<LONG>((index - top) * itemHeight);
+			if (itemTop >= client.bottom) break;
+			const RECT item{ client.left, itemTop, client.right, itemTop + itemHeight };
+			UINT itemState = index == selected ? ODS_SELECTED : 0;
+			if (index == selected && ::GetFocus() == list) itemState |= ODS_FOCUS;
+			PaintRow(dc, index, item, itemState);
+		}
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		if (buffered) (void)listBuffer.Present(target, client);
+		// Publish only after the retained list image is complete. The source DC
+		// remains valid until the caller ends WM_PAINT, and the adapter copies only
+		// dirtyRect into its immutable payload.
+		nativeSurface.CaptureAndSubmit(list, buffered ? listBuffer.Dc() : target, dirtyRect);
+	}
+	//! Paint the Graph LISTBOX as one retained frame. The native fixed-owner-draw
+	//! path can split visible rows across multiple WM_DRAWITEM callbacks after a
+	//! resize, which lets DWM present a valid background between row batches.
+	void PaintGraphListFrame(HDC target)
+	{
+		if (target == nullptr || graphList == nullptr) return;
+		RECT client{};
+		::GetClientRect(graphList, &client);
+		const int width = std::max(0L, client.right - client.left);
+		const int height = std::max(0L, client.bottom - client.top);
+		if (width == 0 || height == 0) return;
+		const bool buffered = graphBuffer.Ensure(target, width, height);
+		const HDC dc = buffered ? graphBuffer.Dc() : target;
+		const HBRUSH background = ::CreateSolidBrush(palette.sideBar.ToColorRef());
+		if (background != nullptr) {
+			::FillRect(dc, &client, background);
+			::DeleteObject(background);
+		}
+		const HGDIOBJ previousFont = font.Get() != nullptr ? ::SelectObject(dc, font.Get()) : nullptr;
+		const int selected = static_cast<int>(::SendMessageW(graphList, LB_GETCURSEL, 0, 0));
+		const int top = std::max(0, static_cast<int>(::SendMessageW(graphList, LB_GETTOPINDEX, 0, 0)));
+		const int itemHeight = std::max(1,
+			static_cast<int>(::SendMessageW(graphList, LB_GETITEMHEIGHT, 0, 0)));
+		for (int index = top; static_cast<std::size_t>(index) < history.size(); ++index) {
+			const LONG itemTop = static_cast<LONG>((index - top) * itemHeight);
+			if (itemTop >= client.bottom) break;
+			const RECT item{ client.left, itemTop, client.right, itemTop + itemHeight };
+			UINT itemState = index == selected ? ODS_SELECTED : 0;
+			if (index == selected && ::GetFocus() == graphList) itemState |= ODS_FOCUS;
+			PaintGraphRow(dc, index, item, itemState);
+		}
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		if (buffered) (void)graphBuffer.Present(target, client);
+	}
 	[[nodiscard]] std::size_t WelcomeSegmentIndexAt(POINT point) const
 	{
 		for (std::size_t index = 0; index < welcomeSegments.size(); ++index) {
@@ -2252,7 +2605,7 @@ struct CScmWorkbenchTool::Impl {
 		hoveredWelcomeSegment = segment;
 		if (window) {
 			const RECT bounds = WelcomeBounds();
-			::InvalidateRect(window, &bounds, TRUE);
+			::InvalidateRect(window, &bounds, FALSE);
 		}
 	}
 	//! Run the pressed welcome action button, which dispatches `git.init` or
@@ -2306,10 +2659,10 @@ struct CScmWorkbenchTool::Impl {
 		hoveredSegment = segment;
 		if (window) {
 			RECT bounds = BandBounds();
-			::InvalidateRect(window, &bounds, TRUE);
+			::InvalidateRect(window, &bounds, FALSE);
 			if (GraphFrameVisible()) {
 				bounds = GraphHeaderBounds();
-				::InvalidateRect(window, &bounds, TRUE);
+				::InvalidateRect(window, &bounds, FALSE);
 			}
 		}
 	}
@@ -2341,11 +2694,31 @@ struct CScmWorkbenchTool::Impl {
 		static const std::vector<ScmCommand> none;
 		statusBarCommands(providers.empty() ? none : providers.front().statusBarCommands);
 	}
-	void RebuildRows(const std::vector<ScmProviderState>& providers,
+	bool RebuildRows(const std::vector<ScmProviderState>& providers,
 		const std::vector<GitResourceDecoration>& decorations,
 		const std::vector<GitResourceOperand>& operands) {
-		rows.clear();
-		resourceCount = 0;
+		// Index the two side tables once. The previous per-resource `find_if`
+		// made a refresh O(R * (O + D)), which becomes visible as the repository
+		// grows and keeps the UI thread busy before it can service paint messages.
+		std::unordered_map<std::wstring, const GitResourceDecoration*> decorationByUri;
+		decorationByUri.reserve(decorations.size());
+		for (const auto& decoration : decorations) {
+			decorationByUri.try_emplace(decoration.resourceUri, &decoration);
+		}
+		const auto operandKey = [](EGitResourceGroup group, std::wstring_view uri) {
+			std::wstring key = std::to_wstring(static_cast<int>(group));
+			key.push_back(L'\x1f');
+			key.append(uri);
+			return key;
+		};
+		std::unordered_map<std::wstring, const GitResourceOperand*> operandByGroupAndUri;
+		operandByGroupAndUri.reserve(operands.size());
+		for (const auto& operand : operands) {
+			operandByGroupAndUri.try_emplace(
+				operandKey(operand.resource.group, operand.resourceUri), &operand);
+		}
+		std::vector<ScmRow> nextRows;
+		std::size_t nextResourceCount = 0;
 		for (const auto& provider : providers) {
 			// Git's menus belong to Git's rows. A provider an extension published
 			// is a different SCM system, and offering it `git.stage` would name a
@@ -2362,8 +2735,8 @@ struct CScmWorkbenchTool::Impl {
 				header.text = header.label;
 				header.groupKey = groupKey;
 				header.resourceCount = group.resources.size();
-				rows.push_back(std::move(header));
-				resourceCount += group.resources.size();
+				nextRows.push_back(std::move(header));
+				nextResourceCount += group.resources.size();
 				if (collapsedGroups.contains(groupKey)) continue;
 				for (const auto& resource : group.resources) {
 					const auto uri = resource.resourceUri.ToString();
@@ -2381,23 +2754,23 @@ struct CScmWorkbenchTool::Impl {
 						// Keyed by URI *and* group: the same path legitimately has a
 						// row in Staged Changes and one in Changes, and those two
 						// rows stage and unstage different things.
-						const auto operand = std::find_if(operands.begin(), operands.end(),
-							[&uri, &groupKind](const GitResourceOperand& candidate) {
-								return candidate.resource.group == *groupKind && candidate.resourceUri == uri;
-							});
-						if (operand != operands.end()) row.operand = operand->resource;
+						const auto operand = operandByGroupAndUri.find(operandKey(*groupKind, uri));
+						if (operand != operandByGroupAndUri.end()) row.operand = operand->second->resource;
 					}
-					const auto found = std::find_if(decorations.begin(), decorations.end(),
-						[&uri](const GitResourceDecoration& decoration) { return decoration.resourceUri == uri; });
+					const auto found = decorationByUri.find(uri);
 					// A provider we did not publish has no badge of ours, and
 					// inventing one would claim a status nobody reported.
-					row.statusLetter = found == decorations.end() ? L' ' : found->letter;
+					row.statusLetter = found == decorationByUri.end() ? L' ' : found->second->letter;
 					row.label = row.windowsPath.empty() ? uri : RelativeDisplayPath(root, row.windowsPath);
 					row.text = row.label;
-					rows.push_back(std::move(row));
+					nextRows.push_back(std::move(row));
 				}
 			}
 		}
+		const bool changed = rows != nextRows || resourceCount != nextResourceCount;
+		rows = std::move(nextRows);
+		resourceCount = nextResourceCount;
+		return changed;
 	}
 	[[nodiscard]] std::optional<ScmRowSelection> CaptureListSelection() const
 	{
@@ -2425,22 +2798,23 @@ struct CScmWorkbenchTool::Impl {
 
 	void Populate(const std::optional<ScmRowSelection>& selected) {
 		if (!list) return;
-		::SendMessageW(list, WM_SETREDRAW, FALSE, 0);
+		const bool suspendRedraw = ::IsWindowVisible(list) != FALSE;
+		if (suspendRedraw) ::SendMessageW(list, WM_SETREDRAW, FALSE, 0);
 		::SendMessageW(list, LB_RESETCONTENT, 0, 0);
 		for (const auto& row : rows) {
 			::SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(row.label.c_str()));
 		}
 		::SendMessageW(list, LB_SETITEMHEIGHT, 0, icons::ScaleDip(kRepositoryRowHeightDip, dpi));
 		RestoreListSelection(selected);
-		::SendMessageW(list, WM_SETREDRAW, TRUE, 0);
-		// A Git refresh can shrink the owner-drawn list.  Invalidation alone leaves
-		// that newly empty tail pending until a later message-loop turn, which lets
-		// pixels from rows that no longer exist remain on the composited screen.
-		// Complete this child redraw at the same state transition that replaces its
-		// items so the screen and the model cannot temporarily disagree.
-		::RedrawWindow(list, nullptr, nullptr, RDW_INVALIDATE | RDW_ERASE | RDW_UPDATENOW | RDW_ALLCHILDREN);
+		if (!deferChildRepaint) {
+			if (suspendRedraw) ::SendMessageW(list, WM_SETREDRAW, TRUE, 0);
+			// A direct refresh owns the complete transition. A worker-result
+			// transaction leaves redraw disabled until its sibling Graph is ready.
+			::RedrawWindow(list, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		} else if (suspendRedraw) listRedrawDeferred = true;
 		UpdateListScrollbar();
-		::InvalidateRect(window, nullptr, TRUE);
+		::InvalidateRect(window, nullptr, FALSE);
 	}
 	void ActivateRow(const ScmRow& row) {
 		if (row.header) return;
@@ -2646,24 +3020,48 @@ LRESULT CALLBACK CScmWorkbenchTool::InputSubclassProc(HWND window, UINT message,
 		::RemoveWindowSubclass(window, &CScmWorkbenchTool::InputSubclassProc, id);
 		return ::DefSubclassProc(window, message, wParam, lParam);
 	}
-	const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
-	if (message != WM_PAINT || impl == nullptr) return result;
+	if (message == WM_ERASEBKGND && impl != nullptr) return 1;
+	if (message != WM_PAINT || impl == nullptr) {
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+
+	PAINTSTRUCT paint{};
+	const HDC target = ::BeginPaint(window, &paint);
+	if (target == nullptr) return 0;
+	RECT client{};
+	::GetClientRect(window, &client);
+	const int width = std::max(0L, client.right - client.left);
+	const int height = std::max(0L, client.bottom - client.top);
+	const bool buffered = impl->inputBuffer.Ensure(target, width, height);
+	const HDC dc = buffered ? impl->inputBuffer.Dc() : target;
+	const int frameState = ::SaveDC(dc);
+	::SetMapMode(dc, MM_TEXT);
+	::SetWindowOrgEx(dc, 0, 0, nullptr);
+	::SetViewportOrgEx(dc, 0, 0, nullptr);
+	(void)::SelectClipRgn(dc, nullptr);
+	const int nativeState = ::SaveDC(dc);
+	(void)::DefSubclassProc(window, WM_PRINTCLIENT, reinterpret_cast<WPARAM>(dc),
+		PRF_CLIENT | PRF_ERASEBKGND);
+	if (nativeState != 0) (void)::RestoreDC(dc, nativeState);
+
 	// Upstream shows the placeholder whenever the box is empty, focused or not.
-	if (!impl->inputModel.value.empty() || impl->inputModel.placeholder.empty()) return result;
-	const HDC dc = ::GetDC(window);
-	if (dc == nullptr) return result;
+	if (impl->inputModel.value.empty() && !impl->inputModel.placeholder.empty()) {
 	const HGDIOBJ previousFont = impl->font.Get() == nullptr ? nullptr : ::SelectObject(dc, impl->font.Get());
-	// The formatting rectangle, so the placeholder starts exactly where the
-	// caret does rather than at the control's own corner.
-	RECT bounds{};
-	::SendMessageW(window, EM_GETRECT, 0, reinterpret_cast<LPARAM>(&bounds));
+	// Use the formatting rectangle so the placeholder shares the caret's left
+	// inset, then center the single line vertically like Monaco's SCM editor.
+	// `DT_END_ELLIPSIS` is important here: a long branch name must clip inside
+	// the input instead of wrapping and making the short input look top-heavy.
+	RECT bounds = impl->inputFormattingRect;
 	::SetBkMode(dc, TRANSPARENT);
 	::SetTextColor(dc, impl->palette.descriptionText.ToColorRef());
 	::DrawTextW(dc, impl->inputModel.placeholder.c_str(), -1, &bounds,
-		DT_LEFT | DT_TOP | DT_WORDBREAK | DT_NOPREFIX);
+		DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
 	if (previousFont != nullptr) ::SelectObject(dc, previousFont);
-	::ReleaseDC(window, dc);
-	return result;
+	}
+	if (frameState != 0) (void)::RestoreDC(dc, frameState);
+	if (buffered) (void)impl->inputBuffer.Present(target, client);
+	::EndPaint(window, &paint);
+	return 0;
 }
 
 LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, WPARAM wParam,
@@ -2673,6 +3071,17 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 	if (message == WM_NCDESTROY) {
 		::RemoveWindowSubclass(window, &CScmWorkbenchTool::ListSubclassProc, id);
 		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+	if (impl != nullptr && (window == impl->list || window == impl->graphList)) {
+		if (message == WM_ERASEBKGND) return 1;
+		if (message == WM_PAINT) {
+			PAINTSTRUCT paint{};
+			const HDC target = ::BeginPaint(window, &paint);
+			if (window == impl->list) impl->PaintChangesListFrame(target, paint.rcPaint);
+			else impl->PaintGraphListFrame(target);
+			::EndPaint(window, &paint);
+			return 0;
+		}
 	}
 	// Both lists share this subclass. Row hover, group toggling, and the change
 	// list's own hit tests belong to the change list alone; the graph list only
@@ -2686,9 +3095,16 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 			const POINT pointer{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
 			const bool moved = impl->listPointer.x != pointer.x || impl->listPointer.y != pointer.y;
 			impl->listPointer = pointer;
-			if (impl->listHoverIndex != index || moved) {
+			const int previousIndex = impl->listHoverIndex;
+			if (previousIndex != index) {
 				impl->listHoverIndex = index;
-				::InvalidateRect(window, nullptr, FALSE);
+				impl->InvalidateListRow(previousIndex);
+				impl->InvalidateListRow(index);
+			} else if (moved && index >= 0 && static_cast<std::size_t>(index) < impl->rows.size()
+				&& impl->rows[static_cast<std::size_t>(index)].header) {
+				// Only group-row action hover depends on the pointer's position inside
+				// an already-hovered row. Redraw that row, not every visible resource.
+				impl->InvalidateListRow(index);
 			}
 			if (!impl->trackingListMouse) {
 				TRACKMOUSEEVENT track{ sizeof(track), TME_LEAVE, window, 0 };
@@ -2696,8 +3112,9 @@ LRESULT CALLBACK CScmWorkbenchTool::ListSubclassProc(HWND window, UINT message, 
 			}
 		} else if (message == WM_MOUSELEAVE) {
 			impl->trackingListMouse = false;
+			const int previousIndex = impl->listHoverIndex;
 			impl->listHoverIndex = -1;
-			::InvalidateRect(window, nullptr, FALSE);
+			impl->InvalidateListRow(previousIndex);
 		} else if (message == WM_LBUTTONDOWN) {
 			const auto hit = ::SendMessageW(window, LB_ITEMFROMPOINT, 0,
 				MAKELPARAM(static_cast<WORD>(GET_X_LPARAM(lParam)), static_cast<WORD>(GET_Y_LPARAM(lParam))));
@@ -2754,7 +3171,8 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	auto instance = reinterpret_cast<HINSTANCE>(::GetWindowLongPtrW(parent, GWLP_HINSTANCE));
 	if (!instance) instance = ::GetModuleHandleW(nullptr);
 	if (!EnsureClass(instance)) return false;
-	m_impl->window = ::CreateWindowExW(0, kWindowClass, L"", WS_CHILD | WS_CLIPCHILDREN,
+	m_impl->window = ::CreateWindowExW(0, kWindowClass, L"",
+		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS,
 		0, 0, 0, 0, parent, nullptr, instance, this);
 	if (!m_impl->window) return false;
 	m_impl->list = ::CreateWindowExW(0, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT
@@ -2763,12 +3181,13 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	if (!m_impl->list) { Close(); return false; }
 	(void)::SetWindowSubclass(m_impl->list, &CScmWorkbenchTool::ListSubclassProc, 1,
 		reinterpret_cast<DWORD_PTR>(m_impl.get()));
-	// The list keeps WS_VSCROLL so its SCROLLINFO stays authoritative; the overlay
-	// hides the platform bar and draws the same themed one the Explorer draws.
+	// The list keeps WS_VSCROLL for keyboard semantics, while the overlay derives
+	// its geometry from the stable row count/height/top-index contract. LISTBOX
+	// SCROLLINFO can lag a resize by one paint and must not be presentation truth.
 	Impl* const impl = m_impl.get();
 	(void)m_impl->listScrollbar.Create(m_impl->window, m_impl->list, [impl](int topRow) {
 		if (impl->list != nullptr) (void)::SendMessageW(impl->list, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
-	});
+	}, controls::OverlayScrollbarSource::ExplicitModel);
 	// The Graph is a second owner-drawn list rather than a hand-scrolled canvas,
 	// so it inherits the same keyboard, wheel, and overlay-scrollbar behaviour the
 	// change list already has.
@@ -2783,7 +3202,7 @@ bool CScmWorkbenchTool::Create(HWND parent)
 		if (impl->graphList != nullptr) {
 			(void)::SendMessageW(impl->graphList, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
 		}
-	});
+	}, controls::OverlayScrollbarSource::ExplicitModel);
 	// Multiline and wrapping, because upstream's SCM input is a real multi-line
 	// editor: a commit body is not one line. `ES_WANTRETURN` keeps Enter
 	// inserting a newline, which is what leaves Ctrl+Enter free to mean commit.
@@ -2810,16 +3229,23 @@ bool CScmWorkbenchTool::Create(HWND parent)
 void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 {
 	if (m_impl->closed || !m_impl->window) return;
+	const bool previousDefer = m_impl->deferChildRepaint;
+	m_impl->deferChildRepaint = true;
 	m_impl->dpi = dpi == 0 ? 96 : dpi;
-	if (m_impl->font.Dpi() != m_impl->dpi) (void)m_impl->font.Recreate(theme::ThemeFontKind::Chrome, m_impl->dpi);
-	::SendMessageW(m_impl->list, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
-	if (m_impl->graphList) {
-		::SendMessageW(m_impl->graphList, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
+	const bool fontChanged = m_impl->font.Dpi() != m_impl->dpi;
+	if (fontChanged) {
+		(void)m_impl->font.Recreate(theme::ThemeFontKind::Chrome, m_impl->dpi);
+		::SendMessageW(m_impl->list, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), FALSE);
+		if (m_impl->graphList) {
+			::SendMessageW(m_impl->graphList, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), FALSE);
+		}
+		if (m_impl->input) {
+			::SendMessageW(m_impl->input, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), FALSE);
+		}
 	}
-	if (m_impl->input) {
-		::SendMessageW(m_impl->input, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
-	}
-	::SetWindowPos(m_impl->window, nullptr, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, SWP_NOZORDER | SWP_NOACTIVATE);
+	::SetWindowPos(m_impl->window, nullptr, rect.left, rect.top,
+		rect.right - rect.left, rect.bottom - rect.top,
+		SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	m_impl->LayoutBand();
 	// The box is laid out before the Changes list; the list's body begins below
 	// the current input height and ends above the reserved Graph frame.
@@ -2827,6 +3253,22 @@ void CScmWorkbenchTool::Layout(const RECT& rect, unsigned int dpi)
 	m_impl->LayoutActionButton();
 	m_impl->LayoutList();
 	m_impl->LayoutWelcome();
+	m_impl->deferChildRepaint = previousDefer;
+	if (!previousDefer) {
+		// Commit parent chrome and both native controls before returning from the
+		// geometry transaction. The Graph subclass turns its WM_PAINT into one
+		// retained visible-row frame rather than exposing WM_DRAWITEM row batches.
+		::RedrawWindow(m_impl->window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		::RedrawWindow(m_impl->list, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_UPDATENOW);
+		::RedrawWindow(m_impl->graphList, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_UPDATENOW);
+		// RedrawWindow completes WM_PAINT dispatch, but GDI may still hold the row
+		// blits in this UI thread's batch. Flush only this thread's commands; unlike
+		// DwmFlush this never waits for the compositor or another application thread.
+		(void)::GdiFlush();
+	}
 }
 
 void CScmWorkbenchTool::Activate()
@@ -2870,6 +3312,8 @@ bool CScmWorkbenchTool::PreTranslateMessage(MSG& message) {
 void CScmWorkbenchTool::Close()
 {
 	if (!m_impl || m_impl->closed) return;
+	m_impl->nativeSurface.ClearTarget();
+	m_impl->nativeSurface.SetSink({});
 	m_impl->closed = true;
 	// Drop the provider first: after this point the tool stops refreshing, and a
 	// surviving handle would keep advertising a repository nobody is watching.
@@ -2881,7 +3325,12 @@ void CScmWorkbenchTool::Close()
 	m_impl->NotifyWindow(nullptr, false);
 	::SetEvent(m_impl->shared->stop);
 	::SetEvent(m_impl->shared->wake);
-	if (m_impl->worker.joinable()) m_impl->worker.join();
+	if (m_impl->worker.joinable() && m_impl->workerRetirement) {
+		(void)workbench::WorkerRetirementService::Instance().Retire(
+			std::move(m_impl->worker), std::move(*m_impl->workerRetirement), m_impl->shared);
+		m_impl->workerRetirement.reset();
+	}
+	m_impl->shared.reset();
 	m_impl->bandSegments.clear();
 	m_impl->band = {};
 	m_impl->welcomeSegments.clear();
@@ -2899,8 +3348,6 @@ void CScmWorkbenchTool::Close()
 	m_impl->list = nullptr;
 	m_impl->graphList = nullptr;
 	m_impl->input = nullptr;
-	if (m_impl->shared->stop) { ::CloseHandle(m_impl->shared->stop); m_impl->shared->stop = nullptr; }
-	if (m_impl->shared->wake) { ::CloseHandle(m_impl->shared->wake); m_impl->shared->wake = nullptr; }
 }
 
 void CScmWorkbenchTool::SetRoot(std::wstring root)
@@ -2909,9 +3356,9 @@ void CScmWorkbenchTool::SetRoot(std::wstring root)
 	{
 		std::lock_guard lock(m_impl->shared->mutex);
 		m_impl->shared->root = m_impl->root;
+		++m_impl->shared->generation;
 	}
-	m_impl->shared->generation.fetch_add(1, std::memory_order_acq_rel);
-	Refresh();
+	if (!m_impl->closed && m_impl->shared->wake) ::SetEvent(m_impl->shared->wake);
 }
 void CScmWorkbenchTool::SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState workspaceState)
 {
@@ -2922,14 +3369,14 @@ void CScmWorkbenchTool::SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState wo
 void CScmWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
 {
 	m_impl->palette = palette;
-	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
-	if (m_impl->list) ::InvalidateRect(m_impl->list, nullptr, TRUE);
-	if (m_impl->graphList) ::InvalidateRect(m_impl->graphList, nullptr, TRUE);
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
+	if (m_impl->list) ::InvalidateRect(m_impl->list, nullptr, FALSE);
+	if (m_impl->graphList) ::InvalidateRect(m_impl->graphList, nullptr, FALSE);
 	m_impl->UpdateListScrollbar();
 	m_impl->UpdateGraphScrollbar();
 	// The box paints its own background through `WM_CTLCOLOREDIT`, so it needs
 	// its own invalidation: the parent's does not reach a child's client area.
-	if (m_impl->input) ::InvalidateRect(m_impl->input, nullptr, TRUE);
+	if (m_impl->input) ::InvalidateRect(m_impl->input, nullptr, FALSE);
 }
 void CScmWorkbenchTool::SetInputLineCountRange(int minLineCount, int maxLineCount)
 {
@@ -2949,7 +3396,7 @@ void CScmWorkbenchTool::SetInputLineCountRange(int minLineCount, int maxLineCoun
 	m_impl->LayoutActionButton();
 	m_impl->LayoutList();
 	m_impl->LayoutWelcome();
-	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 void CScmWorkbenchTool::SetFileActivationCallback(FileActivationCallback callback) { m_impl->activateFile = std::move(callback); }
 void CScmWorkbenchTool::SetStatusBarCommandsCallback(StatusBarCommandsCallback callback) { m_impl->statusBarCommands = std::move(callback); }
@@ -2970,13 +3417,26 @@ void CScmWorkbenchTool::SetTextResolver(TextResolver resolver)
 		// View headers and the Graph unsupported message are direct presentation
 		// text, rather than provider data, so invalidate even if the welcome model
 		// itself remained structurally identical.
-		if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+		if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 	}
 }
 void CScmWorkbenchTool::SetPublicationTextResolver(PublicationTextResolver resolver)
 {
 	m_impl->publicationText = std::move(resolver);
 	if (!m_impl->closed) m_impl->PublishAndRender();
+}
+void CScmWorkbenchTool::SetNativeSurfaceSink(NativeSurfaceSink sink)
+{
+	m_impl->nativeSurface.SetSink(std::move(sink));
+}
+bool CScmWorkbenchTool::SetNativeSurfaceTarget(
+	const ScmNativeSurfaceTarget& target) noexcept
+{
+	return m_impl->nativeSurface.SetTarget(target);
+}
+void CScmWorkbenchTool::ClearNativeSurfaceTarget() noexcept
+{
+	m_impl->nativeSurface.ClearTarget();
 }
 void CScmWorkbenchTool::RefreshStrings()
 {
@@ -2998,7 +3458,17 @@ void CScmWorkbenchTool::SetSourceControlService(SourceControlService* service)
 }
 
 void CScmWorkbenchTool::SetVisible(bool visible) { if (m_impl->window) ::ShowWindow(m_impl->window, visible ? SW_SHOW : SW_HIDE); }
-void CScmWorkbenchTool::Refresh() { if (!m_impl->closed && m_impl->shared->wake) ::SetEvent(m_impl->shared->wake); }
+void CScmWorkbenchTool::Refresh()
+{
+	if (m_impl->closed || !m_impl->shared->wake) return;
+	{
+		// A manual refresh supersedes work already in flight. The timer does not
+		// advance this value, so an ordinary periodic refresh remains publishable.
+		std::lock_guard lock(m_impl->shared->mutex);
+		++m_impl->shared->generation;
+	}
+	::SetEvent(m_impl->shared->wake);
+}
 const GitScmState& CScmWorkbenchTool::State() const noexcept { return m_impl->state; }
 std::size_t CScmWorkbenchTool::OpenRepositoryCount() const noexcept { return m_impl->openRepositoryCount; }
 std::optional<GitHistoryItem> CScmWorkbenchTool::HistoryItem(std::wstring_view id) const
@@ -3033,21 +3503,35 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	auto& impl = *self->m_impl;
 	switch (message) {
 	case WM_SIZE: {
+		const bool previousDefer = impl.deferChildRepaint;
+		impl.deferChildRepaint = true;
 		impl.LayoutBand();
 		impl.LayoutInput();
 		impl.LayoutActionButton();
 		impl.LayoutList();
 		impl.LayoutWelcome();
+		impl.deferChildRepaint = previousDefer;
+		if (!previousDefer) {
+			::RedrawWindow(window, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		}
 		return 0;
 	}
 	case WM_ERASEBKGND: return 1;
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
-		const HDC dc = ::BeginPaint(window, &paint);
+		const HDC target = ::BeginPaint(window, &paint);
+		if (target == nullptr) return 0;
+		RECT client{};
+		::GetClientRect(window, &client);
+		const int width = std::max(0L, client.right - client.left);
+		const int height = std::max(0L, client.bottom - client.top);
+		const bool buffered = impl.windowBuffer.Ensure(target, width, height);
+		const HDC dc = buffered ? impl.windowBuffer.Dc() : target;
 		const HBRUSH brush = ::CreateSolidBrush(impl.palette.sideBar.ToColorRef());
-		::FillRect(dc, &paint.rcPaint, brush);
+		::FillRect(dc, &client, brush);
 		::DeleteObject(brush);
-		if (impl.font.Get()) ::SelectObject(dc, impl.font.Get());
+		const HGDIOBJ previousFont = impl.font.Get() ? ::SelectObject(dc, impl.font.Get()) : nullptr;
 		::SetBkMode(dc, TRANSPARENT);
 		if (impl.band.visible) {
 			impl.PaintViewHeader(dc, impl.RepositoriesHeaderBounds(),
@@ -3062,6 +3546,8 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		impl.PaintWelcome(dc);
 		impl.PaintGraph(dc);
 		impl.PaintBand(dc);
+		if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+		if (buffered) (void)impl.windowBuffer.Present(target, paint.rcPaint);
 		::EndPaint(window, &paint);
 		return 0;
 	}
@@ -3163,12 +3649,28 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
 		if (draw != nullptr && draw->CtlID == 1 && draw->hwndItem == impl.list
 			&& draw->itemID != static_cast<UINT>(-1)) {
-			impl.PaintRow(draw->hDC, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			RECT client{};
+			::GetClientRect(impl.list, &client);
+			const bool buffered = impl.listBuffer.Ensure(draw->hDC,
+				std::max(0L, client.right - client.left), std::max(0L, client.bottom - client.top));
+			const HDC dc = buffered ? impl.listBuffer.Dc() : draw->hDC;
+			const HGDIOBJ previousFont = impl.font.Get() ? ::SelectObject(dc, impl.font.Get()) : nullptr;
+			impl.PaintRow(dc, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+			if (buffered) (void)impl.listBuffer.Present(draw->hDC, draw->rcItem);
 			return TRUE;
 		}
 		if (draw != nullptr && draw->CtlID == kGraphControlId && draw->hwndItem == impl.graphList
 			&& draw->itemID != static_cast<UINT>(-1)) {
-			impl.PaintGraphRow(draw->hDC, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			RECT client{};
+			::GetClientRect(impl.graphList, &client);
+			const bool buffered = impl.graphBuffer.Ensure(draw->hDC,
+				std::max(0L, client.right - client.left), std::max(0L, client.bottom - client.top));
+			const HDC dc = buffered ? impl.graphBuffer.Dc() : draw->hDC;
+			const HGDIOBJ previousFont = impl.font.Get() ? ::SelectObject(dc, impl.font.Get()) : nullptr;
+			impl.PaintGraphRow(dc, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			if (previousFont != nullptr) ::SelectObject(dc, previousFont);
+			if (buffered) (void)impl.graphBuffer.Present(draw->hDC, draw->rcItem);
 			return TRUE;
 		}
 		break;
@@ -3193,15 +3695,14 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		if (LOWORD(wParam) == kInputControlId && HIWORD(wParam) == EN_CHANGE) { impl.OnInputChanged(); return 0; }
 		break;
 	case kResultMessage: {
-		auto result = impl.Take(reinterpret_cast<WorkerResult*>(lParam));
-		if (result && result->generation == impl.shared->generation.load(std::memory_order_acquire)) {
-			impl.state = std::move(result->state);
-			impl.execution = result->execution;
-			impl.failureReason = std::move(result->failureReason);
-			impl.PublishAndRender();
-			// After the render, because the graph's own layout depends on the
-			// bands the change list and welcome content just settled into.
-			impl.ApplyHistory(std::move(result->history), result->historyRead);
+		auto result = impl.TakeLatest();
+		std::uint64_t generation = 0;
+		{
+			std::lock_guard lock(impl.shared->mutex);
+			generation = impl.shared->generation;
+		}
+		if (result && result->generation == generation) {
+			impl.ApplyWorkerResult(std::move(result));
 		}
 		return 0;
 	}

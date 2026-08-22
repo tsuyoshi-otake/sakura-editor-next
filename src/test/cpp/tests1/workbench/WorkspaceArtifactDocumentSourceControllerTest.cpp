@@ -40,6 +40,7 @@ using workbench::workspace::EWorkspaceArtifactDocumentKind;
 using workbench::workspace::EWorkspaceArtifactDocumentSourceStatus;
 using workbench::workspace::EWorkspaceArtifactDocumentStatus;
 using workbench::workspace::WorkspaceArtifactDocumentSourceRequest;
+using workbench::workspace::WorkspaceArtifactDocumentSourceResult;
 
 Uri Resource(const wchar_t* path)
 {
@@ -163,7 +164,8 @@ public:
 
 TEST(WorkspaceArtifactDocumentSourceController, ReadsWorkspaceMembersAndFolderArtifactsWithFolderPrecedence)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	auto folder = Resource(L"file:///C:/Workspace");
 	auto workspace = Resource(L"file:///C:/Workspace/project.code-workspace");
 	files.files.emplace(workspace.Path(), Bytes(R"json({
@@ -172,8 +174,9 @@ TEST(WorkspaceArtifactDocumentSourceController, ReadsWorkspaceMembersAndFolderAr
 })json"));
 	files.files.emplace(L"/C:/Workspace/.vscode/tasks.json", Bytes(R"json({ "version": "2.0.0", "tasks": [ { "label": "folder" } ] })json"));
 
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	auto started = controller.Start({ .generation = 1, .workspaceFolders = { folder }, .workspaceConfiguration = workspace });
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started, started.status);
 	EXPECT_EQ(platform::serialization::CJsoncDocument::kMaximumInputBytes, files.lastMaximumBytes);
@@ -187,12 +190,14 @@ TEST(WorkspaceArtifactDocumentSourceController, ReadsWorkspaceMembersAndFolderAr
 
 TEST(WorkspaceArtifactDocumentSourceController, CorruptOrInvalidBytesPreserveLastGoodDocument)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	auto folder = Resource(L"file:///C:/Workspace");
 	const std::wstring tasks = L"/C:/Workspace/.vscode/tasks.json";
 	files.files.emplace(tasks, Bytes(R"json({ "version": "2.0.0", "tasks": [ { "label": "good" } ] })json"));
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started, controller.Start({ .generation = 1, .workspaceFolders = { folder } }).status);
 	ASSERT_TRUE(service.Tasks(folder).document.has_value());
 	files.files[tasks] = Bytes(R"json({ "tasks": [], "tasks": [] })json");
@@ -219,9 +224,11 @@ TEST(WorkspaceArtifactDocumentSourceController, CorruptOrInvalidBytesPreserveLas
 
 TEST(WorkspaceArtifactDocumentSourceController, ProviderExceptionIsReportedAndDoesNotStrandTheStopFence)
 {
-	FakeFileService files;
-	CWorkspaceArtifactDocumentService documents;
-	CWorkspaceArtifactDocumentSourceController controller(files, documents);
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
+	auto documentsOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& documents = *documentsOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, documentsOwner);
 	const auto folder = Resource(L"file:///C:/workspace");
 
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started,
@@ -236,14 +243,16 @@ TEST(WorkspaceArtifactDocumentSourceController, ProviderExceptionIsReportedAndDo
 
 TEST(WorkspaceArtifactDocumentSourceController, MissingFolderArtifactClearsOnlyFolderContributionAndRestoresWorkspaceFallback)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	auto folder = Resource(L"file:///C:/Workspace");
 	auto workspace = Resource(L"file:///C:/Workspace/project.code-workspace");
 	files.files.emplace(workspace.Path(), Bytes(R"json({ "tasks": { "version": "2.0.0", "tasks": [ { "label": "workspace" } ] } })json"));
 	const std::wstring tasks = L"/C:/Workspace/.vscode/tasks.json";
 	files.files.emplace(tasks, Bytes(R"json({ "version": "2.0.0", "tasks": [ { "label": "folder" } ] })json"));
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started, controller.Start({ .generation = 1, .workspaceFolders = { folder }, .workspaceConfiguration = workspace }).status);
 	ASSERT_TRUE(service.Tasks(folder).document.has_value());
 	EXPECT_EQ(tasks, service.Tasks(folder).document->resource.Path());
@@ -257,9 +266,11 @@ TEST(WorkspaceArtifactDocumentSourceController, MissingFolderArtifactClearsOnlyF
 
 TEST(WorkspaceArtifactDocumentSourceController, RejectsUnboundedOrNonAdvancingTopologyUpdates)
 {
-	FakeFileService files;
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	auto folder = Resource(L"file:///C:/Workspace");
 	WorkspaceArtifactDocumentSourceRequest oversized { .generation = 1 };
 	oversized.workspaceFolders.assign(65, folder);
@@ -269,13 +280,49 @@ TEST(WorkspaceArtifactDocumentSourceController, RejectsUnboundedOrNonAdvancingTo
 	EXPECT_EQ(EWorkspaceArtifactDocumentSourceStatus::Stopped, controller.Stop().status);
 }
 
+TEST(WorkspaceArtifactDocumentSourceController, AdmitsAWorkspaceBurstWithinTheFixedRetirementCapacity)
+{
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
+	files.watchEnabled = true;
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
+	WorkspaceArtifactDocumentSourceRequest request { .generation = 1 };
+	request.workspaceFolders.reserve(64);
+	for (std::size_t index = 0; index < 64; ++index) {
+		const auto parsed = Uri::Parse(L"file:///C:/Workspace-" + std::to_wstring(index));
+		ASSERT_TRUE(parsed.value.has_value());
+		request.workspaceFolders.push_back(*parsed.value);
+	}
+
+	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started, controller.Start(std::move(request)).status);
+	std::size_t admittedWatches = 0;
+	{
+		std::lock_guard lock(files.watchMutex);
+		admittedWatches = files.watches.size();
+	}
+	// One slot is reserved for the dispatcher; every watch worker must have
+	// been admitted before its thread was created, so this cannot exceed the
+	// process-wide fixed retirement bound even for 64-folder input.
+	EXPECT_LE(admittedWatches, workbench::WorkerRetirementService::kMaximumWorkers - 1);
+	EXPECT_EQ(EWorkspaceArtifactDocumentSourceStatus::Stopped, controller.Stop().status);
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (!controller.IsRetirementFinalized() && std::chrono::steady_clock::now() < deadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	EXPECT_TRUE(controller.IsRetirementFinalized());
+}
+
 TEST(WorkspaceArtifactDocumentSourceController, RebuildsDeduplicatedWatchTopologyAndStopsWithoutFurtherCallback)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	files.watchEnabled = true;
 	auto folder = Resource(L"file:///C:/Workspace");
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	std::mutex callbackMutex;
 	std::condition_variable callbackReady;
 	int callbacks = 0;
@@ -304,11 +351,13 @@ TEST(WorkspaceArtifactDocumentSourceController, RebuildsDeduplicatedWatchTopolog
 
 TEST(WorkspaceArtifactDocumentSourceController, StopWaitsForAnInProgressStartBeforeItReturns)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	files.watchEnabled = true;
 	files.BlockNextRead();
-	CWorkspaceArtifactDocumentService service;
-	auto controller = std::make_unique<CWorkspaceArtifactDocumentSourceController>(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	auto controller = std::make_unique<CWorkspaceArtifactDocumentSourceController>(filesOwner, serviceOwner);
 	std::mutex completionMutex;
 	std::condition_variable completionReady;
 	bool startFinished = false;
@@ -371,12 +420,14 @@ TEST(WorkspaceArtifactDocumentSourceController, StopWaitsForAnInProgressStartBef
 
 TEST(WorkspaceArtifactDocumentSourceController, StopPreventsAReadThatCompletesLaterFromApplying)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	auto folder = Resource(L"file:///C:/Workspace");
 	const std::wstring tasks = L"/C:/Workspace/.vscode/tasks.json";
 	files.files.emplace(tasks, Bytes(R"json({ "version": "2.0.0", "tasks": [ { "label": "before" } ] })json"));
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started,
 		controller.Start({ .generation = 1, .workspaceFolders = { folder } }).status);
 	ASSERT_TRUE(service.Tasks(folder).document.has_value());
@@ -399,13 +450,88 @@ TEST(WorkspaceArtifactDocumentSourceController, StopPreventsAReadThatCompletesLa
 	EXPECT_EQ(std::string::npos, service.Tasks(folder).document->rawJsonc.find("after"));
 }
 
+TEST(WorkspaceArtifactDocumentSourceController, StopTransfersAStalledDispatcherWithoutWaitingForItsRead)
+{
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
+	const std::weak_ptr<FakeFileService> filesLifetime = filesOwner;
+	files.watchEnabled = true;
+	const auto folder = Resource(L"file:///C:/Workspace");
+	const auto tasks = Resource(L"file:///C:/Workspace/.vscode/tasks.json");
+	files.files.emplace(tasks.Path(), Bytes(R"json({ "version": "2.0.0", "tasks": [] })json"));
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	const std::weak_ptr<CWorkspaceArtifactDocumentService> serviceLifetime = serviceOwner;
+	auto controller = std::make_unique<CWorkspaceArtifactDocumentSourceController>(filesOwner, serviceOwner);
+	ASSERT_EQ(EWorkspaceArtifactDocumentSourceStatus::Started,
+		controller->Start({ .generation = 1, .workspaceFolders = { folder } }).status);
+
+	FakeFileService::FakeWatch* artifactWatch = nullptr;
+	{
+		std::lock_guard lock(files.watchMutex);
+		for (auto* watch : files.watches) {
+			if (watch->root.Path() == L"/C:/Workspace/.vscode") {
+				artifactWatch = watch;
+				break;
+			}
+		}
+	}
+	ASSERT_NE(nullptr, artifactWatch);
+
+	files.BlockNextRead();
+	artifactWatch->Push({ .type = platform::filesystem::EFileWatchEventType::Changed, .uri = tasks });
+	ASSERT_TRUE(files.WaitForBlockedRead());
+
+	std::mutex stopMutex;
+	std::condition_variable stopReady;
+	bool stopFinished = false;
+	WorkspaceArtifactDocumentSourceResult stopResult;
+	std::thread stopper([&] {
+		const auto result = controller->Stop();
+		{
+			std::lock_guard lock(stopMutex);
+			stopResult = result;
+			stopFinished = true;
+		}
+		stopReady.notify_all();
+	});
+	bool completedBeforeRelease = false;
+	{
+		std::unique_lock lock(stopMutex);
+		completedBeforeRelease = stopReady.wait_for(lock, std::chrono::milliseconds(250), [&] { return stopFinished; });
+	}
+	EXPECT_TRUE(completedBeforeRelease);
+	if (!completedBeforeRelease) files.ReleaseBlockedRead();
+	stopper.join();
+	filesOwner.reset();
+	serviceOwner.reset();
+	auto retainedFiles = filesLifetime.lock();
+	EXPECT_NE(nullptr, retainedFiles);
+	if (retainedFiles) retainedFiles->ReleaseBlockedRead();
+
+	EXPECT_EQ(EWorkspaceArtifactDocumentSourceStatus::Stopped, stopResult.status);
+	EXPECT_TRUE(stopResult.retirementPending || stopResult.retirementFinalized);
+	if (!stopResult.retirementFinalized) {
+		const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		while (!controller->IsRetirementFinalized() && std::chrono::steady_clock::now() < deadline) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		}
+	}
+	EXPECT_TRUE(controller->IsRetirementFinalized());
+	retainedFiles.reset();
+	controller.reset();
+	EXPECT_TRUE(filesLifetime.expired());
+	EXPECT_TRUE(serviceLifetime.expired());
+}
+
 TEST(WorkspaceArtifactDocumentSourceController, CallbackSelfStopRemainsExplicitlyDenied)
 {
-	FakeFileService files;
+	auto filesOwner = std::make_shared<FakeFileService>();
+	auto& files = *filesOwner;
 	files.watchEnabled = true;
 	auto folder = Resource(L"file:///C:/Workspace");
-	CWorkspaceArtifactDocumentService service;
-	CWorkspaceArtifactDocumentSourceController controller(files, service);
+	auto serviceOwner = std::make_shared<CWorkspaceArtifactDocumentService>();
+	auto& service = *serviceOwner;
+	CWorkspaceArtifactDocumentSourceController controller(filesOwner, serviceOwner);
 	std::mutex callbackMutex;
 	std::condition_variable callbackReady;
 	bool callbackFinished = false;

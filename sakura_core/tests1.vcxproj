@@ -59,7 +59,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;gdiplus.lib;psapi.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;gdiplus.lib;psapi.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
@@ -165,6 +165,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalUnicodeTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalParserTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionRetirementServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalShortcutPresetTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalInputTest.cpp" />
@@ -176,6 +177,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalTabPresentationTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp" />
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalSurfaceAdapterTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalBuiltinGlyphRendererTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalDWriteRendererTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalLegacyRendererBaseline.cpp" />
@@ -188,6 +190,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewAsyncStateTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewCommandStateTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewScrollMapTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewSurfaceAdapterTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MermaidDiagramTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CThemeServiceTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\theme\CColorThemeRegistryTest.cpp" />
@@ -229,6 +232,20 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\BuiltinPartProjectionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ProblemsOutputPanelProjectionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCoordinatorModelTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCoordinatorRuntimeTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameRuntimeRetirementServiceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameDeviceDomainModelTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FramePresentationOwnerTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameSurfaceAdapterTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameSurfaceCommitStateTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\EditorViewRenderStateTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameWindowTransactionTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCoordinatorC8TelemetryTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCadenceSourceTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ScmNativeSurfaceAdapterTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameNativeSurfacePayloadAdapterTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CommandPaletteOverlayTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateVersionTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateFeedTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateInstallLocationTest.cpp" />
@@ -236,6 +253,7 @@
 	<ClCompile Include="..\src\test\cpp\tests1\update\UpdateServiceTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\update\WorkbenchUpdateCommandsTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\OverlayScrollbarTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitSourceControlTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\GitLineStagingTest.cpp" />

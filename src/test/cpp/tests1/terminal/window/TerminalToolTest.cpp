@@ -197,7 +197,7 @@ TEST(TerminalTool, DefersFirstSessionUntilActivationAndKeepsItWhileDeactivated)
 	EXPECT_EQ(0, harness.backends[0]->closeCalls.load());
 	EXPECT_EQ(terminal::TerminalSessionState::Running, tool.Tabs()[0].state);
 	tool.Close();
-	EXPECT_EQ(1, harness.backends[0]->closeCalls.load());
+	EXPECT_TRUE(WaitUntil([&] { return harness.backends[0]->closeCalls.load() == 1; }));
 }
 
 TEST(TerminalTool, ScreenPresetCreatesAndMovesBetweenTerminalGroups)
@@ -696,7 +696,7 @@ TEST(TerminalTool, SupportsAddSelectRestartAndDeleteAcrossTabs)
 	EXPECT_EQ(first, tool.ActiveTerminalId());
 	EXPECT_TRUE(tool.RestartTerminal(*first));
 	EXPECT_EQ(3u, harness.backends.size());
-	EXPECT_EQ(1, harness.backends[0]->closeCalls.load());
+	EXPECT_TRUE(WaitUntil([&] { return harness.backends[0]->closeCalls.load() == 1; }));
 	EXPECT_TRUE(tool.DeleteTerminal(*second));
 	EXPECT_EQ(1u, tool.TabCount());
 	EXPECT_FALSE(tool.DeleteTerminal(*second));
@@ -766,16 +766,16 @@ TEST(TerminalTool, SupportsArbitraryFlatSplitGroupsAndClosesTheFocusedPane)
 	EXPECT_TRUE(tool.CloseTerminalSplit());
 	EXPECT_TRUE(tool.HasTerminalSplit());
 	EXPECT_EQ(3u, tool.TabCount());
-	EXPECT_EQ(1, harness.backends[3]->closeCalls.load());
+	EXPECT_TRUE(WaitUntil([&] { return harness.backends[3]->closeCalls.load() == 1; }));
 	EXPECT_TRUE(tool.CloseTerminalSplit());
 	EXPECT_TRUE(tool.HasTerminalSplit());
 	EXPECT_EQ(2u, tool.TabCount());
-	EXPECT_EQ(1, harness.backends[2]->closeCalls.load());
+	EXPECT_TRUE(WaitUntil([&] { return harness.backends[2]->closeCalls.load() == 1; }));
 	EXPECT_TRUE(tool.CloseTerminalSplit());
 	EXPECT_FALSE(tool.HasTerminalSplit());
 	EXPECT_EQ(1u, tool.TabCount());
 	tool.Close();
-	EXPECT_EQ(1, harness.backends[0]->closeCalls.load());
+	EXPECT_TRUE(WaitUntil([&] { return harness.backends[0]->closeCalls.load() == 1; }));
 }
 
 TEST(TerminalTool, SplitCreatesThreeNativeViewportsAndRightTerminalList)
@@ -1138,7 +1138,7 @@ TEST(TerminalTool, WorkspaceResetClosesAllTabsAndCreatesOneReplacementInNewCwd)
 	EXPECT_FALSE(tool.HasTerminalSplit());
 	ASSERT_EQ(4u, harness.backends.size());
 	for( std::size_t index = 0; index < 3; ++index ) {
-		EXPECT_EQ(1, harness.backends[index]->closeCalls.load());
+		EXPECT_TRUE(WaitUntil([&, index] { return harness.backends[index]->closeCalls.load() == 1; }));
 	}
 	EXPECT_EQ(L"C:\\second", harness.backends[3]->workingDirectory);
 	EXPECT_EQ(0, harness.backends[3]->closeCalls.load());

@@ -8,6 +8,7 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
 
 #include <functional>
@@ -38,6 +39,7 @@ public:
 	using OutlineRevealCallback = std::function<void()>;
 
 	explicit CViewContainerHost(std::shared_ptr<CViewContainerPages> pages,
+		std::string logicalHostId,
 		OutlineExpandedCallback outlineExpanded = {}, OutlineRevealCallback outlineRevealed = {});
 	~CViewContainerHost() override;
 	CViewContainerHost(const CViewContainerHost&) = delete;
@@ -89,6 +91,7 @@ private:
 	[[nodiscard]] bool OwnsPage(std::string_view containerId) const noexcept;
 
 	std::shared_ptr<CViewContainerPages> m_pages;
+	std::string m_logicalHostId;
 	OutlineExpandedCallback m_outlineExpandedCallback;
 	OutlineRevealCallback m_outlineRevealCallback;
 	HWND m_window = nullptr;
@@ -100,6 +103,7 @@ private:
 	unsigned int m_dpi = 96;
 	HFONT m_codiconFont = nullptr;
 	int m_codiconFontHeight = 0;
+	rendering::CGdiBackBuffer m_backBuffer;
 	//! The rendered ViewContainer's ID, empty for none.
 	std::string m_page;
 	bool m_closed = false;

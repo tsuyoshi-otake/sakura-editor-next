@@ -1,12 +1,11 @@
 ﻿/*! @file
-	@brief The workbench's VS Code-style overlay vertical scrollbar
+	@brief The workbench's VS Code-style overlay scrollbar
 
 	VS Code does not use the platform scrollbar in its lists: it draws a thin
 	overlay that sits on top of the scrolled content, has no arrow buttons, and
-	takes no layout width. The native controls this shell hosts (a TreeView in the
-	Explorer, an owner-drawn LISTBOX in Source Control) each keep a real SB_VERT
-	scroll state, so the overlay is a separate child window that reads that state
-	and drives it back through one callback.
+	takes no layout width. Native controls can keep a real scroll state that the
+	overlay reads, while surfaces with their own pixel model can provide that
+	state explicitly.
 
 	One implementation serves every such view. A per-view copy is what let the
 	Source Control list keep the platform scrollbar while the Explorer had the
@@ -21,7 +20,9 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <functional>
+#include <optional>
 
 namespace workbench::controls {
 
@@ -34,6 +35,28 @@ struct OverlayScrollbarColors {
 	COLORREF thumbHover = RGB(0x8B, 0x91, 0x9B);
 };
 
+//! Pixel extents and offset used by an overlay with an explicit scroll model.
+//!
+//! The model is normalized by COverlayScrollbar::SetScrollModel: all extents
+//! are non-negative and offset is clamped to the largest valid scroll offset.
+struct OverlayScrollbarModel {
+	int contentExtent{};
+	int viewportExtent{};
+	int offset{};
+};
+
+//! Pure normalization shared by the control and model-level tests.
+[[nodiscard]] constexpr OverlayScrollbarModel NormalizeOverlayScrollbarModel(
+	OverlayScrollbarModel model) noexcept
+{
+	model.contentExtent = std::max(0, model.contentExtent);
+	model.viewportExtent = std::max(0, model.viewportExtent);
+	const int maximumOffset = model.contentExtent > model.viewportExtent
+		? model.contentExtent - model.viewportExtent : 0;
+	model.offset = std::clamp(model.offset, 0, maximumOffset);
+	return model;
+}
+
 //! Which axis the overlay scrolls. VS Code paints the same thin bar on both.
 enum class OverlayScrollbarOrientation {
 	Vertical,
@@ -42,7 +65,7 @@ enum class OverlayScrollbarOrientation {
 
 //! Where the overlay reads its scroll state, and how it places itself.
 enum class OverlayScrollbarSource {
-	//! `SB_VERT` of the target window, placed over the target's client area.
+	//! The target window's native scroll state, placed over its client area.
 	//! The target keeps its own scrolling; the overlay hides the platform bar.
 	TargetWindowBar,
 	/*!
@@ -54,22 +77,27 @@ enum class OverlayScrollbarSource {
 		and gives the overlay the same rectangle through SetBounds().
 	*/
 	ScrollbarControl,
+	//! A caller-owned pixel model; the target remains the visibility, bounds,
+	//! focus, and wheel-routing surface, but supplies no scroll metadata.
+	ExplicitModel,
 };
 
 /*!
-	@brief An overlay scrollbar bound to one scrolling child control
+	@brief An overlay scrollbar bound to one scrolling child control or model
 
-	The target control remains the source of truth: its SB_VERT SCROLLINFO gives
-	the range, page, and position, and `setTopRow` is how the overlay asks it to
-	scroll. The owner calls Update() whenever the target's content, size, scroll
-	position, or visibility may have changed.
+	For TargetWindowBar and ScrollbarControl, the target's SCROLLINFO gives the
+	range, page, and position. ExplicitModel uses OverlayScrollbarModel instead.
+	In every mode, `setTopRow` is how the overlay asks the owner to scroll, and
+	the owner calls Update() whenever content, size, position, or visibility may
+	have changed.
 */
 class COverlayScrollbar final {
 	using Me = COverlayScrollbar;
 
 public:
-	//! Scrolls the target so that `topRow` becomes its first visible row.
-	using SetTopRowCallback = std::function<void(int topRow)>;
+	//! Applies a scroll position, expressed as rows for native models or pixels
+	//! for ExplicitModel, when the user drags the thumb or clicks the track.
+	using SetTopRowCallback = std::function<void(int position)>;
 
 	COverlayScrollbar() = default;
 	~COverlayScrollbar();
@@ -83,7 +111,8 @@ public:
 
 		@param parent The window the overlay is positioned in, normally the same
 		       parent the target control has.
-		@param target The scrolling control whose SB_VERT state the overlay reads.
+		@param target The scrolling surface whose native state the overlay reads,
+		       or whose explicit model the overlay presents.
 		@param setTopRow Applied when the user drags the thumb or clicks the track.
 	*/
 	[[nodiscard]] bool Create(HWND parent, HWND target, SetTopRowCallback setTopRow,
@@ -110,7 +139,11 @@ public:
 	void SetBounds(const RECT& parentRect) noexcept { m_bounds = parentRect; m_hasBounds = true; }
 	void SetColors(const OverlayScrollbarColors& colors) noexcept { m_colors = colors; }
 
-	//! Repositions, shows or hides, and repaints the overlay from the target's state.
+	//! Replaces the pixel model used by OverlayScrollbarSource::ExplicitModel.
+	//! Extents are clamped to non-negative values and offset to its valid range.
+	void SetScrollModel(const OverlayScrollbarModel& model) noexcept;
+
+	//! Repositions, shows or hides, and repaints the overlay from its scroll model.
 	void Update();
 
 	//! Repaints without recomputing placement, for a palette change.
@@ -120,10 +153,11 @@ private:
 	struct Layout {
 		RECT track{};
 		RECT thumb{};
-		int totalRows{};
-		int visibleRows{};
-		int topRow{};
-		int maximumTop{};
+		int contentExtent{};
+		int viewportExtent{};
+		int offset{};
+		int maximumOffset{};
+		int pageStep{};
 		bool scrollable{};
 	};
 
@@ -139,7 +173,7 @@ private:
 		return m_orientation == OverlayScrollbarOrientation::Horizontal;
 	}
 	void EndDrag(bool releaseCapture) noexcept;
-	void ScrollToTopRow(int topRow);
+	void ScrollToPosition(int position);
 
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 	[[nodiscard]] static bool EnsureClass(HINSTANCE instance);
@@ -152,6 +186,7 @@ private:
 	RECT m_bounds{};
 	bool m_hasBounds{};
 	SetTopRowCallback m_setTopRow;
+	std::optional<OverlayScrollbarModel> m_scrollModel;
 	OverlayScrollbarColors m_colors;
 	unsigned int m_dpi = 96;
 	bool m_hover{};

@@ -25,6 +25,7 @@
 #include "StdAfx.h"
 #include <algorithm>
 #include <limits.h>
+#include <utility>
 #include "view/CEditView.h"
 #include "view/CViewFont.h"
 #include "view/CRuler.h"
@@ -284,6 +285,15 @@ BOOL CEditView::Create(
 	if( nullptr == GetHwnd() ){
 		return FALSE;
 	}
+	const auto stableSurfaceId = editor::rendering::EditorViewSurfaceId(
+		static_cast<std::uint32_t>(m_nMyIndex < 0 ? 0 : m_nMyIndex), m_bMiniMap);
+	if( !m_pRenderState || m_pRenderState->StableSurfaceId() != stableSurfaceId ){
+		m_pRenderState = std::make_unique<editor::rendering::CEditViewRenderState>(
+			stableSurfaceId);
+	}
+	(void)m_pRenderState->Open(
+		m_bMiniMap ? "workbench.editor.minimap" : "workbench.editor.pane",
+		::IsWindowVisible(GetHwnd()) != FALSE);
 	if (IsDarkModeActive()) {
 		DarkMode::setWindowExStyle(GetHwnd(), false, WS_EX_STATICEDGE);
 	}
@@ -358,6 +368,12 @@ CEditView::~CEditView()
 
 void CEditView::Close()
 {
+	(void)m_nativeSurface.Close();
+	m_nativeSurface.SetSink({});
+	m_nativeSurfaceTarget.reset();
+	if( m_pRenderState ){
+		(void)m_pRenderState->Close();
+	}
 	if( GetHwnd() != nullptr ){
 		::DestroyWindow( GetHwnd() );
 	}
@@ -366,12 +382,142 @@ void CEditView::Close()
 	//	2007.09.30 genta 関数化
 	//	m_hbmpCompatBMPもここで削除される．
 	UseCompatibleDC(FALSE);
+	if( m_hbmpMiniMapViewport != nullptr ){
+		if( m_hbmpMiniMapViewportOld != nullptr ){
+			::SelectObject( m_hdcMiniMapViewport, m_hbmpMiniMapViewportOld );
+		}
+		::DeleteObject( m_hbmpMiniMapViewport );
+		m_hbmpMiniMapViewport = nullptr;
+		m_hbmpMiniMapViewportOld = nullptr;
+	}
+	if( m_hdcMiniMapViewport != nullptr ){
+		::DeleteDC( m_hdcMiniMapViewport );
+		m_hdcMiniMapViewport = nullptr;
+	}
+	if( m_hdcBackImage != nullptr ){
+		::DeleteDC( m_hdcBackImage );
+		m_hdcBackImage = nullptr;
+	}
 
 	delete m_pcDropTarget;
 	m_pcDropTarget = nullptr;
 
 	delete m_cRegexKeyword;	//@@@ 2001.11.17 add MIK
 	m_cRegexKeyword = nullptr;
+}
+
+void CEditView::RequestGdiFrame() noexcept
+{
+	if( m_pRenderState ){
+		(void)m_pRenderState->RequestFrame();
+	}
+}
+
+void CEditView::CommitGdiPaintBoundary(const bool paintSucceeded) noexcept
+{
+	if( m_pRenderState ){
+		(void)m_pRenderState->CommitGdiFrame(paintSucceeded);
+	}
+}
+
+void CEditView::SetNativeSurfaceSink(NativeSurfaceSink sink) noexcept
+{
+	m_nativeSurface.SetSink(std::move(sink));
+	if( m_nativeSurfaceTarget && m_nativeSurface.HasTarget()
+		&& !m_nativeSurface.IsRegistered() ) {
+		(void)m_nativeSurface.Register(*m_nativeSurfaceTarget);
+	}
+}
+
+bool CEditView::SetNativeSurfaceTarget(const NativeSurfaceTarget& target) noexcept
+{
+	if( m_pRenderState == nullptr
+		|| target.surfaceId != m_pRenderState->StableSurfaceId() ) {
+		return false;
+	}
+	const auto result = m_nativeSurface.IsRegistered()
+		? m_nativeSurface.Update(target) : m_nativeSurface.Register(target);
+	if( result.status != workbench::rendering::EFrameNativeSurfacePayloadStatus::Invalid
+		&& result.status != workbench::rendering::EFrameNativeSurfacePayloadStatus::Stale ) {
+		m_nativeSurfaceTarget = target;
+	}
+	return result.Accepted();
+}
+
+bool CEditView::SetNativeSurfaceVisible(const bool visible) noexcept
+{
+	if( !m_nativeSurfaceTarget ) return false;
+	auto target = *m_nativeSurfaceTarget;
+	target.visible = visible;
+	const auto result = m_nativeSurface.IsRegistered()
+		? m_nativeSurface.Update(target) : m_nativeSurface.Register(target);
+	if( result.status != workbench::rendering::EFrameNativeSurfacePayloadStatus::Invalid
+		&& result.status != workbench::rendering::EFrameNativeSurfacePayloadStatus::Stale ) {
+		m_nativeSurfaceTarget = target;
+	}
+	return result.Accepted();
+}
+
+void CEditView::ClearNativeSurfaceTarget() noexcept
+{
+	(void)m_nativeSurface.Close();
+	m_nativeSurfaceTarget.reset();
+}
+
+void CEditView::SyncNativeSurfaceSize(
+	const std::uint32_t width, const std::uint32_t height) noexcept
+{
+	if( !m_nativeSurfaceTarget ) return;
+	auto target = *m_nativeSurfaceTarget;
+	if( target.width != width || target.height != height ) {
+		if( target.layoutEpoch == (std::numeric_limits<std::uint64_t>::max)() ) return;
+		if (target.layoutEpoch <= m_nativeSurfaceTarget->layoutEpoch) {
+			target.layoutEpoch = m_nativeSurfaceTarget->layoutEpoch + 1;
+		}
+	}
+	target.width = width;
+	target.height = height;
+	const auto result = m_nativeSurface.IsRegistered()
+		? m_nativeSurface.Update(target) : m_nativeSurface.Register(target);
+	if( result.status != workbench::rendering::EFrameNativeSurfacePayloadStatus::Invalid
+		&& result.status != workbench::rendering::EFrameNativeSurfacePayloadStatus::Stale ) {
+		m_nativeSurfaceTarget = target;
+	}
+}
+
+void CEditView::CaptureNativeSurface(
+	const HDC paintedDc, const RECT& dirtyRect) noexcept
+{
+	if( paintedDc == nullptr || m_hWnd == nullptr ) return;
+	RECT client{};
+	if( !::GetClientRect(m_hWnd, &client) ) return;
+	const auto width = client.right - client.left;
+	const auto height = client.bottom - client.top;
+	if( width <= 0 || height <= 0 ) {
+		SyncNativeSurfaceSize(0, 0);
+		return;
+	}
+	// Capture from the final paint target. The compatible bitmap intentionally
+	// omits transient caret/guide overlays, while this borrowed HDC contains the
+	// exact pixels visible at the paint boundary. The adapter copies only the
+	// requested dirty rectangle before the caller releases the HDC.
+	const auto sourceDc = paintedDc;
+	SyncNativeSurfaceSize(static_cast<std::uint32_t>(width),
+		static_cast<std::uint32_t>(height));
+	(void)m_nativeSurface.CapturePending(sourceDc, dirtyRect);
+}
+
+CEditView::NativeSurfaceResult CEditView::PublishNativeSurface() noexcept
+{
+	return m_nativeSurface.PublishPending();
+}
+
+void CEditView::MarkRenderDamage(
+	const editor::rendering::EditViewDamageMask mask) noexcept
+{
+	if( m_pRenderState ){
+		(void)m_pRenderState->MarkDamage(mask);
+	}
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -447,6 +593,7 @@ LRESULT CEditView::DispatchEvent(
 		if( hwnd == GetHwnd() && (BOOL)wParam == FALSE ){
 			DeleteCompatibleBitmap();
 		}
+		(void)SetNativeSurfaceVisible((BOOL)wParam != FALSE);
 		return 0L;
 	// To Here 2007.09.09 Moca
 
@@ -478,12 +625,16 @@ LRESULT CEditView::DispatchEvent(
 		return 0L;
 
 	case WM_IME_NOTIFY:	// Nov. 26, 2006 genta
+		MarkRenderDamage(
+			editor::rendering::EEditViewDamage::Ime
+			| editor::rendering::EEditViewDamage::Caret);
 		if( wParam == IMN_SETCONVERSIONMODE || wParam == IMN_SETOPENSTATUS){
 			GetCaret().ShowEditCaret();
 		}
 		return DefWindowProc( hwnd, uMsg, wParam, lParam );
 
 	case WM_IME_COMPOSITION:
+		MarkRenderDamage(editor::rendering::EEditViewDamage::Ime);
 		if( IsInsMode() && (lParam & GCS_RESULTSTR)){
 			HIMC hIMC;
 			DWORD dwSize;
@@ -542,6 +693,9 @@ LRESULT CEditView::DispatchEvent(
 
 	case WM_IME_ENDCOMPOSITION:
 		m_szComposition[0] = L'\0';
+		MarkRenderDamage(
+			editor::rendering::EEditViewDamage::Ime
+			| editor::rendering::EEditViewDamage::Caret);
 		return DefWindowProc( hwnd, uMsg, wParam, lParam );
 
 	case WM_IME_CHAR:
@@ -716,6 +870,7 @@ LRESULT CEditView::DispatchEvent(
 			hdc = ::BeginPaint( hwnd, &ps );
 			OnPaint( hdc, &ps, FALSE );
 			::EndPaint(hwnd, &ps);
+			CommitGdiPaintBoundary();
 		}
 		return 0L;
 
@@ -724,6 +879,9 @@ LRESULT CEditView::DispatchEvent(
 		::DestroyWindow( hwnd );
 		return 0L;
 	case WM_DESTROY:
+		(void)m_nativeSurface.Close();
+		m_nativeSurface.SetSink({});
+		m_nativeSurfaceTarget.reset();
 		if( nullptr != m_pcDropTarget ){
 			m_pcDropTarget->Revoke_DropTarget();
 		}
@@ -859,13 +1017,24 @@ LRESULT CEditView::DispatchEvent(
 
 void CEditView::OnMove( int x, int y, int nWidth, int nHeight )
 {
-	MoveWindow( GetHwnd(), x, y, nWidth, nHeight, TRUE );
+	if( GetHwnd() != nullptr ){
+		(void)::SetWindowPos( GetHwnd(), nullptr, x, y, nWidth, nHeight,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
+		::RedrawWindow( GetHwnd(), nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN );
+	}
 	return;
 }
 
 /* ウィンドウサイズの変更処理 */
 void CEditView::OnSize( int cx, int cy )
 {
+	SyncNativeSurfaceSize(
+		cx > 0 && cy > 0 ? static_cast<std::uint32_t>(cx) : 0,
+		cx > 0 && cy > 0 ? static_cast<std::uint32_t>(cy) : 0);
+	if( m_pRenderState ){
+		(void)m_pRenderState->NotifyLayout();
+	}
 	if( nullptr == GetHwnd()
 		|| ( cx == 0 && cy == 0 ) ){
 		// From Here 2007.09.09 Moca 互換BMPによる画面バッファ
@@ -884,30 +1053,73 @@ void CEditView::OnSize( int cx, int cy )
 	int nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL );
 	int nCyVScroll = ::GetSystemMetrics( SM_CYVSCROLL );
 
+	struct ChildPlacement final {
+		HWND window{};
+		int x{};
+		int y{};
+		int width{};
+		int height{};
+	};
+	ChildPlacement placements[6]{};
+	int placementCount = 0;
+	const auto addPlacement = [&](HWND window, int x, int y, int width, int height) {
+		if( window == nullptr || placementCount >= 6 ) return;
+		placements[placementCount++] = { window, x, y, width, height };
+	};
+
 	/* 垂直分割ボックス */
 	if( nullptr != m_pcsbwVSplitBox ){
 		nVSplitHeight = 7;
-		::MoveWindow( m_pcsbwVSplitBox->GetHwnd(), cx - nCxVScroll , 0, nCxVScroll, nVSplitHeight, TRUE );
+		addPlacement( m_pcsbwVSplitBox->GetHwnd(), cx - nCxVScroll, 0, nCxVScroll, nVSplitHeight );
 	}
 	/* 水平分割ボックス */
 	if( nullptr != m_pcsbwHSplitBox ){
 		nHSplitWidth = 7;
-		::MoveWindow( m_pcsbwHSplitBox->GetHwnd(),0, cy - nCyHScroll, nHSplitWidth, nCyHScroll, TRUE );
+		addPlacement( m_pcsbwHSplitBox->GetHwnd(), 0, cy - nCyHScroll, nHSplitWidth, nCyHScroll );
 	}
 	/* 垂直スクロールバー */
 	if( nullptr != m_hwndVScrollBar ){
-		::MoveWindow( m_hwndVScrollBar, cx - nCxVScroll , 0 + nVSplitHeight, nCxVScroll, cy - nCyVScroll - nVSplitHeight, TRUE );
-		UpdateOverlayVScrollBar();
+		addPlacement( m_hwndVScrollBar, cx - nCxVScroll, nVSplitHeight,
+			nCxVScroll, cy - nCyVScroll - nVSplitHeight );
 	}
 	/* 水平スクロールバー */
 	if( nullptr != m_hwndHScrollBar ){
-		::MoveWindow( m_hwndHScrollBar, 0 + nHSplitWidth, cy - nCyHScroll, cx - nCxVScroll - nHSplitWidth, nCyHScroll, TRUE );
-		UpdateOverlayHScrollBar();
+		addPlacement( m_hwndHScrollBar, nHSplitWidth, cy - nCyHScroll,
+			cx - nCxVScroll - nHSplitWidth, nCyHScroll );
 	}
 
 	/* サイズボックス */
-	::MoveWindow( m_hwndSizeBox, cx - nCxVScroll, cy - nCyHScroll, nCxHScroll, nCyVScroll, TRUE );
-	::MoveWindow( m_hwndSizeBoxPlaceholder, cx - nCxVScroll, cy - nCyHScroll, nCxHScroll, nCyVScroll, TRUE );
+	addPlacement( m_hwndSizeBox, cx - nCxVScroll, cy - nCyHScroll, nCxHScroll, nCyVScroll );
+	addPlacement( m_hwndSizeBoxPlaceholder, cx - nCxVScroll, cy - nCyHScroll,
+		nCxHScroll, nCyVScroll );
+
+	HDWP defer = placementCount > 0 ? ::BeginDeferWindowPos( placementCount ) : nullptr;
+	bool deferred = defer != nullptr;
+	if( deferred ){
+		for( int index = 0; index < placementCount; ++index ){
+			const auto& placement = placements[index];
+			defer = ::DeferWindowPos( defer, placement.window, nullptr,
+				placement.x, placement.y, placement.width, placement.height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
+			if( defer == nullptr ){
+				deferred = false;
+				break;
+			}
+		}
+		if( deferred ) deferred = ::EndDeferWindowPos( defer ) != FALSE;
+	}
+	if( !deferred ){
+		for( int index = 0; index < placementCount; ++index ){
+			const auto& placement = placements[index];
+			(void)::SetWindowPos( placement.window, nullptr,
+				placement.x, placement.y, placement.width, placement.height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
+		}
+	}
+	if( m_hwndVScrollBar != nullptr ) UpdateOverlayVScrollBar();
+	if( m_hwndHScrollBar != nullptr ) UpdateOverlayHScrollBar();
+	::RedrawWindow( GetHwnd(), nullptr, nullptr,
+		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN );
 	int nAreaWidthOld  = GetTextArea().GetAreaWidth();
 	int nAreaHeightOld = GetTextArea().GetAreaHeight();
 
@@ -1005,6 +1217,9 @@ void CEditView::OnSetFocus( void )
 	}
 
 	GetCaret().ShowEditCaret();
+	MarkRenderDamage(
+		editor::rendering::EEditViewDamage::Caret
+		| editor::rendering::EEditViewDamage::Ime);
 
 	SetIMECompFormFont();
 
@@ -1039,6 +1254,9 @@ void CEditView::OnKillFocus( void )
 	m_bDrawBracketPairFlag = FALSE;
 
 	GetCaret().DestroyCaret();
+	MarkRenderDamage(
+		editor::rendering::EEditViewDamage::Caret
+		| editor::rendering::EEditViewDamage::Ime);
 
 	/* ルーラー描画 */
 	/* ルーラのカーソルを黒からグレーに変更する */
@@ -1089,7 +1307,7 @@ void CEditView::SetFont( void )
 	GetTextArea().DetectWidthOfLineNumberArea( false );
 
 	// ぜんぶ再描画
-	::InvalidateRect( GetHwnd(), nullptr, TRUE );
+	::InvalidateRect( GetHwnd(), nullptr, FALSE );
 
 	//	Oct. 11, 2002 genta IMEのフォントも変更
 	SetIMECompFormFont();
@@ -1259,15 +1477,9 @@ VOID CEditView::OnTimer(
 	/* 範囲選択中でない場合 */
 	if(!GetSelectionInfo().IsMouseSelecting()){
 		if( m_bMiniMap ){
-			bool bHide;
-			if( MiniMapCursorLineTip( &po, &rc, &bHide ) ){
-				m_cTipWnd.m_bAlignLeft = true;
-				m_cTipWnd.Show( po.x, po.y + GetEditWnd().GetActiveView().GetTextMetrics().GetHankakuHeight() );
-			}else{
-				if( bHide && 0 == m_dwTipTimer ){
-					m_cTipWnd.Hide();
-				}
-			}
+			// The minimap is a navigation surface. It must not create a
+			// second floating preview window while the pointer is idle.
+			m_cTipWnd.Hide();
 		}else{
 			if( FALSE != KeyWordHelpSearchDict( LID_SKH_ONTIMER, &po, &rc ) ){	// 2006.04.10 fon
 				/* 辞書Tipを表示 */
@@ -1645,6 +1857,7 @@ void CEditView::OnChangeSetting()
 	if( nullptr == GetHwnd() ){
 		return;
 	}
+	MarkRenderDamage(editor::rendering::kEditViewDamageAll);
 	RECT		rc;
 
 	GetTextArea().SetTopYohaku(DpiScaleY(GetDllShareData().m_Common.m_sWindow.m_nRulerBottomSpace)); 		/* ルーラーとテキストの隙間 */
@@ -1681,7 +1894,7 @@ void CEditView::OnChangeSetting()
 
 	/* 再描画 */
 	if( !GetEditWnd().m_pPrintPreview ){
-		::InvalidateRect( GetHwnd(), nullptr, TRUE );
+		::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	}
 	CTypeSupport cTextType(this, COLORIDX_TEXT);
 	m_crBack = cTextType.GetBackColor();
@@ -2240,7 +2453,6 @@ void CEditView::CopySelectedAllLines(
 		GetCaret().ShowEditCaret();
 	}
 	/* 再描画 */
-	//	::UpdateWindow();
 	// From Here 2007.09.09 Moca 互換BMPによる画面バッファ
 	Call_OnPaint(PAINT_LINENUMBER | PAINT_BODY, false);
 	// To Here 2007.09.09 Moca
@@ -2380,6 +2592,7 @@ void CEditView::CaretUnderLineON( bool bDraw, bool bDrawPaint, bool DisalbeUnder
 			HDC hdc = this->GetDC();
 			OnPaint( hdc, &ps, FALSE );
 			this->ReleaseDC( hdc );
+			CommitGdiPaintBoundary();
 
 			GetCaret().m_cUnderLine.UnLock();
 		}
@@ -2516,6 +2729,7 @@ void CEditView::CaretUnderLineOFF( bool bDraw, bool bDrawPaint, bool bResetFlag,
 				// 可能なら互換BMPからコピーして再作画
 				OnPaint( hdc, &ps, (ps.rcPaint.bottom - ps.rcPaint.top) == 1 );
 				this->ReleaseDC( hdc );
+				CommitGdiPaintBoundary();
 			}
 			m_nOldUnderLineYHeight = 0;
 
@@ -2558,6 +2772,7 @@ void CEditView::CaretUnderLineOFF( bool bDraw, bool bDrawPaint, bool bResetFlag,
 			this->GetSelectionInfo().ReplaceSelectionRange(sSelectBackup);
 			GetCaret().m_cUnderLine.UnLock();
 			ReleaseDC( hdc );
+			CommitGdiPaintBoundary();
 		}
 		m_nOldCursorLineX = -1;
 	}
@@ -2595,6 +2810,9 @@ bool CEditView::IsInsMode(void) const
 void CEditView::SetInsMode(bool mode)
 {
 	m_pcEditDoc->m_cDocEditor.SetInsMode( mode );
+	MarkRenderDamage(
+		editor::rendering::EEditViewDamage::Caret
+		| editor::rendering::EEditViewDamage::Ime);
 }
 
 // -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
@@ -2607,6 +2825,7 @@ void CEditView::OnAfterLoad([[maybe_unused]] const SLoadInfo& sLoadInfo)
 		// MiniMap 非表示
 		return;
 	}
+	MarkRenderDamage(editor::rendering::kEditViewDamageAll);
 	// -- -- ※ InitAllViewでやってたこと -- -- //
 	m_cHistory->Flush();
 

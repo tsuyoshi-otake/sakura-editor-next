@@ -33,6 +33,9 @@ struct GitMenuItem final {
 	std::wstring title;
 	//! True when this row is the rule between two of upstream's menu groups.
 	bool separator{};
+	//! JSON payload passed to the command route. Context menus use `[]`; the
+	//! commit action button uses this to carry upstream's post-commit command.
+	std::string argumentsJson{ "[]" };
 
 	[[nodiscard]] bool operator==(const GitMenuItem&) const = default;
 };

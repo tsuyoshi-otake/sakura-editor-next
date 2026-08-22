@@ -175,6 +175,12 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
 - The same control now also serves the Markdown preview pane and the editor
   text body, and it has a horizontal orientation
   (`OverlayScrollbarOrientation::Horizontal`) for the editor's horizontal bar.
+  The Markdown preview is different from native-control consumers: it has no
+  `WS_VSCROLL` and supplies one pixel-based `ExplicitModel`. The preview's
+  `m_scrollY`, content extent, and viewport extent are the sole authority; the
+  overlay must not call `GetScrollInfo`, `SetScrollInfo`, or `ShowScrollBar` for
+  that source. This prevents native non-client geometry from competing with the
+  sibling overlay during width changes.
   The editor owns real `WC_SCROLLBAR` children; they stay alive as the scroll
   model (`OverlayScrollbarSource::ScrollbarControl`), are hidden, and the
   overlay is given their rectangle through `SetBounds`. Do not re-show those

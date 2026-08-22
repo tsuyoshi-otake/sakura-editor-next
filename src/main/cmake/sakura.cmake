@@ -589,6 +589,40 @@ list(APPEND HEADERS ${TERMINAL_RENDERER_HEADERS})
 list(REMOVE_ITEM SOURCES ${TERMINAL_RENDERER_SOURCES})
 list(APPEND SOURCES ${TERMINAL_RENDERER_SOURCES})
 
+# Keep C8 cadence, backpressure, fault, and telemetry sources explicit so a
+# generated project cannot omit a newly added rendering boundary.
+set(FRAME_RENDERING_HEADERS
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameRuntimeTelemetry.h
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameCadence.h
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameCadenceSource.h
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameBackpressure.h
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameFaultModel.h
+)
+set(FRAME_RENDERING_SOURCES
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameRuntimeTelemetry.cpp
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameCadence.cpp
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameCadenceSource.cpp
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameBackpressure.cpp
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameFaultModel.cpp
+)
+list(REMOVE_ITEM HEADERS ${FRAME_RENDERING_HEADERS})
+list(APPEND HEADERS ${FRAME_RENDERING_HEADERS})
+list(REMOVE_ITEM SOURCES ${FRAME_RENDERING_SOURCES})
+list(APPEND SOURCES ${FRAME_RENDERING_SOURCES})
+
+# Keep the retained-paint native payload boundary explicit in generated
+# projects as well as the legacy MSBuild project.
+set(FRAME_NATIVE_SURFACE_PAYLOAD_HEADERS
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameNativeSurfacePayloadAdapter.h
+)
+set(FRAME_NATIVE_SURFACE_PAYLOAD_SOURCES
+  ${CMAKE_SOURCE_DIR}/sakura_core/workbench/rendering/FrameNativeSurfacePayloadAdapter.cpp
+)
+list(REMOVE_ITEM HEADERS ${FRAME_NATIVE_SURFACE_PAYLOAD_HEADERS})
+list(APPEND HEADERS ${FRAME_NATIVE_SURFACE_PAYLOAD_HEADERS})
+list(REMOVE_ITEM SOURCES ${FRAME_NATIVE_SURFACE_PAYLOAD_SOURCES})
+list(APPEND SOURCES ${FRAME_NATIVE_SURFACE_PAYLOAD_SOURCES})
+
 # Do not let the broad source glob pull in the complete Windows Terminal tree.
 # Only the dependency-closed parser, input and Unicode boundary is compiled.
 set(WINDOWS_TERMINAL_VENDOR_ROOT
@@ -817,6 +851,8 @@ target_link_libraries(sakura_core
     comctl32
     crypt32
     d2d1
+    d3d11
+    dcomp
     dbghelp
     dwmapi
     dwrite
@@ -833,6 +869,7 @@ target_link_libraries(sakura_core
     uxtheme
     version
     windowscodecs
+    dxgi
     winhttp
     winmm
     winspool

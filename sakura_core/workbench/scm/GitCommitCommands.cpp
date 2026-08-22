@@ -7,6 +7,7 @@
 #include "StdAfx.h"
 #include "workbench/scm/GitCommitCommands.h"
 
+#include "workbench/commands/CommandArgumentsJson.h"
 #include "workbench/scm/GitFailureText.h"
 #include "workbench/scm/GitRefModel.h"
 
@@ -14,6 +15,31 @@
 #include <utility>
 
 namespace workbench::scm {
+
+std::optional<EGitPostCommitCommand> ParseGitCommitPostCommandArguments(
+	std::string_view argumentsJson)
+{
+	using namespace workbench::commands::json;
+	if (argumentsJson.empty()) return EGitPostCommitCommand::None;
+
+	std::size_t index = 0;
+	if (!Expect(argumentsJson, index, '[')) return std::nullopt;
+	SkipWhitespace(argumentsJson, index);
+	if (index < argumentsJson.size() && argumentsJson[index] == ']') {
+		++index;
+		return AtEnd(argumentsJson, index) ? std::optional{ EGitPostCommitCommand::None }
+			: std::nullopt;
+	}
+
+	std::string command;
+	if (!ReadString(argumentsJson, index, command) || !Expect(argumentsJson, index, ']')
+		|| !AtEnd(argumentsJson, index)) {
+		return std::nullopt;
+	}
+	if (command == "git.push") return EGitPostCommitCommand::Push;
+	if (command == "git.sync") return EGitPostCommitCommand::Sync;
+	return std::nullopt;
+}
 
 namespace {
 

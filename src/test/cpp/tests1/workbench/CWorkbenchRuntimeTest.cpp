@@ -1468,6 +1468,15 @@ TEST(CWorkbenchRuntime, WorkspaceFolderDocumentsKeepStableControllerIdentityAcro
 	// intact. Recreating the controller would lose the expected revision and
 	// incorrectly overwrite "multiple" with the file's "single" value.
 	EXPECT_EQ(L"multiple", ShowTabs(*fixture.runtime, firstTarget));
+	// A concurrent notification drainer may already own delivery when the
+	// reorder is committed. SetWorkspace then returns after enqueueing this
+	// revision, so wait for the bounded asynchronous terminal observation
+	// instead of sampling the intermediate Ready state.
+	const auto diagnosticDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (fixture.runtime->Snapshot().state != EWorkbenchRuntimeState::ReadyWithDiagnostics
+		&& std::chrono::steady_clock::now() < diagnosticDeadline) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
 	const auto snapshot = fixture.runtime->Snapshot();
 	EXPECT_EQ(EWorkbenchRuntimeState::ReadyWithDiagnostics, snapshot.state);
 	EXPECT_TRUE(std::ranges::any_of(snapshot.diagnostics, [](const auto& diagnostic) {

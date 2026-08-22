@@ -1411,6 +1411,15 @@ INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM
 	}
 	INT_PTR result;
 	result = CDialog::DispatchEvent( hWnd, wMsg, wParam, lParam );
+	if( wMsg == WM_PAINT && IsWorkbenchMode() && m_workbenchNativeSurfaceSubmitter ) {
+		RECT client{};
+		if( ::GetClientRect( hWnd, &client ) != FALSE && client.right > client.left && client.bottom > client.top ) {
+			if( HDC dc = ::GetDC( hWnd ); dc != nullptr ) {
+				m_workbenchNativeSurfaceSubmitter( dc, client );
+				::ReleaseDC( hWnd, dc );
+			}
+		}
+	}
 
 	switch( wMsg ){
 	case WM_ACTIVATEAPP:
@@ -1512,6 +1521,12 @@ INT_PTR CDlgFuncList::DispatchEvent( HWND hWnd, UINT wMsg, WPARAM wParam, LPARAM
 	}
 
 	return result;
+}
+
+void CDlgFuncList::SetWorkbenchNativeSurfaceSubmitter(
+	WorkbenchNativeSurfaceSubmitter submitter ) noexcept
+{
+	m_workbenchNativeSurfaceSubmitter = std::move( submitter );
 }
 
 void CDlgFuncList::BuildWorkbenchClipboardText()

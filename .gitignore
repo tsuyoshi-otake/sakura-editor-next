@@ -51,7 +51,8 @@ service-account*.json
 
 # ローカルIDE・OS・エディター設定
 /.codex/goal-loop/
-/.claude/
+/.claude/*
+!/.claude/skills/
 /.vscode/
 /.idea/
 .DS_Store

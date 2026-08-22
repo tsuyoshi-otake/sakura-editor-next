@@ -21,14 +21,15 @@ constexpr std::wstring_view kStageAllTitle = L"Stage All Changes";
 constexpr std::wstring_view kUnstageAllTitle = L"Unstage All Changes";
 constexpr std::wstring_view kDiscardAllTitle = L"Discard All Changes";
 
-GitMenuItem Item(std::string_view commandId, std::wstring_view title)
+GitMenuItem Item(std::string_view commandId, std::wstring_view title,
+	std::string_view argumentsJson = "[]")
 {
-	return GitMenuItem{ std::string(commandId), std::wstring(title), false };
+	return GitMenuItem{ std::string(commandId), std::wstring(title), false, std::string(argumentsJson) };
 }
 
 GitMenuItem Separator()
 {
-	return GitMenuItem{ {}, {}, true };
+	return GitMenuItem{ {}, {}, true, "[]" };
 }
 
 } // namespace
@@ -203,13 +204,15 @@ std::optional<GitActionButton> BuildGitCommitActionButton(bool hasChanges, bool 
 	button.title = L"$(check) Commit";
 	button.commandId = "git.commit";
 	button.enabled = enabled;
-	// Upstream's two secondary groups are the commit variants and the
-	// post-commit-command variants. Only the first group is routable here; the
-	// omission of Commit & Push / Commit & Sync is recorded in this directory's
-	// CLAUDE.md rather than approximated with a plain commit.
+	// Upstream's secondary commands are two groups: the local commit variants,
+	// followed by post-commit actions. The native popup cannot draw Codicons, so
+	// the titles stay bare while the command payload preserves the operation.
 	button.secondaryCommands = {
 		Item("git.commit", L"Commit"),
 		Item("git.commitAmend", L"Commit (Amend)"),
+		Separator(),
+		Item("git.commit", L"Commit & Push", R"(["git.push"])"),
+		Item("git.commit", L"Commit & Sync", R"(["git.sync"])"),
 	};
 	return button;
 }

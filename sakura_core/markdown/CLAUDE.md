@@ -23,6 +23,45 @@ must remain explicit and testable.
   revision, and every refresh branch has a terminal rendered, deferred, rejected,
   or failed state.
 
+## Live resize and scrolling ownership (2026-08-22, #241)
+
+- This is a native User32/GDI surface, not a WebView. The preview HWND has no
+  `WS_VSCROLL`; `m_scrollY`, content height, and viewport height form its single
+  pixel-based model. `COverlayScrollbar` presents that model through
+  `ExplicitModel` and uses the preview only for geometry, focus, visibility, and
+  wheel routing.
+- Divider drag is a transaction. Mouse move updates only transient editor-group,
+  minimap, preview, overlay, and divider geometry. It must not run full Markdown
+  reflow or full workbench `OnSize2` for each sample. Mouse-up performs one
+  committed reflow; Escape, `WM_CANCELMODE`, capture loss, layout-state change,
+  and destruction explicitly commit, roll back, or abort.
+- A parse completion, document swap, font/DPI change, or image-cache invalidation
+  arriving during a transient drag is deferred as one generation. Do not publish
+  a new document while old render lines point at deleted image handles.
+- Wrapping is width-dependent. A height-only resize updates the viewport and
+  explicit scrollbar model without rebuilding render lines. Hiding a preview
+  must not lay the document out at zero width, and reopening an unchanged hidden
+  preview reuses its committed document generation instead of parsing it again.
+- Width commit is one `O(N)` document reflow, but it is no longer one UI
+  handler. Keep the published render/image/diagram vectors as last-known-good,
+  advance a staging generation through message slices of at most two completed
+  blocks and at most 32 wrapped rows / 2 ms within a block. Preserve the
+  within-block cursor between slices; do not restart a giant paragraph. Stable
+  document text is viewed in place instead of copied, and inline-span
+  normalization is prepared by the worker before the UI continuation consumes it,
+  and swap generations only after staging is complete. A newer width/document
+  request cancels staging and the already-posted wake services only the latest
+  generation. Keep each wrapped-text scan linear: never pass the entire
+  remaining paragraph to GDI once per output row. Bound the measurement probe
+  and advance forced-break searches monotonically.
+- Capture a logical source-line/ordinal/intra-line anchor before committed reflow
+  and restore it afterward. User scrolling clears an earlier reveal request so a
+  later width change cannot snap back to the editor caret.
+- Verify the real painted frames with `tools/measure-markdown-preview-resize.ps1`.
+  It compares `CopyFromScreen` and `PrintWindow`, checks the native style and
+  sibling overlay count, measures every drag message, drives `WM_CANCELMODE`, and
+  proves run-owned process/profile cleanup.
+
 ## VS Code command model
 
 Use the exact upstream command IDs and keep their effects distinct:
@@ -56,13 +95,18 @@ observable.
 ## Asynchronous update ownership
 
 - The UI thread captures only a bounded immutable source/options/revision/
-  generation snapshot. One persistent worker owns parsing and code highlighting.
+  generation snapshot. One persistent worker owns parsing, code highlighting,
+  and admitted local-image WIC decode. Worker-prepared HBITMAP resources use
+  shared ownership across staging and last-good layout generations; a missing
+  worker-prepared image never falls back to synchronous UI-thread decode.
 - Scheduling is bounded to one in-flight request plus one latest pending request.
   A newer generation makes older completion stale; only a custom HWND message may
   commit the latest result to `Document`, HWND, and GDI state on the UI thread.
-- Closing or native destruction transitions the scheduler to `Closed`, requests
-  stop, clears owned pending/completed values, and joins the worker before HWND
-  teardown. Posting failure releases the completed value and records `Failed`.
+- Closing or native destruction transitions the scheduler to `Closed`, detaches
+  the HWND completion sink, requests stop, and clears owned pending/completed
+  values. A pre-admitted bounded retirement service owns the eventual join;
+  the UI thread never waits for parser/highlighter/image work. Posting failure
+  releases the completed value and records `Failed`.
 
 
 ## Declared boundaries must be per concept, not per feeling (2026-08-20, #228)
@@ -86,8 +130,10 @@ the declaration state the real concept, not to flip a value until it matched:
 A capability may only be declared `Supported` after the wiring is measured on the
 running editor, not after reading the code that appears to connect it. The
 scroll-sync directions were measured on 2026-08-20 by driving `F_GOFILETOP` /
-`F_GOFILEEND` and `WM_VSCROLL` under a throwaway profile and reading both
-`SCROLLINFO` positions; the numbers are in `PARITY.md`.
+`F_GOFILEEND` and `WM_VSCROLL` under a throwaway profile. That historical run
+read both `SCROLLINFO` positions; after #241, preview `SCROLLINFO` is intentionally
+absent and the explicit overlay model/painted thumb is the observable preview
+state. The historical numbers and current verification method are in `PARITY.md`.
 
 ## Upstream drift is detected mechanically
 

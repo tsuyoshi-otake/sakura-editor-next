@@ -866,50 +866,115 @@ LRESULT CSplitterWnd::OnSize( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT 
 
 	::GetClientRect( GetHwnd(), &rcClient );
 
+	struct ChildPlacement final {
+		HWND window{};
+		int x{};
+		int y{};
+		int width{};
+		int height{};
+	};
+	struct SplitBoxState final {
+		CEditView* view{};
+		BOOL vert{};
+		BOOL horz{};
+		BOOL sizeBox{};
+	};
+	ChildPlacement placements[MAXCOUNTOFVIEW]{};
+	SplitBoxState splitBoxStates[MAXCOUNTOFVIEW]{};
+	int placementCount = 0;
+	int splitBoxStateCount = 0;
+	const auto addPlacement = [&](HWND window, int x, int y, int width, int height) {
+		if( window == nullptr || placementCount >= MAXCOUNTOFVIEW ) return;
+		placements[placementCount++] = { window, x, y, width, height };
+	};
+	const auto addSplitBoxState = [&](CEditView* view, BOOL vert, BOOL horz, BOOL sizeBox) {
+		if( view == nullptr || splitBoxStateCount >= MAXCOUNTOFVIEW ) return;
+		splitBoxStates[splitBoxStateCount++] = { view, vert, horz, sizeBox };
+	};
+
 	if( m_nAllSplitRows == 1 && m_nAllSplitCols == 1 ){
 		if( m_ChildWndArr[0] != nullptr ){
-			::MoveWindow( m_ChildWndArr[0], 0, 0, rcClient.right,  rcClient.bottom, TRUE );		/* 子ウィンドウ配列 */
+			addPlacement( m_ChildWndArr[0], 0, 0, rcClient.right, rcClient.bottom );
 
-			pcViewArr[0]->SplitBoxOnOff( TRUE, TRUE, bSizeBox );		/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addSplitBoxState( pcViewArr[0], TRUE, TRUE, bSizeBox );		/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 	}else
 	if( m_nAllSplitRows == 2 && m_nAllSplitCols == 1 ){
 		if( m_ChildWndArr[0] != nullptr ){
-			::MoveWindow( m_ChildWndArr[0], 0, 0, rcClient.right,  m_nVSplitPos, TRUE );		/* 子ウィンドウ配列 */
-			pcViewArr[0]->SplitBoxOnOff( FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[0], 0, 0, rcClient.right, m_nVSplitPos );
+			addSplitBoxState( pcViewArr[0], FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 		if( m_ChildWndArr[2] != nullptr ){
-			::MoveWindow( m_ChildWndArr[2], 0, m_nVSplitPos + nFrameWidth, rcClient.right, rcClient.bottom - ( m_nVSplitPos + nFrameWidth ), TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[2]->SplitBoxOnOff( FALSE, TRUE, bSizeBox );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[2], 0, m_nVSplitPos + nFrameWidth,
+				rcClient.right, rcClient.bottom - (m_nVSplitPos + nFrameWidth) );
+			addSplitBoxState( pcViewArr[2], FALSE, TRUE, bSizeBox );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 	}else
 	if( m_nAllSplitRows == 1 && m_nAllSplitCols == 2 ){
 		if( m_ChildWndArr[0] != nullptr ){
-			::MoveWindow( m_ChildWndArr[0], 0, 0, m_nHSplitPos, rcClient.bottom, TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[0]->SplitBoxOnOff( FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[0], 0, 0, m_nHSplitPos, rcClient.bottom );
+			addSplitBoxState( pcViewArr[0], FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 		if( m_ChildWndArr[1] != nullptr ){
-			::MoveWindow( m_ChildWndArr[1], m_nHSplitPos + nFrameWidth, 0, rcClient.right - ( m_nHSplitPos + nFrameWidth ),  rcClient.bottom, TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[1]->SplitBoxOnOff( TRUE, FALSE, bSizeBox );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[1], m_nHSplitPos + nFrameWidth, 0,
+				rcClient.right - (m_nHSplitPos + nFrameWidth), rcClient.bottom );
+			addSplitBoxState( pcViewArr[1], TRUE, FALSE, bSizeBox );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 	}else{
 		if( m_ChildWndArr[0] != nullptr ){
-			::MoveWindow( m_ChildWndArr[0], 0, 0, m_nHSplitPos,  m_nVSplitPos, TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[0]->SplitBoxOnOff( FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[0], 0, 0, m_nHSplitPos, m_nVSplitPos );
+			addSplitBoxState( pcViewArr[0], FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 		if( m_ChildWndArr[1] != nullptr ){
-			::MoveWindow( m_ChildWndArr[1], m_nHSplitPos + nFrameWidth, 0, rcClient.right - ( m_nHSplitPos + nFrameWidth ),  m_nVSplitPos, TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[1]->SplitBoxOnOff( FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[1], m_nHSplitPos + nFrameWidth, 0,
+				rcClient.right - (m_nHSplitPos + nFrameWidth), m_nVSplitPos );
+			addSplitBoxState( pcViewArr[1], FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 		if( m_ChildWndArr[2] != nullptr ){
-			::MoveWindow( m_ChildWndArr[2], 0, m_nVSplitPos + nFrameWidth , m_nHSplitPos,  rcClient.bottom - ( m_nVSplitPos + nFrameWidth ), TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[2]->SplitBoxOnOff( FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[2], 0, m_nVSplitPos + nFrameWidth,
+				m_nHSplitPos, rcClient.bottom - (m_nVSplitPos + nFrameWidth) );
+			addSplitBoxState( pcViewArr[2], FALSE, FALSE, FALSE );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 		if( m_ChildWndArr[3] != nullptr ){
-			::MoveWindow( m_ChildWndArr[3], m_nHSplitPos + nFrameWidth, m_nVSplitPos + nFrameWidth, rcClient.right - ( m_nHSplitPos + nFrameWidth ),  rcClient.bottom - ( m_nVSplitPos + nFrameWidth ), TRUE );			/* 子ウィンドウ配列 */
-			pcViewArr[3]->SplitBoxOnOff( FALSE, FALSE, bSizeBox );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
+			addPlacement( m_ChildWndArr[3], m_nHSplitPos + nFrameWidth,
+				m_nVSplitPos + nFrameWidth,
+				rcClient.right - (m_nHSplitPos + nFrameWidth),
+				rcClient.bottom - (m_nVSplitPos + nFrameWidth) );
+			addSplitBoxState( pcViewArr[3], FALSE, FALSE, bSizeBox );	/* 縦・横の分割ボックスのＯＮ／ＯＦＦ */
 		}
 	}
+
+	// Apply all sibling geometry in one transaction and queue one no-erase
+	// repaint.  A resize must not paint panes against mixed splitter geometry.
+	HDWP defer = placementCount > 0 ? ::BeginDeferWindowPos( placementCount ) : nullptr;
+	bool deferred = defer != nullptr;
+	if( deferred ){
+		for( int index = 0; index < placementCount; ++index ){
+			const auto& placement = placements[index];
+			defer = ::DeferWindowPos( defer, placement.window, nullptr,
+				placement.x, placement.y, placement.width, placement.height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
+			if( defer == nullptr ){
+				deferred = false;
+				break;
+			}
+		}
+		if( deferred ) deferred = ::EndDeferWindowPos( defer ) != FALSE;
+	}
+	if( !deferred ){
+		for( int index = 0; index < placementCount; ++index ){
+			const auto& placement = placements[index];
+			(void)::SetWindowPos( placement.window, nullptr,
+				placement.x, placement.y, placement.width, placement.height,
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW );
+		}
+	}
+	for( int index = 0; index < splitBoxStateCount; ++index ){
+		const auto& state = splitBoxStates[index];
+		state.view->SplitBoxOnOff( state.vert, state.horz, state.sizeBox );
+	}
+	::RedrawWindow( GetHwnd(), nullptr, nullptr,
+		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN );
 	//デスクトップがちらつくのでだめ!
 	//::InvalidateRect( GetHwnd(), NULL, TRUE );	//再描画してね。	//@@@ 2003.06.11 MIK
 	return 0L;

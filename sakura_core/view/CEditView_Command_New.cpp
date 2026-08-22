@@ -309,6 +309,7 @@ void CEditView::InsertData_CEditView(
 			HDC hdc = this->GetDC();
 			OnPaint( hdc, &ps, FALSE );
 			this->ReleaseDC( hdc );
+			this->CommitGdiPaintBoundary();
 			// 2014.07.16 他のビュー(ミニマップ)の再描画を抑制する
 			if( 0 == nInsLineNum ){
 				for(int i = 0; i < GetEditWnd().GetAllViewCount(); i++ ){
@@ -551,8 +552,6 @@ void CEditView::DeleteData(
 				Call_OnPaint(PAINT_LINENUMBER | PAINT_BODY, false);
 			}
 			/* 選択エリアの先頭へカーソルを移動 */
-			this->UpdateWindow();
-			
 			CLayoutPoint caretOld = CLayoutPoint(rcSel.left, rcSel.top);
 			m_pcEditDoc->m_cLayoutMgr.GetLineStr( rcSel.top, &nLineLen, &pcLayout );
 			if( pcLayout != nullptr && rcSel.left <= pcLayout->CalcLayoutWidth( m_pcEditDoc->m_cLayoutMgr ) ){
@@ -885,6 +884,7 @@ bool CEditView::ReplaceData_CEditView3(
 				HDC hdc = this->GetDC();
 				OnPaint( hdc, &ps, FALSE );
 				this->ReleaseDC( hdc );
+				this->CommitGdiPaintBoundary();
 
 				CLayoutYInt nLayoutTop = LRArg.nModLineFrom;
 				CLayoutYInt nLayoutBottom = LRArg.nModLineTo + 1 + nAddLine;

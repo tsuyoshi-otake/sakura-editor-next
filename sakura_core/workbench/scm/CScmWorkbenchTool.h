@@ -13,6 +13,7 @@
 #include "workbench/scm/GitInitCloneCommands.h"
 #include "workbench/scm/GitScmModel.h"
 #include "workbench/scm/SourceControlService.h"
+#include "workbench/scm/ScmNativeSurfaceAdapter.h"
 
 #include <cstddef>
 #include <functional>
@@ -61,6 +62,10 @@ public:
 	//! Resolves presentation strings serialized into the published Git provider.
 	//! Unlike `TextResolver`, this covers publication-only labels and diff titles.
 	using PublicationTextResolver = GitDiffTextResolver;
+	//! The retained Changes list's native projection boundary. The sink owns
+	//! asynchronous registration/update/close/submit and must never make this
+	//! UI thread wait for a compositor or a GPU operation.
+	using NativeSurfaceSink = ScmNativeSurfaceSink;
 
 	CScmWorkbenchTool();
 	~CScmWorkbenchTool() override;
@@ -94,6 +99,9 @@ public:
 	void RepublishFileDecorations();
 	void SetTextResolver(TextResolver resolver);
 	void SetPublicationTextResolver(PublicationTextResolver resolver);
+	void SetNativeSurfaceSink(NativeSurfaceSink sink);
+	[[nodiscard]] bool SetNativeSurfaceTarget(const ScmNativeSurfaceTarget& target) noexcept;
+	void ClearNativeSurfaceTarget() noexcept;
 	//! Re-resolves visible SCM presentation text after a runtime language change.
 	void RefreshStrings();
 	//! Borrow the runtime-owned SCM authority. The tool never stops or owns it.

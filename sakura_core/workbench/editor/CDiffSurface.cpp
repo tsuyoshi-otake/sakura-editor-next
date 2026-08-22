@@ -116,7 +116,8 @@ void CDiffSurface::Layout(const RECT& bounds, unsigned int dpi)
 	const int width = std::max(0L, bounds.right - bounds.left);
 	const int height = std::max(0L, bounds.bottom - bounds.top);
 	(void)dpi; // Child-window DPI is authoritative; WM_DPICHANGED refreshes it.
-	::SetWindowPos(GetHwnd(), nullptr, bounds.left, bounds.top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+	::SetWindowPos(GetHwnd(), nullptr, bounds.left, bounds.top, width, height,
+		SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	LayoutChildren();
 	UpdateScrollRange();
 	::InvalidateRect(GetHwnd(), nullptr, FALSE);
@@ -324,7 +325,8 @@ void CDiffSurface::LayoutChildren()
 	if (m_hwndClose != nullptr) {
 		::SetWindowPos(m_hwndClose, nullptr,
 			std::max(0L, client.right - padding - closeSide), (ScaleDip(44) - closeSide) / 2,
-			closeSide, closeSide, SWP_NOZORDER | SWP_NOACTIVATE);
+			closeSide, closeSide,
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	}
 }
 

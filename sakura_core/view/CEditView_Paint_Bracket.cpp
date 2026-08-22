@@ -205,11 +205,12 @@ void CEditView::DrawBracketPair( bool bDraw )
 						rcChar.top = nTop;
 						rcChar.right = nLeft + GetTextMetrics().GetCharPxWidth(charsWidth);
 						rcChar.bottom = nTop + nHeight;
-						HDC hdcBgImg = ::CreateCompatibleDC(gr);
-						HBITMAP hBmpOld = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
-						DrawBackImage(gr, rcChar, hdcBgImg);
-						::SelectObject(hdcBgImg, hBmpOld);
-						::DeleteDC(hdcBgImg);
+						HDC hdcBgImg = GetBackImageDC(gr);
+						if( hdcBgImg != nullptr ){
+							HBITMAP hBmpOld = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
+							DrawBackImage(gr, rcChar, hdcBgImg);
+							::SelectObject(hdcBgImg, hBmpOld);
+						}
 					}
 					DispPos sPos(nWidth, nHeight);
 					sPos.InitDrawPos(CMyPoint(nLeft, nTop));

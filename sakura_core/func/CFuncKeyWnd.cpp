@@ -182,15 +182,58 @@ LRESULT CFuncKeyWnd::OnSize( [[maybe_unused]] HWND hwnd, [[maybe_unused]] UINT u
 	::GetWindowRect( GetHwnd(), &rcParent );
 	nButtonHeight = rcParent.bottom - rcParent.top - 2;
 
+	const int parentWidth = rcParent.right - rcParent.left;
+	const int parentHeight = rcParent.bottom - rcParent.top;
+	const int nSizeBoxWidth = m_hwndSizeBox != nullptr ? ::GetSystemMetrics( SM_CXVSCROLL ) : 0;
+	const int nSizeBoxHeight = m_hwndSizeBox != nullptr ? ::GetSystemMetrics( SM_CYHSCROLL ) : 0;
+	const UINT positionFlags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW | SWP_NOCOPYBITS;
+
+	HDWP positions = ::BeginDeferWindowPos( nButtonNum + (m_hwndSizeBox != nullptr ? 1 : 0) );
+	bool positioned = positions != nullptr;
 	nX = 1;
-	for( i = 0; i < nButtonNum; ++i ){
-		if( 0 < i  && 0 == ( i % m_nButtonGroupNum ) ){
-			nX += 12;
+	if( positioned ){
+		for( i = 0; i < nButtonNum; ++i ){
+			if( 0 < i  && 0 == ( i % m_nButtonGroupNum ) ){
+				nX += 12;
+			}
+			positions = ::DeferWindowPos( positions, m_hwndButtonArr[i], nullptr,
+				nX, 1, nButtonWidth, nButtonHeight, positionFlags );
+			if( positions == nullptr ){
+				positioned = false;
+				break;
+			}
+			nX += nButtonWidth + 1;
 		}
-		::MoveWindow( m_hwndButtonArr[i], nX, 1, nButtonWidth, nButtonHeight, TRUE );
-		nX += nButtonWidth + 1;
+		if( positioned && m_hwndSizeBox != nullptr ){
+			positions = ::DeferWindowPos( positions, m_hwndSizeBox, nullptr,
+				parentWidth - nSizeBoxWidth, parentHeight - nSizeBoxHeight,
+				nSizeBoxWidth, nSizeBoxHeight, positionFlags );
+			positioned = positions != nullptr;
+		}
+		if( positioned ) positioned = ::EndDeferWindowPos( positions ) != FALSE;
 	}
-	::InvalidateRect( GetHwnd(), nullptr, TRUE );	//再描画してね。	//@@@ 2003.06.11 MIK
+	if( !positioned ){
+		// Keep the fallback out of the paint path if USER cannot allocate an HDWP.
+		nX = 1;
+		for( i = 0; i < nButtonNum; ++i ){
+			if( 0 < i  && 0 == ( i % m_nButtonGroupNum ) ){
+				nX += 12;
+			}
+			::SetWindowPos( m_hwndButtonArr[i], nullptr, nX, 1,
+				nButtonWidth, nButtonHeight, positionFlags );
+			nX += nButtonWidth + 1;
+		}
+		if( m_hwndSizeBox != nullptr ){
+			::SetWindowPos( m_hwndSizeBox, nullptr,
+				parentWidth - nSizeBoxWidth, parentHeight - nSizeBoxHeight,
+				nSizeBoxWidth, nSizeBoxHeight, positionFlags );
+		}
+	}
+
+	// Queue one frame for the bar and all children, without a class-background
+	// erase or synchronous sibling paints during a live resize.
+	::RedrawWindow( GetHwnd(), nullptr, nullptr,
+		RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_NOERASE );
 	return 0L;
 }
 
@@ -347,7 +390,6 @@ int CFuncKeyWnd::CalcButtonSize( void )
 {
 	int			nButtonNum;
 	RECT		rc;
-	int			nCyHScroll;
 	int			nCxVScroll;
 	::GetWindowRect( GetHwnd(), &rc );
 
@@ -358,9 +400,7 @@ int CFuncKeyWnd::CalcButtonSize( void )
 		nCxVScroll = 0;
 	}else{
 		/* サイズボックスの位置、サイズ変更 */
-		nCyHScroll = ::GetSystemMetrics( SM_CYHSCROLL );
 		nCxVScroll = ::GetSystemMetrics( SM_CXVSCROLL );
-		::MoveWindow( m_hwndSizeBox,  rc.right - rc.left - nCxVScroll, rc.bottom - rc.top - nCyHScroll, nCxVScroll, nCyHScroll, TRUE );
 //		::MoveWindow( m_hwndSizeBox,  0, 0, nCxVScroll, nCyHScroll, TRUE );
 
 //		return ( rc.right - rc.left - nCxVScroll = - nButtonNum -  ( (nButtonNum + m_nButtonGroupNum - 1) / m_nButtonGroupNum - 1 ) * 12 ) / nButtonNum;

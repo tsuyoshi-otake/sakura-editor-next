@@ -202,16 +202,24 @@ Two unoccluded captures each compared `Graphics.CopyFromScreen` against
 plus every run-owned Sakura process was gone afterward. Re-verify the
 apportioned four-side inset the same way after this change.
 
-Interactive terminal output uses leading-edge delivery with a trailing frame
-gate. Drain the first output notification immediately so a key echo or short
-command response is never held behind low-priority `WM_TIMER` dispatch. Output
-that arrives during the following frame interval may be coalesced and painted
-together to bound sustained rendering work. This mirrors Windows Terminal's
-`Renderer::NotifyPaintFrame` contract: an explicit redraw request sets the
-redraw state and wakes the render thread immediately; timers are used for their
-own expiry work, not as a prerequisite for the first response frame. Sakura's
-trailing gate remains necessary while parsing and invalidation are UI-thread
-owned rather than render-thread owned.
+Interactive terminal output uses event-driven leading-edge delivery. The
+notification gate keeps at most one queued wake per tab; the UI thread consumes
+that wake before draining the latest available output once, so output arriving
+during the drain can own the next wake without flooding the message queue. A
+key echo or short response is therefore never held behind low-priority
+`WM_TIMER` dispatch, and sustained output does not create an unbounded backlog.
+Do not reintroduce a fixed 16 ms application frame timer: presentation cadence
+belongs to the workbench frame coordinator, while terminal timers remain
+limited to protocol retry and synchronized-output expiry work.
+
+`CTerminalSession` destruction is also nonblocking. A live session pre-admits a
+fixed slot in `TerminalWorkerRetirementService`; the lifecycle worker joins the
+ConPTY reader/writer workers, and callback-origin destruction transfers its own
+join handle to the four-thread bounded reaper. If lifecycle-thread creation
+fails, the same close body runs as a fixed-slot reaper task. No terminal worker
+is detached, and a UI destructor never waits on a backend. Explicit
+`Close()`/`WaitForClose()` remains the external quiescence API for callers that
+need a completion result.
 
 ## VS Code terminal groups and terminal list (Issue #174)
 

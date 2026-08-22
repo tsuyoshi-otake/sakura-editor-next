@@ -115,12 +115,16 @@ void CTipWnd::Show( int nX, int nY, RECT* pRect )
 
 	if( m_bAlignLeft ){
 		// 右側固定で表示(MiniMap)
-		::MoveWindow( GetHwnd(), nX - rc.right, nY, rc.right + 8, rc.bottom + 8, TRUE );
+		::SetWindowPos( GetHwnd(), nullptr, nX - rc.right, nY,
+			rc.right + 8, rc.bottom + 8,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW );
 	}else{
 		// 左側固定で表示(通常)
-		::MoveWindow( GetHwnd(), nX, nY, rc.right + 8, rc.bottom + 8/*nHeight*/, TRUE );
+		::SetWindowPos( GetHwnd(), nullptr, nX, nY,
+			rc.right + 8, rc.bottom + 8/*nHeight*/,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW );
 	}
-	::InvalidateRect( GetHwnd(), nullptr, TRUE );
+	::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	::ShowWindow( GetHwnd(), SW_SHOWNA );
 	return;
 }

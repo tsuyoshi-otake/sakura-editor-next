@@ -244,7 +244,8 @@ void CActivityBar::Layout(const RECT& bounds, unsigned int dpi)
 	const int height = std::max(0L, bounds.bottom - bounds.top);
 	m_model.SetViewport(width, height, dpi);
 	if (m_window != nullptr) {
-		::SetWindowPos(m_window, nullptr, bounds.left, bounds.top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+		::SetWindowPos(m_window, nullptr, bounds.left, bounds.top, width, height,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	}
 	UpdateTooltipRects();
 	Invalidate();

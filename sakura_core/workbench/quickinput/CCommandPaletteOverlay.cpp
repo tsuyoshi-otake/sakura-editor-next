@@ -74,6 +74,14 @@ void FillWithColor(HDC dc, const RECT& bounds, COLORREF color) noexcept
 	return drawn != 0;
 }
 
+//! Queue a repaint without asking USER to erase the class background first.
+//! The overlay and all of its children paint their complete surfaces, so an
+//! erase pass only exposes a blank intermediate frame while the layout moves.
+void QueueNoEraseInvalidate(HWND window) noexcept
+{
+	if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
+}
+
 } // namespace
 
 CCommandPaletteOverlay::~CCommandPaletteOverlay() noexcept
@@ -139,13 +147,21 @@ void CCommandPaletteOverlay::Destroy() noexcept
 	m_empty = nullptr;
 	m_previousFocus = nullptr;
 	m_items.clear();
+	m_lastNotifiedSelectionId.clear();
+	m_selectionNotificationsEnabled = true;
 	m_stringsCallback = {};
+	m_searchCallback = {};
+	m_selectionCallback = {};
+	m_acceptCallback = {};
+	m_cancelCallback = {};
 	ResetBrushes();
 	m_font.Reset();
 	ReleaseCodiconFont();
 }
 
-bool CCommandPaletteOverlay::Show(std::vector<CommandPaletteItem> items)
+bool CCommandPaletteOverlay::Show(
+	std::vector<CommandPaletteItem> items,
+	std::wstring_view initiallySelectedId)
 {
 	if (m_window == nullptr || !::IsWindow(m_window) || items.empty()) return false;
 
@@ -153,16 +169,26 @@ bool CCommandPaletteOverlay::Show(std::vector<CommandPaletteItem> items)
 		m_previousFocus = ::GetFocus();
 		if (IsPaletteTarget(m_window, m_previousFocus)) m_previousFocus = m_parent;
 	}
+	m_selectionNotificationsEnabled = false;
+	m_lastNotifiedSelectionId.clear();
 	if (m_input != nullptr) ::SetWindowTextW(m_input, L"");
 	m_items = std::move(items);
 	RefreshStrings();
-	PopulateList();
+	PopulateList(initiallySelectedId);
+	m_selectionNotificationsEnabled = true;
+	NotifySelectionChanged();
 	Layout();
 	::SetWindowPos(m_window, HWND_TOP, 0, 0, 0, 0,
-		SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+		SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+		| SWP_NOREDRAW | SWP_NOCOPYBITS);
 	::ShowWindow(m_window, SW_SHOWNOACTIVATE);
 	::SetFocus(m_input);
-	::InvalidateRect(m_window, nullptr, FALSE);
+	QueueNoEraseInvalidate(m_window);
+	QueueNoEraseInvalidate(m_prompt);
+	QueueNoEraseInvalidate(m_input);
+	QueueNoEraseInvalidate(m_list);
+	QueueNoEraseInvalidate(m_close);
+	QueueNoEraseInvalidate(m_empty);
 	return true;
 }
 
@@ -228,7 +254,8 @@ void CCommandPaletteOverlay::Layout() noexcept
 	const int height = (std::min)(maximumHeight, (std::max)(minimumHeight, parentHeight - margin * 2));
 	const int x = (std::max)(0, (parentWidth - width) / 2);
 	const int y = (std::max)(Scale(10), (parentHeight - height) / 6);
-	::SetWindowPos(m_window, HWND_TOP, x, y, width, height, SWP_NOACTIVATE);
+	::SetWindowPos(m_window, HWND_TOP, x, y, width, height,
+		SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
 	Layout(width, height);
 }
 
@@ -264,9 +291,9 @@ void CCommandPaletteOverlay::SetPalette(const theme::ThemePalette& palette) noex
 	m_palette = palette;
 	RebuildBrushes();
 	if (m_window != nullptr) {
-		::InvalidateRect(m_window, nullptr, FALSE);
-		if (m_input != nullptr) ::InvalidateRect(m_input, nullptr, TRUE);
-		if (m_list != nullptr) ::InvalidateRect(m_list, nullptr, TRUE);
+		QueueNoEraseInvalidate(m_window);
+		QueueNoEraseInvalidate(m_input);
+		QueueNoEraseInvalidate(m_list);
 	}
 }
 
@@ -279,6 +306,11 @@ void CCommandPaletteOverlay::SetStringsCallback(StringsCallback callback)
 void CCommandPaletteOverlay::SetSearchCallback(SearchCallback callback)
 {
 	m_searchCallback = std::move(callback);
+}
+
+void CCommandPaletteOverlay::SetSelectionCallback(SelectionCallback callback)
+{
+	m_selectionCallback = std::move(callback);
 }
 
 void CCommandPaletteOverlay::SetAcceptCallback(AcceptCallback callback)
@@ -416,6 +448,10 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			Accept();
 			return 0;
 		}
+		if (control == kListControl && notification == LBN_SELCHANGE) {
+			NotifySelectionChanged();
+			return 0;
+		}
 		if (control == kCloseControl) {
 			Cancel();
 			return 0;
@@ -455,16 +491,51 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 	const int listBottom = (std::max)(listTop + Scale(60), height - margin);
 	const int listWidth = (std::max)(0, width - margin * 2);
 
-	::MoveWindow(m_prompt, margin, margin, promptWidth, rowHeight, TRUE);
-	::MoveWindow(m_input, margin + promptWidth + gap, margin,
-		(std::max)(0, width - margin * 2 - promptWidth - closeWidth - gap * 2), rowHeight, TRUE);
-	::MoveWindow(m_close, (std::max)(margin, width - margin - closeWidth), margin,
-		closeWidth, rowHeight, TRUE);
-	::MoveWindow(m_list, margin, listTop, listWidth, (std::max)(0, listBottom - listTop), TRUE);
-	::MoveWindow(m_empty, margin, listTop, listWidth, (std::max)(0, listBottom - listTop), TRUE);
+	const UINT commonFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS;
+	struct Placement {
+		HWND window;
+		int x;
+		int y;
+		int width;
+		int height;
+	};
+	const Placement placements[] = {
+		{ m_prompt, margin, margin, promptWidth, rowHeight },
+		{ m_input, margin + promptWidth + gap, margin,
+			(std::max)(0, width - margin * 2 - promptWidth - closeWidth - gap * 2), rowHeight },
+		{ m_close, (std::max)(margin, width - margin - closeWidth), margin, closeWidth, rowHeight },
+		{ m_list, margin, listTop, listWidth, (std::max)(0, listBottom - listTop) },
+		{ m_empty, margin, listTop, listWidth, (std::max)(0, listBottom - listTop) },
+	};
+
+	HDWP transaction = ::BeginDeferWindowPos(static_cast<int>(std::size(placements)));
+	bool positioned = transaction != nullptr;
+	if (positioned) {
+		for (const auto& placement : placements) {
+			if (placement.window == nullptr) continue;
+			transaction = ::DeferWindowPos(transaction, placement.window, nullptr,
+				placement.x, placement.y, placement.width, placement.height, commonFlags);
+			if (transaction == nullptr) {
+				positioned = false;
+				break;
+			}
+		}
+		if (positioned) positioned = ::EndDeferWindowPos(transaction) != FALSE;
+	}
+	if (!positioned) {
+		// A failed HDWP must not fall back to one-child-at-a-time painting.
+		for (const auto& placement : placements) {
+			if (placement.window != nullptr) {
+				::SetWindowPos(placement.window, nullptr, placement.x, placement.y,
+					placement.width, placement.height, commonFlags);
+			}
+		}
+	}
+	QueueNoEraseInvalidate(m_window);
+	for (const auto& placement : placements) QueueNoEraseInvalidate(placement.window);
 }
 
-void CCommandPaletteOverlay::PopulateList() noexcept
+void CCommandPaletteOverlay::PopulateList(std::wstring_view preferredSelectionId) noexcept
 {
 	if (m_list == nullptr) return;
 	::SendMessageW(m_list, LB_RESETCONTENT, 0, 0);
@@ -472,23 +543,33 @@ void CCommandPaletteOverlay::PopulateList() noexcept
 		::SendMessageW(m_list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.label.c_str()));
 	}
 	int selected = -1;
+	if (!preferredSelectionId.empty()) {
+		for (std::size_t index = 0; index < m_items.size(); ++index) {
+			if (m_items[index].enabled && m_items[index].id == preferredSelectionId) {
+				selected = static_cast<int>(index);
+				break;
+			}
+		}
+	}
 	for (std::size_t index = 0; index < m_items.size(); ++index) {
-		if (m_items[index].enabled) {
+		if (selected < 0 && m_items[index].enabled) {
 			selected = static_cast<int>(index);
 			break;
 		}
 	}
 	if (selected >= 0) ::SendMessageW(m_list, LB_SETCURSEL, selected, 0);
 	if (m_empty != nullptr) ::ShowWindow(m_empty, m_items.empty() ? SW_SHOW : SW_HIDE);
-	::InvalidateRect(m_list, nullptr, TRUE);
+	QueueNoEraseInvalidate(m_list);
+	NotifySelectionChanged();
 }
 
 void CCommandPaletteOverlay::UpdateSearch() noexcept
 {
 	if (m_input == nullptr) return;
+	const auto previousSelectionId = SelectedItemId();
 	const std::wstring query = ReadWindowText(m_input);
 	if (!m_searchCallback) {
-		PopulateList();
+		PopulateList(previousSelectionId);
 		return;
 	}
 	try {
@@ -497,7 +578,7 @@ void CCommandPaletteOverlay::UpdateSearch() noexcept
 	catch (...) {
 		m_items.clear();
 	}
-	PopulateList();
+	PopulateList(previousSelectionId);
 }
 
 void CCommandPaletteOverlay::MoveSelection(int direction) noexcept
@@ -513,9 +594,36 @@ void CCommandPaletteOverlay::MoveSelection(int direction) noexcept
 		if (m_items[static_cast<std::size_t>(current)].enabled) {
 			::SendMessageW(m_list, LB_SETCURSEL, current, 0);
 			::InvalidateRect(m_list, nullptr, FALSE);
+			NotifySelectionChanged();
 			return;
 		}
 	}
+}
+
+void CCommandPaletteOverlay::NotifySelectionChanged() noexcept
+{
+	if (!m_selectionNotificationsEnabled || !m_selectionCallback) return;
+	auto selected = SelectedItemId();
+	if (selected.empty() || selected == m_lastNotifiedSelectionId) return;
+	m_lastNotifiedSelectionId = selected;
+	try {
+		m_selectionCallback(std::move(selected));
+	}
+	catch (...) {
+		// Selection previews are advisory. Keep the Quick Pick usable if a
+		// presentation owner cannot render one item.
+	}
+}
+
+std::wstring CCommandPaletteOverlay::SelectedItemId() const
+{
+	if (m_list == nullptr) return {};
+	const int selected = static_cast<int>(::SendMessageW(m_list, LB_GETCURSEL, 0, 0));
+	if (selected < 0 || static_cast<std::size_t>(selected) >= m_items.size()
+		|| !m_items[static_cast<std::size_t>(selected)].enabled) {
+		return {};
+	}
+	return m_items[static_cast<std::size_t>(selected)].id;
 }
 
 void CCommandPaletteOverlay::Accept() noexcept

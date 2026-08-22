@@ -76,10 +76,14 @@ Verified against `microsoft/vscode` sources, not inferred from screenshots.
   all — a detached HEAD with no commit — where upstream's callers take their
   no-branch path. The status item names `HEAD` there rather than rendering a
   blank, unclickable gap.
-- The commit input box placeholder is
-  `Message (Ctrl+Enter to commit on "<headShortName>")`, with the branch in
-  double quotes, and drops the `on "…"` clause entirely when there is no short
-  name. `{0}` is upstream's resolved `git.commit` keybinding.
+- The commit input box placeholder is resolved through the publication text
+	keys `GitCommitMessage` / `GitCommitMessageOnBranch`, so the active language
+	controls both the wording and the shortcut label. The English fallback is
+	`Message (Ctrl+Enter to commit on "<headShortName>")`, with the branch in
+	double quotes, and drops the `on "…"` clause entirely when there is no short
+	name. The `{0}` argument is the branch or detached-head short name; the
+	shortcut text is part of the localized resource because this native editor
+	does not have Monaco's keybinding formatter.
 - The status items carry upstream's own tooltips: `<headLabel>, Checkout
   Branch/Tag...` for the branch item, and `Publish Branch`,
   `Synchronize Changes`, `Pull N commits from <upstream>`,
@@ -149,9 +153,11 @@ is the pure half -- it has no HWND, runs no git, and reads no file -- and
 - `BuildScmHistoryGraph` is upstream's `toISCMHistoryItemViewModelArray`
   swimlane walk: a lane waiting for this commit becomes its circle and continues
   into its **first** parent, further lanes waiting for the same commit are
-  merges that end here, and every additional parent opens a new lane unless one
-  is already awaiting it.  A commit nothing was waiting for starts its own lane
-  at the right-hand end.
+  merges that end here, and every additional parent opens a new lane.  A commit
+  nothing was waiting for starts its own lane at the right-hand end.  A first
+  parent is retained even when another lane already awaits that same commit:
+  the duplicate is the branch lane needed on the following row to draw the
+  connector back into the shared parent, not a duplicate visible commit.
 - `EScmGraphPresentationStatus` is now `Unavailable` / `Available`.
   `Unavailable` still means "no history has been read, or reading it failed",
   and still paints the message rather than an empty list, because an empty list
@@ -360,6 +366,11 @@ two lanes joined.
   GDI's `PolyBezierTo` continues from the current position, which `Arc` cannot
   do; the divergence is the approximation itself, and it is under half a pixel
   at these radii.
+- **A shared first parent keeps both incoming lanes until the parent row.**
+  `BuildScmHistoryGraph` intentionally preserves the second lane even though
+  both lanes carry the same parent id.  `PaintGraphRow` consumes that lane as
+  the branch connector; collapsing it in the model makes the new-branch line
+  stop at the child commit instead of rejoining the shared parent.
 
 ### Graph divergences
 
@@ -753,6 +764,24 @@ and working-tree commands.
   the upstream default keeps the box identical to a stock VS Code; inventing a
   third size would not. It becomes a real setting when the tool gains a font
   scale of its own.
+
+## Paint Stability Invariants
+
+The Source Control view is a stack of sibling native windows, so its paint path
+must preserve the pixels already on screen when the model has not changed.
+
+- An idle Git refresh may advance no view state. `RebuildRows` compares the
+  complete `ScmRow` sequence and resource count; an equal result must not call
+  `LB_RESETCONTENT`, `LB_ADDSTRING`, or a parent-wide redraw.
+- List hover invalidation is row-local. Moving within the same row does not
+  invalidate the list; when a group row's inline action hit target changes,
+  invalidate only that row. A row transition invalidates the old and new rows.
+- Rebuilds use `RDW_INVALIDATE | RDW_UPDATENOW | RDW_ALLCHILDREN` without an
+  erase pass, and parent invalidation uses `FALSE`. Every owner-drawn row paints
+  its own background, so a background erase would only expose an empty frame.
+- The SCM container uses both `WS_CLIPCHILDREN` and `WS_CLIPSIBLINGS`; the list,
+  graph, edit box, and overlay scrollbars are siblings and must not paint into
+  one another's rectangles.
 
 ## Opening a Change
 
@@ -1575,19 +1604,20 @@ occupies is `ScmViewStackLayout::actionButton`.
   read. A local constant here would let the two disagree about one upstream
   control, which is exactly the defect #218 fixed for the Explorer.
 - The primary half runs `git.commit`; the dropdown half opens
-  `secondaryCommands` and runs the chosen id through the same `runCommand`
+  `secondaryCommands` and runs the chosen id and arguments through the same `runCommand`
   route. The title is kept in `renderLabelWithIcons` syntax (`$(check) Commit`)
   so the native renderer draws upstream's own Codicon.
 
 Recorded divergences (omit, don't fake):
 
-- **`Commit & Push` and `Commit & Sync` are absent.** They are upstream's
-  `git.postCommitCommand` variants: git commits and *then* runs push or sync as
-  one action. This product has no post-commit-command contract --
-  `GitCommitCommands` ends at the commit -- so the dropdown offers only the
-  variants that are actually routable. Rendering them as plain commits would be
-  the faked capability. Implementing them means giving the commit executor a
-  post-commit stage, not adding two menu rows.
+- **`Commit & Push` and `Commit & Sync` use a native payload projection.**
+  Upstream passes its `SourceControl` object and the post-commit command in
+  `git.commit`'s arguments. The native boundary already owns the repository,
+  so the action button publishes `[]`, `["git.push"]`, or `["git.sync"]`; the
+  composition root commits first and then calls the existing push/sync
+  executor. The SCM refresh is asynchronous, so the immediate sync path raises
+  the known-ahead count to at least one after a successful commit; it does not
+  infer a remote or invent a second Git implementation.
 - **`Commit (Signed Off)` is absent** for the same reason: `git.commitSignedOff`
   is not registered here.
 - **The button is always the commit button.** Upstream's action button is a

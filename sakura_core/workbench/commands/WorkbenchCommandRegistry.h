@@ -196,10 +196,10 @@ struct WorkbenchGitCommandExecutors {
 	WorkbenchCommandExecutor stageAll;
 	WorkbenchCommandExecutor unstageAll;
 	WorkbenchCommandExecutor cleanAll;
-	//! Repository-scoped: upstream's `commitWithAnyInput` takes only the
-	//! repository and reads the commit message off its own SCM input box, so
-	//! these carry no payload either.
-	WorkbenchCommandExecutor commit;
+	//! Repository-scoped: upstream's `commitWithAnyInput` reads the message off
+	//! its own SCM input box, while the action button optionally carries one
+	//! post-commit command (`["git.push"]` or `["git.sync"]`).
+	WorkbenchCommandArgumentExecutor commit;
 	WorkbenchCommandExecutor commitAmend;
 	WorkbenchCommandExecutor undoCommit;
 	//! Diff-editor-scoped: upstream's handlers take no operand at all. They read

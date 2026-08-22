@@ -38,6 +38,7 @@ struct QuickInputStrings {
 class CCommandPaletteOverlay final {
 public:
 	using SearchCallback = std::function<std::vector<CommandPaletteItem>(std::wstring_view)>;
+	using SelectionCallback = std::function<void(std::wstring)>;
 	using AcceptCallback = std::function<void(std::wstring)>;
 	using CancelCallback = std::function<void()>;
 	using StringsCallback = std::function<QuickInputStrings()>;
@@ -51,8 +52,12 @@ public:
 	void Destroy() noexcept;
 
 	//! Shows the palette without disabling or entering a nested message loop for the owner.
-	[[nodiscard]] bool Show(std::vector<CommandPaletteItem> items);
+	[[nodiscard]] bool Show(
+		std::vector<CommandPaletteItem> items,
+		std::wstring_view initiallySelectedId = {});
 	void Hide() noexcept;
+	//! Closes the palette through its cancel terminal, if it is visible.
+	void Cancel() noexcept;
 	[[nodiscard]] bool IsVisible() const noexcept;
 
 	//! Gives the editor message loop first chance to handle palette keyboard input.
@@ -64,6 +69,7 @@ public:
 	void SetPalette(const theme::ThemePalette& palette) noexcept;
 	void SetStringsCallback(StringsCallback callback);
 	void SetSearchCallback(SearchCallback callback);
+	void SetSelectionCallback(SelectionCallback callback);
 	void SetAcceptCallback(AcceptCallback callback);
 	void SetCancelCallback(CancelCallback callback);
 
@@ -78,11 +84,12 @@ private:
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept;
 
 	void Layout(int width, int height) noexcept;
-	void PopulateList() noexcept;
+	void PopulateList(std::wstring_view preferredSelectionId = {}) noexcept;
 	void UpdateSearch() noexcept;
 	void MoveSelection(int direction) noexcept;
+	void NotifySelectionChanged() noexcept;
+	[[nodiscard]] std::wstring SelectedItemId() const;
 	void Accept() noexcept;
-	void Cancel() noexcept;
 	void RestoreFocus() noexcept;
 	void Paint(HDC dc, const RECT& bounds) noexcept;
 	void DrawItem(const DRAWITEMSTRUCT& draw) noexcept;
@@ -114,8 +121,11 @@ private:
 	int m_codiconFontHeight = 0;
 
 	std::vector<CommandPaletteItem> m_items;
+	std::wstring m_lastNotifiedSelectionId;
+	bool m_selectionNotificationsEnabled = true;
 	StringsCallback m_stringsCallback;
 	SearchCallback m_searchCallback;
+	SelectionCallback m_selectionCallback;
 	AcceptCallback m_acceptCallback;
 	CancelCallback m_cancelCallback;
 };

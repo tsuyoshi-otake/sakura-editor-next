@@ -302,7 +302,6 @@ CLayoutInt CCaret::MoveCursor(
 			m_pEditView->GetTextArea().OffsetViewTopLine(-nScrollRowNum);
 			if( m_pEditView->GetDrawSwitch() ){
 				m_pEditView->InvalidateRect( nullptr );
-				m_pEditView->UpdateWindow();
 				if( GetEditWnd().GetMiniMap().GetHwnd() ){
 					m_pEditView->MiniMapRedraw(true);
 				}
@@ -386,6 +385,7 @@ CLayoutInt CCaret::MoveCursor(
 	// アウトライン表示の選択位置を更新
 	CLayoutPoint poCaret = GetCaretLayoutPos();
 	GetEditWnd().m_cDlgFuncList.NotifyCaretMovement( poCaret.GetY2() + 1, poCaret.GetX2() + 1 );
+	m_pEditView->MarkRenderDamage(editor::rendering::EEditViewDamage::Caret);
 
 	return nScrollRowNum;
 }
@@ -396,6 +396,7 @@ CLayoutInt CCaret::MoveCursorFastMode(
 {
 	// fastMode
 	SetCaretLogicPos(ptWk_CaretPosLogic);
+	m_pEditView->MarkRenderDamage(editor::rendering::EEditViewDamage::Caret);
 	return CLayoutInt(0);
 }
 
@@ -879,8 +880,7 @@ void CCaret::ShowCaretPosInfo()
 		GetEditWnd().LayoutStatusBarParts();
 		::GetClientRect(hWnd, &updatedRect);
 		::SendMessage(hWnd, WM_SETREDRAW, TRUE, 0);
-		InvalidateRect(hWnd, &updatedRect, TRUE);
-		UpdateWindow(hWnd);
+		InvalidateRect(hWnd, &updatedRect, FALSE);
 	}
 }
 

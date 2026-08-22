@@ -664,6 +664,9 @@
     <ClInclude Include="..\sakura_core\view\CEditView_Paint.h">
       <Filter>Cpp Source Files\view</Filter>
     </ClInclude>
+	<ClInclude Include="..\sakura_core\view\CEditView_RenderingState.h">
+	  <Filter>Cpp Source Files\view</Filter>
+	</ClInclude>
     <ClInclude Include="..\sakura_core\view\CRuler.h">
       <Filter>Cpp Source Files\view</Filter>
     </ClInclude>
@@ -1100,6 +1103,57 @@
 	<ClInclude Include="..\sakura_core\workbench\layout\WorkbenchLayoutStateService.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameCoordinatorModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameCoordinatorRuntime.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameRuntimeRetirementService.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameDeviceDomainModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FramePresentationOwner.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FramePresentationSurfaceRegistry.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameSurfaceAdapter.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameSurfaceCommitState.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameWindowTransaction.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\CGdiBackBuffer.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameNativeSurfacePayloadAdapter.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\LatestOnlyMailbox.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameRuntimeTelemetry.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameCadence.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameCadenceSource.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameBackpressure.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\rendering\FrameFaultModel.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
 
 	<ClInclude Include="..\sakura_core\workbench\keybinding\KeybindingChord.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
@@ -1212,6 +1266,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.h">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClInclude>
+	<ClInclude Include="..\sakura_core\workbench\scm\ScmNativeSurfaceAdapter.h">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClInclude>
 	<ClInclude Include="..\sakura_core\workbench\search\CSearchWorkbenchTool.h">
@@ -1557,10 +1614,19 @@
     <ClInclude Include="..\sakura_core\terminal\session\TerminalSession.h">
       <Filter>Cpp Source Files\terminal</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\TerminalSessionRetirementService.h">
+      <Filter>Cpp Source Files\terminal</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalTool.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\CTerminalWnd.h">
+      <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalNativeFrameBridge.h">
+      <Filter>Cpp Source Files\terminal\window</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\terminal\window\TerminalSurfaceAdapter.h">
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\terminal\window\TerminalBuiltinGlyphRenderer.h">
@@ -1606,6 +1672,12 @@
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\MarkdownPreviewSurfaceAdapter.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\MarkdownPreviewWorkerRetirement.h">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClInclude>
     <ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h">
@@ -2497,6 +2569,9 @@
     <ClCompile Include="..\sakura_core\view\CEditView.cpp">
       <Filter>Cpp Source Files\view</Filter>
     </ClCompile>
+	<ClCompile Include="..\sakura_core\view\CEditView_RenderingState.cpp">
+	  <Filter>Cpp Source Files\view</Filter>
+	</ClCompile>
     <ClCompile Include="..\sakura_core\view\CEditView_Cmdgrep.cpp">
       <Filter>Cpp Source Files\view</Filter>
     </ClCompile>
@@ -3013,6 +3088,48 @@
 	<ClCompile Include="..\sakura_core\workbench\viewcontainer\CViewContainerPages.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameCoordinatorModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameCoordinatorRuntime.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameDeviceDomainModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FramePresentationOwner.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FramePresentationSurfaceRegistry.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameSurfaceAdapter.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameWindowTransaction.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\CGdiBackBuffer.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameNativeSurfacePayloadAdapter.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameRuntimeTelemetry.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameCadence.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameCadenceSource.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameBackpressure.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\rendering\FrameFaultModel.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\outline\COutlineWorkbenchTool.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
@@ -3069,6 +3186,9 @@
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\scm\CScmWorkbenchTool.cpp">
+	  <Filter>Cpp Source Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\sakura_core\workbench\scm\ScmNativeSurfaceAdapter.cpp">
 	  <Filter>Cpp Source Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\sakura_core\workbench\search\CSearchWorkbenchTool.cpp">

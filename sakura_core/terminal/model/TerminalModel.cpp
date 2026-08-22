@@ -75,9 +75,9 @@ TerminalRow TerminalModel::RecycleForBlankRow( TerminalRow&& outgoing, const Ter
 {
 	if( !m_alternateScreen && m_scrollbackLimit != 0 ) {
 		if( m_scrollback.size() == m_scrollbackLimit ) {
-			TerminalRow recycled = std::move(m_scrollback.front());
-			m_scrollback.pop_front();
-			m_scrollback.push_back(std::move(outgoing));
+			TerminalRow recycled = std::move(m_scrollback[m_scrollbackHead]);
+			m_scrollback[m_scrollbackHead] = std::move(outgoing);
+			m_scrollbackHead = (m_scrollbackHead + 1) % m_scrollback.size();
 			ResetRow(recycled, attributes);
 			return recycled;
 		}
@@ -88,11 +88,32 @@ TerminalRow TerminalModel::RecycleForBlankRow( TerminalRow&& outgoing, const Ter
 	return outgoing;
 }
 
+void TerminalModel::AppendScrollbackRow( TerminalRow&& row )
+{
+	if( m_scrollbackLimit == 0 ) return;
+	if( m_scrollback.size() < m_scrollbackLimit ) {
+		m_scrollback.push_back(std::move(row));
+		return;
+	}
+	m_scrollback[m_scrollbackHead] = std::move(row);
+	m_scrollbackHead = (m_scrollbackHead + 1) % m_scrollback.size();
+}
+
+void TerminalModel::NormalizeScrollbackOrder()
+{
+	if( m_scrollbackHead == 0 || m_scrollback.empty() ) return;
+	std::rotate(m_scrollback.begin(),
+		m_scrollback.begin() + static_cast<std::ptrdiff_t>(m_scrollbackHead),
+		m_scrollback.end());
+	m_scrollbackHead = 0;
+}
+
 void TerminalModel::Reset()
 {
 	m_rows.clear();
 	for( std::size_t i = 0; i < m_rowsCount; ++i ) m_rows.push_back(MakeBlankRow());
 	m_scrollback.clear();
+	m_scrollbackHead = 0;
 	m_savedMainRows.clear();
 	m_cursorColumn = m_cursorRow = 0;
 	m_savedCursorColumn = m_savedCursorRow = 0;
@@ -125,6 +146,7 @@ void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 			}
 		};
 		resizeColumns(m_rows);
+		resizeColumns(m_scrollback);
 		resizeColumns(m_savedMainRows);
 	}
 	if( rows != m_rowsCount ) {
@@ -132,8 +154,7 @@ void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 			TerminalRow outgoing = std::move(m_rows.front());
 			m_rows.pop_front();
 			if( !m_alternateScreen && m_scrollbackLimit != 0 ) {
-				m_scrollback.push_back(std::move(outgoing));
-				if( m_scrollback.size() > m_scrollbackLimit ) m_scrollback.pop_front();
+				AppendScrollbackRow(std::move(outgoing));
 			}
 		}
 		while( m_rows.size() < rows ) m_rows.push_back(MakeBlankRow(m_attributes));
@@ -157,8 +178,10 @@ void TerminalModel::Resize( std::size_t columns, std::size_t rows )
 
 void TerminalModel::SetScrollbackLimit( std::size_t lines )
 {
+	NormalizeScrollbackOrder();
 	m_scrollbackLimit = ClampScrollback(lines);
 	while( m_scrollback.size() > m_scrollbackLimit ) m_scrollback.pop_front();
+	m_scrollbackHead = 0;
 }
 
 void TerminalModel::AppendCodepoint( TerminalCell& cell, char32_t codepoint ) noexcept
@@ -461,7 +484,10 @@ void TerminalModel::EraseDisplay( int mode )
 		MarkDirtyRange(0, m_cursorRow);
 	} else if( mode == 2 || mode == 3 ) {
 		for( auto& row : m_rows ) ClearCellRange(row, 0, m_columns);
-		if( mode == 3 ) m_scrollback.clear();
+		if( mode == 3 ) {
+			m_scrollback.clear();
+			m_scrollbackHead = 0;
+		}
 		MarkDirtyRange(0, m_rowsCount - 1);
 	}
 }

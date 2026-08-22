@@ -117,6 +117,9 @@ COLORREF OutlineBackgroundColor( const theme::ThemePalette& palette ) noexcept
 COutlineWorkbenchTool::COutlineWorkbenchTool( CDlgFuncList& dialog ) noexcept
 	: m_dialog(&dialog)
 {
+	m_dialog->SetWorkbenchNativeSurfaceSubmitter([this]( HDC dc, const RECT& rect ) noexcept {
+		(void)SubmitNativeSurface( dc, rect );
+	});
 }
 
 COutlineWorkbenchTool::~COutlineWorkbenchTool()
@@ -180,6 +183,8 @@ bool COutlineWorkbenchTool::PreTranslateMessage( MSG& message )
 void COutlineWorkbenchTool::Close()
 {
 	if( m_lifecycle == OutlineToolLifecycle::Closed ) return;
+	if( m_dialog != nullptr ) m_dialog->SetWorkbenchNativeSurfaceSubmitter({});
+	(void)m_nativeSurface.Close();
 	const HWND window = GetDialogWindow();
 	if( m_dialog != nullptr ) {
 		// Stop the snapshot worker while the dialog still owns its result gate.
@@ -210,6 +215,35 @@ void COutlineWorkbenchTool::SetVisible( bool visible ) noexcept
 	if( window != nullptr && (::IsWindowVisible(window) != FALSE) != visible ) {
 		::ShowWindow(window, visible ? SW_SHOWNA : SW_HIDE);
 	}
+}
+
+void COutlineWorkbenchTool::SetNativeSurfaceSink(
+	rendering::FrameNativeSurfacePayloadSink sink) noexcept
+{
+	m_nativeSurface.SetSink(std::move(sink));
+}
+
+rendering::FrameNativeSurfacePayloadResult COutlineWorkbenchTool::RegisterNativeSurface(
+	const rendering::FrameNativeSurfacePayloadTarget& target) noexcept
+{
+	return m_nativeSurface.Register(target);
+}
+
+rendering::FrameNativeSurfacePayloadResult COutlineWorkbenchTool::UpdateNativeSurface(
+	const rendering::FrameNativeSurfacePayloadTarget& target) noexcept
+{
+	return m_nativeSurface.Update(target);
+}
+
+rendering::FrameNativeSurfacePayloadResult COutlineWorkbenchTool::SubmitNativeSurface(
+	const HDC sourceDc, const RECT& dirtyRect) noexcept
+{
+	return m_nativeSurface.Submit(sourceDc, dirtyRect);
+}
+
+rendering::FrameNativeSurfacePayloadResult COutlineWorkbenchTool::CloseNativeSurface() noexcept
+{
+	return m_nativeSurface.Close();
 }
 
 void COutlineWorkbenchTool::SetPalette( const theme::ThemePalette& palette )
@@ -245,7 +279,8 @@ void COutlineWorkbenchTool::ApplyLayout() noexcept
 	const LONG height = m_layout.bounds.bottom - m_layout.bounds.top;
 	if( !m_hasAppliedLayout || m_appliedWindow != window || !(m_appliedLayout == m_layout) ){
 		::SetWindowPos( window, nullptr, m_layout.bounds.left, m_layout.bounds.top, width, height,
-			SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER );
+			SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOZORDER
+			| SWP_NOCOPYBITS | SWP_NOREDRAW );
 		m_appliedWindow = window;
 		m_appliedLayout = m_layout;
 		m_hasAppliedLayout = true;

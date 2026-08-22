@@ -250,17 +250,53 @@ TEST(GitScmMenus, ContributesTheCommitActionButtonOnlyWhileThereAreChanges)
 	EXPECT_EQ(L"$(check) Commit", button->title);
 	EXPECT_EQ("git.commit", button->commandId);
 	EXPECT_TRUE(button->enabled);
-	ASSERT_EQ(2u, button->secondaryCommands.size());
+	ASSERT_EQ(5u, button->secondaryCommands.size());
 	EXPECT_EQ("git.commit", button->secondaryCommands[0].commandId);
 	EXPECT_EQ(L"Commit", button->secondaryCommands[0].title);
 	EXPECT_EQ("git.commitAmend", button->secondaryCommands[1].commandId);
 	EXPECT_EQ(L"Commit (Amend)", button->secondaryCommands[1].title);
+	EXPECT_TRUE(button->secondaryCommands[2].separator);
+	EXPECT_EQ("git.commit", button->secondaryCommands[3].commandId);
+	EXPECT_EQ(L"Commit & Push", button->secondaryCommands[3].title);
+	EXPECT_EQ(R"(["git.push"])", button->secondaryCommands[3].argumentsJson);
+	EXPECT_EQ("git.commit", button->secondaryCommands[4].commandId);
+	EXPECT_EQ(L"Commit & Sync", button->secondaryCommands[4].title);
+	EXPECT_EQ(R"(["git.sync"])", button->secondaryCommands[4].argumentsJson);
 
 	// A disabled input box disables the button, exactly as a running repository
 	// operation disables both upstream.
 	const auto disabled = BuildGitCommitActionButton(true, false);
 	ASSERT_TRUE(disabled.has_value());
 	EXPECT_FALSE(disabled->enabled);
+}
+
+TEST(GitCommitCommands, ParsesTheActionButtonsPostCommitPayload)
+{
+	const auto empty = ParseGitCommitPostCommandArguments("");
+	ASSERT_TRUE(empty.has_value());
+	EXPECT_EQ(EGitPostCommitCommand::None, *empty);
+
+	const auto noAction = ParseGitCommitPostCommandArguments("[ ]\t");
+	ASSERT_TRUE(noAction.has_value());
+	EXPECT_EQ(EGitPostCommitCommand::None, *noAction);
+
+	const auto push = ParseGitCommitPostCommandArguments(R"(["git.push"])");
+	ASSERT_TRUE(push.has_value());
+	EXPECT_EQ(EGitPostCommitCommand::Push, *push);
+
+	const auto sync = ParseGitCommitPostCommandArguments(R"([ "git.sync" ])");
+	ASSERT_TRUE(sync.has_value());
+	EXPECT_EQ(EGitPostCommitCommand::Sync, *sync);
+}
+
+TEST(GitCommitCommands, RejectsUnsupportedPostCommitPayloads)
+{
+	for (const auto payload : {
+		std::string("null"), std::string("[\"git.fetch\"]"),
+		std::string("[\"git.push\", \"git.sync\"]"), std::string("[true]"),
+		std::string("[\"git.push\"] trailing") }) {
+		EXPECT_FALSE(ParseGitCommitPostCommandArguments(payload).has_value()) << payload;
+	}
 }
 
 TEST(GitCommandRunner, BuildsCommandLineAndPrependsRepositoryDirectory)
@@ -764,6 +800,14 @@ TEST(GitScmPublisher, BuildsUpstreamIdentitiesGroupsAndCount)
 	// are what separate the branch from the surrounding sentence when a branch
 	// name contains a space.
 	EXPECT_EQ("Message (Ctrl+Enter to commit on \"master\")", provider.inputBox.placeholder);
+
+	const GitDiffTextResolver localized = [](std::string_view key, std::wstring_view argument) {
+		if (key != "GitCommitMessageOnBranch") return std::wstring{};
+		return std::wstring(L"Localized commit on ") + std::wstring(argument);
+	};
+	const auto localizedPublication = BuildGitPublication(Owner(), L"C:\\repo\\project", state,
+		EUntrackedChangesPolicy::Mixed, localized);
+	EXPECT_EQ("Localized commit on master", localizedPublication.provider.inputBox.placeholder);
 
 	// Upstream declaration order, so the SCM view renders the groups in the
 	// order a VS Code user already knows.
@@ -3799,7 +3843,7 @@ TEST(GitHistoryModel, ClassifiesDecorationsTheWayGitSpellsThem)
 	EXPECT_EQ(L"HEAD", detached[0].name);
 }
 
-TEST(GitHistoryModel, GivesAMergeTwoOutputLanesAndRejoinsThemAtTheSharedParent)
+TEST(GitHistoryModel, KeepsTheSharedParentLaneSoTheBranchConnectorCanRejoin)
 {
 	//   m  -- merge of a and b
 	//   |\
@@ -3827,12 +3871,15 @@ TEST(GitHistoryModel, GivesAMergeTwoOutputLanesAndRejoinsThemAtTheSharedParent)
 	ASSERT_EQ(2u, rows[1].outputSwimlanes.size());
 	EXPECT_EQ(L"r", rows[1].outputSwimlanes[0].id);
 	EXPECT_EQ(L"b", rows[1].outputSwimlanes[1].id);
-	// `b`'s parent is already awaited on lane 0, so the second lane ends here
-	// instead of drawing a duplicate line down to the same commit.
+	// `b`'s parent is already awaited on lane 0, but the second copy is kept on
+	// lane 1. The renderer needs it on the next row to draw the branch connector
+	// back into the shared commit; dropping it would cut the line off at `b`.
 	EXPECT_EQ(1u, rows[2].circleLane);
-	ASSERT_EQ(1u, rows[2].outputSwimlanes.size());
+	ASSERT_EQ(2u, rows[2].outputSwimlanes.size());
 	EXPECT_EQ(L"r", rows[2].outputSwimlanes[0].id);
-	// The root has no parent, so its lane stops at its own circle.
+	EXPECT_EQ(L"r", rows[2].outputSwimlanes[1].id);
+	// Both lanes arrive at the root. The second lane is consumed by the merge
+	// path, so the root still has one visible circle and no output lane.
 	EXPECT_EQ(0u, rows[3].circleLane);
 	EXPECT_TRUE(rows[3].outputSwimlanes.empty());
 }

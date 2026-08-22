@@ -28,6 +28,8 @@
 #include "workbench/icons/SetiIconPainter.h"
 #include "workbench/icons/ThemeIconResolver.h"
 #include "workbench/controls/COverlayScrollbar.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
+#include "workbench/WorkerRetirementService.h"
 
 #include <sakura/uri/UriIdentity.h>
 
@@ -317,6 +319,18 @@ struct SharedWorkerState {
 	std::shared_ptr<NotificationGate> gate = std::make_shared<NotificationGate>();
 	HANDLE stopEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
 	HANDLE wakeEvent = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+
+	~SharedWorkerState() noexcept
+	{
+		if (stopEvent != nullptr) {
+			::CloseHandle(stopEvent);
+			stopEvent = nullptr;
+		}
+		if (wakeEvent != nullptr) {
+			::CloseHandle(wakeEvent);
+			wakeEvent = nullptr;
+		}
+	}
 };
 
 [[nodiscard]] int CompareNoCase(const std::wstring& left, const std::wstring& right) noexcept
@@ -542,8 +556,13 @@ struct CExplorerTool::Impl {
 
 	std::shared_ptr<SharedWorkerState> shared = std::make_shared<SharedWorkerState>();
 	std::thread worker;
+	std::optional<workbench::WorkerRetirementService::Reservation> workerRetirement;
 	HWND window{};
 	HWND tree{};
+	//! Persistent composition target for the Explorer's own header/welcome surface.
+	//! The child TreeView remains responsible for its native double-buffered rows.
+	workbench::rendering::CGdiBackBuffer windowBuffer;
+	workbench::rendering::FrameNativeSurfacePayloadAdapter nativeSurface;
 	//! The VS Code-style overlay scrollbar, shared with the Source Control view.
 	controls::COverlayScrollbar scrollbar;
 	RECT bounds{};
@@ -737,8 +756,10 @@ struct CExplorerTool::Impl {
 		LayoutEmptyState();
 		if (tree != nullptr) {
 			const int top = HeaderHeight();
-			::MoveWindow(tree, client.left, top, std::max(0L, client.right - client.left),
-				std::max(0L, client.bottom - top), TRUE);
+			::SetWindowPos(tree, nullptr, client.left, top,
+				std::max(0L, client.right - client.left),
+				std::max(0L, client.bottom - top),
+				SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 			::ShowWindow(tree, !root.empty() && filesPaneExpanded ? SW_SHOWNOACTIVATE : SW_HIDE);
 		}
 		// UpdateOverlayScrollbar keys the overlay off the tree's own WS_VISIBLE, so
@@ -753,7 +774,7 @@ struct CExplorerTool::Impl {
 		if (closed || window == nullptr) return;
 		filesPaneExpanded = !filesPaneExpanded;
 		LayoutChildren();
-		::InvalidateRect(window, nullptr, TRUE);
+		::InvalidateRect(window, nullptr, FALSE);
 	}
 
 	void InvokeHeaderAction(int index)
@@ -1114,7 +1135,11 @@ struct CExplorerTool::Impl {
 
 	void StartWorker()
 	{
-		if (!worker.joinable()) worker = std::thread(WorkerMain, shared);
+		if (worker.joinable()) return;
+		auto retirement = workbench::WorkerRetirementService::Instance().TryReserve();
+		if (!retirement) return;
+		worker = std::thread(WorkerMain, shared);
+		workerRetirement.emplace(std::move(*retirement));
 	}
 
 	void StopWorker()
@@ -1123,7 +1148,11 @@ struct CExplorerTool::Impl {
 		shared->state.store(ExplorerWorkerState::CancelRequested, std::memory_order_release);
 		::SetEvent(shared->stopEvent);
 		::SetEvent(shared->wakeEvent);
-		worker.join();
+		if (workerRetirement) {
+			(void)workbench::WorkerRetirementService::Instance().Retire(
+				std::move(worker), std::move(*workerRetirement), shared);
+			workerRetirement.reset();
+		}
 	}
 
 	void SetNotificationWindow(HWND target, bool alive)
@@ -1755,7 +1784,7 @@ struct CExplorerTool::Impl {
 		if (root.empty()) {
 			::ShowWindow(tree, SW_HIDE);
 			LayoutChildren();
-			if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
+			if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
 			return;
 		}
 		::ShowWindow(tree, SW_SHOWNOACTIVATE);
@@ -1774,7 +1803,7 @@ struct CExplorerTool::Impl {
 		const auto [it, inserted] = nodes.emplace(rootNode.id, std::move(rootNode));
 		if (inserted) QueueEnumeration(it->second, false);
 		LayoutChildren();
-		if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
+		if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
 	}
 
 	void QueueEnumeration(Node& node, bool refresh)
@@ -1927,7 +1956,7 @@ struct CExplorerTool::Impl {
 		(void)::SendMessageW(tree, WM_SETREDRAW, TRUE, 0);
 		if (changed) {
 			(void)::RedrawWindow(tree, nullptr, nullptr,
-				RDW_INVALIDATE | RDW_ERASE | RDW_FRAME | RDW_ALLCHILDREN | RDW_UPDATENOW);
+				RDW_INVALIDATE | RDW_NOERASE | RDW_FRAME | RDW_ALLCHILDREN);
 		}
 		UpdateOverlayScrollbar();
 		if (refreshAgain) {
@@ -2036,7 +2065,9 @@ void CExplorerTool::Layout(const RECT& contentRect, unsigned int dpi)
 	}
 	if (m_impl->window != nullptr) {
 		::SetWindowPos(m_impl->window, nullptr, contentRect.left, contentRect.top,
-			std::max(0L, contentRect.right - contentRect.left), std::max(0L, contentRect.bottom - contentRect.top), SWP_NOACTIVATE | SWP_NOZORDER);
+			std::max(0L, contentRect.right - contentRect.left),
+			std::max(0L, contentRect.bottom - contentRect.top),
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
 		m_impl->LayoutChildren();
 	}
 }
@@ -2083,13 +2114,12 @@ void CExplorerTool::Close()
 	if (m_impl->window != nullptr) ::KillTimer(m_impl->window, kRefreshTimer);
 	m_impl->SetNotificationWindow(nullptr, false);
 	m_impl->StopWorker();
+	(void)m_impl->nativeSurface.Close();
 	m_impl->DestroyIconImages();
 	m_impl->scrollbar.Destroy();
 	if (m_impl->window != nullptr && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
 	m_impl->tree = nullptr;
-	if (m_impl->shared->stopEvent != nullptr) { ::CloseHandle(m_impl->shared->stopEvent); m_impl->shared->stopEvent = nullptr; }
-	if (m_impl->shared->wakeEvent != nullptr) { ::CloseHandle(m_impl->shared->wakeEvent); m_impl->shared->wakeEvent = nullptr; }
 }
 
 void CExplorerTool::SetRoot(std::wstring root)
@@ -2169,7 +2199,7 @@ void CExplorerTool::RefreshStrings()
 {
 	if (m_impl->closed) return;
 	m_impl->LayoutChildren();
-	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 
 void CExplorerTool::CollapseAllFolders()
@@ -2185,7 +2215,7 @@ void CExplorerTool::SetPalette(ExplorerPalette palette)
 		TreeView_SetTextColor(m_impl->tree, palette.text);
 	}
 	m_impl->RebuildIconImages();
-	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+	if (m_impl->window != nullptr) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 	m_impl->UpdateOverlayScrollbar();
 }
 
@@ -2212,6 +2242,35 @@ ExplorerDecorationOptions CExplorerTool::GetDecorationOptions() const noexcept
 }
 ExplorerWorkerState CExplorerTool::GetWorkerState() const noexcept { return m_impl->shared->state.load(std::memory_order_acquire); }
 HWND CExplorerTool::GetHwnd() const noexcept { return m_impl->window; }
+
+void CExplorerTool::SetNativeSurfaceSink(
+	rendering::FrameNativeSurfacePayloadSink sink) noexcept
+{
+	m_impl->nativeSurface.SetSink(std::move(sink));
+}
+
+rendering::FrameNativeSurfacePayloadResult CExplorerTool::RegisterNativeSurface(
+	const rendering::FrameNativeSurfacePayloadTarget& target) noexcept
+{
+	return m_impl->nativeSurface.Register(target);
+}
+
+rendering::FrameNativeSurfacePayloadResult CExplorerTool::UpdateNativeSurface(
+	const rendering::FrameNativeSurfacePayloadTarget& target) noexcept
+{
+	return m_impl->nativeSurface.Update(target);
+}
+
+rendering::FrameNativeSurfacePayloadResult CExplorerTool::SubmitNativeSurface(
+	const HDC sourceDc, const RECT& dirtyRect) noexcept
+{
+	return m_impl->nativeSurface.Submit(sourceDc, dirtyRect);
+}
+
+rendering::FrameNativeSurfacePayloadResult CExplorerTool::CloseNativeSurface() noexcept
+{
+	return m_impl->nativeSurface.Close();
+}
 
 std::vector<ExplorerEntry> CExplorerTool::SortEntries(std::vector<ExplorerEntry> entries)
 {
@@ -2258,6 +2317,8 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 	switch (message) {
 	case WM_SIZE:
 		impl.LayoutChildren();
+		(void)::RedrawWindow(window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 		return 0;
 	case WM_MOUSEMOVE: {
 		const POINT point{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
@@ -2322,15 +2383,23 @@ LRESULT CALLBACK CExplorerTool::WindowProc(HWND window, UINT message, WPARAM wPa
 		return 1;
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
-		const HDC dc = ::BeginPaint(window, &paint);
-		if (dc != nullptr) {
+		const HDC target = ::BeginPaint(window, &paint);
+		if (target != nullptr) {
+			RECT client{};
+			(void)::GetClientRect(window, &client);
+			const int width = std::max(0L, client.right - client.left);
+			const int height = std::max(0L, client.bottom - client.top);
+			const bool buffered = impl.windowBuffer.Ensure(target, width, height);
+			const HDC dc = buffered ? impl.windowBuffer.Dc() : target;
 			const HBRUSH brush = ::CreateSolidBrush(impl.palette.background);
 			if (brush != nullptr) {
-				::FillRect(dc, &paint.rcPaint, brush);
+				::FillRect(dc, &client, brush);
 				::DeleteObject(brush);
 			}
 			impl.PaintHeader(dc);
 			impl.PaintEmptyState(dc);
+			if (buffered) (void)impl.windowBuffer.Present(target, paint.rcPaint);
+			(void)impl.nativeSurface.Submit(dc, paint.rcPaint);
 		}
 		::EndPaint(window, &paint);
 		return 0;

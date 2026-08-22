@@ -201,6 +201,48 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCoordinatorModelTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCoordinatorRuntimeTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameRuntimeRetirementServiceTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameDeviceDomainModelTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FramePresentationOwnerTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameSurfaceAdapterTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameSurfaceCommitStateTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\EditorViewRenderStateTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameWindowTransactionTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCoordinatorC8TelemetryTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameCadenceSourceTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ScmNativeSurfaceAdapterTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\FrameNativeSurfacePayloadAdapterTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\CommandPaletteOverlayTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkbenchPanelHostTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -241,6 +283,9 @@
 	</ClCompile>
 
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\ExplorerToolTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\OverlayScrollbarTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\FileDecorationTest.cpp">
@@ -441,6 +486,9 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\TerminalSessionRetirementServiceTest.cpp">
+      <Filter>Test Files\terminal</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\terminal\ConPtyCloseIntegrationTest.cpp">
       <Filter>Test Files\terminal</Filter>
     </ClCompile>
@@ -471,7 +519,10 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderMappingTest.cpp">
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
-	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp">
+    <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalRenderPlanTest.cpp">
+	  <Filter>Test Files\terminal\window</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalSurfaceAdapterTest.cpp">
 	  <Filter>Test Files\terminal\window</Filter>
 	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalBuiltinGlyphRendererTest.cpp">
@@ -508,6 +559,9 @@
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewScrollMapTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewSurfaceAdapterTest.cpp">
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MermaidDiagramTest.cpp">

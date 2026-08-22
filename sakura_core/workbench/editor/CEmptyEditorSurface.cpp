@@ -132,7 +132,10 @@ void CEmptyEditorSurface::Layout(const RECT& bounds, unsigned int dpi)
 	const int height = std::max(0L, bounds.bottom - bounds.top);
 	m_model.SetViewport(width, height, dpi);
 	if (m_font.Dpi() != m_model.GetDpi()) (void)m_font.Recreate(theme::ThemeFontKind::Chrome, m_model.GetDpi());
-	if (m_window != nullptr) ::SetWindowPos(m_window, nullptr, bounds.left, bounds.top, width, height, SWP_NOACTIVATE | SWP_NOZORDER);
+	if (m_window != nullptr) {
+		::SetWindowPos(m_window, nullptr, bounds.left, bounds.top, width, height,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW);
+	}
 	Invalidate();
 }
 

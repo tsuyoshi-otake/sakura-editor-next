@@ -29,6 +29,8 @@
 #include <ObjIdl.h>  // LPDATAOBJECT
 #include <shellapi.h>  // HDROP
 #include <cstdint>
+#include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -58,6 +60,8 @@
 #include "util/design_template.h"
 #include "_os/CClipboard.h"
 #include "workbench/controls/COverlayScrollbar.h"
+#include "view/CEditView_RenderingState.h"
+#include "workbench/rendering/FrameNativeSurfacePayloadAdapter.h"
 
 class CDropTarget; /// 2002/2/3 aroka ヘッダー軽量化
 class COpeBlk;///
@@ -157,7 +161,10 @@ public:
 	void CopyViewStatus( CEditView* ) const;					/* 自分の表示状態を他のビューにコピー */
 
 	HWND GetHwnd() const { return m_hWnd; }
-	void InvalidateRect(LPCRECT lpRect, BOOL bErase = TRUE) { ::InvalidateRect(m_hWnd, lpRect, bErase); }
+	void InvalidateRect(LPCRECT lpRect, BOOL bErase = FALSE) {
+		MarkRenderDamage(editor::rendering::EEditViewDamage::BaseText);
+		::InvalidateRect(m_hWnd, lpRect, bErase);
+	}
 	int ScrollWindowEx(int dx, int dy, const RECT* prcScroll, const RECT* prcClip, HRGN hrgnUpdate, RECT* prcUpdate, UINT uFlags) {
 		return ::ScrollWindowEx(m_hWnd, dx, dy, prcScroll, prcClip, hrgnUpdate, prcUpdate, uFlags);
 	}
@@ -165,7 +172,6 @@ public:
 	int ReleaseDC(HDC hdc) const { return ::ReleaseDC(m_hWnd, hdc); }
 	BOOL CreateCaret(HBITMAP hBitmap, int nWidth, int nHeight) { return ::CreateCaret(m_hWnd, hBitmap, nWidth, nHeight); }
 	BOOL ClientToScreen(LPPOINT lpPoint) const { return ::ClientToScreen(m_hWnd, lpPoint); }
-	BOOL UpdateWindow() { return ::UpdateWindow(m_hWnd); }
 	HWND SetFocus() { return ::SetFocus(m_hWnd); }
 	BOOL GetClientRect(LPRECT lpRect) const { return ::GetClientRect(m_hWnd, lpRect); }
 
@@ -195,9 +201,40 @@ public:
 	//
 	void OnChangeSetting();										/* 設定変更を反映させる */
 	void OnPaint(HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp);			/* 通常の描画処理 */
+	//! Requests the current retained-surface ticket without doing any work.
+	void RequestGdiFrame() noexcept;
+	//! Completes the ticket only after the enclosing GDI paint boundary.
+	void CommitGdiPaintBoundary(bool paintSucceeded = true) noexcept;
+	//! Binds the optional per-surface native presentation mailbox. Callbacks
+	//! are non-blocking registration/update/close/submit operations; the view
+	//! remains GDI-authoritative when no sink is installed.
+	using NativeSurfaceSink = workbench::rendering::FrameNativeSurfacePayloadSink;
+	using NativeSurfaceTarget = workbench::rendering::FrameNativeSurfacePayloadTarget;
+	using NativeSurfaceFrame = workbench::rendering::FrameNativeSurfaceFrame;
+	using NativeSurfaceResult = workbench::rendering::FrameNativeSurfacePayloadResult;
+	void SetNativeSurfaceSink(NativeSurfaceSink sink) noexcept;
+	[[nodiscard]] bool SetNativeSurfaceTarget(const NativeSurfaceTarget& target) noexcept;
+	[[nodiscard]] bool SetNativeSurfaceVisible(bool visible) noexcept;
+	[[nodiscard]] const std::optional<NativeSurfaceTarget>& NativeSurfaceTargetSnapshot() const noexcept
+	{
+		return m_nativeSurfaceTarget;
+	}
+	void ClearNativeSurfaceTarget() noexcept;
+	//! Captures the just-painted dirty region while the borrowed HDC is valid.
+	void CaptureNativeSurface(HDC paintedDc, const RECT& dirtyRect) noexcept;
+	//! Publishes the latest captured payload after the enclosing GDI boundary.
+	[[nodiscard]] NativeSurfaceResult PublishNativeSurface() noexcept;
+	void SyncNativeSurfaceSize(std::uint32_t width, std::uint32_t height) noexcept;
+	//! Records bounded damage without forcing a synchronous redraw.
+	void MarkRenderDamage(editor::rendering::EditViewDamageMask mask) noexcept;
+	void MarkRenderDamage(editor::rendering::EEditViewDamage damage) noexcept
+	{
+		MarkRenderDamage(static_cast<editor::rendering::EditViewDamageMask>(damage));
+	}
 	bool OnPaint2(HDC _hdc, PAINTSTRUCT *pPs, BOOL bDrawFromComptibleBmp);			/* 通常の描画処理 */
 	void DrawMiniMapOverview(HDC hdc);
 	void DrawMiniMapViewport(HDC hdc);
+	HDC GetBackImageDC(HDC hdc);
 	void DrawBackImage(HDC hdc, RECT& rcPaint, HDC hdcBgImg);
 	void OnTimer(HWND hwnd, UINT uMsg, UINT_PTR idEvent, DWORD dwTime);
 	//ウィンドウ
@@ -449,7 +486,6 @@ public:
 	bool IsISearchEnabled(int nCommand) const;
 
 	BOOL KeySearchCore( const CNativeW* pcmemCurText );	// 2006.04.10 fon
-	bool MiniMapCursorLineTip( POINT* po, RECT* rc, bool* pbHide );
 
 	/*!	CEditView::KeyWordHelpSearchDictのコール元指定用ローカルID
 		@date 2006.04.10 fon 新規作成
@@ -540,6 +576,7 @@ public:
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	//                          その他                             //
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
+	bool MiniMapCursorLineTip( POINT* po, RECT* rc, bool* pbHide );
 public:
 	BOOL OPEN_ExtFromtoExt( BOOL bCheckOnly, BOOL bBeepWhenMiss,
 							const WCHAR* file_ext[], const WCHAR* open_ext[],
@@ -683,6 +720,7 @@ public:
 	HDC				m_hdcCompatDC;		/* 再描画用コンパチブルＤＣ */
 	HBITMAP			m_hbmpCompatBMP;	/* 再描画用メモリＢＭＰ */
 	HBITMAP			m_hbmpCompatBMPOld;	/* 再描画用メモリＢＭＰ(OLD) */
+	HDC				m_hdcBackImage = nullptr;	/* 背景画像用コンパチブルＤＣ */
 	int				m_nCompatBMPWidth;  /* 再作画用メモリＢＭＰの幅 */	// 2007.09.09 Moca 互換BMPによる画面バッファ
 	int				m_nCompatBMPHeight; /* 再作画用メモリＢＭＰの高さ */	// 2007.09.09 Moca 互換BMPによる画面バッファ
 
@@ -756,6 +794,9 @@ public:
 	// IME
 private:
 	HWND			m_hWnd;
+	std::unique_ptr<editor::rendering::CEditViewRenderState> m_pRenderState;
+	workbench::rendering::FrameNativeSurfacePayloadAdapter m_nativeSurface;
+	std::optional<NativeSurfaceTarget> m_nativeSurfaceTarget;
 	int				m_nLastReconvLine;             //2002.04.09 minfu 再変換情報保存用;
 	int				m_nLastReconvIndex;            //2002.04.09 minfu 再変換情報保存用;
 
@@ -783,6 +824,12 @@ public:
 		bool valid = false;
 	};
 	MiniMapOverviewCache m_miniMapOverviewCache;
+	// The minimap viewport overlay uses a one-pixel source surface for AlphaBlend.
+	// Keep that surface for the lifetime of the view instead of allocating GDI
+	// objects on every paint.
+	HDC				m_hdcMiniMapViewport = nullptr;
+	HBITMAP			m_hbmpMiniMapViewport = nullptr;
+	HBITMAP			m_hbmpMiniMapViewportOld = nullptr;
 
 	DISALLOW_COPY_AND_ASSIGN(CEditView);
 };

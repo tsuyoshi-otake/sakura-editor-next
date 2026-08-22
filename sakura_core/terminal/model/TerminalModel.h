@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <deque>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -66,6 +67,45 @@ struct TerminalRow {
 	bool wrapped{};
 
 	const TerminalAttributes& AttributesAt( std::size_t column ) const noexcept;
+};
+
+class TerminalScrollbackView final {
+public:
+	class const_iterator final {
+	public:
+		using value_type = TerminalRow;
+		using difference_type = std::ptrdiff_t;
+		using pointer = const TerminalRow*;
+		using reference = const TerminalRow&;
+		using iterator_category = std::forward_iterator_tag;
+
+		const_iterator() = default;
+		const_iterator( const TerminalScrollbackView* view, std::size_t index ) noexcept
+			: m_view(view), m_index(index) {}
+		reference operator*() const noexcept { return (*m_view)[m_index]; }
+		pointer operator->() const noexcept { return &(*m_view)[m_index]; }
+		const_iterator& operator++() noexcept { ++m_index; return *this; }
+		const_iterator operator++(int) noexcept { auto copy = *this; ++*this; return copy; }
+		friend bool operator==( const const_iterator&, const const_iterator& ) noexcept = default;
+
+	private:
+		const TerminalScrollbackView* m_view{};
+		std::size_t m_index{};
+	};
+
+	TerminalScrollbackView( const std::deque<TerminalRow>& rows, std::size_t head ) noexcept
+		: m_rows(&rows), m_head(head) {}
+	std::size_t size() const noexcept { return m_rows->size(); }
+	bool empty() const noexcept { return m_rows->empty(); }
+	const TerminalRow& operator[]( std::size_t index ) const noexcept {
+		return (*m_rows)[m_rows->empty() ? 0 : (m_head + index) % m_rows->size()];
+	}
+	const_iterator begin() const noexcept { return { this, 0 }; }
+	const_iterator end() const noexcept { return { this, size() }; }
+
+private:
+	const std::deque<TerminalRow>* m_rows;
+	std::size_t m_head;
 };
 
 struct TerminalModes {
@@ -135,13 +175,15 @@ public:
 	//! not lost when the same drain immediately begins the next frame.
 	std::uint64_t SynchronizedOutputCommitGeneration() const noexcept { return m_synchronizedOutputCommitGeneration; }
 	const std::deque<TerminalRow>& Rows() const noexcept { return m_rows; }
-	const std::deque<TerminalRow>& Scrollback() const noexcept { return m_scrollback; }
+	TerminalScrollbackView Scrollback() const noexcept { return { m_scrollback, m_scrollbackHead }; }
 	std::vector<std::size_t> ConsumeDirtyRows();
 
 private:
 	TerminalRow MakeBlankRow( const TerminalAttributes& attributes = {} ) const;
 	void ResetRow( TerminalRow& row, const TerminalAttributes& attributes ) const;
 	TerminalRow RecycleForBlankRow( TerminalRow&& outgoing, const TerminalAttributes& attributes );
+	void AppendScrollbackRow( TerminalRow&& row );
+	void NormalizeScrollbackOrder();
 	void ClearCellRange( TerminalRow& row, std::size_t begin, std::size_t end );
 	void SetCellAttributes( TerminalRow& row, std::size_t column, std::size_t length, const TerminalAttributes& attributes );
 	void NormalizeAttributeRuns( TerminalRow& row );
@@ -166,6 +208,7 @@ private:
 	std::deque<TerminalRow> m_rows;
 	// A bounded deque keeps steady-state eviction at the scrollback cap O(1).
 	std::deque<TerminalRow> m_scrollback;
+	std::size_t m_scrollbackHead{};
 	std::deque<TerminalRow> m_savedMainRows;
 	std::vector<bool> m_dirtyRows;
 	std::size_t m_cursorColumn{};

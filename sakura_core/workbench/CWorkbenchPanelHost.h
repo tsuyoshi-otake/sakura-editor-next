@@ -8,6 +8,7 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
 
 #include <functional>
 #include <memory>
@@ -80,6 +81,7 @@ private:
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;
 	RECT m_bounds{};
+	rendering::CGdiBackBuffer m_backBuffer;
 	HWND m_window = nullptr;
 	HWND m_sashWindow = nullptr;
 	std::unique_ptr<IWorkbenchTool> m_tool;

@@ -83,25 +83,41 @@ void COverlayScrollbar::Detach() noexcept
 	m_bounds = RECT{};
 	m_hasBounds = false;
 	m_setTopRow = nullptr;
+	m_scrollModel.reset();
 	m_hover = false;
 	m_trackingMouseLeave = false;
 	m_dragging = false;
 	m_thumbGrabOffset = 0;
 }
 
+void COverlayScrollbar::SetScrollModel(const OverlayScrollbarModel& model) noexcept
+{
+	m_scrollModel = NormalizeOverlayScrollbarModel(model);
+}
+
 COverlayScrollbar::Layout COverlayScrollbar::GetLayout() const noexcept
 {
 	Layout layout;
 	if (m_target == nullptr || m_window == nullptr) return layout;
-	SCROLLINFO info{ sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS };
-	const int bar = m_source == OverlayScrollbarSource::ScrollbarControl
-		? SB_CTL : (IsHorizontal() ? SB_HORZ : SB_VERT);
-	if (!::GetScrollInfo(m_target, bar, &info)) return layout;
-	layout.totalRows = std::max(0, info.nMax - info.nMin + 1);
-	layout.visibleRows = std::max(1, static_cast<int>(info.nPage));
-	layout.maximumTop = std::max(0, layout.totalRows - layout.visibleRows);
-	layout.topRow = std::clamp(info.nPos - info.nMin, 0, layout.maximumTop);
-	if (layout.maximumTop == 0) return layout;
+	if (m_source == OverlayScrollbarSource::ExplicitModel) {
+		if (!m_scrollModel) return layout;
+		const auto model = NormalizeOverlayScrollbarModel(*m_scrollModel);
+		layout.contentExtent = model.contentExtent;
+		layout.viewportExtent = model.viewportExtent;
+		layout.offset = model.offset;
+	} else {
+		SCROLLINFO info{ sizeof(info), SIF_RANGE | SIF_PAGE | SIF_POS };
+		const int bar = m_source == OverlayScrollbarSource::ScrollbarControl
+			? SB_CTL : (IsHorizontal() ? SB_HORZ : SB_VERT);
+		if (!::GetScrollInfo(m_target, bar, &info)) return layout;
+		layout.contentExtent = std::max(0, info.nMax - info.nMin + 1);
+		layout.viewportExtent = std::max(1, static_cast<int>(info.nPage));
+		layout.offset = info.nPos - info.nMin;
+	}
+	layout.maximumOffset = std::max(0, layout.contentExtent - layout.viewportExtent);
+	layout.offset = std::clamp(layout.offset, 0, layout.maximumOffset);
+	layout.pageStep = std::max(1, layout.viewportExtent);
+	if (layout.maximumOffset == 0) return layout;
 
 	RECT client{};
 	if (!::GetClientRect(m_window, &client)) return layout;
@@ -110,11 +126,12 @@ COverlayScrollbar::Layout COverlayScrollbar::GetLayout() const noexcept
 	layout.track = client;
 	const int minimumThumb = std::min(extent, ScaleDip(kMinimumThumbDip));
 	const int proportionalThumb = static_cast<int>(
-		(static_cast<long long>(extent) * layout.visibleRows) / std::max(1, layout.totalRows));
+		(static_cast<long long>(extent) * layout.viewportExtent)
+			/ std::max(1, layout.contentExtent));
 	const int thumbExtent = std::clamp(std::max(minimumThumb, proportionalThumb), 1, extent);
 	const int travel = extent - thumbExtent;
 	const int offset = static_cast<int>(
-		(static_cast<long long>(travel) * layout.topRow) / layout.maximumTop);
+		(static_cast<long long>(travel) * layout.offset) / layout.maximumOffset);
 	layout.thumb = IsHorizontal()
 		? RECT{ client.left + offset, client.top, client.left + offset + thumbExtent, client.bottom }
 		: RECT{ client.left, client.top + offset, client.right, client.top + offset + thumbExtent };
@@ -169,11 +186,11 @@ void COverlayScrollbar::EndDrag(bool releaseCapture) noexcept
 	if (wasInteractive) Invalidate();
 }
 
-void COverlayScrollbar::ScrollToTopRow(int topRow)
+void COverlayScrollbar::ScrollToPosition(int position)
 {
 	if (!m_setTopRow) return;
 	const auto layout = GetLayout();
-	m_setTopRow(std::clamp(topRow, 0, layout.maximumTop));
+	m_setTopRow(std::clamp(position, 0, layout.maximumOffset));
 	Update();
 }
 
@@ -193,13 +210,13 @@ void COverlayScrollbar::DragTo(int pointerPosition)
 	if (travel <= 0) return;
 	const int trackOrigin = static_cast<int>(IsHorizontal() ? layout.track.left : layout.track.top);
 	const int position = std::clamp(pointerPosition - m_thumbGrabOffset - trackOrigin, 0, travel);
-	ScrollToTopRow(static_cast<int>((static_cast<long long>(layout.maximumTop) * position) / travel));
+	ScrollToPosition(static_cast<int>((static_cast<long long>(layout.maximumOffset) * position) / travel));
 }
 
 HWND COverlayScrollbar::ScrolledWindow() const noexcept
 {
-	// A hidden scrollbar control cannot take focus or a wheel notification; the
-	// window it scrolls is the one that owns it.
+	// A hidden ScrollbarControl target only stores metadata, so focus and wheel
+	// input belong to its owner. Other sources use the target as the surface.
 	return m_source == OverlayScrollbarSource::ScrollbarControl ? m_parent : m_target;
 }
 
@@ -218,7 +235,10 @@ void COverlayScrollbar::Update()
 		}
 	} else {
 		const LONG_PTR style = ::GetWindowLongPtrW(m_target, GWL_STYLE);
-		if ((style & (WS_HSCROLL | WS_VSCROLL)) != 0) (void)::ShowScrollBar(m_target, SB_BOTH, FALSE);
+		if (m_source == OverlayScrollbarSource::TargetWindowBar
+			&& (style & (WS_HSCROLL | WS_VSCROLL)) != 0) {
+			(void)::ShowScrollBar(m_target, SB_BOTH, FALSE);
+		}
 		// The workbench may lay out a page while its parent ViewContainer is hidden.
 		// Keep the target control's own visibility state as the source of truth:
 		// IsWindowVisible would include the hidden parent and suppress the overlay
@@ -244,11 +264,13 @@ void COverlayScrollbar::Update()
 	if (IsHorizontal()) {
 		const int overlayHeight = std::min(ScaleDip(kOverlayWidthDip), clientHeight);
 		::SetWindowPos(m_window, HWND_TOP, static_cast<int>(client.left),
-			static_cast<int>(client.bottom) - overlayHeight, clientWidth, overlayHeight, SWP_NOACTIVATE);
+			static_cast<int>(client.bottom) - overlayHeight, clientWidth, overlayHeight,
+			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	} else {
 		const int overlayWidth = std::min(ScaleDip(kOverlayWidthDip), clientWidth);
 		::SetWindowPos(m_window, HWND_TOP, static_cast<int>(client.right) - overlayWidth,
-			static_cast<int>(client.top), overlayWidth, clientHeight, SWP_NOACTIVATE);
+			static_cast<int>(client.top), overlayWidth, clientHeight,
+			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	}
 	const bool show = GetLayout().scrollable;
 	::ShowWindow(m_window, show ? SW_SHOWNOACTIVATE : SW_HIDE);
@@ -305,8 +327,8 @@ LRESULT CALLBACK COverlayScrollbar::WindowProc(HWND window, UINT message, WPARAM
 			self->m_thumbGrabOffset = pointer - thumbStart;
 			::SetCapture(window);
 		} else {
-			self->ScrollToTopRow(layout.topRow
-				+ (pointer < thumbStart ? -layout.visibleRows : layout.visibleRows));
+			self->ScrollToPosition(layout.offset
+				+ (pointer < thumbStart ? -layout.pageStep : layout.pageStep));
 		}
 		self->UpdateHover(point);
 		self->Invalidate();

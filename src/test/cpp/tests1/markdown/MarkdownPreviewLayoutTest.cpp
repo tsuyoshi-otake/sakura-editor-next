@@ -23,6 +23,36 @@ TEST(MarkdownPreviewLayout, HiddenPreviewLeavesTheWholeCentralRegionToTheEditor)
 	EXPECT_EQ(1000, layout.previewLeft);
 }
 
+TEST(MarkdownPreviewScrollMap, PreservesWrappedRowAndPixelOffsetAcrossReflow)
+{
+	struct Line { std::size_t sourceLine; int top; };
+	const std::vector<Line> before{
+		{ 4, 10 }, { 4, 30 }, { 4, 50 }, { 8, 70 },
+	};
+	const auto anchor = CapturePreviewScrollAnchor(before, 37);
+	ASSERT_TRUE(anchor.has_value());
+	EXPECT_EQ(4u, anchor->sourceLine);
+	EXPECT_EQ(1u, anchor->sourceLineOrdinal);
+	EXPECT_EQ(7, anchor->intraLineOffset);
+
+	const std::vector<Line> after{
+		{ 4, 12 }, { 4, 36 }, { 4, 60 }, { 4, 84 }, { 8, 108 },
+	};
+	EXPECT_EQ(43, RestorePreviewScrollAnchor(after, *anchor));
+}
+
+TEST(MarkdownPreviewScrollMap, ClampsMissingWrappedRowsAndFallsForward)
+{
+	struct Line { std::size_t sourceLine; int top; };
+	const std::vector<Line> lines{
+		{ 2, 10 }, { 2, 30 }, { 9, 50 },
+	};
+	EXPECT_EQ(35, RestorePreviewScrollAnchor(lines, { 2, 7, 5 }));
+	EXPECT_EQ(55, RestorePreviewScrollAnchor(lines, { 7, 0, 5 }));
+	EXPECT_EQ(55, RestorePreviewScrollAnchor(lines, { 20, 0, 5 }));
+	EXPECT_FALSE(RestorePreviewScrollAnchor(std::vector<Line>{}, { 0, 0, 0 }).has_value());
+}
+
 TEST(MarkdownPreviewLayout, VisiblePreviewIsAnEditorSiblingBeforeTheRightBoundary)
 {
 	const auto layout = CalculateMarkdownPreviewLayout(120, 1600, 144, true);

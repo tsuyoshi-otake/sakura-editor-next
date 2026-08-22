@@ -869,7 +869,7 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterGitCommands
 		Entry{ MakeGitDescriptor("git.unstageAll", "Git: Unstage All Changes"), std::move(executors.unstageAll), {} },
 		Entry{ MakeGitDescriptor("git.clean", "Git: Discard Changes"), {}, std::move(executors.clean) },
 		Entry{ MakeGitDescriptor("git.cleanAll", "Git: Discard All Changes"), std::move(executors.cleanAll), {} },
-		Entry{ MakeGitDescriptor("git.commit", "Git: Commit"), std::move(executors.commit), {} },
+		Entry{ MakeGitDescriptor("git.commit", "Git: Commit"), {}, std::move(executors.commit) },
 		Entry{ MakeGitDescriptor("git.commitAmend", "Git: Amend Commit"), std::move(executors.commitAmend), {} },
 		Entry{ MakeGitDescriptor("git.undoCommit", "Git: Undo Last Commit"), std::move(executors.undoCommit), {} },
 		Entry{ MakeGitDiffEditorDescriptor("git.stageSelectedRanges", "Git: Stage Selected Ranges"),

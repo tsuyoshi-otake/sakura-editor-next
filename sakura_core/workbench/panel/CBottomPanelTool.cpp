@@ -7,6 +7,7 @@
 #include "StdAfx.h"
 #include "workbench/panel/CBottomPanelTool.h"
 #include "CSelectLang.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
 
 #include <CommCtrl.h>
 #include <Richedit.h>
@@ -147,6 +148,7 @@ struct CBottomPanelTool::Impl {
 	theme::CThemeFont font;
 	HBRUSH panelBrush = nullptr;
 	HBRUSH raisedBrush = nullptr;
+	rendering::CGdiBackBuffer backBuffer;
 	BottomPanelTab active = BottomPanelTab::Terminal;
 	ProblemActivationCallback problemActivation;
 	OutputChannelSelectionCallback outputChannelSelection;
@@ -159,7 +161,7 @@ struct CBottomPanelTool::Impl {
 
 	void ApplyFont(HWND control) const
 	{
-		if (control && font.Get()) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), TRUE);
+		if (control && font.Get()) ::SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(font.Get()), FALSE);
 	}
 
 	void DestroyBrushes() noexcept
@@ -183,23 +185,13 @@ struct CBottomPanelTool::Impl {
 			ListView_SetBkColor(problemsList, palette.bottomPanel.ToColorRef());
 			ListView_SetTextBkColor(problemsList, palette.bottomPanel.ToColorRef());
 			ListView_SetTextColor(problemsList, palette.primaryText.ToColorRef());
-			::InvalidateRect(problemsList, nullptr, TRUE);
+			::InvalidateRect(problemsList, nullptr, FALSE);
 		}
 		if (outputText) {
 			::SendMessageW(outputText, EM_SETBKGNDCOLOR, TRUE, palette.bottomPanel.ToColorRef());
-			::InvalidateRect(outputText, nullptr, TRUE);
+			::InvalidateRect(outputText, nullptr, FALSE);
 		}
-		if (outputSelector) ::InvalidateRect(outputSelector, nullptr, TRUE);
-	}
-
-	void UpdateActionVisibility()
-	{
-		if (maximizeButton) {
-			::ShowWindow(maximizeButton, panelActions.toggleMaximize ? SW_SHOW : SW_HIDE);
-		}
-		if (closeButton) {
-			::ShowWindow(closeButton, panelActions.closePanel ? SW_SHOW : SW_HIDE);
-		}
+		if (outputSelector) ::InvalidateRect(outputSelector, nullptr, FALSE);
 	}
 
 	void DrawOwnerButton(const DRAWITEMSTRUCT& item) const
@@ -305,10 +297,6 @@ struct CBottomPanelTool::Impl {
 		if (closed) return;
 		active = tab;
 		const bool showTerminal = tab == BottomPanelTab::Terminal;
-		::ShowWindow(terminal->GetHwnd(), showTerminal ? SW_SHOW : SW_HIDE);
-		::ShowWindow(problemsList, tab == BottomPanelTab::Problems ? SW_SHOW : SW_HIDE);
-		::ShowWindow(outputSelector, tab == BottomPanelTab::Output ? SW_SHOW : SW_HIDE);
-		::ShowWindow(outputText, tab == BottomPanelTab::Output ? SW_SHOW : SW_HIDE);
 		::SendMessageW(terminalButton, BM_SETSTATE, showTerminal, 0);
 		::SendMessageW(problemsButton, BM_SETSTATE, tab == BottomPanelTab::Problems, 0);
 		::SendMessageW(outputButton, BM_SETSTATE, tab == BottomPanelTab::Output, 0);
@@ -326,17 +314,34 @@ struct CBottomPanelTool::Impl {
 			height, Scale(kPanelHeaderHeightDip, dpi), Scale(kOutputSelectorHeightDip, dpi));
 		const int headerHeight = vertical.headerHeight;
 		const int actionWidth = Scale(30, dpi);
-		::MoveWindow(window, bounds.left, bounds.top, width, height, TRUE);
+		::SetWindowPos(window, nullptr, bounds.left, bounds.top, width, height,
+			SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW | SWP_NOCOPYBITS);
+		struct Placement {
+			HWND child{};
+			int left{};
+			int top{};
+			int width{};
+			int height{};
+			bool visible = true;
+		};
+		std::array<Placement, 9> placements{};
+		std::size_t placementCount = 0;
+		const auto place = [&placements, &placementCount](HWND child, int left, int top, int childWidth,
+			int childHeight, bool visible = true) {
+			if (child == nullptr || placementCount >= placements.size()) return;
+			placements[placementCount++] = {
+				child, left, top, std::max(0, childWidth), std::max(0, childHeight), visible };
+		};
 
 		int commonActionLeft = width;
 		const auto placeAction = [&](HWND button, bool visible) {
 			if (!button) return;
 			if (visible) {
 				commonActionLeft = std::max(0, commonActionLeft - actionWidth);
-				::MoveWindow(button, commonActionLeft, 0,
-					std::min(actionWidth, std::max(0, width - commonActionLeft)), headerHeight, TRUE);
+				place(button, commonActionLeft, 0,
+					std::min(actionWidth, std::max(0, width - commonActionLeft)), headerHeight, true);
 			} else {
-				::MoveWindow(button, 0, 0, 0, 0, FALSE);
+				place(button, 0, 0, 0, 0, false);
 			}
 		};
 		placeAction(closeButton, static_cast<bool>(panelActions.closePanel));
@@ -368,18 +373,56 @@ struct CBottomPanelTool::Impl {
 			const int tabWidth = toolbarLeft >= Scale(desiredTabWidthDipTotal, dpi)
 				? desired
 				: remainingTabs > 0 ? remainingWidth / remainingTabs : 0;
-			::MoveWindow(tabButtons[index], tabLeft, 0, std::max(0, tabWidth), headerHeight, TRUE);
+			place(tabButtons[index], tabLeft, 0, std::max(0, tabWidth), headerHeight);
 			tabLeft += tabWidth;
 			remainingWidth = std::max(0, remainingWidth - tabWidth);
 			--remainingTabs;
 		}
 
 		RECT content{ 0, vertical.contentTop, width, vertical.contentTop + vertical.contentHeight };
-		terminal->Layout(content, dpi);
-		::MoveWindow(problemsList, 0, vertical.contentTop, width, vertical.contentHeight, TRUE);
-		::MoveWindow(outputSelector, 0, vertical.contentTop, width, vertical.outputSelectorHeight, TRUE);
-		::MoveWindow(outputText, 0, vertical.contentTop + vertical.outputSelectorHeight, width,
-			vertical.contentHeight - vertical.outputSelectorHeight, TRUE);
+		place(problemsList, 0, vertical.contentTop, width, vertical.contentHeight,
+			active == BottomPanelTab::Problems);
+		place(outputSelector, 0, vertical.contentTop, width, vertical.outputSelectorHeight,
+			active == BottomPanelTab::Output);
+		place(outputText, 0, vertical.contentTop + vertical.outputSelectorHeight, width,
+			vertical.contentHeight - vertical.outputSelectorHeight, active == BottomPanelTab::Output);
+		// CTerminalTool::Layout uses SWP_SHOWWINDOW for its own root. Keep an
+		// inactive terminal hidden in this transaction and only invoke that layout
+		// after the chrome transaction when Terminal is the committed tab.
+		if (active != BottomPanelTab::Terminal) {
+			place(terminal->GetHwnd(), 0, vertical.contentTop, width, vertical.contentHeight, false);
+		}
+		const UINT positionFlags = SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOREDRAW | SWP_NOCOPYBITS;
+		HDWP positions = ::BeginDeferWindowPos(static_cast<int>(placementCount));
+		bool committed = false;
+		if (positions != nullptr) {
+			bool buildSucceeded = true;
+			for (std::size_t index = 0; index < placementCount; ++index) {
+				const auto& item = placements[index];
+				const UINT visibility = item.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+				positions = ::DeferWindowPos(positions, item.child, nullptr, item.left, item.top,
+					item.width, item.height, positionFlags | visibility);
+				if (positions == nullptr) {
+					buildSucceeded = false;
+					break;
+				}
+			}
+			if (buildSucceeded) committed = ::EndDeferWindowPos(positions) != FALSE;
+		}
+		if (!committed) {
+			// A failed HDWP is not a partially committed layout. Reapply every
+			// final geometry/visibility with redraw suppressed, then publish one
+			// invalidation below. This keeps the fallback out of the paint path.
+			for (std::size_t index = 0; index < placementCount; ++index) {
+				const auto& item = placements[index];
+				const UINT visibility = item.visible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW;
+				::SetWindowPos(item.child, nullptr, item.left, item.top, item.width, item.height,
+					positionFlags | visibility);
+			}
+		}
+		if (active == BottomPanelTab::Terminal) terminal->Layout(content, dpi);
+		::RedrawWindow(window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 	}
 
 	void RefreshProblems()
@@ -569,6 +612,7 @@ void CBottomPanelTool::Close()
 	m_impl->terminal->Close();
 	if (m_impl->window) ::DestroyWindow(m_impl->window);
 	m_impl->window = nullptr;
+	m_impl->backBuffer.Reset();
 	m_impl->DestroyBrushes();
 }
 
@@ -584,7 +628,7 @@ void CBottomPanelTool::SetPalette(const theme::ThemePalette& palette)
 	m_impl->RecreateBrushes();
 	m_impl->terminal->SetPalette(palette);
 	m_impl->ApplyControlPalette();
-	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 
 void CBottomPanelTool::SetProblemsSnapshot(win32::ProblemsPanelSnapshot snapshot)
@@ -621,7 +665,6 @@ void CBottomPanelTool::SetPanelActions(PanelActions actions)
 {
 	if (!m_impl || m_impl->closed) return;
 	m_impl->panelActions = std::move(actions);
-	m_impl->UpdateActionVisibility();
 	m_impl->LayoutChildren();
 	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
@@ -634,7 +677,7 @@ void CBottomPanelTool::RefreshStrings()
 	if (m_impl->outputButton) ::SetWindowTextW(m_impl->outputButton, LS(STR_WORKBENCH_PANEL_OUTPUT));
 	RefreshProblemsColumnTitles(m_impl->problemsList);
 	m_impl->RefreshProblems();
-	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, TRUE);
+	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
 }
 void CBottomPanelTool::SetActiveTab(BottomPanelTab tab)
 {
@@ -737,7 +780,6 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		impl.outputText = ::CreateWindowExW(0, L"EDIT", L"",
 			WS_CHILD | WS_TABSTOP | WS_VSCROLL | WS_HSCROLL | ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | ES_AUTOHSCROLL,
 			0, 0, 0, 0, window, reinterpret_cast<HMENU>(kOutputText), instance, nullptr);
-		impl.UpdateActionVisibility();
 		impl.ApplyControlPalette();
 		impl.ApplyActiveTab(BottomPanelTab::Terminal);
 		return 0;
@@ -772,14 +814,18 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 	case WM_DRAWITEM:
 		if (lParam != 0) {
 			const auto& item = *reinterpret_cast<const DRAWITEMSTRUCT*>(lParam);
+			const int saved = item.hDC ? ::SaveDC(item.hDC) : 0;
 			if (IsPanelTabId(item.CtlID) || IsPanelActionId(item.CtlID)) {
 				impl.DrawOwnerButton(item);
+				if (saved != 0) ::RestoreDC(item.hDC, saved);
 				return TRUE;
 			}
 			if (item.CtlID == kOutputSelector) {
 				impl.DrawOutputItem(item);
+				if (saved != 0) ::RestoreDC(item.hDC, saved);
 				return TRUE;
 			}
+			if (saved != 0) ::RestoreDC(item.hDC, saved);
 		}
 		break;
 	case WM_MEASUREITEM:
@@ -813,29 +859,53 @@ LRESULT CALLBACK CBottomPanelTool::WindowProc(HWND window, UINT message, WPARAM 
 		return 1;
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
-		const HDC dc = ::BeginPaint(window, &paint);
+		const HDC target = ::BeginPaint(window, &paint);
+		if (target == nullptr) return 0;
 		RECT client{};
 		::GetClientRect(window, &client);
-		const HBRUSH brush = ::CreateSolidBrush(impl.palette.bottomPanel.ToColorRef());
-		::FillRect(dc, &client, brush);
-		::DeleteObject(brush);
-		// Clamp with the same layout the children were placed with. The preferred
-		// metric alone would draw the rule into the content area while the Panel
-		// is shorter than its header during a live resize.
-		const int headerHeight = CalculateBottomPanelVerticalLayout(client.bottom - client.top,
-			Scale(kPanelHeaderHeightDip, impl.dpi),
-			Scale(kOutputSelectorHeightDip, impl.dpi)).headerHeight;
-		if (impl.terminalHeaderBounds.right > impl.terminalHeaderBounds.left) {
-			impl.terminal->PaintPanelHeader(dc, impl.terminalHeaderBounds, impl.dpi);
+		const int width = std::max(0L, client.right - client.left);
+		const int height = std::max(0L, client.bottom - client.top);
+		const bool buffered = width > 0 && height > 0
+			&& impl.backBuffer.Ensure(target, width, height);
+		const HDC dc = buffered ? impl.backBuffer.Dc() : target;
+		const auto paintSurface = [&](HDC surface, const RECT& fillRegion) {
+			if (surface == nullptr) return;
+			const int saved = ::SaveDC(surface);
+			const HBRUSH brush = ::CreateSolidBrush(impl.palette.bottomPanel.ToColorRef());
+			if (brush != nullptr) {
+				::FillRect(surface, &fillRegion, brush);
+				::DeleteObject(brush);
+			}
+			// Clamp with the same layout the children were placed with. The preferred
+			// metric alone would draw the rule into the content area while the Panel
+			// is shorter than its header during a live resize.
+			const int headerHeight = CalculateBottomPanelVerticalLayout(client.bottom - client.top,
+				Scale(kPanelHeaderHeightDip, impl.dpi),
+				Scale(kOutputSelectorHeightDip, impl.dpi)).headerHeight;
+			if (impl.terminalHeaderBounds.right > impl.terminalHeaderBounds.left) {
+				impl.terminal->PaintPanelHeader(surface, impl.terminalHeaderBounds, impl.dpi);
+			}
+			// The host only reaches the gaps between children; each child fills the
+			// rest of the rule from its own owner-draw pass.
+			const RECT headerRow{ client.left, client.top, client.right, client.top + headerHeight };
+			FillHeaderRule(surface, headerRow, headerHeight, impl.dpi, impl.palette.border.ToColorRef());
+			if (saved != 0) ::RestoreDC(surface, saved);
+		};
+		paintSurface(dc, buffered ? client : paint.rcPaint);
+		// The persistent target is repainted as a whole, but only the region
+		// invalidated by BeginPaint needs to cross the target DC. This avoids a
+		// full-client BitBlt on every child invalidation during live resize.
+		if (buffered && !impl.backBuffer.Present(target, paint.rcPaint)) {
+			// BitBlt can fail after a display/driver transition. The paint DC is
+			// still valid here, so recover synchronously without exposing the
+			// back-buffer failure as a stale frame.
+			paintSurface(target, paint.rcPaint);
 		}
-		// The host only reaches the gaps between children; each child fills the
-		// rest of the rule from its own owner-draw pass.
-		const RECT headerRow{ client.left, client.top, client.right, client.top + headerHeight };
-		FillHeaderRule(dc, headerRow, headerHeight, impl.dpi, impl.palette.border.ToColorRef());
 		::EndPaint(window, &paint);
 		return 0;
 	}
 	case WM_NCDESTROY:
+		impl.backBuffer.Reset();
 		impl.DestroyBrushes();
 		impl.window = nullptr;
 		::SetWindowLongPtrW(window, GWLP_USERDATA, 0);

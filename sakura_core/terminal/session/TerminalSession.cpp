@@ -1,6 +1,7 @@
 /*! @file */
 #include "StdAfx.h"
 #include "terminal/session/TerminalSession.h"
+#include "terminal/TerminalWorkerRetirementService.h"
 
 #include <algorithm>
 #include <array>
@@ -143,6 +144,9 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 		: backend(std::move(backendValue)), shared(std::make_shared<SharedState>())
 	{
 		shared->callbacks = std::move(callbackValue);
+		if( auto reservation = TerminalWorkerRetirementService::Instance().TryReserve() ) {
+			closeWorkerRetirement.emplace(std::move(*reservation));
+		}
 	}
 
 	std::shared_ptr<ITerminalBackend> backend;
@@ -155,20 +159,20 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 	std::condition_variable closeCompleted;
 	bool closeStarted = false;
 	bool closeFinished = false;
-	std::atomic<bool> closeWorkerLaunchFailed{ false };
+	std::optional<TerminalWorkerRetirementService::Reservation> closeWorkerRetirement;
 	std::chrono::steady_clock::time_point closeFinishedAt{};
 	std::thread::id closeWorkerId{};
 
 	~Impl() noexcept
 	{
-		// Every worker captures a shared Impl. Therefore this destructor can run
-		// only after every other worker has completed; a remaining joinable handle
-		// is an already-finished thread (or the current final worker). Detaching
-		// here prevents std::terminate during callback-origin destruction without
-		// releasing live backend work.
-		if( reader.joinable() ) reader.detach();
-		if( writer.joinable() ) writer.detach();
-		if( closeWorker.joinable() ) closeWorker.detach();
+		// A live worker always owns a shared Impl.  Normal external destruction
+		// therefore reaches BeginClose first and the lifecycle worker joins the I/O
+		// workers before this object is released.  Keep this final assertion strict:
+		// silently detaching here would release ownership while native terminal work
+		// is still live.  Callback-origin destruction transfers the close-worker
+		// handle to TerminalWorkerRetirementService before the last shared owner is
+		// released, so these handles must already be non-joinable.
+		if( reader.joinable() || writer.joinable() || closeWorker.joinable() ) std::terminate();
 	}
 
 	static TerminalSessionState StateOf( const std::shared_ptr<SharedState>& state ) noexcept
@@ -533,50 +537,100 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 		InvokeCallback(shared, callbacks.completed, result);
 	}
 
+	void RunCloseWorkerBody() noexcept
+	{
+		{
+			const std::lock_guard workerLock(shared->workerIdentityMutex);
+			closeWorkerId = std::this_thread::get_id();
+		}
+		CloseImpl();
+		{
+			const std::lock_guard closeLock(closeMutex);
+			closeFinished = true;
+			closeFinishedAt = std::chrono::steady_clock::now();
+		}
+		closeCompleted.notify_all();
+		// `closeFinished` is observable before this callback. This lets an
+		// external waiter take ownership without a completion callback ever
+		// racing live reader/writer or backend work.
+		DeliverCompletion();
+	}
+
+	void RetireCloseTask(
+		const std::shared_ptr<Impl>& self,
+		TerminalWorkerRetirementService::Reservation&& reservation ) noexcept
+	{
+		std::function<void()> task = [self] { self->RunCloseWorkerBody(); };
+		const auto status = TerminalWorkerRetirementService::Instance().RetireTask(
+			std::move(reservation), std::move(task));
+		if( status != TerminalWorkerRetirementStatus::Retired ) std::terminate();
+	}
+
+	void RetireCloseWorker( const std::shared_ptr<Impl>& self ) noexcept
+	{
+		std::thread worker;
+		std::optional<TerminalWorkerRetirementService::Reservation> reservation;
+		{
+			const std::lock_guard lock(closeMutex);
+			// An external waiter may have taken the handle after closeFinished was
+			// published.  In that case it owns the join and the pre-admission slot is
+			// no longer needed.
+			if( !closeWorker.joinable() ) {
+				closeWorkerRetirement.reset();
+				return;
+			}
+			if( !closeWorkerRetirement ) std::terminate();
+			worker = std::move(closeWorker);
+			reservation = std::move(closeWorkerRetirement);
+		}
+
+		const auto status = TerminalWorkerRetirementService::Instance().Retire(
+			std::move(worker), std::move(*reservation), std::shared_ptr<void>(self));
+		if( status != TerminalWorkerRetirementStatus::Retired ) std::terminate();
+	}
+
 	void BeginClose() noexcept
 	{
 		shared->closeRequested.store(true, std::memory_order_release);
-		try {
-			std::lock_guard lock(closeMutex);
+		std::lock_guard lock(closeMutex);
 			if( closeStarted ) return;
 			closeStarted = true;
+			if( !closeWorkerRetirement ) {
+				// An idle/failed session has no workers to retire.  Complete that
+				// terminal state synchronously; Start() rejects live admission without
+				// a slot, so reaching this branch for a running session is an internal
+				// ownership breach rather than a condition under which it is safe to
+				// wait or detach.
+				const auto state = State();
+				if( state == TerminalSessionState::Idle ) {
+					Transition(TerminalSessionState::Closing);
+					Transition(TerminalSessionState::Exited);
+				}
+				if( state == TerminalSessionState::Idle || state == TerminalSessionState::Failed
+					|| state == TerminalSessionState::Exited ) {
+					closeFinished = true;
+					closeFinishedAt = std::chrono::steady_clock::now();
+					closeCompleted.notify_all();
+					return;
+				}
+				std::terminate();
+			}
+			const auto self = shared_from_this();
+			std::optional<TerminalWorkerRetirementService::Reservation> fallbackReservation;
 			try {
-				const auto self = shared_from_this();
 				closeWorker = std::thread([self] {
-					{
-						const std::lock_guard workerLock(self->shared->workerIdentityMutex);
-						self->closeWorkerId = std::this_thread::get_id();
-					}
-					self->CloseImpl();
-					{
-						const std::lock_guard closeLock(self->closeMutex);
-						self->closeFinished = true;
-						self->closeFinishedAt = std::chrono::steady_clock::now();
-					}
-					self->closeCompleted.notify_all();
-					// `closeFinished` is observable before this callback.  This lets an
-					// external waiter take ownership without a completion callback ever
-					// racing live reader/writer or backend work.
-					self->DeliverCompletion();
+					self->RunCloseWorkerBody();
+					self->RetireCloseWorker(self);
 				});
 			}
 			catch( ... ) {
-				// Thread construction can fail. Stop and close the backend immediately
-				// so every worker holding Impl observes finalization and exits. An
-				// external WaitForClose then performs the final joins; callback callers
-				// truthfully receive InProgress rather than a false quiescent result.
-				closeWorkerLaunchFailed.store(true, std::memory_order_release);
-				StopWorkers();
-				CloseBackendOnce();
+				// If a close thread cannot be constructed, execute the same body on a
+				// fixed reaper thread. The reservation was admitted before Start, so
+				// this fallback remains nonblocking for the UI and never detaches.
+				if( !closeWorkerRetirement ) std::terminate();
+				fallbackReservation = std::move(closeWorkerRetirement);
 			}
-		}
-		catch( ... ) {
-			// If the close mutex itself cannot be acquired, retain the same truthful
-			// fallback: stop/close now; a later external wait can join the workers.
-			closeWorkerLaunchFailed.store(true, std::memory_order_release);
-			StopWorkers();
-			CloseBackendOnce();
-		}
+		if( fallbackReservation ) RetireCloseTask(self, std::move(*fallbackReservation));
 	}
 
 	void RequestClose() noexcept
@@ -604,24 +658,20 @@ struct CTerminalSession::Impl : std::enable_shared_from_this<CTerminalSession::I
 		bool exceededDeadline = false;
 		try {
 			std::unique_lock lock(closeMutex);
-			if( closeWorkerLaunchFailed.load(std::memory_order_acquire) && !closeFinished && !closeWorker.joinable() ) {
-				lock.unlock();
-				CloseImpl();
-				lock.lock();
-				closeFinished = true;
-				closeFinishedAt = std::chrono::steady_clock::now();
-				closeCompleted.notify_all();
-			}
-			else {
-				if( !closeCompleted.wait_until(lock, deadline, [this] { return closeFinished; }) ) {
-					exceededDeadline = true;
-					// The deadline is an escalation/reporting boundary, not permission
-					// to release a live backend or worker.
-					closeCompleted.wait(lock, [this] { return closeFinished; });
-				}
+			if( !closeCompleted.wait_until(lock, deadline, [this] { return closeFinished; }) ) {
+				exceededDeadline = true;
+				// The deadline is an escalation/reporting boundary, not permission
+				// to release a live backend or worker.
+				closeCompleted.wait(lock, [this] { return closeFinished; });
 			}
 			if( closeFinishedAt > deadline ) exceededDeadline = true;
-			if( closeWorker.joinable() ) completedWorker = std::move(closeWorker);
+			if( closeWorker.joinable() ) {
+				completedWorker = std::move(closeWorker);
+				// The external waiter now owns the only joinable handle.  Release the
+				// reserved reaper slot so a later callback cannot attempt a second
+				// handoff.
+				closeWorkerRetirement.reset();
+			}
 		}
 		catch( ... ) {
 			// CloseImpl is noexcept and ownership remains in this object.  Retry the
@@ -641,7 +691,10 @@ CTerminalSession::CTerminalSession( std::unique_ptr<ITerminalBackend> backend, T
 
 CTerminalSession::~CTerminalSession()
 {
-	Close();
+	// Destruction may run on a workbench/UI owner.  BeginClose only publishes the
+	// close request; the pre-admitted lifecycle worker and its fixed reaper owner
+	// perform all backend and worker joins without blocking this thread.
+	BeginClose();
 }
 
 TerminalStartResult CTerminalSession::Start( const TerminalLaunchOptions& options )
@@ -659,6 +712,14 @@ TerminalStartResult CTerminalSession::Start( const TerminalLaunchOptions& option
 		impl->Transition( TerminalSessionState::Failed, ERROR_INVALID_PARAMETER );
 		impl->CloseBackendOnce();
 		return TerminalStartResult::Failure( ERROR_INVALID_PARAMETER, L"Terminal launch options are invalid." );
+	}
+	if( !impl->closeWorkerRetirement ) {
+		// A started session must have a nonblocking destruction owner.  Refuse
+		// admission when the fixed retirement capacity is exhausted rather than
+		// creating a worker that would later need to detach or block the UI.
+		impl->Transition( TerminalSessionState::Failed, ERROR_BUSY );
+		impl->CloseBackendOnce();
+		return TerminalStartResult::Failure( ERROR_BUSY, L"Terminal retirement capacity is exhausted." );
 	}
 
 	TerminalStartResult result;

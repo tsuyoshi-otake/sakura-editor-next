@@ -8,6 +8,7 @@
 
 #include "workbench/IWorkbenchTool.h"
 #include "workbench/decorations/FileDecorationModel.h"
+#include "workbench/rendering/FrameNativeSurfacePayloadAdapter.h"
 
 #include <Windows.h>
 
@@ -279,6 +280,17 @@ public:
 	[[nodiscard]] ExplorerDecorationOptions GetDecorationOptions() const noexcept;
 	[[nodiscard]] ExplorerWorkerState GetWorkerState() const noexcept;
 	[[nodiscard]] HWND GetHwnd() const noexcept;
+
+	//! Installs the asynchronous native presentation boundary. The sink owns
+	//! registration and GPU work; this view only publishes retained paint pixels.
+	void SetNativeSurfaceSink(rendering::FrameNativeSurfacePayloadSink sink) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult RegisterNativeSurface(
+		const rendering::FrameNativeSurfacePayloadTarget& target) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult UpdateNativeSurface(
+		const rendering::FrameNativeSurfacePayloadTarget& target) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult SubmitNativeSurface(
+		HDC sourceDc, const RECT& dirtyRect) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult CloseNativeSurface() noexcept;
 
 	//! Pure helpers used by the directory worker and unit tests.
 	[[nodiscard]] static std::vector<ExplorerEntry> SortEntries(std::vector<ExplorerEntry> entries);

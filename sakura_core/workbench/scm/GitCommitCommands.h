@@ -84,6 +84,25 @@ enum class EGitCommitAll : std::uint8_t {
 	Tracked,
 };
 
+//! The post-commit operation carried by the action button's `git.commit` call.
+enum class EGitPostCommitCommand : std::uint8_t {
+	None,
+	Push,
+	Sync,
+};
+
+//!
+//! @brief Decodes the compact post-commit payload published by the native
+//! action button.
+//!
+//! The local composition boundary already owns the repository, so it projects
+//! upstream's `[sourceControl, command]` arguments to `[]`, `["git.push"]`, or
+//! `["git.sync"]`. Empty arguments are the ordinary Command Palette/primary
+//! button invocation and mean no post-commit operation.
+//!
+[[nodiscard]] std::optional<EGitPostCommitCommand> ParseGitCommitPostCommandArguments(
+	std::string_view argumentsJson);
+
 //!
 //! @brief Upstream's `CommitOptions`.
 //!

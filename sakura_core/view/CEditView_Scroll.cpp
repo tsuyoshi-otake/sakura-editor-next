@@ -386,6 +386,7 @@ void CEditView::AdjustScrollBars( BOOL bRedraw )
 	// キャレット移動によるスクロール（ミニマップのドラッグを含む）は ScrollAtV を
 	// 通らず、ここが両方の経路が必ず通る合流点になる。
 	GetEditWnd().SyncMarkdownPreviewToEditorScroll( *this );
+	MarkRenderDamage(editor::rendering::EEditViewDamage::Scrollbar);
 
 }
 
@@ -422,7 +423,7 @@ CLayoutInt CEditView::ScrollAtV( CLayoutInt nPos, BOOL bRedrawScrollBar )
 		GetTextArea().SetViewTopLine( CLayoutInt(nPos) );
 		CMyRect rect = GetTextArea().GetAreaRect();
 		rect.left = 0;
-		::InvalidateRect( GetHwnd(), &rect, TRUE );
+		::InvalidateRect( GetHwnd(), &rect, FALSE );
 	}else{
 		rcScrol.left = 0;
 		rcScrol.right = GetTextArea().GetAreaRight();
@@ -462,6 +463,12 @@ CLayoutInt CEditView::ScrollAtV( CLayoutInt nPos, BOOL bRedrawScrollBar )
 	/* キャレットの表示・更新 */
 	GetCaret().ShowEditCaret();
 
+	MarkRenderDamage(
+		editor::rendering::EEditViewDamage::BaseText
+		| editor::rendering::EEditViewDamage::Selection
+		| editor::rendering::EEditViewDamage::Caret
+		| editor::rendering::EEditViewDamage::Scrollbar
+		| editor::rendering::EEditViewDamage::Minimap);
 	MiniMapRedraw(false);
 
 	return -nScrollRowNum;	//方向が逆なので符号反転が必要
@@ -504,7 +511,7 @@ CLayoutInt CEditView::ScrollAtH( CLayoutInt nPos, BOOL bRedrawScrollBar )
 	/* スクロール */
 	if( t_abs( nScrollColNum ) >= GetTextArea().m_nViewColNum /*|| abs( nScrollRowNum ) >= GetTextArea().m_nViewRowNum*/ ){
 		GetTextArea().SetViewLeftCol( nPos );
-		::InvalidateRect( GetHwnd(), nullptr, TRUE );
+		::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	}else{
 		rcScrol.left = 0;
 		rcScrol.right = GetTextArea().GetAreaRight();
@@ -548,11 +555,21 @@ CLayoutInt CEditView::ScrollAtH( CLayoutInt nPos, BOOL bRedrawScrollBar )
 	/* キャレットの表示・更新 */
 	GetCaret().ShowEditCaret();
 
+	MarkRenderDamage(
+		editor::rendering::EEditViewDamage::BaseText
+		| editor::rendering::EEditViewDamage::Selection
+		| editor::rendering::EEditViewDamage::Caret
+		| editor::rendering::EEditViewDamage::Scrollbar
+		| editor::rendering::EEditViewDamage::Minimap);
 	return -nScrollColNum;	//方向が逆なので符号反転が必要
 }
 
 void CEditView::ScrollDraw(CLayoutInt nScrollRowNum, CLayoutInt nScrollColNum, const RECT& rcScroll, const RECT& rcClip, const RECT& rcClip2)
 {
+	MarkRenderDamage(
+		editor::rendering::EEditViewDamage::BaseText
+		| editor::rendering::EEditViewDamage::Selection
+		| editor::rendering::EEditViewDamage::Caret);
 	const CTextArea& area = GetTextArea();
 
 	// 背景は画面に対して固定か
@@ -570,7 +587,7 @@ void CEditView::ScrollDraw(CLayoutInt nScrollRowNum, CLayoutInt nScrollColNum, c
 			nScrollColPxWidth,	// 水平スクロール量
 			(Int)nScrollRowNum * GetTextMetrics().GetHankakuDy(),	// 垂直スクロール量
 			&rcScroll,	/* スクロール長方形の構造体のアドレス */
-			nullptr, nullptr , nullptr, SW_ERASE | SW_INVALIDATE
+			nullptr, nullptr , nullptr, SW_INVALIDATE
 		);
 		// From Here 2007.09.09 Moca 互換BMPによる画面バッファ
 		if( m_hbmpCompatBMP ){
@@ -598,14 +615,13 @@ void CEditView::ScrollDraw(CLayoutInt nScrollRowNum, CLayoutInt nScrollColNum, c
 			rcTopYohaku.right  = area.GetAreaRight();
 			rcTopYohaku.bottom = area.GetAreaTop();
 			HDC hdcSelf = GetDC();
-			HDC hdcBgImg = m_hdcCompatDC ? m_hdcCompatDC : CreateCompatibleDC(hdcSelf);
-			HBITMAP hOldBmp = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
-			DrawBackImage(hdcSelf, rcTopYohaku, hdcBgImg);
-			SelectObject(hdcBgImg, hOldBmp);
-			ReleaseDC(hdcSelf);
-			if( !m_hdcCompatDC ){
-				DeleteObject(hdcBgImg);
+			HDC hdcBgImg = GetBackImageDC(hdcSelf);
+			if( hdcBgImg != nullptr ){
+				HBITMAP hOldBmp = (HBITMAP)::SelectObject(hdcBgImg, m_pcEditDoc->m_hBackImg);
+				DrawBackImage(hdcSelf, rcTopYohaku, hdcBgImg);
+				SelectObject(hdcBgImg, hOldBmp);
 			}
+			ReleaseDC(hdcSelf);
 		}
 		if( IsBkBitmap() && 0 != nScrollColNum && m_pTypeData->m_backImgScrollX ){
 			// 行番号背景のために更新
@@ -626,7 +642,7 @@ void CEditView::ScrollDraw(CLayoutInt nScrollRowNum, CLayoutInt nScrollColNum, c
 	// To Here 2007.09.09 Moca
 
 	if( nScrollRowNum != 0 ){
-		InvalidateRect( &rcClip );
+		InvalidateRect( &rcClip, FALSE );
 		if( nScrollColNum != 0 ){
 			RECT lineNumClip;
 			GetTextArea().GenerateLineNumberRect(&lineNumClip);
@@ -636,7 +652,6 @@ void CEditView::ScrollDraw(CLayoutInt nScrollRowNum, CLayoutInt nScrollColNum, c
 	if( nScrollColNum != 0 ){
 		InvalidateRect( &rcClip2, FALSE );
 	}
-	UpdateWindow();
 }
 
 void CEditView::MiniMapRedraw(bool bUpdateAll)
@@ -644,11 +659,13 @@ void CEditView::MiniMapRedraw(bool bUpdateAll)
 	(void)bUpdateAll;
 	if( this == &GetEditWnd().GetActiveView() && GetEditWnd().GetMiniMap().GetHwnd() ){
 		CEditView& miniMap = GetEditWnd().GetMiniMap();
+		miniMap.MarkRenderDamage(
+			editor::rendering::EEditViewDamage::BaseText
+			| editor::rendering::EEditViewDamage::Minimap);
 		// The document-wide scale means a line-count or viewport change can affect
 		// every row. Painting is still bounded to O(height) GDI calls.
 		::InvalidateRect( miniMap.GetHwnd(), nullptr, FALSE );
 		GetEditWnd().RecordStartupMiniMapImmediateUpdate();
-		::UpdateWindow( miniMap.GetHwnd() );
 	}
 }
 

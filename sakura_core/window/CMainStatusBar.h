@@ -12,6 +12,7 @@
 #include "doc/CDocListener.h"
 #include "theme/CThemeService.h"
 #include "workbench/scm/SourceControlService.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
 #include "workbench/statusbar/StatusbarViewModel.h"
 
 #include <functional>
@@ -111,5 +112,6 @@ private:
 	std::function<void(std::string_view)> m_workbenchCommandCallback;
 	std::function<void(std::string_view, bool)> m_statusbarVisibilityCallback;
 	mutable std::vector<IconFont> m_iconFontCache;
+	mutable workbench::rendering::CGdiBackBuffer m_backBuffer;
 };
 #endif /* SAKURA_CMAINSTATUSBAR_E2FC11D7_4513_4F96_BDCC_E9B278ED0718_H_ */

@@ -26,6 +26,7 @@
 #include <mutex>
 #include <span>
 #include <string_view>
+#include <unordered_set>
 #include <utility>
 #include <imm.h>
 #include <windowsx.h>
@@ -39,10 +40,8 @@ constexpr int kTabHeightDip = 30;
 constexpr int kTerminalTabsRowHeightDip = 24;
 constexpr UINT kOutputAvailableMessage = WM_APP + 0x3a1;
 constexpr UINT kStateChangedMessage = WM_APP + 0x3a2;
-constexpr UINT_PTR kOutputFrameTimer = 0x5343;
 constexpr UINT_PTR kSynchronizedOutputTimer = 0x5344;
 constexpr UINT_PTR kProtocolInputRetryTimer = 0x5346;
-constexpr UINT kOutputFrameMilliseconds = 16;
 constexpr UINT kProtocolInputRetryMilliseconds = 30;
 constexpr ULONGLONG kSynchronizedOutputMaximumMilliseconds = 100;
 constexpr UINT kCommandNewTerminal = 1;
@@ -95,6 +94,8 @@ struct NotificationGate {
 	std::mutex mutex;
 	HWND window{};
 	bool alive{ true };
+	bool stateWakePending{};
+	std::unordered_set<std::uint64_t> outputWakePending;
 };
 
 class DefaultLaunchResolver final {
@@ -324,18 +325,37 @@ struct CTerminalTool::Impl {
 			const auto gate = weakGate.lock();
 			if( !gate ) return;
 			HWND target = nullptr;
+			bool post = false;
 			{
 				const std::lock_guard lock(gate->mutex);
-				if( gate->alive ) target = gate->window;
+				if( gate->alive ) {
+					target = gate->window;
+					if( event.kind == TerminalTabEventKind::OutputAvailable ) {
+						post = gate->outputWakePending.insert(event.tabId).second;
+					} else if( !gate->stateWakePending ) {
+						gate->stateWakePending = true;
+						post = true;
+					}
+				}
 			}
-			if( target ) ::PostMessageW(target, event.kind == TerminalTabEventKind::OutputAvailable ? kOutputAvailableMessage : kStateChangedMessage,
-				static_cast<WPARAM>(event.tabId), 0);
+			if( !target || !post ) return;
+			const UINT message = event.kind == TerminalTabEventKind::OutputAvailable
+				? kOutputAvailableMessage : kStateChangedMessage;
+			if( ::PostMessageW(target, message, static_cast<WPARAM>(event.tabId), 0) ) return;
+			const std::lock_guard lock(gate->mutex);
+			if( event.kind == TerminalTabEventKind::OutputAvailable ) {
+				gate->outputWakePending.erase(event.tabId);
+			} else {
+				gate->stateWakePending = false;
+			}
 		});
 	}
 
 	std::shared_ptr<NotificationGate> gate;
 	std::unique_ptr<DefaultLaunchResolver> defaultResolver;
 	std::unique_ptr<TerminalTabManager> manager;
+	TerminalNativeFrameBridgePtr nativeFrameBridge;
+	std::uint64_t nativeDeviceEpoch = 1;
 
 	// A terminal session belongs to exactly one group; only the selected group
 	// owns native viewport HWNDs at a time. The group keeps a recursive split
@@ -370,9 +390,7 @@ struct CTerminalTool::Impl {
 	bool active{};
 	bool closed{};
 	bool usesDefaultResolver{};
-	bool outputFrameScheduled{};
 	bool protocolInputRetryScheduled{};
-	std::vector<std::uint64_t> pendingOutputTabs;
 	std::optional<std::size_t> draggingPaneDivider;
 	bool terminalTabsFocused{};
 	std::size_t terminalTabsFirstVisible{};
@@ -592,6 +610,75 @@ struct CTerminalTool::Impl {
 		return found == panes.end() ? nullptr : &*found;
 	}
 
+	void DrainNativeFrames( const std::uint64_t tabId ) noexcept
+	{
+		if( closed || !nativeFrameBridge ) return;
+		auto* pane = FindPane(tabId);
+		if( pane == nullptr || !pane->window ) return;
+		// The publisher is a latest-only mailbox. Drain exactly one immutable
+		// frame per UI notification; if the worker publishes again while this
+		// handler is running it posts another notification. An unbounded loop here
+		// would let a continuously publishing worker monopolize the UI message
+		// pump and would make terminal teardown depend on producer quiescence.
+		if( auto frame = pane->window->TakeNativeFrame() ) {
+			nativeFrameBridge->Submit(std::move(frame));
+		}
+	}
+
+	void AttachNativeFrameBridge( TerminalPane& pane ) noexcept
+	{
+		if( !pane.window ) return;
+		const auto tabId = pane.tabId;
+		if( pane.window->FrameSurfaceSnapshot().deviceEpoch != nativeDeviceEpoch ) {
+			(void)pane.window->NotifyFrameDeviceEpoch(nativeDeviceEpoch);
+		}
+		pane.window->SetNativeFrameBridge(nativeFrameBridge);
+		if( !nativeFrameBridge ) {
+			pane.window->SetNativeFrameReadySink({});
+			return;
+		}
+		pane.window->SetNativeFrameReadySink([this, tabId] {
+			DrainNativeFrames(tabId);
+		});
+		// A frame may have completed before the bridge was attached (for example
+		// while the runtime was being initialized). Drain that mailbox now rather
+		// than waiting for a message that was posted to the old sink state.
+		DrainNativeFrames(tabId);
+	}
+
+	void SetNativeFrameRuntimeBridge( TerminalNativeFrameBridgePtr bridge ) noexcept
+	{
+		if( nativeFrameBridge && nativeFrameBridge != bridge ) DetachNativeFrameRuntime();
+		nativeFrameBridge = std::move(bridge);
+		for( auto& pane : panes ) AttachNativeFrameBridge(pane);
+	}
+
+	void DetachNativeFrameRuntime() noexcept
+	{
+		const auto bridge = std::exchange(nativeFrameBridge, {});
+		for( auto& pane : panes ) {
+			if( pane.window ) pane.window->SetNativeFrameReadySink({});
+		}
+		if( !bridge ) {
+			for( auto& pane : panes ) {
+				if( pane.window ) pane.window->SetNativeFrameBridge({});
+			}
+			return;
+		}
+		// CloseSurface is sent while the runtime is still accepting commands;
+		// only after every stable identity is withdrawn do we atomically fence the
+		// callbacks. No worker or presentation-owner wait occurs here.
+		for( const auto& pane : panes ) {
+			if( !pane.window ) continue;
+			const auto snapshot = pane.window->FrameSurfaceSnapshot();
+			bridge->CloseSurface(snapshot.surfaceId, snapshot.surfaceLifetimeEpoch);
+		}
+		bridge->Close();
+		for( auto& pane : panes ) {
+			if( pane.window ) pane.window->SetNativeFrameBridge({});
+		}
+	}
+
 	void DestroyPaneRenderers() noexcept
 	{
 		// Destroying the focused child transfers focus to this host synchronously.
@@ -601,6 +688,7 @@ struct CTerminalTool::Impl {
 		destroyingPaneRenderers = true;
 		for( auto& pane : panes ) {
 			if( !pane.window ) continue;
+			pane.window->SetNativeFrameReadySink({});
 			pane.window->SetFocusSink(nullptr);
 			pane.window->SetInputAdapter(nullptr);
 			pane.window->SetModel(nullptr);
@@ -653,7 +741,7 @@ struct CTerminalTool::Impl {
 		// intentionally unbound viewport and is never a TerminalTabManager id.
 		const bool unboundViewport = tabId == 0;
 		if( !window || !instance || closed || (!unboundViewport && !manager->Model(tabId)) ) return false;
-		auto candidate = std::make_unique<CTerminalWnd>();
+		auto candidate = std::make_unique<CTerminalWnd>(TerminalSurfaceIdForTab(tabId));
 		if( !candidate->Create(window, instance) ) return false;
 		candidate->SetInputSink([this, tabId](std::span<const std::uint8_t> bytes) {
 			return tabId == 0 ? TerminalQueueInputResult::NotRunning : manager->QueueInput(tabId, bytes);
@@ -668,6 +756,7 @@ struct CTerminalTool::Impl {
 		candidate->SetInputAdapter(unboundViewport ? nullptr : manager->InputAdapter(tabId));
 		candidate->SetModel(unboundViewport ? nullptr : manager->Model(tabId));
 		panes.push_back({ tabId, std::move(candidate), true, 0 });
+		AttachNativeFrameBridge(panes.back());
 		return true;
 	}
 
@@ -736,6 +825,7 @@ struct CTerminalTool::Impl {
 			if( !pane.window ) continue;
 			pane.window->SetInputAdapter(manager->InputAdapter(pane.tabId));
 			pane.window->SetModel(manager->Model(pane.tabId));
+			static_cast<void>(pane.window->NotifyFrameContent());
 			pane.needsFullRepaint = true;
 		}
 	}
@@ -1207,6 +1297,10 @@ struct CTerminalTool::Impl {
 	void PaintTerminalOutput( CTerminalWnd& renderer, const TerminalModel* model, const TerminalDrainResult& result,
 		bool& needsFullRepaint, ULONGLONG& synchronizedSince )
 	{
+		// DrainOutput has already consumed one bounded model publication. Keep
+		// terminal bytes and dirty-row damage in their existing paths; only the
+		// frame projection is latest-only until the enclosing post-paint boundary.
+		static_cast<void>(renderer.NotifyFrameContent());
 		const bool synchronized = model && model->Modes().synchronizedOutput;
 		if( result.synchronizedOutputCommitted ) {
 			// A single drain may close one synchronized frame and immediately open
@@ -1284,30 +1378,24 @@ struct CTerminalTool::Impl {
 
 	void ScheduleOutputFrame( std::uint64_t tabId )
 	{
-		if( std::find(pendingOutputTabs.begin(), pendingOutputTabs.end(), tabId) == pendingOutputTabs.end() ) {
-			pendingOutputTabs.push_back(tabId);
-		}
-		if( outputFrameScheduled || window == nullptr ) return;
-
-		// Windows Terminal's Renderer::NotifyPaintFrame wakes its render thread on
-		// the leading edge instead of waiting for a periodic timer. Mirror that
-		// interactive contract here so a key echo or short command response is not
-		// held behind low-priority WM_TIMER dispatch. Sakura still needs a trailing
-		// frame gate because parsing runs on the UI thread: notifications arriving
-		// during the next 16 ms are coalesced by DrainOutputFrame().
-		outputFrameScheduled = ::SetTimer(window, kOutputFrameTimer, kOutputFrameMilliseconds, nullptr) != 0;
-		auto pending = std::move(pendingOutputTabs);
-		pendingOutputTabs.clear();
-		for( const auto pendingId : pending ) HandleOutput(pendingId);
+		if( window == nullptr ) return;
+		// NotificationGate keeps at most one queued wake per tab. Consume that wake
+		// before entering here, drain the latest available state once, and let output
+		// arriving during the drain post the next wake. This is event driven and does
+		// not impose a 16 ms application timer or hold a short echo for a later tick.
+		HandleOutput(tabId);
 	}
 
-	void DrainOutputFrame()
+	void ConsumeOutputWake( std::uint64_t tabId )
 	{
-		if( window != nullptr ) ::KillTimer(window, kOutputFrameTimer);
-		outputFrameScheduled = false;
-		auto pending = std::move(pendingOutputTabs);
-		pendingOutputTabs.clear();
-		for( const auto tabId : pending ) HandleOutput(tabId);
+		const std::lock_guard lock(gate->mutex);
+		gate->outputWakePending.erase(tabId);
+	}
+
+	void ConsumeStateWake()
+	{
+		const std::lock_guard lock(gate->mutex);
+		gate->stateWakePending = false;
 	}
 
 	void ShowContextMenu( int x, int y, HWND owner = nullptr )
@@ -1692,13 +1780,10 @@ struct CTerminalTool::Impl {
 			}
 			return 0;
 		case kOutputAvailableMessage:
+			ConsumeOutputWake(static_cast<std::uint64_t>(wParam));
 			ScheduleOutputFrame(static_cast<std::uint64_t>(wParam));
 			return 0;
 		case WM_TIMER:
-			if( wParam == kOutputFrameTimer ) {
-				DrainOutputFrame();
-				return 0;
-			}
 			if( wParam == kSynchronizedOutputTimer ) {
 				// Broken or very long synchronized updates still present a bounded-rate
 				// preview instead of freezing indefinitely.
@@ -1716,6 +1801,7 @@ struct CTerminalTool::Impl {
 			}
 			return ::DefWindowProcW(window, message, wParam, lParam);
 		case kStateChangedMessage:
+			ConsumeStateWake();
 			InvalidateTabs();
 			InvalidateTerminalTabs();
 			return 0;
@@ -1795,6 +1881,9 @@ struct CTerminalTool::Impl {
 		if( auto* pane = FindPane(tabId); pane && pane->window ) {
 			pane->window->SetInputAdapter(manager->InputAdapter(tabId));
 			pane->window->SetModel(manager->Model(tabId));
+			// RestartTab may retain the model object while replacing its semantic
+			// generation. Fence that replacement even when the pointer is unchanged.
+			static_cast<void>(pane->window->NotifyFrameContent());
 			pane->needsFullRepaint = true;
 		}
 		HandleOutput(tabId);
@@ -1835,12 +1924,9 @@ struct CTerminalTool::Impl {
 		workingDirectory = std::move(nextWorkingDirectory);
 
 		if( window ) {
-			::KillTimer(window, kOutputFrameTimer);
 			::KillTimer(window, kSynchronizedOutputTimer);
 			::KillTimer(window, kProtocolInputRetryTimer);
 		}
-		outputFrameScheduled = false;
-		pendingOutputTabs.clear();
 		for( auto& pane : panes ) {
 			if( pane.window ) pane.window->ResetSessionInputState();
 		}
@@ -2191,6 +2277,42 @@ void CTerminalTool::Deactivate()
 	m_impl->active = false;
 }
 
+void CTerminalTool::CommitGdiFrames() noexcept
+{
+	if( !m_impl || m_impl->closed ) return;
+	for( auto& pane : m_impl->panes ) {
+		if( pane.window ) static_cast<void>(pane.window->CommitGdiFrame());
+	}
+}
+
+void CTerminalTool::NotifyFrameDeviceEpoch(const std::uint64_t epoch) noexcept
+{
+	if( !m_impl || m_impl->closed || epoch == 0 ) return;
+	m_impl->nativeDeviceEpoch = epoch;
+	for( auto& pane : m_impl->panes ) {
+		if( !pane.window ) continue;
+		const auto before = pane.window->FrameSurfaceSnapshot();
+		if( before.deviceEpoch == epoch ) continue;
+		const auto result = pane.window->NotifyFrameDeviceEpoch(epoch);
+		if( result.Accepted() && pane.window->GetHwnd() != nullptr ) {
+			::InvalidateRect(pane.window->GetHwnd(), nullptr, FALSE);
+		}
+	}
+}
+
+void CTerminalTool::SetNativeFrameRuntimeBridge(
+	TerminalNativeFrameBridgePtr bridge ) noexcept
+{
+	if( !m_impl || m_impl->closed ) return;
+	m_impl->SetNativeFrameRuntimeBridge(std::move(bridge));
+}
+
+void CTerminalTool::DetachNativeFrameRuntime() noexcept
+{
+	if( !m_impl ) return;
+	m_impl->DetachNativeFrameRuntime();
+}
+
 bool CTerminalTool::PreTranslateMessage( MSG& message )
 {
 	if( m_impl->closed ) return false;
@@ -2212,12 +2334,12 @@ void CTerminalTool::Close()
 		const std::lock_guard lock(m_impl->gate->mutex);
 		m_impl->gate->alive = false;
 		m_impl->gate->window = nullptr;
+		m_impl->gate->stateWakePending = false;
+		m_impl->gate->outputWakePending.clear();
 	}
-	if( m_impl->window ) ::KillTimer(m_impl->window, kOutputFrameTimer);
 	if( m_impl->window ) ::KillTimer(m_impl->window, kSynchronizedOutputTimer);
 	if( m_impl->window ) ::KillTimer(m_impl->window, kProtocolInputRetryTimer);
-	m_impl->outputFrameScheduled = false;
-	m_impl->pendingOutputTabs.clear();
+	m_impl->DetachNativeFrameRuntime();
 	m_impl->DestroyPaneRenderers();
 	m_impl->paneGroups.clear();
 	m_impl->activePaneGroup.reset();

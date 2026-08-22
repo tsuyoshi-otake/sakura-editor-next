@@ -8,6 +8,7 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/IWorkbenchTool.h"
+#include "workbench/rendering/FrameNativeSurfacePayloadAdapter.h"
 #include "workbench/search/SearchModel.h"
 
 #include <cstdint>
@@ -95,6 +96,17 @@ public:
 	//! Seeds the query box, e.g. from the editor's selection.
 	void SetQueryText(std::wstring text);
 	[[nodiscard]] HWND GetHwnd() const noexcept;
+
+	//! Installs the asynchronous native presentation boundary. The sink owns
+	//! registration and GPU work; this view only publishes retained paint pixels.
+	void SetNativeSurfaceSink(rendering::FrameNativeSurfacePayloadSink sink) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult RegisterNativeSurface(
+		const rendering::FrameNativeSurfacePayloadTarget& target) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult UpdateNativeSurface(
+		const rendering::FrameNativeSurfacePayloadTarget& target) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult SubmitNativeSurface(
+		HDC sourceDc, const RECT& dirtyRect) noexcept;
+	[[nodiscard]] rendering::FrameNativeSurfacePayloadResult CloseNativeSurface() noexcept;
 
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam);
 

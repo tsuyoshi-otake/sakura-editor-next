@@ -7,6 +7,7 @@
 #pragma once
 
 #include "terminal/window/TerminalTabManager.h"
+#include "terminal/window/TerminalNativeFrameBridge.h"
 #include "TerminalTabPresentation.h"
 #include "workbench/IWorkbenchTool.h"
 #include "theme/CThemeService.h"
@@ -65,6 +66,18 @@ public:
 	void Deactivate() override;
 	bool PreTranslateMessage( MSG& message ) override;
 	void Close() override;
+	//! Commits pane frame projections only after the parent has flushed its real
+	//! post-paint GDI boundary. No paint, wait, or timer is performed here.
+	void CommitGdiFrames() noexcept;
+	//! Advances every pane to a recovered presentation device epoch. The call is
+	//! UI-owned, bounded by the pane count, and never waits for a renderer.
+	void NotifyFrameDeviceEpoch(std::uint64_t epoch) noexcept;
+	//! Connects pane HWNDs to the owning frame runtime. The bridge is shared by
+	//! all currently visible panes and by panes materialized later.
+	void SetNativeFrameRuntimeBridge(TerminalNativeFrameBridgePtr bridge) noexcept;
+	//! Explicitly withdraws every pane surface and fences the bridge before the
+	//! frame runtime is retired. This operation never waits for a worker.
+	void DetachNativeFrameRuntime() noexcept;
 
 	void SetWorkingDirectory( std::wstring workingDirectory );
 	//! Rebinds the terminal authority to a new workspace. Existing sessions,

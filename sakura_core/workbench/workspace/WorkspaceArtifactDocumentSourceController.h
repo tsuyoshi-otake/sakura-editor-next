@@ -11,6 +11,7 @@
 
 #include <sakura/filesystem/IFileService.h>
 #include "workbench/workspace/WorkspaceArtifactDocumentService.h"
+#include "workbench/WorkerRetirementService.h"
 
 #include <condition_variable>
 #include <functional>
@@ -30,6 +31,7 @@ enum class EWorkspaceArtifactDocumentSourceStatus : std::uint8_t {
 	InvalidRequest,
 	CapacityExceeded,
 	StartFailed,
+	RetirementUnavailable,
 	NotStarted,
 	ReentrantStopDenied,
 	ReadFailed,
@@ -39,6 +41,10 @@ struct WorkspaceArtifactDocumentSourceResult final {
 	EWorkspaceArtifactDocumentSourceStatus status = EWorkspaceArtifactDocumentSourceStatus::ReadFailed;
 	std::optional<platform::filesystem::EFileResultStatus> fileStatus;
 	std::vector<WorkspaceArtifactDocumentResult> documents;
+	//! Stop returns after handing live threads to the bounded reaper. These
+	//! fields expose that finalization is pending without making the caller wait.
+	bool retirementPending = false;
+	bool retirementFinalized = false;
 
 	[[nodiscard]] bool Succeeded() const noexcept
 	{
@@ -58,17 +64,18 @@ struct WorkspaceArtifactDocumentSourceRequest final {
 	std::optional<platform::uri::Uri> workspaceConfiguration;
 };
 
-//! Production composition boundary: it borrows `IFileService` and the pure
-//! artifact service, reads `.code-workspace` plus each `.vscode/{tasks,launch,
-//! extensions}.json`, and owns only cancellable watches/workers. It never owns
-//! Task/DAP/extension execution and does not stop the borrowed service.
+//! Production composition boundary: it retains shared ownership of the
+//! `IFileService` and pure artifact service while retired work is pending,
+//! reads `.code-workspace` plus each `.vscode/{tasks,launch,extensions}.json`,
+//! and owns only cancellable watches/workers. It never owns Task/DAP/extension
+//! execution and does not stop either shared service.
 class CWorkspaceArtifactDocumentSourceController final {
 public:
 	using ReloadCallback = std::function<void(const WorkspaceArtifactDocumentSourceResult&)>;
 
 	explicit CWorkspaceArtifactDocumentSourceController(
-		platform::filesystem::IFileService& fileService,
-		CWorkspaceArtifactDocumentService& documentService) noexcept;
+		std::shared_ptr<platform::filesystem::IFileService> fileService,
+		std::shared_ptr<CWorkspaceArtifactDocumentService> documentService) noexcept;
 	~CWorkspaceArtifactDocumentSourceController();
 
 	CWorkspaceArtifactDocumentSourceController(const CWorkspaceArtifactDocumentSourceController&) = delete;
@@ -83,58 +90,54 @@ public:
 	//! Performs one bounded reload while started. Read/parse failures preserve the
 	//! last accepted service document; only NotFound removes a contribution.
 	[[nodiscard]] WorkspaceArtifactDocumentSourceResult Reload() noexcept;
-	//! Cancels watches, joins every worker/dispatcher, and guarantees no callback
-	//! can begin after return. Stop from this adapter callback is rejected.
+	//! Cancels watches, wakes workers, and transfers every worker/dispatcher to
+	//! the bounded retirement service. Return is non-blocking with respect to
+	//! worker completion; the result exposes pending versus finalized retirement.
+	//! Stop from this adapter callback is rejected.
 	[[nodiscard]] WorkspaceArtifactDocumentSourceResult Stop() noexcept;
+	//! Non-blocking observation of the last lifecycle's retirement terminal state.
+	[[nodiscard]] bool IsRetirementFinalized() const noexcept;
 
 private:
+	struct SharedState;
 	struct WatchSlot;
 	struct ReloadOneResult;
 
 	[[nodiscard]] static EWorkspaceArtifactDocumentSourceStatus ValidateRequest(
 		const WorkspaceArtifactDocumentSourceRequest& request) noexcept;
-	void StartWorkersLocked();
+	[[nodiscard]] bool StartWorkersLocked(const std::shared_ptr<SharedState>& state);
 	[[nodiscard]] WorkspaceArtifactDocumentSourceResult StopLocked() noexcept;
-	void CancelAndJoinWorkers() noexcept;
-	[[nodiscard]] bool BeginDocumentOperation() noexcept;
-	void EndDocumentOperation() noexcept;
-	void RebuildTopology() noexcept;
-	void DispatchMain() noexcept;
-	void WorkerMain(WatchSlot* slot) noexcept;
-	void Queue(bool rebuild) noexcept;
-	[[nodiscard]] bool CanDispatch() const noexcept;
-	[[nodiscard]] bool IsRelevant(const WatchSlot& slot, std::size_t targetIndex,
-		const platform::filesystem::FileWatchEvent& event) const noexcept;
-	[[nodiscard]] WorkspaceArtifactDocumentSourceResult ReloadSnapshot() noexcept;
-	[[nodiscard]] ReloadOneResult ReloadOne(
+	static void CancelAndRetireWorkers(const std::shared_ptr<SharedState>& state) noexcept;
+	static void MarkThreadFinished(const std::shared_ptr<SharedState>& state) noexcept;
+	[[nodiscard]] static bool BeginDocumentOperation(const std::shared_ptr<SharedState>& state) noexcept;
+	static void EndDocumentOperation(const std::shared_ptr<SharedState>& state) noexcept;
+	static void RebuildTopology(const std::shared_ptr<SharedState>& state) noexcept;
+	static void DispatchMain(const std::shared_ptr<SharedState>& state) noexcept;
+	static void WorkerMain(const std::shared_ptr<SharedState>& state,
+		const std::shared_ptr<WatchSlot>& slot) noexcept;
+	static void Queue(const std::shared_ptr<SharedState>& state, bool rebuild) noexcept;
+	[[nodiscard]] static bool CanDispatch(const std::shared_ptr<SharedState>& state) noexcept;
+	[[nodiscard]] static bool IsRelevant(const WatchSlot& slot, std::size_t targetIndex,
+		const platform::filesystem::FileWatchEvent& event) noexcept;
+	[[nodiscard]] static WorkspaceArtifactDocumentSourceResult ReloadSnapshot(
+		const std::shared_ptr<SharedState>& state) noexcept;
+	[[nodiscard]] static ReloadOneResult ReloadOne(
+		const std::shared_ptr<SharedState>& state,
 		EWorkspaceArtifactDocumentKind kind,
 		EWorkspaceArtifactDocumentSource source,
 		const std::optional<platform::uri::Uri>& folderUri,
 		const platform::uri::Uri& resource,
 		std::uint64_t generation) noexcept;
-	[[nodiscard]] std::uint64_t NextRevision() noexcept;
+	[[nodiscard]] static std::uint64_t NextRevision(const std::shared_ptr<SharedState>& state) noexcept;
 
-	platform::filesystem::IFileService& m_fileService;
-	CWorkspaceArtifactDocumentService& m_documentService;
+	std::shared_ptr<platform::filesystem::IFileService> m_fileService;
+	std::shared_ptr<CWorkspaceArtifactDocumentService> m_documentService;
 	//! Serializes Start/Stop state transitions, including initial reload and
 	//! dispatcher publication. A concurrent Stop waits for Start to publish a
 	//! complete lifecycle or roll it back; ordinary Reload reads remain outside
 	//! this gate and are fenced immediately before their service mutation.
 	std::mutex m_lifecycleMutex;
-	mutable std::mutex m_mutex;
-	std::condition_variable m_pending;
-	std::condition_variable m_documentOperationsComplete;
-	std::optional<WorkspaceArtifactDocumentSourceRequest> m_request;
-	ReloadCallback m_callback;
-	std::vector<std::unique_ptr<WatchSlot>> m_slots;
-	std::thread m_dispatcher;
-	std::uint64_t m_nextRevision = 1;
-	bool m_started = false;
-	bool m_stopping = false;
-	bool m_rebuildRequested = false;
-	bool m_reloadPending = false;
-	bool m_rebuilding = false;
-	std::size_t m_activeDocumentOperations = 0;
+	std::shared_ptr<SharedState> m_state;
 };
 
 } // namespace workbench::workspace

@@ -10,6 +10,9 @@
 
 #include "theme/CThemeService.h"
 #include "workbench/controls/COverlayScrollbar.h"
+#include "workbench/rendering/CGdiBackBuffer.h"
+#include "workbench/rendering/LatestOnlyMailbox.h"
+#include "workbench/WorkerRetirementService.h"
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CSetiFont.h"
 #include "workbench/IconMetrics.h"
@@ -136,6 +139,14 @@ void FrameRectangle(HDC dc, const RECT& rect, COLORREF color)
 	::DeleteObject(brush);
 }
 
+//! Queue a repaint without asking USER to erase the class background first.
+//! Every Search surface paints its own background, so an erase pass only exposes
+//! a blank intermediate frame while child windows are being repositioned.
+void QueueNoEraseInvalidate(HWND window, const RECT* region = nullptr) noexcept
+{
+	if (window != nullptr) ::InvalidateRect(window, region, FALSE);
+}
+
 //! Replaces `{0}` and `{1}` in a localized message.
 [[nodiscard]] std::wstring FormatMessage(std::wstring text, std::wstring_view first,
 	std::wstring_view second)
@@ -169,6 +180,12 @@ struct WorkerRequest final {
 	std::uint64_t generation = 0;
 };
 
+//! One completed search held by the depth-one result mailbox.
+struct WorkerResult final {
+	SearchResults results;
+	std::uint64_t generation = 0;
+};
+
 //! Everything shared between the window thread and the search worker.
 struct SharedState final {
 	std::mutex mutex;
@@ -182,12 +199,19 @@ struct SharedState final {
 	//! rather than delivered to a destroyed HWND.
 	std::mutex windowMutex;
 	HWND window{};
-};
+	workbench::rendering::LatestOnlyMailbox<std::unique_ptr<WorkerResult>> results;
 
-//! One completed search, owned by the message until the window takes it.
-struct WorkerResult final {
-	SearchResults results;
-	std::uint64_t generation = 0;
+	~SharedState() noexcept
+	{
+		if (stop != nullptr) {
+			::CloseHandle(stop);
+			stop = nullptr;
+		}
+		if (wake != nullptr) {
+			::CloseHandle(wake);
+			wake = nullptr;
+		}
+	}
 };
 
 bool EnsureClass(HINSTANCE instance);
@@ -200,6 +224,11 @@ struct CSearchWorkbenchTool::Impl {
 	HWND replace{};
 	HWND list{};
 	controls::COverlayScrollbar scrollbar;
+	//! Persistent composition targets. They are UI-thread-owned and only publish
+	//! completed pixels to the native target during WM_PAINT/WM_DRAWITEM.
+	workbench::rendering::CGdiBackBuffer rootBuffer;
+	workbench::rendering::CGdiBackBuffer listBuffer;
+	workbench::rendering::FrameNativeSurfacePayloadAdapter nativeSurface;
 	unsigned int dpi{ 96 };
 	theme::CThemeFont font;
 	theme::ThemePalette palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
@@ -226,6 +255,7 @@ struct CSearchWorkbenchTool::Impl {
 	FilesChangedCallback filesChanged;
 	std::shared_ptr<SharedState> shared = std::make_shared<SharedState>();
 	std::thread worker;
+	std::optional<workbench::WorkerRetirementService::Reservation> workerRetirement;
 
 	// --- geometry -------------------------------------------------------------
 
@@ -360,7 +390,7 @@ struct CSearchWorkbenchTool::Impl {
 			::SendMessageW(list, LB_SETTOPINDEX, static_cast<WPARAM>(previousTop), 0);
 		}
 		::SendMessageW(list, WM_SETREDRAW, TRUE, 0);
-		::InvalidateRect(list, nullptr, TRUE);
+		QueueNoEraseInvalidate(list);
 		scrollbar.Update();
 	}
 
@@ -387,7 +417,7 @@ struct CSearchWorkbenchTool::Impl {
 
 	void Repaint()
 	{
-		if (window != nullptr) ::InvalidateRect(window, nullptr, TRUE);
+		QueueNoEraseInvalidate(window);
 	}
 
 	void StartSearch()
@@ -678,7 +708,6 @@ struct CSearchWorkbenchTool::Impl {
 	{
 		if (replaceVisible == visible) return;
 		replaceVisible = visible;
-		if (replace != nullptr) ::ShowWindow(replace, visible ? SW_SHOW : SW_HIDE);
 		LayoutChildren();
 		Repaint();
 	}
@@ -785,32 +814,61 @@ struct CSearchWorkbenchTool::Impl {
 	{
 		if (window == nullptr) return;
 		const RECT queryBox = QueryBoxRect();
-		if (query != nullptr) {
-			RECT inner = queryBox;
-			::InflateRect(&inner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
-			inner.right = InlineToggleRect(queryBox, 3).left - Dip(2);
-			::SetWindowPos(query, nullptr, inner.left, inner.top,
-				std::max(0L, inner.right - inner.left), std::max(0L, inner.bottom - inner.top),
-				SWP_NOZORDER | SWP_NOACTIVATE);
-		}
-		if (replace != nullptr) {
-			const RECT replaceBox = ReplaceBoxRect();
-			RECT inner = replaceBox;
-			::InflateRect(&inner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
-			inner.right = InlineToggleRect(replaceBox, 1).left - Dip(2);
-			::SetWindowPos(replace, nullptr, inner.left, inner.top,
-				std::max(0L, inner.right - inner.left), std::max(0L, inner.bottom - inner.top),
-				SWP_NOZORDER | SWP_NOACTIVATE);
-		}
+		RECT queryInner = queryBox;
+		::InflateRect(&queryInner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
+		queryInner.right = InlineToggleRect(queryBox, 3).left - Dip(2);
+		const RECT replaceBox = ReplaceBoxRect();
+		RECT replaceInner = replaceBox;
+		::InflateRect(&replaceInner, -Dip(kInputPaddingDip), -Dip(kInputPaddingDip));
+		replaceInner.right = InlineToggleRect(replaceBox, 1).left - Dip(2);
+		const RECT listRect = ListRect();
 		if (list != nullptr) {
-			const RECT listRect = ListRect();
 			::SendMessageW(list, LB_SETITEMHEIGHT, 0, static_cast<LPARAM>(Dip(kRowHeightDip)));
-			::SetWindowPos(list, nullptr, listRect.left, listRect.top,
+		}
+
+		const UINT commonFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW;
+		const auto moveWindow = [commonFlags](HWND child, const RECT& bounds, UINT visibility) {
+			if (child == nullptr) return;
+			::SetWindowPos(child, nullptr, bounds.left, bounds.top,
+				std::max(0L, bounds.right - bounds.left),
+				std::max(0L, bounds.bottom - bounds.top), commonFlags | visibility);
+		};
+		HDWP transaction = ::BeginDeferWindowPos(3);
+		if (transaction != nullptr && query != nullptr) {
+			transaction = ::DeferWindowPos(transaction, query, nullptr,
+				queryInner.left, queryInner.top,
+				std::max(0L, queryInner.right - queryInner.left),
+				std::max(0L, queryInner.bottom - queryInner.top), commonFlags | SWP_SHOWWINDOW);
+		}
+		if (transaction != nullptr && replace != nullptr) {
+			transaction = ::DeferWindowPos(transaction, replace, nullptr,
+				replaceInner.left, replaceInner.top,
+				std::max(0L, replaceInner.right - replaceInner.left),
+				std::max(0L, replaceInner.bottom - replaceInner.top),
+				commonFlags | (replaceVisible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW));
+		}
+		if (transaction != nullptr && list != nullptr) {
+			transaction = ::DeferWindowPos(transaction, list, nullptr,
+				listRect.left, listRect.top,
 				std::max(0L, listRect.right - listRect.left),
-				std::max(0L, listRect.bottom - listRect.top), SWP_NOZORDER | SWP_NOACTIVATE);
+				std::max(0L, listRect.bottom - listRect.top), commonFlags | SWP_SHOWWINDOW);
+		}
+		if (transaction != nullptr) {
+			(void)::EndDeferWindowPos(transaction);
+		} else {
+			// DeferWindowPos can fail under desktop resource pressure. Keep the
+			// no-redraw contract on the fallback path so a partial transaction never
+			// reintroduces one-child-at-a-time painting.
+			moveWindow(query, queryInner, SWP_SHOWWINDOW);
+			moveWindow(replace, replaceInner, replaceVisible ? SWP_SHOWWINDOW : SWP_HIDEWINDOW);
+			moveWindow(list, listRect, SWP_SHOWWINDOW);
 		}
 		scrollbar.SetDpi(dpi);
 		scrollbar.Update();
+		QueueNoEraseInvalidate(window);
+		QueueNoEraseInvalidate(query);
+		QueueNoEraseInvalidate(replace);
+		QueueNoEraseInvalidate(list);
 	}
 
 	void ApplyScrollbarColors()
@@ -829,6 +887,8 @@ struct CSearchWorkbenchTool::Impl {
 	{
 		shared->wake = ::CreateEventW(nullptr, FALSE, FALSE, nullptr);
 		shared->stop = ::CreateEventW(nullptr, TRUE, FALSE, nullptr);
+		auto retirement = workbench::WorkerRetirementService::Instance().TryReserve();
+		if (!retirement) return;
 		auto state = shared;
 		worker = std::thread([state]() {
 			const HANDLE handles[2] = { state->stop, state->wake };
@@ -853,18 +913,39 @@ struct CSearchWorkbenchTool::Impl {
 					|| state->generation.load(std::memory_order_acquire) != request.generation) {
 					continue;
 				}
-				if (::PostMessageW(state->window, kResultMessage, 0,
-						reinterpret_cast<LPARAM>(result.get())) != FALSE) {
-					(void)result.release();
+				const auto published = state->results.Publish(std::move(result));
+				if (published.wakeRequired
+					&& ::PostMessageW(state->window, kResultMessage, 0, 0) == FALSE) {
+					state->results.CancelWakeAndDiscard();
 				}
 			}
 		});
+		workerRetirement.emplace(std::move(*retirement));
 	}
 
 	void SetWorkerWindow(HWND value)
 	{
 		std::lock_guard<std::mutex> guard(shared->windowMutex);
 		shared->window = value;
+		if (value == nullptr) shared->results.Close();
+		else shared->results.Open();
+	}
+
+	std::unique_ptr<WorkerResult> TakeLatestResult()
+	{
+		std::lock_guard<std::mutex> guard(shared->windowMutex);
+		auto result = shared->results.Take();
+		return result ? std::move(*result) : nullptr;
+	}
+
+	void DropQueuedResults() noexcept
+	{
+		if (window == nullptr) return;
+		MSG message{};
+		while (::PeekMessageW(&message, window, kResultMessage, kResultMessage, PM_REMOVE) != FALSE) {
+		}
+		std::lock_guard<std::mutex> guard(shared->windowMutex);
+		shared->results.CancelWakeAndDiscard();
 	}
 };
 
@@ -934,12 +1015,12 @@ void CSearchWorkbenchTool::Layout(const RECT& contentRect, unsigned int dpi)
 	}
 	for (HWND child : { m_impl->query, m_impl->replace, m_impl->list }) {
 		if (child != nullptr) {
-			::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), TRUE);
+			::SendMessageW(child, WM_SETFONT, reinterpret_cast<WPARAM>(m_impl->font.Get()), FALSE);
 		}
 	}
 	::SetWindowPos(m_impl->window, nullptr, contentRect.left, contentRect.top,
 		contentRect.right - contentRect.left, contentRect.bottom - contentRect.top,
-		SWP_NOZORDER | SWP_NOACTIVATE);
+		SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
 	m_impl->LayoutChildren();
 }
 
@@ -991,10 +1072,16 @@ void CSearchWorkbenchTool::Close()
 	m_impl->shared->stopping.store(true, std::memory_order_release);
 	if (m_impl->shared->stop != nullptr) ::SetEvent(m_impl->shared->stop);
 	if (m_impl->shared->wake != nullptr) ::SetEvent(m_impl->shared->wake);
-	if (m_impl->worker.joinable()) m_impl->worker.join();
-	if (m_impl->shared->stop != nullptr) { ::CloseHandle(m_impl->shared->stop); m_impl->shared->stop = nullptr; }
-	if (m_impl->shared->wake != nullptr) { ::CloseHandle(m_impl->shared->wake); m_impl->shared->wake = nullptr; }
+	m_impl->DropQueuedResults();
+	(void)m_impl->nativeSurface.Close();
+	if (m_impl->worker.joinable() && m_impl->workerRetirement) {
+		(void)workbench::WorkerRetirementService::Instance().Retire(
+			std::move(m_impl->worker), std::move(*m_impl->workerRetirement), m_impl->shared);
+		m_impl->workerRetirement.reset();
+	}
 	m_impl->scrollbar.Destroy();
+	m_impl->listBuffer.Reset();
+	m_impl->rootBuffer.Reset();
 	m_impl->rows.clear();
 	m_impl->results = {};
 	if (m_impl->window != nullptr && ::IsWindow(m_impl->window)) ::DestroyWindow(m_impl->window);
@@ -1016,7 +1103,7 @@ void CSearchWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
 	m_impl->palette = palette;
 	m_impl->ApplyScrollbarColors();
 	m_impl->Repaint();
-	if (m_impl->list != nullptr) ::InvalidateRect(m_impl->list, nullptr, TRUE);
+	QueueNoEraseInvalidate(m_impl->list);
 }
 
 void CSearchWorkbenchTool::SetTexts(SearchViewTexts texts)
@@ -1071,6 +1158,35 @@ void CSearchWorkbenchTool::SetQueryText(std::wstring text)
 }
 
 HWND CSearchWorkbenchTool::GetHwnd() const noexcept { return m_impl->window; }
+
+void CSearchWorkbenchTool::SetNativeSurfaceSink(
+	rendering::FrameNativeSurfacePayloadSink sink) noexcept
+{
+	m_impl->nativeSurface.SetSink(std::move(sink));
+}
+
+rendering::FrameNativeSurfacePayloadResult CSearchWorkbenchTool::RegisterNativeSurface(
+	const rendering::FrameNativeSurfacePayloadTarget& target) noexcept
+{
+	return m_impl->nativeSurface.Register(target);
+}
+
+rendering::FrameNativeSurfacePayloadResult CSearchWorkbenchTool::UpdateNativeSurface(
+	const rendering::FrameNativeSurfacePayloadTarget& target) noexcept
+{
+	return m_impl->nativeSurface.Update(target);
+}
+
+rendering::FrameNativeSurfacePayloadResult CSearchWorkbenchTool::SubmitNativeSurface(
+	const HDC sourceDc, const RECT& dirtyRect) noexcept
+{
+	return m_impl->nativeSurface.Submit(sourceDc, dirtyRect);
+}
+
+rendering::FrameNativeSurfacePayloadResult CSearchWorkbenchTool::CloseNativeSurface() noexcept
+{
+	return m_impl->nativeSurface.Close();
+}
 
 LRESULT CALLBACK CSearchWorkbenchTool::EditSubclassProc(HWND window, UINT message, WPARAM wParam,
 	LPARAM lParam, UINT_PTR id, DWORD_PTR data)
@@ -1176,11 +1292,22 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 		return 1;
 	case WM_PAINT: {
 		PAINTSTRUCT paint{};
-		const HDC dc = ::BeginPaint(window, &paint);
-		FillRectangle(dc, paint.rcPaint, impl.palette.sideBar.ToColorRef());
+		const HDC target = ::BeginPaint(window, &paint);
+		if (target == nullptr) return 0;
+		RECT client{};
+		::GetClientRect(window, &client);
+		const int width = std::max(0L, client.right - client.left);
+		const int height = std::max(0L, client.bottom - client.top);
+		const bool buffered = impl.rootBuffer.Ensure(target, width, height);
+		const HDC dc = buffered ? impl.rootBuffer.Dc() : target;
+		const int saved = ::SaveDC(dc);
+		FillRectangle(dc, buffered ? client : paint.rcPaint, impl.palette.sideBar.ToColorRef());
 		if (impl.font.Get() != nullptr) ::SelectObject(dc, impl.font.Get());
 		::SetBkMode(dc, TRANSPARENT);
 		impl.PaintWidget(dc);
+		if (saved != 0) ::RestoreDC(dc, saved);
+		if (buffered) (void)impl.rootBuffer.Present(target, paint.rcPaint);
+		(void)impl.nativeSurface.Submit(dc, paint.rcPaint);
 		::EndPaint(window, &paint);
 		return 0;
 	}
@@ -1238,7 +1365,20 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 		auto* draw = reinterpret_cast<DRAWITEMSTRUCT*>(lParam);
 		if (draw != nullptr && draw->CtlID == kListControlId && draw->hwndItem == impl.list
 			&& draw->itemID != static_cast<UINT>(-1)) {
-			impl.PaintRow(draw->hDC, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			RECT client{};
+			::GetClientRect(impl.list, &client);
+			const int width = std::max(0L, client.right - client.left);
+			const int height = std::max(0L, client.bottom - client.top);
+			const bool buffered = impl.listBuffer.Ensure(draw->hDC, width, height);
+			const HDC dc = buffered ? impl.listBuffer.Dc() : draw->hDC;
+			const int saved = ::SaveDC(dc);
+			if (buffered) {
+				(void)::IntersectClipRect(dc, draw->rcItem.left, draw->rcItem.top,
+					draw->rcItem.right, draw->rcItem.bottom);
+			}
+			impl.PaintRow(dc, static_cast<int>(draw->itemID), draw->rcItem, draw->itemState);
+			if (saved != 0) ::RestoreDC(dc, saved);
+			if (buffered) (void)impl.listBuffer.Present(draw->hDC, draw->rcItem);
 			return TRUE;
 		}
 		break;
@@ -1258,7 +1398,7 @@ LRESULT CALLBACK CSearchWorkbenchTool::WindowProc(HWND window, UINT message, WPA
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case kResultMessage: {
-		std::unique_ptr<WorkerResult> result(reinterpret_cast<WorkerResult*>(lParam));
+		auto result = impl.TakeLatestResult();
 		if (result && result->generation == impl.shared->generation.load(std::memory_order_acquire)) {
 			impl.results = std::move(result->results);
 			impl.collapsedFiles.clear();

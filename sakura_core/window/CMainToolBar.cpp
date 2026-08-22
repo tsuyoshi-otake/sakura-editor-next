@@ -381,7 +381,7 @@ void CMainToolBar::CreateToolBar( void )
 			lToolType = ::GetWindowLongPtr(m_hwndToolBar, GWL_STYLE);
 			lToolType |= (TBSTYLE_FLAT);
 			::SetWindowLongPtr(m_hwndToolBar, GWL_STYLE, lToolType);
-			::InvalidateRect(m_hwndToolBar, nullptr, TRUE);
+			::InvalidateRect(m_hwndToolBar, nullptr, FALSE);
 		}
 		delete []pTbbArr;// 2005/8/29 aroka
 	}

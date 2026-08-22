@@ -101,6 +101,11 @@
 #include "workbench/viewcontainer/CViewContainerHost.h"
 #include "workbench/search/CSearchWorkbenchTool.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
+#include "workbench/rendering/FrameCoordinatorRuntime.h"
+#include "workbench/rendering/FrameCadenceSource.h"
+#include "workbench/rendering/FrameRuntimeRetirementService.h"
+#include "workbench/rendering/FrameWindowTransaction.h"
+#include "workbench/scm/ScmNativeSurfaceAdapter.h"
 #include "workbench/WorkbenchZoom.h"
 #include "workbench/commands/ApiCommandArguments.h"
 #include "workbench/commands/ExplorerCommandArguments.h"
@@ -146,6 +151,7 @@
 #include "cmd/CViewCommander_inline.h"
 
 #include <array>
+#include <atomic>
 #include <cwctype>
 #include <functional>
 #include <limits>
@@ -294,9 +300,338 @@ static const SFuncMenuName	sFuncMenuName[] = {
 	{F_TOGGLE_KEY_SEARCH,	{F_TOGGLE_KEY_SEARCH_ON,		F_TOGGLE_KEY_SEARCH_OFF}},
 };
 
+//! Owns the runtime lease while callbacks are in flight.
+//!
+//! The high bit of m_admission is the close fence and the remaining bits count
+//! admitted callback scopes.  Admission and closing are one CAS/fetch_or
+//! protocol, so a callback that wins the race with Close keeps the lease alive
+//! until its RuntimeCall leaves.  Retirement is still non-blocking: the last
+//! callback, or the close path when the count is already zero, hands the lease
+//! to FrameRuntimeRetirementService.
+struct CEditWndFrameRuntimeLeaseHolder final {
+	using Runtime = workbench::rendering::FrameCoordinatorRuntime;
+	using Lease = workbench::rendering::FrameRuntimeRetirementLease;
+
+	explicit CEditWndFrameRuntimeLeaseHolder(std::unique_ptr<Lease> lease) noexcept
+		: m_lease(std::move(lease))
+	{
+	}
+
+	CEditWndFrameRuntimeLeaseHolder(const CEditWndFrameRuntimeLeaseHolder&) = delete;
+	CEditWndFrameRuntimeLeaseHolder& operator=(const CEditWndFrameRuntimeLeaseHolder&) = delete;
+
+	[[nodiscard]] Runtime* RuntimePointer() const noexcept
+	{
+		return m_lease != nullptr ? m_lease->Runtime() : nullptr;
+	}
+
+	//! Closes admission without waiting for already admitted callbacks.
+	void CloseIngress() noexcept
+	{
+		m_admission.fetch_or(kClosedBit, std::memory_order_acq_rel);
+	}
+
+	//! Requests bounded asynchronous retirement. A callback may complete this.
+	void RequestRetirement() noexcept
+	{
+		CloseIngress();
+		m_retirementRequested.store(true, std::memory_order_release);
+		TryRetire();
+	}
+
+	[[nodiscard]] std::shared_ptr<workbench::rendering::FrameRuntimeRetirementObservation>
+		Observation() const noexcept
+	{
+		return m_observation.load(std::memory_order_acquire);
+	}
+
+	private:
+	friend struct CEditWndFrameRuntimeCallbackState;
+
+	static constexpr std::uint64_t kClosedBit = std::uint64_t{1} << 63;
+	static constexpr std::uint64_t kActiveMask = ~kClosedBit;
+
+	//! Returns a runtime only while this holder owns one active admission.
+	[[nodiscard]] Runtime* TryEnter() noexcept
+	{
+		auto admission = m_admission.load(std::memory_order_acquire);
+		for (;;) {
+			if ((admission & kClosedBit) != 0
+				|| (admission & kActiveMask) == kActiveMask) {
+				return nullptr;
+			}
+			if (m_admission.compare_exchange_weak(admission, admission + 1,
+				std::memory_order_acq_rel, std::memory_order_acquire)) {
+				break;
+			}
+		}
+		Runtime* const runtime = RuntimePointer();
+		if (runtime == nullptr) {
+			Leave();
+			return nullptr;
+		}
+		return runtime;
+	}
+
+	public:
+	void Leave() noexcept
+	{
+		const auto previous = m_admission.fetch_sub(1, std::memory_order_acq_rel);
+		if ((previous & kActiveMask) == 1) TryRetire();
+	}
+
+	private:
+	void TryRetire() noexcept
+	{
+		if (!m_retirementRequested.load(std::memory_order_acquire)) return;
+		const auto admission = m_admission.load(std::memory_order_acquire);
+		if ((admission & kClosedBit) == 0 || (admission & kActiveMask) != 0) return;
+		if (m_retirementStarted.exchange(true, std::memory_order_acq_rel)) return;
+		if (m_lease == nullptr) return;
+		const auto result = m_lease->RetireNow();
+		m_observation.store(result.observation, std::memory_order_release);
+		if (!result.Accepted()) {
+			::OutputDebugStringW(L"Sakura Editor NEXT: frame runtime retirement handoff failed.\n");
+		}
+	}
+
+	std::unique_ptr<Lease> m_lease;
+	std::atomic<std::uint64_t> m_admission{ 0 };
+	std::atomic_bool m_retirementRequested{ false };
+	std::atomic_bool m_retirementStarted{ false };
+	std::atomic<std::shared_ptr<workbench::rendering::FrameRuntimeRetirementObservation>>
+		m_observation;
+};
+
+//! Shared callback gate for the per-window presentation runtime.
+//!
+//! Terminal callbacks are delivered by the terminal HWND message path and the
+//! SCM callbacks are delivered by its retained-list WM_PAINT path.  The lambdas
+//! retain this state, never CEditWnd or a raw runtime pointer.  Close fences new
+//! admissions, child sinks are detached, and only then is retirement requested.
+struct CEditWndFrameRuntimeCallbackState final {
+	using Runtime = workbench::rendering::FrameCoordinatorRuntime;
+	using RuntimeRegistration = workbench::rendering::FrameNativeSurfaceRegistration;
+	using RuntimeFrame = workbench::rendering::FrameNativeSurfaceFrame;
+	using ScmRegistration = workbench::scm::ScmNativeSurfaceRegistration;
+	using ScmFrame = workbench::scm::ScmNativeSurfaceFrame;
+
+	struct RuntimeCall final {
+		RuntimeCall(std::shared_ptr<CEditWndFrameRuntimeLeaseHolder> owner,
+			Runtime* runtime) noexcept
+			: owner(std::move(owner)), runtime(runtime)
+		{
+		}
+		RuntimeCall(const RuntimeCall&) = delete;
+		RuntimeCall& operator=(const RuntimeCall&) = delete;
+		RuntimeCall(RuntimeCall&& other) noexcept
+			: owner(std::move(other.owner)), runtime(std::exchange(other.runtime, nullptr))
+		{
+		}
+		RuntimeCall& operator=(RuntimeCall&&) = delete;
+		~RuntimeCall() noexcept
+		{
+			if (owner != nullptr) owner->Leave();
+		}
+		std::shared_ptr<CEditWndFrameRuntimeLeaseHolder> owner;
+		Runtime* runtime = nullptr;
+	};
+
+	void Bind(std::shared_ptr<CEditWndFrameRuntimeLeaseHolder> owner) noexcept
+	{
+		m_owner = std::move(owner);
+		m_closed.store(m_owner == nullptr, std::memory_order_release);
+	}
+
+	//! Fences future calls without joining a worker or taking a UI mutex.
+	void Close() noexcept
+	{
+		m_closed.store(true, std::memory_order_release);
+		if (m_owner != nullptr) m_owner->CloseIngress();
+	}
+
+	//! Transfers the lease to the bounded reaper after all child sinks are gone.
+	void RequestRetirement() noexcept
+	{
+		if (m_owner != nullptr) m_owner->RequestRetirement();
+	}
+
+	void SetDisplayEpoch(const std::uint64_t epoch) noexcept
+	{
+		if (epoch != 0) m_displayEpoch.store(epoch, std::memory_order_release);
+	}
+
+	[[nodiscard]] std::uint64_t DisplayEpoch() const noexcept
+	{
+		const auto epoch = m_displayEpoch.load(std::memory_order_acquire);
+		return epoch == 0 ? 1 : epoch;
+	}
+
+	[[nodiscard]] bool Register(const RuntimeRegistration& registration) noexcept
+	{
+		if (auto call = BeginCall()) {
+			return call->runtime->RegisterPresentedSurface(registration).Accepted();
+		}
+		return false;
+	}
+
+	[[nodiscard]] bool Update(const RuntimeRegistration& registration) noexcept
+	{
+		if (auto call = BeginCall()) {
+			return call->runtime->UpdatePresentedSurface(registration).Accepted();
+		}
+		return false;
+	}
+
+	void CloseSurface(const workbench::rendering::FrameSurfaceId surfaceId,
+		const std::uint64_t lifetime) noexcept
+	{
+		if (auto call = BeginCall()) {
+			(void)call->runtime->CloseSurface(surfaceId, lifetime);
+		}
+	}
+
+	[[nodiscard]] bool SubmitAccepted(
+		std::shared_ptr<const RuntimeFrame> frame) noexcept
+	{
+		if (frame == nullptr) return false;
+		if (auto call = BeginCall()) {
+			return call->runtime->SubmitNativeSurfaceFrame(std::move(frame)).Accepted();
+		}
+		return false;
+	}
+
+	void Submit(std::shared_ptr<const RuntimeFrame> frame) noexcept
+	{
+		(void)SubmitAccepted(std::move(frame));
+	}
+
+	[[nodiscard]] bool RegisterScm(const ScmRegistration& registration) noexcept
+	{
+		return Register(ToRuntimeRegistration(registration));
+	}
+
+	[[nodiscard]] bool UpdateScm(const ScmRegistration& registration) noexcept
+	{
+		return Update(ToRuntimeRegistration(registration));
+	}
+
+	void CloseScm(const workbench::rendering::FrameSurfaceId surfaceId,
+		const std::uint64_t lifetime) noexcept
+	{
+		CloseSurface(surfaceId, lifetime);
+	}
+
+	[[nodiscard]] bool SubmitScm(std::shared_ptr<const ScmFrame> frame) noexcept
+	{
+		if (frame == nullptr || !frame->IsValid()) return false;
+		try {
+			auto runtimeFrame = std::make_shared<const RuntimeFrame>(RuntimeFrame{
+				.surfaceId = frame->surfaceId,
+				.surfaceLifetimeEpoch = frame->surfaceLifetimeEpoch,
+				.deviceEpoch = frame->deviceEpoch,
+				.displayEpoch = DisplayEpoch(),
+				.layoutEpoch = frame->layoutEpoch,
+				.requestId = frame->requestId,
+				.width = frame->width,
+				.height = frame->height,
+				.pitch = frame->payloadPitch,
+				.dirtyRect = frame->dirtyRect,
+				.compactDirtyPayload = true,
+				.pixels = frame->pixels,
+			});
+			if (!runtimeFrame->IsValid()) return false;
+			if (auto call = BeginCall()) {
+				return call->runtime->SubmitNativeSurfaceFrame(std::move(runtimeFrame)).Accepted();
+			}
+		} catch (...) {
+		}
+		return false;
+	}
+
+private:
+	[[nodiscard]] std::optional<RuntimeCall> BeginCall() noexcept
+	{
+		if (m_closed.load(std::memory_order_acquire)) return std::nullopt;
+		auto owner = m_owner;
+		if (owner == nullptr) return std::nullopt;
+		Runtime* const runtime = owner->TryEnter();
+		if (runtime == nullptr || m_closed.load(std::memory_order_acquire)) {
+			if (runtime != nullptr) owner->Leave();
+			return std::nullopt;
+		}
+		return RuntimeCall(std::move(owner), runtime);
+	}
+
+	[[nodiscard]] static RuntimeRegistration ToRuntimeRegistration(
+		const ScmRegistration& registration) noexcept
+	{
+		return RuntimeRegistration{
+			.presentation = workbench::rendering::FramePresentationSurfaceSpec{
+				.surfaceId = registration.surfaceId,
+				.surfaceLifetimeEpoch = registration.surfaceLifetimeEpoch,
+				.deviceEpoch = registration.deviceEpoch,
+				.layoutEpoch = registration.layoutEpoch,
+				.width = registration.width,
+				.height = registration.height,
+				.visible = registration.visible,
+			},
+			.targetWindow = registration.targetWindow,
+			.x = registration.x,
+			.y = registration.y,
+		};
+	}
+
+	std::shared_ptr<CEditWndFrameRuntimeLeaseHolder> m_owner;
+	std::atomic_bool m_closed{ true };
+	std::atomic<std::uint64_t> m_displayEpoch{ 1 };
+};
+
+struct CEditWndNativeSurfaceBinding final {
+	const void* owner = nullptr;
+	HWND window = nullptr;
+	std::uint64_t lifetimeEpoch = 0;
+	workbench::rendering::FrameNativeSurfacePayloadTarget target{};
+	bool targetInitialized = false;
+};
+
+struct CEditWndFrameRuntimeState final {
+	workbench::rendering::FrameCadenceSource cadenceSource;
+	std::shared_ptr<CEditWndFrameRuntimeLeaseHolder> leaseHolder;
+	std::unique_ptr<workbench::rendering::FrameWindowTransaction> windowTransaction;
+	std::shared_ptr<workbench::rendering::FrameRuntimeRetirementObservation> retirementObservation;
+	std::shared_ptr<CEditWndFrameRuntimeCallbackState> callbackState;
+	terminal::TerminalNativeFrameBridgePtr terminalFrameBridge;
+	std::uint64_t scmSurfaceLifetimeEpoch = 1;
+	std::uint64_t scmDeviceEpoch = 1;
+	std::uint64_t scmLayoutEpoch = 1;
+	HWND scmTargetWindow = nullptr;
+	LONG scmTargetX = 0;
+	LONG scmTargetY = 0;
+	std::uint64_t scmTargetDeviceEpoch = 1;
+	bool scmTargetVisible = false;
+	bool scmTargetInitialized = false;
+	std::array<CEditWndNativeSurfaceBinding, 4> editorBindings{};
+	CEditWndNativeSurfaceBinding minimapBinding{};
+	CEditWndNativeSurfaceBinding markdownBinding{};
+	CEditWndNativeSurfaceBinding explorerBinding{};
+	CEditWndNativeSurfaceBinding searchBinding{};
+	CEditWndNativeSurfaceBinding outlineBinding{};
+};
+
 namespace {
 
 constexpr std::string_view kLegacyEditorInputId = "legacy.editor.1";
+// Stable only within the frame-runtime surface namespace. SCM's retained
+// Changes list is one logical surface even though its source is a child HWND.
+constexpr workbench::rendering::FrameSurfaceId kScmNativeSurfaceId =
+	0x53434d0000000001ULL;
+constexpr workbench::rendering::FrameSurfaceId kExplorerNativeSurfaceId =
+	0x4558500000000001ULL;
+constexpr workbench::rendering::FrameSurfaceId kSearchNativeSurfaceId =
+	0x5345410000000001ULL;
+constexpr workbench::rendering::FrameSurfaceId kOutlineNativeSurfaceId =
+	0x4f55540000000001ULL;
 
 //! Width of the frame-edge drop zone that stands in for a hidden side bar during a
 //! composite drag. VS Code accepts an edge drop to reveal the Secondary Side Bar; the
@@ -474,6 +809,10 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 		resourceId = STR_WORKBENCH_GIT_COMMIT_ACTION; break;
 	case workbench::scm::EScmTextKey::GitCommitAmendAction:
 		resourceId = STR_WORKBENCH_GIT_COMMIT_AMEND_ACTION; break;
+	case workbench::scm::EScmTextKey::GitCommitAndPushAction:
+		resourceId = STR_WORKBENCH_GIT_COMMIT_AND_PUSH_ACTION; break;
+	case workbench::scm::EScmTextKey::GitCommitAndSyncAction:
+		resourceId = STR_WORKBENCH_GIT_COMMIT_AND_SYNC_ACTION; break;
 	}
 	std::wstring localized = LocalizedWorkbenchString(resourceId);
 	if (!localized.empty() && !argument.empty()) ReplaceLocalizedArgument(localized, argument);
@@ -768,6 +1107,22 @@ private:
 [[nodiscard]] int PixelsToDip(int pixels, unsigned int dpi) noexcept
 {
 	return ::MulDiv(pixels, 96, dpi == 0 ? 96 : static_cast<int>(dpi));
+}
+
+//! Repositions a child as part of a retained frame layout transaction.
+//!
+//! MoveWindow's repaint parameter is deceptively expensive here: it causes a
+//! synchronous WM_PAINT for every sibling while the remaining siblings still
+//! describe the previous geometry.  That exposes an erased/copy-bits frame in
+//! the middle of a resize.  The parent commits all child pixels together with
+//! one no-erase RedrawWindow after the complete layout has been projected.
+[[nodiscard]] bool PositionChildForFrame(
+	HWND window, int left, int top, int width, int height) noexcept
+{
+	if (window == nullptr || !::IsWindow(window)) return false;
+	return ::SetWindowPos(window, nullptr, left, top,
+		std::max(0, width), std::max(0, height),
+		SWP_NOACTIVATE | SWP_NOZORDER | SWP_NOCOPYBITS | SWP_NOREDRAW) != FALSE;
 }
 
 //! The Git Output channel sink for this window. VS Code's Git extension
@@ -2006,6 +2361,10 @@ void CEditWnd::CommitStartupDrawTransaction()
 	}
 	const BOOL redrawResult = ::RedrawWindow(hwnd, nullptr, nullptr,
 		RDW_FRAME | RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+	if (redrawResult) {
+		(void)::GdiFlush();
+		PublishCommittedGdiFrame();
+	}
 	CStartupTrace::Mark(CStartupTrace::Event::StartupDrawRedrawEnd, redrawResult ? 1 : 0);
 	if (redrawResult && !HasActiveEditorInput()) {
 		RecordFirstStartupContentPaint();
@@ -2348,7 +2707,8 @@ bool CEditWnd::InitializeWorkbench()
 	m_leftWorkbenchPanel = std::make_unique<workbench::CWorkbenchPanelHost>(
 		workbench::WorkbenchEdge::Left, settings.m_nLeftPanelExtent96, commitExtent);
 	auto sidebarHost = std::make_unique<workbench::viewcontainer::CViewContainerHost>(
-		m_viewContainerPages, requestOutlineExpanded, refreshOutlineAfterReveal);
+		m_viewContainerPages, "workbench.parts.sidebar",
+		requestOutlineExpanded, refreshOutlineAfterReveal);
 	m_sidebarHost = sidebarHost.get();
 	m_leftWorkbenchPanel->SetHeaderDragCallback(onHeaderDrag);
 	if (!m_leftWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(sidebarHost))) {
@@ -2362,7 +2722,8 @@ bool CEditWnd::InitializeWorkbench()
 		workbench::WorkbenchEdge::Right, settings.m_nAuxiliaryBarExtent96, commitExtent);
 	m_rightWorkbenchPanel->SetTitle(LocalizedWorkbenchString(STR_WORKBENCH_SECONDARY_SIDEBAR_TITLE));
 	auto auxiliaryHost = std::make_unique<workbench::viewcontainer::CViewContainerHost>(
-		m_viewContainerPages, requestOutlineExpanded, refreshOutlineAfterReveal);
+		m_viewContainerPages, "workbench.parts.auxiliarybar",
+		requestOutlineExpanded, refreshOutlineAfterReveal);
 	m_auxiliaryBarHost = auxiliaryHost.get();
 	m_rightWorkbenchPanel->SetHeaderDragCallback(onHeaderDrag);
 	if (!m_rightWorkbenchPanel->Create(GetHwnd(), G_AppInstance(), std::move(auxiliaryHost))) {
@@ -2846,7 +3207,9 @@ bool CEditWnd::InitializeWorkbench()
 			.stageAll = [this]() { return ExecuteGitStageCommand(EGitStageCommand::StageAll, {}); },
 			.unstageAll = [this]() { return ExecuteGitStageCommand(EGitStageCommand::UnstageAll, {}); },
 			.cleanAll = [this]() { return ExecuteGitStageCommand(EGitStageCommand::CleanAll, {}); },
-			.commit = [this]() { return ExecuteGitCommitCommand(EGitCommitCommand::Commit); },
+			.commit = [this](std::string_view argumentsJson) {
+				return ExecuteGitCommitCommand(EGitCommitCommand::Commit, argumentsJson);
+			},
 			.commitAmend = [this]() { return ExecuteGitCommitCommand(EGitCommitCommand::CommitAmend); },
 			.undoCommit = [this]() { return ExecuteGitCommitCommand(EGitCommitCommand::UndoCommit); },
 			.stageSelectedRanges = [this]() { return ExecuteGitSelectedRangesCommand(true); },
@@ -3081,7 +3444,7 @@ bool CEditWnd::InitializeWorkbench()
 		}
 	}
 
-	ApplyWorkbenchTheme();
+	(void)ApplyWorkbenchTheme();
 	ApplyWorkbenchSettingsFromSharedData(false);
 	if (!ApplyInitialWorkbenchLayoutState()) {
 		CloseWorkbench();
@@ -3200,6 +3563,32 @@ bool CEditWnd::PersistColorThemeSelection(std::wstring_view themeId)
 	}
 }
 
+std::wstring CEditWnd::ConfiguredColorThemeLabel() const
+{
+	if (!m_colorThemeRegistry) return {};
+	const auto fallbackMode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
+		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
+	try {
+		if (m_workbenchRuntime != nullptr) {
+			const auto target = BuildWorkbenchConfigurationTarget();
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue("workbench.colorTheme", target);
+			if (lookup.value) {
+				if (const auto* selected = std::get_if<std::wstring>(&lookup.value->Value());
+					selected != nullptr && !selected->empty()) {
+					const auto loaded = m_colorThemeRegistry->Load(*selected);
+					if (loaded.Succeeded()) return loaded.theme->info.label;
+				}
+			}
+		}
+		const auto fallback = m_colorThemeRegistry->Load(
+			theme::CColorThemeRegistry::BuiltinThemeId(fallbackMode));
+		return fallback.Succeeded() ? fallback.theme->info.label : std::wstring{};
+	}
+	catch (...) {
+		return {};
+	}
+}
+
 bool CEditWnd::ShowColorThemePicker()
 {
 	if (!m_colorThemeRegistry || !GetHwnd()) return false;
@@ -3250,13 +3639,26 @@ bool CEditWnd::ShowColorThemePicker()
 		}
 		return makeItems(filtered);
 	});
+	m_commandPaletteOverlay->SetSelectionCallback([this](std::wstring themeLabel) {
+		(void)ApplyWorkbenchTheme(themeLabel);
+	});
 	m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring themeLabel) {
 		// VS Code persists the display label for workbench.colorTheme. The registry
 		// also accepts the stable id, so settings authored by either ecosystem work.
-		(void)PersistColorThemeSelection(themeLabel);
+		if (PersistColorThemeSelection(themeLabel)) {
+			// The visible commit must not depend on an advisory configuration
+			// notification. This also covers accept without a preceding preview.
+			(void)ApplyWorkbenchTheme(themeLabel);
+		} else {
+			// A failed save owns no durable new theme. Restore the committed setting
+			// so a preview cannot become an accidental terminal state.
+			(void)ApplyWorkbenchTheme();
+		}
 	});
-	m_commandPaletteOverlay->SetCancelCallback({});
-	return m_commandPaletteOverlay->Show(makeItems(themes));
+	m_commandPaletteOverlay->SetCancelCallback([this] {
+		(void)ApplyWorkbenchTheme();
+	});
+	return m_commandPaletteOverlay->Show(makeItems(themes), ConfiguredColorThemeLabel());
 }
 
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteOpenWorkspaceFolderCommand()
@@ -4553,10 +4955,17 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSelecte
 	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
 }
 
-workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitCommand(EGitCommitCommand command)
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitCommand(
+	EGitCommitCommand command, std::string_view argumentsJson)
 {
 	using workbench::commands::EWorkbenchCommandExecutionStatus;
 	using workbench::commands::WorkbenchCommandExecutionResult;
+
+	const auto postCommit = workbench::scm::ParseGitCommitPostCommandArguments(argumentsJson);
+	if (!postCommit) {
+		return { EWorkbenchCommandExecutionStatus::Failed,
+			"git.commit received an unsupported post-commit arguments payload" };
+	}
 
 	const auto root = GetSemanticWorkspaceRoot();
 	if (root.empty() || GetHwnd() == nullptr) {
@@ -4686,7 +5095,22 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitC
 	case workbench::scm::EGitCommitCommandStatus::Succeeded:
 		// HEAD and the index both moved, so every published SCM fact is stale.
 		m_scmTool->Refresh();
-		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		if (*postCommit == workbench::scm::EGitPostCommitCommand::None) {
+			return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		}
+		{
+			const auto followUp = ExecuteGitSyncCommand(
+				*postCommit == workbench::scm::EGitPostCommitCommand::Push
+					? EGitSyncCommand::Push : EGitSyncCommand::Sync,
+				true);
+			if (followUp.Succeeded()) return followUp;
+			std::string detail = "commit succeeded, but the post-commit operation did not complete";
+			if (!followUp.detail.empty()) {
+				detail += ": ";
+				detail += followUp.detail;
+			}
+			return { followUp.status, std::move(detail) };
+		}
 	case workbench::scm::EGitCommitCommandStatus::NotApplicable:
 		return { EWorkbenchCommandExecutionStatus::NotApplicable, "there was nothing to commit" };
 	case workbench::scm::EGitCommitCommandStatus::Cancelled:
@@ -4700,7 +5124,8 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitCommitC
 	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
 }
 
-workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCommand(EGitSyncCommand command)
+workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCommand(
+	EGitSyncCommand command, bool commitJustSucceeded)
 {
 	using workbench::commands::EWorkbenchCommandExecutionStatus;
 	using workbench::commands::WorkbenchCommandExecutionResult;
@@ -4830,7 +5255,13 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitSyncCom
 	auto remotes = workbench::scm::ParseGitRemotes({
 		reinterpret_cast<const char*>(remotesResult.standardOutput.data()),
 		remotesResult.standardOutput.size() });
-	const auto state = workbench::scm::BuildGitSyncRepositoryState(m_scmTool->State(), std::move(remotes));
+	auto state = workbench::scm::BuildGitSyncRepositoryState(m_scmTool->State(), std::move(remotes));
+	if (commitJustSucceeded && state.HasUpstream()) {
+		// Refresh is intentionally asynchronous. The successful commit itself is
+		// proof that this branch is at least one commit ahead, so do not let the
+		// pre-commit snapshot make Commit & Sync skip its push half.
+		state.ahead = std::max(state.ahead, 1);
+	}
 
 	workbench::scm::GitSyncCommandResult result{};
 	switch (command) {
@@ -4957,6 +5388,10 @@ void CEditWnd::SetStatusbarEntryHidden(std::string_view id, bool hidden)
 
 void CEditWnd::CloseWorkbench() noexcept
 {
+	// Fence every surface lifetime before any page HWND or callback gate can be
+	// destroyed. This only requests close and transfers thread ownership; it
+	// never waits on the UI thread.
+	CloseFrameRuntime();
 	// Model callbacks own only the shared gate. Disconnect it before removing
 	// subscriptions so an in-flight callback cannot post into torn-down panels.
 	if (m_themeConfigurationGate) {
@@ -4976,6 +5411,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	if (m_commandPaletteOverlay) {
 		m_commandPaletteOverlay->SetStringsCallback({});
 		m_commandPaletteOverlay->SetSearchCallback({});
+		m_commandPaletteOverlay->SetSelectionCallback({});
 		m_commandPaletteOverlay->SetAcceptCallback({});
 		m_commandPaletteOverlay->SetCancelCallback({});
 		m_commandPaletteOverlay->Destroy();
@@ -5033,7 +5469,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_workspaceContext.reset();
 }
 
-void CEditWnd::ApplyWorkbenchTheme()
+bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 {
 	auto mode = m_pShareData->m_Common.m_sWindow.m_bDarkMode
 		? theme::ThemeMode::Dark
@@ -5048,43 +5484,58 @@ void CEditWnd::ApplyWorkbenchTheme()
 	// workspace, and single-folder target used by the configuration service.
 	// An empty/invalid setting first resolves to Sakura's built-in theme for the
 	// saved mode; the constexpr palette remains the final fail-closed fallback.
-	theme::CThemeService::ClearActiveColorThemePalette();
+	std::optional<theme::ColorThemeSnapshot> resolvedTheme;
 	if (m_colorThemeRegistry != nullptr && m_workbenchRuntime != nullptr) {
 		try {
-			const auto target = BuildWorkbenchConfigurationTarget();
-			const auto lookup = m_workbenchRuntime->Configuration().GetValue("workbench.colorTheme", target);
 			std::wstring selectedTheme;
-			if (lookup.value) {
-				if (const auto* selected = std::get_if<std::wstring>(&lookup.value->Value());
-					selected != nullptr) {
-					selectedTheme = *selected;
+			if (!previewTheme.empty()) {
+				selectedTheme = previewTheme;
+			} else {
+				const auto target = BuildWorkbenchConfigurationTarget();
+				const auto lookup = m_workbenchRuntime->Configuration().GetValue("workbench.colorTheme", target);
+				if (lookup.value) {
+					if (const auto* selected = std::get_if<std::wstring>(&lookup.value->Value());
+						selected != nullptr) {
+						selectedTheme = *selected;
+					}
 				}
 			}
-			const auto applyTheme = [this, &mode, &lightColorTheme](std::wstring_view idOrLabel) {
+			const auto resolveTheme = [this, &resolvedTheme](std::wstring_view idOrLabel) {
 				const auto loaded = m_colorThemeRegistry->Load(idOrLabel);
 				if (!loaded.Succeeded()) return false;
-				theme::CThemeService::SetActiveColorThemePalette(loaded.theme->palette);
-				if (theme::CThemeService::IsHighContrastActive()) {
-					theme::CThemeService::ClearActiveColorThemeSyntaxPalette();
-				} else {
-					theme::CThemeService::SetActiveColorThemeSyntaxPalette(loaded.theme->syntaxPalette);
-				}
-				mode = theme::CColorThemeRegistry::ModeForKind(loaded.theme->info.kind);
-				lightColorTheme = loaded.theme->info.kind == theme::ColorThemeKind::Light;
+				resolvedTheme = std::move(*loaded.theme);
 				return true;
 			};
-			if (!selectedTheme.empty() && applyTheme(selectedTheme)) {
+			if (!selectedTheme.empty() && resolveTheme(selectedTheme)) {
 				// The explicit VS Code setting won.
+			} else if (!previewTheme.empty()) {
+				// A Quick Pick preview is advisory and must not replace the currently
+				// valid palette when its item can no longer be resolved.
+				return false;
 			} else {
 				// Empty settings and unreadable third-party settings both resolve to
 				// the built-in theme matching Sakura's saved Dark/Light preference.
-				(void)applyTheme(theme::CColorThemeRegistry::BuiltinThemeId(mode));
+				(void)resolveTheme(theme::CColorThemeRegistry::BuiltinThemeId(mode));
 			}
 		}
 		catch (...) {
+			if (!previewTheme.empty()) return false;
 			// Keep the legacy saved mode when a third-party theme cannot be read.
-			theme::CThemeService::ClearActiveColorThemePalette();
 		}
+	} else if (!previewTheme.empty()) {
+		return false;
+	}
+
+	theme::CThemeService::ClearActiveColorThemePalette();
+	if (resolvedTheme) {
+		theme::CThemeService::SetActiveColorThemePalette(resolvedTheme->palette);
+		if (theme::CThemeService::IsHighContrastActive()) {
+			theme::CThemeService::ClearActiveColorThemeSyntaxPalette();
+		} else {
+			theme::CThemeService::SetActiveColorThemeSyntaxPalette(resolvedTheme->syntaxPalette);
+		}
+		mode = theme::CColorThemeRegistry::ModeForKind(resolvedTheme->info.kind);
+		lightColorTheme = resolvedTheme->info.kind == theme::ColorThemeKind::Light;
 	}
 	// Published as process-local active-theme state beside the palette and syntax
 	// overlays above. The Explorer reads it on its paint path to select the file
@@ -5126,6 +5577,7 @@ void CEditWnd::ApplyWorkbenchTheme()
 		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
 		m_activityBar->SetPalette(activityPalette);
 	}
+	return true;
 }
 
 void CEditWnd::ApplyWorkbenchSettingsFromSharedData(bool finalizeProjection)
@@ -5380,7 +5832,16 @@ void CEditWnd::ApplyBuiltinWorkbenchFocus(
 void CEditWnd::OnWorkbenchLayoutStateChanged()
 {
 	if (!m_layoutStateSubscription) return;
-	if (m_resizingWorkbenchPanel != nullptr) CancelWorkbenchResize();
+	if (m_resizingWorkbenchPanel != nullptr) {
+		// RedrawWindow(RDW_UPDATENOW) can dispatch an older posted notification
+		// inside the active pointer sample. Cancelling here revives the previous
+		// committed extent and turns mouse-up into an unrelated window drag. Keep
+		// the gesture authoritative and project the newest snapshot at its terminal
+		// commit/cancel path instead.
+		m_workbenchLayoutProjectionDeferred = true;
+		return;
+	}
+	if (m_resizingMarkdownPreview) CancelMarkdownPreviewResize();
 	if (!ApplyCurrentWorkbenchLayoutState(true, true)) {
 		::OutputDebugStringW(L"Sakura Editor NEXT: committed workbench layout projection failed.\n");
 	}
@@ -5729,7 +6190,7 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 		(void)rightVisible;
 		if (m_activityBar) m_activityBar->SetSelectedItem(activeContainer);
 	}
-	ApplyWorkbenchTheme();
+	(void)ApplyWorkbenchTheme();
 	if (GetHwnd() != nullptr) {
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
@@ -5754,6 +6215,572 @@ void CEditWnd::FinalizeWorkbenchPanelProjection(
 		&& m_cDlgFuncList.GetHwnd() == nullptr && m_dispatchReady) {
 		ReloadWorkbenchOutlineAndRelayout();
 	}
+}
+
+bool CEditWnd::InitializeFrameRuntime() noexcept
+{
+	if (m_frameRuntimeState != nullptr) return true;
+	if (m_viewContainerPages == nullptr || GetHwnd() == nullptr) return false;
+	try {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		workbench::rendering::FrameCoordinatorRuntimeOptions options;
+		options.presentationOwner.targetWindow = nullptr;
+		options.presentationOwner.width = static_cast<std::uint32_t>(
+			std::max<LONG>(1, client.right - client.left));
+		options.presentationOwner.height = static_cast<std::uint32_t>(
+			std::max<LONG>(1, client.bottom - client.top));
+		auto state = std::make_unique<CEditWndFrameRuntimeState>();
+		options.cadence = state->cadenceSource.Observe(GetHwnd()).input;
+		auto lease = workbench::rendering::FrameRuntimeRetirementLease::TryCreate(options);
+		if (lease == nullptr) return false;
+		state->leaseHolder = std::make_shared<CEditWndFrameRuntimeLeaseHolder>(std::move(lease));
+		auto* const runtime = state->leaseHolder->RuntimePointer();
+		if (runtime == nullptr) return false;
+		state->callbackState = std::make_shared<CEditWndFrameRuntimeCallbackState>();
+		state->callbackState->Bind(state->leaseHolder);
+		const auto callbackState = state->callbackState;
+		state->terminalFrameBridge = std::make_shared<terminal::TerminalNativeFrameBridge>(
+			[callbackState](const workbench::rendering::FrameNativeSurfaceRegistration& registration) {
+				if (callbackState != nullptr) (void)callbackState->Register(registration);
+			},
+			[callbackState](const workbench::rendering::FrameNativeSurfaceRegistration& registration) {
+				if (callbackState != nullptr) (void)callbackState->Update(registration);
+			},
+			[callbackState](const workbench::rendering::FrameSurfaceId surfaceId,
+				const std::uint64_t surfaceLifetimeEpoch) {
+				if (callbackState != nullptr) callbackState->CloseSurface(
+					surfaceId, surfaceLifetimeEpoch);
+			},
+			[callbackState](std::shared_ptr<const workbench::rendering::FrameNativeSurfaceFrame> frame) {
+				if (callbackState != nullptr) callbackState->Submit(std::move(frame));
+			});
+		state->callbackState->SetDisplayEpoch(options.cadence.displayEpoch);
+		state->terminalFrameBridge->SetDisplayEpoch(options.cadence.displayEpoch);
+		state->windowTransaction =
+			std::make_unique<workbench::rendering::FrameWindowTransaction>(16);
+		using WindowRole = workbench::rendering::EFrameWindowSurfaceRole;
+		const std::array<workbench::rendering::FrameWindowSurfaceSpec, 10> windowSurfaces{
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::ActivityBar),
+				"workbench.parts.activitybar", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::PrimarySideBar),
+				"workbench.parts.sidebar", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::SecondarySideBar),
+				"workbench.parts.auxiliarybar", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::Panel),
+				"workbench.parts.panel", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::TitleAndMenu),
+				"workbench.parts.titlebar", true},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::Tabs),
+				"workbench.parts.editor", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::StatusBar),
+				"workbench.parts.statusbar", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::Editor),
+				"workbench.parts.editor", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::MarkdownPreview),
+				"workbench.parts.editor", false},
+			workbench::rendering::FrameWindowSurfaceSpec{
+				workbench::rendering::FrameWindowSurfaceId(WindowRole::Terminal),
+				"workbench.parts.panel", false},
+		};
+		for (const auto& spec : windowSurfaces) {
+			if (!state->windowTransaction->OpenSurface(spec).Accepted()) return false;
+		}
+		for (const auto& projection : m_viewContainerPages->FrameSurfaceProjections()) {
+			const auto& surface = projection.surface;
+			const auto result = state->leaseHolder->RuntimePointer()->RegisterPresentedSurface({
+				.surfaceId = surface.surfaceId,
+				.surfaceLifetimeEpoch = surface.surfaceLifetimeEpoch,
+				.deviceEpoch = surface.deviceEpoch,
+				.layoutEpoch = surface.layoutEpoch,
+				.width = projection.width,
+				.height = projection.height,
+				.visible = surface.visible,
+			});
+			if (!result.Accepted()) return false;
+		}
+		for (const auto& surface : state->windowTransaction->Snapshots()) {
+			const auto result = state->leaseHolder->RuntimePointer()->RegisterPresentedSurface({
+				.surfaceId = surface.surfaceId,
+				.surfaceLifetimeEpoch = surface.surfaceLifetimeEpoch,
+				.deviceEpoch = surface.deviceEpoch,
+				.layoutEpoch = surface.layoutEpoch,
+				.width = static_cast<std::uint32_t>(
+					std::max<LONG>(1, client.right - client.left)),
+				.height = static_cast<std::uint32_t>(
+					std::max<LONG>(1, client.bottom - client.top)),
+				.visible = surface.visible,
+			});
+			if (!result.Accepted()) return false;
+		}
+		if (!state->windowTransaction->BeginLayout().Accepted()) return false;
+		m_frameRuntimeState = std::move(state);
+		if (m_scmTool != nullptr && m_frameRuntimeState->callbackState != nullptr) {
+			const auto scmCallbacks = m_frameRuntimeState->callbackState;
+			m_scmTool->SetNativeSurfaceSink({
+				.registerSurface = [scmCallbacks](
+					const workbench::scm::ScmNativeSurfaceRegistration& registration) {
+					return scmCallbacks != nullptr && scmCallbacks->RegisterScm(registration);
+				},
+				.updateSurface = [scmCallbacks](
+					const workbench::scm::ScmNativeSurfaceRegistration& registration) {
+					return scmCallbacks != nullptr && scmCallbacks->UpdateScm(registration);
+				},
+				.closeSurface = [scmCallbacks](
+					const workbench::rendering::FrameSurfaceId surfaceId,
+					const std::uint64_t surfaceLifetimeEpoch) {
+					if (scmCallbacks != nullptr) scmCallbacks->CloseScm(
+						surfaceId, surfaceLifetimeEpoch);
+				},
+				.submitFrame = [scmCallbacks](
+					std::shared_ptr<const workbench::scm::ScmNativeSurfaceFrame> frame) {
+					return scmCallbacks != nullptr && scmCallbacks->SubmitScm(std::move(frame));
+				},
+			});
+		}
+		UpdateFrameRuntimeNativeSurfaces();
+		if (m_terminalTool != nullptr && m_frameRuntimeState->terminalFrameBridge != nullptr) {
+			m_terminalTool->SetNativeFrameRuntimeBridge(
+				m_frameRuntimeState->terminalFrameBridge);
+		}
+		return true;
+	} catch (...) {
+		return false;
+	}
+}
+
+void CEditWnd::UpdateFrameRuntimeNativeSurfaces() noexcept
+{
+	if (m_frameRuntimeState == nullptr || m_frameRuntimeState->callbackState == nullptr
+		|| m_frameRuntimeState->leaseHolder == nullptr) {
+		return;
+	}
+	const auto* const runtime = m_frameRuntimeState->leaseHolder->RuntimePointer();
+	if (runtime == nullptr) return;
+	// The owner is the only writer of presentationDeviceEpoch. Snapshot is a
+	// bounded observation; only an epoch transition changes native targets.
+	const auto runtimeSnapshot = runtime->Snapshot();
+	const bool deviceEpochChanged = runtimeSnapshot.presentationDeviceEpoch != 0
+		&& runtimeSnapshot.presentationDeviceEpoch != m_frameRuntimeState->scmDeviceEpoch;
+	if (deviceEpochChanged) {
+		m_frameRuntimeState->scmDeviceEpoch = runtimeSnapshot.presentationDeviceEpoch;
+		if (m_terminalTool != nullptr) {
+			m_terminalTool->NotifyFrameDeviceEpoch(runtimeSnapshot.presentationDeviceEpoch);
+		}
+	}
+	const auto deviceEpoch = std::max<std::uint64_t>(1, m_frameRuntimeState->scmDeviceEpoch);
+	const bool minimized = GetHwnd() != nullptr && ::IsIconic(GetHwnd()) != FALSE;
+
+	if (m_scmTool != nullptr) {
+		const HWND targetWindow = m_scmTool->GetHwnd();
+		const bool visible = targetWindow != nullptr && ::IsWindow(targetWindow)
+			&& ::IsWindowVisible(targetWindow) != FALSE && !minimized;
+		const bool targetChanged = !m_frameRuntimeState->scmTargetInitialized
+			|| targetWindow != m_frameRuntimeState->scmTargetWindow
+			|| visible != m_frameRuntimeState->scmTargetVisible
+			|| m_frameRuntimeState->scmTargetX != 0
+			|| m_frameRuntimeState->scmTargetY != 0
+			|| deviceEpoch != m_frameRuntimeState->scmTargetDeviceEpoch;
+		if (targetChanged) {
+			if (m_frameRuntimeState->scmLayoutEpoch
+				!= (std::numeric_limits<std::uint64_t>::max)()) {
+				++m_frameRuntimeState->scmLayoutEpoch;
+			}
+			const workbench::scm::ScmNativeSurfaceTarget target{
+				.surfaceId = kScmNativeSurfaceId,
+				.surfaceLifetimeEpoch = m_frameRuntimeState->scmSurfaceLifetimeEpoch,
+				.deviceEpoch = deviceEpoch,
+				.layoutEpoch = std::max<std::uint64_t>(1, m_frameRuntimeState->scmLayoutEpoch),
+				.targetWindow = targetWindow,
+				.x = 0,
+				.y = 0,
+				.visible = visible,
+			};
+			(void)m_scmTool->SetNativeSurfaceTarget(target);
+			m_frameRuntimeState->scmTargetWindow = targetWindow;
+			m_frameRuntimeState->scmTargetX = target.x;
+			m_frameRuntimeState->scmTargetY = target.y;
+			m_frameRuntimeState->scmTargetDeviceEpoch = target.deviceEpoch;
+			m_frameRuntimeState->scmTargetVisible = target.visible;
+			m_frameRuntimeState->scmTargetInitialized = true;
+		}
+	}
+
+	const auto callbackState = m_frameRuntimeState->callbackState;
+	const workbench::rendering::FrameNativeSurfacePayloadSink sink{
+		.registerSurface = [callbackState](
+			const workbench::rendering::FrameNativeSurfaceRegistration& registration) {
+			return callbackState != nullptr && callbackState->Register(registration);
+		},
+		.updateSurface = [callbackState](
+			const workbench::rendering::FrameNativeSurfaceRegistration& registration) {
+			return callbackState != nullptr && callbackState->Update(registration);
+		},
+		.closeSurface = [callbackState](
+			const workbench::rendering::FrameSurfaceId surfaceId,
+			const std::uint64_t lifetimeEpoch) {
+			if (callbackState != nullptr) callbackState->CloseSurface(surfaceId, lifetimeEpoch);
+		},
+		.submitFrame = [callbackState](
+			std::shared_ptr<const workbench::rendering::FrameNativeSurfaceFrame> frame) {
+			return callbackState != nullptr
+				&& callbackState->SubmitAccepted(std::move(frame));
+		},
+	};
+	const auto displayEpoch = callbackState->DisplayEpoch();
+	const auto advanceLifetime = [](std::uint64_t& epoch) noexcept {
+		if (epoch == (std::numeric_limits<std::uint64_t>::max)()) return false;
+		++epoch;
+		return true;
+	};
+	const auto sameTarget = [](const auto& left, const auto& right) noexcept {
+		return left.surfaceId == right.surfaceId
+			&& left.surfaceLifetimeEpoch == right.surfaceLifetimeEpoch
+			&& left.deviceEpoch == right.deviceEpoch
+			&& left.displayEpoch == right.displayEpoch
+			&& left.layoutEpoch == right.layoutEpoch
+			&& left.width == right.width && left.height == right.height
+			&& left.targetWindow == right.targetWindow
+			&& left.x == right.x && left.y == right.y
+			&& left.visible == right.visible && left.minimized == right.minimized;
+	};
+	const auto configureSurface = [&](auto* surface,
+		CEditWndNativeSurfaceBinding& binding,
+		const workbench::rendering::FrameSurfaceId surfaceId) noexcept {
+		if (surface == nullptr) return;
+		const void* const owner = static_cast<const void*>(surface);
+		if (binding.owner != owner) {
+			binding.owner = owner;
+			binding.window = nullptr;
+			binding.target = {};
+			binding.targetInitialized = false;
+			surface->SetNativeSurfaceSink(sink);
+		}
+		const HWND window = surface->GetHwnd();
+		if (window == nullptr || ::IsWindow(window) == FALSE) {
+			if (binding.window != nullptr) surface->ClearNativeSurfaceTarget();
+			binding.window = nullptr;
+			return;
+		}
+		if (binding.window != window) {
+			surface->ClearNativeSurfaceTarget();
+			if (!advanceLifetime(binding.lifetimeEpoch)) return;
+			binding.window = window;
+			binding.target = {};
+			binding.targetInitialized = false;
+		}
+		RECT client{};
+		if (::GetClientRect(window, &client) == FALSE) return;
+		const auto width = static_cast<std::uint32_t>(
+			std::max<LONG>(0, client.right - client.left));
+		const auto height = static_cast<std::uint32_t>(
+			std::max<LONG>(0, client.bottom - client.top));
+		const bool visible = ::IsWindowVisible(window) != FALSE && !minimized;
+		using Target = workbench::rendering::FrameNativeSurfacePayloadTarget;
+		const auto& current = surface->NativeSurfaceTargetSnapshot();
+		Target target = current.has_value() ? *current : Target{};
+		if (!current.has_value()
+			|| target.surfaceId != surfaceId
+			|| target.surfaceLifetimeEpoch != binding.lifetimeEpoch) {
+			target = {};
+			target.surfaceId = surfaceId;
+			target.surfaceLifetimeEpoch = binding.lifetimeEpoch;
+			target.layoutEpoch = 1;
+		}
+		const bool projectionChanged = current.has_value()
+			&& (target.deviceEpoch != deviceEpoch
+				|| target.targetWindow != window
+				|| target.width != width || target.height != height
+				|| target.visible != visible || target.minimized != minimized);
+		target.deviceEpoch = deviceEpoch;
+		target.displayEpoch = displayEpoch;
+		target.targetWindow = window;
+		target.x = 0;
+		target.y = 0;
+		target.width = width;
+		target.height = height;
+		target.visible = visible;
+		target.minimized = minimized;
+		if (projectionChanged) {
+			if (target.layoutEpoch == (std::numeric_limits<std::uint64_t>::max)()) return;
+			++target.layoutEpoch;
+		}
+		if (!current.has_value() || !sameTarget(*current, target)) {
+			(void)surface->SetNativeSurfaceTarget(target);
+			if (projectionChanged && (current->deviceEpoch != target.deviceEpoch
+				|| current->displayEpoch != target.displayEpoch)) {
+				::InvalidateRect(window, nullptr, FALSE);
+			}
+		}
+	};
+	const auto configureWorkbenchTool = [&](auto* tool,
+		CEditWndNativeSurfaceBinding& binding,
+		const workbench::rendering::FrameSurfaceId surfaceId) noexcept {
+		if (tool == nullptr) return;
+		const void* const owner = static_cast<const void*>(tool);
+		if (binding.owner != owner) {
+			binding.owner = owner;
+			binding.window = nullptr;
+			binding.target = {};
+			binding.targetInitialized = false;
+			tool->SetNativeSurfaceSink(sink);
+		}
+		const HWND window = tool->GetHwnd();
+		if (window == nullptr || ::IsWindow(window) == FALSE) {
+			if (binding.targetInitialized) (void)tool->CloseNativeSurface();
+			binding.window = nullptr;
+			binding.target = {};
+			binding.targetInitialized = false;
+			return;
+		}
+		if (binding.window != window) {
+			if (binding.targetInitialized) (void)tool->CloseNativeSurface();
+			if (!advanceLifetime(binding.lifetimeEpoch)) return;
+			binding.window = window;
+			binding.target = {};
+			binding.targetInitialized = false;
+		}
+		RECT client{};
+		if (::GetClientRect(window, &client) == FALSE) return;
+		using Target = workbench::rendering::FrameNativeSurfacePayloadTarget;
+		Target target{
+			.surfaceId = surfaceId,
+			.surfaceLifetimeEpoch = binding.lifetimeEpoch,
+			.deviceEpoch = deviceEpoch,
+			.displayEpoch = displayEpoch,
+			.layoutEpoch = binding.targetInitialized
+				? binding.target.layoutEpoch : std::uint64_t{1},
+			.width = static_cast<std::uint32_t>(
+				std::max<LONG>(0, client.right - client.left)),
+			.height = static_cast<std::uint32_t>(
+				std::max<LONG>(0, client.bottom - client.top)),
+			.targetWindow = window,
+			.x = 0,
+			.y = 0,
+			.visible = ::IsWindowVisible(window) != FALSE && !minimized,
+			.minimized = minimized,
+		};
+		const bool changed = !binding.targetInitialized || !sameTarget(binding.target, target);
+		if (!changed) return;
+		if (binding.targetInitialized) {
+			if (target.layoutEpoch == (std::numeric_limits<std::uint64_t>::max)()) return;
+			++target.layoutEpoch;
+		}
+		const auto result = binding.targetInitialized
+			? tool->UpdateNativeSurface(target) : tool->RegisterNativeSurface(target);
+		if (!result.Accepted()) return;
+		const bool epochChanged = binding.targetInitialized
+			&& (binding.target.deviceEpoch != target.deviceEpoch
+				|| binding.target.displayEpoch != target.displayEpoch);
+		binding.target = target;
+		binding.targetInitialized = true;
+		if (epochChanged) ::InvalidateRect(window, nullptr, FALSE);
+	};
+
+	for (std::size_t index = 0; index < m_pcEditViewArr.size(); ++index) {
+		configureSurface(m_pcEditViewArr[index].get(),
+			m_frameRuntimeState->editorBindings[index],
+			editor::rendering::EditorViewSurfaceId(
+				static_cast<std::uint32_t>(index), false));
+	}
+	configureSurface(&m_cMiniMapView, m_frameRuntimeState->minimapBinding,
+		editor::rendering::EditorViewSurfaceId(0, true));
+	configureSurface(m_markdownPreview.get(), m_frameRuntimeState->markdownBinding,
+		markdown::kMarkdownPreviewSurfaceId);
+	configureWorkbenchTool(m_explorerTool, m_frameRuntimeState->explorerBinding,
+		kExplorerNativeSurfaceId);
+	configureWorkbenchTool(m_searchTool, m_frameRuntimeState->searchBinding,
+		kSearchNativeSurfaceId);
+	configureWorkbenchTool(m_outlineWorkbenchTool, m_frameRuntimeState->outlineBinding,
+		kOutlineNativeSurfaceId);
+}
+
+void CEditWnd::UpdateFrameRuntimeCadence(const bool invalidateSource) noexcept
+{
+	if (m_frameRuntimeState == nullptr || m_frameRuntimeState->leaseHolder == nullptr
+		|| m_frameRuntimeState->leaseHolder->RuntimePointer() == nullptr || GetHwnd() == nullptr) {
+		return;
+	}
+	if (invalidateSource) m_frameRuntimeState->cadenceSource.Invalidate();
+	const auto observation = m_frameRuntimeState->cadenceSource.Observe(GetHwnd());
+	if (m_frameRuntimeState->callbackState != nullptr) {
+		m_frameRuntimeState->callbackState->SetDisplayEpoch(
+			observation.input.displayEpoch);
+	}
+	if (m_frameRuntimeState->terminalFrameBridge != nullptr) {
+		m_frameRuntimeState->terminalFrameBridge->SetDisplayEpoch(
+			observation.input.displayEpoch);
+	}
+	UpdateFrameRuntimeNativeSurfaces();
+	(void)m_frameRuntimeState->leaseHolder->RuntimePointer()->UpdateCadence(observation.input);
+}
+
+void CEditWnd::PublishCommittedGdiFrame() noexcept
+{
+	// The caller reaches this function only after the complete parent/child GDI
+	// frame has flushed. Markdown keeps its own lifetime/content fence, so make
+	// that same physical boundary authoritative for its last-good publication.
+	if (m_markdownPreview != nullptr) {
+		(void)m_markdownPreview->CommitGdiFrame();
+	}
+	if (m_terminalTool != nullptr) {
+		m_terminalTool->CommitGdiFrames();
+	}
+	if (m_viewContainerPages == nullptr && (m_frameRuntimeState == nullptr
+		|| m_frameRuntimeState->windowTransaction == nullptr)) return;
+	if (m_frameRuntimeState == nullptr || m_frameRuntimeState->leaseHolder == nullptr
+		|| m_frameRuntimeState->leaseHolder->RuntimePointer() == nullptr) return;
+	auto* const runtime = m_frameRuntimeState->leaseHolder->RuntimePointer();
+	UpdateFrameRuntimeNativeSurfaces();
+	const auto publishNativeSurfaces = [this]() noexcept {
+		for (const auto& view : m_pcEditViewArr) {
+			if (view != nullptr) (void)view->PublishNativeSurface();
+		}
+		(void)m_cMiniMapView.PublishNativeSurface();
+		if (m_markdownPreview != nullptr) {
+			(void)m_markdownPreview->PublishNativeSurface();
+		}
+	};
+	if (m_viewContainerPages != nullptr) {
+		for (const auto& projection : m_viewContainerPages->CommitGdiFrame()) {
+			const auto& surface = projection.surface;
+			if (surface.committedRequestId == 0) continue;
+			(void)runtime->RecordGdiFallback({
+				.surfaceId = surface.surfaceId,
+				.surfaceLifetimeEpoch = surface.surfaceLifetimeEpoch,
+				.deviceEpoch = surface.deviceEpoch,
+				.layoutEpoch = surface.layoutEpoch,
+				.requestId = surface.committedRequestId,
+				.width = projection.width,
+				.height = projection.height,
+				.visible = surface.visible,
+			});
+		}
+	}
+	if (m_frameRuntimeState->windowTransaction == nullptr) {
+		publishNativeSurfaces();
+		return;
+	}
+
+	const auto extent = [](const HWND hwnd) noexcept {
+		RECT rect{};
+		if (hwnd == nullptr || !::GetClientRect(hwnd, &rect)) {
+			return std::pair<std::uint32_t, std::uint32_t>{1, 1};
+		}
+		return std::pair<std::uint32_t, std::uint32_t>{
+			static_cast<std::uint32_t>(std::max<LONG>(1, rect.right - rect.left)),
+			static_cast<std::uint32_t>(std::max<LONG>(1, rect.bottom - rect.top))};
+	};
+	const auto hwndForRole = [this](
+		const workbench::rendering::EFrameWindowSurfaceRole role) noexcept -> HWND {
+		switch (role) {
+		case workbench::rendering::EFrameWindowSurfaceRole::ActivityBar:
+			return m_activityBar ? m_activityBar->GetHwnd() : nullptr;
+		case workbench::rendering::EFrameWindowSurfaceRole::PrimarySideBar:
+			return m_leftWorkbenchPanel ? m_leftWorkbenchPanel->GetHwnd() : nullptr;
+		case workbench::rendering::EFrameWindowSurfaceRole::SecondarySideBar:
+			return m_rightWorkbenchPanel ? m_rightWorkbenchPanel->GetHwnd() : nullptr;
+		case workbench::rendering::EFrameWindowSurfaceRole::Panel:
+			return m_bottomWorkbenchPanel ? m_bottomWorkbenchPanel->GetHwnd() : nullptr;
+		case workbench::rendering::EFrameWindowSurfaceRole::TitleAndMenu:
+			return GetHwnd();
+		case workbench::rendering::EFrameWindowSurfaceRole::Tabs:
+			return m_cTabWnd.GetHwnd();
+		case workbench::rendering::EFrameWindowSurfaceRole::StatusBar:
+			return m_cStatusBar.GetStatusHwnd();
+		case workbench::rendering::EFrameWindowSurfaceRole::Editor:
+			return HasActiveEditorInput() ? GetActiveView().GetHwnd() : nullptr;
+		case workbench::rendering::EFrameWindowSurfaceRole::MarkdownPreview:
+			return m_markdownPreview ? m_markdownPreview->GetHwnd() : nullptr;
+		case workbench::rendering::EFrameWindowSurfaceRole::Terminal:
+			return m_terminalTool ? m_terminalTool->GetHwnd() : nullptr;
+		}
+		return nullptr;
+	};
+	for (const auto& surface :
+		m_frameRuntimeState->windowTransaction->CommitGdiBoundary()) {
+		if (surface.committedRequestId == 0) continue;
+		const auto role = static_cast<workbench::rendering::EFrameWindowSurfaceRole>(
+			surface.surfaceId - workbench::rendering::FrameWindowSurfaceId(
+				workbench::rendering::EFrameWindowSurfaceRole::ActivityBar));
+		const auto [width, height] = extent(hwndForRole(role));
+		(void)runtime->RecordGdiFallback({
+			.surfaceId = surface.surfaceId,
+			.surfaceLifetimeEpoch = surface.surfaceLifetimeEpoch,
+			.deviceEpoch = surface.deviceEpoch,
+			.layoutEpoch = surface.layoutEpoch,
+			.requestId = surface.committedRequestId,
+			.width = width,
+			.height = height,
+			.visible = surface.visible,
+		});
+	}
+	publishNativeSurfaces();
+}
+
+void CEditWnd::CloseFrameRuntime() noexcept
+{
+	if (m_frameRuntimeState == nullptr) return;
+	// Raise the shared ingress fence before withdrawing child sinks. No callback
+	// owns a UI wait or a runtime mutex, and any child that retained a bridge/sink
+	// now sees a closed gate instead of a borrowed CEditWnd pointer.
+	if (m_frameRuntimeState->callbackState != nullptr) {
+		m_frameRuntimeState->callbackState->Close();
+	}
+	if (m_terminalTool != nullptr) m_terminalTool->DetachNativeFrameRuntime();
+	if (m_scmTool != nullptr) {
+		m_scmTool->ClearNativeSurfaceTarget();
+		m_scmTool->SetNativeSurfaceSink({});
+	}
+	if (m_explorerTool != nullptr) {
+		(void)m_explorerTool->CloseNativeSurface();
+		m_explorerTool->SetNativeSurfaceSink({});
+	}
+	if (m_searchTool != nullptr) {
+		(void)m_searchTool->CloseNativeSurface();
+		m_searchTool->SetNativeSurfaceSink({});
+	}
+	if (m_outlineWorkbenchTool != nullptr) {
+		(void)m_outlineWorkbenchTool->CloseNativeSurface();
+		m_outlineWorkbenchTool->SetNativeSurfaceSink({});
+	}
+	for (const auto& view : m_pcEditViewArr) {
+		if (view == nullptr) continue;
+		view->ClearNativeSurfaceTarget();
+		view->SetNativeSurfaceSink({});
+	}
+	m_cMiniMapView.ClearNativeSurfaceTarget();
+	m_cMiniMapView.SetNativeSurfaceSink({});
+	if (m_markdownPreview != nullptr) {
+		m_markdownPreview->ClearNativeSurfaceTarget();
+		m_markdownPreview->SetNativeSurfaceSink({});
+	}
+	if (m_frameRuntimeState->terminalFrameBridge != nullptr) {
+		// DetachNativeFrameRuntime fences every pane bridge before this runtime
+		// retirement. Keep this idempotent fallback for a window with no tool.
+		m_frameRuntimeState->terminalFrameBridge->Close();
+	}
+	if (m_frameRuntimeState->windowTransaction != nullptr) {
+		(void)m_frameRuntimeState->windowTransaction->Close();
+	}
+	if (m_frameRuntimeState->callbackState != nullptr) {
+		m_frameRuntimeState->callbackState->RequestRetirement();
+	} else if (m_frameRuntimeState->leaseHolder != nullptr) {
+		m_frameRuntimeState->leaseHolder->RequestRetirement();
+	}
+	m_frameRuntimeState->retirementObservation =
+		m_frameRuntimeState->leaseHolder != nullptr
+		? m_frameRuntimeState->leaseHolder->Observation() : nullptr;
+	m_frameRuntimeState.reset();
 }
 
 void CEditWnd::RedrawWorkbenchFrameForCommittedLayout(bool immediate)
@@ -5794,7 +6821,16 @@ void CEditWnd::RedrawWorkbenchFrameForCommittedLayout(bool immediate)
 	m_appliedWorkbenchHostGeometry = geometry;
 	if (!changed) return;
 	::RedrawWindow(GetHwnd(), nullptr, nullptr,
-		RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | (immediate ? RDW_UPDATENOW : 0));
+		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN
+			| (immediate ? RDW_UPDATENOW : 0));
+	if (immediate) {
+		// RDW_UPDATENOW completes WM_PAINT dispatch, but child controls can leave
+		// their final GDI commands in this UI thread's batch. Publish those commands
+		// before the geometry handler returns so a native tab/list intermediate does
+		// not become the next composed frame. This does not wait for DWM or a worker.
+		(void)::GdiFlush();
+		PublishCommittedGdiFrame();
+	}
 }
 
 void CEditWnd::ReloadWorkbenchOutlineAndRelayout()
@@ -7928,6 +8964,7 @@ void CEditWnd::UpdateMarkdownPreviewIfNeeded()
 RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, unsigned int dpi,
 	int minimapWidth)
 {
+	m_markdownPreviewMinimapWidth = std::max(0, minimapWidth);
 	const RECT previousDivider = m_markdownPreviewDivider;
 	// Where the minimap ends up unless a sibling preview claims the right side.
 	RECT minimapBounds{ right - minimapWidth, top, right, bottom };
@@ -7971,8 +9008,10 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 			break;
 		}
 	}
+	const int previewWidthDip = m_resizingMarkdownPreview
+		? m_markdownPreviewResizeWidthDip : m_markdownPreviewWidthDip;
 	const auto layout = markdown::CalculateMarkdownPreviewLayout(left, right, dpi, paneMode,
-		m_markdownPreviewWidthDip);
+		previewWidthDip);
 	m_markdownPreviewRegion = { left, top, right, bottom };
 	m_markdownPreviewDivider = { layout.dividerLeft, top, layout.dividerRight, bottom };
 	// The minimap travels with the editor half, so the view keeps the region left
@@ -7988,18 +9027,25 @@ RECT CEditWnd::LayoutMarkdownPreview(int left, int top, int right, int bottom, u
 		::InvalidateRect(GetHwnd(), &m_markdownPreviewDivider, FALSE);
 	}
 	if (const HWND splitter = m_cSplitterWnd.GetHwnd(); splitter != nullptr) {
-		::MoveWindow(splitter, layout.editorLeft, top,
-			std::max(0, editorViewRight - layout.editorLeft), std::max(0, bottom - top), TRUE);
+		(void)PositionChildForFrame(splitter, layout.editorLeft, top,
+			std::max(0, editorViewRight - layout.editorLeft), std::max(0, bottom - top));
 		::ShowWindow(splitter, paneMode == markdown::PreviewPaneMode::Replacement || m_pPrintPreview
 			? SW_HIDE : SW_SHOWNA);
 	}
 	if (!m_markdownPreview) {
 		return minimapBounds;
 	}
+	if (!showPreview || layout.PreviewWidth() == 0) {
+		// A hidden preview keeps its last committed render generation. Laying the
+		// full document out at zero width immediately before hiding is both useless
+		// and pathological for large Markdown documents.
+		m_markdownPreview->Show(false);
+		return minimapBounds;
+	}
 	const RECT previewBounds{ layout.previewLeft, top, layout.previewRight, bottom };
 	m_markdownPreview->SetEditorFont(GetLogfont(), dpi);
-	m_markdownPreview->Layout(previewBounds, dpi);
-	m_markdownPreview->Show(showPreview && layout.PreviewWidth() > 0);
+	m_markdownPreview->Layout(previewBounds, dpi, m_resizingMarkdownPreview);
+	m_markdownPreview->Show(true);
 	return minimapBounds;
 }
 
@@ -8023,24 +9069,56 @@ bool CEditWnd::HitTestMarkdownPreviewDivider(POINT point) const noexcept
 
 void CEditWnd::RelayoutForMarkdownPreviewDivider()
 {
-	RECT client{};
-	::GetClientRect(GetHwnd(), &client);
-	(void)OnSize2(m_nWinSizeType,
-		MAKELONG(client.right - client.left, client.bottom - client.top), false);
+	const RECT region = m_markdownPreviewRegion;
+	const bool haveRegion = region.right > region.left && region.bottom > region.top;
+	if (!haveRegion) return;
+
+	// A preview sash never changes the outer workbench geometry.  Keep this
+	// cohort local for both transient samples and the terminal commit/cancel:
+	// LayoutMarkdownPreview moves only the editor splitter and preview, while
+	// its non-transient preview Layout() queues width-dependent reflow through
+	// CMarkdownPreviewWnd's continuation.  Calling OnSize2 here used to walk
+	// every Part and synchronously replay all accessory layout on mouse-up.
+	const RECT minimapBounds = LayoutMarkdownPreview(region.left, region.top,
+		region.right, region.bottom, ::GetDpiForWindow(GetHwnd()),
+		m_markdownPreviewMinimapWidth);
+	if (const HWND minimap = m_cMiniMapView.GetHwnd(); minimap != nullptr) {
+		(void)PositionChildForFrame(minimap, minimapBounds.left, minimapBounds.top,
+			std::max(0L, minimapBounds.right - minimapBounds.left),
+			std::max(0L, minimapBounds.bottom - minimapBounds.top));
+	}
+	if (!m_resizingMarkdownPreview) {
+		// The committed/cancelled width has already been selected above.  The
+		// preview owns its asynchronous reflow; publish only this cohort's
+		// invalidation now and leave unrelated Parts untouched.
+		::RedrawWindow(GetHwnd(), &region, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		return;
+	}
 	// The editor view, the preview, and the divider are separate windows that
-	// would otherwise repaint on different message-loop turns, so a drag could
-	// expose two different divider positions at once. Commit one complete frame
-	// per drag sample while the pointer is captured.
+	// share one invalidation cohort. The message queue coalesces repeated pointer
+	// samples and each child publishes from its persistent buffer.
 	//
 	// The commit is bounded to the split region and does not ask for an erase.
 	// A whole-window RDW_ERASE would repaint the activity bar, side bars, tabs
 	// and status bar on every mouse sample even though the drag cannot move
 	// them, and those Parts flashing against their own erased background is what
 	// a divider drag looked like before this rectangle was passed.
-	const RECT region = m_markdownPreviewRegion;
-	const bool haveRegion = region.right > region.left && region.bottom > region.top;
+	// MoveWindow and the preview's transient Layout have already invalidated
+	// exactly the vacated strips, new viewport, and old/new divider. Flush those
+	// pending regions as one frame without invalidating the whole central area
+	// again; repainting every pixel here made drag cost proportional to pane area.
 	::RedrawWindow(GetHwnd(), haveRegion ? &region : nullptr, nullptr,
-		RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+}
+
+void CEditWnd::CommitMarkdownPreviewResize()
+{
+	if (!m_resizingMarkdownPreview) return;
+	m_markdownPreviewWidthDip = m_markdownPreviewResizeWidthDip;
+	m_resizingMarkdownPreview = false;
+	if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
+	RelayoutForMarkdownPreviewDivider();
 }
 
 void CEditWnd::CancelMarkdownPreviewResize()
@@ -8049,6 +9127,13 @@ void CEditWnd::CancelMarkdownPreviewResize()
 	m_resizingMarkdownPreview = false;
 	if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
 	RelayoutForMarkdownPreviewDivider();
+}
+
+void CEditWnd::AbortMarkdownPreviewResize() noexcept
+{
+	if (!m_resizingMarkdownPreview) return;
+	m_resizingMarkdownPreview = false;
+	if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
 }
 
 void CEditWnd::ToggleMarkdownPreview()
@@ -8087,16 +9172,21 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ApplyMarkdownPrev
 		break;
 	}
 
+	const bool wasPreviewVisible = m_markdownPreviewVisible;
 	m_markdownPreviewVisible = m_markdownPreviewCommandState.IsVisible();
 	if (m_markdownPreviewVisible) {
+		const bool hadReusablePreview = m_markdownPreview && m_markdownPreview->IsCreated();
 		if (!EnsureMarkdownPreview()) {
 			m_markdownPreviewCommandState.Reset();
 			m_markdownPreviewVisible = false;
 			return { Status::Failed, "native Markdown preview window could not be created" };
 		}
-		m_markdownPreviewDirty = true;
-		m_markdownPreviewRevision = -1;
-		RefreshMarkdownPreview();
+		const auto revision = GetDocument()->m_cDocEditor.m_cOpeBuf.GetCurrentPointer();
+		if (!hadReusablePreview || result.identityChanged || m_markdownPreviewDirty
+			|| m_markdownPreviewRevision != revision) {
+			m_markdownPreviewDirty = true;
+			RefreshMarkdownPreview();
+		}
 	} else if (m_markdownPreview) {
 		m_markdownPreview->Show(false);
 	}
@@ -8105,6 +9195,15 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ApplyMarkdownPrev
 		RECT client{};
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType, MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		if (wasPreviewVisible && !m_markdownPreviewVisible) {
+			// Hiding the preview vacates a child-owned rectangle. The normal layout
+			// pass queues no-erase invalidation, but a close is a low-frequency
+			// transaction whose visible result must be coherent before the next
+			// message-loop turn: flush the parent and its new editor sibling as one
+			// repaint cohort without reintroducing an erase frame.
+			::RedrawWindow(GetHwnd(), nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+		}
 	}
 	return { Status::Succeeded, {} };
 }
@@ -8265,6 +9364,7 @@ bool CEditWnd::ShowCommandPalette()
 		return convertItems(workbench::editor::SearchRegisteredCommandPalette(
 			*m_workbenchCommandRegistry, query, titleResolver));
 	});
+	m_commandPaletteOverlay->SetSelectionCallback({});
 	m_commandPaletteOverlay->SetAcceptCallback([this](std::wstring commandId) {
 		if (!m_workbenchCommandRegistry) return;
 		(void)workbench::editor::DispatchRegisteredCommandPaletteSelection(
@@ -8843,6 +9943,12 @@ HWND CEditWnd::Create(
 		m_hWnd = hWnd = nullptr;
 		return hWnd;
 	}
+	// Rendering admission is deliberately fail-closed per window. The native GDI
+	// surfaces remain authoritative if the bounded owner/finalizer capacity is
+	// unavailable; workbench startup itself must not fail for that fallback.
+	if (!InitializeFrameRuntime()) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: frame runtime unavailable; using GDI fallback.\n");
+	}
 
 	DarkMode::setChildCtrlsTheme(hWnd);
 	DarkMode::setWindowMenuBarSubclass(hWnd);
@@ -9249,7 +10355,10 @@ void CEditWnd::EndLayoutBars( BOOL bAdjust/* = TRUE*/ )
 		auto nWinSizeType = m_nWinSizeType;
 		::SendMessage( GetHwnd(), WM_SIZE, 0, 0 ); // ツールバーの表示ON/OFFを行うとちらつきが発生する事への対策
 		::SendMessage( GetHwnd(), WM_SIZE, nWinSizeType, MAKELONG( rc.right - rc.left, rc.bottom - rc.top ) );
-		::RedrawWindow( GetHwnd(), nullptr, nullptr, RDW_FRAME | RDW_INVALIDATE | RDW_UPDATENOW );	// ステータスバーに必要？
+		// Queue the frame repaint after the bar visibility transaction.  The
+		// children own their complete retained pixels, so an erase/update-now
+		// pass only exposes an intermediate blank frame and recurses into paint.
+		::RedrawWindow( GetHwnd(), nullptr, nullptr, RDW_FRAME | RDW_INVALIDATE | RDW_NOERASE );
 
 		GetActiveView().SetIMECompFormPos();
 	}
@@ -9338,7 +10447,18 @@ LRESULT CEditWnd::DispatchEvent(
 	}
 	LRESULT customFrameResult = 0;
 	if (m_customFrame && m_customFrame->HandleWindowMessage(uMsg, wParam, lParam, customFrameResult)) {
+		if (uMsg == WM_DISPLAYCHANGE) {
+			UpdateFrameRuntimeCadence(true);
+			::RedrawWindow(hwnd, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		}
 		return customFrameResult;
+	}
+	if (uMsg == WM_DISPLAYCHANGE) {
+		UpdateFrameRuntimeCadence(true);
+		::RedrawWindow(hwnd, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+		return ::DefWindowProcW(hwnd, uMsg, wParam, lParam);
 	}
 	if (const auto event = sakura::editor::win32::Win32EditorFrameAdapter::Translate(
 		uMsg, wParam, lParam)) {
@@ -9380,7 +10500,7 @@ LRESULT CEditWnd::DispatchEvent(
 			std::lock_guard lock(m_themeConfigurationGate->mutex);
 			m_themeConfigurationGate->messageQueued = false;
 		}
-		ApplyWorkbenchTheme();
+		(void)ApplyWorkbenchTheme();
 		// Re-read `scm.countBadge`; the count itself has not moved, but whether it
 		// is shown at all may have.
 		SyncScmActivityBadge();
@@ -9409,6 +10529,7 @@ LRESULT CEditWnd::DispatchEvent(
 		return OnCaptureChanged( lParam );
 	case WM_CANCELMODE:
 		CancelWorkbenchResize();
+		CancelMarkdownPreviewResize();
 		return 0;
 	case WM_MOUSEWHEEL:
 		// VS Code scrolls whatever the pointer is over, not whatever holds the
@@ -9439,7 +10560,7 @@ LRESULT CEditWnd::DispatchEvent(
 		}
 		const auto result = ::DefWindowProc( hwnd, uMsg, wParam, lParam );
 		if (m_commandPaletteOverlay) {
-			if (!wParam) m_commandPaletteOverlay->Hide();
+			if (!wParam) m_commandPaletteOverlay->Cancel();
 			else m_commandPaletteOverlay->Layout();
 		}
 		return result;
@@ -9728,6 +10849,7 @@ LRESULT CEditWnd::DispatchEvent(
 	case WM_DESTROY:
 		AbortStartupDrawTransaction();
 		m_dispatchReady = false;
+		AbortMarkdownPreviewResize();
 		CloseMarkdownPreview();
 		CloseWorkbench();
 		if (m_customFrame) {
@@ -9782,11 +10904,11 @@ LRESULT CEditWnd::DispatchEvent(
 					? theme::ThemeMode::Dark
 					: theme::ThemeMode::Light);
 		}
-		ApplyWorkbenchTheme();
+		(void)ApplyWorkbenchTheme();
 		return 0L;
 
 	case WM_SETTINGCHANGE:
-		ApplyWorkbenchTheme();
+		(void)ApplyWorkbenchTheme();
 		return ::DefWindowProc(hwnd, uMsg, wParam, lParam);
 
 	case MYWM_UIPI_CHECK:
@@ -10384,6 +11506,7 @@ sakura::editor::EditorFrameEffect CEditWnd::HandleEditorFrameEvent(
 		if (event.Detail() == SIZE_MINIMIZED) UpdateCaption();
 		const auto packedSize = MAKELPARAM(event.Size().Width(), event.Size().Height());
 		const auto result = OnSize(event.Detail(), packedSize);
+		UpdateFrameRuntimeCadence();
 		if (m_commandPaletteOverlay) m_commandPaletteOverlay->Layout();
 		return { EditorFrameEffectKind::Handled, result };
 	}
@@ -10402,6 +11525,7 @@ sakura::editor::EditorFrameEffect CEditWnd::HandleEditorFrameEvent(
 			m_pShareData->m_Common.m_sWindow.m_nWinPosX = windowRect.left;
 			m_pShareData->m_Common.m_sWindow.m_nWinPosY = windowRect.top;
 		}
+		UpdateFrameRuntimeCadence();
 		return { EditorFrameEffectKind::ForwardToDefault, 0 };
 
 	case EditorFrameEventKind::CloseRequested:
@@ -10412,6 +11536,7 @@ sakura::editor::EditorFrameEffect CEditWnd::HandleEditorFrameEvent(
 		return { EditorFrameEffectKind::CloseRefused, 0 };
 
 	case EditorFrameEventKind::DpiChanged:
+		UpdateFrameRuntimeCadence();
 		return { EditorFrameEffectKind::ForwardToDefault, 0 };
 	}
 	return EditorFrameEffect{};
@@ -11436,7 +12561,7 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		LayoutMainMenu();				// 2010/5/16 Uchi
 
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
-		::InvalidateRect( GetHwnd(), nullptr, TRUE );
+		::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	}else{
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
 		/*	通常モードを隠す	*/
@@ -11493,8 +12618,7 @@ void CEditWnd::PrintPreviewModeONOFF( void )
 		/* 印刷設定の反映 */
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
 		m_pPrintPreview->OnChangePrintSetting();
-		::InvalidateRect( GetHwnd(), nullptr, TRUE );
-		::UpdateWindow( GetHwnd() /* m_pPrintPreview->GetPrintPreviewBarHANDLE() */);
+		::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	}
 	return;
 }
@@ -11590,6 +12714,11 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 		return 0L;
 	}
 	m_layoutInProgress = true;
+	// Pointer-driven layout samples are one retained-frame transaction.  Do not
+	// synchronously paint an individual toolbar/status child while its siblings
+	// still carry the previous geometry; the parent flushes the complete cohort.
+	const bool deferChildPaint = m_resizingWorkbenchPanel != nullptr
+		|| m_resizingMarkdownPreview;
 	auto finishLayout = [this](LRESULT result) {
 		m_layoutInProgress = false;
 		if (!m_layoutPending) return result;
@@ -11696,7 +12825,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 
 		LayoutStatusBarParts();
 
-		if( m_startupDrawState != StartupDrawState::Committing ){
+		if( !deferChildPaint && m_startupDrawState != StartupDrawState::Committing ){
 			::UpdateWindow( m_cStatusBar.GetStatusHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
 		}
 		::GetWindowRect( m_cStatusBar.GetStatusHwnd(), &rc );
@@ -11741,8 +12870,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	// heights together, which `window/CLAUDE.md` forbids in this function.
 	const auto chromeLayout = workbench::CalculateWorkbenchLayout(layoutRequest);
 	if( nullptr != hwndToolBar ){
-		::MoveWindow(hwndToolBar, chromeLayout.topAccessory.left, chromeLayout.topAccessory.top,
-			chromeLayout.topAccessory.Width(), nToolBarHeight, TRUE);
+		(void)PositionChildForFrame(hwndToolBar, chromeLayout.topAccessory.left,
+			chromeLayout.topAccessory.top, chromeLayout.topAccessory.Width(), nToolBarHeight);
 	}
 
 	//@@@ From 2003.05.31 MIK
@@ -11769,16 +12898,14 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cTabWnd.SizeBox_ONOFF( false );
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			nTabWndHeight = rc.bottom - rc.top;
-			::MoveWindow(m_cTabWnd.GetHwnd(), chromeLayout.documentTabs.left,
-				chromeLayout.documentTabs.top, chromeLayout.documentTabs.Width(),
-				nTabWndHeight, TRUE);
+			(void)PositionChildForFrame(m_cTabWnd.GetHwnd(), chromeLayout.documentTabs.left,
+				chromeLayout.documentTabs.top, chromeLayout.documentTabs.Width(), nTabWndHeight);
 			m_cTabWnd.OnSize();
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			if( nTabWndHeight != rc.bottom - rc.top ){
 				nTabWndHeight = rc.bottom - rc.top;
-				::MoveWindow(m_cTabWnd.GetHwnd(), chromeLayout.documentTabs.left,
-					chromeLayout.documentTabs.top, chromeLayout.documentTabs.Width(),
-					nTabWndHeight, TRUE);
+				(void)PositionChildForFrame(m_cTabWnd.GetHwnd(), chromeLayout.documentTabs.left,
+					chromeLayout.documentTabs.top, chromeLayout.documentTabs.Width(), nTabWndHeight);
 			}
 		}else if( tabPosition == TabPosition_Bottom ){
 			// 上から下に移動するとゴミが表示されるので一度非表示にする
@@ -11800,14 +12927,14 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cTabWnd.SizeBox_ONOFF( bSizeBox );
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			nTabWndHeight = rc.bottom - rc.top;
-			::MoveWindow( m_cTabWnd.GetHwnd(), 0,
-				cy - nFuncKeyWndHeight - nStatusBarHeight - nTabWndHeight, cx, nTabWndHeight, TRUE );
+			(void)PositionChildForFrame(m_cTabWnd.GetHwnd(), 0,
+				cy - nFuncKeyWndHeight - nStatusBarHeight - nTabWndHeight, cx, nTabWndHeight);
 			m_cTabWnd.OnSize();
 			::GetWindowRect( m_cTabWnd.GetHwnd(), &rc );
 			if( nTabWndHeight != rc.bottom - rc.top ){
 				nTabWndHeight = rc.bottom - rc.top;
-				::MoveWindow( m_cTabWnd.GetHwnd(), 0,
-					cy - nFuncKeyWndHeight - nStatusBarHeight - nTabWndHeight, cx, nTabWndHeight, TRUE );
+				(void)PositionChildForFrame(m_cTabWnd.GetHwnd(), 0,
+					cy - nFuncKeyWndHeight - nStatusBarHeight - nTabWndHeight, cx, nTabWndHeight);
 			}
 			nTabHeightBottom = rc.bottom - rc.top;
 			nTabWndHeight = 0;
@@ -11827,21 +12954,21 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			// this bar starts where the band starts plus the toolbar's own height.
 			// `nCustomTitleHeight + nToolBarHeight` would be peer-coordinate
 			// inference; use the committed chrome layout instead.
-			::MoveWindow(
+			(void)PositionChildForFrame(
 				m_cFuncKeyWnd.GetHwnd(),
 				chromeLayout.topAccessory.left,
 				chromeLayout.topAccessory.top + nToolBarHeight,
 				chromeLayout.topAccessory.Width(),
-				nFuncKeyWndHeight, TRUE );
+				nFuncKeyWndHeight );
 		}
 		else if( m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 1 )
 		{	/* ファンクションキー表示位置／0:上 1:下 */
-			::MoveWindow(
+			(void)PositionChildForFrame(
 				m_cFuncKeyWnd.GetHwnd(),
 				0,
 				cy - nFuncKeyWndHeight - nStatusBarHeight,
 				cx,
-				nFuncKeyWndHeight, TRUE
+				nFuncKeyWndHeight
 			);
 
 			bool	bSizeBox = true;
@@ -11854,7 +12981,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 			m_cFuncKeyWnd.SizeBox_ONOFF( bSizeBox );
 			bMiniMapSizeBox = false;
 		}
-		if( m_startupDrawState != StartupDrawState::Committing ){
+		if( !deferChildPaint && m_startupDrawState != StartupDrawState::Committing ){
 			::UpdateWindow( m_cFuncKeyWnd.GetHwnd() );	// 2006.06.17 ryoji 即時描画でちらつきを減らす
 		}
 	}
@@ -11862,7 +12989,36 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.documentTabsHeightPixels = nTabWndHeight;
 	layoutRequest.bottomAccessoryHeightPixels = nTabHeightBottom
 		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 1 ? nFuncKeyWndHeight : 0);
-	const auto layout = workbench::CalculateWorkbenchLayout(layoutRequest);
+	auto layout = workbench::CalculateWorkbenchLayout(layoutRequest);
+	if (m_resizingWorkbenchPanel != nullptr) {
+		// Persist the pure layout result, never a child HWND sampled later during
+		// mouse-up. Native children can still be between geometry and paint commits
+		// at that boundary; reading one back made an intermediate/complement width
+		// authoritative and caused the Side Bar to jump after release.
+		const auto edge = m_resizingWorkbenchPanel->GetEdge();
+		// A physical pointer coordinate is not always exactly representable as an
+		// integer DIP. Converge the live frame to the persisted DIP now; otherwise
+		// mouse-up reprojects it one pixel away and ClearType text visibly twitches.
+		for (int attempt = 0; attempt < 2; ++attempt) {
+			const int actualPixels = edge == workbench::WorkbenchEdge::Bottom
+				? layout.bottomPane.Height()
+				: edge == workbench::WorkbenchEdge::Right
+					? layout.rightPane.Width()
+					: layout.leftPane.Width();
+			const int snappedDip = PixelsToDip(actualPixels, layoutRequest.dpi);
+			if (snappedDip == m_resizingWorkbenchPanel->GetPendingExtentDip()) break;
+			m_resizingWorkbenchPanel->UpdateResize(snappedDip);
+			switch (edge) {
+			case workbench::WorkbenchEdge::Left:
+				layoutRequest.leftPaneWidthDip = snappedDip; break;
+			case workbench::WorkbenchEdge::Right:
+				layoutRequest.rightPaneWidthDip = snappedDip; break;
+			case workbench::WorkbenchEdge::Bottom:
+				layoutRequest.bottomPaneHeightDip = snappedDip; break;
+			}
+			layout = workbench::CalculateWorkbenchLayout(layoutRequest);
+		}
+	}
 	m_leftWorkbenchSplitter = ToWinRect(layout.leftSplitter);
 	m_rightWorkbenchSplitter = ToWinRect(layout.rightSplitter);
 	m_bottomWorkbenchSplitter = ToWinRect(layout.bottomSplitter);
@@ -11872,8 +13028,8 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Layout(ToWinRect(layout.rightPane), layoutRequest.dpi);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Layout(ToWinRect(layout.bottomPane), layoutRequest.dpi);
 	if (m_cTabWnd.GetHwnd() && m_cTabWnd.m_eTabPosition == TabPosition_Top) {
-		::MoveWindow(m_cTabWnd.GetHwnd(), layout.documentTabs.left, layout.documentTabs.top,
-			layout.documentTabs.Width(), layout.documentTabs.Height(), TRUE);
+		(void)PositionChildForFrame(m_cTabWnd.GetHwnd(), layout.documentTabs.left,
+			layout.documentTabs.top, layout.documentTabs.Width(), layout.documentTabs.Height());
 		m_cTabWnd.OnSize();
 	}
 
@@ -11890,9 +13046,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	if( m_cMiniMapView.GetHwnd() ){
 		::ShowWindow(m_cMiniMapView.GetHwnd(),
 			layoutRequest.showMinimap && !m_pPrintPreview ? SW_SHOWNA : SW_HIDE);
-		::MoveWindow(m_cMiniMapView.GetHwnd(), minimapBounds.left, minimapBounds.top,
-			std::max(0L, minimapBounds.right - minimapBounds.left),
-			std::max(0L, minimapBounds.bottom - minimapBounds.top), TRUE);
+		(void)PositionChildForFrame(m_cMiniMapView.GetHwnd(), minimapBounds.left,
+			minimapBounds.top, std::max(0L, minimapBounds.right - minimapBounds.left),
+			std::max(0L, minimapBounds.bottom - minimapBounds.top));
 		if (layoutRequest.rightPane != workbench::WorkbenchPanelState::Hidden
 			|| layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden) {
 			bMiniMapSizeBox = false;
@@ -11915,12 +13071,49 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	// applies to a part-visibility change, which reaches this function through
 	// FinalizeWorkbenchPanelProjection.
 	//
-	// The commit must be synchronous. A queued RDW_INVALIDATE here measurably
-	// did not reach the screen: the stale pixels survived past 900 ms and the
-	// screen-versus-PrintWindow difference was unchanged from the uninvalidated
-	// build. RDW_UPDATENOW paints the whole frame within this relayout, which is
-	// what makes the frame update atomically, the way VS Code's does.
-	RedrawWorkbenchFrameForCommittedLayout(true);
+	// The invalidation is queued and no-erase. Persistent surface buffers retain
+	// the previous complete frame until the replacement cohort is ready, avoiding
+	// both an empty intermediate frame and UI-thread paint recursion.
+	if (!m_resizingMarkdownPreview) {
+		if (m_frameRuntimeState != nullptr
+			&& m_frameRuntimeState->windowTransaction != nullptr) {
+			auto& transaction = *m_frameRuntimeState->windowTransaction;
+			using WindowRole = workbench::rendering::EFrameWindowSurfaceRole;
+			const auto setProjection = [&transaction](const WindowRole role,
+				const char* const hostId, const bool visible) noexcept {
+				(void)transaction.SetProjection(
+					workbench::rendering::FrameWindowSurfaceId(role), hostId, visible);
+			};
+			setProjection(WindowRole::ActivityBar, "workbench.parts.activitybar",
+				layout.activityBar.Width() > 0 && layout.activityBar.Height() > 0);
+			setProjection(WindowRole::PrimarySideBar, "workbench.parts.sidebar",
+				layoutRequest.leftPane != workbench::WorkbenchPanelState::Hidden);
+			setProjection(WindowRole::SecondarySideBar, "workbench.parts.auxiliarybar",
+				layoutRequest.rightPane != workbench::WorkbenchPanelState::Hidden);
+			setProjection(WindowRole::Panel, "workbench.parts.panel",
+				layoutRequest.bottomPane != workbench::WorkbenchPanelState::Hidden);
+			setProjection(WindowRole::TitleAndMenu, "workbench.parts.titlebar", true);
+			setProjection(WindowRole::Tabs, "workbench.parts.editor",
+				showDocumentTabs && m_cTabWnd.GetHwnd() != nullptr);
+			setProjection(WindowRole::StatusBar, "workbench.parts.statusbar",
+				m_cStatusBar.GetStatusHwnd() != nullptr
+					&& ::IsWindowVisible(m_cStatusBar.GetStatusHwnd()));
+			setProjection(WindowRole::Editor, "workbench.parts.editor",
+				HasActiveEditorInput() && !m_pPrintPreview);
+			setProjection(WindowRole::MarkdownPreview, "workbench.parts.editor",
+				m_markdownPreviewVisible && m_markdownPreview != nullptr
+					&& m_markdownPreview->IsCreated());
+			const bool terminalActive = layoutRequest.bottomPane
+					!= workbench::WorkbenchPanelState::Hidden
+				&& (m_workbenchRuntime != nullptr
+					? IsBuiltinWorkbenchViewActive(workbench::layout::ids::view::Terminal)
+					: m_pShareData->m_Common.m_sWorkbench.m_eActiveTool
+						== WORKBENCH_TOOL_TERMINAL);
+			setProjection(WindowRole::Terminal, "workbench.parts.panel", terminalActive);
+			(void)transaction.BeginLayout();
+		}
+		RedrawWorkbenchFrameForCommittedLayout(true);
+	}
 
 	/* 印刷プレビューモードか */
 //@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
@@ -12015,6 +13208,7 @@ LRESULT CEditWnd::OnLButtonDown( [[maybe_unused]] WPARAM wParam, LPARAM lParam )
 	}
 
 	if (HitTestMarkdownPreviewDivider(point)) {
+		m_markdownPreviewResizeWidthDip = m_markdownPreviewWidthDip;
 		m_resizingMarkdownPreview = true;
 		::SetCapture(GetHwnd());
 		::SetCursor(::LoadCursor(nullptr, IDC_SIZEWE));
@@ -12038,18 +13232,12 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 	if (m_resizingWorkbenchPanel != nullptr) {
 		auto* host = m_resizingWorkbenchPanel;
 		m_resizingWorkbenchPanel = nullptr;
-		// The pure layout calculator may shrink an over-large requested extent to
-		// preserve the editor minimum. Persist what was actually displayed, not
-		// the unconstrained mouse-derived request.
-		RECT actualBounds{};
-		if (host->GetHwnd() != nullptr && ::GetClientRect(host->GetHwnd(), &actualBounds)) {
-			const int actualPixels = host->GetEdge() == workbench::WorkbenchEdge::Bottom
-				? actualBounds.bottom - actualBounds.top
-				: actualBounds.right - actualBounds.left;
-			host->UpdateResize(PixelsToDip(actualPixels, ::GetDpiForWindow(GetHwnd())));
-		}
+		// OnSize2 already fed the clamped pure-layout extent back into this host.
+		// HWND geometry is presentation output and must never become model truth.
 		const bool committed = host->CommitResize();
-		if (committed && m_workbenchRuntime != nullptr
+		const bool projectionRequired = committed || m_workbenchLayoutProjectionDeferred;
+		m_workbenchLayoutProjectionDeferred = false;
+		if (projectionRequired && m_workbenchRuntime != nullptr
 			&& !ApplyCurrentWorkbenchLayoutState(false, true)) {
 			::OutputDebugStringW(L"Sakura Editor NEXT: committed resize projection failed.\n");
 		}
@@ -12067,9 +13255,7 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 	}
 
 	if (m_resizingMarkdownPreview) {
-		m_resizingMarkdownPreview = false;
-		if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
-		RelayoutForMarkdownPreviewDivider();
+		CommitMarkdownPreviewResize();
 		return 0;
 	}
 
@@ -12088,7 +13274,11 @@ LRESULT CEditWnd::OnLButtonUp( [[maybe_unused]] WPARAM wParam, [[maybe_unused]] 
 	m_bDragMode = false;
 //	MYTRACE( L"m_bDragMode = FALSE (OnLButtonUp)\n");
 	ReleaseCapture();
-	::InvalidateRect( GetHwnd(), nullptr, TRUE );
+	// The drag gesture has ended; queue one no-erase repaint.  Erasing the
+	// entire frame here exposes an empty desktop-colored frame before the
+	// retained surfaces repaint and is especially visible while the title bar
+	// is being dragged.
+	::InvalidateRect( GetHwnd(), nullptr, FALSE );
 	return 0;
 }
 
@@ -12117,12 +13307,10 @@ LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 		::GetClientRect(GetHwnd(), &client);
 		(void)OnSize2(m_nWinSizeType,
 			MAKELONG(client.right - client.left, client.bottom - client.top), false);
-		// MoveWindow invalidates the vacated child rectangles, but the controls can
-		// otherwise paint on different message-loop turns.  Commit one complete
-		// workbench frame while the pointer is captured so tabs, editor, panel, and
-		// terminal never expose geometry from different resize samples.
+		// Coalesce pointer samples through the normal paint queue. Child surfaces
+		// retain their last complete buffers until this geometry is presented.
 		::RedrawWindow(GetHwnd(), nullptr, nullptr,
-			RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 		return 0;
 	}
 
@@ -12131,7 +13319,7 @@ LRESULT CEditWnd::OnMouseMove( WPARAM wParam, LPARAM lParam )
 		// The requested width is clamped inside the pure layout calculator, so an
 		// over-dragged pointer parks the divider at the limit rather than being
 		// ignored, and the stored request stays whatever the pointer asked for.
-		m_markdownPreviewWidthDip = markdown::RequestedPreviewWidthDipFromPointer(
+		m_markdownPreviewResizeWidthDip = markdown::RequestedPreviewWidthDipFromPointer(
 			m_markdownPreviewRegion.right, point.x, ::GetDpiForWindow(GetHwnd()));
 		RelayoutForMarkdownPreviewDivider();
 		return 0;
@@ -12229,6 +13417,11 @@ void CEditWnd::CancelWorkbenchResize()
 	m_resizingWorkbenchPanel = nullptr;
 	host->CancelResize();
 	if (::GetCapture() == GetHwnd()) ::ReleaseCapture();
+	const bool projectionRequired = std::exchange(m_workbenchLayoutProjectionDeferred, false);
+	if (projectionRequired && m_workbenchRuntime != nullptr
+		&& !ApplyCurrentWorkbenchLayoutState(false, true)) {
+		::OutputDebugStringW(L"Sakura Editor NEXT: deferred resize projection failed.\n");
+	}
 	RECT client{};
 	::GetClientRect(GetHwnd(), &client);
 	(void)OnSize2(m_nWinSizeType,
@@ -12439,8 +13632,6 @@ BOOL CEditWnd::OnPrintPageSetting( void )
 			CEditWnd::getInstance()->GetHwnd()
 		);
 	}
-//@@@ 2002.01.14 YAZAKI 印刷プレビューをCPrintPreviewに独立させたことによる変更
-	::UpdateWindow( GetHwnd() /* m_pPrintPreview->GetPrintPreviewBarHANDLE() */);
 	return bRes;
 }
 
@@ -13348,15 +14539,6 @@ BOOL CEditWnd::UpdateTextWrap( void )
 	// （アンドゥ登録＆全ビュー更新のタイミング）
 	if( GetDocument()->m_nTextWrapMethodCur == WRAP_WINDOW_WIDTH ){
 		BOOL bWrap = WrapWindowWidth( 0 );	// 右端で折り返す
-		if( bWrap ){
-			// WrapWindowWidth() で追加した更新リージョンで画面更新する
-			for( int i = 0; i < GetAllViewCount(); i++ ){
-				::UpdateWindow( GetView(i).GetHwnd() );
-			}
-			if( m_cMiniMapView.GetHwnd() ){
-				::UpdateWindow( m_cMiniMapView.GetHwnd() );
-			}
-		}
 		return bWrap;	// 画面更新＝折り返し変更
 	}
 	return FALSE;	// 画面更新しなかった
@@ -13397,12 +14579,15 @@ void CEditWnd::ChangeLayoutParam( bool bShowProgress, CKetaXInt nTabSize, int nT
 
 	for( int i = 0; i < GetAllViewCount(); i++ ){
 		if( GetView(i).GetHwnd() ){
-			InvalidateRect( GetView(i).GetHwnd(), nullptr, TRUE );
+			// Each view paints its complete back buffer.  Queue the update without
+			// asking USER32 for an erase pass so a layout change cannot flash a
+			// blank frame before the retained content is published.
+			InvalidateRect( GetView(i).GetHwnd(), nullptr, FALSE );
 			GetView(i).AdjustScrollBars();	// 2008.06.18 ryoji
 		}
 	}
 	if( m_cMiniMapView.GetHwnd() ){
-		InvalidateRect( m_cMiniMapView.GetHwnd(), nullptr, TRUE );
+		InvalidateRect( m_cMiniMapView.GetHwnd(), nullptr, FALSE );
 		m_cMiniMapView.AdjustScrollBars();
 	}
 	GetActiveView().GetCaret().ShowCaretPosInfo();	// 2009.07.25 ryoji

@@ -125,8 +125,9 @@ enum class TerminalQueueInputResult {
 //! session worker have quiesced.  `InProgress` is returned only to prevent a
 //! callback running on a session/close worker from waiting for itself; it keeps
 //! ownership with the session and an external owner must call WaitForClose. If
-//! a close-worker launch fails, BeginClose first stops workers and closes the
-//! backend; the same external wait remains responsible for joining them.
+//! a close-worker launch fails, the pre-admitted fixed retirement service runs
+//! the same close body on a reaper thread; no live worker is detached or left
+//! for a UI destructor to join.
 enum class TerminalSessionCloseWaitStatus {
 	Closed,
 	DeadlineExceeded,
@@ -184,6 +185,8 @@ public:
 	static constexpr auto kForcedCloseTimeout = std::chrono::milliseconds(250);
 
 	explicit CTerminalSession( std::unique_ptr<ITerminalBackend> backend, TerminalSessionCallbacks callbacks = {} );
+	//! Requests close without waiting.  This is safe for UI-owned destruction;
+	//! the pre-admitted lifecycle worker and fixed retirement reaper own joins.
 	~CTerminalSession();
 
 	CTerminalSession( const CTerminalSession& ) = delete;
@@ -198,9 +201,9 @@ public:
 	//! deadline expires, shutdown still joins before returning DeadlineExceeded.
 	//! InProgress is solely the self-wait guard for callback/worker callers.
 	[[nodiscard]] TerminalSessionCloseResult WaitForClose( std::chrono::steady_clock::time_point deadline ) noexcept;
-	//! Compatibility wrapper. Begins close and waits until quiescent when called
-	//! externally; a session worker callback only initiates close to avoid a
-	//! self-join deadlock.
+	//! Explicit external close. Begins close and waits until quiescent. A session
+	//! worker callback only initiates close to avoid self-wait; destruction uses
+	//! the nonblocking destructor path above.
 	void Close() noexcept;
 
 	TerminalQueueInputResult QueueInput( std::span<const std::uint8_t> bytes );

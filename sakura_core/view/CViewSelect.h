@@ -39,6 +39,7 @@ public:
 	{
 		SetSelectionAnchorRange(CLayoutRange(sRange.GetFrom(), sRange.GetFrom()));
 		m_sSelect = sRange;
+		MarkSelectionDamage();
 	}
 
 	//! 現在の選択範囲を参照する。呼出側は snapshot を作ってから更新操作を呼ぶ。
@@ -51,27 +52,32 @@ public:
 	void ReplaceSelectionRange(const CLayoutRange& sRange)
 	{
 		m_sSelect = sRange;
+		MarkSelectionDamage();
 	}
 
 	void SetSelectionRangeFrom(const CLayoutPoint& point)
 	{
 		m_sSelect.SetFrom(point);
+		MarkSelectionDamage();
 	}
 
 	void SetSelectionRangeTo(const CLayoutPoint& point)
 	{
 		m_sSelect.SetTo(point);
+		MarkSelectionDamage();
 	}
 
 	void SetSelectionRangeToX(CLayoutInt x)
 	{
 		m_sSelect.SetToX(x);
+		MarkSelectionDamage();
 	}
 
 	//! 現在の選択範囲だけを非選択値へ戻す。session 状態は変更しない。
 	void ClearSelectionRange()
 	{
 		m_sSelect.Clear(-1);
+		MarkSelectionDamage();
 	}
 
 	//! 描画差分用の previous range と現在範囲を同じ更新単位で置換する。
@@ -79,6 +85,7 @@ public:
 	{
 		m_sSelectOld = previousRange;
 		m_sSelect = sRange;
+		MarkSelectionDamage();
 	}
 
 	//! 選択原点の adapter snapshot を返す。呼出側は snapshot を作ってから更新操作を呼ぶ。
@@ -228,6 +235,7 @@ public:
 	}
 
 private:
+	void MarkSelectionDamage() noexcept;
 	static editor::selection::SelectionPoint ToSelectionPoint(const CLayoutPoint& point) noexcept;
 	static CLayoutPoint ToLayoutPoint(const editor::selection::SelectionPoint& point) noexcept;
 	static editor::selection::SelectionRange ToSelectionRange(const CLayoutRange& range) noexcept;

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "workbench/outline/OutlineDocumentSnapshot.h"
+#include "workbench/WorkerRetirementService.h"
 
 #include <Windows.h>
 
@@ -213,7 +214,8 @@ public:
 
 	[[nodiscard]] OutlineWorkerStateSnapshot GetStateSnapshot() const noexcept;
 
-	//! Stop accepting notifications, cancel/wake, join, then release queued results.
+	//! Stop accepting notifications and cancel/wake.  The owner never waits for
+	//! parser completion; a non-UI reaper retires the worker thread.
 	void Close() noexcept;
 
 	//! Snapshot-only parser entry point used by production and deterministic tests.
@@ -237,14 +239,19 @@ private:
 	struct NotificationGate;
 	struct SharedState;
 
-	void WorkerMain() noexcept;
-	void PostResult( std::unique_ptr<OutlineWorkerResult> result ) noexcept;
+	static void WorkerMain(
+		std::shared_ptr<SharedState> shared,
+		std::shared_ptr<NotificationGate> gate,
+		ParseFunction parser ) noexcept;
+	static void PostResult(
+		const std::shared_ptr<NotificationGate>& gate,
+		std::unique_ptr<OutlineWorkerResult> result ) noexcept;
 
 	std::shared_ptr<SharedState> m_shared;
 	std::shared_ptr<NotificationGate> m_gate;
 	ParseFunction m_parser;
-	std::thread::id m_ownerThread;
 	std::thread m_worker;
+	std::optional<workbench::WorkerRetirementService::Reservation> m_workerRetirement;
 };
 
 } // namespace workbench::outline

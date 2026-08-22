@@ -102,6 +102,17 @@ list(APPEND TESTS1_SOURCES ${MARKDOWN_CODE_HIGHLIGHTER_TEST_SOURCE})
 # up by the recursive source glob above; keep this explicit note beside the
 # discovery contract so the MSBuild and CMake registrations stay intentional.
 
+set(FRAME_COORDINATOR_C8_TEST_SOURCE
+  ${CMAKE_SOURCE_DIR}/src/test/cpp/tests1/workbench/FrameCoordinatorC8TelemetryTest.cpp
+)
+list(REMOVE_ITEM TESTS1_SOURCES ${FRAME_COORDINATOR_C8_TEST_SOURCE})
+list(APPEND TESTS1_SOURCES ${FRAME_COORDINATOR_C8_TEST_SOURCE})
+set(FRAME_CADENCE_SOURCE_TEST_SOURCE
+  ${CMAKE_SOURCE_DIR}/src/test/cpp/tests1/workbench/FrameCadenceSourceTest.cpp
+)
+list(REMOVE_ITEM TESTS1_SOURCES ${FRAME_CADENCE_SOURCE_TEST_SOURCE})
+list(APPEND TESTS1_SOURCES ${FRAME_CADENCE_SOURCE_TEST_SOURCE})
+
 set(CODE_COVERAGE_SOURCE ${CMAKE_SOURCE_DIR}/src/test/resources/coverage.cpp)
 set(CODE_COVERAGE_HEADER ${CMAKE_VS_INSTALL_DIRECTORY}/VC/Auxiliary/VS/include/CodeCoverage/CodeCoverage.h)
 
