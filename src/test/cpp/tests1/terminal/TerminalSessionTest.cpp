@@ -877,4 +877,57 @@ TEST(ConPtyTerminalBackend, DiscoveredPowerShellExecutesTypedCommand)
 	backend->Close();
 }
 
+TEST(ConPtyTerminalBackend, DescribesInteractiveColorCapabilitiesToChildShell)
+{
+	terminal::NativePowerShellLocatorProvider provider;
+	terminal::PowerShellLocator locator(provider);
+	const auto discovery = locator.Discover();
+	if( !discovery.defaultCandidate.has_value() ) {
+		GTEST_SKIP() << "No supported PowerShell installation was discovered.";
+	}
+
+	terminal::TerminalLaunchOptions options;
+	options.executablePath = discovery.defaultCandidate->path;
+	options.arguments = { L"-NoLogo", L"-NoProfile" };
+	options.initialSize = { 100, 30 };
+
+	auto backend = terminal::CreateConPtyTerminalBackend();
+	ASSERT_NE(nullptr, backend);
+	const auto start = backend->Start(options);
+	ASSERT_TRUE(start.succeeded) << "Create ConPTY PowerShell process failed with " << start.errorCode;
+
+	constexpr std::string_view command =
+		"Write-Output ('NO_COLOR=' + [string]$env:NO_COLOR); "
+		"Write-Output ('TERM=' + [string]$env:TERM); "
+		"Write-Output ('COLORTERM=' + [string]$env:COLORTERM); exit\r\n";
+	const auto write = backend->WriteInput(std::span<const std::uint8_t>(
+		reinterpret_cast<const std::uint8_t*>(command.data()), command.size()));
+	ASSERT_EQ(terminal::TerminalBackendWriteStatus::Completed, write.status);
+
+	std::string output;
+	std::array<std::uint8_t, 4096> buffer{};
+	bool reachedEof = false;
+	const auto deadline = std::chrono::steady_clock::now() + 8s;
+	while( std::chrono::steady_clock::now() < deadline ) {
+		const auto read = backend->ReadOutput(buffer, 100ms);
+		if( read.status == terminal::TerminalBackendReadStatus::Data ) {
+			output.append(reinterpret_cast<const char*>(buffer.data()), read.bytesTransferred);
+			continue;
+		}
+		ASSERT_NE(terminal::TerminalBackendReadStatus::Failed, read.status)
+			<< "ConPTY PowerShell environment read failed with " << read.errorCode;
+		if( read.status == terminal::TerminalBackendReadStatus::EndOfFile ) {
+			reachedEof = true;
+			break;
+		}
+	}
+
+	EXPECT_NE(std::string::npos, output.find("NO_COLOR=\r\n"));
+	EXPECT_NE(std::string::npos, output.find("TERM=xterm-256color\r\n"));
+	EXPECT_NE(std::string::npos, output.find("COLORTERM=truecolor\r\n"));
+	EXPECT_TRUE(reachedEof);
+	EXPECT_EQ(terminal::TerminalBackendExitStatus::Exited, backend->WaitForExit(1s).status);
+	backend->Close();
+}
+
 } // namespace

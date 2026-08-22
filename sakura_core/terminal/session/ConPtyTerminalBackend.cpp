@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cwchar>
 #include <limits>
 #include <mutex>
 #include <optional>
@@ -114,6 +115,64 @@ std::vector<wchar_t> BuildCommandLine( const TerminalLaunchOptions& options )
 	std::vector<wchar_t> mutableCommandLine(commandLine.begin(), commandLine.end());
 	mutableCommandLine.push_back(L'\0');
 	return mutableCommandLine;
+}
+
+//! Build the environment for an embedded ConPTY session.
+//!
+//! Sakura can itself be launched from a non-interactive host such as an agent
+//! runner.  Those hosts commonly export `NO_COLOR=1` and `TERM=dumb`; blindly
+//! inheriting them makes every interactive child (including Claude Code) turn
+//! off ANSI output even though this child has a real ConPTY.  Keep all other
+//! inherited variables, but describe the capabilities of the terminal we own.
+std::vector<wchar_t> BuildTerminalEnvironmentBlock() noexcept
+{
+	std::vector<wchar_t> block;
+	LPWCH raw = ::GetEnvironmentStringsW();
+	if( raw == nullptr ) return block;
+	try {
+		std::vector<std::wstring> entries;
+		bool termPresent = false;
+		bool colorTermPresent = false;
+		bool termProgramPresent = false;
+		for( const wchar_t* entry = raw; *entry != L'\0'; entry += std::wcslen(entry) + 1 ) {
+			std::wstring value(entry);
+			const auto separator = value.find(L'=');
+			if( separator == std::wstring::npos ) continue;
+			const std::wstring name = value.substr(0, separator);
+			const std::wstring variableValue = value.substr(separator + 1);
+			if( _wcsicmp(name.c_str(), L"NO_COLOR") == 0 ) continue;
+			if( _wcsicmp(name.c_str(), L"TERM") == 0 ) {
+				termPresent = true;
+				if( variableValue.empty() || _wcsicmp(variableValue.c_str(), L"dumb") == 0 ) {
+					value = name + L"=xterm-256color";
+				}
+			} else if( _wcsicmp(name.c_str(), L"COLORTERM") == 0 ) {
+				colorTermPresent = true;
+				if( variableValue.empty() ) value = name + L"=truecolor";
+			} else if( _wcsicmp(name.c_str(), L"TERM_PROGRAM") == 0 ) {
+				termProgramPresent = true;
+			}
+			entries.push_back(std::move(value));
+		}
+		if( !termPresent ) entries.emplace_back(L"TERM=xterm-256color");
+		if( !colorTermPresent ) entries.emplace_back(L"COLORTERM=truecolor");
+		if( !termProgramPresent ) entries.emplace_back(L"TERM_PROGRAM=sakura-editor");
+		std::sort(entries.begin(), entries.end(), [](const std::wstring& left, const std::wstring& right) {
+			return _wcsicmp(left.c_str(), right.c_str()) < 0;
+		});
+		std::size_t characterCount = 1;
+		for( const auto& entry : entries ) characterCount += entry.size() + 1;
+		block.reserve(characterCount);
+		for( const auto& entry : entries ) {
+			block.insert(block.end(), entry.begin(), entry.end());
+			block.push_back(L'\0');
+		}
+		block.push_back(L'\0');
+	} catch( ... ) {
+		block.clear();
+	}
+	::FreeEnvironmentStringsW(raw);
+	return block;
 }
 
 UniqueHandle DuplicateLocalHandle( HANDLE source )
@@ -237,10 +296,12 @@ public:
 		startup.lpAttributeList = attributes;
 		PROCESS_INFORMATION processInfo{};
 		auto commandLine = BuildCommandLine(options);
+		auto environmentBlock = BuildTerminalEnvironmentBlock();
 		const DWORD creationFlags = EXTENDED_STARTUPINFO_PRESENT | CREATE_UNICODE_ENVIRONMENT;
 		const wchar_t* workingDirectory = options.workingDirectory.empty() ? nullptr : options.workingDirectory.c_str();
 		if( !::CreateProcessW(options.executablePath.c_str(), commandLine.data(), nullptr, nullptr, FALSE, creationFlags,
-			nullptr, workingDirectory, &startup.StartupInfo, &processInfo) ) return StartFailure(::GetLastError(), L"Create terminal process");
+			environmentBlock.empty() ? nullptr : environmentBlock.data(), workingDirectory,
+			&startup.StartupInfo, &processInfo) ) return StartFailure(::GetLastError(), L"Create terminal process");
 		UniqueHandle process(processInfo.hProcess);
 		UniqueHandle primaryThread(processInfo.hThread);
 		// The job-list attribute assigns the process atomically at creation, so a
