@@ -1,4 +1,4 @@
-/*! @file */
+﻿/*! @file */
 #include "pch.h"
 #include "terminal/model/TerminalModel.h"
 
