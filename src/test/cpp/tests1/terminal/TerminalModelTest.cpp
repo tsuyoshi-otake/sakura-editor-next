@@ -156,6 +156,53 @@ TEST(TerminalModel, CapsScrollbackAndStopsGrowingAtConfiguredLimit)
 	EXPECT_EQ(terminal::TerminalModel::kMaxScrollbackLines, model.ScrollbackLimit());
 }
 
+TEST(TerminalModel, ReportsAppendEvictionClearAndLimitMutationsExactlyOnce)
+{
+	static_assert(terminal::TerminalModel::kDefaultScrollbackLines == 1000);
+	terminal::TerminalModel model(1, 1, 2);
+	EXPECT_FALSE(model.ConsumeScrollbackChange().Changed());
+
+	for( const auto character : { U'a', U'b' } ) {
+		model.Print(character);
+		model.ExecuteControl(L'\r');
+		model.ExecuteControl(L'\n');
+	}
+	auto change = model.ConsumeScrollbackChange();
+	EXPECT_EQ(2u, change.appended);
+	EXPECT_EQ(0u, change.evicted);
+	EXPECT_FALSE(change.cleared);
+	EXPECT_FALSE(model.ConsumeScrollbackChange().Changed());
+
+	model.Print(U'c');
+	model.ExecuteControl(L'\r');
+	model.ExecuteControl(L'\n');
+	change = model.ConsumeScrollbackChange();
+	EXPECT_EQ(1u, change.appended);
+	EXPECT_EQ(1u, change.evicted);
+
+	model.SetScrollbackLimit(1);
+	change = model.ConsumeScrollbackChange();
+	EXPECT_EQ(0u, change.appended);
+	EXPECT_EQ(1u, change.evicted);
+	EXPECT_FALSE(change.cleared);
+
+	model.EraseDisplay(3);
+	change = model.ConsumeScrollbackChange();
+	EXPECT_EQ(0u, change.appended);
+	EXPECT_EQ(1u, change.evicted);
+	EXPECT_TRUE(change.cleared);
+}
+
+TEST(TerminalModel, ZeroScrollbackRetainsNoHistoryAndReportsNoAppend)
+{
+	terminal::TerminalModel model(1, 1, 0);
+	model.Print(U'x');
+	model.ExecuteControl(L'\r');
+	model.ExecuteControl(L'\n');
+	EXPECT_EQ(0u, model.ScrollbackSize());
+	EXPECT_FALSE(model.ConsumeScrollbackChange().Changed());
+}
+
 TEST(TerminalModel, EvictsOldestScrollbackRowAtCapacity)
 {
 	terminal::TerminalModel model(1, 1, 2);

@@ -39,10 +39,10 @@ TerminalSize NormalizeSize( TerminalSize size ) noexcept
 
 struct TerminalTabManager::Impl {
 	struct Tab {
-		Tab( std::uint64_t tabId, TerminalSize size )
+		Tab( std::uint64_t tabId, TerminalSize size, std::size_t scrollbackLimit )
 			: id(tabId)
 			, input(std::make_unique<SakuraTerminalInputAdapter>())
-			, model(std::make_unique<TerminalModel>(size.columns, size.rows))
+			, model(std::make_unique<TerminalModel>(size.columns, size.rows, scrollbackLimit))
 		{
 			parser = std::make_unique<TerminalParser>(*model, input.get(), [this](std::string_view response) {
 				if( !retirement || !retirement->Session() || response.empty() ) return;
@@ -82,6 +82,7 @@ struct TerminalTabManager::Impl {
 	std::vector<std::unique_ptr<Tab>> tabs;
 	std::optional<std::uint64_t> activeTabId;
 	std::uint64_t nextTabId{ 1 };
+	std::size_t scrollbackLimit{ TerminalModel::kDefaultScrollbackLines };
 	bool closed{};
 	bool startedAnySession{};
 
@@ -153,7 +154,7 @@ struct TerminalTabManager::Impl {
 	{
 		const auto size = NormalizeSize(rawSize);
 		tab.input = std::make_unique<SakuraTerminalInputAdapter>();
-		tab.model = std::make_unique<TerminalModel>(size.columns, size.rows);
+		tab.model = std::make_unique<TerminalModel>(size.columns, size.rows, scrollbackLimit);
 		tab.parser = std::make_unique<TerminalParser>(*tab.model, tab.input.get(), [this, tabPtr = &tab](std::string_view response) {
 			if( response.empty() ) return;
 			static_cast<void>(QueueProtocolInput(*tabPtr, std::span<const std::uint8_t>(
@@ -252,7 +253,7 @@ std::optional<std::uint64_t> TerminalTabManager::AddTab( TerminalSize size, std:
 	if( m_impl->closed || m_impl->nextTabId == std::numeric_limits<std::uint64_t>::max() ) return std::nullopt;
 	try {
 		const auto id = m_impl->nextTabId++;
-		auto tab = std::make_unique<Impl::Tab>(id, NormalizeSize(size));
+		auto tab = std::make_unique<Impl::Tab>(id, NormalizeSize(size), m_impl->scrollbackLimit);
 		m_impl->Start(*tab, size, workingDirectory);
 		m_impl->tabs.emplace_back(std::move(tab));
 		m_impl->activeTabId = id;
@@ -354,6 +355,25 @@ bool TerminalTabManager::ResizeTab( std::uint64_t tabId, TerminalSize rawSize )
 	return true;
 }
 
+std::vector<TerminalTabScrollbackChange> TerminalTabManager::SetScrollbackLimit( std::size_t lines )
+{
+	std::vector<TerminalTabScrollbackChange> changes;
+	if( m_impl->closed ) return changes;
+	m_impl->scrollbackLimit = std::min(lines, TerminalModel::kMaxScrollbackLines);
+	changes.reserve(m_impl->tabs.size());
+	for( auto& tab : m_impl->tabs ) {
+		tab->model->SetScrollbackLimit(m_impl->scrollbackLimit);
+		auto change = tab->model->ConsumeScrollbackChange();
+		if( change.Changed() ) changes.push_back({ tab->id, change });
+	}
+	return changes;
+}
+
+std::size_t TerminalTabManager::ScrollbackLimit() const noexcept
+{
+	return m_impl && !m_impl->closed ? m_impl->scrollbackLimit : 0;
+}
+
 void TerminalTabManager::Close() noexcept
 {
 	if( !m_impl || m_impl->closed ) return;
@@ -388,6 +408,7 @@ TerminalDrainResult TerminalTabManager::DrainOutput( std::uint64_t tabId )
 		tab->sequenceTitle = tab->model->Title();
 		result.sequenceChanged = true;
 	}
+	result.scrollbackChange = tab->model->ConsumeScrollbackChange();
 	result.dirtyRows = tab->model->ConsumeDirtyRows();
 	return result;
 }

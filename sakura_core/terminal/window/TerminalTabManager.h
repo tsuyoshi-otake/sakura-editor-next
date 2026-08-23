@@ -65,7 +65,13 @@ struct TerminalDrainResult {
 	bool protocolInputPending{};
 	bool protocolInputRejected{};
 	std::size_t bytesDrained{};
+	TerminalScrollbackChange scrollbackChange;
 	std::vector<std::size_t> dirtyRows;
+};
+
+struct TerminalTabScrollbackChange final {
+	std::uint64_t tabId{};
+	TerminalScrollbackChange change;
 };
 
 enum class TerminalTabClearStatus : std::uint8_t {
@@ -121,6 +127,10 @@ public:
 	[[nodiscard]] TerminalTabClearResult ClearTabs( std::chrono::steady_clock::time_point deadline ) noexcept;
 	void Resize( TerminalSize size );
 	[[nodiscard]] bool ResizeTab( std::uint64_t tabId, TerminalSize size );
+	//! Applies the stable terminal.integrated.scrollback policy to existing tabs
+	//! and remembers it for future/restarted models. No PTY is restarted.
+	[[nodiscard]] std::vector<TerminalTabScrollbackChange> SetScrollbackLimit( std::size_t lines );
+	[[nodiscard]] std::size_t ScrollbackLimit() const noexcept;
 	void Close() noexcept;
 
 	[[nodiscard]] TerminalDrainResult DrainOutput( std::uint64_t tabId );

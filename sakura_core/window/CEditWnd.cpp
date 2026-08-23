@@ -75,6 +75,7 @@
 #include "markdown/MarkdownRemoteImageFetcher.h"
 #include "markdown/MarkdownPreviewLayout.h"
 #include "terminal/window/CTerminalTool.h"
+#include "terminal/model/TerminalModel.h"
 #include "theme/CThemeService.h"
 #include "theme/CColorThemeRegistry.h"
 #include "update/UpdateComposition.h"
@@ -1217,7 +1218,8 @@ struct CEditWnd::ThemeConfigurationGate final {
 				|| change.key == "terminal.integrated.tabs.hideCondition"
 				|| change.key == "terminal.integrated.tabs.showActiveTerminal"
 				|| change.key == "terminal.integrated.tabs.showActions"
-				|| change.key == "terminal.integrated.tabs.location";
+				|| change.key == "terminal.integrated.tabs.location"
+				|| change.key == "terminal.integrated.scrollback";
 		});
 		if (!relevant) return;
 		std::lock_guard lock(gate->mutex);
@@ -2795,6 +2797,7 @@ bool CEditWnd::InitializeWorkbench()
 		(void)PersistTerminalShortcutPresetSelection(preset);
 	});
 	ApplyTerminalShortcutPresetSetting();
+	ApplyTerminalScrollbackSetting();
 	ApplyTerminalTabPresentationSettings();
 		m_terminalTool->SetPanelActions({
 			.renderPanelActions = false,
@@ -8255,6 +8258,27 @@ void CEditWnd::ApplyTerminalShortcutPresetSetting()
 	m_terminalTool->SetShortcutPreset(preset);
 }
 
+void CEditWnd::ApplyTerminalScrollbackSetting()
+{
+	if (m_terminalTool == nullptr) return;
+	std::size_t lines = terminal::TerminalModel::kDefaultScrollbackLines;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto lookup = m_workbenchRuntime->Configuration().GetValue(
+				"terminal.integrated.scrollback", BuildWorkbenchConfigurationTarget());
+			if (lookup.value) {
+				if (const auto* value = std::get_if<std::int64_t>(&lookup.value->Value());
+					value != nullptr && *value >= 0) {
+					lines = static_cast<std::size_t>(*value);
+				}
+			}
+		} catch (...) {
+			lines = terminal::TerminalModel::kDefaultScrollbackLines;
+		}
+	}
+	m_terminalTool->SetScrollbackLimit(lines);
+}
+
 bool CEditWnd::IsAuxiliaryViewContainerActive(std::string_view containerId) const
 {
 	if (m_workbenchRuntime == nullptr) return false;
@@ -10859,6 +10883,7 @@ LRESULT CEditWnd::DispatchEvent(
 		// The commit box is sized from configuration too, and this is the same
 		// notification that tells the window its effective settings moved.
 		ApplyScmInputLineCountSetting();
+		ApplyTerminalScrollbackSetting();
 		ApplyTerminalTabPresentationSettings();
 		return 0;
 	case MYWM_COMPLETE_STARTUP_WORKBENCH:

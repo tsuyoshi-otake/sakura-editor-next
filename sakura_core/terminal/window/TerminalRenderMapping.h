@@ -21,6 +21,12 @@ struct TerminalViewport {
 	std::size_t topRow{};
 };
 
+//! Result of preserving a scrolled viewport across bounded-history mutation.
+struct TerminalViewportAnchorUpdate final {
+	std::size_t scrollOffset{};
+	bool retainedContentDiscarded{};
+};
+
 struct TerminalSelectionPoint {
 	std::size_t row{};
 	std::size_t column{};
@@ -34,6 +40,8 @@ struct TerminalSelectionRange {
 };
 
 [[nodiscard]] TerminalViewport CalculateTerminalViewport( const TerminalModel& model, std::size_t visibleRows, std::size_t scrollOffset ) noexcept;
+[[nodiscard]] TerminalViewportAnchorUpdate UpdateTerminalViewportAnchor(
+	std::size_t scrollOffset, std::size_t appendedHistoryRows, std::size_t maximumScrollOffset ) noexcept;
 [[nodiscard]] const TerminalRow* GetTerminalRow( const TerminalModel& model, std::size_t globalRow ) noexcept;
 [[nodiscard]] TerminalSelectionPoint TerminalCellFromPoint( const TerminalViewport& viewport, int x, int y,
 	int cellWidth, int cellHeight, std::size_t columns,

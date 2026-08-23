@@ -125,6 +125,32 @@ TEST(ConfigurationService, BuiltinTerminalTabSettingsReadAsOneCoherentSnapshot)
 	EXPECT_EQ(L"right", std::get<std::wstring>(read.snapshot->values[8].Value()));
 }
 
+TEST(ConfigurationService, BuiltinTerminalScrollbackMatchesUpstreamDefaultAndStaysBounded)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const auto profile = Target();
+	const auto initial = service.GetValue("terminal.integrated.scrollback", profile);
+	ASSERT_EQ(EConfigurationOutcome::Applied, initial.outcome);
+	ASSERT_TRUE(initial.value.has_value());
+	EXPECT_EQ(1000, std::get<std::int64_t>(initial.value->Value()));
+
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Profile, profile), "terminal.integrated.scrollback",
+		ConfigurationValue(0), "terminal-scrollback-zero" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Profile, profile), "terminal.integrated.scrollback",
+		ConfigurationValue(100000), "terminal-scrollback-maximum" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "terminal.integrated.scrollback",
+		ConfigurationValue(-1), "terminal-scrollback-negative" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "terminal.integrated.scrollback",
+		ConfigurationValue(100001), "terminal-scrollback-over-maximum" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidScope, service.Update({
+		Source(EConfigurationScope::Application, {}), "terminal.integrated.scrollback",
+		ConfigurationValue(1000), "terminal-scrollback-application" }).outcome);
+}
+
 TEST(ConfigurationService, BuiltinActivityBarLocationIsWindowScopedAndBounded)
 {
 	CConfigurationService service(BuiltinConfigurationDescriptors());

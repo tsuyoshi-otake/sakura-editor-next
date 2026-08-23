@@ -1211,6 +1211,58 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		SetScrollTop(static_cast<std::size_t>(target));
 	}
 
+	void InvalidateScrollbarStrip()
+	{
+		if( window == nullptr ) return;
+		RECT client{};
+		if( !::GetClientRect(window, &client) ) return;
+		const int width = std::max(1, ::MulDiv(6, static_cast<int>(dpi == 0 ? kDefaultDpi : dpi), kDefaultDpi));
+		RECT strip{ std::max(client.left, client.right - width), client.top, client.right, client.bottom };
+		AccumulateNativeDirtyRect(strip);
+		::InvalidateRect(window, &strip, FALSE);
+	}
+
+	void ApplyScrollbackChange( const TerminalScrollbackChange& change, bool invalidate )
+	{
+		if( model == nullptr || !change.Changed() ) return;
+		const auto previousOffset = scrollOffset;
+		const auto totalRows = model->ScrollbackSize() + model->RowCount();
+		const auto maximumOffset = totalRows > visibleRows ? totalRows - visibleRows : 0;
+		const auto anchor = UpdateTerminalViewportAnchor(scrollOffset, change.appended, maximumOffset);
+		scrollOffset = anchor.scrollOffset;
+
+		if( change.cleared && change.evicted == 0 ) {
+			ClearSelection();
+		} else if( change.evicted != 0 ) {
+			const auto discarded = change.evicted;
+			if( HasSelection() && std::max(selectionAnchor.row, selectionActive.row) < discarded ) {
+				ClearSelection();
+			} else {
+				const auto adjust = [discarded]( TerminalSelectionPoint& point ) noexcept {
+					if( point.row < discarded ) {
+						point.row = 0;
+						point.column = 0;
+					} else {
+						point.row -= discarded;
+					}
+				};
+				adjust(selectionOrigin);
+				adjust(selectionAnchor);
+				adjust(selectionActive);
+			}
+		}
+
+		UpdateScrollbar();
+		UpdateCaret();
+		if( window == nullptr || !invalidate ) return;
+		if( previousOffset != 0 || anchor.retainedContentDiscarded ) {
+			MarkNativeFullDirty();
+			::InvalidateRect(window, nullptr, FALSE);
+		} else {
+			InvalidateScrollbarStrip();
+		}
+	}
+
 	TerminalSelectionPoint PointToCell( int x, int y ) const noexcept
 	{
 		return TerminalCellFromPoint(Viewport(), x, y, cellWidth, cellHeight, model ? model->Columns() : 0, Geometry());
@@ -1949,6 +2001,11 @@ void CTerminalWnd::SetPalette( const theme::ThemePalette& palette )
 void CTerminalWnd::ResetSessionInputState() noexcept
 {
 	m_impl->ResetSessionInputState();
+}
+
+void CTerminalWnd::ApplyScrollbackChange( const TerminalScrollbackChange& change, bool invalidate )
+{
+	m_impl->ApplyScrollbackChange(change, invalidate);
 }
 
 void CTerminalWnd::InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScreenRows )

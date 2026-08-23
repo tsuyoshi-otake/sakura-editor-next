@@ -620,6 +620,65 @@ TEST(TerminalTool, DrainReportsCompletedSynchronizedFrameEvenWhenNextFrameIsOpen
 	manager.Close();
 }
 
+TEST(TerminalTool, DrainPublishesScrollbackMutationExactlyOnce)
+{
+	ToolHarness harness;
+	harness.scriptedOutput = "a\r\nb\r\n";
+	std::atomic<int> outputNotifications{};
+	terminal::TerminalTabManager manager(harness.Dependencies(), [&outputNotifications](const terminal::TerminalTabEvent& event) {
+		if( event.kind == terminal::TerminalTabEventKind::OutputAvailable ) ++outputNotifications;
+	});
+	const auto id = manager.Activate({ 8, 1 }, L"C:\\workspace");
+	ASSERT_TRUE(id.has_value());
+	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
+
+	const auto first = manager.DrainOutput(*id);
+	EXPECT_EQ(2u, first.scrollbackChange.appended);
+	EXPECT_EQ(0u, first.scrollbackChange.evicted);
+	EXPECT_FALSE(first.scrollbackChange.cleared);
+	EXPECT_FALSE(manager.DrainOutput(*id).scrollbackChange.Changed());
+	manager.Close();
+}
+
+TEST(TerminalTool, AppliesScrollbackLimitToExistingFutureAndRestartedModels)
+{
+	ToolHarness harness;
+	terminal::TerminalTabManager manager(harness.Dependencies());
+	EXPECT_EQ(terminal::TerminalModel::kDefaultScrollbackLines, manager.ScrollbackLimit());
+	EXPECT_TRUE(manager.SetScrollbackLimit(7).empty());
+
+	const auto first = manager.Activate({ 8, 2 }, L"C:\\workspace");
+	ASSERT_TRUE(first.has_value());
+	auto* firstModel = manager.Model(*first);
+	ASSERT_NE(nullptr, firstModel);
+	EXPECT_EQ(7u, firstModel->ScrollbackLimit());
+	for( int line = 0; line < 5; ++line ) {
+		for( const auto character : std::wstring_view(L"line") ) firstModel->Print(character);
+		firstModel->ExecuteControl(L'\r');
+		firstModel->ExecuteControl(L'\n');
+	}
+	static_cast<void>(firstModel->ConsumeScrollbackChange());
+
+	const auto changes = manager.SetScrollbackLimit(2);
+	ASSERT_EQ(1u, changes.size());
+	EXPECT_EQ(*first, changes.front().tabId);
+	EXPECT_EQ(2u, firstModel->ScrollbackLimit());
+	EXPECT_EQ(2u, firstModel->ScrollbackSize());
+	EXPECT_GT(changes.front().change.evicted, 0u);
+
+	const auto second = manager.AddTab({ 8, 2 }, L"C:\\workspace");
+	ASSERT_TRUE(second.has_value());
+	ASSERT_NE(nullptr, manager.Model(*second));
+	EXPECT_EQ(2u, manager.Model(*second)->ScrollbackLimit());
+	ASSERT_TRUE(manager.RestartTab(*first, { 8, 2 }, L"C:\\workspace"));
+	ASSERT_NE(nullptr, manager.Model(*first));
+	EXPECT_EQ(2u, manager.Model(*first)->ScrollbackLimit());
+
+	EXPECT_TRUE(manager.SetScrollbackLimit(terminal::TerminalModel::kMaxScrollbackLines + 1).empty());
+	EXPECT_EQ(terminal::TerminalModel::kMaxScrollbackLines, manager.ScrollbackLimit());
+	manager.Close();
+}
+
 //! The OSC title is stored raw. A recognized Agent CLI reaches the visible tab
 //! presentation through terminal.integrated.tabs.allowAgentCliTitle, while the
 //! stable process/profile identity remains available as its fallback.

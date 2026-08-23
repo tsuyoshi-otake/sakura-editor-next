@@ -64,6 +64,25 @@ TEST(TerminalRenderMapping, AlternateScreenIgnoresRememberedMainScrollbackViewpo
 	EXPECT_NE(L"A", restoredFirstRow->cells[0].Text());
 }
 
+TEST(TerminalRenderMapping, KeepsBottomLiveAndAnchorsScrolledContentAcrossHistoryMutation)
+{
+	const auto bottom = terminal::UpdateTerminalViewportAnchor(0, 50, 100);
+	EXPECT_EQ(0u, bottom.scrollOffset);
+	EXPECT_FALSE(bottom.retainedContentDiscarded);
+
+	const auto anchored = terminal::UpdateTerminalViewportAnchor(7, 3, 100);
+	EXPECT_EQ(10u, anchored.scrollOffset);
+	EXPECT_FALSE(anchored.retainedContentDiscarded);
+
+	const auto evicted = terminal::UpdateTerminalViewportAnchor(7, 3, 8);
+	EXPECT_EQ(8u, evicted.scrollOffset);
+	EXPECT_TRUE(evicted.retainedContentDiscarded);
+
+	const auto limitShrunk = terminal::UpdateTerminalViewportAnchor(7, 0, 4);
+	EXPECT_EQ(4u, limitShrunk.scrollOffset);
+	EXPECT_TRUE(limitShrunk.retainedContentDiscarded);
+}
+
 TEST(TerminalRenderMapping, MapsOnlyDirtyScreenRowsThatAreActuallyVisible)
 {
 	terminal::TerminalModel model(8, 3);

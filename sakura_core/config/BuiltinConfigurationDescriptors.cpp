@@ -35,6 +35,12 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// Explorer presentation with no contributed file icons.
 		{ "workbench.iconTheme", ConfigurationValue(L""),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder }, { Kind::String, 512 } },
+		// VS Code's bounded terminal history setting. Sakura applies the upstream
+		// default dynamically but keeps an explicit implementation ceiling so one
+		// terminal cannot retain unbounded dense native row storage.
+		{ "terminal.integrated.scrollback", ConfigurationValue(1000),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::Integer, std::nullopt, {}, 0, 100000 } },
 		// VS Code's terminal tab presentation contract. These are window-scoped
 		// settings, so profile/workspace/folder layers participate in one effective
 		// snapshot. The resolver applies sanitization and bounded output after the

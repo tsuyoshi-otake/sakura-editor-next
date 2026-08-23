@@ -1038,6 +1038,9 @@ private:
 	//! Resolves `sakura.terminal.shortcutPreset` and hands it to the terminal panel.
 	//! A fork extension, not an upstream key; see terminal/CLAUDE.md.
 	void ApplyTerminalShortcutPresetSetting();
+	//! Applies terminal.integrated.scrollback to existing and future terminal
+	//! models without restarting their PTYs.
+	void ApplyTerminalScrollbackSetting();
 	//! Reads the terminal.integrated.tabs.* presentation policy once from one
 	//! coherent configuration snapshot and pushes plain data to CTerminalTool.
 	//! Configuration never reaches TerminalTabManager or the paint path.

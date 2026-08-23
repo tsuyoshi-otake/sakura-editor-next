@@ -212,6 +212,31 @@ Do not reintroduce a fixed 16 ms application frame timer: presentation cadence
 belongs to the workbench frame coordinator, while terminal timers remain
 limited to protocol retry and synchronized-output expiry work.
 
+## Bounded scrollback and viewport anchoring (Issue #250)
+
+Use VS Code's stable `terminal.integrated.scrollback` configuration key and its
+1000-line default. Profile, workspace, and folder changes apply immediately to
+every existing model and are retained for future or restarted terminals; never
+restart a PTY just to change its history limit. Setting zero disables retained
+history, and reducing the limit discards the oldest rows first.
+
+Sakura accepts 0 through 100000 lines. The 100000-line ceiling is an intentional
+divergence from VS Code's wider configuration range: `TerminalModel` retains
+dense native rows and cells, so the explicit ceiling prevents one long-lived
+agent terminal from becoming an effectively unbounded memory owner. Revisit the
+ceiling only after measuring a more compact row representation; do not remove
+the bound as a substitute for that work.
+
+`TerminalScrollbackChange` is the single model-to-viewport account of appended,
+evicted, and cleared history. Consume it exactly once with the matching output
+or configuration mutation. A viewport at offset zero follows the live bottom.
+A scrolled viewport increases its offset by newly appended history so the same
+retained content stays visible, then clamps only when that content has actually
+been evicted. Shift selection coordinates by evicted rows and clear selections
+whose complete range was discarded. While scrolled, repaint the bounded visible
+viewport after history mutation; at the live bottom, keep ordinary dirty-row
+damage and invalidate only the overlay scrollbar strip.
+
 `CTerminalSession` destruction is also nonblocking. A live session pre-admits a
 fixed slot in `TerminalWorkerRetirementService`; the lifecycle worker joins the
 ConPTY reader/writer workers, and callback-origin destruction transfers its own

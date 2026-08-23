@@ -69,6 +69,20 @@ struct TerminalRow {
 	const TerminalAttributes& AttributesAt( std::size_t column ) const noexcept;
 };
 
+//! One UI-thread-owned mutation of the main-screen scrollback coordinate space.
+//! `appended` advances an anchored viewport away from the live bottom, while
+//! `evicted` shifts every surviving global history coordinate toward zero.
+struct TerminalScrollbackChange final {
+	std::size_t appended{};
+	std::size_t evicted{};
+	bool cleared{};
+
+	[[nodiscard]] bool Changed() const noexcept
+	{
+		return appended != 0 || evicted != 0 || cleared;
+	}
+};
+
 class TerminalScrollbackView final {
 public:
 	class const_iterator final {
@@ -121,7 +135,7 @@ struct TerminalModes {
 
 class TerminalModel final {
 public:
-	static constexpr std::size_t kDefaultScrollbackLines = 5000;
+	static constexpr std::size_t kDefaultScrollbackLines = 1000;
 	static constexpr std::size_t kMaxScrollbackLines = 100000;
 
 	TerminalModel( std::size_t columns, std::size_t rows, std::size_t scrollbackLines = kDefaultScrollbackLines );
@@ -177,6 +191,7 @@ public:
 	const std::deque<TerminalRow>& Rows() const noexcept { return m_rows; }
 	TerminalScrollbackView Scrollback() const noexcept { return { m_scrollback, m_scrollbackHead }; }
 	std::vector<std::size_t> ConsumeDirtyRows();
+	TerminalScrollbackChange ConsumeScrollbackChange() noexcept;
 
 private:
 	TerminalRow MakeBlankRow( const TerminalAttributes& attributes = {} ) const;
@@ -209,6 +224,7 @@ private:
 	// A bounded deque keeps steady-state eviction at the scrollback cap O(1).
 	std::deque<TerminalRow> m_scrollback;
 	std::size_t m_scrollbackHead{};
+	TerminalScrollbackChange m_pendingScrollbackChange;
 	std::deque<TerminalRow> m_savedMainRows;
 	std::vector<bool> m_dirtyRows;
 	std::size_t m_cursorColumn{};

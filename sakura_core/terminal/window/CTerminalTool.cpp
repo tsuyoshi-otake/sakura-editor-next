@@ -723,6 +723,15 @@ struct CTerminalTool::Impl {
 		InvalidateTerminalTabs();
 	}
 
+	void SetScrollbackLimit( std::size_t lines )
+	{
+		for( const auto& mutation : manager->SetScrollbackLimit(lines) ) {
+			if( auto* pane = FindPane(mutation.tabId); pane && pane->window ) {
+				pane->window->ApplyScrollbackChange(mutation.change);
+			}
+		}
+	}
+
 	void OnPaneFocused( std::uint64_t tabId )
 	{
 		terminalTabsFocused = false;
@@ -746,8 +755,12 @@ struct CTerminalTool::Impl {
 		candidate->SetInputSink([this, tabId](std::span<const std::uint8_t> bytes) {
 			return tabId == 0 ? TerminalQueueInputResult::NotRunning : manager->QueueInput(tabId, bytes);
 		});
-		candidate->SetResizeSink([this, tabId](TerminalSize size) {
-			if( tabId != 0 ) static_cast<void>(manager->ResizeTab(tabId, size));
+		auto* const renderer = candidate.get();
+		candidate->SetResizeSink([this, tabId, renderer](TerminalSize size) {
+			if( tabId == 0 || !manager->ResizeTab(tabId, size) ) return;
+			if( auto* model = manager->Model(tabId) ) {
+				renderer->ApplyScrollbackChange(model->ConsumeScrollbackChange());
+			}
 		});
 		candidate->SetFocusSink([this, tabId] {
 			if( tabId != 0 ) OnPaneFocused(tabId);
@@ -1297,11 +1310,13 @@ struct CTerminalTool::Impl {
 	void PaintTerminalOutput( CTerminalWnd& renderer, const TerminalModel* model, const TerminalDrainResult& result,
 		bool& needsFullRepaint, ULONGLONG& synchronizedSince )
 	{
+		const bool synchronized = model && model->Modes().synchronizedOutput;
+		renderer.ApplyScrollbackChange(result.scrollbackChange,
+			!synchronized || result.synchronizedOutputCommitted);
 		// DrainOutput has already consumed one bounded model publication. Keep
 		// terminal bytes and dirty-row damage in their existing paths; only the
 		// frame projection is latest-only until the enclosing post-paint boundary.
 		static_cast<void>(renderer.NotifyFrameContent());
-		const bool synchronized = model && model->Modes().synchronizedOutput;
 		if( result.synchronizedOutputCommitted ) {
 			// A single drain may close one synchronized frame and immediately open
 			// another. Paint the completed boundary even though the final mode is on.
@@ -2431,6 +2446,17 @@ void CTerminalTool::SetTabPresentationSettings( TerminalTabPresentationSettings 
 {
 	if( m_impl->closed ) return;
 	m_impl->SetTabPresentationSettings(std::move(settings));
+}
+
+void CTerminalTool::SetScrollbackLimit( std::size_t lines )
+{
+	if( m_impl->closed ) return;
+	m_impl->SetScrollbackLimit(lines);
+}
+
+std::size_t CTerminalTool::ScrollbackLimit() const noexcept
+{
+	return m_impl && !m_impl->closed ? m_impl->manager->ScrollbackLimit() : 0;
 }
 
 TerminalShortcutPreset CTerminalTool::ShortcutPreset() const noexcept

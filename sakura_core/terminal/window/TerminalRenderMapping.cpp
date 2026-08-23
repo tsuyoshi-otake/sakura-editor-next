@@ -8,6 +8,7 @@
 #include "terminal/window/TerminalRenderMapping.h"
 
 #include <algorithm>
+#include <limits>
 
 namespace terminal {
 namespace {
@@ -43,6 +44,17 @@ TerminalViewport CalculateTerminalViewport( const TerminalModel& model, std::siz
 	const auto bottomTop = viewport.totalRows - viewport.visibleRows;
 	viewport.topRow = bottomTop - std::min(scrollOffset, bottomTop);
 	return viewport;
+}
+
+TerminalViewportAnchorUpdate UpdateTerminalViewportAnchor( std::size_t scrollOffset,
+	std::size_t appendedHistoryRows, std::size_t maximumScrollOffset ) noexcept
+{
+	if( scrollOffset == 0 ) return {};
+	const auto maximum = std::numeric_limits<std::size_t>::max();
+	const auto desired = appendedHistoryRows > maximum - scrollOffset
+		? maximum
+		: scrollOffset + appendedHistoryRows;
+	return { std::min(desired, maximumScrollOffset), desired > maximumScrollOffset };
 }
 
 const TerminalRow* GetTerminalRow( const TerminalModel& model, std::size_t globalRow ) noexcept

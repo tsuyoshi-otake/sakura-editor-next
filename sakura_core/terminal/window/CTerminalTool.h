@@ -107,6 +107,10 @@ public:
 	//! Applies one coherent terminal.integrated.tabs.* projection. This is plain
 	//! presentation data; it never reaches TerminalTabManager or restarts PTYs.
 	void SetTabPresentationSettings( TerminalTabPresentationSettings settings );
+	//! Applies terminal.integrated.scrollback to all existing and future models.
+	//! Shrinking discards the oldest retained rows without restarting a PTY.
+	void SetScrollbackLimit( std::size_t lines );
+	[[nodiscard]] std::size_t ScrollbackLimit() const noexcept;
 	//! Called when the user picks a preset from the terminal menu, so the window
 	//! can persist the selection. Never called by SetShortcutPreset.
 	void SetShortcutPresetSink( std::function<void(TerminalShortcutPreset)> sink );

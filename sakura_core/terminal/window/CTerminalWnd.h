@@ -27,6 +27,7 @@ namespace terminal {
 
 class SakuraTerminalInputAdapter;
 class TerminalModel;
+struct TerminalScrollbackChange;
 
 //! Native GDI terminal viewport. It owns no session or parser.
 class CTerminalWnd final {
@@ -64,6 +65,10 @@ public:
 	//! be called before a renderer is rebound across a workspace/session boundary.
 	void ResetSessionInputState() noexcept;
 	void SetPalette( const theme::ThemePalette& palette );
+	//! Applies one bounded-history coordinate mutation before repaint damage is
+	//! mapped. A live-bottom viewport follows output; a scrolled viewport remains
+	//! anchored until its retained content is actually discarded.
+	void ApplyScrollbackChange( const TerminalScrollbackChange& change, bool invalidate = true );
 	void InvalidateDirtyRows( const std::vector<std::size_t>& dirtyScreenRows );
 	void InvalidateAll();
 	//! Changes the logical frame host without tying publication to an HWND.
