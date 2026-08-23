@@ -10,6 +10,8 @@
 #include "workbench/scm/GitFailureText.h"
 
 #include <algorithm>
+#include <atomic>
+#include <memory>
 #include <utility>
 
 namespace workbench::scm {
@@ -207,6 +209,284 @@ void Notify(const GitBranchCommandContext& context, std::wstring_view message)
 	return RunAndReport(context, BuildCreateBranchArguments(branchName, target));
 }
 
+//! Continuation form of the branch commands.  The synchronous presenters stay
+//! the compatibility boundary for headless callers, while this small state
+//! machine lets the native Quick Input surface return to the editor's message
+//! loop after each user decision.
+class AsyncBranchFlow final : public std::enable_shared_from_this<AsyncBranchFlow> {
+public:
+	static void StartCheckout(const GitBranchCommandContext& context, bool detached,
+		GitBranchCommandCompletion completion)
+	{
+		auto flow = std::shared_ptr<AsyncBranchFlow>(
+			new AsyncBranchFlow(context, std::move(completion)));
+		flow->BeginCheckout(detached);
+	}
+
+	static void StartCreateBranch(const GitBranchCommandContext& context, bool from,
+		GitBranchCommandCompletion completion)
+	{
+		auto flow = std::shared_ptr<AsyncBranchFlow>(
+			new AsyncBranchFlow(context, std::move(completion)));
+		flow->BeginCreateBranch(from);
+	}
+
+private:
+	AsyncBranchFlow(const GitBranchCommandContext& context, GitBranchCommandCompletion completion)
+		: m_context(context), m_completion(std::move(completion))
+	{
+	}
+
+	[[nodiscard]] bool HasPresenters() const noexcept
+	{
+		return static_cast<bool>(m_context.run)
+			&& static_cast<bool>(m_context.quickPickAsync)
+			&& static_cast<bool>(m_context.inputBoxAsync);
+	}
+
+	void Complete(GitBranchCommandResult result) noexcept
+	{
+		if (m_completed.exchange(true)) return;
+		auto callback = std::move(m_completion);
+		if (!callback) return;
+		try {
+			callback(std::move(result));
+		}
+		catch (...) {
+			// The completion belongs to the composition root. A throwing terminal
+			// observer must not make a UI callback unwind into USER32.
+		}
+	}
+
+	void BeginCheckout(bool detached)
+	{
+		if (!HasPresenters()) {
+			Complete(Failed(ResolveText(m_context, "GitCheckoutNoPresenter",
+				L"The checkout command has no presenter.")));
+			return;
+		}
+		std::vector<GitRef> refs;
+		GitBranchCommandResult failure;
+		try {
+			if (!ListRefs(m_context, refs, failure)) {
+				Notify(m_context, failure.message);
+				Complete(std::move(failure));
+				return;
+			}
+		}
+		catch (...) {
+			Complete(Failed(L"The branch references could not be read."));
+			return;
+		}
+		BeginCheckoutPicker(std::make_shared<std::vector<GitRef>>(std::move(refs)), detached);
+	}
+
+	void BeginCheckoutPicker(const std::shared_ptr<const std::vector<GitRef>>& refs, bool detached)
+	{
+		if (m_completed) return;
+		const auto items = BuildCheckoutItems(*refs, detached, true, m_context.text);
+		const auto search = [refs, detached, text = m_context.text](std::wstring_view query) {
+			// The overlay owns fuzzy/text matching. Rebuild the rows with the
+			// query's empty/non-empty ordering so commands move below refs as soon
+			// as the user types, exactly as upstream's Quick Pick does.
+			return BuildCheckoutItems(*refs, detached, query.empty(), text);
+		};
+		const auto self = shared_from_this();
+		auto delivered = std::make_shared<std::atomic_bool>(false);
+		auto completion = [self, refs, detached, delivered](std::optional<GitCheckoutItem> selected) {
+			if (delivered->exchange(true)) return;
+			self->OnCheckoutPicked(refs, detached, selected);
+		};
+		try {
+			m_context.quickPickAsync(items, CheckoutPlaceholder(detached, m_context.text),
+				search, std::move(completion));
+		}
+		catch (...) {
+			Complete(Failed(L"The checkout Quick Pick could not be opened."));
+		}
+	}
+
+	void OnCheckoutPicked(const std::shared_ptr<const std::vector<GitRef>>& refs,
+		bool detached, std::optional<GitCheckoutItem> selected)
+	{
+		if (m_completed) return;
+		if (!selected) {
+			Complete(Cancelled());
+			return;
+		}
+		const auto& item = *selected;
+		switch (item.kind) {
+		case EGitCheckoutItemKind::CreateBranch:
+			BeginCreateBranchFromRefs(refs, false);
+			return;
+		case EGitCheckoutItemKind::CreateBranchFrom:
+			BeginCreateBranchFromRefs(refs, true);
+			return;
+		case EGitCheckoutItemKind::CheckoutDetached:
+			// The synchronous path re-reads refs when it reopens the detached
+			// picker. Keep that boundary so a long-lived overlay never acts on a
+			// stale branch list after the first picker closes.
+			BeginCheckout(detached = true);
+			return;
+		case EGitCheckoutItemKind::Separator:
+			Complete(Cancelled());
+			return;
+		case EGitCheckoutItemKind::Ref:
+		default:
+			break;
+		}
+		if (item.refName.empty()) {
+			Complete(Cancelled());
+			return;
+		}
+		try {
+			GitBranchCommandResult result;
+			if (item.refKind == EGitRefKind::RemoteHead && !detached) {
+				result = CheckoutRemoteHead(m_context, item.refName);
+			}
+			else {
+				result = RunAndReport(m_context, BuildCheckoutArguments(item.refName, detached));
+			}
+			Complete(std::move(result));
+		}
+		catch (...) {
+			Complete(Failed(L"The checkout command could not be completed."));
+		}
+	}
+
+	void BeginCreateBranch(bool from)
+	{
+		if (!HasPresenters()) {
+			Complete(Failed(ResolveText(m_context, "GitBranchNoPresenter",
+				L"The branch command has no presenter.")));
+			return;
+		}
+		std::vector<GitRef> refs;
+		GitBranchCommandResult failure;
+		try {
+			if (!ListRefs(m_context, refs, failure)) {
+				Notify(m_context, failure.message);
+				Complete(std::move(failure));
+				return;
+			}
+		}
+		catch (...) {
+			Complete(Failed(L"The branch references could not be read."));
+			return;
+		}
+		BeginCreateBranchFromRefs(std::make_shared<std::vector<GitRef>>(std::move(refs)), from);
+	}
+
+	void BeginCreateBranchFromRefs(const std::shared_ptr<const std::vector<GitRef>>& refs, bool from)
+	{
+		if (m_completed) return;
+		if (from) {
+			std::wstring headCommit;
+			try {
+				headCommit = ReadHeadCommit(m_context);
+			}
+			catch (...) {
+				// A repository without HEAD is a valid source; only an exception from
+				// the invoker is exceptional, and an empty commit is still the useful
+				// Quick Pick description in that case.
+			}
+			const auto items = BuildBranchFromItems(*refs, headCommit, m_context.text);
+			const auto search = [items](std::wstring_view) { return items; };
+			const auto self = shared_from_this();
+			auto delivered = std::make_shared<std::atomic_bool>(false);
+			auto completion = [self, refs, delivered](std::optional<GitCheckoutItem> selected) {
+				if (delivered->exchange(true)) return;
+				self->OnBranchFromPicked(refs, selected);
+			};
+			try {
+				m_context.quickPickAsync(items,
+					ResolveText(m_context, "GitBranchFromPlaceholder",
+						L"Select a ref to create the branch from"), search, std::move(completion));
+			}
+			catch (...) {
+				Complete(Failed(L"The branch-from Quick Pick could not be opened."));
+			}
+			return;
+		}
+		BeginBranchNamePrompt(refs, L"HEAD", {},
+			ResolveText(m_context, "GitBranchNamePrompt", kBranchNamePrompt));
+	}
+
+	void OnBranchFromPicked(const std::shared_ptr<const std::vector<GitRef>>& refs,
+		std::optional<GitCheckoutItem> selected)
+	{
+		if (m_completed) return;
+		if (!selected) {
+			Complete(Cancelled());
+			return;
+		}
+		if (selected->kind == EGitCheckoutItemKind::Separator) {
+			Complete(Cancelled());
+			return;
+		}
+		const std::wstring target = selected->refName.empty() ? L"HEAD" : selected->refName;
+		BeginBranchNamePrompt(refs, target, {},
+			ResolveText(m_context, "GitBranchNamePrompt", kBranchNamePrompt));
+	}
+
+	void BeginBranchNamePrompt(const std::shared_ptr<const std::vector<GitRef>>& refs,
+		std::wstring target, std::wstring value, std::wstring prompt)
+	{
+		if (m_completed) return;
+		const auto self = shared_from_this();
+		auto delivered = std::make_shared<std::atomic_bool>(false);
+		auto completion = [self, refs, target = std::move(target), delivered]
+			(std::optional<std::wstring> typed) mutable {
+			if (delivered->exchange(true)) return;
+			self->OnBranchNameTyped(refs, std::move(target), std::move(typed));
+		};
+		try {
+			m_context.inputBoxAsync(prompt,
+				ResolveText(m_context, "GitBranchNamePlaceholder", kBranchNamePlaceholder),
+				value, std::move(completion));
+		}
+		catch (...) {
+			Complete(Failed(L"The branch name input could not be opened."));
+		}
+	}
+
+	void OnBranchNameTyped(const std::shared_ptr<const std::vector<GitRef>>& refs,
+		std::wstring target, std::optional<std::wstring> typed)
+	{
+		if (m_completed) return;
+		if (!typed) {
+			Complete(Cancelled());
+			return;
+		}
+		const auto validation = ValidateBranchName(*typed, *refs, kGitBranchWhitespaceChar, m_context.text);
+		switch (validation.state) {
+		case EGitBranchNameValidation::Empty:
+			Complete(Cancelled());
+			return;
+		case EGitBranchNameValidation::AlreadyExists:
+			BeginBranchNamePrompt(refs, std::move(target), *typed, validation.message);
+			return;
+		case EGitBranchNameValidation::Sanitized:
+			Notify(m_context, validation.message);
+			break;
+		case EGitBranchNameValidation::Valid:
+		default:
+			break;
+		}
+		try {
+			Complete(RunAndReport(m_context,
+				BuildCreateBranchArguments(validation.sanitizedName, target)));
+		}
+		catch (...) {
+			Complete(Failed(L"The branch could not be created."));
+		}
+	}
+
+	GitBranchCommandContext m_context;
+	GitBranchCommandCompletion m_completion;
+	std::atomic_bool m_completed{ false };
+};
+
 } // namespace
 
 std::vector<std::wstring> BuildTrackingBranchArguments()
@@ -305,6 +585,18 @@ GitBranchCommandResult RunGitCreateBranch(const GitBranchCommandContext& context
 		return failure;
 	}
 	return CreateBranch(context, refs, from);
+}
+
+void RunGitCheckoutAsync(const GitBranchCommandContext& context, bool detached,
+	GitBranchCommandCompletion completion)
+{
+	AsyncBranchFlow::StartCheckout(context, detached, std::move(completion));
+}
+
+void RunGitCreateBranchAsync(const GitBranchCommandContext& context, bool from,
+	GitBranchCommandCompletion completion)
+{
+	AsyncBranchFlow::StartCreateBranch(context, from, std::move(completion));
 }
 
 } // namespace workbench::scm

@@ -7,6 +7,7 @@
 #pragma once
 
 #include "workbench/activity/ActivityBarModel.h"
+#include "workbench/WorkbenchLayout.h"
 #include "accessibility/CustomUiAutomationProvider.h"
 
 #include <Windows.h>
@@ -24,6 +25,16 @@ namespace workbench {
 using activity::ActivityBarButtonInfo;
 using activity::ActivityBarEntry;
 using activity::ActivityBarModel;
+using activity::ActivityBarOrientation;
+
+//! Localized labels for VS Code's Activity Bar position submenu.
+//! Hidden is intentionally absent from both the data and the native menu.
+struct ActivityBarLocationMenuLabels {
+	std::wstring submenu = L"Activity Bar Position";
+	std::wstring defaultLocation = L"Default";
+	std::wstring top = L"Top";
+	std::wstring bottom = L"Bottom";
+};
 
 //! Caller-supplied colours. High contrast is explicit so callers can inject their system palette.
 struct ActivityBarPalette {
@@ -57,13 +68,15 @@ public:
 	//! The argument is the ViewContainer id of the clicked entry.
 	using ToggleRequestCallback = std::function<void(std::string_view containerId)>;
 	//! GlobalCompositeBar actions (`workbench.actions.accounts` / `workbench.actions.manage`).
-	//! The point is the button's bottom-left in screen coordinates for popup anchoring.
+	//! The point is the button's right/top anchor in screen coordinates for popup
+	//! anchoring. The custom frame grows GlobalCompositeBar menus upward from this edge.
 	using GlobalActionCallback = std::function<void(std::string_view actionId, POINT screenPoint)>;
 	//! Raised when the user drops a dragged Activity Bar entry. VS Code treats both the
 	//! Activity Bar icon and the side-bar title as composite drag handles, and the drop
 	//! target decides whether the ViewContainer changes location. The point is in screen
 	//! coordinates because the target is usually a different window.
 	using ContainerDragCallback = std::function<void(std::string_view containerId, POINT screenPoint)>;
+	using LocationRequestCallback = std::function<void(ActivityBarLocation location)>;
 
 	explicit CActivityBar(ToggleRequestCallback onToggleRequest = {});
 	~CActivityBar();
@@ -81,6 +94,11 @@ public:
 	void SetToggleRequestCallback(ToggleRequestCallback callback) { m_onToggleRequest = std::move(callback); }
 	void SetGlobalActionCallback(GlobalActionCallback callback) { m_onGlobalAction = std::move(callback); }
 	void SetContainerDragCallback(ContainerDragCallback callback) { m_onContainerDrag = std::move(callback); }
+	void SetLocationRequestCallback(LocationRequestCallback callback) { m_onLocationRequest = std::move(callback); }
+	void SetLocationMenuLabels(ActivityBarLocationMenuLabels labels) { m_locationMenuLabels = std::move(labels); }
+	void SetLocation(ActivityBarLocation location) noexcept;
+	[[nodiscard]] ActivityBarLocation GetLocation() const noexcept { return m_location; }
+	[[nodiscard]] ActivityBarOrientation GetOrientation() const noexcept { return m_model.GetOrientation(); }
 
 	//! Replaces the rendered ViewContainers, including any an extension contributed.
 	//! Tooltips and accessibility follow, so this is the only entry point a composition needs.
@@ -106,6 +124,8 @@ public:
 	void SetItemVisible(std::string_view containerId, bool visible) noexcept;
 	[[nodiscard]] bool IsItemVisible(std::string_view containerId) const noexcept { return m_model.IsVisible(containerId); }
 	[[nodiscard]] int GetPreferredWidthPixels() const noexcept { return m_model.GetPreferredWidthPixels(); }
+	[[nodiscard]] int GetPreferredHeightPixels() const noexcept { return m_model.GetPreferredHeightPixels(); }
+	[[nodiscard]] int GetPreferredExtentPixels() const noexcept { return m_model.GetPreferredExtentPixels(); }
 	[[nodiscard]] unsigned int GetDpi() const noexcept { return m_model.GetDpi(); }
 	[[nodiscard]] HWND GetHwnd() const noexcept { return m_window; }
 
@@ -140,6 +160,7 @@ private:
 	[[nodiscard]] LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam);
 	void UpdateClientLayout(unsigned int dpi) noexcept;
 	void UpdateTooltipRects() noexcept;
+	void InvalidateIconFont() noexcept;
 	void EnsureIconFont() noexcept;
 	//! Draws a ViewContainer's activity indicator over its glyph.
 	void PaintBadge(HDC dc, const RECT& bounds, int number) noexcept;
@@ -147,6 +168,7 @@ private:
 	void Invalidate() const noexcept;
 	[[nodiscard]] bool InvokeRequest(std::string_view containerId) noexcept;
 	[[nodiscard]] bool InvokeGlobalAction(std::string_view actionId) noexcept;
+	[[nodiscard]] bool ShowLocationContextMenu(POINT screenPoint) noexcept;
 	[[nodiscard]] bool HandleNavigationKey(WPARAM key) noexcept;
 	void SetHoverFromPoint(POINT point) noexcept;
 	//! True once the pointer has left the system drag threshold while a button is held.
@@ -162,9 +184,14 @@ private:
 	ToggleRequestCallback m_onToggleRequest;
 	GlobalActionCallback m_onGlobalAction;
 	ContainerDragCallback m_onContainerDrag;
+	LocationRequestCallback m_onLocationRequest;
+	ActivityBarLocationMenuLabels m_locationMenuLabels;
+	ActivityBarLocation m_location = ActivityBarLocation::Default;
 	HWND m_window = nullptr;
 	HWND m_tooltip = nullptr;
 	HFONT m_iconFont = nullptr;
+	int m_iconFontSizeDip = 0;
+	unsigned int m_iconFontDpi = 0;
 	//! ViewContainer id under the pressed pointer, empty while nothing is captured. It is a
 	//! copy rather than a view because the entry list can be replaced between messages.
 	std::string m_captureItem;

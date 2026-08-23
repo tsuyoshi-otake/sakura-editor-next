@@ -28,9 +28,12 @@ SCM model finds the provider it expects.
   branch has already changed but the file list still belongs to the previous one.
 - A publisher that has not changed its (root, state, policy) publishes nothing,
   so an idle 5-second refresh costs no service revision.
-- `state.repository == false` **retracts** the provider. "No repository here" and
-  "a repository with no changes" are different facts and must never render the
-  same.
+- A successfully read `state.repository == false` **retracts** the provider.
+  A failed `git status` is not a replacement snapshot: it retains the last
+  successfully published provider, input, resource groups, decorations, and
+  Graph history while recording the execution diagnostic. Changing the semantic
+  workspace root explicitly retracts the old provider before probing the new
+  root, so retention can never leak one repository's state into another.
 - A window with no `CWorkbenchRuntime` has no service to borrow. It builds the
   same publication locally through `BuildGitPublication` and renders that, rather
   than growing a second row-shaping path for that configuration.
@@ -1375,33 +1378,21 @@ divergence is a bug.
   id falls back to the file-activation callback, exactly as it did before a
   callback existed, while `git.checkout` reaches the real registry. A callback
   that swallowed unimplemented command IDs silently would be worse than none.
-- **The native Quick Pick cannot render a group separator.** Upstream's picker
-  is grouped by `branches` / `remote branches` / `tags` separators.
-  `CQuickInputDialog` has no separator row, so `EGitCheckoutItemKind::
-  Separator` items are dropped at the presenter boundary and a `positions` vector
-  maps each rendered row back to its model row. Rendering a separator as an inert
-  selectable line would be a faked capability, and renumbering without the map
-  would silently check out the wrong ref. The separators stay in the model, so
-  the model remains the faithful description and a picker that can group them
-  needs no model change.
-- **The native Quick Pick has no filter box, so upstream's typed-filter
-  reordering never applies.** VS Code moves the three command rows below the refs
-  once the user types. Here the filter is always empty, so
-  `BuildCheckoutItems(..., filterIsEmpty = true)` — commands first — is the one
-  ordering the user ever sees. `filterIsEmpty = false` is implemented and tested
-  so a searchable picker needs no new model work.
-- **The input box has no live validation callback, so the collision message
-  becomes the dialog caption.** `SExtensionQuickInputRequest` has no `prompt`
-  field and no validation hook; upstream keeps its box open and renders the error
-  inline. The re-prompt therefore passes the validation message as
-  `request.title`, which the dialog paints as its window caption, and preserves
-  the rejected text as the initial value. The sanitize notice, which upstream
-  shows as a separate information message, goes to the status bar. Both are
-  degraded presentations of the same message, not a different message.
-- **The picker captions itself with the command title.** Real VS Code's quick
-  input is a chromeless overlay with no caption at all; this dialog is a framed
-  window that must caption itself with something, so it reuses the title upstream
-  already publishes for that command rather than inventing a label.
+- **Resolved: branch commands use the shared chromeless Quick Input overlay.**
+  Checkout and branch creation no longer open `CQuickInputDialog`. Their
+  continuation flow returns to the editor message loop between decisions, and
+  the window-lifetime session gate makes cancellation and teardown explicit
+  terminal paths.
+- The checkout picker renders upstream's `branches` / `remote branches` / `tags`
+  separators as non-selectable group headings, paints `$(codicon)` label runs,
+  filters by typed text, and switches command-row ordering through
+  `BuildCheckoutItems(..., filterIsEmpty)` just as the model specifies. Stable
+  item identities map accepted rows back to their `GitCheckoutItem`; list indexes
+  are never treated as Git ref identities.
+- Branch-name entry is another mode of the same overlay. A colliding name
+  reopens that mode with the validation message and preserves the rejected value;
+  the accepted empty value remains cancellation. No nested message loop or
+  captioned native dialog is involved.
 - **Branch-command messages go to the status bar, not to a notification.**
   There is no native notification producer, and adding one here would create a
   second notification authority.

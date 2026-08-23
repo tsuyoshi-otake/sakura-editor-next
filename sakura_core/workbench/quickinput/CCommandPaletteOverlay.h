@@ -8,6 +8,7 @@
 */
 #pragma once
 
+#include "workbench/controls/COverlayScrollbar.h"
 #include "theme/CThemeService.h"
 
 #include <Windows.h>
@@ -24,8 +25,11 @@ namespace workbench::quickinput {
 struct CommandPaletteItem {
 	std::wstring id;
 	std::wstring label;
+	std::wstring description;
 	std::wstring detail;
 	bool enabled = true;
+	//! A visible group heading, never a legal answer.
+	bool separator = false;
 };
 
 //! Localized strings supplied by the currently active Quick Input surface.
@@ -55,6 +59,13 @@ public:
 	[[nodiscard]] bool Show(
 		std::vector<CommandPaletteItem> items,
 		std::wstring_view initiallySelectedId = {});
+	//! Shows the same chromeless surface as an input box. Enter accepts the
+	//! current text and Escape/close cancels it; no modal caption or dialog
+	//! buttons are created.
+	[[nodiscard]] bool ShowInput(
+		std::wstring_view prompt,
+		std::wstring_view placeholder,
+		std::wstring_view value = {});
 	void Hide() noexcept;
 	//! Closes the palette through its cancel terminal, if it is visible.
 	void Cancel() noexcept;
@@ -81,6 +92,8 @@ private:
 
 	static ATOM RegisterWindowClass() noexcept;
 	static LRESULT CALLBACK WindowProc(HWND window, UINT message, WPARAM wParam, LPARAM lParam) noexcept;
+	static LRESULT CALLBACK ListSubclassProc(HWND window, UINT message, WPARAM wParam,
+		LPARAM lParam, UINT_PTR id, DWORD_PTR data) noexcept;
 	LRESULT HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept;
 
 	void Layout(int width, int height) noexcept;
@@ -89,11 +102,18 @@ private:
 	void MoveSelection(int direction) noexcept;
 	void NotifySelectionChanged() noexcept;
 	[[nodiscard]] std::wstring SelectedItemId() const;
+	void EnsureSelectableSelection() noexcept;
 	void Accept() noexcept;
 	void RestoreFocus() noexcept;
 	void Paint(HDC dc, const RECT& bounds) noexcept;
 	void DrawItem(const DRAWITEMSTRUCT& draw) noexcept;
 	void DrawCloseButton(const DRAWITEMSTRUCT& draw) noexcept;
+	void ScrollListByWheel(WPARAM wParam) noexcept;
+	void ScrollListToPixelOffset(int pixelOffset) noexcept;
+	void RebuildRowPixelOffsets() noexcept;
+	void EnsureRowPixelOffsets() noexcept;
+	[[nodiscard]] controls::OverlayScrollbarModel ListScrollModel() noexcept;
+	void UpdateOverlayScrollbar() noexcept;
 	void RebuildBrushes() noexcept;
 	void ResetBrushes() noexcept;
 	[[nodiscard]] HFONT AcquireCodiconFont(int height) noexcept;
@@ -112,6 +132,16 @@ private:
 	HWND m_close = nullptr;
 	HWND m_empty = nullptr;
 	HWND m_previousFocus = nullptr;
+	controls::COverlayScrollbar m_overlayScrollbar;
+	std::vector<int> m_rowPixelOffsets;
+	UINT m_rowPixelOffsetsDpi = 0;
+	int m_wheelDeltaRemainder = 0;
+	bool m_inputMode = false;
+	std::wstring m_inputPrompt;
+	std::wstring m_inputPlaceholder;
+	int m_lastSelectableIndex = -1;
+	bool m_repairingSelection = false;
+	bool m_terminalCallbackInProgress = false;
 
 	theme::ThemePalette m_palette = theme::CThemeService::PaletteFor(theme::ThemeMode::Dark);
 	theme::CThemeFont m_font;

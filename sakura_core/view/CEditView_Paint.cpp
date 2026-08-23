@@ -525,6 +525,18 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 			if (syntaxKind) syntaxStyle = &syntaxPalette->For(*syntaxKind);
 		}
 	}
+	const auto* editorPalette = theme::CThemeService::ActiveColorThemePalette();
+	if (editorPalette != nullptr && eColorIndex != COLORIDX_SELECT
+		&& eColorIndex2 != COLORIDX_SELECT) {
+		// TextMate tokens inherit editor.background. The legacy type palette may
+		// still be dark while a Light workbench theme is active, so establish the
+		// editor canvas before layering projected syntax colors over it.
+		bkcolor = editorPalette->canvas.ToColorRef();
+		if (eColorIndex == COLORIDX_TEXT || eColorIndex2 == COLORIDX_TEXT
+			|| syntaxStyle != nullptr) {
+			fgcolor = editorPalette->primaryText.ToColorRef();
+		}
+	}
 	const auto applyThemeColor = [](const std::optional<theme::ThemeColor>& color, COLORREF base) noexcept {
 		if (!color || color->alpha == 0) return base;
 		if (color->alpha == 0xFF) return color->ToColorRef();
@@ -532,7 +544,7 @@ void CEditView::SetCurrentColor( CGraphics& gr, EColorIndexType eColorIndex,  EC
 	};
 	if (syntaxStyle != nullptr) {
 		bkcolor = applyThemeColor(syntaxStyle->background, bkcolor);
-		fgcolor = applyThemeColor(syntaxStyle->foreground, bkcolor);
+		fgcolor = applyThemeColor(syntaxStyle->foreground, fgcolor);
 	}
 	if( m_bMiniMap ){
 		// The minimap is navigational context, not a second editor.  Pull syntax

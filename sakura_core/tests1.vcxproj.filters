@@ -198,6 +198,12 @@
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp">
       <Filter>Test Files\workbench</Filter>
     </ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarEntryProjectionTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarModelTest.cpp">
+	  <Filter>Test Files\workbench</Filter>
+	</ClCompile>
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\CWorkspaceContextTest.cpp">
 	  <Filter>Test Files\workbench</Filter>
 	</ClCompile>
@@ -544,6 +550,9 @@
       <Filter>Test Files\terminal\window</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp">
+      <Filter>Test Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownRemoteImageFetcherTest.cpp">
       <Filter>Test Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownCodeHighlighterTest.cpp">

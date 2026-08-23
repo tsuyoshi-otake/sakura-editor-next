@@ -9,10 +9,12 @@
 #include "workbench/icons/CCodiconFont.h"
 #include "workbench/icons/CodiconGlyphTable.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
+#include "workbench/icons/LabelRunPainter.h"
 #include "CSelectLang.h"
 #include "sakura_rc.h"
 
 #include <algorithm>
+#include <array>
 #include <string>
 #include <utility>
 
@@ -22,6 +24,14 @@ namespace {
 constexpr wchar_t kWindowClassName[] = L"SakuraEditor.Next.CommandPaletteOverlay";
 
 constexpr COLORREF kFallbackPanel = RGB(37, 37, 38);
+//! A Quick Input query is a single-line editor.  Keep the chrome row close to
+//! the workbench's other compact inputs instead of allocating two text lines.
+constexpr int kInputRowHeightDip = 26;
+constexpr int kQuickPickCompactRowHeightDip = 22;
+constexpr int kQuickPickDetailRowHeightDip = 44;
+constexpr int kSeparatorRowHeightDip = 30;
+constexpr int kMaximumWidthDip = 600;
+constexpr int kMinimumWidthDip = 320;
 
 [[nodiscard]] std::wstring LocalizedString(UINT resourceId, const wchar_t* fallback)
 {
@@ -82,6 +92,28 @@ void QueueNoEraseInvalidate(HWND window) noexcept
 	if (window != nullptr) ::InvalidateRect(window, nullptr, FALSE);
 }
 
+//! Complete the first visible frame before returning to the caller. A queued
+//! invalidation is insufficient here because the editor, preview, and workbench
+//! siblings can repaint after the command handler and temporarily cover a newly
+//! shown child. Visibility therefore includes a fully painted overlay subtree.
+void PaintOverlayNow(HWND window) noexcept
+{
+	if (window == nullptr) return;
+	(void)::RedrawWindow(window, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_ALLCHILDREN | RDW_FRAME);
+}
+
+//! A child overlay moving, shrinking, or hiding exposes sibling surfaces in
+//! its old rectangle. SWP_NOREDRAW/SWP_NOCOPYBITS deliberately avoid copying
+//! stale pixels, so the parent owns one synchronous repaint of that rectangle.
+void PaintParentRegionNow(HWND parent, const RECT& bounds) noexcept
+{
+	if (parent == nullptr || ::IsRectEmpty(&bounds) != FALSE) return;
+	RECT dirty = bounds;
+	(void)::RedrawWindow(parent, &dirty, nullptr,
+		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE | RDW_ALLCHILDREN);
+}
+
 } // namespace
 
 CCommandPaletteOverlay::~CCommandPaletteOverlay() noexcept
@@ -119,7 +151,7 @@ bool CCommandPaletteOverlay::Create(HWND parent) noexcept
 		WS_EX_CONTROLPARENT,
 		kWindowClassName,
 		L"",
-		WS_CHILD | WS_CLIPCHILDREN | WS_TABSTOP,
+		WS_CHILD | WS_CLIPCHILDREN | WS_CLIPSIBLINGS | WS_TABSTOP,
 		0, 0, 0, 0,
 		parent,
 		nullptr,
@@ -135,6 +167,11 @@ bool CCommandPaletteOverlay::Create(HWND parent) noexcept
 
 void CCommandPaletteOverlay::Destroy() noexcept
 {
+	if (m_list != nullptr && ::IsWindow(m_list)) {
+		(void)::RemoveWindowSubclass(m_list, &CCommandPaletteOverlay::ListSubclassProc,
+			static_cast<UINT_PTR>(kListControl));
+	}
+	m_overlayScrollbar.Destroy();
 	if (m_window != nullptr && ::IsWindow(m_window)) {
 		::DestroyWindow(m_window);
 	}
@@ -146,6 +183,15 @@ void CCommandPaletteOverlay::Destroy() noexcept
 	m_close = nullptr;
 	m_empty = nullptr;
 	m_previousFocus = nullptr;
+	m_inputMode = false;
+	m_inputPrompt.clear();
+	m_inputPlaceholder.clear();
+	m_rowPixelOffsets.clear();
+	m_rowPixelOffsetsDpi = 0;
+	m_wheelDeltaRemainder = 0;
+	m_lastSelectableIndex = -1;
+	m_repairingSelection = false;
+	m_terminalCallbackInProgress = false;
 	m_items.clear();
 	m_lastNotifiedSelectionId.clear();
 	m_selectionNotificationsEnabled = true;
@@ -169,11 +215,17 @@ bool CCommandPaletteOverlay::Show(
 		m_previousFocus = ::GetFocus();
 		if (IsPaletteTarget(m_window, m_previousFocus)) m_previousFocus = m_parent;
 	}
+	m_inputMode = false;
+	m_inputPrompt.clear();
+	m_inputPlaceholder.clear();
 	m_selectionNotificationsEnabled = false;
 	m_lastNotifiedSelectionId.clear();
 	if (m_input != nullptr) ::SetWindowTextW(m_input, L"");
+	if (m_prompt != nullptr) ::SetWindowTextW(m_prompt, L">");
 	m_items = std::move(items);
 	RefreshStrings();
+	if (m_list != nullptr) ::ShowWindow(m_list, SW_SHOW);
+	if (m_empty != nullptr) ::ShowWindow(m_empty, SW_HIDE);
 	PopulateList(initiallySelectedId);
 	m_selectionNotificationsEnabled = true;
 	NotifySelectionChanged();
@@ -183,19 +235,58 @@ bool CCommandPaletteOverlay::Show(
 		| SWP_NOREDRAW | SWP_NOCOPYBITS);
 	::ShowWindow(m_window, SW_SHOWNOACTIVATE);
 	::SetFocus(m_input);
-	QueueNoEraseInvalidate(m_window);
-	QueueNoEraseInvalidate(m_prompt);
-	QueueNoEraseInvalidate(m_input);
-	QueueNoEraseInvalidate(m_list);
-	QueueNoEraseInvalidate(m_close);
-	QueueNoEraseInvalidate(m_empty);
+	PaintOverlayNow(m_window);
+	return true;
+}
+
+bool CCommandPaletteOverlay::ShowInput(
+	std::wstring_view prompt, std::wstring_view placeholder, std::wstring_view value)
+{
+	if (m_window == nullptr || !::IsWindow(m_window)) return false;
+
+	if (!IsVisible()) {
+		m_previousFocus = ::GetFocus();
+		if (IsPaletteTarget(m_window, m_previousFocus)) m_previousFocus = m_parent;
+	}
+	m_inputMode = true;
+	m_inputPrompt.assign(prompt);
+	m_inputPlaceholder.assign(placeholder);
+	m_items.clear();
+	m_lastSelectableIndex = -1;
+	m_lastNotifiedSelectionId.clear();
+	m_selectionNotificationsEnabled = false;
+	if (m_prompt != nullptr) {
+		::SetWindowTextW(m_prompt, m_inputPrompt.empty() ? L">" : m_inputPrompt.c_str());
+	}
+	if (m_input != nullptr) {
+		::SetWindowTextW(m_input, std::wstring(value).c_str());
+		::SendMessageW(m_input, EM_SETSEL, static_cast<WPARAM>(-1), static_cast<LPARAM>(-1));
+	}
+	if (m_list != nullptr) ::ShowWindow(m_list, SW_HIDE);
+	if (m_empty != nullptr) ::ShowWindow(m_empty, SW_HIDE);
+	RefreshStrings();
+	Layout();
+	::SetWindowPos(m_window, HWND_TOP, 0, 0, 0, 0,
+		SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW
+		| SWP_NOREDRAW | SWP_NOCOPYBITS);
+	::ShowWindow(m_window, SW_SHOWNOACTIVATE);
+	::SetFocus(m_input);
+	PaintOverlayNow(m_window);
 	return true;
 }
 
 void CCommandPaletteOverlay::Hide() noexcept
 {
 	if (m_window == nullptr || !::IsWindow(m_window)) return;
+	RECT previousBounds{};
+	const bool repaintParent = IsVisible()
+		&& ::GetWindowRect(m_window, &previousBounds) != FALSE;
+	if (repaintParent) {
+		(void)::MapWindowPoints(nullptr, m_parent,
+			reinterpret_cast<POINT*>(&previousBounds), 2);
+	}
 	::ShowWindow(m_window, SW_HIDE);
+	if (repaintParent) PaintParentRegionNow(m_parent, previousBounds);
 	RestoreFocus();
 }
 
@@ -207,6 +298,14 @@ bool CCommandPaletteOverlay::IsVisible() const noexcept
 bool CCommandPaletteOverlay::PreTranslateMessage(MSG& message) noexcept
 {
 	if (!IsVisible() || !IsPaletteTarget(m_window, message.hwnd)) return false;
+	if (message.message == WM_MOUSEWHEEL && !m_inputMode && m_list != nullptr) {
+		// Quick Input deliberately keeps keyboard focus in the query EDIT. Windows
+		// therefore delivers wheel input to the EDIT even while the pointer is over
+		// the results. Route that input to the scrolling surface and consume the
+		// original message so one wheel notch is applied exactly once.
+		(void)::SendMessageW(m_list, message.message, message.wParam, message.lParam);
+		return true;
+	}
 
 	if (message.message == WM_KEYDOWN) {
 		const bool control = (::GetKeyState(VK_CONTROL) & 0x8000) != 0;
@@ -245,18 +344,48 @@ void CCommandPaletteOverlay::Layout() noexcept
 	const int parentHeight = parentClient.bottom - parentClient.top;
 	if (parentWidth <= 0 || parentHeight <= 0) return;
 
-	const int maximumWidth = Scale(680);
-	const int maximumHeight = Scale(480);
-	const int minimumWidth = Scale(320);
-	const int minimumHeight = Scale(220);
-	const int margin = Scale(16);
-	const int width = (std::min)(maximumWidth, (std::max)(minimumWidth, parentWidth - margin * 2));
-	const int height = (std::min)(maximumHeight, (std::max)(minimumHeight, parentHeight - margin * 2));
+	// VS Code caps Quick Input at 62% of the host width / 600 CSS px and gives
+	// its list 40% of the host height as a maximum. The list itself remains
+	// content-sized, which is what keeps a two-item theme picker compact.
+	const int edgeMargin = Scale(6);
+	const int availableWidth = (std::max)(0, parentWidth - edgeMargin * 2);
+	const int goldenWidth = parentWidth * 62 / 100;
+	const int width = (std::min)(availableWidth,
+		(std::min)(Scale(kMaximumWidthDip),
+			(std::max)(Scale(kMinimumWidthDip), goldenWidth)));
+	const int headerHeight = Scale(6) + Scale(kInputRowHeightDip) + Scale(4);
+	int listHeight = 0;
+	if (!m_inputMode) {
+		EnsureRowPixelOffsets();
+		const int contentHeight = m_items.empty()
+			? Scale(kQuickPickDetailRowHeightDip)
+			: (m_rowPixelOffsets.empty() ? 0 : m_rowPixelOffsets.back());
+		const int rowBand = (std::max)(1, Scale(kQuickPickDetailRowHeightDip));
+		const int rawMaximum = parentHeight * 40 / 100;
+		const int alignedMaximum = rawMaximum / rowBand * rowBand + Scale(6);
+		const int availableHeight = (std::max)(0,
+			parentHeight - edgeMargin - headerHeight - Scale(4));
+		listHeight = (std::min)(contentHeight,
+			(std::min)(alignedMaximum, availableHeight));
+	}
+	const int height = headerHeight + listHeight + Scale(4);
 	const int x = (std::max)(0, (parentWidth - width) / 2);
-	const int y = (std::max)(Scale(10), (parentHeight - height) / 6);
+	const int y = (std::min)(edgeMargin,
+		(std::max)(0, parentHeight - height));
+	RECT previousBounds{};
+	const bool repaintParent = IsVisible()
+		&& ::GetWindowRect(m_window, &previousBounds) != FALSE;
+	if (repaintParent) {
+		(void)::MapWindowPoints(nullptr, m_parent,
+			reinterpret_cast<POINT*>(&previousBounds), 2);
+	}
 	::SetWindowPos(m_window, HWND_TOP, x, y, width, height,
 		SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS);
 	Layout(width, height);
+	if (repaintParent) {
+		PaintParentRegionNow(m_parent, previousBounds);
+		PaintOverlayNow(m_window);
+	}
 }
 
 void CCommandPaletteOverlay::RefreshStrings() noexcept
@@ -280,8 +409,13 @@ void CCommandPaletteOverlay::RefreshStrings() noexcept
 		::SetWindowTextW(m_empty, strings.noResults.c_str());
 	}
 	if (m_input != nullptr) {
+		const std::wstring_view placeholder = !m_inputPlaceholder.empty()
+			? std::wstring_view(m_inputPlaceholder) : std::wstring_view(strings.placeholder);
 		::SendMessageW(m_input, EM_SETCUEBANNER, FALSE,
-			reinterpret_cast<LPARAM>(strings.placeholder.c_str()));
+			reinterpret_cast<LPARAM>(placeholder.data()));
+	}
+	if (m_inputMode && m_prompt != nullptr) {
+		::SetWindowTextW(m_prompt, m_inputPrompt.empty() ? L">" : m_inputPrompt.c_str());
 	}
 	::InvalidateRect(m_window, nullptr, FALSE);
 }
@@ -292,8 +426,13 @@ void CCommandPaletteOverlay::SetPalette(const theme::ThemePalette& palette) noex
 	RebuildBrushes();
 	if (m_window != nullptr) {
 		QueueNoEraseInvalidate(m_window);
+		QueueNoEraseInvalidate(m_prompt);
 		QueueNoEraseInvalidate(m_input);
 		QueueNoEraseInvalidate(m_list);
+		QueueNoEraseInvalidate(m_close);
+		QueueNoEraseInvalidate(m_empty);
+		UpdateOverlayScrollbar();
+		if (IsVisible()) PaintOverlayNow(m_window);
 	}
 }
 
@@ -337,6 +476,75 @@ LRESULT CALLBACK CCommandPaletteOverlay::WindowProc(
 	return ::DefWindowProcW(window, message, wParam, lParam);
 }
 
+LRESULT CALLBACK CCommandPaletteOverlay::ListSubclassProc(
+	HWND window, UINT message, WPARAM wParam, LPARAM lParam, UINT_PTR id,
+	DWORD_PTR data) noexcept
+{
+	auto* const self = reinterpret_cast<CCommandPaletteOverlay*>(data);
+	if (message == WM_NCDESTROY) {
+		(void)::RemoveWindowSubclass(window, &CCommandPaletteOverlay::ListSubclassProc, id);
+		return ::DefSubclassProc(window, message, wParam, lParam);
+	}
+	if (self != nullptr && self->m_list == window && message == WM_MOUSEWHEEL) {
+		// Hiding the native bar also makes LISTBOX drop wheel messages. Keep the
+		// list as the scroll authority, but advance its top index explicitly.
+		self->ScrollListByWheel(wParam);
+		return 0;
+	}
+	if (self != nullptr && self->m_list == window && message == WM_ERASEBKGND
+		&& self->m_panelBrush != nullptr) {
+		RECT client{};
+		::GetClientRect(window, &client);
+		::FillRect(reinterpret_cast<HDC>(wParam), &client, self->m_panelBrush);
+		return 1;
+	}
+	if (self != nullptr && self->m_list == window && message == WM_PAINT
+		&& self->m_panelBrush != nullptr) {
+		// The parent deliberately uses no-erase invalidation during geometry and
+		// theme commits.  Paint the list's complete backing surface before the
+		// owner-drawn rows so an uncovered tail can never reveal the terminal or
+		// another sibling behind the palette.
+		RECT client{};
+		::GetClientRect(window, &client);
+		const HDC dc = ::GetDCEx(window, nullptr, DCX_INTERSECTUPDATE | DCX_CACHE);
+		if (dc != nullptr) {
+			::FillRect(dc, &client, self->m_panelBrush);
+			::ReleaseDC(window, dc);
+		}
+	}
+	const LRESULT result = ::DefSubclassProc(window, message, wParam, lParam);
+	if (self != nullptr && self->m_list == window && message == WM_LBUTTONUP
+		&& !self->m_inputMode && self->IsVisible()) {
+		// VS Code Quick Picks accept a selectable item on the first mouse click.
+		// The native LISTBOX has already committed its selection above, so use the
+		// same terminal path as Enter without requiring a second click.
+		const LRESULT hit = ::SendMessageW(window, LB_ITEMFROMPOINT, 0, lParam);
+		const int index = static_cast<int>(LOWORD(hit));
+		const bool outside = HIWORD(hit) != 0;
+		if (!outside && index >= 0 && static_cast<std::size_t>(index) < self->m_items.size()
+			&& self->m_items[static_cast<std::size_t>(index)].enabled
+			&& !self->m_items[static_cast<std::size_t>(index)].separator) {
+			(void)::SendMessageW(window, LB_SETCURSEL, static_cast<WPARAM>(index), 0);
+			self->EnsureSelectableSelection();
+			self->NotifySelectionChanged();
+			self->Accept();
+		}
+	}
+	if (self != nullptr && self->m_list == window
+		&& (message == WM_VSCROLL || message == WM_KEYDOWN || message == WM_SIZE)) {
+		if (message == WM_VSCROLL) {
+			// A native LISTBOX scrolls by moving existing pixels and invalidating only
+			// the newly exposed strip. Owner-drawn variable-height rows cannot rely on
+			// that optimization after their top index changes, so repaint the bounded
+			// visible viewport synchronously and leave no stale update region behind.
+			(void)::RedrawWindow(window, nullptr, nullptr,
+				RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+		}
+		self->UpdateOverlayScrollbar();
+	}
+	return result;
+}
+
 LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam) noexcept
 {
 	switch (message) {
@@ -344,7 +552,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 		const HINSTANCE instance = ::GetModuleHandleW(nullptr);
 		m_prompt = ::CreateWindowExW(
 			0, L"STATIC", L">",
-			WS_CHILD | WS_VISIBLE | SS_CENTER | SS_CENTERIMAGE,
+			WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
 			0, 0, 0, 0, m_window, nullptr, instance, nullptr);
 		m_input = ::CreateWindowExW(
 			0, L"EDIT", L"",
@@ -352,7 +560,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kInputControl)), instance, nullptr);
 		m_list = ::CreateWindowExW(
 			0, L"LISTBOX", L"",
-			WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_OWNERDRAWFIXED
+			WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_OWNERDRAWVARIABLE
 				| LBS_HASSTRINGS | LBS_NOINTEGRALHEIGHT | LBS_NOTIFY,
 			0, 0, 0, 0, m_window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kListControl)), instance, nullptr);
 		const auto emptyText = LocalizedString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS, L"No matching commands");
@@ -368,6 +576,12 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			|| m_empty == nullptr || m_close == nullptr) {
 			return -1;
 		}
+		(void)::SetWindowSubclass(m_list, &CCommandPaletteOverlay::ListSubclassProc,
+			static_cast<UINT_PTR>(kListControl), reinterpret_cast<DWORD_PTR>(this));
+		(void)m_overlayScrollbar.Create(m_window, m_list, [this](int pixelOffset) {
+			ScrollListToPixelOffset(pixelOffset);
+		}, controls::OverlayScrollbarSource::ExplicitModel);
+		m_overlayScrollbar.SetHideNativeBar(true);
 		::SendMessageW(m_input, EM_SETLIMITTEXT, 4096, 0);
 		const HFONT font = ControlFont(m_font.Get());
 		SetControlFont(m_prompt, font);
@@ -396,7 +610,16 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 	case WM_MEASUREITEM: {
 		auto* measure = reinterpret_cast<MEASUREITEMSTRUCT*>(lParam);
 		if (measure != nullptr && measure->CtlID == kListControl) {
-			measure->itemHeight = static_cast<UINT>(Scale(44));
+			const auto index = static_cast<std::size_t>(measure->itemID);
+			int height = kQuickPickCompactRowHeightDip;
+			if (index < m_items.size()) {
+				if (m_items[index].separator) {
+					height = kSeparatorRowHeightDip;
+				} else if (!m_items[index].detail.empty()) {
+					height = kQuickPickDetailRowHeightDip;
+				}
+			}
+			measure->itemHeight = static_cast<UINT>(Scale(height));
 			return TRUE;
 		}
 		break;
@@ -424,7 +647,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 	case WM_CTLCOLOREDIT: {
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetBkMode(dc, OPAQUE);
-		::SetBkColor(dc, m_palette.raised.ToColorRef());
+		::SetBkColor(dc, m_palette.inputBackground.ToColorRef());
 		::SetTextColor(dc, m_palette.primaryText.ToColorRef());
 		return reinterpret_cast<LRESULT>(m_inputBrush != nullptr
 			? m_inputBrush : ::GetSysColorBrush(COLOR_WINDOW));
@@ -432,7 +655,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 	case WM_CTLCOLORLISTBOX: {
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetBkMode(dc, OPAQUE);
-		::SetBkColor(dc, m_palette.panel.ToColorRef());
+		::SetBkColor(dc, m_palette.quickInputBackground.ToColorRef());
 		::SetTextColor(dc, m_palette.primaryText.ToColorRef());
 		return reinterpret_cast<LRESULT>(m_panelBrush != nullptr
 			? m_panelBrush : ::GetSysColorBrush(COLOR_WINDOW));
@@ -449,6 +672,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 			return 0;
 		}
 		if (control == kListControl && notification == LBN_SELCHANGE) {
+			EnsureSelectableSelection();
 			NotifySelectionChanged();
 			return 0;
 		}
@@ -465,6 +689,7 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 		Cancel();
 		return 0;
 	case WM_DESTROY:
+		m_overlayScrollbar.Destroy();
 		m_prompt = nullptr;
 		m_input = nullptr;
 		m_list = nullptr;
@@ -482,14 +707,42 @@ LRESULT CCommandPaletteOverlay::HandleMessage(UINT message, WPARAM wParam, LPARA
 void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 {
 	if (m_window == nullptr) return;
-	const int margin = Scale(12);
-	const int rowHeight = Scale(38);
-	const int promptWidth = Scale(26);
+	// VS Code's Quick Input header is exactly one input line: six DIP above a
+	// 26-DIP input and four DIP below. Keep horizontal spacing independent so a
+	// vertical tweak cannot silently restore the old dialog-like header.
+	const int horizontalMargin = Scale(4);
+	const int topInset = Scale(6);
+	const int bottomInset = Scale(4);
+	const int rowHeight = Scale(kInputRowHeightDip);
+	int promptWidth = Scale(26);
 	const int closeWidth = Scale(30);
-	const int gap = Scale(6);
-	const int listTop = margin + rowHeight + gap;
-	const int listBottom = (std::max)(listTop + Scale(60), height - margin);
-	const int listWidth = (std::max)(0, width - margin * 2);
+	const int gap = Scale(4);
+	const int listTop = topInset + rowHeight + bottomInset;
+	const int listBottom = (std::max)(listTop, height - bottomInset);
+	const int listWidth = (std::max)(0, width - horizontalMargin * 2);
+	if (m_inputMode && m_prompt != nullptr) {
+		const std::wstring prompt = ReadWindowText(m_prompt);
+		if (!prompt.empty()) {
+			HDC dc = ::GetDC(m_window);
+			if (dc != nullptr) {
+				const HFONT font = ControlFont(m_font.Get());
+				const HGDIOBJ previous = font != nullptr ? ::SelectObject(dc, font) : nullptr;
+				SIZE extent{};
+				if (::GetTextExtentPoint32W(dc, prompt.c_str(), static_cast<int>(prompt.size()), &extent)) {
+					const int topWidth = (std::max)(0,
+						width - horizontalMargin * 2 - closeWidth - gap * 2);
+					const int minimumInputWidth = Scale(120);
+					const int maximumPromptWidth = (std::max)(promptWidth, topWidth - minimumInputWidth);
+					promptWidth = (std::min)(maximumPromptWidth,
+						(std::max)(promptWidth, static_cast<int>(extent.cx) + gap));
+				}
+				if (previous != nullptr && previous != HGDI_ERROR) ::SelectObject(dc, previous);
+				::ReleaseDC(m_window, dc);
+			}
+		}
+	}
+	const int inputWidth = (std::max)(0,
+		width - horizontalMargin * 2 - promptWidth - closeWidth - gap * 2);
 
 	const UINT commonFlags = SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW | SWP_NOCOPYBITS;
 	struct Placement {
@@ -499,14 +752,30 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 		int width;
 		int height;
 	};
-	const Placement placements[] = {
-		{ m_prompt, margin, margin, promptWidth, rowHeight },
-		{ m_input, margin + promptWidth + gap, margin,
-			(std::max)(0, width - margin * 2 - promptWidth - closeWidth - gap * 2), rowHeight },
-		{ m_close, (std::max)(margin, width - margin - closeWidth), margin, closeWidth, rowHeight },
-		{ m_list, margin, listTop, listWidth, (std::max)(0, listBottom - listTop) },
-		{ m_empty, margin, listTop, listWidth, (std::max)(0, listBottom - listTop) },
-	};
+	std::array<Placement, 5> placements{};
+	if (m_inputMode) {
+		placements = {{
+			{ m_prompt, horizontalMargin, topInset, promptWidth, rowHeight },
+			{ m_input, horizontalMargin + promptWidth + gap, topInset, inputWidth, rowHeight },
+			{ m_close, (std::max)(horizontalMargin,
+				width - horizontalMargin - closeWidth), topInset, closeWidth, rowHeight },
+			{ m_list, horizontalMargin, listTop, listWidth, 0 },
+			{ m_empty, horizontalMargin, listTop, listWidth, 0 },
+		}};
+	} else {
+		placements = {{
+			{ m_prompt, horizontalMargin, topInset, promptWidth, rowHeight },
+			{ m_input, horizontalMargin + promptWidth + gap, topInset,
+				(std::max)(0, width - horizontalMargin * 2
+					- promptWidth - closeWidth - gap * 2), rowHeight },
+			{ m_close, (std::max)(horizontalMargin,
+				width - horizontalMargin - closeWidth), topInset, closeWidth, rowHeight },
+			{ m_list, horizontalMargin, listTop, listWidth,
+				(std::max)(0, listBottom - listTop) },
+			{ m_empty, horizontalMargin, listTop, listWidth,
+				(std::max)(0, listBottom - listTop) },
+		}};
+	}
 
 	HDWP transaction = ::BeginDeferWindowPos(static_cast<int>(std::size(placements)));
 	bool positioned = transaction != nullptr;
@@ -531,6 +800,7 @@ void CCommandPaletteOverlay::Layout(int width, int height) noexcept
 			}
 		}
 	}
+	UpdateOverlayScrollbar();
 	QueueNoEraseInvalidate(m_window);
 	for (const auto& placement : placements) QueueNoEraseInvalidate(placement.window);
 }
@@ -542,34 +812,43 @@ void CCommandPaletteOverlay::PopulateList(std::wstring_view preferredSelectionId
 	for (const auto& item : m_items) {
 		::SendMessageW(m_list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.label.c_str()));
 	}
+	RebuildRowPixelOffsets();
+	m_wheelDeltaRemainder = 0;
+	m_lastSelectableIndex = -1;
 	int selected = -1;
 	if (!preferredSelectionId.empty()) {
 		for (std::size_t index = 0; index < m_items.size(); ++index) {
-			if (m_items[index].enabled && m_items[index].id == preferredSelectionId) {
+			if (m_items[index].enabled && !m_items[index].separator
+				&& m_items[index].id == preferredSelectionId) {
 				selected = static_cast<int>(index);
 				break;
 			}
 		}
 	}
 	for (std::size_t index = 0; index < m_items.size(); ++index) {
-		if (selected < 0 && m_items[index].enabled) {
+		if (selected < 0 && m_items[index].enabled && !m_items[index].separator) {
 			selected = static_cast<int>(index);
 			break;
 		}
 	}
+	m_lastSelectableIndex = selected;
 	if (selected >= 0) ::SendMessageW(m_list, LB_SETCURSEL, selected, 0);
-	if (m_empty != nullptr) ::ShowWindow(m_empty, m_items.empty() ? SW_SHOW : SW_HIDE);
+	const bool hasSelectable = selected >= 0;
+	if (m_empty != nullptr) ::ShowWindow(m_empty, hasSelectable ? SW_HIDE : SW_SHOW);
+	UpdateOverlayScrollbar();
 	QueueNoEraseInvalidate(m_list);
-	NotifySelectionChanged();
+	if (!m_inputMode) NotifySelectionChanged();
 }
 
 void CCommandPaletteOverlay::UpdateSearch() noexcept
 {
-	if (m_input == nullptr) return;
+	if (m_input == nullptr || m_inputMode) return;
 	const auto previousSelectionId = SelectedItemId();
 	const std::wstring query = ReadWindowText(m_input);
 	if (!m_searchCallback) {
 		PopulateList(previousSelectionId);
+		Layout();
+		if (IsVisible()) PaintOverlayNow(m_window);
 		return;
 	}
 	try {
@@ -579,6 +858,8 @@ void CCommandPaletteOverlay::UpdateSearch() noexcept
 		m_items.clear();
 	}
 	PopulateList(previousSelectionId);
+	Layout();
+	if (IsVisible()) PaintOverlayNow(m_window);
 }
 
 void CCommandPaletteOverlay::MoveSelection(int direction) noexcept
@@ -591,9 +872,12 @@ void CCommandPaletteOverlay::MoveSelection(int direction) noexcept
 		current += direction;
 		if (current < 0) current = count - 1;
 		if (current >= count) current = 0;
-		if (m_items[static_cast<std::size_t>(current)].enabled) {
+		if (m_items[static_cast<std::size_t>(current)].enabled
+			&& !m_items[static_cast<std::size_t>(current)].separator) {
 			::SendMessageW(m_list, LB_SETCURSEL, current, 0);
+			m_lastSelectableIndex = current;
 			::InvalidateRect(m_list, nullptr, FALSE);
+			UpdateOverlayScrollbar();
 			NotifySelectionChanged();
 			return;
 		}
@@ -620,30 +904,93 @@ std::wstring CCommandPaletteOverlay::SelectedItemId() const
 	if (m_list == nullptr) return {};
 	const int selected = static_cast<int>(::SendMessageW(m_list, LB_GETCURSEL, 0, 0));
 	if (selected < 0 || static_cast<std::size_t>(selected) >= m_items.size()
-		|| !m_items[static_cast<std::size_t>(selected)].enabled) {
+		|| !m_items[static_cast<std::size_t>(selected)].enabled
+		|| m_items[static_cast<std::size_t>(selected)].separator) {
 		return {};
 	}
 	return m_items[static_cast<std::size_t>(selected)].id;
 }
 
+void CCommandPaletteOverlay::EnsureSelectableSelection() noexcept
+{
+	if (m_list == nullptr || m_repairingSelection || m_items.empty()) return;
+	const int selected = static_cast<int>(::SendMessageW(m_list, LB_GETCURSEL, 0, 0));
+	if (selected >= 0 && static_cast<std::size_t>(selected) < m_items.size()
+		&& m_items[static_cast<std::size_t>(selected)].enabled
+		&& !m_items[static_cast<std::size_t>(selected)].separator) {
+		m_lastSelectableIndex = selected;
+		return;
+	}
+
+	int replacement = m_lastSelectableIndex;
+	if (replacement < 0 || static_cast<std::size_t>(replacement) >= m_items.size()
+		|| !m_items[static_cast<std::size_t>(replacement)].enabled
+		|| m_items[static_cast<std::size_t>(replacement)].separator) {
+		replacement = -1;
+		for (std::size_t index = 0; index < m_items.size(); ++index) {
+			if (m_items[index].enabled && !m_items[index].separator) {
+				replacement = static_cast<int>(index);
+				break;
+			}
+		}
+	}
+	if (replacement < 0) return;
+	m_repairingSelection = true;
+	(void)::SendMessageW(m_list, LB_SETCURSEL, replacement, 0);
+	m_repairingSelection = false;
+	m_lastSelectableIndex = replacement;
+}
+
 void CCommandPaletteOverlay::Accept() noexcept
 {
-	if (!IsVisible() || m_list == nullptr) return;
+	if (!IsVisible() || m_terminalCallbackInProgress) return;
+	if (m_inputMode) {
+		const std::wstring value = ReadWindowText(m_input);
+		const auto callback = m_acceptCallback;
+		m_terminalCallbackInProgress = true;
+		Hide();
+		try {
+			if (callback) callback(value);
+		}
+		catch (...) {
+			// A terminal owner callback must never terminate the editor's UI loop.
+		}
+		m_terminalCallbackInProgress = false;
+		return;
+	}
+	if (m_list == nullptr) return;
 	const int selected = static_cast<int>(::SendMessageW(m_list, LB_GETCURSEL, 0, 0));
 	if (selected < 0 || static_cast<std::size_t>(selected) >= m_items.size()
-		|| !m_items[static_cast<std::size_t>(selected)].enabled) {
+		|| !m_items[static_cast<std::size_t>(selected)].enabled
+		|| m_items[static_cast<std::size_t>(selected)].separator) {
 		return;
 	}
 	std::wstring commandId = m_items[static_cast<std::size_t>(selected)].id;
+	const auto callback = m_acceptCallback;
+	m_terminalCallbackInProgress = true;
 	Hide();
-	if (m_acceptCallback) m_acceptCallback(std::move(commandId));
+	try {
+		if (callback) callback(std::move(commandId));
+	}
+	catch (...) {
+		// A terminal owner callback must never terminate the editor's UI loop.
+	}
+	m_terminalCallbackInProgress = false;
 }
 
 void CCommandPaletteOverlay::Cancel() noexcept
 {
-	if (!IsVisible()) return;
+	if (!IsVisible() || m_terminalCallbackInProgress) return;
+	const auto callback = m_cancelCallback;
+	m_terminalCallbackInProgress = true;
 	Hide();
-	if (m_cancelCallback) m_cancelCallback();
+	try {
+		if (callback) callback();
+	}
+	catch (...) {
+		// See Accept: cancellation is a terminal UI event, not an exception path.
+	}
+	m_terminalCallbackInProgress = false;
 }
 
 void CCommandPaletteOverlay::RestoreFocus() noexcept
@@ -659,7 +1006,7 @@ void CCommandPaletteOverlay::RestoreFocus() noexcept
 
 void CCommandPaletteOverlay::Paint(HDC dc, const RECT& bounds) noexcept
 {
-	const COLORREF panelColor = m_palette.panel.ToColorRef();
+	const COLORREF panelColor = m_palette.quickInputBackground.ToColorRef();
 	if (m_panelBrush != nullptr) {
 		::FillRect(dc, &bounds, m_panelBrush);
 	} else {
@@ -670,6 +1017,19 @@ void CCommandPaletteOverlay::Paint(HDC dc, const RECT& bounds) noexcept
 		RECT frame{};
 		::GetClientRect(m_window, &frame);
 		::FrameRect(dc, &frame, border);
+		if (m_input != nullptr && ::IsWindowVisible(m_input) != FALSE) {
+			RECT inputFrame{};
+			if (::GetWindowRect(m_input, &inputFrame) != FALSE) {
+				::MapWindowPoints(nullptr, m_window,
+					reinterpret_cast<POINT*>(&inputFrame), 2);
+				::InflateRect(&inputFrame, 1, 1);
+				const HBRUSH inputBorder = ::CreateSolidBrush(m_palette.inputBorder.ToColorRef());
+				if (inputBorder != nullptr) {
+					::FrameRect(dc, &inputFrame, inputBorder);
+					::DeleteObject(inputBorder);
+				}
+			}
+		}
 		::DeleteObject(border);
 	}
 }
@@ -678,36 +1038,86 @@ void CCommandPaletteOverlay::DrawItem(const DRAWITEMSTRUCT& draw) noexcept
 {
 	RECT bounds = draw.rcItem;
 	const bool valid = draw.itemID < m_items.size();
-	const bool selected = (draw.itemState & ODS_SELECTED) != 0;
-	const bool enabled = valid && m_items[draw.itemID].enabled;
-	const COLORREF background = selected ? m_palette.accent.ToColorRef() : m_palette.panel.ToColorRef();
+	const bool separator = valid && m_items[draw.itemID].separator;
+	const bool selected = !separator && (draw.itemState & ODS_SELECTED) != 0;
+	const bool enabled = valid && m_items[draw.itemID].enabled && !separator;
+	// Selection is a quiet list-surface elevation. The accent is reserved for
+	// focus/action affordances; using it as a full row fill makes the light
+	// Sakura palette look like a banner instead of a Quick Pick selection.
+	const COLORREF background = selected
+		? m_palette.listActiveSelectionBackground.ToColorRef()
+		: m_palette.quickInputBackground.ToColorRef();
 	FillWithColor(draw.hDC, bounds, background);
 	if (!valid) return;
 
 	const auto& item = m_items[draw.itemID];
 	const int padding = Scale(8);
 	const int lineHeight = Scale(17);
-	RECT label = bounds;
-	label.left += padding;
-	label.right -= padding;
-	label.top += Scale(3);
+	const int iconSide = Scale(16);
+	const int lineGap = Scale(8);
+	const bool hasDetail = !item.detail.empty();
+	if (separator) {
+		RECT heading = bounds;
+		heading.left += padding;
+		heading.right -= padding;
+		heading.top += Scale(3);
+		heading.bottom = heading.top + lineHeight;
+		::SetBkMode(draw.hDC, TRANSPARENT);
+		::SetTextColor(draw.hDC, m_palette.secondaryText.ToColorRef());
+		const HFONT oldFont = reinterpret_cast<HFONT>(::SelectObject(
+			draw.hDC, ControlFont(m_font.Get())));
+		::DrawTextW(draw.hDC, item.label.c_str(), -1, &heading,
+			DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX | DT_VCENTER);
+		if (oldFont != nullptr) ::SelectObject(draw.hDC, oldFont);
+		return;
+	}
+	RECT content = bounds;
+	content.left += padding;
+	content.right -= padding;
+	const int contentHeight = content.bottom - content.top;
+	RECT label = content;
+	label.top += hasDetail ? Scale(3) : (std::max)(0, (contentHeight - lineHeight) / 2);
 	label.bottom = label.top + lineHeight;
-	RECT detail = label;
-	detail.top += lineHeight;
+	RECT description = label;
+	RECT detail = content;
+	detail.top = label.top + lineHeight;
 	detail.bottom = detail.top + lineHeight;
 	const COLORREF labelColor = selected
-		? m_palette.highlightText.ToColorRef()
+		? m_palette.listActiveSelectionForeground.ToColorRef()
 		: (enabled ? m_palette.primaryText.ToColorRef() : m_palette.disabledText.ToColorRef());
 	const COLORREF detailColor = selected
-		? m_palette.highlightText.ToColorRef()
+		? m_palette.listActiveSelectionForeground.ToColorRef()
 		: (enabled ? m_palette.descriptionText.ToColorRef() : m_palette.disabledText.ToColorRef());
 	::SetBkMode(draw.hDC, TRANSPARENT);
 	::SetTextColor(draw.hDC, labelColor);
 	const HFONT oldFont = reinterpret_cast<HFONT>(::SelectObject(draw.hDC, ControlFont(m_font.Get())));
-	::DrawTextW(draw.hDC, item.label.c_str(), -1, &label,
-		DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX | DT_VCENTER);
+	const auto& faceName = workbench::icons::CCodiconFont::Instance().FaceName();
+	const auto labelRuns = workbench::icons::ParseLabelWithIcons(item.label, faceName);
+	const int availableWidth = (std::max)(0,
+		static_cast<int>(content.right - content.left));
+	if (!item.description.empty() && availableWidth > 0) {
+		SIZE descriptionExtent{};
+		(void)::GetTextExtentPoint32W(draw.hDC, item.description.c_str(),
+			static_cast<int>(item.description.size()), &descriptionExtent);
+		const int descriptionWidth = (std::min)(static_cast<int>(descriptionExtent.cx),
+			(std::max)(0, availableWidth / 2));
+		if (descriptionWidth > 0 && descriptionWidth + lineGap < availableWidth) {
+			label.right = content.right - descriptionWidth - lineGap;
+			description.left = label.right + lineGap;
+			description.right = content.right;
+		}
+	}
+	const workbench::icons::SLabelRunFontProvider fonts{
+		.acquire = [this](std::wstring_view, int height) { return AcquireCodiconFont(height); },
+		.release = {},
+	};
+	workbench::icons::DrawLabelRuns(draw.hDC, labelRuns, label, iconSide, labelColor, fonts);
 	::SetTextColor(draw.hDC, detailColor);
-	if (!item.detail.empty()) {
+	if (!item.description.empty()) {
+		::DrawTextW(draw.hDC, item.description.c_str(), -1, &description,
+			DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX | DT_VCENTER);
+	}
+	if (hasDetail) {
 		::DrawTextW(draw.hDC, item.detail.c_str(), -1, &detail,
 			DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX | DT_VCENTER);
 	}
@@ -718,7 +1128,8 @@ void CCommandPaletteOverlay::DrawCloseButton(const DRAWITEMSTRUCT& draw) noexcep
 {
 	const bool selected = (draw.itemState & (ODS_SELECTED | ODS_HOTLIGHT)) != 0;
 	FillWithColor(draw.hDC, draw.rcItem,
-		selected ? m_palette.raised.ToColorRef() : m_palette.panel.ToColorRef());
+		selected ? m_palette.listHoverBackground.ToColorRef()
+			: m_palette.quickInputBackground.ToColorRef());
 	const int width = static_cast<int>(draw.rcItem.right - draw.rcItem.left);
 	const int height = static_cast<int>(draw.rcItem.bottom - draw.rcItem.top);
 	const int side = (std::min)(Scale(18), (std::min)(width, height));
@@ -733,6 +1144,130 @@ void CCommandPaletteOverlay::DrawCloseButton(const DRAWITEMSTRUCT& draw) noexcep
 		workbench::icons::codicons::Draw(draw.hDC, iconBox,
 			workbench::icons::codicons::Icon::Close, color);
 	}
+}
+
+void CCommandPaletteOverlay::ScrollListByWheel(WPARAM wParam) noexcept
+{
+	if (m_list == nullptr) return;
+	const int count = static_cast<int>(::SendMessageW(m_list, LB_GETCOUNT, 0, 0));
+	if (count <= 0) return;
+
+	m_wheelDeltaRemainder += GET_WHEEL_DELTA_WPARAM(wParam);
+	const int notches = m_wheelDeltaRemainder / WHEEL_DELTA;
+	if (notches == 0) return;
+	m_wheelDeltaRemainder -= notches * WHEEL_DELTA;
+
+	UINT linesPerNotch = 3;
+	if (::SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, &linesPerNotch, 0) == FALSE) {
+		linesPerNotch = 3;
+	}
+	int rowsPerNotch = static_cast<int>(linesPerNotch);
+	if (linesPerNotch == WHEEL_PAGESCROLL) {
+		EnsureRowPixelOffsets();
+		RECT client{};
+		::GetClientRect(m_list, &client);
+		const int viewport = (std::max)(1, static_cast<int>(client.bottom - client.top));
+		const int top = (std::max)(0,
+			static_cast<int>(::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0)));
+		rowsPerNotch = 0;
+		int pixels = 0;
+		for (int index = top; index < count && pixels < viewport; ++index) {
+			const auto row = static_cast<std::size_t>(index);
+			if (row + 1 >= m_rowPixelOffsets.size()) break;
+			pixels += m_rowPixelOffsets[row + 1] - m_rowPixelOffsets[row];
+			++rowsPerNotch;
+		}
+		rowsPerNotch = (std::max)(1, rowsPerNotch);
+	}
+	if (rowsPerNotch <= 0) return;
+
+	const int top = static_cast<int>(::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0));
+	const long long rowDelta = -static_cast<long long>(notches) * rowsPerNotch;
+	const int next = static_cast<int>((std::clamp)(
+		static_cast<long long>(top) + rowDelta, 0LL, static_cast<long long>(count - 1)));
+	if (next == top) return;
+	(void)::SendMessageW(m_list, LB_SETTOPINDEX, static_cast<WPARAM>(next), 0);
+	(void)::RedrawWindow(m_list, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+	UpdateOverlayScrollbar();
+}
+
+void CCommandPaletteOverlay::ScrollListToPixelOffset(int pixelOffset) noexcept
+{
+	if (m_list == nullptr || m_items.empty()) return;
+	EnsureRowPixelOffsets();
+	if (m_rowPixelOffsets.size() < 2) return;
+	const int maximum = m_rowPixelOffsets.back();
+	const int requested = (std::clamp)(pixelOffset, 0, maximum);
+	const auto end = m_rowPixelOffsets.end() - 1;
+	auto upper = (std::lower_bound)(m_rowPixelOffsets.begin(), end, requested);
+	std::size_t row = 0;
+	if (upper == end) {
+		row = m_items.size() - 1;
+	} else if (upper == m_rowPixelOffsets.begin()) {
+		row = 0;
+	} else {
+		const auto lower = upper - 1;
+		const auto nearest = requested - *lower <= *upper - requested ? lower : upper;
+		row = static_cast<std::size_t>(nearest - m_rowPixelOffsets.begin());
+	}
+	(void)::SendMessageW(m_list, LB_SETTOPINDEX, static_cast<WPARAM>(row), 0);
+	(void)::RedrawWindow(m_list, nullptr, nullptr,
+		RDW_INVALIDATE | RDW_UPDATENOW | RDW_NOERASE);
+	// ScrollToPosition refreshes the overlay after this callback. Publish the
+	// actual LISTBOX-clamped top row before that refresh reads the pixel model.
+	m_overlayScrollbar.SetScrollModel(ListScrollModel());
+}
+
+void CCommandPaletteOverlay::RebuildRowPixelOffsets() noexcept
+{
+	m_rowPixelOffsets.clear();
+	m_rowPixelOffsets.reserve(m_items.size() + 1);
+	m_rowPixelOffsets.push_back(0);
+	for (const auto& item : m_items) {
+		int height = kQuickPickCompactRowHeightDip;
+		if (item.separator) height = kSeparatorRowHeightDip;
+		else if (!item.detail.empty()) height = kQuickPickDetailRowHeightDip;
+		m_rowPixelOffsets.push_back(m_rowPixelOffsets.back() + Scale(height));
+	}
+	const UINT dpi = m_window != nullptr ? ::GetDpiForWindow(m_window) : USER_DEFAULT_SCREEN_DPI;
+	m_rowPixelOffsetsDpi = dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi;
+}
+
+void CCommandPaletteOverlay::EnsureRowPixelOffsets() noexcept
+{
+	const UINT dpi = m_window != nullptr ? ::GetDpiForWindow(m_window) : USER_DEFAULT_SCREEN_DPI;
+	const UINT effectiveDpi = dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi;
+	if (m_rowPixelOffsets.size() != m_items.size() + 1
+		|| m_rowPixelOffsetsDpi != effectiveDpi) {
+		RebuildRowPixelOffsets();
+	}
+}
+
+controls::OverlayScrollbarModel CCommandPaletteOverlay::ListScrollModel() noexcept
+{
+	EnsureRowPixelOffsets();
+	RECT client{};
+	if (m_list != nullptr) ::GetClientRect(m_list, &client);
+	const int viewport = (std::max)(0, static_cast<int>(client.bottom - client.top));
+	const int count = static_cast<int>(m_items.size());
+	const int top = m_list == nullptr || count <= 0 ? 0 : (std::clamp)(
+		static_cast<int>(::SendMessageW(m_list, LB_GETTOPINDEX, 0, 0)), 0, count - 1);
+	const int offset = static_cast<std::size_t>(top) < m_rowPixelOffsets.size()
+		? m_rowPixelOffsets[static_cast<std::size_t>(top)] : 0;
+	return { .contentExtent = m_rowPixelOffsets.empty() ? 0 : m_rowPixelOffsets.back(),
+		.viewportExtent = viewport, .offset = offset };
+}
+
+void CCommandPaletteOverlay::UpdateOverlayScrollbar() noexcept
+{
+	if (m_overlayScrollbar.Get() == nullptr || m_list == nullptr) return;
+	const UINT dpi = m_window != nullptr ? ::GetDpiForWindow(m_window) : USER_DEFAULT_SCREEN_DPI;
+	m_overlayScrollbar.SetDpi(dpi == 0 ? USER_DEFAULT_SCREEN_DPI : dpi);
+	m_overlayScrollbar.SetColors(workbench::controls::ResolveOverlayScrollbarColors(
+		m_palette, m_palette.quickInputBackground));
+	m_overlayScrollbar.SetScrollModel(ListScrollModel());
+	m_overlayScrollbar.Update();
 }
 
 HFONT CCommandPaletteOverlay::AcquireCodiconFont(int height) noexcept
@@ -771,8 +1306,8 @@ void CCommandPaletteOverlay::ReleaseCodiconFont() noexcept
 void CCommandPaletteOverlay::RebuildBrushes() noexcept
 {
 	ResetBrushes();
-	m_panelBrush = ::CreateSolidBrush(m_palette.panel.ToColorRef());
-	m_inputBrush = ::CreateSolidBrush(m_palette.raised.ToColorRef());
+	m_panelBrush = ::CreateSolidBrush(m_palette.quickInputBackground.ToColorRef());
+	m_inputBrush = ::CreateSolidBrush(m_palette.inputBackground.ToColorRef());
 }
 
 void CCommandPaletteOverlay::ResetBrushes() noexcept

@@ -18,6 +18,8 @@
 */
 #pragma once
 
+#include "theme/CThemeService.h"
+
 #include <Windows.h>
 
 #include <algorithm>
@@ -33,7 +35,25 @@ struct OverlayScrollbarColors {
 	COLORREF trackHover = RGB(0x2A, 0x2E, 0x36);
 	COLORREF thumb = RGB(0x38, 0x3E, 0x49);
 	COLORREF thumbHover = RGB(0x8B, 0x91, 0x9B);
+	COLORREF thumbActive = RGB(0x8B, 0x91, 0x9B);
+	[[nodiscard]] constexpr bool operator==(const OverlayScrollbarColors&) const noexcept = default;
 };
+
+//! Resolves VS Code's translucent scrollbar tokens over the concrete surface
+//! that owns the overlay. The track does not change color on hover; only the
+//! slider moves through normal, hover, and active roles upstream.
+[[nodiscard]] constexpr OverlayScrollbarColors ResolveOverlayScrollbarColors(
+	const theme::ThemePalette& palette, theme::ThemeColor surface) noexcept
+{
+	const theme::ThemeColor track = theme::CompositeThemeColor(palette.scrollbarBackground, surface);
+	return {
+		track.ToColorRef(),
+		track.ToColorRef(),
+		theme::CompositeThemeColor(palette.scrollbarSliderBackground, track).ToColorRef(),
+		theme::CompositeThemeColor(palette.scrollbarSliderHoverBackground, track).ToColorRef(),
+		theme::CompositeThemeColor(palette.scrollbarSliderActiveBackground, track).ToColorRef(),
+	};
+}
 
 //! Pixel extents and offset used by an overlay with an explicit scroll model.
 //!
@@ -129,6 +149,11 @@ public:
 
 	void SetDpi(unsigned int dpi) noexcept { m_dpi = dpi == 0 ? 96u : dpi; }
 
+	//! Hides a native bar exposed by an ExplicitModel target before painting the
+	//! overlay. Leave this off for pure pixel-model surfaces such as Markdown,
+	//! which must not query or mutate native scrollbar state.
+	void SetHideNativeBar(bool hide) noexcept { m_hideNativeBar = hide; }
+
 	/*!
 		@brief Places the overlay explicitly, in parent client coordinates
 
@@ -137,7 +162,11 @@ public:
 		this rectangle instead of deriving one from the target.
 	*/
 	void SetBounds(const RECT& parentRect) noexcept { m_bounds = parentRect; m_hasBounds = true; }
-	void SetColors(const OverlayScrollbarColors& colors) noexcept { m_colors = colors; }
+	void SetColors(const OverlayScrollbarColors& colors) noexcept {
+		if (m_colors == colors) return;
+		m_colors = colors;
+		Invalidate();
+	}
 
 	//! Replaces the pixel model used by OverlayScrollbarSource::ExplicitModel.
 	//! Extents are clamped to non-negative values and offset to its valid range.
@@ -185,6 +214,7 @@ private:
 	OverlayScrollbarOrientation m_orientation = OverlayScrollbarOrientation::Vertical;
 	RECT m_bounds{};
 	bool m_hasBounds{};
+	bool m_hideNativeBar{};
 	SetTopRowCallback m_setTopRow;
 	std::optional<OverlayScrollbarModel> m_scrollModel;
 	OverlayScrollbarColors m_colors;

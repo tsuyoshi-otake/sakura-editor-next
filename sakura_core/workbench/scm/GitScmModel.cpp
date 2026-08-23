@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "workbench/scm/GitScmModel.h"
+#include "workbench/scm/GitCommandRunner.h"
 
 #include <charconv>
 #include <utility>
@@ -64,6 +65,13 @@ GitChange MakeChange(
 }
 
 } // namespace
+
+EGitStatusRefreshDisposition ClassifyGitStatusRefresh(EGitExecutionStatus status) noexcept
+{
+	return status == EGitExecutionStatus::Succeeded
+		? EGitStatusRefreshDisposition::ApplySnapshot
+		: EGitStatusRefreshDisposition::RetainSnapshot;
+}
 
 GitScmState ParsePorcelainV2(std::string_view bytes)
 {

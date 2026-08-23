@@ -20,6 +20,7 @@ constexpr int kDefaultDpi = 96;
 constexpr int kTitleHeightDip = 34;
 constexpr int kDocumentTabsHeightDip = 32;
 constexpr int kActivityBarWidthDip = 42;
+constexpr int kActivityBarHeightDip = 35;
 constexpr int kStatusHeightDip = 22;
 // VS Code's sash reserves only the one-pixel part boundary.  Its easier-to-hit
 // four-DIP interaction target is projected by the native host and must not take
@@ -65,6 +66,11 @@ constexpr int kEditorMinimumHeightDip = 180;
 {
 	const auto end = static_cast<std::int64_t>(start) + NonNegative(length);
 	return static_cast<int>(std::min<std::int64_t>(end, limit));
+}
+
+[[nodiscard]] bool IsHorizontalActivityBar(ActivityBarLocation location) noexcept
+{
+	return location == ActivityBarLocation::Top || location == ActivityBarLocation::Bottom;
 }
 
 // Scale desired auxiliary widths into budget while retaining their relative proportions.
@@ -121,7 +127,16 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	const int sidePaneTop = titleHeight + topAccessoryHeight;
 	const int editorTop = sidePaneTop + tabsHeight;
 	const int bodyBottom = height - statusHeight - bottomAccessoryHeight;
-	const int activityWidth = std::min(width, ScaleDip(kActivityBarWidthDip, dpi));
+	// There is deliberately no Hidden value in ActivityBarLocation.  A malformed
+	// value from an untyped settings boundary therefore falls back to the pinned
+	// vertical default instead of looking like a supported hidden layout.
+	const auto activityBarLocation = IsSupportedActivityBarLocation(request.activityBarLocation)
+		? request.activityBarLocation
+		: ActivityBarLocation::Default;
+	const bool horizontalActivityBar = IsHorizontalActivityBar(activityBarLocation);
+	const int activityWidth = horizontalActivityBar
+		? 0
+		: std::min(width, ScaleDip(kActivityBarWidthDip, dpi));
 
 	WorkbenchLayout layout;
 	layout.titleBar = MakeRect(0, 0, width, titleHeight);
@@ -173,12 +188,49 @@ WorkbenchLayout CalculateWorkbenchLayout(const WorkbenchLayoutRequest& request) 
 	const int editorBottom = bodyBottom - bottomPane - bottomSplitter;
 	const int minimapLeft = std::max(centralLeft, centralRight - minimap);
 	layout.documentTabs = MakeRect(centralLeft, sidePaneTop, centralRight, editorTop);
-	layout.leftPane = MakeRect(activityWidth, sidePaneTop, activityWidth + leftPane, bodyBottom);
+	const auto primarySideBar = MakeRect(activityWidth, sidePaneTop, activityWidth + leftPane, bodyBottom);
 	layout.leftSplitter = MakeRect(activityWidth + leftPane, sidePaneTop, centralLeft, bodyBottom);
 	layout.editor = MakeRect(centralLeft, editorTop, minimapLeft, editorBottom);
 	layout.minimap = MakeRect(minimapLeft, editorTop, centralRight, editorBottom);
 	layout.rightSplitter = MakeRect(centralRight, sidePaneTop, centralRight + rightSplitter, bodyBottom);
-	layout.rightPane = MakeRect(centralRight + rightSplitter, sidePaneTop, width, bodyBottom);
+	const auto secondarySideBar = MakeRect(centralRight + rightSplitter, sidePaneTop, width, bodyBottom);
+	layout.leftPane = primarySideBar;
+	layout.rightPane = secondarySideBar;
+
+	// In the horizontal locations the composite bar is part of each visible
+	// side-bar Part.  Reserve its band from that Part's content rectangle rather
+	// than overlaying the ViewContainer host.  The legacy `activityBar` field is
+	// kept only for the default vertical layout; callers that support both
+	// sidebars use the two explicit fields below.
+	layout.activityBar = {};
+	layout.primaryActivityBar = {};
+	layout.secondaryActivityBar = {};
+	if (!horizontalActivityBar) {
+		layout.activityBar = MakeRect(0, sidePaneTop, activityWidth, bodyBottom);
+		layout.primaryActivityBar = layout.activityBar;
+	} else {
+		const int barExtent = ScaleDip(kActivityBarHeightDip, dpi);
+		const auto reserve = [activityBarLocation, barExtent](const WorkbenchRect total,
+			WorkbenchRect& bar, WorkbenchRect& content) noexcept {
+			if (total.Width() <= 0 || total.Height() <= 0) {
+				bar = {};
+				content = total;
+				return;
+			}
+			const int extent = std::min(total.Height(), NonNegative(barExtent));
+			if (activityBarLocation == ActivityBarLocation::Top) {
+				bar = MakeRect(total.left, total.top, total.right,
+					BoundedEnd(total.top, extent, total.bottom));
+				content = MakeRect(total.left, bar.bottom, total.right, total.bottom);
+			} else {
+				const int barTop = std::max(total.top, total.bottom - extent);
+				bar = MakeRect(total.left, barTop, total.right, total.bottom);
+				content = MakeRect(total.left, total.top, total.right, bar.top);
+			}
+		};
+		reserve(primarySideBar, layout.primaryActivityBar, layout.leftPane);
+		reserve(secondarySideBar, layout.secondaryActivityBar, layout.rightPane);
+	}
 	layout.bottomSplitter = MakeRect(centralLeft, editorBottom, centralRight, editorBottom + bottomSplitter);
 	layout.bottomPane = MakeRect(centralLeft, editorBottom + bottomSplitter, centralRight, bodyBottom);
 	const int headerHeight = ScaleDip(request.paneHeaderHeightDip, dpi);

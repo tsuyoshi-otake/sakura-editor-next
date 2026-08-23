@@ -72,6 +72,7 @@
 #include "window/CCustomFrameController.h"
 #include "window/DocumentBreadcrumbs.h"
 #include "markdown/CMarkdownPreviewWnd.h"
+#include "markdown/MarkdownRemoteImageFetcher.h"
 #include "markdown/MarkdownPreviewLayout.h"
 #include "terminal/window/CTerminalTool.h"
 #include "theme/CThemeService.h"
@@ -79,6 +80,7 @@
 #include "update/UpdateComposition.h"
 #include "update/IUpdateService.h"
 #include "config/ConfigurationTypes.h"
+#include "config/CConfigurationNetworkPolicy.h"
 #include "config/SettingsWritebackCoordinator.h"
 #include "config/editing/CJsoncConfigurationEditor.h"
 #include "workbench/CWorkbenchPanelHost.h"
@@ -954,6 +956,18 @@ void ReplaceLocalizedArgument(std::wstring& text, std::wstring_view argument)
 	return std::wstring(fallback);
 }
 
+[[nodiscard]] workbench::ActivityBarLocationMenuLabels ActivityBarLocationMenuLabels()
+{
+	const WORD language = PRIMARYLANGID(CSelectLang::getDefaultLangId());
+	if (language == LANG_JAPANESE) {
+		return { L"アクティビティ バーの位置", L"既定値", L"上部", L"下部" };
+	}
+	if (language == LANG_CHINESE) {
+		return { L"活动栏位置", L"默认", L"顶部", L"底部" };
+	}
+	return {};
+}
+
 class ScopedWorkingCopyBackendEffect final {
 public:
 	explicit ScopedWorkingCopyBackendEffect(bool& value) noexcept
@@ -1193,6 +1207,7 @@ struct CEditWnd::ThemeConfigurationGate final {
 			// Activity Bar paints, and VS Code applies it the moment it changes
 			// rather than at the next Source Control publication.
 			return change.key == "workbench.colorTheme" || change.key == "workbench.iconTheme"
+				|| change.key == "workbench.activityBar.location"
 				|| change.key == "scm.countBadge"
 				|| change.key == "terminal.integrated.tabs.title"
 				|| change.key == "terminal.integrated.tabs.description"
@@ -2813,14 +2828,55 @@ bool CEditWnd::InitializeWorkbench()
 		}
 		ActivateSidebarPage(containerId, true);
 	});
-	m_activityBar->SetGlobalActionCallback([this](std::string_view actionId, POINT screenPoint) {
+	m_auxiliaryActivityBar = std::make_unique<workbench::CActivityBar>(
+		[this](std::string_view containerId) {
+			if (m_workbenchRuntime == nullptr || m_viewContainerPages == nullptr
+				|| !m_viewContainerPages->Contains(containerId)) return;
+			if (IsAuxiliaryViewContainerActive(containerId)) {
+				SetWorkbenchPanelVisible(workbench::WorkbenchEdge::Right, false, false);
+				return;
+			}
+			namespace pageIds = workbench::viewcontainer::pageIds;
+			std::string_view viewId;
+			if (containerId == pageIds::Explorer) viewId = workbench::layout::ids::view::Explorer;
+			else if (containerId == pageIds::Search) viewId = workbench::layout::ids::view::Search;
+			else if (containerId == pageIds::SourceControl) viewId = workbench::layout::ids::view::SourceControl;
+			if (!viewId.empty()) static_cast<void>(ActivateBuiltinWorkbenchView(viewId, true));
+		});
+	const auto showGlobalAction = [this](std::string_view actionId, POINT screenPoint) {
 		if (m_customFrame == nullptr) return;
 		if (actionId == workbench::activity::kAccountsActivityId) {
 			m_customFrame->ShowAccountMenuAt(screenPoint);
 		} else if (actionId == workbench::activity::kManageActivityId) {
 			m_customFrame->ShowManageMenuAt(screenPoint);
 		}
-	});
+	};
+	m_activityBar->SetGlobalActionCallback(showGlobalAction);
+	m_auxiliaryActivityBar->SetGlobalActionCallback(showGlobalAction);
+	const auto changeLocation = [this](workbench::ActivityBarLocation location) {
+		std::string_view commandId;
+		switch (location) {
+		case workbench::ActivityBarLocation::Default:
+			commandId = "workbench.action.activityBarLocation.default"; break;
+		case workbench::ActivityBarLocation::Top:
+			commandId = "workbench.action.activityBarLocation.top"; break;
+		case workbench::ActivityBarLocation::Bottom:
+			commandId = "workbench.action.activityBarLocation.bottom"; break;
+		default:
+			return;
+		}
+		bool handled = false;
+		if (m_workbenchCommandRegistry != nullptr) {
+			static_cast<void>(TryExecuteWorkbenchStableCommand(commandId, handled));
+			return;
+		}
+		static_cast<void>(SetActivityBarLocation(location, true));
+	};
+	m_activityBar->SetLocationRequestCallback(changeLocation);
+	m_auxiliaryActivityBar->SetLocationRequestCallback(changeLocation);
+	const auto locationLabels = ActivityBarLocationMenuLabels();
+	m_activityBar->SetLocationMenuLabels(locationLabels);
+	m_auxiliaryActivityBar->SetLocationMenuLabels(locationLabels);
 	// VS Code's Activity Bar icon is a composite drag handle: dropping it on another side
 	// bar runs the same `moveViewContainerToLocation` the Command Palette move uses.
 	m_activityBar->SetContainerDragCallback([this](std::string_view containerId, POINT screenPoint) {
@@ -2830,7 +2886,19 @@ bool CEditWnd::InitializeWorkbench()
 			MoveViewContainerToEdge(containerId, *target);
 		}
 	});
+	m_auxiliaryActivityBar->SetContainerDragCallback(
+		[this](std::string_view containerId, POINT screenPoint) {
+			if (m_viewContainerPages == nullptr || !m_viewContainerPages->Contains(containerId)) return;
+			if (const auto target = HitTestSideBarEdge(screenPoint);
+				target && *target != workbench::WorkbenchEdge::Right) {
+				MoveViewContainerToEdge(containerId, *target);
+			}
+		});
 	if (!m_activityBar->Create(GetHwnd(), G_AppInstance())) m_activityBar.reset();
+	if (!m_auxiliaryActivityBar->Create(GetHwnd(), G_AppInstance())) {
+		m_auxiliaryActivityBar.reset();
+	}
+	ApplyActivityBarLocationSetting();
 	// The strip is empty until it is projected, and the first layout commit can be far away
 	// (or never arrive at all on the legacy path), so seed it as soon as the window exists.
 	SyncViewContainers(nullptr);
@@ -2868,6 +2936,7 @@ bool CEditWnd::InitializeWorkbench()
 		&& m_rightWorkbenchPanel != nullptr
 		&& m_bottomWorkbenchPanel != nullptr
 		&& m_activityBar != nullptr
+		&& m_auxiliaryActivityBar != nullptr
 		&& (!editorBridgeEnabled
 			|| (m_emptyEditorSurface != nullptr && m_diffSurface != nullptr));
 	if (!initialized) {
@@ -3079,6 +3148,30 @@ bool CEditWnd::InitializeWorkbench()
 						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
 					: workbench::commands::WorkbenchCommandExecutionResult{
 						workbench::commands::EWorkbenchCommandExecutionStatus::Failed, "sidebar layout command failed" };
+			},
+			.activityBarLocationDefault = [this]() {
+				return SetActivityBarLocation(workbench::ActivityBarLocation::Default, true)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"activity bar location could not be saved" };
+			},
+			.activityBarLocationTop = [this]() {
+				return SetActivityBarLocation(workbench::ActivityBarLocation::Top, true)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"activity bar location could not be saved" };
+			},
+			.activityBarLocationBottom = [this]() {
+				return SetActivityBarLocation(workbench::ActivityBarLocation::Bottom, true)
+					? workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Succeeded, {} }
+					: workbench::commands::WorkbenchCommandExecutionResult{
+						workbench::commands::EWorkbenchCommandExecutionStatus::Failed,
+						"activity bar location could not be saved" };
 			},
 			.showExplorer = [this]() {
 				return ExecuteShowExplorerCommand()
@@ -3607,7 +3700,6 @@ bool CEditWnd::ShowColorThemePicker()
 			items.push_back({
 				.id = colorTheme.label,
 				.label = colorTheme.label,
-				.detail = L"Sakura Editor NEXT",
 				.enabled = true,
 			});
 		}
@@ -3690,118 +3782,182 @@ workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitBranchC
 		return { EWorkbenchCommandExecutionStatus::NotApplicable, "no repository is open in this window" };
 	}
 
-	// Every branch command shows exactly one caption, and it is upstream's own
-	// command title. Real VS Code's quick input has no title bar at all; this
-	// dialog is a framed window and must caption itself with something, so it
-	// reuses the string upstream already publishes for the command.
-	std::string_view commandId = "git.checkout";
-	std::wstring_view fallback = L"Checkout to...";
-	switch (command) {
-	case EGitBranchCommand::CheckoutDetached:
-		commandId = "git.checkoutDetached"; fallback = L"Checkout to (Detached)..."; break;
-	case EGitBranchCommand::Branch:
-		commandId = "git.branch"; fallback = L"Create Branch..."; break;
-	case EGitBranchCommand::BranchFrom:
-		commandId = "git.branchFrom"; fallback = L"Create Branch From..."; break;
-	case EGitBranchCommand::Checkout:
-	default:
-		break;
-	}
-	const std::wstring caption = LocalizedWorkbenchCommandTitle(commandId, fallback);
+	// Quick Input is non-modal, so the session gate survives after this command
+	// returns and is invalidated before the window's workbench is torn down.
+	auto session = std::make_shared<std::atomic_bool>(true);
+	if (m_gitBranchCommandSession) m_gitBranchCommandSession->store(false);
+	m_gitBranchCommandSession = session;
 
 	workbench::scm::GitBranchCommandContext context;
 	context.text = [](std::string_view key, std::wstring_view argument) {
 		return ResolveLocalizedScmTextKey(key, argument);
 	};
-	context.run = [&root, sink = MakeGitOutputSink(m_outputService)]
+	context.run = [root, session, sink = MakeGitOutputSink(m_outputService)]
 		(const std::vector<std::wstring>& arguments) {
+		if (!session->load()) return workbench::scm::GitExecutionResult{};
 		workbench::scm::GitExecutionRequest request;
 		request.workingDirectory = root;
 		request.arguments = arguments;
 		return workbench::scm::RunGitLogged(request, nullptr, sink);
 	};
-	context.quickPick = [this, caption](const std::vector<workbench::scm::GitCheckoutItem>& items,
-		std::wstring_view placeholder) -> std::optional<std::size_t> {
-		SQuickInputRequest request;
-		request.kind = EQuickInputKind::QuickPick;
-		request.title = caption;
-		request.placeholder = placeholder;
-		// The native list has no group headers, so upstream's `RefItemSeparator`
-		// rows are dropped rather than rendered as selectable text. `positions`
-		// maps a rendered row back to the model row it came from, so dropping a
-		// separator can never shift the selection onto the wrong ref.
-		std::vector<std::size_t> positions;
-		request.items.reserve(items.size());
-		positions.reserve(items.size());
-		for (std::size_t index = 0; index < items.size(); ++index) {
-			if (items[index].kind == workbench::scm::EGitCheckoutItemKind::Separator) continue;
-			request.items.push_back({
-				.sourceIndex = positions.size(),
-				.label = items[index].label,
-				.description = items[index].description,
-			});
-			positions.push_back(index);
-		}
-		if (request.items.empty()) return std::nullopt;
-		CQuickInputDialog dialog(request);
-		const auto completion = dialog.DoModal(GetHwnd());
-		if (completion.state != EQuickInputState::Accepted
-			|| completion.selectedIndices.size() != 1) {
-			return std::nullopt;
-		}
-		const auto selected = completion.selectedIndices.front();
-		if (selected >= positions.size()) return std::nullopt;
-		return positions[selected];
-	};
-	context.inputBox = [this, caption](std::wstring_view prompt, std::wstring_view placeholder,
-		std::wstring_view value) -> std::optional<std::wstring> {
-		SQuickInputRequest request;
-		request.kind = EQuickInputKind::InputBox;
-		// Upstream's input box carries a title and a separate prompt line. This
-		// dialog renders only a caption, so the prompt takes it: the validation
-		// message a rejected name produces must stay visible on the modal that
-		// asks for the replacement, not go to a surface behind it.
-		request.title = prompt.empty() ? caption : std::wstring(prompt);
-		request.placeholder = placeholder;
-		request.value = value;
-		CQuickInputDialog dialog(request);
-		const auto completion = dialog.DoModal(GetHwnd());
-		if (completion.state != EQuickInputState::Accepted) return std::nullopt;
-		return completion.value.value_or(std::wstring{});
-	};
-	context.message = [this](std::wstring_view message) {
+	context.message = [this, session](std::wstring_view message) {
+		if (!session->load() || GetHwnd() == nullptr) return;
 		m_cStatusBar.SetStatusText(0, SBT_NOBORDERS, std::wstring(message).c_str());
 	};
-
-	workbench::scm::GitBranchCommandResult result{};
+	context.quickPickAsync = [this, session](
+		const std::vector<workbench::scm::GitCheckoutItem>& initialItems,
+		std::wstring_view placeholder,
+		std::function<std::vector<workbench::scm::GitCheckoutItem>(std::wstring_view)> search,
+		std::function<void(std::optional<workbench::scm::GitCheckoutItem>)> completion) {
+		if (!session->load() || GetHwnd() == nullptr || !EnsureQuickInputOverlay()) {
+			if (completion) completion(std::nullopt);
+			return;
+		}
+		struct QuickPickState {
+			std::vector<workbench::scm::GitCheckoutItem> visible;
+			std::function<std::vector<workbench::scm::GitCheckoutItem>(std::wstring_view)> search;
+		};
+		auto state = std::make_shared<QuickPickState>();
+		state->visible = initialItems;
+		state->search = std::move(search);
+		const auto lowercase = [](std::wstring_view value) {
+			std::wstring result(value);
+			for (auto& character : result) character = static_cast<wchar_t>(std::towlower(character));
+			return result;
+		};
+		const auto itemId = [](const workbench::scm::GitCheckoutItem& item) {
+			const auto kind = std::to_wstring(static_cast<int>(item.kind));
+			return L"git-quickpick:" + kind + L":" + item.refName + L":" + item.label;
+		};
+		const auto convert = [state, itemId](std::vector<workbench::scm::GitCheckoutItem> items) {
+			state->visible = std::move(items);
+			std::vector<workbench::quickinput::CommandPaletteItem> converted;
+			converted.reserve(state->visible.size());
+			for (const auto& item : state->visible) {
+				const bool separator = item.kind == workbench::scm::EGitCheckoutItemKind::Separator;
+				converted.push_back({
+					.id = itemId(item),
+					.label = item.label,
+					.description = item.description,
+					.detail = {},
+					.enabled = !separator,
+					.separator = separator,
+				});
+			}
+			return converted;
+		};
+		m_commandPaletteOverlay->SetStringsCallback([placeholder = std::wstring(placeholder)] {
+			return workbench::quickinput::QuickInputStrings {
+				.placeholder = placeholder,
+				.noResults = LocalizedWorkbenchString(STR_WORKBENCH_COMMAND_PALETTE_NO_RESULTS),
+			};
+		});
+		m_commandPaletteOverlay->SetSearchCallback([state, convert, lowercase](std::wstring_view query) {
+			std::vector<workbench::scm::GitCheckoutItem> rows = state->search
+				? state->search(query) : state->visible;
+			if (!query.empty()) {
+				const auto lowered = lowercase(query);
+				std::vector<workbench::scm::GitCheckoutItem> filtered;
+				std::optional<workbench::scm::GitCheckoutItem> pendingSeparator;
+				for (const auto& item : rows) {
+					if (item.kind == workbench::scm::EGitCheckoutItemKind::Separator) {
+						pendingSeparator = item;
+						continue;
+					}
+					const auto haystack = lowercase(item.label + L" " + item.description);
+					if (haystack.find(lowered) == std::wstring::npos) continue;
+					if (pendingSeparator) {
+						filtered.push_back(std::move(*pendingSeparator));
+						pendingSeparator.reset();
+					}
+					filtered.push_back(item);
+				}
+				rows = std::move(filtered);
+			}
+			return convert(std::move(rows));
+		});
+		m_commandPaletteOverlay->SetSelectionCallback({});
+		m_commandPaletteOverlay->SetAcceptCallback([state, itemId, completion, session](std::wstring id) {
+			if (!session->load()) return;
+			for (const auto& item : state->visible) {
+				if (itemId(item) == id && item.kind != workbench::scm::EGitCheckoutItemKind::Separator) {
+					if (completion) completion(item);
+					return;
+				}
+			}
+			if (completion) completion(std::nullopt);
+		});
+		m_commandPaletteOverlay->SetCancelCallback([completion, session] {
+			if (!session->load()) return;
+			if (completion) completion(std::nullopt);
+		});
+		if (!m_commandPaletteOverlay->Show(convert(initialItems))) {
+			if (completion) completion(std::nullopt);
+		}
+	};
+	context.inputBoxAsync = [this, session](std::wstring_view prompt, std::wstring_view placeholder,
+		std::wstring_view value, std::function<void(std::optional<std::wstring>)> completion) {
+		if (!session->load() || GetHwnd() == nullptr || !EnsureQuickInputOverlay()) {
+			if (completion) completion(std::nullopt);
+			return;
+		}
+		m_commandPaletteOverlay->SetStringsCallback({});
+		m_commandPaletteOverlay->SetSearchCallback({});
+		m_commandPaletteOverlay->SetSelectionCallback({});
+		m_commandPaletteOverlay->SetAcceptCallback([completion, session](std::wstring typed) {
+			if (!session->load()) return;
+			if (completion) completion(std::move(typed));
+		});
+		m_commandPaletteOverlay->SetCancelCallback([completion, session] {
+			if (!session->load()) return;
+			if (completion) completion(std::nullopt);
+		});
+		if (!m_commandPaletteOverlay->ShowInput(prompt, placeholder, value)) {
+			if (completion) completion(std::nullopt);
+		}
+	};
+	const auto completion = [this, session](workbench::scm::GitBranchCommandResult result) {
+	if (!session->exchange(false) || GetHwnd() == nullptr) return;
+	if (m_commandPaletteOverlay) {
+		m_commandPaletteOverlay->SetStringsCallback({});
+		m_commandPaletteOverlay->SetSearchCallback({});
+		m_commandPaletteOverlay->SetSelectionCallback({});
+		m_commandPaletteOverlay->SetAcceptCallback({});
+		m_commandPaletteOverlay->SetCancelCallback({});
+	}
+	m_gitBranchCommandSession.reset();
+		switch (result.status) {
+		case workbench::scm::EGitBranchCommandStatus::Succeeded:
+			// HEAD moved, so every published SCM fact is stale. Refreshing here is
+			// what upstream's repository status refresh does after an operation.
+			if (m_scmTool != nullptr) m_scmTool->Refresh();
+			break;
+		case workbench::scm::EGitBranchCommandStatus::Cancelled:
+			break;
+		case workbench::scm::EGitBranchCommandStatus::Failed:
+		default:
+			if (!result.message.empty()) {
+				m_cStatusBar.SetStatusText(0, SBT_NOBORDERS,
+					std::wstring(result.message).c_str());
+			}
+			break;
+		}
+	};
 	switch (command) {
 	case EGitBranchCommand::Checkout:
-		result = workbench::scm::RunGitCheckout(context, false);
+		workbench::scm::RunGitCheckoutAsync(context, false, completion);
 		break;
 	case EGitBranchCommand::CheckoutDetached:
-		result = workbench::scm::RunGitCheckout(context, true);
+		workbench::scm::RunGitCheckoutAsync(context, true, completion);
 		break;
 	case EGitBranchCommand::Branch:
-		result = workbench::scm::RunGitCreateBranch(context, false);
+		workbench::scm::RunGitCreateBranchAsync(context, false, completion);
 		break;
 	case EGitBranchCommand::BranchFrom:
-		result = workbench::scm::RunGitCreateBranch(context, true);
+		workbench::scm::RunGitCreateBranchAsync(context, true, completion);
 		break;
 	}
-
-	switch (result.status) {
-	case workbench::scm::EGitBranchCommandStatus::Succeeded:
-		// HEAD moved, so every published SCM fact is stale. Refreshing here is
-		// what upstream's repository status refresh does after an operation.
-		if (m_scmTool != nullptr) m_scmTool->Refresh();
-		return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
-	case workbench::scm::EGitBranchCommandStatus::Cancelled:
-		return { EWorkbenchCommandExecutionStatus::NotApplicable, "the user dismissed the picker" };
-	case workbench::scm::EGitBranchCommandStatus::Failed:
-	default:
-		break;
-	}
-	return { EWorkbenchCommandExecutionStatus::Failed, wcstou8s(result.message) };
+	return { EWorkbenchCommandExecutionStatus::Succeeded, {} };
 }
 
 workbench::commands::WorkbenchCommandExecutionResult CEditWnd::ExecuteGitInitCommand(
@@ -5388,6 +5544,10 @@ void CEditWnd::SetStatusbarEntryHidden(std::string_view id, bool hidden)
 
 void CEditWnd::CloseWorkbench() noexcept
 {
+	if (m_gitBranchCommandSession) {
+		m_gitBranchCommandSession->store(false);
+		m_gitBranchCommandSession.reset();
+	}
 	// Fence every surface lifetime before any page HWND or callback gate can be
 	// destroyed. This only requests close and transfers thread ownership; it
 	// never waits on the UI thread.
@@ -5447,6 +5607,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	m_colorThemeRegistry.reset();
 	theme::CThemeService::ClearActiveColorThemePalette();
 	if (m_activityBar) m_activityBar->Close();
+	if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->Close();
 	// The shared pages are borrowed by both side-bar hosts, so they must be destroyed
 	// before either host window that may still be their parent.
 	if (m_viewContainerPages) m_viewContainerPages->Close();
@@ -5454,6 +5615,7 @@ void CEditWnd::CloseWorkbench() noexcept
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Close();
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Close();
 	m_activityBar.reset();
+	m_auxiliaryActivityBar.reset();
 	m_leftWorkbenchPanel.reset();
 	m_rightWorkbenchPanel.reset();
 	m_bottomWorkbenchPanel.reset();
@@ -5528,10 +5690,8 @@ bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 
 	theme::CThemeService::ClearActiveColorThemePalette();
 	if (resolvedTheme) {
-		theme::CThemeService::SetActiveColorThemePalette(resolvedTheme->palette);
-		if (theme::CThemeService::IsHighContrastActive()) {
-			theme::CThemeService::ClearActiveColorThemeSyntaxPalette();
-		} else {
+		if (!theme::CThemeService::IsHighContrastActive()) {
+			theme::CThemeService::SetActiveColorThemePalette(resolvedTheme->palette);
 			theme::CThemeService::SetActiveColorThemeSyntaxPalette(resolvedTheme->syntaxPalette);
 		}
 		mode = theme::CColorThemeRegistry::ModeForKind(resolvedTheme->info.kind);
@@ -5542,6 +5702,21 @@ bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 	// icon theme's `light` section, the way VS Code's `.vs` body class does, so no
 	// part host in between has to carry an icon-theme argument it never reads.
 	theme::CThemeService::SetActiveColorThemeLightKind(lightColorTheme);
+	// Native popup menus are painted by darkmodelib rather than the workbench
+	// palette. Synchronize that process-wide renderer with the resolved color
+	// theme (including previews), then refresh the menu subclass before any menu
+	// is opened. The legacy shared dark-mode preference remains only the fallback
+	// used when no workbench.colorTheme can be resolved.
+	const BOOL nativeDark = mode == theme::ThemeMode::Dark ? TRUE : FALSE;
+	// darkmodelib caches popup-menu theme handles separately from the top-level
+	// mode flag. Reapplying the resolved mode flushes that cache even when the
+	// boolean did not change (for example after previewing Dark and accepting
+	// Light), so every native menu follows the selected color theme.
+	ApplyDarkModeSetting(nativeDark);
+	DarkMode::setDarkTitleBarEx(GetHwnd(), true);
+	DarkMode::setWindowMenuBarSubclass(GetHwnd());
+	DarkMode::setChildCtrlsTheme(GetHwnd());
+	::DrawMenuBar(GetHwnd());
 	if (m_customFrame) m_customFrame->SetThemeMode(mode);
 	const auto palette = theme::CThemeService::EffectivePalette(mode);
 	m_cStatusBar.SetPalette(palette);
@@ -5558,6 +5733,10 @@ bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 	if (m_markdownPreview) m_markdownPreview->SetPalette(palette);
 	if (m_emptyEditorSurface) m_emptyEditorSurface->SetPalette(palette);
 	if (m_diffSurface) m_diffSurface->SetPalette(palette);
+	for (int index = 0; index < GetAllViewCount(); ++index) {
+		GetView(index).UpdateWorkbenchTheme();
+	}
+	m_cMiniMapView.UpdateWorkbenchTheme();
 	if (m_activityBar) {
 		workbench::ActivityBarPalette activityPalette;
 		activityPalette.background = palette.activityBar.ToColorRef();
@@ -5576,6 +5755,7 @@ bool CEditWnd::ApplyWorkbenchTheme(std::wstring_view previewTheme)
 		activityPalette.badgeForeground = palette.activityBarBadgeForeground.ToColorRef();
 		activityPalette.highContrast = theme::CThemeService::IsHighContrastActive();
 		m_activityBar->SetPalette(activityPalette);
+		if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->SetPalette(activityPalette);
 	}
 	return true;
 }
@@ -7790,7 +7970,7 @@ void CEditWnd::SetOutlineExpandedInHosts(bool expanded)
 
 void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateSnapshot* layoutState)
 {
-	if (!m_activityBar && !m_viewContainerPages) return;
+	if (!m_activityBar && !m_auxiliaryActivityBar && !m_viewContainerPages) return;
 	const workbench::activity::ActivityBarProjectionOptions options{
 		.renderableBuiltins = kRenderableBuiltinContainers,
 		.titleResolver = ResolveLocalizedActivityBarTitle,
@@ -7800,22 +7980,51 @@ void CEditWnd::SyncViewContainers(const workbench::layout::WorkbenchLayoutStateS
 	const auto contributions =
 		m_workbenchRuntime != nullptr ? m_workbenchRuntime->Contributions().Snapshot() : builtinsOnly;
 	auto entries = workbench::activity::ProjectActivityBarEntries(contributions, options);
+	const auto declaredAuxiliaryEntries = workbench::activity::ProjectActivityBarEntries(
+		contributions, options, workbench::layout::EViewContainerLocation::AuxiliaryBar);
+	for (const auto& candidate : declaredAuxiliaryEntries) {
+		if (std::ranges::none_of(entries, [&candidate](const auto& entry) {
+			return entry.id == candidate.id;
+		})) {
+			entries.push_back(candidate);
+		}
+	}
+	auto primaryEntries = entries;
+	auto auxiliaryEntries = entries;
 
 	// VS Code moves the whole composite entry together with its ViewContainer: a container
 	// that now lives in the Secondary Side Bar has no Activity Bar icon at all. A greyed-out
 	// placeholder would be a fake capability, so the entry is hidden instead.
-	if (layoutState != nullptr) {
-		for (auto& entry : entries) {
-			if (entry.IsGlobalAction()) continue;
-			const auto container = std::ranges::find(layoutState->containers, entry.id,
+	for (std::size_t index = 0; index < entries.size(); ++index) {
+		auto location = std::ranges::find(declaredAuxiliaryEntries, entries[index].id,
+			&workbench::activity::ActivityBarEntry::id) == declaredAuxiliaryEntries.end()
+			? workbench::layout::EWorkbenchViewContainerLocation::SideBar
+			: workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar;
+		if (layoutState != nullptr) {
+			const auto container = std::ranges::find(layoutState->containers, entries[index].id,
 				&workbench::layout::WorkbenchViewContainerState::containerId);
-			entry.visible = container == layoutState->containers.end()
-				|| container->location == workbench::layout::EWorkbenchViewContainerLocation::SideBar;
+			if (container != layoutState->containers.end()) location = container->location;
+		}
+		primaryEntries[index].visible = location
+			== workbench::layout::EWorkbenchViewContainerLocation::SideBar;
+		auxiliaryEntries[index].visible = location
+			== workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar;
+	}
+	// GlobalCompositeBar: Accounts then Manage are pinned to the vertical bar.
+	// Top/bottom placement moves both actions to the native title bar.
+	if (m_activityBarLocation == workbench::ActivityBarLocation::Default) {
+		workbench::activity::AppendGlobalActivityActions(primaryEntries);
+	}
+	if (m_activityBar) m_activityBar->SetEntries(std::move(primaryEntries));
+	if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->SetEntries(std::move(auxiliaryEntries));
+	if (layoutState != nullptr) {
+		if (m_activityBar) m_activityBar->SetSelectedItem(layoutState->activeContainers.sideBar
+			? *layoutState->activeContainers.sideBar : std::string_view{});
+		if (m_auxiliaryActivityBar) {
+			m_auxiliaryActivityBar->SetSelectedItem(layoutState->activeContainers.auxiliaryBar
+				? *layoutState->activeContainers.auxiliaryBar : std::string_view{});
 		}
 	}
-	// GlobalCompositeBar: Accounts then Manage, pinned to the bottom by ActivityBarModel.
-	workbench::activity::AppendGlobalActivityActions(entries);
-	if (m_activityBar) m_activityBar->SetEntries(std::move(entries));
 	// The badge is published beside the entry list, so re-projecting the
 	// containers has to republish it; SetEntries never carries it.
 	SyncScmActivityBadge();
@@ -7833,9 +8042,11 @@ void CEditWnd::SyncScmActivityBadge()
 	ApplyExplorerDecorationSettings();
 	// The terminal keybinding preset is read from the same document too.
 	ApplyTerminalShortcutPresetSetting();
-	if (!m_activityBar) return;
+	if (!m_activityBar && !m_auxiliaryActivityBar) return;
 	const auto publish = [this](std::optional<int> count) {
-		m_activityBar->SetViewContainerBadge(
+		if (m_activityBar) m_activityBar->SetViewContainerBadge(
+			workbench::layout::ids::viewContainer::SourceControl, count);
+		if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->SetViewContainerBadge(
 			workbench::layout::ids::viewContainer::SourceControl, count);
 	};
 	auto* const service = m_workbenchRuntime != nullptr ? m_workbenchRuntime->Scm() : nullptr;
@@ -7891,6 +8102,105 @@ config::ConfigurationTarget CEditWnd::BuildWorkbenchConfigurationTarget() const
 	return target;
 }
 
+workbench::ActivityBarLocation CEditWnd::ReadActivityBarLocationSetting() const
+{
+	if (m_workbenchRuntime == nullptr) return workbench::ActivityBarLocation::Default;
+	try {
+		const auto lookup = m_workbenchRuntime->Configuration().GetValue(
+			"workbench.activityBar.location", BuildWorkbenchConfigurationTarget());
+		if (!lookup.value) return workbench::ActivityBarLocation::Default;
+		const auto* value = std::get_if<std::wstring>(&lookup.value->Value());
+		if (value == nullptr) return workbench::ActivityBarLocation::Default;
+		if (*value == L"top") return workbench::ActivityBarLocation::Top;
+		if (*value == L"bottom") return workbench::ActivityBarLocation::Bottom;
+		return workbench::ActivityBarLocation::Default;
+	}
+	catch (...) {
+		return workbench::ActivityBarLocation::Default;
+	}
+}
+
+bool CEditWnd::PersistActivityBarLocationSelection(workbench::ActivityBarLocation location)
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	std::wstring_view value;
+	switch (location) {
+	case workbench::ActivityBarLocation::Default: value = L"default"; break;
+	case workbench::ActivityBarLocation::Top: value = L"top"; break;
+	case workbench::ActivityBarLocation::Bottom: value = L"bottom"; break;
+	default: return false;
+	}
+	try {
+		const auto& profile = m_workbenchRuntime->Bootstrap().UserDataProfile();
+		config::ConfigurationTarget sourceTarget;
+		sourceTarget.profileId = profile.SelectedProfileId();
+		const config::ConfigurationSource source {
+			config::EConfigurationScope::Profile, sourceTarget,
+			"profile.settings", 0,
+		};
+		config::editing::ConfigurationDocumentEditTarget editTarget;
+		editTarget.scope = config::editing::EConfigurationDocumentScope::Profile;
+		editTarget.target = sourceTarget;
+		editTarget.resource = profile.Resources().Settings();
+		const config::SettingsWritebackRequest request {
+			.edit = {
+				.target = std::move(editTarget),
+				.key = "workbench.activityBar.location",
+				.value = config::ConfigurationValue(std::wstring(value)),
+			},
+			.documentKey = "profile.settings",
+			.source = source,
+		};
+		return m_workbenchRuntime->WriteSetting(request).Succeeded();
+	}
+	catch (...) {
+		return false;
+	}
+}
+
+bool CEditWnd::SetActivityBarLocation(workbench::ActivityBarLocation location, bool persist)
+{
+	switch (location) {
+	case workbench::ActivityBarLocation::Default:
+	case workbench::ActivityBarLocation::Top:
+	case workbench::ActivityBarLocation::Bottom:
+		break;
+	default:
+		return false;
+	}
+	if (persist && !PersistActivityBarLocationSelection(location)) return false;
+	m_activityBarLocation = location;
+	if (m_activityBar) m_activityBar->SetLocation(location);
+	if (m_auxiliaryActivityBar) m_auxiliaryActivityBar->SetLocation(location);
+	if (m_customFrame) {
+		m_customFrame->SetActivityBarLocation(location);
+	}
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+			SyncViewContainers(&snapshot);
+		}
+		catch (...) {
+			SyncViewContainers(nullptr);
+		}
+	} else {
+		SyncViewContainers(nullptr);
+	}
+	if (GetHwnd() != nullptr && m_activityBar && m_auxiliaryActivityBar) {
+		RECT client{};
+		::GetClientRect(GetHwnd(), &client);
+		(void)OnSize2(m_nWinSizeType,
+			MAKELONG(client.right - client.left, client.bottom - client.top), false);
+		RedrawWorkbenchFrameForCommittedLayout(false);
+	}
+	return true;
+}
+
+void CEditWnd::ApplyActivityBarLocationSetting()
+{
+	static_cast<void>(SetActivityBarLocation(ReadActivityBarLocationSetting(), false));
+}
+
 void CEditWnd::ApplyScmInputLineCountSetting()
 {
 	if (m_scmTool == nullptr) return;
@@ -7943,6 +8253,30 @@ void CEditWnd::ApplyTerminalShortcutPresetSetting()
 		}
 	}
 	m_terminalTool->SetShortcutPreset(preset);
+}
+
+bool CEditWnd::IsAuxiliaryViewContainerActive(std::string_view containerId) const
+{
+	if (m_workbenchRuntime == nullptr) return false;
+	try {
+		const auto snapshot = m_workbenchRuntime->LayoutState().Snapshot();
+		const auto part = std::ranges::find(snapshot.parts,
+			workbench::layout::ids::part::Auxiliarybar,
+			&workbench::layout::WorkbenchPartState::partId);
+		if (part == snapshot.parts.end() || !part->visible) return false;
+		const auto container = std::ranges::find(snapshot.containers, containerId,
+			&workbench::layout::WorkbenchViewContainerState::containerId);
+		if (container == snapshot.containers.end() || !container->visible
+			|| container->location
+				!= workbench::layout::EWorkbenchViewContainerLocation::AuxiliaryBar) {
+			return false;
+		}
+		return snapshot.activeContainers.auxiliaryBar
+			&& *snapshot.activeContainers.auxiliaryBar == containerId;
+	}
+	catch (...) {
+		return false;
+	}
 }
 
 void CEditWnd::ApplyTerminalTabPresentationSettings()
@@ -8791,7 +9125,24 @@ bool CEditWnd::EnsureMarkdownPreview()
 	if (m_markdownPreview && m_markdownPreview->IsCreated()) {
 		return true;
 	}
-	m_markdownPreview = std::make_unique<markdown::CMarkdownPreviewWnd>();
+	std::shared_ptr<markdown::IMarkdownRemoteImageFetcher> remoteImageFetcher;
+	if (m_workbenchRuntime != nullptr) {
+		try {
+			config::CConfigurationNetworkPolicy networkPolicy(
+				m_workbenchRuntime->Configuration(),
+				m_workbenchRuntime->Bootstrap().UserDataProfile().SelectedProfileId());
+			const auto snapshot = networkPolicy.Snapshot();
+			if (snapshot && snapshot.snapshot) {
+				remoteImageFetcher = markdown::CreateMarkdownRemoteImageFetcher(*snapshot.snapshot);
+			}
+		}
+		catch (...) {
+			// A missing/invalid network policy disables only remote images. The
+			// native preview and its local-resource sandbox remain available.
+		}
+	}
+	m_markdownPreview = std::make_unique<markdown::CMarkdownPreviewWnd>(
+		std::move(remoteImageFetcher));
 	if (!m_markdownPreview->Create(GetHwnd())) {
 		m_markdownPreview.reset();
 		return false;
@@ -9305,6 +9656,7 @@ bool CEditWnd::PreTranslateWorkbenchMessage(MSG& message)
 		return true;
 	}
 	if (m_activityBar && m_activityBar->PreTranslateMessage(message)) return true;
+	if (m_auxiliaryActivityBar && m_auxiliaryActivityBar->PreTranslateMessage(message)) return true;
 	if (m_bottomWorkbenchPanel && m_bottomWorkbenchPanel->PreTranslateMessage(message)) return true;
 	if (m_leftWorkbenchPanel && m_leftWorkbenchPanel->PreTranslateMessage(message)) return true;
 	return m_rightWorkbenchPanel && m_rightWorkbenchPanel->PreTranslateMessage(message);
@@ -9344,7 +9696,6 @@ bool CEditWnd::ShowCommandPalette()
 			items.push_back({
 				.id = std::wstring(command.id.begin(), command.id.end()),
 				.label = command.label,
-				.detail = command.detail,
 				.enabled = true,
 			});
 		}
@@ -10501,6 +10852,7 @@ LRESULT CEditWnd::DispatchEvent(
 			m_themeConfigurationGate->messageQueued = false;
 		}
 		(void)ApplyWorkbenchTheme();
+		ApplyActivityBarLocationSetting();
 		// Re-read `scm.countBadge`; the count itself has not moved, but whether it
 		// is shown at all may have.
 		SyncScmActivityBadge();
@@ -10995,28 +11347,12 @@ LRESULT CEditWnd::DispatchEvent(
 		/* 設定変更の通知 */
 		switch( (e_PM_CHANGESETTING_SELECT)lParam ){
 		case PM_CHANGESETTING_ALL:
-			if (m_customFrame) {
-				m_customFrame->SetThemeMode(
-					m_pShareData->m_Common.m_sWindow.m_bDarkMode
-						? theme::ThemeMode::Dark
-						: theme::ThemeMode::Light);
-			}
-			/* ダークモード設定を反映する */
+			/* Apply the resolved workbench theme instead of restoring the legacy
+			 * dark-mode preference over an explicit workbench.colorTheme. */
 			{
-				if( (m_pShareData->m_Common.m_sWindow.m_bDarkMode != FALSE) != IsDarkModeActive() ){
-					ApplyDarkModeSetting(m_pShareData->m_Common.m_sWindow.m_bDarkMode);
-					// タイトルバーとメニューバーを更新する
-					DarkMode::setDarkTitleBarEx(GetHwnd(), true);
-					DarkMode::setWindowMenuBarSubclass(GetHwnd());
-
-					// 子コントロールのテーマを更新する
-					DarkMode::setChildCtrlsTheme(GetHwnd());
-
-					// タブバーのテーマを更新する（ツールチップ等）
-					if( m_cTabWnd.GetHwnd() ){
-						m_cTabWnd.UpdateTheme();
-					}
-
+				const bool nativeDarkBefore = IsDarkModeActive();
+				(void)ApplyWorkbenchTheme();
+				if( nativeDarkBefore != IsDarkModeActive() ){
 					// エディットビューのWS_EX_STATICEDGEを切り替える
 					for( int v = 0; v < GetAllViewCount(); v++ ){
 						HWND hwndView = GetView(v).GetHwnd();
@@ -12838,6 +13174,7 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	layoutRequest.clientWidth = cx;
 	layoutRequest.clientHeight = cy;
 	layoutRequest.dpi = workbench::ScaleDpi(physicalDpi, m_workbenchZoomPercent);
+	layoutRequest.activityBarLocation = m_activityBarLocation;
 	layoutRequest.titleBarHeightPixels = nCustomTitleHeight;
 	layoutRequest.topAccessoryHeightPixels = nToolBarHeight
 		+ (m_pShareData->m_Common.m_sWindow.m_nFUNCKEYWND_Place == 0 ? nFuncKeyWndHeight : 0);
@@ -13023,7 +13360,10 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 	m_rightWorkbenchSplitter = ToWinRect(layout.rightSplitter);
 	m_bottomWorkbenchSplitter = ToWinRect(layout.bottomSplitter);
 
-	if (m_activityBar) m_activityBar->Layout(ToWinRect(layout.activityBar), layoutRequest.dpi);
+	if (m_activityBar) m_activityBar->Layout(ToWinRect(layout.primaryActivityBar), layoutRequest.dpi);
+	if (m_auxiliaryActivityBar) {
+		m_auxiliaryActivityBar->Layout(ToWinRect(layout.secondaryActivityBar), layoutRequest.dpi);
+	}
 	if (m_leftWorkbenchPanel) m_leftWorkbenchPanel->Layout(ToWinRect(layout.leftPane), layoutRequest.dpi);
 	if (m_rightWorkbenchPanel) m_rightWorkbenchPanel->Layout(ToWinRect(layout.rightPane), layoutRequest.dpi);
 	if (m_bottomWorkbenchPanel) m_bottomWorkbenchPanel->Layout(ToWinRect(layout.bottomPane), layoutRequest.dpi);
@@ -13085,7 +13425,9 @@ LRESULT CEditWnd::OnSize2( WPARAM wParam, LPARAM lParam, bool bUpdateStatus )
 					workbench::rendering::FrameWindowSurfaceId(role), hostId, visible);
 			};
 			setProjection(WindowRole::ActivityBar, "workbench.parts.activitybar",
-				layout.activityBar.Width() > 0 && layout.activityBar.Height() > 0);
+				(layout.primaryActivityBar.Width() > 0 && layout.primaryActivityBar.Height() > 0)
+				|| (layout.secondaryActivityBar.Width() > 0
+					&& layout.secondaryActivityBar.Height() > 0));
 			setProjection(WindowRole::PrimarySideBar, "workbench.parts.sidebar",
 				layoutRequest.leftPane != workbench::WorkbenchPanelState::Hidden);
 			setProjection(WindowRole::SecondarySideBar, "workbench.parts.auxiliarybar",

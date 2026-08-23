@@ -84,6 +84,8 @@ enum class ResourceUse {
 //! The result of resolving a Markdown resource without performing I/O.
 enum class ResourceDisposition {
 	ResolvedLocal,
+	//! Absolute HTTPS image admitted by the default VS Code Strict policy.
+	ResolvedHttps,
 	Fragment,
 	ExternalBlocked,
 	UnsafeSchemeBlocked,
@@ -136,7 +138,9 @@ struct Block {
 	std::vector<InlineSpan> inlineSpans;
 	std::vector<TableAlignment> tableAlignments;
 	std::vector<TableRow> tableRows;
-	std::optional<ImageNode> image;
+	//! Standalone images that belong to one Markdown paragraph. Consecutive
+	//! image-only source lines share a row and wrap only when width requires it.
+	std::vector<ImageNode> images;
 	//! Normalized first word of a fenced-code info string.
 	std::wstring language;
 	TaskListState taskListState = TaskListState::NotTask;
@@ -155,6 +159,7 @@ enum class CapabilityStatus {
 //! from visual similarity with a full semantic renderer.
 struct PreviewCapabilities {
 	CapabilityStatus localImageProjection = CapabilityStatus::Supported;
+	CapabilityStatus secureRemoteImageProjection = CapabilityStatus::Supported;
 	CapabilityStatus linkActivation = CapabilityStatus::Unsupported;
 	//! Scroll sync is two independent directions upstream, named after the
 	//! settings that gate them: markdown.preview.scrollPreviewWithEditor moves

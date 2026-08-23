@@ -812,7 +812,7 @@
         "tools/ppa_stub/ppa_stub.def",
         "tools/ppa_stub/ppa_stub.h"
       ],
-      "outputs": ["vcpkg:bregonig", "vcpkg:cmigemo", "vcpkg:darkmodelib", "vcpkg:dll-plugin1", "vcpkg:fmt", "vcpkg:gtest", "vcpkg:ms-gsl", "vcpkg:onigmo-next", "vcpkg:ppa-stub", "vcpkg:wil"],
+      "outputs": ["vcpkg:bregonig", "vcpkg:cmigemo", "vcpkg:darkmodelib", "vcpkg:dll-plugin1", "vcpkg:fmt", "vcpkg:gtest", "vcpkg:lunasvg", "vcpkg:ms-gsl", "vcpkg:onigmo-next", "vcpkg:ppa-stub", "vcpkg:wil"],
       "tool_id": null,
       "condition": true
     },

@@ -1680,6 +1680,9 @@
     <ClInclude Include="..\sakura_core\markdown\MarkdownPreviewWorkerRetirement.h">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\markdown\MarkdownRemoteImageFetcher.h">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClInclude>
@@ -3445,6 +3448,9 @@
       <Filter>Cpp Source Files\terminal\window</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp">
+      <Filter>Cpp Source Files\markdown</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\markdown\MarkdownRemoteImageFetcher.cpp">
       <Filter>Cpp Source Files\markdown</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp">

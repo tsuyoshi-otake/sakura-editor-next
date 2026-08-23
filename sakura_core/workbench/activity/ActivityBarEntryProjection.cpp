@@ -51,10 +51,25 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 	const layout::WorkbenchContributionSnapshot& snapshot,
 	const ActivityBarProjectionOptions& options)
 {
+	return ProjectActivityBarEntries(snapshot, options, options.location);
+}
+
+std::vector<ActivityBarEntry> ProjectActivityBarEntries(
+	const layout::WorkbenchContributionSnapshot& snapshot,
+	const ActivityBarProjectionOptions& options,
+	const layout::EViewContainerLocation requestedLocation)
+{
+	// The Activity Bar is a composite bar for a side-bar location. Panel is a
+	// different Part and must fail closed rather than being shown as a plausible
+	// but unopenable Activity Bar entry.
+	if (requestedLocation != layout::EViewContainerLocation::Sidebar
+		&& requestedLocation != layout::EViewContainerLocation::AuxiliaryBar) {
+		return {};
+	}
 	std::vector<const layout::RegisteredWorkbenchViewContainer*> rendered;
 	rendered.reserve(snapshot.viewContainers.size());
 	for (const auto& container : snapshot.viewContainers) {
-		if (container.descriptor.location != layout::EViewContainerLocation::Sidebar) continue;
+		if (container.descriptor.location != requestedLocation) continue;
 		if (std::ranges::find(options.renderableBuiltins, container.descriptor.id)
 				== options.renderableBuiltins.end()) {
 			continue;
@@ -84,6 +99,14 @@ std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 		});
 	}
 	return entries;
+}
+
+std::vector<ActivityBarEntry> ProjectActivityBarEntries(
+	const layout::WorkbenchContributionSnapshot& snapshot,
+	const layout::EViewContainerLocation requestedLocation,
+	const ActivityBarProjectionOptions& options)
+{
+	return ProjectActivityBarEntries(snapshot, options, requestedLocation);
 }
 
 void AppendGlobalActivityActions(std::vector<ActivityBarEntry>& entries)

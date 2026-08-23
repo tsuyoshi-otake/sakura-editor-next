@@ -129,9 +129,51 @@ VS Code's `lighten`/`darken`, which scale HSL lightness by `l * factor` and leav
 hue and saturation alone. Deriving rather than defaulting is what prevents a
 hover color from one theme sitting on a background from another.
 
-The built-in defaults keep Sakura's own accent (`#1F8AD2` dark, `#B83268` light)
-instead of importing VS Code's `#0E639C`/`#007ACC`, consistent with the rest of
- the compiled fallback palette.
+The dark built-in keeps Sakura's own accent (`#1F8AD2`). The Light built-in
+follows VS Code Light Modern's blue accent (`#005FB8`) so its buttons, status
+surface, Activity Bar, and focus affordances remain coherent with the neutral
+light chrome.
+
+## Quick Input and list roles (2026-08-23)
+
+`ThemePalette` keeps the Quick Input surfaces separate from broad Workbench
+roles. `quickInputBackground` maps `quickInput.background`, `inputBackground`
+and `inputBorder` map the one-line text field, and the `list*` members map
+`list.activeSelection*`, `list.hoverBackground`, and
+`list.focusAndSelectionOutline`. This prevents the Command Palette/Quick Pick
+from treating a focus accent as a selection fill. The bundled Light theme uses
+VS Code Light Modern's neutral surfaces (`#F8F8F8` / `#FFFFFF`), pale selected
+rows (`#E8E8E8`), and blue focus (`#005FB8`); the dark defaults retain the
+existing Sakura dark surfaces. High Contrast resolves these roles from system
+face/highlight colors rather than lowering contrast.
+
+The Light built-in no longer uses the former Sakura magenta accent. Its
+Workbench, Activity Bar, SCM, editor chrome, status-bar button, and focus
+roles resolve to the VS Code Light Modern blue/neutral family. Syntax token
+colors remain the bundled Light+ syntax projection and are intentionally
+separate from Workbench surface tokens.
+
+## Scrollbar colors
+
+`scrollbar.background` and the three `scrollbarSlider.*Background` roles retain
+their VS Code alpha channel in `ThemePalette`. Do not project them through a
+generic palette surface: an overlay scrollbar can belong to the editor,
+sidebar, panel, preview, or quick input, and each has a different owning
+background. The concrete consumer resolves these roles over its own surface
+with `ResolveOverlayScrollbarColors`. This also keeps the normal, hover, and
+active slider states consistent with VS Code instead of borrowing unrelated
+border or secondary-text colors.
+
+## Editor whitespace colors
+
+`editorWhitespace.foreground` retains its alpha channel in `ThemePalette` and
+is composited over `editor.background` only when the editor decoration is
+drawn. With an active Workbench color theme, tabs, half/full-width spaces,
+control-character markers, and Sakura's EOL marker all use that role and the
+editor canvas as their background. Selection and search rendering continue to
+win over the decoration colors. Do not let these figures read a legacy dark
+`ColorInfo` background after switching to a light theme; without an active
+Workbench theme, the classic user-configured colors remain authoritative.
 
 ## `gitDecoration.*` colors (2026-08-20, #229)
 

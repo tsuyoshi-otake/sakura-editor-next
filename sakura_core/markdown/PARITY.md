@@ -2,8 +2,9 @@
 
 The acceptance target is VS Code's Markdown preview behavior where it can be
 implemented safely by Sakura's lightweight native renderer. The production path
-contains no embedded browser, script runtime, remote renderer, or runtime asset
-download.
+contains no embedded browser, script runtime, remote renderer, or runtime
+rendering-asset download. VS Code Strict-compatible HTTPS image responses are
+the only remote content admitted, through a bounded anonymous native loader.
 
 ## Current compatibility contract
 
@@ -12,7 +13,7 @@ download.
 | Headings, paragraphs, emphasis, strong, inline code | Typed blocks/spans, native measurement and paint | Implemented |
 | Lists, block quotes, rules, fenced code | Typed blocks with stable source-line ranges | Implemented |
 | Tables | Native rows/cells/alignment; no HTML execution | Implemented |
-| Links and images | Typed URI disposition; unsafe schemes fail closed | Partial: activation remains gated |
+| Links and images | Typed URI disposition; local images and Strict HTTPS image responses render; unsafe schemes, non-image responses, and insecure redirects fail closed | Partial: link activation remains gated |
 | Raw HTML | Allowlisted harmless wrappers projected to native blocks/spans; active content and attributes never execute | Safe subset (explicit allowlist) |
 | Live update | Persistent worker; one in flight plus latest pending; stale generations discarded | Implemented |
 | Live width resize | Transient native geometry per pointer sample; one committed Markdown reflow on mouse-up; explicit rollback on cancellation | Implemented and frame-measured |
@@ -52,6 +53,12 @@ return a typed unsupported result. They never alias to Sakura's legacy sibling
 preview pane. Current-group show/reopen/toggle owns replacement layout; the
 legacy function-code path alone owns `NativeSiblingPane` placement.
 
+`markdown.showPreviewSecuritySelector` remains a typed unsupported command.
+The native renderer implements the default `Strict` level, including HTTPS
+images, but cannot honestly implement upstream's `Disable` option because it has
+no browser script runtime. Showing a visually complete selector would therefore
+declare behavior that this host cannot provide.
+
 The document tab's preview button is therefore **not** a `markdown.*` command. It
 toggles the Sakura-owned sibling pane, so its declared action id is
 `sakura.toggleMarkdownSiblingPreview` (`tabbar::kMarkdownPreviewCommandId`),
@@ -70,6 +77,7 @@ other does not:
 | Capability | Value | Upstream setting |
 |---|---|---|
 | `localImageProjection` | Supported | - |
+| `secureRemoteImageProjection` | Supported | Strict `img-src ... https: data:` policy |
 | `linkActivation` | Unsupported | - |
 | `scrollPreviewWithEditor` | Supported | `markdown.preview.scrollPreviewWithEditor` |
 | `scrollEditorWithPreview` | Supported | `markdown.preview.scrollEditorWithPreview` |
@@ -150,6 +158,12 @@ is not verified, however obviously correct the code looks.
 10. Dependency boundary: source/project/package search.
    Verify: search for embedded-browser and script-runtime dependencies. Expect:
    no production dependency or bundled script asset.
+11. Strict remote images: parser URL disposition plus fake request-service
+    responses. Verify: `MarkdownParserTest.cpp` and
+    `MarkdownRemoteImageFetcherTest.cpp`. Expect: HTTPS image responses load;
+    HTTP, user-info, bad final URLs, non-image content, non-200 responses, and
+    cancellation terminate without publishing image bytes or opening a network
+    connection in tests.
 
 Not yet verified, and therefore not claimed anywhere above: the preview settings
 in `upstream-parity-manifest.json` are not read, and there is no differential

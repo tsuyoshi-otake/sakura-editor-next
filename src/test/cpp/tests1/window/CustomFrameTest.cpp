@@ -13,6 +13,7 @@
 
 #include "window/CCustomFrameController.h"
 #include "window/CClientMenuBar.h"
+#include "workbench/WorkbenchLayout.h"
 #include "workbench/IconMetrics.h"
 #include "workbench/icons/CodiconsActivityIcons.h"
 
@@ -168,6 +169,164 @@ TEST(CustomFrame, PlacesAllCompactTitleControlsImmediatelyBeforeNativeCaptionBut
 	EXPECT_TRUE(::IsRectEmpty(&layout.manageButton));
 	EXPECT_LE(layout.menu.right, layout.captionText.left);
 	EXPECT_LE(layout.captionText.right, layout.layoutButton.left);
+}
+
+TEST(CustomFrame, ProjectsActivityBarGlobalActionsIntoTheTitleBarOnlyWhenEnabled)
+{
+	const auto vertical = CalculateCustomFrameLayout(1200, 96, 430);
+	EXPECT_TRUE(::IsRectEmpty(&vertical.accountButton));
+	EXPECT_TRUE(::IsRectEmpty(&vertical.manageButton));
+
+	const auto topOrBottom = CalculateCustomFrameLayout(1200, 96, 430, 0, true);
+	EXPECT_FALSE(::IsRectEmpty(&topOrBottom.accountButton));
+	EXPECT_FALSE(::IsRectEmpty(&topOrBottom.manageButton));
+	EXPECT_EQ(topOrBottom.secondarySidebarButton.right, topOrBottom.accountButton.left);
+	EXPECT_EQ(topOrBottom.accountButton.right, topOrBottom.manageButton.left);
+	EXPECT_EQ(topOrBottom.manageButton.right, topOrBottom.minimizeButton.left);
+	EXPECT_LE(topOrBottom.captionText.right, topOrBottom.layoutButton.left);
+
+	const auto center = [](const RECT& rect) {
+		return POINT{ (rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2 };
+	};
+	EXPECT_EQ(CustomFrameControl::Account,
+		HitTestCustomFrameControl(topOrBottom, center(topOrBottom.accountButton)));
+	EXPECT_EQ(CustomFrameControl::Manage,
+		HitTestCustomFrameControl(topOrBottom, center(topOrBottom.manageButton)));
+	EXPECT_EQ(HTCLIENT, HitTestCustomFrame(
+		topOrBottom, center(topOrBottom.manageButton), 1200, 700, 8, false));
+
+	const auto account = CustomFrameControlAccessibilityNode(
+		CustomFrameControl::Account, topOrBottom, true);
+	EXPECT_EQ(L"Account", account.name);
+	EXPECT_EQ(L"Sakura.TitleBar.Account", account.automationId);
+	EXPECT_EQ(topOrBottom.accountButton.left, account.bounds.left);
+	EXPECT_TRUE(account.enabled);
+
+	const auto manage = CustomFrameControlAccessibilityNode(
+		CustomFrameControl::Manage, topOrBottom, false);
+	EXPECT_EQ(L"Manage", manage.name);
+	EXPECT_EQ(L"Sakura.TitleBar.Manage", manage.automationId);
+	EXPECT_EQ(topOrBottom.manageButton.left, manage.bounds.left);
+	EXPECT_TRUE(manage.enabled);
+}
+
+TEST(CustomFrame, ActivityBarGlobalActionsPresentationDefaultsToVertical)
+{
+	CCustomFrameController controller;
+	EXPECT_FALSE(controller.AreActivityBarGlobalActionsInTitleBar());
+	controller.SetActivityBarGlobalActionsInTitleBar(true);
+	EXPECT_TRUE(controller.AreActivityBarGlobalActionsInTitleBar());
+	controller.SetActivityBarLocation(workbench::ActivityBarLocation::Top);
+	EXPECT_TRUE(controller.AreActivityBarGlobalActionsInTitleBar());
+	controller.SetActivityBarLocation(workbench::ActivityBarLocation::Bottom);
+	EXPECT_TRUE(controller.AreActivityBarGlobalActionsInTitleBar());
+	controller.SetActivityBarLocation(workbench::ActivityBarLocation::Default);
+	EXPECT_FALSE(controller.AreActivityBarGlobalActionsInTitleBar());
+	controller.SetActivityBarGlobalActionsInTitleBar(false);
+	EXPECT_FALSE(controller.AreActivityBarGlobalActionsInTitleBar());
+}
+
+TEST(CustomFramePopup, ActivityBarPlacementUsesTheRightTopAnchorAndDpiGap)
+{
+	const RECT anchor{ 42, 187, 42, 187 };
+	const SIZE menu{ 270, 145 };
+	const RECT workArea{ 0, 0, 954, 233 };
+	const auto placement = CalculateCustomFramePopupPlacement(
+		anchor, menu, workArea, 96, CustomFramePopupPlacementKind::ActivityBar);
+
+	// The menu sits just to the right of the 42px Activity Bar and its bottom edge
+	// sits just above the gear button, so the native menu grows upward.
+	EXPECT_EQ(46, placement.point.x);
+	EXPECT_EQ(183, placement.point.y);
+	EXPECT_EQ(46, placement.bounds.left);
+	EXPECT_EQ(38, placement.bounds.top);
+	EXPECT_EQ(316, placement.bounds.right);
+	EXPECT_EQ(183, placement.bounds.bottom);
+	EXPECT_EQ(0u, placement.flags & TPM_RIGHTALIGN);
+	EXPECT_NE(0u, placement.flags & TPM_BOTTOMALIGN);
+	EXPECT_NE(0u, placement.flags & TPM_VERTICAL);
+	EXPECT_NE(0u, placement.flags & TPM_WORKAREA);
+
+	const auto highDpi = CalculateCustomFramePopupPlacement(
+		RECT{ 200, 700, 200, 700 }, SIZE{ 300, 220 }, RECT{ 0, 0, 1200, 900 },
+		144, CustomFramePopupPlacementKind::ActivityBar);
+	EXPECT_EQ(206, highDpi.point.x);
+	EXPECT_EQ(694, highDpi.point.y);
+}
+
+TEST(CustomFramePopup, ActivityBarPlacementReversesAtTheScreenEdgeAndClampsVertically)
+{
+	const auto reversed = CalculateCustomFramePopupPlacement(
+		RECT{ 960, 500, 960, 500 }, SIZE{ 300, 220 }, RECT{ 0, 0, 1000, 700 },
+		96, CustomFramePopupPlacementKind::ActivityBar);
+	EXPECT_NE(0u, reversed.flags & TPM_RIGHTALIGN);
+	EXPECT_EQ(956, reversed.point.x);
+	EXPECT_EQ(496, reversed.point.y);
+	EXPECT_EQ(656, reversed.bounds.left);
+	EXPECT_EQ(956, reversed.bounds.right);
+
+	const auto topClamped = CalculateCustomFramePopupPlacement(
+		RECT{ 42, 50, 42, 50 }, SIZE{ 270, 200 }, RECT{ 0, 0, 954, 700 },
+		96, CustomFramePopupPlacementKind::ActivityBar);
+	EXPECT_EQ(0, topClamped.bounds.top);
+	EXPECT_EQ(200, topClamped.bounds.bottom);
+	EXPECT_EQ(200, topClamped.point.y);
+}
+
+TEST(CustomFramePopup, TitleBarPlacementOpensBelowAndClampsToTheWorkArea)
+{
+	const auto below = CalculateCustomFramePopupPlacement(
+		RECT{ 700, 10, 760, 40 }, SIZE{ 250, 100 }, RECT{ 0, 0, 1000, 700 },
+		96, CustomFramePopupPlacementKind::TitleBar, true);
+	EXPECT_NE(0u, below.flags & TPM_RIGHTALIGN);
+	EXPECT_EQ(756, below.point.x);
+	EXPECT_EQ(44, below.point.y);
+	EXPECT_EQ(506, below.bounds.left);
+	EXPECT_EQ(756, below.bounds.right);
+
+	const auto edge = CalculateCustomFramePopupPlacement(
+		RECT{ 920, 650, 980, 680 }, SIZE{ 240, 100 }, RECT{ 0, 0, 1000, 700 },
+		96, CustomFramePopupPlacementKind::TitleBar, true);
+	EXPECT_EQ(600, edge.bounds.top);
+	EXPECT_EQ(700, edge.bounds.bottom);
+	EXPECT_EQ(976, edge.point.x);
+	EXPECT_EQ(600, edge.point.y);
+}
+
+TEST(CustomFrame, CollapsesActivityBarGlobalActionsWithTheWholeTitleControlRun)
+{
+	// At this width the native caption buttons still fit, but the four fixed controls
+	// plus Account/Manage do not. The run must disappear as a unit rather than overlap
+	// the system menu or leave only one global action visible.
+	const auto layout = CalculateCustomFrameLayout(350, 96, 300, true);
+	EXPECT_TRUE(::IsRectEmpty(&layout.layoutButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.secondarySidebarButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.accountButton));
+	EXPECT_TRUE(::IsRectEmpty(&layout.manageButton));
+	EXPECT_EQ(CustomFrameControl::None, HitTestCustomFrameControl(layout, { 200, 16 }));
+	EXPECT_LE(layout.captionText.right, layout.minimizeButton.left);
+}
+
+TEST(CustomFrame, PlacesActivityBarGlobalActionsAfterTheUpdateIndicator)
+{
+	constexpr int kIndicatorWidth = 56;
+	const auto layout = CalculateCustomFrameLayout(1200, 96, 430, kIndicatorWidth, true);
+	EXPECT_FALSE(::IsRectEmpty(&layout.updateButton));
+	EXPECT_FALSE(::IsRectEmpty(&layout.accountButton));
+	EXPECT_FALSE(::IsRectEmpty(&layout.manageButton));
+	EXPECT_EQ(layout.secondarySidebarButton.right, layout.updateButton.left);
+	EXPECT_EQ(layout.updateButton.right, layout.accountButton.left);
+	EXPECT_EQ(layout.accountButton.right, layout.manageButton.left);
+	EXPECT_EQ(layout.manageButton.right, layout.minimizeButton.left);
+	EXPECT_EQ(CustomFrameControl::Update,
+		HitTestCustomFrameControl(layout,
+			{ (layout.updateButton.left + layout.updateButton.right) / 2, 16 }));
+	EXPECT_EQ(CustomFrameControl::Account,
+		HitTestCustomFrameControl(layout,
+			{ (layout.accountButton.left + layout.accountButton.right) / 2, 16 }));
+	EXPECT_EQ(CustomFrameControl::Manage,
+		HitTestCustomFrameControl(layout,
+			{ (layout.manageButton.left + layout.manageButton.right) / 2, 16 }));
 }
 
 TEST(CustomFrame, CollapsesTitleControlsTogetherOnNarrowWidthsWithoutCreatingCaptionOverlap)

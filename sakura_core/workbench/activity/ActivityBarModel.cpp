@@ -83,6 +83,20 @@ void ActivityBarModel::SetViewport(int widthPixels, int heightPixels, unsigned i
 	Reflow();
 }
 
+void ActivityBarModel::SetViewport(int widthPixels, int heightPixels,
+	ActivityBarOrientation orientation, unsigned int dpi) noexcept
+{
+	m_orientation = orientation;
+	SetViewport(widthPixels, heightPixels, dpi);
+}
+
+void ActivityBarModel::SetOrientation(ActivityBarOrientation orientation) noexcept
+{
+	if (m_orientation == orientation) return;
+	m_orientation = orientation;
+	Reflow();
+}
+
 std::size_t ActivityBarModel::IndexOf(std::string_view id) const noexcept
 {
 	if (id.empty()) return kNoIndex;
@@ -251,6 +265,36 @@ int ActivityBarModel::GetPreferredWidthPixels() const noexcept
 	return ScaleDip(kWidthDip, m_dpi);
 }
 
+int ActivityBarModel::GetPreferredHeightPixels() const noexcept
+{
+	return ScaleDip(m_orientation == ActivityBarOrientation::Horizontal
+		? kHorizontalHeightDip : kButtonExtentDip, m_dpi);
+}
+
+int ActivityBarModel::GetPreferredExtentPixels() const noexcept
+{
+	return m_orientation == ActivityBarOrientation::Vertical
+		? GetPreferredWidthPixels()
+		: GetPreferredHeightPixels();
+}
+
+int ActivityBarModel::GetIconSizePixels() const noexcept
+{
+	return ScaleDip(GetIconSizeDip(), m_dpi);
+}
+
+int ActivityBarModel::GetItemFootprintPixels() const noexcept
+{
+	return ScaleDip(m_orientation == ActivityBarOrientation::Horizontal
+		? kHorizontalItemExtentDip : kButtonExtentDip, m_dpi);
+}
+
+int ActivityBarModel::GetOuterInsetPixels() const noexcept
+{
+	return ScaleDip(m_orientation == ActivityBarOrientation::Horizontal
+		? kHorizontalOuterInsetDip : 0, m_dpi);
+}
+
 int ActivityBarModel::ScaleDip(int dip, unsigned int dpi) noexcept
 {
 	const auto effectiveDpi = dpi == 0 ? kDefaultDpi : dpi;
@@ -274,40 +318,62 @@ std::size_t ActivityBarModel::FirstEnabled(int direction) const noexcept
 
 void ActivityBarModel::Reflow() noexcept
 {
-	const int slot = ScaleDip(kButtonExtentDip, m_dpi);
-	const int right = std::min(m_widthPixels, GetPreferredWidthPixels());
-	// ViewContainers stack from the top; GlobalCompositeBar actions pin to the bottom
-	// (Accounts above Manage), matching VS Code's Activity Bar layout.
+	const bool vertical = m_orientation == ActivityBarOrientation::Vertical;
+	const int slot = GetItemFootprintPixels();
+	const int crossExtent = vertical
+		? std::min(m_widthPixels, GetPreferredWidthPixels())
+		: std::min(m_heightPixels, GetPreferredHeightPixels());
+	const int axisExtent = vertical ? m_heightPixels : m_widthPixels;
+	const int outerInset = GetOuterInsetPixels();
+	// Horizontal composite bars leave an inset at each end. Clamp the usable
+	// interval for narrow clients so no button rectangle can escape the client.
+	const int contentStart = vertical ? 0 : std::min(outerInset, axisExtent);
+	const int contentEnd = vertical
+		? axisExtent
+		: std::max(contentStart, axisExtent - outerInset);
+	// ViewContainers stack from the top in the vertical Activity Bar. The
+	// GlobalCompositeBar actions pin to the bottom there, but horizontal bars
+	// render every entry in ordinary order along the same axis.
 	std::size_t globalVisible = 0;
-	for (const auto& entry : m_entries) {
-		if (entry.visible && entry.IsGlobalAction()) ++globalVisible;
+	if (vertical) {
+		for (const auto& entry : m_entries) {
+			if (entry.visible && entry.IsGlobalAction()) ++globalVisible;
+		}
 	}
-	const auto globalHeight64 = static_cast<std::int64_t>(slot) * globalVisible;
-	const int containerAreaHeight = static_cast<int>(std::max<std::int64_t>(
-		0, static_cast<std::int64_t>(m_heightPixels) - globalHeight64));
+	const auto globalExtent64 = static_cast<std::int64_t>(slot) * globalVisible;
+	const int containerAxisEnd = vertical
+		? static_cast<int>(std::max<std::int64_t>(
+			0, static_cast<std::int64_t>(axisExtent) - globalExtent64))
+		: contentEnd;
 
-	std::size_t containerSlot = 0;
+	std::size_t normalSlot = 0;
 	std::size_t globalSlot = 0;
 	for (std::size_t index = 0; index < m_entries.size(); ++index) {
 		if (!m_entries[index].visible) {
 			m_bounds[index] = {};
 			continue;
 		}
-		if (m_entries[index].IsGlobalAction()) {
+		if (vertical && m_entries[index].IsGlobalAction()) {
 			const auto fromBottom = static_cast<std::int64_t>(globalVisible - globalSlot) * slot;
 			++globalSlot;
 			const int top = static_cast<int>(std::max<std::int64_t>(
-				0, static_cast<std::int64_t>(m_heightPixels) - fromBottom));
-			const int bottom = std::min(m_heightPixels, top + slot);
-			m_bounds[index] = { 0, top, right, std::max(top, bottom) };
+				0, static_cast<std::int64_t>(axisExtent) - fromBottom));
+			const int end = std::min(axisExtent, top + slot);
+			m_bounds[index] = { 0, top, crossExtent, std::max(top, end) };
 			continue;
 		}
-		const auto top64 = static_cast<std::int64_t>(slot) * containerSlot;
-		++containerSlot;
-		const int top = static_cast<int>(std::min<std::int64_t>(top64, containerAreaHeight));
-		const int bottom = std::min(containerAreaHeight, static_cast<int>(std::min<std::int64_t>(
-			top64 + slot, std::numeric_limits<int>::max())));
-		m_bounds[index] = { 0, top, right, std::max(top, bottom) };
+		const auto axisStart64 = static_cast<std::int64_t>(vertical ? 0 : contentStart)
+			+ static_cast<std::int64_t>(slot) * normalSlot;
+		++normalSlot;
+		const int axisStart = static_cast<int>(std::min<std::int64_t>(
+			axisStart64, containerAxisEnd));
+		const int axisEnd = std::min(containerAxisEnd, static_cast<int>(std::min<std::int64_t>(
+			axisStart64 + slot, std::numeric_limits<int>::max())));
+		if (vertical) {
+			m_bounds[index] = { 0, axisStart, crossExtent, std::max(axisStart, axisEnd) };
+		} else {
+			m_bounds[index] = { axisStart, 0, std::max(axisStart, axisEnd), crossExtent };
+		}
 	}
 }
 

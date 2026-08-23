@@ -97,6 +97,12 @@ public:
 
 protected:
 	EColorIndexType GetDispColorIdx(void) const{ return m_nDispColorIndex; }
+	//! Visible whitespace inherits the background already resolved by the editor
+	//! paint pipeline while a Workbench theme is active. Selection and find-match
+	//! backgrounds remain authoritative and use the caller-provided fallback.
+	[[nodiscard]] static COLORREF ResolveVisibleWhitespaceBackground(
+		EColorIndexType current, EColorIndexType underlying,
+		COLORREF paintedBackground, COLORREF fallback) noexcept;
 
 	// 実装補助
 	bool DrawImp_StyleSelect(SColorStrategyInfo* pInfo);

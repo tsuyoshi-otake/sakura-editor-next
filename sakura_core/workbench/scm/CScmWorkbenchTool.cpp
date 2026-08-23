@@ -461,6 +461,8 @@ struct InputModel final {
 
 struct WorkerResult {
 	std::uint64_t generation{};
+	//! Valid only when `execution` is `Succeeded`; failed status reads leave this
+	//! default-constructed so the last published repository snapshot can remain.
 	GitScmState state;
 	//! Why the refresh ended. An empty change list means "clean" only when this
 	//! says the command actually succeeded; otherwise it means "unknown".
@@ -963,29 +965,62 @@ struct CScmWorkbenchTool::Impl {
 		Impl& m_owner;
 		bool m_ownsPresentation{};
 	};
-	//! Apply one immutable worker result as one visible SCM revision. Identical
-	//! periodic results are discarded before touching the service, controls,
-	//! decorations, status bar, or invalidation state.
+	//! Apply one immutable worker result. Valid status snapshots become one visible
+	//! SCM revision; a failed status only records diagnostics. Identical periodic
+	//! results are discarded before touching the service, controls, decorations,
+	//! status bar, or invalidation state.
 	void ApplyWorkerResult(std::unique_ptr<WorkerResult> result)
 	{
 		if (!result) return;
-		const bool stateChanged = state != result->state
-			|| execution != result->execution || failureReason != result->failureReason;
-		const bool historyChanged = result->historyRead
+		// `state` and the provider are the last successfully read repository
+		// snapshot. A failed status command does not produce a replacement
+		// snapshot: its default-constructed state is only the worker's empty
+		// payload. In particular, treating that payload as a real state would
+		// retract the provider during a timeout, launch failure, or an
+		// unavailable/over-limit git invocation. This is also why an unattempted
+		// history query must not clear the last graph page on this path.
+		const bool statusSucceeded = ClassifyGitStatusRefresh(result->execution)
+			== EGitStatusRefreshDisposition::ApplySnapshot;
+		const bool stateChanged = statusSucceeded && state != result->state;
+		const bool diagnosticsChanged = execution != result->execution
+			|| failureReason != result->failureReason;
+		const bool historyChanged = statusSucceeded && (result->historyRead
 			? graphPresentation.status != EScmGraphPresentationStatus::Available
 				|| history != result->history
 			: graphPresentation.status != EScmGraphPresentationStatus::Unavailable
-				|| !history.empty();
-		if (!stateChanged && !historyChanged) return;
+				|| !history.empty());
+		if (!stateChanged && !historyChanged) {
+			if (diagnosticsChanged) {
+				execution = result->execution;
+				failureReason = std::move(result->failureReason);
+			}
+			return;
+		}
 
 		WorkerPresentationScope presentation(*this);
-		if (stateChanged) {
-			state = std::move(result->state);
+		if (diagnosticsChanged) {
 			execution = result->execution;
 			failureReason = std::move(result->failureReason);
+		}
+		if (stateChanged) {
+			state = std::move(result->state);
 			PublishAndRender();
 		}
 		if (historyChanged) ApplyHistory(std::move(result->history), result->historyRead);
+	}
+	//! Drop the old repository's authoritative presentation before a new root's
+	//! first status result arrives. The next result is generation-fenced, but an
+	//! unknown refresh must not leave the previous root's provider or Graph visible.
+	void ResetForRootChange()
+	{
+		WorkerPresentationScope presentation(*this);
+		state = {};
+		execution = EGitExecutionStatus::InvalidRequest;
+		failureReason.clear();
+		PublishAndRender();
+		// A Git history page belongs to the previous root just as its provider does;
+		// provider disposal also clears the typed commit input through RebuildInput.
+		ApplyHistory({}, false);
 	}
 	[[nodiscard]] int BandHeight() const noexcept
 	{
@@ -1405,7 +1440,7 @@ struct CScmWorkbenchTool::Impl {
 		if (!input || !inputModel.visible) return;
 		RECT frame = InputBounds();
 		::InflateRect(&frame, 1, 1);
-		const HBRUSH brush = ::CreateSolidBrush(palette.border.ToColorRef());
+		const HBRUSH brush = ::CreateSolidBrush(palette.inputBorder.ToColorRef());
 		if (brush == nullptr) return;
 		::FrameRect(dc, &frame, brush);
 		::DeleteObject(brush);
@@ -1451,11 +1486,7 @@ struct CScmWorkbenchTool::Impl {
 	void UpdateGraphScrollbar()
 	{
 		graphScrollbar.SetDpi(dpi);
-		graphScrollbar.SetColors(controls::OverlayScrollbarColors{
-			palette.sideBar.ToColorRef(),
-			palette.raised.ToColorRef(),
-			palette.border.ToColorRef(),
-			palette.secondaryText.ToColorRef() });
+		graphScrollbar.SetColors(controls::ResolveOverlayScrollbarColors(palette, palette.sideBar));
 		graphScrollbar.SetScrollModel(ListOverlayModel(graphList));
 		graphScrollbar.Update();
 	}
@@ -1464,11 +1495,7 @@ struct CScmWorkbenchTool::Impl {
 	void UpdateListScrollbar()
 	{
 		listScrollbar.SetDpi(dpi);
-		listScrollbar.SetColors(controls::OverlayScrollbarColors{
-			palette.sideBar.ToColorRef(),
-			palette.raised.ToColorRef(),
-			palette.border.ToColorRef(),
-			palette.secondaryText.ToColorRef() });
+		listScrollbar.SetColors(controls::ResolveOverlayScrollbarColors(palette, palette.sideBar));
 		listScrollbar.SetScrollModel(ListOverlayModel(list));
 		listScrollbar.Update();
 	}
@@ -3188,6 +3215,7 @@ bool CScmWorkbenchTool::Create(HWND parent)
 	(void)m_impl->listScrollbar.Create(m_impl->window, m_impl->list, [impl](int topRow) {
 		if (impl->list != nullptr) (void)::SendMessageW(impl->list, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
 	}, controls::OverlayScrollbarSource::ExplicitModel);
+	m_impl->listScrollbar.SetHideNativeBar(true);
 	// The Graph is a second owner-drawn list rather than a hand-scrolled canvas,
 	// so it inherits the same keyboard, wheel, and overlay-scrollbar behaviour the
 	// change list already has.
@@ -3203,6 +3231,7 @@ bool CScmWorkbenchTool::Create(HWND parent)
 			(void)::SendMessageW(impl->graphList, LB_SETTOPINDEX, static_cast<WPARAM>(topRow), 0);
 		}
 	}, controls::OverlayScrollbarSource::ExplicitModel);
+	m_impl->graphScrollbar.SetHideNativeBar(true);
 	// Multiline and wrapping, because upstream's SCM input is a real multi-line
 	// editor: a commit body is not one line. `ES_WANTRETURN` keeps Enter
 	// inserting a newline, which is what leaves Ctrl+Enter free to mean commit.
@@ -3352,12 +3381,14 @@ void CScmWorkbenchTool::Close()
 
 void CScmWorkbenchTool::SetRoot(std::wstring root)
 {
+	if (m_impl->closed || !m_impl->shared || m_impl->root == root) return;
 	m_impl->root = std::move(root);
 	{
 		std::lock_guard lock(m_impl->shared->mutex);
 		m_impl->shared->root = m_impl->root;
 		++m_impl->shared->generation;
 	}
+	m_impl->ResetForRootChange();
 	if (!m_impl->closed && m_impl->shared->wake) ::SetEvent(m_impl->shared->wake);
 }
 void CScmWorkbenchTool::SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState workspaceState)
@@ -3369,14 +3400,15 @@ void CScmWorkbenchTool::SetWelcomeWorkspaceState(EGitScmWelcomeWorkspaceState wo
 void CScmWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
 {
 	m_impl->palette = palette;
-	if (m_impl->window) ::InvalidateRect(m_impl->window, nullptr, FALSE);
-	if (m_impl->list) ::InvalidateRect(m_impl->list, nullptr, FALSE);
-	if (m_impl->graphList) ::InvalidateRect(m_impl->graphList, nullptr, FALSE);
 	m_impl->UpdateListScrollbar();
 	m_impl->UpdateGraphScrollbar();
-	// The box paints its own background through `WM_CTLCOLOREDIT`, so it needs
-	// its own invalidation: the parent's does not reach a child's client area.
-	if (m_impl->input) ::InvalidateRect(m_impl->input, nullptr, FALSE);
+	if (m_impl->window) {
+		// Commit the palette across the complete native subtree. Parent-only
+		// invalidation does not repaint EDIT/LISTBOX client areas and used to leave
+		// the previous theme visible until the next unrelated interaction.
+		(void)::RedrawWindow(m_impl->window, nullptr, nullptr,
+			RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
+	}
 }
 void CScmWorkbenchTool::SetInputLineCountRange(int minLineCount, int maxLineCount)
 {
@@ -3679,8 +3711,8 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 		if (reinterpret_cast<HWND>(lParam) != impl.input) break;
 		const HDC dc = reinterpret_cast<HDC>(wParam);
 		::SetTextColor(dc, impl.palette.primaryText.ToColorRef());
-		::SetBkColor(dc, impl.palette.raised.ToColorRef());
-		::SetDCBrushColor(dc, impl.palette.raised.ToColorRef());
+		::SetBkColor(dc, impl.palette.inputBackground.ToColorRef());
+		::SetDCBrushColor(dc, impl.palette.inputBackground.ToColorRef());
 		return reinterpret_cast<LRESULT>(::GetStockObject(DC_BRUSH));
 	}
 	case WM_CTLCOLORLISTBOX: {

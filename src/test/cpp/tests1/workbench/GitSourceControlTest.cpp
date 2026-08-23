@@ -9,6 +9,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -366,6 +367,30 @@ TEST(GitScmModel, ParsesBranchAheadBehindAndChanges)
 	EXPECT_EQ(L"new.txt", state.changes[0].path);
 	EXPECT_EQ(L"src/file.cpp", state.changes[1].path);
 	EXPECT_EQ(L"origin/feature/test", state.upstream);
+}
+
+TEST(GitScmModel, AppliesOnlySuccessfulStatusRefreshes)
+{
+	EXPECT_EQ(EGitStatusRefreshDisposition::ApplySnapshot,
+		ClassifyGitStatusRefresh(EGitExecutionStatus::Succeeded));
+}
+
+TEST(GitScmModel, RetainsThePublishedSnapshotForEveryNonSuccessfulStatus)
+{
+	constexpr std::array statuses{
+		EGitExecutionStatus::Failed,
+		EGitExecutionStatus::InvalidRequest,
+		EGitExecutionStatus::GitUnavailable,
+		EGitExecutionStatus::LaunchFailed,
+		EGitExecutionStatus::TimedOut,
+		EGitExecutionStatus::Cancelled,
+		EGitExecutionStatus::OutputLimitExceeded,
+	};
+	for (const auto status : statuses) {
+		EXPECT_EQ(EGitStatusRefreshDisposition::RetainSnapshot,
+			ClassifyGitStatusRefresh(status))
+			<< static_cast<int>(status);
+	}
 }
 
 TEST(GitScmPublisher, ClassifiesTheTwoGitAreasSeparately)
@@ -1605,6 +1630,102 @@ TEST(GitBranchCommands, WithoutAPresenterTheCommandFailsInsteadOfRunningGit)
 	EXPECT_EQ(EGitBranchCommandStatus::Failed, RunGitCheckout(context, false).status);
 	EXPECT_EQ(EGitBranchCommandStatus::Failed, RunGitCreateBranch(context, false).status);
 	EXPECT_TRUE(git.invocations.empty());
+}
+
+TEST(GitBranchCommands, AsyncCheckoutUsesOneTerminalCompletion)
+{
+	FakeGit git;
+	git.refs = RefLine("refs/heads/main", kCommitA);
+	auto context = MakeBranchContext(git);
+	context.quickPickAsync = [](const std::vector<GitCheckoutItem>& items, std::wstring_view,
+		std::function<std::vector<GitCheckoutItem>(std::wstring_view)> search,
+		std::function<void(std::optional<GitCheckoutItem>)> done) {
+		const auto rows = search(L"main");
+		const auto found = std::find_if(rows.begin(), rows.end(), [](const auto& item) {
+			return item.refName == L"main";
+		});
+		ASSERT_NE(rows.end(), found);
+		done(*found);
+		done(std::nullopt);
+	};
+	context.inputBoxAsync = [](std::wstring_view, std::wstring_view, std::wstring_view,
+		std::function<void(std::optional<std::wstring>)>) {};
+
+	int completions = 0;
+	GitBranchCommandResult completed;
+	RunGitCheckoutAsync(context, false, [&completions, &completed](GitBranchCommandResult result) {
+		++completions;
+		completed = std::move(result);
+	});
+
+	EXPECT_EQ(1, completions);
+	EXPECT_EQ(EGitBranchCommandStatus::Succeeded, completed.status);
+	ASSERT_EQ(2U, git.invocations.size());
+	EXPECT_EQ(L"checkout", git.Last()[0]);
+	EXPECT_EQ(L"main", git.Last().back());
+}
+
+TEST(GitBranchCommands, AsyncCheckoutCancellationIsTerminalAndDoesNotRunGit)
+{
+	FakeGit git;
+	git.refs = RefLine("refs/heads/main", kCommitA);
+	auto context = MakeBranchContext(git);
+	context.quickPickAsync = [](const std::vector<GitCheckoutItem>&, std::wstring_view,
+		std::function<std::vector<GitCheckoutItem>(std::wstring_view)>,
+		std::function<void(std::optional<GitCheckoutItem>)> done) {
+		done(std::nullopt);
+		done(std::nullopt);
+	};
+	context.inputBoxAsync = [](std::wstring_view, std::wstring_view, std::wstring_view,
+		std::function<void(std::optional<std::wstring>)>) {};
+
+	int completions = 0;
+	GitBranchCommandResult completed;
+	RunGitCheckoutAsync(context, false, [&completions, &completed](GitBranchCommandResult result) {
+		++completions;
+		completed = std::move(result);
+	});
+
+	EXPECT_EQ(1, completions);
+	EXPECT_EQ(EGitBranchCommandStatus::Cancelled, completed.status);
+	ASSERT_EQ(1U, git.invocations.size());
+	EXPECT_EQ(L"for-each-ref", git.invocations[0][0]);
+}
+
+TEST(GitBranchCommands, AsyncBranchNameCollisionReopensTheSameInputFlow)
+{
+	FakeGit git;
+	git.refs = RefLine("refs/heads/main", kCommitA);
+	auto context = MakeBranchContext(git);
+	context.quickPickAsync = [](const std::vector<GitCheckoutItem>&, std::wstring_view,
+		std::function<std::vector<GitCheckoutItem>(std::wstring_view)>,
+		std::function<void(std::optional<GitCheckoutItem>)> done) { done(std::nullopt); };
+	std::vector<std::wstring> typed{ L"main", L"feature" };
+	std::vector<std::wstring> prompts;
+	context.inputBoxAsync = [&typed, &prompts](std::wstring_view prompt, std::wstring_view,
+		std::wstring_view value, std::function<void(std::optional<std::wstring>)> done) {
+		prompts.push_back(std::wstring(prompt) + L"|" + std::wstring(value));
+		ASSERT_FALSE(typed.empty());
+		auto answer = std::move(typed.front());
+		typed.erase(typed.begin());
+		done(std::move(answer));
+		done(std::nullopt);
+	};
+
+	int completions = 0;
+	GitBranchCommandResult completed;
+	RunGitCreateBranchAsync(context, false, [&completions, &completed](GitBranchCommandResult result) {
+		++completions;
+		completed = std::move(result);
+	});
+
+	EXPECT_EQ(1, completions);
+	EXPECT_EQ(EGitBranchCommandStatus::Succeeded, completed.status);
+	ASSERT_EQ(2U, prompts.size());
+	EXPECT_EQ(L"Please provide a new branch name|", prompts[0]);
+	EXPECT_EQ(L"Branch \"main\" already exists|main", prompts[1]);
+	ASSERT_EQ(2U, git.invocations.size());
+	EXPECT_EQ(L"feature", git.Last()[3]);
 }
 
 //! Records every invocation and answers `git branch` the way a repository with

@@ -37,6 +37,29 @@ struct ThemeColor {
 	}
 };
 
+//! Composites one VS Code theme color over an opaque native surface.
+//! Scrollbar slider tokens deliberately retain their alpha until the owning
+//! surface is known, because the same slider is painted over Editor, Side Bar,
+//! Panel, Markdown preview, and Quick Input backgrounds.
+[[nodiscard]] constexpr ThemeColor CompositeThemeColor(
+	ThemeColor foreground, ThemeColor background) noexcept
+{
+	if (foreground.alpha == 0xFF) {
+		return { foreground.red, foreground.green, foreground.blue, 0xFF };
+	}
+	if (foreground.alpha == 0) {
+		return { background.red, background.green, background.blue, 0xFF };
+	}
+	const unsigned int alpha = foreground.alpha;
+	const unsigned int inverse = 0xFFU - alpha;
+	return {
+		static_cast<std::uint8_t>((foreground.red * alpha + background.red * inverse + 127U) / 255U),
+		static_cast<std::uint8_t>((foreground.green * alpha + background.green * inverse + 127U) / 255U),
+		static_cast<std::uint8_t>((foreground.blue * alpha + background.blue * inverse + 127U) / 255U),
+		0xFF,
+	};
+}
+
 //! The complete set of colors used by Sakura-owned workbench chrome.
 struct ThemePalette {
 	ThemeColor canvas;
@@ -93,8 +116,9 @@ struct ThemePalette {
 	//! actionable ("prominent") title-bar Update button with
 	//! `--vscode-button-background` / `--vscode-button-foreground` and hovers it
 	//! with `--vscode-button-hoverBackground`, so the Update indicator needs the
-	//! button role rather than the badge role. Sakura's built-in defaults keep the
-	//! product's own accent instead of importing VS Code's `#0E639C`/`#007ACC`.
+	//! button role rather than the badge role. The dark fallback keeps Sakura's
+	//! product accent; the bundled Light theme supplies VS Code Light Modern's
+	//! `#005FB8` explicitly.
 	ThemeColor buttonBackground = { 0x1F, 0x8A, 0xD2 };
 	//! VS Code `button.foreground`.
 	ThemeColor buttonForeground = { 0xFF, 0xFF, 0xFF };
@@ -129,6 +153,32 @@ struct ThemePalette {
 	ThemeColor gitIgnoredResourceForeground = { 0x8C, 0x8C, 0x8C };
 	ThemeColor gitConflictingResourceForeground = { 0xE4, 0x67, 0x6B };
 	ThemeColor gitSubmoduleResourceForeground = { 0x8D, 0xB9, 0xE2 };
+	//! VS Code `quickInput.background`, used by Command Palette and Quick Pick.
+	ThemeColor quickInputBackground = { 0x25, 0x25, 0x26 };
+	//! VS Code `input.background` for single-line text fields.
+	ThemeColor inputBackground = { 0x3C, 0x3C, 0x3C };
+	//! VS Code `input.border` for single-line text fields.
+	ThemeColor inputBorder = { 0x3C, 0x3C, 0x3C };
+	//! VS Code `list.activeSelectionBackground`, kept separate from focus/accent.
+	ThemeColor listActiveSelectionBackground = { 0x09, 0x47, 0x71 };
+	//! VS Code `list.activeSelectionForeground`.
+	ThemeColor listActiveSelectionForeground = { 0xFF, 0xFF, 0xFF };
+	//! VS Code `list.hoverBackground`.
+	ThemeColor listHoverBackground = { 0x2A, 0x2D, 0x2E };
+	//! VS Code `list.focusAndSelectionOutline`.
+	ThemeColor listFocusAndSelectionOutline = { 0x1F, 0x8A, 0xD2 };
+	//! VS Code `scrollbar.background`. `transparent` leaves the owning surface visible.
+	ThemeColor scrollbarBackground = { 0x00, 0x00, 0x00, 0x00 };
+	//! VS Code `scrollbarSlider.background`. Alpha is resolved over the owning surface.
+	ThemeColor scrollbarSliderBackground = { 0x79, 0x79, 0x79, 0x66 };
+	//! VS Code `scrollbarSlider.hoverBackground`.
+	ThemeColor scrollbarSliderHoverBackground = { 0x64, 0x64, 0x64, 0xB3 };
+	//! VS Code `scrollbarSlider.activeBackground` used while the thumb is dragged.
+	ThemeColor scrollbarSliderActiveBackground = { 0xBF, 0xBF, 0xBF, 0x66 };
+	//! VS Code `editorWhitespace.foreground`. Alpha is resolved over `canvas` by
+	//! editor decoration consumers so a theme switch cannot retain a legacy
+	//! type-specific background behind tabs, spaces, or EOL marks.
+	ThemeColor editorWhitespaceForeground = { 0xE3, 0xE4, 0xE2, 0x29 };
 	[[nodiscard]] constexpr bool operator==(const ThemePalette&) const noexcept = default;
 };
 
@@ -265,6 +315,10 @@ public:
 	static void SetActiveColorThemePalette(const ThemePalette& palette) noexcept;
 	static void ClearActiveColorThemePalette() noexcept;
 	[[nodiscard]] static bool HasActiveColorThemePalette() noexcept;
+	//! Returns the process-local color-theme projection without copying. High
+	//! Contrast suppresses this overlay so the legacy accessibility path remains
+	//! authoritative. The pointer is invalidated by the next theme application.
+	[[nodiscard]] static const ThemePalette* ActiveColorThemePalette() noexcept;
 	//! Installs the projected token/semantic colors for the selected VS Code theme.
 	//! High Contrast suppresses this overlay at read time, like the palette overlay.
 	static void SetActiveColorThemeSyntaxPalette(const ThemeSyntaxPalette& palette) noexcept;
@@ -298,34 +352,34 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 {
 	if (mode == ThemeMode::Light) {
 		return {
-			{ 0xF4, 0xF5, 0xF7 }, // canvas
-			{ 0xFF, 0xFF, 0xFF }, // panel
-			{ 0xE9, 0xEC, 0xF1 }, // raised
-			{ 0xCD, 0xD2, 0xDB }, // border
-			{ 0x1F, 0x23, 0x29 }, // primary text
-			{ 0x5C, 0x65, 0x73 }, // secondary text
-			{ 0x71, 0x71, 0x71 }, // description text: VS Code light descriptionForeground literal
-			{ 0xAA, 0xAB, 0xAC }, // disabled text: #61616180 composited over the light canvas
-			{ 0xB8, 0x32, 0x68 }, // Sakura accent / focus
+			{ 0xFF, 0xFF, 0xFF }, // editor.background
+			{ 0xF8, 0xF8, 0xF8 }, // panel.background / workbench chrome
+			{ 0xF2, 0xF2, 0xF2 }, // list.hoverBackground / raised surface
+			{ 0xE5, 0xE5, 0xE5 }, // shared VS Code Light Modern border
+			{ 0x3B, 0x3B, 0x3B }, // foreground
+			{ 0x3B, 0x3B, 0x3B }, // sideBar.foreground / descriptionForeground
+			{ 0x3B, 0x3B, 0x3B }, // VS Code Light Modern descriptionForeground
+			{ 0xB0, 0xB0, 0xB0 }, // #61616180 composited over the white editor canvas
+			{ 0x00, 0x5F, 0xB8 }, // VS Code Light Modern focus / active blue
 			{ 0xFF, 0xFF, 0xFF }, // highlighted text
-			{ 0xF3, 0xF3, 0xF3 }, // title bar
-			{ 0xF3, 0xF3, 0xF3 }, // activity bar
-			{ 0xC4, 0x2B, 0x1C }, // destructive hover
+			{ 0xF8, 0xF8, 0xF8 }, // titleBar.activeBackground
+			{ 0xF8, 0xF8, 0xF8 }, // activityBar.background
+			{ 0xF8, 0x51, 0x49 }, // VS Code Light Modern errorForeground
 			{ 0xBF, 0x88, 0x00 }, // notificationsWarningIcon.foreground
-			{ 0xFF, 0xFF, 0xFF }, // panel.background
-			{ 0xFF, 0xFF, 0xFF }, // sideBar.background
-			{ 0xFF, 0xFF, 0xFF }, // terminal.background fallback: panel.background
-			{ 0xF4, 0xF5, 0xF7 }, // editorGutter.background fallback: editor.background
-			{ 0x23, 0x78, 0x93 }, // editorLineNumber.foreground
+			{ 0xF8, 0xF8, 0xF8 }, // panel.background
+			{ 0xF8, 0xF8, 0xF8 }, // sideBar.background
+			{ 0xF8, 0xF8, 0xF8 }, // terminal.background fallback: panel.background
+			{ 0xFF, 0xFF, 0xFF }, // editorGutter.background fallback: editor.background
+			{ 0x6E, 0x76, 0x81 }, // editorLineNumber.foreground
 			{ 0x17, 0x11, 0x84 }, // editorLineNumber.activeForeground
-			{ 0xE2, 0xE9, 0xD7 }, // diffEditor.insertedLineBackground: rgba(155,185,85,.2) over the light canvas
-			{ 0xF6, 0xC4, 0xC6 }, // diffEditor.removedLineBackground: rgba(255,0,0,.2) over the light canvas
-			{ 0xCA, 0xCB, 0xCC }, // diffEditor.diagonalFill: #22222233 over the light canvas
-			{ 0xF8, 0xC9, 0xAA }, // editor.findMatchHighlightBackground: #EA5C0055 over the light sideBar
-			{ 0xB8, 0x32, 0x68 }, // button.background: the Sakura light accent, not VS Code's #007ACC
+			{ 0xEB, 0xF1, 0xDD }, // rgba(155,185,85,.2) over the white editor canvas
+			{ 0xFF, 0xCC, 0xCC }, // rgba(255,0,0,.2) over the white editor canvas
+			{ 0xD3, 0xD3, 0xD3 }, // #22222233 over the white editor canvas
+			{ 0xF3, 0xC4, 0xA6 }, // #EA5C0055 over the #F8F8F8 side bar
+			{ 0x00, 0x5F, 0xB8 }, // button.background
 			{ 0xFF, 0xFF, 0xFF }, // button.foreground
-			{ 0x93, 0x28, 0x53 }, // button.hoverBackground: darken(button.background, 0.2) as upstream registers it for light
-			{ 0x00, 0x7A, 0xCC }, // activityBarBadge.background
+			{ 0x02, 0x58, 0xA8 }, // button.hoverBackground: VS Code Light Modern
+			{ 0x00, 0x5F, 0xB8 }, // activityBarBadge.background
 			{ 0xFF, 0xFF, 0xFF }, // activityBarBadge.foreground
 			// The Git extension's registered `light` defaults, verbatim.
 			{ 0x58, 0x7C, 0x0C }, // gitDecoration.addedResourceForeground
@@ -338,6 +392,18 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 			{ 0x8E, 0x8E, 0x90 }, // gitDecoration.ignoredResourceForeground
 			{ 0xAD, 0x07, 0x07 }, // gitDecoration.conflictingResourceForeground
 			{ 0x12, 0x58, 0xA7 }, // gitDecoration.submoduleResourceForeground
+			{ 0xF8, 0xF8, 0xF8 }, // quickInput.background
+			{ 0xFF, 0xFF, 0xFF }, // input.background
+			{ 0xCE, 0xCE, 0xCE }, // input.border
+			{ 0xE8, 0xE8, 0xE8 }, // list.activeSelectionBackground
+			{ 0x00, 0x00, 0x00 }, // list.activeSelectionForeground
+			{ 0xF2, 0xF2, 0xF2 }, // list.hoverBackground
+			{ 0x00, 0x5F, 0xB8 }, // list.focusAndSelectionOutline
+			{ 0x00, 0x00, 0x00, 0x00 }, // scrollbar.background: transparent
+			{ 0x64, 0x64, 0x64, 0x66 }, // scrollbarSlider.background: #646464 at 40%
+			{ 0x64, 0x64, 0x64, 0xB3 }, // scrollbarSlider.hoverBackground: #646464 at 70%
+			{ 0x00, 0x00, 0x00, 0x99 }, // scrollbarSlider.activeBackground: black at 60%
+			{ 0x33, 0x33, 0x33, 0x33 }, // editorWhitespace.foreground
 		};
 	}
 	return {
@@ -381,6 +447,18 @@ constexpr ThemePalette CThemeService::PaletteFor(ThemeMode mode) noexcept
 		{ 0x8C, 0x8C, 0x8C }, // gitDecoration.ignoredResourceForeground
 		{ 0xE4, 0x67, 0x6B }, // gitDecoration.conflictingResourceForeground
 		{ 0x8D, 0xB9, 0xE2 }, // gitDecoration.submoduleResourceForeground
+		{ 0x25, 0x25, 0x26 }, // quickInput.background
+		{ 0x3C, 0x3C, 0x3C }, // input.background
+		{ 0x3C, 0x3C, 0x3C }, // input.border
+		{ 0x09, 0x47, 0x71 }, // list.activeSelectionBackground
+		{ 0xFF, 0xFF, 0xFF }, // list.activeSelectionForeground
+		{ 0x2A, 0x2D, 0x2E }, // list.hoverBackground
+		{ 0x1F, 0x8A, 0xD2 }, // list.focusAndSelectionOutline
+		{ 0x00, 0x00, 0x00, 0x00 }, // scrollbar.background: transparent
+		{ 0x79, 0x79, 0x79, 0x66 }, // scrollbarSlider.background: #797979 at 40%
+		{ 0x64, 0x64, 0x64, 0xB3 }, // scrollbarSlider.hoverBackground: #646464 at 70%
+		{ 0xBF, 0xBF, 0xBF, 0x66 }, // scrollbarSlider.activeBackground: #BFBFBF at 40%
+		{ 0xE3, 0xE4, 0xE2, 0x29 }, // editorWhitespace.foreground
 	};
 }
 

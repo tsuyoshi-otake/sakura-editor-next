@@ -28,6 +28,7 @@
 
 #include <shellapi.h>// HDROP
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <filesystem>
 #include <memory>
@@ -111,6 +112,7 @@ class IWorkbenchRuntime;
 class CWorkbenchPanelHost;
 class CWorkspaceContext;
 enum class WorkbenchEdge : std::uint8_t;
+enum class ActivityBarLocation : std::uint8_t;
 namespace layout {
 class IWorkbenchLayoutSubscription;
 struct WorkbenchLayoutStateSnapshot;
@@ -938,6 +940,7 @@ private:
 	[[nodiscard]] bool IsBuiltinWorkbenchViewActive(std::string_view viewId) const;
 	//! True when `containerId` is the active ViewContainer of a visible Primary Side Bar.
 	[[nodiscard]] bool IsSidebarViewContainerActive(std::string_view containerId) const;
+	[[nodiscard]] bool IsAuxiliaryViewContainerActive(std::string_view containerId) const;
 	[[nodiscard]] workbench::commands::WorkbenchEditorCommandContext BuildWorkbenchEditorCommandContext() const;
 	[[nodiscard]] workbench::commands::WorkbenchScmCommandContext BuildWorkbenchScmCommandContext() const;
 	[[nodiscard]] workbench::commands::WorkbenchUpdateCommandContext BuildWorkbenchUpdateCommandContext() const;
@@ -963,6 +966,15 @@ private:
 	[[nodiscard]] bool ExecuteShowProblemsCommand();
 	[[nodiscard]] bool ExecuteShowOutputCommand(bool requestFocus = true);
 	[[nodiscard]] bool ExecuteToggleOutputCommand();
+	//! Applies one supported value of VS Code's workbench.activityBar.location.
+	//! Hidden is deliberately absent from the type and from every native surface.
+	[[nodiscard]] bool SetActivityBarLocation(workbench::ActivityBarLocation location,
+		bool persist);
+	[[nodiscard]] workbench::ActivityBarLocation ReadActivityBarLocationSetting() const;
+	[[nodiscard]] bool PersistActivityBarLocationSelection(
+		workbench::ActivityBarLocation location);
+	//! Reprojects both side-bar composite bars and the title-bar GlobalCompositeBar.
+	void ApplyActivityBarLocationSetting();
 	void PersistWorkbenchExtent(workbench::WorkbenchEdge edge, int extentDip);
 	//! Activates one Primary Side Bar ViewContainer, mirroring a VS Code Activity Bar click.
 	void ActivateSidebarPage(std::string_view containerId, bool toggleIfActive);
@@ -1176,10 +1188,17 @@ private:
 	std::uint64_t m_workbenchLayoutOperationSequence = 0;
 	std::uint64_t m_outputPanelOperationSequence = 0;
 	std::unique_ptr<workbench::CActivityBar> m_activityBar;
+	//! Horizontal top/bottom placement renders an independent composite bar for
+	//! the Secondary Side Bar; default placement leaves this HWND empty/hidden.
+	std::unique_ptr<workbench::CActivityBar> m_auxiliaryActivityBar;
+	workbench::ActivityBarLocation m_activityBarLocation{};
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_leftWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_rightWorkbenchPanel;
 	std::unique_ptr<workbench::CWorkbenchPanelHost> m_bottomWorkbenchPanel;
 	std::unique_ptr<workbench::quickinput::CCommandPaletteOverlay> m_commandPaletteOverlay;
+	//! Invalidated before workbench teardown so deferred Git Quick Input
+	//! continuations cannot call back into a destroyed CEditWnd.
+	std::shared_ptr<std::atomic_bool> m_gitBranchCommandSession;
 	//! Built-in color themes available to this window.
 	std::unique_ptr<theme::CColorThemeRegistry> m_colorThemeRegistry;
 	bool m_startupOutlineReloadPending = false;

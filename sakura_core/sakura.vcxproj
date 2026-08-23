@@ -74,7 +74,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);lunasvg.lib;advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>true</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\sakura.exe.manifest</AdditionalOptions>
     </Link>
@@ -572,6 +572,7 @@
 	<ClInclude Include="..\sakura_core\markdown\CMarkdownPreviewWnd.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewSurfaceAdapter.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewWorkerRetirement.h" />
+	<ClInclude Include="..\sakura_core\markdown\MarkdownRemoteImageFetcher.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownCodeHighlighter.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownParser.h" />
 	<ClInclude Include="..\sakura_core\markdown\MarkdownPreviewLayout.h" />
@@ -1255,6 +1256,7 @@
     <ClCompile Include="..\sakura_core\theme\CColorThemeRegistry.cpp" />
     <ClCompile Include="..\sakura_core\theme\TextMateScopeColorResolver.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\CMarkdownPreviewWnd.cpp" />
+	<ClCompile Include="..\sakura_core\markdown\MarkdownRemoteImageFetcher.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownCodeHighlighter.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownParser.cpp" />
 	<ClCompile Include="..\sakura_core\markdown\MarkdownPreviewLayout.cpp" />

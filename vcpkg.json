@@ -13,6 +13,7 @@
       "name": "gtest",
       "platform": "static"
     },
+    "lunasvg",
     "ms-gsl",
     "onigmo-next",
     "ppa-stub",

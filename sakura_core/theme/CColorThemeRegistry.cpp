@@ -34,6 +34,7 @@ constexpr std::string_view kSakuraDefaultDarkThemeJson = R"json({
 	"colors": {
 		"editor.background": "#1E1E1E",
 		"editorGutter.background": "#1E1E1E",
+		"editorWhitespace.foreground": "#E3E4E229",
 		"editorLineNumber.foreground": "#858585",
 		"editorLineNumber.activeForeground": "#CCCCCC",
 		"sideBar.background": "#293134",
@@ -73,26 +74,36 @@ constexpr std::string_view kSakuraDefaultLightThemeJson = R"json({
 	"name": "Sakura Default Light",
 	"type": "light",
 	"colors": {
-		"editor.background": "#F4F5F7",
-		"editorGutter.background": "#F4F5F7",
-		"editorLineNumber.foreground": "#237893",
+		"editor.background": "#FFFFFF",
+		"editorGutter.background": "#FFFFFF",
+		"editorWhitespace.foreground": "#33333333",
+		"editorLineNumber.foreground": "#6E7681",
 		"editorLineNumber.activeForeground": "#171184",
-		"sideBar.background": "#FFFFFF",
-		"panel.background": "#FFFFFF",
-		"sideBarSectionHeader.background": "#E9ECF1",
-		"sideBar.border": "#CDD2DB",
-		"panel.border": "#CDD2DB",
-		"foreground": "#1F2329",
-		"sideBar.foreground": "#5C6573",
-		"descriptionForeground": "#717171",
-		"disabledForeground": "#AAABAC",
-		"focusBorder": "#B83268",
+		"sideBar.background": "#F8F8F8",
+		"panel.background": "#F8F8F8",
+		"sideBarSectionHeader.background": "#F8F8F8",
+		"sideBar.border": "#E5E5E5",
+		"panel.border": "#E5E5E5",
+		"foreground": "#3B3B3B",
+		"sideBar.foreground": "#3B3B3B",
+		"descriptionForeground": "#3B3B3B",
+		"disabledForeground": "#61616180",
+		"focusBorder": "#005FB8",
+		"button.background": "#005FB8",
 		"button.foreground": "#FFFFFF",
-		"titleBar.activeBackground": "#F3F3F3",
-		"activityBar.background": "#F3F3F3",
-		"activityBar.border": "#CDD2DB",
-		"errorForeground": "#C42B1C",
-		"notificationsWarningIcon.foreground": "#BF8800"
+		"button.hoverBackground": "#0258A8",
+		"titleBar.activeBackground": "#F8F8F8",
+		"activityBar.background": "#F8F8F8",
+		"activityBar.border": "#E5E5E5",
+		"errorForeground": "#F85149",
+		"notificationsWarningIcon.foreground": "#BF8800",
+		"quickInput.background": "#F8F8F8",
+		"input.background": "#FFFFFF",
+		"input.border": "#CECECE",
+		"list.activeSelectionBackground": "#E8E8E8",
+		"list.activeSelectionForeground": "#000000",
+		"list.hoverBackground": "#F2F2F2",
+		"list.focusAndSelectionOutline": "#005FB8"
 	},
 	"tokenColors": [
 		{ "scope": "comment", "settings": { "foreground": "#008000", "fontStyle": "italic" } },
@@ -456,6 +467,14 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			}
 			return fallback;
 		};
+		const auto firstRaw = [&colors](ThemeColor fallback,
+			std::initializer_list<std::wstring_view> names) {
+			for (const auto name : names) {
+				const auto found = colors.find(std::wstring(name));
+				if (found != colors.end()) return found->second;
+			}
+			return fallback;
+		};
 		palette.canvas = first(palette.canvas, { L"editor.background", L"editorGroup.emptyBackground" });
 		palette.editorGutterBackground = first(palette.canvas, { L"editorGutter.background" });
 		palette.editorLineNumberForeground = firstOverWithFallback(palette.editorGutterBackground,
@@ -477,7 +496,7 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 		palette.panel = first(palette.panel, { L"panel.background", L"editorGroupHeader.tabsBackground" });
 		palette.bottomPanel = first(palette.bottomPanel, { L"panel.background", L"editorGroupHeader.tabsBackground" });
 		palette.terminalBackground = first(palette.bottomPanel, { L"terminal.background" });
-		palette.raised = first(palette.raised, { L"sideBarSectionHeader.background", L"list.hoverBackground",
+		palette.raised = first(palette.raised, { L"list.hoverBackground", L"sideBarSectionHeader.background",
 			L"editorWidget.background", L"quickInput.background" });
 		// `activityBar.border` is a fallback when a theme omits `sideBar.border`;
 		// the Activity Bar paints this shared Part-edge color on its right edge.
@@ -515,6 +534,32 @@ ThemePalette CColorThemeRegistry::ProjectPalette(
 			{ L"activityBarBadge.background" });
 		palette.activityBarBadgeForeground = first(palette.activityBarBadgeForeground,
 			{ L"activityBarBadge.foreground" });
+		// Quick Input owns a single-line input and a list. Keep these roles explicit
+		// instead of deriving them from the broad panel/accent colors so the native
+		// overlay can follow VS Code's low-contrast Light Modern treatment.
+		palette.quickInputBackground = first(palette.quickInputBackground, { L"quickInput.background" });
+		palette.inputBackground = first(palette.inputBackground, { L"input.background" });
+		palette.inputBorder = first(palette.inputBorder, { L"input.border" });
+		palette.listActiveSelectionBackground = first(palette.listActiveSelectionBackground,
+			{ L"list.activeSelectionBackground" });
+		palette.listActiveSelectionForeground = first(palette.listActiveSelectionForeground,
+			{ L"list.activeSelectionForeground" });
+		palette.listHoverBackground = first(palette.listHoverBackground, { L"list.hoverBackground" });
+		palette.listFocusAndSelectionOutline = first(palette.listFocusAndSelectionOutline,
+			{ L"list.focusAndSelectionOutline" });
+		// Unlike ordinary GDI roles, scrollbar colors remain translucent until a
+		// concrete Editor/Side Bar/Panel/Quick Input surface is known. VS Code uses
+		// the same slider tokens over all of those backgrounds.
+		palette.scrollbarBackground = firstRaw(palette.scrollbarBackground,
+			{ L"scrollbar.background" });
+		palette.scrollbarSliderBackground = firstRaw(palette.scrollbarSliderBackground,
+			{ L"scrollbarSlider.background" });
+		palette.scrollbarSliderHoverBackground = firstRaw(palette.scrollbarSliderHoverBackground,
+			{ L"scrollbarSlider.hoverBackground" });
+		palette.scrollbarSliderActiveBackground = firstRaw(palette.scrollbarSliderActiveBackground,
+			{ L"scrollbarSlider.activeBackground" });
+		palette.editorWhitespaceForeground = firstRaw(palette.editorWhitespaceForeground,
+			{ L"editorWhitespace.foreground" });
 		// The Search view's match highlight is the editor's own find-match role, which
 		// is what upstream's `searchResult` rendering reuses.
 		palette.searchMatchHighlightBackground = firstOverWithFallback(palette.sideBar,

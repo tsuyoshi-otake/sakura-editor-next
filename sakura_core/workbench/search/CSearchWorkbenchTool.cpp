@@ -873,12 +873,7 @@ struct CSearchWorkbenchTool::Impl {
 
 	void ApplyScrollbarColors()
 	{
-		controls::OverlayScrollbarColors colors;
-		colors.background = palette.sideBar.ToColorRef();
-		colors.trackHover = palette.raised.ToColorRef();
-		colors.thumb = palette.border.ToColorRef();
-		colors.thumbHover = palette.secondaryText.ToColorRef();
-		scrollbar.SetColors(colors);
+		scrollbar.SetColors(controls::ResolveOverlayScrollbarColors(palette, palette.sideBar));
 	}
 
 	// --- worker ---------------------------------------------------------------
@@ -1102,6 +1097,7 @@ void CSearchWorkbenchTool::SetPalette(const theme::ThemePalette& palette)
 {
 	m_impl->palette = palette;
 	m_impl->ApplyScrollbarColors();
+	m_impl->scrollbar.Update();
 	m_impl->Repaint();
 	QueueNoEraseInvalidate(m_impl->list);
 }

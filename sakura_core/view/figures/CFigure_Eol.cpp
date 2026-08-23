@@ -85,6 +85,9 @@ bool CFigure_Eol::DrawImp(SColorStrategyInfo* pInfo)
 			crText = pcText->GetTextColor();
 			crBack = pcBack->GetBackColor();
 		}
+		crBack = ResolveVisibleWhitespaceBackground(
+			pInfo->GetCurrentColor(), pInfo->GetCurrentColor2(),
+			::GetBkColor(pInfo->m_gr), crBack);
 		pInfo->m_gr.PushTextForeColor(crText);
 		pInfo->m_gr.PushTextBackColor(crBack);
 		bool bTrans = pcView->IsBkBitmap() && cTextType.GetBackColor() == crBack;

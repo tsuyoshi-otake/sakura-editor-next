@@ -81,6 +81,13 @@
       "versionInfo": "2.70.1"
     },
     {
+      "SPDXID": "SPDXRef-lunasvg",
+      "downloadLocation": "https://github.com/sammycage/lunasvg.git",
+      "licenseDeclared": "MIT",
+      "name": "lunasvg",
+      "versionInfo": "2.3.8#1"
+    },
+    {
       "SPDXID": "SPDXRef-miniz-cpp",
       "downloadLocation": "https://github.com/tfussell/miniz-cpp.git",
       "licenseDeclared": "MIT",

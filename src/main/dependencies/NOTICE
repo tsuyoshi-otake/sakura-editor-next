@@ -79,6 +79,14 @@ innounp
   source: tools/innounp/innounp.exe
   notes: Unpacks Inno Setup 6 installers so packaging can prove SHA-256 identity. Not shipped with the product.
 
+lunasvg
+  kind=library ownership=external lifecycle=keep status=present
+  license: MIT
+  version: 2.3.8#1
+  canonical: https://github.com/sammycage/lunasvg.git
+  vcpkg: lunasvg
+  notes: Used only for bounded, in-process static rasterization of pre-screened Markdown preview SVG images.
+
 miniz-cpp
   kind=fixture ownership=external lifecycle=keep status=present
   license: MIT

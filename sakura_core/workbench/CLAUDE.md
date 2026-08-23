@@ -183,7 +183,11 @@ adding one-off HWND branches. Unsupported capabilities are explicit.
   sibling overlay during width changes.
   The editor owns real `WC_SCROLLBAR` children; they stay alive as the scroll
   model (`OverlayScrollbarSource::ScrollbarControl`), are hidden, and the
-  overlay is given their rectangle through `SetBounds`. Do not re-show those
+  overlay is given their entire reserved rectangle through `SetBounds`. The
+  overlay must cover that full rectangle even when no thumb is required; using
+  only the narrower visual thumb width leaves stale native pixels in the
+  reserved gutter. Create the model controls without `WS_VISIBLE`, destroy the
+  matching overlay before recreating a model control, and do not re-show those
   controls: `ShowScrollBar(..., TRUE)` would put the platform bar back on top of
   the overlay.
 - The overlay scrollbar uses TreeView scroll metadata for ordinary layout and
@@ -342,3 +346,22 @@ Task-stop fencing; exact evidence belongs in the goal-loop journal. Folder-
 scoped Launch catalogs, DAP adapter processes/controllers, Debug Console and
 Ports production ownership, extension Task/Debug/Ports RPC, Task Terminal
 presentation, and exact Problems UTF-16 range navigation remain open gates.
+
+## Activity Bar Location (2026-08-23)
+
+- `workbench.activityBar.location` supports the upstream `default`, `top`, and
+  `bottom` values. The matching stable commands are
+  `workbench.action.activityBarLocation.default`, `.top`, and `.bottom`.
+- `default` keeps the Primary Side Bar composite bar vertical. `top` and
+  `bottom` project independent horizontal composite bars inside the Primary
+  and Secondary Side Bars, each containing only the ViewContainers owned by
+  that Part.
+- The horizontal bars are the Side Bar-owned compact `PaneCompositeBar`
+  presentation used upstream, not a rotated full-size `ActivitybarPart`: the
+  bar is 35 DIP high, uses 16 DIP icons and compact horizontal action targets.
+  Accounts and Manage remain in the custom title bar for both horizontal
+  locations.
+- Intentional owner-approved divergence: upstream also supports `hidden`, but
+  Sakura does not. The value is rejected by the configuration descriptor and
+  no `.hide` command or menu entry is registered. This avoids advertising an
+  unsupported state or silently mapping it to a different layout.

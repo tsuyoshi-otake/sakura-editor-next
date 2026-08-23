@@ -260,6 +260,9 @@ bool CFigureSpace::DrawImp_StyleSelect(SColorStrategyInfo* pInfo)
 		crBack = cBack.GetBackColor();
 		bBold = cCurrentType.IsBoldFont();
 	}
+	crBack = ResolveVisibleWhitespaceBackground(
+		pInfo->GetCurrentColor(), pInfo->GetCurrentColor2(),
+		::GetBkColor(pInfo->m_gr), crBack);
 	//cSpaceType.SetGraphicsState_WhileThisObj(pInfo->gr);
 
 	pInfo->m_gr.PushTextForeColor(crText);
@@ -272,6 +275,26 @@ bool CFigureSpace::DrawImp_StyleSelect(SColorStrategyInfo* pInfo)
 	pInfo->m_gr.PushMyFont(sFont);
 	bool bTrans = pcView->IsBkBitmap() && cTextType.GetBackColor() == crBack;
 	return bTrans;
+}
+
+COLORREF CFigureSpace::ResolveVisibleWhitespaceBackground(
+	EColorIndexType current, EColorIndexType underlying,
+	COLORREF paintedBackground, COLORREF fallback) noexcept
+{
+	if (theme::CThemeService::ActiveColorThemePalette() == nullptr) {
+		return fallback;
+	}
+	const auto isFindMatch = [](EColorIndexType color) noexcept {
+		return COLORIDX_SEARCH <= color && color <= COLORIDX_SEARCHTAIL;
+	};
+	if (current != underlying || current == COLORIDX_SELECT || underlying == COLORIDX_SELECT
+		|| isFindMatch(current) || isFindMatch(underlying)) {
+		return fallback;
+	}
+	// SetCurrentColor has already projected TextMate foreground/background tokens
+	// into this DC. Reuse that resolved surface instead of the legacy type
+	// background, which may still contain the previously selected dark theme.
+	return paintedBackground;
 }
 
 void CFigureSpace::DrawImp_StylePop(SColorStrategyInfo* pInfo)

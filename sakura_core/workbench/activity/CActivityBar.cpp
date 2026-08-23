@@ -29,13 +29,15 @@ namespace {
 constexpr wchar_t kActivityBarClass[] = L"SakuraWorkbenchActivityBar";
 constexpr int kDefaultDpi = 96;
 constexpr int kIndicatorWidthDip = 2;
-// The activity indicator dot. Its diameter and insets place it on the glyph's
-// bottom-right corner; the 24-DIP glyph is centred in the 48-DIP button, so its
-// corner sits 12 DIP in from the button's right edge and 36 DIP down from its
-// top. See PaintBadge for why this is a dot and not upstream's number pill.
+constexpr UINT kLocationDefaultCommand = 1;
+constexpr UINT kLocationTopCommand = 2;
+constexpr UINT kLocationBottomCommand = 3;
+// The activity indicator dot is anchored to the glyph rather than its action
+// item so it remains inside both the 42-DIP vertical and 26-DIP compact item.
+// See PaintBadge for why this is a dot and not upstream's number pill.
 constexpr int kBadgeDotDiameterDip = 8;
-constexpr int kBadgeDotRightInsetDip = 10;
-constexpr int kBadgeDotTopInsetDip = 28;
+constexpr int kBadgeDotLeftFromIconRightDip = 7;
+constexpr int kBadgeDotTopFromIconBottomDip = 3;
 
 [[nodiscard]] int ScaleDip(int dip, unsigned int dpi) noexcept
 {
@@ -196,6 +198,34 @@ CActivityBar::~CActivityBar()
 {
 	m_accessibilityLifetime->Invalidate();
 	Destroy();
+}
+
+void CActivityBar::SetLocation(ActivityBarLocation location) noexcept
+{
+	const auto previousOrientation = m_model.GetOrientation();
+	switch (location) {
+	case ActivityBarLocation::Default:
+		m_location = location;
+		m_model.SetOrientation(ActivityBarOrientation::Vertical);
+		break;
+	case ActivityBarLocation::Top:
+	case ActivityBarLocation::Bottom:
+		m_location = location;
+		m_model.SetOrientation(ActivityBarOrientation::Horizontal);
+		break;
+	default:
+		// The settings boundary is typed, but callers can still manufacture an
+		// invalid enum. Fail closed to the supported VS Code default.
+		m_location = ActivityBarLocation::Default;
+		m_model.SetOrientation(ActivityBarOrientation::Vertical);
+		break;
+	}
+	if (previousOrientation != m_model.GetOrientation() && m_iconFont != nullptr) {
+		::DeleteObject(m_iconFont);
+		m_iconFont = nullptr;
+	}
+	UpdateTooltipRects();
+	Invalidate();
 }
 
 bool CActivityBar::Create(HWND parent, HINSTANCE instance)
@@ -375,6 +405,16 @@ LRESULT CActivityBar::HandleMessage(UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_PAINT:
 		Paint();
 		return 0;
+	case WM_CONTEXTMENU: {
+		POINT screenPoint{ GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+		if (screenPoint.x == -1 && screenPoint.y == -1) {
+			RECT bounds{};
+			::GetWindowRect(m_window, &bounds);
+			screenPoint = { bounds.left + (bounds.right - bounds.left) / 2,
+				bounds.top + (bounds.bottom - bounds.top) / 2 };
+		}
+		return ShowLocationContextMenu(screenPoint) ? 0 : ::DefWindowProcW(m_window, message, wParam, lParam);
+	}
 	case WM_GETDLGCODE:
 		return DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTTAB;
 	case WM_SETFOCUS:
@@ -547,7 +587,7 @@ void CActivityBar::EnsureIconFont() noexcept
 	const auto faceName = icons::CCodiconFont::Instance().FaceName();
 	if (faceName.empty() || faceName.size() >= LF_FACESIZE) return;
 	LOGFONTW font{};
-	font.lfHeight = -ScaleDip(icons::kActivityIconDip, m_model.GetDpi());
+	font.lfHeight = -m_model.GetIconSizePixels();
 	font.lfWeight = FW_NORMAL;
 	font.lfCharSet = DEFAULT_CHARSET;
 	font.lfOutPrecision = OUT_TT_PRECIS;
@@ -575,11 +615,22 @@ void CActivityBar::PaintBadge(HDC dc, const RECT& bounds, int number) noexcept
 	if (dc == nullptr || number <= 0) return;
 	const unsigned int dpi = m_model.GetDpi();
 	const int diameter = std::max(2, ScaleDip(kBadgeDotDiameterDip, dpi));
-	RECT dot{ bounds.right - ScaleDip(kBadgeDotRightInsetDip, dpi) - diameter,
-		bounds.top + ScaleDip(kBadgeDotTopInsetDip, dpi), 0, 0 };
+	const auto iconBounds = icons::CenteredIconBounds(
+		{ bounds.left, bounds.top, bounds.right, bounds.bottom }, m_model.GetIconSizeDip(), dpi);
+	RECT dot{ iconBounds.right - ScaleDip(kBadgeDotLeftFromIconRightDip, dpi),
+		iconBounds.bottom - ScaleDip(kBadgeDotTopFromIconBottomDip, dpi), 0, 0 };
 	dot.right = dot.left + diameter;
 	dot.bottom = dot.top + diameter;
 	if (dot.left < bounds.left) dot.left = bounds.left;
+	if (dot.top < bounds.top) dot.top = bounds.top;
+	if (dot.right > bounds.right) {
+		dot.right = bounds.right;
+		dot.left = std::max(bounds.left, dot.right - diameter);
+	}
+	if (dot.bottom > bounds.bottom) {
+		dot.bottom = bounds.bottom;
+		dot.top = std::max(bounds.top, dot.bottom - diameter);
+	}
 	const HBRUSH fill = ::CreateSolidBrush(m_palette.badgeBackground);
 	const HPEN pen = ::CreatePen(PS_SOLID, 1, m_palette.badgeBackground);
 	if (fill != nullptr && pen != nullptr) {
@@ -641,7 +692,12 @@ void CActivityBar::Paint() noexcept
 		}
 		if (button.selected) {
 			RECT indicator = bounds;
-			indicator.right = std::min(indicator.right, indicator.left + std::max(1, ScaleDip(kIndicatorWidthDip, m_model.GetDpi())));
+			const int indicatorExtent = std::max(1, ScaleDip(kIndicatorWidthDip, m_model.GetDpi()));
+			if (m_model.GetOrientation() == ActivityBarOrientation::Horizontal) {
+				indicator.top = std::max(indicator.top, indicator.bottom - indicatorExtent);
+			} else {
+				indicator.right = std::min(indicator.right, indicator.left + indicatorExtent);
+			}
 			const HBRUSH brush = ::CreateSolidBrush(m_palette.activeIndicator);
 			::FillRect(buffer, &indicator, brush);
 			::DeleteObject(brush);
@@ -649,11 +705,11 @@ void CActivityBar::Paint() noexcept
 		const COLORREF iconColor = !button.enabled ? m_palette.disabledIcon
 			: button.selected ? m_palette.activeIcon : m_palette.icon;
 		const auto iconBounds = icons::CenteredIconBounds(
-			{ bounds.left, bounds.top, bounds.right, bounds.bottom }, icons::kActivityIconDip, m_model.GetDpi());
+			{ bounds.left, bounds.top, bounds.right, bounds.bottom }, m_model.GetIconSizeDip(), m_model.GetDpi());
 		// VS Code renders all built-in Activity Bar glyphs from codicon.ttf. Mixing
 		// a GDI path for some entries with a font glyph for others makes their
-		// anti-aliasing and optical weight visibly inconsistent. The 20-DIP bounds
-		// and normal font weight stay unchanged; the vector paths remain only as
+		// anti-aliasing and optical weight visibly inconsistent. The orientation's
+		// 20/16-DIP bounds and normal font weight stay unchanged; vector paths remain
 		// the explicit fallback when the embedded font could not be registered.
 		if (!PaintFontGlyph(buffer, iconBounds, m_iconFont, CodiconGlyph(button.codicon), iconColor)
 			&& !PaintBuiltinGlyph(buffer, iconBounds, button.id, iconColor)) {
@@ -677,9 +733,18 @@ void CActivityBar::Paint() noexcept
 	// Match VS Code's `activityBar.border`: a one-DIP Part edge against the
 	// Primary Side Bar (or the editor when that Side Bar is hidden).
 	const int borderWidth = std::max(1, ScaleDip(1, m_model.GetDpi()));
-	RECT borderRect{ client.right - borderWidth, client.top, client.right, client.bottom };
-	if (borderRect.left < client.left) borderRect.left = client.left;
-	if (borderRect.right > borderRect.left) {
+	RECT borderRect{};
+	if (m_location == ActivityBarLocation::Top) {
+		borderRect = { client.left, std::max(client.top, client.bottom - borderWidth),
+			client.right, client.bottom };
+	} else if (m_location == ActivityBarLocation::Bottom) {
+		borderRect = { client.left, client.top, client.right,
+			std::min(client.bottom, client.top + borderWidth) };
+	} else {
+		borderRect = { std::max(client.left, client.right - borderWidth), client.top,
+			client.right, client.bottom };
+	}
+	if (borderRect.right > borderRect.left && borderRect.bottom > borderRect.top) {
 		const HBRUSH borderBrush = ::CreateSolidBrush(m_palette.border);
 		::FillRect(buffer, &borderRect, borderBrush);
 		::DeleteObject(borderBrush);
@@ -727,6 +792,49 @@ bool CActivityBar::InvokeGlobalAction(std::string_view actionId) noexcept
 	} catch (...) {
 		return false;
 	}
+}
+
+bool CActivityBar::ShowLocationContextMenu(POINT screenPoint) noexcept
+{
+	if (!m_onLocationRequest || m_window == nullptr) return false;
+	const HMENU root = ::CreatePopupMenu();
+	const HMENU location = ::CreatePopupMenu();
+	if (root == nullptr || location == nullptr) {
+		if (location != nullptr) ::DestroyMenu(location);
+		if (root != nullptr) ::DestroyMenu(root);
+		return false;
+	}
+	const auto checked = [this](ActivityBarLocation candidate) noexcept {
+		return candidate == m_location ? MF_CHECKED : MF_UNCHECKED;
+	};
+	::AppendMenuW(location, MF_STRING | checked(ActivityBarLocation::Default),
+		kLocationDefaultCommand, m_locationMenuLabels.defaultLocation.c_str());
+	::AppendMenuW(location, MF_STRING | checked(ActivityBarLocation::Top),
+		kLocationTopCommand, m_locationMenuLabels.top.c_str());
+	::AppendMenuW(location, MF_STRING | checked(ActivityBarLocation::Bottom),
+		kLocationBottomCommand, m_locationMenuLabels.bottom.c_str());
+	::AppendMenuW(root, MF_POPUP | MF_STRING, reinterpret_cast<UINT_PTR>(location),
+		m_locationMenuLabels.submenu.c_str());
+	::SetForegroundWindow(::GetAncestor(m_window, GA_ROOT));
+	const UINT command = ::TrackPopupMenuEx(root,
+		TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN,
+		screenPoint.x, screenPoint.y, m_window, nullptr);
+	::DestroyMenu(root); // recursively destroys the submenu
+	if (command == 0) return true;
+	ActivityBarLocation requested = ActivityBarLocation::Default;
+	switch (command) {
+	case kLocationDefaultCommand: requested = ActivityBarLocation::Default; break;
+	case kLocationTopCommand: requested = ActivityBarLocation::Top; break;
+	case kLocationBottomCommand: requested = ActivityBarLocation::Bottom; break;
+	default: return true;
+	}
+	try {
+		m_onLocationRequest(requested);
+	} catch (...) {
+		// A menu gesture has no secondary owner. The callback reports failures on
+		// the workbench surface and the current location remains authoritative.
+	}
+	return true;
 }
 
 bool CActivityBar::BeginDragIfPastThreshold(POINT point) noexcept

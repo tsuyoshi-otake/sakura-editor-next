@@ -120,10 +120,10 @@ TEST(MarkdownParser, ConvertsSafeHtmlWrappersWithoutExposingOrExecutingRawTags)
 
 	ASSERT_FALSE(document.blocks.empty());
 	ASSERT_EQ(BlockKind::Image, document.blocks.front().kind);
-	ASSERT_TRUE(document.blocks.front().image.has_value());
-	EXPECT_EQ(L"Hero", document.blocks.front().image->altText);
-	EXPECT_EQ(ResourceDisposition::ResolvedLocal, document.blocks.front().image->source.disposition);
-	EXPECT_EQ(L"C:\\workspace\\hero.png", document.blocks.front().image->source.resolvedPath);
+	ASSERT_EQ(1u, document.blocks.front().images.size());
+	EXPECT_EQ(L"Hero", document.blocks.front().images.front().altText);
+	EXPECT_EQ(ResourceDisposition::ResolvedLocal, document.blocks.front().images.front().source.disposition);
+	EXPECT_EQ(L"C:\\workspace\\hero.png", document.blocks.front().images.front().source.resolvedPath);
 
 	bool foundTable = false;
 	bool foundUnsafeLink = false;
@@ -145,6 +145,26 @@ TEST(MarkdownParser, ConvertsSafeHtmlWrappersWithoutExposingOrExecutingRawTags)
 	EXPECT_EQ(std::wstring::npos, allVisibleText.find(L"secretStyleText"));
 	EXPECT_EQ(std::wstring::npos, allVisibleText.find(L"onclick"));
 	EXPECT_EQ(std::wstring::npos, allVisibleText.find(L"onerror"));
+}
+
+TEST(MarkdownParser, KeepsConsecutiveHtmlBadgesInOneImageRow)
+{
+	const auto document = ParseMarkdown(
+		L"<p>\n"
+		L"  <a href=\"https://example.test/build\"><img src=\"https://example.test/build.svg\" alt=\"Build\"></a>\n"
+		L"  <img src=\"https://example.test/platform.svg\" alt=\"Platform\">\n"
+		L"  <a href=\"./LICENSE\"><img src=\"https://example.test/license.svg\" alt=\"License\"></a>\n"
+		L"</p>\n");
+
+	ASSERT_EQ(1u, document.blocks.size());
+	ASSERT_EQ(BlockKind::Image, document.blocks.front().kind);
+	ASSERT_EQ(3u, document.blocks.front().images.size());
+	EXPECT_EQ(L"Build", document.blocks.front().images[0].altText);
+	EXPECT_EQ(L"Platform", document.blocks.front().images[1].altText);
+	EXPECT_EQ(L"License", document.blocks.front().images[2].altText);
+	for (const auto& image : document.blocks.front().images) {
+		EXPECT_EQ(ResourceDisposition::ResolvedHttps, image.source.disposition);
+	}
 }
 
 TEST(MarkdownParser, ProjectsAdditionalSafeHtmlElementsIntoNativeMarkdown)
@@ -238,20 +258,20 @@ TEST(MarkdownParser, ResolvesOnlyLocalResourcesInsideTheApprovedRoot)
 		{ L"C:\\workspace\\docs\\README.md", L"C:\\workspace" });
 
 	ASSERT_EQ(7u, document.blocks.size());
-	ASSERT_TRUE(document.blocks[0].image.has_value());
-	EXPECT_EQ(ResourceDisposition::ResolvedLocal, document.blocks[0].image->source.disposition);
-	EXPECT_EQ(L"C:\\workspace\\docs\\images\\local.png", document.blocks[0].image->source.resolvedPath);
-	ASSERT_TRUE(document.blocks[1].image.has_value());
-	EXPECT_EQ(ResourceDisposition::ResolvedLocal, document.blocks[1].image->source.disposition);
-	EXPECT_EQ(L"C:\\workspace\\assets\\root.png", document.blocks[1].image->source.resolvedPath);
-	ASSERT_TRUE(document.blocks[2].image.has_value());
-	EXPECT_EQ(ResourceDisposition::OutsideAllowedRoots, document.blocks[2].image->source.disposition);
-	ASSERT_TRUE(document.blocks[3].image.has_value());
-	EXPECT_EQ(ResourceDisposition::OutsideAllowedRoots, document.blocks[3].image->source.disposition);
-	ASSERT_TRUE(document.blocks[4].image.has_value());
-	EXPECT_EQ(ResourceDisposition::ExternalBlocked, document.blocks[4].image->source.disposition);
-	ASSERT_TRUE(document.blocks[5].image.has_value());
-	EXPECT_EQ(ResourceDisposition::UnsafeSchemeBlocked, document.blocks[5].image->source.disposition);
+	ASSERT_EQ(1u, document.blocks[0].images.size());
+	EXPECT_EQ(ResourceDisposition::ResolvedLocal, document.blocks[0].images.front().source.disposition);
+	EXPECT_EQ(L"C:\\workspace\\docs\\images\\local.png", document.blocks[0].images.front().source.resolvedPath);
+	ASSERT_EQ(1u, document.blocks[1].images.size());
+	EXPECT_EQ(ResourceDisposition::ResolvedLocal, document.blocks[1].images.front().source.disposition);
+	EXPECT_EQ(L"C:\\workspace\\assets\\root.png", document.blocks[1].images.front().source.resolvedPath);
+	ASSERT_EQ(1u, document.blocks[2].images.size());
+	EXPECT_EQ(ResourceDisposition::OutsideAllowedRoots, document.blocks[2].images.front().source.disposition);
+	ASSERT_EQ(1u, document.blocks[3].images.size());
+	EXPECT_EQ(ResourceDisposition::OutsideAllowedRoots, document.blocks[3].images.front().source.disposition);
+	ASSERT_EQ(1u, document.blocks[4].images.size());
+	EXPECT_EQ(ResourceDisposition::ResolvedHttps, document.blocks[4].images.front().source.disposition);
+	ASSERT_EQ(1u, document.blocks[5].images.size());
+	EXPECT_EQ(ResourceDisposition::UnsafeSchemeBlocked, document.blocks[5].images.front().source.disposition);
 
 	const auto& links = document.blocks[6];
 	ASSERT_EQ(3u, links.inlineSpans.size());
@@ -389,9 +409,9 @@ TEST(MarkdownParser, EnforcesInputBlockImageHtmlAndFrontMatterLimits)
 	imageOptions.limits.maximumImages = 1;
 	const auto imageLimited = ParseMarkdown(L"![one](one.png)\n\n![two](two.png)\n", imageOptions);
 	ASSERT_EQ(2u, imageLimited.blocks.size());
-	ASSERT_TRUE(imageLimited.blocks[1].image.has_value());
-	EXPECT_EQ(ResourceDisposition::LimitExceeded, imageLimited.blocks[1].image->source.disposition);
-	EXPECT_EQ(L"two.png", imageLimited.blocks[1].image->source.original);
+	ASSERT_EQ(1u, imageLimited.blocks[1].images.size());
+	EXPECT_EQ(ResourceDisposition::LimitExceeded, imageLimited.blocks[1].images.front().source.disposition);
+	EXPECT_EQ(L"two.png", imageLimited.blocks[1].images.front().source.original);
 
 	ParseOptions htmlOptions;
 	htmlOptions.limits.maximumHtmlDepth = 1;
@@ -545,6 +565,7 @@ TEST(MarkdownParser, ExposesUnsupportedNativeCapabilitiesAsTypedBoundaries)
 {
 	const auto document = ParseMarkdown(L"text");
 	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.localImageProjection);
+	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.secureRemoteImageProjection);
 	EXPECT_EQ(CapabilityStatus::Unsupported, document.capabilities.linkActivation);
 	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.scrollPreviewWithEditor);
 	EXPECT_EQ(CapabilityStatus::Supported, document.capabilities.scrollEditorWithPreview);

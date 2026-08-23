@@ -50,6 +50,7 @@
 
 #include "CSelectLang.h"
 #include "apiwrap/DarkMode.h"
+#include "theme/CThemeService.h"
 
 LRESULT CALLBACK EditViewWndProc( HWND, UINT, WPARAM, LPARAM );
 VOID CALLBACK EditViewTimerProc( HWND, UINT, UINT_PTR, DWORD );
@@ -364,6 +365,23 @@ BOOL CEditView::Create(
 CEditView::~CEditView()
 {
 	Close();
+}
+
+void CEditView::UpdateWorkbenchTheme() noexcept
+{
+	if (GetHwnd() == nullptr || m_pcEditDoc == nullptr) return;
+	CTypeSupport textType(this, COLORIDX_TEXT);
+	m_crBack = textType.GetBackColor();
+	m_crBack2 = CLR_INVALID;
+	m_miniMapOverviewCache = {};
+	// A theme change invalidates every pixel in the retained editor surface.
+	// Advancing BaseText damage also withdraws any saved paint continuation, so
+	// scrolling cannot move pixels rendered with the previous theme back on screen.
+	MarkRenderDamage(editor::rendering::EEditViewDamage::BaseText);
+	UpdateOverlayVScrollBar();
+	UpdateOverlayHScrollBar();
+	(void)::RedrawWindow(GetHwnd(), nullptr, nullptr,
+		RDW_INVALIDATE | RDW_NOERASE | RDW_ALLCHILDREN);
 }
 
 void CEditView::Close()

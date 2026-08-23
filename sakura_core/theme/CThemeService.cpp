@@ -168,10 +168,12 @@ ThemePalette CThemeService::HighContrastPalette() noexcept
 	// `highContrast` (dark) set is used for both; see theme/CLAUDE.md.
 	return { window, face, face, frame, windowText, grayText, windowText, grayText, highlight, highlightText,
 		face, face, highlight, highlight, face, face, face, window, windowText, windowText,
-		window, window, window, highlight, highlightText, highlight, highlight, highlightText,
+		window, window, window, highlight, highlight, highlightText, highlight, highlight, highlightText,
 		{ 0xA1, 0xE3, 0xAD }, { 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 },
 		{ 0xE2, 0xC0, 0x8D }, { 0xC7, 0x4E, 0x39 }, { 0x73, 0xC9, 0x91 }, { 0xA7, 0xA8, 0xA9 },
-		{ 0xC7, 0x4E, 0x39 }, { 0x8D, 0xB9, 0xE2 } };
+		{ 0xC7, 0x4E, 0x39 }, { 0x8D, 0xB9, 0xE2 },
+		face, face, frame, highlight, highlightText, face, highlightText,
+		{ 0x00, 0x00, 0x00, 0x00 }, frame, frame, frame, windowText };
 }
 
 ThemePalette CThemeService::EffectivePalette(ThemeMode savedMode) noexcept
@@ -199,6 +201,11 @@ void CThemeService::ClearActiveColorThemePalette() noexcept
 bool CThemeService::HasActiveColorThemePalette() noexcept
 {
 	return g_activeColorThemePalette.has_value();
+}
+
+const ThemePalette* CThemeService::ActiveColorThemePalette() noexcept
+{
+	return g_activeColorThemePalette ? &*g_activeColorThemePalette : nullptr;
 }
 
 void CThemeService::SetActiveColorThemeSyntaxPalette(const ThemeSyntaxPalette& palette) noexcept

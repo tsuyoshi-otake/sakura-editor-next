@@ -6,6 +6,7 @@
 */
 #include "StdAfx.h"
 #include "workbench/viewcontainer/CViewContainerPages.h"
+#include "workbench/controls/COverlayScrollbar.h"
 #include "CSelectLang.h"
 
 #include <algorithm>
@@ -239,9 +240,11 @@ void CViewContainerPages::SetPalette(const theme::ThemePalette& palette)
 		explorerPalette.button = palette.buttonBackground.ToColorRef();
 		explorerPalette.buttonHover = palette.buttonHoverBackground.ToColorRef();
 		explorerPalette.buttonText = palette.buttonForeground.ToColorRef();
-		explorerPalette.scrollbarThumb = palette.border.ToColorRef();
-		explorerPalette.scrollbarThumbHover = palette.secondaryText.ToColorRef();
-		explorerPalette.scrollbarTrackHover = palette.raised.ToColorRef();
+		const auto scrollbarColors = controls::ResolveOverlayScrollbarColors(palette, palette.sideBar);
+		explorerPalette.scrollbarThumb = scrollbarColors.thumb;
+		explorerPalette.scrollbarThumbHover = scrollbarColors.thumbHover;
+		explorerPalette.scrollbarThumbActive = scrollbarColors.thumbActive;
+		explorerPalette.scrollbarTrackHover = scrollbarColors.trackHover;
 		// Indexed by `decorations::EFileDecorationColor`; index 0 is `None` and is
 		// never drawn, so it is filled with the row's own text color rather than a
 		// color that would silently become visible if it ever were.

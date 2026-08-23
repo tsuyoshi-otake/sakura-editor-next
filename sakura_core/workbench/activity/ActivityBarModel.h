@@ -16,6 +16,16 @@
 
 namespace workbench::activity {
 
+//! The two physical orientations supported by the Activity Bar host.
+enum class ActivityBarOrientation : std::uint8_t {
+	Vertical,
+	Horizontal,
+};
+
+// Keep the project-style spelling available to callers that use the E-prefixed
+// workbench enums without making the model carry two independent types.
+using EActivityBarOrientation = ActivityBarOrientation;
+
 //! VS Code's Activity Bar has ViewContainers on top and a separate GlobalCompositeBar
 //! (Accounts / Manage) pinned to the bottom. Those are not ViewContainers.
 enum class ActivityBarEntryKind : unsigned char {
@@ -137,10 +147,27 @@ struct ActivityBarButtonInfo {
 class ActivityBarModel final {
 public:
 	static constexpr int kWidthDip = 42;
+	//! The vertical Activity Bar keeps the existing 42-DIP square affordance.
 	static constexpr int kButtonExtentDip = 42;
+	//! The Side Bar-owned horizontal composite bar is deliberately compact.
+	static constexpr int kHorizontalHeightDip = 35;
+	static constexpr int kHorizontalItemExtentDip = 26;
+	static constexpr int kHorizontalOuterInsetDip = 4;
+	static constexpr int kVerticalIconDip = 20;
+	static constexpr int kHorizontalIconDip = 16;
 
 	//! Starts with no entry at all. A composition supplies them through SetEntries().
 	ActivityBarModel() = default;
+	explicit ActivityBarModel(ActivityBarOrientation orientation) noexcept
+		: m_orientation(orientation)
+	{
+	}
+
+	void SetOrientation(ActivityBarOrientation orientation) noexcept;
+	[[nodiscard]] ActivityBarOrientation GetOrientation() const noexcept { return m_orientation; }
+	//! Semantic aliases for hosts that describe this as the bar's layout direction.
+	void SetLayoutOrientation(ActivityBarOrientation orientation) noexcept { SetOrientation(orientation); }
+	[[nodiscard]] ActivityBarOrientation GetLayoutOrientation() const noexcept { return GetOrientation(); }
 
 	/*!
 		@brief Replaces the whole entry list.
@@ -151,8 +178,11 @@ public:
 	void SetEntries(std::vector<ActivityBarEntry> entries);
 	[[nodiscard]] const std::vector<ActivityBarEntry>& Entries() const noexcept { return m_entries; }
 
-	//! Sets physical client dimensions and reflows the vertical button strip.
+	//! Sets physical client dimensions and reflows the button strip in its current orientation.
 	void SetViewport(int widthPixels, int heightPixels, unsigned int dpi = 96) noexcept;
+	//! Convenience overload for callers that set orientation and viewport as one layout commit.
+	void SetViewport(int widthPixels, int heightPixels, ActivityBarOrientation orientation,
+		unsigned int dpi = 96) noexcept;
 	//! Lets the owner reflect the currently visible workbench tool. An empty id means none.
 	//! Global actions are never selected: they open menus, they do not own a ViewContainer.
 	void SetSelectedItem(std::string_view id) noexcept;
@@ -208,7 +238,18 @@ public:
 	[[nodiscard]] std::string_view IdAt(std::size_t index) const noexcept;
 
 	[[nodiscard]] unsigned int GetDpi() const noexcept { return m_dpi; }
+	[[nodiscard]] constexpr int GetIconSizeDip() const noexcept
+	{
+		return m_orientation == ActivityBarOrientation::Horizontal
+			? kHorizontalIconDip : kVerticalIconDip;
+	}
+	[[nodiscard]] int GetIconSizePixels() const noexcept;
+	[[nodiscard]] int GetItemFootprintPixels() const noexcept;
+	[[nodiscard]] int GetOuterInsetPixels() const noexcept;
 	[[nodiscard]] int GetPreferredWidthPixels() const noexcept;
+	[[nodiscard]] int GetPreferredHeightPixels() const noexcept;
+	//! Returns the preferred cross-axis extent of the bar.
+	[[nodiscard]] int GetPreferredExtentPixels() const noexcept;
 
 private:
 	[[nodiscard]] static int ScaleDip(int dip, unsigned int dpi) noexcept;
@@ -225,6 +266,7 @@ private:
 	std::vector<ActivityBarRect> m_bounds;
 	//! Keyed by ViewContainer id so a badge outlives any particular entry list.
 	std::map<std::string, ActivityBarNumberBadge, std::less<>> m_badges;
+	ActivityBarOrientation m_orientation = ActivityBarOrientation::Vertical;
 	int m_widthPixels = kWidthDip;
 	int m_heightPixels = 0;
 	unsigned int m_dpi = 96;

@@ -7,14 +7,18 @@
 #include "StdAfx.h"
 
 #include "CMarkdownPreviewWnd.h"
+#include "MarkdownRemoteImageFetcher.h"
 #include "MarkdownPreviewWorkerRetirement.h"
 
 #include <wincodec.h>
+#define LUNASVG_BUILD_STATIC
+#include <lunasvg.h>
 
 #include "cxx/com_pointer.hpp"
 #include "theme/CThemeService.h"
 
 #include <algorithm>
+#include <charconv>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -63,6 +67,27 @@ public:
 
 private:
 	HRESULT m_result;
+};
+
+class CallbackCancellation final : public platform::request::IRequestCancellation {
+public:
+	explicit CallbackCancellation(std::function<bool()> callback)
+		: m_callback(std::move(callback))
+	{
+	}
+
+	bool IsCancellationRequested() const noexcept override
+	{
+		try {
+			return !m_callback || m_callback();
+		}
+		catch (...) {
+			return true;
+		}
+	}
+
+private:
+	std::function<bool()> m_callback;
 };
 
 /*!
@@ -206,6 +231,76 @@ struct DecodedBitmap {
 	int height = 0;
 };
 
+[[nodiscard]] DecodedBitmap DecodeRasterFrame(
+	IWICImagingFactory* factory, IWICBitmapFrameDecode* frame,
+	std::size_t remainingPixels) noexcept
+{
+	DecodedBitmap result;
+	if (factory == nullptr || frame == nullptr || remainingPixels == 0) return result;
+	UINT width = 0;
+	UINT height = 0;
+	if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
+		|| static_cast<std::uint64_t>(width) * height > kMaximumSourceImagePixels) return result;
+
+	UINT scaledWidth = width;
+	UINT scaledHeight = height;
+	if (scaledWidth > kMaximumDecodedImageEdge || scaledHeight > kMaximumDecodedImageEdge) {
+		if (scaledWidth >= scaledHeight) {
+			scaledHeight = (std::max)(1U, static_cast<UINT>(
+				(static_cast<std::uint64_t>(scaledHeight) * kMaximumDecodedImageEdge) / scaledWidth));
+			scaledWidth = kMaximumDecodedImageEdge;
+		} else {
+			scaledWidth = (std::max)(1U, static_cast<UINT>(
+				(static_cast<std::uint64_t>(scaledWidth) * kMaximumDecodedImageEdge) / scaledHeight));
+			scaledHeight = kMaximumDecodedImageEdge;
+		}
+	}
+	const auto decodedPixels = static_cast<std::size_t>(scaledWidth) * scaledHeight;
+	if (decodedPixels > remainingPixels) return result;
+
+	cxx::com_pointer<IWICBitmapScaler> scaler;
+	IWICBitmapSource* source = frame;
+	if (scaledWidth != width || scaledHeight != height) {
+#if defined(_MSC_VER)
+		constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeHighQualityCubic;
+#else
+		constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeFant;
+#endif
+		if (FAILED(factory->CreateBitmapScaler(&scaler))
+			|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight, kScalerMode))) return result;
+		source = scaler;
+	}
+	cxx::com_pointer<IWICFormatConverter> converter;
+	if (FAILED(factory->CreateFormatConverter(&converter))
+		|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
+			WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return result;
+
+	BITMAPINFO bitmapInfo{};
+	bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+	bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(scaledWidth);
+	bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(scaledHeight);
+	bitmapInfo.bmiHeader.biPlanes = 1;
+	bitmapInfo.bmiHeader.biBitCount = 32;
+	bitmapInfo.bmiHeader.biCompression = BI_RGB;
+	void* bits = nullptr;
+	const auto bitmap = ::CreateDIBSection(nullptr, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
+	if (bitmap == nullptr || bits == nullptr) {
+		if (bitmap != nullptr) ::DeleteObject(bitmap);
+		return result;
+	}
+	const UINT stride = scaledWidth * 4;
+	const auto byteCount = static_cast<std::size_t>(stride) * scaledHeight;
+	if (byteCount > std::numeric_limits<UINT>::max()
+		|| FAILED(converter->CopyPixels(nullptr, stride, static_cast<UINT>(byteCount), static_cast<BYTE*>(bits)))) {
+		::DeleteObject(bitmap);
+		return result;
+	}
+	result.bitmap = bitmap;
+	result.width = static_cast<int>(scaledWidth);
+	result.height = static_cast<int>(scaledHeight);
+	return result;
+}
+
 //! Decodes only after the opened file and allowed-root handles prove the final
 //! target remains inside the parser-approved root. The decoder consumes the
 //! verified handle, avoiding a path re-open between validation and decode.
@@ -240,53 +335,406 @@ struct DecodedBitmap {
 			WICDecodeMetadataCacheOnLoad, &decoder))) return result;
 		cxx::com_pointer<IWICBitmapFrameDecode> frame;
 		if (FAILED(decoder->GetFrame(0, &frame))) return result;
-		UINT width = 0;
-		UINT height = 0;
-		if (FAILED(frame->GetSize(&width, &height)) || width == 0 || height == 0
-			|| static_cast<std::uint64_t>(width) * height > kMaximumSourceImagePixels) return result;
+		result = DecodeRasterFrame(factory, frame, remainingPixels);
+	}
+	catch (...) {
+		return {};
+	}
+	return result;
+}
 
-		UINT scaledWidth = width;
-		UINT scaledHeight = height;
-		if (scaledWidth > kMaximumDecodedImageEdge || scaledHeight > kMaximumDecodedImageEdge) {
-			if (scaledWidth >= scaledHeight) {
-				scaledHeight = (std::max)(1U, static_cast<UINT>(
-					(static_cast<std::uint64_t>(scaledHeight) * kMaximumDecodedImageEdge) / scaledWidth));
-				scaledWidth = kMaximumDecodedImageEdge;
-			} else {
-				scaledWidth = (std::max)(1U, static_cast<UINT>(
-					(static_cast<std::uint64_t>(scaledWidth) * kMaximumDecodedImageEdge) / scaledHeight));
-				scaledHeight = kMaximumDecodedImageEdge;
+[[nodiscard]] DecodedBitmap LoadEncodedRaster(
+	const std::vector<std::uint8_t>& bytes, std::size_t remainingPixels) noexcept
+{
+	if (bytes.empty() || bytes.size() > kMaximumEncodedImageBytes
+		|| bytes.size() > std::numeric_limits<DWORD>::max() || remainingPixels == 0) return {};
+	try {
+		cxx::com_pointer<IWICImagingFactory> factory;
+		if (FAILED(factory.CreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER))) return {};
+		cxx::com_pointer<IWICStream> stream;
+		if (FAILED(factory->CreateStream(&stream))
+			|| FAILED(stream->InitializeFromMemory(
+				const_cast<BYTE*>(reinterpret_cast<const BYTE*>(bytes.data())),
+				static_cast<DWORD>(bytes.size())))) return {};
+		cxx::com_pointer<IWICBitmapDecoder> decoder;
+		if (FAILED(factory->CreateDecoderFromStream(stream, nullptr,
+			WICDecodeMetadataCacheOnLoad, &decoder))) return {};
+		cxx::com_pointer<IWICBitmapFrameDecode> frame;
+		if (FAILED(decoder->GetFrame(0, &frame))) return {};
+		return DecodeRasterFrame(factory, frame, remainingPixels);
+	}
+	catch (...) {
+		return {};
+	}
+}
+
+[[nodiscard]] bool ContainsAsciiInsensitive(std::string_view text, std::string_view needle) noexcept
+{
+	if (needle.empty() || needle.size() > text.size()) return false;
+	return std::search(text.begin(), text.end(), needle.begin(), needle.end(),
+		[](char left, char right) {
+			const auto fold = [](char value) {
+				return value >= 'A' && value <= 'Z' ? static_cast<char>(value - 'A' + 'a') : value;
+			};
+			return fold(left) == fold(right);
+		}) != text.end();
+}
+
+struct SvgTextContext {
+	double scaleX = 1.0;
+	double scaleY = 1.0;
+	double translateX = 0.0;
+	double translateY = 0.0;
+	double x = 0.0;
+	double y = 0.0;
+	double fontSize = 16.0;
+	COLORREF fill = RGB(0, 0, 0);
+	bool anchorMiddle = false;
+	bool anchorEnd = false;
+	bool hidden = false;
+};
+
+struct SvgTextRun {
+	std::wstring text;
+	double x = 0.0;
+	double baseline = 0.0;
+	double fontSize = 0.0;
+	COLORREF fill = RGB(0, 0, 0);
+	bool anchorMiddle = false;
+	bool anchorEnd = false;
+};
+
+[[nodiscard]] char FoldAscii(char value) noexcept
+{
+	return value >= 'A' && value <= 'Z' ? static_cast<char>(value - 'A' + 'a') : value;
+}
+
+[[nodiscard]] std::optional<std::string_view> SvgAttribute(
+	std::string_view tag, std::string_view name) noexcept
+{
+	for (std::size_t offset = 0; offset + name.size() <= tag.size();) {
+		const auto found = std::search(tag.begin() + offset, tag.end(), name.begin(), name.end(),
+			[](char left, char right) { return FoldAscii(left) == FoldAscii(right); });
+		if (found == tag.end()) return std::nullopt;
+		const auto position = static_cast<std::size_t>(found - tag.begin());
+		const bool leftBoundary = position == 0
+			|| tag[position - 1] == '<' || tag[position - 1] == ' '
+			|| tag[position - 1] == '\t' || tag[position - 1] == '\r' || tag[position - 1] == '\n';
+		auto cursor = position + name.size();
+		while (cursor < tag.size() && (tag[cursor] == ' ' || tag[cursor] == '\t')) ++cursor;
+		if (!leftBoundary || cursor >= tag.size() || tag[cursor] != '=') {
+			offset = position + 1;
+			continue;
+		}
+		++cursor;
+		while (cursor < tag.size() && (tag[cursor] == ' ' || tag[cursor] == '\t')) ++cursor;
+		if (cursor >= tag.size() || (tag[cursor] != '"' && tag[cursor] != '\'')) return std::nullopt;
+		const auto quote = tag[cursor++];
+		const auto end = tag.find(quote, cursor);
+		if (end == std::string_view::npos) return std::nullopt;
+		return tag.substr(cursor, end - cursor);
+	}
+	return std::nullopt;
+}
+
+[[nodiscard]] std::optional<double> ParseSvgNumber(std::string_view value) noexcept
+{
+	double result = 0.0;
+	const auto parsed = std::from_chars(value.data(), value.data() + value.size(), result);
+	if (parsed.ec != std::errc{} || !std::isfinite(result)) return std::nullopt;
+	return result;
+}
+
+[[nodiscard]] std::optional<COLORREF> ParseSvgColor(std::string_view value) noexcept
+{
+	if (value.size() != 4 && value.size() != 7) return std::nullopt;
+	if (value.front() != '#') return std::nullopt;
+	const auto digit = [](char character) -> int {
+		if (character >= '0' && character <= '9') return character - '0';
+		const auto folded = FoldAscii(character);
+		return folded >= 'a' && folded <= 'f' ? folded - 'a' + 10 : -1;
+	};
+	int red = 0;
+	int green = 0;
+	int blue = 0;
+	if (value.size() == 4) {
+		red = digit(value[1]);
+		green = digit(value[2]);
+		blue = digit(value[3]);
+		if (red < 0 || green < 0 || blue < 0) return std::nullopt;
+		red *= 17;
+		green *= 17;
+		blue *= 17;
+	} else {
+		const int digits[] = { digit(value[1]), digit(value[2]), digit(value[3]),
+			digit(value[4]), digit(value[5]), digit(value[6]) };
+		if (std::ranges::any_of(digits, [](int value) { return value < 0; })) return std::nullopt;
+		red = digits[0] * 16 + digits[1];
+		green = digits[2] * 16 + digits[3];
+		blue = digits[4] * 16 + digits[5];
+	}
+	return RGB(red, green, blue);
+}
+
+void ApplySvgTransform(SvgTextContext& context, std::string_view transform) noexcept
+{
+	std::size_t offset = 0;
+	while (offset < transform.size()) {
+		const auto open = transform.find('(', offset);
+		if (open == std::string_view::npos) break;
+		auto nameStart = open;
+		while (nameStart > offset && transform[nameStart - 1] != ' '
+			&& transform[nameStart - 1] != '\t' && transform[nameStart - 1] != ',') --nameStart;
+		const auto close = transform.find(')', open + 1);
+		if (close == std::string_view::npos) break;
+		const auto name = transform.substr(nameStart, open - nameStart);
+		auto arguments = transform.substr(open + 1, close - open - 1);
+		const auto delimiter = arguments.find_first_of(", ");
+		const auto first = ParseSvgNumber(arguments.substr(0, delimiter));
+		std::optional<double> second;
+		if (delimiter != std::string_view::npos) {
+			auto secondStart = arguments.find_first_not_of(", \t", delimiter);
+			if (secondStart != std::string_view::npos) second = ParseSvgNumber(arguments.substr(secondStart));
+		}
+		if (first && ContainsAsciiInsensitive(name, "translate")) {
+			context.translateX += context.scaleX * *first;
+			context.translateY += context.scaleY * second.value_or(0.0);
+		} else if (first && ContainsAsciiInsensitive(name, "scale")) {
+			context.scaleX *= *first;
+			context.scaleY *= second.value_or(*first);
+		}
+		offset = close + 1;
+	}
+}
+
+void ApplySvgTextAttributes(SvgTextContext& context, std::string_view tag) noexcept
+{
+	if (const auto value = SvgAttribute(tag, "x")) {
+		if (const auto number = ParseSvgNumber(*value)) context.x = *number;
+	}
+	if (const auto value = SvgAttribute(tag, "y")) {
+		if (const auto number = ParseSvgNumber(*value)) context.y = *number;
+	}
+	if (const auto value = SvgAttribute(tag, "font-size")) {
+		if (const auto number = ParseSvgNumber(*value)) context.fontSize = *number;
+	}
+	if (const auto value = SvgAttribute(tag, "fill")) {
+		if (const auto color = ParseSvgColor(*value)) context.fill = *color;
+	}
+	if (const auto value = SvgAttribute(tag, "text-anchor")) {
+		context.anchorMiddle = ContainsAsciiInsensitive(*value, "middle");
+		context.anchorEnd = ContainsAsciiInsensitive(*value, "end");
+	}
+	if (const auto value = SvgAttribute(tag, "aria-hidden")) {
+		context.hidden = context.hidden || ContainsAsciiInsensitive(*value, "true");
+	}
+	if (const auto value = SvgAttribute(tag, "transform")) ApplySvgTransform(context, *value);
+}
+
+[[nodiscard]] std::wstring DecodeSvgText(std::string_view value)
+{
+	if (value.empty() || value.size() > 4096) return {};
+	const auto required = ::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS,
+		value.data(), static_cast<int>(value.size()), nullptr, 0);
+	if (required <= 0) return {};
+	std::wstring decoded(static_cast<std::size_t>(required), L'\0');
+	if (::MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, value.data(),
+		static_cast<int>(value.size()), decoded.data(), required) != required) return {};
+	const std::pair<std::wstring_view, std::wstring_view> entities[] = {
+		{ L"&amp;", L"&" }, { L"&lt;", L"<" }, { L"&gt;", L">" },
+		{ L"&quot;", L"\"" }, { L"&apos;", L"'" }
+	};
+	for (const auto& [entity, replacement] : entities) {
+		for (std::size_t position = 0; (position = decoded.find(entity, position)) != std::wstring::npos;) {
+			decoded.replace(position, entity.size(), replacement);
+			position += replacement.size();
+		}
+	}
+	return decoded;
+}
+
+[[nodiscard]] std::vector<SvgTextRun> ExtractSvgTextRuns(
+	std::string_view xml, double outputScaleX, double outputScaleY)
+{
+	struct Frame { std::string name; SvgTextContext context; };
+	std::vector<Frame> stack;
+	stack.push_back({ {}, {} });
+	std::vector<SvgTextRun> runs;
+	std::size_t totalCharacters = 0;
+	std::size_t cursor = 0;
+	while (cursor < xml.size() && runs.size() < 256 && totalCharacters < 4096) {
+		const auto open = xml.find('<', cursor);
+		if (open == std::string_view::npos) break;
+		const auto close = xml.find('>', open + 1);
+		if (close == std::string_view::npos) break;
+		const auto tag = xml.substr(open, close - open + 1);
+		if (tag.size() >= 3 && tag[1] == '/') {
+			if (stack.size() > 1) stack.pop_back();
+			cursor = close + 1;
+			continue;
+		}
+		if (tag.size() < 3 || tag[1] == '!' || tag[1] == '?') {
+			cursor = close + 1;
+			continue;
+		}
+		auto nameEnd = tag.find_first_of(" \t\r\n/>", 1);
+		if (nameEnd == std::string_view::npos) break;
+		std::string name(tag.substr(1, nameEnd - 1));
+		std::ranges::transform(name, name.begin(), FoldAscii);
+		auto context = stack.back().context;
+		ApplySvgTextAttributes(context, tag);
+		const bool selfClosing = tag.size() >= 2 && tag[tag.size() - 2] == '/';
+		if (!selfClosing) stack.push_back({ name, context });
+		const auto textStart = close + 1;
+		const auto nextOpen = xml.find('<', textStart);
+		if (!selfClosing && nextOpen != std::string_view::npos
+			&& (name == "text" || name == "tspan") && !context.hidden) {
+			auto raw = xml.substr(textStart, nextOpen - textStart);
+			const auto first = raw.find_first_not_of(" \t\r\n");
+			const auto last = raw.find_last_not_of(" \t\r\n");
+			if (first != std::string_view::npos && last != std::string_view::npos) {
+				auto text = DecodeSvgText(raw.substr(first, last - first + 1));
+				if (!text.empty() && text.size() <= 4096 - totalCharacters) {
+					runs.push_back({ std::move(text),
+						(context.translateX + context.scaleX * context.x) * outputScaleX,
+						(context.translateY + context.scaleY * context.y) * outputScaleY,
+						context.fontSize * std::abs(context.scaleY) * outputScaleY,
+						context.fill, context.anchorMiddle, context.anchorEnd });
+					totalCharacters += runs.back().text.size();
+				}
 			}
 		}
-		const auto decodedPixels = static_cast<std::size_t>(scaledWidth) * scaledHeight;
-		if (decodedPixels > remainingPixels) return result;
+		cursor = close + 1;
+	}
+	return runs;
+}
 
-		cxx::com_pointer<IWICBitmapScaler> scaler;
-		IWICBitmapSource* source = frame;
-		if (scaledWidth != width || scaledHeight != height) {
-			// MinGW-w64's wincodec.h still stops at WICBitmapInterpolationModeFant;
-			// the high-quality cubic mode was added to the Windows SDK in
-			// Windows 8. The experimental MinGW build therefore scales with Fant,
-			// which is a quality difference in that build only.
-#if defined(_MSC_VER)
-			constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeHighQualityCubic;
-#else
-			constexpr WICBitmapInterpolationMode kScalerMode = WICBitmapInterpolationModeFant;
-#endif
-			if (FAILED(factory->CreateBitmapScaler(&scaler))
-				|| FAILED(scaler->Initialize(frame, scaledWidth, scaledHeight,
-					kScalerMode))) return result;
-			source = scaler;
+void OverlaySvgText(BYTE* destination, int width, int height, std::size_t destinationStride,
+	std::string_view xml, double sourceWidth, double sourceHeight) noexcept
+{
+	if (destination == nullptr || width <= 0 || height <= 0 || sourceWidth <= 0.0 || sourceHeight <= 0.0) return;
+	try {
+		const auto runs = ExtractSvgTextRuns(xml, width / sourceWidth, height / sourceHeight);
+		if (runs.empty()) return;
+		BITMAPINFO info{};
+		info.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+		info.bmiHeader.biWidth = width;
+		info.bmiHeader.biHeight = -height;
+		info.bmiHeader.biPlanes = 1;
+		info.bmiHeader.biBitCount = 32;
+		info.bmiHeader.biCompression = BI_RGB;
+		void* maskBits = nullptr;
+		const auto maskBitmap = ::CreateDIBSection(nullptr, &info, DIB_RGB_COLORS, &maskBits, nullptr, 0);
+		const auto maskDc = ::CreateCompatibleDC(nullptr);
+		if (maskBitmap == nullptr || maskBits == nullptr || maskDc == nullptr) {
+			if (maskDc != nullptr) ::DeleteDC(maskDc);
+			if (maskBitmap != nullptr) ::DeleteObject(maskBitmap);
+			return;
 		}
-		cxx::com_pointer<IWICFormatConverter> converter;
-		if (FAILED(factory->CreateFormatConverter(&converter))
-			|| FAILED(converter->Initialize(source, GUID_WICPixelFormat32bppPBGRA,
-				WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return result;
+		const auto oldBitmap = ::SelectObject(maskDc, maskBitmap);
+		::SetBkMode(maskDc, TRANSPARENT);
+		::SetTextColor(maskDc, RGB(255, 255, 255));
+		const auto maskStride = static_cast<std::size_t>(width) * 4;
+		for (const auto& run : runs) {
+			const auto fontPixels = (std::max)(1, static_cast<int>(std::lround(run.fontSize)));
+			const auto font = ::CreateFontW(-fontPixels, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+				DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, ANTIALIASED_QUALITY,
+				DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+			if (font == nullptr) continue;
+			std::memset(maskBits, 0, maskStride * static_cast<std::size_t>(height));
+			const auto oldFont = ::SelectObject(maskDc, font);
+			SIZE extent{};
+			TEXTMETRIC metrics{};
+			(void)::GetTextExtentPoint32W(maskDc, run.text.data(), static_cast<int>(run.text.size()), &extent);
+			(void)::GetTextMetricsW(maskDc, &metrics);
+			int left = static_cast<int>(std::lround(run.x));
+			if (run.anchorMiddle) left -= extent.cx / 2;
+			else if (run.anchorEnd) left -= extent.cx;
+			const int top = static_cast<int>(std::lround(run.baseline)) - metrics.tmAscent;
+			(void)::TextOutW(maskDc, left, top, run.text.data(), static_cast<int>(run.text.size()));
+			::SelectObject(maskDc, oldFont);
+			::DeleteObject(font);
+
+			const BYTE red = GetRValue(run.fill);
+			const BYTE green = GetGValue(run.fill);
+			const BYTE blue = GetBValue(run.fill);
+			for (int row = 0; row < height; ++row) {
+				auto* target = destination + static_cast<std::size_t>(row) * destinationStride;
+				const auto* mask = static_cast<const BYTE*>(maskBits) + static_cast<std::size_t>(row) * maskStride;
+				for (int column = 0; column < width; ++column) {
+					const auto index = static_cast<std::size_t>(column) * 4;
+					const BYTE alpha = (std::max)({ mask[index], mask[index + 1], mask[index + 2] });
+					if (alpha == 0) continue;
+					const unsigned inverse = 255U - alpha;
+					target[index] = static_cast<BYTE>((blue * alpha + target[index] * inverse + 127U) / 255U);
+					target[index + 1] = static_cast<BYTE>((green * alpha + target[index + 1] * inverse + 127U) / 255U);
+					target[index + 2] = static_cast<BYTE>((red * alpha + target[index + 2] * inverse + 127U) / 255U);
+					target[index + 3] = static_cast<BYTE>((255U * alpha + target[index + 3] * inverse + 127U) / 255U);
+				}
+			}
+		}
+		::SelectObject(maskDc, oldBitmap);
+		::DeleteDC(maskDc);
+		::DeleteObject(maskBitmap);
+	}
+	catch (...) {
+		return;
+	}
+}
+
+[[nodiscard]] DecodedBitmap LoadSvgRaster(
+	const std::vector<std::uint8_t>& bytes, std::size_t remainingPixels) noexcept
+{
+	constexpr std::size_t kMaximumSvgBytes = 2U * 1024U * 1024U;
+	constexpr std::size_t kMaximumSvgElements = 20000;
+	if (bytes.empty() || bytes.size() > kMaximumSvgBytes || remainingPixels == 0) return {};
+	const std::string_view xml(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+	// LunaSVG is an in-process static renderer: it does not execute scripts or
+	// fetch URLs. Reject active/XML expansion, nested images, data payloads and
+	// external references before parsing as an additional fail-closed boundary.
+	if (!ContainsAsciiInsensitive(xml, "<svg")
+		|| ContainsAsciiInsensitive(xml, "<!doctype")
+		|| ContainsAsciiInsensitive(xml, "<!entity")
+		|| ContainsAsciiInsensitive(xml, "<script")
+		|| ContainsAsciiInsensitive(xml, "<foreignobject")
+		|| ContainsAsciiInsensitive(xml, "<image")
+		|| ContainsAsciiInsensitive(xml, "data:")
+		|| ContainsAsciiInsensitive(xml, "href=\"http")
+		|| ContainsAsciiInsensitive(xml, "href='http")
+		|| ContainsAsciiInsensitive(xml, "href=\"//")
+		|| ContainsAsciiInsensitive(xml, "href='//")
+		|| ContainsAsciiInsensitive(xml, "url(http")
+		|| ContainsAsciiInsensitive(xml, "url('//")
+		|| ContainsAsciiInsensitive(xml, "url(\"//")
+		|| static_cast<std::size_t>(std::ranges::count(xml, '<')) > kMaximumSvgElements) return {};
+
+	try {
+		auto document = lunasvg::Document::loadFromData(xml.data(), xml.size());
+		if (!document) return {};
+		const auto sourceWidth = document->width();
+		const auto sourceHeight = document->height();
+		if (!std::isfinite(sourceWidth) || !std::isfinite(sourceHeight)
+			|| sourceWidth <= 0.0f || sourceHeight <= 0.0f
+			|| sourceWidth * sourceHeight > static_cast<float>(kMaximumSourceImagePixels)) return {};
+		auto width = static_cast<int>(std::ceil(sourceWidth));
+		auto height = static_cast<int>(std::ceil(sourceHeight));
+		if (width > static_cast<int>(kMaximumDecodedImageEdge)
+			|| height > static_cast<int>(kMaximumDecodedImageEdge)) {
+			const auto scale = static_cast<float>(kMaximumDecodedImageEdge)
+				/ static_cast<float>((std::max)(width, height));
+			width = (std::max)(1, static_cast<int>(std::floor(width * scale)));
+			height = (std::max)(1, static_cast<int>(std::floor(height * scale)));
+		}
+		if (static_cast<std::size_t>(width) * height > remainingPixels) return {};
+		auto rendered = document->renderToBitmap(
+			static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height), 0x00000000);
+		if (!rendered.valid() || rendered.data() == nullptr
+			|| rendered.stride() < static_cast<std::uint32_t>(width) * 4U) return {};
 
 		BITMAPINFO bitmapInfo{};
 		bitmapInfo.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
-		bitmapInfo.bmiHeader.biWidth = static_cast<LONG>(scaledWidth);
-		bitmapInfo.bmiHeader.biHeight = -static_cast<LONG>(scaledHeight);
+		bitmapInfo.bmiHeader.biWidth = width;
+		bitmapInfo.bmiHeader.biHeight = -height;
 		bitmapInfo.bmiHeader.biPlanes = 1;
 		bitmapInfo.bmiHeader.biBitCount = 32;
 		bitmapInfo.bmiHeader.biCompression = BI_RGB;
@@ -294,23 +742,29 @@ struct DecodedBitmap {
 		const auto bitmap = ::CreateDIBSection(nullptr, &bitmapInfo, DIB_RGB_COLORS, &bits, nullptr, 0);
 		if (bitmap == nullptr || bits == nullptr) {
 			if (bitmap != nullptr) ::DeleteObject(bitmap);
-			return result;
+			return {};
 		}
-		const UINT stride = scaledWidth * 4;
-		const auto byteCount = static_cast<std::size_t>(stride) * scaledHeight;
-		if (byteCount > std::numeric_limits<UINT>::max()
-			|| FAILED(converter->CopyPixels(nullptr, stride, static_cast<UINT>(byteCount), static_cast<BYTE*>(bits)))) {
-			::DeleteObject(bitmap);
-			return result;
+		const auto stride = static_cast<std::size_t>(width) * 4;
+		for (int row = 0; row < height; ++row) {
+			std::memcpy(static_cast<BYTE*>(bits) + static_cast<std::size_t>(row) * stride,
+				rendered.data() + static_cast<std::size_t>(row) * rendered.stride(), stride);
 		}
-		result.bitmap = bitmap;
-		result.width = static_cast<int>(scaledWidth);
-		result.height = static_cast<int>(scaledHeight);
+		OverlaySvgText(static_cast<BYTE*>(bits), width, height, stride, xml, sourceWidth, sourceHeight);
+		return { bitmap, width, height };
 	}
 	catch (...) {
 		return {};
 	}
-	return result;
+}
+
+[[nodiscard]] DecodedBitmap LoadRemoteImage(
+	const RemoteImageFetchResult& fetched, std::size_t remainingPixels) noexcept
+{
+	if (!fetched || !fetched.bytes) return {};
+	if (fetched.mediaType == L"image/svg+xml") {
+		return LoadSvgRaster(*fetched.bytes, remainingPixels);
+	}
+	return LoadEncodedRaster(*fetched.bytes, remainingPixels);
 }
 
 } // namespace
@@ -381,6 +835,7 @@ bool CMarkdownPreviewWnd::Create(HWND parent)
 	{
 		std::lock_guard lock(m_workerState->mutex);
 		m_workerState->completionTarget = m_hWnd;
+		m_workerState->remoteImageFetcher = m_remoteImageFetcher;
 	}
 	try {
 		const auto state = m_workerState;
@@ -505,6 +960,11 @@ void CMarkdownPreviewWnd::WorkerMain(
 		PreviewWorkCompletion completion;
 		completion.key = work.key;
 		completion.truncated = work.truncated;
+		CallbackCancellation cancellation([state, stopToken, key = work.key] {
+			if (stopToken.stop_requested()) return true;
+			std::lock_guard lock(state->mutex);
+			return !state->asyncState.IsCurrent(key);
+		});
 		try {
 			completion.document = ParseMarkdown(work.source, work.options);
 			completion.codeHighlights.resize(completion.document.blocks.size());
@@ -521,21 +981,33 @@ void CMarkdownPreviewWnd::WorkerMain(
 				if (block.kind == BlockKind::CodeBlock) {
 					completion.codeHighlights[index] = HighlightMarkdownCode(block.language, block.text);
 				}
-				if (block.kind != BlockKind::Image || !block.image
-					|| block.image->source.disposition != ResourceDisposition::ResolvedLocal) continue;
-				const auto& resource = block.image->source;
+				if (block.kind != BlockKind::Image || block.images.empty()) continue;
+				for (const auto& imageNode : block.images) {
+				const auto& resource = imageNode.source;
+				const bool local = resource.disposition == ResourceDisposition::ResolvedLocal;
+				const bool remote = resource.disposition == ResourceDisposition::ResolvedHttps;
+				if (!local && !remote) continue;
+				const auto& identity = local ? resource.resolvedPath : resource.original;
 				const auto duplicate = std::ranges::find_if(completion.decodedImages,
-					[&resource](const CachedImage& image) {
-						return _wcsicmp(image.path.c_str(), resource.resolvedPath.c_str()) == 0
+					[&identity, &resource](const CachedImage& image) {
+						return _wcsicmp(image.path.c_str(), identity.c_str()) == 0
 							&& _wcsicmp(image.allowedRoot.c_str(), resource.allowedRoot.c_str()) == 0;
 					});
 				if (duplicate != completion.decodedImages.end()
 					|| completion.decodedImages.size() >= kMaximumCachedImages
 					|| completion.decodedImagePixels >= kMaximumDecodedImagePixels) continue;
-				const auto decoded = LoadVerifiedRaster(resource,
-					kMaximumDecodedImagePixels - completion.decodedImagePixels);
+				DecodedBitmap decoded;
+				if (local) {
+					decoded = LoadVerifiedRaster(resource,
+						kMaximumDecodedImagePixels - completion.decodedImagePixels);
+				} else if (state->remoteImageFetcher) {
+					const auto fetched = state->remoteImageFetcher->Fetch(resource.original, &cancellation);
+					if (cancellation.IsCancellationRequested()) break;
+					decoded = LoadRemoteImage(fetched,
+						kMaximumDecodedImagePixels - completion.decodedImagePixels);
+				}
 				CachedImage cached;
-				cached.path = resource.resolvedPath;
+				cached.path = identity;
 				cached.allowedRoot = resource.allowedRoot;
 				cached.bitmap = CachedImage::Adopt(decoded.bitmap);
 				cached.width = decoded.width;
@@ -544,6 +1016,7 @@ void CMarkdownPreviewWnd::WorkerMain(
 				if (decoded.bitmap != nullptr) {
 					completion.decodedImagePixels += static_cast<std::size_t>(decoded.width)
 						* static_cast<std::size_t>(decoded.height);
+				}
 				}
 			}
 		}
@@ -658,10 +1131,7 @@ void CMarkdownPreviewWnd::SetPalette(const theme::ThemePalette& palette)
 	m_colors.primaryText = palette.primaryText.ToColorRef();
 	m_colors.secondaryText = palette.secondaryText.ToColorRef();
 	m_colors.link = palette.accent.ToColorRef();
-	m_overlayColors.background = m_colors.background;
-	m_overlayColors.trackHover = palette.raised.ToColorRef();
-	m_overlayColors.thumb = palette.border.ToColorRef();
-	m_overlayColors.thumbHover = palette.secondaryText.ToColorRef();
+	m_overlayColors = workbench::controls::ResolveOverlayScrollbarColors(palette, palette.canvas);
 	UpdateOverlayScrollbar();
 	RebuildPaintResources();
 	if (m_hWnd != nullptr) {
@@ -1048,10 +1518,13 @@ void CMarkdownPreviewWnd::DeleteCachedImages(std::vector<CachedImage>& images) n
 
 std::size_t CMarkdownPreviewWnd::GetOrLoadImage(const ResourceReference& resource)
 {
-	if (resource.disposition != ResourceDisposition::ResolvedLocal) return kInvalidImage;
+	const bool local = resource.disposition == ResourceDisposition::ResolvedLocal;
+	const bool remote = resource.disposition == ResourceDisposition::ResolvedHttps;
+	if (!local && !remote) return kInvalidImage;
+	const auto& identity = local ? resource.resolvedPath : resource.original;
 	for (std::size_t index = 0; index < m_images.size(); ++index) {
 		const auto& image = m_images[index];
-		if (_wcsicmp(image.path.c_str(), resource.resolvedPath.c_str()) == 0
+		if (_wcsicmp(image.path.c_str(), identity.c_str()) == 0
 			&& _wcsicmp(image.allowedRoot.c_str(), resource.allowedRoot.c_str()) == 0) {
 			return image.bitmap == nullptr ? kInvalidImage : index;
 		}
@@ -1059,7 +1532,7 @@ std::size_t CMarkdownPreviewWnd::GetOrLoadImage(const ResourceReference& resourc
 	// QueueDocument generations decode every admitted local image on their
 	// worker. A missing entry is blocked/failed/over-budget and must not fall
 	// back to synchronous WIC work on the UI layout slice.
-	if (m_layoutImagesPrepared) return kInvalidImage;
+	if (m_layoutImagesPrepared || remote) return kInvalidImage;
 	if (m_images.size() >= kMaximumCachedImages || m_decodedImagePixels >= kMaximumDecodedImagePixels) {
 		return kInvalidImage;
 	}
@@ -1253,39 +1726,62 @@ void CMarkdownPreviewWnd::ContinueLayoutBuild()
 			}
 
 			case BlockKind::Image: {
-				const auto imageIndex = block.image.has_value() ? GetOrLoadImage(block.image->source) : kInvalidImage;
-				if (imageIndex != kInvalidImage) {
-					const auto& image = m_images[imageIndex];
+				std::vector<std::size_t> imageIndices;
+				imageIndices.reserve(block.images.size());
+				for (const auto& imageNode : block.images) {
+					imageIndices.push_back(GetOrLoadImage(imageNode.source));
+				}
+				const auto unavailable = std::ranges::find(imageIndices, kInvalidImage);
+				if (!imageIndices.empty() && unavailable == imageIndices.end()) {
 					const int availableWidth = std::max(1, clientWidth - leftPadding - rightPadding);
-					int displayWidth = std::min(image.width, availableWidth);
-					int displayHeight = std::max(1, ::MulDiv(image.height, displayWidth, image.width));
-					const int maximumHeight = std::max(1, ScaleDip(520));
-					if (displayHeight > maximumHeight) {
-						displayWidth = std::max(1, ::MulDiv(displayWidth, maximumHeight, displayHeight));
-						displayHeight = maximumHeight;
+					const int imageGap = ScaleDip(4);
+					int rowLeft = leftPadding;
+					int rowTop = top;
+					int rowHeight = 0;
+					for (const auto imageIndex : imageIndices) {
+						const auto& image = m_images[imageIndex];
+						int displayWidth = std::min(image.width, availableWidth);
+						int displayHeight = std::max(1, ::MulDiv(image.height, displayWidth, image.width));
+						const int maximumHeight = std::max(1, ScaleDip(520));
+						if (displayHeight > maximumHeight) {
+							displayWidth = std::max(1, ::MulDiv(displayWidth, maximumHeight, displayHeight));
+							displayHeight = maximumHeight;
+						}
+						if (rowLeft != leftPadding
+							&& rowLeft + displayWidth > leftPadding + availableWidth) {
+							rowTop += rowHeight + imageGap;
+							rowLeft = leftPadding;
+							rowHeight = 0;
+						}
+						RenderLine imageLine;
+						imageLine.left = rowLeft;
+						imageLine.top = rowTop;
+						imageLine.height = displayHeight;
+						imageLine.kind = LineKind::Image;
+						imageLine.imageIndex = imageIndex;
+						imageLine.width = displayWidth;
+						imageLine.sourceLine = block.sourceLine;
+						m_lines.push_back(std::move(imageLine));
+						rowLeft += displayWidth + imageGap;
+						rowHeight = std::max(rowHeight, displayHeight);
 					}
-					RenderLine imageLine;
-					imageLine.left = leftPadding;
-					imageLine.top = top;
-					imageLine.height = displayHeight;
-					imageLine.kind = LineKind::Image;
-					imageLine.imageIndex = imageIndex;
-					imageLine.width = displayWidth;
-					imageLine.sourceLine = block.sourceLine;
-					m_lines.push_back(std::move(imageLine));
-					top += displayHeight + lineGap;
+					top = rowTop + rowHeight + lineGap;
 				} else {
 					Block fallback;
 					fallback.sourceLine = block.sourceLine;
-					const auto disposition = block.image.has_value()
-						? block.image->source.disposition : ResourceDisposition::Invalid;
+					const auto unavailableIndex = unavailable == imageIndices.end()
+						? 0U : static_cast<std::size_t>(unavailable - imageIndices.begin());
+					const auto* imageNode = unavailableIndex < block.images.size()
+						? &block.images[unavailableIndex] : nullptr;
+					const auto disposition = imageNode != nullptr
+						? imageNode->source.disposition : ResourceDisposition::Invalid;
 					fallback.text = disposition == ResourceDisposition::ExternalBlocked
 						|| disposition == ResourceDisposition::UnsafeSchemeBlocked
 						|| disposition == ResourceDisposition::OutsideAllowedRoots
 						? L"Blocked image" : L"Image unavailable";
-					if (block.image.has_value() && !block.image->altText.empty()) {
+					if (imageNode != nullptr && !imageNode->altText.empty()) {
 						fallback.text.append(L": ");
-						fallback.text.append(block.image->altText);
+						fallback.text.append(imageNode->altText);
 					}
 					if (build.blockStage == 0) {
 						BeginWrappedText(build, fallback, FontKind::Body, LineKind::Notice,

@@ -932,7 +932,8 @@ struct CExplorerTool::Impl {
 	{
 		scrollbar.SetDpi(dpi == 0 ? kDefaultDpi : dpi);
 		scrollbar.SetColors(controls::OverlayScrollbarColors{ palette.background,
-			palette.scrollbarTrackHover, palette.scrollbarThumb, palette.scrollbarThumbHover });
+			palette.scrollbarTrackHover, palette.scrollbarThumb, palette.scrollbarThumbHover,
+			palette.scrollbarThumbActive });
 		scrollbar.Update();
 	}
 

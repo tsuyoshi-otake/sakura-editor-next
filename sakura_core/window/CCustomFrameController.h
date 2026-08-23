@@ -10,6 +10,7 @@
 #include <Windows.h>
 
 #include <array>
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <utility>
@@ -18,6 +19,10 @@
 #include "window/CClientMenuBar.h"
 #include "window/CCustomTitleBar.h"
 #include "accessibility/CustomUiAutomationProvider.h"
+
+namespace workbench {
+enum class ActivityBarLocation : std::uint8_t;
+}
 
 //! All rectangles use client coordinates after WM_NCCALCSIZE extends the client to the top edge.
 struct CustomFrameLayout {
@@ -48,6 +53,18 @@ struct CustomFrameLayout {
 	int clientWidth,
 	UINT dpi,
 	int preferredMenuWidth,
+	int updateButtonWidth = 0,
+	bool showActivityBarGlobalActions = false
+) noexcept;
+//! Compatibility-shaped overload for callers that provide the Activity Bar
+//! presentation before the optional Update measurement. The controller keeps
+//! one canonical layout contract, but accepting both orders makes the two
+//! independent presentation inputs explicit at call sites.
+[[nodiscard]] CustomFrameLayout CalculateCustomFrameLayout(
+	int clientWidth,
+	UINT dpi,
+	int preferredMenuWidth,
+	bool showActivityBarGlobalActions,
 	int updateButtonWidth = 0
 ) noexcept;
 //! Physical width the Update indicator needs for its label, including its padding and
@@ -59,6 +76,37 @@ struct CustomFrameLayout {
 //! rectangle instead of to the whole action area. Returns an empty rectangle when the
 //! action rectangle is empty or too small to hold a pill.
 [[nodiscard]] RECT CustomFrameUpdateIndicatorPillRect(const RECT& actionRect, UINT dpi) noexcept;
+
+//! Popup surfaces used by the GlobalCompositeBar have different anchor semantics.
+//! The vertical Activity Bar opens to the right of the action and grows upward from
+//! the action's top edge; title-bar actions open below their button.
+enum class CustomFramePopupPlacementKind : unsigned char {
+	ActivityBar,
+	TitleBar,
+};
+
+//! The result consumed by TrackPopupMenuEx. `bounds` is the predicted popup rectangle
+//! after the work-area clamp and is kept in the result so the geometry can be tested
+//! without creating a native menu.
+struct CustomFramePopupPlacement final {
+	POINT point{};
+	UINT flags = 0;
+	RECT bounds{};
+};
+
+//! Calculates the one coordinate/flag combination used by the custom-frame Account
+//! and Manage menus. `anchorScreen` is in screen coordinates. For ActivityBar placement
+//! its right/top edge is the button's right/top edge; for TitleBar placement the full
+//! button rectangle is used. `rightAlign` applies only to TitleBar placement.
+//! `popupSize` is the measured (or conservative estimated) native menu extent.
+[[nodiscard]] CustomFramePopupPlacement CalculateCustomFramePopupPlacement(
+	const RECT& anchorScreen,
+	const SIZE& popupSize,
+	const RECT& workArea,
+	UINT dpi,
+	CustomFramePopupPlacementKind kind,
+	bool rightAlign = false
+) noexcept;
 [[nodiscard]] LRESULT HitTestCustomFrame(
 	const CustomFrameLayout& layout,
 	POINT clientPoint,
@@ -194,6 +242,18 @@ public:
 	//! decisions belong to the composition root, so this takes the answer.
 	void SetUpdateIndicatorVisible(bool visible) noexcept;
 	[[nodiscard]] bool IsUpdateIndicatorVisible() const noexcept { return m_updateIndicatorVisible; }
+	//! Projects Activity Bar placement into the native title bar. Accounts and
+	//! Manage are GlobalCompositeBar actions: they belong on the Activity Bar for
+	//! the default vertical placement and move here only for top/bottom placement.
+	//! The composition root supplies that placement answer; the default is absent.
+	void SetActivityBarGlobalActionsInTitleBar(bool visible) noexcept;
+	//! Typed location projection for the workbench setting. Only Top and Bottom
+	//! map to title-bar actions; Default (vertical) remains absent.
+	void SetActivityBarLocation(workbench::ActivityBarLocation location) noexcept;
+	[[nodiscard]] bool AreActivityBarGlobalActionsInTitleBar() const noexcept
+	{
+		return m_activityBarGlobalActionsInTitleBar;
+	}
 	//! Selects the `7_update` entry the Manage popup contributes. The popup is built
 	//! on demand, so this needs no invalidation; `None` contributes nothing at all.
 	void SetUpdateMenuEntry(CustomFrameUpdateMenuEntry entry) noexcept { m_updateMenuEntry = entry; }
@@ -257,6 +317,7 @@ private:
 	void InvokeTitleControl(CustomFrameControl control) noexcept;
 	void ShowLayoutMenu(const RECT& anchor) noexcept;
 	void ShowAccountMenu(const RECT& anchor) noexcept;
+	void ShowAccountMenuAt(POINT screenPoint, bool titleBar) noexcept;
 	void ShowManageMenu(const RECT& anchor) noexcept;
 	struct ResizeOverlaySlot {
 		CCustomFrameController* owner = nullptr;
@@ -278,6 +339,7 @@ private:
 	CustomFrameManageActionCallback m_manageMenuActionCallback;
 	CustomFrameUpdateIndicatorCallback m_updateIndicatorCallback;
 	bool m_updateIndicatorVisible = false;
+	bool m_activityBarGlobalActionsInTitleBar = false;
 	CustomFrameUpdateMenuEntry m_updateMenuEntry = CustomFrameUpdateMenuEntry::None;
 	LRESULT m_hotHit = HTNOWHERE;
 	LRESULT m_pressedHit = HTNOWHERE;

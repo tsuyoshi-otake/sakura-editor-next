@@ -156,7 +156,7 @@
     "root-vcpkg-package-set"
   ],
   "projection_schema": 1,
-  "semantic_graph_hash": "sha256:e8666b893d3049961465cb8c8a0c528d1edc34a1e1eaa53380fcdc2cb79d10a9",
+  "semantic_graph_hash": "sha256:17ba1ef5a5b9012c0de06a8d709a112f594089b45e850b5e45d9566a79709801",
   "staging_sets": [
     "sakura-editor-msvc-x64-debug-runtime-stage"
   ]

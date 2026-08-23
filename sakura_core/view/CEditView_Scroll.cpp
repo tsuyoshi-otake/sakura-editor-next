@@ -50,7 +50,7 @@ BOOL CEditView::CreateScrollBar()
 		0L,									/* no extended styles */
 		WC_SCROLLBAR,						/* scroll bar control class */
 		nullptr,								/* text for window title bar */
-		WS_VISIBLE | WS_CHILD | SBS_VERT,	/* scroll bar styles */
+		WS_CHILD | SBS_VERT,					/* hidden scroll model; overlay owns pixels */
 		0,									/* horizontal position */
 		0,									/* vertical position */
 		200,								/* width of the scroll bar */
@@ -87,7 +87,7 @@ BOOL CEditView::CreateScrollBar()
 			0L,									/* no extended styles */
 			WC_SCROLLBAR,						/* scroll bar control class */
 			nullptr,								/* text for window title bar */
-			WS_VISIBLE | WS_CHILD | SBS_HORZ,	/* scroll bar styles */
+			WS_CHILD | SBS_HORZ,					/* hidden scroll model; overlay owns pixels */
 			0,									/* horizontal position */
 			0,									/* vertical position */
 			200,								/* width of the scroll bar */
@@ -133,8 +133,8 @@ BOOL CEditView::CreateScrollBar()
 */
 void CEditView::DestroyScrollBar()
 {
-	m_cOverlayVScrollBar.Detach();
-	m_cOverlayHScrollBar.Detach();
+	m_cOverlayVScrollBar.Destroy();
+	m_cOverlayHScrollBar.Destroy();
 	if( m_hwndVScrollBar )
 	{
 		::DestroyWindow( m_hwndVScrollBar );
@@ -827,11 +827,7 @@ void CEditView::UpdateOverlayVScrollBar()
 	const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
 		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 	const auto palette = theme::CThemeService::EffectivePalette( mode );
-	workbench::controls::OverlayScrollbarColors colors;
-	colors.background = palette.canvas.ToColorRef();
-	colors.trackHover = palette.raised.ToColorRef();
-	colors.thumb = palette.border.ToColorRef();
-	colors.thumbHover = palette.secondaryText.ToColorRef();
+	const auto colors = workbench::controls::ResolveOverlayScrollbarColors(palette, palette.canvas);
 	m_cOverlayVScrollBar.SetColors( colors );
 	m_cOverlayVScrollBar.SetDpi( std::max( 1u, ::GetDpiForWindow( GetHwnd() ) ) );
 	// 実体のコントロールは非表示なので、置き場所は明示的に与える。
@@ -851,11 +847,7 @@ void CEditView::UpdateOverlayHScrollBar()
 	const auto mode = GetDllShareData().m_Common.m_sWindow.m_bDarkMode
 		? theme::ThemeMode::Dark : theme::ThemeMode::Light;
 	const auto palette = theme::CThemeService::EffectivePalette( mode );
-	workbench::controls::OverlayScrollbarColors colors;
-	colors.background = palette.canvas.ToColorRef();
-	colors.trackHover = palette.raised.ToColorRef();
-	colors.thumb = palette.border.ToColorRef();
-	colors.thumbHover = palette.secondaryText.ToColorRef();
+	const auto colors = workbench::controls::ResolveOverlayScrollbarColors(palette, palette.canvas);
 	m_cOverlayHScrollBar.SetColors( colors );
 	m_cOverlayHScrollBar.SetDpi( std::max( 1u, ::GetDpiForWindow( GetHwnd() ) ) );
 	RECT rcBar{};

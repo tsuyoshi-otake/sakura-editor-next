@@ -253,10 +253,9 @@ composites with `CreateCompatibleDC`/`BitBlt`, and even
   the existing Accounts / Manage menus. Account remains an explicit
   "No account provider configured" boundary; Manage contains only workbench
   commands with real native executors.
-- The title bar no longer hosts Account / Manage while the Activity Bar is
-  vertical (the only supported position today). When Activity Bar placement is
-  implemented, keep a single placement: bottom of the bar for vertical, title
-  bar for top/bottom — never both.
+- The title bar does not host Account / Manage while the Activity Bar is
+  vertical. The supported top/bottom placements move both actions to the title
+  bar and remove them from the horizontal bars, preserving one placement only.
 
 ## Title-bar Update indicator (2026-08-06)
 

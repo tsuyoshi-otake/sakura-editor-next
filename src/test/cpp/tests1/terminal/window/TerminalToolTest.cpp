@@ -317,11 +317,6 @@ TEST(TerminalTool, RendererSizesPtyFromTheGridInsideTheApportionedPadding)
 
 TEST(TerminalTool, PrintableKeyDownIsClaimedAndStillBecomesACharMessage)
 {
-	// This test directly constructs a MSG instead of retrieving it from the
-	// thread queue.  Arrange the modifier state explicitly so a physically held
-	// Ctrl/Shift key cannot turn the synthetic printable key into a VT command.
-	ScopedNeutralKeyboardState keyboardState;
-	ASSERT_TRUE(keyboardState.Applied());
 	const HWND parent = CreateHiddenParentWindow();
 	ASSERT_NE(nullptr, parent);
 	terminal::CTerminalWnd renderer;
@@ -338,6 +333,12 @@ TEST(TerminalTool, PrintableKeyDownIsClaimedAndStillBecomesACharMessage)
 	// produced.
 	MSG stale{};
 	while( ::PeekMessageW(&stale, nullptr, 0, 0, PM_REMOVE) ) {}
+	// This test directly constructs a MSG instead of retrieving it from the
+	// thread queue. Arrange the modifier state after creating the HWND and
+	// draining its queue so a later physical-key synchronization cannot turn the
+	// synthetic printable key into a VT command.
+	ScopedNeutralKeyboardState keyboardState;
+	ASSERT_TRUE(keyboardState.Applied());
 
 	// TranslateMessage needs the real scan code to produce a WM_CHAR.
 	const LPARAM keyLParam = static_cast<LPARAM>(1 | (::MapVirtualKeyW('A', MAPVK_VK_TO_VSC) << 16));

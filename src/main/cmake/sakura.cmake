@@ -307,6 +307,7 @@ add_custom_target(generate_sakura_exe_manifest
 # Resolve darkmodelib from vcpkg local registry
 find_package(darkmodelib CONFIG REQUIRED)
 find_package(fmt CONFIG REQUIRED)
+find_package(unofficial-lunasvg CONFIG REQUIRED)
 find_package(Microsoft.GSL CONFIG REQUIRED)
 find_package(WIL CONFIG REQUIRED)
 find_package(Onigmo CONFIG REQUIRED)
@@ -843,6 +844,7 @@ target_link_libraries(sakura_core
   PUBLIC
     darkmodelib::darkmodelib
     fmt::fmt
+    unofficial::lunasvg::lunasvg
     Microsoft.GSL::GSL
     WIL::WIL
     Onigmo::onigmo

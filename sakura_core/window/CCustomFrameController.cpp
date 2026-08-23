@@ -9,6 +9,7 @@
 #include "window/CCustomFrameController.h"
 #include "CSelectLang.h"
 #include "func/Funccode.h"
+#include "workbench/WorkbenchLayout.h"
 #include "workbench/WorkbenchZoom.h"
 
 #include <algorithm>
@@ -69,6 +70,8 @@ constexpr UINT kManageUpdateRestart = 0x5A0A;
 constexpr int kUpdateIndicatorMarginDip = 4;
 constexpr int kUpdateIndicatorHeightDip = 22;
 
+constexpr int kPopupAnchorGapDip = 4;
+
 bool Contains(const RECT& rect, POINT point) noexcept
 {
 	return point.x >= rect.left && point.x < rect.right
@@ -78,6 +81,28 @@ bool Contains(const RECT& rect, POINT point) noexcept
 RECT MakeRect(int left, int top, int right, int bottom) noexcept
 {
 	return { left, top, std::max(left, right), std::max(top, bottom) };
+}
+
+void ClampPopupRectToWorkArea(RECT& popup, const RECT& workArea) noexcept
+{
+	if (::IsRectEmpty(&workArea) || ::IsRectEmpty(&popup)) return;
+	const int popupWidth = popup.right - popup.left;
+	const int popupHeight = popup.bottom - popup.top;
+	if (popupWidth <= 0 || popupHeight <= 0) return;
+
+	// A menu larger than the work area cannot be made fully visible. Keep its native
+	// extent and pin its origin to the work-area edge; TrackPopupMenuEx will apply the
+	// same best-effort policy for that impossible case.
+	const int workLeft = static_cast<int>(workArea.left);
+	const int workTop = static_cast<int>(workArea.top);
+	const int workRight = static_cast<int>(workArea.right);
+	const int workBottom = static_cast<int>(workArea.bottom);
+	const int maxLeft = std::max(workLeft, workRight - popupWidth);
+	const int maxTop = std::max(workTop, workBottom - popupHeight);
+	popup.left = static_cast<LONG>(std::clamp(static_cast<int>(popup.left), workLeft, maxLeft));
+	popup.top = static_cast<LONG>(std::clamp(static_cast<int>(popup.top), workTop, maxTop));
+	popup.right = popup.left + popupWidth;
+	popup.bottom = popup.top + popupHeight;
 }
 
 RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl control) noexcept
@@ -95,14 +120,17 @@ RECT TitleControlRect(const CustomFrameLayout& layout, CustomFrameControl contro
 	return {};
 }
 
-//! Layout / Primary Side Bar / Panel / Secondary Side Bar / Update. Accounts and Manage
-//! live on the vertical Activity Bar's GlobalCompositeBar, not in the title bar.
-constexpr std::array<CustomFrameControl, 5> kTitleControls = {
+//! Every title control is kept in this order so hit testing, painting, popup
+//! invocation, and accessibility all consume the same left-to-right run. The
+//! Account/Manage rectangles are empty while the Activity Bar is vertical.
+constexpr std::array<CustomFrameControl, 7> kTitleControls = {
 	CustomFrameControl::Layout,
 	CustomFrameControl::PrimarySidebar,
 	CustomFrameControl::BottomPanel,
 	CustomFrameControl::SecondarySidebar,
 	CustomFrameControl::Update,
+	CustomFrameControl::Account,
+	CustomFrameControl::Manage,
 };
 
 CustomFrameControl TitleControlFromNode(int nodeId) noexcept
@@ -192,6 +220,96 @@ bool AppendUpdateMenuGroup(HMENU menu, CustomFrameUpdateMenuEntry entry) noexcep
 		&& ::AppendMenuW(menu, command == 0 ? MF_STRING | MF_GRAYED : MF_STRING, command, label.c_str()) != FALSE;
 }
 
+[[nodiscard]] RECT PopupWorkAreaForPoint(POINT point) noexcept
+{
+	RECT workArea{};
+	const HMONITOR monitor = ::MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST);
+	MONITORINFO monitorInfo{ sizeof(monitorInfo) };
+	if (monitor != nullptr && ::GetMonitorInfoW(monitor, &monitorInfo) != FALSE) {
+		return monitorInfo.rcWork;
+	}
+	if (::SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0) != FALSE) {
+		return workArea;
+	}
+	workArea = { 0, 0, ::GetSystemMetrics(SM_CXSCREEN), ::GetSystemMetrics(SM_CYSCREEN) };
+	return workArea;
+}
+
+//! Native popup menu sizes are not available until the menu is displayed. This
+//! conservative estimate is used only to make the explicit work-area clamp agree
+//! with the eventual TrackPopupMenuEx placement; the system still performs its own
+//! final menu placement using TPM_WORKAREA.
+[[nodiscard]] SIZE EstimatePopupMenuSize(HMENU menu, HWND owner, HFONT font, UINT dpi) noexcept
+{
+	const int effectiveDpi = dpi == 0 ? 96 : static_cast<int>(dpi);
+	const int rowHeight = std::max(
+		ScaleCustomFrameDip(24, static_cast<UINT>(effectiveDpi)),
+		::GetSystemMetricsForDpi(SM_CYMENU, static_cast<UINT>(effectiveDpi)));
+	const int separatorHeight = std::max(1, ScaleCustomFrameDip(8, static_cast<UINT>(effectiveDpi)));
+	const int horizontalPadding = ScaleCustomFrameDip(48, static_cast<UINT>(effectiveDpi));
+	const int acceleratorGap = ScaleCustomFrameDip(20, static_cast<UINT>(effectiveDpi));
+	const int submenuArrow = ScaleCustomFrameDip(18, static_cast<UINT>(effectiveDpi));
+	SIZE size{
+		ScaleCustomFrameDip(220, static_cast<UINT>(effectiveDpi)),
+		ScaleCustomFrameDip(32, static_cast<UINT>(effectiveDpi)),
+	};
+	if (menu == nullptr) return size;
+
+	HDC dc = owner == nullptr ? ::GetDC(nullptr) : ::GetDC(owner);
+	HGDIOBJ previous = nullptr;
+	if (dc != nullptr && font != nullptr) previous = ::SelectObject(dc, font);
+	int measuredHeight = 0;
+	int measuredWidth = 0;
+	const int itemCount = std::max(0, ::GetMenuItemCount(menu));
+	for (int index = 0; index < itemCount; ++index) {
+		wchar_t text[256]{};
+		MENUITEMINFOW item{ sizeof(item) };
+		item.fMask = MIIM_FTYPE | MIIM_STRING | MIIM_SUBMENU;
+		item.dwTypeData = text;
+		item.cch = static_cast<UINT>(sizeof(text) / sizeof(text[0]) - 1);
+		if (::GetMenuItemInfoW(menu, static_cast<UINT>(index), TRUE, &item) == FALSE) {
+			measuredHeight += rowHeight;
+			continue;
+		}
+		if ((item.fType & MFT_SEPARATOR) != 0) {
+			measuredHeight += separatorHeight;
+			continue;
+		}
+
+		int labelWidth = 0;
+		int acceleratorWidth = 0;
+		const wchar_t* const tab = ::wcschr(text, L'\t');
+		const int labelLength = tab == nullptr
+			? static_cast<int>(::wcslen(text))
+			: static_cast<int>(tab - text);
+		if (dc != nullptr && labelLength > 0) {
+			SIZE extent{};
+			if (::GetTextExtentPoint32W(dc, text, labelLength, &extent) != FALSE) {
+				labelWidth = extent.cx;
+			}
+		}
+		if (dc != nullptr && tab != nullptr && tab[1] != L'\0') {
+			SIZE extent{};
+			if (::GetTextExtentPoint32W(dc, tab + 1,
+				static_cast<int>(::wcslen(tab + 1)), &extent) != FALSE) {
+				acceleratorWidth = extent.cx;
+			}
+		}
+		measuredWidth = std::max(measuredWidth,
+			labelWidth + (acceleratorWidth == 0 ? 0 : acceleratorGap + acceleratorWidth)
+				+ horizontalPadding + (item.hSubMenu == nullptr ? 0 : submenuArrow));
+		measuredHeight += rowHeight;
+	}
+	if (previous != nullptr) ::SelectObject(dc, previous);
+	if (dc != nullptr) {
+		if (owner == nullptr) ::ReleaseDC(nullptr, dc);
+		else ::ReleaseDC(owner, dc);
+	}
+	size.cx = static_cast<LONG>(std::max(static_cast<int>(size.cx), measuredWidth));
+	size.cy = static_cast<LONG>(std::max(static_cast<int>(size.cy), measuredHeight));
+	return size;
+}
+
 } // namespace
 
 int ScaleCustomFrameDip(int value, UINT dpi) noexcept
@@ -242,7 +360,11 @@ CalculateCustomFrameResizeOverlayBounds(
 }
 
 CustomFrameLayout CalculateCustomFrameLayout(
-	int clientWidth, UINT dpi, int preferredMenuWidth, int updateButtonWidth) noexcept
+	int clientWidth,
+	UINT dpi,
+	int preferredMenuWidth,
+	int updateButtonWidth,
+	bool showActivityBarGlobalActions) noexcept
 {
 	const int width = std::max(0, clientWidth);
 	const int titleHeight = ScaleCustomFrameDip(34, dpi);
@@ -252,10 +374,12 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	const int captionPadding = ScaleCustomFrameDip(10, dpi);
 	const int titleControlWidth = ScaleCustomFrameDip(30, dpi);
 	// Layout, Primary Side Bar, Panel, and Secondary Side Bar are the fixed-width
-	// controls. Accounts and Manage belong on the vertical Activity Bar. The Update
-	// indicator is measured separately because its width comes from its label, and it
-	// is absent entirely unless the update state is actionable.
-	const int titleControlCount = 4;
+	// controls. Accounts and Manage are the Activity Bar's GlobalCompositeBar actions;
+	// they use the same compact width only when the Activity Bar is projected into the
+	// title bar. The Update indicator is measured separately because its width comes
+	// from its label, and it is absent entirely unless the update state is actionable.
+	const int globalActionCount = showActivityBarGlobalActions ? 2 : 0;
+	const int titleControlCount = 4 + globalActionCount;
 	const int updateWidth = std::max(0, updateButtonWidth);
 	const int buttonsWidth = buttonWidth * 2 + closeWidth;
 	const int buttonLeft = std::max(0, width - buttonsWidth);
@@ -324,6 +448,10 @@ CustomFrameLayout CalculateCustomFrameLayout(
 		// RECT is what every hit-test/paint/accessibility path treats as absent, so skip
 		// it outright rather than emitting one that starts and ends at the same x.
 		if (updateWidth > 0) layout.updateButton = nextControl(updateWidth);
+		if (showActivityBarGlobalActions) {
+			layout.accountButton = nextControl(titleControlWidth);
+			layout.manageButton = nextControl(titleControlWidth);
+		}
 	}
 	layout.minimizeButton = MakeRect(buttonLeft, 0, std::min(width, buttonLeft + buttonWidth), titleHeight);
 	layout.maximizeButton = MakeRect(
@@ -334,6 +462,18 @@ CustomFrameLayout CalculateCustomFrameLayout(
 	);
 	layout.closeButton = MakeRect(std::min(width, buttonLeft + buttonWidth * 2), 0, width, titleHeight);
 	return layout;
+}
+
+CustomFrameLayout CalculateCustomFrameLayout(
+	int clientWidth,
+	UINT dpi,
+	int preferredMenuWidth,
+	bool showActivityBarGlobalActions,
+	int updateButtonWidth) noexcept
+{
+	return CalculateCustomFrameLayout(
+		clientWidth, dpi, preferredMenuWidth, updateButtonWidth,
+		showActivityBarGlobalActions);
 }
 
 int MeasureCustomFrameUpdateButtonWidth(HDC dc, UINT dpi) noexcept
@@ -373,6 +513,70 @@ RECT CustomFrameUpdateIndicatorPillRect(const RECT& actionRect, UINT dpi) noexce
 		actionRect.top + verticalMargin + pillHeight
 	);
 	return pill.right > pill.left && pill.bottom > pill.top ? pill : RECT{};
+}
+
+CustomFramePopupPlacement CalculateCustomFramePopupPlacement(
+	const RECT& anchorScreen,
+	const SIZE& popupSize,
+	const RECT& workArea,
+	UINT dpi,
+	CustomFramePopupPlacementKind kind,
+	bool rightAlign
+) noexcept
+{
+	constexpr UINT commonFlags =
+		TPM_RETURNCMD | TPM_LEFTBUTTON | TPM_VERTICAL | TPM_WORKAREA;
+	const int gap = std::max(1, ScaleCustomFrameDip(kPopupAnchorGapDip, dpi));
+	const int width = std::max(0, static_cast<int>(popupSize.cx));
+	const int height = std::max(0, static_cast<int>(popupSize.cy));
+
+	CustomFramePopupPlacement placement{};
+	placement.flags = commonFlags;
+	RECT popup{};
+	if (kind == CustomFramePopupPlacementKind::ActivityBar) {
+		// GlobalCompositeBar's vertical action is anchored at its right/top corner. The
+		// bottom alignment makes the menu grow upward, leaving the action itself visible.
+		popup = MakeRect(anchorScreen.right + gap, anchorScreen.top - gap - height,
+			anchorScreen.right + gap + width, anchorScreen.top - gap);
+		bool alignRight = false;
+		if (!::IsRectEmpty(&workArea) && width > 0) {
+			const int leftCandidate = anchorScreen.left - gap - width;
+			const bool fitsRight = popup.right <= workArea.right;
+			const bool fitsLeft = leftCandidate >= workArea.left;
+			if (!fitsRight && fitsLeft) {
+				// A vertical bar on the opposite edge still needs a visible menu. Keep
+				// the anchor corner and reverse only the horizontal alignment.
+				alignRight = true;
+				popup.left = leftCandidate;
+				popup.right = leftCandidate + width;
+			}
+		}
+		if (alignRight) placement.flags |= TPM_RIGHTALIGN;
+		else placement.flags |= TPM_LEFTALIGN;
+		placement.flags |= TPM_BOTTOMALIGN;
+		ClampPopupRectToWorkArea(popup, workArea);
+		placement.point = {
+			alignRight ? popup.right : popup.left,
+			popup.bottom,
+		};
+	} else {
+		// Title-bar actions are laid out horizontally. Keep Manage's historical
+		// right-edge alignment, while Account uses the button's left edge.
+		popup = rightAlign
+			? MakeRect(anchorScreen.right - gap - width, anchorScreen.bottom + gap,
+				anchorScreen.right - gap, anchorScreen.bottom + gap + height)
+			: MakeRect(anchorScreen.left + gap, anchorScreen.bottom + gap,
+				anchorScreen.left + gap + width, anchorScreen.bottom + gap + height);
+		placement.flags |= rightAlign ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
+		placement.flags |= TPM_TOPALIGN;
+		ClampPopupRectToWorkArea(popup, workArea);
+		placement.point = {
+			rightAlign ? popup.right : popup.left,
+			popup.top,
+		};
+	}
+	placement.bounds = popup;
+	return placement;
 }
 
 CustomFrameControl HitTestCustomFrameControl(const CustomFrameLayout& layout, POINT point) noexcept
@@ -602,9 +806,27 @@ void CCustomFrameController::RefreshLayout() noexcept
 	::GetClientRect(m_window, &client);
 	const int menuWidth = m_menuBar.MeasurePreferredWidth(m_window, m_menuFont.Get(), m_dpi);
 	m_layout = CalculateCustomFrameLayout(
-		client.right - client.left, m_dpi, menuWidth, MeasureUpdateIndicatorWidth());
+		client.right - client.left, m_dpi, menuWidth, MeasureUpdateIndicatorWidth(),
+		m_activityBarGlobalActionsInTitleBar);
 	m_menuBar.SetBounds(m_layout.menu);
 	m_menuBar.UpdateItemLayout(m_window, m_menuFont.Get());
+	// A resize can collapse the complete compact run without going through one of
+	// the visibility setters. Do not retain hover/press/UIA state for a rectangle
+	// that the newly committed layout no longer exposes.
+	const auto titleControlVisible = [&](CustomFrameControl control) noexcept {
+		const RECT bounds = TitleControlRect(m_layout, control);
+		return !::IsRectEmpty(&bounds);
+	};
+	if (m_hotControl != CustomFrameControl::None && !titleControlVisible(m_hotControl)) {
+		m_hotControl = CustomFrameControl::None;
+	}
+	if (m_pressedControl != CustomFrameControl::None && !titleControlVisible(m_pressedControl)) {
+		m_pressedControl = CustomFrameControl::None;
+	}
+	const CustomFrameControl focusedControl = TitleControlFromNode(m_accessibilityFocusedNode);
+	if (focusedControl != CustomFrameControl::None && !titleControlVisible(focusedControl)) {
+		ClearAccessibilityFocus();
+	}
 }
 
 int CCustomFrameController::MeasureUpdateIndicatorWidth() const noexcept
@@ -637,6 +859,39 @@ void CCustomFrameController::SetUpdateIndicatorVisible(bool visible) noexcept
 	}
 	RefreshLayout();
 	InvalidateTitle();
+}
+
+void CCustomFrameController::SetActivityBarGlobalActionsInTitleBar(bool visible) noexcept
+{
+	if (m_activityBarGlobalActionsInTitleBar == visible) return;
+	m_activityBarGlobalActionsInTitleBar = visible;
+	// A placement change can remove both rectangles while the pointer or the UIA
+	// focus still names one of them. Clear those transient states before publishing
+	// the new layout so every input and accessibility path agrees on visibility.
+	if (!visible) {
+		if (m_hotControl == CustomFrameControl::Account
+			|| m_hotControl == CustomFrameControl::Manage) {
+			SetHotControl(CustomFrameControl::None);
+		}
+		if (m_pressedControl == CustomFrameControl::Account
+			|| m_pressedControl == CustomFrameControl::Manage) {
+			SetPressedControl(CustomFrameControl::None);
+		}
+		const CustomFrameControl focused = TitleControlFromNode(m_accessibilityFocusedNode);
+		if (focused == CustomFrameControl::Account || focused == CustomFrameControl::Manage) {
+			ClearAccessibilityFocus();
+		}
+	}
+	RefreshLayout();
+	InvalidateTitle();
+}
+
+void CCustomFrameController::SetActivityBarLocation(
+	workbench::ActivityBarLocation location) noexcept
+{
+	SetActivityBarGlobalActionsInTitleBar(
+		location == workbench::ActivityBarLocation::Top
+		|| location == workbench::ActivityBarLocation::Bottom);
 }
 
 void CCustomFrameController::CreateResizeOverlays() noexcept
@@ -947,10 +1202,15 @@ void CCustomFrameController::ShowAccountMenu(const RECT& anchor) noexcept
 	if (m_window == nullptr || ::IsRectEmpty(&anchor)) return;
 	POINT point{ anchor.left, anchor.bottom };
 	::ClientToScreen(m_window, &point);
-	ShowAccountMenuAt(point);
+	ShowAccountMenuAt(point, true);
 }
 
 void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint) noexcept
+{
+	ShowAccountMenuAt(screenPoint, false);
+}
+
+void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint, bool titleBar) noexcept
 {
 	if (m_window == nullptr) return;
 	const HMENU menu = ::CreatePopupMenu();
@@ -958,8 +1218,13 @@ void CCustomFrameController::ShowAccountMenuAt(POINT screenPoint) noexcept
 	// Authentication is not configured in Sakura Editor; keep this explicit rather than implying sign-in works.
 	::AppendMenuW(menu, MF_STRING | MF_GRAYED, 0,
 		MakeMenuItemText(STR_WORKBENCH_ACCOUNT_NO_PROVIDER).c_str());
-	(void)::TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_VERTICAL,
-		screenPoint.x, screenPoint.y, 0, m_window, nullptr);
+	const SIZE popupSize = EstimatePopupMenuSize(menu, m_window, m_menuFont.Get(), m_dpi);
+	const RECT anchor{ screenPoint.x, screenPoint.y, screenPoint.x, screenPoint.y };
+	const auto placement = CalculateCustomFramePopupPlacement(
+		anchor, popupSize, PopupWorkAreaForPoint(screenPoint), m_dpi,
+		titleBar ? CustomFramePopupPlacementKind::TitleBar : CustomFramePopupPlacementKind::ActivityBar);
+	(void)::TrackPopupMenuEx(menu, placement.flags,
+		placement.point.x, placement.point.y, m_window, nullptr);
 	::DestroyMenu(menu);
 }
 
@@ -1003,12 +1268,14 @@ void CCustomFrameController::ShowManageMenuAt(POINT screenPoint, bool rightAlign
 		::DestroyMenu(menu);
 		return;
 	}
-	const UINT align = rightAlign ? TPM_RIGHTALIGN : TPM_LEFTALIGN;
-	const UINT command = ::TrackPopupMenu(
-		menu,
-		align | TPM_TOPALIGN | TPM_LEFTBUTTON | TPM_RETURNCMD | TPM_VERTICAL,
-		screenPoint.x, screenPoint.y, 0, m_window, nullptr
-	);
+	const SIZE popupSize = EstimatePopupMenuSize(menu, m_window, m_menuFont.Get(), m_dpi);
+	const RECT anchor{ screenPoint.x, screenPoint.y, screenPoint.x, screenPoint.y };
+	const auto placement = CalculateCustomFramePopupPlacement(
+		anchor, popupSize, PopupWorkAreaForPoint(screenPoint), m_dpi,
+		rightAlign ? CustomFramePopupPlacementKind::TitleBar : CustomFramePopupPlacementKind::ActivityBar,
+		rightAlign);
+	const UINT command = ::TrackPopupMenuEx(
+		menu, placement.flags, placement.point.x, placement.point.y, m_window, nullptr);
 	::DestroyMenu(menu);
 	const auto action = ManageActionFromMenuCommand(command);
 	if (action == CustomFrameManageAction::None || !m_manageMenuActionCallback) return;

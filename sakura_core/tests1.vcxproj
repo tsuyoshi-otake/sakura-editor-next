@@ -59,7 +59,7 @@
     </ResourceCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>$(FmtLibrary);advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;gdiplus.lib;psapi.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>$(FmtLibrary);lunasvg.lib;advapi32.lib;comctl32.lib;Crypt32.lib;Imm32.lib;mpr.lib;imagehlp.lib;Shlwapi.lib;Dwmapi.lib;Version.lib;Winhttp.lib;Bcrypt.lib;d2d1.lib;dwrite.lib;d3d11.lib;dxgi.lib;dcomp.lib;gdiplus.lib;psapi.lib;dbghelp.lib;htmlhelp.lib;Msimg32.lib;oleacc.lib;oleaut32.lib;uiautomationcore.lib;UxTheme.lib;windowscodecs.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <GenerateDebugInformation>DebugFull</GenerateDebugInformation>
       <AdditionalOptions>/MANIFESTINPUT:..\build\$(Platform)\CMakeTools\tests1.exe.manifest</AdditionalOptions>
     </Link>
@@ -185,6 +185,7 @@
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalScrollbarLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\terminal\window\TerminalToolTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownParserTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownRemoteImageFetcherTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownCodeHighlighterTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewLayoutTest.cpp" />
 	<ClCompile Include="..\src\test\cpp\tests1\markdown\MarkdownPreviewAsyncStateTest.cpp" />
@@ -278,6 +279,8 @@
 	<ClCompile Include="..\src\test\cpp\tests1\workbench\EditorWorkingCopyLifecycleBridgeTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkingCopyPersistenceCodecTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchBootstrapContextTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarEntryProjectionTest.cpp" />
+	<ClCompile Include="..\src\test\cpp\tests1\workbench\ActivityBarModelTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\workbench\WorkbenchLayoutTest.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdocline.cpp" />
     <ClCompile Include="..\src\test\cpp\tests1\test-cdoclinemgr.cpp" />

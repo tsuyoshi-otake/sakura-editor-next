@@ -197,6 +197,28 @@
       ]
     },
     {
+      "id": "lunasvg",
+      "kind": "library",
+      "ownership": "external",
+      "lifecycle": "keep",
+      "status": "present",
+      "scope": ["restore", "build", "runtime"],
+      "owner": "markdown",
+      "plannedIssue": 228,
+      "canonicalRepository": "https://github.com/sammycage/lunasvg.git",
+      "vcpkg": "lunasvg",
+      "license": "MIT",
+      "version": "2.3.8#1",
+      "updatePolicy": "update through the pinned vcpkg baseline after SVG compatibility and security review",
+      "notes": "Used only for bounded, in-process static rasterization of pre-screened Markdown preview SVG images.",
+      "includePatterns": [
+        {
+          "pattern": "lunasvg.h",
+          "roots": ["sakura_core/markdown/"]
+        }
+      ]
+    },
+    {
       "id": "ms-gsl",
       "kind": "library",
       "ownership": "external",

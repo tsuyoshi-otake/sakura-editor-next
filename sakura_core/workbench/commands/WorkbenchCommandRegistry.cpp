@@ -86,6 +86,24 @@ WorkbenchCommandDescriptor MakeToggleSidebarDescriptor()
 	};
 }
 
+WorkbenchCommandDescriptor MakeActivityBarLocationDescriptor(
+	std::string id, std::string title)
+{
+	const auto slot = id + ".palette";
+	return {
+		std::move(id),
+		std::move(title),
+		kBuiltinOwner,
+		"workbenchReady",
+		"workbenchReady",
+		EWorkbenchCommandExecutorTarget::Layout,
+		{
+			{ EWorkbenchCommandSurface::CommandPalette,
+				std::move(slot), std::nullopt },
+		},
+	};
+}
+
 WorkbenchCommandDescriptor MakeExplorerDescriptor()
 {
 	return {
@@ -776,6 +794,15 @@ WorkbenchCommandRegistrationResult WorkbenchCommandRegistry::RegisterBuiltinComm
 {
 	std::vector<Entry> builtins{
 		Entry{ MakeToggleSidebarDescriptor(), std::move(executors.toggleSidebarVisibility), {} },
+		Entry{ MakeActivityBarLocationDescriptor(
+			"workbench.action.activityBarLocation.default", "Move Activity Bar to Side"),
+			std::move(executors.activityBarLocationDefault), {} },
+		Entry{ MakeActivityBarLocationDescriptor(
+			"workbench.action.activityBarLocation.top", "Move Activity Bar to Top"),
+			std::move(executors.activityBarLocationTop), {} },
+		Entry{ MakeActivityBarLocationDescriptor(
+			"workbench.action.activityBarLocation.bottom", "Move Activity Bar to Bottom"),
+			std::move(executors.activityBarLocationBottom), {} },
 		Entry{ MakeExplorerDescriptor(), std::move(executors.showExplorer), {} },
 		Entry{ MakeProblemsDescriptor(), std::move(executors.showProblems), {} },
 		Entry{ MakeOutputDescriptor(), std::move(executors.toggleOutput), {} },

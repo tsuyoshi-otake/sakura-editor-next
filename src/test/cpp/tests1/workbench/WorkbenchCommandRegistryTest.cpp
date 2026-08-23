@@ -213,6 +213,53 @@ TEST(WorkbenchCommandRegistry, BuiltinsResolveEverySurfaceToTheSameStableCommand
 	EXPECT_EQ(EWorkbenchCommandRegistrationStatus::Conflict, registry.RegisterBuiltinCommands().status);
 }
 
+TEST(WorkbenchCommandRegistry, ActivityBarLocationCommandsUseExactIdsPaletteSlotsAndBoundExecutors)
+{
+	WorkbenchCommandRegistry registry;
+	std::array<int, 3> calls{};
+	const auto executor = [&calls](std::size_t index) {
+		return [&calls, index] {
+			++calls[index];
+			return WorkbenchCommandExecutionResult{ EWorkbenchCommandExecutionStatus::Succeeded, {} };
+		};
+	};
+
+	workbench::commands::WorkbenchBuiltinCommandExecutors executors;
+	executors.activityBarLocationDefault = executor(0);
+	executors.activityBarLocationTop = executor(1);
+	executors.activityBarLocationBottom = executor(2);
+	ASSERT_EQ(EWorkbenchCommandRegistrationStatus::Succeeded,
+		registry.RegisterBuiltinCommands(std::move(executors)).status);
+
+	const std::array<std::pair<std::string_view, std::string_view>, 3> expected = {{
+		{ "workbench.action.activityBarLocation.default", "Move Activity Bar to Side" },
+		{ "workbench.action.activityBarLocation.top", "Move Activity Bar to Top" },
+		{ "workbench.action.activityBarLocation.bottom", "Move Activity Bar to Bottom" },
+	}};
+	const auto context = EnabledContext();
+	for (std::size_t index = 0; index < expected.size(); ++index) {
+		const auto [commandId, title] = expected[index];
+		const auto descriptor = registry.Find(commandId);
+		ASSERT_TRUE(descriptor.has_value()) << commandId;
+		EXPECT_EQ(title, descriptor->title);
+		EXPECT_EQ(EWorkbenchCommandExecutorTarget::Layout, descriptor->executorTarget);
+		EXPECT_EQ("workbenchReady", descriptor->whenClause);
+		EXPECT_EQ("workbenchReady", descriptor->enablementClause);
+
+		const auto palette = registry.ResolveSurface(EWorkbenchCommandSurface::CommandPalette,
+			std::string(commandId) + ".palette");
+		ASSERT_TRUE(palette.has_value()) << commandId;
+		EXPECT_EQ(commandId, palette->commandId);
+		EXPECT_FALSE(palette->binding.legacyFunctionCode.has_value());
+		EXPECT_EQ(EWorkbenchCommandExecutionStatus::Succeeded,
+			registry.Execute(commandId, context).status);
+	}
+
+	const std::array<int, 3> expectedCalls{ 1, 1, 1 };
+	EXPECT_EQ(expectedCalls, calls);
+	EXPECT_FALSE(registry.Find("workbench.action.activityBarLocation.hide").has_value());
+}
+
 TEST(WorkbenchCommandRegistry, FileCommandsRegisterStableIdsAliasesSurfacesAndOnlyTheirBoundExecutors)
 {
 	class ExpectedCommand final {

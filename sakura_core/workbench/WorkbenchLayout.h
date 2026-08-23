@@ -28,6 +28,25 @@ enum class WorkbenchPanelState : std::uint8_t {
 	DragResizing,
 };
 
+//! The supported values of VS Code's `workbench.activityBar.location` setting.
+//!
+//! Hidden is intentionally not represented here.  The native workbench does not
+//! have an Activity Bar-hidden layout yet, so accepting that value would make a
+//! request look supported while silently projecting one of the other layouts.
+enum class ActivityBarLocation : std::uint8_t {
+	Default,
+	Top,
+	Bottom,
+};
+
+//! Returns whether a value crossing an untyped settings boundary is supported.
+[[nodiscard]] constexpr bool IsSupportedActivityBarLocation(ActivityBarLocation location) noexcept
+{
+	return location == ActivityBarLocation::Default
+		|| location == ActivityBarLocation::Top
+		|| location == ActivityBarLocation::Bottom;
+}
+
 // Compatibility name retained for the pure-layout callers introduced first.
 using WorkbenchPaneState = WorkbenchPanelState;
 
@@ -36,6 +55,7 @@ struct WorkbenchLayoutRequest {
 	int clientWidth = 0;
 	int clientHeight = 0;
 	unsigned int dpi = 96;
+	ActivityBarLocation activityBarLocation = ActivityBarLocation::Default;
 	//! -1 selects the standard DIP token; non-negative values are physical pixels.
 	int titleBarHeightPixels = -1;
 	int topAccessoryHeightPixels = 0;
@@ -62,7 +82,13 @@ struct WorkbenchLayoutRequest {
 struct WorkbenchLayout {
 	WorkbenchRect titleBar;
 	WorkbenchRect topAccessory;
+	//! The legacy/default Activity Bar rectangle.  It aliases primaryActivityBar
+	//! for the default location and remains empty for horizontal locations.
 	WorkbenchRect activityBar;
+	//! Explicit Activity Bar rectangles for the Primary and Secondary Side Bars.
+	//! The Secondary rectangle is empty when that side bar is hidden.
+	WorkbenchRect primaryActivityBar;
+	WorkbenchRect secondaryActivityBar;
 	WorkbenchRect documentTabs;
 	WorkbenchRect leftPane;
 	WorkbenchRect leftPaneHeader;

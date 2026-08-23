@@ -298,6 +298,8 @@ public:
 	void RedrawAll();											/* フォーカス移動時の再描画 */
 	void Redraw();										// 2001/06/21 asa-o 再描画
 	void RedrawLines( CLayoutYInt top, CLayoutYInt bottom );
+	//! Rebind cached editor colors and repaint after a workbench color-theme change.
+	void UpdateWorkbenchTheme() noexcept;
 	void CaretUnderLineON(bool bDraw, bool bDrawPaint, bool DisalbeUnderLine);						/* カーソル行アンダーラインのON */
 	void CaretUnderLineOFF(bool bDraw, bool bDrawPaint, bool bResetFlag, bool DisalbeUnderLine);				/* カーソル行アンダーラインのOFF */
 	bool GetDrawSwitch() const

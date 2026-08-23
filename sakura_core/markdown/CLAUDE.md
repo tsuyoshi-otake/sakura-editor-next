@@ -3,7 +3,9 @@
 This directory owns Sakura Editor NEXT's lightweight native Markdown preview.
 The production implementation is `CMarkdownPreviewWnd` plus the pure
 `MarkdownParser` model. It must not depend on an embedded browser, a script
-runtime, remote content, or downloaded-at-runtime rendering assets.
+runtime, a remote renderer, or downloaded-at-runtime rendering assets. The one
+remote-content exception is an image URL admitted by VS Code's default Strict
+policy and fetched through the bounded native request boundary below.
 
 Follow [`PARITY.md`](PARITY.md). Visual resemblance alone is not acceptance:
 commands, lock identity, refresh behavior, source mapping, and security outcomes
@@ -19,15 +21,26 @@ must remain explicit and testable.
   `article`, `header`, `footer`, `main`, `nav`, `aside`, `figure`, `details`,
   `summary`), headings, lists, definition lists (`dl`, `dt`, `dd`), block
   quotes, `br`, `hr`, `pre`/`code`, links,
-  local/blocked images, GFM-style tables (`caption`, `thead`, `tbody`, `tfoot`,
+  local/Strict-HTTPS/blocked images, GFM-style tables (`caption`, `thead`, `tbody`, `tfoot`,
   `tr`, `th`, `td`), and inline semantics (`strong`/`b`, `em`/`i`,
   `del`/`s`/`strike`, `kbd`/`samp`/`var`). Text-only wrappers such as `span`,
   `mark`, `u`, `ins`, `small`, `sub`, and `sup` are safe and visible but do not
   claim browser CSS semantics. Script/style bodies, event attributes, unsafe
   URI schemes, form controls, and unsupported active content are discarded or
   represented as blocked.
-- Do not add network fetching. Local resources must remain inside explicitly
-  approved roots after final-path/reparse validation before they can be opened.
+- Strict remote images match VS Code's default preview security level: only an
+  absolute `https:` image URL is admitted. `http:`, protocol-relative URLs,
+  URL user-info, HTTPS-to-HTTP redirects, non-image response types, and TLS
+  validation opt-out fail closed. Requests are anonymous, bounded by timeout,
+  redirects, encoded bytes, decoded pixels, image count, and cache bytes, and
+  are cancelled when their document generation becomes stale.
+- Remote SVG is parsed and rasterized in-process by the static LunaSVG library.
+  Script, DTD/entity expansion, `foreignObject`, nested images/data payloads,
+  and external `href`/CSS URL resources are rejected before parsing; input
+  bytes, element count, dimensions, and decoded pixels are bounded. The SVG
+  path never creates a browser or a nested request.
+- Local resources must remain inside explicitly approved roots after final-path/
+  reparse validation before they can be opened.
 - Keep work bounded for large documents. Live updates coalesce to the newest
   revision, and every refresh branch has a terminal rendered, deferred, rejected,
   or failed state.
@@ -105,7 +118,8 @@ observable.
 
 - The UI thread captures only a bounded immutable source/options/revision/
   generation snapshot. One persistent worker owns parsing, code highlighting,
-  and admitted local-image WIC decode. Worker-prepared HBITMAP resources use
+  admitted local-image WIC decode, and sequential Strict-HTTPS image fetch/decode.
+  Worker-prepared HBITMAP resources use
   shared ownership across staging and last-good layout generations; a missing
   worker-prepared image never falls back to synchronous UI-thread decode.
 - Scheduling is bounded to one in-flight request plus one latest pending request.

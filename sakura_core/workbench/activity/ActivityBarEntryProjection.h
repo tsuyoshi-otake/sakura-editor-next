@@ -39,17 +39,31 @@ struct ActivityBarProjectionOptions {
 	std::span<const std::string_view> renderableBuiltins;
 	//! Resolves a container's display title at presentation time. Empty means registry fallback.
 	std::function<std::wstring(std::string_view containerId, std::wstring_view fallback)> titleResolver;
+	//! Requested ViewContainer location. Only Sidebar and AuxiliaryBar are Activity Bar hosts.
+	layout::EViewContainerLocation location = layout::EViewContainerLocation::Sidebar;
 };
 
 /*!
-	@brief Projects the Primary Side Bar's ViewContainers onto Activity Bar entries.
+@brief Projects one requested side-bar location's ViewContainers onto Activity Bar entries.
 
 	Order follows the registry's `order` field, then the container id, so the strip is stable
-	across restarts. Panel and Auxiliary
-	Bar containers are skipped: VS Code's Activity Bar only ever shows the Primary Side Bar.
+	across restarts. Panel containers are skipped; Sidebar and AuxiliaryBar are separate
+	physical side-bar hosts and can be projected independently.
 */
 [[nodiscard]] std::vector<ActivityBarEntry> ProjectActivityBarEntries(
 	const layout::WorkbenchContributionSnapshot& snapshot,
+	const ActivityBarProjectionOptions& options);
+
+//! Projects the requested side-bar location without requiring a second options object.
+[[nodiscard]] std::vector<ActivityBarEntry> ProjectActivityBarEntries(
+	const layout::WorkbenchContributionSnapshot& snapshot,
+	const ActivityBarProjectionOptions& options,
+	layout::EViewContainerLocation requestedLocation);
+
+//! Argument-order convenience overload for composition code that treats location as primary.
+[[nodiscard]] std::vector<ActivityBarEntry> ProjectActivityBarEntries(
+	const layout::WorkbenchContributionSnapshot& snapshot,
+	layout::EViewContainerLocation requestedLocation,
 	const ActivityBarProjectionOptions& options);
 
 //! The bundled codicon Sakura renders for one of its own containers, empty when it has none.

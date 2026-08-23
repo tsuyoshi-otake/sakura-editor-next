@@ -14,6 +14,21 @@
 #include "view/CEditView.h"
 #include "view/CViewFont.h"
 #include "view/colors/CColorStrategy.h"
+#include "theme/CThemeService.h"
+
+[[nodiscard]] constexpr bool IsThemeEditorWhitespaceColor(EColorIndexType index) noexcept
+{
+	switch (index) {
+	case COLORIDX_TAB:
+	case COLORIDX_SPACE:
+	case COLORIDX_ZENSPACE:
+	case COLORIDX_CTRLCODE:
+	case COLORIDX_EOL:
+		return true;
+	default:
+		return false;
+	}
+}
 
 //2007.08.28 kobake 追加
 /*!タイプサポートクラス
@@ -52,12 +67,35 @@ public:
 	//!前景色(文字色)
 	COLORREF GetTextColor() const
 	{
+		if (const auto* palette = theme::CThemeService::ActiveColorThemePalette()) {
+			if (m_nColorIdx == ToColorInfoArrIndex(COLORIDX_TEXT)) {
+				return palette->primaryText.ToColorRef();
+			}
+			if (IsThemeEditorWhitespaceColor(static_cast<EColorIndexType>(m_nColorIdx))) {
+				return theme::CompositeThemeColor(
+					palette->editorWhitespaceForeground, palette->canvas).ToColorRef();
+			}
+			if (m_nColorIdx == ToColorInfoArrIndex(COLORIDX_RULER)) {
+				return palette->editorLineNumberForeground.ToColorRef();
+			}
+		}
 		return m_pColorInfoArr->m_sColorAttr.m_cTEXT;
 	}
 
 	//!背景色
 	COLORREF GetBackColor() const
 	{
+		if (const auto* palette = theme::CThemeService::ActiveColorThemePalette()) {
+			if (m_nColorIdx == ToColorInfoArrIndex(COLORIDX_TEXT)) {
+				return palette->canvas.ToColorRef();
+			}
+			if (IsThemeEditorWhitespaceColor(static_cast<EColorIndexType>(m_nColorIdx))) {
+				return palette->canvas.ToColorRef();
+			}
+			if (m_nColorIdx == ToColorInfoArrIndex(COLORIDX_RULER)) {
+				return palette->editorGutterBackground.ToColorRef();
+			}
+		}
 		return m_pColorInfoArr->m_sColorAttr.m_cBACK;
 	}
 
@@ -89,7 +127,7 @@ public:
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //
 	void FillBack(CGraphics& gr,const RECT& rc)
 	{
-		gr.FillSolidMyRect(rc, m_pColorInfoArr->m_sColorAttr.m_cBACK);
+		gr.FillSolidMyRect(rc, GetBackColor());
 	}
 
 	// -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- -- //

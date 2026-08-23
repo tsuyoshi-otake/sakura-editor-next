@@ -20,6 +20,12 @@ std::vector<ConfigurationDescriptor> BuiltinConfigurationDescriptors()
 		// workspace persists its window settings in .vscode/settings.json.
 		{ "workbench.editor.showTabs", ConfigurationValue(L"multiple"),
 			{ Scope::Profile, Scope::Workspace, Scope::Folder } },
+		// VS Code's Activity Bar location is a window-scoped setting. The native
+		// workbench exposes only the owner-approved default, top, and bottom layouts.
+		// `hidden` is intentionally rejected rather than accepted as a fake capability.
+		{ "workbench.activityBar.location", ConfigurationValue(L"default"),
+			{ Scope::Profile, Scope::Workspace, Scope::Folder },
+			{ Kind::String, 8, { L"default", L"top", L"bottom" } } },
 		// VS Code's selected color-theme label/id. An empty value resolves to
 		// Sakura's built-in theme matching the legacy profile dark/light preference;
 		// the native palette remains the final fail-closed fallback.

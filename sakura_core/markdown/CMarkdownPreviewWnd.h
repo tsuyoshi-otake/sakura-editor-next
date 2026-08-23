@@ -20,6 +20,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "MarkdownCodeHighlighter.h"
@@ -40,15 +41,19 @@ struct ThemePalette;
 
 namespace markdown {
 
+class IMarkdownRemoteImageFetcher;
+
 //! A cached, GDI-only Markdown preview child window.
 //!
 //! Parsing and line wrapping happen before WM_PAINT.  Painting only consumes the
 //! cached visual lines intersecting the native scroll position.
 class CMarkdownPreviewWnd final {
 public:
-		explicit CMarkdownPreviewWnd(
+	explicit CMarkdownPreviewWnd(
+		std::shared_ptr<IMarkdownRemoteImageFetcher> remoteImageFetcher = {},
 		workbench::rendering::FrameSurfaceId surfaceId = kMarkdownPreviewSurfaceId) noexcept
-		: m_frameSurface(surfaceId)
+		: m_remoteImageFetcher(std::move(remoteImageFetcher))
+		, m_frameSurface(surfaceId)
 		, m_nativeSurface(surfaceId)
 	{
 	}
@@ -254,6 +259,7 @@ private:
 		bool completionWakePosted = false;
 		HWND completionTarget = nullptr;
 		std::uint64_t lifetimeEpoch = 1;
+		std::shared_ptr<IMarkdownRemoteImageFetcher> remoteImageFetcher;
 	};
 
 	static LRESULT CALLBACK WindowProc(HWND hwnd, UINT message, WPARAM wParam, LPARAM lParam);
@@ -374,6 +380,7 @@ private:
 	std::optional<std::size_t> m_lastNotifiedSourceLine;
 	std::function<void(std::size_t)> m_sourceLineCallback;
 	std::optional<PreviewWorkCompletion> m_deferredCompletion;
+	std::shared_ptr<IMarkdownRemoteImageFetcher> m_remoteImageFetcher;
 	std::shared_ptr<WorkerState> m_workerState;
 	std::jthread m_worker;
 	std::optional<MarkdownPreviewWorkerRetirement::Reservation> m_workerRetirement;

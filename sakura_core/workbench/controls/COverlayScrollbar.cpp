@@ -82,6 +82,7 @@ void COverlayScrollbar::Detach() noexcept
 	m_orientation = OverlayScrollbarOrientation::Vertical;
 	m_bounds = RECT{};
 	m_hasBounds = false;
+	m_hideNativeBar = false;
 	m_setTopRow = nullptr;
 	m_scrollModel.reset();
 	m_hover = false;
@@ -117,13 +118,13 @@ COverlayScrollbar::Layout COverlayScrollbar::GetLayout() const noexcept
 	layout.maximumOffset = std::max(0, layout.contentExtent - layout.viewportExtent);
 	layout.offset = std::clamp(layout.offset, 0, layout.maximumOffset);
 	layout.pageStep = std::max(1, layout.viewportExtent);
-	if (layout.maximumOffset == 0) return layout;
 
 	RECT client{};
 	if (!::GetClientRect(m_window, &client)) return layout;
 	const int extent = IsHorizontal() ? (client.right - client.left) : (client.bottom - client.top);
 	if (extent <= 0) return layout;
 	layout.track = client;
+	if (layout.maximumOffset == 0) return layout;
 	const int minimumThumb = std::min(extent, ScaleDip(kMinimumThumbDip));
 	const int proportionalThumb = static_cast<int>(
 		(static_cast<long long>(extent) * layout.viewportExtent)
@@ -142,20 +143,23 @@ COverlayScrollbar::Layout COverlayScrollbar::GetLayout() const noexcept
 void COverlayScrollbar::Paint(HDC dc) const
 {
 	const auto layout = GetLayout();
-	if (dc == nullptr || !layout.scrollable) return;
+	if (dc == nullptr) return;
 	const bool active = m_hover || m_dragging;
 	if (const HBRUSH background = ::CreateSolidBrush(active ? m_colors.trackHover : m_colors.background);
 		background != nullptr) {
 		::FillRect(dc, &layout.track, background);
 		::DeleteObject(background);
 	}
+	if (!layout.scrollable) return;
 	RECT thumb = layout.thumb;
 	if (IsHorizontal()) {
 		thumb.top = std::max(thumb.top, thumb.bottom - ScaleDip(kThumbWidthDip));
 	} else {
 		thumb.left = std::max(thumb.left, thumb.right - ScaleDip(kThumbWidthDip));
 	}
-	if (const HBRUSH thumbBrush = ::CreateSolidBrush(active ? m_colors.thumbHover : m_colors.thumb);
+	const COLORREF thumbColor = m_dragging ? m_colors.thumbActive
+		: (m_hover ? m_colors.thumbHover : m_colors.thumb);
+	if (const HBRUSH thumbBrush = ::CreateSolidBrush(thumbColor);
 		thumbBrush != nullptr) {
 		::FillRect(dc, &thumb, thumbBrush);
 		::DeleteObject(thumbBrush);
@@ -235,7 +239,10 @@ void COverlayScrollbar::Update()
 		}
 	} else {
 		const LONG_PTR style = ::GetWindowLongPtrW(m_target, GWL_STYLE);
-		if (m_source == OverlayScrollbarSource::TargetWindowBar
+		// Native list controls used with an explicit presentation model can opt
+		// into the same suppression. Pure pixel-model surfaces (for example the
+		// Markdown preview) deliberately leave their target untouched.
+		if ((m_source == OverlayScrollbarSource::TargetWindowBar || m_hideNativeBar)
 			&& (style & (WS_HSCROLL | WS_VSCROLL)) != 0) {
 			(void)::ShowScrollBar(m_target, SB_BOTH, FALSE);
 		}
@@ -261,7 +268,15 @@ void COverlayScrollbar::Update()
 		::ShowWindow(m_window, SW_HIDE);
 		return;
 	}
-	if (IsHorizontal()) {
+	if (m_source == OverlayScrollbarSource::ScrollbarControl) {
+		// The editor reserves the platform scrollbar rectangle for its hidden
+		// SCROLLINFO authority. Cover that complete rectangle so pixels from the
+		// former native control cannot survive beside the thin VS Code slider.
+		::SetWindowPos(m_window, HWND_TOP, static_cast<int>(client.left),
+			static_cast<int>(client.top), clientWidth, clientHeight,
+			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
+	}
+	else if (IsHorizontal()) {
 		const int overlayHeight = std::min(ScaleDip(kOverlayWidthDip), clientHeight);
 		::SetWindowPos(m_window, HWND_TOP, static_cast<int>(client.left),
 			static_cast<int>(client.bottom) - overlayHeight, clientWidth, overlayHeight,
@@ -272,7 +287,8 @@ void COverlayScrollbar::Update()
 			static_cast<int>(client.top), overlayWidth, clientHeight,
 			SWP_NOACTIVATE | SWP_NOCOPYBITS | SWP_NOREDRAW);
 	}
-	const bool show = GetLayout().scrollable;
+	const bool show = m_source == OverlayScrollbarSource::ScrollbarControl
+		|| GetLayout().scrollable;
 	::ShowWindow(m_window, show ? SW_SHOWNOACTIVATE : SW_HIDE);
 	if (!show) {
 		m_hover = false;

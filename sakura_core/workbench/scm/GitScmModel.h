@@ -16,6 +16,20 @@
 
 namespace workbench::scm {
 
+enum class EGitExecutionStatus : std::uint8_t;
+
+//! Whether one status command produced a replacement repository snapshot.
+//! Every non-success terminal state is retained as an execution diagnostic; it
+//! is never an empty repository snapshot.
+enum class EGitStatusRefreshDisposition : std::uint8_t {
+	ApplySnapshot,
+	RetainSnapshot,
+};
+
+//! Classify the status command without naming a presentation or SCM consumer.
+[[nodiscard]] EGitStatusRefreshDisposition ClassifyGitStatusRefresh(
+	EGitExecutionStatus status) noexcept;
+
 struct GitChange {
 	wchar_t status = L'M';
 	std::wstring path;

@@ -125,6 +125,43 @@ TEST(ConfigurationService, BuiltinTerminalTabSettingsReadAsOneCoherentSnapshot)
 	EXPECT_EQ(L"right", std::get<std::wstring>(read.snapshot->values[8].Value()));
 }
 
+TEST(ConfigurationService, BuiltinActivityBarLocationIsWindowScopedAndBounded)
+{
+	CConfigurationService service(BuiltinConfigurationDescriptors());
+	const auto profile = Target();
+
+	auto initial = service.GetValue("workbench.activityBar.location", profile);
+	ASSERT_EQ(EConfigurationOutcome::Applied, initial.outcome);
+	ASSERT_TRUE(initial.value.has_value());
+	EXPECT_EQ(L"default", std::get<std::wstring>(initial.value->Value()));
+
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Profile, profile), "workbench.activityBar.location",
+		ConfigurationValue(L"top"), "activity-bar-top" }).outcome);
+	EXPECT_EQ(L"top", std::get<std::wstring>(service.GetValue(
+		"workbench.activityBar.location", profile).value->Value()));
+
+	EXPECT_EQ(EConfigurationOutcome::Applied, service.Update({
+		Source(EConfigurationScope::Workspace, Target(L"default", L"file:///C:/work")),
+		"workbench.activityBar.location", ConfigurationValue(L"bottom"), "activity-bar-bottom" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Folder, Target(L"default", L"file:///C:/work", L"file:///C:/work/folder")),
+		"workbench.activityBar.location", ConfigurationValue(L"hidden"), "activity-bar-hidden" }).outcome);
+
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "workbench.activityBar.location",
+		ConfigurationValue(L"side"), "activity-bar-invalid-enum" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidValue, service.Update({
+		Source(EConfigurationScope::Profile, profile), "workbench.activityBar.location",
+		ConfigurationValue(L"default!!"), "activity-bar-invalid-length" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidScope, service.Update({
+		Source(EConfigurationScope::Application, {}), "workbench.activityBar.location",
+		ConfigurationValue(L"top"), "activity-bar-application" }).outcome);
+	EXPECT_EQ(EConfigurationOutcome::InvalidScope, service.Update({
+		Source(EConfigurationScope::LanguageOverride, Target(L"default", nullptr, nullptr, L"cpp")),
+		"workbench.activityBar.location", ConfigurationValue(L"top"), "activity-bar-language" }).outcome);
+}
+
 TEST(ConfigurationService, ReadSnapshotPreservesRequestOrderAndUsesEffectivePrecedence)
 {
 	auto service = Service();

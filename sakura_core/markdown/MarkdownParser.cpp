@@ -944,7 +944,7 @@ struct HtmlFrame {
 		const auto source = GetAttribute(frame.tag, L"src");
 		if (source.empty()) return {};
 		const auto alt = GetAttribute(frame.tag, L"alt");
-		return L"\n![" + EscapeMarkdownLabel(alt) + L"](<" + EscapeMarkdownDestination(source) + L">)\n";
+		return L"![" + EscapeMarkdownLabel(alt) + L"](<" + EscapeMarkdownDestination(source) + L">)";
 	}
 	// The Markdown paragraph builder treats two trailing spaces as a hard line
 	// break. A bare newline would be normalized to a space and make `<br>` look
@@ -1254,8 +1254,12 @@ struct HtmlFrame {
 		&& (target[2] == L'\\' || target[2] == L'/');
 	if (schemeEnd != 0 && !windowsDrive) {
 		const auto scheme = ToLowerAscii(target.substr(0, schemeEnd));
-		result.disposition = scheme == L"http" || scheme == L"https" || scheme == L"mailto"
-			? ResourceDisposition::ExternalBlocked : ResourceDisposition::UnsafeSchemeBlocked;
+		if (scheme == L"https" && use == ResourceUse::Image) {
+			result.disposition = ResourceDisposition::ResolvedHttps;
+		} else {
+			result.disposition = scheme == L"http" || scheme == L"https" || scheme == L"mailto"
+				? ResourceDisposition::ExternalBlocked : ResourceDisposition::UnsafeSchemeBlocked;
+		}
 		return result;
 	}
 	if (options.documentPath.empty()) return result;
@@ -2225,8 +2229,8 @@ void ParseTaskListMarker(ListMatch* match) noexcept
 	if (!ParseDestination(line, labelEnd + 1, &destinationEnd, &destination, budget)
 		|| !Trim(line.substr(destinationEnd + 1)).empty()) return false;
 	block->kind = BlockKind::Image;
-	block->image = ImageNode{ DecodeEntities(line.substr(2, labelEnd - 2)),
-		ResolveResource(destination, ResourceUse::Image, context) };
+	block->images.push_back(ImageNode{ DecodeEntities(line.substr(2, labelEnd - 2)),
+		ResolveResource(destination, ResourceUse::Image, context) });
 	if (budget.exceeded) block->fallbackKind = NativeFallbackKind::LimitExceeded;
 	block->sourceLine = sourceLine;
 	return true;
@@ -2538,8 +2542,20 @@ Document ParseMarkdown(std::wstring_view source, const ParseOptions& options)
 		}
 		Block image;
 		if (TryMakeStandaloneImage(line, context, sourceLineOffset + index, &image)) {
-			document.blocks.push_back(std::move(image));
 			++index;
+			// CommonMark keeps consecutive image-only lines in one paragraph. The
+			// native preview models that paragraph as a row instead of promoting
+			// every image to an unrelated vertical block.
+			while (index < lines.size() && !Trim(lines[index]).empty()) {
+				Block following;
+				if (!TryMakeStandaloneImage(lines[index], context,
+					sourceLineOffset + index, &following)) break;
+				if (!following.images.empty()) {
+					image.images.push_back(std::move(following.images.front()));
+				}
+				++index;
+			}
+			document.blocks.push_back(std::move(image));
 			continue;
 		}
 		auto quote = StripUpToThreeSpaces(line);

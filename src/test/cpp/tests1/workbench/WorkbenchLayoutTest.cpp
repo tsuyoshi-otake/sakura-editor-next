@@ -121,7 +121,8 @@ TEST(WorkbenchLayout, MinimapIsInsideEditorAtTheRightEdge)
 TEST(WorkbenchLayout, UndersizedClientsRemainClampedAndNonNegative)
 {
 	const auto layout = CalculateWorkbenchLayout({ .clientWidth = 8, .clientHeight = 7, .dpi = 192, .showMinimap = true });
-	for (const auto& rect : { layout.titleBar, layout.topAccessory, layout.activityBar, layout.documentTabs, layout.leftPane,
+	for (const auto& rect : { layout.titleBar, layout.topAccessory, layout.activityBar, layout.primaryActivityBar,
+		layout.secondaryActivityBar, layout.documentTabs, layout.leftPane,
 		layout.leftPaneHeader, layout.leftSplitter, layout.editor, layout.minimap, layout.rightSplitter,
 		layout.rightPane, layout.rightPaneHeader, layout.bottomSplitter, layout.bottomPane, layout.bottomPaneHeader,
 		layout.bottomAccessory, layout.statusBar }) {
@@ -137,6 +138,80 @@ TEST(WorkbenchLayout, RepeatedCalculationIsIdempotent)
 	const WorkbenchLayoutRequest request{ .clientWidth = 1234, .clientHeight = 789, .dpi = 144,
 		.leftPane = WorkbenchPaneState::DragResizing, .showMinimap = true };
 	EXPECT_EQ(CalculateWorkbenchLayout(request), CalculateWorkbenchLayout(request));
+}
+
+TEST(WorkbenchLayout, DefaultActivityBarRemainsVerticalAndExposesPrimaryAlias)
+{
+	const auto layout = CalculateWorkbenchLayout({ .clientWidth = 1600, .clientHeight = 1000 });
+
+	EXPECT_GT(layout.activityBar.Width(), 0);
+	EXPECT_GT(layout.activityBar.Height(), 0);
+	EXPECT_EQ(layout.activityBar, layout.primaryActivityBar);
+	EXPECT_EQ(WorkbenchRect{}, layout.secondaryActivityBar);
+	EXPECT_EQ(layout.activityBar.top, layout.leftPane.top);
+	EXPECT_EQ(layout.activityBar.bottom, layout.leftPane.bottom);
+}
+
+TEST(WorkbenchLayout, TopActivityBarsReserveBandsInBothVisibleSidebars)
+{
+	for (const unsigned int dpi : { 96U, 144U, 192U }) {
+		WorkbenchLayoutRequest request{ .clientWidth = 1600, .clientHeight = 1000, .dpi = dpi };
+		request.activityBarLocation = ActivityBarLocation::Top;
+		const auto layout = CalculateWorkbenchLayout(request);
+		const int expectedBarHeight = ::MulDiv(35, static_cast<int>(dpi), 96);
+
+		EXPECT_EQ(WorkbenchRect{}, layout.activityBar);
+		EXPECT_GT(layout.primaryActivityBar.Width(), 0);
+		EXPECT_GT(layout.secondaryActivityBar.Width(), 0);
+		EXPECT_EQ(expectedBarHeight, layout.primaryActivityBar.Height());
+		EXPECT_EQ(expectedBarHeight, layout.secondaryActivityBar.Height());
+		EXPECT_EQ(layout.primaryActivityBar.top, layout.leftPane.top - expectedBarHeight);
+		EXPECT_EQ(layout.secondaryActivityBar.top, layout.rightPane.top - expectedBarHeight);
+		EXPECT_EQ(layout.primaryActivityBar.bottom, layout.leftPane.top);
+		EXPECT_EQ(layout.secondaryActivityBar.bottom, layout.rightPane.top);
+		EXPECT_GT(layout.leftPane.Height(), 0);
+		EXPECT_GT(layout.rightPane.Height(), 0);
+		EXPECT_EQ(layout.primaryActivityBar.left, layout.leftPane.left);
+		EXPECT_EQ(layout.primaryActivityBar.right, layout.leftPane.right);
+		EXPECT_EQ(layout.secondaryActivityBar.left, layout.rightPane.left);
+		EXPECT_EQ(layout.secondaryActivityBar.right, layout.rightPane.right);
+		EXPECT_EQ(layout.primaryActivityBar.Height() + layout.leftPane.Height(),
+			layout.bottomAccessory.top - layout.topAccessory.bottom);
+		EXPECT_EQ(layout.secondaryActivityBar.Height() + layout.rightPane.Height(),
+			layout.bottomAccessory.top - layout.topAccessory.bottom);
+	}
+}
+
+TEST(WorkbenchLayout, BottomActivityBarReservesOnlyVisibleSidebars)
+{
+	for (const unsigned int dpi : { 96U, 144U, 192U }) {
+		WorkbenchLayoutRequest request{ .clientWidth = 1600, .clientHeight = 1000, .dpi = dpi };
+		request.activityBarLocation = ActivityBarLocation::Bottom;
+		request.rightPane = WorkbenchPaneState::Hidden;
+		const auto layout = CalculateWorkbenchLayout(request);
+		const int expectedBarHeight = ::MulDiv(35, static_cast<int>(dpi), 96);
+
+		EXPECT_EQ(WorkbenchRect{}, layout.activityBar);
+		EXPECT_GT(layout.primaryActivityBar.Width(), 0);
+		EXPECT_EQ(WorkbenchRect{}, layout.secondaryActivityBar);
+		EXPECT_EQ(expectedBarHeight, layout.primaryActivityBar.Height());
+		EXPECT_EQ(layout.primaryActivityBar.bottom, layout.leftPane.bottom + expectedBarHeight);
+		EXPECT_EQ(layout.primaryActivityBar.top, layout.leftPane.bottom);
+		EXPECT_EQ(layout.primaryActivityBar.left, layout.leftPane.left);
+		EXPECT_EQ(layout.primaryActivityBar.right, layout.leftPane.right);
+		EXPECT_EQ(0, layout.rightPane.Width());
+		EXPECT_EQ(layout.leftPane.Height() + layout.primaryActivityBar.Height(),
+			layout.bottomAccessory.top - layout.topAccessory.bottom);
+	}
+}
+
+TEST(WorkbenchLayout, UnsupportedActivityBarLocationFallsBackToVerticalDefault)
+{
+	WorkbenchLayoutRequest request{ .clientWidth = 1000, .clientHeight = 700 };
+	request.activityBarLocation = static_cast<ActivityBarLocation>(255);
+	const auto fallback = CalculateWorkbenchLayout(request);
+	request.activityBarLocation = ActivityBarLocation::Default;
+	EXPECT_EQ(fallback, CalculateWorkbenchLayout(request));
 }
 
 } // namespace

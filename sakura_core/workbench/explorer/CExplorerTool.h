@@ -55,6 +55,7 @@ struct ExplorerPalette {
 	COLORREF buttonText = RGB(0xFF, 0xFF, 0xFF);
 	COLORREF scrollbarThumb = RGB(0x38, 0x3E, 0x49);
 	COLORREF scrollbarThumbHover = RGB(0x8B, 0x91, 0x9B);
+	COLORREF scrollbarThumbActive = RGB(0x8B, 0x91, 0x9B);
 	COLORREF scrollbarTrackHover = RGB(0x2A, 0x2E, 0x36);
 	/*!
 		@brief The resolved `gitDecoration.*` colors, indexed by decoration role.

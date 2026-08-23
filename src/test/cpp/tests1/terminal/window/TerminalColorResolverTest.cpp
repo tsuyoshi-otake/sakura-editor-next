@@ -31,7 +31,7 @@ TEST(TerminalColorResolver, UsesPanelFallbackAndOneHalfProfileAnsiColors)
 			terminal::TerminalDefaultForeground(dark), terminal::TerminalColorRole::Foreground));
 
 	const auto light = theme::CThemeService::PaletteFor(theme::ThemeMode::Light);
-	EXPECT_EQ(RGB(0xFF, 0xFF, 0xFF), terminal::TerminalDefaultBackground(light));
+	EXPECT_EQ(light.terminalBackground.ToColorRef(), terminal::TerminalDefaultBackground(light));
 	EXPECT_EQ(RGB(0x38, 0x3A, 0x42), terminal::TerminalDefaultForeground(light));
 }
 
