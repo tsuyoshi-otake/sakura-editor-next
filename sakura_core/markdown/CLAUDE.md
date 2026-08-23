@@ -14,9 +14,18 @@ must remain explicit and testable.
 - `MarkdownParser` stays independent from HWND, HDC, DPI, theme, and command
   state. `CMarkdownPreviewWnd` owns native measurement, painting, scrolling,
   focus, hit testing, and accessibility-facing labels.
-- Raw HTML is never executed. Supported harmless wrappers are projected into
-  typed native blocks; script/style bodies, event attributes, unsafe URI schemes,
-  and unsupported active content are discarded or represented as blocked.
+- Raw HTML is never executed. The supported harmless subset is projected into
+  the existing native Markdown model: block wrappers (`p`, `div`, `section`,
+  `article`, `header`, `footer`, `main`, `nav`, `aside`, `figure`, `details`,
+  `summary`), headings, lists, definition lists (`dl`, `dt`, `dd`), block
+  quotes, `br`, `hr`, `pre`/`code`, links,
+  local/blocked images, GFM-style tables (`caption`, `thead`, `tbody`, `tfoot`,
+  `tr`, `th`, `td`), and inline semantics (`strong`/`b`, `em`/`i`,
+  `del`/`s`/`strike`, `kbd`/`samp`/`var`). Text-only wrappers such as `span`,
+  `mark`, `u`, `ins`, `small`, `sub`, and `sup` are safe and visible but do not
+  claim browser CSS semantics. Script/style bodies, event attributes, unsafe
+  URI schemes, form controls, and unsupported active content are discarded or
+  represented as blocked.
 - Do not add network fetching. Local resources must remain inside explicitly
   approved roots after final-path/reparse validation before they can be opened.
 - Keep work bounded for large documents. Live updates coalesce to the newest

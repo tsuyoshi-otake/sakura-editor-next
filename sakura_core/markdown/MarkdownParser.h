@@ -212,7 +212,8 @@ struct ParseOptions {
 };
 
 //! Parses Markdown into a safe, window-independent render model. Raw HTML is
-//! interpreted only as a bounded set of structural wrappers and is never executed.
+//! interpreted only as a bounded set of structural and semantic wrappers and
+//! is never executed.
 [[nodiscard]] Document ParseMarkdown(std::wstring_view source, const ParseOptions& options = {});
 
 enum class LiveUpdateAction {

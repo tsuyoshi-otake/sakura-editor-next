@@ -13,7 +13,7 @@ download.
 | Lists, block quotes, rules, fenced code | Typed blocks with stable source-line ranges | Implemented |
 | Tables | Native rows/cells/alignment; no HTML execution | Implemented |
 | Links and images | Typed URI disposition; unsafe schemes fail closed | Partial: activation remains gated |
-| Raw HTML | Harmless semantic wrappers only; active content and attributes never execute | Safe subset |
+| Raw HTML | Allowlisted harmless wrappers projected to native blocks/spans; active content and attributes never execute | Safe subset (explicit allowlist) |
 | Live update | Persistent worker; one in flight plus latest pending; stale generations discarded | Implemented |
 | Live width resize | Transient native geometry per pointer sample; one committed Markdown reflow on mouse-up; explicit rollback on cancellation | Implemented and frame-measured |
 | Scroll synchronization: editor to preview | `scrollPreviewWithEditor`. The editor's top layout line maps to the first rendered row at or after it | Implemented and measured |
@@ -139,6 +139,11 @@ is not verified, however obviously correct the code looks.
 8. Renderer: safe representative Markdown and malicious HTML/URI samples.
    Verify: `MarkdownParserTest.cpp`, `MarkdownPreviewLayoutTest.cpp`. Expect:
    supported structures render and active content remains blocked.
+   Measured 2026-08-23 with the x64 Debug editor and a User32-driven fixture:
+   `<br>`, semantic inline wrappers, `<details>`, `<dl>`, a captioned table,
+   and `<pre>` content were visible in the native preview; script/style/form
+   content was absent. Four divider samples had preview `PrintWindow` versus
+   screen difference 0/4, no `WS_VSCROLL`, and no run-owned process survivors.
 9. Declared capabilities: the typed boundary matches this table.
    Verify: `MarkdownParserTest.ExposesUnsupportedNativeCapabilitiesAsTypedBoundaries`.
    Expect: math and Mermaid stay `Unsupported`.

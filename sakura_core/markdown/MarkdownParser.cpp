@@ -719,13 +719,19 @@ struct HtmlTag {
 {
 	return name == L"script" || name == L"style" || name == L"iframe" || name == L"object"
 		|| name == L"embed" || name == L"svg" || name == L"math" || name == L"form"
-		|| name == L"video" || name == L"audio" || name == L"canvas";
+		|| name == L"video" || name == L"audio" || name == L"canvas"
+		// Native preview has no form/control surface. Dropping these containers
+		// prevents an HTML document from pretending that an interactive control
+		// was created while keeping the parser's failure-closed boundary explicit.
+		|| name == L"button" || name == L"select" || name == L"option"
+		|| name == L"optgroup" || name == L"textarea" || name == L"template";
 }
 
 [[nodiscard]] bool IsVoidHtmlTag(std::wstring_view name) noexcept
 {
 	return name == L"br" || name == L"hr" || name == L"img" || name == L"meta"
-		|| name == L"link" || name == L"input" || name == L"source";
+		|| name == L"link" || name == L"input" || name == L"source"
+		|| name == L"area" || name == L"base" || name == L"col" || name == L"wbr";
 }
 
 [[nodiscard]] std::wstring EscapeMarkdownLabel(std::wstring_view value)
@@ -824,12 +830,33 @@ struct HtmlFrame {
 	constexpr wchar_t kRow = L'\x001d';
 	constexpr wchar_t kCell = L'\x001e';
 	constexpr wchar_t kHeaderCell = L'\x001f';
+	constexpr wchar_t kCaptionStart = L'\x001b';
+	constexpr wchar_t kCaptionEnd = L'\x001c';
+	std::wstring tableContent;
+	std::wstring caption;
+	// A caption is projected to a normal paragraph immediately before the
+	// native table. Keeping it outside the row/cell sentinels means the existing
+	// Table block model stays small while caption text is no longer discarded.
+	for (std::size_t index = 0; index < encoded.size();) {
+		if (encoded[index] != kCaptionStart) {
+			tableContent.push_back(encoded[index++]);
+			continue;
+		}
+		const auto end = encoded.find(kCaptionEnd, index + 1);
+		if (end == std::wstring_view::npos) break;
+		const auto value = Trim(encoded.substr(index + 1, end - index - 1));
+		if (!value.empty()) {
+			if (!caption.empty()) caption.push_back(L'\n');
+			caption.append(value);
+		}
+		index = end + 1;
+	}
 	std::vector<std::vector<std::wstring>> rows;
 	std::size_t rowStart = 0;
-	while (rowStart < encoded.size()) {
-		const auto rowEnd = encoded.find(kRow, rowStart);
-		const auto row = encoded.substr(rowStart,
-			rowEnd == std::wstring_view::npos ? encoded.size() - rowStart : rowEnd - rowStart);
+	while (rowStart < tableContent.size()) {
+		const auto rowEnd = tableContent.find(kRow, rowStart);
+		const auto row = tableContent.substr(rowStart,
+			rowEnd == std::wstring_view::npos ? tableContent.size() - rowStart : rowEnd - rowStart);
 		std::vector<std::wstring> cells;
 		for (std::size_t index = 0; index < row.size();) {
 			if (row[index] != kCell && row[index] != kHeaderCell) {
@@ -846,8 +873,8 @@ struct HtmlFrame {
 		if (rowEnd == std::wstring_view::npos) break;
 		rowStart = rowEnd + 1;
 	}
-	if (rows.empty()) return {};
-	std::wstring result(L"\n");
+	if (rows.empty()) return caption.empty() ? std::wstring{} : L"\n" + caption + L"\n";
+	std::wstring result = caption.empty() ? L"\n" : L"\n" + caption + L"\n\n";
 	auto appendRow = [&result](const std::vector<std::wstring>& row) {
 		result.push_back(L'|');
 		for (const auto& cell : row) {
@@ -869,6 +896,46 @@ struct HtmlFrame {
 	return result;
 }
 
+[[nodiscard]] std::wstring MakeHtmlCodeSpan(std::wstring_view content)
+{
+	std::size_t longestRun = 0;
+	for (std::size_t index = 0; index < content.size();) {
+		if (content[index] != L'`') {
+			++index;
+			continue;
+		}
+		const auto start = index++;
+		while (index < content.size() && content[index] == L'`') ++index;
+		longestRun = std::max(longestRun, index - start);
+	}
+	const auto markerCount = longestRun == (std::numeric_limits<std::size_t>::max)()
+		? longestRun : std::max<std::size_t>(1, longestRun + 1);
+	const std::wstring marker(markerCount, L'`');
+	return marker + std::wstring(content) + marker;
+}
+
+[[nodiscard]] std::wstring MakeHtmlPreBlock(std::wstring_view content)
+{
+	// Decode character references as HTML would before placing the text into a
+	// native fenced-code block. Pick a fence longer than every literal backtick
+	// run so hostile/preformatted content cannot terminate its own projection.
+	const auto decoded = DecodeEntities(content);
+	std::size_t longestRun = 0;
+	for (std::size_t index = 0; index < decoded.size();) {
+		if (decoded[index] != L'`') {
+			++index;
+			continue;
+		}
+		const auto start = index++;
+		while (index < decoded.size() && decoded[index] == L'`') ++index;
+		longestRun = std::max(longestRun, index - start);
+	}
+	const auto markerCount = longestRun == (std::numeric_limits<std::size_t>::max)()
+		? longestRun : std::max<std::size_t>(3, longestRun + 1);
+	const std::wstring marker(markerCount, L'`');
+	return L"\n" + marker + L"\n" + decoded + L"\n" + marker + L"\n";
+}
+
 [[nodiscard]] std::wstring RenderHtmlFrame(const HtmlFrame& frame, std::wstring_view parentName)
 {
 	const auto& name = frame.tag.name;
@@ -879,17 +946,26 @@ struct HtmlFrame {
 		const auto alt = GetAttribute(frame.tag, L"alt");
 		return L"\n![" + EscapeMarkdownLabel(alt) + L"](<" + EscapeMarkdownDestination(source) + L">)\n";
 	}
-	if (name == L"br") return L"\n";
+	// The Markdown paragraph builder treats two trailing spaces as a hard line
+	// break. A bare newline would be normalized to a space and make `<br>` look
+	// as if the tag had been removed.
+	if (name == L"br") return L"  \n";
 	if (name == L"hr") return L"\n---\n";
 	if (name == L"meta" || name == L"link" || name == L"input" || name == L"source") return {};
 	if (name == L"strong" || name == L"b") return L"**" + frame.content + L"**";
 	if (name == L"em" || name == L"i") return L"*" + frame.content + L"*";
-	if (name == L"code") return parentName == L"pre" ? frame.content : L"`" + frame.content + L"`";
-	if (name == L"pre") return L"\n```\n" + frame.content + L"\n```\n";
+	if (name == L"del" || name == L"s" || name == L"strike") {
+		return L"~~" + frame.content + L"~~";
+	}
+	if (name == L"kbd" || name == L"samp" || name == L"var") {
+		return MakeHtmlCodeSpan(frame.content);
+	}
+	if (name == L"code") return parentName == L"pre" ? frame.content : MakeHtmlCodeSpan(frame.content);
+	if (name == L"pre") return MakeHtmlPreBlock(frame.content);
 	if (name == L"a") {
 		const auto href = GetAttribute(frame.tag, L"href");
 		if (href.empty() || frame.content.find(L"![") != std::wstring::npos) return frame.content;
-		return L"[" + frame.content + L"](<" + EscapeMarkdownDestination(href) + L">)";
+		return L"[" + EscapeMarkdownLabel(frame.content) + L"](<" + EscapeMarkdownDestination(href) + L">)";
 	}
 	if (name.size() == 2 && name.front() == L'h' && name[1] >= L'1' && name[1] <= L'6') {
 		const std::wstring prefix(static_cast<std::size_t>(name[1] - L'0'), L'#');
@@ -906,14 +982,32 @@ struct HtmlFrame {
 	if (name == L"blockquote") return L"\n" + PrefixLines(frame.content, L"> ") + L"\n";
 	if (name == L"li") return L"\n" + std::wstring(parentName == L"ol" ? L"1. " : L"- ") + frame.content + L"\n";
 	if (name == L"ul" || name == L"ol") return L"\n" + frame.content + L"\n";
+	if (name == L"dl") return L"\n" + frame.content + L"\n";
+	if (name == L"dt") return L"\n**" + frame.content + L"**\n";
+	if (name == L"dd") return L"\n- " + frame.content + L"\n";
 	if (name == L"td") return std::wstring(1, L'\x001e') + frame.content;
 	if (name == L"th") return std::wstring(1, L'\x001f') + frame.content;
 	if (name == L"tr") return frame.content + std::wstring(1, L'\x001d');
+	if (name == L"caption" && parentName == L"table") {
+		return std::wstring(1, L'\x001b') + frame.content + std::wstring(1, L'\x001c');
+	}
+	if (name == L"thead" || name == L"tbody" || name == L"tfoot") return frame.content;
 	if (name == L"table") return RenderHtmlTable(frame.content);
 	if (name == L"p" || name == L"div" || name == L"section" || name == L"article"
 		|| name == L"header" || name == L"footer" || name == L"main" || name == L"center"
+		|| name == L"nav" || name == L"aside" || name == L"address"
 		|| name == L"figure" || name == L"figcaption" || name == L"details" || name == L"summary") {
 		return L"\n" + frame.content + L"\n";
+	}
+	// Inline semantic wrappers that carry no native CSS equivalent are still
+	// supported as safe text containers. Attributes (including style and event
+	// handlers) are deliberately ignored, so these tags cannot execute or
+	// inject a second renderer into the preview.
+	if (name == L"abbr" || name == L"bdi" || name == L"bdo" || name == L"cite"
+		|| name == L"dfn" || name == L"ins" || name == L"mark" || name == L"q"
+		|| name == L"small" || name == L"span" || name == L"sub" || name == L"sup"
+		|| name == L"time" || name == L"u") {
+		return frame.content;
 	}
 	// Unknown wrappers are stripped. Their text remains inert and visible.
 	return frame.content;

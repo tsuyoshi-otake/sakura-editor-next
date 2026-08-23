@@ -147,6 +147,59 @@ TEST(MarkdownParser, ConvertsSafeHtmlWrappersWithoutExposingOrExecutingRawTags)
 	EXPECT_EQ(std::wstring::npos, allVisibleText.find(L"onerror"));
 }
 
+TEST(MarkdownParser, ProjectsAdditionalSafeHtmlElementsIntoNativeMarkdown)
+{
+	const auto document = ParseMarkdown(
+		L"<p>safe <kbd>Ctrl+C</kbd> <del>old</del> <s>stale</s> <mark>new</mark></p>\n"
+		L"<dl><dt>Term</dt><dd>Definition</dd></dl>\n"
+		L"<table><caption>Caption</caption><thead><tr><th>Name</th></tr></thead>"
+		L"<tbody><tr><td>Value</td></tr></tbody></table>\n"
+		L"<button>must not appear</button><textarea>nor this</textarea>\n");
+
+	ASSERT_FALSE(document.blocks.empty());
+	std::wstring allVisibleText;
+	bool foundTable = false;
+	for (const auto& block : document.blocks) {
+		allVisibleText.append(block.text);
+		if (block.kind == BlockKind::Table) foundTable = true;
+	}
+	EXPECT_NE(std::wstring::npos, allVisibleText.find(L"safe Ctrl+C old stale new"));
+	EXPECT_NE(std::wstring::npos, allVisibleText.find(L"Term"));
+	EXPECT_NE(std::wstring::npos, allVisibleText.find(L"Definition"));
+	EXPECT_NE(std::wstring::npos, allVisibleText.find(L"Caption"));
+	EXPECT_EQ(std::wstring::npos, allVisibleText.find(L"must not appear"));
+	EXPECT_EQ(std::wstring::npos, allVisibleText.find(L"nor this"));
+	EXPECT_TRUE(foundTable);
+
+	const auto& paragraph = document.blocks.front();
+	EXPECT_EQ(1u, CountInline(paragraph, InlineKind::Code));
+	EXPECT_EQ(2u, CountInline(paragraph, InlineKind::Strikethrough));
+}
+
+TEST(MarkdownParser, PreservesHtmlBreaksPreformattedBackticksAndLinkLabels)
+{
+	const auto document = ParseMarkdown(
+		L"<p>one<br>two<br/>three</p>\n"
+		L"<pre><code>&lt;b&gt; ``` inside</code></pre>\n"
+		L"<a href=\"#section\">label [x]</a>\n");
+
+	const Block* paragraph = nullptr;
+	const Block* code = nullptr;
+	const Block* link = nullptr;
+	for (const auto& block : document.blocks) {
+		if (block.kind == BlockKind::Paragraph && paragraph == nullptr) paragraph = &block;
+		if (block.kind == BlockKind::CodeBlock) code = &block;
+		if (block.kind == BlockKind::Paragraph && FindInline(block, InlineKind::Link) != nullptr) link = &block;
+	}
+	ASSERT_NE(nullptr, paragraph);
+	ASSERT_NE(nullptr, code);
+	ASSERT_NE(nullptr, link);
+	EXPECT_EQ(L"one\ntwo\nthree", paragraph->text);
+	EXPECT_EQ(L"<b> ``` inside", code->text);
+	EXPECT_EQ(L"label [x]", link->text);
+	ASSERT_EQ(1u, CountInline(*link, InlineKind::Link));
+}
+
 TEST(MarkdownParser, PreservesLiteralHtmlInsideMarkdownCodeBeforeSanitizingRawHtml)
 {
 	const auto document = ParseMarkdown(
