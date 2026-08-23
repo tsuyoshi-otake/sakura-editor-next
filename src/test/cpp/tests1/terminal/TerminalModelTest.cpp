@@ -168,29 +168,29 @@ TEST(TerminalModel, ReportsAppendEvictionClearAndLimitMutationsExactlyOnce)
 		model.ExecuteControl(L'\n');
 	}
 	auto change = model.ConsumeScrollbackChange();
-	EXPECT_EQ(2u, change.appended);
-	EXPECT_EQ(0u, change.evicted);
-	EXPECT_FALSE(change.cleared);
+	EXPECT_EQ(2u, change.Appended());
+	EXPECT_EQ(0u, change.Evicted());
+	EXPECT_FALSE(change.Cleared());
 	EXPECT_FALSE(model.ConsumeScrollbackChange().Changed());
 
 	model.Print(U'c');
 	model.ExecuteControl(L'\r');
 	model.ExecuteControl(L'\n');
 	change = model.ConsumeScrollbackChange();
-	EXPECT_EQ(1u, change.appended);
-	EXPECT_EQ(1u, change.evicted);
+	EXPECT_EQ(1u, change.Appended());
+	EXPECT_EQ(1u, change.Evicted());
 
 	model.SetScrollbackLimit(1);
 	change = model.ConsumeScrollbackChange();
-	EXPECT_EQ(0u, change.appended);
-	EXPECT_EQ(1u, change.evicted);
-	EXPECT_FALSE(change.cleared);
+	EXPECT_EQ(0u, change.Appended());
+	EXPECT_EQ(1u, change.Evicted());
+	EXPECT_FALSE(change.Cleared());
 
 	model.EraseDisplay(3);
 	change = model.ConsumeScrollbackChange();
-	EXPECT_EQ(0u, change.appended);
-	EXPECT_EQ(1u, change.evicted);
-	EXPECT_TRUE(change.cleared);
+	EXPECT_EQ(0u, change.Appended());
+	EXPECT_EQ(1u, change.Evicted());
+	EXPECT_TRUE(change.Cleared());
 }
 
 TEST(TerminalModel, ZeroScrollbackRetainsNoHistoryAndReportsNoAppend)

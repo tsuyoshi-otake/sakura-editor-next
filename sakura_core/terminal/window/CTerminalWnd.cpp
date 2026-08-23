@@ -1228,13 +1228,13 @@ struct CTerminalWnd::Impl final : ITerminalRenderClassifier {
 		const auto previousOffset = scrollOffset;
 		const auto totalRows = model->ScrollbackSize() + model->RowCount();
 		const auto maximumOffset = totalRows > visibleRows ? totalRows - visibleRows : 0;
-		const auto anchor = UpdateTerminalViewportAnchor(scrollOffset, change.appended, maximumOffset);
+		const auto anchor = UpdateTerminalViewportAnchor(scrollOffset, change.Appended(), maximumOffset);
 		scrollOffset = anchor.scrollOffset;
 
-		if( change.cleared && change.evicted == 0 ) {
+		if( change.Cleared() && change.Evicted() == 0 ) {
 			ClearSelection();
-		} else if( change.evicted != 0 ) {
-			const auto discarded = change.evicted;
+		} else if( change.Evicted() != 0 ) {
+			const auto discarded = change.Evicted();
 			if( HasSelection() && std::max(selectionAnchor.row, selectionActive.row) < discarded ) {
 				ClearSelection();
 			} else {

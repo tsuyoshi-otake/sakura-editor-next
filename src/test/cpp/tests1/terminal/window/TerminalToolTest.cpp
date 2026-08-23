@@ -633,9 +633,9 @@ TEST(TerminalTool, DrainPublishesScrollbackMutationExactlyOnce)
 	ASSERT_TRUE(WaitUntil([&] { return outputNotifications.load() > 0; }));
 
 	const auto first = manager.DrainOutput(*id);
-	EXPECT_EQ(2u, first.scrollbackChange.appended);
-	EXPECT_EQ(0u, first.scrollbackChange.evicted);
-	EXPECT_FALSE(first.scrollbackChange.cleared);
+	EXPECT_EQ(2u, first.scrollbackChange.Appended());
+	EXPECT_EQ(0u, first.scrollbackChange.Evicted());
+	EXPECT_FALSE(first.scrollbackChange.Cleared());
 	EXPECT_FALSE(manager.DrainOutput(*id).scrollbackChange.Changed());
 	manager.Close();
 }
@@ -664,7 +664,7 @@ TEST(TerminalTool, AppliesScrollbackLimitToExistingFutureAndRestartedModels)
 	EXPECT_EQ(*first, changes.front().tabId);
 	EXPECT_EQ(2u, firstModel->ScrollbackLimit());
 	EXPECT_EQ(2u, firstModel->ScrollbackSize());
-	EXPECT_GT(changes.front().change.evicted, 0u);
+	EXPECT_GT(changes.front().change.Evicted(), 0u);
 
 	const auto second = manager.AddTab({ 8, 2 }, L"C:\\workspace");
 	ASSERT_TRUE(second.has_value());

@@ -70,17 +70,25 @@ struct TerminalRow {
 };
 
 //! One UI-thread-owned mutation of the main-screen scrollback coordinate space.
-//! `appended` advances an anchored viewport away from the live bottom, while
-//! `evicted` shifts every surviving global history coordinate toward zero.
+//! Appended rows advance an anchored viewport away from the live bottom, while
+//! evicted rows shift every surviving global history coordinate toward zero.
 struct TerminalScrollbackChange final {
-	std::size_t appended{};
-	std::size_t evicted{};
-	bool cleared{};
+public:
+	[[nodiscard]] std::size_t Appended() const noexcept;
+	[[nodiscard]] std::size_t Evicted() const noexcept;
+	[[nodiscard]] bool Cleared() const noexcept;
+	[[nodiscard]] bool Changed() const noexcept;
 
-	[[nodiscard]] bool Changed() const noexcept
-	{
-		return appended != 0 || evicted != 0 || cleared;
-	}
+private:
+	friend class TerminalModel;
+
+	void RecordAppended() noexcept { ++m_appended; }
+	void RecordEvicted( std::size_t count = 1 ) noexcept { m_evicted += count; }
+	void MarkCleared() noexcept { m_cleared = true; }
+
+	std::size_t m_appended{};
+	std::size_t m_evicted{};
+	bool m_cleared{};
 };
 
 class TerminalScrollbackView final {
