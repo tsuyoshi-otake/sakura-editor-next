@@ -177,7 +177,14 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         self.assertIn("fmt --all -- --check", static_gate)
         self.assertIn("metadata --locked --no-deps --format-version 1", static_gate)
         self.assertIn("ConvertFrom-Json", static_gate)
-        self.assertIn("$metadata.workspace_members", static_gate)
+        self.assertIn(
+            "$metadata.packages | Where-Object { $_.name -eq 'sakura-rust-core' }",
+            static_gate,
+        )
+        self.assertIn(
+            "$metadata.workspace_members | Where-Object { $_ -eq $package.id }",
+            static_gate,
+        )
         self.assertIn("$package.dependencies", static_gate)
         self.assertIn("$targets[0].kind", static_gate)
         self.assertIn("$targets[0].crate_types", static_gate)

@@ -979,11 +979,12 @@ pub fn pack_directory(
             "declarative extension unexpectedly contains a runtime module",
         ));
     }
-    for optional in ["CHANGELOG.md"] {
-        let path = source.join(optional);
-        if path.exists() {
-            payloads.insert(optional.to_owned(), read_source_payload(source, optional)?);
-        }
+    let changelog = "CHANGELOG.md";
+    if source.join(changelog).exists() {
+        payloads.insert(
+            changelog.to_owned(),
+            read_source_payload(source, changelog)?,
+        );
     }
     let assets = source.join("assets");
     if assets.exists() {

@@ -959,13 +959,18 @@ jobs:
           throw "cargo metadata failed with exit code $LASTEXITCODE."
         }
         $metadata = $metadataJson | ConvertFrom-Json
-        $packages = @($metadata.packages)
-        if ($packages.Count -ne 1 -or @($metadata.workspace_members).Count -ne 1) {
-          throw "Rust workspace must contain exactly one package/member; packages=$($packages.Count) members=$(@($metadata.workspace_members).Count)."
+        $corePackages = @(
+          $metadata.packages | Where-Object { $_.name -eq 'sakura-rust-core' }
+        )
+        if ($corePackages.Count -ne 1) {
+          throw "Rust workspace must contain exactly one sakura-rust-core package; matches=$($corePackages.Count)."
         }
-        $package = $packages[0]
-        if ($package.name -ne 'sakura-rust-core' -or @($package.dependencies).Count -ne 0) {
-          throw "sakura-rust-core must be the sole dependency-free workspace package."
+        $package = $corePackages[0]
+        $coreMemberMatches = @(
+          $metadata.workspace_members | Where-Object { $_ -eq $package.id }
+        )
+        if ($coreMemberMatches.Count -ne 1 -or @($package.dependencies).Count -ne 0) {
+          throw "sakura-rust-core must remain a dependency-free workspace member."
         }
         $targets = @($package.targets)
         if (
