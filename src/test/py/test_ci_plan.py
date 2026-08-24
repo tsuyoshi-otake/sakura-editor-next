@@ -136,7 +136,9 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         self.workflow = BUILD_WORKFLOW.read_text(encoding="utf-8-sig")
         self.mingw_workflow = MINGW_WORKFLOW.read_text(encoding="utf-8-sig")
         with RUST_TOOLCHAIN.open("rb") as stream:
-            self.toolchain = tomllib.load(stream)["toolchain"]["channel"]
+            toolchain = tomllib.load(stream)["toolchain"]
+        self.toolchain = toolchain["channel"]
+        self.toolchain_targets = toolchain["targets"]
 
     def step(self, name: str) -> str:
         marker = f"    - name: {name}\n"
@@ -153,6 +155,10 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
 
     def test_toolchain_toml_is_the_single_exact_ci_pin(self) -> None:
         self.assertRegex(self.toolchain, r"^[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertEqual(
+            self.toolchain_targets,
+            ["x86_64-pc-windows-msvc", "wasm32-unknown-unknown"],
+        )
         prepare = self.step("Prepare pinned Rust toolchain")
         self.assertIn("Get-Content -LiteralPath 'rust-toolchain.toml' -Raw", prepare)
         self.assertIn("channel must be an exact numeric release", prepare)
