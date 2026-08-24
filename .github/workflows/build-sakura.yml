@@ -989,7 +989,7 @@ jobs:
       if: ${{ !inputs.release_promotion }}
       working-directory: rust
       shell: pwsh
-      timeout-minutes: 15
+      timeout-minutes: 30
       run: |
         $ErrorActionPreference = 'Stop'
         $toolchainArgument = "+$env:RUST_TOOLCHAIN_PIN"

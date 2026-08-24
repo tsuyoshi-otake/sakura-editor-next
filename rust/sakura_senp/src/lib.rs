@@ -1647,7 +1647,7 @@ fn install_verified_archive(
         fs::create_dir(&staging).map_err(|error| io_error("create staging directory", error))?;
         let install_result = (|| {
             for (entry_path, bytes) in &entries {
-                let output = staging.join(&entry_path);
+                let output = staging.join(entry_path);
                 if let Some(parent) = output.parent() {
                     fs::create_dir_all(parent)
                         .map_err(|error| io_error("create package directory", error))?;
@@ -1658,7 +1658,7 @@ fn install_verified_archive(
                     .open(&output)
                     .map_err(|error| io_error("create package entry", error))?;
                 output_file
-                    .write_all(&bytes)
+                    .write_all(bytes)
                     .map_err(|error| io_error("write package entry", error))?;
                 output_file
                     .sync_all()
