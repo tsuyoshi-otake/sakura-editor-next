@@ -39,11 +39,25 @@ enum class EGitExecutionStatus : std::uint8_t {
 	OutputLimitExceeded,
 };
 
+//! Policy for the repository boundary a request is allowed to use. Ordinary
+//! commands preserve Git's normal configuration behavior; passive reads opt in
+//! to the runner's repository-native safety overrides.
+enum class EGitRequestPolicy : std::uint8_t {
+	//! Preserve Git's ordinary configuration and hook behavior.
+	Ordinary,
+	//! Read repository state without allowing a repository-local fsmonitor hook
+	//! or command to execute.
+	PassiveRepositoryRead,
+};
+
 struct GitExecutionRequest final {
 	//! Working directory. Also passed as `-C <dir>` so git resolves the right repository.
 	std::wstring workingDirectory;
 	//! Arguments after the program name. Quoting is applied by the runner.
 	std::vector<std::wstring> arguments;
+	//! The runner enforces this policy while composing Git's effective arguments.
+	//! Callers must not reproduce the safety override in individual argument lists.
+	EGitRequestPolicy policy{ EGitRequestPolicy::Ordinary };
 	//! Bytes written to the child's standard input, which is then closed.
 	std::string standardInput;
 	std::uint32_t timeoutMilliseconds{ 15000 };

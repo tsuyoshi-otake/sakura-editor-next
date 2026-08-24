@@ -499,6 +499,7 @@
     <ClInclude Include="..\sakura_core\view\figures\CFigure_ZenSpace.h" />
     <ClInclude Include="..\sakura_core\platform\Windows11Platform.h" />
     <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h" />
+    <ClInclude Include="..\sakura_core\platform\process\WindowsExecutableResolver.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CFileService.h" />
     <ClInclude Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.h" />
     <ClInclude Include="..\sakura_core\include\sakura\filesystem\FileSystemFactory.h" />
@@ -1182,6 +1183,7 @@
     <ClCompile Include="..\sakura_core\view\figures\CFigure_ZenSpace.cpp" />
     <ClCompile Include="..\sakura_core\platform\Windows11Platform.cpp" />
     <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp" />
+    <ClCompile Include="..\sakura_core\platform\process\WindowsExecutableResolver.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\CWin32FileSystemProvider.cpp" />
     <ClCompile Include="..\sakura_core\platform\filesystem\FileSystemFactory.cpp" />

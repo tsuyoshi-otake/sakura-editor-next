@@ -74,6 +74,14 @@ PowerShell launch policy, which is the only owner allowed to serialize argument
 tokens. Cancellation and close remain distinct, and an explicit service-owned
 close does not race a second session-exit publication.
 
+PowerShell auto-discovery never uses process CWD as an executable search root.
+The shared Windows resolver parses PATH itself, ignores empty and relative
+entries, and returns only an absolute existing candidate. Explicitly configured
+and known-installation candidates may use the existing bounded version probe;
+an automatically discovered PATH candidate without file version metadata is
+not executed merely to discover its version. Known installation sources run
+before PATH so an untrusted duplicate cannot suppress them.
+
 The remaining Terminal compatibility seam is presentation ownership. Production
 Task sessions currently drain their bounded output queue, but the normal-process
 composition supplies no view sink, so Task output is not yet attached to the

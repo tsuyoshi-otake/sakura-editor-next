@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Seek, Write};
+use std::io::{Cursor, Read, Seek, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use zip::read::ZipArchive;
@@ -29,6 +29,7 @@ const MAX_ENTRY_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_DOCUMENT_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_ENTRIES: usize = 256;
 const MAX_COMPRESSION_RATIO: u64 = 100;
+const ARCHIVE_MARKER_PATH: &str = ".senp-archive-sha256";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "camelCase")]
@@ -137,6 +138,7 @@ pub struct InstalledExtension {
     pub trust: String,
     pub readme: String,
     pub extension_path: PathBuf,
+    pub module_sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub module_path: Option<PathBuf>,
 }
@@ -257,27 +259,54 @@ pub fn decode_hex<const N: usize>(value: &str) -> Result<[u8; N], SenpError> {
     Ok(result)
 }
 
-fn archive_digest(path: &Path) -> Result<String, SenpError> {
-    let metadata = fs::metadata(path).map_err(|error| io_error("read package metadata", error))?;
-    if metadata.len() > MAX_ARCHIVE_BYTES {
+#[derive(Debug)]
+struct ArchiveSnapshot {
+    bytes: Vec<u8>,
+    archive_sha256: String,
+}
+
+fn read_archive_snapshot(path: &Path) -> Result<ArchiveSnapshot, SenpError> {
+    let mut file = File::open(path).map_err(|error| io_error("open package", error))?;
+    let initial_len = file
+        .metadata()
+        .map_err(|error| io_error("read package metadata", error))?
+        .len();
+    if initial_len > MAX_ARCHIVE_BYTES {
         return Err(SenpError::new(
             ErrorCode::ArchiveTooLarge,
             "archive exceeds 64 MiB",
         ));
     }
-    let mut file = File::open(path).map_err(|error| io_error("open package", error))?;
-    let mut digest = Sha256::new();
-    let mut buffer = [0u8; 64 * 1024];
-    loop {
-        let read = file
-            .read(&mut buffer)
-            .map_err(|error| io_error("hash package", error))?;
-        if read == 0 {
-            break;
-        }
-        digest.update(&buffer[..read]);
+    let mut bytes = Vec::with_capacity(initial_len as usize);
+    Read::by_ref(&mut file)
+        .take(MAX_ARCHIVE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error("read package", error))?;
+    let final_len = file
+        .metadata()
+        .map_err(|error| io_error("read package metadata", error))?
+        .len();
+    if bytes.len() as u64 > MAX_ARCHIVE_BYTES {
+        return Err(SenpError::new(
+            ErrorCode::ArchiveTooLarge,
+            "archive exceeds 64 MiB",
+        ));
     }
-    Ok(hex(&digest.finalize()))
+    if bytes.len() as u64 != initial_len || final_len != initial_len {
+        return Err(SenpError::new(
+            ErrorCode::InvalidZip,
+            "package changed while reading",
+        ));
+    }
+    let archive_sha256 = archive_digest(&bytes);
+    Ok(ArchiveSnapshot {
+        bytes,
+        archive_sha256,
+    })
+}
+
+fn archive_digest(bytes: &[u8]) -> String {
+    hex(&Sha256::digest(bytes))
 }
 
 fn normalized_entry_name(raw: &[u8]) -> Result<String, SenpError> {
@@ -870,21 +899,44 @@ fn parse_checksums(bytes: &[u8]) -> Result<BTreeMap<String, String>, SenpError> 
     Ok(checksums)
 }
 
-pub fn verify_package(path: &Path, policy: &TrustPolicy) -> Result<VerifiedPackage, SenpError> {
-    let archive_sha256 = archive_digest(path)?;
+fn parse_signature(bytes: &[u8]) -> Result<Signature, SenpError> {
+    let text = std::str::from_utf8(bytes)
+        .map_err(|_| SenpError::new(ErrorCode::InvalidSignature, "signature is not UTF-8"))?;
+    let encoded = text
+        .strip_suffix('\n')
+        .filter(|value| !value.contains(['\r', '\n']))
+        .ok_or_else(|| {
+            SenpError::new(
+                ErrorCode::InvalidSignature,
+                "signature is not a canonical line",
+            )
+        })?;
+    Ok(Signature::from_bytes(&decode_hex::<64>(encoded)?))
+}
+
+#[derive(Debug)]
+struct VerifiedArchive {
+    package: VerifiedPackage,
+    entries: BTreeMap<String, Vec<u8>>,
+}
+
+fn verify_archive_snapshot(
+    snapshot: &ArchiveSnapshot,
+    policy: &TrustPolicy,
+) -> Result<VerifiedArchive, SenpError> {
+    let archive_sha256 = &snapshot.archive_sha256;
     if let TrustPolicy::BuiltIn {
         expected_archive_sha256,
     } = policy
     {
-        if expected_archive_sha256 != &archive_sha256 {
+        if expected_archive_sha256 != archive_sha256 {
             return Err(SenpError::new(
                 ErrorCode::ChecksumMismatch,
                 "built-in package pin mismatch",
             ));
         }
     }
-    let file = File::open(path).map_err(|error| io_error("open package", error))?;
-    let mut archive = ZipArchive::new(file)
+    let mut archive = ZipArchive::new(Cursor::new(snapshot.bytes.as_slice()))
         .map_err(|error| SenpError::new(ErrorCode::InvalidZip, error.to_string()))?;
     let entries = read_zip_entries(&mut archive)?;
     for required in [MANIFEST_PATH, README_PATH, LICENSE_PATH, CHECKSUM_PATH] {
@@ -918,10 +970,7 @@ pub fn verify_package(path: &Path, policy: &TrustPolicy) -> Result<VerifiedPacka
     validate_manifest_entries(&manifest, &entries)?;
 
     let signed = if let Some(signature_bytes) = entries.get(SIGNATURE_PATH) {
-        let signature_text = std::str::from_utf8(signature_bytes)
-            .map_err(|_| SenpError::new(ErrorCode::InvalidSignature, "signature is not UTF-8"))?;
-        let signature =
-            Signature::from_bytes(&decode_hex::<64>(signature_text.trim_end_matches('\n'))?);
+        let signature = parse_signature(signature_bytes)?;
         let key = match policy {
             TrustPolicy::PublisherKeys(keys) => keys.get(&manifest.publisher).ok_or_else(|| {
                 SenpError::new(ErrorCode::UntrustedPublisher, &manifest.publisher)
@@ -948,13 +997,21 @@ pub fn verify_package(path: &Path, policy: &TrustPolicy) -> Result<VerifiedPacka
         }
         false
     };
-    Ok(VerifiedPackage {
-        manifest,
-        archive_sha256,
-        signed,
-        entry_count: entries.len(),
-        expanded_bytes: entries.values().map(|value| value.len() as u64).sum(),
+    Ok(VerifiedArchive {
+        package: VerifiedPackage {
+            manifest,
+            archive_sha256: archive_sha256.clone(),
+            signed,
+            entry_count: entries.len(),
+            expanded_bytes: entries.values().map(|value| value.len() as u64).sum(),
+        },
+        entries,
     })
+}
+
+pub fn verify_package(path: &Path, policy: &TrustPolicy) -> Result<VerifiedPackage, SenpError> {
+    let snapshot = read_archive_snapshot(path)?;
+    Ok(verify_archive_snapshot(&snapshot, policy)?.package)
 }
 
 pub fn pack_directory(
@@ -1069,33 +1126,24 @@ pub fn pack_directory(
     writer
         .finish()
         .map_err(|error| SenpError::new(ErrorCode::InvalidZip, error.to_string()))?;
-    archive_digest(destination)
+    Ok(read_archive_snapshot(destination)?.archive_sha256)
 }
 
 fn reject_reparse_points(path: &Path) -> Result<(), SenpError> {
     let mut current = PathBuf::new();
     for component in path.components() {
         current.push(component.as_os_str());
-        if !current.exists() {
-            continue;
-        }
-        let metadata = fs::symlink_metadata(&current)
-            .map_err(|error| io_error("inspect install path", error))?;
-        if metadata.file_type().is_symlink() {
-            return Err(SenpError::new(
-                ErrorCode::ReparsePoint,
-                current.display().to_string(),
-            ));
-        }
-        #[cfg(windows)]
-        {
-            use std::os::windows::fs::MetadataExt;
-            if metadata.file_attributes() & 0x400 != 0 {
-                return Err(SenpError::new(
-                    ErrorCode::ReparsePoint,
-                    current.display().to_string(),
-                ));
+        match fs::symlink_metadata(&current) {
+            Ok(metadata) => {
+                if metadata_is_reparse_point(&metadata) {
+                    return Err(SenpError::new(
+                        ErrorCode::ReparsePoint,
+                        current.display().to_string(),
+                    ));
+                }
             }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(io_error("inspect install path", error)),
         }
     }
     Ok(())
@@ -1295,12 +1343,283 @@ fn previous_enabled_state(root: &Path, id: &str, trust: &str) -> Result<Option<b
     Ok((state.trust == trust).then_some(state.enabled))
 }
 
-pub fn install_package(
-    path: &Path,
+#[derive(Debug)]
+struct InstalledContentSnapshot {
+    entries: BTreeMap<String, Vec<u8>>,
+    manifest: Manifest,
+    readme: String,
+    signed: bool,
+    module_sha256: Option<String>,
+}
+
+fn metadata_is_reparse_point(metadata: &fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        if metadata.file_attributes() & 0x400 != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn installed_entry_name(path: &Path) -> Result<String, SenpError> {
+    path.components()
+        .map(|component| match component {
+            Component::Normal(value) => value
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| SenpError::new(ErrorCode::InvalidUtf8, path.display().to_string())),
+            _ => Err(SenpError::new(
+                ErrorCode::UnsafePath,
+                path.display().to_string(),
+            )),
+        })
+        .collect::<Result<Vec<_>, _>>()
+        .map(|components| components.join("/"))
+        .and_then(|value| normalized_entry_name(value.as_bytes()).map(|_| value))
+}
+
+fn read_installed_file(path: &Path, logical_path: &str) -> Result<Vec<u8>, SenpError> {
+    let link_metadata =
+        fs::symlink_metadata(path).map_err(|error| io_error(logical_path, error))?;
+    if metadata_is_reparse_point(&link_metadata) {
+        return Err(SenpError::new(
+            ErrorCode::ReparsePoint,
+            path.display().to_string(),
+        ));
+    }
+    if !link_metadata.is_file() {
+        return Err(SenpError::new(ErrorCode::UnsupportedEntry, logical_path));
+    }
+    let mut file = File::open(path).map_err(|error| io_error(logical_path, error))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| io_error(logical_path, error))?;
+    if metadata_is_reparse_point(&metadata) {
+        return Err(SenpError::new(
+            ErrorCode::ReparsePoint,
+            path.display().to_string(),
+        ));
+    }
+    if !metadata.is_file() {
+        return Err(SenpError::new(ErrorCode::UnsupportedEntry, logical_path));
+    }
+    if metadata.len() > MAX_ENTRY_BYTES
+        || (is_document(logical_path) && metadata.len() > MAX_DOCUMENT_BYTES)
+    {
+        return Err(SenpError::new(ErrorCode::EntryTooLarge, logical_path));
+    }
+    let expected_len = metadata.len();
+    let mut bytes = Vec::with_capacity(expected_len as usize);
+    Read::by_ref(&mut file)
+        .take(MAX_ENTRY_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|error| io_error(logical_path, error))?;
+    if bytes.len() as u64 != expected_len {
+        return Err(SenpError::new(
+            ErrorCode::ChecksumMismatch,
+            format!("installed entry changed while reading: {logical_path}"),
+        ));
+    }
+    Ok(bytes)
+}
+
+fn collect_installed_files(
+    directory: &Path,
+    relative: &Path,
+    files: &mut BTreeMap<String, Vec<u8>>,
+    directories: &mut BTreeSet<String>,
+    expanded: &mut u64,
+    depth: usize,
+) -> Result<(), SenpError> {
+    if depth > MAX_ENTRIES {
+        return Err(SenpError::new(
+            ErrorCode::UnsafePath,
+            "installed content nesting exceeds entry bound",
+        ));
+    }
+    let mut children = Vec::new();
+    for child in
+        fs::read_dir(directory).map_err(|error| io_error("read installed content", error))?
+    {
+        if children.len() >= MAX_ENTRIES {
+            return Err(SenpError::new(
+                ErrorCode::TooManyEntries,
+                MAX_ENTRIES.to_string(),
+            ));
+        }
+        children.push(child.map_err(|error| io_error("enumerate installed content", error))?);
+    }
+    children.sort_by_key(|entry| entry.file_name());
+    for child in children {
+        let metadata = fs::symlink_metadata(child.path())
+            .map_err(|error| io_error("inspect installed content", error))?;
+        if metadata_is_reparse_point(&metadata) {
+            return Err(SenpError::new(
+                ErrorCode::ReparsePoint,
+                child.path().display().to_string(),
+            ));
+        }
+        let name = child
+            .file_name()
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                SenpError::new(ErrorCode::InvalidUtf8, child.path().display().to_string())
+            })?;
+        let child_relative = relative.join(&name);
+        let archive_path = installed_entry_name(&child_relative)?;
+        if metadata.is_dir() {
+            directories.insert(archive_path.clone());
+            collect_installed_files(
+                &child.path(),
+                &child_relative,
+                files,
+                directories,
+                expanded,
+                depth + 1,
+            )?;
+            continue;
+        }
+        if !metadata.is_file() {
+            return Err(SenpError::new(
+                ErrorCode::UnsupportedEntry,
+                child.path().display().to_string(),
+            ));
+        }
+        if relative.as_os_str().is_empty() && name == ARCHIVE_MARKER_PATH {
+            continue;
+        }
+        if !is_allowed_entry(&archive_path) {
+            return Err(SenpError::new(ErrorCode::UnsupportedEntry, archive_path));
+        }
+        if files.len() >= MAX_ENTRIES {
+            return Err(SenpError::new(
+                ErrorCode::TooManyEntries,
+                MAX_ENTRIES.to_string(),
+            ));
+        }
+        let bytes = read_installed_file(&child.path(), &archive_path)?;
+        *expanded = expanded
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| SenpError::new(ErrorCode::ExpandedSizeLimit, archive_path.clone()))?;
+        if *expanded > MAX_EXPANDED_BYTES {
+            return Err(SenpError::new(
+                ErrorCode::ExpandedSizeLimit,
+                expanded.to_string(),
+            ));
+        }
+        if files.insert(archive_path.clone(), bytes).is_some() {
+            return Err(SenpError::new(ErrorCode::DuplicateEntry, archive_path));
+        }
+    }
+    Ok(())
+}
+
+fn expected_installed_directories(files: &BTreeMap<String, Vec<u8>>) -> BTreeSet<String> {
+    let mut directories = BTreeSet::new();
+    for path in files.keys() {
+        let components = path.split('/').collect::<Vec<_>>();
+        for count in 1..components.len() {
+            directories.insert(components[..count].join("/"));
+        }
+    }
+    directories
+}
+
+fn read_installed_content(
+    content: &Path,
+    expected_archive_sha256: &str,
+) -> Result<InstalledContentSnapshot, SenpError> {
+    reject_reparse_points(content)?;
+    let marker = read_installed_file(&content.join(ARCHIVE_MARKER_PATH), ARCHIVE_MARKER_PATH)?;
+    if marker != format!("{expected_archive_sha256}\n").as_bytes() {
+        return Err(SenpError::new(
+            ErrorCode::ChecksumMismatch,
+            "content marker mismatch",
+        ));
+    }
+
+    let mut entries = BTreeMap::new();
+    let mut directories = BTreeSet::new();
+    let mut expanded = 0u64;
+    collect_installed_files(
+        content,
+        Path::new(""),
+        &mut entries,
+        &mut directories,
+        &mut expanded,
+        0,
+    )?;
+    if directories != expected_installed_directories(&entries) {
+        return Err(SenpError::new(
+            ErrorCode::UnsupportedEntry,
+            "installed directory layout does not match payload coverage",
+        ));
+    }
+    for required in [MANIFEST_PATH, README_PATH, LICENSE_PATH, CHECKSUM_PATH] {
+        if !entries.contains_key(required) {
+            return Err(SenpError::new(ErrorCode::MissingRequiredEntry, required));
+        }
+    }
+    for path in [MANIFEST_PATH, README_PATH, LICENSE_PATH] {
+        std::str::from_utf8(&entries[path])
+            .map_err(|_| SenpError::new(ErrorCode::InvalidUtf8, path))?;
+    }
+    let checksums = parse_checksums(&entries[CHECKSUM_PATH])?;
+    let payload_paths: BTreeSet<_> = entries
+        .keys()
+        .filter(|path| path.as_str() != CHECKSUM_PATH && path.as_str() != SIGNATURE_PATH)
+        .cloned()
+        .collect();
+    if payload_paths != checksums.keys().cloned().collect() {
+        return Err(SenpError::new(
+            ErrorCode::InvalidChecksumDocument,
+            "checksum coverage mismatch",
+        ));
+    }
+    for (path, expected) in &checksums {
+        if hex(&Sha256::digest(&entries[path])) != *expected {
+            return Err(SenpError::new(ErrorCode::ChecksumMismatch, path));
+        }
+    }
+    let manifest: Manifest = strict_json(&entries[MANIFEST_PATH])?;
+    validate_manifest(&manifest)?;
+    validate_manifest_entries(&manifest, &entries)?;
+    let readme = String::from_utf8(entries[README_PATH].clone())
+        .map_err(|_| SenpError::new(ErrorCode::InvalidUtf8, README_PATH))?;
+    let module_sha256 = manifest
+        .runtime
+        .as_ref()
+        .map(|_| checksums[MODULE_PATH].clone());
+    let signed = if let Some(signature) = entries.get(SIGNATURE_PATH) {
+        parse_signature(signature)?;
+        true
+    } else {
+        false
+    };
+    Ok(InstalledContentSnapshot {
+        entries,
+        manifest,
+        readme,
+        signed,
+        module_sha256,
+    })
+}
+
+fn install_verified_archive(
     root: &Path,
     policy: &TrustPolicy,
+    verified_archive: VerifiedArchive,
 ) -> Result<VerifiedPackage, SenpError> {
-    let verified = verify_package(path, policy)?;
+    let VerifiedArchive {
+        package: verified,
+        entries,
+    } = verified_archive;
     reject_reparse_points(root)?;
     fs::create_dir_all(root).map_err(|error| io_error("create install root", error))?;
     reject_reparse_points(root)?;
@@ -1309,7 +1628,16 @@ pub fn install_package(
     fs::create_dir_all(&content_root).map_err(|error| io_error("create content root", error))?;
     fs::create_dir_all(&state_root).map_err(|error| io_error("create state root", error))?;
     let destination = content_root.join(&verified.archive_sha256);
-    if !destination.exists() {
+    reject_reparse_points(&destination)?;
+    if destination.exists() {
+        let installed = read_installed_content(&destination, &verified.archive_sha256)?;
+        if installed.entries != entries {
+            return Err(SenpError::new(
+                ErrorCode::ChecksumMismatch,
+                "existing content does not match the verified archive",
+            ));
+        }
+    } else {
         let staging = content_root.join(format!(
             ".{}.{}.{}.tmp",
             verified.archive_sha256,
@@ -1318,11 +1646,7 @@ pub fn install_package(
         ));
         fs::create_dir(&staging).map_err(|error| io_error("create staging directory", error))?;
         let install_result = (|| {
-            let file = File::open(path).map_err(|error| io_error("open package", error))?;
-            let mut archive = ZipArchive::new(file)
-                .map_err(|error| SenpError::new(ErrorCode::InvalidZip, error.to_string()))?;
-            let entries = read_zip_entries(&mut archive)?;
-            for (entry_path, bytes) in entries {
+            for (entry_path, bytes) in &entries {
                 let output = staging.join(&entry_path);
                 if let Some(parent) = output.parent() {
                     fs::create_dir_all(parent)
@@ -1341,23 +1665,37 @@ pub fn install_package(
                     .map_err(|error| io_error("flush package entry", error))?;
             }
             fs::write(
-                staging.join(".senp-archive-sha256"),
+                staging.join(ARCHIVE_MARKER_PATH),
                 format!("{}\n", verified.archive_sha256),
             )
             .map_err(|error| io_error("write package marker", error))?;
-            fs::rename(&staging, &destination)
-                .or_else(|error| {
-                    if destination.is_dir()
-                        && fs::read_to_string(destination.join(".senp-archive-sha256"))
-                            .is_ok_and(|value| value.trim_end() == verified.archive_sha256)
-                    {
-                        fs::remove_dir_all(&staging)?;
-                        Ok(())
-                    } else {
-                        Err(error)
+            let staged = read_installed_content(&staging, &verified.archive_sha256)?;
+            if staged.entries != entries {
+                return Err(SenpError::new(
+                    ErrorCode::ChecksumMismatch,
+                    "staged content does not match the verified archive",
+                ));
+            }
+            match fs::rename(&staging, &destination) {
+                Ok(()) => {}
+                Err(_error) if destination.is_dir() => {
+                    let existing = read_installed_content(&destination, &verified.archive_sha256)?;
+                    if existing.entries != entries {
+                        return Err(SenpError::new(
+                            ErrorCode::ChecksumMismatch,
+                            "published content does not match the verified archive",
+                        ));
                     }
-                })
-                .map_err(|error| SenpError::new(ErrorCode::PublicationFailed, error.to_string()))?;
+                    fs::remove_dir_all(&staging)
+                        .map_err(|cleanup| io_error("remove duplicate staging", cleanup))?;
+                }
+                Err(error) => {
+                    return Err(SenpError::new(
+                        ErrorCode::PublicationFailed,
+                        error.to_string(),
+                    ));
+                }
+            }
             Ok::<(), SenpError>(())
         })();
         if install_result.is_err() {
@@ -1396,6 +1734,16 @@ pub fn install_package(
         Err(error) => return Err(io_error("clear uninstalled state", error)),
     }
     Ok(verified)
+}
+
+pub fn install_package(
+    path: &Path,
+    root: &Path,
+    policy: &TrustPolicy,
+) -> Result<VerifiedPackage, SenpError> {
+    let snapshot = read_archive_snapshot(path)?;
+    let verified = verify_archive_snapshot(&snapshot, policy)?;
+    install_verified_archive(root, policy, verified)
 }
 
 pub fn list_installed(root: &Path) -> Result<Vec<InstalledExtension>, SenpError> {
@@ -1455,6 +1803,12 @@ pub fn list_installed(root: &Path) -> Result<Vec<InstalledExtension>, SenpError>
                 "invalid profile extension state",
             ));
         }
+        if (state.trust == "publisher") != state.signed {
+            return Err(SenpError::new(
+                ErrorCode::InvalidSignature,
+                "profile trust and signature state differ",
+            ));
+        }
         if uninstalled
             .get(&state.id)
             .is_some_and(|removed| removed.trust == state.trust)
@@ -1462,40 +1816,32 @@ pub fn list_installed(root: &Path) -> Result<Vec<InstalledExtension>, SenpError>
             continue;
         }
         let content = root.join("content").join(&state.archive_sha256);
-        reject_reparse_points(&content)?;
-        let marker = fs::read_to_string(content.join(".senp-archive-sha256"))
-            .map_err(|error| io_error("read content marker", error))?;
-        if marker.trim_end() != state.archive_sha256 {
-            return Err(SenpError::new(
-                ErrorCode::ChecksumMismatch,
-                "content marker mismatch",
-            ));
-        }
-        let manifest_bytes = fs::read(content.join(MANIFEST_PATH))
-            .map_err(|error| io_error("read installed manifest", error))?;
-        let manifest: Manifest = strict_json(&manifest_bytes)?;
-        validate_manifest(&manifest)?;
-        if manifest.id != state.id {
+        let content_snapshot = read_installed_content(&content, &state.archive_sha256)?;
+        if content_snapshot.manifest.id != state.id {
             return Err(SenpError::new(
                 ErrorCode::InvalidManifest,
                 "state and manifest ids differ",
             ));
         }
-        let readme_bytes = fs::read(content.join(README_PATH))
-            .map_err(|error| io_error("read installed README", error))?;
-        if readme_bytes.len() as u64 > MAX_DOCUMENT_BYTES {
-            return Err(SenpError::new(ErrorCode::EntryTooLarge, README_PATH));
+        if content_snapshot.signed != state.signed {
+            return Err(SenpError::new(
+                ErrorCode::InvalidSignature,
+                "profile and installed signature state differ",
+            ));
         }
-        let readme = String::from_utf8(readme_bytes)
-            .map_err(|_| SenpError::new(ErrorCode::InvalidUtf8, README_PATH))?;
         installed.push(InstalledExtension {
-            module_path: manifest.runtime.as_ref().map(|_| content.join(MODULE_PATH)),
-            manifest,
+            module_path: content_snapshot
+                .manifest
+                .runtime
+                .as_ref()
+                .map(|_| content.join(MODULE_PATH)),
+            module_sha256: content_snapshot.module_sha256,
+            manifest: content_snapshot.manifest,
             archive_sha256: state.archive_sha256,
             enabled: state.enabled,
             signed: state.signed,
             trust: state.trust,
-            readme,
+            readme: content_snapshot.readme,
             extension_path: content,
         });
     }
@@ -1705,6 +2051,11 @@ mod tests {
         assert_eq!(listed[0].readme, "# Sample\n");
         assert_eq!(listed[0].trust, "builtin");
         assert!(listed[0].enabled);
+        assert_eq!(listed[0].module_sha256, Some(hex(&Sha256::digest(b"wasm"))));
+        assert_eq!(
+            serde_json::to_value(&listed[0]).unwrap()["moduleSha256"],
+            hex(&Sha256::digest(b"wasm"))
+        );
         assert!(listed[0]
             .module_path
             .as_ref()
@@ -1831,6 +2182,8 @@ mod tests {
         let listed = list_installed(&install_root).unwrap();
         assert_eq!(listed.len(), 1);
         assert!(listed[0].module_path.is_none());
+        assert_eq!(listed[0].module_sha256, None);
+        assert!(serde_json::to_value(&listed[0]).unwrap()["moduleSha256"].is_null());
         assert!(listed[0]
             .extension_path
             .join("assets/syntaxes/shell-unix-bash.tmLanguage.json")
@@ -1881,6 +2234,97 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].trust, "developer");
         assert!(!listed[0].enabled);
+    }
+
+    #[test]
+    fn installed_payload_hash_mismatch_fails_closed() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture(&source);
+        let package = temp.path().join("sample.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let install_root = temp.path().join("installed");
+        install_package(
+            &package,
+            &install_root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash.clone(),
+            },
+        )
+        .unwrap();
+
+        fs::write(
+            install_root.join("content").join(&hash).join(MODULE_PATH),
+            b"tampered",
+        )
+        .unwrap();
+        let error = list_installed(&install_root).unwrap_err();
+        assert_eq!(error.code, ErrorCode::ChecksumMismatch);
+    }
+
+    #[test]
+    fn installed_checksum_coverage_rejects_unlisted_payload() {
+        let temp = TempDir::new().unwrap();
+        let source = temp.path().join("source");
+        fixture(&source);
+        let package = temp.path().join("sample.senp");
+        let hash = pack_directory(&source, &package, None).unwrap();
+        let install_root = temp.path().join("installed");
+        install_package(
+            &package,
+            &install_root,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash.clone(),
+            },
+        )
+        .unwrap();
+
+        fs::write(
+            install_root
+                .join("content")
+                .join(hash)
+                .join("assets/icons/unlisted.txt"),
+            b"unlisted",
+        )
+        .unwrap();
+        let error = list_installed(&install_root).unwrap_err();
+        assert_eq!(error.code, ErrorCode::InvalidChecksumDocument);
+    }
+
+    #[test]
+    fn archive_snapshot_survives_source_replacement_before_install() {
+        let temp = TempDir::new().unwrap();
+        let source_a = temp.path().join("source-a");
+        let source_b = temp.path().join("source-b");
+        fixture(&source_a);
+        fixture(&source_b);
+        fs::write(source_b.join(README_PATH), "replacement\n").unwrap();
+        let package_a = temp.path().join("a.senp");
+        let package_b = temp.path().join("b.senp");
+        let hash_a = pack_directory(&source_a, &package_a, None).unwrap();
+        pack_directory(&source_b, &package_b, None).unwrap();
+
+        let snapshot = read_archive_snapshot(&package_a).unwrap();
+        fs::copy(&package_b, &package_a).unwrap();
+        let verified = verify_archive_snapshot(
+            &snapshot,
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash_a.clone(),
+            },
+        )
+        .unwrap();
+        let installed = install_verified_archive(
+            &temp.path().join("installed"),
+            &TrustPolicy::BuiltIn {
+                expected_archive_sha256: hash_a.clone(),
+            },
+            verified,
+        )
+        .unwrap();
+
+        assert_eq!(installed.archive_sha256, hash_a);
+        let listed = list_installed(&temp.path().join("installed")).unwrap();
+        assert_eq!(listed[0].readme, "# Sample\n");
     }
 
     #[test]

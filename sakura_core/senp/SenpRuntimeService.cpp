@@ -134,45 +134,70 @@ public:
 	HostProcess(HostProcess&&) = default;
 	HostProcess& operator=(HostProcess&&) = default;
 
-	[[nodiscard]] bool Open(std::wstring_view modulePath)
+	[[nodiscard]] bool Open(std::wstring_view modulePath, std::wstring_view moduleSha256)
 	{
 		Close();
+		const bool validDigest = moduleSha256.size() == 64
+			&& std::ranges::all_of(moduleSha256, [](wchar_t ch) {
+				return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f');
+			});
 		const auto executable = HostExecutable();
-		if (executable.empty() || !std::filesystem::is_regular_file(executable)
+		if (!validDigest || executable.empty() || !std::filesystem::is_regular_file(executable)
 			|| !std::filesystem::is_regular_file(std::filesystem::path(modulePath))) return false;
 		SECURITY_ATTRIBUTES security{ sizeof(security), nullptr, TRUE };
 		ScopedHandle childInput;
 		ScopedHandle childOutput;
 		if (!::CreatePipe(childInput.Put(), m_input.Put(), &security, 0)
 			|| !::CreatePipe(m_output.Put(), childOutput.Put(), &security, 0)) return false;
-		::SetHandleInformation(m_input.Get(), HANDLE_FLAG_INHERIT, 0);
-		::SetHandleInformation(m_output.Get(), HANDLE_FLAG_INHERIT, 0);
+		if (!::SetHandleInformation(m_input.Get(), HANDLE_FLAG_INHERIT, 0)
+			|| !::SetHandleInformation(m_output.Get(), HANDLE_FLAG_INHERIT, 0)) return false;
 		ScopedHandle nullError(::CreateFileW(L"NUL", GENERIC_WRITE,
 			FILE_SHARE_READ | FILE_SHARE_WRITE, &security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
-		STARTUPINFOW startup{};
-		startup.cb = sizeof(startup);
-		startup.dwFlags = STARTF_USESTDHANDLES;
-		startup.hStdInput = childInput.Get();
-		startup.hStdOutput = childOutput.Get();
-		startup.hStdError = nullError.Valid() ? nullError.Get() : childOutput.Get();
-		std::wstring command = QuoteArgument(executable) + L" --component " + QuoteArgument(modulePath);
+		if (!nullError.Valid()) return false;
+
+		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
+		if (!m_job.Valid()) return false;
+		JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+		if (!::SetInformationJobObject(m_job.Get(), JobObjectExtendedLimitInformation,
+			&limits, sizeof(limits))) return false;
+
+		SIZE_T attributeBytes = 0;
+		(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);
+		if (attributeBytes == 0) return false;
+		std::vector<std::uint8_t> attributeStorage(attributeBytes);
+		auto* const attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeStorage.data());
+		if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &attributeBytes)) return false;
+		struct AttributeListGuard final {
+			LPPROC_THREAD_ATTRIBUTE_LIST value{};
+			~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
+		} attributeGuard{ attributes };
+		const std::array<HANDLE, 3> inheritedHandles{ childInput.Get(), childOutput.Get(), nullError.Get() };
+		if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+			const_cast<HANDLE*>(inheritedHandles.data()), sizeof(inheritedHandles), nullptr, nullptr)) return false;
+		HANDLE jobHandle = m_job.Get();
+		if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+			&jobHandle, sizeof(jobHandle), nullptr, nullptr)) return false;
+
+		STARTUPINFOEXW startup{};
+		startup.StartupInfo.cb = sizeof(startup);
+		startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+		startup.StartupInfo.hStdInput = childInput.Get();
+		startup.StartupInfo.hStdOutput = childOutput.Get();
+		startup.StartupInfo.hStdError = nullError.Get();
+		startup.lpAttributeList = attributes;
+		std::wstring command = QuoteArgument(executable) + L" --component " + QuoteArgument(modulePath)
+			+ L" --component-sha256 " + QuoteArgument(moduleSha256);
 		PROCESS_INFORMATION process{};
 		const BOOL created = ::CreateProcessW(executable.c_str(), command.data(), nullptr, nullptr,
-			TRUE, CREATE_NO_WINDOW, nullptr, nullptr, &startup, &process);
+			TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, nullptr,
+			&startup.StartupInfo, &process);
 		childInput.Reset();
 		childOutput.Reset();
 		if (!created) return false;
 		m_process.Reset(process.hProcess);
 		m_thread.Reset(process.hThread);
-		m_job.Reset(::CreateJobObjectW(nullptr, nullptr));
-		m_assignedToJob = false;
-		if (m_job.Valid()) {
-			JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-			limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-			m_assignedToJob = ::SetInformationJobObject(m_job.Get(), JobObjectExtendedLimitInformation,
-				&limits, sizeof(limits)) != FALSE
-				&& ::AssignProcessToJobObject(m_job.Get(), m_process.Get()) != FALSE;
-		}
+		m_assignedToJob = true;
 		std::string response;
 		return Exchange(R"({"type":"hello","protocol":1})", response)
 			&& response.find(R"("type":"hello")") != std::string::npos;
@@ -373,7 +398,7 @@ private:
 				for (const auto& extension : management.extensions) {
 					if (!extension.enabled || !extension.contributesIndentDecorations) continue;
 					HostProcess host;
-					if (host.Open(extension.modulePath)) hosts.push_back(std::move(host));
+					if (host.Open(extension.modulePath, extension.moduleSha256)) hosts.push_back(std::move(host));
 					else diagnostic = L"An enabled SENP extension host could not be started";
 				}
 				managementRevision = management.revision;

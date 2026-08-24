@@ -11,6 +11,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace terminal {
@@ -22,6 +23,21 @@ enum class EPowerShellSource {
 	AppPaths,
 	WindowsApps,
 	LegacySystem,
+};
+
+// Candidate origin is intentionally separate from discovery source.  An
+// executable found through PATH is not trusted to be launched just to obtain
+// version metadata, while an explicit setting and known installation remain
+// eligible for the existing bounded probe fallback.
+enum class EPowerShellCandidateTrust {
+	ExplicitConfiguration,
+	KnownInstallation,
+	AutoDiscoveredPath,
+};
+
+struct PowerShellCandidatePath {
+	std::wstring path;
+	EPowerShellCandidateTrust trust = EPowerShellCandidateTrust::KnownInstallation;
 };
 
 enum class TerminalChannel {
@@ -84,6 +100,20 @@ class IPowerShellLocatorProvider {
 public:
 	virtual ~IPowerShellLocatorProvider() = default;
 	virtual std::vector<std::wstring> GetCandidates( EPowerShellSource source ) = 0;
+	// The legacy string API remains the provider boundary.  This typed adapter
+	// keeps source trust explicit without forcing existing test providers or
+	// future adapters to duplicate candidate classification.
+	virtual std::vector<PowerShellCandidatePath> GetCandidatePaths( EPowerShellSource source )
+	{
+		const auto trust = source == EPowerShellSource::UserProfile
+			? EPowerShellCandidateTrust::ExplicitConfiguration
+			: (source == EPowerShellSource::Path
+				? EPowerShellCandidateTrust::AutoDiscoveredPath
+				: EPowerShellCandidateTrust::KnownInstallation);
+		std::vector<PowerShellCandidatePath> result;
+		for( auto& path : GetCandidates(source) ) result.push_back({ std::move(path), trust });
+		return result;
+	}
 	virtual std::wstring CanonicalizePath( const std::wstring& path ) = 0;
 	virtual std::optional<PowerShellFileStamp> GetFileStamp( const std::wstring& canonicalPath ) = 0;
 	virtual bool IsAmd64Executable( const std::wstring& canonicalPath ) = 0;

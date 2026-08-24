@@ -315,6 +315,63 @@ TEST(GitCommandRunner, BuildsCommandLineAndPrependsRepositoryDirectory)
 	EXPECT_EQ(L"status", effective[2]);
 }
 
+TEST(GitCommandRunner, PassiveRepositoryReadsDisableFsmonitorAtTheRunnerBoundary)
+{
+	GitExecutionRequest request;
+	request.workingDirectory = L"C:\\repo";
+	request.arguments = { L"status", L"--porcelain=v2" };
+	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
+
+	// The safety policy is part of the typed request and is composed by the
+	// runner. Keeping it out of each caller's argument vector prevents a passive
+	// status path from accidentally re-enabling a repository-local fsmonitor.
+	const auto effective = BuildEffectiveGitArguments(request);
+	const std::vector<std::wstring> expected{
+		L"-C", L"C:\\repo", L"-c", L"core.fsmonitor=false", L"status", L"--porcelain=v2" };
+	EXPECT_EQ(expected, effective);
+}
+
+TEST(GitCommandRunner, PassiveRepositoryReadsRejectCallerFsmonitorOverrides)
+{
+	GitExecutionRequest request;
+	request.workingDirectory = L"C:\\repo";
+	request.arguments = { L"status", L"-c", L"core.fsmonitor=C:\\repo\\hook.exe" };
+	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
+
+	// Do not let a future passive caller put a second config assignment after
+	// the runner's safe one. The request is rejected before process creation.
+	EXPECT_FALSE(IsExecutableGitRequest(request));
+	EXPECT_EQ(EGitExecutionStatus::InvalidRequest, RunGit(request, nullptr).status);
+}
+
+TEST(GitCommandRunner, OrdinaryRequestsPreserveGitConfigurationBehavior)
+{
+	GitExecutionRequest request;
+	request.workingDirectory = L"C:\\repo";
+	request.arguments = { L"status" };
+
+	EXPECT_EQ(EGitRequestPolicy::Ordinary, request.policy);
+	EXPECT_EQ((std::vector<std::wstring>{ L"-C", L"C:\\repo", L"status" }),
+		BuildEffectiveGitArguments(request));
+}
+
+TEST(GitCommandRunner, LaunchesARealGitProcessThroughTheBoundedBoundary)
+{
+	if (ResolveGitExecutable().empty()) GTEST_SKIP() << "git.exe is not installed";
+	std::error_code error;
+	const auto temporaryDirectory = std::filesystem::temp_directory_path(error);
+	ASSERT_FALSE(error) << error.message();
+
+	GitExecutionRequest request;
+	request.workingDirectory = temporaryDirectory.wstring();
+	request.arguments = { L"--version" };
+	request.timeoutMilliseconds = 3000;
+	const auto result = RunGit(request, nullptr);
+
+	ASSERT_EQ(EGitExecutionStatus::Succeeded, result.status) << result.standardError;
+	EXPECT_FALSE(result.standardOutput.empty());
+}
+
 TEST(GitCommandRunner, RejectsRequestsThatCannotBeExecuted)
 {
 	GitExecutionRequest valid;

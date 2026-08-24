@@ -12,6 +12,7 @@
 #include <winver.h>
 
 #include "platform/Windows11Platform.h"
+#include "platform/process/WindowsExecutableResolver.h"
 
 
 namespace terminal {
@@ -19,8 +20,8 @@ namespace {
 
 constexpr std::array<EPowerShellSource, 6> kSourceOrder = {
 	EPowerShellSource::UserProfile, EPowerShellSource::ProgramFiles,
-	EPowerShellSource::Path, EPowerShellSource::AppPaths,
-	EPowerShellSource::WindowsApps, EPowerShellSource::LegacySystem,
+	EPowerShellSource::AppPaths, EPowerShellSource::WindowsApps,
+	EPowerShellSource::LegacySystem, EPowerShellSource::Path,
 };
 
 std::wstring Lower( std::wstring value )
@@ -107,6 +108,7 @@ PowerShellDiscoveryResult PowerShellLocator::Discover()
 {
 	struct DiscoveredPath {
 		EPowerShellSource source;
+		EPowerShellCandidateTrust trust;
 		std::wstring canonicalPath;
 		std::wstring dedupeKey;
 		PowerShellFileStamp stamp;
@@ -120,25 +122,33 @@ PowerShellDiscoveryResult PowerShellLocator::Discover()
 	std::vector<DiscoveredPath> discovered;
 	std::unordered_map<std::wstring, bool> seen;
 	for( const auto source : kSourceOrder ) {
-		for( const auto& rawPath : m_provider.GetCandidates(source) ) {
+		for( const auto& candidatePath : m_provider.GetCandidatePaths(source) ) {
 			if( seen.size() >= kCandidateLimit ) break;
-			const std::wstring canonicalPath = m_provider.CanonicalizePath(rawPath);
+			const std::wstring canonicalPath = m_provider.CanonicalizePath(candidatePath.path);
 			const std::wstring dedupeKey = Lower(canonicalPath);
-			if( canonicalPath.empty() || !seen.emplace(dedupeKey, true).second || !m_provider.IsAmd64Executable(canonicalPath) ) continue;
+			if( canonicalPath.empty() || !seen.emplace(dedupeKey, true).second ) continue;
+			if( !m_provider.IsAmd64Executable(canonicalPath) ) {
+				seen.erase(dedupeKey);
+				continue;
+			}
 			const auto stamp = m_provider.GetFileStamp(canonicalPath);
-			if( !stamp ) continue;
+			if( !stamp ) {
+				seen.erase(dedupeKey);
+				continue;
+			}
 			// UserProfile is intentionally first in kSourceOrder.  Therefore when
 			// an alias to the same canonical executable is found later, the
 			// surviving record retains this explicit-selection bit.
-			DiscoveredPath item{ source, canonicalPath, dedupeKey, *stamp, L"",
-				source == EPowerShellSource::UserProfile };
+			DiscoveredPath item{ source, candidatePath.trust, canonicalPath, dedupeKey, *stamp, L"",
+				candidatePath.trust == EPowerShellCandidateTrust::ExplicitConfiguration };
 			const auto cached = m_cache.find(dedupeKey);
 			if( cached != m_cache.end() && cached->second.stamp == *stamp ) {
 				item.versionText = cached->second.versionText;
 			} else {
 				auto productVersion = m_provider.GetProductVersion(canonicalPath);
 				item.versionText = productVersion.value_or(L"");
-				item.needsProbe = item.versionText.empty();
+				item.needsProbe = item.versionText.empty()
+					&& item.trust != EPowerShellCandidateTrust::AutoDiscoveredPath;
 				if( !item.needsProbe ) m_cache[dedupeKey] = { *stamp, item.versionText };
 			}
 			discovered.push_back(std::move(item));
@@ -269,8 +279,7 @@ std::vector<std::wstring> NativePowerShellLocatorProvider::GetCandidates( EPower
 			::FindClose(handle);
 		}
 	} else if( source == EPowerShellSource::Path ) {
-		wchar_t buffer[32768]{};
-		if( ::SearchPathW(nullptr, L"pwsh.exe", nullptr, static_cast<DWORD>(std::size(buffer)), buffer, nullptr) ) AddIfPresent(result, buffer);
+		if( const auto path = platform::ResolveWindowsExecutable(L"pwsh.exe") ) result.push_back(*path);
 	} else if( source == EPowerShellSource::AppPaths ) {
 		AddIfPresent(result, ReadAppPath(HKEY_CURRENT_USER, L"pwsh.exe"));
 		AddIfPresent(result, ReadAppPath(HKEY_LOCAL_MACHINE, L"pwsh.exe"));

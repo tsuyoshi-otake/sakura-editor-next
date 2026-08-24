@@ -51,6 +51,9 @@ struct ExtensionDescriptor final {
 	std::wstring readme;
 	std::wstring extensionPath;
 	std::wstring modulePath;
+	//! SHA-256 of the exact runtime component bytes validated by the package
+	//! authority. Empty only for declarative extensions without a module.
+	std::wstring moduleSha256;
 	std::wstring archiveSha256;
 	bool installed = true;
 	bool builtIn = false;

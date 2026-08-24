@@ -46,6 +46,19 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   declared; declarative language/grammar packages contain no executable code.
 - Built-ins are integrity-pinned; publisher trust is signature-based; unsigned
   developer packages start disabled.
+- Verification and extraction consume one bounded in-memory archive snapshot;
+  package bytes are never reopened after their digest and trust decision. An
+  installed listing re-reads every allowed payload file, requires exact
+  checksum coverage and directory shape, rejects reparse points, and recomputes
+  each SHA-256 before publishing contributions.
+- Runtime descriptors carry the validated lowercase SHA-256 for
+  `module/extension.wasm`. The host reads the module once into a bounded byte
+  vector, compares that digest, and gives those same bytes to Wasmtime. A path
+  checked by management is therefore not reopened directly by the runtime
+  engine. The installed checksum document is integrity evidence, not a separate
+  authenticated trust anchor against a same-user attacker who can rewrite both
+  payload and metadata; do not claim stronger same-user tamper resistance until
+  authenticated installed metadata or filesystem ACL ownership is defined.
 - `kBuiltInResources` declares whether each embedded package is installed by
   default. Startup reconciles missing or outdated default packages before the
   runtime starts. Reinstallation preserves a user's disabled state for the same
@@ -62,5 +75,7 @@ failure with a visual placeholder or an unrelated legacy plugin path.
   capabilities, activation events, and contribution identifiers fail closed.
 - No WASI linker is attached in ABI v1. Runtime memory, fuel, elapsed time, IPC
   frames, queue depth, and cached results remain bounded.
-- Every host and helper process has explicit timeout and job-object cleanup
-  ownership. Paint and input paths never wait for the host.
+- Every host and helper process inherits only its declared standard-stream
+  handles and is assigned atomically at creation to a kill-on-close job. Each
+  has explicit timeout and cleanup ownership. Paint and input paths never wait
+  for the host.

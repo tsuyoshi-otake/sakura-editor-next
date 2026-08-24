@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::fs::File;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -17,6 +19,7 @@ wasmtime::component::bindgen!({
 use exports::sakura::senp::editor_decorations::{DecorationRequest, VisibleLine};
 
 const MAX_FRAME_BYTES: usize = 4 * 1024 * 1024;
+const MAX_COMPONENT_BYTES: u64 = 32 * 1024 * 1024;
 const MAX_FUEL: u64 = 10_000_000;
 const EPOCH_TICK_MILLISECONDS: u64 = 10;
 const CALL_DEADLINE_TICKS: u64 = 20;
@@ -86,13 +89,17 @@ struct Runtime {
 }
 
 impl Runtime {
-    fn load(component_path: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    fn load(
+        component_path: PathBuf,
+        expected_sha256: &str,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let component_bytes = read_verified_component(component_path, expected_sha256)?;
         let mut config = Config::new();
         config.wasm_component_model(true);
         config.consume_fuel(true);
         config.epoch_interruption(true);
         let engine = Engine::new(&config)?;
-        let component = Component::from_file(&engine, component_path)?;
+        let component = Component::from_binary(&engine, &component_bytes)?;
         let linker = Linker::new(&engine);
         let limits = StoreLimitsBuilder::new()
             .memory_size(32 * 1024 * 1024)
@@ -169,6 +176,46 @@ impl Runtime {
     }
 }
 
+fn is_lower_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn verify_component_bytes(
+    bytes: Vec<u8>,
+    expected_sha256: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    if !is_lower_sha256(expected_sha256) {
+        return Err("component SHA-256 must be 64 lowercase hexadecimal characters".into());
+    }
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual != expected_sha256 {
+        return Err("component SHA-256 mismatch".into());
+    }
+    Ok(bytes)
+}
+
+fn read_verified_component(
+    component_path: PathBuf,
+    expected_sha256: &str,
+) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let mut component = File::open(component_path)?;
+    let initial_len = component.metadata()?.len();
+    if initial_len > MAX_COMPONENT_BYTES {
+        return Err("component exceeds 32 MiB".into());
+    }
+    let mut bytes = Vec::with_capacity(initial_len as usize);
+    Read::by_ref(&mut component)
+        .take(MAX_COMPONENT_BYTES + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_COMPONENT_BYTES {
+        return Err("component exceeds 32 MiB".into());
+    }
+    verify_component_bytes(bytes, expected_sha256)
+}
+
 impl Drop for Runtime {
     fn drop(&mut self) {
         self.epoch_stop.store(true, Ordering::Release);
@@ -209,16 +256,27 @@ fn write_frame(output: &mut impl Write, response: &Response) -> io::Result<()> {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut arguments = std::env::args_os().skip(1);
     if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--component")) {
-        return Err("usage: sakura-senp-host --component <extension.wasm>".into());
+        return Err(
+            "usage: sakura-senp-host --component <extension.wasm> --component-sha256 <sha256>"
+                .into(),
+        );
     }
     let component = arguments
         .next()
         .map(PathBuf::from)
         .ok_or("missing component path")?;
+    if arguments.next().as_deref() != Some(std::ffi::OsStr::new("--component-sha256")) {
+        return Err("missing component SHA-256 option".into());
+    }
+    let component_sha256 = arguments
+        .next()
+        .ok_or("missing component SHA-256")?
+        .into_string()
+        .map_err(|_| "component SHA-256 is not Unicode")?;
     if arguments.next().is_some() {
         return Err("unexpected argument".into());
     }
-    let mut runtime = Runtime::load(component)?;
+    let mut runtime = Runtime::load(component, &component_sha256)?;
     let mut input = io::stdin().lock();
     let mut output = io::stdout().lock();
     while let Some(frame) = read_frame(&mut input)? {
@@ -271,6 +329,24 @@ mod tests {
     use super::*;
 
     #[test]
+    fn verified_component_returns_the_exact_hashed_bytes() {
+        let bytes = b"component bytes".to_vec();
+        let expected = format!("{:x}", Sha256::digest(&bytes));
+        assert_eq!(
+            verify_component_bytes(bytes.clone(), &expected).unwrap(),
+            bytes
+        );
+    }
+
+    #[test]
+    fn verified_component_rejects_mismatch_and_noncanonical_digest() {
+        let bytes = b"component bytes".to_vec();
+        let expected = format!("{:x}", Sha256::digest(&bytes));
+        assert!(verify_component_bytes(bytes.clone(), &"0".repeat(64)).is_err());
+        assert!(verify_component_bytes(bytes, &expected.to_uppercase()).is_err());
+    }
+
+    #[test]
     fn decoration_request_uses_the_public_camel_case_protocol() {
         let request: Request = serde_json::from_str(
             r#"{"type":"decorate","revision":7,"tabSize":4,"lines":[{"line":11,"text":"        value"}]}"#,
@@ -298,7 +374,9 @@ mod tests {
     fn component_executes_without_wasi_or_other_ambient_imports() {
         let component = std::env::var_os("SAKURA_SENP_TEST_COMPONENT")
             .expect("SAKURA_SENP_TEST_COMPONENT must name the built Indent Rainbow component");
-        let mut runtime = Runtime::load(PathBuf::from(component)).unwrap();
+        let component = PathBuf::from(component);
+        let expected_sha256 = format!("{:x}", Sha256::digest(std::fs::read(&component).unwrap()));
+        let mut runtime = Runtime::load(component, &expected_sha256).unwrap();
         let response = runtime.decorate(
             19,
             4,

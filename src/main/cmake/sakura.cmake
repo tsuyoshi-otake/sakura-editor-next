@@ -624,6 +624,20 @@ list(APPEND HEADERS ${FRAME_NATIVE_SURFACE_PAYLOAD_HEADERS})
 list(REMOVE_ITEM SOURCES ${FRAME_NATIVE_SURFACE_PAYLOAD_SOURCES})
 list(APPEND SOURCES ${FRAME_NATIVE_SURFACE_PAYLOAD_SOURCES})
 
+# Keep the shared Windows executable resolver explicit in generated projects.
+# It is also covered by the broad source discovery above, but this declaration
+# makes its platform-layer ownership visible and keeps MSBuild/CMake aligned.
+set(WINDOWS_EXECUTABLE_RESOLVER_HEADERS
+  ${CMAKE_SOURCE_DIR}/sakura_core/platform/process/WindowsExecutableResolver.h
+)
+set(WINDOWS_EXECUTABLE_RESOLVER_SOURCES
+  ${CMAKE_SOURCE_DIR}/sakura_core/platform/process/WindowsExecutableResolver.cpp
+)
+list(REMOVE_ITEM HEADERS ${WINDOWS_EXECUTABLE_RESOLVER_HEADERS})
+list(APPEND HEADERS ${WINDOWS_EXECUTABLE_RESOLVER_HEADERS})
+list(REMOVE_ITEM SOURCES ${WINDOWS_EXECUTABLE_RESOLVER_SOURCES})
+list(APPEND SOURCES ${WINDOWS_EXECUTABLE_RESOLVER_SOURCES})
+
 # Do not let the broad source glob pull in the complete Windows Terminal tree.
 # Only the dependency-closed parser, input and Unicode boundary is compiled.
 set(WINDOWS_TERMINAL_VENDOR_ROOT

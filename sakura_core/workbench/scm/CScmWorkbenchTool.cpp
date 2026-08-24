@@ -522,6 +522,7 @@ GitExecutionRequest MakeStatusRequest(const std::wstring& root)
 	GitExecutionRequest request;
 	request.workingDirectory = root;
 	request.arguments = { L"status", L"--porcelain=v2", L"--branch", L"-z", L"--untracked-files=normal" };
+	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
 	request.timeoutMilliseconds = 3000;
 	request.maximumOutputBytes = kMaximumStatusBytes;
 	return request;
@@ -534,6 +535,7 @@ GitExecutionRequest MakeHistoryRequest(const std::wstring& root)
 	GitExecutionRequest request;
 	request.workingDirectory = root;
 	request.arguments = MakeGitHistoryArguments(kGraphHistoryCount);
+	request.policy = EGitRequestPolicy::PassiveRepositoryRead;
 	request.timeoutMilliseconds = 3000;
 	request.maximumOutputBytes = kMaximumStatusBytes;
 	return request;
@@ -1448,6 +1450,41 @@ struct CScmWorkbenchTool::Impl {
 	[[nodiscard]] RECT BandBounds() const
 	{
 		return ViewBounds(ViewStack().repositoryRow);
+	}
+	//! A wheel that lands on the SCM frame itself has no native child target:
+	//! headers, collapsed bodies, and the unavailable Graph message are all
+	//! painted by the frame.  Route scrollable regions to their owning list and
+	//! consume every other wheel here so DefWindowProc cannot bounce the message
+	//! back to the editor frame.
+	void HandleMouseWheel(WPARAM wParam, LPARAM lParam)
+	{
+		if (!window) return;
+		POINT point{
+			GET_X_LPARAM(lParam),
+			GET_Y_LPARAM(lParam),
+		};
+		if (!::ScreenToClient(window, &point)) return;
+
+		const auto routeToList = [&](HWND target) {
+			if (target == nullptr || ::IsWindowVisible(target) == FALSE) return;
+			::SendMessageW(target, WM_MOUSEWHEEL, wParam, lParam);
+		};
+		const auto layout = ViewStack();
+		const RECT graphHeader = ViewBounds(layout.graphHeader);
+		const RECT graphBody = ViewBounds(layout.graphBody);
+		const bool inGraph = GraphFrameVisible()
+			&& (::PtInRect(&graphHeader, point) != FALSE
+				|| ::PtInRect(&graphBody, point) != FALSE);
+		if (inGraph) {
+			routeToList(graphList);
+			return;
+		}
+
+		const RECT changesHeader = ViewBounds(layout.changesHeader);
+		const RECT changesBody = ViewBounds(layout.changesBody);
+		const bool inChanges = ::PtInRect(&changesHeader, point) != FALSE
+			|| ::PtInRect(&changesBody, point) != FALSE;
+		if (inChanges) routeToList(list);
 	}
 	void LayoutList()
 	{
@@ -3534,6 +3571,9 @@ LRESULT CALLBACK CScmWorkbenchTool::WindowProc(HWND window, UINT message, WPARAM
 	if (!self || !self->m_impl) return ::DefWindowProcW(window, message, wParam, lParam);
 	auto& impl = *self->m_impl;
 	switch (message) {
+	case WM_MOUSEWHEEL:
+		impl.HandleMouseWheel(wParam, lParam);
+		return 0;
 	case WM_SIZE: {
 		const bool previousDefer = impl.deferChildRepaint;
 		impl.deferChildRepaint = true;

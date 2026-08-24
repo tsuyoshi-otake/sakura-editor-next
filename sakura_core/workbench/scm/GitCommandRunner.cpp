@@ -5,6 +5,7 @@
 	SPDX-License-Identifier: Zlib
 */
 #include "StdAfx.h"
+#include "platform/process/WindowsExecutableResolver.h"
 #include "workbench/scm/GitCommandRunner.h"
 
 #include <algorithm>
@@ -23,6 +24,39 @@ bool NeedsQuoting(std::wstring_view value) noexcept
 {
 	if (value.empty()) return true;
 	return value.find_first_of(L" \t\n\v\"") != std::wstring_view::npos;
+}
+
+bool IsCoreFsmonitorAssignment(std::wstring_view value) noexcept
+{
+	const auto equals = value.find(L'=');
+	if (equals == std::wstring_view::npos) return false;
+	const auto key = value.substr(0, equals);
+	return ::CompareStringOrdinal(key.data(), static_cast<int>(key.size()),
+		L"core.fsmonitor", -1, TRUE) == CSTR_EQUAL;
+}
+
+//! A passive request owns the fsmonitor policy. Reject equivalent caller-side
+//! config spellings so a later argument cannot override the runner's `false`.
+bool HasCoreFsmonitorOverride(const std::vector<std::wstring>& arguments) noexcept
+{
+	for (std::size_t index = 0; index < arguments.size(); ++index) {
+		const auto& argument = arguments[index];
+		if (argument == L"-c" || argument == L"--config") {
+			if (index + 1 < arguments.size() && IsCoreFsmonitorAssignment(arguments[index + 1])) return true;
+			continue;
+		}
+		if (argument == L"--config-env") {
+			if (index + 1 < arguments.size() && IsCoreFsmonitorAssignment(arguments[index + 1])) return true;
+			continue;
+		}
+		if (argument.size() > 2 && argument.starts_with(L"-c")
+			&& IsCoreFsmonitorAssignment(argument.substr(2))) return true;
+		if (argument.starts_with(L"--config=")
+			&& IsCoreFsmonitorAssignment(argument.substr(std::wstring_view(L"--config=").size()))) return true;
+		if (argument.starts_with(L"--config-env=")
+			&& IsCoreFsmonitorAssignment(argument.substr(std::wstring_view(L"--config-env=").size()))) return true;
+	}
+	return false;
 }
 
 //! RAII for a handle that must not leak on any early return.
@@ -166,18 +200,24 @@ std::wstring BuildGitCommandLine(std::wstring_view executable, const std::vector
 std::vector<std::wstring> BuildEffectiveGitArguments(const GitExecutionRequest& request)
 {
 	std::vector<std::wstring> effective;
-	effective.reserve(request.arguments.size() + 2);
+	effective.reserve(request.arguments.size() + (request.policy == EGitRequestPolicy::PassiveRepositoryRead ? 4 : 2));
 	effective.emplace_back(L"-C");
 	effective.push_back(request.workingDirectory);
+	if (request.policy == EGitRequestPolicy::PassiveRepositoryRead) {
+		// `core.fsmonitor` may name an executable in the repository config. A
+		// command-line config override is repository-native and takes precedence
+		// over that local value without changing ordinary Git requests.
+		effective.emplace_back(L"-c");
+		effective.emplace_back(L"core.fsmonitor=false");
+	}
 	effective.insert(effective.end(), request.arguments.begin(), request.arguments.end());
 	return effective;
 }
 
 std::wstring ResolveGitExecutable()
 {
-	wchar_t path[MAX_PATH]{};
-	const DWORD length = ::SearchPathW(nullptr, L"git.exe", nullptr, MAX_PATH, path, nullptr);
-	return length != 0 && length < MAX_PATH ? std::wstring(path, length) : std::wstring{};
+	const auto resolved = platform::ResolveWindowsExecutable(L"git.exe");
+	return resolved.value_or(std::wstring{});
 }
 
 bool IsExecutableGitRequest(const GitExecutionRequest& request) noexcept
@@ -189,6 +229,8 @@ bool IsExecutableGitRequest(const GitExecutionRequest& request) noexcept
 	if (request.maximumOutputBytes == 0) return false;
 	if (request.timeoutMilliseconds == 0) return false;
 	if (request.workingDirectory.size() > kMaximumGitArgumentLength) return false;
+	if (request.policy == EGitRequestPolicy::PassiveRepositoryRead
+		&& HasCoreFsmonitorOverride(request.arguments)) return false;
 	return std::none_of(request.arguments.begin(), request.arguments.end(),
 		[](const std::wstring& argument) { return argument.size() > kMaximumGitArgumentLength; });
 }
@@ -214,23 +256,66 @@ GitExecutionResult RunGit(const GitExecutionRequest& request, HANDLE stop)
 	if (!::CreatePipe(errorRead.Put(), errorWrite.Put(), &security, 0)) return Terminal(EGitExecutionStatus::LaunchFailed);
 	if (!::CreatePipe(inputRead.Put(), inputWrite.Put(), &security, 0)) return Terminal(EGitExecutionStatus::LaunchFailed);
 	// Only the child's ends may be inherited; ours must not leak into it.
-	::SetHandleInformation(outputRead.Get(), HANDLE_FLAG_INHERIT, 0);
-	::SetHandleInformation(errorRead.Get(), HANDLE_FLAG_INHERIT, 0);
-	::SetHandleInformation(inputWrite.Get(), HANDLE_FLAG_INHERIT, 0);
+	if (!::SetHandleInformation(outputRead.Get(), HANDLE_FLAG_INHERIT, 0)
+		|| !::SetHandleInformation(errorRead.Get(), HANDLE_FLAG_INHERIT, 0)
+		|| !::SetHandleInformation(inputWrite.Get(), HANDLE_FLAG_INHERIT, 0)) {
+		return Terminal(EGitExecutionStatus::LaunchFailed);
+	}
+
+	// Keep every process spawned by Git inside a kill-on-close job. The job-list
+	// attribute assigns it atomically at creation, so a short-lived Git process
+	// cannot escape between CreateProcessW and a later AssignProcessToJobObject.
+	ScopedHandle job(::CreateJobObjectW(nullptr, nullptr));
+	if (!job.IsValid()) return Terminal(EGitExecutionStatus::LaunchFailed);
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION jobLimits{};
+	jobLimits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	if (!::SetInformationJobObject(job.Get(), JobObjectExtendedLimitInformation,
+		&jobLimits, sizeof(jobLimits))) {
+		return Terminal(EGitExecutionStatus::LaunchFailed);
+	}
+
+	// STARTUPINFOEX's attribute list is deliberately strict: the only inherited
+	// handles are the three standard streams below. This closes the ambient
+	// inheritable-handle boundary that plain CreateProcessW would otherwise leave
+	// open to the entire parent process.
+	SIZE_T attributeBytes = 0;
+	(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);
+	if (attributeBytes == 0) return Terminal(EGitExecutionStatus::LaunchFailed);
+	std::vector<std::uint8_t> attributeStorage(attributeBytes);
+	auto* const attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeStorage.data());
+	if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &attributeBytes)) {
+		return Terminal(EGitExecutionStatus::LaunchFailed);
+	}
+	struct AttributeListGuard final {
+		LPPROC_THREAD_ATTRIBUTE_LIST value{};
+		~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
+	} attributeGuard{ attributes };
+
+	const std::array<HANDLE, 3> inheritedHandles{ inputRead.Get(), outputWrite.Get(), errorWrite.Get() };
+	if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+		const_cast<HANDLE*>(inheritedHandles.data()), sizeof(inheritedHandles), nullptr, nullptr)) {
+		return Terminal(EGitExecutionStatus::LaunchFailed);
+	}
+	HANDLE jobHandle = job.Get();
+	if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+		&jobHandle, sizeof(jobHandle), nullptr, nullptr)) {
+		return Terminal(EGitExecutionStatus::LaunchFailed);
+	}
 
 	auto environment = BuildEnvironmentBlock();
 
-	STARTUPINFOW startup{};
-	startup.cb = sizeof(startup);
-	startup.dwFlags = STARTF_USESTDHANDLES;
-	startup.hStdInput = inputRead.Get();
-	startup.hStdOutput = outputWrite.Get();
-	startup.hStdError = errorWrite.Get();
+	STARTUPINFOEXW startup{};
+	startup.StartupInfo.cb = sizeof(startup);
+	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	startup.StartupInfo.hStdInput = inputRead.Get();
+	startup.StartupInfo.hStdOutput = outputWrite.Get();
+	startup.StartupInfo.hStdError = errorWrite.Get();
+	startup.lpAttributeList = attributes;
 
 	PROCESS_INFORMATION process{};
 	const BOOL created = ::CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr, TRUE,
-		CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT, environment.data(),
-		request.workingDirectory.c_str(), &startup, &process);
+		CREATE_NO_WINDOW | CREATE_UNICODE_ENVIRONMENT | EXTENDED_STARTUPINFO_PRESENT, environment.data(),
+		request.workingDirectory.c_str(), &startup.StartupInfo, &process);
 	// The child owns its ends now; holding them would keep the pipes from ever reporting EOF.
 	outputWrite.Reset();
 	errorWrite.Reset();
@@ -280,7 +365,9 @@ GitExecutionResult RunGit(const GitExecutionRequest& request, HANDLE stop)
 	}
 
 	if (!exited) {
-		::TerminateProcess(processHandle.Get(), ERROR_CANCELLED);
+		if (!::TerminateJobObject(job.Get(), ERROR_CANCELLED)) {
+			(void)::TerminateProcess(processHandle.Get(), ERROR_CANCELLED);
+		}
 		(void)::WaitForSingleObject(processHandle.Get(), 1000);
 	}
 	// Closing our write end unblocks a writer still waiting on a child that quit early.

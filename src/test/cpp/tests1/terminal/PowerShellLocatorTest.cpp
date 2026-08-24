@@ -1,5 +1,6 @@
 /*! @file */
 #include "pch.h"
+#include "platform/process/WindowsExecutableResolver.h"
 #include "terminal/PowerShellLocator.h"
 
 #include <map>
@@ -51,6 +52,60 @@ public:
 		activeProbes.fetch_sub(1);
 		return result;
 	}
+};
+
+class ScopedTestFile final {
+public:
+	explicit ScopedTestFile( std::wstring path ) : m_path(std::move(path))
+	{
+		m_handle = ::CreateFileW(m_path.c_str(), GENERIC_WRITE,
+			FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr, CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL, nullptr);
+	}
+	~ScopedTestFile()
+	{
+		if( m_handle != INVALID_HANDLE_VALUE ) ::CloseHandle(m_handle);
+		::DeleteFileW(m_path.c_str());
+	}
+
+	ScopedTestFile( const ScopedTestFile& ) = delete;
+	ScopedTestFile& operator=( const ScopedTestFile& ) = delete;
+
+	[[nodiscard]] bool IsOpen() const { return m_handle != INVALID_HANDLE_VALUE; }
+	[[nodiscard]] const std::wstring& Path() const { return m_path; }
+
+private:
+	std::wstring m_path;
+	HANDLE m_handle = INVALID_HANDLE_VALUE;
+};
+
+std::wstring TempDirectoryPath()
+{
+	wchar_t tempPath[MAX_PATH]{};
+	const DWORD tempLength = ::GetTempPathW(static_cast<DWORD>(std::size(tempPath)), tempPath);
+	if( tempLength == 0 || tempLength >= std::size(tempPath) ) return {};
+	wchar_t uniquePath[MAX_PATH]{};
+	if( ::GetTempFileNameW(tempPath, L"sen", 0, uniquePath) == 0 ) return {};
+	::DeleteFileW(uniquePath);
+	return ::CreateDirectoryW(uniquePath, nullptr) ? std::wstring(uniquePath) : std::wstring{};
+}
+
+class ScopedTestDirectory final {
+public:
+	ScopedTestDirectory() : m_path(TempDirectoryPath()) {}
+	~ScopedTestDirectory()
+	{
+		if( !m_path.empty() ) ::RemoveDirectoryW(m_path.c_str());
+	}
+
+	ScopedTestDirectory( const ScopedTestDirectory& ) = delete;
+	ScopedTestDirectory& operator=( const ScopedTestDirectory& ) = delete;
+
+	[[nodiscard]] bool IsValid() const { return !m_path.empty(); }
+	[[nodiscard]] const std::wstring& Path() const { return m_path; }
+
+private:
+	std::wstring m_path;
 };
 
 class FakeProfileProvider final : public terminal::ITerminalProfileProvider {
@@ -178,7 +233,7 @@ TEST(PowerShellLocator, RejectsNonAmd64Executables)
 TEST(PowerShellLocator, CapsCandidatesAndBoundsUnknownVersionProbe)
 {
 	FakeProvider provider;
-	for( int i = 0; i != 40; ++i ) provider.candidates[terminal::EPowerShellSource::Path].push_back(L"candidate" + std::to_wstring(i) + L".exe");
+	for( int i = 0; i != 40; ++i ) provider.candidates[terminal::EPowerShellSource::ProgramFiles].push_back(L"candidate" + std::to_wstring(i) + L".exe");
 	provider.probeVersions[L"candidate0.exe"] = L"7.4.0";
 	terminal::PowerShellLocator locator(provider);
 	const auto result = locator.Discover();
@@ -193,7 +248,7 @@ TEST(PowerShellLocator, RunsAtMostTwoUnknownVersionProbesConcurrently)
 	provider.probeDelayMs = 20;
 	for( int i = 0; i != 6; ++i ) {
 		const auto path = L"probe" + std::to_wstring(i) + L".exe";
-		provider.candidates[terminal::EPowerShellSource::Path].push_back(path);
+		provider.candidates[terminal::EPowerShellSource::ProgramFiles].push_back(path);
 		provider.probeVersions[path] = L"7.6." + std::to_wstring(i);
 	}
 	terminal::PowerShellLocator locator(provider);
@@ -201,6 +256,81 @@ TEST(PowerShellLocator, RunsAtMostTwoUnknownVersionProbesConcurrently)
 	EXPECT_EQ(6u, result.candidates.size());
 	EXPECT_GE(provider.maxActiveProbes.load(), 1u);
 	EXPECT_LE(provider.maxActiveProbes.load(), terminal::PowerShellLocator::kMaxConcurrentVersionProbes);
+}
+
+TEST(PowerShellLocator, DoesNotProbeUntrustedPathCandidateWithoutMetadata)
+{
+	FakeProvider provider;
+	provider.candidates[terminal::EPowerShellSource::Path] = { L"untrusted-path.exe" };
+	provider.probeVersions[L"untrusted-path.exe"] = L"7.6.3";
+	terminal::PowerShellLocator locator(provider);
+
+	const auto result = locator.Discover();
+	EXPECT_TRUE(result.candidates.empty());
+	EXPECT_TRUE(provider.probeTimeouts.empty());
+}
+
+TEST(WindowsExecutableResolver, RejectsEmptyPathEntryInsteadOfCurrentDirectory)
+{
+	std::vector<std::wstring> candidates;
+	const auto candidateResolver = [&candidates]( std::wstring_view candidate ) -> std::optional<std::wstring> {
+		candidates.emplace_back(candidate);
+		return std::nullopt;
+	};
+
+	const auto result = platform::ResolveWindowsExecutableFromPath(
+		L"pwsh.exe", L";C:\\path-that-does-not-exist", candidateResolver);
+	EXPECT_FALSE(result.has_value());
+	ASSERT_EQ(1u, candidates.size());
+	EXPECT_EQ(L"C:\\path-that-does-not-exist\\pwsh.exe", candidates.front());
+}
+
+TEST(WindowsExecutableResolver, RejectsRelativePathEntry)
+{
+	std::vector<std::wstring> candidates;
+	const auto candidateResolver = [&candidates]( std::wstring_view candidate ) -> std::optional<std::wstring> {
+		candidates.emplace_back(candidate);
+		return std::nullopt;
+	};
+
+	const auto result = platform::ResolveWindowsExecutableFromPath(
+		L"pwsh.exe", L".;C:\\path-that-does-not-exist", candidateResolver);
+	EXPECT_FALSE(result.has_value());
+	ASSERT_EQ(1u, candidates.size());
+	EXPECT_EQ(L"C:\\path-that-does-not-exist\\pwsh.exe", candidates.front());
+}
+
+TEST(WindowsExecutableResolver, AcceptsQuotedAbsolutePathEntryWithoutUsingCurrentDirectory)
+{
+	std::vector<std::wstring> candidates;
+	const auto candidateResolver = [&candidates]( std::wstring_view candidate ) -> std::optional<std::wstring> {
+		candidates.emplace_back(candidate);
+		return std::wstring(candidate);
+	};
+
+	const auto result = platform::ResolveWindowsExecutableFromPath(
+		L"pwsh.exe", L"\"C:\\Program Files\\PowerShell\\7\"", candidateResolver);
+	ASSERT_TRUE(result.has_value());
+	EXPECT_EQ(L"C:\\Program Files\\PowerShell\\7\\pwsh.exe", *result);
+	ASSERT_EQ(1u, candidates.size());
+}
+
+TEST(WindowsExecutableResolver, FindsExistingAbsolutePathCandidate)
+{
+	ScopedTestDirectory directory;
+	ASSERT_TRUE(directory.IsValid());
+	const auto executableName = L"pwsh.exe";
+	ScopedTestFile executable(directory.Path() + L"\\" + executableName);
+	ASSERT_TRUE(executable.IsOpen());
+
+	const auto result = platform::ResolveWindowsExecutableFromPath(executableName, directory.Path());
+	ASSERT_TRUE(result.has_value());
+	EXPECT_TRUE(platform::IsAbsoluteWindowsPath(*result));
+	wchar_t longPath[32768]{};
+	const DWORD longPathLength = ::GetLongPathNameW(executable.Path().c_str(), longPath, static_cast<DWORD>(std::size(longPath)));
+	ASSERT_GT(longPathLength, 0u);
+	ASSERT_LT(longPathLength, std::size(longPath));
+	EXPECT_EQ(0, _wcsicmp(result->c_str(), std::wstring(longPath, longPathLength).c_str()));
 }
 
 TEST(PowerShellLocator, CachesVersionByPathStampAndVersion)

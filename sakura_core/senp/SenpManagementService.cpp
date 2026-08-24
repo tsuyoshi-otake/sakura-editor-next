@@ -142,42 +142,65 @@ ProcessResult RunTool(const std::vector<std::wstring>& arguments)
 	ScopedHandle outputWrite;
 	ScopedHandle errorRead;
 	ScopedHandle errorWrite;
+	ScopedHandle nullInput;
 	if (!::CreatePipe(outputRead.Put(), outputWrite.Put(), &security, 0)
 		|| !::CreatePipe(errorRead.Put(), errorWrite.Put(), &security, 0)) return result;
-	::SetHandleInformation(outputRead.Get(), HANDLE_FLAG_INHERIT, 0);
-	::SetHandleInformation(errorRead.Get(), HANDLE_FLAG_INHERIT, 0);
+	nullInput.Reset(::CreateFileW(L"NUL", GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE,
+		&security, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr));
+	if (nullInput.Get() == nullptr || nullInput.Get() == INVALID_HANDLE_VALUE
+		|| !::SetHandleInformation(outputRead.Get(), HANDLE_FLAG_INHERIT, 0)
+		|| !::SetHandleInformation(errorRead.Get(), HANDLE_FLAG_INHERIT, 0)) return result;
 
-	STARTUPINFOW startup{};
-	startup.cb = sizeof(startup);
-	startup.dwFlags = STARTF_USESTDHANDLES;
-	startup.hStdInput = ::GetStdHandle(STD_INPUT_HANDLE);
-	startup.hStdOutput = outputWrite.Get();
-	startup.hStdError = errorWrite.Get();
+	ScopedHandle job(::CreateJobObjectW(nullptr, nullptr));
+	if (job.Get() == nullptr || job.Get() == INVALID_HANDLE_VALUE) return result;
+	JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
+	limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+	if (!::SetInformationJobObject(job.Get(), JobObjectExtendedLimitInformation,
+		&limits, sizeof(limits))) return result;
+
+	SIZE_T attributeBytes = 0;
+	(void)::InitializeProcThreadAttributeList(nullptr, 2, 0, &attributeBytes);
+	if (attributeBytes == 0) return result;
+	std::vector<std::uint8_t> attributeStorage(attributeBytes);
+	auto* const attributes = reinterpret_cast<LPPROC_THREAD_ATTRIBUTE_LIST>(attributeStorage.data());
+	if (!::InitializeProcThreadAttributeList(attributes, 2, 0, &attributeBytes)) return result;
+	struct AttributeListGuard final {
+		LPPROC_THREAD_ATTRIBUTE_LIST value{};
+		~AttributeListGuard() { if (value != nullptr) ::DeleteProcThreadAttributeList(value); }
+	} attributeGuard{ attributes };
+	const std::array<HANDLE, 3> inheritedHandles{ nullInput.Get(), outputWrite.Get(), errorWrite.Get() };
+	if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+		const_cast<HANDLE*>(inheritedHandles.data()), sizeof(inheritedHandles), nullptr, nullptr)) return result;
+	HANDLE jobHandle = job.Get();
+	if (!::UpdateProcThreadAttribute(attributes, 0, PROC_THREAD_ATTRIBUTE_JOB_LIST,
+		&jobHandle, sizeof(jobHandle), nullptr, nullptr)) return result;
+
+	STARTUPINFOEXW startup{};
+	startup.StartupInfo.cb = sizeof(startup);
+	startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
+	startup.StartupInfo.hStdInput = nullInput.Get();
+	startup.StartupInfo.hStdOutput = outputWrite.Get();
+	startup.StartupInfo.hStdError = errorWrite.Get();
+	startup.lpAttributeList = attributes;
 	PROCESS_INFORMATION process{};
 	const BOOL created = ::CreateProcessW(executable.c_str(), commandLine.data(), nullptr, nullptr,
-		TRUE, CREATE_NO_WINDOW, nullptr, directory.c_str(), &startup, &process);
+		TRUE, CREATE_NO_WINDOW | EXTENDED_STARTUPINFO_PRESENT, nullptr, directory.c_str(),
+		&startup.StartupInfo, &process);
 	outputWrite.Reset();
 	errorWrite.Reset();
+	nullInput.Reset();
 	if (!created) return result;
 	result.launched = true;
 	ScopedHandle processHandle(process.hProcess);
 	ScopedHandle processThread(process.hThread);
-	ScopedHandle job(::CreateJobObjectW(nullptr, nullptr));
-	bool assignedToJob = false;
-	if (job.Get() != nullptr) {
-		JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-		limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-		assignedToJob = ::SetInformationJobObject(job.Get(), JobObjectExtendedLimitInformation,
-			&limits, sizeof(limits)) != FALSE
-			&& ::AssignProcessToJobObject(job.Get(), processHandle.Get()) != FALSE;
-	}
 	std::thread outputReader(ReadPipeBounded, outputRead.Get(), std::ref(result.output));
 	std::thread errorReader(ReadPipeBounded, errorRead.Get(), std::ref(result.error));
 	const DWORD wait = ::WaitForSingleObject(processHandle.Get(), kToolTimeoutMilliseconds);
 	if (wait != WAIT_OBJECT_0) {
 		result.timedOut = true;
-		if (assignedToJob) (void)::TerminateJobObject(job.Get(), ERROR_TIMEOUT);
-		else (void)::TerminateProcess(processHandle.Get(), ERROR_TIMEOUT);
+		if (!::TerminateJobObject(job.Get(), ERROR_TIMEOUT)) {
+			(void)::TerminateProcess(processHandle.Get(), ERROR_TIMEOUT);
+		}
 		(void)::WaitForSingleObject(processHandle.Get(), 1000);
 	}
 	(void)::GetExitCodeProcess(processHandle.Get(), &result.exitCode);
@@ -323,8 +346,24 @@ std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view 
 		const auto* readme = StringMember(*object, L"readme");
 		const auto* extensionPath = StringMember(*object, L"extensionPath");
 		const auto* modulePath = StringMember(*object, L"modulePath");
+		const auto moduleSha256Member = object->find(L"moduleSha256");
+		const auto* moduleSha256 = moduleSha256Member == object->end()
+			? nullptr : std::get_if<std::wstring>(&moduleSha256Member->second.Value());
 		if (manifest == nullptr || archive == nullptr || enabled == nullptr
 			|| signedPackage == nullptr || trust == nullptr || readme == nullptr || extensionPath == nullptr) {
+			return std::nullopt;
+		}
+		const auto isLowerSha256 = [](std::wstring_view value) noexcept {
+			return value.size() == 64 && std::ranges::all_of(value, [](wchar_t ch) {
+				return (ch >= L'0' && ch <= L'9') || (ch >= L'a' && ch <= L'f');
+			});
+		};
+		if (modulePath != nullptr) {
+			if (modulePath->empty() || moduleSha256 == nullptr || !isLowerSha256(*moduleSha256)) {
+				return std::nullopt;
+			}
+		} else if (moduleSha256Member == object->end()
+			|| !std::holds_alternative<std::monostate>(moduleSha256Member->second.Value())) {
 			return std::nullopt;
 		}
 		const auto* id = StringMember(*manifest, L"id");
@@ -355,6 +394,7 @@ std::optional<std::vector<ExtensionDescriptor>> ParseInstalled(std::string_view 
 			.readme = *readme,
 			.extensionPath = *extensionPath,
 			.modulePath = modulePath == nullptr ? std::wstring{} : *modulePath,
+			.moduleSha256 = moduleSha256 == nullptr ? std::wstring{} : *moduleSha256,
 			.archiveSha256 = *archive,
 			.installed = true,
 			.builtIn = *trust == L"builtin",

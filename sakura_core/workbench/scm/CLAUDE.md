@@ -1451,6 +1451,22 @@ cancellable, and its terminal state is typed.
   directory alone is not enough: a directory can sit inside a different
   repository's worktree, and `-C` is what makes git resolve the repository the
   request names.
+- Git executable discovery uses the shared Windows executable resolver. PATH is
+  parsed explicitly, empty and relative entries are ignored, and the selected
+  `git.exe` path is absolute; process CWD is never an executable search root.
+- Status and history use the typed `PassiveRepositoryRead` policy. The runner
+  injects `-c core.fsmonitor=false` and rejects a caller-side fsmonitor
+  override, so opening or refreshing a repository cannot execute a
+  repository-configured fsmonitor command. Ordinary user-invoked Git commands
+  retain normal Git configuration behavior. This is an explicit interim
+  divergence from VS Code: upstream disables its Git extension in untrusted
+  workspaces, while this product has no Workspace Trust authority yet, so the
+  narrower fsmonitor restriction applies to every passive refresh. Revisit the
+  policy when a real workspace-trust boundary exists.
+- Child inheritance is an explicit standard-stream handle list, and the Git
+  process is assigned atomically at creation to a kill-on-close job. Timeout,
+  cancellation, and output-limit terminal paths therefore own descendant
+  cleanup without exposing unrelated inheritable editor handles.
 - stdin is written on its own thread while the parent drains stdout and stderr.
   A commit message can exceed the pipe buffer, and a blocking parent write would
   deadlock against a child waiting for its stdout to be drained.

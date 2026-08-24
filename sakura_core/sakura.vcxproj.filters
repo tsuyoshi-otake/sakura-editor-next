@@ -1455,6 +1455,9 @@
     <ClInclude Include="..\sakura_core\platform\VirtualStoreMigration.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
+    <ClInclude Include="..\sakura_core\platform\process\WindowsExecutableResolver.h">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClInclude>
     <ClInclude Include="..\sakura_core\platform\foundation\PlatformLifecycleCoordinator.h">
       <Filter>Cpp Source Files\platform</Filter>
     </ClInclude>
@@ -3304,6 +3307,9 @@
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\VirtualStoreMigration.cpp">
+      <Filter>Cpp Source Files\platform</Filter>
+    </ClCompile>
+    <ClCompile Include="..\sakura_core\platform\process\WindowsExecutableResolver.cpp">
       <Filter>Cpp Source Files\platform</Filter>
     </ClCompile>
     <ClCompile Include="..\sakura_core\platform\filesystem\CFileService.cpp">
