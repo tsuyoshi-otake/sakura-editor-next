@@ -43,14 +43,6 @@ PACKAGE_RESTORE = REPO_ROOT / "tools/build/sakura_build_lib/package_restore.py"
 PATH_EXPRESSION = "${{ steps.package-plan.outputs.path }}"
 KEY_EXPRESSION = "sakura-packages-${{ runner.os }}-${{ steps.package-plan.outputs.hash }}"
 
-# `coverage-map.yml` has no step-level pull-request exclusion because it cannot
-# be reached by a pull request at all: it is workflow_call-only and its single
-# caller is build-sakura's trusted main-push path.  The cache write has to
-# retain that caller's scope so main-targeted PRs can restore the map read-only,
-# which is exactly what a `workflow_run` indirection would destroy.  The test
-# below re-checks that reason instead of trusting the entry.
-CALLER_GATED_WORKFLOWS = {"coverage-map.yml"}
-
 STEP_BOUNDARY_RE = re.compile(r"(?m)^(?=[ \t]*-[ \t]+(?:name|uses|if):)")
 # Anything that can write an entry: the combined action writes from its own
 # post-step, so it counts too.
@@ -163,8 +155,6 @@ class PackageClosureCacheTests(unittest.TestCase):
 class RepositoryCacheSavePolicyTests(unittest.TestCase):
     def test_every_cache_write_excludes_pull_requests(self) -> None:
         for workflow in _workflows():
-            if workflow.name in CALLER_GATED_WORKFLOWS:
-                continue
             text = _read(workflow)
             for step in _steps(text):
                 if not CACHE_SAVE_RE.search(step):
@@ -179,25 +169,6 @@ class RepositoryCacheSavePolicyTests(unittest.TestCase):
                         f"can read it, and it consumes the repository-wide "
                         f"10 GiB quota until GitHub evicts it",
                     )
-
-    def test_the_caller_gated_workflow_is_unreachable_from_a_pull_request(self) -> None:
-        for name in CALLER_GATED_WORKFLOWS:
-            with self.subTest(workflow=name):
-                text = _read(WORKFLOW_DIR / name)
-                # No DOTALL here: `.` matching newlines would let the body run
-                # past `on:` and collect every later top-level block's keys.
-                triggers = re.search(r"(?m)^on:\n(?P<body>(?:[ \t]+.*\n|\n)*)", text)
-                self.assertIsNotNone(triggers, f"{name} declares no triggers")
-                assert triggers is not None
-                declared = re.findall(r"(?m)^  (\w+):", triggers.group("body"))
-                self.assertEqual(
-                    declared,
-                    ["workflow_call"],
-                    f"{name} is exempt from the pull-request save exclusion only "
-                    f"because its caller gates it; a direct trigger removes that "
-                    f"guarantee",
-                )
-
 
 class PullRequestCacheCleanupTests(unittest.TestCase):
     def setUp(self) -> None:

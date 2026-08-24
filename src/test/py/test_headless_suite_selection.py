@@ -16,10 +16,9 @@ down the single legacy ``test.filtered_or_skipped`` finding that
 ``tools/CLAUDE.md`` recorded as the reason the workflow could not be edited at
 all.
 
-Both workflows now read this file. ``build-sakura.yml`` also reloads it when a
-main-targeted selection temporarily replaces ``GTEST_FILTER``, so the later
-full headless gate restores the exact shared negative pattern without a second
-literal.
+Both workflows now read this file. ``build-sakura.yml`` publishes it once for
+the required Debug/Release full headless suite without restating the negative
+pattern.
 
 Regular expressions rather than PyYAML, for the reason
 ``test_workflow_cleanup_gating.py`` gives: CI installs ``requirements.txt`` with
@@ -102,10 +101,10 @@ class BothWorkflowsAgreeOnTheSelection(unittest.TestCase):
 
     def test_build_sakura_reads_the_shared_file(self) -> None:
         text = (WORKFLOWS / "build-sakura.yml").read_text(encoding="utf-8")
-        self.assertGreaterEqual(
+        self.assertEqual(
             text.count("src/test/headless-suite-selection.env"),
-            3,
-            "The default, selected component tests, and Rust full gate must use the shared definition.",
+            1,
+            "The native full gate must use the shared definition exactly once.",
         )
         self.assertNotIn(
             "HEADLESS_GTEST_EXCLUDES:",

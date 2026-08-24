@@ -147,12 +147,11 @@ jobs:
 
       - name: Run unit tests
         id: run_unit_tests
-        continue-on-error: true
         timeout-minutes: 15
         run: ./build-gnu.bat ${{ env.BuildPlatform }} ${{ env.Configuration }}
 
       - name: Try gdb backtrace on test failure
-        if: steps.run_unit_tests.outcome == 'failure' && env.Configuration != 'Release'
+        if: failure() && env.Configuration == 'Debug'
         continue-on-error: true
         timeout-minutes: 5
         working-directory: ${{ github.workspace }}/${{ env.BuildPlatform }}/${{ env.Configuration }}
@@ -166,12 +165,6 @@ jobs:
             -ex "bt full" \
             -ex "info registers" \
             --args ./tests1.exe --gtest_repeat=100 --gtest_throw_on_failure
-
-      - name: Mark workflow failed when unit tests fail
-        if: steps.run_unit_tests.outcome == 'failure' && env.Configuration != 'Release'
-        run: |
-          echo "Unit tests failed. See the gdb trace above."
-          exit 1
 
       - name: Clean up test process survivors
         if: ${{ always() }}

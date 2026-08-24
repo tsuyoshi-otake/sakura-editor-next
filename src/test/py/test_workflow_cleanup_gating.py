@@ -57,7 +57,6 @@ GATED_CALL_SITES = {
 # when those files change for a reason of their own.
 KNOWN_UNGATED_CALL_SITES = {
     ("build-on-msys2.yml", "mingw"),
-    ("coverage-map.yml", "collect"),
 }
 
 _JOBS_RE = re.compile(r"^jobs:[ \t]*$", re.MULTILINE)

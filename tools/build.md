@@ -569,15 +569,19 @@ x64\Debug\tests1.exe --gtest_filter=-MacroMgrTest.*:CPpaTest.*:SelectFileTest.*:
 
 GitHub-hosted runner は非対話セッションのため、標準 CI でも同じフィルターを環境変数 `GTEST_FILTER` から適用します。CI では CTest と Actions の両方に上限時間を設け、失敗時を含めてリポジトリ配下の `tests1.exe`、`sakura.exe`、および関連するカバレッジプロセスを検査・終了します。完全な UI・連携テストは、対話可能な Windows セッションで別途実行してください。
 
-### カバレッジマップによる影響テスト選択
+### カバレッジマップによる影響テスト選択（オフライン診断）
 
-Issue #47 の main 向け PR 用選択器は、main の全件テストから作った OpenCppCoverage
-Cobertura 断片をスイート単位で統合し、変更ファイルを GoogleTest selector へ変換します。
+Issue #47 で作成した選択器は、OpenCppCoverage の Cobertura 断片をスイート単位で
+統合し、変更ファイルを GoogleTest selector へ変換するオフライン診断として保持します。
+GitHub Actions の producer/cache/consumer 経路は Issue #166 で廃止済みです。実測では
+map 生成に 94.43 runner-minutes、1 PR あたりの削減は約 4.77 runner-minutes で、損益分岐は
+同一 base を共有する 20 PR でした。最近の履歴で確認できた最大値は 2 PR のため、ホスト
+CI は Debug/Release とも常に full headless suite を実行します。
 マップのスキーマは [`tools/build/coverage-map.schema.json`](build/coverage-map.schema.json)
 です。マップには main の `base_sha`、`tests1.exe` の SHA-256、テスト inventory の
 guarantee fingerprint を保存するため、別の main 成果物を誤って再利用できません。
-Actions cache は `tia-map-windows-x64-<base-sha>-<schema-version>`（CLI の
-`coverage_cache_key` と同じ形式）を使い、base SHA を省略した共有キーを作ってはいけません。
+CLI の `coverage_cache_key` は `tia-map-windows-x64-<base-sha>-<schema-version>` 形式を
+返しますが、現在これを読み書きする Actions cache はありません。
 
 ```cmd
 py -3 tools/build/sakura_build.py test coverage-map merge ^
@@ -628,24 +632,9 @@ test-runner/PCH の変更・選択テストが全体の 65% 以上、または s
 inline/template の変更も同じ module の coverage suite を選べます。modules の所有範囲に
 入らない production file は安全側に全件へフォールバックします。
 
-Actions では `build-sakura.yml` が full Debug/Release 成功後の trusted `main` push だけで
-`coverage-map.yml` を呼びます。Debug の `tests1.exe` と PDB は retention 1 日の入力 artifact
-として渡し、8 shard が XML を各 runner 内で検証して compact partial map だけを集約します。
-最終 map は正確な main SHA を含む cache key で保存されます。map 作成は required check では
-なく、失敗時には cache を保存しません。
-
-同一リポジトリの main 向け PR はその PR の `base.sha` と完全一致する map だけを
-restore し、selector の結果と `CNativeW.*` の smoke を `tests1` の `GTEST_FILTER` に渡します。
-coverage map は `tests1` 専用なので、別々に CTest へ登録された component test executable と
-pytest は、この選択時にも従来の full headless filter で必ず実行します。map 不在・provenance
-不一致・不明な差分・選択器の例外は、従来の full headless suite へ戻ります。fork と `main` head の
-PR は常に full suite です。したがって map は高速化の
-ためのヒントであり、テスト0件の成功や cache 書き込み権限を与えるものではありません。
-
-各構成の選択決定は Actions artifact `test-selection-x64-Debug`／
-`test-selection-x64-Release` 内の `tia-test-selection.json` に保存されます。`mode` と
-`full_fallback` を確認すると、main 向け PR が選択実行したか、安全側の full fallback に戻ったかを
-後から判別できます。
+この CLI をホスト CI に戻す場合は、map 生成コスト、実際の同一 base 再利用数、失敗率を
+再計測し、生成側を含む runner-minutes で損益分岐を満たす設計にしてください。選択結果が
+空、古い、または不明な場合にテスト0件を成功として扱ってはいけません。
 
 ### デバッグ方法
 

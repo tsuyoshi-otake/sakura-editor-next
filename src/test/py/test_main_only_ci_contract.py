@@ -1,4 +1,4 @@
-"""Contracts for the main-only CI and coverage-map event path (#166)."""
+"""Contracts for the main-only CI event path (#166)."""
 
 from __future__ import annotations
 
@@ -10,10 +10,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 WORKFLOWS = REPO_ROOT / ".github/workflows"
 BUILD_WORKFLOW = WORKFLOWS / "build-sakura.yml"
-COVERAGE_WORKFLOW = WORKFLOWS / "coverage-map.yml"
 TARGET_POLICY = WORKFLOWS / "pr-target-policy.yml"
-
-MAIN_PUSH_CONDITION = "github.event_name == 'push' && github.ref_name == 'main'"
 
 
 def _read(path: Path) -> str:
@@ -44,24 +41,9 @@ class MainOnlyTriggerTests(unittest.TestCase):
         self.assertRegex(push, r"(?m)^    branches:\n      - main\n")
         self.assertNotRegex(push, r"(?m)^      - develop\s*$")
 
-    def test_coverage_input_and_call_share_the_main_push_path(self) -> None:
+    def test_develop_does_not_reappear_as_a_push_path(self) -> None:
         text = _read(BUILD_WORKFLOW)
-        self.assertEqual(
-            text.count(MAIN_PUSH_CONDITION),
-            2,
-            "the Debug input upload and reusable coverage-map call must both be "
-            "reachable from the same main push event",
-        )
         self.assertNotIn("github.ref_name == 'develop'", text)
-
-    def test_reusable_coverage_workflow_has_no_direct_event_path(self) -> None:
-        declared = re.findall(r"(?m)^  ([a-z_]+):", _trigger_block(_read(COVERAGE_WORKFLOW)))
-        self.assertEqual(
-            declared,
-            ["workflow_call"],
-            "coverage-map cache writes must stay behind build-sakura's trusted "
-            "main-push caller",
-        )
 
 
 class MainOnlyTargetPolicyTests(unittest.TestCase):

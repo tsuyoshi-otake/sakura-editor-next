@@ -193,7 +193,7 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             static_gate,
         )
 
-    def test_debug_release_rust_and_msbuild_headless_gates_are_in_native_job(self) -> None:
+    def test_debug_release_rust_and_native_headless_gates_are_in_native_job(self) -> None:
         cargo_gate = self.step("Rust tests and product staticlib (${{ matrix.config }})")
         self.assertIn("test --workspace --locked --release", cargo_gate)
         self.assertIn("test --workspace --locked --no-fail-fast", cargo_gate)
@@ -203,21 +203,19 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
             cargo_gate,
         )
 
-        rust_headless = self.step(
-            "MSBuild Rust backend full headless gate (${{ matrix.config }})"
-        )
-        for block in (rust_headless,):
-            self.assertIn("src/test/headless-suite-selection.env", block)
-            self.assertIn("$env:GTEST_FILTER = $Matches.value", block)
-            self.assertIn("'--test-dir' 'build/${{ matrix.platform }}/CMakeTools'", block)
-            self.assertIn("'--timeout' '600'", block)
-
         self.assertIn("SAKURA_UTF16_BACKEND: rust", self.workflow)
         self.assertIn("SAKURA_UTF16_PRODUCTION_PACKAGE: true", self.workflow)
         self.assertNotIn("SAKURA_UTF16_BACKEND: both", self.workflow)
+        self.assertNotIn("MSBuild Rust integration (rust", self.workflow)
+        self.assertNotIn("MSBuild Rust backend full headless gate", self.workflow)
+        self.assertNotIn("SAKURA_UTF16_PRODUCTION_PACKAGE: false", self.workflow)
+        native_headless = self.step("Run headless tests")
+        self.assertIn("& ctest", native_headless)
+        self.assertIn("'--test-dir' 'build/${{ matrix.platform }}/CMakeTools'", native_headless)
+        self.assertIn("'--timeout' '600'", native_headless)
         self.assertLess(
-            self.workflow.index("MSBuild Rust integration (rust"),
-            self.workflow.index("MSBuild Rust backend full headless gate"),
+            self.workflow.index("Run headless tests"),
+            self.workflow.index("Rust tests and product staticlib"),
         )
         self.assertIn(
             "needs: [check-encoding, rust-security-audit, build-vcpkg-msvc, build]",
@@ -241,10 +239,8 @@ class CiRustNativeWorkflowContractTests(unittest.TestCase):
         for name in (
             "Prepare pinned Rust toolchain",
             "Rust tests and product staticlib (${{ matrix.config }})",
-            "MSBuild Rust integration (rust, ${{ matrix.config }})",
             "Rust integration initialization (rust, ${{ matrix.config }})",
             "Rust integration focused tests (rust, ${{ matrix.config }})",
-            "MSBuild Rust backend full headless gate (${{ matrix.config }})",
         ):
             with self.subTest(step=name):
                 self.assertIn(
