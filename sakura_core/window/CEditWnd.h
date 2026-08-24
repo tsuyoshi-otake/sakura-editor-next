@@ -1161,6 +1161,11 @@ private:
 	HWND			m_hWnd = nullptr;
 	std::unique_ptr<CCustomFrameController> m_customFrame;
 	bool			m_dispatchReady = false;
+	//! True while a wheel message is synchronously forwarded to a hovered child.
+	//! A child that declines the message may let DefWindowProc propagate it back
+	//! to this frame; that propagated message must terminate instead of being
+	//! forwarded to the same child again.
+	bool			m_mouseWheelForwarding = false;
 	std::unique_ptr<workbench::CWorkspaceContext> m_workspaceContext;
 	std::unique_ptr<workbench::editor::CEmptyEditorSurface> m_emptyEditorSurface;
 	//! Native side-by-side comparison surface. This is a

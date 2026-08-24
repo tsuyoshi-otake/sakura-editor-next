@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "workbench/commands/ApiCommandArguments.h"
+#include "workbench/scm/CScmWorkbenchTool.h"
 #include "workbench/scm/GitBranchCommands.h"
 #include "workbench/scm/GitCommandRunner.h"
 #include "workbench/scm/GitCommitCommands.h"
@@ -193,6 +194,96 @@ TEST(ScmViewStackLayout, ReservesANonInteractiveGraphFrameBelowChanges)
 	EXPECT_EQ((ScmVerticalBounds{ 0, 250 }), empty.changesBody);
 	EXPECT_TRUE(empty.graphHeader.Empty());
 	EXPECT_TRUE(empty.graphBody.Empty());
+}
+
+TEST(ScmWheelRoute, RoutesHeadersToTheirOwningScrollableList)
+{
+	const auto layout = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.graphVisible = true,
+	});
+
+	EXPECT_EQ(EScmWheelRoute::Changes,
+		ResolveScmWheelRoute(layout, true, true, true, layout.changesHeader.top));
+	EXPECT_EQ(EScmWheelRoute::Changes,
+		ResolveScmWheelRoute(layout, true, true, true, layout.changesHeader.bottom - 1));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, true, true, layout.changesHeader.bottom));
+	EXPECT_EQ(EScmWheelRoute::Changes,
+		ResolveScmWheelRoute(layout, true, true, true, layout.changesBody.top));
+	EXPECT_EQ(EScmWheelRoute::Changes,
+		ResolveScmWheelRoute(layout, true, true, true, layout.changesBody.bottom - 1));
+	EXPECT_EQ(EScmWheelRoute::Graph,
+		ResolveScmWheelRoute(layout, true, true, true, layout.changesBody.bottom));
+	EXPECT_EQ(EScmWheelRoute::Graph,
+		ResolveScmWheelRoute(layout, true, true, true, layout.graphHeader.top));
+	EXPECT_EQ(EScmWheelRoute::Graph,
+		ResolveScmWheelRoute(layout, true, true, true, layout.graphHeader.bottom - 1));
+	EXPECT_EQ(EScmWheelRoute::Graph,
+		ResolveScmWheelRoute(layout, true, true, true, layout.graphHeader.bottom));
+	EXPECT_EQ(EScmWheelRoute::Graph,
+		ResolveScmWheelRoute(layout, true, true, true, layout.graphBody.top));
+	EXPECT_EQ(EScmWheelRoute::Graph,
+		ResolveScmWheelRoute(layout, true, true, true, layout.graphBody.bottom - 1));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, true, true, layout.graphBody.bottom));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, true, true, layout.repositoriesHeader.top));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, true, true, layout.input.top));
+}
+
+TEST(ScmWheelRoute, ConsumesUnavailableAndCollapsedSurfaces)
+{
+	const auto layout = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.graphVisible = true,
+	});
+
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, true, false, layout.graphHeader.top));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, true, false, layout.graphBody.top));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(layout, true, false, true, layout.changesHeader.top));
+
+	const auto collapsed = BuildScmViewStackLayout({
+		.clientTop = 0,
+		.clientBottom = 500,
+		.viewHeaderHeight = 30,
+		.repositoryRowHeight = 22,
+		.inputOuterMargin = 5,
+		.inputHeight = 26,
+		.graphBodyHeight = 48,
+		.repositoriesVisible = true,
+		.changesCollapsed = true,
+		.graphCollapsed = true,
+		.changesHeaderVisible = true,
+		.inputVisible = true,
+		.graphVisible = true,
+	});
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(collapsed, true, false, false, collapsed.changesHeader.top));
+	EXPECT_EQ(EScmWheelRoute::Consume,
+		ResolveScmWheelRoute(collapsed, true, false, false, collapsed.graphHeader.top));
 }
 
 TEST(ScmViewStackLayout, ReservesTheCommitActionButtonUnderTheInput)

@@ -11,6 +11,7 @@
 #include "workbench/scm/GitDiffModel.h"
 #include "workbench/scm/GitHistoryModel.h"
 #include "workbench/scm/GitInitCloneCommands.h"
+#include "workbench/scm/ScmViewStackLayout.h"
 #include "workbench/scm/GitScmModel.h"
 #include "workbench/scm/SourceControlService.h"
 #include "workbench/scm/ScmNativeSurfaceAdapter.h"
@@ -24,6 +25,37 @@
 #include <vector>
 
 namespace workbench::scm {
+
+//! The terminal destination for a wheel that reaches the SCM frame itself.
+//! `Consume` is also the explicit result for an unavailable or collapsed view.
+enum class EScmWheelRoute : unsigned char {
+	Consume,
+	Changes,
+	Graph,
+};
+
+[[nodiscard]] constexpr bool ScmWheelYInBounds(const ScmVerticalBounds& bounds, int y) noexcept
+{
+	return bounds.top <= y && y < bounds.bottom;
+}
+
+//! Resolves the SCM frame's semantic wheel owner without touching HWND state.
+//! The native window uses the same result to route headers to their sibling list
+//! and to terminate every non-scrollable state explicitly.
+[[nodiscard]] constexpr EScmWheelRoute ResolveScmWheelRoute(
+	const ScmViewStackLayout& layout, bool graphFrameVisible,
+	bool changesListVisible, bool graphListVisible, int y) noexcept
+{
+	if (graphFrameVisible && (ScmWheelYInBounds(layout.graphHeader, y)
+		|| ScmWheelYInBounds(layout.graphBody, y))) {
+		return graphListVisible ? EScmWheelRoute::Graph : EScmWheelRoute::Consume;
+	}
+	if (ScmWheelYInBounds(layout.changesHeader, y)
+		|| ScmWheelYInBounds(layout.changesBody, y)) {
+		return changesListVisible ? EScmWheelRoute::Changes : EScmWheelRoute::Consume;
+	}
+	return EScmWheelRoute::Consume;
+}
 
 class CScmWorkbenchTool final : public IWorkbenchTool {
 public:

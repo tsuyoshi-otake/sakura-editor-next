@@ -1465,26 +1465,15 @@ struct CScmWorkbenchTool::Impl {
 		};
 		if (!::ScreenToClient(window, &point)) return;
 
-		const auto routeToList = [&](HWND target) {
-			if (target == nullptr || ::IsWindowVisible(target) == FALSE) return;
-			::SendMessageW(target, WM_MOUSEWHEEL, wParam, lParam);
-		};
 		const auto layout = ViewStack();
-		const RECT graphHeader = ViewBounds(layout.graphHeader);
-		const RECT graphBody = ViewBounds(layout.graphBody);
-		const bool inGraph = GraphFrameVisible()
-			&& (::PtInRect(&graphHeader, point) != FALSE
-				|| ::PtInRect(&graphBody, point) != FALSE);
-		if (inGraph) {
-			routeToList(graphList);
-			return;
+		const auto route = ResolveScmWheelRoute(layout, GraphFrameVisible(),
+			list != nullptr && ::IsWindowVisible(list) != FALSE,
+			graphList != nullptr && ::IsWindowVisible(graphList) != FALSE, point.y);
+		if (route == EScmWheelRoute::Changes && list != nullptr) {
+			::SendMessageW(list, WM_MOUSEWHEEL, wParam, lParam);
+		} else if (route == EScmWheelRoute::Graph && graphList != nullptr) {
+			::SendMessageW(graphList, WM_MOUSEWHEEL, wParam, lParam);
 		}
-
-		const RECT changesHeader = ViewBounds(layout.changesHeader);
-		const RECT changesBody = ViewBounds(layout.changesBody);
-		const bool inChanges = ::PtInRect(&changesHeader, point) != FALSE
-			|| ::PtInRect(&changesBody, point) != FALSE;
-		if (inChanges) routeToList(list);
 	}
 	void LayoutList()
 	{

@@ -993,6 +993,28 @@ private:
 	const bool m_previous;
 };
 
+class ScopedMouseWheelForward final {
+public:
+	explicit ScopedMouseWheelForward(bool& value) noexcept
+		: m_value(value)
+		, m_previous(value)
+	{
+		m_value = true;
+	}
+
+	~ScopedMouseWheelForward()
+	{
+		m_value = m_previous;
+	}
+
+	ScopedMouseWheelForward(const ScopedMouseWheelForward&) = delete;
+	ScopedMouseWheelForward& operator=(const ScopedMouseWheelForward&) = delete;
+
+private:
+	bool& m_value;
+	const bool m_previous;
+};
+
 [[nodiscard]] std::wstring GetProcessCurrentDirectory()
 {
 	const DWORD required = ::GetCurrentDirectoryW(0, nullptr);
@@ -11209,6 +11231,10 @@ LRESULT CEditWnd::DispatchEvent(
 		CancelMarkdownPreviewResize();
 		return 0;
 	case WM_MOUSEWHEEL:
+		// A child that does not consume a synchronously forwarded wheel lets
+		// DefWindowProc propagate it back to this frame.  End that propagated
+		// message here; forwarding it again would recurse until stack overflow.
+		if (m_mouseWheelForwarding) return 0L;
 		// VS Code scrolls whatever the pointer is over, not whatever holds the
 		// keyboard focus.  Win32 delivers WM_MOUSEWHEEL to the focus window, and
 		// SPI_GETMOUSEWHEELROUTING's hybrid default only redirects to a hovered
@@ -11217,6 +11243,7 @@ LRESULT CEditWnd::DispatchEvent(
 		// Forward to the hovered descendant instead; it keeps its own scroll
 		// authority and answers with its own handler.
 		if (const HWND hovered = HoveredScrollTarget(lParam); hovered != nullptr) {
+			ScopedMouseWheelForward forwarding(m_mouseWheelForwarding);
 			return ::SendMessageW(hovered, WM_MOUSEWHEEL, wParam, lParam);
 		}
 		if (!HasActiveEditorInput() && !m_pPrintPreview) return 0;
@@ -14130,6 +14157,15 @@ HWND CEditWnd::HoveredScrollTarget( LPARAM lParam ) const noexcept
 	if (hovered == nullptr || hovered == GetHwnd()) return nullptr;
 	if (::GetWindowThreadProcessId(hovered, nullptr) != ::GetCurrentThreadId()) return nullptr;
 	if (::GetAncestor(hovered, GA_ROOT) != GetHwnd()) return nullptr;
+	// The tab strip owns the historical wheel-to-next/previous-window behavior.
+	// Keep its root and all descendants on OnMouseWheel -> DoMouseWheel so the
+	// m_bChgWndByWheel path is not bypassed by pointer-following forwarding.
+	const HWND tabWindow = m_cTabWnd.GetHwnd();
+	const HWND tabControl = m_cTabWnd.m_hwndTab;
+	for (HWND ancestor = hovered; ancestor != nullptr && ancestor != GetHwnd();
+		ancestor = ::GetParent(ancestor)) {
+		if (ancestor == tabWindow || ancestor == tabControl) return nullptr;
+	}
 	// The editor panes keep the historical path, which owns zoom, the caret, and
 	// the split-pane dispatch that a bare WM_MOUSEWHEEL forward cannot reproduce.
 	for (const auto& view : m_pcEditViewArr) {

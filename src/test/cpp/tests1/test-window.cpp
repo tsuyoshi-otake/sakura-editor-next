@@ -61,6 +61,124 @@ void RequestForeignWindowClose(HWND hWnd);
 
 } // namespace testing
 
+namespace {
+
+struct MouseWheelForwardTestState {
+	CEditWnd* editWindow = nullptr;
+	int parentWheelMessages = 0;
+};
+
+class ScopedEditWindowAttachment final {
+public:
+	explicit ScopedEditWindowAttachment(CEditWnd& editWindow) noexcept
+		: m_editWindow(editWindow)
+	{
+	}
+
+	~ScopedEditWindowAttachment()
+	{
+		m_editWindow.AttachMainWindowEarly(nullptr);
+	}
+
+	ScopedEditWindowAttachment(const ScopedEditWindowAttachment&) = delete;
+	ScopedEditWindowAttachment& operator=(const ScopedEditWindowAttachment&) = delete;
+
+private:
+	CEditWnd& m_editWindow;
+};
+
+class ScopedTabWindowHandles final {
+public:
+	explicit ScopedTabWindowHandles(CTabWnd& tabWindow) noexcept
+		: m_tabWindow(tabWindow)
+		, m_root(tabWindow.GetHwnd())
+		, m_control(tabWindow.m_hwndTab)
+	{
+	}
+
+	~ScopedTabWindowHandles()
+	{
+		m_tabWindow._SetHwnd(m_root);
+		m_tabWindow.m_hwndTab = m_control;
+	}
+
+	ScopedTabWindowHandles(const ScopedTabWindowHandles&) = delete;
+	ScopedTabWindowHandles& operator=(const ScopedTabWindowHandles&) = delete;
+
+private:
+	CTabWnd& m_tabWindow;
+	const HWND m_root;
+	const HWND m_control;
+};
+
+constexpr wchar_t kMouseWheelForwardTestParentClass[] = L"SakuraMouseWheelForwardTestParent";
+constexpr wchar_t kMouseWheelForwardTestChildClass[] = L"SakuraMouseWheelForwardTestChild";
+
+LRESULT CALLBACK MouseWheelForwardTestParentProc(
+	HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	if (message == WM_NCCREATE) {
+		const auto* create = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+		::SetWindowLongPtrW(window, GWLP_USERDATA,
+			reinterpret_cast<LONG_PTR>(create->lpCreateParams));
+	}
+	auto* state = reinterpret_cast<MouseWheelForwardTestState*>(
+		::GetWindowLongPtrW(window, GWLP_USERDATA));
+	if (message == WM_MOUSEWHEEL && state != nullptr && state->editWindow != nullptr) {
+		++state->parentWheelMessages;
+		// Keep a regression in the production guard from overflowing the test
+		// process stack. The assertion below still requires exactly one return.
+		if (state->parentWheelMessages > 8) return 0;
+		return state->editWindow->DispatchEvent(window, message, wParam, lParam);
+	}
+	if (message == WM_NCDESTROY) ::SetWindowLongPtrW(window, GWLP_USERDATA, 0);
+	return ::DefWindowProcW(window, message, wParam, lParam);
+}
+
+LRESULT CALLBACK MouseWheelForwardTestChildProc(
+	HWND window, UINT message, WPARAM wParam, LPARAM lParam)
+{
+	// This child deliberately declines the wheel, reproducing the
+	// DefWindowProc propagation path that used to re-enter the frame.
+	return ::DefWindowProcW(window, message, wParam, lParam);
+}
+
+HWND CreateMouseWheelForwardTestParent(MouseWheelForwardTestState& state)
+{
+	const HINSTANCE instance = ::GetModuleHandleW(nullptr);
+	static const ATOM atom = [] {
+		WNDCLASSW windowClass{};
+		windowClass.lpfnWndProc = MouseWheelForwardTestParentProc;
+		windowClass.hInstance = ::GetModuleHandleW(nullptr);
+		windowClass.lpszClassName = kMouseWheelForwardTestParentClass;
+		const ATOM result = ::RegisterClassW(&windowClass);
+		return result != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS ? 1 : 0;
+	}();
+	if (atom == 0) return nullptr;
+	return ::CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST,
+		kMouseWheelForwardTestParentClass, L"", WS_POPUP, 40, 40, 120, 120,
+		nullptr, nullptr, instance, &state);
+}
+
+HWND CreateMouseWheelForwardTestChild(
+	HWND parent, int x = 0, int y = 0, int width = 120, int height = 120)
+{
+	const HINSTANCE instance = ::GetModuleHandleW(nullptr);
+	static const ATOM atom = [] {
+		WNDCLASSW windowClass{};
+		windowClass.lpfnWndProc = MouseWheelForwardTestChildProc;
+		windowClass.hInstance = ::GetModuleHandleW(nullptr);
+		windowClass.lpszClassName = kMouseWheelForwardTestChildClass;
+		const ATOM result = ::RegisterClassW(&windowClass);
+		return result != 0 || ::GetLastError() == ERROR_CLASS_ALREADY_EXISTS ? 1 : 0;
+	}();
+	if (atom == 0) return nullptr;
+	return ::CreateWindowExW(0, kMouseWheelForwardTestChildClass, L"", WS_CHILD | WS_VISIBLE,
+		x, y, width, height, parent, nullptr, instance, nullptr);
+}
+
+} // namespace
+
 namespace window {
 
 struct TrayWndTest : public ::testing::Test, public env::ShareDataTestSuite, public window::UiaTestSuite {
@@ -903,6 +1021,81 @@ struct EditWndTest : public ::testing::Test, public window::EditorTestSuite, pub
 		return hWndPage;
 	}
 };
+
+TEST_F(EditWndTest, MouseWheelForwardingStopsWhenChildPropagatesToFrame)
+{
+	MouseWheelForwardTestState state{ .editWindow = pcEditWnd };
+	using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
+	WindowHolder parent{ CreateMouseWheelForwardTestParent(state) };
+	ASSERT_TRUE(parent);
+
+	ScopedEditWindowAttachment attachment(*pcEditWnd);
+	pcEditWnd->AttachMainWindowEarly(parent.get());
+	::ShowWindow(parent.get(), SW_SHOWNOACTIVATE);
+	::UpdateWindow(parent.get());
+
+	WindowHolder child{ CreateMouseWheelForwardTestChild(parent.get()) };
+	ASSERT_TRUE(child);
+
+	RECT childRect{};
+	ASSERT_TRUE(::GetWindowRect(child.get(), &childRect));
+	const POINT screen{
+		(childRect.left + childRect.right) / 2,
+		(childRect.top + childRect.bottom) / 2,
+	};
+	ASSERT_EQ(child.get(), ::WindowFromPoint(screen));
+
+	const LPARAM point = MAKELPARAM(
+		static_cast<WORD>(screen.x), static_cast<WORD>(screen.y));
+	EXPECT_EQ(0L, pcEditWnd->DispatchEvent(
+		parent.get(), WM_MOUSEWHEEL, MAKEWPARAM(0, WHEEL_DELTA), point));
+	EXPECT_EQ(1, state.parentWheelMessages);
+}
+
+TEST_F(EditWndTest, HoveredScrollTargetKeepsTabStripWheelPath)
+{
+	MouseWheelForwardTestState state{ .editWindow = pcEditWnd };
+	using WindowHolder = cxx::ResourceHolder<&::DestroyWindow>;
+	WindowHolder parent{ CreateMouseWheelForwardTestParent(state) };
+	ASSERT_TRUE(parent);
+
+	ScopedEditWindowAttachment attachment(*pcEditWnd);
+	pcEditWnd->AttachMainWindowEarly(parent.get());
+	::ShowWindow(parent.get(), SW_SHOWNOACTIVATE);
+	::UpdateWindow(parent.get());
+
+	WindowHolder tabRoot{ CreateMouseWheelForwardTestChild(parent.get()) };
+	ASSERT_TRUE(tabRoot);
+	WindowHolder tabControl{
+		CreateMouseWheelForwardTestChild(tabRoot.get(), 10, 10, 80, 80) };
+	ASSERT_TRUE(tabControl);
+	WindowHolder tabDescendant{
+		CreateMouseWheelForwardTestChild(tabControl.get(), 0, 0, 80, 80) };
+	ASSERT_TRUE(tabDescendant);
+
+	ScopedTabWindowHandles tabHandles(pcEditWnd->m_cTabWnd);
+	pcEditWnd->m_cTabWnd._SetHwnd(tabRoot.get());
+	pcEditWnd->m_cTabWnd.m_hwndTab = tabControl.get();
+
+	RECT rootRect{};
+	ASSERT_TRUE(::GetWindowRect(tabRoot.get(), &rootRect));
+	const POINT rootScreen{ rootRect.right - 5, rootRect.bottom - 5 };
+	ASSERT_EQ(tabRoot.get(), ::WindowFromPoint(rootScreen));
+	const LPARAM rootPoint = MAKELPARAM(
+		static_cast<WORD>(rootScreen.x), static_cast<WORD>(rootScreen.y));
+	EXPECT_EQ(nullptr, pcEditWnd->HoveredScrollTarget(rootPoint));
+
+	RECT descendantRect{};
+	ASSERT_TRUE(::GetWindowRect(tabDescendant.get(), &descendantRect));
+	const POINT descendantScreen{
+		(descendantRect.left + descendantRect.right) / 2,
+		(descendantRect.top + descendantRect.bottom) / 2,
+	};
+	ASSERT_EQ(tabDescendant.get(), ::WindowFromPoint(descendantScreen));
+	const LPARAM descendantPoint = MAKELPARAM(
+		static_cast<WORD>(descendantScreen.x), static_cast<WORD>(descendantScreen.y));
+	EXPECT_EQ(nullptr, pcEditWnd->HoveredScrollTarget(descendantPoint));
+}
 
 TEST_F(EditWndTest, DISABLED_OnCreate101)	// パラメーター不正の考慮がないので呼べない
 {
