@@ -91,7 +91,7 @@ pnpm-debug.log*
 
 Backup
 doxygen*.log
-html
+/html
 iss-*-*.log
 msbuild-*.log
 msbuild-*.log.csv
